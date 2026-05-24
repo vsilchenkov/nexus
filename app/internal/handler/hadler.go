@@ -1,15 +1,16 @@
 package handler
 
 import (
-	"bus/app/internal/config"
-	"bus/app/internal/lib/caching"
-	"bus/app/internal/lib/logging"
-	"bus/app/internal/models"
-	"bus/app/internal/storage/repository"
-	"bus/docs"
 	"context"
 	"fmt"
 	"os"
+
+	"bus/app/internal/config"
+	"bus/app/internal/lib/caching"
+	"bus/app/internal/lib/logging"
+	"bus/app/internal/service"
+	"bus/app/internal/storage/repository"
+	"bus/docs"
 
 	"github.com/getsentry/sentry-go"
 	sentrygin "github.com/getsentry/sentry-go/gin"
@@ -28,28 +29,25 @@ var sentrySkipPaths = map[string]struct{}{
 
 type Handler struct {
 	ctx      context.Context
-	services models.Services
+	services *service.Services
 	store    repository.Repositorer
-	upgrader models.Upgrader
 	cacher   caching.Cacher
 	config   *config.Config
 	logger   logging.Logger
 }
 
 func New(ctx context.Context,
-	service models.Services,
+	services *service.Services,
 	store repository.Repositorer,
-	upgrader models.Upgrader,
-	casher caching.Cacher,
+	cacher caching.Cacher,
 	c *config.Config,
 	logger logging.Logger) *Handler {
 
 	return &Handler{
 		ctx:      ctx,
-		services: service,
+		services: services,
 		store:    store,
-		upgrader: upgrader,
-		cacher:   casher,
+		cacher:   cacher,
 		config:   c,
 		logger:   logger}
 }
@@ -97,32 +95,7 @@ func (h *Handler) Init() *gin.Engine {
 	api := router.Group("/api")
 	api.GET("/", h.swagger)
 	{
-		gate := api.Group("/gate", h.basicAuthMW())
-		{
-			gate.POST("/sendMessage", h.sendMessage)
-		}
-	}
-	{
-		users := api.Group("/users", h.basicAuthMW())
-		{
-			users.POST("/createUser", h.createUser)
-			users.POST("/changeUserPassword", h.changeUserPassword)
-		}
-	}
-
-	router.GET("conn", h.authMW(), h.connection) // внешние ссылки
-
-	wsGroup := router.Group("/ws")
-	{
-		wsGroup.POST("/auth", h.basicAuthMW(), h.authorization)
-		wsGroup.GET("/ping", h.ping)
-		wsGroup.GET("/conn", h.authMW(), h.connection)
-
-		wsGroupApi := wsGroup.Group("/api", h.authMW())
-		{
-			wsGroupApi.POST("/setCache", h.SetCache)
-			wsGroupApi.POST("/getCache", h.GetCache)
-		}
+		api.GET("/ping", h.ping)
 	}
 
 	return router

@@ -23,22 +23,6 @@ type Config struct {
 		Port string `yaml:"Port" binding:"required"`
 	} `yaml:"Server" binding:"required"`
 
-	Authorization struct {
-		JWT struct {
-			Secret     string `yaml:"Secret"`
-			Expiration int    `yaml:"Expiration" binding:"required"`
-		} `yaml:"JWT" binding:"required"`
-	} `yaml:"Authorization" binding:"required"`
-
-	WebSocket struct {
-		Expiration int `yaml:"Expiration" binding:"required"`
-		API        struct {
-			Cache struct {
-				Expiration int `yaml:"Expiration" binding:"required"`
-			} `yaml:"Cache" binding:"required"`
-		} `yaml:"API" binding:"required"`
-	} `yaml:"WebSocket" binding:"required"`
-
 	DataBase struct {
 		Type        string `yaml:"Type"`
 		Host        string `yaml:"Host"`
@@ -196,8 +180,6 @@ func loadEnv(c *Config) {
 	godotenv.Load(fullPath)
 
 	loadEnvValue("SENTRY_DSN", &c.Sentry.Dsn)
-
-	loadEnvValue("JWT_SECRET", &c.Authorization.JWT.Secret)
 
 	loadEnvValue("REDIS_ADDR", &c.Redis.Addr)
 	loadEnvValue("REDIS_USR", &c.Redis.Credintials.UserName)

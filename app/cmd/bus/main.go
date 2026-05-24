@@ -1,34 +1,28 @@
 package main
 
 import (
+	"context"
+	_ "embed"
+	"fmt"
+	"os"
+	"time"
+
 	"bus/app/build"
 	"bus/app/internal/app"
 	"bus/app/internal/config"
 	clientHttp "bus/app/internal/controller/http"
 	"bus/app/internal/controller/manager"
-	clientWS "bus/app/internal/controller/ws"
 	"bus/app/internal/handler"
 	"bus/app/internal/lib/caching"
 	"bus/app/internal/lib/caching/memory"
 	"bus/app/internal/lib/caching/redis"
-	"bus/app/internal/models"
 	"bus/app/internal/service"
-	"bus/app/internal/service/gate"
-	"bus/app/internal/service/hub"
-	"bus/app/internal/service/metrics"
-	"bus/app/internal/service/ws"
-	"bus/app/internal/service/ws/wsapi"
+	"bus/app/internal/service/example"
 	"bus/app/internal/storage"
 	"bus/app/internal/storage/database"
 	"bus/app/internal/storage/migrations"
 	"bus/app/internal/storage/repository"
 	"bus/app/internal/terminal"
-	"context"
-	_ "embed"
-	"fmt"
-
-	"os"
-	"time"
 
 	"github.com/getsentry/sentry-go"
 	"github.com/jinzhu/copier"
@@ -37,7 +31,7 @@ import (
 	"github.com/vsilchenkov/logging"
 )
 
-const projectName = "GateWS"
+const projectName = "Bus"
 
 var svcConfig = &svc.Config{
 	Name:        projectName + "Service",
@@ -48,16 +42,11 @@ var svcConfig = &svc.Config{
 //go:embed versioninfo.json
 var versionInfoData []byte
 
-// @title Gate WS
+// @title Bus API
 // @version 1.0
-// @description Gate WS API Service
+// @description Bus API Service
 // @host localhost:8090
 // @BasePath /
-
-// @securityDefinitions.apikey BearerAuth
-// @in header
-// @name Authorization
-// @description Bearer {token}
 
 // @securityDefinitions.basic BasicAuth
 // @description Basic authentication (username:password)
@@ -90,30 +79,23 @@ func main() {
 	store := repository.NewRepository(db, cacher, logger)
 
 	app := app.New(ctx, store, cacher, c, logger, cancel)
-	h := hub.New(logger)
-	go h.Run()
 
 	if runTerminal(ctx, store, c, logger) {
 		os.Exit(0)
 	}
 
-	initMetrics(ctx, h, c, logger)
-	RunServer(app, c, cacher, h, logger)
+	RunServer(app, c, logger)
 
 }
 
-func RunServer(app app.App, c *config.Config, cacher caching.Cacher, h models.Hub, logger logging.Logger) {
+func RunServer(app app.App, c *config.Config, logger logging.Logger) {
 
 	srv := clientHttp.New(app)
 
-	svcGate := gate.New(app, h)
-	svcWS := ws.New(app, h)
-	wsApi := wsapi.New(app)
-	services := service.New(svcGate, svcWS, wsApi)
+	svcExample := example.New(app)
+	services := service.New(svcExample)
 
-	upgrader := clientWS.NewUpgrader()
-
-	hd := handler.New(app.Ctx, services, app.Store, upgrader, cacher, app.Config, app.Logger).Init()
+	hd := handler.New(app.Ctx, services, app.Store, app.Cacher, app.Config, app.Logger).Init()
 	man := manager.New(srv, hd, c.Server.Port, app)
 
 	s, err := svc.New(man, svcConfig)
@@ -285,22 +267,4 @@ func runTerminal(ctx context.Context, store repository.Repositorer, c *config.Co
 	}
 
 	return true
-}
-
-func initMetrics(ctx context.Context, h models.Hub, c *config.Config, l logging.Logger) {
-
-	if c.Metrics.Interval == 0 {
-		return
-	}
-
-	collect := []metrics.Metric{
-		metrics.NewHubMetrics(h, l),
-	}
-
-	cfg := &metrics.Config{
-		Interval: c.Metrics.Interval,
-	}
-	collector := metrics.New(collect, cfg, l)
-	go collector.Start(ctx)
-
 }

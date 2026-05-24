@@ -1,17 +1,17 @@
 package service
 
-import "bus/app/internal/models"
+import "context"
 
-type Services struct {
-	models.Gate
-	models.WS
-	models.WSApi
+type Example interface {
+	Ping(ctx context.Context) (string, error)
 }
 
-func New(gate models.Gate, ws models.WS, wsApi models.WSApi) models.Services {
+type Services struct {
+	Example
+}
+
+func New(example Example) *Services {
 	return &Services{
-		Gate:  gate,
-		WS:    ws,
-		WSApi: wsApi,
+		Example: example,
 	}
 }

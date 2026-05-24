@@ -1,16 +1,6 @@
 Server:
   Port: "8090"
 
-Authorization:
-  JWT:
-    Expiration: 168 # Время жизни токена в часах
-    
-WebSocket:
-  Expiration: 180 # Время жизни соединения в минутах без активности
-  API:
-    Cache:
-      Expiration: 604800 # Время жизни кэша данных от устройств по умолчанию (в секундах)
-
 DataBase:
   Type: "postgres"
   Host: ""

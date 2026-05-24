@@ -1,0 +1,28 @@
+basePath: /
+host: localhost:8090
+info:
+  contact: {}
+  description: Basic authentication (username:password)
+  title: Bus API
+  version: "1.0"
+paths:
+  /api/ping:
+    get:
+      description: Healthcheck endpoint
+      operationId: ping
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Ping
+      tags:
+      - Health
+securityDefinitions:
+  BasicAuth:
+    type: basic
+swagger: "2.0"
