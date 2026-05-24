@@ -144,69 +144,9 @@ Run through this list every time. If any item fails, fix it before declaring suc
 
 ---
 
-## 11. Available skills (`.claude/skills/`)
+## 11. Skills
 
-Skills are domain-specific playbooks loaded by Claude Code on demand. Trigger them by topic when planning or reviewing related work.
-
-### Language fundamentals
-- **golang-code-style** — formatting, line breaks, declarations, when comments help vs hurt.
-- **golang-naming** — packages, types, interfaces, errors, receivers, getters, options.
-- **golang-documentation** — godoc, README, CONTRIBUTING, CHANGELOG, examples, llms.txt.
-- **golang-modernize** — upgrade old-style code to current idioms and stdlib features.
-- **golang-lint** — `golangci-lint` config, linter selection, nolint suppressions.
-- **golang-stay-updated** — Go news, communities, libraries to watch.
-
-### Types & structure
-- **golang-structs-interfaces** — composition, embedding, segregation, pointer vs value receivers.
-- **golang-data-structures** — slices/maps internals, container/*, strings.Builder, generics.
-- **golang-design-patterns** — functional options, constructors, lifecycle, graceful shutdown, resilience.
-- **golang-project-layout** — `cmd/`, `internal/`, `pkg/`, monorepo, workspace layout.
-
-### Correctness & safety
-- **golang-error-handling** — wrapping, sentinels, custom types, `errors.Join`, slog, oops.
-- **golang-safety** — nil panics, append aliasing, map races, float pitfalls, defensive copies.
-- **golang-context** — propagation, cancellation, timeouts, `WithoutCancel`, request-scoped values.
-- **golang-concurrency** — goroutines, channels, sync, errgroup, singleflight, worker pools.
-- **golang-security** — injection, crypto, secrets, filesystem, network, cookies, memory.
-
-### Testing & quality
-- **golang-testing** — table-driven, parallel, fuzz, fixtures, goleak, coverage, integration.
-- **golang-stretchr-testify** — `assert`, `require`, `mock`, `suite` in depth.
-- **golang-benchmark** — writing benchmarks, pprof, benchstat, regression detection.
-- **golang-performance** — optimization patterns once a bottleneck is identified.
-- **golang-troubleshooting** — systematic root-cause debugging, Delve, race, GODEBUG, pprof.
-
-### Production
-- **golang-observability** — slog, Prometheus, OpenTelemetry, pprof, RUM, alerting, Grafana.
-- **golang-continuous-integration** — GitHub Actions, SAST, coverage, Dependabot, GoReleaser.
-- **golang-dependency-management** — go.mod, MVS, vuln scanning, conflicts, workspaces.
-- **golang-popular-libraries** — production-ready library recommendations.
-
-### Persistence & APIs
-- **golang-database** — `database/sql`, `sqlx`, `pgx`, transactions, scanning, pools, migrations.
-- **golang-grpc** — server/client, protobuf, interceptors, TLS, streaming, bufconn testing.
-- **golang-graphql** — `gqlgen`, `graphql-go`, resolvers, subscriptions.
-- **golang-swagger** — `swaggo/swag` annotations, framework integrations, code generation.
-
-### CLI
-- **golang-cli** — command structure, flags, config layering, exit codes, signals, completion.
-- **golang-spf13-cobra** — command trees, hooks, validators, completion, doc generation.
-- **golang-spf13-viper** — layered config precedence, env binding, hot reload, test isolation.
-
-### Dependency injection
-- **golang-dependency-injection** — why DI, manual injection, library comparison.
-- **golang-google-wire** — compile-time DI, `wire.Build`, `wire.Bind`, provider sets.
-- **golang-uber-dig** — reflection-based container, In/Out, named values, groups.
-- **golang-uber-fx** — `fx.New`, `fx.Module`, `fx.Lifecycle`, annotated providers.
-- **golang-samber-do** — service container, scopes, lifecycle, health checks.
-
-### `samber/*` ecosystem
-- **golang-samber-lo** — 500+ functional helpers (Map, Filter, Reduce, GroupBy, …).
-- **golang-samber-mo** — monadic types (Option, Result, Either, Future, IO, Task, State).
-- **golang-samber-ro** — reactive streams, observables, subjects, operators.
-- **golang-samber-hot** — in-memory cache (LRU, LFU, TinyLFU, ARC, SIEVE, …).
-- **golang-samber-oops** — structured errors with stack traces and attributes.
-- **golang-samber-slog** — slog handlers, sampling, formatters, HTTP middleware, backends.
+42 Go skills from `samber/cc-skills-golang` are installed in `.claude/skills/`. Claude Code auto-loads their descriptions and triggers them by topic — no manual invocation needed. To browse: `ls .claude/skills/`; each skill's contract lives in its `SKILL.md`.
 
 ---
 
