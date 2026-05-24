@@ -17,7 +17,7 @@ func (h *Handler) ping(c *gin.Context) {
 
 	const op = "handler.ping"
 
-	msg, err := h.services.Ping(h.ctx)
+	msg, err := h.services.Ping(c.Request.Context())
 	if err != nil {
 		newErrorResponse(c, http.StatusInternalServerError, op, err)
 		return

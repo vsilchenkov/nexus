@@ -78,7 +78,7 @@ func main() {
 	cacher := initCacher(c, logger)
 	store := repository.NewRepository(db, cacher, logger)
 
-	app := app.New(ctx, store, cacher, c, logger, cancel)
+	app := app.New(store, cacher, c, logger, cancel)
 
 	if runTerminal(ctx, store, c, logger) {
 		os.Exit(0)
@@ -95,7 +95,7 @@ func RunServer(app app.App, c *config.Config, logger logging.Logger) {
 	svcExample := example.New(app)
 	services := service.New(svcExample)
 
-	hd := handler.New(app.Ctx, services, app.Store, app.Cacher, app.Config, app.Logger).Init()
+	hd := handler.New(services, app.Store, app.Cacher, app.Config, app.Logger).Init()
 	man := manager.New(srv, hd, c.Server.Port, app)
 
 	s, err := svc.New(man, svcConfig)

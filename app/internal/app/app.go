@@ -9,7 +9,6 @@ import (
 )
 
 type App struct {
-	Ctx    context.Context
 	Store  repository.Repositorer
 	Cacher caching.Cacher
 	Config *config.Config
@@ -17,9 +16,8 @@ type App struct {
 	Cancel context.CancelFunc
 }
 
-func New(ctx context.Context, store repository.Repositorer, cacher caching.Cacher, c *config.Config, logger logging.Logger, cancel context.CancelFunc) App {
+func New(store repository.Repositorer, cacher caching.Cacher, c *config.Config, logger logging.Logger, cancel context.CancelFunc) App {
 	return App{
-		Ctx:    ctx,
 		Store:  store,
 		Cacher: cacher,
 		Config: c,

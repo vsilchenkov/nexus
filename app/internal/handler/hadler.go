@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"fmt"
 	"os"
 
@@ -28,7 +27,6 @@ var sentrySkipPaths = map[string]struct{}{
 }
 
 type Handler struct {
-	ctx      context.Context
 	services *service.Services
 	store    repository.Repositorer
 	cacher   caching.Cacher
@@ -36,15 +34,13 @@ type Handler struct {
 	logger   logging.Logger
 }
 
-func New(ctx context.Context,
-	services *service.Services,
+func New(services *service.Services,
 	store repository.Repositorer,
 	cacher caching.Cacher,
 	c *config.Config,
 	logger logging.Logger) *Handler {
 
 	return &Handler{
-		ctx:      ctx,
 		services: services,
 		store:    store,
 		cacher:   cacher,
