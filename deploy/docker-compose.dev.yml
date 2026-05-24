@@ -1,0 +1,31 @@
+# Override для локальной разработки.
+# Поднимает только зависимости — receiver/sender/web запускаются локально
+# через `make run-{receiver,sender,web}`.
+#
+# Использование:
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml \
+#                  up -d postgres redis clickhouse kafka prometheus
+
+services:
+  receiver:
+    profiles: ["never"]   # отключаем сервис в dev-режиме
+  sender:
+    profiles: ["never"]
+  web:
+    profiles: ["never"]
+
+  # Открываем порты infrastructure-сервисов на хост — чтобы локальные main'ы
+  # могли подключиться по localhost:<port>.
+  postgres:
+    ports:
+      - "5432:5432"
+  redis:
+    ports:
+      - "6379:6379"
+  clickhouse:
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+  kafka:
+    ports:
+      - "9092:9092"

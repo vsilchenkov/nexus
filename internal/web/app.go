@@ -1,0 +1,91 @@
+// Package web — Web Service (§7 и §11 ТЗ).
+//
+// В Phase 0 — только healthcheck (/health, /ready) и /metrics.
+// REST API (/api/*), SPA через embed.FS и Swagger — Phase 1/3.
+package web
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	goredis "github.com/redis/go-redis/v9"
+
+	"bus/internal/platform/config"
+	"bus/internal/platform/healthcheck"
+	"bus/internal/platform/logging"
+	pgpf "bus/internal/platform/pg"
+	redispf "bus/internal/platform/redis"
+)
+
+type App struct {
+	cfg    *config.Config
+	logger logging.Logger
+	pg     *pgxpool.Pool
+	redis  *goredis.Client
+
+	srv *http.Server
+}
+
+func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, logger logging.Logger) *App {
+	return &App{cfg: cfg, logger: logger, pg: pg, redis: redis}
+}
+
+func (a *App) Start(ctx context.Context) error {
+	gin.SetMode(gin.ReleaseMode)
+	r := gin.New()
+	r.Use(gin.Recovery())
+
+	hc := healthcheck.New(
+		[]healthcheck.Checker{
+			pgpf.HealthChecker("postgres", a.pg),
+			redispf.HealthChecker("redis", a.redis),
+		},
+		nil,
+	)
+	hc.Register(r)
+
+	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
+
+	a.srv = &http.Server{
+		Addr:              a.cfg.Web.HTTPAddr,
+		Handler:           r,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	a.logger.Info("web listening",
+		a.logger.Str("addr", a.cfg.Web.HTTPAddr))
+
+	errCh := make(chan error, 1)
+	go func() {
+		if err := a.srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- fmt.Errorf("web listen: %w", err)
+		}
+		close(errCh)
+	}()
+
+	select {
+	case <-ctx.Done():
+		return nil
+	case err := <-errCh:
+		return err
+	}
+}
+
+func (a *App) Stop(ctx context.Context) error {
+	if a.srv == nil {
+		return nil
+	}
+	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	a.logger.Info("web shutting down")
+	if err := a.srv.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("web shutdown: %w", err)
+	}
+	return nil
+}
