@@ -15,12 +15,15 @@ import (
 
 	"bus/internal/platform/build"
 	"bus/internal/platform/config"
+	"bus/internal/platform/crypto"
 	"bus/internal/platform/kafka"
 	"bus/internal/platform/logging"
 	pgpf "bus/internal/platform/pg"
 	redispf "bus/internal/platform/redis"
 	sentrypf "bus/internal/platform/sentry"
 )
+
+const encryptionKeyEnv = "ENCRYPTION_KEY"
 
 // Init выполняет общие шаги старта: парсит флаги, загружает конфиг,
 // инициализирует Sentry и логгер.
@@ -117,6 +120,20 @@ func MustRedis(ctx context.Context, cfg *config.Config, logger logging.Logger) *
 // MustKafkaDialer — Phase 0: только TCP-dialer для healthcheck.
 func MustKafkaDialer(cfg *config.Config) *kafka.Dialer {
 	return kafka.NewDialer(cfg.Kafka.Brokers)
+}
+
+// MustCipher читает ENCRYPTION_KEY из окружения и создаёт AES-256-GCM cipher.
+// При пустом / неверной длине / невалидном ключе — exit 1 (§5.5 ТЗ:
+// «лучше не подняться, чем работать со сломанным шифрованием»).
+func MustCipher(logger logging.Logger) *crypto.Cipher {
+	key := os.Getenv(encryptionKeyEnv)
+	c, err := crypto.NewCipher(key)
+	if err != nil {
+		logger.ErrorWithOp("encryption key invalid", err, "bootstrap.MustCipher",
+			logger.Str("env", encryptionKeyEnv))
+		os.Exit(1)
+	}
+	return c
 }
 
 // HandleMigrateFlags обрабатывает --migrate-up/--migrate-down/--migrate-status.
