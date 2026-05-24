@@ -1,0 +1,48 @@
+Server:
+  Port: "8090"
+
+Authorization:
+  JWT:
+    Expiration: 24 # Время жизни токена в часах
+    
+WebSocket:
+  Expiration: 5 # Время жизни соединения в минутах без активности
+  API:
+    Cache:
+      Expiration: 604800 # Время жизни кэша данных от устройств по умолчанию (в секундах)
+
+DataBase:
+  Type: "postgres"
+  Host: "pc7822"
+  Port: 5432
+  DBName: "bus"
+  Credintials:
+    UserName: "postgres"
+    Password: "vOkjDn"
+    
+Redis:
+  Use: true
+  Addr: ""
+  DB: 3
+  Credintials:
+    UserName: ""
+    Password: ""
+
+Metrics:
+  Interval: 5
+  
+Log:
+  Debug: false
+  Level: 5            # Уровень логирования от 2 до 5, где 2 - ошибка, 3 - предупреждение, 4 - информация, 5 - дебаг
+  OutputInFile: true  # включить логирование в каталог LogDir
+  Dir: "logs"         # каталог логов
+  
+DeleteTempFiles: false # Удалать файлы из web/temp
+
+Sentry:
+  Use: false # Включить sentry для отлова внутренних ошибок
+  Environment: "Production"
+  AttachStacktrace: true
+  TracesSampleRate: 1.0
+  EnableTracing: true
+  Debug: true
