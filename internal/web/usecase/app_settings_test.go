@@ -189,11 +189,18 @@ type fakeAppSettingsRepo struct {
 	mu        sync.Mutex
 	current   *domain.AppSettings
 	lastSaved *domain.AppSettings
+	getErr    error // если задан — Get возвращает эту ошибку (для error-path тестов)
 }
 
 func (f *fakeAppSettingsRepo) Get(_ context.Context) (*domain.AppSettings, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	if f.current == nil {
+		return &domain.AppSettings{}, nil
+	}
 	cpy := *f.current
 	return &cpy, nil
 }

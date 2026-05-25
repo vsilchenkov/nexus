@@ -107,6 +107,11 @@ func (a *App) Start(ctx context.Context) error {
 	appSettingsRepo := pgrepo.NewAppSettingsRepoPg(a.pg, a.logger)
 	reloadPublisher := reloader.NewPublisher(a.redis)
 	appSettingsUC := usecase.NewAppSettingsUsecase(appSettingsRepo, auditUC, reloadPublisher, a.logger)
+	// SettingsTester (Phase 6.3.2.6): test connection без сохранения.
+	settingsTester := usecase.NewSettingsTester(
+		appSettingsRepo, a.cfg, chpf.New, usecase.DefaultSentryClientFactory,
+		a.cfg.Build.ProjectName, a.cfg.Build.Version, a.logger,
+	)
 
 	// Подписчик hot-reload (§14.5). Web сам слушает события, чтобы admin-инстансы
 	// в кластере применили изменения, отправленные через другой инстанс.
@@ -119,7 +124,7 @@ func (a *App) Start(ctx context.Context) error {
 	userHandler := httpadapter.NewUserHandler(userUC, authUC, a.logger)
 	tokenHandler := httpadapter.NewAPITokenHandler(tokenUC, a.logger)
 	auditHandler := httpadapter.NewAuditHandler(auditUC, a.logger)
-	appSettingsHandler := httpadapter.NewAppSettingsHandler(appSettingsUC, a.logger)
+	appSettingsHandler := httpadapter.NewAppSettingsHandler(appSettingsUC, settingsTester, a.logger)
 
 	dryRunUC := usecase.NewDryRunUsecase(auditUC, a.logger)
 	dryRunHandler := httpadapter.NewDryRunHandler(dryRunUC, a.logger)

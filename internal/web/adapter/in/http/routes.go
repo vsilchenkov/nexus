@@ -88,6 +88,9 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		if h.AppSettings != nil {
 			authedAdmin.GET("/settings/app", h.AppSettings.Get)
 			authedAdmin.PUT("/settings/app", h.AppSettings.Update)
+			// Test connection с patch'ем настроек (Phase 6.3.2.6, §7.10).
+			authedAdmin.POST("/settings/clickhouse/test", h.AppSettings.TestClickHouse)
+			authedAdmin.POST("/settings/sentry/test", h.AppSettings.TestSentry)
 		}
 	}
 }

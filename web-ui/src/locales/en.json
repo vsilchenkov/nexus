@@ -70,7 +70,11 @@
       "updated_at": "Updated",
       "saved": "Saved",
       "masked_hint": "Leave masked value to keep the current secret; type a new one to override.",
-      "hot_reload_note": "Changes take effect on all instances without a restart."
+      "hot_reload_note": "Changes take effect on all instances without a restart.",
+      "test": "Test connection",
+      "test_ok": "OK ({{ms}} ms)",
+      "test_failed": "Failed: {{error}}",
+      "testing": "Testing…"
     },
     "sentry": {
       "title": "Sentry",
@@ -86,7 +90,7 @@
     "clickhouse": {
       "title": "ClickHouse",
       "hint": "Override ClickHouse connection and batch writer settings.",
-      "partial_hot_reload_note": "Connection changes will fully apply after a service restart; batch settings and credentials reload immediately.",
+      "partial_hot_reload_note": "All ClickHouse settings — host, credentials, batch size, workers — apply across instances without a restart.",
       "host": "Host",
       "port": "Port",
       "database": "Database",

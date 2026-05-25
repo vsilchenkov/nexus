@@ -52,6 +52,17 @@ export function SentryPanel() {
     },
   });
 
+  // Phase 6.3.2.6: test connection с patch'ем без сохранения.
+  // Backend создаёт изолированный sentry.Client, отправляет CaptureMessage
+  // и ждёт Flush — глобальный hub не затрагивается.
+  const test = useMutation({
+    mutationFn: () =>
+      api.post<{ ok: boolean; latency_ms?: number; error?: string }>(
+        "/api/settings/sentry/test",
+        form,
+      ),
+  });
+
   if (isLoading) {
     return <div className="text-fg-muted">{t("common.loading")}</div>;
   }
@@ -178,13 +189,22 @@ export function SentryPanel() {
         </div>
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <button
           onClick={() => save.mutate()}
           disabled={save.isPending}
           className="bg-accent hover:bg-accent-hover px-4 py-2 rounded-md text-sm disabled:opacity-50"
         >
           {t("common.save")}
+        </button>
+        <button
+          onClick={() => test.mutate()}
+          disabled={test.isPending || !form.use}
+          className="bg-bg-muted hover:bg-bg-muted/70 px-4 py-2 rounded-md text-sm disabled:opacity-50"
+        >
+          {test.isPending
+            ? t("settings.common.testing")
+            : t("settings.common.test")}
         </button>
         {save.isSuccess && (
           <span className="text-ok text-sm">
@@ -193,6 +213,23 @@ export function SentryPanel() {
         )}
         {save.isError && (
           <span className="text-err text-sm">{t("common.error")}</span>
+        )}
+        {test.isSuccess && test.data?.ok && (
+          <span className="text-ok text-sm">
+            {t("settings.common.test_ok", { ms: test.data.latency_ms ?? 0 })}
+          </span>
+        )}
+        {test.isSuccess && !test.data?.ok && (
+          <span className="text-err text-sm">
+            {t("settings.common.test_failed", {
+              error: test.data?.error ?? "?",
+            })}
+          </span>
+        )}
+        {test.isError && (
+          <span className="text-err text-sm">
+            {t("common.error")}
+          </span>
         )}
       </div>
 

@@ -125,6 +125,7 @@
 | **`app_settings` таблица + REST API + overlay поверх env на старте** | ✅ Phase 6.3.1 | миграция [0006](../migrations/0006_app_settings.up.sql), [domain/app_settings.go](../internal/domain/app_settings.go), [usecase/app_settings.go](../internal/web/usecase/app_settings.go), [http/app_settings_handler.go](../internal/web/adapter/in/http/app_settings_handler.go), [bootstrap/app_settings.go](../internal/platform/bootstrap/app_settings.go) |
 | **Hot-reload Sentry через Redis pub/sub** | ✅ Phase 6.3.2 | [platform/reloader/](../internal/platform/reloader/), [sentry.Reload](../internal/platform/sentry/sentry.go), [bootstrap/reload.go](../internal/platform/bootstrap/reload.go) — Web публикует на канал `databus:config:reload`, Receiver/Sender/Web подписаны и переинициализируют SDK |
 | **Полное hot-reload ClickHouse (пересоздание клиента/writer'а)** | ✅ Phase 6.3.2.5 | [clickhouse.Manager](../internal/platform/clickhouse/manager.go) (атомарный swap conn + delayed close), [chlog.WriterManager](../internal/sender/adapter/out/chlog/manager.go) (пересоздание Writer для смены BufferMaxSize/Workers), [bootstrap.ClickHouseReloader](../internal/platform/bootstrap/reload.go) — Sender и Web swap'ают conn и переподнимают зависимые компоненты без рестарта |
+| **Test connection для Sentry/ClickHouse (§7.10)** | ✅ Phase 6.3.2.6 | [usecase.SettingsTester](../internal/web/usecase/settings_tester.go) + POST `/api/settings/{clickhouse,sentry}/test`, кнопка «Test connection» в [Sentry.tsx](../web-ui/src/pages/settings/Sentry.tsx) и [ClickHouse.tsx](../web-ui/src/pages/settings/ClickHouse.tsx) — открывает временный conn / создаёт изолированный sentry.Client с merge'нутыми настройками, возвращает `{ok, latency_ms}` или `{error}` без сохранения |
 | **Settings → Sentry / ClickHouse страницы в SPA** | ✅ Phase 6.3.3 | [pages/settings/Sentry.tsx](../web-ui/src/pages/settings/Sentry.tsx), [pages/settings/ClickHouse.tsx](../web-ui/src/pages/settings/ClickHouse.tsx), две новые вкладки в [pages/Settings.tsx](../web-ui/src/pages/Settings.tsx) (видны только admin-роли через `/api/auth/me`) |
 
 ### §9 Высоконагруженность / отказоустойчивость
@@ -190,10 +191,10 @@
 
 ### §15 Критерии приёмки
 
-См. [sections/15-acceptance.md](sections/15-acceptance.md). Покрытие: ~92% пунктов реализовано.
+См. [sections/15-acceptance.md](sections/15-acceptance.md). Покрытие: ~93% пунктов реализовано.
 Не покрыто (требует Phase 6):
 
-- ClickHouse Settings-страница: проверка соединения (test connection button) и orphaned tables — UI готов (Phase 6.3.3), сам hot-reload реализован (Phase 6.3.2.5), но кнопки «проверить» и «найти orphan'ы» — нет.
+- ClickHouse Settings: orphan-tables — UI готов (Phase 6.3.3), hot-reload и test-connection реализованы (Phase 6.3.2.5/6.3.2.6), но кнопки «найти orphan'ы» (таблицы без узлов) — нет.
 - Полная Users-страница (с диалогами создания/смены пароля).
 - Полный Audit log с export CSV, diff-двухколоночный для `node.update`.
 - Live-tail UI: фильтры, авто-прокрутка, баннер «N новых записей».
@@ -549,6 +550,7 @@ make proto                                     # перегенерация send
 8. **Grafana дашборд** под `databus_*` метрики и алерт на `databus_kafka_lag > N`,
    `databus_clickhouse_errors_total rate > 0`.
 
-9. **ClickHouse Settings: проверка соединения и orphaned-tables в UI** —
-   hot-reload сам работает, но оператор не видит, успешно ли применились
-   новые настройки. Нужны кнопка «test connection» и список orphan-таблиц.
+9. **ClickHouse Settings: orphaned-tables в UI** — таблицы в ClickHouse,
+   у которых нет соответствующего узла в Postgres. Test connection уже
+   сделан (Phase 6.3.2.6); orphan'ы — backend-сканер + список в UI с
+   кнопкой DROP TABLE (с двойным подтверждением).
