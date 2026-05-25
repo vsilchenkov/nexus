@@ -14,7 +14,6 @@ import (
 	chdrv "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	goredis "github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
@@ -28,6 +27,7 @@ import (
 	"bus/internal/platform/healthcheck"
 	kafkapf "bus/internal/platform/kafka"
 	"bus/internal/platform/logging"
+	"bus/internal/platform/metrics"
 	pgpf "bus/internal/platform/pg"
 	sentrypf "bus/internal/platform/sentry"
 	kafkaadapter "bus/internal/sender/adapter/in/kafka"
@@ -40,12 +40,13 @@ import (
 )
 
 type App struct {
-	cfg    *config.Config
-	logger logging.Logger
-	pg     *pgxpool.Pool
-	ch     chdrv.Conn
-	redis  *goredis.Client
-	cipher *crypto.Cipher
+	cfg     *config.Config
+	logger  logging.Logger
+	pg      *pgxpool.Pool
+	ch      chdrv.Conn
+	redis   *goredis.Client
+	cipher  *crypto.Cipher
+	metrics *metrics.Metrics
 
 	grpcSrv  *grpc.Server
 	adminSrv *http.Server
@@ -62,12 +63,20 @@ func New(
 	cipher *crypto.Cipher,
 	logger logging.Logger,
 ) *App {
-	return &App{cfg: cfg, logger: logger, pg: pg, ch: ch, redis: redis, cipher: cipher}
+	return &App{
+		cfg:     cfg,
+		logger:  logger,
+		pg:      pg,
+		ch:      ch,
+		redis:   redis,
+		cipher:  cipher,
+		metrics: metrics.New("sender"),
+	}
 }
 
 func (a *App) Start(ctx context.Context) error {
 	// Общие сервисы.
-	a.chWriter = chlog.NewWithFallback(a.ch, &a.cfg.ClickHouse, a.cfg.ClickHouse.FallbackDir, a.logger)
+	a.chWriter = chlog.NewWithFallback(a.ch, &a.cfg.ClickHouse, a.cfg.ClickHouse.FallbackDir, a.metrics, a.logger)
 	httpc := httpclient.New(&a.cfg.Sender.HTTPClient, a.logger)
 
 	// Circuit breaker per node — порог 5 ошибок подряд, cooldown 30s.
@@ -79,18 +88,22 @@ func (a *App) Start(ctx context.Context) error {
 	sendUC := usecase.NewSendUsecase(httpc, a.chWriter, cb, a.logger)
 
 	// gRPC adapter для sync.
-	grpcSvc := grpcadapter.NewServer(sendUC, a.logger)
+	grpcSvc := grpcadapter.NewServer(sendUC, a.metrics, a.logger)
 
 	// Async consumer.
 	a.producer = kafkapf.NewProducer(a.cfg)
 	nodeReader := nodepg.New(a.pg, a.cipher, a.logger)
-	asyncProc := usecase.NewAsyncProcessor(nodeReader, sendUC, a.producer, a.cfg.Kafka.DLQTopic, a.logger)
+	asyncProc := usecase.NewAsyncProcessor(nodeReader, sendUC, a.producer, a.cfg.Kafka.DLQTopic, a.metrics, a.logger)
 	a.consumer = kafkaadapter.NewConsumerGroup(a.cfg, a.cfg.Kafka.AsyncTopic, asyncProc, a.logger)
 	a.consumer.Start(ctx)
 
 	// CH partition-drop housekeeping (§4.3 ТЗ): фоновый цикл раз в сутки.
 	hk := usecase.NewCHHousekeeping(a.ch, nodeReader, a.logger)
 	go hk.Run(ctx)
+
+	// Kafka lag reporter (§6 ТЗ): раз в 15 секунд снимаем Stats() со всех
+	// инстансов consumer-группы и пушим в Prometheus.
+	go a.reportKafkaLag(ctx)
 
 	errCh := make(chan error, 2)
 	go func() { errCh <- a.startGRPC(grpcSvc) }()
@@ -134,7 +147,7 @@ func (a *App) startGRPC(svc *grpcadapter.Server) error {
 func (a *App) startAdminHTTP() error {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(sentrypf.GinMiddleware("sender"), gin.Recovery())
+	r.Use(sentrypf.GinMiddleware("sender"), metrics.GinMiddleware(a.metrics), gin.Recovery())
 
 	hc := healthcheck.New(
 		[]healthcheck.Checker{
@@ -144,7 +157,7 @@ func (a *App) startAdminHTTP() error {
 		nil,
 	)
 	hc.Register(r)
-	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
+	r.GET("/metrics", gin.WrapH(a.metrics.Handler()))
 
 	a.adminSrv = &http.Server{
 		Addr:              a.cfg.Sender.AdminHTTPAddr,
@@ -159,6 +172,33 @@ func (a *App) startAdminHTTP() error {
 		return fmt.Errorf("sender admin http: %w", err)
 	}
 	return nil
+}
+
+// reportKafkaLag — фоновый цикл (§6 ТЗ databus_kafka_lag).
+// Опрашивает все consumer-инстансы группы и публикует Lag в Prometheus.
+// Интервал 15 секунд — компромисс между актуальностью и нагрузкой.
+func (a *App) reportKafkaLag(ctx context.Context) {
+	t := time.NewTicker(15 * time.Second)
+	defer t.Stop()
+	group := a.consumer.Group()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			for _, snap := range a.consumer.Snapshot() {
+				topic := snap.Topic
+				if topic == "" {
+					topic = a.cfg.Kafka.AsyncTopic
+				}
+				part := snap.Partition
+				if part == "" {
+					part = "all"
+				}
+				a.metrics.KafkaLag.WithLabelValues(topic, part, group).Set(float64(snap.Lag))
+			}
+		}
+	}
 }
 
 func (a *App) Stop(ctx context.Context) error {

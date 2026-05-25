@@ -23,14 +23,16 @@ import (
 	"bus/internal/domain"
 	"bus/internal/platform/config"
 	"bus/internal/platform/logging"
+	"bus/internal/platform/metrics"
 	"bus/internal/sender/usecase/port"
 )
 
 // Writer реализует port.LogWriter.
 type Writer struct {
-	conn   driver.Conn
-	cfg    *config.ClickHouseSection
-	logger logging.Logger
+	conn    driver.Conn
+	cfg     *config.ClickHouseSection
+	logger  logging.Logger
+	metrics *metrics.Metrics
 
 	ch chan job
 
@@ -52,16 +54,19 @@ type job struct {
 }
 
 func New(conn driver.Conn, cfg *config.ClickHouseSection, logger logging.Logger) *Writer {
-	return NewWithFallback(conn, cfg, "", logger)
+	return NewWithFallback(conn, cfg, "", nil, logger)
 }
 
-// NewWithFallback — вариант с явным каталогом для file-fallback (§9.4).
+// NewWithFallback — вариант с явным каталогом для file-fallback (§9.4)
+// и опциональными Prometheus-метриками (§6 ТЗ).
 // fallbackDir = "" — fallback отключён, проваленные батчи теряются (как в Phase 1).
-func NewWithFallback(conn driver.Conn, cfg *config.ClickHouseSection, fallbackDir string, logger logging.Logger) *Writer {
+// m = nil — метрики не публикуются (тестовый режим).
+func NewWithFallback(conn driver.Conn, cfg *config.ClickHouseSection, fallbackDir string, m *metrics.Metrics, logger logging.Logger) *Writer {
 	w := &Writer{
 		conn:     conn,
 		cfg:      cfg,
 		logger:   logger,
+		metrics:  m,
 		ch:       make(chan job, cfg.BufferMaxSize),
 		buffers:  make(map[string][]*domain.LogRecord),
 		bufferAt: make(map[string]time.Time),
@@ -74,7 +79,13 @@ func NewWithFallback(conn driver.Conn, cfg *config.ClickHouseSection, fallbackDi
 	}
 	if w.fallback.Enabled() {
 		go w.fallback.Run(context.Background(), func(ctx context.Context, table string, batch []*domain.LogRecord) error {
-			return w.insertBatch(ctx, table, batch)
+			if err := w.insertBatch(ctx, table, batch); err != nil {
+				return err
+			}
+			if w.metrics != nil {
+				w.metrics.CHFallbackTotal.WithLabelValues(table, "restored").Add(float64(len(batch)))
+			}
+			return nil
 		})
 	}
 	return w
@@ -86,6 +97,9 @@ func (w *Writer) Write(_ context.Context, table string, rec *domain.LogRecord) {
 	if table == "" {
 		w.logger.Warn("clickhouse write skipped: empty table",
 			w.logger.Str("id", rec.ID))
+		if w.metrics != nil {
+			w.metrics.CHDroppedTotal.WithLabelValues("", "empty_table").Inc()
+		}
 		return
 	}
 	select {
@@ -93,6 +107,9 @@ func (w *Writer) Write(_ context.Context, table string, rec *domain.LogRecord) {
 	default:
 		w.logger.Warn("clickhouse write dropped: buffer full",
 			w.logger.Str("table", table), w.logger.Str("id", rec.ID))
+		if w.metrics != nil {
+			w.metrics.CHDroppedTotal.WithLabelValues(table, "buffer_full").Inc()
+		}
 	}
 }
 
@@ -120,9 +137,13 @@ func (w *Writer) append(table string, rec *domain.LogRecord) {
 	if _, ok := w.bufferAt[table]; !ok {
 		w.bufferAt[table] = time.Now()
 	}
-	full := len(w.buffers[table]) >= w.cfg.BatchSize
+	size := len(w.buffers[table])
+	full := size >= w.cfg.BatchSize
 	w.mu.Unlock()
 
+	if w.metrics != nil {
+		w.metrics.CHBufferSize.WithLabelValues(table).Set(float64(size))
+	}
 	if full {
 		w.flushTable(context.Background(), table)
 	}
@@ -148,6 +169,9 @@ func (w *Writer) flushTable(ctx context.Context, table string) {
 	delete(w.bufferAt, table)
 	w.mu.Unlock()
 
+	if w.metrics != nil {
+		w.metrics.CHBufferSize.WithLabelValues(table).Set(0)
+	}
 	if len(batch) == 0 {
 		return
 	}
@@ -156,16 +180,25 @@ func (w *Writer) flushTable(ctx context.Context, table string) {
 		w.logger.ErrorWithOp("clickhouse batch insert failed", err, "chlog.flushTable",
 			w.logger.Str("table", table),
 			w.logger.Int("rows", len(batch)))
+		if w.metrics != nil {
+			w.metrics.CHErrorsTotal.WithLabelValues(table, "insert").Inc()
+		}
 		if w.fallback.Enabled() {
 			path, ferr := w.fallback.Save(table, batch)
 			if ferr != nil {
 				w.logger.ErrorWithOp("fallback save failed", ferr, "chlog.flushTable.fallback",
 					w.logger.Str("table", table),
 					w.logger.Int("rows", len(batch)))
+				if w.metrics != nil {
+					w.metrics.CHErrorsTotal.WithLabelValues(table, "fallback_save").Inc()
+				}
 			} else {
 				w.logger.Info("batch persisted to file-fallback",
 					w.logger.Str("file", path),
 					w.logger.Int("rows", len(batch)))
+				if w.metrics != nil {
+					w.metrics.CHFallbackTotal.WithLabelValues(table, "saved").Inc()
+				}
 			}
 		}
 	}

@@ -13,7 +13,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	goredis "github.com/redis/go-redis/v9"
 
 	"bus/internal/platform/config"
@@ -21,6 +20,7 @@ import (
 	"bus/internal/platform/healthcheck"
 	kafkapf "bus/internal/platform/kafka"
 	"bus/internal/platform/logging"
+	"bus/internal/platform/metrics"
 	pgpf "bus/internal/platform/pg"
 	"bus/internal/platform/ratelimit"
 	redispf "bus/internal/platform/redis"
@@ -32,11 +32,12 @@ import (
 )
 
 type App struct {
-	cfg    *config.Config
-	logger logging.Logger
-	pg     *pgxpool.Pool
-	redis  *goredis.Client
-	cipher *crypto.Cipher
+	cfg     *config.Config
+	logger  logging.Logger
+	pg      *pgxpool.Pool
+	redis   *goredis.Client
+	cipher  *crypto.Cipher
+	metrics *metrics.Metrics
 
 	srv      *http.Server
 	senderCl *grpcsender.Client
@@ -44,7 +45,14 @@ type App struct {
 }
 
 func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, cipher *crypto.Cipher, logger logging.Logger) *App {
-	return &App{cfg: cfg, logger: logger, pg: pg, redis: redis, cipher: cipher}
+	return &App{
+		cfg:     cfg,
+		logger:  logger,
+		pg:      pg,
+		redis:   redis,
+		cipher:  cipher,
+		metrics: metrics.New("receiver"),
+	}
 }
 
 func (a *App) Start(ctx context.Context) error {
@@ -67,14 +75,14 @@ func (a *App) Start(ctx context.Context) error {
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(sentrypf.GinMiddleware("receiver"), gin.Recovery())
+	r.Use(sentrypf.GinMiddleware("receiver"), metrics.GinMiddleware(a.metrics), gin.Recovery())
 
 	hc := healthcheck.New(
 		[]healthcheck.Checker{pgpf.HealthChecker("postgres", a.pg)},
 		[]healthcheck.Checker{redispf.HealthChecker("redis", a.redis)},
 	)
 	hc.Register(r)
-	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
+	r.GET("/metrics", gin.WrapH(a.metrics.Handler()))
 
 	handler.Register(r, rlMw)
 

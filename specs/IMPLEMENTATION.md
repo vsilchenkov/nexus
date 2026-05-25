@@ -20,7 +20,7 @@
 | Главный поток           | `POST /v1/request/{path}` → Receiver → gRPC Sender → внешний URL → лог в ClickHouse |
 | Async                   | `POST /v1/requestAsync/{path}` → Receiver → Kafka → Sender-consumer   |
 | Зависимости              | PostgreSQL 16, Redis 7, ClickHouse 24, Kafka 3.7 (KRaft), Prometheus  |
-| Покрытие unit-тестами   | 7 пакетов (domain, crypto, i18n, sentry, receiver/usecase, chlog, web/usecase) |
+| Покрытие unit-тестами   | 8 пакетов (domain, crypto, i18n, sentry, receiver/usecase, chlog, web/usecase, metrics) |
 | SPA-фронт               | React 18 + Vite + TS + Tailwind + TanStack Query + react-i18next, 6 страниц |
 | Бинари в `cmd/`         | `receiver`, `sender`, `web`, `loadtest`, `rotate-key`                 |
 
@@ -89,8 +89,10 @@
 
 | Пункт | Статус | Где |
 |---|---|---|
-| `/metrics` Prometheus в каждом сервисе | ✅ | в App.Start каждого сервиса: `r.GET("/metrics", gin.WrapH(promhttp.Handler()))` |
-| Базовые counters/histograms | ◐ | `databus_requests_total`, latency-гистограммы — TODO, сейчас только default Go runtime + gin metrics |
+| `/metrics` Prometheus в каждом сервисе | ✅ | [platform/metrics/metrics.go](../internal/platform/metrics/metrics.go) — изолированный `*prometheus.Registry`, подключается через `a.metrics.Handler()` в каждом `app.go` |
+| **`databus_requests_total` + `databus_request_duration_seconds`** | ✅ Phase 6.1 | Gin middleware [platform/metrics/gin.go](../internal/platform/metrics/gin.go) — Receiver/Web; gRPC [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go) и async [usecase/async.go](../internal/sender/usecase/async.go) — Sender |
+| **`databus_kafka_lag`** | ✅ Phase 6.1 | reporter в [sender/app.go](../internal/sender/app.go) `reportKafkaLag()` — раз в 15 сек снимает `Stats()` со всех consumer-инстансов |
+| **`databus_clickhouse_buffer_size` / `_errors_total` / `_dropped_total` / `_fallback_total`** | ✅ Phase 6.1 | [chlog/writer.go](../internal/sender/adapter/out/chlog/writer.go) обновляет в `append`/`flushTable`/`Write` |
 
 ### §7 Веб-интерфейс
 
@@ -387,7 +389,21 @@ CSS-переменных, заданных в [globals.css](../web-ui/src/styles
 но Sentry SDK их не отправляет. Это no-op без аппроксимации к ошибкам — не пугайтесь
 «отсутствующих» транзакций в Sentry, проверьте config.
 
-### 4.11 Bootstrap ↔ Service-runner
+### 4.11 Prometheus-метрики живут в собственном registry, не default
+
+[platform/metrics.New(service)](../internal/platform/metrics/metrics.go) создаёт
+изолированный `*prometheus.Registry` с предзарегистрированными Go-runtime и Process
+collectors. Каждый App создаёт собственный экземпляр и передаёт по DI в middleware,
+gRPC server, chlog.Writer и AsyncProcessor — глобальной registry мы не пользуемся
+(CLAUDE.md §4: «No globals»). Поэтому `/metrics` подключается как
+`r.GET("/metrics", gin.WrapH(a.metrics.Handler()))`, а не `promhttp.Handler()`.
+
+Метка `service` — статическая, задаётся через `ConstLabels` в конструкторах метрик.
+Это даёт возможность скрапить три сервиса с одинаковыми именами метрик и фильтровать
+их в Grafana через `service="receiver"`. Метка `node` — динамическая (path-параметр
+из `/v1/request/.../*path`), для не-V1 маршрутов остаётся пустой.
+
+### 4.12 Bootstrap ↔ Service-runner
 
 Все три сервиса используют общий [internal/platform/runner/runner.go](../internal/platform/runner/runner.go)
 поверх `kardianos/service`. Это позволяет запускать как обычный процесс ИЛИ как
@@ -480,30 +496,29 @@ make proto                                     # перегенерация send
 
 Если будете расширять — вот логичные следующие шаги, в порядке полезности:
 
-1. **Прометей-метрики** (`databus_requests_total{node, status}`, latency-гистограммы)
-   в Receiver и Sender. Простой `prometheus/client_golang` Counter+Histogram, обёрнутые
-   в middleware.
-
-2. **Async end-to-end integration-тест** через Kafka. Нужно поднять Kafka-контейнер,
+1. **Async end-to-end integration-тест** через Kafka. Нужно поднять Kafka-контейнер,
    создать topic, отправить через Producer, прочитать через Consumer. Шаблон есть
    в `tests/integration/receiver_sync_test.go` — добавьте новый файл для async.
 
-3. **Динамическая перезагрузка Sentry/ClickHouse через UI** (§14.5). Таблица
+2. **Динамическая перезагрузка Sentry/ClickHouse через UI** (§14.5). Таблица
    `app_settings` создана; нужно: REST endpoint в Web → запись в PG → publish в
    Redis pub/sub → подписчики в Receiver/Sender переинициализируют клиенты.
 
-4. **Полная Users-страница SPA** с диалогами создания, смены пароля, переключения
+3. **Полная Users-страница SPA** с диалогами создания, смены пароля, переключения
    статуса. Backend готов, нужен только UI.
 
-5. **Live-tail UI улучшения**: фильтры, авто-прокрутка, баннер «N новых записей».
+4. **Live-tail UI улучшения**: фильтры, авто-прокрутка, баннер «N новых записей».
 
-6. **Полные Swagger-аннотации на 100% endpoints.** Сейчас покрыто ~60% — нужно
+5. **Полные Swagger-аннотации на 100% endpoints.** Сейчас покрыто ~60% — нужно
    аннотировать остальные user/audit/token handlers.
 
-7. **CSV экспорт audit log** в [pages/AuditLog.tsx](../web-ui/src/pages/AuditLog.tsx).
+6. **CSV экспорт audit log** в [pages/AuditLog.tsx](../web-ui/src/pages/AuditLog.tsx).
 
-8. **GitHub Actions workflow** (план — см. TESTING.md → CI/CD).
+7. **GitHub Actions workflow** (план — см. TESTING.md → CI/CD).
 
-9. **L2 in-memory LRU-кеш** в Receiver для случая Redis-flutter'а (§9.2 ТЗ).
+8. **L2 in-memory LRU-кеш** в Receiver для случая Redis-flutter'а (§9.2 ТЗ).
 
-10. **GoReleaser** для бинарей + docker images, если будет нужен релизный pipeline.
+9. **GoReleaser** для бинарей + docker images, если будет нужен релизный pipeline.
+
+10. **Grafana дашборд** под `databus_*` метрики и алерт на `databus_kafka_lag > N`,
+    `databus_clickhouse_errors_total rate > 0`.

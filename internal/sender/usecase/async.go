@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"bus/internal/domain"
 	"bus/internal/platform/logging"
+	"bus/internal/platform/metrics"
 )
 
 // NodeReader — interface чтения актуального узла перед обработкой
@@ -29,6 +31,7 @@ type AsyncProcessor struct {
 	dlq      DLQProducer
 	dlqTopic string
 	logger   logging.Logger
+	metrics  *metrics.Metrics
 
 	pausedRetryAfter time.Duration
 }
@@ -38,6 +41,7 @@ func NewAsyncProcessor(
 	send *SendUsecase,
 	dlq DLQProducer,
 	dlqTopic string,
+	m *metrics.Metrics,
 	logger logging.Logger,
 ) *AsyncProcessor {
 	return &AsyncProcessor{
@@ -46,6 +50,7 @@ func NewAsyncProcessor(
 		dlq:              dlq,
 		dlqTopic:         dlqTopic,
 		logger:           logger,
+		metrics:          m,
 		pausedRetryAfter: 30 * time.Second,
 	}
 }
@@ -131,6 +136,13 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte) HandleResult {
 		LogHeaders:      node.LogHeaders,
 		ClientIP:        env.ClientIP,
 	})
+
+	if p.metrics != nil {
+		p.metrics.RequestsTotal.
+			WithLabelValues("requestAsync", env.NodePath, strconv.FormatInt(int64(out.StatusCode), 10)).Inc()
+		p.metrics.RequestDuration.
+			WithLabelValues("requestAsync", env.NodePath).Observe(float64(out.DurationMs) / 1000.0)
+	}
 
 	if out.StatusCode >= 200 && out.StatusCode < 300 {
 		return HandleAck

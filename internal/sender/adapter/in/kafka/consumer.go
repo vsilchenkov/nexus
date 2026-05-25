@@ -98,3 +98,33 @@ func (g *ConsumerGroup) Stop() {
 	}
 	g.wg.Wait()
 }
+
+// LagSnapshot — одна точка по консьюмеру (topic/partition → lag).
+//
+// Partition хранится строкой, потому что kafka-go's ReaderStats.Partition
+// тоже строка ("0", "1" или "all" в зависимости от конфигурации).
+type LagSnapshot struct {
+	Topic     string
+	Partition string
+	Lag       int64
+}
+
+// Snapshot снимает текущее состояние lag со всех инстансов consumer'ов.
+// Используется фоновым reporter'ом, который пушит данные в Prometheus.
+func (g *ConsumerGroup) Snapshot() []LagSnapshot {
+	out := make([]LagSnapshot, 0, len(g.consumers))
+	for _, c := range g.consumers {
+		s := c.Stats()
+		out = append(out, LagSnapshot{
+			Topic:     s.Topic,
+			Partition: s.Partition,
+			Lag:       s.Lag,
+		})
+	}
+	return out
+}
+
+// Group возвращает имя consumer-group (для меток метрик).
+func (g *ConsumerGroup) Group() string {
+	return g.cfg.Kafka.ConsumerGroup
+}

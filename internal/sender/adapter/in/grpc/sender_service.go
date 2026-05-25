@@ -4,9 +4,11 @@ package grpc
 
 import (
 	"context"
+	"strconv"
 
 	"bus/internal/domain"
 	"bus/internal/platform/logging"
+	"bus/internal/platform/metrics"
 	"bus/internal/sender/usecase"
 	senderv1 "bus/proto/sender/v1"
 )
@@ -14,12 +16,13 @@ import (
 // Server реализует senderv1.SenderServiceServer.
 type Server struct {
 	senderv1.UnimplementedSenderServiceServer
-	uc     *usecase.SendUsecase
-	logger logging.Logger
+	uc      *usecase.SendUsecase
+	logger  logging.Logger
+	metrics *metrics.Metrics
 }
 
-func NewServer(uc *usecase.SendUsecase, logger logging.Logger) *Server {
-	return &Server{uc: uc, logger: logger}
+func NewServer(uc *usecase.SendUsecase, m *metrics.Metrics, logger logging.Logger) *Server {
+	return &Server{uc: uc, metrics: m, logger: logger}
 }
 
 func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1.SendResponse, error) {
@@ -48,6 +51,13 @@ func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 		LogHeaders:      req.GetLogHeaders(),
 		ClientIP:        req.GetClientIp(),
 	})
+
+	if s.metrics != nil {
+		s.metrics.RequestsTotal.
+			WithLabelValues("request", req.GetNodePath(), strconv.FormatInt(int64(out.StatusCode), 10)).Inc()
+		s.metrics.RequestDuration.
+			WithLabelValues("request", req.GetNodePath()).Observe(float64(out.DurationMs) / 1000.0)
+	}
 
 	return &senderv1.SendResponse{
 		StatusCode: out.StatusCode,

@@ -59,3 +59,9 @@ func (c *Consumer) Commit(ctx context.Context, msg kafka.Message) error {
 func (c *Consumer) Close() error {
 	return c.r.Close()
 }
+
+// Stats возвращает kafka-go ReaderStats — Lag, Topic, Partition.
+// Используется для публикации в Prometheus (databus_kafka_lag).
+func (c *Consumer) Stats() kafka.ReaderStats {
+	return c.r.Stats()
+}

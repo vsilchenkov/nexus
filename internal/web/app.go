@@ -14,7 +14,6 @@ import (
 	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	goredis "github.com/redis/go-redis/v9"
 
 	"bus/internal/platform/config"
@@ -22,6 +21,7 @@ import (
 	"bus/internal/platform/healthcheck"
 	"bus/internal/platform/logging"
 	"bus/internal/platform/i18n"
+	"bus/internal/platform/metrics"
 	pgpf "bus/internal/platform/pg"
 	"bus/internal/platform/ratelimit"
 	redispf "bus/internal/platform/redis"
@@ -36,24 +36,33 @@ import (
 )
 
 type App struct {
-	cfg    *config.Config
-	logger logging.Logger
-	pg     *pgxpool.Pool
-	redis  *goredis.Client
-	ch     chdriver.Conn
-	cipher *crypto.Cipher
+	cfg     *config.Config
+	logger  logging.Logger
+	pg      *pgxpool.Pool
+	redis   *goredis.Client
+	ch      chdriver.Conn
+	cipher  *crypto.Cipher
+	metrics *metrics.Metrics
 
 	srv *http.Server
 }
 
 func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, ch chdriver.Conn, cipher *crypto.Cipher, logger logging.Logger) *App {
-	return &App{cfg: cfg, logger: logger, pg: pg, redis: redis, ch: ch, cipher: cipher}
+	return &App{
+		cfg:     cfg,
+		logger:  logger,
+		pg:      pg,
+		redis:   redis,
+		ch:      ch,
+		cipher:  cipher,
+		metrics: metrics.New("web"),
+	}
 }
 
 func (a *App) Start(ctx context.Context) error {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(sentrypf.GinMiddleware("web"), i18n.GinMiddleware(), gin.Recovery())
+	r.Use(sentrypf.GinMiddleware("web"), metrics.GinMiddleware(a.metrics), i18n.GinMiddleware(), gin.Recovery())
 
 	hc := healthcheck.New(
 		[]healthcheck.Checker{
@@ -63,7 +72,7 @@ func (a *App) Start(ctx context.Context) error {
 		nil,
 	)
 	hc.Register(r)
-	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
+	r.GET("/metrics", gin.WrapH(a.metrics.Handler()))
 
 	// Сборка слоёв (Clean Architecture, §17.2).
 	nodeRepo := pgrepo.NewNodeRepoPg(a.pg, a.cipher, a.logger)
