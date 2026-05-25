@@ -71,18 +71,18 @@ func (h *ReplayHandler) Replay(c *gin.Context) {
 		c.JSON(http.StatusOK, res)
 	case errors.Is(err, usecase.ErrReplayRateLimit):
 		c.Header("Retry-After", "60")
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate limit exceeded"})
+		localizedError(c, http.StatusTooManyRequests, "error.rate_limited")
 	case errors.Is(err, usecase.ErrReplayTooOldFailure):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		localizedError(c, http.StatusBadRequest, "replay.too_old")
 	case errors.Is(err, domain.ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "log not found"})
+		localizedError(c, http.StatusNotFound, "error.not_found")
 	case errors.Is(err, domain.ErrNodeNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "node not found"})
+		localizedError(c, http.StatusNotFound, "node.not_found")
 	case errors.Is(err, domain.ErrNodeDisabled):
-		c.JSON(http.StatusConflict, gin.H{"error": "node is disabled; enable it before replay"})
+		localizedError(c, http.StatusConflict, "node.disabled")
 	default:
 		h.logger.ErrorWithOp("replay failed", err, "log.replay",
 			h.logger.Str("log_id", logID))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		localizedError(c, http.StatusInternalServerError, "error.internal")
 	}
 }

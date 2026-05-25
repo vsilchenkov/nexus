@@ -1,0 +1,200 @@
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+
+import { api } from "../../api/client";
+
+type Token = {
+  id: string;
+  name: string;
+  prefix: string;
+  scopes: string[];
+  created_at: string;
+  last_used_at?: string;
+  expires_at?: string;
+  revoked_at?: string;
+};
+type ListResp = { items: Token[] };
+type CreateResp = { token: string; api_token: Token };
+
+const allScopes = ["logs:read", "nodes:read", "metrics:read", "audit:read"];
+
+export function ApiTokensPanel() {
+  const qc = useQueryClient();
+  const list = useQuery({
+    queryKey: ["tokens"],
+    queryFn: () => api.get<ListResp>("/api/tokens"),
+  });
+
+  const [showNew, setShowNew] = useState(false);
+  const [created, setCreated] = useState<CreateResp | null>(null);
+
+  const [name, setName] = useState("");
+  const [scopes, setScopes] = useState<string[]>(["logs:read"]);
+  const [days, setDays] = useState<number | "">(365);
+
+  const create = useMutation({
+    mutationFn: () =>
+      api.post<CreateResp>("/api/tokens", {
+        name,
+        scopes,
+        expires_in_days: days === "" ? null : days,
+      }),
+    onSuccess: (r) => {
+      setCreated(r);
+      qc.invalidateQueries({ queryKey: ["tokens"] });
+      setShowNew(false);
+      setName("");
+    },
+  });
+
+  const revoke = useMutation({
+    mutationFn: (id: string) => api.post(`/api/tokens/${id}/revoke`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["tokens"] }),
+  });
+
+  const del = useMutation({
+    mutationFn: (id: string) => api.del(`/api/tokens/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["tokens"] }),
+  });
+
+  return (
+    <div className="space-y-4">
+      <header className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold">API tokens</h2>
+        <button
+          onClick={() => setShowNew(true)}
+          className="bg-accent hover:bg-accent-hover px-3 py-2 rounded-md text-sm"
+        >
+          new token
+        </button>
+      </header>
+
+      {created && (
+        <div className="bg-warn/10 border border-warn/40 text-warn p-3 rounded-md text-sm space-y-2">
+          <div className="font-medium">copy this token now — it won't be shown again:</div>
+          <code className="block bg-bg-muted px-2 py-1 rounded font-mono select-all">
+            {created.token}
+          </code>
+          <button onClick={() => setCreated(null)} className="underline text-xs">
+            close
+          </button>
+        </div>
+      )}
+
+      {showNew && (
+        <div className="bg-bg-muted/40 p-4 rounded-md space-y-3">
+          <input
+            placeholder="name (e.g. grafana-export)"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none"
+          />
+          <div className="flex flex-wrap gap-3">
+            {allScopes.map((s) => (
+              <label key={s} className="text-sm flex items-center gap-2 font-mono">
+                <input
+                  type="checkbox"
+                  checked={scopes.includes(s)}
+                  onChange={(e) =>
+                    setScopes((p) =>
+                      e.target.checked ? [...p, s] : p.filter((x) => x !== s),
+                    )
+                  }
+                />
+                {s}
+              </label>
+            ))}
+          </div>
+          <div className="text-sm flex items-center gap-2">
+            expires in (days, empty = lifetime):
+            <input
+              type="number"
+              value={days}
+              onChange={(e) =>
+                setDays(e.target.value === "" ? "" : Number(e.target.value))
+              }
+              className="w-20 px-2 py-1 bg-bg-muted rounded-md outline-none"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => create.mutate()}
+              disabled={create.isPending || !name}
+              className="bg-accent hover:bg-accent-hover px-3 py-2 rounded-md text-sm disabled:opacity-50"
+            >
+              create
+            </button>
+            <button
+              onClick={() => setShowNew(false)}
+              className="px-3 py-2 text-sm text-fg-muted hover:text-fg"
+            >
+              cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {list.data && list.data.items.length === 0 && (
+        <div className="text-fg-muted text-sm">no tokens yet</div>
+      )}
+
+      {list.data && list.data.items.length > 0 && (
+        <table className="w-full text-sm">
+          <thead className="text-fg-muted">
+            <tr>
+              <th className="text-left px-3 py-2">name</th>
+              <th className="text-left px-3 py-2">prefix</th>
+              <th className="text-left px-3 py-2">scopes</th>
+              <th className="text-left px-3 py-2">created</th>
+              <th className="text-left px-3 py-2">last used</th>
+              <th className="text-left px-3 py-2">status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {list.data.items.map((t) => (
+              <tr key={t.id} className="border-t border-bg-muted">
+                <td className="px-3 py-2">{t.name}</td>
+                <td className="px-3 py-2 font-mono text-xs">{t.prefix}</td>
+                <td className="px-3 py-2 font-mono text-xs">{t.scopes.join(", ")}</td>
+                <td className="px-3 py-2 font-mono text-xs">
+                  {new Date(t.created_at).toLocaleDateString()}
+                </td>
+                <td className="px-3 py-2 font-mono text-xs text-fg-muted">
+                  {t.last_used_at ? new Date(t.last_used_at).toLocaleString() : "—"}
+                </td>
+                <td className="px-3 py-2">
+                  {t.revoked_at ? (
+                    <span className="text-err">revoked</span>
+                  ) : t.expires_at && new Date(t.expires_at) < new Date() ? (
+                    <span className="text-warn">expired</span>
+                  ) : (
+                    <span className="text-ok">active</span>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-right space-x-2">
+                  {!t.revoked_at && (
+                    <button
+                      onClick={() => revoke.mutate(t.id)}
+                      className="text-warn hover:underline text-xs"
+                    >
+                      revoke
+                    </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      if (confirm("delete token?")) del.mutate(t.id);
+                    }}
+                    className="text-err hover:underline text-xs"
+                  >
+                    delete
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}

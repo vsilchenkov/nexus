@@ -1,11 +1,18 @@
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 
 import { api } from "../api/client";
+
+const navItems: { to: string; label: string }[] = [
+  { to: "/", label: "nodes" },
+  { to: "/audit", label: "audit" },
+  { to: "/settings/tokens", label: "settings" },
+];
 
 export function Topbar() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
+  const loc = useLocation();
 
   async function logout() {
     try {
@@ -16,9 +23,28 @@ export function Topbar() {
 
   return (
     <header className="border-b border-bg-muted bg-bg-elev px-6 py-3 flex items-center justify-between">
-      <a href="/" className="text-lg font-semibold">
-        {t("app.title")}
-      </a>
+      <div className="flex items-center gap-6">
+        <Link to="/" className="text-lg font-semibold">
+          {t("app.title")}
+        </Link>
+        <nav className="flex items-center gap-3 text-sm">
+          {navItems.map((it) => {
+            const active =
+              it.to === "/" ? loc.pathname === "/" : loc.pathname.startsWith(it.to.split("/").slice(0, 2).join("/"));
+            return (
+              <Link
+                key={it.to}
+                to={it.to}
+                className={
+                  active ? "text-accent" : "text-fg-muted hover:text-fg transition-colors"
+                }
+              >
+                {it.label}
+              </Link>
+            );
+          })}
+        </nav>
+      </div>
       <div className="flex items-center gap-3 text-sm">
         <select
           className="bg-bg-muted px-2 py-1 rounded outline-none"

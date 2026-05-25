@@ -24,10 +24,13 @@ export default function Overview() {
       <main className="max-w-6xl mx-auto p-6 space-y-4">
         <header className="flex items-center justify-between">
           <h1 className="text-2xl font-semibold">{t("overview.title")}</h1>
-          <button className="flex items-center gap-2 bg-accent hover:bg-accent-hover px-3 py-2 rounded-md text-sm">
+          <Link
+            to="/nodes/new"
+            className="flex items-center gap-2 bg-accent hover:bg-accent-hover px-3 py-2 rounded-md text-sm"
+          >
             <Plus className="w-4 h-4" />
             {t("overview.new_node")}
-          </button>
+          </Link>
         </header>
 
         <div className="relative w-full max-w-md">

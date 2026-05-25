@@ -4,6 +4,9 @@ import { useQuery } from "@tanstack/react-query";
 import Login from "./pages/Login";
 import Overview from "./pages/Overview";
 import NodeDetail from "./pages/NodeDetail";
+import NodeSettings from "./pages/NodeSettings";
+import AuditLog from "./pages/AuditLog";
+import Settings from "./pages/Settings";
 import { api } from "./api/client";
 
 // useMe — проверка текущей сессии через /api/auth/me.
@@ -35,10 +38,42 @@ export default function App() {
         }
       />
       <Route
+        path="/nodes/new"
+        element={
+          <Protected>
+            <NodeSettings />
+          </Protected>
+        }
+      />
+      <Route
         path="/nodes/:id"
         element={
           <Protected>
             <NodeDetail />
+          </Protected>
+        }
+      />
+      <Route
+        path="/nodes/:id/edit"
+        element={
+          <Protected>
+            <NodeSettings />
+          </Protected>
+        }
+      />
+      <Route
+        path="/audit"
+        element={
+          <Protected>
+            <AuditLog />
+          </Protected>
+        }
+      />
+      <Route
+        path="/settings/*"
+        element={
+          <Protected>
+            <Settings />
           </Protected>
         }
       />

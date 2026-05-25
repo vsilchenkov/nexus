@@ -38,6 +38,8 @@ type Writer struct {
 	buffers  map[string][]*domain.LogRecord
 	bufferAt map[string]time.Time
 
+	fallback *fallbackStore // §9.4 ТЗ: NDJSON-fallback при недоступности CH
+
 	wg     sync.WaitGroup
 	stopCh chan struct{}
 }
@@ -50,6 +52,12 @@ type job struct {
 }
 
 func New(conn driver.Conn, cfg *config.ClickHouseSection, logger logging.Logger) *Writer {
+	return NewWithFallback(conn, cfg, "", logger)
+}
+
+// NewWithFallback — вариант с явным каталогом для file-fallback (§9.4).
+// fallbackDir = "" — fallback отключён, проваленные батчи теряются (как в Phase 1).
+func NewWithFallback(conn driver.Conn, cfg *config.ClickHouseSection, fallbackDir string, logger logging.Logger) *Writer {
 	w := &Writer{
 		conn:     conn,
 		cfg:      cfg,
@@ -57,11 +65,17 @@ func New(conn driver.Conn, cfg *config.ClickHouseSection, logger logging.Logger)
 		ch:       make(chan job, cfg.BufferMaxSize),
 		buffers:  make(map[string][]*domain.LogRecord),
 		bufferAt: make(map[string]time.Time),
+		fallback: newFallbackStore(fallbackDir, 30*time.Second, logger),
 		stopCh:   make(chan struct{}),
 	}
 	for i := 0; i < cfg.Workers; i++ {
 		w.wg.Add(1)
 		go w.run()
+	}
+	if w.fallback.Enabled() {
+		go w.fallback.Run(context.Background(), func(ctx context.Context, table string, batch []*domain.LogRecord) error {
+			return w.insertBatch(ctx, table, batch)
+		})
 	}
 	return w
 }
@@ -142,7 +156,18 @@ func (w *Writer) flushTable(ctx context.Context, table string) {
 		w.logger.ErrorWithOp("clickhouse batch insert failed", err, "chlog.flushTable",
 			w.logger.Str("table", table),
 			w.logger.Int("rows", len(batch)))
-		// TODO Phase 4: file-fallback вместо потери батча.
+		if w.fallback.Enabled() {
+			path, ferr := w.fallback.Save(table, batch)
+			if ferr != nil {
+				w.logger.ErrorWithOp("fallback save failed", ferr, "chlog.flushTable.fallback",
+					w.logger.Str("table", table),
+					w.logger.Int("rows", len(batch)))
+			} else {
+				w.logger.Info("batch persisted to file-fallback",
+					w.logger.Str("file", path),
+					w.logger.Int("rows", len(batch)))
+			}
+		}
 	}
 }
 
@@ -189,4 +214,5 @@ func (w *Writer) Stop(ctx context.Context) {
 	close(w.stopCh)
 	w.wg.Wait()
 	w.flushAll(ctx)
+	w.fallback.Stop()
 }

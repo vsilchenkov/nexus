@@ -163,12 +163,14 @@ func (h *NodeHandler) Delete(c *gin.Context) {
 func (h *NodeHandler) replyDomainError(c *gin.Context, err error, op string) {
 	switch {
 	case errors.Is(err, domain.ErrNodeNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "node not found"})
+		localizedError(c, http.StatusNotFound, "node.not_found")
 	case errors.Is(err, domain.ErrNodeAlreadyExists):
-		c.JSON(http.StatusConflict, gin.H{"error": "node with this path already exists"})
+		localizedError(c, http.StatusConflict, "node.already_exists")
 	case errors.Is(err, domain.ErrLimitReached):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "node limit reached, contact administrator"})
+		localizedError(c, http.StatusBadRequest, "node.limit_reached")
 	case isValidationError(err):
+		// Сообщение валидации содержит конкретное имя поля — передаём как есть;
+		// локализация валидации полей — отдельная работа (Phase 6).
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	default:
 		h.replyServerError(c, err, op)
@@ -178,7 +180,7 @@ func (h *NodeHandler) replyDomainError(c *gin.Context, err error, op string) {
 func (h *NodeHandler) replyServerError(c *gin.Context, err error, op string) {
 	h.logger.ErrorWithOp("web handler error", err, op,
 		h.logger.Str("path", c.Request.URL.Path))
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+	localizedError(c, http.StatusInternalServerError, "error.internal")
 }
 
 // isValidationError — все доменные ошибки валидации полей Node.

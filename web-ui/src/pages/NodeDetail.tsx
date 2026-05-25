@@ -1,11 +1,12 @@
 import { useParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, RefreshCw } from "lucide-react";
+import { ArrowLeft, RefreshCw, Settings, RotateCcw } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { api, type Node } from "../api/client";
 import { Topbar } from "../components/Topbar";
+import { ReplayDialog } from "../components/ReplayDialog";
 
 type LogRow = {
   id: string;
@@ -54,6 +55,7 @@ export default function NodeDetail() {
 
   const node = nodeQ.data;
   const visibleLogs = live ? liveLogs : (logsQ.data?.items ?? []);
+  const [replayId, setReplayId] = useState<string | null>(null);
 
   return (
     <div className="min-h-screen bg-bg text-fg">
@@ -74,7 +76,16 @@ export default function NodeDetail() {
                 {node.root_method} · {node.url_mode} · {node.auth_type}
               </div>
             </div>
-            <span className="px-2 py-1 rounded bg-bg-muted text-xs">{t(`node.status.${node.status}`)}</span>
+            <div className="flex items-center gap-2">
+              <Link
+                to={`/nodes/${node.id}/edit`}
+                className="flex items-center gap-2 bg-bg-muted hover:bg-bg-elev px-3 py-2 rounded-md text-sm"
+              >
+                <Settings className="w-4 h-4" />
+                {t("node.actions.edit")}
+              </Link>
+              <span className="px-2 py-1 rounded bg-bg-muted text-xs">{t(`node.status.${node.status}`)}</span>
+            </div>
           </header>
         )}
 
@@ -102,6 +113,7 @@ export default function NodeDetail() {
                 <th className="px-3 py-2 text-left">URL</th>
                 <th className="px-3 py-2 text-right">Status</th>
                 <th className="px-3 py-2 text-right">ms</th>
+                <th className="px-3 py-2"></th>
               </tr>
             </thead>
             <tbody>
@@ -116,11 +128,20 @@ export default function NodeDetail() {
                     {r.status}
                   </td>
                   <td className="px-3 py-2 text-right">{r.duration_ms}</td>
+                  <td className="px-3 py-2 text-right">
+                    <button
+                      title="replay"
+                      onClick={() => setReplayId(r.id)}
+                      className="text-fg-muted hover:text-accent"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                    </button>
+                  </td>
                 </tr>
               ))}
               {visibleLogs.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-3 py-6 text-center text-fg-muted">
+                  <td colSpan={6} className="px-3 py-6 text-center text-fg-muted">
                     {t("common.loading")}
                   </td>
                 </tr>
@@ -128,6 +149,14 @@ export default function NodeDetail() {
             </tbody>
           </table>
         </section>
+
+        {replayId && node && (
+          <ReplayDialog
+            logId={replayId}
+            nodeId={node.id}
+            onClose={() => setReplayId(null)}
+          />
+        )}
       </main>
     </div>
   );

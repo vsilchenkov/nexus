@@ -5,12 +5,25 @@ export default {
   theme: {
     extend: {
       colors: {
-        bg: { DEFAULT: "#0f1116", elev: "#171922", muted: "#1f2330" },
-        fg: { DEFAULT: "#e3e8f0", muted: "#8d95a8", subtle: "#5b6273" },
-        accent: { DEFAULT: "#5b8def", hover: "#7aa4ff" },
-        ok: "#3ecf8e",
-        warn: "#f5a524",
-        err: "#ef4444",
+        // CSS-переменные хранят 3 числа "r g b", это позволяет Tailwind
+        // правильно посчитать opacity (`bg-bg-muted/40`).
+        bg: {
+          DEFAULT: "rgb(var(--bg) / <alpha-value>)",
+          elev: "rgb(var(--bg-elev) / <alpha-value>)",
+          muted: "rgb(var(--bg-muted) / <alpha-value>)",
+        },
+        fg: {
+          DEFAULT: "rgb(var(--fg) / <alpha-value>)",
+          muted: "rgb(var(--fg-muted) / <alpha-value>)",
+          subtle: "rgb(var(--fg-subtle) / <alpha-value>)",
+        },
+        accent: {
+          DEFAULT: "rgb(var(--accent) / <alpha-value>)",
+          hover: "rgb(var(--accent-hover) / <alpha-value>)",
+        },
+        ok: "rgb(var(--ok) / <alpha-value>)",
+        warn: "rgb(var(--warn) / <alpha-value>)",
+        err: "rgb(var(--err) / <alpha-value>)",
       },
     },
   },

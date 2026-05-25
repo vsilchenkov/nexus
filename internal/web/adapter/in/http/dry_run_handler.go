@@ -87,14 +87,13 @@ func (h *DryRunHandler) Run(c *gin.Context) {
 		UseMock: useMock,
 	})
 	if err != nil {
-		// Доменные ошибки валидации узла → 400.
 		if isValidationError(err) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 		h.logger.ErrorWithOp("dry-run failed", err, "node.dry_run",
 			h.logger.Str("path", req.Node.Path))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		localizedError(c, http.StatusInternalServerError, "error.internal")
 		return
 	}
 	c.JSON(http.StatusOK, rep)

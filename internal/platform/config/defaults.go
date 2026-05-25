@@ -69,6 +69,9 @@ func applyDefaults(c *Config) {
 	if c.ClickHouse.Workers == 0 {
 		c.ClickHouse.Workers = 2
 	}
+	if c.ClickHouse.FallbackDir == "" {
+		c.ClickHouse.FallbackDir = "logs/clickhouse-fallback"
+	}
 
 	if c.Kafka.AsyncTopic == "" {
 		c.Kafka.AsyncTopic = "databus.async"

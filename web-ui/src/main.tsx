@@ -7,6 +7,13 @@ import App from "./App";
 import "./i18n";
 import "./styles/globals.css";
 
+// Применяем сохранённую тему до первого render'а (избегаем flash-of-light).
+(() => {
+  const t = localStorage.getItem("databus.theme") ?? "dark";
+  if (t === "dark") document.documentElement.classList.add("dark");
+  else document.documentElement.classList.remove("dark");
+})();
+
 const qc = new QueryClient({
   defaultOptions: {
     queries: {

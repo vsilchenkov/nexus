@@ -95,12 +95,12 @@ func (h *LogsHandler) List(c *gin.Context) {
 	recs, err := h.uc.ListSince(c.Request.Context(), nodeID, since, limit)
 	if err != nil {
 		if errors.Is(err, domain.ErrNodeNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "node not found"})
+			localizedError(c, http.StatusNotFound, "node.not_found")
 			return
 		}
 		h.logger.ErrorWithOp("logs list failed", err, "logs.list",
 			h.logger.Str("node_id", nodeID))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		localizedError(c, http.StatusInternalServerError, "error.internal")
 		return
 	}
 	out := make([]LogRecordDTO, 0, len(recs))

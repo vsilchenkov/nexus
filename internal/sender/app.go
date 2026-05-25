@@ -67,7 +67,7 @@ func New(
 
 func (a *App) Start(ctx context.Context) error {
 	// Общие сервисы.
-	a.chWriter = chlog.New(a.ch, &a.cfg.ClickHouse, a.logger)
+	a.chWriter = chlog.NewWithFallback(a.ch, &a.cfg.ClickHouse, a.cfg.ClickHouse.FallbackDir, a.logger)
 	httpc := httpclient.New(&a.cfg.Sender.HTTPClient, a.logger)
 
 	// Circuit breaker per node — порог 5 ошибок подряд, cooldown 30s.

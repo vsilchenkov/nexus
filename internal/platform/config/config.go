@@ -82,6 +82,9 @@ type ClickHouseSection struct {
 	FlushIntervalSec int    `yaml:"flush_interval_sec"`
 	BufferMaxSize    int    `yaml:"buffer_max_size"`
 	Workers          int    `yaml:"workers"`
+	// FallbackDir — каталог для NDJSON-fallback при недоступности CH (§9.4 ТЗ).
+	// Пустое значение = fallback отключён, проваленные батчи теряются.
+	FallbackDir string `yaml:"fallback_dir"`
 }
 
 type KafkaSection struct {
