@@ -1,120 +1,14 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>DataBus admin</title>
-<style>
-  :root {
-    --bg: #0f172a;
-    --panel: #1e293b;
-    --text: #e2e8f0;
-    --muted: #94a3b8;
-    --accent: #38bdf8;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    min-height: 100vh;
-    padding: 32px;
-    line-height: 1.6;
-  }
-  .container { max-width: 880px; margin: 0 auto; }
-  header { margin-bottom: 32px; }
-  h1 { font-size: 28px; color: var(--accent); }
-  h2 { font-size: 18px; margin: 24px 0 8px 0; color: var(--accent); }
-  .badge {
-    display: inline-block;
-    padding: 2px 8px;
-    background: #475569;
-    color: #f1f5f9;
-    font-size: 12px;
-    border-radius: 4px;
-    margin-left: 8px;
-    vertical-align: middle;
-  }
-  .panel {
-    background: var(--panel);
-    border-radius: 8px;
-    padding: 20px;
-    margin-bottom: 16px;
-  }
-  code, pre {
-    font-family: "JetBrains Mono", Consolas, monospace;
-    background: #0b1220;
-    color: #f1f5f9;
-    border-radius: 4px;
-    padding: 2px 6px;
-  }
-  pre { padding: 12px; overflow-x: auto; }
-  ul { padding-left: 24px; color: var(--muted); }
-  ul li { margin: 4px 0; }
-  a { color: var(--accent); }
-</style>
-</head>
-<body>
-<div class="container">
-  <header>
-    <h1>DataBus admin<span class="badge">Phase 3 backend</span></h1>
-    <p style="color: var(--muted); margin-top: 8px;">
-      Backend полностью готов. Полноценный React SPA — на этапе Phase 3 frontend (см. roadmap).
-      Пока используйте REST API напрямую.
-    </p>
-  </header>
-
-  <div class="panel">
-    <h2>Быстрый старт</h2>
-    <ol style="padding-left: 24px; color: var(--muted);">
-      <li><code>docker compose -f deploy/docker-compose.yml up -d</code></li>
-      <li><code>make set-admin-password PASSWORD=...</code></li>
-      <li>Логин через <code>POST /api/auth/login</code> ниже.</li>
-    </ol>
-  </div>
-
-  <div class="panel">
-    <h2>API</h2>
-    <h3 style="margin: 12px 0 4px 0;">Аутентификация</h3>
-<pre>POST /api/auth/login    { "login": "admin", "password": "..." }
-POST /api/auth/logout
-GET  /api/auth/me</pre>
-    <h3 style="margin: 12px 0 4px 0;">Узлы</h3>
-<pre>GET    /api/nodes
-POST   /api/nodes        (admin)
-GET    /api/nodes/:id
-PUT    /api/nodes/:id    (admin)
-DELETE /api/nodes/:id    (admin)</pre>
-    <h3 style="margin: 12px 0 4px 0;">Пользователи (admin)</h3>
-<pre>GET    /api/users
-POST   /api/users
-PUT    /api/users/:id
-DELETE /api/users/:id
-POST   /api/users/:id/password</pre>
-    <h3 style="margin: 12px 0 4px 0;">API-токены</h3>
-<pre>GET    /api/tokens
-POST   /api/tokens       { "name": "...", "scopes": ["nodes:read","logs:read"] }
-POST   /api/tokens/:id/revoke
-DELETE /api/tokens/:id</pre>
-    <h3 style="margin: 12px 0 4px 0;">Audit log (admin)</h3>
-<pre>GET    /api/audit?actions=node.create,node.update&amp;limit=50</pre>
-  </div>
-
-  <div class="panel">
-    <h2>Что доступно прямо сейчас</h2>
-    <ul>
-      <li>Sync POST <code>/v1/request/{path}</code> и async <code>/v1/requestAsync/{path}</code> на Receiver (порт 8080).</li>
-      <li>gRPC SenderService на :9090 (Sender admin HTTP — :9091).</li>
-      <li>Логи запросов в ClickHouse-таблице <code>vika_logs.&lt;table&gt;</code> узла.</li>
-      <li>Метрики Prometheus на каждом сервисе <code>/metrics</code>.</li>
-    </ul>
-  </div>
-
-  <p style="color: var(--muted); font-size: 12px; margin-top: 32px;">
-    Полноценный SPA (React + TanStack Query + shadcn/ui + i18n)
-    появится одновременно с собранным <code>/web-ui/dist/</code>.
-    См. <code>web-ui/README.md</code> для инструкций по разработке UI.
-  </p>
-</div>
-</body>
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/databus.svg" />
+    <title>DataBus</title>
+    <script type="module" crossorigin src="/assets/index-DCqlMaAS.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DxTwNR8a.css">
+  </head>
+  <body class="bg-bg text-fg">
+    <div id="root"></div>
+  </body>
 </html>

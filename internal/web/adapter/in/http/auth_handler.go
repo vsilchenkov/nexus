@@ -39,6 +39,7 @@ type loginRequest struct {
 type meResponse struct {
 	UserID             string `json:"user_id"`
 	Login              string `json:"login"`
+	Email              string `json:"email,omitempty"`
 	Role               string `json:"role"`
 	Lang               string `json:"lang"`
 	MustChangePassword bool   `json:"must_change_password"`
@@ -112,9 +113,20 @@ func (h *AuthHandler) Me(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
+	user, err := h.uc.Me(c.Request.Context(), s.UserID)
+	if err != nil {
+		h.logger.ErrorWithOp("load user", err, "auth.me")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"user_id": s.UserID,
-		"role":    string(s.Role),
-		"lang":    string(s.Lang),
+		"user": meResponse{
+			UserID:             user.ID,
+			Login:              user.Login,
+			Email:              user.Email,
+			Role:               string(user.Role),
+			Lang:               string(user.Lang),
+			MustChangePassword: user.MustChangePassword,
+		},
 	})
 }

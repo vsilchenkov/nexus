@@ -87,6 +87,70 @@
       "enable_tracing": "Enable tracing",
       "traces_sample_rate": "Traces sample rate (0..1)"
     },
+    "users": {
+      "title": "Users",
+      "add": "Add user",
+      "search_placeholder": "Search by login or email…",
+      "empty": "No users",
+      "counter_total": "Total: {{n}}",
+      "counter_active": "active: {{n}}",
+      "counter_disabled": "disabled: {{n}}",
+      "default_admin_warning": "User `admin` still uses the default password. We recommend changing it.",
+      "you": "you",
+      "col": {
+        "user": "User",
+        "role": "Role",
+        "status": "Status",
+        "last_login": "Last login"
+      },
+      "role": {
+        "admin": "Full access",
+        "admin_hint": "Manage everything in DataBus.",
+        "viewer": "Read-only",
+        "viewer_hint": "View nodes, logs and audit; no modifications."
+      },
+      "status": {
+        "active": "Active",
+        "disabled": "Disabled"
+      },
+      "action": {
+        "change_password": "Change password",
+        "edit": "Edit",
+        "enable": "Enable",
+        "delete": "Delete"
+      },
+      "confirm_delete": "Delete user `{{login}}` permanently?",
+      "last_admin_warning": "At least one admin must remain.",
+      "cannot_disable_self": "Cannot disable yourself.",
+      "pw_empty": "Enter a password.",
+      "pw_weak": "Weak.",
+      "pw_medium": "Medium.",
+      "pw_strong": "Strong.",
+      "pw_very_strong": "Very strong.",
+      "field": {
+        "login": "Login",
+        "login_hint": "Cannot be changed later.",
+        "email": "Email",
+        "password": "Password",
+        "generate": "Generate",
+        "role": "Role",
+        "active": "Active",
+        "must_change": "Require password change on next login"
+      },
+      "dialog": {
+        "new_title": "New user",
+        "new_subtitle": "Create a new account with a chosen role.",
+        "edit_title": "Edit `{{login}}`",
+        "edit_subtitle": "Update profile and access.",
+        "create": "Create user"
+      },
+      "password_dialog": {
+        "title": "Change password for `{{login}}`",
+        "new_password": "New password",
+        "must_change": "Require password change on next login",
+        "submit": "Change password"
+      }
+    },
     "clickhouse": {
       "title": "ClickHouse",
       "hint": "Override ClickHouse connection and batch writer settings.",

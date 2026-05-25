@@ -9,10 +9,12 @@ import { LanguagePanel } from "./settings/Language";
 import { ThemePanel } from "./settings/Theme";
 import { SentryPanel } from "./settings/Sentry";
 import { ClickHousePanel } from "./settings/ClickHouse";
+import { UsersPanel } from "./settings/Users";
 
 type Tab = { to: string; labelKey: string; adminOnly?: boolean };
 
 const tabs: Tab[] = [
+  { to: "users", labelKey: "settings.users.title", adminOnly: true },
   { to: "tokens", labelKey: "settings.tokens.title" },
   { to: "language", labelKey: "settings.language.title" },
   { to: "theme", labelKey: "settings.theme.title" },
@@ -63,6 +65,7 @@ export default function Settings() {
 
         <section className="flex-1 bg-bg-elev rounded-xl border border-bg-muted p-5">
           <Routes>
+            {isAdmin && <Route path="users" element={<UsersPanel />} />}
             <Route path="tokens" element={<ApiTokensPanel />} />
             <Route path="language" element={<LanguagePanel />} />
             <Route path="theme" element={<ThemePanel />} />

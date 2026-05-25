@@ -87,6 +87,70 @@
       "enable_tracing": "Включить tracing",
       "traces_sample_rate": "Доля трассируемых транзакций (0..1)"
     },
+    "users": {
+      "title": "Пользователи",
+      "add": "Добавить",
+      "search_placeholder": "Поиск по логину или email…",
+      "empty": "Пользователей нет",
+      "counter_total": "Всего: {{n}}",
+      "counter_active": "активных: {{n}}",
+      "counter_disabled": "отключённых: {{n}}",
+      "default_admin_warning": "Пользователь `admin` всё ещё использует пароль по умолчанию. Рекомендуем сменить его.",
+      "you": "это вы",
+      "col": {
+        "user": "Пользователь",
+        "role": "Роль",
+        "status": "Статус",
+        "last_login": "Последний вход"
+      },
+      "role": {
+        "admin": "Полный доступ",
+        "admin_hint": "Может управлять всеми функциями DataBus.",
+        "viewer": "Только просмотр",
+        "viewer_hint": "Может смотреть узлы, логи, аудит без изменений."
+      },
+      "status": {
+        "active": "Активен",
+        "disabled": "Отключён"
+      },
+      "action": {
+        "change_password": "Сменить пароль",
+        "edit": "Редактировать",
+        "enable": "Включить",
+        "delete": "Удалить"
+      },
+      "confirm_delete": "Удалить пользователя `{{login}}` навсегда?",
+      "last_admin_warning": "Должен остаться хотя бы один администратор.",
+      "cannot_disable_self": "Нельзя отключить самого себя.",
+      "pw_empty": "Введите пароль.",
+      "pw_weak": "Слабый.",
+      "pw_medium": "Средний.",
+      "pw_strong": "Сильный.",
+      "pw_very_strong": "Очень сильный.",
+      "field": {
+        "login": "Логин",
+        "login_hint": "Нельзя изменить позже.",
+        "email": "Email",
+        "password": "Пароль",
+        "generate": "Сгенерировать",
+        "role": "Роль",
+        "active": "Активен",
+        "must_change": "Требовать смену пароля при следующем входе"
+      },
+      "dialog": {
+        "new_title": "Новый пользователь",
+        "new_subtitle": "Создание учётной записи с выбранной ролью.",
+        "edit_title": "Редактирование `{{login}}`",
+        "edit_subtitle": "Обновите профиль и права.",
+        "create": "Создать"
+      },
+      "password_dialog": {
+        "title": "Смена пароля для `{{login}}`",
+        "new_password": "Новый пароль",
+        "must_change": "Требовать смену пароля при следующем входе",
+        "submit": "Сменить пароль"
+      }
+    },
     "clickhouse": {
       "title": "ClickHouse",
       "hint": "Переопределяет параметры подключения и batch-writer'а.",

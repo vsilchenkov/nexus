@@ -106,6 +106,13 @@ func (u *AuthUsecase) Check(ctx context.Context, token string) (*domain.Session,
 	return s, nil
 }
 
+// Me возвращает текущего пользователя по идентификатору сессии. Нужен
+// для /api/auth/me, чтобы вернуть login/email — Session хранит только
+// user_id, role, lang.
+func (u *AuthUsecase) Me(ctx context.Context, userID string) (*domain.User, error) {
+	return u.users.Get(ctx, userID)
+}
+
 // ChangePassword — изменяет пароль пользователя (вызывается админом
 // или самим пользователем). Все активные сессии этого пользователя
 // удаляются (forced re-login, §7.1).
