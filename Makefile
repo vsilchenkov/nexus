@@ -126,8 +126,12 @@ proto: ## Генерация Go-кода из .proto через protoc
 		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
 		proto/sender/v1/sender.proto
 
-loadtest: ## Phase 4: нагрузочный сценарий
-	@echo "TODO Phase 4: make loadtest TARGET_RPS=500 DURATION=10m NODES=50"
+loadtest: ## Нагрузочный сценарий: make loadtest TARGET_RPS=500 DURATION=10m NODES=50 ADMIN_PASSWORD=...
+	$(GO) run ./cmd/loadtest \
+		--admin-password $(ADMIN_PASSWORD) \
+		--target-rps $(or $(TARGET_RPS),500) \
+		--duration $(or $(DURATION),10m) \
+		--nodes $(or $(NODES),50)
 
 test-integration: ## Phase 1+: integration через testcontainers
 	@echo "TODO Phase 1+: testcontainers-based интеграционные тесты"
