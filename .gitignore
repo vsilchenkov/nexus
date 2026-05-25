@@ -28,6 +28,9 @@ coverage.txt
 /web-ui/dist/
 /web-ui/node_modules/
 
+# protoc WKT — копируется локально при необходимости, в репо не нужно
+/proto/google/
+
 # OS
 .DS_Store
 Thumbs.db

@@ -1,0 +1,57 @@
+// Sender Service gRPC API (§4.1 ТЗ).
+//
+// Версионирование: имя пакета содержит v1. Несовместимые изменения
+// делаются в новом пакете databus.sender.v2 — оба сервиса могут быть
+// зарегистрированы параллельно.
+syntax = "proto3";
+
+package databus.sender.v1;
+
+option go_package = "bus/proto/sender/v1;senderv1";
+
+service SenderService {
+  // Send выполняет один outbound-вызов внешнего узла.
+  // Используется Receiver'ом для синхронных запросов (/v1/request/*).
+  // Для async (/v1/requestAsync/*) Sender забирает сообщения из Kafka.
+  rpc Send(SendRequest) returns (SendResponse);
+}
+
+// AuthConfig — параметры авторизации внешнего узла, разрешённой к этому
+// конкретному запросу. Receiver уже разобрался с auth_type и собрал
+// итоговый заголовок Authorization (или ничего, если auth_type=none).
+message AuthConfig {
+  // Готовое значение заголовка Authorization, либо пустая строка.
+  // В таком виде Sender ничего не знает про режимы — просто пробрасывает.
+  string authorization_header = 1;
+}
+
+message SendRequest {
+  string id            = 1;  // UUID запроса, прокидываемый из Receiver'а
+  string node_path     = 2;  // для логов и трассировки
+  string target_url    = 3;  // фактический URL (после URL resolution)
+  string method        = 4;  // HTTP-метод (POST, GET, PUT, ...)
+  AuthConfig auth      = 5;
+  map<string,string> headers = 6;  // forward_headers + Content-Type и т.п.
+  bytes body           = 7;
+  int32 timeout_ms     = 8;
+  int32 retry_count    = 9;
+  int32 retry_backoff_ms = 10;
+
+  // Для логирования в ClickHouse-таблицу узла.
+  string clickhouse_table = 20;
+  bool log_request_body   = 21;
+  bool log_response_body  = 22;
+  bool log_headers        = 23;
+  string client_ip        = 24;
+}
+
+message SendResponse {
+  int32 status_code    = 1;
+  bytes body           = 2;
+  map<string,string> headers = 3;
+  // Заполняется, если внешний узел не ответил (timeout, dns, и т.п.).
+  // Receiver проксирует это как 502/504/503.
+  string error         = 4;
+  int32 attempts       = 5;
+  int32 duration_ms    = 6;
+}

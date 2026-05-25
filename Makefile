@@ -116,8 +116,12 @@ docker-logs: ## Логи сервисов (Ctrl+C для выхода)
 swagger: ## Phase 1+: генерация swagger
 	@echo "TODO Phase 1+: swag init для receiver и web"
 
-proto: ## Phase 1: генерация Go-кода из .proto
-	@echo "TODO Phase 1: protoc для proto/sender/v1/sender.proto"
+proto: ## Генерация Go-кода из .proto через protoc
+	protoc \
+		--proto_path=. \
+		--go_out=. --go_opt=paths=source_relative \
+		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
+		proto/sender/v1/sender.proto
 
 loadtest: ## Phase 4: нагрузочный сценарий
 	@echo "TODO Phase 4: make loadtest TARGET_RPS=500 DURATION=10m NODES=50"
