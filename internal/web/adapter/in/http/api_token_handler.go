@@ -48,6 +48,14 @@ func toTokenResp(t *domain.APIToken) tokenResponse {
 	}
 }
 
+// List godoc
+// @Summary  Список API-токенов текущего пользователя (§7.14).
+// @Description  Каждый видит только свои токены. Возвращает префикс, scopes, last_used_at — без полной строки токена.
+// @Tags     tokens
+// @Produce  json
+// @Success  200  {object}  map[string]any
+// @Security CookieAuth
+// @Router   /api/tokens [get]
 func (h *APITokenHandler) List(c *gin.Context) {
 	s, _ := sessionFromCtx(c)
 	tokens, err := h.uc.ListByUser(c.Request.Context(), s.UserID)
@@ -62,6 +70,17 @@ func (h *APITokenHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": out})
 }
 
+// Create godoc
+// @Summary  Создать API-токен (§7.14).
+// @Description  Plain-строка токена возвращается ровно один раз, потом доступен только префикс. Scopes — подмножество {logs:read, nodes:read, metrics:read, audit:read}.
+// @Tags     tokens
+// @Accept   json
+// @Produce  json
+// @Param    body  body  createTokenRequest  true  "name + scopes + expires_at"
+// @Success  201   {object}  map[string]any  "token (plain) + info"
+// @Failure  400   {object}  map[string]string
+// @Security CookieAuth
+// @Router   /api/tokens [post]
 func (h *APITokenHandler) Create(c *gin.Context) {
 	var req createTokenRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -82,6 +101,16 @@ func (h *APITokenHandler) Create(c *gin.Context) {
 	})
 }
 
+// Revoke godoc
+// @Summary  Отозвать API-токен.
+// @Description  После revoke токен сразу теряет силу, но сама запись остаётся (для аудита).
+// @Tags     tokens
+// @Produce  json
+// @Param    id   path  string  true  "token id"
+// @Success  204
+// @Failure  404  {object}  map[string]string
+// @Security CookieAuth
+// @Router   /api/tokens/{id}/revoke [post]
 func (h *APITokenHandler) Revoke(c *gin.Context) {
 	s, _ := sessionFromCtx(c)
 	if err := h.uc.Revoke(c.Request.Context(), userActor(c), c.Param("id"), s.UserID); err != nil {
@@ -95,6 +124,16 @@ func (h *APITokenHandler) Revoke(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// Delete godoc
+// @Summary  Удалить API-токен.
+// @Description  Удаление допустимо, только если токен уже revoked. Иначе — 404 «not deletable yet».
+// @Tags     tokens
+// @Produce  json
+// @Param    id   path  string  true  "token id"
+// @Success  204
+// @Failure  404  {object}  map[string]string
+// @Security CookieAuth
+// @Router   /api/tokens/{id} [delete]
 func (h *APITokenHandler) Delete(c *gin.Context) {
 	s, _ := sessionFromCtx(c)
 	if err := h.uc.Delete(c.Request.Context(), userActor(c), c.Param("id"), s.UserID); err != nil {

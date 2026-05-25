@@ -165,8 +165,8 @@
 | Аннотации `@Summary/@Param/...` на ключевых handlers | ✅ Phase 5 | login, nodes (List/Get/Create), dry-run, replay, logs (List/Stream) |
 | `make swagger` (через `swag init -g cmd/web/main.go`) | ✅ | [Makefile](../Makefile) |
 | `make swagger-drift-check` для CI | ✅ Phase 5 | сравнивает `git diff --exit-code docs/` после регенерации |
-| Полные аннотации на 100% endpoints | ◐ | базовые покрыты; остальные — Phase 6 |
-| Swagger UI handler в Gin | ⛔ | doc-файлы есть в `docs/web/`, серверный handler `/swagger/index.html` не подключён |
+| **Полные аннотации на 100% endpoints** | ✅ Phase 7.1 | auth (login/logout/me), nodes (List/Get/Create/Update/Delete), users (List/Get/Create/Update/Delete/ChangePassword), tokens (List/Create/Revoke/Delete), audit (List/ExportCSV), dry-run, replay, logs (List/Stream), settings/app (Get/Update/TestClickHouse/TestSentry), settings/clickhouse/orphans (List/Drop) |
+| **Swagger UI handler в Gin** | ✅ Phase 7.1 | `r.GET("/swagger/*any", ginswagger.WrapHandler(swaggerfiles.Handler))` в [internal/web/app.go](../internal/web/app.go) + blank-import `_ "bus/docs/web"` для регистрации генеренного docTemplate в `swag.Registry` |
 
 ### §12 Структура репозитория
 
@@ -535,14 +535,12 @@ make proto                                     # перегенерация send
 
 Если будете расширять — вот логичные следующие шаги, в порядке полезности:
 
-1. **Полные Swagger-аннотации на 100% endpoints.** Сейчас покрыто ~70%
-   (logs, audit, settings/orphans, app_settings — добавлены в Phase 6).
-   Не покрыты остальные user/token/auth handlers.
-
-2. **GitHub Actions workflow** (план — см. TESTING.md → CI/CD):
+1. **GitHub Actions workflow** (план — см. TESTING.md → CI/CD):
    build, lint, test, swagger-drift-check, integration matrix.
 
-3. **L2 in-memory LRU-кеш** в Receiver для случая Redis-flutter'а (§9.2 ТЗ).
+2. **L2 in-memory LRU-кеш** в Receiver для случая Redis-flutter'а (§9.2 ТЗ).
+
+3. **Testcontainers + Redis + ClickHouse** в integration-тестах — сейчас покрыты только PG + Kafka.
 
 4. **GoReleaser** для бинарей + docker images, если будет нужен релизный pipeline.
 
@@ -560,3 +558,13 @@ make proto                                     # перегенерация send
 - 6.7 ClickHouse orphan-tables (сканер + DROP с подтверждением).
 - 6.8 Расширенные фильтры live-tail (period/IP/Host/full-text).
 - 6.9 Audit log: diff-двухколоночный для `node.update`.
+
+Сделанное в Phase 7:
+
+- 7.1 Swagger 100% endpoints + UI handler (`/swagger/index.html`):
+  допокрыты аннотациями auth (logout/me), nodes (Update/Delete), users
+  (все 6 handlers), tokens (все 4), audit (List/ExportCSV); подключён
+  `ginswagger.WrapHandler` в [internal/web/app.go](../internal/web/app.go),
+  blank-import `_ "bus/docs/web"` регистрирует генеренный docTemplate
+  в `swag.Registry`. Добавлены deps `github.com/swaggo/gin-swagger` и
+  `github.com/swaggo/files`. UI открывается по адресу `/swagger/index.html` на Web Service (по умолчанию `:8081`).

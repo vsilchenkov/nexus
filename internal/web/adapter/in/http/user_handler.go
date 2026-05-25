@@ -69,6 +69,15 @@ func toUserResp(u *domain.User) userResponse {
 	}
 }
 
+// List godoc
+// @Summary  Список пользователей (admin only).
+// @Tags     users
+// @Produce  json
+// @Param    search  query  string  false  "поиск по login или email"
+// @Success  200     {object}  map[string]any
+// @Failure  500     {object}  map[string]string
+// @Security CookieAuth
+// @Router   /api/users [get]
 func (h *UserHandler) List(c *gin.Context) {
 	users, err := h.uc.List(c.Request.Context(), port.ListUsersFilter{
 		Search: c.Query("search"),
@@ -85,6 +94,15 @@ func (h *UserHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": out})
 }
 
+// Get godoc
+// @Summary  Один пользователь по id (admin only).
+// @Tags     users
+// @Produce  json
+// @Param    id   path  string  true  "user id"
+// @Success  200  {object}  userResponse
+// @Failure  404  {object}  map[string]string
+// @Security CookieAuth
+// @Router   /api/users/{id} [get]
 func (h *UserHandler) Get(c *gin.Context) {
 	u, err := h.uc.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
@@ -98,6 +116,17 @@ func (h *UserHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, toUserResp(u))
 }
 
+// Create godoc
+// @Summary  Создать пользователя (admin only).
+// @Tags     users
+// @Accept   json
+// @Produce  json
+// @Param    body  body  createUserRequest  true  "user fields"
+// @Success  201   {object}  userResponse
+// @Failure  400   {object}  map[string]string
+// @Failure  409   {object}  map[string]string  "login already exists"
+// @Security CookieAuth
+// @Router   /api/users [post]
 func (h *UserHandler) Create(c *gin.Context) {
 	var req createUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -123,6 +152,20 @@ func (h *UserHandler) Create(c *gin.Context) {
 	c.JSON(http.StatusCreated, toUserResp(u))
 }
 
+// Update godoc
+// @Summary  Обновить пользователя (admin only).
+// @Description  Нельзя демоутить себя в viewer и нельзя оставлять <1 активного admin (§7.9).
+// @Tags     users
+// @Accept   json
+// @Produce  json
+// @Param    id    path  string             true  "user id"
+// @Param    body  body  updateUserRequest  true  "user fields"
+// @Success  200   {object}  userResponse
+// @Failure  400   {object}  map[string]string
+// @Failure  403   {object}  map[string]string  "cannot demote yourself"
+// @Failure  404   {object}  map[string]string
+// @Security CookieAuth
+// @Router   /api/users/{id} [put]
 func (h *UserHandler) Update(c *gin.Context) {
 	id := c.Param("id")
 	old, err := h.uc.Get(c.Request.Context(), id)
@@ -160,6 +203,16 @@ func (h *UserHandler) Update(c *gin.Context) {
 	c.JSON(http.StatusOK, toUserResp(&updated))
 }
 
+// Delete godoc
+// @Summary  Удалить пользователя (admin only).
+// @Description  Нельзя удалить себя и нельзя оставить <1 активного admin (§7.9).
+// @Tags     users
+// @Produce  json
+// @Param    id   path  string  true  "user id"
+// @Success  204
+// @Failure  400  {object}  map[string]string
+// @Security CookieAuth
+// @Router   /api/users/{id} [delete]
 func (h *UserHandler) Delete(c *gin.Context) {
 	if err := h.uc.Delete(c.Request.Context(), userActor(c), c.Param("id")); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -168,6 +221,18 @@ func (h *UserHandler) Delete(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// ChangePassword godoc
+// @Summary  Сменить пароль пользователя (admin only).
+// @Description  Если must_change_password=true, при следующем логине пользователь будет обязан задать новый пароль.
+// @Tags     users
+// @Accept   json
+// @Produce  json
+// @Param    id    path  string                  true  "user id"
+// @Param    body  body  changePasswordRequest   true  "new password"
+// @Success  204
+// @Failure  400   {object}  map[string]string
+// @Security CookieAuth
+// @Router   /api/users/{id}/password [post]
 func (h *UserHandler) ChangePassword(c *gin.Context) {
 	var req changePasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

@@ -90,6 +90,25 @@ func auditFilterFromQuery(c *gin.Context, defaultLimit, maxLimit int) port.Audit
 	return f
 }
 
+// List godoc
+// @Summary  Журнал audit-log (admin only, §7.13).
+// @Description  Поддерживаемые actions: node.create/update/delete, user.create/update/delete/password_changed, token.create/revoke/delete, login.success/failure, ch_table.drop, settings.update и др.
+// @Tags     audit
+// @Produce  json
+// @Param    user_id      query  string  false  "фильтр по user_id"
+// @Param    action       query  string  false  "одно значение action"
+// @Param    actions      query  string  false  "несколько action через запятую"
+// @Param    target_type  query  string  false  "node|user|token|ch_table|..."
+// @Param    target_id    query  string  false  "фильтр по target_id"
+// @Param    from         query  string  false  "RFC3339 (начало)"
+// @Param    to           query  string  false  "RFC3339 (конец)"
+// @Param    limit        query  int     false  "default 100, max 1000"
+// @Param    offset       query  int     false  "смещение"
+// @Success  200          {object}  map[string]any
+// @Failure  500          {object}  map[string]string
+// @Security CookieAuth
+// @Security ApiTokenAuth
+// @Router   /api/audit [get]
 func (h *AuditHandler) List(c *gin.Context) {
 	f := auditFilterFromQuery(c, 100, 1000)
 
@@ -106,12 +125,25 @@ func (h *AuditHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": out})
 }
 
-// ExportCSV — выгрузка журнала в CSV (§7.13, Phase 6.6). Тот же набор
-// фильтров, что у List, но допустим больший limit (до 50000). По умолчанию
-// возвращает первые 10000 строк, чтобы избежать DoS.
-//
-// CSV-формат: id, created_at, user_login, user_id, action, target_type,
-// target_id, ip_address, details (JSON-строка).
+// ExportCSV godoc
+// @Summary  Выгрузка audit-log в CSV (admin only, §7.13).
+// @Description  Тот же набор фильтров, что у /api/audit. Default limit 10000, max 50000. CSV в UTF-8 с BOM (для Excel), 9 колонок: id, created_at, user_login, user_id, action, target_type, target_id, ip_address, details (JSON).
+// @Tags     audit
+// @Produce  text/csv
+// @Param    user_id      query  string  false  "фильтр по user_id"
+// @Param    action       query  string  false  "одно значение action"
+// @Param    actions      query  string  false  "несколько action через запятую"
+// @Param    target_type  query  string  false  "node|user|token|ch_table|..."
+// @Param    target_id    query  string  false  "фильтр по target_id"
+// @Param    from         query  string  false  "RFC3339 (начало)"
+// @Param    to           query  string  false  "RFC3339 (конец)"
+// @Param    limit        query  int     false  "default 10000, max 50000"
+// @Param    offset       query  int     false  "смещение"
+// @Success  200          {string}  string  "CSV"
+// @Failure  500          {object}  map[string]string
+// @Security CookieAuth
+// @Security ApiTokenAuth
+// @Router   /api/audit/export.csv [get]
 func (h *AuditHandler) ExportCSV(c *gin.Context) {
 	f := auditFilterFromQuery(c, 10000, 50000)
 

@@ -97,6 +97,14 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	})
 }
 
+// Logout godoc
+// @Summary  Завершить сессию.
+// @Description  Удаляет session-cookie databus_session и инвалидирует токен в Redis (§7.1 ТЗ).
+// @Tags     auth
+// @Produce  json
+// @Success  204
+// @Security CookieAuth
+// @Router   /api/auth/logout [post]
 func (h *AuthHandler) Logout(c *gin.Context) {
 	token, err := c.Cookie(h.cfg.SessionCookieName)
 	if err == nil && token != "" {
@@ -107,6 +115,16 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// Me godoc
+// @Summary  Профиль текущей сессии.
+// @Description  Возвращает user_id, login, email, role, lang и must_change_password.
+// @Tags     auth
+// @Produce  json
+// @Success  200  {object}  map[string]any
+// @Failure  401  {object}  map[string]string
+// @Security CookieAuth
+// @Security ApiTokenAuth
+// @Router   /api/auth/me [get]
 func (h *AuthHandler) Me(c *gin.Context) {
 	s, ok := sessionFromCtx(c)
 	if !ok {

@@ -119,6 +119,20 @@ func actorFromCtx(c *gin.Context) usecase.Actor {
 	return a
 }
 
+// Update godoc
+// @Summary  Обновить узел.
+// @Description  Только admin. Пустые auth_credentials/incoming_auth_credentials в body означают «оставить старое значение» (§5.5 ТЗ).
+// @Tags     nodes
+// @Accept   json
+// @Produce  json
+// @Param    id    path  string             true  "node id"
+// @Param    body  body  UpdateNodeRequest  true  "node config"
+// @Success  200   {object}  NodeResponse
+// @Failure  400   {object}  map[string]string
+// @Failure  404   {object}  map[string]string
+// @Failure  409   {object}  map[string]string  "path already exists"
+// @Security CookieAuth
+// @Router   /api/nodes/{id} [put]
 func (h *NodeHandler) Update(c *gin.Context) {
 	id := c.Param("id")
 	existing, err := h.uc.Get(c.Request.Context(), id)
@@ -152,6 +166,16 @@ func (h *NodeHandler) Update(c *gin.Context) {
 	c.JSON(http.StatusOK, nodeToResponse(updated))
 }
 
+// Delete godoc
+// @Summary  Удалить узел.
+// @Description  Только admin. Удаляет запись и инвалидирует Redis-кеш. ClickHouse-таблица узла остаётся (см. §7.10 — orphan-cleanup).
+// @Tags     nodes
+// @Produce  json
+// @Param    id   path  string  true  "node id"
+// @Success  204
+// @Failure  404  {object}  map[string]string
+// @Security CookieAuth
+// @Router   /api/nodes/{id} [delete]
 func (h *NodeHandler) Delete(c *gin.Context) {
 	if err := h.uc.Delete(c.Request.Context(), actorFromCtx(c), c.Param("id")); err != nil {
 		h.replyDomainError(c, err, "node.delete")

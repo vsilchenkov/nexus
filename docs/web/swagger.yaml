@@ -1,5 +1,55 @@
 basePath: /
 definitions:
+  bus_internal_domain.AppSettings:
+    properties:
+      clickhouse:
+        $ref: '#/definitions/bus_internal_domain.ClickHouseSettings'
+      sentry:
+        $ref: '#/definitions/bus_internal_domain.SentrySettings'
+      updated_at:
+        type: string
+      updated_by:
+        description: user_id, кто последним обновил
+        type: string
+    type: object
+  bus_internal_domain.ClickHouseSettings:
+    properties:
+      batch_size:
+        type: integer
+      buffer_max_size:
+        type: integer
+      database:
+        type: string
+      flush_interval_sec:
+        type: integer
+      host:
+        type: string
+      password:
+        type: string
+      port:
+        type: integer
+      user:
+        type: string
+      workers:
+        type: integer
+    type: object
+  bus_internal_domain.SentrySettings:
+    properties:
+      attach_stacktrace:
+        type: boolean
+      dsn:
+        type: string
+      enable_tracing:
+        type: boolean
+      environment:
+        type: string
+      level:
+        type: integer
+      traces_sample_rate:
+        type: number
+      use:
+        type: boolean
+    type: object
   bus_internal_web_usecase.DryRunReport:
     properties:
       id:
@@ -36,6 +86,15 @@ definitions:
         type: string
       status_code:
         type: integer
+    type: object
+  bus_internal_web_usecase.TestResult:
+    properties:
+      error:
+        type: string
+      latency_ms:
+        type: integer
+      ok:
+        type: boolean
     type: object
   internal_web_adapter_in_http.CreateNodeRequest:
     properties:
@@ -240,6 +299,155 @@ definitions:
     required:
     - node_id
     type: object
+  internal_web_adapter_in_http.UpdateNodeRequest:
+    properties:
+      auth_credentials:
+        maxLength: 1024
+        type: string
+      auth_dynamic_field:
+        maxLength: 64
+        type: string
+      auth_dynamic_source:
+        enum:
+        - query
+        - header
+        - body
+        type: string
+      auth_dynamic_strip_prefix:
+        maxLength: 64
+        type: string
+      auth_type:
+        enum:
+        - none
+        - basic
+        - token
+        - token_from_request
+        - basic_from_request
+        type: string
+      clickhouse_retention_days:
+        maximum: 3650
+        minimum: 0
+        type: integer
+      clickhouse_table:
+        maxLength: 129
+        type: string
+      forward_headers:
+        items:
+          type: string
+        type: array
+      incoming_auth_credentials:
+        maxLength: 1024
+        type: string
+      incoming_auth_type:
+        enum:
+        - none
+        - basic
+        - token
+        type: string
+      log_headers:
+        type: boolean
+      log_request_body:
+        type: boolean
+      log_response_body:
+        type: boolean
+      path:
+        maxLength: 255
+        type: string
+      retry_backoff_ms:
+        type: integer
+      retry_count:
+        type: integer
+      root_method:
+        enum:
+        - request
+        - requestAsync
+        type: string
+      status:
+        enum:
+        - enabled
+        - disabled
+        - paused
+        type: string
+      target_url:
+        maxLength: 2048
+        type: string
+      timeout_ms:
+        type: integer
+      url_allowed_hosts:
+        items:
+          type: string
+        type: array
+      url_mode:
+        enum:
+        - static
+        - from_request
+        type: string
+      url_param_name:
+        maxLength: 64
+        type: string
+    required:
+    - path
+    - root_method
+    type: object
+  internal_web_adapter_in_http.changePasswordRequest:
+    properties:
+      must_change_password:
+        type: boolean
+      new_password:
+        maxLength: 128
+        minLength: 8
+        type: string
+    required:
+    - new_password
+    type: object
+  internal_web_adapter_in_http.createTokenRequest:
+    properties:
+      expires_at:
+        type: string
+      name:
+        maxLength: 255
+        minLength: 1
+        type: string
+      scopes:
+        items:
+          type: string
+        minItems: 1
+        type: array
+    required:
+    - name
+    - scopes
+    type: object
+  internal_web_adapter_in_http.createUserRequest:
+    properties:
+      active:
+        type: boolean
+      email:
+        maxLength: 255
+        type: string
+      lang:
+        enum:
+        - en
+        - ru
+        type: string
+      login:
+        maxLength: 255
+        minLength: 1
+        type: string
+      must_change_password:
+        type: boolean
+      password:
+        maxLength: 128
+        minLength: 8
+        type: string
+      role:
+        enum:
+        - admin
+        - viewer
+        type: string
+    required:
+    - login
+    - role
+    type: object
   internal_web_adapter_in_http.loginRequest:
     properties:
       login:
@@ -254,6 +462,51 @@ definitions:
     - login
     - password
     type: object
+  internal_web_adapter_in_http.updateUserRequest:
+    properties:
+      active:
+        type: boolean
+      email:
+        maxLength: 255
+        type: string
+      lang:
+        enum:
+        - en
+        - ru
+        type: string
+      must_change_password:
+        type: boolean
+      role:
+        enum:
+        - admin
+        - viewer
+        type: string
+    required:
+    - role
+    type: object
+  internal_web_adapter_in_http.userResponse:
+    properties:
+      active:
+        type: boolean
+      created_at:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+      lang:
+        type: string
+      last_login_at:
+        type: string
+      login:
+        type: string
+      must_change_password:
+        type: boolean
+      role:
+        type: string
+      team_id:
+        type: string
+    type: object
 info:
   contact: {}
   description: |-
@@ -263,6 +516,129 @@ info:
   title: DataBus Web API
   version: "1.0"
 paths:
+  /api/audit:
+    get:
+      description: 'Поддерживаемые actions: node.create/update/delete, user.create/update/delete/password_changed,
+        token.create/revoke/delete, login.success/failure, ch_table.drop, settings.update
+        и др.'
+      parameters:
+      - description: фильтр по user_id
+        in: query
+        name: user_id
+        type: string
+      - description: одно значение action
+        in: query
+        name: action
+        type: string
+      - description: несколько action через запятую
+        in: query
+        name: actions
+        type: string
+      - description: node|user|token|ch_table|...
+        in: query
+        name: target_type
+        type: string
+      - description: фильтр по target_id
+        in: query
+        name: target_id
+        type: string
+      - description: RFC3339 (начало)
+        in: query
+        name: from
+        type: string
+      - description: RFC3339 (конец)
+        in: query
+        name: to
+        type: string
+      - description: default 100, max 1000
+        in: query
+        name: limit
+        type: integer
+      - description: смещение
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      - ApiTokenAuth: []
+      summary: Журнал audit-log (admin only, §7.13).
+      tags:
+      - audit
+  /api/audit/export.csv:
+    get:
+      description: 'Тот же набор фильтров, что у /api/audit. Default limit 10000,
+        max 50000. CSV в UTF-8 с BOM (для Excel), 9 колонок: id, created_at, user_login,
+        user_id, action, target_type, target_id, ip_address, details (JSON).'
+      parameters:
+      - description: фильтр по user_id
+        in: query
+        name: user_id
+        type: string
+      - description: одно значение action
+        in: query
+        name: action
+        type: string
+      - description: несколько action через запятую
+        in: query
+        name: actions
+        type: string
+      - description: node|user|token|ch_table|...
+        in: query
+        name: target_type
+        type: string
+      - description: фильтр по target_id
+        in: query
+        name: target_id
+        type: string
+      - description: RFC3339 (начало)
+        in: query
+        name: from
+        type: string
+      - description: RFC3339 (конец)
+        in: query
+        name: to
+        type: string
+      - description: default 10000, max 50000
+        in: query
+        name: limit
+        type: integer
+      - description: смещение
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - text/csv
+      responses:
+        "200":
+          description: CSV
+          schema:
+            type: string
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      - ApiTokenAuth: []
+      summary: Выгрузка audit-log в CSV (admin only, §7.13).
+      tags:
+      - audit
   /api/auth/login:
     post:
       consumes:
@@ -302,6 +678,43 @@ paths:
               type: string
             type: object
       summary: Логин по логину/паролю.
+      tags:
+      - auth
+  /api/auth/logout:
+    post:
+      description: Удаляет session-cookie databus_session и инвалидирует токен в Redis
+        (§7.1 ТЗ).
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+      security:
+      - CookieAuth: []
+      summary: Завершить сессию.
+      tags:
+      - auth
+  /api/auth/me:
+    get:
+      description: Возвращает user_id, login, email, role, lang и must_change_password.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      - ApiTokenAuth: []
+      summary: Профиль текущей сессии.
       tags:
       - auth
   /api/logs/{id}/replay:
@@ -427,6 +840,31 @@ paths:
       tags:
       - nodes
   /api/nodes/{id}:
+    delete:
+      description: Только admin. Удаляет запись и инвалидирует Redis-кеш. ClickHouse-таблица
+        узла остаётся (см. §7.10 — orphan-cleanup).
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Удалить узел.
+      tags:
+      - nodes
     get:
       parameters:
       - description: node id
@@ -453,6 +891,53 @@ paths:
       summary: Один узел по id.
       tags:
       - nodes
+    put:
+      consumes:
+      - application/json
+      description: Только admin. Пустые auth_credentials/incoming_auth_credentials
+        в body означают «оставить старое значение» (§5.5 ТЗ).
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: node config
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.UpdateNodeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.NodeResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: path already exists
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Обновить узел.
+      tags:
+      - nodes
   /api/nodes/{id}/logs:
     get:
       parameters:
@@ -461,7 +946,8 @@ paths:
         name: id
         required: true
         type: string
-      - description: cursor по date_request (UnixMilli)
+      - description: legacy cursor по date_request (UnixMilli); если задан — фильтры
+          from/to/ip/host/status/done/q игнорируются
         in: query
         name: since_ms
         type: integer
@@ -469,6 +955,34 @@ paths:
         in: query
         name: limit
         type: integer
+      - description: начало диапазона (RFC3339 или UnixMilli)
+        in: query
+        name: from
+        type: string
+      - description: конец диапазона (RFC3339 или UnixMilli)
+        in: query
+        name: to
+        type: string
+      - description: exact match по IP клиента
+        in: query
+        name: ip
+        type: string
+      - description: exact match по Host
+        in: query
+        name: host
+        type: string
+      - description: ok | err | (пусто)
+        in: query
+        name: status
+        type: string
+      - description: yes | no | (пусто)
+        in: query
+        name: done
+        type: string
+      - description: подстрока (case-insensitive) по url/request/response
+        in: query
+        name: q
+        type: string
       produces:
       - application/json
       responses:
@@ -480,7 +994,7 @@ paths:
       security:
       - CookieAuth: []
       - ApiTokenAuth: []
-      summary: Snapshot логов узла из ClickHouse.
+      summary: Snapshot логов узла из ClickHouse с фильтрами.
       tags:
       - logs
   /api/nodes/{id}/logs/stream:
@@ -548,6 +1062,484 @@ paths:
       summary: 'Dry-run: проверить конфиг узла без сохранения (§7.5.1).'
       tags:
       - nodes
+  /api/settings/app:
+    get:
+      description: Возвращает merge'нутые значения из БД. Секреты (DSN, password)
+        маскируются.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/bus_internal_domain.AppSettings'
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Текущие dynamic-настройки Sentry/ClickHouse (§14.5).
+      tags:
+      - settings
+    put:
+      consumes:
+      - application/json
+      description: 'Patch-семантика: nil-поля сохраняются как есть, "***" в секретах
+        не перезаписывает текущее значение.'
+      parameters:
+      - description: patch
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/bus_internal_domain.AppSettings'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Обновить dynamic-настройки Sentry/ClickHouse (§14.5).
+      tags:
+      - settings
+  /api/settings/clickhouse/orphans:
+    get:
+      description: Возвращает таблицы из текущей CH-базы, у которых нет соответствующего
+        узла в Postgres.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Поиск orphan-таблиц в ClickHouse (§7.10).
+      tags:
+      - settings
+  /api/settings/clickhouse/orphans/{table}:
+    delete:
+      description: 'DROP TABLE IF EXISTS db.table. Защита: имя валидируется, повторно
+        проверяется orphan-статус, действие пишется в audit.'
+      parameters:
+      - description: Полное имя db.table
+        in: path
+        name: table
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Удалить orphan-таблицу (§7.10).
+      tags:
+      - settings
+  /api/settings/clickhouse/test:
+    post:
+      consumes:
+      - application/json
+      description: Открывает временный conn с merge'нутыми (current + body) настройками,
+        делает Ping, возвращает {ok,latency_ms} или {ok:false,error}. Не сохраняет.
+      parameters:
+      - description: patch
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/bus_internal_domain.ClickHouseSettings'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/bus_internal_web_usecase.TestResult'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Проверить соединение с ClickHouse по patch'у настроек (§7.10).
+      tags:
+      - settings
+  /api/settings/sentry/test:
+    post:
+      consumes:
+      - application/json
+      description: Создаёт изолированный sentry.Client, отправляет CaptureMessage,
+        ждёт Flush. Глобальный hub не затрагивается. Возвращает {ok,latency_ms} или
+        {ok:false,error}.
+      parameters:
+      - description: patch
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/bus_internal_domain.SentrySettings'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/bus_internal_web_usecase.TestResult'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Отправить тестовое событие в Sentry с patch'ем настроек (§7.10).
+      tags:
+      - settings
+  /api/tokens:
+    get:
+      description: Каждый видит только свои токены. Возвращает префикс, scopes, last_used_at
+        — без полной строки токена.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Список API-токенов текущего пользователя (§7.14).
+      tags:
+      - tokens
+    post:
+      consumes:
+      - application/json
+      description: Plain-строка токена возвращается ровно один раз, потом доступен
+        только префикс. Scopes — подмножество {logs:read, nodes:read, metrics:read,
+        audit:read}.
+      parameters:
+      - description: name + scopes + expires_at
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.createTokenRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: token (plain) + info
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Создать API-токен (§7.14).
+      tags:
+      - tokens
+  /api/tokens/{id}:
+    delete:
+      description: Удаление допустимо, только если токен уже revoked. Иначе — 404
+        «not deletable yet».
+      parameters:
+      - description: token id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Удалить API-токен.
+      tags:
+      - tokens
+  /api/tokens/{id}/revoke:
+    post:
+      description: После revoke токен сразу теряет силу, но сама запись остаётся (для
+        аудита).
+      parameters:
+      - description: token id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Отозвать API-токен.
+      tags:
+      - tokens
+  /api/users:
+    get:
+      parameters:
+      - description: поиск по login или email
+        in: query
+        name: search
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Список пользователей (admin only).
+      tags:
+      - users
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: user fields
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.createUserRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.userResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: login already exists
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Создать пользователя (admin only).
+      tags:
+      - users
+  /api/users/{id}:
+    delete:
+      description: Нельзя удалить себя и нельзя оставить <1 активного admin (§7.9).
+      parameters:
+      - description: user id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Удалить пользователя (admin only).
+      tags:
+      - users
+    get:
+      parameters:
+      - description: user id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.userResponse'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Один пользователь по id (admin only).
+      tags:
+      - users
+    put:
+      consumes:
+      - application/json
+      description: Нельзя демоутить себя в viewer и нельзя оставлять <1 активного
+        admin (§7.9).
+      parameters:
+      - description: user id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: user fields
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.updateUserRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.userResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: cannot demote yourself
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Обновить пользователя (admin only).
+      tags:
+      - users
+  /api/users/{id}/password:
+    post:
+      consumes:
+      - application/json
+      description: Если must_change_password=true, при следующем логине пользователь
+        будет обязан задать новый пароль.
+      parameters:
+      - description: user id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: new password
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.changePasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Сменить пароль пользователя (admin only).
+      tags:
+      - users
 schemes:
 - http
 - https

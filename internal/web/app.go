@@ -15,7 +15,11 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
+	swaggerfiles "github.com/swaggo/files"
+	ginswagger "github.com/swaggo/gin-swagger"
 
+	// Регистрирует Web Swagger-doc в swag.Registry при импорте (§11 ТЗ).
+	_ "bus/docs/web"
 	"bus/internal/platform/bootstrap"
 	chpf "bus/internal/platform/clickhouse"
 	"bus/internal/platform/config"
@@ -77,6 +81,10 @@ func (a *App) Start(ctx context.Context) error {
 	)
 	hc.Register(r)
 	r.GET("/metrics", gin.WrapH(a.metrics.Handler()))
+
+	// Swagger UI (§11 ТЗ): /swagger/index.html.
+	// Дока генерируется аннотациями над handlers и попадает в docs/web/ через `make swagger`.
+	r.GET("/swagger/*any", ginswagger.WrapHandler(swaggerfiles.Handler))
 
 	// Сборка слоёв (Clean Architecture, §17.2).
 	nodeRepo := pgrepo.NewNodeRepoPg(a.pg, a.cipher, a.logger)
