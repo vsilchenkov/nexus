@@ -1,6 +1,6 @@
 # DataBus
 
-Шина данных — три Go-сервиса (Receiver, Sender, Web), которые принимают входящие HTTP-запросы, маршрутизируют их на сконфигурированные внешние узлы и логируют все вызовы. Конфигурация маршрутов хранится в PostgreSQL, редактируется через REST API и (в будущем) веб-UI. Полное ТЗ — [data_bus_spec.md](./data_bus_spec.md).
+Шина данных — три Go-сервиса (Receiver, Sender, Web), которые принимают входящие HTTP-запросы, маршрутизируют их на сконфигурированные внешние узлы и логируют все вызовы. Конфигурация маршрутов хранится в PostgreSQL, редактируется через REST API и SPA (React 18 + Vite + Tailwind). Полное ТЗ — [specs/data_bus_spec.md](./specs/data_bus_spec.md); разделено по разделам в [specs/sections/](./specs/sections/).
 
 ## Статус
 
@@ -18,7 +18,13 @@
 | Phase 3  | SPA каркас через embed.FS (index.html-заглушка с REST-документацией)             |
 | Phase 4  | loadtest бинарь с pass/fail-критериями (§10.2)                                   |
 | Phase 4  | unit-тесты критических usecase'ов; housekeeping cron (audit retention)           |
-| Out-of-scope (v2) | полноценный React SPA, integration testcontainers, ClickHouse partition drop, Grafana dashboards, KMS-интеграция |
+| Phase 5  | paused→202, dry-run (§7.5.1), replay (§7.4.1), SSE live-tail (§7.4)              |
+| Phase 5  | rotate-encryption-key utility (§5.5); CH partition-drop housekeeping (§4.3)      |
+| Phase 5  | Swagger generation + drift-check; port.UnitOfWork; Sentry tracing-spans          |
+| Phase 5  | i18n (Accept-Language en/ru); SPA на React 18 + Vite + Tailwind (Login, Overview, NodeDetail, NodeSettings, Audit, Settings/{API tokens,Language,Theme}) |
+| Phase 5  | integration-тесты testcontainers: node-repo + receiver sync end-to-end           |
+| Phase 5.1 | CH file-fallback (NDJSON); расширенный i18n на handlers; unit-тесты Replay/Logs/Sentry middleware |
+| Out-of-scope (v2) | Grafana dashboards, KMS-интеграция, multi-tenancy логика, webhook signature verification |
 
 ## Зависимости
 

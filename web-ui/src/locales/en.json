@@ -6,6 +6,11 @@
     "login_failed": "Invalid login or password",
     "logout": "Sign out"
   },
+  "nav": {
+    "nodes": "Nodes",
+    "audit": "Audit",
+    "settings": "Settings"
+  },
   "overview": {
     "title": "Nodes",
     "new_node": "New node",
@@ -26,13 +31,48 @@
       "disabled": "Disabled",
       "paused": "Paused"
     },
-    "actions": { "edit": "Edit", "delete": "Delete" }
+    "actions": { "edit": "Edit", "delete": "Delete", "dry_run": "Dry-run", "replay": "Replay" }
+  },
+  "audit": {
+    "title": "Audit log",
+    "all_actions": "All actions",
+    "empty": "No entries",
+    "columns": {
+      "when": "When",
+      "user": "User",
+      "action": "Action",
+      "target": "Target",
+      "ip": "IP",
+      "details": "Details"
+    }
+  },
+  "settings": {
+    "title": "Settings",
+    "tokens": {
+      "title": "API tokens",
+      "new_token": "New token",
+      "scopes": "Scopes",
+      "expires_days": "Expires in (days)",
+      "expires_lifetime": "Empty = lifetime",
+      "create": "Create",
+      "name_placeholder": "Name (e.g. grafana-export)",
+      "copy_now": "Copy this token now — it won't be shown again",
+      "revoke": "Revoke",
+      "delete": "Delete",
+      "empty": "No tokens yet"
+    },
+    "language": {
+      "title": "Language",
+      "note": "Applies to UI only; logs, metrics and ClickHouse stay in English."
+    },
+    "theme": { "title": "Theme", "light": "Light", "dark": "Dark" }
   },
   "common": {
     "loading": "Loading…",
     "error": "Error",
     "ok": "OK",
     "cancel": "Cancel",
-    "save": "Save"
+    "save": "Save",
+    "close": "Close"
   }
 }

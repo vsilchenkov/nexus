@@ -33,13 +33,13 @@ export default function AuditLog() {
 
       <main className="max-w-6xl mx-auto p-6 space-y-4">
         <header className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold">Audit log</h1>
+          <h1 className="text-2xl font-semibold">{t("audit.title")}</h1>
           <select
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             className="px-3 py-2 bg-bg-muted rounded-md outline-none"
           >
-            <option value="">all actions</option>
+            <option value="">{t("audit.all_actions")}</option>
             <option value="node.create">node.create</option>
             <option value="node.update">node.update</option>
             <option value="node.delete">node.delete</option>
@@ -60,12 +60,12 @@ export default function AuditLog() {
             <table className="w-full text-sm">
               <thead className="bg-bg-muted text-fg-muted">
                 <tr>
-                  <th className="px-3 py-2 text-left">when</th>
-                  <th className="px-3 py-2 text-left">user</th>
-                  <th className="px-3 py-2 text-left">action</th>
-                  <th className="px-3 py-2 text-left">target</th>
-                  <th className="px-3 py-2 text-left">ip</th>
-                  <th className="px-3 py-2 text-left">details</th>
+                  <th className="px-3 py-2 text-left">{t("audit.columns.when")}</th>
+                  <th className="px-3 py-2 text-left">{t("audit.columns.user")}</th>
+                  <th className="px-3 py-2 text-left">{t("audit.columns.action")}</th>
+                  <th className="px-3 py-2 text-left">{t("audit.columns.target")}</th>
+                  <th className="px-3 py-2 text-left">{t("audit.columns.ip")}</th>
+                  <th className="px-3 py-2 text-left">{t("audit.columns.details")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -93,7 +93,7 @@ export default function AuditLog() {
                 {q.data.items.length === 0 && (
                   <tr>
                     <td colSpan={6} className="px-3 py-6 text-center text-fg-muted">
-                      empty
+                      {t("audit.empty")}
                     </td>
                   </tr>
                 )}

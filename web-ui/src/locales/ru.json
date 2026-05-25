@@ -6,6 +6,11 @@
     "login_failed": "Неверный логин или пароль",
     "logout": "Выйти"
   },
+  "nav": {
+    "nodes": "Узлы",
+    "audit": "Аудит",
+    "settings": "Настройки"
+  },
   "overview": {
     "title": "Узлы",
     "new_node": "Новый узел",
@@ -26,13 +31,48 @@
       "disabled": "Отключён",
       "paused": "Пауза"
     },
-    "actions": { "edit": "Изменить", "delete": "Удалить" }
+    "actions": { "edit": "Изменить", "delete": "Удалить", "dry_run": "Тестовый запрос", "replay": "Повтор" }
+  },
+  "audit": {
+    "title": "Журнал действий",
+    "all_actions": "Все действия",
+    "empty": "Нет записей",
+    "columns": {
+      "when": "Когда",
+      "user": "Пользователь",
+      "action": "Действие",
+      "target": "Цель",
+      "ip": "IP",
+      "details": "Детали"
+    }
+  },
+  "settings": {
+    "title": "Настройки",
+    "tokens": {
+      "title": "API-токены",
+      "new_token": "Новый токен",
+      "scopes": "Scopes",
+      "expires_days": "Истекает через (дней)",
+      "expires_lifetime": "Пусто = пожизненный",
+      "create": "Создать",
+      "name_placeholder": "Имя (например, grafana-export)",
+      "copy_now": "Скопируйте токен сейчас — повторно он не отображается",
+      "revoke": "Отозвать",
+      "delete": "Удалить",
+      "empty": "Токенов пока нет"
+    },
+    "language": {
+      "title": "Язык",
+      "note": "Применяется только к UI; логи, метрики и ClickHouse остаются на английском."
+    },
+    "theme": { "title": "Тема", "light": "Светлая", "dark": "Тёмная" }
   },
   "common": {
     "loading": "Загрузка…",
     "error": "Ошибка",
     "ok": "OK",
     "cancel": "Отмена",
-    "save": "Сохранить"
+    "save": "Сохранить",
+    "close": "Закрыть"
   }
 }

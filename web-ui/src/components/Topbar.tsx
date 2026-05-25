@@ -3,16 +3,16 @@ import { Link, useNavigate, useLocation } from "react-router-dom";
 
 import { api } from "../api/client";
 
-const navItems: { to: string; label: string }[] = [
-  { to: "/", label: "nodes" },
-  { to: "/audit", label: "audit" },
-  { to: "/settings/tokens", label: "settings" },
-];
-
 export function Topbar() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const loc = useLocation();
+
+  const navItems = [
+    { to: "/", label: t("nav.nodes") },
+    { to: "/audit", label: t("nav.audit") },
+    { to: "/settings/tokens", label: t("nav.settings") },
+  ];
 
   async function logout() {
     try {
