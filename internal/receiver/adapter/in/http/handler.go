@@ -1,0 +1,155 @@
+// Package http — HTTP-handlers Receiver Service (Gin).
+package http
+
+import (
+	"errors"
+	"io"
+	"net/http"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+
+	"bus/internal/domain"
+	"bus/internal/platform/logging"
+	"bus/internal/receiver/usecase"
+)
+
+// Handler — /v1/request/* и /v1/requestAsync/*.
+type Handler struct {
+	route          *usecase.RouteUsecase
+	logger         logging.Logger
+	maxBodyBytes   int
+}
+
+func New(route *usecase.RouteUsecase, maxBodyBytes int, logger logging.Logger) *Handler {
+	return &Handler{route: route, logger: logger, maxBodyBytes: maxBodyBytes}
+}
+
+// Register вешает /v1/request/*path и /v1/requestAsync/*path на роутер.
+//
+// Префикс /v1/ обязателен; запрос без него — 404 с подсказкой (§3.1).
+func (h *Handler) Register(r *gin.Engine) {
+	// Корневой 404 для запросов без /v1/.
+	r.NoRoute(func(c *gin.Context) {
+		p := c.Request.URL.Path
+		if strings.HasPrefix(p, "/request") || strings.HasPrefix(p, "/requestAsync") {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": "API version required, use /v1/...",
+			})
+			return
+		}
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+	})
+
+	v1 := r.Group("/v1")
+	{
+		v1.Any("/request/*path", h.handleSync)
+		v1.Any("/requestAsync/*path", h.handleAsync)
+	}
+}
+
+func (h *Handler) handleSync(c *gin.Context) {
+	nodePath := strings.TrimPrefix(c.Param("path"), "/")
+	if nodePath == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "empty node path"})
+		return
+	}
+
+	body, err := readBody(c, h.maxBodyBytes)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	out, err := h.route.Route(c.Request.Context(), usecase.RouteInput{
+		NodePath: nodePath,
+		Method:   c.Request.Method,
+		Header:   c.Request.Header,
+		Query:    c.Request.URL.Query(),
+		Body:     body,
+		ClientIP: clientIP(c.Request),
+	})
+	if err != nil {
+		h.replyDomainError(c, err, nodePath, "receiver.sync")
+		return
+	}
+	for k, v := range out.Headers {
+		// Пропускаем hop-by-hop и небезопасные.
+		if isHopByHopHeader(k) {
+			continue
+		}
+		c.Header(k, v)
+	}
+	c.Data(out.StatusCode, out.Headers["Content-Type"], out.Body)
+}
+
+func (h *Handler) handleAsync(c *gin.Context) {
+	// Phase 2: запись в Kafka. В Phase 1 — 501.
+	c.JSON(http.StatusNotImplemented, gin.H{
+		"error": "async path is not implemented in Phase 1; see roadmap",
+	})
+}
+
+func readBody(c *gin.Context, max int) ([]byte, error) {
+	if max <= 0 {
+		max = 5 * 1024 * 1024
+	}
+	r := io.LimitReader(c.Request.Body, int64(max+1))
+	body, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > max {
+		return nil, errors.New("request body too large")
+	}
+	return body, nil
+}
+
+func clientIP(r *http.Request) string {
+	if xf := r.Header.Get("X-Forwarded-For"); xf != "" {
+		if i := strings.Index(xf, ","); i >= 0 {
+			return strings.TrimSpace(xf[:i])
+		}
+		return strings.TrimSpace(xf)
+	}
+	if r.RemoteAddr != "" {
+		if i := strings.LastIndex(r.RemoteAddr, ":"); i >= 0 {
+			return r.RemoteAddr[:i]
+		}
+		return r.RemoteAddr
+	}
+	return ""
+}
+
+func isHopByHopHeader(name string) bool {
+	switch strings.ToLower(name) {
+	case "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+		"te", "trailer", "transfer-encoding", "upgrade":
+		return true
+	}
+	return false
+}
+
+func (h *Handler) replyDomainError(c *gin.Context, err error, nodePath, op string) {
+	switch {
+	case errors.Is(err, domain.ErrNodeNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": "node not found"})
+	case errors.Is(err, domain.ErrNodeDisabled):
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "node not available"})
+	case errors.Is(err, domain.ErrURLParamRequired):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	case errors.Is(err, domain.ErrURLInvalid):
+		c.JSON(http.StatusBadRequest, gin.H{"error": "target url is invalid"})
+	case errors.Is(err, domain.ErrURLNotAllowed):
+		c.JSON(http.StatusForbidden, gin.H{"error": "target url not in allowlist"})
+	case errors.Is(err, domain.ErrAuthHeaderMissing),
+		errors.Is(err, domain.ErrAuthHeaderMalformed),
+		errors.Is(err, domain.ErrAuthTokenRequired),
+		errors.Is(err, domain.ErrUnauthorized):
+		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+	default:
+		h.logger.ErrorWithOp("receiver routing failed", err, op,
+			h.logger.Str("node", nodePath))
+		c.JSON(http.StatusBadGateway, gin.H{"error": "internal routing error"})
+	}
+}

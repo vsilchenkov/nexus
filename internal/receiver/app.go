@@ -1,7 +1,7 @@
 // Package receiver — Receiver Service (§3 ТЗ).
 //
-// В Phase 0 — только healthcheck (/health, /ready) и /metrics.
-// HTTP-эндпоинты /v1/request/* и /v1/requestAsync/* — Phase 1.
+// Phase 1: handlers /v1/request/* (sync) + healthcheck.
+// /v1/requestAsync/* — заглушка 501, реальная реализация в Phase 2.
 package receiver
 
 import (
@@ -17,30 +17,43 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 
 	"bus/internal/platform/config"
+	"bus/internal/platform/crypto"
 	"bus/internal/platform/healthcheck"
 	"bus/internal/platform/logging"
 	pgpf "bus/internal/platform/pg"
 	redispf "bus/internal/platform/redis"
+	httpadapter "bus/internal/receiver/adapter/in/http"
+	"bus/internal/receiver/adapter/out/grpcsender"
+	"bus/internal/receiver/adapter/out/nodecache"
+	"bus/internal/receiver/usecase"
 )
 
-// App — заглушка Receiver на Phase 0.
 type App struct {
 	cfg    *config.Config
 	logger logging.Logger
 	pg     *pgxpool.Pool
 	redis  *goredis.Client
+	cipher *crypto.Cipher
 
-	srv *http.Server
+	srv      *http.Server
+	senderCl *grpcsender.Client
 }
 
-// New собирает App. Зависимости — pgxpool и redis-client — уже подняты в main.
-func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, logger logging.Logger) *App {
-	return &App{cfg: cfg, logger: logger, pg: pg, redis: redis}
+func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, cipher *crypto.Cipher, logger logging.Logger) *App {
+	return &App{cfg: cfg, logger: logger, pg: pg, redis: redis, cipher: cipher}
 }
 
-// Start блокирующе поднимает HTTP-сервер. Возвращается, когда ctx отменён
-// или сервер упал.
 func (a *App) Start(ctx context.Context) error {
+	senderCl, err := grpcsender.New(&a.cfg.Receiver.SenderGRPC, a.logger)
+	if err != nil {
+		return fmt.Errorf("init sender client: %w", err)
+	}
+	a.senderCl = senderCl
+
+	reader := nodecache.New(a.redis, a.pg, a.cipher, time.Duration(a.cfg.Redis.NodeTTLSec)*time.Second, a.logger)
+	routeUC := usecase.NewRouteUsecase(reader, a.senderCl, a.logger)
+	handler := httpadapter.New(routeUC, a.cfg.Receiver.MaxBodyBytes, a.logger)
+
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
@@ -50,8 +63,9 @@ func (a *App) Start(ctx context.Context) error {
 		[]healthcheck.Checker{redispf.HealthChecker("redis", a.redis)},
 	)
 	hc.Register(r)
-
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
+
+	handler.Register(r)
 
 	a.srv = &http.Server{
 		Addr:              a.cfg.Receiver.HTTPAddr,
@@ -82,16 +96,18 @@ func (a *App) Start(ctx context.Context) error {
 	}
 }
 
-// Stop — graceful shutdown HTTP-сервера.
 func (a *App) Stop(ctx context.Context) error {
-	if a.srv == nil {
-		return nil
-	}
 	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	a.logger.Info("receiver shutting down")
-	if err := a.srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("receiver shutdown: %w", err)
+
+	if a.srv != nil {
+		if err := a.srv.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("receiver shutdown: %w", err)
+		}
+	}
+	if a.senderCl != nil {
+		_ = a.senderCl.Close()
 	}
 	return nil
 }
