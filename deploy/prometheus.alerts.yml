@@ -1,0 +1,121 @@
+# Prometheus alert rules для DataBus (§6 ТЗ + §9 SLO).
+#
+# Подключается в prometheus.yml:
+#
+#   rule_files:
+#     - prometheus.alerts.yml
+#
+# В docker-compose обе папки монтируются read-only в /etc/prometheus/.
+groups:
+  - name: databus.slo
+    interval: 30s
+    rules:
+
+      # ----- Sync RPS / latency / error rate -----
+
+      - alert: DataBusReceiverDown
+        expr: up{job="databus-receiver"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: receiver
+        annotations:
+          summary: "Receiver instance is unreachable"
+          description: "Prometheus cannot scrape /metrics for {{ $labels.instance }} for 2 minutes."
+
+      - alert: DataBusSenderDown
+        expr: up{job="databus-sender"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: sender
+        annotations:
+          summary: "Sender instance is unreachable"
+          description: "Prometheus cannot scrape /metrics for {{ $labels.instance }} for 2 minutes."
+
+      - alert: DataBusHighErrorRate
+        # >5% 5xx за 5 минут на синхронном пути — выше SLO §9.1.
+        expr: |
+          (
+            sum by (service) (rate(databus_requests_total{status=~"5..|0"}[5m]))
+            /
+            sum by (service) (rate(databus_requests_total[5m]))
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }} 5xx rate > 5% for 10m"
+          description: "Aggregate error rate across all nodes is breaching the SLO."
+
+      - alert: DataBusP95LatencyHigh
+        # p95 end-to-end > 200ms за 5 мин — упрёт против §9.1 «p95 ≤ 200ms».
+        expr: |
+          histogram_quantile(0.95,
+            sum by (service, le) (rate(databus_request_duration_seconds_bucket{method="request"}[5m]))
+          ) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }} sync p95 latency > 200ms"
+          description: "Sync request p95 over the last 5 minutes is above the 200ms SLO."
+
+      # ----- Async backlog -----
+
+      - alert: DataBusKafkaLagHigh
+        # >10k unprocessed сообщений на партицию для 5 минут — async очередь не успевает.
+        expr: max by (topic, partition) (databus_kafka_lag) > 10000
+        for: 5m
+        labels:
+          severity: warning
+          service: sender
+        annotations:
+          summary: "Kafka lag > 10k messages on {{ $labels.topic }}/{{ $labels.partition }}"
+          description: "Sender-consumer is falling behind; check downstream upstream latency or scale consumer instances."
+
+      # ----- ClickHouse health -----
+
+      - alert: DataBusClickHouseErrors
+        # Любая стабильная скорость ошибок батчей CH > 0.1/sec — недоступность.
+        expr: sum by (service) (rate(databus_clickhouse_errors_total[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          service: sender
+        annotations:
+          summary: "ClickHouse batch insert errors on {{ $labels.service }}"
+          description: "Sender is failing CH inserts. File-fallback is engaged; check ClickHouse cluster health."
+
+      - alert: DataBusClickHouseBufferGrowing
+        # 90% от buffer_max_size — близко к drop-точке.
+        expr: max by (table) (databus_clickhouse_buffer_size) > 90000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CH buffer for {{ $labels.table }} is near max"
+          description: "Buffer is above 90k rows; next overflow will start writing NDJSON fallback files."
+
+      - alert: DataBusClickHouseDropped
+        # >0 — значит логи теряются.
+        expr: sum by (service, table) (increase(databus_clickhouse_dropped_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Log records dropped for table {{ $labels.table }}"
+          description: "DataBus is dropping log records (buffer full or empty_table). Check CH writer health."
+
+      # ----- L2 cache health (§9.2, Phase 7.2) -----
+
+      - alert: DataBusL2CacheStaleFallback
+        # Stale-fallback срабатывает = downstream (Redis + PG) лежат.
+        expr: sum(rate(databus_l2_cache_hits_total{kind="stale"}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+          service: receiver
+        annotations:
+          summary: "Receiver is serving stale node configs from L2"
+          description: "Redis + PostgreSQL are unavailable; Receiver falls back to expired LRU entries."

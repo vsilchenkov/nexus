@@ -562,9 +562,6 @@ make proto                                     # перегенерация send
 
 1. **GoReleaser** для бинарей + docker images, если будет нужен релизный pipeline.
 
-2. **Grafana дашборд** под `databus_*` метрики и алерт на `databus_kafka_lag > N`,
-   `databus_clickhouse_errors_total rate > 0`.
-
 Сделанное в Phase 6:
 
 - 6.1 Prometheus метрики (`databus_requests_total`, latency, kafka_lag, CH-метрики).
@@ -594,6 +591,18 @@ make proto                                     # перегенерация send
   `ErrNodeNotFound` НЕ кешируется. Метрики `databus_l2_cache_hits_total{kind}`,
   `_misses_total`, `_evictions_total`, `_size`. Unit-тесты на детерминированных
   `Clock` (без real sleep).
+- 7.5 Grafana dashboard + Prometheus alert rules:
+  · `deploy/grafana/databus.json` — 10 панелей: RPS, error rate (%),
+  request duration p50/p95/p99, Kafka lag, CH buffer per table, CH
+  errors/dropped/fallback, L2 cache hit ratio (fresh vs stale), L2
+  size/evictions, Go runtime heap, goroutines. Datasource и `service`
+  параметризованы (templating).
+  · `deploy/prometheus.alerts.yml` — 9 alert rules: up==0 (receiver/sender),
+  5xx>5%, p95>200ms (SLO §9.1), kafka_lag>10k, CH errors/buffer growing/dropped,
+  L2 stale-fallback (Redis+PG лежат). Подцеплены через `rule_files:` в
+  `deploy/prometheus.yml`, том смонтирован в compose (`prometheus.alerts.yml`).
+  · `deploy/grafana/README.md` — инструкция импорта (UI + provisioning).
+  Валидация: `promtool check config/rules` — оба файла приняты.
 - 7.4 GitHub Actions CI: `.github/workflows/ci.yml` — параллельные jobs
   go-test (race -short), go-build (`go build ./...`), go-lint
   (`golangci-lint v1.62`), swagger-drift (regen `swag init` → `git diff`),
