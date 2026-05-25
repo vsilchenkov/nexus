@@ -119,9 +119,18 @@ sc start DataBusReceiverService
 
 REST API задокументировано в [internal/web/static/index.html](./internal/web/static/index.html) (он же — UI-заглушка при открытии `http://localhost:8000/`).
 
+OpenAPI / Swagger: `make swagger` генерирует [docs/web/](./docs/web/) из аннотаций в Go-handlers; `make swagger-drift-check` для CI.
+
 ## Тестирование
 
 См. [TESTING.md](./TESTING.md).
+
+## Где смотреть, что реализовано
+
+Подробная карта реализации с привязкой к разделам ТЗ, ссылками на ключевые файлы,
+архитектурными решениями и неочевидностями — в [specs/IMPLEMENTATION.md](./specs/IMPLEMENTATION.md).
+Этот документ создан специально для быстрого onboarding'а новых разработчиков
+и агентов (включая Claude Code в будущих сессиях).
 
 ## Структура проекта
 
