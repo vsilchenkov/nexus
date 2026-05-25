@@ -1,0 +1,171 @@
+package postgres
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"bus/internal/domain"
+	"bus/internal/platform/logging"
+	"bus/internal/web/usecase/port"
+)
+
+type UserRepoPg struct {
+	pool   *pgxpool.Pool
+	logger logging.Logger
+}
+
+var _ port.UserRepo = (*UserRepoPg)(nil)
+
+func NewUserRepoPg(pool *pgxpool.Pool, logger logging.Logger) *UserRepoPg {
+	return &UserRepoPg{pool: pool, logger: logger}
+}
+
+const userCols = `id, login, COALESCE(email,''), COALESCE(password_hash,''),
+	role, active, must_change_password, lang, team_id, created_at, last_login_at`
+
+func (r *UserRepoPg) scanRow(row pgx.Row) (*domain.User, error) {
+	var u domain.User
+	var role, lang string
+	var lastLogin *time.Time
+	if err := row.Scan(
+		&u.ID, &u.Login, &u.Email, &u.PasswordHash,
+		&role, &u.Active, &u.MustChangePassword, &lang, &u.TeamID,
+		&u.CreatedAt, &lastLogin,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrUserNotFound
+		}
+		return nil, fmt.Errorf("scan user: %w", err)
+	}
+	u.Role = domain.UserRole(role)
+	u.Lang = domain.UserLang(lang)
+	u.LastLoginAt = lastLogin
+	return &u, nil
+}
+
+func (r *UserRepoPg) Get(ctx context.Context, id string) (*domain.User, error) {
+	return r.scanRow(r.pool.QueryRow(ctx, `SELECT `+userCols+` FROM users WHERE id = $1::uuid`, id))
+}
+
+func (r *UserRepoPg) GetByLogin(ctx context.Context, login string) (*domain.User, error) {
+	return r.scanRow(r.pool.QueryRow(ctx, `SELECT `+userCols+` FROM users WHERE login = $1`, login))
+}
+
+func (r *UserRepoPg) List(ctx context.Context, f port.ListUsersFilter) ([]*domain.User, error) {
+	q := `SELECT ` + userCols + ` FROM users WHERE 1=1`
+	args := []any{}
+	if f.Search != "" {
+		q += fmt.Sprintf(" AND (login ILIKE $%d OR email ILIKE $%d)", len(args)+1, len(args)+2)
+		like := "%" + f.Search + "%"
+		args = append(args, like, like)
+	}
+	q += " ORDER BY login"
+	if f.Limit > 0 {
+		q += fmt.Sprintf(" LIMIT $%d", len(args)+1)
+		args = append(args, f.Limit)
+	}
+	if f.Offset > 0 {
+		q += fmt.Sprintf(" OFFSET $%d", len(args)+1)
+		args = append(args, f.Offset)
+	}
+	rows, err := r.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list users: %w", err)
+	}
+	defer rows.Close()
+	var out []*domain.User
+	for rows.Next() {
+		u, err := r.scanRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+func (r *UserRepoPg) CountActiveAdmins(ctx context.Context) (int, error) {
+	var n int
+	err := r.pool.QueryRow(ctx,
+		`SELECT count(*) FROM users WHERE role='admin' AND active=true`).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count admins: %w", err)
+	}
+	return n, nil
+}
+
+func (r *UserRepoPg) Create(ctx context.Context, u *domain.User) error {
+	const q = `
+INSERT INTO users (login, email, password_hash, role, active, must_change_password, lang, team_id)
+VALUES ($1, NULLIF($2,''), NULLIF($3,''), $4, $5, $6, $7, COALESCE(NULLIF($8,''), 'default'))
+RETURNING id, created_at`
+	err := r.pool.QueryRow(ctx, q,
+		u.Login, u.Email, u.PasswordHash, string(u.Role), u.Active,
+		u.MustChangePassword, string(u.Lang), u.TeamID,
+	).Scan(&u.ID, &u.CreatedAt)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return domain.ErrUserAlreadyExists
+		}
+		return fmt.Errorf("create user: %w", err)
+	}
+	return nil
+}
+
+func (r *UserRepoPg) Update(ctx context.Context, u *domain.User) error {
+	const q = `
+UPDATE users SET
+	email = NULLIF($2,''),
+	role = $3,
+	active = $4,
+	lang = $5,
+	must_change_password = $6
+WHERE id = $1::uuid`
+	tag, err := r.pool.Exec(ctx, q,
+		u.ID, u.Email, string(u.Role), u.Active, string(u.Lang), u.MustChangePassword,
+	)
+	if err != nil {
+		return fmt.Errorf("update user: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrUserNotFound
+	}
+	return nil
+}
+
+func (r *UserRepoPg) UpdatePassword(ctx context.Context, id, passwordHash string, mustChange bool) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE users SET password_hash=$2, must_change_password=$3 WHERE id=$1::uuid`,
+		id, passwordHash, mustChange)
+	if err != nil {
+		return fmt.Errorf("update password: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrUserNotFound
+	}
+	return nil
+}
+
+func (r *UserRepoPg) UpdateLastLogin(ctx context.Context, id string, at time.Time) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE users SET last_login_at=$2 WHERE id=$1::uuid`, id, at)
+	return err
+}
+
+func (r *UserRepoPg) Delete(ctx context.Context, id string) error {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM users WHERE id=$1::uuid`, id)
+	if err != nil {
+		return fmt.Errorf("delete user: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrUserNotFound
+	}
+	return nil
+}

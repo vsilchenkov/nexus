@@ -72,9 +72,24 @@ func (a *App) Start(ctx context.Context) error {
 	)
 	nodeHandler := httpadapter.NewNodeHandler(nodeUC, a.logger)
 
+	userRepo := pgrepo.NewUserRepoPg(a.pg, a.logger)
+	sessionRepo := rediscache.NewSessionRepoRedis(a.redis)
+	sessionTTL := time.Duration(a.cfg.Redis.SessionTTLSec) * time.Second
+	authUC := usecase.NewAuthUsecase(userRepo, sessionRepo, auditUC, sessionTTL, a.logger)
+	userUC := usecase.NewUserUsecase(userRepo, sessionRepo, auditUC, a.logger)
+
+	authHandler := httpadapter.NewAuthHandler(authUC, &a.cfg.Web, sessionTTL, a.logger)
+	userHandler := httpadapter.NewUserHandler(userUC, authUC, a.logger)
+
+	mw := httpadapter.Middlewares{
+		Auth:         httpadapter.AuthMiddleware(authUC, &a.cfg.Web),
+		RequireAdmin: httpadapter.RequireRole("admin"),
+	}
 	httpadapter.RegisterAPI(r, httpadapter.Handlers{
+		Auth: authHandler,
 		Node: nodeHandler,
-	})
+		User: userHandler,
+	}, mw)
 
 	a.srv = &http.Server{
 		Addr:              a.cfg.Web.HTTPAddr,
