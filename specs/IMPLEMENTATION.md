@@ -130,6 +130,7 @@
 | **Settings → Users (полная страница CRUD с диалогами создания/смены пароля, §7.9/§7.10)** | ✅ Phase 6.4 | [pages/settings/Users.tsx](../web-ui/src/pages/settings/Users.tsx), таблица + UserDialog (create/edit) + PasswordDialog (compact). Учитывает «нельзя удалить/отключить себя», «нельзя оставить < 1 активного админа», баннер «admin использует пароль по умолчанию», метку «это вы», relative-time для last_login. Backend: исправил [auth_handler.Me](../internal/web/adapter/in/http/auth_handler.go) — теперь возвращает `{user:{user_id, login, email, role, lang, must_change_password}}` (был плоский ответ, фронт ждал обёртку → isAdmin-вкладки не показывались). Добавлен [AuthUsecase.Me](../internal/web/usecase/auth.go) для подъёма login/email из БД |
 | **Live-tail UI: подсветка новых записей (1s), авто-прокрутка, баннер «N новых», pagination size, фильтры status/done (§7.4)** | ✅ Phase 6.5 | [pages/NodeDetail.tsx](../web-ui/src/pages/NodeDetail.tsx) — буфер новых SSE-записей подсвечивается фоном через `transition-colors`, сбрасывается через 1000ms; sticky thead с прокруткой внутри блока; `autoScrollRef` отслеживает ручной скролл, при отступе от верха больше 8px включается баннер «N new ↑» (клик возвращает к live); SegmentedControl OK/Errors/All + Done/Pending/Any фильтрует на клиенте; селектор 50/100/200 заменяет `limit` snapshot-запроса |
 | **CSV-экспорт audit log (§7.13, кнопка «Export CSV»)** | ✅ Phase 6.6 | `GET /api/audit/export.csv` ([audit_handler.go](../internal/web/adapter/in/http/audit_handler.go) `ExportCSV`) — тот же набор фильтров что у `List`, default limit 10000, max 50000. CSV с UTF-8 BOM (для Excel), 9 колонок (id, created_at, user_login, user_id, action, target_type, target_id, ip_address, details-as-json). UI: ссылка `<a download>` в [pages/AuditLog.tsx](../web-ui/src/pages/AuditLog.tsx) header'е, прокидывает текущий `action`-фильтр. Общая функция `auditFilterFromQuery` извлечена из `List` для переиспользования. |
+| **ClickHouse orphan-tables: сканер + DROP (§7.10, Phase 6.7)** | ✅ Phase 6.7 | `GET /api/settings/clickhouse/orphans` + `DELETE /api/settings/clickhouse/orphans/:table` ([orphan_handler.go](../internal/web/adapter/in/http/orphan_handler.go)). Usecase [orphan_scanner.go](../internal/web/usecase/orphan_scanner.go): SELECT name,engine,total_rows,total_bytes из `system.tables` для базы из cfg.ClickHouse.Database (только `*MergeTree*`, не служебные `.inner*`/`.tmp*`); вычитает known-set из `nodes.clickhouse_table`. `Drop` валидирует имя (isSafeTableNameLocal), повторно перепроверяет orphan-статус (защита от race) и логирует action=`ch_table.drop` в audit. UI: компонент [OrphanTablesPanel](../web-ui/src/components/OrphanTablesPanel.tsx) внизу страницы Settings → ClickHouse, lazy-fetch (только после клика «Scan»), DROP с двойным подтверждением (модал требует ввести имя таблицы вручную). |
 
 ### §9 Высоконагруженность / отказоустойчивость
 
@@ -194,12 +195,11 @@
 
 ### §15 Критерии приёмки
 
-См. [sections/15-acceptance.md](sections/15-acceptance.md). Покрытие: ~93% пунктов реализовано.
-Не покрыто (требует Phase 6):
+См. [sections/15-acceptance.md](sections/15-acceptance.md). Покрытие: ~95% пунктов реализовано.
+Не покрыто (требует Phase 6+):
 
-- ClickHouse Settings: orphan-tables — UI готов (Phase 6.3.3), hot-reload и test-connection реализованы (Phase 6.3.2.5/6.3.2.6), но кнопки «найти orphan'ы» (таблицы без узлов) — нет.
-- Полный Audit log с export CSV, diff-двухколоночный для `node.update`.
-- Live-tail UI: расширенные фильтры (период, IP, Host, полнотекстовый поиск) — требуют backend-параметров.
+- Полный Audit log: CSV-экспорт сделан (Phase 6.6), diff-двухколоночный для `node.update` — Phase 6.9.
+- Live-tail UI: расширенные фильтры (период, IP, Host, полнотекстовый поиск) — Phase 6.8.
 
 ### §16 Out of scope (явно отложено в v2)
 
@@ -547,7 +547,12 @@ make proto                                     # перегенерация send
 6. **Grafana дашборд** под `databus_*` метрики и алерт на `databus_kafka_lag > N`,
    `databus_clickhouse_errors_total rate > 0`.
 
-7. **ClickHouse Settings: orphaned-tables в UI** — таблицы в ClickHouse,
-   у которых нет соответствующего узла в Postgres. Test connection уже
-   сделан (Phase 6.3.2.6); orphan'ы — backend-сканер + список в UI с
-   кнопкой DROP TABLE (с двойным подтверждением).
+7. ~~**ClickHouse Settings: orphaned-tables в UI**~~ — реализовано в Phase 6.7.
+
+8. **Расширенные фильтры live-tail (период, IP, Host, full-text)** — сейчас
+   фильтрация только клиентская (status/done). Backend-параметры
+   `from`/`to`/`ip`/`host`/`q` для `/api/nodes/:id/logs` — Phase 6.8.
+
+9. **Audit log: diff-двухколоночный для `node.update`** — детали уже
+   содержат `before`/`after`, но рендер их «json в `<details>`»;
+   нужен полноценный diff-view side-by-side. Phase 6.9.

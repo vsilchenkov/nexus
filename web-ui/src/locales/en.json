@@ -192,7 +192,28 @@
       "batch_size": "Batch size",
       "flush_interval_sec": "Flush interval (sec)",
       "buffer_max_size": "Buffer max size",
-      "workers": "Workers"
+      "workers": "Workers",
+      "orphans": {
+        "title": "Orphan tables",
+        "hint": "ClickHouse tables in the configured database that have no matching node in Postgres.",
+        "scan": "Scan",
+        "scanning": "Scanning…",
+        "rescan": "Rescan",
+        "empty": "No orphan tables found",
+        "col": {
+          "table": "Table",
+          "engine": "Engine",
+          "rows": "Rows",
+          "size": "Size",
+          "modified": "Last modified",
+          "action": ""
+        },
+        "drop": "DROP",
+        "drop_confirm_1": "Drop table `{{table}}` permanently? This action cannot be undone.",
+        "drop_confirm_2": "Type the table name to confirm:",
+        "drop_mismatch": "Table name does not match.",
+        "dropping": "Dropping…"
+      }
     }
   },
   "common": {

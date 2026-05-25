@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
 import { api } from "../../api/client";
+import { OrphanTablesPanel } from "../../components/OrphanTablesPanel";
 
 type ClickHouseSettings = {
   host?: string;
@@ -257,6 +258,8 @@ export function ClickHousePanel() {
       <p className="text-xs text-fg-muted">
         {t("settings.clickhouse.partial_hot_reload_note")}
       </p>
+
+      <OrphanTablesPanel />
     </div>
   );
 }

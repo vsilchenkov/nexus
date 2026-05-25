@@ -138,6 +138,7 @@ func (a *App) Start(ctx context.Context) error {
 	var (
 		replayHandler *httpadapter.ReplayHandler
 		logsHandler   *httpadapter.LogsHandler
+		orphanHandler *httpadapter.OrphanHandler
 	)
 	if a.ch != nil {
 		a.chMgr = chpf.NewManager(a.ch, chpf.New, &a.cfg.ClickHouse, a.logger)
@@ -150,6 +151,10 @@ func (a *App) Start(ctx context.Context) error {
 		logsUC := usecase.NewLogsUsecase(logReader, nodeRepo, a.logger)
 		replayHandler = httpadapter.NewReplayHandler(replayUC, a.logger)
 		logsHandler = httpadapter.NewLogsHandler(logsUC, a.logger)
+
+		// Orphan-сканер (Phase 6.7): таблицы в CH без узла в Postgres.
+		orphanScanner := usecase.NewOrphanScanner(a.chMgr, nodeRepo, &a.cfg.ClickHouse, auditUC, a.logger)
+		orphanHandler = httpadapter.NewOrphanHandler(orphanScanner, a.logger)
 
 		// ClickHouse hot-reload: Web не держит chlog.Writer, поэтому writers пуст.
 		// Manager.Reload swap'нет conn — LogReaderCH сразу пойдёт через новый.
@@ -178,6 +183,7 @@ func (a *App) Start(ctx context.Context) error {
 		Replay:      replayHandler,
 		Logs:        logsHandler,
 		AppSettings: appSettingsHandler,
+		Orphan:      orphanHandler,
 	}, mw)
 
 	// SPA fallback: всё, что не API/инфра — отдаём index.html (§17.1 ТЗ).

@@ -15,6 +15,7 @@ type Handlers struct {
 	Replay      *ReplayHandler
 	Logs        *LogsHandler
 	AppSettings *AppSettingsHandler
+	Orphan      *OrphanHandler
 }
 
 // Middlewares — общие middleware (auth-check, role-check, API token-check).
@@ -93,6 +94,13 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			// Test connection с patch'ем настроек (Phase 6.3.2.6, §7.10).
 			authedAdmin.POST("/settings/clickhouse/test", h.AppSettings.TestClickHouse)
 			authedAdmin.POST("/settings/sentry/test", h.AppSettings.TestSentry)
+		}
+
+		// Orphan-таблицы ClickHouse (§7.10 / Phase 6.7). Admin-only.
+		// Регистрируется только если включён ClickHouse (см. app.go).
+		if h.Orphan != nil {
+			authedAdmin.GET("/settings/clickhouse/orphans", h.Orphan.List)
+			authedAdmin.DELETE("/settings/clickhouse/orphans/:table", h.Orphan.Drop)
 		}
 	}
 }
