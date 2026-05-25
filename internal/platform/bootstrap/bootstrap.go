@@ -9,11 +9,13 @@ import (
 	"os"
 	"time"
 
+	chdrv "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jinzhu/copier"
 	goredis "github.com/redis/go-redis/v9"
 
 	"bus/internal/platform/build"
+	chpf "bus/internal/platform/clickhouse"
 	"bus/internal/platform/config"
 	"bus/internal/platform/crypto"
 	"bus/internal/platform/kafka"
@@ -120,6 +122,16 @@ func MustRedis(ctx context.Context, cfg *config.Config, logger logging.Logger) *
 // MustKafkaDialer — Phase 0: только TCP-dialer для healthcheck.
 func MustKafkaDialer(cfg *config.Config) *kafka.Dialer {
 	return kafka.NewDialer(cfg.Kafka.Brokers)
+}
+
+// MustClickHouse подключает ClickHouse. Завершает процесс при ошибке.
+func MustClickHouse(ctx context.Context, cfg *config.Config, logger logging.Logger) chdrv.Conn {
+	conn, err := chpf.New(ctx, &cfg.ClickHouse)
+	if err != nil {
+		logger.ErrorWithOp("clickhouse connect failed", err, "bootstrap.MustClickHouse")
+		os.Exit(1)
+	}
+	return conn
 }
 
 // MustCipher читает ENCRYPTION_KEY из окружения и создаёт AES-256-GCM cipher.

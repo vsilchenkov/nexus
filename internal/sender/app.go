@@ -1,8 +1,7 @@
 // Package sender — Sender Service (§4 ТЗ).
 //
-// В Phase 0 — gRPC-сервер с healthcheck-сервисом (grpc_health_v1)
-// + admin HTTP с /health, /ready, /metrics. Реальные методы Send,
-// HTTP-клиент и Kafka-consumer — Phase 1/2.
+// Phase 1: gRPC сервер с регистрацией SenderServiceServer (sync-путь).
+// Kafka consumer для async — Phase 2.
 package sender
 
 import (
@@ -13,6 +12,7 @@ import (
 	"net/http"
 	"time"
 
+	chdrv "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -21,33 +21,49 @@ import (
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 
+	chpf "bus/internal/platform/clickhouse"
 	"bus/internal/platform/config"
 	"bus/internal/platform/healthcheck"
 	"bus/internal/platform/kafka"
 	"bus/internal/platform/logging"
 	pgpf "bus/internal/platform/pg"
+	grpcadapter "bus/internal/sender/adapter/in/grpc"
+	"bus/internal/sender/adapter/out/chlog"
+	"bus/internal/sender/adapter/out/httpclient"
+	"bus/internal/sender/usecase"
+	senderv1 "bus/proto/sender/v1"
 )
 
-// App — заглушка Sender на Phase 0.
 type App struct {
 	cfg         *config.Config
 	logger      logging.Logger
 	pg          *pgxpool.Pool
 	kafkaDialer *kafka.Dialer
+	ch          chdrv.Conn
 
 	grpcSrv  *grpc.Server
 	adminSrv *http.Server
+	chWriter *chlog.Writer
 }
 
-func New(cfg *config.Config, pg *pgxpool.Pool, kafkaDialer *kafka.Dialer, logger logging.Logger) *App {
-	return &App{cfg: cfg, logger: logger, pg: pg, kafkaDialer: kafkaDialer}
+func New(
+	cfg *config.Config,
+	pg *pgxpool.Pool,
+	kafkaDialer *kafka.Dialer,
+	ch chdrv.Conn,
+	logger logging.Logger,
+) *App {
+	return &App{cfg: cfg, logger: logger, pg: pg, kafkaDialer: kafkaDialer, ch: ch}
 }
 
-// Start поднимает gRPC-сервер и admin-HTTP параллельно. Блокирует до ctx.Done.
 func (a *App) Start(ctx context.Context) error {
-	errCh := make(chan error, 2)
+	a.chWriter = chlog.New(a.ch, &a.cfg.ClickHouse, a.logger)
+	httpc := httpclient.New(&a.cfg.Sender.HTTPClient, a.logger)
+	sendUC := usecase.NewSendUsecase(httpc, a.chWriter, a.logger)
+	grpcSvc := grpcadapter.NewServer(sendUC, a.logger)
 
-	go func() { errCh <- a.startGRPC() }()
+	errCh := make(chan error, 2)
+	go func() { errCh <- a.startGRPC(grpcSvc) }()
 	go func() { errCh <- a.startAdminHTTP() }()
 
 	select {
@@ -58,7 +74,7 @@ func (a *App) Start(ctx context.Context) error {
 	}
 }
 
-func (a *App) startGRPC() error {
+func (a *App) startGRPC(svc *grpcadapter.Server) error {
 	lis, err := net.Listen("tcp", a.cfg.Sender.GRPCAddr)
 	if err != nil {
 		return fmt.Errorf("sender grpc listen %s: %w", a.cfg.Sender.GRPCAddr, err)
@@ -67,8 +83,12 @@ func (a *App) startGRPC() error {
 	a.grpcSrv = grpc.NewServer(
 		grpc.MaxConcurrentStreams(a.cfg.Sender.GRPCMaxConcurrentStreams),
 	)
+
+	senderv1.RegisterSenderServiceServer(a.grpcSrv, svc)
+
 	hsrv := health.NewServer()
 	hsrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
+	hsrv.SetServingStatus("databus.sender.v1.SenderService", healthpb.HealthCheckResponse_SERVING)
 	healthpb.RegisterHealthServer(a.grpcSrv, hsrv)
 	reflection.Register(a.grpcSrv)
 
@@ -87,7 +107,10 @@ func (a *App) startAdminHTTP() error {
 	r.Use(gin.Recovery())
 
 	hc := healthcheck.New(
-		[]healthcheck.Checker{pgpf.HealthChecker("postgres", a.pg)},
+		[]healthcheck.Checker{
+			pgpf.HealthChecker("postgres", a.pg),
+			chpf.HealthChecker("clickhouse", a.ch),
+		},
 		[]healthcheck.Checker{kafka.HealthChecker("kafka", a.kafkaDialer)},
 	)
 	hc.Register(r)
@@ -108,7 +131,6 @@ func (a *App) startAdminHTTP() error {
 	return nil
 }
 
-// Stop — graceful shutdown gRPC + HTTP.
 func (a *App) Stop(ctx context.Context) error {
 	a.logger.Info("sender shutting down")
 
@@ -125,6 +147,12 @@ func (a *App) Stop(ctx context.Context) error {
 		case <-time.After(30 * time.Second):
 			a.grpcSrv.Stop()
 		}
+	}
+
+	if a.chWriter != nil {
+		flushCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		a.chWriter.Stop(flushCtx)
+		cancel()
 	}
 
 	if a.adminSrv != nil {

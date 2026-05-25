@@ -38,7 +38,10 @@ func main() {
 
 	kafkaDialer := bootstrap.MustKafkaDialer(cfg)
 
-	app := sender.New(cfg, pgPool, kafkaDialer, logger)
+	chConn := bootstrap.MustClickHouse(ctx, cfg, logger)
+	defer chConn.Close()
+
+	app := sender.New(cfg, pgPool, kafkaDialer, chConn, logger)
 
 	if err := runner.Run(serviceName, displayName, description, app, logger); err != nil {
 		logger.ErrorWithOp("service stopped", err, "main")
