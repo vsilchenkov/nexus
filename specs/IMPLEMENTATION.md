@@ -122,7 +122,9 @@
 | `config/config.yml` + `config_debug.yml` + `config.example.yml` | ✅ | [config/](../config/) |
 | Env-вставки `${VAR:default}` | ✅ | [platform/config/load.go](../internal/platform/config/load.go) |
 | Флаги `--config`, `--debug`, `--version` | ✅ | [platform/config/flags.go](../internal/platform/config/flags.go) |
-| Динамическая перезагрузка sentry/clickhouse через app_settings + pub/sub | ⛔ Phase 6 | таблица `app_settings` есть, но UI/reload — не реализованы |
+| **`app_settings` таблица + REST API + overlay поверх env на старте** | ✅ Phase 6.3.1 | миграция [0006](../migrations/0006_app_settings.up.sql), [domain/app_settings.go](../internal/domain/app_settings.go), [usecase/app_settings.go](../internal/web/usecase/app_settings.go), [http/app_settings_handler.go](../internal/web/adapter/in/http/app_settings_handler.go), [bootstrap/app_settings.go](../internal/platform/bootstrap/app_settings.go) |
+| Hot-reload через Redis pub/sub (без рестарта) | ⛔ Phase 6.3.2 | overlay сейчас работает только при рестарте; pub/sub для Sentry/CH — следующий блок |
+| Settings → Sentry / ClickHouse страницы в SPA | ⛔ Phase 6.3.3 | backend готов, нужен UI |
 
 ### §9 Высоконагруженность / отказоустойчивость
 

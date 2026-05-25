@@ -36,4 +36,6 @@ const (
 
 	ActionNodeReplay = "node.replay"
 	ActionNodeDryRun = "node.dry_run"
+
+	ActionAppSettingsUpdate = "app_settings.update"
 )

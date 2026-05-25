@@ -38,6 +38,9 @@ func main() {
 	pgPool := bootstrap.MustPG(ctx, cfg, logger)
 	defer pgPool.Close()
 
+	// §8.4 / §14.5: динамическая часть Sentry/CH из app_settings поверх env.
+	bootstrap.ApplyAppSettings(ctx, pgPool, cfg, logger)
+
 	redisClient := bootstrap.MustRedis(ctx, cfg, logger)
 	defer redisClient.Close()
 

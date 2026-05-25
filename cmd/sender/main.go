@@ -36,6 +36,9 @@ func main() {
 	pgPool := bootstrap.MustPG(ctx, cfg, logger)
 	defer pgPool.Close()
 
+	// §8.4 / §14.5: накладываем CH-настройки из app_settings ДО подключения.
+	bootstrap.ApplyAppSettings(ctx, pgPool, cfg, logger)
+
 	chConn := bootstrap.MustClickHouse(ctx, cfg, logger)
 	defer chConn.Close()
 

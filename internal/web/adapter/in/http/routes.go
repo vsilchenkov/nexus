@@ -6,14 +6,15 @@ import (
 
 // Handlers — bag всех HTTP-handler'ов Web Service.
 type Handlers struct {
-	Auth   *AuthHandler
-	Node   *NodeHandler
-	User   *UserHandler
-	Token  *APITokenHandler
-	Audit  *AuditHandler
-	DryRun *DryRunHandler
-	Replay *ReplayHandler
-	Logs   *LogsHandler
+	Auth        *AuthHandler
+	Node        *NodeHandler
+	User        *UserHandler
+	Token       *APITokenHandler
+	Audit       *AuditHandler
+	DryRun      *DryRunHandler
+	Replay      *ReplayHandler
+	Logs        *LogsHandler
+	AppSettings *AppSettingsHandler
 }
 
 // Middlewares — общие middleware (auth-check, role-check, API token-check).
@@ -82,5 +83,11 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 
 		// Audit log: admin-only; scope audit:read нужен только для API-токена.
 		authedAdmin.GET("/audit", RequireScope("audit:read"), h.Audit.List)
+
+		// Dynamic-настройки Sentry/ClickHouse (§14.5). Admin-only.
+		if h.AppSettings != nil {
+			authedAdmin.GET("/settings/app", h.AppSettings.Get)
+			authedAdmin.PUT("/settings/app", h.AppSettings.Update)
+		}
 	}
 }

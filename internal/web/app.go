@@ -100,10 +100,14 @@ func (a *App) Start(ctx context.Context) error {
 	tokenRepo := pgrepo.NewAPITokenRepoPg(a.pg, a.logger)
 	tokenUC := usecase.NewAPITokenUsecase(tokenRepo, userRepo, auditUC, a.logger)
 
+	appSettingsRepo := pgrepo.NewAppSettingsRepoPg(a.pg, a.logger)
+	appSettingsUC := usecase.NewAppSettingsUsecase(appSettingsRepo, auditUC, a.logger)
+
 	authHandler := httpadapter.NewAuthHandler(authUC, &a.cfg.Web, sessionTTL, a.logger)
 	userHandler := httpadapter.NewUserHandler(userUC, authUC, a.logger)
 	tokenHandler := httpadapter.NewAPITokenHandler(tokenUC, a.logger)
 	auditHandler := httpadapter.NewAuditHandler(auditUC, a.logger)
+	appSettingsHandler := httpadapter.NewAppSettingsHandler(appSettingsUC, a.logger)
 
 	dryRunUC := usecase.NewDryRunUsecase(auditUC, a.logger)
 	dryRunHandler := httpadapter.NewDryRunHandler(dryRunUC, a.logger)
@@ -134,14 +138,15 @@ func (a *App) Start(ctx context.Context) error {
 		RequireAdmin: httpadapter.RequireRole("admin"),
 	}
 	httpadapter.RegisterAPI(r, httpadapter.Handlers{
-		Auth:   authHandler,
-		Node:   nodeHandler,
-		User:   userHandler,
-		Token:  tokenHandler,
-		Audit:  auditHandler,
-		DryRun: dryRunHandler,
-		Replay: replayHandler,
-		Logs:   logsHandler,
+		Auth:        authHandler,
+		Node:        nodeHandler,
+		User:        userHandler,
+		Token:       tokenHandler,
+		Audit:       auditHandler,
+		DryRun:      dryRunHandler,
+		Replay:      replayHandler,
+		Logs:        logsHandler,
+		AppSettings: appSettingsHandler,
 	}, mw)
 
 	// SPA fallback: всё, что не API/инфра — отдаём index.html (§17.1 ТЗ).

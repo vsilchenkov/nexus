@@ -54,6 +54,11 @@ func main() {
 	pgPool := bootstrap.MustPG(ctx, cfg, logger)
 	defer pgPool.Close()
 
+	bootstrap.AutoMigrate(cfg, logger)
+	// §8.4 / §14.5: накладываем dynamic-настройки из app_settings поверх
+	// env-конфига до подключения зависимостей (CH-клиент возьмёт overlay'нутый адрес).
+	bootstrap.ApplyAppSettings(ctx, pgPool, cfg, logger)
+
 	redisClient := bootstrap.MustRedis(ctx, cfg, logger)
 	defer redisClient.Close()
 
