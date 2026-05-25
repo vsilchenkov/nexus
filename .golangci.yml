@@ -1,0 +1,63 @@
+# golangci-lint config для DataBus.
+# Запуск локально: `golangci-lint run` (через `make lint`).
+# В CI поднимается через golangci/golangci-lint-action@v6.
+
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck       # необработанные ошибки
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gosimple
+    - gofmt
+    - goimports
+    - misspell
+    - revive         # лёгкий стилистический линт (без exhaustruct)
+    - bodyclose      # http.Response.Body должен закрываться
+    - rowserrcheck   # sql.Rows.Err() после итерации
+    - unconvert      # бесполезные конвертации типов
+    - prealloc       # очевидные пре-аллокации слайсов
+    - nilerr         # `return nil` после ненулевой ошибки
+
+linters-settings:
+  errcheck:
+    check-blank: false
+    exclude-functions:
+      # Намеренно «огонь-и-забыть»: best-effort cleanup.
+      - (io.Closer).Close
+      - (*os.File).Close
+      - (net/http.ResponseWriter).Write
+  revive:
+    rules:
+      - name: var-naming
+      - name: exported
+      - name: errorf
+      - name: error-return
+      - name: package-comments
+        disabled: true
+      - name: unused-parameter
+        disabled: true
+  goimports:
+    local-prefixes: bus
+
+issues:
+  exclude-rules:
+    # Тесты могут импортировать domain через dot-import, ignore-cancel и пр.
+    - path: _test\.go
+      linters:
+        - errcheck
+        - revive
+    # Сгенерированный код Swagger / proto.
+    - path: docs/
+      linters: [unused, gosimple, staticcheck, revive]
+    - path: proto/
+      linters: [unused, gosimple, staticcheck, revive]
+  max-issues-per-linter: 0
+  max-same-issues: 0

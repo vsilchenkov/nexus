@@ -560,12 +560,9 @@ make proto                                     # перегенерация send
 
 Если будете расширять — вот логичные следующие шаги, в порядке полезности:
 
-1. **GitHub Actions workflow** (план — см. TESTING.md → CI/CD):
-   build, lint, test, swagger-drift-check, integration matrix.
+1. **GoReleaser** для бинарей + docker images, если будет нужен релизный pipeline.
 
-2. **GoReleaser** для бинарей + docker images, если будет нужен релизный pipeline.
-
-3. **Grafana дашборд** под `databus_*` метрики и алерт на `databus_kafka_lag > N`,
+2. **Grafana дашборд** под `databus_*` метрики и алерт на `databus_kafka_lag > N`,
    `databus_clickhouse_errors_total rate > 0`.
 
 Сделанное в Phase 6:
@@ -597,6 +594,15 @@ make proto                                     # перегенерация send
   `ErrNodeNotFound` НЕ кешируется. Метрики `databus_l2_cache_hits_total{kind}`,
   `_misses_total`, `_evictions_total`, `_size`. Unit-тесты на детерминированных
   `Clock` (без real sleep).
+- 7.4 GitHub Actions CI: `.github/workflows/ci.yml` — параллельные jobs
+  go-test (race -short), go-build (`go build ./...`), go-lint
+  (`golangci-lint v1.62`), swagger-drift (regen `swag init` → `git diff`),
+  ui (Node 20 + `npm ci` + `npm run lint --if-present` + `vite build`),
+  integration (testcontainers, гейтированный по label `run-integration`
+  для PR — тяжёлый сетап с pre-pull docker-образов). `.golangci.yml` с
+  набором bodyclose/rowserrcheck/errcheck/govet/revive/staticcheck.
+  `.github/dependabot.yml` — еженедельные апдейты gomod + npm, ежемесячно
+  github-actions; группировка minor/patch в один PR.
 - 7.3 Integration suite: Redis + ClickHouse через testcontainers.
   Generic-контейнер (`testcontainers.GenericContainer`) — без отдельных
   модулей `modules/redis`/`modules/clickhouse`. CH: native-handshake
