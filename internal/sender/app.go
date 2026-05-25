@@ -50,11 +50,12 @@ type App struct {
 	cipher  *crypto.Cipher
 	metrics *metrics.Metrics
 
-	grpcSrv  *grpc.Server
-	adminSrv *http.Server
-	chWriter *chlog.Writer
-	producer *kafkapf.Producer
-	consumer *kafkaadapter.ConsumerGroup
+	grpcSrv   *grpc.Server
+	adminSrv  *http.Server
+	chMgr     *chpf.Manager
+	chWriter  *chlog.WriterManager
+	producer  *kafkapf.Producer
+	consumer  *kafkaadapter.ConsumerGroup
 }
 
 func New(
@@ -78,7 +79,11 @@ func New(
 
 func (a *App) Start(ctx context.Context) error {
 	// Общие сервисы.
-	a.chWriter = chlog.NewWithFallback(a.ch, &a.cfg.ClickHouse, a.cfg.ClickHouse.FallbackDir, a.metrics, a.logger)
+	// ClickHouse Manager — владелец соединения для hot-reload (§8.4 / Phase 6.3.2.5).
+	// Все consumers (chWriter, CHHousekeeping, HealthChecker) идут через него,
+	// а не через raw a.ch, чтобы при reload swap conn'а был для них прозрачным.
+	a.chMgr = chpf.NewManager(a.ch, chpf.New, &a.cfg.ClickHouse, a.logger)
+	a.chWriter = chlog.NewManagerWithFallback(a.chMgr, &a.cfg.ClickHouse, a.cfg.ClickHouse.FallbackDir, a.metrics, a.logger)
 	httpc := httpclient.New(&a.cfg.Sender.HTTPClient, a.logger)
 
 	// Circuit breaker per node — порог 5 ошибок подряд, cooldown 30s.
@@ -100,23 +105,24 @@ func (a *App) Start(ctx context.Context) error {
 	a.consumer.Start(ctx)
 
 	// CH partition-drop housekeeping (§4.3 ТЗ): фоновый цикл раз в сутки.
-	hk := usecase.NewCHHousekeeping(a.ch, nodeReader, a.logger)
+	hk := usecase.NewCHHousekeeping(a.chMgr, nodeReader, a.logger)
 	go hk.Run(ctx)
 
 	// Kafka lag reporter (§6 ТЗ): раз в 15 секунд снимаем Stats() со всех
 	// инстансов consumer-группы и пушим в Prometheus.
 	go a.reportKafkaLag(ctx)
 
-	// Hot-reload Sentry и refresh CH-overlay (§14.5). Подписчик слушает Redis
-	// pub/sub и применяет изменения, опубликованные Web после PUT /api/settings/app.
-	// Sentry — полный hot-reload через sentry.Init. CH — пока только overlay
-	// в cfg (полное пересоздание клиента — Phase 6.3.2.5).
+	// Hot-reload Sentry и ClickHouse (§14.5 / §8.4 ТЗ, Phase 6.3.2 + 6.3.2.5).
+	// Подписчик слушает Redis pub/sub и применяет изменения, опубликованные Web
+	// после PUT /api/settings/app. Sentry — sentry.Init c новыми параметрами.
+	// CH — полный reconnect через chpf.Manager + пересоздание chlog.Writer.
 	if a.redis != nil {
 		reloadSub := reloader.NewSubscriber(a.redis, a.logger)
 		reloadSub.Register(reloader.SectionSentry,
 			bootstrap.SentryReloader(a.pg, a.cfg, a.cfg.Build.ProjectName, a.cfg.Build.Version, a.logger))
 		reloadSub.Register(reloader.SectionClickHouse,
-			bootstrap.ClickHouseOverlayReloader(a.pg, a.cfg, a.logger))
+			bootstrap.ClickHouseReloader(a.pg, a.cfg, a.chMgr,
+				[]bootstrap.WriterReloader{a.chWriter}, a.logger))
 		go reloadSub.Run(ctx)
 	}
 
@@ -167,7 +173,7 @@ func (a *App) startAdminHTTP() error {
 	hc := healthcheck.New(
 		[]healthcheck.Checker{
 			pgpf.HealthChecker("postgres", a.pg),
-			chpf.HealthChecker("clickhouse", a.ch),
+			chpf.HealthChecker("clickhouse", a.chMgr),
 		},
 		nil,
 	)
@@ -241,6 +247,11 @@ func (a *App) Stop(ctx context.Context) error {
 	if a.chWriter != nil {
 		flushCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		a.chWriter.Stop(flushCtx)
+		cancel()
+	}
+	if a.chMgr != nil {
+		closeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		_ = a.chMgr.Close(closeCtx)
 		cancel()
 	}
 	if a.producer != nil {

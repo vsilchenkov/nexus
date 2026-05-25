@@ -64,10 +64,9 @@ func main() {
 
 	// ClickHouse нужен для replay (§7.4.1) и live-tail (§7.4). Если недоступен
 	// — Web стартует, но эти функции вернут 404 на свои эндпоинты.
-	chConn, err := bootstrap.TryClickHouse(ctx, cfg, logger)
-	if err == nil {
-		defer chConn.Close()
-	}
+	// Conn закрывается через web.App.Stop → clickhouse.Manager.Close,
+	// чтобы при hot-reload (Phase 6.3.2.5) закрылся текущий conn, а не исходный.
+	chConn, _ := bootstrap.TryClickHouse(ctx, cfg, logger)
 
 	cipher := bootstrap.MustCipher(logger)
 

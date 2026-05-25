@@ -39,8 +39,10 @@ func main() {
 	// §8.4 / §14.5: накладываем CH-настройки из app_settings ДО подключения.
 	bootstrap.ApplyAppSettings(ctx, pgPool, cfg, logger)
 
+	// Conn закрывается через sender.App.Stop → clickhouse.Manager.Close,
+	// чтобы при hot-reload (§8.4) закрылся ТЕКУЩИЙ conn, а не исходный
+	// (который мог быть уже swap'нут).
 	chConn := bootstrap.MustClickHouse(ctx, cfg, logger)
-	defer chConn.Close()
 
 	redisClient := bootstrap.MustRedis(ctx, cfg, logger)
 	defer redisClient.Close()

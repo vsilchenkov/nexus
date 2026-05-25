@@ -43,11 +43,29 @@ func New(ctx context.Context, c *config.ClickHouseSection) (driver.Conn, error) 
 }
 
 // HealthChecker — healthcheck.Checker, который пингует соединение.
-func HealthChecker(name string, conn driver.Conn) healthcheck.Checker {
+//
+// Принимает ConnProvider, а не driver.Conn напрямую: после hot-reload
+// (Phase 6.3.2.5) Manager подменяет внутренний conn, и healthcheck должен
+// смотреть на актуальный, а не на закрытый старый.
+func HealthChecker(name string, provider ConnProvider) healthcheck.Checker {
 	return healthcheck.CheckerFunc{
 		N: name,
 		F: func(ctx context.Context) error {
+			conn := provider.Conn()
+			if conn == nil {
+				return fmt.Errorf("clickhouse conn is nil")
+			}
 			return conn.Ping(ctx)
 		},
 	}
 }
+
+// StaticProvider оборачивает уже открытый driver.Conn в ConnProvider —
+// для кода, который не нуждается в hot-reload (тесты, утилиты).
+func StaticProvider(c driver.Conn) ConnProvider {
+	return staticProvider{c: c}
+}
+
+type staticProvider struct{ c driver.Conn }
+
+func (s staticProvider) Conn() driver.Conn { return s.c }

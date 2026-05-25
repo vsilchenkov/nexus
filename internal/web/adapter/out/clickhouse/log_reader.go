@@ -11,19 +11,33 @@ import (
 	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
 	"bus/internal/domain"
+	chpf "bus/internal/platform/clickhouse"
 	"bus/internal/platform/logging"
 	"bus/internal/web/usecase/port"
 )
 
+// LogReaderCH принимает ConnProvider, а не raw driver.Conn: при hot-reload
+// (Phase 6.3.2.5) clickhouse.Manager swap'ает внутренний conn, и каждый
+// новый запрос автоматически идёт в свежий клиент.
 type LogReaderCH struct {
-	conn   chdriver.Conn
+	conn   chpf.ConnProvider
 	logger logging.Logger
 }
 
 var _ port.LogReader = (*LogReaderCH)(nil)
 
-func NewLogReader(conn chdriver.Conn, logger logging.Logger) *LogReaderCH {
+func NewLogReader(conn chpf.ConnProvider, logger logging.Logger) *LogReaderCH {
 	return &LogReaderCH{conn: conn, logger: logger}
+}
+
+// liveConn возвращает текущее соединение из ConnProvider или ошибку, если
+// Manager уже закрыт.
+func (r *LogReaderCH) liveConn() (chdriver.Conn, error) {
+	c := r.conn.Conn()
+	if c == nil {
+		return nil, fmt.Errorf("clickhouse conn is nil")
+	}
+	return c, nil
 }
 
 const selectCols = `ID, type, url, method, parameters, request, response,
@@ -39,7 +53,11 @@ func (r *LogReaderCH) GetByID(ctx context.Context, table, id string) (*domain.Lo
 	if !isSafeTableName(table) {
 		return nil, fmt.Errorf("invalid table name: %q", table)
 	}
-	rows, err := r.conn.Query(ctx,
+	conn, err := r.liveConn()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := conn.Query(ctx,
 		fmt.Sprintf(`SELECT %s FROM %s WHERE ID = ? LIMIT 1`, selectCols, table), id)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse select log: %w", err)
@@ -63,7 +81,11 @@ func (r *LogReaderCH) ListSince(ctx context.Context, table string, cursor int64,
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	rows, err := r.conn.Query(ctx, fmt.Sprintf(
+	conn, err := r.liveConn()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := conn.Query(ctx, fmt.Sprintf(
 		`SELECT %s FROM %s WHERE toUnixTimestamp64Milli(toDateTime64(date_request, 3)) > ?
 		 ORDER BY date_request ASC LIMIT ?`, selectCols, table), cursor, limit)
 	if err != nil {

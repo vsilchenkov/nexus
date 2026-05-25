@@ -124,7 +124,7 @@
 | Флаги `--config`, `--debug`, `--version` | ✅ | [platform/config/flags.go](../internal/platform/config/flags.go) |
 | **`app_settings` таблица + REST API + overlay поверх env на старте** | ✅ Phase 6.3.1 | миграция [0006](../migrations/0006_app_settings.up.sql), [domain/app_settings.go](../internal/domain/app_settings.go), [usecase/app_settings.go](../internal/web/usecase/app_settings.go), [http/app_settings_handler.go](../internal/web/adapter/in/http/app_settings_handler.go), [bootstrap/app_settings.go](../internal/platform/bootstrap/app_settings.go) |
 | **Hot-reload Sentry через Redis pub/sub** | ✅ Phase 6.3.2 | [platform/reloader/](../internal/platform/reloader/), [sentry.Reload](../internal/platform/sentry/sentry.go), [bootstrap/reload.go](../internal/platform/bootstrap/reload.go) — Web публикует на канал `databus:config:reload`, Receiver/Sender/Web подписаны и переинициализируют SDK |
-| Полное hot-reload ClickHouse (пересоздание клиента/writer'а) | ⛔ Phase 6.3.2.5 | сейчас reloader только обновляет overlay в cfg; реальный reconnect требует переделки sender pipeline |
+| **Полное hot-reload ClickHouse (пересоздание клиента/writer'а)** | ✅ Phase 6.3.2.5 | [clickhouse.Manager](../internal/platform/clickhouse/manager.go) (атомарный swap conn + delayed close), [chlog.WriterManager](../internal/sender/adapter/out/chlog/manager.go) (пересоздание Writer для смены BufferMaxSize/Workers), [bootstrap.ClickHouseReloader](../internal/platform/bootstrap/reload.go) — Sender и Web swap'ают conn и переподнимают зависимые компоненты без рестарта |
 | **Settings → Sentry / ClickHouse страницы в SPA** | ✅ Phase 6.3.3 | [pages/settings/Sentry.tsx](../web-ui/src/pages/settings/Sentry.tsx), [pages/settings/ClickHouse.tsx](../web-ui/src/pages/settings/ClickHouse.tsx), две новые вкладки в [pages/Settings.tsx](../web-ui/src/pages/Settings.tsx) (видны только admin-роли через `/api/auth/me`) |
 
 ### §9 Высоконагруженность / отказоустойчивость
@@ -190,11 +190,10 @@
 
 ### §15 Критерии приёмки
 
-См. [sections/15-acceptance.md](sections/15-acceptance.md). Покрытие: ~90% пунктов реализовано.
+См. [sections/15-acceptance.md](sections/15-acceptance.md). Покрытие: ~92% пунктов реализовано.
 Не покрыто (требует Phase 6):
 
-- Полное hot-reload ClickHouse (UI настроек уже есть — backend reload пересоздаёт writer/клиент только частично).
-- ClickHouse Settings-страница (UI + проверка соединения / orphaned tables) — базовый UI готов (Phase 6.3.3), не хватает проверки соединения и orphaned tables.
+- ClickHouse Settings-страница: проверка соединения (test connection button) и orphaned tables — UI готов (Phase 6.3.3), сам hot-reload реализован (Phase 6.3.2.5), но кнопки «проверить» и «найти orphan'ы» — нет.
 - Полная Users-страница (с диалогами создания/смены пароля).
 - Полный Audit log с export CSV, diff-двухколоночный для `node.update`.
 - Live-tail UI: фильтры, авто-прокрутка, баннер «N новых записей».
@@ -392,6 +391,38 @@ CSS-переменных, заданных в [globals.css](../web-ui/src/styles
 но Sentry SDK их не отправляет. Это no-op без аппроксимации к ошибкам — не пугайтесь
 «отсутствующих» транзакций в Sentry, проверьте config.
 
+### 4.10.1 Hot-reload ClickHouse — Manager владеет conn, consumers через ConnProvider
+
+При hot-reload (Phase 6.3.2.5) важно не оставить «висящих» ссылок на старый
+`driver.Conn`, иначе после swap'а они продолжат пилить закрытое соединение.
+Архитектурное решение: вынесли владение conn'ом в
+[clickhouse.Manager](../internal/platform/clickhouse/manager.go), а consumers
+(`chlog.Writer`, `LogReaderCH`, `CHHousekeeping`, `clickhouse.HealthChecker`)
+принимают `ConnProvider` (одно-методный интерфейс с `Conn() driver.Conn`)
+вместо raw `driver.Conn`. Каждый вызов внутри consumer'а заново берёт
+актуальный conn — swap прозрачен.
+
+Старый conn закрывается с задержкой `closeDelay` (по умолчанию 15 секунд),
+чтобы in-flight batch insert и SELECT успели завершиться. Это компромисс
+без ref-counting: при 15-секундной задержке хватает на типовые операции
+chlog.flushTable (≤10 сек timeout) и LogReaderCH.GetByID. Если в будущем
+понадобится точный учёт активных пользователей — переключиться на счётчик
+`atomic.Int32` вокруг каждого `Conn()` вызова.
+
+Полное пересоздание `chlog.Writer` (для смены `BufferMaxSize`/`Workers`/
+`BatchSize`) — отдельная задача, потому что эти поля фиксируются при
+создании канала и пула горутин. Это делает
+[chlog.WriterManager](../internal/sender/adapter/out/chlog/manager.go):
+обёртка над `*Writer`, реализующая `port.LogWriter`. При `Reload`
+поднимает свежий `Writer` с актуальным cfg, делает `Stop` (с flush'ем
+остатка) на старом. Если в момент swap'а кто-то писал — `Write`
+делегируется новому writer'у через RWMutex, потерь нет.
+
+`bootstrap.ClickHouseReloader` координирует: overlay cfg ← app_settings →
+`Manager.Reload(ctx)` (open + ping + swap) → `WriterReloader.Reload(ctx)`
+для каждого зарегистрированного writer'а. При ошибке открытия нового
+conn'а старый остаётся живым — битые UI-настройки не убивают поток логов.
+
 ### 4.11 Prometheus-метрики живут в собственном registry, не default
 
 [platform/metrics.New(service)](../internal/platform/metrics/metrics.go) создаёт
@@ -499,27 +530,25 @@ make proto                                     # перегенерация send
 
 Если будете расширять — вот логичные следующие шаги, в порядке полезности:
 
-1. **Полное hot-reload ClickHouse** (Phase 6.3.2.5). UI и backend `app_settings`
-   готовы (Phase 6.3.3), Redis pub/sub публикует событие `clickhouse` — но
-   reloader сейчас только обновляет overlay в cfg. Полный reconnect требует
-   передать в `chlog.Writer` фабрику клиента или вынести его создание в
-   менеджер, реагирующий на `reloader.Section("clickhouse")`.
-
-2. **Полная Users-страница SPA** с диалогами создания, смены пароля, переключения
+1. **Полная Users-страница SPA** с диалогами создания, смены пароля, переключения
    статуса. Backend готов, нужен только UI.
 
-3. **Live-tail UI улучшения**: фильтры, авто-прокрутка, баннер «N новых записей».
+2. **Live-tail UI улучшения**: фильтры, авто-прокрутка, баннер «N новых записей».
 
-4. **Полные Swagger-аннотации на 100% endpoints.** Сейчас покрыто ~60% — нужно
+3. **Полные Swagger-аннотации на 100% endpoints.** Сейчас покрыто ~60% — нужно
    аннотировать остальные user/audit/token handlers.
 
-5. **CSV экспорт audit log** в [pages/AuditLog.tsx](../web-ui/src/pages/AuditLog.tsx).
+4. **CSV экспорт audit log** в [pages/AuditLog.tsx](../web-ui/src/pages/AuditLog.tsx).
 
-6. **GitHub Actions workflow** (план — см. TESTING.md → CI/CD).
+5. **GitHub Actions workflow** (план — см. TESTING.md → CI/CD).
 
-7. **L2 in-memory LRU-кеш** в Receiver для случая Redis-flutter'а (§9.2 ТЗ).
+6. **L2 in-memory LRU-кеш** в Receiver для случая Redis-flutter'а (§9.2 ТЗ).
 
-8. **GoReleaser** для бинарей + docker images, если будет нужен релизный pipeline.
+7. **GoReleaser** для бинарей + docker images, если будет нужен релизный pipeline.
 
-9. **Grafana дашборд** под `databus_*` метрики и алерт на `databus_kafka_lag > N`,
+8. **Grafana дашборд** под `databus_*` метрики и алерт на `databus_kafka_lag > N`,
    `databus_clickhouse_errors_total rate > 0`.
+
+9. **ClickHouse Settings: проверка соединения и orphaned-tables в UI** —
+   hot-reload сам работает, но оператор не видит, успешно ли применились
+   новые настройки. Нужны кнопка «test connection» и список orphan-таблиц.

@@ -17,6 +17,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 
 	"bus/internal/platform/bootstrap"
+	chpf "bus/internal/platform/clickhouse"
 	"bus/internal/platform/config"
 	"bus/internal/platform/crypto"
 	"bus/internal/platform/healthcheck"
@@ -43,6 +44,7 @@ type App struct {
 	pg      *pgxpool.Pool
 	redis   *goredis.Client
 	ch      chdriver.Conn
+	chMgr   *chpf.Manager
 	cipher  *crypto.Cipher
 	metrics *metrics.Metrics
 
@@ -108,12 +110,10 @@ func (a *App) Start(ctx context.Context) error {
 
 	// Подписчик hot-reload (§14.5). Web сам слушает события, чтобы admin-инстансы
 	// в кластере применили изменения, отправленные через другой инстанс.
+	// ClickHouseReloader регистрируется ниже — после создания chMgr (если CH доступен).
 	reloadSub := reloader.NewSubscriber(a.redis, a.logger)
 	reloadSub.Register(reloader.SectionSentry,
 		bootstrap.SentryReloader(a.pg, a.cfg, a.cfg.Build.ProjectName, a.cfg.Build.Version, a.logger))
-	reloadSub.Register(reloader.SectionClickHouse,
-		bootstrap.ClickHouseOverlayReloader(a.pg, a.cfg, a.logger))
-	go reloadSub.Run(ctx)
 
 	authHandler := httpadapter.NewAuthHandler(authUC, &a.cfg.Web, sessionTTL, a.logger)
 	userHandler := httpadapter.NewUserHandler(userUC, authUC, a.logger)
@@ -128,12 +128,15 @@ func (a *App) Start(ctx context.Context) error {
 
 	// Replay + live-tail зависят от ClickHouse-чтения и HTTP-диспетчера
 	// к Receiver. Подключаем только если CH-клиент инициализирован.
+	// ConnProvider — clickhouse.Manager, чтобы при hot-reload (Phase 6.3.2.5)
+	// LogReaderCH автоматически переключился на новый conn.
 	var (
 		replayHandler *httpadapter.ReplayHandler
 		logsHandler   *httpadapter.LogsHandler
 	)
 	if a.ch != nil {
-		logReader := chreader.NewLogReader(a.ch, a.logger)
+		a.chMgr = chpf.NewManager(a.ch, chpf.New, &a.cfg.ClickHouse, a.logger)
+		logReader := chreader.NewLogReader(a.chMgr, a.logger)
 		dispatcher := rcvdispatcher.NewHTTPDispatcher(a.cfg.Web.ReceiverURL, 30*time.Second, a.logger)
 		replayUC := usecase.NewReplayUsecase(
 			logReader, nodeRepo, dispatcher, rl, auditUC,
@@ -142,7 +145,18 @@ func (a *App) Start(ctx context.Context) error {
 		logsUC := usecase.NewLogsUsecase(logReader, nodeRepo, a.logger)
 		replayHandler = httpadapter.NewReplayHandler(replayUC, a.logger)
 		logsHandler = httpadapter.NewLogsHandler(logsUC, a.logger)
+
+		// ClickHouse hot-reload: Web не держит chlog.Writer, поэтому writers пуст.
+		// Manager.Reload swap'нет conn — LogReaderCH сразу пойдёт через новый.
+		reloadSub.Register(reloader.SectionClickHouse,
+			bootstrap.ClickHouseReloader(a.pg, a.cfg, a.chMgr, nil, a.logger))
+	} else {
+		// CH-клиент недоступен — но overlay в cfg всё равно полезно обновлять,
+		// чтобы при следующем рестарте подхватились свежие значения.
+		reloadSub.Register(reloader.SectionClickHouse,
+			bootstrap.ClickHouseOverlayReloader(a.pg, a.cfg, a.logger))
 	}
+	go reloadSub.Run(ctx)
 
 	mw := httpadapter.Middlewares{
 		APITokenAuth: httpadapter.APITokenAuthMiddleware(tokenUC, rl, a.cfg.Web.APITokenRateLimitPerMin, a.logger),
@@ -204,6 +218,11 @@ func (a *App) Stop(ctx context.Context) error {
 	a.logger.Info("web shutting down")
 	if err := a.srv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("web shutdown: %w", err)
+	}
+	if a.chMgr != nil {
+		closeCtx, cancelClose := context.WithTimeout(ctx, 5*time.Second)
+		_ = a.chMgr.Close(closeCtx)
+		cancelClose()
 	}
 	return nil
 }

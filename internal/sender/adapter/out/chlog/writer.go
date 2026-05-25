@@ -18,8 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-
+	chpf "bus/internal/platform/clickhouse"
 	"bus/internal/domain"
 	"bus/internal/platform/config"
 	"bus/internal/platform/logging"
@@ -29,7 +28,7 @@ import (
 
 // Writer реализует port.LogWriter.
 type Writer struct {
-	conn    driver.Conn
+	conn    chpf.ConnProvider
 	cfg     *config.ClickHouseSection
 	logger  logging.Logger
 	metrics *metrics.Metrics
@@ -53,7 +52,7 @@ type job struct {
 	rec   *domain.LogRecord
 }
 
-func New(conn driver.Conn, cfg *config.ClickHouseSection, logger logging.Logger) *Writer {
+func New(conn chpf.ConnProvider, cfg *config.ClickHouseSection, logger logging.Logger) *Writer {
 	return NewWithFallback(conn, cfg, "", nil, logger)
 }
 
@@ -61,7 +60,7 @@ func New(conn driver.Conn, cfg *config.ClickHouseSection, logger logging.Logger)
 // и опциональными Prometheus-метриками (§6 ТЗ).
 // fallbackDir = "" — fallback отключён, проваленные батчи теряются (как в Phase 1).
 // m = nil — метрики не публикуются (тестовый режим).
-func NewWithFallback(conn driver.Conn, cfg *config.ClickHouseSection, fallbackDir string, m *metrics.Metrics, logger logging.Logger) *Writer {
+func NewWithFallback(conn chpf.ConnProvider, cfg *config.ClickHouseSection, fallbackDir string, m *metrics.Metrics, logger logging.Logger) *Writer {
 	w := &Writer{
 		conn:     conn,
 		cfg:      cfg,
@@ -215,7 +214,11 @@ func (w *Writer) insertBatch(ctx context.Context, table string, batch []*domain.
 	bctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	bt, err := w.conn.PrepareBatch(bctx, fmt.Sprintf(insertSQL, table))
+	conn := w.conn.Conn()
+	if conn == nil {
+		return fmt.Errorf("clickhouse conn is nil")
+	}
+	bt, err := conn.PrepareBatch(bctx, fmt.Sprintf(insertSQL, table))
 	if err != nil {
 		return fmt.Errorf("prepare batch %s: %w", table, err)
 	}

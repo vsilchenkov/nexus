@@ -5,6 +5,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	chpf "bus/internal/platform/clickhouse"
 	"bus/internal/platform/config"
 	"bus/internal/platform/logging"
 	"bus/internal/platform/reloader"
@@ -33,13 +34,11 @@ func SentryReloader(pool *pgxpool.Pool, cfg *config.Config, projectName, version
 	}
 }
 
-// ClickHouseOverlayReloader возвращает Reloader, который перечитывает
-// CH overlay в cfg (без пересоздания клиента). Это упрощённый вариант
-// hot-reload: фактическое пересоздание chConn / chlog.Writer требует
-// глубокой переделки sender pipeline и будет реализовано в Phase 6.3.2.5.
-//
-// Сейчас reloader полезен для аудита и метрики — оператор видит «settings
-// applied», и при следующем рестарте CH-клиент подхватит новые значения.
+// ClickHouseOverlayReloader возвращает Reloader, который только
+// перечитывает CH overlay в cfg, без пересоздания клиента. Используется
+// в инстансах, у которых нет ClickHouse-клиента (например Receiver),
+// — чтобы overlay в их config'е оставался свежим и при добавлении
+// CH-зависимости в будущем не было рассинхрона.
 func ClickHouseOverlayReloader(pool *pgxpool.Pool, cfg *config.Config, logger logging.Logger) reloader.Reloader {
 	return func(ctx context.Context) error {
 		o, err := readAppSettings(ctx, pool)
@@ -47,8 +46,60 @@ func ClickHouseOverlayReloader(pool *pgxpool.Pool, cfg *config.Config, logger lo
 			return err
 		}
 		overlayClickHouse(cfg, o)
-		logger.Info("clickhouse settings overlay refreshed; full reconnect deferred to restart",
+		logger.Info("clickhouse settings overlay refreshed",
 			logger.Str("host", cfg.ClickHouse.Host))
+		return nil
+	}
+}
+
+// WriterReloader — узкий интерфейс, который реализует chlog.WriterManager
+// (sender) и в будущем — любой другой держатель CH-зависимостей. Объявлен
+// в bootstrap'е, чтобы избежать import cycle с sender/chlog (config →
+// bootstrap; bootstrap не импортирует sender).
+type WriterReloader interface {
+	Reload(ctx context.Context) error
+}
+
+// ClickHouseReloader возвращает Reloader, который полностью применяет
+// изменения CH-настроек без рестарта (§8.4 / §14.5 / §9 ТЗ, Phase 6.3.2.5):
+//
+//  1. перечитывает overlay из app_settings и накладывает на cfg;
+//  2. вызывает chpf.Manager.Reload — открывает новое соединение с актуальным
+//     адресом/учёткой, делает Ping и атомарно подменяет внутренний conn;
+//  3. для каждого WriterReloader (chlog.WriterManager) вызывает Reload —
+//     старый Writer flush'ится и останавливается, поднимается новый
+//     с актуальными BufferMaxSize/Workers/BatchSize.
+//
+// Если open/ping нового conn'а упал — старый conn остаётся живым, writer
+// не пересоздаётся, ошибка возвращается в reloader.Subscriber.handle
+// и логируется. Это гарантирует, что битые настройки UI не «убьют» поток
+// логов.
+func ClickHouseReloader(pool *pgxpool.Pool, cfg *config.Config, mgr *chpf.Manager, writers []WriterReloader, logger logging.Logger) reloader.Reloader {
+	return func(ctx context.Context) error {
+		o, err := readAppSettings(ctx, pool)
+		if err != nil {
+			return err
+		}
+		overlayClickHouse(cfg, o)
+
+		if mgr != nil {
+			if err := mgr.Reload(ctx); err != nil {
+				return err
+			}
+		}
+		for _, w := range writers {
+			if w == nil {
+				continue
+			}
+			if err := w.Reload(ctx); err != nil {
+				return err
+			}
+		}
+		logger.Info("clickhouse hot-reload applied",
+			logger.Str("host", cfg.ClickHouse.Host),
+			logger.Int("port", cfg.ClickHouse.Port),
+			logger.Str("db", cfg.ClickHouse.Database),
+			logger.Int("writers_recreated", len(writers)))
 		return nil
 	}
 }

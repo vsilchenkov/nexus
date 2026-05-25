@@ -6,8 +6,7 @@ import (
 	"strings"
 	"time"
 
-	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-
+	chpf "bus/internal/platform/clickhouse"
 	"bus/internal/domain"
 	"bus/internal/platform/logging"
 )
@@ -28,13 +27,13 @@ type NodeLister interface {
 //
 // для всех партиций со столбца system.parts, чья дата старше cutoff.
 type CHHousekeeping struct {
-	ch     chdriver.Conn
+	ch     chpf.ConnProvider
 	nodes  NodeLister
 	period time.Duration
 	logger logging.Logger
 }
 
-func NewCHHousekeeping(ch chdriver.Conn, nodes NodeLister, logger logging.Logger) *CHHousekeeping {
+func NewCHHousekeeping(ch chpf.ConnProvider, nodes NodeLister, logger logging.Logger) *CHHousekeeping {
 	return &CHHousekeeping{ch: ch, nodes: nodes, period: 24 * time.Hour, logger: logger}
 }
 
@@ -94,7 +93,11 @@ func (h *CHHousekeeping) dropPartitionsOlderThan(ctx context.Context, table stri
 	}
 	cutoff := time.Now().AddDate(0, 0, -retentionDays)
 
-	rows, err := h.ch.Query(ctx, `
+	conn := h.ch.Conn()
+	if conn == nil {
+		return 0, fmt.Errorf("clickhouse conn is nil")
+	}
+	rows, err := conn.Query(ctx, `
 SELECT DISTINCT partition
 FROM system.parts
 WHERE database = ? AND table = ? AND active = 1 AND max_date < ?
@@ -123,7 +126,7 @@ WHERE database = ? AND table = ? AND active = 1 AND max_date < ?
 			continue
 		}
 		stmt := fmt.Sprintf("ALTER TABLE %s DROP PARTITION '%s'", table, p)
-		if err := h.ch.Exec(ctx, stmt); err != nil {
+		if err := conn.Exec(ctx, stmt); err != nil {
 			return 0, fmt.Errorf("drop partition %s/%s: %w", table, p, err)
 		}
 	}
