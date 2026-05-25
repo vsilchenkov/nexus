@@ -68,11 +68,21 @@ func (h *NodeHandler) Create(c *gin.Context) {
 		return
 	}
 	n := reqToDomain(req)
-	if err := h.uc.Create(c.Request.Context(), n); err != nil {
+	if err := h.uc.Create(c.Request.Context(), actorFromCtx(c), n); err != nil {
 		h.replyDomainError(c, err, "node.create")
 		return
 	}
 	c.JSON(http.StatusCreated, nodeToResponse(n))
+}
+
+// actorFromCtx — извлекает Actor для audit-логирования.
+// В Phase 2 нет аутентификации → SystemActor (user_login="system") + IP клиента.
+// В Phase 3 будет читать user_id/user_login из Gin-context, куда положит
+// auth-middleware после проверки session-cookie.
+func actorFromCtx(c *gin.Context) usecase.Actor {
+	a := usecase.SystemActor()
+	a.IPAddress = c.ClientIP()
+	return a
 }
 
 func (h *NodeHandler) Update(c *gin.Context) {
@@ -101,7 +111,7 @@ func (h *NodeHandler) Update(c *gin.Context) {
 		updated.IncomingAuthCredentials = existing.IncomingAuthCredentials
 	}
 
-	if err := h.uc.Update(c.Request.Context(), updated); err != nil {
+	if err := h.uc.Update(c.Request.Context(), actorFromCtx(c), updated); err != nil {
 		h.replyDomainError(c, err, "node.update")
 		return
 	}
@@ -109,7 +119,7 @@ func (h *NodeHandler) Update(c *gin.Context) {
 }
 
 func (h *NodeHandler) Delete(c *gin.Context) {
-	if err := h.uc.Delete(c.Request.Context(), c.Param("id")); err != nil {
+	if err := h.uc.Delete(c.Request.Context(), actorFromCtx(c), c.Param("id")); err != nil {
 		h.replyDomainError(c, err, "node.delete")
 		return
 	}

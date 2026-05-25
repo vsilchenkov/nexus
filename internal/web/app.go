@@ -60,9 +60,12 @@ func (a *App) Start(ctx context.Context) error {
 	// Сборка слоёв (Clean Architecture, §17.2).
 	nodeRepo := pgrepo.NewNodeRepoPg(a.pg, a.cipher, a.logger)
 	nodeCache := rediscache.NewNodeCacheRedis(a.redis, a.logger)
+	auditRepo := pgrepo.NewAuditRepoPg(a.pg, a.logger)
+	auditUC := usecase.NewAuditUsecase(auditRepo, a.logger)
 	nodeUC := usecase.NewNodeUsecase(
 		nodeRepo,
 		nodeCache,
+		auditUC,
 		time.Duration(a.cfg.Redis.NodeTTLSec)*time.Second,
 		a.cfg.Web.NodesHardLimit,
 		a.logger,
