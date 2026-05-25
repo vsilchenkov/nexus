@@ -39,7 +39,9 @@ func main() {
 	redisClient := bootstrap.MustRedis(ctx, cfg, logger)
 	defer redisClient.Close()
 
-	app := web.New(cfg, pgPool, redisClient, logger)
+	cipher := bootstrap.MustCipher(logger)
+
+	app := web.New(cfg, pgPool, redisClient, cipher, logger)
 
 	if err := runner.Run(serviceName, displayName, description, app, logger); err != nil {
 		logger.ErrorWithOp("service stopped", err, "main")

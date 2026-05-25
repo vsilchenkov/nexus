@@ -1,7 +1,7 @@
 // Package web — Web Service (§7 и §11 ТЗ).
 //
-// В Phase 0 — только healthcheck (/health, /ready) и /metrics.
-// REST API (/api/*), SPA через embed.FS и Swagger — Phase 1/3.
+// В Phase 1 — healthcheck + REST /api/nodes CRUD. SPA через embed.FS,
+// аутентификация, Swagger, audit log — Phase 3.
 package web
 
 import (
@@ -17,10 +17,15 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 
 	"bus/internal/platform/config"
+	"bus/internal/platform/crypto"
 	"bus/internal/platform/healthcheck"
 	"bus/internal/platform/logging"
 	pgpf "bus/internal/platform/pg"
 	redispf "bus/internal/platform/redis"
+	httpadapter "bus/internal/web/adapter/in/http"
+	pgrepo "bus/internal/web/adapter/out/postgres"
+	rediscache "bus/internal/web/adapter/out/redis"
+	"bus/internal/web/usecase"
 )
 
 type App struct {
@@ -28,12 +33,13 @@ type App struct {
 	logger logging.Logger
 	pg     *pgxpool.Pool
 	redis  *goredis.Client
+	cipher *crypto.Cipher
 
 	srv *http.Server
 }
 
-func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, logger logging.Logger) *App {
-	return &App{cfg: cfg, logger: logger, pg: pg, redis: redis}
+func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, cipher *crypto.Cipher, logger logging.Logger) *App {
+	return &App{cfg: cfg, logger: logger, pg: pg, redis: redis, cipher: cipher}
 }
 
 func (a *App) Start(ctx context.Context) error {
@@ -49,8 +55,23 @@ func (a *App) Start(ctx context.Context) error {
 		nil,
 	)
 	hc.Register(r)
-
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
+
+	// Сборка слоёв (Clean Architecture, §17.2).
+	nodeRepo := pgrepo.NewNodeRepoPg(a.pg, a.cipher, a.logger)
+	nodeCache := rediscache.NewNodeCacheRedis(a.redis, a.logger)
+	nodeUC := usecase.NewNodeUsecase(
+		nodeRepo,
+		nodeCache,
+		time.Duration(a.cfg.Redis.NodeTTLSec)*time.Second,
+		a.cfg.Web.NodesHardLimit,
+		a.logger,
+	)
+	nodeHandler := httpadapter.NewNodeHandler(nodeUC, a.logger)
+
+	httpadapter.RegisterAPI(r, httpadapter.Handlers{
+		Node: nodeHandler,
+	})
 
 	a.srv = &http.Server{
 		Addr:              a.cfg.Web.HTTPAddr,
