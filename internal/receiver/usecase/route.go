@@ -78,26 +78,38 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 		return nil, err
 	}
 
-	targetURL, cleanQuery, err := ResolveURL(node, in.Query)
+	// Динамическая авторизация: извлекаем и удаляем служебные значения
+	// из query/headers/body ДО ResolveURL и pickForwardHeaders, чтобы
+	// очищенные данные ушли внешнему узлу (§3.5 «Исключение»).
+	effHeader := in.Header
+	effQuery := in.Query
+	effBody := in.Body
+	var authHeader string
+
+	if node.AuthType.IsDynamic() {
+		dyn, derr := BuildDynamicOutgoingAuth(node, in.Header, in.Query, in.Body)
+		if derr != nil {
+			return nil, derr
+		}
+		authHeader = dyn.Header
+		effHeader = dyn.Headers
+		effQuery = dyn.Query
+		effBody = dyn.Body
+	} else {
+		authHeader, err = BuildOutgoingAuth(node)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	targetURL, cleanQuery, err := ResolveURL(node, effQuery)
 	if err != nil {
 		return nil, err
 	}
 	finalURL := appendQuery(targetURL, cleanQuery)
 
-	// Outgoing auth: для AuthType=none/basic/token используем BuildOutgoingAuth.
-	// Динамические режимы — Phase 1.9.
-	var authHeader string
-	if node.AuthType.IsDynamic() {
-		authHeader, err = BuildDynamicOutgoingAuth(node, in.Header, in.Query, in.Body)
-	} else {
-		authHeader, err = BuildOutgoingAuth(node)
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	headers := pickForwardHeaders(in.Header, node.ForwardHeaders)
-	if ct := in.Header.Get("Content-Type"); ct != "" {
+	headers := pickForwardHeaders(effHeader, node.ForwardHeaders)
+	if ct := effHeader.Get("Content-Type"); ct != "" {
 		headers["Content-Type"] = ct
 	}
 
@@ -109,7 +121,7 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 		Method:           in.Method,
 		Auth:             &senderv1.AuthConfig{AuthorizationHeader: authHeader},
 		Headers:          headers,
-		Body:             in.Body,
+		Body:             effBody,
 		TimeoutMs:        node.TimeoutMs,
 		RetryCount:       node.RetryCount,
 		RetryBackoffMs:   node.RetryBackoffMs,
