@@ -107,6 +107,10 @@ func (a *App) Start(ctx context.Context) error {
 	// именно SPA-fallback'ом.
 	httpadapter.SPAFallback(r, static.FS())
 
+	// Housekeeping cron: ежедневное удаление старых audit-записей (§7.13).
+	hk := usecase.NewHousekeeping(auditUC, a.cfg.Web.AuditRetentionDays, a.logger)
+	go hk.Run(ctx)
+
 	a.srv = &http.Server{
 		Addr:              a.cfg.Web.HTTPAddr,
 		Handler:           r,

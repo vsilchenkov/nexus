@@ -1,10 +1,26 @@
 # DataBus
 
-Шина данных — три Go-сервиса (Receiver, Sender, Web), которые принимают входящие HTTP-запросы, маршрутизируют их на сконфигурированные внешние узлы и логируют все вызовы. Конфигурация маршрутов хранится в PostgreSQL, редактируется через веб-UI. Полное ТЗ — [data_bus_spec.md](./data_bus_spec.md).
+Шина данных — три Go-сервиса (Receiver, Sender, Web), которые принимают входящие HTTP-запросы, маршрутизируют их на сконфигурированные внешние узлы и логируют все вызовы. Конфигурация маршрутов хранится в PostgreSQL, редактируется через REST API и (в будущем) веб-UI. Полное ТЗ — [data_bus_spec.md](./data_bus_spec.md).
 
-> **Статус: Phase 0 (фундамент).** Поднимается весь docker-стек, три сервиса отвечают на `/health` и `/ready`, миграции применяются автоматически. Бизнес-логика (приём запросов, gRPC, ClickHouse-логи, UI) — Phase 1+.
+## Статус
 
-## Зависимости (минимальные версии)
+| Фаза     | Что готово                                                                       |
+|----------|----------------------------------------------------------------------------------|
+| Phase 0  | Скелет, docker-compose, healthcheck, миграции, kardianos/service runner          |
+| Phase 1  | Sync end-to-end: /v1/request/* → gRPC к Sender → внешний URL; ClickHouse-логи    |
+| Phase 1  | Все режимы auth (none/basic/token/token_from_request/basic_from_request)         |
+| Phase 1  | URL-режимы static / from_request с allowlist                                     |
+| Phase 1  | AES-256-GCM шифрование auth_credentials в БД                                     |
+| Phase 2  | Async /v1/requestAsync/* → Kafka (databus.async/dlq); Sender-consumer; paused-pacing |
+| Phase 2  | Circuit breaker + rate-limit (Redis); audit log таблица + запись для CRUD узлов  |
+| Phase 3  | Web auth: users CRUD, sessions в Redis, login/logout/me, RBAC, --set-admin-password CLI |
+| Phase 3  | API-токены: SHA-256 hash, scopes, rate-limit, audit                              |
+| Phase 3  | SPA каркас через embed.FS (index.html-заглушка с REST-документацией)             |
+| Phase 4  | loadtest бинарь с pass/fail-критериями (§10.2)                                   |
+| Phase 4  | unit-тесты критических usecase'ов; housekeeping cron (audit retention)           |
+| Out-of-scope (v2) | полноценный React SPA, integration testcontainers, ClickHouse partition drop, Grafana dashboards, KMS-интеграция |
+
+## Зависимости
 
 | Компонент    | Версия |
 |--------------|--------|
@@ -18,22 +34,51 @@
 ## Быстрый старт через Docker
 
 ```bash
-cp .env.example .env       # отредактируйте пароли
+cp .env.example .env       # отредактируйте пароли + ENCRYPTION_KEY
 cp config/config.example.yml config/config.yml
 docker compose -f deploy/docker-compose.yml up -d
-curl http://localhost:8080/health   # receiver
-curl http://localhost:8000/health   # web
+
+# bootstrap пароля admin (миграция 0002 создаёт его с password_hash=NULL)
+make set-admin-password PASSWORD=mySecretPass
+
+# проверка
+curl http://localhost:8000/health
+curl -X POST http://localhost:8000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"login":"admin","password":"mySecretPass"}'
 ```
 
-Веб-UI (Phase 3) — `http://localhost:8000`, креды по умолчанию `admin/admin`.
+UI-заглушка с REST-документацией: `http://localhost:8000/`.
+
+## Создание первого узла и тестовый запрос
+
+```bash
+# из под admin-сессии (cookie databus_session):
+curl -X POST http://localhost:8000/api/nodes -b cookies.txt \
+  -H "Content-Type: application/json" \
+  -d '{
+    "path": "test/echo",
+    "root_method": "request",
+    "target_url": "https://httpbin.org/anything",
+    "auth_type": "none",
+    "incoming_auth_type": "none",
+    "clickhouse_table": "vika_logs.test_echo"
+  }'
+
+# создать таблицу в ClickHouse (схема из §4.3 ТЗ — TODO Phase 3 UI помощник)
+
+# отправить запрос через шину:
+curl -X POST http://localhost:8080/v1/request/test/echo \
+  -H "Content-Type: application/json" \
+  -d '{"hello":"world"}'
+```
 
 ## Запуск через Makefile (локальная разработка)
 
-Поднимаем только инфраструктуру в Docker; сервисы запускаем локально через `go run`:
-
 ```bash
 make docker-up-dev          # postgres + redis + clickhouse + kafka + prometheus
-make migrate-up             # накатить миграции
+make migrate-up
+make set-admin-password PASSWORD=...
 make run-receiver           # в одном терминале
 make run-sender             # во втором
 make run-web                # в третьем
@@ -42,12 +87,11 @@ make run-web                # в третьем
 ### Windows
 
 `make` ставится одним из:
-- `choco install make` (Chocolatey)
+- `choco install make` (Chocolatey, требует admin)
 - `scoop install make`
-- `mingw32-make` (входит в MSYS2 / TDM-GCC)
+- `mingw32-make`
 
-Каждый бинарь дополнительно можно установить как Windows-сервис:
-
+Каждый бинарь также устанавливается как Windows-сервис (kardianos/service):
 ```cmd
 bin\receiver.exe install
 sc start DataBusReceiverService
@@ -55,42 +99,42 @@ sc start DataBusReceiverService
 
 ## Конфигурация
 
-- `config/config.yml` — основной конфиг, **не коммитится в git**. Шаблон — `config/config.example.yml`.
-- `config/config_debug.yml` — конфиг для локальной разработки (адреса `localhost`, Sentry off).
-- `.env` — секреты (пароли, токены), **не коммитится**. Шаблон — `.env.example`.
-- Подстановка `${VAR}` / `${VAR:default}` поддерживается в YAML.
+- `config/config.yml` — production, в git не коммитится. Шаблон — `config/config.example.yml`.
+- `config/config_debug.yml` — localhost-адреса для `make run-*`.
+- `.env` — секреты, в git не коммитится.
 
-Выбор конфига (по приоритету):
-1. Флаг `--config /path/to/file.yml` (или `-c`)
-2. Переменная окружения `DATABUS_CONFIG`
-3. Флаг `--debug` → `./config/config_debug.yml`
-4. Дефолт: `./config/config.yml`
+Выбор конфига по приоритету: `--config` → `$DATABUS_CONFIG` → `--debug` → `config/config.yml`.
 
 ## API
 
-- Receiver — HTTP `:8080`. В Phase 0 доступен только `/health`, `/ready`, `/metrics`.
-- Sender — gRPC `:9090` (healthcheck сервис), admin HTTP `:9091` для `/health`, `/ready`, `/metrics`.
-- Web — HTTP `:8000`. В Phase 0 доступен только `/health`, `/ready`, `/metrics`.
+- Receiver `:8080` — `/v1/request/*`, `/v1/requestAsync/*`, `/health`, `/ready`, `/metrics`.
+- Sender `:9090` (gRPC SenderService) + admin `:9091` (`/health`, `/ready`, `/metrics`).
+- Web `:8000` — `/api/*`, SPA fallback, `/health`, `/ready`, `/metrics`.
 
-Swagger UI (Phase 1+) — `http://localhost:8080/swagger/`, `http://localhost:8000/swagger/`.
+REST API задокументировано в [internal/web/static/index.html](./internal/web/static/index.html) (он же — UI-заглушка при открытии `http://localhost:8000/`).
 
 ## Тестирование
 
-См. [TESTING.md](./TESTING.md) для подробной инструкции.
+См. [TESTING.md](./TESTING.md).
 
 ## Структура проекта
 
 ```
-/cmd               # точки входа (receiver, sender, web)
+/cmd
+  /receiver, /sender, /web, /loadtest
 /internal
-  /platform        # общие пакеты (config, logging, sentry, runner, healthcheck, pg, redis, clickhouse, kafka, bootstrap)
-  /receiver        # бизнес-логика Receiver
-  /sender          # бизнес-логика Sender
-  /web             # бизнес-логика Web
+  /platform        # общая инфраструктура (config, logging, sentry, runner,
+                   #   healthcheck, pg, redis, clickhouse, kafka, crypto,
+                   #   ratelimit, circuitbreaker, bootstrap)
+  /domain          # shared kernel (Node, User, Session, LogRecord, AuditEntry, APIToken)
+  /receiver        # Receiver: handlers, usecase, gRPC client, NodeReader
+  /sender          # Sender: gRPC server, Kafka consumer, HTTP-клиент, ClickHouse writer
+  /web             # Web: handlers, usecase, repo, SPA static
+/proto/sender/v1   # .proto + сгенерированные pb.go / pb_grpc.go
 /migrations        # SQL-миграции (golang-migrate)
-/config            # YAML-конфиги
+/config            # YAML
 /deploy            # docker-compose, Dockerfile, prometheus.yml
-/web-ui            # SPA (Phase 3)
+/web-ui            # каркас фронта (см. README в каталоге)
 ```
 
 ## Лицензия
