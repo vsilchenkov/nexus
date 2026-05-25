@@ -21,6 +21,7 @@ import (
 	"bus/internal/platform/healthcheck"
 	"bus/internal/platform/logging"
 	pgpf "bus/internal/platform/pg"
+	"bus/internal/platform/ratelimit"
 	redispf "bus/internal/platform/redis"
 	httpadapter "bus/internal/web/adapter/in/http"
 	pgrepo "bus/internal/web/adapter/out/postgres"
@@ -78,17 +79,24 @@ func (a *App) Start(ctx context.Context) error {
 	authUC := usecase.NewAuthUsecase(userRepo, sessionRepo, auditUC, sessionTTL, a.logger)
 	userUC := usecase.NewUserUsecase(userRepo, sessionRepo, auditUC, a.logger)
 
+	tokenRepo := pgrepo.NewAPITokenRepoPg(a.pg, a.logger)
+	tokenUC := usecase.NewAPITokenUsecase(tokenRepo, userRepo, auditUC, a.logger)
+
 	authHandler := httpadapter.NewAuthHandler(authUC, &a.cfg.Web, sessionTTL, a.logger)
 	userHandler := httpadapter.NewUserHandler(userUC, authUC, a.logger)
+	tokenHandler := httpadapter.NewAPITokenHandler(tokenUC, a.logger)
 
+	rl := ratelimit.New(a.redis)
 	mw := httpadapter.Middlewares{
-		Auth:         httpadapter.AuthMiddleware(authUC, &a.cfg.Web),
+		APITokenAuth: httpadapter.APITokenAuthMiddleware(tokenUC, rl, a.cfg.Web.APITokenRateLimitPerMin, a.logger),
+		SessionAuth:  httpadapter.AuthMiddleware(authUC, &a.cfg.Web),
 		RequireAdmin: httpadapter.RequireRole("admin"),
 	}
 	httpadapter.RegisterAPI(r, httpadapter.Handlers{
-		Auth: authHandler,
-		Node: nodeHandler,
-		User: userHandler,
+		Auth:  authHandler,
+		Node:  nodeHandler,
+		User:  userHandler,
+		Token: tokenHandler,
 	}, mw)
 
 	a.srv = &http.Server{

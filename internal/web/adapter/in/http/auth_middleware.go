@@ -21,6 +21,11 @@ const ctxSessionKey = "databus.session"
 // недоступности Redis отвечает 503 на эндпоинты, требующие авторизации»).
 func AuthMiddleware(auth *usecase.AuthUsecase, cfg *config.WebSection) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Если API-token middleware уже выставил session — пропускаем.
+		if _, ok := c.Get(ctxSessionKey); ok {
+			c.Next()
+			return
+		}
 		token, err := c.Cookie(cfg.SessionCookieName)
 		if err != nil || token == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
