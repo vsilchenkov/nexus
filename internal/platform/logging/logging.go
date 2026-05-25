@@ -6,6 +6,9 @@
 package logging
 
 import (
+	"io"
+	"log/slog"
+
 	extlog "github.com/vsilchenkov/logging"
 )
 
@@ -28,4 +31,13 @@ func Init(c *Config, s *SentryConfig) Logger {
 // sentry.Init (для случаев, когда нужны кастомные опции).
 func SentryClientOptions(s *SentryConfig) any {
 	return extlog.SentryClientOptions(s)
+}
+
+// NewNoop возвращает логгер, который сбрасывает весь вывод в io.Discard.
+// Используется в unit-тестах, чтобы не зависеть от файловой системы и не
+// засорять stderr.
+func NewNoop() Logger {
+	return extlog.NewLogger(slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{
+		Level: slog.LevelError,
+	})))
 }

@@ -9,6 +9,7 @@ import (
 
 	"bus/internal/domain"
 	"bus/internal/platform/config"
+	"bus/internal/platform/i18n"
 	"bus/internal/platform/logging"
 	"bus/internal/web/usecase"
 )
@@ -43,6 +44,18 @@ type meResponse struct {
 	MustChangePassword bool   `json:"must_change_password"`
 }
 
+// Login godoc
+// @Summary  Логин по логину/паролю.
+// @Description  При успехе ставит HttpOnly cookie databus_session (§7.1 ТЗ).
+// @Tags     auth
+// @Accept   json
+// @Produce  json
+// @Param    body  body  loginRequest  true  "credentials"
+// @Success  200   {object}  map[string]any
+// @Failure  400   {object}  map[string]string
+// @Failure  401   {object}  map[string]string  "invalid credentials"
+// @Failure  403   {object}  map[string]string  "user inactive"
+// @Router   /api/auth/login [post]
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req loginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -51,14 +64,15 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 	token, user, err := h.uc.Login(c.Request.Context(), req.Login, req.Password, c.ClientIP())
 	if err != nil {
+		lang := i18n.FromGin(c)
 		switch {
 		case errors.Is(err, domain.ErrUnauthorized):
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": i18n.Translate(lang, "auth.invalid_credentials")})
 		case errors.Is(err, domain.ErrUserInactive):
-			c.JSON(http.StatusForbidden, gin.H{"error": "user is inactive"})
+			c.JSON(http.StatusForbidden, gin.H{"error": i18n.Translate(lang, "auth.user_inactive")})
 		default:
 			h.logger.ErrorWithOp("login failed", err, "auth.login")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": i18n.Translate(lang, "error.internal")})
 		}
 		return
 	}

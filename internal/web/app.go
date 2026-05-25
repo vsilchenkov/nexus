@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -20,11 +21,15 @@ import (
 	"bus/internal/platform/crypto"
 	"bus/internal/platform/healthcheck"
 	"bus/internal/platform/logging"
+	"bus/internal/platform/i18n"
 	pgpf "bus/internal/platform/pg"
 	"bus/internal/platform/ratelimit"
 	redispf "bus/internal/platform/redis"
+	sentrypf "bus/internal/platform/sentry"
 	httpadapter "bus/internal/web/adapter/in/http"
+	chreader "bus/internal/web/adapter/out/clickhouse"
 	pgrepo "bus/internal/web/adapter/out/postgres"
+	rcvdispatcher "bus/internal/web/adapter/out/receiver"
 	rediscache "bus/internal/web/adapter/out/redis"
 	"bus/internal/web/static"
 	"bus/internal/web/usecase"
@@ -35,19 +40,20 @@ type App struct {
 	logger logging.Logger
 	pg     *pgxpool.Pool
 	redis  *goredis.Client
+	ch     chdriver.Conn
 	cipher *crypto.Cipher
 
 	srv *http.Server
 }
 
-func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, cipher *crypto.Cipher, logger logging.Logger) *App {
-	return &App{cfg: cfg, logger: logger, pg: pg, redis: redis, cipher: cipher}
+func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, ch chdriver.Conn, cipher *crypto.Cipher, logger logging.Logger) *App {
+	return &App{cfg: cfg, logger: logger, pg: pg, redis: redis, ch: ch, cipher: cipher}
 }
 
 func (a *App) Start(ctx context.Context) error {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(gin.Recovery())
+	r.Use(sentrypf.GinMiddleware("web"), i18n.GinMiddleware(), gin.Recovery())
 
 	hc := healthcheck.New(
 		[]healthcheck.Checker{
@@ -64,10 +70,12 @@ func (a *App) Start(ctx context.Context) error {
 	nodeCache := rediscache.NewNodeCacheRedis(a.redis, a.logger)
 	auditRepo := pgrepo.NewAuditRepoPg(a.pg, a.logger)
 	auditUC := usecase.NewAuditUsecase(auditRepo, a.logger)
+	uow := pgrepo.NewUnitOfWorkPg(a.pg, a.cipher, a.logger)
 	nodeUC := usecase.NewNodeUsecase(
 		nodeRepo,
 		nodeCache,
 		auditUC,
+		uow,
 		time.Duration(a.cfg.Redis.NodeTTLSec)*time.Second,
 		a.cfg.Web.NodesHardLimit,
 		a.logger,
@@ -88,18 +96,43 @@ func (a *App) Start(ctx context.Context) error {
 	tokenHandler := httpadapter.NewAPITokenHandler(tokenUC, a.logger)
 	auditHandler := httpadapter.NewAuditHandler(auditUC, a.logger)
 
+	dryRunUC := usecase.NewDryRunUsecase(auditUC, a.logger)
+	dryRunHandler := httpadapter.NewDryRunHandler(dryRunUC, a.logger)
+
 	rl := ratelimit.New(a.redis)
+
+	// Replay + live-tail зависят от ClickHouse-чтения и HTTP-диспетчера
+	// к Receiver. Подключаем только если CH-клиент инициализирован.
+	var (
+		replayHandler *httpadapter.ReplayHandler
+		logsHandler   *httpadapter.LogsHandler
+	)
+	if a.ch != nil {
+		logReader := chreader.NewLogReader(a.ch, a.logger)
+		dispatcher := rcvdispatcher.NewHTTPDispatcher(a.cfg.Web.ReceiverURL, 30*time.Second, a.logger)
+		replayUC := usecase.NewReplayUsecase(
+			logReader, nodeRepo, dispatcher, rl, auditUC,
+			a.cfg.Web.ReplayRateLimitPerUserPerMin, a.logger,
+		)
+		logsUC := usecase.NewLogsUsecase(logReader, nodeRepo, a.logger)
+		replayHandler = httpadapter.NewReplayHandler(replayUC, a.logger)
+		logsHandler = httpadapter.NewLogsHandler(logsUC, a.logger)
+	}
+
 	mw := httpadapter.Middlewares{
 		APITokenAuth: httpadapter.APITokenAuthMiddleware(tokenUC, rl, a.cfg.Web.APITokenRateLimitPerMin, a.logger),
 		SessionAuth:  httpadapter.AuthMiddleware(authUC, &a.cfg.Web),
 		RequireAdmin: httpadapter.RequireRole("admin"),
 	}
 	httpadapter.RegisterAPI(r, httpadapter.Handlers{
-		Auth:  authHandler,
-		Node:  nodeHandler,
-		User:  userHandler,
-		Token: tokenHandler,
-		Audit: auditHandler,
+		Auth:   authHandler,
+		Node:   nodeHandler,
+		User:   userHandler,
+		Token:  tokenHandler,
+		Audit:  auditHandler,
+		DryRun: dryRunHandler,
+		Replay: replayHandler,
+		Logs:   logsHandler,
 	}, mw)
 
 	// SPA fallback: всё, что не API/инфра — отдаём index.html (§17.1 ТЗ).

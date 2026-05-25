@@ -157,4 +157,7 @@ func applyDefaults(c *Config) {
 	if c.Web.APITokenRateLimitPerMin == 0 {
 		c.Web.APITokenRateLimitPerMin = 100
 	}
+	if c.Web.ReceiverURL == "" {
+		c.Web.ReceiverURL = "http://receiver:8080"
+	}
 }

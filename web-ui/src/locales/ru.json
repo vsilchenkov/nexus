@@ -1,0 +1,38 @@
+{
+  "app": { "title": "DataBus" },
+  "auth": {
+    "login": "Вход",
+    "login_button": "Войти",
+    "login_failed": "Неверный логин или пароль",
+    "logout": "Выйти"
+  },
+  "overview": {
+    "title": "Узлы",
+    "new_node": "Новый узел",
+    "search_placeholder": "Поиск по пути или URL…",
+    "table": {
+      "path": "Путь",
+      "method": "Метод",
+      "target": "Адрес",
+      "status": "Статус",
+      "auth": "Авторизация"
+    },
+    "empty": "Узлов пока нет"
+  },
+  "node": {
+    "tabs": { "overview": "Обзор", "logs": "Логи", "config": "Конфиг" },
+    "status": {
+      "enabled": "Активен",
+      "disabled": "Отключён",
+      "paused": "Пауза"
+    },
+    "actions": { "edit": "Изменить", "delete": "Удалить" }
+  },
+  "common": {
+    "loading": "Загрузка…",
+    "error": "Ошибка",
+    "ok": "OK",
+    "cancel": "Отмена",
+    "save": "Сохранить"
+  }
+}

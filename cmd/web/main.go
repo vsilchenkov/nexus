@@ -1,5 +1,20 @@
 // Web Service — REST API админки + SPA через embed.FS.
-// См. §7, §11, §17.1 ТЗ и Phase 0 плана (только healthcheck + metrics).
+// См. §7, §11, §17.1 ТЗ.
+//
+// @title         DataBus Web API
+// @version       1.0
+// @description   Admin REST API шины данных (§7 ТЗ). Сессии в Redis +
+// @description   API-токены (Bearer db_*). SPA по embed.FS отдаётся
+// @description   фолбэком на index.html для всех путей не из /api/.
+// @basePath      /
+// @schemes       http https
+// @securityDefinitions.apikey  CookieAuth
+// @in            cookie
+// @name          databus_session
+// @securityDefinitions.apikey  ApiTokenAuth
+// @in            header
+// @name          Authorization
+// @description   "Bearer db_<32-байт-base64>". См. §7.14.
 package main
 
 import (
@@ -42,9 +57,16 @@ func main() {
 	redisClient := bootstrap.MustRedis(ctx, cfg, logger)
 	defer redisClient.Close()
 
+	// ClickHouse нужен для replay (§7.4.1) и live-tail (§7.4). Если недоступен
+	// — Web стартует, но эти функции вернут 404 на свои эндпоинты.
+	chConn, err := bootstrap.TryClickHouse(ctx, cfg, logger)
+	if err == nil {
+		defer chConn.Close()
+	}
+
 	cipher := bootstrap.MustCipher(logger)
 
-	app := web.New(cfg, pgPool, redisClient, cipher, logger)
+	app := web.New(cfg, pgPool, redisClient, chConn, cipher, logger)
 
 	if err := runner.Run(serviceName, displayName, description, app, logger); err != nil {
 		logger.ErrorWithOp("service stopped", err, "main")

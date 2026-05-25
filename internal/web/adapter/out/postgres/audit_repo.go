@@ -5,24 +5,22 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-
-	"github.com/jackc/pgx/v5/pgxpool"
+	"time"
 
 	"bus/internal/domain"
 	"bus/internal/platform/logging"
 	"bus/internal/web/usecase/port"
-	"time"
 )
 
 type AuditRepoPg struct {
-	pool   *pgxpool.Pool
+	db     DBTX
 	logger logging.Logger
 }
 
 var _ port.AuditRepo = (*AuditRepoPg)(nil)
 
-func NewAuditRepoPg(pool *pgxpool.Pool, logger logging.Logger) *AuditRepoPg {
-	return &AuditRepoPg{pool: pool, logger: logger}
+func NewAuditRepoPg(db DBTX, logger logging.Logger) *AuditRepoPg {
+	return &AuditRepoPg{db: db, logger: logger}
 }
 
 func (r *AuditRepoPg) Write(ctx context.Context, e *domain.AuditEntry) error {
@@ -34,7 +32,7 @@ func (r *AuditRepoPg) Write(ctx context.Context, e *domain.AuditEntry) error {
 INSERT INTO user_audit (user_id, user_login, action, target_type, target_id, details, ip_address)
 VALUES (NULLIF($1,'')::uuid, $2, $3, $4, $5, $6::jsonb, NULLIF($7,'')::inet)
 RETURNING id, created_at`
-	err = r.pool.QueryRow(ctx, q,
+	err = r.db.QueryRow(ctx, q,
 		e.UserID, e.UserLogin, e.Action, e.TargetType, e.TargetID,
 		string(details), e.IPAddress,
 	).Scan(&e.ID, &e.CreatedAt)
@@ -84,7 +82,7 @@ FROM user_audit WHERE 1=1`
 		args = append(args, f.Offset)
 	}
 
-	rows, err := r.pool.Query(ctx, q, args...)
+	rows, err := r.db.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("audit list: %w", err)
 	}
@@ -109,7 +107,7 @@ FROM user_audit WHERE 1=1`
 }
 
 func (r *AuditRepoPg) DeleteOlderThan(ctx context.Context, cutoff time.Time) (int, error) {
-	tag, err := r.pool.Exec(ctx, `DELETE FROM user_audit WHERE created_at < $1`, cutoff)
+	tag, err := r.db.Exec(ctx, `DELETE FROM user_audit WHERE created_at < $1`, cutoff)
 	if err != nil {
 		return 0, fmt.Errorf("audit retention delete: %w", err)
 	}

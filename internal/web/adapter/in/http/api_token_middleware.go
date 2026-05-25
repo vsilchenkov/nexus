@@ -79,6 +79,20 @@ func APITokenAuthMiddleware(
 	}
 }
 
+// RequireSessionOnly — middleware, который отклоняет вызовы,
+// аутентифицированные API-токеном (Bearer db_...). Используется для
+// эндпоинтов типа SSE live-tail, доступных только UI-сессиям (§7.14).
+func RequireSessionOnly() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if _, ok := c.Get(ctxAPITokenKey); ok {
+			c.JSON(http.StatusForbidden, gin.H{"error": "endpoint not available via API token"})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
 // RequireScope — middleware для эндпоинтов, которые могут вызываться по
 // API-токену. Если в context'е есть APIToken и у него нет нужного scope
 // → 403. Если токена нет (обычная session-cookie) — пропускает (роль

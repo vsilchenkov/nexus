@@ -69,15 +69,22 @@ func (h *Handler) handleSync(c *gin.Context) {
 		return
 	}
 
-	out, err := h.route.Route(c.Request.Context(), usecase.RouteInput{
+	in := usecase.RouteInput{
 		NodePath: nodePath,
 		Method:   c.Request.Method,
 		Header:   c.Request.Header,
 		Query:    c.Request.URL.Query(),
 		Body:     body,
 		ClientIP: clientIP(c.Request),
-	})
+	}
+	out, err := h.route.Route(c.Request.Context(), in)
 	if err != nil {
+		// §3.6: paused-узел в sync-режиме переключается на async и
+		// отвечает 202 + queued:true (см. handleAsync).
+		if errors.Is(err, domain.ErrNodePaused) {
+			h.handleAsyncFromInput(c, in)
+			return
+		}
 		h.replyDomainError(c, err, nodePath, "receiver.sync")
 		return
 	}
@@ -102,8 +109,7 @@ func (h *Handler) handleAsync(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-	res, err := h.routeAsync.RouteAsync(c.Request.Context(), usecase.RouteInput{
+	h.handleAsyncFromInput(c, usecase.RouteInput{
 		NodePath: nodePath,
 		Method:   c.Request.Method,
 		Header:   c.Request.Header,
@@ -111,8 +117,15 @@ func (h *Handler) handleAsync(c *gin.Context) {
 		Body:     body,
 		ClientIP: clientIP(c.Request),
 	})
+}
+
+// handleAsyncFromInput выполняет async-маршрутизацию по уже подготовленному
+// RouteInput. Вызывается как из /v1/requestAsync, так и из sync-handler'а,
+// когда узел в paused (§3.6).
+func (h *Handler) handleAsyncFromInput(c *gin.Context, in usecase.RouteInput) {
+	res, err := h.routeAsync.RouteAsync(c.Request.Context(), in)
 	if err != nil {
-		h.replyDomainError(c, err, nodePath, "receiver.async")
+		h.replyDomainError(c, err, in.NodePath, "receiver.async")
 		return
 	}
 

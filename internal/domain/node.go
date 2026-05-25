@@ -32,11 +32,12 @@ type Node struct {
 	IncomingAuthType        IncomingAuthType
 	IncomingAuthCredentials string // plaintext в памяти, шифр в БД
 
-	ForwardHeaders  []string
-	TimeoutMs       int32
-	RetryCount      int32
-	RetryBackoffMs  int32
-	ClickHouseTable string
+	ForwardHeaders          []string
+	TimeoutMs               int32
+	RetryCount              int32
+	RetryBackoffMs          int32
+	ClickHouseTable         string
+	ClickHouseRetentionDays int32 // §4.3: TTL по партициям (housekeeping)
 
 	Status NodeStatus
 	TeamID string
@@ -153,5 +154,8 @@ func (n *Node) SetDefaults() {
 	}
 	if n.RetryBackoffMs == 0 {
 		n.RetryBackoffMs = 1_000
+	}
+	if n.ClickHouseRetentionDays == 0 {
+		n.ClickHouseRetentionDays = 90
 	}
 }

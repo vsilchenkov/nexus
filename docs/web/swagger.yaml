@@ -1,0 +1,564 @@
+basePath: /
+definitions:
+  bus_internal_web_usecase.DryRunReport:
+    properties:
+      id:
+        type: string
+      ok:
+        type: boolean
+      steps:
+        items:
+          $ref: '#/definitions/bus_internal_web_usecase.DryRunStep'
+        type: array
+    type: object
+  bus_internal_web_usecase.DryRunStep:
+    properties:
+      detail: {}
+      message:
+        type: string
+      name:
+        type: string
+      status:
+        description: ok | failed | skipped
+        type: string
+    type: object
+  bus_internal_web_usecase.ReplayResult:
+    properties:
+      body_preview:
+        type: string
+      duration_ms:
+        type: integer
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      new_log_id:
+        type: string
+      status_code:
+        type: integer
+    type: object
+  internal_web_adapter_in_http.CreateNodeRequest:
+    properties:
+      auth_credentials:
+        maxLength: 1024
+        type: string
+      auth_dynamic_field:
+        maxLength: 64
+        type: string
+      auth_dynamic_source:
+        enum:
+        - query
+        - header
+        - body
+        type: string
+      auth_dynamic_strip_prefix:
+        maxLength: 64
+        type: string
+      auth_type:
+        enum:
+        - none
+        - basic
+        - token
+        - token_from_request
+        - basic_from_request
+        type: string
+      clickhouse_retention_days:
+        maximum: 3650
+        minimum: 0
+        type: integer
+      clickhouse_table:
+        maxLength: 129
+        type: string
+      forward_headers:
+        items:
+          type: string
+        type: array
+      incoming_auth_credentials:
+        maxLength: 1024
+        type: string
+      incoming_auth_type:
+        enum:
+        - none
+        - basic
+        - token
+        type: string
+      log_headers:
+        type: boolean
+      log_request_body:
+        type: boolean
+      log_response_body:
+        type: boolean
+      path:
+        maxLength: 255
+        type: string
+      retry_backoff_ms:
+        type: integer
+      retry_count:
+        type: integer
+      root_method:
+        enum:
+        - request
+        - requestAsync
+        type: string
+      status:
+        enum:
+        - enabled
+        - disabled
+        - paused
+        type: string
+      target_url:
+        maxLength: 2048
+        type: string
+      timeout_ms:
+        type: integer
+      url_allowed_hosts:
+        items:
+          type: string
+        type: array
+      url_mode:
+        enum:
+        - static
+        - from_request
+        type: string
+      url_param_name:
+        maxLength: 64
+        type: string
+    required:
+    - path
+    - root_method
+    type: object
+  internal_web_adapter_in_http.DryRunRequest:
+    properties:
+      node:
+        $ref: '#/definitions/internal_web_adapter_in_http.CreateNodeRequest'
+      request:
+        $ref: '#/definitions/internal_web_adapter_in_http.DryRunSubrequest'
+      use_mock:
+        type: boolean
+    required:
+    - node
+    - request
+    type: object
+  internal_web_adapter_in_http.DryRunSubrequest:
+    properties:
+      body:
+        type: string
+      headers:
+        additionalProperties:
+          items:
+            type: string
+          type: array
+        type: object
+      method:
+        enum:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - PATCH
+        type: string
+      query:
+        additionalProperties:
+          items:
+            type: string
+          type: array
+        type: object
+    type: object
+  internal_web_adapter_in_http.NodeResponse:
+    properties:
+      auth_credentials_set:
+        type: boolean
+      auth_dynamic_field:
+        type: string
+      auth_dynamic_source:
+        type: string
+      auth_dynamic_strip_prefix:
+        type: string
+      auth_type:
+        type: string
+      clickhouse_retention_days:
+        type: integer
+      clickhouse_table:
+        type: string
+      created_at:
+        type: string
+      forward_headers:
+        items:
+          type: string
+        type: array
+      id:
+        type: string
+      incoming_auth_credentials_set:
+        type: boolean
+      incoming_auth_type:
+        type: string
+      log_headers:
+        type: boolean
+      log_request_body:
+        type: boolean
+      log_response_body:
+        type: boolean
+      path:
+        type: string
+      retry_backoff_ms:
+        type: integer
+      retry_count:
+        type: integer
+      root_method:
+        type: string
+      status:
+        type: string
+      target_url:
+        type: string
+      team_id:
+        type: string
+      timeout_ms:
+        type: integer
+      updated_at:
+        type: string
+      url_allowed_hosts:
+        items:
+          type: string
+        type: array
+      url_mode:
+        type: string
+      url_param_name:
+        type: string
+    type: object
+  internal_web_adapter_in_http.ReplayRequest:
+    properties:
+      body_override:
+        type: string
+      custom_auth:
+        type: string
+      node_id:
+        type: string
+      sync_override:
+        type: boolean
+      use_node_auth:
+        type: boolean
+    required:
+    - node_id
+    type: object
+  internal_web_adapter_in_http.loginRequest:
+    properties:
+      login:
+        maxLength: 255
+        minLength: 1
+        type: string
+      password:
+        maxLength: 128
+        minLength: 1
+        type: string
+    required:
+    - login
+    - password
+    type: object
+info:
+  contact: {}
+  description: |-
+    Admin REST API шины данных (§7 ТЗ). Сессии в Redis +
+    API-токены (Bearer db_*). SPA по embed.FS отдаётся
+    фолбэком на index.html для всех путей не из /api/.
+  title: DataBus Web API
+  version: "1.0"
+paths:
+  /api/auth/login:
+    post:
+      consumes:
+      - application/json
+      description: При успехе ставит HttpOnly cookie databus_session (§7.1 ТЗ).
+      parameters:
+      - description: credentials
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.loginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: invalid credentials
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: user inactive
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Логин по логину/паролю.
+      tags:
+      - auth
+  /api/logs/{id}/replay:
+    post:
+      consumes:
+      - application/json
+      description: Берёт оригинал из ClickHouse-лога, применяет переопределения, отправляет
+        через Receiver.
+      parameters:
+      - description: log id (UUID v4)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: опции
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.ReplayRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/bus_internal_web_usecase.ReplayResult'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: node disabled
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "429":
+          description: rate limit exceeded
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Повторно отправить запрос через шину (§7.4.1).
+      tags:
+      - logs
+  /api/nodes:
+    get:
+      parameters:
+      - description: поиск по path или target_url
+        in: query
+        name: search
+        type: string
+      - description: request | requestAsync
+        in: query
+        name: root_method
+        type: string
+      - description: лимит, max 500
+        in: query
+        name: limit
+        type: integer
+      - description: смещение
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      - ApiTokenAuth: []
+      summary: Список узлов команды.
+      tags:
+      - nodes
+    post:
+      consumes:
+      - application/json
+      description: Только admin. §3.3 ТЗ, лимиты в §3.3.
+      parameters:
+      - description: node config
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.CreateNodeRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.NodeResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: path already exists
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Создать узел.
+      tags:
+      - nodes
+  /api/nodes/{id}:
+    get:
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.NodeResponse'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      - ApiTokenAuth: []
+      summary: Один узел по id.
+      tags:
+      - nodes
+  /api/nodes/{id}/logs:
+    get:
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: cursor по date_request (UnixMilli)
+        in: query
+        name: since_ms
+        type: integer
+      - description: 1..500, default 100
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      - ApiTokenAuth: []
+      summary: Snapshot логов узла из ClickHouse.
+      tags:
+      - logs
+  /api/nodes/{id}/logs/stream:
+    get:
+      description: Доступно только UI-сессиям (API-токены отклоняются — §7.14). Каждое
+        новое событие приходит как SSE event "log".
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: event-stream
+          schema:
+            type: string
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: SSE live-tail логов узла (§7.4).
+      tags:
+      - logs
+  /api/nodes/dry-run:
+    post:
+      consumes:
+      - application/json
+      description: Прогоняет synthetic-запрос через pipeline шины и возвращает пошаговый
+        отчёт.
+      parameters:
+      - description: node + sub-request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.DryRunRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/bus_internal_web_usecase.DryRunReport'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: 'Dry-run: проверить конфиг узла без сохранения (§7.5.1).'
+      tags:
+      - nodes
+schemes:
+- http
+- https
+securityDefinitions:
+  ApiTokenAuth:
+    description: '"Bearer db_<32-байт-base64>". См. §7.14.'
+    in: header
+    name: Authorization
+    type: apiKey
+  CookieAuth:
+    in: cookie
+    name: databus_session
+    type: apiKey
+swagger: "2.0"

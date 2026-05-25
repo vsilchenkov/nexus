@@ -23,6 +23,18 @@ func NewNodeHandler(uc *usecase.NodeUsecase, logger logging.Logger) *NodeHandler
 	return &NodeHandler{uc: uc, logger: logger}
 }
 
+// List godoc
+// @Summary  Список узлов команды.
+// @Tags     nodes
+// @Produce  json
+// @Param    search       query  string  false  "поиск по path или target_url"
+// @Param    root_method  query  string  false  "request | requestAsync"
+// @Param    limit        query  int     false  "лимит, max 500"
+// @Param    offset       query  int     false  "смещение"
+// @Success  200          {object}  map[string]any
+// @Security CookieAuth
+// @Security ApiTokenAuth
+// @Router   /api/nodes [get]
 func (h *NodeHandler) List(c *gin.Context) {
 	f := port.ListNodesFilter{
 		TeamID:     "default",
@@ -52,6 +64,16 @@ func (h *NodeHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": resp})
 }
 
+// Get godoc
+// @Summary  Один узел по id.
+// @Tags     nodes
+// @Produce  json
+// @Param    id   path  string  true  "node id"
+// @Success  200  {object}  NodeResponse
+// @Failure  404  {object}  map[string]string
+// @Security CookieAuth
+// @Security ApiTokenAuth
+// @Router   /api/nodes/{id} [get]
 func (h *NodeHandler) Get(c *gin.Context) {
 	n, err := h.uc.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
@@ -61,6 +83,18 @@ func (h *NodeHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, nodeToResponse(n))
 }
 
+// Create godoc
+// @Summary  Создать узел.
+// @Description  Только admin. §3.3 ТЗ, лимиты в §3.3.
+// @Tags     nodes
+// @Accept   json
+// @Produce  json
+// @Param    body  body  CreateNodeRequest  true  "node config"
+// @Success  201   {object}  NodeResponse
+// @Failure  400   {object}  map[string]string
+// @Failure  409   {object}  map[string]string  "path already exists"
+// @Security CookieAuth
+// @Router   /api/nodes [post]
 func (h *NodeHandler) Create(c *gin.Context) {
 	var req CreateNodeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

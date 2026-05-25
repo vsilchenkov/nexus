@@ -34,6 +34,7 @@ var (
 	ErrNodeAllowedHostsSize      = errors.New("domain: url_allowed_hosts must have at most 50 elements")
 	ErrNodeForwardHeadersSize    = errors.New("domain: forward_headers must have at most 30 elements")
 	ErrNodeDisabled              = errors.New("domain: node disabled")
+	ErrNodePaused                = errors.New("domain: node paused")
 
 	// User / Session
 	ErrUserNotFound      = errors.New("domain: user not found")

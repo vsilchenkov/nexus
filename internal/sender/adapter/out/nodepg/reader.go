@@ -98,3 +98,27 @@ func (r *Reader) GetByPath(ctx context.Context, path string) (*domain.Node, erro
 	}
 	return &n, nil
 }
+
+// ListForHousekeeping — все узлы с заданной CH-таблицей и retention > 0.
+// Используется CHHousekeeping (§4.3 ТЗ). Чувствительные поля не нужны,
+// поэтому скан без crypto.Decrypt.
+func (r *Reader) ListForHousekeeping(ctx context.Context) ([]*domain.Node, error) {
+	rows, err := r.pg.Query(ctx, `
+SELECT id, path, clickhouse_table, clickhouse_retention_days
+FROM nodes
+WHERE clickhouse_table <> '' AND clickhouse_retention_days > 0`)
+	if err != nil {
+		return nil, fmt.Errorf("list housekeeping: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*domain.Node
+	for rows.Next() {
+		var n domain.Node
+		if err := rows.Scan(&n.ID, &n.Path, &n.ClickHouseTable, &n.ClickHouseRetentionDays); err != nil {
+			return nil, fmt.Errorf("scan housekeeping row: %w", err)
+		}
+		out = append(out, &n)
+	}
+	return out, nil
+}

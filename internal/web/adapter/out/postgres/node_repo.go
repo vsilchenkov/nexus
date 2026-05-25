@@ -14,7 +14,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"bus/internal/domain"
 	"bus/internal/platform/crypto"
@@ -22,9 +21,10 @@ import (
 	"bus/internal/web/usecase/port"
 )
 
-// NodeRepoPg реализует port.NodeRepo.
+// NodeRepoPg реализует port.NodeRepo. Зависит от DBTX (см. db.go), что
+// позволяет UnitOfWorkPg создавать транзакционные клоны репозитория.
 type NodeRepoPg struct {
-	pool   *pgxpool.Pool
+	db     DBTX
 	cipher *crypto.Cipher
 	logger logging.Logger
 }
@@ -32,8 +32,8 @@ type NodeRepoPg struct {
 // Compile-time check, что интерфейс реализован полностью.
 var _ port.NodeRepo = (*NodeRepoPg)(nil)
 
-func NewNodeRepoPg(pool *pgxpool.Pool, cipher *crypto.Cipher, logger logging.Logger) *NodeRepoPg {
-	return &NodeRepoPg{pool: pool, cipher: cipher, logger: logger}
+func NewNodeRepoPg(db DBTX, cipher *crypto.Cipher, logger logging.Logger) *NodeRepoPg {
+	return &NodeRepoPg{db: db, cipher: cipher, logger: logger}
 }
 
 const nodeColumns = `
@@ -43,17 +43,17 @@ const nodeColumns = `
 	auth_dynamic_source, auth_dynamic_field, auth_dynamic_strip_prefix,
 	incoming_auth_type, incoming_auth_credentials,
 	forward_headers, timeout_ms, retry_count, retry_backoff_ms,
-	clickhouse_table, status, team_id,
+	clickhouse_table, clickhouse_retention_days, status, team_id,
 	log_request_body, log_response_body, log_headers,
 	created_at, updated_at`
 
 func (r *NodeRepoPg) Get(ctx context.Context, id string) (*domain.Node, error) {
-	row := r.pool.QueryRow(ctx, `SELECT `+nodeColumns+` FROM nodes WHERE id = $1`, id)
+	row := r.db.QueryRow(ctx, `SELECT `+nodeColumns+` FROM nodes WHERE id = $1`, id)
 	return r.scan(row)
 }
 
 func (r *NodeRepoPg) GetByPath(ctx context.Context, path string) (*domain.Node, error) {
-	row := r.pool.QueryRow(ctx, `SELECT `+nodeColumns+` FROM nodes WHERE path = $1`, path)
+	row := r.db.QueryRow(ctx, `SELECT `+nodeColumns+` FROM nodes WHERE path = $1`, path)
 	return r.scan(row)
 }
 
@@ -79,7 +79,7 @@ func (r *NodeRepoPg) List(ctx context.Context, f port.ListNodesFilter) ([]*domai
 		args = append(args, f.Offset)
 	}
 
-	rows, err := r.pool.Query(ctx, q, args...)
+	rows, err := r.db.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list nodes: %w", err)
 	}
@@ -98,7 +98,7 @@ func (r *NodeRepoPg) List(ctx context.Context, f port.ListNodesFilter) ([]*domai
 
 func (r *NodeRepoPg) Count(ctx context.Context, teamID string) (int, error) {
 	var n int
-	err := r.pool.QueryRow(ctx, `SELECT count(*) FROM nodes WHERE team_id = $1`, teamID).Scan(&n)
+	err := r.db.QueryRow(ctx, `SELECT count(*) FROM nodes WHERE team_id = $1`, teamID).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("count nodes: %w", err)
 	}
@@ -123,7 +123,7 @@ INSERT INTO nodes (
 	auth_dynamic_source, auth_dynamic_field, auth_dynamic_strip_prefix,
 	incoming_auth_type, incoming_auth_credentials,
 	forward_headers, timeout_ms, retry_count, retry_backoff_ms,
-	clickhouse_table, status, team_id,
+	clickhouse_table, clickhouse_retention_days, status, team_id,
 	log_request_body, log_response_body, log_headers
 ) VALUES (
 	$1, $2,
@@ -132,18 +132,18 @@ INSERT INTO nodes (
 	$9, $10, $11,
 	$12, $13,
 	$14, $15, $16, $17,
-	$18, $19, $20,
-	$21, $22, $23
+	$18, $19, $20, $21,
+	$22, $23, $24
 ) RETURNING id, created_at, updated_at`
 
-	err = r.pool.QueryRow(ctx, q,
+	err = r.db.QueryRow(ctx, q,
 		n.Path, string(n.RootMethod),
 		string(n.URLMode), n.TargetURL, n.URLParamName, n.URLAllowedHosts,
 		string(n.AuthType), encAuth,
 		string(n.AuthDynamicSource), n.AuthDynamicField, n.AuthDynamicStripPrefix,
 		string(n.IncomingAuthType), encInc,
 		n.ForwardHeaders, n.TimeoutMs, n.RetryCount, n.RetryBackoffMs,
-		n.ClickHouseTable, string(n.Status), n.TeamID,
+		n.ClickHouseTable, n.ClickHouseRetentionDays, string(n.Status), n.TeamID,
 		n.LogRequestBody, n.LogResponseBody, n.LogHeaders,
 	).Scan(&n.ID, &n.CreatedAt, &n.UpdatedAt)
 
@@ -175,13 +175,13 @@ UPDATE nodes SET
 	auth_dynamic_source = $10, auth_dynamic_field = $11, auth_dynamic_strip_prefix = $12,
 	incoming_auth_type = $13, incoming_auth_credentials = $14,
 	forward_headers = $15, timeout_ms = $16, retry_count = $17, retry_backoff_ms = $18,
-	clickhouse_table = $19, status = $20, team_id = $21,
-	log_request_body = $22, log_response_body = $23, log_headers = $24,
+	clickhouse_table = $19, clickhouse_retention_days = $20, status = $21, team_id = $22,
+	log_request_body = $23, log_response_body = $24, log_headers = $25,
 	updated_at = now()
 WHERE id = $1
 RETURNING updated_at`
 
-	err = r.pool.QueryRow(ctx, q,
+	err = r.db.QueryRow(ctx, q,
 		n.ID,
 		n.Path, string(n.RootMethod),
 		string(n.URLMode), n.TargetURL, n.URLParamName, n.URLAllowedHosts,
@@ -189,7 +189,7 @@ RETURNING updated_at`
 		string(n.AuthDynamicSource), n.AuthDynamicField, n.AuthDynamicStripPrefix,
 		string(n.IncomingAuthType), encInc,
 		n.ForwardHeaders, n.TimeoutMs, n.RetryCount, n.RetryBackoffMs,
-		n.ClickHouseTable, string(n.Status), n.TeamID,
+		n.ClickHouseTable, n.ClickHouseRetentionDays, string(n.Status), n.TeamID,
 		n.LogRequestBody, n.LogResponseBody, n.LogHeaders,
 	).Scan(&n.UpdatedAt)
 
@@ -207,7 +207,7 @@ RETURNING updated_at`
 }
 
 func (r *NodeRepoPg) Delete(ctx context.Context, id string) error {
-	tag, err := r.pool.Exec(ctx, `DELETE FROM nodes WHERE id = $1`, id)
+	tag, err := r.db.Exec(ctx, `DELETE FROM nodes WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("delete node: %w", err)
 	}
@@ -235,7 +235,7 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 		&authDynSrc, &n.AuthDynamicField, &n.AuthDynamicStripPrefix,
 		&incomingAuth, &encInc,
 		&n.ForwardHeaders, &n.TimeoutMs, &n.RetryCount, &n.RetryBackoffMs,
-		&n.ClickHouseTable, &status, &n.TeamID,
+		&n.ClickHouseTable, &n.ClickHouseRetentionDays, &status, &n.TeamID,
 		&n.LogRequestBody, &n.LogResponseBody, &n.LogHeaders,
 		&created, &updated,
 	)

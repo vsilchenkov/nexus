@@ -27,7 +27,13 @@ type Migrator struct {
 // несколько одновременно стартующих инстансов не накатывают миграции
 // параллельно (§5.1 ТЗ).
 func NewMigrator(c *config.PostgresSection, migrationsDir string, logger logging.Logger) (*Migrator, error) {
-	dsn := DSN(c)
+	return NewMigratorFromDSN(DSN(c), migrationsDir, logger)
+}
+
+// NewMigratorFromDSN — вариант для тестов: принимает готовый DSN
+// (без секции config.PostgresSection). Используется в integration-тестах
+// с testcontainers (§10.1).
+func NewMigratorFromDSN(dsn, migrationsDir string, logger logging.Logger) (*Migrator, error) {
 	abs, err := filepath.Abs(migrationsDir)
 	if err != nil {
 		return nil, fmt.Errorf("abs path: %w", err)

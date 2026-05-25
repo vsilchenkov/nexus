@@ -1,0 +1,38 @@
+{
+  "app": { "title": "DataBus" },
+  "auth": {
+    "login": "Sign in",
+    "login_button": "Sign in",
+    "login_failed": "Invalid login or password",
+    "logout": "Sign out"
+  },
+  "overview": {
+    "title": "Nodes",
+    "new_node": "New node",
+    "search_placeholder": "Search by path or URL…",
+    "table": {
+      "path": "Path",
+      "method": "Method",
+      "target": "Target",
+      "status": "Status",
+      "auth": "Auth"
+    },
+    "empty": "No nodes yet"
+  },
+  "node": {
+    "tabs": { "overview": "Overview", "logs": "Logs", "config": "Config" },
+    "status": {
+      "enabled": "Active",
+      "disabled": "Disabled",
+      "paused": "Paused"
+    },
+    "actions": { "edit": "Edit", "delete": "Delete" }
+  },
+  "common": {
+    "loading": "Loading…",
+    "error": "Error",
+    "ok": "OK",
+    "cancel": "Cancel",
+    "save": "Save"
+  }
+}

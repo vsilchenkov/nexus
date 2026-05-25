@@ -29,6 +29,7 @@ import (
 	kafkapf "bus/internal/platform/kafka"
 	"bus/internal/platform/logging"
 	pgpf "bus/internal/platform/pg"
+	sentrypf "bus/internal/platform/sentry"
 	kafkaadapter "bus/internal/sender/adapter/in/kafka"
 	grpcadapter "bus/internal/sender/adapter/in/grpc"
 	"bus/internal/sender/adapter/out/chlog"
@@ -87,6 +88,10 @@ func (a *App) Start(ctx context.Context) error {
 	a.consumer = kafkaadapter.NewConsumerGroup(a.cfg, a.cfg.Kafka.AsyncTopic, asyncProc, a.logger)
 	a.consumer.Start(ctx)
 
+	// CH partition-drop housekeeping (§4.3 ТЗ): фоновый цикл раз в сутки.
+	hk := usecase.NewCHHousekeeping(a.ch, nodeReader, a.logger)
+	go hk.Run(ctx)
+
 	errCh := make(chan error, 2)
 	go func() { errCh <- a.startGRPC(grpcSvc) }()
 	go func() { errCh <- a.startAdminHTTP() }()
@@ -129,7 +134,7 @@ func (a *App) startGRPC(svc *grpcadapter.Server) error {
 func (a *App) startAdminHTTP() error {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(gin.Recovery())
+	r.Use(sentrypf.GinMiddleware("sender"), gin.Recovery())
 
 	hc := healthcheck.New(
 		[]healthcheck.Checker{

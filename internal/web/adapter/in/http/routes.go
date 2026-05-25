@@ -6,11 +6,14 @@ import (
 
 // Handlers — bag всех HTTP-handler'ов Web Service.
 type Handlers struct {
-	Auth  *AuthHandler
-	Node  *NodeHandler
-	User  *UserHandler
-	Token *APITokenHandler
-	Audit *AuditHandler
+	Auth   *AuthHandler
+	Node   *NodeHandler
+	User   *UserHandler
+	Token  *APITokenHandler
+	Audit  *AuditHandler
+	DryRun *DryRunHandler
+	Replay *ReplayHandler
+	Logs   *LogsHandler
 }
 
 // Middlewares — общие middleware (auth-check, role-check, API token-check).
@@ -48,11 +51,27 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		authed.GET("/nodes", RequireScope("nodes:read"), h.Node.List)
 		authed.GET("/nodes/:id", RequireScope("nodes:read"), h.Node.Get)
 
+		// Логи узла (§7.4): snapshot + SSE live-tail.
+		// Регистрируются только если включён ClickHouse (см. app.go).
+		if h.Logs != nil {
+			authed.GET("/nodes/:id/logs", RequireScope("logs:read"), h.Logs.List)
+			// SSE доступен только UI-сессиям (§7.14: для API-токенов — только
+			// snapshot).
+			authed.GET("/nodes/:id/logs/stream", RequireSessionOnly(), h.Logs.Stream)
+		}
+
+		// Replay одного запроса (§7.4.1): только session-cookie (mutating).
+		if h.Replay != nil {
+			authed.POST("/logs/:id/replay", h.Replay.Replay)
+		}
+
 		// Mutating — только session-cookie + admin (API-токены сюда не пускаем).
 		authedAdmin := authed.Group("/", mw.RequireAdmin)
 		authedAdmin.POST("/nodes", h.Node.Create)
 		authedAdmin.PUT("/nodes/:id", h.Node.Update)
 		authedAdmin.DELETE("/nodes/:id", h.Node.Delete)
+		// §7.5.1: dry-run без сохранения конфига. Только admin.
+		authedAdmin.POST("/nodes/dry-run", h.DryRun.Run)
 
 		authedAdmin.GET("/users", h.User.List)
 		authedAdmin.GET("/users/:id", h.User.Get)

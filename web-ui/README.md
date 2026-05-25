@@ -1,58 +1,78 @@
 # web-ui
 
-SPA-фронтенд DataBus. **Полная реализация — Phase 3 frontend (см. план).**
+SPA-фронтенд DataBus на React + TypeScript + Vite + Tailwind (§7, §17.5–17.6 ТЗ).
 
-Сейчас в проекте только REST API; index.html-заглушка с документацией
-эндпоинтов лежит в [internal/web/static/index.html](../internal/web/static/index.html)
-и встроена в бинарь Web через `embed.FS`.
+В этом каркасе уже есть:
+- роутинг (React Router 6) и проверка сессии через `/api/auth/me`;
+- TanStack Query для серверного state'а, с автоматическим редиректом на /login при 401;
+- i18n (en/ru) через `react-i18next`, переключатель в шапке;
+- три ключевые страницы: Login, Overview (список узлов), NodeDetail (с логами и SSE live-tail);
+- Tailwind с тёмной палитрой (`bg`, `fg`, `accent`, `ok`/`warn`/`err`).
 
-## Технологический стек (по §17.5–17.6 ТЗ)
+Это **скелет**, который покрывает основной поток «вошёл → увидел узлы → открыл узел → посмотрел логи в live-режиме». Полный набор 13 страниц §7 (NodeSettings, диалоги replay/dry-run, Settings → ClickHouse/Users/API Tokens/Sentry/Language/Theme, Audit log, диалог создания ClickHouse-таблицы и т.п.) — следующая итерация фронта.
 
-- React 18 + TypeScript
-- Vite (dev-server и сборка)
-- TanStack Query (server state, кеширование, инвалидация)
-- React Router 6 (routing)
-- shadcn/ui + Tailwind CSS (компонентная библиотека)
+## Стек
+
+- React 18 + TypeScript + Vite
+- TanStack Query (server state)
+- React Router 6
+- Tailwind CSS (без shadcn-CLI; компоненты — обычные JSX в `src/components/`, при желании можно подключить shadcn/ui позднее)
 - Lucide icons
-- react-i18next (en / ru)
-- react-hook-form + zod (формы и валидация)
-- Vitest + React Testing Library + Playwright (тесты)
+- react-i18next
+- react-hook-form + zod (для форм; пока используются на странице Login через useState — формы тяжелее перенесём позже)
 
-## Структура (когда будет реализован)
+## Установка и запуск
+
+```bash
+cd web-ui
+npm install
+npm run dev     # Vite на :5173, /api/* проксируется на :8000
+```
+
+В соседнем терминале:
+```bash
+make run-web    # Go-бэк на :8000
+```
+
+## Сборка под Go-бинарь
+
+```bash
+cd web-ui
+npm run build
+cp -r dist/* ../internal/web/static/
+cd ..
+make build-web
+```
+
+Бинарь `bin/web` содержит весь SPA через `embed.FS` (см. [internal/web/static/static.go](../internal/web/static/static.go)).
+
+## Структура
 
 ```
 /web-ui
-  package.json
-  vite.config.ts
-  tsconfig.json
-  tailwind.config.js
-  /public
+  index.html
+  package.json, vite.config.ts, tsconfig.json, tailwind.config.js, postcss.config.js
   /src
-    main.tsx
-    App.tsx
-    /api          # HTTP-клиент, типы (генерируются из swagger через openapi-typescript)
-    /pages        # Login, Overview, NodeDetail, NodeSettings, Settings/*, AuditLog
-    /components   # UI-примитивы (shadcn) + кастомные (NodeCard, LogTable, ...)
-    /hooks        # useNodes, useLogs, useLiveTail (SSE), useAuth
-    /lib          # форматирование, валидация
-    /locales      # en.json, ru.json
+    main.tsx        # React + QueryClient + Router
+    App.tsx         # роуты + защищённый wrapper
+    i18n.ts         # react-i18next init
+    /api
+      client.ts     # axios + interceptor 401→/login
+    /pages
+      Login.tsx
+      Overview.tsx
+      NodeDetail.tsx
+    /components
+      Topbar.tsx
+    /locales
+      en.json
+      ru.json
     /styles
+      globals.css
 ```
 
-## Когда появится
-
-После реализации фронтенда:
-1. `cd web-ui && npm install && npm run build`
-2. Полученный `web-ui/dist/` копируется в `internal/web/static/`,
-   либо меняется `//go:embed` в [static.go](../internal/web/static/static.go).
-3. `go build ./cmd/web` — бинарь содержит весь UI.
-
-Dev-режим:
-- Go-бэк на :8000 (`make run-web`)
-- Vite dev-server на :5173 (`npm run dev` с proxy `/api/* → localhost:8000`)
-
-## Что НЕ делаем в этом проекте
+## Что НЕ делаем
 
 - SSR / Next.js (это админка, SEO не нужен).
-- Redux / MobX / Zustand (server state покрывает TanStack Query, local state — useState).
+- Redux / MobX / Zustand (server state покрывает TanStack Query, локальный state — `useState`).
 - GraphQL (REST + Swagger закрывают все потребности).

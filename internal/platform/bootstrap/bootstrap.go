@@ -145,6 +145,19 @@ func MustClickHouse(ctx context.Context, cfg *config.Config, logger logging.Logg
 	return conn
 }
 
+// TryClickHouse подключает ClickHouse, но не падает при ошибке. Используется
+// в сервисах, для которых ClickHouse — опциональная зависимость (Web без
+// replay/live-tail умеет работать).
+func TryClickHouse(ctx context.Context, cfg *config.Config, logger logging.Logger) (chdrv.Conn, error) {
+	conn, err := chpf.New(ctx, &cfg.ClickHouse)
+	if err != nil {
+		logger.Warn("clickhouse connect failed; replay and live-tail will be disabled",
+			logger.Err(err))
+		return nil, err
+	}
+	return conn, nil
+}
+
 // MustCipher читает ENCRYPTION_KEY из окружения и создаёт AES-256-GCM cipher.
 // При пустом / неверной длине / невалидном ключе — exit 1 (§5.5 ТЗ:
 // «лучше не подняться, чем работать со сломанным шифрованием»).

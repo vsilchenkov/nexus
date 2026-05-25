@@ -66,8 +66,9 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 	case domain.NodeStatusDisabled:
 		return nil, domain.ErrNodeNotFound
 	case domain.NodeStatusPaused:
-		// В Phase 1 синхронный paused = 503 (накопление в Kafka — Phase 2).
-		return nil, fmt.Errorf("%w: node paused", domain.ErrNodeDisabled)
+		// §3.6: sync на paused-узел превращается в async — handler
+		// переключается на RouteAsync и отвечает 202 + queued:true.
+		return nil, domain.ErrNodePaused
 	}
 
 	if node.RootMethod != domain.RootMethodRequest {

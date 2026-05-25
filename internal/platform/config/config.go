@@ -171,14 +171,18 @@ type SenderHTTPClientConfig struct {
 }
 
 type WebSection struct {
-	HTTPAddr                       string `yaml:"http_addr"`
-	SessionCookieName              string `yaml:"session_cookie_name"`
-	SessionCookieSecure            bool   `yaml:"session_cookie_secure"`
-	SessionCookieSamesite          string `yaml:"session_cookie_samesite"`
-	AuditRetentionDays             int    `yaml:"audit_retention_days"`
-	ReplayRateLimitPerUserPerMin   int    `yaml:"replay_rate_limit_per_user_per_min"`
-	NodesSoftLimit                 int    `yaml:"nodes_soft_limit"`
-	NodesHardLimit                 int    `yaml:"nodes_hard_limit"`
-	APITokenRateLimitPerMin        int    `yaml:"api_token_rate_limit_per_min"`
-	SwaggerEnabled                 bool   `yaml:"swagger_enabled"`
+	HTTPAddr                     string `yaml:"http_addr"`
+	SessionCookieName            string `yaml:"session_cookie_name"`
+	SessionCookieSecure          bool   `yaml:"session_cookie_secure"`
+	SessionCookieSamesite        string `yaml:"session_cookie_samesite"`
+	AuditRetentionDays           int    `yaml:"audit_retention_days"`
+	ReplayRateLimitPerUserPerMin int    `yaml:"replay_rate_limit_per_user_per_min"`
+	NodesSoftLimit               int    `yaml:"nodes_soft_limit"`
+	NodesHardLimit               int    `yaml:"nodes_hard_limit"`
+	APITokenRateLimitPerMin      int    `yaml:"api_token_rate_limit_per_min"`
+	SwaggerEnabled               bool   `yaml:"swagger_enabled"`
+	// ReceiverURL — base URL Receiver Service (e.g. "http://receiver:8080").
+	// Используется для replay-запросов (§7.4.1): Web отправляет реплай через
+	// реальный pipeline Receiver, а не через bypass.
+	ReceiverURL string `yaml:"receiver_url"`
 }

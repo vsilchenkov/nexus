@@ -59,3 +59,23 @@ func (u *AuditUsecase) Log(ctx context.Context, a Actor, action, targetType, tar
 func (u *AuditUsecase) List(ctx context.Context, f port.AuditFilter) ([]*domain.AuditEntry, error) {
 	return u.repo.List(ctx, f)
 }
+
+// auditEntry — фабрика *domain.AuditEntry для использования внутри
+// UnitOfWork (когда нужно вызвать AuditRepo.Write напрямую). В отличие
+// от AuditUsecase.Log, ошибка проброса вверх — потому что транзакция
+// либо коммитится целиком, либо откатывается.
+func auditEntry(a Actor, action, targetType, targetID string, details map[string]any) *domain.AuditEntry {
+	if details == nil {
+		details = map[string]any{}
+	}
+	return &domain.AuditEntry{
+		UserID:     a.UserID,
+		UserLogin:  a.UserLogin,
+		Action:     action,
+		TargetType: targetType,
+		TargetID:   targetID,
+		Details:    details,
+		IPAddress:  a.IPAddress,
+		CreatedAt:  time.Now().UTC(),
+	}
+}

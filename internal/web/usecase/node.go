@@ -13,19 +13,25 @@ import (
 )
 
 // NodeUsecase — CRUD над узлами + write-through кеш + audit-log.
+//
+// Create/Update/Delete атомарны: репо-операция и запись в audit идут одной
+// транзакцией через UnitOfWork (§17.4 ТЗ). Если uow=nil — fallback на
+// не-транзакционный путь (репо + audit вызываются по отдельности).
 type NodeUsecase struct {
-	repo            port.NodeRepo
-	cache           port.NodeCache
-	audit           *AuditUsecase
-	cacheTTL        time.Duration
-	nodesHardLimit  int
-	logger          logging.Logger
+	repo           port.NodeRepo
+	cache          port.NodeCache
+	audit          *AuditUsecase
+	uow            port.UnitOfWork
+	cacheTTL       time.Duration
+	nodesHardLimit int
+	logger         logging.Logger
 }
 
 func NewNodeUsecase(
 	repo port.NodeRepo,
 	cache port.NodeCache,
 	audit *AuditUsecase,
+	uow port.UnitOfWork,
 	cacheTTL time.Duration,
 	nodesHardLimit int,
 	logger logging.Logger,
@@ -34,6 +40,7 @@ func NewNodeUsecase(
 		repo:           repo,
 		cache:          cache,
 		audit:          audit,
+		uow:            uow,
 		cacheTTL:       cacheTTL,
 		nodesHardLimit: nodesHardLimit,
 		logger:         logger,
@@ -61,7 +68,9 @@ func (u *NodeUsecase) Create(ctx context.Context, actor Actor, n *domain.Node) e
 		return err
 	}
 
-	// §3.3 ТЗ: hard-limit nodes_hard_limit.
+	// §3.3 ТЗ: hard-limit nodes_hard_limit. Считаем вне транзакции —
+	// небольшая гонка возможна, но допустима: финальная сериализация
+	// гарантируется уникальным path в БД.
 	count, err := u.repo.Count(ctx, n.TeamID)
 	if err != nil {
 		return fmt.Errorf("count nodes for limit check: %w", err)
@@ -70,22 +79,35 @@ func (u *NodeUsecase) Create(ctx context.Context, actor Actor, n *domain.Node) e
 		return domain.ErrLimitReached
 	}
 
-	if err := u.repo.Create(ctx, n); err != nil {
-		return err
+	auditDetails := map[string]any{
+		"path":        n.Path,
+		"root_method": string(n.RootMethod),
+		"target_url":  n.TargetURL,
+		"url_mode":    string(n.URLMode),
+		"auth_type":   string(n.AuthType),
+		"status":      string(n.Status),
 	}
-	// Write-through: после создания кладём в кеш.
+
+	if u.uow != nil {
+		if err := u.uow.Execute(ctx, func(ctx context.Context, r port.Repos) error {
+			if err := r.Nodes.Create(ctx, n); err != nil {
+				return err
+			}
+			return r.Audit.Write(ctx, auditEntry(actor, domain.ActionNodeCreate, "node", n.ID, auditDetails))
+		}); err != nil {
+			return err
+		}
+	} else {
+		if err := u.repo.Create(ctx, n); err != nil {
+			return err
+		}
+		u.audit.Log(ctx, actor, domain.ActionNodeCreate, "node", n.ID, auditDetails)
+	}
+
 	if err := u.cache.Set(ctx, n, u.cacheTTL); err != nil {
 		u.logger.Warn("cache set after create failed",
 			u.logger.Str("path", n.Path), u.logger.Err(err))
 	}
-	u.audit.Log(ctx, actor, domain.ActionNodeCreate, "node", n.ID, map[string]any{
-		"path":         n.Path,
-		"root_method":  string(n.RootMethod),
-		"target_url":   n.TargetURL,
-		"url_mode":     string(n.URLMode),
-		"auth_type":    string(n.AuthType),
-		"status":       string(n.Status),
-	})
 	return nil
 }
 
@@ -94,15 +116,27 @@ func (u *NodeUsecase) Update(ctx context.Context, actor Actor, n *domain.Node) e
 	if err := n.Validate(); err != nil {
 		return err
 	}
-	// Старая запись нужна, чтобы инвалидировать кеш по старому path,
-	// если path был изменён.
 	old, err := u.repo.Get(ctx, n.ID)
 	if err != nil {
 		return err
 	}
-	if err := u.repo.Update(ctx, n); err != nil {
-		return err
+	diff := diffNodes(old, n)
+	if u.uow != nil {
+		if err := u.uow.Execute(ctx, func(ctx context.Context, r port.Repos) error {
+			if err := r.Nodes.Update(ctx, n); err != nil {
+				return err
+			}
+			return r.Audit.Write(ctx, auditEntry(actor, domain.ActionNodeUpdate, "node", n.ID, diff))
+		}); err != nil {
+			return err
+		}
+	} else {
+		if err := u.repo.Update(ctx, n); err != nil {
+			return err
+		}
+		u.audit.Log(ctx, actor, domain.ActionNodeUpdate, "node", n.ID, diff)
 	}
+
 	if old.Path != n.Path {
 		if err := u.cache.InvalidateByPath(ctx, old.Path); err != nil {
 			u.logger.Warn("cache invalidate old path failed",
@@ -113,8 +147,6 @@ func (u *NodeUsecase) Update(ctx context.Context, actor Actor, n *domain.Node) e
 		u.logger.Warn("cache set after update failed",
 			u.logger.Str("path", n.Path), u.logger.Err(err))
 	}
-	u.audit.Log(ctx, actor, domain.ActionNodeUpdate, "node", n.ID,
-		diffNodes(old, n))
 	return nil
 }
 
@@ -126,17 +158,30 @@ func (u *NodeUsecase) Delete(ctx context.Context, actor Actor, id string) error 
 		}
 		return fmt.Errorf("get before delete: %w", err)
 	}
-	if err := u.repo.Delete(ctx, id); err != nil {
-		return err
+	details := map[string]any{
+		"path":             n.Path,
+		"clickhouse_table": n.ClickHouseTable,
 	}
+	if u.uow != nil {
+		if err := u.uow.Execute(ctx, func(ctx context.Context, r port.Repos) error {
+			if err := r.Nodes.Delete(ctx, id); err != nil {
+				return err
+			}
+			return r.Audit.Write(ctx, auditEntry(actor, domain.ActionNodeDelete, "node", n.ID, details))
+		}); err != nil {
+			return err
+		}
+	} else {
+		if err := u.repo.Delete(ctx, id); err != nil {
+			return err
+		}
+		u.audit.Log(ctx, actor, domain.ActionNodeDelete, "node", n.ID, details)
+	}
+
 	if err := u.cache.InvalidateByPath(ctx, n.Path); err != nil {
 		u.logger.Warn("cache invalidate after delete failed",
 			u.logger.Str("path", n.Path), u.logger.Err(err))
 	}
-	u.audit.Log(ctx, actor, domain.ActionNodeDelete, "node", n.ID, map[string]any{
-		"path":             n.Path,
-		"clickhouse_table": n.ClickHouseTable,
-	})
 	return nil
 }
 

@@ -24,6 +24,7 @@ import (
 	pgpf "bus/internal/platform/pg"
 	"bus/internal/platform/ratelimit"
 	redispf "bus/internal/platform/redis"
+	sentrypf "bus/internal/platform/sentry"
 	httpadapter "bus/internal/receiver/adapter/in/http"
 	"bus/internal/receiver/adapter/out/grpcsender"
 	"bus/internal/receiver/adapter/out/nodecache"
@@ -66,7 +67,7 @@ func (a *App) Start(ctx context.Context) error {
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(gin.Recovery())
+	r.Use(sentrypf.GinMiddleware("receiver"), gin.Recovery())
 
 	hc := healthcheck.New(
 		[]healthcheck.Checker{pgpf.HealthChecker("postgres", a.pg)},

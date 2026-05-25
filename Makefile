@@ -40,6 +40,10 @@ build-sender:
 build-web:
 	$(GO) build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o $(BIN_DIR)/web$(GOEXE) ./cmd/web
 
+build-ui: ## Сборка SPA (web-ui) и копирование в internal/web/static
+	cd web-ui && npm install && npm run build
+	cp -r web-ui/dist/* internal/web/static/ 2>/dev/null || true
+
 build-windows: ## Кросс-сборка под Windows (.exe)
 	GOOS=windows GOARCH=amd64 $(GO) build -ldflags="$(LDFLAGS)" -o $(BIN_DIR)/receiver.exe ./cmd/receiver
 	GOOS=windows GOARCH=amd64 $(GO) build -ldflags="$(LDFLAGS)" -o $(BIN_DIR)/sender.exe ./cmd/sender
@@ -116,8 +120,14 @@ docker-logs: ## Логи сервисов (Ctrl+C для выхода)
 
 .PHONY: swagger proto loadtest test-integration sqlc-gen rotate-encryption-key
 
-swagger: ## Phase 1+: генерация swagger
-	@echo "TODO Phase 1+: swag init для receiver и web"
+SWAG ?= swag
+swagger: ## Сгенерировать swagger в docs/web и docs/receiver (см. §11)
+	$(SWAG) init -g cmd/web/main.go -o docs/web --parseDependency --parseDepth 2 --quiet
+	@echo "swagger generated -> docs/web"
+
+swagger-drift-check: swagger ## CI: фейлит сборку, если docs/ изменились (см. §11.2)
+	@git diff --exit-code docs/ \
+		|| (echo "swagger drift detected; run 'make swagger' and commit" && exit 1)
 
 proto: ## Генерация Go-кода из .proto через protoc
 	protoc \
@@ -133,14 +143,17 @@ loadtest: ## Нагрузочный сценарий: make loadtest TARGET_RPS=5
 		--duration $(or $(DURATION),10m) \
 		--nodes $(or $(NODES),50)
 
-test-integration: ## Phase 1+: integration через testcontainers
-	@echo "TODO Phase 1+: testcontainers-based интеграционные тесты"
+test-integration: ## Integration-тесты через testcontainers (требует Docker)
+	$(GO) test -tags=integration -count=1 -v ./tests/integration/...
 
 sqlc-gen: ## Phase 1: генерация Go-кода из SQL через sqlc
 	@echo "TODO Phase 1: sqlc generate"
 
-rotate-encryption-key: ## Phase 4: ротация ENCRYPTION_KEY
-	@echo "TODO Phase 4: см. §5.5 ТЗ"
+rotate-encryption-key: ## Ротация ENCRYPTION_KEY: make rotate-encryption-key OLD_KEY=... NEW_KEY=... [DRY_RUN=true]
+	$(GO) run ./cmd/rotate-key \
+		--old-key="$(OLD_KEY)" \
+		--new-key="$(NEW_KEY)" \
+		$(if $(filter true,$(DRY_RUN)),--dry-run,)
 
 # ----- clean ----------------------------------------------------------------
 

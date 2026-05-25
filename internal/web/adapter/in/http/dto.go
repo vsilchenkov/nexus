@@ -30,8 +30,9 @@ type CreateNodeRequest struct {
 	TimeoutMs              int32    `json:"timeout_ms"`
 	RetryCount             int32    `json:"retry_count"`
 	RetryBackoffMs         int32    `json:"retry_backoff_ms"`
-	ClickHouseTable        string   `json:"clickhouse_table" binding:"omitempty,max=129"`
-	Status                 string   `json:"status" binding:"omitempty,oneof=enabled disabled paused"`
+	ClickHouseTable          string `json:"clickhouse_table" binding:"omitempty,max=129"`
+	ClickHouseRetentionDays  int32  `json:"clickhouse_retention_days" binding:"omitempty,min=0,max=3650"`
+	Status                   string `json:"status" binding:"omitempty,oneof=enabled disabled paused"`
 	LogRequestBody         bool     `json:"log_request_body"`
 	LogResponseBody        bool     `json:"log_response_body"`
 	LogHeaders             bool     `json:"log_headers"`
@@ -62,6 +63,7 @@ type NodeResponse struct {
 	RetryCount               int32     `json:"retry_count"`
 	RetryBackoffMs           int32     `json:"retry_backoff_ms"`
 	ClickHouseTable          string    `json:"clickhouse_table"`
+	ClickHouseRetentionDays  int32     `json:"clickhouse_retention_days"`
 	Status                   string    `json:"status"`
 	TeamID                   string    `json:"team_id"`
 	LogRequestBody           bool      `json:"log_request_body"`
@@ -102,6 +104,7 @@ func reqToDomain(r CreateNodeRequest) *domain.Node {
 		RetryCount:              r.RetryCount,
 		RetryBackoffMs:          r.RetryBackoffMs,
 		ClickHouseTable:         r.ClickHouseTable,
+		ClickHouseRetentionDays: r.ClickHouseRetentionDays,
 		Status:                  domain.NodeStatus(r.Status),
 		LogRequestBody:          r.LogRequestBody,
 		LogResponseBody:         r.LogResponseBody,
@@ -129,8 +132,9 @@ func nodeToResponse(n *domain.Node) NodeResponse {
 		TimeoutMs:              n.TimeoutMs,
 		RetryCount:             n.RetryCount,
 		RetryBackoffMs:         n.RetryBackoffMs,
-		ClickHouseTable:        n.ClickHouseTable,
-		Status:                 string(n.Status),
+		ClickHouseTable:         n.ClickHouseTable,
+		ClickHouseRetentionDays: n.ClickHouseRetentionDays,
+		Status:                  string(n.Status),
 		TeamID:                 n.TeamID,
 		LogRequestBody:         n.LogRequestBody,
 		LogResponseBody:        n.LogResponseBody,
