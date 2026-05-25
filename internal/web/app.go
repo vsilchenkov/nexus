@@ -26,6 +26,7 @@ import (
 	httpadapter "bus/internal/web/adapter/in/http"
 	pgrepo "bus/internal/web/adapter/out/postgres"
 	rediscache "bus/internal/web/adapter/out/redis"
+	"bus/internal/web/static"
 	"bus/internal/web/usecase"
 )
 
@@ -100,6 +101,11 @@ func (a *App) Start(ctx context.Context) error {
 		Token: tokenHandler,
 		Audit: auditHandler,
 	}, mw)
+
+	// SPA fallback: всё, что не API/инфра — отдаём index.html (§17.1 ТЗ).
+	// Регистрируется ПОСЛЕ всех API-роутов, чтобы NoRoute переопределялся
+	// именно SPA-fallback'ом.
+	httpadapter.SPAFallback(r, static.FS())
 
 	a.srv = &http.Server{
 		Addr:              a.cfg.Web.HTTPAddr,
