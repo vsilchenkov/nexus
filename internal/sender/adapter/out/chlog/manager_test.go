@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"bus/internal/domain"
-	chpf "bus/internal/platform/clickhouse"
 	"bus/internal/platform/config"
 	"bus/internal/platform/logging"
 	"bus/internal/sender/adapter/out/chlog"
@@ -106,6 +105,6 @@ func TestWriterManager_Reload_FreshWriterUsesNewCfg(t *testing.T) {
 	}
 }
 
-// убедимся, что Manager поверх stub-провайдера корректно реализует ConnProvider —
-// компилируется и совпадает по интерфейсу. Это даёт build-time гарантию.
-var _ chpf.ConnProvider = (*stubProvider)(nil)
+// убедимся, что stubProvider удовлетворяет chlog.ConnProvider —
+// build-time гарантия структурного совпадения.
+var _ chlog.ConnProvider = (*stubProvider)(nil)

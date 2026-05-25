@@ -11,22 +11,29 @@ import (
 	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
 	"bus/internal/domain"
-	chpf "bus/internal/platform/clickhouse"
 	"bus/internal/platform/logging"
 	"bus/internal/web/usecase/port"
 )
+
+// ConnProvider — узкий read-only доступ к ClickHouse-соединению.
+// Определён на стороне consumer'а (CLAUDE.md §3): LogReaderCH не должен
+// зависеть от конкретного владельца conn'а — clickhouse.Manager
+// автоматически реализует этот интерфейс структурным совпадением.
+type ConnProvider interface {
+	Conn() chdriver.Conn
+}
 
 // LogReaderCH принимает ConnProvider, а не raw driver.Conn: при hot-reload
 // (Phase 6.3.2.5) clickhouse.Manager swap'ает внутренний conn, и каждый
 // новый запрос автоматически идёт в свежий клиент.
 type LogReaderCH struct {
-	conn   chpf.ConnProvider
+	conn   ConnProvider
 	logger logging.Logger
 }
 
 var _ port.LogReader = (*LogReaderCH)(nil)
 
-func NewLogReader(conn chpf.ConnProvider, logger logging.Logger) *LogReaderCH {
+func NewLogReader(conn ConnProvider, logger logging.Logger) *LogReaderCH {
 	return &LogReaderCH{conn: conn, logger: logger}
 }
 

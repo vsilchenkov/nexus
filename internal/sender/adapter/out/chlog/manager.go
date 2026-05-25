@@ -5,7 +5,6 @@ import (
 	"sync"
 
 	"bus/internal/domain"
-	chpf "bus/internal/platform/clickhouse"
 	"bus/internal/platform/config"
 	"bus/internal/platform/logging"
 	"bus/internal/platform/metrics"
@@ -30,7 +29,7 @@ import (
 //     На практике hot-reload идёт раз в минуты/часы, а flush укладывается
 //     в миллисекунды, так что потери не накапливаются.
 type WriterManager struct {
-	provider    chpf.ConnProvider
+	provider    ConnProvider
 	cfg         *config.ClickHouseSection
 	fallbackDir string
 	metrics     *metrics.Metrics
@@ -46,7 +45,7 @@ var _ port.LogWriter = (*WriterManager)(nil)
 // NewManagerWithFallback создаёт WriterManager и сразу поднимает первый
 // Writer с переданными параметрами. cfg — указатель на живую секцию
 // конфига, которую Reload использует при пересоздании.
-func NewManagerWithFallback(provider chpf.ConnProvider, cfg *config.ClickHouseSection, fallbackDir string, m *metrics.Metrics, logger logging.Logger) *WriterManager {
+func NewManagerWithFallback(provider ConnProvider, cfg *config.ClickHouseSection, fallbackDir string, m *metrics.Metrics, logger logging.Logger) *WriterManager {
 	wm := &WriterManager{
 		provider:    provider,
 		cfg:         cfg,

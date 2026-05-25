@@ -6,7 +6,8 @@ import (
 	"strings"
 	"time"
 
-	chpf "bus/internal/platform/clickhouse"
+	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+
 	"bus/internal/domain"
 	"bus/internal/platform/logging"
 )
@@ -15,6 +16,14 @@ import (
 // со включённой ClickHouse-таблицей и их retention в днях.
 type NodeLister interface {
 	ListForHousekeeping(ctx context.Context) ([]*domain.Node, error)
+}
+
+// ConnProvider — узкий read-only доступ к ClickHouse-соединению.
+// Определён на стороне consumer'а (CLAUDE.md §3): CHHousekeeping не
+// должен зависеть от конкретного владельца conn'а — clickhouse.Manager
+// автоматически реализует этот интерфейс структурным совпадением.
+type ConnProvider interface {
+	Conn() chdriver.Conn
 }
 
 // CHHousekeeping — раз в сутки удаляет старые ClickHouse-партиции по
@@ -27,13 +36,13 @@ type NodeLister interface {
 //
 // для всех партиций со столбца system.parts, чья дата старше cutoff.
 type CHHousekeeping struct {
-	ch     chpf.ConnProvider
+	ch     ConnProvider
 	nodes  NodeLister
 	period time.Duration
 	logger logging.Logger
 }
 
-func NewCHHousekeeping(ch chpf.ConnProvider, nodes NodeLister, logger logging.Logger) *CHHousekeeping {
+func NewCHHousekeeping(ch ConnProvider, nodes NodeLister, logger logging.Logger) *CHHousekeeping {
 	return &CHHousekeeping{ch: ch, nodes: nodes, period: 24 * time.Hour, logger: logger}
 }
 

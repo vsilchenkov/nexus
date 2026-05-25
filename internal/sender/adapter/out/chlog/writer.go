@@ -18,7 +18,8 @@ import (
 	"sync"
 	"time"
 
-	chpf "bus/internal/platform/clickhouse"
+	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+
 	"bus/internal/domain"
 	"bus/internal/platform/config"
 	"bus/internal/platform/logging"
@@ -26,9 +27,17 @@ import (
 	"bus/internal/sender/usecase/port"
 )
 
+// ConnProvider — узкий read-only доступ к ClickHouse-соединению.
+// Определён на стороне consumer'а (CLAUDE.md §3): chlog.Writer не должен
+// зависеть от конкретного владельца conn'а — clickhouse.Manager
+// автоматически реализует этот интерфейс структурным совпадением.
+type ConnProvider interface {
+	Conn() chdriver.Conn
+}
+
 // Writer реализует port.LogWriter.
 type Writer struct {
-	conn    chpf.ConnProvider
+	conn    ConnProvider
 	cfg     *config.ClickHouseSection
 	logger  logging.Logger
 	metrics *metrics.Metrics
@@ -52,7 +61,7 @@ type job struct {
 	rec   *domain.LogRecord
 }
 
-func New(conn chpf.ConnProvider, cfg *config.ClickHouseSection, logger logging.Logger) *Writer {
+func New(conn ConnProvider, cfg *config.ClickHouseSection, logger logging.Logger) *Writer {
 	return NewWithFallback(conn, cfg, "", nil, logger)
 }
 
@@ -60,7 +69,7 @@ func New(conn chpf.ConnProvider, cfg *config.ClickHouseSection, logger logging.L
 // и опциональными Prometheus-метриками (§6 ТЗ).
 // fallbackDir = "" — fallback отключён, проваленные батчи теряются (как в Phase 1).
 // m = nil — метрики не публикуются (тестовый режим).
-func NewWithFallback(conn chpf.ConnProvider, cfg *config.ClickHouseSection, fallbackDir string, m *metrics.Metrics, logger logging.Logger) *Writer {
+func NewWithFallback(conn ConnProvider, cfg *config.ClickHouseSection, fallbackDir string, m *metrics.Metrics, logger logging.Logger) *Writer {
 	w := &Writer{
 		conn:     conn,
 		cfg:      cfg,
