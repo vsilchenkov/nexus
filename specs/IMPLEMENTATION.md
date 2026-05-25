@@ -145,8 +145,8 @@
 | Unit-тесты domain/crypto/usecase/i18n/sentry/chlog | ✅ Phase 5/5.2 | `*_test.go` в соответствующих пакетах |
 | **Integration testcontainers** (Postgres + миграции) | ✅ Phase 5/5.1 | [tests/integration/](../tests/integration/), `make test-integration` |
 | Loadtest бинарь с pass/fail-критериями | ✅ | [cmd/loadtest](../cmd/loadtest/) |
-| Полный testcontainers-сетап (PG + Redis + CH + Kafka) | ⛔ Phase 6 | сейчас только PG (heavy-setup гоняется в CI) |
-| Async end-to-end интеграция через Kafka | ⛔ Phase 6 | для verify см. e2e через loadtest |
+| Полный testcontainers-сетап (PG + Redis + CH + Kafka) | ◐ | PG + Kafka покрыты; Redis + CH — Phase 6+ |
+| **Async end-to-end интеграция через Kafka** | ✅ Phase 6.2 | [tests/integration/receiver_async_test.go](../tests/integration/receiver_async_test.go) — реальный pipeline `RouteAsyncUsecase → Kafka → ConsumerGroup → AsyncProcessor → SendUsecase → mock HTTP` |
 
 ### §11 Swagger / OpenAPI
 
@@ -496,29 +496,25 @@ make proto                                     # перегенерация send
 
 Если будете расширять — вот логичные следующие шаги, в порядке полезности:
 
-1. **Async end-to-end integration-тест** через Kafka. Нужно поднять Kafka-контейнер,
-   создать topic, отправить через Producer, прочитать через Consumer. Шаблон есть
-   в `tests/integration/receiver_sync_test.go` — добавьте новый файл для async.
-
-2. **Динамическая перезагрузка Sentry/ClickHouse через UI** (§14.5). Таблица
+1. **Динамическая перезагрузка Sentry/ClickHouse через UI** (§14.5). Таблица
    `app_settings` создана; нужно: REST endpoint в Web → запись в PG → publish в
    Redis pub/sub → подписчики в Receiver/Sender переинициализируют клиенты.
 
-3. **Полная Users-страница SPA** с диалогами создания, смены пароля, переключения
+2. **Полная Users-страница SPA** с диалогами создания, смены пароля, переключения
    статуса. Backend готов, нужен только UI.
 
-4. **Live-tail UI улучшения**: фильтры, авто-прокрутка, баннер «N новых записей».
+3. **Live-tail UI улучшения**: фильтры, авто-прокрутка, баннер «N новых записей».
 
-5. **Полные Swagger-аннотации на 100% endpoints.** Сейчас покрыто ~60% — нужно
+4. **Полные Swagger-аннотации на 100% endpoints.** Сейчас покрыто ~60% — нужно
    аннотировать остальные user/audit/token handlers.
 
-6. **CSV экспорт audit log** в [pages/AuditLog.tsx](../web-ui/src/pages/AuditLog.tsx).
+5. **CSV экспорт audit log** в [pages/AuditLog.tsx](../web-ui/src/pages/AuditLog.tsx).
 
-7. **GitHub Actions workflow** (план — см. TESTING.md → CI/CD).
+6. **GitHub Actions workflow** (план — см. TESTING.md → CI/CD).
 
-8. **L2 in-memory LRU-кеш** в Receiver для случая Redis-flutter'а (§9.2 ТЗ).
+7. **L2 in-memory LRU-кеш** в Receiver для случая Redis-flutter'а (§9.2 ТЗ).
 
-9. **GoReleaser** для бинарей + docker images, если будет нужен релизный pipeline.
+8. **GoReleaser** для бинарей + docker images, если будет нужен релизный pipeline.
 
-10. **Grafana дашборд** под `databus_*` метрики и алерт на `databus_kafka_lag > N`,
-    `databus_clickhouse_errors_total rate > 0`.
+9. **Grafana дашборд** под `databus_*` метрики и алерт на `databus_kafka_lag > N`,
+   `databus_clickhouse_errors_total rate > 0`.

@@ -138,11 +138,11 @@ INSERT INTO nodes (
 
 	err = r.db.QueryRow(ctx, q,
 		n.Path, string(n.RootMethod),
-		string(n.URLMode), n.TargetURL, n.URLParamName, n.URLAllowedHosts,
+		string(n.URLMode), n.TargetURL, n.URLParamName, nullSafe(n.URLAllowedHosts),
 		string(n.AuthType), encAuth,
 		string(n.AuthDynamicSource), n.AuthDynamicField, n.AuthDynamicStripPrefix,
 		string(n.IncomingAuthType), encInc,
-		n.ForwardHeaders, n.TimeoutMs, n.RetryCount, n.RetryBackoffMs,
+		nullSafe(n.ForwardHeaders), n.TimeoutMs, n.RetryCount, n.RetryBackoffMs,
 		n.ClickHouseTable, n.ClickHouseRetentionDays, string(n.Status), n.TeamID,
 		n.LogRequestBody, n.LogResponseBody, n.LogHeaders,
 	).Scan(&n.ID, &n.CreatedAt, &n.UpdatedAt)
@@ -184,11 +184,11 @@ RETURNING updated_at`
 	err = r.db.QueryRow(ctx, q,
 		n.ID,
 		n.Path, string(n.RootMethod),
-		string(n.URLMode), n.TargetURL, n.URLParamName, n.URLAllowedHosts,
+		string(n.URLMode), n.TargetURL, n.URLParamName, nullSafe(n.URLAllowedHosts),
 		string(n.AuthType), encAuth,
 		string(n.AuthDynamicSource), n.AuthDynamicField, n.AuthDynamicStripPrefix,
 		string(n.IncomingAuthType), encInc,
-		n.ForwardHeaders, n.TimeoutMs, n.RetryCount, n.RetryBackoffMs,
+		nullSafe(n.ForwardHeaders), n.TimeoutMs, n.RetryCount, n.RetryBackoffMs,
 		n.ClickHouseTable, n.ClickHouseRetentionDays, string(n.Status), n.TeamID,
 		n.LogRequestBody, n.LogResponseBody, n.LogHeaders,
 	).Scan(&n.UpdatedAt)

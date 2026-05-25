@@ -17,3 +17,14 @@ type DBTX interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
+
+// nullSafe возвращает s, либо пустой не-nil слайс, если s == nil.
+// pgx/v5 кодирует nil-слайс как NULL, что ломает NOT NULL колонки с
+// дефолтом '{}' — DEFAULT не срабатывает, потому что значение явно
+// передано в INSERT. Этот helper применяется ко всем TEXT[] полям.
+func nullSafe(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
