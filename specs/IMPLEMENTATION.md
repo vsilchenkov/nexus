@@ -155,7 +155,7 @@
 | Unit-тесты domain/crypto/usecase/i18n/sentry/chlog | ✅ Phase 5/5.2 | `*_test.go` в соответствующих пакетах |
 | **Integration testcontainers** (Postgres + миграции) | ✅ Phase 5/5.1 | [tests/integration/](../tests/integration/), `make test-integration` |
 | Loadtest бинарь с pass/fail-критериями | ✅ | [cmd/loadtest](../cmd/loadtest/) |
-| Полный testcontainers-сетап (PG + Redis + CH + Kafka) | ◐ | PG + Kafka покрыты; Redis + CH — Phase 6+ |
+| **Полный testcontainers-сетап (PG + Redis + CH + Kafka)** | ✅ Phase 7.3 | PG ([node_repo_test.go](../tests/integration/node_repo_test.go)), Kafka ([receiver_async_test.go](../tests/integration/receiver_async_test.go)), Redis ([redis_test.go](../tests/integration/redis_test.go) — SessionRepo + NodeCache + TTL-expire), CH ([clickhouse_test.go](../tests/integration/clickhouse_test.go) — chlog.Writer batch insert + LogReaderCH `GetByID`/`Search` + table-name SQL-injection guard) |
 | **Async end-to-end интеграция через Kafka** | ✅ Phase 6.2 | [tests/integration/receiver_async_test.go](../tests/integration/receiver_async_test.go) — реальный pipeline `RouteAsyncUsecase → Kafka → ConsumerGroup → AsyncProcessor → SendUsecase → mock HTTP` |
 
 ### §11 Swagger / OpenAPI
@@ -563,11 +563,9 @@ make proto                                     # перегенерация send
 1. **GitHub Actions workflow** (план — см. TESTING.md → CI/CD):
    build, lint, test, swagger-drift-check, integration matrix.
 
-2. **Testcontainers + Redis + ClickHouse** в integration-тестах — сейчас покрыты только PG + Kafka.
+2. **GoReleaser** для бинарей + docker images, если будет нужен релизный pipeline.
 
-3. **GoReleaser** для бинарей + docker images, если будет нужен релизный pipeline.
-
-4. **Grafana дашборд** под `databus_*` метрики и алерт на `databus_kafka_lag > N`,
+3. **Grafana дашборд** под `databus_*` метрики и алерт на `databus_kafka_lag > N`,
    `databus_clickhouse_errors_total rate > 0`.
 
 Сделанное в Phase 6:
@@ -599,3 +597,12 @@ make proto                                     # перегенерация send
   `ErrNodeNotFound` НЕ кешируется. Метрики `databus_l2_cache_hits_total{kind}`,
   `_misses_total`, `_evictions_total`, `_size`. Unit-тесты на детерминированных
   `Clock` (без real sleep).
+- 7.3 Integration suite: Redis + ClickHouse через testcontainers.
+  Generic-контейнер (`testcontainers.GenericContainer`) — без отдельных
+  модулей `modules/redis`/`modules/clickhouse`. CH: native-handshake
+  готовится позже `ForListeningPort`, поэтому в helper'е активный retry-ping
+  до 60 сек. Покрытие: SessionRepoRedis (CRUD + DeleteByUser + TTL expire),
+  NodeCacheRedis (Set/GetByPath/Invalidate), chlog.Writer → реальная
+  MergeTree-таблица → LogReaderCH (`GetByID`, `Search` с фильтрами
+  status/IP/Done/full-text, защита от SQL-инъекции в имени таблицы).
+  Весь интеграционный набор (PG + Kafka + Redis + CH) проходит за ~200s.
