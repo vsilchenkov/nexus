@@ -14,6 +14,12 @@
 // Дополнительно (для observability сборщика логов):
 //   - databus_clickhouse_dropped_total{table, reason}
 //   - databus_clickhouse_fallback_total{table, op}
+//
+// Receiver L2-кеш узлов (§9.2):
+//   - databus_l2_cache_hits_total{kind}     # kind=fresh|stale
+//   - databus_l2_cache_misses_total
+//   - databus_l2_cache_evictions_total
+//   - databus_l2_cache_size
 package metrics
 
 import (
@@ -39,6 +45,11 @@ type Metrics struct {
 	CHErrorsTotal       *prometheus.CounterVec
 	CHDroppedTotal      *prometheus.CounterVec
 	CHFallbackTotal     *prometheus.CounterVec
+
+	L2CacheHits      *prometheus.CounterVec
+	L2CacheMisses    prometheus.Counter
+	L2CacheEvictions prometheus.Counter
+	L2CacheSize      prometheus.Gauge
 }
 
 // New создаёт новый экземпляр Metrics для указанного сервиса.
@@ -95,6 +106,30 @@ func New(service string) *Metrics {
 			Help:        "ClickHouse file-fallback batch outcomes (saved, restored).",
 			ConstLabels: constLabels,
 		}, []string{"table", "op"}),
+
+		L2CacheHits: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "databus_l2_cache_hits_total",
+			Help:        "Receiver L2 in-memory node cache hits, split by kind (fresh, stale).",
+			ConstLabels: constLabels,
+		}, []string{"kind"}),
+
+		L2CacheMisses: prometheus.NewCounter(prometheus.CounterOpts{
+			Name:        "databus_l2_cache_misses_total",
+			Help:        "Receiver L2 in-memory node cache misses (delegated to Redis/Postgres).",
+			ConstLabels: constLabels,
+		}),
+
+		L2CacheEvictions: prometheus.NewCounter(prometheus.CounterOpts{
+			Name:        "databus_l2_cache_evictions_total",
+			Help:        "Receiver L2 in-memory node cache evictions due to capacity overflow.",
+			ConstLabels: constLabels,
+		}),
+
+		L2CacheSize: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name:        "databus_l2_cache_size",
+			Help:        "Receiver L2 in-memory node cache current entry count.",
+			ConstLabels: constLabels,
+		}),
 	}
 
 	reg.MustRegister(
@@ -107,9 +142,28 @@ func New(service string) *Metrics {
 		m.CHErrorsTotal,
 		m.CHDroppedTotal,
 		m.CHFallbackTotal,
+		m.L2CacheHits,
+		m.L2CacheMisses,
+		m.L2CacheEvictions,
+		m.L2CacheSize,
 	)
 	return m
 }
+
+// IncL2Hit реализует nodecache.L2Metrics: счётчик попаданий в L2-кеш.
+// kind — "fresh" (валидная запись) либо "stale" (после fallback'а при ошибке downstream).
+func (m *Metrics) IncL2Hit(kind string) {
+	m.L2CacheHits.WithLabelValues(kind).Inc()
+}
+
+// IncL2Miss инкрементит счётчик промахов L2-кеша.
+func (m *Metrics) IncL2Miss() { m.L2CacheMisses.Inc() }
+
+// IncL2Eviction инкрементит счётчик вытеснений из L2-кеша.
+func (m *Metrics) IncL2Eviction() { m.L2CacheEvictions.Inc() }
+
+// SetL2Size обновляет текущий размер L2-кеша.
+func (m *Metrics) SetL2Size(n int) { m.L2CacheSize.Set(float64(n)) }
 
 // Registry возвращает собственный prometheus.Registry — для тестов или
 // дополнительных кастомных collectors.

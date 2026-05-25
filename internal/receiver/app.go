@@ -64,7 +64,13 @@ func (a *App) Start(ctx context.Context) error {
 	}
 	a.senderCl = senderCl
 
-	reader := nodecache.New(a.redis, a.pg, a.cipher, time.Duration(a.cfg.Redis.NodeTTLSec)*time.Second, a.logger)
+	baseReader := nodecache.New(a.redis, a.pg, a.cipher, time.Duration(a.cfg.Redis.NodeTTLSec)*time.Second, a.logger)
+	reader := nodecache.NewL2(baseReader, nodecache.L2Config{
+		Enabled:  a.cfg.Receiver.L2Cache.Enabled,
+		Size:     a.cfg.Receiver.L2Cache.Size,
+		TTL:      time.Duration(a.cfg.Receiver.L2Cache.TTLMs) * time.Millisecond,
+		StaleTTL: time.Duration(a.cfg.Receiver.L2Cache.StaleTTLMs) * time.Millisecond,
+	}, a.logger, a.metrics)
 	routeUC := usecase.NewRouteUsecase(reader, a.senderCl, a.logger)
 
 	a.producer = kafkapf.NewProducer(a.cfg)

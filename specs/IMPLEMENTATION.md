@@ -139,7 +139,7 @@
 | Пункт | Статус | Где |
 |---|---|---|
 | Redis-кеш конфига узлов + cache-aside | ✅ | [receiver/adapter/out/nodecache/reader.go](../internal/receiver/adapter/out/nodecache/reader.go) |
-| Локальный LRU L2-кеш (1-5 сек) | ⛔ | Phase 6: пока только Redis → PG |
+| **Локальный LRU L2-кеш (1-5 сек) + stale-fallback при ошибках downstream** | ✅ Phase 7.2 | [nodecache/lru.go](../internal/receiver/adapter/out/nodecache/lru.go) + [nodecache/l2.go](../internal/receiver/adapter/out/nodecache/l2.go); конфиг `receiver.l2_cache.{enabled,size,ttl_ms,stale_ttl_ms}`; метрики `databus_l2_cache_{hits,misses,evictions}_total` + `databus_l2_cache_size` |
 | Pool соединений PG/Redis по конфигу | ✅ | `MaxOpenConns`, `PoolSize` в YAML |
 | **Graceful shutdown с дренажом CH-буфера и Kafka offset** | ✅ | `App.Stop` в каждом сервисе, `chWriter.Stop(ctx)` |
 | **CH file-fallback при недоступности (§9.4)** | ✅ Phase 5.1 | [chlog/fallback.go](../internal/sender/adapter/out/chlog/fallback.go) |
@@ -442,6 +442,31 @@ gRPC server, chlog.Writer и AsyncProcessor — глобальной registry м
 их в Grafana через `service="receiver"`. Метка `node` — динамическая (path-параметр
 из `/v1/request/.../*path`), для не-V1 маршрутов остаётся пустой.
 
+### 4.12.1 L2 in-memory кеш узлов — декоратор поверх Reader, stale-fallback по StaleTTL
+
+`receiver.l2_cache` (Phase 7.2) включает локальный LRU поверх обычного
+[nodecache.Reader](../internal/receiver/adapter/out/nodecache/reader.go).
+Архитектурно — чистый decorator: [nodecache.L2Reader](../internal/receiver/adapter/out/nodecache/l2.go)
+реализует тот же `port.NodeReader`, что и его inner. Если `Enabled=false` —
+`NewL2` возвращает inner без обёртки (нулевой overhead).
+
+Семантика отказоустойчивости:
+
+- **Fresh-hit** (запись не протухла) — отдаётся из памяти, downstream не дёргается.
+- **Miss** — идём в Redis/PG, при успехе пишем в L2.
+- **Downstream error + `StaleTTL > 0`** — пробуем вернуть протухшую запись, если её
+  возраст ≤ `StaleTTL`. Это и есть §9.4 «крайний случай: одновременно лежат Redis
+  и PG» — на горячих узлах сервис продолжает отвечать. Возвращаем `stale`-метку в
+  `databus_l2_cache_hits_total{kind="stale"}` и Warn в логи.
+- **`ErrNodeNotFound`** — stale-fallback не срабатывает: «нет узла» — это валидный
+  ответ, кешировать его как «есть» нельзя.
+
+`LRU[V]` (generic, [lru.go](../internal/receiver/adapter/out/nodecache/lru.go)) —
+своя минимальная реализация (~150 строк): `container/list` + `map[string]*Element`
++ `sync.Mutex`. Без `samber/hot` — задача узкая, ставить внешнюю зависимость ради
+этого нецелесообразно. Часы инжектятся через `Clock`-интерфейс (тесты без
+real-sleep).
+
 ### 4.12 Bootstrap ↔ Service-runner
 
 Все три сервиса используют общий [internal/platform/runner/runner.go](../internal/platform/runner/runner.go)
@@ -538,13 +563,11 @@ make proto                                     # перегенерация send
 1. **GitHub Actions workflow** (план — см. TESTING.md → CI/CD):
    build, lint, test, swagger-drift-check, integration matrix.
 
-2. **L2 in-memory LRU-кеш** в Receiver для случая Redis-flutter'а (§9.2 ТЗ).
+2. **Testcontainers + Redis + ClickHouse** в integration-тестах — сейчас покрыты только PG + Kafka.
 
-3. **Testcontainers + Redis + ClickHouse** в integration-тестах — сейчас покрыты только PG + Kafka.
+3. **GoReleaser** для бинарей + docker images, если будет нужен релизный pipeline.
 
-4. **GoReleaser** для бинарей + docker images, если будет нужен релизный pipeline.
-
-5. **Grafana дашборд** под `databus_*` метрики и алерт на `databus_kafka_lag > N`,
+4. **Grafana дашборд** под `databus_*` метрики и алерт на `databus_kafka_lag > N`,
    `databus_clickhouse_errors_total rate > 0`.
 
 Сделанное в Phase 6:
@@ -568,3 +591,11 @@ make proto                                     # перегенерация send
   blank-import `_ "bus/docs/web"` регистрирует генеренный docTemplate
   в `swag.Registry`. Добавлены deps `github.com/swaggo/gin-swagger` и
   `github.com/swaggo/files`. UI открывается по адресу `/swagger/index.html` на Web Service (по умолчанию `:8081`).
+- 7.2 L2 in-memory LRU-кеш узлов в Receiver (§9.2):
+  декоратор поверх `nodecache.Reader`, реализует тот же `port.NodeReader`.
+  При `Enabled=false` декоратор отдаёт inner как есть. Stale-fallback по
+  `StaleTTL` (§9.4 крайний случай: одновременно лежат Redis и PG — на
+  горячем наборе узлов сервис продолжает отвечать с протухшего слепка).
+  `ErrNodeNotFound` НЕ кешируется. Метрики `databus_l2_cache_hits_total{kind}`,
+  `_misses_total`, `_evictions_total`, `_size`. Unit-тесты на детерминированных
+  `Clock` (без real sleep).

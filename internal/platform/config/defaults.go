@@ -111,6 +111,16 @@ func applyDefaults(c *Config) {
 		c.Receiver.SenderGRPC.TimeoutMs = 30000
 	}
 
+	if c.Receiver.L2Cache.Size == 0 {
+		c.Receiver.L2Cache.Size = 1000
+	}
+	if c.Receiver.L2Cache.TTLMs == 0 {
+		c.Receiver.L2Cache.TTLMs = 2000
+	}
+	if c.Receiver.L2Cache.StaleTTLMs == 0 {
+		c.Receiver.L2Cache.StaleTTLMs = 60000
+	}
+
 	if c.Sender.GRPCAddr == "" {
 		c.Sender.GRPCAddr = ":9090"
 	}

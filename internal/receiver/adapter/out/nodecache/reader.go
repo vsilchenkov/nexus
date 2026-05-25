@@ -1,8 +1,8 @@
 // Package nodecache — реализация receiver.port.NodeReader.
 //
-// Трёхуровневое чтение по §9.2 ТЗ: Redis → PostgreSQL.
-// Локальный LRU (L2 cache, 1-5 сек) — TODO Phase 1.7, когда станет
-// видна реальная нагрузка.
+// Трёхуровневое чтение по §9.2 ТЗ: L2 (in-memory LRU) → Redis → PostgreSQL.
+// L2 включается опционально через cfg.Receiver.L2Cache (Phase 7.2),
+// см. [L2Reader] в [l2.go] и LRU-структуру в [lru.go].
 package nodecache
 
 import (

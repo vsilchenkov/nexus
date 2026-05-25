@@ -146,6 +146,17 @@ type ReceiverSection struct {
 	RateLimitPerNode int                     `yaml:"rate_limit_per_node"`
 	SenderGRPC       ReceiverSenderGRPCConfig `yaml:"sender_grpc"`
 	SwaggerEnabled   bool                    `yaml:"swagger_enabled"`
+	L2Cache          ReceiverL2CacheConfig   `yaml:"l2_cache"`
+}
+
+// ReceiverL2CacheConfig — параметры in-memory LRU L2-кеша поверх Redis+PG
+// для конфига узлов (§9.2). При Enabled=false слой не подключается и
+// чтение идёт напрямую через Redis/PG.
+type ReceiverL2CacheConfig struct {
+	Enabled      bool `yaml:"enabled"`
+	Size         int  `yaml:"size"`
+	TTLMs        int  `yaml:"ttl_ms"`
+	StaleTTLMs   int  `yaml:"stale_ttl_ms"`
 }
 
 type ReceiverSenderGRPCConfig struct {

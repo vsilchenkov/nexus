@@ -111,6 +111,15 @@ receiver:
     keepalive_time_sec: 30
     keepalive_timeout_sec: 10
   swagger_enabled: false
+  # In-memory L2-кеш конфига узлов (§9.2). Снимает нагрузку с Redis на
+  # пиковом RPS и спасает при кратковременном Redis-flutter'е. При
+  # одновременной недоступности Redis и PG (§9.4 крайний случай) возвращает
+  # протухшую запись в пределах stale_ttl_ms.
+  l2_cache:
+    enabled: false
+    size: 1000
+    ttl_ms: 2000
+    stale_ttl_ms: 60000
 
 sender:
   grpc_addr: :9090
