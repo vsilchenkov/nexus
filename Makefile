@@ -90,6 +90,9 @@ migrate-down: ## Откатить N последних миграций: make mi
 migrate-status: ## Текущая версия схемы
 	$(GO) run ./cmd/web --debug --migrate-status
 
+set-admin-password: ## Задать пароль admin: make set-admin-password PASSWORD=mypass
+	$(GO) run ./cmd/web --debug --set-admin-password $(PASSWORD)
+
 # ----- docker ---------------------------------------------------------------
 
 .PHONY: docker-build docker-up docker-up-dev docker-down docker-logs

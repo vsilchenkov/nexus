@@ -8,12 +8,13 @@ import (
 
 // Flags — флаги командной строки, общие для всех трёх бинарей.
 type Flags struct {
-	ConfigPath     string
-	Debug          bool
-	ShowVersion    bool
-	MigrateUp      bool
-	MigrateDownN   int
-	MigrateStatus  bool
+	ConfigPath         string
+	Debug              bool
+	ShowVersion        bool
+	MigrateUp          bool
+	MigrateDownN       int
+	MigrateStatus      bool
+	SetAdminPassword   string // если задано — задаёт пароль admin'у и выходит
 }
 
 // ParseFlags парсит argv. Неизвестные флаги — error.
@@ -29,6 +30,7 @@ func ParseFlags(version string) Flags {
 	fs.BoolVar(&f.MigrateUp, "migrate-up", false, "применить все непримененные миграции и выйти")
 	fs.IntVar(&f.MigrateDownN, "migrate-down", 0, "откатить N последних миграций и выйти")
 	fs.BoolVar(&f.MigrateStatus, "migrate-status", false, "показать текущую версию схемы и выйти")
+	fs.StringVar(&f.SetAdminPassword, "set-admin-password", "", "задать пароль admin'у (bootstrap) и выйти")
 
 	_ = fs.Parse(os.Args[1:])
 

@@ -85,6 +85,7 @@ func (a *App) Start(ctx context.Context) error {
 	authHandler := httpadapter.NewAuthHandler(authUC, &a.cfg.Web, sessionTTL, a.logger)
 	userHandler := httpadapter.NewUserHandler(userUC, authUC, a.logger)
 	tokenHandler := httpadapter.NewAPITokenHandler(tokenUC, a.logger)
+	auditHandler := httpadapter.NewAuditHandler(auditUC, a.logger)
 
 	rl := ratelimit.New(a.redis)
 	mw := httpadapter.Middlewares{
@@ -97,6 +98,7 @@ func (a *App) Start(ctx context.Context) error {
 		Node:  nodeHandler,
 		User:  userHandler,
 		Token: tokenHandler,
+		Audit: auditHandler,
 	}, mw)
 
 	a.srv = &http.Server{

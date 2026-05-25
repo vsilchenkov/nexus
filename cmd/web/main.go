@@ -32,6 +32,9 @@ func main() {
 	if bootstrap.HandleMigrateFlags(flags, cfg, logger) {
 		return
 	}
+	if bootstrap.HandleSetAdminPassword(ctx, flags, cfg, logger) {
+		return
+	}
 
 	pgPool := bootstrap.MustPG(ctx, cfg, logger)
 	defer pgPool.Close()

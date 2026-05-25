@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jinzhu/copier"
 	goredis "github.com/redis/go-redis/v9"
+	"golang.org/x/crypto/bcrypt"
 
 	"bus/internal/platform/build"
 	chpf "bus/internal/platform/clickhouse"
@@ -196,6 +197,42 @@ func HandleMigrateFlags(flags config.Flags, cfg *config.Config, logger logging.L
 		}
 		fmt.Printf("schema version: %d dirty: %v\n", v, dirty)
 	}
+	return true
+}
+
+// HandleSetAdminPassword — bootstrap-команда задать пароль admin'у.
+// При --set-admin-password: подключается к PG, обновляет users WHERE login='admin',
+// сбрасывает must_change_password=false, выходит с exit 0.
+// Возвращает true, если флаг был задействован — main должен после этого завершиться.
+func HandleSetAdminPassword(ctx context.Context, flags config.Flags, cfg *config.Config, logger logging.Logger) bool {
+	if flags.SetAdminPassword == "" {
+		return false
+	}
+	if len(flags.SetAdminPassword) < 8 {
+		logger.Error("password must be at least 8 characters")
+		os.Exit(1)
+	}
+	pool := MustPG(ctx, cfg, logger)
+	defer pool.Close()
+
+	hashBytes, err := bcrypt.GenerateFromPassword([]byte(flags.SetAdminPassword), bcrypt.DefaultCost)
+	if err != nil {
+		logger.ErrorWithOp("bcrypt failed", err, "bootstrap.HandleSetAdminPassword")
+		os.Exit(1)
+	}
+	hash := string(hashBytes)
+	tag, err := pool.Exec(ctx, `
+UPDATE users SET password_hash=$1, must_change_password=false, active=true
+WHERE login='admin'`, hash)
+	if err != nil {
+		logger.ErrorWithOp("update admin password failed", err, "bootstrap.HandleSetAdminPassword")
+		os.Exit(1)
+	}
+	if tag.RowsAffected() == 0 {
+		logger.Error("admin user not found — run migrations first")
+		os.Exit(1)
+	}
+	logger.Info("admin password updated; you can now login")
 	return true
 }
 

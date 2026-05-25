@@ -10,6 +10,7 @@ type Handlers struct {
 	Node  *NodeHandler
 	User  *UserHandler
 	Token *APITokenHandler
+	Audit *AuditHandler
 }
 
 // Middlewares — общие middleware (auth-check, role-check, API token-check).
@@ -59,5 +60,8 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		authedAdmin.PUT("/users/:id", h.User.Update)
 		authedAdmin.DELETE("/users/:id", h.User.Delete)
 		authedAdmin.POST("/users/:id/password", h.User.ChangePassword)
+
+		// Audit log: admin-only; scope audit:read нужен только для API-токена.
+		authedAdmin.GET("/audit", RequireScope("audit:read"), h.Audit.List)
 	}
 }
