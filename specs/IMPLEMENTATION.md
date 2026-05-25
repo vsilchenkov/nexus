@@ -125,7 +125,7 @@
 | **`app_settings` таблица + REST API + overlay поверх env на старте** | ✅ Phase 6.3.1 | миграция [0006](../migrations/0006_app_settings.up.sql), [domain/app_settings.go](../internal/domain/app_settings.go), [usecase/app_settings.go](../internal/web/usecase/app_settings.go), [http/app_settings_handler.go](../internal/web/adapter/in/http/app_settings_handler.go), [bootstrap/app_settings.go](../internal/platform/bootstrap/app_settings.go) |
 | **Hot-reload Sentry через Redis pub/sub** | ✅ Phase 6.3.2 | [platform/reloader/](../internal/platform/reloader/), [sentry.Reload](../internal/platform/sentry/sentry.go), [bootstrap/reload.go](../internal/platform/bootstrap/reload.go) — Web публикует на канал `databus:config:reload`, Receiver/Sender/Web подписаны и переинициализируют SDK |
 | Полное hot-reload ClickHouse (пересоздание клиента/writer'а) | ⛔ Phase 6.3.2.5 | сейчас reloader только обновляет overlay в cfg; реальный reconnect требует переделки sender pipeline |
-| Settings → Sentry / ClickHouse страницы в SPA | ⛔ Phase 6.3.3 | backend готов, нужен UI |
+| **Settings → Sentry / ClickHouse страницы в SPA** | ✅ Phase 6.3.3 | [pages/settings/Sentry.tsx](../web-ui/src/pages/settings/Sentry.tsx), [pages/settings/ClickHouse.tsx](../web-ui/src/pages/settings/ClickHouse.tsx), две новые вкладки в [pages/Settings.tsx](../web-ui/src/pages/Settings.tsx) (видны только admin-роли через `/api/auth/me`) |
 
 ### §9 Высоконагруженность / отказоустойчивость
 
@@ -193,8 +193,8 @@
 См. [sections/15-acceptance.md](sections/15-acceptance.md). Покрытие: ~90% пунктов реализовано.
 Не покрыто (требует Phase 6):
 
-- Динамическая перезагрузка Sentry/ClickHouse через UI без рестарта.
-- ClickHouse Settings-страница (UI + проверка соединения / orphaned tables).
+- Полное hot-reload ClickHouse (UI настроек уже есть — backend reload пересоздаёт writer/клиент только частично).
+- ClickHouse Settings-страница (UI + проверка соединения / orphaned tables) — базовый UI готов (Phase 6.3.3), не хватает проверки соединения и orphaned tables.
 - Полная Users-страница (с диалогами создания/смены пароля).
 - Полный Audit log с export CSV, diff-двухколоночный для `node.update`.
 - Live-tail UI: фильтры, авто-прокрутка, баннер «N новых записей».
@@ -499,9 +499,11 @@ make proto                                     # перегенерация send
 
 Если будете расширять — вот логичные следующие шаги, в порядке полезности:
 
-1. **Динамическая перезагрузка Sentry/ClickHouse через UI** (§14.5). Таблица
-   `app_settings` создана; нужно: REST endpoint в Web → запись в PG → publish в
-   Redis pub/sub → подписчики в Receiver/Sender переинициализируют клиенты.
+1. **Полное hot-reload ClickHouse** (Phase 6.3.2.5). UI и backend `app_settings`
+   готовы (Phase 6.3.3), Redis pub/sub публикует событие `clickhouse` — но
+   reloader сейчас только обновляет overlay в cfg. Полный reconnect требует
+   передать в `chlog.Writer` фабрику клиента или вынести его создание в
+   менеджер, реагирующий на `reloader.Section("clickhouse")`.
 
 2. **Полная Users-страница SPA** с диалогами создания, смены пароля, переключения
    статуса. Backend готов, нужен только UI.

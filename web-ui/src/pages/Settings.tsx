@@ -1,19 +1,39 @@
 import { NavLink, Route, Routes } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { useQuery } from "@tanstack/react-query";
 
 import { Topbar } from "../components/Topbar";
+import { api } from "../api/client";
 import { ApiTokensPanel } from "./settings/ApiTokens";
 import { LanguagePanel } from "./settings/Language";
 import { ThemePanel } from "./settings/Theme";
+import { SentryPanel } from "./settings/Sentry";
+import { ClickHousePanel } from "./settings/ClickHouse";
 
-const tabs = [
-  { to: "tokens", label: "API tokens" },
-  { to: "language", label: "language" },
-  { to: "theme", label: "theme" },
+type Tab = { to: string; labelKey: string; adminOnly?: boolean };
+
+const tabs: Tab[] = [
+  { to: "tokens", labelKey: "settings.tokens.title" },
+  { to: "language", labelKey: "settings.language.title" },
+  { to: "theme", labelKey: "settings.theme.title" },
+  { to: "sentry", labelKey: "settings.sentry.title", adminOnly: true },
+  { to: "clickhouse", labelKey: "settings.clickhouse.title", adminOnly: true },
 ];
+
+function useRole() {
+  return useQuery({
+    queryKey: ["me"],
+    queryFn: () =>
+      api.get<{ user: { user_id: string; role: string } }>("/api/auth/me"),
+  });
+}
 
 export default function Settings() {
   const { t } = useTranslation();
+  const me = useRole();
+  const isAdmin = me.data?.user.role === "admin";
+
+  const visibleTabs = tabs.filter((tab) => !tab.adminOnly || isAdmin);
 
   return (
     <div className="min-h-screen bg-bg text-fg">
@@ -22,9 +42,9 @@ export default function Settings() {
       <main className="max-w-6xl mx-auto p-6 flex gap-6">
         <aside className="w-48 shrink-0 space-y-1">
           <div className="text-xs uppercase tracking-wider text-fg-muted mb-2">
-            settings
+            {t("nav.settings")}
           </div>
-          {tabs.map((tab) => (
+          {visibleTabs.map((tab) => (
             <NavLink
               key={tab.to}
               to={tab.to}
@@ -36,7 +56,7 @@ export default function Settings() {
                 }`
               }
             >
-              {tab.label}
+              {t(tab.labelKey)}
             </NavLink>
           ))}
         </aside>
@@ -46,7 +66,16 @@ export default function Settings() {
             <Route path="tokens" element={<ApiTokensPanel />} />
             <Route path="language" element={<LanguagePanel />} />
             <Route path="theme" element={<ThemePanel />} />
-            <Route path="*" element={<div className="text-fg-muted">{t("common.loading")}</div>} />
+            {isAdmin && <Route path="sentry" element={<SentryPanel />} />}
+            {isAdmin && (
+              <Route path="clickhouse" element={<ClickHousePanel />} />
+            )}
+            <Route
+              path="*"
+              element={
+                <div className="text-fg-muted">{t("common.loading")}</div>
+              }
+            />
           </Routes>
         </section>
       </main>

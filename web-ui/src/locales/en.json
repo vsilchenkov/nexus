@@ -65,7 +65,38 @@
       "title": "Language",
       "note": "Applies to UI only; logs, metrics and ClickHouse stay in English."
     },
-    "theme": { "title": "Theme", "light": "Light", "dark": "Dark" }
+    "theme": { "title": "Theme", "light": "Light", "dark": "Dark" },
+    "common": {
+      "updated_at": "Updated",
+      "saved": "Saved",
+      "masked_hint": "Leave masked value to keep the current secret; type a new one to override.",
+      "hot_reload_note": "Changes take effect on all instances without a restart."
+    },
+    "sentry": {
+      "title": "Sentry",
+      "hint": "Override Sentry settings from config.yml. Empty fields fall back to env/YAML.",
+      "use": "Enable Sentry",
+      "dsn": "DSN",
+      "environment": "Environment",
+      "level": "Minimum level",
+      "attach_stacktrace": "Attach stacktrace",
+      "enable_tracing": "Enable tracing",
+      "traces_sample_rate": "Traces sample rate (0..1)"
+    },
+    "clickhouse": {
+      "title": "ClickHouse",
+      "hint": "Override ClickHouse connection and batch writer settings.",
+      "partial_hot_reload_note": "Connection changes will fully apply after a service restart; batch settings and credentials reload immediately.",
+      "host": "Host",
+      "port": "Port",
+      "database": "Database",
+      "user": "User",
+      "password": "Password",
+      "batch_size": "Batch size",
+      "flush_interval_sec": "Flush interval (sec)",
+      "buffer_max_size": "Buffer max size",
+      "workers": "Workers"
+    }
   },
   "common": {
     "loading": "Loading…",

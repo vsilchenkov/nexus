@@ -106,9 +106,9 @@ export function DryRunDialog({
                   </span>
                   <span className="font-mono">{s.name}</span>
                   {s.message && <span className="text-fg-muted ml-2">{s.message}</span>}
-                  {s.detail && (
+                  {s.detail !== undefined && (
                     <pre className="ml-16 text-fg-muted overflow-auto bg-bg-muted/40 p-1 rounded mt-1">
-                      {JSON.stringify(s.detail, null, 2)}
+                      {JSON.stringify(s.detail, null, 2) ?? ""}
                     </pre>
                   )}
                 </div>

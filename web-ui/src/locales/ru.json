@@ -65,7 +65,38 @@
       "title": "Язык",
       "note": "Применяется только к UI; логи, метрики и ClickHouse остаются на английском."
     },
-    "theme": { "title": "Тема", "light": "Светлая", "dark": "Тёмная" }
+    "theme": { "title": "Тема", "light": "Светлая", "dark": "Тёмная" },
+    "common": {
+      "updated_at": "Обновлено",
+      "saved": "Сохранено",
+      "masked_hint": "Оставьте маску — текущий секрет сохранится; введите новое значение, чтобы заменить.",
+      "hot_reload_note": "Изменения применяются на всех инстансах без перезапуска."
+    },
+    "sentry": {
+      "title": "Sentry",
+      "hint": "Переопределяет настройки Sentry из config.yml. Пустые поля — значения из env/YAML.",
+      "use": "Включить Sentry",
+      "dsn": "DSN",
+      "environment": "Окружение",
+      "level": "Минимальный уровень",
+      "attach_stacktrace": "Прикреплять stacktrace",
+      "enable_tracing": "Включить tracing",
+      "traces_sample_rate": "Доля трассируемых транзакций (0..1)"
+    },
+    "clickhouse": {
+      "title": "ClickHouse",
+      "hint": "Переопределяет параметры подключения и batch-writer'а.",
+      "partial_hot_reload_note": "Полная смена подключения применится после рестарта сервиса; batch-параметры и креды перечитываются сразу.",
+      "host": "Хост",
+      "port": "Порт",
+      "database": "База",
+      "user": "Пользователь",
+      "password": "Пароль",
+      "batch_size": "Размер пакета",
+      "flush_interval_sec": "Интервал flush (сек)",
+      "buffer_max_size": "Макс. размер буфера",
+      "workers": "Воркеры"
+    }
   },
   "common": {
     "loading": "Загрузка…",
