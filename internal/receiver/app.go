@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
 
+	"bus/internal/platform/bootstrap"
 	"bus/internal/platform/config"
 	"bus/internal/platform/crypto"
 	"bus/internal/platform/healthcheck"
@@ -24,6 +25,7 @@ import (
 	pgpf "bus/internal/platform/pg"
 	"bus/internal/platform/ratelimit"
 	redispf "bus/internal/platform/redis"
+	"bus/internal/platform/reloader"
 	sentrypf "bus/internal/platform/sentry"
 	httpadapter "bus/internal/receiver/adapter/in/http"
 	"bus/internal/receiver/adapter/out/grpcsender"
@@ -85,6 +87,13 @@ func (a *App) Start(ctx context.Context) error {
 	r.GET("/metrics", gin.WrapH(a.metrics.Handler()))
 
 	handler.Register(r, rlMw)
+
+	// Hot-reload Sentry: подписываемся на pub/sub-канал, чтобы менять DSN/level
+	// без рестарта при изменении app_settings через UI Web (§14.5 ТЗ).
+	reloadSub := reloader.NewSubscriber(a.redis, a.logger)
+	reloadSub.Register(reloader.SectionSentry,
+		bootstrap.SentryReloader(a.pg, a.cfg, a.cfg.Build.ProjectName, a.cfg.Build.Version, a.logger))
+	go reloadSub.Run(ctx)
 
 	a.srv = &http.Server{
 		Addr:              a.cfg.Receiver.HTTPAddr,

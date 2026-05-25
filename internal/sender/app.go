@@ -20,6 +20,7 @@ import (
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 
+	"bus/internal/platform/bootstrap"
 	"bus/internal/platform/circuitbreaker"
 	chpf "bus/internal/platform/clickhouse"
 	"bus/internal/platform/config"
@@ -29,6 +30,7 @@ import (
 	"bus/internal/platform/logging"
 	"bus/internal/platform/metrics"
 	pgpf "bus/internal/platform/pg"
+	"bus/internal/platform/reloader"
 	sentrypf "bus/internal/platform/sentry"
 	kafkaadapter "bus/internal/sender/adapter/in/kafka"
 	grpcadapter "bus/internal/sender/adapter/in/grpc"
@@ -104,6 +106,19 @@ func (a *App) Start(ctx context.Context) error {
 	// Kafka lag reporter (§6 ТЗ): раз в 15 секунд снимаем Stats() со всех
 	// инстансов consumer-группы и пушим в Prometheus.
 	go a.reportKafkaLag(ctx)
+
+	// Hot-reload Sentry и refresh CH-overlay (§14.5). Подписчик слушает Redis
+	// pub/sub и применяет изменения, опубликованные Web после PUT /api/settings/app.
+	// Sentry — полный hot-reload через sentry.Init. CH — пока только overlay
+	// в cfg (полное пересоздание клиента — Phase 6.3.2.5).
+	if a.redis != nil {
+		reloadSub := reloader.NewSubscriber(a.redis, a.logger)
+		reloadSub.Register(reloader.SectionSentry,
+			bootstrap.SentryReloader(a.pg, a.cfg, a.cfg.Build.ProjectName, a.cfg.Build.Version, a.logger))
+		reloadSub.Register(reloader.SectionClickHouse,
+			bootstrap.ClickHouseOverlayReloader(a.pg, a.cfg, a.logger))
+		go reloadSub.Run(ctx)
+	}
 
 	errCh := make(chan error, 2)
 	go func() { errCh <- a.startGRPC(grpcSvc) }()

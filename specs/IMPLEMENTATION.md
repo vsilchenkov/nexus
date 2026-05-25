@@ -123,7 +123,8 @@
 | Env-вставки `${VAR:default}` | ✅ | [platform/config/load.go](../internal/platform/config/load.go) |
 | Флаги `--config`, `--debug`, `--version` | ✅ | [platform/config/flags.go](../internal/platform/config/flags.go) |
 | **`app_settings` таблица + REST API + overlay поверх env на старте** | ✅ Phase 6.3.1 | миграция [0006](../migrations/0006_app_settings.up.sql), [domain/app_settings.go](../internal/domain/app_settings.go), [usecase/app_settings.go](../internal/web/usecase/app_settings.go), [http/app_settings_handler.go](../internal/web/adapter/in/http/app_settings_handler.go), [bootstrap/app_settings.go](../internal/platform/bootstrap/app_settings.go) |
-| Hot-reload через Redis pub/sub (без рестарта) | ⛔ Phase 6.3.2 | overlay сейчас работает только при рестарте; pub/sub для Sentry/CH — следующий блок |
+| **Hot-reload Sentry через Redis pub/sub** | ✅ Phase 6.3.2 | [platform/reloader/](../internal/platform/reloader/), [sentry.Reload](../internal/platform/sentry/sentry.go), [bootstrap/reload.go](../internal/platform/bootstrap/reload.go) — Web публикует на канал `databus:config:reload`, Receiver/Sender/Web подписаны и переинициализируют SDK |
+| Полное hot-reload ClickHouse (пересоздание клиента/writer'а) | ⛔ Phase 6.3.2.5 | сейчас reloader только обновляет overlay в cfg; реальный reconnect требует переделки sender pipeline |
 | Settings → Sentry / ClickHouse страницы в SPA | ⛔ Phase 6.3.3 | backend готов, нужен UI |
 
 ### §9 Высоконагруженность / отказоустойчивость

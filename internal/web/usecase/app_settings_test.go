@@ -11,6 +11,7 @@ import (
 
 	"bus/internal/domain"
 	"bus/internal/platform/logging"
+	"bus/internal/platform/reloader"
 	"bus/internal/web/usecase/port"
 )
 
@@ -138,7 +139,7 @@ func TestAppSettingsUsecase_GetMasksSecrets(t *testing.T) {
 			ClickHouse: domain.ClickHouseSettings{Password: &realPwd},
 		},
 	}
-	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), logging.NewNoop())
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, logging.NewNoop())
 
 	got, err := uc.Get(context.Background())
 	require.NoError(t, err)
@@ -160,7 +161,8 @@ func TestAppSettingsUsecase_UpdateMergesAndAudits(t *testing.T) {
 		current: &domain.AppSettings{Sentry: domain.SentrySettings{Environment: &envOld}},
 	}
 	audit := &fakeAuditRepo{}
-	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(audit, logging.NewNoop()), logging.NewNoop())
+	pub := &fakeReloadPublisher{}
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(audit, logging.NewNoop()), pub, logging.NewNoop())
 
 	err := uc.Update(context.Background(), Actor{UserID: "u-1"}, &domain.AppSettings{
 		Sentry: domain.SentrySettings{Environment: &envNew},
@@ -176,6 +178,9 @@ func TestAppSettingsUsecase_UpdateMergesAndAudits(t *testing.T) {
 	assert.Equal(t, domain.ActionAppSettingsUpdate, audit.written[0].Action)
 	assert.Equal(t, []any{"sentry"},
 		audit.written[0].Details["changed_sections"].([]any))
+
+	// Publisher должен получить событие для секции sentry.
+	assert.Equal(t, []string{"sentry"}, pub.sections)
 }
 
 // ---- fakes ----
@@ -229,4 +234,16 @@ func (f *fakeAuditRepo) List(_ context.Context, _ port.AuditFilter) ([]*domain.A
 
 func (f *fakeAuditRepo) DeleteOlderThan(_ context.Context, _ time.Time) (int, error) {
 	return 0, nil
+}
+
+type fakeReloadPublisher struct {
+	mu       sync.Mutex
+	sections []string
+}
+
+func (f *fakeReloadPublisher) Publish(_ context.Context, s reloader.Section) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sections = append(f.sections, string(s))
+	return nil
 }

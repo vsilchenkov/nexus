@@ -6,22 +6,32 @@ import (
 
 	"bus/internal/domain"
 	"bus/internal/platform/logging"
+	"bus/internal/platform/reloader"
 	"bus/internal/web/usecase/port"
 )
+
+// ReloadPublisher — interface, который реализует reloader.Publisher.
+// Объявлен здесь, чтобы usecase не зависел от конкретного pub/sub-механизма
+// (см. §17.2 — accept interfaces).
+type ReloadPublisher interface {
+	Publish(ctx context.Context, section reloader.Section) error
+}
 
 // AppSettingsUsecase инкапсулирует CRUD над singleton-конфигом §14.5.
 //
 // При Update пишет audit-запись с маскированием DSN и пароля
 // (в `details` уходят имена изменённых полей, но не их значения, кроме
-// безопасных вроде environment/level).
+// безопасных вроде environment/level), и публикует событие reload в
+// Redis pub/sub для горячей перезагрузки на всех инстансах.
 type AppSettingsUsecase struct {
-	repo   port.AppSettingsRepo
-	audit  *AuditUsecase
-	logger logging.Logger
+	repo      port.AppSettingsRepo
+	audit     *AuditUsecase
+	publisher ReloadPublisher
+	logger    logging.Logger
 }
 
-func NewAppSettingsUsecase(repo port.AppSettingsRepo, audit *AuditUsecase, logger logging.Logger) *AppSettingsUsecase {
-	return &AppSettingsUsecase{repo: repo, audit: audit, logger: logger}
+func NewAppSettingsUsecase(repo port.AppSettingsRepo, audit *AuditUsecase, publisher ReloadPublisher, logger logging.Logger) *AppSettingsUsecase {
+	return &AppSettingsUsecase{repo: repo, audit: audit, publisher: publisher, logger: logger}
 }
 
 // Get возвращает текущие настройки + флаги «значение задано».
@@ -69,9 +79,22 @@ func (u *AppSettingsUsecase) Update(ctx context.Context, actor Actor, patch *dom
 		return err
 	}
 
+	sections := changedSections(patch)
 	u.audit.Log(ctx, actor, domain.ActionAppSettingsUpdate, "app_settings", "1", map[string]any{
-		"changed_sections": changedSections(patch),
+		"changed_sections": sections,
 	})
+
+	// Hot-reload: для каждой изменённой секции публикуем событие в Redis.
+	// Подписчики (Receiver/Sender/Web) переинициализируют Sentry и/или CH.
+	if u.publisher != nil {
+		for _, s := range sections {
+			if err := u.publisher.Publish(ctx, reloader.Section(s)); err != nil {
+				u.logger.Warn("reload publish failed",
+					u.logger.Str("section", s),
+					u.logger.Err(err))
+			}
+		}
+	}
 	return nil
 }
 

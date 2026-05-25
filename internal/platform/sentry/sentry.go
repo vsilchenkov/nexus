@@ -58,6 +58,18 @@ func Flush(timeout time.Duration) {
 	sentry.Flush(timeout)
 }
 
+// Reload переинициализирует Sentry SDK новыми параметрами. Используется
+// для hot-reload через Redis pub/sub (§14.5 + §8.4 ТЗ): когда оператор
+// меняет настройки через UI, подписчик в каждом сервисе вызывает Reload.
+//
+// sentry-go internally заменяет глобальный hub при повторном sentry.Init,
+// так что middleware и логгер продолжают работать без переподписки.
+//
+// Если новый Use=false — старый hub остаётся, но клиент станет no-op.
+func Reload(s *config.SentrySection, projectName, version string) error {
+	return Init(s, projectName, version)
+}
+
 func beforeSend(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
 	if event == nil {
 		return nil

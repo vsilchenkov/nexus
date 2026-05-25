@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
 
+	"bus/internal/platform/bootstrap"
 	"bus/internal/platform/config"
 	"bus/internal/platform/crypto"
 	"bus/internal/platform/healthcheck"
@@ -25,6 +26,7 @@ import (
 	pgpf "bus/internal/platform/pg"
 	"bus/internal/platform/ratelimit"
 	redispf "bus/internal/platform/redis"
+	"bus/internal/platform/reloader"
 	sentrypf "bus/internal/platform/sentry"
 	httpadapter "bus/internal/web/adapter/in/http"
 	chreader "bus/internal/web/adapter/out/clickhouse"
@@ -101,7 +103,17 @@ func (a *App) Start(ctx context.Context) error {
 	tokenUC := usecase.NewAPITokenUsecase(tokenRepo, userRepo, auditUC, a.logger)
 
 	appSettingsRepo := pgrepo.NewAppSettingsRepoPg(a.pg, a.logger)
-	appSettingsUC := usecase.NewAppSettingsUsecase(appSettingsRepo, auditUC, a.logger)
+	reloadPublisher := reloader.NewPublisher(a.redis)
+	appSettingsUC := usecase.NewAppSettingsUsecase(appSettingsRepo, auditUC, reloadPublisher, a.logger)
+
+	// Подписчик hot-reload (§14.5). Web сам слушает события, чтобы admin-инстансы
+	// в кластере применили изменения, отправленные через другой инстанс.
+	reloadSub := reloader.NewSubscriber(a.redis, a.logger)
+	reloadSub.Register(reloader.SectionSentry,
+		bootstrap.SentryReloader(a.pg, a.cfg, a.cfg.Build.ProjectName, a.cfg.Build.Version, a.logger))
+	reloadSub.Register(reloader.SectionClickHouse,
+		bootstrap.ClickHouseOverlayReloader(a.pg, a.cfg, a.logger))
+	go reloadSub.Run(ctx)
 
 	authHandler := httpadapter.NewAuthHandler(authUC, &a.cfg.Web, sessionTTL, a.logger)
 	userHandler := httpadapter.NewUserHandler(userUC, authUC, a.logger)
