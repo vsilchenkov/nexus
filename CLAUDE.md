@@ -7,6 +7,68 @@ Read it before touching code. Apply every rule. When in doubt, ask — do not gu
 
 ---
 
+## 0. Project orientation — обязательно прочитать первым делом
+
+Этот репозиторий — **DataBus**, шина данных из трёх Go-сервисов (Receiver + Sender + Web) + React SPA.
+Полное ТЗ — [specs/data_bus_spec.md](specs/data_bus_spec.md), нарезано на 17 файлов в [specs/sections/](specs/sections/).
+
+**Прежде чем что-либо менять — открой [specs/IMPLEMENTATION.md](specs/IMPLEMENTATION.md).** Это карта
+проделанных работ: статус каждого пункта ТЗ (✅/◐/⛔), ссылки на ключевые файлы кода, архитектурные
+решения и неочевидности (зачем `ErrNodePaused`, почему replay через HTTP а не bypass, как устроен
+file-fallback на Windows, и т.п.). Без этого документа ты потратишь время на исследование того, что
+уже задокументировано.
+
+### Архитектура в одном абзаце
+
+Sync: `POST /v1/request/{path}` → Receiver (auth + URL resolve + masking) → gRPC к Sender → внешний
+HTTP → ответ обратно. Async: `POST /v1/requestAsync/{path}` → Receiver → Kafka `databus.async` →
+Sender-consumer → внешний HTTP → лог в ClickHouse (или в NDJSON file-fallback при недоступности CH).
+Конфиг узлов в PostgreSQL (с шифрованием кредов AES-256-GCM), горячий кеш и сессии в Redis.
+Web Service отдаёт REST API под `/api/*` и SPA (`embed.FS`) на всё остальное. Подробности — в
+[sections/02-architecture.md](specs/sections/02-architecture.md).
+
+### Carved-in принципы для этого репозитория
+
+- **Clean Architecture строго: `handler → usecase → port → adapter`.** Usecase зависит **только** от
+  интерфейсов из `usecase/port/`, никогда от конкретных типов из `adapter/out/`. См.
+  [sections/17-patterns.md](specs/sections/17-patterns.md).
+- **Шифрование кредов живёт только в `adapter/out/postgres`.** `domain.Node` всегда содержит plaintext.
+  Если касаешься Node в любом другом слое — креды уже расшифрованы. Не дублируй логику шифрования.
+- **Receiver через `DBTX` интерфейс, не `*pgxpool.Pool`.** Это требование UnitOfWork — репозитории
+  должны работать с пулом ИЛИ с pgx.Tx одинаково. См.
+  [internal/web/adapter/out/postgres/db.go](internal/web/adapter/out/postgres/db.go).
+- **Замаскированные значения (`***`) — не реверсивны.** В логах, Sentry, dry-run отчётах. Если
+  добавляешь новое чувствительное поле — добавь его имя в `sensitiveKeys` в
+  [platform/sentry/sentry.go](internal/platform/sentry/sentry.go).
+- **Логгер только через DI.** Никаких `logging.GetLogger()` в продакшн-коде. В unit-тестах
+  используй `logging.NewNoop()`.
+- **`team_id` в v1 всегда `'default'`.** Колонки уже есть как закладка под multi-tenancy v2, но
+  любая фильтрация по `team_id` сейчас бессмысленна.
+
+### Самые частые сценарии
+
+| Задача                       | Куда смотреть                                                            |
+|------------------------------|--------------------------------------------------------------------------|
+| Добавить новый endpoint Web  | [internal/web/usecase/](internal/web/usecase/) + [adapter/in/http/](internal/web/adapter/in/http/) + routes.go |
+| Добавить таблицу/колонку     | новая миграция в [migrations/](migrations/), затем `Validate()` и DB-маппер |
+| Поправить routing Receiver   | [internal/receiver/usecase/route.go](internal/receiver/usecase/route.go) (sync) или `route_async.go` |
+| Изменить логику Sender       | [internal/sender/usecase/](internal/sender/usecase/) (`send.go`, `async.go`, `ch_housekeeping.go`) |
+| Новый i18n-ключ              | [internal/platform/i18n/i18n.go](internal/platform/i18n/i18n.go) (backend) **и** [web-ui/src/locales/](web-ui/src/locales/) (frontend) |
+| Добавить SPA-страницу        | [web-ui/src/pages/](web-ui/src/pages/), маршрут в `App.tsx`, кнопку в `Topbar.tsx` |
+| Прогнать integration-тест    | `make test-integration` (нужен Docker daemon)                            |
+| Сгенерировать Swagger        | `make swagger` после правки аннотаций над handler'ом                     |
+
+### Прежде чем коммитить
+
+1. `go build ./...` зелёный — но на Windows из-за OOM-линкера может потребоваться
+   `go build -ldflags="-s -w" ./cmd/<name>` по одному бинарю.
+2. `make test` — все unit-тесты прошли.
+3. Если менял Swagger-аннотации — `make swagger`.
+4. Если менял публичный handler — обнови [specs/IMPLEMENTATION.md](specs/IMPLEMENTATION.md).
+5. Не делай destructive операций (push --force, reset --hard, drop migration) без явной просьбы.
+
+---
+
 ## 1. Core principles (non-negotiable)
 
 - **No global variables.** No package-level mutable state. No `init()` side effects. No singletons reached via package vars.
