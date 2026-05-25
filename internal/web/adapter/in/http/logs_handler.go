@@ -13,6 +13,7 @@ import (
 	"bus/internal/domain"
 	"bus/internal/platform/logging"
 	"bus/internal/web/usecase"
+	"bus/internal/web/usecase/port"
 )
 
 // LogsHandler — чтение логов узла из ClickHouse.
@@ -76,23 +77,74 @@ func toLogDTO(r *domain.LogRecord) LogRecordDTO {
 	}
 }
 
+// logQueryFromContext извлекает расширенные фильтры (§7.4, Phase 6.8) из
+// query-параметров: from/to (RFC3339 или UnixMilli), ip, host, status,
+// done, q. Используется и List, и Stream.
+func logQueryFromContext(c *gin.Context) port.LogQuery {
+	q := port.LogQuery{
+		IP:     c.Query("ip"),
+		Host:   c.Query("host"),
+		Status: c.Query("status"), // "ok" / "err" / ""
+		Done:   c.Query("done"),   // "yes" / "no" / ""
+		Q:      c.Query("q"),
+	}
+	if v := c.Query("from"); v != "" {
+		q.SinceMs = parseTimeMs(v)
+	}
+	if v := c.Query("to"); v != "" {
+		q.UntilMs = parseTimeMs(v)
+	}
+	return q
+}
+
+// parseTimeMs — принимает либо RFC3339 ("2026-01-15T10:00:00Z"), либо
+// UnixMilli как строку. Невалидное значение → 0 (фильтр отключён).
+func parseTimeMs(v string) int64 {
+	if t, err := time.Parse(time.RFC3339, v); err == nil {
+		return t.UnixMilli()
+	}
+	if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+		return n
+	}
+	return 0
+}
+
 // List godoc
-// @Summary  Snapshot логов узла из ClickHouse.
+// @Summary  Snapshot логов узла из ClickHouse с фильтрами.
 // @Tags     logs
 // @Produce  json
 // @Param    id        path   string  true   "node id"
-// @Param    since_ms  query  int     false  "cursor по date_request (UnixMilli)"
+// @Param    since_ms  query  int     false  "legacy cursor по date_request (UnixMilli); если задан — фильтры from/to/ip/host/status/done/q игнорируются"
 // @Param    limit     query  int     false  "1..500, default 100"
+// @Param    from      query  string  false  "начало диапазона (RFC3339 или UnixMilli)"
+// @Param    to        query  string  false  "конец диапазона (RFC3339 или UnixMilli)"
+// @Param    ip        query  string  false  "exact match по IP клиента"
+// @Param    host      query  string  false  "exact match по Host"
+// @Param    status    query  string  false  "ok | err | (пусто)"
+// @Param    done      query  string  false  "yes | no | (пусто)"
+// @Param    q         query  string  false  "подстрока (case-insensitive) по url/request/response"
 // @Success  200       {object}  map[string]any
 // @Security CookieAuth
 // @Security ApiTokenAuth
 // @Router   /api/nodes/{id}/logs [get]
 func (h *LogsHandler) List(c *gin.Context) {
 	nodeID := c.Param("id")
-	since, _ := strconv.ParseInt(c.Query("since_ms"), 10, 64)
 	limit, _ := strconv.Atoi(c.Query("limit"))
 
-	recs, err := h.uc.ListSince(c.Request.Context(), nodeID, since, limit)
+	var (
+		recs []*domain.LogRecord
+		err  error
+	)
+	// Если задан since_ms — legacy-режим (без расширенных фильтров) для
+	// SSE-cursor'а и обратной совместимости.
+	if v := c.Query("since_ms"); v != "" {
+		since, _ := strconv.ParseInt(v, 10, 64)
+		recs, err = h.uc.ListSince(c.Request.Context(), nodeID, since, limit)
+	} else {
+		q := logQueryFromContext(c)
+		q.Limit = limit
+		recs, err = h.uc.Search(c.Request.Context(), nodeID, q)
+	}
 	if err != nil {
 		if errors.Is(err, domain.ErrNodeNotFound) {
 			localizedError(c, http.StatusNotFound, "node.not_found")
@@ -134,7 +186,8 @@ func (h *LogsHandler) Stream(c *gin.Context) {
 	ctx, cancel := context.WithCancel(c.Request.Context())
 	defer cancel()
 
-	ch, errCh, err := h.uc.Subscribe(ctx, nodeID)
+	filter := logQueryFromContext(c)
+	ch, errCh, err := h.uc.Subscribe(ctx, nodeID, filter)
 	if err != nil {
 		if errors.Is(err, domain.ErrNodeNotFound) {
 			c.SSEvent("error", gin.H{"error": "node not found"})

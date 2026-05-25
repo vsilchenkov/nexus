@@ -40,6 +40,18 @@
     "live_on": "Live ▶",
     "live_off": "Live ⏸",
     "new_records": "{{n}} новых",
+    "advanced": {
+      "toggle_on": "Расширенные фильтры ▾",
+      "toggle_off": "Расширенные фильтры ▴",
+      "q": "Поиск",
+      "q_placeholder": "Подстрока в URL / request / response…",
+      "ip": "IP",
+      "host": "Host",
+      "from": "С",
+      "to": "По",
+      "apply": "Применить",
+      "reset": "Сбросить"
+    },
     "filter": {
       "all": "Все",
       "ok": "OK",

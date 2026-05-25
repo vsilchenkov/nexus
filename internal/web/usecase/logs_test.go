@@ -8,6 +8,7 @@ import (
 
 	"bus/internal/domain"
 	"bus/internal/platform/logging"
+	"bus/internal/web/usecase/port"
 )
 
 // logReaderMock — отдаёт фиксированные записи на каждый Subscribe-tick.
@@ -23,6 +24,10 @@ func (m *logReaderMock) GetByID(_ context.Context, _, _ string) (*domain.LogReco
 
 func (m *logReaderMock) ListSince(_ context.Context, _ string, _ int64, _ int) ([]*domain.LogRecord, error) {
 	m.calls++
+	return m.rows, m.err
+}
+
+func (m *logReaderMock) Search(_ context.Context, _ port.LogQuery) ([]*domain.LogRecord, error) {
 	return m.rows, m.err
 }
 
@@ -71,7 +76,7 @@ func TestLogs_ListSince_NodeNotFound(t *testing.T) {
 func TestLogs_Subscribe_NodeMissing(t *testing.T) {
 	t.Parallel()
 	uc := NewLogsUsecase(&logReaderMock{}, &stubNodeRepo{nodes: map[string]*domain.Node{}}, logging.NewNoop())
-	_, _, err := uc.Subscribe(context.Background(), "nope")
+	_, _, err := uc.Subscribe(context.Background(), "nope", port.LogQuery{})
 	if !errors.Is(err, domain.ErrNodeNotFound) {
 		t.Fatalf("want ErrNodeNotFound, got %v", err)
 	}
@@ -87,7 +92,7 @@ func TestLogs_Subscribe_ClosesOnCtxCancel(t *testing.T) {
 	uc.pollInterval = 5 * time.Millisecond
 
 	ctx, cancel := context.WithCancel(context.Background())
-	ch, _, err := uc.Subscribe(ctx, "n1")
+	ch, _, err := uc.Subscribe(ctx, "n1", port.LogQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}

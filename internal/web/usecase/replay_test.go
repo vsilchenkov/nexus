@@ -48,6 +48,9 @@ func (s *stubLogReader) GetByID(_ context.Context, _, _ string) (*domain.LogReco
 func (s *stubLogReader) ListSince(_ context.Context, _ string, _ int64, _ int) ([]*domain.LogRecord, error) {
 	return nil, nil
 }
+func (s *stubLogReader) Search(_ context.Context, _ port.LogQuery) ([]*domain.LogRecord, error) {
+	return nil, nil
+}
 
 // stubDispatcher — реализует port.ReceiverDispatcher; сохраняет последний
 // запрос для проверки.

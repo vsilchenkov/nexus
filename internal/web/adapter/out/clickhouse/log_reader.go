@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -97,6 +98,84 @@ func (r *LogReaderCH) ListSince(ctx context.Context, table string, cursor int64,
 		 ORDER BY date_request ASC LIMIT ?`, selectCols, table), cursor, limit)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse list since: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*domain.LogRecord
+	for rows.Next() {
+		rec, err := scanLogRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	return out, nil
+}
+
+// Search — snapshot с расширенными фильтрами (§7.4 Phase 6.8). Сортировка
+// по date_request DESC, LIMIT (1..500, default 100). Все фильтры опциональны;
+// пустые поля q не попадают в WHERE.
+func (r *LogReaderCH) Search(ctx context.Context, q port.LogQuery) ([]*domain.LogRecord, error) {
+	if !isSafeTableName(q.Table) {
+		return nil, fmt.Errorf("invalid table name: %q", q.Table)
+	}
+	limit := q.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+
+	var (
+		conds []string
+		args  []any
+	)
+	if q.SinceMs > 0 {
+		conds = append(conds, "toUnixTimestamp64Milli(toDateTime64(date_request, 3)) > ?")
+		args = append(args, q.SinceMs)
+	}
+	if q.UntilMs > 0 {
+		conds = append(conds, "toUnixTimestamp64Milli(toDateTime64(date_request, 3)) <= ?")
+		args = append(args, q.UntilMs)
+	}
+	if q.IP != "" {
+		conds = append(conds, "IP = ?")
+		args = append(args, q.IP)
+	}
+	if q.Host != "" {
+		conds = append(conds, "Host = ?")
+		args = append(args, q.Host)
+	}
+	switch q.Status {
+	case "ok":
+		conds = append(conds, "status BETWEEN 200 AND 299")
+	case "err":
+		conds = append(conds, "(status >= 400 OR status = 0)")
+	}
+	switch q.Done {
+	case "yes":
+		conds = append(conds, "done = 1")
+	case "no":
+		conds = append(conds, "done = 0")
+	}
+	if q.Q != "" {
+		conds = append(conds,
+			"(positionCaseInsensitiveUTF8(url, ?) > 0 OR positionCaseInsensitiveUTF8(request, ?) > 0 OR positionCaseInsensitiveUTF8(response, ?) > 0)")
+		args = append(args, q.Q, q.Q, q.Q)
+	}
+
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + strings.Join(conds, " AND ")
+	}
+
+	conn, err := r.liveConn()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := conn.Query(ctx, fmt.Sprintf(
+		`SELECT %s FROM %s%s ORDER BY date_request DESC LIMIT ?`,
+		selectCols, q.Table, where), append(args, limit)...)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse search: %w", err)
 	}
 	defer rows.Close()
 

@@ -41,10 +41,32 @@ export default function NodeDetail() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [doneFilter, setDoneFilter] = useState<"all" | "done" | "pending">("all");
 
+  // Phase 6.8 — расширенные фильтры (period/IP/Host/full-text).
+  // Применяются по кнопке «Apply», чтобы не перезагружать SSE/snapshot на
+  // каждый символ. appliedFilters — те, что реально ушли на backend.
+  const [showAdv, setShowAdv] = useState(false);
+  const [advForm, setAdvForm] = useState({
+    q: "",
+    ip: "",
+    host: "",
+    from: "",
+    to: "",
+  });
+  const [appliedFilters, setAppliedFilters] = useState(advForm);
+
+  const advQueryParams = useMemo(() => {
+    const p: Record<string, string | number> = { limit: pageSize };
+    if (appliedFilters.q) p.q = appliedFilters.q;
+    if (appliedFilters.ip) p.ip = appliedFilters.ip;
+    if (appliedFilters.host) p.host = appliedFilters.host;
+    if (appliedFilters.from) p.from = new Date(appliedFilters.from).toISOString();
+    if (appliedFilters.to) p.to = new Date(appliedFilters.to).toISOString();
+    return p;
+  }, [pageSize, appliedFilters]);
+
   const logsQ = useQuery({
-    queryKey: ["logs", id, pageSize],
-    queryFn: () =>
-      api.get<LogsResp>(`/api/nodes/${id}/logs`, { limit: pageSize }),
+    queryKey: ["logs", id, advQueryParams],
+    queryFn: () => api.get<LogsResp>(`/api/nodes/${id}/logs`, advQueryParams),
     enabled: !!id,
     refetchInterval: 5_000,
   });
@@ -58,7 +80,13 @@ export default function NodeDetail() {
 
   useEffect(() => {
     if (!live || !id) return;
-    const es = new EventSource(`/api/nodes/${id}/logs/stream`);
+    // В SSE кладём только q/ip/host (from/to не имеют смысла для live).
+    const qs = new URLSearchParams();
+    if (appliedFilters.q) qs.set("q", appliedFilters.q);
+    if (appliedFilters.ip) qs.set("ip", appliedFilters.ip);
+    if (appliedFilters.host) qs.set("host", appliedFilters.host);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    const es = new EventSource(`/api/nodes/${id}/logs/stream${suffix}`);
     es.addEventListener("log", (e) => {
       try {
         const rec = JSON.parse((e as MessageEvent).data) as LogRow;
@@ -81,7 +109,7 @@ export default function NodeDetail() {
     });
     es.onerror = () => es.close();
     return () => es.close();
-  }, [live, id]);
+  }, [live, id, appliedFilters.q, appliedFilters.ip, appliedFilters.host]);
 
   // Авто-прокрутка к верху, если пользователь не скроллил вручную;
   // иначе показываем баннер «N новых записей» (§7.4).
@@ -224,6 +252,13 @@ export default function NodeDetail() {
                 </select>
               </label>
 
+              <button
+                onClick={() => setShowAdv((s) => !s)}
+                className="text-xs text-fg-muted hover:text-fg px-2 py-1"
+              >
+                {showAdv ? t("logs.advanced.toggle_off") : t("logs.advanced.toggle_on")}
+              </button>
+
               <label className="flex items-center gap-2 text-sm cursor-pointer">
                 <input
                   type="checkbox"
@@ -242,6 +277,85 @@ export default function NodeDetail() {
               </label>
             </div>
           </header>
+
+          {showAdv && (
+            <div className="px-4 py-3 border-b border-bg-muted grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+              <div className="md:col-span-5 space-y-1">
+                <label className="text-[10px] uppercase tracking-wider text-fg-muted">
+                  {t("logs.advanced.q")}
+                </label>
+                <input
+                  type="text"
+                  value={advForm.q}
+                  onChange={(e) => setAdvForm({ ...advForm, q: e.target.value })}
+                  placeholder={t("logs.advanced.q_placeholder")}
+                  className="w-full px-3 py-1.5 bg-bg-muted rounded-md outline-none text-sm"
+                />
+              </div>
+              <div className="md:col-span-2 space-y-1">
+                <label className="text-[10px] uppercase tracking-wider text-fg-muted">
+                  {t("logs.advanced.ip")}
+                </label>
+                <input
+                  type="text"
+                  value={advForm.ip}
+                  onChange={(e) => setAdvForm({ ...advForm, ip: e.target.value })}
+                  className="w-full px-3 py-1.5 bg-bg-muted rounded-md outline-none text-sm font-mono"
+                />
+              </div>
+              <div className="md:col-span-2 space-y-1">
+                <label className="text-[10px] uppercase tracking-wider text-fg-muted">
+                  {t("logs.advanced.host")}
+                </label>
+                <input
+                  type="text"
+                  value={advForm.host}
+                  onChange={(e) => setAdvForm({ ...advForm, host: e.target.value })}
+                  className="w-full px-3 py-1.5 bg-bg-muted rounded-md outline-none text-sm font-mono"
+                />
+              </div>
+              <div className="md:col-span-3 space-y-1">
+                <label className="text-[10px] uppercase tracking-wider text-fg-muted">
+                  {t("logs.advanced.from")}
+                </label>
+                <input
+                  type="datetime-local"
+                  value={advForm.from}
+                  onChange={(e) => setAdvForm({ ...advForm, from: e.target.value })}
+                  className="w-full px-3 py-1.5 bg-bg-muted rounded-md outline-none text-sm"
+                />
+              </div>
+              <div className="md:col-span-3 space-y-1">
+                <label className="text-[10px] uppercase tracking-wider text-fg-muted">
+                  {t("logs.advanced.to")}
+                </label>
+                <input
+                  type="datetime-local"
+                  value={advForm.to}
+                  onChange={(e) => setAdvForm({ ...advForm, to: e.target.value })}
+                  className="w-full px-3 py-1.5 bg-bg-muted rounded-md outline-none text-sm"
+                />
+              </div>
+              <div className="md:col-span-6 flex items-center gap-2 justify-end">
+                <button
+                  onClick={() => {
+                    const reset = { q: "", ip: "", host: "", from: "", to: "" };
+                    setAdvForm(reset);
+                    setAppliedFilters(reset);
+                  }}
+                  className="px-3 py-1.5 text-sm bg-bg-muted hover:bg-bg-muted/70 rounded-md"
+                >
+                  {t("logs.advanced.reset")}
+                </button>
+                <button
+                  onClick={() => setAppliedFilters(advForm)}
+                  className="px-3 py-1.5 text-sm bg-accent hover:bg-accent-hover text-white rounded-md"
+                >
+                  {t("logs.advanced.apply")}
+                </button>
+              </div>
+            </div>
+          )}
 
           <div
             ref={tableWrapRef}

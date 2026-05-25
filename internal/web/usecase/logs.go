@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"bus/internal/domain"
@@ -46,7 +47,65 @@ func (u *LogsUsecase) ListSince(ctx context.Context, nodeID string, sinceMs int6
 	return u.logs.ListSince(ctx, n.ClickHouseTable, sinceMs, limit)
 }
 
-// Subscribe — SSE live-tail (§7.4 ТЗ).
+// Search — snapshot с расширенными фильтрами (Phase 6.8).
+// Подставляет n.ClickHouseTable в q.Table.
+func (u *LogsUsecase) Search(ctx context.Context, nodeID string, q port.LogQuery) ([]*domain.LogRecord, error) {
+	n, err := u.nodes.Get(ctx, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	if n.ClickHouseTable == "" {
+		return nil, fmt.Errorf("node %q has no clickhouse_table configured", n.Path)
+	}
+	q.Table = n.ClickHouseTable
+	return u.logs.Search(ctx, q)
+}
+
+// matchLogFilter — клиентский фильтр для live-tail. Совпадает по семантике
+// с SQL-фильтром в LogReaderCH.Search, но применяется in-memory ко всем
+// событиям перед отправкой клиенту (избегаем динамической перестройки
+// polling-запроса при смене фильтра в UI).
+func matchLogFilter(r *domain.LogRecord, q port.LogQuery) bool {
+	if q.IP != "" && r.IP != q.IP {
+		return false
+	}
+	if q.Host != "" && r.Host != q.Host {
+		return false
+	}
+	switch q.Status {
+	case "ok":
+		if r.Status < 200 || r.Status > 299 {
+			return false
+		}
+	case "err":
+		if r.Status > 0 && r.Status < 400 {
+			return false
+		}
+	}
+	switch q.Done {
+	case "yes":
+		if !r.Done {
+			return false
+		}
+	case "no":
+		if r.Done {
+			return false
+		}
+	}
+	if q.Q != "" {
+		needle := strings.ToLower(q.Q)
+		if !strings.Contains(strings.ToLower(r.URL), needle) &&
+			!strings.Contains(strings.ToLower(r.Request), needle) &&
+			!strings.Contains(strings.ToLower(r.Response), needle) {
+			return false
+		}
+	}
+	return true
+}
+
+// Subscribe — SSE live-tail (§7.4 ТЗ). filter применяется in-memory
+// к каждому событию перед отправкой клиенту (Phase 6.8) —
+// SinceMs/UntilMs/Limit/Table из filter игнорируются (курсор сам управляется).
 //
 // Реализация — простой polling раз в pollInterval с курсором по date_request.
 // Канал закрывается, когда ctx отменён. errCh передаёт фатальные ошибки
@@ -55,7 +114,7 @@ func (u *LogsUsecase) ListSince(ctx context.Context, nodeID string, sinceMs int6
 // Это не самая дешёвая реализация (каждый клиент = свой опрос ClickHouse),
 // но для админок этого хватает. Долгосрочный путь — pub/sub через
 // Kafka databus.logs (out of scope в v1).
-func (u *LogsUsecase) Subscribe(ctx context.Context, nodeID string) (<-chan *domain.LogRecord, <-chan error, error) {
+func (u *LogsUsecase) Subscribe(ctx context.Context, nodeID string, filter port.LogQuery) (<-chan *domain.LogRecord, <-chan error, error) {
 	n, err := u.nodes.Get(ctx, nodeID)
 	if err != nil {
 		return nil, nil, err
@@ -92,6 +151,9 @@ func (u *LogsUsecase) Subscribe(ctx context.Context, nodeID string) (<-chan *dom
 				for _, r := range recs {
 					if ms := r.DateRequest.UnixMilli(); ms > cursor {
 						cursor = ms
+					}
+					if !matchLogFilter(r, filter) {
+						continue
 					}
 					select {
 					case ch <- r:
