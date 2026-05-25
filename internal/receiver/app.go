@@ -19,6 +19,7 @@ import (
 	"bus/internal/platform/config"
 	"bus/internal/platform/crypto"
 	"bus/internal/platform/healthcheck"
+	kafkapf "bus/internal/platform/kafka"
 	"bus/internal/platform/logging"
 	pgpf "bus/internal/platform/pg"
 	redispf "bus/internal/platform/redis"
@@ -37,6 +38,7 @@ type App struct {
 
 	srv      *http.Server
 	senderCl *grpcsender.Client
+	producer *kafkapf.Producer
 }
 
 func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, cipher *crypto.Cipher, logger logging.Logger) *App {
@@ -52,7 +54,11 @@ func (a *App) Start(ctx context.Context) error {
 
 	reader := nodecache.New(a.redis, a.pg, a.cipher, time.Duration(a.cfg.Redis.NodeTTLSec)*time.Second, a.logger)
 	routeUC := usecase.NewRouteUsecase(reader, a.senderCl, a.logger)
-	handler := httpadapter.New(routeUC, a.cfg.Receiver.MaxBodyBytes, a.logger)
+
+	a.producer = kafkapf.NewProducer(a.cfg)
+	routeAsyncUC := usecase.NewRouteAsyncUsecase(reader, a.producer, a.cfg.Kafka.AsyncTopic, a.logger)
+
+	handler := httpadapter.New(routeUC, routeAsyncUC, a.cfg.Receiver.MaxBodyBytes, a.logger)
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -108,6 +114,9 @@ func (a *App) Stop(ctx context.Context) error {
 	}
 	if a.senderCl != nil {
 		_ = a.senderCl.Close()
+	}
+	if a.producer != nil {
+		_ = a.producer.Close()
 	}
 	return nil
 }

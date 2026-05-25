@@ -16,13 +16,19 @@ import (
 
 // Handler — /v1/request/* и /v1/requestAsync/*.
 type Handler struct {
-	route          *usecase.RouteUsecase
-	logger         logging.Logger
-	maxBodyBytes   int
+	route        *usecase.RouteUsecase
+	routeAsync   *usecase.RouteAsyncUsecase
+	logger       logging.Logger
+	maxBodyBytes int
 }
 
-func New(route *usecase.RouteUsecase, maxBodyBytes int, logger logging.Logger) *Handler {
-	return &Handler{route: route, logger: logger, maxBodyBytes: maxBodyBytes}
+func New(
+	route *usecase.RouteUsecase,
+	routeAsync *usecase.RouteAsyncUsecase,
+	maxBodyBytes int,
+	logger logging.Logger,
+) *Handler {
+	return &Handler{route: route, routeAsync: routeAsync, logger: logger, maxBodyBytes: maxBodyBytes}
 }
 
 // Register вешает /v1/request/*path и /v1/requestAsync/*path на роутер.
@@ -84,10 +90,41 @@ func (h *Handler) handleSync(c *gin.Context) {
 }
 
 func (h *Handler) handleAsync(c *gin.Context) {
-	// Phase 2: запись в Kafka. В Phase 1 — 501.
-	c.JSON(http.StatusNotImplemented, gin.H{
-		"error": "async path is not implemented in Phase 1; see roadmap",
+	nodePath := strings.TrimPrefix(c.Param("path"), "/")
+	if nodePath == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "empty node path"})
+		return
+	}
+	body, err := readBody(c, h.maxBodyBytes)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	res, err := h.routeAsync.RouteAsync(c.Request.Context(), usecase.RouteInput{
+		NodePath: nodePath,
+		Method:   c.Request.Method,
+		Header:   c.Request.Header,
+		Query:    c.Request.URL.Query(),
+		Body:     body,
+		ClientIP: clientIP(c.Request),
 	})
+	if err != nil {
+		h.replyDomainError(c, err, nodePath, "receiver.async")
+		return
+	}
+
+	// §3.6 ТЗ: paused-узел отвечает 202 + queued:true + node_status:paused.
+	if res.Queued {
+		c.JSON(http.StatusAccepted, gin.H{
+			"result":      true,
+			"id":          res.ID,
+			"queued":      true,
+			"node_status": string(res.NodeStatus),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"result": true, "id": res.ID})
 }
 
 func readBody(c *gin.Context, max int) ([]byte, error) {

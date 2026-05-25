@@ -43,6 +43,8 @@ func main() {
 
 	cipher := bootstrap.MustCipher(logger)
 
+	bootstrap.MustEnsureKafkaTopics(ctx, cfg, logger, cfg.Kafka.AsyncTopic, cfg.Kafka.DLQTopic)
+
 	app := receiver.New(cfg, pgPool, redisClient, cipher, logger)
 
 	if err := runner.Run(serviceName, displayName, description, app, logger); err != nil {
