@@ -60,6 +60,12 @@
     "title": "Audit log",
     "all_actions": "All actions",
     "empty": "No entries",
+    "export_csv": "Export CSV",
+    "diff": {
+      "before": "Before",
+      "after": "After",
+      "no_changes": "No field changes recorded"
+    },
     "columns": {
       "when": "When",
       "user": "User",

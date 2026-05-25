@@ -83,6 +83,8 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 
 		// Audit log: admin-only; scope audit:read нужен только для API-токена.
 		authedAdmin.GET("/audit", RequireScope("audit:read"), h.Audit.List)
+		// CSV-экспорт журнала (§7.13, Phase 6.6).
+		authedAdmin.GET("/audit/export.csv", RequireScope("audit:read"), h.Audit.ExportCSV)
 
 		// Dynamic-настройки Sentry/ClickHouse (§14.5). Admin-only.
 		if h.AppSettings != nil {

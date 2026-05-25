@@ -34,22 +34,35 @@ export default function AuditLog() {
       <main className="max-w-6xl mx-auto p-6 space-y-4">
         <header className="flex items-center justify-between">
           <h1 className="text-2xl font-semibold">{t("audit.title")}</h1>
-          <select
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="px-3 py-2 bg-bg-muted rounded-md outline-none"
-          >
-            <option value="">{t("audit.all_actions")}</option>
-            <option value="node.create">node.create</option>
-            <option value="node.update">node.update</option>
-            <option value="node.delete">node.delete</option>
-            <option value="node.replay">node.replay</option>
-            <option value="node.dry_run">node.dry_run</option>
-            <option value="user.login.success">user.login.success</option>
-            <option value="user.login.failed">user.login.failed</option>
-            <option value="api_token.create">api_token.create</option>
-            <option value="api_token.revoke">api_token.revoke</option>
-          </select>
+          <div className="flex items-center gap-2">
+            <select
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              className="px-3 py-2 bg-bg-muted rounded-md outline-none"
+            >
+              <option value="">{t("audit.all_actions")}</option>
+              <option value="node.create">node.create</option>
+              <option value="node.update">node.update</option>
+              <option value="node.delete">node.delete</option>
+              <option value="node.replay">node.replay</option>
+              <option value="node.dry_run">node.dry_run</option>
+              <option value="user.login.success">user.login.success</option>
+              <option value="user.login.failed">user.login.failed</option>
+              <option value="api_token.create">api_token.create</option>
+              <option value="api_token.revoke">api_token.revoke</option>
+            </select>
+            <a
+              href={
+                filter
+                  ? `/api/audit/export.csv?action=${encodeURIComponent(filter)}`
+                  : "/api/audit/export.csv"
+              }
+              className="px-3 py-2 bg-bg-muted hover:bg-bg-muted/70 rounded-md text-sm transition-colors"
+              download
+            >
+              {t("audit.export_csv")}
+            </a>
+          </div>
         </header>
 
         {q.isLoading && <div className="text-fg-muted">{t("common.loading")}</div>}
