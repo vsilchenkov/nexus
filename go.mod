@@ -13,6 +13,7 @@ require (
 	github.com/kardianos/service v1.2.4
 	github.com/prometheus/client_golang v1.23.2
 	github.com/redis/go-redis/v9 v9.19.0
+	github.com/segmentio/kafka-go v0.4.51
 	github.com/swaggo/swag v1.16.6
 	github.com/vsilchenkov/logging v1.7.8
 	google.golang.org/grpc v1.74.2

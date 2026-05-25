@@ -124,6 +124,16 @@ func MustKafkaDialer(cfg *config.Config) *kafka.Dialer {
 	return kafka.NewDialer(cfg.Kafka.Brokers)
 }
 
+// MustEnsureKafkaTopics создаёт перечисленные топики на старте
+// (если не существуют). Параметры — из cfg.Kafka.Topic (§5.3).
+// На ошибке завершает процесс — без топиков async не работает.
+func MustEnsureKafkaTopics(ctx context.Context, cfg *config.Config, logger logging.Logger, topics ...string) {
+	if err := kafka.EnsureTopics(ctx, cfg, logger, topics...); err != nil {
+		logger.ErrorWithOp("ensure kafka topics failed", err, "bootstrap.MustEnsureKafkaTopics")
+		os.Exit(1)
+	}
+}
+
 // MustClickHouse подключает ClickHouse. Завершает процесс при ошибке.
 func MustClickHouse(ctx context.Context, cfg *config.Config, logger logging.Logger) chdrv.Conn {
 	conn, err := chpf.New(ctx, &cfg.ClickHouse)
