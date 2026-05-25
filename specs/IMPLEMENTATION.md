@@ -132,6 +132,7 @@
 | **CSV-экспорт audit log (§7.13, кнопка «Export CSV»)** | ✅ Phase 6.6 | `GET /api/audit/export.csv` ([audit_handler.go](../internal/web/adapter/in/http/audit_handler.go) `ExportCSV`) — тот же набор фильтров что у `List`, default limit 10000, max 50000. CSV с UTF-8 BOM (для Excel), 9 колонок (id, created_at, user_login, user_id, action, target_type, target_id, ip_address, details-as-json). UI: ссылка `<a download>` в [pages/AuditLog.tsx](../web-ui/src/pages/AuditLog.tsx) header'е, прокидывает текущий `action`-фильтр. Общая функция `auditFilterFromQuery` извлечена из `List` для переиспользования. |
 | **ClickHouse orphan-tables: сканер + DROP (§7.10, Phase 6.7)** | ✅ Phase 6.7 | `GET /api/settings/clickhouse/orphans` + `DELETE /api/settings/clickhouse/orphans/:table` ([orphan_handler.go](../internal/web/adapter/in/http/orphan_handler.go)). Usecase [orphan_scanner.go](../internal/web/usecase/orphan_scanner.go): SELECT name,engine,total_rows,total_bytes из `system.tables` для базы из cfg.ClickHouse.Database (только `*MergeTree*`, не служебные `.inner*`/`.tmp*`); вычитает known-set из `nodes.clickhouse_table`. `Drop` валидирует имя (isSafeTableNameLocal), повторно перепроверяет orphan-статус (защита от race) и логирует action=`ch_table.drop` в audit. UI: компонент [OrphanTablesPanel](../web-ui/src/components/OrphanTablesPanel.tsx) внизу страницы Settings → ClickHouse, lazy-fetch (только после клика «Scan»), DROP с двойным подтверждением (модал требует ввести имя таблицы вручную). |
 | **Live-tail: расширенные фильтры (§7.4, Phase 6.8)** | ✅ Phase 6.8 | `port.LogQuery` (period/IP/Host/status/done/q) + `LogReader.Search` ([log_reader.go](../internal/web/adapter/out/clickhouse/log_reader.go)): SQL-фильтр через positionCaseInsensitiveUTF8 для full-text, exact match для IP/Host, диапазон по toUnixTimestamp64Milli. `GET /api/nodes/{id}/logs` принимает query: `from`/`to` (RFC3339 или UnixMilli), `ip`, `host`, `status` (ok/err), `done` (yes/no), `q`. Legacy `since_ms` остался для cursor'а; при нём расширенные фильтры игнорируются (backwards-compatible). SSE `/api/nodes/{id}/logs/stream` принимает те же поля, фильтрация в-памяти через `matchLogFilter` в `LogsUsecase.Subscribe`. UI: раскрываемая панель «Advanced filters» в [NodeDetail.tsx](../web-ui/src/pages/NodeDetail.tsx) (textbox `q` + IP + Host + datetime-local `from`/`to` + кнопки Apply/Reset), при изменении applied — пересоздаёт snapshot-query и EventSource. |
+| **Audit log: diff-двухколоночный для `node.update` (§7.13, Phase 6.9)** | ✅ Phase 6.9 | Компонент [AuditDetailsCell.tsx](../web-ui/src/components/AuditDetailsCell.tsx) рендерит детали audit-записи по action: для `node.update` (details формы `{field: {before, after}}` — см. `diffNodes` в [node.go](../internal/web/usecase/node.go)) — компактная таблица 3 колонки (поле / before в `text-err` / after в `text-ok`); спецслучай `auth_credentials: "changed"` — одной строкой italic; для остальных action — JSON в `<details>` (как раньше). [AuditLog.tsx](../web-ui/src/pages/AuditLog.tsx): ячейка `details` заменена на `<AuditDetailsCell action={e.action} details={e.details} />`. Локализация: `audit.diff.{before,after,no_changes}`. |
 
 ### §9 Высоконагруженность / отказоустойчивость
 
@@ -199,7 +200,7 @@
 См. [sections/15-acceptance.md](sections/15-acceptance.md). Покрытие: ~95% пунктов реализовано.
 Не покрыто (требует Phase 6+):
 
-- Полный Audit log: CSV-экспорт сделан (Phase 6.6), diff-двухколоночный для `node.update` — Phase 6.9.
+- Полный Audit log: CSV-экспорт (Phase 6.6), diff-двухколоночный для `node.update` (Phase 6.9) — сделано.
 - Live-tail UI: расширенные фильтры сделаны в Phase 6.8 (`q`/`ip`/`host`/`from`/`to` — на backend через `port.LogQuery`).
 
 ### §16 Out of scope (явно отложено в v2)
@@ -530,28 +531,32 @@ make proto                                     # перегенерация send
 
 ---
 
-## 7. Куда копать дальше (Phase 6+)
+## 7. Куда копать дальше (Phase 7+)
 
 Если будете расширять — вот логичные следующие шаги, в порядке полезности:
 
-1. **Полные Swagger-аннотации на 100% endpoints.** Сейчас покрыто ~60% — нужно
-   аннотировать остальные user/audit/token handlers.
+1. **Полные Swagger-аннотации на 100% endpoints.** Сейчас покрыто ~70%
+   (logs, audit, settings/orphans, app_settings — добавлены в Phase 6).
+   Не покрыты остальные user/token/auth handlers.
 
-2. **CSV экспорт audit log** в [pages/AuditLog.tsx](../web-ui/src/pages/AuditLog.tsx).
+2. **GitHub Actions workflow** (план — см. TESTING.md → CI/CD):
+   build, lint, test, swagger-drift-check, integration matrix.
 
-3. **GitHub Actions workflow** (план — см. TESTING.md → CI/CD).
+3. **L2 in-memory LRU-кеш** в Receiver для случая Redis-flutter'а (§9.2 ТЗ).
 
-4. **L2 in-memory LRU-кеш** в Receiver для случая Redis-flutter'а (§9.2 ТЗ).
+4. **GoReleaser** для бинарей + docker images, если будет нужен релизный pipeline.
 
-5. **GoReleaser** для бинарей + docker images, если будет нужен релизный pipeline.
-
-6. **Grafana дашборд** под `databus_*` метрики и алерт на `databus_kafka_lag > N`,
+5. **Grafana дашборд** под `databus_*` метрики и алерт на `databus_kafka_lag > N`,
    `databus_clickhouse_errors_total rate > 0`.
 
-7. ~~**ClickHouse Settings: orphaned-tables в UI**~~ — реализовано в Phase 6.7.
+Сделанное в Phase 6:
 
-8. ~~**Расширенные фильтры live-tail**~~ — реализовано в Phase 6.8.
-
-9. **Audit log: diff-двухколоночный для `node.update`** — детали уже
-   содержат `before`/`after`, но рендер их «json в `<details>`»;
-   нужен полноценный diff-view side-by-side. Phase 6.9.
+- 6.1 Prometheus метрики (`databus_requests_total`, latency, kafka_lag, CH-метрики).
+- 6.2 Async end-to-end integration через Kafka.
+- 6.3 app_settings + hot-reload Sentry/ClickHouse + test connection.
+- 6.4 Settings → Users полный CRUD.
+- 6.5 Live-tail UI улучшения (подсветка, авто-прокрутка, баннер).
+- 6.6 CSV-экспорт audit log.
+- 6.7 ClickHouse orphan-tables (сканер + DROP с подтверждением).
+- 6.8 Расширенные фильтры live-tail (period/IP/Host/full-text).
+- 6.9 Audit log: diff-двухколоночный для `node.update`.

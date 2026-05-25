@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { api } from "../api/client";
 import { Topbar } from "../components/Topbar";
+import { AuditDetailsCell } from "../components/AuditDetailsCell";
 
 type Entry = {
   id: string;
@@ -93,13 +94,8 @@ export default function AuditLog() {
                       {e.target_type}/{e.target_id.slice(0, 8)}
                     </td>
                     <td className="px-3 py-2 font-mono text-xs text-fg-muted">{e.ip_address}</td>
-                    <td className="px-3 py-2 font-mono text-[10px] text-fg-muted">
-                      <details>
-                        <summary className="cursor-pointer">json</summary>
-                        <pre className="overflow-auto bg-bg-muted/40 p-1 rounded mt-1">
-                          {JSON.stringify(e.details, null, 2)}
-                        </pre>
-                      </details>
+                    <td className="px-3 py-2 max-w-lg">
+                      <AuditDetailsCell action={e.action} details={e.details} />
                     </td>
                   </tr>
                 ))}
