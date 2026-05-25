@@ -128,6 +128,7 @@
 | **Test connection для Sentry/ClickHouse (§7.10)** | ✅ Phase 6.3.2.6 | [usecase.SettingsTester](../internal/web/usecase/settings_tester.go) + POST `/api/settings/{clickhouse,sentry}/test`, кнопка «Test connection» в [Sentry.tsx](../web-ui/src/pages/settings/Sentry.tsx) и [ClickHouse.tsx](../web-ui/src/pages/settings/ClickHouse.tsx) — открывает временный conn / создаёт изолированный sentry.Client с merge'нутыми настройками, возвращает `{ok, latency_ms}` или `{error}` без сохранения |
 | **Settings → Sentry / ClickHouse страницы в SPA** | ✅ Phase 6.3.3 | [pages/settings/Sentry.tsx](../web-ui/src/pages/settings/Sentry.tsx), [pages/settings/ClickHouse.tsx](../web-ui/src/pages/settings/ClickHouse.tsx), две новые вкладки в [pages/Settings.tsx](../web-ui/src/pages/Settings.tsx) (видны только admin-роли через `/api/auth/me`) |
 | **Settings → Users (полная страница CRUD с диалогами создания/смены пароля, §7.9/§7.10)** | ✅ Phase 6.4 | [pages/settings/Users.tsx](../web-ui/src/pages/settings/Users.tsx), таблица + UserDialog (create/edit) + PasswordDialog (compact). Учитывает «нельзя удалить/отключить себя», «нельзя оставить < 1 активного админа», баннер «admin использует пароль по умолчанию», метку «это вы», relative-time для last_login. Backend: исправил [auth_handler.Me](../internal/web/adapter/in/http/auth_handler.go) — теперь возвращает `{user:{user_id, login, email, role, lang, must_change_password}}` (был плоский ответ, фронт ждал обёртку → isAdmin-вкладки не показывались). Добавлен [AuthUsecase.Me](../internal/web/usecase/auth.go) для подъёма login/email из БД |
+| **Live-tail UI: подсветка новых записей (1s), авто-прокрутка, баннер «N новых», pagination size, фильтры status/done (§7.4)** | ✅ Phase 6.5 | [pages/NodeDetail.tsx](../web-ui/src/pages/NodeDetail.tsx) — буфер новых SSE-записей подсвечивается фоном через `transition-colors`, сбрасывается через 1000ms; sticky thead с прокруткой внутри блока; `autoScrollRef` отслеживает ручной скролл, при отступе от верха больше 8px включается баннер «N new ↑» (клик возвращает к live); SegmentedControl OK/Errors/All + Done/Pending/Any фильтрует на клиенте; селектор 50/100/200 заменяет `limit` snapshot-запроса |
 
 ### §9 Высоконагруженность / отказоустойчивость
 
@@ -197,7 +198,7 @@
 
 - ClickHouse Settings: orphan-tables — UI готов (Phase 6.3.3), hot-reload и test-connection реализованы (Phase 6.3.2.5/6.3.2.6), но кнопки «найти orphan'ы» (таблицы без узлов) — нет.
 - Полный Audit log с export CSV, diff-двухколоночный для `node.update`.
-- Live-tail UI: фильтры, авто-прокрутка, баннер «N новых записей».
+- Live-tail UI: расширенные фильтры (период, IP, Host, полнотекстовый поиск) — требуют backend-параметров.
 
 ### §16 Out of scope (явно отложено в v2)
 
@@ -531,23 +532,21 @@ make proto                                     # перегенерация send
 
 Если будете расширять — вот логичные следующие шаги, в порядке полезности:
 
-1. **Live-tail UI улучшения**: фильтры, авто-прокрутка, баннер «N новых записей».
-
-2. **Полные Swagger-аннотации на 100% endpoints.** Сейчас покрыто ~60% — нужно
+1. **Полные Swagger-аннотации на 100% endpoints.** Сейчас покрыто ~60% — нужно
    аннотировать остальные user/audit/token handlers.
 
-3. **CSV экспорт audit log** в [pages/AuditLog.tsx](../web-ui/src/pages/AuditLog.tsx).
+2. **CSV экспорт audit log** в [pages/AuditLog.tsx](../web-ui/src/pages/AuditLog.tsx).
 
-4. **GitHub Actions workflow** (план — см. TESTING.md → CI/CD).
+3. **GitHub Actions workflow** (план — см. TESTING.md → CI/CD).
 
-5. **L2 in-memory LRU-кеш** в Receiver для случая Redis-flutter'а (§9.2 ТЗ).
+4. **L2 in-memory LRU-кеш** в Receiver для случая Redis-flutter'а (§9.2 ТЗ).
 
-6. **GoReleaser** для бинарей + docker images, если будет нужен релизный pipeline.
+5. **GoReleaser** для бинарей + docker images, если будет нужен релизный pipeline.
 
-7. **Grafana дашборд** под `databus_*` метрики и алерт на `databus_kafka_lag > N`,
+6. **Grafana дашборд** под `databus_*` метрики и алерт на `databus_kafka_lag > N`,
    `databus_clickhouse_errors_total rate > 0`.
 
-8. **ClickHouse Settings: orphaned-tables в UI** — таблицы в ClickHouse,
+7. **ClickHouse Settings: orphaned-tables в UI** — таблицы в ClickHouse,
    у которых нет соответствующего узла в Postgres. Test connection уже
    сделан (Phase 6.3.2.6); orphan'ы — backend-сканер + список в UI с
    кнопкой DROP TABLE (с двойным подтверждением).

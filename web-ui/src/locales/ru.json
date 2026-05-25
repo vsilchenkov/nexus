@@ -33,6 +33,29 @@
     },
     "actions": { "edit": "Изменить", "delete": "Удалить", "dry_run": "Тестовый запрос", "replay": "Повтор" }
   },
+  "logs": {
+    "empty": "Записей нет",
+    "shown_count": "Показано {{n}}",
+    "page_size": "Размер страницы",
+    "live_on": "Live ▶",
+    "live_off": "Live ⏸",
+    "new_records": "{{n}} новых",
+    "filter": {
+      "all": "Все",
+      "ok": "OK",
+      "err": "Ошибки",
+      "done_all": "Все",
+      "done_yes": "Завершено",
+      "done_no": "В работе"
+    },
+    "col": {
+      "time": "Время",
+      "method": "Метод",
+      "url": "URL",
+      "status": "Статус",
+      "ms": "мс"
+    }
+  },
   "audit": {
     "title": "Журнал действий",
     "all_actions": "Все действия",

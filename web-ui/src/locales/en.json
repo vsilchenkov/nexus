@@ -33,6 +33,29 @@
     },
     "actions": { "edit": "Edit", "delete": "Delete", "dry_run": "Dry-run", "replay": "Replay" }
   },
+  "logs": {
+    "empty": "No log entries",
+    "shown_count": "{{n}} shown",
+    "page_size": "Page size",
+    "live_on": "Live ▶",
+    "live_off": "Live ⏸",
+    "new_records": "{{n}} new",
+    "filter": {
+      "all": "All",
+      "ok": "OK",
+      "err": "Errors",
+      "done_all": "Any",
+      "done_yes": "Done",
+      "done_no": "Pending"
+    },
+    "col": {
+      "time": "Time",
+      "method": "Method",
+      "url": "URL",
+      "status": "Status",
+      "ms": "ms"
+    }
+  },
   "audit": {
     "title": "Audit log",
     "all_actions": "All actions",
