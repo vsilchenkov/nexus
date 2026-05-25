@@ -22,6 +22,7 @@ import (
 	kafkapf "bus/internal/platform/kafka"
 	"bus/internal/platform/logging"
 	pgpf "bus/internal/platform/pg"
+	"bus/internal/platform/ratelimit"
 	redispf "bus/internal/platform/redis"
 	httpadapter "bus/internal/receiver/adapter/in/http"
 	"bus/internal/receiver/adapter/out/grpcsender"
@@ -60,6 +61,9 @@ func (a *App) Start(ctx context.Context) error {
 
 	handler := httpadapter.New(routeUC, routeAsyncUC, a.cfg.Receiver.MaxBodyBytes, a.logger)
 
+	rl := ratelimit.New(a.redis)
+	rlMw := httpadapter.RateLimitMiddleware(rl, a.cfg.Receiver.RateLimitPerNode, a.logger)
+
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
@@ -71,7 +75,7 @@ func (a *App) Start(ctx context.Context) error {
 	hc.Register(r)
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
-	handler.Register(r)
+	handler.Register(r, rlMw)
 
 	a.srv = &http.Server{
 		Addr:              a.cfg.Receiver.HTTPAddr,

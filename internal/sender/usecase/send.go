@@ -50,17 +50,37 @@ type SendOutput struct {
 	DurationMs int32
 }
 
+// CircuitBreaker — interface circuit breaker'а (§9.5 ТЗ).
+// Объявлен здесь, чтобы usecase не зависел от Redis-реализации.
+// Реализация — internal/platform/circuitbreaker.
+type CircuitBreaker interface {
+	Allow(ctx context.Context, key string) (bool, error)
+	RecordSuccess(ctx context.Context, key string) error
+	RecordFailure(ctx context.Context, key string) error
+}
+
+// noopBreaker используется, если CB отключён (cfg-зависимость не настроена).
+type noopBreaker struct{}
+
+func (noopBreaker) Allow(context.Context, string) (bool, error)  { return true, nil }
+func (noopBreaker) RecordSuccess(context.Context, string) error  { return nil }
+func (noopBreaker) RecordFailure(context.Context, string) error  { return nil }
+
 // SendUsecase — оркестрация: HTTP-вызов с retry + асинхронная запись лога в ClickHouse.
 type SendUsecase struct {
 	httpc  port.HTTPCaller
 	logw   port.LogWriter
+	cb     CircuitBreaker
 	logger logging.Logger
 	host   string
 }
 
-func NewSendUsecase(httpc port.HTTPCaller, logw port.LogWriter, logger logging.Logger) *SendUsecase {
+func NewSendUsecase(httpc port.HTTPCaller, logw port.LogWriter, cb CircuitBreaker, logger logging.Logger) *SendUsecase {
+	if cb == nil {
+		cb = noopBreaker{}
+	}
 	host, _ := os.Hostname()
-	return &SendUsecase{httpc: httpc, logw: logw, logger: logger, host: host}
+	return &SendUsecase{httpc: httpc, logw: logw, cb: cb, logger: logger, host: host}
 }
 
 type attempt struct {
@@ -96,6 +116,24 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		Headers:   in.Headers,
 		Body:      in.Body,
 		TimeoutMs: in.TimeoutMs,
+	}
+
+	// Circuit breaker per node (§9.5). Если breaker open — сразу
+	// 503 без попытки + лог. Это снижает нагрузку на проблемный
+	// внешний узел и ускоряет fail-fast в DLQ для async.
+	if allowed, _ := u.cb.Allow(ctx, in.NodePath); !allowed {
+		rec.DateResponse = time.Now()
+		rec.Duration = int32(time.Since(t0).Milliseconds())
+		rec.Status = 0
+		rec.Done = false
+		rec.Reason = "circuit_breaker_open"
+		rec.Attempts = 0
+		u.logw.Write(ctx, in.ClickHouseTable, rec)
+		return SendOutput{
+			StatusCode: 503,
+			Error:      "circuit breaker open",
+			DurationMs: rec.Duration,
+		}
 	}
 
 	var (
@@ -170,6 +208,13 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		} else {
 			rec.Reason = "OK"
 		}
+	}
+
+	// Обновляем circuit breaker по итогу.
+	if rec.Done {
+		_ = u.cb.RecordSuccess(ctx, in.NodePath)
+	} else {
+		_ = u.cb.RecordFailure(ctx, in.NodePath)
 	}
 
 	if len(attempts) > 1 || !rec.Done {

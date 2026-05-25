@@ -34,7 +34,9 @@ func New(
 // Register вешает /v1/request/*path и /v1/requestAsync/*path на роутер.
 //
 // Префикс /v1/ обязателен; запрос без него — 404 с подсказкой (§3.1).
-func (h *Handler) Register(r *gin.Engine) {
+// mws — дополнительные middleware (rate-limit, audit, ...), применяются
+// перед основным handler'ом.
+func (h *Handler) Register(r *gin.Engine, mws ...gin.HandlerFunc) {
 	// Корневой 404 для запросов без /v1/.
 	r.NoRoute(func(c *gin.Context) {
 		p := c.Request.URL.Path
@@ -47,7 +49,7 @@ func (h *Handler) Register(r *gin.Engine) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 	})
 
-	v1 := r.Group("/v1")
+	v1 := r.Group("/v1", mws...)
 	{
 		v1.Any("/request/*path", h.handleSync)
 		v1.Any("/requestAsync/*path", h.handleAsync)

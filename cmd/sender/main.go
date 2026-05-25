@@ -39,11 +39,14 @@ func main() {
 	chConn := bootstrap.MustClickHouse(ctx, cfg, logger)
 	defer chConn.Close()
 
+	redisClient := bootstrap.MustRedis(ctx, cfg, logger)
+	defer redisClient.Close()
+
 	cipher := bootstrap.MustCipher(logger)
 
 	bootstrap.MustEnsureKafkaTopics(ctx, cfg, logger, cfg.Kafka.AsyncTopic, cfg.Kafka.DLQTopic)
 
-	app := sender.New(cfg, pgPool, chConn, cipher, logger)
+	app := sender.New(cfg, pgPool, chConn, redisClient, cipher, logger)
 
 	if err := runner.Run(serviceName, displayName, description, app, logger); err != nil {
 		logger.ErrorWithOp("service stopped", err, "main")

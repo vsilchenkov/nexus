@@ -15,11 +15,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	goredis "github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 
+	"bus/internal/platform/circuitbreaker"
 	chpf "bus/internal/platform/clickhouse"
 	"bus/internal/platform/config"
 	"bus/internal/platform/crypto"
@@ -41,6 +43,7 @@ type App struct {
 	logger logging.Logger
 	pg     *pgxpool.Pool
 	ch     chdrv.Conn
+	redis  *goredis.Client
 	cipher *crypto.Cipher
 
 	grpcSrv  *grpc.Server
@@ -54,17 +57,25 @@ func New(
 	cfg *config.Config,
 	pg *pgxpool.Pool,
 	ch chdrv.Conn,
+	redis *goredis.Client,
 	cipher *crypto.Cipher,
 	logger logging.Logger,
 ) *App {
-	return &App{cfg: cfg, logger: logger, pg: pg, ch: ch, cipher: cipher}
+	return &App{cfg: cfg, logger: logger, pg: pg, ch: ch, redis: redis, cipher: cipher}
 }
 
 func (a *App) Start(ctx context.Context) error {
 	// Общие сервисы.
 	a.chWriter = chlog.New(a.ch, &a.cfg.ClickHouse, a.logger)
 	httpc := httpclient.New(&a.cfg.Sender.HTTPClient, a.logger)
-	sendUC := usecase.NewSendUsecase(httpc, a.chWriter, a.logger)
+
+	// Circuit breaker per node — порог 5 ошибок подряд, cooldown 30s.
+	// Параметры можно вынести в конфиг в Phase 4.
+	var cb usecase.CircuitBreaker
+	if a.redis != nil {
+		cb = circuitbreaker.New(a.redis, 5, 30*time.Second)
+	}
+	sendUC := usecase.NewSendUsecase(httpc, a.chWriter, cb, a.logger)
 
 	// gRPC adapter для sync.
 	grpcSvc := grpcadapter.NewServer(sendUC, a.logger)
