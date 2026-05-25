@@ -36,12 +36,14 @@ func main() {
 	pgPool := bootstrap.MustPG(ctx, cfg, logger)
 	defer pgPool.Close()
 
-	kafkaDialer := bootstrap.MustKafkaDialer(cfg)
-
 	chConn := bootstrap.MustClickHouse(ctx, cfg, logger)
 	defer chConn.Close()
 
-	app := sender.New(cfg, pgPool, kafkaDialer, chConn, logger)
+	cipher := bootstrap.MustCipher(logger)
+
+	bootstrap.MustEnsureKafkaTopics(ctx, cfg, logger, cfg.Kafka.AsyncTopic, cfg.Kafka.DLQTopic)
+
+	app := sender.New(cfg, pgPool, chConn, cipher, logger)
 
 	if err := runner.Run(serviceName, displayName, description, app, logger); err != nil {
 		logger.ErrorWithOp("service stopped", err, "main")

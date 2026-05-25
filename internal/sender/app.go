@@ -1,7 +1,6 @@
 // Package sender — Sender Service (§4 ТЗ).
 //
-// Phase 1: gRPC сервер с регистрацией SenderServiceServer (sync-путь).
-// Kafka consumer для async — Phase 2.
+// Phase 2: gRPC (sync) + Kafka consumer (async) + DLQ + paused-pacing.
 package sender
 
 import (
@@ -23,44 +22,59 @@ import (
 
 	chpf "bus/internal/platform/clickhouse"
 	"bus/internal/platform/config"
+	"bus/internal/platform/crypto"
 	"bus/internal/platform/healthcheck"
-	"bus/internal/platform/kafka"
+	kafkapf "bus/internal/platform/kafka"
 	"bus/internal/platform/logging"
 	pgpf "bus/internal/platform/pg"
+	kafkaadapter "bus/internal/sender/adapter/in/kafka"
 	grpcadapter "bus/internal/sender/adapter/in/grpc"
 	"bus/internal/sender/adapter/out/chlog"
 	"bus/internal/sender/adapter/out/httpclient"
+	"bus/internal/sender/adapter/out/nodepg"
 	"bus/internal/sender/usecase"
 	senderv1 "bus/proto/sender/v1"
 )
 
 type App struct {
-	cfg         *config.Config
-	logger      logging.Logger
-	pg          *pgxpool.Pool
-	kafkaDialer *kafka.Dialer
-	ch          chdrv.Conn
+	cfg    *config.Config
+	logger logging.Logger
+	pg     *pgxpool.Pool
+	ch     chdrv.Conn
+	cipher *crypto.Cipher
 
 	grpcSrv  *grpc.Server
 	adminSrv *http.Server
 	chWriter *chlog.Writer
+	producer *kafkapf.Producer
+	consumer *kafkaadapter.ConsumerGroup
 }
 
 func New(
 	cfg *config.Config,
 	pg *pgxpool.Pool,
-	kafkaDialer *kafka.Dialer,
 	ch chdrv.Conn,
+	cipher *crypto.Cipher,
 	logger logging.Logger,
 ) *App {
-	return &App{cfg: cfg, logger: logger, pg: pg, kafkaDialer: kafkaDialer, ch: ch}
+	return &App{cfg: cfg, logger: logger, pg: pg, ch: ch, cipher: cipher}
 }
 
 func (a *App) Start(ctx context.Context) error {
+	// Общие сервисы.
 	a.chWriter = chlog.New(a.ch, &a.cfg.ClickHouse, a.logger)
 	httpc := httpclient.New(&a.cfg.Sender.HTTPClient, a.logger)
 	sendUC := usecase.NewSendUsecase(httpc, a.chWriter, a.logger)
+
+	// gRPC adapter для sync.
 	grpcSvc := grpcadapter.NewServer(sendUC, a.logger)
+
+	// Async consumer.
+	a.producer = kafkapf.NewProducer(a.cfg)
+	nodeReader := nodepg.New(a.pg, a.cipher, a.logger)
+	asyncProc := usecase.NewAsyncProcessor(nodeReader, sendUC, a.producer, a.cfg.Kafka.DLQTopic, a.logger)
+	a.consumer = kafkaadapter.NewConsumerGroup(a.cfg, a.cfg.Kafka.AsyncTopic, asyncProc, a.logger)
+	a.consumer.Start(ctx)
 
 	errCh := make(chan error, 2)
 	go func() { errCh <- a.startGRPC(grpcSvc) }()
@@ -111,7 +125,7 @@ func (a *App) startAdminHTTP() error {
 			pgpf.HealthChecker("postgres", a.pg),
 			chpf.HealthChecker("clickhouse", a.ch),
 		},
-		[]healthcheck.Checker{kafka.HealthChecker("kafka", a.kafkaDialer)},
+		nil,
 	)
 	hc.Register(r)
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
@@ -134,6 +148,10 @@ func (a *App) startAdminHTTP() error {
 func (a *App) Stop(ctx context.Context) error {
 	a.logger.Info("sender shutting down")
 
+	if a.consumer != nil {
+		a.consumer.Stop()
+	}
+
 	if a.grpcSrv != nil {
 		done := make(chan struct{})
 		go func() {
@@ -153,6 +171,9 @@ func (a *App) Stop(ctx context.Context) error {
 		flushCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		a.chWriter.Stop(flushCtx)
 		cancel()
+	}
+	if a.producer != nil {
+		_ = a.producer.Close()
 	}
 
 	if a.adminSrv != nil {
