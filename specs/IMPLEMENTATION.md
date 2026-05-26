@@ -14,7 +14,7 @@
 
 | Параметр                | Значение                                                              |
 |-------------------------|-----------------------------------------------------------------------|
-| Go-версия               | 1.25                                                                  |
+| Go-версия               | 1.26                                                                  |
 | Тип проекта             | три stateless backend-сервиса (Receiver, Sender, Web) + SPA админка   |
 | Архитектура             | Clean Architecture: `handler → usecase → port → adapter`              |
 | Главный поток           | `POST /v1/request/{path}` → Receiver → gRPC Sender → внешний URL → лог в ClickHouse |
