@@ -113,7 +113,7 @@
 | API-токены: `db_<base64>` префикс, SHA-256 hash, scopes, audit | ✅ | [web/usecase/api_token.go](../internal/web/usecase/api_token.go), [http/api_token_middleware.go](../internal/web/adapter/in/http/api_token_middleware.go) |
 | Audit log (CRUD узлов, replay, dry_run, login, token actions) с retention | ✅ | [web/usecase/audit.go](../internal/web/usecase/audit.go), [usecase/housekeeping.go](../internal/web/usecase/housekeeping.go) |
 | `RequireSessionOnly` для SSE (отклоняет API-токены) | ✅ Phase 5 | [api_token_middleware.go](../internal/web/adapter/in/http/api_token_middleware.go) |
-| Полный лейаут §7 (Overview cards, KPI-блоки, ClickHouse-настройки, Users-страница) | ⛔ Phase 6 | сейчас только основной поток |
+| Полный лейаут §7 (Overview cards, KPI-блоки, ClickHouse-настройки, Users-страница) | ✅ Phase 6.3/6.4 | Settings → Sentry/ClickHouse/Users CRUD с диалогами, live-tail UI с фильтрами и подсветкой |
 
 ### §8 Конфигурация
 
@@ -193,7 +193,7 @@
 | `ErrorWithOp` с `op` для группировки | ✅ | используется во всех handlers/usecase |
 | Sentry с `BeforeSend`/`BeforeBreadcrumb` для маскирования | ✅ | [platform/sentry/sentry.go](../internal/platform/sentry/sentry.go) |
 | **Sentry tracing-middleware для Gin (§14.3)** | ✅ Phase 5 | [platform/sentry/middleware.go](../internal/platform/sentry/middleware.go) — span'ы с тегами service/node/root_method |
-| `app_settings` PostgreSQL singleton + Web UI Sentry | ⛔ Phase 6 | таблица создана, UI/reload — не реализованы |
+| `app_settings` PostgreSQL singleton + Web UI Sentry | ✅ Phase 6.3 | overlay поверх env, hot-reload Sentry/ClickHouse через Redis pub/sub, test connection (см. §8 строки 125-128) |
 
 ### §15 Критерии приёмки
 
@@ -560,7 +560,14 @@ make proto                                     # перегенерация send
 
 Если будете расширять — вот логичные следующие шаги, в порядке полезности:
 
-1. **GoReleaser** для бинарей + docker images, если будет нужен релизный pipeline.
+1. **OpenTelemetry distributed tracing** (§16: явно out-of-scope v1, но даст
+   корреляцию logs↔traces↔metrics при росте числа сервисов).
+2. **Webhook signature verification** (`/v1/callback/`) — §16, для приёма
+   входящих webhook'ов от партнёров (Stripe/GitHub/...).
+3. **KMS/Vault** интеграция для `ENCRYPTION_KEY` — §16, чтобы убрать секрет
+   из env. См. также `make rotate-encryption-key`.
+4. **Multi-tenancy v2** — колонки `team_id` уже есть, нужен RBAC по team_id
+   + миграция existing `'default'`-данных.
 
 Сделанное в Phase 6:
 

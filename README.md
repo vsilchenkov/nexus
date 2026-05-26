@@ -1,5 +1,10 @@
 # DataBus
 
+[![CI](https://github.com/vsilchenkov/databus/actions/workflows/ci.yml/badge.svg)](.github/workflows/ci.yml)
+[![Security](https://github.com/vsilchenkov/databus/actions/workflows/security.yml/badge.svg)](.github/workflows/security.yml)
+[![Release](https://github.com/vsilchenkov/databus/actions/workflows/release.yml/badge.svg)](.github/workflows/release.yml)
+[![Go 1.25](https://img.shields.io/badge/go-1.25-00ADD8?logo=go)](go.mod)
+
 Шина данных — три Go-сервиса (Receiver, Sender, Web), которые принимают входящие HTTP-запросы, маршрутизируют их на сконфигурированные внешние узлы и логируют все вызовы. Конфигурация маршрутов хранится в PostgreSQL, редактируется через REST API и SPA (React 18 + Vite + Tailwind). Полное ТЗ — [specs/data_bus_spec.md](./specs/data_bus_spec.md); разделено по разделам в [specs/sections/](./specs/sections/).
 
 ## Статус
@@ -24,7 +29,9 @@
 | Phase 5  | i18n (Accept-Language en/ru); SPA на React 18 + Vite + Tailwind (Login, Overview, NodeDetail, NodeSettings, Audit, Settings/{API tokens,Language,Theme}) |
 | Phase 5  | integration-тесты testcontainers: node-repo + receiver sync end-to-end           |
 | Phase 5.1 | CH file-fallback (NDJSON); расширенный i18n на handlers; unit-тесты Replay/Logs/Sentry middleware |
-| Out-of-scope (v2) | Grafana dashboards, KMS-интеграция, multi-tenancy логика, webhook signature verification |
+| Phase 6  | Prometheus метрики; app_settings + hot-reload Sentry/ClickHouse + test connection; Users CRUD; live-tail UI (подсветка/баннер); CSV-экспорт audit; CH orphan-tables; live-tail фильтры; audit diff |
+| Phase 7  | Swagger 100% endpoints + UI; L2 LRU кеш узлов; integration suite (Redis+CH через testcontainers); GitHub Actions CI; Grafana dashboard + Prometheus alerts; **GoReleaser релизы + multi-arch docker в GHCR; security scanning workflow** |
+| Out-of-scope (v2) | KMS-интеграция, multi-tenancy логика, webhook signature verification, OpenTelemetry |
 
 ## Зависимости
 
@@ -54,7 +61,7 @@ curl -X POST http://localhost:8000/api/auth/login \
   -d '{"login":"admin","password":"mySecretPass"}'
 ```
 
-UI-заглушка с REST-документацией: `http://localhost:8000/`.
+UI на `http://localhost:8000/`. Swagger UI — `http://localhost:8000/swagger/index.html` (см. Phase 7.1 в [IMPLEMENTATION.md](./specs/IMPLEMENTATION.md)).
 
 ## Создание первого узла и тестовый запрос
 
@@ -119,7 +126,25 @@ sc start DataBusReceiverService
 
 REST API задокументировано в [internal/web/static/index.html](./internal/web/static/index.html) (он же — UI-заглушка при открытии `http://localhost:8000/`).
 
-OpenAPI / Swagger: `make swagger` генерирует [docs/web/](./docs/web/) из аннотаций в Go-handlers; `make swagger-drift-check` для CI.
+OpenAPI / Swagger: `make swagger` генерирует [docs/web/](./docs/web/) из аннотаций в Go-handlers; `make swagger-drift-check` для CI. Интерактивный UI — `http://localhost:8000/swagger/index.html`.
+
+## Docker images (release builds)
+
+Релизные multi-arch образы (amd64+arm64) публикуются в GHCR по тегу `v*`:
+
+```
+ghcr.io/<owner>/<repo>/receiver:<version>
+ghcr.io/<owner>/<repo>/sender:<version>
+ghcr.io/<owner>/<repo>/web:<version>
+```
+
+Локальный snapshot для проверки релизной сборки — `make release-snapshot`
+(артефакты в `dist/`). См. [.goreleaser.yaml](./.goreleaser.yaml) и
+[.github/workflows/release.yml](./.github/workflows/release.yml).
+
+## Вклад в проект
+
+См. [CONTRIBUTING.md](./CONTRIBUTING.md) — конвенции, процесс работы, CI/release pipeline.
 
 ## Тестирование
 
