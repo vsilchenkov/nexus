@@ -32,15 +32,15 @@ type fallbackStore struct {
 	logger   logging.Logger
 	interval time.Duration
 
-	mu       sync.Mutex
-	stopCh   chan struct{}
-	stopped  bool
-	wg       sync.WaitGroup
+	mu      sync.Mutex
+	stopCh  chan struct{}
+	stopped bool
+	wg      sync.WaitGroup
 }
 
 type fallbackEntry struct {
-	Table string             `json:"table"`
-	Log   *domain.LogRecord  `json:"log"`
+	Table string            `json:"table"`
+	Log   *domain.LogRecord `json:"log"`
 }
 
 // newFallbackStore создаёт каталог dir (если не существует) и

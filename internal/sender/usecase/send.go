@@ -62,9 +62,9 @@ type CircuitBreaker interface {
 // noopBreaker используется, если CB отключён (cfg-зависимость не настроена).
 type noopBreaker struct{}
 
-func (noopBreaker) Allow(context.Context, string) (bool, error)  { return true, nil }
-func (noopBreaker) RecordSuccess(context.Context, string) error  { return nil }
-func (noopBreaker) RecordFailure(context.Context, string) error  { return nil }
+func (noopBreaker) Allow(context.Context, string) (bool, error) { return true, nil }
+func (noopBreaker) RecordSuccess(context.Context, string) error { return nil }
+func (noopBreaker) RecordFailure(context.Context, string) error { return nil }
 
 // SendUsecase — оркестрация: HTTP-вызов с retry + асинхронная запись лога в ClickHouse.
 type SendUsecase struct {

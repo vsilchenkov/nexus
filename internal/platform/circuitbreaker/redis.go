@@ -1,11 +1,12 @@
 // Package circuitbreaker — Redis-backed CB (§9.5 ТЗ).
 //
 // Состояние per-key (обычно key = node_path) с тремя положениями:
-//   closed    — обычная работа;
-//   open      — после consecutive failures >= threshold; запросы
-//               отбрасываются на cooldown секунд;
-//   half_open — после cooldown один пробный запрос; success → closed,
-//               failure → opens обратно.
+//
+//	closed    — обычная работа;
+//	open      — после consecutive failures >= threshold; запросы
+//	            отбрасываются на cooldown секунд;
+//	half_open — после cooldown один пробный запрос; success → closed,
+//	            failure → opens обратно.
 //
 // Реализация — два Redis-поля per key: failures (int) + state (string)
 // + opened_at (unix sec).

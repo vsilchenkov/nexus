@@ -685,7 +685,7 @@ make proto                                     # перегенерация send
   трёх GitHub workflows (ci/security/release) в одном файле для self-hosted
   GitLab. Все jobs на ноде `srv-d-android-l` через `default: tags`.
   · 9.2a CI stages: `test` (go vet + go test -race -short), `lint`
-  (golangci-lint v1.62 + swagger-drift), `build` (go build ./... + Vite SPA
+  (golangci-lint v2.12 + swagger-drift), `build` (go build ./... + Vite SPA
   с artifact'ом web-ui/dist), `integration` (testcontainers с pre-pull
   docker-образов; запуск на master/dev/tag или MR с label `run-integration`).
   · 9.2b Security stage: 4 jobs (govulncheck — единственный gate'ующий с
@@ -1212,7 +1212,7 @@ make proto                                     # перегенерация send
   Валидация: `promtool check config/rules` — оба файла приняты.
 - 7.4 GitHub Actions CI: `.github/workflows/ci.yml` — параллельные jobs
   go-test (race -short), go-build (`go build ./...`), go-lint
-  (`golangci-lint v1.62`), swagger-drift (regen `swag init` → `git diff`),
+  (`golangci-lint v2.12`), swagger-drift (regen `swag init` → `git diff`),
   ui (Node 20 + `npm ci` + `npm run lint --if-present` + `vite build`),
   integration (testcontainers, гейтированный по label `run-integration`
   для PR — тяжёлый сетап с pre-pull docker-образов). `.golangci.yml` с

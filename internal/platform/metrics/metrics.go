@@ -38,13 +38,13 @@ type Metrics struct {
 	registry *prometheus.Registry
 	service  string
 
-	RequestsTotal       *prometheus.CounterVec
-	RequestDuration     *prometheus.HistogramVec
-	KafkaLag            *prometheus.GaugeVec
-	CHBufferSize        *prometheus.GaugeVec
-	CHErrorsTotal       *prometheus.CounterVec
-	CHDroppedTotal      *prometheus.CounterVec
-	CHFallbackTotal     *prometheus.CounterVec
+	RequestsTotal   *prometheus.CounterVec
+	RequestDuration *prometheus.HistogramVec
+	KafkaLag        *prometheus.GaugeVec
+	CHBufferSize    *prometheus.GaugeVec
+	CHErrorsTotal   *prometheus.CounterVec
+	CHDroppedTotal  *prometheus.CounterVec
+	CHFallbackTotal *prometheus.CounterVec
 
 	L2CacheHits      *prometheus.CounterVec
 	L2CacheMisses    prometheus.Counter

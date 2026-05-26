@@ -21,10 +21,11 @@ type Producer struct {
 // databus.async и databus.async.dlq из одного инстанса.
 //
 // Параметры:
-//   acks=all (RequiredAcks=-1) — ждём подтверждения от всех ISR (надёжность).
-//   idempotent producer для exactly-once на retry'ах.
-//   compression: lz4.
-//   max.in.flight=5, retries=MaxInt.
+//
+//	acks=all (RequiredAcks=-1) — ждём подтверждения от всех ISR (надёжность).
+//	idempotent producer для exactly-once на retry'ах.
+//	compression: lz4.
+//	max.in.flight=5, retries=MaxInt.
 func NewProducer(cfg *config.Config) *Producer {
 	brokers := splitBrokers(cfg.Kafka.Brokers)
 	w := &kafka.Writer{

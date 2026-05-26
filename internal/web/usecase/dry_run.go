@@ -77,7 +77,7 @@ func (u *DryRunUsecase) Run(ctx context.Context, actor Actor, req DryRunRequest)
 		})
 		rep.OK = false
 		u.writeAudit(ctx, actor, req.Node, rep, "failed:auth.incoming")
-		return rep, nil
+		return rep, nil //nolint:nilerr // dry-run: ошибка узла — это результат, а не сбой операции
 	}
 	rep.Steps = append(rep.Steps, DryRunStep{
 		Name: "auth.incoming", Status: "ok",
@@ -109,7 +109,7 @@ func (u *DryRunUsecase) Run(ctx context.Context, actor Actor, req DryRunRequest)
 		})
 		rep.OK = false
 		u.writeAudit(ctx, actor, req.Node, rep, "failed:auth.outgoing")
-		return rep, nil
+		return rep, nil //nolint:nilerr // dry-run: ошибка узла — это результат, а не сбой операции
 	}
 	rep.Steps = append(rep.Steps, DryRunStep{
 		Name:    "auth.outgoing",
@@ -129,7 +129,7 @@ func (u *DryRunUsecase) Run(ctx context.Context, actor Actor, req DryRunRequest)
 		})
 		rep.OK = false
 		u.writeAudit(ctx, actor, req.Node, rep, "failed:url.resolve")
-		return rep, nil
+		return rep, nil //nolint:nilerr // dry-run: ошибка узла — это результат, а не сбой операции
 	}
 	finalURL := appendQueryToURL(target, cleanQuery)
 	rep.Steps = append(rep.Steps, DryRunStep{

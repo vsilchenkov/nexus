@@ -16,8 +16,7 @@ import (
 // обработки сообщения. Это даёт at-least-once при сбое в середине
 // обработки (сообщение обработается повторно).
 type Consumer struct {
-	r       *kafka.Reader
-	logger  func(string, ...any)
+	r *kafka.Reader
 }
 
 // NewConsumer создаёт consumer для одного топика и одной consumer-group.

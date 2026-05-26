@@ -60,9 +60,9 @@ func NewAsyncProcessor(
 type HandleResult int
 
 const (
-	HandleAck    HandleResult = iota // commit offset
-	HandleRetry                      // не коммитить — обработать снова (для paused-узлов)
-	HandleDLQed                      // отправлено в DLQ, commit offset
+	HandleAck   HandleResult = iota // commit offset
+	HandleRetry                     // не коммитить — обработать снова (для paused-узлов)
+	HandleDLQed                     // отправлено в DLQ, commit offset
 )
 
 // Handle обрабатывает одно сообщение. Возвращает решение по offset.
@@ -169,10 +169,10 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 
 func (p *AsyncProcessor) publishDLQ(ctx context.Context, raw []byte, env Envelope, out SendOutput) error {
 	hdrs := map[string]string{
-		"id":              env.ID,
-		"node_path":       env.NodePath,
-		"orig_topic":      "databus.async",
-		"reason":          fmt.Sprintf("status=%d attempts=%d duration_ms=%d err=%s",
+		"id":         env.ID,
+		"node_path":  env.NodePath,
+		"orig_topic": "databus.async",
+		"reason": fmt.Sprintf("status=%d attempts=%d duration_ms=%d err=%s",
 			out.StatusCode, out.Attempts, out.DurationMs, out.Error),
 		"last_attempt_at": time.Now().UTC().Format(time.RFC3339Nano),
 	}

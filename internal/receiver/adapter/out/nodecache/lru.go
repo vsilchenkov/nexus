@@ -35,12 +35,12 @@ func (realClock) Now() time.Time { return time.Now() }
 // дают точный контроль над порядком и предсказуемую сложность O(1) для
 // Get/Set/Delete.
 type LRU[V any] struct {
-	mu     sync.Mutex
-	items  map[string]*list.Element
-	order  *list.List
-	size   int
-	ttl    time.Duration
-	clock  Clock
+	mu      sync.Mutex
+	items   map[string]*list.Element
+	order   *list.List
+	size    int
+	ttl     time.Duration
+	clock   Clock
 	onEvict func() // best-effort callback для метрик; nil допустим
 }
 

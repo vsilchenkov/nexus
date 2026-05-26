@@ -1,13 +1,13 @@
 // Loadtest — сценарный тест производительности (§10.2 ТЗ).
 //
 // Что делает:
-//   1. Поднимает mock-сервер внешних узлов (HTTP).
-//   2. Логинится в Web (POST /api/auth/login).
-//   3. Создаёт N узлов через POST /api/nodes (с разными url_mode и auth_type).
-//   4. Гонит target_rps в течение duration в Receiver (/v1/request/*).
-//   5. Считает p50/p95/p99, error rate; печатает отчёт.
-//   6. Сохраняет JSON-отчёт в --report и выходит с кодом 1 при нарушении
-//      критериев приёма (rps >= 95% target, p95 <= 200ms, error rate < 0.1%).
+//  1. Поднимает mock-сервер внешних узлов (HTTP).
+//  2. Логинится в Web (POST /api/auth/login).
+//  3. Создаёт N узлов через POST /api/nodes (с разными url_mode и auth_type).
+//  4. Гонит target_rps в течение duration в Receiver (/v1/request/*).
+//  5. Считает p50/p95/p99, error rate; печатает отчёт.
+//  6. Сохраняет JSON-отчёт в --report и выходит с кодом 1 при нарушении
+//     критериев приёма (rps >= 95% target, p95 <= 200ms, error rate < 0.1%).
 //
 // В Phase 4 — базовая реализация: только static-URL + auth=none.
 // Расширение под все комбинации url_mode/auth_type — последующая итерация.
@@ -30,18 +30,18 @@ import (
 )
 
 type flags struct {
-	WebURL       string
-	ReceiverURL  string
-	AdminLogin   string
-	AdminPass    string
-	TargetRPS    int
-	Duration     time.Duration
-	Nodes        int
-	PayloadMin   int
-	PayloadMax   int
-	MockLatency  time.Duration
-	Cleanup      bool
-	Report       string
+	WebURL      string
+	ReceiverURL string
+	AdminLogin  string
+	AdminPass   string
+	TargetRPS   int
+	Duration    time.Duration
+	Nodes       int
+	PayloadMin  int
+	PayloadMax  int
+	MockLatency time.Duration
+	Cleanup     bool
+	Report      string
 }
 
 func parseFlags() flags {
@@ -153,13 +153,13 @@ func (c *client) createNodes(ctx context.Context, n int, targetURL string) ([]st
 	for i := 0; i < n; i++ {
 		path := fmt.Sprintf("loadtest/node-%d-%d", time.Now().UnixNano(), i)
 		body, _ := json.Marshal(map[string]any{
-			"path":              path,
-			"root_method":       "request",
-			"target_url":        targetURL,
-			"auth_type":         "none",
+			"path":               path,
+			"root_method":        "request",
+			"target_url":         targetURL,
+			"auth_type":          "none",
 			"incoming_auth_type": "none",
-			"timeout_ms":        30000,
-			"clickhouse_table":  "vika_logs.loadtest",
+			"timeout_ms":         30000,
+			"clickhouse_table":   "vika_logs.loadtest",
 		})
 		req, _ := http.NewRequestWithContext(ctx, "POST", c.baseWeb+"/api/nodes", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
@@ -203,14 +203,14 @@ func (r *result) add(d time.Duration, errored bool) {
 }
 
 type report struct {
-	Sent      int64           `json:"sent"`
-	Errors    int64           `json:"errors"`
-	ErrorRate float64         `json:"error_rate"`
-	AchievedRPS float64       `json:"achieved_rps"`
-	P50Ms     float64         `json:"p50_ms"`
-	P95Ms     float64         `json:"p95_ms"`
-	P99Ms     float64         `json:"p99_ms"`
-	Duration  string          `json:"duration"`
+	Sent        int64   `json:"sent"`
+	Errors      int64   `json:"errors"`
+	ErrorRate   float64 `json:"error_rate"`
+	AchievedRPS float64 `json:"achieved_rps"`
+	P50Ms       float64 `json:"p50_ms"`
+	P95Ms       float64 `json:"p95_ms"`
+	P99Ms       float64 `json:"p99_ms"`
+	Duration    string  `json:"duration"`
 }
 
 func (rep *report) print() {

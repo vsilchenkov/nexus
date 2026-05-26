@@ -151,8 +151,8 @@ func TestBeforeSend_MasksRequest(t *testing.T) {
 			QueryString: "token=leaked",
 		},
 		Tags: map[string]string{
-			"node":       "demo/path",
-			"x-api-key":  "leaked-key",
+			"node":      "demo/path",
+			"x-api-key": "leaked-key",
 		},
 		Breadcrumbs: []*sentry.Breadcrumb{
 			{Data: map[string]any{"secret": "x", "msg": "hi"}},

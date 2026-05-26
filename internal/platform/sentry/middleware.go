@@ -75,10 +75,10 @@ func nodePathFromGin(c *gin.Context) string {
 
 func rootMethod(c *gin.Context) string {
 	full := c.FullPath()
-	switch {
-	case full == "/v1/request/*path":
+	switch full {
+	case "/v1/request/*path":
 		return "request"
-	case full == "/v1/requestAsync/*path":
+	case "/v1/requestAsync/*path":
 		return "requestAsync"
 	}
 	return ""

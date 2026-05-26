@@ -36,10 +36,10 @@ func (*fakeConn) QueryRow(context.Context, string, ...any) chdriver.Row { panic(
 func (*fakeConn) PrepareBatch(context.Context, string, ...chdriver.PrepareBatchOption) (chdriver.Batch, error) {
 	panic("not impl")
 }
-func (*fakeConn) Exec(context.Context, string, ...any) error        { panic("not impl") }
+func (*fakeConn) Exec(context.Context, string, ...any) error              { panic("not impl") }
 func (*fakeConn) AsyncInsert(context.Context, string, bool, ...any) error { panic("not impl") }
-func (*fakeConn) Ping(context.Context) error                         { return nil }
-func (*fakeConn) Stats() chdriver.Stats                              { panic("not impl") }
+func (*fakeConn) Ping(context.Context) error                              { return nil }
+func (*fakeConn) Stats() chdriver.Stats                                   { panic("not impl") }
 
 func TestManager_Conn_ReturnsInitial(t *testing.T) {
 	t.Parallel()

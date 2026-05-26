@@ -107,7 +107,7 @@ func (h *Handler) handleSync(c *gin.Context) {
 // webhook'а от внешнего провайдера (§16 ТЗ). Алиас /v1/requestAsync с
 // проверкой что узел сконфигурирован под webhook_signature: иначе вернём
 // 400, чтобы случайные клиенты не дёргали callback-endpoint с обычными
-// узлами в обход seperation of concerns.
+// узлами в обход separation of concerns.
 //
 // Сама HMAC-проверка делается централизованно в CheckIncomingAuth внутри
 // RouteAsync — handler здесь не выполняет crypto-логику.

@@ -43,9 +43,9 @@ func TestNewOption_FromVersionInfoJSON(t *testing.T) {
 	assert.Empty(t, opt.Commit)
 	assert.Empty(t, opt.BuildDate)
 	assert.Equal(t, "test-service", opt.ProjectName)
-	assert.Equal(t, "Acme", opt.VersionInfo.StringFileInfo.CompanyName)
-	assert.Equal(t, 1, opt.VersionInfo.FixedFileInfo.FileVersion.Major)
-	assert.Equal(t, "/tmp/icon.ico", opt.VersionInfo.IconPath)
+	assert.Equal(t, "Acme", opt.StringFileInfo.CompanyName)
+	assert.Equal(t, 1, opt.FixedFileInfo.FileVersion.Major)
+	assert.Equal(t, "/tmp/icon.ico", opt.IconPath)
 	assert.NotEmpty(t, opt.WorkingDir, "WorkingDir всегда должен быть заполнен")
 }
 
@@ -60,7 +60,7 @@ func TestNewOption_LdflagsOverrideVersion(t *testing.T) {
 	assert.Equal(t, "9.9.9-rc1", opt.Version, "ldflags Version должен переопределять versioninfo.json")
 	assert.Equal(t, "abc1234", opt.Commit)
 	assert.Equal(t, "2026-05-26T00:00:00Z", opt.BuildDate)
-	assert.Equal(t, "1.2.3", opt.VersionInfo.StringFileInfo.ProductVersion,
+	assert.Equal(t, "1.2.3", opt.StringFileInfo.ProductVersion,
 		"VersionInfo сам по себе не модифицируется")
 }
 

@@ -38,9 +38,9 @@ func (*fakeCHConn) QueryRow(context.Context, string, ...any) chdriver.Row { pani
 func (*fakeCHConn) PrepareBatch(context.Context, string, ...chdriver.PrepareBatchOption) (chdriver.Batch, error) {
 	panic("not impl")
 }
-func (*fakeCHConn) Exec(context.Context, string, ...any) error             { panic("not impl") }
+func (*fakeCHConn) Exec(context.Context, string, ...any) error              { panic("not impl") }
 func (*fakeCHConn) AsyncInsert(context.Context, string, bool, ...any) error { panic("not impl") }
-func (*fakeCHConn) Stats() chdriver.Stats                                  { panic("not impl") }
+func (*fakeCHConn) Stats() chdriver.Stats                                   { panic("not impl") }
 
 // fakeSentryClient — реализует SentryTestClient без сети.
 type fakeSentryClient struct {

@@ -56,8 +56,8 @@ func (s *stubMetrics) IncL2Hit(kind string) {
 		s.stale.Add(1)
 	}
 }
-func (s *stubMetrics) IncL2Miss()     { s.miss.Add(1) }
-func (s *stubMetrics) IncL2Eviction() { s.evict.Add(1) }
+func (s *stubMetrics) IncL2Miss()      { s.miss.Add(1) }
+func (s *stubMetrics) IncL2Eviction()  { s.evict.Add(1) }
 func (s *stubMetrics) SetL2Size(n int) { s.size.Store(int64(n)) }
 
 func TestL2_DisabledReturnsInner(t *testing.T) {

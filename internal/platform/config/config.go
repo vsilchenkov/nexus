@@ -29,12 +29,12 @@ type Config struct {
 // SampleRate=0 → drop all; 1.0 → отправлять каждый. Между — head-based
 // ratio-sampler.
 type OtelSection struct {
-	Enable        bool    `yaml:"enable"`
-	OtlpEndpoint  string  `yaml:"otlp_endpoint"`
-	OtlpInsecure  bool    `yaml:"otlp_insecure"`
-	SampleRate    float64 `yaml:"sample_rate"`
-	ServiceName   string  `yaml:"service_name"`
-	Environment   string  `yaml:"environment"`
+	Enable       bool    `yaml:"enable"`
+	OtlpEndpoint string  `yaml:"otlp_endpoint"`
+	OtlpInsecure bool    `yaml:"otlp_insecure"`
+	SampleRate   float64 `yaml:"sample_rate"`
+	ServiceName  string  `yaml:"service_name"`
+	Environment  string  `yaml:"environment"`
 }
 
 type BuildSection struct {
@@ -76,18 +76,18 @@ type PostgresSection struct {
 }
 
 type RedisSection struct {
-	Host              string `yaml:"host"`
-	Port              int    `yaml:"port"`
-	DB                int    `yaml:"db"`
-	Password          string `yaml:"password"`
-	PoolSize          int    `yaml:"pool_size"`
-	MinIdleConns      int    `yaml:"min_idle_conns"`
-	DialTimeoutMs     int    `yaml:"dial_timeout_ms"`
-	ReadTimeoutMs     int    `yaml:"read_timeout_ms"`
-	WriteTimeoutMs    int    `yaml:"write_timeout_ms"`
-	NodeTTLSec        int    `yaml:"node_ttl_sec"`
-	SessionTTLSec     int    `yaml:"session_ttl_sec"`
-	RatelimitWindowSec int   `yaml:"ratelimit_window_sec"`
+	Host               string `yaml:"host"`
+	Port               int    `yaml:"port"`
+	DB                 int    `yaml:"db"`
+	Password           string `yaml:"password"`
+	PoolSize           int    `yaml:"pool_size"`
+	MinIdleConns       int    `yaml:"min_idle_conns"`
+	DialTimeoutMs      int    `yaml:"dial_timeout_ms"`
+	ReadTimeoutMs      int    `yaml:"read_timeout_ms"`
+	WriteTimeoutMs     int    `yaml:"write_timeout_ms"`
+	NodeTTLSec         int    `yaml:"node_ttl_sec"`
+	SessionTTLSec      int    `yaml:"session_ttl_sec"`
+	RatelimitWindowSec int    `yaml:"ratelimit_window_sec"`
 }
 
 type ClickHouseSection struct {
@@ -106,11 +106,11 @@ type ClickHouseSection struct {
 }
 
 type KafkaSection struct {
-	Brokers       string              `yaml:"brokers"`
-	AsyncTopic    string              `yaml:"async_topic"`
-	DLQTopic      string              `yaml:"dlq_topic"`
-	ConsumerGroup string              `yaml:"consumer_group"`
-	Topic         KafkaTopicSection   `yaml:"topic"`
+	Brokers       string               `yaml:"brokers"`
+	AsyncTopic    string               `yaml:"async_topic"`
+	DLQTopic      string               `yaml:"dlq_topic"`
+	ConsumerGroup string               `yaml:"consumer_group"`
+	Topic         KafkaTopicSection    `yaml:"topic"`
 	Producer      KafkaProducerSection `yaml:"producer"`
 	Consumer      KafkaConsumerSection `yaml:"consumer"`
 }
@@ -155,26 +155,26 @@ type KafkaConsumerSection struct {
 }
 
 type ReceiverSection struct {
-	HTTPAddr         string                  `yaml:"http_addr"`
-	ReadTimeoutMs    int                     `yaml:"read_timeout_ms"`
-	WriteTimeoutMs   int                     `yaml:"write_timeout_ms"`
-	IdleTimeoutSec   int                     `yaml:"idle_timeout_sec"`
-	MaxBodyBytes     int                     `yaml:"max_body_bytes"`
-	MaxHeaderBytes   int                     `yaml:"max_header_bytes"`
-	RateLimitPerNode int                     `yaml:"rate_limit_per_node"`
+	HTTPAddr         string                   `yaml:"http_addr"`
+	ReadTimeoutMs    int                      `yaml:"read_timeout_ms"`
+	WriteTimeoutMs   int                      `yaml:"write_timeout_ms"`
+	IdleTimeoutSec   int                      `yaml:"idle_timeout_sec"`
+	MaxBodyBytes     int                      `yaml:"max_body_bytes"`
+	MaxHeaderBytes   int                      `yaml:"max_header_bytes"`
+	RateLimitPerNode int                      `yaml:"rate_limit_per_node"`
 	SenderGRPC       ReceiverSenderGRPCConfig `yaml:"sender_grpc"`
-	SwaggerEnabled   bool                    `yaml:"swagger_enabled"`
-	L2Cache          ReceiverL2CacheConfig   `yaml:"l2_cache"`
+	SwaggerEnabled   bool                     `yaml:"swagger_enabled"`
+	L2Cache          ReceiverL2CacheConfig    `yaml:"l2_cache"`
 }
 
 // ReceiverL2CacheConfig — параметры in-memory LRU L2-кеша поверх Redis+PG
 // для конфига узлов (§9.2). При Enabled=false слой не подключается и
 // чтение идёт напрямую через Redis/PG.
 type ReceiverL2CacheConfig struct {
-	Enabled      bool `yaml:"enabled"`
-	Size         int  `yaml:"size"`
-	TTLMs        int  `yaml:"ttl_ms"`
-	StaleTTLMs   int  `yaml:"stale_ttl_ms"`
+	Enabled    bool `yaml:"enabled"`
+	Size       int  `yaml:"size"`
+	TTLMs      int  `yaml:"ttl_ms"`
+	StaleTTLMs int  `yaml:"stale_ttl_ms"`
 }
 
 type ReceiverSenderGRPCConfig struct {
@@ -186,19 +186,19 @@ type ReceiverSenderGRPCConfig struct {
 }
 
 type SenderSection struct {
-	GRPCAddr                  string                   `yaml:"grpc_addr"`
-	AdminHTTPAddr             string                   `yaml:"admin_http_addr"`
-	GRPCMaxConcurrentStreams  uint32                   `yaml:"grpc_max_concurrent_streams"`
-	HTTPClient                SenderHTTPClientConfig   `yaml:"http_client"`
-	Workers                   int                      `yaml:"workers"`
+	GRPCAddr                 string                 `yaml:"grpc_addr"`
+	AdminHTTPAddr            string                 `yaml:"admin_http_addr"`
+	GRPCMaxConcurrentStreams uint32                 `yaml:"grpc_max_concurrent_streams"`
+	HTTPClient               SenderHTTPClientConfig `yaml:"http_client"`
+	Workers                  int                    `yaml:"workers"`
 }
 
 type SenderHTTPClientConfig struct {
-	TimeoutMs            int `yaml:"timeout_ms"`
-	MaxIdleConns         int `yaml:"max_idle_conns"`
-	MaxIdleConnsPerHost  int `yaml:"max_idle_conns_per_host"`
-	IdleConnTimeoutSec   int `yaml:"idle_conn_timeout_sec"`
-	DialTimeoutMs        int `yaml:"dial_timeout_ms"`
+	TimeoutMs             int `yaml:"timeout_ms"`
+	MaxIdleConns          int `yaml:"max_idle_conns"`
+	MaxIdleConnsPerHost   int `yaml:"max_idle_conns_per_host"`
+	IdleConnTimeoutSec    int `yaml:"idle_conn_timeout_sec"`
+	DialTimeoutMs         int `yaml:"dial_timeout_ms"`
 	TLSHandshakeTimeoutMs int `yaml:"tls_handshake_timeout_ms"`
 }
 

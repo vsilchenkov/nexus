@@ -18,8 +18,8 @@ import (
 
 // LogsHandler — чтение логов узла из ClickHouse.
 //
-//   GET /api/nodes/{id}/logs         — snapshot со стандартной пагинацией.
-//   GET /api/nodes/{id}/logs/stream  — SSE live-tail (§7.4).
+//	GET /api/nodes/{id}/logs         — snapshot со стандартной пагинацией.
+//	GET /api/nodes/{id}/logs/stream  — SSE live-tail (§7.4).
 type LogsHandler struct {
 	uc     *usecase.LogsUsecase
 	logger logging.Logger

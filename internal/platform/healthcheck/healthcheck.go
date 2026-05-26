@@ -1,10 +1,10 @@
 // Package healthcheck — handlers для /health (liveness) и /ready (readiness).
 //
 // Соответствует §9.6 ТЗ:
-//   * /health — 200, пока процесс жив;
-//   * /ready  — 200, если все обязательные зависимости отвечают;
-//                200 + degraded:true, если опциональная зависимость лежит;
-//                503, если упала обязательная зависимость.
+//   - /health — 200, пока процесс жив;
+//   - /ready  — 200, если все обязательные зависимости отвечают;
+//     200 + degraded:true, если опциональная зависимость лежит;
+//     503, если упала обязательная зависимость.
 package healthcheck
 
 import (
@@ -27,8 +27,8 @@ type CheckerFunc struct {
 	F func(ctx context.Context) error
 }
 
-func (c CheckerFunc) Name() string                           { return c.N }
-func (c CheckerFunc) Check(ctx context.Context) error        { return c.F(ctx) }
+func (c CheckerFunc) Name() string                    { return c.N }
+func (c CheckerFunc) Check(ctx context.Context) error { return c.F(ctx) }
 
 // Handler собирает Gin-handler'ы /health и /ready.
 //

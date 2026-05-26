@@ -143,7 +143,7 @@ func TestValidate(t *testing.T) {
 		mutate  func(*Config)
 		wantErr string
 	}{
-		{"nil_config", func(_ *Config) {}, ""},   // спец-кейс ниже
+		{"nil_config", func(_ *Config) {}, ""}, // спец-кейс ниже
 		{"valid", func(_ *Config) {}, ""},
 		{"missing_postgres_host",
 			func(c *Config) { c.Postgres.Host = "" },

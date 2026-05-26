@@ -22,9 +22,9 @@ type AsyncProducer interface {
 
 // RouteAsyncResult — что Receiver возвращает клиенту /v1/requestAsync.
 type RouteAsyncResult struct {
-	ID           string
-	NodeStatus   domain.NodeStatus
-	Queued       bool // true для paused-узлов (§3.6)
+	ID         string
+	NodeStatus domain.NodeStatus
+	Queued     bool // true для paused-узлов (§3.6)
 }
 
 // RouteAsyncUsecase — обработка /v1/requestAsync/*.
@@ -110,9 +110,9 @@ func (u *RouteAsyncUsecase) RouteAsync(ctx context.Context, in RouteInput) (*Rou
 	}
 
 	headers := map[string]string{
-		"id":         id,
-		"node_path":  node.Path,
-		"attempt":    "0",
+		"id":        id,
+		"node_path": node.Path,
+		"attempt":   "0",
 	}
 
 	// OTel (Phase 8.4): producer-span + traceparent в headers. На consumer-стороне

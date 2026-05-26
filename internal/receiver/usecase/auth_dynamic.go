@@ -13,12 +13,12 @@ import (
 
 // DynamicAuthResult — результат разбора динамической авторизации (§3.5).
 //
-//   Header — готовая строка для outbound-заголовка Authorization
-//            ("Bearer <token>" или "Basic <base64>").
+//	Header — готовая строка для outbound-заголовка Authorization
+//	         ("Bearer <token>" или "Basic <base64>").
 //
-//   Stripped — обновлённые copies входящих query/headers/body, из которых
-//              удалены служебные значения, чтобы они не попали внешнему
-//              узлу (§3.5 «Исключение из проксируемого запроса»).
+//	Stripped — обновлённые copies входящих query/headers/body, из которых
+//	           удалены служебные значения, чтобы они не попали внешнему
+//	           узлу (§3.5 «Исключение из проксируемого запроса»).
 type DynamicAuthResult struct {
 	Header  string
 	Query   url.Values

@@ -28,9 +28,10 @@ type Middlewares struct {
 // RegisterAPI вешает /api/* маршруты.
 //
 // Pipeline:
-//   APITokenAuth — если есть Bearer db_*, аутентифицирует; иначе passthrough.
-//   SessionAuth  — если ctxSession ещё не выставлен (API-токеном) — проверяет cookie.
-//   RequireAdmin — для admin-only роутов.
+//
+//	APITokenAuth — если есть Bearer db_*, аутентифицирует; иначе passthrough.
+//	SessionAuth  — если ctxSession ещё не выставлен (API-токеном) — проверяет cookie.
+//	RequireAdmin — для admin-only роутов.
 //
 // API-токены вызывают только GET-эндпоинты (read-only, §7.14);
 // для каждого нужен соответствующий scope через RequireScope.

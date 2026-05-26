@@ -161,14 +161,14 @@ func (r *authUserRepo) Delete(_ context.Context, id string) error {
 
 // memSessionRepo — in-memory session store.
 type memSessionRepo struct {
-	mu             sync.Mutex
-	byToken        map[string]*domain.Session
-	deleteByUser   map[string]int
-	getErr         error
-	createErr      error
-	deleteCalls    int
-	touchCalls     int
-	deletedByUser  []string
+	mu            sync.Mutex
+	byToken       map[string]*domain.Session
+	deleteByUser  map[string]int
+	getErr        error
+	createErr     error
+	deleteCalls   int
+	touchCalls    int
+	deletedByUser []string
 }
 
 func newMemSessionRepo() *memSessionRepo {

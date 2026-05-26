@@ -33,13 +33,13 @@ func (s stubSenderClient) Send(_ context.Context, _ *senderv1.SendRequest) (*sen
 func TestRoute_Paused(t *testing.T) {
 	t.Parallel()
 	node := &domain.Node{
-		Path:       "demo/path",
-		RootMethod: domain.RootMethodRequest,
-		URLMode:    domain.URLModeStatic,
-		TargetURL:  "https://example.com/hook",
+		Path:             "demo/path",
+		RootMethod:       domain.RootMethodRequest,
+		URLMode:          domain.URLModeStatic,
+		TargetURL:        "https://example.com/hook",
 		AuthType:         domain.AuthTypeNone,
 		IncomingAuthType: domain.IncomingAuthTypeNone,
-		Status:     domain.NodeStatusPaused,
+		Status:           domain.NodeStatusPaused,
 	}
 	u := NewRouteUsecase(stubNodeReader{node: node}, stubSenderClient{}, logging.NewNoop())
 	_, err := u.Route(context.Background(), RouteInput{NodePath: "demo/path"})
@@ -51,13 +51,13 @@ func TestRoute_Paused(t *testing.T) {
 func TestRoute_Disabled(t *testing.T) {
 	t.Parallel()
 	node := &domain.Node{
-		Path:       "demo/path",
-		RootMethod: domain.RootMethodRequest,
-		URLMode:    domain.URLModeStatic,
-		TargetURL:  "https://example.com/hook",
+		Path:             "demo/path",
+		RootMethod:       domain.RootMethodRequest,
+		URLMode:          domain.URLModeStatic,
+		TargetURL:        "https://example.com/hook",
 		AuthType:         domain.AuthTypeNone,
 		IncomingAuthType: domain.IncomingAuthTypeNone,
-		Status:     domain.NodeStatusDisabled,
+		Status:           domain.NodeStatusDisabled,
 	}
 	u := NewRouteUsecase(stubNodeReader{node: node}, stubSenderClient{}, logging.NewNoop())
 	_, err := u.Route(context.Background(), RouteInput{NodePath: "demo/path"})
@@ -71,13 +71,13 @@ func TestRoute_Disabled(t *testing.T) {
 func TestRouteAsync_PausedQueued(t *testing.T) {
 	t.Parallel()
 	node := &domain.Node{
-		Path:       "demo/path",
-		RootMethod: domain.RootMethodRequest,
-		URLMode:    domain.URLModeStatic,
-		TargetURL:  "https://example.com/hook",
+		Path:             "demo/path",
+		RootMethod:       domain.RootMethodRequest,
+		URLMode:          domain.URLModeStatic,
+		TargetURL:        "https://example.com/hook",
 		AuthType:         domain.AuthTypeNone,
 		IncomingAuthType: domain.IncomingAuthTypeNone,
-		Status:     domain.NodeStatusPaused,
+		Status:           domain.NodeStatusPaused,
 	}
 	producer := &stubProducer{}
 	u := NewRouteAsyncUsecase(stubNodeReader{node: node}, producer, "databus.async", logging.NewNoop())

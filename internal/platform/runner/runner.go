@@ -1,6 +1,6 @@
 // Package runner — единая точка запуска бинаря под обоими режимами:
-//   * docker / интерактивный foreground — реагирует на SIGTERM/SIGINT;
-//   * Windows-сервис под SCM (kardianos/service) — реагирует на Service Control.
+//   - docker / интерактивный foreground — реагирует на SIGTERM/SIGINT;
+//   - Windows-сервис под SCM (kardianos/service) — реагирует на Service Control.
 //
 // Каждый main вызывает runner.Run(serviceName, app); внутри обёртки выбор
 // делается через service.Interactive().

@@ -70,10 +70,10 @@ func (s *stubLogWriter) Flush(_ context.Context) error {
 
 // stubBreaker — программируемый CircuitBreaker.
 type stubBreaker struct {
-	allow         bool
-	successCount  int
-	failureCount  int
-	allowErr      error
+	allow        bool
+	successCount int
+	failureCount int
+	allowErr     error
 }
 
 func (b *stubBreaker) Allow(_ context.Context, _ string) (bool, error) {
@@ -249,8 +249,8 @@ func TestSend_5xxRetriesUntilSuccess(t *testing.T) {
 
 	uc := NewSendUsecase(httpc, logw, cb, logging.NewNoop())
 	in := baseInput()
-	in.RetryCount = 3       // итого 4 попытки максимум
-	in.RetryBackoffMs = 1   // быстрый backoff для теста
+	in.RetryCount = 3     // итого 4 попытки максимум
+	in.RetryBackoffMs = 1 // быстрый backoff для теста
 
 	t0 := time.Now()
 	out := uc.Send(context.Background(), in)
@@ -285,7 +285,7 @@ func TestSend_AllAttemptsFail_Returns0AndError(t *testing.T) {
 
 	uc := NewSendUsecase(httpc, logw, cb, logging.NewNoop())
 	in := baseInput()
-	in.RetryCount = 1     // 2 попытки
+	in.RetryCount = 1 // 2 попытки
 	in.RetryBackoffMs = 1
 
 	out := uc.Send(context.Background(), in)

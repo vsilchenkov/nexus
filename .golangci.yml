@@ -1,63 +1,81 @@
-# golangci-lint config для DataBus.
-# Запуск локально: `golangci-lint run` (через `make lint`).
-# В CI поднимается через golangci/golangci-lint-action@v6.
-
+version: "2"
 run:
-  timeout: 5m
-  tests: true
   modules-download-mode: readonly
-
+  tests: true
 linters:
-  disable-all: true
+  default: none
   enable:
-    - errcheck       # необработанные ошибки
+    - bodyclose
+    - errcheck
     - govet
     - ineffassign
-    - staticcheck
-    - unused
-    - gosimple
-    - gofmt
-    - goimports
     - misspell
-    - revive         # лёгкий стилистический линт (без exhaustruct)
-    - bodyclose      # http.Response.Body должен закрываться
-    - rowserrcheck   # sql.Rows.Err() после итерации
-    - unconvert      # бесполезные конвертации типов
-    - prealloc       # очевидные пре-аллокации слайсов
-    - nilerr         # `return nil` после ненулевой ошибки
-
-linters-settings:
-  errcheck:
-    check-blank: false
-    exclude-functions:
-      # Намеренно «огонь-и-забыть»: best-effort cleanup.
-      - (io.Closer).Close
-      - (*os.File).Close
-      - (net/http.ResponseWriter).Write
-  revive:
+    - nilerr
+    - prealloc
+    - revive
+    - rowserrcheck
+    - staticcheck
+    - unconvert
+    - unused
+  settings:
+    errcheck:
+      check-blank: false
+      exclude-functions:
+        - (io.Closer).Close
+        - (*os.File).Close
+        - (net/http.ResponseWriter).Write
+    revive:
+      rules:
+        - name: var-naming
+        - name: exported
+        - name: errorf
+        - name: error-return
+        - name: package-comments
+          disabled: true
+        - name: unused-parameter
+          disabled: true
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
     rules:
-      - name: var-naming
-      - name: exported
-      - name: errorf
-      - name: error-return
-      - name: package-comments
-        disabled: true
-      - name: unused-parameter
-        disabled: true
-  goimports:
-    local-prefixes: bus
-
+      - linters:
+          - errcheck
+          - revive
+        path: _test\.go
+      - linters:
+          - revive
+          - staticcheck
+          - unused
+        path: docs/
+      - linters:
+          - revive
+          - staticcheck
+          - unused
+        path: proto/
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+      - web-ui/node_modules
 issues:
-  exclude-rules:
-    # Тесты могут импортировать domain через dot-import, ignore-cancel и пр.
-    - path: _test\.go
-      linters:
-        - errcheck
-        - revive
-    # Сгенерированный код Swagger / proto.
-    - path: docs/
-      linters: [unused, gosimple, staticcheck, revive]
-    - path: proto/
-      linters: [unused, gosimple, staticcheck, revive]
   max-issues-per-linter: 0
   max-same-issues: 0
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - bus
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+      - web-ui/node_modules

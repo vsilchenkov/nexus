@@ -97,4 +97,3 @@ func TestSubscriber_Register_ConcurrentSafe(t *testing.T) {
 	}
 	wg.Wait()
 }
-

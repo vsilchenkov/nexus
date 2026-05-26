@@ -59,9 +59,9 @@ func TestCheckIncomingAuth_Token(t *testing.T) {
 
 func TestBuildOutgoingAuth(t *testing.T) {
 	cases := []struct {
-		auth domain.AuthType
+		auth  domain.AuthType
 		creds string
-		want string
+		want  string
 	}{
 		{domain.AuthTypeNone, "", ""},
 		{domain.AuthTypeBasic, "u:p", "Basic " + base64.StdEncoding.EncodeToString([]byte("u:p"))},

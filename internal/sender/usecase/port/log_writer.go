@@ -24,10 +24,10 @@ type HTTPCaller interface {
 
 // HTTPRequest — параметры исходящего запроса.
 type HTTPRequest struct {
-	Method  string
-	URL     string
-	Headers map[string]string
-	Body    []byte
+	Method    string
+	URL       string
+	Headers   map[string]string
+	Body      []byte
 	TimeoutMs int32
 }
 

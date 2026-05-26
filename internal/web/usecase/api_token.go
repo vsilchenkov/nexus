@@ -41,8 +41,8 @@ func NewAPITokenUsecase(
 // CreatedToken — то, что возвращается при создании. Поле PlainToken
 // отдаётся клиенту ОДИН РАЗ (§7.14: «показывается ровно один раз»).
 type CreatedToken struct {
-	Token  *domain.APIToken
-	Plain  string
+	Token *domain.APIToken
+	Plain string
 }
 
 // Create генерирует токен и сохраняет SHA-256(token) в БД.

@@ -17,10 +17,10 @@ const (
 
 // Load читает YAML, подставляет ${VAR} и ${VAR:default} из окружения,
 // разбирает в Config. Выбор файла:
-//   1. flags.ConfigPath
-//   2. $DATABUS_CONFIG
-//   3. config/config_debug.yml (если flags.Debug)
-//   4. config/config.yml
+//  1. flags.ConfigPath
+//  2. $DATABUS_CONFIG
+//  3. config/config_debug.yml (если flags.Debug)
+//  4. config/config.yml
 //
 // workingDir — каталог, относительно которого ищется дефолтный путь.
 func Load(flags Flags, workingDir string) (*Config, string, error) {

@@ -7,7 +7,7 @@ import (
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres" // драйвер postgres
-	_ "github.com/golang-migrate/migrate/v4/source/file"      // file-source
+	_ "github.com/golang-migrate/migrate/v4/source/file"       // file-source
 
 	"bus/internal/platform/config"
 	"bus/internal/platform/logging"

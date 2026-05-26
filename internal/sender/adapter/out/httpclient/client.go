@@ -39,7 +39,7 @@ func New(cfg *config.SenderHTTPClientConfig, logger logging.Logger) *Client {
 			Timeout:   time.Duration(cfg.DialTimeoutMs) * time.Millisecond,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+		TLSClientConfig:   &tls.Config{MinVersion: tls.VersionTLS12},
 		ForceAttemptHTTP2: true,
 	}
 	return &Client{

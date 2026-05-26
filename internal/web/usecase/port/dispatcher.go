@@ -7,10 +7,10 @@ import (
 
 // DispatchRequest — что отправляем через шину для replay (§7.4.1 ТЗ).
 type DispatchRequest struct {
-	NodePath string      // {path} в /v1/request/{path}
-	Async    bool        // true → /v1/requestAsync
-	Method   string      // POST / GET / ...
-	Query    url.Values  // итоговый query (включая служебный __replay_of=<id>)
+	NodePath string     // {path} в /v1/request/{path}
+	Async    bool       // true → /v1/requestAsync
+	Method   string     // POST / GET / ...
+	Query    url.Values // итоговый query (включая служебный __replay_of=<id>)
 	Headers  map[string]string
 	Body     []byte
 }

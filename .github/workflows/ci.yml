@@ -64,9 +64,9 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-      - uses: golangci/golangci-lint-action@v6
+      - uses: golangci/golangci-lint-action@v7
         with:
-          version: v1.62
+          version: v2.12
           args: --timeout=5m
 
   # ---------------- Swagger drift check (§11.2) ----------------------------

@@ -8,13 +8,13 @@ import (
 
 // Flags — флаги командной строки, общие для всех трёх бинарей.
 type Flags struct {
-	ConfigPath         string
-	Debug              bool
-	ShowVersion        bool
-	MigrateUp          bool
-	MigrateDownN       int
-	MigrateStatus      bool
-	SetAdminPassword   string // если задано — задаёт пароль admin'у и выходит
+	ConfigPath       string
+	Debug            bool
+	ShowVersion      bool
+	MigrateUp        bool
+	MigrateDownN     int
+	MigrateStatus    bool
+	SetAdminPassword string // если задано — задаёт пароль admin'у и выходит
 }
 
 // ParseFlags парсит argv. Неизвестные флаги — error.

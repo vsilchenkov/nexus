@@ -38,10 +38,10 @@ func (r *orphanNodeRepo) Get(_ context.Context, _ string) (*domain.Node, error) 
 func (r *orphanNodeRepo) GetByPath(_ context.Context, _ string) (*domain.Node, error) {
 	return nil, domain.ErrNodeNotFound
 }
-func (r *orphanNodeRepo) Count(_ context.Context, _ string) (int, error)   { return 0, nil }
-func (r *orphanNodeRepo) Create(_ context.Context, _ *domain.Node) error   { return nil }
-func (r *orphanNodeRepo) Update(_ context.Context, _ *domain.Node) error   { return nil }
-func (r *orphanNodeRepo) Delete(_ context.Context, _ string) error         { return nil }
+func (r *orphanNodeRepo) Count(_ context.Context, _ string) (int, error) { return 0, nil }
+func (r *orphanNodeRepo) Create(_ context.Context, _ *domain.Node) error { return nil }
+func (r *orphanNodeRepo) Update(_ context.Context, _ *domain.Node) error { return nil }
+func (r *orphanNodeRepo) Delete(_ context.Context, _ string) error       { return nil }
 
 func newOrphanScanner(t *testing.T, dbName string, nodes []*domain.Node) *OrphanScanner {
 	t.Helper()

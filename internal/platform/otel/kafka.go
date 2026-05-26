@@ -15,8 +15,8 @@ import (
 // map[string]string и сам конвертирует в []kafka.Header.
 type stringMapCarrier map[string]string
 
-func (c stringMapCarrier) Get(key string) string  { return c[key] }
-func (c stringMapCarrier) Set(key, value string)  { c[key] = value }
+func (c stringMapCarrier) Get(key string) string { return c[key] }
+func (c stringMapCarrier) Set(key, value string) { c[key] = value }
 func (c stringMapCarrier) Keys() []string {
 	out := make([]string, 0, len(c))
 	for k := range c {
