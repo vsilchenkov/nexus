@@ -552,9 +552,14 @@ make proto                                     # перегенерация send
 9. **`team_id` колонки уже есть, но в v1 всегда `'default'`.** Не делайте новых
    методов с `team_id`-фильтром, пока не появится Multi-tenancy в v2.
 
-10. **Pagination в LogReader.GetByID использует `LIMIT 1`.** ClickHouse не понимает
-    `WHERE id = ? LIMIT 1` так же как Postgres: если у одного `id` две записи (replay
-    того же лога), вернётся произвольная. В практике UUID v4 коллизии исключены.
+10. **LogReader.GetByID детерминирован через `ORDER BY date_request DESC LIMIT 1`** (Phase 9.1).
+    ClickHouse не enforce'ит PRIMARY KEY uniqueness в MergeTree — два INSERT'а с одним ID
+    создают две строки (например, file-fallback restore после восстановления CH, или
+    повторный INSERT при batch-retry). UUID v4-коллизий нет, но дубликаты по бизнес-логике
+    возможны. Поэтому `GetByID` возвращает самую свежую запись детерминированно.
+    Integration-тест `TestClickHouse_GetByID_Deterministic`
+    ([tests/integration/clickhouse_test.go](../tests/integration/clickhouse_test.go))
+    проверяет контракт «два INSERT'а с одним ID → видим новейший».
 
 ---
 
@@ -570,6 +575,22 @@ make proto                                     # перегенерация send
    из env. См. также `make rotate-encryption-key`.
 4. **Multi-tenancy v2** — колонки `team_id` уже есть, нужен RBAC по team_id
    + миграция existing `'default'`-данных.
+
+Сделанное в Phase 9.1:
+
+- 9.1 Дотягивание v1: детерминированный `LogReader.GetByID`.
+  · [internal/web/adapter/out/clickhouse/log_reader.go](../internal/web/adapter/out/clickhouse/log_reader.go)
+  `GetByID`: `SELECT ... WHERE ID = ? LIMIT 1` → `... ORDER BY date_request DESC LIMIT 1`.
+  Причина: ClickHouse MergeTree не enforce'ит PRIMARY KEY uniqueness, два
+  INSERT'а с одним ID создают две строки (file-fallback restore после
+  восстановления CH, повторный INSERT при batch-retry, дубликат в NDJSON
+  при крэше до удаления файла). До этого `LIMIT 1` без ORDER BY выдавал
+  произвольную строку из двух — UI «открыл по id, вижу старый ответ»
+  выглядел как баг рейс-кондишн.
+  · Integration-тест `TestClickHouse_GetByID_Deterministic`
+  ([tests/integration/clickhouse_test.go](../tests/integration/clickhouse_test.go))
+  пишет два INSERT'а одного ID с разными `date_request`, ждёт `count()=2`,
+  затем `GetByID` — проверяет что вернулся самый свежий.
 
 Сделанное в Phase 6:
 

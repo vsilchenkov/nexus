@@ -229,3 +229,72 @@ func TestClickHouse_WriteAndRead(t *testing.T) {
 	_, err = reader.GetByID(ctx, "vika_logs.test_e2e; DROP TABLE foo--", "x")
 	require.Error(t, err)
 }
+
+// TestClickHouse_GetByID_Deterministic — при двух записях с одним ID
+// (file-fallback restore + повторный INSERT, или ручной replay одной и той же
+// записи) GetByID должен возвращать самую свежую по date_request, а не
+// произвольную строку — это контракт UI: «открываю по id, вижу актуальное».
+func TestClickHouse_GetByID_Deterministic(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
+	defer cancel()
+
+	conn, cfg, cleanup := startClickHouse(t, ctx)
+	defer cleanup()
+
+	const table = "vika_logs.test_getbyid"
+	createNodeLogTable(t, ctx, conn, table)
+
+	logger := logging.NewNoop()
+	provider := clickhouse.StaticProvider(conn)
+	writer := chlog.New(provider, cfg, logger)
+	defer writer.Stop(ctx)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	id := "11111111-1111-1111-1111-111111111111"
+
+	mk := func(at time.Time, status int32, response string) *domain.LogRecord {
+		return &domain.LogRecord{
+			ID:               id,
+			Type:             domain.RootMethodRequest,
+			URL:              "https://example.com/upstream",
+			Method:           "POST",
+			Parameters:       "k=v",
+			Request:          `{"hello":"world"}`,
+			Response:         response,
+			Status:           status,
+			DateCreate:       at,
+			DateRequest:      at,
+			DateResponse:     at.Add(50 * time.Millisecond),
+			Duration:         50,
+			Done:             status < 400,
+			ChecksumRequest:  strings.Repeat("a", 32),
+			ChecksumResponse: strings.Repeat("b", 32),
+			Host:             "h1",
+			IP:               "127.0.0.1",
+			Attempts:         1,
+			AttemptsDetails:  "[]",
+		}
+	}
+
+	writer.Write(ctx, table, mk(now.Add(-2*time.Hour), 500, `{"old":true}`))
+	writer.Write(ctx, table, mk(now, 200, `{"new":true}`))
+	require.NoError(t, writer.Flush(ctx))
+
+	deadline := time.Now().Add(20 * time.Second)
+	var n uint64
+	for time.Now().Before(deadline) {
+		row := conn.QueryRow(ctx, fmt.Sprintf("SELECT count() FROM %s WHERE ID = ?", table), id)
+		require.NoError(t, row.Scan(&n))
+		if n >= 2 {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	require.EqualValues(t, 2, n, "two rows with the same ID expected")
+
+	reader := webch.NewLogReader(provider, logger)
+	rec, err := reader.GetByID(ctx, table, id)
+	require.NoError(t, err)
+	require.Equal(t, `{"new":true}`, rec.Response, "GetByID must return the most recent row by date_request")
+	require.EqualValues(t, 200, rec.Status)
+}

@@ -57,6 +57,12 @@ const selectCols = `ID, type, url, method, parameters, request, response,
 //
 // table — формат "db.table". Sanitized: проверяем, что состоит только из
 // допустимых символов; иначе ошибка (защита от SQL-инъекции).
+//
+// На один ID в таблице может быть несколько строк: ClickHouse не enforce'ит
+// PRIMARY KEY uniqueness (MergeTree пишет каждый INSERT отдельно), и хотя
+// UUID v4-коллизии исключены, в attempts_details может оказаться replay
+// того же ID или ручной повторный INSERT при file-fallback restore. Поэтому
+// ORDER BY date_request DESC — берём самую свежую запись детерминированно.
 func (r *LogReaderCH) GetByID(ctx context.Context, table, id string) (*domain.LogRecord, error) {
 	if !isSafeTableName(table) {
 		return nil, fmt.Errorf("invalid table name: %q", table)
@@ -66,7 +72,7 @@ func (r *LogReaderCH) GetByID(ctx context.Context, table, id string) (*domain.Lo
 		return nil, err
 	}
 	rows, err := conn.Query(ctx,
-		fmt.Sprintf(`SELECT %s FROM %s WHERE ID = ? LIMIT 1`, selectCols, table), id)
+		fmt.Sprintf(`SELECT %s FROM %s WHERE ID = ? ORDER BY date_request DESC LIMIT 1`, selectCols, table), id)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse select log: %w", err)
 	}
