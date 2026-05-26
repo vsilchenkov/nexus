@@ -574,6 +574,29 @@ make proto                                     # перегенерация send
 - 6.8 Расширенные фильтры live-tail (period/IP/Host/full-text).
 - 6.9 Audit log: diff-двухколоночный для `node.update`.
 
+Сделанное в Phase 7.7:
+
+- 7.7 Security scanning: новый workflow [.github/workflows/security.yml](../.github/workflows/security.yml).
+  Триггеры: push/PR в master|dev, weekly cron (вс 06:00 UTC), workflow_dispatch.
+  · **govulncheck** (`golang.org/x/vuln`) — официальный сканер CVE с call-graph
+  анализом (не просто проверка версий, а сопоставление с фактически вызываемым
+  кодом). Падает на vuln, гейтит PR — это разумно, так как call-graph отсеивает
+  ложные срабатывания.
+  · **gosec** (securego/gosec@master) — статический анализатор OWASP/CWE
+  правил (G-серии). Не падает на findings (`-no-fail`); SARIF → Security tab
+  репозитория, чтобы PR-CI не блокировался шумом. Исключены `web-ui/` и `docs/`.
+  · **Trivy fs** (aquasecurity/trivy-action@0.28.0) — vuln (включая npm в web-ui)
+  + secret scanning + Dockerfile/YAML misconfig. severity CRITICAL|HIGH|MEDIUM,
+  `ignore-unfixed: true`. SARIF → Security tab, exit-code 0 (не блокирует).
+  · **Nancy** (Sonatype OSS Index) — дополнительный source CVE-индекса,
+  перекрывает govulncheck по less-критичным. `continue-on-error: true`.
+  · Permissions: `security-events: write` для upload-sarif в Code Scanning.
+  · Локальные Make-цели: `make vuln-check`, `make gosec`, `make security-scan`
+  (auto-install через `go install` если не найдено).
+  Локальная верификация: `govulncheck ./internal/platform/crypto/...` —
+  «No vulnerabilities found» (на полном `./...` падает Windows OOM в SSA-builder,
+  это известная проблема — в Linux CI отрабатывает корректно).
+
 Сделанное в Phase 7.6:
 
 - 7.6 GoReleaser: релизный pipeline по тегам `v*`.

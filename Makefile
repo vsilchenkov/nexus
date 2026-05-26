@@ -155,6 +155,20 @@ rotate-encryption-key: ## Ротация ENCRYPTION_KEY: make rotate-encryption-
 		--new-key="$(NEW_KEY)" \
 		$(if $(filter true,$(DRY_RUN)),--dry-run,)
 
+# ----- security (Phase 7.7) -------------------------------------------------
+
+.PHONY: vuln-check gosec security-scan
+
+vuln-check: ## govulncheck — Go CVE-сканер с call-graph анализом
+	@command -v govulncheck >/dev/null 2>&1 || go install golang.org/x/vuln/cmd/govulncheck@latest
+	govulncheck ./...
+
+gosec: ## gosec — статический анализ безопасности (OWASP/CWE)
+	@command -v gosec >/dev/null 2>&1 || go install github.com/securego/gosec/v2/cmd/gosec@latest
+	gosec -exclude-dir=web-ui -exclude-dir=docs ./...
+
+security-scan: vuln-check gosec ## Локальный security-прогон (vuln + gosec)
+
 # ----- release (Phase 7.6) --------------------------------------------------
 
 .PHONY: release-check release-snapshot

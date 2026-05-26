@@ -1,0 +1,131 @@
+name: Security scan
+
+# Phase 7.7: govulncheck + gosec + trivy (filesystem + docker images после release).
+#
+# Триггеры:
+#   - push в master/dev
+#   - pull_request на master/dev
+#   - schedule (раз в неделю, чтобы ловить вновь опубликованные CVE без коммитов)
+#   - workflow_dispatch (вручную)
+#
+# Все jobs не блокируют merge — это early-warning, не gate. Результаты гонять
+# через SARIF в Security tab репозитория.
+on:
+  push:
+    branches: [master, dev]
+  pull_request:
+    branches: [master, dev]
+  schedule:
+    # Каждое воскресенье 06:00 UTC = 09:00 МСК
+    - cron: "0 6 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write    # для upload-sarif
+  actions: read
+
+env:
+  GO_VERSION: "1.25.7"
+
+jobs:
+  # govulncheck (golang.org/x/vuln) — официальный сканер Go-зависимостей.
+  # Опирается на отчёты go.dev/security/vuln/, сопоставляет с фактически
+  # вызываемым кодом (call-graph анализ), не просто проверяет версии модулей.
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        run: govulncheck ./...
+
+  # gosec — статический анализатор безопасности (G-серии правил OWASP/CWE).
+  # Загружает SARIF в Security tab; не падает на high-severity, чтобы PR-CI
+  # не блокировался — слежение через alerts.
+  gosec:
+    name: gosec
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run gosec
+        uses: securego/gosec@master
+        with:
+          # -fmt sarif → файл results.sarif
+          # -no-fail чтобы воркфлоу шёл дальше, а findings уехали в Security tab
+          args: -no-fail -fmt sarif -out results.sarif -exclude-dir=web-ui -exclude-dir=docs ./...
+
+      - name: Upload SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: results.sarif
+          category: gosec
+
+  # Trivy fs-scan — сканер vulnerabilities + secrets + misconfigs на исходниках.
+  # Дополняет govulncheck (Go-only): покрывает npm в web-ui, Dockerfile, YAML
+  # конфиги (compose/k8s/prometheus).
+  trivy-fs:
+    name: Trivy (filesystem)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trivy fs scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-fs.sarif
+          severity: CRITICAL,HIGH,MEDIUM
+          ignore-unfixed: true
+          # Отдельные scanner'ы: vuln (deps), secret (приватные ключи в коде),
+          # misconfig (Dockerfile/YAML best practices).
+          scanners: vuln,secret,misconfig
+          exit-code: "0"
+
+      - name: Upload SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
+
+  # nancy — отдельный сканер Sonatype OSS Index, перекрывает govulncheck по
+  # less-критичным CVE и быстрее обнаруживает новые. Не SARIF-репорт,
+  # просто console output для PR-комментария.
+  nancy:
+    name: Nancy (Sonatype OSS Index)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Write go.list (sleuth input)
+        run: go list -json -deps ./... > go.list
+
+      - name: Nancy scan
+        uses: sonatype-nexus-community/nancy-github-action@main
+        with:
+          nancyCommand: sleuth --loud
+        continue-on-error: true
