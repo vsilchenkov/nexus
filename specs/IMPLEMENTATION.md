@@ -581,6 +581,26 @@ make proto                                     # перегенерация send
 - 6.8 Расширенные фильтры live-tail (period/IP/Host/full-text).
 - 6.9 Audit log: diff-двухколоночный для `node.update`.
 
+Сделанное в Phase 7.9:
+
+- 7.9 Pre-commit hooks через [lefthook](https://github.com/evilmartians/lefthook):
+  · [`lefthook.yml`](../lefthook.yml) — три ивента:
+    - **pre-commit** (parallel, на staged-файлах): gofmt → goimports `-local bus`
+      → go vet → golangci-lint с `--new-from-rev=HEAD~ --fast` (только новые
+      строки, не весь проект — полный прогон у CI).
+    - **pre-push** (sequential): `go test -short` + swag drift-check (если
+      менялись `internal/web/adapter/in/http/**/*.go`), который сам себя
+      откатывает через `git checkout -- docs/` после диагностики.
+    - **commit-msg**: regex-проверка формата `Phase N.M: ...` или conventional
+      commits (`feat:`, `fix:`, `chore:`, ...).
+  · Make-цели `make install-hooks` (auto-install через `go install` если
+  `lefthook` нет в PATH) и `make uninstall-hooks` + `make hooks-run`
+  (прогон pre-commit вручную, без коммита).
+  · CONTRIBUTING.md дополнен разделом «Git hooks» с подробностями ивентов.
+  · YAML-syntax валидирован через `gopkg.in/yaml.v3` Unmarshal (локальный
+  `lefthook validate` не запускается из-за git 2.24 < 2.31, ограничение
+  Windows-окружения автора; в CI/Linux с современным git'ом всё работает).
+
 Сделанное в Phase 7.7:
 
 - 7.7 Security scanning: новый workflow [.github/workflows/security.yml](../.github/workflows/security.yml).

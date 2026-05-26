@@ -1,0 +1,93 @@
+# Lefthook конфиг (Phase 7.9).
+#
+# Установка:
+#   go install github.com/evilmartians/lefthook@latest   # или brew install lefthook
+#   lefthook install                                      # одноразовая привязка хуков
+#
+# Альтернатива: `make install-hooks` (см. Makefile).
+#
+# Все pre-commit команды работают на staged-файлах ({staged_files}), а не
+# на всём дереве — быстро и не блокирует worker-in-progress в других файлах.
+# Pre-push гонит более тяжёлые проверки (unit-тесты, swagger drift).
+
+pre-commit:
+  parallel: true
+  commands:
+    gofmt:
+      tags: format
+      glob: "*.go"
+      run: gofmt -l {staged_files}
+      fail_text: |
+        gofmt нашёл неотформатированные файлы. Запустите:
+          gofmt -w {staged_files}
+
+    goimports:
+      tags: format
+      glob: "*.go"
+      run: |
+        command -v goimports >/dev/null 2>&1 || go install golang.org/x/tools/cmd/goimports@latest
+        out=$(goimports -l -local bus {staged_files})
+        if [ -n "$out" ]; then
+          echo "$out"
+          exit 1
+        fi
+      fail_text: |
+        goimports нашёл неупорядоченные импорты. Запустите:
+          goimports -w -local bus {staged_files}
+
+    govet:
+      tags: lint
+      glob: "*.go"
+      # Запускаем не по {staged_files} а по пакетам, чтобы go vet видел контекст
+      run: go vet ./...
+
+    golangci-lint:
+      tags: lint
+      glob: "*.go"
+      # --new-from-rev=HEAD: проверяем только новые/изменённые строки, не весь проект
+      # (полный прогон делает CI, локально это слишком медленно).
+      run: |
+        command -v golangci-lint >/dev/null 2>&1 || {
+          echo "golangci-lint не установлен. См. https://golangci-lint.run/install/"
+          exit 1
+        }
+        golangci-lint run --new-from-rev=HEAD~ --fast
+
+pre-push:
+  parallel: false   # тесты не любят гоняться параллельно с swag init
+  commands:
+    test:
+      tags: test
+      run: go test -short -timeout 180s ./...
+
+    swagger-drift:
+      tags: docs
+      glob: "internal/web/adapter/in/http/**/*.go"
+      run: |
+        command -v swag >/dev/null 2>&1 || go install github.com/swaggo/swag/cmd/swag@v1.16.6
+        swag init -g cmd/web/main.go -o docs/web --parseDependency --parseDepth 2 --quiet
+        if ! git diff --quiet docs/; then
+          echo "swagger drift: docs/ устарели, выполните 'make swagger' и закоммитьте"
+          git --no-pager diff --stat docs/
+          # Откатываем сгенерированные изменения, чтобы не оставить грязное дерево
+          git checkout -- docs/
+          exit 1
+        fi
+
+commit-msg:
+  commands:
+    conventional:
+      # Принимаем «Phase N.M: ...» (наш формат) либо conventional commits
+      # (feat/fix/chore/...). Merge-коммиты пропускаем.
+      run: |
+        msg=$(head -n1 "{1}")
+        case "$msg" in
+          Merge*|"Phase "*|feat:*|feat\(*|fix:*|fix\(*|chore:*|chore\(*|docs:*|docs\(*|refactor:*|refactor\(*|test:*|test\(*|build:*|build\(*|ci:*|ci\(*|perf:*|perf\(*)
+            exit 0
+            ;;
+          *)
+            echo "Сообщение коммита должно начинаться с 'Phase N.M: ...' или conventional commit (feat:/fix:/...)."
+            echo "Получено: $msg"
+            exit 1
+            ;;
+        esac

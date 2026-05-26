@@ -19,13 +19,32 @@ make migrate-up
 # 3. Bootstrap admin (первая миграция оставляет пароль NULL)
 make set-admin-password PASSWORD=changeme
 
-# 4. Поднять три сервиса (каждый в своём терминале)
+# 4. (Один раз) установить git hooks для локальной проверки кода до коммита
+make install-hooks
+
+# 5. Поднять три сервиса (каждый в своём терминале)
 make run-receiver
 make run-sender
 make run-web
 
-# 5. UI на http://localhost:8000/, Swagger на http://localhost:8000/swagger/index.html
+# 6. UI на http://localhost:8000/, Swagger на http://localhost:8000/swagger/index.html
 ```
+
+## Git hooks
+
+`make install-hooks` ставит [lefthook](https://github.com/evilmartians/lefthook)
+и привязывает наши `lefthook.yml`-хуки. После этого:
+
+- **pre-commit** (на staged-файлах): `gofmt`, `goimports` с `-local bus`,
+  `go vet`, `golangci-lint --new-from-rev=HEAD~ --fast` — быстро, не блокирует
+  worker-in-progress в других файлах.
+- **pre-push** (на всём дереве): `go test -short ./...`, swagger drift-check
+  (если менялись handler'ы) — чтобы CI не ловил ошибки которые видны локально.
+- **commit-msg**: проверяет, что сообщение начинается с `Phase N.M:` либо
+  conventional-commit prefix (`feat:`, `fix:`, `chore:`, ...).
+
+Прогнать pre-commit вручную, без коммита — `make hooks-run`.
+Снять хуки — `make uninstall-hooks`.
 
 Полный список целей — `make help`.
 

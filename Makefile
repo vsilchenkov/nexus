@@ -155,6 +155,21 @@ rotate-encryption-key: ## Ротация ENCRYPTION_KEY: make rotate-encryption-
 		--new-key="$(NEW_KEY)" \
 		$(if $(filter true,$(DRY_RUN)),--dry-run,)
 
+# ----- git hooks (Phase 7.9) ------------------------------------------------
+
+.PHONY: install-hooks uninstall-hooks hooks-run
+
+install-hooks: ## Установить pre-commit/pre-push hooks через lefthook
+	@command -v lefthook >/dev/null 2>&1 || $(GO) install github.com/evilmartians/lefthook@latest
+	lefthook install
+	@echo "git hooks установлены. Конфиг — lefthook.yml. Отключение: make uninstall-hooks"
+
+uninstall-hooks: ## Снять git hooks
+	@command -v lefthook >/dev/null 2>&1 && lefthook uninstall || echo "lefthook не установлен"
+
+hooks-run: ## Прогнать pre-commit hooks вручную (без коммита)
+	lefthook run pre-commit
+
 # ----- security (Phase 7.7) -------------------------------------------------
 
 .PHONY: vuln-check gosec security-scan
