@@ -20,7 +20,7 @@
 | Главный поток           | `POST /v1/request/{path}` → Receiver → gRPC Sender → внешний URL → лог в ClickHouse |
 | Async                   | `POST /v1/requestAsync/{path}` → Receiver → Kafka → Sender-consumer   |
 | Зависимости              | PostgreSQL 16, Redis 7, ClickHouse 24, Kafka 3.7 (KRaft), Prometheus  |
-| Покрытие unit-тестами   | 12 пакетов (domain, crypto, i18n, sentry, receiver/usecase, chlog, web/usecase, metrics, healthcheck, config, clickhouse, reloader, nodecache, **+ sender/usecase в Phase 7.12**) |
+| Покрытие unit-тестами   | 14 пакетов (domain, crypto, i18n, sentry, receiver/usecase, chlog, web/usecase, metrics, healthcheck, config, clickhouse, reloader, nodecache, sender/usecase, **+ build / httpclient в Phase 7.13**) + integration: circuitbreaker (Phase 7.13) |
 | SPA-фронт               | React 18 + Vite + TS + Tailwind + TanStack Query + react-i18next, 6 страниц |
 | Бинари в `cmd/`         | `receiver`, `sender`, `web`, `loadtest`, `rotate-key`                 |
 
@@ -580,6 +580,45 @@ make proto                                     # перегенерация send
 - 6.7 ClickHouse orphan-tables (сканер + DROP с подтверждением).
 - 6.8 Расширенные фильтры live-tail (period/IP/Host/full-text).
 - 6.9 Audit log: diff-двухколоночный для `node.update`.
+
+Сделанное в Phase 7.13:
+
+- 7.13 Unit-тесты для трёх ранее непокрытых пакетов: `platform/build`,
+  `sender/adapter/out/httpclient`, плюс integration-тесты для
+  `platform/circuitbreaker` (требует Redis — testcontainers helper уже есть в
+  [tests/integration/redis_test.go](../tests/integration/redis_test.go), новой
+  зависимости не вносим).
+  · **`internal/platform/build`** ([build_test.go](../internal/platform/build/build_test.go))
+  — 6 тестов: `NewOption` парсит `versioninfo.json` (StringFileInfo.ProductVersion,
+  FixedFileInfo, IconPath, ProjectName, WorkingDir); ldflags-vars (`Version`/`Commit`/
+  `BuildDate`) переопределяют значение из JSON для release-сборки (см. Phase 7.6);
+  fallback к JSON при пустых ldflags;
+  `parse versioninfo.json` error на битом JSON; пустой `{}` → пустая версия,
+  Option не-nil; `WorkingDir()` в test-среде возвращает непустой путь
+  (cwd при `service.Interactive()=true`). Helper `resetLdflagsVars` через
+  `t.Cleanup` восстанавливает глобалы — единственное место, где приходится
+  работать с пакетным var'ом (это сами release-флаги, изолировать иначе нельзя).
+  · **`internal/sender/adapter/out/httpclient`** ([client_test.go](../internal/sender/adapter/out/httpclient/client_test.go))
+  — 8 тестов через `httptest.Server`: happy-path 200 с проверкой что headers/body
+  пробрасываются туда-обратно; 5xx статус не превращается в Go error, а отдаётся
+  в `resp.StatusCode`; per-request timeout (`req.TimeoutMs=50ms`, сервер спит
+  200ms → `deadline exceeded`); default timeout 30s при `TimeoutMs<=0`; connection
+  refused на `127.0.0.1:1`; невалидный `Method` (`BAD METHOD`) → `build http
+  request` error; `context.Cancel()` родительского ctx прерывает Do; большое
+  тело ответа (64 KB) целиком прочитано через `io.ReadAll`. Все `t.Parallel()`.
+  · **`internal/platform/circuitbreaker`** ([tests/integration/circuitbreaker_test.go](../tests/integration/circuitbreaker_test.go))
+  — 6 integration-тестов через testcontainers Redis (helper `startRedis`
+  переиспользуется из `redis_test.go`): свежий ключ — `closed`/Allow=true;
+  после `threshold` failures — `open`, Allow=false пока cooldown активен;
+  по истечении cooldown первый `Allow` → `half_open` + true (пробный запрос);
+  `RecordSuccess` в любом состоянии возвращает в `closed` и сбрасывает failures
+  (Allow=true немедленно, без cooldown); изоляция ключей (`node-A` open, `node-B`
+  остаётся closed); `State()` на неизвестном ключе → `closed` (а не пустая
+  строка / Redis-Nil error). Tests c sleep пропускаются в `-short`.
+  · Все unit-тесты проходят `go test -short`; integration — под build-tag
+  `integration` (запуск `make test-integration` с Docker).
+  · Покрытие unit-тестами: 12 → **14 пакетов** + `circuitbreaker` теперь под
+  integration-сетапом.
 
 Сделанное в Phase 7.12:
 
