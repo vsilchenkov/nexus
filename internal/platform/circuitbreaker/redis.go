@@ -9,7 +9,8 @@
 //	            failure → opens обратно.
 //
 // Реализация — два Redis-поля per key: failures (int) + state (string)
-// + opened_at (unix sec).
+// + opened_at (unix nanoseconds — нужны сабсекундные cooldown'ы, например
+// в integration-тестах).
 package circuitbreaker
 
 import (
@@ -55,7 +56,7 @@ func (b *Breaker) Allow(ctx context.Context, key string) (bool, error) {
 	}
 	if state == StateOpen {
 		ts, _ := strconv.ParseInt(res["opened_at"], 10, 64)
-		openedAt := time.Unix(ts, 0)
+		openedAt := time.Unix(0, ts)
 		if time.Since(openedAt) >= b.cooldown {
 			// Переводим в half_open — пускаем один пробный.
 			_ = b.client.HSet(ctx, k, "state", string(StateHalfOpen)).Err()
@@ -87,7 +88,7 @@ func (b *Breaker) RecordFailure(ctx context.Context, key string) error {
 	}
 	_ = b.client.Expire(ctx, k, 10*time.Minute).Err()
 	if int(failures) >= b.threshold {
-		ts := strconv.FormatInt(time.Now().Unix(), 10)
+		ts := strconv.FormatInt(time.Now().UnixNano(), 10)
 		return b.client.HSet(ctx, k, "state", string(StateOpen), "opened_at", ts).Err()
 	}
 	return nil
