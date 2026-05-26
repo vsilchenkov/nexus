@@ -65,10 +65,15 @@ services:
         soft: 262144
         hard: 262144
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8123/ping"]
+      # clickhouse-client всегда есть в образе clickhouse-server, в отличие
+      # от wget — в alpine-варианте 24+ его выпилили из base layer'а.
+      # --host=127.0.0.1 принудительно по TCP 9000, чтобы не тянуть зависимость
+      # от HTTP-listener'а.
+      test: ["CMD-SHELL", "clickhouse-client --host=127.0.0.1 --query='SELECT 1' || exit 1"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 12
+      start_period: 30s
     networks: [databus_net]
 
   kafka:
