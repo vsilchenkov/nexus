@@ -208,7 +208,7 @@
 
 - Multi-tenancy логика (колонки `team_id` уже есть, изоляция — нет).
 - ~~Webhook signature verification (`/v1/callback/`)~~ — реализовано в Phase 8.1.
-- ~~OpenTelemetry distributed tracing~~ — реализовано в Phase 8.2 (HTTP-server-span'ы) + 8.3 (HTTP outbound propagation + gRPC unary client/server interceptor'ы). End-to-end trace через UI → Web → Receiver → gRPC → Sender → внешний URL.
+- ~~OpenTelemetry distributed tracing~~ — реализовано в Phase 8.2 (HTTP-server-span'ы) + 8.3 (HTTP outbound + gRPC unary client/server interceptor'ы) + 8.4 (Kafka headers propagation для async-пути). End-to-end trace через UI → Web → Receiver → {gRPC → Sender → внешний URL} / {Kafka → Sender-consumer → внешний URL}.
 - Notifications для операторов (Slack/Telegram).
 - Шаблоны узлов.
 - Версионирование конфигов узла + откат.
@@ -582,6 +582,44 @@ make proto                                     # перегенерация send
 - 6.7 ClickHouse orphan-tables (сканер + DROP с подтверждением).
 - 6.8 Расширенные фильтры live-tail (period/IP/Host/full-text).
 - 6.9 Audit log: diff-двухколоночный для `node.update`.
+
+Сделанное в Phase 8.4:
+
+- 8.4 Kafka-headers OTel propagation для async-пути. До 8.4 async-сообщения
+  теряли trace-id на границе publish/consume — Sender-consumer стартовал
+  свой root-span, никак не связанный с входящим /v1/requestAsync. Теперь
+  trace пробрасывается через Kafka headers (W3C traceparent + baggage).
+  · [internal/platform/otel/kafka.go](../internal/platform/otel/kafka.go):
+  `stringMapCarrier` — `TextMapCarrier` поверх `map[string]string` (наш
+  `kafka.Producer.Produce` принимает headers как map; внутри сам конвертит
+  в `[]kafka.Header`). Helper'ы `InjectKafkaHeaders(ctx, headers)`,
+  `ExtractKafkaHeaders(ctx, headers) → ctx`, `StartKafkaProducerSpan(ctx,
+  topic) → (ctx, finish)` (semconv `messaging.system=kafka` +
+  `messaging.destination.name` + `messaging.operation.type=publish`),
+  аналогичный `StartKafkaConsumerSpan` с `operation.type=process`.
+  · Producer-side: [route_async.go](../internal/receiver/usecase/route_async.go)
+  перед `producer.Produce` открывает producer-span и инжектит traceparent
+  в headers (рядом с уже существующими `id` / `node_path` / `attempt`).
+  При выключенном tracing — оба helper'а no-op.
+  · Consumer-side: [async.go](../internal/sender/usecase/async.go)
+  `AsyncProcessor.Handle` принял новый параметр `msgHeaders map[string]string`,
+  делает `ExtractKafkaHeaders(ctx, msgHeaders)` + `StartKafkaConsumerSpan` —
+  envelope-обработка теперь дочерний span к producer-span'у Receiver'а.
+  · [adapter/in/kafka/consumer.go](../internal/sender/adapter/in/kafka/consumer.go)
+  собирает `map[string]string` из `msg.Headers` (берёт первое значение на
+  ключ, исключая ситуацию когда Kafka даёт несколько значений — для
+  propagator-keys это не релевантно) и передаёт в `Handle`.
+  · Существующие async-unit-тесты ([async_test.go](../internal/sender/usecase/async_test.go))
+  обновлены под новую сигнатуру (`nil` для headers — extract пустых
+  безопасен, тест-cases без изменения).
+  · 7 unit-тестов [kafka_test.go](../internal/platform/otel/kafka_test.go):
+  stringMapCarrier Get/Set/Keys + видимость через ref'ом, Inject c nil-map
+  и пустой map (no-panic), Extract пустых = тот же ctx, Extract с keys не
+  паникует, StartKafkaProducerSpan finish с/без err, end-to-end roundtrip
+  Inject→Extract→StartConsumerSpan.
+  · Это завершает OTel-историю: span'ы соединены через все 4 транспорта
+  шины — HTTP server-side (Phase 8.2), HTTP outbound (8.3a), gRPC unary
+  (8.3b), Kafka publish/consume (8.4).
 
 Сделанное в Phase 8.3:
 

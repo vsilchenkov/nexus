@@ -75,7 +75,16 @@ func (g *ConsumerGroup) runOne(ctx context.Context, c *kafkapf.Consumer, idx int
 			continue
 		}
 
-		res := g.processor.Handle(ctx, msg.Value)
+		// Извлекаем Kafka headers в map[string]string для OTel-propagator'а
+		// (Phase 8.4). Несколько значений на ключ Kafka в принципе допускает,
+		// но для propagator-keys это исключено — берём первое.
+		hdrs := make(map[string]string, len(msg.Headers))
+		for _, h := range msg.Headers {
+			if _, exists := hdrs[h.Key]; !exists {
+				hdrs[h.Key] = string(h.Value)
+			}
+		}
+		res := g.processor.Handle(ctx, msg.Value, hdrs)
 		switch res {
 		case usecase.HandleAck, usecase.HandleDLQed:
 			if err := c.Commit(ctx, msg); err != nil {

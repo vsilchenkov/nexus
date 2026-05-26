@@ -11,6 +11,7 @@ import (
 	"bus/internal/domain"
 	"bus/internal/platform/logging"
 	"bus/internal/platform/metrics"
+	otelpf "bus/internal/platform/otel"
 )
 
 // NodeReader — interface чтения актуального узла перед обработкой
@@ -78,7 +79,16 @@ const (
 // Retry-цикл с экспоненциальным backoff живёт ВНУТРИ SendUsecase
 // (см. internal/sender/usecase/send.go); ConsumerWorker делает
 // только одну попытку доставки на одно Kafka-сообщение.
-func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte) HandleResult {
+// Handle принимает raw envelope (JSON-payload Kafka-сообщения) и msgHeaders
+// (Kafka message headers, для propagation OTel trace-context'а — §16 ТЗ,
+// Phase 8.4). msgHeaders может быть nil — пропуск extraction'а тогда no-op.
+func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[string]string) HandleResult {
+	// OTel: extract traceparent → consumer-span. При выключенном tracing —
+	// extract возвращает входной ctx, span будет no-op'ным.
+	ctx = otelpf.ExtractKafkaHeaders(ctx, msgHeaders)
+	ctx, finishSpan := otelpf.StartKafkaConsumerSpan(ctx, "databus.async")
+	defer finishSpan(nil)
+
 	var env Envelope
 	if err := json.Unmarshal(raw, &env); err != nil {
 		p.logger.ErrorWithOp("envelope unmarshal failed", err, "async.Handle")

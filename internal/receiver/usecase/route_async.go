@@ -9,6 +9,7 @@ import (
 
 	"bus/internal/domain"
 	"bus/internal/platform/logging"
+	otelpf "bus/internal/platform/otel"
 	"bus/internal/receiver/usecase/port"
 )
 
@@ -113,9 +114,17 @@ func (u *RouteAsyncUsecase) RouteAsync(ctx context.Context, in RouteInput) (*Rou
 		"node_path":  node.Path,
 		"attempt":    "0",
 	}
-	if err := u.producer.Produce(ctx, u.asyncTopic, node.Path, payload, headers); err != nil {
+
+	// OTel (Phase 8.4): producer-span + traceparent в headers. На consumer-стороне
+	// ExtractKafkaHeaders восстановит parent, и обработка envelope попадёт в тот
+	// же trace, что и входящий HTTP-запрос /v1/requestAsync.
+	produceCtx, finish := otelpf.StartKafkaProducerSpan(ctx, u.asyncTopic)
+	otelpf.InjectKafkaHeaders(produceCtx, headers)
+	if err := u.producer.Produce(produceCtx, u.asyncTopic, node.Path, payload, headers); err != nil {
+		finish(err)
 		return nil, fmt.Errorf("produce: %w", err)
 	}
+	finish(nil)
 
 	return &RouteAsyncResult{
 		ID:         id,

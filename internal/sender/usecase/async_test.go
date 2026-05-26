@@ -82,7 +82,7 @@ func TestAsync_BrokenEnvelope_Ack(t *testing.T) {
 		nil, nil,
 		&stubDLQProducer{},
 	)
-	got := p.Handle(context.Background(), []byte("not-json"))
+	got := p.Handle(context.Background(), []byte("not-json"), nil)
 	assert.Equal(t, HandleAck, got, "битое сообщение → Ack (не повторяем)")
 }
 
@@ -94,7 +94,7 @@ func TestAsync_UnknownNode_Ack(t *testing.T) {
 		nil, nil,
 		&stubDLQProducer{},
 	)
-	got := p.Handle(context.Background(), makeEnvelope(t, "partner/echo"))
+	got := p.Handle(context.Background(), makeEnvelope(t, "partner/echo"), nil)
 	assert.Equal(t, HandleAck, got, "узел удалён → Ack, без бесконечного ретрая")
 }
 
@@ -106,7 +106,7 @@ func TestAsync_NodeReadError_Retry(t *testing.T) {
 		nil, nil,
 		&stubDLQProducer{},
 	)
-	got := p.Handle(context.Background(), makeEnvelope(t, "partner/echo"))
+	got := p.Handle(context.Background(), makeEnvelope(t, "partner/echo"), nil)
 	assert.Equal(t, HandleRetry, got, "временная ошибка чтения узла → Retry без commit'а")
 }
 
@@ -122,7 +122,7 @@ func TestAsync_NodeDisabled_Ack(t *testing.T) {
 		nil, nil,
 		&stubDLQProducer{},
 	)
-	got := p.Handle(context.Background(), makeEnvelope(t, "partner/echo"))
+	got := p.Handle(context.Background(), makeEnvelope(t, "partner/echo"), nil)
 	assert.Equal(t, HandleAck, got, "disabled-узел → дропаем сообщение")
 }
 
@@ -141,7 +141,7 @@ func TestAsync_NodePaused_Retry(t *testing.T) {
 	// pausedRetryAfter по умолчанию 30s — для теста сокращаем.
 	p.pausedRetryAfter = 5 * time.Millisecond
 
-	got := p.Handle(context.Background(), makeEnvelope(t, "partner/echo"))
+	got := p.Handle(context.Background(), makeEnvelope(t, "partner/echo"), nil)
 	assert.Equal(t, HandleRetry, got, "paused-узел → не коммитим offset, sleep+retry (§3.6)")
 }
 
@@ -160,7 +160,7 @@ func TestAsync_Enabled_2xx_Ack(t *testing.T) {
 		nil,
 		&stubDLQProducer{},
 	)
-	got := p.Handle(context.Background(), makeEnvelope(t, "partner/echo"))
+	got := p.Handle(context.Background(), makeEnvelope(t, "partner/echo"), nil)
 	assert.Equal(t, HandleAck, got, "2xx → Ack, без DLQ")
 }
 
@@ -181,7 +181,7 @@ func TestAsync_Enabled_5xx_DLQ(t *testing.T) {
 		nil,
 		dlq,
 	)
-	got := p.Handle(context.Background(), makeEnvelope(t, "partner/echo"))
+	got := p.Handle(context.Background(), makeEnvelope(t, "partner/echo"), nil)
 	assert.Equal(t, HandleDLQed, got, "после исчерпания retry → DLQ + Ack offset")
 
 	require.Len(t, dlq.produced, 1)
@@ -209,7 +209,7 @@ func TestAsync_DLQProduceFails_Retry(t *testing.T) {
 		nil,
 		dlq,
 	)
-	got := p.Handle(context.Background(), makeEnvelope(t, "partner/echo"))
+	got := p.Handle(context.Background(), makeEnvelope(t, "partner/echo"), nil)
 	assert.Equal(t, HandleRetry, got,
 		"если DLQ не записался — не теряем сообщение, оставляем для следующей попытки")
 }
