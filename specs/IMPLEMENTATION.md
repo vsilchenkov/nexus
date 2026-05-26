@@ -208,7 +208,7 @@
 
 - Multi-tenancy логика (колонки `team_id` уже есть, изоляция — нет).
 - ~~Webhook signature verification (`/v1/callback/`)~~ — реализовано в Phase 8.1.
-- ~~OpenTelemetry distributed tracing~~ — реализовано в Phase 8.2 (только HTTP-server-span'ы; client-side propagation и gRPC-interceptor'ы — будущий блок).
+- ~~OpenTelemetry distributed tracing~~ — реализовано в Phase 8.2 (HTTP-server-span'ы) + 8.3 (HTTP outbound propagation + gRPC unary client/server interceptor'ы). End-to-end trace через UI → Web → Receiver → gRPC → Sender → внешний URL.
 - Notifications для операторов (Slack/Telegram).
 - Шаблоны узлов.
 - Версионирование конфигов узла + откат.
@@ -582,6 +582,65 @@ make proto                                     # перегенерация send
 - 6.7 ClickHouse orphan-tables (сканер + DROP с подтверждением).
 - 6.8 Расширенные фильтры live-tail (period/IP/Host/full-text).
 - 6.9 Audit log: diff-двухколоночный для `node.update`.
+
+Сделанное в Phase 8.3:
+
+- 8.3 OpenTelemetry end-to-end propagation (продолжение Phase 8.2). После
+  8.2 span'ы жили только в одном сервисе; теперь trace связывается через
+  всю шину: UI → Web → Receiver → gRPC → Sender → внешний URL.
+  · 8.3a HTTP outbound + traceparent injection
+  ([http_client.go](../internal/platform/otel/http_client.go)):
+  · `InjectHTTPHeaders(ctx, h http.Header)` — простая обёртка над
+  `otel.GetTextMapPropagator().Inject(...)` через `propagation.HeaderCarrier`;
+  при no-op propagator'е ничего не вставляет.
+  · `StartHTTPClientSpan(ctx, method, url) → (ctx, finish)` — открывает
+  client-span с semconv-атрибутами `http.request.method` / `url.full`
+  (через `sanitizeURL` query вырезается, чтобы PII / токены не утекали в
+  бэкенд трейсинга). finish() пишет `http.response.status_code` и
+  `codes.Error` на 5xx или err != nil.
+  · Подключено в двух outbound-местах:
+  [httpclient.Client.Do](../internal/sender/adapter/out/httpclient/client.go)
+  (Sender → внешний узел) и
+  [HTTPDispatcher.Dispatch](../internal/web/adapter/out/receiver/dispatcher.go)
+  (Web → Receiver для replay). Оба теперь делают: открыть client-span →
+  собрать запрос → положить traceparent в header → выполнить → закрыть
+  span со статусом/ошибкой.
+  · 5 unit-тестов [http_client_test.go](../internal/platform/otel/http_client_test.go):
+  Inject без TP не паникует; finish с err и со status>=500 не паникуют;
+  sanitizeURL table-driven (с query / без / только query / пустой).
+  · 8.3b gRPC unary interceptor'ы
+  ([grpc.go](../internal/platform/otel/grpc.go)):
+  · `metadataCarrier` — `propagation.TextMapCarrier` поверх
+  `grpc/metadata.MD`. gRPC lowercase'ит ключи, метод Set через `md.Set(k, v)`
+  работает совместимо.
+  · `UnaryClientInterceptor()` — открывает client-span с
+  `rpc.system=grpc`/`rpc.method`, копирует существующий outgoing MD
+  (`md.Copy()`), инжектит propagator-keys, передаёт в invoker; при ошибке
+  записывает `rpc.grpc.status_code` (если err — это grpc/status.Status) и
+  `codes.Error`.
+  · `UnaryServerInterceptor()` — экстракт propagator-keys из incoming MD,
+  затем server-span; те же атрибуты и обработка ошибок.
+  · Подключено в Receiver
+  [grpcsender/client.go](../internal/receiver/adapter/out/grpcsender/client.go)
+  через `grpc.WithUnaryInterceptor(otelpf.UnaryClientInterceptor())` и в
+  Sender [app.go](../internal/sender/app.go) через
+  `grpc.UnaryInterceptor(otelpf.UnaryServerInterceptor())` при создании
+  `grpc.NewServer`.
+  · 8 unit-тестов [grpc_test.go](../internal/platform/otel/grpc_test.go):
+  metadataCarrier Get/Set/Keys, server-interceptor happy-path / handler
+  error / grpc-status error / без incoming metadata, client-interceptor
+  invoker happy-path / caller MD не затирается / invoker error пропагается.
+  E2E через bufconn убран — Invoke без registered service возвращает
+  UNIMPLEMENTED и invoker не дозванивается до handler'а, тест становился
+  нестабильным; чистый unit с mock-invoker'ом надёжнее.
+  · Зависимости — НЕ менялись (всё через уже подключённые в 8.2
+  `go.opentelemetry.io/otel`, `propagation`, `semconv v1.27.0`,
+  `google.golang.org/grpc`).
+  · Не сделано (отдельный блок): Kafka-headers propagation для async-пути
+  (Receiver → Kafka → Sender). Сейчас async теряет trace-id на границе
+  publish/consume. Нужно: при publish писать traceparent в Kafka
+  message.Headers; при consume — Extract в обработчике перед обработкой
+  envelope.
 
 Сделанное в Phase 8.2:
 

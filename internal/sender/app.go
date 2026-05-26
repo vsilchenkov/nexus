@@ -150,6 +150,9 @@ func (a *App) startGRPC(svc *grpcadapter.Server) error {
 
 	a.grpcSrv = grpc.NewServer(
 		grpc.MaxConcurrentStreams(a.cfg.Sender.GRPCMaxConcurrentStreams),
+		// OTel: extract traceparent из incoming metadata + server-span
+		// вокруг каждого unary-вызова (§16 ТЗ, Phase 8.3).
+		grpc.UnaryInterceptor(otelpf.UnaryServerInterceptor()),
 	)
 
 	senderv1.RegisterSenderServiceServer(a.grpcSrv, svc)

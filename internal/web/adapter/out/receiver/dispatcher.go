@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"bus/internal/platform/logging"
+	otelpf "bus/internal/platform/otel"
 	"bus/internal/web/usecase/port"
 )
 
@@ -51,8 +52,14 @@ func (d *HTTPDispatcher) Dispatch(ctx context.Context, req port.DispatchRequest)
 		method = http.MethodPost
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(req.Body))
+	// OTel client-span + traceparent injection: replay должен лежать в том же
+	// trace'е, что и UI-инициатор (Web получит входящий span от пользователя
+	// в Phase 8.2 GinMiddleware).
+	spanCtx, spanFinish := otelpf.StartHTTPClientSpan(ctx, method, target)
+
+	httpReq, err := http.NewRequestWithContext(spanCtx, method, target, bytes.NewReader(req.Body))
 	if err != nil {
+		spanFinish(0, err)
 		return nil, fmt.Errorf("build http request: %w", err)
 	}
 	for k, v := range req.Headers {
@@ -65,12 +72,15 @@ func (d *HTTPDispatcher) Dispatch(ctx context.Context, req port.DispatchRequest)
 			httpReq.Header.Set("Content-Type", "application/json")
 		}
 	}
+	otelpf.InjectHTTPHeaders(spanCtx, httpReq.Header)
 
 	resp, err := d.client.Do(httpReq)
 	if err != nil {
+		spanFinish(0, err)
 		return nil, fmt.Errorf("dispatch to receiver: %w", err)
 	}
 	defer resp.Body.Close()
+	defer func() { spanFinish(resp.StatusCode, nil) }()
 
 	body, _ := io.ReadAll(resp.Body)
 	out := &port.DispatchResponse{

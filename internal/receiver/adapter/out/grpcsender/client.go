@@ -16,6 +16,7 @@ import (
 
 	"bus/internal/platform/config"
 	"bus/internal/platform/logging"
+	otelpf "bus/internal/platform/otel"
 	senderv1 "bus/proto/sender/v1"
 )
 
@@ -41,6 +42,9 @@ func New(cfg *config.ReceiverSenderGRPCConfig, logger logging.Logger) (*Client, 
 				Time:    time.Duration(cfg.KeepaliveTimeSec) * time.Second,
 				Timeout: time.Duration(cfg.KeepaliveTimeoutSec) * time.Second,
 			}),
+			// OTel client-span + traceparent injection в outgoing metadata
+			// (§16 ТЗ, Phase 8.3). При Enable=false — no-op.
+			grpc.WithUnaryInterceptor(otelpf.UnaryClientInterceptor()),
 		)
 		if err != nil {
 			for _, prev := range conns {

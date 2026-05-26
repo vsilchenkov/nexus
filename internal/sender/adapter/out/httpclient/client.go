@@ -17,6 +17,7 @@ import (
 
 	"bus/internal/platform/config"
 	"bus/internal/platform/logging"
+	otelpf "bus/internal/platform/otel"
 	"bus/internal/sender/usecase/port"
 )
 
@@ -58,24 +59,34 @@ func (c *Client) Do(ctx context.Context, req *port.HTTPRequest) (*port.HTTPRespo
 	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	// OTel client-span + W3C traceparent injection (§16, Phase 8.3). При
+	// Enable=false — оба no-op без накладных расходов.
+	var spanFinish func(statusCode int, err error)
+	reqCtx, spanFinish = otelpf.StartHTTPClientSpan(reqCtx, req.Method, req.URL)
+
 	hreq, err := http.NewRequestWithContext(reqCtx, req.Method, req.URL, bytes.NewReader(req.Body))
 	if err != nil {
+		spanFinish(0, err)
 		return nil, fmt.Errorf("build http request: %w", err)
 	}
 	for k, v := range req.Headers {
 		hreq.Header.Set(k, v)
 	}
+	otelpf.InjectHTTPHeaders(reqCtx, hreq.Header)
 
 	hresp, err := c.hc.Do(hreq)
 	if err != nil {
+		spanFinish(0, err)
 		return nil, err
 	}
 	defer hresp.Body.Close()
 
 	body, err := io.ReadAll(hresp.Body)
 	if err != nil {
+		spanFinish(hresp.StatusCode, err)
 		return nil, fmt.Errorf("read response body: %w", err)
 	}
+	spanFinish(hresp.StatusCode, nil)
 
 	hdrs := make(map[string]string, len(hresp.Header))
 	for k, v := range hresp.Header {
