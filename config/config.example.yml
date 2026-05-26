@@ -76,8 +76,11 @@ kafka:
   consumer_group: databus-sender
   topic:
     partitions: 4
-    replication_factor: 3
-    min_insync_replicas: 2
+    # Дефолты — для multi-broker prod-кластера. На single-broker (локальный
+    # docker-compose, CI loadtest) переопределяй через env: RF=1, ISR=1 —
+    # иначе EnsureTopics зависнет/упадёт на InvalidReplicationFactor.
+    replication_factor: ${KAFKA_TOPIC_REPLICATION_FACTOR:3}
+    min_insync_replicas: ${KAFKA_TOPIC_MIN_INSYNC_REPLICAS:2}
     retention_ms: 2592000000   # 30 дней
     retention_bytes: -1
     segment_ms: 86400000       # 1 день

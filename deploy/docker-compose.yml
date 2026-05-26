@@ -147,8 +147,8 @@ services:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
       interval: 10s
       timeout: 3s
-      retries: 5
-      start_period: 10s
+      retries: 10
+      start_period: 30s
     networks: [databus_net]
 
   sender:
@@ -169,8 +169,8 @@ services:
       test: ["CMD", "wget", "-qO-", "http://localhost:9091/health"]
       interval: 10s
       timeout: 3s
-      retries: 5
-      start_period: 10s
+      retries: 10
+      start_period: 30s
     networks: [databus_net]
 
   web:
@@ -189,8 +189,8 @@ services:
       test: ["CMD", "wget", "-qO-", "http://localhost:8000/health"]
       interval: 10s
       timeout: 3s
-      retries: 5
-      start_period: 10s
+      retries: 10
+      start_period: 30s
     networks: [databus_net]
 
   # Loadtest — сценарный тест производительности (§10.2 ТЗ).

@@ -268,6 +268,10 @@ loadtest:
       CH_USER=default
       CH_PASSWORD=
       KAFKA_BROKERS=kafka:9092
+      # Single-broker compose-стек: переопределяем prod-дефолты 3/2,
+      # иначе bootstrap.MustEnsureKafkaTopics упадёт на InvalidReplicationFactor.
+      KAFKA_TOPIC_REPLICATION_FACTOR=1
+      KAFKA_TOPIC_MIN_INSYNC_REPLICAS=1
       SENTRY_USE=false
       SENTRY_DSN=
       SENTRY_ENVIRONMENT=loadtest
