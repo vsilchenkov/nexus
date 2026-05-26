@@ -3,6 +3,8 @@ package build
 type Option struct {
 	VersionInfo
 	Version     string
+	Commit      string
+	BuildDate   string
 	ProjectName string
 	WorkingDir  string
 	Interactive bool

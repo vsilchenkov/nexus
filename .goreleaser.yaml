@@ -1,0 +1,319 @@
+# GoReleaser конфиг для DataBus (Phase 7.6).
+#
+# Запуск:
+#   - локально, без публикации:   goreleaser release --snapshot --clean
+#   - CI релиз по тегу v*:        goreleaser release --clean (см. .github/workflows/release.yml)
+#
+# Версия / commit / дата сборки пробрасываются в bus/internal/platform/build через ldflags.
+# Если переменные пустые (обычный go build) — fallback на versioninfo.json (см. NewOption).
+version: 2
+
+project_name: databus
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: receiver
+    main: ./cmd/receiver
+    binary: receiver
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, windows, darwin]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+      - -X bus/internal/platform/build.Version={{ .Version }}
+      - -X bus/internal/platform/build.Commit={{ .ShortCommit }}
+      - -X bus/internal/platform/build.BuildDate={{ .Date }}
+
+  - id: sender
+    main: ./cmd/sender
+    binary: sender
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, windows, darwin]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+      - -X bus/internal/platform/build.Version={{ .Version }}
+      - -X bus/internal/platform/build.Commit={{ .ShortCommit }}
+      - -X bus/internal/platform/build.BuildDate={{ .Date }}
+
+  - id: web
+    main: ./cmd/web
+    binary: web
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, windows, darwin]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+      - -X bus/internal/platform/build.Version={{ .Version }}
+      - -X bus/internal/platform/build.Commit={{ .ShortCommit }}
+      - -X bus/internal/platform/build.BuildDate={{ .Date }}
+
+  - id: rotate-key
+    main: ./cmd/rotate-key
+    binary: rotate-key
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, windows, darwin]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+      - -X bus/internal/platform/build.Version={{ .Version }}
+      - -X bus/internal/platform/build.Commit={{ .ShortCommit }}
+      - -X bus/internal/platform/build.BuildDate={{ .Date }}
+
+  - id: loadtest
+    main: ./cmd/loadtest
+    binary: loadtest
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, windows, darwin]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+      - -X bus/internal/platform/build.Version={{ .Version }}
+      - -X bus/internal/platform/build.Commit={{ .ShortCommit }}
+      - -X bus/internal/platform/build.BuildDate={{ .Date }}
+
+archives:
+  - id: default
+    ids: [receiver, sender, web, rotate-key, loadtest]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - CLAUDE.md
+      - LICENSE*
+      - config/config.example.yml
+      - migrations/**/*
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "Merge pull request"
+      - "Merge branch"
+  groups:
+    - title: Features
+      regexp: "^.*feat[(\\w)]*:+.*$"
+      order: 0
+    - title: Bug fixes
+      regexp: "^.*fix[(\\w)]*:+.*$"
+      order: 1
+    - title: Phase milestones
+      regexp: "^Phase \\d"
+      order: 2
+    - title: Other
+      order: 999
+
+# Multi-arch docker images для receiver/sender/web с пушем в GHCR.
+# manifests склеивают amd64+arm64 под один тег.
+dockers:
+  - id: receiver-amd64
+    ids: [receiver]
+    image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/receiver:{{ .Version }}-amd64"
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/receiver:latest-amd64"
+    dockerfile: deploy/docker/release.Dockerfile
+    use: buildx
+    goos: linux
+    goarch: amd64
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--build-arg=BINARY=receiver"
+      - "--label=org.opencontainers.image.title=databus-receiver"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+      - "--label=org.opencontainers.image.source=https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
+    extra_files:
+      - migrations
+      - config/config.example.yml
+
+  - id: receiver-arm64
+    ids: [receiver]
+    image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/receiver:{{ .Version }}-arm64"
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/receiver:latest-arm64"
+    dockerfile: deploy/docker/release.Dockerfile
+    use: buildx
+    goos: linux
+    goarch: arm64
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--build-arg=BINARY=receiver"
+      - "--label=org.opencontainers.image.title=databus-receiver"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+      - "--label=org.opencontainers.image.source=https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
+    extra_files:
+      - migrations
+      - config/config.example.yml
+
+  - id: sender-amd64
+    ids: [sender]
+    image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/sender:{{ .Version }}-amd64"
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/sender:latest-amd64"
+    dockerfile: deploy/docker/release.Dockerfile
+    use: buildx
+    goos: linux
+    goarch: amd64
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--build-arg=BINARY=sender"
+      - "--label=org.opencontainers.image.title=databus-sender"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+      - "--label=org.opencontainers.image.source=https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
+    extra_files:
+      - migrations
+      - config/config.example.yml
+
+  - id: sender-arm64
+    ids: [sender]
+    image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/sender:{{ .Version }}-arm64"
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/sender:latest-arm64"
+    dockerfile: deploy/docker/release.Dockerfile
+    use: buildx
+    goos: linux
+    goarch: arm64
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--build-arg=BINARY=sender"
+      - "--label=org.opencontainers.image.title=databus-sender"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+      - "--label=org.opencontainers.image.source=https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
+    extra_files:
+      - migrations
+      - config/config.example.yml
+
+  - id: web-amd64
+    ids: [web]
+    image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/web:{{ .Version }}-amd64"
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/web:latest-amd64"
+    dockerfile: deploy/docker/release.Dockerfile
+    use: buildx
+    goos: linux
+    goarch: amd64
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--build-arg=BINARY=web"
+      - "--label=org.opencontainers.image.title=databus-web"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+      - "--label=org.opencontainers.image.source=https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
+    extra_files:
+      - migrations
+      - config/config.example.yml
+
+  - id: web-arm64
+    ids: [web]
+    image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/web:{{ .Version }}-arm64"
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/web:latest-arm64"
+    dockerfile: deploy/docker/release.Dockerfile
+    use: buildx
+    goos: linux
+    goarch: arm64
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--build-arg=BINARY=web"
+      - "--label=org.opencontainers.image.title=databus-web"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+      - "--label=org.opencontainers.image.source=https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
+    extra_files:
+      - migrations
+      - config/config.example.yml
+
+docker_manifests:
+  - name_template: "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/receiver:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/receiver:{{ .Version }}-amd64"
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/receiver:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/receiver:latest"
+    image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/receiver:latest-amd64"
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/receiver:latest-arm64"
+
+  - name_template: "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/sender:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/sender:{{ .Version }}-amd64"
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/sender:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/sender:latest"
+    image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/sender:latest-amd64"
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/sender:latest-arm64"
+
+  - name_template: "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/web:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/web:{{ .Version }}-amd64"
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/web:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/web:latest"
+    image_templates:
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/web:latest-amd64"
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/web:latest-arm64"
+
+release:
+  github:
+    owner: ""
+    name: ""
+  draft: true
+  prerelease: auto
+  name_template: "DataBus {{ .Version }}"
+  header: |
+    ## DataBus {{ .Version }}
+
+    См. [specs/IMPLEMENTATION.md](specs/IMPLEMENTATION.md) — карту реализации с привязкой
+    к разделам ТЗ и [README.md](README.md) для быстрого старта.
+
+    Docker images: `ghcr.io/<owner>/<repo>/{receiver,sender,web}:{{ .Version }}` (multi-arch amd64+arm64).
+  footer: |
+    **Полный список изменений:** <https://github.com/{{ .Env.GITHUB_REPOSITORY }}/compare/{{ .PreviousTag }}...{{ .Tag }}>

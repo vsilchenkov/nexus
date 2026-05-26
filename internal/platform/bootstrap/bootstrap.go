@@ -6,6 +6,7 @@ package bootstrap
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
@@ -83,10 +84,18 @@ func Init(versionInfoData []byte, projectName string) (*build.Option, config.Fla
 	}
 
 	logger := logging.Init(&logCfg, &sentryCfg)
-	logger.Info("starting service",
+	fields := []slog.Attr{
 		logger.Str("service", projectName),
 		logger.Str("version", buildOpt.Version),
-		logger.Str("config", path))
+		logger.Str("config", path),
+	}
+	if buildOpt.Commit != "" {
+		fields = append(fields, logger.Str("commit", buildOpt.Commit))
+	}
+	if buildOpt.BuildDate != "" {
+		fields = append(fields, logger.Str("build_date", buildOpt.BuildDate))
+	}
+	logger.Info("starting service", fields...)
 
 	return buildOpt, flags, cfg, logger
 }

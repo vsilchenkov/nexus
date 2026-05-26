@@ -155,6 +155,18 @@ rotate-encryption-key: ## Ротация ENCRYPTION_KEY: make rotate-encryption-
 		--new-key="$(NEW_KEY)" \
 		$(if $(filter true,$(DRY_RUN)),--dry-run,)
 
+# ----- release (Phase 7.6) --------------------------------------------------
+
+.PHONY: release-check release-snapshot
+
+release-check: ## Проверить .goreleaser.yaml на синтаксис
+	goreleaser check
+
+release-snapshot: ## Локальный snapshot-релиз (без публикации) — артефакты в dist/
+	GITHUB_REPOSITORY=local/databus \
+	GITHUB_REPOSITORY_LOWER=local/databus \
+	goreleaser release --snapshot --clean --skip=publish
+
 # ----- clean ----------------------------------------------------------------
 
 .PHONY: clean
@@ -162,4 +174,5 @@ rotate-encryption-key: ## Ротация ENCRYPTION_KEY: make rotate-encryption-
 clean: ## Удалить bin/ и тестовые артефакты
 	$(GO) clean -testcache
 	-$(RM) -r $(BIN_DIR)
+	-$(RM) -r dist
 	-$(RM) coverage.out coverage.html

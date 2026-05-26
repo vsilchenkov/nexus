@@ -574,6 +574,32 @@ make proto                                     # перегенерация send
 - 6.8 Расширенные фильтры live-tail (period/IP/Host/full-text).
 - 6.9 Audit log: diff-двухколоночный для `node.update`.
 
+Сделанное в Phase 7.6:
+
+- 7.6 GoReleaser: релизный pipeline по тегам `v*`.
+  · [`.goreleaser.yaml`](../.goreleaser.yaml) — 5 builds (`receiver`, `sender`, `web`,
+  `rotate-key`, `loadtest`) × Linux/Windows/macOS × amd64+arm64 (Windows/arm64
+  исключён — не поддерживается рядом deps); archives (tar.gz, zip для Windows)
+  с README/LICENSE/config.example/migrations, SHA-256 checksums, GitHub-changelog
+  (группы Features / Bug fixes / Phase milestones).
+  · ldflags `-X bus/internal/platform/build.{Version,Commit,BuildDate}` —
+  переопределяют значения из `versioninfo.json` при release-сборке;
+  переменные пакета добавлены в [build/build.go](../internal/platform/build/build.go),
+  fallback-логика сохранена. [bootstrap.Init](../internal/platform/bootstrap/bootstrap.go)
+  логирует `commit`/`build_date` в стартовом сообщении, если заполнены.
+  · 6 docker-образов через `dockers:` (receiver/sender/web × amd64+arm64) → GHCR
+  через [release.Dockerfile](../deploy/docker/release.Dockerfile) (использует
+  pre-built бинарь, не пересобирает). `docker_manifests:` склеивают arch-варианты
+  в multi-arch теги `:{Version}` и `:latest`.
+  · GitHub Actions [release.yml](../.github/workflows/release.yml) — триггер
+  `push: tags: [v*]` + workflow_dispatch; QEMU + Buildx + GHCR login через
+  `GITHUB_TOKEN` (`packages: write`); вычисляет lowercase repo-name для
+  ghcr-пути (GHCR требует lowercase).
+  · Makefile цели `make release-check` (синтаксис `.goreleaser.yaml`) и
+  `make release-snapshot` (локальный snapshot в `dist/` без публикации).
+  · Локальная верификация ldflags: `go build -ldflags "-X .../build.Version=v1.2.3 ..."`
+  + `./binary --version` печатает `v1.2.3` вместо `0.1.0` из versioninfo.json.
+
 Сделанное в Phase 7:
 
 - 7.1 Swagger 100% endpoints + UI handler (`/swagger/index.html`):
