@@ -66,4 +66,7 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY_LOWER: ${{ steps.repo.outputs.lower }}
+          # DOCKER_REGISTRY_BASE и COMPARE_URL_BASE — общий контракт с .gitlab-ci.yml
+          # (один .goreleaser.yaml работает в обоих CI; см. шапку release-блока).
+          DOCKER_REGISTRY_BASE: ghcr.io/${{ steps.repo.outputs.lower }}
+          COMPARE_URL_BASE: https://github.com/${{ github.repository }}/compare

@@ -152,8 +152,8 @@ dockers:
   - id: receiver-amd64
     ids: [receiver]
     image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/receiver:{{ .Version }}-amd64"
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/receiver:latest-amd64"
+      - "{{ .Env.DOCKER_REGISTRY_BASE }}/receiver:{{ .Version }}-amd64"
+      - "{{ .Env.DOCKER_REGISTRY_BASE }}/receiver:latest-amd64"
     dockerfile: deploy/docker/release.Dockerfile
     use: buildx
     goos: linux
@@ -173,8 +173,8 @@ dockers:
   - id: receiver-arm64
     ids: [receiver]
     image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/receiver:{{ .Version }}-arm64"
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/receiver:latest-arm64"
+      - "{{ .Env.DOCKER_REGISTRY_BASE }}/receiver:{{ .Version }}-arm64"
+      - "{{ .Env.DOCKER_REGISTRY_BASE }}/receiver:latest-arm64"
     dockerfile: deploy/docker/release.Dockerfile
     use: buildx
     goos: linux
@@ -194,8 +194,8 @@ dockers:
   - id: sender-amd64
     ids: [sender]
     image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/sender:{{ .Version }}-amd64"
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/sender:latest-amd64"
+      - "{{ .Env.DOCKER_REGISTRY_BASE }}/sender:{{ .Version }}-amd64"
+      - "{{ .Env.DOCKER_REGISTRY_BASE }}/sender:latest-amd64"
     dockerfile: deploy/docker/release.Dockerfile
     use: buildx
     goos: linux
@@ -215,8 +215,8 @@ dockers:
   - id: sender-arm64
     ids: [sender]
     image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/sender:{{ .Version }}-arm64"
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/sender:latest-arm64"
+      - "{{ .Env.DOCKER_REGISTRY_BASE }}/sender:{{ .Version }}-arm64"
+      - "{{ .Env.DOCKER_REGISTRY_BASE }}/sender:latest-arm64"
     dockerfile: deploy/docker/release.Dockerfile
     use: buildx
     goos: linux
@@ -236,8 +236,8 @@ dockers:
   - id: web-amd64
     ids: [web]
     image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/web:{{ .Version }}-amd64"
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/web:latest-amd64"
+      - "{{ .Env.DOCKER_REGISTRY_BASE }}/web:{{ .Version }}-amd64"
+      - "{{ .Env.DOCKER_REGISTRY_BASE }}/web:latest-amd64"
     dockerfile: deploy/docker/release.Dockerfile
     use: buildx
     goos: linux
@@ -257,8 +257,8 @@ dockers:
   - id: web-arm64
     ids: [web]
     image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/web:{{ .Version }}-arm64"
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/web:latest-arm64"
+      - "{{ .Env.DOCKER_REGISTRY_BASE }}/web:{{ .Version }}-arm64"
+      - "{{ .Env.DOCKER_REGISTRY_BASE }}/web:latest-arm64"
     dockerfile: deploy/docker/release.Dockerfile
     use: buildx
     goos: linux
@@ -276,37 +276,37 @@ dockers:
       - config/config.example.yml
 
 docker_manifests:
-  - name_template: "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/receiver:{{ .Version }}"
+  - name_template: "{{ .Env.DOCKER_REGISTRY_BASE }}/receiver:{{ .Version }}"
     image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/receiver:{{ .Version }}-amd64"
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/receiver:{{ .Version }}-arm64"
-  - name_template: "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/receiver:latest"
+      - "{{ .Env.DOCKER_REGISTRY_BASE }}/receiver:{{ .Version }}-amd64"
+      - "{{ .Env.DOCKER_REGISTRY_BASE }}/receiver:{{ .Version }}-arm64"
+  - name_template: "{{ .Env.DOCKER_REGISTRY_BASE }}/receiver:latest"
     image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/receiver:latest-amd64"
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/receiver:latest-arm64"
+      - "{{ .Env.DOCKER_REGISTRY_BASE }}/receiver:latest-amd64"
+      - "{{ .Env.DOCKER_REGISTRY_BASE }}/receiver:latest-arm64"
 
-  - name_template: "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/sender:{{ .Version }}"
+  - name_template: "{{ .Env.DOCKER_REGISTRY_BASE }}/sender:{{ .Version }}"
     image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/sender:{{ .Version }}-amd64"
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/sender:{{ .Version }}-arm64"
-  - name_template: "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/sender:latest"
+      - "{{ .Env.DOCKER_REGISTRY_BASE }}/sender:{{ .Version }}-amd64"
+      - "{{ .Env.DOCKER_REGISTRY_BASE }}/sender:{{ .Version }}-arm64"
+  - name_template: "{{ .Env.DOCKER_REGISTRY_BASE }}/sender:latest"
     image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/sender:latest-amd64"
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/sender:latest-arm64"
+      - "{{ .Env.DOCKER_REGISTRY_BASE }}/sender:latest-amd64"
+      - "{{ .Env.DOCKER_REGISTRY_BASE }}/sender:latest-arm64"
 
-  - name_template: "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/web:{{ .Version }}"
+  - name_template: "{{ .Env.DOCKER_REGISTRY_BASE }}/web:{{ .Version }}"
     image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/web:{{ .Version }}-amd64"
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/web:{{ .Version }}-arm64"
-  - name_template: "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/web:latest"
+      - "{{ .Env.DOCKER_REGISTRY_BASE }}/web:{{ .Version }}-amd64"
+      - "{{ .Env.DOCKER_REGISTRY_BASE }}/web:{{ .Version }}-arm64"
+  - name_template: "{{ .Env.DOCKER_REGISTRY_BASE }}/web:latest"
     image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/web:latest-amd64"
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}/web:latest-arm64"
+      - "{{ .Env.DOCKER_REGISTRY_BASE }}/web:latest-amd64"
+      - "{{ .Env.DOCKER_REGISTRY_BASE }}/web:latest-arm64"
 
 release:
-  github:
-    owner: ""
-    name: ""
+  # github:/gitlab: блок не указываем — GoReleaser автодетектит CI по env
+  # (GITHUB_TOKEN → GitHub, GITLAB_TOKEN → GitLab). Один и тот же конфиг
+  # работает и в .github/workflows/release.yml и в .gitlab-ci.yml (release job).
   draft: true
   prerelease: auto
   name_template: "DataBus {{ .Version }}"
@@ -317,6 +317,6 @@ release:
     [specs/IMPLEMENTATION.md](specs/IMPLEMENTATION.md) — карта реализации с привязкой к разделам ТЗ;
     [README.md](README.md) — быстрый старт.
 
-    Docker images: `ghcr.io/<owner>/<repo>/{receiver,sender,web}:{{ .Version }}` (multi-arch amd64+arm64).
+    Docker images: `{{ .Env.DOCKER_REGISTRY_BASE }}/{receiver,sender,web}:{{ .Version }}` (multi-arch amd64+arm64).
   footer: |
-    **Полный список изменений:** <https://github.com/{{ .Env.GITHUB_REPOSITORY }}/compare/{{ .PreviousTag }}...{{ .Tag }}>
+    **Полный список изменений:** {{ .Env.COMPARE_URL_BASE }}/{{ .PreviousTag }}...{{ .Tag }}

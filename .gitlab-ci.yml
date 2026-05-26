@@ -1,0 +1,170 @@
+# GitLab CI/CD pipeline для DataBus (Phase 9.2).
+#
+# Аналог .github/workflows/{ci,security,release}.yml — один файл со всеми
+# stages: test, lint, build, security, integration, release.
+#
+# Runner: self-hosted shell/docker executor с тегом `srv-d-android-l`.
+# Для integration и release jobs требуется доступ к Docker daemon (либо
+# docker.sock смонтирован в runner, либо services: [docker:dind] + privileged).
+#
+# Триггеры:
+#   - push в любую ветку             → test, lint, build, swagger-drift, ui
+#   - merge_request                  → то же + integration (по labels)
+#   - schedule (weekly)              → security (govulncheck + gosec + trivy + nancy)
+#   - tag v*                         → release (GoReleaser → GitLab Container Registry)
+#
+# Документация GitLab CI variables: https://docs.gitlab.com/ee/ci/variables/
+
+variables:
+  GO_VERSION: "1.25.7"
+  NODE_VERSION: "20"
+  # Локальный GOPATH/GOCACHE/GOMODCACHE — кешируется между jobs.
+  GOPATH: "$CI_PROJECT_DIR/.cache/go"
+  GOCACHE: "$CI_PROJECT_DIR/.cache/go-build"
+  GOMODCACHE: "$CI_PROJECT_DIR/.cache/go-mod"
+  # Глобально отключаем интерактивные prompt'ы apt/npm.
+  DEBIAN_FRONTEND: noninteractive
+
+default:
+  # Все jobs запускаются на ноде srv-d-android-l (self-hosted runner).
+  tags:
+    - srv-d-android-l
+  # Прерываемые при новом push в ту же ветку — экономит CI-минуты.
+  interruptible: true
+
+# concurrency-аналог: не запускать новый pipeline пока старый не завершился
+# (для веток feature/*). Для master/tag — ждём, не отменяем.
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH
+
+stages:
+  - test
+  - lint
+  - build
+  - security
+  - integration
+  - release
+
+# ----------- Reusable anchors -----------------------------------------------
+
+# Go-кэш: ускоряет `go mod download` и `go build` между jobs.
+# GitLab кеширует tar-архив директорий между jobs одного pipeline и (при
+# совпадении key) между разными pipelines.
+.go-cache: &go-cache
+  cache:
+    key:
+      files:
+        - go.sum
+    paths:
+      - .cache/go-build
+      - .cache/go-mod
+    policy: pull-push
+
+.go-base:
+  image: golang:${GO_VERSION}
+  <<: *go-cache
+  before_script:
+    - go env -w GOPATH=$GOPATH GOCACHE=$GOCACHE GOMODCACHE=$GOMODCACHE
+    - go mod download
+
+# ----------- TEST stage -----------------------------------------------------
+
+go-test:
+  stage: test
+  extends: .go-base
+  script:
+    - go vet ./...
+    - go test -race -short ./...
+
+# ----------- LINT stage -----------------------------------------------------
+
+go-lint:
+  stage: lint
+  image: golangci/golangci-lint:v1.62
+  <<: *go-cache
+  script:
+    - golangci-lint run --timeout=5m
+
+swagger-drift:
+  stage: lint
+  extends: .go-base
+  script:
+    - go install github.com/swaggo/swag/cmd/swag@v1.16.6
+    - $GOPATH/bin/swag init -g cmd/web/main.go -o docs/web --parseDependency --parseDepth 2 --quiet
+    - |
+      if ! git diff --quiet docs/; then
+        echo "swagger drift detected; run 'make swagger' locally and commit"
+        git --no-pager diff --stat docs/
+        exit 1
+      fi
+
+# ----------- BUILD stage ----------------------------------------------------
+
+go-build:
+  stage: build
+  extends: .go-base
+  script:
+    # На Linux линкер не падает с OOM (грабля Windows из CLAUDE.md §6).
+    - go build ./...
+
+ui-build:
+  stage: build
+  image: node:${NODE_VERSION}
+  cache:
+    key:
+      files:
+        - web-ui/package-lock.json
+    paths:
+      - web-ui/node_modules
+    policy: pull-push
+  script:
+    - cd web-ui
+    - npm ci
+    - npm run lint --if-present
+    - npm run build
+  artifacts:
+    paths:
+      - web-ui/dist
+    expire_in: 1 week
+
+# ----------- INTEGRATION stage ----------------------------------------------
+# Тяжёлый job: PG + Redis + Kafka + ClickHouse через testcontainers-go.
+# Требует доступа к Docker daemon. На self-hosted runner с shell-executor —
+# работает если docker.sock доступен; на docker-executor — services dind +
+# privileged: true (см. variables ниже).
+#
+# По умолчанию запускается на label `run-integration` для MR и всегда на
+# master/dev/tag — аналогично GitHub workflow.
+
+integration:
+  stage: integration
+  image: golang:${GO_VERSION}
+  <<: *go-cache
+  # Services-секцию активируйте если runner — docker-executor:
+  # services:
+  #   - name: docker:24-dind
+  #     alias: docker
+  # variables:
+  #   DOCKER_HOST: "tcp://docker:2375"
+  #   DOCKER_TLS_CERTDIR: ""
+  #   TESTCONTAINERS_HOST_OVERRIDE: "docker"
+  #   TESTCONTAINERS_RYUK_DISABLED: "true"
+  timeout: 25 minutes
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+    - if: $CI_COMMIT_BRANCH == "dev"
+    - if: $CI_COMMIT_TAG
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_LABELS =~ /run-integration/
+  before_script:
+    - go env -w GOPATH=$GOPATH GOCACHE=$GOCACHE GOMODCACHE=$GOMODCACHE
+    - go mod download
+    # Pre-pull docker-образы — cached слои ускоряют testcontainers.
+    - docker pull postgres:16-alpine || true
+    - docker pull redis:7-alpine || true
+    - docker pull confluentinc/confluent-local:7.5.0 || true
+    - docker pull clickhouse/clickhouse-server:24-alpine || true
+  script:
+    - go test -tags=integration -timeout 20m -count=1 ./tests/integration/...
