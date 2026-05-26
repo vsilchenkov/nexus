@@ -309,14 +309,26 @@ govulncheck:
 # gosec — статический анализатор security-правил OWASP/CWE (G-серия).
 # `-fmt sarif` для просмотра в IDE; `-fmt gitlab` для GitLab Security Dashboard
 # (Premium-фича; на Community SARIF доступен как artifact).
+#
+# NB: используем golang:${GO_VERSION}-alpine, а не securego/gosec — последний
+# идёт без Go toolchain, и gosec в этом образе не может разрешить `./...`
+# через `go list` → «Files: 0, Lines: 0» и артефакты не создаются.
 gosec:
   stage: security
-  image: securego/gosec:latest
-  <<: *security-rules
+  image: golang:${GO_VERSION}-alpine
+  <<: [*go-cache, *security-rules]
   allow_failure: true  # findings не блокируют — alerts only
+  before_script:
+    - apk add --no-cache git
+    - go env -w GOPATH=$GOPATH GOCACHE=$GOCACHE GOMODCACHE=$GOMODCACHE
+    - go mod download
+    - go install github.com/securego/gosec/v2/cmd/gosec@latest
+    # Stub-файлы, чтобы `artifacts.paths` всегда нашёл что выложить —
+    # даже если gosec упал до записи отчётов.
+    - touch gosec-results.sarif gosec-junit.xml
   script:
-    - gosec -fmt=sarif -out=gosec-results.sarif -exclude-dir=web-ui -exclude-dir=docs ./... || true
-    - gosec -fmt=junit-xml -out=gosec-junit.xml -exclude-dir=web-ui -exclude-dir=docs ./... || true
+    - $GOPATH/bin/gosec -fmt=sarif -out=gosec-results.sarif -exclude-dir=web-ui -exclude-dir=docs ./... || true
+    - $GOPATH/bin/gosec -fmt=junit-xml -out=gosec-junit.xml -exclude-dir=web-ui -exclude-dir=docs ./... || true
   artifacts:
     when: always
     paths:
@@ -390,6 +402,11 @@ renovate:
 
 # Nancy (Sonatype OSS Index) — дополнительный CVE-источник, перекрывает
 # govulncheck по less-критичным. Не SARIF, просто фейлится по списку.
+#
+# NB: shell у runner'а — sh, без `set -o pipefail`. Если `go list -json -deps`
+# упадёт в pipe, его exit-код проглатывается, а nancy получает пустой stdin
+# и выводит help+exit 1, маскируя реальную ошибку. Поэтому собираем deps в
+# файл и явно проверяем результат `go list`, прежде чем кормить nancy.
 nancy:
   stage: security
   extends: .go-base
@@ -397,7 +414,9 @@ nancy:
   allow_failure: true
   script:
     - go install github.com/sonatype-nexus-community/nancy@latest
-    - go list -json -deps ./... | $GOPATH/bin/nancy sleuth --loud
+    - go list -json -deps ./... > deps.json
+    - test -s deps.json
+    - $GOPATH/bin/nancy sleuth --loud < deps.json
 
 # ----------- RELEASE stage --------------------------------------------------
 # Триггерится тегом v*. Использует GoReleaser → GitLab Container Registry
