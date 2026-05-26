@@ -22,6 +22,18 @@ sentry:
   traces_sample_rate: 0.1
   debug: false
 
+# OpenTelemetry distributed tracing (§16 ТЗ, Phase 8.2).
+# При enable=false полный no-op: global TracerProvider не устанавливается,
+# Init не пытается коннектиться к collector'у, GinMiddleware пропускает
+# запрос без span'а. OTLP-экспорт по HTTP (POST /v1/traces).
+otel:
+  enable:        ${OTEL_ENABLE:false}
+  otlp_endpoint: ${OTEL_OTLP_ENDPOINT:otel-collector:4318}
+  otlp_insecure: ${OTEL_OTLP_INSECURE:true}     # production: false + valid TLS
+  sample_rate:   ${OTEL_SAMPLE_RATE:0.1}        # 0.0..1.0 — head-based ratio sampler
+  service_name:  ${OTEL_SERVICE_NAME:}          # пусто → берётся имя бинаря
+  environment:   ${OTEL_ENVIRONMENT:production}
+
 postgres:
   host: ${PG_HOST:postgres}
   port: ${PG_PORT:5432}

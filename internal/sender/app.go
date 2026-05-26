@@ -29,6 +29,7 @@ import (
 	kafkapf "bus/internal/platform/kafka"
 	"bus/internal/platform/logging"
 	"bus/internal/platform/metrics"
+	otelpf "bus/internal/platform/otel"
 	pgpf "bus/internal/platform/pg"
 	"bus/internal/platform/reloader"
 	sentrypf "bus/internal/platform/sentry"
@@ -50,12 +51,13 @@ type App struct {
 	cipher  *crypto.Cipher
 	metrics *metrics.Metrics
 
-	grpcSrv   *grpc.Server
-	adminSrv  *http.Server
-	chMgr     *chpf.Manager
-	chWriter  *chlog.WriterManager
-	producer  *kafkapf.Producer
-	consumer  *kafkaadapter.ConsumerGroup
+	grpcSrv      *grpc.Server
+	adminSrv     *http.Server
+	chMgr        *chpf.Manager
+	chWriter     *chlog.WriterManager
+	producer     *kafkapf.Producer
+	consumer     *kafkaadapter.ConsumerGroup
+	otelShutdown otelpf.ShutdownFunc
 }
 
 func New(
@@ -64,16 +66,18 @@ func New(
 	ch chdrv.Conn,
 	redis *goredis.Client,
 	cipher *crypto.Cipher,
+	otelShutdown otelpf.ShutdownFunc,
 	logger logging.Logger,
 ) *App {
 	return &App{
-		cfg:     cfg,
-		logger:  logger,
-		pg:      pg,
-		ch:      ch,
-		redis:   redis,
-		cipher:  cipher,
-		metrics: metrics.New("sender"),
+		cfg:          cfg,
+		logger:       logger,
+		pg:           pg,
+		ch:           ch,
+		redis:        redis,
+		cipher:       cipher,
+		metrics:      metrics.New("sender"),
+		otelShutdown: otelShutdown,
 	}
 }
 
@@ -168,7 +172,7 @@ func (a *App) startGRPC(svc *grpcadapter.Server) error {
 func (a *App) startAdminHTTP() error {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(sentrypf.GinMiddleware("sender"), metrics.GinMiddleware(a.metrics), gin.Recovery())
+	r.Use(otelpf.GinMiddleware("sender"), sentrypf.GinMiddleware("sender"), metrics.GinMiddleware(a.metrics), gin.Recovery())
 
 	hc := healthcheck.New(
 		[]healthcheck.Checker{
@@ -263,6 +267,13 @@ func (a *App) Stop(ctx context.Context) error {
 		defer cancel()
 		if err := a.adminSrv.Shutdown(shutdownCtx); err != nil {
 			return fmt.Errorf("sender admin shutdown: %w", err)
+		}
+	}
+	if a.otelShutdown != nil {
+		shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		if err := a.otelShutdown(shutdownCtx); err != nil {
+			a.logger.Warn("otel tracer shutdown returned error", a.logger.Err(err))
 		}
 	}
 	return nil

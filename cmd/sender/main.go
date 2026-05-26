@@ -51,7 +51,9 @@ func main() {
 
 	bootstrap.MustEnsureKafkaTopics(ctx, cfg, logger, cfg.Kafka.AsyncTopic, cfg.Kafka.DLQTopic)
 
-	app := sender.New(cfg, pgPool, chConn, redisClient, cipher, logger)
+	otelShutdown := bootstrap.MustOtel(ctx, cfg, "sender", logger)
+
+	app := sender.New(cfg, pgPool, chConn, redisClient, cipher, otelShutdown, logger)
 
 	if err := runner.Run(serviceName, displayName, description, app, logger); err != nil {
 		logger.ErrorWithOp("service stopped", err, "main")

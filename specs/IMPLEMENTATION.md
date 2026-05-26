@@ -208,6 +208,7 @@
 
 - Multi-tenancy логика (колонки `team_id` уже есть, изоляция — нет).
 - ~~Webhook signature verification (`/v1/callback/`)~~ — реализовано в Phase 8.1.
+- ~~OpenTelemetry distributed tracing~~ — реализовано в Phase 8.2 (только HTTP-server-span'ы; client-side propagation и gRPC-interceptor'ы — будущий блок).
 - Notifications для операторов (Slack/Telegram).
 - Шаблоны узлов.
 - Версионирование конфигов узла + откат.
@@ -581,6 +582,58 @@ make proto                                     # перегенерация send
 - 6.7 ClickHouse orphan-tables (сканер + DROP с подтверждением).
 - 6.8 Расширенные фильтры live-tail (period/IP/Host/full-text).
 - 6.9 Audit log: diff-двухколоночный для `node.update`.
+
+Сделанное в Phase 8.2:
+
+- 8.2 OpenTelemetry distributed tracing (§16 ТЗ). Минимальная имплементация
+  без external `opentelemetry-go-contrib`, чтобы не валить Windows-линкер
+  (CLAUDE.md грабли #1):
+  · Новые direct-deps: `go.opentelemetry.io/otel/sdk` и
+  `go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp`.
+  Транзитивно `otel` обновился с v1.41.0 до v1.43.0.
+  · Пакет [internal/platform/otel](../internal/platform/otel/):
+  · [otel.go](../internal/platform/otel/otel.go) `Init(ctx, cfg, serviceName, logger)`
+  — единая точка bootstrap'а: при `cfg.Otel.Enable=false` (или `cfg=nil`)
+  возвращает noop-shutdown и nil-error без побочных эффектов; при включённом —
+  собирает OTLP/HTTP exporter (`otlptracehttp.NewClient`), resource с
+  `service.name`/`deployment.environment` (semconv v1.27), head-based
+  `ParentBased(TraceIDRatioBased(SampleRate))` sampler с дефолтом 0.1.
+  Устанавливает global TracerProvider + TextMapPropagator
+  (TraceContext+Baggage). Возвращает shutdown с 5-секундным timeout'ом.
+  Init НЕ делает network round-trip — exporter лениво коннектится при первом
+  батче, поэтому временно недоступный collector не блокирует старт сервиса.
+  · [gin.go](../internal/platform/otel/gin.go) `GinMiddleware(serviceName)`
+  — handcrafted, не otelgin: пропуск exhaust большого графа `contrib`-deps;
+  делает ровно то, что нужно — extract traceparent из header'а, открывает
+  server-span с http.method/url.path/http.route/user_agent/http.client_ip,
+  пишет http.response.status_code в конце и codes.Error на 5xx; .End()
+  в defer'е переживает panic. При `Enable=false` global TracerProvider —
+  no-op, middleware превращается в пару дешёвых allocation'ов без сети.
+  · 5 unit-тестов [otel_test.go](../internal/platform/otel/otel_test.go):
+  Init c Enable=false → noop-shutdown; Init с nil-cfg (defence-in-depth) →
+  noop-shutdown; GinMiddleware пропускает запрос без TracerProvider'а;
+  middleware пробрасывает обновлённый ctx в handler; Init с заведомо битым
+  endpoint не падает (правильное поведение — exporter ленивый), shutdown
+  без паники.
+  · Конфиг: добавил `OtelSection` в [platform/config/config.go](../internal/platform/config/config.go)
+  (Enable, OtlpEndpoint, OtlpInsecure, SampleRate, ServiceName, Environment)
+  и [config.example.yml](../config/config.example.yml) — с env-overrides
+  `OTEL_ENABLE`, `OTEL_OTLP_ENDPOINT`, `OTEL_OTLP_INSECURE`,
+  `OTEL_SAMPLE_RATE`, `OTEL_SERVICE_NAME`, `OTEL_ENVIRONMENT`.
+  · Bootstrap [bootstrap.go](../internal/platform/bootstrap/bootstrap.go)
+  `MustOtel(ctx, cfg, projectName, logger) otelpf.ShutdownFunc` — единая
+  точка инициализации, при ошибке Init'а пишет warning и возвращает noop
+  (не валит сервис из-за «opcollect недоступен»).
+  · Подключение в трёх сервисах: `New(...)` каждого App принимает
+  `otelpf.ShutdownFunc` параметром (Constructor Injection, как и остальные
+  cross-cutting deps); `App.Stop` вызывает shutdown с 5-секундным таймаутом
+  и логирует ошибки. Gin-router инициализируется с
+  `otelpf.GinMiddleware("<service>")` ПЕРЕД sentry/metrics — span охватывает
+  весь pipeline. `cmd/{receiver,sender,web}/main.go` вызывают
+  `bootstrap.MustOtel` и пробрасывают shutdown в App-конструктор.
+  · Sentry tracing (§14.3, Phase 5) НЕ заменяется: Sentry оставлен для
+  error-correlation, OTel — для distributed tracing. Параллельная работа
+  поддерживается, оба middleware установлены на router.
 
 Сделанное в Phase 8.1b (frontend):
 

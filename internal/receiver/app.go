@@ -22,6 +22,7 @@ import (
 	kafkapf "bus/internal/platform/kafka"
 	"bus/internal/platform/logging"
 	"bus/internal/platform/metrics"
+	otelpf "bus/internal/platform/otel"
 	pgpf "bus/internal/platform/pg"
 	"bus/internal/platform/ratelimit"
 	redispf "bus/internal/platform/redis"
@@ -41,19 +42,21 @@ type App struct {
 	cipher  *crypto.Cipher
 	metrics *metrics.Metrics
 
-	srv      *http.Server
-	senderCl *grpcsender.Client
-	producer *kafkapf.Producer
+	srv          *http.Server
+	senderCl     *grpcsender.Client
+	producer     *kafkapf.Producer
+	otelShutdown otelpf.ShutdownFunc
 }
 
-func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, cipher *crypto.Cipher, logger logging.Logger) *App {
+func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, cipher *crypto.Cipher, otelShutdown otelpf.ShutdownFunc, logger logging.Logger) *App {
 	return &App{
-		cfg:     cfg,
-		logger:  logger,
-		pg:      pg,
-		redis:   redis,
-		cipher:  cipher,
-		metrics: metrics.New("receiver"),
+		cfg:          cfg,
+		logger:       logger,
+		pg:           pg,
+		redis:        redis,
+		cipher:       cipher,
+		metrics:      metrics.New("receiver"),
+		otelShutdown: otelShutdown,
 	}
 }
 
@@ -83,7 +86,7 @@ func (a *App) Start(ctx context.Context) error {
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(sentrypf.GinMiddleware("receiver"), metrics.GinMiddleware(a.metrics), gin.Recovery())
+	r.Use(otelpf.GinMiddleware("receiver"), sentrypf.GinMiddleware("receiver"), metrics.GinMiddleware(a.metrics), gin.Recovery())
 
 	hc := healthcheck.New(
 		[]healthcheck.Checker{pgpf.HealthChecker("postgres", a.pg)},
@@ -145,6 +148,11 @@ func (a *App) Stop(ctx context.Context) error {
 	}
 	if a.producer != nil {
 		_ = a.producer.Close()
+	}
+	if a.otelShutdown != nil {
+		if err := a.otelShutdown(shutdownCtx); err != nil {
+			a.logger.Warn("otel tracer shutdown returned error", a.logger.Err(err))
+		}
 	}
 	return nil
 }

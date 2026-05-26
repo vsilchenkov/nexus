@@ -28,6 +28,7 @@ import (
 	"bus/internal/platform/logging"
 	"bus/internal/platform/i18n"
 	"bus/internal/platform/metrics"
+	otelpf "bus/internal/platform/otel"
 	pgpf "bus/internal/platform/pg"
 	"bus/internal/platform/ratelimit"
 	redispf "bus/internal/platform/redis"
@@ -52,25 +53,27 @@ type App struct {
 	cipher  *crypto.Cipher
 	metrics *metrics.Metrics
 
-	srv *http.Server
+	srv          *http.Server
+	otelShutdown otelpf.ShutdownFunc
 }
 
-func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, ch chdriver.Conn, cipher *crypto.Cipher, logger logging.Logger) *App {
+func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, ch chdriver.Conn, cipher *crypto.Cipher, otelShutdown otelpf.ShutdownFunc, logger logging.Logger) *App {
 	return &App{
-		cfg:     cfg,
-		logger:  logger,
-		pg:      pg,
-		redis:   redis,
-		ch:      ch,
-		cipher:  cipher,
-		metrics: metrics.New("web"),
+		cfg:          cfg,
+		logger:       logger,
+		pg:           pg,
+		redis:        redis,
+		ch:           ch,
+		cipher:       cipher,
+		metrics:      metrics.New("web"),
+		otelShutdown: otelShutdown,
 	}
 }
 
 func (a *App) Start(ctx context.Context) error {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(sentrypf.GinMiddleware("web"), metrics.GinMiddleware(a.metrics), i18n.GinMiddleware(), gin.Recovery())
+	r.Use(otelpf.GinMiddleware("web"), sentrypf.GinMiddleware("web"), metrics.GinMiddleware(a.metrics), i18n.GinMiddleware(), gin.Recovery())
 
 	hc := healthcheck.New(
 		[]healthcheck.Checker{
@@ -242,6 +245,13 @@ func (a *App) Stop(ctx context.Context) error {
 		closeCtx, cancelClose := context.WithTimeout(ctx, 5*time.Second)
 		_ = a.chMgr.Close(closeCtx)
 		cancelClose()
+	}
+	if a.otelShutdown != nil {
+		otelCtx, cancelOtel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancelOtel()
+		if err := a.otelShutdown(otelCtx); err != nil {
+			a.logger.Warn("otel tracer shutdown returned error", a.logger.Err(err))
+		}
 	}
 	return nil
 }

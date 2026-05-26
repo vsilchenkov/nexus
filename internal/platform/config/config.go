@@ -10,6 +10,7 @@ type Config struct {
 	Build      BuildSection      `yaml:"build"`
 	Logging    LoggingSection    `yaml:"logging"`
 	Sentry     SentrySection     `yaml:"sentry"`
+	Otel       OtelSection       `yaml:"otel"`
 	Postgres   PostgresSection   `yaml:"postgres"`
 	Redis      RedisSection      `yaml:"redis"`
 	ClickHouse ClickHouseSection `yaml:"clickhouse"`
@@ -17,6 +18,23 @@ type Config struct {
 	Receiver   ReceiverSection   `yaml:"receiver"`
 	Sender     SenderSection     `yaml:"sender"`
 	Web        WebSection        `yaml:"web"`
+}
+
+// OtelSection — параметры OpenTelemetry distributed tracing (§16 ТЗ, Phase 8.2).
+// При Enable=false весь tracing — no-op (глобальный TracerProvider не
+// устанавливается, span'ы не создаются). При Enable=true span'ы
+// экспортируются OTLP/HTTP в OtlpEndpoint (по умолчанию http://otel-collector:4318
+// для docker-compose; localhost:4318 — для разработчика).
+//
+// SampleRate=0 → drop all; 1.0 → отправлять каждый. Между — head-based
+// ratio-sampler.
+type OtelSection struct {
+	Enable        bool    `yaml:"enable"`
+	OtlpEndpoint  string  `yaml:"otlp_endpoint"`
+	OtlpInsecure  bool    `yaml:"otlp_insecure"`
+	SampleRate    float64 `yaml:"sample_rate"`
+	ServiceName   string  `yaml:"service_name"`
+	Environment   string  `yaml:"environment"`
 }
 
 type BuildSection struct {

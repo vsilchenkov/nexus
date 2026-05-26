@@ -22,6 +22,7 @@ import (
 	"bus/internal/platform/crypto"
 	"bus/internal/platform/kafka"
 	"bus/internal/platform/logging"
+	otelpf "bus/internal/platform/otel"
 	pgpf "bus/internal/platform/pg"
 	redispf "bus/internal/platform/redis"
 	sentrypf "bus/internal/platform/sentry"
@@ -256,6 +257,21 @@ WHERE login='admin'`, hash)
 	}
 	logger.Info("admin password updated; you can now login")
 	return true
+}
+
+// MustOtel инициализирует OpenTelemetry tracer (§16 ТЗ, Phase 8.2).
+// При cfg.Otel.Enable=false возвращает noop-shutdown и nil-error: безопасно
+// вызывать defer shutdown(ctx).
+//
+// Init не делает network round-trip — exporter лениво коннектится при первом
+// экспорте, поэтому даже временно недоступный collector не блокирует старт.
+func MustOtel(ctx context.Context, cfg *config.Config, projectName string, logger logging.Logger) otelpf.ShutdownFunc {
+	shutdown, err := otelpf.Init(ctx, &cfg.Otel, projectName, logger)
+	if err != nil {
+		logger.ErrorWithOp("otel init failed; continuing without tracing", err, "bootstrap.MustOtel")
+		return func(context.Context) error { return nil }
+	}
+	return shutdown
 }
 
 // AutoMigrate накатывает все непримененные миграции при старте.
