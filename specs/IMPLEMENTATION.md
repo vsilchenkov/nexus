@@ -20,7 +20,7 @@
 | Главный поток           | `POST /v1/request/{path}` → Receiver → gRPC Sender → внешний URL → лог в ClickHouse |
 | Async                   | `POST /v1/requestAsync/{path}` → Receiver → Kafka → Sender-consumer   |
 | Зависимости              | PostgreSQL 16, Redis 7, ClickHouse 24, Kafka 3.7 (KRaft), Prometheus  |
-| Покрытие unit-тестами   | 14 пакетов (domain, crypto, i18n, sentry, receiver/usecase, chlog, web/usecase, metrics, healthcheck, config, clickhouse, reloader, nodecache, sender/usecase, **+ build / httpclient в Phase 7.13**) + integration: circuitbreaker (Phase 7.13) |
+| Покрытие unit-тестами   | 14 пакетов (domain, crypto, i18n, sentry, receiver/usecase, chlog, web/usecase, metrics, healthcheck, config, clickhouse, reloader, nodecache, sender/usecase, **+ build / httpclient в Phase 7.13, + receiver/http + web/http middlewares в Phase 7.14**) + integration: circuitbreaker (Phase 7.13) |
 | SPA-фронт               | React 18 + Vite + TS + Tailwind + TanStack Query + react-i18next, 6 страниц |
 | Бинари в `cmd/`         | `receiver`, `sender`, `web`, `loadtest`, `rotate-key`                 |
 
@@ -575,6 +575,109 @@ make proto                                     # перегенерация send
    из env. См. также `make rotate-encryption-key`.
 4. **Multi-tenancy v2** — колонки `team_id` уже есть, нужен RBAC по team_id
    + миграция existing `'default'`-данных.
+
+Сделанное в Phase 7.14:
+
+- 7.14 Дополнение unit-test покрытия по 8 ранее непокрытым пакетам / файлам
+  (~80 новых тестов). После Phase 7.11–7.13 без покрытия оставались
+  middleware-слои, маскирование Sentry, парсинг Accept-Language, домен-методы
+  и часть web/usecase. Закрыто это всё.
+  · **`internal/domain`** ([enums_test.go](../internal/domain/enums_test.go),
+  [api_token_test.go](../internal/domain/api_token_test.go)) — 39 sub-тестов:
+  `Valid()` для всех 9 enum-типов (NodeStatus / RootMethod / URLMode /
+  AuthType / AuthDynSource / IncomingAuthType / UserRole / UserLang) с
+  case-sensitive проверкой и unknown-значениями; `APIToken.IsActive` /
+  `HasScope` (revoked beats expiry, empty scopes reject, case-sensitive,
+  scope-constants distinct).
+  · **`internal/platform/sentry/sentry.go`** ([sentry_test.go](../internal/platform/sentry/sentry_test.go))
+  — 12 тестов: `isSensitive` с 30+ кейсами (точные совпадения, case-insensitive
+  через ToLower, substring `user_password`/`refresh_token`/`my_api_key`, не-секретные
+  `username`/`email`/`x-request-id`); `maskMap` / `maskAny` (mutation +
+  nil/empty); `beforeSend` маскирует request.Headers, очищает Cookies/Data/
+  QueryString, маскирует Tags и breadcrumb.Data; `beforeBreadcrumb` без
+  request.Headers; `Init`/`Reload` no-op при `Use=false`; `sensitiveKeys`
+  без uppercase и без пустых.
+  · **`internal/platform/i18n/middleware.go`** ([middleware_test.go](../internal/platform/i18n/middleware_test.go))
+  — 6 тестов: `GinMiddleware` парсит Accept-Language (ru / ru-RU / en /
+  en-US / unknown→default / empty→default) и кладёт значение в gin-context
+  и request-context; `FromGin` приоритет gin.Set над request-ctx, fallback на
+  ctx при отсутствии gin-значения, на DefaultLang при пустоте, при non-string
+  значении в gin.Set.
+  · **`internal/platform/metrics/gin.go`** ([gin_test.go](../internal/platform/metrics/gin_test.go))
+  — 7 тестов: `rootMethodFromPath` table-driven (V1/non-V1/empty);
+  `nodePathFromGin` table-driven (slash-strip/nested/empty); end-to-end
+  GinMiddleware: `/v1/request/*path` → `method="request"` + `node="demo/sub"`,
+  `/v1/requestAsync/*path` → `method="requestAsync"`, API routes → `method="GET /api/nodes/:id"`
+  fallback и `node=""`, `/health`/`/ready`/`/metrics` не учитываются,
+  404 (FullPath="") не пишет counter, статус берётся из `c.Writer.Status()`
+  после Abort.
+  · **`internal/receiver/adapter/in/http/middleware.go`** ([middleware_test.go](../internal/receiver/adapter/in/http/middleware_test.go))
+  — 6 тестов: `RateLimitMiddleware` happy-path (handler вызван, key=nodePath
+  + limit прокинуты в limiter); denied (429, handler не вызван); fail-open
+  при Redis-ошибке (200, handler вызван — §9.4 ТЗ); `limitPerMin=0` no-op
+  (limiter не вызывается); empty nodePath (без `:path`-параметра) skip;
+  async-path стрипует prefix `/v1/requestAsync/` корректно.
+  · **Рефакторинг для тестируемости.** `RateLimitMiddleware` принимал
+  конкретный `*ratelimit.Limiter` — заменён на consumer-side interface
+  `rateAllower` (§17.4 ТЗ, CLAUDE.md §3 «interface on consumer side»).
+  Удовлетворяется *Limiter автоматически, production wiring без изменений.
+  Аналогично в Web: `AuthMiddleware` принимал `*usecase.AuthUsecase` —
+  заменён на `sessionChecker`; `APITokenAuthMiddleware` — два interface'а
+  `apiTokenVerifier` и `tokenRateAllower`. Это **не** меняет publik API
+  middleware'ов — только сигнатуры конструкторов.
+  · **`internal/web/adapter/in/http`** ([auth_middleware_test.go](../internal/web/adapter/in/http/auth_middleware_test.go),
+  [api_token_middleware_test.go](../internal/web/adapter/in/http/api_token_middleware_test.go),
+  [errors_test.go](../internal/web/adapter/in/http/errors_test.go)) — 23
+  теста: `AuthMiddleware` no-cookie/401, session-expired/401,
+  redis-down/503, valid/passes-with-session, already-set (api-token путь)
+  skip; `RequireRole` admin/admin ok, viewer/admin 403, viewer/viewer ok,
+  no-session 403; `sessionFromCtx` (present / absent / wrong-type);
+  `APITokenAuthMiddleware` no-Bearer skip, JWT-prefix skip (не наш),
+  invalid/401, backend-error/500, valid сохраняет session+token в ctx,
+  rate-limit 429 + Retry-After, rate-limit error путь;
+  `RequireSessionOnly` (session ok, api-token 403); `RequireScope` (no-token
+  pass, scope present, scope absent 403, nil-token 403);
+  `localizedError` (default lang, EN vs RU translation differ, unknown-key
+  fallback к самому ключу).
+  · **`internal/web/usecase/auth.go`** ([auth_test.go](../internal/web/usecase/auth_test.go))
+  — 14 тестов: `Login` (unknown user → ErrUnauthorized + audit reason=`not_found`;
+  inactive → ErrUserInactive + audit reason=`inactive`; password
+  hash="" → ErrUnauthorized; bad password → ErrUnauthorized + audit
+  reason=`bad_password`; happy-path сохраняет сессию с token/userID/
+  role/lang, обновляет last_login, пишет audit; get-user error
+  оборачивается с `get user:` wrap; session create error оборачивается
+  с `create session:`); `Logout` (удаление по token); `Check` (touch +
+  return; not-found → ErrSessionNotFound); `Me`; `ChangePassword`
+  (короткий пароль → error; happy с MustChange=true, purge сессий
+  только владельца, audit; UpdatePassword error пробрасывается).
+  Mock-репозитории `authUserRepo` / `memSessionRepo` — гибкие
+  in-memory implementations, переиспользуются user_test.go.
+  · **`internal/web/usecase/user.go`** ([user_test.go](../internal/web/usecase/user_test.go))
+  — 12 тестов: `Get`/`List` делегирование; `Create` (invalid role → error,
+  password<8 → error, пустой lang → дефолт UserLangEN, happy hash'ит
+  пароль + audit, repo.Create error не пишет audit); `Update` (last-admin
+  demote rejected, last-admin disable rejected, role/active change →
+  purge sessions + audit, no-change → no purge); `Delete` (self →
+  error, last admin → error, happy purge sessions + audit с
+  details.login=old.Login, not-found пробрасывает ErrUserNotFound).
+  · **`internal/sender/usecase/ch_housekeeping.go`** ([ch_housekeeping_test.go](../internal/sender/usecase/ch_housekeeping_test.go))
+  — 10 тестов: `isSensitive` table-driven (digits/alnum/hyphen ok;
+  semicolon/quote/space/slash/cyrillic/dot rejected; границы 0/64/65
+  длины); `splitDBTable` (happy/no-dot/empty/leading/trailing/двух
+  точек — берётся первая); `runOnce` (list-error → wrap `list nodes:`;
+  empty nodes → no error; nodes без table/retention=0/-1 → skip без
+  обращения к Conn; node с битым table-name → ошибка drop'а
+  логируется, цикл не падает); `dropPartitionsOlderThan` (invalid
+  table → error; nil-conn → error «conn is nil»); конструктор:
+  default period 24h; `Run` cancel ctx → graceful stop в течение 2s,
+  один прогон до cancel был выполнен.
+  · **`internal/web/adapter/in/http` теперь покрыт.** Раньше там был только
+  middleware Sentry-tracing — теперь все три middleware (auth, api-token,
+  rate-limit в receiver) + errors.localizedError.
+  · Покрытие пакетов: 14 → **16** + middleware-слой полностью.
+  Все тесты `go test -short` зелёные на Windows; OOM-линкер на `-race`
+  по-прежнему присутствует (CLAUDE.md «грабли» #1) — в CI/Linux race
+  проходит штатно.
 
 Сделанное в Phase 9.2 (GitLab CI):
 

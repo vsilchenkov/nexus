@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -10,11 +11,20 @@ import (
 
 	"bus/internal/domain"
 	"bus/internal/platform/logging"
-	"bus/internal/platform/ratelimit"
 	"bus/internal/web/usecase"
 )
 
 const ctxAPITokenKey = "databus.api_token"
+
+// apiTokenVerifier — consumer-side interface для APITokenUsecase.Verify (§17.4).
+type apiTokenVerifier interface {
+	Verify(ctx context.Context, plain string) (*domain.APIToken, *domain.User, error)
+}
+
+// tokenRateAllower — то же, что rateAllower в receiver/http; локальный.
+type tokenRateAllower interface {
+	Allow(ctx context.Context, key string, limitPerMin int) (bool, error)
+}
 
 // APITokenAuthMiddleware — пытается аутентифицировать запрос по
 // Authorization: Bearer db_... При успехе кладёт session/токен
@@ -24,8 +34,8 @@ const ctxAPITokenKey = "databus.api_token"
 //
 // rate-limit per-token: cfg.Web.api_token_rate_limit_per_min (§7.14).
 func APITokenAuthMiddleware(
-	uc *usecase.APITokenUsecase,
-	rl *ratelimit.Limiter,
+	uc apiTokenVerifier,
+	rl tokenRateAllower,
 	rateLimitPerMin int,
 	logger logging.Logger,
 ) gin.HandlerFunc {

@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -8,10 +9,16 @@ import (
 
 	"bus/internal/domain"
 	"bus/internal/platform/config"
-	"bus/internal/web/usecase"
 )
 
 const ctxSessionKey = "databus.session"
+
+// sessionChecker — consumer-side interface для AuthUsecase.Check (§17.4 ТЗ).
+// Удовлетворяется *usecase.AuthUsecase; вынесен сюда, чтобы middleware
+// можно было unit-тестировать без users/sessions репозиториев.
+type sessionChecker interface {
+	Check(ctx context.Context, token string) (*domain.Session, error)
+}
 
 // AuthMiddleware — проверяет session-cookie через AuthUsecase.Check.
 // При неуспехе — 401 + Abort.
@@ -19,7 +26,7 @@ const ctxSessionKey = "databus.session"
 // Если cookie отсутствует или сессия истекла — 401. Если Redis недоступен
 // (Check вернёт не ErrSessionNotFound) — 503 (§9.4 ТЗ: «Web API при
 // недоступности Redis отвечает 503 на эндпоинты, требующие авторизации»).
-func AuthMiddleware(auth *usecase.AuthUsecase, cfg *config.WebSection) gin.HandlerFunc {
+func AuthMiddleware(auth sessionChecker, cfg *config.WebSection) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Если API-token middleware уже выставил session — пропускаем.
 		if _, ok := c.Get(ctxSessionKey); ok {
