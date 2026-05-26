@@ -20,6 +20,7 @@ import (
 	"flag"
 	"fmt"
 	"math/rand"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -30,18 +31,20 @@ import (
 )
 
 type flags struct {
-	WebURL      string
-	ReceiverURL string
-	AdminLogin  string
-	AdminPass   string
-	TargetRPS   int
-	Duration    time.Duration
-	Nodes       int
-	PayloadMin  int
-	PayloadMax  int
-	MockLatency time.Duration
-	Cleanup     bool
-	Report      string
+	WebURL        string
+	ReceiverURL   string
+	AdminLogin    string
+	AdminPass     string
+	TargetRPS     int
+	Duration      time.Duration
+	Nodes         int
+	PayloadMin    int
+	PayloadMax    int
+	MockLatency   time.Duration
+	MockBind      string
+	MockPublicURL string
+	Cleanup       bool
+	Report        string
 }
 
 func parseFlags() flags {
@@ -56,6 +59,10 @@ func parseFlags() flags {
 	flag.IntVar(&f.PayloadMin, "payload-min", 100, "Min payload size (bytes)")
 	flag.IntVar(&f.PayloadMax, "payload-max", 5120, "Max payload size")
 	flag.DurationVar(&f.MockLatency, "mock-latency", 50*time.Millisecond, "Mock server response latency")
+	flag.StringVar(&f.MockBind, "mock-bind", "127.0.0.1:0",
+		"Mock server bind address (host:port). Use 0.0.0.0:<port> when running inside docker/compose so Receiver/Sender can reach the mock from neighbour containers.")
+	flag.StringVar(&f.MockPublicURL, "mock-public-url", "",
+		"Public base URL of the mock server as seen by Receiver/Sender (e.g. http://loadtest:9999). If empty, the listener URL is used — works only when loadtest, Receiver and Sender share the same network namespace.")
 	flag.BoolVar(&f.Cleanup, "cleanup", true, "Delete created nodes after test")
 	flag.StringVar(&f.Report, "report", "report.json", "Report file path")
 	flag.Parse()
@@ -69,9 +76,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	mock := startMockServer(f.MockLatency)
+	mock, err := startMockServer(f.MockBind, f.MockLatency)
+	if err != nil {
+		fail("start mock server: %v", err)
+	}
 	defer mock.Close()
-	fmt.Printf("mock server: %s\n", mock.URL)
+	targetURL := f.MockPublicURL
+	if targetURL == "" {
+		targetURL = mock.URL
+	}
+	fmt.Printf("mock server: listen=%s target=%s\n", mock.URL, targetURL)
 
 	ctx := context.Background()
 	client := &client{baseWeb: f.WebURL, baseRecv: f.ReceiverURL,
@@ -82,7 +96,7 @@ func main() {
 	}
 	fmt.Println("logged in OK")
 
-	nodes, err := client.createNodes(ctx, f.Nodes, mock.URL)
+	nodes, err := client.createNodes(ctx, f.Nodes, targetURL)
 	if err != nil {
 		fail("create nodes: %v", err)
 	}
@@ -109,13 +123,25 @@ func fail(format string, args ...any) {
 
 // ----- mock server ---------------------------------------------------------
 
-func startMockServer(latency time.Duration) *httptest.Server {
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func startMockServer(bind string, latency time.Duration) (*httptest.Server, error) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		jitter := time.Duration(rand.Int63n(int64(latency / 2)))
 		time.Sleep(latency - latency/4 + jitter)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprintln(w, `{"ok":true}`)
-	}))
+	})
+	ln, err := net.Listen("tcp", bind)
+	if err != nil {
+		return nil, fmt.Errorf("listen %q: %w", bind, err)
+	}
+	srv := httptest.NewUnstartedServer(handler)
+	// httptest по умолчанию создаёт собственный listener на 127.0.0.1 —
+	// заменяем нашим, чтобы можно было биндить на 0.0.0.0 (контейнер) и/или
+	// фиксированный порт.
+	_ = srv.Listener.Close()
+	srv.Listener = ln
+	srv.Start()
+	return srv, nil
 }
 
 // ----- web client ----------------------------------------------------------

@@ -712,6 +712,19 @@ make proto                                     # перегенерация send
   gitlab-ci/github-actions). Группировка minor+patch в один MR; major —
   отдельный с label major-update; vulnerability alerts создаются немедленно
   (не ждут weekly). Renovate job в pipeline запускается по schedule/web/manual.
+  · 9.2e Manual loadtest job (`loadtest:` в [.gitlab-ci.yml](../.gitlab-ci.yml))
+  — поднимает изолированный compose-стек (`COMPOSE_PROJECT_NAME=loadtest-<pipe>-<job>`,
+  уникальные сети/volumes), bootstrap-задаёт пароль admin'у через
+  `web --set-admin-password`, прогоняет `cmd/loadtest` как сервис из
+  [deploy/docker/loadtest.Dockerfile](../deploy/docker/loadtest.Dockerfile)
+  под compose-профилем `loadtest` (depends_on: receiver/sender/web healthy),
+  снимает стек, выкладывает `loadtest-report/{report.json,compose-logs.txt}`
+  как artifacts. Mock внешних узлов слушает `0.0.0.0:9999` внутри docker-сети
+  (новые флаги `--mock-bind` и `--mock-public-url` в [cmd/loadtest/main.go](../cmd/loadtest/main.go)),
+  Receiver/Sender ходят к нему как `http://loadtest:9999`. Required CI variable:
+  `LOADTEST_ADMIN_PASSWORD` (masked+protected); опциональные: `LOADTEST_TARGET_RPS`
+  (def. 500), `LOADTEST_DURATION` (def. 5m), `LOADTEST_NODES` (def. 50) —
+  переопределяются через UI «Run pipeline → Variables».
 - 9.2 Параметризация общего `.goreleaser.yaml` под обе CI-системы:
   · `ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}` → `{{ .Env.DOCKER_REGISTRY_BASE }}`
   (30 строк в `dockers:` и `docker_manifests:`).

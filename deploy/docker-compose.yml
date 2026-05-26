@@ -179,6 +179,28 @@ services:
       start_period: 10s
     networks: [databus_net]
 
+  # Loadtest — сценарный тест производительности (§10.2 ТЗ).
+  # Поднимается только под профилем `loadtest`, чтобы обычный
+  # `docker compose up` его не активировал. Запуск:
+  #   docker compose --profile loadtest run --rm loadtest \
+  #     --web http://web:8000 --receiver http://receiver:8080 \
+  #     --mock-bind 0.0.0.0:9999 --mock-public-url http://loadtest:9999 \
+  #     --admin-password "$LOADTEST_ADMIN_PASSWORD" ...
+  loadtest:
+    profiles: ["loadtest"]
+    build:
+      context: ..
+      dockerfile: deploy/docker/loadtest.Dockerfile
+    # container_name намеренно не задан: GitLab CI добавляет COMPOSE_PROJECT_NAME
+    # с уникальным префиксом, и docker сам присвоит уникальное имя
+    # `<project>-loadtest-<n>` — параллельные запуски не конфликтуют.
+    restart: "no"
+    depends_on:
+      receiver: { condition: service_healthy }
+      sender:   { condition: service_healthy }
+      web:      { condition: service_healthy }
+    networks: [databus_net]
+
 networks:
   databus_net:
     driver: bridge

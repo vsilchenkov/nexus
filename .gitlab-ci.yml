@@ -170,6 +170,106 @@ integration:
   script:
     - go test -tags=integration -timeout 20m -count=1 ./tests/integration/...
 
+# ----------- LOADTEST (manual) ----------------------------------------------
+# Нагрузочный сценарий (§10.2 ТЗ) — поднимает изолированный compose-стек,
+# гонит cmd/loadtest и снимает стек. Запускается вручную из UI GitLab
+# (Pipelines → Run pipeline → loadtest или Job → Play на ручной job).
+#
+# Окружение собирается каждый запуск с нуля: COMPOSE_PROJECT_NAME содержит
+# pipeline+job id, поэтому сети/volumes уникальны, и параллельные запуски
+# не пересекаются по namespace docker'а. Container names не зашиваются для
+# сервиса loadtest — docker присвоит `<project>-loadtest-run`.
+#
+# Required CI/CD Variables (Settings → CI/CD → Variables):
+#   - LOADTEST_ADMIN_PASSWORD — пароль admin'а (masked + protected). Задаём
+#     им же admin'у в свежей БД через `web --set-admin-password`, и им же
+#     loadtest логинится в Web.
+#
+# Опциональные переменные (можно переопределить при ручном запуске через
+# UI «Run pipeline» → Variables):
+#   - LOADTEST_TARGET_RPS  (default 500)
+#   - LOADTEST_DURATION    (default 5m)
+#   - LOADTEST_NODES       (default 50)
+
+loadtest:
+  stage: integration
+  image: docker:24-cli
+  rules:
+    - when: manual
+      allow_failure: true
+  timeout: 60 minutes
+  variables:
+    COMPOSE_PROJECT_NAME: "loadtest-${CI_PIPELINE_ID}-${CI_JOB_ID}"
+    COMPOSE_FILE: "deploy/docker-compose.yml"
+    LOADTEST_TARGET_RPS: "500"
+    LOADTEST_DURATION: "5m"
+    LOADTEST_NODES: "50"
+  before_script:
+    - apk add --no-cache docker-cli-compose openssl
+    - |
+      if [ -z "$LOADTEST_ADMIN_PASSWORD" ]; then
+        echo "LOADTEST_ADMIN_PASSWORD не задан в CI/CD Variables (masked+protected)" >&2
+        exit 1
+      fi
+    # .env для compose-стека. Хосты — compose-имена сервисов; ENCRYPTION_KEY
+    # эпemerный, его valid'ность нужна только на время прогона.
+    - |
+      cat > .env <<EOF
+      VERSION=loadtest-${CI_PIPELINE_ID}
+      PG_HOST=postgres
+      PG_PORT=5432
+      PG_USER=databus
+      PG_PASSWORD=loadtest_local_pg
+      REDIS_HOST=redis
+      REDIS_PORT=6379
+      REDIS_PASSWORD=
+      CH_HOST=clickhouse
+      CH_PORT=9000
+      CH_USER=default
+      CH_PASSWORD=
+      KAFKA_BROKERS=kafka:9092
+      SENTRY_USE=false
+      SENTRY_DSN=
+      SENTRY_ENVIRONMENT=loadtest
+      ENCRYPTION_KEY=$(openssl rand -base64 32)
+      EOF
+    - mkdir -p loadtest-report
+  script:
+    # 1) Поднимаем инфраструктуру + сервисы (без loadtest — он под profile).
+    - docker compose up -d --build --wait postgres redis clickhouse kafka receiver sender web
+    # 2) Bootstrap пароля admin'а (web в свежей БД заводится с NULL hash).
+    - |
+      docker compose run --rm --no-deps web \
+        /usr/local/bin/web --config /app/config/config.yml \
+        --set-admin-password "$LOADTEST_ADMIN_PASSWORD"
+    # 3) Прогон loadtest'а. --name даёт фиксированное имя для docker cp.
+    #    Не --rm: контейнер нужно сохранить до копирования отчёта.
+    - |
+      docker compose --profile loadtest run \
+        --name "${COMPOSE_PROJECT_NAME}-loadtest-run" \
+        loadtest \
+          --web http://web:8000 \
+          --receiver http://receiver:8080 \
+          --mock-bind 0.0.0.0:9999 \
+          --mock-public-url http://loadtest:9999 \
+          --admin-password "$LOADTEST_ADMIN_PASSWORD" \
+          --target-rps "$LOADTEST_TARGET_RPS" \
+          --duration "$LOADTEST_DURATION" \
+          --nodes "$LOADTEST_NODES" \
+          --cleanup=false \
+          --report /tmp/report.json
+    - docker cp "${COMPOSE_PROJECT_NAME}-loadtest-run":/tmp/report.json loadtest-report/report.json
+    - docker rm "${COMPOSE_PROJECT_NAME}-loadtest-run" || true
+  after_script:
+    - docker compose --profile loadtest logs --tail=400 > loadtest-report/compose-logs.txt 2>&1 || true
+    - docker compose --profile loadtest down -v --remove-orphans || true
+    - rm -f .env
+  artifacts:
+    when: always
+    paths:
+      - loadtest-report/
+    expire_in: 1 month
+
 # ----------- SECURITY stage -------------------------------------------------
 # Аналог .github/workflows/security.yml. Не блокируют merge — early-warning,
 # не gate. Запускаются на master/dev push, по schedule (CI/CD → Schedules в UI
