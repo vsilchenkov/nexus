@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"testing"
 
-	"bus/internal/domain"
+	"nexus/internal/domain"
 )
 
 func TestResolveURL_Static(t *testing.T) {

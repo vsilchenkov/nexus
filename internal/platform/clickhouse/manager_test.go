@@ -11,9 +11,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	chpf "bus/internal/platform/clickhouse"
-	"bus/internal/platform/config"
-	"bus/internal/platform/logging"
+	chpf "nexus/internal/platform/clickhouse"
+	"nexus/internal/platform/config"
+	"nexus/internal/platform/logging"
 )
 
 // fakeConn — stub реализации chdriver.Conn для unit-тестов Manager.

@@ -18,13 +18,13 @@ import (
 	tcpg "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"bus/internal/domain"
-	"bus/internal/platform/crypto"
-	pgpf "bus/internal/platform/pg"
-	"bus/internal/platform/logging"
-	pgrepo "bus/internal/web/adapter/out/postgres"
-	"bus/internal/web/usecase"
-	"bus/internal/web/usecase/port"
+	"nexus/internal/domain"
+	"nexus/internal/platform/crypto"
+	pgpf "nexus/internal/platform/pg"
+	"nexus/internal/platform/logging"
+	pgrepo "nexus/internal/web/adapter/out/postgres"
+	"nexus/internal/web/usecase"
+	"nexus/internal/web/usecase/port"
 )
 
 const testEncryptionKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=" // 32 bytes base64

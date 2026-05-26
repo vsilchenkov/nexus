@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bus/internal/domain"
+	"nexus/internal/domain"
 )
 
 // sign возвращает HMAC-SHA256(body, secret) в hex'е — то, что должен прислать

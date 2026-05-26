@@ -15,18 +15,18 @@ import (
 
 	tckafka "github.com/testcontainers/testcontainers-go/modules/kafka"
 
-	"bus/internal/domain"
-	"bus/internal/platform/config"
-	"bus/internal/platform/crypto"
-	kafkapf "bus/internal/platform/kafka"
-	"bus/internal/platform/logging"
-	rcv "bus/internal/receiver/usecase"
-	kafkaadapter "bus/internal/sender/adapter/in/kafka"
-	"bus/internal/sender/adapter/out/httpclient"
-	"bus/internal/sender/adapter/out/nodepg"
-	senderuc "bus/internal/sender/usecase"
-	pgrepo "bus/internal/web/adapter/out/postgres"
-	webuc "bus/internal/web/usecase"
+	"nexus/internal/domain"
+	"nexus/internal/platform/config"
+	"nexus/internal/platform/crypto"
+	kafkapf "nexus/internal/platform/kafka"
+	"nexus/internal/platform/logging"
+	rcv "nexus/internal/receiver/usecase"
+	kafkaadapter "nexus/internal/sender/adapter/in/kafka"
+	"nexus/internal/sender/adapter/out/httpclient"
+	"nexus/internal/sender/adapter/out/nodepg"
+	senderuc "nexus/internal/sender/usecase"
+	pgrepo "nexus/internal/web/adapter/out/postgres"
+	webuc "nexus/internal/web/usecase"
 )
 
 // TestSender_Async_E2E прогоняет полный путь async-обработки:

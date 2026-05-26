@@ -9,8 +9,8 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
-	"bus/internal/domain"
-	"bus/internal/web/usecase/port"
+	"nexus/internal/domain"
+	"nexus/internal/web/usecase/port"
 )
 
 const sessionPrefix = "session:"

@@ -10,8 +10,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 
-	"bus/internal/domain"
-	"bus/internal/platform/config"
+	"nexus/internal/domain"
+	"nexus/internal/platform/config"
 )
 
 // stubSessionChecker — мок sessionChecker.

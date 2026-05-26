@@ -15,10 +15,10 @@ import (
 	"net/http"
 	"time"
 
-	"bus/internal/platform/config"
-	"bus/internal/platform/logging"
-	otelpf "bus/internal/platform/otel"
-	"bus/internal/sender/usecase/port"
+	"nexus/internal/platform/config"
+	"nexus/internal/platform/logging"
+	otelpf "nexus/internal/platform/otel"
+	"nexus/internal/sender/usecase/port"
 )
 
 // Client реализует port.HTTPCaller.

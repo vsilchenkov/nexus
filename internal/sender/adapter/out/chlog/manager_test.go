@@ -8,10 +8,10 @@ import (
 	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/stretchr/testify/require"
 
-	"bus/internal/domain"
-	"bus/internal/platform/config"
-	"bus/internal/platform/logging"
-	"bus/internal/sender/adapter/out/chlog"
+	"nexus/internal/domain"
+	"nexus/internal/platform/config"
+	"nexus/internal/platform/logging"
+	"nexus/internal/sender/adapter/out/chlog"
 )
 
 // stubProvider возвращает либо стабильный nil-conn, либо имитированный

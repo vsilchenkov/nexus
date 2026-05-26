@@ -11,9 +11,9 @@ import (
 
 	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
-	"bus/internal/platform/config"
-	"bus/internal/platform/logging"
-	"bus/internal/web/usecase/port"
+	"nexus/internal/platform/config"
+	"nexus/internal/platform/logging"
+	"nexus/internal/web/usecase/port"
 )
 
 // OrphanScannerConnProvider — узкий read-only доступ к ClickHouse-соединению.

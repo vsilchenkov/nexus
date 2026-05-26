@@ -10,9 +10,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"bus/internal/domain"
-	"bus/internal/platform/logging"
-	"bus/internal/receiver/usecase/port"
+	"nexus/internal/domain"
+	"nexus/internal/platform/logging"
+	"nexus/internal/receiver/usecase/port"
 )
 
 // fakeReader реализует port.NodeReader. Хранит ответы по path и счётчик вызовов.

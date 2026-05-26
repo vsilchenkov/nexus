@@ -11,9 +11,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"bus/internal/domain"
-	"bus/internal/platform/logging"
-	rcv "bus/internal/receiver/usecase"
+	"nexus/internal/domain"
+	"nexus/internal/platform/logging"
+	rcv "nexus/internal/receiver/usecase"
 )
 
 // DryRunRequest — что приходит в POST /api/nodes/dry-run.

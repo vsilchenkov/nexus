@@ -8,8 +8,8 @@ import (
 
 	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
-	"bus/internal/domain"
-	"bus/internal/platform/logging"
+	"nexus/internal/domain"
+	"nexus/internal/platform/logging"
 )
 
 // NodeLister — минимальный интерфейс для housekeeping: получить узлы

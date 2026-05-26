@@ -9,10 +9,10 @@ import (
 	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/getsentry/sentry-go"
 
-	"bus/internal/domain"
-	"bus/internal/platform/config"
-	"bus/internal/platform/logging"
-	"bus/internal/web/usecase/port"
+	"nexus/internal/domain"
+	"nexus/internal/platform/config"
+	"nexus/internal/platform/logging"
+	"nexus/internal/web/usecase/port"
 )
 
 // TestResult — итог проверки соединения (§7.10 ТЗ): успех/ошибка + latency.

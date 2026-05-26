@@ -9,7 +9,7 @@ import (
 
 	"github.com/getsentry/sentry-go"
 
-	"bus/internal/platform/config"
+	"nexus/internal/platform/config"
 )
 
 // sensitiveKeys — имена полей/заголовков, значения которых стираются в Sentry.

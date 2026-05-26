@@ -14,9 +14,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"bus/internal/domain"
-	"bus/internal/platform/crypto"
-	"bus/internal/platform/logging"
+	"nexus/internal/domain"
+	"nexus/internal/platform/crypto"
+	"nexus/internal/platform/logging"
 )
 
 // Reader реализует тот же контракт port.NodeReader, что и в Receiver,

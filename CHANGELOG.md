@@ -87,7 +87,7 @@
 
 #### Added
 - Swagger-аннотации на all handlers (auth, nodes, users, tokens, audit, dry-run, replay, logs, settings/app, settings/clickhouse/orphans).
-- `ginswagger.WrapHandler` в `internal/web/app.go` + blank-import `_ "bus/docs/web"` → UI на `/swagger/index.html`.
+- `ginswagger.WrapHandler` в `internal/web/app.go` + blank-import `_ "nexus/docs/web"` → UI на `/swagger/index.html`.
 - Deps `github.com/swaggo/gin-swagger` + `github.com/swaggo/files`.
 
 ### Phase 6 — Web admin, observability, hot-reload, audit improvements

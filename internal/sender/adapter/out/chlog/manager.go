@@ -4,11 +4,11 @@ import (
 	"context"
 	"sync"
 
-	"bus/internal/domain"
-	"bus/internal/platform/config"
-	"bus/internal/platform/logging"
-	"bus/internal/platform/metrics"
-	"bus/internal/sender/usecase/port"
+	"nexus/internal/domain"
+	"nexus/internal/platform/config"
+	"nexus/internal/platform/logging"
+	"nexus/internal/platform/metrics"
+	"nexus/internal/sender/usecase/port"
 )
 
 // WriterManager — обёртка над *Writer, реализующая port.LogWriter и

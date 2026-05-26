@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"bus/internal/platform/logging"
+	"nexus/internal/platform/logging"
 )
 
 // Housekeeping — фоновые задачи Web Service. В Phase 4 — только

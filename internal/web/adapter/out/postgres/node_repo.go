@@ -15,10 +15,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"bus/internal/domain"
-	"bus/internal/platform/crypto"
-	"bus/internal/platform/logging"
-	"bus/internal/web/usecase/port"
+	"nexus/internal/domain"
+	"nexus/internal/platform/crypto"
+	"nexus/internal/platform/logging"
+	"nexus/internal/web/usecase/port"
 )
 
 // NodeRepoPg реализует port.NodeRepo. Зависит от DBTX (см. db.go), что

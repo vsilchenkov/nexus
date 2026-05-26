@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bus/internal/domain"
+	"nexus/internal/domain"
 )
 
 // stubNode возвращает узел c заданным списком forward-заголовков —

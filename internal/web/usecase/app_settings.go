@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"bus/internal/domain"
-	"bus/internal/platform/logging"
-	"bus/internal/platform/reloader"
-	"bus/internal/web/usecase/port"
+	"nexus/internal/domain"
+	"nexus/internal/platform/logging"
+	"nexus/internal/platform/reloader"
+	"nexus/internal/web/usecase/port"
 )
 
 // ReloadPublisher — interface, который реализует reloader.Publisher.

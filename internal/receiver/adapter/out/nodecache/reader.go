@@ -16,10 +16,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
 
-	"bus/internal/domain"
-	"bus/internal/platform/crypto"
-	"bus/internal/platform/logging"
-	"bus/internal/receiver/usecase/port"
+	"nexus/internal/domain"
+	"nexus/internal/platform/crypto"
+	"nexus/internal/platform/logging"
+	"nexus/internal/receiver/usecase/port"
 )
 
 // Reader реализует port.NodeReader.

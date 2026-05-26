@@ -19,10 +19,10 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"bus/internal/platform/bootstrap"
-	"bus/internal/platform/config"
-	"bus/internal/platform/crypto"
-	"bus/internal/platform/logging"
+	"nexus/internal/platform/bootstrap"
+	"nexus/internal/platform/config"
+	"nexus/internal/platform/crypto"
+	"nexus/internal/platform/logging"
 )
 
 const projectName = "rotate-key"

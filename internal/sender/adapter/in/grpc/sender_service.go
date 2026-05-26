@@ -6,11 +6,11 @@ import (
 	"context"
 	"strconv"
 
-	"bus/internal/domain"
-	"bus/internal/platform/logging"
-	"bus/internal/platform/metrics"
-	"bus/internal/sender/usecase"
-	senderv1 "bus/proto/sender/v1"
+	"nexus/internal/domain"
+	"nexus/internal/platform/logging"
+	"nexus/internal/platform/metrics"
+	"nexus/internal/sender/usecase"
+	senderv1 "nexus/proto/sender/v1"
 )
 
 // Server реализует senderv1.SenderServiceServer.

@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bus/internal/platform/metrics"
+	"nexus/internal/platform/metrics"
 )
 
 func TestNew_RegistersAllRequiredMetrics(t *testing.T) {

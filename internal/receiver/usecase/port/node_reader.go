@@ -4,7 +4,7 @@ package port
 import (
 	"context"
 
-	"bus/internal/domain"
+	"nexus/internal/domain"
 )
 
 // NodeReader — read-only доступ к конфигу узлов.

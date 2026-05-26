@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"bus/internal/platform/healthcheck"
+	"nexus/internal/platform/healthcheck"
 )
 
 // Dialer — реализация healthcheck.Checker через TCP-dial к одному из broker'ов.

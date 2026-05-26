@@ -10,10 +10,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"bus/internal/domain"
-	"bus/internal/platform/logging"
-	"bus/internal/web/usecase"
-	"bus/internal/web/usecase/port"
+	"nexus/internal/domain"
+	"nexus/internal/platform/logging"
+	"nexus/internal/web/usecase"
+	"nexus/internal/web/usecase/port"
 )
 
 // LogsHandler — чтение логов узла из ClickHouse.

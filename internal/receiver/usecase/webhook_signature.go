@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"bus/internal/domain"
+	"nexus/internal/domain"
 )
 
 // VerifyWebhookSignature проверяет HMAC-SHA256 подпись входящего webhook'а

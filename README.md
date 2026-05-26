@@ -5,7 +5,7 @@
 [![Release](https://github.com/vsilchenkov/databus/actions/workflows/release.yml/badge.svg)](.github/workflows/release.yml)
 [![Go 1.26](https://img.shields.io/badge/go-1.26-00ADD8?logo=go)](go.mod)
 
-Шина данных — три Go-сервиса (Receiver, Sender, Web), которые принимают входящие HTTP-запросы, маршрутизируют их на сконфигурированные внешние узлы и логируют все вызовы. Конфигурация маршрутов хранится в PostgreSQL, редактируется через REST API и SPA (React 18 + Vite + Tailwind). Полное ТЗ — [specs/data_bus_spec.md](./specs/data_bus_spec.md); разделено по разделам в [specs/sections/](./specs/sections/).
+Шина данных — три Go-сервиса (Receiver, Sender, Web), которые принимают входящие HTTP-запросы, маршрутизируют их на сконфигурированные внешние узлы и логируют все вызовы. Конфигурация маршрутов хранится в PostgreSQL, редактируется через REST API и SPA (React 18 + Vite + Tailwind). Полное ТЗ — [specs/nexus_spec.md](./specs/nexus_spec.md); разделено по разделам в [specs/sections/](./specs/sections/).
 
 ## Статус
 

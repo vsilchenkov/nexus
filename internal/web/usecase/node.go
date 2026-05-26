@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"time"
 
-	"bus/internal/domain"
-	"bus/internal/platform/logging"
-	"bus/internal/web/usecase/port"
+	"nexus/internal/domain"
+	"nexus/internal/platform/logging"
+	"nexus/internal/web/usecase/port"
 )
 
 // NodeUsecase — CRUD над узлами + write-through кеш + audit-log.

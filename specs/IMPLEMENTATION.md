@@ -1,7 +1,7 @@
 # IMPLEMENTATION.md — карта проделанных работ по ТЗ DataBus
 
 > **Назначение этого файла.** Карта реализации шины данных в привязке к разделам ТЗ
-> ([data_bus_spec.md](data_bus_spec.md), разделённый на [sections/](sections/)).
+> ([nexus_spec.md](nexus_spec.md), разделённый на [sections/](sections/)).
 > Помогает новому агенту/разработчику быстро понять: что уже сделано, где это лежит,
 > по какой схеме построено и куда копать дальше.
 >
@@ -167,7 +167,7 @@
 | `make swagger` (через `swag init -g cmd/web/main.go`) | ✅ | [Makefile](../Makefile) |
 | `make swagger-drift-check` для CI | ✅ Phase 5 | сравнивает `git diff --exit-code docs/` после регенерации |
 | **Полные аннотации на 100% endpoints** | ✅ Phase 7.1 | auth (login/logout/me), nodes (List/Get/Create/Update/Delete), users (List/Get/Create/Update/Delete/ChangePassword), tokens (List/Create/Revoke/Delete), audit (List/ExportCSV), dry-run, replay, logs (List/Stream), settings/app (Get/Update/TestClickHouse/TestSentry), settings/clickhouse/orphans (List/Drop) |
-| **Swagger UI handler в Gin** | ✅ Phase 7.1 | `r.GET("/swagger/*any", ginswagger.WrapHandler(swaggerfiles.Handler))` в [internal/web/app.go](../internal/web/app.go) + blank-import `_ "bus/docs/web"` для регистрации генеренного docTemplate в `swag.Registry` |
+| **Swagger UI handler в Gin** | ✅ Phase 7.1 | `r.GET("/swagger/*any", ginswagger.WrapHandler(swaggerfiles.Handler))` в [internal/web/app.go](../internal/web/app.go) + blank-import `_ "nexus/docs/web"` для регистрации генеренного docTemplate в `swag.Registry` |
 
 ### §12 Структура репозитория
 
@@ -306,7 +306,7 @@
 
 /specs               ТЗ (исходный) + разделённое по разделам
   /sections          01-purpose..17-patterns
-  data_bus_spec.md   сводный документ
+  nexus_spec.md      сводный документ
   IMPLEMENTATION.md  ЭТОТ ФАЙЛ
 ```
 
@@ -1187,7 +1187,7 @@ make proto                                     # перегенерация send
   допокрыты аннотациями auth (logout/me), nodes (Update/Delete), users
   (все 6 handlers), tokens (все 4), audit (List/ExportCSV); подключён
   `ginswagger.WrapHandler` в [internal/web/app.go](../internal/web/app.go),
-  blank-import `_ "bus/docs/web"` регистрирует генеренный docTemplate
+  blank-import `_ "nexus/docs/web"` регистрирует генеренный docTemplate
   в `swag.Registry`. Добавлены deps `github.com/swaggo/gin-swagger` и
   `github.com/swaggo/files`. UI открывается по адресу `/swagger/index.html` на Web Service (по умолчанию `:8081`).
 - 7.2 L2 in-memory LRU-кеш узлов в Receiver (§9.2):

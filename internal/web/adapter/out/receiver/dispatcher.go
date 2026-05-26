@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"bus/internal/platform/logging"
-	otelpf "bus/internal/platform/otel"
-	"bus/internal/web/usecase/port"
+	"nexus/internal/platform/logging"
+	otelpf "nexus/internal/platform/otel"
+	"nexus/internal/web/usecase/port"
 )
 
 type HTTPDispatcher struct {

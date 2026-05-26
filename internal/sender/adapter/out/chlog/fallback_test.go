@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"bus/internal/domain"
-	"bus/internal/platform/logging"
+	"nexus/internal/domain"
+	"nexus/internal/platform/logging"
 )
 
 func TestFallbackStore_SaveAndRestore(t *testing.T) {

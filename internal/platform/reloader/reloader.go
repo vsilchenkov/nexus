@@ -18,7 +18,7 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
-	"bus/internal/platform/logging"
+	"nexus/internal/platform/logging"
 )
 
 // Channel — Redis pub/sub канал для config-reload.

@@ -10,7 +10,7 @@ Read it before touching code. Apply every rule. When in doubt, ask — do not gu
 ## 0. Project orientation — обязательно прочитать первым делом
 
 Этот репозиторий — **DataBus**, шина данных из трёх Go-сервисов (Receiver + Sender + Web) + React SPA.
-Полное ТЗ — [specs/data_bus_spec.md](specs/data_bus_spec.md), нарезано на 17 файлов в [specs/sections/](specs/sections/).
+Полное ТЗ — [specs/nexus_spec.md](specs/nexus_spec.md), нарезано на 17 файлов в [specs/sections/](specs/sections/).
 
 **Прежде чем что-либо менять — открой [specs/IMPLEMENTATION.md](specs/IMPLEMENTATION.md).** Это карта
 проделанных работ: статус каждого пункта ТЗ (✅/◐/⛔), ссылки на ключевые файлы кода, архитектурные

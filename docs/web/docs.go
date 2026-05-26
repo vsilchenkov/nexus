@@ -364,7 +364,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/bus_internal_web_usecase.ReplayResult"
+                            "$ref": "#/definitions/nexus_internal_web_usecase.ReplayResult"
                         }
                     },
                     "400": {
@@ -548,7 +548,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/bus_internal_web_usecase.DryRunReport"
+                            "$ref": "#/definitions/nexus_internal_web_usecase.DryRunReport"
                         }
                     },
                     "400": {
@@ -879,7 +879,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/bus_internal_domain.AppSettings"
+                            "$ref": "#/definitions/nexus_internal_domain.AppSettings"
                         }
                     },
                     "500": {
@@ -917,7 +917,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/bus_internal_domain.AppSettings"
+                            "$ref": "#/definitions/nexus_internal_domain.AppSettings"
                         }
                     }
                 ],
@@ -1055,7 +1055,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/bus_internal_domain.ClickHouseSettings"
+                            "$ref": "#/definitions/nexus_internal_domain.ClickHouseSettings"
                         }
                     }
                 ],
@@ -1063,7 +1063,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/bus_internal_web_usecase.TestResult"
+                            "$ref": "#/definitions/nexus_internal_web_usecase.TestResult"
                         }
                     },
                     "400": {
@@ -1112,7 +1112,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/bus_internal_domain.SentrySettings"
+                            "$ref": "#/definitions/nexus_internal_domain.SentrySettings"
                         }
                     }
                 ],
@@ -1120,7 +1120,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/bus_internal_web_usecase.TestResult"
+                            "$ref": "#/definitions/nexus_internal_web_usecase.TestResult"
                         }
                     },
                     "400": {
@@ -1598,152 +1598,6 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "bus_internal_domain.AppSettings": {
-            "type": "object",
-            "properties": {
-                "clickhouse": {
-                    "$ref": "#/definitions/bus_internal_domain.ClickHouseSettings"
-                },
-                "sentry": {
-                    "$ref": "#/definitions/bus_internal_domain.SentrySettings"
-                },
-                "updated_at": {
-                    "type": "string"
-                },
-                "updated_by": {
-                    "description": "user_id, кто последним обновил",
-                    "type": "string"
-                }
-            }
-        },
-        "bus_internal_domain.ClickHouseSettings": {
-            "type": "object",
-            "properties": {
-                "batch_size": {
-                    "type": "integer"
-                },
-                "buffer_max_size": {
-                    "type": "integer"
-                },
-                "database": {
-                    "type": "string"
-                },
-                "flush_interval_sec": {
-                    "type": "integer"
-                },
-                "host": {
-                    "type": "string"
-                },
-                "password": {
-                    "type": "string"
-                },
-                "port": {
-                    "type": "integer"
-                },
-                "user": {
-                    "type": "string"
-                },
-                "workers": {
-                    "type": "integer"
-                }
-            }
-        },
-        "bus_internal_domain.SentrySettings": {
-            "type": "object",
-            "properties": {
-                "attach_stacktrace": {
-                    "type": "boolean"
-                },
-                "dsn": {
-                    "type": "string"
-                },
-                "enable_tracing": {
-                    "type": "boolean"
-                },
-                "environment": {
-                    "type": "string"
-                },
-                "level": {
-                    "type": "integer"
-                },
-                "traces_sample_rate": {
-                    "type": "number"
-                },
-                "use": {
-                    "type": "boolean"
-                }
-            }
-        },
-        "bus_internal_web_usecase.DryRunReport": {
-            "type": "object",
-            "properties": {
-                "id": {
-                    "type": "string"
-                },
-                "ok": {
-                    "type": "boolean"
-                },
-                "steps": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/bus_internal_web_usecase.DryRunStep"
-                    }
-                }
-            }
-        },
-        "bus_internal_web_usecase.DryRunStep": {
-            "type": "object",
-            "properties": {
-                "detail": {},
-                "message": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "status": {
-                    "description": "ok | failed | skipped",
-                    "type": "string"
-                }
-            }
-        },
-        "bus_internal_web_usecase.ReplayResult": {
-            "type": "object",
-            "properties": {
-                "body_preview": {
-                    "type": "string"
-                },
-                "duration_ms": {
-                    "type": "integer"
-                },
-                "headers": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string"
-                    }
-                },
-                "new_log_id": {
-                    "type": "string"
-                },
-                "status_code": {
-                    "type": "integer"
-                }
-            }
-        },
-        "bus_internal_web_usecase.TestResult": {
-            "type": "object",
-            "properties": {
-                "error": {
-                    "type": "string"
-                },
-                "latency_ms": {
-                    "type": "integer"
-                },
-                "ok": {
-                    "type": "boolean"
-                }
-            }
-        },
         "internal_web_adapter_in_http.CreateNodeRequest": {
             "type": "object",
             "required": [
@@ -2351,6 +2205,152 @@ const docTemplate = `{
                 },
                 "team_id": {
                     "type": "string"
+                }
+            }
+        },
+        "nexus_internal_domain.AppSettings": {
+            "type": "object",
+            "properties": {
+                "clickhouse": {
+                    "$ref": "#/definitions/nexus_internal_domain.ClickHouseSettings"
+                },
+                "sentry": {
+                    "$ref": "#/definitions/nexus_internal_domain.SentrySettings"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "updated_by": {
+                    "description": "user_id, кто последним обновил",
+                    "type": "string"
+                }
+            }
+        },
+        "nexus_internal_domain.ClickHouseSettings": {
+            "type": "object",
+            "properties": {
+                "batch_size": {
+                    "type": "integer"
+                },
+                "buffer_max_size": {
+                    "type": "integer"
+                },
+                "database": {
+                    "type": "string"
+                },
+                "flush_interval_sec": {
+                    "type": "integer"
+                },
+                "host": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                },
+                "port": {
+                    "type": "integer"
+                },
+                "user": {
+                    "type": "string"
+                },
+                "workers": {
+                    "type": "integer"
+                }
+            }
+        },
+        "nexus_internal_domain.SentrySettings": {
+            "type": "object",
+            "properties": {
+                "attach_stacktrace": {
+                    "type": "boolean"
+                },
+                "dsn": {
+                    "type": "string"
+                },
+                "enable_tracing": {
+                    "type": "boolean"
+                },
+                "environment": {
+                    "type": "string"
+                },
+                "level": {
+                    "type": "integer"
+                },
+                "traces_sample_rate": {
+                    "type": "number"
+                },
+                "use": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "nexus_internal_web_usecase.DryRunReport": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "ok": {
+                    "type": "boolean"
+                },
+                "steps": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/nexus_internal_web_usecase.DryRunStep"
+                    }
+                }
+            }
+        },
+        "nexus_internal_web_usecase.DryRunStep": {
+            "type": "object",
+            "properties": {
+                "detail": {},
+                "message": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "ok | failed | skipped",
+                    "type": "string"
+                }
+            }
+        },
+        "nexus_internal_web_usecase.ReplayResult": {
+            "type": "object",
+            "properties": {
+                "body_preview": {
+                    "type": "string"
+                },
+                "duration_ms": {
+                    "type": "integer"
+                },
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "new_log_id": {
+                    "type": "string"
+                },
+                "status_code": {
+                    "type": "integer"
+                }
+            }
+        },
+        "nexus_internal_web_usecase.TestResult": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string"
+                },
+                "latency_ms": {
+                    "type": "integer"
+                },
+                "ok": {
+                    "type": "boolean"
                 }
             }
         }

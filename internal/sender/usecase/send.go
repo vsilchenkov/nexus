@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"bus/internal/domain"
-	"bus/internal/platform/logging"
-	"bus/internal/sender/usecase/port"
+	"nexus/internal/domain"
+	"nexus/internal/platform/logging"
+	"nexus/internal/sender/usecase/port"
 )
 
 // SendInput — параметры одного outbound-вызова.

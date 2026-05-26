@@ -12,8 +12,8 @@ import (
 	chgo "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
-	"bus/internal/platform/config"
-	"bus/internal/platform/healthcheck"
+	"nexus/internal/platform/config"
+	"nexus/internal/platform/healthcheck"
 )
 
 // New открывает соединение и проверяет Ping.

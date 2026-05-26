@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"bus/internal/domain"
-	"bus/internal/platform/logging"
-	senderv1 "bus/proto/sender/v1"
+	"nexus/internal/domain"
+	"nexus/internal/platform/logging"
+	senderv1 "nexus/proto/sender/v1"
 )
 
 type stubNodeReader struct {

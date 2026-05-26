@@ -7,7 +7,7 @@ syntax = "proto3";
 
 package databus.sender.v1;
 
-option go_package = "bus/proto/sender/v1;senderv1";
+option go_package = "nexus/proto/sender/v1;senderv1";
 
 service SenderService {
   // Send выполняет один outbound-вызов внешнего узла.

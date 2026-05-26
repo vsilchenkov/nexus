@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"testing"
 
-	"bus/internal/domain"
+	"nexus/internal/domain"
 )
 
 func TestCheckIncomingAuth_None(t *testing.T) {

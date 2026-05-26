@@ -7,7 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"bus/internal/platform/logging"
+	"nexus/internal/platform/logging"
 )
 
 // rateAllower — consumer-side interface для rate-limiter'а (§17.4 ТЗ).

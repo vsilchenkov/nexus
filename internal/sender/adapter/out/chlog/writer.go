@@ -20,11 +20,11 @@ import (
 
 	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
-	"bus/internal/domain"
-	"bus/internal/platform/config"
-	"bus/internal/platform/logging"
-	"bus/internal/platform/metrics"
-	"bus/internal/sender/usecase/port"
+	"nexus/internal/domain"
+	"nexus/internal/platform/config"
+	"nexus/internal/platform/logging"
+	"nexus/internal/platform/metrics"
+	"nexus/internal/sender/usecase/port"
 )
 
 // ConnProvider — узкий read-only доступ к ClickHouse-соединению.

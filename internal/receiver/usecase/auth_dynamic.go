@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"strings"
 
-	"bus/internal/domain"
+	"nexus/internal/domain"
 )
 
 // DynamicAuthResult — результат разбора динамической авторизации (§3.5).

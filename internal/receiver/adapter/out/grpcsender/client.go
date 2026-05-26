@@ -14,10 +14,10 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 
-	"bus/internal/platform/config"
-	"bus/internal/platform/logging"
-	otelpf "bus/internal/platform/otel"
-	senderv1 "bus/proto/sender/v1"
+	"nexus/internal/platform/config"
+	"nexus/internal/platform/logging"
+	otelpf "nexus/internal/platform/otel"
+	senderv1 "nexus/proto/sender/v1"
 )
 
 // Client — пул gRPC-соединений к Sender.

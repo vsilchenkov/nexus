@@ -12,7 +12,7 @@ import (
 
 	"github.com/kardianos/service"
 
-	"bus/internal/platform/logging"
+	"nexus/internal/platform/logging"
 )
 
 // App — контракт приложения, которое умеет стартовать и останавливаться.

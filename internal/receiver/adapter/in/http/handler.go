@@ -9,9 +9,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"bus/internal/domain"
-	"bus/internal/platform/logging"
-	"bus/internal/receiver/usecase"
+	"nexus/internal/domain"
+	"nexus/internal/platform/logging"
+	"nexus/internal/receiver/usecase"
 )
 
 // Handler — /v1/request/* и /v1/requestAsync/*.

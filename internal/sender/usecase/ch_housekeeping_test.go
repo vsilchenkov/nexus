@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bus/internal/domain"
-	"bus/internal/platform/logging"
+	"nexus/internal/domain"
+	"nexus/internal/platform/logging"
 )
 
 func TestIsSafePartition(t *testing.T) {

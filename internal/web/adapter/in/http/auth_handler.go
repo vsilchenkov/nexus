@@ -7,11 +7,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"bus/internal/domain"
-	"bus/internal/platform/config"
-	"bus/internal/platform/i18n"
-	"bus/internal/platform/logging"
-	"bus/internal/web/usecase"
+	"nexus/internal/domain"
+	"nexus/internal/platform/config"
+	"nexus/internal/platform/i18n"
+	"nexus/internal/platform/logging"
+	"nexus/internal/web/usecase"
 )
 
 // AuthHandler — /api/auth/* (login/logout/me).

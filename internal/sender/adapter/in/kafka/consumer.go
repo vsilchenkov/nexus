@@ -8,10 +8,10 @@ import (
 	"errors"
 	"sync"
 
-	"bus/internal/platform/config"
-	kafkapf "bus/internal/platform/kafka"
-	"bus/internal/platform/logging"
-	"bus/internal/sender/usecase"
+	"nexus/internal/platform/config"
+	kafkapf "nexus/internal/platform/kafka"
+	"nexus/internal/platform/logging"
+	"nexus/internal/sender/usecase"
 )
 
 // ConsumerGroup — пул из cfg.Kafka.Consumer.Instances consumer-горутин.

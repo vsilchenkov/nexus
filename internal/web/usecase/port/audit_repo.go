@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"bus/internal/domain"
+	"nexus/internal/domain"
 )
 
 // AuditFilter — параметры фильтрации в AuditRepo.List.

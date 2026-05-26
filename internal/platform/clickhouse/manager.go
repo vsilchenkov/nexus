@@ -9,8 +9,8 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
-	"bus/internal/platform/config"
-	"bus/internal/platform/logging"
+	"nexus/internal/platform/config"
+	"nexus/internal/platform/logging"
 )
 
 // ConnProvider — read-only доступ к актуальному ClickHouse-соединению.

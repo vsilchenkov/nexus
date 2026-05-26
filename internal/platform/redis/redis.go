@@ -11,8 +11,8 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
-	"bus/internal/platform/config"
-	"bus/internal/platform/healthcheck"
+	"nexus/internal/platform/config"
+	"nexus/internal/platform/healthcheck"
 )
 
 // New создаёт *redis.Client и проверяет соединение Ping.

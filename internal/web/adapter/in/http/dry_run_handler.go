@@ -6,8 +6,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"bus/internal/platform/logging"
-	"bus/internal/web/usecase"
+	"nexus/internal/platform/logging"
+	"nexus/internal/web/usecase"
 )
 
 // DryRunHandler — POST /api/nodes/dry-run (§7.5.1 ТЗ).

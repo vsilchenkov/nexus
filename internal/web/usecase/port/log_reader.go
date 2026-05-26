@@ -3,7 +3,7 @@ package port
 import (
 	"context"
 
-	"bus/internal/domain"
+	"nexus/internal/domain"
 )
 
 // LogQuery — параметры расширенного поиска по логам узла (§7.4, Phase 6.8).

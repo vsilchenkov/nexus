@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"time"
 
-	"bus/internal/domain"
+	"nexus/internal/domain"
 )
 
 // Envelope — формат сообщения в databus.async.

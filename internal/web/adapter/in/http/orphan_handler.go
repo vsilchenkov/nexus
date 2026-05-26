@@ -5,8 +5,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"bus/internal/platform/logging"
-	"bus/internal/web/usecase"
+	"nexus/internal/platform/logging"
+	"nexus/internal/web/usecase"
 )
 
 // OrphanHandler — GET /api/settings/clickhouse/orphans + DELETE /api/settings/clickhouse/orphans/:table

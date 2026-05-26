@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bus/internal/platform/i18n"
+	"nexus/internal/platform/i18n"
 )
 
 func TestLocalizedError_DefaultLang(t *testing.T) {

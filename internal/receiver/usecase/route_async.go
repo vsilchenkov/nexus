@@ -7,10 +7,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"bus/internal/domain"
-	"bus/internal/platform/logging"
-	otelpf "bus/internal/platform/otel"
-	"bus/internal/receiver/usecase/port"
+	"nexus/internal/domain"
+	"nexus/internal/platform/logging"
+	otelpf "nexus/internal/platform/otel"
+	"nexus/internal/receiver/usecase/port"
 )
 
 // AsyncProducer — интерфейс, который реализует kafka.Producer.

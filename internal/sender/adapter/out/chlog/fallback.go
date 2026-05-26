@@ -15,8 +15,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"bus/internal/domain"
-	"bus/internal/platform/logging"
+	"nexus/internal/domain"
+	"nexus/internal/platform/logging"
 )
 
 // fallbackStore — пишет проваленный батч ClickHouse в NDJSON-файл

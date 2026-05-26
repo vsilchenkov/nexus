@@ -8,9 +8,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bus/internal/domain"
-	"bus/internal/platform/logging"
-	"bus/internal/web/usecase/port"
+	"nexus/internal/domain"
+	"nexus/internal/platform/logging"
+	"nexus/internal/web/usecase/port"
 )
 
 func newUserUC(users *authUserRepo, sessions *memSessionRepo) (*UserUsecase, *stubAuditRepo) {

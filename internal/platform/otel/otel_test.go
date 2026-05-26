@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bus/internal/platform/config"
-	"bus/internal/platform/logging"
+	"nexus/internal/platform/config"
+	"nexus/internal/platform/logging"
 )
 
 func TestInit_Disabled_ReturnsNoopShutdown(t *testing.T) {

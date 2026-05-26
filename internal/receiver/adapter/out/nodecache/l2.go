@@ -17,9 +17,9 @@ import (
 	"errors"
 	"time"
 
-	"bus/internal/domain"
-	"bus/internal/platform/logging"
-	"bus/internal/receiver/usecase/port"
+	"nexus/internal/domain"
+	"nexus/internal/platform/logging"
+	"nexus/internal/receiver/usecase/port"
 )
 
 // L2Config — параметры L2-кеша.

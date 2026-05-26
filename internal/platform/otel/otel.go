@@ -25,8 +25,8 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.27.0"
 
-	"bus/internal/platform/config"
-	"bus/internal/platform/logging"
+	"nexus/internal/platform/config"
+	"nexus/internal/platform/logging"
 )
 
 // ShutdownFunc — callback для graceful shutdown'а tracer-provider'а.

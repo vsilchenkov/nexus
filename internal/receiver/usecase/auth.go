@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"bus/internal/domain"
+	"nexus/internal/domain"
 )
 
 // CheckIncomingAuth проверяет авторизацию входящего запроса согласно

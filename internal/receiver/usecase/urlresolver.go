@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"strings"
 
-	"bus/internal/domain"
+	"nexus/internal/domain"
 )
 
 // ResolveURL вычисляет фактический URL отправки и возвращает его + query-string

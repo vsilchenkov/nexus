@@ -12,15 +12,15 @@ import (
 	"testing"
 	"time"
 
-	senderv1 "bus/proto/sender/v1"
+	senderv1 "nexus/proto/sender/v1"
 
-	"bus/internal/domain"
-	"bus/internal/platform/crypto"
-	"bus/internal/platform/logging"
-	pgrepo "bus/internal/web/adapter/out/postgres"
-	"bus/internal/web/usecase"
+	"nexus/internal/domain"
+	"nexus/internal/platform/crypto"
+	"nexus/internal/platform/logging"
+	pgrepo "nexus/internal/web/adapter/out/postgres"
+	"nexus/internal/web/usecase"
 
-	rcv "bus/internal/receiver/usecase"
+	rcv "nexus/internal/receiver/usecase"
 )
 
 // TestReceiver_Sync_E2E: создаём узел через NodeUsecase (реальный Postgres

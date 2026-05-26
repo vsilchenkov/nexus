@@ -7,9 +7,9 @@ import (
 	_ "embed"
 	"os"
 
-	"bus/internal/platform/bootstrap"
-	"bus/internal/platform/runner"
-	"bus/internal/sender"
+	"nexus/internal/platform/bootstrap"
+	"nexus/internal/platform/runner"
+	"nexus/internal/sender"
 )
 
 const (

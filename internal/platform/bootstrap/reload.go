@@ -5,11 +5,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	chpf "bus/internal/platform/clickhouse"
-	"bus/internal/platform/config"
-	"bus/internal/platform/logging"
-	"bus/internal/platform/reloader"
-	sentrypf "bus/internal/platform/sentry"
+	chpf "nexus/internal/platform/clickhouse"
+	"nexus/internal/platform/config"
+	"nexus/internal/platform/logging"
+	"nexus/internal/platform/reloader"
+	sentrypf "nexus/internal/platform/sentry"
 )
 
 // SentryReloader возвращает Reloader, который читает свежий overlay из

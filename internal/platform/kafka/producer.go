@@ -8,7 +8,7 @@ import (
 	kafka "github.com/segmentio/kafka-go"
 	"github.com/segmentio/kafka-go/compress"
 
-	"bus/internal/platform/config"
+	"nexus/internal/platform/config"
 )
 
 // Producer — обёртка над *kafka.Writer с параметрами из §5.3 ТЗ.

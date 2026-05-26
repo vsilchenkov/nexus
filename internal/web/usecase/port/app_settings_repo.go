@@ -3,7 +3,7 @@ package port
 import (
 	"context"
 
-	"bus/internal/domain"
+	"nexus/internal/domain"
 )
 
 // AppSettingsRepo — singleton-репозиторий динамических настроек (§14.5 ТЗ).

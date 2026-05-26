@@ -11,9 +11,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bus/internal/domain"
-	"bus/internal/platform/logging"
-	"bus/internal/sender/usecase/port"
+	"nexus/internal/domain"
+	"nexus/internal/platform/logging"
+	"nexus/internal/sender/usecase/port"
 )
 
 // stubHTTPCaller — программируемый ответ. Если Body/Status — функция,

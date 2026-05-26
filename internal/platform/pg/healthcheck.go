@@ -5,7 +5,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"bus/internal/platform/healthcheck"
+	"nexus/internal/platform/healthcheck"
 )
 
 // HealthChecker — healthcheck.Checker, который пингует пул.

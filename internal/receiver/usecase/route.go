@@ -14,10 +14,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"bus/internal/domain"
-	"bus/internal/platform/logging"
-	"bus/internal/receiver/usecase/port"
-	senderv1 "bus/proto/sender/v1"
+	"nexus/internal/domain"
+	"nexus/internal/platform/logging"
+	"nexus/internal/receiver/usecase/port"
+	senderv1 "nexus/proto/sender/v1"
 )
 
 // SenderClient — интерфейс, который реализует grpcsender.Client.

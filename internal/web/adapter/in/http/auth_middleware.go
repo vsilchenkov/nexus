@@ -7,8 +7,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"bus/internal/domain"
-	"bus/internal/platform/config"
+	"nexus/internal/domain"
+	"nexus/internal/platform/config"
 )
 
 const ctxSessionKey = "databus.session"

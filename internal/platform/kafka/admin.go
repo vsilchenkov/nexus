@@ -14,8 +14,8 @@ import (
 
 	kafka "github.com/segmentio/kafka-go"
 
-	"bus/internal/platform/config"
-	"bus/internal/platform/logging"
+	"nexus/internal/platform/config"
+	"nexus/internal/platform/logging"
 )
 
 // EnsureTopics создаёт перечисленные топики, если их ещё нет.

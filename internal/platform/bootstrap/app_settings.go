@@ -8,8 +8,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"bus/internal/platform/config"
-	"bus/internal/platform/logging"
+	"nexus/internal/platform/config"
+	"nexus/internal/platform/logging"
 )
 
 // appSettingsOverlay — узкий read-only-доступ к таблице app_settings, который

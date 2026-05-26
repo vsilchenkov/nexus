@@ -7,7 +7,7 @@ import (
 
 	kafka "github.com/segmentio/kafka-go"
 
-	"bus/internal/platform/config"
+	"nexus/internal/platform/config"
 )
 
 // Consumer — обёртка над *kafka.Reader с настройками §5.3 ТЗ.

@@ -4,7 +4,7 @@ package port
 import (
 	"context"
 
-	"bus/internal/domain"
+	"nexus/internal/domain"
 )
 
 // LogWriter — асинхронная запись логов в ClickHouse-таблицу узла (§4.3 ТЗ).

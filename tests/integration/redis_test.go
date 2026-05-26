@@ -13,9 +13,9 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"bus/internal/domain"
-	"bus/internal/platform/logging"
-	webredis "bus/internal/web/adapter/out/redis"
+	"nexus/internal/domain"
+	"nexus/internal/platform/logging"
+	webredis "nexus/internal/web/adapter/out/redis"
 )
 
 // startRedis поднимает Redis 7 через generic testcontainer и возвращает

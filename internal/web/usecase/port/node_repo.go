@@ -8,7 +8,7 @@ import (
 	"context"
 	"time"
 
-	"bus/internal/domain"
+	"nexus/internal/domain"
 )
 
 // ListNodesFilter — параметры фильтрации в NodeRepo.List.

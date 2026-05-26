@@ -3,7 +3,7 @@ package http
 import (
 	"github.com/gin-gonic/gin"
 
-	"bus/internal/platform/i18n"
+	"nexus/internal/platform/i18n"
 )
 
 // localizedError отвечает HTTP-статусом и JSON-телом {"error": <переведённое сообщение>}.

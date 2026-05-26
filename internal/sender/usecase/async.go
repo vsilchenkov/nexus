@@ -8,10 +8,10 @@ import (
 	"strconv"
 	"time"
 
-	"bus/internal/domain"
-	"bus/internal/platform/logging"
-	"bus/internal/platform/metrics"
-	otelpf "bus/internal/platform/otel"
+	"nexus/internal/domain"
+	"nexus/internal/platform/logging"
+	"nexus/internal/platform/metrics"
+	otelpf "nexus/internal/platform/otel"
 )
 
 // NodeReader — interface чтения актуального узла перед обработкой

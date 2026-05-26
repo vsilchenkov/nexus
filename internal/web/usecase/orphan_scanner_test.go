@@ -10,10 +10,10 @@ import (
 
 	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
-	"bus/internal/domain"
-	"bus/internal/platform/config"
-	"bus/internal/platform/logging"
-	"bus/internal/web/usecase/port"
+	"nexus/internal/domain"
+	"nexus/internal/platform/config"
+	"nexus/internal/platform/logging"
+	"nexus/internal/web/usecase/port"
 )
 
 // nilConnProvider — отдаёт nil-conn; используется чтобы проверять

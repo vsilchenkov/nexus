@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"bus/internal/domain"
+	"nexus/internal/domain"
 )
 
 // ListUsersFilter — фильтры списка пользователей.

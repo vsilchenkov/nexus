@@ -22,9 +22,9 @@ import (
 	_ "embed"
 	"os"
 
-	"bus/internal/platform/bootstrap"
-	"bus/internal/platform/runner"
-	"bus/internal/web"
+	"nexus/internal/platform/bootstrap"
+	"nexus/internal/platform/runner"
+	"nexus/internal/web"
 )
 
 const (

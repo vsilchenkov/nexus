@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"bus/internal/domain"
+	"nexus/internal/domain"
 )
 
 func TestBuildDynamicOutgoingAuth_TokenFromQuery(t *testing.T) {

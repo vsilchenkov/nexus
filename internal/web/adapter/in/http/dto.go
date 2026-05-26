@@ -4,7 +4,7 @@ package http
 import (
 	"time"
 
-	"bus/internal/domain"
+	"nexus/internal/domain"
 )
 
 // CredentialsMask — что возвращаем вместо реального значения кредов.

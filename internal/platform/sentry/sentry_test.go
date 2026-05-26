@@ -5,7 +5,7 @@ import (
 
 	"github.com/getsentry/sentry-go"
 
-	"bus/internal/platform/config"
+	"nexus/internal/platform/config"
 )
 
 func TestIsSensitive(t *testing.T) {

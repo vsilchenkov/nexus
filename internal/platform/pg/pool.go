@@ -11,7 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"bus/internal/platform/config"
+	"nexus/internal/platform/config"
 )
 
 // New создаёт pgxpool с настройками из конфига и проверяет соединение Ping.

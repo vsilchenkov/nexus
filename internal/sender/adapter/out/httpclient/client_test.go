@@ -12,9 +12,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bus/internal/platform/config"
-	"bus/internal/platform/logging"
-	"bus/internal/sender/usecase/port"
+	"nexus/internal/platform/config"
+	"nexus/internal/platform/logging"
+	"nexus/internal/sender/usecase/port"
 )
 
 // testCfg возвращает базовый SenderHTTPClientConfig для httptest-сценариев.

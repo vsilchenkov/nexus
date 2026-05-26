@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bus/internal/platform/circuitbreaker"
+	"nexus/internal/platform/circuitbreaker"
 )
 
 // TestCircuitBreaker_HappyPath_Closed — свежий ключ → state=closed, Allow=true.

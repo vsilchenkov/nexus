@@ -3,7 +3,7 @@ package port
 import (
 	"context"
 
-	"bus/internal/domain"
+	"nexus/internal/domain"
 )
 
 // APITokenRepo — CRUD для read-only API-токенов (§7.14).

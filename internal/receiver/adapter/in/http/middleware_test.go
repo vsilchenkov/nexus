@@ -10,7 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"bus/internal/platform/logging"
+	"nexus/internal/platform/logging"
 )
 
 // stubLimiter — простой mock rateAllower'а. Возвращает allow/err из полей.

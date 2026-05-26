@@ -15,13 +15,13 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"bus/internal/domain"
-	"bus/internal/platform/clickhouse"
-	"bus/internal/platform/config"
-	"bus/internal/platform/logging"
-	"bus/internal/sender/adapter/out/chlog"
-	webch "bus/internal/web/adapter/out/clickhouse"
-	"bus/internal/web/usecase/port"
+	"nexus/internal/domain"
+	"nexus/internal/platform/clickhouse"
+	"nexus/internal/platform/config"
+	"nexus/internal/platform/logging"
+	"nexus/internal/sender/adapter/out/chlog"
+	webch "nexus/internal/web/adapter/out/clickhouse"
+	"nexus/internal/web/usecase/port"
 )
 
 // startClickHouse поднимает CH 24-alpine через generic testcontainer и
