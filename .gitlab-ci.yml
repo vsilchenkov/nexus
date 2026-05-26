@@ -168,3 +168,102 @@ integration:
     - docker pull clickhouse/clickhouse-server:24-alpine || true
   script:
     - go test -tags=integration -timeout 20m -count=1 ./tests/integration/...
+
+# ----------- SECURITY stage -------------------------------------------------
+# Аналог .github/workflows/security.yml. Не блокируют merge — early-warning,
+# не gate. Запускаются на master/dev push, по schedule (CI/CD → Schedules в UI
+# GitLab, рекомендую weekly cron `0 6 * * 0`), и вручную через workflow_dispatch.
+#
+# Premium-фичи GitLab Ultimate (managed SAST/Dependency Scanning через
+# Security/SAST.gitlab-ci.yml include) не используются, потому что
+# self-hosted Community Edition их не поддерживает; вместо них — open-source
+# инструменты тех же категорий.
+
+.security-rules: &security-rules
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+    - if: $CI_COMMIT_BRANCH == "dev"
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - go.mod
+        - go.sum
+        - web-ui/package-lock.json
+        - Dockerfile
+        - deploy/docker/*.Dockerfile
+    - when: manual
+      allow_failure: true
+
+# govulncheck (golang.org/x/vuln) — официальный сканер Go-зависимостей с
+# call-graph анализом: сопоставляет CVE с фактически вызываемым кодом, а не
+# просто проверяет версии модулей. Падает на vuln — гейтит pipeline.
+govulncheck:
+  stage: security
+  extends: .go-base
+  <<: *security-rules
+  script:
+    - go install golang.org/x/vuln/cmd/govulncheck@latest
+    - $GOPATH/bin/govulncheck ./...
+
+# gosec — статический анализатор security-правил OWASP/CWE (G-серия).
+# `-fmt sarif` для просмотра в IDE; `-fmt gitlab` для GitLab Security Dashboard
+# (Premium-фича; на Community SARIF доступен как artifact).
+gosec:
+  stage: security
+  image: securego/gosec:latest
+  <<: *security-rules
+  allow_failure: true  # findings не блокируют — alerts only
+  script:
+    - gosec -fmt=sarif -out=gosec-results.sarif -exclude-dir=web-ui -exclude-dir=docs ./... || true
+    - gosec -fmt=junit-xml -out=gosec-junit.xml -exclude-dir=web-ui -exclude-dir=docs ./... || true
+  artifacts:
+    when: always
+    paths:
+      - gosec-results.sarif
+    reports:
+      junit: gosec-junit.xml
+    expire_in: 1 month
+
+# Trivy filesystem scan — vulns (Go + npm) + secrets (приватные ключи) +
+# misconfigs (Dockerfile, YAML). Дополняет govulncheck по non-Go-частям.
+trivy-fs:
+  stage: security
+  image:
+    name: aquasec/trivy:0.55.0
+    entrypoint: [""]
+  <<: *security-rules
+  allow_failure: true
+  variables:
+    # Trivy скачивает DB при каждом запуске; кеш ускоряет последующие jobs.
+    TRIVY_CACHE_DIR: "$CI_PROJECT_DIR/.cache/trivy"
+  cache:
+    key: trivy-db
+    paths:
+      - .cache/trivy
+    policy: pull-push
+  script:
+    - trivy --version
+    - trivy fs
+        --scanners vuln,secret,misconfig
+        --severity CRITICAL,HIGH,MEDIUM
+        --ignore-unfixed
+        --format sarif
+        --output trivy-fs.sarif
+        --exit-code 0
+        .
+  artifacts:
+    when: always
+    paths:
+      - trivy-fs.sarif
+    expire_in: 1 month
+
+# Nancy (Sonatype OSS Index) — дополнительный CVE-источник, перекрывает
+# govulncheck по less-критичным. Не SARIF, просто фейлится по списку.
+nancy:
+  stage: security
+  extends: .go-base
+  <<: *security-rules
+  allow_failure: true
+  script:
+    - go install github.com/sonatype-nexus-community/nancy@latest
+    - go list -json -deps ./... | $GOPATH/bin/nancy sleuth --loud
