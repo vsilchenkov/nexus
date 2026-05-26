@@ -26,9 +26,10 @@ variables:
   DEBIAN_FRONTEND: noninteractive
 
 default:
-  # Все jobs запускаются на ноде srv-d-android-l (self-hosted runner).
+  # Все jobs запускаются на ноде srv-d-android-l (self-hosted runner,
+  # docker-executor — поддерживает директиву `image:` из job-секций).
   tags:
-    - srv-d-android-l
+    - srv-d-android-l-docker
   # Прерываемые при новом push в ту же ветку — экономит CI-минуты.
   interruptible: true
 
