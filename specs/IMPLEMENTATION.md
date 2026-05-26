@@ -524,6 +524,15 @@ make proto                                     # перегенерация send
    testcontainers косвенно из go.mod) и линкер падает с VirtualAlloc. Решение —
    собирать по одному `./cmd/<name>` с `-ldflags="-s -w"` (см. TESTING.md → Отладка).
 
+   **`go test -race` на Windows.** Требует рабочего gcc (CGO). Если установлены
+   и MSYS2 mingw64, и Git for Windows, последний прячет старые DLL
+   (`libgcc_s_seh-1.dll`, `libgmp-10.dll`, ...) в `C:\Program Files\Git\mingw64\bin`,
+   которые подгружаются раньше MSYS2-версий → `cc1.exe` падает с
+   `STATUS_ENTRYPOINT_NOT_FOUND` без сообщения. Лечится приоритетом MSYS2 в PATH —
+   Makefile делает это автоматически (`ifeq Windows_NT` + `export PATH := C:\msys64\mingw64\bin;$(PATH)`).
+   Если запускаете `go test -race` вручную из PowerShell — сначала
+   `$env:PATH = "C:\msys64\mingw64\bin;$env:PATH"`.
+
 2. **swag init нужен go в PATH.** Если CI пытается генерировать docs/, убедитесь,
    что `swag` доступен (`go install github.com/swaggo/swag/cmd/swag@latest`).
 

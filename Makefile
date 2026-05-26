@@ -11,6 +11,12 @@ ifeq ($(OS),Windows_NT)
     GOEXE := .exe
     RM    := del /Q
     MKDIR := mkdir
+    # Prepend MSYS2 mingw64 to PATH so cgo (cc1.exe) loads MSYS2 DLLs first
+    # instead of older ones from C:\Program Files\Git\mingw64\bin. Required
+    # for `go test -race` and any other CGO-enabled build on Windows.
+    ifneq ($(wildcard C:/msys64/mingw64/bin/gcc.exe),)
+        export PATH := C:\msys64\mingw64\bin;$(PATH)
+    endif
 else
     GOEXE :=
     RM    := rm -f
