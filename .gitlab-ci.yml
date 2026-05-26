@@ -71,11 +71,26 @@ stages:
     - go env -w GOPATH=$GOPATH GOCACHE=$GOCACHE GOMODCACHE=$GOMODCACHE
     - go mod download
 
+# Селективные ручные прогоны (см. порядок запуска в TESTING.md):
+#   RUN_PROFILE = integration-only   → только integration job
+#   RUN_PROFILE = loadtest-only      → только loadtest job
+#   RUN_PROFILE = default            → обычный pipeline (build/lint/test/...)
+#
+# Якорь подставляется первой строкой в `rules:` каждого «обычного» job'а —
+# при выборе профиля он скипает всё остальное, оставляя только нужное.
+# В integration/loadtest jobs логика инвертирована (см. их rules:).
+.skip-if-profiled-rule: &skip-if-profiled-rule
+  if: $RUN_PROFILE == "integration-only" || $RUN_PROFILE == "loadtest-only"
+  when: never
+
 # ----------- TEST stage -----------------------------------------------------
 
 go-test:
   stage: test
   extends: .go-base
+  rules:
+    - *skip-if-profiled-rule
+    - when: on_success
   script:
     - go vet ./...
     - go test -race -short ./...
@@ -86,12 +101,18 @@ go-lint:
   stage: lint
   image: golangci/golangci-lint:v2.12-alpine
   <<: *go-cache
+  rules:
+    - *skip-if-profiled-rule
+    - when: on_success
   script:
     - golangci-lint run --timeout=5m
 
 swagger-drift:
   stage: lint
   extends: .go-base
+  rules:
+    - *skip-if-profiled-rule
+    - when: on_success
   script:
     - go install github.com/swaggo/swag/cmd/swag@v1.16.6
     - $GOPATH/bin/swag init -g cmd/web/main.go -o docs/web --parseDependency --parseDepth 2 --quiet
@@ -107,6 +128,9 @@ swagger-drift:
 go-build:
   stage: build
   extends: .go-base
+  rules:
+    - *skip-if-profiled-rule
+    - when: on_success
   script:
     # На Linux линкер не падает с OOM (грабля Windows из CLAUDE.md §6).
     - go build ./...
@@ -121,6 +145,9 @@ ui-build:
     paths:
       - web-ui/node_modules
     policy: pull-push
+  rules:
+    - *skip-if-profiled-rule
+    - when: on_success
   script:
     - cd web-ui
     - npm ci
@@ -139,6 +166,8 @@ ui-build:
 #
 # По умолчанию запускается на label `run-integration` для MR и всегда на
 # master/dev/tag — аналогично GitHub workflow.
+# Селективный ручной запуск: «Run pipeline → RUN_PROFILE=integration-only»
+# (порядок — в TESTING.md).
 
 integration:
   stage: integration
@@ -155,6 +184,10 @@ integration:
   #   TESTCONTAINERS_RYUK_DISABLED: "true"
   timeout: 25 minutes
   rules:
+    - if: $RUN_PROFILE == "loadtest-only"
+      when: never
+    - if: $RUN_PROFILE == "integration-only"
+      when: on_success
     - if: $CI_COMMIT_BRANCH == "master"
     - if: $CI_COMMIT_BRANCH == "dev"
     - if: $CI_COMMIT_TAG
@@ -195,6 +228,13 @@ loadtest:
   stage: integration
   image: docker:24-cli
   rules:
+    - if: $RUN_PROFILE == "integration-only"
+      when: never
+    # При RUN_PROFILE=loadtest-only — стартует без ручного клика,
+    # как только pipeline создан (порядок в TESTING.md).
+    - if: $RUN_PROFILE == "loadtest-only"
+      when: on_success
+      allow_failure: true
     - when: manual
       allow_failure: true
   timeout: 60 minutes
@@ -282,6 +322,7 @@ loadtest:
 
 .security-rules: &security-rules
   rules:
+    - *skip-if-profiled-rule
     - if: $CI_COMMIT_BRANCH == "master"
     - if: $CI_COMMIT_BRANCH == "dev"
     - if: $CI_PIPELINE_SOURCE == "schedule"
@@ -385,6 +426,7 @@ renovate:
     name: renovate/renovate:latest
     entrypoint: [""]
   rules:
+    - *skip-if-profiled-rule
     - if: $CI_PIPELINE_SOURCE == "schedule"
     - if: $CI_PIPELINE_SOURCE == "web"
     - when: manual
@@ -442,6 +484,7 @@ release:
     # дополнительно требуется fetch-depth: 0 — в GitLab он по умолчанию.
     GIT_DEPTH: "0"
   rules:
+    - *skip-if-profiled-rule
     - if: $CI_COMMIT_TAG =~ /^v[0-9]/
   timeout: 60 minutes
   before_script:

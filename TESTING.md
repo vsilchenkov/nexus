@@ -101,13 +101,77 @@ make swagger-drift-check  # CI-проверка: фейлит если docs/ у�
 Аннотации висят на ключевых handlers: login, nodes (List/Get/Create), dry-run, replay, logs (List/Stream).
 Расширение остальных endpoints — Phase 6.
 
-## CI/CD (TODO)
+## CI/CD
 
-GitHub Actions workflow ещё не написан. План:
+GitLab CI — [.gitlab-ci.yml](.gitlab-ci.yml), Phase 9.2. Аналог для GitHub —
+`.github/workflows/{ci,security,release}.yml`. Стэйджи в одном pipeline:
+`test → lint → build → security → integration → release`. Все jobs на runner
+с тегом `srv-d-android-l-docker`.
 
-- На каждый PR: `make lint`, `make test`, `make swagger-drift-check`, сборка всех бинарей,
-  loadtest smoke (1 min × 100 rps).
-- Nightly / перед релизом: полный loadtest 10 min × 500 rps + `make test-integration`.
+### Что когда запускается автоматически
+
+| Триггер                                    | Что катится                                                   |
+|--------------------------------------------|---------------------------------------------------------------|
+| push в любую ветку                         | `go-test`, `go-lint`, `swagger-drift`, `go-build`, `ui-build` |
+| push в master/dev/tag                      | + `integration` + security stage (govulncheck — gate)         |
+| MR с label `run-integration`               | + `integration`                                               |
+| MR с изменениями go.mod/go.sum/Dockerfile  | + security stage (govulncheck/gosec/trivy)                    |
+| schedule (CI/CD → Schedules, weekly)       | security stage + `renovate`                                   |
+| tag `v[0-9]…`                              | + `release` (GoReleaser → GitLab Container Registry)          |
+
+### Селективный ручной запуск (UI → Run pipeline)
+
+В GitLab UI: **Build → Pipelines → Run pipeline → выбрать ветку → ввести
+переменную `RUN_PROFILE` со значением `integration-only` или `loadtest-only`
+→ Run pipeline**. Остальные jobs стэйджей `test/lint/build/security/release`
+скипаются.
+
+| `RUN_PROFILE`      | Что выполнится                                | Доп. переменные                |
+|--------------------|-----------------------------------------------|--------------------------------|
+| (не задана)        | обычный pipeline по триггерам выше            | —                              |
+| `integration-only` | только `integration` job (testcontainers)     | —                              |
+| `loadtest-only`    | только `loadtest` job (compose-стек + нагр.)  | см. таблицу loadtest-vars ниже |
+
+**Переменные для `loadtest-only`** (Settings → CI/CD → Variables и/или
+поле Variables в Run pipeline):
+
+| Переменная                | Обяз. | Default | Назначение                                                                    |
+|---------------------------|-------|---------|-------------------------------------------------------------------------------|
+| `LOADTEST_ADMIN_PASSWORD` | да    | —       | пароль admin'а (masked + protected). Падает в `before_script:` если не задана |
+| `LOADTEST_TARGET_RPS`     | нет   | `500`   | целевой RPS                                                                   |
+| `LOADTEST_DURATION`       | нет   | `5m`    | длительность нагрузки (формат `time.Duration`)                                |
+| `LOADTEST_NODES`          | нет   | `50`    | число узлов, которые loadtest создаст через Web API                           |
+
+Альтернативный путь для loadtest без `RUN_PROFILE`: в любом полном
+pipeline'е (push в любую ветку) job `loadtest` создаётся как **manual**
+кнопкой Play — это удобно когда хочешь сначала прогнать обычные jobs,
+а потом ткнуть нагрузочный.
+
+#### Loadtest job — что под капотом
+
+1. Готовит изолированный compose-стек: `COMPOSE_PROJECT_NAME=loadtest-<pipe>-<job>`
+   → уникальные docker-сети и volumes, параллельные запуски не конфликтуют.
+   Базовый стек — [deploy/docker-compose.yml](deploy/docker-compose.yml)
+   (postgres + redis + clickhouse + kafka + receiver + sender + web).
+2. Bootstrap-задаёт пароль admin'у через `web --set-admin-password`
+   (миграция 0002 создаёт admin'а с NULL hash, без этого шага login упадёт).
+3. Запускает loadtest как сервис под compose-профилем `loadtest`
+   ([deploy/docker/loadtest.Dockerfile](deploy/docker/loadtest.Dockerfile))
+   с `depends_on: receiver/sender/web healthy`. Mock внешних узлов биндит
+   на `0.0.0.0:9999`, Receiver/Sender ходят к нему как `http://loadtest:9999`
+   (DNS внутри compose-сети).
+4. После прогона: `down -v --remove-orphans` и `rm -f .env`. Артефакты —
+   `loadtest-report/{report.json, compose-logs.txt}` (хранятся 1 месяц).
+
+#### Pre-flight checklist для `loadtest-only`
+
+- `LOADTEST_ADMIN_PASSWORD` задан в Settings → CI/CD → Variables (Type: Variable,
+  Flags: Masked + Protected, Environment scope: `*`). Без него job упадёт в
+  `before_script:` с понятным сообщением.
+- Runner `srv-d-android-l-docker` имеет доступ к docker daemon (через
+  смонтированный `docker.sock` либо DinD service + privileged).
+- На runner'е нет других нагрузочных сценариев в это же время — хотя
+  namespace docker уникальный, физические ресурсы (CPU/RAM) общие.
 
 ## Отладка
 
