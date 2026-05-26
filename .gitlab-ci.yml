@@ -400,23 +400,11 @@ renovate:
   script:
     - renovate
 
-# Nancy (Sonatype OSS Index) — дополнительный CVE-источник, перекрывает
-# govulncheck по less-критичным. Не SARIF, просто фейлится по списку.
-#
-# NB: shell у runner'а — sh, без `set -o pipefail`. Если `go list -json -deps`
-# упадёт в pipe, его exit-код проглатывается, а nancy получает пустой stdin
-# и выводит help+exit 1, маскируя реальную ошибку. Поэтому собираем deps в
-# файл и явно проверяем результат `go list`, прежде чем кормить nancy.
-nancy:
-  stage: security
-  extends: .go-base
-  <<: *security-rules
-  allow_failure: true
-  script:
-    - go install github.com/sonatype-nexus-community/nancy@latest
-    - go list -json -deps ./... > deps.json
-    - test -s deps.json
-    - $GOPATH/bin/nancy sleuth --loud < deps.json
+# Nancy (Sonatype OSS Index) убран: Sonatype начали возвращать 403 Forbidden
+# для анонимных запросов, без OSS Index account скан не работает. CVE-покрытие
+# Go-модулей закрывается govulncheck (NVD + call-graph анализ), vendor/npm —
+# trivy. Если nancy потребуется вернуть — нужен OSS Index API token в
+# Settings → CI/CD → Variables и передача через --username/--token.
 
 # ----------- RELEASE stage --------------------------------------------------
 # Триггерится тегом v*. Использует GoReleaser → GitLab Container Registry

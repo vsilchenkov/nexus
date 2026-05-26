@@ -107,25 +107,8 @@ jobs:
           sarif_file: trivy-fs.sarif
           category: trivy-fs
 
-  # nancy — отдельный сканер Sonatype OSS Index, перекрывает govulncheck по
-  # less-критичным CVE и быстрее обнаруживает новые. Не SARIF-репорт,
-  # просто console output для PR-комментария.
-  nancy:
-    name: Nancy (Sonatype OSS Index)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Write go.list (sleuth input)
-        run: go list -json -deps ./... > go.list
-
-      - name: Nancy scan
-        uses: sonatype-nexus-community/nancy-github-action@main
-        with:
-          nancyCommand: sleuth --loud
-        continue-on-error: true
+# Nancy (Sonatype OSS Index) убран: Sonatype начали возвращать 403 Forbidden
+# для анонимных запросов, без OSS Index account скан не работает. CVE-покрытие
+# Go-модулей закрывается govulncheck (NVD + call-graph анализ), vendor/npm —
+# trivy. Если nancy потребуется вернуть — нужен OSS Index API token в
+# secrets и передача через --username/--token.

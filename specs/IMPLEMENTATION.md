@@ -697,8 +697,10 @@ make proto                                     # перегенерация send
   (golangci-lint v2.12 + swagger-drift), `build` (go build ./... + Vite SPA
   с artifact'ом web-ui/dist), `integration` (testcontainers с pre-pull
   docker-образов; запуск на master/dev/tag или MR с label `run-integration`).
-  · 9.2b Security stage: 4 jobs (govulncheck — единственный gate'ующий с
-  call-graph анализом; gosec/trivy/nancy — allow_failure=true, alerts only).
+  · 9.2b Security stage: 3 jobs (govulncheck — единственный gate'ующий с
+  call-graph анализом; gosec/trivy — allow_failure=true, alerts only).
+  Nancy убран (Sonatype OSS Index возвращает 403 для анонимов; функционально
+  дублирует govulncheck — оба ходят в NVD).
   Триггеры через anchor `.security-rules`: push в master/dev, MR при
   изменении deps-файлов, schedule, manual. SARIF artifacts через
   `artifacts.paths` (Premium-фичи Security Dashboard в CE недоступны).
@@ -1168,8 +1170,9 @@ make proto                                     # перегенерация send
   · **Trivy fs** (aquasecurity/trivy-action@0.28.0) — vuln (включая npm в web-ui)
   + secret scanning + Dockerfile/YAML misconfig. severity CRITICAL|HIGH|MEDIUM,
   `ignore-unfixed: true`. SARIF → Security tab, exit-code 0 (не блокирует).
-  · **Nancy** (Sonatype OSS Index) — дополнительный source CVE-индекса,
-  перекрывает govulncheck по less-критичным. `continue-on-error: true`.
+  · Nancy убран: Sonatype OSS Index возвращает 403 для анонимных запросов,
+  без API token скан не работает. Покрытие CVE Go-модулей сохраняется через
+  govulncheck (тоже NVD, плюс call-graph анализ).
   · Permissions: `security-events: write` для upload-sarif в Code Scanning.
   · Локальные Make-цели: `make vuln-check`, `make gosec`, `make security-scan`
   (auto-install через `go install` если не найдено).
