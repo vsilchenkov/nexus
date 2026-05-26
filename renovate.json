@@ -1,0 +1,69 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":semanticCommits",
+    ":dependencyDashboard"
+  ],
+  "timezone": "Europe/Moscow",
+  "schedule": ["before 9am on monday"],
+  "prHourlyLimit": 4,
+  "prConcurrentLimit": 8,
+  "commitMessagePrefix": "deps",
+  "rangeStrategy": "bump",
+  "packageRules": [
+    {
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "go modules (minor + patch)",
+      "commitMessagePrefix": "deps(go)"
+    },
+    {
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["major"],
+      "commitMessagePrefix": "deps(go)!",
+      "addLabels": ["dependencies", "major-update"]
+    },
+    {
+      "matchManagers": ["npm"],
+      "matchPaths": ["web-ui/**"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "npm minor + patch (web-ui)",
+      "commitMessagePrefix": "deps(ui)"
+    },
+    {
+      "matchManagers": ["npm"],
+      "matchPaths": ["web-ui/**"],
+      "matchUpdateTypes": ["major"],
+      "commitMessagePrefix": "deps(ui)!",
+      "addLabels": ["dependencies", "major-update"]
+    },
+    {
+      "matchManagers": ["dockerfile", "docker-compose"],
+      "groupName": "docker images",
+      "commitMessagePrefix": "deps(docker)",
+      "schedule": ["before 9am on first day of month"]
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions",
+      "commitMessagePrefix": "deps(ci)",
+      "schedule": ["before 9am on first day of month"]
+    },
+    {
+      "matchManagers": ["gitlabci", "gitlabci-include"],
+      "groupName": "gitlab ci",
+      "commitMessagePrefix": "deps(ci)",
+      "schedule": ["before 9am on first day of month"]
+    },
+    {
+      "matchPackagePatterns": ["^golang.org/x/", "^google.golang.org/"],
+      "groupName": "golang.org + google.golang.org"
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "labels": ["security"],
+    "schedule": ["at any time"],
+    "prCreation": "immediate"
+  }
+}

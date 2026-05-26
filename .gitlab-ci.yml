@@ -257,6 +257,36 @@ trivy-fs:
       - trivy-fs.sarif
     expire_in: 1 month
 
+# Renovate Bot — self-hosted замена Dependabot для GitLab. Конфиг в
+# renovate.json в корне. Запускается по schedule (CI/CD → Schedules в UI
+# GitLab, рекомендую weekly `0 7 * * 1` — понедельник 07:00 UTC) и вручную.
+#
+# Required CI/CD Variables:
+#   - RENOVATE_TOKEN — Project (или Group) Access Token со scope `api` +
+#     `write_repository`; от него renovate создаёт MR.
+#   - GITHUB_COM_TOKEN (опционально) — read-only token для github.com,
+#     нужен для подтягивания CHANGELOG'ов npm-пакетов и release notes.
+renovate:
+  stage: security
+  image:
+    name: renovate/renovate:latest
+    entrypoint: [""]
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - when: manual
+      allow_failure: true
+  variables:
+    LOG_LEVEL: info
+    RENOVATE_PLATFORM: gitlab
+    RENOVATE_ENDPOINT: "$CI_API_V4_URL"
+    RENOVATE_AUTODISCOVER: "false"
+    RENOVATE_REPOSITORIES: "$CI_PROJECT_PATH"
+    # Авто-merge minor/patch держим OFF — пусть человек подтверждает.
+    RENOVATE_AUTOMERGE: "false"
+  script:
+    - renovate
+
 # Nancy (Sonatype OSS Index) — дополнительный CVE-источник, перекрывает
 # govulncheck по less-критичным. Не SARIF, просто фейлится по списку.
 nancy:
