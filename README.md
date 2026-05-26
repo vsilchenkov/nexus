@@ -130,17 +130,36 @@ OpenAPI / Swagger: `make swagger` генерирует [docs/web/](./docs/web/) 
 
 ## Docker images (release builds)
 
-Релизные multi-arch образы (amd64+arm64) публикуются в GHCR по тегу `v*`:
+Релизные multi-arch образы (amd64+arm64) публикуются в registry по тегу `v*`.
+Один [.goreleaser.yaml](./.goreleaser.yaml) работает в обоих CI:
 
-```
-ghcr.io/<owner>/<repo>/receiver:<version>
-ghcr.io/<owner>/<repo>/sender:<version>
-ghcr.io/<owner>/<repo>/web:<version>
-```
+- **GitHub Actions** ([release.yml](./.github/workflows/release.yml)) →
+  `ghcr.io/<owner>/<repo>/{receiver,sender,web}:<version>`
+- **GitLab CI** ([release job в .gitlab-ci.yml](./.gitlab-ci.yml)) →
+  `$CI_REGISTRY_IMAGE/{receiver,sender,web}:<version>` (GitLab Container Registry)
+
+Различия параметризованы через env-переменные `DOCKER_REGISTRY_BASE` и
+`COMPARE_URL_BASE`, которые задаёт каждый CI. GoReleaser автодетектит платформу
+по наличию `GITHUB_TOKEN` или `GITLAB_TOKEN`.
 
 Локальный snapshot для проверки релизной сборки — `make release-snapshot`
-(артефакты в `dist/`). См. [.goreleaser.yaml](./.goreleaser.yaml) и
-[.github/workflows/release.yml](./.github/workflows/release.yml).
+(артефакты в `dist/`).
+
+## CI/CD
+
+Pipeline'ы покрывают unit-тесты, lint, build, security и release. Поддерживаются
+обе платформы:
+
+| Что                            | GitHub Actions                                                 | GitLab CI                                          |
+|--------------------------------|----------------------------------------------------------------|----------------------------------------------------|
+| Unit + lint + build + swagger  | [ci.yml](./.github/workflows/ci.yml)                           | [.gitlab-ci.yml](./.gitlab-ci.yml) stages test/lint/build |
+| Integration (testcontainers)   | `ci.yml` (label `run-integration`)                             | `.gitlab-ci.yml` job `integration`                 |
+| Security (govulncheck/gosec/trivy/nancy) | [security.yml](./.github/workflows/security.yml)     | `.gitlab-ci.yml` security stage                    |
+| Release (GoReleaser)           | [release.yml](./.github/workflows/release.yml)                 | `.gitlab-ci.yml` release stage                     |
+| Auto-updates deps              | [dependabot.yml](./.github/dependabot.yml)                     | [renovate.json](./renovate.json) + renovate job    |
+
+GitLab CI запускается на self-hosted runner с тегом `srv-d-android-l` —
+смотри шапку [.gitlab-ci.yml](./.gitlab-ci.yml) для required CI/CD Variables.
 
 ## Вклад в проект
 

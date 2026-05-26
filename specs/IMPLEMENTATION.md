@@ -576,6 +576,40 @@ make proto                                     # перегенерация send
 4. **Multi-tenancy v2** — колонки `team_id` уже есть, нужен RBAC по team_id
    + миграция existing `'default'`-данных.
 
+Сделанное в Phase 9.2 (GitLab CI):
+
+- 9.2 GitLab CI pipeline ([.gitlab-ci.yml](../.gitlab-ci.yml)) — аналог
+  трёх GitHub workflows (ci/security/release) в одном файле для self-hosted
+  GitLab. Все jobs на ноде `srv-d-android-l` через `default: tags`.
+  · 9.2a CI stages: `test` (go vet + go test -race -short), `lint`
+  (golangci-lint v1.62 + swagger-drift), `build` (go build ./... + Vite SPA
+  с artifact'ом web-ui/dist), `integration` (testcontainers с pre-pull
+  docker-образов; запуск на master/dev/tag или MR с label `run-integration`).
+  · 9.2b Security stage: 4 jobs (govulncheck — единственный gate'ующий с
+  call-graph анализом; gosec/trivy/nancy — allow_failure=true, alerts only).
+  Триггеры через anchor `.security-rules`: push в master/dev, MR при
+  изменении deps-файлов, schedule, manual. SARIF artifacts через
+  `artifacts.paths` (Premium-фичи Security Dashboard в CE недоступны).
+  · 9.2c Release stage: GoReleaser → GitLab Container Registry
+  (`$CI_REGISTRY_IMAGE/{receiver,sender,web}`), multi-arch amd64+arm64
+  через docker:dind + buildx + tonistiigi/binfmt. Триггер `$CI_COMMIT_TAG =~ /^v[0-9]/`.
+  Required CI/CD Variables: `GITLAB_TOKEN` (Project Access Token со
+  scope api+write_repository — для release entry).
+  · 9.2d Renovate Bot ([renovate.json](../renovate.json)) — self-hosted
+  замена Dependabot. 4 ecosystems (gomod, npm в web-ui, dockerfile/compose,
+  gitlab-ci/github-actions). Группировка minor+patch в один MR; major —
+  отдельный с label major-update; vulnerability alerts создаются немедленно
+  (не ждут weekly). Renovate job в pipeline запускается по schedule/web/manual.
+- 9.2 Параметризация общего `.goreleaser.yaml` под обе CI-системы:
+  · `ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}` → `{{ .Env.DOCKER_REGISTRY_BASE }}`
+  (30 строк в `dockers:` и `docker_manifests:`).
+  · Footer compare-URL через `{{ .Env.COMPARE_URL_BASE }}` — GitHub
+  использует `/compare/`, GitLab `/-/compare/`.
+  · Убран явный `release.github:` блок — GoReleaser автодетектит CI
+  по `GITHUB_TOKEN` / `GITLAB_TOKEN`.
+  · `.github/workflows/release.yml` дополнен `DOCKER_REGISTRY_BASE` и
+  `COMPARE_URL_BASE` в env шага GoReleaser; поведение не меняется.
+
 Сделанное в Phase 9.1:
 
 - 9.1 Дотягивание v1: детерминированный `LogReader.GetByID`.
