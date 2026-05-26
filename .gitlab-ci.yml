@@ -267,3 +267,54 @@ nancy:
   script:
     - go install github.com/sonatype-nexus-community/nancy@latest
     - go list -json -deps ./... | $GOPATH/bin/nancy sleuth --loud
+
+# ----------- RELEASE stage --------------------------------------------------
+# Триггерится тегом v*. Использует GoReleaser → GitLab Container Registry
+# (registry.gitlab.com/<owner>/<repo>/{receiver,sender,web}) для docker-образов
+# и GitLab Releases API для архивов / GitHub-style release page.
+#
+# Один .goreleaser.yaml работает и здесь, и в GitHub Actions: DOCKER_REGISTRY_BASE
+# + COMPARE_URL_BASE передаются через env; GoReleaser автодетектит CI по наличию
+# GITLAB_TOKEN.
+#
+# Требования к runner:
+#   - доступ к Docker daemon (через docker:dind service или docker.sock).
+#     По умолчанию настроен DinD; если runner — shell-executor с локальным
+#     docker, services-блок можно удалить.
+#   - привилегии на DinD (privileged: true в config.toml runner'а).
+#
+# Required CI/CD Variables (Settings → CI/CD → Variables):
+#   - GITLAB_TOKEN — Project Access Token со scope `api` + `write_repository`;
+#     нужен GoReleaser'у для создания release entry в GitLab.
+
+release:
+  stage: release
+  image: goreleaser/goreleaser:v2
+  services:
+    - name: docker:24-dind
+      alias: docker
+  variables:
+    DOCKER_HOST: "tcp://docker:2375"
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_DRIVER: overlay2
+    # Общий контракт с .github/workflows/release.yml — см. шапку .goreleaser.yaml.
+    DOCKER_REGISTRY_BASE: $CI_REGISTRY_IMAGE
+    COMPARE_URL_BASE: "$CI_PROJECT_URL/-/compare"
+    # GoReleaser автодетектит GitLab по наличию GITLAB_TOKEN; для git operations
+    # дополнительно требуется fetch-depth: 0 — в GitLab он по умолчанию.
+    GIT_DEPTH: "0"
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v[0-9]/
+  timeout: 60 minutes
+  before_script:
+    - apk add --no-cache git
+    # Multi-arch buildx (для linux/amd64 + linux/arm64). QEMU включается через
+    # tonistiigi/binfmt — нужно privileged runner.
+    - docker run --privileged --rm tonistiigi/binfmt --install all
+    - docker buildx create --use --name multiarch --driver docker-container
+    - docker buildx inspect --bootstrap
+    # Login в GitLab Container Registry — переменные CI_REGISTRY_* предоставляются
+    # GitLab автоматически (read+write для текущего проекта).
+    - echo "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" --password-stdin
+  script:
+    - goreleaser release --clean
