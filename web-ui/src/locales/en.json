@@ -31,7 +31,10 @@
       "disabled": "Disabled",
       "paused": "Paused"
     },
-    "actions": { "edit": "Edit", "delete": "Delete", "dry_run": "Dry-run", "replay": "Replay" }
+    "actions": { "edit": "Edit", "delete": "Delete", "dry_run": "Dry-run", "replay": "Replay" },
+    "webhook": {
+      "hint": "Receive webhooks at POST /v1/callback/{path}. The signature is HMAC-SHA256 of the raw request body using the secret above, hex-encoded, optionally prefixed (e.g. \"sha256=\") and placed in the header."
+    }
   },
   "logs": {
     "empty": "No log entries",

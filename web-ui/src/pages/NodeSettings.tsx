@@ -18,6 +18,8 @@ type Form = {
   auth_credentials: string;
   incoming_auth_type: string;
   incoming_auth_credentials: string;
+  webhook_signature_header: string;
+  webhook_signature_prefix: string;
   timeout_ms: number;
   retry_count: number;
   retry_backoff_ms: number;
@@ -38,6 +40,8 @@ const emptyForm: Form = {
   auth_credentials: "",
   incoming_auth_type: "none",
   incoming_auth_credentials: "",
+  webhook_signature_header: "X-Hub-Signature-256",
+  webhook_signature_prefix: "sha256=",
   timeout_ms: 30000,
   retry_count: 0,
   retry_backoff_ms: 1000,
@@ -219,11 +223,17 @@ export default function NodeSettings() {
               <Select
                 value={form.incoming_auth_type}
                 onChange={(v) => set("incoming_auth_type", v)}
-                options={["none", "basic", "token"]}
+                options={["none", "basic", "token", "webhook_signature"]}
               />
             </Field>
             {form.incoming_auth_type !== "none" && (
-              <Field label="incoming_auth_credentials">
+              <Field
+                label={
+                  form.incoming_auth_type === "webhook_signature"
+                    ? "webhook_secret"
+                    : "incoming_auth_credentials"
+                }
+              >
                 <input
                   className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none border border-bg-muted focus:border-accent"
                   value={form.incoming_auth_credentials}
@@ -231,6 +241,32 @@ export default function NodeSettings() {
                   placeholder={isNew ? "" : "leave empty to keep current"}
                 />
               </Field>
+            )}
+            {form.incoming_auth_type === "webhook_signature" && (
+              <>
+                <Field label="webhook_signature_header">
+                  <input
+                    className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none border border-bg-muted focus:border-accent font-mono"
+                    value={form.webhook_signature_header}
+                    onChange={(e) => set("webhook_signature_header", e.target.value)}
+                    placeholder="X-Hub-Signature-256"
+                  />
+                </Field>
+                <Field label="webhook_signature_prefix">
+                  <input
+                    className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none border border-bg-muted focus:border-accent font-mono"
+                    value={form.webhook_signature_prefix}
+                    onChange={(e) => set("webhook_signature_prefix", e.target.value)}
+                    placeholder="sha256="
+                  />
+                </Field>
+                <div className="col-span-2 text-xs text-fg-muted bg-bg-muted/40 rounded-md p-3">
+                  {t("node.webhook.hint", {
+                    defaultValue:
+                      "Receive webhooks at POST /v1/callback/{path}. Signature is HMAC-SHA256 of raw body with the secret, hex-encoded, optionally prefixed (e.g. \"sha256=\") in the header above.",
+                  })}
+                </div>
+              </>
             )}
             <Field label="auth_type (outgoing)">
               <Select

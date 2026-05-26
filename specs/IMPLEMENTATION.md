@@ -582,6 +582,28 @@ make proto                                     # перегенерация send
 - 6.8 Расширенные фильтры live-tail (period/IP/Host/full-text).
 - 6.9 Audit log: diff-двухколоночный для `node.update`.
 
+Сделанное в Phase 8.1b (frontend):
+
+- 8.1b SPA UI для webhook_signature: в форме узла
+  ([pages/NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx))
+  расширил secret-блок:
+  · `incoming_auth_type` теперь принимает `webhook_signature` (4-й
+  option).
+  · При выборе `webhook_signature` лейбл поля `incoming_auth_credentials`
+  меняется на `webhook_secret` (UX — пользователь не должен путать
+  webhook-секрет с api-токеном).
+  · Появляются два технических поля: `webhook_signature_header` (default
+  "X-Hub-Signature-256") и `webhook_signature_prefix` (default "sha256=")
+  — оба моноширинные, чтобы было видно регистр (`X-Hub-...` vs `x-hub-...`).
+  · Хелп-блок снизу: «Receive webhooks at POST /v1/callback/{path}. The
+  signature is HMAC-SHA256 of the raw request body using the secret
+  above, hex-encoded, optionally prefixed (e.g. "sha256=") and placed in
+  the header.» Переведён в [locales/en.json](../web-ui/src/locales/en.json)
+  и [ru.json](../web-ui/src/locales/ru.json) под ключом `node.webhook.hint`.
+  · SPA пересобран (`make build-ui`), bundle обновлён в
+  `internal/web/static/`. Старые `index-*.css/.js` удалены (Vite использует
+  content-hash в именах, Makefile-`cp` не удаляет устаревшие).
+
 Сделанное в Phase 8.1 (backend):
 
 - 8.1 Webhook callback endpoint с HMAC-SHA256 подписью (§16 ТЗ —
