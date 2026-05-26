@@ -162,11 +162,11 @@ integration:
   before_script:
     - go env -w GOPATH=$GOPATH GOCACHE=$GOCACHE GOMODCACHE=$GOMODCACHE
     - go mod download
-    # Pre-pull docker-образы — cached слои ускоряют testcontainers.
-    - docker pull postgres:16-alpine || true
-    - docker pull redis:7-alpine || true
-    - docker pull confluentinc/confluent-local:7.5.0 || true
-    - docker pull clickhouse/clickhouse-server:24-alpine || true
+    # NB: docker pre-pull убран. golang:${GO_VERSION} (debian) идёт без
+    # docker CLI — testcontainers-go ходит к daemon'у напрямую через
+    # docker.sock, а `docker pull` в before_script писал в лог
+    # «command not found» (спасало только `|| true`). Если нужен прогрев
+    # слоёв — нужен image c docker-cli или отдельный prepare-job.
   script:
     - go test -tags=integration -timeout 20m -count=1 ./tests/integration/...
 
