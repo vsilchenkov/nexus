@@ -1,0 +1,189 @@
+# Changelog
+
+Все заметные изменения в проекте документируются в этом файле.
+
+Формат основан на [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/),
+проект следует [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+> Версионирование запустится с первым git-тегом `v*` (см. [.github/workflows/release.yml](.github/workflows/release.yml)).
+> До этого момента всё попадает в `[Unreleased]`, сгруппировано по фазам разработки.
+
+---
+
+## [Unreleased]
+
+### Phase 7.9 — pre-commit hooks (lefthook)
+
+#### Added
+- `lefthook.yml` — pre-commit (gofmt/goimports/govet/golangci-lint `--new-from-rev=HEAD~ --fast`),
+  pre-push (`go test -short` + swag drift-check), commit-msg (формат `Phase N.M:` или conventional).
+- Make-цели `install-hooks`/`uninstall-hooks`/`hooks-run` с авто-установкой lefthook через `go install`.
+- CONTRIBUTING.md — раздел «Git hooks» с описанием ивентов.
+
+### Phase 7.8 — CONTRIBUTING + актуализация документации
+
+#### Added
+- `CONTRIBUTING.md` — процесс работы (блоки/коммиты/IMPLEMENTATION.md), стиль кода, тестирование, CI/release.
+- README badges (CI / Security / Release / Go version).
+- Раздел «Docker images (release builds)» в README со ссылками на GHCR-теги.
+
+#### Changed
+- README статус-таблица обновлена строками Phase 6 и Phase 7.
+- IMPLEMENTATION.md: устаревшие ⛔ пометки на «полный лейаут §7» и «app_settings + UI Sentry» заменены на ✅ Phase 6.3/6.4.
+- Раздел «Куда копать дальше» переписан под §16 ТЗ (OpenTelemetry/webhook signatures/KMS/multi-tenancy).
+
+### Phase 7.7 — security scanning workflow
+
+#### Added
+- `.github/workflows/security.yml` — 4 параллельных job'а:
+  - **govulncheck** (call-graph CVE-анализ, гейтит PR),
+  - **gosec** (OWASP/CWE → SARIF в Security tab),
+  - **Trivy fs** (vuln + secrets + Dockerfile/YAML misconfig → SARIF),
+  - **Nancy** (Sonatype OSS Index, дополнительный source, `continue-on-error`).
+- Триггеры: push/PR в master|dev, weekly cron (вс 06:00 UTC), workflow_dispatch.
+- Make-цели `vuln-check`/`gosec`/`security-scan` с авто-установкой через `go install`.
+
+### Phase 7.6 — GoReleaser + multi-arch docker
+
+#### Added
+- `.goreleaser.yaml` — 5 builds (receiver/sender/web/rotate-key/loadtest) × Linux/Windows/macOS × amd64+arm64.
+- Archives (tar.gz + zip для Windows) с README/LICENSE/config.example/migrations, SHA-256 checksums, GitHub-changelog с группами Features/Bug fixes/Phase milestones.
+- 6 docker images (receiver/sender/web × amd64+arm64) через `deploy/docker/release.Dockerfile` + 3 multi-arch manifests `:{Version}` и `:latest` в GHCR.
+- `.github/workflows/release.yml` — триггер на тег `v*` + workflow_dispatch; QEMU + Buildx + GHCR login.
+- Make-цели `release-check` (синтаксис) / `release-snapshot` (артефакты в `dist/`).
+- `bus/internal/platform/build.{Version,Commit,BuildDate}` переменные пакета, переопределяются через `-ldflags`; fallback на versioninfo.json при обычной сборке.
+- `bootstrap.Init` логирует `commit`/`build_date`, если заполнены.
+
+### Phase 7.5 — Grafana dashboard + Prometheus alert rules
+
+#### Added
+- `deploy/grafana/databus.json` — 10 панелей (RPS, error rate, request duration p50/p95/p99, Kafka lag, CH buffer/errors/dropped/fallback, L2 cache hit ratio, Go runtime).
+- `deploy/prometheus.alerts.yml` — 9 alert rules (up==0, 5xx>5%, p95>200ms, kafka_lag>10k, CH errors/buffer/dropped, L2 stale-fallback).
+- `deploy/grafana/README.md` — инструкция импорта.
+
+### Phase 7.4 — GitHub Actions CI
+
+#### Added
+- `.github/workflows/ci.yml` — go-test (race -short), go-build, go-lint (golangci-lint v1.62), swagger-drift, ui (Node 20 + vite build), integration (label `run-integration`).
+- `.golangci.yml` — bodyclose/rowserrcheck/errcheck/govet/revive/staticcheck.
+- `.github/dependabot.yml` — weekly gomod + npm, monthly github-actions; группировка minor/patch.
+
+### Phase 7.3 — расширенный integration suite
+
+#### Added
+- Redis testcontainers (SessionRepo CRUD + DeleteByUser + TTL expire, NodeCache Set/GetByPath/Invalidate).
+- ClickHouse testcontainers (chlog.Writer batch insert + LogReaderCH `GetByID`/`Search` с фильтрами status/IP/Done/full-text + SQL-injection guard в имени таблицы).
+- Generic `testcontainers.GenericContainer` (без отдельных модулей) с retry-ping для CH native-handshake.
+
+### Phase 7.2 — L2 in-memory LRU кеш узлов в Receiver
+
+#### Added
+- `nodecache.L2Reader` — decorator над `port.NodeReader`, generic `LRU[V]` (~150 строк через `container/list`+map+mutex).
+- Stale-fallback при downstream-ошибках (§9.4 ТЗ — Redis и PG одновременно лежат).
+- Конфиг `receiver.l2_cache.{enabled,size,ttl_ms,stale_ttl_ms}` с zero-overhead disable.
+- Метрики `databus_l2_cache_{hits,misses,evictions}_total` + `_size`.
+
+### Phase 7.1 — Swagger 100% endpoints + UI
+
+#### Added
+- Swagger-аннотации на all handlers (auth, nodes, users, tokens, audit, dry-run, replay, logs, settings/app, settings/clickhouse/orphans).
+- `ginswagger.WrapHandler` в `internal/web/app.go` + blank-import `_ "bus/docs/web"` → UI на `/swagger/index.html`.
+- Deps `github.com/swaggo/gin-swagger` + `github.com/swaggo/files`.
+
+### Phase 6 — Web admin, observability, hot-reload, audit improvements
+
+См. подробности в [IMPLEMENTATION.md](specs/IMPLEMENTATION.md) (раздел «Сделанное в Phase 6»).
+Резюме: 9 блоков (6.1-6.9).
+
+#### Added
+- Prometheus метрики (`databus_requests_total`, latency, kafka_lag, CH-метрики).
+- Async e2e integration через Kafka.
+- `app_settings` таблица + REST API + overlay поверх env.
+- Hot-reload Sentry через Redis pub/sub.
+- Полное hot-reload ClickHouse (Manager + WriterManager).
+- Test connection для Sentry/ClickHouse.
+- Settings → Users полный CRUD страница (§7.9/§7.10).
+- Live-tail UI: подсветка новых записей (1s), авто-прокрутка, баннер «N new», pagination size, фильтры status/done.
+- CSV-экспорт audit log (`/api/audit/export.csv`).
+- ClickHouse orphan-tables — сканер + DROP с подтверждением.
+- Live-tail расширенные фильтры (period/IP/Host/full-text через `port.LogQuery`).
+- Audit log diff-двухколоночный для `node.update` (компонент `AuditDetailsCell`).
+
+### Phase 5 — paused→async, dry-run, replay, SSE live-tail, i18n, SPA
+
+#### Added
+- paused-узел в sync: 202 + `queued:true` + `node_status:paused` через сигнальный `ErrNodePaused`.
+- `POST /api/nodes/dry-run` (§7.5.1) — пошаговый отчёт без реального запроса.
+- `POST /api/logs/{id}/replay` (§7.4.1) — replay через HTTPDispatcher (реальный Receiver pipeline, не bypass) + маркер `__replay_of` + rate-limit 10/мин.
+- SSE live-tail `/api/nodes/{id}/logs/stream` (§7.4) с heartbeat, `RequireSessionOnly` (отклоняет API-токены).
+- `rotate-encryption-key` утилита (идемпотентная, v1-формат `v1:nonce:ct:tag`).
+- CH partition-drop housekeeping (§4.3) + миграция `clickhouse_retention_days`.
+- Swagger generation + drift-check (`make swagger-drift-check`).
+- `port.UnitOfWork` (атомарные Create/Update/Delete с audit-записью в одной транзакции).
+- Sentry tracing-middleware для Gin (§14.3).
+- i18n / Accept-Language (en/ru) на backend + SPA.
+- SPA: React 18 + Vite + TS + Tailwind + TanStack Query + react-i18next, 6 страниц.
+- Integration testcontainers (Postgres + миграции).
+
+### Phase 5.1 — CH file-fallback, расширенный i18n, integration sync
+
+#### Added
+- NDJSON file-fallback при недоступности CH (`adapter/out/chlog/fallback.go`) с атомарной записью `.tmp` + rename и Windows-safe restore.
+- Расширенный i18n на handlers.
+- Расширение SPA (NodeSettings, ApiTokens, Language, Theme, AuditLog).
+
+### Phase 5.2 — unit-тесты Replay/Logs/Sentry, локализация SPA, docs
+
+#### Added
+- Unit-тесты для Replay/Logs usecase, Sentry middleware.
+- Локализация SPA-сообщений.
+- `specs/IMPLEMENTATION.md` — карта проделанных работ.
+- CLAUDE.md §0 «Project orientation» + явный процесс «коммит на блок + обновление IMPLEMENTATION.md».
+
+### Phase 4 — loadtest, unit-тесты, housekeeping
+
+#### Added
+- `cmd/loadtest` бинарь (§10.2 ТЗ) — 500 rps × 10 мин с pass/fail-критериями.
+- Unit-тесты для критических usecase'ов (domain/crypto/i18n/sentry/receiver-usecase).
+- Housekeeping cron — audit retention.
+
+### Phase 3 — Web auth, API tokens, SPA каркас
+
+#### Added
+- Web auth: users CRUD, sessions в Redis, login/logout/me, RBAC, `--set-admin-password` CLI.
+- API-токены: SHA-256 hash, scopes, rate-limit, audit.
+- GET `/api/audit` с фильтрами.
+- SPA каркас через embed.FS (index.html-заглушка).
+
+### Phase 2 — async через Kafka, circuit breaker, rate-limit, audit
+
+#### Added
+- Kafka admin + producer + consumer на `segmentio/kafka-go` (auto-create topics, retention 30 дней, acks=all, idempotence).
+- Receiver `/v1/requestAsync/*` — producer, envelope, paused→202.
+- Sender consumer для `databus.async` — async-обработка + DLQ + paused-pacing (offset commit только после успешной доставки).
+- Circuit breaker per-node в Redis (§9.5).
+- Rate-limit per-node + per-token через Redis.
+- `user_audit` таблица + AuditRepo + AuditUsecase + запись для CRUD узлов.
+
+### Phase 1 — sync end-to-end, auth, AES-256-GCM, gRPC, ClickHouse
+
+#### Added
+- Sync end-to-end: `/v1/request/*` → Receiver → gRPC к Sender → внешний URL → лог в ClickHouse.
+- Все режимы incoming auth (none/basic/token) и outgoing auth (none/basic/token/token_from_request/basic_from_request).
+- URL-режимы `static`/`from_request` с allowlist + wildcard `*.partner.com`.
+- AES-256-GCM шифрование auth_credentials в БД (v1-формат `v1:nonce:ct:tag`).
+- proto/sender/v1/sender.proto + `make proto` + сгенерированный gRPC код.
+- HTTP-клиент с keep-alive + retry/backoff.
+- ClickHouse batch writer (§4 ТЗ).
+- Постгрес-миграции 0001-0002 (uuid extension, methods, nodes, node_headers, users).
+- Domain (Node, User, Session, LogRecord) + ports.
+
+### Phase 0 — фундамент
+
+#### Added
+- Скелет трёх сервисов (Receiver/Sender/Web), docker-compose, healthcheck, kardianos/service runner.
+- Базовая инфраструктура `internal/platform/{config,logging,sentry,pg,redis,clickhouse,kafka,crypto,...}`.
+
+---
+
+[Unreleased]: https://github.com/vsilchenkov/databus/compare/HEAD

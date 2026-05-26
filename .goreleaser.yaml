@@ -109,6 +109,8 @@ archives:
         formats: [zip]
     files:
       - README.md
+      - CHANGELOG.md
+      - CONTRIBUTING.md
       - CLAUDE.md
       - LICENSE*
       - config/config.example.yml
@@ -311,8 +313,9 @@ release:
   header: |
     ## DataBus {{ .Version }}
 
-    См. [specs/IMPLEMENTATION.md](specs/IMPLEMENTATION.md) — карту реализации с привязкой
-    к разделам ТЗ и [README.md](README.md) для быстрого старта.
+    См. [CHANGELOG.md](CHANGELOG.md) — детальный список изменений по фазам;
+    [specs/IMPLEMENTATION.md](specs/IMPLEMENTATION.md) — карта реализации с привязкой к разделам ТЗ;
+    [README.md](README.md) — быстрый старт.
 
     Docker images: `ghcr.io/<owner>/<repo>/{receiver,sender,web}:{{ .Version }}` (multi-arch amd64+arm64).
   footer: |

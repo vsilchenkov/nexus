@@ -146,6 +146,10 @@ ghcr.io/<owner>/<repo>/web:<version>
 
 См. [CONTRIBUTING.md](./CONTRIBUTING.md) — конвенции, процесс работы, CI/release pipeline.
 
+## Changelog
+
+История изменений по фазам — в [CHANGELOG.md](./CHANGELOG.md) (формат Keep a Changelog).
+
 ## Тестирование
 
 См. [TESTING.md](./TESTING.md).

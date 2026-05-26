@@ -581,6 +581,19 @@ make proto                                     # перегенерация send
 - 6.8 Расширенные фильтры live-tail (period/IP/Host/full-text).
 - 6.9 Audit log: diff-двухколоночный для `node.update`.
 
+Сделанное в Phase 7.10:
+
+- 7.10 CHANGELOG.md — [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/) формат.
+  · Единая секция `[Unreleased]` с подзаголовками по фазам — нужная история
+  есть, но `[x.y.z]`-заголовки появятся вместе с первым git-тегом `v*` (после
+  чего release-workflow поедет в нормальный SemVer-режим).
+  · Содержит **15 фаз** (Phase 0 → 7.9), сгруппированы по Added/Changed
+  (для каждой); ссылки на ключевые файлы / handlers / endpoints.
+  · GoReleaser archives дополнены `CHANGELOG.md` + `CONTRIBUTING.md`;
+  `release.header` теперь ссылается на CHANGELOG как первый источник истины
+  (вторым — IMPLEMENTATION.md, третьим — README).
+  · README дополнен разделом «Changelog» со ссылкой.
+
 Сделанное в Phase 7.9:
 
 - 7.9 Pre-commit hooks через [lefthook](https://github.com/evilmartians/lefthook):
