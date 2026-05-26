@@ -20,7 +20,7 @@
 | Главный поток           | `POST /v1/request/{path}` → Receiver → gRPC Sender → внешний URL → лог в ClickHouse |
 | Async                   | `POST /v1/requestAsync/{path}` → Receiver → Kafka → Sender-consumer   |
 | Зависимости              | PostgreSQL 16, Redis 7, ClickHouse 24, Kafka 3.7 (KRaft), Prometheus  |
-| Покрытие unit-тестами   | 11 пакетов (domain, crypto, i18n, sentry, receiver/usecase, chlog, web/usecase, metrics, **healthcheck**, **config**, **clickhouse**, **reloader**, **nodecache**) |
+| Покрытие unit-тестами   | 12 пакетов (domain, crypto, i18n, sentry, receiver/usecase, chlog, web/usecase, metrics, healthcheck, config, clickhouse, reloader, nodecache, **+ sender/usecase в Phase 7.12**) |
 | SPA-фронт               | React 18 + Vite + TS + Tailwind + TanStack Query + react-i18next, 6 страниц |
 | Бинари в `cmd/`         | `receiver`, `sender`, `web`, `loadtest`, `rotate-key`                 |
 
@@ -580,6 +580,66 @@ make proto                                     # перегенерация send
 - 6.7 ClickHouse orphan-tables (сканер + DROP с подтверждением).
 - 6.8 Расширенные фильтры live-tail (period/IP/Host/full-text).
 - 6.9 Audit log: diff-двухколоночный для `node.update`.
+
+Сделанное в Phase 7.12:
+
+- 7.12 Расширение unit-test покрытия на ранее непокрытые usecase-пакеты (~38
+  новых тестов, продолжение линии Phase 7.11):
+  · **`internal/receiver/usecase/envelope.go`** ([envelope_test.go](../internal/receiver/usecase/envelope_test.go))
+  — 5 тестов на `BuildEnvelope`: happy-path (ID/NodePath/Method/TargetURL/AuthHeader/
+  ClientIP/Body копируются; ForwardHeaders + Content-Type — единственные заголовки,
+  что попадают в envelope; ReceivedAt свежий и в UTC); ForwardHeaders=nil + только
+  Content-Type автодобавляется (Authorization/Cookie из исходных headers НЕ утекают);
+  отсутствие Content-Type → ничего лишнего; merge query c существующим URL'ом;
+  case-insensitive ForwardHeaders → нормализация через CanonicalHeaderKey.
+  · **`internal/web/usecase/orphan_scanner.go`** ([orphan_scanner_test.go](../internal/web/usecase/orphan_scanner_test.go))
+  — 24 теста (18 table-driven для `isSafeTableNameLocal` + 6 на Scan/Drop):
+  валидные форматы `db.table` (digits, underscores, mixed case), отказы на SQL-инъекции
+  (semicolon/quote/space/backtick), кириллице, hyphen, без точки, ведущая/завершающая
+  точка, две точки, длина >128, граничный 128 = ok; для `Drop` — отказ на
+  невалидное имя, отказ на чужую БД, отказ если таблица всё ещё в use узла
+  (case-insensitive match через known-set), nil-conn после прохождения guard'ов.
+  Тестируется через `OrphanScannerConnProvider`-интерфейс (`nilConnProvider`),
+  чтобы не тащить полный `chdriver.Conn` mock.
+  · **`internal/web/usecase/api_token.go`** ([api_token_test.go](../internal/web/usecase/api_token_test.go))
+  — 9 тестов: `generateToken` (префикс `db_`, длина = prefix+43 символа base64-url,
+  два подряд токена различны = энтропия есть); `hashToken` (SHA-256 hex детерминистичен,
+  ровно 64 lowercase-hex символа); `Create` happy-path (в БД лежит SHA-256, не plain;
+  Prefix = первые 8 символов, audit-запись с `ActionAPITokenCreate`); `Create` без
+  name → ошибка `name is required`; `Verify` happy-path с асинхронным `TouchLastUsed`
+  (через `assert.Eventually`); `Verify` table-driven на 5 невалидных форматов
+  (`not an api token`); неизвестный токен → `ErrUnauthorized` (а не `ErrNotFound` —
+  не утекаем существование); просроченный токен → `ErrUnauthorized`; revoked токен →
+  `ErrUnauthorized`; inactive user → `ErrUserInactive`. Шифрование/scopes —
+  через `inMemAPITokenRepo` и `userRepoStub` (новые, локальные для теста, чтобы не
+  конфликтовать с уже существующим `stubNodeRepo` в `replay_test.go`).
+  · **`internal/sender/usecase/send.go`** ([send_test.go](../internal/sender/usecase/send_test.go))
+  — 8 тестов: `md5hex` (детерминистичный, lowercase hex 32 символа, MD5("") =
+  `d41d8cd98f00b204e9800998ecf8427e`); `extractQuery` table-driven (с query/без/пустой
+  marker/broken URL); `Send` happy-path 200 (запись лога с done=true, LogResponseBody
+  отрабатывает, `RecordSuccess` на breaker, attempts_details пустой для 1 попытки);
+  circuit breaker open → 503 без HTTP-вызова, reason=`circuit_breaker_open`;
+  4xx ответ не ретраится даже при RetryCount=3 → 1 попытка, breaker `RecordFailure`;
+  5xx → 5xx → 2xx — retry с экспоненциальным backoff до успеха, в attempts_details
+  лежит JSON всех попыток; все попытки в conn refused → status=0, error из последней
+  попытки, breaker.RecordFailure; LogRequestBody=true сохраняет request body, query
+  из TargetURL парсится в `rec.Parameters`; nil-breaker заменяется на `noopBreaker`
+  (Allow всегда true).
+  · **`internal/sender/usecase/async.go`** ([async_test.go](../internal/sender/usecase/async_test.go))
+  — 8 тестов на `AsyncProcessor.Handle` (Kafka-обработчик, §3.6): битый JSON envelope →
+  Ack (не повторяем); неизвестный узел (`ErrNodeNotFound`) → Ack; временная ошибка
+  чтения узла → Retry (без commit'а offset'а); disabled-узел → Ack (дроп); paused-узел →
+  Retry + sleep `pausedRetryAfter` (для теста сокращён до 5ms); enabled+2xx → Ack
+  без DLQ; enabled+5xx → DLQ с headers (`reason="status=502 ..."`, `last_attempt_at`);
+  DLQ produce failed → Retry (не теряем сообщение).
+  · **Windows OOM при `go test -p N ./...`** — компиляция test-binary для двух
+  тяжёлых пакетов (`sender/usecase` + `web/usecase`) параллельно валит линкер с
+  `VirtualAlloc errno=1455`. Решается прогоном `go test -p 1 ./internal/...` или
+  по одному пакету. Это известная Windows-специфика (CLAUDE.md «грабли» #1), не
+  регрессия — в CI/Linux всё стандартно.
+  · Покрытие в IMPLEMENTATION.md обновлено: 11 → **12 пакетов**
+  (+ `sender/usecase`; для `web/usecase` и `receiver/usecase` пакеты не новые,
+  но покрытие в них существенно расширено новыми файлами тестов).
 
 Сделанное в Phase 7.11:
 
