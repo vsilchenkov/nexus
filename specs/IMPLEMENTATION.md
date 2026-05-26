@@ -19,7 +19,7 @@
 | Архитектура             | Clean Architecture: `handler → usecase → port → adapter`              |
 | Главный поток           | `POST /v1/request/{path}` → Receiver → gRPC Sender → внешний URL → лог в ClickHouse |
 | Async                   | `POST /v1/requestAsync/{path}` → Receiver → Kafka → Sender-consumer   |
-| Зависимости              | PostgreSQL 16, Redis 7, ClickHouse 24, Kafka 3.7 (KRaft), Prometheus  |
+| Зависимости              | PostgreSQL 16, Redis 7, ClickHouse 24, Kafka 3.9 (KRaft), Prometheus  |
 | Покрытие unit-тестами   | 14 пакетов (domain, crypto, i18n, sentry, receiver/usecase, chlog, web/usecase, metrics, healthcheck, config, clickhouse, reloader, nodecache, sender/usecase, **+ build / httpclient в Phase 7.13, + receiver/http + web/http middlewares в Phase 7.14**) + integration: circuitbreaker (Phase 7.13) |
 | SPA-фронт               | React 18 + Vite + TS + Tailwind + TanStack Query + react-i18next, 6 страниц |
 | Бинари в `cmd/`         | `receiver`, `sender`, `web`, `loadtest`, `rotate-key`                 |
@@ -475,6 +475,27 @@ real-sleep).
 поверх `kardianos/service`. Это позволяет запускать как обычный процесс ИЛИ как
 системный сервис Windows/Linux. Метод `Start(ctx)` должен быть **блокирующим**,
 `Stop(ctx)` — graceful shutdown с таймаутом.
+
+### 4.13 Kafka — `apache/kafka` (KRaft), не Bitnami и не Confluent
+
+В августе 2025 Bitnami сняли публичные теги `bitnami/kafka:*` с docker.io
+(перевели в `bitnamilegacy/`). Чтобы не садиться на legacy и не плодить
+разные образы в dev/CI/integration, везде используется официальный upstream
+`apache/kafka:3.9.0` (KRaft, single-broker):
+
+- [deploy/docker-compose.yml](../deploy/docker-compose.yml) — env-переменные
+  без префикса `_CFG_` (это был bitnami-wrapper), `CLUSTER_ID` зашит, чтобы
+  volume не реинициализировался при пересоздании контейнера, log-dir —
+  `/var/lib/kafka/data`, healthcheck — `/opt/kafka/bin/kafka-topics.sh`.
+- [tests/integration/receiver_async_test.go](../tests/integration/receiver_async_test.go)
+  — `tckafka.Run(ctx, "apache/kafka:3.9.0")`; testcontainers-go v0.42 модуль
+  `kafka` поддерживает `apache/kafka:3.7+`.
+- [.github/workflows/ci.yml](../.github/workflows/ci.yml) — pre-pull тоже
+  `apache/kafka:3.9.0`.
+
+Если будете обновлять минорку — меняйте все три места разом, иначе CI и
+docker-compose-стек начнут тянуть разные образы и расходиться по поведению
+(например, дефолтным retention'ам).
 
 ---
 

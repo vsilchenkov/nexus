@@ -180,12 +180,13 @@ func TestSender_Async_E2E(t *testing.T) {
 	}
 }
 
-// startKafka поднимает Kafka 7.5 (KRaft) через testcontainers и возвращает
-// строку брокеров вида "host:port".
+// startKafka поднимает Apache Kafka 3.9 (KRaft) через testcontainers и
+// возвращает строку брокеров вида "host:port". Образ — официальный
+// apache/kafka (унифицирован с deploy/docker-compose.yml).
 func startKafka(t *testing.T, ctx context.Context) (string, func()) {
 	t.Helper()
 
-	c, err := tckafka.Run(ctx, "confluentinc/confluent-local:7.5.0")
+	c, err := tckafka.Run(ctx, "apache/kafka:3.9.0")
 	if err != nil {
 		t.Fatalf("start kafka: %v", err)
 	}
