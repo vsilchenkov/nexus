@@ -71,6 +71,10 @@ Web Service отдаёт REST API под `/api/*` и SPA (`embed.FS`) на вс�
    - `make test` — unit-тесты зелёные.
    - Если менял Swagger-аннотации — `make swagger`.
    - Если менял integration-сценарий — `make test-integration` (нужен Docker).
+   - Если менял `web-ui/` (TS/TSX, package.json, eslint.config.js) — `cd web-ui && npm run lint && npm run build`.
+     В CI ([.gitlab-ci.yml](.gitlab-ci.yml) job `ui-build`) lint запускается с `--max-warnings=0` —
+     любой warning валит pipeline. Если меняешь зависимости — коммить и `package-lock.json`,
+     иначе `npm ci` в CI развалится.
 
 2. **Дописать результаты в [specs/IMPLEMENTATION.md](specs/IMPLEMENTATION.md).**
    - В разделе «Карта реализации по разделам ТЗ» — поменять статус (✅/◐/⛔) и добавить ссылки на
