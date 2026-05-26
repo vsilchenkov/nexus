@@ -60,11 +60,16 @@ func (u *RouteAsyncUsecase) RouteAsync(ctx context.Context, in RouteInput) (*Rou
 		return nil, domain.ErrNodeNotFound
 	}
 
+	// §16 ТЗ: callback-маршрут разрешён только для узлов с подписью.
+	if in.RequireCallback && node.IncomingAuthType != domain.IncomingAuthTypeWebhookSignature {
+		return nil, domain.ErrCallbackNotAllowed
+	}
+
 	// Любой root_method можно отправить через async — §3.6 «При paused
 	// все запросы превращаются в async». Поэтому RouteAsync доступен
 	// и для request-узлов, если они в paused.
 
-	if err := CheckIncomingAuth(node, in.Header); err != nil {
+	if err := CheckIncomingAuth(node, in.Header, in.Body); err != nil {
 		return nil, err
 	}
 

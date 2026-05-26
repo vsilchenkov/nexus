@@ -24,8 +24,10 @@ type CreateNodeRequest struct {
 	AuthDynamicSource      string   `json:"auth_dynamic_source" binding:"omitempty,oneof=query header body"`
 	AuthDynamicField       string   `json:"auth_dynamic_field" binding:"omitempty,max=64"`
 	AuthDynamicStripPrefix string   `json:"auth_dynamic_strip_prefix" binding:"omitempty,max=64"`
-	IncomingAuthType       string   `json:"incoming_auth_type" binding:"omitempty,oneof=none basic token"`
+	IncomingAuthType       string   `json:"incoming_auth_type" binding:"omitempty,oneof=none basic token webhook_signature"`
 	IncomingAuthCreds      string   `json:"incoming_auth_credentials" binding:"omitempty,max=1024"`
+	WebhookSignatureHeader string   `json:"webhook_signature_header" binding:"omitempty,max=128"`
+	WebhookSignaturePrefix string   `json:"webhook_signature_prefix" binding:"omitempty,max=64"`
 	ForwardHeaders         []string `json:"forward_headers"`
 	TimeoutMs              int32    `json:"timeout_ms"`
 	RetryCount             int32    `json:"retry_count"`
@@ -58,6 +60,8 @@ type NodeResponse struct {
 	AuthDynamicStripPrefix   string    `json:"auth_dynamic_strip_prefix"`
 	IncomingAuthType         string    `json:"incoming_auth_type"`
 	IncomingAuthCredsSet     bool      `json:"incoming_auth_credentials_set"`
+	WebhookSignatureHeader   string    `json:"webhook_signature_header"`
+	WebhookSignaturePrefix   string    `json:"webhook_signature_prefix"`
 	ForwardHeaders           []string  `json:"forward_headers"`
 	TimeoutMs                int32     `json:"timeout_ms"`
 	RetryCount               int32     `json:"retry_count"`
@@ -99,6 +103,8 @@ func reqToDomain(r CreateNodeRequest) *domain.Node {
 		AuthDynamicStripPrefix:  r.AuthDynamicStripPrefix,
 		IncomingAuthType:        domain.IncomingAuthType(r.IncomingAuthType),
 		IncomingAuthCredentials: r.IncomingAuthCreds,
+		WebhookSignatureHeader:  r.WebhookSignatureHeader,
+		WebhookSignaturePrefix:  r.WebhookSignaturePrefix,
 		ForwardHeaders:          headers,
 		TimeoutMs:               r.TimeoutMs,
 		RetryCount:              r.RetryCount,
@@ -128,6 +134,8 @@ func nodeToResponse(n *domain.Node) NodeResponse {
 		AuthDynamicStripPrefix: n.AuthDynamicStripPrefix,
 		IncomingAuthType:       string(n.IncomingAuthType),
 		IncomingAuthCredsSet:   n.IncomingAuthCredentials != "",
+		WebhookSignatureHeader: n.WebhookSignatureHeader,
+		WebhookSignaturePrefix: n.WebhookSignaturePrefix,
 		ForwardHeaders:         n.ForwardHeaders,
 		TimeoutMs:              n.TimeoutMs,
 		RetryCount:             n.RetryCount,

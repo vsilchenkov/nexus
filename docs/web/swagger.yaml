@@ -140,6 +140,7 @@ definitions:
         - none
         - basic
         - token
+        - webhook_signature
         type: string
       log_headers:
         type: boolean
@@ -180,6 +181,12 @@ definitions:
         - from_request
         type: string
       url_param_name:
+        maxLength: 64
+        type: string
+      webhook_signature_header:
+        maxLength: 128
+        type: string
+      webhook_signature_prefix:
         maxLength: 64
         type: string
     required:
@@ -283,6 +290,10 @@ definitions:
         type: string
       url_param_name:
         type: string
+      webhook_signature_header:
+        type: string
+      webhook_signature_prefix:
+        type: string
     type: object
   internal_web_adapter_in_http.ReplayRequest:
     properties:
@@ -343,6 +354,7 @@ definitions:
         - none
         - basic
         - token
+        - webhook_signature
         type: string
       log_headers:
         type: boolean
@@ -383,6 +395,12 @@ definitions:
         - from_request
         type: string
       url_param_name:
+        maxLength: 64
+        type: string
+      webhook_signature_header:
+        maxLength: 128
+        type: string
+      webhook_signature_prefix:
         maxLength: 64
         type: string
     required:

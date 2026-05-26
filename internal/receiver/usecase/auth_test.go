@@ -11,7 +11,7 @@ import (
 
 func TestCheckIncomingAuth_None(t *testing.T) {
 	n := &domain.Node{IncomingAuthType: domain.IncomingAuthTypeNone}
-	if err := CheckIncomingAuth(n, http.Header{}); err != nil {
+	if err := CheckIncomingAuth(n, http.Header{}, nil); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -23,18 +23,18 @@ func TestCheckIncomingAuth_Basic(t *testing.T) {
 	}
 	h := http.Header{}
 	h.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("user:pass")))
-	if err := CheckIncomingAuth(n, h); err != nil {
+	if err := CheckIncomingAuth(n, h, nil); err != nil {
 		t.Fatal(err)
 	}
 
 	hBad := http.Header{}
 	hBad.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("user:wrong")))
-	if err := CheckIncomingAuth(n, hBad); !errors.Is(err, domain.ErrUnauthorized) {
+	if err := CheckIncomingAuth(n, hBad, nil); !errors.Is(err, domain.ErrUnauthorized) {
 		t.Fatalf("want ErrUnauthorized, got %v", err)
 	}
 
 	hMissing := http.Header{}
-	if err := CheckIncomingAuth(n, hMissing); !errors.Is(err, domain.ErrAuthHeaderMissing) {
+	if err := CheckIncomingAuth(n, hMissing, nil); !errors.Is(err, domain.ErrAuthHeaderMissing) {
 		t.Fatalf("want ErrAuthHeaderMissing, got %v", err)
 	}
 }
@@ -46,13 +46,13 @@ func TestCheckIncomingAuth_Token(t *testing.T) {
 	}
 	h := http.Header{}
 	h.Set("Authorization", "Bearer secret-token")
-	if err := CheckIncomingAuth(n, h); err != nil {
+	if err := CheckIncomingAuth(n, h, nil); err != nil {
 		t.Fatal(err)
 	}
 
 	hBad := http.Header{}
 	hBad.Set("Authorization", "Bearer wrong")
-	if err := CheckIncomingAuth(n, hBad); !errors.Is(err, domain.ErrUnauthorized) {
+	if err := CheckIncomingAuth(n, hBad, nil); !errors.Is(err, domain.ErrUnauthorized) {
 		t.Fatalf("want ErrUnauthorized, got %v", err)
 	}
 }

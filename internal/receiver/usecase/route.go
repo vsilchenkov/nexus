@@ -29,12 +29,17 @@ type SenderClient interface {
 
 // RouteInput — параметры входящего sync-запроса.
 type RouteInput struct {
-	NodePath    string
-	Method      string
-	Header      http.Header
-	Query       url.Values
-	Body        []byte
-	ClientIP    string
+	NodePath string
+	Method   string
+	Header   http.Header
+	Query    url.Values
+	Body     []byte
+	ClientIP string
+	// RequireCallback включается для POST /v1/callback/{path} (§16 ТЗ).
+	// RouteAsync отклоняет такой запрос, если у узла IncomingAuthType !=
+	// webhook_signature — чтобы случайный клиент не пробрасывал произвольное
+	// тело через callback-маршрут на узел с обычной авторизацией.
+	RequireCallback bool
 }
 
 // RouteOutput — что Receiver вернёт клиенту.
@@ -75,7 +80,7 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 		return nil, fmt.Errorf("%w: node is %s, not request", domain.ErrNodeNotFound, node.RootMethod)
 	}
 
-	if err := CheckIncomingAuth(node, in.Header); err != nil {
+	if err := CheckIncomingAuth(node, in.Header, in.Body); err != nil {
 		return nil, err
 	}
 

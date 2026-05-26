@@ -198,9 +198,12 @@ func diffNodes(old, n *domain.Node) map[string]any {
 	add("target_url", old.TargetURL, n.TargetURL)
 	add("url_mode", string(old.URLMode), string(n.URLMode))
 	add("auth_type", string(old.AuthType), string(n.AuthType))
+	add("incoming_auth_type", string(old.IncomingAuthType), string(n.IncomingAuthType))
 	add("status", string(old.Status), string(n.Status))
 	add("timeout_ms", old.TimeoutMs, n.TimeoutMs)
 	add("retry_count", old.RetryCount, n.RetryCount)
+	add("webhook_signature_header", old.WebhookSignatureHeader, n.WebhookSignatureHeader)
+	add("webhook_signature_prefix", old.WebhookSignaturePrefix, n.WebhookSignaturePrefix)
 	if old.AuthCredentials != n.AuthCredentials {
 		d["auth_credentials"] = "changed"
 	}

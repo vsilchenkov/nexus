@@ -1805,7 +1805,8 @@ const docTemplate = `{
                     "enum": [
                         "none",
                         "basic",
-                        "token"
+                        "token",
+                        "webhook_signature"
                     ]
                 },
                 "log_headers": {
@@ -1863,6 +1864,14 @@ const docTemplate = `{
                     ]
                 },
                 "url_param_name": {
+                    "type": "string",
+                    "maxLength": 64
+                },
+                "webhook_signature_header": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "webhook_signature_prefix": {
                     "type": "string",
                     "maxLength": 64
                 }
@@ -2011,6 +2020,12 @@ const docTemplate = `{
                 },
                 "url_param_name": {
                     "type": "string"
+                },
+                "webhook_signature_header": {
+                    "type": "string"
+                },
+                "webhook_signature_prefix": {
+                    "type": "string"
                 }
             }
         },
@@ -2098,7 +2113,8 @@ const docTemplate = `{
                     "enum": [
                         "none",
                         "basic",
-                        "token"
+                        "token",
+                        "webhook_signature"
                     ]
                 },
                 "log_headers": {
@@ -2156,6 +2172,14 @@ const docTemplate = `{
                     ]
                 },
                 "url_param_name": {
+                    "type": "string",
+                    "maxLength": 64
+                },
+                "webhook_signature_header": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "webhook_signature_prefix": {
                     "type": "string",
                     "maxLength": 64
                 }

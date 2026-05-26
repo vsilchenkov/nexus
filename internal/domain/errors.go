@@ -35,6 +35,12 @@ var (
 	ErrNodeForwardHeadersSize    = errors.New("domain: forward_headers must have at most 30 elements")
 	ErrNodeDisabled              = errors.New("domain: node disabled")
 	ErrNodePaused                = errors.New("domain: node paused")
+	// Webhook signature (§16 ТЗ, IncomingAuthTypeWebhookSignature).
+	ErrNodeWebhookSigHeaderLength   = errors.New("domain: webhook_signature_header length must be <= 128")
+	ErrNodeWebhookSigPrefixLength   = errors.New("domain: webhook_signature_prefix length must be <= 64")
+	ErrNodeWebhookSigHeaderRequired = errors.New("domain: webhook_signature_header is required for incoming_auth_type=webhook_signature")
+	ErrNodeWebhookSigSecretRequired = errors.New("domain: incoming_auth_credentials (secret) is required for incoming_auth_type=webhook_signature")
+	ErrCallbackNotAllowed           = errors.New("domain: /v1/callback route requires incoming_auth_type=webhook_signature")
 
 	// User / Session
 	ErrUserNotFound      = errors.New("domain: user not found")

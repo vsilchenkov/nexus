@@ -40,7 +40,7 @@ func (h *Handler) Register(r *gin.Engine, mws ...gin.HandlerFunc) {
 	// Корневой 404 для запросов без /v1/.
 	r.NoRoute(func(c *gin.Context) {
 		p := c.Request.URL.Path
-		if strings.HasPrefix(p, "/request") || strings.HasPrefix(p, "/requestAsync") {
+		if strings.HasPrefix(p, "/request") || strings.HasPrefix(p, "/requestAsync") || strings.HasPrefix(p, "/callback") {
 			c.JSON(http.StatusNotFound, gin.H{
 				"error": "API version required, use /v1/...",
 			})
@@ -53,6 +53,11 @@ func (h *Handler) Register(r *gin.Engine, mws ...gin.HandlerFunc) {
 	{
 		v1.Any("/request/*path", h.handleSync)
 		v1.Any("/requestAsync/*path", h.handleAsync)
+		// §16 ТЗ: webhook callback. Alias /v1/requestAsync с обязательной
+		// проверкой того, что у узла IncomingAuthType=webhook_signature.
+		// Сама проверка подписи происходит в RouteAsync через
+		// CheckIncomingAuth (общий путь, без дублирования логики).
+		v1.POST("/callback/*path", h.handleCallback)
 	}
 }
 
@@ -96,6 +101,36 @@ func (h *Handler) handleSync(c *gin.Context) {
 		c.Header(k, v)
 	}
 	c.Data(out.StatusCode, out.Headers["Content-Type"], out.Body)
+}
+
+// handleCallback обрабатывает POST /v1/callback/{path} — приём входящего
+// webhook'а от внешнего провайдера (§16 ТЗ). Алиас /v1/requestAsync с
+// проверкой что узел сконфигурирован под webhook_signature: иначе вернём
+// 400, чтобы случайные клиенты не дёргали callback-endpoint с обычными
+// узлами в обход seperation of concerns.
+//
+// Сама HMAC-проверка делается централизованно в CheckIncomingAuth внутри
+// RouteAsync — handler здесь не выполняет crypto-логику.
+func (h *Handler) handleCallback(c *gin.Context) {
+	nodePath := strings.TrimPrefix(c.Param("path"), "/")
+	if nodePath == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "empty node path"})
+		return
+	}
+	body, err := readBody(c, h.maxBodyBytes)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	h.handleAsyncFromInput(c, usecase.RouteInput{
+		NodePath:        nodePath,
+		Method:          c.Request.Method,
+		Header:          c.Request.Header,
+		Query:           c.Request.URL.Query(),
+		Body:            body,
+		ClientIP:        clientIP(c.Request),
+		RequireCallback: true,
+	})
 }
 
 func (h *Handler) handleAsync(c *gin.Context) {
@@ -188,7 +223,8 @@ func (h *Handler) replyDomainError(c *gin.Context, err error, nodePath, op strin
 		c.JSON(http.StatusNotFound, gin.H{"error": "node not found"})
 	case errors.Is(err, domain.ErrNodeDisabled):
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "node not available"})
-	case errors.Is(err, domain.ErrURLParamRequired):
+	case errors.Is(err, domain.ErrURLParamRequired),
+		errors.Is(err, domain.ErrCallbackNotAllowed):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	case errors.Is(err, domain.ErrURLInvalid):
 		c.JSON(http.StatusBadRequest, gin.H{"error": "target url is invalid"})

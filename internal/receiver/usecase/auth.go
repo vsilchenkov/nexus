@@ -15,10 +15,17 @@ import (
 //
 // В §3.3 ТЗ basic-формат: `auth_credentials = "login:password"`. Token-формат
 // — просто токен. Хранятся в открытом виде в domain.Node (расшифрованные).
-func CheckIncomingAuth(node *domain.Node, h http.Header) error {
+//
+// body нужен только для IncomingAuthTypeWebhookSignature (§16 — HMAC по
+// сырому телу). Для остальных типов параметр игнорируется (можно передавать
+// nil).
+func CheckIncomingAuth(node *domain.Node, h http.Header, body []byte) error {
 	switch node.IncomingAuthType {
 	case domain.IncomingAuthTypeNone:
 		return nil
+
+	case domain.IncomingAuthTypeWebhookSignature:
+		return VerifyWebhookSignature(node, h, body)
 
 	case domain.IncomingAuthTypeBasic:
 		got := h.Get("Authorization")

@@ -93,14 +93,16 @@ func (s AuthDynSource) Valid() bool {
 type IncomingAuthType string
 
 const (
-	IncomingAuthTypeNone  IncomingAuthType = "none"
-	IncomingAuthTypeBasic IncomingAuthType = "basic"
-	IncomingAuthTypeToken IncomingAuthType = "token"
+	IncomingAuthTypeNone             IncomingAuthType = "none"
+	IncomingAuthTypeBasic            IncomingAuthType = "basic"
+	IncomingAuthTypeToken            IncomingAuthType = "token"
+	IncomingAuthTypeWebhookSignature IncomingAuthType = "webhook_signature"
 )
 
 func (a IncomingAuthType) Valid() bool {
 	switch a {
-	case IncomingAuthTypeNone, IncomingAuthTypeBasic, IncomingAuthTypeToken:
+	case IncomingAuthTypeNone, IncomingAuthTypeBasic, IncomingAuthTypeToken,
+		IncomingAuthTypeWebhookSignature:
 		return true
 	}
 	return false

@@ -42,6 +42,7 @@ const nodeColumns = `
 	auth_type, auth_credentials,
 	auth_dynamic_source, auth_dynamic_field, auth_dynamic_strip_prefix,
 	incoming_auth_type, incoming_auth_credentials,
+	webhook_signature_header, webhook_signature_prefix,
 	forward_headers, timeout_ms, retry_count, retry_backoff_ms,
 	clickhouse_table, clickhouse_retention_days, status, team_id,
 	log_request_body, log_response_body, log_headers,
@@ -122,6 +123,7 @@ INSERT INTO nodes (
 	auth_type, auth_credentials,
 	auth_dynamic_source, auth_dynamic_field, auth_dynamic_strip_prefix,
 	incoming_auth_type, incoming_auth_credentials,
+	webhook_signature_header, webhook_signature_prefix,
 	forward_headers, timeout_ms, retry_count, retry_backoff_ms,
 	clickhouse_table, clickhouse_retention_days, status, team_id,
 	log_request_body, log_response_body, log_headers
@@ -131,9 +133,10 @@ INSERT INTO nodes (
 	$7, $8,
 	$9, $10, $11,
 	$12, $13,
-	$14, $15, $16, $17,
-	$18, $19, $20, $21,
-	$22, $23, $24
+	$14, $15,
+	$16, $17, $18, $19,
+	$20, $21, $22, $23,
+	$24, $25, $26
 ) RETURNING id, created_at, updated_at`
 
 	err = r.db.QueryRow(ctx, q,
@@ -142,6 +145,7 @@ INSERT INTO nodes (
 		string(n.AuthType), encAuth,
 		string(n.AuthDynamicSource), n.AuthDynamicField, n.AuthDynamicStripPrefix,
 		string(n.IncomingAuthType), encInc,
+		n.WebhookSignatureHeader, n.WebhookSignaturePrefix,
 		nullSafe(n.ForwardHeaders), n.TimeoutMs, n.RetryCount, n.RetryBackoffMs,
 		n.ClickHouseTable, n.ClickHouseRetentionDays, string(n.Status), n.TeamID,
 		n.LogRequestBody, n.LogResponseBody, n.LogHeaders,
@@ -174,9 +178,10 @@ UPDATE nodes SET
 	auth_type = $8, auth_credentials = $9,
 	auth_dynamic_source = $10, auth_dynamic_field = $11, auth_dynamic_strip_prefix = $12,
 	incoming_auth_type = $13, incoming_auth_credentials = $14,
-	forward_headers = $15, timeout_ms = $16, retry_count = $17, retry_backoff_ms = $18,
-	clickhouse_table = $19, clickhouse_retention_days = $20, status = $21, team_id = $22,
-	log_request_body = $23, log_response_body = $24, log_headers = $25,
+	webhook_signature_header = $15, webhook_signature_prefix = $16,
+	forward_headers = $17, timeout_ms = $18, retry_count = $19, retry_backoff_ms = $20,
+	clickhouse_table = $21, clickhouse_retention_days = $22, status = $23, team_id = $24,
+	log_request_body = $25, log_response_body = $26, log_headers = $27,
 	updated_at = now()
 WHERE id = $1
 RETURNING updated_at`
@@ -188,6 +193,7 @@ RETURNING updated_at`
 		string(n.AuthType), encAuth,
 		string(n.AuthDynamicSource), n.AuthDynamicField, n.AuthDynamicStripPrefix,
 		string(n.IncomingAuthType), encInc,
+		n.WebhookSignatureHeader, n.WebhookSignaturePrefix,
 		nullSafe(n.ForwardHeaders), n.TimeoutMs, n.RetryCount, n.RetryBackoffMs,
 		n.ClickHouseTable, n.ClickHouseRetentionDays, string(n.Status), n.TeamID,
 		n.LogRequestBody, n.LogResponseBody, n.LogHeaders,
@@ -234,6 +240,7 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 		&authType, &encAuth,
 		&authDynSrc, &n.AuthDynamicField, &n.AuthDynamicStripPrefix,
 		&incomingAuth, &encInc,
+		&n.WebhookSignatureHeader, &n.WebhookSignaturePrefix,
 		&n.ForwardHeaders, &n.TimeoutMs, &n.RetryCount, &n.RetryBackoffMs,
 		&n.ClickHouseTable, &n.ClickHouseRetentionDays, &status, &n.TeamID,
 		&n.LogRequestBody, &n.LogResponseBody, &n.LogHeaders,

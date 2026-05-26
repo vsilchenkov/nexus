@@ -32,6 +32,11 @@ type Node struct {
 	IncomingAuthType        IncomingAuthType
 	IncomingAuthCredentials string // plaintext в памяти, шифр в БД
 
+	// Параметры webhook-подписи (§16 ТЗ, IncomingAuthType="webhook_signature").
+	// Сам секрет лежит в IncomingAuthCredentials.
+	WebhookSignatureHeader string // имя HTTP-заголовка, напр. "X-Hub-Signature-256"
+	WebhookSignaturePrefix string // префикс, отрезается перед hex-decode, напр. "sha256="
+
 	ForwardHeaders          []string
 	TimeoutMs               int32
 	RetryCount              int32
@@ -114,6 +119,20 @@ func (n *Node) Validate() error {
 	}
 	if len(n.ForwardHeaders) > 30 {
 		return ErrNodeForwardHeadersSize
+	}
+	if l := len(n.WebhookSignatureHeader); l > 128 {
+		return ErrNodeWebhookSigHeaderLength
+	}
+	if l := len(n.WebhookSignaturePrefix); l > 64 {
+		return ErrNodeWebhookSigPrefixLength
+	}
+	if n.IncomingAuthType == IncomingAuthTypeWebhookSignature {
+		if n.WebhookSignatureHeader == "" {
+			return ErrNodeWebhookSigHeaderRequired
+		}
+		if n.IncomingAuthCredentials == "" {
+			return ErrNodeWebhookSigSecretRequired
+		}
 	}
 	return nil
 }

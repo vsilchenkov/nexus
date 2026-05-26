@@ -1802,7 +1802,8 @@
                     "enum": [
                         "none",
                         "basic",
-                        "token"
+                        "token",
+                        "webhook_signature"
                     ]
                 },
                 "log_headers": {
@@ -1860,6 +1861,14 @@
                     ]
                 },
                 "url_param_name": {
+                    "type": "string",
+                    "maxLength": 64
+                },
+                "webhook_signature_header": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "webhook_signature_prefix": {
                     "type": "string",
                     "maxLength": 64
                 }
@@ -2008,6 +2017,12 @@
                 },
                 "url_param_name": {
                     "type": "string"
+                },
+                "webhook_signature_header": {
+                    "type": "string"
+                },
+                "webhook_signature_prefix": {
+                    "type": "string"
                 }
             }
         },
@@ -2095,7 +2110,8 @@
                     "enum": [
                         "none",
                         "basic",
-                        "token"
+                        "token",
+                        "webhook_signature"
                     ]
                 },
                 "log_headers": {
@@ -2153,6 +2169,14 @@
                     ]
                 },
                 "url_param_name": {
+                    "type": "string",
+                    "maxLength": 64
+                },
+                "webhook_signature_header": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "webhook_signature_prefix": {
                     "type": "string",
                     "maxLength": 64
                 }

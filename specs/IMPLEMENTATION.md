@@ -45,6 +45,7 @@
 |---|---|---|
 | `/v1/request/*` sync с проксированием ответа | ✅ | [internal/receiver/usecase/route.go](../internal/receiver/usecase/route.go), [adapter/in/http/handler.go](../internal/receiver/adapter/in/http/handler.go) |
 | `/v1/requestAsync/*` async, ответ 200 сразу | ✅ | [route_async.go](../internal/receiver/usecase/route_async.go) |
+| **`/v1/callback/*` (webhook с HMAC-SHA256, §16)** | ✅ Phase 8.1 | [handler.go](../internal/receiver/adapter/in/http/handler.go) `handleCallback`, [webhook_signature.go](../internal/receiver/usecase/webhook_signature.go) `VerifyWebhookSignature`, миграция [0007](../migrations/0007_webhook_signature.up.sql) |
 | 404 без префикса `/v1/` с подсказкой | ✅ | `Handler.Register` → `r.NoRoute` |
 | `url_mode = static` / `from_request` + allowlist + wildcard (`*.partner.com`) | ✅ | [urlresolver.go](../internal/receiver/usecase/urlresolver.go) |
 | `url_base` исключается из проксируемой query | ✅ | `ResolveURL`: `clean.Del(param)` |
@@ -206,7 +207,7 @@
 ### §16 Out of scope (явно отложено в v2)
 
 - Multi-tenancy логика (колонки `team_id` уже есть, изоляция — нет).
-- Webhook signature verification (`/v1/callback/`).
+- ~~Webhook signature verification (`/v1/callback/`)~~ — реализовано в Phase 8.1.
 - Notifications для операторов (Slack/Telegram).
 - Шаблоны узлов.
 - Версионирование конфигов узла + откат.
@@ -580,6 +581,67 @@ make proto                                     # перегенерация send
 - 6.7 ClickHouse orphan-tables (сканер + DROP с подтверждением).
 - 6.8 Расширенные фильтры live-tail (period/IP/Host/full-text).
 - 6.9 Audit log: diff-двухколоночный для `node.update`.
+
+Сделанное в Phase 8.1 (backend):
+
+- 8.1 Webhook callback endpoint с HMAC-SHA256 подписью (§16 ТЗ —
+  «Webhook signature verification`/v1/callback/`»). Архитектурное
+  решение: НЕ создаём отдельный путь маршрутизации, а добавляем новый
+  `IncomingAuthType = "webhook_signature"`. Webhook secret хранится в
+  существующей колонке `incoming_auth_credentials` (уже шифруется
+  AES-256-GCM, шифрование/расшифровка — единственное место в
+  `adapter/out/postgres`). Endpoint `/v1/callback/{path}` — alias
+  `/v1/requestAsync/{path}` с дополнительной проверкой
+  `IncomingAuthType=webhook_signature` (иначе 400 `ErrCallbackNotAllowed`).
+  · Миграция [0007_webhook_signature.up.sql](../migrations/0007_webhook_signature.up.sql):
+  добавляет колонки `webhook_signature_header` (VARCHAR(128), default '')
+  и `webhook_signature_prefix` (VARCHAR(64), default 'sha256='), расширяет
+  CHECK `nodes_inc_auth_check` (drop+add — Postgres не умеет ALTER CONSTRAINT)
+  до `(none, basic, token, webhook_signature)`, добавляет CHECK
+  `nodes_webhook_sig_header_required`: header не может быть пустым для
+  webhook_signature.
+  · Domain: новый enum-value `IncomingAuthTypeWebhookSignature`,
+  поля Node `WebhookSignatureHeader` / `WebhookSignaturePrefix`,
+  валидация в `Node.Validate` (header/secret required + length ≤128/≤64),
+  4 новых sentinel-ошибки в [errors.go](../internal/domain/errors.go) и
+  одна handler-маппится в 400 (`ErrCallbackNotAllowed`).
+  · Верификация подписи: [webhook_signature.go](../internal/receiver/usecase/webhook_signature.go)
+  `VerifyWebhookSignature(node, h, body)`: берёт значение header'а,
+  отрезает prefix (если задан), hex-decode → HMAC-SHA256(body, secret) →
+  `subtle.ConstantTimeCompare`. Любая ошибка форматирования — 401
+  `ErrAuthHeaderMalformed`; mismatch — `ErrUnauthorized`. Этот же путь
+  реиспользуется в `CheckIncomingAuth` для всех роутов (sync/async/callback)
+  — расширил сигнатуру `CheckIncomingAuth(node, h, body []byte)`, body=nil
+  игнорируется для non-webhook кейсов. Обновлены 3 вызова в route.go,
+  route_async.go, dry_run.go.
+  · Receiver handler [handler.go](../internal/receiver/adapter/in/http/handler.go):
+  `POST /v1/callback/*path` → `handleCallback` → `handleAsyncFromInput`
+  с флагом `RequireCallback=true`. `RouteAsync` отбрасывает запрос с
+  `ErrCallbackNotAllowed`, если у узла другой `IncomingAuthType`.
+  Корневой 404 ловит `/callback/*` без `/v1/` префикса.
+  · Web DTO: `incoming_auth_type` в `binding:oneof` принимает
+  `webhook_signature`; новые поля `webhook_signature_header` /
+  `webhook_signature_prefix` в `CreateNodeRequest` и `NodeResponse`;
+  маппинг через `reqToDomain` и `nodeToResponse`. Audit diff
+  ([node.go](../internal/web/usecase/node.go) `diffNodes`) дополнен
+  тремя ключами: `incoming_auth_type`, `webhook_signature_header`,
+  `webhook_signature_prefix` — UI получит compact-таблицу before/after
+  (Phase 6.9 уже умеет рендерить такой формат).
+  · Чтение Node везде расширено новыми колонками: NodeRepoPg (Web),
+  nodecache.Reader (Receiver, через PG-fallback), nodepg.Reader (Sender)
+  — SELECT/scan/INSERT/UPDATE.
+  · Unit-тесты [webhook_signature_test.go](../internal/receiver/usecase/webhook_signature_test.go)
+  — 10 тестов: happy-path (real HMAC), mismatch, wrong secret, missing
+  header, malformed prefix (md5= вместо sha256=), non-hex value, пустой
+  header name (defence-in-depth), без prefix (всё значение — hex), пустое
+  тело (Stripe-style ping), CheckIncomingAuth-делегирование, валидация
+  Node (header/secret required для webhook_signature). Существующие
+  тесты в [auth_test.go](../internal/receiver/usecase/auth_test.go)
+  обновлены под новую сигнатуру `CheckIncomingAuth(_, _, nil)`.
+  · Swagger перегенерирован — `webhook_signature_header`/`_prefix` в
+  Node-DTO, `incoming_auth_type=webhook_signature` в enum.
+  · Frontend (NodeSettings.tsx + i18n + локали SPA) — Phase 8.1b
+  (отдельный коммит).
 
 Сделанное в Phase 7.13:
 
