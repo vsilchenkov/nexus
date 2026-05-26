@@ -17,7 +17,10 @@ export function Topbar() {
   async function logout() {
     try {
       await api.post("/api/auth/logout");
-    } catch {}
+    } catch {
+      // Logout всё равно завершаем локально: даже если сервер недоступен или
+      // сессия уже истекла, редирект на /login корректно сбрасывает состояние.
+    }
     navigate("/login");
   }
 

@@ -105,7 +105,9 @@ export default function NodeDetail() {
             return next;
           });
         }, HIGHLIGHT_DURATION_MS);
-      } catch {}
+      } catch {
+        // Невалидный JSON в SSE-событии — пропускаем запись, поток продолжаем.
+      }
     });
     es.onerror = () => es.close();
     return () => es.close();
