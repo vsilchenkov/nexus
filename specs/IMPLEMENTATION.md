@@ -20,7 +20,7 @@
 | Главный поток           | `POST /v1/request/{path}` → Receiver → gRPC Sender → внешний URL → лог в ClickHouse |
 | Async                   | `POST /v1/requestAsync/{path}` → Receiver → Kafka → Sender-consumer   |
 | Зависимости              | PostgreSQL 16, Redis 7, ClickHouse 24, Kafka 3.7 (KRaft), Prometheus  |
-| Покрытие unit-тестами   | 8 пакетов (domain, crypto, i18n, sentry, receiver/usecase, chlog, web/usecase, metrics) |
+| Покрытие unit-тестами   | 11 пакетов (domain, crypto, i18n, sentry, receiver/usecase, chlog, web/usecase, metrics, **healthcheck**, **config**, **clickhouse**, **reloader**, **nodecache**) |
 | SPA-фронт               | React 18 + Vite + TS + Tailwind + TanStack Query + react-i18next, 6 страниц |
 | Бинари в `cmd/`         | `receiver`, `sender`, `web`, `loadtest`, `rotate-key`                 |
 
@@ -580,6 +580,33 @@ make proto                                     # перегенерация send
 - 6.7 ClickHouse orphan-tables (сканер + DROP с подтверждением).
 - 6.8 Расширенные фильтры live-tail (period/IP/Host/full-text).
 - 6.9 Audit log: diff-двухколоночный для `node.update`.
+
+Сделанное в Phase 7.11:
+
+- 7.11 Unit-тесты для 3-х ранее непокрытых пакетов (чистая логика, без deps):
+  · **`internal/platform/healthcheck`** ([healthcheck_test.go](../internal/platform/healthcheck/healthcheck_test.go))
+  — 5 тестов: `Live` всегда 200; `Ready` 4 кейса (all_up / required_down→503 /
+  optional_down→degraded:true / required_takes_precedence) + no_checkers;
+  таймаут-propagation в `Check(ctx)` — handler не зависает дольше Timeout;
+  `CheckerFunc` адаптер.
+  · **`internal/platform/config`** ([load_test.go](../internal/platform/config/load_test.go))
+  — 8 тестов / 25+ подтестов: `expandEnv` (10 граничных кейсов включая
+  `${VAR}`/`${VAR:default}`/пустой default/невалидное имя/$5.99 не expand'ится),
+  `resolveConfigPath` (приоритет flag > env > debug > default), `applyDefaults`
+  (не затирает ненулевые значения, заполняет zero defaults), `Validate` (10
+  подтестов на missing-обязательных + bad samesite + sentry-use-no-dsn), `Load`
+  end-to-end (YAML + env-substitution + applyDefaults + validate), error-кейсы
+  (отсутствующий файл, невалидный YAML, validate-fail).
+  · **`internal/web/usecase/audit`** ([audit_test.go](../internal/web/usecase/audit_test.go))
+  — 6 тестов: `SystemActor()` поля; `Log` сохраняет все поля + CreatedAt в UTC;
+  nil-details нормализуется в пустой map (защита downstream JSON-маршаллинга);
+  `errAuditRepo` инжектит ошибку — `Log` её не пробрасывает (§7.13 «сбой
+  аудита не ломает бизнес-операцию»); `List` делегирует в repo; фабрика
+  `auditEntry` всегда выдаёт UTC + non-nil Details.
+  · Известное ограничение Go: `t.Parallel()` несовместим с `t.Setenv` —
+  где нужны env-моки, parallel выключен (закомментировано в тестах).
+  · Покрытие в IMPLEMENTATION.md обновлено: 8 → **11 пакетов** (с учётом
+  ранее добавленных в Phase 7 reloader/clickhouse/nodecache).
 
 Сделанное в Phase 7.10:
 
