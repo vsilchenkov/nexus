@@ -45,10 +45,33 @@ go test -tags=integration -count=1 -v ./tests/integration/...
 - **`TestReceiver_Sync_E2E`** — Postgres + `httptest` mock внешнего узла + inline-stub Sender, который
   делает реальный HTTP-запрос вместо gRPC. Проверяет, что запрос дошёл до upstream с правильным path,
   body, и заголовком `Authorization: Bearer ...`.
-
-Минимальный сценарий §10.1 ТЗ (Postgres + Redis + ClickHouse + Kafka + создание узла → отправка `POST
-/v1/request/{path}` → запись в `vika_logs.{table}`) — следующая итерация (добавление CH и Kafka контейнеров
-требует heavier-setup, обычно гоняется в CI).
+- **`TestSender_Async_E2E`** — Postgres + Kafka (KRaft) + mock upstream. Receiver-RouteAsync публикует
+  Envelope в `databus.async`, Sender ConsumerGroup читает, делает HTTP-вызов, пишет в capturing log
+  writer. Покрывает §3.6 / §4.2 happy-path.
+- **`TestSender_Async_DLQ_E2E`** — тот же стэк, но mock всегда отвечает 500, узел с `retry_count=2`.
+  Отдельный kafka-reader на `databus.async.dlq` дожидается публикации и проверяет headers
+  (`id` / `node_path` / `orig_topic` / `reason=status=500 attempts=3` / `last_attempt_at`).
+  Покрывает §3.6 / §5.3 (DLQ after retry exhaustion).
+- **`TestClickHouse_WriteAndRead`** + **`TestClickHouse_GetByID_Deterministic`** — ClickHouse 24-alpine,
+  `chlog.Writer` пишет батч; `LogReaderCH` через `Search` фильтрует по `status` / `IP` / `Q` / `Done`.
+  Второй тест гарантирует, что при двух записях с одним ID `GetByID` возвращает свежую по `date_request`.
+- **`TestReplay_E2E_ClickHouse`** — Postgres + ClickHouse. Узел создан через `NodeUsecase`, в CH
+  записывается «оригинальный» лог, далее `ReplayUsecase` через capturing-dispatcher проверяет, что в
+  запрос проброшен маркер `__replay_of=<orig_id>`, оригинальные query-параметры сохранены, тело
+  совпадает с оригиналом, audit-запись `node.replay` появляется в PG. Покрывает §7.4.1.
+- **`TestSessionRepo_E2E`** / **`TestNodeCache_E2E`** / **`TestSession_TTLExpires`** — Redis 7,
+  CRUD сессий и горячий кеш узлов (§5.4 / §7.1 / §9.2).
+- **`TestCircuitBreaker_*`** — Redis 7, поведение CB: closed → open по threshold, переход в half_open
+  по cooldown, изоляция ключей, recovery через `RecordSuccess`. Покрывает §9.5.
+- **`TestAuth_Login_E2E`** — Postgres + Redis. `AuthUsecase.Login` с `UserRepoPg`+`SessionRepoRedis`,
+  проверка `ErrUnauthorized` / `ErrUserInactive`, `Check` продлевает TTL, `ChangePassword`
+  инвалидирует ВСЕ активные сессии пользователя (forced re-login §7.1), audit пишет
+  `user.login.success` / `user.login.failed` / `user.password.change` с правильным `reason`
+  в Details.
+- **`TestReceiver_IncomingAuth_E2E`** — Postgres + полный Receiver HTTP-стек (Gin, `httptest.Server`).
+  Три узла с `incoming_auth_type` = none / basic / token; реальные HTTP-запросы с правильными и
+  ошибочными `Authorization`-заголовками проверяют, что Receiver отдаёт 200 / 401 и что 401-запросы
+  до upstream не доходят. Покрывает §3.3.
 
 ## Нагрузочный тест (`make loadtest`)
 

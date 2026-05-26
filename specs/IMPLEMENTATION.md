@@ -158,6 +158,10 @@
 | Loadtest бинарь с pass/fail-критериями | ✅ | [cmd/loadtest](../cmd/loadtest/) |
 | **Полный testcontainers-сетап (PG + Redis + CH + Kafka)** | ✅ Phase 7.3 | PG ([node_repo_test.go](../tests/integration/node_repo_test.go)), Kafka ([receiver_async_test.go](../tests/integration/receiver_async_test.go)), Redis ([redis_test.go](../tests/integration/redis_test.go) — SessionRepo + NodeCache + TTL-expire), CH ([clickhouse_test.go](../tests/integration/clickhouse_test.go) — chlog.Writer batch insert + LogReaderCH `GetByID`/`Search` + table-name SQL-injection guard) |
 | **Async end-to-end интеграция через Kafka** | ✅ Phase 6.2 | [tests/integration/receiver_async_test.go](../tests/integration/receiver_async_test.go) — реальный pipeline `RouteAsyncUsecase → Kafka → ConsumerGroup → AsyncProcessor → SendUsecase → mock HTTP` |
+| **DLQ-сценарий после retry-exhaustion** | ✅ Phase 9.3 | [tests/integration/sender_dlq_test.go](../tests/integration/sender_dlq_test.go) — mock=500 + узел с `retry_count=2`; отдельный kafka-reader на `databus.async.dlq` проверяет headers `id` / `node_path` / `orig_topic` / `reason=status=500 attempts=3` / `last_attempt_at` |
+| **Replay-сценарий через ClickHouse** | ✅ Phase 9.3 | [tests/integration/replay_test.go](../tests/integration/replay_test.go) — PG+CH; `ReplayUsecase` поверх реального `LogReaderCH` проверяет маркер `__replay_of=<orig_id>` в query, сохранение исходных query-параметров, тело из CH-записи и audit-запись `node.replay` |
+| **Auth E2E (login + session + role)** | ✅ Phase 9.3 | [tests/integration/auth_test.go](../tests/integration/auth_test.go) — PG `UserRepoPg` + Redis `SessionRepoRedis`; happy/bad-password/inactive, `Check` продлевает TTL, `ChangePassword` инвалидирует все сессии, audit `user.login.*` / `user.password.change` |
+| **Receiver incoming auth через реальный HTTP** | ✅ Phase 9.3 | [tests/integration/receiver_incoming_auth_test.go](../tests/integration/receiver_incoming_auth_test.go) — Gin + `httptest.NewServer`; узлы none/basic/token, проверка 401/200 для отсутствующего/малформенного/неверного/верного `Authorization`, гарантия что 401 не достигает upstream |
 
 ### §11 Swagger / OpenAPI
 
@@ -708,6 +712,57 @@ make proto                                     # перегенерация send
   Все тесты `go test -short` зелёные на Windows; OOM-линкер на `-race`
   по-прежнему присутствует (CLAUDE.md «грабли» #1) — в CI/Linux race
   проходит штатно.
+
+Сделанное в Phase 9.3 (Расширение integration-тестов):
+
+- 9.3 Четыре новых сценария поверх существующего testcontainers-стэка
+  (PG + Redis + CH + Kafka). Цель — покрыть критические бизнес-сценарии,
+  которые проходят через несколько adapter'ов и которые легко регрессировать
+  одной правкой в usecase. До 9.3 было 11 integration-тестов; после — 15.
+  · [tests/integration/sender_dlq_test.go](../tests/integration/sender_dlq_test.go)
+  `TestSender_Async_DLQ_E2E` — узел с `retry_count=2` + mock=500. Sender
+  делает 3 попытки, после исчерпания публикует исходный envelope в
+  `databus.async.dlq`. Отдельный `kafka-go` reader на DLQ-топике (separate
+  consumer-group `databus-dlq-watcher-it`, чтобы не конкурировать с
+  Sender'ом) дожидается сообщения и проверяет headers: `id` соответствует
+  envelope id, `node_path`, `orig_topic="databus.async"`, `reason` содержит
+  `status=500 attempts=3`, `last_attempt_at` непуст; value полностью
+  соответствует исходному envelope. В capturing log-writer 1 запись со
+  Status=500, Done=false, Attempts=3 (а не 3 отдельные записи — `SendUsecase`
+  пишет ОДИН лог с aggregated `attempts_details`).
+  · [tests/integration/replay_test.go](../tests/integration/replay_test.go)
+  `TestReplay_E2E_ClickHouse` — узел в PG + «оригинальный» log в CH
+  (`Done=false, Status=500`). `ReplayUsecase` через capturing-dispatcher
+  (fake `port.ReceiverDispatcher`, чтобы не поднимать Receiver-HTTP-сервер
+  — шов уже покрыт другими тестами) проверяет: маркер `__replay_of=<orig_id>`
+  в query, оригинальные query-параметры (`x=1&y=2`) сохранены, body совпадает
+  с оригиналом из CH, audit-запись `node.replay` появляется в PG c TargetID=
+  оригинальный log_id (НЕ node.id) и UserID актёра.
+  · [tests/integration/auth_test.go](../tests/integration/auth_test.go)
+  `TestAuth_Login_E2E` — PG `UserRepoPg` + Redis `SessionRepoRedis`.
+  Пять сценариев в одном тесте (чтобы не платить за двойной testcontainer-
+  bootstrap): wrong password → `ErrUnauthorized` + `user.login.failed`;
+  correct → token + `user.login.success`; `Check` валидирует и продлевает
+  TTL; `ChangePassword` инвалидирует ВСЕ сессии пользователя (forced
+  re-login §7.1) — обе предыдущие сессии возвращают `ErrSessionNotFound`,
+  старым паролем больше не зайти, новым — да; `Active=false` → `ErrUserInactive`.
+  Audit-журнал проверяется counters по action и `Details["reason"]="inactive"`
+  для inactive-попытки.
+  · [tests/integration/receiver_incoming_auth_test.go](../tests/integration/receiver_incoming_auth_test.go)
+  `TestReceiver_IncomingAuth_E2E` — Postgres + полный Receiver HTTP-стек:
+  `gin.New()` + `Handler.Register` + `httptest.NewServer` + реальный
+  `http.Client`. Три узла с `incoming_auth_type` = none / basic / token,
+  upstream — `httptest.Server` с counter. Покрываемые матрицы: basic
+  без заголовка / wrong scheme / wrong creds / correct; token без заголовка
+  / wrong scheme / wrong token / correct. Финальная проверка `upstreamHits=3`
+  гарантирует, что 401-запросы не доходят до upstream — короткое замыкание
+  на стороне Receiver, а не на стороне Sender.
+- Helpers `startPostgres` / `startKafka` / `startRedis` / `startClickHouse`
+  и `createNodeLogTable` переиспользуются из существующих тестов; новые
+  тесты не добавили ни одного testcontainer-helper'а. Helper'ы остаются
+  в файлах, где появились первыми (`node_repo_test.go`, `receiver_async_test.go`,
+  `redis_test.go`, `clickhouse_test.go`); все остальные тесты импортят
+  их через build-tag `integration` и общий package `integration`.
 
 Сделанное в Phase 9.2 (GitLab CI):
 
