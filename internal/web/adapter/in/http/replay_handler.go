@@ -65,7 +65,7 @@ func (h *ReplayHandler) Replay(c *gin.Context) {
 		opts.BodyOverride = []byte(*req.BodyOverride)
 	}
 
-	res, err := h.uc.Replay(c.Request.Context(), actorFromCtx(c), logID, req.NodeID, opts)
+	res, err := h.uc.Replay(c.Request.Context(), actorFromCtx(c), logID, req.NodeID, currentTeamID(c), opts)
 	switch {
 	case err == nil:
 		c.JSON(http.StatusOK, res)

@@ -42,7 +42,7 @@ func TestLogs_ListSinceForwardsToReader(t *testing.T) {
 	}}
 	uc := NewLogsUsecase(r, nodes, logging.NewNoop())
 
-	rows, err := uc.ListSince(context.Background(), "n1", 0, 100)
+	rows, err := uc.ListSince(context.Background(), "n1", "", 0, 100)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestLogs_ListSince_NoCHTable(t *testing.T) {
 	}}
 	uc := NewLogsUsecase(&logReaderMock{}, nodes, logging.NewNoop())
 
-	_, err := uc.ListSince(context.Background(), "n1", 0, 100)
+	_, err := uc.ListSince(context.Background(), "n1", "", 0, 100)
 	if err == nil {
 		t.Fatal("expected error when node has no ClickHouse table")
 	}
@@ -67,7 +67,7 @@ func TestLogs_ListSince_NoCHTable(t *testing.T) {
 func TestLogs_ListSince_NodeNotFound(t *testing.T) {
 	t.Parallel()
 	uc := NewLogsUsecase(&logReaderMock{}, &stubNodeRepo{nodes: map[string]*domain.Node{}}, logging.NewNoop())
-	_, err := uc.ListSince(context.Background(), "nope", 0, 100)
+	_, err := uc.ListSince(context.Background(), "nope", "", 0, 100)
 	if !errors.Is(err, domain.ErrNodeNotFound) {
 		t.Fatalf("want ErrNodeNotFound, got %v", err)
 	}
@@ -76,7 +76,7 @@ func TestLogs_ListSince_NodeNotFound(t *testing.T) {
 func TestLogs_Subscribe_NodeMissing(t *testing.T) {
 	t.Parallel()
 	uc := NewLogsUsecase(&logReaderMock{}, &stubNodeRepo{nodes: map[string]*domain.Node{}}, logging.NewNoop())
-	_, _, err := uc.Subscribe(context.Background(), "nope", port.LogQuery{})
+	_, _, err := uc.Subscribe(context.Background(), "nope", "", port.LogQuery{})
 	if !errors.Is(err, domain.ErrNodeNotFound) {
 		t.Fatalf("want ErrNodeNotFound, got %v", err)
 	}
@@ -92,7 +92,7 @@ func TestLogs_Subscribe_ClosesOnCtxCancel(t *testing.T) {
 	uc.pollInterval = 5 * time.Millisecond
 
 	ctx, cancel := context.WithCancel(context.Background())
-	ch, _, err := uc.Subscribe(ctx, "n1", port.LogQuery{})
+	ch, _, err := uc.Subscribe(ctx, "n1", "", port.LogQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}

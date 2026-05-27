@@ -129,6 +129,7 @@ func parseTimeMs(v string) int64 {
 // @Router   /api/nodes/{id}/logs [get]
 func (h *LogsHandler) List(c *gin.Context) {
 	nodeID := c.Param("id")
+	team := currentTeamID(c)
 	limit, _ := strconv.Atoi(c.Query("limit"))
 
 	var (
@@ -139,11 +140,11 @@ func (h *LogsHandler) List(c *gin.Context) {
 	// SSE-cursor'а и обратной совместимости.
 	if v := c.Query("since_ms"); v != "" {
 		since, _ := strconv.ParseInt(v, 10, 64)
-		recs, err = h.uc.ListSince(c.Request.Context(), nodeID, since, limit)
+		recs, err = h.uc.ListSince(c.Request.Context(), nodeID, team, since, limit)
 	} else {
 		q := logQueryFromContext(c)
 		q.Limit = limit
-		recs, err = h.uc.Search(c.Request.Context(), nodeID, q)
+		recs, err = h.uc.Search(c.Request.Context(), nodeID, team, q)
 	}
 	if err != nil {
 		if errors.Is(err, domain.ErrNodeNotFound) {
@@ -187,7 +188,7 @@ func (h *LogsHandler) Stream(c *gin.Context) {
 	defer cancel()
 
 	filter := logQueryFromContext(c)
-	ch, errCh, err := h.uc.Subscribe(ctx, nodeID, filter)
+	ch, errCh, err := h.uc.Subscribe(ctx, nodeID, currentTeamID(c), filter)
 	if err != nil {
 		if errors.Is(err, domain.ErrNodeNotFound) {
 			c.SSEvent("error", gin.H{"error": "node not found"})

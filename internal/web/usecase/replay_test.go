@@ -98,7 +98,7 @@ func TestReplay_HappyPath(t *testing.T) {
 		logging.NewNoop(),
 	)
 
-	res, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", ReplayOptions{UseNodeAuth: true})
+	res, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{UseNodeAuth: true})
 	if err != nil {
 		t.Fatalf("replay: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestReplay_NodeDisabled(t *testing.T) {
 		&stubDispatcher{},
 		nil, NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10, logging.NewNoop(),
 	)
-	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", ReplayOptions{})
+	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{})
 	if !errors.Is(err, domain.ErrNodeDisabled) {
 		t.Fatalf("want ErrNodeDisabled, got %v", err)
 	}
@@ -145,7 +145,7 @@ func TestReplay_TooOldFailure(t *testing.T) {
 		&stubDispatcher{},
 		nil, NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10, logging.NewNoop(),
 	)
-	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", ReplayOptions{})
+	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{})
 	if !errors.Is(err, ErrReplayTooOldFailure) {
 		t.Fatalf("want ErrReplayTooOldFailure, got %v", err)
 	}
@@ -171,7 +171,7 @@ func TestReplay_RateLimit(t *testing.T) {
 	)
 	// Только пользователи с UserID попадают под rate-limit (актёр "system" — нет).
 	actor := Actor{UserID: "u1", UserLogin: "alice"}
-	_, err := uc.Replay(context.Background(), actor, "log1", "n1", ReplayOptions{})
+	_, err := uc.Replay(context.Background(), actor, "log1", "n1", "", ReplayOptions{})
 	if !errors.Is(err, ErrReplayRateLimit) {
 		t.Fatalf("want ErrReplayRateLimit, got %v", err)
 	}
@@ -194,7 +194,7 @@ func TestReplay_BodyOverride(t *testing.T) {
 		disp, nil,
 		NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10, logging.NewNoop(),
 	)
-	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", ReplayOptions{
+	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{
 		BodyOverride: []byte(`{"new":1}`),
 	})
 	if err != nil {
