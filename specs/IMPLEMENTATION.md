@@ -79,6 +79,8 @@
 | `golang-migrate` advisory lock, auto-migrate на старте | ✅ | [platform/pg/migrate.go](../internal/platform/pg/migrate.go) `NewMigrator` |
 | `team_id` колонки с DEFAULT 'default' (закладка multi-tenancy v2) | ✅ → ◐ Phase 10.1 | миграция 0002 (legacy) → миграция 0008 (UUID FK на `teams`, см. §16 Phase 10) |
 | **`teams`, `user_teams` + FK во всех team-aware таблицах** | ✅ Phase 10.1 | [migrations/0008_multi_tenancy.up.sql](../migrations/0008_multi_tenancy.up.sql); сидинг 'default'-team (`ch_database='nexus_default'`), admin → owner |
+| **TeamProvisioner: `CREATE DATABASE nexus_<slug>` атомарно с PG-tx** | ✅ Phase 10.C.1 | [adapter/out/clickhouse/team_provisioner.go](../internal/web/adapter/out/clickhouse/team_provisioner.go), [usecase/team.go](../internal/web/usecase/team.go); при упавшем CH `repo.Delete` откатывает PG-row; имя БД жёстко валидируется regex'ом |
+| **Backfill `nodes.clickhouse_table` → `<team.ch_database>.<table>`** | ✅ Phase 10.C.3 | [migrations/0009_node_ch_table_prefix.up.sql](../migrations/0009_node_ch_table_prefix.up.sql); legacy `vika_logs.<x>` и unprefixed `<x>` приводятся к `nexus_default.<x>`, чужие `nexus_<other>.<x>` не трогаются |
 | Up/Down + `make migrate-up`/`-down N=1`/`-status` | ✅ | [Makefile](../Makefile) |
 | ClickHouse driver `clickhouse-go/v2`, batch INSERT | ✅ | [platform/clickhouse/clickhouse.go](../internal/platform/clickhouse/clickhouse.go) |
 | Kafka admin + producer + consumer (`segmentio/kafka-go`) с автосозданием топиков с retention 30 дней, acks=all, idempotence | ✅ | [platform/kafka/](../internal/platform/kafka/) |
@@ -216,7 +218,10 @@
   - ✅ Phase 10.2: `domain.Team`, `TeamRepository` (PG-impl CRUD + membership), `User.TeamID → DefaultTeamID`, резолв UUID 'default'-team в Web-bootstrap и проброс в NodeUsecase/OrphanScanner.
   - ✅ Phase 10.B.1: `Session.CurrentTeamID` в Redis, `APIToken.TeamID`, endpoints `GET /api/me/teams` + `POST /api/me/switch-team` (последний только для session-cookie: API-токены ограничены одной командой). `AuthUsecase` теперь принимает `port.TeamRepo`.
   - ✅ Phase 10.B.2: team-scope в `NodeUsecase.{Get,Update,Delete}` (cross-team → 404), `NodeHandler.Create` подставляет `currentTeamID(c)`, `APITokenUsecase.Create` принимает `teamID` и пишет его в `api_tokens.team_id`.
-  - ⛔ Phase 10.C+: TeamProvisioner (PG-tx + CREATE DATABASE per team), CH read/write per-team (Sender пишет в `<team.ch_database>.<table>`), Receiver URL `/v1/request/<team_slug>/<path>`, UI «Команды», изоляция audit/users/api_tokens по team.
+  - ✅ Phase 10.C.1: `TeamProvisioner` (PG-tx + `CREATE DATABASE nexus_<slug>` атомарно с откатом PG-row), `TeamUsecase` (CRUD + Members), HTTP `/api/teams` (admin-only). Creator → owner. `default`-team удалить нельзя.
+  - ✅ Phase 10.C.2: `NodeUsecase` нормализует `clickhouse_table` до `<team.ch_database>.<table>` в Create/Update через `TeamRepo`. Sender и `ch_housekeeping` без изменений — `chlog.Writer` уже принимает `db.table` строкой, `splitDBTable` уже умеет парсить.
+  - ✅ Phase 10.C.3: миграция 0009 — backfill `nodes.clickhouse_table` (`<table>` → `nexus_default.<table>`, `vika_logs.<x>` → `nexus_default.<x>`, чужие `nexus_<other>.<x>` не трогаются).
+  - ⛔ Phase 10.D+: scope-фильтрация в audit/users/replay/logs (сейчас только nodes + api_tokens.Create), UI «Команды» + Members, Receiver URL `/v1/request/<team_slug>/<path>`, orphan_scanner расширяется на allow-list БД, ch_housekeeping ходит по всем `teams.ch_database`.
 - ~~Webhook signature verification (`/v1/callback/`)~~ — реализовано в Phase 8.1.
 - ~~OpenTelemetry distributed tracing~~ — реализовано в Phase 8.2 (HTTP-server-span'ы) + 8.3 (HTTP outbound + gRPC unary client/server interceptor'ы) + 8.4 (Kafka headers propagation для async-пути). End-to-end trace через UI → Web → Receiver → {gRPC → Sender → внешний URL} / {Kafka → Sender-consumer → внешний URL}.
 - Notifications для операторов (Slack/Telegram).
@@ -505,6 +510,32 @@ real-sleep).
 docker-compose-стек начнут тянуть разные образы и расходиться по поведению
 (например, дефолтным retention'ам).
 
+### 4.17 `nodes.clickhouse_table` хранит полный `db.table`, маршрутизация на стороне Web
+
+Phase 10.C перенесла резолв «в какую CH-БД пишет узел» с runtime-time
+(Sender JOIN-ит teams) на write-time (Web нормализует поле при
+Create/Update). [NodeUsecase.normalizeCHTable](../internal/web/usecase/node.go)
+вызывается до `Validate()` — если в `n.ClickHouseTable` нет точки и
+`n.TeamID` известен, поле обогащается префиксом
+`<team.ch_database>.<table>`. После этого:
+
+- Sender ([chlog.Writer.Write](../internal/sender/adapter/out/chlog/writer.go))
+  передаёт значение в `INSERT INTO %s` без изменений — CH парсит `db.table`.
+- [CHHousekeeping.dropPartitionsOlderThan](../internal/sender/usecase/ch_housekeeping.go)
+  использует `splitDBTable(name)` — уже умеет.
+- Receiver/Web log-read через [LogReaderCH](../internal/web/adapter/out/clickhouse/log_reader.go)
+  тоже получает `db.table` и собирает запрос напрямую.
+
+Sender за каждое сообщение НЕ ходит в PG за `teams.ch_database` — это
+было бы +1 query на каждый async/sync вызов. Цена за подход: при
+переименовании команды (которое запрещено в TeamUsecase.Update) пришлось
+бы мигрировать все nodes.clickhouse_table. Поэтому `teams.slug` и
+`teams.ch_database` immutable.
+
+Защита от legacy-данных — миграция 0009 (`vika_logs.<x>` →
+`nexus_default.<x>`). Новые узлы через UI всегда получают корректный
+префикс автоматически.
+
 ### 4.15 Team-switcher: `current_team_id` в Redis-сессии, не в cookie
 
 Phase 10.B.1 кладёт UUID активной команды в `domain.Session.CurrentTeamID`
@@ -677,18 +708,20 @@ make proto                                     # перегенерация send
 3. **KMS/Vault** интеграция для `ENCRYPTION_KEY` — §16, чтобы убрать секрет
    из env. См. также `make rotate-encryption-key`.
 4. **Multi-tenancy v2** — фаза 10 в работе.
-   - Сделано: Phase 10.1 (миграция 0008 `teams` + `user_teams` + FK),
-     Phase 10.2 (`domain.Team`, `TeamRepository`, `User.TeamID →
-     DefaultTeamID`, резолв `defaultTeamID` в Web-bootstrap), Phase
-     10.B.1 (`Session.CurrentTeamID`, endpoints `GET /api/me/teams`,
-     `POST /api/me/switch-team`, API-токены ограничены одной командой),
-     Phase 10.B.2 (team-scope в `NodeUsecase.{Get,Update,Delete}` и
-     `NodeHandler.Create`, `APITokenUsecase.Create(teamID)`).
-   - Дальше: TeamProvisioner (PG-tx + `CREATE DATABASE per team`), CH
-     read/write per-team (Sender пишет в `<team.ch_database>.<table>`,
-     Web log_reader/orphan_scanner/ch_housekeeping расширяется на
-     allow-list БД), Receiver URL `/v1/request/<team_slug>/<path>`,
-     scope в audit/users, UI «Команды» + Members.
+   - Сделано:
+     - Блок A: миграция 0008 + `domain.Team` + `TeamRepository` + резолв
+       `defaultTeamID` в Web-bootstrap.
+     - Блок B: `Session.CurrentTeamID` + `/api/me/teams` +
+       `/api/me/switch-team` + team-scope в Node CRUD и
+       `APITokenUsecase.Create`.
+     - Блок C: `TeamProvisioner` + `/api/teams` CRUD + Members,
+       `NodeUsecase` нормализует `clickhouse_table` до
+       `<team.ch_database>.<table>`, миграция 0009 для backfill
+       legacy-данных (`vika_logs.<x>` → `nexus_default.<x>`).
+   - Дальше: UI «Команды» + Members, Receiver URL
+     `/v1/request/<team_slug>/<path>`, scope в audit/users/replay/logs,
+     `orphan_scanner` и `ch_housekeeping` расширяются на allow-list БД
+     (`teams.ch_database`).
 
 Сделанное в Phase 7.14:
 
