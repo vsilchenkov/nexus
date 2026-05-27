@@ -22,6 +22,12 @@ COPY --from=builder /out/sender /usr/local/bin/sender
 COPY config/config.example.yml /app/config/config.yml
 COPY migrations /app/migrations
 
+# Директория для CH-fallback (NDJSON .tmp + rename). Sender пишет сюда при
+# недоступности ClickHouse — иначе `chlog.flushTable.fallback` фейлится с
+# "no such file or directory". Права на нашего непривилегированного user'а.
+RUN mkdir -p /app/logs/clickhouse-fallback && \
+    chown -R nexus:nexus /app/logs
+
 USER nexus
 
 EXPOSE 9090 9091
