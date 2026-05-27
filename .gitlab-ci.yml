@@ -374,15 +374,22 @@ loadtest:
     # Финальный snapshot: что было в compose-стеке к моменту провала,
     # плюс хвост логов всех сервисов прямо в stdout job'а (без необходимости
     # лезть в артефакты ради первого диагноза).
+    #
+    # Важно: --profile loadtest НЕ используем для logs/ps/down — иначе compose
+    # фильтрует на сервисы profile=loadtest (только loadtest-runner), а логи
+    # postgres/redis/kafka/clickhouse/receiver/sender/web в файл не попадают.
+    # Для down используем --profile "*" чтобы зачистить вообще всё, включая
+    # loadtest-runner.
     - 'echo "===== after_script — финальное состояние compose-стека ====="'
-    - docker compose ps || true
-    - 'echo "===== exit codes контейнеров ====="'
-    - docker compose --profile loadtest ps -a --format 'table {{.Name}}\t{{.State}}\t{{.ExitCode}}\t{{.Status}}' || true
-    - docker compose --profile loadtest logs --tail=400 > loadtest-report/compose-logs.txt 2>&1 || true
-    - echo "===== compose-logs.txt (tail 200) ====="
+    - docker compose ps -a || true
+    - 'echo "===== inspect-таблица (Name / Status / Health / Image) ====="'
+    - docker compose ps -a --format 'table {{.Name}}\t{{.Status}}\t{{.Image}}' || true
+    - docker compose logs --tail=400 --no-color > loadtest-report/compose-logs.txt 2>&1 || true
+    - 'echo "===== compose-logs.txt (size + tail 200) ====="'
+    - ls -lh loadtest-report/compose-logs.txt || true
     - tail -n 200 loadtest-report/compose-logs.txt || true
-    - echo "===== /compose-logs.txt ====="
-    - docker compose --profile loadtest down -v --remove-orphans || true
+    - 'echo "===== /compose-logs.txt ====="'
+    - docker compose --profile "*" down -v --remove-orphans || true
     - rm -f .env
   artifacts:
     when: always
