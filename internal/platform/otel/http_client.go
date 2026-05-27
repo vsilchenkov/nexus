@@ -34,7 +34,7 @@ func InjectHTTPHeaders(ctx context.Context, h http.Header) {
 //	otel.InjectHTTPHeaders(ctx, req.Header)
 //	// ... вызов ...
 func StartHTTPClientSpan(ctx context.Context, method, url string) (context.Context, func(statusCode int, err error)) {
-	tracer := otel.Tracer("databus/http.client")
+	tracer := otel.Tracer("nexus/http.client")
 	ctx, span := tracer.Start(ctx, method+" "+sanitizeURL(url),
 		trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(

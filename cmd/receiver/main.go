@@ -14,9 +14,9 @@ import (
 
 const (
 	projectName = "Receiver"
-	serviceName = "DataBusReceiverService"
-	displayName = "DataBus Receiver Service"
-	description = "Receiver service of the DataBus — accepts incoming HTTP requests, routes by node config, proxies to Sender via gRPC or to Kafka."
+	serviceName = "NexusReceiverService"
+	displayName = "Nexus Receiver Service"
+	description = "Receiver service of the Nexus — accepts incoming HTTP requests, routes by node config, proxies to Sender via gRPC or to Kafka."
 )
 
 //go:embed versioninfo.json

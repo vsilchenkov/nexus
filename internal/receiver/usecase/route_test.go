@@ -80,7 +80,7 @@ func TestRouteAsync_PausedQueued(t *testing.T) {
 		Status:           domain.NodeStatusPaused,
 	}
 	producer := &stubProducer{}
-	u := NewRouteAsyncUsecase(stubNodeReader{node: node}, producer, "databus.async", logging.NewNoop())
+	u := NewRouteAsyncUsecase(stubNodeReader{node: node}, producer, "nexus.async", logging.NewNoop())
 	res, err := u.RouteAsync(context.Background(), RouteInput{NodePath: "demo/path"})
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)

@@ -21,12 +21,12 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates tzdata && \
-    addgroup -S databus && adduser -S -G databus databus
+    addgroup -S nexus && adduser -S -G nexus nexus
 
 WORKDIR /app
 COPY --from=builder /out/loadtest /usr/local/bin/loadtest
 
-USER databus
+USER nexus
 
 # Порт mock-сервера внешних узлов. В job передаём `--mock-bind 0.0.0.0:9999`
 # и `--mock-public-url http://loadtest:9999`, чтобы Receiver/Sender могли

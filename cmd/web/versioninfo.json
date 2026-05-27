@@ -15,13 +15,13 @@
   "StringFileInfo": {
     "ProductVersion": "0.1.0",
     "CompanyName": "Vozovoz",
-    "FileDescription": "DataBus Web Service",
+    "FileDescription": "Nexus Web Service",
     "InternalName": "web",
     "LegalCopyright": "© 2026 Vozovoz",
     "LegalTrademarks": "",
     "OriginalFilename": "web.exe",
     "PrivateBuild": "",
-    "ProductName": "DataBus Web Service",
+    "ProductName": "Nexus Web Service",
     "SpecialBuild": "",
     "Comments": ""
   },

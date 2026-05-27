@@ -15,14 +15,14 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates tzdata wget && \
-    addgroup -S databus && adduser -S -G databus databus
+    addgroup -S nexus && adduser -S -G nexus nexus
 
 WORKDIR /app
 COPY --from=builder /out/web /usr/local/bin/web
 COPY config/config.example.yml /app/config/config.yml
 COPY migrations /app/migrations
 
-USER databus
+USER nexus
 
 EXPOSE 8000
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=5 \

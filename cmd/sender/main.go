@@ -14,9 +14,9 @@ import (
 
 const (
 	projectName = "Sender"
-	serviceName = "DataBusSenderService"
-	displayName = "DataBus Sender Service"
-	description = "Sender service of the DataBus — performs outbound HTTP calls to external nodes, consumes Kafka async queue."
+	serviceName = "NexusSenderService"
+	displayName = "Nexus Sender Service"
+	description = "Sender service of the Nexus — performs outbound HTTP calls to external nodes, consumes Kafka async queue."
 )
 
 //go:embed versioninfo.json

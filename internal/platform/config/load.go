@@ -12,13 +12,13 @@ import (
 const (
 	defaultConfigPath      = "config/config.yml"
 	defaultDebugConfigPath = "config/config_debug.yml"
-	envConfigVar           = "DATABUS_CONFIG"
+	envConfigVar           = "NEXUS_CONFIG"
 )
 
 // Load читает YAML, подставляет ${VAR} и ${VAR:default} из окружения,
 // разбирает в Config. Выбор файла:
 //  1. flags.ConfigPath
-//  2. $DATABUS_CONFIG
+//  2. $NEXUS_CONFIG
 //  3. config/config_debug.yml (если flags.Debug)
 //  4. config/config.yml
 //

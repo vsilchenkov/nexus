@@ -15,13 +15,13 @@
   "StringFileInfo": {
     "ProductVersion": "0.1.0",
     "CompanyName": "Vozovoz",
-    "FileDescription": "DataBus Receiver Service",
+    "FileDescription": "Nexus Receiver Service",
     "InternalName": "receiver",
     "LegalCopyright": "© 2026 Vozovoz",
     "LegalTrademarks": "",
     "OriginalFilename": "receiver.exe",
     "PrivateBuild": "",
-    "ProductName": "DataBus Receiver Service",
+    "ProductName": "Nexus Receiver Service",
     "SpecialBuild": "",
     "Comments": ""
   },

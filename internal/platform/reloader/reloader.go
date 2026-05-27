@@ -2,7 +2,7 @@
 // что dynamic-настройки (app_settings) изменились через UI и их нужно
 // применить без рестарта (§8.4 / §14.5 ТЗ).
 //
-// Канал: "databus:config:reload". Сообщение — JSON-объект `{"section":"sentry"}`
+// Канал: "nexus:config:reload". Сообщение — JSON-объект `{"section":"sentry"}`
 // либо `{"section":"clickhouse"}` (или "all" для повторного overlay'я обеих).
 //
 // Подписчик в каждом сервисе хранит набор cb-функций, привязанных к section.
@@ -22,7 +22,7 @@ import (
 )
 
 // Channel — Redis pub/sub канал для config-reload.
-const Channel = "databus:config:reload"
+const Channel = "nexus:config:reload"
 
 // Section — какие настройки изменились.
 type Section string

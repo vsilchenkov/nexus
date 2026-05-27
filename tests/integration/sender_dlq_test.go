@@ -31,7 +31,7 @@ import (
 
 // TestSender_Async_DLQ_E2E: внешний узел всегда отвечает 500, узел сконфигурирован
 // с retry_count=2 → SendUsecase делает 3 попытки → все провалились → AsyncProcessor
-// публикует исходный envelope в databus.async.dlq и коммитит offset исходного
+// публикует исходный envelope в nexus.async.dlq и коммитит offset исходного
 // сообщения (HandleDLQed). Тест отдельным kafka-reader'ом дожидается сообщения
 // в DLQ-топике и проверяет headers (id/node_path/reason/last_attempt_at).
 //
@@ -90,7 +90,7 @@ func TestSender_Async_DLQ_E2E(t *testing.T) {
 	cfg := newKafkaTestConfig(brokers)
 	// Уникальная consumer-group, чтобы fresh-start с earliest и без
 	// конфликта с предыдущим запуском в той же Kafka-сессии.
-	cfg.Kafka.ConsumerGroup = "databus-sender-dlq-it"
+	cfg.Kafka.ConsumerGroup = "nexus-sender-dlq-it"
 
 	require.NoError(t,
 		kafkapf.EnsureTopics(ctx, cfg, logger, cfg.Kafka.AsyncTopic, cfg.Kafka.DLQTopic),
@@ -115,14 +115,14 @@ func TestSender_Async_DLQ_E2E(t *testing.T) {
 	dlqReader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:  []string{brokers},
 		Topic:    cfg.Kafka.DLQTopic,
-		GroupID:  "databus-dlq-watcher-it",
+		GroupID:  "nexus-dlq-watcher-it",
 		MaxWait:  500 * time.Millisecond,
 		MinBytes: 1,
 		MaxBytes: 1 << 20,
 	})
 	defer dlqReader.Close()
 
-	// 5. Receiver путь: RouteAsync публикует envelope в databus.async.
+	// 5. Receiver путь: RouteAsync публикует envelope в nexus.async.
 	routeAsyncUC := rcv.NewRouteAsyncUsecase(&fakeReader{repo: nodeRepo}, producer, cfg.Kafka.AsyncTopic, logger)
 	res, err := routeAsyncUC.RouteAsync(ctx, rcv.RouteInput{
 		NodePath: "demo/dlq",
@@ -151,7 +151,7 @@ func TestSender_Async_DLQ_E2E(t *testing.T) {
 	hdrs := kafkaHeadersToMap(msg.Headers)
 	require.Equal(t, res.ID, hdrs["id"], "DLQ header 'id' must match envelope id")
 	require.Equal(t, "demo/dlq", hdrs["node_path"])
-	require.Equal(t, "databus.async", hdrs["orig_topic"])
+	require.Equal(t, "nexus.async", hdrs["orig_topic"])
 	require.Contains(t, hdrs["reason"], "status=500", "DLQ reason must contain HTTP status")
 	require.Contains(t, hdrs["reason"], "attempts=3", "DLQ reason must contain attempt count")
 	require.NotEmpty(t, hdrs["last_attempt_at"])

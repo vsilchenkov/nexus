@@ -34,7 +34,7 @@ POST /v1/requestAsync/{node_path}   — асинхронный
 
 - При совместимом изменении (новые опциональные поля в теле, новые header'ы) — оставляем `/v1/`.
 - При несовместимом изменении (удалили поле, поменяли семантику, изменили формат ответа) — добавляем `/v2/` параллельно. Обе версии работают одновременно минимум 6 месяцев, после чего `/v1/` помечается как deprecated через заголовок ответа `Deprecation: true` и `Sunset: <дата>`.
-- Старые версии живут до тех пор, пока есть значимый трафик. Метрика `databus_requests_total{version="v1"}` позволяет видеть, кто ещё на старой версии.
+- Старые версии живут до тех пор, пока есть значимый трафик. Метрика `nexus_requests_total{version="v1"}` позволяет видеть, кто ещё на старой версии.
 - Запрос без префикса версии (например, `POST /request/...`) возвращает 404 с подсказкой `{"error": "API version required, use /v1/..."}`.
 
 Web Service API (см. §11) — внутренний контракт админки и не имеет префикса версии, поскольку UI обновляется одновременно с backend.
@@ -53,7 +53,7 @@ Web Service API (см. §11) — внутренний контракт адми�
 **`/v1/requestAsync/*` — асинхронный:**
 1. Receiver принимает JSON, проверяет авторизацию.
 2. Определяет целевой URL согласно `url_mode` узла (см. §3.4); валидирует. При невалидном URL — 400/403, в Kafka не кладётся.
-3. Кладёт сообщение в Kafka (topic = `databus.async`, ключ = `node_path`, тело = JSON envelope с метаданными, включая разрешённый target URL).
+3. Кладёт сообщение в Kafka (topic = `nexus.async`, ключ = `node_path`, тело = JSON envelope с метаданными, включая разрешённый target URL).
 4. Сразу возвращает клиенту HTTP 200 и тело `{"result": true, "id": "<uuid>"}`.
 
 ### 3.3 Конфигурация узла
@@ -221,7 +221,7 @@ Web Service API (см. §11) — внутренний контракт адми�
 **Ограничения паузы:**
 - Если узел провёл в `paused` более 7 дней — UI показывает баннер «Узел в паузе X дней, накоплено N сообщений. Проверьте, нужна ли пауза до сих пор».
 - Sync-клиент, привыкший получать реальный ответ, при пересылке через paused-узел получит только id — нужно учитывать в интеграциях. Это сознательный trade-off.
-- Метрика `databus_paused_messages_total{node}` показывает, сколько накопилось.
+- Метрика `nexus_paused_messages_total{node}` показывает, сколько накопилось.
 
 **UI:** На странице узла и в форме настроек — переключатель состояния (radio из трёх вариантов с иконками: `▶ Active`, `⏸ Paused`, `⏹ Disabled`). Смена статуса требует подтверждения через диалог с описанием последствий каждого режима.
 
@@ -234,8 +234,8 @@ Web Service API (см. §11) — внутренний контракт адми�
 ```protobuf
 syntax = "proto3";
 
-package databus.sender.v1;
-option go_package = "github.com/<org>/databus/proto/sender/v1;senderv1";
+package nexus.sender.v1;
+option go_package = "github.com/<org>/nexus/proto/sender/v1;senderv1";
 
 rpc Send(SendRequest) returns (SendResponse);
 
@@ -257,7 +257,7 @@ message SendResponse {
 }
 ```
 
-**Версионирование gRPC.** Имя пакета содержит `v1` — это часть полного имени сервиса (`databus.sender.v1.SenderService`), что эквивалентно префиксу `/v1/` в HTTP. При несовместимых изменениях контракта создаётся новый пакет `databus.sender.v2` с обновлёнными сообщениями; обе версии работают параллельно, Sender регистрирует оба сервиса. `.proto`-файлы версий лежат в отдельных подкаталогах: `/proto/sender/v1/sender.proto`, `/proto/sender/v2/sender.proto` — это позволяет генерировать Go-код для обеих версий независимо.
+**Версионирование gRPC.** Имя пакета содержит `v1` — это часть полного имени сервиса (`nexus.sender.v1.SenderService`), что эквивалентно префиксу `/v1/` в HTTP. При несовместимых изменениях контракта создаётся новый пакет `nexus.sender.v2` с обновлёнными сообщениями; обе версии работают параллельно, Sender регистрирует оба сервиса. `.proto`-файлы версий лежат в отдельных подкаталогах: `/proto/sender/v1/sender.proto`, `/proto/sender/v2/sender.proto` — это позволяет генерировать Go-код для обеих версий независимо.
 
 Совместимые изменения (новые опциональные поля с новыми номерами) делаются в рамках текущей версии без создания v2.
 
@@ -267,7 +267,7 @@ message SendResponse {
 
 - Каждый входящий gRPC-запрос обрабатывается в отдельной горутине.
 - Воркер-пул для исходящих HTTP-вызовов, общение через каналы.
-- Kafka-consumer работает параллельно: читает `databus.async`, для каждого сообщения делает HTTP-вызов с настроенными retry. Offset коммитится **только после успешной доставки** (HTTP 2xx или исчерпания retry с фиксацией в DLQ-топик `databus.async.dlq`). Сообщения «в полёте» не теряются при рестарте.
+- Kafka-consumer работает параллельно: читает `nexus.async`, для каждого сообщения делает HTTP-вызов с настроенными retry. Offset коммитится **только после успешной доставки** (HTTP 2xx или исчерпания retry с фиксацией в DLQ-топик `nexus.async.dlq`). Сообщения «в полёте» не теряются при рестарте.
 - При сбое внешнего узла — экспоненциальный backoff + jitter.
 
 ### 4.3 Логирование
@@ -396,9 +396,9 @@ UI умеет:
 
 | Топик | Назначение | Retention |
 |---|---|---|
-| `databus.async` | Основная очередь async-сообщений | 30 дней |
-| `databus.async.dlq` | Dead letter queue (исчерпан retry) | 30 дней |
-| `databus.config.events` | Pub/sub для оповещения инстансов о смене настроек (см. §8.4) | 1 час |
+| `nexus.async` | Основная очередь async-сообщений | 30 дней |
+| `nexus.async.dlq` | Dead letter queue (исчерпан retry) | 30 дней |
+| `nexus.config.events` | Pub/sub для оповещения инстансов о смене настроек (см. §8.4) | 1 час |
 
 **Retention 30 дней** означает, что сообщения хранятся в Kafka месяц с момента записи независимо от того, обработаны они или нет. Это даёт:
 - возможность переобработать сообщения за прошедший период при ошибке логики (reset consumer offset),
@@ -500,7 +500,7 @@ Redis используется как горячий кеш и быстрое ke
 **Стратегия чтения (cache-aside):**
 - Receiver при обработке запроса сначала смотрит в Redis по ключу `node:{path}`.
 - Если cache miss — читает из PostgreSQL, кладёт в Redis, возвращает.
-- При недоступности Redis Receiver автоматически переключается на чтение напрямую из PostgreSQL (с метрикой `databus_redis_unavailable_total`).
+- При недоступности Redis Receiver автоматически переключается на чтение напрямую из PostgreSQL (с метрикой `nexus_redis_unavailable_total`).
 
 **Что в Redis НЕ хранится:**
 - Тела HTTP-запросов и ответов (они уходят прямо в ClickHouse).
@@ -543,11 +543,11 @@ Redis работает в режиме одиночного инстанса д�
 
 Каждый сервис экспонирует `/metrics` для Prometheus. Метрики (минимум):
 
-- `databus_requests_total{service, method, node, status}` — счётчик
-- `databus_request_duration_seconds{service, method, node}` — гистограмма
-- `databus_kafka_lag{topic}` — гейдж
-- `databus_clickhouse_buffer_size` — гейдж
-- `databus_clickhouse_errors_total` — счётчик
+- `nexus_requests_total{service, method, node, status}` — счётчик
+- `nexus_request_duration_seconds{service, method, node}` — гистограмма
+- `nexus_kafka_lag{topic}` — гейдж
+- `nexus_clickhouse_buffer_size` — гейдж
+- `nexus_clickhouse_errors_total` — счётчик
 
 Prometheus поднимается в docker compose.
 
@@ -556,7 +556,7 @@ Prometheus поднимается в docker compose.
 ### 7.1 Аутентификация
 
 - Логин на основе username/password.
-- **Серверные сессии в Redis.** При успешном логине Web Service генерирует случайный opaque-токен (32 байта в base64), сохраняет в Redis под ключом `session:{token}` со значением `{user_id, role, lang, created_at, last_seen_at}` и TTL `redis.session_ttl_sec` (по умолчанию 24 часа). Токен возвращается клиенту в HttpOnly Secure SameSite=Strict cookie с именем `databus_session`.
+- **Серверные сессии в Redis.** При успешном логине Web Service генерирует случайный opaque-токен (32 байта в base64), сохраняет в Redis под ключом `session:{token}` со значением `{user_id, role, lang, created_at, last_seen_at}` и TTL `redis.session_ttl_sec` (по умолчанию 24 часа). Токен возвращается клиенту в HttpOnly Secure SameSite=Strict cookie с именем `nexus_session`.
 - На каждый запрос Web API middleware читает cookie, ищет ключ в Redis, продлевает TTL, добавляет в контекст `user_id` и `role`. Отсутствующий или просроченный ключ → 401 Unauthorized.
 - **Logout** — удаление ключа `session:{token}` из Redis и cookie с пустым значением и `Max-Age=0`. Действует мгновенно: после следующего запроса пользователь невалиден.
 - **Принудительный logout всех сессий пользователя** (при смене роли, отключении или смене пароля) — выполняется через `SCAN MATCH session:*` с проверкой `user_id` в значении и удалением подходящих ключей. Не самая дешёвая операция (O(n) от числа активных сессий), но выполняется редко.
@@ -994,7 +994,7 @@ Mutating scopes (`*:write`, `*:delete`) **не предусмотрены в v1*
 **Использование клиентом:**
 
 ```
-curl https://databus.example.com/api/nodes/abc/logs \
+curl https://nexus.example.com/api/nodes/abc/logs \
   -H "Authorization: Bearer db_3xK9mPq7vR2nL8wT5sF4hY6jB1aZ0cE"
 ```
 
@@ -1023,7 +1023,7 @@ Middleware Web API при получении заголовка `Authorization: 
 Источник конфига определяется в порядке приоритета:
 
 1. **Флаг командной строки** `--config /path/to/file.yml` (или короткий `-c`) — высший приоритет.
-2. **Переменная окружения** `DATABUS_CONFIG=/path/to/file.yml`.
+2. **Переменная окружения** `NEXUS_CONFIG=/path/to/file.yml`.
 3. **Дефолт** — `./config/config.yml` относительно `WorkingDir`.
 
 Каждый бинарь (`receiver`, `sender`, `web`) принимает один и тот же набор флагов: `--config`, `--debug` (форсирует загрузку `config_debug.yml`), `--version` (печатает версию из `BuildConfig`).
@@ -1034,7 +1034,7 @@ Middleware Web API при получении заголовка `Authorization: 
 
 ```yaml
 build:
-  project_name: databus
+  project_name: nexus
   version: ${VERSION:dev}
 
 logging:
@@ -1055,8 +1055,8 @@ sentry:
 postgres:
   host: ${PG_HOST:localhost}
   port: ${PG_PORT:5432}
-  database: databus
-  user: ${PG_USER:databus}             # из .env
+  database: nexus
+  user: ${PG_USER:nexus}             # из .env
   password: ${PG_PASSWORD}             # из .env
   max_open_conns: 25                   # под 500 rps с Redis-кешем хватает с запасом
   max_idle_conns: 5
@@ -1091,9 +1091,9 @@ clickhouse:
 
 kafka:
   brokers: ${KAFKA_BROKERS:localhost:9092}  # comma-separated, в проде 3+ broker'а
-  async_topic: databus.async
-  dlq_topic: databus.async.dlq
-  consumer_group: databus-sender
+  async_topic: nexus.async
+  dlq_topic: nexus.async.dlq
+  consumer_group: nexus-sender
   # === Параметры топиков (применяются при автосоздании на старте) ===
   topic:
     partitions: 4                      # под параллелизм consumer'ов и rps
@@ -1161,7 +1161,7 @@ sender:
 
 web:
   http_addr: :8000
-  session_cookie_name: databus_session # имя cookie с session-токеном
+  session_cookie_name: nexus_session # имя cookie с session-токеном
   session_cookie_secure: true          # cookie только по HTTPS (false для локальной разработки)
   session_cookie_samesite: strict      # strict / lax / none
   # session_ttl наследуется из redis.session_ttl_sec (см. §7.1)
@@ -1176,7 +1176,7 @@ web:
 
 ```dotenv
 # PostgreSQL
-PG_USER=databus
+PG_USER=nexus
 PG_PASSWORD=change_me_in_production
 
 # Redis
@@ -1206,7 +1206,7 @@ VERSION=1.0.0
 ### 8.4 Перезагрузка конфигурации
 
 - Поля из секций `clickhouse` (часть, доступная через UI) и `sentry` дополнительно хранятся в таблице `app_settings` PostgreSQL (см. §14.5) и кешируются в Redis (ключ `app_settings`) — значения из БД накладываются поверх YAML на старте.
-- Изменения настроек ClickHouse и Sentry через UI применяются без рестарта: запись в PostgreSQL → инвалидация ключа в Redis → graceful переинициализация соответствующих клиентов на всех инстансах сервиса (через pub/sub-канал Redis `databus:config:reload`).
+- Изменения настроек ClickHouse и Sentry через UI применяются без рестарта: запись в PostgreSQL → инвалидация ключа в Redis → graceful переинициализация соответствующих клиентов на всех инстансах сервиса (через pub/sub-канал Redis `nexus:config:reload`).
 - Изменения, требующие рестарта (адреса PostgreSQL/Redis/Kafka, порты, размеры пулов), вносятся в YAML и применяются при перезапуске.
 - Секреты (пароли БД, токены) **никогда не пишутся в YAML** — только в `.env` или внешнем секрет-менеджере.
 
@@ -1243,14 +1243,14 @@ VERSION=1.0.0
 - Receiver продолжает работать на данных из Redis. Запись новых узлов через UI временно невозможна — Web возвращает ошибку с понятным сообщением.
 - Web показывает баннер «БД недоступна, работаем в read-only».
 - Sender не зависит от PostgreSQL напрямую (конфиг приходит в gRPC-запросе от Receiver или из Kafka-сообщения вместе с payload).
-- Метрика `databus_postgres_unavailable_total` инкрементится для алертинга.
+- Метрика `nexus_postgres_unavailable_total` инкрементится для алертинга.
 
 **Redis недоступен:**
 - Receiver автоматически переключается на чтение конфига **напрямую из PostgreSQL** на каждый запрос. p95 latency временно растёт (на горячих SQL остаётся приемлемой за счёт prepared statements).
 - Локальный LRU-кеш в памяти процесса смягчает пик нагрузки на PostgreSQL в этот момент.
 - Web API при недоступности Redis отвечает 503 на все эндпоинты, требующие авторизации (сессии хранятся в Redis — без него нельзя проверить токен). Это сознательное решение: лучше показать пользователю «временные проблемы, попробуйте через минуту», чем пускать без проверки роли. Login форма доступна и отвечает 503 с понятным сообщением.
 - Rate limit и circuit breaker временно отключаются (они опираются на Redis).
-- Метрика `databus_redis_unavailable_total` инкрементится для алертинга.
+- Метрика `nexus_redis_unavailable_total` инкрементится для алертинга.
 - При восстановлении Redis сервисы автоматически возвращаются к кешированию без рестарта.
 
 **Одновременная недоступность PostgreSQL и Redis** (крайний случай):
@@ -1262,7 +1262,7 @@ VERSION=1.0.0
 - Логи буферизуются в памяти (лимит `clickhouse.buffer_max_size`).
 - При переполнении буфера — сброс в файл-фоллбек (NDJSON, каталог `logging.dir`).
 - После восстановления ClickHouse файл-фоллбек загружается обратно background-воркером, in-memory буфер сливается батчами.
-- Основной поток обработки запросов **не блокируется**: запись лога идёт через неблокирующий канал; если канал полон, лог отбрасывается с инкрементом метрики `databus_clickhouse_dropped_total`, но запрос обрабатывается.
+- Основной поток обработки запросов **не блокируется**: запись лога идёт через неблокирующий канал; если канал полон, лог отбрасывается с инкрементом метрики `nexus_clickhouse_dropped_total`, но запрос обрабатывается.
 
 **Kafka недоступна:**
 - `requestAsync` возвращает клиенту HTTP 503 с понятным телом `{"result": false, "error": "queue unavailable"}` (синхронный путь продолжает работать без изменений).
@@ -1271,10 +1271,10 @@ VERSION=1.0.0
 
 **Внешний узел недоступен или возвращает ошибку:**
 - Sync: возвращается клиенту реальный код ответа (5xx, timeout — 504), запрос фиксируется в ClickHouse с `done=false` и причиной.
-- Async: retry по политике узла (`retry_count`, `retry_backoff_ms`). После исчерпания — сообщение уходит в `databus.async.dlq` с заголовками: оригинальный topic, причина, число попыток, timestamp последней попытки.
+- Async: retry по политике узла (`retry_count`, `retry_backoff_ms`). После исчерпания — сообщение уходит в `nexus.async.dlq` с заголовками: оригинальный topic, причина, число попыток, timestamp последней попытки.
 
 **Sender недоступен:**
-- Receiver: sync-запросы получают 503, async продолжают идти в Kafka. Метрика `databus_sender_unavailable_total` инкрементится для алертинга.
+- Receiver: sync-запросы получают 503, async продолжают идти в Kafka. Метрика `nexus_sender_unavailable_total` инкрементится для алертинга.
 
 ### 9.5 Защита от перегрузки
 
@@ -1484,7 +1484,7 @@ TESTING.md              процедура запуска всех видов т
 - Healthcheck на каждой зависимости (`pg_isready`, `redis-cli ping`, ClickHouse `SELECT 1`, Kafka `kafka-topics --list`).
 - Restart policy `unless-stopped` для всех сервисов.
 - Volume для Postgres, Redis (AOF persistence), ClickHouse и Kafka — данные переживают рестарт контейнеров.
-- Сеть `databus_net` для изоляции.
+- Сеть `nexus_net` для изоляции.
 - Все секреты — через `.env` файл (`.env.example` в git, реальный `.env` в `.gitignore`). Compose автоматически подхватывает `.env` рядом с собой.
 
 **Override для разработки** — `docker-compose.dev.yml`:
@@ -1613,7 +1613,7 @@ h.logger.Error("file processing failed",
     h.logger.Err(err))
 
 s.logger.ErrorWithOp("kafka publish failed", err, "sender.publishAsync",
-    s.logger.Str("topic", "databus.async"),
+    s.logger.Str("topic", "nexus.async"),
     s.logger.Str("node", nodePath))
 ```
 
@@ -1765,19 +1765,19 @@ s.logger.ErrorWithOp("kafka publish failed", err, "sender.publishAsync",
 - Graceful shutdown по `SIGTERM` завершает все in-flight запросы, сливает ClickHouse-буфер и коммитит Kafka-offset'ы до выхода.
 - Все секреты (пароли PostgreSQL, Redis, ClickHouse, Sentry DSN, ENCRYPTION_KEY) хранятся только в `.env` (или внешнем секрет-менеджере) — в `config.yml`, `config_debug.yml` и других файлах git'а их нет. Поиск `grep -r "PASSWORD\s*=" config/` не возвращает реальных значений.
 - Swagger UI описывает только HTTP-эндпоинты Receiver и Web; контракт Sender (gRPC) описан в `.proto` и в Swagger не дублируется.
-- При старте сервиса топики `databus.async` и `databus.async.dlq` автоматически создаются (если не существуют) с параметрами из конфига: 4 партиции, retention 30 дней (`retention.ms=2592000000`), `cleanup.policy=delete`, `compression.type=lz4`.
-- Команда `kafka-topics --describe --topic databus.async` показывает retention.ms=2592000000 и все остальные параметры согласно §5.3.
+- При старте сервиса топики `nexus.async` и `nexus.async.dlq` автоматически создаются (если не существуют) с параметрами из конфига: 4 партиции, retention 30 дней (`retention.ms=2592000000`), `cleanup.policy=delete`, `compression.type=lz4`.
+- Команда `kafka-topics --describe --topic nexus.async` показывает retention.ms=2592000000 и все остальные параметры согласно §5.3.
 - При reset consumer offset на начало (`kafka-consumer-groups --reset-offsets --to-earliest`) Sender переобрабатывает все сообщения за последние 30 дней.
 - Producer работает с `acks=all` и `enable.idempotence=true` — повторная отправка одного и того же сообщения при ретрае не создаёт дублей в топике.
 - Consumer коммитит offset только после успешной доставки во внешний узел (`enable.auto.commit=false`); при рестарте Sender'а в середине обработки сообщения оно обрабатывается повторно, потерь нет.
 - В Settings → Language выбор «Русский» переключает UI без перезагрузки, сохраняется в `users.lang` и подтягивается при следующем входе; язык по умолчанию для нового пользователя — English (либо определяется по `Accept-Language`, если содержит `ru`).
 - Серверные ответы API учитывают заголовок `Accept-Language` и возвращают тексты ошибок на соответствующем языке; логи в ClickHouse, stderr и метрики Prometheus остаются на английском.
-- Все эндпоинты Receiver доступны только с префиксом `/v1/` (`/v1/request/...`, `/v1/requestAsync/...`); запрос без префикса возвращает 404 с подсказкой использовать `/v1/`. gRPC-сервис зарегистрирован с пакетом `databus.sender.v1`.
+- Все эндпоинты Receiver доступны только с префиксом `/v1/` (`/v1/request/...`, `/v1/requestAsync/...`); запрос без префикса возвращает 404 с подсказкой использовать `/v1/`. gRPC-сервис зарегистрирован с пакетом `nexus.sender.v1`.
 - Валидация полей узла (см. таблицу лимитов в §3.3) отвергает превышение длины / неверный формат с 400 Bad Request и понятным сообщением; БД-constraint'ы дополнительно защищают от обхода API.
 - При достижении `nodes_soft_limit` в UI появляется баннер на странице создания узла; при достижении `nodes_hard_limit` API возвращает 400 с сообщением о превышении лимита.
 - В ClickHouse-таблице узла поля `attempts` и `attempts_details` заполняются корректно: `attempts >= 1` всегда, `attempts_details` пустая строка при успехе с первой попытки, JSON-массив со всеми деталями попыток при наличии ретраев или ошибке.
 - Колонки `team_id` присутствуют в таблицах `nodes` и `users`, имеют default-значение `'default'`, NOT NULL. UI и API игнорируют это поле в v1 — все запросы работают со значением `'default'`.
-- Узел в состоянии `paused` принимает входящие запросы (sync возвращает HTTP 202 с `queued: true`, async — обычное 200), сообщения копятся в Kafka; Sender-consumer пропускает их и переоткладывает с задержкой. При смене статуса на `enabled` Sender обрабатывает накопленные сообщения с обычной скоростью. Метрика `databus_paused_messages_total{node}` корректно отражает накопление.
+- Узел в состоянии `paused` принимает входящие запросы (sync возвращает HTTP 202 с `queued: true`, async — обычное 200), сообщения копятся в Kafka; Sender-consumer пропускает их и переоткладывает с задержкой. При смене статуса на `enabled` Sender обрабатывает накопленные сообщения с обычной скоростью. Метрика `nexus_paused_messages_total{node}` корректно отражает накопление.
 - UI Settings → API Tokens работает для всех ролей: пользователь видит только свои токены, может создать/отозвать/удалить. При создании секретное значение показывается ровно один раз. В БД хранится только `SHA-256(token)`.
 - Запросы к Web API с заголовком `Authorization: Bearer db_...` проходят через middleware API-токенов: scope проверяется на каждом эндпоинте, недостаточный scope → 403; превышение `api_token_rate_limit_per_min` (100/мин по умолчанию) → 429. Невалидный / отозванный / истёкший токен → 401.
 
@@ -1803,8 +1803,8 @@ s.logger.ErrorWithOp("kafka publish failed", err, "sender.publishAsync",
 - Эндпоинт `/v1/callback/{node_path}` для приёма callback-вебхуков от внешних систем (например, статусы async-доставки, асинхронные ответы на отложенные операции).
 - Проверка подписи `X-Signature: hmac-sha256=<hex>` или `X-Hub-Signature-256: sha256=<hex>` (GitHub-style) — алгоритм и формат заголовка выбираются в настройках узла.
 - Поле `callback_secret` в `nodes` (зашифрованное, как `auth_credentials`).
-- Поведение при невалидной подписи: 401 + запись в audit, метрика `databus_callback_signature_invalid_total{node}`.
-- Маршрутизация валидированных callback'ов: либо записываются как отдельный лог в ClickHouse-таблицу узла, либо пробрасываются в Kafka-топик `databus.callback`, откуда их забирает интегратор.
+- Поведение при невалидной подписи: 401 + запись в audit, метрика `nexus_callback_signature_invalid_total{node}`.
+- Маршрутизация валидированных callback'ов: либо записываются как отдельный лог в ClickHouse-таблицу узла, либо пробрасываются в Kafka-топик `nexus.callback`, откуда их забирает интегратор.
 
 ### Webhook / уведомления для операторов
 
@@ -1850,7 +1850,7 @@ s.logger.ErrorWithOp("kafka publish failed", err, "sender.publishAsync",
 - Отдаёт статику собранного SPA (HTML, JS, CSS, assets) под всеми остальными путями через `embed.FS` (стандартная библиотека Go).
 - Для SPA-роутинга (history mode) использует **fallback на `index.html`** для всех путей, не начинающихся с `/api/`, `/swagger/`, `/metrics`, `/health`, `/ready`.
 
-**Почему так:** один бинарь — одна команда деплоя (`docker run databus-web`), один процесс в `docker-compose.yml`, нет CORS-боли (один origin), нет sync между версиями фронта и бэка (они в одном артефакте). Минус — фронт пересобирается одновременно с Go-бинарём; компенсируется отдельной целью `make build-ui` и dev-режимом, где фронт запускается через Vite-dev-server против запущенного Go-бэка.
+**Почему так:** один бинарь — одна команда деплоя (`docker run nexus-web`), один процесс в `docker-compose.yml`, нет CORS-боли (один origin), нет sync между версиями фронта и бэка (они в одном артефакте). Минус — фронт пересобирается одновременно с Go-бинарём; компенсируется отдельной целью `make build-ui` и dev-режимом, где фронт запускается через Vite-dev-server против запущенного Go-бэка.
 
 **Структура сборки:**
 ```
@@ -1930,7 +1930,7 @@ package port
 
 import (
     "context"
-    "github.com/<org>/databus/internal/web/domain"
+    "github.com/<org>/nexus/internal/web/domain"
 )
 
 type NodeRepo interface {

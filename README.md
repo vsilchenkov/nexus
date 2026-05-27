@@ -1,4 +1,4 @@
-# DataBus
+# Nexus
 
 [![Go 1.26](https://img.shields.io/badge/go-1.26-00ADD8?logo=go)](go.mod)
 
@@ -13,7 +13,7 @@
 | Phase 1  | Все режимы auth (none/basic/token/token_from_request/basic_from_request)         |
 | Phase 1  | URL-режимы static / from_request с allowlist                                     |
 | Phase 1  | AES-256-GCM шифрование auth_credentials в БД                                     |
-| Phase 2  | Async /v1/requestAsync/* → Kafka (databus.async/dlq); Sender-consumer; paused-pacing |
+| Phase 2  | Async /v1/requestAsync/* → Kafka (nexus.async/dlq); Sender-consumer; paused-pacing |
 | Phase 2  | Circuit breaker + rate-limit (Redis); audit log таблица + запись для CRUD узлов  |
 | Phase 3  | Web auth: users CRUD, sessions в Redis, login/logout/me, RBAC, --set-admin-password CLI |
 | Phase 3  | API-токены: SHA-256 hash, scopes, rate-limit, audit                              |
@@ -63,7 +63,7 @@ UI на `http://localhost:8000/`. Swagger UI — `http://localhost:8000/swagger/
 ## Создание первого узла и тестовый запрос
 
 ```bash
-# из под admin-сессии (cookie databus_session):
+# из под admin-сессии (cookie nexus_session):
 curl -X POST http://localhost:8000/api/nodes -b cookies.txt \
   -H "Content-Type: application/json" \
   -d '{
@@ -104,12 +104,12 @@ make run-web                # в третьем
 Каждый бинарь также устанавливается как Windows-сервис (kardianos/service):
 ```cmd
 bin\receiver.exe install
-sc start DataBusReceiverService
+sc start NexusReceiverService
 ```
 
 ## Отладка в VS Code (Windows, Docker Desktop для зависимостей)
 
-В каталоге [.vscode/](.vscode/) лежит готовый конфиг отладки: launch.json с конфигами для каждого сервиса и compound «DataBus: all», tasks.json с задачами `deps: up/down/logs`, миграциями и тестами, settings.json под `gopls`/`dlv-dap`.
+В каталоге [.vscode/](.vscode/) лежит готовый конфиг отладки: launch.json с конфигами для каждого сервиса и compound «Nexus: all», tasks.json с задачами `deps: up/down/logs`, миграциями и тестами, settings.json под `gopls`/`dlv-dap`.
 
 Сценарий: зависимости (PostgreSQL, Redis, ClickHouse, Kafka) поднимаются в Docker Desktop отдельным compose-файлом с пробросом портов на хост; бинари `receiver`/`sender`/`web` стартуют локально под отладчиком и цепляются к `localhost:<port>`.
 
@@ -146,7 +146,7 @@ Compose [deploy/docker-compose.deps.yml](deploy/docker-compose.deps.yml) — с�
 | `Web (debug)`                      | `go run ./cmd/web --debug` под dlv → :8000                       |
 | `Receiver (debug)`                 | `go run ./cmd/receiver --debug` под dlv → :8080                  |
 | `Sender (debug)`                   | `go run ./cmd/sender --debug` под dlv → :9090 gRPC + :9091       |
-| `DataBus: all`                     | compound: все три сервиса одной кнопкой (`stopAll: true`)        |
+| `Nexus: all`                     | compound: все три сервиса одной кнопкой (`stopAll: true`)        |
 | `Web: migrate-up`                  | разовая миграция через отладчик                                  |
 | `Web: set-admin-password`          | задаёт пароль admin'у                                            |
 | `Loadtest`                         | `cmd/loadtest` против локального стека (1m / 100 RPS / 10 узлов) |
@@ -175,7 +175,7 @@ Compose [deploy/docker-compose.deps.yml](deploy/docker-compose.deps.yml) — с�
 - `config/config_debug.yml` — localhost-адреса для `make run-*`.
 - `.env` — секреты, в git не коммитится.
 
-Выбор конфига по приоритету: `--config` → `$DATABUS_CONFIG` → `--debug` → `config/config.yml`.
+Выбор конфига по приоритету: `--config` → `$NEXUS_CONFIG` → `--debug` → `config/config.yml`.
 
 ## API
 

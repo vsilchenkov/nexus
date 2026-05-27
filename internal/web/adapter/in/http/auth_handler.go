@@ -47,7 +47,7 @@ type meResponse struct {
 
 // Login godoc
 // @Summary  Логин по логину/паролю.
-// @Description  При успехе ставит HttpOnly cookie databus_session (§7.1 ТЗ).
+// @Description  При успехе ставит HttpOnly cookie nexus_session (§7.1 ТЗ).
 // @Tags     auth
 // @Accept   json
 // @Produce  json
@@ -99,7 +99,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 // Logout godoc
 // @Summary  Завершить сессию.
-// @Description  Удаляет session-cookie databus_session и инвалидирует токен в Redis (§7.1 ТЗ).
+// @Description  Удаляет session-cookie nexus_session и инвалидирует токен в Redis (§7.1 ТЗ).
 // @Tags     auth
 // @Produce  json
 // @Success  204

@@ -77,8 +77,8 @@ func TestGinMiddleware_V1Request(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 
 	body := scrape(t, m)
-	assert.Contains(t, body, `databus_requests_total{method="request",node="demo/sub",service="receiver",status="200"} 1`)
-	assert.Contains(t, body, `databus_request_duration_seconds_count{method="request",node="demo/sub",service="receiver"} 1`)
+	assert.Contains(t, body, `nexus_requests_total{method="request",node="demo/sub",service="receiver",status="200"} 1`)
+	assert.Contains(t, body, `nexus_request_duration_seconds_count{method="request",node="demo/sub",service="receiver"} 1`)
 }
 
 func TestGinMiddleware_V1RequestAsync(t *testing.T) {

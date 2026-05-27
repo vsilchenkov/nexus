@@ -204,7 +204,7 @@ const docTemplate = `{
         },
         "/api/auth/login": {
             "post": {
-                "description": "При успехе ставит HttpOnly cookie databus_session (§7.1 ТЗ).",
+                "description": "При успехе ставит HttpOnly cookie nexus_session (§7.1 ТЗ).",
                 "consumes": [
                     "application/json"
                 ],
@@ -271,7 +271,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Удаляет session-cookie databus_session и инвалидирует токен в Redis (§7.1 ТЗ).",
+                "description": "Удаляет session-cookie nexus_session и инвалидирует токен в Redis (§7.1 ТЗ).",
                 "produces": [
                     "application/json"
                 ],
@@ -2364,7 +2364,7 @@ const docTemplate = `{
         },
         "CookieAuth": {
             "type": "apiKey",
-            "name": "databus_session",
+            "name": "nexus_session",
             "in": "cookie"
         }
     }
@@ -2376,7 +2376,7 @@ var SwaggerInfo = &swag.Spec{
 	Host:             "",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},
-	Title:            "DataBus Web API",
+	Title:            "Nexus Web API",
 	Description:      "Admin REST API шины данных (§7 ТЗ). Сессии в Redis +\nAPI-токены (Bearer db_*). SPA по embed.FS отдаётся\nфолбэком на index.html для всех путей не из /api/.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,

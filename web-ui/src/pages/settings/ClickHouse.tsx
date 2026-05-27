@@ -123,7 +123,7 @@ export function ClickHousePanel() {
             type="text"
             value={form.database ?? ""}
             onChange={(e) => setForm({ ...form, database: e.target.value })}
-            placeholder="databus"
+            placeholder="nexus"
             className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none"
           />
         </div>

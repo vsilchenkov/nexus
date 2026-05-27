@@ -15,13 +15,13 @@
   "StringFileInfo": {
     "ProductVersion": "0.1.0",
     "CompanyName": "Vozovoz",
-    "FileDescription": "DataBus Sender Service",
+    "FileDescription": "Nexus Sender Service",
     "InternalName": "sender",
     "LegalCopyright": "© 2026 Vozovoz",
     "LegalTrademarks": "",
     "OriginalFilename": "sender.exe",
     "PrivateBuild": "",
-    "ProductName": "DataBus Sender Service",
+    "ProductName": "Nexus Sender Service",
     "SpecialBuild": "",
     "Comments": ""
   },

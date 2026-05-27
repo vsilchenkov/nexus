@@ -1,8 +1,8 @@
-# DataBus — конфиг для локальной отладки.
+# Nexus — конфиг для локальной отладки.
 # Зависимости подняты в docker-compose.dev.yml на localhost.
 
 build:
-  project_name: databus
+  project_name: nexus
   version: dev
 
 logging:
@@ -24,9 +24,9 @@ sentry:
 postgres:
   host: localhost
   port: 5432
-  database: databus
-  user: databus
-  password: databus
+  database: nexus
+  user: nexus
+  password: nexus
   max_open_conns: 10
   max_idle_conns: 2
   conn_max_lifetime_min: 30
@@ -58,9 +58,9 @@ clickhouse:
 
 kafka:
   brokers: localhost:9092
-  async_topic: databus.async
-  dlq_topic: databus.async.dlq
-  consumer_group: databus-sender-dev
+  async_topic: nexus.async
+  dlq_topic: nexus.async.dlq
+  consumer_group: nexus-sender-dev
   topic:
     partitions: 1
     replication_factor: 1
@@ -126,7 +126,7 @@ sender:
 
 web:
   http_addr: :8000
-  session_cookie_name: databus_session
+  session_cookie_name: nexus_session
   session_cookie_secure: false
   session_cookie_samesite: lax
   audit_retention_days: 30

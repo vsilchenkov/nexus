@@ -159,7 +159,7 @@ func (a *App) startGRPC(svc *grpcadapter.Server) error {
 
 	hsrv := health.NewServer()
 	hsrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
-	hsrv.SetServingStatus("databus.sender.v1.SenderService", healthpb.HealthCheckResponse_SERVING)
+	hsrv.SetServingStatus("nexus.sender.v1.SenderService", healthpb.HealthCheckResponse_SERVING)
 	healthpb.RegisterHealthServer(a.grpcSrv, hsrv)
 	reflection.Register(a.grpcSrv)
 
@@ -202,7 +202,7 @@ func (a *App) startAdminHTTP() error {
 	return nil
 }
 
-// reportKafkaLag — фоновый цикл (§6 ТЗ databus_kafka_lag).
+// reportKafkaLag — фоновый цикл (§6 ТЗ nexus_kafka_lag).
 // Опрашивает все consumer-инстансы группы и публикует Lag в Prometheus.
 // Интервал 15 секунд — компромисс между актуальностью и нагрузкой.
 func (a *App) reportKafkaLag(ctx context.Context) {

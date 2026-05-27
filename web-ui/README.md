@@ -1,6 +1,6 @@
 # web-ui
 
-SPA-фронтенд DataBus на React + TypeScript + Vite + Tailwind (§7, §17.5–17.6 ТЗ).
+SPA-фронтенд Nexus на React + TypeScript + Vite + Tailwind (§7, §17.5–17.6 ТЗ).
 
 В этом каркасе уже есть:
 - роутинг (React Router 6) и проверка сессии через `/api/auth/me`;

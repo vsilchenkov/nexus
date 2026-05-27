@@ -1,9 +1,9 @@
-# DataBus — основной конфиг.
+# Nexus — основной конфиг.
 # Этот файл — шаблон. Реальный config.yml в git не коммитится.
 # Все секреты подставляются из .env через ${VAR} / ${VAR:default}.
 
 build:
-  project_name: databus
+  project_name: nexus
   version: ${VERSION:dev}
 
 logging:
@@ -37,8 +37,8 @@ otel:
 postgres:
   host: ${PG_HOST:postgres}
   port: ${PG_PORT:5432}
-  database: databus
-  user: ${PG_USER:databus}
+  database: nexus
+  user: ${PG_USER:nexus}
   password: ${PG_PASSWORD}
   max_open_conns: 25
   max_idle_conns: 5
@@ -71,9 +71,9 @@ clickhouse:
 
 kafka:
   brokers: ${KAFKA_BROKERS:kafka:9092}
-  async_topic: databus.async
-  dlq_topic: databus.async.dlq
-  consumer_group: databus-sender
+  async_topic: nexus.async
+  dlq_topic: nexus.async.dlq
+  consumer_group: nexus-sender
   topic:
     partitions: 4
     # Дефолты — для multi-broker prod-кластера. На single-broker (локальный
@@ -151,7 +151,7 @@ sender:
 
 web:
   http_addr: :8000
-  session_cookie_name: databus_session
+  session_cookie_name: nexus_session
   session_cookie_secure: true
   session_cookie_samesite: strict
   audit_retention_days: 365

@@ -34,7 +34,7 @@ import (
 //	Producer → Kafka → ConsumerGroup → AsyncProcessor → SendUsecase → mock HTTP.
 //
 // Покрывает §3.6 / §4.2 / §10.2 ТЗ. Не запускает реальный Receiver — вместо
-// него тест играет роль продюсера, который кладёт Envelope в `databus.async`.
+// него тест играет роль продюсера, который кладёт Envelope в `nexus.async`.
 // Это правильное «вертикальное» покрытие Sender-стороны: всё, что после
 // Receiver, должно работать end-to-end.
 //
@@ -209,9 +209,9 @@ func newKafkaTestConfig(broker string) *config.Config {
 	return &config.Config{
 		Kafka: config.KafkaSection{
 			Brokers:       broker,
-			AsyncTopic:    "databus.async",
-			DLQTopic:      "databus.async.dlq",
-			ConsumerGroup: "databus-sender-it",
+			AsyncTopic:    "nexus.async",
+			DLQTopic:      "nexus.async.dlq",
+			ConsumerGroup: "nexus-sender-it",
 			Topic: config.KafkaTopicSection{
 				Partitions:        1,
 				ReplicationFactor: 1,

@@ -51,7 +51,7 @@
 - Healthcheck на каждой зависимости (`pg_isready`, `redis-cli ping`, ClickHouse `SELECT 1`, Kafka `kafka-topics --list`).
 - Restart policy `unless-stopped` для всех сервисов.
 - Volume для Postgres, Redis (AOF persistence), ClickHouse и Kafka — данные переживают рестарт контейнеров.
-- Сеть `databus_net` для изоляции.
+- Сеть `nexus_net` для изоляции.
 - Все секреты — через `.env` файл (`.env.example` в git, реальный `.env` в `.gitignore`). Compose автоматически подхватывает `.env` рядом с собой.
 
 **Override для разработки** — `docker-compose.dev.yml`:

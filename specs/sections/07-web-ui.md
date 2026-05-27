@@ -3,7 +3,7 @@
 ### 7.1 Аутентификация
 
 - Логин на основе username/password.
-- **Серверные сессии в Redis.** При успешном логине Web Service генерирует случайный opaque-токен (32 байта в base64), сохраняет в Redis под ключом `session:{token}` со значением `{user_id, role, lang, created_at, last_seen_at}` и TTL `redis.session_ttl_sec` (по умолчанию 24 часа). Токен возвращается клиенту в HttpOnly Secure SameSite=Strict cookie с именем `databus_session`.
+- **Серверные сессии в Redis.** При успешном логине Web Service генерирует случайный opaque-токен (32 байта в base64), сохраняет в Redis под ключом `session:{token}` со значением `{user_id, role, lang, created_at, last_seen_at}` и TTL `redis.session_ttl_sec` (по умолчанию 24 часа). Токен возвращается клиенту в HttpOnly Secure SameSite=Strict cookie с именем `nexus_session`.
 - На каждый запрос Web API middleware читает cookie, ищет ключ в Redis, продлевает TTL, добавляет в контекст `user_id` и `role`. Отсутствующий или просроченный ключ → 401 Unauthorized.
 - **Logout** — удаление ключа `session:{token}` из Redis и cookie с пустым значением и `Max-Age=0`. Действует мгновенно: после следующего запроса пользователь невалиден.
 - **Принудительный logout всех сессий пользователя** (при смене роли, отключении или смене пароля) — выполняется через `SCAN MATCH session:*` с проверкой `user_id` в значении и удалением подходящих ключей. Не самая дешёвая операция (O(n) от числа активных сессий), но выполняется редко.
@@ -441,7 +441,7 @@ Mutating scopes (`*:write`, `*:delete`) **не предусмотрены в v1*
 **Использование клиентом:**
 
 ```
-curl https://databus.example.com/api/nodes/abc/logs \
+curl https://nexus.example.com/api/nodes/abc/logs \
   -H "Authorization: Bearer db_3xK9mPq7vR2nL8wT5sF4hY6jB1aZ0cE"
 ```
 

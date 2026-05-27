@@ -165,7 +165,7 @@ func (t *SettingsTester) TestSentry(ctx context.Context, patch *domain.SentrySet
 	if err != nil {
 		return &TestResult{OK: false, Error: err.Error()}, nil //nolint:nilerr // ошибка теста инкапсулирована в TestResult
 	}
-	_ = client.CaptureMessage("DataBus settings test event", nil, nil)
+	_ = client.CaptureMessage("Nexus settings test event", nil, nil)
 	if ok := client.Flush(t.flushTimeout); !ok {
 		return &TestResult{OK: false, Error: "sentry flush timed out"}, nil
 	}

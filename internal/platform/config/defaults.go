@@ -74,13 +74,13 @@ func applyDefaults(c *Config) {
 	}
 
 	if c.Kafka.AsyncTopic == "" {
-		c.Kafka.AsyncTopic = "databus.async"
+		c.Kafka.AsyncTopic = "nexus.async"
 	}
 	if c.Kafka.DLQTopic == "" {
-		c.Kafka.DLQTopic = "databus.async.dlq"
+		c.Kafka.DLQTopic = "nexus.async.dlq"
 	}
 	if c.Kafka.ConsumerGroup == "" {
-		c.Kafka.ConsumerGroup = "databus-sender"
+		c.Kafka.ConsumerGroup = "nexus-sender"
 	}
 
 	if c.Receiver.HTTPAddr == "" {
@@ -150,7 +150,7 @@ func applyDefaults(c *Config) {
 		c.Web.HTTPAddr = ":8000"
 	}
 	if c.Web.SessionCookieName == "" {
-		c.Web.SessionCookieName = "databus_session"
+		c.Web.SessionCookieName = "nexus_session"
 	}
 	if c.Web.SessionCookieSamesite == "" {
 		c.Web.SessionCookieSamesite = "strict"

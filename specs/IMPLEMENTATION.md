@@ -1,4 +1,4 @@
-# IMPLEMENTATION.md — карта проделанных работ по ТЗ DataBus
+# IMPLEMENTATION.md — карта проделанных работ по ТЗ Nexus
 
 > **Назначение этого файла.** Карта реализации шины данных в привязке к разделам ТЗ
 > ([nexus_spec.md](nexus_spec.md), разделённый на [sections/](sections/)).
@@ -91,15 +91,15 @@
 | Пункт | Статус | Где |
 |---|---|---|
 | `/metrics` Prometheus в каждом сервисе | ✅ | [platform/metrics/metrics.go](../internal/platform/metrics/metrics.go) — изолированный `*prometheus.Registry`, подключается через `a.metrics.Handler()` в каждом `app.go` |
-| **`databus_requests_total` + `databus_request_duration_seconds`** | ✅ Phase 6.1 | Gin middleware [platform/metrics/gin.go](../internal/platform/metrics/gin.go) — Receiver/Web; gRPC [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go) и async [usecase/async.go](../internal/sender/usecase/async.go) — Sender |
-| **`databus_kafka_lag`** | ✅ Phase 6.1 | reporter в [sender/app.go](../internal/sender/app.go) `reportKafkaLag()` — раз в 15 сек снимает `Stats()` со всех consumer-инстансов |
-| **`databus_clickhouse_buffer_size` / `_errors_total` / `_dropped_total` / `_fallback_total`** | ✅ Phase 6.1 | [chlog/writer.go](../internal/sender/adapter/out/chlog/writer.go) обновляет в `append`/`flushTable`/`Write` |
+| **`nexus_requests_total` + `nexus_request_duration_seconds`** | ✅ Phase 6.1 | Gin middleware [platform/metrics/gin.go](../internal/platform/metrics/gin.go) — Receiver/Web; gRPC [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go) и async [usecase/async.go](../internal/sender/usecase/async.go) — Sender |
+| **`nexus_kafka_lag`** | ✅ Phase 6.1 | reporter в [sender/app.go](../internal/sender/app.go) `reportKafkaLag()` — раз в 15 сек снимает `Stats()` со всех consumer-инстансов |
+| **`nexus_clickhouse_buffer_size` / `_errors_total` / `_dropped_total` / `_fallback_total`** | ✅ Phase 6.1 | [chlog/writer.go](../internal/sender/adapter/out/chlog/writer.go) обновляет в `append`/`flushTable`/`Write` |
 
 ### §7 Веб-интерфейс
 
 | Пункт | Статус | Где |
 |---|---|---|
-| Login form (cookie databus_session) | ✅ | [web-ui/src/pages/Login.tsx](../web-ui/src/pages/Login.tsx) |
+| Login form (cookie nexus_session) | ✅ | [web-ui/src/pages/Login.tsx](../web-ui/src/pages/Login.tsx) |
 | Overview (список узлов) | ✅ | [web-ui/src/pages/Overview.tsx](../web-ui/src/pages/Overview.tsx) |
 | Node detail с вкладкой Logs (snapshot + SSE live-tail) | ✅ Phase 5 | [pages/NodeDetail.tsx](../web-ui/src/pages/NodeDetail.tsx) |
 | Node settings (создание/редактирование, dry-run кнопка) | ✅ Phase 5.1 | [pages/NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx) |
@@ -124,7 +124,7 @@
 | Env-вставки `${VAR:default}` | ✅ | [platform/config/load.go](../internal/platform/config/load.go) |
 | Флаги `--config`, `--debug`, `--version` | ✅ | [platform/config/flags.go](../internal/platform/config/flags.go) |
 | **`app_settings` таблица + REST API + overlay поверх env на старте** | ✅ Phase 6.3.1 | миграция [0006](../migrations/0006_app_settings.up.sql), [domain/app_settings.go](../internal/domain/app_settings.go), [usecase/app_settings.go](../internal/web/usecase/app_settings.go), [http/app_settings_handler.go](../internal/web/adapter/in/http/app_settings_handler.go), [bootstrap/app_settings.go](../internal/platform/bootstrap/app_settings.go) |
-| **Hot-reload Sentry через Redis pub/sub** | ✅ Phase 6.3.2 | [platform/reloader/](../internal/platform/reloader/), [sentry.Reload](../internal/platform/sentry/sentry.go), [bootstrap/reload.go](../internal/platform/bootstrap/reload.go) — Web публикует на канал `databus:config:reload`, Receiver/Sender/Web подписаны и переинициализируют SDK |
+| **Hot-reload Sentry через Redis pub/sub** | ✅ Phase 6.3.2 | [platform/reloader/](../internal/platform/reloader/), [sentry.Reload](../internal/platform/sentry/sentry.go), [bootstrap/reload.go](../internal/platform/bootstrap/reload.go) — Web публикует на канал `nexus:config:reload`, Receiver/Sender/Web подписаны и переинициализируют SDK |
 | **Полное hot-reload ClickHouse (пересоздание клиента/writer'а)** | ✅ Phase 6.3.2.5 | [clickhouse.Manager](../internal/platform/clickhouse/manager.go) (атомарный swap conn + delayed close), [chlog.WriterManager](../internal/sender/adapter/out/chlog/manager.go) (пересоздание Writer для смены BufferMaxSize/Workers), [bootstrap.ClickHouseReloader](../internal/platform/bootstrap/reload.go) — Sender и Web swap'ают conn и переподнимают зависимые компоненты без рестарта |
 | **Test connection для Sentry/ClickHouse (§7.10)** | ✅ Phase 6.3.2.6 | [usecase.SettingsTester](../internal/web/usecase/settings_tester.go) + POST `/api/settings/{clickhouse,sentry}/test`, кнопка «Test connection» в [Sentry.tsx](../web-ui/src/pages/settings/Sentry.tsx) и [ClickHouse.tsx](../web-ui/src/pages/settings/ClickHouse.tsx) — открывает временный conn / создаёт изолированный sentry.Client с merge'нутыми настройками, возвращает `{ok, latency_ms}` или `{error}` без сохранения |
 | **Settings → Sentry / ClickHouse страницы в SPA** | ✅ Phase 6.3.3 | [pages/settings/Sentry.tsx](../web-ui/src/pages/settings/Sentry.tsx), [pages/settings/ClickHouse.tsx](../web-ui/src/pages/settings/ClickHouse.tsx), две новые вкладки в [pages/Settings.tsx](../web-ui/src/pages/Settings.tsx) (видны только admin-роли через `/api/auth/me`) |
@@ -140,7 +140,7 @@
 | Пункт | Статус | Где |
 |---|---|---|
 | Redis-кеш конфига узлов + cache-aside | ✅ | [receiver/adapter/out/nodecache/reader.go](../internal/receiver/adapter/out/nodecache/reader.go) |
-| **Локальный LRU L2-кеш (1-5 сек) + stale-fallback при ошибках downstream** | ✅ Phase 7.2 | [nodecache/lru.go](../internal/receiver/adapter/out/nodecache/lru.go) + [nodecache/l2.go](../internal/receiver/adapter/out/nodecache/l2.go); конфиг `receiver.l2_cache.{enabled,size,ttl_ms,stale_ttl_ms}`; метрики `databus_l2_cache_{hits,misses,evictions}_total` + `databus_l2_cache_size` |
+| **Локальный LRU L2-кеш (1-5 сек) + stale-fallback при ошибках downstream** | ✅ Phase 7.2 | [nodecache/lru.go](../internal/receiver/adapter/out/nodecache/lru.go) + [nodecache/l2.go](../internal/receiver/adapter/out/nodecache/l2.go); конфиг `receiver.l2_cache.{enabled,size,ttl_ms,stale_ttl_ms}`; метрики `nexus_l2_cache_{hits,misses,evictions}_total` + `nexus_l2_cache_size` |
 | Pool соединений PG/Redis по конфигу | ✅ | `MaxOpenConns`, `PoolSize` в YAML |
 | **Graceful shutdown с дренажом CH-буфера и Kafka offset** | ✅ | `App.Stop` в каждом сервисе, `chWriter.Stop(ctx)` |
 | **CH file-fallback при недоступности (§9.4)** | ✅ Phase 5.1 | [chlog/fallback.go](../internal/sender/adapter/out/chlog/fallback.go) |
@@ -158,7 +158,7 @@
 | Loadtest бинарь с pass/fail-критериями | ✅ | [cmd/loadtest](../cmd/loadtest/) |
 | **Полный testcontainers-сетап (PG + Redis + CH + Kafka)** | ✅ Phase 7.3 | PG ([node_repo_test.go](../tests/integration/node_repo_test.go)), Kafka ([receiver_async_test.go](../tests/integration/receiver_async_test.go)), Redis ([redis_test.go](../tests/integration/redis_test.go) — SessionRepo + NodeCache + TTL-expire), CH ([clickhouse_test.go](../tests/integration/clickhouse_test.go) — chlog.Writer batch insert + LogReaderCH `GetByID`/`Search` + table-name SQL-injection guard) |
 | **Async end-to-end интеграция через Kafka** | ✅ Phase 6.2 | [tests/integration/receiver_async_test.go](../tests/integration/receiver_async_test.go) — реальный pipeline `RouteAsyncUsecase → Kafka → ConsumerGroup → AsyncProcessor → SendUsecase → mock HTTP` |
-| **DLQ-сценарий после retry-exhaustion** | ✅ Phase 9.3 | [tests/integration/sender_dlq_test.go](../tests/integration/sender_dlq_test.go) — mock=500 + узел с `retry_count=2`; отдельный kafka-reader на `databus.async.dlq` проверяет headers `id` / `node_path` / `orig_topic` / `reason=status=500 attempts=3` / `last_attempt_at` |
+| **DLQ-сценарий после retry-exhaustion** | ✅ Phase 9.3 | [tests/integration/sender_dlq_test.go](../tests/integration/sender_dlq_test.go) — mock=500 + узел с `retry_count=2`; отдельный kafka-reader на `nexus.async.dlq` проверяет headers `id` / `node_path` / `orig_topic` / `reason=status=500 attempts=3` / `last_attempt_at` |
 | **Replay-сценарий через ClickHouse** | ✅ Phase 9.3 | [tests/integration/replay_test.go](../tests/integration/replay_test.go) — PG+CH; `ReplayUsecase` поверх реального `LogReaderCH` проверяет маркер `__replay_of=<orig_id>` в query, сохранение исходных query-параметров, тело из CH-записи и audit-запись `node.replay` |
 | **Auth E2E (login + session + role)** | ✅ Phase 9.3 | [tests/integration/auth_test.go](../tests/integration/auth_test.go) — PG `UserRepoPg` + Redis `SessionRepoRedis`; happy/bad-password/inactive, `Check` продлевает TTL, `ChangePassword` инвалидирует все сессии, audit `user.login.*` / `user.password.change` |
 | **Receiver incoming auth через реальный HTTP** | ✅ Phase 9.3 | [tests/integration/receiver_incoming_auth_test.go](../tests/integration/receiver_incoming_auth_test.go) — Gin + `httptest.NewServer`; узлы none/basic/token, проверка 401/200 для отсутствующего/малформенного/неверного/верного `Authorization`, гарантия что 401 не достигает upstream |
@@ -361,7 +361,7 @@ maskиование, rate-limit per-node. Маркер `__replay_of=<orig_id>` д
 [LogsUsecase.Subscribe](../internal/web/usecase/logs.go) опрашивает ClickHouse раз
 в 1 секунду по курсору `date_request`. Это компромисс: при большом числе одновременных
 SSE-клиентов нагрузка на CH растёт линейно. Долгосрочный путь — pub/sub через Kafka
-`databus.logs` (out-of-scope в v1). SSE отклоняет API-токены через
+`nexus.logs` (out-of-scope в v1). SSE отклоняет API-токены через
 [RequireSessionOnly](../internal/web/adapter/in/http/api_token_middleware.go) — только UI-сессии.
 
 ### 4.7 ClickHouse fallback — атомарная запись через `.tmp` + rename
@@ -463,7 +463,7 @@ gRPC server, chlog.Writer и AsyncProcessor — глобальной registry м
 - **Downstream error + `StaleTTL > 0`** — пробуем вернуть протухшую запись, если её
   возраст ≤ `StaleTTL`. Это и есть §9.4 «крайний случай: одновременно лежат Redis
   и PG» — на горячих узлах сервис продолжает отвечать. Возвращаем `stale`-метку в
-  `databus_l2_cache_hits_total{kind="stale"}` и Warn в логи.
+  `nexus_l2_cache_hits_total{kind="stale"}` и Warn в логи.
 - **`ErrNodeNotFound`** — stale-fallback не срабатывает: «нет узла» — это валидный
   ответ, кешировать его как «есть» нельзя.
 
@@ -720,10 +720,10 @@ make proto                                     # перегенерация send
   · [tests/integration/sender_dlq_test.go](../tests/integration/sender_dlq_test.go)
   `TestSender_Async_DLQ_E2E` — узел с `retry_count=2` + mock=500. Sender
   делает 3 попытки, после исчерпания публикует исходный envelope в
-  `databus.async.dlq`. Отдельный `kafka-go` reader на DLQ-топике (separate
-  consumer-group `databus-dlq-watcher-it`, чтобы не конкурировать с
+  `nexus.async.dlq`. Отдельный `kafka-go` reader на DLQ-топике (separate
+  consumer-group `nexus-dlq-watcher-it`, чтобы не конкурировать с
   Sender'ом) дожидается сообщения и проверяет headers: `id` соответствует
-  envelope id, `node_path`, `orig_topic="databus.async"`, `reason` содержит
+  envelope id, `node_path`, `orig_topic="nexus.async"`, `reason` содержит
   `status=500 attempts=3`, `last_attempt_at` непуст; value полностью
   соответствует исходному envelope. В capturing log-writer 1 запись со
   Status=500, Done=false, Attempts=3 (а не 3 отдельные записи — `SendUsecase`
@@ -828,7 +828,7 @@ make proto                                     # перегенерация send
 
 Сделанное в Phase 6:
 
-- 6.1 Prometheus метрики (`databus_requests_total`, latency, kafka_lag, CH-метрики).
+- 6.1 Prometheus метрики (`nexus_requests_total`, latency, kafka_lag, CH-метрики).
 - 6.2 Async end-to-end integration через Kafka.
 - 6.3 app_settings + hot-reload Sentry/ClickHouse + test connection.
 - 6.4 Settings → Users полный CRUD.
@@ -1290,11 +1290,11 @@ make proto                                     # перегенерация send
   При `Enabled=false` декоратор отдаёт inner как есть. Stale-fallback по
   `StaleTTL` (§9.4 крайний случай: одновременно лежат Redis и PG — на
   горячем наборе узлов сервис продолжает отвечать с протухшего слепка).
-  `ErrNodeNotFound` НЕ кешируется. Метрики `databus_l2_cache_hits_total{kind}`,
+  `ErrNodeNotFound` НЕ кешируется. Метрики `nexus_l2_cache_hits_total{kind}`,
   `_misses_total`, `_evictions_total`, `_size`. Unit-тесты на детерминированных
   `Clock` (без real sleep).
 - 7.5 Grafana dashboard + Prometheus alert rules:
-  · `deploy/grafana/databus.json` — 10 панелей: RPS, error rate (%),
+  · `deploy/grafana/nexus.json` — 10 панелей: RPS, error rate (%),
   request duration p50/p95/p99, Kafka lag, CH buffer per table, CH
   errors/dropped/fallback, L2 cache hit ratio (fresh vs stale), L2
   size/evictions, Go runtime heap, goroutines. Datasource и `service`

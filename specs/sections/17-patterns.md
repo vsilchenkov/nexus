@@ -9,7 +9,7 @@
 - Отдаёт статику собранного SPA (HTML, JS, CSS, assets) под всеми остальными путями через `embed.FS` (стандартная библиотека Go).
 - Для SPA-роутинга (history mode) использует **fallback на `index.html`** для всех путей, не начинающихся с `/api/`, `/swagger/`, `/metrics`, `/health`, `/ready`.
 
-**Почему так:** один бинарь — одна команда деплоя (`docker run databus-web`), один процесс в `docker-compose.yml`, нет CORS-боли (один origin), нет sync между версиями фронта и бэка (они в одном артефакте). Минус — фронт пересобирается одновременно с Go-бинарём; компенсируется отдельной целью `make build-ui` и dev-режимом, где фронт запускается через Vite-dev-server против запущенного Go-бэка.
+**Почему так:** один бинарь — одна команда деплоя (`docker run nexus-web`), один процесс в `docker-compose.yml`, нет CORS-боли (один origin), нет sync между версиями фронта и бэка (они в одном артефакте). Минус — фронт пересобирается одновременно с Go-бинарём; компенсируется отдельной целью `make build-ui` и dev-режимом, где фронт запускается через Vite-dev-server против запущенного Go-бэка.
 
 **Структура сборки:**
 ```
@@ -89,7 +89,7 @@ package port
 
 import (
     "context"
-    "github.com/<org>/databus/internal/web/domain"
+    "github.com/<org>/nexus/internal/web/domain"
 )
 
 type NodeRepo interface {

@@ -11,7 +11,7 @@ ARG BINARY
 FROM alpine:3.20
 
 RUN apk add --no-cache ca-certificates tzdata wget && \
-    addgroup -S databus && adduser -S -G databus databus
+    addgroup -S nexus && adduser -S -G nexus nexus
 
 ARG BINARY
 WORKDIR /app
@@ -25,7 +25,7 @@ RUN echo "#!/bin/sh" > /entrypoint && \
     echo "exec /usr/local/bin/${BINARY} --config /app/config/config.yml \"\$@\"" >> /entrypoint && \
     chmod +x /entrypoint
 
-USER databus
+USER nexus
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=5 \
     CMD wget -qO- http://localhost:8080/health || wget -qO- http://localhost:8000/health || exit 1

@@ -531,7 +531,7 @@ info:
     Admin REST API шины данных (§7 ТЗ). Сессии в Redis +
     API-токены (Bearer db_*). SPA по embed.FS отдаётся
     фолбэком на index.html для всех путей не из /api/.
-  title: DataBus Web API
+  title: Nexus Web API
   version: "1.0"
 paths:
   /api/audit:
@@ -661,7 +661,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: При успехе ставит HttpOnly cookie databus_session (§7.1 ТЗ).
+      description: При успехе ставит HttpOnly cookie nexus_session (§7.1 ТЗ).
       parameters:
       - description: credentials
         in: body
@@ -700,7 +700,7 @@ paths:
       - auth
   /api/auth/logout:
     post:
-      description: Удаляет session-cookie databus_session и инвалидирует токен в Redis
+      description: Удаляет session-cookie nexus_session и инвалидирует токен в Redis
         (§7.1 ТЗ).
       produces:
       - application/json
@@ -1569,6 +1569,6 @@ securityDefinitions:
     type: apiKey
   CookieAuth:
     in: cookie
-    name: databus_session
+    name: nexus_session
     type: apiKey
 swagger: "2.0"

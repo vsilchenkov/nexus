@@ -6,17 +6,17 @@ rule_files:
   - prometheus.alerts.yml
 
 scrape_configs:
-  - job_name: databus-receiver
+  - job_name: nexus-receiver
     static_configs:
       - targets: ["receiver:8080"]
     metrics_path: /metrics
 
-  - job_name: databus-sender
+  - job_name: nexus-sender
     static_configs:
       - targets: ["sender:9091"]
     metrics_path: /metrics
 
-  - job_name: databus-web
+  - job_name: nexus-web
     static_configs:
       - targets: ["web:8000"]
     metrics_path: /metrics

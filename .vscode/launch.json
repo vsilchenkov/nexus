@@ -1,5 +1,5 @@
 {
-    // DataBus — конфиги отладки в VS Code.
+    // Nexus — конфиги отладки в VS Code.
     //
     // Предусловие: deps (postgres, redis, clickhouse, kafka) подняты через
     // отдельный compose `deploy/docker-compose.deps.yml` (см. README раздел
@@ -10,7 +10,7 @@
     // (envFile). PG_*, REDIS_*, CH_*, KAFKA_BROKERS из envFile перекрывают
     // дефолты в config/config_debug.yml через ${VAR:default}-плейсхолдеры.
     //
-    // Compound "DataBus: all" поднимает все три сервиса одним кликом.
+    // Compound "Nexus: all" поднимает все три сервиса одним кликом.
     "version": "0.2.0",
     "configurations": [
         {
@@ -102,7 +102,7 @@
     ],
     "compounds": [
         {
-            "name": "DataBus: all (web + receiver + sender)",
+            "name": "Nexus: all (web + receiver + sender)",
             "configurations": ["Web (debug)", "Sender (debug)", "Receiver (debug)"],
             "stopAll": true
         }

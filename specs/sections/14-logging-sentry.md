@@ -78,7 +78,7 @@ h.logger.Error("file processing failed",
     h.logger.Err(err))
 
 s.logger.ErrorWithOp("kafka publish failed", err, "sender.publishAsync",
-    s.logger.Str("topic", "databus.async"),
+    s.logger.Str("topic", "nexus.async"),
     s.logger.Str("node", nodePath))
 ```
 

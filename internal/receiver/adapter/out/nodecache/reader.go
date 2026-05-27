@@ -156,6 +156,6 @@ func (r *Reader) getFromPg(ctx context.Context, path string) (*domain.Node, erro
 func isRedisUnavailable(err error) bool {
 	// Простая проверка по тексту — pkg-уровневая sentinel у go-redis нет
 	// для disconnect/timeout. Phase 2: заменить на более точный детектор
-	// с метрикой databus_redis_unavailable_total.
+	// с метрикой nexus_redis_unavailable_total.
 	return err != nil
 }

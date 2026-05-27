@@ -199,7 +199,7 @@ func TestLoad_EndToEnd_WithEnvSubstitution(t *testing.T) {
 
 	yaml := `
 build:
-  project_name: databus
+  project_name: nexus
   version: dev
 
 logging:

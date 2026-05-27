@@ -1,4 +1,4 @@
-# GitLab CI/CD pipeline для DataBus (Phase 9.2).
+# GitLab CI/CD pipeline для Nexus (Phase 9.2).
 #
 # Один файл со всеми stages: test, lint, build, security, integration, release.
 #
@@ -289,7 +289,7 @@ loadtest:
       VERSION=loadtest-${CI_PIPELINE_ID}
       PG_HOST=postgres
       PG_PORT=5432
-      PG_USER=databus
+      PG_USER=nexus
       PG_PASSWORD=loadtest_local_pg
       REDIS_HOST=redis
       REDIS_PORT=6379

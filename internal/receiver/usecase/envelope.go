@@ -8,7 +8,7 @@ import (
 	"nexus/internal/domain"
 )
 
-// Envelope — формат сообщения в databus.async.
+// Envelope — формат сообщения в nexus.async.
 // Содержит всё, что нужно Sender-consumer'у для повторного выполнения
 // запроса: фактический target URL (уже разрешённый), готовый заголовок
 // Authorization (если был), отфильтрованные forward-headers, тело.

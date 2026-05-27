@@ -1,4 +1,4 @@
-# TESTING.md — процедура запуска тестов DataBus
+# TESTING.md — процедура запуска тестов Nexus
 
 ## Unit-тесты
 
@@ -46,10 +46,10 @@ go test -tags=integration -count=1 -v ./tests/integration/...
   делает реальный HTTP-запрос вместо gRPC. Проверяет, что запрос дошёл до upstream с правильным path,
   body, и заголовком `Authorization: Bearer ...`.
 - **`TestSender_Async_E2E`** — Postgres + Kafka (KRaft) + mock upstream. Receiver-RouteAsync публикует
-  Envelope в `databus.async`, Sender ConsumerGroup читает, делает HTTP-вызов, пишет в capturing log
+  Envelope в `nexus.async`, Sender ConsumerGroup читает, делает HTTP-вызов, пишет в capturing log
   writer. Покрывает §3.6 / §4.2 happy-path.
 - **`TestSender_Async_DLQ_E2E`** — тот же стэк, но mock всегда отвечает 500, узел с `retry_count=2`.
-  Отдельный kafka-reader на `databus.async.dlq` дожидается публикации и проверяет headers
+  Отдельный kafka-reader на `nexus.async.dlq` дожидается публикации и проверяет headers
   (`id` / `node_path` / `orig_topic` / `reason=status=500 attempts=3` / `last_attempt_at`).
   Покрывает §3.6 / §5.3 (DLQ after retry exhaustion).
 - **`TestClickHouse_WriteAndRead`** + **`TestClickHouse_GetByID_Deterministic`** — ClickHouse 24-alpine,

@@ -18,7 +18,7 @@ type Producer struct {
 
 // NewProducer создаёт producer без привязки к конкретному топику —
 // топик передаётся в каждом сообщении. Это удобно для отправки в
-// databus.async и databus.async.dlq из одного инстанса.
+// nexus.async и nexus.async.dlq из одного инстанса.
 //
 // Параметры:
 //

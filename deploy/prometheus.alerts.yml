@@ -1,4 +1,4 @@
-# Prometheus alert rules для DataBus (§6 ТЗ + §9 SLO).
+# Prometheus alert rules для Nexus (§6 ТЗ + §9 SLO).
 #
 # Подключается в prometheus.yml:
 #
@@ -7,14 +7,14 @@
 #
 # В docker-compose обе папки монтируются read-only в /etc/prometheus/.
 groups:
-  - name: databus.slo
+  - name: nexus.slo
     interval: 30s
     rules:
 
       # ----- Sync RPS / latency / error rate -----
 
-      - alert: DataBusReceiverDown
-        expr: up{job="databus-receiver"} == 0
+      - alert: NexusReceiverDown
+        expr: up{job="nexus-receiver"} == 0
         for: 2m
         labels:
           severity: critical
@@ -23,8 +23,8 @@ groups:
           summary: "Receiver instance is unreachable"
           description: "Prometheus cannot scrape /metrics for {{ $labels.instance }} for 2 minutes."
 
-      - alert: DataBusSenderDown
-        expr: up{job="databus-sender"} == 0
+      - alert: NexusSenderDown
+        expr: up{job="nexus-sender"} == 0
         for: 2m
         labels:
           severity: critical
@@ -33,13 +33,13 @@ groups:
           summary: "Sender instance is unreachable"
           description: "Prometheus cannot scrape /metrics for {{ $labels.instance }} for 2 minutes."
 
-      - alert: DataBusHighErrorRate
+      - alert: NexusHighErrorRate
         # >5% 5xx за 5 минут на синхронном пути — выше SLO §9.1.
         expr: |
           (
-            sum by (service) (rate(databus_requests_total{status=~"5..|0"}[5m]))
+            sum by (service) (rate(nexus_requests_total{status=~"5..|0"}[5m]))
             /
-            sum by (service) (rate(databus_requests_total[5m]))
+            sum by (service) (rate(nexus_requests_total[5m]))
           ) > 0.05
         for: 10m
         labels:
@@ -48,11 +48,11 @@ groups:
           summary: "{{ $labels.service }} 5xx rate > 5% for 10m"
           description: "Aggregate error rate across all nodes is breaching the SLO."
 
-      - alert: DataBusP95LatencyHigh
+      - alert: NexusP95LatencyHigh
         # p95 end-to-end > 200ms за 5 мин — упрёт против §9.1 «p95 ≤ 200ms».
         expr: |
           histogram_quantile(0.95,
-            sum by (service, le) (rate(databus_request_duration_seconds_bucket{method="request"}[5m]))
+            sum by (service, le) (rate(nexus_request_duration_seconds_bucket{method="request"}[5m]))
           ) > 0.2
         for: 10m
         labels:
@@ -63,9 +63,9 @@ groups:
 
       # ----- Async backlog -----
 
-      - alert: DataBusKafkaLagHigh
+      - alert: NexusKafkaLagHigh
         # >10k unprocessed сообщений на партицию для 5 минут — async очередь не успевает.
-        expr: max by (topic, partition) (databus_kafka_lag) > 10000
+        expr: max by (topic, partition) (nexus_kafka_lag) > 10000
         for: 5m
         labels:
           severity: warning
@@ -76,9 +76,9 @@ groups:
 
       # ----- ClickHouse health -----
 
-      - alert: DataBusClickHouseErrors
+      - alert: NexusClickHouseErrors
         # Любая стабильная скорость ошибок батчей CH > 0.1/sec — недоступность.
-        expr: sum by (service) (rate(databus_clickhouse_errors_total[5m])) > 0.1
+        expr: sum by (service) (rate(nexus_clickhouse_errors_total[5m])) > 0.1
         for: 10m
         labels:
           severity: warning
@@ -87,9 +87,9 @@ groups:
           summary: "ClickHouse batch insert errors on {{ $labels.service }}"
           description: "Sender is failing CH inserts. File-fallback is engaged; check ClickHouse cluster health."
 
-      - alert: DataBusClickHouseBufferGrowing
+      - alert: NexusClickHouseBufferGrowing
         # 90% от buffer_max_size — близко к drop-точке.
-        expr: max by (table) (databus_clickhouse_buffer_size) > 90000
+        expr: max by (table) (nexus_clickhouse_buffer_size) > 90000
         for: 5m
         labels:
           severity: warning
@@ -97,21 +97,21 @@ groups:
           summary: "CH buffer for {{ $labels.table }} is near max"
           description: "Buffer is above 90k rows; next overflow will start writing NDJSON fallback files."
 
-      - alert: DataBusClickHouseDropped
+      - alert: NexusClickHouseDropped
         # >0 — значит логи теряются.
-        expr: sum by (service, table) (increase(databus_clickhouse_dropped_total[5m])) > 0
+        expr: sum by (service, table) (increase(nexus_clickhouse_dropped_total[5m])) > 0
         for: 5m
         labels:
           severity: critical
         annotations:
           summary: "Log records dropped for table {{ $labels.table }}"
-          description: "DataBus is dropping log records (buffer full or empty_table). Check CH writer health."
+          description: "Nexus is dropping log records (buffer full or empty_table). Check CH writer health."
 
       # ----- L2 cache health (§9.2, Phase 7.2) -----
 
-      - alert: DataBusL2CacheStaleFallback
+      - alert: NexusL2CacheStaleFallback
         # Stale-fallback срабатывает = downstream (Redis + PG) лежат.
-        expr: sum(rate(databus_l2_cache_hits_total{kind="stale"}[5m])) > 0.1
+        expr: sum(rate(nexus_l2_cache_hits_total{kind="stale"}[5m])) > 0.1
         for: 5m
         labels:
           severity: critical

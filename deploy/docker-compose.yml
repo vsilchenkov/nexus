@@ -1,33 +1,33 @@
-# DataBus — production-style compose-стек.
+# Nexus — production-style compose-стек.
 # Запуск: docker compose -f deploy/docker-compose.yml up -d
 # Все секреты — через .env (рядом с этим файлом или в корне проекта).
 
-name: databus
+name: nexus
 
 services:
 
   postgres:
     image: postgres:16-alpine
-    container_name: databus_postgres
+    container_name: nexus_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${PG_USER:-databus}
-      POSTGRES_PASSWORD: ${PG_PASSWORD:-databus}
-      POSTGRES_DB: databus
+      POSTGRES_USER: ${PG_USER:-nexus}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-nexus}
+      POSTGRES_DB: nexus
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-databus} -d databus"]
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-nexus} -d nexus"]
       interval: 5s
       timeout: 5s
       retries: 10
-    networks: [databus_net]
+    networks: [nexus_net]
 
   redis:
     image: redis:7-alpine
-    container_name: databus_redis
+    container_name: nexus_redis
     restart: unless-stopped
     command:
       - redis-server
@@ -44,11 +44,11 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-    networks: [databus_net]
+    networks: [nexus_net]
 
   clickhouse:
     image: clickhouse/clickhouse-server:24-alpine
-    container_name: databus_clickhouse
+    container_name: nexus_clickhouse
     restart: unless-stopped
     environment:
       CLICKHOUSE_DB: vika_logs
@@ -74,7 +74,7 @@ services:
       timeout: 5s
       retries: 12
       start_period: 30s
-    networks: [databus_net]
+    networks: [nexus_net]
 
   kafka:
     # Официальный Apache Kafka в KRaft-режиме (single-broker для dev).
@@ -83,7 +83,7 @@ services:
     # был bitnami'evский wrapper); CLUSTER_ID зашит, чтобы volume не
     # инициализировался под новый ID при пересоздании контейнера.
     image: apache/kafka:3.9.0
-    container_name: databus_kafka
+    container_name: nexus_kafka
     restart: unless-stopped
     environment:
       CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
@@ -113,11 +113,11 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
-    networks: [databus_net]
+    networks: [nexus_net]
 
   prometheus:
     image: prom/prometheus:v2.55.0
-    container_name: databus_prometheus
+    container_name: nexus_prometheus
     restart: unless-stopped
     command:
       - --config.file=/etc/prometheus/prometheus.yml
@@ -128,13 +128,13 @@ services:
       - prometheus_data:/prometheus
     ports:
       - "9091:9090"
-    networks: [databus_net]
+    networks: [nexus_net]
 
   receiver:
     build:
       context: ..
       dockerfile: deploy/docker/receiver.Dockerfile
-    container_name: databus_receiver
+    container_name: nexus_receiver
     restart: unless-stopped
     env_file: ../.env
     depends_on:
@@ -149,13 +149,13 @@ services:
       timeout: 3s
       retries: 10
       start_period: 30s
-    networks: [databus_net]
+    networks: [nexus_net]
 
   sender:
     build:
       context: ..
       dockerfile: deploy/docker/sender.Dockerfile
-    container_name: databus_sender
+    container_name: nexus_sender
     restart: unless-stopped
     env_file: ../.env
     depends_on:
@@ -171,13 +171,13 @@ services:
       timeout: 3s
       retries: 10
       start_period: 30s
-    networks: [databus_net]
+    networks: [nexus_net]
 
   web:
     build:
       context: ..
       dockerfile: deploy/docker/web.Dockerfile
-    container_name: databus_web
+    container_name: nexus_web
     restart: unless-stopped
     env_file: ../.env
     depends_on:
@@ -191,7 +191,7 @@ services:
       timeout: 3s
       retries: 10
       start_period: 30s
-    networks: [databus_net]
+    networks: [nexus_net]
 
   # Loadtest — сценарный тест производительности (§10.2 ТЗ).
   # Поднимается только под профилем `loadtest`, чтобы обычный
@@ -213,10 +213,10 @@ services:
       receiver: { condition: service_healthy }
       sender:   { condition: service_healthy }
       web:      { condition: service_healthy }
-    networks: [databus_net]
+    networks: [nexus_net]
 
 networks:
-  databus_net:
+  nexus_net:
     driver: bridge
 
 volumes:

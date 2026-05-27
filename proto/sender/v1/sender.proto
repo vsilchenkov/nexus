@@ -1,11 +1,11 @@
 // Sender Service gRPC API (§4.1 ТЗ).
 //
 // Версионирование: имя пакета содержит v1. Несовместимые изменения
-// делаются в новом пакете databus.sender.v2 — оба сервиса могут быть
+// делаются в новом пакете nexus.sender.v2 — оба сервиса могут быть
 // зарегистрированы параллельно.
 syntax = "proto3";
 
-package databus.sender.v1;
+package nexus.sender.v1;
 
 option go_package = "nexus/proto/sender/v1;senderv1";
 

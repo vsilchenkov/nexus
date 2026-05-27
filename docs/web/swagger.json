@@ -6,7 +6,7 @@
     "swagger": "2.0",
     "info": {
         "description": "Admin REST API шины данных (§7 ТЗ). Сессии в Redis +\nAPI-токены (Bearer db_*). SPA по embed.FS отдаётся\nфолбэком на index.html для всех путей не из /api/.",
-        "title": "DataBus Web API",
+        "title": "Nexus Web API",
         "contact": {},
         "version": "1.0"
     },
@@ -201,7 +201,7 @@
         },
         "/api/auth/login": {
             "post": {
-                "description": "При успехе ставит HttpOnly cookie databus_session (§7.1 ТЗ).",
+                "description": "При успехе ставит HttpOnly cookie nexus_session (§7.1 ТЗ).",
                 "consumes": [
                     "application/json"
                 ],
@@ -268,7 +268,7 @@
                         "CookieAuth": []
                     }
                 ],
-                "description": "Удаляет session-cookie databus_session и инвалидирует токен в Redis (§7.1 ТЗ).",
+                "description": "Удаляет session-cookie nexus_session и инвалидирует токен в Redis (§7.1 ТЗ).",
                 "produces": [
                     "application/json"
                 ],
@@ -2361,7 +2361,7 @@
         },
         "CookieAuth": {
             "type": "apiKey",
-            "name": "databus_session",
+            "name": "nexus_session",
             "in": "cookie"
         }
     }

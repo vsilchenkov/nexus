@@ -13,7 +13,7 @@
 Источник конфига определяется в порядке приоритета:
 
 1. **Флаг командной строки** `--config /path/to/file.yml` (или короткий `-c`) — высший приоритет.
-2. **Переменная окружения** `DATABUS_CONFIG=/path/to/file.yml`.
+2. **Переменная окружения** `NEXUS_CONFIG=/path/to/file.yml`.
 3. **Дефолт** — `./config/config.yml` относительно `WorkingDir`.
 
 Каждый бинарь (`receiver`, `sender`, `web`) принимает один и тот же набор флагов: `--config`, `--debug` (форсирует загрузку `config_debug.yml`), `--version` (печатает версию из `BuildConfig`).
@@ -24,7 +24,7 @@
 
 ```yaml
 build:
-  project_name: databus
+  project_name: nexus
   version: ${VERSION:dev}
 
 logging:
@@ -45,8 +45,8 @@ sentry:
 postgres:
   host: ${PG_HOST:localhost}
   port: ${PG_PORT:5432}
-  database: databus
-  user: ${PG_USER:databus}             # из .env
+  database: nexus
+  user: ${PG_USER:nexus}             # из .env
   password: ${PG_PASSWORD}             # из .env
   max_open_conns: 25                   # под 500 rps с Redis-кешем хватает с запасом
   max_idle_conns: 5
@@ -81,9 +81,9 @@ clickhouse:
 
 kafka:
   brokers: ${KAFKA_BROKERS:localhost:9092}  # comma-separated, в проде 3+ broker'а
-  async_topic: databus.async
-  dlq_topic: databus.async.dlq
-  consumer_group: databus-sender
+  async_topic: nexus.async
+  dlq_topic: nexus.async.dlq
+  consumer_group: nexus-sender
   # === Параметры топиков (применяются при автосоздании на старте) ===
   topic:
     partitions: 4                      # под параллелизм consumer'ов и rps
@@ -151,7 +151,7 @@ sender:
 
 web:
   http_addr: :8000
-  session_cookie_name: databus_session # имя cookie с session-токеном
+  session_cookie_name: nexus_session # имя cookie с session-токеном
   session_cookie_secure: true          # cookie только по HTTPS (false для локальной разработки)
   session_cookie_samesite: strict      # strict / lax / none
   # session_ttl наследуется из redis.session_ttl_sec (см. §7.1)
@@ -166,7 +166,7 @@ web:
 
 ```dotenv
 # PostgreSQL
-PG_USER=databus
+PG_USER=nexus
 PG_PASSWORD=change_me_in_production
 
 # Redis
@@ -196,7 +196,7 @@ VERSION=1.0.0
 ### 8.4 Перезагрузка конфигурации
 
 - Поля из секций `clickhouse` (часть, доступная через UI) и `sentry` дополнительно хранятся в таблице `app_settings` PostgreSQL (см. §14.5) и кешируются в Redis (ключ `app_settings`) — значения из БД накладываются поверх YAML на старте.
-- Изменения настроек ClickHouse и Sentry через UI применяются без рестарта: запись в PostgreSQL → инвалидация ключа в Redis → graceful переинициализация соответствующих клиентов на всех инстансах сервиса (через pub/sub-канал Redis `databus:config:reload`).
+- Изменения настроек ClickHouse и Sentry через UI применяются без рестарта: запись в PostgreSQL → инвалидация ключа в Redis → graceful переинициализация соответствующих клиентов на всех инстансах сервиса (через pub/sub-канал Redis `nexus:config:reload`).
 - Изменения, требующие рестарта (адреса PostgreSQL/Redis/Kafka, порты, размеры пулов), вносятся в YAML и применяются при перезапуске.
 - Секреты (пароли БД, токены) **никогда не пишутся в YAML** — только в `.env` или внешнем секрет-менеджере.
 

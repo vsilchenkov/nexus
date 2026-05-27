@@ -5,7 +5,7 @@
 //   - Фоновый воркер копит до batch_size или ждёт flush_interval_sec —
 //     потом batch INSERT в ClickHouse.
 //   - Отдельный батч на каждую таблицу узла (table → buffer).
-//   - При недоступности ClickHouse: метрика databus_clickhouse_dropped_total
+//   - При недоступности ClickHouse: метрика nexus_clickhouse_dropped_total
 //     (TODO Phase 4) + warning в логе; запрос НЕ блокируется (§9.4 ТЗ).
 //
 // File-fallback при переполнении — TODO Phase 4. Сейчас при переполнении

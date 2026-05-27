@@ -2,7 +2,7 @@ package usecase
 
 import "time"
 
-// Envelope — формат сообщения в databus.async (тот же, что Receiver
+// Envelope — формат сообщения в nexus.async (тот же, что Receiver
 // в internal/receiver/usecase/envelope.go; продублирован, чтобы
 // Sender не импортировал Receiver — это нарушение Clean).
 //

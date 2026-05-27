@@ -166,7 +166,7 @@ func (c *client) login(ctx context.Context, login, password string) error {
 		return fmt.Errorf("login status %d", resp.StatusCode)
 	}
 	for _, ck := range resp.Cookies() {
-		if ck.Name == "databus_session" {
+		if ck.Name == "nexus_session" {
 			c.cookie = ck.Value
 			return nil
 		}
@@ -189,7 +189,7 @@ func (c *client) createNodes(ctx context.Context, n int, targetURL string) ([]st
 		})
 		req, _ := http.NewRequestWithContext(ctx, "POST", c.baseWeb+"/api/nodes", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		req.AddCookie(&http.Cookie{Name: "databus_session", Value: c.cookie})
+		req.AddCookie(&http.Cookie{Name: "nexus_session", Value: c.cookie})
 		resp, err := c.hc.Do(req)
 		if err != nil {
 			return paths, err

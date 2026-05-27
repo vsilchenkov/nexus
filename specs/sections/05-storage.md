@@ -57,9 +57,9 @@ UI умеет:
 
 | Топик | Назначение | Retention |
 |---|---|---|
-| `databus.async` | Основная очередь async-сообщений | 30 дней |
-| `databus.async.dlq` | Dead letter queue (исчерпан retry) | 30 дней |
-| `databus.config.events` | Pub/sub для оповещения инстансов о смене настроек (см. §8.4) | 1 час |
+| `nexus.async` | Основная очередь async-сообщений | 30 дней |
+| `nexus.async.dlq` | Dead letter queue (исчерпан retry) | 30 дней |
+| `nexus.config.events` | Pub/sub для оповещения инстансов о смене настроек (см. §8.4) | 1 час |
 
 **Retention 30 дней** означает, что сообщения хранятся в Kafka месяц с момента записи независимо от того, обработаны они или нет. Это даёт:
 - возможность переобработать сообщения за прошедший период при ошибке логики (reset consumer offset),
@@ -161,7 +161,7 @@ Redis используется как горячий кеш и быстрое ke
 **Стратегия чтения (cache-aside):**
 - Receiver при обработке запроса сначала смотрит в Redis по ключу `node:{path}`.
 - Если cache miss — читает из PostgreSQL, кладёт в Redis, возвращает.
-- При недоступности Redis Receiver автоматически переключается на чтение напрямую из PostgreSQL (с метрикой `databus_redis_unavailable_total`).
+- При недоступности Redis Receiver автоматически переключается на чтение напрямую из PostgreSQL (с метрикой `nexus_redis_unavailable_total`).
 
 **Что в Redis НЕ хранится:**
 - Тела HTTP-запросов и ответов (они уходят прямо в ClickHouse).

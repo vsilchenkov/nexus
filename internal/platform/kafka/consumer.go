@@ -60,7 +60,7 @@ func (c *Consumer) Close() error {
 }
 
 // Stats возвращает kafka-go ReaderStats — Lag, Topic, Partition.
-// Используется для публикации в Prometheus (databus_kafka_lag).
+// Используется для публикации в Prometheus (nexus_kafka_lag).
 func (c *Consumer) Stats() kafka.ReaderStats {
 	return c.r.Stats()
 }

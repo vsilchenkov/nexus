@@ -50,7 +50,7 @@ func NewRouteAsyncUsecase(
 }
 
 // RouteAsync принимает sync RouteInput (тот же формат), валидирует и
-// кладёт envelope в databus.async с key=node_path (для сохранения
+// кладёт envelope в nexus.async с key=node_path (для сохранения
 // порядка обработки одного узла).
 func (u *RouteAsyncUsecase) RouteAsync(ctx context.Context, in RouteInput) (*RouteAsyncResult, error) {
 	node, err := u.nodes.GetByPath(ctx, in.NodePath)

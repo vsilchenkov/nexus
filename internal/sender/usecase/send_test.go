@@ -99,7 +99,7 @@ func baseInput() SendInput {
 		TimeoutMs:       1000,
 		RetryCount:      0,
 		RetryBackoffMs:  10,
-		ClickHouseTable: "databus.log_partner_echo",
+		ClickHouseTable: "nexus.log_partner_echo",
 	}
 }
 
@@ -166,7 +166,7 @@ func TestSend_Success_RecordsLogAndUpdatesBreaker(t *testing.T) {
 	// Лог записан в правильную таблицу с done=true.
 	require.Len(t, logw.written, 1)
 	rec := logw.written[0].rec
-	assert.Equal(t, "databus.log_partner_echo", logw.written[0].table)
+	assert.Equal(t, "nexus.log_partner_echo", logw.written[0].table)
 	assert.True(t, rec.Done)
 	assert.Equal(t, int32(200), rec.Status)
 	assert.Equal(t, "OK", rec.Reason)

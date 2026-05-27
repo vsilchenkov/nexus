@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 
 type Theme = "light" | "dark";
 
-const KEY = "databus.theme";
+const KEY = "nexus.theme";
 
 function applyTheme(t: Theme) {
   const root = document.documentElement;

@@ -12,12 +12,12 @@
       }
     ]
   },
-  "description": "DataBus overview: sync RPS/latency/error rate, async backlog, ClickHouse buffer, L2 cache. Источник метрик — endpoints /metrics всех трёх сервисов (см. §6 ТЗ).",
+  "description": "Nexus overview: sync RPS/latency/error rate, async backlog, ClickHouse buffer, L2 cache. Источник метрик — endpoints /metrics всех трёх сервисов (см. §6 ТЗ).",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
-  "tags": ["databus"],
+  "tags": ["nexus"],
   "templating": {
     "list": [
       {
@@ -34,14 +34,14 @@
       {
         "current": { "selected": false, "text": "All", "value": "$__all" },
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "definition": "label_values(databus_requests_total, service)",
+        "definition": "label_values(nexus_requests_total, service)",
         "hide": 0,
         "includeAll": true,
         "label": "Service",
         "multi": true,
         "name": "service",
         "options": [],
-        "query": { "qryType": 1, "query": "label_values(databus_requests_total, service)", "refId": "PrometheusVariableQueryEditor-VariableQuery" },
+        "query": { "qryType": 1, "query": "label_values(nexus_requests_total, service)", "refId": "PrometheusVariableQueryEditor-VariableQuery" },
         "refresh": 2,
         "type": "query"
       }
@@ -50,8 +50,8 @@
   "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},
   "timezone": "browser",
-  "title": "DataBus — Overview",
-  "uid": "databus-overview",
+  "title": "Nexus — Overview",
+  "uid": "nexus-overview",
   "version": 1,
   "schemaVersion": 39,
   "weekStart": "",
@@ -65,7 +65,7 @@
       "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
       "targets": [
         {
-          "expr": "sum by (service) (rate(databus_requests_total{service=~\"$service\"}[1m]))",
+          "expr": "sum by (service) (rate(nexus_requests_total{service=~\"$service\"}[1m]))",
           "legendFormat": "{{service}}",
           "refId": "A"
         }
@@ -93,7 +93,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (service) (rate(databus_requests_total{service=~\"$service\",status=~\"5..|0\"}[5m])) / sum by (service) (rate(databus_requests_total{service=~\"$service\"}[5m]))",
+          "expr": "sum by (service) (rate(nexus_requests_total{service=~\"$service\",status=~\"5..|0\"}[5m])) / sum by (service) (rate(nexus_requests_total{service=~\"$service\"}[5m]))",
           "legendFormat": "{{service}}",
           "refId": "A"
         }
@@ -108,17 +108,17 @@
       "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
       "targets": [
         {
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(databus_request_duration_seconds_bucket{service=~\"$service\",method=\"request\"}[5m])))",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(nexus_request_duration_seconds_bucket{service=~\"$service\",method=\"request\"}[5m])))",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(databus_request_duration_seconds_bucket{service=~\"$service\",method=\"request\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(nexus_request_duration_seconds_bucket{service=~\"$service\",method=\"request\"}[5m])))",
           "legendFormat": "p95",
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(databus_request_duration_seconds_bucket{service=~\"$service\",method=\"request\"}[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(nexus_request_duration_seconds_bucket{service=~\"$service\",method=\"request\"}[5m])))",
           "legendFormat": "p99",
           "refId": "C"
         }
@@ -133,7 +133,7 @@
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
       "targets": [
         {
-          "expr": "max by (topic, partition) (databus_kafka_lag)",
+          "expr": "max by (topic, partition) (nexus_kafka_lag)",
           "legendFormat": "{{topic}}/{{partition}}",
           "refId": "A"
         }
@@ -148,7 +148,7 @@
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
       "targets": [
         {
-          "expr": "max by (table) (databus_clickhouse_buffer_size)",
+          "expr": "max by (table) (nexus_clickhouse_buffer_size)",
           "legendFormat": "{{table}}",
           "refId": "A"
         }
@@ -163,17 +163,17 @@
       "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
       "targets": [
         {
-          "expr": "sum(rate(databus_clickhouse_errors_total[5m]))",
+          "expr": "sum(rate(nexus_clickhouse_errors_total[5m]))",
           "legendFormat": "errors",
           "refId": "A"
         },
         {
-          "expr": "sum(rate(databus_clickhouse_dropped_total[5m]))",
+          "expr": "sum(rate(nexus_clickhouse_dropped_total[5m]))",
           "legendFormat": "dropped",
           "refId": "B"
         },
         {
-          "expr": "sum(rate(databus_clickhouse_fallback_total[5m]))",
+          "expr": "sum(rate(nexus_clickhouse_fallback_total[5m]))",
           "legendFormat": "fallback",
           "refId": "C"
         }
@@ -188,12 +188,12 @@
       "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
       "targets": [
         {
-          "expr": "sum(rate(databus_l2_cache_hits_total{kind=\"fresh\"}[5m])) / (sum(rate(databus_l2_cache_hits_total[5m])) + sum(rate(databus_l2_cache_misses_total[5m])))",
+          "expr": "sum(rate(nexus_l2_cache_hits_total{kind=\"fresh\"}[5m])) / (sum(rate(nexus_l2_cache_hits_total[5m])) + sum(rate(nexus_l2_cache_misses_total[5m])))",
           "legendFormat": "fresh ratio",
           "refId": "A"
         },
         {
-          "expr": "sum(rate(databus_l2_cache_hits_total{kind=\"stale\"}[5m])) / (sum(rate(databus_l2_cache_hits_total[5m])) + sum(rate(databus_l2_cache_misses_total[5m])))",
+          "expr": "sum(rate(nexus_l2_cache_hits_total{kind=\"stale\"}[5m])) / (sum(rate(nexus_l2_cache_hits_total[5m])) + sum(rate(nexus_l2_cache_misses_total[5m])))",
           "legendFormat": "stale ratio",
           "refId": "B"
         }
@@ -208,12 +208,12 @@
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
       "targets": [
         {
-          "expr": "databus_l2_cache_size",
+          "expr": "nexus_l2_cache_size",
           "legendFormat": "size",
           "refId": "A"
         },
         {
-          "expr": "rate(databus_l2_cache_evictions_total[5m])",
+          "expr": "rate(nexus_l2_cache_evictions_total[5m])",
           "legendFormat": "evictions/s",
           "refId": "B"
         }

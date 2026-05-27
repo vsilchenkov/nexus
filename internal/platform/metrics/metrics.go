@@ -1,25 +1,25 @@
-// Package metrics — Prometheus-метрики DataBus (§6 ТЗ).
+// Package metrics — Prometheus-метрики Nexus (§6 ТЗ).
 //
 // Метрики не лежат в глобальной registry: каждый сервис создаёт свой
 // экземпляр *Metrics в bootstrap'е и передаёт в middleware/usecase
 // через DI. Это исключает кросс-сервисное «протекание» и упрощает unit-тесты.
 //
 // Минимальный набор (§6):
-//   - databus_requests_total{service, method, node, status}
-//   - databus_request_duration_seconds{service, method, node}
-//   - databus_kafka_lag{topic, partition, group}
-//   - databus_clickhouse_buffer_size{table}
-//   - databus_clickhouse_errors_total{table, op}
+//   - nexus_requests_total{service, method, node, status}
+//   - nexus_request_duration_seconds{service, method, node}
+//   - nexus_kafka_lag{topic, partition, group}
+//   - nexus_clickhouse_buffer_size{table}
+//   - nexus_clickhouse_errors_total{table, op}
 //
 // Дополнительно (для observability сборщика логов):
-//   - databus_clickhouse_dropped_total{table, reason}
-//   - databus_clickhouse_fallback_total{table, op}
+//   - nexus_clickhouse_dropped_total{table, reason}
+//   - nexus_clickhouse_fallback_total{table, op}
 //
 // Receiver L2-кеш узлов (§9.2):
-//   - databus_l2_cache_hits_total{kind}     # kind=fresh|stale
-//   - databus_l2_cache_misses_total
-//   - databus_l2_cache_evictions_total
-//   - databus_l2_cache_size
+//   - nexus_l2_cache_hits_total{kind}     # kind=fresh|stale
+//   - nexus_l2_cache_misses_total
+//   - nexus_l2_cache_evictions_total
+//   - nexus_l2_cache_size
 package metrics
 
 import (
@@ -65,68 +65,68 @@ func New(service string) *Metrics {
 		service:  service,
 
 		RequestsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name:        "databus_requests_total",
-			Help:        "Total DataBus requests by method (request/requestAsync), node path and resulting HTTP status.",
+			Name:        "nexus_requests_total",
+			Help:        "Total Nexus requests by method (request/requestAsync), node path and resulting HTTP status.",
 			ConstLabels: constLabels,
 		}, []string{"method", "node", "status"}),
 
 		RequestDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:        "databus_request_duration_seconds",
-			Help:        "DataBus request duration in seconds (end-to-end for the given service).",
+			Name:        "nexus_request_duration_seconds",
+			Help:        "Nexus request duration in seconds (end-to-end for the given service).",
 			ConstLabels: constLabels,
 			Buckets:     prometheus.DefBuckets,
 		}, []string{"method", "node"}),
 
 		KafkaLag: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name:        "databus_kafka_lag",
+			Name:        "nexus_kafka_lag",
 			Help:        "Kafka consumer lag in messages per topic/partition for the configured consumer group.",
 			ConstLabels: constLabels,
 		}, []string{"topic", "partition", "group"}),
 
 		CHBufferSize: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name:        "databus_clickhouse_buffer_size",
+			Name:        "nexus_clickhouse_buffer_size",
 			Help:        "ClickHouse batch writer pending rows per table.",
 			ConstLabels: constLabels,
 		}, []string{"table"}),
 
 		CHErrorsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name:        "databus_clickhouse_errors_total",
+			Name:        "nexus_clickhouse_errors_total",
 			Help:        "ClickHouse batch writer errors by table and operation (insert, prepare, fallback).",
 			ConstLabels: constLabels,
 		}, []string{"table", "op"}),
 
 		CHDroppedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name:        "databus_clickhouse_dropped_total",
+			Name:        "nexus_clickhouse_dropped_total",
 			Help:        "ClickHouse log records dropped (e.g. due to full buffer or missing table).",
 			ConstLabels: constLabels,
 		}, []string{"table", "reason"}),
 
 		CHFallbackTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name:        "databus_clickhouse_fallback_total",
+			Name:        "nexus_clickhouse_fallback_total",
 			Help:        "ClickHouse file-fallback batch outcomes (saved, restored).",
 			ConstLabels: constLabels,
 		}, []string{"table", "op"}),
 
 		L2CacheHits: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name:        "databus_l2_cache_hits_total",
+			Name:        "nexus_l2_cache_hits_total",
 			Help:        "Receiver L2 in-memory node cache hits, split by kind (fresh, stale).",
 			ConstLabels: constLabels,
 		}, []string{"kind"}),
 
 		L2CacheMisses: prometheus.NewCounter(prometheus.CounterOpts{
-			Name:        "databus_l2_cache_misses_total",
+			Name:        "nexus_l2_cache_misses_total",
 			Help:        "Receiver L2 in-memory node cache misses (delegated to Redis/Postgres).",
 			ConstLabels: constLabels,
 		}),
 
 		L2CacheEvictions: prometheus.NewCounter(prometheus.CounterOpts{
-			Name:        "databus_l2_cache_evictions_total",
+			Name:        "nexus_l2_cache_evictions_total",
 			Help:        "Receiver L2 in-memory node cache evictions due to capacity overflow.",
 			ConstLabels: constLabels,
 		}),
 
 		L2CacheSize: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name:        "databus_l2_cache_size",
+			Name:        "nexus_l2_cache_size",
 			Help:        "Receiver L2 in-memory node cache current entry count.",
 			ConstLabels: constLabels,
 		}),

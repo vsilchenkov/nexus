@@ -56,7 +56,7 @@
 ### Phase 7.5 — Grafana dashboard + Prometheus alert rules
 
 #### Added
-- `deploy/grafana/databus.json` — 10 панелей (RPS, error rate, request duration p50/p95/p99, Kafka lag, CH buffer/errors/dropped/fallback, L2 cache hit ratio, Go runtime).
+- `deploy/grafana/nexus.json` — 10 панелей (RPS, error rate, request duration p50/p95/p99, Kafka lag, CH buffer/errors/dropped/fallback, L2 cache hit ratio, Go runtime).
 - `deploy/prometheus.alerts.yml` — 9 alert rules (up==0, 5xx>5%, p95>200ms, kafka_lag>10k, CH errors/buffer/dropped, L2 stale-fallback).
 - `deploy/grafana/README.md` — инструкция импорта.
 
@@ -80,7 +80,7 @@
 - `nodecache.L2Reader` — decorator над `port.NodeReader`, generic `LRU[V]` (~150 строк через `container/list`+map+mutex).
 - Stale-fallback при downstream-ошибках (§9.4 ТЗ — Redis и PG одновременно лежат).
 - Конфиг `receiver.l2_cache.{enabled,size,ttl_ms,stale_ttl_ms}` с zero-overhead disable.
-- Метрики `databus_l2_cache_{hits,misses,evictions}_total` + `_size`.
+- Метрики `nexus_l2_cache_{hits,misses,evictions}_total` + `_size`.
 
 ### Phase 7.1 — Swagger 100% endpoints + UI
 
@@ -95,7 +95,7 @@
 Резюме: 9 блоков (6.1-6.9).
 
 #### Added
-- Prometheus метрики (`databus_requests_total`, latency, kafka_lag, CH-метрики).
+- Prometheus метрики (`nexus_requests_total`, latency, kafka_lag, CH-метрики).
 - Async e2e integration через Kafka.
 - `app_settings` таблица + REST API + overlay поверх env.
 - Hot-reload Sentry через Redis pub/sub.
@@ -159,7 +159,7 @@
 #### Added
 - Kafka admin + producer + consumer на `segmentio/kafka-go` (auto-create topics, retention 30 дней, acks=all, idempotence).
 - Receiver `/v1/requestAsync/*` — producer, envelope, paused→202.
-- Sender consumer для `databus.async` — async-обработка + DLQ + paused-pacing (offset commit только после успешной доставки).
+- Sender consumer для `nexus.async` — async-обработка + DLQ + paused-pacing (offset commit только после успешной доставки).
 - Circuit breaker per-node в Redis (§9.5).
 - Rate-limit per-node + per-token через Redis.
 - `user_audit` таблица + AuditRepo + AuditUsecase + запись для CRUD узлов.

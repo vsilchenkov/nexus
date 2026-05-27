@@ -50,7 +50,7 @@ var _ propagation.TextMapCarrier = metadataCarrier{}
 //
 // Используется в Receiver для вызовов sender.SenderService.Send.
 func UnaryClientInterceptor() grpc.UnaryClientInterceptor {
-	tracer := otel.Tracer("databus/grpc.client")
+	tracer := otel.Tracer("nexus/grpc.client")
 	propagator := otel.GetTextMapPropagator()
 
 	return func(
@@ -96,7 +96,7 @@ func UnaryClientInterceptor() grpc.UnaryClientInterceptor {
 // UnaryServerInterceptor извлекает traceparent из incoming metadata и
 // создаёт server-span. Используется в Sender для входящих gRPC-вызовов.
 func UnaryServerInterceptor() grpc.UnaryServerInterceptor {
-	tracer := otel.Tracer("databus/grpc.server")
+	tracer := otel.Tracer("nexus/grpc.server")
 	propagator := otel.GetTextMapPropagator()
 
 	return func(

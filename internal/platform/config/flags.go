@@ -23,7 +23,7 @@ func ParseFlags(version string) Flags {
 	fs := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 
 	var f Flags
-	fs.StringVar(&f.ConfigPath, "config", "", "путь к YAML-конфигу (приоритет: флаг > $DATABUS_CONFIG > ./config/config.yml)")
+	fs.StringVar(&f.ConfigPath, "config", "", "путь к YAML-конфигу (приоритет: флаг > $NEXUS_CONFIG > ./config/config.yml)")
 	fs.StringVar(&f.ConfigPath, "c", "", "alias for --config")
 	fs.BoolVar(&f.Debug, "debug", false, "загрузить config_debug.yml вместо config.yml")
 	fs.BoolVar(&f.ShowVersion, "version", false, "напечатать версию и выйти")

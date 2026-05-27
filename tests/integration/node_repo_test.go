@@ -34,7 +34,7 @@ func startPostgres(t *testing.T, ctx context.Context) (*pgxpool.Pool, func()) {
 
 	c, err := tcpg.Run(ctx,
 		"postgres:16-alpine",
-		tcpg.WithDatabase("databus"),
+		tcpg.WithDatabase("nexus"),
 		tcpg.WithUsername("test"),
 		tcpg.WithPassword("test"),
 		testcontainers.WithWaitStrategy(

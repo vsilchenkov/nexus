@@ -56,7 +56,7 @@ func newAsyncProcessorForTest(t *testing.T, nr NodeReader, httpResp *port.HTTPRe
 	}
 	logw := &stubLogWriter{}
 	send := NewSendUsecase(httpc, logw, nil, logging.NewNoop())
-	return NewAsyncProcessor(nr, send, dlq, "databus.async.dlq", nil, logging.NewNoop())
+	return NewAsyncProcessor(nr, send, dlq, "nexus.async.dlq", nil, logging.NewNoop())
 }
 
 func makeEnvelope(t *testing.T, nodePath string) []byte {
@@ -152,7 +152,7 @@ func TestAsync_Enabled_2xx_Ack(t *testing.T) {
 		Path:            "partner/echo",
 		Status:          domain.NodeStatusEnabled,
 		TimeoutMs:       1000,
-		ClickHouseTable: "databus.log_partner_echo",
+		ClickHouseTable: "nexus.log_partner_echo",
 	}
 	p := newAsyncProcessorForTest(t,
 		&stubAsyncNodeReader{node: node},
@@ -172,7 +172,7 @@ func TestAsync_Enabled_5xx_DLQ(t *testing.T) {
 		Status:          domain.NodeStatusEnabled,
 		TimeoutMs:       1000,
 		RetryCount:      0, // не ретраим внутри Send для скорости
-		ClickHouseTable: "databus.log_partner_echo",
+		ClickHouseTable: "nexus.log_partner_echo",
 	}
 	dlq := &stubDLQProducer{}
 	p := newAsyncProcessorForTest(t,
@@ -186,7 +186,7 @@ func TestAsync_Enabled_5xx_DLQ(t *testing.T) {
 
 	require.Len(t, dlq.produced, 1)
 	msg := dlq.produced[0]
-	assert.Equal(t, "databus.async.dlq", msg.topic)
+	assert.Equal(t, "nexus.async.dlq", msg.topic)
 	assert.Equal(t, "partner/echo", msg.key)
 	assert.Contains(t, msg.headers["reason"], "status=502",
 		"DLQ-headers должны содержать причину и статус")
@@ -200,7 +200,7 @@ func TestAsync_DLQProduceFails_Retry(t *testing.T) {
 		Path:            "partner/echo",
 		Status:          domain.NodeStatusEnabled,
 		TimeoutMs:       1000,
-		ClickHouseTable: "databus.log_partner_echo",
+		ClickHouseTable: "nexus.log_partner_echo",
 	}
 	dlq := &stubDLQProducer{err: assertSomeError()}
 	p := newAsyncProcessorForTest(t,

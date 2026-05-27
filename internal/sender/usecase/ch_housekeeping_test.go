@@ -62,7 +62,7 @@ func TestSplitDBTable(t *testing.T) {
 		table string
 		ok    bool
 	}{
-		{"databus.logs", "databus", "logs", true},
+		{"nexus.logs", "nexus", "logs", true},
 		{"db.tbl_name", "db", "tbl_name", true},
 		{"no_dot", "", "", false},
 		{"", "", "", false},
@@ -132,8 +132,8 @@ func TestCHHousekeeping_RunOnce_SkipsNodesWithoutTableOrRetention(t *testing.T) 
 	// ставим узлы которые должны быть пропущены.
 	nodes := &stubNodeLister{nodes: []*domain.Node{
 		{ID: "1", ClickHouseTable: "", ClickHouseRetentionDays: 30},
-		{ID: "2", ClickHouseTable: "databus.tbl", ClickHouseRetentionDays: 0},
-		{ID: "3", ClickHouseTable: "databus.tbl", ClickHouseRetentionDays: -1},
+		{ID: "2", ClickHouseTable: "nexus.tbl", ClickHouseRetentionDays: 0},
+		{ID: "3", ClickHouseTable: "nexus.tbl", ClickHouseRetentionDays: -1},
 	}}
 	h := NewCHHousekeeping(nilConnProvider{}, nodes, logging.NewNoop())
 

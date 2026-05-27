@@ -29,7 +29,7 @@ func (s *stubSessionChecker) Check(_ context.Context, token string) (*domain.Ses
 }
 
 func webCfg() *config.WebSection {
-	return &config.WebSection{SessionCookieName: "databus_session"}
+	return &config.WebSection{SessionCookieName: "nexus_session"}
 }
 
 func TestAuthMiddleware_NoCookie_401(t *testing.T) {
@@ -53,7 +53,7 @@ func TestAuthMiddleware_SessionExpired_401(t *testing.T) {
 	r.GET("/", func(c *gin.Context) { c.Status(200) })
 
 	req := httptest.NewRequest("GET", "/", nil)
-	req.AddCookie(&http.Cookie{Name: "databus_session", Value: "stale"})
+	req.AddCookie(&http.Cookie{Name: "nexus_session", Value: "stale"})
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -70,7 +70,7 @@ func TestAuthMiddleware_RedisDown_503(t *testing.T) {
 	r.GET("/", func(c *gin.Context) { c.Status(200) })
 
 	req := httptest.NewRequest("GET", "/", nil)
-	req.AddCookie(&http.Cookie{Name: "databus_session", Value: "tok"})
+	req.AddCookie(&http.Cookie{Name: "nexus_session", Value: "tok"})
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -94,7 +94,7 @@ func TestAuthMiddleware_Valid_PassesAndStoresSession(t *testing.T) {
 	})
 
 	req := httptest.NewRequest("GET", "/", nil)
-	req.AddCookie(&http.Cookie{Name: "databus_session", Value: "tok"})
+	req.AddCookie(&http.Cookie{Name: "nexus_session", Value: "tok"})
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 

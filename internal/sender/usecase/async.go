@@ -20,7 +20,7 @@ type NodeReader interface {
 	GetByPath(ctx context.Context, path string) (*domain.Node, error)
 }
 
-// DLQProducer — publish failed message в databus.async.dlq.
+// DLQProducer — publish failed message в nexus.async.dlq.
 type DLQProducer interface {
 	Produce(ctx context.Context, topic, key string, value []byte, headers map[string]string) error
 }
@@ -86,7 +86,7 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 	// OTel: extract traceparent → consumer-span. При выключенном tracing —
 	// extract возвращает входной ctx, span будет no-op'ным.
 	ctx = otelpf.ExtractKafkaHeaders(ctx, msgHeaders)
-	ctx, finishSpan := otelpf.StartKafkaConsumerSpan(ctx, "databus.async")
+	ctx, finishSpan := otelpf.StartKafkaConsumerSpan(ctx, "nexus.async")
 	defer finishSpan(nil)
 
 	var env Envelope
@@ -171,7 +171,7 @@ func (p *AsyncProcessor) publishDLQ(ctx context.Context, raw []byte, env Envelop
 	hdrs := map[string]string{
 		"id":         env.ID,
 		"node_path":  env.NodePath,
-		"orig_topic": "databus.async",
+		"orig_topic": "nexus.async",
 		"reason": fmt.Sprintf("status=%d attempts=%d duration_ms=%d err=%s",
 			out.StatusCode, out.Attempts, out.DurationMs, out.Error),
 		"last_attempt_at": time.Now().UTC().Format(time.RFC3339Nano),

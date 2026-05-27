@@ -56,7 +56,7 @@ func TestExtractKafkaHeaders_WithKeys_DoesNotPanic(t *testing.T) {
 }
 
 func TestStartKafkaProducerSpan_FinishSafe(t *testing.T) {
-	ctx, finish := StartKafkaProducerSpan(context.Background(), "databus.async")
+	ctx, finish := StartKafkaProducerSpan(context.Background(), "nexus.async")
 	assert.NotNil(t, ctx)
 	assert.NotPanics(t, func() {
 		finish(nil)
@@ -64,7 +64,7 @@ func TestStartKafkaProducerSpan_FinishSafe(t *testing.T) {
 }
 
 func TestStartKafkaProducerSpan_FinishWithError(t *testing.T) {
-	_, finish := StartKafkaProducerSpan(context.Background(), "databus.async")
+	_, finish := StartKafkaProducerSpan(context.Background(), "nexus.async")
 	assert.NotPanics(t, func() {
 		finish(errors.New("broker down"))
 	})
@@ -78,7 +78,7 @@ func TestStartKafkaConsumerSpan_RestoresParentFromHeaders(t *testing.T) {
 	InjectKafkaHeaders(context.Background(), headers)
 
 	ctx := ExtractKafkaHeaders(context.Background(), headers)
-	ctx, finish := StartKafkaConsumerSpan(ctx, "databus.async")
+	ctx, finish := StartKafkaConsumerSpan(ctx, "nexus.async")
 	assert.NotNil(t, ctx)
 	assert.NotPanics(t, func() {
 		finish(nil)

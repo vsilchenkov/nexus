@@ -1,4 +1,4 @@
-# DataBus — Makefile (см. §13.1 ТЗ).
+# Nexus — Makefile (см. §13.1 ТЗ).
 # Совместим с Windows (GNU Make / mingw32-make) и Linux/macOS.
 
 GO          ?= go
@@ -198,8 +198,8 @@ release-check: ## Проверить .goreleaser.yaml на синтаксис
 	goreleaser check
 
 release-snapshot: ## Локальный snapshot-релиз (без публикации) — артефакты в dist/
-	GITHUB_REPOSITORY=local/databus \
-	GITHUB_REPOSITORY_LOWER=local/databus \
+	GITHUB_REPOSITORY=local/nexus \
+	GITHUB_REPOSITORY_LOWER=local/nexus \
 	goreleaser release --snapshot --clean --skip=publish
 
 # ----- clean ----------------------------------------------------------------

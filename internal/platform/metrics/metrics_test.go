@@ -22,9 +22,9 @@ func TestNew_RegistersAllRequiredMetrics(t *testing.T) {
 	// поэтому сначала «прикасаемся» к каждому ряду §6, потом проверяем дамп.
 	m.RequestsTotal.WithLabelValues("request", "demo", "200").Inc()
 	m.RequestDuration.WithLabelValues("request", "demo").Observe(0.01)
-	m.KafkaLag.WithLabelValues("databus.async", "0", "sender").Set(0)
-	m.CHBufferSize.WithLabelValues("databus.logs").Set(0)
-	m.CHErrorsTotal.WithLabelValues("databus.logs", "insert").Add(0)
+	m.KafkaLag.WithLabelValues("nexus.async", "0", "sender").Set(0)
+	m.CHBufferSize.WithLabelValues("nexus.logs").Set(0)
+	m.CHErrorsTotal.WithLabelValues("nexus.logs", "insert").Add(0)
 
 	rr := httptest.NewRecorder()
 	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
@@ -32,11 +32,11 @@ func TestNew_RegistersAllRequiredMetrics(t *testing.T) {
 	body := rr.Body.String()
 
 	for _, want := range []string{
-		"databus_requests_total",
-		"databus_request_duration_seconds",
-		"databus_kafka_lag",
-		"databus_clickhouse_buffer_size",
-		"databus_clickhouse_errors_total",
+		"nexus_requests_total",
+		"nexus_request_duration_seconds",
+		"nexus_kafka_lag",
+		"nexus_clickhouse_buffer_size",
+		"nexus_clickhouse_errors_total",
 		// Standard runtime/process collectors registered into our isolated registry.
 		"go_goroutines",
 		"process_cpu_seconds_total",
@@ -81,11 +81,11 @@ func TestGinMiddleware_RecordsRequestsAndDuration(t *testing.T) {
 
 	// requests_total{method="request",node="partner/orders",status="200"} == 1.
 	requireSample(t, dump,
-		`databus_requests_total{method="request",node="partner/orders",service="receiver",status="200"} 1`)
+		`nexus_requests_total{method="request",node="partner/orders",service="receiver",status="200"} 1`)
 
 	// duration: количество наблюдений ровно 1.
 	requireSample(t, dump,
-		`databus_request_duration_seconds_count{method="request",node="partner/orders",service="receiver"} 1`)
+		`nexus_request_duration_seconds_count{method="request",node="partner/orders",service="receiver"} 1`)
 }
 
 func TestGinMiddleware_SkipsHealthAndMetrics(t *testing.T) {
@@ -106,8 +106,8 @@ func TestGinMiddleware_SkipsHealthAndMetrics(t *testing.T) {
 	}
 
 	dump := dumpMetrics(t, m.Handler())
-	// На /health и /metrics не должно быть ни одной серии databus_requests_total.
-	if strings.Contains(dump, "databus_requests_total{") {
+	// На /health и /metrics не должно быть ни одной серии nexus_requests_total.
+	if strings.Contains(dump, "nexus_requests_total{") {
 		// Допустим только строки с другим method (не /health, не /metrics).
 		// Поскольку других маршрутов в тесте нет — серий быть не должно.
 		t.Fatalf("/metrics and /health must not produce request series; got:\n%s", dump)
@@ -131,7 +131,7 @@ func TestGinMiddleware_NonV1Path_UsesFullRoute(t *testing.T) {
 	dump := dumpMetrics(t, m.Handler())
 	// node = "" (нет path-параметра /v1), method = "GET /api/nodes/:id" (template, не URL).
 	requireSample(t, dump,
-		`databus_requests_total{method="GET /api/nodes/:id",node="",service="web",status="404"} 1`)
+		`nexus_requests_total{method="GET /api/nodes/:id",node="",service="web",status="404"} 1`)
 }
 
 // ---- helpers ----
@@ -144,13 +144,13 @@ func dumpMetrics(t *testing.T, h http.Handler) string {
 	return rr.Body.String()
 }
 
-// findServiceLabel ищет любую серию databus_requests_total и возвращает
+// findServiceLabel ищет любую серию nexus_requests_total и возвращает
 // её service-label (для подтверждения изоляции реестров).
 func findServiceLabel(t *testing.T, h http.Handler) string {
 	t.Helper()
 	dump := dumpMetrics(t, h)
 	for _, line := range strings.Split(dump, "\n") {
-		if !strings.HasPrefix(line, "databus_requests_total{") {
+		if !strings.HasPrefix(line, "nexus_requests_total{") {
 			continue
 		}
 		i := strings.Index(line, `service="`)
@@ -164,7 +164,7 @@ func findServiceLabel(t *testing.T, h http.Handler) string {
 		}
 		return rest[:len(`service="`)+j+1]
 	}
-	t.Fatalf("no databus_requests_total series in /metrics:\n%s", dump)
+	t.Fatalf("no nexus_requests_total series in /metrics:\n%s", dump)
 	return ""
 }
 

@@ -11,7 +11,7 @@ import (
 	"nexus/internal/platform/config"
 )
 
-const ctxSessionKey = "databus.session"
+const ctxSessionKey = "nexus.session"
 
 // sessionChecker — consumer-side interface для AuthUsecase.Check (§17.4 ТЗ).
 // Удовлетворяется *usecase.AuthUsecase; вынесен сюда, чтобы middleware

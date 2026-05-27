@@ -1,5 +1,5 @@
 {
-  "app": { "title": "DataBus" },
+  "app": { "title": "Nexus" },
   "auth": {
     "login": "Sign in",
     "login_button": "Sign in",
@@ -149,7 +149,7 @@
       },
       "role": {
         "admin": "Full access",
-        "admin_hint": "Manage everything in DataBus.",
+        "admin_hint": "Manage everything in Nexus.",
         "viewer": "Read-only",
         "viewer_hint": "View nodes, logs and audit; no modifications."
       },

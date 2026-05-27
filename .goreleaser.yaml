@@ -1,4 +1,4 @@
-# GoReleaser конфиг для DataBus (Phase 7.6).
+# GoReleaser конфиг для Nexus (Phase 7.6).
 #
 # Запуск:
 #   - локально, без публикации:   goreleaser release --snapshot --clean
@@ -8,7 +8,7 @@
 # Если переменные пустые (обычный go build) — fallback на versioninfo.json (см. NewOption).
 version: 2
 
-project_name: databus
+project_name: nexus
 
 before:
   hooks:
@@ -162,7 +162,7 @@ dockers:
     build_flag_templates:
       - "--platform=linux/amd64"
       - "--build-arg=BINARY=receiver"
-      - "--label=org.opencontainers.image.title=databus-receiver"
+      - "--label=org.opencontainers.image.title=nexus-receiver"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
       - "--label=org.opencontainers.image.created={{ .Date }}"
@@ -183,7 +183,7 @@ dockers:
     build_flag_templates:
       - "--platform=linux/arm64"
       - "--build-arg=BINARY=receiver"
-      - "--label=org.opencontainers.image.title=databus-receiver"
+      - "--label=org.opencontainers.image.title=nexus-receiver"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
       - "--label=org.opencontainers.image.created={{ .Date }}"
@@ -204,7 +204,7 @@ dockers:
     build_flag_templates:
       - "--platform=linux/amd64"
       - "--build-arg=BINARY=sender"
-      - "--label=org.opencontainers.image.title=databus-sender"
+      - "--label=org.opencontainers.image.title=nexus-sender"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
       - "--label=org.opencontainers.image.created={{ .Date }}"
@@ -225,7 +225,7 @@ dockers:
     build_flag_templates:
       - "--platform=linux/arm64"
       - "--build-arg=BINARY=sender"
-      - "--label=org.opencontainers.image.title=databus-sender"
+      - "--label=org.opencontainers.image.title=nexus-sender"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
       - "--label=org.opencontainers.image.created={{ .Date }}"
@@ -246,7 +246,7 @@ dockers:
     build_flag_templates:
       - "--platform=linux/amd64"
       - "--build-arg=BINARY=web"
-      - "--label=org.opencontainers.image.title=databus-web"
+      - "--label=org.opencontainers.image.title=nexus-web"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
       - "--label=org.opencontainers.image.created={{ .Date }}"
@@ -267,7 +267,7 @@ dockers:
     build_flag_templates:
       - "--platform=linux/arm64"
       - "--build-arg=BINARY=web"
-      - "--label=org.opencontainers.image.title=databus-web"
+      - "--label=org.opencontainers.image.title=nexus-web"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
       - "--label=org.opencontainers.image.created={{ .Date }}"
@@ -309,9 +309,9 @@ release:
   # См. .gitlab-ci.yml job `release` (триггер по тегу v*).
   draft: true
   prerelease: auto
-  name_template: "DataBus {{ .Version }}"
+  name_template: "Nexus {{ .Version }}"
   header: |
-    ## DataBus {{ .Version }}
+    ## Nexus {{ .Version }}
 
     См. [CHANGELOG.md](CHANGELOG.md) — детальный список изменений по фазам;
     [specs/IMPLEMENTATION.md](specs/IMPLEMENTATION.md) — карта реализации с привязкой к разделам ТЗ;

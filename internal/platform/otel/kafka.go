@@ -53,7 +53,7 @@ func ExtractKafkaHeaders(ctx context.Context, headers map[string]string) context
 // StartKafkaProducerSpan открывает producer-span вокруг publish'а в
 // Kafka-топик; при no-op TP — дешёвый no-op.
 func StartKafkaProducerSpan(ctx context.Context, topic string) (context.Context, func(err error)) {
-	tracer := otel.Tracer("databus/kafka.producer")
+	tracer := otel.Tracer("nexus/kafka.producer")
 	ctx, span := tracer.Start(ctx, "kafka.publish "+topic,
 		trace.WithSpanKind(trace.SpanKindProducer),
 		trace.WithAttributes(
@@ -74,7 +74,7 @@ func StartKafkaProducerSpan(ctx context.Context, topic string) (context.Context,
 // StartKafkaConsumerSpan открывает consumer-span. Вызывать ПОСЛЕ
 // ExtractKafkaHeaders, чтобы span'у был известен parent.
 func StartKafkaConsumerSpan(ctx context.Context, topic string) (context.Context, func(err error)) {
-	tracer := otel.Tracer("databus/kafka.consumer")
+	tracer := otel.Tracer("nexus/kafka.consumer")
 	ctx, span := tracer.Start(ctx, "kafka.consume "+topic,
 		trace.WithSpanKind(trace.SpanKindConsumer),
 		trace.WithAttributes(

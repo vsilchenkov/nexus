@@ -16,7 +16,7 @@ func SPAFallback(r *gin.Engine, embedFS fs.FS) {
 	indexBytes, err := fs.ReadFile(embedFS, "index.html")
 	if err != nil {
 		// В режиме без embedded UI просто отдаём короткое сообщение.
-		indexBytes = []byte("<html><body>DataBus UI not embedded</body></html>")
+		indexBytes = []byte("<html><body>Nexus UI not embedded</body></html>")
 	}
 
 	// NoRoute уже определён в Handler.Register; перепишем его — теперь

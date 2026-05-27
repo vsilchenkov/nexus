@@ -14,7 +14,7 @@ import (
 	"nexus/internal/web/usecase"
 )
 
-const ctxAPITokenKey = "databus.api_token"
+const ctxAPITokenKey = "nexus.api_token"
 
 // apiTokenVerifier — consumer-side interface для APITokenUsecase.Verify (§17.4).
 type apiTokenVerifier interface {

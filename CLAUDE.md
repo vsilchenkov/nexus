@@ -9,7 +9,7 @@ Read it before touching code. Apply every rule. When in doubt, ask — do not gu
 
 ## 0. Project orientation — обязательно прочитать первым делом
 
-Этот репозиторий — **DataBus**, шина данных из трёх Go-сервисов (Receiver + Sender + Web) + React SPA.
+Этот репозиторий — **Nexus**, шина данных из трёх Go-сервисов (Receiver + Sender + Web) + React SPA.
 Полное ТЗ — [specs/nexus_spec.md](specs/nexus_spec.md), нарезано на 17 файлов в [specs/sections/](specs/sections/).
 
 **Прежде чем что-либо менять — открой [specs/IMPLEMENTATION.md](specs/IMPLEMENTATION.md).** Это карта
@@ -21,7 +21,7 @@ file-fallback на Windows, и т.п.). Без этого документа т�
 ### Архитектура в одном абзаце
 
 Sync: `POST /v1/request/{path}` → Receiver (auth + URL resolve + masking) → gRPC к Sender → внешний
-HTTP → ответ обратно. Async: `POST /v1/requestAsync/{path}` → Receiver → Kafka `databus.async` →
+HTTP → ответ обратно. Async: `POST /v1/requestAsync/{path}` → Receiver → Kafka `nexus.async` →
 Sender-consumer → внешний HTTP → лог в ClickHouse (или в NDJSON file-fallback при недоступности CH).
 Конфиг узлов в PostgreSQL (с шифрованием кредов AES-256-GCM), горячий кеш и сессии в Redis.
 Web Service отдаёт REST API под `/api/*` и SPA (`embed.FS`) на всё остальное. Подробности — в

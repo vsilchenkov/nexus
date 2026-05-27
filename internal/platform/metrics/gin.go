@@ -7,7 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// GinMiddleware считает databus_requests_total и databus_request_duration_seconds
+// GinMiddleware считает nexus_requests_total и nexus_request_duration_seconds
 // для каждого HTTP-запроса.
 //
 // method = "request" | "requestAsync" для V1-маршрутов проксирования,

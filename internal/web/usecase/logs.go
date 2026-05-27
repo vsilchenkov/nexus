@@ -113,7 +113,7 @@ func matchLogFilter(r *domain.LogRecord, q port.LogQuery) bool {
 //
 // Это не самая дешёвая реализация (каждый клиент = свой опрос ClickHouse),
 // но для админок этого хватает. Долгосрочный путь — pub/sub через
-// Kafka databus.logs (out of scope в v1).
+// Kafka nexus.logs (out of scope в v1).
 func (u *LogsUsecase) Subscribe(ctx context.Context, nodeID string, filter port.LogQuery) (<-chan *domain.LogRecord, <-chan error, error) {
 	n, err := u.nodes.Get(ctx, nodeID)
 	if err != nil {

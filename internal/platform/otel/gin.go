@@ -26,7 +26,7 @@ import (
 // no-op, и весь middleware превращается в пару дешёвых allocation'ов
 // без сетевой нагрузки.
 func GinMiddleware(serviceName string) gin.HandlerFunc {
-	tracer := otel.Tracer("databus/" + serviceName)
+	tracer := otel.Tracer("nexus/" + serviceName)
 	propagator := otel.GetTextMapPropagator()
 
 	return func(c *gin.Context) {

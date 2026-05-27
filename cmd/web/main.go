@@ -1,7 +1,7 @@
 // Web Service — REST API админки + SPA через embed.FS.
 // См. §7, §11, §17.1 ТЗ.
 //
-// @title         DataBus Web API
+// @title         Nexus Web API
 // @version       1.0
 // @description   Admin REST API шины данных (§7 ТЗ). Сессии в Redis +
 // @description   API-токены (Bearer db_*). SPA по embed.FS отдаётся
@@ -10,7 +10,7 @@
 // @schemes       http https
 // @securityDefinitions.apikey  CookieAuth
 // @in            cookie
-// @name          databus_session
+// @name          nexus_session
 // @securityDefinitions.apikey  ApiTokenAuth
 // @in            header
 // @name          Authorization
@@ -29,9 +29,9 @@ import (
 
 const (
 	projectName = "Web"
-	serviceName = "DataBusWebService"
-	displayName = "DataBus Web Service"
-	description = "Web service of the DataBus — admin REST API and embedded SPA."
+	serviceName = "NexusWebService"
+	displayName = "Nexus Web Service"
+	description = "Web service of the Nexus — admin REST API and embedded SPA."
 )
 
 //go:embed versioninfo.json
