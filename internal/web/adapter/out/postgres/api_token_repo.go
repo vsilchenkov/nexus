@@ -25,13 +25,13 @@ func NewAPITokenRepoPg(pool *pgxpool.Pool, logger logging.Logger) *APITokenRepoP
 	return &APITokenRepoPg{pool: pool, logger: logger}
 }
 
-const apiTokenCols = `id, user_id, name, token_hash, prefix, scopes,
+const apiTokenCols = `id, user_id, team_id, name, token_hash, prefix, scopes,
 	created_at, last_used_at, expires_at, revoked_at`
 
 func scanAPIToken(row pgx.Row) (*domain.APIToken, error) {
 	var t domain.APIToken
 	var lastUsed, expires, revoked *time.Time
-	err := row.Scan(&t.ID, &t.UserID, &t.Name, &t.TokenHash, &t.Prefix, &t.Scopes,
+	err := row.Scan(&t.ID, &t.UserID, &t.TeamID, &t.Name, &t.TokenHash, &t.Prefix, &t.Scopes,
 		&t.CreatedAt, &lastUsed, &expires, &revoked)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -73,12 +73,17 @@ func (r *APITokenRepoPg) ListByUser(ctx context.Context, userID string) ([]*doma
 }
 
 func (r *APITokenRepoPg) Create(ctx context.Context, t *domain.APIToken) error {
+	// team_id: если caller не передал — берём UUID 'default'-team из
+	// сидинга миграции 0008. После блока B токены всегда выдаются от
+	// имени конкретной команды (current_team_id сессии).
 	err := r.pool.QueryRow(ctx, `
-INSERT INTO api_tokens (user_id, name, token_hash, prefix, scopes, expires_at)
-VALUES ($1::uuid, $2, $3, $4, $5, $6)
-RETURNING id, created_at`,
-		t.UserID, t.Name, t.TokenHash, t.Prefix, t.Scopes, t.ExpiresAt,
-	).Scan(&t.ID, &t.CreatedAt)
+INSERT INTO api_tokens (user_id, team_id, name, token_hash, prefix, scopes, expires_at)
+VALUES ($1::uuid,
+        COALESCE(NULLIF($7,'')::uuid, (SELECT id FROM teams WHERE slug = '`+domain.DefaultTeamSlug+`')),
+        $2, $3, $4, $5, $6)
+RETURNING id, team_id, created_at`,
+		t.UserID, t.Name, t.TokenHash, t.Prefix, t.Scopes, t.ExpiresAt, t.TeamID,
+	).Scan(&t.ID, &t.TeamID, &t.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("create api_token: %w", err)
 	}

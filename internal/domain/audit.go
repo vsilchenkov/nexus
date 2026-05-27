@@ -38,4 +38,6 @@ const (
 	ActionNodeDryRun = "node.dry_run"
 
 	ActionAppSettingsUpdate = "app_settings.update"
+
+	ActionTeamSwitch = "team.switch"
 )

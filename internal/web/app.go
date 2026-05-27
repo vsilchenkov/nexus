@@ -117,12 +117,11 @@ func (a *App) Start(ctx context.Context) error {
 		a.logger,
 	)
 	nodeHandler := httpadapter.NewNodeHandler(nodeUC, a.logger)
-	_ = teamRepo // TeamRepo handler/usecase появится в блоке B
 
 	userRepo := pgrepo.NewUserRepoPg(a.pg, a.logger)
 	sessionRepo := rediscache.NewSessionRepoRedis(a.redis)
 	sessionTTL := time.Duration(a.cfg.Redis.SessionTTLSec) * time.Second
-	authUC := usecase.NewAuthUsecase(userRepo, sessionRepo, auditUC, sessionTTL, a.logger)
+	authUC := usecase.NewAuthUsecase(userRepo, sessionRepo, teamRepo, auditUC, sessionTTL, a.logger)
 	userUC := usecase.NewUserUsecase(userRepo, sessionRepo, auditUC, a.logger)
 
 	tokenRepo := pgrepo.NewAPITokenRepoPg(a.pg, a.logger)

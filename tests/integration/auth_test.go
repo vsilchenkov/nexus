@@ -43,9 +43,10 @@ func TestAuth_Login_E2E(t *testing.T) {
 	logger := logging.NewNoop()
 	userRepo := pgrepo.NewUserRepoPg(pool, logger)
 	sessionRepo := webredis.NewSessionRepoRedis(redisClient)
+	teamRepo := pgrepo.NewTeamRepoPg(pool, logger)
 	auditRepo := pgrepo.NewAuditRepoPg(pool, logger)
 	auditUC := webuc.NewAuditUsecase(auditRepo, logger)
-	authUC := webuc.NewAuthUsecase(userRepo, sessionRepo, auditUC, time.Hour, logger)
+	authUC := webuc.NewAuthUsecase(userRepo, sessionRepo, teamRepo, auditUC, time.Hour, logger)
 
 	// Создаём пользователя через UserRepo напрямую — Web-usecase для creation
 	// тестируется в unit'ах; здесь интересна вся цепочка login.

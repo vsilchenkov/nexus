@@ -75,3 +75,15 @@ func sessionFromCtx(c *gin.Context) (*domain.Session, bool) {
 	s, ok := v.(*domain.Session)
 	return s, ok
 }
+
+// currentTeamID — UUID команды в контексте текущей сессии (multi-tenancy
+// v2). Возвращает пустую строку, если сессии нет или CurrentTeamID не
+// выставлен (последнее — только в legacy unit-тестах). Handler'ы должны
+// использовать его как scope для всех list/get/mutate-операций.
+func currentTeamID(c *gin.Context) string {
+	s, ok := sessionFromCtx(c)
+	if !ok {
+		return ""
+	}
+	return s.CurrentTeamID
+}

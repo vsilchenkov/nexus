@@ -4,9 +4,14 @@ import "time"
 
 // APIToken — read-only токен для интеграций (§7.14).
 // Само значение токена в БД не хранится — только token_hash (SHA-256).
+//
+// TeamID — multi-tenancy v2 (миграция 0008). Токен ограничен одной
+// командой: Receiver/Web используют его как scope (current_team_id
+// сессии = token.TeamID).
 type APIToken struct {
 	ID         string
 	UserID     string
+	TeamID     string
 	Name       string
 	TokenHash  string
 	Prefix     string

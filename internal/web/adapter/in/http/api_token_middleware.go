@@ -75,13 +75,16 @@ func APITokenAuthMiddleware(
 
 		// Кладём «псевдо-сессию» в тот же ключ — handlers по-прежнему
 		// могут использовать sessionFromCtx без отдельной ветки.
+		// CurrentTeamID = team_id токена (multi-tenancy v2, миграция 0008):
+		// API-токен ограничен одной командой, переключать его нельзя.
 		s := &domain.Session{
-			Token:      "",
-			UserID:     user.ID,
-			Role:       user.Role,
-			Lang:       user.Lang,
-			CreatedAt:  time.Now(),
-			LastSeenAt: time.Now(),
+			Token:         "",
+			UserID:        user.ID,
+			Role:          user.Role,
+			Lang:          user.Lang,
+			CurrentTeamID: token.TeamID,
+			CreatedAt:     time.Now(),
+			LastSeenAt:    time.Now(),
 		}
 		c.Set(ctxSessionKey, s)
 		c.Set(ctxAPITokenKey, token)

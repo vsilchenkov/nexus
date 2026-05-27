@@ -44,6 +44,11 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		authed.POST("/auth/logout", h.Auth.Logout)
 		authed.GET("/auth/me", h.Auth.Me)
 
+		// Team-switcher (multi-tenancy v2, §16 ТЗ). Только session-cookie:
+		// API-токены ограничены одной командой по token.team_id.
+		authed.GET("/me/teams", h.Auth.MyTeams)
+		authed.POST("/me/switch-team", RequireSessionOnly(), h.Auth.SwitchTeam)
+
 		// API-токены — собственные, без scope (только session-cookie).
 		authed.GET("/tokens", h.Token.List)
 		authed.POST("/tokens", h.Token.Create)
