@@ -55,7 +55,7 @@ type userResponse struct {
 	Active             bool       `json:"active"`
 	Lang               string     `json:"lang"`
 	MustChangePassword bool       `json:"must_change_password"`
-	TeamID             string     `json:"team_id"`
+	DefaultTeamID      string     `json:"default_team_id"`
 	CreatedAt          time.Time  `json:"created_at"`
 	LastLoginAt        *time.Time `json:"last_login_at,omitempty"`
 }
@@ -64,7 +64,7 @@ func toUserResp(u *domain.User) userResponse {
 	return userResponse{
 		ID: u.ID, Login: u.Login, Email: u.Email,
 		Role: string(u.Role), Active: u.Active, Lang: string(u.Lang),
-		MustChangePassword: u.MustChangePassword, TeamID: u.TeamID,
+		MustChangePassword: u.MustChangePassword, DefaultTeamID: u.DefaultTeamID,
 		CreatedAt: u.CreatedAt, LastLoginAt: u.LastLoginAt,
 	}
 }

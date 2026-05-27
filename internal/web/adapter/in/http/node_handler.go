@@ -36,8 +36,10 @@ func NewNodeHandler(uc *usecase.NodeUsecase, logger logging.Logger) *NodeHandler
 // @Security ApiTokenAuth
 // @Router   /api/nodes [get]
 func (h *NodeHandler) List(c *gin.Context) {
+	// TeamID не указываем — NodeUsecase подставит defaultTeamID (UUID
+	// 'default'-team из миграции 0008). В блоке B handler начнёт читать
+	// current_team_id из сессии.
 	f := port.ListNodesFilter{
-		TeamID:     "default",
 		Search:     c.Query("search"),
 		RootMethod: c.Query("root_method"),
 	}

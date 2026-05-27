@@ -48,7 +48,7 @@ func newOrphanScanner(t *testing.T, dbName string, nodes []*domain.Node) *Orphan
 	repo := &orphanNodeRepo{listResult: nodes}
 	cfg := &config.ClickHouseSection{Database: dbName}
 	audit := NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop())
-	return NewOrphanScanner(nilConnProvider{}, repo, cfg, audit, logging.NewNoop())
+	return NewOrphanScanner(nilConnProvider{}, repo, cfg, audit, "00000000-0000-0000-0000-000000000000", logging.NewNoop())
 }
 
 func TestIsSafeTableNameLocal(t *testing.T) {

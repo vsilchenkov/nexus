@@ -48,11 +48,12 @@ type OrphanTable struct {
 // против isSafeTableName (защита от SQL-инъекции), действие пишется
 // в audit log (action="ch_table.drop", target_type="clickhouse_table").
 type OrphanScanner struct {
-	ch       OrphanScannerConnProvider
-	nodeRepo port.NodeRepo
-	chCfg    *config.ClickHouseSection
-	audit    *AuditUsecase
-	logger   logging.Logger
+	ch            OrphanScannerConnProvider
+	nodeRepo      port.NodeRepo
+	chCfg         *config.ClickHouseSection
+	audit         *AuditUsecase
+	defaultTeamID string
+	logger        logging.Logger
 }
 
 func NewOrphanScanner(
@@ -60,14 +61,16 @@ func NewOrphanScanner(
 	nodeRepo port.NodeRepo,
 	chCfg *config.ClickHouseSection,
 	audit *AuditUsecase,
+	defaultTeamID string,
 	logger logging.Logger,
 ) *OrphanScanner {
 	return &OrphanScanner{
-		ch:       ch,
-		nodeRepo: nodeRepo,
-		chCfg:    chCfg,
-		audit:    audit,
-		logger:   logger,
+		ch:            ch,
+		nodeRepo:      nodeRepo,
+		chCfg:         chCfg,
+		audit:         audit,
+		defaultTeamID: defaultTeamID,
+		logger:        logger,
 	}
 }
 
@@ -188,7 +191,7 @@ func (s *OrphanScanner) knownTables(ctx context.Context) (map[string]struct{}, e
 	offset := 0
 	for {
 		nodes, err := s.nodeRepo.List(ctx, port.ListNodesFilter{
-			TeamID: "default",
+			TeamID: s.defaultTeamID,
 			Limit:  pageSize,
 			Offset: offset,
 		})

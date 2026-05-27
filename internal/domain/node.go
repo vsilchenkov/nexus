@@ -165,9 +165,9 @@ func (n *Node) SetDefaults() {
 	if n.Status == "" {
 		n.Status = NodeStatusEnabled
 	}
-	if n.TeamID == "" {
-		n.TeamID = "default"
-	}
+	// n.TeamID — обязательное UUID-поле в multi-tenancy v2 (миграция 0008).
+	// Резолв "current team" — задача handler'а / usecase, не SetDefaults
+	// (см. NodeUsecase.defaultTeamID для legacy single-team пути).
 	if n.TimeoutMs == 0 {
 		n.TimeoutMs = 30_000
 	}

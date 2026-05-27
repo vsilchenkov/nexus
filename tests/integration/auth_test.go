@@ -60,7 +60,8 @@ func TestAuth_Login_E2E(t *testing.T) {
 		Role:         domain.UserRoleAdmin,
 		Active:       true,
 		Lang:         domain.UserLangEN,
-		TeamID:       "default",
+		// DefaultTeamID пустой — UserRepo подставит UUID default-team
+		// через COALESCE с подзапросом по slug='default'.
 	}
 	require.NoError(t, userRepo.Create(ctx, u))
 	require.NotEmpty(t, u.ID)
@@ -116,7 +117,6 @@ func TestAuth_Login_E2E(t *testing.T) {
 		Role:         domain.UserRoleViewer,
 		Active:       false,
 		Lang:         domain.UserLangEN,
-		TeamID:       "default",
 	}
 	require.NoError(t, userRepo.Create(ctx, inactive))
 	_, _, err = authUC.Login(ctx, "bob", password, "127.0.0.1")

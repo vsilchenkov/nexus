@@ -75,6 +75,20 @@ func startPostgres(t *testing.T, ctx context.Context) (*pgxpool.Pool, func()) {
 	return pool, cleanup
 }
 
+// resolveDefaultTeamID — UUID 'default'-team из сидинга миграции 0008.
+// Используется в integration-тестах NodeUsecase, которым нужен UUID
+// для передачи в конструктор.
+func resolveDefaultTeamID(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
+	t.Helper()
+	var id string
+	if err := pool.QueryRow(ctx,
+		"SELECT id::text FROM teams WHERE slug = $1",
+		"default").Scan(&id); err != nil {
+		t.Fatalf("resolve default team: %v", err)
+	}
+	return id
+}
+
 // TestNodeRepoCreate_E2E: создаём узел через NodeUsecase с UnitOfWork.
 // Проверяем, что узел сохранён в БД и в audit_log появилась запись.
 func TestNodeRepoCreate_E2E(t *testing.T) {
@@ -94,7 +108,8 @@ func TestNodeRepoCreate_E2E(t *testing.T) {
 	auditRepo := pgrepo.NewAuditRepoPg(pool, logger)
 	uow := pgrepo.NewUnitOfWorkPg(pool, cipher, logger)
 	auditUC := usecase.NewAuditUsecase(auditRepo, logger)
-	nodeUC := usecase.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, time.Minute, 0, logger)
+	defaultTeam := resolveDefaultTeamID(t, ctx, pool)
+	nodeUC := usecase.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, time.Minute, 0, defaultTeam, logger)
 
 	n := &domain.Node{
 		Path:       "test/path",

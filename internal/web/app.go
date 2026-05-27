@@ -20,6 +20,7 @@ import (
 
 	// Регистрирует Web Swagger-doc в swag.Registry при импорте (§11 ТЗ).
 	_ "nexus/docs/web"
+	"nexus/internal/domain"
 	"nexus/internal/platform/bootstrap"
 	chpf "nexus/internal/platform/clickhouse"
 	"nexus/internal/platform/config"
@@ -90,6 +91,16 @@ func (a *App) Start(ctx context.Context) error {
 	r.GET("/swagger/*any", ginswagger.WrapHandler(swaggerfiles.Handler))
 
 	// Сборка слоёв (Clean Architecture, §17.2).
+	// TeamRepo — multi-tenancy v2 (Phase 10.1 миграция 0008). Резолвим UUID
+	// 'default'-team при старте — он используется как fallback в NodeUsecase,
+	// OrphanScanner для legacy single-team-кода (до блока B с team-switcher).
+	teamRepo := pgrepo.NewTeamRepoPg(a.pg, a.logger)
+	defaultTeam, err := teamRepo.GetBySlug(ctx, domain.DefaultTeamSlug)
+	if err != nil {
+		return fmt.Errorf("resolve default team: %w (run --migrate-up?)", err)
+	}
+	defaultTeamID := defaultTeam.ID
+
 	nodeRepo := pgrepo.NewNodeRepoPg(a.pg, a.cipher, a.logger)
 	nodeCache := rediscache.NewNodeCacheRedis(a.redis, a.logger)
 	auditRepo := pgrepo.NewAuditRepoPg(a.pg, a.logger)
@@ -102,9 +113,11 @@ func (a *App) Start(ctx context.Context) error {
 		uow,
 		time.Duration(a.cfg.Redis.NodeTTLSec)*time.Second,
 		a.cfg.Web.NodesHardLimit,
+		defaultTeamID,
 		a.logger,
 	)
 	nodeHandler := httpadapter.NewNodeHandler(nodeUC, a.logger)
+	_ = teamRepo // TeamRepo handler/usecase появится в блоке B
 
 	userRepo := pgrepo.NewUserRepoPg(a.pg, a.logger)
 	sessionRepo := rediscache.NewSessionRepoRedis(a.redis)
@@ -164,7 +177,7 @@ func (a *App) Start(ctx context.Context) error {
 		logsHandler = httpadapter.NewLogsHandler(logsUC, a.logger)
 
 		// Orphan-сканер (Phase 6.7): таблицы в CH без узла в Postgres.
-		orphanScanner := usecase.NewOrphanScanner(a.chMgr, nodeRepo, &a.cfg.ClickHouse, auditUC, a.logger)
+		orphanScanner := usecase.NewOrphanScanner(a.chMgr, nodeRepo, &a.cfg.ClickHouse, auditUC, defaultTeamID, a.logger)
 		orphanHandler = httpadapter.NewOrphanHandler(orphanScanner, a.logger)
 
 		// ClickHouse hot-reload: Web не держит chlog.Writer, поэтому writers пуст.

@@ -27,7 +27,7 @@ func NewUserRepoPg(pool *pgxpool.Pool, logger logging.Logger) *UserRepoPg {
 }
 
 const userCols = `id, login, COALESCE(email,''), COALESCE(password_hash,''),
-	role, active, must_change_password, lang, team_id, created_at, last_login_at`
+	role, active, must_change_password, lang, default_team_id, created_at, last_login_at`
 
 func (r *UserRepoPg) scanRow(row pgx.Row) (*domain.User, error) {
 	var u domain.User
@@ -35,7 +35,7 @@ func (r *UserRepoPg) scanRow(row pgx.Row) (*domain.User, error) {
 	var lastLogin *time.Time
 	if err := row.Scan(
 		&u.ID, &u.Login, &u.Email, &u.PasswordHash,
-		&role, &u.Active, &u.MustChangePassword, &lang, &u.TeamID,
+		&role, &u.Active, &u.MustChangePassword, &lang, &u.DefaultTeamID,
 		&u.CreatedAt, &lastLogin,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -101,13 +101,17 @@ func (r *UserRepoPg) CountActiveAdmins(ctx context.Context) (int, error) {
 }
 
 func (r *UserRepoPg) Create(ctx context.Context, u *domain.User) error {
+	// default_team_id: если caller не передал — берём UUID 'default'-team
+	// из сидинга миграции 0008. NULLIF превращает пустую строку в NULL,
+	// COALESCE подставляет lookup.
 	const q = `
-INSERT INTO users (login, email, password_hash, role, active, must_change_password, lang, team_id)
-VALUES ($1, NULLIF($2,''), NULLIF($3,''), $4, $5, $6, $7, COALESCE(NULLIF($8,''), 'default'))
+INSERT INTO users (login, email, password_hash, role, active, must_change_password, lang, default_team_id)
+VALUES ($1, NULLIF($2,''), NULLIF($3,''), $4, $5, $6, $7,
+	COALESCE(NULLIF($8,'')::uuid, (SELECT id FROM teams WHERE slug = '` + domain.DefaultTeamSlug + `')))
 RETURNING id, created_at`
 	err := r.pool.QueryRow(ctx, q,
 		u.Login, u.Email, u.PasswordHash, string(u.Role), u.Active,
-		u.MustChangePassword, string(u.Lang), u.TeamID,
+		u.MustChangePassword, string(u.Lang), u.DefaultTeamID,
 	).Scan(&u.ID, &u.CreatedAt)
 	if err != nil {
 		var pgErr *pgconn.PgError

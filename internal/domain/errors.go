@@ -59,4 +59,13 @@ var (
 	ErrURLParamRequired = errors.New("domain: url parameter is required")
 	ErrURLInvalid       = errors.New("domain: url is invalid")
 	ErrURLNotAllowed    = errors.New("domain: url is not in allowlist")
+
+	// Team (multi-tenancy v2)
+	ErrTeamNotFound         = errors.New("domain: team not found")
+	ErrTeamAlreadyExists    = errors.New("domain: team with this slug or ch_database already exists")
+	ErrTeamSlugFormat       = errors.New("domain: team slug must match ^[a-z][a-z0-9_]{0,31}$")
+	ErrTeamNameLength       = errors.New("domain: team name length must be 1..255")
+	ErrTeamCHDatabaseFormat = errors.New("domain: team ch_database must match ^nexus_[a-z][a-z0-9_]{0,31}$")
+	ErrTeamInvalidRole      = errors.New("domain: invalid team role")
+	ErrTeamMemberNotFound   = errors.New("domain: team membership not found")
 )

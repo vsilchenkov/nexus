@@ -17,6 +17,11 @@ import (
 // Create/Update/Delete атомарны: репо-операция и запись в audit идут одной
 // транзакцией через UnitOfWork (§17.4 ТЗ). Если uow=nil — fallback на
 // не-транзакционный путь (репо + audit вызываются по отдельности).
+//
+// defaultTeamID — UUID 'default'-team из миграции 0008. Используется как
+// fallback для List и Create, когда caller (handler) не передал team scope.
+// В блоке B (team-switcher в сессии) handler начнёт передавать
+// current_team_id из сессии, и default останется только для CLI-сценариев.
 type NodeUsecase struct {
 	repo           port.NodeRepo
 	cache          port.NodeCache
@@ -24,6 +29,7 @@ type NodeUsecase struct {
 	uow            port.UnitOfWork
 	cacheTTL       time.Duration
 	nodesHardLimit int
+	defaultTeamID  string
 	logger         logging.Logger
 }
 
@@ -34,6 +40,7 @@ func NewNodeUsecase(
 	uow port.UnitOfWork,
 	cacheTTL time.Duration,
 	nodesHardLimit int,
+	defaultTeamID string,
 	logger logging.Logger,
 ) *NodeUsecase {
 	return &NodeUsecase{
@@ -43,6 +50,7 @@ func NewNodeUsecase(
 		uow:            uow,
 		cacheTTL:       cacheTTL,
 		nodesHardLimit: nodesHardLimit,
+		defaultTeamID:  defaultTeamID,
 		logger:         logger,
 	}
 }
@@ -57,13 +65,16 @@ func (u *NodeUsecase) Get(ctx context.Context, id string) (*domain.Node, error) 
 
 func (u *NodeUsecase) List(ctx context.Context, f port.ListNodesFilter) ([]*domain.Node, error) {
 	if f.TeamID == "" {
-		f.TeamID = "default"
+		f.TeamID = u.defaultTeamID
 	}
 	return u.repo.List(ctx, f)
 }
 
 func (u *NodeUsecase) Create(ctx context.Context, actor Actor, n *domain.Node) error {
 	n.SetDefaults()
+	if n.TeamID == "" {
+		n.TeamID = u.defaultTeamID
+	}
 	if err := n.Validate(); err != nil {
 		return err
 	}
