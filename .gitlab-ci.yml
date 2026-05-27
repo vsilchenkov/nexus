@@ -271,7 +271,11 @@ loadtest:
   timeout: 60 minutes
   variables:
     COMPOSE_PROJECT_NAME: "loadtest-${CI_PIPELINE_ID}-${CI_JOB_ID}"
-    COMPOSE_FILE: "deploy/docker-compose.yml"
+    # COMPOSE_FILE поддерживает несколько файлов через ":" (Linux). Второй
+    # override сбрасывает host-публикацию портов (см. docker-compose.loadtest.yml),
+    # иначе CI пытается забиндить 5432/6379/8123/... — конфликт с зомби-контейнерами
+    # или другими pipelines на runner-host.
+    COMPOSE_FILE: "deploy/docker-compose.yml:deploy/docker-compose.loadtest.yml"
     LOADTEST_TARGET_RPS: "500"
     LOADTEST_DURATION: "5m"
     LOADTEST_NODES: "50"

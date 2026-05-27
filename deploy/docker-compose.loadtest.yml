@@ -1,0 +1,30 @@
+# Loadtest override для GitLab CI loadtest job'а.
+# Подключается вторым -f к docker-compose.yml; сбрасывает host-публикацию
+# портов для всех сервисов через !reset (Compose-spec ≥ v2.20).
+#
+# Зачем: в CI каждый pipeline пытается занять одни и те же хост-порты
+# (5432/6379/8123/9000/9092/8080/8000/9091/9093). Если другой pipeline /
+# зомби-контейнер / сторонний процесс уже слушает на этом порту — docker
+# не может создать container и весь стек падает с
+# `Bind for 0.0.0.0:PORT failed: port is already allocated`.
+#
+# Внутри compose-сети сервисы видят друг друга по DNS-именам (postgres,
+# redis, kafka и т.д.) — host-публикация нужна только для локальной
+# разработки.
+services:
+  postgres:
+    ports: !reset []
+  redis:
+    ports: !reset []
+  clickhouse:
+    ports: !reset []
+  kafka:
+    ports: !reset []
+  prometheus:
+    ports: !reset []
+  receiver:
+    ports: !reset []
+  sender:
+    ports: !reset []
+  web:
+    ports: !reset []
