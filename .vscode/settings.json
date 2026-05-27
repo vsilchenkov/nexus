@@ -1,5 +1,17 @@
 {
+    // Чтобы IntelliSense/gopls видел файлы с //go:build integration.
     "gopls": {
         "buildFlags": ["-tags=integration"]
-    }
+    },
+    // Совет: delve иногда показывает "could not load source" для embed.FS —
+    // не критично, на отладку не влияет.
+    "go.delveConfig": {
+        "showGlobalVariables": false,
+        "debugAdapter": "dlv-dap"
+    },
+    "go.testTags": "integration",
+    "go.testFlags": ["-v"],
+    // Линтер: golangci-lint должен быть в PATH (`go install ...` или choco/scoop).
+    "go.lintTool": "golangci-lint",
+    "go.lintOnSave": "package"
 }

@@ -1,0 +1,161 @@
+# DataBus — standalone-compose для зависимостей (Windows / Docker Desktop).
+# Поднимает PostgreSQL, Redis, ClickHouse, Kafka (KRaft, single-broker) и
+# Prometheus с пробросом портов на хост — чтобы локальные main'ы из
+# cmd/{receiver,sender,web,loadtest} цеплялись по localhost:<port>.
+#
+# Файл самодостаточный: не зависит от docker-compose.yml. Используй его,
+# когда сервисы DataBus запускаешь локально (VS Code debug / make run-*).
+#
+# Запуск:
+#   docker compose -f deploy/docker-compose.deps.yml up -d
+# Остановить:
+#   docker compose -f deploy/docker-compose.deps.yml down
+# Сбросить данные:
+#   docker compose -f deploy/docker-compose.deps.yml down -v
+
+name: databus-deps
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: databus_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PG_USER:-databus}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-databus}
+      POSTGRES_DB: databus
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-databus} -d databus"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [databus_deps_net]
+
+  redis:
+    image: redis:7-alpine
+    container_name: databus_redis
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --requirepass
+      - ${REDIS_PASSWORD:-}
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [databus_deps_net]
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine
+    container_name: databus_clickhouse
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: vika_logs
+      CLICKHOUSE_USER: ${CH_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CH_PASSWORD:-}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --host=127.0.0.1 --query='SELECT 1' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks: [databus_deps_net]
+
+  kafka:
+    # Apache Kafka в KRaft-режиме (single-broker — для локальной разработки).
+    # Два listener'а: PLAINTEXT://kafka:9092 (между контейнерами) и
+    # EXTERNAL://localhost:29092 (для процессов на хосте). Но т.к. локальные
+    # main'ы запускаются вне docker'а, использовать нужно localhost:9092 —
+    # advertised listener ниже отдаёт именно его. Это намеренно: docker compose
+    # стартует только kafka, никаких других контейнеров, которые ходили бы
+    # внутрь сети, нет — поэтому single-listener "PLAINTEXT://localhost:9092"
+    # покрывает всё.
+    image: apache/kafka:3.9.0
+    container_name: databus_kafka
+    restart: unless-stopped
+    environment:
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://localhost:9092"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@localhost:9093"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_NUM_PARTITIONS: "4"
+      KAFKA_DEFAULT_REPLICATION_FACTOR: "1"
+      KAFKA_MIN_INSYNC_REPLICAS: "1"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    ports:
+      - "9092:9092"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks: [databus_deps_net]
+
+  # Prometheus поднимается под профилем `metrics`. По умолчанию выключен,
+  # потому что scrape-таргеты в prometheus.yml — это контейнерные имена
+  # (`receiver:8080`, `sender:9091`, `web:8000`), и из standalone-deps
+  # сети они не видны. Если хочется метрик — добавь host.docker.internal
+  # в prometheus.yml и подними под профилем:
+  #   docker compose -f deploy/docker-compose.deps.yml --profile metrics up -d
+  prometheus:
+    profiles: ["metrics"]
+    image: prom/prometheus:v2.55.0
+    container_name: databus_prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus.alerts.yml:/etc/prometheus/prometheus.alerts.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9091:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [databus_deps_net]
+
+networks:
+  databus_deps_net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  clickhouse_data:
+  kafka_data:
+  prometheus_data:

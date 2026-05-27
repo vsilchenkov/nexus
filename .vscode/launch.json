@@ -1,46 +1,110 @@
 {
-    // Use IntelliSense to learn about possible attributes.
-    // Hover to view descriptions of existing attributes.
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    // DataBus — конфиги отладки в VS Code.
+    //
+    // Предусловие: deps (postgres, redis, clickhouse, kafka) подняты через
+    // отдельный compose `deploy/docker-compose.deps.yml` (см. README раздел
+    // "Запуск под Windows"). Бинари receiver/sender/web стартуют локально
+    // под отладчиком и цепляются к localhost:<port>.
+    //
+    // ENCRYPTION_KEY и прочие секреты — из `${workspaceFolder}/.env`
+    // (envFile). PG_*, REDIS_*, CH_*, KAFKA_BROKERS из envFile перекрывают
+    // дефолты в config/config_debug.yml через ${VAR:default}-плейсхолдеры.
+    //
+    // Compound "DataBus: all" поднимает все три сервиса одним кликом.
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug",
+            "name": "Web (debug)",
             "type": "go",
             "request": "launch",
             "mode": "auto",
             "cwd": "${workspaceFolder}",
-            "program": "${workspaceFolder}\\app\\cmd\\bus\\main.go",
-            "args": ["-config=config/config_debug.yml"],
-            "envFile": "${workspaceFolder}\\.env"
+            "program": "${workspaceFolder}/cmd/web",
+            "args": ["--debug"],
+            "envFile": "${workspaceFolder}/.env",
+            "showLog": true
         },
         {
-            "name": "Debug Integration Tests",
+            "name": "Receiver (debug)",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "cwd": "${workspaceFolder}",
+            "program": "${workspaceFolder}/cmd/receiver",
+            "args": ["--debug"],
+            "envFile": "${workspaceFolder}/.env",
+            "showLog": true
+        },
+        {
+            "name": "Sender (debug)",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "cwd": "${workspaceFolder}",
+            "program": "${workspaceFolder}/cmd/sender",
+            "args": ["--debug"],
+            "envFile": "${workspaceFolder}/.env",
+            "showLog": true
+        },
+        {
+            "name": "Web: migrate-up",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "cwd": "${workspaceFolder}",
+            "program": "${workspaceFolder}/cmd/web",
+            "args": ["--debug", "--migrate-up"],
+            "envFile": "${workspaceFolder}/.env"
+        },
+        {
+            "name": "Web: set-admin-password",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "cwd": "${workspaceFolder}",
+            "program": "${workspaceFolder}/cmd/web",
+            "args": ["--debug", "--set-admin-password", "admin"],
+            "envFile": "${workspaceFolder}/.env"
+        },
+        {
+            "name": "Loadtest",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "cwd": "${workspaceFolder}",
+            "program": "${workspaceFolder}/cmd/loadtest",
+            "args": [
+                "--web", "http://localhost:8000",
+                "--receiver", "http://localhost:8080",
+                "--admin-password", "admin",
+                "--target-rps", "100",
+                "--duration", "1m",
+                "--nodes", "10"
+            ],
+            "envFile": "${workspaceFolder}/.env"
+        },
+        {
+            "name": "Integration tests (current file)",
             "type": "go",
             "request": "launch",
             "mode": "test",
             "program": "${file}",
             "buildFlags": "-tags=integration",
-            "args": [
-                // "./...",
-                "-test.v",
-                // "-tags=integration",
-                // "-test.run", "TestYourTest"
-            ],
-            "env": {
-                "WS_WAIT_SECONDS": "3"
-            },
-            // "envFile": "${workspaceFolder}/.env"
+            "args": ["-test.v"]
         },
         {
-            "name": "Production",
+            "name": "Attach to process (pid)",
             "type": "go",
-            "request": "launch",
-            "mode": "auto",
-            "cwd": "${workspaceFolder}",
-            "program": "${workspaceFolder}\\app\\cmd\\bus\\main.go",
-            "args": [],
-            "envFile": "${workspaceFolder}\\.env"
-        },       
+            "request": "attach",
+            "mode": "local",
+            "processId": 0
+        }
+    ],
+    "compounds": [
+        {
+            "name": "DataBus: all (web + receiver + sender)",
+            "configurations": ["Web (debug)", "Sender (debug)", "Receiver (debug)"],
+            "stopAll": true
+        }
     ]
 }

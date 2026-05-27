@@ -1,0 +1,79 @@
+{
+    // VS Code задачи для типовых операций.
+    // Запуск: Ctrl+Shift+P → "Tasks: Run Task" → выбрать.
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "deps: up",
+            "type": "shell",
+            "command": "docker compose -f deploy/docker-compose.deps.yml up -d",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "deps: down",
+            "type": "shell",
+            "command": "docker compose -f deploy/docker-compose.deps.yml down",
+            "problemMatcher": []
+        },
+        {
+            "label": "deps: down + reset volumes",
+            "type": "shell",
+            "command": "docker compose -f deploy/docker-compose.deps.yml down -v",
+            "problemMatcher": []
+        },
+        {
+            "label": "deps: status",
+            "type": "shell",
+            "command": "docker compose -f deploy/docker-compose.deps.yml ps",
+            "problemMatcher": []
+        },
+        {
+            "label": "deps: logs (kafka)",
+            "type": "shell",
+            "command": "docker compose -f deploy/docker-compose.deps.yml logs -f kafka",
+            "problemMatcher": []
+        },
+        {
+            "label": "migrate up",
+            "type": "shell",
+            "command": "go run ./cmd/web --debug --migrate-up",
+            "options": {
+                "env": {
+                    "ENCRYPTION_KEY": "${env:ENCRYPTION_KEY}"
+                }
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "set admin password (admin)",
+            "type": "shell",
+            "command": "go run ./cmd/web --debug --set-admin-password admin",
+            "problemMatcher": []
+        },
+        {
+            "label": "test: unit",
+            "type": "shell",
+            "command": "go test -race -short ./...",
+            "group": "test",
+            "problemMatcher": "$go"
+        },
+        {
+            "label": "test: integration",
+            "type": "shell",
+            "command": "go test -tags=integration -count=1 -v ./tests/integration/...",
+            "group": "test",
+            "problemMatcher": "$go"
+        },
+        {
+            "label": "build: all",
+            "type": "shell",
+            "command": "go build -ldflags=\"-s -w\" -o bin/receiver.exe ./cmd/receiver; go build -ldflags=\"-s -w\" -o bin/sender.exe ./cmd/sender; go build -ldflags=\"-s -w\" -o bin/web.exe ./cmd/web",
+            "group": "build",
+            "problemMatcher": "$go"
+        }
+    ]
+}
