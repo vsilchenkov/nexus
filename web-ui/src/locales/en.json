@@ -9,7 +9,8 @@
   "nav": {
     "nodes": "Nodes",
     "audit": "Audit",
-    "settings": "Settings"
+    "settings": "Settings",
+    "team": "Team"
   },
   "overview": {
     "title": "Nodes",

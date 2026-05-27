@@ -225,7 +225,10 @@
   - ✅ Phase 10.D.2: `OrphanScanner` сканирует все `teams.ch_database` (allow-list), `knownTables` собирает узлы всех команд, drop guard разрешает DROP только в tenant-БД. `ch_housekeeping` (Sender) автоматически multi-team — берёт узлы всех команд из PG и идёт по `db.table` через `splitDBTable`.
   - ✅ Phase 10.E.1: `NodeReader.Get(teamSlug, path)` — PG-запрос через `JOIN teams ON nodes.team_id = teams.id WHERE teams.slug=$1 AND nodes.path=$2`, Redis-ключ `node:<team_slug>:<path>`, L2-кеш по `<team_slug>/<path>`. Receiver принимает `/v1/request/<team_slug>/<node_path>` и legacy `/v1/request/<node_path>` (default-team). Parser `splitTeamSlugAndPath` различает 1- и 2-сегментные URL.
   - ✅ Phase 10.E.2: cross-team изоляция в Receiver обеспечивается JOIN'ом из E.1 (чужой `team_slug` → 404, не утечка существования). API-токены в Receiver не используются — incoming auth узла остаётся ответственным за аутентификацию клиента. Фиксируется unit-тестом `TestSplitTeamSlugAndPath` (8 кейсов).
-  - ⛔ Phase 10.F+: scope-фильтрация в audit/users, UI «Команды» + Members + team-switcher в Topbar.
+  - ✅ Phase 10.F.1: `user_audit.team_id` реально записывается через `Actor.TeamID` (берётся из сессии в `userActor(c)`/`actorFromCtx(c)`). `AuditFilter.TeamID` + handler-overlay: по умолчанию admin видит только свою команду; `?team_id=*` или `?team_id=<uuid>` — override. CSV-экспорт включает колонку `team_id`.
+  - ✅ Phase 10.F.2: SPA — страница `Settings → Teams` (admin-only). `TeamsPanel` (CRUD + delete-guard для `default`), `TeamDialog` (slug immutable после создания, preview `nexus_<slug>`), `MembersDialog` (add/update-role/remove, select из `/api/users` без уже-членов). i18n en/ru.
+  - ✅ Phase 10.F.3: Topbar team-switcher — `<select>` со списком из `/api/me/teams`, при смене вызывает `/api/me/switch-team` и `qc.invalidateQueries()` (все списки nodes/audit/logs/tokens перерисовываются под новый scope).
+  - ⛔ Phase 10.G: integration-тест на изоляцию 2 команд end-to-end + финальный апдейт IMPLEMENTATION.md.
 - ~~Webhook signature verification (`/v1/callback/`)~~ — реализовано в Phase 8.1.
 - ~~OpenTelemetry distributed tracing~~ — реализовано в Phase 8.2 (HTTP-server-span'ы) + 8.3 (HTTP outbound + gRPC unary client/server interceptor'ы) + 8.4 (Kafka headers propagation для async-пути). End-to-end trace через UI → Web → Receiver → {gRPC → Sender → внешний URL} / {Kafka → Sender-consumer → внешний URL}.
 - Notifications для операторов (Slack/Telegram).
@@ -514,6 +517,23 @@ real-sleep).
 docker-compose-стек начнут тянуть разные образы и расходиться по поведению
 (например, дефолтным retention'ам).
 
+### 4.20 Topbar team-switcher вызывает `qc.invalidateQueries()` без аргументов
+
+Phase 10.F.3 ставит `<select>` в [Topbar](../web-ui/src/components/Topbar.tsx).
+При смене команды через `POST /api/me/switch-team` (Phase 10.B.1) сервер
+переписывает `current_team_id` в Redis-сессии, и **все** последующие
+запросы идут в новый scope. Чтобы это сразу же увидел UI, после успешной
+мутации вызывается `qc.invalidateQueries()` **без queryKey** — это
+сбрасывает все кеши TanStack Query.
+
+Альтернатива (точечный invalidate `["nodes"]`, `["audit"]`, …) была
+отвергнута: легко забыть добавить новый key, когда появится новая
+страница. Глобальный invalidate — простой и stay-correct по
+конструкции.
+
+Cookie сессии не меняется (см. §4.15). UI ничего не редиректит — текущая
+страница перерисовывается с новыми данными.
+
 ### 4.19 Receiver URL: `team_slug` в первом сегменте path, не в host/subdomain
 
 Phase 10.E.1 расширила URL Receiver'а под multi-tenancy:
@@ -782,8 +802,13 @@ make proto                                     # перегенерация send
        (legacy без слога продолжает работать для default-team),
        `NodeReader.Get(teamSlug, path)` через PG JOIN с teams, Redis
        и L2-кеш учитывают team_slug в ключе.
-   - Дальше: scope в audit/users, UI «Команды» + Members + team-switcher
-     в Topbar.
+     - Блок F: `user_audit.team_id` пишется через `Actor.TeamID`, admin
+       по умолчанию видит только свой scope (`?team_id=*` для
+       override). SPA: страница `Settings → Teams` (admin-only,
+       CRUD + Members) и Topbar team-switcher (`<select>`, перезагрузка
+       всех queries после switch'а).
+   - Дальше: блок G — integration-тест end-to-end на изоляцию двух
+     команд + финальный апдейт IMPLEMENTATION.md.
 
 Сделанное в Phase 7.14:
 

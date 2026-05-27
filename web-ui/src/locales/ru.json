@@ -9,7 +9,8 @@
   "nav": {
     "nodes": "Узлы",
     "audit": "Аудит",
-    "settings": "Настройки"
+    "settings": "Настройки",
+    "team": "Команда"
   },
   "overview": {
     "title": "Узлы",
