@@ -280,14 +280,26 @@ loadtest:
     - mkdir -p loadtest-report
   script:
     # 1) Поднимаем инфраструктуру + сервисы (без loadtest — он под profile).
+    - echo "[1/4] docker compose up -d --build --wait infra+services..."
     - docker compose up -d --build --wait postgres redis clickhouse kafka receiver sender web
+    - echo "[1/4] up done; статус контейнеров:"
+    - docker compose ps
     # 2) Bootstrap пароля admin'а (web в свежей БД заводится с NULL hash).
+    #    Передаём ТОЛЬКО доп. флаг — ENTRYPOINT уже содержит
+    #    `/usr/local/bin/web --config /app/config/config.yml`, и docker run
+    #    приклеит --set-admin-password к нему. Если передать полный путь явно,
+    #    он станет лишним позиционным аргументом и --set-admin-password
+    #    потеряется → web стартует как обычный сервер и висит.
+    #    timeout 60s — на случай, если флаг опять перестанет ловиться:
+    #    лучше быстро упасть, чем висеть час до timeout pipeline.
+    - echo "[2/4] bootstrap admin password (timeout 60s)..."
     - |
-      docker compose run --rm --no-deps web \
-        /usr/local/bin/web --config /app/config/config.yml \
+      timeout 60s docker compose run --rm --no-deps web \
         --set-admin-password "$LOADTEST_ADMIN_PASSWORD"
+    - echo "[2/4] admin password done"
     # 3) Прогон loadtest'а. --name даёт фиксированное имя для docker cp.
     #    Не --rm: контейнер нужно сохранить до копирования отчёта.
+    - echo "[3/4] starting loadtest (target_rps=$LOADTEST_TARGET_RPS, duration=$LOADTEST_DURATION, nodes=$LOADTEST_NODES)..."
     - |
       docker compose --profile loadtest run \
         --name "${COMPOSE_PROJECT_NAME}-loadtest-run" \
@@ -302,10 +314,17 @@ loadtest:
           --nodes "$LOADTEST_NODES" \
           --cleanup=false \
           --report /tmp/report.json
+    - echo "[4/4] copying report from loadtest container..."
     - docker cp "${COMPOSE_PROJECT_NAME}-loadtest-run":/tmp/report.json loadtest-report/report.json
     - docker rm "${COMPOSE_PROJECT_NAME}-loadtest-run" || true
+    - echo "[4/4] done; report saved to loadtest-report/report.json"
   after_script:
+    # Логи всех сервисов в артефакт + хвост сразу в stdout job'а, чтобы при
+    # провале не надо было лезть в артефакты ради первого диагноза.
     - docker compose --profile loadtest logs --tail=400 > loadtest-report/compose-logs.txt 2>&1 || true
+    - echo "===== compose-logs.txt (tail 200) ====="
+    - tail -n 200 loadtest-report/compose-logs.txt || true
+    - echo "===== /compose-logs.txt ====="
     - docker compose --profile loadtest down -v --remove-orphans || true
     - rm -f .env
   artifacts:
