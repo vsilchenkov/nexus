@@ -111,12 +111,17 @@ func (h *NodeHandler) Create(c *gin.Context) {
 }
 
 // actorFromCtx — извлекает Actor для audit-логирования.
-// В Phase 2 нет аутентификации → SystemActor (user_login="system") + IP клиента.
-// В Phase 3 будет читать user_id/user_login из Gin-context, куда положит
-// auth-middleware после проверки session-cookie.
+// До auth-middleware — SystemActor (user_login="system") + IP клиента.
+// При наличии сессии — UserID + CurrentTeamID (multi-tenancy v2,
+// Phase 10.F.1). Phase 1 комментарий устарел: middleware теперь
+// гарантированно ставит сессию в ctx до handler'а.
 func actorFromCtx(c *gin.Context) usecase.Actor {
 	a := usecase.SystemActor()
 	a.IPAddress = c.ClientIP()
+	if s, ok := sessionFromCtx(c); ok {
+		a.UserID = s.UserID
+		a.TeamID = s.CurrentTeamID
+	}
 	return a
 }
 

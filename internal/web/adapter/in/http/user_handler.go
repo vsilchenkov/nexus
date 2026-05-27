@@ -247,13 +247,17 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// userActor — отличается от actorFromCtx тем, что заполняет UserID/UserLogin
+// userActor — отличается от actorFromCtx тем, что заполняет UserID/TeamID
 // из проверенной сессии (если она есть). До auth-middleware — system.
+//
+// TeamID = s.CurrentTeamID (multi-tenancy v2, Phase 10.F.1): audit-журнал
+// получает scope актёра.
 func userActor(c *gin.Context) usecase.Actor {
 	a := usecase.SystemActor()
 	a.IPAddress = c.ClientIP()
 	if s, ok := sessionFromCtx(c); ok {
 		a.UserID = s.UserID
+		a.TeamID = s.CurrentTeamID
 	}
 	return a
 }

@@ -3,10 +3,16 @@ package domain
 import "time"
 
 // AuditEntry — запись журнала действий пользователя (§7.13).
+//
+// TeamID — UUID команды, в контексте которой выполнено действие
+// (multi-tenancy v2, миграция 0008). Пустая строка = глобальное
+// действие админа (например, создание новой команды до того, как
+// admin вошёл в её scope).
 type AuditEntry struct {
 	ID         string
 	UserID     string // пустая строка = system
 	UserLogin  string
+	TeamID     string
 	Action     string // машинно-читаемый код: node.create, user.login.success, ...
 	TargetType string
 	TargetID   string
