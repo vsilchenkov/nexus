@@ -180,13 +180,21 @@ func TestSender_Async_E2E(t *testing.T) {
 	}
 }
 
-// startKafka поднимает Apache Kafka 3.9 (KRaft) через testcontainers и
-// возвращает строку брокеров вида "host:port". Образ — официальный
-// apache/kafka (унифицирован с deploy/docker-compose.yml).
+// startKafka поднимает Kafka (KRaft) через testcontainers и возвращает
+// строку брокеров вида "host:port".
+//
+// Образ намеренно НЕ совпадает с deploy/docker-compose.yml (там
+// apache/kafka:3.9.0). testcontainers-go/modules/kafka@v0.42 хардкодит
+// в стартовый shell-скрипт пути из confluentinc/confluent-local
+// (/etc/confluent/docker/{bash-config,configure,launch}); apache/kafka
+// этих скриптов не содержит и контейнер падает с exit 127. Прод-параллель
+// не страдает: тест проверяет наш wrapper Producer/ConsumerGroup поверх
+// segmentio/kafka-go — а это library-level проверка, для которой
+// конкретный дистрибутив Kafka неважен.
 func startKafka(t *testing.T, ctx context.Context) (string, func()) {
 	t.Helper()
 
-	c, err := tckafka.Run(ctx, "apache/kafka:3.9.0")
+	c, err := tckafka.Run(ctx, "confluentinc/confluent-local:7.5.0")
 	if err != nil {
 		t.Fatalf("start kafka: %v", err)
 	}
