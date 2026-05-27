@@ -412,7 +412,12 @@ loadtest:
     - echo "  receiver   = http://receiver:8080"
     - echo "  mock URL   = http://loadtest:9999"
     - 'echo "запускаем: docker compose --profile loadtest run loadtest ..."'
+    # Один big-block: loadtest scenario + cp/rm отчёта + diagnostic. Иначе
+    # GitLab `set -e` после первого non-zero exit (loadtest при fail-rate)
+    # обрывает script — diagnostic не выполнялась. Тут exit code loadtest'а
+    # запоминаем в LOADTEST_RC и пробрасываем в самом конце.
     - |
+      set +e
       docker compose --profile loadtest run \
         --name "${COMPOSE_PROJECT_NAME}-loadtest-run" \
         loadtest \
@@ -426,39 +431,41 @@ loadtest:
           --nodes "$LOADTEST_NODES" \
           --cleanup=false \
           --report /tmp/report.json
-    - 'echo "--- loadtest run завершился ---"'
-    # ----- Шаг 4: извлечь отчёт из контейнера -----
-    - echo "===== [4/4] копируем report.json из loadtest-контейнера ====="
-    - docker cp "${COMPOSE_PROJECT_NAME}-loadtest-run":/tmp/report.json loadtest-report/report.json
-    - 'echo "--- размер артефактов ---"'
-    - ls -lh loadtest-report/
-    - docker rm "${COMPOSE_PROJECT_NAME}-loadtest-run" || true
-    - echo "===== loadtest done ====="
-    # Диагностика на случай высокого error rate: проверяем, что sender
-    # видит DNS-alias `loadtest` (mock-сервер). Если getent ничего не
-    # возвращает — `docker compose run loadtest` не получил network alias,
-    # и sender не мог достучаться до mock'а на http://loadtest:9999.
-    # NB: к моменту этого шага loadtest-run уже exited, но если alias
-    # был — DNS-запись остаётся в Docker DNS resolver на короткое время.
-    - 'echo "===== diagnostic: sender DNS + connectivity ====="'
-    - docker compose exec -T sender getent hosts loadtest 2>&1 || echo "(getent loadtest → not found / failed)"
-    - docker compose exec -T sender getent hosts web 2>&1 || echo "(getent web → not found / failed)"
-    # Что реально в PG — есть ли loadtest-узлы. Если 0 — web их не сохранил;
-    # если 50 — receiver их не видит (cache invalidation или PG-read).
-    - 'echo "===== diagnostic: ноды в PostgreSQL ====="'
-    - docker compose exec -T postgres psql -U nexus -d nexus -c "SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE deleted_at IS NULL) AS active FROM nodes;" 2>&1 || true
-    - docker compose exec -T postgres psql -U nexus -d nexus -c "SELECT path, target_url FROM nodes ORDER BY id DESC LIMIT 3;" 2>&1 || true
-    # Прямой запрос к receiver на одну из созданных нод. wget -S печатает HTTP-headers.
-    - 'echo "===== diagnostic: receiver direct response ====="'
-    - |
-      LOADTEST_PATH=$(docker compose exec -T postgres psql -U nexus -d nexus -t -c "SELECT path FROM nodes WHERE path LIKE 'loadtest/%' ORDER BY id DESC LIMIT 1;" 2>/dev/null | tr -d ' \n')
+      LOADTEST_RC=$?
+      echo "--- loadtest exit code = $LOADTEST_RC ---"
+
+      # ----- Шаг 4: извлечь отчёт из контейнера -----
+      echo "===== [4/4] копируем report.json из loadtest-контейнера ====="
+      docker cp "${COMPOSE_PROJECT_NAME}-loadtest-run":/tmp/report.json loadtest-report/report.json || true
+      echo "--- размер артефактов ---"
+      ls -lh loadtest-report/
+      docker rm "${COMPOSE_PROJECT_NAME}-loadtest-run" || true
+      echo "===== loadtest done ====="
+
+      # ----- Диагностика 100%-error: что в PG, что отвечает receiver -----
+      echo "===== diagnostic: sender DNS + connectivity ====="
+      docker compose exec -T sender getent hosts loadtest 2>&1 || echo "(getent loadtest → not found)"
+      docker compose exec -T sender getent hosts web 2>&1 || echo "(getent web → not found)"
+
+      echo "===== diagnostic: ноды в PostgreSQL ====="
+      docker compose exec -T postgres psql -U nexus -d nexus -c "SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE deleted_at IS NULL) AS active FROM nodes;" 2>&1
+      docker compose exec -T postgres psql -U nexus -d nexus -c "SELECT path, target_url FROM nodes ORDER BY id DESC LIMIT 3;" 2>&1
+
+      echo "===== diagnostic: receiver direct response ====="
+      LOADTEST_PATH=$(docker compose exec -T postgres psql -U nexus -d nexus -t -c "SELECT path FROM nodes WHERE path LIKE 'loadtest/%' ORDER BY id DESC LIMIT 1;" 2>/dev/null | tr -d ' \n\r')
       echo "loadtest node path: '$LOADTEST_PATH'"
       if [ -n "$LOADTEST_PATH" ]; then
         docker compose exec -T sender wget -S -O- --post-data='diag' \
           --header='Content-Type: application/octet-stream' \
-          "http://receiver:8080/v1/request/$LOADTEST_PATH" 2>&1 | head -40 || true
+          "http://receiver:8080/v1/request/$LOADTEST_PATH" 2>&1 | head -40
+      else
+        echo "(loadtest_path пуст — нет нод в PG с префиксом loadtest/)"
       fi
-    - 'echo "===== /diagnostic ====="'
+      echo "===== /diagnostic ====="
+
+      # Пробрасываем exit code loadtest'а наружу — pipeline остаётся красным
+      # при fail-rate, но diagnostic сначала выполнится.
+      exit "$LOADTEST_RC"
   after_script:
     # Финальный snapshot: что было в compose-стеке к моменту провала,
     # плюс хвост логов всех сервисов прямо в stdout job'а (без необходимости
