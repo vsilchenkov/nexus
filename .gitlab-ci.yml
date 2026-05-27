@@ -96,9 +96,34 @@ go-test:
     - go env GOPATH GOCACHE GOMODCACHE
     - 'echo "===== go vet ./... ====="'
     - go vet ./...
-    - 'echo "===== go test -race -short ./... ====="'
-    - go test -race -short ./...
+    - 'echo "===== installing gotestsum (для JUnit-отчёта в GitLab Tests tab) ====="'
+    - go install gotest.tools/gotestsum@v1.12.0
+    - 'echo "===== gotestsum -- -race -short -coverprofile ./... ====="'
+    # gotestsum пробрасывает exit code go test'а, поэтому pipeline остаётся
+    # красным при любом FAIL. --format pkgname-and-test-fails — лаконичный
+    # вывод (зелёные пакеты одной строкой, упавшие — с трейсом).
+    - $GOPATH/bin/gotestsum
+        --junitfile junit.xml
+        --format pkgname-and-test-fails
+        --
+        -race -short -coverprofile=coverage.out -covermode=atomic ./...
+    - 'echo "===== coverage summary (для MR widget) ====="'
+    - go tool cover -func=coverage.out | tail -1
     - 'echo "===== go-test done ====="'
+  # GitLab парсит итоговый процент покрытия из stdout по этому regex и
+  # показывает его рядом со статусом pipeline в MR widget.
+  coverage: '/total:\s+\(statements\)\s+(\d+\.\d+)%/'
+  artifacts:
+    when: always
+    paths:
+      - coverage.out
+      - junit.xml
+    reports:
+      junit: junit.xml
+      # cobertura-отчёт для line-by-line coverage в MR diff включён НЕ
+      # сейчас: требует `gocover-cobertura` и при больших проектах ощутимо
+      # удлиняет job. Если понадобится — добавим отдельным шагом.
+    expire_in: 1 month
 
 # ----------- LINT stage -----------------------------------------------------
 
@@ -221,6 +246,7 @@ integration:
   before_script:
     - go env -w GOPATH=$GOPATH GOCACHE=$GOCACHE GOMODCACHE=$GOMODCACHE
     - go mod download
+    - go install gotest.tools/gotestsum@v1.12.0
     # NB: docker pre-pull убран. golang:${GO_VERSION} (debian) идёт без
     # docker CLI — testcontainers-go ходит к daemon'у напрямую через
     # docker.sock, а `docker pull` в before_script писал в лог
@@ -230,9 +256,23 @@ integration:
     - 'echo "===== integration test env ====="'
     - go version
     - 'echo "DOCKER_HOST = $DOCKER_HOST"'
-    - 'echo "===== go test -tags=integration -timeout 20m -count=1 ./tests/integration/... ====="'
-    - go test -tags=integration -timeout 20m -count=1 -v ./tests/integration/...
+    - 'echo "===== gotestsum -tags=integration -timeout 20m -count=1 ./tests/integration/... ====="'
+    # JUnit-отчёт пишем в junit-integration.xml — отдельный файл от unit-тестов,
+    # чтобы в GitLab Tests tab были две независимые вкладки и было видно, в
+    # каком слое (unit vs integration) сломалось.
+    - $GOPATH/bin/gotestsum
+        --junitfile junit-integration.xml
+        --format pkgname-and-test-fails
+        --
+        -tags=integration -timeout 20m -count=1 ./tests/integration/...
     - 'echo "===== integration done ====="'
+  artifacts:
+    when: always
+    paths:
+      - junit-integration.xml
+    reports:
+      junit: junit-integration.xml
+    expire_in: 1 month
 
 # ----------- LOADTEST (manual) ----------------------------------------------
 # Нагрузочный сценарий (§10.2 ТЗ) — поднимает изолированный compose-стек,
@@ -298,7 +338,8 @@ loadtest:
     LOADTEST_DURATION: "2m"
     LOADTEST_NODES: "50"
   before_script:
-    - apk add --no-cache docker-cli-compose openssl
+    # jq нужен в after_script для генерации JUnit-отчёта из report.json.
+    - apk add --no-cache docker-cli-compose openssl jq
     - |
       if [ -z "$LOADTEST_ADMIN_PASSWORD" ]; then
         echo "LOADTEST_ADMIN_PASSWORD не задан в CI/CD Variables (masked+protected)" >&2
@@ -516,12 +557,69 @@ loadtest:
     - 'echo "===== compose-logs.txt (tail 200) ====="'
     - tail -n 200 loadtest-report/compose-logs.txt || true
     - 'echo "===== /compose-logs.txt ====="'
+    # ----- JUnit-отчёт для GitLab Tests tab -----
+    # 3 testcase из report.json — те же пороги, что в report.passed() в
+    # cmd/loadtest/main.go (acceptance criteria §10.2 ТЗ). Если report.json не
+    # родился (compose up упал на [1/4], или loadtest container не запустился) —
+    # один failure-кейс «infra unavailable» с указанием на compose-logs.txt.
+    # Файл попадает в artifacts.paths через loadtest-report/, а в
+    # artifacts.reports.junit — для рендера во вкладке Tests.
+    - 'echo "===== генерируем loadtest-report/junit.xml ====="'
+    - |
+      REPORT=loadtest-report/report.json
+      JUNIT=loadtest-report/junit.xml
+      if [ ! -s "$REPORT" ]; then
+        cat > "$JUNIT" <<EOF
+      <?xml version="1.0" encoding="UTF-8"?>
+      <testsuites name="loadtest" tests="1" failures="1">
+        <testsuite name="infra" tests="1" failures="1">
+          <testcase classname="loadtest.infra" name="report_produced">
+            <failure message="report.json not found">loadtest не успел/не смог записать report.json — см. loadtest-report/compose-logs.txt и stdout job'а</failure>
+          </testcase>
+        </testsuite>
+      </testsuites>
+      EOF
+      else
+        ACHIEVED=$(jq -r '.achieved_rps' "$REPORT")
+        P95=$(jq -r '.p95_ms' "$REPORT")
+        ERATE=$(jq -r '.error_rate' "$REPORT")
+        SENT=$(jq -r '.sent' "$REPORT")
+        ERRORS=$(jq -r '.errors' "$REPORT")
+        TARGET="${LOADTEST_TARGET_RPS:-300}"
+        MIN_RPS=$(awk -v t="$TARGET" 'BEGIN{printf "%.1f", t*0.95}')
+        # awk возвращает 1 если условие истинно, 0 если ложно — bash-сравнение через -eq.
+        RPS_FAIL=$(awk -v a="$ACHIEVED" -v m="$MIN_RPS" 'BEGIN{print (a<m)?1:0}')
+        P95_FAIL=$(awk -v p="$P95" 'BEGIN{print (p>200)?1:0}')
+        ERR_FAIL=$(awk -v e="$ERATE" 'BEGIN{print (e>=0.001)?1:0}')
+        FAILS=$((RPS_FAIL + P95_FAIL + ERR_FAIL))
+        # heredoc'и для failure-блоков — пустые если PASS, иначе <failure>...</failure>.
+        RPS_BODY=""
+        P95_BODY=""
+        ERR_BODY=""
+        [ "$RPS_FAIL" = "1" ] && RPS_BODY="<failure message=\"achieved_rps ${ACHIEVED} &lt; 95% of target ${TARGET} (min ${MIN_RPS})\">acceptance §10.2: achieved RPS должен быть не ниже 95% от target</failure>"
+        [ "$P95_FAIL" = "1" ] && P95_BODY="<failure message=\"p95 ${P95}ms &gt; 200ms\">acceptance §10.2: p95 latency не должна превышать 200ms</failure>"
+        [ "$ERR_FAIL" = "1" ] && ERR_BODY="<failure message=\"error_rate ${ERATE} &gt;= 0.001 (${ERRORS}/${SENT})\">acceptance §10.2: error rate должна быть строго ниже 0.1%</failure>"
+        cat > "$JUNIT" <<EOF
+      <?xml version="1.0" encoding="UTF-8"?>
+      <testsuites name="loadtest" tests="3" failures="${FAILS}">
+        <testsuite name="acceptance" tests="3" failures="${FAILS}">
+          <testcase classname="loadtest.acceptance" name="achieved_rps_at_least_95pct_of_target">${RPS_BODY}<system-out>achieved=${ACHIEVED} target=${TARGET} min=${MIN_RPS}</system-out></testcase>
+          <testcase classname="loadtest.acceptance" name="p95_latency_under_200ms">${P95_BODY}<system-out>p95=${P95}ms</system-out></testcase>
+          <testcase classname="loadtest.acceptance" name="error_rate_under_0.1pct">${ERR_BODY}<system-out>error_rate=${ERATE} (${ERRORS}/${SENT})</system-out></testcase>
+        </testsuite>
+      </testsuites>
+      EOF
+      fi
+      echo "--- junit.xml (preview) ---"
+      cat "$JUNIT"
     - docker compose --profile "*" down -v --remove-orphans || true
     - rm -f .env
   artifacts:
     when: always
     paths:
       - loadtest-report/
+    reports:
+      junit: loadtest-report/junit.xml
     expire_in: 1 month
 
 # ----------- SECURITY stage -------------------------------------------------
