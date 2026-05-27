@@ -55,10 +55,19 @@ func NewNodeUsecase(
 	}
 }
 
-func (u *NodeUsecase) Get(ctx context.Context, id string) (*domain.Node, error) {
+// Get возвращает узел и проверяет, что он принадлежит указанной команде
+// (multi-tenancy v2). teamID="" пропускает проверку — это legacy-путь для
+// CLI/тестов; production handler'ы передают currentTeamID(c).
+//
+// При несовпадении возвращает ErrNodeNotFound (не утечка существования
+// узла в чужой команде).
+func (u *NodeUsecase) Get(ctx context.Context, id, teamID string) (*domain.Node, error) {
 	n, err := u.repo.Get(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("get node: %w", err)
+	}
+	if teamID != "" && n.TeamID != teamID {
+		return nil, domain.ErrNodeNotFound
 	}
 	return n, nil
 }
@@ -122,7 +131,14 @@ func (u *NodeUsecase) Create(ctx context.Context, actor Actor, n *domain.Node) e
 	return nil
 }
 
-func (u *NodeUsecase) Update(ctx context.Context, actor Actor, n *domain.Node) error {
+// Update обновляет узел. teamID — scope multi-tenancy v2; при несовпадении
+// с old.TeamID возвращает ErrNodeNotFound. Цепочка handler → currentTeamID(c)
+// гарантирует, что нельзя обновить узел чужой команды.
+//
+// Перенос узла между командами через Update запрещён: handler перед
+// вызовом обнуляет n.TeamID = existing.TeamID, плюс здесь явная проверка
+// n.TeamID == old.TeamID на случай прямого вызова.
+func (u *NodeUsecase) Update(ctx context.Context, actor Actor, n *domain.Node, teamID string) error {
 	n.SetDefaults()
 	if err := n.Validate(); err != nil {
 		return err
@@ -130,6 +146,12 @@ func (u *NodeUsecase) Update(ctx context.Context, actor Actor, n *domain.Node) e
 	old, err := u.repo.Get(ctx, n.ID)
 	if err != nil {
 		return err
+	}
+	if teamID != "" && old.TeamID != teamID {
+		return domain.ErrNodeNotFound
+	}
+	if n.TeamID != old.TeamID {
+		return domain.ErrPermissionDenied
 	}
 	diff := diffNodes(old, n)
 	if u.uow != nil {
@@ -161,13 +183,17 @@ func (u *NodeUsecase) Update(ctx context.Context, actor Actor, n *domain.Node) e
 	return nil
 }
 
-func (u *NodeUsecase) Delete(ctx context.Context, actor Actor, id string) error {
+// Delete удаляет узел. teamID — scope multi-tenancy v2.
+func (u *NodeUsecase) Delete(ctx context.Context, actor Actor, id, teamID string) error {
 	n, err := u.repo.Get(ctx, id)
 	if err != nil {
 		if errors.Is(err, domain.ErrNodeNotFound) {
 			return err
 		}
 		return fmt.Errorf("get before delete: %w", err)
+	}
+	if teamID != "" && n.TeamID != teamID {
+		return domain.ErrNodeNotFound
 	}
 	details := map[string]any{
 		"path":             n.Path,

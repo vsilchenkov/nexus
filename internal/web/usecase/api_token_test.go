@@ -148,7 +148,7 @@ func TestAPITokenUsecase_Create_HappyPath(t *testing.T) {
 	uc := NewAPITokenUsecase(repo, users, audit, logging.NewNoop())
 
 	created, err := uc.Create(context.Background(), Actor{UserLogin: "alice"},
-		"u-1", "prod-token", []string{domain.ScopeLogsRead}, nil)
+		"u-1", "team-1", "prod-token", []string{domain.ScopeLogsRead}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, created)
 
@@ -181,7 +181,7 @@ func TestAPITokenUsecase_Create_RequiresName(t *testing.T) {
 	audit := NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop())
 	uc := NewAPITokenUsecase(repo, users, audit, logging.NewNoop())
 
-	created, err := uc.Create(context.Background(), Actor{}, "u-1", "", nil, nil)
+	created, err := uc.Create(context.Background(), Actor{}, "u-1", "team-1", "", nil, nil)
 	require.Error(t, err)
 	assert.Nil(t, created)
 	assert.Contains(t, err.Error(), "name is required")
@@ -198,7 +198,7 @@ func TestAPITokenUsecase_Verify_HappyPath_TouchesLastUsed(t *testing.T) {
 	audit := NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop())
 	uc := NewAPITokenUsecase(repo, users, audit, logging.NewNoop())
 
-	created, err := uc.Create(context.Background(), Actor{}, uid, "tok", []string{domain.ScopeLogsRead}, nil)
+	created, err := uc.Create(context.Background(), Actor{}, uid, "team-1", "tok", []string{domain.ScopeLogsRead}, nil)
 	require.NoError(t, err)
 
 	gotTok, gotUser, err := uc.Verify(context.Background(), created.Plain)
@@ -269,7 +269,7 @@ func TestAPITokenUsecase_Verify_ExpiredToken_Unauthorized(t *testing.T) {
 	uc := NewAPITokenUsecase(repo, users, audit, logging.NewNoop())
 
 	past := time.Now().Add(-time.Hour)
-	created, err := uc.Create(context.Background(), Actor{}, "u-1", "expired",
+	created, err := uc.Create(context.Background(), Actor{}, "u-1", "team-1", "expired",
 		[]string{domain.ScopeLogsRead}, &past)
 	require.NoError(t, err)
 
@@ -286,7 +286,7 @@ func TestAPITokenUsecase_Verify_RevokedToken_Unauthorized(t *testing.T) {
 	audit := NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop())
 	uc := NewAPITokenUsecase(repo, users, audit, logging.NewNoop())
 
-	created, err := uc.Create(context.Background(), Actor{}, "u-1", "t",
+	created, err := uc.Create(context.Background(), Actor{}, "u-1", "team-1", "t",
 		[]string{domain.ScopeLogsRead}, nil)
 	require.NoError(t, err)
 
@@ -307,7 +307,7 @@ func TestAPITokenUsecase_Verify_InactiveUser_ErrUserInactive(t *testing.T) {
 	audit := NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop())
 	uc := NewAPITokenUsecase(repo, users, audit, logging.NewNoop())
 
-	created, err := uc.Create(context.Background(), Actor{}, "u-1", "t",
+	created, err := uc.Create(context.Background(), Actor{}, "u-1", "team-1", "t",
 		[]string{domain.ScopeLogsRead}, nil)
 	require.NoError(t, err)
 

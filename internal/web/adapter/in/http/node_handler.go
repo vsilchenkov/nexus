@@ -36,10 +36,8 @@ func NewNodeHandler(uc *usecase.NodeUsecase, logger logging.Logger) *NodeHandler
 // @Security ApiTokenAuth
 // @Router   /api/nodes [get]
 func (h *NodeHandler) List(c *gin.Context) {
-	// TeamID не указываем — NodeUsecase подставит defaultTeamID (UUID
-	// 'default'-team из миграции 0008). В блоке B handler начнёт читать
-	// current_team_id из сессии.
 	f := port.ListNodesFilter{
+		TeamID:     currentTeamID(c),
 		Search:     c.Query("search"),
 		RootMethod: c.Query("root_method"),
 	}
@@ -77,7 +75,7 @@ func (h *NodeHandler) List(c *gin.Context) {
 // @Security ApiTokenAuth
 // @Router   /api/nodes/{id} [get]
 func (h *NodeHandler) Get(c *gin.Context) {
-	n, err := h.uc.Get(c.Request.Context(), c.Param("id"))
+	n, err := h.uc.Get(c.Request.Context(), c.Param("id"), currentTeamID(c))
 	if err != nil {
 		h.replyDomainError(c, err, "node.get")
 		return
@@ -104,6 +102,7 @@ func (h *NodeHandler) Create(c *gin.Context) {
 		return
 	}
 	n := reqToDomain(req)
+	n.TeamID = currentTeamID(c)
 	if err := h.uc.Create(c.Request.Context(), actorFromCtx(c), n); err != nil {
 		h.replyDomainError(c, err, "node.create")
 		return
@@ -137,7 +136,8 @@ func actorFromCtx(c *gin.Context) usecase.Actor {
 // @Router   /api/nodes/{id} [put]
 func (h *NodeHandler) Update(c *gin.Context) {
 	id := c.Param("id")
-	existing, err := h.uc.Get(c.Request.Context(), id)
+	team := currentTeamID(c)
+	existing, err := h.uc.Get(c.Request.Context(), id, team)
 	if err != nil {
 		h.replyDomainError(c, err, "node.update.get")
 		return
@@ -161,7 +161,7 @@ func (h *NodeHandler) Update(c *gin.Context) {
 		updated.IncomingAuthCredentials = existing.IncomingAuthCredentials
 	}
 
-	if err := h.uc.Update(c.Request.Context(), actorFromCtx(c), updated); err != nil {
+	if err := h.uc.Update(c.Request.Context(), actorFromCtx(c), updated, team); err != nil {
 		h.replyDomainError(c, err, "node.update")
 		return
 	}
@@ -179,7 +179,7 @@ func (h *NodeHandler) Update(c *gin.Context) {
 // @Security CookieAuth
 // @Router   /api/nodes/{id} [delete]
 func (h *NodeHandler) Delete(c *gin.Context) {
-	if err := h.uc.Delete(c.Request.Context(), actorFromCtx(c), c.Param("id")); err != nil {
+	if err := h.uc.Delete(c.Request.Context(), actorFromCtx(c), c.Param("id"), currentTeamID(c)); err != nil {
 		h.replyDomainError(c, err, "node.delete")
 		return
 	}

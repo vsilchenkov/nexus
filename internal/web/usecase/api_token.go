@@ -46,10 +46,13 @@ type CreatedToken struct {
 }
 
 // Create генерирует токен и сохраняет SHA-256(token) в БД.
+// teamID — UUID команды, к которой будет привязан токен (multi-tenancy v2,
+// миграция 0008). Пустая строка — fallback на default-team через подзапрос
+// в api_token_repo.Create.
 func (u *APITokenUsecase) Create(
 	ctx context.Context,
 	actor Actor,
-	userID, name string,
+	userID, teamID, name string,
 	scopes []string,
 	expiresAt *time.Time,
 ) (*CreatedToken, error) {
@@ -63,6 +66,7 @@ func (u *APITokenUsecase) Create(
 	hash := hashToken(plain)
 	t := &domain.APIToken{
 		UserID:    userID,
+		TeamID:    teamID,
 		Name:      name,
 		TokenHash: hash,
 		Prefix:    plain[:min(8, len(plain))],
