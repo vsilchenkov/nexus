@@ -418,7 +418,13 @@ loadtest:
     # запоминаем в LOADTEST_RC и пробрасываем в самом конце.
     - |
       set +e
+      # --use-aliases КРИТИЧНО: иначе `docker compose run --name X loadtest`
+      # в v2.29.1 не даёт one-off контейнеру network-alias `loadtest`, и
+      # Sender'у некуда стучаться при target_url=http://loadtest:9999.
+      # Прошлый прогон: `getent loadtest → not found`, receiver direct-probe
+      # отдавал 502 Bad Gateway (sender StatusCode=0 = не достучался).
       docker compose --profile loadtest run \
+        --use-aliases \
         --name "${COMPOSE_PROJECT_NAME}-loadtest-run" \
         loadtest \
           --web http://web:8000 \
@@ -448,7 +454,7 @@ loadtest:
       docker compose exec -T sender getent hosts web 2>&1 || echo "(getent web → not found)"
 
       echo "===== diagnostic: ноды в PostgreSQL ====="
-      docker compose exec -T postgres psql -U nexus -d nexus -c "SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE deleted_at IS NULL) AS active FROM nodes;" 2>&1
+      docker compose exec -T postgres psql -U nexus -d nexus -c "SELECT COUNT(*) AS total FROM nodes;" 2>&1
       docker compose exec -T postgres psql -U nexus -d nexus -c "SELECT path, target_url FROM nodes ORDER BY id DESC LIMIT 3;" 2>&1
 
       echo "===== diagnostic: receiver direct response ====="
