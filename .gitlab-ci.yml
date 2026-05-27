@@ -434,6 +434,16 @@ loadtest:
     - ls -lh loadtest-report/
     - docker rm "${COMPOSE_PROJECT_NAME}-loadtest-run" || true
     - echo "===== loadtest done ====="
+    # Диагностика на случай высокого error rate: проверяем, что sender
+    # видит DNS-alias `loadtest` (mock-сервер). Если getent ничего не
+    # возвращает — `docker compose run loadtest` не получил network alias,
+    # и sender не мог достучаться до mock'а на http://loadtest:9999.
+    # NB: к моменту этого шага loadtest-run уже exited, но если alias
+    # был — DNS-запись остаётся в Docker DNS resolver на короткое время.
+    - 'echo "===== diagnostic: sender DNS + connectivity ====="'
+    - docker compose exec -T sender getent hosts loadtest 2>&1 || echo "(getent loadtest → not found / failed)"
+    - docker compose exec -T sender getent hosts web 2>&1 || echo "(getent web → not found / failed)"
+    - 'echo "===== /diagnostic ====="'
   after_script:
     # Финальный snapshot: что было в compose-стеке к моменту провала,
     # плюс хвост логов всех сервисов прямо в stdout job'а (без необходимости
@@ -448,9 +458,16 @@ loadtest:
     - docker compose ps -a || true
     - 'echo "===== inspect-таблица (Name / Status / Health / Image) ====="'
     - docker compose ps -a --format 'table {{.Name}}\t{{.Status}}\t{{.Image}}' || true
-    - docker compose logs --tail=400 --no-color > loadtest-report/compose-logs.txt 2>&1 || true
-    - 'echo "===== compose-logs.txt (size + tail 200) ====="'
+    # Полный лог (без --tail) — нужен для диагностики 100%-error прогонов:
+    # tail 400 забивается Kafka offset-spam'ом, а ошибки sender/receiver
+    # стартуют ровно во время loadtest scenario (~3-5 минут от старта стека).
+    - docker compose logs --no-color > loadtest-report/compose-logs.txt 2>&1 || true
+    - 'echo "===== compose-logs.txt (size) ====="'
     - ls -lh loadtest-report/compose-logs.txt || true
+    - 'echo "===== ERR/WRN от receiver/sender/web (первые 100) ====="'
+    - grep -E 'receiver-1 |sender-1 |web-1 ' loadtest-report/compose-logs.txt | grep -E 'ERR|WRN|error|failed' | head -100 || true
+    - 'echo "===== /ERR/WRN ====="'
+    - 'echo "===== compose-logs.txt (tail 200) ====="'
     - tail -n 200 loadtest-report/compose-logs.txt || true
     - 'echo "===== /compose-logs.txt ====="'
     - docker compose --profile "*" down -v --remove-orphans || true
