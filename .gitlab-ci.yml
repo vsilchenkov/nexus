@@ -684,10 +684,15 @@ gosec:
     # даже если gosec упал до записи отчётов.
     - touch gosec-results.sarif gosec-junit.xml
   script:
+    # -exclude-dir=.cache КРИТИЧНО: GOMODCACHE задан как $CI_PROJECT_DIR/.cache/go-mod
+    # (см. variables в шапке), и gosec без exclude лезет туда и сканирует все
+    # зависимости — Go stdlib через toolchain, x/tools, swaggo testdata, grpc и т.п.
+    # Результат: ~150 finding'ов из чужого кода, которые забивают вкладку Tests
+    # и прячут реальные replied issues из нашего internal/ и cmd/.
     - 'echo "===== gosec -fmt=sarif ====="'
-    - $GOPATH/bin/gosec -fmt=sarif -out=gosec-results.sarif -exclude-dir=web-ui -exclude-dir=docs ./... || true
+    - $GOPATH/bin/gosec -fmt=sarif -out=gosec-results.sarif -exclude-dir=.cache -exclude-dir=web-ui -exclude-dir=docs ./... || true
     - 'echo "===== gosec -fmt=junit-xml ====="'
-    - $GOPATH/bin/gosec -fmt=junit-xml -out=gosec-junit.xml -exclude-dir=web-ui -exclude-dir=docs ./... || true
+    - $GOPATH/bin/gosec -fmt=junit-xml -out=gosec-junit.xml -exclude-dir=.cache -exclude-dir=web-ui -exclude-dir=docs ./... || true
     - 'echo "===== gosec output ====="'
     - ls -lh gosec-results.sarif gosec-junit.xml
     - 'echo "===== gosec done ====="'
