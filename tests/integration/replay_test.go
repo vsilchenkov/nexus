@@ -132,7 +132,15 @@ func TestReplay_E2E_ClickHouse(t *testing.T) {
 
 	replayUC := webuc.NewReplayUsecase(logReader, nodeRepo, dispatcher, nil, auditUC, 10, logger)
 
-	actor := webuc.Actor{UserID: "u1", UserLogin: "alice", IPAddress: "127.0.0.1"}
+	// UserID должен быть валидным UUID — колонка user_audit.user_id типа UUID,
+	// SQL Write делает NULLIF($1,'')::uuid. Невалидное значение валит cast,
+	// audit.Log() глушит ошибку (это by-design — сбой аудита не ломает
+	// бизнес-операцию), и assert на entries=1 ниже падает с пустым списком.
+	actor := webuc.Actor{
+		UserID:    "11111111-1111-1111-1111-111111111111",
+		UserLogin: "alice",
+		IPAddress: "127.0.0.1",
+	}
 	result, err := replayUC.Replay(ctx, actor, origID, n.ID, webuc.ReplayOptions{})
 	require.NoError(t, err)
 	require.NotEmpty(t, result.NewLogID, "replay must return new id")
