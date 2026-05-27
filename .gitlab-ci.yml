@@ -320,10 +320,32 @@ loadtest:
     - sed -E 's/(PASSWORD|KEY)=.+/\1=***MASKED***/' .env
     - 'echo "--- /.env ---"'
     # ----- Шаг 1: docker compose up -----
+    # При фейле `--wait` compose может оставить контейнеры в exited-state,
+    # а после exit script'а GitLab всё равно вызовет after_script. Чтобы
+    # ни одной строки логов не потерять — сразу после up (успешного или нет)
+    # снимаем `docker compose logs` в файл артефакта. На случай если что-то
+    # пойдёт не так в [2/4] или [3/4] — этот файл будет содержать стартовую
+    # часть логов, а after_script допишет финальную.
     - echo "===== [1/4] docker compose up -d --build --wait postgres redis clickhouse kafka receiver sender web ====="
-    - docker compose up -d --build --wait postgres redis clickhouse kafka receiver sender web
-    - echo "--- compose ps ---"
-    - docker compose ps
+    - |
+      docker compose up -d --build --wait postgres redis clickhouse kafka receiver sender web
+      rc=$?
+      echo "--- compose up exit code = $rc ---"
+      echo "--- compose ps -a (включая упавшие) ---"
+      docker compose ps -a
+      echo "--- compose ps -a --format Name/Status/Image ---"
+      docker compose ps -a --format 'table {{.Name}}\t{{.Status}}\t{{.Image}}' || true
+      echo "--- snapshot всех логов прямо сейчас (до возможной зачистки) ---"
+      docker compose logs --no-color --timestamps > loadtest-report/compose-logs-after-up.txt 2>&1 || true
+      ls -lh loadtest-report/compose-logs-after-up.txt
+      if [ "$rc" -ne 0 ]; then
+        echo "===== compose up FAILED — печатаю хвост 300 строк лога каждого сервиса ====="
+        for svc in postgres redis clickhouse kafka receiver sender web; do
+          echo "----- logs: $svc (tail 60) -----"
+          docker compose logs --no-color --tail=60 "$svc" 2>&1 || true
+        done
+        exit $rc
+      fi
     - 'echo "--- images используются ---"'
     - docker compose images
     # ----- Шаг 2: bootstrap admin password -----
