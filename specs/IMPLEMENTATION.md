@@ -221,7 +221,9 @@
   - ✅ Phase 10.C.1: `TeamProvisioner` (PG-tx + `CREATE DATABASE nexus_<slug>` атомарно с откатом PG-row), `TeamUsecase` (CRUD + Members), HTTP `/api/teams` (admin-only). Creator → owner. `default`-team удалить нельзя.
   - ✅ Phase 10.C.2: `NodeUsecase` нормализует `clickhouse_table` до `<team.ch_database>.<table>` в Create/Update через `TeamRepo`. Sender и `ch_housekeeping` без изменений — `chlog.Writer` уже принимает `db.table` строкой, `splitDBTable` уже умеет парсить.
   - ✅ Phase 10.C.3: миграция 0009 — backfill `nodes.clickhouse_table` (`<table>` → `nexus_default.<table>`, `vika_logs.<x>` → `nexus_default.<x>`, чужие `nexus_<other>.<x>` не трогаются).
-  - ⛔ Phase 10.D+: scope-фильтрация в audit/users/replay/logs (сейчас только nodes + api_tokens.Create), UI «Команды» + Members, Receiver URL `/v1/request/<team_slug>/<path>`, orphan_scanner расширяется на allow-list БД, ch_housekeeping ходит по всем `teams.ch_database`.
+  - ✅ Phase 10.D.1: team-scope в `LogsUsecase.{ListSince,Search,Subscribe}` и `ReplayUsecase.Replay` (cross-team → 404). `DryRunHandler` ставит `n.TeamID = currentTeamID(c)` на узле формы. Handler'ы передают `currentTeamID(c)` во все эти usecase.
+  - ✅ Phase 10.D.2: `OrphanScanner` сканирует все `teams.ch_database` (allow-list), `knownTables` собирает узлы всех команд, drop guard разрешает DROP только в tenant-БД. `ch_housekeeping` (Sender) автоматически multi-team — берёт узлы всех команд из PG и идёт по `db.table` через `splitDBTable`.
+  - ⛔ Phase 10.E+: scope-фильтрация в audit/users, Receiver URL `/v1/request/<team_slug>/<path>` + API-токен сверяет `slug` URL ↔ `team_id` токена, UI «Команды» + Members.
 - ~~Webhook signature verification (`/v1/callback/`)~~ — реализовано в Phase 8.1.
 - ~~OpenTelemetry distributed tracing~~ — реализовано в Phase 8.2 (HTTP-server-span'ы) + 8.3 (HTTP outbound + gRPC unary client/server interceptor'ы) + 8.4 (Kafka headers propagation для async-пути). End-to-end trace через UI → Web → Receiver → {gRPC → Sender → внешний URL} / {Kafka → Sender-consumer → внешний URL}.
 - Notifications для операторов (Slack/Telegram).
@@ -510,6 +512,29 @@ real-sleep).
 docker-compose-стек начнут тянуть разные образы и расходиться по поведению
 (например, дефолтным retention'ам).
 
+### 4.18 OrphanScanner — allow-list по `teams.ch_database`, не одна БД из конфига
+
+Phase 10.D.2 заменила «одна `chCfg.Database` = единственная сканируемая
+БД» на динамический allow-list: при каждом `Scan()` сканер вычитывает
+`teams.List()` и проходит по каждой `ch_database`. Это даёт:
+
+- **Multi-team по умолчанию.** Любая команда, созданная через
+  `/api/teams` (Phase 10.C.1), автоматически попадает под сканирование
+  без рестарта Web.
+- **Drop guard сужается до tenant-БД.** Раньше можно было ошибочно
+  передать `system.X` или `default.X` — теперь DROP допускается только
+  в БД, зарегистрированной в `teams`. `system`, `default`,
+  `information_schema` физически невозможно дёрнуть через API.
+- **Узлы одной команды не считаются orphan'ами в чужой БД.** Раньше
+  `knownTables` фильтровал по `defaultTeamID`, и узлы acme в `nexus_acme`
+  могли «утечь» в orphan-список Web'а, смотрящего на default. Теперь
+  `knownTables` обходит все команды.
+
+`ch_housekeeping` (Sender) не требует аналогичной правки: он работает
+от `nodes.ListForHousekeeping` (без team-фильтра) и `splitDBTable` уже
+парсит `db.table` из `nodes.clickhouse_table` — после Phase 10.C.3 это
+всегда `nexus_<slug>.<table>`.
+
 ### 4.17 `nodes.clickhouse_table` хранит полный `db.table`, маршрутизация на стороне Web
 
 Phase 10.C перенесла резолв «в какую CH-БД пишет узел» с runtime-time
@@ -718,10 +743,14 @@ make proto                                     # перегенерация send
        `NodeUsecase` нормализует `clickhouse_table` до
        `<team.ch_database>.<table>`, миграция 0009 для backfill
        legacy-данных (`vika_logs.<x>` → `nexus_default.<x>`).
-   - Дальше: UI «Команды» + Members, Receiver URL
-     `/v1/request/<team_slug>/<path>`, scope в audit/users/replay/logs,
-     `orphan_scanner` и `ch_housekeeping` расширяются на allow-list БД
-     (`teams.ch_database`).
+     - Блок D: team-scope в `LogsUsecase`/`ReplayUsecase`/`DryRunHandler`
+       (cross-team → 404), `OrphanScanner` сканирует все
+       `teams.ch_database` (allow-list) и дропает только в них.
+       `ch_housekeeping` (Sender) и так multi-team — `splitDBTable`
+       режет `db.table` из `nodes.clickhouse_table`.
+   - Дальше: scope в audit/users, Receiver URL
+     `/v1/request/<team_slug>/<path>` + API-токен сверяет slug,
+     UI «Команды» + Members.
 
 Сделанное в Phase 7.14:
 
