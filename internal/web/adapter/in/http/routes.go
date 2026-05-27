@@ -10,6 +10,7 @@ type Handlers struct {
 	Node        *NodeHandler
 	User        *UserHandler
 	Token       *APITokenHandler
+	Team        *TeamHandler
 	Audit       *AuditHandler
 	DryRun      *DryRunHandler
 	Replay      *ReplayHandler
@@ -87,6 +88,21 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		authedAdmin.PUT("/users/:id", h.User.Update)
 		authedAdmin.DELETE("/users/:id", h.User.Delete)
 		authedAdmin.POST("/users/:id/password", h.User.ChangePassword)
+
+		// Teams (multi-tenancy v2, Phase 10.C). Admin-only.
+		// Регистрируется только если есть TeamHandler (Web запущен с
+		// доступным ClickHouse — иначе TeamUsecase не сможет provision'ить).
+		if h.Team != nil {
+			authedAdmin.GET("/teams", h.Team.List)
+			authedAdmin.POST("/teams", h.Team.Create)
+			authedAdmin.GET("/teams/:id", h.Team.Get)
+			authedAdmin.PUT("/teams/:id", h.Team.Update)
+			authedAdmin.DELETE("/teams/:id", h.Team.Delete)
+			authedAdmin.GET("/teams/:id/members", h.Team.ListMembers)
+			authedAdmin.POST("/teams/:id/members", h.Team.AddMember)
+			authedAdmin.PUT("/teams/:id/members/:user_id", h.Team.UpdateMemberRole)
+			authedAdmin.DELETE("/teams/:id/members/:user_id", h.Team.RemoveMember)
+		}
 
 		// Audit log: admin-only; scope audit:read нужен только для API-токена.
 		authedAdmin.GET("/audit", RequireScope("audit:read"), h.Audit.List)

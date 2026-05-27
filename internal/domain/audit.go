@@ -40,4 +40,11 @@ const (
 	ActionAppSettingsUpdate = "app_settings.update"
 
 	ActionTeamSwitch = "team.switch"
+
+	ActionTeamCreate       = "team.create"
+	ActionTeamUpdate       = "team.update"
+	ActionTeamDelete       = "team.delete"
+	ActionTeamMemberAdd    = "team.member.add"
+	ActionTeamMemberRemove = "team.member.remove"
+	ActionTeamMemberRole   = "team.member.role"
 )

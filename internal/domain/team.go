@@ -57,6 +57,13 @@ type UserTeam struct {
 // на team-switcher в сессии.
 const DefaultTeamSlug = "default"
 
+// CHDatabaseForSlug возвращает каноническое имя ClickHouse-БД для команды.
+// Формат "nexus_<slug>" (см. teamCHDatabasePattern). Используется
+// TeamUsecase при создании команды и Sender'ом при резолве маршрута.
+func CHDatabaseForSlug(slug string) string {
+	return "nexus_" + slug
+}
+
 // teamSlugPattern и teamCHDatabasePattern совпадают с CHECK-constraint'ами
 // в миграции 0008 (teams_slug_format / teams_ch_database_format).
 var (

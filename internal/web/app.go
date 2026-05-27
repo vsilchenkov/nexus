@@ -162,6 +162,7 @@ func (a *App) Start(ctx context.Context) error {
 		replayHandler *httpadapter.ReplayHandler
 		logsHandler   *httpadapter.LogsHandler
 		orphanHandler *httpadapter.OrphanHandler
+		teamHandler   *httpadapter.TeamHandler
 	)
 	if a.ch != nil {
 		a.chMgr = chpf.NewManager(a.ch, chpf.New, &a.cfg.ClickHouse, a.logger)
@@ -178,6 +179,13 @@ func (a *App) Start(ctx context.Context) error {
 		// Orphan-сканер (Phase 6.7): таблицы в CH без узла в Postgres.
 		orphanScanner := usecase.NewOrphanScanner(a.chMgr, nodeRepo, &a.cfg.ClickHouse, auditUC, defaultTeamID, a.logger)
 		orphanHandler = httpadapter.NewOrphanHandler(orphanScanner, a.logger)
+
+		// Team provisioning (Phase 10.C). Регистрируется только при
+		// доступном ClickHouse — без него TeamUsecase.Create вернёт
+		// ErrCHUnavailable.
+		teamProvisioner := chreader.NewTeamProvisioner(a.chMgr, a.logger)
+		teamUC := usecase.NewTeamUsecase(teamRepo, teamProvisioner, auditUC, a.logger)
+		teamHandler = httpadapter.NewTeamHandler(teamUC, a.logger)
 
 		// ClickHouse hot-reload: Web не держит chlog.Writer, поэтому writers пуст.
 		// Manager.Reload swap'нет conn — LogReaderCH сразу пойдёт через новый.
@@ -201,6 +209,7 @@ func (a *App) Start(ctx context.Context) error {
 		Node:        nodeHandler,
 		User:        userHandler,
 		Token:       tokenHandler,
+		Team:        teamHandler,
 		Audit:       auditHandler,
 		DryRun:      dryRunHandler,
 		Replay:      replayHandler,
