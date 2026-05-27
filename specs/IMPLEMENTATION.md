@@ -77,7 +77,8 @@
 |---|---|---|
 | Таблицы PG: methods, nodes, node_headers, users, user_audit, api_tokens | ✅ | [migrations/0001-0005](../migrations/) |
 | `golang-migrate` advisory lock, auto-migrate на старте | ✅ | [platform/pg/migrate.go](../internal/platform/pg/migrate.go) `NewMigrator` |
-| `team_id` колонки с DEFAULT 'default' (закладка multi-tenancy v2) | ✅ | миграция 0002 |
+| `team_id` колонки с DEFAULT 'default' (закладка multi-tenancy v2) | ✅ → ◐ Phase 10.1 | миграция 0002 (legacy) → миграция 0008 (UUID FK на `teams`, см. §16 Phase 10) |
+| **`teams`, `user_teams` + FK во всех team-aware таблицах** | ✅ Phase 10.1 | [migrations/0008_multi_tenancy.up.sql](../migrations/0008_multi_tenancy.up.sql); сидинг 'default'-team (`ch_database='nexus_default'`), admin → owner |
 | Up/Down + `make migrate-up`/`-down N=1`/`-status` | ✅ | [Makefile](../Makefile) |
 | ClickHouse driver `clickhouse-go/v2`, batch INSERT | ✅ | [platform/clickhouse/clickhouse.go](../internal/platform/clickhouse/clickhouse.go) |
 | Kafka admin + producer + consumer (`segmentio/kafka-go`) с автосозданием топиков с retention 30 дней, acks=all, idempotence | ✅ | [platform/kafka/](../internal/platform/kafka/) |
@@ -210,7 +211,10 @@
 
 ### §16 Out of scope (явно отложено в v2)
 
-- Multi-tenancy логика (колонки `team_id` уже есть, изоляция — нет).
+- Multi-tenancy v2 — ◐ **Phase 10 в работе**.
+  - ✅ Phase 10.1: миграция 0008 (taxonомия `teams`, `user_teams`, FK на `nodes`/`users`/`api_tokens`/`user_audit`, `UNIQUE(team_id, path)`, сидинг 'default'-team).
+  - ✅ Phase 10.2: `domain.Team`, `TeamRepository` (PG-impl CRUD + membership), `User.TeamID → DefaultTeamID`, резолв UUID 'default'-team в Web-bootstrap и проброс в NodeUsecase/OrphanScanner.
+  - ⛔ Phase 10.3+: TeamProvisioner (PG-tx + CREATE DATABASE per team), CH read/write per-team, team-switcher в сессии, Receiver URL `/v1/request/<team_slug>/<path>`, UI «Команды», изоляция scope.
 - ~~Webhook signature verification (`/v1/callback/`)~~ — реализовано в Phase 8.1.
 - ~~OpenTelemetry distributed tracing~~ — реализовано в Phase 8.2 (HTTP-server-span'ы) + 8.3 (HTTP outbound + gRPC unary client/server interceptor'ы) + 8.4 (Kafka headers propagation для async-пути). End-to-end trace через UI → Web → Receiver → {gRPC → Sender → внешний URL} / {Kafka → Sender-consumer → внешний URL}.
 - Notifications для операторов (Slack/Telegram).
@@ -499,6 +503,35 @@ real-sleep).
 docker-compose-стек начнут тянуть разные образы и расходиться по поведению
 (например, дефолтным retention'ам).
 
+### 4.14 `defaultTeamID` резолвится в Web-bootstrap, не из конфига
+
+Phase 10.2 ввела `domain.Team` и `TeamRepository`, но существующий
+single-team-код продолжает работать благодаря резолву UUID 'default'-team
+**один раз при старте Web** ([internal/web/app.go](../internal/web/app.go),
+`teamRepo.GetBySlug(ctx, domain.DefaultTeamSlug)`).
+
+Полученный UUID передаётся в конструкторы [NodeUsecase](../internal/web/usecase/node.go)
+и [OrphanScanner](../internal/web/usecase/orphan_scanner.go) как
+fallback для случаев, когда handler не передал team scope (List без
+filter, Create без TeamID). До блока B (team-switcher в сессии) это
+единственный источник current_team_id.
+
+Важные следствия:
+
+- Если миграция 0008 не накачена — Web падает на старте с
+  `resolve default team: ... (run --migrate-up?)`. Это намеренный
+  fail-fast — без default-team весь scope-резолв сломается.
+- `domain.Node.SetDefaults` **больше не подставляет literal "default"**
+  в TeamID. Подстановка вынесена в usecase (где есть `defaultTeamID`).
+  Не возвращайте literal обратно — UUID не совпадёт со slug.
+- `users.team_id` в БД называется `default_team_id` (миграция 0008);
+  поле в `domain.User` — тоже `DefaultTeamID`. JSON в `userResponse`
+  — `default_team_id`. Старое имя `team_id` зарезервировано под
+  current_team в блоке B.
+- В integration-тестах используйте helper `resolveDefaultTeamID(t, ctx,
+  pool)` ([tests/integration/node_repo_test.go](../tests/integration/node_repo_test.go))
+  — он читает UUID из БД после применения миграций.
+
 ---
 
 ## 5. Команды для типовых задач
@@ -605,8 +638,17 @@ make proto                                     # перегенерация send
    входящих webhook'ов от партнёров (Stripe/GitHub/...).
 3. **KMS/Vault** интеграция для `ENCRYPTION_KEY` — §16, чтобы убрать секрет
    из env. См. также `make rotate-encryption-key`.
-4. **Multi-tenancy v2** — колонки `team_id` уже есть, нужен RBAC по team_id
-   + миграция existing `'default'`-данных.
+4. **Multi-tenancy v2** — фаза 10 в работе.
+   - Сделано: Phase 10.1 (миграция 0008 `teams` + `user_teams` + FK),
+     Phase 10.2 (`domain.Team`, `TeamRepository`, переименование
+     `User.TeamID → DefaultTeamID`, резолв `defaultTeamID` в Web-bootstrap).
+   - Дальше: TeamProvisioner (PG-tx + `CREATE DATABASE per team`), CH
+     read/write per-team (Sender пишет в `<team.ch_database>.<table>`,
+     Web log_reader/orphan_scanner/ch_housekeeping расширяется на
+     allow-list БД), team-switcher в сессии (`current_team_id` в Redis,
+     `POST /api/v1/me/switch-team`), Receiver URL
+     `/v1/request/<team_slug>/<path>`, API-токены с team_id,
+     UI «Команды» + Members.
 
 Сделанное в Phase 7.14:
 
