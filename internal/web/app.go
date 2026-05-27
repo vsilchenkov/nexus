@@ -177,8 +177,10 @@ func (a *App) Start(ctx context.Context) error {
 		replayHandler = httpadapter.NewReplayHandler(replayUC, a.logger)
 		logsHandler = httpadapter.NewLogsHandler(logsUC, a.logger)
 
-		// Orphan-сканер (Phase 6.7): таблицы в CH без узла в Postgres.
-		orphanScanner := usecase.NewOrphanScanner(a.chMgr, nodeRepo, &a.cfg.ClickHouse, auditUC, defaultTeamID, a.logger)
+		// Orphan-сканер (Phase 6.7 + 10.D.2 multi-tenancy): таблицы в CH
+		// без узла в Postgres. Сканирует и дропает только в БД allow-list'а
+		// (teams.ch_database). chCfg остаётся для метаданных.
+		orphanScanner := usecase.NewOrphanScanner(a.chMgr, nodeRepo, teamRepo, &a.cfg.ClickHouse, auditUC, a.logger)
 		orphanHandler = httpadapter.NewOrphanHandler(orphanScanner, a.logger)
 
 		// Team provisioning (Phase 10.C). Регистрируется только при

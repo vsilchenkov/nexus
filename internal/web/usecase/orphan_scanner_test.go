@@ -43,12 +43,24 @@ func (r *orphanNodeRepo) Create(_ context.Context, _ *domain.Node) error { retur
 func (r *orphanNodeRepo) Update(_ context.Context, _ *domain.Node) error { return nil }
 func (r *orphanNodeRepo) Delete(_ context.Context, _ string) error       { return nil }
 
+// fakeTeamRepo — minimal port.TeamRepo для orphan-тестов: возвращает
+// одну team с заданным ch_database, остальные методы — nopTeamRepo.
+type fakeTeamRepo struct {
+	nopTeamRepo
+	chDatabase string
+}
+
+func (r *fakeTeamRepo) List(context.Context) ([]*domain.Team, error) {
+	return []*domain.Team{{ID: "team-1", Slug: "default", CHDatabase: r.chDatabase}}, nil
+}
+
 func newOrphanScanner(t *testing.T, dbName string, nodes []*domain.Node) *OrphanScanner {
 	t.Helper()
 	repo := &orphanNodeRepo{listResult: nodes}
+	teams := &fakeTeamRepo{chDatabase: dbName}
 	cfg := &config.ClickHouseSection{Database: dbName}
 	audit := NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop())
-	return NewOrphanScanner(nilConnProvider{}, repo, cfg, audit, "00000000-0000-0000-0000-000000000000", logging.NewNoop())
+	return NewOrphanScanner(nilConnProvider{}, repo, teams, cfg, audit, logging.NewNoop())
 }
 
 func TestIsSafeTableNameLocal(t *testing.T) {
@@ -111,7 +123,7 @@ func TestOrphanScanner_Drop_WrongDatabase(t *testing.T) {
 	sc := newOrphanScanner(t, "nexus", nil)
 	err := sc.Drop(context.Background(), SystemActor(), "otherdb.some_table")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "drop allowed only in configured database")
+	assert.Contains(t, err.Error(), "drop allowed only in tenant databases")
 }
 
 func TestOrphanScanner_Drop_RefusesIfStillUsedByNode(t *testing.T) {
