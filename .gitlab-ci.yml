@@ -270,6 +270,14 @@ loadtest:
     - if: $RUN_PROFILE == "loadtest-only"
       when: on_success
       allow_failure: true
+    # Auto-run на push в master: smoke-test инфраструктуры идёт вместе со
+    # всем pipeline. allow_failure: true — loadtest не блокирует master при
+    # временном недотягивании RPS (он зависит от загрузки runner-host'а);
+    # это early-warning, не gate. Полный capacity-bench всё равно гонять
+    # отдельно с RUN_PROFILE=loadtest-only и переопределёнными переменными.
+    - if: $CI_COMMIT_BRANCH == "master"
+      when: on_success
+      allow_failure: true
     - when: manual
       allow_failure: true
   timeout: 60 minutes
