@@ -1,6 +1,13 @@
 # Nexus — production-style compose-стек.
 # Запуск: docker compose -f deploy/docker-compose.yml up -d
 # Все секреты — через .env (рядом с этим файлом или в корне проекта).
+#
+# container_name намеренно НЕ задан ни для одного сервиса: GitLab CI loadtest
+# job задаёт уникальный COMPOSE_PROJECT_NAME=loadtest-<pipeline>-<job>, и docker
+# compose автоматически генерирует имена `<project>-<service>-<n>` — параллельные/
+# последовательные pipelines не конфликтуют. Локально `docker compose up` тоже
+# работает: project_name берётся из `name: nexus` (см. ниже), имена будут
+# `nexus-postgres-1`, `nexus-redis-1` и т.д.
 
 name: nexus
 
@@ -8,7 +15,6 @@ services:
 
   postgres:
     image: postgres:16-alpine
-    container_name: nexus_postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${PG_USER:-nexus}
@@ -27,7 +33,6 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: nexus_redis
     restart: unless-stopped
     command:
       - redis-server
@@ -48,7 +53,6 @@ services:
 
   clickhouse:
     image: clickhouse/clickhouse-server:24-alpine
-    container_name: nexus_clickhouse
     restart: unless-stopped
     environment:
       CLICKHOUSE_DB: vika_logs
@@ -83,7 +87,6 @@ services:
     # был bitnami'evский wrapper); CLUSTER_ID зашит, чтобы volume не
     # инициализировался под новый ID при пересоздании контейнера.
     image: apache/kafka:3.9.0
-    container_name: nexus_kafka
     restart: unless-stopped
     environment:
       CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
@@ -117,7 +120,6 @@ services:
 
   prometheus:
     image: prom/prometheus:v2.55.0
-    container_name: nexus_prometheus
     restart: unless-stopped
     command:
       - --config.file=/etc/prometheus/prometheus.yml
@@ -134,7 +136,6 @@ services:
     build:
       context: ..
       dockerfile: deploy/docker/receiver.Dockerfile
-    container_name: nexus_receiver
     restart: unless-stopped
     env_file: ../.env
     depends_on:
@@ -155,7 +156,6 @@ services:
     build:
       context: ..
       dockerfile: deploy/docker/sender.Dockerfile
-    container_name: nexus_sender
     restart: unless-stopped
     env_file: ../.env
     depends_on:
@@ -177,7 +177,6 @@ services:
     build:
       context: ..
       dockerfile: deploy/docker/web.Dockerfile
-    container_name: nexus_web
     restart: unless-stopped
     env_file: ../.env
     depends_on:
@@ -205,9 +204,6 @@ services:
     build:
       context: ..
       dockerfile: deploy/docker/loadtest.Dockerfile
-    # container_name намеренно не задан: GitLab CI добавляет COMPOSE_PROJECT_NAME
-    # с уникальным префиксом, и docker сам присвоит уникальное имя
-    # `<project>-loadtest-<n>` — параллельные запуски не конфликтуют.
     restart: "no"
     depends_on:
       receiver: { condition: service_healthy }
