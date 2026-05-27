@@ -107,6 +107,68 @@ bin\receiver.exe install
 sc start DataBusReceiverService
 ```
 
+## Отладка в VS Code (Windows, Docker Desktop для зависимостей)
+
+В каталоге [.vscode/](.vscode/) лежит готовый конфиг отладки: launch.json с конфигами для каждого сервиса и compound «DataBus: all», tasks.json с задачами `deps: up/down/logs`, миграциями и тестами, settings.json под `gopls`/`dlv-dap`.
+
+Сценарий: зависимости (PostgreSQL, Redis, ClickHouse, Kafka) поднимаются в Docker Desktop отдельным compose-файлом с пробросом портов на хост; бинари `receiver`/`sender`/`web` стартуют локально под отладчиком и цепляются к `localhost:<port>`.
+
+### Разовая подготовка
+
+- Установить Docker Desktop, Go 1.25+, VS Code + расширение `golang.go` (через Command Palette → «Go: Install/Update Tools» поставить `dlv`, `gopls`, `golangci-lint`).
+- В корне создать `.env` (см. [.env.example](.env.example)). Минимум обязателен `ENCRYPTION_KEY` — 32 байта в base64. Сгенерировать в PowerShell:
+
+  ```powershell
+  [Convert]::ToBase64String((1..32 | ForEach-Object { Get-Random -Maximum 256 }))
+  ```
+
+### Запуск зависимостей
+
+```powershell
+docker compose -f deploy/docker-compose.deps.yml up -d
+```
+
+или VS Code Command Palette → **Tasks: Run Task → deps: up**. Проверка состояния — `deps: status`; полный сброс данных — `deps: down + reset volumes`.
+
+Compose [deploy/docker-compose.deps.yml](deploy/docker-compose.deps.yml) — самодостаточный, поднимает только зависимости с портами `5432/6379/8123/9000/9092` на хосте. Prometheus спрятан за профилем `metrics` (по умолчанию выключен — scrape-таргеты в [prometheus.yml](deploy/prometheus.yml) ориентированы на контейнерные имена).
+
+### Миграции и bootstrap admin (один раз)
+
+- **Tasks: Run Task → migrate up** (или `go run ./cmd/web --debug --migrate-up`)
+- **Tasks: Run Task → set admin password (admin)** (или `go run ./cmd/web --debug --set-admin-password admin`)
+
+### Старт под отладчиком
+
+В панели **Run and Debug** (`Ctrl+Shift+D`):
+
+| Конфиг                             | Что делает                                                       |
+|------------------------------------|------------------------------------------------------------------|
+| `Web (debug)`                      | `go run ./cmd/web --debug` под dlv → :8000                       |
+| `Receiver (debug)`                 | `go run ./cmd/receiver --debug` под dlv → :8080                  |
+| `Sender (debug)`                   | `go run ./cmd/sender --debug` под dlv → :9090 gRPC + :9091       |
+| `DataBus: all`                     | compound: все три сервиса одной кнопкой (`stopAll: true`)        |
+| `Web: migrate-up`                  | разовая миграция через отладчик                                  |
+| `Web: set-admin-password`          | задаёт пароль admin'у                                            |
+| `Loadtest`                         | `cmd/loadtest` против локального стека (1m / 100 RPS / 10 узлов) |
+| `Integration tests (current file)` | `go test -tags=integration -v` для открытого файла               |
+| `Attach to process (pid)`          | подключение к уже запущенному процессу                           |
+
+Все конфиги загружают переменные из `${workspaceFolder}/.env`, используют `--debug` → [config/config_debug.yml](config/config_debug.yml) (все хосты — `localhost`).
+
+### После запуска
+
+- Web UI / API → `http://localhost:8000`
+- Swagger UI → `http://localhost:8000/swagger/index.html`
+- Receiver → `http://localhost:8080/v1/request/*`, `http://localhost:8080/v1/requestAsync/*`
+- Sender admin → `http://localhost:9091/health` (gRPC SenderService — на `:9090`)
+
+### Типовые грабли
+
+- `ENCRYPTION_KEY invalid` — декодированный base64 не равен 32 байтам, перегенерируй.
+- `clickhouse connect failed` в Web — не критично: replay/live-tail отключатся, остальное работает ([bootstrap.go:161](internal/platform/bootstrap/bootstrap.go#L161)).
+- Kafka не стартует за 10 сек — норма для KRaft на Windows; дай 30 сек. Логи: `docker compose -f deploy/docker-compose.deps.yml logs kafka`.
+- Порт 5432/6379/9092 занят — выключи локальный postgres/redis/kafka-сервис или поменяй проброс в `docker-compose.deps.yml`.
+
 ## Конфигурация
 
 - `config/config.yml` — production, в git не коммитится. Шаблон — `config/config.example.yml`.
