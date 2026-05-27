@@ -79,7 +79,8 @@ func TestSender_Async_E2E(t *testing.T) {
 	uow := pgrepo.NewUnitOfWorkPg(pool, cipher, logger)
 	auditUC := webuc.NewAuditUsecase(auditRepo, logger)
 	defaultTeam := resolveDefaultTeamID(t, ctx, pool)
-	nodeUC := webuc.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, time.Minute, 0, defaultTeam, logger)
+	teamRepo := pgrepo.NewTeamRepoPg(pool, logger)
+	nodeUC := webuc.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, teamRepo, time.Minute, 0, defaultTeam, logger)
 
 	n := &domain.Node{
 		Path:                    "demo/async",

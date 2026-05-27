@@ -109,7 +109,8 @@ func TestNodeRepoCreate_E2E(t *testing.T) {
 	uow := pgrepo.NewUnitOfWorkPg(pool, cipher, logger)
 	auditUC := usecase.NewAuditUsecase(auditRepo, logger)
 	defaultTeam := resolveDefaultTeamID(t, ctx, pool)
-	nodeUC := usecase.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, time.Minute, 0, defaultTeam, logger)
+	teamRepo := pgrepo.NewTeamRepoPg(pool, logger)
+	nodeUC := usecase.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, teamRepo, time.Minute, 0, defaultTeam, logger)
 
 	n := &domain.Node{
 		Path:       "test/path",

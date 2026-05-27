@@ -111,6 +111,7 @@ func (a *App) Start(ctx context.Context) error {
 		nodeCache,
 		auditUC,
 		uow,
+		teamRepo,
 		time.Duration(a.cfg.Redis.NodeTTLSec)*time.Second,
 		a.cfg.Web.NodesHardLimit,
 		defaultTeamID,

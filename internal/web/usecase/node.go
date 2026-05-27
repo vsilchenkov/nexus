@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"nexus/internal/domain"
@@ -22,11 +23,18 @@ import (
 // fallback для List и Create, когда caller (handler) не передал team scope.
 // В блоке B (team-switcher в сессии) handler начнёт передавать
 // current_team_id из сессии, и default останется только для CLI-сценариев.
+//
+// teams — опциональный TeamRepo (multi-tenancy v2, Phase 10.C.2). Если
+// задан, Create/Update нормализуют n.ClickHouseTable до полного имени
+// "<team.ch_database>.<table>" — Sender и ch_housekeeping всегда пишут в
+// БД конкретной команды независимо от Database в CH-Options. Если nil —
+// нормализация выключена (legacy single-team / unit-тесты).
 type NodeUsecase struct {
 	repo           port.NodeRepo
 	cache          port.NodeCache
 	audit          *AuditUsecase
 	uow            port.UnitOfWork
+	teams          port.TeamRepo
 	cacheTTL       time.Duration
 	nodesHardLimit int
 	defaultTeamID  string
@@ -38,6 +46,7 @@ func NewNodeUsecase(
 	cache port.NodeCache,
 	audit *AuditUsecase,
 	uow port.UnitOfWork,
+	teams port.TeamRepo,
 	cacheTTL time.Duration,
 	nodesHardLimit int,
 	defaultTeamID string,
@@ -48,11 +57,30 @@ func NewNodeUsecase(
 		cache:          cache,
 		audit:          audit,
 		uow:            uow,
+		teams:          teams,
 		cacheTTL:       cacheTTL,
 		nodesHardLimit: nodesHardLimit,
 		defaultTeamID:  defaultTeamID,
 		logger:         logger,
 	}
+}
+
+// normalizeCHTable — если ClickHouseTable непустой и не содержит '.',
+// префиксует именем БД команды узла. Возвращает безмолвно если teams==nil
+// (single-team путь) или imя БД не удалось получить.
+func (u *NodeUsecase) normalizeCHTable(ctx context.Context, n *domain.Node) error {
+	if u.teams == nil || n.ClickHouseTable == "" || n.TeamID == "" {
+		return nil
+	}
+	if strings.Contains(n.ClickHouseTable, ".") {
+		return nil
+	}
+	t, err := u.teams.GetByID(ctx, n.TeamID)
+	if err != nil {
+		return fmt.Errorf("resolve team ch_database: %w", err)
+	}
+	n.ClickHouseTable = t.CHDatabase + "." + n.ClickHouseTable
+	return nil
 }
 
 // Get возвращает узел и проверяет, что он принадлежит указанной команде
@@ -83,6 +111,9 @@ func (u *NodeUsecase) Create(ctx context.Context, actor Actor, n *domain.Node) e
 	n.SetDefaults()
 	if n.TeamID == "" {
 		n.TeamID = u.defaultTeamID
+	}
+	if err := u.normalizeCHTable(ctx, n); err != nil {
+		return err
 	}
 	if err := n.Validate(); err != nil {
 		return err
@@ -140,6 +171,9 @@ func (u *NodeUsecase) Create(ctx context.Context, actor Actor, n *domain.Node) e
 // n.TeamID == old.TeamID на случай прямого вызова.
 func (u *NodeUsecase) Update(ctx context.Context, actor Actor, n *domain.Node, teamID string) error {
 	n.SetDefaults()
+	if err := u.normalizeCHTable(ctx, n); err != nil {
+		return err
+	}
 	if err := n.Validate(); err != nil {
 		return err
 	}
