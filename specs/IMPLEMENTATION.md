@@ -494,10 +494,8 @@ real-sleep).
 - [tests/integration/receiver_async_test.go](../tests/integration/receiver_async_test.go)
   — `tckafka.Run(ctx, "apache/kafka:3.9.0")`; testcontainers-go v0.42 модуль
   `kafka` поддерживает `apache/kafka:3.7+`.
-- [.github/workflows/ci.yml](../.github/workflows/ci.yml) — pre-pull тоже
-  `apache/kafka:3.9.0`.
 
-Если будете обновлять минорку — меняйте все три места разом, иначе CI и
+Если будете обновлять минорку — меняйте все два места разом, иначе CI и
 docker-compose-стек начнут тянуть разные образы и расходиться по поведению
 (например, дефолтным retention'ам).
 
@@ -803,15 +801,14 @@ make proto                                     # перегенерация send
   `LOADTEST_ADMIN_PASSWORD` (masked+protected); опциональные: `LOADTEST_TARGET_RPS`
   (def. 500), `LOADTEST_DURATION` (def. 5m), `LOADTEST_NODES` (def. 50) —
   переопределяются через UI «Run pipeline → Variables».
-- 9.2 Параметризация общего `.goreleaser.yaml` под обе CI-системы:
-  · `ghcr.io/{{ .Env.GITHUB_REPOSITORY_LOWER }}` → `{{ .Env.DOCKER_REGISTRY_BASE }}`
-  (30 строк в `dockers:` и `docker_manifests:`).
-  · Footer compare-URL через `{{ .Env.COMPARE_URL_BASE }}` — GitHub
-  использует `/compare/`, GitLab `/-/compare/`.
-  · Убран явный `release.github:` блок — GoReleaser автодетектит CI
-  по `GITHUB_TOKEN` / `GITLAB_TOKEN`.
-  · `.github/workflows/release.yml` дополнен `DOCKER_REGISTRY_BASE` и
-  `COMPARE_URL_BASE` в env шага GoReleaser; поведение не меняется.
+- 9.2 `.goreleaser.yaml` под GitLab CI:
+  · Реестр через `{{ .Env.DOCKER_REGISTRY_BASE }}` — задаётся `$CI_REGISTRY_IMAGE`
+  в [.gitlab-ci.yml](../.gitlab-ci.yml) release job (30 строк в `dockers:` /
+  `docker_manifests:`).
+  · Footer compare-URL через `{{ .Env.COMPARE_URL_BASE }}` —
+  `$CI_PROJECT_URL/-/compare`.
+  · `release.gitlab:` блок не указан — GoReleaser автодетектит платформу
+  по `GITLAB_TOKEN`.
 
 Сделанное в Phase 9.1:
 
@@ -1234,22 +1231,21 @@ make proto                                     # перегенерация send
 
 Сделанное в Phase 7.7:
 
-- 7.7 Security scanning: новый workflow [.github/workflows/security.yml](../.github/workflows/security.yml).
-  Триггеры: push/PR в master|dev, weekly cron (вс 06:00 UTC), workflow_dispatch.
+- 7.7 Security scanning: jobs в [.gitlab-ci.yml](../.gitlab-ci.yml) stage
+  `security`. Триггеры: push в master/dev, weekly schedule, manual.
   · **govulncheck** (`golang.org/x/vuln`) — официальный сканер CVE с call-graph
   анализом (не просто проверка версий, а сопоставление с фактически вызываемым
-  кодом). Падает на vuln, гейтит PR — это разумно, так как call-graph отсеивает
-  ложные срабатывания.
-  · **gosec** (securego/gosec@master) — статический анализатор OWASP/CWE
-  правил (G-серии). Не падает на findings (`-no-fail`); SARIF → Security tab
-  репозитория, чтобы PR-CI не блокировался шумом. Исключены `web-ui/` и `docs/`.
-  · **Trivy fs** (aquasecurity/trivy-action@0.28.0) — vuln (включая npm в web-ui)
-  + secret scanning + Dockerfile/YAML misconfig. severity CRITICAL|HIGH|MEDIUM,
-  `ignore-unfixed: true`. SARIF → Security tab, exit-code 0 (не блокирует).
+  кодом). Падает на vuln, гейтит pipeline — это разумно, так как call-graph
+  отсеивает ложные срабатывания.
+  · **gosec** (securego/gosec@latest) — статический анализатор OWASP/CWE
+  правил (G-серии). `allow_failure: true` — SARIF в артефакты, чтобы pipeline
+  не блокировался шумом. Исключены `web-ui/` и `docs/`.
+  · **Trivy fs** (aquasec/trivy:0.55.0) — vuln (включая npm в web-ui) + secret
+  scanning + Dockerfile/YAML misconfig. severity CRITICAL|HIGH|MEDIUM,
+  `--ignore-unfixed`. SARIF в артефакты, `--exit-code 0` (не блокирует).
   · Nancy убран: Sonatype OSS Index возвращает 403 для анонимных запросов,
   без API token скан не работает. Покрытие CVE Go-модулей сохраняется через
   govulncheck (тоже NVD, плюс call-graph анализ).
-  · Permissions: `security-events: write` для upload-sarif в Code Scanning.
   · Локальные Make-цели: `make vuln-check`, `make gosec`, `make security-scan`
   (auto-install через `go install` если не найдено).
   Локальная верификация: `govulncheck ./internal/platform/crypto/...` —
@@ -1269,14 +1265,12 @@ make proto                                     # перегенерация send
   переменные пакета добавлены в [build/build.go](../internal/platform/build/build.go),
   fallback-логика сохранена. [bootstrap.Init](../internal/platform/bootstrap/bootstrap.go)
   логирует `commit`/`build_date` в стартовом сообщении, если заполнены.
-  · 6 docker-образов через `dockers:` (receiver/sender/web × amd64+arm64) → GHCR
-  через [release.Dockerfile](../deploy/docker/release.Dockerfile) (использует
-  pre-built бинарь, не пересобирает). `docker_manifests:` склеивают arch-варианты
-  в multi-arch теги `:{Version}` и `:latest`.
-  · GitHub Actions [release.yml](../.github/workflows/release.yml) — триггер
-  `push: tags: [v*]` + workflow_dispatch; QEMU + Buildx + GHCR login через
-  `GITHUB_TOKEN` (`packages: write`); вычисляет lowercase repo-name для
-  ghcr-пути (GHCR требует lowercase).
+  · 6 docker-образов через `dockers:` (receiver/sender/web × amd64+arm64) →
+  GitLab Container Registry через [release.Dockerfile](../deploy/docker/release.Dockerfile)
+  (использует pre-built бинарь, не пересобирает). `docker_manifests:` склеивают
+  arch-варианты в multi-arch теги `:{Version}` и `:latest`.
+  · [.gitlab-ci.yml](../.gitlab-ci.yml) job `release` — триггер на тег `v*`;
+  QEMU + Buildx + login в `$CI_REGISTRY` через `$CI_REGISTRY_PASSWORD`.
   · Makefile цели `make release-check` (синтаксис `.goreleaser.yaml`) и
   `make release-snapshot` (локальный snapshot в `dist/` без публикации).
   · Локальная верификация ldflags: `go build -ldflags "-X .../build.Version=v1.2.3 ..."`
@@ -1311,15 +1305,14 @@ make proto                                     # перегенерация send
   `deploy/prometheus.yml`, том смонтирован в compose (`prometheus.alerts.yml`).
   · `deploy/grafana/README.md` — инструкция импорта (UI + provisioning).
   Валидация: `promtool check config/rules` — оба файла приняты.
-- 7.4 GitHub Actions CI: `.github/workflows/ci.yml` — параллельные jobs
-  go-test (race -short), go-build (`go build ./...`), go-lint
-  (`golangci-lint v2.12`), swagger-drift (regen `swag init` → `git diff`),
-  ui (Node 20 + `npm ci` + `npm run lint --if-present` + `vite build`),
-  integration (testcontainers, гейтированный по label `run-integration`
-  для PR — тяжёлый сетап с pre-pull docker-образов). `.golangci.yml` с
-  набором bodyclose/rowserrcheck/errcheck/govet/revive/staticcheck.
-  `.github/dependabot.yml` — еженедельные апдейты gomod + npm, ежемесячно
-  github-actions; группировка minor/patch в один PR.
+- 7.4 CI pipeline в [.gitlab-ci.yml](../.gitlab-ci.yml) — параллельные jobs
+  `go-test` (race -short), `go-build` (`go build ./...`), `go-lint`
+  (`golangci-lint v2.12`), `swagger-drift` (regen `swag init` → `git diff`),
+  `ui-build` (Node 20 + `npm ci` + `npm run lint --if-present` + `vite build`),
+  `integration` (testcontainers, по MR-label `run-integration` или master/dev/tag).
+  `.golangci.yml` с набором bodyclose/rowserrcheck/errcheck/govet/revive/staticcheck.
+  Авто-апдейты зависимостей — [renovate.json](../renovate.json) (weekly
+  schedule), группировка minor/patch в один MR.
 - 7.3 Integration suite: Redis + ClickHouse через testcontainers.
   Generic-контейнер (`testcontainers.GenericContainer`) — без отдельных
   модулей `modules/redis`/`modules/clickhouse`. CH: native-handshake

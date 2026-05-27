@@ -137,17 +137,24 @@ DataBus разрабатывается итеративными **фазами**
 
 ## CI / Release
 
-GitHub Actions workflows ([.github/workflows/](.github/workflows/)):
+Pipeline живёт в [.gitlab-ci.yml](.gitlab-ci.yml) (self-hosted runner с тегом
+`srv-d-android-l-docker`):
 
-- **ci.yml** — gate-проверки на каждый push: `go vet`, `go build ./...`,
-  `go test -race -short`, golangci-lint, swagger drift, vite build, integration
-  (опционально — через label `run-integration` для PR).
-- **security.yml** — govulncheck (gate) + gosec/trivy/nancy (SARIF в Security tab).
-  Гоняется на push, PR, и weekly cron.
-- **release.yml** — триггер по тегу `v*`: GoReleaser собирает бинари
-  (Linux/Windows/macOS × amd64+arm64) + multi-arch docker images в GHCR.
-  Локальная проверка: `make release-check` (синтаксис) и `make release-snapshot`
-  (артефакты в `dist/` без публикации).
+- **test** — `go vet ./...`, `go test -race -short ./...`.
+- **lint** — `golangci-lint run`, `swagger-drift` (drift `docs/` против
+  аннотаций).
+- **build** — `go build ./...` + `ui-build` (Vite lint + build для `web-ui/`).
+- **integration** — testcontainers PG/Redis/Kafka/CH; форсируется на push в
+  `master`/`dev`/тег, или на MR с label `run-integration`. Ручной селективный
+  запуск через UI «Run pipeline» с переменной `RUN_PROFILE=integration-only`.
+- **loadtest** — нагрузочный сценарий, поднимает изолированный compose-стек и
+  гоняет `cmd/loadtest`. Manual или `RUN_PROFILE=loadtest-only`.
+- **security** — `govulncheck`, `gosec`, `trivy-fs` (SARIF в артефакты),
+  `renovate` (weekly schedule, MR с обновлением зависимостей).
+- **release** — триггер по тегу `v*`: GoReleaser собирает бинари
+  (Linux/Windows/macOS × amd64+arm64) + multi-arch docker images в GitLab
+  Container Registry. Локальная проверка: `make release-check` (синтаксис) и
+  `make release-snapshot` (артефакты в `dist/` без публикации).
 
 Релизный workflow:
 ```bash

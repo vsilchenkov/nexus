@@ -45,12 +45,6 @@
       "schedule": ["before 9am on first day of month"]
     },
     {
-      "matchManagers": ["github-actions"],
-      "groupName": "github actions",
-      "commitMessagePrefix": "deps(ci)",
-      "schedule": ["before 9am on first day of month"]
-    },
-    {
       "matchManagers": ["gitlabci", "gitlabci-include"],
       "groupName": "gitlab ci",
       "commitMessagePrefix": "deps(ci)",

@@ -1,16 +1,15 @@
 # GitLab CI/CD pipeline для DataBus (Phase 9.2).
 #
-# Аналог .github/workflows/{ci,security,release}.yml — один файл со всеми
-# stages: test, lint, build, security, integration, release.
+# Один файл со всеми stages: test, lint, build, security, integration, release.
 #
-# Runner: self-hosted shell/docker executor с тегом `srv-d-android-l`.
-# Для integration и release jobs требуется доступ к Docker daemon (либо
-# docker.sock смонтирован в runner, либо services: [docker:dind] + privileged).
+# Runner: self-hosted docker-executor с тегом `srv-d-android-l-docker`.
+# Для integration и release jobs требуется доступ к Docker daemon
+# (services: [docker:dind] + privileged либо docker.sock смонтирован в runner).
 #
 # Триггеры:
 #   - push в любую ветку             → test, lint, build, swagger-drift, ui
 #   - merge_request                  → то же + integration (по labels)
-#   - schedule (weekly)              → security (govulncheck + gosec + trivy + nancy)
+#   - schedule (weekly)              → security (govulncheck + gosec + trivy)
 #   - tag v*                         → release (GoReleaser → GitLab Container Registry)
 #
 # Документация GitLab CI variables: https://docs.gitlab.com/ee/ci/variables/
@@ -92,8 +91,14 @@ go-test:
     - *skip-if-profiled-rule
     - when: on_success
   script:
+    - 'echo "===== go version + env ====="'
+    - go version
+    - go env GOPATH GOCACHE GOMODCACHE
+    - 'echo "===== go vet ./... ====="'
     - go vet ./...
+    - 'echo "===== go test -race -short ./... ====="'
     - go test -race -short ./...
+    - 'echo "===== go-test done ====="'
 
 # ----------- LINT stage -----------------------------------------------------
 
@@ -105,7 +110,11 @@ go-lint:
     - *skip-if-profiled-rule
     - when: on_success
   script:
+    - 'echo "===== golangci-lint version ====="'
+    - golangci-lint version
+    - 'echo "===== golangci-lint run --timeout=5m ====="'
     - golangci-lint run --timeout=5m
+    - 'echo "===== go-lint done ====="'
 
 swagger-drift:
   stage: lint
@@ -114,14 +123,18 @@ swagger-drift:
     - *skip-if-profiled-rule
     - when: on_success
   script:
+    - 'echo "===== installing swag CLI ====="'
     - go install github.com/swaggo/swag/cmd/swag@v1.16.6
+    - 'echo "===== swag init -g cmd/web/main.go -o docs/web ====="'
     - $GOPATH/bin/swag init -g cmd/web/main.go -o docs/web --parseDependency --parseDepth 2 --quiet
+    - 'echo "===== git diff docs/ (должно быть пусто) ====="'
     - |
       if ! git diff --quiet docs/; then
         echo "swagger drift detected; run 'make swagger' locally and commit"
         git --no-pager diff --stat docs/
         exit 1
       fi
+    - 'echo "===== swagger-drift done ====="'
 
 # ----------- BUILD stage ----------------------------------------------------
 
@@ -133,7 +146,11 @@ go-build:
     - when: on_success
   script:
     # На Linux линкер не падает с OOM (грабля Windows из CLAUDE.md §6).
+    - 'echo "===== go build ./... ====="'
     - go build ./...
+    - 'echo "===== собранные пакеты ====="'
+    - ls -la cmd/
+    - 'echo "===== go-build done ====="'
 
 ui-build:
   stage: build
@@ -149,10 +166,19 @@ ui-build:
     - *skip-if-profiled-rule
     - when: on_success
   script:
+    - 'echo "===== node / npm versions ====="'
+    - node --version
+    - npm --version
     - cd web-ui
+    - 'echo "===== npm ci (web-ui/) ====="'
     - npm ci
+    - 'echo "===== npm run lint --if-present ====="'
     - npm run lint --if-present
+    - 'echo "===== npm run build ====="'
     - npm run build
+    - 'echo "===== dist/ содержимое ====="'
+    - ls -lh dist/
+    - 'echo "===== ui-build done ====="'
   artifacts:
     paths:
       - web-ui/dist
@@ -201,7 +227,12 @@ integration:
     # «command not found» (спасало только `|| true`). Если нужен прогрев
     # слоёв — нужен image c docker-cli или отдельный prepare-job.
   script:
-    - go test -tags=integration -timeout 20m -count=1 ./tests/integration/...
+    - 'echo "===== integration test env ====="'
+    - go version
+    - 'echo "DOCKER_HOST = $DOCKER_HOST"'
+    - 'echo "===== go test -tags=integration -timeout 20m -count=1 ./tests/integration/... ====="'
+    - go test -tags=integration -timeout 20m -count=1 -v ./tests/integration/...
+    - 'echo "===== integration done ====="'
 
 # ----------- LOADTEST (manual) ----------------------------------------------
 # Нагрузочный сценарий (§10.2 ТЗ) — поднимает изолированный compose-стек,
@@ -360,9 +391,9 @@ loadtest:
     expire_in: 1 month
 
 # ----------- SECURITY stage -------------------------------------------------
-# Аналог .github/workflows/security.yml. Не блокируют merge — early-warning,
-# не gate. Запускаются на master/dev push, по schedule (CI/CD → Schedules в UI
-# GitLab, рекомендую weekly cron `0 6 * * 0`), и вручную через workflow_dispatch.
+# Не блокируют merge (`allow_failure: true` где есть) — early-warning, не gate.
+# Запускаются на master/dev push, по schedule (CI/CD → Schedules в UI GitLab,
+# рекомендую weekly cron `0 6 * * 0`), и вручную с rule `when: manual`.
 #
 # Premium-фичи GitLab Ultimate (managed SAST/Dependency Scanning через
 # Security/SAST.gitlab-ci.yml include) не используются, потому что
@@ -393,8 +424,12 @@ govulncheck:
   extends: .go-base
   <<: *security-rules
   script:
+    - 'echo "===== installing govulncheck ====="'
     - go install golang.org/x/vuln/cmd/govulncheck@latest
+    - $GOPATH/bin/govulncheck -version
+    - 'echo "===== govulncheck ./... ====="'
     - $GOPATH/bin/govulncheck ./...
+    - 'echo "===== govulncheck done (no vulns found) ====="'
 
 # gosec — статический анализатор security-правил OWASP/CWE (G-серия).
 # `-fmt sarif` для просмотра в IDE; `-fmt gitlab` для GitLab Security Dashboard
@@ -417,8 +452,13 @@ gosec:
     # даже если gosec упал до записи отчётов.
     - touch gosec-results.sarif gosec-junit.xml
   script:
+    - 'echo "===== gosec -fmt=sarif ====="'
     - $GOPATH/bin/gosec -fmt=sarif -out=gosec-results.sarif -exclude-dir=web-ui -exclude-dir=docs ./... || true
+    - 'echo "===== gosec -fmt=junit-xml ====="'
     - $GOPATH/bin/gosec -fmt=junit-xml -out=gosec-junit.xml -exclude-dir=web-ui -exclude-dir=docs ./... || true
+    - 'echo "===== gosec output ====="'
+    - ls -lh gosec-results.sarif gosec-junit.xml
+    - 'echo "===== gosec done ====="'
   artifacts:
     when: always
     paths:
@@ -445,7 +485,9 @@ trivy-fs:
       - .cache/trivy
     policy: pull-push
   script:
+    - 'echo "===== trivy version ====="'
     - trivy --version
+    - 'echo "===== trivy fs scan (vuln+secret+misconfig, CRITICAL/HIGH/MEDIUM) ====="'
     - trivy fs
         --scanners vuln,secret,misconfig
         --severity CRITICAL,HIGH,MEDIUM
@@ -454,6 +496,9 @@ trivy-fs:
         --output trivy-fs.sarif
         --exit-code 0
         .
+    - 'echo "===== trivy output ====="'
+    - ls -lh trivy-fs.sarif
+    - 'echo "===== trivy-fs done ====="'
   artifacts:
     when: always
     paths:
@@ -499,12 +544,11 @@ renovate:
 
 # ----------- RELEASE stage --------------------------------------------------
 # Триггерится тегом v*. Использует GoReleaser → GitLab Container Registry
-# (registry.gitlab.com/<owner>/<repo>/{receiver,sender,web}) для docker-образов
-# и GitLab Releases API для архивов / GitHub-style release page.
+# ($CI_REGISTRY_IMAGE/{receiver,sender,web}:<version>) для docker-образов
+# и GitLab Releases API для архивов и release-страницы.
 #
-# Один .goreleaser.yaml работает и здесь, и в GitHub Actions: DOCKER_REGISTRY_BASE
-# + COMPARE_URL_BASE передаются через env; GoReleaser автодетектит CI по наличию
-# GITLAB_TOKEN.
+# DOCKER_REGISTRY_BASE и COMPARE_URL_BASE передаются через env (см. шапку
+# .goreleaser.yaml); GoReleaser автодетектит платформу по наличию GITLAB_TOKEN.
 #
 # Требования к runner:
 #   - доступ к Docker daemon (через docker:dind service или docker.sock).
@@ -526,7 +570,7 @@ release:
     DOCKER_HOST: "tcp://docker:2375"
     DOCKER_TLS_CERTDIR: ""
     DOCKER_DRIVER: overlay2
-    # Общий контракт с .github/workflows/release.yml — см. шапку .goreleaser.yaml.
+    # См. шапку .goreleaser.yaml — это env-контракт для GoReleaser.
     DOCKER_REGISTRY_BASE: $CI_REGISTRY_IMAGE
     COMPARE_URL_BASE: "$CI_PROJECT_URL/-/compare"
     # GoReleaser автодетектит GitLab по наличию GITLAB_TOKEN; для git operations
@@ -537,14 +581,21 @@ release:
     - if: $CI_COMMIT_TAG =~ /^v[0-9]/
   timeout: 60 minutes
   before_script:
+    - 'echo "===== release tag = $CI_COMMIT_TAG ====="'
     - apk add --no-cache git
     # Multi-arch buildx (для linux/amd64 + linux/arm64). QEMU включается через
     # tonistiigi/binfmt — нужно privileged runner.
+    - 'echo "===== installing QEMU binfmt + buildx ====="'
     - docker run --privileged --rm tonistiigi/binfmt --install all
     - docker buildx create --use --name multiarch --driver docker-container
     - docker buildx inspect --bootstrap
     # Login в GitLab Container Registry — переменные CI_REGISTRY_* предоставляются
     # GitLab автоматически (read+write для текущего проекта).
+    - 'echo "===== docker login to $CI_REGISTRY ====="'
     - echo "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" --password-stdin
   script:
+    - 'echo "===== goreleaser version ====="'
+    - goreleaser --version
+    - 'echo "===== goreleaser release --clean ====="'
     - goreleaser release --clean
+    - 'echo "===== release done ====="'

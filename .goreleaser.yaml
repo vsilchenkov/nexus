@@ -2,7 +2,7 @@
 #
 # Запуск:
 #   - локально, без публикации:   goreleaser release --snapshot --clean
-#   - CI релиз по тегу v*:        goreleaser release --clean (см. .github/workflows/release.yml)
+#   - CI релиз по тегу v*:        goreleaser release --clean (см. .gitlab-ci.yml job `release`)
 #
 # Версия / commit / дата сборки пробрасываются в bus/internal/platform/build через ldflags.
 # Если переменные пустые (обычный go build) — fallback на versioninfo.json (см. NewOption).
@@ -146,7 +146,8 @@ changelog:
     - title: Other
       order: 999
 
-# Multi-arch docker images для receiver/sender/web с пушем в GHCR.
+# Multi-arch docker images для receiver/sender/web с пушем в GitLab
+# Container Registry (см. DOCKER_REGISTRY_BASE = $CI_REGISTRY_IMAGE).
 # manifests склеивают amd64+arm64 под один тег.
 dockers:
   - id: receiver-amd64
@@ -304,9 +305,8 @@ docker_manifests:
       - "{{ .Env.DOCKER_REGISTRY_BASE }}/web:latest-arm64"
 
 release:
-  # github:/gitlab: блок не указываем — GoReleaser автодетектит CI по env
-  # (GITHUB_TOKEN → GitHub, GITLAB_TOKEN → GitLab). Один и тот же конфиг
-  # работает и в .github/workflows/release.yml и в .gitlab-ci.yml (release job).
+  # gitlab: блок не указываем — GoReleaser автодетектит CI по env GITLAB_TOKEN.
+  # См. .gitlab-ci.yml job `release` (триггер по тегу v*).
   draft: true
   prerelease: auto
   name_template: "DataBus {{ .Version }}"

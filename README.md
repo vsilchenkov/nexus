@@ -1,8 +1,5 @@
 # DataBus
 
-[![CI](https://github.com/vsilchenkov/databus/actions/workflows/ci.yml/badge.svg)](.github/workflows/ci.yml)
-[![Security](https://github.com/vsilchenkov/databus/actions/workflows/security.yml/badge.svg)](.github/workflows/security.yml)
-[![Release](https://github.com/vsilchenkov/databus/actions/workflows/release.yml/badge.svg)](.github/workflows/release.yml)
 [![Go 1.26](https://img.shields.io/badge/go-1.26-00ADD8?logo=go)](go.mod)
 
 Шина данных — три Go-сервиса (Receiver, Sender, Web), которые принимают входящие HTTP-запросы, маршрутизируют их на сконфигурированные внешние узлы и логируют все вызовы. Конфигурация маршрутов хранится в PostgreSQL, редактируется через REST API и SPA (React 18 + Vite + Tailwind). Полное ТЗ — [specs/nexus_spec.md](./specs/nexus_spec.md); разделено по разделам в [specs/sections/](./specs/sections/).
@@ -30,7 +27,7 @@
 | Phase 5  | integration-тесты testcontainers: node-repo + receiver sync end-to-end           |
 | Phase 5.1 | CH file-fallback (NDJSON); расширенный i18n на handlers; unit-тесты Replay/Logs/Sentry middleware |
 | Phase 6  | Prometheus метрики; app_settings + hot-reload Sentry/ClickHouse + test connection; Users CRUD; live-tail UI (подсветка/баннер); CSV-экспорт audit; CH orphan-tables; live-tail фильтры; audit diff |
-| Phase 7  | Swagger 100% endpoints + UI; L2 LRU кеш узлов; integration suite (Redis+CH через testcontainers); GitHub Actions CI; Grafana dashboard + Prometheus alerts; **GoReleaser релизы + multi-arch docker в GHCR; security scanning workflow** |
+| Phase 7  | Swagger 100% endpoints + UI; L2 LRU кеш узлов; integration suite (Redis+CH через testcontainers); GitLab CI pipeline; Grafana dashboard + Prometheus alerts; **GoReleaser релизы + multi-arch docker в GitLab Container Registry; security scanning** |
 | Out-of-scope (v2) | KMS-интеграция, multi-tenancy логика, webhook signature verification, OpenTelemetry |
 
 ## Зависимости
@@ -130,36 +127,31 @@ OpenAPI / Swagger: `make swagger` генерирует [docs/web/](./docs/web/) 
 
 ## Docker images (release builds)
 
-Релизные multi-arch образы (amd64+arm64) публикуются в registry по тегу `v*`.
-Один [.goreleaser.yaml](./.goreleaser.yaml) работает в обоих CI:
-
-- **GitHub Actions** ([release.yml](./.github/workflows/release.yml)) →
-  `ghcr.io/<owner>/<repo>/{receiver,sender,web}:<version>`
-- **GitLab CI** ([release job в .gitlab-ci.yml](./.gitlab-ci.yml)) →
-  `$CI_REGISTRY_IMAGE/{receiver,sender,web}:<version>` (GitLab Container Registry)
-
-Различия параметризованы через env-переменные `DOCKER_REGISTRY_BASE` и
-`COMPARE_URL_BASE`, которые задаёт каждый CI. GoReleaser автодетектит платформу
-по наличию `GITHUB_TOKEN` или `GITLAB_TOKEN`.
+Релизные multi-arch образы (amd64+arm64) собираются [.goreleaser.yaml](./.goreleaser.yaml)
+и публикуются в GitLab Container Registry по тегу `v*`:
+`$CI_REGISTRY_IMAGE/{receiver,sender,web}:<version>`.
 
 Локальный snapshot для проверки релизной сборки — `make release-snapshot`
 (артефакты в `dist/`).
 
 ## CI/CD
 
-Pipeline'ы покрывают unit-тесты, lint, build, security и release. Поддерживаются
-обе платформы:
+Pipeline живёт в [.gitlab-ci.yml](./.gitlab-ci.yml), запускается на self-hosted
+runner с тегом `srv-d-android-l-docker` (docker-executor). Stages:
 
-| Что                            | GitHub Actions                                                 | GitLab CI                                          |
-|--------------------------------|----------------------------------------------------------------|----------------------------------------------------|
-| Unit + lint + build + swagger  | [ci.yml](./.github/workflows/ci.yml)                           | [.gitlab-ci.yml](./.gitlab-ci.yml) stages test/lint/build |
-| Integration (testcontainers)   | `ci.yml` (label `run-integration`)                             | `.gitlab-ci.yml` job `integration`                 |
-| Security (govulncheck/gosec/trivy/nancy) | [security.yml](./.github/workflows/security.yml)     | `.gitlab-ci.yml` security stage                    |
-| Release (GoReleaser)           | [release.yml](./.github/workflows/release.yml)                 | `.gitlab-ci.yml` release stage                     |
-| Auto-updates deps              | [dependabot.yml](./.github/dependabot.yml)                     | [renovate.json](./renovate.json) + renovate job    |
+| Stage         | Что делает                                                                  |
+|---------------|-----------------------------------------------------------------------------|
+| `test`        | `go vet ./...`, `go test -race -short ./...`                                |
+| `lint`        | `golangci-lint run`, `swagger-drift` (проверка `docs/` против аннотаций)    |
+| `build`       | `go build ./...`, `ui-build` (Vite + lint + build для `web-ui/`)            |
+| `integration` | testcontainers PG/Redis/Kafka/CH; `loadtest` (manual или RUN_PROFILE)       |
+| `security`    | `govulncheck`, `gosec`, `trivy-fs`, `renovate` (weekly schedule)            |
+| `release`     | `goreleaser release` на теги `v*` → GitLab Container Registry               |
 
-GitLab CI запускается на self-hosted runner с тегом `srv-d-android-l` —
-смотри шапку [.gitlab-ci.yml](./.gitlab-ci.yml) для required CI/CD Variables.
+Селективный ручной запуск через **«Run pipeline»** в UI с переменной
+`RUN_PROFILE = integration-only | loadtest-only` (см. шапку [.gitlab-ci.yml](./.gitlab-ci.yml)
+для required CI/CD Variables). Авто-апдейты зависимостей — [renovate.json](./renovate.json)
+по weekly schedule.
 
 ## Вклад в проект
 

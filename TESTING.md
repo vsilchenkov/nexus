@@ -126,10 +126,9 @@ make swagger-drift-check  # CI-проверка: фейлит если docs/ у�
 
 ## CI/CD
 
-GitLab CI — [.gitlab-ci.yml](.gitlab-ci.yml), Phase 9.2. Аналог для GitHub —
-`.github/workflows/{ci,security,release}.yml`. Стэйджи в одном pipeline:
-`test → lint → build → security → integration → release`. Все jobs на runner
-с тегом `srv-d-android-l-docker`.
+GitLab CI — [.gitlab-ci.yml](.gitlab-ci.yml), Phase 9.2. Стэйджи в одном
+pipeline: `test → lint → build → security → integration → release`. Все
+jobs на runner с тегом `srv-d-android-l-docker`.
 
 ### Что когда запускается автоматически
 

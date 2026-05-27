@@ -5,7 +5,7 @@
 Формат основан на [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/),
 проект следует [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-> Версионирование запустится с первым git-тегом `v*` (см. [.github/workflows/release.yml](.github/workflows/release.yml)).
+> Версионирование запустится с первым git-тегом `v*` (см. job `release` в [.gitlab-ci.yml](.gitlab-ci.yml)).
 > До этого момента всё попадает в `[Unreleased]`, сгруппировано по фазам разработки.
 
 ---
@@ -24,32 +24,31 @@
 
 #### Added
 - `CONTRIBUTING.md` — процесс работы (блоки/коммиты/IMPLEMENTATION.md), стиль кода, тестирование, CI/release.
-- README badges (CI / Security / Release / Go version).
-- Раздел «Docker images (release builds)» в README со ссылками на GHCR-теги.
+- README badges (Go version).
+- Раздел «Docker images (release builds)» в README со ссылками на GitLab Container Registry.
 
 #### Changed
 - README статус-таблица обновлена строками Phase 6 и Phase 7.
 - IMPLEMENTATION.md: устаревшие ⛔ пометки на «полный лейаут §7» и «app_settings + UI Sentry» заменены на ✅ Phase 6.3/6.4.
 - Раздел «Куда копать дальше» переписан под §16 ТЗ (OpenTelemetry/webhook signatures/KMS/multi-tenancy).
 
-### Phase 7.7 — security scanning workflow
+### Phase 7.7 — security scanning
 
 #### Added
-- `.github/workflows/security.yml` — 4 параллельных job'а:
-  - **govulncheck** (call-graph CVE-анализ, гейтит PR),
-  - **gosec** (OWASP/CWE → SARIF в Security tab),
-  - **Trivy fs** (vuln + secrets + Dockerfile/YAML misconfig → SARIF),
-  - **Nancy** (Sonatype OSS Index, дополнительный source, `continue-on-error`).
-- Триггеры: push/PR в master|dev, weekly cron (вс 06:00 UTC), workflow_dispatch.
+- Stage `security` в `.gitlab-ci.yml` — параллельные jobs:
+  - **govulncheck** (call-graph CVE-анализ, гейтит pipeline),
+  - **gosec** (OWASP/CWE → SARIF в артефакты, `allow_failure: true`),
+  - **trivy-fs** (vuln + secrets + Dockerfile/YAML misconfig → SARIF, `allow_failure: true`).
+- Триггеры: push в master/dev, weekly schedule, manual.
 - Make-цели `vuln-check`/`gosec`/`security-scan` с авто-установкой через `go install`.
 
 ### Phase 7.6 — GoReleaser + multi-arch docker
 
 #### Added
 - `.goreleaser.yaml` — 5 builds (receiver/sender/web/rotate-key/loadtest) × Linux/Windows/macOS × amd64+arm64.
-- Archives (tar.gz + zip для Windows) с README/LICENSE/config.example/migrations, SHA-256 checksums, GitHub-changelog с группами Features/Bug fixes/Phase milestones.
-- 6 docker images (receiver/sender/web × amd64+arm64) через `deploy/docker/release.Dockerfile` + 3 multi-arch manifests `:{Version}` и `:latest` в GHCR.
-- `.github/workflows/release.yml` — триггер на тег `v*` + workflow_dispatch; QEMU + Buildx + GHCR login.
+- Archives (tar.gz + zip для Windows) с README/LICENSE/config.example/migrations, SHA-256 checksums, changelog с группами Features/Bug fixes/Phase milestones.
+- 6 docker images (receiver/sender/web × amd64+arm64) через `deploy/docker/release.Dockerfile` + 3 multi-arch manifests `:{Version}` и `:latest` в GitLab Container Registry.
+- Job `release` в `.gitlab-ci.yml` — триггер на тег `v*`; QEMU + Buildx + login в `$CI_REGISTRY`.
 - Make-цели `release-check` (синтаксис) / `release-snapshot` (артефакты в `dist/`).
 - `bus/internal/platform/build.{Version,Commit,BuildDate}` переменные пакета, переопределяются через `-ldflags`; fallback на versioninfo.json при обычной сборке.
 - `bootstrap.Init` логирует `commit`/`build_date`, если заполнены.
@@ -61,12 +60,12 @@
 - `deploy/prometheus.alerts.yml` — 9 alert rules (up==0, 5xx>5%, p95>200ms, kafka_lag>10k, CH errors/buffer/dropped, L2 stale-fallback).
 - `deploy/grafana/README.md` — инструкция импорта.
 
-### Phase 7.4 — GitHub Actions CI
+### Phase 7.4 — GitLab CI pipeline
 
 #### Added
-- `.github/workflows/ci.yml` — go-test (race -short), go-build, go-lint (golangci-lint v1.62), swagger-drift, ui (Node 20 + vite build), integration (label `run-integration`).
+- `.gitlab-ci.yml` — stages test/lint/build: `go-test` (race -short), `go-build`, `go-lint` (golangci-lint v2.12), `swagger-drift`, `ui-build` (Node 20 + vite build), `integration` (MR-label `run-integration` или master/dev/tag).
 - `.golangci.yml` — bodyclose/rowserrcheck/errcheck/govet/revive/staticcheck.
-- `.github/dependabot.yml` — weekly gomod + npm, monthly github-actions; группировка minor/patch.
+- `renovate.json` — weekly gomod + npm, monthly docker; группировка minor/patch.
 
 ### Phase 7.3 — расширенный integration suite
 
@@ -186,4 +185,4 @@
 
 ---
 
-[Unreleased]: https://github.com/vsilchenkov/databus/compare/HEAD
+[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/HEAD
