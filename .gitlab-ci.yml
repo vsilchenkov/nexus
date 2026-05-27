@@ -443,6 +443,21 @@ loadtest:
     - 'echo "===== diagnostic: sender DNS + connectivity ====="'
     - docker compose exec -T sender getent hosts loadtest 2>&1 || echo "(getent loadtest → not found / failed)"
     - docker compose exec -T sender getent hosts web 2>&1 || echo "(getent web → not found / failed)"
+    # Что реально в PG — есть ли loadtest-узлы. Если 0 — web их не сохранил;
+    # если 50 — receiver их не видит (cache invalidation или PG-read).
+    - 'echo "===== diagnostic: ноды в PostgreSQL ====="'
+    - docker compose exec -T postgres psql -U nexus -d nexus -c "SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE deleted_at IS NULL) AS active FROM nodes;" 2>&1 || true
+    - docker compose exec -T postgres psql -U nexus -d nexus -c "SELECT path, target_url FROM nodes ORDER BY id DESC LIMIT 3;" 2>&1 || true
+    # Прямой запрос к receiver на одну из созданных нод. wget -S печатает HTTP-headers.
+    - 'echo "===== diagnostic: receiver direct response ====="'
+    - |
+      LOADTEST_PATH=$(docker compose exec -T postgres psql -U nexus -d nexus -t -c "SELECT path FROM nodes WHERE path LIKE 'loadtest/%' ORDER BY id DESC LIMIT 1;" 2>/dev/null | tr -d ' \n')
+      echo "loadtest node path: '$LOADTEST_PATH'"
+      if [ -n "$LOADTEST_PATH" ]; then
+        docker compose exec -T sender wget -S -O- --post-data='diag' \
+          --header='Content-Type: application/octet-stream' \
+          "http://receiver:8080/v1/request/$LOADTEST_PATH" 2>&1 | head -40 || true
+      fi
     - 'echo "===== /diagnostic ====="'
   after_script:
     # Финальный snapshot: что было в compose-стеке к моменту провала,
