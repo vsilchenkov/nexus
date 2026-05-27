@@ -79,6 +79,7 @@ type RedisSection struct {
 	Host               string `yaml:"host"`
 	Port               int    `yaml:"port"`
 	DB                 int    `yaml:"db"`
+	Username           string `yaml:"username"`
 	Password           string `yaml:"password"`
 	PoolSize           int    `yaml:"pool_size"`
 	MinIdleConns       int    `yaml:"min_idle_conns"`

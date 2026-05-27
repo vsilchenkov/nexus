@@ -1,9 +1,17 @@
-# Nexus — конфиг для локальной отладки.
-# Зависимости подняты в docker-compose.dev.yml на localhost.
+# Nexus — конфиг для локальной отладки (Windows + docker-compose).
+#
+# Значения подключения к зависимостям подставляются из .env через
+# ${VAR:default}. Дефолты соответствуют сервисам, поднятым в
+# docker-compose.yml в корне репозитория (postgres / redis / clickhouse /
+# kafka). При запуске под `cmd/* --debug` бинарь читает этот файл и
+# подставляет переменные окружения; envFile из .vscode/launch.json
+# поставляет реальные значения.
+#
+# Если меняешь имена переменных — синхронизируй с .env.example.
 
 build:
   project_name: nexus
-  version: dev
+  version: ${VERSION:dev}
 
 logging:
   level: 5              # debug
@@ -12,30 +20,39 @@ logging:
   debug: true
 
 sentry:
-  use: false
-  dsn: ""
-  environment: dev
+  use: ${SENTRY_USE:false}
+  dsn: ${SENTRY_DSN:}
+  environment: ${SENTRY_ENVIRONMENT:dev}
   level: 2
   attach_stacktrace: true
   enable_tracing: false
   traces_sample_rate: 0.0
   debug: false
 
+otel:
+  enable:        ${OTEL_ENABLE:false}
+  otlp_endpoint: ${OTEL_OTLP_ENDPOINT:localhost:4318}
+  otlp_insecure: ${OTEL_OTLP_INSECURE:true}
+  sample_rate:   ${OTEL_SAMPLE_RATE:0.1}
+  service_name:  ${OTEL_SERVICE_NAME:}
+  environment:   ${OTEL_ENVIRONMENT:dev}
+
 postgres:
-  host: localhost
-  port: 5432
-  database: nexus
-  user: nexus
-  password: nexus
+  host: ${PG_HOST:localhost}
+  port: ${PG_PORT:5432}
+  database: ${PG_DATABASE:postgres}
+  user: ${PG_USER:postgres}
+  password: ${PG_PASSWORD:vOkjDn}
   max_open_conns: 10
   max_idle_conns: 2
   conn_max_lifetime_min: 30
 
 redis:
-  host: localhost
-  port: 6379
-  db: 0
-  password: ""
+  host: ${REDIS_HOST:localhost}
+  port: ${REDIS_PORT:6379}
+  db: ${REDIS_DB:0}
+  username: ${REDIS_USER:sa}
+  password: ${REDIS_PASSWORD:I2MV5s}
   pool_size: 10
   min_idle_conns: 2
   dial_timeout_ms: 2000
@@ -46,25 +63,29 @@ redis:
   ratelimit_window_sec: 60
 
 clickhouse:
-  host: localhost
-  port: 9000
-  database: vika_logs
-  user: default
-  password: ""
+  # ВАЖНО: TCP-порт ClickHouse в docker-compose проброшен как 19000:9000.
+  # HTTP-порт — 18123:8123 (не используется коннектором clickhouse-go).
+  host: ${CH_HOST:localhost}
+  port: ${CH_PORT:19000}
+  database: ${CH_DATABASE:vika_logs}
+  user: ${CH_USER:default}
+  password: ${CH_PASSWORD:}
   batch_size: 100
   flush_interval_sec: 2
   buffer_max_size: 10000
   workers: 1
 
 kafka:
-  brokers: localhost:9092
+  brokers: ${KAFKA_BROKERS:localhost:9092}
   async_topic: nexus.async
   dlq_topic: nexus.async.dlq
   consumer_group: nexus-sender-dev
   topic:
     partitions: 1
-    replication_factor: 1
-    min_insync_replicas: 1
+    # single-broker docker-compose → RF=1, ISR=1 (см. примечание в
+    # config.example.yml). Любое больше — InvalidReplicationFactor.
+    replication_factor: ${KAFKA_TOPIC_REPLICATION_FACTOR:1}
+    min_insync_replicas: ${KAFKA_TOPIC_MIN_INSYNC_REPLICAS:1}
     retention_ms: 2592000000
     retention_bytes: -1
     segment_ms: 86400000
@@ -135,3 +156,4 @@ web:
   nodes_hard_limit: 5000
   api_token_rate_limit_per_min: 1000
   swagger_enabled: true
+  receiver_url: ${RECEIVER_URL:http://localhost:8080}
