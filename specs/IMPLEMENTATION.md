@@ -223,7 +223,9 @@
   - ✅ Phase 10.C.3: миграция 0009 — backfill `nodes.clickhouse_table` (`<table>` → `nexus_default.<table>`, `vika_logs.<x>` → `nexus_default.<x>`, чужие `nexus_<other>.<x>` не трогаются).
   - ✅ Phase 10.D.1: team-scope в `LogsUsecase.{ListSince,Search,Subscribe}` и `ReplayUsecase.Replay` (cross-team → 404). `DryRunHandler` ставит `n.TeamID = currentTeamID(c)` на узле формы. Handler'ы передают `currentTeamID(c)` во все эти usecase.
   - ✅ Phase 10.D.2: `OrphanScanner` сканирует все `teams.ch_database` (allow-list), `knownTables` собирает узлы всех команд, drop guard разрешает DROP только в tenant-БД. `ch_housekeeping` (Sender) автоматически multi-team — берёт узлы всех команд из PG и идёт по `db.table` через `splitDBTable`.
-  - ⛔ Phase 10.E+: scope-фильтрация в audit/users, Receiver URL `/v1/request/<team_slug>/<path>` + API-токен сверяет `slug` URL ↔ `team_id` токена, UI «Команды» + Members.
+  - ✅ Phase 10.E.1: `NodeReader.Get(teamSlug, path)` — PG-запрос через `JOIN teams ON nodes.team_id = teams.id WHERE teams.slug=$1 AND nodes.path=$2`, Redis-ключ `node:<team_slug>:<path>`, L2-кеш по `<team_slug>/<path>`. Receiver принимает `/v1/request/<team_slug>/<node_path>` и legacy `/v1/request/<node_path>` (default-team). Parser `splitTeamSlugAndPath` различает 1- и 2-сегментные URL.
+  - ✅ Phase 10.E.2: cross-team изоляция в Receiver обеспечивается JOIN'ом из E.1 (чужой `team_slug` → 404, не утечка существования). API-токены в Receiver не используются — incoming auth узла остаётся ответственным за аутентификацию клиента. Фиксируется unit-тестом `TestSplitTeamSlugAndPath` (8 кейсов).
+  - ⛔ Phase 10.F+: scope-фильтрация в audit/users, UI «Команды» + Members + team-switcher в Topbar.
 - ~~Webhook signature verification (`/v1/callback/`)~~ — реализовано в Phase 8.1.
 - ~~OpenTelemetry distributed tracing~~ — реализовано в Phase 8.2 (HTTP-server-span'ы) + 8.3 (HTTP outbound + gRPC unary client/server interceptor'ы) + 8.4 (Kafka headers propagation для async-пути). End-to-end trace через UI → Web → Receiver → {gRPC → Sender → внешний URL} / {Kafka → Sender-consumer → внешний URL}.
 - Notifications для операторов (Slack/Telegram).
@@ -512,6 +514,34 @@ real-sleep).
 docker-compose-стек начнут тянуть разные образы и расходиться по поведению
 (например, дефолтным retention'ам).
 
+### 4.19 Receiver URL: `team_slug` в первом сегменте path, не в host/subdomain
+
+Phase 10.E.1 расширила URL Receiver'а под multi-tenancy:
+`/v1/request/<team_slug>/<node_path>`. Альтернатива — поддомен
+(`acme.nexus.local/v1/request/<path>`) — была отвергнута:
+
+- Поддомен требует wildcard-сертификат и DNS-управление на каждой
+  команде; URL-сегмент работает на любом deploy без правки инфры.
+- `splitTeamSlugAndPath` ([handler.go](../internal/receiver/adapter/in/http/handler.go))
+  парсит catch-all `/*path` Gin'а: первый сегмент = `team_slug`,
+  остальное = `node_path`. Один сегмент = legacy URL без слога
+  (default-team — `domain.DefaultTeamSlug`). Это позволяет
+  одновременно обслуживать новые и существующие интеграции.
+- В Postgres `nodes` после миграции 0008 имеет `UNIQUE(team_id, path)`,
+  не `UNIQUE(path)`. Без team_slug в URL запрос
+  `WHERE path = ?` для одинаковых имён узлов в разных командах
+  неоднозначен — резолв через JOIN с teams избегает этой проблемы.
+
+Cross-team-изоляция в Receiver — следствие JOIN'а в
+[nodecache.Reader.getFromPg](../internal/receiver/adapter/out/nodecache/reader.go):
+если slug в URL не совпадает с реальной командой узла, запрос вернёт
+`ErrNodeNotFound` (404), а не утечку существования. Фиксируется
+unit-тестом `TestSplitTeamSlugAndPath`.
+
+API-токены в Receiver не используются — incoming auth узла (basic /
+token / webhook_signature) остаётся ответственным за аутентификацию
+клиента, а scope обеспечивается принадлежностью узла команде.
+
 ### 4.18 OrphanScanner — allow-list по `teams.ch_database`, не одна БД из конфига
 
 Phase 10.D.2 заменила «одна `chCfg.Database` = единственная сканируемая
@@ -748,9 +778,12 @@ make proto                                     # перегенерация send
        `teams.ch_database` (allow-list) и дропает только в них.
        `ch_housekeeping` (Sender) и так multi-team — `splitDBTable`
        режет `db.table` из `nodes.clickhouse_table`.
-   - Дальше: scope в audit/users, Receiver URL
-     `/v1/request/<team_slug>/<path>` + API-токен сверяет slug,
-     UI «Команды» + Members.
+     - Блок E: Receiver URL `/v1/request/<team_slug>/<node_path>`
+       (legacy без слога продолжает работать для default-team),
+       `NodeReader.Get(teamSlug, path)` через PG JOIN с teams, Redis
+       и L2-кеш учитывают team_slug в ключе.
+   - Дальше: scope в audit/users, UI «Команды» + Members + team-switcher
+     в Topbar.
 
 Сделанное в Phase 7.14:
 
