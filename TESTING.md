@@ -160,9 +160,14 @@ jobs на runner с тегом `srv-d-android-l-docker`.
 | Переменная                | Обяз. | Default | Назначение                                                                    |
 |---------------------------|-------|---------|-------------------------------------------------------------------------------|
 | `LOADTEST_ADMIN_PASSWORD` | да    | —       | пароль admin'а (masked + protected). Падает в `before_script:` если не задана |
-| `LOADTEST_TARGET_RPS`     | нет   | `500`   | целевой RPS                                                                   |
-| `LOADTEST_DURATION`       | нет   | `5m`    | длительность нагрузки (формат `time.Duration`)                                |
+| `LOADTEST_TARGET_RPS`     | нет   | `300`   | целевой RPS (CI smoke-mode — см. ниже)                                        |
+| `LOADTEST_DURATION`       | нет   | `2m`    | длительность нагрузки (формат `time.Duration`)                                |
 | `LOADTEST_NODES`          | нет   | `50`    | число узлов, которые loadtest создаст через Web API                           |
+
+Дефолты RPS=300 / 2m — это **CI smoke-mode**, не полный capacity-тест. На
+self-hosted runner'е (общий docker daemon + параллельные builds на одной
+машине) реалистично 300-400 RPS. Полный bench §10.2 ТЗ (500 RPS / 5 мин)
+надо гонять локально или через UI «Run pipeline → Variables» с переопределением.
 
 Альтернативный путь для loadtest без `RUN_PROFILE`: в любом полном
 pipeline'е (push в любую ветку) job `loadtest` создаётся как **manual**
