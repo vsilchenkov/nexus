@@ -53,7 +53,7 @@ func NewRouteAsyncUsecase(
 // кладёт envelope в nexus.async с key=node_path (для сохранения
 // порядка обработки одного узла).
 func (u *RouteAsyncUsecase) RouteAsync(ctx context.Context, in RouteInput) (*RouteAsyncResult, error) {
-	node, err := u.nodes.GetByPath(ctx, in.NodePath)
+	node, err := u.nodes.Get(ctx, in.TeamSlug, in.NodePath)
 	if err != nil {
 		return nil, err
 	}

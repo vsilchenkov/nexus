@@ -29,6 +29,10 @@ type SenderClient interface {
 
 // RouteInput — параметры входящего sync-запроса.
 type RouteInput struct {
+	// TeamSlug — slug команды, под которую был адресован запрос. Из URL
+	// /v1/request/<team_slug>/<path> (Phase 10.E.1). Пустая строка =
+	// legacy URL без слога; NodeReader подставит DefaultTeamSlug.
+	TeamSlug string
 	NodePath string
 	Method   string
 	Header   http.Header
@@ -62,7 +66,7 @@ func NewRouteUsecase(nodes port.NodeReader, sender SenderClient, logger logging.
 
 // Route — sync-обработка (POST /v1/request/{path}).
 func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, error) {
-	node, err := u.nodes.GetByPath(ctx, in.NodePath)
+	node, err := u.nodes.Get(ctx, in.TeamSlug, in.NodePath)
 	if err != nil {
 		return nil, err
 	}

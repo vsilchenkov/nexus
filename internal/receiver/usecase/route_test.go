@@ -15,7 +15,7 @@ type stubNodeReader struct {
 	err  error
 }
 
-func (s stubNodeReader) GetByPath(_ context.Context, _ string) (*domain.Node, error) {
+func (s stubNodeReader) Get(_ context.Context, _, _ string) (*domain.Node, error) {
 	return s.node, s.err
 }
 

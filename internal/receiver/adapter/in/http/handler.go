@@ -33,6 +33,12 @@ func New(
 
 // Register вешает /v1/request/*path и /v1/requestAsync/*path на роутер.
 //
+// Phase 10.E.1: маршруты включают team_slug. Полный путь —
+// /v1/request/<team_slug>/<node_path>. Legacy без слога
+// (/v1/request/<node_path>) сохраняется как convenience для default-team:
+// запросы без префикса слога продолжают работать, NodeReader подставляет
+// domain.DefaultTeamSlug.
+//
 // Префикс /v1/ обязателен; запрос без него — 404 с подсказкой (§3.1).
 // mws — дополнительные middleware (rate-limit, audit, ...), применяются
 // перед основным handler'ом.
@@ -61,8 +67,29 @@ func (h *Handler) Register(r *gin.Engine, mws ...gin.HandlerFunc) {
 	}
 }
 
+// splitTeamSlugAndPath режет catch-all сегмент Gin (`/foo/bar/baz`) на
+// (team_slug, node_path). Первый сегмент — slug команды (мульти-tenancy
+// v2). Один сегмент = legacy URL без слога: возвращает teamSlug=""
+// (NodeReader подставит DefaultTeamSlug).
+//
+// Также допускается единственный «не-slug» сегмент, в котором есть
+// разрешённые в node_path символы '/' (после catch-all gin всегда даёт
+// строку с ведущим '/').
+func splitTeamSlugAndPath(raw string) (teamSlug, nodePath string) {
+	trimmed := strings.TrimPrefix(raw, "/")
+	if trimmed == "" {
+		return "", ""
+	}
+	parts := strings.SplitN(trimmed, "/", 2)
+	if len(parts) == 1 {
+		// Один сегмент — legacy URL, считаем что это node_path в default-team.
+		return "", parts[0]
+	}
+	return parts[0], parts[1]
+}
+
 func (h *Handler) handleSync(c *gin.Context) {
-	nodePath := strings.TrimPrefix(c.Param("path"), "/")
+	teamSlug, nodePath := splitTeamSlugAndPath(c.Param("path"))
 	if nodePath == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "empty node path"})
 		return
@@ -75,6 +102,7 @@ func (h *Handler) handleSync(c *gin.Context) {
 	}
 
 	in := usecase.RouteInput{
+		TeamSlug: teamSlug,
 		NodePath: nodePath,
 		Method:   c.Request.Method,
 		Header:   c.Request.Header,
@@ -112,7 +140,7 @@ func (h *Handler) handleSync(c *gin.Context) {
 // Сама HMAC-проверка делается централизованно в CheckIncomingAuth внутри
 // RouteAsync — handler здесь не выполняет crypto-логику.
 func (h *Handler) handleCallback(c *gin.Context) {
-	nodePath := strings.TrimPrefix(c.Param("path"), "/")
+	teamSlug, nodePath := splitTeamSlugAndPath(c.Param("path"))
 	if nodePath == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "empty node path"})
 		return
@@ -123,6 +151,7 @@ func (h *Handler) handleCallback(c *gin.Context) {
 		return
 	}
 	h.handleAsyncFromInput(c, usecase.RouteInput{
+		TeamSlug:        teamSlug,
 		NodePath:        nodePath,
 		Method:          c.Request.Method,
 		Header:          c.Request.Header,
@@ -134,7 +163,7 @@ func (h *Handler) handleCallback(c *gin.Context) {
 }
 
 func (h *Handler) handleAsync(c *gin.Context) {
-	nodePath := strings.TrimPrefix(c.Param("path"), "/")
+	teamSlug, nodePath := splitTeamSlugAndPath(c.Param("path"))
 	if nodePath == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "empty node path"})
 		return
@@ -145,6 +174,7 @@ func (h *Handler) handleAsync(c *gin.Context) {
 		return
 	}
 	h.handleAsyncFromInput(c, usecase.RouteInput{
+		TeamSlug: teamSlug,
 		NodePath: nodePath,
 		Method:   c.Request.Method,
 		Header:   c.Request.Header,
