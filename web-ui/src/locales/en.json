@@ -195,6 +195,55 @@
         "submit": "Change password"
       }
     },
+    "teams": {
+      "title": "Teams",
+      "subtitle": "Multi-tenancy: each team has its own ClickHouse database (nexus_<slug>). Nodes, logs and API tokens are isolated by team.",
+      "add": "New team",
+      "empty": "No teams yet",
+      "col": {
+        "slug": "Slug",
+        "name": "Name",
+        "ch_database": "ClickHouse DB"
+      },
+      "action": {
+        "members": "Members",
+        "edit": "Rename",
+        "delete": "Delete"
+      },
+      "confirm_delete": "Delete team `{{slug}}`? CH database stays — drop manually via Orphans.",
+      "field": {
+        "slug": "Slug",
+        "slug_hint": "Lowercase letters / digits / underscore, 1..32 chars. Immutable after creation.",
+        "slug_immutable": "Slug and ClickHouse database name cannot be changed after creation.",
+        "name": "Display name",
+        "ch_database_preview": "ClickHouse database will be created as `{{db}}`."
+      },
+      "dialog": {
+        "new_title": "New team",
+        "new_subtitle": "PG row + CH database are created atomically.",
+        "edit_title": "Edit `{{slug}}`",
+        "edit_subtitle": "Only display name can be changed.",
+        "create": "Create team"
+      },
+      "role": {
+        "owner": "Owner",
+        "admin": "Admin",
+        "member": "Member"
+      },
+      "members": {
+        "title": "Members of `{{name}}`",
+        "add_user": "Add user",
+        "pick_user": "— pick user —",
+        "role": "Role",
+        "add": "Add",
+        "remove": "Remove",
+        "empty": "No members in this team",
+        "col": {
+          "user": "User",
+          "role": "Role"
+        }
+      }
+    },
     "clickhouse": {
       "title": "ClickHouse",
       "hint": "Override ClickHouse connection and batch writer settings.",
