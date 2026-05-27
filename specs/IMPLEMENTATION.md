@@ -17,8 +17,9 @@
 | Go-версия               | 1.26                                                                  |
 | Тип проекта             | три stateless backend-сервиса (Receiver, Sender, Web) + SPA админка   |
 | Архитектура             | Clean Architecture: `handler → usecase → port → adapter`              |
-| Главный поток           | `POST /v1/request/{path}` → Receiver → gRPC Sender → внешний URL → лог в ClickHouse |
-| Async                   | `POST /v1/requestAsync/{path}` → Receiver → Kafka → Sender-consumer   |
+| Главный поток           | `POST /v1/request/<team_slug>/{path}` → Receiver → gRPC Sender → внешний URL → лог в ClickHouse `nexus_<team_slug>.<table>` |
+| Async                   | `POST /v1/requestAsync/<team_slug>/{path}` → Receiver → Kafka → Sender-consumer |
+| Multi-tenancy           | Phase 10 ✅: команды через `/api/teams`, своя CH-БД per team (`nexus_<slug>`), team-switcher в Topbar, scope в nodes/audit/logs/replay/api_tokens. Legacy URL без слога продолжает работать как default-team. |
 | Зависимости              | PostgreSQL 16, Redis 7, ClickHouse 24, Kafka 3.9 (KRaft), Prometheus  |
 | Покрытие unit-тестами   | 14 пакетов (domain, crypto, i18n, sentry, receiver/usecase, chlog, web/usecase, metrics, healthcheck, config, clickhouse, reloader, nodecache, sender/usecase, **+ build / httpclient в Phase 7.13, + receiver/http + web/http middlewares в Phase 7.14**) + integration: circuitbreaker (Phase 7.13) |
 | SPA-фронт               | React 18 + Vite + TS + Tailwind + TanStack Query + react-i18next, 6 страниц |
@@ -213,7 +214,8 @@
 
 ### §16 Out of scope (явно отложено в v2)
 
-- Multi-tenancy v2 — ◐ **Phase 10 в работе**.
+- Multi-tenancy v2 — ✅ **Phase 10 закрыта** (см. подробный список ниже,
+  итого 18 коммитов, 7 блоков A→G).
   - ✅ Phase 10.1: миграция 0008 (`teams`, `user_teams`, FK на `nodes`/`users`/`api_tokens`/`user_audit`, `UNIQUE(team_id, path)`, сидинг 'default'-team).
   - ✅ Phase 10.2: `domain.Team`, `TeamRepository` (PG-impl CRUD + membership), `User.TeamID → DefaultTeamID`, резолв UUID 'default'-team в Web-bootstrap и проброс в NodeUsecase/OrphanScanner.
   - ✅ Phase 10.B.1: `Session.CurrentTeamID` в Redis, `APIToken.TeamID`, endpoints `GET /api/me/teams` + `POST /api/me/switch-team` (последний только для session-cookie: API-токены ограничены одной командой). `AuthUsecase` теперь принимает `port.TeamRepo`.
@@ -228,7 +230,7 @@
   - ✅ Phase 10.F.1: `user_audit.team_id` реально записывается через `Actor.TeamID` (берётся из сессии в `userActor(c)`/`actorFromCtx(c)`). `AuditFilter.TeamID` + handler-overlay: по умолчанию admin видит только свою команду; `?team_id=*` или `?team_id=<uuid>` — override. CSV-экспорт включает колонку `team_id`.
   - ✅ Phase 10.F.2: SPA — страница `Settings → Teams` (admin-only). `TeamsPanel` (CRUD + delete-guard для `default`), `TeamDialog` (slug immutable после создания, preview `nexus_<slug>`), `MembersDialog` (add/update-role/remove, select из `/api/users` без уже-членов). i18n en/ru.
   - ✅ Phase 10.F.3: Topbar team-switcher — `<select>` со списком из `/api/me/teams`, при смене вызывает `/api/me/switch-team` и `qc.invalidateQueries()` (все списки nodes/audit/logs/tokens перерисовываются под новый scope).
-  - ⛔ Phase 10.G: integration-тест на изоляцию 2 команд end-to-end + финальный апдейт IMPLEMENTATION.md.
+  - ✅ Phase 10.G.1: end-to-end integration-тест `TestMultiTenancy_Isolation_E2E` (testcontainers PG) — 10 свойств: одинаковый path в двух командах, cross-team Get/Update/Delete возвращает 404, ClickHouseTable префиксуется через NodeUsecase, audit-записи несут team_id, FK ON DELETE RESTRICT блокирует удаление team с активными узлами. Прогон ~5 сек.
 - ~~Webhook signature verification (`/v1/callback/`)~~ — реализовано в Phase 8.1.
 - ~~OpenTelemetry distributed tracing~~ — реализовано в Phase 8.2 (HTTP-server-span'ы) + 8.3 (HTTP outbound + gRPC unary client/server interceptor'ы) + 8.4 (Kafka headers propagation для async-пути). End-to-end trace через UI → Web → Receiver → {gRPC → Sender → внешний URL} / {Kafka → Sender-consumer → внешний URL}.
 - Notifications для операторов (Slack/Telegram).
@@ -782,33 +784,29 @@ make proto                                     # перегенерация send
    входящих webhook'ов от партнёров (Stripe/GitHub/...).
 3. **KMS/Vault** интеграция для `ENCRYPTION_KEY` — §16, чтобы убрать секрет
    из env. См. также `make rotate-encryption-key`.
-4. **Multi-tenancy v2** — фаза 10 в работе.
-   - Сделано:
-     - Блок A: миграция 0008 + `domain.Team` + `TeamRepository` + резолв
-       `defaultTeamID` в Web-bootstrap.
-     - Блок B: `Session.CurrentTeamID` + `/api/me/teams` +
-       `/api/me/switch-team` + team-scope в Node CRUD и
-       `APITokenUsecase.Create`.
-     - Блок C: `TeamProvisioner` + `/api/teams` CRUD + Members,
-       `NodeUsecase` нормализует `clickhouse_table` до
-       `<team.ch_database>.<table>`, миграция 0009 для backfill
-       legacy-данных (`vika_logs.<x>` → `nexus_default.<x>`).
-     - Блок D: team-scope в `LogsUsecase`/`ReplayUsecase`/`DryRunHandler`
-       (cross-team → 404), `OrphanScanner` сканирует все
-       `teams.ch_database` (allow-list) и дропает только в них.
-       `ch_housekeeping` (Sender) и так multi-team — `splitDBTable`
-       режет `db.table` из `nodes.clickhouse_table`.
-     - Блок E: Receiver URL `/v1/request/<team_slug>/<node_path>`
-       (legacy без слога продолжает работать для default-team),
-       `NodeReader.Get(teamSlug, path)` через PG JOIN с teams, Redis
-       и L2-кеш учитывают team_slug в ключе.
-     - Блок F: `user_audit.team_id` пишется через `Actor.TeamID`, admin
-       по умолчанию видит только свой scope (`?team_id=*` для
-       override). SPA: страница `Settings → Teams` (admin-only,
-       CRUD + Members) и Topbar team-switcher (`<select>`, перезагрузка
-       всех queries после switch'а).
-   - Дальше: блок G — integration-тест end-to-end на изоляцию двух
-     команд + финальный апдейт IMPLEMENTATION.md.
+4. **Multi-tenancy v2** — ✅ Phase 10 закрыта (7 блоков, 18 коммитов).
+   - Блок A (foundation): миграция 0008 `teams` + `user_teams` + FK во
+     всех team-aware таблицах, `domain.Team` + `TeamRepository`, резолв
+     `defaultTeamID` в Web-bootstrap.
+   - Блок B (session + scope): `Session.CurrentTeamID` в Redis,
+     `/api/me/teams` + `/api/me/switch-team`, team-scope в Node CRUD
+     и `APITokenUsecase.Create`.
+   - Блок C (CH write): `TeamProvisioner` (PG-tx + CH `CREATE DATABASE`
+     атомарно), `/api/teams` CRUD + Members, `NodeUsecase` нормализует
+     `clickhouse_table` до `<team.ch_database>.<table>`, миграция 0009
+     для backfill legacy-данных.
+   - Блок D (CH read): scope в `LogsUsecase`/`ReplayUsecase`/`DryRunHandler`,
+     `OrphanScanner` на allow-list `teams.ch_database`, `ch_housekeeping`
+     работает multi-team автоматически.
+   - Блок E (Receiver URL): `NodeReader.Get(teamSlug, path)` через PG
+     JOIN, Redis-ключ `node:<team_slug>:<path>`, L2-кеш по
+     `<team_slug>/<path>`, URL `/v1/request/<team_slug>/<node_path>`
+     (legacy без слога продолжает работать для default-team).
+   - Блок F (UI + audit scope): `user_audit.team_id` через `Actor.TeamID`,
+     SPA `Settings → Teams` + Topbar team-switcher с
+     `qc.invalidateQueries()`.
+   - Блок G (regression): integration-тест
+     `TestMultiTenancy_Isolation_E2E` (10 свойств, testcontainers PG).
 
 Сделанное в Phase 7.14:
 
