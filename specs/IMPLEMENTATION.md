@@ -212,9 +212,11 @@
 ### §16 Out of scope (явно отложено в v2)
 
 - Multi-tenancy v2 — ◐ **Phase 10 в работе**.
-  - ✅ Phase 10.1: миграция 0008 (taxonомия `teams`, `user_teams`, FK на `nodes`/`users`/`api_tokens`/`user_audit`, `UNIQUE(team_id, path)`, сидинг 'default'-team).
+  - ✅ Phase 10.1: миграция 0008 (`teams`, `user_teams`, FK на `nodes`/`users`/`api_tokens`/`user_audit`, `UNIQUE(team_id, path)`, сидинг 'default'-team).
   - ✅ Phase 10.2: `domain.Team`, `TeamRepository` (PG-impl CRUD + membership), `User.TeamID → DefaultTeamID`, резолв UUID 'default'-team в Web-bootstrap и проброс в NodeUsecase/OrphanScanner.
-  - ⛔ Phase 10.3+: TeamProvisioner (PG-tx + CREATE DATABASE per team), CH read/write per-team, team-switcher в сессии, Receiver URL `/v1/request/<team_slug>/<path>`, UI «Команды», изоляция scope.
+  - ✅ Phase 10.B.1: `Session.CurrentTeamID` в Redis, `APIToken.TeamID`, endpoints `GET /api/me/teams` + `POST /api/me/switch-team` (последний только для session-cookie: API-токены ограничены одной командой). `AuthUsecase` теперь принимает `port.TeamRepo`.
+  - ✅ Phase 10.B.2: team-scope в `NodeUsecase.{Get,Update,Delete}` (cross-team → 404), `NodeHandler.Create` подставляет `currentTeamID(c)`, `APITokenUsecase.Create` принимает `teamID` и пишет его в `api_tokens.team_id`.
+  - ⛔ Phase 10.C+: TeamProvisioner (PG-tx + CREATE DATABASE per team), CH read/write per-team (Sender пишет в `<team.ch_database>.<table>`), Receiver URL `/v1/request/<team_slug>/<path>`, UI «Команды», изоляция audit/users/api_tokens по team.
 - ~~Webhook signature verification (`/v1/callback/`)~~ — реализовано в Phase 8.1.
 - ~~OpenTelemetry distributed tracing~~ — реализовано в Phase 8.2 (HTTP-server-span'ы) + 8.3 (HTTP outbound + gRPC unary client/server interceptor'ы) + 8.4 (Kafka headers propagation для async-пути). End-to-end trace через UI → Web → Receiver → {gRPC → Sender → внешний URL} / {Kafka → Sender-consumer → внешний URL}.
 - Notifications для операторов (Slack/Telegram).
@@ -503,6 +505,42 @@ real-sleep).
 docker-compose-стек начнут тянуть разные образы и расходиться по поведению
 (например, дефолтным retention'ам).
 
+### 4.15 Team-switcher: `current_team_id` в Redis-сессии, не в cookie
+
+Phase 10.B.1 кладёт UUID активной команды в `domain.Session.CurrentTeamID`
+и сериализует вместе с сессией в Redis. Cookie `nexus_session` остаётся
+неизменной — клиент при switch'е не получает новый токен, и сессия не
+инвалидируется. Это сознательное решение:
+
+- Cookie — стабильный идентификатор; UI не должен ребэйнднуть пользователя
+  при каждом switch.
+- Все живые табы того же юзера моментально получают новый scope (они
+  ходят в Redis по тому же session_token).
+- TTL сессии не меняется (Touch не вызывается специально из SwitchTeam).
+
+API-токены (`Bearer db_…`) имеют свою «псевдо-сессию», которую собирает
+[api_token_middleware](../internal/web/adapter/in/http/api_token_middleware.go) —
+там `CurrentTeamID` берётся из `api_tokens.team_id` и переключать его
+нельзя ([routes.go](../internal/web/adapter/in/http/routes.go):
+`POST /api/me/switch-team` обёрнут `RequireSessionOnly()`).
+
+### 4.16 Cross-team Update узла возвращает ErrPermissionDenied, не 404
+
+Phase 10.B.2 различает два сценария в `NodeUsecase.Update`:
+
+- `old.TeamID != teamID` (узел из чужой команды): `ErrNodeNotFound` (404).
+  Скрываем существование чужих узлов — нельзя отличить «нет узла» от
+  «узел есть, но в другой команде».
+- `n.TeamID != old.TeamID` (попытка перенести узел): `ErrPermissionDenied`
+  (403). Этот код срабатывает только если caller сам положил в `n.TeamID`
+  чужой UUID; handler [node_handler.go](../internal/web/adapter/in/http/node_handler.go)
+  всегда делает `updated.TeamID = existing.TeamID` до вызова, так что
+  через UI попасть в этот путь нельзя — но usecase защищён от прямых
+  вызовов (CLI, тесты).
+
+Перенос узла между командами — отдельная операция (не часть Update).
+Будет в блоке F вместе с UI «Команды».
+
 ### 4.14 `defaultTeamID` резолвится в Web-bootstrap, не из конфига
 
 Phase 10.2 ввела `domain.Team` и `TeamRepository`, но существующий
@@ -640,15 +678,17 @@ make proto                                     # перегенерация send
    из env. См. также `make rotate-encryption-key`.
 4. **Multi-tenancy v2** — фаза 10 в работе.
    - Сделано: Phase 10.1 (миграция 0008 `teams` + `user_teams` + FK),
-     Phase 10.2 (`domain.Team`, `TeamRepository`, переименование
-     `User.TeamID → DefaultTeamID`, резолв `defaultTeamID` в Web-bootstrap).
+     Phase 10.2 (`domain.Team`, `TeamRepository`, `User.TeamID →
+     DefaultTeamID`, резолв `defaultTeamID` в Web-bootstrap), Phase
+     10.B.1 (`Session.CurrentTeamID`, endpoints `GET /api/me/teams`,
+     `POST /api/me/switch-team`, API-токены ограничены одной командой),
+     Phase 10.B.2 (team-scope в `NodeUsecase.{Get,Update,Delete}` и
+     `NodeHandler.Create`, `APITokenUsecase.Create(teamID)`).
    - Дальше: TeamProvisioner (PG-tx + `CREATE DATABASE per team`), CH
      read/write per-team (Sender пишет в `<team.ch_database>.<table>`,
      Web log_reader/orphan_scanner/ch_housekeeping расширяется на
-     allow-list БД), team-switcher в сессии (`current_team_id` в Redis,
-     `POST /api/v1/me/switch-team`), Receiver URL
-     `/v1/request/<team_slug>/<path>`, API-токены с team_id,
-     UI «Команды» + Members.
+     allow-list БД), Receiver URL `/v1/request/<team_slug>/<path>`,
+     scope в audit/users, UI «Команды» + Members.
 
 Сделанное в Phase 7.14:
 
