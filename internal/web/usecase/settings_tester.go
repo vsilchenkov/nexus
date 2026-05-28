@@ -53,6 +53,7 @@ type SettingsTester struct {
 	cfg           *config.Config
 	chFactory     ClickHouseFactory
 	sentryFactory SentryClientFactory
+	telegram      TelegramSender
 	projectName   string
 	version       string
 	pingTimeout   time.Duration
@@ -68,6 +69,7 @@ func NewSettingsTester(
 	cfg *config.Config,
 	chFactory ClickHouseFactory,
 	sentryFactory SentryClientFactory,
+	telegram TelegramSender,
 	projectName, version string,
 	logger logging.Logger,
 ) *SettingsTester {
@@ -76,6 +78,7 @@ func NewSettingsTester(
 		cfg:           cfg,
 		chFactory:     chFactory,
 		sentryFactory: sentryFactory,
+		telegram:      telegram,
 		projectName:   projectName,
 		version:       version,
 		pingTimeout:   5 * time.Second,
@@ -170,6 +173,43 @@ func (t *SettingsTester) TestSentry(ctx context.Context, patch *domain.SentrySet
 		return &TestResult{OK: false, Error: "sentry flush timed out"}, nil
 	}
 	return &TestResult{OK: true, LatencyMs: time.Since(start).Milliseconds()}, nil
+}
+
+// TestTelegram шлёт тестовое сообщение в Telegram с merge'нутыми настройками
+// (§20.7). Маскированный bot_token в patch не используется — merge оставит
+// сохранённый реальный токен. Не сохраняет настройки.
+func (t *SettingsTester) TestTelegram(ctx context.Context, patch *domain.TelegramSettings) (*TestResult, error) {
+	current, err := t.repo.Get(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read current settings: %w", err)
+	}
+	merged := mergeAppSettings(current, &domain.AppSettings{
+		Notifications: domain.NotificationsSettings{Telegram: derefTelegram(patch)},
+	})
+	tg := merged.Notifications.Telegram
+	if tg.BotToken == nil || *tg.BotToken == "" {
+		return &TestResult{OK: false, Error: "telegram bot_token is empty"}, nil
+	}
+	if tg.ChatID == nil || *tg.ChatID == "" {
+		return &TestResult{OK: false, Error: "telegram chat_id is empty"}, nil
+	}
+	if t.telegram == nil {
+		return nil, errors.New("telegram sender is nil")
+	}
+	sendCtx, cancel := context.WithTimeout(ctx, t.pingTimeout)
+	defer cancel()
+	start := time.Now()
+	if err := t.telegram.Send(sendCtx, *tg.BotToken, *tg.ChatID, "✅ Nexus: test notification"); err != nil {
+		return &TestResult{OK: false, Error: err.Error()}, nil
+	}
+	return &TestResult{OK: true, LatencyMs: time.Since(start).Milliseconds()}, nil
+}
+
+func derefTelegram(p *domain.TelegramSettings) domain.TelegramSettings {
+	if p == nil {
+		return domain.TelegramSettings{}
+	}
+	return *p
 }
 
 // applyClickHouseSettings — overlay не-nil полей из domain.ClickHouseSettings

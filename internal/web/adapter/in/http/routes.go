@@ -126,6 +126,8 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			// Test connection с patch'ем настроек (Phase 6.3.2.6, §7.10).
 			authedAdmin.POST("/settings/clickhouse/test", h.AppSettings.TestClickHouse)
 			authedAdmin.POST("/settings/sentry/test", h.AppSettings.TestSentry)
+			// Тестовое уведомление в Telegram (§20.7).
+			authedAdmin.POST("/settings/notifications/test", h.AppSettings.TestTelegram)
 		}
 
 		// Шаблоны CH-таблиц (§19): мутации и verify — admin-only.

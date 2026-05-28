@@ -35,6 +35,7 @@ import (
 	redispf "nexus/internal/platform/redis"
 	"nexus/internal/platform/reloader"
 	sentrypf "nexus/internal/platform/sentry"
+	"nexus/internal/platform/telegram"
 	httpadapter "nexus/internal/web/adapter/in/http"
 	chreader "nexus/internal/web/adapter/out/clickhouse"
 	pgrepo "nexus/internal/web/adapter/out/postgres"
@@ -147,9 +148,11 @@ func (a *App) Start(ctx context.Context) error {
 	appSettingsRepo := pgrepo.NewAppSettingsRepoPg(a.pg, a.logger)
 	reloadPublisher := reloader.NewPublisher(a.redis)
 	appSettingsUC := usecase.NewAppSettingsUsecase(appSettingsRepo, auditUC, reloadPublisher, a.logger)
+	// Telegram-клиент (§20): для тестовой отправки и планировщика уведомлений.
+	telegramClient := telegram.New(a.logger)
 	// SettingsTester (Phase 6.3.2.6): test connection без сохранения.
 	settingsTester := usecase.NewSettingsTester(
-		appSettingsRepo, a.cfg, chpf.New, usecase.DefaultSentryClientFactory,
+		appSettingsRepo, a.cfg, chpf.New, usecase.DefaultSentryClientFactory, telegramClient,
 		a.cfg.Build.ProjectName, a.cfg.Build.Version, a.logger,
 	)
 
@@ -213,6 +216,19 @@ func (a *App) Start(ctx context.Context) error {
 		// Manager.Reload swap'нет conn — LogReaderCH сразу пойдёт через новый.
 		reloadSub.Register(reloader.SectionClickHouse,
 			bootstrap.ClickHouseReloader(a.pg, a.cfg, a.chMgr, nil, a.logger))
+
+		// Планировщик Telegram-уведомлений (§20). Требует LogReader (CountErrors),
+		// поэтому живёт в CH-блоке. Расписание — из app_settings; пересоздаётся
+		// при hot-reload секции notifications.
+		notifScheduler := usecase.NewNotificationScheduler(
+			appSettingsUC, teamRepo, nodeRepo, logReader, telegramClient,
+			rediscache.NewNotifLock(a.redis), rediscache.NewNotifCheckpoint(a.redis), a.logger,
+		)
+		reloadSub.Register(reloader.SectionNotifications, func(ctx context.Context) error {
+			notifScheduler.Reschedule(ctx)
+			return nil
+		})
+		go notifScheduler.Run(ctx)
 	} else {
 		// CH-клиент недоступен — но overlay в cfg всё равно полезно обновлять,
 		// чтобы при следующем рестарте подхватились свежие значения.
