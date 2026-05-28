@@ -46,6 +46,10 @@ const (
 
 	ActionAppSettingsUpdate = "app_settings.update"
 
+	ActionCHTemplateCreate = "ch_template.create"
+	ActionCHTemplateUpdate = "ch_template.update"
+	ActionCHTemplateDelete = "ch_template.delete"
+
 	ActionTeamSwitch = "team.switch"
 
 	ActionTeamCreate       = "team.create"
