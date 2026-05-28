@@ -1,9 +1,11 @@
 {
   "app": { "title": "Nexus" },
   "auth": {
-    "login": "Sign in",
+    "login": "Sign in to the panel",
     "login_button": "Sign in",
     "login_failed": "Invalid login or password",
+    "login_field": "Login",
+    "password_field": "Password",
     "logout": "Sign out"
   },
   "nav": {
@@ -221,7 +223,8 @@
       "empty": "No tokens yet"
     },
     "language": {
-      "title": "Language",
+      "title": "UI language",
+      "subtitle": "Applies to the current user only. Takes effect immediately.",
       "note": "Applies to UI only; logs, metrics and ClickHouse stay in English."
     },
     "theme": { "title": "Theme", "light": "Light", "dark": "Dark" },
