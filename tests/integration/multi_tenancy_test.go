@@ -57,6 +57,7 @@ func TestMultiTenancy_Isolation_E2E(t *testing.T) {
 	nodeUC := usecase.NewNodeUsecase(
 		nodeRepo, nopCache{}, auditUC, uow, teamRepo,
 		nil, // provisioner: CH-rename не тестируется (нет ClickHouse в этом тесте)
+		nil, // templates: §19 не тестируется здесь
 		time.Minute, 0, defaultTeam, logger,
 	)
 
@@ -211,7 +212,7 @@ func TestMultiTenancy_NodeMove_E2E(t *testing.T) {
 	defaultTeam := resolveDefaultTeamID(t, ctx, pool)
 	nodeUC := usecase.NewNodeUsecase(
 		nodeRepo, nopCache{}, auditUC, uow, teamRepo,
-		nil, time.Minute, 0, defaultTeam, logger,
+		nil, nil, time.Minute, 0, defaultTeam, logger,
 	)
 
 	acme := &domain.Team{Slug: "acme", Name: "Acme", CHDatabase: domain.CHDatabaseForSlug("acme")}

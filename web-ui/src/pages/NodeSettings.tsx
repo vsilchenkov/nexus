@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { ArrowLeft, Beaker, Trash2 } from "lucide-react";
 
-import { api, type Node } from "../api/client";
+import { api, type Node, type CHTemplate } from "../api/client";
 import { Topbar } from "../components/Topbar";
 import { DryRunDialog } from "../components/DryRunDialog";
 
@@ -24,6 +24,7 @@ type Form = {
   retry_count: number;
   retry_backoff_ms: number;
   clickhouse_table: string;
+  clickhouse_template_id: string;
   clickhouse_retention_days: number;
   status: "enabled" | "disabled" | "paused";
   log_request_body: boolean;
@@ -46,6 +47,7 @@ const emptyForm: Form = {
   retry_count: 0,
   retry_backoff_ms: 1000,
   clickhouse_table: "",
+  clickhouse_template_id: "",
   clickhouse_retention_days: 90,
   status: "enabled",
   log_request_body: false,
@@ -68,6 +70,12 @@ export default function NodeSettings() {
   const [form, setForm] = useState<Form>(emptyForm);
   const [showDryRun, setShowDryRun] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // §19: список шаблонов CH-таблиц для селектора.
+  const templates = useQuery({
+    queryKey: ["ch-templates"],
+    queryFn: () => api.get<{ items: CHTemplate[] }>("/api/ch-templates"),
+  });
 
   useEffect(() => {
     if (existing.data) {
@@ -289,12 +297,28 @@ export default function NodeSettings() {
 
           {/* ClickHouse */}
           <Section title="clickhouse">
+            <Field label={t("node.fields.ch_template")}>
+              <select
+                className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none border border-bg-muted focus:border-accent"
+                value={form.clickhouse_template_id}
+                onChange={(e) => set("clickhouse_template_id", e.target.value)}
+              >
+                <option value="">{t("node.fields.ch_template_manual")}</option>
+                {templates.data?.items.map((tpl) => (
+                  <option key={tpl.id} value={tpl.id}>
+                    {tpl.name}
+                    {tpl.is_default ? " ★" : ""}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-fg-muted mt-1">{t("node.fields.ch_template_hint")}</p>
+            </Field>
             <Field label="clickhouse_table">
               <input
                 className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none border border-bg-muted focus:border-accent font-mono"
                 value={form.clickhouse_table}
                 onChange={(e) => set("clickhouse_table", e.target.value)}
-                placeholder="vika_logs.webhook_send"
+                placeholder="webhook_send"
               />
             </Field>
             <Field label="retention_days">

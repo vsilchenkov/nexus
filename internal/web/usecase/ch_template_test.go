@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -53,7 +54,7 @@ func (r *memCHTemplateRepo) Create(_ context.Context, t *domain.CHTemplate) erro
 		}
 	}
 	r.seq++
-	t.ID = string(rune('a'+r.seq)) + "-id"
+	t.ID = fmt.Sprintf("00000000-0000-0000-0000-%012d", r.seq)
 	cp := *t
 	r.items[t.ID] = &cp
 	return nil
@@ -77,10 +78,14 @@ func (r *memCHTemplateRepo) CountNodesUsing(_ context.Context, id string) (int, 
 	return r.nodesUsing[id], nil
 }
 
-// verifyProvisioner — port.TeamProvisioner, фиксирует вызовы VerifyTemplate.
+// verifyProvisioner — port.TeamProvisioner, фиксирует вызовы VerifyTemplate
+// и CreateTable (используется в тестах §19 usecase'ов).
 type verifyProvisioner struct {
-	verifiedDB string
-	verifyErr  error
+	verifiedDB    string
+	verifyErr     error
+	createdTable  string
+	createdDDL    string
+	createTableEr error
 }
 
 func (p *verifyProvisioner) CreateDatabase(context.Context, string) error { return nil }
@@ -88,7 +93,11 @@ func (p *verifyProvisioner) DropDatabase(context.Context, string) error   { retu
 func (p *verifyProvisioner) RenameTable(context.Context, string, string) error {
 	return nil
 }
-func (p *verifyProvisioner) CreateTable(context.Context, string, string) error { return nil }
+func (p *verifyProvisioner) CreateTable(_ context.Context, table, ddl string) error {
+	p.createdTable = table
+	p.createdDDL = ddl
+	return p.createTableEr
+}
 func (p *verifyProvisioner) VerifyTemplate(_ context.Context, db string, _ *domain.CHTemplate) error {
 	p.verifiedDB = db
 	return p.verifyErr

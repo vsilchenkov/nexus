@@ -119,6 +119,7 @@ func (a *App) Start(ctx context.Context) error {
 	auditRepo := pgrepo.NewAuditRepoPg(a.pg, a.logger)
 	auditUC := usecase.NewAuditUsecase(auditRepo, a.logger)
 	uow := pgrepo.NewUnitOfWorkPg(a.pg, a.cipher, a.logger)
+	chTemplateRepo := pgrepo.NewCHTemplateRepoPg(a.pg, a.logger)
 	nodeUC := usecase.NewNodeUsecase(
 		nodeRepo,
 		nodeCache,
@@ -126,6 +127,7 @@ func (a *App) Start(ctx context.Context) error {
 		uow,
 		teamRepo,
 		teamProvisioner,
+		chTemplateRepo,
 		time.Duration(a.cfg.Redis.NodeTTLSec)*time.Second,
 		a.cfg.Web.NodesHardLimit,
 		defaultTeamID,
@@ -164,9 +166,9 @@ func (a *App) Start(ctx context.Context) error {
 	auditHandler := httpadapter.NewAuditHandler(auditUC, a.logger)
 	appSettingsHandler := httpadapter.NewAppSettingsHandler(appSettingsUC, settingsTester, a.logger)
 
-	// Шаблоны CH-таблиц (§19). Repo и usecase создаём всегда (GET работает без
-	// ClickHouse); provisioner может быть nil — Verify тогда вернёт 503.
-	chTemplateRepo := pgrepo.NewCHTemplateRepoPg(a.pg, a.logger)
+	// Шаблоны CH-таблиц (§19). chTemplateRepo создан выше (для NodeUsecase);
+	// usecase/handler создаём всегда (GET работает без ClickHouse); provisioner
+	// может быть nil — Verify тогда вернёт 503.
 	chTemplateUC := usecase.NewCHTemplateUsecase(chTemplateRepo, teamProvisioner, teamRepo, auditUC, a.logger)
 	chTemplateHandler := httpadapter.NewCHTemplateHandler(chTemplateUC, a.logger)
 
