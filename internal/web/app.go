@@ -123,7 +123,7 @@ func (a *App) Start(ctx context.Context) error {
 	sessionRepo := rediscache.NewSessionRepoRedis(a.redis)
 	sessionTTL := time.Duration(a.cfg.Redis.SessionTTLSec) * time.Second
 	authUC := usecase.NewAuthUsecase(userRepo, sessionRepo, teamRepo, auditUC, sessionTTL, a.logger)
-	userUC := usecase.NewUserUsecase(userRepo, sessionRepo, auditUC, a.logger)
+	userUC := usecase.NewUserUsecase(userRepo, sessionRepo, teamRepo, auditUC, defaultTeamID, a.logger)
 
 	tokenRepo := pgrepo.NewAPITokenRepoPg(a.pg, a.logger)
 	tokenUC := usecase.NewAPITokenUsecase(tokenRepo, userRepo, auditUC, a.logger)

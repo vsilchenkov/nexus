@@ -16,7 +16,10 @@ import (
 func newUserUC(users *authUserRepo, sessions *memSessionRepo) (*UserUsecase, *stubAuditRepo) {
 	repo := &stubAuditRepo{}
 	audit := NewAuditUsecase(repo, logging.NewNoop())
-	return NewUserUsecase(users, sessions, audit, logging.NewNoop()), repo
+	// nopTeamRepo и defaultTeamID — multi-tenancy v2 (Phase 11.A).
+	uc := NewUserUsecase(users, sessions, &nopTeamRepo{}, audit,
+		"00000000-0000-0000-0000-000000000000", logging.NewNoop())
+	return uc, repo
 }
 
 func TestUserUC_Get_Delegates(t *testing.T) {
@@ -46,7 +49,7 @@ func TestUserUC_Create_InvalidRole(t *testing.T) {
 	t.Parallel()
 	uc, _ := newUserUC(newAuthUserRepo(), newMemSessionRepo())
 
-	err := uc.Create(context.Background(), SystemActor(),
+	err := uc.Create(context.Background(), SystemActor(), "",
 		&domain.User{ID: "u1", Login: "alice", Role: "editor"}, "longenough")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid role")
@@ -56,7 +59,7 @@ func TestUserUC_Create_PasswordTooShort(t *testing.T) {
 	t.Parallel()
 	uc, _ := newUserUC(newAuthUserRepo(), newMemSessionRepo())
 
-	err := uc.Create(context.Background(), SystemActor(),
+	err := uc.Create(context.Background(), SystemActor(), "",
 		&domain.User{ID: "u1", Login: "alice", Role: domain.UserRoleViewer}, "short")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "at least 8")
@@ -68,7 +71,7 @@ func TestUserUC_Create_DefaultsLang(t *testing.T) {
 	uc, _ := newUserUC(users, newMemSessionRepo())
 
 	u := &domain.User{ID: "u1", Login: "alice", Role: domain.UserRoleAdmin, Lang: ""}
-	require.NoError(t, uc.Create(context.Background(), SystemActor(), u, ""))
+	require.NoError(t, uc.Create(context.Background(), SystemActor(), "", u, ""))
 	assert.Equal(t, domain.UserLangEN, u.Lang)
 }
 
@@ -78,7 +81,7 @@ func TestUserUC_Create_Happy(t *testing.T) {
 	uc, audit := newUserUC(users, newMemSessionRepo())
 
 	u := &domain.User{ID: "u1", Login: "alice", Role: domain.UserRoleAdmin, Lang: domain.UserLangRU}
-	require.NoError(t, uc.Create(context.Background(), SystemActor(), u, "secret123"))
+	require.NoError(t, uc.Create(context.Background(), SystemActor(), "", u, "secret123"))
 
 	assert.NotEmpty(t, u.PasswordHash, "password must be hashed")
 	assert.NotEqual(t, "secret123", u.PasswordHash, "plaintext must not be stored")
@@ -90,13 +93,63 @@ func TestUserUC_Create_Happy(t *testing.T) {
 	assert.Equal(t, string(domain.UserRoleAdmin), audit.entries[0].Details["role"])
 }
 
+// recordingTeamRepo — фиксирует вызовы AddMember (Phase 11.A).
+type recordingTeamRepo struct {
+	nopTeamRepo
+	addUserID string
+	addTeamID string
+	addRole   domain.TeamRole
+	addCalls  int
+}
+
+func (r *recordingTeamRepo) AddMember(_ context.Context, userID, teamID string, role domain.TeamRole) error {
+	r.addCalls++
+	r.addUserID, r.addTeamID, r.addRole = userID, teamID, role
+	return nil
+}
+
+// TestUserUC_Create_AddsMembership: при создании юзера в команде должна
+// появиться строка в user_teams (иначе юзер не попадёт в scoped-список).
+func TestUserUC_Create_AddsMembership(t *testing.T) {
+	t.Parallel()
+	users := newAuthUserRepo()
+	teams := &recordingTeamRepo{}
+	audit := NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop())
+	uc := NewUserUsecase(users, newMemSessionRepo(), teams, audit,
+		"default-team-uuid", logging.NewNoop())
+
+	u := &domain.User{ID: "u9", Login: "bob", Role: domain.UserRoleViewer}
+	require.NoError(t, uc.Create(context.Background(), SystemActor(), "team-acme", u, "secret123"))
+
+	assert.Equal(t, 1, teams.addCalls, "Create must add user_teams membership")
+	assert.Equal(t, "u9", teams.addUserID)
+	assert.Equal(t, "team-acme", teams.addTeamID)
+	assert.Equal(t, domain.TeamRoleMember, teams.addRole)
+}
+
+// TestUserUC_Create_AddsMembership_DefaultFallback: пустой teamID →
+// defaultTeamID.
+func TestUserUC_Create_AddsMembership_DefaultFallback(t *testing.T) {
+	t.Parallel()
+	users := newAuthUserRepo()
+	teams := &recordingTeamRepo{}
+	audit := NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop())
+	uc := NewUserUsecase(users, newMemSessionRepo(), teams, audit,
+		"default-team-uuid", logging.NewNoop())
+
+	u := &domain.User{ID: "u10", Login: "carol", Role: domain.UserRoleViewer}
+	require.NoError(t, uc.Create(context.Background(), SystemActor(), "", u, "secret123"))
+
+	assert.Equal(t, "default-team-uuid", teams.addTeamID, "empty teamID falls back to default")
+}
+
 func TestUserUC_Create_RepoError(t *testing.T) {
 	t.Parallel()
 	users := newAuthUserRepo()
 	users.createErr = errors.New("db down")
 	uc, audit := newUserUC(users, newMemSessionRepo())
 
-	err := uc.Create(context.Background(), SystemActor(),
+	err := uc.Create(context.Background(), SystemActor(), "",
 		&domain.User{ID: "u1", Login: "alice", Role: domain.UserRoleAdmin}, "")
 	require.Error(t, err)
 	// При ошибке Create в audit ничего не должно попасть.

@@ -80,6 +80,7 @@ func toUserResp(u *domain.User) userResponse {
 // @Router   /api/users [get]
 func (h *UserHandler) List(c *gin.Context) {
 	users, err := h.uc.List(c.Request.Context(), port.ListUsersFilter{
+		TeamID: currentTeamID(c),
 		Search: c.Query("search"),
 	})
 	if err != nil {
@@ -141,7 +142,7 @@ func (h *UserHandler) Create(c *gin.Context) {
 	if u.Lang == "" {
 		u.Lang = domain.UserLangEN
 	}
-	if err := h.uc.Create(c.Request.Context(), userActor(c), u, req.Password); err != nil {
+	if err := h.uc.Create(c.Request.Context(), userActor(c), currentTeamID(c), u, req.Password); err != nil {
 		if errors.Is(err, domain.ErrUserAlreadyExists) {
 			c.JSON(http.StatusConflict, gin.H{"error": "login already exists"})
 			return
