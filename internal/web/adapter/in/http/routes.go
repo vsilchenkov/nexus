@@ -15,6 +15,7 @@ type Handlers struct {
 	DryRun      *DryRunHandler
 	Replay      *ReplayHandler
 	Logs        *LogsHandler
+	Metrics     *MetricsHandler
 	AppSettings *AppSettingsHandler
 	Orphan      *OrphanHandler
 	CHTemplate  *CHTemplateHandler
@@ -80,6 +81,16 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		// Replay одного запроса (§7.4.1): только session-cookie (mutating).
 		if h.Replay != nil {
 			authed.POST("/logs/:id/replay", h.Replay.Replay)
+		}
+
+		// Метрики панели (§21): KPI/throughput/график. Read-only, scope
+		// metrics:read для API-токенов. Эндпоинты деградируют, если нет
+		// Prometheus/ClickHouse (см. MetricsUsecase), поэтому регистрируются
+		// всегда.
+		if h.Metrics != nil {
+			authed.GET("/metrics/overview", RequireScope("metrics:read"), h.Metrics.Overview)
+			authed.GET("/metrics/nodes", RequireScope("metrics:read"), h.Metrics.NodesOverview)
+			authed.GET("/metrics/nodes/:id", RequireScope("metrics:read"), h.Metrics.Node)
 		}
 
 		// Mutating — только session-cookie + admin (API-токены сюда не пускаем).

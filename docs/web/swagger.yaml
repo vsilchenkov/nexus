@@ -453,6 +453,21 @@ definitions:
     - login
     - password
     type: object
+  internal_web_adapter_in_http.overviewKPIDTO:
+    properties:
+      error_rate:
+        type: number
+      errors_24h:
+        type: integer
+      incoming_24h:
+        type: integer
+      kafka_queue:
+        type: integer
+      outgoing_24h:
+        type: integer
+      prometheus_available:
+        type: boolean
+    type: object
   internal_web_adapter_in_http.switchTeamRequest:
     properties:
       team_id:
@@ -1230,6 +1245,80 @@ paths:
       summary: Список команд, в которых состоит текущий пользователь.
       tags:
       - auth
+  /api/metrics/nodes:
+    get:
+      description: Источник — Prometheus (sum by node). Ключ node = path узла. Без
+        Prometheus — пустой список с prometheus_available=false.
+      parameters:
+      - description: 15m | 1h | 24h | 7d (default 1h)
+        in: query
+        name: range
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      - ApiTokenAuth: []
+      summary: Per-node throughput за окно (§21).
+      tags:
+      - metrics
+  /api/metrics/nodes/{id}:
+    get:
+      description: Источник — ClickHouse (точные перцентили). Узел без таблицы логов
+        → нули с chart_available=false.
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 15m | 1h | 24h | 7d (default 1h)
+        in: query
+        name: range
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      - ApiTokenAuth: []
+      summary: KPI + временной ряд графика узла (§21).
+      tags:
+      - metrics
+  /api/metrics/overview:
+    get:
+      description: Источник — Prometheus. Без настроенного prometheus.url возвращает
+        нули с prometheus_available=false.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.overviewKPIDTO'
+      security:
+      - CookieAuth: []
+      - ApiTokenAuth: []
+      summary: Глобальные KPI панели за 24ч (§21).
+      tags:
+      - metrics
   /api/nodes:
     get:
       parameters:

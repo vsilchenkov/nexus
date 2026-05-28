@@ -98,8 +98,14 @@
 | **`nexus_requests_total` + `nexus_request_duration_seconds`** | ✅ Phase 6.1 | Gin middleware [platform/metrics/gin.go](../internal/platform/metrics/gin.go) — Receiver/Web; gRPC [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go) и async [usecase/async.go](../internal/sender/usecase/async.go) — Sender |
 | **`nexus_kafka_lag`** | ✅ Phase 6.1 | reporter в [sender/app.go](../internal/sender/app.go) `reportKafkaLag()` — раз в 15 сек снимает `Stats()` со всех consumer-инстансов |
 | **`nexus_clickhouse_buffer_size` / `_errors_total` / `_dropped_total` / `_fallback_total`** | ✅ Phase 6.1 | [chlog/writer.go](../internal/sender/adapter/out/chlog/writer.go) обновляет в `append`/`flushTable`/`Write` |
+| **HTTP-API метрик для панели (§21)** | ✅ Phase 21.1 | Web опрашивает Prometheus query API: [adapter/out/prometheus/client.go](../internal/web/adapter/out/prometheus/client.go) (глобальные KPI/очередь/throughput) + per-node агрегаты из ClickHouse [adapter/out/clickhouse/metrics_reader.go](../internal/web/adapter/out/clickhouse/metrics_reader.go) (точные p95/p99). Usecase [usecase/metrics.go](../internal/web/usecase/metrics.go), порт [port/metrics_provider.go](../internal/web/usecase/port/metrics_provider.go), handler [metrics_handler.go](../internal/web/adapter/in/http/metrics_handler.go): `GET /api/metrics/overview`, `/api/metrics/nodes`, `/api/metrics/nodes/{id}`. Конфиг `prometheus.url` ([config.go](../internal/platform/config/config.go)); деградация при отсутствии Prometheus. |
 
 ### §7 Веб-интерфейс
+
+> **Phase 21 (§21):** все экраны §7 переведены на единый визуальный эталон
+> ([nexus_ui.html](nexus_ui.html)) — дизайн-токены, UI-kit, app-shell (левый
+> сайдбар + топбар), вкладки узла, KPI/графики из API метрик. Подробности —
+> [sections/21-ui-redesign.md](sections/21-ui-redesign.md) и разделы 4.11.2/4.11.3 ниже.
 
 | Пункт | Статус | Где |
 |---|---|---|
@@ -529,6 +535,52 @@ gRPC server, chlog.Writer и AsyncProcessor — глобальной registry м
 Это даёт возможность скрапить три сервиса с одинаковыми именами метрик и фильтровать
 их в Grafana через `service="receiver"`. Метка `node` — динамическая (path-параметр
 из `/v1/request/.../*path`), для не-V1 маршрутов остаётся пустой.
+
+### 4.11.2 Metrics API панели — гибрид Prometheus + ClickHouse, с деградацией (Phase 21.1)
+
+Дашборды панели (§21) не считают агрегаты на лету в Go, а тянут готовые из двух
+источников по принципу «каждому показателю — лучший источник»:
+
+- **Prometheus** ([adapter/out/prometheus/client.go](../internal/web/adapter/out/prometheus/client.go))
+  — глобальные KPI Overview (incoming = `sum(increase(nexus_requests_total{service="receiver"}[24h]))`,
+  outgoing = то же для `service="sender"`, errors = `…,status=~"0|[45].."`), очередь Kafka
+  (`sum(nexus_kafka_lag)`) и per-node throughput (`sum by (node)(…)`). Это **query API**
+  сервера Prometheus (`prometheus.url`), а не scrape-эндпоинт `/metrics`. Метка `node`
+  совпадает с `domain.Node.Path` — поэтому per-node merge на фронте идёт по path.
+- **ClickHouse** ([adapter/out/clickhouse/metrics_reader.go](../internal/web/adapter/out/clickhouse/metrics_reader.go))
+  — per-node KPI и ряд графика на странице узла: точные `quantile(0.95/0.99)(duration)`,
+  count/delivered/errors и time-bucket-ряд по таблице логов узла. Точные перцентили из CH,
+  а не из histogram-бакетов Prometheus.
+
+Почему так: outgoing/delivered/перцентили достоверно есть только в CH-логах (их пишет
+Sender), а очередь Kafka и кросс-сервисный throughput — только в Prometheus. Оба источника
+**опциональны**: при пустом `prometheus.url` провайдер не создаётся (nil), `MetricsUsecase`
+отдаёт нули с `prometheus_available=false`; узел без `clickhouse_table` → `chart_available=false`.
+Это сделано намеренно, чтобы поллинг UI не спамил 500-ками, когда Prometheus не настроен
+(см. [usecase/metrics.go](../internal/web/usecase/metrics.go)).
+
+### 4.11.3 Редизайн UI под эталон: дизайн-токены + UI-kit + app-shell (Phase 21.2)
+
+Фронтенд приводится к визуальному эталону [specs/nexus_ui.html](nexus_ui.html) (§21). Базис:
+
+- **Дизайн-токены** ([web-ui/src/styles/globals.css](../web-ui/src/styles/globals.css) +
+  [tailwind.config.js](../web-ui/tailwind.config.js)) — палитра/радиусы/шрифты эталона как
+  CSS-переменные (RGB-тройки для opacity). Тёмная тема — основная, светлая зеркальная.
+  Шрифты Inter + JetBrains Mono подключены ссылкой в [index.html](../web-ui/index.html) с
+  graceful-fallback на системный стек.
+- **UI-kit** [web-ui/src/components/ui/](../web-ui/src/components/ui/) — атомы эталона
+  (Button, Input/Select/Textarea/Field, Card, SectionHead, Modal, Chip, Pill, Kpi/KpiRow,
+  Seg, Hint, PickGroup, Toggle3). Снимает дублирование инлайн-классов на экранах.
+- **App-shell** — постоянный левый сайдбар [Sidebar.tsx](../web-ui/src/components/Sidebar.tsx)
+  + тонкий топбар [Topbar.tsx](../web-ui/src/components/Topbar.tsx) (крошки, team-switcher,
+  переключатель языка и **темы**), композит [AppShell.tsx](../web-ui/src/components/AppShell.tsx).
+  В [App.tsx](../web-ui/src/App.tsx) защищённые маршруты идут layout-route'ом через `<Outlet/>`
+  (раньше каждый экран рисовал свой `<Topbar/>`). Тема — общий хелпер
+  [lib/theme.ts](../web-ui/src/lib/theme.ts).
+
+Экраны перестилизовываются поэтапно (Phase 21.3+); до этого они отрисовываются в новом
+shell с обновлённой палитрой. Встроенный SPA в `internal/web/static` пересобирается
+(`make build-ui`) в конце, когда UI завершён.
 
 ### 4.12.1 L2 in-memory кеш узлов — декоратор поверх Reader, stale-fallback по StaleTTL
 

@@ -15,9 +15,22 @@ type Config struct {
 	Redis      RedisSection      `yaml:"redis"`
 	ClickHouse ClickHouseSection `yaml:"clickhouse"`
 	Kafka      KafkaSection      `yaml:"kafka"`
+	Prometheus PrometheusSection `yaml:"prometheus"`
 	Receiver   ReceiverSection   `yaml:"receiver"`
 	Sender     SenderSection     `yaml:"sender"`
 	Web        WebSection        `yaml:"web"`
+}
+
+// PrometheusSection — адрес Prometheus-сервера, который Web-сервис опрашивает
+// для дашбордов метрик панели (§21, §6). Это НЕ scrape-эндпоинт /metrics
+// самих сервисов, а источник для query/query_range.
+//
+// URL пуст → API метрик деградирует: глобальные KPI (входящие/исходящие за
+// 24ч), очередь Kafka и per-node throughput недоступны; per-node счётчики и
+// перцентили на странице узла продолжают считаться из ClickHouse.
+type PrometheusSection struct {
+	URL       string `yaml:"url"`
+	TimeoutMs int    `yaml:"timeout_ms"`
 }
 
 // OtelSection — параметры OpenTelemetry distributed tracing (§16 ТЗ, Phase 8.2).

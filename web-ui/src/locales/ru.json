@@ -1,27 +1,47 @@
 {
   "app": { "title": "Nexus" },
   "auth": {
-    "login": "Вход",
+    "login": "Войдите в панель управления",
     "login_button": "Войти",
     "login_failed": "Неверный логин или пароль",
+    "login_field": "Логин",
+    "password_field": "Пароль",
     "logout": "Выйти"
   },
   "nav": {
     "nodes": "Узлы",
     "audit": "Аудит",
     "settings": "Настройки",
-    "team": "Команда"
+    "team": "Команда",
+    "language": "Язык",
+    "theme": "Тема"
+  },
+  "role": {
+    "admin": "полный доступ",
+    "viewer": "только просмотр"
   },
   "overview": {
     "title": "Узлы",
     "new_node": "Новый узел",
     "search_placeholder": "Поиск по пути или URL…",
+    "kpi": {
+      "incoming": "Входящие за 24ч",
+      "outgoing": "Исходящие за 24ч",
+      "queue": "Очередь Kafka",
+      "errors": "Ошибки за 24ч"
+    },
+    "filter": { "all_methods": "Все методы" },
+    "view": { "table": "Таблица", "cards": "Карточки" },
+    "status": { "ok": "OK", "down": "Down", "queue": "Очередь" },
     "table": {
-      "path": "Путь",
+      "path": "Узел",
       "method": "Метод",
       "target": "Адрес",
       "status": "Статус",
-      "auth": "Авторизация"
+      "auth": "Авторизация",
+      "in1h": "Вход 1ч",
+      "out1h": "Выход 1ч",
+      "errors": "Ошибки"
     },
     "empty": "Узлов пока нет",
     "move": {
@@ -33,22 +53,104 @@
       "submit": "Перенести"
     }
   },
+  "metrics": {
+    "no_data": "нет данных",
+    "prometheus_off": "Prometheus не настроен — KPI, очередь и графики недоступны.",
+    "tab_overview": "Обзор",
+    "traffic": "Трафик",
+    "recent": "Последние запросы",
+    "all_logs": "Все логи",
+    "kpi": {
+      "in": "Вход",
+      "delivered": "Доставлено",
+      "p95": "p95 latency",
+      "p99": "p99",
+      "errors": "Ошибки",
+      "total": "Всего",
+      "requests": "Запросы"
+    },
+    "range": { "15m": "15м", "1h": "1ч", "24h": "24ч", "7d": "7д" }
+  },
   "node": {
-    "tabs": { "overview": "Обзор", "logs": "Логи", "config": "Конфиг" },
+    "tabs": { "overview": "Обзор", "logs": "Логи", "config": "Конфиг", "metrics": "Метрики" },
     "status": {
       "enabled": "Активен",
       "disabled": "Отключён",
       "paused": "Пауза"
     },
     "actions": { "edit": "Изменить", "delete": "Удалить", "dry_run": "Тестовый запрос", "replay": "Повтор" },
+    "not_found": "Узел не найден",
     "fields": {
       "ch_template": "Шаблон таблицы",
       "ch_template_manual": "(нет / ручная таблица)",
-      "ch_template_hint": "Выберите шаблон — таблица логов создаётся автоматически при сохранении. Оставьте пустым, чтобы управлять таблицей вручную."
+      "ch_template_hint": "Выберите шаблон — таблица логов создаётся автоматически при сохранении. Оставьте пустым, чтобы управлять таблицей вручную.",
+      "method": "Тип метода",
+      "path": "Путь узла",
+      "url_mode": "Режим URL",
+      "target_url": "Target URL",
+      "auth": "Авторизация",
+      "ch_table": "Таблица логов"
     },
     "webhook": {
       "hint": "Приём вебхуков: POST /v1/callback/{path}. Подпись — HMAC-SHA256 от сырого тела запроса с секретом выше, в hex; при необходимости с префиксом (напр. \"sha256=\") в заголовке."
+    },
+    "form": {
+      "route": "Маршрут",
+      "target": "Куда перенаправить",
+      "auth": "Авторизация",
+      "logging": "Заголовки и логирование",
+      "method_type": "Тип метода",
+      "sync_desc": "sync, ждём ответ узла",
+      "async_desc": "в Kafka, 200 сразу",
+      "state": "Состояние",
+      "url_static": "Статичный",
+      "url_static_desc": "адрес из Target URL",
+      "url_from_request": "Из запроса",
+      "url_from_request_desc": "URL из параметра запроса",
+      "param_name": "Имя параметра",
+      "timeout_ms": "Timeout (мс)",
+      "retry_count": "Retry",
+      "incoming": "Входящая",
+      "outgoing": "Исходящая",
+      "credentials": "Креды",
+      "keep_secret": "оставьте пустым, чтобы не менять",
+      "webhook_secret": "Секрет вебхука",
+      "sig_header": "Заголовок подписи",
+      "sig_prefix": "Префикс подписи",
+      "retention_days": "Retention (дней)",
+      "log_what": "Что логировать",
+      "log_request": "Тело запроса",
+      "log_response": "Тело ответа",
+      "preview": "Предпросмотр маршрута",
+      "ssrf_warn": "Режим «Из запроса»: заполните allowlist хостов — это защита от SSRF. Не оставляйте список пустым в production."
+    },
+    "delete": {
+      "title": "Удалить узел",
+      "confirm": "Удалить навсегда",
+      "drop_table": "Также удалить таблицу логов в ClickHouse",
+      "drop_on": "Таблица будет удалена из ClickHouse:",
+      "drop_off": "Таблица останется в ClickHouse — удалить позже можно из Settings → ClickHouse → Осиротевшие:",
+      "no_table": "У этого узла нет таблицы логов.",
+      "type_to_confirm": "Введите для подтверждения:"
     }
+  },
+  "replay": {
+    "title": "Replay запроса",
+    "body_label": "Тело запроса (пусто = взять оригинал)",
+    "sync": "Sync вместо async (дождаться ответа здесь)",
+    "use_node_auth": "Использовать авторизацию узла",
+    "custom_auth": "Свой заголовок Authorization",
+    "send": "Отправить replay",
+    "security": "Токены и Basic-креды из оригинала не восстанавливаются (в логе уже ***). Введите вручную при необходимости.",
+    "result_status": "статус"
+  },
+  "dryrun": {
+    "title": "Тестовый запрос (dry-run)",
+    "subtitle": "конфиг не сохраняется · production-логи не пишутся",
+    "method": "Метод",
+    "body": "Тело",
+    "run": "Запустить",
+    "result": "Результат"
   },
   "logs": {
     "empty": "Записей нет",
@@ -121,7 +223,8 @@
       "empty": "Токенов пока нет"
     },
     "language": {
-      "title": "Язык",
+      "title": "Язык интерфейса",
+      "subtitle": "Применяется только к текущему пользователю. Изменение вступает в силу сразу.",
       "note": "Применяется только к UI; логи, метрики и ClickHouse остаются на английском."
     },
     "theme": { "title": "Тема", "light": "Светлая", "dark": "Тёмная" },
@@ -343,6 +446,7 @@
     "ok": "OK",
     "cancel": "Отмена",
     "save": "Сохранить",
-    "close": "Закрыть"
+    "close": "Закрыть",
+    "edit": "Изменить"
   }
 }

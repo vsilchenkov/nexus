@@ -1,27 +1,47 @@
 {
   "app": { "title": "Nexus" },
   "auth": {
-    "login": "Sign in",
+    "login": "Sign in to the panel",
     "login_button": "Sign in",
     "login_failed": "Invalid login or password",
+    "login_field": "Login",
+    "password_field": "Password",
     "logout": "Sign out"
   },
   "nav": {
     "nodes": "Nodes",
     "audit": "Audit",
     "settings": "Settings",
-    "team": "Team"
+    "team": "Team",
+    "language": "Language",
+    "theme": "Theme"
+  },
+  "role": {
+    "admin": "full access",
+    "viewer": "read-only"
   },
   "overview": {
     "title": "Nodes",
     "new_node": "New node",
     "search_placeholder": "Search by path or URL…",
+    "kpi": {
+      "incoming": "Incoming (24h)",
+      "outgoing": "Outgoing (24h)",
+      "queue": "Kafka queue",
+      "errors": "Errors (24h)"
+    },
+    "filter": { "all_methods": "All methods" },
+    "view": { "table": "Table", "cards": "Cards" },
+    "status": { "ok": "OK", "down": "Down", "queue": "Queue" },
     "table": {
-      "path": "Path",
+      "path": "Node",
       "method": "Method",
       "target": "Target",
       "status": "Status",
-      "auth": "Auth"
+      "auth": "Auth",
+      "in1h": "In 1h",
+      "out1h": "Out 1h",
+      "errors": "Errors"
     },
     "empty": "No nodes yet",
     "move": {
@@ -33,22 +53,104 @@
       "submit": "Move"
     }
   },
+  "metrics": {
+    "no_data": "no data",
+    "prometheus_off": "Prometheus is not configured — KPI, queue and charts are unavailable.",
+    "tab_overview": "Overview",
+    "traffic": "Traffic",
+    "recent": "Recent requests",
+    "all_logs": "All logs",
+    "kpi": {
+      "in": "In",
+      "delivered": "Delivered",
+      "p95": "p95 latency",
+      "p99": "p99",
+      "errors": "Errors",
+      "total": "Total",
+      "requests": "Requests"
+    },
+    "range": { "15m": "15m", "1h": "1h", "24h": "24h", "7d": "7d" }
+  },
   "node": {
-    "tabs": { "overview": "Overview", "logs": "Logs", "config": "Config" },
+    "tabs": { "overview": "Overview", "logs": "Logs", "config": "Config", "metrics": "Metrics" },
     "status": {
       "enabled": "Active",
       "disabled": "Disabled",
       "paused": "Paused"
     },
     "actions": { "edit": "Edit", "delete": "Delete", "dry_run": "Dry-run", "replay": "Replay" },
+    "not_found": "Node not found",
     "fields": {
       "ch_template": "Table template",
       "ch_template_manual": "(none / manual table)",
-      "ch_template_hint": "Pick a template — the log table is created automatically on save. Leave empty to manage the table manually."
+      "ch_template_hint": "Pick a template — the log table is created automatically on save. Leave empty to manage the table manually.",
+      "method": "Method type",
+      "path": "Node path",
+      "url_mode": "URL mode",
+      "target_url": "Target URL",
+      "auth": "Auth",
+      "ch_table": "Log table"
     },
     "webhook": {
       "hint": "Receive webhooks at POST /v1/callback/{path}. The signature is HMAC-SHA256 of the raw request body using the secret above, hex-encoded, optionally prefixed (e.g. \"sha256=\") and placed in the header."
+    },
+    "form": {
+      "route": "Route",
+      "target": "Target",
+      "auth": "Authorization",
+      "logging": "Headers & logging",
+      "method_type": "Method type",
+      "sync_desc": "sync, wait for node response",
+      "async_desc": "to Kafka, 200 immediately",
+      "state": "State",
+      "url_static": "Static",
+      "url_static_desc": "address from Target URL",
+      "url_from_request": "From request",
+      "url_from_request_desc": "URL from a request parameter",
+      "param_name": "Parameter name",
+      "timeout_ms": "Timeout (ms)",
+      "retry_count": "Retries",
+      "incoming": "Incoming",
+      "outgoing": "Outgoing",
+      "credentials": "Credentials",
+      "keep_secret": "leave empty to keep current",
+      "webhook_secret": "Webhook secret",
+      "sig_header": "Signature header",
+      "sig_prefix": "Signature prefix",
+      "retention_days": "Retention (days)",
+      "log_what": "What to log",
+      "log_request": "Request body",
+      "log_response": "Response body",
+      "preview": "Route preview",
+      "ssrf_warn": "\"From request\" mode: fill the host allowlist to prevent SSRF. Do not leave it empty in production."
+    },
+    "delete": {
+      "title": "Delete node",
+      "confirm": "Delete permanently",
+      "drop_table": "Also drop the ClickHouse log table",
+      "drop_on": "The table will be dropped from ClickHouse:",
+      "drop_off": "The table stays in ClickHouse — drop it later from Settings → ClickHouse → Orphaned:",
+      "no_table": "This node has no log table.",
+      "type_to_confirm": "Type to confirm:"
     }
+  },
+  "replay": {
+    "title": "Replay request",
+    "body_label": "Request body (leave empty to reuse original)",
+    "sync": "Sync instead of async (wait for the response here)",
+    "use_node_auth": "Use the node's auth config",
+    "custom_auth": "Custom Authorization header",
+    "send": "Send replay",
+    "security": "Tokens and Basic creds from the original are not restored (already *** in the log). Enter them manually if needed.",
+    "result_status": "status"
+  },
+  "dryrun": {
+    "title": "Test request (dry-run)",
+    "subtitle": "config is not saved · no production logs are written",
+    "method": "Method",
+    "body": "Body",
+    "run": "Run",
+    "result": "Result"
   },
   "logs": {
     "empty": "No log entries",
@@ -121,7 +223,8 @@
       "empty": "No tokens yet"
     },
     "language": {
-      "title": "Language",
+      "title": "UI language",
+      "subtitle": "Applies to the current user only. Takes effect immediately.",
       "note": "Applies to UI only; logs, metrics and ClickHouse stay in English."
     },
     "theme": { "title": "Theme", "light": "Light", "dark": "Dark" },
@@ -343,6 +446,7 @@
     "ok": "OK",
     "cancel": "Cancel",
     "save": "Save",
-    "close": "Close"
+    "close": "Close",
+    "edit": "Edit"
   }
 }

@@ -67,6 +67,21 @@ docker compose -f deploy/docker-compose.deps.yml up -d
 > Prometheus спрятан за профилем `metrics` и по умолчанию выключен (его scrape-таргеты
 > рассчитаны на контейнерные имена). Для метрик: `docker compose -f deploy/docker-compose.deps.yml --profile metrics up -d`.
 
+> **Дашборды панели (§21) локально.** KPI на Overview, per-node throughput и график на
+> странице узла берутся из Prometheus + ClickHouse. По умолчанию `prometheus.url` в
+> `config_debug.yml` пуст — панель работает, но эти блоки показывают «нет данных»
+> (`prometheus_available=false`). Чтобы увидеть реальные числа локально:
+> 1. подними профиль `metrics` (команда выше) — Prometheus слушает `localhost:9091`;
+> 2. задай `PROMETHEUS_URL=http://localhost:9091` перед запуском `cmd/web` (env подставится
+>    в `${PROMETHEUS_URL:}` плейсхолдер конфига).
+>
+> Важно: scrape-таргеты Prometheus в `deploy/prometheus.yml` указывают на контейнерные имена
+> (`receiver:8080`, `sender:9091`, `web:8000`). При нативном запуске сервисов с хоста
+> Prometheus их не доскрейпит — поэтому глобальные KPI/очередь будут пустыми даже с заданным
+> `PROMETHEUS_URL`. Per-node KPI и график на странице узла при этом работают всегда (источник —
+> ClickHouse). Полноценные дашборды проще смотреть в полном docker-compose, где все сервисы
+> в одной сети с Prometheus.
+
 ### Шаг 2. Применить миграции (один раз / после новых миграций)
 
 - **Tasks: Run Task → migrate up**, либо в терминале:
