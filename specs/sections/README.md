@@ -23,6 +23,7 @@
 | 15 | [15-acceptance.md](15-acceptance.md) | Критерии приёмки |
 | 16 | [16-out-of-scope.md](16-out-of-scope.md) | Out of scope в v1 / планы на v2 |
 | 17 | [17-patterns.md](17-patterns.md) | Паттерны разработки (Clean Architecture, фронтенд) |
+| 18 | [18-multi-tenancy.md](18-multi-tenancy.md) | Multi-tenancy v2 — команды, изоляция, CH-БД per team, перенос узлов |
 
 ## Как пользоваться
 
