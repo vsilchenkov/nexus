@@ -31,6 +31,10 @@ func (m *logReaderMock) Search(_ context.Context, _ port.LogQuery) ([]*domain.Lo
 	return m.rows, m.err
 }
 
+func (m *logReaderMock) CountErrors(_ context.Context, _ string, _, _ int64) (uint64, error) {
+	return 0, nil
+}
+
 func TestLogs_ListSinceForwardsToReader(t *testing.T) {
 	t.Parallel()
 	r := &logReaderMock{rows: []*domain.LogRecord{

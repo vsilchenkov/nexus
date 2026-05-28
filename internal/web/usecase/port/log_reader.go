@@ -47,4 +47,8 @@ type LogReader interface {
 	// Search — snapshot с расширенными фильтрами (Phase 6.8). Сортировка
 	// по date_request DESC (последние записи первыми), LIMIT.
 	Search(ctx context.Context, q LogQuery) ([]*domain.LogRecord, error)
+
+	// CountErrors — число записей-ошибок (status>=400 OR status=0 OR done=0)
+	// в таблице за окно (sinceMs, untilMs]. Используется уведомлениями (§20.3).
+	CountErrors(ctx context.Context, table string, sinceMs, untilMs int64) (uint64, error)
 }
