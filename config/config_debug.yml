@@ -48,7 +48,7 @@ redis:
 clickhouse:
   host: localhost
   port: 9000
-  database: vika_logs
+  database: nexus_default
   user: default
   password: ""
   batch_size: 100
