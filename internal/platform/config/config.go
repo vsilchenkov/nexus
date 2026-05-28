@@ -76,9 +76,13 @@ type PostgresSection struct {
 }
 
 type RedisSection struct {
-	Host               string `yaml:"host"`
-	Port               int    `yaml:"port"`
-	DB                 int    `yaml:"db"`
+	Host string `yaml:"host"`
+	Port int    `yaml:"port"`
+	DB   int    `yaml:"db"`
+	// Username — Redis ACL-пользователь (Redis 6+). Пустая строка =
+	// дефолтный пользователь (обратная совместимость). Нужен, когда
+	// сервер поднят с ACL и default-юзер выключен.
+	Username           string `yaml:"username"`
 	Password           string `yaml:"password"`
 	PoolSize           int    `yaml:"pool_size"`
 	MinIdleConns       int    `yaml:"min_idle_conns"`

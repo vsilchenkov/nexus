@@ -20,6 +20,7 @@ func New(ctx context.Context, c *config.RedisSection) (*goredis.Client, error) {
 	addr := fmt.Sprintf("%s:%d", c.Host, c.Port)
 	client := goredis.NewClient(&goredis.Options{
 		Addr:         addr,
+		Username:     c.Username,
 		Password:     c.Password,
 		DB:           c.DB,
 		PoolSize:     c.PoolSize,

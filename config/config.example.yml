@@ -48,6 +48,7 @@ redis:
   host: ${REDIS_HOST:redis}
   port: ${REDIS_PORT:6379}
   db: 0
+  username: ${REDIS_USER:}          # ACL-юзер (Redis 6+); пусто = default
   password: ${REDIS_PASSWORD}
   pool_size: 50
   min_idle_conns: 10
