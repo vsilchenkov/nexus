@@ -18,6 +18,16 @@ type DBTX interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
+// nullUUID возвращает nil для пустой строки (→ SQL NULL для nullable UUID
+// колонки) или саму строку. Без этого пустой "" привёл бы к ошибке формата
+// uuid / FK-нарушению.
+func nullUUID(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
 // nullSafe возвращает s, либо пустой не-nil слайс, если s == nil.
 // pgx/v5 кодирует nil-слайс как NULL, что ломает NOT NULL колонки с
 // дефолтом '{}' — DEFAULT не срабатывает, потому что значение явно

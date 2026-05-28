@@ -46,7 +46,7 @@ const nodeColumns = `
 	forward_headers, timeout_ms, retry_count, retry_backoff_ms,
 	clickhouse_table, clickhouse_retention_days, status, team_id,
 	log_request_body, log_response_body, log_headers,
-	created_at, updated_at`
+	created_at, updated_at, clickhouse_template_id`
 
 func (r *NodeRepoPg) Get(ctx context.Context, id string) (*domain.Node, error) {
 	row := r.db.QueryRow(ctx, `SELECT `+nodeColumns+` FROM nodes WHERE id = $1`, id)
@@ -126,7 +126,8 @@ INSERT INTO nodes (
 	webhook_signature_header, webhook_signature_prefix,
 	forward_headers, timeout_ms, retry_count, retry_backoff_ms,
 	clickhouse_table, clickhouse_retention_days, status, team_id,
-	log_request_body, log_response_body, log_headers
+	log_request_body, log_response_body, log_headers,
+	clickhouse_template_id
 ) VALUES (
 	$1, $2,
 	$3, $4, $5, $6,
@@ -136,7 +137,8 @@ INSERT INTO nodes (
 	$14, $15,
 	$16, $17, $18, $19,
 	$20, $21, $22, $23,
-	$24, $25, $26
+	$24, $25, $26,
+	$27
 ) RETURNING id, created_at, updated_at`
 
 	err = r.db.QueryRow(ctx, q,
@@ -149,6 +151,7 @@ INSERT INTO nodes (
 		nullSafe(n.ForwardHeaders), n.TimeoutMs, n.RetryCount, n.RetryBackoffMs,
 		n.ClickHouseTable, n.ClickHouseRetentionDays, string(n.Status), n.TeamID,
 		n.LogRequestBody, n.LogResponseBody, n.LogHeaders,
+		nullUUID(n.ClickHouseTemplateID),
 	).Scan(&n.ID, &n.CreatedAt, &n.UpdatedAt)
 
 	if err != nil {
@@ -182,6 +185,7 @@ UPDATE nodes SET
 	forward_headers = $17, timeout_ms = $18, retry_count = $19, retry_backoff_ms = $20,
 	clickhouse_table = $21, clickhouse_retention_days = $22, status = $23, team_id = $24,
 	log_request_body = $25, log_response_body = $26, log_headers = $27,
+	clickhouse_template_id = $28,
 	updated_at = now()
 WHERE id = $1
 RETURNING updated_at`
@@ -197,6 +201,7 @@ RETURNING updated_at`
 		nullSafe(n.ForwardHeaders), n.TimeoutMs, n.RetryCount, n.RetryBackoffMs,
 		n.ClickHouseTable, n.ClickHouseRetentionDays, string(n.Status), n.TeamID,
 		n.LogRequestBody, n.LogResponseBody, n.LogHeaders,
+		nullUUID(n.ClickHouseTemplateID),
 	).Scan(&n.UpdatedAt)
 
 	if err != nil {
@@ -233,6 +238,7 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 	var rootMethod, urlMode, authType, authDynSrc, incomingAuth, status string
 	var encAuth, encInc string
 	var created, updated time.Time
+	var templateID *string
 
 	err := row.Scan(
 		&n.ID, &n.Path, &rootMethod,
@@ -244,7 +250,7 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 		&n.ForwardHeaders, &n.TimeoutMs, &n.RetryCount, &n.RetryBackoffMs,
 		&n.ClickHouseTable, &n.ClickHouseRetentionDays, &status, &n.TeamID,
 		&n.LogRequestBody, &n.LogResponseBody, &n.LogHeaders,
-		&created, &updated,
+		&created, &updated, &templateID,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -261,6 +267,9 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 	n.Status = domain.NodeStatus(status)
 	n.CreatedAt = created
 	n.UpdatedAt = updated
+	if templateID != nil {
+		n.ClickHouseTemplateID = *templateID
+	}
 
 	n.AuthCredentials, err = r.cipher.Decrypt(encAuth)
 	if err != nil {

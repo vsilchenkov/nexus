@@ -1,10 +1,35 @@
 package domain
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 )
+
+// TestDefaultCHTemplateSpec_SeedJSON фиксирует, что JSON-литерал сида миграции
+// 0010 совпадает с marshal(DefaultCHTemplateSpec) и корректно рендерится.
+// Если поменять домен — тест поймает рассинхрон с миграцией.
+func TestDefaultCHTemplateSpec_SeedJSON(t *testing.T) {
+	const seed = `{"engine":"MergeTree","partition_by":"toYYYYMM(date_create)","order_by":["date_create","date_request","method"],"ttl_mode":"none"}`
+
+	got, err := json.Marshal(DefaultCHTemplateSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != seed {
+		t.Errorf("seed mismatch:\n got: %s\nwant: %s", got, seed)
+	}
+
+	var spec CHTemplateSpec
+	if err := json.Unmarshal([]byte(seed), &spec); err != nil {
+		t.Fatal(err)
+	}
+	tpl := &CHTemplate{Name: "Standard logs", Spec: spec}
+	if _, err := tpl.RenderCreateTable("nexus_default.x", 0); err != nil {
+		t.Fatalf("render seeded spec: %v", err)
+	}
+}
 
 // TestRequiredLogColumns_MatchSpec фиксирует обязательную схему §4.3: 20
 // колонок в точном порядке и с точными типами. Если кто-то поменяет

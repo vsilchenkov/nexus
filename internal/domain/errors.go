@@ -35,6 +35,7 @@ var (
 	ErrNodeForwardHeadersSize      = errors.New("domain: forward_headers must have at most 30 elements")
 	ErrNodeDisabled                = errors.New("domain: node disabled")
 	ErrNodePaused                  = errors.New("domain: node paused")
+	ErrNodeInvalidTemplateID       = errors.New("domain: clickhouse_template_id must be a valid UUID")
 	// Webhook signature (§16 ТЗ, IncomingAuthTypeWebhookSignature).
 	ErrNodeWebhookSigHeaderLength   = errors.New("domain: webhook_signature_header length must be <= 128")
 	ErrNodeWebhookSigPrefixLength   = errors.New("domain: webhook_signature_prefix length must be <= 64")

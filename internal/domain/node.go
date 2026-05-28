@@ -42,7 +42,8 @@ type Node struct {
 	RetryCount              int32
 	RetryBackoffMs          int32
 	ClickHouseTable         string
-	ClickHouseRetentionDays int32 // §4.3: TTL по партициям (housekeeping)
+	ClickHouseTemplateID    string // §19: FK на ch_templates; пусто = ручная таблица (legacy)
+	ClickHouseRetentionDays int32  // §4.3: TTL по партициям (housekeeping)
 
 	Status NodeStatus
 	TeamID string
@@ -58,6 +59,7 @@ type Node struct {
 // pathPattern — то же ограничение, что в БД-constraint (§3.3 ТЗ).
 var pathPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9/_-]*$`)
 var paramNamePattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]*$`)
+var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // Validate проверяет доменные инварианты узла. Используется в usecase.Create/Update.
 // Constraints в БД — второй уровень защиты; здесь — основной, потому что только
@@ -133,6 +135,9 @@ func (n *Node) Validate() error {
 		if n.IncomingAuthCredentials == "" {
 			return ErrNodeWebhookSigSecretRequired
 		}
+	}
+	if n.ClickHouseTemplateID != "" && !uuidPattern.MatchString(n.ClickHouseTemplateID) {
+		return ErrNodeInvalidTemplateID
 	}
 	return nil
 }
