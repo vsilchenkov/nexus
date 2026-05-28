@@ -11,6 +11,7 @@ import { SentryPanel } from "./settings/Sentry";
 import { ClickHousePanel } from "./settings/ClickHouse";
 import { UsersPanel } from "./settings/Users";
 import { TeamsPanel } from "./settings/Teams";
+import { NotificationsPanel } from "./settings/Notifications";
 
 type Tab = { to: string; labelKey: string; adminOnly?: boolean };
 
@@ -22,6 +23,7 @@ const tabs: Tab[] = [
   { to: "theme", labelKey: "settings.theme.title" },
   { to: "sentry", labelKey: "settings.sentry.title", adminOnly: true },
   { to: "clickhouse", labelKey: "settings.clickhouse.title", adminOnly: true },
+  { to: "notifications", labelKey: "settings.notifications.title", adminOnly: true },
 ];
 
 function useRole() {
@@ -75,6 +77,9 @@ export default function Settings() {
             {isAdmin && <Route path="sentry" element={<SentryPanel />} />}
             {isAdmin && (
               <Route path="clickhouse" element={<ClickHousePanel />} />
+            )}
+            {isAdmin && (
+              <Route path="notifications" element={<NotificationsPanel />} />
             )}
             <Route
               path="*"

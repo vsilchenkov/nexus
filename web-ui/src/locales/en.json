@@ -320,6 +320,20 @@
         "in_use": "Template is used by nodes and cannot be deleted",
         "remove": "Remove"
       }
+    },
+    "notifications": {
+      "title": "Notifications",
+      "hint": "Telegram alerts about node errors. The scheduler checks logs on a cron schedule and sends a summary only when there are errors.",
+      "telegram": "Telegram bot",
+      "enabled": "Enabled",
+      "chat_id": "Chat ID",
+      "bot_token": "Bot token",
+      "cron": "Schedule (cron)",
+      "cron_hint": "Standard 5-field cron, e.g. \"*/15 * * * *\" — every 15 minutes.",
+      "check": "Send test",
+      "checking": "Sending…",
+      "check_ok": "Test message sent",
+      "check_failed": "Failed: {{error}}"
     }
   },
   "common": {
