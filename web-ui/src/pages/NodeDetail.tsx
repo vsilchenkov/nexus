@@ -37,6 +37,10 @@ export default function NodeDetail() {
     enabled: !!id,
   });
 
+  // Логи доступны только если у узла настроен clickhouse_table. Иначе не
+  // поллим и не открываем SSE — backend всё равно вернёт «logs not configured».
+  const hasLogsTable = !!nodeQ.data?.clickhouse_table;
+
   const [pageSize, setPageSize] = useState<PageSize>(50);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [doneFilter, setDoneFilter] = useState<"all" | "done" | "pending">("all");
@@ -67,7 +71,7 @@ export default function NodeDetail() {
   const logsQ = useQuery({
     queryKey: ["logs", id, advQueryParams],
     queryFn: () => api.get<LogsResp>(`/api/nodes/${id}/logs`, advQueryParams),
-    enabled: !!id,
+    enabled: !!id && hasLogsTable,
     refetchInterval: 5_000,
   });
 
@@ -79,7 +83,7 @@ export default function NodeDetail() {
   const [highlighted, setHighlighted] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    if (!live || !id) return;
+    if (!live || !id || !hasLogsTable) return;
     // В SSE кладём только q/ip/host (from/to не имеют смысла для live).
     const qs = new URLSearchParams();
     if (appliedFilters.q) qs.set("q", appliedFilters.q);
@@ -111,7 +115,7 @@ export default function NodeDetail() {
     });
     es.onerror = () => es.close();
     return () => es.close();
-  }, [live, id, appliedFilters.q, appliedFilters.ip, appliedFilters.host]);
+  }, [live, id, hasLogsTable, appliedFilters.q, appliedFilters.ip, appliedFilters.host]);
 
   // Авто-прокрутка к верху, если пользователь не скроллил вручную;
   // иначе показываем баннер «N новых записей» (§7.4).
@@ -265,6 +269,7 @@ export default function NodeDetail() {
                 <input
                   type="checkbox"
                   checked={live}
+                  disabled={!hasLogsTable}
                   onChange={(e) => {
                     setLiveLogs([]);
                     setHighlighted(new Set());
@@ -359,6 +364,18 @@ export default function NodeDetail() {
             </div>
           )}
 
+          {node && !hasLogsTable ? (
+            <div className="px-4 py-10 text-center text-fg-muted space-y-3">
+              <p className="max-w-xl mx-auto">{t("logs.not_configured")}</p>
+              <Link
+                to={`/nodes/${node.id}/edit`}
+                className="inline-flex items-center gap-2 bg-bg-muted hover:bg-bg-elev px-3 py-2 rounded-md text-sm"
+              >
+                <Settings className="w-4 h-4" />
+                {t("node.actions.edit")}
+              </Link>
+            </div>
+          ) : (
           <div
             ref={tableWrapRef}
             onScroll={onScroll}
@@ -428,6 +445,7 @@ export default function NodeDetail() {
               </tbody>
             </table>
           </div>
+          )}
 
           {live && pendingCount > 0 && (
             <button

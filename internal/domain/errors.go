@@ -36,6 +36,7 @@ var (
 	ErrNodeDisabled                = errors.New("domain: node disabled")
 	ErrNodePaused                  = errors.New("domain: node paused")
 	ErrNodeInvalidTemplateID       = errors.New("domain: clickhouse_template_id must be a valid UUID")
+	ErrNodeLogsNotConfigured       = errors.New("domain: node has no clickhouse_table configured")
 	// Webhook signature (§16 ТЗ, IncomingAuthTypeWebhookSignature).
 	ErrNodeWebhookSigHeaderLength   = errors.New("domain: webhook_signature_header length must be <= 128")
 	ErrNodeWebhookSigPrefixLength   = errors.New("domain: webhook_signature_prefix length must be <= 64")

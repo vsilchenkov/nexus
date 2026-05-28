@@ -416,6 +416,20 @@ SSE-клиентов нагрузка на CH растёт линейно. До�
 `nexus.logs` (out-of-scope в v1). SSE отклоняет API-токены через
 [RequireSessionOnly](../internal/web/adapter/in/http/api_token_middleware.go) — только UI-сессии.
 
+#### 4.6.1 Узел без `clickhouse_table` — штатное состояние, не 500
+
+`clickhouse_table` опционален: таблица логов провижинится только если задан
+`clickhouse_template_id` **и** непустое имя таблицы (см. `NodeUsecase.provisionTable`).
+Узел без таблицы логировать не может — это норма, а не сбой. Поэтому
+[LogsUsecase.resolveNode](../internal/web/usecase/logs.go) возвращает sentinel
+`domain.ErrNodeLogsNotConfigured`, а [logs_handler.go](../internal/web/adapter/in/http/logs_handler.go)
+маппит его в `200 {"items":[], "logs_configured":false}` (для `Stream` — SSE-event
+`error`) **без ERR-лога** (как `ErrNodeNotFound`). Иначе поллинг UI (раз в 5с) +
+SSE спамили `ERR logs list failed ... op=logs.list` и 500-ответами. Фронт
+[NodeDetail.tsx](../web-ui/src/pages/NodeDetail.tsx) гасит поллинг/SSE по
+`node.clickhouse_table === ""` и показывает баннер `logs.not_configured` со ссылкой
+на настройки узла.
+
 ### 4.7 ClickHouse fallback — атомарная запись через `.tmp` + rename
 
 [fallbackStore.Save](../internal/sender/adapter/out/chlog/fallback.go) сначала пишет
@@ -431,6 +445,22 @@ Tailwind palette построена через `rgb(var(--bg) / <alpha-value>)`
 CSS-переменных, заданных в [globals.css](../web-ui/src/styles/globals.css) для
 `:root` (light) и `html.dark` (dark). Это даёт мгновенное переключение без
 перерисовки и поддержку opacity (`bg-bg-muted/40` работает).
+
+### 4.9 SPA-ассеты в embed.FS — `go:embed` + явный `/assets` route
+
+Две вещи должны совпадать, иначе при открытии UI получаем белый экран:
+
+1. Директива в [static.go](../internal/web/static/static.go) — `//go:embed index.html assets`
+   (не только `index.html`): иначе `assets/*.js|*.css` не попадают в бинарь.
+2. [SPAFallback](../internal/web/adapter/in/http/spa.go) регистрирует
+   `r.StaticFS("/assets", http.FS(fs.Sub(embedFS, "assets")))` — отдаёт ассеты с
+   корректным MIME. Без этого route запросы к `/assets/index-*.js` проваливаются в
+   `NoRoute` → возвращается `index.html` с `text/html` → модульный скрипт не исполняется.
+
+`make build-ui` копирует свежий `web-ui/dist/*` в `internal/web/static/` (ассеты
+git-tracked — это источник embed; CI job `go-build` их не пересобирает). После правок
+во фронте нужно пересобрать UI и закоммитить обновлённый бандл, иначе бинарь отдаёт
+старый SPA.
 
 Тема инициализируется **до** React-рендера в [main.tsx](../web-ui/src/main.tsx),
 чтобы избежать flash-of-light при перезагрузке страницы.

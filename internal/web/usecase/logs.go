@@ -3,7 +3,6 @@ package usecase
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -69,7 +68,7 @@ func (u *LogsUsecase) resolveNode(ctx context.Context, nodeID, teamID string) (*
 		return nil, domain.ErrNodeNotFound
 	}
 	if n.ClickHouseTable == "" {
-		return nil, fmt.Errorf("node %q has no clickhouse_table configured", n.Path)
+		return nil, domain.ErrNodeLogsNotConfigured
 	}
 	return n, nil
 }

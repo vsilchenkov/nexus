@@ -63,8 +63,21 @@ func TestLogs_ListSince_NoCHTable(t *testing.T) {
 	uc := NewLogsUsecase(&logReaderMock{}, nodes, logging.NewNoop())
 
 	_, err := uc.ListSince(context.Background(), "n1", "", 0, 100)
-	if err == nil {
-		t.Fatal("expected error when node has no ClickHouse table")
+	if !errors.Is(err, domain.ErrNodeLogsNotConfigured) {
+		t.Fatalf("want ErrNodeLogsNotConfigured, got %v", err)
+	}
+}
+
+func TestLogs_Subscribe_NoCHTable(t *testing.T) {
+	t.Parallel()
+	nodes := &stubNodeRepo{nodes: map[string]*domain.Node{
+		"n1": {ID: "n1", ClickHouseTable: "", Status: domain.NodeStatusEnabled},
+	}}
+	uc := NewLogsUsecase(&logReaderMock{}, nodes, logging.NewNoop())
+
+	_, _, err := uc.Subscribe(context.Background(), "n1", "", port.LogQuery{})
+	if !errors.Is(err, domain.ErrNodeLogsNotConfigured) {
+		t.Fatalf("want ErrNodeLogsNotConfigured, got %v", err)
 	}
 }
 

@@ -151,6 +151,14 @@ func (h *LogsHandler) List(c *gin.Context) {
 			localizedError(c, http.StatusNotFound, "node.not_found")
 			return
 		}
+		// Узел без clickhouse_table — логирование не настроено. Это штатное
+		// состояние (таблица опциональна, провижинится только по шаблону),
+		// а не сбой: отдаём пустой список с флагом logs_configured=false,
+		// без ERR-лога и без 500 (иначе поллинг UI спамит ошибками).
+		if errors.Is(err, domain.ErrNodeLogsNotConfigured) {
+			c.JSON(http.StatusOK, gin.H{"items": []LogRecordDTO{}, "logs_configured": false})
+			return
+		}
 		h.logger.ErrorWithOp("logs list failed", err, "logs.list",
 			h.logger.Str("node_id", nodeID))
 		localizedError(c, http.StatusInternalServerError, "error.internal")
@@ -192,6 +200,11 @@ func (h *LogsHandler) Stream(c *gin.Context) {
 	if err != nil {
 		if errors.Is(err, domain.ErrNodeNotFound) {
 			c.SSEvent("error", gin.H{"error": "node not found"})
+			return
+		}
+		// Логирование для узла не настроено — штатное состояние, не сбой.
+		if errors.Is(err, domain.ErrNodeLogsNotConfigured) {
+			c.SSEvent("error", gin.H{"error": "logs not configured"})
 			return
 		}
 		h.logger.ErrorWithOp("logs subscribe failed", err, "logs.stream",
