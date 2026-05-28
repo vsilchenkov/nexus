@@ -5,7 +5,6 @@ import { useTranslation } from "react-i18next";
 import { Search, Plus } from "lucide-react";
 
 import { api, type Node } from "../api/client";
-import { Topbar } from "../components/Topbar";
 
 type ListResp = { items: Node[] };
 
@@ -19,11 +18,8 @@ export default function Overview() {
   });
 
   return (
-    <div className="min-h-screen bg-bg text-fg">
-      <Topbar />
-
-      <main className="max-w-6xl mx-auto p-6 space-y-4">
-        <header className="flex items-center justify-between">
+    <div className="mx-auto max-w-6xl space-y-4">
+      <header className="flex items-center justify-between">
           <h1 className="text-2xl font-semibold">{t("overview.title")}</h1>
           <Link
             to="/nodes/new"
@@ -98,8 +94,6 @@ export default function Overview() {
             </table>
           </div>
         )}
-      </main>
-
       {moveTarget && (
         <MoveNodeDialog node={moveTarget} onClose={() => setMoveTarget(null)} />
       )}

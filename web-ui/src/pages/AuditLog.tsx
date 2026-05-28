@@ -3,7 +3,6 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
 import { api } from "../api/client";
-import { Topbar } from "../components/Topbar";
 import { AuditDetailsCell } from "../components/AuditDetailsCell";
 
 type Entry = {
@@ -29,11 +28,8 @@ export default function AuditLog() {
   });
 
   return (
-    <div className="min-h-screen bg-bg text-fg">
-      <Topbar />
-
-      <main className="max-w-6xl mx-auto p-6 space-y-4">
-        <header className="flex items-center justify-between">
+    <div className="mx-auto max-w-6xl space-y-4">
+      <header className="flex items-center justify-between">
           <h1 className="text-2xl font-semibold">{t("audit.title")}</h1>
           <div className="flex items-center gap-2">
             <select
@@ -110,7 +106,6 @@ export default function AuditLog() {
             </table>
           </div>
         )}
-      </main>
     </div>
   );
 }

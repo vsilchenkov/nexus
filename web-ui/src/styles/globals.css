@@ -2,37 +2,64 @@
 @tailwind components;
 @tailwind utilities;
 
-/* CSS-переменные хранят цвета как 3 числа "r g b", чтобы Tailwind мог
-   подсчитать opacity через rgb(var(--bg) / 50%). */
+/* Дизайн-токены панели (§21, эталон specs/nexus_ui.html).
+   Цвета хранятся как 3 числа "r g b", чтобы Tailwind считал opacity
+   через rgb(var(--bg) / 50%). Эталон тёмный; светлая тема — зеркальные
+   значения тех же токенов. */
 
 :root {
   color-scheme: light;
-  --bg: 250 250 250;
+  /* поверхности */
+  --bg-app: 244 245 247; /* страница */
+  --bg: 255 255 255; /* карточки/сайдбар (bg-primary) */
   --bg-elev: 255 255 255;
-  --bg-muted: 236 236 236;
-  --fg: 15 17 22;
-  --fg-muted: 91 98 115;
-  --fg-subtle: 141 149 168;
-  --accent: 76 110 245;
-  --accent-hover: 94 125 247;
-  --ok: 30 142 62;
-  --warn: 176 98 0;
-  --err: 197 48 48;
+  --bg-muted: 238 240 243; /* hover/инпуты (bg-secondary) */
+  --bg-3: 228 231 236; /* сегменты (bg-tertiary) */
+  /* текст */
+  --fg: 24 28 35; /* text-primary */
+  --fg-muted: 90 99 114; /* text-secondary */
+  --fg-subtle: 130 139 154; /* text-tertiary */
+  /* границы */
+  --line: 223 227 233; /* border-tertiary */
+  --line-strong: 200 206 214; /* border-strong */
+  /* семантика */
+  --accent: 60 122 215;
+  --accent-hover: 45 105 195;
+  --ok: 32 140 90;
+  --warn: 176 120 24;
+  --err: 200 60 60;
 }
 
 html.dark {
   color-scheme: dark;
-  --bg: 15 17 22;
-  --bg-elev: 23 25 34;
-  --bg-muted: 31 35 48;
-  --fg: 227 232 240;
-  --fg-muted: 141 149 168;
-  --fg-subtle: 91 98 115;
-  --accent: 91 141 239;
-  --accent-hover: 122 164 255;
-  --ok: 62 207 142;
-  --warn: 245 165 36;
-  --err: 239 68 68;
+  /* поверхности (эталон) */
+  --bg-app: 15 17 21; /* #0f1115 */
+  --bg: 22 25 31; /* #16191f bg-primary */
+  --bg-elev: 22 25 31;
+  --bg-muted: 28 32 39; /* #1c2027 bg-secondary */
+  --bg-3: 34 39 47; /* #22272f bg-tertiary */
+  /* текст */
+  --fg: 230 233 239; /* #e6e9ef */
+  --fg-muted: 154 163 178; /* #9aa3b2 */
+  --fg-subtle: 95 104 117; /* #5f6875 */
+  /* границы */
+  --line: 42 48 56; /* #2a3038 */
+  --line-strong: 56 64 74; /* #38404a */
+  /* семантика (эталон) */
+  --accent: 91 155 240; /* #5b9bf0 text-info */
+  --accent-hover: 74 138 216;
+  --ok: 76 195 138; /* #4cc38a */
+  --warn: 217 164 65; /* #d9a441 */
+  --err: 232 93 92; /* #e85d5c */
+}
+
+:root {
+  --radius-sm: 4px;
+  --radius-md: 7px;
+  --radius-lg: 11px;
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
 }
 
 html,
@@ -42,11 +69,11 @@ body,
 }
 
 body {
-  background: rgb(var(--bg));
+  background: rgb(var(--bg-app));
   color: rgb(var(--fg));
-  font-family:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
-    sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }

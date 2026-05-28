@@ -5,7 +5,6 @@ import { ArrowLeft, RefreshCw, Settings, RotateCcw } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api, type Node } from "../api/client";
-import { Topbar } from "../components/Topbar";
 import { ReplayDialog } from "../components/ReplayDialog";
 
 type LogRow = {
@@ -178,17 +177,14 @@ export default function NodeDetail() {
   };
 
   return (
-    <div className="min-h-screen bg-bg text-fg">
-      <Topbar />
-
-      <main className="max-w-6xl mx-auto p-6 space-y-4">
-        <Link
-          to="/"
-          className="inline-flex items-center gap-1 text-sm text-fg-muted hover:text-accent"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          back
-        </Link>
+    <div className="mx-auto max-w-6xl space-y-4">
+      <Link
+        to="/"
+        className="inline-flex items-center gap-1 text-sm text-fg-muted hover:text-accent"
+      >
+        <ArrowLeft className="w-4 h-4" />
+        back
+      </Link>
 
         {nodeQ.isLoading && <div>{t("common.loading")}</div>}
         {node && (
@@ -463,8 +459,7 @@ export default function NodeDetail() {
             nodeId={node.id}
             onClose={() => setReplayId(null)}
           />
-        )}
-      </main>
+      )}
     </div>
   );
 }

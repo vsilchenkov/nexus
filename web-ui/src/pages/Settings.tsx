@@ -2,7 +2,6 @@ import { NavLink, Route, Routes } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 
-import { Topbar } from "../components/Topbar";
 import { api } from "../api/client";
 import { ApiTokensPanel } from "./settings/ApiTokens";
 import { LanguagePanel } from "./settings/Language";
@@ -42,11 +41,8 @@ export default function Settings() {
   const visibleTabs = tabs.filter((tab) => !tab.adminOnly || isAdmin);
 
   return (
-    <div className="min-h-screen bg-bg text-fg">
-      <Topbar />
-
-      <main className="max-w-6xl mx-auto p-6 flex gap-6">
-        <aside className="w-48 shrink-0 space-y-1">
+    <div className="mx-auto flex max-w-6xl gap-6">
+      <aside className="w-48 shrink-0 space-y-1">
           <div className="text-xs uppercase tracking-wider text-fg-muted mb-2">
             {t("nav.settings")}
           </div>
@@ -88,8 +84,7 @@ export default function Settings() {
               }
             />
           </Routes>
-        </section>
-      </main>
+      </section>
     </div>
   );
 }

@@ -10,7 +10,13 @@
     "nodes": "Nodes",
     "audit": "Audit",
     "settings": "Settings",
-    "team": "Team"
+    "team": "Team",
+    "language": "Language",
+    "theme": "Theme"
+  },
+  "role": {
+    "admin": "full access",
+    "viewer": "read-only"
   },
   "overview": {
     "title": "Nodes",
@@ -343,6 +349,7 @@
     "ok": "OK",
     "cancel": "Cancel",
     "save": "Save",
-    "close": "Close"
+    "close": "Close",
+    "edit": "Edit"
   }
 }

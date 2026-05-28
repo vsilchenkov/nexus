@@ -554,6 +554,29 @@ Sender), а очередь Kafka и кросс-сервисный throughput —
 Это сделано намеренно, чтобы поллинг UI не спамил 500-ками, когда Prometheus не настроен
 (см. [usecase/metrics.go](../internal/web/usecase/metrics.go)).
 
+### 4.11.3 Редизайн UI под эталон: дизайн-токены + UI-kit + app-shell (Phase 21.2)
+
+Фронтенд приводится к визуальному эталону [specs/nexus_ui.html](nexus_ui.html) (§21). Базис:
+
+- **Дизайн-токены** ([web-ui/src/styles/globals.css](../web-ui/src/styles/globals.css) +
+  [tailwind.config.js](../web-ui/tailwind.config.js)) — палитра/радиусы/шрифты эталона как
+  CSS-переменные (RGB-тройки для opacity). Тёмная тема — основная, светлая зеркальная.
+  Шрифты Inter + JetBrains Mono подключены ссылкой в [index.html](../web-ui/index.html) с
+  graceful-fallback на системный стек.
+- **UI-kit** [web-ui/src/components/ui/](../web-ui/src/components/ui/) — атомы эталона
+  (Button, Input/Select/Textarea/Field, Card, SectionHead, Modal, Chip, Pill, Kpi/KpiRow,
+  Seg, Hint, PickGroup, Toggle3). Снимает дублирование инлайн-классов на экранах.
+- **App-shell** — постоянный левый сайдбар [Sidebar.tsx](../web-ui/src/components/Sidebar.tsx)
+  + тонкий топбар [Topbar.tsx](../web-ui/src/components/Topbar.tsx) (крошки, team-switcher,
+  переключатель языка и **темы**), композит [AppShell.tsx](../web-ui/src/components/AppShell.tsx).
+  В [App.tsx](../web-ui/src/App.tsx) защищённые маршруты идут layout-route'ом через `<Outlet/>`
+  (раньше каждый экран рисовал свой `<Topbar/>`). Тема — общий хелпер
+  [lib/theme.ts](../web-ui/src/lib/theme.ts).
+
+Экраны перестилизовываются поэтапно (Phase 21.3+); до этого они отрисовываются в новом
+shell с обновлённой палитрой. Встроенный SPA в `internal/web/static` пересобирается
+(`make build-ui`) в конце, когда UI завершён.
+
 ### 4.12.1 L2 in-memory кеш узлов — декоратор поверх Reader, stale-fallback по StaleTTL
 
 `receiver.l2_cache` (Phase 7.2) включает локальный LRU поверх обычного

@@ -5,7 +5,6 @@ import { useTranslation } from "react-i18next";
 import { ArrowLeft, Beaker, Trash2 } from "lucide-react";
 
 import { api, type Node, type CHTemplate } from "../api/client";
-import { Topbar } from "../components/Topbar";
 import { DryRunDialog } from "../components/DryRunDialog";
 
 type Form = {
@@ -106,11 +105,8 @@ export default function NodeSettings() {
   }
 
   return (
-    <div className="min-h-screen bg-bg text-fg">
-      <Topbar />
-
-      <main className="max-w-4xl mx-auto p-6 space-y-6">
-        <Link to="/" className="inline-flex items-center gap-1 text-sm text-fg-muted hover:text-accent">
+    <div className="mx-auto max-w-4xl space-y-6">
+      <Link to="/" className="inline-flex items-center gap-1 text-sm text-fg-muted hover:text-accent">
           <ArrowLeft className="w-4 h-4" />
           back
         </Link>
@@ -369,7 +365,6 @@ export default function NodeSettings() {
             onClose={() => setShowDryRun(false)}
           />
         )}
-      </main>
     </div>
   );
 }
