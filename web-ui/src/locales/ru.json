@@ -91,7 +91,64 @@
     },
     "webhook": {
       "hint": "Приём вебхуков: POST /v1/callback/{path}. Подпись — HMAC-SHA256 от сырого тела запроса с секретом выше, в hex; при необходимости с префиксом (напр. \"sha256=\") в заголовке."
+    },
+    "form": {
+      "route": "Маршрут",
+      "target": "Куда перенаправить",
+      "auth": "Авторизация",
+      "logging": "Заголовки и логирование",
+      "method_type": "Тип метода",
+      "sync_desc": "sync, ждём ответ узла",
+      "async_desc": "в Kafka, 200 сразу",
+      "state": "Состояние",
+      "url_static": "Статичный",
+      "url_static_desc": "адрес из Target URL",
+      "url_from_request": "Из запроса",
+      "url_from_request_desc": "URL из параметра запроса",
+      "param_name": "Имя параметра",
+      "timeout_ms": "Timeout (мс)",
+      "retry_count": "Retry",
+      "incoming": "Входящая",
+      "outgoing": "Исходящая",
+      "credentials": "Креды",
+      "keep_secret": "оставьте пустым, чтобы не менять",
+      "webhook_secret": "Секрет вебхука",
+      "sig_header": "Заголовок подписи",
+      "sig_prefix": "Префикс подписи",
+      "retention_days": "Retention (дней)",
+      "log_what": "Что логировать",
+      "log_request": "Тело запроса",
+      "log_response": "Тело ответа",
+      "preview": "Предпросмотр маршрута",
+      "ssrf_warn": "Режим «Из запроса»: заполните allowlist хостов — это защита от SSRF. Не оставляйте список пустым в production."
+    },
+    "delete": {
+      "title": "Удалить узел",
+      "confirm": "Удалить навсегда",
+      "drop_table": "Также удалить таблицу логов в ClickHouse",
+      "drop_on": "Таблица будет удалена из ClickHouse:",
+      "drop_off": "Таблица останется в ClickHouse — удалить позже можно из Settings → ClickHouse → Осиротевшие:",
+      "no_table": "У этого узла нет таблицы логов.",
+      "type_to_confirm": "Введите для подтверждения:"
     }
+  },
+  "replay": {
+    "title": "Replay запроса",
+    "body_label": "Тело запроса (пусто = взять оригинал)",
+    "sync": "Sync вместо async (дождаться ответа здесь)",
+    "use_node_auth": "Использовать авторизацию узла",
+    "custom_auth": "Свой заголовок Authorization",
+    "send": "Отправить replay",
+    "security": "Токены и Basic-креды из оригинала не восстанавливаются (в логе уже ***). Введите вручную при необходимости.",
+    "result_status": "статус"
+  },
+  "dryrun": {
+    "title": "Тестовый запрос (dry-run)",
+    "subtitle": "конфиг не сохраняется · production-логи не пишутся",
+    "method": "Метод",
+    "body": "Тело",
+    "run": "Запустить",
+    "result": "Результат"
   },
   "logs": {
     "empty": "Записей нет",

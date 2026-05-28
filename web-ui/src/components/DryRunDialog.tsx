@@ -1,6 +1,9 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
+import { Play } from "lucide-react";
 
 import { api } from "../api/client";
+import { Button, Field, Modal, Pill, Select, Textarea } from "./ui";
 
 type DryRunStep = {
   name: string;
@@ -14,13 +17,8 @@ type DryRunReport = {
   steps: DryRunStep[];
 };
 
-export function DryRunDialog({
-  node,
-  onClose,
-}: {
-  node: unknown;
-  onClose: () => void;
-}) {
+export function DryRunDialog({ node, onClose }: { node: unknown; onClose: () => void }) {
+  const { t } = useTranslation();
   const [method, setMethod] = useState("POST");
   const [body, setBody] = useState('{"test": true}');
   const [busy, setBusy] = useState(false);
@@ -38,85 +36,68 @@ export function DryRunDialog({
         use_mock: true,
       });
       setReport(r);
-    } catch (e: any) {
-      setError(e?.response?.data?.error ?? String(e));
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { error?: string } } };
+      setError(err?.response?.data?.error ?? t("common.error"));
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-      <div className="bg-bg-elev border border-bg-muted rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-auto">
-        <header className="flex items-center justify-between p-4 border-b border-bg-muted">
-          <h3 className="font-semibold">dry-run (mock)</h3>
-          <button onClick={onClose} className="text-fg-muted hover:text-fg">
-            ✕
-          </button>
-        </header>
-
-        <div className="p-4 space-y-3">
-          <div className="grid grid-cols-[120px_1fr] gap-2 items-center">
-            <label className="text-fg-muted text-sm">method</label>
-            <select
-              value={method}
-              onChange={(e) => setMethod(e.target.value)}
-              className="px-3 py-2 bg-bg-muted rounded-md outline-none"
-            >
-              {["POST", "GET", "PUT", "DELETE", "PATCH"].map((m) => (
-                <option key={m}>{m}</option>
-              ))}
-            </select>
-          </div>
-          <label className="text-fg-muted text-sm block">body (JSON)</label>
-          <textarea
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            rows={4}
-            className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none font-mono text-sm"
-          />
-
-          <button
-            onClick={run}
-            disabled={busy}
-            className="bg-accent hover:bg-accent-hover px-4 py-2 rounded-md text-sm font-medium disabled:opacity-50"
-          >
-            {busy ? "…" : "run"}
-          </button>
-
-          {error && <div className="text-err">{error}</div>}
-
-          {report && (
-            <div className="space-y-2 mt-4 border-t border-bg-muted pt-4">
-              <div className={`text-sm ${report.ok ? "text-ok" : "text-err"}`}>
-                {report.ok ? "OK" : "FAILED"}
-              </div>
-              {report.steps.map((s, i) => (
-                <div key={i} className="text-xs">
-                  <span
-                    className={`inline-block w-16 ${
-                      s.status === "ok"
-                        ? "text-ok"
-                        : s.status === "failed"
-                          ? "text-err"
-                          : "text-fg-muted"
-                    }`}
-                  >
-                    [{s.status}]
-                  </span>
-                  <span className="font-mono">{s.name}</span>
-                  {s.message && <span className="text-fg-muted ml-2">{s.message}</span>}
-                  {s.detail !== undefined && (
-                    <pre className="ml-16 text-fg-muted overflow-auto bg-bg-muted/40 p-1 rounded mt-1">
-                      {JSON.stringify(s.detail, null, 2) ?? ""}
-                    </pre>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+    <Modal
+      title={t("dryrun.title")}
+      subtitle={t("dryrun.subtitle")}
+      onClose={onClose}
+      className="max-w-2xl"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            {t("common.close")}
+          </Button>
+          <Button variant="primary" disabled={busy} onClick={run}>
+            <Play className="h-4 w-4" /> {t("dryrun.run")}
+          </Button>
+        </>
+      }
+    >
+      <div className="grid grid-cols-[120px_1fr] items-center gap-3">
+        <Field label={t("dryrun.method")}>
+          <Select value={method} onChange={(e) => setMethod(e.target.value)}>
+            {["POST", "GET", "PUT", "DELETE", "PATCH"].map((m) => (
+              <option key={m}>{m}</option>
+            ))}
+          </Select>
+        </Field>
+        <div />
       </div>
-    </div>
+      <Field label={t("dryrun.body")} className="mt-3">
+        <Textarea rows={3} value={body} onChange={(e) => setBody(e.target.value)} />
+      </Field>
+
+      {error && <div className="mt-3 rounded-md bg-err/10 px-3 py-2 text-sm text-err">{error}</div>}
+
+      {report && (
+        <div className="mt-4 space-y-2 border-t border-line pt-4">
+          <div className="text-[11px] uppercase tracking-wide text-fg-subtle">{t("dryrun.result")}</div>
+          {report.steps.map((s, i) => (
+            <div key={i} className="flex items-start gap-2 text-xs">
+              <Pill tone={s.status === "ok" ? "ok" : s.status === "failed" ? "err" : "warn"}>
+                {i + 1}
+              </Pill>
+              <div>
+                <span className="font-mono">{s.name}</span>
+                {s.message && <span className="ml-2 text-fg-muted">{s.message}</span>}
+                {s.detail !== undefined && (
+                  <pre className="mt-1 overflow-auto rounded bg-bg-muted/50 p-1 text-fg-muted">
+                    {JSON.stringify(s.detail, null, 2) ?? ""}
+                  </pre>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Modal>
   );
 }

@@ -1,6 +1,9 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
+import { RefreshCw, ShieldQuestion } from "lucide-react";
 
 import { api } from "../api/client";
+import { Button, Field, Hint, Input, Modal, Textarea } from "./ui";
 
 type ReplayResult = {
   new_log_id: string;
@@ -17,7 +20,8 @@ export function ReplayDialog({
   nodeId: string;
   onClose: () => void;
 }) {
-  const [bodyOverride, setBodyOverride] = useState<string>("");
+  const { t } = useTranslation();
+  const [bodyOverride, setBodyOverride] = useState("");
   const [syncOverride, setSyncOverride] = useState(false);
   const [useNodeAuth, setUseNodeAuth] = useState(true);
   const [customAuth, setCustomAuth] = useState("");
@@ -38,91 +42,68 @@ export function ReplayDialog({
         custom_auth: customAuth || undefined,
       });
       setResult(r);
-    } catch (e: any) {
-      setError(e?.response?.data?.error ?? String(e));
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { error?: string } } };
+      setError(err?.response?.data?.error ?? t("common.error"));
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-      <div className="bg-bg-elev border border-bg-muted rounded-xl shadow-xl w-full max-w-xl">
-        <header className="flex items-center justify-between p-4 border-b border-bg-muted">
-          <h3 className="font-semibold">replay log</h3>
-          <button onClick={onClose} className="text-fg-muted hover:text-fg">
-            ✕
-          </button>
-        </header>
+    <Modal
+      title={t("replay.title")}
+      subtitle={<span className="font-mono">{logId}</span>}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            {t("common.cancel")}
+          </Button>
+          <Button variant="primary" disabled={busy} onClick={run}>
+            <RefreshCw className="h-4 w-4" /> {t("replay.send")}
+          </Button>
+        </>
+      }
+    >
+      <Field label={t("replay.body_label")}>
+        <Textarea rows={4} value={bodyOverride} onChange={(e) => setBodyOverride(e.target.value)} />
+      </Field>
 
-        <div className="p-4 space-y-3 text-sm">
-          <div className="font-mono text-xs text-fg-muted">log_id: {logId}</div>
+      <label className="mt-3 flex items-center gap-2 text-[13px]">
+        <input type="checkbox" checked={syncOverride} onChange={(e) => setSyncOverride(e.target.checked)} />
+        {t("replay.sync")}
+      </label>
+      <label className="mt-2 flex items-center gap-2 text-[13px]">
+        <input type="checkbox" checked={useNodeAuth} onChange={(e) => setUseNodeAuth(e.target.checked)} />
+        {t("replay.use_node_auth")}
+      </label>
 
-          <label className="block">
-            <div className="text-fg-muted mb-1">body override (leave empty to reuse original)</div>
-            <textarea
-              value={bodyOverride}
-              onChange={(e) => setBodyOverride(e.target.value)}
-              rows={4}
-              className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none font-mono text-xs"
-            />
-          </label>
+      {!useNodeAuth && (
+        <Field label={t("replay.custom_auth")} className="mt-3">
+          <Input mono value={customAuth} onChange={(e) => setCustomAuth(e.target.value)} placeholder="Bearer …" />
+        </Field>
+      )}
 
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={syncOverride}
-              onChange={(e) => setSyncOverride(e.target.checked)}
-            />
-            send as sync (instead of async)
-          </label>
+      <Hint tone="muted" icon={<ShieldQuestion className="h-3.5 w-3.5" />} className="mt-3">
+        {t("replay.security")}
+      </Hint>
 
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={useNodeAuth}
-              onChange={(e) => setUseNodeAuth(e.target.checked)}
-            />
-            use node auth config
-          </label>
+      {error && <div className="mt-3 rounded-md bg-err/10 px-3 py-2 text-sm text-err">{error}</div>}
 
-          {!useNodeAuth && (
-            <label className="block">
-              <div className="text-fg-muted mb-1">custom Authorization header</div>
-              <input
-                value={customAuth}
-                onChange={(e) => setCustomAuth(e.target.value)}
-                placeholder="Bearer ..."
-                className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none font-mono text-xs"
-              />
-            </label>
+      {result && (
+        <div className="mt-3 space-y-1 border-t border-line pt-3 text-sm">
+          <div className={result.status_code < 300 ? "text-ok" : "text-err"}>
+            {t("replay.result_status")} {result.status_code}
+          </div>
+          {result.body_preview && (
+            <pre className="overflow-auto rounded bg-bg-muted/50 p-2 text-xs text-fg-muted">
+              {result.body_preview}
+            </pre>
           )}
-
-          <button
-            onClick={run}
-            disabled={busy}
-            className="bg-accent hover:bg-accent-hover px-4 py-2 rounded-md text-sm font-medium disabled:opacity-50"
-          >
-            {busy ? "…" : "send replay"}
-          </button>
-
-          {error && <div className="text-err">{error}</div>}
-
-          {result && (
-            <div className="mt-3 space-y-1 border-t border-bg-muted pt-3">
-              <div className={result.status_code < 300 ? "text-ok" : "text-err"}>
-                status {result.status_code}
-              </div>
-              {result.body_preview && (
-                <pre className="text-xs text-fg-muted bg-bg-muted/40 p-2 rounded overflow-auto">
-                  {result.body_preview}
-                </pre>
-              )}
-              <div className="text-xs text-fg-muted">new_log_id: {result.new_log_id}</div>
-            </div>
-          )}
+          <div className="font-mono text-xs text-fg-muted">{result.new_log_id}</div>
         </div>
-      </div>
-    </div>
+      )}
+    </Modal>
   );
 }

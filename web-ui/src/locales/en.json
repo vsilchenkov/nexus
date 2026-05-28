@@ -91,7 +91,64 @@
     },
     "webhook": {
       "hint": "Receive webhooks at POST /v1/callback/{path}. The signature is HMAC-SHA256 of the raw request body using the secret above, hex-encoded, optionally prefixed (e.g. \"sha256=\") and placed in the header."
+    },
+    "form": {
+      "route": "Route",
+      "target": "Target",
+      "auth": "Authorization",
+      "logging": "Headers & logging",
+      "method_type": "Method type",
+      "sync_desc": "sync, wait for node response",
+      "async_desc": "to Kafka, 200 immediately",
+      "state": "State",
+      "url_static": "Static",
+      "url_static_desc": "address from Target URL",
+      "url_from_request": "From request",
+      "url_from_request_desc": "URL from a request parameter",
+      "param_name": "Parameter name",
+      "timeout_ms": "Timeout (ms)",
+      "retry_count": "Retries",
+      "incoming": "Incoming",
+      "outgoing": "Outgoing",
+      "credentials": "Credentials",
+      "keep_secret": "leave empty to keep current",
+      "webhook_secret": "Webhook secret",
+      "sig_header": "Signature header",
+      "sig_prefix": "Signature prefix",
+      "retention_days": "Retention (days)",
+      "log_what": "What to log",
+      "log_request": "Request body",
+      "log_response": "Response body",
+      "preview": "Route preview",
+      "ssrf_warn": "\"From request\" mode: fill the host allowlist to prevent SSRF. Do not leave it empty in production."
+    },
+    "delete": {
+      "title": "Delete node",
+      "confirm": "Delete permanently",
+      "drop_table": "Also drop the ClickHouse log table",
+      "drop_on": "The table will be dropped from ClickHouse:",
+      "drop_off": "The table stays in ClickHouse — drop it later from Settings → ClickHouse → Orphaned:",
+      "no_table": "This node has no log table.",
+      "type_to_confirm": "Type to confirm:"
     }
+  },
+  "replay": {
+    "title": "Replay request",
+    "body_label": "Request body (leave empty to reuse original)",
+    "sync": "Sync instead of async (wait for the response here)",
+    "use_node_auth": "Use the node's auth config",
+    "custom_auth": "Custom Authorization header",
+    "send": "Send replay",
+    "security": "Tokens and Basic creds from the original are not restored (already *** in the log). Enter them manually if needed.",
+    "result_status": "status"
+  },
+  "dryrun": {
+    "title": "Test request (dry-run)",
+    "subtitle": "config is not saved · no production logs are written",
+    "method": "Method",
+    "body": "Body",
+    "run": "Run",
+    "result": "Result"
   },
   "logs": {
     "empty": "No log entries",
