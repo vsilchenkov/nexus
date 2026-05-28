@@ -3,6 +3,8 @@ package port
 import (
 	"context"
 	"errors"
+
+	"nexus/internal/domain"
 )
 
 // TeamProvisioner — физический provisioning ClickHouse-объектов команды
@@ -28,6 +30,16 @@ type TeamProvisioner interface {
 	// ErrSourceTableAbsent (узел переносится, но CH-операция пропускается:
 	// таблица будет создана внешне при первом логе в новой БД).
 	RenameTable(ctx context.Context, from, to string) error
+
+	// CreateTable выполняет готовый `CREATE TABLE IF NOT EXISTS` DDL (§19).
+	// ddl рендерится доменным CHTemplate.RenderCreateTable; здесь имя таблицы
+	// (формат "<db>.<table>") валидируется и DDL выполняется. Идемпотентно.
+	CreateTable(ctx context.Context, table, ddl string) error
+
+	// VerifyTemplate «вживую» проверяет шаблон: пробно создаёт временную
+	// таблицу в БД db (формат "nexus_<slug>") и сразу удаляет её. Ловит
+	// несовместимость CODEC/типов для конкретной версии ClickHouse (§19.4).
+	VerifyTemplate(ctx context.Context, db string, tmpl *domain.CHTemplate) error
 }
 
 // ErrSourceTableAbsent — исходной таблицы для RenameTable нет в ClickHouse.
