@@ -46,6 +46,28 @@ export type Node = {
   status: "enabled" | "disabled" | "paused";
   auth_type: string;
   clickhouse_table: string;
+  clickhouse_template_id: string;
+  created_at: string;
+  updated_at: string;
+};
+
+// §19: шаблоны DDL для таблиц логов ClickHouse.
+export type CHColumnOverride = { name: string; codec: string };
+export type CHTemplateIndex = { name: string; expr: string; type: string; granularity: number };
+export type CHTemplateSpec = {
+  engine: string;
+  partition_by: string;
+  order_by: string[];
+  column_overrides?: CHColumnOverride[];
+  indexes?: CHTemplateIndex[];
+  ttl_mode: "none" | "ttl_days";
+};
+export type CHTemplate = {
+  id: string;
+  name: string;
+  description: string;
+  spec: CHTemplateSpec;
+  is_default: boolean;
   created_at: string;
   updated_at: string;
 };

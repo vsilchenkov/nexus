@@ -27,6 +27,7 @@ coverage.txt
 # Web UI build output
 /web-ui/dist/
 /web-ui/node_modules/
+/web-ui/tsconfig.tsbuildinfo
 
 # protoc WKT — копируется локально при необходимости, в репо не нужно
 /proto/google/

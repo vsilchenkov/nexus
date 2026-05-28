@@ -2,10 +2,13 @@ package clickhouse
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
 
+	"nexus/internal/domain"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase/port"
 )
@@ -100,6 +103,57 @@ func (p *TeamProvisionerCH) RenameTable(ctx context.Context, from, to string) er
 	p.logger.Info("clickhouse table renamed",
 		p.logger.Str("from", from), p.logger.Str("to", to))
 	return nil
+}
+
+func (p *TeamProvisionerCH) CreateTable(ctx context.Context, table, ddl string) error {
+	if !fullTableNamePattern.MatchString(table) {
+		return errInvalidTableName
+	}
+	conn := p.conn.Conn()
+	if conn == nil {
+		return errors.New("clickhouse conn is nil")
+	}
+	if err := conn.Exec(ctx, ddl); err != nil {
+		return fmt.Errorf("create table %s: %w", table, err)
+	}
+	p.logger.Info("clickhouse table provisioned", p.logger.Str("table", table))
+	return nil
+}
+
+func (p *TeamProvisionerCH) VerifyTemplate(ctx context.Context, db string, tmpl *domain.CHTemplate) error {
+	if !dbNamePattern.MatchString(db) {
+		return errInvalidDBName
+	}
+	conn := p.conn.Conn()
+	if conn == nil {
+		return errors.New("clickhouse conn is nil")
+	}
+	suffix, err := randHex(8)
+	if err != nil {
+		return err
+	}
+	tmpTable := fmt.Sprintf("%s.__nexus_tmpl_check_%s", db, suffix)
+	ddl, err := tmpl.RenderCreateTable(tmpTable, 1)
+	if err != nil {
+		return err
+	}
+	// Чистим временную таблицу даже при отменённом ctx (WithoutCancel).
+	defer func() {
+		_ = conn.Exec(context.WithoutCancel(ctx), "DROP TABLE IF EXISTS "+tmpTable)
+	}()
+	if err := conn.Exec(ctx, ddl); err != nil {
+		return fmt.Errorf("verify template: %w", err)
+	}
+	return nil
+}
+
+// randHex возвращает n hex-символов из crypto/rand.
+func randHex(n int) (string, error) {
+	b := make([]byte, n/2)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("rand: %w", err)
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // splitDBDotTable режет "db.table" (предполагается уже валидным).

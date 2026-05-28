@@ -133,3 +133,34 @@ func (h *AppSettingsHandler) TestSentry(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, res)
 }
+
+// TestTelegram godoc
+// @Summary  Отправить тестовое уведомление в Telegram с patch'ем настроек (§20.7).
+// @Description  Шлёт тестовое сообщение в чат с merge'нутыми (current + body) настройками. Маскированный bot_token не используется. Возвращает {ok,latency_ms} или {ok:false,error}. Не сохраняет.
+// @Tags     settings
+// @Accept   json
+// @Produce  json
+// @Param    body  body  domain.TelegramSettings  true  "patch"
+// @Success  200  {object}  usecase.TestResult
+// @Failure  400  {object}  map[string]string
+// @Failure  500  {object}  map[string]string
+// @Security CookieAuth
+// @Router   /api/settings/notifications/test [post]
+func (h *AppSettingsHandler) TestTelegram(c *gin.Context) {
+	if h.tester == nil {
+		localizedError(c, http.StatusServiceUnavailable, "error.internal")
+		return
+	}
+	var patch domain.TelegramSettings
+	if err := c.ShouldBindJSON(&patch); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	res, err := h.tester.TestTelegram(c.Request.Context(), &patch)
+	if err != nil {
+		h.logger.ErrorWithOp("telegram test failed", err, "settings.test_telegram")
+		localizedError(c, http.StatusInternalServerError, "error.internal")
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}

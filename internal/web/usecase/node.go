@@ -32,6 +32,11 @@ import (
 // provisioner — опциональный CH-provisioner (multi-tenancy v2, Phase
 // 11.B). Нужен только для Move (RENAME TABLE между БД команд). Если nil
 // (Web без ClickHouse) — Move переносит только PG-метаданные.
+// templates — опциональный каталог шаблонов CH-таблиц (§19, Phase F1.5).
+// Если задан вместе с provisioner'ом, при Create/Update узла с непустым
+// ClickHouseTemplateID рендерится DDL и создаётся таблица (CREATE TABLE IF
+// NOT EXISTS) в БД команды. Если узел задаёт template_id, но templates или
+// provisioner == nil — Create/Update вернут ErrCHUnavailable (не тихий пропуск).
 type NodeUsecase struct {
 	repo           port.NodeRepo
 	cache          port.NodeCache
@@ -39,6 +44,7 @@ type NodeUsecase struct {
 	uow            port.UnitOfWork
 	teams          port.TeamRepo
 	provisioner    port.TeamProvisioner
+	templates      port.CHTemplateRepo
 	cacheTTL       time.Duration
 	nodesHardLimit int
 	defaultTeamID  string
@@ -52,6 +58,7 @@ func NewNodeUsecase(
 	uow port.UnitOfWork,
 	teams port.TeamRepo,
 	provisioner port.TeamProvisioner,
+	templates port.CHTemplateRepo,
 	cacheTTL time.Duration,
 	nodesHardLimit int,
 	defaultTeamID string,
@@ -64,11 +71,33 @@ func NewNodeUsecase(
 		uow:            uow,
 		teams:          teams,
 		provisioner:    provisioner,
+		templates:      templates,
 		cacheTTL:       cacheTTL,
 		nodesHardLimit: nodesHardLimit,
 		defaultTeamID:  defaultTeamID,
 		logger:         logger,
 	}
+}
+
+// provisionTable создаёт таблицу логов узла из выбранного шаблона (§19.5).
+// No-op если template_id пуст (ручная/legacy таблица) или имя таблицы пустое.
+// Если template_id задан, но templates/provisioner недоступны — ErrCHUnavailable.
+func (u *NodeUsecase) provisionTable(ctx context.Context, n *domain.Node) error {
+	if n.ClickHouseTemplateID == "" || n.ClickHouseTable == "" {
+		return nil
+	}
+	if u.templates == nil || u.provisioner == nil {
+		return ErrCHUnavailable
+	}
+	tmpl, err := u.templates.Get(ctx, n.ClickHouseTemplateID)
+	if err != nil {
+		return err
+	}
+	ddl, err := tmpl.RenderCreateTable(n.ClickHouseTable, n.ClickHouseRetentionDays)
+	if err != nil {
+		return err
+	}
+	return u.provisioner.CreateTable(ctx, n.ClickHouseTable, ddl)
 }
 
 // normalizeCHTable — если ClickHouseTable непустой и не содержит '.',
@@ -136,6 +165,12 @@ func (u *NodeUsecase) Create(ctx context.Context, actor Actor, n *domain.Node) e
 		return domain.ErrLimitReached
 	}
 
+	// §19.5: создаём CH-таблицу из шаблона ДО PG-commit. CREATE TABLE
+	// идемпотентен (IF NOT EXISTS); при падении узел не создаётся.
+	if err := u.provisionTable(ctx, n); err != nil {
+		return err
+	}
+
 	auditDetails := map[string]any{
 		"path":        n.Path,
 		"root_method": string(n.RootMethod),
@@ -192,6 +227,12 @@ func (u *NodeUsecase) Update(ctx context.Context, actor Actor, n *domain.Node, t
 	}
 	if n.TeamID != old.TeamID {
 		return domain.ErrPermissionDenied
+	}
+	// §19.5: пересоздаём таблицу только если сменились имя или шаблон.
+	if old.ClickHouseTable != n.ClickHouseTable || old.ClickHouseTemplateID != n.ClickHouseTemplateID {
+		if err := u.provisionTable(ctx, n); err != nil {
+			return err
+		}
 	}
 	diff := diffNodes(old, n)
 	if u.uow != nil {

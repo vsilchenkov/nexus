@@ -17,6 +17,7 @@ type Handlers struct {
 	Logs        *LogsHandler
 	AppSettings *AppSettingsHandler
 	Orphan      *OrphanHandler
+	CHTemplate  *CHTemplateHandler
 }
 
 // Middlewares — общие middleware (auth-check, role-check, API token-check).
@@ -59,6 +60,13 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		// Чтение узлов: scope nodes:read для API tokens.
 		authed.GET("/nodes", RequireScope("nodes:read"), h.Node.List)
 		authed.GET("/nodes/:id", RequireScope("nodes:read"), h.Node.Get)
+
+		// Шаблоны CH-таблиц (§19). GET доступен любой сессии (селектор
+		// при настройке узла); мутации/verify — admin-only ниже.
+		if h.CHTemplate != nil {
+			authed.GET("/ch-templates", h.CHTemplate.List)
+			authed.GET("/ch-templates/:id", h.CHTemplate.Get)
+		}
 
 		// Логи узла (§7.4): snapshot + SSE live-tail.
 		// Регистрируются только если включён ClickHouse (см. app.go).
@@ -118,6 +126,16 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			// Test connection с patch'ем настроек (Phase 6.3.2.6, §7.10).
 			authedAdmin.POST("/settings/clickhouse/test", h.AppSettings.TestClickHouse)
 			authedAdmin.POST("/settings/sentry/test", h.AppSettings.TestSentry)
+			// Тестовое уведомление в Telegram (§20.7).
+			authedAdmin.POST("/settings/notifications/test", h.AppSettings.TestTelegram)
+		}
+
+		// Шаблоны CH-таблиц (§19): мутации и verify — admin-only.
+		if h.CHTemplate != nil {
+			authedAdmin.POST("/ch-templates", h.CHTemplate.Create)
+			authedAdmin.PUT("/ch-templates/:id", h.CHTemplate.Update)
+			authedAdmin.DELETE("/ch-templates/:id", h.CHTemplate.Delete)
+			authedAdmin.POST("/ch-templates/verify", h.CHTemplate.Verify)
 		}
 
 		// Orphan-таблицы ClickHouse (§7.10 / Phase 6.7). Admin-only.

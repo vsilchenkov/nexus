@@ -10,11 +10,27 @@ import "time"
 // из YAML/env». Это позволяет hot-reload не затирать env-настройки, если
 // оператор очистил поле в UI.
 type AppSettings struct {
-	Sentry     SentrySettings     `json:"sentry"`
-	ClickHouse ClickHouseSettings `json:"clickhouse"`
+	Sentry        SentrySettings        `json:"sentry"`
+	ClickHouse    ClickHouseSettings    `json:"clickhouse"`
+	Notifications NotificationsSettings `json:"notifications"`
 
 	UpdatedAt time.Time `json:"updated_at"`
 	UpdatedBy string    `json:"updated_by,omitempty"` // user_id, кто последним обновил
+}
+
+// NotificationsSettings — настройки уведомлений операторам (§20).
+type NotificationsSettings struct {
+	Telegram TelegramSettings `json:"telegram"`
+}
+
+// TelegramSettings — уведомления в Telegram-бот (§20.2). Все поля —
+// указатели (nil = не задано). bot_token маскируется в Get(). cron —
+// стандартное 5-полевое выражение (валидируется в usecase).
+type TelegramSettings struct {
+	Enabled  *bool   `json:"enabled,omitempty"`
+	ChatID   *string `json:"chat_id,omitempty"`
+	BotToken *string `json:"bot_token,omitempty"`
+	Cron     *string `json:"cron,omitempty"`
 }
 
 // SentrySettings — параметры §14.4 ТЗ, доступные через Web UI.

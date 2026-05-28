@@ -324,6 +324,302 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/ch-templates": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ch-templates"
+                ],
+                "summary": "Список шаблонов CH-таблиц (§19).",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ch-templates"
+                ],
+                "summary": "Создать шаблон CH-таблицы (admin, §19).",
+                "parameters": [
+                    {
+                        "description": "template",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.chTemplateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.chTemplateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/ch-templates/verify": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Статическая валидация + пробное создание временной таблицы в ClickHouse. Возвращает {ok} или {ok:false,error}.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ch-templates"
+                ],
+                "summary": "Проверить шаблон CH-таблицы (admin, §19.4).",
+                "parameters": [
+                    {
+                        "description": "template",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.chTemplateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "clickhouse unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/ch-templates/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ch-templates"
+                ],
+                "summary": "Один шаблон CH-таблицы по id (§19).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "template id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.chTemplateResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ch-templates"
+                ],
+                "summary": "Обновить шаблон CH-таблицы (admin, §19).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "template id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "template",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.chTemplateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.chTemplateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Нельзя удалить default или используемый узлами шаблон (409).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ch-templates"
+                ],
+                "summary": "Удалить шаблон CH-таблицы (admin, §19).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "template id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/logs/{id}/replay": {
             "post": {
                 "security": [
@@ -396,6 +692,108 @@ const docTemplate = `{
                     },
                     "429": {
                         "description": "rate limit exceeded",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/me/switch-team": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Multi-tenancy v2. team_id должен быть из списка GET /api/me/teams.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Сменить текущую команду в сессии.",
+                "parameters": [
+                    {
+                        "description": "team_id",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.switchTeamRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "user is not a member of this team",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/me/teams": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Multi-tenancy v2 (§16 ТЗ). Используется UI team-switcher'ом.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Список команд, в которых состоит текущий пользователь.",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -860,6 +1258,85 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/nodes/{id}/move": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Меняет team_id узла и переносит ClickHouse-таблицу логов (RENAME TABLE, best-effort). Конфликт пути в целевой команде → 409.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "nodes"
+                ],
+                "summary": "Перенести узел в другую команду (admin only, multi-tenancy v2).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "target team slug",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.MoveNodeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "same team / not allowed",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "node or target team not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "path already exists in target team",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/settings/app": {
             "get": {
                 "security": [
@@ -1087,6 +1564,63 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/settings/notifications/test": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Шлёт тестовое сообщение в чат с merge'нутыми (current + body) настройками. Маскированный bot_token не используется. Возвращает {ok,latency_ms} или {ok:false,error}. Не сохраняет.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "settings"
+                ],
+                "summary": "Отправить тестовое уведомление в Telegram с patch'ем настроек (§20.7).",
+                "parameters": [
+                    {
+                        "description": "patch",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/nexus_internal_domain.TelegramSettings"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nexus_internal_web_usecase.TestResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/settings/sentry/test": {
             "post": {
                 "security": [
@@ -1140,6 +1674,384 @@ const docTemplate = `{
                                 "type": "string"
                             }
                         }
+                    }
+                }
+            }
+        },
+        "/api/teams": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "teams"
+                ],
+                "summary": "Список команд (admin only).",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Атомарно: row в teams + CREATE DATABASE nexus_\u003cslug\u003e. ch_database вычисляется из slug. Creator → owner.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "teams"
+                ],
+                "summary": "Создать команду (admin only).",
+                "parameters": [
+                    {
+                        "description": "slug + name",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.createTeamRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.teamResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "slug or ch_database exists",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "ClickHouse unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/teams/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "teams"
+                ],
+                "summary": "Одна команда по id (admin only).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "team id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.teamResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Slug и ch_database immutable после создания.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "teams"
+                ],
+                "summary": "Обновить имя команды (admin only).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "team id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "name",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.updateTeamRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.teamResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "default-team удалить нельзя. ON DELETE RESTRICT на nodes — если в команде есть узлы, удаление вернёт 409. ClickHouse-БД остаётся как orphan (drop через UI «Orphans», Phase 10.D).",
+                "tags": [
+                    "teams"
+                ],
+                "summary": "Удалить команду (admin only).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "team id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "403": {
+                        "description": "cannot delete default team",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "team has nodes",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/teams/{id}/members": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "teams"
+                ],
+                "summary": "Список членов команды (admin only).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "team id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Если membership уже есть — обновляется роль (UPSERT через ON CONFLICT).",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "teams"
+                ],
+                "summary": "Добавить пользователя в команду (admin only).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "team id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "user_id + role",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.addMemberRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
+        "/api/teams/{id}/members/{user_id}": {
+            "put": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "teams"
+                ],
+                "summary": "Изменить роль пользователя в команде (admin only).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "team id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "user id",
+                        "name": "user_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "role",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.updateMemberRoleRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "tags": [
+                    "teams"
+                ],
+                "summary": "Убрать пользователя из команды (admin only).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "team id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "user id",
+                        "name": "user_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
                     }
                 }
             }
@@ -1644,6 +2556,9 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 129
                 },
+                "clickhouse_template_id": {
+                    "type": "string"
+                },
                 "forward_headers": {
                     "type": "array",
                     "items": {
@@ -1785,6 +2700,17 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_web_adapter_in_http.MoveNodeRequest": {
+            "type": "object",
+            "required": [
+                "target_team_slug"
+            ],
+            "properties": {
+                "target_team_slug": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_web_adapter_in_http.NodeResponse": {
             "type": "object",
             "properties": {
@@ -1807,6 +2733,9 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "clickhouse_table": {
+                    "type": "string"
+                },
+                "clickhouse_template_id": {
                     "type": "string"
                 },
                 "created_at": {
@@ -1952,6 +2881,9 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 129
                 },
+                "clickhouse_template_id": {
+                    "type": "string"
+                },
                 "forward_headers": {
                     "type": "array",
                     "items": {
@@ -2039,6 +2971,69 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_web_adapter_in_http.addMemberRequest": {
+            "type": "object",
+            "required": [
+                "role",
+                "user_id"
+            ],
+            "properties": {
+                "role": {
+                    "type": "string",
+                    "enum": [
+                        "owner",
+                        "admin",
+                        "member"
+                    ]
+                },
+                "user_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.chTemplateRequest": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "is_default": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "spec": {
+                    "$ref": "#/definitions/nexus_internal_domain.CHTemplateSpec"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.chTemplateResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_default": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "spec": {
+                    "$ref": "#/definitions/nexus_internal_domain.CHTemplateSpec"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_web_adapter_in_http.changePasswordRequest": {
             "type": "object",
             "required": [
@@ -2052,6 +3047,25 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 128,
                     "minLength": 8
+                }
+            }
+        },
+        "internal_web_adapter_in_http.createTeamRequest": {
+            "type": "object",
+            "required": [
+                "name",
+                "slug"
+            ],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "slug": {
+                    "type": "string",
+                    "maxLength": 32,
+                    "minLength": 1
                 }
             }
         },
@@ -2141,6 +3155,69 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_web_adapter_in_http.switchTeamRequest": {
+            "type": "object",
+            "required": [
+                "team_id"
+            ],
+            "properties": {
+                "team_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.teamResponse": {
+            "type": "object",
+            "properties": {
+                "ch_database": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "slug": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.updateMemberRoleRequest": {
+            "type": "object",
+            "required": [
+                "role"
+            ],
+            "properties": {
+                "role": {
+                    "type": "string",
+                    "enum": [
+                        "owner",
+                        "admin",
+                        "member"
+                    ]
+                }
+            }
+        },
+        "internal_web_adapter_in_http.updateTeamRequest": {
+            "type": "object",
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                }
+            }
+        },
         "internal_web_adapter_in_http.updateUserRequest": {
             "type": "object",
             "required": [
@@ -2182,6 +3259,9 @@ const docTemplate = `{
                 "created_at": {
                     "type": "string"
                 },
+                "default_team_id": {
+                    "type": "string"
+                },
                 "email": {
                     "type": "string"
                 },
@@ -2202,9 +3282,6 @@ const docTemplate = `{
                 },
                 "role": {
                     "type": "string"
-                },
-                "team_id": {
-                    "type": "string"
                 }
             }
         },
@@ -2213,6 +3290,9 @@ const docTemplate = `{
             "properties": {
                 "clickhouse": {
                     "$ref": "#/definitions/nexus_internal_domain.ClickHouseSettings"
+                },
+                "notifications": {
+                    "$ref": "#/definitions/nexus_internal_domain.NotificationsSettings"
                 },
                 "sentry": {
                     "$ref": "#/definitions/nexus_internal_domain.SentrySettings"
@@ -2223,6 +3303,92 @@ const docTemplate = `{
                 "updated_by": {
                     "description": "user_id, кто последним обновил",
                     "type": "string"
+                }
+            }
+        },
+        "nexus_internal_domain.CHColumnOverride": {
+            "type": "object",
+            "properties": {
+                "codec": {
+                    "description": "содержимое CODEC(...), напр. \"ZSTD(3)\" или \"Delta, ZSTD\"",
+                    "type": "string"
+                },
+                "name": {
+                    "description": "имя колонки из RequiredLogColumns",
+                    "type": "string"
+                }
+            }
+        },
+        "nexus_internal_domain.CHEngine": {
+            "type": "string",
+            "enum": [
+                "MergeTree"
+            ],
+            "x-enum-varnames": [
+                "CHEngineMergeTree"
+            ]
+        },
+        "nexus_internal_domain.CHTTLMode": {
+            "type": "string",
+            "enum": [
+                "none",
+                "ttl_days"
+            ],
+            "x-enum-varnames": [
+                "CHTTLModeNone",
+                "CHTTLModeTTLDays"
+            ]
+        },
+        "nexus_internal_domain.CHTemplateIndex": {
+            "type": "object",
+            "properties": {
+                "expr": {
+                    "description": "имя обязательной колонки",
+                    "type": "string"
+                },
+                "granularity": {
+                    "description": "GRANULARITY N",
+                    "type": "integer"
+                },
+                "name": {
+                    "description": "[A-Za-z0-9_]+",
+                    "type": "string"
+                },
+                "type": {
+                    "description": "minmax | set(N) | bloom_filter(...) | tokenbf_v1(...) | ngrambf_v1(...)",
+                    "type": "string"
+                }
+            }
+        },
+        "nexus_internal_domain.CHTemplateSpec": {
+            "type": "object",
+            "properties": {
+                "column_overrides": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/nexus_internal_domain.CHColumnOverride"
+                    }
+                },
+                "engine": {
+                    "$ref": "#/definitions/nexus_internal_domain.CHEngine"
+                },
+                "indexes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/nexus_internal_domain.CHTemplateIndex"
+                    }
+                },
+                "order_by": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "partition_by": {
+                    "type": "string"
+                },
+                "ttl_mode": {
+                    "$ref": "#/definitions/nexus_internal_domain.CHTTLMode"
                 }
             }
         },
@@ -2258,6 +3424,14 @@ const docTemplate = `{
                 }
             }
         },
+        "nexus_internal_domain.NotificationsSettings": {
+            "type": "object",
+            "properties": {
+                "telegram": {
+                    "$ref": "#/definitions/nexus_internal_domain.TelegramSettings"
+                }
+            }
+        },
         "nexus_internal_domain.SentrySettings": {
             "type": "object",
             "properties": {
@@ -2280,6 +3454,23 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "use": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "nexus_internal_domain.TelegramSettings": {
+            "type": "object",
+            "properties": {
+                "bot_token": {
+                    "type": "string"
+                },
+                "chat_id": {
+                    "type": "string"
+                },
+                "cron": {
+                    "type": "string"
+                },
+                "enabled": {
                     "type": "boolean"
                 }
             }

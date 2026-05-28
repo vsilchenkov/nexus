@@ -32,6 +32,8 @@ definitions:
       clickhouse_table:
         maxLength: 129
         type: string
+      clickhouse_template_id:
+        type: string
       forward_headers:
         items:
           type: string
@@ -134,6 +136,13 @@ definitions:
           type: array
         type: object
     type: object
+  internal_web_adapter_in_http.MoveNodeRequest:
+    properties:
+      target_team_slug:
+        type: string
+    required:
+    - target_team_slug
+    type: object
   internal_web_adapter_in_http.NodeResponse:
     properties:
       auth_credentials_set:
@@ -149,6 +158,8 @@ definitions:
       clickhouse_retention_days:
         type: integer
       clickhouse_table:
+        type: string
+      clickhouse_template_id:
         type: string
       created_at:
         type: string
@@ -246,6 +257,8 @@ definitions:
       clickhouse_table:
         maxLength: 129
         type: string
+      clickhouse_template_id:
+        type: string
       forward_headers:
         items:
           type: string
@@ -311,6 +324,48 @@ definitions:
     - path
     - root_method
     type: object
+  internal_web_adapter_in_http.addMemberRequest:
+    properties:
+      role:
+        enum:
+        - owner
+        - admin
+        - member
+        type: string
+      user_id:
+        type: string
+    required:
+    - role
+    - user_id
+    type: object
+  internal_web_adapter_in_http.chTemplateRequest:
+    properties:
+      description:
+        type: string
+      is_default:
+        type: boolean
+      name:
+        type: string
+      spec:
+        $ref: '#/definitions/nexus_internal_domain.CHTemplateSpec'
+    type: object
+  internal_web_adapter_in_http.chTemplateResponse:
+    properties:
+      created_at:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      is_default:
+        type: boolean
+      name:
+        type: string
+      spec:
+        $ref: '#/definitions/nexus_internal_domain.CHTemplateSpec'
+      updated_at:
+        type: string
+    type: object
   internal_web_adapter_in_http.changePasswordRequest:
     properties:
       must_change_password:
@@ -321,6 +376,20 @@ definitions:
         type: string
     required:
     - new_password
+    type: object
+  internal_web_adapter_in_http.createTeamRequest:
+    properties:
+      name:
+        maxLength: 255
+        minLength: 1
+        type: string
+      slug:
+        maxLength: 32
+        minLength: 1
+        type: string
+    required:
+    - name
+    - slug
     type: object
   internal_web_adapter_in_http.createTokenRequest:
     properties:
@@ -384,6 +453,48 @@ definitions:
     - login
     - password
     type: object
+  internal_web_adapter_in_http.switchTeamRequest:
+    properties:
+      team_id:
+        type: string
+    required:
+    - team_id
+    type: object
+  internal_web_adapter_in_http.teamResponse:
+    properties:
+      ch_database:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      slug:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  internal_web_adapter_in_http.updateMemberRoleRequest:
+    properties:
+      role:
+        enum:
+        - owner
+        - admin
+        - member
+        type: string
+    required:
+    - role
+    type: object
+  internal_web_adapter_in_http.updateTeamRequest:
+    properties:
+      name:
+        maxLength: 255
+        minLength: 1
+        type: string
+    required:
+    - name
+    type: object
   internal_web_adapter_in_http.updateUserRequest:
     properties:
       active:
@@ -412,6 +523,8 @@ definitions:
         type: boolean
       created_at:
         type: string
+      default_team_id:
+        type: string
       email:
         type: string
       id:
@@ -426,13 +539,13 @@ definitions:
         type: boolean
       role:
         type: string
-      team_id:
-        type: string
     type: object
   nexus_internal_domain.AppSettings:
     properties:
       clickhouse:
         $ref: '#/definitions/nexus_internal_domain.ClickHouseSettings'
+      notifications:
+        $ref: '#/definitions/nexus_internal_domain.NotificationsSettings'
       sentry:
         $ref: '#/definitions/nexus_internal_domain.SentrySettings'
       updated_at:
@@ -440,6 +553,65 @@ definitions:
       updated_by:
         description: user_id, кто последним обновил
         type: string
+    type: object
+  nexus_internal_domain.CHColumnOverride:
+    properties:
+      codec:
+        description: содержимое CODEC(...), напр. "ZSTD(3)" или "Delta, ZSTD"
+        type: string
+      name:
+        description: имя колонки из RequiredLogColumns
+        type: string
+    type: object
+  nexus_internal_domain.CHEngine:
+    enum:
+    - MergeTree
+    type: string
+    x-enum-varnames:
+    - CHEngineMergeTree
+  nexus_internal_domain.CHTTLMode:
+    enum:
+    - none
+    - ttl_days
+    type: string
+    x-enum-varnames:
+    - CHTTLModeNone
+    - CHTTLModeTTLDays
+  nexus_internal_domain.CHTemplateIndex:
+    properties:
+      expr:
+        description: имя обязательной колонки
+        type: string
+      granularity:
+        description: GRANULARITY N
+        type: integer
+      name:
+        description: '[A-Za-z0-9_]+'
+        type: string
+      type:
+        description: minmax | set(N) | bloom_filter(...) | tokenbf_v1(...) | ngrambf_v1(...)
+        type: string
+    type: object
+  nexus_internal_domain.CHTemplateSpec:
+    properties:
+      column_overrides:
+        items:
+          $ref: '#/definitions/nexus_internal_domain.CHColumnOverride'
+        type: array
+      engine:
+        $ref: '#/definitions/nexus_internal_domain.CHEngine'
+      indexes:
+        items:
+          $ref: '#/definitions/nexus_internal_domain.CHTemplateIndex'
+        type: array
+      order_by:
+        items:
+          type: string
+        type: array
+      partition_by:
+        type: string
+      ttl_mode:
+        $ref: '#/definitions/nexus_internal_domain.CHTTLMode'
     type: object
   nexus_internal_domain.ClickHouseSettings:
     properties:
@@ -462,6 +634,11 @@ definitions:
       workers:
         type: integer
     type: object
+  nexus_internal_domain.NotificationsSettings:
+    properties:
+      telegram:
+        $ref: '#/definitions/nexus_internal_domain.TelegramSettings'
+    type: object
   nexus_internal_domain.SentrySettings:
     properties:
       attach_stacktrace:
@@ -477,6 +654,17 @@ definitions:
       traces_sample_rate:
         type: number
       use:
+        type: boolean
+    type: object
+  nexus_internal_domain.TelegramSettings:
+    properties:
+      bot_token:
+        type: string
+      chat_id:
+        type: string
+      cron:
+        type: string
+      enabled:
         type: boolean
     type: object
   nexus_internal_web_usecase.DryRunReport:
@@ -735,6 +923,194 @@ paths:
       summary: Профиль текущей сессии.
       tags:
       - auth
+  /api/ch-templates:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Список шаблонов CH-таблиц (§19).
+      tags:
+      - ch-templates
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: template
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.chTemplateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.chTemplateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Создать шаблон CH-таблицы (admin, §19).
+      tags:
+      - ch-templates
+  /api/ch-templates/{id}:
+    delete:
+      description: Нельзя удалить default или используемый узлами шаблон (409).
+      parameters:
+      - description: template id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Удалить шаблон CH-таблицы (admin, §19).
+      tags:
+      - ch-templates
+    get:
+      parameters:
+      - description: template id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.chTemplateResponse'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Один шаблон CH-таблицы по id (§19).
+      tags:
+      - ch-templates
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: template id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: template
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.chTemplateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.chTemplateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Обновить шаблон CH-таблицы (admin, §19).
+      tags:
+      - ch-templates
+  /api/ch-templates/verify:
+    post:
+      consumes:
+      - application/json
+      description: Статическая валидация + пробное создание временной таблицы в ClickHouse.
+        Возвращает {ok} или {ok:false,error}.
+      parameters:
+      - description: template
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.chTemplateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: clickhouse unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Проверить шаблон CH-таблицы (admin, §19.4).
+      tags:
+      - ch-templates
   /api/logs/{id}/replay:
     post:
       consumes:
@@ -789,6 +1165,71 @@ paths:
       summary: Повторно отправить запрос через шину (§7.4.1).
       tags:
       - logs
+  /api/me/switch-team:
+    post:
+      consumes:
+      - application/json
+      description: Multi-tenancy v2. team_id должен быть из списка GET /api/me/teams.
+      parameters:
+      - description: team_id
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.switchTeamRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: user is not a member of this team
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Сменить текущую команду в сессии.
+      tags:
+      - auth
+  /api/me/teams:
+    get:
+      description: Multi-tenancy v2 (§16 ТЗ). Используется UI team-switcher'ом.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Список команд, в которых состоит текущий пользователь.
+      tags:
+      - auth
   /api/nodes:
     get:
       parameters:
@@ -1049,6 +1490,58 @@ paths:
       summary: SSE live-tail логов узла (§7.4).
       tags:
       - logs
+  /api/nodes/{id}/move:
+    post:
+      consumes:
+      - application/json
+      description: Меняет team_id узла и переносит ClickHouse-таблицу логов (RENAME
+        TABLE, best-effort). Конфликт пути в целевой команде → 409.
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: target team slug
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.MoveNodeRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: same team / not allowed
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: node or target team not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: path already exists in target team
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Перенести узел в другую команду (admin only, multi-tenancy v2).
+      tags:
+      - nodes
   /api/nodes/dry-run:
     post:
       consumes:
@@ -1228,6 +1721,44 @@ paths:
       summary: Проверить соединение с ClickHouse по patch'у настроек (§7.10).
       tags:
       - settings
+  /api/settings/notifications/test:
+    post:
+      consumes:
+      - application/json
+      description: Шлёт тестовое сообщение в чат с merge'нутыми (current + body) настройками.
+        Маскированный bot_token не используется. Возвращает {ok,latency_ms} или {ok:false,error}.
+        Не сохраняет.
+      parameters:
+      - description: patch
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/nexus_internal_domain.TelegramSettings'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/nexus_internal_web_usecase.TestResult'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Отправить тестовое уведомление в Telegram с patch'ем настроек (§20.7).
+      tags:
+      - settings
   /api/settings/sentry/test:
     post:
       consumes:
@@ -1266,6 +1797,247 @@ paths:
       summary: Отправить тестовое событие в Sentry с patch'ем настроек (§7.10).
       tags:
       - settings
+  /api/teams:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Список команд (admin only).
+      tags:
+      - teams
+    post:
+      consumes:
+      - application/json
+      description: 'Атомарно: row в teams + CREATE DATABASE nexus_<slug>. ch_database
+        вычисляется из slug. Creator → owner.'
+      parameters:
+      - description: slug + name
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.createTeamRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.teamResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: slug or ch_database exists
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: ClickHouse unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Создать команду (admin only).
+      tags:
+      - teams
+  /api/teams/{id}:
+    delete:
+      description: default-team удалить нельзя. ON DELETE RESTRICT на nodes — если
+        в команде есть узлы, удаление вернёт 409. ClickHouse-БД остаётся как orphan
+        (drop через UI «Orphans», Phase 10.D).
+      parameters:
+      - description: team id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "403":
+          description: cannot delete default team
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: team has nodes
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Удалить команду (admin only).
+      tags:
+      - teams
+    get:
+      parameters:
+      - description: team id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.teamResponse'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Одна команда по id (admin only).
+      tags:
+      - teams
+    put:
+      consumes:
+      - application/json
+      description: Slug и ch_database immutable после создания.
+      parameters:
+      - description: team id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: name
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.updateTeamRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.teamResponse'
+      security:
+      - CookieAuth: []
+      summary: Обновить имя команды (admin only).
+      tags:
+      - teams
+  /api/teams/{id}/members:
+    get:
+      parameters:
+      - description: team id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Список членов команды (admin only).
+      tags:
+      - teams
+    post:
+      consumes:
+      - application/json
+      description: Если membership уже есть — обновляется роль (UPSERT через ON CONFLICT).
+      parameters:
+      - description: team id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: user_id + role
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.addMemberRequest'
+      responses:
+        "204":
+          description: No Content
+      security:
+      - CookieAuth: []
+      summary: Добавить пользователя в команду (admin only).
+      tags:
+      - teams
+  /api/teams/{id}/members/{user_id}:
+    delete:
+      parameters:
+      - description: team id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: user id
+        in: path
+        name: user_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+      security:
+      - CookieAuth: []
+      summary: Убрать пользователя из команды (admin only).
+      tags:
+      - teams
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: team id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: user id
+        in: path
+        name: user_id
+        required: true
+        type: string
+      - description: role
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.updateMemberRoleRequest'
+      responses:
+        "204":
+          description: No Content
+      security:
+      - CookieAuth: []
+      summary: Изменить роль пользователя в команде (admin only).
+      tags:
+      - teams
   /api/tokens:
     get:
       description: Каждый видит только свои токены. Возвращает префикс, scopes, last_used_at

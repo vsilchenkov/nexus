@@ -33,6 +33,7 @@ type CreateNodeRequest struct {
 	RetryCount              int32    `json:"retry_count"`
 	RetryBackoffMs          int32    `json:"retry_backoff_ms"`
 	ClickHouseTable         string   `json:"clickhouse_table" binding:"omitempty,max=129"`
+	ClickHouseTemplateID    string   `json:"clickhouse_template_id" binding:"omitempty,uuid"`
 	ClickHouseRetentionDays int32    `json:"clickhouse_retention_days" binding:"omitempty,min=0,max=3650"`
 	Status                  string   `json:"status" binding:"omitempty,oneof=enabled disabled paused"`
 	LogRequestBody          bool     `json:"log_request_body"`
@@ -67,6 +68,7 @@ type NodeResponse struct {
 	RetryCount              int32     `json:"retry_count"`
 	RetryBackoffMs          int32     `json:"retry_backoff_ms"`
 	ClickHouseTable         string    `json:"clickhouse_table"`
+	ClickHouseTemplateID    string    `json:"clickhouse_template_id"`
 	ClickHouseRetentionDays int32     `json:"clickhouse_retention_days"`
 	Status                  string    `json:"status"`
 	TeamID                  string    `json:"team_id"`
@@ -110,6 +112,7 @@ func reqToDomain(r CreateNodeRequest) *domain.Node {
 		RetryCount:              r.RetryCount,
 		RetryBackoffMs:          r.RetryBackoffMs,
 		ClickHouseTable:         r.ClickHouseTable,
+		ClickHouseTemplateID:    r.ClickHouseTemplateID,
 		ClickHouseRetentionDays: r.ClickHouseRetentionDays,
 		Status:                  domain.NodeStatus(r.Status),
 		LogRequestBody:          r.LogRequestBody,
@@ -141,6 +144,7 @@ func nodeToResponse(n *domain.Node) NodeResponse {
 		RetryCount:              n.RetryCount,
 		RetryBackoffMs:          n.RetryBackoffMs,
 		ClickHouseTable:         n.ClickHouseTable,
+		ClickHouseTemplateID:    n.ClickHouseTemplateID,
 		ClickHouseRetentionDays: n.ClickHouseRetentionDays,
 		Status:                  string(n.Status),
 		TeamID:                  n.TeamID,

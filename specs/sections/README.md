@@ -24,6 +24,8 @@
 | 16 | [16-out-of-scope.md](16-out-of-scope.md) | Out of scope в v1 / планы на v2 |
 | 17 | [17-patterns.md](17-patterns.md) | Паттерны разработки (Clean Architecture, фронтенд) |
 | 18 | [18-multi-tenancy.md](18-multi-tenancy.md) | Multi-tenancy v2 — команды, изоляция, CH-БД per team, перенос узлов |
+| 19 | [19-ch-templates.md](19-ch-templates.md) | Шаблоны запросов ClickHouse — каталог DDL, CODEC/индексы/TTL, авто-создание таблицы узла |
+| 20 | [20-notifications.md](20-notifications.md) | Уведомления операторам в Telegram — cron-расписание, ошибки узлов, тестовая отправка |
 
 ## Как пользоваться
 

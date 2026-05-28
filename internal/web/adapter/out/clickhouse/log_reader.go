@@ -196,6 +196,34 @@ func (r *LogReaderCH) Search(ctx context.Context, q port.LogQuery) ([]*domain.Lo
 	return out, nil
 }
 
+// CountErrors считает записи-ошибки в таблице за окно (sinceMs, untilMs]
+// (§20.3). Ошибка = status>=400 OR status=0 (сетевой сбой) OR done=0.
+func (r *LogReaderCH) CountErrors(ctx context.Context, table string, sinceMs, untilMs int64) (uint64, error) {
+	if !isSafeTableName(table) {
+		return 0, fmt.Errorf("invalid table name: %q", table)
+	}
+	conds := []string{"(status >= 400 OR status = 0 OR done = 0)"}
+	var args []any
+	if sinceMs > 0 {
+		conds = append(conds, "toUnixTimestamp64Milli(toDateTime64(date_request, 3)) > ?")
+		args = append(args, sinceMs)
+	}
+	if untilMs > 0 {
+		conds = append(conds, "toUnixTimestamp64Milli(toDateTime64(date_request, 3)) <= ?")
+		args = append(args, untilMs)
+	}
+	conn, err := r.liveConn()
+	if err != nil {
+		return 0, err
+	}
+	var n uint64
+	q := fmt.Sprintf("SELECT count() FROM %s WHERE %s", table, strings.Join(conds, " AND "))
+	if err := conn.QueryRow(ctx, q, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("clickhouse count errors: %w", err)
+	}
+	return n, nil
+}
+
 func scanLogRow(rows chdriver.Rows) (*domain.LogRecord, error) {
 	var (
 		r          domain.LogRecord

@@ -2486,3 +2486,68 @@ Multi-tenancy реализована в v2 (фазы Phase 10 + Phase 11). В v1
 - Роль `team_admin` с ограниченными правами (сейчас admin/viewer — глобальные роли UI; роли в `user_teams` хранятся, но RBAC по ним не разведён).
 - Квоты/биллинг per team, self-service onboarding (SaaS-режим).
 - Перенос узла между РАЗНЫМИ ClickHouse-серверами (сейчас только один сервер, RENAME в пределах него).
+
+## 19. Шаблоны запросов ClickHouse
+
+Реализовано в Phase F1. Полный раздел — [sections/19-ch-templates.md](sections/19-ch-templates.md).
+
+Оператор-админ ведёт глобальный каталог шаблонов DDL для таблиц логов; при
+настройке узла выбирается шаблон и имя таблицы — таблица создаётся автоматически
+при сохранении узла в БД его команды. Шаблоны настраивают сжатие (CODEC),
+индексы и TTL поверх обязательной схемы из 20 колонок (§4.3).
+
+### 19.1 Модель данных
+
+- `domain.RequiredLogColumns` — единый источник 20 обязательных колонок (порядок
+  INSERT/SELECT), инвариант кода.
+- Таблица `ch_templates` (PostgreSQL, глобальная; миграция 0010): `id`, `name`
+  (UNIQUE), `description`, `spec` (JSONB), `is_default` (partial-unique), таймстампы.
+  Сид `Standard logs` рендерится в схему §4.3.
+- `spec`: `engine` (MergeTree), `partition_by`, `order_by`, `column_overrides`
+  (CODEC), `indexes`, `ttl_mode` (`none`/`ttl_days`).
+- `nodes.clickhouse_template_id` (UUID, NULL FK, ON DELETE SET NULL); NULL =
+  ручная таблица (обратная совместимость).
+
+### 19.2 Верификация и применение
+
+- Статическая (`Validate`: белые списки CODEC/index/partition, 20 колонок по
+  построению) + live (`VerifyTemplate`: temp `CREATE`+`DROP` в CH).
+- При Create/Update узла с template_id таблица создаётся через
+  `TeamProvisioner.CreateTable` (`IF NOT EXISTS`) до PG-commit; `provisioner==nil`
+  + template_id → `ErrCHUnavailable`. Retention по умолчанию остаётся за
+  `ch_housekeeping` (`ttl_mode=none`).
+
+### 19.3 API / UI
+
+- `GET /api/ch-templates[/:id]` — любая сессия; `POST/PUT/DELETE` + `POST
+  /api/ch-templates/verify` — admin-only (DELETE default/используемого → 409/403).
+- UI: селектор шаблона в NodeSettings; управление шаблонами в Settings →
+  ClickHouse (admin-only).
+
+## 20. Уведомления операторам (Telegram)
+
+Реализовано в Phase F2. Полный раздел — [sections/20-notifications.md](sections/20-notifications.md).
+
+Web Service по cron-расписанию проверяет ошибки узлов за период и шлёт сводку в
+Telegram — только при наличии ошибок. Настраивается админом, есть тестовая отправка.
+
+### 20.1 Настройки и планировщик
+
+- `domain.AppSettings.notifications.telegram` = `{enabled, chat_id, bot_token,
+  cron}` (поля-указатели) в singleton `app_settings` (JSONB). `bot_token`
+  маскируется; `cron` валидируется (`robfig/cron`); reload-секция `notifications`.
+- `NotificationScheduler` (Web): cron-тики, окно `(last_check, now]` в Redis
+  (`nexus:notif:last_check`), подсчёт ошибок `status>=400 OR status=0 OR done=0`
+  по всем узлам (`LogReader.CountErrors`). Multi-instance — Redis-лок
+  `nexus:notif:lock` (SETNX, TTL). На send-fail checkpoint не двигается.
+
+### 20.2 Клиент / API / UI
+
+- `platform/telegram.Client` → `sendMessage` (HTML, своя HTTP-сессия). Сообщение
+  агрегирует ошибки по командам/узлам, режется по 4096.
+- `GET/PUT /api/settings/app` (секция notifications) + `POST
+  /api/settings/notifications/test` (admin-only).
+- UI: Settings → Notifications (admin-only) — enabled/chat_id/bot_token/cron +
+  «Проверить».
+- Неочевидность: `AppSettingsRepoPg.Update` обязан сериализовать `notifications`
+  (иначе молчаливая потеря) — закреплено round-trip integration-тестом.
