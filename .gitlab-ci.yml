@@ -233,7 +233,7 @@ integration:
   #   DOCKER_TLS_CERTDIR: ""
   #   TESTCONTAINERS_HOST_OVERRIDE: "docker"
   #   TESTCONTAINERS_RYUK_DISABLED: "true"
-  timeout: 25 minutes
+  timeout: 35 minutes
   rules:
     - if: $RUN_PROFILE == "loadtest-only"
       when: never
@@ -256,15 +256,20 @@ integration:
     - 'echo "===== integration test env ====="'
     - go version
     - 'echo "DOCKER_HOST = $DOCKER_HOST"'
-    - 'echo "===== gotestsum -tags=integration -timeout 20m -count=1 ./tests/integration/... ====="'
+    - 'echo "===== gotestsum -tags=integration -timeout 30m -count=1 ./tests/integration/... ====="'
     # JUnit-отчёт пишем в junit-integration.xml — отдельный файл от unit-тестов,
     # чтобы в GitLab Tests tab были две независимые вкладки и было видно, в
     # каком слое (unit vs integration) сломалось.
+    #
+    # --format standard-verbose: каждый тест стримит `=== RUN ...` сразу при
+    # старте (а не по завершении пакета). Без этого долгий прогон выглядит как
+    # зависание: testcontainers тянет образы PG/Redis/Kafka/ClickHouse и ждёт
+    # готовности CH до 180с на контейнер — несколько минут полной тишины.
     - $GOPATH/bin/gotestsum
         --junitfile junit-integration.xml
-        --format pkgname-and-test-fails
+        --format standard-verbose
         --
-        -tags=integration -timeout 20m -count=1 ./tests/integration/...
+        -tags=integration -timeout 30m -count=1 ./tests/integration/...
     - 'echo "===== integration done ====="'
   artifacts:
     when: always
