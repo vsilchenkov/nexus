@@ -42,10 +42,10 @@ type OrphanTable struct {
 //  2. SELECT clickhouse_table FROM nodes (всех команд) → known-set.
 //  3. Для каждой БД allow-list'а:
 //     SELECT name, engine, total_rows, total_bytes,
-//            metadata_modification_time
+//     metadata_modification_time
 //     FROM system.tables
 //     WHERE database = ? AND engine LIKE '%MergeTree%'
-//       AND name NOT LIKE '.inner%' AND name NOT LIKE '.tmp%'
+//     AND name NOT LIKE '.inner%' AND name NOT LIKE '.tmp%'
 //  4. Те, что не входят в known-set, — orphan'ы.
 //
 // Drop(): DROP TABLE IF EXISTS db.table; имя строго валидируется

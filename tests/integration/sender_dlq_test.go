@@ -187,4 +187,3 @@ func kafkaHeadersToMap(in []kafka.Header) map[string]string {
 	}
 	return out
 }
-

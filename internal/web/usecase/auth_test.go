@@ -250,10 +250,10 @@ func (nopTeamRepo) GetByID(context.Context, string) (*domain.Team, error) {
 func (nopTeamRepo) GetBySlug(context.Context, string) (*domain.Team, error) {
 	return nil, domain.ErrTeamNotFound
 }
-func (nopTeamRepo) List(context.Context) ([]*domain.Team, error)            { return nil, nil }
-func (nopTeamRepo) Create(context.Context, *domain.Team) error              { return nil }
-func (nopTeamRepo) Update(context.Context, *domain.Team) error              { return nil }
-func (nopTeamRepo) Delete(context.Context, string) error                    { return nil }
+func (nopTeamRepo) List(context.Context) ([]*domain.Team, error) { return nil, nil }
+func (nopTeamRepo) Create(context.Context, *domain.Team) error   { return nil }
+func (nopTeamRepo) Update(context.Context, *domain.Team) error   { return nil }
+func (nopTeamRepo) Delete(context.Context, string) error         { return nil }
 func (nopTeamRepo) AddMember(context.Context, string, string, domain.TeamRole) error {
 	return nil
 }

@@ -55,11 +55,11 @@ func TestSender_Async_E2E(t *testing.T) {
 
 	// 1. Mock внешнего узла. Считаем количество вызовов — нужно ровно 1.
 	var (
-		mu       sync.Mutex
-		hits     int32
-		gotBody  []byte
-		gotAuth  string
-		gotPath  string
+		mu      sync.Mutex
+		hits    int32
+		gotBody []byte
+		gotAuth string
+		gotPath string
 	)
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&hits, 1)

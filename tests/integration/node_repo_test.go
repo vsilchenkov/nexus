@@ -20,8 +20,8 @@ import (
 
 	"nexus/internal/domain"
 	"nexus/internal/platform/crypto"
-	pgpf "nexus/internal/platform/pg"
 	"nexus/internal/platform/logging"
+	pgpf "nexus/internal/platform/pg"
 	pgrepo "nexus/internal/web/adapter/out/postgres"
 	"nexus/internal/web/usecase"
 	"nexus/internal/web/usecase/port"
@@ -147,10 +147,12 @@ func TestNodeRepoCreate_E2E(t *testing.T) {
 // но в тестах кеш не нужен; ошибки игнорируем.
 type nopCache struct{}
 
-func (nopCache) Get(_ context.Context, _ string) (*domain.Node, error) { return nil, domain.ErrNotFound }
+func (nopCache) Get(_ context.Context, _ string) (*domain.Node, error) {
+	return nil, domain.ErrNotFound
+}
 func (nopCache) GetByPath(_ context.Context, _ string) (*domain.Node, error) {
 	return nil, domain.ErrNotFound
 }
 func (nopCache) Set(_ context.Context, _ *domain.Node, _ time.Duration) error { return nil }
-func (nopCache) Invalidate(_ context.Context, _ string) error                  { return nil }
-func (nopCache) InvalidateByPath(_ context.Context, _ string) error            { return nil }
+func (nopCache) Invalidate(_ context.Context, _ string) error                 { return nil }
+func (nopCache) InvalidateByPath(_ context.Context, _ string) error           { return nil }

@@ -36,9 +36,9 @@ func startClickHouse(t *testing.T, ctx context.Context) (chdriver.Conn, *config.
 			"9000/tcp", // native TCP
 		},
 		Env: map[string]string{
-			"CLICKHOUSE_DB":                       "vika_logs",
-			"CLICKHOUSE_USER":                     "default",
-			"CLICKHOUSE_PASSWORD":                 "",
+			"CLICKHOUSE_DB":                        "vika_logs",
+			"CLICKHOUSE_USER":                      "default",
+			"CLICKHOUSE_PASSWORD":                  "",
 			"CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT": "1",
 		},
 		// CH alpine иногда логирует "Ready for connections." с точкой, иногда
