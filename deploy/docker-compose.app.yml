@@ -1,0 +1,81 @@
+# Nexus — compose ТОЛЬКО для трёх сервисов приложения (receiver, sender, web).
+# Зависимости (PostgreSQL, Redis, ClickHouse, Kafka) НЕ поднимаются — они
+# внешние. Адреса/логины/пароли внешних сервисов задаются через ../.env
+# (PG_HOST, REDIS_HOST, CH_HOST, KAFKA_BROKERS и пароли).
+#
+# Запуск:
+#   docker compose -f deploy/docker-compose.app.yml up -d --build
+# Остановить:
+#   docker compose -f deploy/docker-compose.app.yml down
+#
+# Если внешние сервисы крутятся на самом docker-хосте — в .env указывай
+# host.docker.internal (резолвится через extra_hosts ниже), напр.:
+#   PG_HOST=host.docker.internal
+#   CH_HOST=host.docker.internal
+#   REDIS_HOST=host.docker.internal
+#   KAFKA_BROKERS=host.docker.internal:9092
+
+name: nexus
+
+services:
+
+  receiver:
+    build:
+      context: ..
+      dockerfile: deploy/docker/receiver.Dockerfile
+    restart: unless-stopped
+    env_file: ../.env
+    depends_on:
+      sender: { condition: service_started }
+    ports:
+      - "8080:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+    networks: [nexus_app_net]
+
+  sender:
+    build:
+      context: ..
+      dockerfile: deploy/docker/sender.Dockerfile
+    restart: unless-stopped
+    env_file: ../.env
+    ports:
+      - "9090:9090"
+      - "9093:9091"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9091/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+    networks: [nexus_app_net]
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/docker/web.Dockerfile
+    restart: unless-stopped
+    env_file: ../.env
+    ports:
+      - "8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+    networks: [nexus_app_net]
+
+networks:
+  nexus_app_net:
+    driver: bridge

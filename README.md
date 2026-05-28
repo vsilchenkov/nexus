@@ -34,31 +34,33 @@
 
 | Компонент    | Версия |
 |--------------|--------|
-| Go           | 1.25   |
+| Go           | 1.26   |
 | PostgreSQL   | 16     |
 | Redis        | 7      |
 | ClickHouse   | 24     |
-| Kafka        | 3.7 (KRaft) |
+| Kafka        | 3.9 (KRaft) |
 | Prometheus   | 2.55   |
 
-## Быстрый старт через Docker
+## Установка, запуск и отладка
+
+- **Развёртывание в продакшене** — [DEPLOYMENT.md](./DEPLOYMENT.md): установка на чистом
+  Linux-сервере, запуск полностью в Docker и с внешними сервисами
+  (PostgreSQL/ClickHouse/Kafka/Redis), где задавать адреса/логины/пароли, обновление,
+  смена версии и откат, запуск под Docker на Windows.
+- **Локальная разработка и отладка в VS Code (Windows)** — [DEVELOPMENT.md](./DEVELOPMENT.md):
+  порядок первого запуска, миграции, варианты запуска под отладчиком, запуск всех трёх
+  сервисов одной кнопкой.
+
+Самый короткий путь (полностью в Docker):
 
 ```bash
-cp .env.example .env       # отредактируйте пароли + ENCRYPTION_KEY
-cp config/config.example.yml config/config.yml
-docker compose -f deploy/docker-compose.yml up -d
-
-# bootstrap пароля admin (миграция 0002 создаёт его с password_hash=NULL)
-make set-admin-password PASSWORD=mySecretPass
-
-# проверка
+cp .env.example .env       # отредактируйте пароли + ENCRYPTION_KEY (см. DEPLOYMENT.md §2)
+docker compose -f deploy/docker-compose.yml up -d --build
+docker compose -f deploy/docker-compose.yml run --rm web --set-admin-password 'mySecretPass'
 curl http://localhost:8000/health
-curl -X POST http://localhost:8000/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"login":"admin","password":"mySecretPass"}'
 ```
 
-UI на `http://localhost:8000/`. Swagger UI — `http://localhost:8000/swagger/index.html` (см. Phase 7.1 в [IMPLEMENTATION.md](./specs/IMPLEMENTATION.md)).
+UI на `http://localhost:8000/`. Swagger UI — `http://localhost:8000/swagger/index.html`.
 
 ## Создание первого узла и тестовый запрос
 
@@ -72,7 +74,7 @@ curl -X POST http://localhost:8000/api/nodes -b cookies.txt \
     "target_url": "https://httpbin.org/anything",
     "auth_type": "none",
     "incoming_auth_type": "none",
-    "clickhouse_table": "vika_logs.test_echo"
+    "clickhouse_table": "nexus_default.test_echo"
   }'
 
 # создать таблицу в ClickHouse (схема из §4.3 ТЗ — TODO Phase 3 UI помощник)
@@ -83,91 +85,13 @@ curl -X POST http://localhost:8080/v1/request/test/echo \
   -d '{"hello":"world"}'
 ```
 
-## Запуск через Makefile (локальная разработка)
+## Запуск для разработки
 
-```bash
-make docker-up-dev          # postgres + redis + clickhouse + kafka + prometheus
-make migrate-up
-make set-admin-password PASSWORD=...
-make run-receiver           # в одном терминале
-make run-sender             # во втором
-make run-web                # в третьем
-```
-
-### Windows
-
-`make` ставится одним из:
-- `choco install make` (Chocolatey, требует admin)
-- `scoop install make`
-- `mingw32-make`
-
-Каждый бинарь также устанавливается как Windows-сервис (kardianos/service):
-```cmd
-bin\receiver.exe install
-sc start NexusReceiverService
-```
-
-## Отладка в VS Code (Windows, Docker Desktop для зависимостей)
-
-В каталоге [.vscode/](.vscode/) лежит готовый конфиг отладки: launch.json с конфигами для каждого сервиса и compound «Nexus: all», tasks.json с задачами `deps: up/down/logs`, миграциями и тестами, settings.json под `gopls`/`dlv-dap`.
-
-Сценарий: зависимости (PostgreSQL, Redis, ClickHouse, Kafka) поднимаются в Docker Desktop отдельным compose-файлом с пробросом портов на хост; бинари `receiver`/`sender`/`web` стартуют локально под отладчиком и цепляются к `localhost:<port>`.
-
-### Разовая подготовка
-
-- Установить Docker Desktop, Go 1.25+, VS Code + расширение `golang.go` (через Command Palette → «Go: Install/Update Tools» поставить `dlv`, `gopls`, `golangci-lint`).
-- В корне создать `.env` (см. [.env.example](.env.example)). Минимум обязателен `ENCRYPTION_KEY` — 32 байта в base64. Сгенерировать в PowerShell:
-
-  ```powershell
-  [Convert]::ToBase64String((1..32 | ForEach-Object { Get-Random -Maximum 256 }))
-  ```
-
-### Запуск зависимостей
-
-```powershell
-docker compose -f deploy/docker-compose.deps.yml up -d
-```
-
-или VS Code Command Palette → **Tasks: Run Task → deps: up**. Проверка состояния — `deps: status`; полный сброс данных — `deps: down + reset volumes`.
-
-Compose [deploy/docker-compose.deps.yml](deploy/docker-compose.deps.yml) — самодостаточный, поднимает только зависимости с портами `5432/6379/8123/9000/9092` на хосте. Prometheus спрятан за профилем `metrics` (по умолчанию выключен — scrape-таргеты в [prometheus.yml](deploy/prometheus.yml) ориентированы на контейнерные имена).
-
-### Миграции и bootstrap admin (один раз)
-
-- **Tasks: Run Task → migrate up** (или `go run ./cmd/web --debug --migrate-up`)
-- **Tasks: Run Task → set admin password (admin)** (или `go run ./cmd/web --debug --set-admin-password admin`)
-
-### Старт под отладчиком
-
-В панели **Run and Debug** (`Ctrl+Shift+D`):
-
-| Конфиг                             | Что делает                                                       |
-|------------------------------------|------------------------------------------------------------------|
-| `Web (debug)`                      | `go run ./cmd/web --debug` под dlv → :8000                       |
-| `Receiver (debug)`                 | `go run ./cmd/receiver --debug` под dlv → :8080                  |
-| `Sender (debug)`                   | `go run ./cmd/sender --debug` под dlv → :9090 gRPC + :9091       |
-| `Nexus: all`                     | compound: все три сервиса одной кнопкой (`stopAll: true`)        |
-| `Web: migrate-up`                  | разовая миграция через отладчик                                  |
-| `Web: set-admin-password`          | задаёт пароль admin'у                                            |
-| `Loadtest`                         | `cmd/loadtest` против локального стека (1m / 100 RPS / 10 узлов) |
-| `Integration tests (current file)` | `go test -tags=integration -v` для открытого файла               |
-| `Attach to process (pid)`          | подключение к уже запущенному процессу                           |
-
-Все конфиги загружают переменные из `${workspaceFolder}/.env`, используют `--debug` → [config/config_debug.yml](config/config_debug.yml) (все хосты — `localhost`).
-
-### После запуска
-
-- Web UI / API → `http://localhost:8000`
-- Swagger UI → `http://localhost:8000/swagger/index.html`
-- Receiver → `http://localhost:8080/v1/request/*`, `http://localhost:8080/v1/requestAsync/*`
-- Sender admin → `http://localhost:9091/health` (gRPC SenderService — на `:9090`)
-
-### Типовые грабли
-
-- `ENCRYPTION_KEY invalid` — декодированный base64 не равен 32 байтам, перегенерируй.
-- `clickhouse connect failed` в Web — не критично: replay/live-tail отключатся, остальное работает ([bootstrap.go:161](internal/platform/bootstrap/bootstrap.go#L161)).
-- Kafka не стартует за 10 сек — норма для KRaft на Windows; дай 30 сек. Логи: `docker compose -f deploy/docker-compose.deps.yml logs kafka`.
-- Порт 5432/6379/9092 занят — выключи локальный postgres/redis/kafka-сервис или поменяй проброс в `docker-compose.deps.yml`.
+- Локальный запуск под отладчиком VS Code (Windows) с зависимостями в Docker Desktop —
+  [DEVELOPMENT.md](./DEVELOPMENT.md).
+- Запуск без VS Code: `make docker-up-dev` (поднять зависимости) → `make migrate-up` →
+  `make set-admin-password PASSWORD=...` → `make run-receiver` / `run-sender` / `run-web`
+  (каждый в своём терминале). Полный список целей — `make help`.
 
 ## Конфигурация
 
@@ -176,6 +100,8 @@ Compose [deploy/docker-compose.deps.yml](deploy/docker-compose.deps.yml) — с�
 - `.env` — секреты, в git не коммитится.
 
 Выбор конфига по приоритету: `--config` → `$NEXUS_CONFIG` → `--debug` → `config/config.yml`.
+Полная карта переменных `.env` (адреса/логины/пароли хранилищ, `ENCRYPTION_KEY`) — в
+[DEPLOYMENT.md](./DEPLOYMENT.md) §2.
 
 ## API
 
