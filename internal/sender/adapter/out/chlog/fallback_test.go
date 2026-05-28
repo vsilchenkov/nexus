@@ -24,7 +24,7 @@ func TestFallbackStore_SaveAndRestore(t *testing.T) {
 		{ID: "1", URL: "https://a.com", Method: "POST", Status: 500, Done: false},
 		{ID: "2", URL: "https://b.com", Method: "POST", Status: 200, Done: true},
 	}
-	path, err := s.Save("vika_logs.demo", batch)
+	path, err := s.Save("nexus_default.demo", batch)
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestFallbackStore_SaveAndRestore(t *testing.T) {
 	// Реплеер успешно «доставляет» — файл должен удалиться.
 	var got []*domain.LogRecord
 	replay := func(_ context.Context, table string, b []*domain.LogRecord) error {
-		if table != "vika_logs.demo" {
+		if table != "nexus_default.demo" {
 			t.Errorf("table mismatch: %q", table)
 		}
 		got = append(got, b...)
@@ -57,7 +57,7 @@ func TestFallbackStore_RestoreKeepsOnFailure(t *testing.T) {
 	s := newFallbackStore(dir, time.Second, logging.NewNoop())
 
 	batch := []*domain.LogRecord{{ID: "x", URL: "https://x.com", Method: "POST"}}
-	path, err := s.Save("vika_logs.demo", batch)
+	path, err := s.Save("nexus_default.demo", batch)
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}

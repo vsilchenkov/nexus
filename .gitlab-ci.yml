@@ -430,15 +430,15 @@ loadtest:
         --set-admin-password "$LOADTEST_ADMIN_PASSWORD"
     - echo "--- admin password установлен; web-container, что мы вызывали, удалён (--rm) ---"
     # ----- Шаг 2.5: ClickHouse таблица для логов loadtest-узлов -----
-    # cmd/loadtest создаёт 50 узлов с clickhouse_table=vika_logs.loadtest, но сам
+    # cmd/loadtest создаёт 50 узлов с clickhouse_table=nexus_default.loadtest, но сам
     # таблицу не создаёт. Без неё sender'овский chlog.Writer фейлится на каждом
-    # batch insert ("Table vika_logs.loadtest does not exist") → error rate 100%.
+    # batch insert ("Table nexus_default.loadtest does not exist") → error rate 100%.
     # Схема — §4.3 ТЗ (specs/sections/04-sender.md), единая для всех узлов.
-    - 'echo "===== [2.5/4] создаём CH-таблицу vika_logs.loadtest ====="'
+    - 'echo "===== [2.5/4] создаём CH-таблицу nexus_default.loadtest ====="'
     - |
       docker compose exec -T clickhouse clickhouse-client --multiquery --query "
-      CREATE DATABASE IF NOT EXISTS vika_logs;
-      CREATE TABLE IF NOT EXISTS vika_logs.loadtest (
+      CREATE DATABASE IF NOT EXISTS nexus_default;
+      CREATE TABLE IF NOT EXISTS nexus_default.loadtest (
         ID String,
         type String,
         url String,
@@ -465,8 +465,8 @@ loadtest:
       ORDER BY (date_create, date_request, method)
       SETTINGS index_granularity = 8192;
       "
-    - 'echo "--- проверка: SHOW TABLES FROM vika_logs ---"'
-    - docker compose exec -T clickhouse clickhouse-client --query "SHOW TABLES FROM vika_logs"
+    - 'echo "--- проверка: SHOW TABLES FROM nexus_default ---"'
+    - docker compose exec -T clickhouse clickhouse-client --query "SHOW TABLES FROM nexus_default"
     # ----- Шаг 3: запуск нагрузочного сценария -----
     - echo "===== [3/4] loadtest scenario ====="
     - echo "  target_rps = $LOADTEST_TARGET_RPS"

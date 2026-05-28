@@ -8,7 +8,7 @@ import (
 )
 
 // TestDefaultCHTemplateSpec_SeedJSON фиксирует, что JSON-литерал сида миграции
-// 0010 совпадает с marshal(DefaultCHTemplateSpec) и корректно рендерится.
+// 0009 совпадает с marshal(DefaultCHTemplateSpec) и корректно рендерится.
 // Если поменять домен — тест поймает рассинхрон с миграцией.
 func TestDefaultCHTemplateSpec_SeedJSON(t *testing.T) {
 	const seed = `{"engine":"MergeTree","partition_by":"toYYYYMM(date_create)","order_by":["date_create","date_request","method"],"ttl_mode":"none"}`

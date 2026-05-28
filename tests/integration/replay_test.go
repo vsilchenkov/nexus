@@ -52,7 +52,7 @@ func TestReplay_E2E_ClickHouse(t *testing.T) {
 	cipher, _ := crypto.NewCipher(testEncryptionKey)
 
 	// 1. Узел в PG.
-	const chTable = "vika_logs.replay_e2e"
+	const chTable = "nexus_default.replay_e2e"
 	nodeRepo := pgrepo.NewNodeRepoPg(pool, cipher, logger)
 	auditRepo := pgrepo.NewAuditRepoPg(pool, logger)
 	uow := pgrepo.NewUnitOfWorkPg(pool, cipher, logger)

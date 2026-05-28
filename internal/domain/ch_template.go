@@ -151,7 +151,7 @@ func validCHCodec(codec string) bool {
 // DefaultCHTemplateSpec — спецификация шаблона «Standard logs», рендерящаяся
 // ровно в схему §4.3 (MergeTree, PARTITION BY toYYYYMM(date_create),
 // ORDER BY (date_create, date_request, method), без CODEC/индексов/TTL).
-// Используется сидом миграции 0010 и golden-тестом.
+// Используется сидом миграции 0009 и golden-тестом.
 func DefaultCHTemplateSpec() CHTemplateSpec {
 	return CHTemplateSpec{
 		Engine:      CHEngineMergeTree,

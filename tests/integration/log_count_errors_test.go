@@ -26,7 +26,7 @@ func TestLogReader_CountErrors_E2E(t *testing.T) {
 	conn, cfg, cleanup := startClickHouse(t, ctx)
 	defer cleanup()
 
-	const table = "vika_logs.count_err"
+	const table = "nexus_default.count_err"
 	createNodeLogTable(t, ctx, conn, table)
 
 	logger := logging.NewNoop()

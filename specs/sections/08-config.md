@@ -71,7 +71,7 @@ clickhouse:
   # Начальные значения — потом перезаписываются из app_settings (PostgreSQL → Redis)
   host: ${CH_HOST:localhost}
   port: ${CH_PORT:9000}
-  database: vika_logs
+  database: nexus_default
   user: ${CH_USER:default}             # из .env
   password: ${CH_PASSWORD}             # из .env
   batch_size: 500                      # под 500 rps — секунда трафика в батче

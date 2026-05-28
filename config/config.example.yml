@@ -62,7 +62,7 @@ redis:
 clickhouse:
   host: ${CH_HOST:clickhouse}
   port: ${CH_PORT:9000}
-  database: vika_logs
+  database: nexus_default
   user: ${CH_USER:default}
   password: ${CH_PASSWORD}
   batch_size: 500

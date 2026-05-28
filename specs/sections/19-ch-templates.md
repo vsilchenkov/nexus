@@ -21,7 +21,7 @@
   CODEC/индексы/TTL поверх, но не меняет состав/имена/типы (иначе ломается batch
   INSERT Sender'а).
 - **Таблица `ch_templates`** (PostgreSQL, **глобальный** каталог, не per-team;
-  миграция 0010):
+  миграция 0009):
   - `id` (UUID, PK), `name` (varchar(64), UNIQUE, CHECK
     `^[A-Za-z0-9][A-Za-z0-9 _-]{0,63}$`), `description` (text),
     `spec` (JSONB), `is_default` (bool), `created_at`, `updated_at`.

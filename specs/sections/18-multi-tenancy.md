@@ -30,8 +30,10 @@ ClickHouse для логов.
   - `user_audit.team_id` (UUID FK, NULL = глобальное действие).
 - Сидинг: команда `default` (`ch_database = nexus_default`), стартовый
   `admin` — её owner.
-- Backfill (миграция 0009): `nodes.clickhouse_table` приводится к формату
-  `<db>.<table>` (`vika_logs.<x>` и unprefixed `<x>` → `nexus_default.<x>`).
+- Нормализация: `nodes.clickhouse_table` приводится к формату `<db>.<table>`
+  на write-time в Web (`NodeUsecase.normalizeCHTable` при создании/обновлении
+  узла) — unprefixed `<x>` → `nexus_default.<x>`. Backfill-миграция для
+  legacy-данных не нужна (стенд greenfield, узлов со старым форматом нет).
 
 ### 18.2 ClickHouse: БД на команду
 

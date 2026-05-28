@@ -25,7 +25,7 @@ import (
 )
 
 // startClickHouse поднимает CH 24-alpine через generic testcontainer и
-// возвращает готовое driver.Conn + cleanup. База "vika_logs" создаётся
+// возвращает готовое driver.Conn + cleanup. База "nexus_default" создаётся
 // сразу (по умолчанию в Sender writer/LogReader работают с db.table-нотацией).
 func startClickHouse(t *testing.T, ctx context.Context) (chdriver.Conn, *config.ClickHouseSection, func()) {
 	t.Helper()
@@ -36,7 +36,7 @@ func startClickHouse(t *testing.T, ctx context.Context) (chdriver.Conn, *config.
 			"9000/tcp", // native TCP
 		},
 		Env: map[string]string{
-			"CLICKHOUSE_DB":                        "vika_logs",
+			"CLICKHOUSE_DB":                        "nexus_default",
 			"CLICKHOUSE_USER":                      "default",
 			"CLICKHOUSE_PASSWORD":                  "",
 			"CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT": "1",
@@ -60,7 +60,7 @@ func startClickHouse(t *testing.T, ctx context.Context) (chdriver.Conn, *config.
 	cfg := &config.ClickHouseSection{
 		Host:             host,
 		Port:             int(port.Num()),
-		Database:         "vika_logs",
+		Database:         "nexus_default",
 		User:             "default",
 		Password:         "",
 		BatchSize:        10,
@@ -139,7 +139,7 @@ func TestClickHouse_WriteAndRead(t *testing.T) {
 	conn, cfg, cleanup := startClickHouse(t, ctx)
 	defer cleanup()
 
-	const table = "vika_logs.test_e2e"
+	const table = "nexus_default.test_e2e"
 	createNodeLogTable(t, ctx, conn, table)
 
 	logger := logging.NewNoop()
@@ -226,7 +226,7 @@ func TestClickHouse_WriteAndRead(t *testing.T) {
 	require.Len(t, got, 2)
 
 	// Защита от SQL-инъекции: невалидное имя таблицы.
-	_, err = reader.GetByID(ctx, "vika_logs.test_e2e; DROP TABLE foo--", "x")
+	_, err = reader.GetByID(ctx, "nexus_default.test_e2e; DROP TABLE foo--", "x")
 	require.Error(t, err)
 }
 
@@ -241,7 +241,7 @@ func TestClickHouse_GetByID_Deterministic(t *testing.T) {
 	conn, cfg, cleanup := startClickHouse(t, ctx)
 	defer cleanup()
 
-	const table = "vika_logs.test_getbyid"
+	const table = "nexus_default.test_getbyid"
 	createNodeLogTable(t, ctx, conn, table)
 
 	logger := logging.NewNoop()

@@ -81,7 +81,7 @@
 | `team_id` колонки с DEFAULT 'default' (закладка multi-tenancy v2) | ✅ → ◐ Phase 10.1 | миграция 0002 (legacy) → миграция 0008 (UUID FK на `teams`, см. §16 Phase 10) |
 | **`teams`, `user_teams` + FK во всех team-aware таблицах** | ✅ Phase 10.1 | [migrations/0008_multi_tenancy.up.sql](../migrations/0008_multi_tenancy.up.sql); сидинг 'default'-team (`ch_database='nexus_default'`), admin → owner |
 | **TeamProvisioner: `CREATE DATABASE nexus_<slug>` атомарно с PG-tx** | ✅ Phase 10.C.1 | [adapter/out/clickhouse/team_provisioner.go](../internal/web/adapter/out/clickhouse/team_provisioner.go), [usecase/team.go](../internal/web/usecase/team.go); при упавшем CH `repo.Delete` откатывает PG-row; имя БД жёстко валидируется regex'ом |
-| **Backfill `nodes.clickhouse_table` → `<team.ch_database>.<table>`** | ✅ Phase 10.C.3 | [migrations/0009_node_ch_table_prefix.up.sql](../migrations/0009_node_ch_table_prefix.up.sql); legacy `vika_logs.<x>` и unprefixed `<x>` приводятся к `nexus_default.<x>`, чужие `nexus_<other>.<x>` не трогаются |
+| **Нормализация `nodes.clickhouse_table` → `<team.ch_database>.<table>`** | ✅ Phase 10.C.2 | [usecase/node.go](../internal/web/usecase/node.go) `normalizeCHTable` — write-time префикс при Create/Update; unprefixed `<x>` → `nexus_default.<x>`. Backfill-миграция (0009) удалена как ненужная (стенд greenfield) |
 | Up/Down + `make migrate-up`/`-down N=1`/`-status` | ✅ | [Makefile](../Makefile) |
 | ClickHouse driver `clickhouse-go/v2`, batch INSERT | ✅ | [platform/clickhouse/clickhouse.go](../internal/platform/clickhouse/clickhouse.go) |
 | Kafka admin + producer + consumer (`segmentio/kafka-go`) с автосозданием топиков с retention 30 дней, acks=all, idempotence | ✅ | [platform/kafka/](../internal/platform/kafka/) |
@@ -222,7 +222,7 @@
   - ✅ Phase 10.B.2: team-scope в `NodeUsecase.{Get,Update,Delete}` (cross-team → 404), `NodeHandler.Create` подставляет `currentTeamID(c)`, `APITokenUsecase.Create` принимает `teamID` и пишет его в `api_tokens.team_id`.
   - ✅ Phase 10.C.1: `TeamProvisioner` (PG-tx + `CREATE DATABASE nexus_<slug>` атомарно с откатом PG-row), `TeamUsecase` (CRUD + Members), HTTP `/api/teams` (admin-only). Creator → owner. `default`-team удалить нельзя.
   - ✅ Phase 10.C.2: `NodeUsecase` нормализует `clickhouse_table` до `<team.ch_database>.<table>` в Create/Update через `TeamRepo`. Sender и `ch_housekeeping` без изменений — `chlog.Writer` уже принимает `db.table` строкой, `splitDBTable` уже умеет парсить.
-  - ✅ Phase 10.C.3: миграция 0009 — backfill `nodes.clickhouse_table` (`<table>` → `nexus_default.<table>`, `vika_logs.<x>` → `nexus_default.<x>`, чужие `nexus_<other>.<x>` не трогаются).
+  - ✅ Phase 10.C.3: нормализация `nodes.clickhouse_table` до `<team.ch_database>.<table>` — на write-time в `NodeUsecase.normalizeCHTable` (Create/Update). Backfill-миграция 0009 удалена как ненужная (стенд greenfield, узлов со старым/unprefixed форматом нет).
   - ✅ Phase 10.D.1: team-scope в `LogsUsecase.{ListSince,Search,Subscribe}` и `ReplayUsecase.Replay` (cross-team → 404). `DryRunHandler` ставит `n.TeamID = currentTeamID(c)` на узле формы. Handler'ы передают `currentTeamID(c)` во все эти usecase.
   - ✅ Phase 10.D.2: `OrphanScanner` сканирует все `teams.ch_database` (allow-list), `knownTables` собирает узлы всех команд, drop guard разрешает DROP только в tenant-БД. `ch_housekeeping` (Sender) автоматически multi-team — берёт узлы всех команд из PG и идёт по `db.table` через `splitDBTable`.
   - ✅ Phase 10.E.1: `NodeReader.Get(teamSlug, path)` — PG-запрос через `JOIN teams ON nodes.team_id = teams.id WHERE teams.slug=$1 AND nodes.path=$2`, Redis-ключ `node:<team_slug>:<path>`, L2-кеш по `<team_slug>/<path>`. Receiver принимает `/v1/request/<team_slug>/<node_path>` и legacy `/v1/request/<node_path>` (default-team). Parser `splitTeamSlugAndPath` различает 1- и 2-сегментные URL.
@@ -255,7 +255,7 @@
 |---|---|---|
 | Единый источник 20 колонок | ✅ Phase F1.1 | [domain/ch_log_schema.go](../internal/domain/ch_log_schema.go) `RequiredLogColumns` |
 | Доменная модель шаблона + Validate (белые списки CODEC/index/partition) | ✅ Phase F1.1 | [domain/ch_template.go](../internal/domain/ch_template.go), рендер [ch_template_render.go](../internal/domain/ch_template_render.go) |
-| Таблица `ch_templates` (JSONB spec, partial-unique default) + сид «Standard logs» + `nodes.clickhouse_template_id` | ✅ Phase F1.2 | [migrations/0010](../migrations/0010_ch_templates.up.sql), [postgres/ch_template_repo.go](../internal/web/adapter/out/postgres/ch_template_repo.go) |
+| Таблица `ch_templates` (JSONB spec, partial-unique default) + сид «Standard logs» + `nodes.clickhouse_template_id` | ✅ Phase F1.2 | [migrations/0009](../migrations/0009_ch_templates.up.sql), [postgres/ch_template_repo.go](../internal/web/adapter/out/postgres/ch_template_repo.go) |
 | `TeamProvisioner.CreateTable` / `VerifyTemplate` (live temp create+drop) | ✅ Phase F1.3 | [clickhouse/team_provisioner.go](../internal/web/adapter/out/clickhouse/team_provisioner.go) |
 | CHTemplateUsecase (CRUD+audit, delete-guard, verify) + handler + routes | ✅ Phase F1.4 | [usecase/ch_template.go](../internal/web/usecase/ch_template.go), [http/ch_template_handler.go](../internal/web/adapter/in/http/ch_template_handler.go) |
 | Авто-создание таблицы при Create/Update узла + DTO + UI (селектор + панель управления) | ✅ Phase F1.5 | [usecase/node.go](../internal/web/usecase/node.go) `provisionTable`, [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx), [CHTemplatesPanel.tsx](../web-ui/src/components/CHTemplatesPanel.tsx) |
@@ -616,8 +616,8 @@ Phase 10.D.2 заменила «одна `chCfg.Database` = единственн
 
 `ch_housekeeping` (Sender) не требует аналогичной правки: он работает
 от `nodes.ListForHousekeeping` (без team-фильтра) и `splitDBTable` уже
-парсит `db.table` из `nodes.clickhouse_table` — после Phase 10.C.3 это
-всегда `nexus_<slug>.<table>`.
+парсит `db.table` из `nodes.clickhouse_table` — после нормализации в Web
+(Phase 10.C.2) это всегда `nexus_<slug>.<table>`.
 
 ### 4.17 `nodes.clickhouse_table` хранит полный `db.table`, маршрутизация на стороне Web
 
@@ -641,9 +641,12 @@ Sender за каждое сообщение НЕ ходит в PG за `teams.ch
 бы мигрировать все nodes.clickhouse_table. Поэтому `teams.slug` и
 `teams.ch_database` immutable.
 
-Защита от legacy-данных — миграция 0009 (`vika_logs.<x>` →
-`nexus_default.<x>`). Новые узлы через UI всегда получают корректный
-префикс автоматически.
+Стенд greenfield — узлов со старым/unprefixed форматом нет, поэтому
+backfill-миграция не нужна. Бывшая backfill-миграция удалена, а
+`ch_templates` переименована 0010 → 0009, чтобы нумерация шла подряд
+(БД, где уже была применена старая 0010, нужно пересоздать — данных нет).
+Новые узлы через UI всегда получают корректный префикс
+`nexus_<slug>.<table>` автоматически (`normalizeCHTable`).
 
 ### 4.15 Team-switcher: `current_team_id` в Redis-сессии, не в cookie
 
@@ -825,8 +828,8 @@ make proto                                     # перегенерация send
      и `APITokenUsecase.Create`.
    - Блок C (CH write): `TeamProvisioner` (PG-tx + CH `CREATE DATABASE`
      атомарно), `/api/teams` CRUD + Members, `NodeUsecase` нормализует
-     `clickhouse_table` до `<team.ch_database>.<table>`, миграция 0009
-     для backfill legacy-данных.
+     `clickhouse_table` до `<team.ch_database>.<table>` на write-time
+     (backfill-миграция не понадобилась — greenfield).
    - Блок D (CH read): scope в `LogsUsecase`/`ReplayUsecase`/`DryRunHandler`,
      `OrphanScanner` на allow-list `teams.ch_database`, `ch_housekeeping`
      работает multi-team автоматически.

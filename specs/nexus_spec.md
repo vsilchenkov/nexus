@@ -277,7 +277,7 @@ message SendResponse {
 Таблица на каждый узел, схема едина:
 
 ```sql
-CREATE TABLE vika_logs.{node_table}
+CREATE TABLE nexus_default.{node_table}
 (
   ID String,
   type String,
@@ -624,7 +624,7 @@ Prometheus поднимается в docker compose.
 
 3. Таблица последних запросов из ClickHouse:
    - Колонки: время, статус-код, длительность, HTTP-метод, checksum_request / checksum_response.
-   - Имя таблицы (`vika_logs.{table}`) показано рядом с заголовком блока.
+   - Имя таблицы (`nexus_default.{table}`) показано рядом с заголовком блока.
    - Кнопки «Фильтр» и «Все логи» (переход на вкладку Логи).
    - Строки с ошибками подсвечены фоновой заливкой.
    - Клик по строке раскрывает её и показывает полное тело запроса, тело ответа, заголовки и причину ошибки.
@@ -1081,7 +1081,7 @@ clickhouse:
   # Начальные значения — потом перезаписываются из app_settings (PostgreSQL → Redis)
   host: ${CH_HOST:localhost}
   port: ${CH_PORT:9000}
-  database: vika_logs
+  database: nexus_default
   user: ${CH_USER:default}             # из .env
   password: ${CH_PASSWORD}             # из .env
   batch_size: 500                      # под 500 rps — секунда трафика в батче
@@ -2438,7 +2438,7 @@ Multi-tenancy реализована в v2 (фазы Phase 10 + Phase 11). В v1
   - `api_tokens.team_id` (UUID FK) — токен ограничен одной командой.
   - `user_audit.team_id` (UUID FK, NULL = глобальное действие).
 - Сидинг: команда `default` (`ch_database = nexus_default`), стартовый `admin` — её owner.
-- Backfill (миграция 0009): `nodes.clickhouse_table` приводится к формату `<db>.<table>` (`vika_logs.<x>` и unprefixed `<x>` → `nexus_default.<x>`).
+- Нормализация: `nodes.clickhouse_table` приводится к формату `<db>.<table>` на write-time в Web (`NodeUsecase.normalizeCHTable` при создании/обновлении узла) — unprefixed `<x>` → `nexus_default.<x>`. Backfill-миграция для legacy-данных не нужна (стенд greenfield).
 
 ### 18.2 ClickHouse: БД на команду
 
@@ -2500,7 +2500,7 @@ Multi-tenancy реализована в v2 (фазы Phase 10 + Phase 11). В v1
 
 - `domain.RequiredLogColumns` — единый источник 20 обязательных колонок (порядок
   INSERT/SELECT), инвариант кода.
-- Таблица `ch_templates` (PostgreSQL, глобальная; миграция 0010): `id`, `name`
+- Таблица `ch_templates` (PostgreSQL, глобальная; миграция 0009): `id`, `name`
   (UNIQUE), `description`, `spec` (JSONB), `is_default` (partial-unique), таймстампы.
   Сид `Standard logs` рендерится в схему §4.3.
 - `spec`: `engine` (MergeTree), `partition_by`, `order_by`, `column_overrides`

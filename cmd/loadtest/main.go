@@ -185,7 +185,7 @@ func (c *client) createNodes(ctx context.Context, n int, targetURL string) ([]st
 			"auth_type":          "none",
 			"incoming_auth_type": "none",
 			"timeout_ms":         30000,
-			"clickhouse_table":   "vika_logs.loadtest",
+			"clickhouse_table":   "nexus_default.loadtest",
 		})
 		req, _ := http.NewRequestWithContext(ctx, "POST", c.baseWeb+"/api/nodes", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")

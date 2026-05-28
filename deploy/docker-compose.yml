@@ -55,7 +55,7 @@ services:
     image: clickhouse/clickhouse-server:24-alpine
     restart: unless-stopped
     environment:
-      CLICKHOUSE_DB: vika_logs
+      CLICKHOUSE_DB: nexus_default
       CLICKHOUSE_USER: ${CH_USER:-default}
       CLICKHOUSE_PASSWORD: ${CH_PASSWORD:-}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
