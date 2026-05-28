@@ -102,6 +102,11 @@
 
 ### §7 Веб-интерфейс
 
+> **Phase 21 (§21):** все экраны §7 переведены на единый визуальный эталон
+> ([nexus_ui.html](nexus_ui.html)) — дизайн-токены, UI-kit, app-shell (левый
+> сайдбар + топбар), вкладки узла, KPI/графики из API метрик. Подробности —
+> [sections/21-ui-redesign.md](sections/21-ui-redesign.md) и разделы 4.11.2/4.11.3 ниже.
+
 | Пункт | Статус | Где |
 |---|---|---|
 | Login form (cookie nexus_session) | ✅ | [web-ui/src/pages/Login.tsx](../web-ui/src/pages/Login.tsx) |

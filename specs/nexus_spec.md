@@ -2551,3 +2551,42 @@ Telegram — только при наличии ошибок. Настраива
   «Проверить».
 - Неочевидность: `AppSettingsRepoPg.Update` обязан сериализовать `notifications`
   (иначе молчаливая потеря) — закреплено round-trip integration-тестом.
+
+## 21. Редизайн UI под эталон + API метрик панели
+
+Реализовано в Phase 21. Полный раздел — [sections/21-ui-redesign.md](sections/21-ui-redesign.md).
+Визуальный эталон экранов — [nexus_ui.html](nexus_ui.html).
+
+Весь веб-интерфейс (§7) приведён к единому эталону (тёмная тема, дизайн-токены,
+левый сайдбар + тонкий топбар), достроены вкладки узла, KPI, графики и
+переключатель таблица/карточки; поздние разделы (Teams §18, Notifications §20,
+тема) оформлены в том же стиле; добавлен отсутствовавший HTTP-API метрик.
+
+### 21.1 Дизайн-система и shell
+
+- Токены/радиусы/шрифты эталона — `globals.css` + `tailwind.config.js`; UI-kit
+  `components/ui/*` (Button, Field, Card, Modal, Chip, Pill, Kpi, Seg, Hint,
+  PickGroup, Toggle3, TrafficChart). Тема тёмная основная, светлая зеркальная;
+  переключатель — в топбаре.
+- `AppShell`: постоянный Sidebar + Topbar (крошки, team-switcher, язык, тема,
+  выход); защищённые маршруты — layout-route через `<Outlet/>`. Настройки —
+  одна подстраница со своим вложенным меню (осознанное отклонение от сайдбара
+  эталона).
+
+### 21.2 API метрик панели
+
+- `GET /api/metrics/overview` (KPI 24ч), `/api/metrics/nodes?range=` (per-node
+  throughput), `/api/metrics/nodes/{id}?range=` (KPI + ряд графика). Scope
+  `metrics:read`.
+- Источники: Prometheus query API (`prometheus.url`) — глобальные KPI/очередь/
+  throughput; ClickHouse — точные `quantile(0.95/0.99)` и счётчики по таблице
+  узла. Деградация без Prometheus (`prometheus_available=false`) и без CH-таблицы
+  (`chart_available=false`) — без 500.
+- Prometheus — зависимость Web для дашбордов (DEPLOYMENT.md/DEVELOPMENT.md).
+
+### 21.3 Экраны
+
+- Node detail — вкладки Обзор/Логи/Конфигурация/Метрики. Overview — KPI + статус
+  OK/Очередь/Down + таблица/карточки. Node settings — двухколоночная форма +
+  предпросмотр маршрута. Удаление узла — чекбокс дропа таблицы + ввод path.
+  Диалоги Replay/Dry-run — общий Modal. Login/Language/Audit — на UI-kit.

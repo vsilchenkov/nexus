@@ -1,0 +1,971 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nexus — UI эталон для реализации</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/tabler-icons.min.css">
+<style>
+:root {
+  /* Dark theme tokens — единый источник правды для реализации */
+  --bg-app: #0f1115;
+  --bg-primary: #16191f;
+  --bg-secondary: #1c2027;
+  --bg-tertiary: #22272f;
+  --bg-info: rgba(74, 144, 226, 0.12);
+  --bg-success: rgba(60, 180, 120, 0.14);
+  --bg-danger: rgba(226, 75, 74, 0.12);
+  --bg-warning: rgba(220, 160, 60, 0.14);
+
+  --border-tertiary: #2a3038;
+  --border-strong: #38404a;
+  --border-danger: rgba(226, 75, 74, 0.5);
+
+  --text-primary: #e6e9ef;
+  --text-secondary: #9aa3b2;
+  --text-tertiary: #5f6875;
+  --text-info: #5b9bf0;
+  --text-success: #4cc38a;
+  --text-danger: #e85d5c;
+  --text-warning: #d9a441;
+
+  --radius-sm: 4px;
+  --radius-md: 7px;
+  --radius-lg: 11px;
+
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+
+  --sidebar-w: 220px;
+  --header-h: 56px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ===== Document intro ===== */
+.doc-intro {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 48px 32px 24px;
+}
+.doc-intro h1 {
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin-bottom: 12px;
+}
+.doc-intro .lead {
+  font-size: 15px;
+  color: var(--text-secondary);
+  line-height: 1.65;
+  margin-bottom: 8px;
+}
+.doc-intro code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--bg-secondary);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  color: var(--text-info);
+}
+.doc-note {
+  margin-top: 20px;
+  padding: 14px 18px;
+  background: var(--bg-info);
+  border: 0.5px solid rgba(91, 155, 240, 0.3);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+/* ===== Screen-by-screen TOC ===== */
+.toc {
+  max-width: 900px;
+  margin: 0 auto 40px;
+  padding: 0 32px;
+}
+.toc h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+  margin-bottom: 14px;
+}
+.toc-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+.toc-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--bg-primary);
+  border: 0.5px solid var(--border-tertiary);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 13px;
+  transition: border-color 0.15s, color 0.15s;
+}
+.toc-item:hover { border-color: var(--border-strong); color: var(--text-primary); }
+.toc-item .num {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  min-width: 28px;
+}
+
+/* ===== Screen frame ===== */
+.screen {
+  max-width: 1180px;
+  margin: 0 auto 56px;
+  padding: 0 24px;
+  scroll-margin-top: 20px;
+}
+.screen-label {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 6px;
+  padding-bottom: 0;
+}
+.screen-label .tag {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-info);
+  background: var(--bg-info);
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+}
+.screen-label h2 { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+.screen-desc { font-size: 13px; color: var(--text-secondary); margin-bottom: 16px; max-width: 720px; line-height: 1.6; }
+
+.frame {
+  background: var(--bg-app);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.35);
+}
+
+/* ===== App shell (sidebar + header) ===== */
+.shell { display: grid; grid-template-columns: var(--sidebar-w) 1fr; min-height: 560px; }
+.sidebar {
+  background: var(--bg-primary);
+  border-right: 0.5px solid var(--border-tertiary);
+  padding: 16px 12px;
+  display: flex;
+  flex-direction: column;
+}
+.brand {
+  display: flex; align-items: center; gap: 9px;
+  padding: 6px 10px 18px;
+  font-weight: 600; font-size: 15px;
+}
+.brand .logo {
+  width: 26px; height: 26px; border-radius: 7px;
+  background: linear-gradient(135deg, #5b9bf0, #4cc38a);
+  display: grid; place-items: center;
+  color: #fff; font-size: 15px;
+}
+.nav-group { margin-bottom: 4px; }
+.nav-group-title {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--text-tertiary); padding: 12px 10px 6px;
+}
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: var(--radius-md);
+  font-size: 13px; color: var(--text-secondary);
+  cursor: pointer; margin-bottom: 1px;
+}
+.nav-item:hover { background: var(--bg-secondary); color: var(--text-primary); }
+.nav-item.active { background: var(--bg-secondary); color: var(--text-primary); font-weight: 500; }
+.nav-item i { font-size: 17px; }
+.sidebar-foot { margin-top: auto; padding: 10px; border-top: 0.5px solid var(--border-tertiary); }
+.user-chip { display: flex; align-items: center; gap: 9px; font-size: 12px; color: var(--text-secondary); }
+.user-chip .av {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--bg-info); color: var(--text-info);
+  display: grid; place-items: center; font-weight: 600; font-size: 11px;
+}
+
+.main { display: flex; flex-direction: column; min-width: 0; }
+.topbar {
+  height: var(--header-h);
+  border-bottom: 0.5px solid var(--border-tertiary);
+  display: flex; align-items: center; gap: 14px;
+  padding: 0 20px; background: var(--bg-primary);
+}
+.crumbs { font-size: 13px; color: var(--text-secondary); display: flex; align-items: center; gap: 7px; }
+.crumbs .cur { color: var(--text-primary); }
+.crumbs i { font-size: 13px; color: var(--text-tertiary); }
+.topbar-spacer { flex: 1; }
+.icon-btn {
+  width: 32px; height: 32px; border-radius: var(--radius-md);
+  display: grid; place-items: center; color: var(--text-secondary);
+  cursor: pointer; border: 0.5px solid transparent;
+}
+.icon-btn:hover { background: var(--bg-secondary); color: var(--text-primary); }
+.content { padding: 22px 24px; overflow: auto; }
+
+/* ===== Reusable UI atoms ===== */
+.btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 8px 14px; border-radius: var(--radius-md);
+  font-size: 13px; font-weight: 500; cursor: pointer;
+  border: 0.5px solid var(--border-strong);
+  background: var(--bg-secondary); color: var(--text-primary);
+  font-family: var(--font-sans);
+}
+.btn:hover { background: var(--bg-tertiary); }
+.btn i { font-size: 15px; }
+.btn-primary { background: var(--text-info); border-color: var(--text-info); color: #fff; }
+.btn-primary:hover { background: #4a8ad8; }
+.btn-danger { background: var(--text-danger); border-color: var(--text-danger); color: #fff; }
+.btn-ghost { background: transparent; border-color: var(--border-tertiary); }
+.btn-sm { padding: 5px 10px; font-size: 12px; }
+
+label.fld { display: block; font-size: 12px; color: var(--text-secondary); margin-bottom: 5px; }
+input.in, select.in, textarea.in {
+  width: 100%; height: 36px; padding: 0 11px;
+  background: var(--bg-app); border: 0.5px solid var(--border-tertiary);
+  border-radius: var(--radius-md); color: var(--text-primary);
+  font-size: 13px; font-family: var(--font-sans);
+}
+textarea.in { height: auto; padding: 9px 11px; font-family: var(--font-mono); font-size: 12px; line-height: 1.55; resize: vertical; }
+input.in:focus, select.in:focus, textarea.in:focus { outline: none; border-color: var(--text-info); }
+input.mono { font-family: var(--font-mono); font-size: 12px; }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px; border-radius: 11px; font-size: 11px;
+  background: var(--bg-secondary); color: var(--text-secondary);
+}
+.chip i { font-size: 12px; cursor: pointer; opacity: 0.5; }
+.chip i:hover { opacity: 1; }
+.chip-info { background: var(--bg-info); color: var(--text-info); }
+.chip-success { background: var(--bg-success); color: var(--text-success); }
+.chip-danger { background: var(--bg-danger); color: var(--text-danger); }
+.chip-warning { background: var(--bg-warning); color: var(--text-warning); }
+
+.pill { display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 11px; font-size: 11px; font-weight: 500; }
+.pill-ok { background: var(--bg-success); color: var(--text-success); }
+.pill-err { background: var(--bg-danger); color: var(--text-danger); }
+.pill-warn { background: var(--bg-warning); color: var(--text-warning); }
+
+.card {
+  background: var(--bg-primary); border: 0.5px solid var(--border-tertiary);
+  border-radius: var(--radius-lg); padding: 16px 18px;
+}
+.card-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+.card-sub { font-size: 12px; color: var(--text-secondary); margin-bottom: 14px; }
+
+table.tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+table.tbl th {
+  text-align: left; padding: 8px 10px; font-weight: 500;
+  color: var(--text-secondary); border-bottom: 0.5px solid var(--border-tertiary);
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+}
+table.tbl td { padding: 9px 10px; border-bottom: 0.5px solid var(--border-tertiary); }
+table.tbl tr:hover td { background: var(--bg-secondary); }
+.mono { font-family: var(--font-mono); }
+
+.kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px; }
+.kpi {
+  background: var(--bg-primary); border: 0.5px solid var(--border-tertiary);
+  border-radius: var(--radius-md); padding: 13px 15px;
+}
+.kpi .k-label { font-size: 11px; color: var(--text-secondary); margin-bottom: 6px; }
+.kpi .k-value { font-size: 23px; font-weight: 600; letter-spacing: -0.01em; }
+.kpi .k-delta { font-size: 11px; margin-top: 3px; }
+.k-up { color: var(--text-success); }
+.k-down { color: var(--text-danger); }
+
+.seg { display: inline-flex; background: var(--bg-secondary); border-radius: var(--radius-md); padding: 2px; }
+.seg button {
+  border: none; background: transparent; color: var(--text-secondary);
+  padding: 5px 12px; border-radius: 5px; font-size: 12px; cursor: pointer; font-family: var(--font-sans);
+}
+.seg button.on { background: var(--bg-tertiary); color: var(--text-primary); font-weight: 500; }
+
+.toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+.toolbar .grow { flex: 1; min-width: 160px; }
+
+.pick { display: grid; gap: 10px; }
+.pick.cols-2 { grid-template-columns: 1fr 1fr; }
+.pick label {
+  padding: 12px 14px; border: 0.5px solid var(--border-tertiary);
+  border-radius: var(--radius-md); cursor: pointer; position: relative;
+}
+.pick label.sel { border-color: var(--text-info); background: var(--bg-info); }
+.pick .t { font-size: 13px; font-weight: 500; display: flex; align-items: center; gap: 7px; margin-bottom: 3px; }
+.pick label.sel .t { color: var(--text-info); }
+.pick .d { font-size: 11px; color: var(--text-secondary); line-height: 1.4; }
+.pick label.sel .d { color: var(--text-info); opacity: 0.85; }
+.pick .ck { position: absolute; top: 12px; right: 12px; color: var(--text-info); display: none; }
+.pick label.sel .ck { display: block; }
+
+.hint {
+  display: flex; gap: 7px; padding: 9px 12px; border-radius: var(--radius-md);
+  font-size: 11.5px; line-height: 1.5; margin-top: 10px;
+}
+.hint i { font-size: 14px; flex-shrink: 0; margin-top: 1px; }
+.hint-info { background: var(--bg-info); color: var(--text-info); }
+.hint-warn { background: var(--bg-warning); color: var(--text-warning); }
+.hint-danger { background: var(--bg-danger); color: var(--text-danger); }
+.hint-muted { background: var(--bg-secondary); color: var(--text-secondary); }
+
+.section-head { font-size: 13px; font-weight: 600; margin: 4px 0 12px; display: flex; align-items: center; gap: 7px; color: var(--text-primary); }
+.section-head i { font-size: 16px; color: var(--text-secondary); }
+
+.frow { display: grid; grid-template-columns: 150px 1fr; gap: 14px; align-items: start; padding: 12px 0; border-bottom: 0.5px solid var(--border-tertiary); }
+.frow:last-child { border-bottom: none; }
+.frow .fl { font-size: 13px; color: var(--text-secondary); padding-top: 8px; }
+.frow .fl .sub { font-size: 11px; color: var(--text-tertiary); display: block; margin-top: 2px; }
+.frow .fi { display: flex; flex-direction: column; gap: 6px; }
+
+/* ===== Modal frame (shown inline as static) ===== */
+.modal-demo {
+  background: var(--bg-app);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 16px 50px rgba(0,0,0,0.5);
+  max-width: 560px;
+  overflow: hidden;
+}
+.modal-head { padding: 16px 20px; border-bottom: 0.5px solid var(--border-tertiary); display: flex; align-items: center; justify-content: space-between; }
+.modal-head h3 { font-size: 15px; font-weight: 600; }
+.modal-head .sub { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+.modal-body { padding: 18px 20px; }
+.modal-foot { padding: 14px 20px; border-top: 0.5px solid var(--border-tertiary); display: flex; justify-content: flex-end; gap: 9px; }
+
+.two-col { display: grid; grid-template-columns: 1fr 320px; gap: 18px; }
+
+.preview-box { padding: 11px 13px; background: var(--bg-app); border-radius: var(--radius-md); border: 0.5px solid var(--border-tertiary); }
+.preview-box .pl { font-size: 10px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+.preview-box .pr { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); line-height: 1.7; }
+.preview-box .pr .key { color: var(--text-info); }
+.preview-box .pr .val { color: var(--text-primary); }
+.preview-box .pr .muted { color: var(--text-tertiary); font-size: 10px; }
+
+.flag { width: 30px; height: 22px; border-radius: 3px; overflow: hidden; flex-shrink: 0; }
+
+.toggle3 { display: flex; gap: 8px; }
+.toggle3 label {
+  flex: 1; padding: 9px; text-align: center; border: 0.5px solid var(--border-tertiary);
+  border-radius: var(--radius-md); cursor: pointer; font-size: 12px;
+}
+.toggle3 label.sel { border-color: var(--text-info); background: var(--bg-info); color: var(--text-info); font-weight: 500; }
+
+.subblock { background: var(--bg-secondary); border-radius: var(--radius-md); padding: 12px 14px; }
+
+.foot-note { max-width: 900px; margin: 0 auto; padding: 24px 32px 60px; font-size: 12px; color: var(--text-tertiary); line-height: 1.7; border-top: 0.5px solid var(--border-tertiary); }
+</style>
+</head>
+<body>
+
+<div class="doc-intro">
+  <h1>Nexus — UI эталон</h1>
+  <p class="lead">Визуальный референс всех согласованных экранов и форм. Передаётся в Claude Code как эталон для реализации фронтенда (React + TypeScript + Vite + TanStack Query + shadcn/ui + Tailwind, см. §17 ТЗ).</p>
+  <p class="lead">Каждый экран помечен ссылкой на раздел ТЗ (<code>§7.x</code>), где описано поведение, валидация, состояния и API-эндпоинты. Этот документ фиксирует <strong>внешний вид и компоновку</strong>; логика — в ТЗ.</p>
+  <div class="doc-note">
+    <strong>Как использовать.</strong> Дизайн-токены вверху <code>&lt;style&gt;</code> (цвета, радиусы, шрифты, отступы) — единый источник правды. При реализации перенести их в Tailwind-config / CSS-переменные один в один. Все экраны в тёмной теме; светлая строится зеркально от тех же токенов. Иконки — Tabler Icons (в проде — lucide-react, имена совпадают почти везде).
+  </div>
+</div>
+
+<div class="toc">
+  <h2>Экраны</h2>
+  <div class="toc-grid">
+    <a class="toc-item" href="#login"><span class="num">7.1</span> Login — вход</a>
+    <a class="toc-item" href="#overview"><span class="num">7.3</span> Overview — список узлов</a>
+    <a class="toc-item" href="#detail"><span class="num">7.4</span> Node detail — обзор узла</a>
+    <a class="toc-item" href="#logs"><span class="num">7.4</span> Логи + Live-tail</a>
+    <a class="toc-item" href="#replay"><span class="num">7.4.1</span> Replay — диалог</a>
+    <a class="toc-item" href="#settings"><span class="num">7.5</span> Node settings — форма узла</a>
+    <a class="toc-item" href="#dryrun"><span class="num">7.5.1</span> Dry-run — диалог</a>
+    <a class="toc-item" href="#deletenode"><span class="num">7.5</span> Удаление узла — диалог</a>
+    <a class="toc-item" href="#createtable"><span class="num">7.6</span> Создание таблицы CH</a>
+    <a class="toc-item" href="#chsettings"><span class="num">7.8</span> Settings → ClickHouse</a>
+    <a class="toc-item" href="#users"><span class="num">7.9</span> Settings → Users</a>
+    <a class="toc-item" href="#userdialog"><span class="num">7.10</span> Диалог пользователя</a>
+    <a class="toc-item" href="#language"><span class="num">7.11</span> Settings → Language</a>
+    <a class="toc-item" href="#audit"><span class="num">7.13</span> Audit log</a>
+    <a class="toc-item" href="#tokens"><span class="num">7.14</span> Settings → API Tokens</a>
+    <a class="toc-item" href="#createtoken"><span class="num">7.14</span> Создание токена — диалог</a>
+  </div>
+</div>
+
+<!-- screens injected below -->
+<div id="screens-root">
+
+<!-- ============ LOGIN ============ -->
+<section class="screen" id="login">
+  <div class="screen-label"><span class="tag">§7.1</span><h2>Login — вход</h2></div>
+  <p class="screen-desc">Форма входа по username/password. После успеха — серверная сессия в Redis, HttpOnly-cookie <code>databus_session</code>. Дефолтный <code>admin / admin</code> с принудительной сменой пароля.</p>
+  <div class="frame" style="display:grid; place-items:center; min-height:440px; background:var(--bg-app);">
+    <div style="width:340px;">
+      <div style="text-align:center; margin-bottom:26px;">
+        <div style="width:46px;height:46px;border-radius:11px;background:linear-gradient(135deg,#5b9bf0,#4cc38a);display:grid;place-items:center;color:#fff;font-size:24px;margin:0 auto 14px;"><i class="ti ti-arrows-exchange"></i></div>
+        <div style="font-size:19px;font-weight:600;">Nexus</div>
+        <div style="font-size:13px;color:var(--text-secondary);margin-top:3px;">Войдите в панель управления</div>
+      </div>
+      <div class="card" style="padding:22px;">
+        <div style="margin-bottom:14px;"><label class="fld">Логин</label><input class="in" value="admin"></div>
+        <div style="margin-bottom:18px;"><label class="fld">Пароль</label><input class="in" type="password" value="••••••"></div>
+        <button class="btn btn-primary" style="width:100%;justify-content:center;">Войти</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ OVERVIEW ============ -->
+<section class="screen" id="overview">
+  <div class="screen-label"><span class="tag">§7.3</span><h2>Overview — список узлов</h2></div>
+  <p class="screen-desc">Головной экран. 4 KPI-блока, поиск, фильтр по методу, переключатель «Таблица / Карточки» (выбор в localStorage), кнопка «Новый узел». Статусы: OK / Очередь / Down.</p>
+  <div class="frame"><div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="logo"><i class="ti ti-arrows-exchange"></i></span> Nexus</div>
+      <div class="nav-group">
+        <div class="nav-item active"><i class="ti ti-layout-grid"></i> Узлы</div>
+        <div class="nav-item"><i class="ti ti-history"></i> Audit log</div>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-title">Настройки</div>
+        <div class="nav-item"><i class="ti ti-database"></i> ClickHouse</div>
+        <div class="nav-item"><i class="ti ti-users"></i> Пользователи</div>
+        <div class="nav-item"><i class="ti ti-key"></i> API Tokens</div>
+        <div class="nav-item"><i class="ti ti-bell"></i> Sentry</div>
+        <div class="nav-item"><i class="ti ti-language"></i> Язык</div>
+      </div>
+      <div class="sidebar-foot"><div class="user-chip"><span class="av">A</span> admin · полный доступ</div></div>
+    </aside>
+    <div class="main">
+      <div class="topbar">
+        <div class="crumbs"><span class="cur">Узлы</span></div>
+        <div class="topbar-spacer"></div>
+        <div class="icon-btn"><i class="ti ti-language"></i></div>
+        <div class="icon-btn"><i class="ti ti-moon"></i></div>
+      </div>
+      <div class="content">
+        <div class="kpi-row">
+          <div class="kpi"><div class="k-label">Входящие за 24ч</div><div class="k-value">1.24M</div><div class="k-delta k-up">▲ 8.2%</div></div>
+          <div class="kpi"><div class="k-label">Исходящие за 24ч</div><div class="k-value">1.23M</div><div class="k-delta k-up">▲ 7.9%</div></div>
+          <div class="kpi"><div class="k-label">Очередь Kafka</div><div class="k-value">312</div><div class="k-delta k-down">▲ растёт</div></div>
+          <div class="kpi"><div class="k-label">Ошибки за 24ч</div><div class="k-value">1,847</div><div class="k-delta k-down">0.15%</div></div>
+        </div>
+        <div class="toolbar">
+          <input class="in grow" placeholder="Поиск по имени узла и URL…">
+          <select class="in" style="width:160px;"><option>Все методы</option><option>request</option><option>requestAsync</option></select>
+          <div class="seg"><button class="on">Таблица</button><button>Карточки</button></div>
+          <button class="btn btn-primary"><i class="ti ti-plus"></i> Новый узел</button>
+        </div>
+        <table class="tbl">
+          <thead><tr><th>Узел</th><th>Метод</th><th>Вход 1ч</th><th>Выход 1ч</th><th>Ошибки</th><th>Статус</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">webhook/send</td><td><span class="chip">request</span></td><td>4,201</td><td>4,198</td><td>2</td><td><span class="pill pill-ok">OK</span></td></tr>
+            <tr><td class="mono">geo/notify</td><td><span class="chip">requestAsync</span></td><td>12,043</td><td>11,901</td><td>142</td><td><span class="pill pill-warn">Очередь</span></td></tr>
+            <tr><td class="mono">proxy/api</td><td><span class="chip">request</span></td><td>880</td><td>421</td><td>459</td><td><span class="pill pill-err">Down</span></td></tr>
+            <tr><td class="mono">crm/sync</td><td><span class="chip">requestAsync</span></td><td>3,300</td><td>3,300</td><td>0</td><td><span class="pill pill-ok">OK</span></td></tr>
+            <tr><td class="mono">billing/charge</td><td><span class="chip">request</span></td><td>650</td><td>649</td><td>1</td><td><span class="pill pill-ok">OK</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div></div>
+</section>
+
+<!-- ============ NODE DETAIL — OVERVIEW TAB ============ -->
+<section class="screen" id="detail">
+  <div class="screen-label"><span class="tag">§7.4</span><h2>Node detail — вкладка «Обзор»</h2></div>
+  <p class="screen-desc">Детальная страница узла. Вкладки Обзор / Логи / Конфигурация / Метрики. 4 KPI, график трафика с переключателем диапазона, таблица последних запросов (клик раскрывает тело).</p>
+  <div class="frame"><div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="logo"><i class="ti ti-arrows-exchange"></i></span> Nexus</div>
+      <div class="nav-group">
+        <div class="nav-item active"><i class="ti ti-layout-grid"></i> Узлы</div>
+        <div class="nav-item"><i class="ti ti-history"></i> Audit log</div>
+      </div>
+      <div class="sidebar-foot"><div class="user-chip"><span class="av">A</span> admin</div></div>
+    </aside>
+    <div class="main">
+      <div class="topbar">
+        <div class="crumbs">Узлы <i class="ti ti-chevron-right"></i> request <i class="ti ti-chevron-right"></i> <span class="cur">webhook/send</span></div>
+        <div class="topbar-spacer"></div>
+        <button class="btn btn-sm"><i class="ti ti-flask"></i> Тест</button>
+        <button class="btn btn-sm btn-primary"><i class="ti ti-edit"></i> Изменить</button>
+        <div class="icon-btn"><i class="ti ti-dots-vertical"></i></div>
+      </div>
+      <div class="content">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+          <h2 style="font-size:20px;font-weight:600;" class="mono">webhook/send</h2>
+          <span class="chip">request</span>
+          <span class="pill pill-ok">OK</span>
+          <span style="font-size:11px;color:var(--text-tertiary);margin-left:auto;">обновлено 4 сек назад</span>
+        </div>
+        <div style="display:flex;gap:4px;border-bottom:0.5px solid var(--border-tertiary);margin-bottom:18px;">
+          <div style="padding:9px 14px;font-size:13px;font-weight:500;border-bottom:2px solid var(--text-info);">Обзор</div>
+          <div style="padding:9px 14px;font-size:13px;color:var(--text-secondary);">Логи</div>
+          <div style="padding:9px 14px;font-size:13px;color:var(--text-secondary);">Конфигурация</div>
+          <div style="padding:9px 14px;font-size:13px;color:var(--text-secondary);">Метрики</div>
+        </div>
+        <div class="kpi-row">
+          <div class="kpi"><div class="k-label">Вход (1ч)</div><div class="k-value">4,201</div><div class="k-delta k-up">▲ 3%</div></div>
+          <div class="kpi"><div class="k-label">Доставлено</div><div class="k-value">4,198</div><div class="k-delta k-up">99.9%</div></div>
+          <div class="kpi"><div class="k-label">p95 latency</div><div class="k-value">87<span style="font-size:13px;color:var(--text-secondary);"> ms</span></div><div class="k-delta" style="color:var(--text-secondary);">p99 142 ms</div></div>
+          <div class="kpi"><div class="k-label">Ошибки</div><div class="k-value">2</div><div class="k-delta" style="color:var(--text-secondary);">timeout 2</div></div>
+        </div>
+        <div class="card" style="margin-bottom:16px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+            <span class="card-title">Трафик</span>
+            <div class="seg"><button>15м</button><button class="on">1ч</button><button>24ч</button><button>7д</button></div>
+          </div>
+          <div style="height:120px;display:flex;align-items:flex-end;gap:3px;">
+            <!-- decorative bars -->
+            <div style="flex:1;height:40%;background:var(--bg-info);border-radius:2px 2px 0 0;"></div>
+            <div style="flex:1;height:55%;background:var(--bg-info);border-radius:2px 2px 0 0;"></div>
+            <div style="flex:1;height:48%;background:var(--bg-info);border-radius:2px 2px 0 0;"></div>
+            <div style="flex:1;height:70%;background:var(--bg-info);border-radius:2px 2px 0 0;"></div>
+            <div style="flex:1;height:62%;background:var(--bg-info);border-radius:2px 2px 0 0;"></div>
+            <div style="flex:1;height:80%;background:var(--bg-info);border-radius:2px 2px 0 0;"></div>
+            <div style="flex:1;height:58%;background:var(--bg-info);border-radius:2px 2px 0 0;"></div>
+            <div style="flex:1;height:90%;background:var(--bg-info);border-radius:2px 2px 0 0;"></div>
+            <div style="flex:1;height:72%;background:var(--bg-info);border-radius:2px 2px 0 0;"></div>
+            <div style="flex:1;height:65%;background:var(--bg-info);border-radius:2px 2px 0 0;"></div>
+            <div style="flex:1;height:85%;background:var(--bg-info);border-radius:2px 2px 0 0;"></div>
+            <div style="flex:1;height:78%;background:var(--bg-info);border-radius:2px 2px 0 0;"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+            <span class="card-title">Последние запросы <span style="font-weight:400;color:var(--text-tertiary);font-size:12px;" class="mono">vika_logs.webhook_send</span></span>
+            <div style="display:flex;gap:6px;"><button class="btn btn-sm btn-ghost"><i class="ti ti-filter"></i> Фильтр</button><button class="btn btn-sm btn-ghost">Все логи</button></div>
+          </div>
+          <table class="tbl">
+            <thead><tr><th>Время</th><th>Статус</th><th>Длит.</th><th>Метод</th><th>checksum req</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">14:32:18</td><td><span class="pill pill-ok">200</span></td><td>87 ms</td><td class="mono">POST</td><td class="mono">a3f9…21</td></tr>
+              <tr style="background:var(--bg-danger);"><td class="mono">14:32:17</td><td><span class="pill pill-err">504</span></td><td>30000 ms</td><td class="mono">POST</td><td class="mono">b1c8…04</td></tr>
+              <tr><td class="mono">14:32:16</td><td><span class="pill pill-ok">200</span></td><td>62 ms</td><td class="mono">POST</td><td class="mono">d4e7…99</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div></div>
+</section>
+
+<!-- ============ LOGS + LIVE TAIL ============ -->
+<section class="screen" id="logs">
+  <div class="screen-label"><span class="tag">§7.4</span><h2>Вкладка «Логи» + Live-tail</h2></div>
+  <p class="screen-desc">SSE-стрим в режиме Live (фильтры отключены, новые строки подсвечиваются, буфер 500). Меню «⋮» у строки: детали / скопировать как curl / Replay.</p>
+  <div class="frame"><div class="content" style="background:var(--bg-app);">
+    <div style="display:flex;gap:4px;border-bottom:0.5px solid var(--border-tertiary);margin-bottom:16px;">
+      <div style="padding:9px 14px;font-size:13px;color:var(--text-secondary);">Обзор</div>
+      <div style="padding:9px 14px;font-size:13px;font-weight:500;border-bottom:2px solid var(--text-info);">Логи</div>
+      <div style="padding:9px 14px;font-size:13px;color:var(--text-secondary);">Конфигурация</div>
+      <div style="padding:9px 14px;font-size:13px;color:var(--text-secondary);">Метрики</div>
+    </div>
+    <div class="toolbar">
+      <span class="pill pill-err" style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;font-weight:500;"><span style="width:7px;height:7px;border-radius:50%;background:currentColor;"></span> Live</span>
+      <select class="in" style="width:130px;opacity:0.5;" disabled><option>Все статусы</option></select>
+      <select class="in" style="width:130px;opacity:0.5;" disabled><option>Последний час</option></select>
+      <input class="in grow" placeholder="Поиск отключён в live" disabled style="opacity:0.5;">
+      <span style="font-size:11px;color:var(--text-tertiary);margin-left:auto;">12 новых за минуту</span>
+    </div>
+    <table class="tbl">
+      <thead><tr><th>Время</th><th>Статус</th><th>Длит.</th><th>URL</th><th>IP</th><th></th></tr></thead>
+      <tbody>
+        <tr style="background:var(--bg-info);"><td class="mono">14:32:18.412</td><td><span class="pill pill-ok">200</span></td><td>87 ms</td><td class="mono">https://api.partner.com/hook</td><td class="mono">10.0.4.21</td><td><i class="ti ti-dots-vertical" style="color:var(--text-tertiary);cursor:pointer;"></i></td></tr>
+        <tr style="position:relative;"><td class="mono">14:32:18.211</td><td><span class="pill pill-ok">200</span></td><td>62 ms</td><td class="mono">https://api.partner.com/hook</td><td class="mono">10.0.4.21</td><td style="position:relative;">
+          <i class="ti ti-dots-vertical" style="color:var(--text-primary);cursor:pointer;"></i>
+          <div style="position:absolute;top:24px;right:0;background:var(--bg-primary);border:0.5px solid var(--border-tertiary);border-radius:var(--radius-md);box-shadow:0 6px 20px rgba(0,0,0,0.4);min-width:200px;padding:4px 0;z-index:5;">
+            <div style="padding:8px 12px;font-size:12px;display:flex;gap:8px;align-items:center;"><i class="ti ti-eye" style="font-size:14px;color:var(--text-secondary);"></i> Открыть детали</div>
+            <div style="padding:8px 12px;font-size:12px;display:flex;gap:8px;align-items:center;"><i class="ti ti-terminal" style="font-size:14px;color:var(--text-secondary);"></i> Скопировать как curl</div>
+            <div style="height:0.5px;background:var(--border-tertiary);margin:4px 0;"></div>
+            <div style="padding:8px 12px;font-size:12px;display:flex;gap:8px;align-items:center;color:var(--text-info);"><i class="ti ti-refresh" style="font-size:14px;"></i> Replay</div>
+          </div>
+        </td></tr>
+        <tr style="background:var(--bg-danger);"><td class="mono">14:32:17.991</td><td><span class="pill pill-err">504</span></td><td>30000 ms</td><td class="mono">https://api.partner.com/hook</td><td class="mono">10.0.4.18</td><td><i class="ti ti-dots-vertical" style="color:var(--text-tertiary);cursor:pointer;"></i></td></tr>
+        <tr><td class="mono">14:32:17.834</td><td><span class="pill pill-ok">200</span></td><td>54 ms</td><td class="mono">https://api.partner.com/hook</td><td class="mono">10.0.4.21</td><td><i class="ti ti-dots-vertical" style="color:var(--text-tertiary);cursor:pointer;"></i></td></tr>
+      </tbody>
+    </table>
+    <div class="hint hint-muted" style="margin-top:10px;"><i class="ti ti-info-circle"></i> SSE-стрим активен. Буфер UI: 487 / 500 записей. Нажмите Pause для применения фильтров.</div>
+  </div></div>
+</section>
+
+<!-- ============ REPLAY DIALOG ============ -->
+<section class="screen" id="replay">
+  <div class="screen-label"><span class="tag">§7.4.1</span><h2>Replay — диалог повторной отправки</h2></div>
+  <p class="screen-desc">Повторная отправка через шину. Редактируемое тело, выбор «Куда отправить» / «Авторизация» / «Sync вместо async». Чувствительные данные не восстанавливаются из лога. Rate limit 10/мин.</p>
+  <div style="display:grid;place-items:center;padding:24px;background:rgba(0,0,0,0.3);border-radius:var(--radius-lg);">
+    <div class="modal-demo">
+      <div class="modal-head"><div><h3>Replay запроса</h3><div class="sub mono">ID a3f9c211 · 14:32:18 · webhook/send</div></div><i class="ti ti-x icon-btn"></i></div>
+      <div class="modal-body">
+        <label class="fld">Тело запроса (редактируемое)</label>
+        <textarea class="in" rows="4" style="margin-bottom:14px;">{
+  "event": "order.created",
+  "order_id": 88213
+}</textarea>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
+          <div><label class="fld">Куда отправить</label><select class="in"><option>На тот же URL</option><option>По текущему конфигу узла</option></select></div>
+          <div><label class="fld">Авторизация</label><select class="in"><option>Текущий конфиг узла</option><option>Без авторизации</option></select></div>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;"><input type="checkbox"> Sync вместо async (дождаться ответа здесь)</label>
+        <div class="hint hint-muted"><i class="ti ti-shield-lock"></i> Токены и Basic-креды из оригинала не восстанавливаются (в логе они уже <span class="mono">***</span>). Введите вручную при необходимости.</div>
+      </div>
+      <div class="modal-foot"><button class="btn btn-ghost">Отмена</button><button class="btn btn-primary"><i class="ti ti-refresh"></i> Отправить replay</button></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ NODE SETTINGS FORM ============ -->
+<section class="screen" id="settings">
+  <div class="screen-label"><span class="tag">§7.5</span><h2>Node settings — форма создания / редактирования узла</h2></div>
+  <p class="screen-desc">Двухколоночная форма, 5 секций слева, превью маршрута справа. Показаны режим URL «Из запроса» и исходящая авторизация «Bearer из запроса» с раскрытыми настройками.</p>
+  <div class="frame"><div class="content" style="background:var(--bg-app);">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;">
+      <div class="crumbs">Узлы <i class="ti ti-chevron-right"></i> <span class="cur">Новый узел</span></div>
+      <div style="display:flex;gap:8px;"><button class="btn btn-ghost">Отмена</button><button class="btn"><i class="ti ti-flask"></i> Тестовый запрос (dry-run)</button><button class="btn btn-primary"><i class="ti ti-device-floppy"></i> Сохранить</button></div>
+    </div>
+    <div class="two-col">
+      <div>
+        <div class="card" style="margin-bottom:14px;">
+          <div class="section-head"><i class="ti ti-route"></i> Маршрут</div>
+          <div class="frow"><div class="fl">Тип метода</div><div class="fi"><div class="pick cols-2">
+            <label class="sel"><div class="t"><i class="ti ti-arrow-bounce"></i> request</div><div class="d">sync, ждём ответ узла</div><i class="ti ti-check ck"></i></label>
+            <label><div class="t"><i class="ti ti-send"></i> requestAsync</div><div class="d">в Kafka, 200 сразу</div><i class="ti ti-check ck"></i></label>
+          </div></div></div>
+          <div class="frow"><div class="fl">Путь узла</div><div class="fi"><input class="in mono" value="webhook/send"><span style="font-size:11px;color:var(--text-tertiary);" class="mono">/v1/request/webhook/send</span></div></div>
+          <div class="frow"><div class="fl">Состояние</div><div class="fi"><div class="toggle3">
+            <label class="sel">▶ Активен</label><label>⏸ Пауза</label><label>⏹ Отключён</label>
+          </div></div></div>
+        </div>
+        <div class="card" style="margin-bottom:14px;">
+          <div class="section-head"><i class="ti ti-world"></i> Куда перенаправить</div>
+          <div class="frow"><div class="fl">Режим URL</div><div class="fi"><div class="pick cols-2">
+            <label><div class="t"><i class="ti ti-pin"></i> Статичный</div><div class="d">адрес из Target URL</div><i class="ti ti-check ck"></i></label>
+            <label class="sel"><div class="t"><i class="ti ti-route"></i> Из запроса</div><div class="d">URL из параметра url_base</div><i class="ti ti-check ck"></i></label>
+          </div></div></div>
+          <div class="frow"><div class="fl">Имя параметра<span class="sub">источник URL</span></div><div class="fi">
+            <input class="in mono" value="url_base">
+            <span style="font-size:11px;color:var(--text-tertiary);" class="mono">?url_base=https://api.partner.com/hook</span>
+          </div></div>
+          <div class="frow"><div class="fl">Allowlist хостов<span class="sub">защита от SSRF</span></div><div class="fi">
+            <div style="display:flex;flex-wrap:wrap;gap:6px;"><span class="chip">*.partner.com <i class="ti ti-x"></i></span><span class="chip">api.crm.company.ru <i class="ti ti-x"></i></span></div>
+            <div style="display:flex;gap:6px;margin-top:6px;"><input class="in" placeholder="*.example.com" style="flex:1;"><button class="btn btn-sm"><i class="ti ti-plus"></i></button></div>
+          </div></div>
+          <div class="frow"><div class="fl">Timeout / Retry</div><div class="fi" style="flex-direction:row;gap:8px;"><input class="in" value="5000" style="width:100px;"><select class="in" style="width:130px;"><option>3 retry</option><option>5 retry</option><option>Без retry</option></select></div></div>
+        </div>
+        <div class="card" style="margin-bottom:14px;">
+          <div class="section-head"><i class="ti ti-lock"></i> Авторизация</div>
+          <div class="frow"><div class="fl">Входящая</div><div class="fi"><select class="in"><option>Bearer token</option><option>Basic auth</option><option>Без авторизации</option></select></div></div>
+          <div class="frow"><div class="fl">Исходящая</div><div class="fi">
+            <select class="in"><option>Без авторизации</option><option>Basic auth</option><option>Bearer token</option><option selected>Bearer из запроса</option><option>Basic из запроса</option></select>
+            <div class="subblock" style="margin-top:6px;">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                <div><label class="fld">Источник</label><select class="in" style="height:32px;"><option>Query string</option><option>HTTP-заголовок</option><option>JSON-тело</option></select></div>
+                <div><label class="fld">Имя</label><input class="in mono" style="height:32px;" value="token"></div>
+              </div>
+              <div class="preview-box"><div class="pl">Превью</div><div class="pr"><span class="muted">?token=abc123</span> → <span class="key">Authorization:</span> <span class="val">Bearer abc123</span></div></div>
+              <div class="hint hint-muted"><i class="ti ti-info-circle"></i> Токен обязателен. Без токена — 401 Unauthorized.</div>
+            </div>
+          </div></div>
+        </div>
+        <div class="card">
+          <div class="section-head"><i class="ti ti-list-details"></i> Заголовки и логирование</div>
+          <div class="frow"><div class="fl">Проброс заголовков</div><div class="fi"><div style="display:flex;flex-wrap:wrap;gap:6px;"><span class="chip">X-Request-Id <i class="ti ti-x"></i></span><span class="chip">X-Trace <i class="ti ti-x"></i></span></div></div></div>
+          <div class="frow"><div class="fl">Таблица логов</div><div class="fi" style="flex-direction:row;gap:6px;"><input class="in mono" value="vika_logs.webhook_send" style="flex:1;"><button class="btn btn-sm">Проверить</button></div></div>
+          <div class="frow"><div class="fl">Что логировать</div><div class="fi">
+            <label style="display:flex;align-items:center;gap:8px;font-size:12px;"><input type="checkbox" checked> Тело запроса</label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:12px;"><input type="checkbox" checked> Тело ответа</label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:12px;"><input type="checkbox"> Заголовки</label>
+          </div></div>
+        </div>
+      </div>
+      <div>
+        <div class="card" style="margin-bottom:12px;">
+          <div class="card-title" style="margin-bottom:10px;">Предпросмотр маршрута</div>
+          <div style="font-size:12px;line-height:2;color:var(--text-secondary);">
+            <div><span class="chip chip-info">POST</span> <span class="mono">/v1/request/webhook/send</span></div>
+            <div style="padding-left:8px;">↓ Receiver</div>
+            <div style="padding-left:8px;">↓ gRPC (sync)</div>
+            <div style="padding-left:8px;">↓ Sender</div>
+            <div style="padding-left:8px;">→ <span class="mono" style="color:var(--text-primary);">{url_base из запроса}</span></div>
+            <div style="padding-left:8px;">↓ ответ клиенту</div>
+          </div>
+        </div>
+        <div class="hint hint-danger"><i class="ti ti-shield-exclamation"></i> Режим «Из запроса»: allowlist заполнен — это защищает от SSRF. Не оставляйте список пустым в production.</div>
+      </div>
+    </div>
+  </div></div>
+</section>
+
+<!-- ============ DRY-RUN DIALOG ============ -->
+<section class="screen" id="dryrun">
+  <div class="screen-label"><span class="tag">§7.5.1</span><h2>Dry-run — тестовый запрос перед сохранением</h2></div>
+  <p class="screen-desc">Проверка несохранённого конфига на реальном запросе через шину. Mock-сервер включён по умолчанию. Пошаговый отчёт: auth → URL → outgoing auth → headers → body → response → would-log.</p>
+  <div style="display:grid;place-items:center;padding:24px;background:rgba(0,0,0,0.3);border-radius:var(--radius-lg);">
+    <div class="modal-demo" style="max-width:600px;">
+      <div class="modal-head"><div><h3>Тестовый запрос (dry-run)</h3><div class="sub">конфиг не сохраняется · production-логи не пишутся</div></div><i class="ti ti-x icon-btn"></i></div>
+      <div class="modal-body">
+        <div style="display:grid;grid-template-columns:110px 1fr;gap:10px;margin-bottom:12px;">
+          <div><label class="fld">Метод</label><select class="in" style="height:32px;"><option>POST</option></select></div>
+          <div><label class="fld">Query</label><input class="in mono" style="height:32px;" value="url_base=...&token=abc"></div>
+        </div>
+        <label class="fld">Тело</label>
+        <textarea class="in" rows="2" style="margin-bottom:12px;">{"test": true}</textarea>
+        <label style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:14px;"><input type="checkbox" checked> Использовать mock-сервер вместо реального узла</label>
+        <div style="border-top:0.5px solid var(--border-tertiary);padding-top:12px;">
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-tertiary);margin-bottom:10px;">Результат</div>
+          <div style="display:flex;flex-direction:column;gap:7px;font-size:12px;">
+            <div style="display:flex;gap:8px;align-items:center;"><span class="pill pill-ok" style="min-width:24px;text-align:center;">1</span> <span><b>Auth (incoming):</b> OK</span></div>
+            <div style="display:flex;gap:8px;align-items:center;"><span class="pill pill-ok" style="min-width:24px;text-align:center;">2</span> <span><b>URL:</b> <span class="mono">https://api.partner.com/hook</span> · allowlist passed</span></div>
+            <div style="display:flex;gap:8px;align-items:center;"><span class="pill pill-ok" style="min-width:24px;text-align:center;">3</span> <span><b>Auth (outgoing):</b> <span class="mono">Bearer *** (3 chars)</span></span></div>
+            <div style="display:flex;gap:8px;align-items:center;"><span class="pill pill-ok" style="min-width:24px;text-align:center;">4</span> <span><b>Response:</b> 200 · 64 ms (mock)</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-foot"><button class="btn btn-ghost">Закрыть</button><button class="btn btn-primary"><i class="ti ti-player-play"></i> Запустить</button></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ DELETE NODE DIALOG ============ -->
+<section class="screen" id="deletenode">
+  <div class="screen-label"><span class="tag">§7.5</span><h2>Удаление узла — диалог</h2></div>
+  <p class="screen-desc">Чекбокс «Также удалить таблицу логов» (выключен по умолчанию). Для активации кнопки требуется ввести path узла. По умолчанию таблица остаётся «осиротевшей».</p>
+  <div style="display:grid;place-items:center;padding:24px;background:rgba(0,0,0,0.3);border-radius:var(--radius-lg);">
+    <div class="modal-demo" style="max-width:480px;">
+      <div class="modal-head"><h3>Удалить узел <span class="mono">webhook/send</span>?</h3><i class="ti ti-x icon-btn"></i></div>
+      <div class="modal-body">
+        <div class="hint hint-muted" style="margin-top:0;"><i class="ti ti-info-circle"></i> За всё время обработано <b>1,284,002</b> запросов. Логи — в таблице <span class="mono">vika_logs.webhook_send</span>.</div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:14px 0 8px;"><input type="checkbox"> Также удалить таблицу логов в ClickHouse</label>
+        <div class="hint hint-muted" style="margin-top:0;"><i class="ti ti-archive"></i> Таблица останется в ClickHouse — удалить позже можно из Settings → ClickHouse → Осиротевшие.</div>
+        <label class="fld" style="margin-top:14px;">Введите <span class="mono">webhook/send</span> для подтверждения</label>
+        <input class="in mono" placeholder="webhook/send">
+      </div>
+      <div class="modal-foot"><button class="btn btn-ghost">Отмена</button><button class="btn btn-danger">Удалить навсегда</button></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CREATE TABLE DIALOG ============ -->
+<section class="screen" id="createtable">
+  <div class="screen-label"><span class="tag">§7.6</span><h2>Создание таблицы ClickHouse — диалог</h2></div>
+  <p class="screen-desc">Выбор шаблона схемы (Стандартный / Минимальный), редактируемый SQL с подсветкой, информация о БД, кнопка «Открыть в редакторе».</p>
+  <div style="display:grid;place-items:center;padding:24px;background:rgba(0,0,0,0.3);border-radius:var(--radius-lg);">
+    <div class="modal-demo" style="max-width:600px;">
+      <div class="modal-head"><div><h3>Создать таблицу</h3><div class="sub mono">vika_logs.webhook_send</div></div><i class="ti ti-x icon-btn"></i></div>
+      <div class="modal-body">
+        <label class="fld">Шаблон схемы</label>
+        <div class="pick cols-2" style="margin-bottom:14px;">
+          <label class="sel"><div class="t">Стандартный</div><div class="d">все 20 полей (§4.3)</div><i class="ti ti-check ck"></i></label>
+          <label><div class="t">Минимальный</div><div class="d">без request / response</div><i class="ti ti-check ck"></i></label>
+        </div>
+        <label class="fld">SQL</label>
+        <textarea class="in" rows="6">CREATE TABLE vika_logs.webhook_send (
+  ID String, type String, url String,
+  method String, status Int32, ...
+) ENGINE = MergeTree
+PARTITION BY toYYYYMM(date_create)
+ORDER BY (date_create, date_request, method);</textarea>
+        <div class="hint hint-info"><i class="ti ti-database"></i> База <span class="mono">vika_logs</span> существует.</div>
+      </div>
+      <div class="modal-foot"><button class="btn btn-ghost"><i class="ti ti-maximize"></i> В редакторе</button><button class="btn btn-ghost">Отмена</button><button class="btn btn-primary">Создать таблицу</button></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SETTINGS CLICKHOUSE ============ -->
+<section class="screen" id="chsettings">
+  <div class="screen-label"><span class="tag">§7.8</span><h2>Settings → ClickHouse</h2></div>
+  <p class="screen-desc">Форма подключения + список таблиц с фильтром Все / Привязанные / Осиротевшие. Кнопки «Проверить соединение», «Очистить осиротевшие».</p>
+  <div class="frame"><div class="content" style="background:var(--bg-app);">
+    <div class="card" style="margin-bottom:16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+        <span class="card-title">Подключение к ClickHouse</span>
+        <span class="pill pill-ok"><span style="width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block;margin-right:5px;"></span>Подключено</span>
+      </div>
+      <div style="display:grid;grid-template-columns:2fr 1fr;gap:10px;margin-bottom:10px;"><div><label class="fld">Host</label><input class="in" value="clickhouse.internal"></div><div><label class="fld">Port</label><input class="in" value="9000"></div></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;"><div><label class="fld">Пользователь</label><input class="in" value="default"></div><div><label class="fld">Пароль</label><input class="in" type="password" value="••••••"></div></div>
+      <div style="display:flex;gap:8px;margin-top:6px;"><button class="btn"><i class="ti ti-plug"></i> Проверить соединение</button><button class="btn btn-primary">Сохранить и переподключить</button></div>
+    </div>
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <div class="seg"><button class="on">Все</button><button>Привязанные</button><button>Осиротевшие</button></div>
+        <button class="btn btn-sm"><i class="ti ti-trash"></i> Очистить осиротевшие</button>
+      </div>
+      <table class="tbl">
+        <thead><tr><th>Таблица</th><th>Записей</th><th>Размер</th><th>Привязка</th><th>Последняя запись</th><th></th></tr></thead>
+        <tbody>
+          <tr><td class="mono">vika_logs.webhook_send</td><td>1.28M</td><td>312 MB</td><td><span class="chip chip-info">webhook/send</span></td><td>сейчас</td><td><i class="ti ti-dots-vertical" style="color:var(--text-tertiary);cursor:pointer;"></i></td></tr>
+          <tr><td class="mono">vika_logs.geo_notify</td><td>8.1M</td><td>1.9 GB</td><td><span class="chip chip-info">geo/notify</span></td><td>сейчас</td><td><i class="ti ti-dots-vertical" style="color:var(--text-tertiary);cursor:pointer;"></i></td></tr>
+          <tr><td class="mono">vika_logs.old_legacy</td><td>440K</td><td>98 MB</td><td><span class="chip chip-danger">осиротевшая</span></td><td>32 дня назад</td><td><i class="ti ti-dots-vertical" style="color:var(--text-tertiary);cursor:pointer;"></i></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div></div>
+</section>
+
+<!-- ============ SETTINGS USERS ============ -->
+<section class="screen" id="users">
+  <div class="screen-label"><span class="tag">§7.9</span><h2>Settings → Users</h2></div>
+  <p class="screen-desc">Только для админов. Счётчики, поиск, баннер про дефолтный пароль admin. Роли chip'ами, статус, последний вход, действия (пароль / редактировать / удалить / включить).</p>
+  <div class="frame"><div class="content" style="background:var(--bg-app);">
+    <div class="hint hint-warn" style="margin-top:0;margin-bottom:16px;"><i class="ti ti-alert-triangle"></i> Пользователь <b>admin</b> использует пароль по умолчанию. Рекомендуем сменить его.</div>
+    <div class="toolbar">
+      <span style="font-size:13px;color:var(--text-secondary);">Всего <b style="color:var(--text-primary);">4</b> · активных <b style="color:var(--text-primary);">3</b> · отключённых <b style="color:var(--text-primary);">1</b></span>
+      <input class="in grow" placeholder="Поиск по логину и email…">
+      <button class="btn btn-primary"><i class="ti ti-plus"></i> Добавить</button>
+    </div>
+    <table class="tbl">
+      <thead><tr><th>Пользователь</th><th>Роль</th><th>Статус</th><th>Последний вход</th><th>Действия</th></tr></thead>
+      <tbody>
+        <tr><td><div style="display:flex;align-items:center;gap:9px;"><span style="width:28px;height:28px;border-radius:50%;background:var(--bg-info);color:var(--text-info);display:grid;place-items:center;font-weight:600;font-size:11px;">A</span><div><div>admin <span class="chip" style="font-size:10px;">это вы</span></div><div style="font-size:11px;color:var(--text-tertiary);">admin@company.ru</div></div></div></td><td><span class="chip chip-info"><i class="ti ti-shield"></i> Полный доступ</span></td><td><span style="color:var(--text-success);">● Активен</span></td><td>сейчас</td><td><div style="display:flex;gap:4px;"><i class="ti ti-key icon-btn"></i><i class="ti ti-edit icon-btn"></i></div></td></tr>
+        <tr><td><div style="display:flex;align-items:center;gap:9px;"><span style="width:28px;height:28px;border-radius:50%;background:var(--bg-secondary);color:var(--text-secondary);display:grid;place-items:center;font-weight:600;font-size:11px;">M</span><div><div>maria</div><div style="font-size:11px;color:var(--text-tertiary);">maria@company.ru</div></div></div></td><td><span class="chip"><i class="ti ti-eye"></i> Только просмотр</span></td><td><span style="color:var(--text-success);">● Активен</span></td><td>2 часа назад</td><td><div style="display:flex;gap:4px;"><i class="ti ti-key icon-btn"></i><i class="ti ti-edit icon-btn"></i><i class="ti ti-trash icon-btn"></i></div></td></tr>
+        <tr style="opacity:0.55;"><td><div style="display:flex;align-items:center;gap:9px;"><span style="width:28px;height:28px;border-radius:50%;background:var(--bg-secondary);color:var(--text-secondary);display:grid;place-items:center;font-weight:600;font-size:11px;">D</span><div><div>dmitry</div><div style="font-size:11px;color:var(--text-tertiary);">dmitry@company.ru</div></div></div></td><td><span class="chip"><i class="ti ti-eye"></i> Только просмотр</span></td><td><span style="color:var(--text-tertiary);">● Отключён</span></td><td>3 дня назад</td><td><div style="display:flex;gap:4px;"><i class="ti ti-player-play icon-btn"></i><i class="ti ti-trash icon-btn"></i></div></td></tr>
+      </tbody>
+    </table>
+  </div></div>
+</section>
+
+<!-- ============ USER DIALOG ============ -->
+<section class="screen" id="userdialog">
+  <div class="screen-label"><span class="tag">§7.10</span><h2>Диалог пользователя (создание / редактирование)</h2></div>
+  <p class="screen-desc">Логин (нельзя менять позже), email, пароль с генератором и индикатором силы, роль карточками, чекбокс «требовать смену пароля».</p>
+  <div style="display:grid;place-items:center;padding:24px;background:rgba(0,0,0,0.3);border-radius:var(--radius-lg);">
+    <div class="modal-demo" style="max-width:480px;">
+      <div class="modal-head"><div><h3>Новый пользователь</h3><div class="sub">создайте учётную запись для доступа в панель</div></div><i class="ti ti-x icon-btn"></i></div>
+      <div class="modal-body">
+        <div style="margin-bottom:12px;"><label class="fld">Логин <span style="color:var(--text-tertiary);">· нельзя изменить позже</span></label><input class="in" placeholder="maria"></div>
+        <div style="margin-bottom:12px;"><label class="fld">Email (опционально)</label><input class="in" placeholder="maria@company.ru"></div>
+        <div style="margin-bottom:12px;"><label class="fld">Пароль</label>
+          <div style="display:flex;gap:6px;"><input class="in mono" value="K7$mP2xL9qWz" style="flex:1;"><button class="btn btn-sm">Сгенерировать</button></div>
+          <div style="display:flex;gap:3px;margin-top:6px;"><span style="flex:1;height:3px;background:var(--text-success);border-radius:2px;"></span><span style="flex:1;height:3px;background:var(--text-success);border-radius:2px;"></span><span style="flex:1;height:3px;background:var(--text-success);border-radius:2px;"></span><span style="flex:1;height:3px;background:var(--text-success);border-radius:2px;"></span></div>
+          <div style="font-size:11px;color:var(--text-success);margin-top:3px;">Сильный</div>
+        </div>
+        <label class="fld">Роль</label>
+        <div class="pick cols-2" style="margin-bottom:12px;">
+          <label class="sel"><div class="t"><i class="ti ti-shield"></i> Полный доступ</div><div class="d">может всё</div><i class="ti ti-check ck"></i></label>
+          <label><div class="t"><i class="ti ti-eye"></i> Только просмотр</div><div class="d">read-only</div><i class="ti ti-check ck"></i></label>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;"><input type="checkbox" checked> Требовать смену пароля при первом входе</label>
+      </div>
+      <div class="modal-foot"><button class="btn btn-ghost">Отмена</button><button class="btn btn-primary">Создать пользователя</button></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SETTINGS LANGUAGE ============ -->
+<section class="screen" id="language">
+  <div class="screen-label"><span class="tag">§7.11</span><h2>Settings → Language</h2></div>
+  <p class="screen-desc">Выбор языка для текущего пользователя. English (по умолчанию) / Русский. Карточки с флагами. Логи и метрики всегда на английском.</p>
+  <div class="frame"><div class="content" style="background:var(--bg-app);">
+    <div class="card" style="max-width:560px;">
+      <div class="card-title">Язык интерфейса</div>
+      <div class="card-sub">Применяется только к текущему пользователю. Изменение вступает в силу сразу.</div>
+      <div class="pick cols-2">
+        <label><div style="display:flex;align-items:center;gap:12px;">
+          <svg class="flag" viewBox="0 0 60 36"><rect width="60" height="36" fill="#012169"/><path d="M0,0 L60,36 M60,0 L0,36" stroke="#fff" stroke-width="7"/><path d="M0,0 L60,36 M60,0 L0,36" stroke="#C8102E" stroke-width="3"/><path d="M30,0 V36 M0,18 H60" stroke="#fff" stroke-width="10"/><path d="M30,0 V36 M0,18 H60" stroke="#C8102E" stroke-width="6"/></svg>
+          <div><div class="t" style="margin:0;">English</div><div class="d">По умолчанию</div></div>
+        </div><i class="ti ti-check ck"></i></label>
+        <label class="sel"><div style="display:flex;align-items:center;gap:12px;">
+          <svg class="flag" viewBox="0 0 60 36"><rect width="60" height="12" fill="#fff"/><rect y="12" width="60" height="12" fill="#0039A6"/><rect y="24" width="60" height="12" fill="#D52B1E"/></svg>
+          <div><div class="t" style="margin:0;">Русский</div><div class="d">Русский интерфейс</div></div>
+        </div><i class="ti ti-check ck"></i></label>
+      </div>
+      <div class="hint hint-muted"><i class="ti ti-info-circle"></i> Числа и даты форматируются по локали. Логи в ClickHouse и метрики Prometheus — всегда на английском.</div>
+    </div>
+  </div></div>
+</section>
+
+<!-- ============ AUDIT LOG ============ -->
+<section class="screen" id="audit">
+  <div class="screen-label"><span class="tag">§7.13</span><h2>Audit log — журнал действий</h2></div>
+  <p class="screen-desc">Только для админов. Append-only. Фильтры по периоду / пользователю / типу действия / target ID. Модалка с diff для node.update. Экспорт CSV.</p>
+  <div class="frame"><div class="content" style="background:var(--bg-app);">
+    <div class="toolbar">
+      <select class="in" style="width:150px;"><option>Последние 24ч</option></select>
+      <select class="in" style="width:140px;"><option>Все пользователи</option></select>
+      <select class="in" style="width:160px;"><option>Все действия</option><option>node.*</option><option>user.*</option></select>
+      <input class="in grow" placeholder="Поиск по target ID…">
+      <button class="btn btn-sm"><i class="ti ti-download"></i> CSV</button>
+    </div>
+    <table class="tbl">
+      <thead><tr><th>Время</th><th>Пользователь</th><th>Действие</th><th>Target</th><th>IP</th><th></th></tr></thead>
+      <tbody>
+        <tr><td class="mono">14:32:08.221</td><td>admin</td><td><span class="chip chip-info">node.update</span></td><td class="mono">webhook/send</td><td class="mono">10.0.0.3</td><td><i class="ti ti-eye icon-btn"></i></td></tr>
+        <tr><td class="mono">14:28:55.010</td><td>admin</td><td><span class="chip chip-success">node.create</span></td><td class="mono">crm/sync</td><td class="mono">10.0.0.3</td><td><i class="ti ti-eye icon-btn"></i></td></tr>
+        <tr><td class="mono">14:15:32.880</td><td>maria</td><td><span class="chip">api_token.create</span></td><td class="mono">bi-daily-sync</td><td class="mono">10.0.0.8</td><td><i class="ti ti-eye icon-btn"></i></td></tr>
+        <tr><td class="mono">13:59:01.442</td><td>admin</td><td><span class="chip chip-danger">node.delete</span></td><td class="mono">old/legacy</td><td class="mono">10.0.0.3</td><td><i class="ti ti-eye icon-btn"></i></td></tr>
+      </tbody>
+    </table>
+  </div></div>
+</section>
+
+<!-- ============ API TOKENS ============ -->
+<section class="screen" id="tokens">
+  <div class="screen-label"><span class="tag">§7.14</span><h2>Settings → API Tokens</h2></div>
+  <p class="screen-desc">Доступно всем ролям, каждый видит свои токены. Read-only scopes. Prefix вместо полного значения, статус, действия отозвать / удалить.</p>
+  <div class="frame"><div class="content" style="background:var(--bg-app);">
+    <div class="toolbar">
+      <span style="font-size:13px;color:var(--text-secondary);">Ваши токены для интеграций (Grafana, BI, скрипты)</span>
+      <div class="grow"></div>
+      <button class="btn btn-primary"><i class="ti ti-plus"></i> Создать токен</button>
+    </div>
+    <table class="tbl">
+      <thead><tr><th>Имя</th><th>Prefix</th><th>Scopes</th><th>Последнее использование</th><th>Истечение</th><th>Статус</th><th></th></tr></thead>
+      <tbody>
+        <tr><td>grafana-export</td><td class="mono">db_3xK9mP…</td><td><span class="chip">logs:read</span> <span class="chip">metrics:read</span></td><td>5 мин назад</td><td>пожизненный</td><td><span class="pill pill-ok">активен</span></td><td><i class="ti ti-dots-vertical icon-btn"></i></td></tr>
+        <tr><td>bi-daily-sync</td><td class="mono">db_8wT5sF…</td><td><span class="chip">logs:read</span></td><td>вчера, 03:00</td><td>через 88 дней</td><td><span class="pill pill-ok">активен</span></td><td><i class="ti ti-dots-vertical icon-btn"></i></td></tr>
+        <tr style="opacity:0.55;"><td>old-script</td><td class="mono">db_1aZ0cE…</td><td><span class="chip">nodes:read</span></td><td>2 мес назад</td><td>—</td><td><span class="pill pill-err">отозван</span></td><td><i class="ti ti-dots-vertical icon-btn"></i></td></tr>
+      </tbody>
+    </table>
+  </div></div>
+</section>
+
+<!-- ============ CREATE TOKEN DIALOG ============ -->
+<section class="screen" id="createtoken">
+  <div class="screen-label"><span class="tag">§7.14</span><h2>Создание токена — диалог (single-show)</h2></div>
+  <p class="screen-desc">Имя, scopes (мультиселект), срок. После создания токен показывается ровно один раз с кнопкой «Скопировать». В БД хранится только SHA-256.</p>
+  <div style="display:grid;place-items:center;padding:24px;background:rgba(0,0,0,0.3);border-radius:var(--radius-lg);">
+    <div class="modal-demo" style="max-width:480px;">
+      <div class="modal-head"><div><h3>Токен создан</h3><div class="sub">скопируйте сейчас — больше он не покажется</div></div><i class="ti ti-x icon-btn"></i></div>
+      <div class="modal-body">
+        <div class="hint hint-warn" style="margin-top:0;"><i class="ti ti-alert-triangle"></i> Это единственный раз, когда виден полный токен. После закрытия — только prefix.</div>
+        <label class="fld" style="margin-top:14px;">Ваш токен</label>
+        <div style="display:flex;gap:6px;"><input class="in mono" value="db_3xK9mPq7vR2nL8wT5sF4hY6jB1aZ0cE" readonly style="flex:1;"><button class="btn btn-primary"><i class="ti ti-copy"></i> Копировать</button></div>
+        <div style="margin-top:16px;padding-top:14px;border-top:0.5px solid var(--border-tertiary);font-size:12px;color:var(--text-secondary);">
+          <div style="margin-bottom:6px;"><b style="color:var(--text-primary);">grafana-export</b></div>
+          <div>Scopes: <span class="chip">logs:read</span> <span class="chip">metrics:read</span></div>
+          <div style="margin-top:6px;">Истечение: пожизненный</div>
+        </div>
+      </div>
+      <div class="modal-foot"><button class="btn btn-primary">Готово</button></div>
+    </div>
+  </div>
+</section>
+
+</div>
+
+<div class="foot-note">
+  Nexus UI reference · сгенерировано как эталон для Claude Code · все размеры, цвета и компоновка соответствуют согласованным мокапам сессии. Поведение, валидация, состояния загрузки/ошибок и контракты API — в техническом задании (data_bus_spec.md, §7).
+</div>
+
+</body>
+</html>
