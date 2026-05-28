@@ -191,10 +191,48 @@ func (h *NodeHandler) Delete(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// MoveNodeRequest — тело POST /api/nodes/{id}/move.
+type MoveNodeRequest struct {
+	TargetTeamSlug string `json:"target_team_slug" binding:"required"`
+}
+
+// Move godoc
+// @Summary  Перенести узел в другую команду (admin only, multi-tenancy v2).
+// @Description  Меняет team_id узла и переносит ClickHouse-таблицу логов (RENAME TABLE, best-effort). Конфликт пути в целевой команде → 409.
+// @Tags     nodes
+// @Accept   json
+// @Produce  json
+// @Param    id    path  string           true  "node id"
+// @Param    body  body  MoveNodeRequest  true  "target team slug"
+// @Success  204
+// @Failure  400   {object}  map[string]string
+// @Failure  403   {object}  map[string]string  "same team / not allowed"
+// @Failure  404   {object}  map[string]string  "node or target team not found"
+// @Failure  409   {object}  map[string]string  "path already exists in target team"
+// @Security CookieAuth
+// @Router   /api/nodes/{id}/move [post]
+func (h *NodeHandler) Move(c *gin.Context) {
+	var req MoveNodeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	err := h.uc.Move(c.Request.Context(), actorFromCtx(c), c.Param("id"),
+		currentTeamID(c), req.TargetTeamSlug)
+	if err != nil {
+		h.replyDomainError(c, err, "node.move")
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 func (h *NodeHandler) replyDomainError(c *gin.Context, err error, op string) {
 	switch {
-	case errors.Is(err, domain.ErrNodeNotFound):
+	case errors.Is(err, domain.ErrNodeNotFound),
+		errors.Is(err, domain.ErrTeamNotFound):
 		localizedError(c, http.StatusNotFound, "node.not_found")
+	case errors.Is(err, domain.ErrPermissionDenied):
+		c.JSON(http.StatusForbidden, gin.H{"error": "operation not allowed"})
 	case errors.Is(err, domain.ErrNodeAlreadyExists):
 		localizedError(c, http.StatusConflict, "node.already_exists")
 	case errors.Is(err, domain.ErrLimitReached):

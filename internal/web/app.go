@@ -42,6 +42,7 @@ import (
 	rediscache "nexus/internal/web/adapter/out/redis"
 	"nexus/internal/web/static"
 	"nexus/internal/web/usecase"
+	webport "nexus/internal/web/usecase/port"
 )
 
 type App struct {
@@ -101,6 +102,18 @@ func (a *App) Start(ctx context.Context) error {
 	}
 	defaultTeamID := defaultTeam.ID
 
+	// ClickHouse Manager + team-provisioner создаём заранее (до NodeUsecase):
+	// provisioner нужен NodeUsecase.Move (RENAME TABLE, Phase 11.B) и
+	// TeamUsecase.Create (Phase 10.C). При отсутствии CH остаётся nil —
+	// Move переносит только PG-метаданные, TeamUsecase.Create вернёт
+	// ErrCHUnavailable. Тип переменной — интерфейс, чтобы nil-проверки в
+	// usecase работали корректно (не nil-обёртка над nil-указателем).
+	var teamProvisioner webport.TeamProvisioner
+	if a.ch != nil {
+		a.chMgr = chpf.NewManager(a.ch, chpf.New, &a.cfg.ClickHouse, a.logger)
+		teamProvisioner = chreader.NewTeamProvisioner(a.chMgr, a.logger)
+	}
+
 	nodeRepo := pgrepo.NewNodeRepoPg(a.pg, a.cipher, a.logger)
 	nodeCache := rediscache.NewNodeCacheRedis(a.redis, a.logger)
 	auditRepo := pgrepo.NewAuditRepoPg(a.pg, a.logger)
@@ -112,6 +125,7 @@ func (a *App) Start(ctx context.Context) error {
 		auditUC,
 		uow,
 		teamRepo,
+		teamProvisioner,
 		time.Duration(a.cfg.Redis.NodeTTLSec)*time.Second,
 		a.cfg.Web.NodesHardLimit,
 		defaultTeamID,
@@ -166,7 +180,7 @@ func (a *App) Start(ctx context.Context) error {
 		teamHandler   *httpadapter.TeamHandler
 	)
 	if a.ch != nil {
-		a.chMgr = chpf.NewManager(a.ch, chpf.New, &a.cfg.ClickHouse, a.logger)
+		// a.chMgr уже создан выше (вместе с teamProvisioner).
 		logReader := chreader.NewLogReader(a.chMgr, a.logger)
 		dispatcher := rcvdispatcher.NewHTTPDispatcher(a.cfg.Web.ReceiverURL, 30*time.Second, a.logger)
 		replayUC := usecase.NewReplayUsecase(
@@ -183,10 +197,7 @@ func (a *App) Start(ctx context.Context) error {
 		orphanScanner := usecase.NewOrphanScanner(a.chMgr, nodeRepo, teamRepo, &a.cfg.ClickHouse, auditUC, a.logger)
 		orphanHandler = httpadapter.NewOrphanHandler(orphanScanner, a.logger)
 
-		// Team provisioning (Phase 10.C). Регистрируется только при
-		// доступном ClickHouse — без него TeamUsecase.Create вернёт
-		// ErrCHUnavailable.
-		teamProvisioner := chreader.NewTeamProvisioner(a.chMgr, a.logger)
+		// Team provisioning (Phase 10.C): teamProvisioner создан выше.
 		teamUC := usecase.NewTeamUsecase(teamRepo, teamProvisioner, auditUC, a.logger)
 		teamHandler = httpadapter.NewTeamHandler(teamUC, a.logger)
 

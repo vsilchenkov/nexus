@@ -63,3 +63,51 @@ func (p *TeamProvisionerCH) DropDatabase(ctx context.Context, name string) error
 		p.logger.Str("database", name))
 	return nil
 }
+
+// fullTableNamePattern — "<db>.<table>", обе части [A-Za-z0-9_], ровно
+// одна точка. CH не принимает параметризованные имена БД/таблиц, поэтому
+// строки идут в Exec напрямую после жёсткой валидации (защита от инъекции).
+var fullTableNamePattern = regexp.MustCompile(`^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$`)
+
+var errInvalidTableName = errors.New("clickhouse: invalid table name (expected db.table)")
+
+func (p *TeamProvisionerCH) RenameTable(ctx context.Context, from, to string) error {
+	if !fullTableNamePattern.MatchString(from) || !fullTableNamePattern.MatchString(to) {
+		return errInvalidTableName
+	}
+	conn := p.conn.Conn()
+	if conn == nil {
+		return errors.New("clickhouse conn is nil")
+	}
+
+	// Проверяем существование источника — RENAME несуществующей таблицы
+	// падает, но для переноса узла это не ошибка (таблица могла ещё не
+	// создаться, если в узел не приходили логи).
+	fromDB, fromTbl, _ := splitDBDotTable(from)
+	var cnt uint64
+	if err := conn.QueryRow(ctx,
+		"SELECT count() FROM system.tables WHERE database = ? AND name = ?",
+		fromDB, fromTbl).Scan(&cnt); err != nil {
+		return fmt.Errorf("check source table %s: %w", from, err)
+	}
+	if cnt == 0 {
+		return port.ErrSourceTableAbsent
+	}
+
+	if err := conn.Exec(ctx, fmt.Sprintf("RENAME TABLE %s TO %s", from, to)); err != nil {
+		return fmt.Errorf("rename table %s to %s: %w", from, to, err)
+	}
+	p.logger.Info("clickhouse table renamed",
+		p.logger.Str("from", from), p.logger.Str("to", to))
+	return nil
+}
+
+// splitDBDotTable режет "db.table" (предполагается уже валидным).
+func splitDBDotTable(name string) (db, table string, ok bool) {
+	for i := 0; i < len(name); i++ {
+		if name[i] == '.' {
+			return name[:i], name[i+1:], true
+		}
+	}
+	return "", "", false
+}

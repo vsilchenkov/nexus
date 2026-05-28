@@ -79,6 +79,8 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		authedAdmin.POST("/nodes", h.Node.Create)
 		authedAdmin.PUT("/nodes/:id", h.Node.Update)
 		authedAdmin.DELETE("/nodes/:id", h.Node.Delete)
+		// Перенос узла в другую команду (multi-tenancy v2, Phase 11.B).
+		authedAdmin.POST("/nodes/:id/move", h.Node.Move)
 		// §7.5.1: dry-run без сохранения конфига. Только admin.
 		authedAdmin.POST("/nodes/dry-run", h.DryRun.Run)
 

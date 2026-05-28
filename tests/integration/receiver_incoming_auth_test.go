@@ -61,7 +61,7 @@ func TestReceiver_IncomingAuth_E2E(t *testing.T) {
 	auditUC := webuc.NewAuditUsecase(auditRepo, logger)
 	defaultTeam := resolveDefaultTeamID(t, ctx, pool)
 	teamRepo := pgrepo.NewTeamRepoPg(pool, logger)
-	nodeUC := webuc.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, teamRepo, time.Minute, 0, defaultTeam, logger)
+	nodeUC := webuc.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, teamRepo, nil, time.Minute, 0, defaultTeam, logger)
 
 	makeNode := func(path string, inAuth domain.IncomingAuthType, creds string) *domain.Node {
 		n := &domain.Node{

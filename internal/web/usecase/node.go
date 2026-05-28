@@ -29,12 +29,16 @@ import (
 // "<team.ch_database>.<table>" — Sender и ch_housekeeping всегда пишут в
 // БД конкретной команды независимо от Database в CH-Options. Если nil —
 // нормализация выключена (legacy single-team / unit-тесты).
+// provisioner — опциональный CH-provisioner (multi-tenancy v2, Phase
+// 11.B). Нужен только для Move (RENAME TABLE между БД команд). Если nil
+// (Web без ClickHouse) — Move переносит только PG-метаданные.
 type NodeUsecase struct {
 	repo           port.NodeRepo
 	cache          port.NodeCache
 	audit          *AuditUsecase
 	uow            port.UnitOfWork
 	teams          port.TeamRepo
+	provisioner    port.TeamProvisioner
 	cacheTTL       time.Duration
 	nodesHardLimit int
 	defaultTeamID  string
@@ -47,6 +51,7 @@ func NewNodeUsecase(
 	audit *AuditUsecase,
 	uow port.UnitOfWork,
 	teams port.TeamRepo,
+	provisioner port.TeamProvisioner,
 	cacheTTL time.Duration,
 	nodesHardLimit int,
 	defaultTeamID string,
@@ -58,6 +63,7 @@ func NewNodeUsecase(
 		audit:          audit,
 		uow:            uow,
 		teams:          teams,
+		provisioner:    provisioner,
 		cacheTTL:       cacheTTL,
 		nodesHardLimit: nodesHardLimit,
 		defaultTeamID:  defaultTeamID,
@@ -254,6 +260,101 @@ func (u *NodeUsecase) Delete(ctx context.Context, actor Actor, id, teamID string
 			u.logger.Str("path", n.Path), u.logger.Err(err))
 	}
 	return nil
+}
+
+// Move переносит узел в другую команду (multi-tenancy v2, Phase 11.B).
+//
+// PG-запись авторитетна: в одной UoW-транзакции меняются team_id и
+// clickhouse_table (БД-префикс → новая команда) + audit. Конфликт пути
+// в целевой команде (UNIQUE(team_id, path)) → ErrNodeAlreadyExists.
+// После commit'а — best-effort RENAME TABLE в ClickHouse (логи следуют
+// за узлом); если исходной таблицы нет или provisioner отсутствует —
+// CH-операция пропускается без ошибки.
+//
+// currentTeamID — scope (узел чужой команды → ErrNodeNotFound).
+func (u *NodeUsecase) Move(ctx context.Context, actor Actor, nodeID, currentTeamID, targetTeamSlug string) error {
+	n, err := u.repo.Get(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	if currentTeamID != "" && n.TeamID != currentTeamID {
+		return domain.ErrNodeNotFound
+	}
+	if u.teams == nil {
+		return fmt.Errorf("move requires TeamRepo")
+	}
+	target, err := u.teams.GetBySlug(ctx, targetTeamSlug)
+	if err != nil {
+		return err
+	}
+	if target.ID == n.TeamID {
+		return domain.ErrPermissionDenied // перенос в ту же команду — no-op
+	}
+
+	oldTable := n.ClickHouseTable
+	newTable := rebaseCHTable(oldTable, target.CHDatabase)
+
+	moved := *n
+	moved.TeamID = target.ID
+	moved.ClickHouseTable = newTable
+
+	details := map[string]any{
+		"path":          n.Path,
+		"from_team":     n.TeamID,
+		"to_team":       target.ID,
+		"to_team_slug":  target.Slug,
+		"from_ch_table": oldTable,
+		"to_ch_table":   newTable,
+	}
+
+	if u.uow != nil {
+		if err := u.uow.Execute(ctx, func(ctx context.Context, r port.Repos) error {
+			if err := r.Nodes.Update(ctx, &moved); err != nil {
+				return err
+			}
+			return r.Audit.Write(ctx, auditEntry(actor, domain.ActionNodeMove, "node", n.ID, details))
+		}); err != nil {
+			return err
+		}
+	} else {
+		if err := u.repo.Update(ctx, &moved); err != nil {
+			return err
+		}
+		u.audit.Log(ctx, actor, domain.ActionNodeMove, "node", n.ID, details)
+	}
+
+	// CH RENAME — best-effort: PG уже авторитетно указывает на новую БД.
+	if u.provisioner != nil && oldTable != "" && newTable != "" && oldTable != newTable {
+		if err := u.provisioner.RenameTable(ctx, oldTable, newTable); err != nil {
+			if errors.Is(err, port.ErrSourceTableAbsent) {
+				u.logger.Info("node move: source CH table absent, skip rename",
+					u.logger.Str("from", oldTable))
+			} else {
+				u.logger.Warn("node move: CH rename failed (PG already moved)",
+					u.logger.Str("from", oldTable), u.logger.Str("to", newTable),
+					u.logger.Err(err))
+			}
+		}
+	}
+
+	if err := u.cache.InvalidateByPath(ctx, n.Path); err != nil {
+		u.logger.Warn("cache invalidate after move failed",
+			u.logger.Str("path", n.Path), u.logger.Err(err))
+	}
+	return nil
+}
+
+// rebaseCHTable меняет БД-префикс полного имени "<db>.<table>" на newDB.
+// Если имя без точки (legacy) — префиксует newDB. Пустое имя остаётся
+// пустым.
+func rebaseCHTable(full, newDB string) string {
+	if full == "" {
+		return ""
+	}
+	if i := strings.IndexByte(full, '.'); i >= 0 {
+		return newDB + "." + full[i+1:]
+	}
+	return newDB + "." + full
 }
 
 // diffNodes — упрощённый diff основных полей. Полный diff с двумя

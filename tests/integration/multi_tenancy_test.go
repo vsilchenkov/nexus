@@ -56,6 +56,7 @@ func TestMultiTenancy_Isolation_E2E(t *testing.T) {
 	defaultTeam := resolveDefaultTeamID(t, ctx, pool)
 	nodeUC := usecase.NewNodeUsecase(
 		nodeRepo, nopCache{}, auditUC, uow, teamRepo,
+		nil, // provisioner: CH-rename не тестируется (нет ClickHouse в этом тесте)
 		time.Minute, 0, defaultTeam, logger,
 	)
 
@@ -185,4 +186,92 @@ func TestMultiTenancy_Isolation_E2E(t *testing.T) {
 	_, err = teamRepo.GetByID(ctx, acme.ID)
 	assert.True(t, errors.Is(err, domain.ErrTeamNotFound),
 		"after Delete: team must not be found")
+}
+
+// TestMultiTenancy_NodeMove_E2E — Phase 11.B: перенос узла между командами.
+// CH-rename здесь не проверяется (provisioner=nil, нет ClickHouse) —
+// тестируется PG-перенос: team_id, clickhouse_table-rebase, audit,
+// конфликт пути.
+func TestMultiTenancy_NodeMove_E2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	pool, cleanup := startPostgres(t, ctx)
+	defer cleanup()
+
+	cipher, err := crypto.NewCipher(testEncryptionKey)
+	require.NoError(t, err)
+	logger := logging.NewNoop()
+
+	teamRepo := pgrepo.NewTeamRepoPg(pool, logger)
+	nodeRepo := pgrepo.NewNodeRepoPg(pool, cipher, logger)
+	auditRepo := pgrepo.NewAuditRepoPg(pool, logger)
+	uow := pgrepo.NewUnitOfWorkPg(pool, cipher, logger)
+	auditUC := usecase.NewAuditUsecase(auditRepo, logger)
+	defaultTeam := resolveDefaultTeamID(t, ctx, pool)
+	nodeUC := usecase.NewNodeUsecase(
+		nodeRepo, nopCache{}, auditUC, uow, teamRepo,
+		nil, time.Minute, 0, defaultTeam, logger,
+	)
+
+	acme := &domain.Team{Slug: "acme", Name: "Acme", CHDatabase: domain.CHDatabaseForSlug("acme")}
+	require.NoError(t, teamRepo.Create(ctx, acme))
+	globex := &domain.Team{Slug: "globex", Name: "Globex", CHDatabase: domain.CHDatabaseForSlug("globex")}
+	require.NoError(t, teamRepo.Create(ctx, globex))
+
+	// Узел в acme с CH-таблицей.
+	node := &domain.Node{
+		Path:            "billing",
+		RootMethod:      domain.RootMethodRequest,
+		URLMode:         domain.URLModeStatic,
+		TargetURL:       "https://example.com/billing",
+		TeamID:          acme.ID,
+		ClickHouseTable: "logs",
+	}
+	require.NoError(t, nodeUC.Create(ctx, usecase.SystemActor(), node))
+	require.Equal(t, "nexus_acme.logs", node.ClickHouseTable)
+
+	// 1. Перенос в ту же команду → ErrPermissionDenied.
+	err = nodeUC.Move(ctx, usecase.SystemActor(), node.ID, acme.ID, "acme")
+	assert.ErrorIs(t, err, domain.ErrPermissionDenied)
+
+	// 2. Перенос узла из чужой команды (scope) → ErrNodeNotFound.
+	err = nodeUC.Move(ctx, usecase.SystemActor(), node.ID, globex.ID, "acme")
+	assert.ErrorIs(t, err, domain.ErrNodeNotFound)
+
+	// 3. Успешный перенос acme → globex.
+	require.NoError(t, nodeUC.Move(ctx, usecase.SystemActor(), node.ID, acme.ID, "globex"))
+
+	moved, err := nodeRepo.Get(ctx, node.ID)
+	require.NoError(t, err)
+	assert.Equal(t, globex.ID, moved.TeamID, "team_id переехал")
+	assert.Equal(t, "nexus_globex.logs", moved.ClickHouseTable, "ch_table rebase на новую БД")
+
+	// 4. Узел теперь виден в scope globex, не acme.
+	_, err = nodeUC.Get(ctx, node.ID, acme.ID)
+	assert.ErrorIs(t, err, domain.ErrNodeNotFound)
+	got, err := nodeUC.Get(ctx, node.ID, globex.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "billing", got.Path)
+
+	// 5. Audit node.move записан с team_id целевой команды.
+	moveAudit, err := auditRepo.List(ctx, port.AuditFilter{
+		TargetID: node.ID, Actions: []string{domain.ActionNodeMove}, Limit: 10,
+	})
+	require.NoError(t, err)
+	require.Len(t, moveAudit, 1)
+	assert.Equal(t, globex.ID, moveAudit[0].Details["to_team"])
+
+	// 6. Конфликт пути: создаём узел "billing" в acme, пытаемся перенести
+	// в globex (где уже есть "billing") → ErrNodeAlreadyExists.
+	conflict := &domain.Node{
+		Path:       "billing",
+		RootMethod: domain.RootMethodRequest,
+		URLMode:    domain.URLModeStatic,
+		TargetURL:  "https://example.com/b2",
+		TeamID:     acme.ID,
+	}
+	require.NoError(t, nodeUC.Create(ctx, usecase.SystemActor(), conflict))
+	err = nodeUC.Move(ctx, usecase.SystemActor(), conflict.ID, acme.ID, "globex")
+	assert.ErrorIs(t, err, domain.ErrNodeAlreadyExists)
 }

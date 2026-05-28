@@ -23,7 +23,15 @@
       "status": "Status",
       "auth": "Auth"
     },
-    "empty": "No nodes yet"
+    "empty": "No nodes yet",
+    "move": {
+      "action": "Move",
+      "title": "Move node to team",
+      "target_team": "Target team",
+      "pick_team": "— pick team —",
+      "hint": "The node and its ClickHouse log table move to the selected team.",
+      "submit": "Move"
+    }
   },
   "node": {
     "tabs": { "overview": "Overview", "logs": "Logs", "config": "Config" },
