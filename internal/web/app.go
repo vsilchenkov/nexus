@@ -39,6 +39,7 @@ import (
 	httpadapter "nexus/internal/web/adapter/in/http"
 	chreader "nexus/internal/web/adapter/out/clickhouse"
 	pgrepo "nexus/internal/web/adapter/out/postgres"
+	prometheusreader "nexus/internal/web/adapter/out/prometheus"
 	rcvdispatcher "nexus/internal/web/adapter/out/receiver"
 	rediscache "nexus/internal/web/adapter/out/redis"
 	"nexus/internal/web/static"
@@ -180,6 +181,23 @@ func (a *App) Start(ctx context.Context) error {
 
 	rl := ratelimit.New(a.redis)
 
+	// Prometheus query-клиент для метрик панели (§21). Опционален: при пустом
+	// prometheus.url остаётся nil — MetricsUsecase деградирует
+	// (prometheus_available=false), не падает.
+	var promMetrics webport.PromMetrics
+	if a.cfg.Prometheus.URL != "" {
+		pc, err := prometheusreader.New(
+			a.cfg.Prometheus.URL,
+			time.Duration(a.cfg.Prometheus.TimeoutMs)*time.Millisecond,
+			a.logger,
+		)
+		if err != nil {
+			a.logger.Warn("prometheus client init failed; panel metrics degraded", a.logger.Err(err))
+		} else {
+			promMetrics = pc
+		}
+	}
+
 	// Replay + live-tail зависят от ClickHouse-чтения и HTTP-диспетчера
 	// к Receiver. Подключаем только если CH-клиент инициализирован.
 	// ConnProvider — clickhouse.Manager, чтобы при hot-reload (Phase 6.3.2.5)
@@ -189,10 +207,12 @@ func (a *App) Start(ctx context.Context) error {
 		logsHandler   *httpadapter.LogsHandler
 		orphanHandler *httpadapter.OrphanHandler
 		teamHandler   *httpadapter.TeamHandler
+		chMetrics     webport.CHMetrics // per-node агрегаты для метрик узла (§21)
 	)
 	if a.ch != nil {
 		// a.chMgr уже создан выше (вместе с teamProvisioner).
 		logReader := chreader.NewLogReader(a.chMgr, a.logger)
+		chMetrics = chreader.NewMetricsReader(a.chMgr, a.logger)
 		dispatcher := rcvdispatcher.NewHTTPDispatcher(a.cfg.Web.ReceiverURL, 30*time.Second, a.logger)
 		replayUC := usecase.NewReplayUsecase(
 			logReader, nodeRepo, dispatcher, rl, auditUC,
@@ -237,6 +257,12 @@ func (a *App) Start(ctx context.Context) error {
 	}
 	go reloadSub.Run(ctx)
 
+	// Метрики панели (§21): гибрид Prometheus (KPI/очередь/throughput) +
+	// ClickHouse (per-node KPI/график). Оба источника опциональны — usecase
+	// деградирует, поэтому handler создаётся всегда.
+	metricsUC := usecase.NewMetricsUsecase(promMetrics, chMetrics, nodeRepo, a.logger)
+	metricsHandler := httpadapter.NewMetricsHandler(metricsUC, a.logger)
+
 	mw := httpadapter.Middlewares{
 		APITokenAuth: httpadapter.APITokenAuthMiddleware(tokenUC, rl, a.cfg.Web.APITokenRateLimitPerMin, a.logger),
 		SessionAuth:  httpadapter.AuthMiddleware(authUC, &a.cfg.Web),
@@ -252,6 +278,7 @@ func (a *App) Start(ctx context.Context) error {
 		DryRun:      dryRunHandler,
 		Replay:      replayHandler,
 		Logs:        logsHandler,
+		Metrics:     metricsHandler,
 		AppSettings: appSettingsHandler,
 		Orphan:      orphanHandler,
 		CHTemplate:  chTemplateHandler,

@@ -70,6 +70,14 @@ clickhouse:
   buffer_max_size: 100000
   workers: 2
 
+# Prometheus — источник метрик для дашбордов Web-панели (§21, §6).
+# Это адрес сервера Prometheus (query API), а НЕ /metrics самих сервисов.
+# Пусто → KPI/очередь/графики недоступны (деградация), per-node счётчики и
+# перцентили на странице узла считаются из ClickHouse.
+prometheus:
+  url: ${PROMETHEUS_URL:}          # напр. http://prometheus:9090
+  timeout_ms: 5000
+
 kafka:
   brokers: ${KAFKA_BROKERS:kafka:9092}
   async_topic: nexus.async

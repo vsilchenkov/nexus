@@ -73,6 +73,10 @@ func applyDefaults(c *Config) {
 		c.ClickHouse.FallbackDir = "logs/clickhouse-fallback"
 	}
 
+	if c.Prometheus.TimeoutMs == 0 {
+		c.Prometheus.TimeoutMs = 5000
+	}
+
 	if c.Kafka.AsyncTopic == "" {
 		c.Kafka.AsyncTopic = "nexus.async"
 	}

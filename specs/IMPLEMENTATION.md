@@ -98,6 +98,7 @@
 | **`nexus_requests_total` + `nexus_request_duration_seconds`** | ✅ Phase 6.1 | Gin middleware [platform/metrics/gin.go](../internal/platform/metrics/gin.go) — Receiver/Web; gRPC [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go) и async [usecase/async.go](../internal/sender/usecase/async.go) — Sender |
 | **`nexus_kafka_lag`** | ✅ Phase 6.1 | reporter в [sender/app.go](../internal/sender/app.go) `reportKafkaLag()` — раз в 15 сек снимает `Stats()` со всех consumer-инстансов |
 | **`nexus_clickhouse_buffer_size` / `_errors_total` / `_dropped_total` / `_fallback_total`** | ✅ Phase 6.1 | [chlog/writer.go](../internal/sender/adapter/out/chlog/writer.go) обновляет в `append`/`flushTable`/`Write` |
+| **HTTP-API метрик для панели (§21)** | ✅ Phase 21.1 | Web опрашивает Prometheus query API: [adapter/out/prometheus/client.go](../internal/web/adapter/out/prometheus/client.go) (глобальные KPI/очередь/throughput) + per-node агрегаты из ClickHouse [adapter/out/clickhouse/metrics_reader.go](../internal/web/adapter/out/clickhouse/metrics_reader.go) (точные p95/p99). Usecase [usecase/metrics.go](../internal/web/usecase/metrics.go), порт [port/metrics_provider.go](../internal/web/usecase/port/metrics_provider.go), handler [metrics_handler.go](../internal/web/adapter/in/http/metrics_handler.go): `GET /api/metrics/overview`, `/api/metrics/nodes`, `/api/metrics/nodes/{id}`. Конфиг `prometheus.url` ([config.go](../internal/platform/config/config.go)); деградация при отсутствии Prometheus. |
 
 ### §7 Веб-интерфейс
 
@@ -529,6 +530,29 @@ gRPC server, chlog.Writer и AsyncProcessor — глобальной registry м
 Это даёт возможность скрапить три сервиса с одинаковыми именами метрик и фильтровать
 их в Grafana через `service="receiver"`. Метка `node` — динамическая (path-параметр
 из `/v1/request/.../*path`), для не-V1 маршрутов остаётся пустой.
+
+### 4.11.2 Metrics API панели — гибрид Prometheus + ClickHouse, с деградацией (Phase 21.1)
+
+Дашборды панели (§21) не считают агрегаты на лету в Go, а тянут готовые из двух
+источников по принципу «каждому показателю — лучший источник»:
+
+- **Prometheus** ([adapter/out/prometheus/client.go](../internal/web/adapter/out/prometheus/client.go))
+  — глобальные KPI Overview (incoming = `sum(increase(nexus_requests_total{service="receiver"}[24h]))`,
+  outgoing = то же для `service="sender"`, errors = `…,status=~"0|[45].."`), очередь Kafka
+  (`sum(nexus_kafka_lag)`) и per-node throughput (`sum by (node)(…)`). Это **query API**
+  сервера Prometheus (`prometheus.url`), а не scrape-эндпоинт `/metrics`. Метка `node`
+  совпадает с `domain.Node.Path` — поэтому per-node merge на фронте идёт по path.
+- **ClickHouse** ([adapter/out/clickhouse/metrics_reader.go](../internal/web/adapter/out/clickhouse/metrics_reader.go))
+  — per-node KPI и ряд графика на странице узла: точные `quantile(0.95/0.99)(duration)`,
+  count/delivered/errors и time-bucket-ряд по таблице логов узла. Точные перцентили из CH,
+  а не из histogram-бакетов Prometheus.
+
+Почему так: outgoing/delivered/перцентили достоверно есть только в CH-логах (их пишет
+Sender), а очередь Kafka и кросс-сервисный throughput — только в Prometheus. Оба источника
+**опциональны**: при пустом `prometheus.url` провайдер не создаётся (nil), `MetricsUsecase`
+отдаёт нули с `prometheus_available=false`; узел без `clickhouse_table` → `chart_available=false`.
+Это сделано намеренно, чтобы поллинг UI не спамил 500-ками, когда Prometheus не настроен
+(см. [usecase/metrics.go](../internal/web/usecase/metrics.go)).
 
 ### 4.12.1 L2 in-memory кеш узлов — декоратор поверх Reader, stale-fallback по StaleTTL
 

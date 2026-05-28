@@ -25,7 +25,7 @@ Nexus — три stateless Go-сервиса плюс набор хранили�
 | Redis       | 7      | `6379`         | Кеш узлов, сессии, rate-limit, circuit breaker |
 | ClickHouse  | 24     | `8123`/`9000`  | Логи всех вызовов                             |
 | Kafka       | 3.9 (KRaft) | `9092`     | Очередь async-запросов (`nexus.async`/`.dlq`) |
-| Prometheus  | 2.55   | `9091→9090`    | Метрики (опционально)                         |
+| Prometheus  | 2.55   | `9091→9090`    | Scrape метрик сервисов **и источник дашбордов панели** (KPI/очередь/графики, §21) |
 
 Сервисы — stateless: всё состояние в хранилищах. Поэтому обновление и откат сводятся
 к замене бинарей/образов; данные остаются в PostgreSQL/ClickHouse/Kafka/Redis.
@@ -70,6 +70,7 @@ Nexus — три stateless Go-сервиса плюс набор хранили�
 | `CH_USER`             | Логин ClickHouse                                        | `default`             |
 | `CH_PASSWORD`         | Пароль ClickHouse                                       | пусто                 |
 | `KAFKA_BROKERS`       | Список брокеров через запятую                           | `kafka:9092`          |
+| `PROMETHEUS_URL`      | Адрес сервера Prometheus (query API) — источник дашбордов панели (§21). Пусто = метрики панели деградируют | `http://prometheus:9090` (в `.env.example`); в `config.example.yml` пусто |
 | `SENTRY_USE`          | Включить Sentry                                         | `false`               |
 | `SENTRY_DSN`          | DSN Sentry                                              | пусто                 |
 | `SENTRY_ENVIRONMENT`  | Окружение для Sentry                                    | `production`          |
@@ -79,6 +80,23 @@ Nexus — три stateless Go-сервиса плюс набор хранили�
 `KAFKA_TOPIC_REPLICATION_FACTOR=1` и `KAFKA_TOPIC_MIN_INSYNC_REPLICAS=1` — иначе создание
 топиков упадёт с `InvalidReplicationFactor` (дефолты в `config.example.yml` рассчитаны
 на кластер из 3+ брокеров: RF=3, ISR=2).
+
+### Метрики панели и Prometheus (§21)
+
+Дашборды Web-панели (KPI на Overview: входящие/исходящие/очередь/ошибки за 24ч; per-node
+throughput; на странице узла — KPI, перцентили p95/p99 и график трафика) питаются из двух
+источников:
+
+- **Prometheus** (секция `prometheus.url`) — глобальные KPI, очередь Kafka и per-node
+  throughput. Это адрес query API сервера Prometheus (напр. `http://prometheus:9090`),
+  **а не** `/metrics` самих сервисов. В Docker — задаётся через `PROMETHEUS_URL` (см. таблицу).
+- **ClickHouse** — per-node KPI и временной ряд графика на странице узла (точные перцентили).
+
+**Деградация без Prometheus.** Если `prometheus.url` пуст или сервер недоступен — панель не
+падает: глобальные KPI, очередь Kafka и per-node throughput скрываются (флаг
+`prometheus_available=false` в ответе API), а per-node KPI/график на странице узла продолжают
+считаться из ClickHouse. Поэтому для prod с дашбордами Prometheus нужно поднять и указать его
+URL; без него вся остальная панель (узлы, логи, настройки, audit) работает как прежде.
 
 ### Генерация `ENCRYPTION_KEY`
 
