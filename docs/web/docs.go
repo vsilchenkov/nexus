@@ -804,6 +804,124 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/metrics/nodes": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    },
+                    {
+                        "ApiTokenAuth": []
+                    }
+                ],
+                "description": "Источник — Prometheus (sum by node). Ключ node = path узла. Без Prometheus — пустой список с prometheus_available=false.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "metrics"
+                ],
+                "summary": "Per-node throughput за окно (§21).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "15m | 1h | 24h | 7d (default 1h)",
+                        "name": "range",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/metrics/nodes/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    },
+                    {
+                        "ApiTokenAuth": []
+                    }
+                ],
+                "description": "Источник — ClickHouse (точные перцентили). Узел без таблицы логов → нули с chart_available=false.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "metrics"
+                ],
+                "summary": "KPI + временной ряд графика узла (§21).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "15m | 1h | 24h | 7d (default 1h)",
+                        "name": "range",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/metrics/overview": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    },
+                    {
+                        "ApiTokenAuth": []
+                    }
+                ],
+                "description": "Источник — Prometheus. Без настроенного prometheus.url возвращает нули с prometheus_available=false.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "metrics"
+                ],
+                "summary": "Глобальные KPI панели за 24ч (§21).",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.overviewKPIDTO"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes": {
             "get": {
                 "security": [
@@ -3152,6 +3270,29 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 128,
                     "minLength": 1
+                }
+            }
+        },
+        "internal_web_adapter_in_http.overviewKPIDTO": {
+            "type": "object",
+            "properties": {
+                "error_rate": {
+                    "type": "number"
+                },
+                "errors_24h": {
+                    "type": "integer"
+                },
+                "incoming_24h": {
+                    "type": "integer"
+                },
+                "kafka_queue": {
+                    "type": "integer"
+                },
+                "outgoing_24h": {
+                    "type": "integer"
+                },
+                "prometheus_available": {
+                    "type": "boolean"
                 }
             }
         },
