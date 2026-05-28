@@ -51,6 +51,38 @@ export type Node = {
   updated_at: string;
 };
 
+// §21: метрики панели (см. /api/metrics/*).
+export type OverviewKPI = {
+  incoming_24h: number;
+  outgoing_24h: number;
+  kafka_queue: number;
+  errors_24h: number;
+  error_rate: number;
+  prometheus_available: boolean;
+};
+export type NodeThroughput = {
+  node: string;
+  in: number;
+  out: number;
+  errors: number;
+};
+export type NodesThroughputResp = {
+  items: NodeThroughput[];
+  prometheus_available: boolean;
+};
+export type NodeMetricsResp = {
+  kpi: {
+    total: number;
+    delivered: number;
+    errors: number;
+    p95_ms: number;
+    p99_ms: number;
+  };
+  series: { ts: number; count: number; errors: number }[];
+  chart_available: boolean;
+  range_ms: number;
+};
+
 // §19: шаблоны DDL для таблиц логов ClickHouse.
 export type CHColumnOverride = { name: string; codec: string };
 export type CHTemplateIndex = { name: string; expr: string; type: string; granularity: number };
