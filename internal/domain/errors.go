@@ -82,6 +82,9 @@ var (
 	ErrCHTemplateInUse                   = errors.New("domain: template is used by nodes and cannot be deleted")
 	ErrCHTemplateDefaultImmutable        = errors.New("domain: default template cannot be deleted")
 
+	// Уведомления (§20)
+	ErrTelegramCronInvalid = errors.New("domain: invalid telegram cron expression")
+
 	// Team (multi-tenancy v2)
 	ErrTeamNotFound         = errors.New("domain: team not found")
 	ErrTeamAlreadyExists    = errors.New("domain: team with this slug or ch_database already exists")
