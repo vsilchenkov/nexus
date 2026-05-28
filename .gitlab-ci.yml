@@ -97,7 +97,7 @@ go-test:
     - 'echo "===== go vet ./... ====="'
     - go vet ./...
     - 'echo "===== installing gotestsum (для JUnit-отчёта в GitLab Tests tab) ====="'
-    - go install gotest.tools/gotestsum@v1.12.0
+    - go install gotest.tools/gotestsum@v1.13.0
     - 'echo "===== gotestsum -- -race -short -coverprofile ./... ====="'
     # gotestsum пробрасывает exit code go test'а, поэтому pipeline остаётся
     # красным при любом FAIL. --format pkgname-and-test-fails — лаконичный
@@ -246,7 +246,7 @@ integration:
   before_script:
     - go env -w GOPATH=$GOPATH GOCACHE=$GOCACHE GOMODCACHE=$GOMODCACHE
     - go mod download
-    - go install gotest.tools/gotestsum@v1.12.0
+    - go install gotest.tools/gotestsum@v1.13.0
     # NB: docker pre-pull убран. golang:${GO_VERSION} (debian) идёт без
     # docker CLI — testcontainers-go ходит к daemon'у напрямую через
     # docker.sock, а `docker pull` в before_script писал в лог
