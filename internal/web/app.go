@@ -164,6 +164,12 @@ func (a *App) Start(ctx context.Context) error {
 	auditHandler := httpadapter.NewAuditHandler(auditUC, a.logger)
 	appSettingsHandler := httpadapter.NewAppSettingsHandler(appSettingsUC, settingsTester, a.logger)
 
+	// Шаблоны CH-таблиц (§19). Repo и usecase создаём всегда (GET работает без
+	// ClickHouse); provisioner может быть nil — Verify тогда вернёт 503.
+	chTemplateRepo := pgrepo.NewCHTemplateRepoPg(a.pg, a.logger)
+	chTemplateUC := usecase.NewCHTemplateUsecase(chTemplateRepo, teamProvisioner, teamRepo, auditUC, a.logger)
+	chTemplateHandler := httpadapter.NewCHTemplateHandler(chTemplateUC, a.logger)
+
 	dryRunUC := usecase.NewDryRunUsecase(auditUC, a.logger)
 	dryRunHandler := httpadapter.NewDryRunHandler(dryRunUC, a.logger)
 
@@ -230,6 +236,7 @@ func (a *App) Start(ctx context.Context) error {
 		Logs:        logsHandler,
 		AppSettings: appSettingsHandler,
 		Orphan:      orphanHandler,
+		CHTemplate:  chTemplateHandler,
 	}, mw)
 
 	// SPA fallback: всё, что не API/инфра — отдаём index.html (§17.1 ТЗ).
