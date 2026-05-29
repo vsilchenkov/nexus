@@ -38,6 +38,11 @@ type SendInput struct {
 	LogResponseBody bool
 	LogHeaders      bool
 	ClientIP        string
+
+	// §22: контроль логирования узла.
+	LoggingEnabled     bool  // false → лог в ClickHouse не пишется совсем
+	MaxBodySizeEnabled bool  // включает обрезку сохраняемых тел
+	MaxBodySize        int32 // макс. число символов (рун) в request/response
 }
 
 // SendOutput — результат, который Sender отдаёт обратно Receiver'у.

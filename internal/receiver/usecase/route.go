@@ -136,10 +136,13 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 		RetryCount:      node.RetryCount,
 		RetryBackoffMs:  node.RetryBackoffMs,
 		ClickhouseTable: node.ClickHouseTable,
-		LogRequestBody:  node.LogRequestBody,
-		LogResponseBody: node.LogResponseBody,
-		LogHeaders:      node.LogHeaders,
-		ClientIp:        in.ClientIP,
+		LogRequestBody:     node.LogRequestBody,
+		LogResponseBody:    node.LogResponseBody,
+		LogHeaders:         node.LogHeaders,
+		ClientIp:           in.ClientIP,
+		LoggingEnabled:     node.LoggingEnabled,
+		MaxBodySizeEnabled: node.MaxBodySizeEnabled,
+		MaxBodySize:        node.MaxBodySize,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("sender.Send: %w", err)

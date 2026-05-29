@@ -39,6 +39,11 @@ type CreateNodeRequest struct {
 	LogRequestBody          bool     `json:"log_request_body"`
 	LogResponseBody         bool     `json:"log_response_body"`
 	LogHeaders              bool     `json:"log_headers"`
+	// LoggingEnabled — указатель, чтобы отличить «не прислано» (дефолт true,
+	// сохраняет текущее поведение) от явного false (§22).
+	LoggingEnabled     *bool `json:"logging_enabled"`
+	MaxBodySizeEnabled bool  `json:"max_body_size_enabled"`
+	MaxBodySize        int32 `json:"max_body_size" binding:"omitempty,min=0,max=10000000"`
 }
 
 // UpdateNodeRequest — то же, но без path/root_method иногда позволяется
@@ -75,6 +80,9 @@ type NodeResponse struct {
 	LogRequestBody          bool      `json:"log_request_body"`
 	LogResponseBody         bool      `json:"log_response_body"`
 	LogHeaders              bool      `json:"log_headers"`
+	LoggingEnabled          bool      `json:"logging_enabled"`
+	MaxBodySizeEnabled      bool      `json:"max_body_size_enabled"`
+	MaxBodySize             int32     `json:"max_body_size"`
 	CreatedAt               time.Time `json:"created_at"`
 	UpdatedAt               time.Time `json:"updated_at"`
 }
@@ -90,6 +98,10 @@ func reqToDomain(r CreateNodeRequest) *domain.Node {
 	headers := r.ForwardHeaders
 	if headers == nil {
 		headers = []string{}
+	}
+	loggingEnabled := true // дефолт §22: поле не прислано → логирование включено
+	if r.LoggingEnabled != nil {
+		loggingEnabled = *r.LoggingEnabled
 	}
 	return &domain.Node{
 		Path:                    r.Path,
@@ -118,6 +130,9 @@ func reqToDomain(r CreateNodeRequest) *domain.Node {
 		LogRequestBody:          r.LogRequestBody,
 		LogResponseBody:         r.LogResponseBody,
 		LogHeaders:              r.LogHeaders,
+		LoggingEnabled:          loggingEnabled,
+		MaxBodySizeEnabled:      r.MaxBodySizeEnabled,
+		MaxBodySize:             r.MaxBodySize,
 	}
 }
 
@@ -151,6 +166,9 @@ func nodeToResponse(n *domain.Node) NodeResponse {
 		LogRequestBody:          n.LogRequestBody,
 		LogResponseBody:         n.LogResponseBody,
 		LogHeaders:              n.LogHeaders,
+		LoggingEnabled:          n.LoggingEnabled,
+		MaxBodySizeEnabled:      n.MaxBodySizeEnabled,
+		MaxBodySize:             n.MaxBodySize,
 		CreatedAt:               n.CreatedAt,
 		UpdatedAt:               n.UpdatedAt,
 	}

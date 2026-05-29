@@ -46,10 +46,13 @@ func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 		RetryCount:      req.GetRetryCount(),
 		RetryBackoffMs:  req.GetRetryBackoffMs(),
 		ClickHouseTable: req.GetClickhouseTable(),
-		LogRequestBody:  req.GetLogRequestBody(),
-		LogResponseBody: req.GetLogResponseBody(),
-		LogHeaders:      req.GetLogHeaders(),
-		ClientIP:        req.GetClientIp(),
+		LogRequestBody:     req.GetLogRequestBody(),
+		LogResponseBody:    req.GetLogResponseBody(),
+		LogHeaders:         req.GetLogHeaders(),
+		ClientIP:           req.GetClientIp(),
+		LoggingEnabled:     req.GetLoggingEnabled(),
+		MaxBodySizeEnabled: req.GetMaxBodySizeEnabled(),
+		MaxBodySize:        req.GetMaxBodySize(),
 	})
 
 	if s.metrics != nil {

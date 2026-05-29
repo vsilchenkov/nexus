@@ -297,6 +297,22 @@
 
 ---
 
+### §22 Контроль логирования узла, обрезка тел, карточки Overview, Telegram→Prometheus
+
+ТЗ — [sections/22-logging-controls-cards.md](sections/22-logging-controls-cards.md). Ветка
+`feature/logging-controls-cards`.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| Поля узла `logging_enabled` / `max_body_size_enabled` / `max_body_size` | ◐ Phase 22.1 | миграция [0010](../migrations/0010_node_logging_controls.up.sql), [domain/node.go](../internal/domain/node.go), [postgres/node_repo.go](../internal/web/adapter/out/postgres/node_repo.go), [dto.go](../internal/web/adapter/in/http/dto.go), proto [sender.proto](../proto/sender/v1/sender.proto) |
+| Проводка полей Node → Sender (sync gRPC + async PG) | ◐ Phase 22.1 | [route.go](../internal/receiver/usecase/route.go), [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go), [async.go](../internal/sender/usecase/async.go), readers [nodepg](../internal/sender/adapter/out/nodepg/reader.go) / [nodecache](../internal/receiver/adapter/out/nodecache/reader.go) |
+| Отключение логирования + обрезка по символам в Sender | ⛔ Phase 22.2 | [send.go](../internal/sender/usecase/send.go) |
+| UI формы: Toggle, карточки «Заголовки» / «Логирование» | ⛔ Phase 22.3 | [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx) |
+| Telegram-алерты через Prometheus + метрика `nexus_request_incomplete_total` | ⛔ Phase 22.4 | [notification.go](../internal/web/usecase/notification.go), [metrics.go](../internal/platform/metrics/metrics.go) |
+| Карточки Overview под `ui_cards.html` (спарклайн, p95, фильтр) | ⛔ Phase 22.5 | [Overview.tsx](../web-ui/src/pages/Overview.tsx) |
+
+---
+
 ## 3. Где что лежит — карта каталогов
 
 ```text

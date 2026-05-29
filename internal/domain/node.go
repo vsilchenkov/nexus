@@ -52,6 +52,14 @@ type Node struct {
 	LogResponseBody bool
 	LogHeaders      bool
 
+	// §22: контроль логирования на уровне узла.
+	// LoggingEnabled=false — узел не пишет лог в ClickHouse совсем.
+	// При MaxBodySizeEnabled сохраняемые request/response режутся до
+	// MaxBodySize СИМВОЛОВ (рун); checksum считается по полному телу.
+	LoggingEnabled     bool
+	MaxBodySizeEnabled bool
+	MaxBodySize        int32
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -138,6 +146,12 @@ func (n *Node) Validate() error {
 	}
 	if n.ClickHouseTemplateID != "" && !uuidPattern.MatchString(n.ClickHouseTemplateID) {
 		return ErrNodeInvalidTemplateID
+	}
+	if n.MaxBodySize < 0 || n.MaxBodySize > 10_000_000 {
+		return ErrNodeMaxBodySizeRange
+	}
+	if n.MaxBodySizeEnabled && n.MaxBodySize <= 0 {
+		return ErrNodeMaxBodySizeRequired
 	}
 	return nil
 }

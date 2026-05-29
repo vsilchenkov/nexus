@@ -141,10 +141,13 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 		RetryCount:      node.RetryCount,
 		RetryBackoffMs:  node.RetryBackoffMs,
 		ClickHouseTable: node.ClickHouseTable,
-		LogRequestBody:  node.LogRequestBody,
-		LogResponseBody: node.LogResponseBody,
-		LogHeaders:      node.LogHeaders,
-		ClientIP:        env.ClientIP,
+		LogRequestBody:     node.LogRequestBody,
+		LogResponseBody:    node.LogResponseBody,
+		LogHeaders:         node.LogHeaders,
+		ClientIP:           env.ClientIP,
+		LoggingEnabled:     node.LoggingEnabled,
+		MaxBodySizeEnabled: node.MaxBodySizeEnabled,
+		MaxBodySize:        node.MaxBodySize,
 	})
 
 	if p.metrics != nil {
