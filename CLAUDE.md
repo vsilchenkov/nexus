@@ -70,6 +70,10 @@ Web Service отдаёт REST API под `/api/*` и SPA (`embed.FS`) на вс�
 
 1. **Прогнать сборку и тесты.**
    - `go build ./...` (на Windows при OOM-линкере — `go build -ldflags="-s -w" ./cmd/<name>` по одному).
+   - **Перед тестами — `go fix` + `gofmt`.** Прогони `go fix ./cmd/... ./internal/... ./tests/...`
+     (не `./...` из корня — он спотыкается о стороннюю `.go`-заглушку в `web-ui/node_modules/`),
+     затем `gofmt -w` на затронутые файлы (или `gofmt -l .` для проверки). Это держит код в
+     актуальных идиомах Go и не даёт упасть CI job `lint` (`golangci-lint` проверяет `gofmt`).
    - `make test` — unit-тесты зелёные.
    - Если менял Swagger-аннотации — `make swagger`.
    - Если менял integration-сценарий — `make test-integration` (нужен Docker).
