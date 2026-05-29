@@ -34,6 +34,12 @@ self-contained compose-файлом с пробросом портов на хо
 2. **Go 1.26+** — установить, проверить `go version`.
 3. **VS Code + расширение `golang.go`.** Через Command Palette (`Ctrl+Shift+P`) →
    **Go: Install/Update Tools** поставить `dlv`, `gopls`, `golangci-lint`.
+   - Версию линтера держать в соответствии с CI (`golangci/golangci-lint:v2.12`):
+     `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2`.
+   - **На Windows запускать с `--concurrency=2`** — дефолтная параллельность
+     приводит к `runtime: out of memory`:
+     `golangci-lint run --timeout=10m --concurrency=2`
+     (в CI ограничение не нужно — Linux-контейнер с достаточной памятью).
 4. **`.env` в корне репозитория** на основе [.env.example](./.env.example). Минимально
    обязателен `ENCRYPTION_KEY` — 32 байта в base64. Сгенерировать в PowerShell:
 
