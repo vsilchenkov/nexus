@@ -3,7 +3,6 @@ package usecase
 import (
 	"fmt"
 	"net/url"
-	"strings"
 
 	"nexus/internal/domain"
 )
@@ -29,7 +28,7 @@ func ResolveURL(node *domain.Node, incomingQuery url.Values) (target string, cle
 		if perr != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
 			return "", nil, fmt.Errorf("%w: %s", domain.ErrURLInvalid, raw)
 		}
-		if !hostAllowed(parsed.Host, node.URLAllowedHosts) {
+		if !domain.HostAllowed(parsed.Host, node.URLAllowedHosts) {
 			return "", nil, fmt.Errorf("%w: %s", domain.ErrURLNotAllowed, parsed.Host)
 		}
 		// Вырезаем служебный параметр.
@@ -40,35 +39,6 @@ func ResolveURL(node *domain.Node, incomingQuery url.Values) (target string, cle
 	default:
 		return "", nil, fmt.Errorf("%w: %q", domain.ErrNodeInvalidURLMode, node.URLMode)
 	}
-}
-
-// hostAllowed: пустой allowlist = разрешено всё.
-// Поддерживаются wildcard-паттерны вида "*.partner.com".
-func hostAllowed(host string, allowlist []string) bool {
-	if len(allowlist) == 0 {
-		return true
-	}
-	low := strings.ToLower(host)
-	// Срезаем порт, если есть.
-	if i := strings.Index(low, ":"); i >= 0 {
-		low = low[:i]
-	}
-	for _, pat := range allowlist {
-		pat = strings.ToLower(strings.TrimSpace(pat))
-		if pat == "" {
-			continue
-		}
-		if pat == low {
-			return true
-		}
-		if strings.HasPrefix(pat, "*.") {
-			suffix := pat[1:] // ".partner.com"
-			if strings.HasSuffix(low, suffix) && low != suffix[1:] {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func cloneValues(v url.Values) url.Values {

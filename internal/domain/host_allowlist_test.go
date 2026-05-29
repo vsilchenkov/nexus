@@ -53,6 +53,40 @@ func TestHostAllowlistEntry_Validate(t *testing.T) {
 	}
 }
 
+func TestHostAllowed(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		host     string
+		patterns []string
+		want     bool
+	}{
+		{"empty allowlist allows all", "anywhere.com", nil, true},
+		{"exact match", "api.partner.com", []string{"api.partner.com"}, true},
+		{"exact case-insensitive", "API.Partner.COM", []string{"api.partner.com"}, true},
+		{"exact strips port", "api.partner.com:8443", []string{"api.partner.com"}, true},
+		{"exact no match", "evil.com", []string{"api.partner.com"}, false},
+		{"wildcard subdomain", "eu.api.partner.com", []string{"*.partner.com"}, true},
+		{"wildcard direct subdomain", "api.partner.com", []string{"*.partner.com"}, true},
+		{"wildcard excludes bare domain", "partner.com", []string{"*.partner.com"}, false},
+		{"wildcard excludes lookalike", "evilpartner.com", []string{"*.partner.com"}, false},
+		{"regex match", "api-42.legacy.io", []string{`re:^api-\d+\.legacy\.io$`}, true},
+		{"regex no match", "api-x.legacy.io", []string{`re:^api-\d+\.legacy\.io$`}, false},
+		{"regex not lowercased class", "host7", []string{`re:^host\d$`}, true},
+		{"invalid regex denies", "anything", []string{`re:^api-(\d+`}, false},
+		{"multiple patterns any match", "x.notify.io", []string{"api.partner.com", "*.notify.io"}, true},
+		{"blank pattern skipped", "api.partner.com", []string{"  ", "api.partner.com"}, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := HostAllowed(tc.host, tc.patterns); got != tc.want {
+				t.Errorf("HostAllowed(%q, %v) = %v, want %v", tc.host, tc.patterns, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestHostAllowlistEntry_EncodedPattern(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

@@ -87,6 +87,54 @@ func (e *HostAllowlistEntry) Validate() error {
 	return nil
 }
 
+// HostAllowed сообщает, разрешён ли host списком паттернов из денормализованного
+// снимка nodes.url_allowed_hosts. Единый матчер для Receiver (горячий путь) и
+// Web-preview (§23, DRY).
+//
+//   - пустой список = разрешено всё (как было до каталога);
+//   - host нормализуется: lower-case, порт срезается;
+//   - exact: точное совпадение (без учёта регистра);
+//   - "*.x": любой поддомен x (но не сам x);
+//   - "re:<regexp>": Go-регексп против hostname; невалидный regexp = deny.
+//
+// Regex-паттерн НЕ приводится к нижнему регистру (это сломало бы классы вроде
+// \D); хост уже lower-case, чего достаточно для регистронезависимых hostname.
+func HostAllowed(host string, patterns []string) bool {
+	if len(patterns) == 0 {
+		return true
+	}
+	low := strings.ToLower(host)
+	if i := strings.Index(low, ":"); i >= 0 {
+		low = low[:i]
+	}
+	for _, pat := range patterns {
+		pat = strings.TrimSpace(pat)
+		if pat == "" {
+			continue
+		}
+		if rx, ok := strings.CutPrefix(pat, RegexEncodePrefix); ok {
+			re, err := regexp.Compile(rx)
+			if err != nil {
+				continue // невалидный regexp = deny
+			}
+			if re.MatchString(low) {
+				return true
+			}
+			continue
+		}
+		lp := strings.ToLower(pat)
+		if lp == low {
+			return true
+		}
+		if suffix, ok := strings.CutPrefix(lp, "*."); ok {
+			if strings.HasSuffix(low, "."+suffix) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // EncodedPattern возвращает форму паттерна для денормализованного снимка
 // nodes.url_allowed_hosts. exact/wildcard сохраняются как есть, regex — с
 // префиксом RegexEncodePrefix, чтобы Receiver-матчер отличил его.
