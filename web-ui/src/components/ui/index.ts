@@ -5,7 +5,7 @@ export { Card, SectionHead } from "./surfaces";
 export { Modal } from "./Modal";
 export { Chip, Pill, Kpi, KpiRow, Seg, Hint } from "./data";
 export type { SegOption } from "./data";
-export { PickGroup, Toggle3 } from "./pickers";
+export { PickGroup, Toggle, Toggle3 } from "./pickers";
 export type { PickOption } from "./pickers";
 export { TrafficChart } from "./TrafficChart";
 export type { SeriesPoint } from "./TrafficChart";

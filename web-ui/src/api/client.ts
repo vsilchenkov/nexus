@@ -47,6 +47,13 @@ export type Node = {
   auth_type: string;
   clickhouse_table: string;
   clickhouse_template_id: string;
+  forward_headers: string[];
+  log_request_body: boolean;
+  log_response_body: boolean;
+  log_headers: boolean;
+  logging_enabled: boolean;
+  max_body_size_enabled: boolean;
+  max_body_size: number;
   created_at: string;
   updated_at: string;
 };
