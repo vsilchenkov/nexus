@@ -54,6 +54,17 @@ definitions:
         type: boolean
       log_response_body:
         type: boolean
+      logging_enabled:
+        description: |-
+          LoggingEnabled — указатель, чтобы отличить «не прислано» (дефолт true,
+          сохраняет текущее поведение) от явного false (§22).
+        type: boolean
+      max_body_size:
+        maximum: 10000000
+        minimum: 0
+        type: integer
+      max_body_size_enabled:
+        type: boolean
       path:
         maxLength: 255
         type: string
@@ -179,6 +190,12 @@ definitions:
         type: boolean
       log_response_body:
         type: boolean
+      logging_enabled:
+        type: boolean
+      max_body_size:
+        type: integer
+      max_body_size_enabled:
+        type: boolean
       path:
         type: string
       retry_backoff_ms:
@@ -278,6 +295,17 @@ definitions:
       log_request_body:
         type: boolean
       log_response_body:
+        type: boolean
+      logging_enabled:
+        description: |-
+          LoggingEnabled — указатель, чтобы отличить «не прислано» (дефолт true,
+          сохраняет текущее поведение) от явного false (§22).
+        type: boolean
+      max_body_size:
+        maximum: 10000000
+        minimum: 0
+        type: integer
+      max_body_size_enabled:
         type: boolean
       path:
         maxLength: 255

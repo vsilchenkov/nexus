@@ -274,7 +274,7 @@
 |---|---|---|
 | Настройки `notifications.telegram` в app_settings (mask/merge/cron-валидация) + **фикс marshal'а Update** + reloader-секция | ✅ Phase F2.1 | [domain/app_settings.go](../internal/domain/app_settings.go), [usecase/app_settings.go](../internal/web/usecase/app_settings.go), [postgres/app_settings_repo.go](../internal/web/adapter/out/postgres/app_settings_repo.go), [reloader.go](../internal/platform/reloader/reloader.go) |
 | Telegram-клиент (sendMessage) | ✅ Phase F2.2 | [platform/telegram/client.go](../internal/platform/telegram/client.go) |
-| `LogReader.CountErrors` + Redis checkpoint + distributed lock | ✅ Phase F2.3 | [clickhouse/log_reader.go](../internal/web/adapter/out/clickhouse/log_reader.go), [redis/notif_checkpoint.go](../internal/web/adapter/out/redis/notif_checkpoint.go), [redis/notif_lock.go](../internal/web/adapter/out/redis/notif_lock.go) |
+| ~~`LogReader.CountErrors`~~ → **§22: `PromMetrics.NodeErrors` (Prometheus)** + Redis checkpoint + distributed lock | ✅ Phase F2.3 / 22.4 | источник ошибок переведён на Prometheus (`nexus_request_incomplete_total`), см. §22; [redis/notif_checkpoint.go](../internal/web/adapter/out/redis/notif_checkpoint.go), [redis/notif_lock.go](../internal/web/adapter/out/redis/notif_lock.go) |
 | NotificationScheduler (cron, окно ошибок, send-if>0, hot-reload) | ✅ Phase F2.4 | [usecase/notification.go](../internal/web/usecase/notification.go), dep `robfig/cron/v3` |
 | Wiring + `POST /api/settings/notifications/test` | ✅ Phase F2.5 | [usecase/settings_tester.go](../internal/web/usecase/settings_tester.go) `TestTelegram`, [app.go](../internal/web/app.go) |
 | UI Settings → Notifications | ✅ Phase F2.6 | [pages/settings/Notifications.tsx](../web-ui/src/pages/settings/Notifications.tsx) |
@@ -810,6 +810,30 @@ filter, Create без TeamID). До блока B (team-switcher в сессии)
 - В integration-тестах используйте helper `resolveDefaultTeamID(t, ctx,
   pool)` ([tests/integration/node_repo_test.go](../tests/integration/node_repo_test.go))
   — он читает UUID из БД после применения миграций.
+
+### 4.21 §22 — контроль логирования и единый источник алертов
+
+- **Обрезка по рунам, checksum по полному телу.** `truncateRunes` в
+  [send.go](../internal/sender/usecase/send.go) режет `[]rune`, а не байты — иначе многобайтовый
+  UTF-8 рвётся и ClickHouse-строка бьётся. `checksum_request/response` считаются из `in.Body`/
+  `resp.Body` ДО обрезки: контрольная сумма отражает реальный payload, даже если тело урезано.
+- **`logging_enabled=false` обрывает запись на usecase-уровне**, а не в writer'е: guard стоит на
+  обоих вызовах `u.logw.Write` (основной и circuit-breaker-open). Так узел не пишет вообще ничего,
+  а не «пустую» строку.
+- **Дефолт `logging_enabled` через `*bool` в DTO.** Plain `bool` не отличает «не прислано» от
+  «false». Указатель: nil → true (старые клиенты и существующие узлы логируют как прежде).
+- **`done=0` ⟺ `!rec.Done` ⟺ всё ClickHouse-условие ошибки.** Поэтому один счётчик
+  `nexus_request_incomplete_total` точно воспроизводит прежний `CountErrors`
+  (`status>=400 OR status=0 OR done=0`): первые два — подмножества `done=0`. Инкремент в адаптерах
+  Sender по `out.StatusCode` не 2xx (метрику в usecase не тащим).
+- **Telegram теперь зависит от Prometheus.** `NotificationScheduler` больше не держит `LogReader`;
+  ошибки берёт из `PromMetrics.NodeErrors` (один запрос на тик вместо N к ClickHouse). Планировщик
+  вынесен из CH-блока в [app.go](../internal/web/app.go) и стартует только при `promMetrics != nil`.
+- **p95 для карточек — без новой метрики.** Sender уже пишет `nexus_request_duration_seconds`
+  и для sync ([sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go)), и для
+  async ([async.go](../internal/sender/usecase/async.go)); карточкам нужен лишь
+  `histogram_quantile` по `service="sender"`. Спарклайн — один `query_range` с `by (node)` на весь
+  список, не N запросов.
 
 ---
 

@@ -27,6 +27,7 @@
 | 19 | [19-ch-templates.md](19-ch-templates.md) | Шаблоны запросов ClickHouse — каталог DDL, CODEC/индексы/TTL, авто-создание таблицы узла |
 | 20 | [20-notifications.md](20-notifications.md) | Уведомления операторам в Telegram — cron-расписание, ошибки узлов, тестовая отправка |
 | 21 | [21-ui-redesign.md](21-ui-redesign.md) | Редизайн UI под эталон (дизайн-токены, UI-kit, app-shell) + HTTP-API метрик панели (Prometheus + ClickHouse) |
+| 22 | [22-logging-controls-cards.md](22-logging-controls-cards.md) | Контроль логирования узла (тумблер, обрезка тел), раскладка карточками Overview, перевод Telegram-алертов на Prometheus |
 
 ## Как пользоваться
 

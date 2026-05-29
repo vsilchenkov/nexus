@@ -153,6 +153,24 @@ docker compose -f deploy/docker-compose.deps.yml up -d
 | `test: integration` | `go test -tags=integration -count=1 -v ./tests/integration/...` |
 | `build: all` | сборка `bin/{receiver,sender,web}.exe` |
 
+### Кодогенерация и §22-специфика
+
+- **Правка gRPC-контракта** (`proto/sender/v1/sender.proto`) → перегенерировать Go-код:
+  `make proto` (нужны `protoc`, `protoc-gen-go`, `protoc-gen-go-grpc` в `PATH`). Например, поля
+  контроля логирования узла (`logging_enabled`/`max_body_size_enabled`/`max_body_size`, §22) едут в
+  Sender по sync-пути именно через `SendRequest` — после правки proto не забыть `make proto` и
+  смаппить новые поля в `route.go`/`sender_service.go`.
+- **Правка handler-аннотаций / DTO** (`internal/web/adapter/in/http/*`) → `make swagger`
+  (CI-гейт `swagger-drift-check` валит сборку при расхождении `docs/`).
+- **Сценарные тесты логирования (§22)** — `internal/sender/usecase/send_test.go` (обрезка по рунам,
+  отключение логирования, спецсимволы) и `tests/integration/clickhouse_test.go`
+  (`TestClickHouse_Logging_Scenarios`, требует Docker: большое тело/JSON/unicode + кейс «логирование
+  выключено → count==0»).
+- **Новые поля формы узла** (§22): в `web-ui` — карточки «Заголовки»/«Логирование», компонент
+  `Toggle`; после правки `web-ui/` обязательны `npm run lint` (`--max-warnings=0`) и `npm run build`,
+  затем пересборка встроенного SPA (`make build-ui` или копирование `web-ui/dist/*` в
+  `internal/web/static/`).
+
 ---
 
 ## 5. После запуска
