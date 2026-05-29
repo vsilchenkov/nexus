@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"regexp"
 	"time"
 )
@@ -62,6 +63,23 @@ type Node struct {
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+// UnmarshalJSON задаёт дефолт LoggingEnabled=true для JSON без этого поля (§22).
+// Узел сериализуется в Redis-кеш как JSON; записи, сохранённые до появления
+// поля (например, переживший выкат L1-кеш ресивера), не должны выключать
+// логирование. Отсутствующее поле → true, явное значение — как прислано.
+func (n *Node) UnmarshalJSON(data []byte) error {
+	type alias Node // без методов Node, чтобы не зациклить UnmarshalJSON
+	aux := &struct {
+		LoggingEnabled *bool `json:"LoggingEnabled"`
+		*alias
+	}{alias: (*alias)(n)}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	n.LoggingEnabled = aux.LoggingEnabled == nil || *aux.LoggingEnabled
+	return nil
 }
 
 // pathPattern — то же ограничение, что в БД-constraint (§3.3 ТЗ).

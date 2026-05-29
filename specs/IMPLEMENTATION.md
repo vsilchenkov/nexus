@@ -822,6 +822,10 @@ filter, Create без TeamID). До блока B (team-switcher в сессии)
   а не «пустую» строку.
 - **Дефолт `logging_enabled` через `*bool` в DTO.** Plain `bool` не отличает «не прислано» от
   «false». Указатель: nil → true (старые клиенты и существующие узлы логируют как прежде).
+- **`Node.UnmarshalJSON` дефолтит `LoggingEnabled=true`** ([node.go](../internal/domain/node.go)).
+  Узел кешируется в Redis как JSON; запись, сериализованная до появления поля (переживший выкат
+  L1-кеш ресивера, TTL `Redis.NodeTTLSec`=300с), без этого иначе читалась бы как `false` и на ≤5 мин
+  выключила бы логирование узла. Кастомный Unmarshal закрывает окно: отсутствующее поле → `true`.
 - **`done=0` ⟺ `!rec.Done` ⟺ всё ClickHouse-условие ошибки.** Поэтому один счётчик
   `nexus_request_incomplete_total` точно воспроизводит прежний `CountErrors`
   (`status>=400 OR status=0 OR done=0`): первые два — подмножества `done=0`. Инкремент в адаптерах
