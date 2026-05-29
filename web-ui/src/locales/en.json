@@ -160,6 +160,14 @@
       "preview": "Route preview",
       "ssrf_warn": "\"From request\" mode: fill the host allowlist to prevent SSRF. Do not leave it empty in production."
     },
+    "headers_combo": {
+      "add_placeholder": "Add a header…",
+      "search": "Header name…",
+      "empty": "Nothing matched.",
+      "used": "{{count}} node(s)",
+      "create": "Create \"{{name}}\"",
+      "invalid": "Invalid name: latin letters, digits and - _ . ! # $ % & ' * + ^ ` | ~, 1–100 chars."
+    },
     "allowed_hosts": {
       "label": "Allowed hosts",
       "hint_short": "patterns from the catalog; a URL outside the list → 403",
