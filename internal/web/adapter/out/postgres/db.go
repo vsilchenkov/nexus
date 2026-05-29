@@ -2,10 +2,18 @@ package postgres
 
 import (
 	"context"
+	"errors"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
+
+// isForeignKeyViolation сообщает, что ошибка — нарушение FK-ограничения
+// (SQLSTATE 23503), напр. попытка удалить запись, на которую ссылаются.
+func isForeignKeyViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23503"
+}
 
 // DBTX — общий минимальный интерфейс над pgxpool.Pool и pgx.Tx.
 //

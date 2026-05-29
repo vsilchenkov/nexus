@@ -36,6 +36,7 @@ func (u *UnitOfWorkPg) Execute(ctx context.Context, fn func(ctx context.Context,
 	repos := port.Repos{
 		Nodes: NewNodeRepoPg(tx, u.cipher, u.logger),
 		Audit: NewAuditRepoPg(tx, u.logger),
+		Hosts: NewHostAllowlistRepoPg(tx, u.logger),
 	}
 
 	if err := fn(ctx, repos); err != nil {
