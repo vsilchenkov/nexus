@@ -58,4 +58,11 @@ const (
 	ActionTeamMemberAdd    = "team.member.add"
 	ActionTeamMemberRemove = "team.member.remove"
 	ActionTeamMemberRole   = "team.member.role"
+
+	// Каталог разрешённых хостов (§23).
+	ActionHostCreate = "host.create"
+	ActionHostUpdate = "host.update"
+	ActionHostDelete = "host.delete"
+	ActionHostAttach = "host.attach"
+	ActionHostDetach = "host.detach"
 )
