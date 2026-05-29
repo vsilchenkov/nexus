@@ -76,10 +76,12 @@ func (h *MetricsHandler) Overview(c *gin.Context) {
 }
 
 type nodeThroughputDTO struct {
-	Node   string `json:"node"`
-	In     uint64 `json:"in"`
-	Out    uint64 `json:"out"`
-	Errors uint64 `json:"errors"`
+	Node   string    `json:"node"`
+	In     uint64    `json:"in"`
+	Out    uint64    `json:"out"`
+	Errors uint64    `json:"errors"`
+	P95ms  float64   `json:"p95_ms"`
+	Spark  []float64 `json:"spark"`
 }
 
 // NodesOverview godoc
@@ -97,7 +99,14 @@ func (h *MetricsHandler) NodesOverview(c *gin.Context) {
 	res := h.uc.NodesOverview(c.Request.Context(), window)
 	items := make([]nodeThroughputDTO, 0, len(res.Items))
 	for _, it := range res.Items {
-		items = append(items, nodeThroughputDTO{Node: it.Node, In: it.In, Out: it.Out, Errors: it.Errors})
+		spark := it.Spark
+		if spark == nil {
+			spark = []float64{}
+		}
+		items = append(items, nodeThroughputDTO{
+			Node: it.Node, In: it.In, Out: it.Out, Errors: it.Errors,
+			P95ms: it.P95ms, Spark: spark,
+		})
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"items":                items,

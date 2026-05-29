@@ -12,10 +12,12 @@ import {
 } from "../api/client";
 import { Button, Card, Chip, Field, Input, Kpi, KpiRow, Pill, Seg, Select } from "../components/ui";
 import { Modal } from "../components/ui/Modal";
+import { cn } from "../lib/cn";
 
 type ListResp = { items: Node[] };
 type View = "table" | "cards";
-type Throughput = { in: number; out: number; errors: number };
+type StatusFilter = "all" | "ok" | "warn" | "err" | "paused" | "disabled";
+type Throughput = { in: number; out: number; errors: number; p95: number; spark: number[] };
 
 const VIEW_KEY = "nexus.overview.view";
 
@@ -30,6 +32,7 @@ export default function Overview() {
   const { t } = useTranslation();
   const [search, setSearch] = useState("");
   const [method, setMethod] = useState<"" | "request" | "requestAsync">("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [view, setView] = useState<View>(
     () => (localStorage.getItem(VIEW_KEY) as View) || "table",
   );
@@ -57,15 +60,31 @@ export default function Overview() {
   const throughput = useMemo(() => {
     const m = new Map<string, Throughput>();
     for (const it of thrQ.data?.items ?? []) {
-      m.set(it.node, { in: it.in, out: it.out, errors: it.errors });
+      m.set(it.node, { in: it.in, out: it.out, errors: it.errors, p95: it.p95_ms, spark: it.spark ?? [] });
     }
     return m;
   }, [thrQ.data]);
 
+  // Сортировка: проблемные первыми (err → warn → paused → ok → disabled),
+  // внутри статуса — по убыванию входящего трафика (§22, ui_cards.html).
+  const sortRank: Record<Variant, number> = useMemo(
+    () => ({ err: 0, warn: 1, paused: 2, ok: 3, disabled: 4 }),
+    [],
+  );
+
   const nodes = useMemo(() => {
-    const items = nodesQ.data?.items ?? [];
-    return method ? items.filter((n) => n.root_method === method) : items;
-  }, [nodesQ.data, method]);
+    let items = nodesQ.data?.items ?? [];
+    if (method) items = items.filter((n) => n.root_method === method);
+    if (statusFilter !== "all") {
+      items = items.filter((n) => nodeVariant(n, throughput.get(n.path)) === statusFilter);
+    }
+    return [...items].sort((a, b) => {
+      const va = nodeVariant(a, throughput.get(a.path));
+      const vb = nodeVariant(b, throughput.get(b.path));
+      if (sortRank[va] !== sortRank[vb]) return sortRank[va] - sortRank[vb];
+      return (throughput.get(b.path)?.in ?? 0) - (throughput.get(a.path)?.in ?? 0);
+    });
+  }, [nodesQ.data, method, statusFilter, throughput, sortRank]);
 
   const kpi = kpiQ.data;
   const errPct = kpi && kpi.error_rate > 0 ? (kpi.error_rate * 100).toFixed(2) + "%" : "0%";
@@ -107,6 +126,18 @@ export default function Overview() {
           <option value="request">request</option>
           <option value="requestAsync">requestAsync</option>
         </Select>
+        <Select
+          className="w-40"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+        >
+          <option value="all">{t("overview.filter.all_statuses")}</option>
+          <option value="ok">{t("overview.status.ok")}</option>
+          <option value="warn">{t("overview.status.queue")}</option>
+          <option value="err">{t("overview.status.down")}</option>
+          <option value="paused">{t("node.status.paused")}</option>
+          <option value="disabled">{t("node.status.disabled")}</option>
+        </Select>
         <Seg
           value={view}
           onChange={setView}
@@ -142,21 +173,49 @@ export default function Overview() {
   );
 }
 
-type StatusInfo = { tone: "ok" | "err" | "warn"; label: string };
+type Variant = "ok" | "warn" | "err" | "paused" | "disabled";
+type StatusInfo = { tone: "ok" | "err" | "warn"; label: string; variant: Variant };
+
+// nodeVariant — чистая классификация статуса узла (без i18n), для фильтра,
+// сортировки и цвета акцента карточки (§22, ui_cards.html).
+function nodeVariant(n: Node, m?: Throughput): Variant {
+  if (n.status === "disabled") return "disabled";
+  if (n.status === "paused") return "paused";
+  if (m) {
+    const rate = m.out > 0 ? m.errors / m.out : 0;
+    if (rate > 0.3) return "err";
+    if (n.root_method === "requestAsync" && m.in - m.out > Math.max(50, m.in * 0.1)) {
+      return "warn";
+    }
+  }
+  return "ok";
+}
+
+// accentByVariant — класс полосы-акцента слева (border-l) по статусу.
+const accentByVariant: Record<Variant, string> = {
+  ok: "border-l-ok",
+  warn: "border-l-warn",
+  err: "border-l-err",
+  paused: "border-l-accent",
+  disabled: "border-l-fg-subtle",
+};
 
 function useStatus() {
   const { t } = useTranslation();
   return (n: Node, m?: Throughput): StatusInfo => {
-    if (n.status === "disabled") return { tone: "err", label: t("node.status.disabled") };
-    if (n.status === "paused") return { tone: "warn", label: t("node.status.paused") };
-    if (m) {
-      const rate = m.out > 0 ? m.errors / m.out : 0;
-      if (rate > 0.3) return { tone: "err", label: t("overview.status.down") };
-      if (n.root_method === "requestAsync" && m.in - m.out > Math.max(50, m.in * 0.1)) {
-        return { tone: "warn", label: t("overview.status.queue") };
-      }
+    const variant = nodeVariant(n, m);
+    switch (variant) {
+      case "disabled":
+        return { variant, tone: "err", label: t("node.status.disabled") };
+      case "paused":
+        return { variant, tone: "warn", label: t("node.status.paused") };
+      case "err":
+        return { variant, tone: "err", label: t("overview.status.down") };
+      case "warn":
+        return { variant, tone: "warn", label: t("overview.status.queue") };
+      default:
+        return { variant, tone: "ok", label: t("overview.status.ok") };
     }
-    return { tone: "ok", label: t("overview.status.ok") };
   };
 }
 
@@ -223,6 +282,13 @@ function NodeTable({
   );
 }
 
+// fmtMs — компактный формат p95-латентности (ms / s).
+function fmtMs(ms: number): string {
+  if (ms <= 0) return "—";
+  if (ms >= 1000) return (ms / 1000).toFixed(1) + "s";
+  return Math.round(ms) + "ms";
+}
+
 function NodeCards({
   nodes,
   throughput,
@@ -235,32 +301,59 @@ function NodeCards({
   const { t } = useTranslation();
   const status = useStatus();
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+    <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
       {nodes.map((n) => {
         const m = throughput.get(n.path);
         const s = status(n, m);
+        const target =
+          n.url_mode === "from_request" ? t("overview.card.dynamic_url") : n.target_url || "—";
         return (
-          <Card key={n.id} className="h-full">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <Link to={`/nodes/${n.id}`} className="truncate font-mono text-[13px] hover:text-accent">
-                {n.path}
-              </Link>
-              <Pill tone={s.tone}>{s.label}</Pill>
+          <Card
+            key={n.id}
+            className={cn(
+              "flex h-full flex-col gap-3 border-l-[3px]",
+              accentByVariant[s.variant],
+              n.status === "disabled" && "opacity-70",
+            )}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <Link
+                  to={`/nodes/${n.id}`}
+                  className="block truncate font-mono text-[13px] font-medium hover:text-accent"
+                >
+                  {n.path}
+                </Link>
+                <div className="mt-1 flex items-center gap-1.5">
+                  <Chip>{n.root_method}</Chip>
+                  <Pill tone={s.tone}>
+                    <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-current" />
+                    {s.label}
+                  </Pill>
+                </div>
+              </div>
             </div>
-            <div className="mb-3 flex items-center justify-between">
-              <Chip>{n.root_method}</Chip>
+            <div className="grid grid-cols-3 gap-2 border-y border-line py-2.5 text-center">
+              <CardStat label={t("overview.table.in1h")} value={m ? fmtNum(m.in) : "—"} />
+              <CardStat label="p95" value={m ? fmtMs(m.p95) : "—"} />
+              <CardStat
+                label={t("overview.table.errors")}
+                value={m ? fmtNum(m.errors) : "—"}
+                tone={m && m.errors > 0 ? "err" : undefined}
+              />
+            </div>
+            <Sparkline data={m?.spark ?? []} variant={s.variant} />
+            <div className="flex items-center justify-between gap-2 text-[11px] text-fg-subtle">
+              <span className="truncate font-mono" title={target}>
+                {target}
+              </span>
               <button
                 type="button"
                 onClick={() => onMove(n)}
-                className="text-xs text-fg-subtle hover:text-accent"
+                className="shrink-0 hover:text-accent"
               >
                 {t("overview.move.action")}
               </button>
-            </div>
-            <div className="grid grid-cols-3 gap-2 text-center">
-              <CardStat label={t("overview.table.in1h")} value={m ? fmtNum(m.in) : "—"} />
-              <CardStat label={t("overview.table.out1h")} value={m ? fmtNum(m.out) : "—"} />
-              <CardStat label={t("overview.table.errors")} value={m ? fmtNum(m.errors) : "—"} />
             </div>
           </Card>
         );
@@ -269,11 +362,38 @@ function NodeCards({
   );
 }
 
-function CardStat({ label, value }: { label: string; value: string }) {
+function CardStat({ label, value, tone }: { label: string; value: string; tone?: "err" }) {
   return (
     <div>
-      <div className="font-mono text-[15px]">{value}</div>
+      <div className={cn("font-mono text-[15px]", tone === "err" && "text-err")}>{value}</div>
       <div className="text-[10px] uppercase tracking-wide text-fg-subtle">{label}</div>
+    </div>
+  );
+}
+
+// Sparkline — мини-график входящего трафика за час (§22, ui_cards.html).
+function Sparkline({ data, variant }: { data: number[]; variant: Variant }) {
+  if (data.length === 0) {
+    return <div className="h-7" />;
+  }
+  const max = Math.max(1, ...data);
+  const color =
+    variant === "err"
+      ? "bg-err"
+      : variant === "warn"
+        ? "bg-warn"
+        : variant === "disabled"
+          ? "bg-fg-subtle"
+          : "bg-accent";
+  return (
+    <div className="flex h-7 items-end gap-px">
+      {data.map((v, i) => (
+        <span
+          key={i}
+          className={cn("flex-1 rounded-sm opacity-80", color)}
+          style={{ height: `${Math.max(4, (v / max) * 100)}%` }}
+        />
+      ))}
     </div>
   );
 }

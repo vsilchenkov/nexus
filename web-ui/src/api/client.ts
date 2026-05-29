@@ -72,6 +72,8 @@ export type NodeThroughput = {
   in: number;
   out: number;
   errors: number;
+  p95_ms: number;
+  spark: number[];
 };
 export type NodesThroughputResp = {
   items: NodeThroughput[];

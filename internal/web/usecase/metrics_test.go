@@ -24,6 +24,8 @@ type fakeProm struct {
 	thrErr     error
 	nodeErrs   map[string]float64
 	nodeErrErr error
+	series     map[string][]float64
+	seriesErr  error
 }
 
 func (f *fakeProm) GlobalTotals(_ context.Context, _ time.Duration) (port.GlobalTotals, error) {
@@ -35,6 +37,9 @@ func (f *fakeProm) NodeThroughput(_ context.Context, _ time.Duration) (map[strin
 }
 func (f *fakeProm) NodeErrors(_ context.Context, _ time.Duration) (map[string]float64, error) {
 	return f.nodeErrs, f.nodeErrErr
+}
+func (f *fakeProm) NodeSeries(_ context.Context, _ time.Duration, _ int) (map[string][]float64, error) {
+	return f.series, f.seriesErr
 }
 
 type fakeCH struct {

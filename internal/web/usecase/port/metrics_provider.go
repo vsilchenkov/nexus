@@ -50,6 +50,7 @@ type NodeThroughput struct {
 	In     float64
 	Out    float64
 	Errors float64
+	P95ms  float64 // 95-й перцентиль длительности исходящих (Sender), мс
 }
 
 // PromMetrics — глобальные и кросс-сервисные метрики из Prometheus
@@ -71,4 +72,9 @@ type PromMetrics interface {
 	// из nexus_request_incomplete_total. Ключ — path узла (метка node).
 	// Используется планировщиком Telegram-алертов (§22) вместо ClickHouse.
 	NodeErrors(ctx context.Context, window time.Duration) (map[string]float64, error)
+
+	// NodeSeries — спарклайн входящего трафика per-node: range-запрос за окно,
+	// разбитый на buckets точек (один запрос на весь список, §22). Ключ — path
+	// узла; длина слайса == buckets (недостающие точки — нули).
+	NodeSeries(ctx context.Context, window time.Duration, buckets int) (map[string][]float64, error)
 }

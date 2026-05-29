@@ -30,8 +30,9 @@
       "queue": "Очередь Kafka",
       "errors": "Ошибки за 24ч"
     },
-    "filter": { "all_methods": "Все методы" },
+    "filter": { "all_methods": "Все методы", "all_statuses": "Все статусы" },
     "view": { "table": "Таблица", "cards": "Карточки" },
+    "card": { "dynamic_url": "{URL из запроса}" },
     "status": { "ok": "OK", "down": "Down", "queue": "Очередь" },
     "table": {
       "path": "Узел",

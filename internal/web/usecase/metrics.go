@@ -39,12 +39,14 @@ type OverviewKPI struct {
 	PrometheusAvailable bool
 }
 
-// NodeThroughputRow — строка per-node throughput для таблицы Overview.
+// NodeThroughputRow — строка per-node throughput для таблицы/карточек Overview.
 type NodeThroughputRow struct {
 	Node   string
 	In     uint64
 	Out    uint64
 	Errors uint64
+	P95ms  float64   // §22: p95 латентности исходящих (Prometheus)
+	Spark  []float64 // §22: спарклайн входящего трафика (range-запрос)
 }
 
 // NodesOverview — батч per-node throughput за окно.
@@ -114,13 +116,27 @@ func (u *MetricsUsecase) NodesOverview(ctx context.Context, window time.Duration
 		u.logger.Warn("prometheus node throughput failed", u.logger.Err(err))
 		return NodesOverview{Items: []NodeThroughputRow{}}
 	}
+	// Спарклайн (12 точек) одним range-запросом на весь список. Ошибка
+	// спарклайна не валит throughput — деградируем до пустых рядов.
+	const sparkBuckets = 12
+	series, err := u.prom.NodeSeries(ctx, window, sparkBuckets)
+	if err != nil {
+		u.logger.Warn("prometheus node series failed", u.logger.Err(err))
+		series = map[string][]float64{}
+	}
 	items := make([]NodeThroughputRow, 0, len(m))
 	for node, t := range m {
+		spark := series[node]
+		if spark == nil {
+			spark = []float64{}
+		}
 		items = append(items, NodeThroughputRow{
 			Node:   node,
 			In:     f2u(t.In),
 			Out:    f2u(t.Out),
 			Errors: f2u(t.Errors),
+			P95ms:  t.P95ms,
+			Spark:  spark,
 		})
 	}
 	return NodesOverview{Items: items, PrometheusAvailable: true}

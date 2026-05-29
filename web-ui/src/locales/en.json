@@ -30,8 +30,9 @@
       "queue": "Kafka queue",
       "errors": "Errors (24h)"
     },
-    "filter": { "all_methods": "All methods" },
+    "filter": { "all_methods": "All methods", "all_statuses": "All statuses" },
     "view": { "table": "Table", "cards": "Cards" },
+    "card": { "dynamic_url": "{URL from request}" },
     "status": { "ok": "OK", "down": "Down", "queue": "Queue" },
     "table": {
       "path": "Node",

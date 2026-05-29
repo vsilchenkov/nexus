@@ -61,6 +61,9 @@ func (p notifProm) NodeThroughput(context.Context, time.Duration) (map[string]po
 func (p notifProm) NodeErrors(context.Context, time.Duration) (map[string]float64, error) {
 	return p.errs, p.err
 }
+func (p notifProm) NodeSeries(context.Context, time.Duration, int) (map[string][]float64, error) {
+	return nil, nil
+}
 
 type notifSender struct {
 	msgs []string
