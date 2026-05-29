@@ -150,8 +150,12 @@ swagger-drift:
   script:
     - 'echo "===== installing swag CLI ====="'
     - go install github.com/swaggo/swag/cmd/swag@v1.16.6
-    - 'echo "===== swag init -g cmd/web/main.go -o docs/web ====="'
-    - $GOPATH/bin/swag init -g cmd/web/main.go -o docs/web --parseDependency --parseDepth 2 --quiet
+    # Генерируем ОБА дока с теми же флагами, что цель `swagger` в Makefile (§25):
+    # web (instance swagger) и receiver (instance receiver). --exclude изолирует
+    # пакеты, иначе web-док подхватил бы /v1-маршруты Receiver.
+    - 'echo "===== swag init (web + receiver) ====="'
+    - $GOPATH/bin/swag init -g cmd/web/main.go -o docs/web --exclude cmd/receiver,internal/receiver --parseDependency --parseDepth 2 --quiet
+    - $GOPATH/bin/swag init -g cmd/receiver/main.go -o docs/receiver --instanceName receiver --exclude cmd/web,internal/web --parseDependency --parseDepth 2 --quiet
     - 'echo "===== git diff docs/ (должно быть пусто) ====="'
     - |
       if ! git diff --quiet docs/; then
