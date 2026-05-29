@@ -11,10 +11,12 @@ type Entry = {
   id: string;
   user_login: string;
   action: string;
-  target_type: string;
-  target_id: string;
-  details: Record<string, unknown>;
-  ip_address: string;
+  // target_type/target_id/ip_address отдаются бэком с `omitempty` —
+  // у событий без цели (логины и т.п.) их в JSON просто нет → undefined.
+  target_type?: string;
+  target_id?: string;
+  details?: Record<string, unknown>;
+  ip_address?: string;
   created_at: string;
 };
 type Resp = { items: Entry[] };
@@ -92,7 +94,8 @@ export default function AuditLog() {
                     <Chip tone={actionTone(e.action)}>{e.action}</Chip>
                   </td>
                   <td className="px-3 py-2 font-mono text-xs text-fg-muted">
-                    {e.target_type}/{e.target_id.slice(0, 8)}
+                    {e.target_type || "—"}
+                    {e.target_id ? `/${e.target_id.slice(0, 8)}` : ""}
                   </td>
                   <td className="px-3 py-2 font-mono text-xs text-fg-muted">{e.ip_address}</td>
                   <td className="max-w-lg px-3 py-2">

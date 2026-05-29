@@ -459,5 +459,12 @@
     "close": "Close",
     "edit": "Edit",
     "delete": "Delete"
+  },
+  "error_boundary": {
+    "title": "Something went wrong",
+    "hint": "An error occurred while rendering the page. Try reloading or going back to the home page.",
+    "reload": "Reload page",
+    "home": "Go home",
+    "details": "Details"
   }
 }
