@@ -181,7 +181,9 @@ curl -X POST http://localhost:8000/api/auth/login \
 ```
 
 - UI: `http://<сервер>:8000/`
-- Swagger UI: `http://<сервер>:8000/swagger/index.html`
+- Swagger UI (§25): Web API — `http://<сервер>:8000/swagger/web/index.html`,
+  Receiver API — `http://<сервер>:8000/swagger/receiver/index.html`
+  (старый `/swagger/index.html` редиректит на web). Оба дока раздаёт Web-бинарь.
 
 ### 3.5. Управление стеком
 

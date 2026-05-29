@@ -18,7 +18,9 @@ import (
 	swaggerfiles "github.com/swaggo/files"
 	ginswagger "github.com/swaggo/gin-swagger"
 
-	// Регистрирует Web Swagger-doc в swag.Registry при импорте (§11 ТЗ).
+	// Регистрируют Swagger-доки в swag.Registry при импорте (§11, §25 ТЗ):
+	// web (instance "swagger") и receiver (instance "receiver").
+	_ "nexus/docs/receiver"
 	_ "nexus/docs/web"
 	"nexus/internal/domain"
 	"nexus/internal/platform/bootstrap"
@@ -89,9 +91,15 @@ func (a *App) Start(ctx context.Context) error {
 	hc.Register(r)
 	r.GET("/metrics", gin.WrapH(a.metrics.Handler()))
 
-	// Swagger UI (§11 ТЗ): /swagger/index.html.
-	// Дока генерируется аннотациями над handlers и попадает в docs/web/ через `make swagger`.
-	r.GET("/swagger/*any", ginswagger.WrapHandler(swaggerfiles.Handler))
+	// Swagger UI (§11, §25 ТЗ): Web раздаёт два дока (оба собираются `make
+	// swagger` и встраиваются через embed-импорты выше).
+	//   /swagger/web/      — Web Service API  (instance "swagger", default);
+	//   /swagger/receiver/ — Receiver API     (instance "receiver").
+	// Старый /swagger/index.html редиректится на web для совместимости.
+	r.GET("/swagger/web/*any", ginswagger.WrapHandler(swaggerfiles.Handler, ginswagger.InstanceName("swagger")))
+	r.GET("/swagger/receiver/*any", ginswagger.WrapHandler(swaggerfiles.Handler, ginswagger.InstanceName("receiver")))
+	r.GET("/swagger", func(c *gin.Context) { c.Redirect(http.StatusMovedPermanently, "/swagger/web/index.html") })
+	r.GET("/swagger/index.html", func(c *gin.Context) { c.Redirect(http.StatusMovedPermanently, "/swagger/web/index.html") })
 
 	// Сборка слоёв (Clean Architecture, §17.2).
 	// TeamRepo — multi-tenancy v2 (Phase 10.1 миграция 0008). Резолвим UUID
