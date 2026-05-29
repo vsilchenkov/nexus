@@ -1,0 +1,104 @@
+basePath: /
+info:
+  contact: {}
+  description: |-
+    Публичный HTTP-вход шины данных (§3 ТЗ). Принимает входящие
+    запросы клиентов, маршрутизирует по конфигу узла (path) и
+    проксирует на внешний адрес синхронно (/v1/request) либо
+    ставит в очередь Kafka асинхронно (/v1/requestAsync).
+    Префикс /v1/ обязателен. Контракт зависит от конфигурации
+    конкретного узла в админке.
+  title: Nexus Receiver API
+  version: "1.0"
+paths:
+  /v1/callback/{path}:
+    post:
+      description: Приём входящего webhook'а от внешнего провайдера. Alias асинхронного
+        маршрута с обязательной проверкой HMAC-подписи (узел должен быть incoming_auth_type=webhook_signature).
+      parameters:
+      - description: '[<team_slug>/]<node_path>'
+        in: path
+        name: path
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: callback not allowed for this node
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Webhook-callback (§16).
+      tags:
+      - routing
+  /v1/request/{path}:
+    post:
+      description: Проксирует входящий запрос на внешний адрес узла и возвращает его
+        ответ. Путь — /v1/request/<team_slug>/<node_path> (slug опционален для default-команды).
+        Метод, тело и заголовки зависят от конфигурации узла.
+      parameters:
+      - description: '[<team_slug>/]<node_path>'
+        in: path
+        name: path
+        required: true
+        type: string
+      responses:
+        "200":
+          description: ответ внешнего узла (тело/код проксируются)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: url not in allowlist
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: node not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Синхронный запрос через узел (§3.1).
+      tags:
+      - routing
+  /v1/requestAsync/{path}:
+    post:
+      description: Ставит запрос в очередь Kafka и сразу отвечает {result:true,id}.
+        Доставку выполняет Sender-consumer. Путь — /v1/requestAsync/<team_slug>/<node_path>.
+      parameters:
+      - description: '[<team_slug>/]<node_path>'
+        in: path
+        name: path
+        required: true
+        type: string
+      responses:
+        "200":
+          description: '{result:true,id}'
+          schema:
+            additionalProperties: true
+            type: object
+        "202":
+          description: queued (paused node, §3.6)
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: node not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Асинхронный запрос через узел (§3.1).
+      tags:
+      - routing
+schemes:
+- http
+- https
+swagger: "2.0"
