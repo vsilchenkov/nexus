@@ -16,4 +16,5 @@ type UnitOfWork interface {
 type Repos struct {
 	Nodes NodeRepo
 	Audit AuditRepo
+	Hosts HostAllowlistRepo
 }

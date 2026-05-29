@@ -88,6 +88,15 @@ func splitTeamSlugAndPath(raw string) (teamSlug, nodePath string) {
 	return parts[0], parts[1]
 }
 
+// handleSync godoc
+// @Summary  Синхронный запрос через узел (§3.1).
+// @Description  Проксирует входящий запрос на внешний адрес узла и возвращает его ответ. Путь — /v1/request/<team_slug>/<node_path> (slug опционален для default-команды). Метод, тело и заголовки зависят от конфигурации узла.
+// @Tags     routing
+// @Param    path  path  string  true  "[<team_slug>/]<node_path>"
+// @Success  200  {object}  map[string]interface{}  "ответ внешнего узла (тело/код проксируются)"
+// @Failure  403  {object}  map[string]string  "url not in allowlist"
+// @Failure  404  {object}  map[string]string  "node not found"
+// @Router   /v1/request/{path} [post]
 func (h *Handler) handleSync(c *gin.Context) {
 	teamSlug, nodePath := splitTeamSlugAndPath(c.Param("path"))
 	if nodePath == "" {
@@ -139,6 +148,14 @@ func (h *Handler) handleSync(c *gin.Context) {
 //
 // Сама HMAC-проверка делается централизованно в CheckIncomingAuth внутри
 // RouteAsync — handler здесь не выполняет crypto-логику.
+// handleCallback godoc
+// @Summary  Webhook-callback (§16).
+// @Description  Приём входящего webhook'а от внешнего провайдера. Alias асинхронного маршрута с обязательной проверкой HMAC-подписи (узел должен быть incoming_auth_type=webhook_signature).
+// @Tags     routing
+// @Param    path  path  string  true  "[<team_slug>/]<node_path>"
+// @Success  200  {object}  map[string]interface{}
+// @Failure  400  {object}  map[string]string  "callback not allowed for this node"
+// @Router   /v1/callback/{path} [post]
 func (h *Handler) handleCallback(c *gin.Context) {
 	teamSlug, nodePath := splitTeamSlugAndPath(c.Param("path"))
 	if nodePath == "" {
@@ -162,6 +179,15 @@ func (h *Handler) handleCallback(c *gin.Context) {
 	})
 }
 
+// handleAsync godoc
+// @Summary  Асинхронный запрос через узел (§3.1).
+// @Description  Ставит запрос в очередь Kafka и сразу отвечает {result:true,id}. Доставку выполняет Sender-consumer. Путь — /v1/requestAsync/<team_slug>/<node_path>.
+// @Tags     routing
+// @Param    path  path  string  true  "[<team_slug>/]<node_path>"
+// @Success  200  {object}  map[string]interface{}  "{result:true,id}"
+// @Success  202  {object}  map[string]interface{}  "queued (paused node, §3.6)"
+// @Failure  404  {object}  map[string]string  "node not found"
+// @Router   /v1/requestAsync/{path} [post]
 func (h *Handler) handleAsync(c *gin.Context) {
 	teamSlug, nodePath := splitTeamSlugAndPath(c.Param("path"))
 	if nodePath == "" {

@@ -11,6 +11,7 @@ import { ClickHousePanel } from "./settings/ClickHouse";
 import { UsersPanel } from "./settings/Users";
 import { TeamsPanel } from "./settings/Teams";
 import { NotificationsPanel } from "./settings/Notifications";
+import { AllowedHostsPanel } from "./settings/AllowedHosts";
 
 type Tab = { to: string; labelKey: string; adminOnly?: boolean };
 
@@ -18,6 +19,7 @@ const tabs: Tab[] = [
   { to: "users", labelKey: "settings.users.title", adminOnly: true },
   { to: "teams", labelKey: "settings.teams.title", adminOnly: true },
   { to: "tokens", labelKey: "settings.tokens.title" },
+  { to: "allowed-hosts", labelKey: "settings.allowed_hosts.title", adminOnly: true },
   { to: "language", labelKey: "settings.language.title" },
   { to: "sentry", labelKey: "settings.sentry.title", adminOnly: true },
   { to: "clickhouse", labelKey: "settings.clickhouse.title", adminOnly: true },
@@ -67,6 +69,7 @@ export default function Settings() {
           {isAdmin && <Route path="users" element={<UsersPanel />} />}
           {isAdmin && <Route path="teams" element={<TeamsPanel />} />}
           <Route path="tokens" element={<ApiTokensPanel />} />
+          {isAdmin && <Route path="allowed-hosts" element={<AllowedHostsPanel />} />}
           <Route path="language" element={<LanguagePanel />} />
           {isAdmin && <Route path="sentry" element={<SentryPanel />} />}
           {isAdmin && <Route path="clickhouse" element={<ClickHousePanel />} />}

@@ -2,11 +2,12 @@ import { useTranslation } from "react-i18next";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { ChevronRight, Languages, Moon, Sun, LogOut } from "lucide-react";
+import { ChevronRight, Languages, Moon, Sun, LogOut, FileText, ExternalLink, Route, ServerCog } from "lucide-react";
 
 import { api } from "../api/client";
 import { cn } from "../lib/cn";
 import { getTheme, setTheme, type Theme } from "../lib/theme";
+import { Popover, PopoverTrigger, PopoverContent, Tooltip } from "./ui";
 
 type TeamMembership = {
   id: string;
@@ -102,6 +103,8 @@ export function Topbar() {
         </select>
       )}
 
+      <SwaggerMenu />
+
       <IconBtn onClick={toggleLang} title={t("nav.language")}>
         <Languages className="h-[18px] w-[18px]" />
         <span className="ml-1 text-[11px] uppercase">
@@ -117,6 +120,81 @@ export function Topbar() {
         <LogOut className="h-[18px] w-[18px]" />
       </IconBtn>
     </header>
+  );
+}
+
+// SwaggerMenu — иконка документации API в утилитарной зоне (§25). Клик
+// открывает popover с двумя доками; пункт открывается в новой вкладке.
+// Маленький ↗ заранее сигналит, что переход внешний.
+function SwaggerMenu() {
+  const { t } = useTranslation();
+  const openDoc = (url: string) => window.open(url, "_blank", "noopener,noreferrer");
+  return (
+    <Popover>
+      <Tooltip content={t("nav.api_docs_tip")}>
+        <PopoverTrigger
+          aria-label={t("nav.api_docs")}
+          className={cn(
+            "relative flex h-8 items-center rounded-md px-2 text-fg-muted outline-none",
+            "transition-colors hover:bg-bg-muted hover:text-fg data-[state=open]:bg-bg-muted data-[state=open]:text-accent",
+          )}
+        >
+          <FileText className="h-[18px] w-[18px]" />
+          <ExternalLink className="absolute right-1 top-1 h-2 w-2 text-fg-subtle" />
+        </PopoverTrigger>
+      </Tooltip>
+      <PopoverContent align="end" className="min-w-[280px] p-1.5">
+        <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-fg-subtle">
+          {t("nav.api_docs")}
+        </div>
+        <SwaggerItem
+          icon={<Route className="h-4 w-4" />}
+          title="Receiver API"
+          tag="/v1/*"
+          sub={t("nav.api_docs_receiver")}
+          onClick={() => openDoc("/swagger/receiver/index.html")}
+        />
+        <SwaggerItem
+          icon={<ServerCog className="h-4 w-4" />}
+          title="Web Service API"
+          tag="/api/*"
+          sub={t("nav.api_docs_web")}
+          onClick={() => openDoc("/swagger/web/index.html")}
+        />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function SwaggerItem({
+  icon,
+  title,
+  tag,
+  sub,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  tag: string;
+  sub: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex w-full items-center gap-2.5 rounded px-3 py-2 text-left text-[13px] text-fg hover:bg-bg-muted"
+    >
+      <span className="text-fg-muted">{icon}</span>
+      <span className="flex-1">
+        <span className="flex items-center gap-1.5">
+          {title}
+          <span className="font-mono text-[11px] text-fg-subtle">{tag}</span>
+        </span>
+        <span className="mt-0.5 block text-[11px] text-fg-subtle">{sub}</span>
+      </span>
+      <ExternalLink className="h-3.5 w-3.5 text-fg-subtle" />
+    </button>
   );
 }
 

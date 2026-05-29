@@ -127,9 +127,10 @@ docker-logs: ## Логи сервисов (Ctrl+C для выхода)
 .PHONY: swagger proto loadtest test-integration sqlc-gen rotate-encryption-key
 
 SWAG ?= swag
-swagger: ## Сгенерировать swagger в docs/web и docs/receiver (см. §11)
-	$(SWAG) init -g cmd/web/main.go -o docs/web --parseDependency --parseDepth 2 --quiet
-	@echo "swagger generated -> docs/web"
+swagger: ## Сгенерировать swagger в docs/web и docs/receiver (см. §11, §25)
+	$(SWAG) init -g cmd/web/main.go -o docs/web --exclude cmd/receiver,internal/receiver --parseDependency --parseDepth 2 --quiet
+	$(SWAG) init -g cmd/receiver/main.go -o docs/receiver --instanceName receiver --exclude cmd/web,internal/web --parseDependency --parseDepth 2 --quiet
+	@echo "swagger generated -> docs/web, docs/receiver"
 
 swagger-drift-check: swagger ## CI: фейлит сборку, если docs/ изменились (см. §11.2)
 	@git diff --exit-code docs/ \

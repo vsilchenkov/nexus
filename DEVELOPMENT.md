@@ -160,8 +160,10 @@ docker compose -f deploy/docker-compose.deps.yml up -d
   контроля логирования узла (`logging_enabled`/`max_body_size_enabled`/`max_body_size`, §22) едут в
   Sender по sync-пути именно через `SendRequest` — после правки proto не забыть `make proto` и
   смаппить новые поля в `route.go`/`sender_service.go`.
-- **Правка handler-аннотаций / DTO** (`internal/web/adapter/in/http/*`) → `make swagger`
-  (CI-гейт `swagger-drift-check` валит сборку при расхождении `docs/`).
+- **Правка handler-аннотаций / DTO** (`internal/web/adapter/in/http/*` или
+  `internal/receiver/adapter/in/http/*`) → `make swagger`. Цель генерирует ДВА дока:
+  `docs/web` (Web API) и `docs/receiver` (Receiver API, instance `receiver`, §25).
+  CI-гейт `swagger-drift-check` валит сборку при расхождении `docs/`.
 - **Сценарные тесты логирования (§22)** — `internal/sender/usecase/send_test.go` (обрезка по рунам,
   отключение логирования, спецсимволы) и `tests/integration/clickhouse_test.go`
   (`TestClickHouse_Logging_Scenarios`, требует Docker: большое тело/JSON/unicode + кейс «логирование
@@ -176,7 +178,8 @@ docker compose -f deploy/docker-compose.deps.yml up -d
 ## 5. После запуска
 
 - Web UI / API → `http://localhost:8000`
-- Swagger UI → `http://localhost:8000/swagger/index.html`
+- Swagger UI → `http://localhost:8000/swagger/web/index.html` (Web API),
+  `http://localhost:8000/swagger/receiver/index.html` (Receiver API)
 - Receiver → `http://localhost:8080/v1/request/*`, `http://localhost:8080/v1/requestAsync/*`
 - Sender admin → `http://localhost:9091/health` (сам gRPC SenderService — на `:9090`)
 

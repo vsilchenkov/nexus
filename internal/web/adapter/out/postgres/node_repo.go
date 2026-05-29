@@ -234,6 +234,22 @@ func (r *NodeRepoPg) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// UpdateAllowedHostsSnapshot переписывает только колонку url_allowed_hosts
+// (денормализованный снимок паттернов из каталога, §23). Не трогает креды и
+// остальные поля — поэтому дешевле и безопаснее полного Update.
+func (r *NodeRepoPg) UpdateAllowedHostsSnapshot(ctx context.Context, nodeID string, patterns []string) error {
+	tag, err := r.db.Exec(ctx,
+		`UPDATE nodes SET url_allowed_hosts = $2, updated_at = now() WHERE id = $1`,
+		nodeID, nullSafe(patterns))
+	if err != nil {
+		return fmt.Errorf("update node allowed_hosts snapshot: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrNodeNotFound
+	}
+	return nil
+}
+
 // rowScanner — общий интерфейс между *pgx.Row и pgx.Rows для scan().
 type rowScanner interface {
 	Scan(dest ...any) error

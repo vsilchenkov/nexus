@@ -42,6 +42,9 @@ func (r *orphanNodeRepo) Count(_ context.Context, _ string) (int, error) { retur
 func (r *orphanNodeRepo) Create(_ context.Context, _ *domain.Node) error { return nil }
 func (r *orphanNodeRepo) Update(_ context.Context, _ *domain.Node) error { return nil }
 func (r *orphanNodeRepo) Delete(_ context.Context, _ string) error       { return nil }
+func (r *orphanNodeRepo) UpdateAllowedHostsSnapshot(_ context.Context, _ string, _ []string) error {
+	return nil
+}
 
 // fakeTeamRepo — minimal port.TeamRepo для orphan-тестов: возвращает
 // одну team с заданным ch_database, остальные методы — nopTeamRepo.

@@ -28,6 +28,9 @@
 | 20 | [20-notifications.md](20-notifications.md) | Уведомления операторам в Telegram — cron-расписание, ошибки узлов, тестовая отправка |
 | 21 | [21-ui-redesign.md](21-ui-redesign.md) | Редизайн UI под эталон (дизайн-токены, UI-kit, app-shell) + HTTP-API метрик панели (Prometheus + ClickHouse) |
 | 22 | [22-logging-controls-cards.md](22-logging-controls-cards.md) | Контроль логирования узла (тумблер, обрезка тел), раскладка карточками Overview, перевод Telegram-алертов на Prometheus |
+| 23 | [23-allowed-hosts-catalog.md](23-allowed-hosts-catalog.md) | Каталог разрешённых хостов (SSRF) — общий справочник exact/wildcard/regex, привязка к узлам, preview, denорм-снимок |
+| 24 | [24-headers-catalog.md](24-headers-catalog.md) | Справочник HTTP-заголовков — combobox с автодополнением и автосозданием, usage_count on-read |
+| 25 | [25-topbar-swagger.md](25-topbar-swagger.md) | Swagger в шапке — два дока (Receiver + Web), popover, раздача обоих Web-бинарём |
 
 ## Как пользоваться
 

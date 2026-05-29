@@ -18,7 +18,9 @@ import (
 	swaggerfiles "github.com/swaggo/files"
 	ginswagger "github.com/swaggo/gin-swagger"
 
-	// Регистрирует Web Swagger-doc в swag.Registry при импорте (§11 ТЗ).
+	// Регистрируют Swagger-доки в swag.Registry при импорте (§11, §25 ТЗ):
+	// web (instance "swagger") и receiver (instance "receiver").
+	_ "nexus/docs/receiver"
 	_ "nexus/docs/web"
 	"nexus/internal/domain"
 	"nexus/internal/platform/bootstrap"
@@ -89,9 +91,15 @@ func (a *App) Start(ctx context.Context) error {
 	hc.Register(r)
 	r.GET("/metrics", gin.WrapH(a.metrics.Handler()))
 
-	// Swagger UI (§11 ТЗ): /swagger/index.html.
-	// Дока генерируется аннотациями над handlers и попадает в docs/web/ через `make swagger`.
-	r.GET("/swagger/*any", ginswagger.WrapHandler(swaggerfiles.Handler))
+	// Swagger UI (§11, §25 ТЗ): Web раздаёт два дока (оба собираются `make
+	// swagger` и встраиваются через embed-импорты выше).
+	//   /swagger/web/      — Web Service API  (instance "swagger", default);
+	//   /swagger/receiver/ — Receiver API     (instance "receiver").
+	// Старый /swagger/index.html редиректится на web для совместимости.
+	r.GET("/swagger/web/*any", ginswagger.WrapHandler(swaggerfiles.Handler, ginswagger.InstanceName("swagger")))
+	r.GET("/swagger/receiver/*any", ginswagger.WrapHandler(swaggerfiles.Handler, ginswagger.InstanceName("receiver")))
+	r.GET("/swagger", func(c *gin.Context) { c.Redirect(http.StatusMovedPermanently, "/swagger/web/index.html") })
+	r.GET("/swagger/index.html", func(c *gin.Context) { c.Redirect(http.StatusMovedPermanently, "/swagger/web/index.html") })
 
 	// Сборка слоёв (Clean Architecture, §17.2).
 	// TeamRepo — multi-tenancy v2 (Phase 10.1 миграция 0008). Резолвим UUID
@@ -175,6 +183,24 @@ func (a *App) Start(ctx context.Context) error {
 	// может быть nil — Verify тогда вернёт 503.
 	chTemplateUC := usecase.NewCHTemplateUsecase(chTemplateRepo, teamProvisioner, teamRepo, auditUC, a.logger)
 	chTemplateHandler := httpadapter.NewCHTemplateHandler(chTemplateUC, a.logger)
+
+	// Каталог разрешённых хостов (§23). Не зависит от ClickHouse — создаётся
+	// всегда. Привязка к узлу пересобирает снимок nodes.url_allowed_hosts и
+	// write-through кеш (тот же TTL, что у NodeUsecase).
+	hostAllowlistUC := usecase.NewHostAllowlistUsecase(
+		pgrepo.NewHostAllowlistRepoPg(a.pg, a.logger),
+		nodeRepo, nodeCache, uow, auditUC,
+		time.Duration(a.cfg.Redis.NodeTTLSec)*time.Second,
+		a.logger,
+	)
+	hostAllowlistHandler := httpadapter.NewHostAllowlistHandler(hostAllowlistUC, a.logger)
+
+	// Справочник заголовков (§24). usage_count считается on-read из
+	// nodes.forward_headers; отдельной таблицы привязки нет.
+	headerCatalogUC := usecase.NewHeaderCatalogUsecase(
+		pgrepo.NewHeaderCatalogRepoPg(a.pg, a.logger), auditUC, a.logger,
+	)
+	headerCatalogHandler := httpadapter.NewHeaderCatalogHandler(headerCatalogUC, a.logger)
 
 	dryRunUC := usecase.NewDryRunUsecase(auditUC, a.logger)
 	dryRunHandler := httpadapter.NewDryRunHandler(dryRunUC, a.logger)
@@ -273,19 +299,21 @@ func (a *App) Start(ctx context.Context) error {
 		RequireAdmin: httpadapter.RequireRole("admin"),
 	}
 	httpadapter.RegisterAPI(r, httpadapter.Handlers{
-		Auth:        authHandler,
-		Node:        nodeHandler,
-		User:        userHandler,
-		Token:       tokenHandler,
-		Team:        teamHandler,
-		Audit:       auditHandler,
-		DryRun:      dryRunHandler,
-		Replay:      replayHandler,
-		Logs:        logsHandler,
-		Metrics:     metricsHandler,
-		AppSettings: appSettingsHandler,
-		Orphan:      orphanHandler,
-		CHTemplate:  chTemplateHandler,
+		Auth:          authHandler,
+		Node:          nodeHandler,
+		User:          userHandler,
+		Token:         tokenHandler,
+		Team:          teamHandler,
+		Audit:         auditHandler,
+		DryRun:        dryRunHandler,
+		Replay:        replayHandler,
+		Logs:          logsHandler,
+		Metrics:       metricsHandler,
+		AppSettings:   appSettingsHandler,
+		Orphan:        orphanHandler,
+		CHTemplate:    chTemplateHandler,
+		HostAllowlist: hostAllowlistHandler,
+		HeaderCatalog: headerCatalogHandler,
 	}, mw)
 
 	// SPA fallback: всё, что не API/инфра — отдаём index.html (§17.1 ТЗ).

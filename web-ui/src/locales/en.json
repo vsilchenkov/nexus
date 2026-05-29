@@ -36,7 +36,11 @@
     "settings": "Settings",
     "team": "Team",
     "language": "Language",
-    "theme": "Theme"
+    "theme": "Theme",
+    "api_docs": "API documentation",
+    "api_docs_tip": "Swagger API · opens in a new tab",
+    "api_docs_receiver": "for external clients",
+    "api_docs_web": "admin contract + API tokens"
   },
   "role": {
     "admin": "full access",
@@ -156,6 +160,24 @@
       "preview": "Route preview",
       "ssrf_warn": "\"From request\" mode: fill the host allowlist to prevent SSRF. Do not leave it empty in production."
     },
+    "headers_combo": {
+      "add_placeholder": "Add a header…",
+      "search": "Header name…",
+      "empty": "Nothing matched.",
+      "used": "{{count}} node(s)",
+      "create": "Create \"{{name}}\"",
+      "invalid": "Invalid name: latin letters, digits and - _ . ! # $ % & ' * + ^ ` | ~, 1–100 chars."
+    },
+    "allowed_hosts": {
+      "label": "Allowed hosts",
+      "hint_short": "patterns from the catalog; a URL outside the list → 403",
+      "add_placeholder": "Add a host from the catalog…",
+      "search": "Search the catalog…",
+      "not_found": "Nothing found. Create patterns in Settings → Allowed hosts.",
+      "hint": "Manage the catalog in Settings → Allowed hosts.",
+      "ssrf_title": "SSRF risk · any URL allowed",
+      "ssrf_desc": "Without an allowlist a client can make the bus call internal services. Add at least one pattern or use Static mode."
+    },
     "delete": {
       "title": "Delete node",
       "confirm": "Delete permanently",
@@ -253,6 +275,28 @@
       "revoke": "Revoke",
       "delete": "Delete",
       "empty": "No tokens yet"
+    },
+    "allowed_hosts": {
+      "title": "Allowed hosts",
+      "subtitle": "Shared catalog for dynamic URLs (url_mode=from_request). Nodes pick patterns from this list; a pattern in use cannot be deleted.",
+      "add": "Add host",
+      "search": "Search by pattern or description…",
+      "empty": "Catalog is empty",
+      "filter_all": "All",
+      "used": "{{count}} node(s)",
+      "not_used": "not used",
+      "in_use_tip": "used by nodes — detach first",
+      "confirm_delete": "Delete pattern {{pattern}}?",
+      "col": { "pattern": "Pattern", "kind": "Kind", "description": "Description", "usage": "Usage" },
+      "kind": { "exact": "Exact", "wildcard": "Wildcard", "regex": "Regex" },
+      "field": { "kind": "Pattern kind", "pattern": "Pattern", "description": "Description", "test_urls": "Test URLs (one per line)" },
+      "dialog": {
+        "new": "Add allowed host",
+        "edit": "Edit allowed host",
+        "subtitle": "Appears in the catalog for all nodes of the installation",
+        "create": "Create"
+      },
+      "preview": { "allow": "Will allow", "block": "Will block", "invalid": "Invalid pattern — fix it to see the preview" }
     },
     "language": {
       "title": "UI language",

@@ -11,18 +11,17 @@ import {
   Lock,
   ListChecks,
   List,
-  Plus,
-  X,
   ShieldAlert,
 } from "lucide-react";
 
-import { api, type Node, type CHTemplate } from "../api/client";
+import { api, type Node, type CHTemplate, type HostAllowlistEntry } from "../api/client";
 import { DryRunDialog } from "../components/DryRunDialog";
 import { DeleteNodeDialog } from "../components/node/DeleteNodeDialog";
+import { AllowedHostsField } from "../components/node/AllowedHostsField";
+import { HeadersField } from "../components/node/HeadersField";
 import {
   Button,
   Card,
-  Chip,
   Field,
   Hint,
   Input,
@@ -103,7 +102,9 @@ export default function NodeSettings() {
   });
 
   const [form, setForm] = useState<Form>(emptyForm);
-  const [headerInput, setHeaderInput] = useState("");
+  // §23: для нового узла выбранные хосты копятся локально и привязываются после
+  // создания (allowlist — производный снимок каталога, управляется link/unlink).
+  const [pendingHosts, setPendingHosts] = useState<HostAllowlistEntry[]>([]);
   const [showDryRun, setShowDryRun] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -118,7 +119,15 @@ export default function NodeSettings() {
   }, [existing.data]);
 
   const save = useMutation({
-    mutationFn: () => (isNew ? api.post("/api/nodes", form) : api.put(`/api/nodes/${id}`, form)),
+    mutationFn: async () => {
+      if (!isNew) return api.put(`/api/nodes/${id}`, form);
+      // §23: создаём узел, затем привязываем выбранные паттерны к нему.
+      const node = await api.post<Node>("/api/nodes", form);
+      for (const h of pendingHosts) {
+        await api.post(`/api/nodes/${node.id}/allowed-hosts`, { host_id: h.id });
+      }
+      return node;
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["nodes"] });
       navigate("/");
@@ -129,23 +138,6 @@ export default function NodeSettings() {
 
   function set<K extends keyof Form>(k: K, v: Form[K]) {
     setForm((p) => ({ ...p, [k]: v }));
-  }
-
-  function addHeader() {
-    const h = headerInput.trim();
-    if (!h || form.forward_headers.includes(h)) {
-      setHeaderInput("");
-      return;
-    }
-    set("forward_headers", [...form.forward_headers, h]);
-    setHeaderInput("");
-  }
-
-  function removeHeader(h: string) {
-    set(
-      "forward_headers",
-      form.forward_headers.filter((x) => x !== h),
-    );
   }
 
   const verb = form.root_method === "request" ? "request" : "requestAsync";
@@ -248,6 +240,20 @@ export default function NodeSettings() {
                 </span>
               </Field>
             )}
+            {form.url_mode === "from_request" && (
+              <Field
+                label={t("node.allowed_hosts.label")}
+                hint={t("node.allowed_hosts.hint_short")}
+                className="mt-3"
+              >
+                <AllowedHostsField
+                  nodeId={id}
+                  urlMode={form.url_mode}
+                  pending={pendingHosts}
+                  onPendingChange={setPendingHosts}
+                />
+              </Field>
+            )}
             <div className="mt-3 grid grid-cols-2 gap-3">
               <Field label={t("node.form.timeout_ms")}>
                 <Input
@@ -343,40 +349,10 @@ export default function NodeSettings() {
               {t("node.form.headers")}
             </SectionHead>
             <Field label={t("node.form.forward_headers")} hint={t("node.form.forward_headers_hint")}>
-              {form.forward_headers.length > 0 && (
-                <div className="mb-2 flex flex-wrap gap-1.5">
-                  {form.forward_headers.map((h) => (
-                    <Chip key={h}>
-                      <span className="font-mono">{h}</span>
-                      <button
-                        type="button"
-                        onClick={() => removeHeader(h)}
-                        className="ml-1 text-fg-subtle hover:text-err"
-                        aria-label={t("common.delete")}
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </Chip>
-                  ))}
-                </div>
-              )}
-              <div className="flex gap-2">
-                <Input
-                  mono
-                  value={headerInput}
-                  onChange={(e) => setHeaderInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      addHeader();
-                    }
-                  }}
-                  placeholder="X-Request-Id"
-                />
-                <Button type="button" onClick={addHeader}>
-                  <Plus className="h-4 w-4" /> {t("node.form.add_header")}
-                </Button>
-              </div>
+              <HeadersField
+                value={form.forward_headers}
+                onChange={(v) => set("forward_headers", v)}
+              />
             </Field>
           </Card>
 

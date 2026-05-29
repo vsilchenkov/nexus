@@ -366,6 +366,11 @@ definitions:
     - role
     - user_id
     type: object
+  internal_web_adapter_in_http.attachHostRequest:
+    properties:
+      host_id:
+        type: string
+    type: object
   internal_web_adapter_in_http.chTemplateRequest:
     properties:
       description:
@@ -466,6 +471,69 @@ definitions:
     required:
     - login
     - role
+    type: object
+  internal_web_adapter_in_http.headerRequest:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+    type: object
+  internal_web_adapter_in_http.headerResponse:
+    properties:
+      created_at:
+        type: string
+      created_by:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      updated_at:
+        type: string
+      usage_count:
+        type: integer
+    type: object
+  internal_web_adapter_in_http.hostPreviewRequest:
+    properties:
+      kind:
+        type: string
+      pattern:
+        type: string
+      test_urls:
+        items:
+          type: string
+        type: array
+    type: object
+  internal_web_adapter_in_http.hostRequest:
+    properties:
+      description:
+        type: string
+      kind:
+        type: string
+      pattern:
+        type: string
+    type: object
+  internal_web_adapter_in_http.hostResponse:
+    properties:
+      created_at:
+        type: string
+      created_by:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      kind:
+        type: string
+      pattern:
+        type: string
+      updated_at:
+        type: string
+      usage_count:
+        type: integer
     type: object
   internal_web_adapter_in_http.loginRequest:
     properties:
@@ -765,6 +833,170 @@ info:
   title: Nexus Web API
   version: "1.0"
 paths:
+  /api/allowed-hosts:
+    get:
+      parameters:
+      - description: поиск по паттерну и описанию
+        in: query
+        name: q
+        type: string
+      - description: 'фильтр по типу: exact|wildcard|regex'
+        in: query
+        name: kind
+        type: string
+      - description: лимит (по умолчанию 50)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: 'Каталог разрешённых хостов: поиск/листинг (§23).'
+      tags:
+      - allowed-hosts
+    post:
+      consumes:
+      - application/json
+      description: 'Идемпотентно по case-insensitive паттерну: повтор вернёт существующую
+        запись.'
+      parameters:
+      - description: host
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.hostRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.hostResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Создать разрешённый хост (admin, §23).
+      tags:
+      - allowed-hosts
+  /api/allowed-hosts/{id}:
+    delete:
+      description: Нельзя удалить хост, используемый узлами (409).
+      parameters:
+      - description: host id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Удалить разрешённый хост (admin, §23).
+      tags:
+      - allowed-hosts
+    patch:
+      consumes:
+      - application/json
+      description: Описание меняется всегда; паттерн/тип — только если хост не используется
+        (usage_count=0).
+      parameters:
+      - description: host id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: host
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.hostRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Изменить разрешённый хост (admin, §23).
+      tags:
+      - allowed-hosts
+  /api/allowed-hosts/preview:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: preview
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.hostPreviewRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: 'Превью паттерна: какие URL разрешит/заблокирует (§23).'
+      tags:
+      - allowed-hosts
   /api/audit:
     get:
       description: 'Поддерживаемые actions: node.create/update/delete, user.create/update/delete/password_changed,
@@ -1154,6 +1386,60 @@ paths:
       summary: Проверить шаблон CH-таблицы (admin, §19.4).
       tags:
       - ch-templates
+  /api/headers:
+    get:
+      parameters:
+      - description: prefix поиска по имени; пусто = топ-используемые
+        in: query
+        name: q
+        type: string
+      - description: лимит (по умолчанию 20)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: 'Справочник заголовков: автодополнение (§24).'
+      tags:
+      - headers
+    post:
+      consumes:
+      - application/json
+      description: 'Идемпотентно по case-insensitive имени: повтор вернёт существующую
+        запись (200), а не ошибку.'
+      parameters:
+      - description: header
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.headerRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.headerResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Создать заголовок в справочнике (admin, §24).
+      tags:
+      - headers
   /api/logs/{id}/replay:
     post:
       consumes:
@@ -1514,6 +1800,93 @@ paths:
       summary: Обновить узел.
       tags:
       - nodes
+  /api/nodes/{id}/allowed-hosts:
+    get:
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Хосты, привязанные к узлу (§23).
+      tags:
+      - allowed-hosts
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: host_id
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.attachHostRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Привязать хост к узлу (admin, §23).
+      tags:
+      - allowed-hosts
+  /api/nodes/{id}/allowed-hosts/{host_id}:
+    delete:
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: host id
+        in: path
+        name: host_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Отвязать хост от узла (admin, §23).
+      tags:
+      - allowed-hosts
   /api/nodes/{id}/logs:
     get:
       parameters:

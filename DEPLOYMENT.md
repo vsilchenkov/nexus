@@ -181,7 +181,9 @@ curl -X POST http://localhost:8000/api/auth/login \
 ```
 
 - UI: `http://<сервер>:8000/`
-- Swagger UI: `http://<сервер>:8000/swagger/index.html`
+- Swagger UI (§25): Web API — `http://<сервер>:8000/swagger/web/index.html`,
+  Receiver API — `http://<сервер>:8000/swagger/receiver/index.html`
+  (старый `/swagger/index.html` редиректит на web). Оба дока раздаёт Web-бинарь.
 
 ### 3.5. Управление стеком
 
@@ -404,6 +406,13 @@ Compose автоматически подхватывает `docker-compose.over
   (DEFAULT true), `max_body_size_enabled` (DEFAULT false), `max_body_size` (DEFAULT 0). Применяется
   тем же автомиграционным путём; для существующих узлов логирование остаётся включённым, лимита
   тела нет (поведение не меняется).
+- **§23:** миграция `0011_host_allowlist` добавляет каталог разрешённых хостов (`host_allowlist`),
+  связь `node_allowed_hosts` (M2M) и trigger денормализации `usage_count`. Существующее поле
+  `nodes.url_allowed_hosts TEXT[]` сохраняется как денормализованный снимок — Receiver не трогается,
+  поведение существующих узлов не меняется. Каталог изначально пуст.
+- **§24:** миграция `0012_headers_catalog` добавляет справочник HTTP-заголовков (`headers_catalog`,
+  UNIQUE по `lower(name)`). Привязка к узлу остаётся в `nodes.forward_headers TEXT[]` — Receiver не
+  трогается; usage_count считается on-read. Каталог изначально пуст.
 - **Вручную** (для контролируемых деплоев — применить до старта трафика):
 
   | Действие | Команда (нативно) | Команда (в Docker) |

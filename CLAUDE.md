@@ -60,6 +60,13 @@ Web Service отдаёт REST API под `/api/*` и SPA (`embed.FS`) на вс�
 | Прогнать integration-тест    | `make test-integration` (нужен Docker daemon)                            |
 | Сгенерировать Swagger        | `make swagger` после правки аннотаций над handler'ом                     |
 
+> **Инфраструктура разработки.** На рабочей машине разработчика (Windows) установлен **Docker
+> Desktop** — integration-тесты (`make test-integration`, testcontainers поднимает PostgreSQL/
+> ClickHouse/Redis) и docker-compose можно запускать локально. То есть «нужен Docker» по тексту
+> ниже здесь выполнимо: после изменения миграций / репозиториев / схемы **прогоняй
+> `make test-integration`**, а не ограничивайся unit-тестами. Если CI integration-job всё же
+> падает — сперва отличай инфра-проблему раннера от ошибки в коде (см. [memory] feedback_ci_infra).
+
 ### Процесс работы — коммит на каждый завершённый блок + актуальный IMPLEMENTATION.md
 
 **Декомпозиция.** Большую задачу всегда разбивай на завершённые блоки (A.1, A.2, B.1, ...). Каждый

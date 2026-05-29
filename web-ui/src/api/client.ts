@@ -58,6 +58,30 @@ export type Node = {
   updated_at: string;
 };
 
+// §23: каталог разрешённых хостов (см. /api/allowed-hosts/*).
+export type HostKind = "exact" | "wildcard" | "regex";
+export type HostAllowlistEntry = {
+  id: string;
+  pattern: string;
+  kind: HostKind;
+  description: string;
+  usage_count: number;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
+// §24: справочник заголовков (см. /api/headers).
+export type HeaderCatalogEntry = {
+  id: string;
+  name: string;
+  description: string;
+  usage_count: number;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
 // §21: метрики панели (см. /api/metrics/*).
 export type OverviewKPI = {
   incoming_24h: number;

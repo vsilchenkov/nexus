@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nexus — Выбор заголовков из справочника</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/tabler-icons.min.css">
+<style>
+:root {
+  --bg-app: #0f1115;
+  --bg-primary: #16191f;
+  --bg-secondary: #1c2027;
+  --bg-tertiary: #22272f;
+  --bg-info: rgba(74, 144, 226, 0.12);
+  --bg-success: rgba(60, 180, 120, 0.14);
+  --bg-warning: rgba(220, 160, 60, 0.14);
+  --border-tertiary: #2a3038;
+  --border-strong: #38404a;
+  --text-primary: #e6e9ef;
+  --text-secondary: #9aa3b2;
+  --text-tertiary: #5f6875;
+  --text-info: #5b9bf0;
+  --text-success: #4cc38a;
+  --text-warning: #d9a441;
+  --radius-sm: 4px;
+  --radius-md: 7px;
+  --radius-lg: 11px;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font-sans); background: var(--bg-app); color: var(--text-primary); font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; padding: 32px; }
+
+.intro { max-width: 980px; margin: 0 auto 28px; }
+.intro .tag { display: inline-block; font-family: var(--font-mono); font-size: 11px; color: var(--text-info); background: var(--bg-info); padding: 3px 8px; border-radius: var(--radius-sm); margin-bottom: 10px; }
+.intro h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; margin-bottom: 6px; }
+.intro p { font-size: 13px; color: var(--text-secondary); line-height: 1.65; max-width: 760px; }
+
+.row { max-width: 980px; margin: 0 auto 28px; }
+.row-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }
+.row-head .num { font-family: var(--font-mono); font-size: 11px; color: var(--text-info); background: var(--bg-info); padding: 3px 8px; border-radius: var(--radius-sm); }
+.row-head h2 { font-size: 15px; font-weight: 600; }
+.row-desc { font-size: 12.5px; color: var(--text-secondary); margin-bottom: 14px; max-width: 700px; line-height: 1.6; }
+
+.frame {
+  background: var(--bg-app);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  padding: 22px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+}
+
+/* Form section header */
+.section-head { font-size: 13px; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; gap: 7px; color: var(--text-primary); }
+.section-head i { font-size: 16px; color: var(--text-secondary); }
+
+/* Selected chips */
+.chips-wrap { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; min-height: 28px; align-items: center; }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 4px 4px 9px;
+  border-radius: 11px;
+  font-size: 11.5px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+.chip .x {
+  cursor: pointer;
+  width: 16px; height: 16px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  color: var(--text-tertiary);
+}
+.chip .x:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+.chip.disabled { opacity: 0.6; font-style: italic; }
+.chips-empty { font-size: 12px; color: var(--text-tertiary); font-style: italic; }
+
+.clear-all {
+  font-size: 11px; color: var(--text-tertiary); cursor: pointer;
+  padding: 2px 8px; border-radius: 9px;
+}
+.clear-all:hover { color: var(--text-warning); background: var(--bg-warning); }
+
+/* Combobox */
+.combo {
+  position: relative;
+  max-width: 520px;
+}
+.combo-input {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 11px;
+  background: var(--bg-app);
+  border: 0.5px solid var(--text-info);
+  border-radius: var(--radius-md);
+  box-shadow: 0 0 0 3px rgba(91, 155, 240, 0.12);
+}
+.combo-input i { color: var(--text-tertiary); font-size: 16px; }
+.combo-input input {
+  flex: 1; border: none; outline: none;
+  background: transparent; color: var(--text-primary);
+  font-size: 13px; font-family: var(--font-mono);
+}
+.combo-input input::placeholder { color: var(--text-tertiary); font-family: var(--font-sans); font-style: italic; }
+.combo-hint { font-size: 11px; color: var(--text-tertiary); margin-top: 5px; padding-left: 4px; }
+.combo-hint kbd {
+  background: var(--bg-tertiary);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  border: 0.5px solid var(--border-tertiary);
+}
+
+/* Dropdown */
+.dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0; right: 0;
+  background: var(--bg-primary);
+  border: 0.5px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: 0 12px 36px rgba(0,0,0,0.5);
+  max-height: 320px;
+  overflow: auto;
+  z-index: 10;
+}
+.dropdown-section {
+  padding: 6px 0;
+  border-bottom: 0.5px solid var(--border-tertiary);
+}
+.dropdown-section:last-child { border-bottom: none; }
+.dropdown-section-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  padding: 6px 12px 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+.opt:hover, .opt.hover { background: var(--bg-secondary); }
+.opt .name {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-primary);
+  min-width: 0;
+}
+.opt .name .hl { background: var(--bg-info); color: var(--text-info); border-radius: 2px; padding: 0 2px; }
+.opt .desc {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.opt .meta {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.opt.selected { opacity: 0.55; cursor: default; }
+.opt.selected:hover { background: transparent; }
+.opt.selected .check { color: var(--text-success); margin-left: auto; }
+
+.opt.create {
+  color: var(--text-info);
+  font-weight: 500;
+}
+.opt.create .name {
+  color: var(--text-info);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.opt.create .ic { color: var(--text-info); font-size: 16px; }
+.opt.create.invalid { color: var(--text-warning); cursor: not-allowed; }
+.opt.create.invalid .name, .opt.create.invalid .ic { color: var(--text-warning); }
+.opt.create.invalid .reason { font-size: 11px; color: var(--text-warning); margin-left: auto; }
+
+.empty-state {
+  padding: 18px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+/* Two-state showcase grid */
+.states {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 22px;
+  max-width: 1180px;
+  margin: 0 auto 28px;
+}
+.states .row { margin: 0; }
+
+/* Notes panel */
+.notes {
+  max-width: 980px;
+  margin: 8px auto 0;
+  padding: 18px 22px;
+  background: var(--bg-primary);
+  border: 0.5px solid var(--border-tertiary);
+  border-radius: var(--radius-lg);
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  line-height: 1.65;
+}
+.notes h3 { font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; margin-top: 14px; }
+.notes h3:first-child { margin-top: 0; }
+.notes ul { list-style: none; padding: 0; }
+.notes li { padding: 3px 0; }
+.notes li::before { content: "·"; color: var(--text-tertiary); margin-right: 8px; }
+.notes code { font-family: var(--font-mono); font-size: 11px; background: var(--bg-secondary); padding: 1px 6px; border-radius: 3px; color: var(--text-info); }
+.notes kbd { background: var(--bg-tertiary); padding: 1px 5px; border-radius: 3px; font-size: 10px; font-family: var(--font-mono); border: 0.5px solid var(--border-tertiary); color: var(--text-primary); }
+</style>
+</head>
+<body>
+
+<div class="intro">
+  <span class="tag">§7.5 + §7.15</span>
+  <h1>Выбор заголовков из справочника</h1>
+  <p>Combobox с автодополнением для секции «Проброс заголовков» формы узла. Подсказки — из общей справочной таблицы <code style="font-family:var(--font-mono);font-size:11px;background:var(--bg-secondary);color:var(--text-info);padding:1px 5px;border-radius:3px;">headers_catalog</code>. Новые заголовки, не найденные в каталоге, создаются автоматически прямо из дропдауна без отдельной формы и сразу попадают в выбранные.</p>
+</div>
+
+<!-- ============ STATE 1: opened, search query matches catalog ============ -->
+<div class="row">
+  <div class="row-head"><span class="num">1</span><h2>Состояние · поиск в каталоге</h2></div>
+  <p class="row-desc">Пользователь начал печатать <kbd style="font-family:var(--font-mono);font-size:11px;background:var(--bg-tertiary);padding:1px 5px;border-radius:3px;">x-r</kbd>. Дропдаун показывает совпадения по prefix-match, отсортированные по <code style="font-family:var(--font-mono);font-size:11px;background:var(--bg-secondary);color:var(--text-info);padding:1px 5px;border-radius:3px;">usage_count desc</code>. Уже выбранные элементы помечены «использован», клик по ним ничего не делает.</p>
+  <div class="frame">
+    <div class="section-head"><i class="ti ti-list-details"></i> Проброс заголовков <span style="font-weight:400;font-size:11px;color:var(--text-tertiary);margin-left:8px;">3 из 30</span></div>
+
+    <div class="chips-wrap">
+      <span class="chip">X-Request-ID <span class="x"><i class="ti ti-x" style="font-size:11px;"></i></span></span>
+      <span class="chip">X-Trace <span class="x"><i class="ti ti-x" style="font-size:11px;"></i></span></span>
+      <span class="chip">User-Agent <span class="x"><i class="ti ti-x" style="font-size:11px;"></i></span></span>
+      <span class="clear-all">очистить все</span>
+    </div>
+
+    <div class="combo">
+      <div class="combo-input">
+        <i class="ti ti-search"></i>
+        <input type="text" value="x-r" placeholder="Имя заголовка…">
+        <kbd style="font-family:var(--font-mono);font-size:10px;background:var(--bg-tertiary);padding:1px 5px;border-radius:3px;border:0.5px solid var(--border-tertiary);">↵</kbd>
+      </div>
+      <div class="dropdown">
+        <div class="dropdown-section">
+          <div class="dropdown-section-title"><span>Найдено в справочнике</span><span>4</span></div>
+          <div class="opt selected">
+            <span class="name"><span class="hl">X-R</span>equest-ID</span>
+            <span class="desc">Внутренний request ID для трассировки</span>
+            <span class="meta">42 узла</span>
+            <i class="ti ti-check check"></i>
+          </div>
+          <div class="opt hover">
+            <span class="name"><span class="hl">X-R</span>ate-Limit-Remaining</span>
+            <span class="desc">Из ответа: сколько запросов осталось в окне</span>
+            <span class="meta">18 узлов</span>
+          </div>
+          <div class="opt">
+            <span class="name"><span class="hl">X-R</span>eal-IP</span>
+            <span class="desc">IP клиента за обратным прокси</span>
+            <span class="meta">11 узлов</span>
+          </div>
+          <div class="opt">
+            <span class="name"><span class="hl">X-R</span>etry-After</span>
+            <span class="desc"><span style="opacity:0.5;font-style:italic;">— нет описания —</span></span>
+            <span class="meta">3 узла</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="combo-hint"><kbd>↑↓</kbd> навигация · <kbd>↵</kbd> выбрать · <kbd>Esc</kbd> закрыть · поиск без учёта регистра</div>
+  </div>
+</div>
+
+<!-- ============ STATE 2: not found in catalog, creatable ============ -->
+<div class="row">
+  <div class="row-head"><span class="num">2</span><h2>Состояние · creatable, новое имя</h2></div>
+  <p class="row-desc">Пользователь напечатал <kbd style="font-family:var(--font-mono);font-size:11px;background:var(--bg-tertiary);padding:1px 5px;border-radius:3px;">X-Internal-Job-ID</kbd> — в каталоге его нет. Появляется строка «+ Создать», клик автоматически добавляет запись в <code style="font-family:var(--font-mono);font-size:11px;background:var(--bg-secondary);color:var(--text-info);padding:1px 5px;border-radius:3px;">headers_catalog</code> и сразу в выбранные. Без диалогов и подтверждений.</p>
+  <div class="frame">
+    <div class="section-head"><i class="ti ti-list-details"></i> Проброс заголовков <span style="font-weight:400;font-size:11px;color:var(--text-tertiary);margin-left:8px;">3 из 30</span></div>
+
+    <div class="chips-wrap">
+      <span class="chip">X-Request-ID <span class="x"><i class="ti ti-x" style="font-size:11px;"></i></span></span>
+      <span class="chip">X-Trace <span class="x"><i class="ti ti-x" style="font-size:11px;"></i></span></span>
+      <span class="chip">User-Agent <span class="x"><i class="ti ti-x" style="font-size:11px;"></i></span></span>
+      <span class="clear-all">очистить все</span>
+    </div>
+
+    <div class="combo">
+      <div class="combo-input">
+        <i class="ti ti-search"></i>
+        <input type="text" value="X-Internal-Job-ID" placeholder="Имя заголовка…">
+        <kbd style="font-family:var(--font-mono);font-size:10px;background:var(--bg-tertiary);padding:1px 5px;border-radius:3px;border:0.5px solid var(--border-tertiary);">↵</kbd>
+      </div>
+      <div class="dropdown">
+        <div class="dropdown-section">
+          <div class="dropdown-section-title"><span>В справочнике не найдено</span><span>0</span></div>
+          <div class="empty-state">Ничего не совпало.</div>
+        </div>
+        <div class="dropdown-section">
+          <div class="opt create hover">
+            <i class="ti ti-plus ic"></i>
+            <span class="name">Создать «<span class="hl">X-Internal-Job-ID</span>»</span>
+            <span style="font-size:11px;color:var(--text-tertiary);margin-left:auto;">появится во всех узлах</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="combo-hint">Новый заголовок сразу попадёт в справочник и будет доступен другим узлам этой инсталляции.</div>
+  </div>
+</div>
+
+<!-- ============ STATE 3: invalid name ============ -->
+<div class="row">
+  <div class="row-head"><span class="num">3</span><h2>Состояние · недопустимое имя</h2></div>
+  <p class="row-desc">Пользователь ввёл <kbd style="font-family:var(--font-mono);font-size:11px;background:var(--bg-tertiary);padding:1px 5px;border-radius:3px;">X My Header</kbd> с пробелом — это нарушает RFC 7230 (имя HTTP-заголовка не может содержать пробелов). Кнопка «Создать» disabled, рядом — причина. Реальная проверка по regex <code style="font-family:var(--font-mono);font-size:11px;background:var(--bg-secondary);color:var(--text-info);padding:1px 5px;border-radius:3px;">^[a-zA-Z0-9!#$%&amp;'*+.^_`|~-]+$</code>.</p>
+  <div class="frame">
+    <div class="section-head"><i class="ti ti-list-details"></i> Проброс заголовков <span style="font-weight:400;font-size:11px;color:var(--text-tertiary);margin-left:8px;">3 из 30</span></div>
+
+    <div class="chips-wrap">
+      <span class="chip">X-Request-ID <span class="x"><i class="ti ti-x" style="font-size:11px;"></i></span></span>
+      <span class="chip">X-Trace <span class="x"><i class="ti ti-x" style="font-size:11px;"></i></span></span>
+      <span class="chip">User-Agent <span class="x"><i class="ti ti-x" style="font-size:11px;"></i></span></span>
+    </div>
+
+    <div class="combo">
+      <div class="combo-input" style="border-color:var(--text-warning);box-shadow:0 0 0 3px rgba(217,164,65,0.15);">
+        <i class="ti ti-alert-triangle" style="color:var(--text-warning);"></i>
+        <input type="text" value="X My Header" placeholder="Имя заголовка…">
+      </div>
+      <div class="dropdown">
+        <div class="dropdown-section">
+          <div class="opt create invalid">
+            <i class="ti ti-x ic"></i>
+            <span class="name">Нельзя создать «X My Header»</span>
+            <span class="reason">пробелы недопустимы</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="combo-hint">Имя должно соответствовать RFC 7230: латиница, цифры и символы <code style="font-family:var(--font-mono);font-size:11px;background:var(--bg-secondary);color:var(--text-info);padding:1px 5px;border-radius:3px;">- _ . ! # $ % &amp; ' * + ^ ` | ~</code>, 1–100 символов.</div>
+  </div>
+</div>
+
+<!-- ============ STATE 4: deduplication ============ -->
+<div class="row">
+  <div class="row-head"><span class="num">4</span><h2>Состояние · case-insensitive дедупликация</h2></div>
+  <p class="row-desc">Пользователь напечатал <kbd style="font-family:var(--font-mono);font-size:11px;background:var(--bg-tertiary);padding:1px 5px;border-radius:3px;">x-request-id</kbd> — в справочнике есть <code style="font-family:var(--font-mono);font-size:11px;background:var(--bg-secondary);color:var(--text-info);padding:1px 5px;border-radius:3px;">X-Request-ID</code> в каноническом регистре. Создания не предлагаем — показываем существующую запись.</p>
+  <div class="frame">
+    <div class="section-head"><i class="ti ti-list-details"></i> Проброс заголовков <span style="font-weight:400;font-size:11px;color:var(--text-tertiary);margin-left:8px;">2 из 30</span></div>
+
+    <div class="chips-wrap">
+      <span class="chip">X-Trace <span class="x"><i class="ti ti-x" style="font-size:11px;"></i></span></span>
+      <span class="chip">User-Agent <span class="x"><i class="ti ti-x" style="font-size:11px;"></i></span></span>
+    </div>
+
+    <div class="combo">
+      <div class="combo-input">
+        <i class="ti ti-search"></i>
+        <input type="text" value="x-request-id" placeholder="Имя заголовка…">
+        <kbd style="font-family:var(--font-mono);font-size:10px;background:var(--bg-tertiary);padding:1px 5px;border-radius:3px;border:0.5px solid var(--border-tertiary);">↵</kbd>
+      </div>
+      <div class="dropdown">
+        <div class="dropdown-section">
+          <div class="dropdown-section-title"><span>Найдено в справочнике (совпадение без учёта регистра)</span><span>1</span></div>
+          <div class="opt hover">
+            <span class="name">X-Request-ID</span>
+            <span class="desc">Внутренний request ID для трассировки</span>
+            <span class="meta">42 узла</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="combo-hint">Имена сравниваются без учёта регистра. <code style="font-family:var(--font-mono);font-size:11px;background:var(--bg-secondary);color:var(--text-info);padding:1px 5px;border-radius:3px;">x-request-id</code> и <code style="font-family:var(--font-mono);font-size:11px;background:var(--bg-secondary);color:var(--text-info);padding:1px 5px;border-radius:3px;">X-Request-ID</code> — одно и то же. В UI отображается каноническая запись из каталога.</div>
+  </div>
+</div>
+
+<!-- ============ STATE 5: empty / focus ============ -->
+<div class="row">
+  <div class="row-head"><span class="num">5</span><h2>Состояние · фокус, ничего не введено</h2></div>
+  <p class="row-desc">Поле в фокусе, ввода нет. Дропдаун показывает топ-самых-используемых заголовков из справочника (сортировка по <code style="font-family:var(--font-mono);font-size:11px;background:var(--bg-secondary);color:var(--text-info);padding:1px 5px;border-radius:3px;">usage_count desc</code>, лимит 20). Помогает выбрать «как у всех» без печати.</p>
+  <div class="frame">
+    <div class="section-head"><i class="ti ti-list-details"></i> Проброс заголовков <span style="font-weight:400;font-size:11px;color:var(--text-tertiary);margin-left:8px;">0 из 30</span></div>
+
+    <div class="chips-wrap">
+      <span class="chips-empty">Ни одного заголовка не выбрано. Начните печатать или выберите из списка ниже.</span>
+    </div>
+
+    <div class="combo">
+      <div class="combo-input">
+        <i class="ti ti-search"></i>
+        <input type="text" placeholder="Имя заголовка…" autofocus>
+      </div>
+      <div class="dropdown">
+        <div class="dropdown-section">
+          <div class="dropdown-section-title"><span>Самые используемые</span><span>топ 8</span></div>
+          <div class="opt hover">
+            <span class="name">X-Request-ID</span>
+            <span class="desc">Внутренний request ID для трассировки</span>
+            <span class="meta">42 узла</span>
+          </div>
+          <div class="opt">
+            <span class="name">Content-Type</span>
+            <span class="desc">MIME-тип тела</span>
+            <span class="meta">38 узлов</span>
+          </div>
+          <div class="opt">
+            <span class="name">Accept</span>
+            <span class="desc">Ожидаемый MIME-тип ответа</span>
+            <span class="meta">31 узел</span>
+          </div>
+          <div class="opt">
+            <span class="name">X-Forwarded-For</span>
+            <span class="desc">Цепочка IP клиента через прокси</span>
+            <span class="meta">29 узлов</span>
+          </div>
+          <div class="opt">
+            <span class="name">User-Agent</span>
+            <span class="desc"><span style="opacity:0.5;font-style:italic;">— нет описания —</span></span>
+            <span class="meta">26 узлов</span>
+          </div>
+          <div class="opt">
+            <span class="name">X-Trace</span>
+            <span class="desc">Trace ID для распределённой трассировки</span>
+            <span class="meta">22 узла</span>
+          </div>
+          <div class="opt">
+            <span class="name">Accept-Language</span>
+            <span class="desc">Предпочитаемая локаль ответа</span>
+            <span class="meta">17 узлов</span>
+          </div>
+          <div class="opt">
+            <span class="name">X-Real-IP</span>
+            <span class="desc">IP клиента за обратным прокси</span>
+            <span class="meta">11 узлов</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="combo-hint">Подсказка обновляется по мере набора. Если совпадений нет — появится предложение создать.</div>
+  </div>
+</div>
+
+<!-- ============ Reference notes ============ -->
+<div class="notes">
+  <h3>Поведение и контракты</h3>
+  <ul>
+    <li><b>Источник данных.</b> Таблица <code>headers_catalog</code> в PostgreSQL (см. §5.1). Каталог общий для всей инсталляции — заголовок, добавленный одним админом, виден всем.</li>
+    <li><b>API.</b> <code>GET /api/headers?q=&lt;prefix&gt;&amp;limit=20</code> — поиск, возвращает <code>{id, name, description, usage_count}</code>. <code>POST /api/headers</code> с <code>{name, description?}</code> — создаёт запись (автоматически из combobox), возвращает созданную запись. Создание идемпотентное по case-insensitive имени: повторный <code>POST</code> с тем же именем вернёт существующую запись с 200, а не ошибку.</li>
+    <li><b>Кеш на клиенте.</b> TanStack Query, queryKey <code>['headers', q]</code>, staleTime 30 сек. После успешного <code>POST</code> — <code>invalidate</code> всех queries по префиксу <code>['headers']</code>, чтобы новый заголовок появился во всех открытых формах.</li>
+    <li><b>Дебаунс ввода</b> — 150 мс. Без дебаунса каждое нажатие клавиши шлёт запрос; с дебаунсом UI остаётся отзывчивым, нагрузка на backend минимальная.</li>
+  </ul>
+
+  <h3>Клавиатура</h3>
+  <ul>
+    <li><kbd>↑</kbd> <kbd>↓</kbd> — навигация по списку.</li>
+    <li><kbd>Enter</kbd> — выбрать подсвеченный элемент. Если ничего не подсвечено, но в поле есть валидный текст без совпадений — сработает «Создать».</li>
+    <li><kbd>Esc</kbd> — закрыть дропдаун, очистить поле.</li>
+    <li><kbd>Tab</kbd> — перейти к следующему полю формы (combobox закрывается).</li>
+    <li><kbd>Backspace</kbd> в пустом поле — удалить последний chip.</li>
+  </ul>
+
+  <h3>Валидация имени</h3>
+  <ul>
+    <li>Regex: <code>^[a-zA-Z0-9!#$%&amp;'*+.^_`|~-]+$</code>, длина 1–100 (по RFC 7230).</li>
+    <li>Проверка на клиенте перед показом «Создать»; ту же валидацию backend выполняет в <code>POST /api/headers</code>, чтобы нельзя было обойти UI.</li>
+    <li>Имя сохраняется в каталог в том виде, в котором ввёл пользователь (включая регистр и оригинальный case дефисов), без нормализации. Поиск — case-insensitive.</li>
+  </ul>
+
+  <h3>Что Claude Code должен учесть</h3>
+  <ul>
+    <li>Использовать готовый combobox-компонент из shadcn/ui (<code>Command</code> из <code>cmdk</code>) или Radix UI — не писать свой с нуля.</li>
+    <li>Список выбранных хранится в react-hook-form как <code>string[]</code> (имена заголовков), а не <code>id[]</code> — это упрощает сериализацию узла в JSON для API и не привязывает форму узла к ID каталога.</li>
+    <li>При сохранении узла backend разрешает имена в ID каталога (<code>name → id</code>), записывает в <code>node_headers</code>. Если какое-то имя в каталоге исчезло между моментом открытия формы и сохранением — backend создаёт его автоматически. То есть гонок «фронт прислал имя, которого больше нет» быть не может.</li>
+    <li>Доступность: <code>role="combobox"</code>, <code>aria-expanded</code>, <code>aria-activedescendant</code>, <code>aria-controls</code>. Это уже встроено в Radix/cmdk, своё не пишем.</li>
+  </ul>
+</div>
+
+</body>
+</html>
