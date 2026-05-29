@@ -103,6 +103,7 @@ SELECT
 	n.forward_headers, n.timeout_ms, n.retry_count, n.retry_backoff_ms,
 	n.clickhouse_table, n.status, n.team_id,
 	n.log_request_body, n.log_response_body, n.log_headers,
+	n.logging_enabled, n.max_body_size_enabled, n.max_body_size,
 	n.created_at, n.updated_at
 FROM nodes n
 JOIN teams t ON t.id = n.team_id
@@ -126,6 +127,7 @@ func (r *Reader) getFromPg(ctx context.Context, teamSlug, path string) (*domain.
 		&n.ForwardHeaders, &n.TimeoutMs, &n.RetryCount, &n.RetryBackoffMs,
 		&n.ClickHouseTable, &status, &n.TeamID,
 		&n.LogRequestBody, &n.LogResponseBody, &n.LogHeaders,
+		&n.LoggingEnabled, &n.MaxBodySizeEnabled, &n.MaxBodySize,
 		&created, &updated,
 	)
 	if err != nil {

@@ -43,7 +43,7 @@ type NotificationScheduler struct {
 	settings SettingsReader
 	teams    port.TeamRepo
 	nodes    port.NodeRepo
-	logs     port.LogReader
+	prom     port.PromMetrics
 	telegram TelegramSender
 	lock     DistLock
 	state    Checkpoint
@@ -59,14 +59,14 @@ func NewNotificationScheduler(
 	settings SettingsReader,
 	teams port.TeamRepo,
 	nodes port.NodeRepo,
-	logs port.LogReader,
+	prom port.PromMetrics,
 	telegram TelegramSender,
 	lock DistLock,
 	state Checkpoint,
 	logger logging.Logger,
 ) *NotificationScheduler {
 	return &NotificationScheduler{
-		settings: settings, teams: teams, nodes: nodes, logs: logs,
+		settings: settings, teams: teams, nodes: nodes, prom: prom,
 		telegram: telegram, lock: lock, state: state,
 		lockTTL: 3 * time.Minute, logger: logger,
 	}
@@ -205,10 +205,24 @@ type errStats struct {
 	teams []teamErrStat
 }
 
-// collectErrors обходит все команды и их узлы, считая ошибки за окно. Узлы без
-// таблицы и ошибки CountErrors (например, таблицы ещё нет) пропускаются.
+// collectErrors берёт per-node счётчик «незавершённых» вызовов из Prometheus
+// (§22, одна метрика nexus_request_incomplete_total за окно), затем раскладывает
+// его по командам, сопоставляя метку node с path узла. Это заменяет N запросов
+// CountErrors к ClickHouse одним запросом к тому же источнику, что и графики.
 func (s *NotificationScheduler) collectErrors(ctx context.Context, sinceMs, untilMs int64) errStats {
 	var stats errStats
+	window := time.Duration(untilMs-sinceMs) * time.Millisecond
+	if window <= 0 {
+		return stats
+	}
+	byNode, err := s.prom.NodeErrors(ctx, window)
+	if err != nil {
+		s.logger.ErrorWithOp("notif collect: prometheus node errors", err, "notif.collect")
+		return stats
+	}
+	if len(byNode) == 0 {
+		return stats
+	}
 	teams, err := s.teams.List(ctx)
 	if err != nil {
 		s.logger.ErrorWithOp("notif collect: list teams", err, "notif.collect")
@@ -223,13 +237,7 @@ func (s *NotificationScheduler) collectErrors(ctx context.Context, sinceMs, unti
 		}
 		ts := teamErrStat{name: team.Name, slug: team.Slug}
 		for _, n := range nodes {
-			if n.ClickHouseTable == "" {
-				continue
-			}
-			cnt, err := s.logs.CountErrors(ctx, n.ClickHouseTable, sinceMs, untilMs)
-			if err != nil {
-				continue // таблицы может ещё не быть — не шум в логах
-			}
+			cnt := f2u(byNode[n.Path])
 			if cnt > 0 {
 				ts.nodes = append(ts.nodes, nodeErrStat{path: n.Path, table: n.ClickHouseTable, count: cnt})
 				ts.total += cnt

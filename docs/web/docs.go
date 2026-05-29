@@ -2705,6 +2705,18 @@ const docTemplate = `{
                 "log_response_body": {
                     "type": "boolean"
                 },
+                "logging_enabled": {
+                    "description": "LoggingEnabled — указатель, чтобы отличить «не прислано» (дефолт true,\nсохраняет текущее поведение) от явного false (§22).",
+                    "type": "boolean"
+                },
+                "max_body_size": {
+                    "type": "integer",
+                    "maximum": 10000000,
+                    "minimum": 0
+                },
+                "max_body_size_enabled": {
+                    "type": "boolean"
+                },
                 "path": {
                     "type": "string",
                     "maxLength": 255
@@ -2883,6 +2895,15 @@ const docTemplate = `{
                 "log_response_body": {
                     "type": "boolean"
                 },
+                "logging_enabled": {
+                    "type": "boolean"
+                },
+                "max_body_size": {
+                    "type": "integer"
+                },
+                "max_body_size_enabled": {
+                    "type": "boolean"
+                },
                 "path": {
                     "type": "string"
                 },
@@ -3028,6 +3049,18 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "log_response_body": {
+                    "type": "boolean"
+                },
+                "logging_enabled": {
+                    "description": "LoggingEnabled — указатель, чтобы отличить «не прислано» (дефолт true,\nсохраняет текущее поведение) от явного false (§22).",
+                    "type": "boolean"
+                },
+                "max_body_size": {
+                    "type": "integer",
+                    "maximum": 10000000,
+                    "minimum": 0
+                },
+                "max_body_size_enabled": {
                     "type": "boolean"
                 },
                 "path": {

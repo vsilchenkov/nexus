@@ -45,19 +45,24 @@ func (r notifNodeRepo) Create(context.Context, *domain.Node) error { return nil 
 func (r notifNodeRepo) Update(context.Context, *domain.Node) error { return nil }
 func (r notifNodeRepo) Delete(context.Context, string) error       { return nil }
 
-type notifLogReader struct{ counts map[string]uint64 }
+// notifProm — фейк PromMetrics: per-node «незавершённые» вызовы (§22).
+type notifProm struct {
+	errs map[string]float64
+	err  error
+}
 
-func (r notifLogReader) GetByID(context.Context, string, string) (*domain.LogRecord, error) {
-	return nil, domain.ErrNotFound
+func (p notifProm) GlobalTotals(context.Context, time.Duration) (port.GlobalTotals, error) {
+	return port.GlobalTotals{}, nil
 }
-func (r notifLogReader) ListSince(context.Context, string, int64, int) ([]*domain.LogRecord, error) {
+func (p notifProm) KafkaQueue(context.Context) (float64, error) { return 0, nil }
+func (p notifProm) NodeThroughput(context.Context, time.Duration) (map[string]port.NodeThroughput, error) {
 	return nil, nil
 }
-func (r notifLogReader) Search(context.Context, port.LogQuery) ([]*domain.LogRecord, error) {
-	return nil, nil
+func (p notifProm) NodeErrors(context.Context, time.Duration) (map[string]float64, error) {
+	return p.errs, p.err
 }
-func (r notifLogReader) CountErrors(_ context.Context, table string, _, _ int64) (uint64, error) {
-	return r.counts[table], nil
+func (p notifProm) NodeSeries(context.Context, time.Duration, int) (map[string][]float64, error) {
+	return nil, nil
 }
 
 type notifSender struct {
@@ -96,9 +101,9 @@ func notifSettings(enabled bool, cronExpr string) *domain.AppSettings {
 	}}}
 }
 
-func newScheduler(s *domain.AppSettings, nodes port.NodeRepo, logs port.LogReader, sender *notifSender, lock fakeLock, cp *memCheckpoint) *NotificationScheduler {
+func newScheduler(s *domain.AppSettings, nodes port.NodeRepo, prom port.PromMetrics, sender *notifSender, lock fakeLock, cp *memCheckpoint) *NotificationScheduler {
 	teams := notifTeamRepo{teams: []*domain.Team{{ID: "t1", Slug: "default", Name: "Default", CHDatabase: "nexus_default"}}}
-	return NewNotificationScheduler(fakeSettingsReader{s}, teams, nodes, logs, sender, lock, cp, logging.NewNoop())
+	return NewNotificationScheduler(fakeSettingsReader{s}, teams, nodes, prom, sender, lock, cp, logging.NewNoop())
 }
 
 func oneNode() notifNodeRepo {
@@ -112,7 +117,7 @@ func TestNotifCycle_SendsWhenErrors(t *testing.T) {
 	sender := &notifSender{}
 	cp := &memCheckpoint{}
 	s := newScheduler(notifSettings(true, "*/5 * * * *"), oneNode(),
-		notifLogReader{counts: map[string]uint64{"nexus_default.logs": 5}}, sender, fakeLock{ok: true}, cp)
+		notifProm{errs: map[string]float64{"svc/hook": 5}}, sender, fakeLock{ok: true}, cp)
 
 	s.cycle(context.Background())
 	require.Len(t, sender.msgs, 1)
@@ -126,7 +131,7 @@ func TestNotifCycle_NoErrorsNoSend(t *testing.T) {
 	sender := &notifSender{}
 	cp := &memCheckpoint{}
 	s := newScheduler(notifSettings(true, "*/5 * * * *"), oneNode(),
-		notifLogReader{counts: map[string]uint64{}}, sender, fakeLock{ok: true}, cp)
+		notifProm{errs: map[string]float64{}}, sender, fakeLock{ok: true}, cp)
 
 	s.cycle(context.Background())
 	assert.Empty(t, sender.msgs, "no errors → no message")
@@ -138,7 +143,7 @@ func TestNotifCycle_NoLockNoWork(t *testing.T) {
 	sender := &notifSender{}
 	cp := &memCheckpoint{}
 	s := newScheduler(notifSettings(true, "*/5 * * * *"), oneNode(),
-		notifLogReader{counts: map[string]uint64{"nexus_default.logs": 5}}, sender, fakeLock{ok: false}, cp)
+		notifProm{errs: map[string]float64{"svc/hook": 5}}, sender, fakeLock{ok: false}, cp)
 
 	s.cycle(context.Background())
 	assert.Empty(t, sender.msgs)
@@ -150,7 +155,7 @@ func TestNotifCycle_SendFailKeepsCheckpoint(t *testing.T) {
 	sender := &notifSender{err: assertErr}
 	cp := &memCheckpoint{}
 	s := newScheduler(notifSettings(true, "*/5 * * * *"), oneNode(),
-		notifLogReader{counts: map[string]uint64{"nexus_default.logs": 2}}, sender, fakeLock{ok: true}, cp)
+		notifProm{errs: map[string]float64{"svc/hook": 2}}, sender, fakeLock{ok: true}, cp)
 
 	s.cycle(context.Background())
 	assert.Equal(t, 0, cp.sets, "send failed → do not advance checkpoint (retry next tick)")
@@ -159,7 +164,7 @@ func TestNotifCycle_SendFailKeepsCheckpoint(t *testing.T) {
 func TestNotifReschedule_RebuildsAndStops(t *testing.T) {
 	t.Parallel()
 	s := newScheduler(notifSettings(true, "*/5 * * * *"), oneNode(),
-		notifLogReader{}, &notifSender{}, fakeLock{ok: true}, &memCheckpoint{})
+		notifProm{}, &notifSender{}, fakeLock{ok: true}, &memCheckpoint{})
 	ctx := context.Background()
 
 	s.Reschedule(ctx)
@@ -181,7 +186,7 @@ func TestNotifReschedule_RebuildsAndStops(t *testing.T) {
 func TestNotifReschedule_InvalidCron(t *testing.T) {
 	t.Parallel()
 	s := newScheduler(notifSettings(true, "not a cron"), oneNode(),
-		notifLogReader{}, &notifSender{}, fakeLock{ok: true}, &memCheckpoint{})
+		notifProm{}, &notifSender{}, fakeLock{ok: true}, &memCheckpoint{})
 	s.Reschedule(context.Background())
 	assert.Nil(t, s.cron, "invalid cron → not armed")
 }

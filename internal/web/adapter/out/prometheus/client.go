@@ -122,6 +122,14 @@ func (c *Client) KafkaQueue(ctx context.Context) (float64, error) {
 	return c.instantScalar(ctx, `sum(nexus_kafka_lag)`)
 }
 
+// NodeErrors — per-node число «незавершённых» вызовов (done=0) за окно
+// из nexus_request_incomplete_total (§22, Telegram-алерты).
+func (c *Client) NodeErrors(ctx context.Context, window time.Duration) (map[string]float64, error) {
+	return c.instantByNode(ctx,
+		fmt.Sprintf(`sum by (node)(increase(nexus_request_incomplete_total{service="sender"}[%s]))`,
+			promRange(window)))
+}
+
 // NodeThroughput — per-node in/out/errors за окно (ключ — метка node = path).
 func (c *Client) NodeThroughput(ctx context.Context, window time.Duration) (map[string]port.NodeThroughput, error) {
 	w := promRange(window)
@@ -140,6 +148,13 @@ func (c *Client) NodeThroughput(ctx context.Context, window time.Duration) (map[
 	if err != nil {
 		return nil, err
 	}
+	// p95 длительности исходящих (Sender) по узлам — гистограмма уже пишется
+	// и sync, и async (§22, новой метрики не нужно). Значение в секундах → мс.
+	p95, err := c.instantByNode(ctx,
+		fmt.Sprintf(`histogram_quantile(0.95, sum by (node, le)(rate(nexus_request_duration_seconds_bucket{service="sender"}[%s])))`, w))
+	if err != nil {
+		return nil, err
+	}
 
 	res := make(map[string]port.NodeThroughput, len(out))
 	merge := func(m map[string]float64, set func(*port.NodeThroughput, float64)) {
@@ -152,5 +167,49 @@ func (c *Client) NodeThroughput(ctx context.Context, window time.Duration) (map[
 	merge(in, func(t *port.NodeThroughput, v float64) { t.In = v })
 	merge(out, func(t *port.NodeThroughput, v float64) { t.Out = v })
 	merge(errs, func(t *port.NodeThroughput, v float64) { t.Errors = v })
+	merge(p95, func(t *port.NodeThroughput, v float64) {
+		if v > 0 { // NaN/отрицательные от histogram_quantile при пустых бакетах игнорируем
+			t.P95ms = v * 1000
+		}
+	})
+	return res, nil
+}
+
+// NodeSeries — спарклайн входящего трафика per-node одним range-запросом
+// (§22). Возвращает по buckets точек на узел; недостающие — нули.
+func (c *Client) NodeSeries(ctx context.Context, window time.Duration, buckets int) (map[string][]float64, error) {
+	if buckets <= 0 {
+		buckets = 12
+	}
+	step := window / time.Duration(buckets)
+	if step <= 0 {
+		step = time.Minute
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
+	end := time.Now()
+	start := end.Add(-window)
+	query := fmt.Sprintf(`sum by (node)(increase(nexus_requests_total{service="receiver"}[%s]))`, promRange(step))
+	val, _, err := c.api.QueryRange(ctx, query, promv1.Range{Start: start, End: end, Step: step})
+	if err != nil {
+		return nil, fmt.Errorf("prometheus query_range %q: %w", query, err)
+	}
+	matrix, ok := val.(model.Matrix)
+	if !ok {
+		return nil, fmt.Errorf("prometheus query_range %q: unexpected result type %T", query, val)
+	}
+	res := make(map[string][]float64, len(matrix))
+	for _, stream := range matrix {
+		node := string(stream.Metric["node"])
+		if node == "" {
+			continue
+		}
+		pts := make([]float64, 0, len(stream.Values))
+		for _, sp := range stream.Values {
+			pts = append(pts, float64(sp.Value))
+		}
+		res[node] = pts
+	}
 	return res, nil
 }

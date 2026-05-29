@@ -42,6 +42,7 @@ SELECT
 	forward_headers, timeout_ms, retry_count, retry_backoff_ms,
 	clickhouse_table, status, team_id,
 	log_request_body, log_response_body, log_headers,
+	logging_enabled, max_body_size_enabled, max_body_size,
 	created_at, updated_at
 FROM nodes WHERE path = $1`
 
@@ -65,6 +66,7 @@ func (r *Reader) GetByPath(ctx context.Context, path string) (*domain.Node, erro
 		&n.ForwardHeaders, &n.TimeoutMs, &n.RetryCount, &n.RetryBackoffMs,
 		&n.ClickHouseTable, &status, &n.TeamID,
 		&n.LogRequestBody, &n.LogResponseBody, &n.LogHeaders,
+		&n.LoggingEnabled, &n.MaxBodySizeEnabled, &n.MaxBodySize,
 		&created, &updated,
 	)
 	if err != nil {

@@ -2590,3 +2590,42 @@ Telegram — только при наличии ошибок. Настраива
   OK/Очередь/Down + таблица/карточки. Node settings — двухколоночная форма +
   предпросмотр маршрута. Удаление узла — чекбокс дропа таблицы + ввод path.
   Диалоги Replay/Dry-run — общий Modal. Login/Language/Audit — на UI-kit.
+
+## 22. Контроль логирования узла, раскладка карточками, Telegram-алерты через Prometheus
+
+Подробное ТЗ — [sections/22-logging-controls-cards.md](sections/22-logging-controls-cards.md).
+
+### 22.1 Поля контроля логирования узла
+
+- `logging_enabled` (bool, дефолт true) — мастер-тумблер; при false узел не пишет лог в ClickHouse
+  совсем.
+- `max_body_size_enabled` (bool) + `max_body_size` (int32, число символов) — ограничение размера
+  сохраняемых тел. Миграция `0010_node_logging_controls`.
+
+### 22.2 Обрезка тел
+
+Поля `request`/`response` режутся до `max_body_size` символов (рун, не байт) с маркером
+`…(truncated)`. Контрольные суммы считаются по полному телу.
+
+### 22.3 Сценарные требования
+
+Запись не ломается на большом теле, спецсимволах, JSON, unicode/emoji (драйвер экранирует сам);
+при `logging_enabled=false` записей в таблице нет. Покрыто unit + integration тестами.
+
+### 22.4 Telegram-алерты через Prometheus
+
+Метрика Sender `nexus_request_incomplete_total{method,node}` (любой не-2xx = `done=0`). Планировщик
+уведомлений берёт ошибки из Prometheus (`sum by (node)(increase(...[window]))`) вместо ClickHouse —
+единый источник с графиками. Требует настроенного Prometheus.
+
+### 22.5 Раскладка карточками
+
+Overview-карточки под эталон `ui_cards.html`: полоса-акцент по статусу, chip+pill, 3 метрики
+(вход/p95/ошибки), спарклайн (12 точек), target URL, фильтр статусов, сортировка
+err→warn→paused→ok→disabled. p95 — из существующей гистограммы Sender; спарклайн — один range-запрос
+на весь список.
+
+### 22.6 Форма узла
+
+Блок «Заголовки и логирование» разделён на две карточки: «Заголовки» (forward_headers) и
+«Логирование» (мастер-тумблер + ClickHouse-настройки + max_body_size).

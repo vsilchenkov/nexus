@@ -10,6 +10,9 @@ import {
   Globe,
   Lock,
   ListChecks,
+  List,
+  Plus,
+  X,
   ShieldAlert,
 } from "lucide-react";
 
@@ -19,12 +22,14 @@ import { DeleteNodeDialog } from "../components/node/DeleteNodeDialog";
 import {
   Button,
   Card,
+  Chip,
   Field,
   Hint,
   Input,
   PickGroup,
   SectionHead,
   Select,
+  Toggle,
   Toggle3,
 } from "../components/ui";
 
@@ -47,8 +52,13 @@ type Form = {
   clickhouse_template_id: string;
   clickhouse_retention_days: number;
   status: "enabled" | "disabled" | "paused";
+  forward_headers: string[];
   log_request_body: boolean;
   log_response_body: boolean;
+  log_headers: boolean;
+  logging_enabled: boolean;
+  max_body_size_enabled: boolean;
+  max_body_size: number;
 };
 
 const emptyForm: Form = {
@@ -70,8 +80,13 @@ const emptyForm: Form = {
   clickhouse_template_id: "",
   clickhouse_retention_days: 90,
   status: "enabled",
+  forward_headers: [],
   log_request_body: false,
   log_response_body: false,
+  log_headers: false,
+  logging_enabled: true,
+  max_body_size_enabled: false,
+  max_body_size: 0,
 };
 
 export default function NodeSettings() {
@@ -88,6 +103,7 @@ export default function NodeSettings() {
   });
 
   const [form, setForm] = useState<Form>(emptyForm);
+  const [headerInput, setHeaderInput] = useState("");
   const [showDryRun, setShowDryRun] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -113,6 +129,23 @@ export default function NodeSettings() {
 
   function set<K extends keyof Form>(k: K, v: Form[K]) {
     setForm((p) => ({ ...p, [k]: v }));
+  }
+
+  function addHeader() {
+    const h = headerInput.trim();
+    if (!h || form.forward_headers.includes(h)) {
+      setHeaderInput("");
+      return;
+    }
+    set("forward_headers", [...form.forward_headers, h]);
+    setHeaderInput("");
+  }
+
+  function removeHeader(h: string) {
+    set(
+      "forward_headers",
+      form.forward_headers.filter((x) => x !== h),
+    );
   }
 
   const verb = form.root_method === "request" ? "request" : "requestAsync";
@@ -306,58 +339,137 @@ export default function NodeSettings() {
           </Card>
 
           <Card>
-            <SectionHead icon={<ListChecks className="h-4 w-4" />}>
-              {t("node.form.logging")}
+            <SectionHead icon={<List className="h-4 w-4" />}>
+              {t("node.form.headers")}
             </SectionHead>
-            <Field label={t("node.fields.ch_template")} hint={t("node.fields.ch_template_hint")}>
-              <Select
-                value={form.clickhouse_template_id}
-                onChange={(e) => set("clickhouse_template_id", e.target.value)}
-              >
-                <option value="">{t("node.fields.ch_template_manual")}</option>
-                {templates.data?.items.map((tpl) => (
-                  <option key={tpl.id} value={tpl.id}>
-                    {tpl.name}
-                    {tpl.is_default ? " ★" : ""}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field label={t("node.fields.ch_table")} className="mt-3">
-              <Input
-                mono
-                value={form.clickhouse_table}
-                onChange={(e) => set("clickhouse_table", e.target.value)}
-                placeholder="webhook_send"
-              />
-            </Field>
-            <Field label={t("node.form.retention_days")} className="mt-3">
-              <Input
-                type="number"
-                value={form.clickhouse_retention_days}
-                onChange={(e) => set("clickhouse_retention_days", Number(e.target.value))}
-              />
-            </Field>
-            <Field label={t("node.form.log_what")} className="mt-3">
-              <div className="flex flex-col gap-1.5 text-xs">
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={form.log_request_body}
-                    onChange={(e) => set("log_request_body", e.target.checked)}
-                  />
-                  {t("node.form.log_request")}
-                </label>
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={form.log_response_body}
-                    onChange={(e) => set("log_response_body", e.target.checked)}
-                  />
-                  {t("node.form.log_response")}
-                </label>
+            <Field label={t("node.form.forward_headers")} hint={t("node.form.forward_headers_hint")}>
+              {form.forward_headers.length > 0 && (
+                <div className="mb-2 flex flex-wrap gap-1.5">
+                  {form.forward_headers.map((h) => (
+                    <Chip key={h}>
+                      <span className="font-mono">{h}</span>
+                      <button
+                        type="button"
+                        onClick={() => removeHeader(h)}
+                        className="ml-1 text-fg-subtle hover:text-err"
+                        aria-label={t("common.delete")}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </Chip>
+                  ))}
+                </div>
+              )}
+              <div className="flex gap-2">
+                <Input
+                  mono
+                  value={headerInput}
+                  onChange={(e) => setHeaderInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addHeader();
+                    }
+                  }}
+                  placeholder="X-Request-Id"
+                />
+                <Button type="button" onClick={addHeader}>
+                  <Plus className="h-4 w-4" /> {t("node.form.add_header")}
+                </Button>
               </div>
             </Field>
+          </Card>
+
+          <Card>
+            <div className="mb-3 flex items-center justify-between">
+              <SectionHead icon={<ListChecks className="h-4 w-4" />} className="mb-0">
+                {t("node.form.logging")}
+              </SectionHead>
+              <Toggle
+                checked={form.logging_enabled}
+                onChange={(v) => set("logging_enabled", v)}
+                label={t("node.form.logging_enabled")}
+              />
+            </div>
+            <fieldset
+              disabled={!form.logging_enabled}
+              className={form.logging_enabled ? "" : "pointer-events-none opacity-50"}
+            >
+              <Field label={t("node.fields.ch_template")} hint={t("node.fields.ch_template_hint")}>
+                <Select
+                  value={form.clickhouse_template_id}
+                  onChange={(e) => set("clickhouse_template_id", e.target.value)}
+                >
+                  <option value="">{t("node.fields.ch_template_manual")}</option>
+                  {templates.data?.items.map((tpl) => (
+                    <option key={tpl.id} value={tpl.id}>
+                      {tpl.name}
+                      {tpl.is_default ? " ★" : ""}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label={t("node.fields.ch_table")} className="mt-3">
+                <Input
+                  mono
+                  value={form.clickhouse_table}
+                  onChange={(e) => set("clickhouse_table", e.target.value)}
+                  placeholder="webhook_send"
+                />
+              </Field>
+              <Field label={t("node.form.retention_days")} className="mt-3">
+                <Input
+                  type="number"
+                  value={form.clickhouse_retention_days}
+                  onChange={(e) => set("clickhouse_retention_days", Number(e.target.value))}
+                />
+              </Field>
+              <Field label={t("node.form.log_what")} className="mt-3">
+                <div className="flex flex-col gap-1.5 text-xs">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={form.log_request_body}
+                      onChange={(e) => set("log_request_body", e.target.checked)}
+                    />
+                    {t("node.form.log_request")}
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={form.log_response_body}
+                      onChange={(e) => set("log_response_body", e.target.checked)}
+                    />
+                    {t("node.form.log_response")}
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={form.log_headers}
+                      onChange={(e) => set("log_headers", e.target.checked)}
+                    />
+                    {t("node.form.log_headers")}
+                  </label>
+                </div>
+              </Field>
+              <div className="mt-4 border-t border-line pt-3">
+                <Toggle
+                  checked={form.max_body_size_enabled}
+                  onChange={(v) => set("max_body_size_enabled", v)}
+                  label={t("node.form.max_body_enabled")}
+                />
+                <Field label={t("node.form.max_body_size")} hint={t("node.form.max_body_hint")} className="mt-2">
+                  <Input
+                    type="number"
+                    min={0}
+                    disabled={!form.max_body_size_enabled}
+                    value={form.max_body_size}
+                    onChange={(e) => set("max_body_size", Number(e.target.value))}
+                    placeholder="10000"
+                  />
+                </Field>
+              </div>
+            </fieldset>
           </Card>
         </div>
 

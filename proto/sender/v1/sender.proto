@@ -43,6 +43,11 @@ message SendRequest {
   bool log_response_body  = 22;
   bool log_headers        = 23;
   string client_ip        = 24;
+
+  // §22: контроль логирования узла.
+  bool logging_enabled       = 25;  // false → лог в ClickHouse не пишется совсем
+  bool max_body_size_enabled = 26;  // включает обрезку сохраняемых тел
+  int32 max_body_size        = 27;  // макс. число символов (рун) в request/response
 }
 
 message SendResponse {

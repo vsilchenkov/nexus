@@ -46,10 +46,13 @@ func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 		RetryCount:      req.GetRetryCount(),
 		RetryBackoffMs:  req.GetRetryBackoffMs(),
 		ClickHouseTable: req.GetClickhouseTable(),
-		LogRequestBody:  req.GetLogRequestBody(),
-		LogResponseBody: req.GetLogResponseBody(),
-		LogHeaders:      req.GetLogHeaders(),
-		ClientIP:        req.GetClientIp(),
+		LogRequestBody:     req.GetLogRequestBody(),
+		LogResponseBody:    req.GetLogResponseBody(),
+		LogHeaders:         req.GetLogHeaders(),
+		ClientIP:           req.GetClientIp(),
+		LoggingEnabled:     req.GetLoggingEnabled(),
+		MaxBodySizeEnabled: req.GetMaxBodySizeEnabled(),
+		MaxBodySize:        req.GetMaxBodySize(),
 	})
 
 	if s.metrics != nil {
@@ -57,6 +60,9 @@ func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 			WithLabelValues("request", req.GetNodePath(), strconv.FormatInt(int64(out.StatusCode), 10)).Inc()
 		s.metrics.RequestDuration.
 			WithLabelValues("request", req.GetNodePath()).Observe(float64(out.DurationMs) / 1000.0)
+		if out.StatusCode < 200 || out.StatusCode >= 300 {
+			s.metrics.RequestsIncompleteTotal.WithLabelValues("request", req.GetNodePath()).Inc()
+		}
 	}
 
 	return &senderv1.SendResponse{

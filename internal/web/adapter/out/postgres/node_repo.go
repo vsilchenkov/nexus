@@ -46,6 +46,7 @@ const nodeColumns = `
 	forward_headers, timeout_ms, retry_count, retry_backoff_ms,
 	clickhouse_table, clickhouse_retention_days, status, team_id,
 	log_request_body, log_response_body, log_headers,
+	logging_enabled, max_body_size_enabled, max_body_size,
 	created_at, updated_at, clickhouse_template_id`
 
 func (r *NodeRepoPg) Get(ctx context.Context, id string) (*domain.Node, error) {
@@ -127,6 +128,7 @@ INSERT INTO nodes (
 	forward_headers, timeout_ms, retry_count, retry_backoff_ms,
 	clickhouse_table, clickhouse_retention_days, status, team_id,
 	log_request_body, log_response_body, log_headers,
+	logging_enabled, max_body_size_enabled, max_body_size,
 	clickhouse_template_id
 ) VALUES (
 	$1, $2,
@@ -138,7 +140,8 @@ INSERT INTO nodes (
 	$16, $17, $18, $19,
 	$20, $21, $22, $23,
 	$24, $25, $26,
-	$27
+	$27, $28, $29,
+	$30
 ) RETURNING id, created_at, updated_at`
 
 	err = r.db.QueryRow(ctx, q,
@@ -151,6 +154,7 @@ INSERT INTO nodes (
 		nullSafe(n.ForwardHeaders), n.TimeoutMs, n.RetryCount, n.RetryBackoffMs,
 		n.ClickHouseTable, n.ClickHouseRetentionDays, string(n.Status), n.TeamID,
 		n.LogRequestBody, n.LogResponseBody, n.LogHeaders,
+		n.LoggingEnabled, n.MaxBodySizeEnabled, n.MaxBodySize,
 		nullUUID(n.ClickHouseTemplateID),
 	).Scan(&n.ID, &n.CreatedAt, &n.UpdatedAt)
 
@@ -185,7 +189,8 @@ UPDATE nodes SET
 	forward_headers = $17, timeout_ms = $18, retry_count = $19, retry_backoff_ms = $20,
 	clickhouse_table = $21, clickhouse_retention_days = $22, status = $23, team_id = $24,
 	log_request_body = $25, log_response_body = $26, log_headers = $27,
-	clickhouse_template_id = $28,
+	logging_enabled = $28, max_body_size_enabled = $29, max_body_size = $30,
+	clickhouse_template_id = $31,
 	updated_at = now()
 WHERE id = $1
 RETURNING updated_at`
@@ -201,6 +206,7 @@ RETURNING updated_at`
 		nullSafe(n.ForwardHeaders), n.TimeoutMs, n.RetryCount, n.RetryBackoffMs,
 		n.ClickHouseTable, n.ClickHouseRetentionDays, string(n.Status), n.TeamID,
 		n.LogRequestBody, n.LogResponseBody, n.LogHeaders,
+		n.LoggingEnabled, n.MaxBodySizeEnabled, n.MaxBodySize,
 		nullUUID(n.ClickHouseTemplateID),
 	).Scan(&n.UpdatedAt)
 
@@ -250,6 +256,7 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 		&n.ForwardHeaders, &n.TimeoutMs, &n.RetryCount, &n.RetryBackoffMs,
 		&n.ClickHouseTable, &n.ClickHouseRetentionDays, &status, &n.TeamID,
 		&n.LogRequestBody, &n.LogResponseBody, &n.LogHeaders,
+		&n.LoggingEnabled, &n.MaxBodySizeEnabled, &n.MaxBodySize,
 		&created, &updated, &templateID,
 	)
 	if err != nil {

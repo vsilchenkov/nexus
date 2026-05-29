@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"regexp"
 	"time"
 )
@@ -52,8 +53,33 @@ type Node struct {
 	LogResponseBody bool
 	LogHeaders      bool
 
+	// §22: контроль логирования на уровне узла.
+	// LoggingEnabled=false — узел не пишет лог в ClickHouse совсем.
+	// При MaxBodySizeEnabled сохраняемые request/response режутся до
+	// MaxBodySize СИМВОЛОВ (рун); checksum считается по полному телу.
+	LoggingEnabled     bool
+	MaxBodySizeEnabled bool
+	MaxBodySize        int32
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+// UnmarshalJSON задаёт дефолт LoggingEnabled=true для JSON без этого поля (§22).
+// Узел сериализуется в Redis-кеш как JSON; записи, сохранённые до появления
+// поля (например, переживший выкат L1-кеш ресивера), не должны выключать
+// логирование. Отсутствующее поле → true, явное значение — как прислано.
+func (n *Node) UnmarshalJSON(data []byte) error {
+	type alias Node // без методов Node, чтобы не зациклить UnmarshalJSON
+	aux := &struct {
+		LoggingEnabled *bool `json:"LoggingEnabled"`
+		*alias
+	}{alias: (*alias)(n)}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	n.LoggingEnabled = aux.LoggingEnabled == nil || *aux.LoggingEnabled
+	return nil
 }
 
 // pathPattern — то же ограничение, что в БД-constraint (§3.3 ТЗ).
@@ -138,6 +164,12 @@ func (n *Node) Validate() error {
 	}
 	if n.ClickHouseTemplateID != "" && !uuidPattern.MatchString(n.ClickHouseTemplateID) {
 		return ErrNodeInvalidTemplateID
+	}
+	if n.MaxBodySize < 0 || n.MaxBodySize > 10_000_000 {
+		return ErrNodeMaxBodySizeRange
+	}
+	if n.MaxBodySizeEnabled && n.MaxBodySize <= 0 {
+		return ErrNodeMaxBodySizeRequired
 	}
 	return nil
 }

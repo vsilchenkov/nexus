@@ -30,8 +30,9 @@
       "queue": "Kafka queue",
       "errors": "Errors (24h)"
     },
-    "filter": { "all_methods": "All methods" },
+    "filter": { "all_methods": "All methods", "all_statuses": "All statuses" },
     "view": { "table": "Table", "cards": "Cards" },
+    "card": { "dynamic_url": "{URL from request}" },
     "status": { "ok": "OK", "down": "Down", "queue": "Queue" },
     "table": {
       "path": "Node",
@@ -98,7 +99,11 @@
       "route": "Route",
       "target": "Target",
       "auth": "Authorization",
-      "logging": "Headers & logging",
+      "logging": "Logging",
+      "headers": "Headers",
+      "forward_headers": "Forwarded headers",
+      "forward_headers_hint": "which headers to pass to the target node",
+      "add_header": "Add",
       "method_type": "Method type",
       "sync_desc": "sync, wait for node response",
       "async_desc": "to Kafka, 200 immediately",
@@ -121,6 +126,11 @@
       "log_what": "What to log",
       "log_request": "Request body",
       "log_response": "Response body",
+      "log_headers": "Headers",
+      "logging_enabled": "Logging enabled",
+      "max_body_enabled": "Limit body size",
+      "max_body_size": "Max body size",
+      "max_body_hint": "max characters; request/response are truncated to this value",
       "preview": "Route preview",
       "ssrf_warn": "\"From request\" mode: fill the host allowlist to prevent SSRF. Do not leave it empty in production."
     },
@@ -447,6 +457,7 @@
     "cancel": "Cancel",
     "save": "Save",
     "close": "Close",
-    "edit": "Edit"
+    "edit": "Edit",
+    "delete": "Delete"
   }
 }
