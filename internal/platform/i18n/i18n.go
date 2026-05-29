@@ -117,6 +117,16 @@ var translations = map[Lang]map[string]string{
 		"url.required":    "url parameter is required",
 		"url.invalid":     "target url is invalid",
 		"url.not_allowed": "target url not in allowlist",
+		// allowed hosts catalog (§23)
+		"host.not_found":          "host pattern not found",
+		"host.already_exists":     "a host pattern with this value already exists",
+		"host.in_use":             "the host pattern is used by nodes and cannot be modified or deleted",
+		"host.invalid_kind":       "kind must be exact, wildcard or regex",
+		"host.pattern_length":     "pattern length must be between 1 and 512 characters",
+		"host.exact_format":       "exact host must be a valid hostname (no scheme, port or path)",
+		"host.wildcard_format":    "wildcard host must look like *.example.com",
+		"host.regex_invalid":      "regex does not compile",
+		"host.description_length": "description must be at most 500 characters",
 		// ch-templates (§19)
 		"ch_template.not_found":                 "clickhouse template not found",
 		"ch_template.already_exists":            "a template with this name already exists",
@@ -159,6 +169,16 @@ var translations = map[Lang]map[string]string{
 		"url.required":             "параметр URL обязателен",
 		"url.invalid":              "целевой URL невалиден",
 		"url.not_allowed":          "целевой URL не входит в allowlist",
+		// allowed hosts catalog (§23)
+		"host.not_found":          "паттерн хоста не найден",
+		"host.already_exists":     "паттерн хоста с таким значением уже существует",
+		"host.in_use":             "паттерн используется узлами — изменить или удалить нельзя",
+		"host.invalid_kind":       "тип должен быть exact, wildcard или regex",
+		"host.pattern_length":     "длина паттерна должна быть от 1 до 512 символов",
+		"host.exact_format":       "точный хост должен быть валидным hostname (без схемы, порта и пути)",
+		"host.wildcard_format":    "wildcard-хост должен иметь вид *.example.com",
+		"host.regex_invalid":      "регулярное выражение не компилируется",
+		"host.description_length": "описание должно быть не длиннее 500 символов",
 		// ch-templates (§19)
 		"ch_template.not_found":                 "шаблон ClickHouse не найден",
 		"ch_template.already_exists":            "шаблон с таким названием уже существует",

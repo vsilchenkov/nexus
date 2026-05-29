@@ -6,19 +6,20 @@ import (
 
 // Handlers — bag всех HTTP-handler'ов Web Service.
 type Handlers struct {
-	Auth        *AuthHandler
-	Node        *NodeHandler
-	User        *UserHandler
-	Token       *APITokenHandler
-	Team        *TeamHandler
-	Audit       *AuditHandler
-	DryRun      *DryRunHandler
-	Replay      *ReplayHandler
-	Logs        *LogsHandler
-	Metrics     *MetricsHandler
-	AppSettings *AppSettingsHandler
-	Orphan      *OrphanHandler
-	CHTemplate  *CHTemplateHandler
+	Auth          *AuthHandler
+	Node          *NodeHandler
+	User          *UserHandler
+	Token         *APITokenHandler
+	Team          *TeamHandler
+	Audit         *AuditHandler
+	DryRun        *DryRunHandler
+	Replay        *ReplayHandler
+	Logs          *LogsHandler
+	Metrics       *MetricsHandler
+	AppSettings   *AppSettingsHandler
+	Orphan        *OrphanHandler
+	CHTemplate    *CHTemplateHandler
+	HostAllowlist *HostAllowlistHandler
 }
 
 // Middlewares — общие middleware (auth-check, role-check, API token-check).
@@ -69,6 +70,13 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			authed.GET("/ch-templates/:id", h.CHTemplate.Get)
 		}
 
+		// Каталог разрешённых хостов (§23). GET доступен любой сессии (combobox
+		// формы узла); мутации и привязки — admin-only ниже.
+		if h.HostAllowlist != nil {
+			authed.GET("/allowed-hosts", h.HostAllowlist.Search)
+			authed.GET("/nodes/:id/allowed-hosts", RequireScope("nodes:read"), h.HostAllowlist.ListByNode)
+		}
+
 		// Логи узла (§7.4): snapshot + SSE live-tail.
 		// Регистрируются только если включён ClickHouse (см. app.go).
 		if h.Logs != nil {
@@ -102,6 +110,16 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		authedAdmin.POST("/nodes/:id/move", h.Node.Move)
 		// §7.5.1: dry-run без сохранения конфига. Только admin.
 		authedAdmin.POST("/nodes/dry-run", h.DryRun.Run)
+
+		// Каталог разрешённых хостов (§23): мутации каталога и привязки — admin-only.
+		if h.HostAllowlist != nil {
+			authedAdmin.POST("/allowed-hosts", h.HostAllowlist.Create)
+			authedAdmin.PATCH("/allowed-hosts/:id", h.HostAllowlist.Update)
+			authedAdmin.DELETE("/allowed-hosts/:id", h.HostAllowlist.Delete)
+			authedAdmin.POST("/allowed-hosts/preview", h.HostAllowlist.Preview)
+			authedAdmin.POST("/nodes/:id/allowed-hosts", h.HostAllowlist.Attach)
+			authedAdmin.DELETE("/nodes/:id/allowed-hosts/:host_id", h.HostAllowlist.Detach)
+		}
 
 		authedAdmin.GET("/users", h.User.List)
 		authedAdmin.GET("/users/:id", h.User.Get)

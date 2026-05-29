@@ -144,6 +144,10 @@ func (u *NodeUsecase) List(ctx context.Context, f port.ListNodesFilter) ([]*doma
 
 func (u *NodeUsecase) Create(ctx context.Context, actor Actor, n *domain.Node) error {
 	n.SetDefaults()
+	// §23: allowlist хостов — производный снимок каталога (node_allowed_hosts).
+	// Новый узел создаётся с пустым allowlist; паттерны привязываются отдельно
+	// через POST /api/nodes/:id/allowed-hosts. Тело узла снимок не задаёт.
+	n.URLAllowedHosts = []string{}
 	if n.TeamID == "" {
 		n.TeamID = u.defaultTeamID
 	}
@@ -228,6 +232,9 @@ func (u *NodeUsecase) Update(ctx context.Context, actor Actor, n *domain.Node, t
 	if n.TeamID != old.TeamID {
 		return domain.ErrPermissionDenied
 	}
+	// §23: снимок allowlist хостов управляется только каталогом (link/unlink) —
+	// сохраняем существующий, чтобы PUT узла его не затирал.
+	n.URLAllowedHosts = old.URLAllowedHosts
 	// §19.5: пересоздаём таблицу только если сменились имя или шаблон.
 	if old.ClickHouseTable != n.ClickHouseTable || old.ClickHouseTemplateID != n.ClickHouseTemplateID {
 		if err := u.provisionTable(ctx, n); err != nil {

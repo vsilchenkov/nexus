@@ -176,6 +176,17 @@ func (a *App) Start(ctx context.Context) error {
 	chTemplateUC := usecase.NewCHTemplateUsecase(chTemplateRepo, teamProvisioner, teamRepo, auditUC, a.logger)
 	chTemplateHandler := httpadapter.NewCHTemplateHandler(chTemplateUC, a.logger)
 
+	// Каталог разрешённых хостов (§23). Не зависит от ClickHouse — создаётся
+	// всегда. Привязка к узлу пересобирает снимок nodes.url_allowed_hosts и
+	// write-through кеш (тот же TTL, что у NodeUsecase).
+	hostAllowlistUC := usecase.NewHostAllowlistUsecase(
+		pgrepo.NewHostAllowlistRepoPg(a.pg, a.logger),
+		nodeRepo, nodeCache, uow, auditUC,
+		time.Duration(a.cfg.Redis.NodeTTLSec)*time.Second,
+		a.logger,
+	)
+	hostAllowlistHandler := httpadapter.NewHostAllowlistHandler(hostAllowlistUC, a.logger)
+
 	dryRunUC := usecase.NewDryRunUsecase(auditUC, a.logger)
 	dryRunHandler := httpadapter.NewDryRunHandler(dryRunUC, a.logger)
 
@@ -273,19 +284,20 @@ func (a *App) Start(ctx context.Context) error {
 		RequireAdmin: httpadapter.RequireRole("admin"),
 	}
 	httpadapter.RegisterAPI(r, httpadapter.Handlers{
-		Auth:        authHandler,
-		Node:        nodeHandler,
-		User:        userHandler,
-		Token:       tokenHandler,
-		Team:        teamHandler,
-		Audit:       auditHandler,
-		DryRun:      dryRunHandler,
-		Replay:      replayHandler,
-		Logs:        logsHandler,
-		Metrics:     metricsHandler,
-		AppSettings: appSettingsHandler,
-		Orphan:      orphanHandler,
-		CHTemplate:  chTemplateHandler,
+		Auth:          authHandler,
+		Node:          nodeHandler,
+		User:          userHandler,
+		Token:         tokenHandler,
+		Team:          teamHandler,
+		Audit:         auditHandler,
+		DryRun:        dryRunHandler,
+		Replay:        replayHandler,
+		Logs:          logsHandler,
+		Metrics:       metricsHandler,
+		AppSettings:   appSettingsHandler,
+		Orphan:        orphanHandler,
+		CHTemplate:    chTemplateHandler,
+		HostAllowlist: hostAllowlistHandler,
 	}, mw)
 
 	// SPA fallback: всё, что не API/инфра — отдаём index.html (§17.1 ТЗ).
