@@ -42,10 +42,10 @@ type Metrics struct {
 	RequestsIncompleteTotal *prometheus.CounterVec
 	RequestDuration         *prometheus.HistogramVec
 	KafkaLag                *prometheus.GaugeVec
-	CHBufferSize    *prometheus.GaugeVec
-	CHErrorsTotal   *prometheus.CounterVec
-	CHDroppedTotal  *prometheus.CounterVec
-	CHFallbackTotal *prometheus.CounterVec
+	CHBufferSize            *prometheus.GaugeVec
+	CHErrorsTotal           *prometheus.CounterVec
+	CHDroppedTotal          *prometheus.CounterVec
+	CHFallbackTotal         *prometheus.CounterVec
 
 	L2CacheHits      *prometheus.CounterVec
 	L2CacheMisses    prometheus.Counter

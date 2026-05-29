@@ -44,11 +44,11 @@ func TestMetricsReader_NodeKPI_E2E(t *testing.T) {
 			Host: "h", IP: "127.0.0.1", Attempts: 1, AttemptsDetails: "[]",
 		}
 	}
-	writer.Write(ctx, table, mk("00000000-0000-0000-0000-000000000001", 200, 50, true))   // delivered
-	writer.Write(ctx, table, mk("00000000-0000-0000-0000-000000000002", 200, 100, true))  // delivered
-	writer.Write(ctx, table, mk("00000000-0000-0000-0000-000000000003", 200, 150, true))  // delivered
-	writer.Write(ctx, table, mk("00000000-0000-0000-0000-000000000004", 500, 30, false))  // error (status)
-	writer.Write(ctx, table, mk("00000000-0000-0000-0000-000000000005", 0, 0, false))     // error (network)
+	writer.Write(ctx, table, mk("00000000-0000-0000-0000-000000000001", 200, 50, true))  // delivered
+	writer.Write(ctx, table, mk("00000000-0000-0000-0000-000000000002", 200, 100, true)) // delivered
+	writer.Write(ctx, table, mk("00000000-0000-0000-0000-000000000003", 200, 150, true)) // delivered
+	writer.Write(ctx, table, mk("00000000-0000-0000-0000-000000000004", 500, 30, false)) // error (status)
+	writer.Write(ctx, table, mk("00000000-0000-0000-0000-000000000005", 0, 0, false))    // error (network)
 	require.NoError(t, writer.Flush(ctx))
 
 	// Дожидаемся всех 5 строк.

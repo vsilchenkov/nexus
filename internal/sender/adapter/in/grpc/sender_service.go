@@ -35,17 +35,17 @@ func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 	}
 
 	out := s.uc.Send(ctx, usecase.SendInput{
-		ID:              req.GetId(),
-		NodePath:        req.GetNodePath(),
-		RootMethod:      domain.RootMethodRequest, // sync-путь
-		TargetURL:       req.GetTargetUrl(),
-		Method:          req.GetMethod(),
-		Headers:         headers,
-		Body:            req.GetBody(),
-		TimeoutMs:       req.GetTimeoutMs(),
-		RetryCount:      req.GetRetryCount(),
-		RetryBackoffMs:  req.GetRetryBackoffMs(),
-		ClickHouseTable: req.GetClickhouseTable(),
+		ID:                 req.GetId(),
+		NodePath:           req.GetNodePath(),
+		RootMethod:         domain.RootMethodRequest, // sync-путь
+		TargetURL:          req.GetTargetUrl(),
+		Method:             req.GetMethod(),
+		Headers:            headers,
+		Body:               req.GetBody(),
+		TimeoutMs:          req.GetTimeoutMs(),
+		RetryCount:         req.GetRetryCount(),
+		RetryBackoffMs:     req.GetRetryBackoffMs(),
+		ClickHouseTable:    req.GetClickhouseTable(),
 		LogRequestBody:     req.GetLogRequestBody(),
 		LogResponseBody:    req.GetLogResponseBody(),
 		LogHeaders:         req.GetLogHeaders(),
