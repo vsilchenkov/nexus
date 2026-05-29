@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nexus — Утилитарная зона глобальной шапки</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/tabler-icons.min.css">
+<style>
+:root {
+  --bg-app: #0f1115;
+  --bg-primary: #16191f;
+  --bg-secondary: #1c2027;
+  --bg-tertiary: #22272f;
+  --bg-info: rgba(74, 144, 226, 0.12);
+  --bg-success: rgba(60, 180, 120, 0.14);
+  --bg-warning: rgba(220, 160, 60, 0.14);
+  --border-tertiary: #2a3038;
+  --border-strong: #38404a;
+  --text-primary: #e6e9ef;
+  --text-secondary: #9aa3b2;
+  --text-tertiary: #5f6875;
+  --text-info: #5b9bf0;
+  --text-success: #4cc38a;
+  --text-warning: #d9a441;
+  --radius-sm: 4px;
+  --radius-md: 7px;
+  --radius-lg: 11px;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font-sans); background: var(--bg-app); color: var(--text-primary); font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; padding: 32px; }
+
+.intro { max-width: 980px; margin: 0 auto 28px; }
+.intro .tag { display: inline-block; font-family: var(--font-mono); font-size: 11px; color: var(--text-info); background: var(--bg-info); padding: 3px 8px; border-radius: var(--radius-sm); margin-bottom: 10px; }
+.intro h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; margin-bottom: 6px; }
+.intro p { font-size: 13px; color: var(--text-secondary); line-height: 1.65; max-width: 760px; }
+.intro code { font-family: var(--font-mono); font-size: 11px; background: var(--bg-secondary); padding: 1px 6px; border-radius: 3px; color: var(--text-info); }
+
+.row { max-width: 1100px; margin: 0 auto 28px; }
+.row-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }
+.row-head .num { font-family: var(--font-mono); font-size: 11px; color: var(--text-info); background: var(--bg-info); padding: 3px 8px; border-radius: var(--radius-sm); }
+.row-head h2 { font-size: 15px; font-weight: 600; }
+.row-desc { font-size: 12.5px; color: var(--text-secondary); margin-bottom: 14px; max-width: 760px; line-height: 1.6; }
+.row-desc code { font-family: var(--font-mono); font-size: 11px; background: var(--bg-secondary); padding: 1px 6px; border-radius: 3px; color: var(--text-info); }
+.row-desc kbd { background: var(--bg-tertiary); padding: 1px 5px; border-radius: 3px; font-size: 10px; font-family: var(--font-mono); border: 0.5px solid var(--border-tertiary); color: var(--text-primary); }
+
+/* Topbar mock (standalone, not full app) */
+.topbar-frame {
+  background: var(--bg-primary);
+  border: 0.5px solid var(--border-tertiary);
+  border-radius: var(--radius-lg);
+  height: 56px;
+  display: flex; align-items: center;
+  padding: 0 20px;
+  position: relative;
+  overflow: visible;
+}
+.brand { display: flex; align-items: center; gap: 9px; font-weight: 600; font-size: 15px; padding-right: 18px; border-right: 0.5px solid var(--border-tertiary); margin-right: 18px; }
+.brand .logo { width: 26px; height: 26px; border-radius: 7px; background: linear-gradient(135deg, #5b9bf0, #4cc38a); display: grid; place-items: center; color: #fff; font-size: 15px; }
+.crumbs { font-size: 13px; color: var(--text-primary); }
+.crumbs .muted { color: var(--text-secondary); }
+.spacer { flex: 1; }
+
+/* Utility zone */
+.util {
+  display: flex; align-items: center; gap: 4px;
+  position: relative;
+}
+.util-sep { width: 1px; height: 22px; background: var(--border-tertiary); margin: 0 6px; }
+
+.icon-btn {
+  width: 34px; height: 34px;
+  border-radius: var(--radius-md);
+  display: grid; place-items: center;
+  color: var(--text-secondary); cursor: pointer;
+  position: relative;
+  transition: background 0.12s, color 0.12s;
+}
+.icon-btn:hover { background: var(--bg-secondary); color: var(--text-primary); }
+.icon-btn i { font-size: 17px; }
+.icon-btn.active { background: var(--bg-secondary); color: var(--text-info); }
+.icon-btn .ext {
+  position: absolute;
+  top: 7px; right: 7px;
+  font-size: 8px;
+  color: var(--text-tertiary);
+}
+
+/* Avatar */
+.avatar-btn {
+  display: flex; align-items: center; gap: 9px;
+  padding: 4px 10px 4px 4px;
+  border-radius: 20px;
+  background: var(--bg-secondary);
+  cursor: pointer;
+  margin-left: 4px;
+}
+.avatar-btn:hover { background: var(--bg-tertiary); }
+.avatar-btn .av {
+  width: 28px; height: 28px; border-radius: 50%;
+  background: linear-gradient(135deg, #5b9bf0, #4cc38a);
+  color: #fff;
+  display: grid; place-items: center;
+  font-weight: 600; font-size: 11px;
+}
+.avatar-btn .info { display: flex; flex-direction: column; line-height: 1.15; }
+.avatar-btn .nm { font-size: 12.5px; font-weight: 500; }
+.avatar-btn .rl { font-size: 10px; color: var(--text-tertiary); }
+.avatar-btn .car { color: var(--text-tertiary); margin-left: 4px; }
+
+/* Tooltip (shown on Swagger) */
+.tooltip {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%; transform: translateX(-50%);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 11px;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  border: 0.5px solid var(--border-strong);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+  z-index: 30;
+}
+.tooltip::before {
+  content: ''; position: absolute;
+  top: -4px; left: 50%; transform: translateX(-50%) rotate(45deg);
+  width: 7px; height: 7px;
+  background: var(--bg-tertiary);
+  border-left: 0.5px solid var(--border-strong);
+  border-top: 0.5px solid var(--border-strong);
+}
+
+/* Dropdown — common */
+.dd {
+  position: absolute;
+  top: calc(100% + 8px);
+  background: var(--bg-primary);
+  border: 0.5px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: 0 14px 40px rgba(0,0,0,0.5);
+  min-width: 240px;
+  padding: 6px 0;
+  z-index: 20;
+}
+.dd-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 14px;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.dd-item:hover { background: var(--bg-secondary); }
+.dd-item i { font-size: 16px; color: var(--text-secondary); width: 18px; }
+.dd-item .ck { margin-left: auto; color: var(--text-info); }
+.dd-item .ext-ic { margin-left: auto; color: var(--text-tertiary); font-size: 13px; }
+.dd-sep { height: 0.5px; background: var(--border-tertiary); margin: 6px 0; }
+.dd-head {
+  padding: 12px 14px 6px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+}
+.dd-foot {
+  padding: 8px 14px 4px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  border-top: 0.5px solid var(--border-tertiary);
+  margin-top: 4px;
+}
+.dd-danger { color: var(--text-warning); }
+.dd-danger i { color: var(--text-warning); }
+
+/* Specific dropdown positions */
+.dd-swagger { right: 152px; min-width: 280px; }
+.dd-lang { right: 100px; min-width: 200px; }
+.dd-theme { right: 58px; min-width: 220px; }
+.dd-user { right: 0; min-width: 240px; }
+
+/* Compact account block in user dropdown */
+.acc-head { padding: 12px 14px 10px; display: flex; align-items: center; gap: 10px; }
+.acc-head .av { width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #5b9bf0, #4cc38a); color: #fff; display: grid; place-items: center; font-weight: 600; font-size: 13px; }
+.acc-head .nm { font-size: 13.5px; font-weight: 500; }
+.acc-head .em { font-size: 11px; color: var(--text-tertiary); }
+
+/* Annotations block */
+.notes {
+  max-width: 980px;
+  margin: 8px auto 0;
+  padding: 18px 22px;
+  background: var(--bg-primary);
+  border: 0.5px solid var(--border-tertiary);
+  border-radius: var(--radius-lg);
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  line-height: 1.65;
+}
+.notes h3 { font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; margin-top: 14px; }
+.notes h3:first-child { margin-top: 0; }
+.notes ul { list-style: none; padding: 0; }
+.notes li { padding: 3px 0; }
+.notes li::before { content: "·"; color: var(--text-tertiary); margin-right: 8px; }
+.notes code { font-family: var(--font-mono); font-size: 11px; background: var(--bg-secondary); padding: 1px 6px; border-radius: 3px; color: var(--text-info); }
+.notes kbd { background: var(--bg-tertiary); padding: 1px 5px; border-radius: 3px; font-size: 10px; font-family: var(--font-mono); border: 0.5px solid var(--border-tertiary); color: var(--text-primary); }
+
+/* Flag mini */
+.flag-mini { width: 18px; height: 13px; border-radius: 2px; overflow: hidden; }
+
+/* Spacer column between sections */
+.divider {
+  max-width: 980px;
+  margin: 36px auto 24px;
+  height: 0.5px;
+  background: var(--border-tertiary);
+}
+</style>
+</head>
+<body>
+
+<div class="intro">
+  <span class="tag">§7.12</span>
+  <h1>Утилитарная зона глобальной шапки</h1>
+  <p>Правая часть глобального topbar, видимая на всех страницах Nexus. Содержит: <b>Swagger</b> (документация API), <b>Язык</b> (быстрое переключение EN/RU), <b>Тема</b> (светлая/тёмная/системная), <b>Аватар пользователя</b> (профиль, смена пароля, выход). Зона отделена от основной навигации, потому что эти действия не относятся к рабочему процессу, но должны быть в один клик откуда угодно.</p>
+</div>
+
+<!-- ============ STATE 1 — Resting ============ -->
+<div class="row">
+  <div class="row-head"><span class="num">1</span><h2>Базовое состояние</h2></div>
+  <p class="row-desc">Шапка как она выглядит на любой странице. Слева — бренд и хлебные крошки текущего экрана; справа — утилитарные иконки и аватар.</p>
+  <div class="topbar-frame">
+    <div class="brand"><span class="logo"><i class="ti ti-arrows-exchange"></i></span> Nexus</div>
+    <div class="crumbs"><span class="muted">Узлы /</span> webhook/send</div>
+    <div class="spacer"></div>
+
+    <div class="util">
+      <div class="icon-btn" title="Swagger API"><i class="ti ti-file-text"></i><i class="ti ti-external-link ext"></i></div>
+      <div class="icon-btn"><i class="ti ti-language"></i></div>
+      <div class="icon-btn"><i class="ti ti-moon"></i></div>
+      <div class="util-sep"></div>
+      <div class="avatar-btn">
+        <span class="av">A</span>
+        <span class="info"><span class="nm">admin</span><span class="rl">admin</span></span>
+        <i class="ti ti-chevron-down car"></i>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ STATE 2 — Hover on Swagger (tooltip) ============ -->
+<div class="row">
+  <div class="row-head"><span class="num">2</span><h2>Hover на Swagger · tooltip</h2></div>
+  <p class="row-desc">Наведение на иконку Swagger показывает tooltip с поясняющим текстом. Маленькая иконка <code>↗</code> в углу — индикатор открытия в новой вкладке.</p>
+  <div class="topbar-frame">
+    <div class="brand"><span class="logo"><i class="ti ti-arrows-exchange"></i></span> Nexus</div>
+    <div class="crumbs"><span class="muted">Узлы /</span> webhook/send</div>
+    <div class="spacer"></div>
+
+    <div class="util">
+      <div class="icon-btn active" style="position:relative;">
+        <i class="ti ti-file-text"></i>
+        <i class="ti ti-external-link ext"></i>
+        <div class="tooltip">Swagger API · открыть в новой вкладке</div>
+      </div>
+      <div class="icon-btn"><i class="ti ti-language"></i></div>
+      <div class="icon-btn"><i class="ti ti-moon"></i></div>
+      <div class="util-sep"></div>
+      <div class="avatar-btn">
+        <span class="av">A</span>
+        <span class="info"><span class="nm">admin</span><span class="rl">admin</span></span>
+        <i class="ti ti-chevron-down car"></i>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ STATE 3 — Click on Swagger (popover with options) ============ -->
+<div class="row">
+  <div class="row-head"><span class="num">3</span><h2>Клик на Swagger · выбор API</h2></div>
+  <p class="row-desc">Клик открывает компактный popover со списком: документация Receiver API (внешний контракт для клиентов) и Web Service API (контракт админки и API-токенов). Обе ведут на <code>/swagger/...</code> того же процесса (см. §11, единый Go-бинарь раздаёт и UI, и Swagger через <code>embed.FS</code>). Открытие — в новой вкладке.</p>
+  <div class="topbar-frame">
+    <div class="brand"><span class="logo"><i class="ti ti-arrows-exchange"></i></span> Nexus</div>
+    <div class="crumbs"><span class="muted">Узлы /</span> webhook/send</div>
+    <div class="spacer"></div>
+
+    <div class="util">
+      <div class="icon-btn active"><i class="ti ti-file-text"></i><i class="ti ti-external-link ext"></i></div>
+      <div class="icon-btn"><i class="ti ti-language"></i></div>
+      <div class="icon-btn"><i class="ti ti-moon"></i></div>
+      <div class="util-sep"></div>
+      <div class="avatar-btn">
+        <span class="av">A</span>
+        <span class="info"><span class="nm">admin</span><span class="rl">admin</span></span>
+        <i class="ti ti-chevron-down car"></i>
+      </div>
+
+      <div class="dd dd-swagger">
+        <div class="dd-head">API documentation</div>
+        <div class="dd-item">
+          <i class="ti ti-route"></i>
+          <div style="flex:1;">
+            <div style="font-size:13px;">Receiver API <span style="font-family:var(--font-mono);color:var(--text-tertiary);font-size:11px;">/v1/*</span></div>
+            <div style="font-size:11px;color:var(--text-tertiary);margin-top:1px;">для внешних клиентов</div>
+          </div>
+          <i class="ti ti-external-link ext-ic"></i>
+        </div>
+        <div class="dd-item">
+          <i class="ti ti-server-cog"></i>
+          <div style="flex:1;">
+            <div style="font-size:13px;">Web Service API <span style="font-family:var(--font-mono);color:var(--text-tertiary);font-size:11px;">/api/*</span></div>
+            <div style="font-size:11px;color:var(--text-tertiary);margin-top:1px;">контракт админки + API-токены</div>
+          </div>
+          <i class="ti ti-external-link ext-ic"></i>
+        </div>
+        <div class="dd-foot">Внешний контракт — <code style="font-family:var(--font-mono);font-size:10px;color:var(--text-info);">/v1/</code> в URL обязателен.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ STATE 4 — Language dropdown ============ -->
+<div class="row">
+  <div class="row-head"><span class="num">4</span><h2>Клик на Язык</h2></div>
+  <p class="row-desc">Быстрое переключение языка интерфейса (полная настройка — в Settings → Language, §7.11). Текущий выбор отмечен галочкой. Изменение применяется без перезагрузки, сохраняется в <code>users.lang</code>.</p>
+  <div class="topbar-frame">
+    <div class="brand"><span class="logo"><i class="ti ti-arrows-exchange"></i></span> Nexus</div>
+    <div class="crumbs"><span class="muted">Узлы /</span> webhook/send</div>
+    <div class="spacer"></div>
+
+    <div class="util">
+      <div class="icon-btn"><i class="ti ti-file-text"></i><i class="ti ti-external-link ext"></i></div>
+      <div class="icon-btn active"><i class="ti ti-language"></i></div>
+      <div class="icon-btn"><i class="ti ti-moon"></i></div>
+      <div class="util-sep"></div>
+      <div class="avatar-btn">
+        <span class="av">A</span>
+        <span class="info"><span class="nm">admin</span><span class="rl">admin</span></span>
+        <i class="ti ti-chevron-down car"></i>
+      </div>
+
+      <div class="dd dd-lang">
+        <div class="dd-item">
+          <svg class="flag-mini" viewBox="0 0 60 36" xmlns="http://www.w3.org/2000/svg"><rect width="60" height="36" fill="#012169"/><path d="M0,0 L60,36 M60,0 L0,36" stroke="#fff" stroke-width="7"/><path d="M0,0 L60,36 M60,0 L0,36" stroke="#C8102E" stroke-width="3"/><path d="M30,0 V36 M0,18 H60" stroke="#fff" stroke-width="10"/><path d="M30,0 V36 M0,18 H60" stroke="#C8102E" stroke-width="6"/></svg>
+          English
+        </div>
+        <div class="dd-item">
+          <svg class="flag-mini" viewBox="0 0 60 36" xmlns="http://www.w3.org/2000/svg"><rect width="60" height="12" fill="#fff"/><rect y="12" width="60" height="12" fill="#0039A6"/><rect y="24" width="60" height="12" fill="#D52B1E"/></svg>
+          Русский
+          <i class="ti ti-check ck"></i>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ STATE 5 — Theme dropdown ============ -->
+<div class="row">
+  <div class="row-head"><span class="num">5</span><h2>Клик на Тему</h2></div>
+  <p class="row-desc">Три варианта: <b>Светлая</b>, <b>Тёмная</b>, <b>Системная</b> (следует <code>prefers-color-scheme</code>). Иконка в шапке отражает фактическую тему — при системной показывается солнце или луна в зависимости от текущего OS-режима.</p>
+  <div class="topbar-frame">
+    <div class="brand"><span class="logo"><i class="ti ti-arrows-exchange"></i></span> Nexus</div>
+    <div class="crumbs"><span class="muted">Узлы /</span> webhook/send</div>
+    <div class="spacer"></div>
+
+    <div class="util">
+      <div class="icon-btn"><i class="ti ti-file-text"></i><i class="ti ti-external-link ext"></i></div>
+      <div class="icon-btn"><i class="ti ti-language"></i></div>
+      <div class="icon-btn active"><i class="ti ti-moon"></i></div>
+      <div class="util-sep"></div>
+      <div class="avatar-btn">
+        <span class="av">A</span>
+        <span class="info"><span class="nm">admin</span><span class="rl">admin</span></span>
+        <i class="ti ti-chevron-down car"></i>
+      </div>
+
+      <div class="dd dd-theme">
+        <div class="dd-item"><i class="ti ti-sun"></i> Светлая</div>
+        <div class="dd-item"><i class="ti ti-moon"></i> Тёмная <i class="ti ti-check ck"></i></div>
+        <div class="dd-item"><i class="ti ti-device-desktop"></i> Системная</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ STATE 6 — User avatar dropdown ============ -->
+<div class="row">
+  <div class="row-head"><span class="num">6</span><h2>Клик на аватар</h2></div>
+  <p class="row-desc">Шапка аккаунта (полное имя + email), затем пункты: смена пароля, API-токены (быстрый переход в §7.14), audit log (только для админов), выход. Logout — мгновенно удаляет сессионный ключ в Redis (см. §7.1).</p>
+  <div class="topbar-frame">
+    <div class="brand"><span class="logo"><i class="ti ti-arrows-exchange"></i></span> Nexus</div>
+    <div class="crumbs"><span class="muted">Узлы /</span> webhook/send</div>
+    <div class="spacer"></div>
+
+    <div class="util">
+      <div class="icon-btn"><i class="ti ti-file-text"></i><i class="ti ti-external-link ext"></i></div>
+      <div class="icon-btn"><i class="ti ti-language"></i></div>
+      <div class="icon-btn"><i class="ti ti-moon"></i></div>
+      <div class="util-sep"></div>
+      <div class="avatar-btn" style="background:var(--bg-tertiary);">
+        <span class="av">A</span>
+        <span class="info"><span class="nm">admin</span><span class="rl">admin</span></span>
+        <i class="ti ti-chevron-up car"></i>
+      </div>
+
+      <div class="dd dd-user">
+        <div class="acc-head">
+          <span class="av">A</span>
+          <div>
+            <div class="nm">admin</div>
+            <div class="em">admin@company.ru</div>
+          </div>
+        </div>
+        <div class="dd-sep"></div>
+        <div class="dd-item"><i class="ti ti-key"></i> Сменить пароль</div>
+        <div class="dd-item"><i class="ti ti-id-badge-2"></i> Мои API-токены</div>
+        <div class="dd-item"><i class="ti ti-history"></i> Audit log <span style="margin-left:auto;font-size:10px;color:var(--text-tertiary);">только admin</span></div>
+        <div class="dd-sep"></div>
+        <div class="dd-item dd-danger"><i class="ti ti-logout"></i> Выйти</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<div class="notes">
+  <h3>Поведение Swagger</h3>
+  <ul>
+    <li>Web Service раздаёт документацию по <code>/swagger/receiver/</code> (Receiver API, внешний контракт <code>/v1/*</code>) и <code>/swagger/web/</code> (Web Service API, контракт админки). Оба файла собираются <code>make swagger</code> и встраиваются в Go-бинарь через <code>embed.FS</code>.</li>
+    <li>Клик по иконке — короткий popover из двух пунктов. Клик по пункту — <code>window.open(url, '_blank')</code>, документация открывается в новой вкладке.</li>
+    <li>Иконка <code>↗</code> в углу кнопки заранее предупреждает пользователя, что переход внешний и не покинет основной поток работы.</li>
+    <li>Если в проекте останется только один Swagger (что вероятно, поскольку Receiver и Web Service — это два разных бинаря в разных доменах) — popover опускается и иконка превращается в простую ссылку.</li>
+  </ul>
+
+  <h3>Поведение остальных пунктов</h3>
+  <ul>
+    <li><b>Язык.</b> Применение мгновенное, без перезагрузки. Сохраняется в <code>users.lang</code> (PostgreSQL) и в Redis-сессии — см. §7.11. Серверные ответы API учитывают <code>Accept-Language</code>.</li>
+    <li><b>Тема.</b> Сохраняется в <code>localStorage</code>. «Системная» подписывается на <code>matchMedia('(prefers-color-scheme: dark)')</code>. Все экраны переключаются без перезагрузки через CSS-переменные.</li>
+    <li><b>Аватар.</b> Цвет — детерминированный градиент из логина (одинаковый между сессиями). Пункт «Audit log» виден только админам (<code>v-if="user.role === 'admin'"</code>); для viewer строка не отображается.</li>
+  </ul>
+
+  <h3>Раскладка</h3>
+  <ul>
+    <li>Порядок справа налево: <kbd>аватар</kbd> · <kbd>разделитель</kbd> · <kbd>Тема</kbd> · <kbd>Язык</kbd> · <kbd>Swagger</kbd> · <kbd>spacer</kbd>.</li>
+    <li>Расстояние между иконками — 4px, размер кнопки 34×34px, радиус скругления <code>--radius-md</code> (7px).</li>
+    <li>На мобильных (&lt; 768px) Swagger и Язык сворачиваются под одну иконку «⋯», тема и аватар остаются как есть.</li>
+    <li>Все dropdown'ы закрываются по клику вне, по <kbd>Esc</kbd>, по выбору пункта. Никаких backdrop-overlay'ов — обычные popover'ы.</li>
+  </ul>
+
+  <h3>Что Claude Code должен учесть</h3>
+  <ul>
+    <li>Использовать <code>DropdownMenu</code> / <code>Popover</code> из shadcn/ui — не писать свой dropdown с нуля.</li>
+    <li>Tooltip из shadcn (<code>TooltipProvider</code>) с задержкой 400–500 мс. Без задержки tooltip раздражает.</li>
+    <li>Доступность: <code>aria-label</code> для каждой иконки, <code>aria-expanded</code> на кнопке popover, <code>role="menu"</code> на dropdown.</li>
+    <li>Все четыре дропдауна — глобальные компоненты, монтируются один раз в <code>AppShell</code>. Не дублируются на каждой странице.</li>
+  </ul>
+</div>
+
+</body>
+</html>

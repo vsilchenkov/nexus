@@ -87,6 +87,17 @@ var (
 	ErrCHTemplateInUse                   = errors.New("domain: template is used by nodes and cannot be deleted")
 	ErrCHTemplateDefaultImmutable        = errors.New("domain: default template cannot be deleted")
 
+	// Host allowlist catalog (§23)
+	ErrHostNotFound          = errors.New("domain: host pattern not found")
+	ErrHostAlreadyExists     = errors.New("domain: host pattern already exists")
+	ErrHostInvalidKind       = errors.New("domain: host kind must be exact, wildcard or regex")
+	ErrHostPatternLength     = errors.New("domain: host pattern length must be 1..512")
+	ErrHostExactFormat       = errors.New("domain: exact host must be a valid hostname")
+	ErrHostWildcardFormat    = errors.New("domain: wildcard host must be *.<hostname>")
+	ErrHostRegexInvalid      = errors.New("domain: host regex does not compile")
+	ErrHostDescriptionLength = errors.New("domain: host description length must be <= 500")
+	ErrHostInUse             = errors.New("domain: host pattern is used by nodes and cannot be modified or deleted")
+
 	// Уведомления (§20)
 	ErrTelegramCronInvalid = errors.New("domain: invalid telegram cron expression")
 
