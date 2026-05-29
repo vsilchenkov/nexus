@@ -197,6 +197,7 @@ docker compose -f deploy/docker-compose.deps.yml up -d
 | Redis       | `localhost:6379`     | `sa`       | `I2MV5s` | default-юзер выключен через ACL → нужен `username`             |
 | ClickHouse  | `localhost:`**`19000`** | `default` | —        | native-порт проброшен как **19000** (не 9000); HTTP — 18123   |
 | Kafka       | `localhost:9092`     | —          | —        | брокер анонсирует себя как `kafka:9092` → нужен hosts-маппинг  |
+| Prometheus  | `localhost:`**`9099`** | —          | —        | опционален; в Docker, скрейпит нативные сервисы через `host.docker.internal`; включает дашборды панели (§21) и Telegram-алерты (§22). Хост-порт **9099** (9090/9091 заняты Sender'ом) |
 
 ### Шаг 1. Подготовить сервисы
 
@@ -297,6 +298,25 @@ git update-index --skip-worktree config/config_debug.yml
 вместо `--debug`. Для VS Code продублируйте нужные конфиги в [.vscode/launch.json](./.vscode/launch.json),
 заменив `"args": ["--debug"]` на `"args": ["--config", "config/config.local.yml"]`. Добавьте
 `config/config.local.yml` в `.gitignore`.
+
+### Шаг 2б. Prometheus (опционально — дашборды панели + Telegram-алерты)
+
+Дашборды Overview (§21) и Telegram-уведомления (§22, теперь считают ошибки из Prometheus) работают
+только при настроенном Prometheus. Если он есть в вашем `docker-compose.yml` сторонних сервисов
+(сервис `prometheus`, хост-порт **9099**, скрейпит нативные сервисы через `host.docker.internal` —
+см. пример в `prometheus.yml` рядом с compose), достаточно указать его URL Web-сервису.
+
+`config_debug.yml` читает `prometheus.url: ${PROMETHEUS_URL:}`, поэтому правка конфига не нужна —
+задайте переменную в `.env`:
+
+```dotenv
+PROMETHEUS_URL=http://localhost:9099
+```
+
+Без неё `url` остаётся пустым: панель деградирует (KPI/throughput скрыты, `prometheus_available=false`),
+а планировщик Telegram-уведомлений не запускается (warning в лог). Остальная разработка (узлы, логи,
+аудит) от этого не страдает. Проверка скрейпа: открыть `http://localhost:9099/targets` — таргеты
+`nexus-receiver`/`nexus-sender`/`nexus-web` должны быть `UP` (нативные сервисы при этом запущены).
 
 ### Шаг 3. Первый запуск и миграция
 
