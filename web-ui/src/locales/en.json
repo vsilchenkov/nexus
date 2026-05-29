@@ -1,5 +1,27 @@
 {
   "app": { "title": "Nexus" },
+  "ch_template": {
+    "not_found": "clickhouse template not found",
+    "already_exists": "a template with this name already exists",
+    "in_use": "the template is used by nodes and cannot be deleted",
+    "default_immutable": "the default template cannot be deleted",
+    "unavailable": "clickhouse is unavailable",
+    "name_format": "name may contain only latin letters, digits, space, hyphen and underscore, must start with a letter or digit and be at most 64 characters",
+    "description_length": "description must be at most 1000 characters",
+    "invalid_engine": "engine must be MergeTree",
+    "invalid_partition": "partitioning expression is not in the allowed set",
+    "empty_order_by": "order by must list at least one column",
+    "invalid_order_by": "order by may reference only required log columns",
+    "unknown_column": "a codec override references an unknown column",
+    "invalid_codec": "a column codec is invalid",
+    "invalid_index_name": "index name may contain only latin letters, digits and underscore",
+    "invalid_index_expr": "index expression must reference a required log column",
+    "invalid_index_type": "index type is invalid",
+    "invalid_index_granularity": "index granularity must be between 1 and 1000000",
+    "invalid_ttl_mode": "retention mode must be \"none\" or \"ttl_days\"",
+    "ttl_days_required": "retention days must be greater than 0 when TTL is enabled",
+    "invalid_table_name": "table name must be in db.table format"
+  },
   "auth": {
     "login": "Sign in to the panel",
     "login_button": "Sign in",

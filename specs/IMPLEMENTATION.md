@@ -265,6 +265,7 @@
 | `TeamProvisioner.CreateTable` / `VerifyTemplate` (live temp create+drop) | ✅ Phase F1.3 | [clickhouse/team_provisioner.go](../internal/web/adapter/out/clickhouse/team_provisioner.go) |
 | CHTemplateUsecase (CRUD+audit, delete-guard, verify) + handler + routes | ✅ Phase F1.4 | [usecase/ch_template.go](../internal/web/usecase/ch_template.go), [http/ch_template_handler.go](../internal/web/adapter/in/http/ch_template_handler.go) |
 | Авто-создание таблицы при Create/Update узла + DTO + UI (селектор + панель управления) | ✅ Phase F1.5 | [usecase/node.go](../internal/web/usecase/node.go) `provisionTable`, [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx), [CHTemplatesPanel.tsx](../web-ui/src/components/CHTemplatesPanel.tsx) |
+| Локализованные ошибки валидации шаблона (i18n-`code` + перевод в языке UI, inline-вывод у полей) | ✅ Phase F1.6 | [http/ch_template_handler.go](../internal/web/adapter/in/http/ch_template_handler.go) `chTemplateErrorCode`/`chTemplateValidationCode`, [i18n.go](../internal/platform/i18n/i18n.go) ключи `ch_template.*`, [CHTemplatesPanel.tsx](../web-ui/src/components/CHTemplatesPanel.tsx) |
 
 ### §20 Уведомления операторам (Telegram)
 
@@ -498,6 +499,18 @@ git-tracked — это источник embed; CI job `go-build` их не пе�
 "node.not_found" в backend выводит локализованный JSON-error, а в SPA рендерит
 этот error из ответа API без перевода. Если хотите больше «фронт-only» —
 скрывайте API-ошибку и показывайте локализованную SPA-строку.
+
+**Грабли с языком.** Backend выбирает язык по `Accept-Language` (язык браузера),
+а SPA — по `localStorage` (явный селектор). Они могут **не совпадать**: оператор
+переключил UI на RU, но браузер шлёт `en` → сырой API-error приходит на английском.
+Для ошибок шаблонов CH (§19) это решено гибридом: хендлер
+[ch_template_handler.go](../internal/web/adapter/in/http/ch_template_handler.go)
+отдаёт `{"error": <localized>, "code": "ch_template.name_format"}` —
+SPA переводит по стабильному `code` в языке UI (`t(code, {defaultValue: error})`),
+а `error` остаётся fallback'ом для не-UI клиентов и для динамических
+live-ошибок ClickHouse в `Verify` (у которых `code` нет). Ключи `ch_template.*`
+продублированы в обоих словарях. Этот же паттерн стоит применять к новым
+полевым ошибкам валидации, где важно совпадение с языком UI и привязка к полю.
 
 ### 4.10 Sentry tracing требует включения в конфиге
 

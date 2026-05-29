@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"nexus/internal/domain"
+	"nexus/internal/platform/i18n"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase"
 )
@@ -181,30 +182,31 @@ func (h *CHTemplateHandler) Verify(c *gin.Context) {
 	case err == nil:
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	case errors.Is(err, usecase.ErrCHUnavailable):
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "clickhouse unavailable"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": i18n.Translate(i18n.FromGin(c), "ch_template.unavailable")})
 	default:
-		// И статическая, и live-ошибка означают «шаблон невалиден» — отдаём в теле.
+		// Статическая ошибка валидации локализуема — отдаём i18n-код. Live-ошибка
+		// ClickHouse динамическая (текст из БД), переводу не подлежит — отдаём как есть.
+		if code, ok := chTemplateValidationCode(err); ok {
+			c.JSON(http.StatusOK, gin.H{"ok": false, "error": i18n.Translate(i18n.FromGin(c), code), "code": code})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"ok": false, "error": err.Error()})
 	}
 }
 
 func (h *CHTemplateHandler) replyDomainError(c *gin.Context, err error, op string) {
-	switch {
-	case errors.Is(err, domain.ErrCHTemplateNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "template not found"})
-	case errors.Is(err, domain.ErrCHTemplateAlreadyExists):
-		c.JSON(http.StatusConflict, gin.H{"error": "template with this name already exists"})
-	case errors.Is(err, domain.ErrCHTemplateInUse):
-		c.JSON(http.StatusConflict, gin.H{"error": "template is used by nodes"})
-	case errors.Is(err, domain.ErrCHTemplateDefaultImmutable):
-		c.JSON(http.StatusForbidden, gin.H{"error": "default template cannot be deleted"})
-	case errors.Is(err, usecase.ErrCHUnavailable):
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "clickhouse unavailable"})
-	case isCHTemplateValidationError(err):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-	default:
-		h.replyServerError(c, err, op)
+	if code, status, ok := chTemplateErrorCode(err); ok {
+		h.replyCode(c, status, code)
+		return
 	}
+	h.replyServerError(c, err, op)
+}
+
+// replyCode отвечает локализованным сообщением по i18n-ключу и дублирует
+// сам ключ в поле "code" — фронт переводит его в языке UI (он может
+// отличаться от Accept-Language), а "error" остаётся как fallback.
+func (h *CHTemplateHandler) replyCode(c *gin.Context, status int, code string) {
+	c.JSON(status, gin.H{"error": i18n.Translate(i18n.FromGin(c), code), "code": code})
 }
 
 func (h *CHTemplateHandler) replyServerError(c *gin.Context, err error, op string) {
@@ -213,20 +215,63 @@ func (h *CHTemplateHandler) replyServerError(c *gin.Context, err error, op strin
 	localizedError(c, http.StatusInternalServerError, "error.internal")
 }
 
-func isCHTemplateValidationError(err error) bool {
-	for _, target := range []error{
-		domain.ErrCHTemplateNameFormat, domain.ErrCHTemplateDescriptionLength,
-		domain.ErrCHTemplateInvalidEngine, domain.ErrCHTemplateInvalidPartition,
-		domain.ErrCHTemplateEmptyOrderBy, domain.ErrCHTemplateInvalidOrderBy,
-		domain.ErrCHTemplateUnknownColumn, domain.ErrCHTemplateInvalidCodec,
-		domain.ErrCHTemplateInvalidIndexName, domain.ErrCHTemplateInvalidIndexExpr,
-		domain.ErrCHTemplateInvalidIndexType, domain.ErrCHTemplateInvalidIndexGranularity,
-		domain.ErrCHTemplateInvalidTTLMode, domain.ErrCHTemplateTTLDaysRequired,
-		domain.ErrCHTemplateInvalidTableName,
-	} {
-		if errors.Is(err, target) {
-			return true
-		}
+// chTemplateErrorCode сопоставляет доменную ошибку каталога шаблонов с
+// i18n-ключом и HTTP-статусом. ok=false — ошибка не относится к шаблонам
+// (трактуется вызывающим как внутренняя ошибка сервера).
+func chTemplateErrorCode(err error) (code string, status int, ok bool) {
+	switch {
+	case errors.Is(err, domain.ErrCHTemplateNotFound):
+		return "ch_template.not_found", http.StatusNotFound, true
+	case errors.Is(err, domain.ErrCHTemplateAlreadyExists):
+		return "ch_template.already_exists", http.StatusConflict, true
+	case errors.Is(err, domain.ErrCHTemplateInUse):
+		return "ch_template.in_use", http.StatusConflict, true
+	case errors.Is(err, domain.ErrCHTemplateDefaultImmutable):
+		return "ch_template.default_immutable", http.StatusForbidden, true
+	case errors.Is(err, usecase.ErrCHUnavailable):
+		return "ch_template.unavailable", http.StatusServiceUnavailable, true
 	}
-	return false
+	if code, ok := chTemplateValidationCode(err); ok {
+		return code, http.StatusBadRequest, true
+	}
+	return "", 0, false
+}
+
+// chTemplateValidationCode выделяет статические ошибки валидации шаблона
+// (400 Bad Request) и их i18n-ключи. Используется и хендлером CRUD, и
+// Verify (где live-ошибки ClickHouse, наоборот, отдаются как есть).
+func chTemplateValidationCode(err error) (string, bool) {
+	switch {
+	case errors.Is(err, domain.ErrCHTemplateNameFormat):
+		return "ch_template.name_format", true
+	case errors.Is(err, domain.ErrCHTemplateDescriptionLength):
+		return "ch_template.description_length", true
+	case errors.Is(err, domain.ErrCHTemplateInvalidEngine):
+		return "ch_template.invalid_engine", true
+	case errors.Is(err, domain.ErrCHTemplateInvalidPartition):
+		return "ch_template.invalid_partition", true
+	case errors.Is(err, domain.ErrCHTemplateEmptyOrderBy):
+		return "ch_template.empty_order_by", true
+	case errors.Is(err, domain.ErrCHTemplateInvalidOrderBy):
+		return "ch_template.invalid_order_by", true
+	case errors.Is(err, domain.ErrCHTemplateUnknownColumn):
+		return "ch_template.unknown_column", true
+	case errors.Is(err, domain.ErrCHTemplateInvalidCodec):
+		return "ch_template.invalid_codec", true
+	case errors.Is(err, domain.ErrCHTemplateInvalidIndexName):
+		return "ch_template.invalid_index_name", true
+	case errors.Is(err, domain.ErrCHTemplateInvalidIndexExpr):
+		return "ch_template.invalid_index_expr", true
+	case errors.Is(err, domain.ErrCHTemplateInvalidIndexType):
+		return "ch_template.invalid_index_type", true
+	case errors.Is(err, domain.ErrCHTemplateInvalidIndexGranularity):
+		return "ch_template.invalid_index_granularity", true
+	case errors.Is(err, domain.ErrCHTemplateInvalidTTLMode):
+		return "ch_template.invalid_ttl_mode", true
+	case errors.Is(err, domain.ErrCHTemplateTTLDaysRequired):
+		return "ch_template.ttl_days_required", true
+	case errors.Is(err, domain.ErrCHTemplateInvalidTableName):
+		return "ch_template.invalid_table_name", true
+	}
+	return "", false
 }

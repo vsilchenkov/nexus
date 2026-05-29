@@ -22,6 +22,16 @@ type Editor = {
   is_default: boolean;
 };
 
+// ApiError — нормализованная ошибка API: стабильный i18n-код (если бэкенд
+// его прислал) + локализованный текст-fallback. Фронт предпочитает перевод
+// по code в языке UI, иначе показывает text.
+type ApiError = { code?: string; text: string };
+
+function apiError(e: any): ApiError {
+  const d = e?.response?.data;
+  return { code: d?.code, text: d?.error ?? String(e) };
+}
+
 function emptyEditor(): Editor {
   return {
     id: "",
@@ -48,8 +58,8 @@ export function CHTemplatesPanel() {
   });
 
   const [editor, setEditor] = useState<Editor | null>(null);
-  const [verify, setVerify] = useState<{ ok: boolean; error?: string } | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const [verify, setVerify] = useState<{ ok: boolean; error?: string; code?: string } | null>(null);
+  const [err, setErr] = useState<ApiError | null>(null);
 
   const save = useMutation({
     mutationFn: (e: Editor) => {
@@ -62,22 +72,25 @@ export function CHTemplatesPanel() {
       setVerify(null);
       setErr(null);
     },
-    onError: (e: any) => setErr(e?.response?.data?.error ?? String(e)),
+    onError: (e: any) => setErr(apiError(e)),
   });
 
   const remove = useMutation({
     mutationFn: (id: string) => api.del(`/api/ch-templates/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["ch-templates"] }),
-    onError: (e: any) => setErr(e?.response?.data?.error ?? String(e)),
+    onError: (e: any) => setErr(apiError(e)),
   });
 
   const doVerify = useMutation({
     mutationFn: (e: Editor) =>
-      api.post<{ ok: boolean; error?: string }>("/api/ch-templates/verify", {
+      api.post<{ ok: boolean; error?: string; code?: string }>("/api/ch-templates/verify", {
         name: e.name || "draft", description: e.description, spec: e.spec, is_default: e.is_default,
       }),
     onSuccess: (r) => setVerify(r),
-    onError: (e: any) => setVerify({ ok: false, error: e?.response?.data?.error ?? String(e) }),
+    onError: (e: any) => {
+      const err = apiError(e);
+      setVerify({ ok: false, error: err.text, code: err.code });
+    },
   });
 
   function openEdit(tpl: CHTemplate) {
@@ -172,9 +185,9 @@ function TemplateEditor(props: {
   onVerify: () => void;
   onCancel: () => void;
   verifying: boolean;
-  verify: { ok: boolean; error?: string } | null;
+  verify: { ok: boolean; error?: string; code?: string } | null;
   saving: boolean;
-  err: string | null;
+  err: ApiError | null;
 }) {
   const { t } = useTranslation();
   const { editor: e, setEditor, patchSpec, verify } = props;
@@ -182,16 +195,35 @@ function TemplateEditor(props: {
   const indexes = e.spec.indexes ?? [];
   const inp = "w-full px-2 py-1.5 bg-bg-muted rounded-md outline-none border border-bg-muted focus:border-accent text-sm";
 
+  // Текст ошибки: переводим по стабильному code (язык UI), иначе берём
+  // присланный бэкендом текст. Ошибки конкретных полей (название/описание)
+  // показываем рядом с полем, остальные — баннером сверху редактора.
+  const errMsg = props.err ? (props.err.code ? t(props.err.code, { defaultValue: props.err.text }) : props.err.text) : null;
+  const nameErr = props.err?.code === "ch_template.name_format" ? errMsg : null;
+  const descErr = props.err?.code === "ch_template.description_length" ? errMsg : null;
+  const bannerErr = errMsg && !nameErr && !descErr ? errMsg : null;
+
   return (
     <div className="border border-bg-muted rounded-md p-4 space-y-3 bg-bg-elev">
+      {bannerErr && <p className="text-sm text-err">{bannerErr}</p>}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <label className="space-y-1">
           <span className="text-xs text-fg-muted">{t("settings.clickhouse.templates.name")}</span>
-          <input className={inp} value={e.name} onChange={(ev) => setEditor({ ...e, name: ev.target.value })} />
+          <input
+            className={`${inp} ${nameErr ? "border-err focus:border-err" : ""}`}
+            value={e.name}
+            onChange={(ev) => setEditor({ ...e, name: ev.target.value })}
+          />
+          {nameErr && <span className="block text-xs text-err">{nameErr}</span>}
         </label>
         <label className="space-y-1">
           <span className="text-xs text-fg-muted">{t("settings.clickhouse.templates.description")}</span>
-          <input className={inp} value={e.description} onChange={(ev) => setEditor({ ...e, description: ev.target.value })} />
+          <input
+            className={`${inp} ${descErr ? "border-err focus:border-err" : ""}`}
+            value={e.description}
+            onChange={(ev) => setEditor({ ...e, description: ev.target.value })}
+          />
+          {descErr && <span className="block text-xs text-err">{descErr}</span>}
         </label>
         <label className="space-y-1">
           <span className="text-xs text-fg-muted">{t("settings.clickhouse.templates.partition_by")}</span>
@@ -276,9 +308,14 @@ function TemplateEditor(props: {
         ))}
       </div>
 
-      {props.err && <p className="text-sm text-err">{props.err}</p>}
       {verify && verify.ok && <p className="text-sm text-ok">{t("settings.clickhouse.templates.verify_ok")}</p>}
-      {verify && !verify.ok && <p className="text-sm text-err">{t("settings.clickhouse.templates.verify_failed", { error: verify.error })}</p>}
+      {verify && !verify.ok && (
+        <p className="text-sm text-err">
+          {t("settings.clickhouse.templates.verify_failed", {
+            error: verify.code ? t(verify.code, { defaultValue: verify.error ?? "" }) : verify.error,
+          })}
+        </p>
+      )}
 
       <div className="flex items-center gap-2">
         <button type="button" onClick={props.onSave} disabled={props.saving} className="bg-accent hover:bg-accent-hover px-3 py-1.5 rounded-md text-sm disabled:opacity-50">
