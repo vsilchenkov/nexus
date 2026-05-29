@@ -66,4 +66,9 @@ type PromMetrics interface {
 	// NodeThroughput — per-node in/out/errors за окно, ключ — path узла
 	// (метка node в nexus_requests_total).
 	NodeThroughput(ctx context.Context, window time.Duration) (map[string]NodeThroughput, error)
+
+	// NodeErrors — per-node число «незавершённых» вызовов (done=0) за окно
+	// из nexus_request_incomplete_total. Ключ — path узла (метка node).
+	// Используется планировщиком Telegram-алертов (§22) вместо ClickHouse.
+	NodeErrors(ctx context.Context, window time.Duration) (map[string]float64, error)
 }

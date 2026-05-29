@@ -122,6 +122,14 @@ func (c *Client) KafkaQueue(ctx context.Context) (float64, error) {
 	return c.instantScalar(ctx, `sum(nexus_kafka_lag)`)
 }
 
+// NodeErrors — per-node число «незавершённых» вызовов (done=0) за окно
+// из nexus_request_incomplete_total (§22, Telegram-алерты).
+func (c *Client) NodeErrors(ctx context.Context, window time.Duration) (map[string]float64, error) {
+	return c.instantByNode(ctx,
+		fmt.Sprintf(`sum by (node)(increase(nexus_request_incomplete_total{service="sender"}[%s]))`,
+			promRange(window)))
+}
+
 // NodeThroughput — per-node in/out/errors за окно (ключ — метка node = path).
 func (c *Client) NodeThroughput(ctx context.Context, window time.Duration) (map[string]port.NodeThroughput, error) {
 	w := promRange(window)

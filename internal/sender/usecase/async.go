@@ -155,6 +155,9 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 			WithLabelValues("requestAsync", env.NodePath, strconv.FormatInt(int64(out.StatusCode), 10)).Inc()
 		p.metrics.RequestDuration.
 			WithLabelValues("requestAsync", env.NodePath).Observe(float64(out.DurationMs) / 1000.0)
+		if out.StatusCode < 200 || out.StatusCode >= 300 {
+			p.metrics.RequestsIncompleteTotal.WithLabelValues("requestAsync", env.NodePath).Inc()
+		}
 	}
 
 	if out.StatusCode >= 200 && out.StatusCode < 300 {

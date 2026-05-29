@@ -38,9 +38,10 @@ type Metrics struct {
 	registry *prometheus.Registry
 	service  string
 
-	RequestsTotal   *prometheus.CounterVec
-	RequestDuration *prometheus.HistogramVec
-	KafkaLag        *prometheus.GaugeVec
+	RequestsTotal           *prometheus.CounterVec
+	RequestsIncompleteTotal *prometheus.CounterVec
+	RequestDuration         *prometheus.HistogramVec
+	KafkaLag                *prometheus.GaugeVec
 	CHBufferSize    *prometheus.GaugeVec
 	CHErrorsTotal   *prometheus.CounterVec
 	CHDroppedTotal  *prometheus.CounterVec
@@ -69,6 +70,15 @@ func New(service string) *Metrics {
 			Help:        "Total Nexus requests by method (request/requestAsync), node path and resulting HTTP status.",
 			ConstLabels: constLabels,
 		}, []string{"method", "node", "status"}),
+
+		// §22: «незавершённые» исходящие вызовы Sender (done=0): статус не 2xx —
+		// сетевой сбой (0), 3xx/4xx/5xx, circuit-breaker. Единый сигнал для
+		// Telegram-алертов, эквивалентный ClickHouse-условию CountErrors.
+		RequestsIncompleteTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "nexus_request_incomplete_total",
+			Help:        "Sender outbound calls that did not complete successfully (non-2xx) by method and node path.",
+			ConstLabels: constLabels,
+		}, []string{"method", "node"}),
 
 		RequestDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:        "nexus_request_duration_seconds",
@@ -136,6 +146,7 @@ func New(service string) *Metrics {
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 		m.RequestsTotal,
+		m.RequestsIncompleteTotal,
 		m.RequestDuration,
 		m.KafkaLag,
 		m.CHBufferSize,

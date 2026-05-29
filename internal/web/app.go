@@ -236,12 +236,19 @@ func (a *App) Start(ctx context.Context) error {
 		// Manager.Reload swap'нет conn — LogReaderCH сразу пойдёт через новый.
 		reloadSub.Register(reloader.SectionClickHouse,
 			bootstrap.ClickHouseReloader(a.pg, a.cfg, a.chMgr, nil, a.logger))
+	} else {
+		// CH-клиент недоступен — но overlay в cfg всё равно полезно обновлять,
+		// чтобы при следующем рестарте подхватились свежие значения.
+		reloadSub.Register(reloader.SectionClickHouse,
+			bootstrap.ClickHouseOverlayReloader(a.pg, a.cfg, a.logger))
+	}
 
-		// Планировщик Telegram-уведомлений (§20). Требует LogReader (CountErrors),
-		// поэтому живёт в CH-блоке. Расписание — из app_settings; пересоздаётся
-		// при hot-reload секции notifications.
+	// Планировщик Telegram-уведомлений (§22): ошибки берутся из Prometheus
+	// (метрика nexus_request_incomplete_total) — единый источник с графиками.
+	// Требует Prometheus; без него уведомления не запускаются.
+	if promMetrics != nil {
 		notifScheduler := usecase.NewNotificationScheduler(
-			appSettingsUC, teamRepo, nodeRepo, logReader, telegramClient,
+			appSettingsUC, teamRepo, nodeRepo, promMetrics, telegramClient,
 			rediscache.NewNotifLock(a.redis), rediscache.NewNotifCheckpoint(a.redis), a.logger,
 		)
 		reloadSub.Register(reloader.SectionNotifications, func(ctx context.Context) error {
@@ -250,10 +257,7 @@ func (a *App) Start(ctx context.Context) error {
 		})
 		go notifScheduler.Run(ctx)
 	} else {
-		// CH-клиент недоступен — но overlay в cfg всё равно полезно обновлять,
-		// чтобы при следующем рестарте подхватились свежие значения.
-		reloadSub.Register(reloader.SectionClickHouse,
-			bootstrap.ClickHouseOverlayReloader(a.pg, a.cfg, a.logger))
+		a.logger.Warn("telegram notifications disabled: prometheus not configured (§22)")
 	}
 	go reloadSub.Run(ctx)
 
