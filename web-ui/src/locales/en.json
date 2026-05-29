@@ -258,6 +258,28 @@
       "delete": "Delete",
       "empty": "No tokens yet"
     },
+    "allowed_hosts": {
+      "title": "Allowed hosts",
+      "subtitle": "Shared catalog for dynamic URLs (url_mode=from_request). Nodes pick patterns from this list; a pattern in use cannot be deleted.",
+      "add": "Add host",
+      "search": "Search by pattern or description…",
+      "empty": "Catalog is empty",
+      "filter_all": "All",
+      "used": "{{count}} node(s)",
+      "not_used": "not used",
+      "in_use_tip": "used by nodes — detach first",
+      "confirm_delete": "Delete pattern {{pattern}}?",
+      "col": { "pattern": "Pattern", "kind": "Kind", "description": "Description", "usage": "Usage" },
+      "kind": { "exact": "Exact", "wildcard": "Wildcard", "regex": "Regex" },
+      "field": { "kind": "Pattern kind", "pattern": "Pattern", "description": "Description", "test_urls": "Test URLs (one per line)" },
+      "dialog": {
+        "new": "Add allowed host",
+        "edit": "Edit allowed host",
+        "subtitle": "Appears in the catalog for all nodes of the installation",
+        "create": "Create"
+      },
+      "preview": { "allow": "Will allow", "block": "Will block", "invalid": "Invalid pattern — fix it to see the preview" }
+    },
     "language": {
       "title": "UI language",
       "subtitle": "Applies to the current user only. Takes effect immediately.",
