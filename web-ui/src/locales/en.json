@@ -36,7 +36,11 @@
     "settings": "Settings",
     "team": "Team",
     "language": "Language",
-    "theme": "Theme"
+    "theme": "Theme",
+    "api_docs": "API documentation",
+    "api_docs_tip": "Swagger API · opens in a new tab",
+    "api_docs_receiver": "for external clients",
+    "api_docs_web": "admin contract + API tokens"
   },
   "role": {
     "admin": "full access",
