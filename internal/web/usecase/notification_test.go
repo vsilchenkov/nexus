@@ -196,7 +196,7 @@ func TestNotifReschedule_InvalidCron(t *testing.T) {
 
 func TestFormatErrorMessages_Chunks(t *testing.T) {
 	t.Parallel()
-	var nodes []nodeErrStat
+	nodes := make([]nodeErrStat, 0, 300)
 	for range 300 {
 		nodes = append(nodes, nodeErrStat{path: strings.Repeat("p", 20), table: "nexus_default.t", count: 1})
 	}

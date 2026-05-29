@@ -5,9 +5,6 @@ import (
 	"time"
 )
 
-//go:fix inline
-func ptrTime(t time.Time) *time.Time { return new(t) }
-
 func TestAPIToken_IsActive(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC)

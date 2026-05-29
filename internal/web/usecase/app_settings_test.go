@@ -182,12 +182,6 @@ func TestAppSettingsUsecase_UpdateMergesAndAudits(t *testing.T) {
 	assert.Equal(t, []string{"sentry"}, pub.sections)
 }
 
-//go:fix inline
-func strPtr(s string) *string { return new(s) }
-
-//go:fix inline
-func boolPtr(b bool) *bool { return new(b) }
-
 func TestAppSettings_GetMasksBotToken(t *testing.T) {
 	t.Parallel()
 	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{
