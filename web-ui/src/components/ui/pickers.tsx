@@ -99,8 +99,11 @@ export function Toggle({
       >
         <span
           className={cn(
-            "absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform",
-            checked ? "translate-x-[18px]" : "translate-x-0.5",
+            // left-0.5 фиксирует базу бегунка у левого края трека; без явного
+            // left отсчёт идёт от статической позиции (≈центр трека), и
+            // translate-x-[18px] выгонял бегунок за трек на текст подписи.
+            "absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white transition-transform",
+            checked ? "translate-x-4" : "translate-x-0",
           )}
         />
       </button>
