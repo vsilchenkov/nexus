@@ -16,9 +16,10 @@ import {
   ShieldAlert,
 } from "lucide-react";
 
-import { api, type Node, type CHTemplate } from "../api/client";
+import { api, type Node, type CHTemplate, type HostAllowlistEntry } from "../api/client";
 import { DryRunDialog } from "../components/DryRunDialog";
 import { DeleteNodeDialog } from "../components/node/DeleteNodeDialog";
+import { AllowedHostsField } from "../components/node/AllowedHostsField";
 import {
   Button,
   Card,
@@ -103,6 +104,9 @@ export default function NodeSettings() {
   });
 
   const [form, setForm] = useState<Form>(emptyForm);
+  // §23: для нового узла выбранные хосты копятся локально и привязываются после
+  // создания (allowlist — производный снимок каталога, управляется link/unlink).
+  const [pendingHosts, setPendingHosts] = useState<HostAllowlistEntry[]>([]);
   const [headerInput, setHeaderInput] = useState("");
   const [showDryRun, setShowDryRun] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
@@ -118,7 +122,15 @@ export default function NodeSettings() {
   }, [existing.data]);
 
   const save = useMutation({
-    mutationFn: () => (isNew ? api.post("/api/nodes", form) : api.put(`/api/nodes/${id}`, form)),
+    mutationFn: async () => {
+      if (!isNew) return api.put(`/api/nodes/${id}`, form);
+      // §23: создаём узел, затем привязываем выбранные паттерны к нему.
+      const node = await api.post<Node>("/api/nodes", form);
+      for (const h of pendingHosts) {
+        await api.post(`/api/nodes/${node.id}/allowed-hosts`, { host_id: h.id });
+      }
+      return node;
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["nodes"] });
       navigate("/");
@@ -246,6 +258,20 @@ export default function NodeSettings() {
                 <span className="font-mono text-[11px] text-fg-subtle">
                   ?{form.url_param_name}=https://api.partner.com/hook
                 </span>
+              </Field>
+            )}
+            {form.url_mode === "from_request" && (
+              <Field
+                label={t("node.allowed_hosts.label")}
+                hint={t("node.allowed_hosts.hint_short")}
+                className="mt-3"
+              >
+                <AllowedHostsField
+                  nodeId={id}
+                  urlMode={form.url_mode}
+                  pending={pendingHosts}
+                  onPendingChange={setPendingHosts}
+                />
               </Field>
             )}
             <div className="mt-3 grid grid-cols-2 gap-3">

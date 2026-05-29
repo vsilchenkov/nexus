@@ -160,6 +160,16 @@
       "preview": "Route preview",
       "ssrf_warn": "\"From request\" mode: fill the host allowlist to prevent SSRF. Do not leave it empty in production."
     },
+    "allowed_hosts": {
+      "label": "Allowed hosts",
+      "hint_short": "patterns from the catalog; a URL outside the list → 403",
+      "add_placeholder": "Add a host from the catalog…",
+      "search": "Search the catalog…",
+      "not_found": "Nothing found. Create patterns in Settings → Allowed hosts.",
+      "hint": "Manage the catalog in Settings → Allowed hosts.",
+      "ssrf_title": "SSRF risk · any URL allowed",
+      "ssrf_desc": "Without an allowlist a client can make the bus call internal services. Add at least one pattern or use Static mode."
+    },
     "delete": {
       "title": "Delete node",
       "confirm": "Delete permanently",
