@@ -88,12 +88,10 @@ func TestSubscriber_Register_ConcurrentSafe(t *testing.T) {
 	s := reloader.NewSubscriber(nil, logging.NewNoop())
 
 	var wg sync.WaitGroup
-	for i := 0; i < 20; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 20 {
+		wg.Go(func() {
 			s.Register(reloader.SectionSentry, func(context.Context) error { return nil })
-		}()
+		})
 	}
 	wg.Wait()
 }

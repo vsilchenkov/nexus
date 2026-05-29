@@ -392,8 +392,8 @@ func rebaseCHTable(full, newDB string) string {
 	if full == "" {
 		return ""
 	}
-	if i := strings.IndexByte(full, '.'); i >= 0 {
-		return newDB + "." + full[i+1:]
+	if _, after, ok := strings.Cut(full, "."); ok {
+		return newDB + "." + after
 	}
 	return newDB + "." + full
 }

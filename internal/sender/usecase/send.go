@@ -148,10 +148,7 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		attempts  []attempt
 		backoffMs int32
 	)
-	maxAttempts := in.RetryCount + 1
-	if maxAttempts < 1 {
-		maxAttempts = 1
-	}
+	maxAttempts := max(in.RetryCount+1, 1)
 	for n := int32(1); n <= maxAttempts; n++ {
 		if backoffMs > 0 {
 			time.Sleep(time.Duration(backoffMs) * time.Millisecond)

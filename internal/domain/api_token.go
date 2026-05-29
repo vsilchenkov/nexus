@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 // APIToken — read-only токен для интеграций (§7.14).
 // Само значение токена в БД не хранится — только token_hash (SHA-256).
@@ -43,10 +46,5 @@ func (t *APIToken) IsActive(now time.Time) bool {
 
 // HasScope — true, если у токена есть указанный scope.
 func (t *APIToken) HasScope(scope string) bool {
-	for _, s := range t.Scopes {
-		if s == scope {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(t.Scopes, scope)
 }

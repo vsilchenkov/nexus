@@ -36,7 +36,6 @@ func TestIsSafePartition(t *testing.T) {
 		{"dot rejected", "2024.05", false},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			if got := isSafePartition(c.in); got != c.want {
@@ -73,7 +72,6 @@ func TestSplitDBTable(t *testing.T) {
 		{"a.b.c", "a", "b.c", true},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.in, func(t *testing.T) {
 			t.Parallel()
 			db, tbl, ok := splitDBTable(c.in)

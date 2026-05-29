@@ -149,7 +149,7 @@ func dumpMetrics(t *testing.T, h http.Handler) string {
 func findServiceLabel(t *testing.T, h http.Handler) string {
 	t.Helper()
 	dump := dumpMetrics(t, h)
-	for _, line := range strings.Split(dump, "\n") {
+	for line := range strings.SplitSeq(dump, "\n") {
 		if !strings.HasPrefix(line, "nexus_requests_total{") {
 			continue
 		}
@@ -170,7 +170,7 @@ func findServiceLabel(t *testing.T, h http.Handler) string {
 
 func requireSample(t *testing.T, dump, want string) {
 	t.Helper()
-	for _, line := range strings.Split(dump, "\n") {
+	for line := range strings.SplitSeq(dump, "\n") {
 		if strings.HasPrefix(line, want) {
 			return
 		}

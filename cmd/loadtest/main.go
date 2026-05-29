@@ -24,7 +24,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"sort"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -176,7 +176,7 @@ func (c *client) login(ctx context.Context, login, password string) error {
 
 func (c *client) createNodes(ctx context.Context, n int, targetURL string) ([]string, error) {
 	paths := make([]string, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		path := fmt.Sprintf("loadtest/node-%d-%d", time.Now().UnixNano(), i)
 		body, _ := json.Marshal(map[string]any{
 			"path":               path,
@@ -285,22 +285,17 @@ func runLoad(ctx context.Context, c *client, paths []string, f flags) *report {
 	// Простейший pacing: один тикёр на target_rps, рассылающий задания
 	// пулу из N воркеров. Не идеален для high-rps (>10k), для 500
 	// достаточно.
-	interval := time.Second / time.Duration(f.TargetRPS)
-	if interval < time.Microsecond {
-		interval = time.Microsecond
-	}
+	interval := max(time.Second/time.Duration(f.TargetRPS), time.Microsecond)
 
 	jobs := make(chan struct{}, f.TargetRPS*2)
 	workerCount := 200
 	var wg sync.WaitGroup
-	for i := 0; i < workerCount; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range workerCount {
+		wg.Go(func() {
 			for range jobs {
 				doRequest(c, paths, f, res)
 			}
-		}()
+		})
 	}
 
 	tick := time.NewTicker(interval)
@@ -361,10 +356,7 @@ func percentileMs(values []time.Duration, p float64) float64 {
 	if len(values) == 0 {
 		return 0
 	}
-	sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
-	idx := int(float64(len(values))*p) - 1
-	if idx < 0 {
-		idx = 0
-	}
+	slices.Sort(values)
+	idx := max(int(float64(len(values))*p)-1, 0)
 	return float64(values[idx].Microseconds()) / 1000.0
 }

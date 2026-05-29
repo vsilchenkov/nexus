@@ -4,6 +4,7 @@ package grpc
 
 import (
 	"context"
+	"maps"
 	"strconv"
 
 	"nexus/internal/domain"
@@ -27,9 +28,7 @@ func NewServer(uc *usecase.SendUsecase, m *metrics.Metrics, logger logging.Logge
 
 func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1.SendResponse, error) {
 	headers := make(map[string]string, len(req.GetHeaders())+1)
-	for k, v := range req.GetHeaders() {
-		headers[k] = v
-	}
+	maps.Copy(headers, req.GetHeaders())
 	if a := req.GetAuth(); a != nil && a.GetAuthorizationHeader() != "" {
 		headers["Authorization"] = a.GetAuthorizationHeader()
 	}

@@ -24,7 +24,6 @@ func TestRootMethodFromPath(t *testing.T) {
 		{"", ""},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.path, func(t *testing.T) {
 			t.Parallel()
 			if got := rootMethodFromPath(c.path); got != c.want {
@@ -50,7 +49,6 @@ func TestNodePathFromGin(t *testing.T) {
 		{"nested deep", "/a/b/c", "a/b/c"},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())

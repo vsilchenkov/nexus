@@ -140,7 +140,7 @@ func validCHCodec(codec string) bool {
 	if codec == "" {
 		return false
 	}
-	for _, tok := range strings.Split(codec, ",") {
+	for tok := range strings.SplitSeq(codec, ",") {
 		if !chCodecTokenPattern.MatchString(strings.TrimSpace(tok)) {
 			return false
 		}

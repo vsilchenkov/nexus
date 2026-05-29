@@ -137,7 +137,6 @@ func TestRequireRole(t *testing.T) {
 		{"no session → 403", nil, domain.UserRoleAdmin, 403},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			gin.SetMode(gin.TestMode)

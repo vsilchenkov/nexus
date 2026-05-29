@@ -80,7 +80,7 @@ func TestL2_FreshHit(t *testing.T) {
 	require.Equal(t, "foo", n.Path)
 	require.Equal(t, 1, inner.Calls(), "first call hits inner")
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		n, err := r.Get(context.Background(), "", "foo")
 		require.NoError(t, err)
 		require.Equal(t, "foo", n.Path)
@@ -97,7 +97,7 @@ func TestL2_NotFoundIsNotCached(t *testing.T) {
 	mx := &stubMetrics{}
 	r := NewL2(inner, L2Config{Enabled: true, Size: 10, TTL: time.Minute, StaleTTL: time.Minute}, logging.NewNoop(), mx)
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err := r.Get(context.Background(), "", "missing")
 		require.ErrorIs(t, err, domain.ErrNodeNotFound)
 	}

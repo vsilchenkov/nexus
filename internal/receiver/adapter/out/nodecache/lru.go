@@ -115,10 +115,7 @@ func (c *LRU[V]) GetStale(key string) (value V, fresh bool, age time.Duration, o
 	entry := el.Value.(*lruEntry[V])
 	now := c.clock.Now()
 	fresh = !now.After(entry.expiresAt)
-	age = now.Sub(entry.expiresAt.Add(-c.ttl))
-	if age < 0 {
-		age = 0
-	}
+	age = max(now.Sub(entry.expiresAt.Add(-c.ttl)), 0)
 	if fresh {
 		c.order.MoveToFront(el)
 	}

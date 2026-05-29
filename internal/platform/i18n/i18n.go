@@ -44,7 +44,7 @@ func FromContext(ctx context.Context) Lang {
 // Возвращает первый распознанный язык (ru или en); если ничего не
 // распознано — DefaultLang.
 func ParseAcceptLanguage(header string) Lang {
-	for _, part := range strings.Split(header, ",") {
+	for part := range strings.SplitSeq(header, ",") {
 		p := strings.TrimSpace(part)
 		// убираем q-параметр
 		if i := strings.IndexByte(p, ';'); i >= 0 {

@@ -224,8 +224,8 @@ func readBody(c *gin.Context, max int) ([]byte, error) {
 
 func clientIP(r *http.Request) string {
 	if xf := r.Header.Get("X-Forwarded-For"); xf != "" {
-		if i := strings.Index(xf, ","); i >= 0 {
-			return strings.TrimSpace(xf[:i])
+		if before, _, ok := strings.Cut(xf, ","); ok {
+			return strings.TrimSpace(before)
 		}
 		return strings.TrimSpace(xf)
 	}
