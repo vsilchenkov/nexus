@@ -127,6 +127,12 @@ var translations = map[Lang]map[string]string{
 		"host.wildcard_format":    "wildcard host must look like *.example.com",
 		"host.regex_invalid":      "regex does not compile",
 		"host.description_length": "description must be at most 500 characters",
+		// headers catalog (§24)
+		"header.not_found":          "header not found",
+		"header.already_exists":     "a header with this name already exists",
+		"header.name_length":        "header name length must be between 1 and 100 characters",
+		"header.name_format":        "header name must be a valid RFC 7230 token (no spaces)",
+		"header.description_length": "description must be at most 500 characters",
 		// ch-templates (§19)
 		"ch_template.not_found":                 "clickhouse template not found",
 		"ch_template.already_exists":            "a template with this name already exists",
@@ -179,6 +185,12 @@ var translations = map[Lang]map[string]string{
 		"host.wildcard_format":    "wildcard-хост должен иметь вид *.example.com",
 		"host.regex_invalid":      "регулярное выражение не компилируется",
 		"host.description_length": "описание должно быть не длиннее 500 символов",
+		// headers catalog (§24)
+		"header.not_found":          "заголовок не найден",
+		"header.already_exists":     "заголовок с таким именем уже существует",
+		"header.name_length":        "длина имени заголовка должна быть от 1 до 100 символов",
+		"header.name_format":        "имя заголовка должно быть валидным RFC 7230 token (без пробелов)",
+		"header.description_length": "описание должно быть не длиннее 500 символов",
 		// ch-templates (§19)
 		"ch_template.not_found":                 "шаблон ClickHouse не найден",
 		"ch_template.already_exists":            "шаблон с таким названием уже существует",

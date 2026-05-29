@@ -59,6 +59,9 @@ const (
 	ActionTeamMemberRemove = "team.member.remove"
 	ActionTeamMemberRole   = "team.member.role"
 
+	// Справочник заголовков (§24).
+	ActionHeaderCreate = "header.create"
+
 	// Каталог разрешённых хостов (§23).
 	ActionHostCreate = "host.create"
 	ActionHostUpdate = "host.update"

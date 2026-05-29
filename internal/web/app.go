@@ -187,6 +187,13 @@ func (a *App) Start(ctx context.Context) error {
 	)
 	hostAllowlistHandler := httpadapter.NewHostAllowlistHandler(hostAllowlistUC, a.logger)
 
+	// Справочник заголовков (§24). usage_count считается on-read из
+	// nodes.forward_headers; отдельной таблицы привязки нет.
+	headerCatalogUC := usecase.NewHeaderCatalogUsecase(
+		pgrepo.NewHeaderCatalogRepoPg(a.pg, a.logger), auditUC, a.logger,
+	)
+	headerCatalogHandler := httpadapter.NewHeaderCatalogHandler(headerCatalogUC, a.logger)
+
 	dryRunUC := usecase.NewDryRunUsecase(auditUC, a.logger)
 	dryRunHandler := httpadapter.NewDryRunHandler(dryRunUC, a.logger)
 
@@ -298,6 +305,7 @@ func (a *App) Start(ctx context.Context) error {
 		Orphan:        orphanHandler,
 		CHTemplate:    chTemplateHandler,
 		HostAllowlist: hostAllowlistHandler,
+		HeaderCatalog: headerCatalogHandler,
 	}, mw)
 
 	// SPA fallback: всё, что не API/инфра — отдаём index.html (§17.1 ТЗ).

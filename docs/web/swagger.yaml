@@ -472,6 +472,30 @@ definitions:
     - login
     - role
     type: object
+  internal_web_adapter_in_http.headerRequest:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+    type: object
+  internal_web_adapter_in_http.headerResponse:
+    properties:
+      created_at:
+        type: string
+      created_by:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      updated_at:
+        type: string
+      usage_count:
+        type: integer
+    type: object
   internal_web_adapter_in_http.hostPreviewRequest:
     properties:
       kind:
@@ -1362,6 +1386,60 @@ paths:
       summary: Проверить шаблон CH-таблицы (admin, §19.4).
       tags:
       - ch-templates
+  /api/headers:
+    get:
+      parameters:
+      - description: prefix поиска по имени; пусто = топ-используемые
+        in: query
+        name: q
+        type: string
+      - description: лимит (по умолчанию 20)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: 'Справочник заголовков: автодополнение (§24).'
+      tags:
+      - headers
+    post:
+      consumes:
+      - application/json
+      description: 'Идемпотентно по case-insensitive имени: повтор вернёт существующую
+        запись (200), а не ошибку.'
+      parameters:
+      - description: header
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.headerRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.headerResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Создать заголовок в справочнике (admin, §24).
+      tags:
+      - headers
   /api/logs/{id}/replay:
     post:
       consumes:

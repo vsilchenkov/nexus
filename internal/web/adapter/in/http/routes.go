@@ -20,6 +20,7 @@ type Handlers struct {
 	Orphan        *OrphanHandler
 	CHTemplate    *CHTemplateHandler
 	HostAllowlist *HostAllowlistHandler
+	HeaderCatalog *HeaderCatalogHandler
 }
 
 // Middlewares — общие middleware (auth-check, role-check, API token-check).
@@ -77,6 +78,12 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			authed.GET("/nodes/:id/allowed-hosts", RequireScope("nodes:read"), h.HostAllowlist.ListByNode)
 		}
 
+		// Справочник заголовков (§24). GET — combobox любой сессии; POST —
+		// admin (создание из формы узла) ниже.
+		if h.HeaderCatalog != nil {
+			authed.GET("/headers", h.HeaderCatalog.Search)
+		}
+
 		// Логи узла (§7.4): snapshot + SSE live-tail.
 		// Регистрируются только если включён ClickHouse (см. app.go).
 		if h.Logs != nil {
@@ -119,6 +126,11 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			authedAdmin.POST("/allowed-hosts/preview", h.HostAllowlist.Preview)
 			authedAdmin.POST("/nodes/:id/allowed-hosts", h.HostAllowlist.Attach)
 			authedAdmin.DELETE("/nodes/:id/allowed-hosts/:host_id", h.HostAllowlist.Detach)
+		}
+
+		// Справочник заголовков (§24): create из combobox — admin-only.
+		if h.HeaderCatalog != nil {
+			authedAdmin.POST("/headers", h.HeaderCatalog.Create)
 		}
 
 		authedAdmin.GET("/users", h.User.List)
