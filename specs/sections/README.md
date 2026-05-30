@@ -31,6 +31,7 @@
 | 23 | [23-allowed-hosts-catalog.md](23-allowed-hosts-catalog.md) | Каталог разрешённых хостов (SSRF) — общий справочник exact/wildcard/regex, привязка к узлам, preview, denорм-снимок |
 | 24 | [24-headers-catalog.md](24-headers-catalog.md) | Справочник HTTP-заголовков — combobox с автодополнением и автосозданием, usage_count on-read |
 | 25 | [25-topbar-swagger.md](25-topbar-swagger.md) | Swagger в шапке — два дока (Receiver + Web), popover, раздача обоих Web-бинарём |
+| 26 | [26-roles-access-control.md](26-roles-access-control.md) | RBAC — три роли (Admin/Manager/Viewer), иерархия рангов, матрица доступа, self-service смена своего пароля |
 
 ## Как пользоваться
 
