@@ -469,3 +469,54 @@ func TestAuthUC_ChangePassword_UpdateError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "db down")
 }
+
+// userWithPassword — хелпер: пользователь с bcrypt-хешем заданного пароля.
+func userWithPassword(t *testing.T, id, login, password string, role domain.UserRole) *domain.User {
+	t.Helper()
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	require.NoError(t, err)
+	return &domain.User{ID: id, Login: login, Role: role, Active: true, PasswordHash: string(hash)}
+}
+
+func TestAuthUC_ChangeOwnPassword_Happy(t *testing.T) {
+	t.Parallel()
+	users := newAuthUserRepo()
+	users.put(userWithPassword(t, "u1", "bob", "oldpassword", domain.UserRoleManager))
+
+	sessions := newMemSessionRepo()
+	sessions.byToken["tok-1"] = &domain.Session{Token: "tok-1", UserID: "u1"}
+	uc, audit := newAuthUC(users, sessions)
+
+	err := uc.ChangeOwnPassword(context.Background(), SystemActor(), "u1", "oldpassword", "newpassword")
+	require.NoError(t, err)
+
+	// Пароль обновлён с mustChange=false; сессии инвалидированы; есть audit.
+	require.Len(t, users.updatePassCalls, 1)
+	assert.False(t, users.updatePassCalls[0].MustChange)
+	assert.NotContains(t, sessions.byToken, "tok-1")
+	require.Len(t, audit.entries, 1)
+	assert.Equal(t, domain.ActionUserPassword, audit.entries[0].Action)
+}
+
+func TestAuthUC_ChangeOwnPassword_WrongCurrent(t *testing.T) {
+	t.Parallel()
+	users := newAuthUserRepo()
+	users.put(userWithPassword(t, "u1", "bob", "oldpassword", domain.UserRoleManager))
+	uc, _ := newAuthUC(users, newMemSessionRepo())
+
+	err := uc.ChangeOwnPassword(context.Background(), SystemActor(), "u1", "wrongpassword", "newpassword")
+	require.ErrorIs(t, err, domain.ErrUnauthorized)
+	// Пароль не менялся.
+	assert.Empty(t, users.updatePassCalls)
+}
+
+func TestAuthUC_ChangeOwnPassword_NewTooShort(t *testing.T) {
+	t.Parallel()
+	users := newAuthUserRepo()
+	users.put(userWithPassword(t, "u1", "bob", "oldpassword", domain.UserRoleManager))
+	uc, _ := newAuthUC(users, newMemSessionRepo())
+
+	err := uc.ChangeOwnPassword(context.Background(), SystemActor(), "u1", "oldpassword", "short")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "at least 8")
+}
