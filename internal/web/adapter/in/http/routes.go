@@ -25,9 +25,10 @@ type Handlers struct {
 
 // Middlewares — общие middleware (auth-check, role-check, API token-check).
 type Middlewares struct {
-	APITokenAuth gin.HandlerFunc // пытается auth по API token (Bearer db_*); пропускает, если не наш токен
-	SessionAuth  gin.HandlerFunc // session-cookie auth
-	RequireAdmin gin.HandlerFunc
+	APITokenAuth   gin.HandlerFunc // пытается auth по API token (Bearer db_*); пропускает, если не наш токен
+	SessionAuth    gin.HandlerFunc // session-cookie auth
+	RequireAdmin   gin.HandlerFunc // роль admin
+	RequireManager gin.HandlerFunc // роль не ниже manager (manager+admin), §26
 }
 
 // RegisterAPI вешает /api/* маршруты.

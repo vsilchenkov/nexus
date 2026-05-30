@@ -157,6 +157,42 @@ func TestRequireRole(t *testing.T) {
 	}
 }
 
+func TestRequireMinRole(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		session *domain.Session
+		min     domain.UserRole
+		status  int
+	}{
+		{"admin >= manager → ok", &domain.Session{Role: domain.UserRoleAdmin}, domain.UserRoleManager, 200},
+		{"manager >= manager → ok", &domain.Session{Role: domain.UserRoleManager}, domain.UserRoleManager, 200},
+		{"viewer < manager → 403", &domain.Session{Role: domain.UserRoleViewer}, domain.UserRoleManager, 403},
+		{"manager < admin → 403", &domain.Session{Role: domain.UserRoleManager}, domain.UserRoleAdmin, 403},
+		{"admin >= admin → ok", &domain.Session{Role: domain.UserRoleAdmin}, domain.UserRoleAdmin, 200},
+		{"no session → 403", nil, domain.UserRoleManager, 403},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			gin.SetMode(gin.TestMode)
+			r := gin.New()
+			if c.session != nil {
+				r.Use(func(ctx *gin.Context) {
+					ctx.Set(ctxSessionKey, c.session)
+					ctx.Next()
+				})
+			}
+			r.Use(RequireMinRole(c.min))
+			r.GET("/", func(ctx *gin.Context) { ctx.Status(200) })
+
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+			assert.Equal(t, c.status, w.Code)
+		})
+	}
+}
+
 func TestSessionFromCtx(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
