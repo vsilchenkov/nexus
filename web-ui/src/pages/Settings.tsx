@@ -12,18 +12,22 @@ import { UsersPanel } from "./settings/Users";
 import { TeamsPanel } from "./settings/Teams";
 import { NotificationsPanel } from "./settings/Notifications";
 import { AllowedHostsPanel } from "./settings/AllowedHosts";
+import { PasswordPanel } from "./settings/Password";
+import { roleAtLeast, type Role } from "../lib/roles";
 
-type Tab = { to: string; labelKey: string; adminOnly?: boolean };
+// minRole — минимальная роль для вкладки (§26). Без поля — доступна всем.
+type Tab = { to: string; labelKey: string; minRole?: Role };
 
 const tabs: Tab[] = [
-  { to: "users", labelKey: "settings.users.title", adminOnly: true },
-  { to: "teams", labelKey: "settings.teams.title", adminOnly: true },
+  { to: "users", labelKey: "settings.users.title", minRole: "admin" },
+  { to: "teams", labelKey: "settings.teams.title", minRole: "admin" },
   { to: "tokens", labelKey: "settings.tokens.title" },
-  { to: "allowed-hosts", labelKey: "settings.allowed_hosts.title", adminOnly: true },
+  { to: "allowed-hosts", labelKey: "settings.allowed_hosts.title", minRole: "manager" },
+  { to: "password", labelKey: "settings.password.title" },
   { to: "language", labelKey: "settings.language.title" },
-  { to: "sentry", labelKey: "settings.sentry.title", adminOnly: true },
-  { to: "clickhouse", labelKey: "settings.clickhouse.title", adminOnly: true },
-  { to: "notifications", labelKey: "settings.notifications.title", adminOnly: true },
+  { to: "sentry", labelKey: "settings.sentry.title", minRole: "admin" },
+  { to: "clickhouse", labelKey: "settings.clickhouse.title", minRole: "admin" },
+  { to: "notifications", labelKey: "settings.notifications.title", minRole: "admin" },
 ];
 
 function useRole() {
@@ -36,9 +40,11 @@ function useRole() {
 export default function Settings() {
   const { t } = useTranslation();
   const me = useRole();
-  const isAdmin = me.data?.user.role === "admin";
+  const role = me.data?.user.role;
+  const isAdmin = roleAtLeast(role, "admin");
+  const isManager = roleAtLeast(role, "manager");
 
-  const visibleTabs = tabs.filter((tab) => !tab.adminOnly || isAdmin);
+  const visibleTabs = tabs.filter((tab) => !tab.minRole || roleAtLeast(role, tab.minRole));
 
   return (
     <div className="mx-auto flex max-w-6xl gap-6">
@@ -69,7 +75,8 @@ export default function Settings() {
           {isAdmin && <Route path="users" element={<UsersPanel />} />}
           {isAdmin && <Route path="teams" element={<TeamsPanel />} />}
           <Route path="tokens" element={<ApiTokensPanel />} />
-          {isAdmin && <Route path="allowed-hosts" element={<AllowedHostsPanel />} />}
+          {isManager && <Route path="allowed-hosts" element={<AllowedHostsPanel />} />}
+          <Route path="password" element={<PasswordPanel />} />
           <Route path="language" element={<LanguagePanel />} />
           {isAdmin && <Route path="sentry" element={<SentryPanel />} />}
           {isAdmin && <Route path="clickhouse" element={<ClickHousePanel />} />}

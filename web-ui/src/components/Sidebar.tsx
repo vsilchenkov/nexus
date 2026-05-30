@@ -42,7 +42,8 @@ export function Sidebar() {
   ];
 
   const login = me.data?.user.login ?? "admin";
-  const role = me.data?.user.role === "admin" ? t("role.admin") : t("role.viewer");
+  // role.{admin,manager,viewer} — §26.
+  const role = t(`role.${me.data?.user.role ?? "viewer"}`);
 
   return (
     <aside className="flex w-sidebar shrink-0 flex-col border-r border-line bg-bg p-3">
