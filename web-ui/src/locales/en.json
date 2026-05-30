@@ -44,6 +44,7 @@
   },
   "role": {
     "admin": "full access",
+    "manager": "manage nodes",
     "viewer": "read-only"
   },
   "overview": {
@@ -303,6 +304,18 @@
       "subtitle": "Applies to the current user only. Takes effect immediately.",
       "note": "Applies to UI only; logs, metrics and ClickHouse stay in English."
     },
+    "password": {
+      "title": "My password",
+      "subtitle": "Change your own password. You will be signed out everywhere after the change.",
+      "current": "Current password",
+      "new": "New password",
+      "new_hint": "min 8 chars",
+      "confirm": "Confirm new password",
+      "mismatch": "Passwords do not match.",
+      "submit": "Change password",
+      "saving": "Changing…",
+      "note": "All your active sessions are revoked; sign in again with the new password."
+    },
     "theme": { "title": "Theme", "light": "Light", "dark": "Dark" },
     "common": {
       "updated_at": "Updated",
@@ -344,6 +357,8 @@
       "role": {
         "admin": "Full access",
         "admin_hint": "Manage everything in Nexus.",
+        "manager": "Manage nodes",
+        "manager_hint": "Manage nodes, host/header catalogs and view audit; no users, global settings or CH templates.",
         "viewer": "Read-only",
         "viewer_hint": "View nodes, logs and audit; no modifications."
       },

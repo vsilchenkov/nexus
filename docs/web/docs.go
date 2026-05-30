@@ -1043,6 +1043,60 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/me/password": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Требует подтверждения текущего пароля; userID берётся из сессии (§26). Все сессии пользователя завершаются (forced re-login).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Сменить собственный пароль (self-service).",
+                "parameters": [
+                    {
+                        "description": "current + new password",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.changeOwnPasswordRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "current password incorrect",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/me/switch-team": {
             "post": {
                 "security": [
@@ -3672,6 +3726,25 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_web_adapter_in_http.changeOwnPasswordRequest": {
+            "type": "object",
+            "required": [
+                "current_password",
+                "new_password"
+            ],
+            "properties": {
+                "current_password": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                },
+                "new_password": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 8
+                }
+            }
+        },
         "internal_web_adapter_in_http.changePasswordRequest": {
             "type": "object",
             "required": [
@@ -3769,7 +3842,8 @@ const docTemplate = `{
                     "type": "string",
                     "enum": [
                         "admin",
-                        "viewer"
+                        "viewer",
+                        "manager"
                     ]
                 }
             }
@@ -4003,7 +4077,8 @@ const docTemplate = `{
                     "type": "string",
                     "enum": [
                         "admin",
-                        "viewer"
+                        "viewer",
+                        "manager"
                     ]
                 }
             }

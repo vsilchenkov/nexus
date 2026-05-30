@@ -413,6 +413,10 @@ Compose автоматически подхватывает `docker-compose.over
 - **§24:** миграция `0012_headers_catalog` добавляет справочник HTTP-заголовков (`headers_catalog`,
   UNIQUE по `lower(name)`). Привязка к узлу остаётся в `nodes.forward_headers TEXT[]` — Receiver не
   трогается; usage_count считается on-read. Каталог изначально пуст.
+- **§26:** миграция `0013_user_role_manager` расширяет CHECK-constraint `users_role_check` до
+  `('admin','manager','viewer')` — добавляет роль `manager`. Новых колонок/таблиц нет, существующие
+  пользователи не затрагиваются. Откат (`down`) переводит существующих менеджеров в `viewer` перед
+  возвратом старого constraint.
 - **Вручную** (для контролируемых деплоев — применить до старта трафика):
 
   | Действие | Команда (нативно) | Команда (в Docker) |

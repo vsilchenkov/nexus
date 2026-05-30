@@ -67,6 +67,20 @@ func RequireRole(role domain.UserRole) gin.HandlerFunc {
 	}
 }
 
+// RequireMinRole — middleware, требующий роль не ниже min по иерархии
+// viewer < manager < admin (§26). Admin проходит любую manager-проверку.
+func RequireMinRole(min domain.UserRole) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		s, ok := sessionFromCtx(c)
+		if !ok || !s.Role.AtLeast(min) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
 func sessionFromCtx(c *gin.Context) (*domain.Session, bool) {
 	v, ok := c.Get(ctxSessionKey)
 	if !ok {

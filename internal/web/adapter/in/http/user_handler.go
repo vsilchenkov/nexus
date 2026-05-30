@@ -28,7 +28,7 @@ type createUserRequest struct {
 	Login              string `json:"login" binding:"required,min=1,max=255"`
 	Email              string `json:"email" binding:"omitempty,email,max=255"`
 	Password           string `json:"password" binding:"omitempty,min=8,max=128"`
-	Role               string `json:"role" binding:"required,oneof=admin viewer"`
+	Role               string `json:"role" binding:"required,oneof=admin viewer manager"`
 	Active             bool   `json:"active"`
 	Lang               string `json:"lang" binding:"omitempty,oneof=en ru"`
 	MustChangePassword bool   `json:"must_change_password"`
@@ -36,7 +36,7 @@ type createUserRequest struct {
 
 type updateUserRequest struct {
 	Email              string `json:"email" binding:"omitempty,email,max=255"`
-	Role               string `json:"role" binding:"required,oneof=admin viewer"`
+	Role               string `json:"role" binding:"required,oneof=admin viewer manager"`
 	Active             bool   `json:"active"`
 	Lang               string `json:"lang" binding:"omitempty,oneof=en ru"`
 	MustChangePassword bool   `json:"must_change_password"`

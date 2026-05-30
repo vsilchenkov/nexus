@@ -108,16 +108,45 @@ func (a IncomingAuthType) Valid() bool {
 	return false
 }
 
-// UserRole — роль пользователя UI (§7.1).
+// UserRole — роль пользователя UI (§7.1, §26).
+//
+// Иерархия прав: viewer < manager < admin (см. Rank/AtLeast). Менеджер
+// управляет узлами и каталогами Allowed Hosts/Headers, видит Audit log и
+// меняет только свой пароль; общие настройки, пользователи, команды и
+// шаблоны CH остаются за admin (§26).
 type UserRole string
 
 const (
-	UserRoleAdmin  UserRole = "admin"
-	UserRoleViewer UserRole = "viewer"
+	UserRoleAdmin   UserRole = "admin"
+	UserRoleManager UserRole = "manager"
+	UserRoleViewer  UserRole = "viewer"
 )
 
-func (r UserRole) Valid() bool   { return r == UserRoleAdmin || r == UserRoleViewer }
+func (r UserRole) Valid() bool {
+	switch r {
+	case UserRoleAdmin, UserRoleManager, UserRoleViewer:
+		return true
+	}
+	return false
+}
+
 func (r UserRole) IsAdmin() bool { return r == UserRoleAdmin }
+
+// Rank — числовой ранг роли в иерархии (viewer=0, manager=1, admin=2).
+// Неизвестная роль трактуется как минимальный ранг.
+func (r UserRole) Rank() int {
+	switch r {
+	case UserRoleAdmin:
+		return 2
+	case UserRoleManager:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// AtLeast сообщает, что роль не ниже min по иерархии прав.
+func (r UserRole) AtLeast(min UserRole) bool { return r.Rank() >= min.Rank() }
 
 // UserLang — язык UI пользователя (§7.11).
 type UserLang string

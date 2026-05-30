@@ -60,6 +60,11 @@ type switchTeamRequest struct {
 	TeamID string `json:"team_id" binding:"required,uuid"`
 }
 
+type changeOwnPasswordRequest struct {
+	CurrentPassword string `json:"current_password" binding:"required,min=1,max=128"`
+	NewPassword     string `json:"new_password" binding:"required,min=8,max=128"`
+}
+
 // Login godoc
 // @Summary  Логин по логину/паролю.
 // @Description  При успехе ставит HttpOnly cookie nexus_session (§7.1 ТЗ).
@@ -167,6 +172,42 @@ func (h *AuthHandler) Me(c *gin.Context) {
 			CurrentTeamID:      s.CurrentTeamID,
 		},
 	})
+}
+
+// ChangeOwnPassword godoc
+// @Summary  Сменить собственный пароль (self-service).
+// @Description  Требует подтверждения текущего пароля; userID берётся из сессии (§26). Все сессии пользователя завершаются (forced re-login).
+// @Tags     auth
+// @Accept   json
+// @Produce  json
+// @Param    body  body  changeOwnPasswordRequest  true  "current + new password"
+// @Success  204
+// @Failure  400   {object}  map[string]string
+// @Failure  401   {object}  map[string]string  "current password incorrect"
+// @Security CookieAuth
+// @Router   /api/me/password [post]
+func (h *AuthHandler) ChangeOwnPassword(c *gin.Context) {
+	s, ok := sessionFromCtx(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	var req changeOwnPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	// userID — строго из проверенной сессии: чужой пароль так не сменить.
+	err := h.uc.ChangeOwnPassword(c.Request.Context(), userActor(c), s.UserID, req.CurrentPassword, req.NewPassword)
+	if err != nil {
+		if errors.Is(err, domain.ErrUnauthorized) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": i18n.Translate(i18n.FromGin(c), "auth.invalid_credentials")})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 // MyTeams godoc

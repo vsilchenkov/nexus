@@ -25,9 +25,10 @@ type Handlers struct {
 
 // Middlewares — общие middleware (auth-check, role-check, API token-check).
 type Middlewares struct {
-	APITokenAuth gin.HandlerFunc // пытается auth по API token (Bearer db_*); пропускает, если не наш токен
-	SessionAuth  gin.HandlerFunc // session-cookie auth
-	RequireAdmin gin.HandlerFunc
+	APITokenAuth   gin.HandlerFunc // пытается auth по API token (Bearer db_*); пропускает, если не наш токен
+	SessionAuth    gin.HandlerFunc // session-cookie auth
+	RequireAdmin   gin.HandlerFunc // роль admin
+	RequireManager gin.HandlerFunc // роль не ниже manager (manager+admin), §26
 }
 
 // RegisterAPI вешает /api/* маршруты.
@@ -53,6 +54,9 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		// API-токены ограничены одной командой по token.team_id.
 		authed.GET("/me/teams", h.Auth.MyTeams)
 		authed.POST("/me/switch-team", RequireSessionOnly(), h.Auth.SwitchTeam)
+		// Self-service смена собственного пароля (§26): любая роль, только
+		// session-cookie (API-токенам пароль менять незачем).
+		authed.POST("/me/password", RequireSessionOnly(), h.Auth.ChangeOwnPassword)
 
 		// API-токены — собственные, без scope (только session-cookie).
 		authed.GET("/tokens", h.Token.List)
@@ -108,30 +112,43 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			authed.GET("/metrics/nodes/:id", RequireScope("metrics:read"), h.Metrics.Node)
 		}
 
-		// Mutating — только session-cookie + admin (API-токены сюда не пускаем).
-		authedAdmin := authed.Group("/", mw.RequireAdmin)
-		authedAdmin.POST("/nodes", h.Node.Create)
-		authedAdmin.PUT("/nodes/:id", h.Node.Update)
-		authedAdmin.DELETE("/nodes/:id", h.Node.Delete)
-		// Перенос узла в другую команду (multi-tenancy v2, Phase 11.B).
-		authedAdmin.POST("/nodes/:id/move", h.Node.Move)
-		// §7.5.1: dry-run без сохранения конфига. Только admin.
-		authedAdmin.POST("/nodes/dry-run", h.DryRun.Run)
+		// Mutating — только session-cookie (API-токены сюда не пускаем).
+		//
+		// authedManager (роль manager+admin, §26): управление узлами и
+		// связанными каталогами + чтение Audit log.
+		authedManager := authed.Group("/", mw.RequireManager)
+		authedManager.POST("/nodes", h.Node.Create)
+		authedManager.PUT("/nodes/:id", h.Node.Update)
+		authedManager.DELETE("/nodes/:id", h.Node.Delete)
+		// §7.5.1: dry-run без сохранения конфига.
+		authedManager.POST("/nodes/dry-run", h.DryRun.Run)
 
-		// Каталог разрешённых хостов (§23): мутации каталога и привязки — admin-only.
+		// Каталог разрешённых хостов (§23): мутации каталога и привязки.
 		if h.HostAllowlist != nil {
-			authedAdmin.POST("/allowed-hosts", h.HostAllowlist.Create)
-			authedAdmin.PATCH("/allowed-hosts/:id", h.HostAllowlist.Update)
-			authedAdmin.DELETE("/allowed-hosts/:id", h.HostAllowlist.Delete)
-			authedAdmin.POST("/allowed-hosts/preview", h.HostAllowlist.Preview)
-			authedAdmin.POST("/nodes/:id/allowed-hosts", h.HostAllowlist.Attach)
-			authedAdmin.DELETE("/nodes/:id/allowed-hosts/:host_id", h.HostAllowlist.Detach)
+			authedManager.POST("/allowed-hosts", h.HostAllowlist.Create)
+			authedManager.PATCH("/allowed-hosts/:id", h.HostAllowlist.Update)
+			authedManager.DELETE("/allowed-hosts/:id", h.HostAllowlist.Delete)
+			authedManager.POST("/allowed-hosts/preview", h.HostAllowlist.Preview)
+			authedManager.POST("/nodes/:id/allowed-hosts", h.HostAllowlist.Attach)
+			authedManager.DELETE("/nodes/:id/allowed-hosts/:host_id", h.HostAllowlist.Detach)
 		}
 
-		// Справочник заголовков (§24): create из combobox — admin-only.
+		// Справочник заголовков (§24): create из combobox.
 		if h.HeaderCatalog != nil {
-			authedAdmin.POST("/headers", h.HeaderCatalog.Create)
+			authedManager.POST("/headers", h.HeaderCatalog.Create)
 		}
+
+		// Audit log: чтение доступно manager+admin (§26); scope audit:read нужен
+		// только для API-токена.
+		authedManager.GET("/audit", RequireScope("audit:read"), h.Audit.List)
+		// CSV-экспорт журнала (§7.13, Phase 6.6).
+		authedManager.GET("/audit/export.csv", RequireScope("audit:read"), h.Audit.ExportCSV)
+
+		// authedAdmin — только admin: перенос узлов между командами, управление
+		// пользователями/командами, общие настройки и шаблоны CH.
+		authedAdmin := authed.Group("/", mw.RequireAdmin)
+		// Перенос узла в другую команду (multi-tenancy v2, Phase 11.B). Admin-only.
+		authedAdmin.POST("/nodes/:id/move", h.Node.Move)
 
 		authedAdmin.GET("/users", h.User.List)
 		authedAdmin.GET("/users/:id", h.User.Get)
@@ -154,11 +171,6 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			authedAdmin.PUT("/teams/:id/members/:user_id", h.Team.UpdateMemberRole)
 			authedAdmin.DELETE("/teams/:id/members/:user_id", h.Team.RemoveMember)
 		}
-
-		// Audit log: admin-only; scope audit:read нужен только для API-токена.
-		authedAdmin.GET("/audit", RequireScope("audit:read"), h.Audit.List)
-		// CSV-экспорт журнала (§7.13, Phase 6.6).
-		authedAdmin.GET("/audit/export.csv", RequireScope("audit:read"), h.Audit.ExportCSV)
 
 		// Dynamic-настройки Sentry/ClickHouse (§14.5). Admin-only.
 		if h.AppSettings != nil {
