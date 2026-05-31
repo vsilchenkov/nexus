@@ -229,6 +229,7 @@ type WebSection struct {
 	NodesSoftLimit               int    `yaml:"nodes_soft_limit"`
 	NodesHardLimit               int    `yaml:"nodes_hard_limit"`
 	APITokenRateLimitPerMin      int    `yaml:"api_token_rate_limit_per_min"`
+	RMQTestRateLimitPerMin       int    `yaml:"rmq_test_rate_limit_per_min"` // §27.8: лимит POST /api/nodes/test-rmq на пользователя
 	SwaggerEnabled               bool   `yaml:"swagger_enabled"`
 	// ReceiverURL — base URL Receiver Service (e.g. "http://receiver:8080").
 	// Используется для replay-запросов (§7.4.1): Web отправляет реплай через

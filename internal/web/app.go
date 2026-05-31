@@ -42,6 +42,7 @@ import (
 	chreader "nexus/internal/web/adapter/out/clickhouse"
 	pgrepo "nexus/internal/web/adapter/out/postgres"
 	prometheusreader "nexus/internal/web/adapter/out/prometheus"
+	rabbitmqadapter "nexus/internal/web/adapter/out/rabbitmq"
 	rcvdispatcher "nexus/internal/web/adapter/out/receiver"
 	rediscache "nexus/internal/web/adapter/out/redis"
 	"nexus/internal/web/static"
@@ -207,6 +208,12 @@ func (a *App) Start(ctx context.Context) error {
 
 	rl := ratelimit.New(a.redis)
 
+	// §27.8: проверка подключения к RabbitMQ (диагностический AMQP-handshake,
+	// rate-limit на пользователя через общий Redis-лимитер).
+	rmqTestHandler := httpadapter.NewRMQTestHandler(
+		usecase.NewRMQTester(rabbitmqadapter.NewProber(), a.logger),
+		rl, a.cfg.Web.RMQTestRateLimitPerMin, a.logger)
+
 	// Prometheus query-клиент для метрик панели (§21). Опционален: при пустом
 	// prometheus.url остаётся nil — MetricsUsecase деградирует
 	// (prometheus_available=false), не падает.
@@ -315,6 +322,7 @@ func (a *App) Start(ctx context.Context) error {
 		CHTemplate:    chTemplateHandler,
 		HostAllowlist: hostAllowlistHandler,
 		HeaderCatalog: headerCatalogHandler,
+		RMQTest:       rmqTestHandler,
 	}, mw)
 
 	// SPA fallback: всё, что не API/инфра — отдаём index.html (§17.1 ТЗ).
