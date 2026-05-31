@@ -354,6 +354,21 @@
 | FE-инфра Radix/cmdk + обёртки Popover/Tooltip/Command | ✅ Phase D.1 | [components/ui/](../web-ui/src/components/ui/) |
 | Topbar Swagger popover (две доки, ↗, tooltip) | ✅ Phase 25.D.2 | [components/Topbar.tsx](../web-ui/src/components/Topbar.tsx), [AppShell.tsx](../web-ui/src/components/AppShell.tsx) |
 
+### §27 Тип узла RabbitMQAsync
+
+ТЗ — [sections/27-rabbitmq-async.md](sections/27-rabbitmq-async.md).
+
+| Пункт | Статус | Где |
+|---|---|---|
+| Домен: `RootMethodRabbitMQAsync`+`IsPull`, поля `rmq_*`/`pull_*`, `Validate`, `NormalizeForRootMethod`, дефолты | ✅ Phase B | [domain/enums.go](../internal/domain/enums.go), [domain/node.go](../internal/domain/node.go), [domain/errors.go](../internal/domain/errors.go) |
+| Миграция 0014: `methods`+`RabbitMQAsync`, колонки `nodes`, `chk_rmq_fields` | ✅ Phase B | [0014_rmq_async_node](../migrations/0014_rmq_async_node.up.sql) |
+| Postgres: шифрование `rmq_password`, NULL для не-pull, scan | ✅ Phase B | [node_repo.go](../internal/web/adapter/out/postgres/node_repo.go), [db.go](../internal/web/adapter/out/postgres/db.go) |
+| DTO+handler: поля, `rmq_password_set`, «пусто=не менять», сброс несовместимых полей в audit | ✅ Phase B | [dto.go](../internal/web/adapter/in/http/dto.go), [node_handler.go](../internal/web/adapter/in/http/node_handler.go), [usecase/node.go](../internal/web/usecase/node.go) |
+| `POST /api/nodes/test-rmq` (manager+, rate-limit, passive declare) | ◐ Phase C | — |
+| Puller-воркер RabbitMQ→Kafka в Receiver, метрики `nexus_rmq_*`, runtime-`degraded` | ◐ Phase D | — |
+| UI: форма (3 карточки, проверка, pull-параметры), KPI/degraded | ◐ Phase E | — |
+| Сценарные/e2e-тесты (testcontainers RabbitMQ) + loadtest `--ratio-rmq` | ◐ Phase F | [tests/integration/node_repo_test.go](../tests/integration/node_repo_test.go) (round-trip+CHECK) |
+
 ---
 
 ## 3. Где что лежит — карта каталогов

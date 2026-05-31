@@ -48,6 +48,13 @@ var (
 	ErrNodeMaxBodySizeRange    = errors.New("domain: max_body_size must be 0..10000000")
 	ErrNodeMaxBodySizeRequired = errors.New("domain: max_body_size must be > 0 when max_body_size_enabled")
 
+	// §27: узел RabbitMQAsync.
+	ErrNodeRMQHostRequired   = errors.New("domain: rmq_host length must be 1..253 for RabbitMQAsync")
+	ErrNodeRMQQueueInvalid   = errors.New("domain: rmq_queue length must be 1..255 and match ^[a-zA-Z0-9._-]+$")
+	ErrNodePullIntervalRange = errors.New("domain: pull_interval_sec must be 1..3600")
+	ErrNodePullBatchRange    = errors.New("domain: pull_batch_size must be 1..1000")
+	ErrNodePullPrefetchRange = errors.New("domain: pull_prefetch must be 1..1000")
+
 	// User / Session
 	ErrUserNotFound      = errors.New("domain: user not found")
 	ErrUserAlreadyExists = errors.New("domain: user with this login already exists")

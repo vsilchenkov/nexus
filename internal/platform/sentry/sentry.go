@@ -23,6 +23,7 @@ var sensitiveKeys = []string{
 	"authorization",
 	"auth_credentials",
 	"incoming_auth_credentials",
+	"rmq_password",
 	"encryption_key",
 	"cookie",
 	"set-cookie",

@@ -27,13 +27,24 @@ func (s NodeStatus) Valid() bool {
 type RootMethod string
 
 const (
-	RootMethodRequest      RootMethod = "request"
-	RootMethodRequestAsync RootMethod = "requestAsync"
+	RootMethodRequest       RootMethod = "request"
+	RootMethodRequestAsync  RootMethod = "requestAsync"
+	RootMethodRabbitMQAsync RootMethod = "RabbitMQAsync"
 )
 
 func (m RootMethod) Valid() bool {
-	return m == RootMethodRequest || m == RootMethodRequestAsync
+	switch m {
+	case RootMethodRequest, RootMethodRequestAsync, RootMethodRabbitMQAsync:
+		return true
+	}
+	return false
 }
+
+// IsPull сообщает, что узел сам забирает сообщения из внешнего источника
+// (RabbitMQAsync, §27), а не ждёт входящего HTTP-запроса. Для pull-узлов
+// нет смысла в incoming-авторизации и url_mode=from_request, и только для
+// них применимо runtime-состояние degraded.
+func (m RootMethod) IsPull() bool { return m == RootMethodRabbitMQAsync }
 
 // URLMode — режим определения целевого URL (§3.4).
 type URLMode string

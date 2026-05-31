@@ -103,6 +103,88 @@ func TestNode_Validate_Errors(t *testing.T) {
 	}
 }
 
+func TestNode_Validate_RabbitMQAsync(t *testing.T) {
+	base := func() *Node {
+		n := &Node{
+			Path: "billing-events", RootMethod: RootMethodRabbitMQAsync,
+			TargetURL: "https://api.partner.com/webhook",
+			RMQHost:   "rmq.internal", RMQQueue: "billing.events",
+		}
+		n.SetDefaults()
+		return n
+	}
+
+	t.Run("ok with defaults", func(t *testing.T) {
+		n := base()
+		if err := n.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		// SetDefaults заполняет pull_* и vhost/port.
+		if n.RMQVHost != "/" || n.RMQPort != 5672 ||
+			n.PullIntervalSec != 5 || n.PullBatchSize != 100 || n.PullPrefetch != 100 {
+			t.Fatalf("pull defaults not applied: %+v", n)
+		}
+	})
+
+	cases := []struct {
+		name string
+		mut  func(*Node)
+		want error
+	}{
+		{"no host", func(n *Node) { n.RMQHost = "" }, ErrNodeRMQHostRequired},
+		{"bad queue", func(n *Node) { n.RMQQueue = "bad queue!" }, ErrNodeRMQQueueInvalid},
+		{"interval too big", func(n *Node) { n.PullIntervalSec = 99999 }, ErrNodePullIntervalRange},
+		{"batch too big", func(n *Node) { n.PullBatchSize = 99999 }, ErrNodePullBatchRange},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			n := base()
+			c.mut(n)
+			if err := n.Validate(); !errors.Is(err, c.want) {
+				t.Fatalf("want %v, got %v", c.want, err)
+			}
+		})
+	}
+}
+
+func TestNode_NormalizeForRootMethod(t *testing.T) {
+	t.Run("pull node clears incompatible fields", func(t *testing.T) {
+		n := &Node{
+			RootMethod:       RootMethodRabbitMQAsync,
+			URLMode:          URLModeFromRequest,
+			IncomingAuthType: IncomingAuthTypeToken,
+			AuthType:         AuthTypeTokenFromRequest,
+		}
+		cleared := n.NormalizeForRootMethod()
+		if n.URLMode != URLModeStatic || n.IncomingAuthType != IncomingAuthTypeNone ||
+			n.AuthType != AuthTypeNone {
+			t.Fatalf("fields not normalized: %+v", n)
+		}
+		if len(cleared) != 3 {
+			t.Fatalf("want 3 cleared fields, got %v", cleared)
+		}
+	})
+
+	t.Run("non-pull node untouched", func(t *testing.T) {
+		n := &Node{RootMethod: RootMethodRequestAsync, URLMode: URLModeFromRequest}
+		if cleared := n.NormalizeForRootMethod(); cleared != nil {
+			t.Fatalf("want nil, got %v", cleared)
+		}
+		if n.URLMode != URLModeFromRequest {
+			t.Fatal("url_mode should remain from_request for non-pull node")
+		}
+	})
+}
+
+func TestRootMethod_IsPull(t *testing.T) {
+	if !RootMethodRabbitMQAsync.IsPull() {
+		t.Error("RabbitMQAsync must be pull")
+	}
+	if RootMethodRequest.IsPull() || RootMethodRequestAsync.IsPull() {
+		t.Error("request/requestAsync must not be pull")
+	}
+}
+
 func TestAuthType_IsDynamic(t *testing.T) {
 	cases := map[AuthType]bool{
 		AuthTypeNone:             false,

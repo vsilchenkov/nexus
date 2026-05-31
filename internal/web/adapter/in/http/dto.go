@@ -14,7 +14,7 @@ const CredentialsMask = "***"
 // CreateNodeRequest — DTO для POST /api/nodes.
 type CreateNodeRequest struct {
 	Path                    string   `json:"path" binding:"required,max=255"`
-	RootMethod              string   `json:"root_method" binding:"required,oneof=request requestAsync"`
+	RootMethod              string   `json:"root_method" binding:"required,oneof=request requestAsync RabbitMQAsync"`
 	URLMode                 string   `json:"url_mode" binding:"omitempty,oneof=static from_request"`
 	TargetURL               string   `json:"target_url" binding:"omitempty,max=2048"`
 	URLParamName            string   `json:"url_param_name" binding:"omitempty,max=64"`
@@ -44,6 +44,20 @@ type CreateNodeRequest struct {
 	LoggingEnabled     *bool `json:"logging_enabled"`
 	MaxBodySizeEnabled bool  `json:"max_body_size_enabled"`
 	MaxBodySize        int32 `json:"max_body_size" binding:"omitempty,min=0,max=10000000"`
+
+	// §27: RabbitMQAsync. RMQPassword пустой в PUT = «оставить старый» (как
+	// auth_credentials, разбирается в handler.Update). Диапазоны pull_* также
+	// проверяет domain.Node.Validate и БД-constraint chk_rmq_fields.
+	RMQHost         string `json:"rmq_host" binding:"omitempty,max=253"`
+	RMQPort         int32  `json:"rmq_port" binding:"omitempty,min=1,max=65535"`
+	RMQVHost        string `json:"rmq_vhost" binding:"omitempty,max=255"`
+	RMQUser         string `json:"rmq_user" binding:"omitempty,max=255"`
+	RMQPassword     string `json:"rmq_password" binding:"omitempty,max=1024"`
+	RMQQueue        string `json:"rmq_queue" binding:"omitempty,max=255"`
+	RMQUseTLS       bool   `json:"rmq_use_tls"`
+	PullIntervalSec int32  `json:"pull_interval_sec" binding:"omitempty,min=1,max=3600"`
+	PullBatchSize   int32  `json:"pull_batch_size" binding:"omitempty,min=1,max=1000"`
+	PullPrefetch    int32  `json:"pull_prefetch" binding:"omitempty,min=1,max=1000"`
 }
 
 // UpdateNodeRequest — то же, но без path/root_method иногда позволяется
@@ -52,39 +66,68 @@ type UpdateNodeRequest = CreateNodeRequest
 
 // NodeResponse — DTO ответа. Креды НЕ возвращаются.
 type NodeResponse struct {
-	ID                      string    `json:"id"`
-	Path                    string    `json:"path"`
-	RootMethod              string    `json:"root_method"`
-	URLMode                 string    `json:"url_mode"`
-	TargetURL               string    `json:"target_url"`
-	URLParamName            string    `json:"url_param_name"`
-	URLAllowedHosts         []string  `json:"url_allowed_hosts"`
-	AuthType                string    `json:"auth_type"`
-	AuthCredentialsSet      bool      `json:"auth_credentials_set"`
-	AuthDynamicSource       string    `json:"auth_dynamic_source"`
-	AuthDynamicField        string    `json:"auth_dynamic_field"`
-	AuthDynamicStripPrefix  string    `json:"auth_dynamic_strip_prefix"`
-	IncomingAuthType        string    `json:"incoming_auth_type"`
-	IncomingAuthCredsSet    bool      `json:"incoming_auth_credentials_set"`
-	WebhookSignatureHeader  string    `json:"webhook_signature_header"`
-	WebhookSignaturePrefix  string    `json:"webhook_signature_prefix"`
-	ForwardHeaders          []string  `json:"forward_headers"`
-	TimeoutMs               int32     `json:"timeout_ms"`
-	RetryCount              int32     `json:"retry_count"`
-	RetryBackoffMs          int32     `json:"retry_backoff_ms"`
-	ClickHouseTable         string    `json:"clickhouse_table"`
-	ClickHouseTemplateID    string    `json:"clickhouse_template_id"`
-	ClickHouseRetentionDays int32     `json:"clickhouse_retention_days"`
-	Status                  string    `json:"status"`
-	TeamID                  string    `json:"team_id"`
-	LogRequestBody          bool      `json:"log_request_body"`
-	LogResponseBody         bool      `json:"log_response_body"`
-	LogHeaders              bool      `json:"log_headers"`
-	LoggingEnabled          bool      `json:"logging_enabled"`
-	MaxBodySizeEnabled      bool      `json:"max_body_size_enabled"`
-	MaxBodySize             int32     `json:"max_body_size"`
-	CreatedAt               time.Time `json:"created_at"`
-	UpdatedAt               time.Time `json:"updated_at"`
+	ID                      string   `json:"id"`
+	Path                    string   `json:"path"`
+	RootMethod              string   `json:"root_method"`
+	URLMode                 string   `json:"url_mode"`
+	TargetURL               string   `json:"target_url"`
+	URLParamName            string   `json:"url_param_name"`
+	URLAllowedHosts         []string `json:"url_allowed_hosts"`
+	AuthType                string   `json:"auth_type"`
+	AuthCredentialsSet      bool     `json:"auth_credentials_set"`
+	AuthDynamicSource       string   `json:"auth_dynamic_source"`
+	AuthDynamicField        string   `json:"auth_dynamic_field"`
+	AuthDynamicStripPrefix  string   `json:"auth_dynamic_strip_prefix"`
+	IncomingAuthType        string   `json:"incoming_auth_type"`
+	IncomingAuthCredsSet    bool     `json:"incoming_auth_credentials_set"`
+	WebhookSignatureHeader  string   `json:"webhook_signature_header"`
+	WebhookSignaturePrefix  string   `json:"webhook_signature_prefix"`
+	ForwardHeaders          []string `json:"forward_headers"`
+	TimeoutMs               int32    `json:"timeout_ms"`
+	RetryCount              int32    `json:"retry_count"`
+	RetryBackoffMs          int32    `json:"retry_backoff_ms"`
+	ClickHouseTable         string   `json:"clickhouse_table"`
+	ClickHouseTemplateID    string   `json:"clickhouse_template_id"`
+	ClickHouseRetentionDays int32    `json:"clickhouse_retention_days"`
+	Status                  string   `json:"status"`
+	TeamID                  string   `json:"team_id"`
+	LogRequestBody          bool     `json:"log_request_body"`
+	LogResponseBody         bool     `json:"log_response_body"`
+	LogHeaders              bool     `json:"log_headers"`
+	LoggingEnabled          bool     `json:"logging_enabled"`
+	MaxBodySizeEnabled      bool     `json:"max_body_size_enabled"`
+	MaxBodySize             int32    `json:"max_body_size"`
+
+	// §27: RabbitMQAsync. Пароль не возвращается — только флаг RMQPasswordSet.
+	// RMQStatus — runtime-health воркера (degraded/queue_depth/…), заполняется
+	// только для RabbitMQAsync; nil для request/requestAsync.
+	RMQHost         string     `json:"rmq_host"`
+	RMQPort         int32      `json:"rmq_port"`
+	RMQVHost        string     `json:"rmq_vhost"`
+	RMQUser         string     `json:"rmq_user"`
+	RMQPasswordSet  bool       `json:"rmq_password_set"`
+	RMQQueue        string     `json:"rmq_queue"`
+	RMQUseTLS       bool       `json:"rmq_use_tls"`
+	PullIntervalSec int32      `json:"pull_interval_sec"`
+	PullBatchSize   int32      `json:"pull_batch_size"`
+	PullPrefetch    int32      `json:"pull_prefetch"`
+	RMQStatus       *RMQStatus `json:"rmq_status,omitempty"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// RMQStatus — runtime-снимок Puller-воркера узла RabbitMQAsync (§27.4, §27.8).
+// Источник — Puller-manager в Receiver через общий стор (Redis); поле degraded
+// НЕ хранится в node.status.
+type RMQStatus struct {
+	Degraded        bool   `json:"degraded"`
+	Reason          string `json:"reason,omitempty"`
+	ConnectionState string `json:"connection_state"` // down|connecting|up
+	QueueDepth      int64  `json:"queue_depth"`
+	ConsumerCount   int64  `json:"consumer_count"`
+	Attempts        int64  `json:"attempts"`
+	Since           string `json:"since,omitempty"`
 }
 
 // reqToDomain превращает DTO в domain.Node.
@@ -133,6 +176,16 @@ func reqToDomain(r CreateNodeRequest) *domain.Node {
 		LoggingEnabled:          loggingEnabled,
 		MaxBodySizeEnabled:      r.MaxBodySizeEnabled,
 		MaxBodySize:             r.MaxBodySize,
+		RMQHost:                 r.RMQHost,
+		RMQPort:                 r.RMQPort,
+		RMQVHost:                r.RMQVHost,
+		RMQUser:                 r.RMQUser,
+		RMQPassword:             r.RMQPassword,
+		RMQQueue:                r.RMQQueue,
+		RMQUseTLS:               r.RMQUseTLS,
+		PullIntervalSec:         r.PullIntervalSec,
+		PullBatchSize:           r.PullBatchSize,
+		PullPrefetch:            r.PullPrefetch,
 	}
 }
 
@@ -169,6 +222,16 @@ func nodeToResponse(n *domain.Node) NodeResponse {
 		LoggingEnabled:          n.LoggingEnabled,
 		MaxBodySizeEnabled:      n.MaxBodySizeEnabled,
 		MaxBodySize:             n.MaxBodySize,
+		RMQHost:                 n.RMQHost,
+		RMQPort:                 n.RMQPort,
+		RMQVHost:                n.RMQVHost,
+		RMQUser:                 n.RMQUser,
+		RMQPasswordSet:          n.RMQPassword != "",
+		RMQQueue:                n.RMQQueue,
+		RMQUseTLS:               n.RMQUseTLS,
+		PullIntervalSec:         n.PullIntervalSec,
+		PullBatchSize:           n.PullBatchSize,
+		PullPrefetch:            n.PullPrefetch,
 		CreatedAt:               n.CreatedAt,
 		UpdatedAt:               n.UpdatedAt,
 	}

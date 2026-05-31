@@ -165,6 +165,10 @@ func (h *NodeHandler) Update(c *gin.Context) {
 	if req.IncomingAuthCreds == "" {
 		updated.IncomingAuthCredentials = existing.IncomingAuthCredentials
 	}
+	// §27: пустой rmq_password = оставить старый (как остальные креды).
+	if req.RMQPassword == "" {
+		updated.RMQPassword = existing.RMQPassword
+	}
 
 	if err := h.uc.Update(c.Request.Context(), actorFromCtx(c), updated, team); err != nil {
 		h.replyDomainError(c, err, "node.update")
@@ -265,6 +269,9 @@ func isValidationError(err error) bool {
 		domain.ErrNodeTimeoutRange, domain.ErrNodeRetryCountRange,
 		domain.ErrNodeRetryBackoffRange, domain.ErrNodeAllowedHostsSize,
 		domain.ErrNodeForwardHeadersSize,
+		domain.ErrNodeRMQHostRequired, domain.ErrNodeRMQQueueInvalid,
+		domain.ErrNodePullIntervalRange, domain.ErrNodePullBatchRange,
+		domain.ErrNodePullPrefetchRange,
 	} {
 		if errors.Is(err, target) {
 			return true
