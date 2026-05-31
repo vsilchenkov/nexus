@@ -130,6 +130,22 @@ type RMQStatus struct {
 	Since           string `json:"since,omitempty"`
 }
 
+// rmqHealthToDTO конвертирует доменный health-снимок в DTO ответа (§27.8).
+func rmqHealthToDTO(h *domain.RMQHealth) *RMQStatus {
+	s := &RMQStatus{
+		Degraded:        h.Degraded,
+		Reason:          h.Reason,
+		ConnectionState: string(h.ConnState),
+		QueueDepth:      h.QueueDepth,
+		ConsumerCount:   h.ConsumerCount,
+		Attempts:        h.Attempts,
+	}
+	if !h.Since.IsZero() {
+		s.Since = h.Since.Format(time.RFC3339)
+	}
+	return s
+}
+
 // reqToDomain превращает DTO в domain.Node.
 // Если в запросе кредов нет (пустая строка), сохраняем существующие
 // (для Update этот разбор делается выше — в handler).

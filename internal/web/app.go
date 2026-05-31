@@ -144,7 +144,9 @@ func (a *App) Start(ctx context.Context) error {
 		defaultTeamID,
 		a.logger,
 	)
-	nodeHandler := httpadapter.NewNodeHandler(nodeUC, a.logger)
+	// §27.8: health-ридер Puller-воркеров из общего Redis-стора (rmq:health).
+	rmqHealthReader := rediscache.NewRMQHealthReaderRedis(a.redis)
+	nodeHandler := httpadapter.NewNodeHandler(nodeUC, rmqHealthReader, a.logger)
 
 	userRepo := pgrepo.NewUserRepoPg(a.pg, a.logger)
 	sessionRepo := rediscache.NewSessionRepoRedis(a.redis)

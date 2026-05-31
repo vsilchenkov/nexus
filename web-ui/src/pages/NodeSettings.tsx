@@ -19,6 +19,7 @@ import { DryRunDialog } from "../components/DryRunDialog";
 import { DeleteNodeDialog } from "../components/node/DeleteNodeDialog";
 import { AllowedHostsField } from "../components/node/AllowedHostsField";
 import { HeadersField } from "../components/node/HeadersField";
+import { RabbitMQSection, type RMQSetter } from "../components/node/RabbitMQSection";
 import {
   Button,
   Card,
@@ -34,7 +35,7 @@ import {
 
 type Form = {
   path: string;
-  root_method: "request" | "requestAsync";
+  root_method: "request" | "requestAsync" | "RabbitMQAsync";
   url_mode: "static" | "from_request";
   target_url: string;
   url_param_name: string;
@@ -58,6 +59,17 @@ type Form = {
   logging_enabled: boolean;
   max_body_size_enabled: boolean;
   max_body_size: number;
+  // §27: RabbitMQAsync.
+  rmq_host: string;
+  rmq_port: number;
+  rmq_vhost: string;
+  rmq_user: string;
+  rmq_password: string;
+  rmq_queue: string;
+  rmq_use_tls: boolean;
+  pull_interval_sec: number;
+  pull_batch_size: number;
+  pull_prefetch: number;
 };
 
 const emptyForm: Form = {
@@ -86,6 +98,16 @@ const emptyForm: Form = {
   logging_enabled: true,
   max_body_size_enabled: false,
   max_body_size: 0,
+  rmq_host: "",
+  rmq_port: 5672,
+  rmq_vhost: "/",
+  rmq_user: "",
+  rmq_password: "",
+  rmq_queue: "",
+  rmq_use_tls: false,
+  pull_interval_sec: 5,
+  pull_batch_size: 100,
+  pull_prefetch: 100,
 };
 
 export default function NodeSettings() {
@@ -140,6 +162,7 @@ export default function NodeSettings() {
     setForm((p) => ({ ...p, [k]: v }));
   }
 
+  const isPull = form.root_method === "RabbitMQAsync";
   const verb = form.root_method === "request" ? "request" : "requestAsync";
   const routePath = `/v1/${verb}/${form.path || "…"}`;
 
@@ -180,6 +203,7 @@ export default function NodeSettings() {
                 options={[
                   { value: "request", title: "request", description: t("node.form.sync_desc") },
                   { value: "requestAsync", title: "requestAsync", description: t("node.form.async_desc") },
+                  { value: "RabbitMQAsync", title: "RabbitMQAsync", description: t("node.form.rmq_desc") },
                 ]}
               />
             </Field>
@@ -206,20 +230,34 @@ export default function NodeSettings() {
             </Field>
           </Card>
 
+          {isPull && (
+            <RabbitMQSection
+              form={form}
+              // RMQFormFields — структурное подмножество Form с теми же типами
+              // значений; дженерик-сеттер Form совместим, TS требует явный каст.
+              set={set as RMQSetter}
+              isNew={isNew}
+            />
+          )}
+
           <Card>
             <SectionHead icon={<Globe className="h-4 w-4" />}>{t("node.form.target")}</SectionHead>
-            <Field label={t("node.fields.url_mode")}>
-              <PickGroup
-                value={form.url_mode}
-                onChange={(v) => set("url_mode", v)}
-                options={[
-                  { value: "static", title: t("node.form.url_static"), description: t("node.form.url_static_desc") },
-                  { value: "from_request", title: t("node.form.url_from_request"), description: t("node.form.url_from_request_desc") },
-                ]}
-              />
-            </Field>
-            {form.url_mode === "static" && (
-              <Field label={t("node.fields.target_url")} className="mt-3">
+            {/* §27.11: для pull-узлов url_mode=from_request скрыт — нет входящего
+                HTTP-запроса, из которого можно взять URL. Только статичный адрес. */}
+            {!isPull && (
+              <Field label={t("node.fields.url_mode")}>
+                <PickGroup
+                  value={form.url_mode}
+                  onChange={(v) => set("url_mode", v)}
+                  options={[
+                    { value: "static", title: t("node.form.url_static"), description: t("node.form.url_static_desc") },
+                    { value: "from_request", title: t("node.form.url_from_request"), description: t("node.form.url_from_request_desc") },
+                  ]}
+                />
+              </Field>
+            )}
+            {(form.url_mode === "static" || isPull) && (
+              <Field label={t("node.fields.target_url")} className={isPull ? "" : "mt-3"}>
                 <Input
                   mono
                   value={form.target_url}
@@ -228,7 +266,7 @@ export default function NodeSettings() {
                 />
               </Field>
             )}
-            {form.url_mode === "from_request" && (
+            {form.url_mode === "from_request" && !isPull && (
               <Field label={t("node.form.param_name")} className="mt-3">
                 <Input
                   mono
@@ -240,7 +278,7 @@ export default function NodeSettings() {
                 </span>
               </Field>
             )}
-            {form.url_mode === "from_request" && (
+            {form.url_mode === "from_request" && !isPull && (
               <Field
                 label={t("node.allowed_hosts.label")}
                 hint={t("node.allowed_hosts.hint_short")}
@@ -274,6 +312,10 @@ export default function NodeSettings() {
 
           <Card>
             <SectionHead icon={<Lock className="h-4 w-4" />}>{t("node.form.auth")}</SectionHead>
+            {/* §27.11: «Входящая авторизация» скрыта для pull-узлов — входящих
+                HTTP-запросов нет, некого авторизовывать. */}
+            {!isPull && (
+              <>
             <Field label={t("node.form.incoming")}>
               <Select
                 value={form.incoming_auth_type}
@@ -324,13 +366,17 @@ export default function NodeSettings() {
                 {t("node.webhook.hint")}
               </Hint>
             )}
-            <Field label={t("node.form.outgoing")} className="mt-3">
+              </>
+            )}
+            <Field label={t("node.form.outgoing")} className={isPull ? "" : "mt-3"}>
               <Select value={form.auth_type} onChange={(e) => set("auth_type", e.target.value)}>
                 <option value="none">none</option>
                 <option value="basic">basic</option>
                 <option value="token">token</option>
-                <option value="token_from_request">token_from_request</option>
-                <option value="basic_from_request">basic_from_request</option>
+                {/* §27.11: динамическая авторизация (*_from_request) недоступна
+                    для pull-узлов — её неоткуда брать. */}
+                {!isPull && <option value="token_from_request">token_from_request</option>}
+                {!isPull && <option value="basic_from_request">basic_from_request</option>}
               </Select>
             </Field>
             {(form.auth_type === "basic" || form.auth_type === "token") && (
@@ -453,22 +499,30 @@ export default function NodeSettings() {
           <Card>
             <div className="mb-2.5 text-sm font-semibold">{t("node.form.preview")}</div>
             <div className="space-y-1 text-[12px] leading-7 text-fg-muted">
-              <div>
-                <span className="rounded bg-accent/10 px-2 py-0.5 text-[11px] text-accent">POST</span>{" "}
-                <span className="font-mono">{routePath}</span>
-              </div>
-              <div className="pl-2">↓ Receiver</div>
-              <div className="pl-2">
-                ↓ {form.root_method === "request" ? "gRPC (sync)" : "Kafka (async)"}
-              </div>
+              {isPull ? (
+                <>
+                  <div>
+                    <span className="rounded bg-warn/10 px-2 py-0.5 text-[11px] text-warn">RabbitMQ</span>{" "}
+                    <span className="font-mono">{form.rmq_queue || "{queue}"}</span>
+                  </div>
+                  <div className="pl-2">↓ Puller (Receiver)</div>
+                  <div className="pl-2">↓ Kafka (async)</div>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <span className="rounded bg-accent/10 px-2 py-0.5 text-[11px] text-accent">POST</span>{" "}
+                    <span className="font-mono">{routePath}</span>
+                  </div>
+                  <div className="pl-2">↓ Receiver</div>
+                  <div className="pl-2">
+                    ↓ {form.root_method === "request" ? "gRPC (sync)" : "Kafka (async)"}
+                  </div>
+                </>
+              )}
               <div className="pl-2">↓ Sender</div>
               <div className="pl-2">
-                →{" "}
-                <span className="font-mono text-fg">
-                  {form.url_mode === "static"
-                    ? form.target_url || "{target_url}"
-                    : `{${form.url_param_name}}`}
-                </span>
+                → <span className="font-mono text-fg">{form.target_url || "{target_url}"}</span>
               </div>
             </div>
           </Card>
