@@ -933,6 +933,30 @@ filter, Create без TeamID). До блока B (team-switcher в сессии)
 - **POST идемпотентен по `lower(name)`**: unique-violation ловится в usecase и резолвится в
   существующую запись (200). Combobox создаёт без диалогов и без гонок.
 
+### 4.25 §27 — RabbitMQAsync: неочевидности
+
+- **`degraded` — runtime, не `node.status`.** Сознательно НЕ расширяли enum `NodeStatus` и его
+  CHECK. Смешивать конфиг-статус (что выставил пользователь: enabled/paused/disabled) с health (что
+  наблюдает воркер) нельзя — иначе `degraded` затирал бы `paused`, а воркер писал бы в конфиг.
+  Health живёт в `domain.RMQHealth`, Receiver публикует снимок в Redis-hash `rmq:health`, Web читает
+  его в `NodeResponse.rmq_status`. Метрика `nexus_node_degraded` — отдельный сигнал.
+- **Puller в Receiver, не в Sender.** Sender ничего не знает про RabbitMQ — он потребляет из Kafka как
+  обычно. Puller только перекладывает RMQ→Kafka, переиспользуя тот же producer и формат `Envelope`
+  (плюс блок `rmq`). Это даёт единый конвейер с `requestAsync`.
+- **Порядок ack строгий: Kafka `acks=all` → потом `basic.ack`.** Это даёт at-least-once: сбой между
+  Kafka-ack и RMQ-ack → дубль (получатель должен быть идемпотентен по `message_id`); сбой до Kafka-ack
+  → `basic.nack(requeue)` без потери. Producer уже `RequireAll`, отдельной настройки не нужно.
+- **Reconcile из PG, не pub/sub.** Узлового Redis-события на CRUD нет (инвалидация кеша — по path, без
+  сообщения). `PullerManager` периодически (`receiver.puller.reconcile_sec`, деф. 15с) сверяет список
+  RabbitMQAsync-узлов из PG с запущенными воркерами, перезапуская при изменении `updated_at`. Задержка
+  старта нового узла ≤ reconcile_sec — приемлемо для v1.
+- **Отдельный PG-листер, не nodecache.Reader.** Reader не тянет `rmq_*`-колонки и расшифровку
+  `rmq_password`; для Puller нужен полный конфиг → `rabbitmq.NodeLister`. paused-узлы из поллинга
+  исключены (источник останавливается).
+- **`basic.get` поллинг, не `basic.consume`.** v1 — простой предсказуемый поллинг с manual ack
+  (push-consumer — §27.14 v2). `QueueDeclarePassive` при Connect проверяет существование очереди (404
+  → backoff/degraded, не создаём).
+
 ### 4.24 §25 — два swagger одним Web-бинарём
 
 - **Изоляция генерации через `--exclude`.** swag сканирует всё дерево от searchDir; без `--exclude`
