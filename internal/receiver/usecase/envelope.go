@@ -27,6 +27,20 @@ type Envelope struct {
 	Body       []byte            `json:"body,omitempty"`
 	ClientIP   string            `json:"client_ip,omitempty"`
 	ReceivedAt time.Time         `json:"received_at"`
+
+	// RMQ — служебный блок для узлов RabbitMQAsync (§27.3). nil для
+	// request/requestAsync. Sender обрабатывает envelope одинаково; блок несёт
+	// происхождение сообщения для трассировки/диагностики.
+	RMQ *RMQMeta `json:"rmq,omitempty"`
+}
+
+// RMQMeta — происхождение сообщения из RabbitMQ (§27.3).
+type RMQMeta struct {
+	Exchange    string    `json:"exchange,omitempty"`
+	RoutingKey  string    `json:"routing_key,omitempty"`
+	DeliveryTag uint64    `json:"delivery_tag,omitempty"`
+	MessageID   string    `json:"message_id,omitempty"`
+	Timestamp   time.Time `json:"timestamp,omitempty"`
 }
 
 // BuildEnvelope формирует Envelope из входящего запроса узла,
