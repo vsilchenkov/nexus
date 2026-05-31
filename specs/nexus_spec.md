@@ -2840,3 +2840,72 @@ new_password}` (минимум 8 символов); `userID` берётся **с
 
 Per-team роли (`user_teams.role`, multi-tenancy v2 §18) — отдельный механизм членства в команде, этим
 разделом не меняется. Гранулярные ACL уровня отдельных узлов — out of scope.
+
+## 27. Тип узла RabbitMQAsync (забор из RabbitMQ)
+
+Третий тип узла. В отличие от `request` / `requestAsync` (§3.2), которые ждут HTTP-вызова от клиента,
+`RabbitMQAsync` **сам периодически забирает** сообщения из очереди RabbitMQ, кладёт в Kafka
+`nexus.async`, дальше Sender обрабатывает их тем же конвейером, что `requestAsync`. Убирает прокси
+RabbitMQ→HTTP: единая трассировка, логирование, ретрай и DLQ. Полный раздел —
+[sections/27-rabbitmq-async.md](sections/27-rabbitmq-async.md). Макет UI — `nexus_rabbitmq_ui.html`.
+
+### 27.1. Поведение
+
+Фоновый компонент **Puller** (в Receiver) поднимает один воркер на узел. Цикл с интервалом
+`pull_interval_sec`: `basic.qos(prefetch)` → `basic.get` до `pull_batch_size` сообщений (manual ack) →
+публикация envelope в `nexus.async` (ключ `node.Path`) → после `acks=all` от Kafka `basic.ack` в
+RabbitMQ. Ошибка Kafka → `basic.nack(requeue=true)` (потерь нет). Сообщение > 10 МБ → `basic.reject`
+без requeue + Sentry `op="puller.rejectOversize"`. **Гарантия at-least-once**: дубль возможен при сбое
+между Kafka-ack и RabbitMQ-ack. При `SIGTERM`/удалении — graceful: дождаться батч (≤10с), nack
+необработанных, закрыть канал.
+
+### 27.2. Envelope
+
+Тот же `Envelope`, что у `requestAsync`, плюс блок `rmq{exchange, routing_key, delivery_tag,
+message_id, timestamp}`. `method="POST"`, `client_ip="rabbitmq://<host>:<port>/<vhost>"`; авто-заголовки
+`X-Nexus-Source: rabbitmq`, `X-Nexus-Routing-Key`; из AMQP-headers пробрасываются только перечисленные в
+`forward_headers`.
+
+### 27.3. degraded (runtime)
+
+`degraded` — runtime-состояние воркера (RabbitMQ недоступен > 5 мин или очередь не найдена), **не**
+значение `node.status`: enum `NodeStatus` и его CHECK не расширяются. Отдаётся отдельным полем в API +
+метрика `nexus_node_degraded{node,reason}`; снимается автоматически. Только для pull-узлов.
+
+### 27.4. Конфигурация
+
+Поля `rmq_host/rmq_port/rmq_vhost/rmq_user/rmq_password(шифр)/rmq_queue/rmq_use_tls` и
+`pull_interval_sec(1–3600, деф.5)/pull_batch_size(1–1000, деф.100)/pull_prefetch(=batch)`. Игнорируемые
+поля (`incoming_auth_*`, `url_mode=from_request`) backend молча сбрасывает в `none`/`static` +
+audit `cleared_incompatible_fields`. Исходящая авторизация — статичные `none/basic/token`.
+
+### 27.5. PostgreSQL
+
+Миграция `0014`: пересоздать CHECK таблицы `methods` (`+ 'RabbitMQAsync'`) + `INSERT`; nullable-колонки
+`rmq_*`/`pull_*` в `nodes`; `chk_rmq_fields` CHECK (host+queue NOT NULL, интервал/batch в диапазоне при
+`root_method='RabbitMQAsync'`).
+
+### 27.6. Web API
+
+`POST /api/nodes/test-rmq` (manager+, rate-limit 10/мин, всегда 200 с `ok+checks`, `queue.declare
+passive=true`, в audit не пишется). CRUD-эндпоинты принимают/возвращают новые поля; `rmq_password` →
+флаг `rmq_password_set`, «пусто = не менять». Health-снимок воркера — в `NodeResponse.rmq_status` для
+RabbitMQAsync (через Redis, без нового gRPC).
+
+### 27.7. Метрики и логирование
+
+`nexus_rmq_messages_pulled_total{node,status}`, `nexus_rmq_pull_duration_seconds{node}`,
+`nexus_rmq_connection_state{node}`, `nexus_rmq_queue_depth{node}`, `nexus_rmq_consumer_count{node}`,
+`nexus_node_degraded{node,reason}`. ClickHouse-лог: `IP=rabbitmq://…`, `method=POST`,
+`type=RabbitMQAsync`.
+
+### 27.8. Сценарные тесты
+
+e2e integration (testcontainers RabbitMQ+Kafka+CH+mock-HTTP): узел → publish → доставка на mock + лог в
+CH, без потерь; кейсы requeue (Kafka down) и degraded (нет очереди). Расширение `cmd/loadtest`: флаг
+`--ratio-rmq` публикует часть нагрузки прямо в RabbitMQ-очереди узлов; критерий «нет потерь».
+
+### 27.9. Out of scope / v2
+
+Exactly-once (дедуп по `message_id`), методы кроме POST, динамический URL/авторизация, несколько
+очередей на узел, шардинг воркера (leader election), push-consumer, exchange+bindings через UI.

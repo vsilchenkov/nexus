@@ -14,6 +14,15 @@ SaaS-onboarding остаются возможными расширениями �
 Исторический контекст: в v1 колонки `team_id` были закладкой с дефолтом
 `'default'`; в v2 (миграция 0008) они стали реальными UUID FK на `teams`.
 
+### Тип узла RabbitMQAsync — ✅ реализовано (см. §27)
+
+Перенесено в полноценный раздел [§27 RabbitMQAsync](27-rabbitmq-async.md). Третий тип узла: Puller-воркер
+(в Receiver) сам забирает сообщения из очереди RabbitMQ (`basic.get`, manual ack), публикует в Kafka
+`nexus.async`, дальше Sender обрабатывает их как обычный `requestAsync`. Убирает прокси-сервис
+RabbitMQ→HTTP. Остаются возможными расширениями (§27.14): exactly-once (дедуп по `message_id`), методы
+кроме POST, динамический URL/авторизация, несколько очередей на узел, шардинг воркера (leader election),
+push-режим (`basic.consume`), создание exchange+bindings через UI.
+
 ### Webhook signature verification
 
 В v1 шина только пересылает запросы во внешние узлы; обратных callback'ов от внешних узлов нет.

@@ -32,6 +32,7 @@
 | 24 | [24-headers-catalog.md](24-headers-catalog.md) | Справочник HTTP-заголовков — combobox с автодополнением и автосозданием, usage_count on-read |
 | 25 | [25-topbar-swagger.md](25-topbar-swagger.md) | Swagger в шапке — два дока (Receiver + Web), popover, раздача обоих Web-бинарём |
 | 26 | [26-roles-access-control.md](26-roles-access-control.md) | RBAC — три роли (Admin/Manager/Viewer), иерархия рангов, матрица доступа, self-service смена своего пароля |
+| 27 | [27-rabbitmq-async.md](27-rabbitmq-async.md) | Тип узла RabbitMQAsync — Puller-воркер RabbitMQ→Kafka, поля `rmq_*`/`pull_*`, runtime-`degraded`, `POST /api/nodes/test-rmq`, метрики, UI, сценарные тесты |
 
 ## Как пользоваться
 
