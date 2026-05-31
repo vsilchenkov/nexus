@@ -45,6 +45,12 @@ go test -tags=integration -count=1 -v ./tests/integration/...
 - **`TestReceiver_Sync_E2E`** — Postgres + `httptest` mock внешнего узла + inline-stub Sender, который
   делает реальный HTTP-запрос вместо gRPC. Проверяет, что запрос дошёл до upstream с правильным path,
   body, и заголовком `Authorization: Bearer ...`.
+- **`TestNodeRepoRabbitMQAsync_E2E`** (§27) — Postgres: round-trip узла RabbitMQAsync через
+  `NodeUsecase`, шифрование `rmq_password`, сброс несовместимых полей, срабатывание `chk_rmq_fields`.
+- **`TestRMQPuller_E2E_NoLoss` / `…_KafkaDown_Requeue`** (§27.12) — реальный RabbitMQ через
+  `tcrabbit.Run`: публикуем N сообщений → `PullerWorker` забирает все, складывает в fake-producer
+  (Kafka-путь покрыт отдельно), очередь дренируется без потерь; envelope содержит блок `rmq` и
+  `IP=rabbitmq://…`. Второй кейс: при «упавшей» Kafka сообщения возвращаются в очередь (`nack requeue`).
 - **`TestSender_Async_E2E`** — Postgres + Kafka (KRaft) + mock upstream. Receiver-RouteAsync публикует
   Envelope в `nexus.async`, Sender ConsumerGroup читает, делает HTTP-вызов, пишет в capturing log
   writer. Покрывает §3.6 / §4.2 happy-path.
@@ -107,12 +113,26 @@ Loadtest exit'ится с кодом 1, если:
 
 Это и есть критерий §10.2 для CI.
 
+### RabbitMQAsync-нагрузка (§27.12)
+
+Флаг `--ratio-rmq` (0..1) + `--rmq-url` поднимают долю узлов как `RabbitMQAsync`: loadtest объявляет
+их очереди и публикует payload'ы прямо в RabbitMQ (а не HTTP в Receiver). Пример:
+
+```bash
+go run ./cmd/loadtest \
+  --admin-password=admin --target-rps=200 --duration=2m --nodes=20 \
+  --ratio-rmq=0.3 --rmq-url=amqp://guest:guest@localhost:5672/
+```
+
+В отчёт печатается `rmq_published=N`. Критерий «нет потерь» = `N` ≤ числу строк в ClickHouse-логе
+узлов (`type=RabbitMQAsync`); сверка вручную/скриптом (loadtest не ходит в ClickHouse).
+
 ### Что не покрыто текущим loadtest
 
 - Все варианты `url_mode` / `auth_type` (сейчас static + auth=none).
 - Доля async / dynamic-url / token-auth-узлов из конфига (`--ratio-*` — следующая итерация).
-- Проверка числа сообщений в ClickHouse-логе == числу отправленных
-  (для async). Требует подключения к ClickHouse — TODO Phase 6.
+- Автоматическая сверка числа сообщений в ClickHouse-логе == числу отправленных
+  (для async и RabbitMQAsync). Требует подключения к ClickHouse — TODO Phase 6.
 
 ## Swagger
 
