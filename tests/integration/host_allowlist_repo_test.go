@@ -236,9 +236,20 @@ func TestMigrations_0011_0012_DownUp(t *testing.T) {
 	}
 	defer mg.Close()
 
-	// Откат 0012 (headers_catalog) и 0011 (host_allowlist).
-	if err := mg.Down(2); err != nil {
-		t.Fatalf("down 2: %v", err)
+	// Откатываем всё до версии 10 (т.е. 0011 включительно), а не фиксированные
+	// 2 шага — иначе тест ломается при каждой новой миграции поверх 0012
+	// (так и случилось с 0013 manager-роли и 0014 RabbitMQAsync). Шагов =
+	// текущая_версия − 10.
+	ver, _, verr := mg.Status()
+	if verr != nil {
+		t.Fatalf("status: %v", verr)
+	}
+	steps := int(ver) - 10
+	if steps < 2 {
+		t.Fatalf("unexpected schema version %d (<12)", ver)
+	}
+	if err := mg.Down(steps); err != nil {
+		t.Fatalf("down %d (to version 10): %v", steps, err)
 	}
 	for _, tbl := range []string{"host_allowlist", "node_allowed_hosts", "headers_catalog"} {
 		if regclass(tbl) {
