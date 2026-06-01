@@ -90,10 +90,14 @@ paths:
             additionalProperties: true
             type: object
         "404":
-          description: node not found
+          description: '{result:false,message} — node not found'
           schema:
-            additionalProperties:
-              type: string
+            additionalProperties: true
+            type: object
+        "405":
+          description: '{result:false,message} — method not allowed'
+          schema:
+            additionalProperties: true
             type: object
       summary: Асинхронный запрос через узел (§3.1).
       tags:

@@ -187,7 +187,8 @@ func (h *Handler) handleCallback(c *gin.Context) {
 // @Param    path  path  string  true  "[<team_slug>/]<node_path>"
 // @Success  200  {object}  map[string]interface{}  "{result:true,id}"
 // @Success  202  {object}  map[string]interface{}  "queued (paused node, §3.6)"
-// @Failure  404  {object}  map[string]string  "node not found"
+// @Failure  404  {object}  map[string]interface{}  "{result:false,message} — node not found"
+// @Failure  405  {object}  map[string]interface{}  "{result:false,message} — method not allowed"
 // @Router   /api/v1/requestAsync/{path} [post]
 func (h *Handler) handleAsync(c *gin.Context) {
 	teamSlug, nodePath := splitTeamSlugAndPath(c.Param("path"))
@@ -217,7 +218,8 @@ func (h *Handler) handleAsync(c *gin.Context) {
 func (h *Handler) handleAsyncFromInput(c *gin.Context, in usecase.RouteInput) {
 	res, err := h.routeAsync.RouteAsync(c.Request.Context(), in)
 	if err != nil {
-		h.replyDomainError(c, err, in.NodePath, "receiver.async")
+		// §3, #7: async-ошибка → {"result":false,"message":...}.
+		h.replyAsyncError(c, err, in.NodePath, "receiver.async")
 		return
 	}
 
@@ -274,29 +276,53 @@ func isHopByHopHeader(name string) bool {
 	return false
 }
 
-func (h *Handler) replyDomainError(c *gin.Context, err error, nodePath, op string) {
+// classifyDomainError маппит доменную ошибку маршрутизации в HTTP-код и
+// человекочитаемое сообщение. internal=true означает «непредвиденная ошибка»
+// (502) — её caller дополнительно логирует. Общая для sync (replyDomainError)
+// и async (replyAsyncError), чтобы коды и тексты не расходились.
+func classifyDomainError(err error) (status int, message string, internal bool) {
 	switch {
 	case errors.Is(err, domain.ErrNodeNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "node not found"})
+		return http.StatusNotFound, "node not found", false
 	case errors.Is(err, domain.ErrNodeDisabled):
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "node not available"})
+		return http.StatusServiceUnavailable, "node not available", false
 	case errors.Is(err, domain.ErrNodeMethodNotAllowed):
-		c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "http method not allowed for this node"})
+		return http.StatusMethodNotAllowed, "http method not allowed for this node", false
 	case errors.Is(err, domain.ErrURLParamRequired),
 		errors.Is(err, domain.ErrCallbackNotAllowed):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return http.StatusBadRequest, err.Error(), false
 	case errors.Is(err, domain.ErrURLInvalid):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "target url is invalid"})
+		return http.StatusBadRequest, "target url is invalid", false
 	case errors.Is(err, domain.ErrURLNotAllowed):
-		c.JSON(http.StatusForbidden, gin.H{"error": "target url not in allowlist"})
+		return http.StatusForbidden, "target url not in allowlist", false
 	case errors.Is(err, domain.ErrAuthHeaderMissing),
 		errors.Is(err, domain.ErrAuthHeaderMalformed),
 		errors.Is(err, domain.ErrAuthTokenRequired),
 		errors.Is(err, domain.ErrUnauthorized):
-		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		return http.StatusUnauthorized, err.Error(), false
 	default:
+		return http.StatusBadGateway, "internal routing error", true
+	}
+}
+
+// replyDomainError — sync-ответ об ошибке: {"error": <msg>}.
+func (h *Handler) replyDomainError(c *gin.Context, err error, nodePath, op string) {
+	status, msg, internal := classifyDomainError(err)
+	if internal {
 		h.logger.ErrorWithOp("receiver routing failed", err, op,
 			h.logger.Str("node", nodePath))
-		c.JSON(http.StatusBadGateway, gin.H{"error": "internal routing error"})
 	}
+	c.JSON(status, gin.H{"error": msg})
+}
+
+// replyAsyncError — async-ответ об ошибке (§3, #7): {"result": false,
+// "message": <причина>}. Тело отличается от sync-варианта, чтобы async-клиент
+// единообразно читал result/message и в успехе, и в ошибке.
+func (h *Handler) replyAsyncError(c *gin.Context, err error, nodePath, op string) {
+	status, msg, internal := classifyDomainError(err)
+	if internal {
+		h.logger.ErrorWithOp("receiver async routing failed", err, op,
+			h.logger.Str("node", nodePath))
+	}
+	c.JSON(status, gin.H{"result": false, "message": msg})
 }

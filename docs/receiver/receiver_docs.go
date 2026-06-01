@@ -128,12 +128,17 @@ const docTemplatereceiver = `{
                         }
                     },
                     "404": {
-                        "description": "node not found",
+                        "description": "{result:false,message} — node not found",
                         "schema": {
                             "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "additionalProperties": true
+                        }
+                    },
+                    "405": {
+                        "description": "{result:false,message} — method not allowed",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     }
                 }

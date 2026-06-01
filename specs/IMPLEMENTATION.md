@@ -45,7 +45,7 @@
 | Пункт | Статус | Где |
 |---|---|---|
 | `/api/v1/request/*` sync с проксированием ответа | ✅ | [internal/receiver/usecase/route.go](../internal/receiver/usecase/route.go), [adapter/in/http/handler.go](../internal/receiver/adapter/in/http/handler.go) |
-| `/api/v1/requestAsync/*` async, ответ 200 сразу | ✅ | [route_async.go](../internal/receiver/usecase/route_async.go) |
+| `/api/v1/requestAsync/*` async, ответ 200 сразу `{result:true}` / ошибка `{result:false,message}` (#7) | ✅ | [route_async.go](../internal/receiver/usecase/route_async.go), [handler.go](../internal/receiver/adapter/in/http/handler.go) `replyAsyncError`, `classifyDomainError` |
 | **`/api/v1/callback/*` (webhook с HMAC-SHA256, §16)** | ✅ Phase 8.1 | [handler.go](../internal/receiver/adapter/in/http/handler.go) `handleCallback`, [webhook_signature.go](../internal/receiver/usecase/webhook_signature.go) `VerifyWebhookSignature`, миграция [0007](../migrations/0007_webhook_signature.up.sql) |
 | 404 без префикса `/api/v1/` с подсказкой | ✅ | `Handler.Register` → `r.NoRoute` |
 | **Единый вход: Web reverse-proxy `/api/v1/request\|requestAsync\|callback` → Receiver** | ✅ | [internal/web/adapter/in/http/receiver_proxy.go](../internal/web/adapter/in/http/receiver_proxy.go) `RegisterReceiverProxy`, регистрируется в [app.go](../internal/web/app.go) до `SPAFallback`. Без этого боевой путь проваливался в SPA-fallback и возвращал `index.html`. |
