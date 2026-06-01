@@ -64,7 +64,12 @@ stages:
     policy: pull-push
 
 .go-base:
-  image: golang:${GO_VERSION}
+  image:
+    name: golang:${GO_VERSION}
+    # Fallback: при сетевом сбое к Docker Hub (TLS handshake timeout) берём
+    # локально закэшированный образ вместо падения job'а. Требует на раннере
+    # allowed_pull_policies = ["always", "if-not-present"] (config.toml).
+    pull_policy: [always, if-not-present]
   <<: *go-cache
   before_script:
     - go env -w GOPATH=$GOPATH GOCACHE=$GOCACHE GOMODCACHE=$GOMODCACHE
@@ -129,7 +134,9 @@ go-test:
 
 go-lint:
   stage: lint
-  image: golangci/golangci-lint:v2.12-alpine
+  image:
+    name: golangci/golangci-lint:v2.12-alpine
+    pull_policy: [always, if-not-present]
   <<: *go-cache
   rules:
     - *skip-if-profiled-rule
@@ -183,7 +190,9 @@ go-build:
 
 ui-build:
   stage: build
-  image: node:${NODE_VERSION}
+  image:
+    name: node:${NODE_VERSION}
+    pull_policy: [always, if-not-present]
   cache:
     key:
       files:
@@ -226,7 +235,9 @@ ui-build:
 
 integration:
   stage: integration
-  image: golang:${GO_VERSION}
+  image:
+    name: golang:${GO_VERSION}
+    pull_policy: [always, if-not-present]
   <<: *go-cache
   # Services-секцию активируйте если runner — docker-executor:
   # services:
@@ -310,7 +321,9 @@ loadtest:
   # docker:27-cli: client API v1.45 для docker daemon v25+. На v24-cli
   # `docker cp/rm` падали с «client version 1.43 is too old, minimum
   # supported API is 1.44» — отчёт report.json не копировался из контейнера.
-  image: docker:27-cli
+  image:
+    name: docker:27-cli
+    pull_policy: [always, if-not-present]
   rules:
     - if: $RUN_PROFILE == "integration-only"
       when: never
@@ -681,7 +694,9 @@ govulncheck:
 # через `go list` → «Files: 0, Lines: 0» и артефакты не создаются.
 gosec:
   stage: security
-  image: golang:${GO_VERSION}-alpine
+  image:
+    name: golang:${GO_VERSION}-alpine
+    pull_policy: [always, if-not-present]
   <<: [*go-cache, *security-rules]
   allow_failure: true  # findings не блокируют — alerts only
   before_script:
@@ -715,6 +730,7 @@ trivy-fs:
   image:
     name: aquasec/trivy:0.55.0
     entrypoint: [""]
+    pull_policy: [always, if-not-present]
   <<: *security-rules
   allow_failure: true
   variables:
@@ -760,6 +776,7 @@ renovate:
   image:
     name: renovate/renovate:latest
     entrypoint: [""]
+    pull_policy: [always, if-not-present]
   rules:
     - *skip-if-profiled-rule
     - if: $CI_PIPELINE_SOURCE == "schedule"
@@ -803,10 +820,13 @@ renovate:
 
 release:
   stage: release
-  image: goreleaser/goreleaser:v2
+  image:
+    name: goreleaser/goreleaser:v2
+    pull_policy: [always, if-not-present]
   services:
     - name: docker:24-dind
       alias: docker
+      pull_policy: [always, if-not-present]
   variables:
     DOCKER_HOST: "tcp://docker:2375"
     DOCKER_TLS_CERTDIR: ""
