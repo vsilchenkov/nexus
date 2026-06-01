@@ -37,6 +37,14 @@ make test-integration
 go test -tags=integration -count=1 -v ./tests/integration/...
 ```
 
+`make test-integration` гоняет пакет **под-прогонами по группам зависимостей**
+(§10.1): `test-int-pg`, `test-int-ch`, `test-int-catalog`, `test-int-receiver`,
+`test-int-rmq`, `test-int-sender` — каждая со своим `-timeout` (`INTEGRATION_TIMEOUT`,
+дефолт 20m). Это не даёт одному зависшему/упавшему тесту съесть бюджет всего
+пакета (`go test -timeout` общий на пакет) и замаскировать остальные группы.
+Группы выполняются последовательно; Kafka-группа (`test-int-sender`) идёт
+последней. Отдельную группу можно запустить точечно: `make test-int-rmq`.
+
 Покрытые сценарии:
 
 - **`TestNodeRepoCreate_E2E`** — реальный Postgres через `tcpg.Run`, миграции из `/migrations`,
