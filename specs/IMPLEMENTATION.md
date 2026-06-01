@@ -1304,10 +1304,14 @@ make proto                                     # перегенерация send
   тоже **необходим** (без него `docker compose run` не даёт one-off-контейнеру
   network-alias `loadtest`, и Sender не дозвонится до mock'а — это даёт 502,
   а не 404). Оба нужны одновременно. **Диагностический блок в loadtest job
-  (`getent`/receiver direct-probe) запускается ПОСЛЕ `docker rm` run-контейнера**
-  — mock к тому моменту уже мёртв, поэтому probe всегда отдаёт 502 независимо
-  от реальной причины; не доверяй ему как индикатору in-test ошибки, смотри
-  `compose-logs.txt`.
+  запускается ПОСЛЕ завершения `run` (mock жив только во время самого прогона,
+  т.к. это процесс loadtest-бинаря) — связность с mock'ом им проверить нельзя,
+  502 там ОЖИДАЕМО.** Блок переработан: проверяет именно МАРШРУТИЗАЦИЮ Receiver'а
+  (probe корректного URL `/v1/request/default/<path>` ждёт НЕ 404; legacy-URL
+  без слога показывает 404 как регресс-сигнатуру team_slug-парсинга), а логи
+  самого run-контейнера снимаются в `loadtest-report/loadtest-container.txt`
+  ДО `docker rm`. In-test ошибки ищи в `report.json`/`loadtest-container.txt`/
+  `compose-logs.txt`, а не по коду пост-прогонного probe.
 - 9.2 `.goreleaser.yaml` под GitLab CI:
   · Реестр через `{{ .Env.DOCKER_REGISTRY_BASE }}` — задаётся `$CI_REGISTRY_IMAGE`
   в [.gitlab-ci.yml](../.gitlab-ci.yml) release job (30 строк в `dockers:` /

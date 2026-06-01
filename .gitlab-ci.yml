@@ -504,17 +504,26 @@ loadtest:
     # запоминаем в LOADTEST_RC и пробрасываем в самом конце.
     - |
       set +e
-      # --use-aliases КРИТИЧНО: иначе `docker compose run --name X loadtest`
-      # в v2.29.1 не даёт one-off контейнеру network-alias `loadtest`, и
-      # Sender'у некуда стучаться при target_url=http://loadtest:9999.
-      # Прошлый прогон: `getent loadtest → not found`, receiver direct-probe
-      # отдавал 502 Bad Gateway (sender StatusCode=0 = не достучался).
+      # Два НЕЗАВИСИМЫХ требования к сетевой/маршрутной части loadtest'а — оба
+      # обязательны одновременно (исторически их путали друг с другом):
+      #  1. --use-aliases — иначе `docker compose run --name X loadtest` не даёт
+      #     one-off контейнеру network-alias `loadtest`, и Sender не дозвонится
+      #     до mock'а (target_url=http://loadtest:9999) → StatusCode 0 → 502.
+      #  2. --team-slug default — узлы создаются с path=loadtest/node-… (со
+      #     слэшем) в команде default. Receiver-URL — /v1/request/{team_slug}/
+      #     {node_path}; без слога первый сегмент (loadtest) трактуется как
+      #     team_slug → узел не найден → 404 на КАЖДОМ запросе (error rate 100%,
+      #     p50≈1.6мс). Фикс — в cmd/loadtest doRequest (флаг --team-slug).
+      # NB: пост-прогонная diagnostic ниже НЕ проверяет связность с mock'ом —
+      # mock живёт только пока крутится этот `run` (процесс самого loadtest'а),
+      # к моменту diagnostic он уже мёртв (см. подробности там же).
       docker compose --profile loadtest run \
         --use-aliases \
         --name "${COMPOSE_PROJECT_NAME}-loadtest-run" \
         loadtest \
           --web http://web:8000 \
           --receiver http://receiver:8080 \
+          --team-slug default \
           --mock-bind 0.0.0.0:9999 \
           --mock-public-url http://loadtest:9999 \
           --admin-password "$LOADTEST_ADMIN_PASSWORD" \
@@ -526,30 +535,47 @@ loadtest:
       LOADTEST_RC=$?
       echo "--- loadtest exit code = $LOADTEST_RC ---"
 
-      # ----- Шаг 4: извлечь отчёт из контейнера -----
-      echo "===== [4/4] копируем report.json из loadtest-контейнера ====="
+      # ----- Шаг 4: извлечь отчёт + логи из контейнера -----
+      echo "===== [4/4] копируем report.json + логи из loadtest-контейнера ====="
       docker cp "${COMPOSE_PROJECT_NAME}-loadtest-run":/tmp/report.json loadtest-report/report.json || true
+      # Логи самого run-контейнера (mock startup, "created N nodes", сам отчёт)
+      # снимаем ДО docker rm — в `docker compose logs` его нет, после rm теряются.
+      docker logs "${COMPOSE_PROJECT_NAME}-loadtest-run" > loadtest-report/loadtest-container.txt 2>&1 || true
       echo "--- размер артефактов ---"
       ls -lh loadtest-report/
       docker rm "${COMPOSE_PROJECT_NAME}-loadtest-run" || true
       echo "===== loadtest done ====="
 
-      # ----- Диагностика 100%-error: что в PG, что отвечает receiver -----
-      echo "===== diagnostic: sender DNS + connectivity ====="
-      docker compose exec -T sender getent hosts loadtest 2>&1 || echo "(getent loadtest → not found)"
+      # ----- Диагностика: МАРШРУТИЗАЦИЯ Receiver'а (НЕ связность с mock'ом) -----
+      # ВАЖНО: mock жил только во время `run` и к этому моменту уже мёртв,
+      # поэтому upstream-связность здесь проверить НЕЛЬЗЯ, и 502 на receiver-
+      # probe — ОЖИДАЕМО (sender не дозвонится до несуществующего mock'а).
+      # Полезен именно код СТАТУСА маршрутизации:
+      #   • 404/403/401 — баг в lookup/auth узла (например, неверный team_slug);
+      #   • 502        — маршрут найден, упал только upstream → НОРМА для probe.
+      # Реальные in-test ошибки смотри в loadtest-report/{report.json,
+      # loadtest-container.txt,compose-logs.txt}, а не по коду этого probe.
+      echo "===== diagnostic: sender DNS (long-lived сервисы) ====="
       docker compose exec -T sender getent hosts web 2>&1 || echo "(getent web → not found)"
+      # `loadtest` тут заведомо отсутствует (one-off контейнер удалён) — не баг,
+      # поэтому его и не пробуем: это лишь сбивало с толку в прошлых прогонах.
 
       echo "===== diagnostic: ноды в PostgreSQL ====="
       docker compose exec -T postgres psql -U nexus -d nexus -c "SELECT COUNT(*) AS total FROM nodes;" 2>&1
       docker compose exec -T postgres psql -U nexus -d nexus -c "SELECT path, target_url FROM nodes ORDER BY id DESC LIMIT 3;" 2>&1
 
-      echo "===== diagnostic: receiver direct response ====="
+      echo "===== diagnostic: receiver routing (со слогом vs legacy) ====="
       LOADTEST_PATH=$(docker compose exec -T postgres psql -U nexus -d nexus -t -c "SELECT path FROM nodes WHERE path LIKE 'loadtest/%' ORDER BY id DESC LIMIT 1;" 2>/dev/null | tr -d ' \n\r')
       echo "loadtest node path: '$LOADTEST_PATH'"
       if [ -n "$LOADTEST_PATH" ]; then
+        echo "--- correct: /v1/request/default/$LOADTEST_PATH (ждём НЕ 404; 502=mock мёртв, маршрут ОК) ---"
         docker compose exec -T sender wget -S -O- --post-data='diag' \
           --header='Content-Type: application/octet-stream' \
-          "http://receiver:8080/v1/request/$LOADTEST_PATH" 2>&1 | head -40
+          "http://receiver:8080/v1/request/default/$LOADTEST_PATH" 2>&1 | head -30
+        echo "--- legacy: /v1/request/$LOADTEST_PATH (демонстрирует 404 от team_slug-парсинга) ---"
+        docker compose exec -T sender wget -S -O- --post-data='diag' \
+          --header='Content-Type: application/octet-stream' \
+          "http://receiver:8080/v1/request/$LOADTEST_PATH" 2>&1 | head -15
       else
         echo "(loadtest_path пуст — нет нод в PG с префиксом loadtest/)"
       fi
