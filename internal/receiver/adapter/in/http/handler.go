@@ -31,31 +31,32 @@ func New(
 	return &Handler{route: route, routeAsync: routeAsync, logger: logger, maxBodyBytes: maxBodyBytes}
 }
 
-// Register вешает /v1/request/*path и /v1/requestAsync/*path на роутер.
+// Register вешает /api/v1/request/*path и /api/v1/requestAsync/*path на роутер.
 //
 // Phase 10.E.1: маршруты включают team_slug. Полный путь —
-// /v1/request/<team_slug>/<node_path>. Legacy без слога
-// (/v1/request/<node_path>) сохраняется как convenience для default-team:
+// /api/v1/request/<team_slug>/<node_path>. Legacy без слога
+// (/api/v1/request/<node_path>) сохраняется как convenience для default-team:
 // запросы без префикса слога продолжают работать, NodeReader подставляет
 // domain.DefaultTeamSlug.
 //
-// Префикс /v1/ обязателен; запрос без него — 404 с подсказкой (§3.1).
+// Префикс /api/v1/ обязателен; запрос без него — 404 с подсказкой (§3.1).
 // mws — дополнительные middleware (rate-limit, audit, ...), применяются
 // перед основным handler'ом.
 func (h *Handler) Register(r *gin.Engine, mws ...gin.HandlerFunc) {
-	// Корневой 404 для запросов без /v1/.
+	// Корневой 404 для запросов без /api/v1/.
 	r.NoRoute(func(c *gin.Context) {
 		p := c.Request.URL.Path
-		if strings.HasPrefix(p, "/request") || strings.HasPrefix(p, "/requestAsync") || strings.HasPrefix(p, "/callback") {
+		if strings.HasPrefix(p, "/request") || strings.HasPrefix(p, "/requestAsync") ||
+			strings.HasPrefix(p, "/callback") || strings.HasPrefix(p, "/v1/") {
 			c.JSON(http.StatusNotFound, gin.H{
-				"error": "API version required, use /v1/...",
+				"error": "API version required, use /api/v1/...",
 			})
 			return
 		}
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 	})
 
-	v1 := r.Group("/v1", mws...)
+	v1 := r.Group("/api/v1", mws...)
 	{
 		v1.Any("/request/*path", h.handleSync)
 		v1.Any("/requestAsync/*path", h.handleAsync)
@@ -90,13 +91,13 @@ func splitTeamSlugAndPath(raw string) (teamSlug, nodePath string) {
 
 // handleSync godoc
 // @Summary  Синхронный запрос через узел (§3.1).
-// @Description  Проксирует входящий запрос на внешний адрес узла и возвращает его ответ. Путь — /v1/request/<team_slug>/<node_path> (slug опционален для default-команды). Метод, тело и заголовки зависят от конфигурации узла.
+// @Description  Проксирует входящий запрос на внешний адрес узла и возвращает его ответ. Путь — /api/v1/request/<team_slug>/<node_path> (slug опционален для default-команды). Метод, тело и заголовки зависят от конфигурации узла.
 // @Tags     routing
 // @Param    path  path  string  true  "[<team_slug>/]<node_path>"
 // @Success  200  {object}  map[string]interface{}  "ответ внешнего узла (тело/код проксируются)"
 // @Failure  403  {object}  map[string]string  "url not in allowlist"
 // @Failure  404  {object}  map[string]string  "node not found"
-// @Router   /v1/request/{path} [post]
+// @Router   /api/v1/request/{path} [post]
 func (h *Handler) handleSync(c *gin.Context) {
 	teamSlug, nodePath := splitTeamSlugAndPath(c.Param("path"))
 	if nodePath == "" {
@@ -155,7 +156,7 @@ func (h *Handler) handleSync(c *gin.Context) {
 // @Param    path  path  string  true  "[<team_slug>/]<node_path>"
 // @Success  200  {object}  map[string]interface{}
 // @Failure  400  {object}  map[string]string  "callback not allowed for this node"
-// @Router   /v1/callback/{path} [post]
+// @Router   /api/v1/callback/{path} [post]
 func (h *Handler) handleCallback(c *gin.Context) {
 	teamSlug, nodePath := splitTeamSlugAndPath(c.Param("path"))
 	if nodePath == "" {
@@ -181,13 +182,13 @@ func (h *Handler) handleCallback(c *gin.Context) {
 
 // handleAsync godoc
 // @Summary  Асинхронный запрос через узел (§3.1).
-// @Description  Ставит запрос в очередь Kafka и сразу отвечает {result:true,id}. Доставку выполняет Sender-consumer. Путь — /v1/requestAsync/<team_slug>/<node_path>.
+// @Description  Ставит запрос в очередь Kafka и сразу отвечает {result:true,id}. Доставку выполняет Sender-consumer. Путь — /api/v1/requestAsync/<team_slug>/<node_path>.
 // @Tags     routing
 // @Param    path  path  string  true  "[<team_slug>/]<node_path>"
 // @Success  200  {object}  map[string]interface{}  "{result:true,id}"
 // @Success  202  {object}  map[string]interface{}  "queued (paused node, §3.6)"
 // @Failure  404  {object}  map[string]string  "node not found"
-// @Router   /v1/requestAsync/{path} [post]
+// @Router   /api/v1/requestAsync/{path} [post]
 func (h *Handler) handleAsync(c *gin.Context) {
 	teamSlug, nodePath := splitTeamSlugAndPath(c.Param("path"))
 	if nodePath == "" {

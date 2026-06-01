@@ -15,7 +15,7 @@ const docTemplatereceiver = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
-        "/v1/callback/{path}": {
+        "/api/v1/callback/{path}": {
             "post": {
                 "description": "Приём входящего webhook'а от внешнего провайдера. Alias асинхронного маршрута с обязательной проверкой HMAC-подписи (узел должен быть incoming_auth_type=webhook_signature).",
                 "tags": [
@@ -51,9 +51,9 @@ const docTemplatereceiver = `{
                 }
             }
         },
-        "/v1/request/{path}": {
+        "/api/v1/request/{path}": {
             "post": {
-                "description": "Проксирует входящий запрос на внешний адрес узла и возвращает его ответ. Путь — /v1/request/\u003cteam_slug\u003e/\u003cnode_path\u003e (slug опционален для default-команды). Метод, тело и заголовки зависят от конфигурации узла.",
+                "description": "Проксирует входящий запрос на внешний адрес узла и возвращает его ответ. Путь — /api/v1/request/\u003cteam_slug\u003e/\u003cnode_path\u003e (slug опционален для default-команды). Метод, тело и заголовки зависят от конфигурации узла.",
                 "tags": [
                     "routing"
                 ],
@@ -96,9 +96,9 @@ const docTemplatereceiver = `{
                 }
             }
         },
-        "/v1/requestAsync/{path}": {
+        "/api/v1/requestAsync/{path}": {
             "post": {
-                "description": "Ставит запрос в очередь Kafka и сразу отвечает {result:true,id}. Доставку выполняет Sender-consumer. Путь — /v1/requestAsync/\u003cteam_slug\u003e/\u003cnode_path\u003e.",
+                "description": "Ставит запрос в очередь Kafka и сразу отвечает {result:true,id}. Доставку выполняет Sender-consumer. Путь — /api/v1/requestAsync/\u003cteam_slug\u003e/\u003cnode_path\u003e.",
                 "tags": [
                     "routing"
                 ],
@@ -149,7 +149,7 @@ var SwaggerInforeceiver = &swag.Spec{
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},
 	Title:            "Nexus Receiver API",
-	Description:      "Публичный HTTP-вход шины данных (§3 ТЗ). Принимает входящие\nзапросы клиентов, маршрутизирует по конфигу узла (path) и\nпроксирует на внешний адрес синхронно (/v1/request) либо\nставит в очередь Kafka асинхронно (/v1/requestAsync).\nПрефикс /v1/ обязателен. Контракт зависит от конфигурации\nконкретного узла в админке.",
+	Description:      "Публичный HTTP-вход шины данных (§3 ТЗ). Принимает входящие\nзапросы клиентов, маршрутизирует по конфигу узла (path) и\nпроксирует на внешний адрес синхронно (/api/v1/request) либо\nставит в очередь Kafka асинхронно (/api/v1/requestAsync).\nПрефикс /api/v1/ обязателен. Контракт зависит от конфигурации\nконкретного узла в админке.",
 	InfoInstanceName: "receiver",
 	SwaggerTemplate:  docTemplatereceiver,
 	LeftDelim:        "{{",

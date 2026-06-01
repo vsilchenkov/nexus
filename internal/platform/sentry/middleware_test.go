@@ -39,12 +39,12 @@ func TestGinMiddleware_NoSentry(t *testing.T) {
 
 	r := gin.New()
 	r.Use(GinMiddleware("test"))
-	r.GET("/v1/request/*path", func(c *gin.Context) {
+	r.GET("/api/v1/request/*path", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/v1/request/demo/path?q=1", nil)
+	req := httptest.NewRequest("GET", "/api/v1/request/demo/path?q=1", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
@@ -57,15 +57,15 @@ func TestRootMethod(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	r := gin.New()
-	r.GET("/v1/request/*path", func(c *gin.Context) {
+	r.GET("/api/v1/request/*path", func(c *gin.Context) {
 		if got := rootMethod(c); got != "request" {
-			t.Errorf("/v1/request: got %q", got)
+			t.Errorf("/api/v1/request: got %q", got)
 		}
 		c.Status(200)
 	})
-	r.GET("/v1/requestAsync/*path", func(c *gin.Context) {
+	r.GET("/api/v1/requestAsync/*path", func(c *gin.Context) {
 		if got := rootMethod(c); got != "requestAsync" {
-			t.Errorf("/v1/requestAsync: got %q", got)
+			t.Errorf("/api/v1/requestAsync: got %q", got)
 		}
 		c.Status(200)
 	})
@@ -76,7 +76,7 @@ func TestRootMethod(t *testing.T) {
 		c.Status(200)
 	})
 
-	for _, p := range []string{"/v1/request/demo", "/v1/requestAsync/x", "/health"} {
+	for _, p := range []string{"/api/v1/request/demo", "/api/v1/requestAsync/x", "/health"} {
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, httptest.NewRequest("GET", p, nil))
 		if w.Code != 200 {

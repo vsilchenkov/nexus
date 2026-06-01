@@ -17,8 +17,8 @@
 | Go-версия               | 1.26                                                                  |
 | Тип проекта             | три stateless backend-сервиса (Receiver, Sender, Web) + SPA админка   |
 | Архитектура             | Clean Architecture: `handler → usecase → port → adapter`              |
-| Главный поток           | `POST /v1/request/<team_slug>/{path}` → Receiver → gRPC Sender → внешний URL → лог в ClickHouse `nexus_<team_slug>.<table>` |
-| Async                   | `POST /v1/requestAsync/<team_slug>/{path}` → Receiver → Kafka → Sender-consumer |
+| Главный поток           | `POST /api/v1/request/<team_slug>/{path}` → Web (единый вход, reverse-proxy) → Receiver → gRPC Sender → внешний URL → лог в ClickHouse `nexus_<team_slug>.<table>` |
+| Async                   | `POST /api/v1/requestAsync/<team_slug>/{path}` → Web → Receiver → Kafka → Sender-consumer |
 | Multi-tenancy           | Phase 10 ✅: команды через `/api/teams`, своя CH-БД per team (`nexus_<slug>`), team-switcher в Topbar, scope в nodes/audit/logs/replay/api_tokens. Legacy URL без слога продолжает работать как default-team. |
 | Зависимости              | PostgreSQL 16, Redis 7, ClickHouse 24, Kafka 3.9 (KRaft), Prometheus  |
 | Покрытие unit-тестами   | 14 пакетов (domain, crypto, i18n, sentry, receiver/usecase, chlog, web/usecase, metrics, healthcheck, config, clickhouse, reloader, nodecache, sender/usecase, **+ build / httpclient в Phase 7.13, + receiver/http + web/http middlewares в Phase 7.14**) + integration: circuitbreaker (Phase 7.13) |
@@ -44,10 +44,11 @@
 
 | Пункт | Статус | Где |
 |---|---|---|
-| `/v1/request/*` sync с проксированием ответа | ✅ | [internal/receiver/usecase/route.go](../internal/receiver/usecase/route.go), [adapter/in/http/handler.go](../internal/receiver/adapter/in/http/handler.go) |
-| `/v1/requestAsync/*` async, ответ 200 сразу | ✅ | [route_async.go](../internal/receiver/usecase/route_async.go) |
-| **`/v1/callback/*` (webhook с HMAC-SHA256, §16)** | ✅ Phase 8.1 | [handler.go](../internal/receiver/adapter/in/http/handler.go) `handleCallback`, [webhook_signature.go](../internal/receiver/usecase/webhook_signature.go) `VerifyWebhookSignature`, миграция [0007](../migrations/0007_webhook_signature.up.sql) |
-| 404 без префикса `/v1/` с подсказкой | ✅ | `Handler.Register` → `r.NoRoute` |
+| `/api/v1/request/*` sync с проксированием ответа | ✅ | [internal/receiver/usecase/route.go](../internal/receiver/usecase/route.go), [adapter/in/http/handler.go](../internal/receiver/adapter/in/http/handler.go) |
+| `/api/v1/requestAsync/*` async, ответ 200 сразу | ✅ | [route_async.go](../internal/receiver/usecase/route_async.go) |
+| **`/api/v1/callback/*` (webhook с HMAC-SHA256, §16)** | ✅ Phase 8.1 | [handler.go](../internal/receiver/adapter/in/http/handler.go) `handleCallback`, [webhook_signature.go](../internal/receiver/usecase/webhook_signature.go) `VerifyWebhookSignature`, миграция [0007](../migrations/0007_webhook_signature.up.sql) |
+| 404 без префикса `/api/v1/` с подсказкой | ✅ | `Handler.Register` → `r.NoRoute` |
+| **Единый вход: Web reverse-proxy `/api/v1/request\|requestAsync\|callback` → Receiver** | ✅ | [internal/web/adapter/in/http/receiver_proxy.go](../internal/web/adapter/in/http/receiver_proxy.go) `RegisterReceiverProxy`, регистрируется в [app.go](../internal/web/app.go) до `SPAFallback`. Без этого боевой путь проваливался в SPA-fallback и возвращал `index.html`. |
 | `url_mode = static` / `from_request` + allowlist + wildcard (`*.partner.com`) | ✅ | [urlresolver.go](../internal/receiver/usecase/urlresolver.go) |
 | `url_base` исключается из проксируемой query | ✅ | `ResolveURL`: `clean.Del(param)` |
 | Все режимы incoming auth (none/basic/token) | ✅ | [auth.go](../internal/receiver/usecase/auth.go) `CheckIncomingAuth` |
@@ -451,6 +452,26 @@
 ## 4. Архитектурные решения и неочевидности
 
 Эти моменты не очевидны из кода без контекста — стоит держать в голове при доработке.
+
+### 4.0 Базовый путь API — `/api/v1` и единый вход через Web
+
+Боевые эндпоинты Receiver живут под `/api/v1/request`, `/api/v1/requestAsync`,
+`/api/v1/callback` (раньше было `/v1/...`). Причина: клиенты обращаются к шине через
+**единый хост Web Service** (тот же, что отдаёт админку). Web реверс-проксирует
+`/api/v1/request|requestAsync|callback` в Receiver
+([receiver_proxy.go](../internal/web/adapter/in/http/receiver_proxy.go), регистрируется в
+[app.go](../internal/web/app.go) **до** `SPAFallback`). Префикс `/api` критичен: SPA-fallback
+отдаёт `index.html` на всё, что **не** начинается с `/api/` — поэтому старый `/v1/request`
+возвращал клиенту HTML вместо ответа узла (баг). Грабли при доработке:
+
+- Шаблон gin-роута теперь `/api/v1/request/*path` — это завязано в
+  [metrics/gin.go](../internal/platform/metrics/gin.go) (`rootMethodFromPath`) и
+  [sentry/middleware.go](../internal/platform/sentry/middleware.go) (`rootMethod`); меняешь путь —
+  меняй и там, иначе сломается node-метка и имена спанов.
+- Replay-диспетчер ([web/adapter/out/receiver/dispatcher.go](../internal/web/adapter/out/receiver/dispatcher.go))
+  и loadtest ([cmd/loadtest/main.go](../cmd/loadtest/main.go)) бьют по `/api/v1/...`.
+- `X-Forwarded-For` проставляется стандартным `httputil.ReverseProxy` — Receiver видит реальный
+  IP клиента (важно для аудита/логов).
 
 ### 4.1 Шифрование auth_credentials живёт только в `adapter/out/postgres`
 

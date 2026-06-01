@@ -7,8 +7,8 @@ import (
 )
 
 // TestSplitTeamSlugAndPath фиксирует контракт парсинга URL Receiver'а
-// (Phase 10.E.1): /v1/request/<team_slug>/<node_path> для multi-tenancy
-// и /v1/request/<node_path> для legacy default-team.
+// (Phase 10.E.1): /api/v1/request/<team_slug>/<node_path> для multi-tenancy
+// и /api/v1/request/<node_path> для legacy default-team.
 //
 // Cross-team изоляция в Receiver работает на уровне БД: NodeReader.Get
 // делает SELECT через JOIN с teams (WHERE slug=$1 AND path=$2). Если

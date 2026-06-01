@@ -66,14 +66,14 @@ func TestGinMiddleware_RecordsRequestsAndDuration(t *testing.T) {
 
 	r := gin.New()
 	r.Use(metrics.GinMiddleware(m))
-	r.Any("/v1/request/*path", func(c *gin.Context) {
+	r.Any("/api/v1/request/*path", func(c *gin.Context) {
 		// Имитируем работу — observe в гистограмме должен быть > 0.
 		time.Sleep(2 * time.Millisecond)
 		c.Status(http.StatusOK)
 	})
 
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/request/partner/orders", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/request/partner/orders", nil)
 	r.ServeHTTP(rr, req)
 	require.Equal(t, http.StatusOK, rr.Code)
 

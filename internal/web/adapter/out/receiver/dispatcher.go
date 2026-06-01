@@ -38,9 +38,9 @@ func NewHTTPDispatcher(baseURL string, timeout time.Duration, logger logging.Log
 }
 
 func (d *HTTPDispatcher) Dispatch(ctx context.Context, req port.DispatchRequest) (*port.DispatchResponse, error) {
-	root := "/v1/request"
+	root := "/api/v1/request"
 	if req.Async {
-		root = "/v1/requestAsync"
+		root = "/api/v1/requestAsync"
 	}
 	target := fmt.Sprintf("%s%s/%s", d.baseURL, root, strings.TrimPrefix(req.NodePath, "/"))
 	if len(req.Query) > 0 {

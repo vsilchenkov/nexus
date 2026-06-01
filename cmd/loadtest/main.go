@@ -4,7 +4,7 @@
 //  1. Поднимает mock-сервер внешних узлов (HTTP).
 //  2. Логинится в Web (POST /api/auth/login).
 //  3. Создаёт N узлов через POST /api/nodes (с разными url_mode и auth_type).
-//  4. Гонит target_rps в течение duration в Receiver (/v1/request/*).
+//  4. Гонит target_rps в течение duration в Receiver (/api/v1/request/*).
 //  5. Считает p50/p95/p99, error rate; печатает отчёт.
 //  6. Сохраняет JSON-отчёт в --report и выходит с кодом 1 при нарушении
 //     критериев приёма (rps >= 95% target, p95 <= 200ms, error rate < 0.1%).
@@ -55,7 +55,7 @@ func parseFlags() flags {
 	flag.StringVar(&f.WebURL, "web", "http://localhost:8000", "Web service base URL")
 	flag.StringVar(&f.ReceiverURL, "receiver", "http://localhost:8080", "Receiver base URL")
 	flag.StringVar(&f.TeamSlug, "team-slug", "default",
-		"Team slug used to address nodes in the request URL: /v1/request/<team_slug>/<node_path>. "+
+		"Team slug used to address nodes in the request URL: /api/v1/request/<team_slug>/<node_path>. "+
 			"Must match the team the nodes are created in (Phase 10.E.1 multi-tenancy). Узлы с "+
 			"многосегментным path (loadtest/node-…) недостижимы по legacy-URL без слога — первый "+
 			"сегмент трактуется как team_slug.")
@@ -366,10 +366,10 @@ func doRequest(c *client, paths []string, f flags, res *result) {
 		body[i] = 'a'
 	}
 
-	// Адресуем узел с явным team_slug: /v1/request/<team_slug>/<node_path>.
+	// Адресуем узел с явным team_slug: /api/v1/request/<team_slug>/<node_path>.
 	// Без слога Receiver съедает первый сегмент пути (loadtest/...) как
 	// team_slug и отвечает 404 (Phase 10.E.1 multi-tenancy).
-	url := c.baseRecv + "/v1/request/"
+	url := c.baseRecv + "/api/v1/request/"
 	if f.TeamSlug != "" {
 		url += f.TeamSlug + "/"
 	}

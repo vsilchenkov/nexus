@@ -42,7 +42,7 @@ var (
 	ErrNodeWebhookSigPrefixLength   = errors.New("domain: webhook_signature_prefix length must be <= 64")
 	ErrNodeWebhookSigHeaderRequired = errors.New("domain: webhook_signature_header is required for incoming_auth_type=webhook_signature")
 	ErrNodeWebhookSigSecretRequired = errors.New("domain: incoming_auth_credentials (secret) is required for incoming_auth_type=webhook_signature")
-	ErrCallbackNotAllowed           = errors.New("domain: /v1/callback route requires incoming_auth_type=webhook_signature")
+	ErrCallbackNotAllowed           = errors.New("domain: /api/v1/callback route requires incoming_auth_type=webhook_signature")
 
 	// §22: контроль логирования узла.
 	ErrNodeMaxBodySizeRange    = errors.New("domain: max_body_size must be 0..10000000")
