@@ -125,6 +125,12 @@ func applyDefaults(c *Config) {
 		c.Receiver.L2Cache.StaleTTLMs = 60000
 	}
 
+	// §27: Puller включён по умолчанию; узлов RabbitMQAsync может не быть —
+	// тогда reconcile просто ничего не поднимает.
+	if c.Receiver.Puller.ReconcileSec == 0 {
+		c.Receiver.Puller.ReconcileSec = 15
+	}
+
 	if c.Sender.GRPCAddr == "" {
 		c.Sender.GRPCAddr = ":9090"
 	}
@@ -173,6 +179,9 @@ func applyDefaults(c *Config) {
 	}
 	if c.Web.APITokenRateLimitPerMin == 0 {
 		c.Web.APITokenRateLimitPerMin = 100
+	}
+	if c.Web.RMQTestRateLimitPerMin == 0 {
+		c.Web.RMQTestRateLimitPerMin = 10 // §27.8: POST /api/nodes/test-rmq
 	}
 	if c.Web.ReceiverURL == "" {
 		c.Web.ReceiverURL = "http://receiver:8080"

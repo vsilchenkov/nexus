@@ -1474,6 +1474,63 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/nodes/test-rmq": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Реальный AMQP-handshake: TCP-connect, auth, passive queue.declare. Не создаёт очередь и не забирает сообщения. Всегда 200; OK=false при любом проваленном шаге (диагностика, не функциональный вызов). Доступно manager+, rate-limit 10/мин на пользователя.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "nodes"
+                ],
+                "summary": "Проверить подключение к RabbitMQ (§27.8).",
+                "parameters": [
+                    {
+                        "description": "RabbitMQ connection params",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.testRMQRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nexus_internal_web_usecase.RMQTestResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "rate limit exceeded",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/{id}": {
             "get": {
                 "security": [
@@ -3254,17 +3311,62 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 255
                 },
+                "pull_batch_size": {
+                    "type": "integer",
+                    "maximum": 1000,
+                    "minimum": 1
+                },
+                "pull_interval_sec": {
+                    "type": "integer",
+                    "maximum": 3600,
+                    "minimum": 1
+                },
+                "pull_prefetch": {
+                    "type": "integer",
+                    "maximum": 1000,
+                    "minimum": 1
+                },
                 "retry_backoff_ms": {
                     "type": "integer"
                 },
                 "retry_count": {
                     "type": "integer"
                 },
+                "rmq_host": {
+                    "description": "§27: RabbitMQAsync. RMQPassword пустой в PUT = «оставить старый» (как\nauth_credentials, разбирается в handler.Update). Диапазоны pull_* также\nпроверяет domain.Node.Validate и БД-constraint chk_rmq_fields.",
+                    "type": "string",
+                    "maxLength": 253
+                },
+                "rmq_password": {
+                    "type": "string",
+                    "maxLength": 1024
+                },
+                "rmq_port": {
+                    "type": "integer",
+                    "maximum": 65535,
+                    "minimum": 1
+                },
+                "rmq_queue": {
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "rmq_use_tls": {
+                    "type": "boolean"
+                },
+                "rmq_user": {
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "rmq_vhost": {
+                    "type": "string",
+                    "maxLength": 255
+                },
                 "root_method": {
                     "type": "string",
                     "enum": [
                         "request",
-                        "requestAsync"
+                        "requestAsync",
+                        "RabbitMQAsync"
                     ]
                 },
                 "status": {
@@ -3440,11 +3542,45 @@ const docTemplate = `{
                 "path": {
                     "type": "string"
                 },
+                "pull_batch_size": {
+                    "type": "integer"
+                },
+                "pull_interval_sec": {
+                    "type": "integer"
+                },
+                "pull_prefetch": {
+                    "type": "integer"
+                },
                 "retry_backoff_ms": {
                     "type": "integer"
                 },
                 "retry_count": {
                     "type": "integer"
+                },
+                "rmq_host": {
+                    "description": "§27: RabbitMQAsync. Пароль не возвращается — только флаг RMQPasswordSet.\nRMQStatus — runtime-health воркера (degraded/queue_depth/…), заполняется\nтолько для RabbitMQAsync; nil для request/requestAsync.",
+                    "type": "string"
+                },
+                "rmq_password_set": {
+                    "type": "boolean"
+                },
+                "rmq_port": {
+                    "type": "integer"
+                },
+                "rmq_queue": {
+                    "type": "string"
+                },
+                "rmq_status": {
+                    "$ref": "#/definitions/internal_web_adapter_in_http.RMQStatus"
+                },
+                "rmq_use_tls": {
+                    "type": "boolean"
+                },
+                "rmq_user": {
+                    "type": "string"
+                },
+                "rmq_vhost": {
+                    "type": "string"
                 },
                 "root_method": {
                     "type": "string"
@@ -3480,6 +3616,33 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "webhook_signature_prefix": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.RMQStatus": {
+            "type": "object",
+            "properties": {
+                "attempts": {
+                    "type": "integer"
+                },
+                "connection_state": {
+                    "description": "down|connecting|up",
+                    "type": "string"
+                },
+                "consumer_count": {
+                    "type": "integer"
+                },
+                "degraded": {
+                    "type": "boolean"
+                },
+                "queue_depth": {
+                    "type": "integer"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "since": {
                     "type": "string"
                 }
             }
@@ -3600,17 +3763,62 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 255
                 },
+                "pull_batch_size": {
+                    "type": "integer",
+                    "maximum": 1000,
+                    "minimum": 1
+                },
+                "pull_interval_sec": {
+                    "type": "integer",
+                    "maximum": 3600,
+                    "minimum": 1
+                },
+                "pull_prefetch": {
+                    "type": "integer",
+                    "maximum": 1000,
+                    "minimum": 1
+                },
                 "retry_backoff_ms": {
                     "type": "integer"
                 },
                 "retry_count": {
                     "type": "integer"
                 },
+                "rmq_host": {
+                    "description": "§27: RabbitMQAsync. RMQPassword пустой в PUT = «оставить старый» (как\nauth_credentials, разбирается в handler.Update). Диапазоны pull_* также\nпроверяет domain.Node.Validate и БД-constraint chk_rmq_fields.",
+                    "type": "string",
+                    "maxLength": 253
+                },
+                "rmq_password": {
+                    "type": "string",
+                    "maxLength": 1024
+                },
+                "rmq_port": {
+                    "type": "integer",
+                    "maximum": 65535,
+                    "minimum": 1
+                },
+                "rmq_queue": {
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "rmq_use_tls": {
+                    "type": "boolean"
+                },
+                "rmq_user": {
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "rmq_vhost": {
+                    "type": "string",
+                    "maxLength": 255
+                },
                 "root_method": {
                     "type": "string",
                     "enum": [
                         "request",
-                        "requestAsync"
+                        "requestAsync",
+                        "RabbitMQAsync"
                     ]
                 },
                 "status": {
@@ -4021,6 +4229,43 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_web_adapter_in_http.testRMQRequest": {
+            "type": "object",
+            "required": [
+                "host",
+                "queue"
+            ],
+            "properties": {
+                "host": {
+                    "type": "string",
+                    "maxLength": 253
+                },
+                "password": {
+                    "type": "string",
+                    "maxLength": 1024
+                },
+                "port": {
+                    "type": "integer",
+                    "maximum": 65535,
+                    "minimum": 1
+                },
+                "queue": {
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "use_tls": {
+                    "type": "boolean"
+                },
+                "user": {
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "vhost": {
+                    "type": "string",
+                    "maxLength": 255
+                }
+            }
+        },
         "internal_web_adapter_in_http.updateMemberRoleRequest": {
             "type": "object",
             "required": [
@@ -4338,6 +4583,51 @@ const docTemplate = `{
                 "status": {
                     "description": "ok | failed | skipped",
                     "type": "string"
+                }
+            }
+        },
+        "nexus_internal_web_usecase.RMQCheck": {
+            "type": "object",
+            "properties": {
+                "consumer_count": {
+                    "type": "integer"
+                },
+                "elapsed_ms": {
+                    "type": "integer"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message_count": {
+                    "type": "integer"
+                },
+                "ok": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "nexus_internal_web_usecase.RMQChecks": {
+            "type": "object",
+            "properties": {
+                "auth": {
+                    "$ref": "#/definitions/nexus_internal_web_usecase.RMQCheck"
+                },
+                "connect": {
+                    "$ref": "#/definitions/nexus_internal_web_usecase.RMQCheck"
+                },
+                "queue": {
+                    "$ref": "#/definitions/nexus_internal_web_usecase.RMQCheck"
+                }
+            }
+        },
+        "nexus_internal_web_usecase.RMQTestResult": {
+            "type": "object",
+            "properties": {
+                "checks": {
+                    "$ref": "#/definitions/nexus_internal_web_usecase.RMQChecks"
+                },
+                "ok": {
+                    "type": "boolean"
                 }
             }
         },

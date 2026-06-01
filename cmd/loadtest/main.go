@@ -45,6 +45,8 @@ type flags struct {
 	MockPublicURL string
 	Cleanup       bool
 	Report        string
+	RatioRMQ      float64 // §27.12: доля узлов RabbitMQAsync
+	RMQURL        string  // amqp://user:pass@host:port/vhost для RMQ-нагрузки
 }
 
 func parseFlags() flags {
@@ -65,6 +67,10 @@ func parseFlags() flags {
 		"Public base URL of the mock server as seen by Receiver/Sender (e.g. http://loadtest:9999). If empty, the listener URL is used — works only when loadtest, Receiver and Sender share the same network namespace.")
 	flag.BoolVar(&f.Cleanup, "cleanup", true, "Delete created nodes after test")
 	flag.StringVar(&f.Report, "report", "report.json", "Report file path")
+	flag.Float64Var(&f.RatioRMQ, "ratio-rmq", 0,
+		"§27: fraction of nodes created as RabbitMQAsync (0..1). Requires --rmq-url.")
+	flag.StringVar(&f.RMQURL, "rmq-url", "",
+		"AMQP URL for RabbitMQAsync load (amqp://user:pass@host:port/vhost). Queues are declared and published to during the run.")
 	flag.Parse()
 	return f
 }
@@ -96,18 +102,33 @@ func main() {
 	}
 	fmt.Println("logged in OK")
 
-	nodes, err := client.createNodes(ctx, f.Nodes, targetURL)
+	// §27.12: часть узлов — RabbitMQAsync (нагрузка публикуется в их очереди).
+	httpNodes := f.Nodes
+	rmqNodes := 0
+	if f.RatioRMQ > 0 && f.RMQURL != "" {
+		rmqNodes = int(float64(f.Nodes)*f.RatioRMQ + 0.5)
+		httpNodes = f.Nodes - rmqNodes
+	} else if f.RatioRMQ > 0 {
+		fmt.Fprintln(os.Stderr, "--ratio-rmq requires --rmq-url; ignoring RMQ load")
+	}
+
+	nodes, err := client.createNodes(ctx, httpNodes, targetURL)
 	if err != nil {
 		fail("create nodes: %v", err)
 	}
-	fmt.Printf("created %d nodes\n", len(nodes))
+	fmt.Printf("created %d http nodes\n", len(nodes))
 
 	if f.Cleanup {
 		defer client.deleteNodes(context.Background(), nodes)
 	}
 
+	// RMQ-нагрузка идёт параллельно HTTP-нагрузке.
+	rmqLoad := startRMQLoad(ctx, client, f, targetURL, rmqNodes)
+	defer rmqLoad.stop()
+
 	report := runLoad(ctx, client, nodes, f)
 	report.print()
+	rmqLoad.report()
 	if err := report.save(f.Report); err != nil {
 		fmt.Fprintf(os.Stderr, "save report: %v\n", err)
 	}

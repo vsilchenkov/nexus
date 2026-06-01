@@ -417,6 +417,15 @@ Compose автоматически подхватывает `docker-compose.over
   `('admin','manager','viewer')` — добавляет роль `manager`. Новых колонок/таблиц нет, существующие
   пользователи не затрагиваются. Откат (`down`) переводит существующих менеджеров в `viewer` перед
   возвратом старого constraint.
+- **§27:** миграция `0014_rmq_async_node` добавляет метод `RabbitMQAsync` в справочник `methods` и
+  nullable-колонки `rmq_*`/`pull_*` в `nodes` + constraint `chk_rmq_fields`. Для request/requestAsync
+  колонки NULL — поведение не меняется. Откат (`down`) сперва удаляет узлы `RabbitMQAsync`, затем
+  колонки и значение метода. **Зависимость:** появился клиент `github.com/rabbitmq/amqp091-go`
+  (vendored в go.mod) — внешний RabbitMQ-брокер Nexus НЕ поднимает, он только подключается к уже
+  существующей очереди, указанной в узле. **Конфиг:** новая секция `receiver.puller`
+  (`disabled` — по умолчанию false, `reconcile_sec` — 15) — Puller-воркеры живут в Receiver; при
+  отсутствии узлов RabbitMQAsync это no-op. Health-снимки воркеров пишутся в Redis-hash `rmq:health`
+  (Web читает для UI) — дополнительной инфраструктуры не требуют.
 - **Вручную** (для контролируемых деплоев — применить до старта трафика):
 
   | Действие | Команда (нативно) | Команда (в Docker) |

@@ -144,6 +144,11 @@ receiver:
     size: 1000
     ttl_ms: 2000
     stale_ttl_ms: 60000
+  # §27: Puller-воркеры RabbitMQAsync (один на узел, забор basic.get → Kafka).
+  # Включён по умолчанию; при отсутствии узлов RabbitMQAsync — no-op.
+  puller:
+    disabled: false
+    reconcile_sec: 15
 
 sender:
   grpc_addr: :9090

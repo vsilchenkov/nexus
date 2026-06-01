@@ -125,6 +125,7 @@ docker-logs: ## Логи сервисов (Ctrl+C для выхода)
 # ----- placeholders для следующих фаз ---------------------------------------
 
 .PHONY: swagger proto loadtest test-integration sqlc-gen rotate-encryption-key
+.PHONY: test-int-pg test-int-ch test-int-catalog test-int-receiver test-int-rmq test-int-sender
 
 SWAG ?= swag
 swagger: ## Сгенерировать swagger в docs/web и docs/receiver (см. §11, §25)
@@ -150,8 +151,35 @@ loadtest: ## Нагрузочный сценарий: make loadtest TARGET_RPS=5
 		--duration $(or $(DURATION),10m) \
 		--nodes $(or $(NODES),50)
 
-test-integration: ## Integration-тесты через testcontainers (требует Docker)
-	$(GO) test -tags=integration -count=1 -v ./tests/integration/...
+INTEGRATION_TIMEOUT ?= 20m
+
+# Под-прогоны тяжёлого integration-пакета по группам зависимостей (§10.1, §27.12).
+# Каждая группа — отдельный `go test` со своим -timeout: один зависший/упавший
+# тест не съедает бюджет всего пакета и не маскирует остальные группы. GNU Make
+# выполняет prerequisite'ы последовательно; Kafka-группа (`sender`, исторически
+# самая медленная/тайминг-чувствительная) идёт последней, чтобы все остальные
+# группы успели отработать и отчитаться даже при её падении.
+# Регексы -run в ДВОЙНЫХ кавычках — переносимо между cmd.exe (Windows) и sh.
+# Запуск отдельной группы: `make test-int-rmq` и т.п.
+test-integration: test-int-pg test-int-ch test-int-catalog test-int-receiver test-int-rmq test-int-sender ## Integration-тесты под-прогонами (требует Docker; 20m на группу)
+
+test-int-pg: ## integration: Postgres-узлы/миграции/multi-tenancy
+	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestNodeRepo|^TestNodeUC|^TestNodeCache|^TestMigrations|^TestMultiTenancy" ./tests/integration/...
+
+test-int-ch: ## integration: ClickHouse/шаблоны/метрики/replay
+	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestClickHouse|^TestCHTemplateRepo|^TestCHProvisioner|^TestLogReader|^TestMetricsReader|^TestReplay" ./tests/integration/...
+
+test-int-catalog: ## integration: каталоги/auth/сессии/нотификации/circuit-breaker
+	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestHostAllowlist|^TestHeaderCatalog|^TestAuth|^TestSession|^TestUserRoleManager|^TestAppSettingsRepo|^TestNotif|^TestCircuitBreaker" ./tests/integration/...
+
+test-int-receiver: ## integration: Receiver sync/incoming-auth
+	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestReceiver_" ./tests/integration/...
+
+test-int-rmq: ## integration: RabbitMQAsync Puller (§27)
+	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestRMQPuller" ./tests/integration/...
+
+test-int-sender: ## integration: Sender async + DLQ (Kafka)
+	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestSender_Async" ./tests/integration/...
 
 sqlc-gen: ## Phase 1: генерация Go-кода из SQL через sqlc
 	@echo "TODO Phase 1: sqlc generate"

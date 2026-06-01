@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nexus — RabbitMQAsync (узел с забором из RabbitMQ)</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/tabler-icons.min.css">
+<style>
+:root {
+  --bg-app: #0f1115;
+  --bg-primary: #16191f;
+  --bg-secondary: #1c2027;
+  --bg-tertiary: #22272f;
+  --bg-info: rgba(74, 144, 226, 0.12);
+  --bg-success: rgba(60, 180, 120, 0.14);
+  --bg-warning: rgba(220, 160, 60, 0.14);
+  --bg-danger: rgba(226, 75, 74, 0.12);
+  --border-tertiary: #2a3038;
+  --border-strong: #38404a;
+  --border-danger: rgba(226, 75, 74, 0.5);
+  --text-primary: #e6e9ef;
+  --text-secondary: #9aa3b2;
+  --text-tertiary: #5f6875;
+  --text-info: #5b9bf0;
+  --text-success: #4cc38a;
+  --text-warning: #d9a441;
+  --text-danger: #e85d5c;
+  --radius-sm: 4px;
+  --radius-md: 7px;
+  --radius-lg: 11px;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font-sans); background: var(--bg-app); color: var(--text-primary); font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; padding: 32px; }
+code { font-family: var(--font-mono); font-size: 11px; background: var(--bg-secondary); padding: 1px 6px; border-radius: 3px; color: var(--text-info); }
+
+.intro { max-width: 1100px; margin: 0 auto 28px; }
+.intro .tag { display: inline-block; font-family: var(--font-mono); font-size: 11px; color: var(--text-info); background: var(--bg-info); padding: 3px 8px; border-radius: var(--radius-sm); margin-bottom: 10px; }
+.intro h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; margin-bottom: 6px; }
+.intro p { font-size: 13px; color: var(--text-secondary); line-height: 1.65; max-width: 820px; }
+
+.row { max-width: 1100px; margin: 0 auto 32px; }
+.row-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }
+.row-head .num { font-family: var(--font-mono); font-size: 11px; color: var(--text-info); background: var(--bg-info); padding: 3px 8px; border-radius: var(--radius-sm); }
+.row-head h2 { font-size: 15px; font-weight: 600; }
+.row-desc { font-size: 12.5px; color: var(--text-secondary); margin-bottom: 14px; max-width: 800px; line-height: 1.6; }
+
+.frame { background: var(--bg-app); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); padding: 22px; box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
+
+/* Buttons */
+.btn { display: inline-flex; align-items: center; gap: 7px; padding: 8px 14px; border-radius: var(--radius-md); font-size: 13px; font-weight: 500; cursor: pointer; border: 0.5px solid var(--border-strong); background: var(--bg-secondary); color: var(--text-primary); font-family: var(--font-sans); }
+.btn:hover { background: var(--bg-tertiary); }
+.btn i { font-size: 15px; }
+.btn-primary { background: var(--text-info); border-color: var(--text-info); color: #fff; }
+.btn-sm { padding: 5px 10px; font-size: 12px; }
+
+/* Section head */
+.section-head { font-size: 13px; font-weight: 600; margin-bottom: 14px; display: flex; align-items: center; gap: 7px; color: var(--text-primary); }
+.section-head i { font-size: 16px; color: var(--text-secondary); }
+
+/* Field row (two-col) */
+.frow { display: grid; grid-template-columns: 150px 1fr; gap: 14px; align-items: start; padding: 11px 0; border-bottom: 0.5px solid var(--border-tertiary); }
+.frow:last-child { border-bottom: none; }
+.frow .fl { font-size: 13px; color: var(--text-secondary); padding-top: 8px; }
+.frow .fl .sub { font-size: 11px; color: var(--text-tertiary); display: block; margin-top: 2px; }
+.frow .fi { display: flex; flex-direction: column; gap: 6px; }
+
+input.in, select.in { width: 100%; height: 36px; padding: 0 11px; background: var(--bg-app); border: 0.5px solid var(--border-tertiary); border-radius: var(--radius-md); color: var(--text-primary); font-size: 13px; font-family: var(--font-sans); }
+input.mono { font-family: var(--font-mono); font-size: 12px; }
+label.fld { display: block; font-size: 11px; color: var(--text-secondary); margin-bottom: 4px; }
+.hint-small { font-size: 11px; color: var(--text-tertiary); padding-left: 2px; }
+
+/* 4-way method picker — main feature */
+.method-pick {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.method-pick label {
+  padding: 12px 13px;
+  border: 0.5px solid var(--border-tertiary);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  position: relative;
+  text-align: left;
+}
+.method-pick label.sel { border-color: var(--text-info); background: var(--bg-info); }
+.method-pick .ico { width: 28px; height: 28px; border-radius: 6px; background: var(--bg-tertiary); display: grid; place-items: center; margin-bottom: 8px; color: var(--text-secondary); }
+.method-pick label.sel .ico { background: rgba(74, 144, 226, 0.22); color: var(--text-info); }
+.method-pick .t { font-size: 12.5px; font-weight: 500; margin-bottom: 3px; }
+.method-pick label.sel .t { color: var(--text-info); }
+.method-pick .d { font-size: 10.5px; color: var(--text-tertiary); line-height: 1.45; }
+.method-pick label.sel .d { color: var(--text-info); opacity: 0.85; }
+.method-pick .ck { position: absolute; top: 10px; right: 10px; color: var(--text-info); display: none; font-size: 15px; }
+.method-pick label.sel .ck { display: block; }
+.method-pick .new-badge {
+  position: absolute; top: 8px; right: 8px;
+  font-size: 9px; padding: 1px 5px;
+  background: var(--bg-success);
+  color: var(--text-success);
+  border-radius: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+.method-pick label.sel .new-badge { display: none; }
+
+/* Connection card */
+.conn-card {
+  background: var(--bg-primary);
+  border: 0.5px solid var(--border-tertiary);
+  border-radius: var(--radius-md);
+  padding: 16px 18px;
+}
+
+/* Hints */
+.hint { display: flex; gap: 9px; padding: 10px 13px; border-radius: var(--radius-md); font-size: 12px; line-height: 1.55; margin-top: 12px; }
+.hint i { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+.hint-info { background: var(--bg-info); color: var(--text-info); }
+.hint-warn { background: var(--bg-warning); color: var(--text-warning); }
+.hint-muted { background: var(--bg-secondary); color: var(--text-secondary); }
+
+/* Test result */
+.test-result {
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  margin-top: 12px;
+  font-size: 12.5px;
+}
+.test-result.ok { background: var(--bg-success); border: 0.5px solid rgba(60,180,120,0.4); }
+.test-result.err { background: var(--bg-danger); border: 0.5px solid var(--border-danger); }
+.test-result .tr-head { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 10px; }
+.test-result.ok .tr-head { color: var(--text-success); }
+.test-result.err .tr-head { color: var(--text-danger); }
+.test-result .check-row { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 12px; }
+.test-result .check-row .ic { width: 16px; flex-shrink: 0; }
+.test-result .check-row .ok-i { color: var(--text-success); }
+.test-result .check-row .err-i { color: var(--text-danger); }
+.test-result .check-row .nm { min-width: 80px; font-weight: 500; }
+.test-result .check-row .desc { color: var(--text-secondary); flex: 1; }
+.test-result .check-row .meta { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
+
+/* Diagram */
+.diagram {
+  background: var(--bg-primary);
+  border: 0.5px solid var(--border-tertiary);
+  border-radius: var(--radius-md);
+  padding: 18px 20px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 2;
+  margin-top: 14px;
+}
+.diagram .step { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
+.diagram .step .num {
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--bg-tertiary); color: var(--text-primary);
+  display: grid; place-items: center; font-size: 11px; font-weight: 600;
+  flex-shrink: 0;
+}
+.diagram .step .arrow { color: var(--text-tertiary); margin: 0 6px; font-family: var(--font-mono); }
+.diagram code { font-family: var(--font-mono); font-size: 11px; background: var(--bg-secondary); padding: 1px 6px; border-radius: 3px; color: var(--text-info); }
+
+/* Degraded state pill */
+.pill { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 11px; font-size: 11px; font-weight: 500; }
+.pill .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.pill-ok { background: var(--bg-success); color: var(--text-success); }
+.pill-degraded { background: var(--bg-danger); color: var(--text-danger); }
+
+/* Top form bar (breadcrumbs + buttons) */
+.form-top {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 18px;
+}
+.crumbs { font-size: 13px; color: var(--text-secondary); display: flex; align-items: center; gap: 7px; }
+.crumbs i { font-size: 13px; color: var(--text-tertiary); }
+.crumbs .cur { color: var(--text-primary); }
+
+.notes { max-width: 1100px; margin: 8px auto 0; padding: 18px 22px; background: var(--bg-primary); border: 0.5px solid var(--border-tertiary); border-radius: var(--radius-lg); font-size: 12.5px; color: var(--text-secondary); line-height: 1.65; }
+.notes h3 { font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; margin-top: 14px; }
+.notes h3:first-child { margin-top: 0; }
+.notes ul { list-style: none; padding: 0; }
+.notes li { padding: 3px 0; }
+.notes li::before { content: "·"; color: var(--text-tertiary); margin-right: 8px; }
+
+.metrics-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-top: 14px;
+}
+.mini-kpi { padding: 11px 13px; background: var(--bg-secondary); border-radius: var(--radius-md); }
+.mini-kpi .ml { font-size: 10.5px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+.mini-kpi .mv { font-size: 18px; font-weight: 600; }
+.mini-kpi .ms { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+</style>
+</head>
+<body>
+
+<div class="intro">
+  <span class="tag">§3.3 + §7.5 (RabbitMQAsync)</span>
+  <h1>RabbitMQAsync — узел с забором из RabbitMQ</h1>
+  <p>Третий тип узла. В отличие от <code>request</code> / <code>requestAsync</code>, не ждёт HTTP-вызова от клиента — сам периодически забирает сообщения из заданной RabbitMQ-очереди, кладёт в Kafka, дальше Sender отправляет их на target URL так же, как для <code>requestAsync</code>. Полезно для интеграций, где события уже лежат в корпоративной шине, и нужен RabbitMQ → HTTP мост без отдельного прокси-сервиса.</p>
+</div>
+
+<!-- ============ STATE 1 — Method selector with new option ============ -->
+<div class="row">
+  <div class="row-head"><span class="num">1</span><h2>Селектор типа узла · 3 варианта</h2></div>
+  <p class="row-desc">В секции «Маршрут» формы создания узла переключатель теперь содержит три карточки. <code>RabbitMQAsync</code> помечен бейджем «NEW» — только что добавлен. Выбор переключателя определяет, какие секции формы откроются ниже.</p>
+  <div class="frame">
+    <div class="section-head"><i class="ti ti-route"></i> Маршрут</div>
+    <div class="frow">
+      <div class="fl">Тип источника<span class="sub">откуда приходят сообщения</span></div>
+      <div class="fi">
+        <div class="method-pick">
+          <label>
+            <div class="ico"><i class="ti ti-arrow-bounce"></i></div>
+            <div class="t">request</div>
+            <div class="d">HTTP sync, ждём ответ</div>
+            <i class="ti ti-check ck"></i>
+          </label>
+          <label>
+            <div class="ico"><i class="ti ti-send"></i></div>
+            <div class="t">requestAsync</div>
+            <div class="d">HTTP в Kafka, ответ 200</div>
+            <i class="ti ti-check ck"></i>
+          </label>
+          <label class="sel">
+            <div class="ico"><i class="ti ti-brand-rabbit"></i></div>
+            <div class="t">RabbitMQAsync</div>
+            <div class="d">Забор из очереди по расписанию</div>
+            <span class="new-badge">new</span>
+            <i class="ti ti-check ck"></i>
+          </label>
+        </div>
+      </div>
+    </div>
+    <div class="frow">
+      <div class="fl">Имя узла</div>
+      <div class="fi">
+        <input class="in mono" value="billing-events">
+        <span class="hint-small">Используется как ключ для маршрутизации и имя ClickHouse-таблицы логов.</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ STATE 2 — RabbitMQ connection block ============ -->
+<div class="row">
+  <div class="row-head"><span class="num">2</span><h2>Подключение к RabbitMQ + проверка</h2></div>
+  <p class="row-desc">При выборе <code>RabbitMQAsync</code> раскрывается секция подключения. Все поля валидируются на клиенте по тем же правилам, что бэкенд проверит на сохранении. Кнопка «Проверить подключение» вызывает <code>POST /api/nodes/test-rmq</code> — реальный AMQP-handshake без сохранения узла.</p>
+  <div class="frame">
+    <div class="section-head"><i class="ti ti-brand-rabbit" style="color:var(--text-warning);"></i> RabbitMQ — источник</div>
+
+    <div class="frow">
+      <div class="fl">Хост и порт</div>
+      <div class="fi">
+        <div style="display:grid;grid-template-columns:2fr 100px 100px;gap:8px;">
+          <input class="in mono" value="rmq.internal.company.ru">
+          <input class="in mono" value="5672">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;padding:0 8px;border:0.5px solid var(--border-tertiary);border-radius:var(--radius-md);height:36px;cursor:pointer;">
+            <input type="checkbox"> TLS
+          </label>
+        </div>
+        <span class="hint-small">5672 для AMQP, 5671 для AMQPS. TLS-сертификат должен быть доверенным или явно разрешён в конфиге.</span>
+      </div>
+    </div>
+
+    <div class="frow">
+      <div class="fl">Virtual host</div>
+      <div class="fi">
+        <input class="in mono" value="/" style="max-width:300px;">
+      </div>
+    </div>
+
+    <div class="frow">
+      <div class="fl">Аутентификация<span class="sub">шифруется AES-256-GCM</span></div>
+      <div class="fi">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <input class="in" placeholder="user" value="nexus-billing">
+          <input class="in" type="password" placeholder="password" value="••••••••••">
+        </div>
+      </div>
+    </div>
+
+    <div class="frow">
+      <div class="fl">Очередь</div>
+      <div class="fi">
+        <input class="in mono" value="billing.events.outbound">
+        <span class="hint-small">Очередь должна быть создана и забиндена к нужному exchange заранее. Nexus не создаёт очереди в v1.</span>
+      </div>
+    </div>
+
+    <div style="display:flex;justify-content:flex-end;margin-top:14px;">
+      <button class="btn"><i class="ti ti-plug-connected"></i> Проверить подключение</button>
+    </div>
+
+    <!-- Test result — success -->
+    <div class="test-result ok">
+      <div class="tr-head"><i class="ti ti-circle-check" style="font-size:18px;"></i> Подключение успешно</div>
+      <div class="check-row"><i class="ti ti-check ic ok-i"></i><span class="nm">connect</span><span class="desc">TCP + AMQP handshake</span><span class="meta">42 ms</span></div>
+      <div class="check-row"><i class="ti ti-check ic ok-i"></i><span class="nm">auth</span><span class="desc">авторизация пользователя <code style="font-family:var(--font-mono);font-size:11px;background:rgba(60,180,120,0.18);color:var(--text-success);padding:0 5px;border-radius:3px;">nexus-billing</code> прошла</span><span class="meta">18 ms</span></div>
+      <div class="check-row"><i class="ti ti-check ic ok-i"></i><span class="nm">queue</span><span class="desc">очередь существует, сейчас в ней <strong style="color:var(--text-primary);">1,248</strong> сообщений, <strong style="color:var(--text-primary);">0</strong> consumer'ов</span><span class="meta">11 ms</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ STATE 3 — Test failed ============ -->
+<div class="row">
+  <div class="row-head"><span class="num">3</span><h2>Проверка с ошибкой</h2></div>
+  <p class="row-desc">Подключение прошло, аутентификация прошла, но очередь не найдена. Это самый частый сценарий — опечатка в имени или забыли создать очередь до настройки узла. Каждая проверка показана отдельной строкой, ошибка с конкретной причиной — не «error» одним словом.</p>
+  <div class="frame">
+    <div class="section-head"><i class="ti ti-brand-rabbit" style="color:var(--text-warning);"></i> RabbitMQ — источник</div>
+
+    <div class="frow">
+      <div class="fl">Очередь</div>
+      <div class="fi">
+        <input class="in mono" value="billing.events.outboud" style="border-color:var(--border-danger);">
+        <span class="hint-small" style="color:var(--text-danger);">Опечатка в имени? RabbitMQ не нашёл такую очередь.</span>
+      </div>
+    </div>
+
+    <div class="test-result err">
+      <div class="tr-head"><i class="ti ti-alert-triangle" style="font-size:18px;"></i> Не удалось подключиться</div>
+      <div class="check-row"><i class="ti ti-check ic ok-i"></i><span class="nm">connect</span><span class="desc">TCP + AMQP handshake</span><span class="meta">38 ms</span></div>
+      <div class="check-row"><i class="ti ti-check ic ok-i"></i><span class="nm">auth</span><span class="desc">авторизация пользователя <code style="font-family:var(--font-mono);font-size:11px;background:rgba(60,180,120,0.18);color:var(--text-success);padding:0 5px;border-radius:3px;">nexus-billing</code> прошла</span><span class="meta">21 ms</span></div>
+      <div class="check-row"><i class="ti ti-x ic err-i"></i><span class="nm">queue</span><span class="desc">очередь <code style="font-family:var(--font-mono);font-size:11px;background:rgba(226,75,74,0.18);color:var(--text-danger);padding:0 5px;border-radius:3px;">billing.events.outboud</code> не найдена (404 NOT_FOUND). Проверьте имя или создайте очередь и привяжите к exchange.</span><span class="meta">9 ms</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ STATE 4 — Pull parameters ============ -->
+<div class="row">
+  <div class="row-head"><span class="num">4</span><h2>Параметры забора</h2></div>
+  <p class="row-desc">Отдельная секция под подключением. <code>pull_interval_sec</code> — насколько часто опрашивать очередь; <code>pull_batch_size</code> — сколько сообщений брать за раз. Дефолты: 5 секунд / 100 сообщений — это разумная середина: быстрая реакция и без излишней нагрузки на брокер.</p>
+  <div class="frame">
+    <div class="section-head"><i class="ti ti-refresh"></i> Параметры забора</div>
+
+    <div class="frow">
+      <div class="fl">Периодичность<span class="sub">интервал опроса</span></div>
+      <div class="fi">
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input class="in mono" value="5" style="width:90px;text-align:right;">
+          <span style="font-size:12px;color:var(--text-secondary);">секунд</span>
+          <div style="flex:1;"></div>
+          <div style="display:flex;gap:4px;">
+            <button class="btn btn-sm" style="background:transparent;border-color:var(--border-tertiary);">1с</button>
+            <button class="btn btn-sm" style="background:var(--bg-info);border-color:var(--text-info);color:var(--text-info);">5с</button>
+            <button class="btn btn-sm" style="background:transparent;border-color:var(--border-tertiary);">30с</button>
+            <button class="btn btn-sm" style="background:transparent;border-color:var(--border-tertiary);">1м</button>
+            <button class="btn btn-sm" style="background:transparent;border-color:var(--border-tertiary);">5м</button>
+          </div>
+        </div>
+        <span class="hint-small">Воркер делает batch-fetch раз в N секунд. 1 секунда — почти realtime, 5 минут — для редких событий. Допустимо 1–3600.</span>
+      </div>
+    </div>
+
+    <div class="frow">
+      <div class="fl">Размер батча<span class="sub">сообщений за раз</span></div>
+      <div class="fi">
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input class="in mono" value="100" style="width:90px;text-align:right;">
+          <span style="font-size:12px;color:var(--text-secondary);">сообщений</span>
+        </div>
+        <span class="hint-small">Максимум сообщений за одну итерацию. 100 — баланс между throughput и latency. Допустимо 1–1000.</span>
+      </div>
+    </div>
+
+    <div class="frow">
+      <div class="fl">Prefetch (QoS)</div>
+      <div class="fi">
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input class="in mono" value="100" style="width:90px;text-align:right;">
+          <span style="font-size:12px;color:var(--text-secondary);">сообщений</span>
+        </div>
+        <span class="hint-small">AMQP <code>basic.qos</code>. По умолчанию равен размеру батча. Меняйте только если знаете, что делаете.</span>
+      </div>
+    </div>
+
+    <div class="hint hint-info"><i class="ti ti-info-circle"></i>
+      При нагрузке <strong>10 сообщений/сек</strong> с этими настройками: каждые 5 секунд воркер забирает ~50 сообщений батчем, средняя задержка от появления в очереди до отправки на target URL — около 2.5 секунд + время Sender'а. Если нужна меньшая задержка — уменьшите интервал.
+    </div>
+  </div>
+</div>
+
+<!-- ============ STATE 5 — Routing block ============ -->
+<div class="row">
+  <div class="row-head"><span class="num">5</span><h2>Куда отправлять</h2></div>
+  <p class="row-desc">После забора сообщения пройдут через Sender и уйдут на target URL. Динамический URL <code>from_request</code> для этого типа скрыт — нет «входящего HTTP-запроса», в котором мог бы быть параметр. Только статичный адрес.</p>
+  <div class="frame">
+    <div class="section-head"><i class="ti ti-world"></i> Куда перенаправить</div>
+
+    <div class="frow">
+      <div class="fl">Target URL</div>
+      <div class="fi">
+        <input class="in mono" value="https://api.partner.com/billing/webhook">
+        <span class="hint-small">Все сообщения из очереди уйдут POST на этот адрес.</span>
+      </div>
+    </div>
+
+    <div class="frow">
+      <div class="fl">HTTP-метод</div>
+      <div class="fi">
+        <select class="in" style="max-width:160px;" disabled>
+          <option>POST</option>
+        </select>
+        <span class="hint-small">В v1 — только POST. PUT/PATCH с маппингом из routing key — в планах v2.</span>
+      </div>
+    </div>
+
+    <div class="frow">
+      <div class="fl">Timeout / Retry</div>
+      <div class="fi" style="display:flex;gap:8px;flex-direction:row;">
+        <input class="in mono" value="5000" style="width:100px;">
+        <span style="font-size:12px;color:var(--text-secondary);padding-top:8px;">ms</span>
+        <select class="in" style="width:140px;margin-left:auto;"><option>3 retry</option><option>5 retry</option></select>
+      </div>
+    </div>
+
+    <div class="hint hint-muted">
+      <i class="ti ti-info-circle"></i>
+      Поля «Входящая авторизация» и режим URL «Из запроса» скрыты — для этого типа узла они не имеют смысла: входящих HTTP-запросов нет, шина сама забирает данные.
+    </div>
+  </div>
+</div>
+
+<!-- ============ STATE 6 — Data flow diagram ============ -->
+<div class="row">
+  <div class="row-head"><span class="num">6</span><h2>Поток данных</h2></div>
+  <p class="row-desc">Что именно происходит после сохранения узла. Тот же путь через Kafka + Sender, что у <code>requestAsync</code>, но добавлен Puller-воркер впереди.</p>
+  <div class="frame" style="padding:18px 22px;">
+    <div class="diagram">
+      <div class="step"><span class="num">1</span> <strong style="color:var(--text-primary);">Puller</strong> (в Receiver) опрашивает <code>billing.events.outbound</code> каждые 5 секунд</div>
+      <div class="step"><span class="num">2</span> Достал до 100 сообщений батчем через <code>basic.get</code>, <strong style="color:var(--text-primary);">не</strong> ack'ает их</div>
+      <div class="step"><span class="num">3</span> <span class="arrow">→</span> Публикует в <code>databus.async</code> topic, ключ = <code>billing-events</code></div>
+      <div class="step"><span class="num">4</span> Kafka подтверждает запись (<code>acks=all</code>)</div>
+      <div class="step"><span class="num">5</span> <span class="arrow">→</span> <strong style="color:var(--text-primary);">basic.ack</strong> в RabbitMQ — теперь сообщение точно не потеряется</div>
+      <div class="step"><span class="num">6</span> Sender забирает из Kafka, отправляет <code>POST https://api.partner.com/billing/webhook</code></div>
+      <div class="step"><span class="num">7</span> Лог в ClickHouse: <code>type=RabbitMQAsync</code>, <code>IP=rabbitmq://rmq.internal.company.ru:5672//</code></div>
+    </div>
+    <div class="hint hint-warn" style="margin-top:14px;">
+      <i class="ti ti-alert-triangle"></i>
+      <strong style="font-weight:600;">At-least-once.</strong> Если Receiver упадёт <em>между</em> Kafka-ack (шаг 4) и RabbitMQ-ack (шаг 5) — сообщение пройдёт повторно после рестарта. Получатель должен быть идемпотентен (по <code>message_id</code> из envelope) или мириться с редкими дублями.
+    </div>
+  </div>
+</div>
+
+<!-- ============ STATE 7 — Detail page with RMQ metrics ============ -->
+<div class="row">
+  <div class="row-head"><span class="num">7</span><h2>Страница узла · KPI для RabbitMQAsync</h2></div>
+  <p class="row-desc">На detail-странице узла KPI-блоки заменяются на специфичные для RabbitMQAsync: глубина очереди, скорость забора, статус подключения. Это то, на что смотрит оператор, чтобы понять, справляется ли узел.</p>
+  <div class="frame">
+    <div class="form-top">
+      <div class="crumbs">Узлы <i class="ti ti-chevron-right"></i> RabbitMQAsync <i class="ti ti-chevron-right"></i> <span class="cur">billing-events</span></div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <span class="pill pill-ok"><span class="dot"></span>Активен · подключение OK</span>
+        <button class="btn btn-sm"><i class="ti ti-edit"></i> Изменить</button>
+      </div>
+    </div>
+
+    <div class="metrics-row">
+      <div class="mini-kpi">
+        <div class="ml">Глубина очереди</div>
+        <div class="mv">248</div>
+        <div class="ms" style="color:var(--text-success);">▼ убывает (-12/сек)</div>
+      </div>
+      <div class="mini-kpi">
+        <div class="ml">Скорость забора</div>
+        <div class="mv">19.4<span style="font-size:12px;color:var(--text-secondary);font-weight:400;">/сек</span></div>
+        <div class="ms">за последнюю минуту</div>
+      </div>
+      <div class="mini-kpi">
+        <div class="ml">p95 от очереди до получателя</div>
+        <div class="mv">3.1<span style="font-size:12px;color:var(--text-secondary);font-weight:400;">с</span></div>
+        <div class="ms">RMQ → Kafka → HTTP</div>
+      </div>
+      <div class="mini-kpi">
+        <div class="ml">Ошибки доставки</div>
+        <div class="mv">2</div>
+        <div class="ms" style="color:var(--text-secondary);">timeout · 0.02%</div>
+      </div>
+    </div>
+
+    <div class="hint hint-info" style="margin-top:14px;"><i class="ti ti-info-circle"></i>
+      Подключено к <code>rmq.internal.company.ru:5672</code>, очередь <code>billing.events.outbound</code>, забор каждые 5 секунд по 100 сообщений. Sender отправляет на <code>api.partner.com/billing/webhook</code>.
+    </div>
+  </div>
+</div>
+
+<!-- ============ STATE 8 — Degraded state ============ -->
+<div class="row">
+  <div class="row-head"><span class="num">8</span><h2>Состояние · degraded (RabbitMQ недоступен)</h2></div>
+  <p class="row-desc">Если RabbitMQ недоступен дольше 5 минут — узел автоматически переходит в <code>degraded</code>. Это не «отключён» (его никто не выключал, и он сам попытается восстановиться) — это «работает, но не может работать». В UI красный баннер с конкретной причиной и числом неудачных попыток.</p>
+  <div class="frame">
+    <div class="form-top">
+      <div class="crumbs">Узлы <i class="ti ti-chevron-right"></i> RabbitMQAsync <i class="ti ti-chevron-right"></i> <span class="cur">billing-events</span></div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <span class="pill pill-degraded"><span class="dot"></span>Degraded · RabbitMQ unreachable</span>
+        <button class="btn btn-sm"><i class="ti ti-edit"></i> Изменить</button>
+      </div>
+    </div>
+
+    <div class="test-result err" style="margin-top:0;">
+      <div class="tr-head"><i class="ti ti-plug-connected-x" style="font-size:18px;"></i> Не удаётся подключиться к RabbitMQ</div>
+      <div class="check-row"><i class="ti ti-x ic err-i"></i><span class="nm">connect</span><span class="desc">TCP timeout на <code style="font-family:var(--font-mono);font-size:11px;background:rgba(226,75,74,0.18);color:var(--text-danger);padding:0 5px;border-radius:3px;">rmq.internal.company.ru:5672</code></span><span class="meta">с 14:18:42</span></div>
+      <div class="check-row"><i class="ti ti-history ic" style="color:var(--text-tertiary);"></i><span class="nm">попыток</span><span class="desc">147 (backoff: 60 с, следующая попытка через 38 с)</span><span class="meta">за 6м 14с</span></div>
+      <div style="display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:0.5px solid rgba(226,75,74,0.3);">
+        <button class="btn btn-sm"><i class="ti ti-refresh"></i> Попробовать сейчас</button>
+        <button class="btn btn-sm" style="background:transparent;"><i class="ti ti-plug-connected"></i> Перепроверить настройки</button>
+      </div>
+    </div>
+
+    <div class="hint hint-muted" style="margin-top:14px;">
+      <i class="ti ti-info-circle"></i>
+      Узел вернётся в <strong style="color:var(--text-primary);">active</strong> автоматически после восстановления связи. До этого момента новые сообщения в очереди не теряются — они остаются в RabbitMQ. Накопление видно в метрике <code>databus_rmq_queue_depth</code>.
+    </div>
+  </div>
+</div>
+
+<!-- Notes -->
+<div class="notes">
+  <h3>Где встроено в основное ТЗ</h3>
+  <ul>
+    <li>§3.3 — новый <code>root_method = RabbitMQAsync</code> и поля <code>rmq_*</code> + <code>pull_*</code></li>
+    <li>§3.6 — четвёртое состояние <code>degraded</code> (только для pull-узлов)</li>
+    <li>§5.1 — colонки в <code>nodes</code> + constraint для целостности RabbitMQ-узлов</li>
+    <li>§5.5 — <code>rmq_password</code> шифруется по той же схеме, что <code>auth_credentials</code></li>
+    <li>§7.5 — расширение формы узла: переключатель с 3 вариантами, секция подключения, кнопка проверки</li>
+    <li>§11 — новый эндпоинт <code>POST /api/nodes/test-rmq</code> в Web Service Swagger</li>
+  </ul>
+
+  <h3>Что Claude Code должен учесть</h3>
+  <ul>
+    <li>В Go использовать <code>github.com/rabbitmq/amqp091-go</code> — официальный поддерживаемый клиент. <code>streadway/amqp</code> заархивирован.</li>
+    <li>Puller-воркер живёт в Receiver-сервисе, не в Sender. Sender ничего не знает про RabbitMQ — он просто потребляет из Kafka как обычно.</li>
+    <li>Один <code>amqp.Connection</code> и <code>amqp.Channel</code> на узел; переоткрываются на ошибках. <strong>Не</strong> создавать соединение на каждый тик — это убьёт брокер при 50+ узлах.</li>
+    <li>Graceful shutdown: при <code>SIGTERM</code> или удалении узла — <code>basic.nack</code> всех необработанных, дождаться текущий батч (до 10с), закрыть канал.</li>
+    <li>Тест подключения через <code>queue.declare</code> с <code>passive=true</code> — это не создаёт очередь, только проверяет существование. Не использовать <code>basic.get</code> или <code>consume</code> для проверки — они изменят состояние очереди.</li>
+    <li>UI селектора типа — три карточки в одной сетке через компонент <code>method-pick</code>; при добавлении новых типов узлов сетка переключается на 4 колонки.</li>
+  </ul>
+</div>
+
+</body>
+</html>

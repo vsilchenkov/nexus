@@ -178,6 +178,13 @@ docker compose -f deploy/docker-compose.deps.yml up -d
   `Toggle`; после правки `web-ui/` обязательны `npm run lint` (`--max-warnings=0`) и `npm run build`,
   затем пересборка встроенного SPA (`make build-ui` или копирование `web-ui/dist/*` в
   `internal/web/static/`).
+- **RabbitMQAsync (§27)** — Puller-воркеры живут в Receiver и сами поднимаются для узлов
+  `root_method=RabbitMQAsync` (reconcile из PG раз в `receiver.puller.reconcile_sec`). Для локальной
+  отладки нужен брокер RabbitMQ (Docker: `docker run -d --rm -p 5672:5672 -p 15672:15672
+  rabbitmq:3.13-management-alpine`). e2e-тесты (`tests/integration/receiver_rmq_test.go`) сами
+  поднимают RabbitMQ через testcontainers — отдельный брокер для `make test-integration` не нужен,
+  только Docker daemon. Кнопка «Проверить подключение» в форме узла дёргает `POST /api/nodes/test-rmq`
+  (manager+). Health воркера UI читает из Redis-hash `rmq:health`.
 
 ---
 

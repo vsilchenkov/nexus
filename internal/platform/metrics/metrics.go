@@ -51,6 +51,14 @@ type Metrics struct {
 	L2CacheMisses    prometheus.Counter
 	L2CacheEvictions prometheus.Counter
 	L2CacheSize      prometheus.Gauge
+
+	// §27: узел RabbitMQAsync (Puller-воркер в Receiver).
+	RMQMessagesPulledTotal *prometheus.CounterVec // {node, status=ok|nack|reject}
+	RMQPullDuration        *prometheus.HistogramVec
+	RMQConnectionState     *prometheus.GaugeVec // {node}: 0=down,1=connecting,2=up
+	RMQQueueDepth          *prometheus.GaugeVec // {node}
+	RMQConsumerCount       *prometheus.GaugeVec // {node}
+	NodeDegraded           *prometheus.GaugeVec // {node, reason}: 1 при degraded
 }
 
 // New создаёт новый экземпляр Metrics для указанного сервиса.
@@ -140,6 +148,43 @@ func New(service string) *Metrics {
 			Help:        "Receiver L2 in-memory node cache current entry count.",
 			ConstLabels: constLabels,
 		}),
+
+		RMQMessagesPulledTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "nexus_rmq_messages_pulled_total",
+			Help:        "RabbitMQAsync messages pulled by node and outcome (ok, nack, reject).",
+			ConstLabels: constLabels,
+		}, []string{"node", "status"}),
+
+		RMQPullDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:        "nexus_rmq_pull_duration_seconds",
+			Help:        "RabbitMQAsync batch pull+publish duration in seconds by node.",
+			ConstLabels: constLabels,
+			Buckets:     prometheus.DefBuckets,
+		}, []string{"node"}),
+
+		RMQConnectionState: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "nexus_rmq_connection_state",
+			Help:        "RabbitMQAsync connection state by node: 0=down, 1=connecting, 2=up.",
+			ConstLabels: constLabels,
+		}, []string{"node"}),
+
+		RMQQueueDepth: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "nexus_rmq_queue_depth",
+			Help:        "RabbitMQAsync source queue depth (messages) by node, sampled each tick.",
+			ConstLabels: constLabels,
+		}, []string{"node"}),
+
+		RMQConsumerCount: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "nexus_rmq_consumer_count",
+			Help:        "RabbitMQAsync source queue consumer count by node.",
+			ConstLabels: constLabels,
+		}, []string{"node"}),
+
+		NodeDegraded: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "nexus_node_degraded",
+			Help:        "Pull node (RabbitMQAsync) degraded state: 1 when degraded, 0 otherwise.",
+			ConstLabels: constLabels,
+		}, []string{"node", "reason"}),
 	}
 
 	reg.MustRegister(
@@ -157,6 +202,12 @@ func New(service string) *Metrics {
 		m.L2CacheMisses,
 		m.L2CacheEvictions,
 		m.L2CacheSize,
+		m.RMQMessagesPulledTotal,
+		m.RMQPullDuration,
+		m.RMQConnectionState,
+		m.RMQQueueDepth,
+		m.RMQConsumerCount,
+		m.NodeDegraded,
 	)
 	return m
 }

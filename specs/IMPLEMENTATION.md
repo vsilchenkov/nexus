@@ -354,6 +354,21 @@
 | FE-инфра Radix/cmdk + обёртки Popover/Tooltip/Command | ✅ Phase D.1 | [components/ui/](../web-ui/src/components/ui/) |
 | Topbar Swagger popover (две доки, ↗, tooltip) | ✅ Phase 25.D.2 | [components/Topbar.tsx](../web-ui/src/components/Topbar.tsx), [AppShell.tsx](../web-ui/src/components/AppShell.tsx) |
 
+### §27 Тип узла RabbitMQAsync
+
+ТЗ — [sections/27-rabbitmq-async.md](sections/27-rabbitmq-async.md).
+
+| Пункт | Статус | Где |
+|---|---|---|
+| Домен: `RootMethodRabbitMQAsync`+`IsPull`, поля `rmq_*`/`pull_*`, `Validate`, `NormalizeForRootMethod`, дефолты | ✅ Phase B | [domain/enums.go](../internal/domain/enums.go), [domain/node.go](../internal/domain/node.go), [domain/errors.go](../internal/domain/errors.go) |
+| Миграция 0014: `methods`+`RabbitMQAsync`, колонки `nodes`, `chk_rmq_fields` | ✅ Phase B | [0014_rmq_async_node](../migrations/0014_rmq_async_node.up.sql) |
+| Postgres: шифрование `rmq_password`, NULL для не-pull, scan | ✅ Phase B | [node_repo.go](../internal/web/adapter/out/postgres/node_repo.go), [db.go](../internal/web/adapter/out/postgres/db.go) |
+| DTO+handler: поля, `rmq_password_set`, «пусто=не менять», сброс несовместимых полей в audit | ✅ Phase B | [dto.go](../internal/web/adapter/in/http/dto.go), [node_handler.go](../internal/web/adapter/in/http/node_handler.go), [usecase/node.go](../internal/web/usecase/node.go) |
+| `POST /api/nodes/test-rmq` (manager+, rate-limit, passive declare) | ✅ Phase C | usecase [rmq_tester.go](../internal/web/usecase/rmq_tester.go), adapter [rabbitmq/prober.go](../internal/web/adapter/out/rabbitmq/prober.go), handler [rmq_test_handler.go](../internal/web/adapter/in/http/rmq_test_handler.go), route в группе `authedManager` ([routes.go](../internal/web/adapter/in/http/routes.go)); 3 шага connect/auth/queue (passive declare), всегда 200, rate-limit `web.rmq_test_rate_limit_per_min` (деф. 10) |
+| Puller-воркер RabbitMQ→Kafka в Receiver, метрики `nexus_rmq_*`, runtime-`degraded` | ✅ Phase D | usecase [puller.go](../internal/receiver/usecase/puller.go)+[puller_manager.go](../internal/receiver/usecase/puller_manager.go), адаптеры [rabbitmq/](../internal/receiver/adapter/out/rabbitmq/) (connector/nodelister/healthsink), envelope-блок `rmq` ([envelope.go](../internal/receiver/usecase/envelope.go)), метрики ([metrics.go](../internal/platform/metrics/metrics.go)), health-снимок в Redis (`rmq:health`), wiring [receiver/app.go](../internal/receiver/app.go), конфиг `receiver.puller`. Reconcile из PG (без узлового pub/sub), graceful stop (≤10с) |
+| UI: форма (3 карточки, проверка, pull-параметры), KPI/degraded | ✅ Phase E | health-ридер [redis/rmq_health.go](../internal/web/adapter/out/redis/rmq_health.go) → `NodeResponse.rmq_status` ([node_handler.go](../internal/web/adapter/in/http/node_handler.go)); UI [RabbitMQSection.tsx](../web-ui/src/components/node/RabbitMQSection.tsx), [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx) (3-я карточка, скрытие incoming-auth/from_request, проверка подключения), [NodeDetail.tsx](../web-ui/src/pages/NodeDetail.tsx) (degraded-pill + KPI, refetch 5с); i18n en/ru |
+| Сценарные/e2e-тесты (testcontainers RabbitMQ) + loadtest `--ratio-rmq` | ✅ Phase F | [tests/integration/receiver_rmq_test.go](../tests/integration/receiver_rmq_test.go) (RabbitMQ-контейнер: no-loss + kafka-down requeue), [node_repo_test.go](../tests/integration/node_repo_test.go) (round-trip+CHECK), unit [puller_test.go](../internal/receiver/usecase/puller_test.go), loadtest [cmd/loadtest/rmq.go](../cmd/loadtest/rmq.go) (`--ratio-rmq`/`--rmq-url`), TESTING.md |
+
 ---
 
 ## 3. Где что лежит — карта каталогов
@@ -917,6 +932,30 @@ filter, Create без TeamID). До блока B (team-switcher в сессии)
   trigger'ом на массив (тот хрупок). Форма узла шлёт имена (`string[]`), не ID — Receiver нетронут.
 - **POST идемпотентен по `lower(name)`**: unique-violation ловится в usecase и резолвится в
   существующую запись (200). Combobox создаёт без диалогов и без гонок.
+
+### 4.25 §27 — RabbitMQAsync: неочевидности
+
+- **`degraded` — runtime, не `node.status`.** Сознательно НЕ расширяли enum `NodeStatus` и его
+  CHECK. Смешивать конфиг-статус (что выставил пользователь: enabled/paused/disabled) с health (что
+  наблюдает воркер) нельзя — иначе `degraded` затирал бы `paused`, а воркер писал бы в конфиг.
+  Health живёт в `domain.RMQHealth`, Receiver публикует снимок в Redis-hash `rmq:health`, Web читает
+  его в `NodeResponse.rmq_status`. Метрика `nexus_node_degraded` — отдельный сигнал.
+- **Puller в Receiver, не в Sender.** Sender ничего не знает про RabbitMQ — он потребляет из Kafka как
+  обычно. Puller только перекладывает RMQ→Kafka, переиспользуя тот же producer и формат `Envelope`
+  (плюс блок `rmq`). Это даёт единый конвейер с `requestAsync`.
+- **Порядок ack строгий: Kafka `acks=all` → потом `basic.ack`.** Это даёт at-least-once: сбой между
+  Kafka-ack и RMQ-ack → дубль (получатель должен быть идемпотентен по `message_id`); сбой до Kafka-ack
+  → `basic.nack(requeue)` без потери. Producer уже `RequireAll`, отдельной настройки не нужно.
+- **Reconcile из PG, не pub/sub.** Узлового Redis-события на CRUD нет (инвалидация кеша — по path, без
+  сообщения). `PullerManager` периодически (`receiver.puller.reconcile_sec`, деф. 15с) сверяет список
+  RabbitMQAsync-узлов из PG с запущенными воркерами, перезапуская при изменении `updated_at`. Задержка
+  старта нового узла ≤ reconcile_sec — приемлемо для v1.
+- **Отдельный PG-листер, не nodecache.Reader.** Reader не тянет `rmq_*`-колонки и расшифровку
+  `rmq_password`; для Puller нужен полный конфиг → `rabbitmq.NodeLister`. paused-узлы из поллинга
+  исключены (источник останавливается).
+- **`basic.get` поллинг, не `basic.consume`.** v1 — простой предсказуемый поллинг с manual ack
+  (push-consumer — §27.14 v2). `QueueDeclarePassive` при Connect проверяет существование очереди (404
+  → backoff/degraded, не создаём).
 
 ### 4.24 §25 — два swagger одним Web-бинарём
 

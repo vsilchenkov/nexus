@@ -151,6 +151,9 @@ func (u *NodeUsecase) Create(ctx context.Context, actor Actor, n *domain.Node) e
 	if n.TeamID == "" {
 		n.TeamID = u.defaultTeamID
 	}
+	// §27.6: для pull-узлов молча сбрасываем несовместимые поля (incoming-auth,
+	// url_mode=from_request, динамическая исходящая авторизация).
+	cleared := n.NormalizeForRootMethod()
 	if err := u.normalizeCHTable(ctx, n); err != nil {
 		return err
 	}
@@ -182,6 +185,9 @@ func (u *NodeUsecase) Create(ctx context.Context, actor Actor, n *domain.Node) e
 		"url_mode":    string(n.URLMode),
 		"auth_type":   string(n.AuthType),
 		"status":      string(n.Status),
+	}
+	if len(cleared) > 0 {
+		auditDetails["cleared_incompatible_fields"] = cleared
 	}
 
 	if u.uow != nil {
@@ -216,6 +222,7 @@ func (u *NodeUsecase) Create(ctx context.Context, actor Actor, n *domain.Node) e
 // n.TeamID == old.TeamID на случай прямого вызова.
 func (u *NodeUsecase) Update(ctx context.Context, actor Actor, n *domain.Node, teamID string) error {
 	n.SetDefaults()
+	cleared := n.NormalizeForRootMethod() // §27.6
 	if err := u.normalizeCHTable(ctx, n); err != nil {
 		return err
 	}
@@ -242,6 +249,9 @@ func (u *NodeUsecase) Update(ctx context.Context, actor Actor, n *domain.Node, t
 		}
 	}
 	diff := diffNodes(old, n)
+	if len(cleared) > 0 {
+		diff["cleared_incompatible_fields"] = cleared
+	}
 	if u.uow != nil {
 		if err := u.uow.Execute(ctx, func(ctx context.Context, r port.Repos) error {
 			if err := r.Nodes.Update(ctx, n); err != nil {
@@ -429,6 +439,19 @@ func diffNodes(old, n *domain.Node) map[string]any {
 	}
 	if old.IncomingAuthCredentials != n.IncomingAuthCredentials {
 		d["incoming_auth_credentials"] = "changed"
+	}
+	// §27: RabbitMQAsync-поля (rmq_password маскируется, как остальные креды).
+	add("rmq_host", old.RMQHost, n.RMQHost)
+	add("rmq_port", old.RMQPort, n.RMQPort)
+	add("rmq_vhost", old.RMQVHost, n.RMQVHost)
+	add("rmq_user", old.RMQUser, n.RMQUser)
+	add("rmq_queue", old.RMQQueue, n.RMQQueue)
+	add("rmq_use_tls", old.RMQUseTLS, n.RMQUseTLS)
+	add("pull_interval_sec", old.PullIntervalSec, n.PullIntervalSec)
+	add("pull_batch_size", old.PullBatchSize, n.PullBatchSize)
+	add("pull_prefetch", old.PullPrefetch, n.PullPrefetch)
+	if old.RMQPassword != n.RMQPassword {
+		d["rmq_password"] = "changed"
 	}
 	return d
 }

@@ -21,6 +21,7 @@ type Handlers struct {
 	CHTemplate    *CHTemplateHandler
 	HostAllowlist *HostAllowlistHandler
 	HeaderCatalog *HeaderCatalogHandler
+	RMQTest       *RMQTestHandler
 }
 
 // Middlewares — общие middleware (auth-check, role-check, API token-check).
@@ -122,6 +123,11 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		authedManager.DELETE("/nodes/:id", h.Node.Delete)
 		// §7.5.1: dry-run без сохранения конфига.
 		authedManager.POST("/nodes/dry-run", h.DryRun.Run)
+		// §27.8: проверка подключения к RabbitMQ (только session, manager+,
+		// rate-limit внутри handler'а). Регистрируется только если включён.
+		if h.RMQTest != nil {
+			authedManager.POST("/nodes/test-rmq", RequireSessionOnly(), h.RMQTest.TestRMQ)
+		}
 
 		// Каталог разрешённых хостов (§23): мутации каталога и привязки.
 		if h.HostAllowlist != nil {

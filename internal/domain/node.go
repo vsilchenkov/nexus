@@ -61,6 +61,21 @@ type Node struct {
 	MaxBodySizeEnabled bool
 	MaxBodySize        int32
 
+	// §27: параметры узла RabbitMQAsync (root_method="RabbitMQAsync").
+	// Для request/requestAsync эти поля пустые/нулевые. RMQPassword хранится
+	// в БД зашифрованным (AES-256-GCM, как AuthCredentials); в domain.Node —
+	// plaintext. Заполнены и осмысленны только при RootMethod.IsPull().
+	RMQHost         string
+	RMQPort         int32
+	RMQVHost        string
+	RMQUser         string
+	RMQPassword     string // plaintext в памяти, шифр в БД
+	RMQQueue        string
+	RMQUseTLS       bool
+	PullIntervalSec int32
+	PullBatchSize   int32
+	PullPrefetch    int32
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -82,10 +97,42 @@ func (n *Node) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// NormalizeForRootMethod приводит узел к виду, совместимому с его RootMethod,
+// и возвращает имена молча сброшенных несовместимых полей (для audit, §27.6).
+// Для pull-узлов (RabbitMQAsync) нет входящего HTTP-запроса: incoming-авторизация
+// и url_mode=from_request бессмысленны, динамическая исходящая авторизация
+// (*_from_request) тоже — её неоткуда брать. Вызывается в usecase.Create/Update
+// до Validate.
+func (n *Node) NormalizeForRootMethod() []string {
+	if !n.RootMethod.IsPull() {
+		return nil
+	}
+	var cleared []string
+	if n.IncomingAuthType != "" && n.IncomingAuthType != IncomingAuthTypeNone {
+		n.IncomingAuthType = IncomingAuthTypeNone
+		n.IncomingAuthCredentials = ""
+		n.WebhookSignatureHeader = ""
+		cleared = append(cleared, "incoming_auth_type")
+	}
+	if n.URLMode == URLModeFromRequest {
+		n.URLMode = URLModeStatic
+		cleared = append(cleared, "url_mode")
+	}
+	if n.AuthType.IsDynamic() {
+		n.AuthType = AuthTypeNone
+		n.AuthCredentials = ""
+		cleared = append(cleared, "auth_type")
+	}
+	return cleared
+}
+
 // pathPattern — то же ограничение, что в БД-constraint (§3.3 ТЗ).
 var pathPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9/_-]*$`)
 var paramNamePattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]*$`)
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// rmqQueuePattern — стандартное ограничение имени очереди RabbitMQ (§27.6).
+var rmqQueuePattern = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
 // Validate проверяет доменные инварианты узла. Используется в usecase.Create/Update.
 // Constraints в БД — второй уровень защиты; здесь — основной, потому что только
@@ -171,6 +218,32 @@ func (n *Node) Validate() error {
 	if n.MaxBodySizeEnabled && n.MaxBodySize <= 0 {
 		return ErrNodeMaxBodySizeRequired
 	}
+	if n.RootMethod.IsPull() {
+		if err := n.validateRMQ(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateRMQ проверяет инварианты узла RabbitMQAsync (§27.6). Дублирует
+// БД-constraint chk_rmq_fields, но даёт user-friendly ошибку до похода в БД.
+func (n *Node) validateRMQ() error {
+	if l := len(n.RMQHost); l < 1 || l > 253 {
+		return ErrNodeRMQHostRequired
+	}
+	if l := len(n.RMQQueue); l < 1 || l > 255 || !rmqQueuePattern.MatchString(n.RMQQueue) {
+		return ErrNodeRMQQueueInvalid
+	}
+	if n.PullIntervalSec < 1 || n.PullIntervalSec > 3600 {
+		return ErrNodePullIntervalRange
+	}
+	if n.PullBatchSize < 1 || n.PullBatchSize > 1000 {
+		return ErrNodePullBatchRange
+	}
+	if n.PullPrefetch < 1 || n.PullPrefetch > 1000 {
+		return ErrNodePullPrefetchRange
+	}
 	return nil
 }
 
@@ -213,5 +286,28 @@ func (n *Node) SetDefaults() {
 	}
 	if n.ClickHouseRetentionDays == 0 {
 		n.ClickHouseRetentionDays = 90
+	}
+	if n.RootMethod.IsPull() {
+		// (см. NormalizeForRootMethod — вызывается отдельно в usecase,
+		// чтобы зафиксировать сброшенные поля в audit)
+		if n.RMQVHost == "" {
+			n.RMQVHost = "/"
+		}
+		if n.RMQPort == 0 {
+			if n.RMQUseTLS {
+				n.RMQPort = 5671
+			} else {
+				n.RMQPort = 5672
+			}
+		}
+		if n.PullIntervalSec == 0 {
+			n.PullIntervalSec = 5
+		}
+		if n.PullBatchSize == 0 {
+			n.PullBatchSize = 100
+		}
+		if n.PullPrefetch == 0 {
+			n.PullPrefetch = n.PullBatchSize
+		}
 	}
 }

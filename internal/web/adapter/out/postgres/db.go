@@ -46,3 +46,20 @@ func nullSafe(s []string) []string {
 	}
 	return s
 }
+
+// derefStr/derefInt32 — безопасное разыменование nullable-колонок: NULL
+// (nil-указатель из pgx.Scan) превращается в zero-значение домена. Применяется
+// к §27-полям rmq_*/pull_*, которые NULL для request/requestAsync.
+func derefStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+func derefInt32(p *int32) int32 {
+	if p == nil {
+		return 0
+	}
+	return *p
+}

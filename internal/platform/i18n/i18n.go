@@ -111,6 +111,8 @@ var translations = map[Lang]map[string]string{
 		"node.disabled":       "node is disabled; enable it before replay",
 		"node.limit_reached":  "node limit reached, contact administrator",
 		"node.paused":         "node is paused",
+		// RabbitMQAsync (§27)
+		"rmq.test_rate_limited": "too many RabbitMQ connection tests, try again in a minute",
 		// replay
 		"replay.too_old": "cannot replay failed request older than 7 days",
 		// url
@@ -171,6 +173,7 @@ var translations = map[Lang]map[string]string{
 		"node.disabled":            "узел отключён; включите его перед replay",
 		"node.limit_reached":       "достигнут лимит узлов, обратитесь к администратору",
 		"node.paused":              "узел в паузе",
+		"rmq.test_rate_limited":    "слишком много проверок подключения к RabbitMQ, повторите через минуту",
 		"replay.too_old":           "нельзя повторить запрос с ошибкой старше 7 дней",
 		"url.required":             "параметр URL обязателен",
 		"url.invalid":              "целевой URL невалиден",

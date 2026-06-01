@@ -68,14 +68,52 @@ definitions:
       path:
         maxLength: 255
         type: string
+      pull_batch_size:
+        maximum: 1000
+        minimum: 1
+        type: integer
+      pull_interval_sec:
+        maximum: 3600
+        minimum: 1
+        type: integer
+      pull_prefetch:
+        maximum: 1000
+        minimum: 1
+        type: integer
       retry_backoff_ms:
         type: integer
       retry_count:
         type: integer
+      rmq_host:
+        description: |-
+          §27: RabbitMQAsync. RMQPassword пустой в PUT = «оставить старый» (как
+          auth_credentials, разбирается в handler.Update). Диапазоны pull_* также
+          проверяет domain.Node.Validate и БД-constraint chk_rmq_fields.
+        maxLength: 253
+        type: string
+      rmq_password:
+        maxLength: 1024
+        type: string
+      rmq_port:
+        maximum: 65535
+        minimum: 1
+        type: integer
+      rmq_queue:
+        maxLength: 255
+        type: string
+      rmq_use_tls:
+        type: boolean
+      rmq_user:
+        maxLength: 255
+        type: string
+      rmq_vhost:
+        maxLength: 255
+        type: string
       root_method:
         enum:
         - request
         - requestAsync
+        - RabbitMQAsync
         type: string
       status:
         enum:
@@ -198,10 +236,36 @@ definitions:
         type: boolean
       path:
         type: string
+      pull_batch_size:
+        type: integer
+      pull_interval_sec:
+        type: integer
+      pull_prefetch:
+        type: integer
       retry_backoff_ms:
         type: integer
       retry_count:
         type: integer
+      rmq_host:
+        description: |-
+          §27: RabbitMQAsync. Пароль не возвращается — только флаг RMQPasswordSet.
+          RMQStatus — runtime-health воркера (degraded/queue_depth/…), заполняется
+          только для RabbitMQAsync; nil для request/requestAsync.
+        type: string
+      rmq_password_set:
+        type: boolean
+      rmq_port:
+        type: integer
+      rmq_queue:
+        type: string
+      rmq_status:
+        $ref: '#/definitions/internal_web_adapter_in_http.RMQStatus'
+      rmq_use_tls:
+        type: boolean
+      rmq_user:
+        type: string
+      rmq_vhost:
+        type: string
       root_method:
         type: string
       status:
@@ -225,6 +289,24 @@ definitions:
       webhook_signature_header:
         type: string
       webhook_signature_prefix:
+        type: string
+    type: object
+  internal_web_adapter_in_http.RMQStatus:
+    properties:
+      attempts:
+        type: integer
+      connection_state:
+        description: down|connecting|up
+        type: string
+      consumer_count:
+        type: integer
+      degraded:
+        type: boolean
+      queue_depth:
+        type: integer
+      reason:
+        type: string
+      since:
         type: string
     type: object
   internal_web_adapter_in_http.ReplayRequest:
@@ -310,14 +392,52 @@ definitions:
       path:
         maxLength: 255
         type: string
+      pull_batch_size:
+        maximum: 1000
+        minimum: 1
+        type: integer
+      pull_interval_sec:
+        maximum: 3600
+        minimum: 1
+        type: integer
+      pull_prefetch:
+        maximum: 1000
+        minimum: 1
+        type: integer
       retry_backoff_ms:
         type: integer
       retry_count:
         type: integer
+      rmq_host:
+        description: |-
+          §27: RabbitMQAsync. RMQPassword пустой в PUT = «оставить старый» (как
+          auth_credentials, разбирается в handler.Update). Диапазоны pull_* также
+          проверяет domain.Node.Validate и БД-constraint chk_rmq_fields.
+        maxLength: 253
+        type: string
+      rmq_password:
+        maxLength: 1024
+        type: string
+      rmq_port:
+        maximum: 65535
+        minimum: 1
+        type: integer
+      rmq_queue:
+        maxLength: 255
+        type: string
+      rmq_use_tls:
+        type: boolean
+      rmq_user:
+        maxLength: 255
+        type: string
+      rmq_vhost:
+        maxLength: 255
+        type: string
       root_method:
         enum:
         - request
         - requestAsync
+        - RabbitMQAsync
         type: string
       status:
         enum:
@@ -601,6 +721,33 @@ definitions:
       updated_at:
         type: string
     type: object
+  internal_web_adapter_in_http.testRMQRequest:
+    properties:
+      host:
+        maxLength: 253
+        type: string
+      password:
+        maxLength: 1024
+        type: string
+      port:
+        maximum: 65535
+        minimum: 1
+        type: integer
+      queue:
+        maxLength: 255
+        type: string
+      use_tls:
+        type: boolean
+      user:
+        maxLength: 255
+        type: string
+      vhost:
+        maxLength: 255
+        type: string
+    required:
+    - host
+    - queue
+    type: object
   internal_web_adapter_in_http.updateMemberRoleRequest:
     properties:
       role:
@@ -815,6 +962,35 @@ definitions:
       status:
         description: ok | failed | skipped
         type: string
+    type: object
+  nexus_internal_web_usecase.RMQCheck:
+    properties:
+      consumer_count:
+        type: integer
+      elapsed_ms:
+        type: integer
+      error:
+        type: string
+      message_count:
+        type: integer
+      ok:
+        type: boolean
+    type: object
+  nexus_internal_web_usecase.RMQChecks:
+    properties:
+      auth:
+        $ref: '#/definitions/nexus_internal_web_usecase.RMQCheck'
+      connect:
+        $ref: '#/definitions/nexus_internal_web_usecase.RMQCheck'
+      queue:
+        $ref: '#/definitions/nexus_internal_web_usecase.RMQCheck'
+    type: object
+  nexus_internal_web_usecase.RMQTestResult:
+    properties:
+      checks:
+        $ref: '#/definitions/nexus_internal_web_usecase.RMQChecks'
+      ok:
+        type: boolean
     type: object
   nexus_internal_web_usecase.ReplayResult:
     properties:
@@ -2112,6 +2288,45 @@ paths:
       security:
       - CookieAuth: []
       summary: 'Dry-run: проверить конфиг узла без сохранения (§7.5.1).'
+      tags:
+      - nodes
+  /api/nodes/test-rmq:
+    post:
+      consumes:
+      - application/json
+      description: 'Реальный AMQP-handshake: TCP-connect, auth, passive queue.declare.
+        Не создаёт очередь и не забирает сообщения. Всегда 200; OK=false при любом
+        проваленном шаге (диагностика, не функциональный вызов). Доступно manager+,
+        rate-limit 10/мин на пользователя.'
+      parameters:
+      - description: RabbitMQ connection params
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.testRMQRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/nexus_internal_web_usecase.RMQTestResult'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "429":
+          description: rate limit exceeded
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Проверить подключение к RabbitMQ (§27.8).
       tags:
       - nodes
   /api/settings/app:

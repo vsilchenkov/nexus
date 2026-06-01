@@ -182,6 +182,16 @@ type ReceiverSection struct {
 	SenderGRPC       ReceiverSenderGRPCConfig `yaml:"sender_grpc"`
 	SwaggerEnabled   bool                     `yaml:"swagger_enabled"`
 	L2Cache          ReceiverL2CacheConfig    `yaml:"l2_cache"`
+	Puller           ReceiverPullerConfig     `yaml:"puller"`
+}
+
+// ReceiverPullerConfig — параметры Puller-воркеров RabbitMQAsync (§27.2).
+// По умолчанию компонент включён (узлов RabbitMQAsync может не быть — тогда
+// reconcile ничего не поднимает). Disabled=true полностью выключает поллинг.
+// ReconcileSec — период сверки списка узлов с запущенными воркерами.
+type ReceiverPullerConfig struct {
+	Disabled     bool `yaml:"disabled"`
+	ReconcileSec int  `yaml:"reconcile_sec"`
 }
 
 // ReceiverL2CacheConfig — параметры in-memory LRU L2-кеша поверх Redis+PG
@@ -229,6 +239,7 @@ type WebSection struct {
 	NodesSoftLimit               int    `yaml:"nodes_soft_limit"`
 	NodesHardLimit               int    `yaml:"nodes_hard_limit"`
 	APITokenRateLimitPerMin      int    `yaml:"api_token_rate_limit_per_min"`
+	RMQTestRateLimitPerMin       int    `yaml:"rmq_test_rate_limit_per_min"` // §27.8: лимит POST /api/nodes/test-rmq на пользователя
 	SwaggerEnabled               bool   `yaml:"swagger_enabled"`
 	// ReceiverURL — base URL Receiver Service (e.g. "http://receiver:8080").
 	// Используется для replay-запросов (§7.4.1): Web отправляет реплай через

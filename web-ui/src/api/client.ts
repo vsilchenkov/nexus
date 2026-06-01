@@ -37,10 +37,23 @@ export const api = {
   },
 };
 
+export type RootMethod = "request" | "requestAsync" | "RabbitMQAsync";
+
+// §27: runtime-health Puller-воркера узла RabbitMQAsync (только для него).
+export type RMQStatus = {
+  degraded: boolean;
+  reason?: string;
+  connection_state: "down" | "connecting" | "up";
+  queue_depth: number;
+  consumer_count: number;
+  attempts: number;
+  since?: string;
+};
+
 export type Node = {
   id: string;
   path: string;
-  root_method: "request" | "requestAsync";
+  root_method: RootMethod;
   url_mode: "static" | "from_request";
   target_url: string;
   status: "enabled" | "disabled" | "paused";
@@ -54,8 +67,33 @@ export type Node = {
   logging_enabled: boolean;
   max_body_size_enabled: boolean;
   max_body_size: number;
+  // §27: RabbitMQAsync (пустые/нулевые для request/requestAsync).
+  rmq_host?: string;
+  rmq_port?: number;
+  rmq_vhost?: string;
+  rmq_user?: string;
+  rmq_password_set?: boolean;
+  rmq_queue?: string;
+  rmq_use_tls?: boolean;
+  pull_interval_sec?: number;
+  pull_batch_size?: number;
+  pull_prefetch?: number;
+  rmq_status?: RMQStatus;
   created_at: string;
   updated_at: string;
+};
+
+// §27: ответ POST /api/nodes/test-rmq.
+export type RMQTestCheck = {
+  ok: boolean;
+  elapsed_ms: number;
+  error?: string;
+  message_count?: number;
+  consumer_count?: number;
+};
+export type RMQTestResult = {
+  ok: boolean;
+  checks: { connect: RMQTestCheck; auth: RMQTestCheck; queue: RMQTestCheck };
 };
 
 // §23: каталог разрешённых хостов (см. /api/allowed-hosts/*).

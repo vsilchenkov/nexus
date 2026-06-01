@@ -81,6 +81,7 @@ func TestSender_Async_DLQ_E2E(t *testing.T) {
 		AuthType:                domain.AuthTypeNone,
 		IncomingAuthType:        domain.IncomingAuthTypeNone,
 		Status:                  domain.NodeStatusEnabled,
+		LoggingEnabled:          true, // §22: иначе лог в ClickHouse не пишется
 		ClickHouseTable:         "test.demo_dlq",
 		ClickHouseRetentionDays: 30,
 		TimeoutMs:               2000,

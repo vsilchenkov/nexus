@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -13,14 +14,21 @@ import (
 	"nexus/internal/web/usecase/port"
 )
 
+// RMQHealthReader — порт чтения runtime-health Puller-воркера узла
+// RabbitMQAsync (§27.8). Реализуется Redis-адаптером; nil — health не отдаётся.
+type RMQHealthReader interface {
+	Get(ctx context.Context, nodePath string) (*domain.RMQHealth, error)
+}
+
 // NodeHandler — HTTP-обработчики для /api/nodes.
 type NodeHandler struct {
 	uc     *usecase.NodeUsecase
+	health RMQHealthReader
 	logger logging.Logger
 }
 
-func NewNodeHandler(uc *usecase.NodeUsecase, logger logging.Logger) *NodeHandler {
-	return &NodeHandler{uc: uc, logger: logger}
+func NewNodeHandler(uc *usecase.NodeUsecase, health RMQHealthReader, logger logging.Logger) *NodeHandler {
+	return &NodeHandler{uc: uc, health: health, logger: logger}
 }
 
 // List godoc
@@ -80,7 +88,14 @@ func (h *NodeHandler) Get(c *gin.Context) {
 		h.replyDomainError(c, err, "node.get")
 		return
 	}
-	c.JSON(http.StatusOK, nodeToResponse(n))
+	resp := nodeToResponse(n)
+	// §27.8: для RabbitMQAsync доклеиваем runtime-health из общего стора.
+	if n.RootMethod.IsPull() && h.health != nil {
+		if hp, herr := h.health.Get(c.Request.Context(), n.Path); herr == nil && hp != nil {
+			resp.RMQStatus = rmqHealthToDTO(hp)
+		}
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // Create godoc
@@ -164,6 +179,10 @@ func (h *NodeHandler) Update(c *gin.Context) {
 	}
 	if req.IncomingAuthCreds == "" {
 		updated.IncomingAuthCredentials = existing.IncomingAuthCredentials
+	}
+	// §27: пустой rmq_password = оставить старый (как остальные креды).
+	if req.RMQPassword == "" {
+		updated.RMQPassword = existing.RMQPassword
 	}
 
 	if err := h.uc.Update(c.Request.Context(), actorFromCtx(c), updated, team); err != nil {
@@ -265,6 +284,9 @@ func isValidationError(err error) bool {
 		domain.ErrNodeTimeoutRange, domain.ErrNodeRetryCountRange,
 		domain.ErrNodeRetryBackoffRange, domain.ErrNodeAllowedHostsSize,
 		domain.ErrNodeForwardHeadersSize,
+		domain.ErrNodeRMQHostRequired, domain.ErrNodeRMQQueueInvalid,
+		domain.ErrNodePullIntervalRange, domain.ErrNodePullBatchRange,
+		domain.ErrNodePullPrefetchRange,
 	} {
 		if errors.Is(err, target) {
 			return true
