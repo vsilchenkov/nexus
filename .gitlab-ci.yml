@@ -296,8 +296,10 @@ integration:
 
 # ----------- LOADTEST (manual) ----------------------------------------------
 # Нагрузочный сценарий (§10.2 ТЗ) — поднимает изолированный compose-стек,
-# гонит cmd/loadtest и снимает стек. Запускается вручную из UI GitLab
-# (Pipelines → Run pipeline → loadtest или Job → Play на ручной job).
+# гонит cmd/loadtest и снимает стек. Запускается: авто-смоук на push в master
+# (allow_failure) либо целенаправленно через «Run pipeline → RUN_PROFILE=
+# loadtest-only». Manual-стаб на каждой ветке убран (плодил пустой ручной job
+# на dev/feature) — для разового прогона используй RUN_PROFILE=loadtest-only.
 #
 # Окружение собирается каждый запуск с нуля: COMPOSE_PROJECT_NAME содержит
 # pipeline+job id, поэтому сети/volumes уникальны, и параллельные запуски
@@ -339,8 +341,6 @@ loadtest:
     # отдельно с RUN_PROFILE=loadtest-only и переопределёнными переменными.
     - if: $CI_COMMIT_BRANCH == "master"
       when: on_success
-      allow_failure: true
-    - when: manual
       allow_failure: true
   timeout: 60 minutes
   variables:
