@@ -33,6 +33,7 @@ import (
 type flags struct {
 	WebURL        string
 	ReceiverURL   string
+	TeamSlug      string
 	AdminLogin    string
 	AdminPass     string
 	TargetRPS     int
@@ -53,6 +54,11 @@ func parseFlags() flags {
 	var f flags
 	flag.StringVar(&f.WebURL, "web", "http://localhost:8000", "Web service base URL")
 	flag.StringVar(&f.ReceiverURL, "receiver", "http://localhost:8080", "Receiver base URL")
+	flag.StringVar(&f.TeamSlug, "team-slug", "default",
+		"Team slug used to address nodes in the request URL: /v1/request/<team_slug>/<node_path>. "+
+			"Must match the team the nodes are created in (Phase 10.E.1 multi-tenancy). Узлы с "+
+			"многосегментным path (loadtest/node-…) недостижимы по legacy-URL без слога — первый "+
+			"сегмент трактуется как team_slug.")
 	flag.StringVar(&f.AdminLogin, "admin-login", "admin", "Admin login")
 	flag.StringVar(&f.AdminPass, "admin-password", "", "Admin password (required)")
 	flag.IntVar(&f.TargetRPS, "target-rps", 500, "Target RPS")
@@ -360,7 +366,14 @@ func doRequest(c *client, paths []string, f flags, res *result) {
 		body[i] = 'a'
 	}
 
-	url := c.baseRecv + "/v1/request/" + p
+	// Адресуем узел с явным team_slug: /v1/request/<team_slug>/<node_path>.
+	// Без слога Receiver съедает первый сегмент пути (loadtest/...) как
+	// team_slug и отвечает 404 (Phase 10.E.1 multi-tenancy).
+	url := c.baseRecv + "/v1/request/"
+	if f.TeamSlug != "" {
+		url += f.TeamSlug + "/"
+	}
+	url += p
 	t0 := time.Now()
 	req, _ := http.NewRequest("POST", url, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/octet-stream")

@@ -1291,6 +1291,23 @@ make proto                                     # перегенерация send
   `LOADTEST_ADMIN_PASSWORD` (masked+protected); опциональные: `LOADTEST_TARGET_RPS`
   (def. 500), `LOADTEST_DURATION` (def. 5m), `LOADTEST_NODES` (def. 50) —
   переопределяются через UI «Run pipeline → Variables».
+  · **Грабли team-slug (Phase 10.E.1) → 100% error rate.** Узлы создаются с
+  `path=loadtest/node-…` (со слэшем) в команде `default`. Receiver-URL
+  `/v1/request/{team_slug}/{node_path}`: `splitTeamSlugAndPath`
+  ([receiver handler.go](../internal/receiver/adapter/in/http/handler.go))
+  всегда трактует первый сегмент как team_slug. Поэтому legacy-URL без слога
+  `/v1/request/loadtest/node-X` парсится как `team=loadtest, path=node-X` →
+  узел не найден → **404 на каждом запросе** (error rate 100%, p50≈1.6мс).
+  Фикс: `cmd/loadtest` адресует узлы с явным слогом
+  (`/v1/request/<team_slug>/<path>`, флаг `--team-slug`, def. `default`).
+  Это ортогонально `--use-aliases` в [.gitlab-ci.yml](../.gitlab-ci.yml): тот
+  тоже **необходим** (без него `docker compose run` не даёт one-off-контейнеру
+  network-alias `loadtest`, и Sender не дозвонится до mock'а — это даёт 502,
+  а не 404). Оба нужны одновременно. **Диагностический блок в loadtest job
+  (`getent`/receiver direct-probe) запускается ПОСЛЕ `docker rm` run-контейнера**
+  — mock к тому моменту уже мёртв, поэтому probe всегда отдаёт 502 независимо
+  от реальной причины; не доверяй ему как индикатору in-test ошибки, смотри
+  `compose-logs.txt`.
 - 9.2 `.goreleaser.yaml` под GitLab CI:
   · Реестр через `{{ .Env.DOCKER_REGISTRY_BASE }}` — задаётся `$CI_REGISTRY_IMAGE`
   в [.gitlab-ci.yml](../.gitlab-ci.yml) release job (30 строк в `dockers:` /
