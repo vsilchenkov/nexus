@@ -297,9 +297,9 @@ integration:
 # ----------- LOADTEST (manual) ----------------------------------------------
 # Нагрузочный сценарий (§10.2 ТЗ) — поднимает изолированный compose-стек,
 # гонит cmd/loadtest и снимает стек. Запускается: авто-смоук на push в master
-# (allow_failure) либо целенаправленно через «Run pipeline → RUN_PROFILE=
-# loadtest-only». Manual-стаб на каждой ветке убран (плодил пустой ручной job
-# на dev/feature) — для разового прогона используй RUN_PROFILE=loadtest-only.
+# (allow_failure); кнопкой ▶ Play на pipeline ветки dev; либо через «Run
+# pipeline → RUN_PROFILE=loadtest-only» (на любой ветке, стартует сам).
+# На feature-ветках manual-стаб не плодим — там только RUN_PROFILE=loadtest-only.
 #
 # Окружение собирается каждый запуск с нуля: COMPOSE_PROJECT_NAME содержит
 # pipeline+job id, поэтому сети/volumes уникальны, и параллельные запуски
@@ -341,6 +341,11 @@ loadtest:
     # отдельно с RUN_PROFILE=loadtest-only и переопределёнными переменными.
     - if: $CI_COMMIT_BRANCH == "master"
       when: on_success
+      allow_failure: true
+    # Ручной запуск (кнопка ▶ Play) — только на dev. На feature-ветках стаб
+    # не плодим; для разового прогона там используй RUN_PROFILE=loadtest-only.
+    - if: $CI_COMMIT_BRANCH == "dev"
+      when: manual
       allow_failure: true
   timeout: 60 minutes
   variables:
