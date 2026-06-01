@@ -23,7 +23,7 @@
 | Зависимости              | PostgreSQL 16, Redis 7, ClickHouse 24, Kafka 3.9 (KRaft), Prometheus  |
 | Покрытие unit-тестами   | 14 пакетов (domain, crypto, i18n, sentry, receiver/usecase, chlog, web/usecase, metrics, healthcheck, config, clickhouse, reloader, nodecache, sender/usecase, **+ build / httpclient в Phase 7.13, + receiver/http + web/http middlewares в Phase 7.14**) + integration: circuitbreaker (Phase 7.13) |
 | SPA-фронт               | React 18 + Vite + TS + Tailwind + TanStack Query + react-i18next, 6 страниц |
-| Бинари в `cmd/`         | `receiver`, `sender`, `web`, `loadtest`, `rotate-key`                 |
+| Бинари в `cmd/`         | `receiver`, `sender`, `web`, `loadtest`, `rotate-key`, `echosrv` (тестовый получатель для стенда) |
 
 ---
 
