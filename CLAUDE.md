@@ -82,6 +82,12 @@ Web Service отдаёт REST API под `/api/*` и SPA (`embed.FS`) на вс�
      затем `gofmt -w` на затронутые файлы (или `gofmt -l .` для проверки). Это держит код в
      актуальных идиомах Go и не даёт упасть CI job `lint` (`golangci-lint` проверяет `gofmt`).
    - `make test` — unit-тесты зелёные.
+   - **`golangci-lint run --timeout=5m` — обязательно перед коммитом, не только `go vet`.**
+     `go vet`/`gofmt` НЕ ловят `nilerr` (проверил `err != nil` → вернул `nil`),
+     `staticcheck` (QF1001 De Morgan и пр.) и остальные линтеры из `.golangci.yml`. Их ловит
+     только golangci-lint, и CI job `lint` на них падает (образ `golangci/golangci-lint:v2.12-alpine`,
+     rolling — версия может обгонять локальную, гоняй именно его). Пропуск этого шага = красный CI
+     и перепушивание постфактум.
    - Если менял Swagger-аннотации — `make swagger`.
    - Если менял integration-сценарий — `make test-integration` (нужен Docker).
    - Если менял `web-ui/` (TS/TSX, package.json, eslint.config.js) — `cd web-ui && npm run lint && npm run build`.
