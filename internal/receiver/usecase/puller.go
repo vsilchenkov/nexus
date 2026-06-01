@@ -81,6 +81,8 @@ type PullerWorker struct {
 	sink            HealthSink
 	logger          logging.Logger
 
+	degradeAfter time.Duration // через сколько непрерывной недоступности → degraded
+
 	consumer       RMQConsumer
 	state          domain.RMQConnState
 	attempts       int64
@@ -111,6 +113,16 @@ func NewPullerWorker(
 		sink:            sink,
 		logger:          logger,
 		state:           domain.RMQConnDown,
+		degradeAfter:    rmqDegradeAfter,
+	}
+}
+
+// SetDegradeAfter переопределяет порог перехода в degraded (дефолт
+// rmqDegradeAfter=5м). Вызывать только до Run — например, в тестах, чтобы не
+// ждать 5 минут реального простоя.
+func (w *PullerWorker) SetDegradeAfter(d time.Duration) {
+	if d > 0 {
+		w.degradeAfter = d
 	}
 }
 
@@ -164,7 +176,7 @@ func (w *PullerWorker) reconnect(ctx context.Context) bool {
 			w.downSince = nowUTC()
 		}
 		reason := fmt.Sprintf("RabbitMQ unreachable: %v", err)
-		if nowUTC().Sub(w.downSince) >= rmqDegradeAfter {
+		if nowUTC().Sub(w.downSince) >= w.degradeAfter {
 			w.markDegraded(ctx, reason)
 		}
 		w.setState(ctx, domain.RMQConnDown, reason)

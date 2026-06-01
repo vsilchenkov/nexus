@@ -55,10 +55,12 @@ go test -tags=integration -count=1 -v ./tests/integration/...
   body, и заголовком `Authorization: Bearer ...`.
 - **`TestNodeRepoRabbitMQAsync_E2E`** (§27) — Postgres: round-trip узла RabbitMQAsync через
   `NodeUsecase`, шифрование `rmq_password`, сброс несовместимых полей, срабатывание `chk_rmq_fields`.
-- **`TestRMQPuller_E2E_NoLoss` / `…_KafkaDown_Requeue`** (§27.12) — реальный RabbitMQ через
-  `tcrabbit.Run`: публикуем N сообщений → `PullerWorker` забирает все, складывает в fake-producer
-  (Kafka-путь покрыт отдельно), очередь дренируется без потерь; envelope содержит блок `rmq` и
-  `IP=rabbitmq://…`. Второй кейс: при «упавшей» Kafka сообщения возвращаются в очередь (`nack requeue`).
+- **`TestRMQPuller_E2E_NoLoss` / `…_KafkaDown_Requeue` / `…_DegradedOnMissingQueue`** (§27.12) —
+  реальный RabbitMQ через `tcrabbit.Run`: (1) публикуем N сообщений → `PullerWorker` забирает все,
+  складывает в fake-producer (Kafka-путь покрыт отдельно), очередь дренируется без потерь; envelope
+  содержит блок `rmq` и `IP=rabbitmq://…`; (2) при «упавшей» Kafka сообщения возвращаются в очередь
+  (`nack requeue`), потерь нет; (3) если очереди узла не существует (passive-declare 404), воркер
+  после `SetDegradeAfter` помечает узел `degraded` (health-снимок с `connection_state=down` и причиной).
 - **`TestSender_Async_E2E`** — Postgres + Kafka (KRaft) + mock upstream. Receiver-RouteAsync публикует
   Envelope в `nexus.async`, Sender ConsumerGroup читает, делает HTTP-вызов, пишет в capturing log
   writer. Покрывает §3.6 / §4.2 happy-path.

@@ -170,6 +170,73 @@ func TestRMQPuller_E2E_KafkaDown_Requeue(t *testing.T) {
 	assertQueueDepth(t, ctx, host, port, queue, 5)
 }
 
+// captureSink реализует usecase.HealthSink, запоминая последний снимок и факт
+// появления degraded.
+type captureSink struct {
+	mu           sync.Mutex
+	last         domain.RMQHealth
+	degradedSeen bool
+}
+
+func (s *captureSink) Publish(_ context.Context, h domain.RMQHealth) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.last = h
+	if h.Degraded {
+		s.degradedSeen = true
+	}
+	return nil
+}
+
+func (s *captureSink) snapshot() (domain.RMQHealth, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.last, s.degradedSeen
+}
+
+// TestRMQPuller_E2E_DegradedOnMissingQueue: RabbitMQ доступен, но очередь узла
+// не существует → passive-declare даёт 404 на каждой попытке connect → после
+// degradeAfter воркер помечает узел degraded (§27.4). Порог укорочен через
+// SetDegradeAfter, чтобы не ждать 5 минут.
+func TestRMQPuller_E2E_DegradedOnMissingQueue(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	host, port, terminate := startRabbitMQ(t, ctx)
+	defer terminate()
+
+	// Очередь НЕ объявляем — её не существует.
+	node := rmqTestNode(host, port, "queue.that.does.not.exist")
+	sink := &captureSink{}
+	worker := usecase.NewPullerWorker(
+		node, rmqadapter.NewConnector(), &captureProducer{}, "nexus.async", 10*1024*1024,
+		metrics.New("receiver"), sink, logging.NewNoop())
+	worker.SetDegradeAfter(1 * time.Second) // не ждём дефолтные 5 минут
+
+	runCtx, runCancel := context.WithTimeout(ctx, 30*time.Second)
+	defer runCancel()
+	done := make(chan struct{})
+	go func() { defer close(done); worker.Run(runCtx) }()
+
+	waitFor(t, 25*time.Second, func() bool { _, degraded := sink.snapshot(); return degraded })
+	runCancel()
+	<-done
+
+	h, degraded := sink.snapshot()
+	if !degraded {
+		t.Fatal("worker did not report degraded for a missing queue")
+	}
+	if h.ConnState != domain.RMQConnDown {
+		t.Fatalf("connection_state = %q, want down", h.ConnState)
+	}
+	if h.Reason == "" {
+		t.Fatal("degraded health must carry a non-empty reason")
+	}
+	if h.Attempts < 1 {
+		t.Fatalf("expected at least 1 failed attempt, got %d", h.Attempts)
+	}
+}
+
 // --- amqp helpers ------------------------------------------------------------
 
 func openChannel(t *testing.T, host string, port int) (*amqp.Connection, *amqp.Channel) {
