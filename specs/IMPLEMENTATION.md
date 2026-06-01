@@ -127,6 +127,7 @@
 | **Self-service смена своего пароля `POST /api/me/password` (§26.4)** | ✅ Phase A | `AuthUsecase.ChangeOwnPassword` (подтверждение текущего пароля, инвалидация всех сессий) [auth.go](../internal/web/usecase/auth.go), handler [auth_handler.go](../internal/web/adapter/in/http/auth_handler.go), UI [pages/settings/Password.tsx](../web-ui/src/pages/settings/Password.tsx) |
 | API-токены: `db_<base64>` префикс, SHA-256 hash, scopes, audit | ✅ | [web/usecase/api_token.go](../internal/web/usecase/api_token.go), [http/api_token_middleware.go](../internal/web/adapter/in/http/api_token_middleware.go) |
 | Audit log (CRUD узлов, replay, dry_run, login, token actions) с retention | ✅ | [web/usecase/audit.go](../internal/web/usecase/audit.go), [usecase/housekeeping.go](../internal/web/usecase/housekeeping.go) |
+| **IP в аудите/логах нормализуется в IPv4 (`::1`→`127.0.0.1`, IPv4-mapped) (#4)** | ✅ | [platform/clientip/clientip.go](../internal/platform/clientip/clientip.go) `NormalizeIPv4` — применён в Web (`actorFromCtx`, `userActor`, login) и Receiver (`clientIP`) |
 | `RequireSessionOnly` для SSE (отклоняет API-токены) | ✅ Phase 5 | [api_token_middleware.go](../internal/web/adapter/in/http/api_token_middleware.go) |
 | Полный лейаут §7 (Overview cards, KPI-блоки, ClickHouse-настройки, Users-страница) | ✅ Phase 6.3/6.4 | Settings → Sentry/ClickHouse/Users CRUD с диалогами, live-tail UI с фильтрами и подсветкой |
 

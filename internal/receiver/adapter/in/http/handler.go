@@ -4,12 +4,14 @@ package http
 import (
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"nexus/internal/domain"
+	"nexus/internal/platform/clientip"
 	"nexus/internal/platform/logging"
 	"nexus/internal/receiver/usecase"
 )
@@ -251,7 +253,13 @@ func readBody(c *gin.Context, max int) ([]byte, error) {
 	return body, nil
 }
 
+// clientIP извлекает IP клиента (X-Forwarded-For → RemoteAddr) и нормализует
+// его к IPv4, где возможно (§4 ТЗ: в логах фиксируем ip4, а не ip6).
 func clientIP(r *http.Request) string {
+	return clientip.NormalizeIPv4(rawClientIP(r))
+}
+
+func rawClientIP(r *http.Request) string {
 	if xf := r.Header.Get("X-Forwarded-For"); xf != "" {
 		if before, _, ok := strings.Cut(xf, ","); ok {
 			return strings.TrimSpace(before)
@@ -259,8 +267,10 @@ func clientIP(r *http.Request) string {
 		return strings.TrimSpace(xf)
 	}
 	if r.RemoteAddr != "" {
-		if i := strings.LastIndex(r.RemoteAddr, ":"); i >= 0 {
-			return r.RemoteAddr[:i]
+		// RemoteAddr — "host:port"; host может быть IPv6 в скобках
+		// ("[::1]:1234"). net.SplitHostPort корректно их разбирает.
+		if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+			return host
 		}
 		return r.RemoteAddr
 	}

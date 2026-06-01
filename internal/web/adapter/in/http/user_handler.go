@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"nexus/internal/domain"
+	"nexus/internal/platform/clientip"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase"
 	"nexus/internal/web/usecase/port"
@@ -255,7 +256,7 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 // получает scope актёра.
 func userActor(c *gin.Context) usecase.Actor {
 	a := usecase.SystemActor()
-	a.IPAddress = c.ClientIP()
+	a.IPAddress = clientip.NormalizeIPv4(c.ClientIP())
 	if s, ok := sessionFromCtx(c); ok {
 		a.UserID = s.UserID
 		a.TeamID = s.CurrentTeamID
