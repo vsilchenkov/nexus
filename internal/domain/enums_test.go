@@ -173,8 +173,8 @@ func TestUserRole_Valid_And_IsAdmin(t *testing.T) {
 func TestUserRole_Rank_And_AtLeast(t *testing.T) {
 	t.Parallel()
 	// Иерархия: viewer < manager < admin (§26).
-	if !(UserRoleViewer.Rank() < UserRoleManager.Rank() &&
-		UserRoleManager.Rank() < UserRoleAdmin.Rank()) {
+	if UserRoleViewer.Rank() >= UserRoleManager.Rank() ||
+		UserRoleManager.Rank() >= UserRoleAdmin.Rank() {
 		t.Fatalf("ожидалось viewer(%d) < manager(%d) < admin(%d)",
 			UserRoleViewer.Rank(), UserRoleManager.Rank(), UserRoleAdmin.Rank())
 	}

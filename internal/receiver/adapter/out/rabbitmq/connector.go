@@ -74,12 +74,12 @@ type consumer struct {
 
 var _ usecase.RMQConsumer = (*consumer)(nil)
 
-func (c *consumer) GetBatch(ctx context.Context, max int) ([]usecase.RMQDelivery, error) {
+func (c *consumer) GetBatch(_ context.Context, max int) ([]usecase.RMQDelivery, error) {
+	// Цикл ограничен max (≤ pull_batch_size); basic.get — быстрый локальный
+	// вызов. Отмену ctx обрабатывает воркер: pullOnce/handleDelivery делают
+	// nack(requeue) уже собранных сообщений при shutdown (graceful, §27.5).
 	out := make([]usecase.RMQDelivery, 0, max)
 	for i := 0; i < max; i++ {
-		if err := ctx.Err(); err != nil {
-			return out, nil
-		}
 		d, ok, err := c.ch.Get(c.queue, false) // autoAck=false → manual ack
 		if err != nil {
 			return out, fmt.Errorf("basic.get: %w", err)
