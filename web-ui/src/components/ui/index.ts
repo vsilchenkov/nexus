@@ -1,5 +1,6 @@
 // UI-kit панели (§21, эталон specs/nexus_ui.html). Единый источник атомов.
 export { Button } from "./Button";
+export { CopyButton } from "./CopyButton";
 export { Input, Select, Textarea, Field } from "./form";
 export { Card, SectionHead } from "./surfaces";
 export { Modal } from "./Modal";

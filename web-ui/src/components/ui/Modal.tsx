@@ -28,12 +28,14 @@ export function Modal({ title, subtitle, onClose, children, footer, className }:
     >
       <div
         className={cn(
-          "w-full max-w-lg overflow-hidden rounded-lg border border-line-strong bg-app shadow-2xl",
+          // flex-колонка с ограничением высоты: заголовок/футер фиксированы,
+          // тело скроллится (§3 — длинный результат dry-run не выталкивает кнопки).
+          "flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-lg border border-line-strong bg-app shadow-2xl",
           className,
         )}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-line px-5 py-4">
+        <div className="flex shrink-0 items-center justify-between border-b border-line px-5 py-4">
           <div>
             <h3 className="text-[15px] font-semibold">{title}</h3>
             {subtitle && <div className="mt-0.5 text-xs text-fg-muted">{subtitle}</div>}
@@ -46,9 +48,9 @@ export function Modal({ title, subtitle, onClose, children, footer, className }:
             <X className="h-4 w-4" />
           </button>
         </div>
-        <div className="px-5 py-4">{children}</div>
+        <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
         {footer && (
-          <div className="flex justify-end gap-2 border-t border-line px-5 py-3.5">
+          <div className="flex shrink-0 justify-end gap-2 border-t border-line px-5 py-3.5">
             {footer}
           </div>
         )}

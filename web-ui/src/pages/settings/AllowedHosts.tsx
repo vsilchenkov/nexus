@@ -221,7 +221,7 @@ function HostDialog({
 
         <div>
           <div className="mb-1.5 text-xs text-fg-muted">{t("settings.allowed_hosts.field.kind")}</div>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             {kindOptions.map((o) => (
               <button
                 key={o.value}
@@ -259,7 +259,7 @@ function HostDialog({
           />
         </label>
 
-        <div className="grid grid-cols-2 gap-3 border-t border-line pt-3">
+        <div className="grid grid-cols-1 gap-3 border-t border-line pt-3 sm:grid-cols-2">
           <PreviewCol
             tone="ok"
             title={t("settings.allowed_hosts.preview.allow")}

@@ -23,6 +23,7 @@ import { RabbitMQSection, type RMQSetter } from "../components/node/RabbitMQSect
 import {
   Button,
   Card,
+  CopyButton,
   Field,
   Hint,
   Input,
@@ -33,9 +34,13 @@ import {
   Toggle3,
 } from "../components/ui";
 
+const HTTP_METHODS = ["GET", "POST", "PUT", "DELETE"] as const;
+
 type Form = {
   path: string;
   root_method: "request" | "requestAsync" | "RabbitMQAsync";
+  incoming_method: "GET" | "POST" | "PUT" | "DELETE";
+  outgoing_method: "GET" | "POST" | "PUT" | "DELETE";
   url_mode: "static" | "from_request";
   target_url: string;
   url_param_name: string;
@@ -75,6 +80,8 @@ type Form = {
 const emptyForm: Form = {
   path: "",
   root_method: "request",
+  incoming_method: "POST",
+  outgoing_method: "POST",
   url_mode: "static",
   target_url: "",
   url_param_name: "url_base",
@@ -164,15 +171,17 @@ export default function NodeSettings() {
 
   const isPull = form.root_method === "RabbitMQAsync";
   const verb = form.root_method === "request" ? "request" : "requestAsync";
-  const routePath = `/v1/${verb}/${form.path || "…"}`;
+  const routePath = `/api/v1/${verb}/${form.path || "…"}`;
+  // §2: полный адрес = origin (единый вход Web) + путь маршрута.
+  const fullAddress = `${window.location.origin}${routePath}`;
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-lg font-semibold">
           {isNew ? t("overview.new_node") : `${t("node.actions.edit")}: ${form.path}`}
         </h1>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Link to="/">
             <Button variant="ghost">{t("common.cancel")}</Button>
           </Link>
@@ -219,8 +228,35 @@ export default function NodeSettings() {
                 placeholder="webhook/send"
                 required
               />
-              <span className="font-mono text-[11px] text-fg-subtle">{routePath}</span>
+              {!isPull && (
+                <div className="mt-1 flex items-center gap-1.5">
+                  <span className="min-w-0 break-all font-mono text-[11px] text-fg-subtle">
+                    {fullAddress}
+                  </span>
+                  <CopyButton value={fullAddress} />
+                </div>
+              )}
             </Field>
+            {!isPull && (
+              <Field
+                label={t("node.form.incoming_method")}
+                hint={t("node.form.incoming_method_hint")}
+                className="mt-3"
+              >
+                <Select
+                  value={form.incoming_method}
+                  onChange={(e) =>
+                    set("incoming_method", e.target.value as Form["incoming_method"])
+                  }
+                >
+                  {HTTP_METHODS.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            )}
             <Field label={t("node.form.state")} className="mt-3">
               <Toggle3
                 value={form.status}
@@ -296,7 +332,25 @@ export default function NodeSettings() {
                 />
               </Field>
             )}
-            <div className="mt-3 grid grid-cols-2 gap-3">
+            <Field
+              label={t("node.form.outgoing_method")}
+              hint={t("node.form.outgoing_method_hint")}
+              className="mt-3"
+            >
+              <Select
+                value={form.outgoing_method}
+                onChange={(e) =>
+                  set("outgoing_method", e.target.value as Form["outgoing_method"])
+                }
+              >
+                {HTTP_METHODS.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field label={t("node.form.timeout_ms")}>
                 <Input
                   type="number"
@@ -356,7 +410,7 @@ export default function NodeSettings() {
               </Hint>
             )}
             {form.incoming_auth_type === "webhook_signature" && (
-              <div className="mt-3 grid grid-cols-2 gap-3">
+              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Field label={t("node.form.sig_header")}>
                   <Input
                     mono
@@ -539,9 +593,12 @@ export default function NodeSettings() {
                 </>
               ) : (
                 <>
-                  <div>
-                    <span className="rounded bg-accent/10 px-2 py-0.5 text-[11px] text-accent">POST</span>{" "}
-                    <span className="font-mono">{routePath}</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="rounded bg-accent/10 px-2 py-0.5 text-[11px] text-accent">
+                      {form.incoming_method}
+                    </span>
+                    <span className="min-w-0 break-all font-mono">{fullAddress}</span>
+                    <CopyButton value={fullAddress} />
                   </div>
                   <div className="pl-2">↓ Receiver</div>
                   <div className="pl-2">
@@ -551,6 +608,9 @@ export default function NodeSettings() {
               )}
               <div className="pl-2">↓ Sender</div>
               <div className="pl-2">
+                <span className="rounded bg-bg-muted px-1.5 py-0.5 text-[11px] text-fg-muted">
+                  {form.outgoing_method}
+                </span>{" "}
                 → <span className="font-mono text-fg">{form.target_url || "{target_url}"}</span>
               </div>
             </div>

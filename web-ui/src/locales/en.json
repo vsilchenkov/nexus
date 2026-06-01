@@ -143,6 +143,11 @@
       "sync_desc": "sync, wait for node response",
       "async_desc": "to Kafka, 200 immediately",
       "rmq_desc": "pull from a RabbitMQ queue",
+      "incoming_method": "Incoming method",
+      "incoming_method_hint": "HTTP method the node accepts; other methods get 405",
+      "outgoing_method": "Outgoing method",
+      "outgoing_method_hint": "HTTP method used to call the target",
+      "full_address": "Full address",
       "state": "State",
       "url_static": "Static",
       "url_static_desc": "address from Target URL",
@@ -575,7 +580,9 @@
     "save": "Save",
     "close": "Close",
     "edit": "Edit",
-    "delete": "Delete"
+    "delete": "Delete",
+    "copy": "Copy",
+    "copied": "Copied"
   },
   "error_boundary": {
     "title": "Something went wrong",

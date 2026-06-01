@@ -101,7 +101,7 @@ export function RabbitMQSection({ form, set, isNew }: Props) {
         </Field>
 
         <Field label={t("node.rmq.auth")} className="mt-3">
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <Input
               value={form.rmq_user}
               onChange={(e) => set("rmq_user", e.target.value)}
@@ -171,7 +171,7 @@ export function RabbitMQSection({ form, set, isNew }: Props) {
           </div>
         </Field>
 
-        <div className="mt-3 grid grid-cols-2 gap-3">
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label={t("node.rmq.batch_size")} hint={t("node.rmq.batch_hint")}>
             <Input
               mono

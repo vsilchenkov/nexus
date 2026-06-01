@@ -488,7 +488,7 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
             <label className="text-xs uppercase tracking-wider text-fg-muted">
               {t("settings.users.field.role")}
             </label>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               {(["admin", "manager", "viewer"] as const).map((r) => {
                 const disabledLastAdmin = isLastAdmin && r !== "admin";
                 const disabledSelf = isSelf && initial?.role === "admin" && r !== "admin";

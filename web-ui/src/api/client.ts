@@ -42,6 +42,7 @@ export const api = {
 };
 
 export type RootMethod = "request" | "requestAsync" | "RabbitMQAsync";
+export type HTTPMethod = "GET" | "POST" | "PUT" | "DELETE";
 
 // §27: runtime-health Puller-воркера узла RabbitMQAsync (только для него).
 export type RMQStatus = {
@@ -58,6 +59,8 @@ export type Node = {
   id: string;
   path: string;
   root_method: RootMethod;
+  incoming_method?: HTTPMethod;
+  outgoing_method?: HTTPMethod;
   url_mode: "static" | "from_request";
   target_url: string;
   status: "enabled" | "disabled" | "paused";
