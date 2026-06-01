@@ -478,6 +478,29 @@
 - `X-Forwarded-For` проставляется стандартным `httputil.ReverseProxy` — Receiver видит реальный
   IP клиента (важно для аудита/логов).
 
+### 4.0.1 Стендовая валидация доработок (#1–#9)
+
+Сквозной прогон на реальном стенде (deps в Docker + сервисы локально + echosrv +
+RabbitMQ) подтвердил, см. [docs/STAND_TESTING.md](STAND_TESTING.md):
+
+- **#1/#6** единый вход `POST :8000/api/v1/request/...` → прокси → Receiver →
+  Sender → echosrv: ответ = тело+заголовки получателя (JSON + `X-Echo`), не HTML;
+  пустое тело узла `/empty` → `Content-Length: 0`.
+- **#5** запрос неверным методом → `405`; исходящий метод узла диктует вызов
+  (echo.method и колонка `method` в логе совпадают с `outgoing_method`).
+- **#7** async-успех `{"result":true,id}`, ошибка → `404` + `{"result":false,"message":"node not found"}`.
+- **#8** RabbitMQAsync: 50 опубликованных сообщений вытянуты puller'ом → доставлены
+  → 50 строк в ClickHouse (`type=requestAsync`, `status=200`); синхронного
+  `result`-ответа нет (ожидаемо).
+- **#4** IP в аудите и в ClickHouse-логах = `127.0.0.1` (IPv4), не `::1`.
+- CH-шаблон (default «Standard logs») → авто-создание таблицы и запись логов;
+  без шаблона — file-fallback NDJSON в `logs/clickhouse-fallback/`.
+- Метрики `nexus_requests_total{method,node,status}` растут по узлам (200/404/405).
+
+Грабли локального запуска: `config_debug.yml` должен задавать `web.receiver_url:
+http://localhost:8080` (дефолт `http://receiver:8080` — docker-имя, локально не
+резолвится), иначе единый вход отдаёт 502.
+
 ### 4.1 Шифрование auth_credentials живёт только в `adapter/out/postgres`
 
 `domain.Node` всегда хранит **открытый** plaintext. Шифрование/расшифровка происходит
