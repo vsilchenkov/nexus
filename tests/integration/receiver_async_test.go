@@ -91,6 +91,7 @@ func TestSender_Async_E2E(t *testing.T) {
 		AuthCredentials:         "supersecret",
 		IncomingAuthType:        domain.IncomingAuthTypeNone,
 		Status:                  domain.NodeStatusEnabled,
+		LoggingEnabled:          true, // §22: иначе лог в ClickHouse не пишется
 		ClickHouseTable:         "test.demo_async",
 		ClickHouseRetentionDays: 30,
 		TimeoutMs:               5000,

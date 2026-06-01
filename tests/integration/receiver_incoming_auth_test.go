@@ -99,8 +99,11 @@ func TestReceiver_IncomingAuth_E2E(t *testing.T) {
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	doPost := func(path string, headers map[string]string) (int, []byte) {
+		// §18: первый сегмент URL — team_slug (splitTeamSlugAndPath). Узлы
+		// созданы с многосегментным path ("auth/none" и т.п.), поэтому без
+		// слага "auth" был бы съеден как команда → 404. Префиксуем default-слогом.
 		req, err := http.NewRequestWithContext(ctx, "POST",
-			srv.URL+"/v1/request/"+path, bytes.NewReader([]byte(`{"x":1}`)))
+			srv.URL+"/v1/request/"+domain.DefaultTeamSlug+"/"+path, bytes.NewReader([]byte(`{"x":1}`)))
 		require.NoError(t, err)
 		req.Header.Set("Content-Type", "application/json")
 		for k, v := range headers {
