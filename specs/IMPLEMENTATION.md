@@ -924,6 +924,15 @@ filter, Create без TeamID). До блока B (team-switcher в сессии)
   `POST/PUT /api/nodes` — curl-клиент больше не сидит allowlist через тело узла.
 - **Редактирование паттерна — только при `usage_count = 0`** (плюс FK RESTRICT на удаление). Это и
   гарантирует отсутствие стейл-снимков: используемый паттерн неизменяем.
+- **`POST /api/allowed-hosts/preview` отвечает `200` даже на невалидный паттерн** (`{valid:false,
+  reason:<i18n-код>}`), а НЕ `400`. Превью — это «что будет», и недописанный/кривой паттерн при живом
+  вводе в форме (запрос летит на каждое нажатие клавиши) — нормальный ответ, а не ошибка клиента.
+  Раньше отдавали `400` → консоль браузера засорялась красными `Failed to load resource (400)`, хотя
+  UI работал. Только malformed JSON-тело по-прежнему `400` (ShouldBindJSON). Не «чини» обратно на
+  `400`: [http/host_allowlist_handler.go](../internal/web/adapter/in/http/host_allowlist_handler.go)
+  `Preview`, фронт читает флаг `valid` ([AllowedHosts.tsx](../web-ui/src/pages/settings/AllowedHosts.tsx)).
+- **Редактирование хоста в UI — `PATCH /allowed-hosts/:id`** (роут — PATCH, не PUT; раньше фронт слал
+  PUT → 404). В `api`-клиенте есть метод `patch` ([web-ui/src/api/client.ts](../web-ui/src/api/client.ts)).
 
 ### 4.23 §24 — headers_catalog: usage_count on-read, без M2M
 

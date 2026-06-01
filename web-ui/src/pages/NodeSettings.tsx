@@ -184,7 +184,11 @@ export default function NodeSettings() {
               <Trash2 className="h-4 w-4" /> {t("node.actions.delete")}
             </Button>
           )}
-          <Button variant="primary" disabled={save.isPending} onClick={() => save.mutate()}>
+          <Button
+            variant="primary"
+            disabled={save.isPending || form.path.trim() === ""}
+            onClick={() => save.mutate()}
+          >
             <Save className="h-4 w-4" /> {t("common.save")}
           </Button>
         </div>

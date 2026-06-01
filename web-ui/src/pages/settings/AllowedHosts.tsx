@@ -7,7 +7,9 @@ import { api, type HostAllowlistEntry, type HostKind } from "../../api/client";
 import { Button, Chip, Input, Modal, Seg, type SegOption } from "../../components/ui";
 
 type ListResp = { items: HostAllowlistEntry[] };
-type PreviewResp = { allowed: string[]; blocked: string[] };
+// Превью всегда отвечает 200: valid=false означает недописанный/кривой паттерн
+// (нормальный ответ «что будет», а не сетевая ошибка) — см. host_allowlist_handler.go.
+type PreviewResp = { valid: boolean; reason?: string; allowed: string[]; blocked: string[] };
 
 const kindTone: Record<HostKind, "success" | "info" | "warning"> = {
   exact: "success",
@@ -174,13 +176,17 @@ function HostDialog({
     enabled: pattern.trim().length > 0,
     retry: false,
   });
+  // Невалидный паттерн — это valid:false в успешном ответе (200), либо реальная
+  // сетевая ошибка превью. В обоих случаях колонки показываем как «invalid».
+  const previewInvalid = preview.isError || preview.data?.valid === false;
 
   const save = useMutation({
     mutationFn: () => {
       if (mode === "create") {
         return api.post("/api/allowed-hosts", { pattern, kind, description });
       }
-      return api.put(`/api/allowed-hosts/${initial!.id}`, { pattern, kind, description });
+      // Маршрут редактирования — PATCH /allowed-hosts/:id (см. routes.go).
+      return api.patch(`/api/allowed-hosts/${initial!.id}`, { pattern, kind, description });
     },
     onSuccess: () => onSaved(),
     onError: (err: { response?: { data?: { error?: string } } }) =>
@@ -259,17 +265,17 @@ function HostDialog({
             title={t("settings.allowed_hosts.preview.allow")}
             icon={<Check className="h-3.5 w-3.5" />}
             urls={preview.data?.allowed ?? []}
-            invalid={preview.isError}
+            invalid={previewInvalid}
           />
           <PreviewCol
             tone="err"
             title={t("settings.allowed_hosts.preview.block")}
             icon={<X className="h-3.5 w-3.5" />}
             urls={preview.data?.blocked ?? []}
-            invalid={preview.isError}
+            invalid={previewInvalid}
           />
         </div>
-        {preview.isError && (
+        {previewInvalid && (
           <div className="text-[11px] text-warn">{t("settings.allowed_hosts.preview.invalid")}</div>
         )}
       </div>

@@ -32,6 +32,10 @@ export const api = {
     const r = await axiosInstance.put<T>(url, body);
     return r.data;
   },
+  async patch<T>(url: string, body?: unknown): Promise<T> {
+    const r = await axiosInstance.patch<T>(url, body);
+    return r.data;
+  },
   async del(url: string): Promise<void> {
     await axiosInstance.delete(url);
   },

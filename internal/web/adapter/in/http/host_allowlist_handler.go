@@ -176,10 +176,21 @@ func (h *HostAllowlistHandler) Preview(c *gin.Context) {
 	}
 	res, err := h.uc.Preview(c.Request.Context(), req.Pattern, domain.HostKind(req.Kind), req.TestURLs)
 	if err != nil {
-		h.replyDomainError(c, err, "host.preview")
+		// Превью — это «что будет», а не мутация: недописанный/невалидный
+		// паттерн (живой ввод в форме) — нормальный ответ «valid:false», а не
+		// ошибка клиента. Возвращаем 200 с флагом, чтобы UI показал состояние
+		// без сетевого 400 в консоли. Иные ошибки — внутренние (500).
+		if code, _, ok := hostErrorCode(err); ok {
+			c.JSON(http.StatusOK, gin.H{
+				"valid": false, "reason": code,
+				"allowed": []string{}, "blocked": []string{},
+			})
+			return
+		}
+		h.replyServerError(c, err, "host.preview")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"allowed": res.Allowed, "blocked": res.Blocked})
+	c.JSON(http.StatusOK, gin.H{"valid": true, "allowed": res.Allowed, "blocked": res.Blocked})
 }
 
 // ListByNode godoc
