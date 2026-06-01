@@ -343,6 +343,14 @@ export default function NodeSettings() {
                 />
               </Field>
             )}
+            {(form.incoming_auth_type === "basic" ||
+              form.incoming_auth_type === "token") && (
+              <Hint tone="muted" className="mt-2">
+                {form.incoming_auth_type === "basic"
+                  ? t("node.auth.basic_in_hint")
+                  : t("node.auth.token_in_hint")}
+              </Hint>
+            )}
             {form.incoming_auth_type === "webhook_signature" && (
               <div className="mt-3 grid grid-cols-2 gap-3">
                 <Field label={t("node.form.sig_header")}>
@@ -387,6 +395,23 @@ export default function NodeSettings() {
                   placeholder={isNew ? "" : t("node.form.keep_secret")}
                 />
               </Field>
+            )}
+            {(form.auth_type === "basic" || form.auth_type === "token") && (
+              <Hint tone="muted" className="mt-2">
+                {form.auth_type === "basic"
+                  ? t("node.auth.basic_out_hint")
+                  : t("node.auth.token_out_hint")}
+              </Hint>
+            )}
+            {!isPull && form.auth_type === "token_from_request" && (
+              <Hint tone="muted" className="mt-2">
+                {t("node.auth.token_from_request_hint")}
+              </Hint>
+            )}
+            {!isPull && form.auth_type === "basic_from_request" && (
+              <Hint tone="muted" className="mt-2">
+                {t("node.auth.basic_from_request_hint")}
+              </Hint>
             )}
           </Card>
 

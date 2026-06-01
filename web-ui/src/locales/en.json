@@ -122,6 +122,14 @@
     "webhook": {
       "hint": "Receive webhooks at POST /v1/callback/{path}. The signature is HMAC-SHA256 of the raw request body using the secret above, hex-encoded, optionally prefixed (e.g. \"sha256=\") and placed in the header."
     },
+    "auth": {
+      "basic_in_hint": "Format: login:password separated by a colon (e.g. admin:s3cret). The client sends Authorization: Basic base64(login:password) — no need to base64-encode here.",
+      "basic_out_hint": "Format: login:password separated by a colon (e.g. admin:s3cret). Nexus base64-encodes it and sets Authorization: Basic … on the request to the node.",
+      "token_in_hint": "Token value only, without the \"Bearer \" prefix. The client sends Authorization: Bearer <token>.",
+      "token_out_hint": "Token value only, without the \"Bearer \" prefix. Nexus sets Authorization: Bearer <token> on the request to the node.",
+      "token_from_request_hint": "The token is taken from the incoming request (query / header / body field) and placed into Authorization: Bearer on the request to the node; the original value is stripped from the proxied request.",
+      "basic_from_request_hint": "The incoming Authorization: Basic … header is forwarded to the node as-is (Nexus stores no credentials)."
+    },
     "form": {
       "route": "Route",
       "target": "Target",
