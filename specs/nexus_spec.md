@@ -64,6 +64,8 @@ Web Service API (см. §11) — внутренний контракт адми�
 
 - `path` — путь после корня (`webhook/send`)
 - `root_method` — `request` либо `requestAsync`
+- `incoming_method` — HTTP-метод, который узел принимает на вход (`GET`/`POST`/`PUT`/`DELETE`, по умолчанию `POST`); другой метод → `405 Method Not Allowed`. Неприменим для pull-узлов, не проверяется для callback (webhook).
+- `outgoing_method` — HTTP-метод вызова получателя (`GET`/`POST`/`PUT`/`DELETE`, по умолчанию `POST`); всегда диктует метод исходящего запроса.
 - `url_mode` — режим определения целевого URL (см. §3.4): `static` (по умолчанию) или `from_request`
 - `target_url` — статичный адрес перенаправления (используется при `url_mode = static`; при `from_request` игнорируется)
 - `url_param_name` — имя query-параметра, в котором клиент передаёт URL (по умолчанию `url_base`, можно переопределить)

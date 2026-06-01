@@ -47,6 +47,8 @@ Web Service API админки (см. §11) живёт под `/api/*` без с
 
 - `path` — путь после корня (`webhook/send`)
 - `root_method` — `request` либо `requestAsync`
+- `incoming_method` — HTTP-метод, который узел принимает на вход (`GET`/`POST`/`PUT`/`DELETE`, по умолчанию `POST`). Запрос другим методом отклоняется с `405 Method Not Allowed`. Для pull-узлов (RabbitMQAsync) неприменим, для callback-маршрута (webhook) не проверяется.
+- `outgoing_method` — HTTP-метод, которым Sender вызывает получателя (`GET`/`POST`/`PUT`/`DELETE`, по умолчанию `POST`). Всегда диктует метод исходящего запроса независимо от метода входящего.
 - `url_mode` — режим определения целевого URL (см. §3.4): `static` (по умолчанию) или `from_request`
 - `target_url` — статичный адрес перенаправления (используется при `url_mode = static`; при `from_request` игнорируется)
 - `url_param_name` — имя query-параметра, в котором клиент передаёт URL (по умолчанию `url_base`, можно переопределить)

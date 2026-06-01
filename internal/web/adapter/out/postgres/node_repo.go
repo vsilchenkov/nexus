@@ -49,7 +49,8 @@ const nodeColumns = `
 	logging_enabled, max_body_size_enabled, max_body_size,
 	created_at, updated_at, clickhouse_template_id,
 	rmq_host, rmq_port, rmq_vhost, rmq_user, rmq_password, rmq_queue, rmq_use_tls,
-	pull_interval_sec, pull_batch_size, pull_prefetch`
+	pull_interval_sec, pull_batch_size, pull_prefetch,
+	incoming_method, outgoing_method`
 
 func (r *NodeRepoPg) Get(ctx context.Context, id string) (*domain.Node, error) {
 	row := r.db.QueryRow(ctx, `SELECT `+nodeColumns+` FROM nodes WHERE id = $1`, id)
@@ -138,7 +139,8 @@ INSERT INTO nodes (
 	logging_enabled, max_body_size_enabled, max_body_size,
 	clickhouse_template_id,
 	rmq_host, rmq_port, rmq_vhost, rmq_user, rmq_password, rmq_queue, rmq_use_tls,
-	pull_interval_sec, pull_batch_size, pull_prefetch
+	pull_interval_sec, pull_batch_size, pull_prefetch,
+	incoming_method, outgoing_method
 ) VALUES (
 	$1, $2,
 	$3, $4, $5, $6,
@@ -152,7 +154,8 @@ INSERT INTO nodes (
 	$27, $28, $29,
 	$30,
 	$31, $32, $33, $34, $35, $36, $37,
-	$38, $39, $40
+	$38, $39, $40,
+	$41, $42
 ) RETURNING id, created_at, updated_at`
 
 	err = r.db.QueryRow(ctx, q,
@@ -169,6 +172,7 @@ INSERT INTO nodes (
 		nullUUID(n.ClickHouseTemplateID),
 		rmq.host, rmq.port, rmq.vhost, rmq.user, encRMQ, rmq.queue, n.RMQUseTLS,
 		rmq.interval, rmq.batch, rmq.prefetch,
+		methodOrDefault(n.IncomingMethod), methodOrDefault(n.OutgoingMethod),
 	).Scan(&n.ID, &n.CreatedAt, &n.UpdatedAt)
 
 	if err != nil {
@@ -212,6 +216,7 @@ UPDATE nodes SET
 	rmq_host = $32, rmq_port = $33, rmq_vhost = $34, rmq_user = $35,
 	rmq_password = $36, rmq_queue = $37, rmq_use_tls = $38,
 	pull_interval_sec = $39, pull_batch_size = $40, pull_prefetch = $41,
+	incoming_method = $42, outgoing_method = $43,
 	updated_at = now()
 WHERE id = $1
 RETURNING updated_at`
@@ -231,6 +236,7 @@ RETURNING updated_at`
 		nullUUID(n.ClickHouseTemplateID),
 		rmq.host, rmq.port, rmq.vhost, rmq.user, encRMQ, rmq.queue, n.RMQUseTLS,
 		rmq.interval, rmq.batch, rmq.prefetch,
+		methodOrDefault(n.IncomingMethod), methodOrDefault(n.OutgoingMethod),
 	).Scan(&n.UpdatedAt)
 
 	if err != nil {
@@ -281,6 +287,16 @@ type rmqValues struct {
 	port, interval, batch, prefetch any
 }
 
+// methodOrDefault страхует от пустого метода при прямой записи через репозиторий
+// (минуя usecase.SetDefaults): колонки incoming_method/outgoing_method —
+// NOT NULL с CHECK IN (...), пустая строка нарушила бы constraint. Пустое = POST.
+func methodOrDefault(m domain.HTTPMethod) string {
+	if m == "" {
+		return string(domain.HTTPMethodPOST)
+	}
+	return string(m)
+}
+
 func rmqArgs(n *domain.Node) rmqValues {
 	if !n.RootMethod.IsPull() {
 		return rmqValues{}
@@ -305,6 +321,7 @@ type rowScanner interface {
 func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 	var n domain.Node
 	var rootMethod, urlMode, authType, authDynSrc, incomingAuth, status string
+	var incomingMethod, outgoingMethod string
 	var encAuth, encInc string
 	var created, updated time.Time
 	var templateID *string
@@ -325,6 +342,7 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 		&created, &updated, &templateID,
 		&rmqHost, &rmqPort, &rmqVHost, &rmqUser, &encRMQ, &rmqQueue, &n.RMQUseTLS,
 		&pullInterval, &pullBatch, &pullPrefetch,
+		&incomingMethod, &outgoingMethod,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -334,6 +352,8 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 	}
 
 	n.RootMethod = domain.RootMethod(rootMethod)
+	n.IncomingMethod = domain.HTTPMethod(incomingMethod)
+	n.OutgoingMethod = domain.HTTPMethod(outgoingMethod)
 	n.URLMode = domain.URLMode(urlMode)
 	n.AuthType = domain.AuthType(authType)
 	n.AuthDynamicSource = domain.AuthDynSource(authDynSrc)

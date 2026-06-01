@@ -280,6 +280,8 @@ func (h *Handler) replyDomainError(c *gin.Context, err error, nodePath, op strin
 		c.JSON(http.StatusNotFound, gin.H{"error": "node not found"})
 	case errors.Is(err, domain.ErrNodeDisabled):
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "node not available"})
+	case errors.Is(err, domain.ErrNodeMethodNotAllowed):
+		c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "http method not allowed for this node"})
 	case errors.Is(err, domain.ErrURLParamRequired),
 		errors.Is(err, domain.ErrCallbackNotAllowed):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

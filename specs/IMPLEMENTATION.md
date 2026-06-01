@@ -55,6 +55,7 @@
 | Все режимы outgoing auth (none/basic/token/token_from_request/basic_from_request) | ✅ | [auth_dynamic.go](../internal/receiver/usecase/auth_dynamic.go) `BuildDynamicOutgoingAuth` |
 | Исключение служебных значений из проксируемого запроса (§3.5 «Исключение») | ✅ | `buildTokenFromRequest`, `buildBasicFromRequest` |
 | Маскирование `***` в логах и Sentry | ✅ | `maskAuthHeader` (dry-run), [sentry/sentry.go](../internal/platform/sentry/sentry.go) `isSensitive` |
+| **Методы узла: входящий (enforcement, иначе 405) + исходящий (диктует вызов получателя), деф. POST (#5)** | ✅ | [domain/enums.go](../internal/domain/enums.go) `HTTPMethod`, [domain/node.go](../internal/domain/node.go), миграция [0015](../migrations/0015_node_methods.up.sql), [route.go](../internal/receiver/usecase/route.go) `methodMatches` + `OutgoingMethod`, [route_async.go](../internal/receiver/usecase/route_async.go), [puller.go](../internal/receiver/usecase/puller.go) |
 | Статусы узла: `enabled` / `disabled` / `paused` | ✅ | `RouteUsecase.Route` (§3.6) |
 | **paused в sync** → 202 + `queued:true` + `node_status:paused` | ✅ Phase 5 | `Route()` возвращает `ErrNodePaused` → `handleSync` переключается на `handleAsyncFromInput` |
 | Лимиты полей (path 1-255, timeout 100-300000 ms, ...) | ✅ | [domain/node.go](../internal/domain/node.go) `Validate()` + DB-constraints в [migrations/0002](../migrations/0002_nodes_methods_users.up.sql) |

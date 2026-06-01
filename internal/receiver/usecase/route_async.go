@@ -66,6 +66,13 @@ func (u *RouteAsyncUsecase) RouteAsync(ctx context.Context, in RouteInput) (*Rou
 		return nil, domain.ErrCallbackNotAllowed
 	}
 
+	// §3.2 (#5): узел принимает только сконфигурированный входящий метод.
+	// Callback (webhook) — исключение: маршрут уже зафиксирован как POST и
+	// защищён HMAC-подписью, метод диктует внешний провайдер.
+	if !in.RequireCallback && !methodMatches(in.Method, node.IncomingMethod) {
+		return nil, domain.ErrNodeMethodNotAllowed
+	}
+
 	// Любой root_method можно отправить через async — §3.6 «При paused
 	// все запросы превращаются в async». Поэтому RouteAsync доступен
 	// и для request-узлов, если они в paused.
@@ -101,7 +108,7 @@ func (u *RouteAsyncUsecase) RouteAsync(ctx context.Context, in RouteInput) (*Rou
 	}
 
 	id := uuid.NewString()
-	env := BuildEnvelope(id, node, in.Method, targetURL, authHeader, in.ClientIP,
+	env := BuildEnvelope(id, node, string(node.OutgoingMethod), targetURL, authHeader, in.ClientIP,
 		effHeader, cleanQuery, effBody)
 
 	payload, err := json.Marshal(env)

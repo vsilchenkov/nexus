@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -84,6 +85,11 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 		return nil, fmt.Errorf("%w: node is %s, not request", domain.ErrNodeNotFound, node.RootMethod)
 	}
 
+	// §3.2 (#5): узел принимает только сконфигурированный входящий метод.
+	if !methodMatches(in.Method, node.IncomingMethod) {
+		return nil, domain.ErrNodeMethodNotAllowed
+	}
+
 	if err := CheckIncomingAuth(node, in.Header, in.Body); err != nil {
 		return nil, err
 	}
@@ -128,7 +134,7 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 		Id:                 id,
 		NodePath:           node.Path,
 		TargetUrl:          finalURL,
-		Method:             in.Method,
+		Method:             string(node.OutgoingMethod),
 		Auth:               &senderv1.AuthConfig{AuthorizationHeader: authHeader},
 		Headers:            headers,
 		Body:               effBody,
@@ -164,6 +170,17 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 		}
 	}
 	return out, nil
+}
+
+// methodMatches сравнивает фактический HTTP-метод входящего запроса с
+// сконфигурированным методом узла (§3.2, #5), без учёта регистра. Пустой
+// want трактуется как POST (дефолт), чтобы узлы, созданные до миграции 0015 и
+// переживший её L1/Redis-кеш без поля, не отклоняли трафик.
+func methodMatches(got string, want domain.HTTPMethod) bool {
+	if want == "" {
+		want = domain.HTTPMethodPOST
+	}
+	return strings.EqualFold(got, string(want))
 }
 
 func appendQuery(target string, q url.Values) string {

@@ -15,6 +15,8 @@ const CredentialsMask = "***"
 type CreateNodeRequest struct {
 	Path                    string   `json:"path" binding:"required,max=255"`
 	RootMethod              string   `json:"root_method" binding:"required,oneof=request requestAsync RabbitMQAsync"`
+	IncomingMethod          string   `json:"incoming_method" binding:"omitempty,oneof=GET POST PUT DELETE"`
+	OutgoingMethod          string   `json:"outgoing_method" binding:"omitempty,oneof=GET POST PUT DELETE"`
 	URLMode                 string   `json:"url_mode" binding:"omitempty,oneof=static from_request"`
 	TargetURL               string   `json:"target_url" binding:"omitempty,max=2048"`
 	URLParamName            string   `json:"url_param_name" binding:"omitempty,max=64"`
@@ -69,6 +71,8 @@ type NodeResponse struct {
 	ID                      string   `json:"id"`
 	Path                    string   `json:"path"`
 	RootMethod              string   `json:"root_method"`
+	IncomingMethod          string   `json:"incoming_method"`
+	OutgoingMethod          string   `json:"outgoing_method"`
 	URLMode                 string   `json:"url_mode"`
 	TargetURL               string   `json:"target_url"`
 	URLParamName            string   `json:"url_param_name"`
@@ -165,6 +169,8 @@ func reqToDomain(r CreateNodeRequest) *domain.Node {
 	return &domain.Node{
 		Path:                    r.Path,
 		RootMethod:              domain.RootMethod(r.RootMethod),
+		IncomingMethod:          domain.HTTPMethod(r.IncomingMethod),
+		OutgoingMethod:          domain.HTTPMethod(r.OutgoingMethod),
 		URLMode:                 domain.URLMode(r.URLMode),
 		TargetURL:               r.TargetURL,
 		URLParamName:            r.URLParamName,
@@ -210,6 +216,8 @@ func nodeToResponse(n *domain.Node) NodeResponse {
 		ID:                      n.ID,
 		Path:                    n.Path,
 		RootMethod:              string(n.RootMethod),
+		IncomingMethod:          string(n.IncomingMethod),
+		OutgoingMethod:          string(n.OutgoingMethod),
 		URLMode:                 string(n.URLMode),
 		TargetURL:               n.TargetURL,
 		URLParamName:            n.URLParamName,

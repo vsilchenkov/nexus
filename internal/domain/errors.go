@@ -15,6 +15,8 @@ var (
 	ErrNodeNotFound                = errors.New("domain: node not found")
 	ErrNodeAlreadyExists           = errors.New("domain: node with this path already exists")
 	ErrNodeInvalidRootMethod       = errors.New("domain: invalid root_method")
+	ErrNodeInvalidIncomingMethod   = errors.New("domain: invalid incoming_method (allowed: GET, POST, PUT, DELETE)")
+	ErrNodeInvalidOutgoingMethod   = errors.New("domain: invalid outgoing_method (allowed: GET, POST, PUT, DELETE)")
 	ErrNodeInvalidURLMode          = errors.New("domain: invalid url_mode")
 	ErrNodeInvalidAuthType         = errors.New("domain: invalid auth_type")
 	ErrNodeInvalidIncomingAuthType = errors.New("domain: invalid incoming_auth_type")
@@ -35,6 +37,7 @@ var (
 	ErrNodeForwardHeadersSize      = errors.New("domain: forward_headers must have at most 30 elements")
 	ErrNodeDisabled                = errors.New("domain: node disabled")
 	ErrNodePaused                  = errors.New("domain: node paused")
+	ErrNodeMethodNotAllowed        = errors.New("domain: http method not allowed for this node")
 	ErrNodeInvalidTemplateID       = errors.New("domain: clickhouse_template_id must be a valid UUID")
 	ErrNodeLogsNotConfigured       = errors.New("domain: node has no clickhouse_table configured")
 	// Webhook signature (§16 ТЗ, IncomingAuthTypeWebhookSignature).

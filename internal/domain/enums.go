@@ -46,6 +46,26 @@ func (m RootMethod) Valid() bool {
 // них применимо runtime-состояние degraded.
 func (m RootMethod) IsPull() bool { return m == RootMethodRabbitMQAsync }
 
+// HTTPMethod — HTTP-метод узла (§3.2): отдельно для входящего запроса
+// (который узел принимает) и для исходящего вызова получателя. По умолчанию
+// POST. Множество ограничено четырьмя методами из ТЗ.
+type HTTPMethod string
+
+const (
+	HTTPMethodGET    HTTPMethod = "GET"
+	HTTPMethodPOST   HTTPMethod = "POST"
+	HTTPMethodPUT    HTTPMethod = "PUT"
+	HTTPMethodDELETE HTTPMethod = "DELETE"
+)
+
+func (m HTTPMethod) Valid() bool {
+	switch m {
+	case HTTPMethodGET, HTTPMethodPOST, HTTPMethodPUT, HTTPMethodDELETE:
+		return true
+	}
+	return false
+}
+
 // URLMode — режим определения целевого URL (§3.4).
 type URLMode string
 
