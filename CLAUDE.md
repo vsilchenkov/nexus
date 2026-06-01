@@ -94,6 +94,14 @@ Web Service отдаёт REST API под `/api/*` и SPA (`embed.FS`) на вс�
      В CI ([.gitlab-ci.yml](.gitlab-ci.yml) job `ui-build`) lint запускается с `--max-warnings=0` —
      любой warning валит pipeline. Если меняешь зависимости — коммить и `package-lock.json`,
      иначе `npm ci` в CI развалится.
+   - **После правки `web-ui/` обязательно пересобери встроенный SPA и закоммить бандл в том же
+     коммите.** Web Service отдаёт фронт из `internal/web/static/` через `embed.FS` — правка только
+     исходников `web-ui/src/` НЕ доходит до пользователя, пока бандл не пересобран. Прогони
+     `make build-ui` (`npm run build` → копирует `web-ui/dist/*` в `internal/web/static/`), затем
+     `go build ./cmd/web`, и **закоммить изменённый `internal/web/static/`** (имена ассетов хешируются —
+     старый `index-<hash>.js` заменяется новым). Грабли: Phase E (UI RabbitMQAsync) поправил исходники,
+     но не пересобрал бандл — в проде показывались две карточки типа узла вместо трёх (см. коммит
+     `fix(ui): пересборка встроенного SPA`). Пропуск этого шага = «фича в `dev`, но её нет в интерфейсе».
 
 2. **Дописать результаты в [specs/IMPLEMENTATION.md](specs/IMPLEMENTATION.md).**
    - В разделе «Карта реализации по разделам ТЗ» — поменять статус (✅/◐/⛔) и добавить ссылки на
