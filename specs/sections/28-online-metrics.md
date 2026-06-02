@@ -50,9 +50,10 @@ UI собирает полный адрес узла от неё, иначе —
 
 - API метрик принимает либо `range=<preset>`, либо произвольный `from`/`to` (RFC3339 или UnixMilli)
   во всех трёх эндпоинтах (`/api/metrics/overview|nodes|nodes/:id`).
-- ClickHouse-путь (KPI/ряд узла) уже работал по `(sinceMs, untilMs]`. Prometheus-путь
-  (`NodeThroughput`/`NodeSeries`) переведён на `(since, until time.Time)`: запрос вычисляется на
-  момент `until`, что даёт произвольный календарный период. Глобальные KPI Overview остаются за 24ч.
+- Prometheus-путь (`NodeThroughput`/`NodeSeries`) переведён на `(since, until time.Time)`: запрос
+  вычисляется на момент `until`, что даёт произвольный календарный период. Глобальные KPI Overview
+  остаются за 24ч. (KPI/ряд узла изначально считались из ClickHouse по `(sinceMs, untilMs]`; позже,
+  чтобы метрики не зависели от логов CH, переведены на Prometheus — см. §6.1 и IMPLEMENTATION.md §4.11.2.)
 
 ### 28.5. Понятные ошибки валидации узла (Пункт 5)
 

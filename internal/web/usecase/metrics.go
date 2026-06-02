@@ -11,22 +11,19 @@ import (
 
 // MetricsUsecase — дашборды метрик панели (§21).
 //
-// Источники гибридные:
-//   - Prometheus (prom) — глобальные KPI Overview, очередь Kafka, per-node
-//     throughput. Опционален: при пустом prometheus.url prom == nil и методы
-//     отдают деградацию (PrometheusAvailable=false), не ошибку.
-//   - ClickHouse (ch) — per-node KPI и временной ряд на странице узла (точные
-//     перцентили). Опционален: при отсутствии ClickHouse ch == nil, узел без
-//     таблицы → ChartAvailable=false с нулевыми значениями.
+// Единый источник — Prometheus (prom): глобальные KPI Overview, очередь Kafka,
+// per-node throughput и per-node KPI/график на странице узла. Опционален: при
+// пустом prometheus.url prom == nil и методы отдают деградацию
+// (PrometheusAvailable / ChartAvailable = false), не ошибку. ClickHouse в
+// метриках больше не участвует — он остаётся чисто хранилищем логов.
 type MetricsUsecase struct {
 	prom   port.PromMetrics // может быть nil
-	ch     port.CHMetrics   // может быть nil
 	nodes  port.NodeRepo
 	logger logging.Logger
 }
 
-func NewMetricsUsecase(prom port.PromMetrics, ch port.CHMetrics, nodes port.NodeRepo, logger logging.Logger) *MetricsUsecase {
-	return &MetricsUsecase{prom: prom, ch: ch, nodes: nodes, logger: logger}
+func NewMetricsUsecase(prom port.PromMetrics, nodes port.NodeRepo, logger logging.Logger) *MetricsUsecase {
+	return &MetricsUsecase{prom: prom, nodes: nodes, logger: logger}
 }
 
 // OverviewKPI — 4 KPI головного экрана + флаг доступности Prometheus.
@@ -59,7 +56,7 @@ type NodesOverview struct {
 type NodeMetrics struct {
 	KPI            port.NodeKPI
 	Series         []port.SeriesPoint
-	ChartAvailable bool // есть ли CH-источник (узел с таблицей + CH доступен)
+	ChartAvailable bool // доступен ли источник (Prometheus сконфигурирован и ответил)
 	RangeMs        int64
 }
 
@@ -145,10 +142,12 @@ func (u *MetricsUsecase) NodesOverview(ctx context.Context, since, until time.Ti
 	return NodesOverview{Items: items, PrometheusAvailable: true}
 }
 
-// NodeMetrics — KPI + ряд графика одного узла за окно rng, разбитый на buckets.
-// Узел резолвится с проверкой team-scope (как в LogsUsecase). Узел без
-// ClickHouseTable или отсутствие CH-провайдера → нулевые значения с
-// ChartAvailable=false (штатное состояние, не ошибка).
+// NodeMetrics — KPI + ряд графика одного узла за окно, разбитый на buckets.
+// Узел резолвится с проверкой team-scope (как в LogsUsecase). Источник —
+// Prometheus (по метке node = path узла). Без Prometheus (prom == nil) или при
+// ошибке запроса → нулевые значения с ChartAvailable=false (штатная деградация,
+// не 500) — единообразно с Overview/NodesOverview, чтобы поллинг UI не спамил
+// ошибками.
 func (u *MetricsUsecase) NodeMetrics(ctx context.Context, nodeID, teamID string, since, until time.Time, buckets int) (NodeMetrics, error) {
 	n, err := u.nodes.Get(ctx, nodeID)
 	if err != nil {
@@ -168,19 +167,18 @@ func (u *MetricsUsecase) NodeMetrics(ctx context.Context, nodeID, teamID string,
 	}
 	res := NodeMetrics{RangeMs: until.Sub(since).Milliseconds(), Series: []port.SeriesPoint{}}
 
-	if u.ch == nil || n.ClickHouseTable == "" {
+	if u.prom == nil {
 		return res, nil
 	}
-	sinceMs := since.UnixMilli()
-	untilMs := until.UnixMilli()
-
-	kpi, err := u.ch.NodeKPI(ctx, n.ClickHouseTable, sinceMs, untilMs)
+	kpi, err := u.prom.NodeKPI(ctx, n.Path, since, until)
 	if err != nil {
-		return NodeMetrics{}, err
+		u.logger.Warn("prometheus node kpi failed", u.logger.Err(err))
+		return res, nil
 	}
-	series, err := u.ch.NodeSeries(ctx, n.ClickHouseTable, sinceMs, untilMs, buckets)
+	series, err := u.prom.NodeChart(ctx, n.Path, since, until, buckets)
 	if err != nil {
-		return NodeMetrics{}, err
+		u.logger.Warn("prometheus node chart failed", u.logger.Err(err))
+		return res, nil
 	}
 	res.KPI = kpi
 	res.Series = series

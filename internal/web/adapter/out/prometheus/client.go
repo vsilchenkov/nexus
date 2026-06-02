@@ -9,6 +9,8 @@ package prometheus
 import (
 	"context"
 	"fmt"
+	"math"
+	"strings"
 	"time"
 
 	papi "github.com/prometheus/client_golang/api"
@@ -54,12 +56,18 @@ func promRange(d time.Duration) string {
 	return fmt.Sprintf("%ds", secs)
 }
 
-// instantScalar выполняет instant-query, ожидая скалярный результат
-// (sum(...) → vector из одного элемента). Пустой vector → 0.
+// instantScalar выполняет instant-query на момент time.Now(), ожидая
+// скалярный результат (sum(...) → vector из одного элемента).
 func (c *Client) instantScalar(ctx context.Context, query string) (float64, error) {
+	return c.instantScalarAt(ctx, query, time.Now())
+}
+
+// instantScalarAt — как instantScalar, но на произвольный момент at. Пустой
+// vector → 0.
+func (c *Client) instantScalarAt(ctx context.Context, query string, at time.Time) (float64, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
-	val, _, err := c.api.Query(ctx, query, time.Now())
+	val, _, err := c.api.Query(ctx, query, at)
 	if err != nil {
 		return 0, fmt.Errorf("prometheus query %q: %w", query, err)
 	}
@@ -71,6 +79,30 @@ func (c *Client) instantScalar(ctx context.Context, query string) (float64, erro
 		return 0, nil
 	}
 	return float64(vec[0].Value), nil
+}
+
+// promLabel экранирует значение метки для PromQL-селектора (двойные кавычки):
+// path узла может содержать спецсимволы, требующие экранирования.
+func promLabel(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`).Replace(s)
+}
+
+// nonNegU64 округляет неотрицательное float-значение в uint64 (отрицательные
+// и NaN → 0). Дубль usecase.f2u, чтобы не тащить зависимость на usecase.
+func nonNegU64(v float64) uint64 {
+	if math.IsNaN(v) || v <= 0 {
+		return 0
+	}
+	return uint64(v + 0.5)
+}
+
+// quantileMs нормализует результат histogram_quantile (секунды) в мс:
+// NaN/отрицательные (пустые бакеты) → 0.
+func quantileMs(v float64) float64 {
+	if math.IsNaN(v) || v < 0 {
+		return 0
+	}
+	return v * 1000
 }
 
 // instantByNode выполняет instant-query вида `sum by (node)(...)` на момент at
@@ -215,4 +247,122 @@ func (c *Client) NodeSeries(ctx context.Context, since, until time.Time, buckets
 		res[node] = pts
 	}
 	return res, nil
+}
+
+// NodeKPI — сводка одного узла (§21) за период (since, until] из per-node
+// счётчиков Sender'а. total/errors — increase() по nexus_requests_total /
+// nexus_request_incomplete_total; delivered = total-errors; p95/p99 — через
+// histogram_quantile по бакетам длительности. Запрос на момент until.
+func (c *Client) NodeKPI(ctx context.Context, node string, since, until time.Time) (port.NodeKPI, error) {
+	w := promRange(until.Sub(since))
+	lbl := promLabel(node)
+	sel := fmt.Sprintf(`{service="sender",node="%s"}`, lbl)
+
+	total, err := c.instantScalarAt(ctx,
+		fmt.Sprintf(`sum(increase(nexus_requests_total%s[%s]))`, sel, w), until)
+	if err != nil {
+		return port.NodeKPI{}, err
+	}
+	errs, err := c.instantScalarAt(ctx,
+		fmt.Sprintf(`sum(increase(nexus_request_incomplete_total%s[%s]))`, sel, w), until)
+	if err != nil {
+		return port.NodeKPI{}, err
+	}
+	p95, err := c.instantScalarAt(ctx,
+		fmt.Sprintf(`histogram_quantile(0.95, sum by (le)(rate(nexus_request_duration_seconds_bucket%s[%s])))`, sel, w), until)
+	if err != nil {
+		return port.NodeKPI{}, err
+	}
+	p99, err := c.instantScalarAt(ctx,
+		fmt.Sprintf(`histogram_quantile(0.99, sum by (le)(rate(nexus_request_duration_seconds_bucket%s[%s])))`, sel, w), until)
+	if err != nil {
+		return port.NodeKPI{}, err
+	}
+
+	tot := nonNegU64(total)
+	er := nonNegU64(errs)
+	delivered := uint64(0)
+	if tot > er {
+		delivered = tot - er
+	}
+	return port.NodeKPI{
+		Total:     tot,
+		Delivered: delivered,
+		Errors:    er,
+		P95ms:     quantileMs(p95),
+		P99ms:     quantileMs(p99),
+	}, nil
+}
+
+// NodeChart — ряд графика одного узла за период (since, until], buckets точек
+// (ASC, недостающие — нули). Count — все исходящие вызовы, Errors —
+// «незавершённые» (non-2xx). Два range-запроса (count/errors) с шагом step;
+// значения раскладываются по бакетам позиционно.
+func (c *Client) NodeChart(ctx context.Context, node string, since, until time.Time, buckets int) ([]port.SeriesPoint, error) {
+	if buckets <= 0 {
+		buckets = 48
+	}
+	if !until.After(since) {
+		return nil, fmt.Errorf("invalid window: until <= since")
+	}
+	step := until.Sub(since) / time.Duration(buckets)
+	if step <= 0 {
+		step = time.Minute
+	}
+	lbl := promLabel(node)
+	sel := fmt.Sprintf(`{service="sender",node="%s"}`, lbl)
+	stepSel := promRange(step)
+
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
+	// Start = since+step → первая точка покрывает (since, since+step], последняя
+	// (until-step, until]; ровно buckets интервалов в окне, как в прежнем CH-ряде.
+	rng := promv1.Range{Start: since.Add(step), End: until, Step: step}
+	counts, err := c.rangeSeriesValues(ctx,
+		fmt.Sprintf(`sum(increase(nexus_requests_total%s[%s]))`, sel, stepSel), rng)
+	if err != nil {
+		return nil, err
+	}
+	errsSeries, err := c.rangeSeriesValues(ctx,
+		fmt.Sprintf(`sum(increase(nexus_request_incomplete_total%s[%s]))`, sel, stepSel), rng)
+	if err != nil {
+		return nil, err
+	}
+
+	bucketMs := step.Milliseconds()
+	sinceMs := since.UnixMilli()
+	out := make([]port.SeriesPoint, buckets)
+	for i := range out {
+		out[i] = port.SeriesPoint{TsMs: sinceMs + int64(i)*bucketMs}
+		if i < len(counts) {
+			out[i].Count = nonNegU64(counts[i])
+		}
+		if i < len(errsSeries) {
+			out[i].Errors = nonNegU64(errsSeries[i])
+		}
+	}
+	return out, nil
+}
+
+// rangeSeriesValues выполняет range-query со скалярным агрегатом (sum(...) →
+// одна серия) и возвращает её значения в порядке возрастания времени. Пустой
+// результат (нет данных за окно) → nil без ошибки.
+func (c *Client) rangeSeriesValues(ctx context.Context, query string, rng promv1.Range) ([]float64, error) {
+	val, _, err := c.api.QueryRange(ctx, query, rng)
+	if err != nil {
+		return nil, fmt.Errorf("prometheus query_range %q: %w", query, err)
+	}
+	matrix, ok := val.(model.Matrix)
+	if !ok {
+		return nil, fmt.Errorf("prometheus query_range %q: unexpected result type %T", query, val)
+	}
+	if len(matrix) == 0 {
+		return nil, nil
+	}
+	vals := make([]float64, 0, len(matrix[0].Values))
+	for _, sp := range matrix[0].Values {
+		vals = append(vals, float64(sp.Value))
+	}
+	return vals, nil
 }

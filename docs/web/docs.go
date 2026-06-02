@@ -1258,7 +1258,7 @@ const docTemplate = `{
                         "ApiTokenAuth": []
                     }
                 ],
-                "description": "Источник — ClickHouse (точные перцентили). Узел без таблицы логов → нули с chart_available=false.",
+                "description": "Источник — Prometheus (per-node счётчики Sender'а; перцентили через histogram_quantile). Без Prometheus → нули с chart_available=false.",
                 "produces": [
                     "application/json"
                 ],
