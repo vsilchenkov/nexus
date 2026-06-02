@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { type Node } from "../../api/client";
-import { Card, Hint, Kpi, KpiRow, PeriodPicker, TrafficChart, type Period } from "../ui";
+import { Card, Hint, Kpi, KpiRow, LabelHint, PeriodPicker, TrafficChart, type Period } from "../ui";
 import { fmtNum } from "../../lib/format";
 import { useNodeMetrics } from "./useNodeMetrics";
 
@@ -27,20 +27,25 @@ export function MetricsTab({ node }: { node: Node }) {
       )}
 
       <KpiRow>
-        <Kpi label={t("metrics.kpi.total")} value={kpi ? fmtNum(kpi.total) : "—"} />
-        <Kpi label={t("metrics.kpi.delivered")} value={kpi ? fmtNum(kpi.delivered) : "—"} />
+        <Kpi label={t("metrics.kpi.total")} value={kpi ? fmtNum(kpi.total) : "—"} hint={t("metrics.hints.total")} />
+        <Kpi label={t("metrics.kpi.delivered")} value={kpi ? fmtNum(kpi.delivered) : "—"} hint={t("metrics.hints.delivered")} />
         <Kpi
           label={t("metrics.kpi.p95")}
           value={kpi ? <>{Math.round(kpi.p95_ms)}<span className="text-sm text-fg-muted"> ms</span></> : "—"}
+          hint={t("metrics.hints.p95")}
         />
         <Kpi
           label={t("metrics.kpi.p99")}
           value={kpi ? <>{Math.round(kpi.p99_ms)}<span className="text-sm text-fg-muted"> ms</span></> : "—"}
+          hint={t("metrics.hints.p99")}
         />
       </KpiRow>
 
       <Card>
-        <div className="mb-3 text-sm font-semibold">{t("metrics.kpi.requests")}</div>
+        <div className="mb-3 flex items-center gap-1.5 text-sm font-semibold">
+          {t("metrics.kpi.requests")}
+          <LabelHint content={t("metrics.hints.requests")} />
+        </div>
         <TrafficChart data={m.data?.series ?? []} height={180} />
       </Card>
     </div>

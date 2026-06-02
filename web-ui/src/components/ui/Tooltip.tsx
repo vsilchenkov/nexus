@@ -6,20 +6,23 @@ import { cn } from "../../lib/cn";
 // TooltipProvider монтируется один раз в корне приложения (AppShell).
 export const TooltipProvider = RadixTooltip.Provider;
 
-// Tooltip — простой tooltip с задержкой 400мс (без задержки раздражает, §25).
+// Tooltip — простой tooltip с задержкой 400мс по умолчанию (без задержки
+// раздражает, §25). delayDuration можно уменьшить для плотных областей (чарт).
 export function Tooltip({
   content,
   children,
   side = "bottom",
   className,
+  delayDuration = 400,
 }: {
   content: ReactNode;
   children: ReactNode;
   side?: "top" | "right" | "bottom" | "left";
   className?: string;
+  delayDuration?: number;
 }) {
   return (
-    <RadixTooltip.Root delayDuration={400}>
+    <RadixTooltip.Root delayDuration={delayDuration}>
       <RadixTooltip.Trigger asChild>{children}</RadixTooltip.Trigger>
       <RadixTooltip.Portal>
         <RadixTooltip.Content

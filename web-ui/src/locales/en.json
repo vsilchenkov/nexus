@@ -97,6 +97,20 @@
       "total": "Total",
       "requests": "Requests"
     },
+    "hints": {
+      "traffic": "Bar height is the number of requests in the interval. Blue is successful responses, red at the bottom is errors. Hover a bar for details.",
+      "requests": "Request distribution over time. Blue — successful, red — errors. Hover a bar for details.",
+      "in": "Total incoming requests for the selected period.",
+      "total": "Total processed requests for the period.",
+      "delivered": "Requests successfully delivered to the target (2xx/3xx).",
+      "errors": "Requests that failed (4xx/5xx or delivery failure).",
+      "p95": "95th percentile of response time: 95% of requests were within this time.",
+      "p99": "99th percentile of response time: 99% of requests were within this time.",
+      "tooltip": {
+        "requests": "{{n}} requests",
+        "errors": "{{n}} errors ({{pct}}%)"
+      }
+    },
     "period": "Period",
     "range": {
       "15m": "15m",
