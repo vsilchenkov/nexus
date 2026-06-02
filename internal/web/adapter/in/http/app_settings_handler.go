@@ -1,6 +1,7 @@
 package http
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -46,6 +47,29 @@ func (h *AppSettingsHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, s)
 }
 
+// GetPublic godoc
+// @Summary  Публичный адрес приложения (§28, Пункт 1).
+// @Description  Лёгкий read-only эндпоинт для любого авторизованного пользователя: возвращает {public_base_url} для сборки полного адреса узла в UI. Не требует прав admin (в отличие от /api/settings/app).
+// @Tags     settings
+// @Produce  json
+// @Success  200  {object}  map[string]string
+// @Failure  500  {object}  map[string]string
+// @Security CookieAuth
+// @Router   /api/settings/public [get]
+func (h *AppSettingsHandler) GetPublic(c *gin.Context) {
+	s, err := h.uc.Get(c.Request.Context())
+	if err != nil {
+		h.logger.ErrorWithOp("app_settings public get failed", err, "settings.get_public")
+		localizedError(c, http.StatusInternalServerError, "error.internal")
+		return
+	}
+	var url string
+	if s.General.PublicBaseURL != nil {
+		url = *s.General.PublicBaseURL
+	}
+	c.JSON(http.StatusOK, gin.H{"public_base_url": url})
+}
+
 // Update godoc
 // @Summary  Обновить dynamic-настройки Sentry/ClickHouse (§14.5).
 // @Description  Patch-семантика: nil-поля сохраняются как есть, "***" в секретах не перезаписывает текущее значение.
@@ -65,6 +89,10 @@ func (h *AppSettingsHandler) Update(c *gin.Context) {
 		return
 	}
 	if err := h.uc.Update(c.Request.Context(), actorFromCtx(c), &patch); err != nil {
+		if errors.Is(err, domain.ErrPublicBaseURLInvalid) || errors.Is(err, domain.ErrTelegramCronInvalid) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		h.logger.ErrorWithOp("app_settings update failed", err, "settings.update")
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 		return

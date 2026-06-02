@@ -1,6 +1,33 @@
 package domain
 
-import "time"
+import (
+	"net/url"
+	"strings"
+	"time"
+)
+
+// ValidatePublicBaseURL проверяет публичный адрес приложения (§28, Пункт 1):
+// пустая строка допустима (= не задан), иначе — абсолютный http(s)-URL без
+// пути, query и хвостового слеша (только origin: scheme://host[:port]).
+func ValidatePublicBaseURL(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	if strings.HasSuffix(raw, "/") {
+		return ErrPublicBaseURLInvalid
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ErrPublicBaseURLInvalid
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return ErrPublicBaseURLInvalid
+	}
+	if u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return ErrPublicBaseURLInvalid
+	}
+	return nil
+}
 
 // AppSettings — динамическая часть конфига Sentry и ClickHouse, которая
 // может меняться оператором через UI и переопределяет значения из YAML/env
@@ -10,12 +37,22 @@ import "time"
 // из YAML/env». Это позволяет hot-reload не затирать env-настройки, если
 // оператор очистил поле в UI.
 type AppSettings struct {
+	General       GeneralSettings       `json:"general"`
 	Sentry        SentrySettings        `json:"sentry"`
 	ClickHouse    ClickHouseSettings    `json:"clickhouse"`
 	Notifications NotificationsSettings `json:"notifications"`
 
 	UpdatedAt time.Time `json:"updated_at"`
 	UpdatedBy string    `json:"updated_by,omitempty"` // user_id, кто последним обновил
+}
+
+// GeneralSettings — общесистемные настройки приложения (§28, Пункт 1).
+type GeneralSettings struct {
+	// PublicBaseURL — публичный адрес, под которым опубликован Web (origin без
+	// хвостового слеша, напр. https://nexus.example.com). Если задан, UI
+	// формирует полный адрес узла от него вместо window.location.origin.
+	// nil/"" = не задан (UI берёт origin браузера). Не секрет — Get() не маскирует.
+	PublicBaseURL *string `json:"public_base_url,omitempty"`
 }
 
 // NotificationsSettings — настройки уведомлений операторам (§20).

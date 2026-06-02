@@ -76,6 +76,11 @@ func (u *AppSettingsUsecase) Update(ctx context.Context, actor Actor, patch *dom
 	if err := validateTelegramPatch(patch); err != nil {
 		return err
 	}
+	if patch.General.PublicBaseURL != nil {
+		if err := domain.ValidatePublicBaseURL(*patch.General.PublicBaseURL); err != nil {
+			return err
+		}
+	}
 
 	current, err := u.repo.Get(ctx)
 	if err != nil {
@@ -113,6 +118,11 @@ func (u *AppSettingsUsecase) Update(ctx context.Context, actor Actor, patch *dom
 // ("***", "https://***@...") НЕ перезаписывают current.
 func mergeAppSettings(current, patch *domain.AppSettings) *domain.AppSettings {
 	out := *current
+
+	// General (§28). PublicBaseURL не секрет — перезаписываем как есть.
+	if patch.General.PublicBaseURL != nil {
+		out.General.PublicBaseURL = patch.General.PublicBaseURL
+	}
 
 	// Sentry
 	if patch.Sentry.Use != nil {
@@ -200,6 +210,9 @@ func validateTelegramPatch(p *domain.AppSettings) error {
 // содержит хотя бы одно не-nil поле. Используется в audit details.
 func changedSections(p *domain.AppSettings) []string {
 	var out []string
+	if p.General.PublicBaseURL != nil {
+		out = append(out, "general")
+	}
 	s := p.Sentry
 	if s.Use != nil || s.DSN != nil || s.Environment != nil || s.Level != nil ||
 		s.AttachStacktrace != nil || s.EnableTracing != nil || s.TracesSampleRate != nil {

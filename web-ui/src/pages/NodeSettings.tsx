@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 
 import { api, type Node, type CHTemplate, type HostAllowlistEntry } from "../api/client";
+import { useNodeUrlBuilder } from "../lib/nodeUrl";
 import { DryRunDialog } from "../components/DryRunDialog";
 import { DeleteNodeDialog } from "../components/node/DeleteNodeDialog";
 import { AllowedHostsField } from "../components/node/AllowedHostsField";
@@ -171,9 +172,10 @@ export default function NodeSettings() {
 
   const isPull = form.root_method === "RabbitMQAsync";
   const verb = form.root_method === "request" ? "request" : "requestAsync";
-  const routePath = `/api/v1/${verb}/${form.path || "…"}`;
-  // §2: полный адрес = origin (единый вход Web) + путь маршрута.
-  const fullAddress = `${window.location.origin}${routePath}`;
+  // §28 Пункт 1: полный адрес собирается из публичного адреса приложения
+  // (если задан в настройках) или origin браузера + slug текущей команды.
+  const buildUrl = useNodeUrlBuilder();
+  const fullAddress = buildUrl(verb, form.path);
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">

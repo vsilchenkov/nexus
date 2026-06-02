@@ -305,6 +305,12 @@
   },
   "settings": {
     "title": "Settings",
+    "general": {
+      "title": "General",
+      "public_base_url": "Public application URL",
+      "public_base_url_hint": "Public address the app is published at. When set, node addresses are built from it instead of the browser host. Leave empty to use the current origin.",
+      "public_base_url_example": "Origin only, no path or trailing slash, e.g. https://nexus.example.com"
+    },
     "tokens": {
       "title": "API tokens",
       "new_token": "New token",
