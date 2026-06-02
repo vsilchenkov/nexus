@@ -1,6 +1,7 @@
 import { type ReactNode } from "react";
 
 import { cn } from "../../lib/cn";
+import { LabelHint } from "./LabelHint";
 
 type Tone = "default" | "info" | "success" | "danger" | "warning";
 
@@ -67,24 +68,30 @@ export function Pill({
 }
 
 // Kpi — карточка показателя (.kpi). delta — подпись под значением.
+// hint — необязательная расшифровка метрики (info-иконка у метки).
 export function Kpi({
   label,
   value,
   delta,
   deltaTone,
+  hint,
   className,
 }: {
   label: ReactNode;
   value: ReactNode;
   delta?: ReactNode;
   deltaTone?: "up" | "down" | "muted";
+  hint?: string;
   className?: string;
 }) {
   const deltaCls =
     deltaTone === "up" ? "text-ok" : deltaTone === "down" ? "text-err" : "text-fg-muted";
   return (
     <div className={cn("rounded-md border border-line bg-bg px-4 py-3", className)}>
-      <div className="mb-1.5 text-[11px] text-fg-muted">{label}</div>
+      <div className="mb-1.5 flex items-center gap-1 text-[11px] text-fg-muted">
+        <span>{label}</span>
+        {hint && <LabelHint content={hint} />}
+      </div>
       <div className="text-[23px] font-semibold leading-none tracking-tight">{value}</div>
       {delta != null && <div className={cn("mt-1 text-[11px]", deltaCls)}>{delta}</div>}
     </div>

@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
 import { api, type Node } from "../../api/client";
-import { Card, Kpi, KpiRow, Pill, PeriodPicker, TrafficChart, defaultPeriod, type Period } from "../ui";
+import { Card, Kpi, KpiRow, LabelHint, Pill, PeriodPicker, TrafficChart, defaultPeriod, type Period } from "../ui";
 import { fmtNum } from "../../lib/format";
 import { useNodeMetrics, METRICS_REFETCH_MS } from "./useNodeMetrics";
 import { type LogsResp } from "./types";
@@ -30,28 +30,34 @@ export function OverviewTab({ node, onAllLogs }: { node: Node; onAllLogs: () => 
   return (
     <div className="space-y-4">
       <KpiRow>
-        <Kpi label={t("metrics.kpi.in")} value={kpi ? fmtNum(kpi.total) : "—"} />
+        <Kpi label={t("metrics.kpi.in")} value={kpi ? fmtNum(kpi.total) : "—"} hint={t("metrics.hints.in")} />
         <Kpi
           label={t("metrics.kpi.delivered")}
           value={kpi ? fmtNum(kpi.delivered) : "—"}
           delta={deliveredPct}
           deltaTone="up"
+          hint={t("metrics.hints.delivered")}
         />
         <Kpi
           label={t("metrics.kpi.p95")}
           value={kpi ? <>{Math.round(kpi.p95_ms)}<span className="text-sm text-fg-muted"> ms</span></> : "—"}
           delta={kpi ? `p99 ${Math.round(kpi.p99_ms)} ms` : undefined}
+          hint={t("metrics.hints.p95")}
         />
         <Kpi
           label={t("metrics.kpi.errors")}
           value={kpi ? fmtNum(kpi.errors) : "—"}
           deltaTone={kpi && kpi.errors > 0 ? "down" : "muted"}
+          hint={t("metrics.hints.errors")}
         />
       </KpiRow>
 
       <Card>
         <div className="mb-3 flex items-center justify-between">
-          <span className="text-sm font-semibold">{t("metrics.traffic")}</span>
+          <span className="flex items-center gap-1.5 text-sm font-semibold">
+            {t("metrics.traffic")}
+            <LabelHint content={t("metrics.hints.traffic")} />
+          </span>
           <PeriodPicker value={period} onChange={setPeriod} />
         </div>
         <TrafficChart data={m.data?.series ?? []} />

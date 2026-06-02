@@ -22,6 +22,7 @@ import {
   Pill,
   Seg,
   Select,
+  Tooltip,
   defaultPeriod,
   periodKey,
   periodParams,
@@ -384,7 +385,11 @@ function NodeCards({
                 tone={m && m.errors > 0 ? "err" : undefined}
               />
             </div>
-            <Sparkline data={m?.spark ?? []} variant={s.variant} />
+            <Sparkline
+              data={m?.spark ?? []}
+              variant={s.variant}
+              hint={t("metrics.hints.sparkline", { period: plabel })}
+            />
             <div className="flex items-center justify-between gap-2 text-[11px] text-fg-subtle">
               <span className="truncate font-mono" title={target}>
                 {target}
@@ -413,8 +418,9 @@ function CardStat({ label, value, tone }: { label: string; value: string; tone?:
   );
 }
 
-// Sparkline — мини-график входящего трафика за час (§22, ui_cards.html).
-function Sparkline({ data, variant }: { data: number[]; variant: Variant }) {
+// Sparkline — мини-график входящего трафика за период (§22, ui_cards.html).
+// hint — необязательная расшифровка (что показано + статус узла) в тултипе.
+function Sparkline({ data, variant, hint }: { data: number[]; variant: Variant; hint?: string }) {
   if (data.length === 0) {
     return <div className="h-7" />;
   }
@@ -427,7 +433,7 @@ function Sparkline({ data, variant }: { data: number[]; variant: Variant }) {
         : variant === "disabled"
           ? "bg-fg-subtle"
           : "bg-accent";
-  return (
+  const bars = (
     <div className="flex h-7 items-end gap-px">
       {data.map((v, i) => (
         <span
@@ -437,6 +443,13 @@ function Sparkline({ data, variant }: { data: number[]; variant: Variant }) {
         />
       ))}
     </div>
+  );
+  return hint ? (
+    <Tooltip content={hint} side="top">
+      {bars}
+    </Tooltip>
+  ) : (
+    bars
   );
 }
 
