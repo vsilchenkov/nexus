@@ -718,6 +718,15 @@ Prometheus убрал последнюю зависимость метрик о�
 Overview/NodesOverview, чтобы поллинг UI не спамил ошибками
 (см. [usecase/metrics.go](../internal/web/usecase/metrics.go)).
 
+**Консистентность метки `node` (in/out merge на дашборде).** Sender пишет метку `node = node.Path`
+(без слога команды), а `GinMiddleware` по умолчанию брал сырой URL-параметр Receiver'а, который для
+`/api/v1/request/<team>/<path>` включал слог (`default/stand/...`). Из-за этого per-node merge
+incoming(Receiver)/outgoing(Sender) на `/api/metrics/nodes` разъезжался — у sender-строк `in`/спарклайн
+оказывались нулевыми. Фикс: Receiver-handler кладёт чистый путь узла в контекст под
+`metrics.NodeLabelKey` ([handler.go](../internal/receiver/adapter/in/http/handler.go)), а `GinMiddleware`
+(`nodeLabel`) предпочитает его сырому параметру ([gin.go](../internal/platform/metrics/gin.go)). Для Web/
+Sender ключ не ставится — их поведение не меняется.
+
 ### 4.11.3 Редизайн UI под эталон: дизайн-токены + UI-kit + app-shell (Phase 21.2)
 
 Фронтенд приводится к визуальному эталону [specs/nexus_ui.html](nexus_ui.html) (§21). Базис:
