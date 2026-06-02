@@ -3,26 +3,24 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
 import { api, type Node } from "../../api/client";
-import { Card, Kpi, KpiRow, Pill, Seg, TrafficChart } from "../ui";
+import { Card, Kpi, KpiRow, Pill, PeriodPicker, TrafficChart, defaultPeriod, type Period } from "../ui";
 import { fmtNum } from "../../lib/format";
-import { useNodeMetrics, type MetricsRange } from "./useNodeMetrics";
+import { useNodeMetrics, METRICS_REFETCH_MS } from "./useNodeMetrics";
 import { type LogsResp } from "./types";
-
-const RANGES: MetricsRange[] = ["15m", "1h", "24h", "7d"];
 
 // OverviewTab — вкладка «Обзор» узла (§21): 4 KPI + график трафика + последние
 // запросы. KPI/график — из ClickHouse через /api/metrics; таблица — из логов.
 export function OverviewTab({ node, onAllLogs }: { node: Node; onAllLogs: () => void }) {
   const { t } = useTranslation();
-  const [range, setRange] = useState<MetricsRange>("1h");
-  const m = useNodeMetrics(node.id, range);
+  const [period, setPeriod] = useState<Period>(defaultPeriod);
+  const m = useNodeMetrics(node.id, period);
   const hasLogsTable = !!node.clickhouse_table;
 
   const recentQ = useQuery({
     queryKey: ["logs", node.id, { limit: 8 }],
     queryFn: () => api.get<LogsResp>(`/api/nodes/${node.id}/logs`, { limit: 8 }),
     enabled: hasLogsTable,
-    refetchInterval: 10_000,
+    refetchInterval: METRICS_REFETCH_MS,
   });
 
   const kpi = m.data?.kpi;
@@ -54,11 +52,7 @@ export function OverviewTab({ node, onAllLogs }: { node: Node; onAllLogs: () => 
       <Card>
         <div className="mb-3 flex items-center justify-between">
           <span className="text-sm font-semibold">{t("metrics.traffic")}</span>
-          <Seg
-            value={range}
-            onChange={setRange}
-            options={RANGES.map((r) => ({ value: r, label: t(`metrics.range.${r}`) }))}
-          />
+          <PeriodPicker value={period} onChange={setPeriod} />
         </div>
         <TrafficChart data={m.data?.series ?? []} />
       </Card>

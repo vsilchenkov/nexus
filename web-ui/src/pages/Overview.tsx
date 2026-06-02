@@ -10,10 +10,27 @@ import {
   type OverviewKPI,
   type NodesThroughputResp,
 } from "../api/client";
-import { Button, Card, Chip, Field, Input, Kpi, KpiRow, Pill, Seg, Select } from "../components/ui";
+import {
+  Button,
+  Card,
+  Chip,
+  Field,
+  Input,
+  Kpi,
+  KpiRow,
+  PeriodPicker,
+  Pill,
+  Seg,
+  Select,
+  defaultPeriod,
+  periodKey,
+  periodParams,
+  type Period,
+} from "../components/ui";
 import { Modal } from "../components/ui/Modal";
 import { cn } from "../lib/cn";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
+import { METRICS_REFETCH_MS } from "../components/node/useNodeMetrics";
 
 type ListResp = { items: Node[] };
 type View = "table" | "cards";
@@ -33,6 +50,8 @@ export default function Overview() {
   const { t } = useTranslation();
   // §26/§28 Пункт 3: создание/редактирование узлов — только manager+.
   const canEdit = useRoleAtLeast("manager");
+  // §28 Пункт 4: период метрик per-node throughput (по умолчанию 1h).
+  const [period, setPeriod] = useState<Period>(defaultPeriod);
   const [search, setSearch] = useState("");
   const [method, setMethod] = useState<"" | "request" | "requestAsync" | "RabbitMQAsync">("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -51,13 +70,15 @@ export default function Overview() {
   const kpiQ = useQuery({
     queryKey: ["metrics-overview"],
     queryFn: () => api.get<OverviewKPI>("/api/metrics/overview"),
-    refetchInterval: 30_000,
+    refetchInterval: METRICS_REFETCH_MS,
   });
 
+  // §28 Пункт 4: период per-node throughput выбирается (по умолчанию 1h),
+  // §28 Пункт 2: обновляется онлайн через refetchInterval.
   const thrQ = useQuery({
-    queryKey: ["metrics-nodes", "1h"],
-    queryFn: () => api.get<NodesThroughputResp>("/api/metrics/nodes", { range: "1h" }),
-    refetchInterval: 30_000,
+    queryKey: ["metrics-nodes", periodKey(period)],
+    queryFn: () => api.get<NodesThroughputResp>("/api/metrics/nodes", periodParams(period)),
+    refetchInterval: METRICS_REFETCH_MS,
   });
 
   const throughput = useMemo(() => {
@@ -150,6 +171,10 @@ export default function Overview() {
             { value: "cards", label: t("overview.view.cards") },
           ]}
         />
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-fg-muted">{t("metrics.period")}</span>
+          <PeriodPicker value={period} onChange={setPeriod} />
+        </div>
         {canEdit && (
           <Link to="/nodes/new">
             <Button variant="primary">

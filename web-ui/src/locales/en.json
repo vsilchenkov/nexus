@@ -97,7 +97,17 @@
       "total": "Total",
       "requests": "Requests"
     },
-    "range": { "15m": "15m", "1h": "1h", "24h": "24h", "7d": "7d" }
+    "period": "Period",
+    "range": {
+      "15m": "15m",
+      "1h": "1h",
+      "3h": "3h",
+      "24h": "24h",
+      "7d": "7d",
+      "14d": "14d",
+      "30d": "30d",
+      "custom": "Custom"
+    }
   },
   "node": {
     "tabs": { "overview": "Overview", "logs": "Logs", "config": "Config", "metrics": "Metrics" },

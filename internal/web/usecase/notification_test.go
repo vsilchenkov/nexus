@@ -58,13 +58,13 @@ func (p notifProm) GlobalTotals(context.Context, time.Duration) (port.GlobalTota
 	return port.GlobalTotals{}, nil
 }
 func (p notifProm) KafkaQueue(context.Context) (float64, error) { return 0, nil }
-func (p notifProm) NodeThroughput(context.Context, time.Duration) (map[string]port.NodeThroughput, error) {
+func (p notifProm) NodeThroughput(context.Context, time.Time, time.Time) (map[string]port.NodeThroughput, error) {
 	return nil, nil
 }
 func (p notifProm) NodeErrors(context.Context, time.Duration) (map[string]float64, error) {
 	return p.errs, p.err
 }
-func (p notifProm) NodeSeries(context.Context, time.Duration, int) (map[string][]float64, error) {
+func (p notifProm) NodeSeries(context.Context, time.Time, time.Time, int) (map[string][]float64, error) {
 	return nil, nil
 }
 
