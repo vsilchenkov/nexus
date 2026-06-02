@@ -18,3 +18,9 @@ export function periodParams(p: Period): Record<string, string> {
 export function periodKey(p: Period): string {
   return p.kind === "preset" ? `r:${p.range}` : `c:${p.from}:${p.to}`;
 }
+
+// periodLabel — короткая метка периода для заголовков (§28 Пункт 4): пресет →
+// локализованное "1ч"/"24ч"/…, произвольный → "Произвольный". t — i18n-функция.
+export function periodLabel(p: Period, t: (k: string) => string): string {
+  return p.kind === "preset" ? t(`metrics.range.${p.range}`) : t("metrics.range.custom");
+}

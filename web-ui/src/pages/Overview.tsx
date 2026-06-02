@@ -25,6 +25,7 @@ import {
   defaultPeriod,
   periodKey,
   periodParams,
+  periodLabel,
   type Period,
 } from "../components/ui";
 import { Modal } from "../components/ui/Modal";
@@ -171,10 +172,6 @@ export default function Overview() {
             { value: "cards", label: t("overview.view.cards") },
           ]}
         />
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-fg-muted">{t("metrics.period")}</span>
-          <PeriodPicker value={period} onChange={setPeriod} />
-        </div>
         {canEdit && (
           <Link to="/nodes/new">
             <Button variant="primary">
@@ -182,6 +179,12 @@ export default function Overview() {
             </Button>
           </Link>
         )}
+      </div>
+
+      {/* §28 Пункт 4: период метрик — отдельной строкой под фильтрами. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs text-fg-muted">{t("metrics.period")}</span>
+        <PeriodPicker value={period} onChange={setPeriod} />
       </div>
 
       {nodesQ.isLoading && <div className="text-fg-muted">{t("common.loading")}</div>}
@@ -192,9 +195,9 @@ export default function Overview() {
 
       {nodes.length > 0 &&
         (view === "table" ? (
-          <NodeTable nodes={nodes} throughput={throughput} onMove={setMoveTarget} />
+          <NodeTable nodes={nodes} throughput={throughput} onMove={setMoveTarget} period={period} />
         ) : (
-          <NodeCards nodes={nodes} throughput={throughput} onMove={setMoveTarget} />
+          <NodeCards nodes={nodes} throughput={throughput} onMove={setMoveTarget} period={period} />
         ))}
 
       {moveTarget && (
@@ -254,13 +257,16 @@ function NodeTable({
   nodes,
   throughput,
   onMove,
+  period,
 }: {
   nodes: Node[];
   throughput: Map<string, Throughput>;
   onMove: (n: Node) => void;
+  period: Period;
 }) {
   const { t } = useTranslation();
   const status = useStatus();
+  const plabel = periodLabel(period, t);
   return (
     <Card className="overflow-hidden p-0">
       <div className="overflow-x-auto">
@@ -269,8 +275,8 @@ function NodeTable({
           <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-fg-muted">
             <th className="px-3 py-2 font-medium">{t("overview.table.path")}</th>
             <th className="px-3 py-2 font-medium">{t("overview.table.method")}</th>
-            <th className="px-3 py-2 font-medium">{t("overview.table.in1h")}</th>
-            <th className="px-3 py-2 font-medium">{t("overview.table.out1h")}</th>
+            <th className="px-3 py-2 font-medium">{t("overview.table.in")} {plabel}</th>
+            <th className="px-3 py-2 font-medium">{t("overview.table.out")} {plabel}</th>
             <th className="px-3 py-2 font-medium">{t("overview.table.errors")}</th>
             <th className="px-3 py-2 font-medium">{t("overview.table.status")}</th>
             <th className="px-3 py-2" />
@@ -326,13 +332,16 @@ function NodeCards({
   nodes,
   throughput,
   onMove,
+  period,
 }: {
   nodes: Node[];
   throughput: Map<string, Throughput>;
   onMove: (n: Node) => void;
+  period: Period;
 }) {
   const { t } = useTranslation();
   const status = useStatus();
+  const plabel = periodLabel(period, t);
   return (
     <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
       {nodes.map((n) => {
@@ -367,7 +376,7 @@ function NodeCards({
               </div>
             </div>
             <div className="grid grid-cols-3 gap-2 border-y border-line py-2.5 text-center">
-              <CardStat label={t("overview.table.in1h")} value={m ? fmtNum(m.in) : "—"} />
+              <CardStat label={`${t("overview.table.in")} ${plabel}`} value={m ? fmtNum(m.in) : "—"} />
               <CardStat label="p95" value={m ? fmtMs(m.p95) : "—"} />
               <CardStat
                 label={t("overview.table.errors")}

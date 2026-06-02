@@ -67,8 +67,8 @@
       "target": "Target",
       "status": "Status",
       "auth": "Auth",
-      "in1h": "In 1h",
-      "out1h": "Out 1h",
+      "in": "In",
+      "out": "Out",
       "errors": "Errors"
     },
     "empty": "No nodes yet",
@@ -634,7 +634,8 @@
     "edit": "Edit",
     "delete": "Delete",
     "copy": "Copy",
-    "copied": "Copied"
+    "copied": "Copied",
+    "apply": "Apply"
   },
   "error_boundary": {
     "title": "Something went wrong",

@@ -68,17 +68,28 @@ make docker-up-dev             # только postgres/redis/clickhouse/kafka/pr
 
 # ВАЖНО: нативный --debug-запуск читает ENCRYPTION_KEY из окружения (НЕ из .env).
 # Ключ должен совпадать с тем, которым зашифрованы креды в БД (значение из .env).
+# Плюс PROMETHEUS_URL — иначе Web считает Prometheus недоступным и метрики панели
+# (Overview KPI/throughput) будут НУЛЕВЫМИ (prometheus_available=false). Prometheus
+# из deps скрейпит нативные сервисы по host.docker.internal; на хосте он на :9099.
 # PowerShell:
 $env:ENCRYPTION_KEY = (Select-String -Path .env -Pattern '^ENCRYPTION_KEY=').Line.Split('=',2)[1]
+$env:PROMETHEUS_URL = 'http://localhost:9099'
 # bash:
 export $(grep -E '^ENCRYPTION_KEY=' .env)
+export PROMETHEUS_URL=http://localhost:9099
 
 make set-admin-password PASSWORD=secret   # bootstrap пароля admin
-# три сервиса — каждый в своём терминале (config_debug.yml → localhost):
+# три сервиса — каждый в своём терминале (config_debug.yml → localhost; для метрик
+# панели run-web должен видеть PROMETHEUS_URL в окружении):
 make run-receiver
 make run-sender
 make run-web
 ```
+
+> Метрики панели (Overview KPI/очередь/throughput) приходят из Prometheus. Если
+> Prometheus не поднят/не скрейпит сервисы или `PROMETHEUS_URL` не задан — они
+> деградируют в нули (это не баг), а per-node KPI/график на странице узла
+> продолжают считаться из ClickHouse за выбранный период.
 
 echosrv виден нативному Receiver'у как `http://localhost:9999`.
 

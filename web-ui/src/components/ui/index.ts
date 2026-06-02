@@ -8,7 +8,7 @@ export { Modal } from "./Modal";
 export { Chip, Pill, Kpi, KpiRow, Seg, Hint } from "./data";
 export type { SegOption } from "./data";
 export { PeriodPicker } from "./PeriodPicker";
-export { periodParams, periodKey, defaultPeriod, PRESET_RANGES } from "../../lib/period";
+export { periodParams, periodKey, periodLabel, defaultPeriod, PRESET_RANGES } from "../../lib/period";
 export type { Period, PresetRange } from "../../lib/period";
 export { PickGroup, Toggle, Toggle3 } from "./pickers";
 export type { PickOption } from "./pickers";
