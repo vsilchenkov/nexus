@@ -185,7 +185,7 @@ services:
       kafka:      { condition: service_healthy }
       clickhouse: { condition: service_healthy }
     ports:
-      - "9090:9090"
+      - "9190:9190"
       - "9093:9091"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:9091/health"]

@@ -46,7 +46,7 @@ services:
     restart: unless-stopped
     env_file: ../.env
     ports:
-      - "9090:9090"
+      - "9190:9190"
       - "9093:9091"
     extra_hosts:
       - "host.docker.internal:host-gateway"

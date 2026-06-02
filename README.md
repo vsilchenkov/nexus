@@ -107,7 +107,7 @@ curl -X POST http://localhost:8000/api/v1/request/test/echo \
 
 - Receiver `:8080` — `/api/v1/request/*`, `/api/v1/requestAsync/*`, `/api/v1/callback/*`, `/health`, `/ready`, `/metrics`.
   Боевой трафик идёт через единый вход Web (`:8000`, те же `/api/v1/*` проксируются в Receiver).
-- Sender `:9090` (gRPC SenderService) + admin `:9091` (`/health`, `/ready`, `/metrics`).
+- Sender `:9190` (gRPC SenderService) + admin `:9091` (`/health`, `/ready`, `/metrics`).
 - Web `:8000` — `/api/*`, SPA fallback, `/health`, `/ready`, `/metrics`.
 
 REST API задокументировано в [internal/web/static/index.html](./internal/web/static/index.html) (он же — UI-заглушка при открытии `http://localhost:8000/`).

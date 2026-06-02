@@ -1145,14 +1145,14 @@ receiver:
   rate_limit_per_node: 0               # 0 = без лимита
   # gRPC-клиент к Sender
   sender_grpc:
-    addr: sender:9090
+    addr: sender:9190
     pool_size: 8                       # пул gRPC-соединений
     timeout_ms: 30000
     keepalive_time_sec: 30
     keepalive_timeout_sec: 10
 
 sender:
-  grpc_addr: :9090
+  grpc_addr: :9190
   grpc_max_concurrent_streams: 1000
   http_client:
     timeout_ms: 30000
@@ -1474,7 +1474,7 @@ TESTING.md              процедура запуска всех видов т
 | Сервис | Назначение | Порты |
 |---|---|---|
 | `receiver` | Receiver Service | `8080` |
-| `sender` | Sender Service | `9090` (gRPC) |
+| `sender` | Sender Service | `9190` (gRPC) |
 | `web` | Web UI + API | `8000` |
 | `postgres` | Хранилище конфига (источник правды) | `5432` |
 | `redis` | Кеш конфига, сессии, rate-limit, circuit-breaker | `6379` |

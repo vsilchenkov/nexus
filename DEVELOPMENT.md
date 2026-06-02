@@ -19,7 +19,7 @@ self-contained compose-файлом с пробросом портов на хо
    ┌───────────────────────────────────┐        ┌──────────────────────────────────┐
    │ postgres:5432  redis:6379          │◄───────│  web      → :8000                 │
    │ clickhouse:8123/9000  kafka:9092   │◄───────│  receiver → :8080                 │
-   └───────────────────────────────────┘        │  sender   → :9090 (gRPC) / :9091  │
+   └───────────────────────────────────┘        │  sender   → :9190 (gRPC) / :9091  │
         docker-compose.deps.yml                  └──────────────────────────────────┘
 ```
 
@@ -127,7 +127,7 @@ docker compose -f deploy/docker-compose.deps.yml up -d
 |-------------------------------------|------------------------------------------------------------------|
 | `Web (debug)`                       | `go run ./cmd/web --debug` под dlv → `:8000`                     |
 | `Receiver (debug)`                  | `go run ./cmd/receiver --debug` под dlv → `:8080`               |
-| `Sender (debug)`                    | `go run ./cmd/sender --debug` под dlv → `:9090` gRPC + `:9091`  |
+| `Sender (debug)`                    | `go run ./cmd/sender --debug` под dlv → `:9190` gRPC + `:9091`  |
 | `Nexus: all (web + receiver + sender)` | **compound** — все три сервиса одной кнопкой (`stopAll: true`) |
 | `Web: migrate-up`                   | разовая миграция под отладчиком                                  |
 | `Web: set-admin-password`           | задаёт пароль `admin`                                            |
@@ -195,7 +195,7 @@ docker compose -f deploy/docker-compose.deps.yml up -d
   `http://localhost:8000/swagger/receiver/index.html` (Receiver API)
 - Receiver → `http://localhost:8080/api/v1/request/*`, `http://localhost:8080/api/v1/requestAsync/*`
   (боевой трафик в проде идёт через единый вход Web `:8000/api/v1/*`, который проксирует в Receiver)
-- Sender admin → `http://localhost:9091/health` (сам gRPC SenderService — на `:9090`)
+- Sender admin → `http://localhost:9091/health` (сам gRPC SenderService — на `:9190`)
 
 Логин в UI: `admin` + пароль, заданный на шаге 3.
 
@@ -214,7 +214,7 @@ docker compose -f deploy/docker-compose.deps.yml up -d
 | Redis       | `localhost:6379`     | `sa`       | `I2MV5s` | default-юзер выключен через ACL → нужен `username`             |
 | ClickHouse  | `localhost:`**`19000`** | `default` | —        | native-порт проброшен как **19000** (не 9000); HTTP — 18123   |
 | Kafka       | `localhost:9092`     | —          | —        | брокер анонсирует себя как `kafka:9092` → нужен hosts-маппинг  |
-| Prometheus  | `localhost:`**`9099`** | —          | —        | опционален; в Docker, скрейпит нативные сервисы через `host.docker.internal`; включает дашборды панели (§21) и Telegram-алерты (§22). Хост-порт **9099** (9090/9091 заняты Sender'ом) |
+| Prometheus  | `localhost:`**`9099`** | —          | —        | опционален; в Docker, скрейпит нативные сервисы через `host.docker.internal`; включает дашборды панели (§21) и Telegram-алерты (§22). Хост-порт **9099** (9091 занят Sender-admin'ом, gRPC Sender на 9190; 9090 зарезервирован под другое приложение) |
 
 ### Шаг 1. Подготовить сервисы
 

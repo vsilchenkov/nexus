@@ -129,7 +129,7 @@ receiver:
   max_header_bytes: 1048576
   rate_limit_per_node: 0
   sender_grpc:
-    addr: sender:9090
+    addr: sender:9190
     pool_size: 8
     timeout_ms: 30000
     keepalive_time_sec: 30
@@ -151,7 +151,7 @@ receiver:
     reconcile_sec: 15
 
 sender:
-  grpc_addr: :9090
+  grpc_addr: :9190
   admin_http_addr: :9091
   grpc_max_concurrent_streams: 1000
   http_client:

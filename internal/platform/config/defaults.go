@@ -106,7 +106,7 @@ func applyDefaults(c *Config) {
 		c.Receiver.MaxHeaderBytes = 1_048_576
 	}
 	if c.Receiver.SenderGRPC.Addr == "" {
-		c.Receiver.SenderGRPC.Addr = "sender:9090"
+		c.Receiver.SenderGRPC.Addr = "sender:9190"
 	}
 	if c.Receiver.SenderGRPC.PoolSize == 0 {
 		c.Receiver.SenderGRPC.PoolSize = 8
@@ -132,7 +132,7 @@ func applyDefaults(c *Config) {
 	}
 
 	if c.Sender.GRPCAddr == "" {
-		c.Sender.GRPCAddr = ":9090"
+		c.Sender.GRPCAddr = ":9190"
 	}
 	if c.Sender.AdminHTTPAddr == "" {
 		c.Sender.AdminHTTPAddr = ":9091"

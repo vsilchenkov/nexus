@@ -131,14 +131,14 @@ receiver:
   rate_limit_per_node: 0               # 0 = без лимита
   # gRPC-клиент к Sender
   sender_grpc:
-    addr: sender:9090
+    addr: sender:9190
     pool_size: 8                       # пул gRPC-соединений
     timeout_ms: 30000
     keepalive_time_sec: 30
     keepalive_timeout_sec: 10
 
 sender:
-  grpc_addr: :9090
+  grpc_addr: :9190
   grpc_max_concurrent_streams: 1000
   http_client:
     timeout_ms: 30000

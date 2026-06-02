@@ -30,7 +30,7 @@ RUN mkdir -p /app/logs/clickhouse-fallback && \
 
 USER nexus
 
-EXPOSE 9090 9091
+EXPOSE 9190 9091
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=5 \
     CMD wget -qO- http://localhost:9091/health || exit 1
 

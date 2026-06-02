@@ -133,7 +133,7 @@ services:
       postgres: { condition: service_healthy }
       kafka:    { condition: service_healthy }
     ports:
-      - "9090:9090"
+      - "9190:9190"
       - "9093:9091"
     extra_hosts:
       - "host.docker.internal:host-gateway"
