@@ -31,7 +31,7 @@ function fmtNum(n: number): string {
 export default function Overview() {
   const { t } = useTranslation();
   const [search, setSearch] = useState("");
-  const [method, setMethod] = useState<"" | "request" | "requestAsync">("");
+  const [method, setMethod] = useState<"" | "request" | "requestAsync" | "RabbitMQAsync">("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [view, setView] = useState<View>(
     () => (localStorage.getItem(VIEW_KEY) as View) || "table",
@@ -125,6 +125,7 @@ export default function Overview() {
           <option value="">{t("overview.filter.all_methods")}</option>
           <option value="request">request</option>
           <option value="requestAsync">requestAsync</option>
+          <option value="RabbitMQAsync">RabbitMQAsync</option>
         </Select>
         <Select
           className="w-40"
