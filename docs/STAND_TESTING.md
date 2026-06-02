@@ -33,36 +33,62 @@
 | Web (UI + API + единый вход) | http://localhost:8000 |
 | Receiver (напрямую) | http://localhost:8080 |
 | Sender admin (health/metrics) | http://localhost:9091 |
-| Prometheus | http://localhost:9091 → проброшен как `:9091` (см. compose) |
+| Prometheus | http://localhost:9099 (контейнер `:9090`) |
 | RabbitMQ management | http://localhost:15672 (guest/guest) |
 | echosrv (получатель) | http://localhost:9999 |
+
+Зависимости (порты, опубликованные на хост для нативного запуска): PostgreSQL
+`:5432`, Redis `:6379`, ClickHouse `:19000` (native protocol), Kafka `:9092`,
+Prometheus `:9099`. Адреса/креды для нативного запуска зашиты в
+[config/config_debug.yml](../config/config_debug.yml); для Docker-стека — в `.env`
+(docker-сетевые хосты `postgres`/`redis`/`clickhouse`/`kafka`).
 
 ---
 
 ## 1. Поднять стек
 
-Параметры берутся из `.env` (тестовые креды уже там).
+Есть два варианта запуска. Боевой трафик в обоих идёт через единый вход Web (`:8000`).
+
+### Вариант A — всё в Docker (как в проде, креды из `.env`)
 
 ```bash
-# зависимости + 3 сервиса
-make docker-up
-
-# для теста RabbitMQAsync — поднять RabbitMQ (профиль stand)
+make docker-up                 # зависимости + receiver/sender/web (env_file: .env)
+# для RabbitMQAsync — поднять RabbitMQ (профиль stand):
 docker compose -f deploy/docker-compose.yml --profile stand up -d rabbitmq
-
-# задать пароль admin (если ещё не задан)
-make set-admin-password PASSWORD=secret
+make set-admin-password PASSWORD=secret   # bootstrap пароля admin (идемпотентно)
 ```
 
-Запустить сервис-получатель (в отдельном терминале, на хосте):
+`ENCRYPTION_KEY` сервисы получают из `.env` (`env_file`). echosrv виден Receiver'у
+как `http://host.docker.internal:9999`.
+
+### Вариант B — зависимости в Docker, сервисы нативно (быстрая итерация)
+
+```bash
+make docker-up-dev             # только postgres/redis/clickhouse/kafka/prometheus
+
+# ВАЖНО: нативный --debug-запуск читает ENCRYPTION_KEY из окружения (НЕ из .env).
+# Ключ должен совпадать с тем, которым зашифрованы креды в БД (значение из .env).
+# PowerShell:
+$env:ENCRYPTION_KEY = (Select-String -Path .env -Pattern '^ENCRYPTION_KEY=').Line.Split('=',2)[1]
+# bash:
+export $(grep -E '^ENCRYPTION_KEY=' .env)
+
+make set-admin-password PASSWORD=secret   # bootstrap пароля admin
+# три сервиса — каждый в своём терминале (config_debug.yml → localhost):
+make run-receiver
+make run-sender
+make run-web
+```
+
+echosrv виден нативному Receiver'у как `http://localhost:9999`.
+
+### echosrv (общий для обоих вариантов)
+
+Сервис-получатель — в отдельном терминале на хосте:
 
 ```bash
 go run ./cmd/echosrv -addr :9999
 ```
-
-Проверка, что echosrv виден из контейнера Receiver (важно для target_url):
-в docker-сети хост доступен как `host.docker.internal`. Если Receiver запущен
-локально (`make run-receiver`), используйте `http://localhost:9999`.
 
 ---
 
@@ -172,6 +198,33 @@ done
 - Панели Web: `GET $WEB/api/metrics/overview`, `/api/metrics/nodes`,
   `/api/metrics/nodes/{id}`.
 
+### 3.7 Доработки §28 «онлайн-метрики» (8 пунктов ТЗ)
+
+ТЗ — [specs/sections/28-online-metrics.md](../specs/sections/28-online-metrics.md).
+
+- **#1 Публичный адрес.** Settings → **Общие** (admin): задать
+  `https://nexus.example.com` → на форме узла и вкладке «Конфигурация» полный
+  адрес собирается от него (а не от origin браузера). Пусто → снова origin.
+- **#2 Онлайн-метрики.** На Overview и странице узла KPI/графики обновляются без
+  перезагрузки (поллинг 12с) — стрельните нагрузкой и смотрите рост на месте.
+- **#3 Маскирование кред.** Поля incoming/outgoing/RMQ-пароль — звёздочки +
+  глазик (раскрывает только вводимое). Под ролью **viewer** кнопки New/Edit
+  скрыты, прямой переход на форму узла редиректит (креды не видны).
+- **#4 Период метрик.** Селектор «Период»: `1h/3h/24h/7d/14d/30d` + «Произвольный»
+  (календарь from/to) на Overview и вкладках узла Обзор/Метрики; по умолчанию 1h.
+- **#5 Ошибки валидации.** Создать узел с плохими данными (пустой `path`,
+  кривой `rmq_queue`, `logging` включён без таблицы) → понятное локализованное
+  сообщение **у конкретного поля** (красная рамка), а не сырой `domain: ...`.
+- **#6 Фильтр RabbitMQAsync.** На Overview в фильтре типа узла есть третий
+  вариант `RabbitMQAsync`.
+- **#7 CH-таблица без шаблона.** Узлы стенда создаются с `clickhouse_table` без
+  `clickhouse_template_id` — таблица логов авто-создаётся из дефолтного шаблона;
+  логи/метрики узла грузятся **без** `clickhouse search: code 60`.
+- **#8 Резолв async по пути-со-слешем.** Создать узел `webhook/sendasynq` и
+  дёрнуть показанный в UI адрес **без слога команды**
+  (`/api/v1/requestAsync/webhook/sendasynq`) — проходит (а не `node not found`);
+  то же для sync `webhook/send`.
+
 ---
 
 ## 4. Диагностика
@@ -183,6 +236,9 @@ done
 | target_url unreachable / 502 | echosrv недоступен Receiver'у — проверьте `ECHO_URL` (host.docker.internal vs localhost) |
 | RabbitMQAsync без трафика | RabbitMQ не поднят (`--profile stand`) или очередь `nexus.stand` не создана |
 | IP в логах `::1` | проверьте, что собран код с нормализацией IPv4 (Phase D) |
+| Сервис падает с exit 1 «invalid ENCRYPTION_KEY» при `make run-*` | нативный запуск не видит `.env` — экспортируйте `ENCRYPTION_KEY` в окружение (см. Вариант B) |
+| Логи/метрики узла: `clickhouse search: code 60 ... Unknown table` | таблица логов не создана — убедитесь, что есть дефолтный CH-шаблон (узел без `clickhouse_template_id` берёт его); фикс #7 §28 |
+| `node not found` на адресе с путём-со-слешем | бейте по адресу как в UI; фикс #8 §28 резолвит legacy-путь в default-команде |
 
 См. также общий [TESTING.md](../TESTING.md) (unit/integration/loadtest) и
 [DEVELOPMENT.md](../DEVELOPMENT.md) (локальный запуск).

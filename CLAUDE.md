@@ -58,6 +58,7 @@ Web Service отдаёт REST API под `/api/*` и SPA (`embed.FS`) на вс�
 | Новый i18n-ключ              | [internal/platform/i18n/i18n.go](internal/platform/i18n/i18n.go) (backend) **и** [web-ui/src/locales/](web-ui/src/locales/) (frontend) |
 | Добавить SPA-страницу        | [web-ui/src/pages/](web-ui/src/pages/), маршрут в `App.tsx`, кнопку в `Topbar.tsx` |
 | Прогнать integration-тест    | `make test-integration` (нужен Docker daemon)                            |
+| Прогнать живой тестовый стенд (ручной сквозной прогон) | [docs/STAND_TESTING.md](docs/STAND_TESTING.md) — два варианта запуска (Docker / нативный), `scripts/stand/seed_and_test.{sh,ps1}`, чек-лист проверки по фичам |
 | Сгенерировать Swagger        | `make swagger` после правки аннотаций над handler'ом                     |
 
 > **Инфраструктура разработки.** На рабочей машине разработчика (Windows) установлен **Docker
