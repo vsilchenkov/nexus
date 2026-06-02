@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Rabbit, PlugZap, RefreshCw, CircleCheck, CircleX } from "lucide-react";
 
 import { api, type RMQTestResult } from "../../api/client";
-import { Button, Card, Field, Hint, Input, SectionHead } from "../ui";
+import { Button, Card, Field, Hint, Input, SecretInput, SectionHead } from "../ui";
 
 // §27: поля формы, относящиеся к RabbitMQAsync. Подмножество Form в NodeSettings.
 export type RMQFormFields = {
@@ -107,8 +107,7 @@ export function RabbitMQSection({ form, set, isNew }: Props) {
               onChange={(e) => set("rmq_user", e.target.value)}
               placeholder="user"
             />
-            <Input
-              type="password"
+            <SecretInput
               value={form.rmq_password}
               onChange={(e) => set("rmq_password", e.target.value)}
               placeholder={isNew ? "password" : t("node.form.keep_secret")}

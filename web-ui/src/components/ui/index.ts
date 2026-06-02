@@ -2,6 +2,7 @@
 export { Button } from "./Button";
 export { CopyButton } from "./CopyButton";
 export { Input, Select, Textarea, Field } from "./form";
+export { SecretInput } from "./SecretInput";
 export { Card, SectionHead } from "./surfaces";
 export { Modal } from "./Modal";
 export { Chip, Pill, Kpi, KpiRow, Seg, Hint } from "./data";

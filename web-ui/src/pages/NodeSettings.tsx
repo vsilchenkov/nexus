@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useParams, Link } from "react-router-dom";
+import { useNavigate, useParams, Link, Navigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
@@ -16,6 +16,7 @@ import {
 
 import { api, type Node, type CHTemplate, type HostAllowlistEntry } from "../api/client";
 import { useNodeUrlBuilder } from "../lib/nodeUrl";
+import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { DryRunDialog } from "../components/DryRunDialog";
 import { DeleteNodeDialog } from "../components/node/DeleteNodeDialog";
 import { AllowedHostsField } from "../components/node/AllowedHostsField";
@@ -29,6 +30,7 @@ import {
   Hint,
   Input,
   PickGroup,
+  SecretInput,
   SectionHead,
   Select,
   Toggle,
@@ -176,6 +178,13 @@ export default function NodeSettings() {
   // (если задан в настройках) или origin браузера + slug текущей команды.
   const buildUrl = useNodeUrlBuilder();
   const fullAddress = buildUrl(verb, form.path);
+
+  // §26/§28 Пункт 3: форму узла (с полями авторизации) открывает только
+  // manager+. viewer перенаправляется на просмотр/список.
+  const canEdit = useRoleAtLeast("manager");
+  if (!canEdit) {
+    return <Navigate to={isNew ? "/" : `/nodes/${id}`} replace />;
+  }
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">
@@ -396,7 +405,7 @@ export default function NodeSettings() {
                 }
                 className="mt-3"
               >
-                <Input
+                <SecretInput
                   value={form.incoming_auth_credentials}
                   onChange={(e) => set("incoming_auth_credentials", e.target.value)}
                   placeholder={isNew ? "" : t("node.form.keep_secret")}
@@ -449,7 +458,7 @@ export default function NodeSettings() {
             </Field>
             {(form.auth_type === "basic" || form.auth_type === "token") && (
               <Field label={t("node.form.credentials")} className="mt-3">
-                <Input
+                <SecretInput
                   value={form.auth_credentials}
                   onChange={(e) => set("auth_credentials", e.target.value)}
                   placeholder={isNew ? "" : t("node.form.keep_secret")}

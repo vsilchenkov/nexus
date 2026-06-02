@@ -13,6 +13,7 @@ import {
 import { Button, Card, Chip, Field, Input, Kpi, KpiRow, Pill, Seg, Select } from "../components/ui";
 import { Modal } from "../components/ui/Modal";
 import { cn } from "../lib/cn";
+import { useRoleAtLeast } from "../lib/useCurrentRole";
 
 type ListResp = { items: Node[] };
 type View = "table" | "cards";
@@ -30,6 +31,8 @@ function fmtNum(n: number): string {
 
 export default function Overview() {
   const { t } = useTranslation();
+  // §26/§28 Пункт 3: создание/редактирование узлов — только manager+.
+  const canEdit = useRoleAtLeast("manager");
   const [search, setSearch] = useState("");
   const [method, setMethod] = useState<"" | "request" | "requestAsync" | "RabbitMQAsync">("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -147,11 +150,13 @@ export default function Overview() {
             { value: "cards", label: t("overview.view.cards") },
           ]}
         />
-        <Link to="/nodes/new">
-          <Button variant="primary">
-            <Plus className="h-4 w-4" /> {t("overview.new_node")}
-          </Button>
-        </Link>
+        {canEdit && (
+          <Link to="/nodes/new">
+            <Button variant="primary">
+              <Plus className="h-4 w-4" /> {t("overview.new_node")}
+            </Button>
+          </Link>
+        )}
       </div>
 
       {nodesQ.isLoading && <div className="text-fg-muted">{t("common.loading")}</div>}
