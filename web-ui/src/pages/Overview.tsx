@@ -22,11 +22,11 @@ import {
   Pill,
   Seg,
   Select,
-  Tooltip,
   defaultPeriod,
   periodKey,
   periodParams,
   periodLabel,
+  periodWindow,
   type Period,
 } from "../components/ui";
 import { Modal } from "../components/ui/Modal";
@@ -385,11 +385,7 @@ function NodeCards({
                 tone={m && m.errors > 0 ? "err" : undefined}
               />
             </div>
-            <Sparkline
-              data={m?.spark ?? []}
-              variant={s.variant}
-              hint={t("metrics.hints.sparkline", { period: plabel })}
-            />
+            <Sparkline data={m?.spark ?? []} variant={s.variant} period={period} />
             <div className="flex items-center justify-between gap-2 text-[11px] text-fg-subtle">
               <span className="truncate font-mono" title={target}>
                 {target}
@@ -418,9 +414,19 @@ function CardStat({ label, value, tone }: { label: string; value: string; tone?:
   );
 }
 
+// fmtBucket — подпись временного окна одного столбца спарклайна. Для окна ≤ 24ч
+// показываем только время (ЧЧ:ММ), для длинных периодов — дату со временем.
+function fmtBucket(start: number, end: number, multiDay: boolean): string {
+  const opts: Intl.DateTimeFormatOptions = multiDay
+    ? { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }
+    : { hour: "2-digit", minute: "2-digit" };
+  return `${new Date(start).toLocaleString([], opts)}–${new Date(end).toLocaleString([], opts)}`;
+}
+
 // Sparkline — мини-график входящего трафика за период (§22, ui_cards.html).
-// hint — необязательная расшифровка (что показано + статус узла) в тултипе.
-function Sparkline({ data, variant, hint }: { data: number[]; variant: Variant; hint?: string }) {
+// На каждом столбце нативный тултип с конкретикой: окно времени бакета и число
+// входящих запросов (нативный title — легковесно, на Overview много карточек).
+function Sparkline({ data, variant, period }: { data: number[]; variant: Variant; period: Period }) {
   if (data.length === 0) {
     return <div className="h-7" />;
   }
@@ -433,23 +439,23 @@ function Sparkline({ data, variant, hint }: { data: number[]; variant: Variant; 
         : variant === "disabled"
           ? "bg-fg-subtle"
           : "bg-accent";
-  const bars = (
+  const { since, until } = periodWindow(period);
+  const bucketW = (until - since) / data.length;
+  const multiDay = until - since > 86_400_000;
+  return (
     <div className="flex h-7 items-end gap-px">
-      {data.map((v, i) => (
-        <span
-          key={i}
-          className={cn("flex-1 rounded-sm opacity-80", color)}
-          style={{ height: `${Math.max(4, (v / max) * 100)}%` }}
-        />
-      ))}
+      {data.map((v, i) => {
+        const start = since + i * bucketW;
+        return (
+          <span
+            key={i}
+            className={cn("flex-1 rounded-sm opacity-80", color)}
+            style={{ height: `${Math.max(4, (v / max) * 100)}%` }}
+            title={`${fmtBucket(start, start + bucketW, multiDay)} · ${fmtNum(Math.round(v))}`}
+          />
+        );
+      })}
     </div>
-  );
-  return hint ? (
-    <Tooltip content={hint} side="top">
-      {bars}
-    </Tooltip>
-  ) : (
-    bars
   );
 }
 

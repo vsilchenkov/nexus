@@ -100,7 +100,6 @@
     "hints": {
       "traffic": "Bar height is the number of requests in the interval. Blue is successful responses, red at the bottom is errors. Hover a bar for details.",
       "requests": "Request distribution over time. Blue — successful, red — errors. Hover a bar for details.",
-      "sparkline": "Incoming traffic over {{period}}.",
       "in": "Total incoming requests for the selected period.",
       "total": "Total processed requests for the period.",
       "delivered": "Requests successfully delivered to the target (2xx/3xx).",
