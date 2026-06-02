@@ -51,6 +51,9 @@ var (
 	ErrNodeMaxBodySizeRange    = errors.New("domain: max_body_size must be 0..10000000")
 	ErrNodeMaxBodySizeRequired = errors.New("domain: max_body_size must be > 0 when max_body_size_enabled")
 
+	// §29: комментарий узла.
+	ErrNodeCommentLength = errors.New("domain: comment length must be <= 2000")
+
 	// §27: узел RabbitMQAsync.
 	ErrNodeRMQHostRequired   = errors.New("domain: rmq_host length must be 1..253 for RabbitMQAsync")
 	ErrNodeRMQQueueInvalid   = errors.New("domain: rmq_queue length must be 1..255 and match ^[a-zA-Z0-9._-]+$")
