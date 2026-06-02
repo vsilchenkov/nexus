@@ -1220,8 +1220,20 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "15m | 1h | 24h | 7d (default 1h)",
+                        "description": "1h | 3h | 24h | 7d | 14d | 30d (default 1h)",
                         "name": "range",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "период с (RFC3339 или UnixMilli); вместе с to задаёт произвольный период",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "период по (RFC3339 или UnixMilli)",
+                        "name": "to",
                         "in": "query"
                     }
                 ],
@@ -1264,8 +1276,20 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "15m | 1h | 24h | 7d (default 1h)",
+                        "description": "1h | 3h | 24h | 7d | 14d | 30d (default 1h)",
                         "name": "range",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "период с (RFC3339 или UnixMilli); вместе с to задаёт произвольный период",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "период по (RFC3339 или UnixMilli)",
+                        "name": "to",
                         "in": "query"
                     }
                 ],
@@ -2310,6 +2334,43 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/settings/public": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Лёгкий read-only эндпоинт для любого авторизованного пользователя: возвращает {public_base_url} для сборки полного адреса узла в UI. Не требует прав admin (в отличие от /api/settings/app).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "settings"
+                ],
+                "summary": "Публичный адрес приложения (§28, Пункт 1).",
+                "responses": {
+                    "200": {
+                        "description": "OK",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -4411,6 +4472,9 @@ const docTemplate = `{
                 "clickhouse": {
                     "$ref": "#/definitions/nexus_internal_domain.ClickHouseSettings"
                 },
+                "general": {
+                    "$ref": "#/definitions/nexus_internal_domain.GeneralSettings"
+                },
                 "notifications": {
                     "$ref": "#/definitions/nexus_internal_domain.NotificationsSettings"
                 },
@@ -4541,6 +4605,15 @@ const docTemplate = `{
                 },
                 "workers": {
                     "type": "integer"
+                }
+            }
+        },
+        "nexus_internal_domain.GeneralSettings": {
+            "type": "object",
+            "properties": {
+                "public_base_url": {
+                    "description": "PublicBaseURL — публичный адрес, под которым опубликован Web (origin без\nхвостового слеша, напр. https://nexus.example.com). Если задан, UI\nформирует полный адрес узла от него вместо window.location.origin.\nnil/\"\" = не задан (UI берёт origin браузера). Не секрет — Get() не маскирует.",
+                    "type": "string"
                 }
             }
         },
