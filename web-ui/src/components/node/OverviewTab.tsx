@@ -29,6 +29,14 @@ export function OverviewTab({ node, onAllLogs }: { node: Node; onAllLogs: () => 
 
   return (
     <div className="space-y-4">
+      {node.comment && (
+        <Card>
+          <div className="mb-1 text-[11px] uppercase tracking-wide text-fg-subtle">
+            {t("node.form.comment")}
+          </div>
+          <p className="whitespace-pre-wrap text-[13px] text-fg-muted">{node.comment}</p>
+        </Card>
+      )}
       <KpiRow>
         <Kpi label={t("metrics.kpi.in")} value={kpi ? fmtNum(kpi.total) : "—"} />
         <Kpi

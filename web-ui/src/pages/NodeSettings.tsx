@@ -12,6 +12,7 @@ import {
   ListChecks,
   List,
   ShieldAlert,
+  MessageSquare,
 } from "lucide-react";
 
 import { api, type Node, type CHTemplate, type HostAllowlistEntry } from "../api/client";
@@ -33,6 +34,7 @@ import {
   SecretInput,
   SectionHead,
   Select,
+  Textarea,
   Toggle,
   Toggle3,
 } from "../components/ui";
@@ -78,6 +80,8 @@ type Form = {
   pull_interval_sec: number;
   pull_batch_size: number;
   pull_prefetch: number;
+  // §29: произвольный комментарий-описание узла.
+  comment: string;
 };
 
 const emptyForm: Form = {
@@ -118,6 +122,7 @@ const emptyForm: Form = {
   pull_interval_sec: 5,
   pull_batch_size: 100,
   pull_prefetch: 100,
+  comment: "",
 };
 
 export default function NodeSettings() {
@@ -612,6 +617,23 @@ export default function NodeSettings() {
                 </Field>
               </div>
             </fieldset>
+          </Card>
+
+          {/* §29: комментарий-описание узла — отдельным блоком в самом низу. */}
+          <Card>
+            <SectionHead icon={<MessageSquare className="h-4 w-4" />}>
+              {t("node.form.comment")}
+            </SectionHead>
+            <Field label={t("node.form.comment_label")} hint={t("node.form.comment_hint")}>
+              <Textarea
+                mono={false}
+                rows={4}
+                maxLength={2000}
+                value={form.comment}
+                onChange={(e) => set("comment", e.target.value)}
+                placeholder={t("node.form.comment_placeholder")}
+              />
+            </Field>
           </Card>
         </div>
 
