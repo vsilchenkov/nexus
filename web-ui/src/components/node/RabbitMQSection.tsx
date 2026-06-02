@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Rabbit, PlugZap, RefreshCw, CircleCheck, CircleX } from "lucide-react";
 
 import { api, type RMQTestResult } from "../../api/client";
-import { Button, Card, Field, Hint, Input, SectionHead } from "../ui";
+import { Button, Card, Field, Hint, Input, SecretInput, SectionHead } from "../ui";
 
 // §27: поля формы, относящиеся к RabbitMQAsync. Подмножество Form в NodeSettings.
 export type RMQFormFields = {
@@ -27,6 +27,10 @@ type Props = {
   form: RMQFormFields;
   set: RMQSetter;
   isNew: boolean;
+  // §28 Пункт 5: имя поля с ошибкой валидации и локализованный текст (для
+  // inline-подсветки RMQ-полей). Прокидываются из NodeSettings.
+  errField?: string | null;
+  errMsg?: string | null;
 };
 
 const INTERVAL_PRESETS: { label: string; sec: number }[] = [
@@ -40,8 +44,13 @@ const INTERVAL_PRESETS: { label: string; sec: number }[] = [
 // RabbitMQSection — секция «RabbitMQ — источник» + «Параметры забора» (§27.11).
 // Кнопка «Проверить подключение» дёргает POST /api/nodes/test-rmq (реальный
 // AMQP-handshake без сохранения узла).
-export function RabbitMQSection({ form, set, isNew }: Props) {
+export function RabbitMQSection({ form, set, isNew, errField, errMsg }: Props) {
   const { t } = useTranslation();
+
+  // inline-вывод ошибки валидации под RMQ-полем name.
+  const fieldErr = (name: string) =>
+    errField === name ? <p className="mt-1 text-xs text-err">{errMsg}</p> : null;
+  const errCls = (name: string) => (errField === name ? "border-err" : "");
 
   const test = useMutation({
     mutationFn: () =>
@@ -68,6 +77,7 @@ export function RabbitMQSection({ form, set, isNew }: Props) {
           <div className="grid grid-cols-[2fr_100px_auto] gap-2">
             <Input
               mono
+              className={errCls("rmq_host")}
               value={form.rmq_host}
               onChange={(e) => set("rmq_host", e.target.value)}
               placeholder="rmq.internal.company.ru"
@@ -89,6 +99,7 @@ export function RabbitMQSection({ form, set, isNew }: Props) {
             </label>
           </div>
           <span className="text-[11px] text-fg-subtle">{t("node.rmq.host_hint")}</span>
+          {fieldErr("rmq_host")}
         </Field>
 
         <Field label={t("node.rmq.vhost")} className="mt-3">
@@ -107,8 +118,7 @@ export function RabbitMQSection({ form, set, isNew }: Props) {
               onChange={(e) => set("rmq_user", e.target.value)}
               placeholder="user"
             />
-            <Input
-              type="password"
+            <SecretInput
               value={form.rmq_password}
               onChange={(e) => set("rmq_password", e.target.value)}
               placeholder={isNew ? "password" : t("node.form.keep_secret")}
@@ -119,11 +129,13 @@ export function RabbitMQSection({ form, set, isNew }: Props) {
         <Field label={t("node.rmq.queue")} className="mt-3">
           <Input
             mono
+            className={errCls("rmq_queue")}
             value={form.rmq_queue}
             onChange={(e) => set("rmq_queue", e.target.value)}
             placeholder="billing.events.outbound"
           />
           <span className="text-[11px] text-fg-subtle">{t("node.rmq.queue_hint")}</span>
+          {fieldErr("rmq_queue")}
         </Field>
 
         <div className="mt-3 flex justify-end">

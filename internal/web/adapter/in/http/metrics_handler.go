@@ -3,6 +3,8 @@ package http
 import (
 	"errors"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -26,23 +28,73 @@ func NewMetricsHandler(uc *usecase.MetricsUsecase, logger logging.Logger) *Metri
 	return &MetricsHandler{uc: uc, logger: logger}
 }
 
-// rangeBuckets — допустимые окна диапазона и число бакетов для графика.
+// rangeBuckets — допустимые окна-пресеты и число бакетов для графика (§28
+// Пункт 4): 1h/3h/24h/7d/14d/30d. 15m оставлен для обратной совместимости.
 var rangeBuckets = map[string]struct {
 	d       time.Duration
 	buckets int
 }{
 	"15m": {15 * time.Minute, 30},
 	"1h":  {time.Hour, 60},
+	"3h":  {3 * time.Hour, 60},
 	"24h": {24 * time.Hour, 48},
 	"7d":  {7 * 24 * time.Hour, 84},
+	"14d": {14 * 24 * time.Hour, 84},
+	"30d": {30 * 24 * time.Hour, 90},
 }
 
-// parseRange — окно из query-параметра range; дефолт 1h.
+// parseRange — окно-пресет из query-параметра range; дефолт 1h.
 func parseRange(s string) (time.Duration, int) {
 	if rb, ok := rangeBuckets[s]; ok {
 		return rb.d, rb.buckets
 	}
 	return time.Hour, 60
+}
+
+// parseTimeParam парсит метку времени из query: RFC3339 или UnixMilli (число).
+func parseTimeParam(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, false
+	}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, true
+	}
+	if ms, err := strconv.ParseInt(s, 10, 64); err == nil && ms > 0 {
+		return time.UnixMilli(ms), true
+	}
+	return time.Time{}, false
+}
+
+// resolveWindow определяет период метрик из query (§28 Пункт 4):
+//   - произвольный календарный период: from+to (RFC3339 или UnixMilli);
+//   - иначе пресет range (1h/3h/24h/7d/14d/30d), окно = [now-d, now].
+//
+// Возвращает (since, until, buckets). Для произвольного периода buckets берётся
+// от ближайшего пресета по длительности (для разумной плотности графика).
+func resolveWindow(c *gin.Context) (since, until time.Time, buckets int) {
+	from, okF := parseTimeParam(c.Query("from"))
+	to, okT := parseTimeParam(c.Query("to"))
+	if okF && okT && from.Before(to) {
+		return from, to, bucketsForDuration(to.Sub(from))
+	}
+	d, b := parseRange(c.Query("range"))
+	now := time.Now()
+	return now.Add(-d), now, b
+}
+
+// bucketsForDuration подбирает число бакетов графика по длительности окна.
+func bucketsForDuration(d time.Duration) int {
+	switch {
+	case d <= time.Hour:
+		return 60
+	case d <= 24*time.Hour:
+		return 48
+	case d <= 7*24*time.Hour:
+		return 84
+	default:
+		return 90
+	}
 }
 
 type overviewKPIDTO struct {
@@ -89,14 +141,16 @@ type nodeThroughputDTO struct {
 // @Description  Источник — Prometheus (sum by node). Ключ node = path узла. Без Prometheus — пустой список с prometheus_available=false.
 // @Tags     metrics
 // @Produce  json
-// @Param    range  query  string  false  "15m | 1h | 24h | 7d (default 1h)"
+// @Param    range  query  string  false  "1h | 3h | 24h | 7d | 14d | 30d (default 1h)"
+// @Param    from   query  string  false  "период с (RFC3339 или UnixMilli); вместе с to задаёт произвольный период"
+// @Param    to     query  string  false  "период по (RFC3339 или UnixMilli)"
 // @Success  200  {object}  map[string]any
 // @Security CookieAuth
 // @Security ApiTokenAuth
 // @Router   /api/metrics/nodes [get]
 func (h *MetricsHandler) NodesOverview(c *gin.Context) {
-	window, _ := parseRange(c.Query("range"))
-	res := h.uc.NodesOverview(c.Request.Context(), window)
+	since, until, _ := resolveWindow(c)
+	res := h.uc.NodesOverview(c.Request.Context(), since, until)
 	items := make([]nodeThroughputDTO, 0, len(res.Items))
 	for _, it := range res.Items {
 		spark := it.Spark
@@ -134,7 +188,9 @@ type seriesPointDTO struct {
 // @Tags     metrics
 // @Produce  json
 // @Param    id     path   string  true   "node id"
-// @Param    range  query  string  false  "15m | 1h | 24h | 7d (default 1h)"
+// @Param    range  query  string  false  "1h | 3h | 24h | 7d | 14d | 30d (default 1h)"
+// @Param    from   query  string  false  "период с (RFC3339 или UnixMilli); вместе с to задаёт произвольный период"
+// @Param    to     query  string  false  "период по (RFC3339 или UnixMilli)"
 // @Success  200  {object}  map[string]any
 // @Failure  404  {object}  map[string]string
 // @Security CookieAuth
@@ -142,8 +198,8 @@ type seriesPointDTO struct {
 // @Router   /api/metrics/nodes/{id} [get]
 func (h *MetricsHandler) Node(c *gin.Context) {
 	nodeID := c.Param("id")
-	rng, buckets := parseRange(c.Query("range"))
-	res, err := h.uc.NodeMetrics(c.Request.Context(), nodeID, currentTeamID(c), rng, buckets)
+	since, until, buckets := resolveWindow(c)
+	res, err := h.uc.NodeMetrics(c.Request.Context(), nodeID, currentTeamID(c), since, until, buckets)
 	if err != nil {
 		if errors.Is(err, domain.ErrNodeNotFound) {
 			localizedError(c, http.StatusNotFound, "node.not_found")

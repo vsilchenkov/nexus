@@ -96,7 +96,7 @@ func TestClient_NodeThroughput(t *testing.T) {
 	c, err := New(srv.URL, time.Second, logging.NewNoop())
 	require.NoError(t, err)
 
-	m, err := c.NodeThroughput(context.Background(), time.Hour)
+	m, err := c.NodeThroughput(context.Background(), time.Now().Add(-time.Hour), time.Now())
 	require.NoError(t, err)
 	require.Contains(t, m, "webhook/send")
 	require.EqualValues(t, 4201, m["webhook/send"].In)

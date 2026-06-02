@@ -102,16 +102,19 @@ func (u *MetricsUsecase) Overview(ctx context.Context) OverviewKPI {
 	}
 }
 
-// NodesOverview — per-node throughput за окно (по умолчанию 1ч). Деградирует
-// без Prometheus.
-func (u *MetricsUsecase) NodesOverview(ctx context.Context, window time.Duration) NodesOverview {
+// NodesOverview — per-node throughput за период (since, until]. Деградирует
+// без Prometheus. Пустой период нормализуется в последний час.
+func (u *MetricsUsecase) NodesOverview(ctx context.Context, since, until time.Time) NodesOverview {
 	if u.prom == nil {
 		return NodesOverview{Items: []NodeThroughputRow{}}
 	}
-	if window <= 0 {
-		window = time.Hour
+	if until.IsZero() {
+		until = time.Now()
 	}
-	m, err := u.prom.NodeThroughput(ctx, window)
+	if since.IsZero() || !since.Before(until) {
+		since = until.Add(-time.Hour)
+	}
+	m, err := u.prom.NodeThroughput(ctx, since, until)
 	if err != nil {
 		u.logger.Warn("prometheus node throughput failed", u.logger.Err(err))
 		return NodesOverview{Items: []NodeThroughputRow{}}
@@ -119,7 +122,7 @@ func (u *MetricsUsecase) NodesOverview(ctx context.Context, window time.Duration
 	// Спарклайн (12 точек) одним range-запросом на весь список. Ошибка
 	// спарклайна не валит throughput — деградируем до пустых рядов.
 	const sparkBuckets = 12
-	series, err := u.prom.NodeSeries(ctx, window, sparkBuckets)
+	series, err := u.prom.NodeSeries(ctx, since, until, sparkBuckets)
 	if err != nil {
 		u.logger.Warn("prometheus node series failed", u.logger.Err(err))
 		series = map[string][]float64{}
@@ -146,7 +149,7 @@ func (u *MetricsUsecase) NodesOverview(ctx context.Context, window time.Duration
 // Узел резолвится с проверкой team-scope (как в LogsUsecase). Узел без
 // ClickHouseTable или отсутствие CH-провайдера → нулевые значения с
 // ChartAvailable=false (штатное состояние, не ошибка).
-func (u *MetricsUsecase) NodeMetrics(ctx context.Context, nodeID, teamID string, rng time.Duration, buckets int) (NodeMetrics, error) {
+func (u *MetricsUsecase) NodeMetrics(ctx context.Context, nodeID, teamID string, since, until time.Time, buckets int) (NodeMetrics, error) {
 	n, err := u.nodes.Get(ctx, nodeID)
 	if err != nil {
 		return NodeMetrics{}, err
@@ -154,19 +157,20 @@ func (u *MetricsUsecase) NodeMetrics(ctx context.Context, nodeID, teamID string,
 	if teamID != "" && n.TeamID != teamID {
 		return NodeMetrics{}, domain.ErrNodeNotFound
 	}
-	if rng <= 0 {
-		rng = time.Hour
+	if until.IsZero() {
+		until = time.Now()
+	}
+	if since.IsZero() || !since.Before(until) {
+		since = until.Add(-time.Hour)
 	}
 	if buckets <= 0 {
 		buckets = 48
 	}
-	res := NodeMetrics{RangeMs: rng.Milliseconds(), Series: []port.SeriesPoint{}}
+	res := NodeMetrics{RangeMs: until.Sub(since).Milliseconds(), Series: []port.SeriesPoint{}}
 
 	if u.ch == nil || n.ClickHouseTable == "" {
 		return res, nil
 	}
-	until := time.Now()
-	since := until.Add(-rng)
 	sinceMs := since.UnixMilli()
 	untilMs := until.UnixMilli()
 

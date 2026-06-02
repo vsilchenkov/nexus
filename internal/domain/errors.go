@@ -118,6 +118,9 @@ var (
 	// Уведомления (§20)
 	ErrTelegramCronInvalid = errors.New("domain: invalid telegram cron expression")
 
+	// Общие настройки (§28, Пункт 1)
+	ErrPublicBaseURLInvalid = errors.New("domain: public_base_url must be an http(s) origin without path or trailing slash")
+
 	// Team (multi-tenancy v2)
 	ErrTeamNotFound         = errors.New("domain: team not found")
 	ErrTeamAlreadyExists    = errors.New("domain: team with this slug or ch_database already exists")

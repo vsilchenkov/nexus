@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import { type ReactNode } from "react";
 
 import { type Node } from "../../api/client";
+import { useNodeUrlBuilder } from "../../lib/nodeUrl";
 import { Card, Chip, CopyButton } from "../ui";
 
 // ConfigTab — вкладка «Конфигурация» узла (§21): read-only сводка настроек.
@@ -9,7 +10,9 @@ export function ConfigTab({ node }: { node: Node }) {
   const { t } = useTranslation();
   const isPull = node.root_method === "RabbitMQAsync";
   const verb = node.root_method === "request" ? "request" : "requestAsync";
-  const fullAddress = `${window.location.origin}/api/v1/${verb}/${node.path}`;
+  // §28 Пункт 1: адрес из публичного base URL приложения + slug команды.
+  const buildUrl = useNodeUrlBuilder();
+  const fullAddress = buildUrl(verb, node.path);
   return (
     <Card>
       <dl className="divide-y divide-line">

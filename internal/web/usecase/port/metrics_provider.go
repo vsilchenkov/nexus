@@ -64,17 +64,18 @@ type PromMetrics interface {
 	// KafkaQueue — суммарный consumer lag всех партиций (мгновенное значение).
 	KafkaQueue(ctx context.Context) (float64, error)
 
-	// NodeThroughput — per-node in/out/errors за окно, ключ — path узла
-	// (метка node в nexus_requests_total).
-	NodeThroughput(ctx context.Context, window time.Duration) (map[string]NodeThroughput, error)
+	// NodeThroughput — per-node in/out/errors за период (since, until], ключ —
+	// path узла (метка node в nexus_requests_total). Произвольный период (§28
+	// Пункт 4): окно = until-since, запрос вычисляется на момент until.
+	NodeThroughput(ctx context.Context, since, until time.Time) (map[string]NodeThroughput, error)
 
 	// NodeErrors — per-node число «незавершённых» вызовов (done=0) за окно
 	// из nexus_request_incomplete_total. Ключ — path узла (метка node).
 	// Используется планировщиком Telegram-алертов (§22) вместо ClickHouse.
 	NodeErrors(ctx context.Context, window time.Duration) (map[string]float64, error)
 
-	// NodeSeries — спарклайн входящего трафика per-node: range-запрос за окно,
-	// разбитый на buckets точек (один запрос на весь список, §22). Ключ — path
-	// узла; длина слайса == buckets (недостающие точки — нули).
-	NodeSeries(ctx context.Context, window time.Duration, buckets int) (map[string][]float64, error)
+	// NodeSeries — спарклайн входящего трафика per-node: range-запрос за период
+	// (since, until], разбитый на buckets точек (один запрос на весь список,
+	// §22/§28). Ключ — path узла; длина слайса == buckets (недостающие — нули).
+	NodeSeries(ctx context.Context, since, until time.Time, buckets int) (map[string][]float64, error)
 }

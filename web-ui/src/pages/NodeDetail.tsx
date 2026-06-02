@@ -7,6 +7,7 @@ import { useState } from "react";
 import { api, type Node } from "../api/client";
 import { Button, Chip, Pill } from "../components/ui";
 import { cn } from "../lib/cn";
+import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { LogsTab } from "../components/node/LogsTab";
 import { OverviewTab } from "../components/node/OverviewTab";
 import { ConfigTab } from "../components/node/ConfigTab";
@@ -20,6 +21,8 @@ export default function NodeDetail() {
   const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
   const [tab, setTab] = useState<Tab>("overview");
+  // §26/§28 Пункт 3: редактирование узла — только manager+ (viewer не видит креды).
+  const canEdit = useRoleAtLeast("manager");
 
   const nodeQ = useQuery({
     queryKey: ["node", id],
@@ -47,11 +50,13 @@ export default function NodeDetail() {
         <Pill tone={statusTone}>{t(`node.status.${node.status}`)}</Pill>
         {isPull && rmq?.degraded && <Pill tone="err">{t("node.rmq.degraded")}</Pill>}
         <div className="ml-auto flex items-center gap-2">
-          <Link to={`/nodes/${node.id}/edit`}>
-            <Button sm variant="primary">
-              <Pencil className="h-3.5 w-3.5" /> {t("node.actions.edit")}
-            </Button>
-          </Link>
+          {canEdit && (
+            <Link to={`/nodes/${node.id}/edit`}>
+              <Button sm variant="primary">
+                <Pencil className="h-3.5 w-3.5" /> {t("node.actions.edit")}
+              </Button>
+            </Link>
+          )}
         </div>
       </div>
 

@@ -850,6 +850,8 @@ definitions:
     properties:
       clickhouse:
         $ref: '#/definitions/nexus_internal_domain.ClickHouseSettings'
+      general:
+        $ref: '#/definitions/nexus_internal_domain.GeneralSettings'
       notifications:
         $ref: '#/definitions/nexus_internal_domain.NotificationsSettings'
       sentry:
@@ -939,6 +941,16 @@ definitions:
         type: string
       workers:
         type: integer
+    type: object
+  nexus_internal_domain.GeneralSettings:
+    properties:
+      public_base_url:
+        description: |-
+          PublicBaseURL — публичный адрес, под которым опубликован Web (origin без
+          хвостового слеша, напр. https://nexus.example.com). Если задан, UI
+          формирует полный адрес узла от него вместо window.location.origin.
+          nil/"" = не задан (UI берёт origin браузера). Не секрет — Get() не маскирует.
+        type: string
     type: object
   nexus_internal_domain.NotificationsSettings:
     properties:
@@ -1823,9 +1835,18 @@ paths:
       description: Источник — Prometheus (sum by node). Ключ node = path узла. Без
         Prometheus — пустой список с prometheus_available=false.
       parameters:
-      - description: 15m | 1h | 24h | 7d (default 1h)
+      - description: 1h | 3h | 24h | 7d | 14d | 30d (default 1h)
         in: query
         name: range
+        type: string
+      - description: период с (RFC3339 или UnixMilli); вместе с to задаёт произвольный
+          период
+        in: query
+        name: from
+        type: string
+      - description: период по (RFC3339 или UnixMilli)
+        in: query
+        name: to
         type: string
       produces:
       - application/json
@@ -1851,9 +1872,18 @@ paths:
         name: id
         required: true
         type: string
-      - description: 15m | 1h | 24h | 7d (default 1h)
+      - description: 1h | 3h | 24h | 7d | 14d | 30d (default 1h)
         in: query
         name: range
+        type: string
+      - description: период с (RFC3339 или UnixMilli); вместе с to задаёт произвольный
+          период
+        in: query
+        name: from
+        type: string
+      - description: период по (RFC3339 или UnixMilli)
+        in: query
+        name: to
         type: string
       produces:
       - application/json
@@ -2545,6 +2575,31 @@ paths:
       security:
       - CookieAuth: []
       summary: Отправить тестовое уведомление в Telegram с patch'ем настроек (§20.7).
+      tags:
+      - settings
+  /api/settings/public:
+    get:
+      description: 'Лёгкий read-only эндпоинт для любого авторизованного пользователя:
+        возвращает {public_base_url} для сборки полного адреса узла в UI. Не требует
+        прав admin (в отличие от /api/settings/app).'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Публичный адрес приложения (§28, Пункт 1).
       tags:
       - settings
   /api/settings/sentry/test:

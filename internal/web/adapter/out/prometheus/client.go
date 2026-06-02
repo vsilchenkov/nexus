@@ -73,12 +73,12 @@ func (c *Client) instantScalar(ctx context.Context, query string) (float64, erro
 	return float64(vec[0].Value), nil
 }
 
-// instantByNode выполняет instant-query вида `sum by (node)(...)` и собирает
-// результат в map по метке node.
-func (c *Client) instantByNode(ctx context.Context, query string) (map[string]float64, error) {
+// instantByNode выполняет instant-query вида `sum by (node)(...)` на момент at
+// и собирает результат в map по метке node.
+func (c *Client) instantByNode(ctx context.Context, query string, at time.Time) (map[string]float64, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
-	val, _, err := c.api.Query(ctx, query, time.Now())
+	val, _, err := c.api.Query(ctx, query, at)
 	if err != nil {
 		return nil, fmt.Errorf("prometheus query %q: %w", query, err)
 	}
@@ -127,31 +127,33 @@ func (c *Client) KafkaQueue(ctx context.Context) (float64, error) {
 func (c *Client) NodeErrors(ctx context.Context, window time.Duration) (map[string]float64, error) {
 	return c.instantByNode(ctx,
 		fmt.Sprintf(`sum by (node)(increase(nexus_request_incomplete_total{service="sender"}[%s]))`,
-			promRange(window)))
+			promRange(window)), time.Now())
 }
 
-// NodeThroughput — per-node in/out/errors за окно (ключ — метка node = path).
-func (c *Client) NodeThroughput(ctx context.Context, window time.Duration) (map[string]port.NodeThroughput, error) {
-	w := promRange(window)
+// NodeThroughput — per-node in/out/errors за период (since, until] (ключ —
+// метка node = path). Окно = until-since, запрос вычисляется на момент until
+// (поддержка произвольного календарного периода, §28 Пункт 4).
+func (c *Client) NodeThroughput(ctx context.Context, since, until time.Time) (map[string]port.NodeThroughput, error) {
+	w := promRange(until.Sub(since))
 	in, err := c.instantByNode(ctx,
-		fmt.Sprintf(`sum by (node)(increase(nexus_requests_total{service="receiver"}[%s]))`, w))
+		fmt.Sprintf(`sum by (node)(increase(nexus_requests_total{service="receiver"}[%s]))`, w), until)
 	if err != nil {
 		return nil, err
 	}
 	out, err := c.instantByNode(ctx,
-		fmt.Sprintf(`sum by (node)(increase(nexus_requests_total{service="sender"}[%s]))`, w))
+		fmt.Sprintf(`sum by (node)(increase(nexus_requests_total{service="sender"}[%s]))`, w), until)
 	if err != nil {
 		return nil, err
 	}
 	errs, err := c.instantByNode(ctx,
-		fmt.Sprintf(`sum by (node)(increase(nexus_requests_total{service="sender",status=~"0|[45].."}[%s]))`, w))
+		fmt.Sprintf(`sum by (node)(increase(nexus_requests_total{service="sender",status=~"0|[45].."}[%s]))`, w), until)
 	if err != nil {
 		return nil, err
 	}
 	// p95 длительности исходящих (Sender) по узлам — гистограмма уже пишется
 	// и sync, и async (§22, новой метрики не нужно). Значение в секундах → мс.
 	p95, err := c.instantByNode(ctx,
-		fmt.Sprintf(`histogram_quantile(0.95, sum by (node, le)(rate(nexus_request_duration_seconds_bucket{service="sender"}[%s])))`, w))
+		fmt.Sprintf(`histogram_quantile(0.95, sum by (node, le)(rate(nexus_request_duration_seconds_bucket{service="sender"}[%s])))`, w), until)
 	if err != nil {
 		return nil, err
 	}
@@ -177,10 +179,11 @@ func (c *Client) NodeThroughput(ctx context.Context, window time.Duration) (map[
 
 // NodeSeries — спарклайн входящего трафика per-node одним range-запросом
 // (§22). Возвращает по buckets точек на узел; недостающие — нули.
-func (c *Client) NodeSeries(ctx context.Context, window time.Duration, buckets int) (map[string][]float64, error) {
+func (c *Client) NodeSeries(ctx context.Context, since, until time.Time, buckets int) (map[string][]float64, error) {
 	if buckets <= 0 {
 		buckets = 12
 	}
+	window := until.Sub(since)
 	step := window / time.Duration(buckets)
 	if step <= 0 {
 		step = time.Minute
@@ -188,8 +191,8 @@ func (c *Client) NodeSeries(ctx context.Context, window time.Duration, buckets i
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
-	end := time.Now()
-	start := end.Add(-window)
+	start := since
+	end := until
 	query := fmt.Sprintf(`sum by (node)(increase(nexus_requests_total{service="receiver"}[%s]))`, promRange(step))
 	val, _, err := c.api.QueryRange(ctx, query, promv1.Range{Start: start, End: end, Step: step})
 	if err != nil {

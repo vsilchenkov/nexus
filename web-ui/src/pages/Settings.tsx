@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { api } from "../api/client";
 import { cn } from "../lib/cn";
+import { GeneralPanel } from "./settings/General";
 import { ApiTokensPanel } from "./settings/ApiTokens";
 import { LanguagePanel } from "./settings/Language";
 import { SentryPanel } from "./settings/Sentry";
@@ -19,6 +20,7 @@ import { roleAtLeast, type Role } from "../lib/roles";
 type Tab = { to: string; labelKey: string; minRole?: Role };
 
 const tabs: Tab[] = [
+  { to: "general", labelKey: "settings.general.title", minRole: "admin" },
   { to: "users", labelKey: "settings.users.title", minRole: "admin" },
   { to: "teams", labelKey: "settings.teams.title", minRole: "admin" },
   { to: "tokens", labelKey: "settings.tokens.title" },
@@ -72,6 +74,7 @@ export default function Settings() {
 
       <section className="min-w-0 flex-1">
         <Routes>
+          {isAdmin && <Route path="general" element={<GeneralPanel />} />}
           {isAdmin && <Route path="users" element={<UsersPanel />} />}
           {isAdmin && <Route path="teams" element={<TeamsPanel />} />}
           <Route path="tokens" element={<ApiTokensPanel />} />

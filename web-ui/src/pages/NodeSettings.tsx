@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useParams, Link } from "react-router-dom";
+import { useNavigate, useParams, Link, Navigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 
 import { api, type Node, type CHTemplate, type HostAllowlistEntry } from "../api/client";
+import { useNodeUrlBuilder } from "../lib/nodeUrl";
+import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { DryRunDialog } from "../components/DryRunDialog";
 import { DeleteNodeDialog } from "../components/node/DeleteNodeDialog";
 import { AllowedHostsField } from "../components/node/AllowedHostsField";
@@ -28,6 +30,7 @@ import {
   Hint,
   Input,
   PickGroup,
+  SecretInput,
   SectionHead,
   Select,
   Toggle,
@@ -137,6 +140,9 @@ export default function NodeSettings() {
   const [showDryRun, setShowDryRun] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // §28 Пункт 5: имя поля с ошибкой валидации (для inline-подсветки) из
+  // ответа { error, code, field } бэкенда.
+  const [errField, setErrField] = useState<string | null>(null);
 
   const templates = useQuery({
     queryKey: ["ch-templates"],
@@ -161,19 +167,42 @@ export default function NodeSettings() {
       qc.invalidateQueries({ queryKey: ["nodes"] });
       navigate("/");
     },
-    onError: (e: { response?: { data?: { error?: string } } }) =>
-      setError(e?.response?.data?.error ?? t("common.error")),
+    onError: (e: { response?: { data?: { error?: string; code?: string; field?: string } } }) => {
+      const d = e?.response?.data;
+      setErrField(d?.field ?? null);
+      // Переводим по code в языке UI (может отличаться от Accept-Language);
+      // fallback — текст error с бэка, затем generic.
+      setError(d?.code ? t(d.code) : (d?.error ?? t("common.error")));
+    },
   });
 
   function set<K extends keyof Form>(k: K, v: Form[K]) {
     setForm((p) => ({ ...p, [k]: v }));
+    // Сбрасываем подсветку поля, как только пользователь его правит.
+    setErrField((f) => (f === k ? null : f));
   }
+
+  // fieldErr — inline-сообщение об ошибке под полем name (§28 Пункт 5).
+  function fieldErr(name: string) {
+    if (errField !== name) return null;
+    return <p className="mt-1 text-xs text-err">{error}</p>;
+  }
+  // errCls — класс красной рамки для поля с ошибкой.
+  const errCls = (name: string) => (errField === name ? "border-err" : "");
 
   const isPull = form.root_method === "RabbitMQAsync";
   const verb = form.root_method === "request" ? "request" : "requestAsync";
-  const routePath = `/api/v1/${verb}/${form.path || "…"}`;
-  // §2: полный адрес = origin (единый вход Web) + путь маршрута.
-  const fullAddress = `${window.location.origin}${routePath}`;
+  // §28 Пункт 1: полный адрес собирается из публичного адреса приложения
+  // (если задан в настройках) или origin браузера + slug текущей команды.
+  const buildUrl = useNodeUrlBuilder();
+  const fullAddress = buildUrl(verb, form.path);
+
+  // §26/§28 Пункт 3: форму узла (с полями авторизации) открывает только
+  // manager+. viewer перенаправляется на просмотр/список.
+  const canEdit = useRoleAtLeast("manager");
+  if (!canEdit) {
+    return <Navigate to={isNew ? "/" : `/nodes/${id}`} replace />;
+  }
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">
@@ -223,11 +252,13 @@ export default function NodeSettings() {
             <Field label={t("node.fields.path")} className="mt-3">
               <Input
                 mono
+                className={errCls("path")}
                 value={form.path}
                 onChange={(e) => set("path", e.target.value)}
                 placeholder="webhook/send"
                 required
               />
+              {fieldErr("path")}
               {!isPull && (
                 <div className="mt-1 flex items-center gap-1.5">
                   <span className="min-w-0 break-all font-mono text-[11px] text-fg-subtle">
@@ -277,6 +308,8 @@ export default function NodeSettings() {
               // значений; дженерик-сеттер Form совместим, TS требует явный каст.
               set={set as RMQSetter}
               isNew={isNew}
+              errField={errField}
+              errMsg={error}
             />
           )}
 
@@ -300,10 +333,12 @@ export default function NodeSettings() {
               <Field label={t("node.fields.target_url")} className={isPull ? "" : "mt-3"}>
                 <Input
                   mono
+                  className={errCls("target_url")}
                   value={form.target_url}
                   onChange={(e) => set("target_url", e.target.value)}
                   placeholder="https://api.partner.com/hook"
                 />
+                {fieldErr("target_url")}
               </Field>
             )}
             {form.url_mode === "from_request" && !isPull && (
@@ -394,7 +429,7 @@ export default function NodeSettings() {
                 }
                 className="mt-3"
               >
-                <Input
+                <SecretInput
                   value={form.incoming_auth_credentials}
                   onChange={(e) => set("incoming_auth_credentials", e.target.value)}
                   placeholder={isNew ? "" : t("node.form.keep_secret")}
@@ -447,7 +482,7 @@ export default function NodeSettings() {
             </Field>
             {(form.auth_type === "basic" || form.auth_type === "token") && (
               <Field label={t("node.form.credentials")} className="mt-3">
-                <Input
+                <SecretInput
                   value={form.auth_credentials}
                   onChange={(e) => set("auth_credentials", e.target.value)}
                   placeholder={isNew ? "" : t("node.form.keep_secret")}
@@ -517,10 +552,12 @@ export default function NodeSettings() {
               <Field label={t("node.fields.ch_table")} className="mt-3">
                 <Input
                   mono
+                  className={errCls("clickhouse_table")}
                   value={form.clickhouse_table}
                   onChange={(e) => set("clickhouse_table", e.target.value)}
                   placeholder="webhook_send"
                 />
+                {fieldErr("clickhouse_table")}
               </Field>
               <Field label={t("node.form.retention_days")} className="mt-3">
                 <Input

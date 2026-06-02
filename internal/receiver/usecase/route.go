@@ -67,7 +67,7 @@ func NewRouteUsecase(nodes port.NodeReader, sender SenderClient, logger logging.
 
 // Route — sync-обработка (POST /v1/request/{path}).
 func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, error) {
-	node, err := u.nodes.Get(ctx, in.TeamSlug, in.NodePath)
+	node, err := resolveNode(ctx, u.nodes, in.TeamSlug, in.NodePath)
 	if err != nil {
 		return nil, err
 	}

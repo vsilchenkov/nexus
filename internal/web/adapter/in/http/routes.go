@@ -113,6 +113,13 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			authed.GET("/metrics/nodes/:id", RequireScope("metrics:read"), h.Metrics.Node)
 		}
 
+		// Публичный адрес приложения (§28, Пункт 1): read-only для любого
+		// авторизованного — UI собирает полный адрес узла. PUT/секреты
+		// остаются admin-only ниже (/settings/app).
+		if h.AppSettings != nil {
+			authed.GET("/settings/public", h.AppSettings.GetPublic)
+		}
+
 		// Mutating — только session-cookie (API-токены сюда не пускаем).
 		//
 		// authedManager (роль manager+admin, §26): управление узлами и

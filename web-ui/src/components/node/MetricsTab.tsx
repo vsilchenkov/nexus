@@ -2,30 +2,24 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { type Node } from "../../api/client";
-import { Card, Hint, Kpi, KpiRow, Seg, TrafficChart } from "../ui";
+import { Card, Hint, Kpi, KpiRow, PeriodPicker, TrafficChart, type Period } from "../ui";
 import { fmtNum } from "../../lib/format";
-import { useNodeMetrics, type MetricsRange } from "./useNodeMetrics";
-
-const RANGES: MetricsRange[] = ["15m", "1h", "24h", "7d"];
+import { useNodeMetrics } from "./useNodeMetrics";
 
 // MetricsTab — вкладка «Метрики» узла (§21): перцентили + счётчики + график
-// за выбранный диапазон. Источник — ClickHouse (точные quantile).
+// за выбранный период. Источник — ClickHouse (точные quantile). По умолчанию 24h.
 export function MetricsTab({ node }: { node: Node }) {
   const { t } = useTranslation();
-  const [range, setRange] = useState<MetricsRange>("24h");
-  const m = useNodeMetrics(node.id, range);
+  const [period, setPeriod] = useState<Period>({ kind: "preset", range: "24h" });
+  const m = useNodeMetrics(node.id, period);
   const kpi = m.data?.kpi;
   const chartUnavailable = m.data && !m.data.chart_available;
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-sm font-semibold">{t("node.tabs.metrics")}</span>
-        <Seg
-          value={range}
-          onChange={setRange}
-          options={RANGES.map((r) => ({ value: r, label: t(`metrics.range.${r}`) }))}
-        />
+        <PeriodPicker value={period} onChange={setPeriod} />
       </div>
 
       {chartUnavailable && (

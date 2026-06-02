@@ -234,6 +234,11 @@ func (n *Node) Validate() error {
 	if n.MaxBodySizeEnabled && n.MaxBodySize <= 0 {
 		return ErrNodeMaxBodySizeRequired
 	}
+	// §28 Пункт 5: логирование включено, но не настроено имя таблицы. Без него
+	// Sender некуда писать логи, а UI-чтение логов/метрик падает с CH code 60.
+	if n.LoggingEnabled && n.ClickHouseTable == "" {
+		return ErrNodeLogsNotConfigured
+	}
 	if n.RootMethod.IsPull() {
 		if err := n.validateRMQ(); err != nil {
 			return err
