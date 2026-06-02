@@ -60,6 +60,49 @@ func TestNodePathFromGin(t *testing.T) {
 	}
 }
 
+func TestNodeLabel_PrefersContext(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	t.Run("context value wins over raw param", func(t *testing.T) {
+		t.Parallel()
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Params = gin.Params{{Key: "path", Value: "/default/stand/req"}}
+		ctx.Set(NodeLabelKey, "stand/req")
+		assert.Equal(t, "stand/req", nodeLabel(ctx))
+	})
+
+	t.Run("falls back to raw param when unset", func(t *testing.T) {
+		t.Parallel()
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Params = gin.Params{{Key: "path", Value: "/demo/path"}}
+		assert.Equal(t, "demo/path", nodeLabel(ctx))
+	})
+}
+
+// TestGinMiddleware_NodeLabelFromContext: Receiver кладёт чистый путь узла в
+// контекст (URL содержит слог команды) — метка node должна быть без слога,
+// чтобы совпасть с Sender (in/out merge на дашборде, §21).
+func TestGinMiddleware_NodeLabelFromContext(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+	m := New("receiver")
+	r := gin.New()
+	r.Use(GinMiddleware(m))
+	r.POST("/api/v1/request/*path", func(c *gin.Context) {
+		c.Set(NodeLabelKey, "stand/req-noauth-post") // как делает Receiver-handler
+		c.Status(http.StatusOK)
+	})
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("POST", "/api/v1/request/default/stand/req-noauth-post", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	body := scrape(t, m)
+	assert.Contains(t, body, `node="stand/req-noauth-post"`)
+	assert.NotContains(t, body, `node="default/stand/req-noauth-post"`)
+}
+
 func TestGinMiddleware_V1Request(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)

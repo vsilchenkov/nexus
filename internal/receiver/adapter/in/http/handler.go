@@ -13,6 +13,7 @@ import (
 	"nexus/internal/domain"
 	"nexus/internal/platform/clientip"
 	"nexus/internal/platform/logging"
+	"nexus/internal/platform/metrics"
 	"nexus/internal/receiver/usecase"
 )
 
@@ -106,6 +107,9 @@ func (h *Handler) handleSync(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "empty node path"})
 		return
 	}
+	// Метка node для метрик — чистый путь узла (без слога команды), чтобы
+	// совпадать с меткой Sender и корректно мёрджить in/out на дашборде (§21).
+	c.Set(metrics.NodeLabelKey, nodePath)
 
 	body, err := readBody(c, h.maxBodyBytes)
 	if err != nil {
@@ -218,6 +222,8 @@ func (h *Handler) handleAsync(c *gin.Context) {
 // RouteInput. Вызывается как из /v1/requestAsync, так и из sync-handler'а,
 // когда узел в paused (§3.6).
 func (h *Handler) handleAsyncFromInput(c *gin.Context, in usecase.RouteInput) {
+	// Метка node для метрик — чистый путь узла (см. handleSync).
+	c.Set(metrics.NodeLabelKey, in.NodePath)
 	res, err := h.routeAsync.RouteAsync(c.Request.Context(), in)
 	if err != nil {
 		// §3, #7: async-ошибка → {"result":false,"message":...}.
