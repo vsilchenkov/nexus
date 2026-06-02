@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"nexus/internal/domain"
@@ -99,7 +98,6 @@ func TestNodeUC_CreateNoTemplate_DefaultProvision_E2E(t *testing.T) {
 
 	provider := clickhouse.StaticProvider(conn)
 	provisioner := webch.NewTeamProvisioner(provider, logger)
-	metricsReader := webch.NewMetricsReader(provider, logger)
 
 	nodeRepo := pgrepo.NewNodeRepoPg(pool, cipher, logger)
 	chTemplateRepo := pgrepo.NewCHTemplateRepoPg(pool, logger)
@@ -130,9 +128,4 @@ func TestNodeUC_CreateNoTemplate_DefaultProvision_E2E(t *testing.T) {
 	require.NoError(t, conn.QueryRow(ctx,
 		"SELECT count() FROM system.tables WHERE database = 'nexus_default' AND name = 'stand_async_noauth'").Scan(&cnt))
 	require.EqualValues(t, 1, cnt, "log table must be auto-created from default template")
-
-	// Чтение KPI по только что созданной таблице не должно падать (CH code 60).
-	kpi, err := metricsReader.NodeKPI(ctx, n.ClickHouseTable, 0, 0)
-	require.NoError(t, err, "NodeKPI over provisioned table must not fail")
-	assert.Zero(t, kpi.Total, "fresh table is empty")
 }

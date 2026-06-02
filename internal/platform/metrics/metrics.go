@@ -92,7 +92,10 @@ func New(service string) *Metrics {
 			Name:        "nexus_request_duration_seconds",
 			Help:        "Nexus request duration in seconds (end-to-end for the given service).",
 			ConstLabels: constLabels,
-			Buckets:     prometheus.DefBuckets,
+			// DefBuckets упираются в 10с, а timeout_ms узла — до 300с. Расширяем
+			// верх диапазона, чтобы histogram_quantile (p95/p99 per-node, §21)
+			// не «прилипал» к +Inf на медленных узлах.
+			Buckets: []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60, 120, 300},
 		}, []string{"method", "node"}),
 
 		KafkaLag: prometheus.NewGaugeVec(prometheus.GaugeOpts{

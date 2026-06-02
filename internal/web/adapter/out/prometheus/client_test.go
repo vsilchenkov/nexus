@@ -104,6 +104,76 @@ func TestClient_NodeThroughput(t *testing.T) {
 	require.EqualValues(t, 2, m["webhook/send"].Errors)
 }
 
+func TestClient_NodeKPI(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		q := r.FormValue("query")
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(q, "histogram_quantile(0.95"):
+			_, _ = w.Write([]byte(vectorResp(sample("{}", "0.087")))) // 87 мс
+		case strings.Contains(q, "histogram_quantile(0.99"):
+			_, _ = w.Write([]byte(vectorResp(sample("{}", "0.142")))) // 142 мс
+		case strings.Contains(q, "nexus_request_incomplete_total"):
+			_, _ = w.Write([]byte(vectorResp(sample("{}", "2"))))
+		case strings.Contains(q, "nexus_requests_total"):
+			_, _ = w.Write([]byte(vectorResp(sample("{}", "100"))))
+		default:
+			_, _ = w.Write([]byte(vectorResp()))
+		}
+	}))
+	defer srv.Close()
+
+	c, err := New(srv.URL, time.Second, logging.NewNoop())
+	require.NoError(t, err)
+
+	kpi, err := c.NodeKPI(context.Background(), "webhook/send", time.Now().Add(-time.Hour), time.Now())
+	require.NoError(t, err)
+	require.EqualValues(t, 100, kpi.Total)
+	require.EqualValues(t, 2, kpi.Errors)
+	require.EqualValues(t, 98, kpi.Delivered) // total - errors
+	require.InDelta(t, 87, kpi.P95ms, 0.5)
+	require.InDelta(t, 142, kpi.P99ms, 0.5)
+}
+
+// matrixResp формирует Prometheus range-matrix JSON с одной серией.
+func matrixResp(values ...string) string {
+	return `{"status":"success","data":{"resultType":"matrix","result":[` +
+		`{"metric":{},"values":[` + strings.Join(values, ",") + `]}]}}`
+}
+
+func TestClient_NodeChart(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		q := r.FormValue("query")
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(q, "nexus_request_incomplete_total"):
+			_, _ = w.Write([]byte(matrixResp(`[1700000060,"1"]`, `[1700000120,"3"]`)))
+		case strings.Contains(q, "nexus_requests_total"):
+			_, _ = w.Write([]byte(matrixResp(`[1700000060,"10"]`, `[1700000120,"20"]`)))
+		default:
+			_, _ = w.Write([]byte(matrixResp()))
+		}
+	}))
+	defer srv.Close()
+
+	c, err := New(srv.URL, time.Second, logging.NewNoop())
+	require.NoError(t, err)
+
+	since := time.Now().Add(-2 * time.Minute)
+	until := time.Now()
+	pts, err := c.NodeChart(context.Background(), "webhook/send", since, until, 2)
+	require.NoError(t, err)
+	require.Len(t, pts, 2)
+	require.EqualValues(t, 10, pts[0].Count)
+	require.EqualValues(t, 1, pts[0].Errors)
+	require.EqualValues(t, 20, pts[1].Count)
+	require.EqualValues(t, 3, pts[1].Errors)
+}
+
 func TestClient_EmptyVector(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

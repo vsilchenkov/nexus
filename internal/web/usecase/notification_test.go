@@ -67,6 +67,12 @@ func (p notifProm) NodeErrors(context.Context, time.Duration) (map[string]float6
 func (p notifProm) NodeSeries(context.Context, time.Time, time.Time, int) (map[string][]float64, error) {
 	return nil, nil
 }
+func (p notifProm) NodeKPI(context.Context, string, time.Time, time.Time) (port.NodeKPI, error) {
+	return port.NodeKPI{}, nil
+}
+func (p notifProm) NodeChart(context.Context, string, time.Time, time.Time, int) ([]port.SeriesPoint, error) {
+	return nil, nil
+}
 
 type notifSender struct {
 	msgs []string

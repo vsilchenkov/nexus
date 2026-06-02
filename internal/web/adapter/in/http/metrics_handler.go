@@ -18,7 +18,7 @@ import (
 //
 //	GET /api/metrics/overview     — глобальные KPI (Prometheus).
 //	GET /api/metrics/nodes        — per-node throughput за окно (Prometheus).
-//	GET /api/metrics/nodes/{id}   — KPI + ряд графика узла (ClickHouse).
+//	GET /api/metrics/nodes/{id}   — KPI + ряд графика узла (Prometheus).
 type MetricsHandler struct {
 	uc     *usecase.MetricsUsecase
 	logger logging.Logger
@@ -184,7 +184,7 @@ type seriesPointDTO struct {
 
 // Node godoc
 // @Summary  KPI + временной ряд графика узла (§21).
-// @Description  Источник — ClickHouse (точные перцентили). Узел без таблицы логов → нули с chart_available=false.
+// @Description  Источник — Prometheus (per-node счётчики Sender'а; перцентили через histogram_quantile). Без Prometheus → нули с chart_available=false.
 // @Tags     metrics
 // @Produce  json
 // @Param    id     path   string  true   "node id"

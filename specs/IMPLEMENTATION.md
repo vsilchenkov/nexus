@@ -686,27 +686,36 @@ gRPC server, chlog.Writer и AsyncProcessor — глобальной registry м
 их в Grafana через `service="receiver"`. Метка `node` — динамическая (path-параметр
 из `/v1/request/.../*path`), для не-V1 маршрутов остаётся пустой.
 
-### 4.11.2 Metrics API панели — гибрид Prometheus + ClickHouse, с деградацией (Phase 21.1)
+### 4.11.2 Metrics API панели — единый источник Prometheus, с деградацией (Phase 21.1 → 29)
 
-Дашборды панели (§21) не считают агрегаты на лету в Go, а тянут готовые из двух
-источников по принципу «каждому показателю — лучший источник»:
+Дашборды панели (§21) не считают агрегаты на лету в Go, а тянут готовые из **единого
+источника — Prometheus** ([adapter/out/prometheus/client.go](../internal/web/adapter/out/prometheus/client.go)).
+Это **query API** сервера Prometheus (`prometheus.url`), а не scrape-эндпоинт `/metrics`. Метка
+`node` совпадает с `domain.Node.Path` — поэтому per-node merge на фронте идёт по path.
 
-- **Prometheus** ([adapter/out/prometheus/client.go](../internal/web/adapter/out/prometheus/client.go))
-  — глобальные KPI Overview (incoming = `sum(increase(nexus_requests_total{service="receiver"}[24h]))`,
-  outgoing = то же для `service="sender"`, errors = `…,status=~"0|[45].."`), очередь Kafka
-  (`sum(nexus_kafka_lag)`) и per-node throughput (`sum by (node)(…)`). Это **query API**
-  сервера Prometheus (`prometheus.url`), а не scrape-эндпоинт `/metrics`. Метка `node`
-  совпадает с `domain.Node.Path` — поэтому per-node merge на фронте идёт по path.
-- **ClickHouse** ([adapter/out/clickhouse/metrics_reader.go](../internal/web/adapter/out/clickhouse/metrics_reader.go))
-  — per-node KPI и ряд графика на странице узла: точные `quantile(0.95/0.99)(duration)`,
-  count/delivered/errors и time-bucket-ряд по таблице логов узла. Точные перцентили из CH,
-  а не из histogram-бакетов Prometheus.
+- Глобальные KPI Overview: incoming = `sum(increase(nexus_requests_total{service="receiver"}[24h]))`,
+  outgoing = то же для `service="sender"`, errors = `…,status=~"0|[45].."`; очередь Kafka =
+  `sum(nexus_kafka_lag)`; per-node throughput = `sum by (node)(…)`.
+- **per-node KPI и ряд графика на странице узла** (`NodeKPI`/`NodeChart`): total/errors через
+  `increase(nexus_requests_total)` / `increase(nexus_request_incomplete_total)` (errors = «незавершённые»,
+  точный аналог прежнего CH-условия `status>=400 OR status=0 OR done=0`), delivered = total−errors,
+  p95/p99 — через `histogram_quantile()` по `nexus_request_duration_seconds_bucket`.
 
-Почему так: outgoing/delivered/перцентили достоверно есть только в CH-логах (их пишет
-Sender), а очередь Kafka и кросс-сервисный throughput — только в Prometheus. Оба источника
-**опциональны**: при пустом `prometheus.url` провайдер не создаётся (nil), `MetricsUsecase`
-отдаёт нули с `prometheus_available=false`; узел без `clickhouse_table` → `chart_available=false`.
-Это сделано намеренно, чтобы поллинг UI не спамил 500-ками, когда Prometheus не настроен
+**Почему ушли от ClickHouse (Phase 29).** Раньше per-node KPI/график считались напрямую из
+CH-таблицы логов узла ([был] `adapter/out/clickhouse/metrics_reader.go`). Это ломалось, если у узла
+выключено `logging_enabled`, CH недоступен или таблица пуста — метрики узла пропадали. Перенос на
+Prometheus убрал последнюю зависимость метрик от CH: per-node счётчики Sender'а пишутся **независимо**
+от логирования (sync — `grpc/sender_service.go`, async — `usecase/async.go`), поэтому метрики узла
+видны всегда, а **ClickHouse остаётся чисто хранилищем логов**. Цена — приблизительные (по бакетам)
+перцентили и глубина истории, ограниченная retention Prometheus (env `PROMETHEUS_RETENTION`, дефолт
+`90d`). Под это расширены бакеты `nexus_request_duration_seconds` до 300с
+([platform/metrics/metrics.go](../internal/platform/metrics/metrics.go)), т.к. `DefBuckets` упираются
+в 10с при `timeout_ms` до 300с.
+
+Источник **опционален**: при пустом `prometheus.url` провайдер не создаётся (nil), `MetricsUsecase`
+отдаёт нули с `prometheus_available=false` / `chart_available=false`. Ошибка запроса к Prometheus в
+`NodeMetrics` тоже **деградирует** (warning + `chart_available=false`), а не 500 — единообразно с
+Overview/NodesOverview, чтобы поллинг UI не спамил ошибками
 (см. [usecase/metrics.go](../internal/web/usecase/metrics.go)).
 
 ### 4.11.3 Редизайн UI под эталон: дизайн-токены + UI-kit + app-shell (Phase 21.2)

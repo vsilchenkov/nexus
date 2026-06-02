@@ -242,12 +242,10 @@ func (a *App) Start(ctx context.Context) error {
 		logsHandler   *httpadapter.LogsHandler
 		orphanHandler *httpadapter.OrphanHandler
 		teamHandler   *httpadapter.TeamHandler
-		chMetrics     webport.CHMetrics // per-node агрегаты для метрик узла (§21)
 	)
 	if a.ch != nil {
 		// a.chMgr уже создан выше (вместе с teamProvisioner).
 		logReader := chreader.NewLogReader(a.chMgr, a.logger)
-		chMetrics = chreader.NewMetricsReader(a.chMgr, a.logger)
 		dispatcher := rcvdispatcher.NewHTTPDispatcher(a.cfg.Web.ReceiverURL, 30*time.Second, a.logger)
 		replayUC := usecase.NewReplayUsecase(
 			logReader, nodeRepo, dispatcher, rl, auditUC,
@@ -296,10 +294,10 @@ func (a *App) Start(ctx context.Context) error {
 	}
 	go reloadSub.Run(ctx)
 
-	// Метрики панели (§21): гибрид Prometheus (KPI/очередь/throughput) +
-	// ClickHouse (per-node KPI/график). Оба источника опциональны — usecase
-	// деградирует, поэтому handler создаётся всегда.
-	metricsUC := usecase.NewMetricsUsecase(promMetrics, chMetrics, nodeRepo, a.logger)
+	// Метрики панели (§21): единый источник — Prometheus (KPI/очередь/throughput
+	// и per-node KPI/график). Источник опционален — usecase деградирует
+	// (prometheus_available/chart_available=false), поэтому handler создаётся всегда.
+	metricsUC := usecase.NewMetricsUsecase(promMetrics, nodeRepo, a.logger)
 	metricsHandler := httpadapter.NewMetricsHandler(metricsUC, a.logger)
 
 	mw := httpadapter.Middlewares{

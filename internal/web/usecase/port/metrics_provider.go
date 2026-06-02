@@ -5,12 +5,12 @@ import (
 	"time"
 )
 
-// NodeKPI — сводные показатели одного узла за окно, считаются из таблицы
-// логов узла в ClickHouse (§21, вкладки «Обзор»/«Метрики»).
+// NodeKPI — сводные показатели одного узла за окно (§21, вкладки
+// «Обзор»/«Метрики»). Считаются из Prometheus по per-node счётчикам Sender'а.
 type NodeKPI struct {
-	Total     uint64  // всего записей (обработанных запросов)
-	Delivered uint64  // успешно доставленных (status 2xx)
-	Errors    uint64  // ошибок (status>=400 OR status=0 OR done=0)
+	Total     uint64  // всего исходящих вызовов (nexus_requests_total)
+	Delivered uint64  // успешно доставленных (status 2xx) = total - errors
+	Errors    uint64  // «незавершённых» вызовов (non-2xx, nexus_request_incomplete_total)
 	P95ms     float64 // 95-й перцентиль длительности, мс
 	P99ms     float64 // 99-й перцентиль длительности, мс
 }
@@ -21,19 +21,6 @@ type SeriesPoint struct {
 	TsMs   int64
 	Count  uint64
 	Errors uint64
-}
-
-// CHMetrics — per-node агрегаты из ClickHouse-таблицы логов узла.
-// Реализуется адаптером adapter/out/clickhouse. Доступно только когда у узла
-// настроен ClickHouseTable; иначе usecase отдаёт нулевые значения, не ошибку.
-type CHMetrics interface {
-	// NodeKPI — сводка за окно (sinceMs, untilMs] по date_request.
-	NodeKPI(ctx context.Context, table string, sinceMs, untilMs int64) (NodeKPI, error)
-
-	// NodeSeries — временной ряд за окно, разбитый на buckets равных бакетов
-	// (ASC по времени). Пустые бакеты заполняются нулями вызывающей стороной
-	// либо адаптером — контракт: длина результата == buckets.
-	NodeSeries(ctx context.Context, table string, sinceMs, untilMs int64, buckets int) ([]SeriesPoint, error)
 }
 
 // GlobalTotals — кросс-сервисные счётчики за окно (из Prometheus).
@@ -78,4 +65,17 @@ type PromMetrics interface {
 	// (since, until], разбитый на buckets точек (один запрос на весь список,
 	// §22/§28). Ключ — path узла; длина слайса == buckets (недостающие — нули).
 	NodeSeries(ctx context.Context, since, until time.Time, buckets int) (map[string][]float64, error)
+
+	// NodeKPI — сводка одного узла (total/delivered/errors/p95/p99) за период
+	// (since, until]. node — path узла (метка node счётчиков Sender'а).
+	// Источник вкладки «Метрики» узла (§21) вместо ClickHouse: total/errors из
+	// nexus_requests_total / nexus_request_incomplete_total, перцентили — из
+	// histogram_quantile по nexus_request_duration_seconds_bucket.
+	NodeKPI(ctx context.Context, node string, since, until time.Time) (NodeKPI, error)
+
+	// NodeChart — временной ряд графика одного узла за период (since, until],
+	// разбитый на buckets равных бакетов (ASC по времени, недостающие — нули,
+	// длина результата == buckets). Count — все исходящие вызовы, Errors —
+	// «незавершённые» (non-2xx). node — path узла.
+	NodeChart(ctx context.Context, node string, since, until time.Time, buckets int) ([]SeriesPoint, error)
 }
