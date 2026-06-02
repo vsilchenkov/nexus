@@ -15,6 +15,8 @@ var (
 	ErrNodeNotFound                = errors.New("domain: node not found")
 	ErrNodeAlreadyExists           = errors.New("domain: node with this path already exists")
 	ErrNodeInvalidRootMethod       = errors.New("domain: invalid root_method")
+	ErrNodeInvalidIncomingMethod   = errors.New("domain: invalid incoming_method (allowed: GET, POST, PUT, DELETE)")
+	ErrNodeInvalidOutgoingMethod   = errors.New("domain: invalid outgoing_method (allowed: GET, POST, PUT, DELETE)")
 	ErrNodeInvalidURLMode          = errors.New("domain: invalid url_mode")
 	ErrNodeInvalidAuthType         = errors.New("domain: invalid auth_type")
 	ErrNodeInvalidIncomingAuthType = errors.New("domain: invalid incoming_auth_type")
@@ -35,6 +37,7 @@ var (
 	ErrNodeForwardHeadersSize      = errors.New("domain: forward_headers must have at most 30 elements")
 	ErrNodeDisabled                = errors.New("domain: node disabled")
 	ErrNodePaused                  = errors.New("domain: node paused")
+	ErrNodeMethodNotAllowed        = errors.New("domain: http method not allowed for this node")
 	ErrNodeInvalidTemplateID       = errors.New("domain: clickhouse_template_id must be a valid UUID")
 	ErrNodeLogsNotConfigured       = errors.New("domain: node has no clickhouse_table configured")
 	// Webhook signature (§16 ТЗ, IncomingAuthTypeWebhookSignature).
@@ -42,7 +45,7 @@ var (
 	ErrNodeWebhookSigPrefixLength   = errors.New("domain: webhook_signature_prefix length must be <= 64")
 	ErrNodeWebhookSigHeaderRequired = errors.New("domain: webhook_signature_header is required for incoming_auth_type=webhook_signature")
 	ErrNodeWebhookSigSecretRequired = errors.New("domain: incoming_auth_credentials (secret) is required for incoming_auth_type=webhook_signature")
-	ErrCallbackNotAllowed           = errors.New("domain: /v1/callback route requires incoming_auth_type=webhook_signature")
+	ErrCallbackNotAllowed           = errors.New("domain: /api/v1/callback route requires incoming_auth_type=webhook_signature")
 
 	// §22: контроль логирования узла.
 	ErrNodeMaxBodySizeRange    = errors.New("domain: max_body_size must be 0..10000000")

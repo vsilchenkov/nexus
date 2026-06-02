@@ -3286,6 +3286,15 @@ const docTemplate = `{
                         "webhook_signature"
                     ]
                 },
+                "incoming_method": {
+                    "type": "string",
+                    "enum": [
+                        "GET",
+                        "POST",
+                        "PUT",
+                        "DELETE"
+                    ]
+                },
                 "log_headers": {
                     "type": "boolean"
                 },
@@ -3306,6 +3315,15 @@ const docTemplate = `{
                 },
                 "max_body_size_enabled": {
                     "type": "boolean"
+                },
+                "outgoing_method": {
+                    "type": "string",
+                    "enum": [
+                        "GET",
+                        "POST",
+                        "PUT",
+                        "DELETE"
+                    ]
                 },
                 "path": {
                     "type": "string",
@@ -3521,6 +3539,9 @@ const docTemplate = `{
                 "incoming_auth_type": {
                     "type": "string"
                 },
+                "incoming_method": {
+                    "type": "string"
+                },
                 "log_headers": {
                     "type": "boolean"
                 },
@@ -3538,6 +3559,9 @@ const docTemplate = `{
                 },
                 "max_body_size_enabled": {
                     "type": "boolean"
+                },
+                "outgoing_method": {
+                    "type": "string"
                 },
                 "path": {
                     "type": "string"
@@ -3738,6 +3762,15 @@ const docTemplate = `{
                         "webhook_signature"
                     ]
                 },
+                "incoming_method": {
+                    "type": "string",
+                    "enum": [
+                        "GET",
+                        "POST",
+                        "PUT",
+                        "DELETE"
+                    ]
+                },
                 "log_headers": {
                     "type": "boolean"
                 },
@@ -3758,6 +3791,15 @@ const docTemplate = `{
                 },
                 "max_body_size_enabled": {
                     "type": "boolean"
+                },
+                "outgoing_method": {
+                    "type": "string",
+                    "enum": [
+                        "GET",
+                        "POST",
+                        "PUT",
+                        "DELETE"
+                    ]
                 },
                 "path": {
                     "type": "string",

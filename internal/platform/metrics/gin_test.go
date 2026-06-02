@@ -17,8 +17,8 @@ func TestRootMethodFromPath(t *testing.T) {
 		path string
 		want string
 	}{
-		{"/v1/request/*path", "request"},
-		{"/v1/requestAsync/*path", "requestAsync"},
+		{"/api/v1/request/*path", "request"},
+		{"/api/v1/requestAsync/*path", "requestAsync"},
 		{"/api/nodes/:id", ""},
 		{"/health", ""},
 		{"", ""},
@@ -66,12 +66,12 @@ func TestGinMiddleware_V1Request(t *testing.T) {
 	m := New("receiver")
 	r := gin.New()
 	r.Use(GinMiddleware(m))
-	r.GET("/v1/request/*path", func(c *gin.Context) {
+	r.GET("/api/v1/request/*path", func(c *gin.Context) {
 		c.Status(http.StatusOK)
 	})
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest("GET", "/v1/request/demo/sub?q=1", nil))
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/request/demo/sub?q=1", nil))
 	require.Equal(t, http.StatusOK, w.Code)
 
 	body := scrape(t, m)
@@ -85,12 +85,12 @@ func TestGinMiddleware_V1RequestAsync(t *testing.T) {
 	m := New("receiver")
 	r := gin.New()
 	r.Use(GinMiddleware(m))
-	r.POST("/v1/requestAsync/*path", func(c *gin.Context) {
+	r.POST("/api/v1/requestAsync/*path", func(c *gin.Context) {
 		c.Status(http.StatusAccepted)
 	})
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest("POST", "/v1/requestAsync/demo", nil))
+	r.ServeHTTP(w, httptest.NewRequest("POST", "/api/v1/requestAsync/demo", nil))
 	require.Equal(t, http.StatusAccepted, w.Code)
 
 	body := scrape(t, m)
@@ -162,12 +162,12 @@ func TestGinMiddleware_StatusFromError(t *testing.T) {
 	m := New("receiver")
 	r := gin.New()
 	r.Use(GinMiddleware(m))
-	r.GET("/v1/request/*path", func(c *gin.Context) {
+	r.GET("/api/v1/request/*path", func(c *gin.Context) {
 		c.AbortWithStatus(http.StatusBadGateway)
 	})
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest("GET", "/v1/request/demo", nil))
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/request/demo", nil))
 	require.Equal(t, http.StatusBadGateway, w.Code)
 
 	body := scrape(t, m)

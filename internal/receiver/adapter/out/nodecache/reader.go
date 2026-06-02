@@ -104,7 +104,8 @@ SELECT
 	n.clickhouse_table, n.status, n.team_id,
 	n.log_request_body, n.log_response_body, n.log_headers,
 	n.logging_enabled, n.max_body_size_enabled, n.max_body_size,
-	n.created_at, n.updated_at
+	n.created_at, n.updated_at,
+	n.incoming_method, n.outgoing_method
 FROM nodes n
 JOIN teams t ON t.id = n.team_id
 WHERE t.slug = $1 AND n.path = $2`
@@ -114,6 +115,7 @@ func (r *Reader) getFromPg(ctx context.Context, teamSlug, path string) (*domain.
 
 	var n domain.Node
 	var rootMethod, urlMode, authType, authDynSrc, incomingAuth, status string
+	var incomingMethod, outgoingMethod string
 	var encAuth, encInc string
 	var created, updated time.Time
 
@@ -129,6 +131,7 @@ func (r *Reader) getFromPg(ctx context.Context, teamSlug, path string) (*domain.
 		&n.LogRequestBody, &n.LogResponseBody, &n.LogHeaders,
 		&n.LoggingEnabled, &n.MaxBodySizeEnabled, &n.MaxBodySize,
 		&created, &updated,
+		&incomingMethod, &outgoingMethod,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -138,6 +141,8 @@ func (r *Reader) getFromPg(ctx context.Context, teamSlug, path string) (*domain.
 	}
 
 	n.RootMethod = domain.RootMethod(rootMethod)
+	n.IncomingMethod = domain.HTTPMethod(incomingMethod)
+	n.OutgoingMethod = domain.HTTPMethod(outgoingMethod)
 	n.URLMode = domain.URLMode(urlMode)
 	n.AuthType = domain.AuthType(authType)
 	n.AuthDynamicSource = domain.AuthDynSource(authDynSrc)

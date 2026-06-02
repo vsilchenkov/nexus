@@ -327,6 +327,11 @@ func (a *App) Start(ctx context.Context) error {
 		RMQTest:       rmqTestHandler,
 	}, mw)
 
+	// Реверс-прокси боевых эндпоинтов Receiver (§17.1, единый вход): Web
+	// проксирует /api/v1/request|requestAsync|callback на Receiver. Иначе эти
+	// пути провалились бы в SPA-fallback и вернули index.html вместо ответа узла.
+	httpadapter.RegisterReceiverProxy(r, a.cfg.Web.ReceiverURL, a.logger)
+
 	// SPA fallback: всё, что не API/инфра — отдаём index.html (§17.1 ТЗ).
 	// Регистрируется ПОСЛЕ всех API-роутов, чтобы NoRoute переопределялся
 	// именно SPA-fallback'ом.

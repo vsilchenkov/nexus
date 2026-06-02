@@ -18,7 +18,7 @@ type rateAllower interface {
 }
 
 // RateLimitMiddleware применяет глобальный rate-limit per node:
-// ключ — первый сегмент path после /v1/request/ или /v1/requestAsync/.
+// ключ — первый сегмент path после /api/v1/request/ или /api/v1/requestAsync/.
 //
 // Если limit=0, middleware no-op. При недоступности Redis — fail-open
 // (§9.4 ТЗ).

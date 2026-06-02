@@ -79,8 +79,8 @@ curl -X POST http://localhost:8000/api/nodes -b cookies.txt \
 
 # создать таблицу в ClickHouse (схема из §4.3 ТЗ — TODO Phase 3 UI помощник)
 
-# отправить запрос через шину:
-curl -X POST http://localhost:8080/v1/request/test/echo \
+# отправить запрос через шину (единый вход через Web :8000; напрямую в Receiver :8080 тоже работает):
+curl -X POST http://localhost:8000/api/v1/request/test/echo \
   -H "Content-Type: application/json" \
   -d '{"hello":"world"}'
 ```
@@ -105,7 +105,8 @@ curl -X POST http://localhost:8080/v1/request/test/echo \
 
 ## API
 
-- Receiver `:8080` — `/v1/request/*`, `/v1/requestAsync/*`, `/health`, `/ready`, `/metrics`.
+- Receiver `:8080` — `/api/v1/request/*`, `/api/v1/requestAsync/*`, `/api/v1/callback/*`, `/health`, `/ready`, `/metrics`.
+  Боевой трафик идёт через единый вход Web (`:8000`, те же `/api/v1/*` проксируются в Receiver).
 - Sender `:9090` (gRPC SenderService) + admin `:9091` (`/health`, `/ready`, `/metrics`).
 - Web `:8000` — `/api/*`, SPA fallback, `/health`, `/ready`, `/metrics`.
 

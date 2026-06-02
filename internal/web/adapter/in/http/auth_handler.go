@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"nexus/internal/domain"
+	"nexus/internal/platform/clientip"
 	"nexus/internal/platform/config"
 	"nexus/internal/platform/i18n"
 	"nexus/internal/platform/logging"
@@ -83,7 +84,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	token, user, err := h.uc.Login(c.Request.Context(), req.Login, req.Password, c.ClientIP())
+	token, user, err := h.uc.Login(c.Request.Context(), req.Login, req.Password, clientip.NormalizeIPv4(c.ClientIP()))
 	if err != nil {
 		lang := i18n.FromGin(c)
 		switch {

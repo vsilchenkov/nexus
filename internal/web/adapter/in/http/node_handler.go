@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"nexus/internal/domain"
+	"nexus/internal/platform/clientip"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase"
 	"nexus/internal/web/usecase/port"
@@ -132,7 +133,7 @@ func (h *NodeHandler) Create(c *gin.Context) {
 // гарантированно ставит сессию в ctx до handler'а.
 func actorFromCtx(c *gin.Context) usecase.Actor {
 	a := usecase.SystemActor()
-	a.IPAddress = c.ClientIP()
+	a.IPAddress = clientip.NormalizeIPv4(c.ClientIP())
 	if s, ok := sessionFromCtx(c); ok {
 		a.UserID = s.UserID
 		a.TeamID = s.CurrentTeamID

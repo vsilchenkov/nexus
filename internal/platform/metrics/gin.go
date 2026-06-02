@@ -15,7 +15,7 @@ import (
 // сразу группирует /api/nodes/:id и подобные в один ряд, а не плодит
 // кардинальность по id.
 //
-// node = path-параметр после /v1/request/.../ для V1, либо "" для остальных.
+// node = path-параметр после /api/v1/request/.../ для V1, либо "" для остальных.
 //
 // /metrics и /health не учитываются, чтобы не зашумлять данные.
 func GinMiddleware(m *Metrics) gin.HandlerFunc {
@@ -45,9 +45,9 @@ func GinMiddleware(m *Metrics) gin.HandlerFunc {
 // Для всех остальных возвращает "" (caller подставит свой fallback).
 func rootMethodFromPath(fullPath string) string {
 	switch fullPath {
-	case "/v1/request/*path":
+	case "/api/v1/request/*path":
 		return "request"
-	case "/v1/requestAsync/*path":
+	case "/api/v1/requestAsync/*path":
 		return "requestAsync"
 	}
 	return ""

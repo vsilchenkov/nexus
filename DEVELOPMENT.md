@@ -193,7 +193,8 @@ docker compose -f deploy/docker-compose.deps.yml up -d
 - Web UI / API → `http://localhost:8000`
 - Swagger UI → `http://localhost:8000/swagger/web/index.html` (Web API),
   `http://localhost:8000/swagger/receiver/index.html` (Receiver API)
-- Receiver → `http://localhost:8080/v1/request/*`, `http://localhost:8080/v1/requestAsync/*`
+- Receiver → `http://localhost:8080/api/v1/request/*`, `http://localhost:8080/api/v1/requestAsync/*`
+  (боевой трафик в проде идёт через единый вход Web `:8000/api/v1/*`, который проксирует в Receiver)
 - Sender admin → `http://localhost:9091/health` (сам gRPC SenderService — на `:9090`)
 
 Логин в UI: `admin` + пароль, заданный на шаге 3.

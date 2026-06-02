@@ -143,6 +143,11 @@
       "sync_desc": "sync, ждём ответ узла",
       "async_desc": "в Kafka, 200 сразу",
       "rmq_desc": "забор из очереди RabbitMQ",
+      "incoming_method": "Входящий метод",
+      "incoming_method_hint": "HTTP-метод, который принимает узел; остальные получают 405",
+      "outgoing_method": "Исходящий метод",
+      "outgoing_method_hint": "HTTP-метод вызова получателя",
+      "full_address": "Полный адрес",
       "state": "Состояние",
       "url_static": "Статичный",
       "url_static_desc": "адрес из Target URL",
@@ -575,7 +580,9 @@
     "save": "Сохранить",
     "close": "Закрыть",
     "edit": "Изменить",
-    "delete": "Удалить"
+    "delete": "Удалить",
+    "copy": "Скопировать",
+    "copied": "Скопировано"
   },
   "error_boundary": {
     "title": "Что-то пошло не так",

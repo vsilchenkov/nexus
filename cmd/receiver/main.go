@@ -5,9 +5,9 @@
 // @version       1.0
 // @description   Публичный HTTP-вход шины данных (§3 ТЗ). Принимает входящие
 // @description   запросы клиентов, маршрутизирует по конфигу узла (path) и
-// @description   проксирует на внешний адрес синхронно (/v1/request) либо
-// @description   ставит в очередь Kafka асинхронно (/v1/requestAsync).
-// @description   Префикс /v1/ обязателен. Контракт зависит от конфигурации
+// @description   проксирует на внешний адрес синхронно (/api/v1/request) либо
+// @description   ставит в очередь Kafka асинхронно (/api/v1/requestAsync).
+// @description   Префикс /api/v1/ обязателен. Контракт зависит от конфигурации
 // @description   конкретного узла в админке.
 // @basePath      /
 // @schemes       http https

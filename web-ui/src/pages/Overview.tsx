@@ -232,7 +232,8 @@ function NodeTable({
   const status = useStatus();
   return (
     <Card className="overflow-hidden p-0">
-      <table className="w-full text-[12.5px]">
+      <div className="overflow-x-auto">
+      <table className="w-full min-w-[640px] text-[12.5px]">
         <thead>
           <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-fg-muted">
             <th className="px-3 py-2 font-medium">{t("overview.table.path")}</th>
@@ -278,6 +279,7 @@ function NodeTable({
           })}
         </tbody>
       </table>
+      </div>
     </Card>
   );
 }

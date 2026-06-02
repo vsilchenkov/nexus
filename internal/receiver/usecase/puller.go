@@ -305,10 +305,14 @@ func (w *PullerWorker) buildPayload(msg RMQDelivery) ([]byte, error) {
 	headers["X-Nexus-Source"] = "rabbitmq"
 	headers["X-Nexus-Routing-Key"] = msg.RoutingKey
 
+	outMethod := string(w.node.OutgoingMethod) // §3.2 (#5): метод вызова получателя
+	if outMethod == "" {
+		outMethod = "POST"
+	}
 	env := &Envelope{
 		ID:         w.msgID(msg),
 		NodePath:   w.node.Path,
-		Method:     "POST", // §27.3: в v1 только POST
+		Method:     outMethod,
 		TargetURL:  targetURL,
 		AuthHeader: authHeader,
 		Headers:    headers,

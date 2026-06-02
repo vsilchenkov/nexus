@@ -19,6 +19,13 @@ type Node struct {
 	Path       string
 	RootMethod RootMethod
 
+	// §3.2: HTTP-метод узла. IncomingMethod — метод, который узел принимает на
+	// вход (иначе 405); OutgoingMethod — метод, которым Sender вызывает
+	// получателя. Оба по умолчанию POST. Для pull-узлов (RabbitMQAsync)
+	// IncomingMethod неприменим (входящего HTTP-запроса нет).
+	IncomingMethod HTTPMethod
+	OutgoingMethod HTTPMethod
+
 	URLMode         URLMode
 	TargetURL       string
 	URLParamName    string
@@ -141,6 +148,15 @@ func (n *Node) Validate() error {
 	if !n.RootMethod.Valid() {
 		return ErrNodeInvalidRootMethod
 	}
+	// Пустой метод допустим — это «использовать дефолт POST» (SetDefaults
+	// заполнит, БД-колонка NOT NULL DEFAULT 'POST', methodMatches трактует
+	// пустое как POST). Непустое значение должно быть из допустимого множества.
+	if n.IncomingMethod != "" && !n.IncomingMethod.Valid() {
+		return ErrNodeInvalidIncomingMethod
+	}
+	if n.OutgoingMethod != "" && !n.OutgoingMethod.Valid() {
+		return ErrNodeInvalidOutgoingMethod
+	}
 	if !n.URLMode.Valid() {
 		return ErrNodeInvalidURLMode
 	}
@@ -251,6 +267,12 @@ func (n *Node) validateRMQ() error {
 // Вызывается до Validate в usecase.Create — чтобы пользователь мог
 // прислать минимальный JSON и получить рабочий узел.
 func (n *Node) SetDefaults() {
+	if n.IncomingMethod == "" {
+		n.IncomingMethod = HTTPMethodPOST
+	}
+	if n.OutgoingMethod == "" {
+		n.OutgoingMethod = HTTPMethodPOST
+	}
 	if n.URLMode == "" {
 		n.URLMode = URLModeStatic
 	}

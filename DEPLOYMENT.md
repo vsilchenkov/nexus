@@ -15,8 +15,8 @@ Nexus — три stateless Go-сервиса плюс набор хранили�
 
 | Сервис     | Порт(ы)                         | Назначение                                            |
 |------------|---------------------------------|-------------------------------------------------------|
-| `web`      | `8000`                          | REST API `/api/*`, SPA-админка, Swagger UI            |
-| `receiver` | `8080`                          | Приём `/v1/request/*`, `/v1/requestAsync/*`, `/v1/callback/*` |
+| `web`      | `8000`                          | REST API `/api/*`, SPA-админка, Swagger UI, единый вход боевого трафика (`/api/v1/*` → проксируется в Receiver) |
+| `receiver` | `8080`                          | Приём `/api/v1/request/*`, `/api/v1/requestAsync/*`, `/api/v1/callback/*` |
 | `sender`   | `9090` (gRPC) + `9093→9091` (admin/health/metrics) | Доставка во внешние URL, запись логов в ClickHouse |
 
 | Зависимость | Версия | Порт(ы)        | Для чего                                      |

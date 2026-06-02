@@ -60,7 +60,7 @@ func routeName(c *gin.Context) string {
 	return c.Request.URL.Path
 }
 
-// nodePathFromGin — для /v1/request/*path и /v1/requestAsync/*path
+// nodePathFromGin — для /api/v1/request/*path и /api/v1/requestAsync/*path
 // возвращает значение path-параметра без ведущего слеша.
 func nodePathFromGin(c *gin.Context) string {
 	p := c.Param("path")
@@ -76,9 +76,9 @@ func nodePathFromGin(c *gin.Context) string {
 func rootMethod(c *gin.Context) string {
 	full := c.FullPath()
 	switch full {
-	case "/v1/request/*path":
+	case "/api/v1/request/*path":
 		return "request"
-	case "/v1/requestAsync/*path":
+	case "/api/v1/requestAsync/*path":
 		return "requestAsync"
 	}
 	return ""

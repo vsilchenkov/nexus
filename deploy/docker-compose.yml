@@ -132,6 +132,28 @@ services:
       - "9091:9090"
     networks: [nexus_net]
 
+  # RabbitMQ — только для ручного тестирования узлов RabbitMQAsync на стенде
+  # (docs/STAND_TESTING.md). Под профилем `stand`, чтобы обычный
+  # `docker compose up` его не поднимал. Запуск: добавить `--profile stand`.
+  # Management UI: http://localhost:15672 (guest/guest).
+  rabbitmq:
+    profiles: ["stand"]
+    image: rabbitmq:3.13-management-alpine
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RMQ_PASSWORD:-guest}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks: [nexus_net]
+
   receiver:
     build:
       context: ..

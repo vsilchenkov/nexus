@@ -19,14 +19,16 @@
 
 ### 3.1 Эндпоинты
 
-Два корневых маршрута — `/v1/request` и `/v1/requestAsync`. К корню добавляется путь конкретного узла, настроенный через UI:
+Два корневых маршрута — `/api/v1/request` и `/api/v1/requestAsync`. К корню добавляется путь конкретного узла, настроенный через UI:
 
 ```
-POST /v1/request/{node_path}        — синхронный
-POST /v1/requestAsync/{node_path}   — асинхронный
+POST /api/v1/request/{node_path}        — синхронный
+POST /api/v1/requestAsync/{node_path}   — асинхронный
 ```
 
-Примеры: `/v1/request/webhook/send`, `/v1/requestAsync/geo/notify`.
+Примеры: `/api/v1/request/webhook/send`, `/api/v1/requestAsync/geo/notify`.
+
+Боевой трафик идёт через единый вход Web Service (тот же хост, что и админка): Web реверс-проксирует `/api/v1/request|requestAsync|callback` в Receiver. Префикс `/api` обязателен — иначе запрос провалится в SPA-fallback и вернёт `index.html`.
 
 Глубина `node_path` произвольная (один или несколько сегментов через `/`).
 
@@ -62,6 +64,8 @@ Web Service API (см. §11) — внутренний контракт адми�
 
 - `path` — путь после корня (`webhook/send`)
 - `root_method` — `request` либо `requestAsync`
+- `incoming_method` — HTTP-метод, который узел принимает на вход (`GET`/`POST`/`PUT`/`DELETE`, по умолчанию `POST`); другой метод → `405 Method Not Allowed`. Неприменим для pull-узлов, не проверяется для callback (webhook).
+- `outgoing_method` — HTTP-метод вызова получателя (`GET`/`POST`/`PUT`/`DELETE`, по умолчанию `POST`); всегда диктует метод исходящего запроса.
 - `url_mode` — режим определения целевого URL (см. §3.4): `static` (по умолчанию) или `from_request`
 - `target_url` — статичный адрес перенаправления (используется при `url_mode = static`; при `from_request` игнорируется)
 - `url_param_name` — имя query-параметра, в котором клиент передаёт URL (по умолчанию `url_base`, можно переопределить)
@@ -1772,7 +1776,7 @@ s.logger.ErrorWithOp("kafka publish failed", err, "sender.publishAsync",
 - Consumer коммитит offset только после успешной доставки во внешний узел (`enable.auto.commit=false`); при рестарте Sender'а в середине обработки сообщения оно обрабатывается повторно, потерь нет.
 - В Settings → Language выбор «Русский» переключает UI без перезагрузки, сохраняется в `users.lang` и подтягивается при следующем входе; язык по умолчанию для нового пользователя — English (либо определяется по `Accept-Language`, если содержит `ru`).
 - Серверные ответы API учитывают заголовок `Accept-Language` и возвращают тексты ошибок на соответствующем языке; логи в ClickHouse, stderr и метрики Prometheus остаются на английском.
-- Все эндпоинты Receiver доступны только с префиксом `/v1/` (`/v1/request/...`, `/v1/requestAsync/...`); запрос без префикса возвращает 404 с подсказкой использовать `/v1/`. gRPC-сервис зарегистрирован с пакетом `nexus.sender.v1`.
+- Все эндпоинты Receiver доступны только с префиксом `/api/v1/` (`/api/v1/request/...`, `/api/v1/requestAsync/...`); запрос без префикса возвращает 404 с подсказкой использовать `/api/v1/`. Боевой трафик идёт через единый вход Web (`/api/v1/*` проксируется в Receiver). gRPC-сервис зарегистрирован с пакетом `nexus.sender.v1`.
 - Валидация полей узла (см. таблицу лимитов в §3.3) отвергает превышение длины / неверный формат с 400 Bad Request и понятным сообщением; БД-constraint'ы дополнительно защищают от обхода API.
 - При достижении `nodes_soft_limit` в UI появляется баннер на странице создания узла; при достижении `nodes_hard_limit` API возвращает 400 с сообщением о превышении лимита.
 - В ClickHouse-таблице узла поля `attempts` и `attempts_details` заполняются корректно: `attempts >= 1` всегда, `attempts_details` пустая строка при успехе с первой попытки, JSON-массив со всеми деталями попыток при наличии ретраев или ошибке.

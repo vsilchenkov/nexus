@@ -1,5 +1,9 @@
 # TESTING.md — процедура запуска тестов Nexus
 
+> **Ручное сквозное тестирование на стенде** (поднять весь стек, создать узлы
+> всех типов, прогнать по 500 запросов, проверить UI/логи/метрики) — отдельная
+> пошаговая инструкция со скриптами: [docs/STAND_TESTING.md](docs/STAND_TESTING.md).
+
 ## Unit-тесты
 
 ```bash
@@ -244,7 +248,8 @@ pipeline'е (push в любую ветку) job `loadtest` создаётся к
 |----------------------------------|--------------------------------------------------|
 | `port already in use`            | освободить или поменять адрес в config_debug.yml |
 | Receiver 401 на запросе с узлом  | `incoming_auth_type=none` или верные креды       |
-| Receiver 404 на /v1/request/...  | узел существует и `status=enabled`               |
+| Receiver 404 на /api/v1/request/...  | узел существует и `status=enabled`           |
+| В ответ на запрос приходит HTML index.html | используешь `/api/v1/...` (не старый `/v1/...`); запрос идёт на Web `:8000` или Receiver `:8080` |
 | Sender DLQ заполняется           | внешний URL отвечает; CB не открыт; см. attempts_details |
 | Loadtest fail: rps < target      | проверить max_idle_conns_per_host в http-клиенте Sender; ограничения Receiver (read/write_timeout) |
 | `migration "dirty"`              | `psql ... SELECT * FROM schema_migrations`; вручную поправить, force-сбросить |
