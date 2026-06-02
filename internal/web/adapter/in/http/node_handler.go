@@ -10,6 +10,7 @@ import (
 
 	"nexus/internal/domain"
 	"nexus/internal/platform/clientip"
+	"nexus/internal/platform/i18n"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase"
 	"nexus/internal/web/usecase/port"
@@ -258,9 +259,15 @@ func (h *NodeHandler) replyDomainError(c *gin.Context, err error, op string) {
 	case errors.Is(err, domain.ErrLimitReached):
 		localizedError(c, http.StatusBadRequest, "node.limit_reached")
 	case isValidationError(err):
-		// Сообщение валидации содержит конкретное имя поля — передаём как есть;
-		// локализация валидации полей — отдельная работа (Phase 6).
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		// §28 Пункт 5: локализованное сообщение + код + имя поля для inline-вывода
+		// у конкретного поля формы. "error" — fallback, "code" фронт переводит в
+		// языке UI, "field" подсвечивает поле.
+		code, field, _ := nodeValidationCode(err)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": i18n.Translate(i18n.FromGin(c), code),
+			"code":  code,
+			"field": field,
+		})
 	default:
 		h.replyServerError(c, err, op)
 	}
@@ -272,26 +279,10 @@ func (h *NodeHandler) replyServerError(c *gin.Context, err error, op string) {
 	localizedError(c, http.StatusInternalServerError, "error.internal")
 }
 
-// isValidationError — все доменные ошибки валидации полей Node.
+// isValidationError — доменная ошибка валидации поля Node. Единый источник —
+// карта nodeValidationErrors (node_validation.go): если ошибка в ней есть,
+// это валидация конкретного поля.
 func isValidationError(err error) bool {
-	for _, target := range []error{
-		domain.ErrNodeInvalidRootMethod, domain.ErrNodeInvalidURLMode,
-		domain.ErrNodeInvalidAuthType, domain.ErrNodeInvalidIncomingAuthType,
-		domain.ErrNodeInvalidAuthDynSource, domain.ErrNodeInvalidStatus,
-		domain.ErrNodePathLength, domain.ErrNodePathFormat,
-		domain.ErrNodeTargetURLLength, domain.ErrNodeStaticNeedsTargetURL,
-		domain.ErrNodeParamNameLength, domain.ErrNodeParamNameFormat,
-		domain.ErrNodeAuthDynFieldLength, domain.ErrNodeAuthDynFieldFormat,
-		domain.ErrNodeTimeoutRange, domain.ErrNodeRetryCountRange,
-		domain.ErrNodeRetryBackoffRange, domain.ErrNodeAllowedHostsSize,
-		domain.ErrNodeForwardHeadersSize,
-		domain.ErrNodeRMQHostRequired, domain.ErrNodeRMQQueueInvalid,
-		domain.ErrNodePullIntervalRange, domain.ErrNodePullBatchRange,
-		domain.ErrNodePullPrefetchRange,
-	} {
-		if errors.Is(err, target) {
-			return true
-		}
-	}
-	return false
+	_, _, ok := nodeValidationCode(err)
+	return ok
 }

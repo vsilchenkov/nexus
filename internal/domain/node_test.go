@@ -103,6 +103,26 @@ func TestNode_Validate_Errors(t *testing.T) {
 	}
 }
 
+func TestNode_Validate_LoggingRequiresTable(t *testing.T) {
+	// §28 Пункт 5: логирование включено, но имя таблицы не задано → ошибка.
+	n := &Node{Path: "x", RootMethod: RootMethodRequest, TargetURL: "https://example.com", LoggingEnabled: true}
+	n.SetDefaults()
+	if err := n.Validate(); !errors.Is(err, ErrNodeLogsNotConfigured) {
+		t.Fatalf("want ErrNodeLogsNotConfigured, got %v", err)
+	}
+	// С таблицей — ок.
+	n.ClickHouseTable = "nexus_default.x"
+	if err := n.Validate(); err != nil {
+		t.Fatalf("with table want nil, got %v", err)
+	}
+	// Логирование выключено — таблица не требуется.
+	n2 := &Node{Path: "y", RootMethod: RootMethodRequest, TargetURL: "https://example.com", LoggingEnabled: false}
+	n2.SetDefaults()
+	if err := n2.Validate(); err != nil {
+		t.Fatalf("logging off want nil, got %v", err)
+	}
+}
+
 func TestNode_Validate_RabbitMQAsync(t *testing.T) {
 	base := func() *Node {
 		n := &Node{
