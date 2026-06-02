@@ -250,6 +250,44 @@ done
 | Сервис падает с exit 1 «invalid ENCRYPTION_KEY» при `make run-*` | нативный запуск не видит `.env` — экспортируйте `ENCRYPTION_KEY` в окружение (см. Вариант B) |
 | Логи/метрики узла: `clickhouse search: code 60 ... Unknown table` | таблица логов не создана — убедитесь, что есть дефолтный CH-шаблон (узел без `clickhouse_template_id` берёт его); фикс #7 §28 |
 | `node not found` на адресе с путём-со-слешем | бейте по адресу как в UI; фикс #8 §28 резолвит legacy-путь в default-команде |
+| `web listen: ... :8000: bind: Only one usage of each socket address` (или `address already in use`) | На порту уже висит **старый** экземпляр сервиса с прошлого прогона — стенд не был выключен. Завершите его (см. §5) и запускайте заново |
+
+---
+
+## 5. Завершение: ОБЯЗАТЕЛЬНО выключить стенд после тестов
+
+> **Правило.** Любой прогон на стенде (ручной или автоматический, в т.ч. агентом Claude Code)
+> **завершается выключением** поднятых сервисов. Иначе следующий запуск падает на
+> `bind: Only one usage of each socket address ... :8000` (порт занят зависшим Web), а лишние
+> процессы тихо едят ресурсы и искажают метрики.
+
+**Нативные сервисы (Вариант B).** Если запускали `make run-{receiver,sender,web}` в терминалах —
+закройте их `Ctrl+C`. Если процессы зависли/запускались в фоне (или это был временный экземпляр
+для проверки) — снять по имени образа:
+
+```powershell
+# Windows (PowerShell): гасит web/sender/receiver и временные бинари проверки
+taskkill /IM web.exe /F; taskkill /IM sender.exe /F; taskkill /IM receiver.exe /F
+# проверить, что порты свободны (пусто = всё выключено):
+netstat -ano | findstr ":8000 :8080 :9091 :9190"
+```
+
+```bash
+# Linux/macOS:
+pkill -f 'cmd/web' ; pkill -f 'cmd/sender' ; pkill -f 'cmd/receiver'
+```
+
+echosrv (`go run ./cmd/echosrv`) тоже закрыть (`Ctrl+C` / `taskkill /IM echosrv.exe /F`).
+
+**Docker-стек (Вариант A).** `make docker-down` (остановит receiver/sender/web + зависимости).
+
+**Зависимости (PostgreSQL/Redis/ClickHouse/Kafka/Prometheus/RabbitMQ).** Это инфраструктура, а не
+сам «стенд» — по умолчанию **оставляем поднятой** (данные в volume'ах сохраняются). Остановить при
+необходимости: `make docker-down` (профиль базового compose) либо `docker compose -f <ваш-файл> down`
+для внешнего deps-стека.
+
+> Для агента Claude Code: если в ходе задачи ты сам поднимал сервисы стенда (включая временные
+> экземпляры на других портах), **в конце задачи погаси их** и убедись, что порты освобождены.
 
 См. также общий [TESTING.md](../TESTING.md) (unit/integration/loadtest) и
 [DEVELOPMENT.md](../DEVELOPMENT.md) (локальный запуск).
