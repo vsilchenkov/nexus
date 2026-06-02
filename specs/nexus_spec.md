@@ -2978,3 +2978,37 @@ API метрик принимает `range` или `from`/`to`. Prometheus-ме�
 
 `resolveNode` в Receiver при miss и угаданном слоге повторяет резолв как
 `(default-team, "<slug>/<path>")`. Применяется в sync и async.
+
+## 29. Комментарий узла (описание для команды)
+
+### 29.1. Зачем
+
+При десятках узлов трудно понять назначение каждого. Поле «комментарий» — простое
+текстовое описание узла для внутреннего использования командой. Это UI-метаданные:
+в маршрутизации запросов не участвует, внешним клиентам не отдаётся.
+
+### 29.2. Модель данных
+
+Колонка `comment TEXT NOT NULL DEFAULT '' CHECK (length(comment) <= 2000)` в таблице
+`nodes` (миграция `0016_node_comment`). Домен — `domain.Node.Comment string`,
+валидация в `Validate()` по рунам (`utf8.RuneCountInString <= 2000`, совпадает с
+PG-CHECK и DTO-binding), ошибка `ErrNodeCommentLength`.
+
+### 29.3. API
+
+`comment` в `CreateNodeRequest`/`UpdateNodeRequest` (`binding:"omitempty,max=2000"`) и
+`NodeResponse`; мапперы `reqToDomain`/`nodeToResponse`. Swagger перегенерирован.
+
+### 29.4. UI
+
+Отдельный блок «Комментарий» в самом низу формы узла (`Textarea`, rows=4,
+maxLength=2000); read-only показ на вкладке «Обзор» узла, если задан. i18n-ключи
+`node.form.comment*` (ru/en).
+
+### 29.5. Receiver
+
+Receiver не использует `comment` (поле не участвует в маршрутизации).
+
+### 29.6. Out of scope (v1)
+
+История изменений, упоминания/уведомления, отдельные права на правку комментария.

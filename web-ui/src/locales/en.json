@@ -233,7 +233,11 @@
       "max_body_size": "Max body size",
       "max_body_hint": "max characters; request/response are truncated to this value",
       "preview": "Route preview",
-      "ssrf_warn": "\"From request\" mode: fill the host allowlist to prevent SSRF. Do not leave it empty in production."
+      "ssrf_warn": "\"From request\" mode: fill the host allowlist to prevent SSRF. Do not leave it empty in production.",
+      "comment": "Comment",
+      "comment_label": "Node description",
+      "comment_hint": "internal note for your team; not visible to external clients",
+      "comment_placeholder": "E.g., integration with system X, sends order events…"
     },
     "rmq": {
       "source": "RabbitMQ — source",

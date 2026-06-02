@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"regexp"
 	"time"
+	"unicode/utf8"
 )
 
 // Node — узел перенаправления (§3.3 ТЗ).
@@ -82,6 +83,10 @@ type Node struct {
 	PullIntervalSec int32
 	PullBatchSize   int32
 	PullPrefetch    int32
+
+	// §29: произвольный комментарий-описание узла (UI-метаданные, не участвует
+	// в маршрутизации). Необязательное, максимум 2000 символов.
+	Comment string
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -230,6 +235,11 @@ func (n *Node) Validate() error {
 	}
 	if n.MaxBodySize < 0 || n.MaxBodySize > 10_000_000 {
 		return ErrNodeMaxBodySizeRange
+	}
+	// §29: лимит по рунам (символам) — совпадает с PG CHECK length(comment) и
+	// с DTO-binding max (validator считает руны), без расхождений для кириллицы.
+	if utf8.RuneCountInString(n.Comment) > 2000 {
+		return ErrNodeCommentLength
 	}
 	if n.MaxBodySizeEnabled && n.MaxBodySize <= 0 {
 		return ErrNodeMaxBodySizeRequired

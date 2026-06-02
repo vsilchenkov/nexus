@@ -393,6 +393,19 @@
 
 ---
 
+### §29 Комментарий узла
+
+ТЗ — [sections/29-node-comment.md](sections/29-node-comment.md). Ветка `feature/node-comment`.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| Колонка `comment` + домен + валидация (≤2000 рун) | ✅ Phase 29.A | миграция [0016](../migrations/0016_node_comment.up.sql), [domain/node.go](../internal/domain/node.go) (`Comment`, `utf8.RuneCountInString`), `ErrNodeCommentLength` [errors.go](../internal/domain/errors.go) |
+| PG repo + DTO + Swagger | ✅ Phase 29.A | comment последней колонкой в [node_repo.go](../internal/web/adapter/out/postgres/node_repo.go) (INSERT/UPDATE/scan), [dto.go](../internal/web/adapter/in/http/dto.go) (req/resp+мапперы); тесты [node_test.go](../internal/domain/node_test.go), [node_repo_test.go](../tests/integration/node_repo_test.go) |
+| UI: блок в форме + показ на «Обзоре» + i18n | ✅ Phase 29.B | [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx) (Card+Textarea внизу формы), [OverviewTab.tsx](../web-ui/src/components/node/OverviewTab.tsx) (read-only), `node.form.comment*` ([locales](../web-ui/src/locales/)) |
+| Багфикс: ключ node-кеша Web = формату Receiver | ✅ Phase Fix.B | [redis/node_cache.go](../internal/web/adapter/out/redis/node_cache.go) (`node:<DefaultTeamSlug>:<path>`) — см. §4.26 |
+
+---
+
 ## 3. Где что лежит — карта каталогов
 
 ```text
@@ -1048,6 +1061,23 @@ filter, Create без TeamID). До блока B (team-switcher в сессии)
 - **`basic.get` поллинг, не `basic.consume`.** v1 — простой предсказуемый поллинг с manual ack
   (push-consumer — §27.14 v2). `QueueDeclarePassive` при Connect проверяет существование очереди (404
   → backoff/degraded, не создаём).
+
+### 4.26 §29 — комментарий узла и багфикс ключа node-кеша
+
+- **`comment` — только метаданные UI.** Не участвует в маршрутизации, Receiver его не читает
+  (в SELECT `nodecache` не добавлен). Лимит валидируется по **рунам** (`utf8.RuneCountInString`),
+  а не байтам, чтобы совпадать с PG-`CHECK length()` (символы) и DTO-binding `max` (validator
+  считает руны) — иначе 2000 кириллических символов давали бы расхождение «прошёл binding/PG, но
+  отверг домен».
+- **Багфикс рассинхронизации ключа node-кеша (Fix.B).** Web писал/инвалидировал Redis-ключ
+  `node:<path>` ([redis/node_cache.go](../internal/web/adapter/out/redis/node_cache.go)), а Receiver
+  читает `node:<team_slug>:<path>` (формат разошёлся после ввода `team_slug` в Phase 10.1, см. §10.E.1).
+  Из-за этого write-through и инвалидация из Web **не доходили** до ключа Receiver, и изменения узла
+  вступали в силу только по истечении Redis-TTL Receiver (`Redis.NodeTTLSec`=300с) — до 5 минут.
+  Фикс: Web строит ключ через `domain.DefaultTeamSlug` (`node:default:<path>`) — идентично Receiver.
+  В v1 команда всегда `default` (§0), поэтому достаточно; **v2 multi-tenancy** потребует резолва
+  реального slug команды узла в этом адаптере (образец — `resolveCHDatabase` в `usecase/node.go`).
+  После фикса изменения вступают в силу ≤ ~2с (L2 in-memory TTL Receiver).
 
 ### 4.24 §25 — два swagger одним Web-бинарём
 

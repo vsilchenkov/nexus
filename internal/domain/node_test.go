@@ -3,6 +3,7 @@ package domain
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -76,6 +77,12 @@ func TestNode_Validate_OK(t *testing.T) {
 	if err := n.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	// §29: лимит комментария — по рунам (символам). 2000 кириллических символов
+	// (4000 байт) обязаны проходить, иначе лимит ошибочно считался бы по байтам.
+	n.Comment = strings.Repeat("я", 2000)
+	if err := n.Validate(); err != nil {
+		t.Fatalf("comment of 2000 runes must pass, got %v", err)
+	}
 }
 
 func TestNode_Validate_Errors(t *testing.T) {
@@ -89,6 +96,7 @@ func TestNode_Validate_Errors(t *testing.T) {
 		{"static without url", func(n *Node) { n.TargetURL = "" }, ErrNodeStaticNeedsTargetURL},
 		{"bad timeout", func(n *Node) { n.TimeoutMs = 1 }, ErrNodeTimeoutRange},
 		{"bad retry", func(n *Node) { n.RetryCount = 999 }, ErrNodeRetryCountRange},
+		{"comment too long", func(n *Node) { n.Comment = strings.Repeat("я", 2001) }, ErrNodeCommentLength},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

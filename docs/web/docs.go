@@ -3328,6 +3328,10 @@ const docTemplate = `{
                 "clickhouse_template_id": {
                     "type": "string"
                 },
+                "comment": {
+                    "type": "string",
+                    "maxLength": 2000
+                },
                 "forward_headers": {
                     "type": "array",
                     "items": {
@@ -3582,6 +3586,9 @@ const docTemplate = `{
                 "clickhouse_template_id": {
                     "type": "string"
                 },
+                "comment": {
+                    "type": "string"
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -3803,6 +3810,10 @@ const docTemplate = `{
                 },
                 "clickhouse_template_id": {
                     "type": "string"
+                },
+                "comment": {
+                    "type": "string",
+                    "maxLength": 2000
                 },
                 "forward_headers": {
                     "type": "array",

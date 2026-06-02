@@ -50,7 +50,7 @@ const nodeColumns = `
 	created_at, updated_at, clickhouse_template_id,
 	rmq_host, rmq_port, rmq_vhost, rmq_user, rmq_password, rmq_queue, rmq_use_tls,
 	pull_interval_sec, pull_batch_size, pull_prefetch,
-	incoming_method, outgoing_method`
+	incoming_method, outgoing_method, comment`
 
 func (r *NodeRepoPg) Get(ctx context.Context, id string) (*domain.Node, error) {
 	row := r.db.QueryRow(ctx, `SELECT `+nodeColumns+` FROM nodes WHERE id = $1`, id)
@@ -140,7 +140,7 @@ INSERT INTO nodes (
 	clickhouse_template_id,
 	rmq_host, rmq_port, rmq_vhost, rmq_user, rmq_password, rmq_queue, rmq_use_tls,
 	pull_interval_sec, pull_batch_size, pull_prefetch,
-	incoming_method, outgoing_method
+	incoming_method, outgoing_method, comment
 ) VALUES (
 	$1, $2,
 	$3, $4, $5, $6,
@@ -155,7 +155,7 @@ INSERT INTO nodes (
 	$30,
 	$31, $32, $33, $34, $35, $36, $37,
 	$38, $39, $40,
-	$41, $42
+	$41, $42, $43
 ) RETURNING id, created_at, updated_at`
 
 	err = r.db.QueryRow(ctx, q,
@@ -172,7 +172,7 @@ INSERT INTO nodes (
 		nullUUID(n.ClickHouseTemplateID),
 		rmq.host, rmq.port, rmq.vhost, rmq.user, encRMQ, rmq.queue, n.RMQUseTLS,
 		rmq.interval, rmq.batch, rmq.prefetch,
-		methodOrDefault(n.IncomingMethod), methodOrDefault(n.OutgoingMethod),
+		methodOrDefault(n.IncomingMethod), methodOrDefault(n.OutgoingMethod), n.Comment,
 	).Scan(&n.ID, &n.CreatedAt, &n.UpdatedAt)
 
 	if err != nil {
@@ -216,7 +216,7 @@ UPDATE nodes SET
 	rmq_host = $32, rmq_port = $33, rmq_vhost = $34, rmq_user = $35,
 	rmq_password = $36, rmq_queue = $37, rmq_use_tls = $38,
 	pull_interval_sec = $39, pull_batch_size = $40, pull_prefetch = $41,
-	incoming_method = $42, outgoing_method = $43,
+	incoming_method = $42, outgoing_method = $43, comment = $44,
 	updated_at = now()
 WHERE id = $1
 RETURNING updated_at`
@@ -236,7 +236,7 @@ RETURNING updated_at`
 		nullUUID(n.ClickHouseTemplateID),
 		rmq.host, rmq.port, rmq.vhost, rmq.user, encRMQ, rmq.queue, n.RMQUseTLS,
 		rmq.interval, rmq.batch, rmq.prefetch,
-		methodOrDefault(n.IncomingMethod), methodOrDefault(n.OutgoingMethod),
+		methodOrDefault(n.IncomingMethod), methodOrDefault(n.OutgoingMethod), n.Comment,
 	).Scan(&n.UpdatedAt)
 
 	if err != nil {
@@ -342,7 +342,7 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 		&created, &updated, &templateID,
 		&rmqHost, &rmqPort, &rmqVHost, &rmqUser, &encRMQ, &rmqQueue, &n.RMQUseTLS,
 		&pullInterval, &pullBatch, &pullPrefetch,
-		&incomingMethod, &outgoingMethod,
+		&incomingMethod, &outgoingMethod, &n.Comment,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

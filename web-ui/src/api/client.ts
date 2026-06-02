@@ -74,6 +74,8 @@ export type Node = {
   logging_enabled: boolean;
   max_body_size_enabled: boolean;
   max_body_size: number;
+  // §29: произвольный комментарий-описание узла.
+  comment?: string;
   // §27: RabbitMQAsync (пустые/нулевые для request/requestAsync).
   rmq_host?: string;
   rmq_port?: number;

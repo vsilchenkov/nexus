@@ -34,6 +34,9 @@ definitions:
         type: string
       clickhouse_template_id:
         type: string
+      comment:
+        maxLength: 2000
+        type: string
       forward_headers:
         items:
           type: string
@@ -224,6 +227,8 @@ definitions:
         type: string
       clickhouse_template_id:
         type: string
+      comment:
+        type: string
       created_at:
         type: string
       forward_headers:
@@ -375,6 +380,9 @@ definitions:
         maxLength: 129
         type: string
       clickhouse_template_id:
+        type: string
+      comment:
+        maxLength: 2000
         type: string
       forward_headers:
         items:

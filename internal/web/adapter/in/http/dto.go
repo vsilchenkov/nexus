@@ -37,6 +37,7 @@ type CreateNodeRequest struct {
 	ClickHouseTable         string   `json:"clickhouse_table" binding:"omitempty,max=129"`
 	ClickHouseTemplateID    string   `json:"clickhouse_template_id" binding:"omitempty,uuid"`
 	ClickHouseRetentionDays int32    `json:"clickhouse_retention_days" binding:"omitempty,min=0,max=3650"`
+	Comment                 string   `json:"comment" binding:"omitempty,max=2000"`
 	Status                  string   `json:"status" binding:"omitempty,oneof=enabled disabled paused"`
 	LogRequestBody          bool     `json:"log_request_body"`
 	LogResponseBody         bool     `json:"log_response_body"`
@@ -93,6 +94,7 @@ type NodeResponse struct {
 	ClickHouseTable         string   `json:"clickhouse_table"`
 	ClickHouseTemplateID    string   `json:"clickhouse_template_id"`
 	ClickHouseRetentionDays int32    `json:"clickhouse_retention_days"`
+	Comment                 string   `json:"comment"`
 	Status                  string   `json:"status"`
 	TeamID                  string   `json:"team_id"`
 	LogRequestBody          bool     `json:"log_request_body"`
@@ -191,6 +193,7 @@ func reqToDomain(r CreateNodeRequest) *domain.Node {
 		ClickHouseTable:         r.ClickHouseTable,
 		ClickHouseTemplateID:    r.ClickHouseTemplateID,
 		ClickHouseRetentionDays: r.ClickHouseRetentionDays,
+		Comment:                 r.Comment,
 		Status:                  domain.NodeStatus(r.Status),
 		LogRequestBody:          r.LogRequestBody,
 		LogResponseBody:         r.LogResponseBody,
@@ -238,6 +241,7 @@ func nodeToResponse(n *domain.Node) NodeResponse {
 		ClickHouseTable:         n.ClickHouseTable,
 		ClickHouseTemplateID:    n.ClickHouseTemplateID,
 		ClickHouseRetentionDays: n.ClickHouseRetentionDays,
+		Comment:                 n.Comment,
 		Status:                  string(n.Status),
 		TeamID:                  n.TeamID,
 		LogRequestBody:          n.LogRequestBody,

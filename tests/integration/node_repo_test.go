@@ -117,6 +117,7 @@ func TestNodeRepoCreate_E2E(t *testing.T) {
 		RootMethod: domain.RootMethodRequest,
 		URLMode:    domain.URLModeStatic,
 		TargetURL:  "https://example.com/hook",
+		Comment:    "интеграция с системой X — события заказов", // §29: round-trip
 	}
 	if err := nodeUC.Create(ctx, usecase.SystemActor(), n); err != nil {
 		t.Fatalf("create node: %v", err)
@@ -132,6 +133,10 @@ func TestNodeRepoCreate_E2E(t *testing.T) {
 	if got.Path != "test/path" {
 		t.Fatalf("path mismatch: %q", got.Path)
 	}
+	// §29: комментарий должен сохраниться и прочитаться без искажений.
+	if got.Comment != "интеграция с системой X — события заказов" {
+		t.Fatalf("comment round-trip mismatch: %q", got.Comment)
+	}
 
 	// Audit-запись должна существовать (атомарная транзакция).
 	entries, err := auditRepo.List(ctx, port.AuditFilter{TargetID: n.ID, Limit: 10})
@@ -140,6 +145,20 @@ func TestNodeRepoCreate_E2E(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].Action != domain.ActionNodeCreate {
 		t.Fatalf("expected one node.create audit entry, got %+v", entries)
+	}
+
+	// §29: Update должен переписать комментарий (проверяем после audit-ассерта,
+	// т.к. Update добавит свою audit-запись).
+	got.Comment = "обновлённое описание"
+	if err := nodeUC.Update(ctx, usecase.SystemActor(), got, ""); err != nil {
+		t.Fatalf("update node: %v", err)
+	}
+	after, err := nodeRepo.Get(ctx, n.ID)
+	if err != nil {
+		t.Fatalf("get after update: %v", err)
+	}
+	if after.Comment != "обновлённое описание" {
+		t.Fatalf("comment after update mismatch: %q", after.Comment)
 	}
 }
 
