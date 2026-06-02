@@ -63,6 +63,8 @@ function CreateNode([hashtable]$node) {
 # Каталог узлов: покрываем request/requestAsync, методы, проброс заголовков,
 # все виды outgoing-auth и RabbitMQAsync. target_url указывает на echosrv с
 # нужным режимом авторизации (/noauth, /basic, /token, /empty, /status/500).
+# clickhouse_table задаётся без clickhouse_template_id — таблица логов
+# авто-создаётся из дефолтного CH-шаблона каталога (provisionTable, фикс #7).
 function NodeCatalog {
   @(
     @{ path = "stand/req-noauth-post";   root_method = "request";      incoming_method = "POST"; outgoing_method = "POST"; url_mode = "static"; target_url = "$EchoUrl/noauth/echo"; auth_type = "none"; clickhouse_table = "stand_req_noauth_post" },

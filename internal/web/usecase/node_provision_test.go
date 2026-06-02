@@ -133,6 +133,53 @@ func TestNodeUC_Create_TemplateButNoProvisioner_Errors(t *testing.T) {
 	assert.ErrorIs(t, err, ErrCHUnavailable)
 }
 
+// nodeWithTable — узел без template_id, но с заданной таблицей и флагом
+// логирования (как приходит со стенда: clickhouse_table без явного шаблона).
+func nodeWithTable(table string, logging bool) *domain.Node {
+	return &domain.Node{
+		Path: "svc/hook", RootMethod: domain.RootMethodRequest, TargetURL: "https://x",
+		ClickHouseTable: table, ClickHouseRetentionDays: 30, LoggingEnabled: logging,
+	}
+}
+
+// Фикс #7: узел без template_id, но с включённым логированием — таблица
+// создаётся из дефолтного шаблона каталога (иначе чтение логов/метрик упало бы
+// с CH code 60 «Unknown table»).
+func TestNodeUC_Create_NoTemplate_UsesDefaultWhenLogging(t *testing.T) {
+	t.Parallel()
+	templates := newMemCHTemplateRepo()
+	require.NoError(t, templates.Create(context.Background(), validTemplate("Standard", true)))
+	prov := &verifyProvisioner{}
+	uc := newNodeUC(newMemNodeRepo(), prov, templates)
+
+	require.NoError(t, uc.Create(context.Background(), SystemActor(), nodeWithTable("nexus_default.hook", true)))
+	assert.Equal(t, "nexus_default.hook", prov.createdTable, "logging enabled + default template → table created")
+	assert.Contains(t, prov.createdDDL, "CREATE TABLE IF NOT EXISTS nexus_default.hook")
+}
+
+// Нет дефолтного шаблона — деградация: узел создаётся, таблица нет (мягко).
+func TestNodeUC_Create_NoTemplate_NoDefault_Degrades(t *testing.T) {
+	t.Parallel()
+	prov := &verifyProvisioner{}
+	uc := newNodeUC(newMemNodeRepo(), prov, newMemCHTemplateRepo())
+
+	require.NoError(t, uc.Create(context.Background(), SystemActor(), nodeWithTable("nexus_default.hook", true)),
+		"no default template → node still created, no error")
+	assert.Empty(t, prov.createdTable, "no default template → no CreateTable")
+}
+
+// Логирование выключено — таблица не создаётся даже при наличии дефолта.
+func TestNodeUC_Create_LoggingDisabled_SkipsDefault(t *testing.T) {
+	t.Parallel()
+	templates := newMemCHTemplateRepo()
+	require.NoError(t, templates.Create(context.Background(), validTemplate("Standard", true)))
+	prov := &verifyProvisioner{}
+	uc := newNodeUC(newMemNodeRepo(), prov, templates)
+
+	require.NoError(t, uc.Create(context.Background(), SystemActor(), nodeWithTable("nexus_default.hook", false)))
+	assert.Empty(t, prov.createdTable, "logging disabled → no provisioning even with default template")
+}
+
 func TestNodeUC_Update_ProvisionsOnlyOnChange(t *testing.T) {
 	t.Parallel()
 	templates := newMemCHTemplateRepo()
