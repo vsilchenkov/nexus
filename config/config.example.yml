@@ -4,7 +4,7 @@
 
 build:
   project_name: nexus
-  version: ${VERSION:dev}
+  version: ${VERSION:0.1.0}
 
 logging:
   level: 4              # 2=error, 3=warn, 4=info, 5=debug
