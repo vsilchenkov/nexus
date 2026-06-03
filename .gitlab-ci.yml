@@ -294,22 +294,17 @@ integration:
       junit: junit-integration.xml
     expire_in: 1 month
 
-# ----------- LOADTEST (base + profiles) -------------------------------------
-# Нагрузочные сценарии (§10.2 ТЗ). Общее тело — в скрытом шаблоне
-# `.loadtest-base` (поднимает изолированный compose-стек, гонит cmd/loadtest,
-# снимает стек, генерит per-mode JUnit). Конкретные профили (`loadtest`,
-# `loadtest-mixed`, `loadtest-async`, `loadtest-rmq`, `loadtest-highrps`)
-# отличаются только `variables:` (микс долей / no-loss / RPS) и `rules:`.
+# ----------- LOADTEST (единый job, §10.2) -----------------------------------
+# Один job `loadtest`: поднимает изолированный compose-стек (включая rabbitmq),
+# за ОДИН прогон гонит полный микс трафика (sync + async + dynamic-url +
+# auth-token + auth-basic + RabbitMQAsync), сверяет no-loss по ClickHouse,
+# снимает стек и генерит per-mode JUnit. Раньше было 5 отдельных профилей —
+# объединены в этот один job, чтобы не плодить кнопки в pipeline; разные
+# сценарии теперь задаются переопределением переменных в «Run pipeline».
 #
-# Какой профиль когда:
-#   - loadtest        — sync-smoke. Авто на push в master (allow_failure) и под
-#                       RUN_PROFILE=loadtest-only; manual на dev.
-#   - loadtest-mixed  — реалистичный микс §10.2 (async+dyn-url+auth) + no-loss.
-#                       Авто под RUN_PROFILE=loadtest-only; manual на dev.
-#   - loadtest-async  — async-ориентированный + строгая no-loss. Manual.
-#   - loadtest-rmq    — RabbitMQAsync-нагрузка (поднимает rabbitmq) + no-loss. Manual.
-#   - loadtest-highrps — capacity-bench на высоком RPS. Manual.
-# На feature-ветках manual-стаб не плодим — там только RUN_PROFILE=loadtest-only.
+# Когда запускается: авто на push в master (allow_failure — early-warning, не
+# gate) и под RUN_PROFILE=loadtest-only; manual (кнопка ▶) на dev. На
+# feature-ветках стаб не плодим — там только RUN_PROFILE=loadtest-only.
 #
 # Окружение собирается каждый запуск с нуля: COMPOSE_PROJECT_NAME содержит
 # pipeline+job id, поэтому сети/volumes уникальны, и параллельные запуски
@@ -321,12 +316,12 @@ integration:
 #     им же admin'у в свежей БД через `web --set-admin-password`, и им же
 #     loadtest логинится в Web.
 #
-# Опциональные переменные (переопределяются в `variables:` профиля или через
-# UI «Run pipeline» → Variables): LOADTEST_TARGET_RPS / _DURATION / _NODES /
-# _RATIO_ASYNC / _RATIO_DYNAMIC_URL / _RATIO_AUTH_TOKEN / _RATIO_AUTH_BASIC /
-# _RATIO_RMQ / _CH_NOLOSS (0|1) / _WITH_RMQ (0|1) / _P95_MS.
+# Переопределяемые через UI «Run pipeline» → Variables: LOADTEST_TARGET_RPS /
+# _DURATION / _NODES / _RATIO_ASYNC / _RATIO_DYNAMIC_URL / _RATIO_AUTH_TOKEN /
+# _RATIO_AUTH_BASIC / _RATIO_RMQ / _CH_NOLOSS (0|1) / _WITH_RMQ (0|1) / _P95_MS.
+# Например, capacity-bench: LOADTEST_TARGET_RPS=600, LOADTEST_P95_MS=400.
 
-.loadtest-base:
+loadtest:
   stage: integration
   # docker:27-cli: client API v1.45 для docker daemon v25+. На v24-cli
   # `docker cp/rm` падали с «client version 1.43 is too old, minimum
@@ -335,6 +330,22 @@ integration:
     name: docker:27-cli
     pull_policy: [always, if-not-present]
   timeout: 60 minutes
+  rules:
+    - if: $RUN_PROFILE == "integration-only"
+      when: never
+    # Под RUN_PROFILE=loadtest-only — стартует без ручного клика.
+    - if: $RUN_PROFILE == "loadtest-only"
+      when: on_success
+      allow_failure: true
+    # Auto-run на push в master: smoke инфраструктуры. allow_failure — не gate
+    # (RPS зависит от загрузки runner-host'а); полный bench гонять отдельно.
+    - if: $CI_COMMIT_BRANCH == "master"
+      when: on_success
+      allow_failure: true
+    # Ручной запуск (кнопка ▶) на dev.
+    - if: $CI_COMMIT_BRANCH == "dev"
+      when: manual
+      allow_failure: true
   variables:
     COMPOSE_PROJECT_NAME: "loadtest-${CI_PIPELINE_ID}-${CI_JOB_ID}"
     # COMPOSE_FILE поддерживает несколько файлов через ":" (Linux). Второй
@@ -351,16 +362,18 @@ integration:
     LOADTEST_TARGET_RPS: "300"
     LOADTEST_DURATION: "2m"
     LOADTEST_NODES: "50"
-    # Микс трафика §10.2 (доли — независимые корзины, сумма ≤ 1, остаток sync).
-    LOADTEST_RATIO_ASYNC: "0"
-    LOADTEST_RATIO_DYNAMIC_URL: "0"
-    LOADTEST_RATIO_AUTH_TOKEN: "0"
-    LOADTEST_RATIO_AUTH_BASIC: "0"
-    LOADTEST_RATIO_RMQ: "0"
-    # "1" => loadtest сверяет no-loss по ClickHouse (--ch-addr clickhouse:9000).
-    LOADTEST_CH_NOLOSS: "0"
-    # "1" => поднимаем rabbitmq (profile stand) и передаём --rmq-url/--ratio-rmq.
-    LOADTEST_WITH_RMQ: "0"
+    # Полный микс трафика §10.2 (доли — независимые корзины, сумма ≤ 1; rmq
+    # вырезается отдельно, http-остаток добивается plain sync). Здесь
+    # упражняются все 6 режимов за один прогон.
+    LOADTEST_RATIO_ASYNC: "0.25"
+    LOADTEST_RATIO_DYNAMIC_URL: "0.2"
+    LOADTEST_RATIO_AUTH_TOKEN: "0.2"
+    LOADTEST_RATIO_AUTH_BASIC: "0.15"
+    LOADTEST_RATIO_RMQ: "0.1"
+    # no-loss async/rmq по ClickHouse (--ch-addr clickhouse:9000).
+    LOADTEST_CH_NOLOSS: "1"
+    # Поднимаем rabbitmq (profile stand) и передаём --rmq-url/--ratio-rmq.
+    LOADTEST_WITH_RMQ: "1"
     # Порог p95 (мс) для acceptance- и per-mode testcase'ов JUnit.
     LOADTEST_P95_MS: "200"
   before_script:
@@ -711,98 +724,6 @@ integration:
     reports:
       junit: loadtest-report/junit.xml
     expire_in: 1 month
-
-# --- Профили (отличаются только variables + rules; тело — в .loadtest-base) ---
-
-# loadtest — sync-smoke (текущее поведение). Авто на master + под loadtest-only;
-# manual на dev. Все доли = 0 (наследуются из base) => чистый sync.
-loadtest:
-  extends: .loadtest-base
-  rules:
-    - if: $RUN_PROFILE == "integration-only"
-      when: never
-    - if: $RUN_PROFILE == "loadtest-only"
-      when: on_success
-      allow_failure: true
-    # Auto-run на push в master: smoke инфраструктуры. allow_failure — не gate
-    # (RPS зависит от загрузки runner-host'а); полный bench гонять отдельно.
-    - if: $CI_COMMIT_BRANCH == "master"
-      when: on_success
-      allow_failure: true
-    - if: $CI_COMMIT_BRANCH == "dev"
-      when: manual
-      allow_failure: true
-
-# loadtest-mixed — реалистичный микс §10.2 + no-loss. Авто под loadtest-only,
-# manual на dev. Доли сумма 0.85 (остаток 0.15 — plain sync).
-loadtest-mixed:
-  extends: .loadtest-base
-  variables:
-    LOADTEST_RATIO_ASYNC: "0.3"
-    LOADTEST_RATIO_DYNAMIC_URL: "0.2"
-    LOADTEST_RATIO_AUTH_TOKEN: "0.2"
-    LOADTEST_RATIO_AUTH_BASIC: "0.15"
-    LOADTEST_CH_NOLOSS: "1"
-  rules:
-    - if: $RUN_PROFILE == "integration-only"
-      when: never
-    - if: $RUN_PROFILE == "loadtest-only"
-      when: on_success
-      allow_failure: true
-    - if: $CI_COMMIT_BRANCH == "dev"
-      when: manual
-      allow_failure: true
-
-# loadtest-async — async-ориентированный (Kafka-путь) + строгая no-loss.
-loadtest-async:
-  extends: .loadtest-base
-  variables:
-    LOADTEST_RATIO_ASYNC: "0.8"
-    LOADTEST_CH_NOLOSS: "1"
-  rules:
-    - if: $RUN_PROFILE == "integration-only"
-      when: never
-    - if: $RUN_PROFILE == "loadtest-only"
-      when: manual
-      allow_failure: true
-    - if: $CI_COMMIT_BRANCH == "dev"
-      when: manual
-      allow_failure: true
-
-# loadtest-rmq — RabbitMQAsync-нагрузка (поднимает rabbitmq, profile stand) + no-loss.
-loadtest-rmq:
-  extends: .loadtest-base
-  variables:
-    LOADTEST_WITH_RMQ: "1"
-    LOADTEST_RATIO_RMQ: "0.5"
-    LOADTEST_CH_NOLOSS: "1"
-  rules:
-    - if: $RUN_PROFILE == "integration-only"
-      when: never
-    - if: $RUN_PROFILE == "loadtest-only"
-      when: manual
-      allow_failure: true
-    - if: $CI_COMMIT_BRANCH == "dev"
-      when: manual
-      allow_failure: true
-
-# loadtest-highrps — capacity-bench на высоком RPS. На shared-runner может не
-# дотягивать — не gate (allow_failure). p95-порог ослаблен под высокую нагрузку.
-loadtest-highrps:
-  extends: .loadtest-base
-  variables:
-    LOADTEST_TARGET_RPS: "600"
-    LOADTEST_DURATION: "3m"
-    LOADTEST_P95_MS: "400"
-  rules:
-    - if: $RUN_PROFILE == "integration-only"
-      when: never
-    - if: $RUN_PROFILE == "loadtest-only"
-      when: manual
-      allow_failure: true
-    - if: $CI_COMMIT_BRANCH == "dev"
-      when: manual
-      allow_failure: true
 
 # ----------- SECURITY stage -------------------------------------------------
 # Не блокируют merge (`allow_failure: true` где есть) — early-warning, не gate.
