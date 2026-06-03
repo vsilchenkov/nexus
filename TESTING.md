@@ -114,7 +114,36 @@ go run ./cmd/loadtest \
   --admin-password ... \
   --target-rps 500 --duration 10m --nodes 50 \
   --payload-min 100 --payload-max 5120 \
-  --mock-latency 50ms --report report.json
+  --mock-latency 50ms --mock-latency-jitter 30ms --report report.json
+```
+
+### Микс трафика (§10.2)
+
+Узлы — **односценарные корзины**: каждый упражняет ровно одну фичу, что даёт чистую per-mode
+статистику и понятные testcase'ы. Доли — независимые корзины (сумма ≤ 1, остаток — plain `sync`):
+
+| Флаг                  | Дефолт | Режим узла  | Что упражняет                                                |
+|-----------------------|--------|-------------|--------------------------------------------------------------|
+| `--ratio-async`       | `0`    | `async`     | `root_method=requestAsync` → Kafka-путь, `/api/v1/requestAsync/...` |
+| `--ratio-dynamic-url` | `0`    | `dyn-url`   | `url_mode=from_request`, target в `?url_base=` (allowlist пуст = allow-all) |
+| `--ratio-auth-token`  | `0`    | `auth-token`| `auth_type=token_from_request`, заголовок `Authorization: Bearer …` |
+| `--ratio-auth-basic`  | `0`    | `auth-basic`| `auth_type=basic_from_request`, заголовок `Authorization: Basic …`  |
+| `--random-headers`    | `true` | (все)       | 1–3 случайных `X-Lt-*` заголовка на запрос                    |
+
+Дефолт 0 для всех долей сохраняет старое поведение (`make loadtest` без переменных = чистый sync-smoke).
+В отчёт (`report.json`) добавлен блок `modes` — sent/errors/error_rate/p50/p95/p99 на каждый режим.
+
+### No-loss проверка async/rmq через ClickHouse (§10.2)
+
+При заданном `--ch-addr` loadtest после прогона ждёт `--ch-flush-grace` (батч-флаш sender'а в CH) и
+сверяет число строк `type IN ('requestAsync','RabbitMQAsync')` в `--ch-table` с числом отправленных
+async + rmq запросов. Потеря (`ch_rows < expected`) → exit 1. Дубликаты at-least-once
+(`ch_rows > expected`) нарушением не считаются. Пустой `--ch-addr` пропускает проверку.
+
+```bash
+go run ./cmd/loadtest --admin-password ... \
+  --target-rps 200 --duration 2m --nodes 20 \
+  --ratio-async 0.5 --ch-addr localhost:9000 --ch-flush-grace 10s
 ```
 
 ### Критерии pass/fail
@@ -143,10 +172,10 @@ go run ./cmd/loadtest \
 
 ### Что не покрыто текущим loadtest
 
-- Все варианты `url_mode` / `auth_type` (сейчас static + auth=none).
-- Доля async / dynamic-url / token-auth-узлов из конфига (`--ratio-*` — следующая итерация).
-- Автоматическая сверка числа сообщений в ClickHouse-логе == числу отправленных
-  (для async и RabbitMQAsync). Требует подключения к ClickHouse — TODO Phase 6.
+- Kafka consumer-lag в отчёте (§10.2 — опциональная диагностика, не acceptance-критерий;
+  «нет потерь» закрыто сверкой по числу строк CH). TODO.
+- Внутренний размер CH-буфера sender'а — извне ненаблюдаем; заменён фактической no-loss
+  сверкой числа строк.
 
 ## Swagger
 

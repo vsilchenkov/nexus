@@ -144,12 +144,19 @@ proto: ## Генерация Go-кода из .proto через protoc
 		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
 		proto/sender/v1/sender.proto
 
-loadtest: ## Нагрузочный сценарий: make loadtest TARGET_RPS=500 DURATION=10m NODES=50 ADMIN_PASSWORD=...
+loadtest: ## Нагрузочный сценарий §10.2: make loadtest ADMIN_PASSWORD=... [TARGET_RPS=500 DURATION=10m NODES=50 RATIO_ASYNC=.3 RATIO_DYNAMIC_URL=.2 RATIO_AUTH_TOKEN=.3 RATIO_AUTH_BASIC=.1 CH_ADDR=localhost:9000 RATIO_RMQ=.2 RMQ_URL=amqp://...]
 	$(GO) run ./cmd/loadtest \
 		--admin-password $(ADMIN_PASSWORD) \
 		--target-rps $(or $(TARGET_RPS),500) \
 		--duration $(or $(DURATION),10m) \
-		--nodes $(or $(NODES),50)
+		--nodes $(or $(NODES),50) \
+		--ratio-async $(or $(RATIO_ASYNC),0) \
+		--ratio-dynamic-url $(or $(RATIO_DYNAMIC_URL),0) \
+		--ratio-auth-token $(or $(RATIO_AUTH_TOKEN),0) \
+		--ratio-auth-basic $(or $(RATIO_AUTH_BASIC),0) \
+		$(if $(CH_ADDR),--ch-addr $(CH_ADDR),) \
+		$(if $(RATIO_RMQ),--ratio-rmq $(RATIO_RMQ),) \
+		$(if $(RMQ_URL),--rmq-url $(RMQ_URL),)
 
 INTEGRATION_TIMEOUT ?= 20m
 
