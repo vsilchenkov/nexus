@@ -25,8 +25,10 @@ import (
 	otelpf "nexus/internal/platform/otel"
 	pgpf "nexus/internal/platform/pg"
 	"nexus/internal/platform/ratelimit"
+	recoverypf "nexus/internal/platform/recovery"
 	redispf "nexus/internal/platform/redis"
 	"nexus/internal/platform/reloader"
+	"nexus/internal/platform/requestid"
 	"nexus/internal/platform/safego"
 	sentrypf "nexus/internal/platform/sentry"
 	httpadapter "nexus/internal/receiver/adapter/in/http"
@@ -118,7 +120,13 @@ func (a *App) Start(ctx context.Context) error {
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(otelpf.GinMiddleware("receiver"), sentrypf.GinMiddleware("receiver"), metrics.GinMiddleware(a.metrics), gin.Recovery())
+	r.Use(
+		requestid.GinMiddleware(),
+		otelpf.GinMiddleware("receiver"),
+		sentrypf.GinMiddleware("receiver"),
+		recoverypf.GinMiddleware(a.logger),
+		metrics.GinMiddleware(a.metrics),
+	)
 
 	hc := healthcheck.New(
 		[]healthcheck.Checker{pgpf.HealthChecker("postgres", a.pg)},

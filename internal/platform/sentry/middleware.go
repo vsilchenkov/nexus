@@ -3,6 +3,8 @@ package sentry
 import (
 	"github.com/getsentry/sentry-go"
 	"github.com/gin-gonic/gin"
+
+	"nexus/internal/platform/requestid"
 )
 
 // GinMiddleware — оборачивает каждый запрос в Sentry-транзакцию (§14.3 ТЗ).
@@ -21,6 +23,15 @@ func GinMiddleware(service string) gin.HandlerFunc {
 		hub := sentry.CurrentHub().Clone()
 		ctx := sentry.SetHubOnContext(c.Request.Context(), hub)
 
+		// request_id (§30): тег на scope hub'а ⇒ попадёт во все события этого
+		// запроса (включая залогированные через logger.WithContext); тег на
+		// span ниже ⇒ во все транзакции. requestid-middleware идёт первым, id
+		// уже в контексте.
+		reqID := requestid.FromContext(c.Request.Context())
+		if reqID != "" {
+			hub.Scope().SetTag("request_id", reqID)
+		}
+
 		txName := c.Request.Method + " " + routeName(c)
 		span := sentry.StartTransaction(ctx, txName,
 			sentry.WithOpName("http.server"),
@@ -29,6 +40,9 @@ func GinMiddleware(service string) gin.HandlerFunc {
 		defer span.Finish()
 
 		span.SetTag("service", service)
+		if reqID != "" {
+			span.SetTag("request_id", reqID)
+		}
 		if v1 := nodePathFromGin(c); v1 != "" {
 			span.SetTag("node", v1)
 		}

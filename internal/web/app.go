@@ -34,8 +34,10 @@ import (
 	otelpf "nexus/internal/platform/otel"
 	pgpf "nexus/internal/platform/pg"
 	"nexus/internal/platform/ratelimit"
+	recoverypf "nexus/internal/platform/recovery"
 	redispf "nexus/internal/platform/redis"
 	"nexus/internal/platform/reloader"
+	"nexus/internal/platform/requestid"
 	"nexus/internal/platform/safego"
 	sentrypf "nexus/internal/platform/sentry"
 	"nexus/internal/platform/telegram"
@@ -81,7 +83,14 @@ func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, ch chdrive
 func (a *App) Start(ctx context.Context) error {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(otelpf.GinMiddleware("web"), sentrypf.GinMiddleware("web"), metrics.GinMiddleware(a.metrics), i18n.GinMiddleware(), gin.Recovery())
+	r.Use(
+		requestid.GinMiddleware(),
+		otelpf.GinMiddleware("web"),
+		sentrypf.GinMiddleware("web"),
+		recoverypf.GinMiddleware(a.logger),
+		metrics.GinMiddleware(a.metrics),
+		i18n.GinMiddleware(),
+	)
 
 	hc := healthcheck.New(
 		[]healthcheck.Checker{

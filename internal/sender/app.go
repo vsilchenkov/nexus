@@ -31,7 +31,9 @@ import (
 	"nexus/internal/platform/metrics"
 	otelpf "nexus/internal/platform/otel"
 	pgpf "nexus/internal/platform/pg"
+	recoverypf "nexus/internal/platform/recovery"
 	"nexus/internal/platform/reloader"
+	"nexus/internal/platform/requestid"
 	"nexus/internal/platform/safego"
 	sentrypf "nexus/internal/platform/sentry"
 	grpcadapter "nexus/internal/sender/adapter/in/grpc"
@@ -188,7 +190,13 @@ func (a *App) startGRPC(svc *grpcadapter.Server) error {
 func (a *App) startAdminHTTP() error {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(otelpf.GinMiddleware("sender"), sentrypf.GinMiddleware("sender"), metrics.GinMiddleware(a.metrics), gin.Recovery())
+	r.Use(
+		requestid.GinMiddleware(),
+		otelpf.GinMiddleware("sender"),
+		sentrypf.GinMiddleware("sender"),
+		recoverypf.GinMiddleware(a.logger),
+		metrics.GinMiddleware(a.metrics),
+	)
 
 	hc := healthcheck.New(
 		[]healthcheck.Checker{
