@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { ArrowLeftRight } from "lucide-react";
 
 import { api } from "../api/client";
+import { Button, Card, Field, Input } from "../components/ui";
 
 export default function Login() {
   const { t } = useTranslation();
@@ -19,51 +21,51 @@ export default function Login() {
     try {
       await api.post("/api/auth/login", { login, password });
       navigate("/", { replace: true });
-    } catch (err: any) {
-      setError(err?.response?.data?.error ?? t("auth.login_failed"));
+    } catch (err: unknown) {
+      const ex = err as { response?: { data?: { error?: string } } };
+      setError(ex?.response?.data?.error ?? t("auth.login_failed"));
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-bg">
-      <form
-        onSubmit={onSubmit}
-        className="bg-bg-elev p-8 rounded-2xl shadow-xl w-[360px] space-y-4 border border-bg-muted"
-      >
-        <h1 className="text-2xl font-semibold mb-2">{t("app.title")}</h1>
-        <h2 className="text-sm text-fg-muted">{t("auth.login")}</h2>
-
-        <input
-          className="w-full px-3 py-2 bg-bg-muted rounded-md border border-bg-muted focus:border-accent outline-none"
-          type="text"
-          autoComplete="username"
-          value={login}
-          onChange={(e) => setLogin(e.target.value)}
-          placeholder="login"
-          required
-        />
-        <input
-          className="w-full px-3 py-2 bg-bg-muted rounded-md border border-bg-muted focus:border-accent outline-none"
-          type="password"
-          autoComplete="current-password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="password"
-          required
-        />
-
-        {error && <div className="text-err text-sm">{error}</div>}
-
-        <button
-          type="submit"
-          disabled={busy}
-          className="w-full bg-accent hover:bg-accent-hover transition-colors py-2 rounded-md font-medium disabled:opacity-50"
-        >
-          {busy ? "…" : t("auth.login_button")}
-        </button>
-      </form>
+    <div className="grid min-h-screen place-items-center bg-app text-fg">
+      <div className="w-[340px]">
+        <div className="mb-6 text-center">
+          <div className="mx-auto mb-3.5 grid h-12 w-12 place-items-center rounded-lg bg-gradient-to-br from-accent to-ok text-white">
+            <ArrowLeftRight className="h-6 w-6" />
+          </div>
+          <div className="text-[19px] font-semibold">{t("app.title")}</div>
+          <div className="mt-1 text-[13px] text-fg-muted">{t("auth.login")}</div>
+        </div>
+        <Card className="p-6">
+          <form onSubmit={onSubmit} className="space-y-3.5">
+            <Field label={t("auth.login_field")}>
+              <Input
+                type="text"
+                autoComplete="username"
+                value={login}
+                onChange={(e) => setLogin(e.target.value)}
+                required
+              />
+            </Field>
+            <Field label={t("auth.password_field")}>
+              <Input
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </Field>
+            {error && <div className="text-sm text-err">{error}</div>}
+            <Button type="submit" variant="primary" disabled={busy} className="w-full">
+              {busy ? "…" : t("auth.login_button")}
+            </Button>
+          </form>
+        </Card>
+      </div>
     </div>
   );
 }

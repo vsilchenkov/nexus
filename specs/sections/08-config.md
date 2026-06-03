@@ -71,7 +71,7 @@ clickhouse:
   # Начальные значения — потом перезаписываются из app_settings (PostgreSQL → Redis)
   host: ${CH_HOST:localhost}
   port: ${CH_PORT:9000}
-  database: vika_logs
+  database: nexus_default
   user: ${CH_USER:default}             # из .env
   password: ${CH_PASSWORD}             # из .env
   batch_size: 500                      # под 500 rps — секунда трафика в батче
@@ -131,14 +131,14 @@ receiver:
   rate_limit_per_node: 0               # 0 = без лимита
   # gRPC-клиент к Sender
   sender_grpc:
-    addr: sender:9090
+    addr: sender:9190
     pool_size: 8                       # пул gRPC-соединений
     timeout_ms: 30000
     keepalive_time_sec: 30
     keepalive_timeout_sec: 10
 
 sender:
-  grpc_addr: :9090
+  grpc_addr: :9190
   grpc_max_concurrent_streams: 1000
   http_client:
     timeout_ms: 30000

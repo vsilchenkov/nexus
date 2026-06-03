@@ -236,7 +236,36 @@ func hash(t *testing.T, pw string) string {
 func newAuthUC(users *authUserRepo, sessions port.SessionRepo) (*AuthUsecase, *stubAuditRepo) {
 	repo := &stubAuditRepo{}
 	audit := NewAuditUsecase(repo, logging.NewNoop())
-	return NewAuthUsecase(users, sessions, audit, time.Hour, logging.NewNoop()), repo
+	return NewAuthUsecase(users, sessions, &nopTeamRepo{}, audit, time.Hour, logging.NewNoop()), repo
+}
+
+// nopTeamRepo — заглушка port.TeamRepo для unit-тестов AuthUsecase.
+// Возвращает пустые/zero значения; нужна, потому что AuthUsecase теперь
+// требует TeamRepo в конструкторе (multi-tenancy v2, Phase 10.B).
+type nopTeamRepo struct{}
+
+func (nopTeamRepo) GetByID(context.Context, string) (*domain.Team, error) {
+	return nil, domain.ErrTeamNotFound
+}
+func (nopTeamRepo) GetBySlug(context.Context, string) (*domain.Team, error) {
+	return nil, domain.ErrTeamNotFound
+}
+func (nopTeamRepo) List(context.Context) ([]*domain.Team, error) { return nil, nil }
+func (nopTeamRepo) Create(context.Context, *domain.Team) error   { return nil }
+func (nopTeamRepo) Update(context.Context, *domain.Team) error   { return nil }
+func (nopTeamRepo) Delete(context.Context, string) error         { return nil }
+func (nopTeamRepo) AddMember(context.Context, string, string, domain.TeamRole) error {
+	return nil
+}
+func (nopTeamRepo) RemoveMember(context.Context, string, string) error { return nil }
+func (nopTeamRepo) UpdateMemberRole(context.Context, string, string, domain.TeamRole) error {
+	return nil
+}
+func (nopTeamRepo) ListMembers(context.Context, string) ([]*domain.TeamMember, error) {
+	return nil, nil
+}
+func (nopTeamRepo) ListUserTeams(context.Context, string) ([]*domain.UserTeam, error) {
+	return nil, nil
 }
 
 func TestAuthUC_Login_UnknownUser(t *testing.T) {
@@ -439,4 +468,55 @@ func TestAuthUC_ChangePassword_UpdateError(t *testing.T) {
 	err := uc.ChangePassword(context.Background(), SystemActor(), "u1", "longenough", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "db down")
+}
+
+// userWithPassword — хелпер: пользователь с bcrypt-хешем заданного пароля.
+func userWithPassword(t *testing.T, id, login, password string, role domain.UserRole) *domain.User {
+	t.Helper()
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	require.NoError(t, err)
+	return &domain.User{ID: id, Login: login, Role: role, Active: true, PasswordHash: string(hash)}
+}
+
+func TestAuthUC_ChangeOwnPassword_Happy(t *testing.T) {
+	t.Parallel()
+	users := newAuthUserRepo()
+	users.put(userWithPassword(t, "u1", "bob", "oldpassword", domain.UserRoleManager))
+
+	sessions := newMemSessionRepo()
+	sessions.byToken["tok-1"] = &domain.Session{Token: "tok-1", UserID: "u1"}
+	uc, audit := newAuthUC(users, sessions)
+
+	err := uc.ChangeOwnPassword(context.Background(), SystemActor(), "u1", "oldpassword", "newpassword")
+	require.NoError(t, err)
+
+	// Пароль обновлён с mustChange=false; сессии инвалидированы; есть audit.
+	require.Len(t, users.updatePassCalls, 1)
+	assert.False(t, users.updatePassCalls[0].MustChange)
+	assert.NotContains(t, sessions.byToken, "tok-1")
+	require.Len(t, audit.entries, 1)
+	assert.Equal(t, domain.ActionUserPassword, audit.entries[0].Action)
+}
+
+func TestAuthUC_ChangeOwnPassword_WrongCurrent(t *testing.T) {
+	t.Parallel()
+	users := newAuthUserRepo()
+	users.put(userWithPassword(t, "u1", "bob", "oldpassword", domain.UserRoleManager))
+	uc, _ := newAuthUC(users, newMemSessionRepo())
+
+	err := uc.ChangeOwnPassword(context.Background(), SystemActor(), "u1", "wrongpassword", "newpassword")
+	require.ErrorIs(t, err, domain.ErrUnauthorized)
+	// Пароль не менялся.
+	assert.Empty(t, users.updatePassCalls)
+}
+
+func TestAuthUC_ChangeOwnPassword_NewTooShort(t *testing.T) {
+	t.Parallel()
+	users := newAuthUserRepo()
+	users.put(userWithPassword(t, "u1", "bob", "oldpassword", domain.UserRoleManager))
+	uc, _ := newAuthUC(users, newMemSessionRepo())
+
+	err := uc.ChangeOwnPassword(context.Background(), SystemActor(), "u1", "oldpassword", "short")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "at least 8")
 }

@@ -38,18 +38,27 @@ type Metrics struct {
 	registry *prometheus.Registry
 	service  string
 
-	RequestsTotal   *prometheus.CounterVec
-	RequestDuration *prometheus.HistogramVec
-	KafkaLag        *prometheus.GaugeVec
-	CHBufferSize    *prometheus.GaugeVec
-	CHErrorsTotal   *prometheus.CounterVec
-	CHDroppedTotal  *prometheus.CounterVec
-	CHFallbackTotal *prometheus.CounterVec
+	RequestsTotal           *prometheus.CounterVec
+	RequestsIncompleteTotal *prometheus.CounterVec
+	RequestDuration         *prometheus.HistogramVec
+	KafkaLag                *prometheus.GaugeVec
+	CHBufferSize            *prometheus.GaugeVec
+	CHErrorsTotal           *prometheus.CounterVec
+	CHDroppedTotal          *prometheus.CounterVec
+	CHFallbackTotal         *prometheus.CounterVec
 
 	L2CacheHits      *prometheus.CounterVec
 	L2CacheMisses    prometheus.Counter
 	L2CacheEvictions prometheus.Counter
 	L2CacheSize      prometheus.Gauge
+
+	// §27: узел RabbitMQAsync (Puller-воркер в Receiver).
+	RMQMessagesPulledTotal *prometheus.CounterVec // {node, status=ok|nack|reject}
+	RMQPullDuration        *prometheus.HistogramVec
+	RMQConnectionState     *prometheus.GaugeVec // {node}: 0=down,1=connecting,2=up
+	RMQQueueDepth          *prometheus.GaugeVec // {node}
+	RMQConsumerCount       *prometheus.GaugeVec // {node}
+	NodeDegraded           *prometheus.GaugeVec // {node, reason}: 1 при degraded
 }
 
 // New создаёт новый экземпляр Metrics для указанного сервиса.
@@ -70,11 +79,23 @@ func New(service string) *Metrics {
 			ConstLabels: constLabels,
 		}, []string{"method", "node", "status"}),
 
+		// §22: «незавершённые» исходящие вызовы Sender (done=0): статус не 2xx —
+		// сетевой сбой (0), 3xx/4xx/5xx, circuit-breaker. Единый сигнал для
+		// Telegram-алертов, эквивалентный ClickHouse-условию CountErrors.
+		RequestsIncompleteTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "nexus_request_incomplete_total",
+			Help:        "Sender outbound calls that did not complete successfully (non-2xx) by method and node path.",
+			ConstLabels: constLabels,
+		}, []string{"method", "node"}),
+
 		RequestDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:        "nexus_request_duration_seconds",
 			Help:        "Nexus request duration in seconds (end-to-end for the given service).",
 			ConstLabels: constLabels,
-			Buckets:     prometheus.DefBuckets,
+			// DefBuckets упираются в 10с, а timeout_ms узла — до 300с. Расширяем
+			// верх диапазона, чтобы histogram_quantile (p95/p99 per-node, §21)
+			// не «прилипал» к +Inf на медленных узлах.
+			Buckets: []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60, 120, 300},
 		}, []string{"method", "node"}),
 
 		KafkaLag: prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -130,12 +151,50 @@ func New(service string) *Metrics {
 			Help:        "Receiver L2 in-memory node cache current entry count.",
 			ConstLabels: constLabels,
 		}),
+
+		RMQMessagesPulledTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "nexus_rmq_messages_pulled_total",
+			Help:        "RabbitMQAsync messages pulled by node and outcome (ok, nack, reject).",
+			ConstLabels: constLabels,
+		}, []string{"node", "status"}),
+
+		RMQPullDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:        "nexus_rmq_pull_duration_seconds",
+			Help:        "RabbitMQAsync batch pull+publish duration in seconds by node.",
+			ConstLabels: constLabels,
+			Buckets:     prometheus.DefBuckets,
+		}, []string{"node"}),
+
+		RMQConnectionState: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "nexus_rmq_connection_state",
+			Help:        "RabbitMQAsync connection state by node: 0=down, 1=connecting, 2=up.",
+			ConstLabels: constLabels,
+		}, []string{"node"}),
+
+		RMQQueueDepth: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "nexus_rmq_queue_depth",
+			Help:        "RabbitMQAsync source queue depth (messages) by node, sampled each tick.",
+			ConstLabels: constLabels,
+		}, []string{"node"}),
+
+		RMQConsumerCount: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "nexus_rmq_consumer_count",
+			Help:        "RabbitMQAsync source queue consumer count by node.",
+			ConstLabels: constLabels,
+		}, []string{"node"}),
+
+		NodeDegraded: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "nexus_node_degraded",
+			Help:        "Pull node (RabbitMQAsync) degraded state: 1 when degraded, 0 otherwise.",
+			ConstLabels: constLabels,
+		}, []string{"node", "reason"}),
 	}
 
 	reg.MustRegister(
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 		m.RequestsTotal,
+		m.RequestsIncompleteTotal,
 		m.RequestDuration,
 		m.KafkaLag,
 		m.CHBufferSize,
@@ -146,6 +205,12 @@ func New(service string) *Metrics {
 		m.L2CacheMisses,
 		m.L2CacheEvictions,
 		m.L2CacheSize,
+		m.RMQMessagesPulledTotal,
+		m.RMQPullDuration,
+		m.RMQConnectionState,
+		m.RMQQueueDepth,
+		m.RMQConsumerCount,
+		m.NodeDegraded,
 	)
 	return m
 }

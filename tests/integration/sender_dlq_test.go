@@ -69,7 +69,9 @@ func TestSender_Async_DLQ_E2E(t *testing.T) {
 	auditRepo := pgrepo.NewAuditRepoPg(pool, logger)
 	uow := pgrepo.NewUnitOfWorkPg(pool, cipher, logger)
 	auditUC := webuc.NewAuditUsecase(auditRepo, logger)
-	nodeUC := webuc.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, time.Minute, 0, logger)
+	defaultTeam := resolveDefaultTeamID(t, ctx, pool)
+	teamRepo := pgrepo.NewTeamRepoPg(pool, logger)
+	nodeUC := webuc.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, teamRepo, nil, nil, time.Minute, 0, defaultTeam, logger)
 
 	n := &domain.Node{
 		Path:                    "demo/dlq",
@@ -79,6 +81,7 @@ func TestSender_Async_DLQ_E2E(t *testing.T) {
 		AuthType:                domain.AuthTypeNone,
 		IncomingAuthType:        domain.IncomingAuthTypeNone,
 		Status:                  domain.NodeStatusEnabled,
+		LoggingEnabled:          true, // §22: иначе лог в ClickHouse не пишется
 		ClickHouseTable:         "test.demo_dlq",
 		ClickHouseRetentionDays: 30,
 		TimeoutMs:               2000,
@@ -185,4 +188,3 @@ func kafkaHeadersToMap(in []kafka.Header) map[string]string {
 	}
 	return out
 }
-

@@ -15,17 +15,27 @@ type User struct {
 	Active             bool
 	MustChangePassword bool
 	Lang               UserLang
-	TeamID             string
-	CreatedAt          time.Time
-	LastLoginAt        *time.Time
+	// DefaultTeamID — UUID команды, выставляемой текущей при логине.
+	// Реальная видимость команд — через user_teams membership (multi-tenancy
+	// v2, §16 ТЗ). До миграции 0008 это поле называлось TeamID и хранило
+	// строку 'default'.
+	DefaultTeamID string
+	CreatedAt     time.Time
+	LastLoginAt   *time.Time
 }
 
 // Session — серверная сессия в Redis (§7.1).
+//
+// CurrentTeamID — UUID команды, в контексте которой работает сессия
+// (multi-tenancy v2, §16 ТЗ). Выставляется при логине из DefaultTeamID
+// и меняется через POST /api/me/switch-team. Для API-токенов (которые
+// привязаны к одной команде) равен api_tokens.team_id.
 type Session struct {
-	Token      string
-	UserID     string
-	Role       UserRole
-	Lang       UserLang
-	CreatedAt  time.Time
-	LastSeenAt time.Time
+	Token         string
+	UserID        string
+	Role          UserRole
+	Lang          UserLang
+	CurrentTeamID string
+	CreatedAt     time.Time
+	LastSeenAt    time.Time
 }

@@ -17,12 +17,13 @@
 | Go-версия               | 1.26                                                                  |
 | Тип проекта             | три stateless backend-сервиса (Receiver, Sender, Web) + SPA админка   |
 | Архитектура             | Clean Architecture: `handler → usecase → port → adapter`              |
-| Главный поток           | `POST /v1/request/{path}` → Receiver → gRPC Sender → внешний URL → лог в ClickHouse |
-| Async                   | `POST /v1/requestAsync/{path}` → Receiver → Kafka → Sender-consumer   |
+| Главный поток           | `POST /api/v1/request/<team_slug>/{path}` → Web (единый вход, reverse-proxy) → Receiver → gRPC Sender → внешний URL → лог в ClickHouse `nexus_<team_slug>.<table>` |
+| Async                   | `POST /api/v1/requestAsync/<team_slug>/{path}` → Web → Receiver → Kafka → Sender-consumer |
+| Multi-tenancy           | Phase 10 ✅: команды через `/api/teams`, своя CH-БД per team (`nexus_<slug>`), team-switcher в Topbar, scope в nodes/audit/logs/replay/api_tokens. Legacy URL без слога продолжает работать как default-team. |
 | Зависимости              | PostgreSQL 16, Redis 7, ClickHouse 24, Kafka 3.9 (KRaft), Prometheus  |
 | Покрытие unit-тестами   | 14 пакетов (domain, crypto, i18n, sentry, receiver/usecase, chlog, web/usecase, metrics, healthcheck, config, clickhouse, reloader, nodecache, sender/usecase, **+ build / httpclient в Phase 7.13, + receiver/http + web/http middlewares в Phase 7.14**) + integration: circuitbreaker (Phase 7.13) |
 | SPA-фронт               | React 18 + Vite + TS + Tailwind + TanStack Query + react-i18next, 6 страниц |
-| Бинари в `cmd/`         | `receiver`, `sender`, `web`, `loadtest`, `rotate-key`                 |
+| Бинари в `cmd/`         | `receiver`, `sender`, `web`, `loadtest`, `rotate-key`, `echosrv` (тестовый получатель для стенда) |
 
 ---
 
@@ -43,16 +44,18 @@
 
 | Пункт | Статус | Где |
 |---|---|---|
-| `/v1/request/*` sync с проксированием ответа | ✅ | [internal/receiver/usecase/route.go](../internal/receiver/usecase/route.go), [adapter/in/http/handler.go](../internal/receiver/adapter/in/http/handler.go) |
-| `/v1/requestAsync/*` async, ответ 200 сразу | ✅ | [route_async.go](../internal/receiver/usecase/route_async.go) |
-| **`/v1/callback/*` (webhook с HMAC-SHA256, §16)** | ✅ Phase 8.1 | [handler.go](../internal/receiver/adapter/in/http/handler.go) `handleCallback`, [webhook_signature.go](../internal/receiver/usecase/webhook_signature.go) `VerifyWebhookSignature`, миграция [0007](../migrations/0007_webhook_signature.up.sql) |
-| 404 без префикса `/v1/` с подсказкой | ✅ | `Handler.Register` → `r.NoRoute` |
+| `/api/v1/request/*` sync с проксированием ответа | ✅ | [internal/receiver/usecase/route.go](../internal/receiver/usecase/route.go), [adapter/in/http/handler.go](../internal/receiver/adapter/in/http/handler.go) |
+| `/api/v1/requestAsync/*` async, ответ 200 сразу `{result:true}` / ошибка `{result:false,message}` (#7) | ✅ | [route_async.go](../internal/receiver/usecase/route_async.go), [handler.go](../internal/receiver/adapter/in/http/handler.go) `replyAsyncError`, `classifyDomainError` |
+| **`/api/v1/callback/*` (webhook с HMAC-SHA256, §16)** | ✅ Phase 8.1 | [handler.go](../internal/receiver/adapter/in/http/handler.go) `handleCallback`, [webhook_signature.go](../internal/receiver/usecase/webhook_signature.go) `VerifyWebhookSignature`, миграция [0007](../migrations/0007_webhook_signature.up.sql) |
+| 404 без префикса `/api/v1/` с подсказкой | ✅ | `Handler.Register` → `r.NoRoute` |
+| **Единый вход: Web reverse-proxy `/api/v1/request\|requestAsync\|callback` → Receiver** | ✅ | [internal/web/adapter/in/http/receiver_proxy.go](../internal/web/adapter/in/http/receiver_proxy.go) `RegisterReceiverProxy`, регистрируется в [app.go](../internal/web/app.go) до `SPAFallback`. Без этого боевой путь проваливался в SPA-fallback и возвращал `index.html`. |
 | `url_mode = static` / `from_request` + allowlist + wildcard (`*.partner.com`) | ✅ | [urlresolver.go](../internal/receiver/usecase/urlresolver.go) |
 | `url_base` исключается из проксируемой query | ✅ | `ResolveURL`: `clean.Del(param)` |
 | Все режимы incoming auth (none/basic/token) | ✅ | [auth.go](../internal/receiver/usecase/auth.go) `CheckIncomingAuth` |
 | Все режимы outgoing auth (none/basic/token/token_from_request/basic_from_request) | ✅ | [auth_dynamic.go](../internal/receiver/usecase/auth_dynamic.go) `BuildDynamicOutgoingAuth` |
 | Исключение служебных значений из проксируемого запроса (§3.5 «Исключение») | ✅ | `buildTokenFromRequest`, `buildBasicFromRequest` |
 | Маскирование `***` в логах и Sentry | ✅ | `maskAuthHeader` (dry-run), [sentry/sentry.go](../internal/platform/sentry/sentry.go) `isSensitive` |
+| **Методы узла: входящий (enforcement, иначе 405) + исходящий (диктует вызов получателя), деф. POST (#5)** | ✅ | [domain/enums.go](../internal/domain/enums.go) `HTTPMethod`, [domain/node.go](../internal/domain/node.go), миграция [0015](../migrations/0015_node_methods.up.sql), [route.go](../internal/receiver/usecase/route.go) `methodMatches` + `OutgoingMethod`, [route_async.go](../internal/receiver/usecase/route_async.go), [puller.go](../internal/receiver/usecase/puller.go) |
 | Статусы узла: `enabled` / `disabled` / `paused` | ✅ | `RouteUsecase.Route` (§3.6) |
 | **paused в sync** → 202 + `queued:true` + `node_status:paused` | ✅ Phase 5 | `Route()` возвращает `ErrNodePaused` → `handleSync` переключается на `handleAsyncFromInput` |
 | Лимиты полей (path 1-255, timeout 100-300000 ms, ...) | ✅ | [domain/node.go](../internal/domain/node.go) `Validate()` + DB-constraints в [migrations/0002](../migrations/0002_nodes_methods_users.up.sql) |
@@ -77,7 +80,10 @@
 |---|---|---|
 | Таблицы PG: methods, nodes, node_headers, users, user_audit, api_tokens | ✅ | [migrations/0001-0005](../migrations/) |
 | `golang-migrate` advisory lock, auto-migrate на старте | ✅ | [platform/pg/migrate.go](../internal/platform/pg/migrate.go) `NewMigrator` |
-| `team_id` колонки с DEFAULT 'default' (закладка multi-tenancy v2) | ✅ | миграция 0002 |
+| `team_id` колонки с DEFAULT 'default' (закладка multi-tenancy v2) | ✅ → ◐ Phase 10.1 | миграция 0002 (legacy) → миграция 0008 (UUID FK на `teams`, см. §16 Phase 10) |
+| **`teams`, `user_teams` + FK во всех team-aware таблицах** | ✅ Phase 10.1 | [migrations/0008_multi_tenancy.up.sql](../migrations/0008_multi_tenancy.up.sql); сидинг 'default'-team (`ch_database='nexus_default'`), admin → owner |
+| **TeamProvisioner: `CREATE DATABASE nexus_<slug>` атомарно с PG-tx** | ✅ Phase 10.C.1 | [adapter/out/clickhouse/team_provisioner.go](../internal/web/adapter/out/clickhouse/team_provisioner.go), [usecase/team.go](../internal/web/usecase/team.go); при упавшем CH `repo.Delete` откатывает PG-row; имя БД жёстко валидируется regex'ом |
+| **Нормализация `nodes.clickhouse_table` → `<team.ch_database>.<table>`** | ✅ Phase 10.C.2 | [usecase/node.go](../internal/web/usecase/node.go) `normalizeCHTable` — write-time префикс при Create/Update; unprefixed `<x>` → `nexus_default.<x>`. Backfill-миграция (0009) удалена как ненужная (стенд greenfield) |
 | Up/Down + `make migrate-up`/`-down N=1`/`-status` | ✅ | [Makefile](../Makefile) |
 | ClickHouse driver `clickhouse-go/v2`, batch INSERT | ✅ | [platform/clickhouse/clickhouse.go](../internal/platform/clickhouse/clickhouse.go) |
 | Kafka admin + producer + consumer (`segmentio/kafka-go`) с автосозданием топиков с retention 30 дней, acks=all, idempotence | ✅ | [platform/kafka/](../internal/platform/kafka/) |
@@ -94,8 +100,14 @@
 | **`nexus_requests_total` + `nexus_request_duration_seconds`** | ✅ Phase 6.1 | Gin middleware [platform/metrics/gin.go](../internal/platform/metrics/gin.go) — Receiver/Web; gRPC [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go) и async [usecase/async.go](../internal/sender/usecase/async.go) — Sender |
 | **`nexus_kafka_lag`** | ✅ Phase 6.1 | reporter в [sender/app.go](../internal/sender/app.go) `reportKafkaLag()` — раз в 15 сек снимает `Stats()` со всех consumer-инстансов |
 | **`nexus_clickhouse_buffer_size` / `_errors_total` / `_dropped_total` / `_fallback_total`** | ✅ Phase 6.1 | [chlog/writer.go](../internal/sender/adapter/out/chlog/writer.go) обновляет в `append`/`flushTable`/`Write` |
+| **HTTP-API метрик для панели (§21)** | ✅ Phase 21.1 | Web опрашивает Prometheus query API: [adapter/out/prometheus/client.go](../internal/web/adapter/out/prometheus/client.go) (глобальные KPI/очередь/throughput) + per-node агрегаты из ClickHouse [adapter/out/clickhouse/metrics_reader.go](../internal/web/adapter/out/clickhouse/metrics_reader.go) (точные p95/p99). Usecase [usecase/metrics.go](../internal/web/usecase/metrics.go), порт [port/metrics_provider.go](../internal/web/usecase/port/metrics_provider.go), handler [metrics_handler.go](../internal/web/adapter/in/http/metrics_handler.go): `GET /api/metrics/overview`, `/api/metrics/nodes`, `/api/metrics/nodes/{id}`. Конфиг `prometheus.url` ([config.go](../internal/platform/config/config.go)); деградация при отсутствии Prometheus. |
 
 ### §7 Веб-интерфейс
+
+> **Phase 21 (§21):** все экраны §7 переведены на единый визуальный эталон
+> ([nexus_ui.html](nexus_ui.html)) — дизайн-токены, UI-kit, app-shell (левый
+> сайдбар + топбар), вкладки узла, KPI/графики из API метрик. Подробности —
+> [sections/21-ui-redesign.md](sections/21-ui-redesign.md) и разделы 4.11.2/4.11.3 ниже.
 
 | Пункт | Статус | Где |
 |---|---|---|
@@ -103,6 +115,9 @@
 | Overview (список узлов) | ✅ | [web-ui/src/pages/Overview.tsx](../web-ui/src/pages/Overview.tsx) |
 | Node detail с вкладкой Logs (snapshot + SSE live-tail) | ✅ Phase 5 | [pages/NodeDetail.tsx](../web-ui/src/pages/NodeDetail.tsx) |
 | Node settings (создание/редактирование, dry-run кнопка) | ✅ Phase 5.1 | [pages/NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx) |
+| **Полный адрес узла (origin+/api/v1) + кнопка «Скопировать» (#2)** | ✅ | [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx) (поле path + preview), [node/ConfigTab.tsx](../web-ui/src/components/node/ConfigTab.tsx), компонент [ui/CopyButton.tsx](../web-ui/src/components/ui/CopyButton.tsx) |
+| **Селекторы методов узла (входящий/исходящий) в форме (#5 UI)** | ✅ | [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx) (карточки Route/Target), preview, ConfigTab |
+| **Скролл результата dry-run + адаптивность форм (#3, #9)** | ✅ | [ui/Modal.tsx](../web-ui/src/components/ui/Modal.tsx) (flex-col, тело overflow-y-auto, footer фиксирован), `grid-cols-1 sm:grid-cols-2`/`flex-wrap`/`overflow-x-auto` в формах и таблицах |
 | **POST /api/nodes/dry-run** (§7.5.1) с пошаговым отчётом | ✅ Phase 5 | [web/usecase/dry_run.go](../internal/web/usecase/dry_run.go), [http/dry_run_handler.go](../internal/web/adapter/in/http/dry_run_handler.go), UI: [components/DryRunDialog.tsx](../web-ui/src/components/DryRunDialog.tsx) |
 | **POST /api/logs/{id}/replay** (§7.4.1) + маркер `__replay_of` + rate-limit 10/мин | ✅ Phase 5 | [usecase/replay.go](../internal/web/usecase/replay.go), [http/replay_handler.go](../internal/web/adapter/in/http/replay_handler.go), [adapter/out/receiver/dispatcher.go](../internal/web/adapter/out/receiver/dispatcher.go), UI: [components/ReplayDialog.tsx](../web-ui/src/components/ReplayDialog.tsx) |
 | **SSE live-tail `/api/nodes/{id}/logs/stream`** (§7.4) с heartbeat | ✅ Phase 5 | [usecase/logs.go](../internal/web/usecase/logs.go) `Subscribe`, [http/logs_handler.go](../internal/web/adapter/in/http/logs_handler.go) `Stream` |
@@ -111,8 +126,11 @@
 | Audit log страница | ✅ Phase 5.1 | [pages/AuditLog.tsx](../web-ui/src/pages/AuditLog.tsx) |
 | **i18n / Accept-Language (en/ru)** на стороне backend и SPA | ✅ Phase 5 | [platform/i18n/](../internal/platform/i18n/), [web-ui/src/locales/](../web-ui/src/locales/), [web-ui/src/i18n.ts](../web-ui/src/i18n.ts) |
 | Auth: users CRUD, sessions Redis, RBAC, must_change_password | ✅ | [web/usecase/auth.go](../internal/web/usecase/auth.go), [adapter/out/redis/session_repo.go](../internal/web/adapter/out/redis/session_repo.go) |
+| **Роль `manager` + иерархия рангов (RBAC, §26)** | ✅ Phase A | `viewer<manager<admin` через [domain.UserRole.Rank/AtLeast](../internal/domain/enums.go), middleware `RequireMinRole` ([auth_middleware.go](../internal/web/adapter/in/http/auth_middleware.go)), группа `authedManager` ([routes.go](../internal/web/adapter/in/http/routes.go)), миграция [0013_user_role_manager](../migrations/0013_user_role_manager.up.sql). Менеджер: узлы CRUD/dry-run, каталоги Allowed Hosts/Headers, чтение Audit; не трогает users/teams/общие настройки/CH-шаблоны/move. UI-гейтинг по `minRole` ([web-ui/src/lib/roles.ts](../web-ui/src/lib/roles.ts), [Settings.tsx](../web-ui/src/pages/Settings.tsx)) |
+| **Self-service смена своего пароля `POST /api/me/password` (§26.4)** | ✅ Phase A | `AuthUsecase.ChangeOwnPassword` (подтверждение текущего пароля, инвалидация всех сессий) [auth.go](../internal/web/usecase/auth.go), handler [auth_handler.go](../internal/web/adapter/in/http/auth_handler.go), UI [pages/settings/Password.tsx](../web-ui/src/pages/settings/Password.tsx) |
 | API-токены: `db_<base64>` префикс, SHA-256 hash, scopes, audit | ✅ | [web/usecase/api_token.go](../internal/web/usecase/api_token.go), [http/api_token_middleware.go](../internal/web/adapter/in/http/api_token_middleware.go) |
 | Audit log (CRUD узлов, replay, dry_run, login, token actions) с retention | ✅ | [web/usecase/audit.go](../internal/web/usecase/audit.go), [usecase/housekeeping.go](../internal/web/usecase/housekeeping.go) |
+| **IP в аудите/логах нормализуется в IPv4 (`::1`→`127.0.0.1`, IPv4-mapped) (#4)** | ✅ | [platform/clientip/clientip.go](../internal/platform/clientip/clientip.go) `NormalizeIPv4` — применён в Web (`actorFromCtx`, `userActor`, login) и Receiver (`clientIP`) |
 | `RequireSessionOnly` для SSE (отклоняет API-токены) | ✅ Phase 5 | [api_token_middleware.go](../internal/web/adapter/in/http/api_token_middleware.go) |
 | Полный лейаут §7 (Overview cards, KPI-блоки, ClickHouse-настройки, Users-страница) | ✅ Phase 6.3/6.4 | Settings → Sentry/ClickHouse/Users CRUD с диалогами, live-tail UI с фильтрами и подсветкой |
 
@@ -148,6 +166,8 @@
 | Rate-limit per-node + per-token | ✅ | [platform/ratelimit/redis.go](../internal/platform/ratelimit/redis.go) |
 | `/health` (liveness) + `/ready` (с degraded body) | ✅ | [platform/healthcheck/healthcheck.go](../internal/platform/healthcheck/healthcheck.go) |
 | Загрузочный тест 500 rps × 10 мин | ✅ | [cmd/loadtest/main.go](../cmd/loadtest/main.go), `make loadtest` |
+| Реалистичный микс трафика (§10.2: async / dynamic-url / auth token+basic / random headers) | ✅ Phase 10.2.A | [cmd/loadtest/nodes.go](../cmd/loadtest/nodes.go) — односценарные узлы по `--ratio-*`, per-mode отчёт |
+| No-loss async/rmq (число строк CH = числу отправленных, §10.2) | ✅ Phase 10.2.A.3 | [cmd/loadtest/noloss.go](../cmd/loadtest/noloss.go) — `--ch-addr`, фильтр `type IN (requestAsync,RabbitMQAsync)` |
 
 ### §10 Тестирование
 
@@ -155,7 +175,7 @@
 |---|---|---|
 | Unit-тесты domain/crypto/usecase/i18n/sentry/chlog | ✅ Phase 5/5.2 | `*_test.go` в соответствующих пакетах |
 | **Integration testcontainers** (Postgres + миграции) | ✅ Phase 5/5.1 | [tests/integration/](../tests/integration/), `make test-integration` |
-| Loadtest бинарь с pass/fail-критериями | ✅ | [cmd/loadtest](../cmd/loadtest/) |
+| Loadtest бинарь с pass/fail-критериями + микс трафика + no-loss | ✅ Phase 10.2.A | [cmd/loadtest](../cmd/loadtest/) — `--ratio-async/-dynamic-url/-auth-token/-auth-basic`, per-mode `modes` в report.json, CH no-loss (`--ch-addr`); единый CI-job `loadtest` гонит полный микс (sync+async+dyn-url+auth+rmq) за один прогон |
 | **Полный testcontainers-сетап (PG + Redis + CH + Kafka)** | ✅ Phase 7.3 | PG ([node_repo_test.go](../tests/integration/node_repo_test.go)), Kafka ([receiver_async_test.go](../tests/integration/receiver_async_test.go)), Redis ([redis_test.go](../tests/integration/redis_test.go) — SessionRepo + NodeCache + TTL-expire), CH ([clickhouse_test.go](../tests/integration/clickhouse_test.go) — chlog.Writer batch insert + LogReaderCH `GetByID`/`Search` + table-name SQL-injection guard) |
 | **Async end-to-end интеграция через Kafka** | ✅ Phase 6.2 | [tests/integration/receiver_async_test.go](../tests/integration/receiver_async_test.go) — реальный pipeline `RouteAsyncUsecase → Kafka → ConsumerGroup → AsyncProcessor → SendUsecase → mock HTTP` |
 | **DLQ-сценарий после retry-exhaustion** | ✅ Phase 9.3 | [tests/integration/sender_dlq_test.go](../tests/integration/sender_dlq_test.go) — mock=500 + узел с `retry_count=2`; отдельный kafka-reader на `nexus.async.dlq` проверяет headers `id` / `node_path` / `orig_topic` / `reason=status=500 attempts=3` / `last_attempt_at` |
@@ -172,6 +192,7 @@
 | `make swagger-drift-check` для CI | ✅ Phase 5 | сравнивает `git diff --exit-code docs/` после регенерации |
 | **Полные аннотации на 100% endpoints** | ✅ Phase 7.1 | auth (login/logout/me), nodes (List/Get/Create/Update/Delete), users (List/Get/Create/Update/Delete/ChangePassword), tokens (List/Create/Revoke/Delete), audit (List/ExportCSV), dry-run, replay, logs (List/Stream), settings/app (Get/Update/TestClickHouse/TestSentry), settings/clickhouse/orphans (List/Drop) |
 | **Swagger UI handler в Gin** | ✅ Phase 7.1 | `r.GET("/swagger/*any", ginswagger.WrapHandler(swaggerfiles.Handler))` в [internal/web/app.go](../internal/web/app.go) + blank-import `_ "nexus/docs/web"` для регистрации генеренного docTemplate в `swag.Registry` |
+| **Два дока: Web + Receiver** (§25) | ✅ Phase 25.C | `make swagger` генерирует `docs/web` (instance `swagger`) и `docs/receiver` (instance `receiver`, `--exclude` изоляция); Web раздаёт `/swagger/web/*any` и `/swagger/receiver/*any`, старый `/swagger/index.html` → редирект на web |
 
 ### §12 Структура репозитория
 
@@ -197,7 +218,8 @@
 | `github.com/vsilchenkov/logging` через DI | ✅ | [platform/logging/logging.go](../internal/platform/logging/logging.go) — алиас `Logger`, `Init`, `NewNoop` для тестов |
 | `ErrorWithOp` с `op` для группировки | ✅ | используется во всех handlers/usecase |
 | Sentry с `BeforeSend`/`BeforeBreadcrumb` для маскирования | ✅ | [platform/sentry/sentry.go](../internal/platform/sentry/sentry.go) |
-| **Sentry tracing-middleware для Gin (§14.3)** | ✅ Phase 5 | [platform/sentry/middleware.go](../internal/platform/sentry/middleware.go) — span'ы с тегами service/node/root_method |
+| **Sentry tracing-middleware для Gin (§14.3)** | ✅ Phase 5 | [platform/sentry/middleware.go](../internal/platform/sentry/middleware.go) — span'ы с тегами service/node/root_method/**request_id** (§30) |
+| Обработка паник + `request_id` + версия в UI | ✅ §30 | логгер v1.7.9 (`WithContext`); см. карту §30 ниже и решение §4.27 |
 | `app_settings` PostgreSQL singleton + Web UI Sentry | ✅ Phase 6.3 | overlay поверх env, hot-reload Sentry/ClickHouse через Redis pub/sub, test connection (см. §8 строки 125-128) |
 
 ### §15 Критерии приёмки
@@ -210,16 +232,65 @@
 
 ### §16 Out of scope (явно отложено в v2)
 
-- Multi-tenancy логика (колонки `team_id` уже есть, изоляция — нет).
+- Multi-tenancy v2 — ✅ **Phase 10 закрыта** (см. подробный список ниже,
+  итого 18 коммитов, 7 блоков A→G).
+  - ✅ Phase 10.1: миграция 0008 (`teams`, `user_teams`, FK на `nodes`/`users`/`api_tokens`/`user_audit`, `UNIQUE(team_id, path)`, сидинг 'default'-team).
+  - ✅ Phase 10.2: `domain.Team`, `TeamRepository` (PG-impl CRUD + membership), `User.TeamID → DefaultTeamID`, резолв UUID 'default'-team в Web-bootstrap и проброс в NodeUsecase/OrphanScanner.
+  - ✅ Phase 10.B.1: `Session.CurrentTeamID` в Redis, `APIToken.TeamID`, endpoints `GET /api/me/teams` + `POST /api/me/switch-team` (последний только для session-cookie: API-токены ограничены одной командой). `AuthUsecase` теперь принимает `port.TeamRepo`.
+  - ✅ Phase 10.B.2: team-scope в `NodeUsecase.{Get,Update,Delete}` (cross-team → 404), `NodeHandler.Create` подставляет `currentTeamID(c)`, `APITokenUsecase.Create` принимает `teamID` и пишет его в `api_tokens.team_id`.
+  - ✅ Phase 10.C.1: `TeamProvisioner` (PG-tx + `CREATE DATABASE nexus_<slug>` атомарно с откатом PG-row), `TeamUsecase` (CRUD + Members), HTTP `/api/teams` (admin-only). Creator → owner. `default`-team удалить нельзя.
+  - ✅ Phase 10.C.2: `NodeUsecase` нормализует `clickhouse_table` до `<team.ch_database>.<table>` в Create/Update через `TeamRepo`. Sender и `ch_housekeeping` без изменений — `chlog.Writer` уже принимает `db.table` строкой, `splitDBTable` уже умеет парсить.
+  - ✅ Phase 10.C.3: нормализация `nodes.clickhouse_table` до `<team.ch_database>.<table>` — на write-time в `NodeUsecase.normalizeCHTable` (Create/Update). Backfill-миграция 0009 удалена как ненужная (стенд greenfield, узлов со старым/unprefixed форматом нет).
+  - ✅ Phase 10.D.1: team-scope в `LogsUsecase.{ListSince,Search,Subscribe}` и `ReplayUsecase.Replay` (cross-team → 404). `DryRunHandler` ставит `n.TeamID = currentTeamID(c)` на узле формы. Handler'ы передают `currentTeamID(c)` во все эти usecase.
+  - ✅ Phase 10.D.2: `OrphanScanner` сканирует все `teams.ch_database` (allow-list), `knownTables` собирает узлы всех команд, drop guard разрешает DROP только в tenant-БД. `ch_housekeeping` (Sender) автоматически multi-team — берёт узлы всех команд из PG и идёт по `db.table` через `splitDBTable`.
+  - ✅ Phase 10.E.1: `NodeReader.Get(teamSlug, path)` — PG-запрос через `JOIN teams ON nodes.team_id = teams.id WHERE teams.slug=$1 AND nodes.path=$2`, Redis-ключ `node:<team_slug>:<path>`, L2-кеш по `<team_slug>/<path>`. Receiver принимает `/v1/request/<team_slug>/<node_path>` и legacy `/v1/request/<node_path>` (default-team). Parser `splitTeamSlugAndPath` различает 1- и 2-сегментные URL.
+  - ✅ Phase 10.E.2: cross-team изоляция в Receiver обеспечивается JOIN'ом из E.1 (чужой `team_slug` → 404, не утечка существования). API-токены в Receiver не используются — incoming auth узла остаётся ответственным за аутентификацию клиента. Фиксируется unit-тестом `TestSplitTeamSlugAndPath` (8 кейсов).
+  - ✅ Phase 10.F.1: `user_audit.team_id` реально записывается через `Actor.TeamID` (берётся из сессии в `userActor(c)`/`actorFromCtx(c)`). `AuditFilter.TeamID` + handler-overlay: по умолчанию admin видит только свою команду; `?team_id=*` или `?team_id=<uuid>` — override. CSV-экспорт включает колонку `team_id`.
+  - ✅ Phase 10.F.2: SPA — страница `Settings → Teams` (admin-only). `TeamsPanel` (CRUD + delete-guard для `default`), `TeamDialog` (slug immutable после создания, preview `nexus_<slug>`), `MembersDialog` (add/update-role/remove, select из `/api/users` без уже-членов). i18n en/ru.
+  - ✅ Phase 10.F.3: Topbar team-switcher — `<select>` со списком из `/api/me/teams`, при смене вызывает `/api/me/switch-team` и `qc.invalidateQueries()` (все списки nodes/audit/logs/tokens перерисовываются под новый scope).
+  - ✅ Phase 10.G.1: end-to-end integration-тест `TestMultiTenancy_Isolation_E2E` (testcontainers PG) — 10 свойств: одинаковый path в двух командах, cross-team Get/Update/Delete возвращает 404, ClickHouseTable префиксуется через NodeUsecase, audit-записи несут team_id, FK ON DELETE RESTRICT блокирует удаление team с активными узлами. Прогон ~5 сек.
+  - ✅ Phase 11.A: scope пользователей по членству — `ListUsersFilter.TeamID`, `UserRepoPg.List` через `JOIN user_teams` (userCols квалифицированы алиасом `u`, чтобы `created_at` не был ambiguous), `UserUsecase` принимает `TeamRepo` + `defaultTeamID`. `Create` добавляет membership в current_team через `AddMember` (иначе новый юзер не попал бы в scoped-список). Handler передаёт `currentTeamID(c)` в List/Create. Полное ТЗ — §18, см. [sections/18-multi-tenancy.md](sections/18-multi-tenancy.md).
+  - ✅ Phase 11.B: перенос узла между командами — `POST /api/nodes/:id/move {target_team_slug}` (admin-only). `NodeUsecase.Move`: PG-перенос (team_id + clickhouse_table rebase на БД целевой команды) в UoW-транзакции + audit `node.move`; конфликт пути → `ErrNodeAlreadyExists` (409); перенос в свою команду → 403; чужой узел → 404. CH-таблица логов следует за узлом через `TeamProvisioner.RenameTable` (RENAME TABLE old_db.tbl TO new_db.tbl, best-effort: при отсутствии исходной таблицы — `ErrSourceTableAbsent`, пропуск). UI: кнопка «Move» на Overview + диалог выбора команды. Integration-тест `TestMultiTenancy_NodeMove_E2E`.
+  - ✅ Phase 11.C: Redis ACL — `RedisSection.Username` (yaml `username`), проброшен в `goredis.Options.Username`. `config.example.yml`: `username: ${REDIS_USER:}`; `.env.example`: `REDIS_USER=`. Пустое значение = default-юзер (обратная совместимость). `config_debug.yml` не трогается (для локального ACL-Redis добавить `username: <user>` вручную).
+  - ✅ Phase 11.D: multi-tenancy зафиксирована как ТЗ §18 — новый раздел [sections/18-multi-tenancy.md](sections/18-multi-tenancy.md) (модель данных, CH-БД per team, scope, Receiver URL, перенос узла, UI), пункт в `16-out-of-scope.md` помечен реализованным со ссылкой на §18, строка в `sections/README.md`, синхронизирован сводный `nexus_spec.md`. В `CLAUDE.md` — правило: новая крупная фича → новый раздел в `specs/sections/`.
 - ~~Webhook signature verification (`/v1/callback/`)~~ — реализовано в Phase 8.1.
 - ~~OpenTelemetry distributed tracing~~ — реализовано в Phase 8.2 (HTTP-server-span'ы) + 8.3 (HTTP outbound + gRPC unary client/server interceptor'ы) + 8.4 (Kafka headers propagation для async-пути). End-to-end trace через UI → Web → Receiver → {gRPC → Sender → внешний URL} / {Kafka → Sender-consumer → внешний URL}.
-- Notifications для операторов (Slack/Telegram).
-- Шаблоны узлов.
+- ◐ Notifications для операторов — **Telegram реализован (Phase F2, см. §20)**;
+  Slack/generic-webhook и доп. триггеры остаются расширением.
+- Шаблоны узлов (предзаполненный конфиг узла — НЕ путать с §19 «шаблоны
+  CH-таблиц», которые реализованы).
 - Версионирование конфигов узла + откат.
 - Bulk-операции, импорт/экспорт.
 - Mutating API tokens.
 - KMS/Vault интеграция.
 - OpenTelemetry.
+
+### §19 Шаблоны запросов ClickHouse
+
+Полный ТЗ-раздел — [sections/19-ch-templates.md](sections/19-ch-templates.md).
+
+| Пункт | Статус | Где |
+|---|---|---|
+| Единый источник 20 колонок | ✅ Phase F1.1 | [domain/ch_log_schema.go](../internal/domain/ch_log_schema.go) `RequiredLogColumns` |
+| Доменная модель шаблона + Validate (белые списки CODEC/index/partition) | ✅ Phase F1.1 | [domain/ch_template.go](../internal/domain/ch_template.go), рендер [ch_template_render.go](../internal/domain/ch_template_render.go) |
+| Таблица `ch_templates` (JSONB spec, partial-unique default) + сид «Standard logs» + `nodes.clickhouse_template_id` | ✅ Phase F1.2 | [migrations/0009](../migrations/0009_ch_templates.up.sql), [postgres/ch_template_repo.go](../internal/web/adapter/out/postgres/ch_template_repo.go) |
+| `TeamProvisioner.CreateTable` / `VerifyTemplate` (live temp create+drop) | ✅ Phase F1.3 | [clickhouse/team_provisioner.go](../internal/web/adapter/out/clickhouse/team_provisioner.go) |
+| CHTemplateUsecase (CRUD+audit, delete-guard, verify) + handler + routes | ✅ Phase F1.4 | [usecase/ch_template.go](../internal/web/usecase/ch_template.go), [http/ch_template_handler.go](../internal/web/adapter/in/http/ch_template_handler.go) |
+| Авто-создание таблицы при Create/Update узла + DTO + UI (селектор + панель управления) | ✅ Phase F1.5 | [usecase/node.go](../internal/web/usecase/node.go) `provisionTable`, [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx), [CHTemplatesPanel.tsx](../web-ui/src/components/CHTemplatesPanel.tsx) |
+| Локализованные ошибки валидации шаблона (i18n-`code` + перевод в языке UI, inline-вывод у полей) | ✅ Phase F1.6 | [http/ch_template_handler.go](../internal/web/adapter/in/http/ch_template_handler.go) `chTemplateErrorCode`/`chTemplateValidationCode`, [i18n.go](../internal/platform/i18n/i18n.go) ключи `ch_template.*`, [CHTemplatesPanel.tsx](../web-ui/src/components/CHTemplatesPanel.tsx) |
+
+### §20 Уведомления операторам (Telegram)
+
+Полный ТЗ-раздел — [sections/20-notifications.md](sections/20-notifications.md).
+
+| Пункт | Статус | Где |
+|---|---|---|
+| Настройки `notifications.telegram` в app_settings (mask/merge/cron-валидация) + **фикс marshal'а Update** + reloader-секция | ✅ Phase F2.1 | [domain/app_settings.go](../internal/domain/app_settings.go), [usecase/app_settings.go](../internal/web/usecase/app_settings.go), [postgres/app_settings_repo.go](../internal/web/adapter/out/postgres/app_settings_repo.go), [reloader.go](../internal/platform/reloader/reloader.go) |
+| Telegram-клиент (sendMessage) | ✅ Phase F2.2 | [platform/telegram/client.go](../internal/platform/telegram/client.go) |
+| ~~`LogReader.CountErrors`~~ → **§22: `PromMetrics.NodeErrors` (Prometheus)** + Redis checkpoint + distributed lock | ✅ Phase F2.3 / 22.4 | источник ошибок переведён на Prometheus (`nexus_request_incomplete_total`), см. §22; [redis/notif_checkpoint.go](../internal/web/adapter/out/redis/notif_checkpoint.go), [redis/notif_lock.go](../internal/web/adapter/out/redis/notif_lock.go) |
+| NotificationScheduler (cron, окно ошибок, send-if>0, hot-reload) | ✅ Phase F2.4 | [usecase/notification.go](../internal/web/usecase/notification.go), dep `robfig/cron/v3` |
+| Wiring + `POST /api/settings/notifications/test` | ✅ Phase F2.5 | [usecase/settings_tester.go](../internal/web/usecase/settings_tester.go) `TestTelegram`, [app.go](../internal/web/app.go) |
+| UI Settings → Notifications | ✅ Phase F2.6 | [pages/settings/Notifications.tsx](../web-ui/src/pages/settings/Notifications.tsx) |
 
 ### §17 Паттерны разработки
 
@@ -236,6 +307,121 @@
 | Frontend: компоненты без прямых `fetch`, только через hooks | ✅ | `useQuery`, `useMutation`; единственный axios — в [api/client.ts](../web-ui/src/api/client.ts) с 401-interceptor'ом |
 | Логгер через DI (никаких `logging.GetLogger()`) | ✅ | проверено в каждом конструкторе |
 | Никаких глобалов / `init()` со side-effects | ✅ | |
+
+---
+
+### §22 Контроль логирования узла, обрезка тел, карточки Overview, Telegram→Prometheus
+
+ТЗ — [sections/22-logging-controls-cards.md](sections/22-logging-controls-cards.md). Ветка
+`feature/logging-controls-cards`.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| Поля узла `logging_enabled` / `max_body_size_enabled` / `max_body_size` | ◐ Phase 22.1 | миграция [0010](../migrations/0010_node_logging_controls.up.sql), [domain/node.go](../internal/domain/node.go), [postgres/node_repo.go](../internal/web/adapter/out/postgres/node_repo.go), [dto.go](../internal/web/adapter/in/http/dto.go), proto [sender.proto](../proto/sender/v1/sender.proto) |
+| Проводка полей Node → Sender (sync gRPC + async PG) | ◐ Phase 22.1 | [route.go](../internal/receiver/usecase/route.go), [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go), [async.go](../internal/sender/usecase/async.go), readers [nodepg](../internal/sender/adapter/out/nodepg/reader.go) / [nodecache](../internal/receiver/adapter/out/nodecache/reader.go) |
+| Отключение логирования + обрезка по символам в Sender | ✅ Phase 22.2 | [send.go](../internal/sender/usecase/send.go) (`truncateRunes`, guard на `Write`); тесты [send_test.go](../internal/sender/usecase/send_test.go) + integration [clickhouse_test.go](../tests/integration/clickhouse_test.go) |
+| UI формы: Toggle, карточки «Заголовки» / «Логирование» | ✅ Phase 22.3 | [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx) (две карточки, мастер-тумблер гасит `<fieldset disabled>`), компонент [Toggle](../web-ui/src/components/ui/pickers.tsx), i18n ru/en |
+| Telegram-алерты через Prometheus + метрика `nexus_request_incomplete_total` | ✅ Phase 22.4 | [notification.go](../internal/web/usecase/notification.go) (`PromMetrics.NodeErrors` вместо `LogReader.CountErrors`), [metrics.go](../internal/platform/metrics/metrics.go), инкремент в [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go)/[async.go](../internal/sender/usecase/async.go), wiring [app.go](../internal/web/app.go) (требует Prometheus) |
+| Карточки Overview под `ui_cards.html` (спарклайн, p95, фильтр) | ✅ Phase 22.5 | [Overview.tsx](../web-ui/src/pages/Overview.tsx) (полоса-акцент, chip+pill, 3 метрики, спарклайн, target, фильтр статусов, сортировка); backend [prometheus/client.go](../internal/web/adapter/out/prometheus/client.go) (`NodeSeries` range-запрос + p95 в `NodeThroughput`), [metrics.go](../internal/web/usecase/metrics.go), DTO [metrics_handler.go](../internal/web/adapter/in/http/metrics_handler.go) |
+| Подсказки-расшифровки на графиках/метриках (info-иконка `?` + богатый тултип на области) | ✅ Phase 22.6 | атом [LabelHint.tsx](../web-ui/src/components/ui/LabelHint.tsx) (HelpCircle + Radix `Tooltip`); `hint?` в [Kpi](../web-ui/src/components/ui/data.tsx); per-bar тултип в [TrafficChart.tsx](../web-ui/src/components/ui/TrafficChart.tsx) (время/запросы/ошибки %, легенда цветов, `delayDuration` в [Tooltip.tsx](../web-ui/src/components/ui/Tooltip.tsx)); тултип на `Sparkline` ([Overview.tsx](../web-ui/src/pages/Overview.tsx)); заголовки в [OverviewTab.tsx](../web-ui/src/components/node/OverviewTab.tsx)/[MetricsTab.tsx](../web-ui/src/components/node/MetricsTab.tsx); ключи `metrics.hints.*` (ru/en). Грабли: `@radix-ui/react-tooltip` v1.2.8 **не** экспортирует `Anchor` — per-bar тултип через обёртку `Tooltip` на каждый столбец (Radix ленив на контенте) |
+
+---
+
+### §23 Каталог разрешённых хостов (Allowed Hosts catalog)
+
+ТЗ — [sections/23-allowed-hosts-catalog.md](sections/23-allowed-hosts-catalog.md). Ветка
+`feature/catalogs-and-swagger`.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| Миграция `host_allowlist` + `node_allowed_hosts` (M2M) + trigger usage_count | ✅ Phase 23.A.1 | [0011](../migrations/0011_host_allowlist.up.sql) |
+| Домен `HostAllowlistEntry` (exact/wildcard/regex), `EncodedPattern` (`re:`) | ✅ Phase 23.A.1 | [domain/host_allowlist.go](../internal/domain/host_allowlist.go) |
+| Единый матчер `domain.HostAllowed` (+regex) для Receiver и preview | ✅ Phase 23.A.2 | [host_allowlist.go](../internal/domain/host_allowlist.go), [urlresolver.go](../internal/receiver/usecase/urlresolver.go) |
+| Port + PG repo + `NodeRepo.UpdateAllowedHostsSnapshot` + `Repos.Hosts` | ✅ Phase 23.A.3 | [port/host_allowlist_repo.go](../internal/web/usecase/port/host_allowlist_repo.go), [postgres/host_allowlist_repo.go](../internal/web/adapter/out/postgres/host_allowlist_repo.go) |
+| Usecase: CRUD/preview/link-unlink + пересборка снимка + cache.Set | ✅ Phase 23.A.4 | [usecase/host_allowlist.go](../internal/web/usecase/host_allowlist.go) (+тесты) |
+| HTTP: `/api/allowed-hosts*`, `/api/nodes/:id/allowed-hosts*`, swagger | ✅ Phase 23.A.5 | [http/host_allowlist_handler.go](../internal/web/adapter/in/http/host_allowlist_handler.go), [routes.go](../internal/web/adapter/in/http/routes.go), [app.go](../internal/web/app.go) |
+| UI: страница Settings → Allowed Hosts (таблица/фильтр/диалог preview) | ✅ Phase 23.A.6 | [pages/settings/AllowedHosts.tsx](../web-ui/src/pages/settings/AllowedHosts.tsx) |
+| UI: combobox+chips в форме узла (attach/detach, SSRF-warn) | ✅ Phase 23.A.7 | [components/node/AllowedHostsField.tsx](../web-ui/src/components/node/AllowedHostsField.tsx), [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx) |
+
+### §24 Справочник заголовков (Headers catalog)
+
+ТЗ — [sections/24-headers-catalog.md](sections/24-headers-catalog.md).
+
+| Пункт | Статус | Где |
+|---|---|---|
+| Миграция `headers_catalog` (UNIQUE lower(name)) + домен | ✅ Phase 24.B.1 | [0012](../migrations/0012_headers_catalog.up.sql), [domain/header_catalog.go](../internal/domain/header_catalog.go) |
+| Port+repo (usage on-read) + usecase (идемпотентный create) + HTTP | ✅ Phase 24.B.2 | [postgres/header_catalog_repo.go](../internal/web/adapter/out/postgres/header_catalog_repo.go), [usecase/header_catalog.go](../internal/web/usecase/header_catalog.go), [http/header_catalog_handler.go](../internal/web/adapter/in/http/header_catalog_handler.go) |
+| UI: combobox (debounce, top-used, автосоздание) в форме узла | ✅ Phase 24.B.3 | [components/node/HeadersField.tsx](../web-ui/src/components/node/HeadersField.tsx) |
+
+### §25 Swagger в шапке (Topbar) + два дока
+
+ТЗ — [sections/25-topbar-swagger.md](sections/25-topbar-swagger.md).
+
+| Пункт | Статус | Где |
+|---|---|---|
+| Receiver swagger-аннотации + генерация двух доков (`--exclude`) | ✅ Phase 25.C.1 | [cmd/receiver/main.go](../cmd/receiver/main.go), [receiver/.../handler.go](../internal/receiver/adapter/in/http/handler.go), [Makefile](../Makefile), `docs/receiver` |
+| Web раздаёт `/swagger/web` + `/swagger/receiver` (InstanceName) | ✅ Phase 25.C.2 | [app.go](../internal/web/app.go) |
+| FE-инфра Radix/cmdk + обёртки Popover/Tooltip/Command | ✅ Phase D.1 | [components/ui/](../web-ui/src/components/ui/) |
+| Topbar Swagger popover (две доки, ↗, tooltip) | ✅ Phase 25.D.2 | [components/Topbar.tsx](../web-ui/src/components/Topbar.tsx), [AppShell.tsx](../web-ui/src/components/AppShell.tsx) |
+
+### §27 Тип узла RabbitMQAsync
+
+ТЗ — [sections/27-rabbitmq-async.md](sections/27-rabbitmq-async.md).
+
+| Пункт | Статус | Где |
+|---|---|---|
+| Домен: `RootMethodRabbitMQAsync`+`IsPull`, поля `rmq_*`/`pull_*`, `Validate`, `NormalizeForRootMethod`, дефолты | ✅ Phase B | [domain/enums.go](../internal/domain/enums.go), [domain/node.go](../internal/domain/node.go), [domain/errors.go](../internal/domain/errors.go) |
+| Миграция 0014: `methods`+`RabbitMQAsync`, колонки `nodes`, `chk_rmq_fields` | ✅ Phase B | [0014_rmq_async_node](../migrations/0014_rmq_async_node.up.sql) |
+| Postgres: шифрование `rmq_password`, NULL для не-pull, scan | ✅ Phase B | [node_repo.go](../internal/web/adapter/out/postgres/node_repo.go), [db.go](../internal/web/adapter/out/postgres/db.go) |
+| DTO+handler: поля, `rmq_password_set`, «пусто=не менять», сброс несовместимых полей в audit | ✅ Phase B | [dto.go](../internal/web/adapter/in/http/dto.go), [node_handler.go](../internal/web/adapter/in/http/node_handler.go), [usecase/node.go](../internal/web/usecase/node.go) |
+| `POST /api/nodes/test-rmq` (manager+, rate-limit, passive declare) | ✅ Phase C | usecase [rmq_tester.go](../internal/web/usecase/rmq_tester.go), adapter [rabbitmq/prober.go](../internal/web/adapter/out/rabbitmq/prober.go), handler [rmq_test_handler.go](../internal/web/adapter/in/http/rmq_test_handler.go), route в группе `authedManager` ([routes.go](../internal/web/adapter/in/http/routes.go)); 3 шага connect/auth/queue (passive declare), всегда 200, rate-limit `web.rmq_test_rate_limit_per_min` (деф. 10) |
+| Puller-воркер RabbitMQ→Kafka в Receiver, метрики `nexus_rmq_*`, runtime-`degraded` | ✅ Phase D | usecase [puller.go](../internal/receiver/usecase/puller.go)+[puller_manager.go](../internal/receiver/usecase/puller_manager.go), адаптеры [rabbitmq/](../internal/receiver/adapter/out/rabbitmq/) (connector/nodelister/healthsink), envelope-блок `rmq` ([envelope.go](../internal/receiver/usecase/envelope.go)), метрики ([metrics.go](../internal/platform/metrics/metrics.go)), health-снимок в Redis (`rmq:health`), wiring [receiver/app.go](../internal/receiver/app.go), конфиг `receiver.puller`. Reconcile из PG (без узлового pub/sub), graceful stop (≤10с) |
+| UI: форма (3 карточки, проверка, pull-параметры), KPI/degraded | ✅ Phase E | health-ридер [redis/rmq_health.go](../internal/web/adapter/out/redis/rmq_health.go) → `NodeResponse.rmq_status` ([node_handler.go](../internal/web/adapter/in/http/node_handler.go)); UI [RabbitMQSection.tsx](../web-ui/src/components/node/RabbitMQSection.tsx), [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx) (3-я карточка, скрытие incoming-auth/from_request, проверка подключения), [NodeDetail.tsx](../web-ui/src/pages/NodeDetail.tsx) (degraded-pill + KPI, refetch 5с); i18n en/ru |
+| Сценарные/e2e-тесты (testcontainers RabbitMQ) + loadtest `--ratio-rmq` | ✅ Phase F | [tests/integration/receiver_rmq_test.go](../tests/integration/receiver_rmq_test.go) (RabbitMQ-контейнер: no-loss + kafka-down requeue), [node_repo_test.go](../tests/integration/node_repo_test.go) (round-trip+CHECK), unit [puller_test.go](../internal/receiver/usecase/puller_test.go), loadtest [cmd/loadtest/rmq.go](../cmd/loadtest/rmq.go) (`--ratio-rmq`/`--rmq-url`), TESTING.md |
+
+### §28 Онлайн-метрики, период просмотра, публичный адрес, UX (8 пунктов ТЗ)
+
+ТЗ — [sections/28-online-metrics.md](sections/28-online-metrics.md). Ветка `feature/online-metrics`.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| #1 Публичный адрес приложения в настройках | ✅ Phase B | `AppSettings.General.PublicBaseURL` + `ValidatePublicBaseURL` ([domain/app_settings.go](../internal/domain/app_settings.go)), merge/changedSections ([usecase/app_settings.go](../internal/web/usecase/app_settings.go)), `GET /api/settings/public` (любой authed) ([app_settings_handler.go](../internal/web/adapter/in/http/app_settings_handler.go), [routes.go](../internal/web/adapter/in/http/routes.go)), UI [settings/General.tsx](../web-ui/src/pages/settings/General.tsx), хелпер [lib/nodeUrl.ts](../web-ui/src/lib/nodeUrl.ts) (применён в [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx)/[ConfigTab.tsx](../web-ui/src/components/node/ConfigTab.tsx)) |
+| #2 Онлайн-обновление метрик везде | ✅ Phase F | единый `METRICS_REFETCH_MS=12s` ([useNodeMetrics.ts](../web-ui/src/components/node/useNodeMetrics.ts)), применён в [Overview.tsx](../web-ui/src/pages/Overview.tsx), [OverviewTab.tsx](../web-ui/src/components/node/OverviewTab.tsx), [MetricsTab.tsx](../web-ui/src/components/node/MetricsTab.tsx) |
+| #3 Маскирование данных авторизации (UI) + viewer-гейтинг | ✅ Phase E | [ui/SecretInput.tsx](../web-ui/src/components/ui/SecretInput.tsx) (password+глазик), [useCurrentRole.ts](../web-ui/src/lib/useCurrentRole.ts) (`useRoleAtLeast`), скрытие New/Edit для viewer ([Overview.tsx](../web-ui/src/pages/Overview.tsx), [NodeDetail.tsx](../web-ui/src/pages/NodeDetail.tsx)), redirect в [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx); бэкенд значения не отдаёт (DTO `*_set`) |
+| #4 Период просмотра метрик (1h..30d + календарь) | ✅ Phase F | [ui/PeriodPicker.tsx](../web-ui/src/components/ui/PeriodPicker.tsx) + [lib/period.ts](../web-ui/src/lib/period.ts); backend `rangeBuckets`+`resolveWindow` (from/to RFC3339/UnixMilli) [metrics_handler.go](../internal/web/adapter/in/http/metrics_handler.go); `PromMetrics.NodeThroughput/NodeSeries` → `(since,until)` [metrics_provider.go](../internal/web/usecase/port/metrics_provider.go), [prometheus/client.go](../internal/web/adapter/out/prometheus/client.go), [usecase/metrics.go](../internal/web/usecase/metrics.go) |
+| #5 Понятные ошибки валидации (code/field + i18n) + проверка логирования | ✅ Phase C | карта [node_validation.go](../internal/web/adapter/in/http/node_validation.go), `replyDomainError`→`{error,code,field}` [node_handler.go](../internal/web/adapter/in/http/node_handler.go), i18n `node.validation.*` ([i18n.go](../internal/platform/i18n/i18n.go), [locales](../web-ui/src/locales/)), inline-вывод в [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx)/[RabbitMQSection.tsx](../web-ui/src/components/node/RabbitMQSection.tsx); `ErrNodeLogsNotConfigured` в `Validate` [domain/node.go](../internal/domain/node.go) |
+| #6 Фильтр RabbitMQAsync на Overview | ✅ Phase D | [Overview.tsx](../web-ui/src/pages/Overview.tsx) (3-й тип в селекторе) |
+| #7 Багфикс: CH-таблица узла без шаблона (CH code 60) | ✅ Phase A.1 | `provisionTable` берёт дефолтный шаблон при `logging_enabled` без `template_id` ([usecase/node.go](../internal/web/usecase/node.go)); unit [node_provision_test.go](../internal/web/usecase/node_provision_test.go), E2E [node_ch_template_test.go](../tests/integration/node_ch_template_test.go) |
+| #8 Багфикс: резолв async-узла по legacy-пути со слешем | ✅ Phase A.2 | `resolveNode` fallback на default-team ([receiver/usecase/resolver.go](../internal/receiver/usecase/resolver.go)), применён в [route.go](../internal/receiver/usecase/route.go)/[route_async.go](../internal/receiver/usecase/route_async.go); unit [resolver_test.go](../internal/receiver/usecase/resolver_test.go) |
+
+---
+
+### §29 Комментарий узла
+
+ТЗ — [sections/29-node-comment.md](sections/29-node-comment.md). Ветка `feature/node-comment`.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| Колонка `comment` + домен + валидация (≤2000 рун) | ✅ Phase 29.A | миграция [0016](../migrations/0016_node_comment.up.sql), [domain/node.go](../internal/domain/node.go) (`Comment`, `utf8.RuneCountInString`), `ErrNodeCommentLength` [errors.go](../internal/domain/errors.go) |
+| PG repo + DTO + Swagger | ✅ Phase 29.A | comment последней колонкой в [node_repo.go](../internal/web/adapter/out/postgres/node_repo.go) (INSERT/UPDATE/scan), [dto.go](../internal/web/adapter/in/http/dto.go) (req/resp+мапперы); тесты [node_test.go](../internal/domain/node_test.go), [node_repo_test.go](../tests/integration/node_repo_test.go) |
+| UI: блок в форме + показ на «Обзоре» + i18n | ✅ Phase 29.B | [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx) (Card+Textarea внизу формы), [OverviewTab.tsx](../web-ui/src/components/node/OverviewTab.tsx) (read-only), `node.form.comment*` ([locales](../web-ui/src/locales/)) |
+| Багфикс: ключ node-кеша Web = формату Receiver | ✅ Phase Fix.B | [redis/node_cache.go](../internal/web/adapter/out/redis/node_cache.go) (`node:<DefaultTeamSlug>:<path>`) — см. §4.26 |
+
+---
+
+### §30 Логирование, обработка паник и идентификация запросов
+
+ТЗ — [sections/30-logging-panic-recovery.md](sections/30-logging-panic-recovery.md).
+Ветка `feature/logging-panic-requestid`. Зависимость: bump логгера до v1.7.9
+(`With`/`WithContext`).
+
+| Пункт | Статус | Где |
+|---|---|---|
+| Recover в горутинах (helper) | ✅ Phase 1–2 | [safego](../internal/platform/safego/safego.go) (`Recover`/`RecoverCtx`); `defer safego.Recover` в [runner.go](../internal/platform/runner/runner.go), всех горутинах [sender](../internal/sender/app.go)/[receiver](../internal/receiver/app.go)/[web](../internal/web/app.go) app.go, пулах ([kafka consumer](../internal/sender/adapter/in/kafka/consumer.go), [chlog writer](../internal/sender/adapter/out/chlog/writer.go), [puller_manager](../internal/receiver/usecase/puller_manager.go)), [ch manager](../internal/platform/clickhouse/manager.go), [api_token](../internal/web/usecase/api_token.go), [logs](../internal/web/usecase/logs.go) |
+| Recover в точках входа | ✅ Phase 2 | production `main` уже под `bootstrap.Shutdown`; [echosrv](../cmd/echosrv/main.go)/[loadtest](../cmd/loadtest/main.go) — `safego.Recover` в main |
+| gin recovery → лог + Sentry + 500 | ✅ Phase 3 | [recovery.GinMiddleware](../internal/platform/recovery/middleware.go) заменяет `gin.Recovery()` во всех движках; capture через `logger.WithContext` в request-scoped hub |
+| requestId (UUID v4, не перезаписывать) → Sentry | ✅ Phase 3 | [requestid](../internal/platform/requestid/requestid.go) (middleware первым в цепочке, `X-Request-Id`); тег на scope+транзакцию в [sentry/middleware.go](../internal/platform/sentry/middleware.go) |
+| Версия в UI | ✅ Phase 4 | публичный `GET /api/version` [version_handler.go](../internal/web/adapter/in/http/version_handler.go) (`cfg.Build.Version`); футер [Sidebar.tsx](../web-ui/src/components/Sidebar.tsx); порядок присвоения — [DEPLOYMENT.md §9.0](../DEPLOYMENT.md) |
 
 ---
 
@@ -320,6 +506,49 @@
 
 Эти моменты не очевидны из кода без контекста — стоит держать в голове при доработке.
 
+### 4.0 Базовый путь API — `/api/v1` и единый вход через Web
+
+Боевые эндпоинты Receiver живут под `/api/v1/request`, `/api/v1/requestAsync`,
+`/api/v1/callback` (раньше было `/v1/...`). Причина: клиенты обращаются к шине через
+**единый хост Web Service** (тот же, что отдаёт админку). Web реверс-проксирует
+`/api/v1/request|requestAsync|callback` в Receiver
+([receiver_proxy.go](../internal/web/adapter/in/http/receiver_proxy.go), регистрируется в
+[app.go](../internal/web/app.go) **до** `SPAFallback`). Префикс `/api` критичен: SPA-fallback
+отдаёт `index.html` на всё, что **не** начинается с `/api/` — поэтому старый `/v1/request`
+возвращал клиенту HTML вместо ответа узла (баг). Грабли при доработке:
+
+- Шаблон gin-роута теперь `/api/v1/request/*path` — это завязано в
+  [metrics/gin.go](../internal/platform/metrics/gin.go) (`rootMethodFromPath`) и
+  [sentry/middleware.go](../internal/platform/sentry/middleware.go) (`rootMethod`); меняешь путь —
+  меняй и там, иначе сломается node-метка и имена спанов.
+- Replay-диспетчер ([web/adapter/out/receiver/dispatcher.go](../internal/web/adapter/out/receiver/dispatcher.go))
+  и loadtest ([cmd/loadtest/main.go](../cmd/loadtest/main.go)) бьют по `/api/v1/...`.
+- `X-Forwarded-For` проставляется стандартным `httputil.ReverseProxy` — Receiver видит реальный
+  IP клиента (важно для аудита/логов).
+
+### 4.0.1 Стендовая валидация доработок (#1–#9)
+
+Сквозной прогон на реальном стенде (deps в Docker + сервисы локально + echosrv +
+RabbitMQ) подтвердил, см. [docs/STAND_TESTING.md](STAND_TESTING.md):
+
+- **#1/#6** единый вход `POST :8000/api/v1/request/...` → прокси → Receiver →
+  Sender → echosrv: ответ = тело+заголовки получателя (JSON + `X-Echo`), не HTML;
+  пустое тело узла `/empty` → `Content-Length: 0`.
+- **#5** запрос неверным методом → `405`; исходящий метод узла диктует вызов
+  (echo.method и колонка `method` в логе совпадают с `outgoing_method`).
+- **#7** async-успех `{"result":true,id}`, ошибка → `404` + `{"result":false,"message":"node not found"}`.
+- **#8** RabbitMQAsync: 50 опубликованных сообщений вытянуты puller'ом → доставлены
+  → 50 строк в ClickHouse (`type=requestAsync`, `status=200`); синхронного
+  `result`-ответа нет (ожидаемо).
+- **#4** IP в аудите и в ClickHouse-логах = `127.0.0.1` (IPv4), не `::1`.
+- CH-шаблон (default «Standard logs») → авто-создание таблицы и запись логов;
+  без шаблона — file-fallback NDJSON в `logs/clickhouse-fallback/`.
+- Метрики `nexus_requests_total{method,node,status}` растут по узлам (200/404/405).
+
+Грабли локального запуска: `config_debug.yml` должен задавать `web.receiver_url:
+http://localhost:8080` (дефолт `http://receiver:8080` — docker-имя, локально не
+резолвится), иначе единый вход отдаёт 502.
+
 ### 4.1 Шифрование auth_credentials живёт только в `adapter/out/postgres`
 
 `domain.Node` всегда хранит **открытый** plaintext. Шифрование/расшифровка происходит
@@ -364,6 +593,20 @@ SSE-клиентов нагрузка на CH растёт линейно. До�
 `nexus.logs` (out-of-scope в v1). SSE отклоняет API-токены через
 [RequireSessionOnly](../internal/web/adapter/in/http/api_token_middleware.go) — только UI-сессии.
 
+#### 4.6.1 Узел без `clickhouse_table` — штатное состояние, не 500
+
+`clickhouse_table` опционален: таблица логов провижинится только если задан
+`clickhouse_template_id` **и** непустое имя таблицы (см. `NodeUsecase.provisionTable`).
+Узел без таблицы логировать не может — это норма, а не сбой. Поэтому
+[LogsUsecase.resolveNode](../internal/web/usecase/logs.go) возвращает sentinel
+`domain.ErrNodeLogsNotConfigured`, а [logs_handler.go](../internal/web/adapter/in/http/logs_handler.go)
+маппит его в `200 {"items":[], "logs_configured":false}` (для `Stream` — SSE-event
+`error`) **без ERR-лога** (как `ErrNodeNotFound`). Иначе поллинг UI (раз в 5с) +
+SSE спамили `ERR logs list failed ... op=logs.list` и 500-ответами. Фронт
+[NodeDetail.tsx](../web-ui/src/pages/NodeDetail.tsx) гасит поллинг/SSE по
+`node.clickhouse_table === ""` и показывает баннер `logs.not_configured` со ссылкой
+на настройки узла.
+
 ### 4.7 ClickHouse fallback — атомарная запись через `.tmp` + rename
 
 [fallbackStore.Save](../internal/sender/adapter/out/chlog/fallback.go) сначала пишет
@@ -380,6 +623,22 @@ CSS-переменных, заданных в [globals.css](../web-ui/src/styles
 `:root` (light) и `html.dark` (dark). Это даёт мгновенное переключение без
 перерисовки и поддержку opacity (`bg-bg-muted/40` работает).
 
+### 4.9 SPA-ассеты в embed.FS — `go:embed` + явный `/assets` route
+
+Две вещи должны совпадать, иначе при открытии UI получаем белый экран:
+
+1. Директива в [static.go](../internal/web/static/static.go) — `//go:embed index.html assets`
+   (не только `index.html`): иначе `assets/*.js|*.css` не попадают в бинарь.
+2. [SPAFallback](../internal/web/adapter/in/http/spa.go) регистрирует
+   `r.StaticFS("/assets", http.FS(fs.Sub(embedFS, "assets")))` — отдаёт ассеты с
+   корректным MIME. Без этого route запросы к `/assets/index-*.js` проваливаются в
+   `NoRoute` → возвращается `index.html` с `text/html` → модульный скрипт не исполняется.
+
+`make build-ui` копирует свежий `web-ui/dist/*` в `internal/web/static/` (ассеты
+git-tracked — это источник embed; CI job `go-build` их не пересобирает). После правок
+во фронте нужно пересобрать UI и закоммитить обновлённый бандл, иначе бинарь отдаёт
+старый SPA.
+
 Тема инициализируется **до** React-рендера в [main.tsx](../web-ui/src/main.tsx),
 чтобы избежать flash-of-light при перезагрузке страницы.
 
@@ -394,6 +653,18 @@ CSS-переменных, заданных в [globals.css](../web-ui/src/styles
 "node.not_found" в backend выводит локализованный JSON-error, а в SPA рендерит
 этот error из ответа API без перевода. Если хотите больше «фронт-only» —
 скрывайте API-ошибку и показывайте локализованную SPA-строку.
+
+**Грабли с языком.** Backend выбирает язык по `Accept-Language` (язык браузера),
+а SPA — по `localStorage` (явный селектор). Они могут **не совпадать**: оператор
+переключил UI на RU, но браузер шлёт `en` → сырой API-error приходит на английском.
+Для ошибок шаблонов CH (§19) это решено гибридом: хендлер
+[ch_template_handler.go](../internal/web/adapter/in/http/ch_template_handler.go)
+отдаёт `{"error": <localized>, "code": "ch_template.name_format"}` —
+SPA переводит по стабильному `code` в языке UI (`t(code, {defaultValue: error})`),
+а `error` остаётся fallback'ом для не-UI клиентов и для динамических
+live-ошибок ClickHouse в `Verify` (у которых `code` нет). Ключи `ch_template.*`
+продублированы в обоих словарях. Этот же паттерн стоит применять к новым
+полевым ошибкам валидации, где важно совпадение с языком UI и привязка к полю.
 
 ### 4.10 Sentry tracing требует включения в конфиге
 
@@ -448,6 +719,70 @@ gRPC server, chlog.Writer и AsyncProcessor — глобальной registry м
 их в Grafana через `service="receiver"`. Метка `node` — динамическая (path-параметр
 из `/v1/request/.../*path`), для не-V1 маршрутов остаётся пустой.
 
+### 4.11.2 Metrics API панели — единый источник Prometheus, с деградацией (Phase 21.1 → 29)
+
+Дашборды панели (§21) не считают агрегаты на лету в Go, а тянут готовые из **единого
+источника — Prometheus** ([adapter/out/prometheus/client.go](../internal/web/adapter/out/prometheus/client.go)).
+Это **query API** сервера Prometheus (`prometheus.url`), а не scrape-эндпоинт `/metrics`. Метка
+`node` совпадает с `domain.Node.Path` — поэтому per-node merge на фронте идёт по path.
+
+- Глобальные KPI Overview: incoming = `sum(increase(nexus_requests_total{service="receiver"}[24h]))`,
+  outgoing = то же для `service="sender"`, errors = `…,status=~"0|[45].."`; очередь Kafka =
+  `sum(nexus_kafka_lag)`; per-node throughput = `sum by (node)(…)`.
+- **per-node KPI и ряд графика на странице узла** (`NodeKPI`/`NodeChart`): total/errors через
+  `increase(nexus_requests_total)` / `increase(nexus_request_incomplete_total)` (errors = «незавершённые»,
+  точный аналог прежнего CH-условия `status>=400 OR status=0 OR done=0`), delivered = total−errors,
+  p95/p99 — через `histogram_quantile()` по `nexus_request_duration_seconds_bucket`.
+
+**Почему ушли от ClickHouse (Phase 29).** Раньше per-node KPI/график считались напрямую из
+CH-таблицы логов узла ([был] `adapter/out/clickhouse/metrics_reader.go`). Это ломалось, если у узла
+выключено `logging_enabled`, CH недоступен или таблица пуста — метрики узла пропадали. Перенос на
+Prometheus убрал последнюю зависимость метрик от CH: per-node счётчики Sender'а пишутся **независимо**
+от логирования (sync — `grpc/sender_service.go`, async — `usecase/async.go`), поэтому метрики узла
+видны всегда, а **ClickHouse остаётся чисто хранилищем логов**. Цена — приблизительные (по бакетам)
+перцентили и глубина истории, ограниченная retention Prometheus (env `PROMETHEUS_RETENTION`, дефолт
+`90d`). Под это расширены бакеты `nexus_request_duration_seconds` до 300с
+([platform/metrics/metrics.go](../internal/platform/metrics/metrics.go)), т.к. `DefBuckets` упираются
+в 10с при `timeout_ms` до 300с.
+
+Источник **опционален**: при пустом `prometheus.url` провайдер не создаётся (nil), `MetricsUsecase`
+отдаёт нули с `prometheus_available=false` / `chart_available=false`. Ошибка запроса к Prometheus в
+`NodeMetrics` тоже **деградирует** (warning + `chart_available=false`), а не 500 — единообразно с
+Overview/NodesOverview, чтобы поллинг UI не спамил ошибками
+(см. [usecase/metrics.go](../internal/web/usecase/metrics.go)).
+
+**Консистентность метки `node` (in/out merge на дашборде).** Sender пишет метку `node = node.Path`
+(без слога команды), а `GinMiddleware` по умолчанию брал сырой URL-параметр Receiver'а, который для
+`/api/v1/request/<team>/<path>` включал слог (`default/stand/...`). Из-за этого per-node merge
+incoming(Receiver)/outgoing(Sender) на `/api/metrics/nodes` разъезжался — у sender-строк `in`/спарклайн
+оказывались нулевыми. Фикс: Receiver-handler кладёт чистый путь узла в контекст под
+`metrics.NodeLabelKey` ([handler.go](../internal/receiver/adapter/in/http/handler.go)), а `GinMiddleware`
+(`nodeLabel`) предпочитает его сырому параметру ([gin.go](../internal/platform/metrics/gin.go)). Для Web/
+Sender ключ не ставится — их поведение не меняется.
+
+### 4.11.3 Редизайн UI под эталон: дизайн-токены + UI-kit + app-shell (Phase 21.2)
+
+Фронтенд приводится к визуальному эталону [specs/nexus_ui.html](nexus_ui.html) (§21). Базис:
+
+- **Дизайн-токены** ([web-ui/src/styles/globals.css](../web-ui/src/styles/globals.css) +
+  [tailwind.config.js](../web-ui/tailwind.config.js)) — палитра/радиусы/шрифты эталона как
+  CSS-переменные (RGB-тройки для opacity). Тёмная тема — основная, светлая зеркальная.
+  Шрифты Inter + JetBrains Mono подключены ссылкой в [index.html](../web-ui/index.html) с
+  graceful-fallback на системный стек.
+- **UI-kit** [web-ui/src/components/ui/](../web-ui/src/components/ui/) — атомы эталона
+  (Button, Input/Select/Textarea/Field, Card, SectionHead, Modal, Chip, Pill, Kpi/KpiRow,
+  Seg, Hint, PickGroup, Toggle3). Снимает дублирование инлайн-классов на экранах.
+- **App-shell** — постоянный левый сайдбар [Sidebar.tsx](../web-ui/src/components/Sidebar.tsx)
+  + тонкий топбар [Topbar.tsx](../web-ui/src/components/Topbar.tsx) (крошки, team-switcher,
+  переключатель языка и **темы**), композит [AppShell.tsx](../web-ui/src/components/AppShell.tsx).
+  В [App.tsx](../web-ui/src/App.tsx) защищённые маршруты идут layout-route'ом через `<Outlet/>`
+  (раньше каждый экран рисовал свой `<Topbar/>`). Тема — общий хелпер
+  [lib/theme.ts](../web-ui/src/lib/theme.ts).
+
+Экраны перестилизовываются поэтапно (Phase 21.3+); до этого они отрисовываются в новом
+shell с обновлённой палитрой. Встроенный SPA в `internal/web/static` пересобирается
+(`make build-ui`) в конце, когда UI завершён.
+
 ### 4.12.1 L2 in-memory кеш узлов — декоратор поверх Reader, stale-fallback по StaleTTL
 
 `receiver.l2_cache` (Phase 7.2) включает локальный LRU поверх обычного
@@ -498,6 +833,306 @@ real-sleep).
 Если будете обновлять минорку — меняйте все два места разом, иначе CI и
 docker-compose-стек начнут тянуть разные образы и расходиться по поведению
 (например, дефолтным retention'ам).
+
+### 4.20 Topbar team-switcher вызывает `qc.invalidateQueries()` без аргументов
+
+Phase 10.F.3 ставит `<select>` в [Topbar](../web-ui/src/components/Topbar.tsx).
+При смене команды через `POST /api/me/switch-team` (Phase 10.B.1) сервер
+переписывает `current_team_id` в Redis-сессии, и **все** последующие
+запросы идут в новый scope. Чтобы это сразу же увидел UI, после успешной
+мутации вызывается `qc.invalidateQueries()` **без queryKey** — это
+сбрасывает все кеши TanStack Query.
+
+Альтернатива (точечный invalidate `["nodes"]`, `["audit"]`, …) была
+отвергнута: легко забыть добавить новый key, когда появится новая
+страница. Глобальный invalidate — простой и stay-correct по
+конструкции.
+
+Cookie сессии не меняется (см. §4.15). UI ничего не редиректит — текущая
+страница перерисовывается с новыми данными.
+
+### 4.19 Receiver URL: `team_slug` в первом сегменте path, не в host/subdomain
+
+Phase 10.E.1 расширила URL Receiver'а под multi-tenancy:
+`/v1/request/<team_slug>/<node_path>`. Альтернатива — поддомен
+(`acme.nexus.local/v1/request/<path>`) — была отвергнута:
+
+- Поддомен требует wildcard-сертификат и DNS-управление на каждой
+  команде; URL-сегмент работает на любом deploy без правки инфры.
+- `splitTeamSlugAndPath` ([handler.go](../internal/receiver/adapter/in/http/handler.go))
+  парсит catch-all `/*path` Gin'а: первый сегмент = `team_slug`,
+  остальное = `node_path`. Один сегмент = legacy URL без слога
+  (default-team — `domain.DefaultTeamSlug`). Это позволяет
+  одновременно обслуживать новые и существующие интеграции.
+- В Postgres `nodes` после миграции 0008 имеет `UNIQUE(team_id, path)`,
+  не `UNIQUE(path)`. Без team_slug в URL запрос
+  `WHERE path = ?` для одинаковых имён узлов в разных командах
+  неоднозначен — резолв через JOIN с teams избегает этой проблемы.
+
+Cross-team-изоляция в Receiver — следствие JOIN'а в
+[nodecache.Reader.getFromPg](../internal/receiver/adapter/out/nodecache/reader.go):
+если slug в URL не совпадает с реальной командой узла, запрос вернёт
+`ErrNodeNotFound` (404), а не утечку существования. Фиксируется
+unit-тестом `TestSplitTeamSlugAndPath`.
+
+API-токены в Receiver не используются — incoming auth узла (basic /
+token / webhook_signature) остаётся ответственным за аутентификацию
+клиента, а scope обеспечивается принадлежностью узла команде.
+
+### 4.18 OrphanScanner — allow-list по `teams.ch_database`, не одна БД из конфига
+
+Phase 10.D.2 заменила «одна `chCfg.Database` = единственная сканируемая
+БД» на динамический allow-list: при каждом `Scan()` сканер вычитывает
+`teams.List()` и проходит по каждой `ch_database`. Это даёт:
+
+- **Multi-team по умолчанию.** Любая команда, созданная через
+  `/api/teams` (Phase 10.C.1), автоматически попадает под сканирование
+  без рестарта Web.
+- **Drop guard сужается до tenant-БД.** Раньше можно было ошибочно
+  передать `system.X` или `default.X` — теперь DROP допускается только
+  в БД, зарегистрированной в `teams`. `system`, `default`,
+  `information_schema` физически невозможно дёрнуть через API.
+- **Узлы одной команды не считаются orphan'ами в чужой БД.** Раньше
+  `knownTables` фильтровал по `defaultTeamID`, и узлы acme в `nexus_acme`
+  могли «утечь» в orphan-список Web'а, смотрящего на default. Теперь
+  `knownTables` обходит все команды.
+
+`ch_housekeeping` (Sender) не требует аналогичной правки: он работает
+от `nodes.ListForHousekeeping` (без team-фильтра) и `splitDBTable` уже
+парсит `db.table` из `nodes.clickhouse_table` — после нормализации в Web
+(Phase 10.C.2) это всегда `nexus_<slug>.<table>`.
+
+### 4.17 `nodes.clickhouse_table` хранит полный `db.table`, маршрутизация на стороне Web
+
+Phase 10.C перенесла резолв «в какую CH-БД пишет узел» с runtime-time
+(Sender JOIN-ит teams) на write-time (Web нормализует поле при
+Create/Update). [NodeUsecase.normalizeCHTable](../internal/web/usecase/node.go)
+вызывается до `Validate()` — если в `n.ClickHouseTable` нет точки и
+`n.TeamID` известен, поле обогащается префиксом
+`<team.ch_database>.<table>`. После этого:
+
+- Sender ([chlog.Writer.Write](../internal/sender/adapter/out/chlog/writer.go))
+  передаёт значение в `INSERT INTO %s` без изменений — CH парсит `db.table`.
+- [CHHousekeeping.dropPartitionsOlderThan](../internal/sender/usecase/ch_housekeeping.go)
+  использует `splitDBTable(name)` — уже умеет.
+- Receiver/Web log-read через [LogReaderCH](../internal/web/adapter/out/clickhouse/log_reader.go)
+  тоже получает `db.table` и собирает запрос напрямую.
+
+Sender за каждое сообщение НЕ ходит в PG за `teams.ch_database` — это
+было бы +1 query на каждый async/sync вызов. Цена за подход: при
+переименовании команды (которое запрещено в TeamUsecase.Update) пришлось
+бы мигрировать все nodes.clickhouse_table. Поэтому `teams.slug` и
+`teams.ch_database` immutable.
+
+Стенд greenfield — узлов со старым/unprefixed форматом нет, поэтому
+backfill-миграция не нужна. Бывшая backfill-миграция удалена, а
+`ch_templates` переименована 0010 → 0009, чтобы нумерация шла подряд
+(БД, где уже была применена старая 0010, нужно пересоздать — данных нет).
+Новые узлы через UI всегда получают корректный префикс
+`nexus_<slug>.<table>` автоматически (`normalizeCHTable`).
+
+### 4.15 Team-switcher: `current_team_id` в Redis-сессии, не в cookie
+
+Phase 10.B.1 кладёт UUID активной команды в `domain.Session.CurrentTeamID`
+и сериализует вместе с сессией в Redis. Cookie `nexus_session` остаётся
+неизменной — клиент при switch'е не получает новый токен, и сессия не
+инвалидируется. Это сознательное решение:
+
+- Cookie — стабильный идентификатор; UI не должен ребэйнднуть пользователя
+  при каждом switch.
+- Все живые табы того же юзера моментально получают новый scope (они
+  ходят в Redis по тому же session_token).
+- TTL сессии не меняется (Touch не вызывается специально из SwitchTeam).
+
+API-токены (`Bearer db_…`) имеют свою «псевдо-сессию», которую собирает
+[api_token_middleware](../internal/web/adapter/in/http/api_token_middleware.go) —
+там `CurrentTeamID` берётся из `api_tokens.team_id` и переключать его
+нельзя ([routes.go](../internal/web/adapter/in/http/routes.go):
+`POST /api/me/switch-team` обёрнут `RequireSessionOnly()`).
+
+### 4.16 Cross-team Update узла возвращает ErrPermissionDenied, не 404
+
+Phase 10.B.2 различает два сценария в `NodeUsecase.Update`:
+
+- `old.TeamID != teamID` (узел из чужой команды): `ErrNodeNotFound` (404).
+  Скрываем существование чужих узлов — нельзя отличить «нет узла» от
+  «узел есть, но в другой команде».
+- `n.TeamID != old.TeamID` (попытка перенести узел): `ErrPermissionDenied`
+  (403). Этот код срабатывает только если caller сам положил в `n.TeamID`
+  чужой UUID; handler [node_handler.go](../internal/web/adapter/in/http/node_handler.go)
+  всегда делает `updated.TeamID = existing.TeamID` до вызова, так что
+  через UI попасть в этот путь нельзя — но usecase защищён от прямых
+  вызовов (CLI, тесты).
+
+Перенос узла между командами — отдельная операция (не часть Update).
+Будет в блоке F вместе с UI «Команды».
+
+### 4.14 `defaultTeamID` резолвится в Web-bootstrap, не из конфига
+
+Phase 10.2 ввела `domain.Team` и `TeamRepository`, но существующий
+single-team-код продолжает работать благодаря резолву UUID 'default'-team
+**один раз при старте Web** ([internal/web/app.go](../internal/web/app.go),
+`teamRepo.GetBySlug(ctx, domain.DefaultTeamSlug)`).
+
+Полученный UUID передаётся в конструкторы [NodeUsecase](../internal/web/usecase/node.go)
+и [OrphanScanner](../internal/web/usecase/orphan_scanner.go) как
+fallback для случаев, когда handler не передал team scope (List без
+filter, Create без TeamID). До блока B (team-switcher в сессии) это
+единственный источник current_team_id.
+
+Важные следствия:
+
+- Если миграция 0008 не накачена — Web падает на старте с
+  `resolve default team: ... (run --migrate-up?)`. Это намеренный
+  fail-fast — без default-team весь scope-резолв сломается.
+- `domain.Node.SetDefaults` **больше не подставляет literal "default"**
+  в TeamID. Подстановка вынесена в usecase (где есть `defaultTeamID`).
+  Не возвращайте literal обратно — UUID не совпадёт со slug.
+- `users.team_id` в БД называется `default_team_id` (миграция 0008);
+  поле в `domain.User` — тоже `DefaultTeamID`. JSON в `userResponse`
+  — `default_team_id`. Старое имя `team_id` зарезервировано под
+  current_team в блоке B.
+- В integration-тестах используйте helper `resolveDefaultTeamID(t, ctx,
+  pool)` ([tests/integration/node_repo_test.go](../tests/integration/node_repo_test.go))
+  — он читает UUID из БД после применения миграций.
+
+### 4.21 §22 — контроль логирования и единый источник алертов
+
+- **Обрезка по рунам, checksum по полному телу.** `truncateRunes` в
+  [send.go](../internal/sender/usecase/send.go) режет `[]rune`, а не байты — иначе многобайтовый
+  UTF-8 рвётся и ClickHouse-строка бьётся. `checksum_request/response` считаются из `in.Body`/
+  `resp.Body` ДО обрезки: контрольная сумма отражает реальный payload, даже если тело урезано.
+- **`logging_enabled=false` обрывает запись на usecase-уровне**, а не в writer'е: guard стоит на
+  обоих вызовах `u.logw.Write` (основной и circuit-breaker-open). Так узел не пишет вообще ничего,
+  а не «пустую» строку.
+- **Дефолт `logging_enabled` через `*bool` в DTO.** Plain `bool` не отличает «не прислано» от
+  «false». Указатель: nil → true (старые клиенты и существующие узлы логируют как прежде).
+- **`Node.UnmarshalJSON` дефолтит `LoggingEnabled=true`** ([node.go](../internal/domain/node.go)).
+  Узел кешируется в Redis как JSON; запись, сериализованная до появления поля (переживший выкат
+  L1-кеш ресивера, TTL `Redis.NodeTTLSec`=300с), без этого иначе читалась бы как `false` и на ≤5 мин
+  выключила бы логирование узла. Кастомный Unmarshal закрывает окно: отсутствующее поле → `true`.
+- **`done=0` ⟺ `!rec.Done` ⟺ всё ClickHouse-условие ошибки.** Поэтому один счётчик
+  `nexus_request_incomplete_total` точно воспроизводит прежний `CountErrors`
+  (`status>=400 OR status=0 OR done=0`): первые два — подмножества `done=0`. Инкремент в адаптерах
+  Sender по `out.StatusCode` не 2xx (метрику в usecase не тащим).
+- **Telegram теперь зависит от Prometheus.** `NotificationScheduler` больше не держит `LogReader`;
+  ошибки берёт из `PromMetrics.NodeErrors` (один запрос на тик вместо N к ClickHouse). Планировщик
+  вынесен из CH-блока в [app.go](../internal/web/app.go) и стартует только при `promMetrics != nil`.
+- **p95 для карточек — без новой метрики.** Sender уже пишет `nexus_request_duration_seconds`
+  и для sync ([sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go)), и для
+  async ([async.go](../internal/sender/usecase/async.go)); карточкам нужен лишь
+  `histogram_quantile` по `service="sender"`. Спарклайн — один `query_range` с `by (node)` на весь
+  список, не N запросов.
+
+### 4.22 §23 — каталог хостов: денормализованный снимок, Receiver нетронут
+
+- **`nodes.url_allowed_hosts TEXT[]` — это снимок, не источник истины.** Источник — `node_allowed_hosts`
+  (M2M). Receiver читает снимок из JSON-кеша узла (Redis) и **не знает про каталог** — горячий путь не
+  изменился. При attach/detach Web в одной UoW-транзакции: `Link/Unlink` → `ListByNode` → пересборка
+  снимка (`UpdateAllowedHostsSnapshot`) → после commit `nodeCache.Set`. Забыть `cache.Set` = тихий
+  рассинхрон; покрыто unit-тестом (`TestHostUC_Attach_RebuildsSnapshotAndCache`).
+- **`kind` кодируется в плоском массиве**, чтобы не менять формат кеша: `re:<pattern>` для regex
+  (префикс безопасен — hostname не содержит `:`), exact/wildcard как есть. Матчер `domain.HostAllowed`
+  распознаёт `re:`. **regex не лоуэркейзится** (иначе ломаются классы `\d`→`\D`); хост уже lower-case.
+- **`NodeUsecase.Create/Update` игнорируют allowlist из тела узла** (Create → пусто, Update →
+  сохраняет старый снимок). Управление только через каталог. Это сознательное изменение контракта
+  `POST/PUT /api/nodes` — curl-клиент больше не сидит allowlist через тело узла.
+- **Редактирование паттерна — только при `usage_count = 0`** (плюс FK RESTRICT на удаление). Это и
+  гарантирует отсутствие стейл-снимков: используемый паттерн неизменяем.
+- **`POST /api/allowed-hosts/preview` отвечает `200` даже на невалидный паттерн** (`{valid:false,
+  reason:<i18n-код>}`), а НЕ `400`. Превью — это «что будет», и недописанный/кривой паттерн при живом
+  вводе в форме (запрос летит на каждое нажатие клавиши) — нормальный ответ, а не ошибка клиента.
+  Раньше отдавали `400` → консоль браузера засорялась красными `Failed to load resource (400)`, хотя
+  UI работал. Только malformed JSON-тело по-прежнему `400` (ShouldBindJSON). Не «чини» обратно на
+  `400`: [http/host_allowlist_handler.go](../internal/web/adapter/in/http/host_allowlist_handler.go)
+  `Preview`, фронт читает флаг `valid` ([AllowedHosts.tsx](../web-ui/src/pages/settings/AllowedHosts.tsx)).
+- **Редактирование хоста в UI — `PATCH /allowed-hosts/:id`** (роут — PATCH, не PUT; раньше фронт слал
+  PUT → 404). В `api`-клиенте есть метод `patch` ([web-ui/src/api/client.ts](../web-ui/src/api/client.ts)).
+
+### 4.23 §24 — headers_catalog: usage_count on-read, без M2M
+
+- **Отдельной таблицы привязки нет.** Источник — `nodes.forward_headers TEXT[]` (его читает Receiver).
+  `usage_count` считается коррелированным подзапросом (`unnest(forward_headers)` + `lower()`), а не
+  trigger'ом на массив (тот хрупок). Форма узла шлёт имена (`string[]`), не ID — Receiver нетронут.
+- **POST идемпотентен по `lower(name)`**: unique-violation ловится в usecase и резолвится в
+  существующую запись (200). Combobox создаёт без диалогов и без гонок.
+
+### 4.25 §27 — RabbitMQAsync: неочевидности
+
+- **`degraded` — runtime, не `node.status`.** Сознательно НЕ расширяли enum `NodeStatus` и его
+  CHECK. Смешивать конфиг-статус (что выставил пользователь: enabled/paused/disabled) с health (что
+  наблюдает воркер) нельзя — иначе `degraded` затирал бы `paused`, а воркер писал бы в конфиг.
+  Health живёт в `domain.RMQHealth`, Receiver публикует снимок в Redis-hash `rmq:health`, Web читает
+  его в `NodeResponse.rmq_status`. Метрика `nexus_node_degraded` — отдельный сигнал.
+- **Puller в Receiver, не в Sender.** Sender ничего не знает про RabbitMQ — он потребляет из Kafka как
+  обычно. Puller только перекладывает RMQ→Kafka, переиспользуя тот же producer и формат `Envelope`
+  (плюс блок `rmq`). Это даёт единый конвейер с `requestAsync`.
+- **Порядок ack строгий: Kafka `acks=all` → потом `basic.ack`.** Это даёт at-least-once: сбой между
+  Kafka-ack и RMQ-ack → дубль (получатель должен быть идемпотентен по `message_id`); сбой до Kafka-ack
+  → `basic.nack(requeue)` без потери. Producer уже `RequireAll`, отдельной настройки не нужно.
+- **Reconcile из PG, не pub/sub.** Узлового Redis-события на CRUD нет (инвалидация кеша — по path, без
+  сообщения). `PullerManager` периодически (`receiver.puller.reconcile_sec`, деф. 15с) сверяет список
+  RabbitMQAsync-узлов из PG с запущенными воркерами, перезапуская при изменении `updated_at`. Задержка
+  старта нового узла ≤ reconcile_sec — приемлемо для v1.
+- **Отдельный PG-листер, не nodecache.Reader.** Reader не тянет `rmq_*`-колонки и расшифровку
+  `rmq_password`; для Puller нужен полный конфиг → `rabbitmq.NodeLister`. paused-узлы из поллинга
+  исключены (источник останавливается).
+- **`basic.get` поллинг, не `basic.consume`.** v1 — простой предсказуемый поллинг с manual ack
+  (push-consumer — §27.14 v2). `QueueDeclarePassive` при Connect проверяет существование очереди (404
+  → backoff/degraded, не создаём).
+
+### 4.26 §29 — комментарий узла и багфикс ключа node-кеша
+
+- **`comment` — только метаданные UI.** Не участвует в маршрутизации, Receiver его не читает
+  (в SELECT `nodecache` не добавлен). Лимит валидируется по **рунам** (`utf8.RuneCountInString`),
+  а не байтам, чтобы совпадать с PG-`CHECK length()` (символы) и DTO-binding `max` (validator
+  считает руны) — иначе 2000 кириллических символов давали бы расхождение «прошёл binding/PG, но
+  отверг домен».
+- **Багфикс рассинхронизации ключа node-кеша (Fix.B).** Web писал/инвалидировал Redis-ключ
+  `node:<path>` ([redis/node_cache.go](../internal/web/adapter/out/redis/node_cache.go)), а Receiver
+  читает `node:<team_slug>:<path>` (формат разошёлся после ввода `team_slug` в Phase 10.1, см. §10.E.1).
+  Из-за этого write-through и инвалидация из Web **не доходили** до ключа Receiver, и изменения узла
+  вступали в силу только по истечении Redis-TTL Receiver (`Redis.NodeTTLSec`=300с) — до 5 минут.
+  Фикс: Web строит ключ через `domain.DefaultTeamSlug` (`node:default:<path>`) — идентично Receiver.
+  В v1 команда всегда `default` (§0), поэтому достаточно; **v2 multi-tenancy** потребует резолва
+  реального slug команды узла в этом адаптере (образец — `resolveCHDatabase` в `usecase/node.go`).
+  После фикса изменения вступают в силу ≤ ~2с (L2 in-memory TTL Receiver).
+
+### 4.27 §30 — паники, request_id и привязка к Sentry-hub через WithContext
+
+- **Логгер v1.7.9 — `WithContext` доводит request-scoped hub до Sentry.** До v1.7.9
+  методы логгера вызывали slog без контекста, поэтому `logger.Error` всегда капчурил в
+  **глобальный** `sentry.CurrentHub()` — теги запроса (`request_id`/`node`), выставленные
+  на склонированный hub в [sentry/middleware.go](../internal/platform/sentry/middleware.go),
+  туда не попадали. В v1.7.9 методы логируют через `LogAttrs(l.context(), ...)`, и
+  `logger.WithContext(c.Request.Context()).Error(...)` отправляет событие в hub из
+  контекста (тот самый клонированный). Поэтому в [recovery-middleware](../internal/platform/recovery/middleware.go)
+  не нужен ручной `hub.RecoverWithContext` — он дал бы **дубль** события. Для фоновых
+  горутин (нет request-hub) `safego.Recover` логирует без контекста → в глобальный hub,
+  что корректно.
+- **Порядок middleware: `requestid → otel → sentry → recovery → metrics [→ i18n]`.**
+  recovery стоит **после** sentry (иначе при панике `span.Status` не успевал выставиться в
+  500 — sentry-middleware ставит его строкой после `c.Next()`), но **раньше** metrics и
+  handler'ов (чтобы перехватывать их паники). requestid — строго первым, чтобы id был в
+  контексте к моменту работы sentry/recovery. `gin.Recovery()` удалён везде.
+- **request_id не перезаписывается.** Если клиент/вышестоящий сервис прислал `X-Request-Id`
+  — он сохраняется (сквозная трассировка), иначе генерится UUID v4. Тег ставится и на
+  scope hub'а (события), и на транзакцию (трейсы).
+- **`safego.Recover` после `wg.Done()` в пулах.** В пулах (kafka consumer, chlog writer,
+  puller worker) `defer wg.Done()` регистрируется первым (выполнится последним), а
+  `defer safego.Recover` — после него в коде (выполнится первым, LIFO): сначала гасим
+  панику, затем отрабатывает `wg.Done`, не оставляя WaitGroup висеть.
+
+### 4.24 §25 — два swagger одним Web-бинарём
+
+- **Изоляция генерации через `--exclude`.** swag сканирует всё дерево от searchDir; без `--exclude`
+  web-док подхватил бы `/v1`-маршруты Receiver, а receiver-док — web-handler'ы с cross-package типами
+  (`usecase.TestResult` → ошибка). Web исключает `cmd/receiver,internal/receiver`, Receiver —
+  `cmd/web,internal/web`.
+- **Разные `InstanceName`.** Web-док — default `swagger`, Receiver — `receiver` (`swag --instanceName`).
+  Web раздаёт оба через `ginswagger.WrapHandler(..., InstanceName(...))`; blank-импорты обоих
+  `docs/*`-пакетов регистрируют их в `swag.Registry`. Receiver — отдельный процесс, swagger UI к нему
+  не подключён (мокап §25 это и предписывает).
 
 ---
 
@@ -605,8 +1240,29 @@ make proto                                     # перегенерация send
    входящих webhook'ов от партнёров (Stripe/GitHub/...).
 3. **KMS/Vault** интеграция для `ENCRYPTION_KEY` — §16, чтобы убрать секрет
    из env. См. также `make rotate-encryption-key`.
-4. **Multi-tenancy v2** — колонки `team_id` уже есть, нужен RBAC по team_id
-   + миграция existing `'default'`-данных.
+4. **Multi-tenancy v2** — ✅ Phase 10 закрыта (7 блоков, 18 коммитов).
+   - Блок A (foundation): миграция 0008 `teams` + `user_teams` + FK во
+     всех team-aware таблицах, `domain.Team` + `TeamRepository`, резолв
+     `defaultTeamID` в Web-bootstrap.
+   - Блок B (session + scope): `Session.CurrentTeamID` в Redis,
+     `/api/me/teams` + `/api/me/switch-team`, team-scope в Node CRUD
+     и `APITokenUsecase.Create`.
+   - Блок C (CH write): `TeamProvisioner` (PG-tx + CH `CREATE DATABASE`
+     атомарно), `/api/teams` CRUD + Members, `NodeUsecase` нормализует
+     `clickhouse_table` до `<team.ch_database>.<table>` на write-time
+     (backfill-миграция не понадобилась — greenfield).
+   - Блок D (CH read): scope в `LogsUsecase`/`ReplayUsecase`/`DryRunHandler`,
+     `OrphanScanner` на allow-list `teams.ch_database`, `ch_housekeeping`
+     работает multi-team автоматически.
+   - Блок E (Receiver URL): `NodeReader.Get(teamSlug, path)` через PG
+     JOIN, Redis-ключ `node:<team_slug>:<path>`, L2-кеш по
+     `<team_slug>/<path>`, URL `/v1/request/<team_slug>/<node_path>`
+     (legacy без слога продолжает работать для default-team).
+   - Блок F (UI + audit scope): `user_audit.team_id` через `Actor.TeamID`,
+     SPA `Settings → Teams` + Topbar team-switcher с
+     `qc.invalidateQueries()`.
+   - Блок G (regression): integration-тест
+     `TestMultiTenancy_Isolation_E2E` (10 свойств, testcontainers PG).
 
 Сделанное в Phase 7.14:
 
@@ -801,6 +1457,27 @@ make proto                                     # перегенерация send
   `LOADTEST_ADMIN_PASSWORD` (masked+protected); опциональные: `LOADTEST_TARGET_RPS`
   (def. 500), `LOADTEST_DURATION` (def. 5m), `LOADTEST_NODES` (def. 50) —
   переопределяются через UI «Run pipeline → Variables».
+  · **Грабли team-slug (Phase 10.E.1) → 100% error rate.** Узлы создаются с
+  `path=loadtest/node-…` (со слэшем) в команде `default`. Receiver-URL
+  `/v1/request/{team_slug}/{node_path}`: `splitTeamSlugAndPath`
+  ([receiver handler.go](../internal/receiver/adapter/in/http/handler.go))
+  всегда трактует первый сегмент как team_slug. Поэтому legacy-URL без слога
+  `/v1/request/loadtest/node-X` парсится как `team=loadtest, path=node-X` →
+  узел не найден → **404 на каждом запросе** (error rate 100%, p50≈1.6мс).
+  Фикс: `cmd/loadtest` адресует узлы с явным слогом
+  (`/v1/request/<team_slug>/<path>`, флаг `--team-slug`, def. `default`).
+  Это ортогонально `--use-aliases` в [.gitlab-ci.yml](../.gitlab-ci.yml): тот
+  тоже **необходим** (без него `docker compose run` не даёт one-off-контейнеру
+  network-alias `loadtest`, и Sender не дозвонится до mock'а — это даёт 502,
+  а не 404). Оба нужны одновременно. **Диагностический блок в loadtest job
+  запускается ПОСЛЕ завершения `run` (mock жив только во время самого прогона,
+  т.к. это процесс loadtest-бинаря) — связность с mock'ом им проверить нельзя,
+  502 там ОЖИДАЕМО.** Блок переработан: проверяет именно МАРШРУТИЗАЦИЮ Receiver'а
+  (probe корректного URL `/v1/request/default/<path>` ждёт НЕ 404; legacy-URL
+  без слога показывает 404 как регресс-сигнатуру team_slug-парсинга), а логи
+  самого run-контейнера снимаются в `loadtest-report/loadtest-container.txt`
+  ДО `docker rm`. In-test ошибки ищи в `report.json`/`loadtest-container.txt`/
+  `compose-logs.txt`, а не по коду пост-прогонного probe.
 - 9.2 `.goreleaser.yaml` под GitLab CI:
   · Реестр через `{{ .Env.DOCKER_REGISTRY_BASE }}` — задаётся `$CI_REGISTRY_IMAGE`
   в [.gitlab-ci.yml](../.gitlab-ci.yml) release job (30 строк в `dockers:` /

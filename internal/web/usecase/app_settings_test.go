@@ -26,7 +26,6 @@ func TestMaskSecret(t *testing.T) {
 		{"dsn-like", "https://abcdef@sentry.io/123456", "http***3456"},
 	}
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, maskSecret(tc.in))
@@ -181,6 +180,72 @@ func TestAppSettingsUsecase_UpdateMergesAndAudits(t *testing.T) {
 
 	// Publisher должен получить событие для секции sentry.
 	assert.Equal(t, []string{"sentry"}, pub.sections)
+}
+
+func TestAppSettings_GetMasksBotToken(t *testing.T) {
+	t.Parallel()
+	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{
+		Notifications: domain.NotificationsSettings{Telegram: domain.TelegramSettings{
+			BotToken: new("123456:secret-bot-token"),
+		}},
+	}}
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, logging.NewNoop())
+
+	got, err := uc.Get(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, got.Notifications.Telegram.BotToken)
+	assert.Equal(t, "***", *got.Notifications.Telegram.BotToken)
+}
+
+func TestMergeAppSettings_MaskedBotTokenDoesNotOverwrite(t *testing.T) {
+	t.Parallel()
+	current := &domain.AppSettings{Notifications: domain.NotificationsSettings{
+		Telegram: domain.TelegramSettings{BotToken: new("real-token")},
+	}}
+	patch := &domain.AppSettings{Notifications: domain.NotificationsSettings{
+		Telegram: domain.TelegramSettings{BotToken: new("***"), Cron: new("*/5 * * * *")},
+	}}
+	out := mergeAppSettings(current, patch)
+	require.NotNil(t, out.Notifications.Telegram.BotToken)
+	assert.Equal(t, "real-token", *out.Notifications.Telegram.BotToken)
+	require.NotNil(t, out.Notifications.Telegram.Cron)
+	assert.Equal(t, "*/5 * * * *", *out.Notifications.Telegram.Cron)
+}
+
+func TestChangedSections_Notifications(t *testing.T) {
+	t.Parallel()
+	p := &domain.AppSettings{Notifications: domain.NotificationsSettings{
+		Telegram: domain.TelegramSettings{Enabled: new(true)},
+	}}
+	assert.Equal(t, []string{"notifications"}, changedSections(p))
+}
+
+func TestAppSettings_Update_InvalidCron(t *testing.T) {
+	t.Parallel()
+	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, logging.NewNoop())
+
+	err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
+		Notifications: domain.NotificationsSettings{Telegram: domain.TelegramSettings{Cron: new("not a cron")}},
+	})
+	assert.ErrorIs(t, err, domain.ErrTelegramCronInvalid)
+	assert.Nil(t, repo.lastSaved, "invalid cron must not persist")
+}
+
+func TestAppSettings_Update_ValidCron(t *testing.T) {
+	t.Parallel()
+	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
+	pub := &fakeReloadPublisher{}
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, logging.NewNoop())
+
+	err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
+		Notifications: domain.NotificationsSettings{Telegram: domain.TelegramSettings{
+			Enabled: new(true), ChatID: new("-100123"), BotToken: new("tok"), Cron: new("*/15 * * * *"),
+		}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, repo.lastSaved)
+	assert.Equal(t, []string{"notifications"}, pub.sections)
 }
 
 // ---- fakes ----

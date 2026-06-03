@@ -29,6 +29,10 @@ type NodeRepo interface {
 	Create(ctx context.Context, node *domain.Node) error
 	Update(ctx context.Context, node *domain.Node) error
 	Delete(ctx context.Context, id string) error
+	// UpdateAllowedHostsSnapshot обновляет только денормализованный снимок
+	// nodes.url_allowed_hosts (§23). Используется host-allowlist usecase при
+	// привязке/отвязке паттернов — не трогает остальные поля узла и креды.
+	UpdateAllowedHostsSnapshot(ctx context.Context, nodeID string, patterns []string) error
 }
 
 // NodeCache — кеш для node-конфигов в Redis (§9.2: write-through, cache-aside).

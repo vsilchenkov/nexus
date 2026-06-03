@@ -17,14 +17,13 @@ func TestRootMethodFromPath(t *testing.T) {
 		path string
 		want string
 	}{
-		{"/v1/request/*path", "request"},
-		{"/v1/requestAsync/*path", "requestAsync"},
+		{"/api/v1/request/*path", "request"},
+		{"/api/v1/requestAsync/*path", "requestAsync"},
 		{"/api/nodes/:id", ""},
 		{"/health", ""},
 		{"", ""},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.path, func(t *testing.T) {
 			t.Parallel()
 			if got := rootMethodFromPath(c.path); got != c.want {
@@ -50,7 +49,6 @@ func TestNodePathFromGin(t *testing.T) {
 		{"nested deep", "/a/b/c", "a/b/c"},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -62,18 +60,61 @@ func TestNodePathFromGin(t *testing.T) {
 	}
 }
 
+func TestNodeLabel_PrefersContext(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	t.Run("context value wins over raw param", func(t *testing.T) {
+		t.Parallel()
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Params = gin.Params{{Key: "path", Value: "/default/stand/req"}}
+		ctx.Set(NodeLabelKey, "stand/req")
+		assert.Equal(t, "stand/req", nodeLabel(ctx))
+	})
+
+	t.Run("falls back to raw param when unset", func(t *testing.T) {
+		t.Parallel()
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Params = gin.Params{{Key: "path", Value: "/demo/path"}}
+		assert.Equal(t, "demo/path", nodeLabel(ctx))
+	})
+}
+
+// TestGinMiddleware_NodeLabelFromContext: Receiver кладёт чистый путь узла в
+// контекст (URL содержит слог команды) — метка node должна быть без слога,
+// чтобы совпасть с Sender (in/out merge на дашборде, §21).
+func TestGinMiddleware_NodeLabelFromContext(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+	m := New("receiver")
+	r := gin.New()
+	r.Use(GinMiddleware(m))
+	r.POST("/api/v1/request/*path", func(c *gin.Context) {
+		c.Set(NodeLabelKey, "stand/req-noauth-post") // как делает Receiver-handler
+		c.Status(http.StatusOK)
+	})
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("POST", "/api/v1/request/default/stand/req-noauth-post", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	body := scrape(t, m)
+	assert.Contains(t, body, `node="stand/req-noauth-post"`)
+	assert.NotContains(t, body, `node="default/stand/req-noauth-post"`)
+}
+
 func TestGinMiddleware_V1Request(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
 	m := New("receiver")
 	r := gin.New()
 	r.Use(GinMiddleware(m))
-	r.GET("/v1/request/*path", func(c *gin.Context) {
+	r.GET("/api/v1/request/*path", func(c *gin.Context) {
 		c.Status(http.StatusOK)
 	})
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest("GET", "/v1/request/demo/sub?q=1", nil))
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/request/demo/sub?q=1", nil))
 	require.Equal(t, http.StatusOK, w.Code)
 
 	body := scrape(t, m)
@@ -87,12 +128,12 @@ func TestGinMiddleware_V1RequestAsync(t *testing.T) {
 	m := New("receiver")
 	r := gin.New()
 	r.Use(GinMiddleware(m))
-	r.POST("/v1/requestAsync/*path", func(c *gin.Context) {
+	r.POST("/api/v1/requestAsync/*path", func(c *gin.Context) {
 		c.Status(http.StatusAccepted)
 	})
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest("POST", "/v1/requestAsync/demo", nil))
+	r.ServeHTTP(w, httptest.NewRequest("POST", "/api/v1/requestAsync/demo", nil))
 	require.Equal(t, http.StatusAccepted, w.Code)
 
 	body := scrape(t, m)
@@ -164,12 +205,12 @@ func TestGinMiddleware_StatusFromError(t *testing.T) {
 	m := New("receiver")
 	r := gin.New()
 	r.Use(GinMiddleware(m))
-	r.GET("/v1/request/*path", func(c *gin.Context) {
+	r.GET("/api/v1/request/*path", func(c *gin.Context) {
 		c.AbortWithStatus(http.StatusBadGateway)
 	})
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest("GET", "/v1/request/demo", nil))
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/request/demo", nil))
 	require.Equal(t, http.StatusBadGateway, w.Code)
 
 	body := scrape(t, m)

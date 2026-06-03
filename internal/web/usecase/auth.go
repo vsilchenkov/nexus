@@ -17,10 +17,11 @@ import (
 
 const sessionTokenBytes = 32
 
-// AuthUsecase — login/logout/check; password operations.
+// AuthUsecase — login/logout/check; password operations; team-switcher.
 type AuthUsecase struct {
 	users      port.UserRepo
 	sessions   port.SessionRepo
+	teams      port.TeamRepo
 	audit      *AuditUsecase
 	sessionTTL time.Duration
 	logger     logging.Logger
@@ -29,6 +30,7 @@ type AuthUsecase struct {
 func NewAuthUsecase(
 	users port.UserRepo,
 	sessions port.SessionRepo,
+	teams port.TeamRepo,
 	audit *AuditUsecase,
 	sessionTTL time.Duration,
 	logger logging.Logger,
@@ -36,6 +38,7 @@ func NewAuthUsecase(
 	return &AuthUsecase{
 		users:      users,
 		sessions:   sessions,
+		teams:      teams,
 		audit:      audit,
 		sessionTTL: sessionTTL,
 		logger:     logger,
@@ -75,12 +78,13 @@ func (u *AuthUsecase) Login(ctx context.Context, login, password, ip string) (st
 	}
 	now := time.Now().UTC()
 	s := &domain.Session{
-		Token:      token,
-		UserID:     user.ID,
-		Role:       user.Role,
-		Lang:       user.Lang,
-		CreatedAt:  now,
-		LastSeenAt: now,
+		Token:         token,
+		UserID:        user.ID,
+		Role:          user.Role,
+		Lang:          user.Lang,
+		CurrentTeamID: user.DefaultTeamID,
+		CreatedAt:     now,
+		LastSeenAt:    now,
 	}
 	if err := u.sessions.Create(ctx, s, u.sessionTTL); err != nil {
 		return "", nil, fmt.Errorf("create session: %w", err)
@@ -113,9 +117,52 @@ func (u *AuthUsecase) Me(ctx context.Context, userID string) (*domain.User, erro
 	return u.users.Get(ctx, userID)
 }
 
-// ChangePassword — изменяет пароль пользователя (вызывается админом
-// или самим пользователем). Все активные сессии этого пользователя
-// удаляются (forced re-login, §7.1).
+// MyTeams — список команд, в которых состоит пользователь (multi-tenancy
+// v2). Используется UI для team-switcher'а.
+func (u *AuthUsecase) MyTeams(ctx context.Context, userID string) ([]*domain.UserTeam, error) {
+	return u.teams.ListUserTeams(ctx, userID)
+}
+
+// SwitchTeam меняет current_team_id в активной сессии. Проверяет, что
+// пользователь является членом запрашиваемой команды (через user_teams).
+// При успехе обновляет сессию в Redis (TTL не меняется — Touch отдельно).
+//
+// Возвращает обновлённую *domain.Session, чтобы handler мог сразу
+// положить её в context для последующих request-action'ов.
+func (u *AuthUsecase) SwitchTeam(ctx context.Context, actor Actor, token, teamID string) (*domain.Session, error) {
+	s, err := u.sessions.Get(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if s.UserID != actor.UserID {
+		return nil, domain.ErrPermissionDenied
+	}
+
+	memberships, err := u.teams.ListUserTeams(ctx, actor.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("list memberships: %w", err)
+	}
+	found := false
+	for _, ut := range memberships {
+		if ut.Team.ID == teamID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, domain.ErrPermissionDenied
+	}
+
+	s.CurrentTeamID = teamID
+	if err := u.sessions.Create(ctx, s, u.sessionTTL); err != nil {
+		return nil, fmt.Errorf("update session: %w", err)
+	}
+	u.audit.Log(ctx, actor, domain.ActionTeamSwitch, "team", teamID, nil)
+	return s, nil
+}
+
+// ChangePassword — изменяет пароль пользователя (вызывается админом).
+// Все активные сессии этого пользователя удаляются (forced re-login, §7.1).
 func (u *AuthUsecase) ChangePassword(ctx context.Context, actor Actor, userID, newPassword string, mustChange bool) error {
 	if len(newPassword) < 8 {
 		return errors.New("password must be at least 8 characters")
@@ -130,6 +177,26 @@ func (u *AuthUsecase) ChangePassword(ctx context.Context, actor Actor, userID, n
 	_, _ = u.sessions.DeleteByUser(ctx, userID)
 	u.audit.Log(ctx, actor, domain.ActionUserPassword, "user", userID, nil)
 	return nil
+}
+
+// ChangeOwnPassword — self-service смена собственного пароля (§26). В
+// отличие от ChangePassword (admin-only), требует подтверждения текущего
+// пароля и сбрасывает флаг must_change_password. Доступна любой роли;
+// menedzheru это единственный способ сменить пароль. Все активные сессии
+// пользователя инвалидируются (forced re-login, §7.1).
+func (u *AuthUsecase) ChangeOwnPassword(ctx context.Context, actor Actor, userID, currentPassword, newPassword string) error {
+	if len(newPassword) < 8 {
+		return errors.New("password must be at least 8 characters")
+	}
+	user, err := u.users.Get(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("get user: %w", err)
+	}
+	if user.PasswordHash == "" ||
+		bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(currentPassword)) != nil {
+		return domain.ErrUnauthorized
+	}
+	return u.ChangePassword(ctx, actor, userID, newPassword, false)
 }
 
 func randomToken() (string, error) {

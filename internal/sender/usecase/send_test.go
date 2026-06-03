@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -100,6 +101,7 @@ func baseInput() SendInput {
 		RetryCount:      0,
 		RetryBackoffMs:  10,
 		ClickHouseTable: "nexus.log_partner_echo",
+		LoggingEnabled:  true, // дефолт §22: узел логирует
 	}
 }
 
@@ -340,4 +342,133 @@ func TestSend_NoopBreakerWhenNil(t *testing.T) {
 	out := uc.Send(context.Background(), baseInput())
 	// noopBreaker.Allow=true, ничего не падает — это и есть проверка.
 	assert.Equal(t, int32(200), out.StatusCode)
+}
+
+// --- §22: контроль логирования ---------------------------------------------
+
+func TestTruncateRunes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		in      string
+		enabled bool
+		max     int32
+		want    string
+	}{
+		{"disabled passes through", "hello world", false, 5, "hello world"},
+		{"max<=0 passes through", "hello", true, 0, "hello"},
+		{"shorter than limit", "hi", true, 5, "hi"},
+		{"exactly at limit", "hello", true, 5, "hello"},
+		{"longer than limit", "hello world", true, 5, "hello" + truncationMarker},
+		{"empty string", "", true, 5, ""},
+		// Многобайтовые руны: режем по символам, не по байтам.
+		{"cyrillic by runes", "привет мир", true, 6, "привет" + truncationMarker},
+		{"emoji by runes", "😀😀😀😀😀", true, 2, "😀😀" + truncationMarker},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := truncateRunes(tc.in, tc.enabled, tc.max)
+			assert.Equal(t, tc.want, got)
+			assert.True(t, utf8.ValidString(got), "результат должен быть валидным UTF-8")
+		})
+	}
+}
+
+func TestSend_LoggingDisabled_NoWrite(t *testing.T) {
+	t.Parallel()
+
+	t.Run("success path", func(t *testing.T) {
+		t.Parallel()
+		httpc := &stubHTTPCaller{
+			responses: []*port.HTTPResponse{{StatusCode: 200, Body: []byte("ok")}},
+		}
+		logw := &stubLogWriter{}
+		uc := NewSendUsecase(httpc, logw, &stubBreaker{allow: true}, logging.NewNoop())
+		in := baseInput()
+		in.LoggingEnabled = false
+		in.LogRequestBody = true
+		in.LogResponseBody = true
+
+		out := uc.Send(context.Background(), in)
+
+		assert.Equal(t, int32(200), out.StatusCode, "ответ клиенту отдаётся как обычно")
+		assert.Empty(t, logw.written, "при LoggingEnabled=false лог в ClickHouse не пишется")
+	})
+
+	t.Run("circuit breaker open path", func(t *testing.T) {
+		t.Parallel()
+		logw := &stubLogWriter{}
+		uc := NewSendUsecase(&stubHTTPCaller{}, logw, &stubBreaker{allow: false}, logging.NewNoop())
+		in := baseInput()
+		in.LoggingEnabled = false
+
+		out := uc.Send(context.Background(), in)
+
+		assert.Equal(t, int32(503), out.StatusCode)
+		assert.Empty(t, logw.written, "даже CB-open путь не пишет лог при выключенном логировании")
+	})
+}
+
+func TestSend_MaxBodySize_TruncatesStoredBodies_ChecksumOverFull(t *testing.T) {
+	t.Parallel()
+
+	// 100 рун кириллицы в запросе, 100 emoji в ответе — обе длиннее лимита.
+	reqBody := []byte(strings.Repeat("я", 100))
+	respBody := []byte(strings.Repeat("😀", 100))
+
+	httpc := &stubHTTPCaller{
+		responses: []*port.HTTPResponse{{StatusCode: 200, Body: respBody}},
+	}
+	logw := &stubLogWriter{}
+	uc := NewSendUsecase(httpc, logw, &stubBreaker{allow: true}, logging.NewNoop())
+
+	in := baseInput()
+	in.Body = reqBody
+	in.LogRequestBody = true
+	in.LogResponseBody = true
+	in.MaxBodySizeEnabled = true
+	in.MaxBodySize = 10
+
+	uc.Send(context.Background(), in)
+
+	require.Len(t, logw.written, 1)
+	rec := logw.written[0].rec
+
+	assert.Equal(t, strings.Repeat("я", 10)+truncationMarker, rec.Request)
+	assert.Equal(t, strings.Repeat("😀", 10)+truncationMarker, rec.Response)
+	assert.True(t, utf8.ValidString(rec.Request))
+	assert.True(t, utf8.ValidString(rec.Response))
+
+	// checksum считается по ПОЛНОМУ телу, не по обрезанному.
+	assert.Equal(t, md5hex(reqBody), rec.ChecksumRequest)
+	assert.Equal(t, md5hex(respBody), rec.ChecksumResponse)
+}
+
+func TestSend_SpecialCharsAndJSON_StoredIntactWithoutLimit(t *testing.T) {
+	t.Parallel()
+
+	// Спецсимволы, кавычки, переводы строк, табы, NUL, unicode, emoji.
+	reqBody := []byte("line1\nline2\ttab\x00nul\"quote\\back контроль 😀")
+	jsonResp := []byte(`{"key":"v\"al","nested":{"arr":[1,2,3]},"u":"п\nр"}`)
+
+	httpc := &stubHTTPCaller{
+		responses: []*port.HTTPResponse{{StatusCode: 200, Body: jsonResp}},
+	}
+	logw := &stubLogWriter{}
+	uc := NewSendUsecase(httpc, logw, &stubBreaker{allow: true}, logging.NewNoop())
+
+	in := baseInput()
+	in.Body = reqBody
+	in.LogRequestBody = true
+	in.LogResponseBody = true
+	// Лимит выключен — тела сохраняются как есть.
+
+	uc.Send(context.Background(), in)
+
+	require.Len(t, logw.written, 1)
+	rec := logw.written[0].rec
+	assert.Equal(t, string(reqBody), rec.Request, "спецсимволы сохраняются без изменений")
+	assert.Equal(t, string(jsonResp), rec.Response, "JSON сохраняется как есть")
 }

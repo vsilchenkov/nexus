@@ -32,6 +32,11 @@ definitions:
       clickhouse_table:
         maxLength: 129
         type: string
+      clickhouse_template_id:
+        type: string
+      comment:
+        maxLength: 2000
+        type: string
       forward_headers:
         items:
           type: string
@@ -46,23 +51,86 @@ definitions:
         - token
         - webhook_signature
         type: string
+      incoming_method:
+        enum:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        type: string
       log_headers:
         type: boolean
       log_request_body:
         type: boolean
       log_response_body:
         type: boolean
+      logging_enabled:
+        description: |-
+          LoggingEnabled — указатель, чтобы отличить «не прислано» (дефолт true,
+          сохраняет текущее поведение) от явного false (§22).
+        type: boolean
+      max_body_size:
+        maximum: 10000000
+        minimum: 0
+        type: integer
+      max_body_size_enabled:
+        type: boolean
+      outgoing_method:
+        enum:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        type: string
       path:
         maxLength: 255
         type: string
+      pull_batch_size:
+        maximum: 1000
+        minimum: 1
+        type: integer
+      pull_interval_sec:
+        maximum: 3600
+        minimum: 1
+        type: integer
+      pull_prefetch:
+        maximum: 1000
+        minimum: 1
+        type: integer
       retry_backoff_ms:
         type: integer
       retry_count:
         type: integer
+      rmq_host:
+        description: |-
+          §27: RabbitMQAsync. RMQPassword пустой в PUT = «оставить старый» (как
+          auth_credentials, разбирается в handler.Update). Диапазоны pull_* также
+          проверяет domain.Node.Validate и БД-constraint chk_rmq_fields.
+        maxLength: 253
+        type: string
+      rmq_password:
+        maxLength: 1024
+        type: string
+      rmq_port:
+        maximum: 65535
+        minimum: 1
+        type: integer
+      rmq_queue:
+        maxLength: 255
+        type: string
+      rmq_use_tls:
+        type: boolean
+      rmq_user:
+        maxLength: 255
+        type: string
+      rmq_vhost:
+        maxLength: 255
+        type: string
       root_method:
         enum:
         - request
         - requestAsync
+        - RabbitMQAsync
         type: string
       status:
         enum:
@@ -134,6 +202,13 @@ definitions:
           type: array
         type: object
     type: object
+  internal_web_adapter_in_http.MoveNodeRequest:
+    properties:
+      target_team_slug:
+        type: string
+    required:
+    - target_team_slug
+    type: object
   internal_web_adapter_in_http.NodeResponse:
     properties:
       auth_credentials_set:
@@ -150,6 +225,10 @@ definitions:
         type: integer
       clickhouse_table:
         type: string
+      clickhouse_template_id:
+        type: string
+      comment:
+        type: string
       created_at:
         type: string
       forward_headers:
@@ -162,18 +241,54 @@ definitions:
         type: boolean
       incoming_auth_type:
         type: string
+      incoming_method:
+        type: string
       log_headers:
         type: boolean
       log_request_body:
         type: boolean
       log_response_body:
         type: boolean
+      logging_enabled:
+        type: boolean
+      max_body_size:
+        type: integer
+      max_body_size_enabled:
+        type: boolean
+      outgoing_method:
+        type: string
       path:
         type: string
+      pull_batch_size:
+        type: integer
+      pull_interval_sec:
+        type: integer
+      pull_prefetch:
+        type: integer
       retry_backoff_ms:
         type: integer
       retry_count:
         type: integer
+      rmq_host:
+        description: |-
+          §27: RabbitMQAsync. Пароль не возвращается — только флаг RMQPasswordSet.
+          RMQStatus — runtime-health воркера (degraded/queue_depth/…), заполняется
+          только для RabbitMQAsync; nil для request/requestAsync.
+        type: string
+      rmq_password_set:
+        type: boolean
+      rmq_port:
+        type: integer
+      rmq_queue:
+        type: string
+      rmq_status:
+        $ref: '#/definitions/internal_web_adapter_in_http.RMQStatus'
+      rmq_use_tls:
+        type: boolean
+      rmq_user:
+        type: string
+      rmq_vhost:
+        type: string
       root_method:
         type: string
       status:
@@ -197,6 +312,24 @@ definitions:
       webhook_signature_header:
         type: string
       webhook_signature_prefix:
+        type: string
+    type: object
+  internal_web_adapter_in_http.RMQStatus:
+    properties:
+      attempts:
+        type: integer
+      connection_state:
+        description: down|connecting|up
+        type: string
+      consumer_count:
+        type: integer
+      degraded:
+        type: boolean
+      queue_depth:
+        type: integer
+      reason:
+        type: string
+      since:
         type: string
     type: object
   internal_web_adapter_in_http.ReplayRequest:
@@ -246,6 +379,11 @@ definitions:
       clickhouse_table:
         maxLength: 129
         type: string
+      clickhouse_template_id:
+        type: string
+      comment:
+        maxLength: 2000
+        type: string
       forward_headers:
         items:
           type: string
@@ -260,23 +398,86 @@ definitions:
         - token
         - webhook_signature
         type: string
+      incoming_method:
+        enum:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        type: string
       log_headers:
         type: boolean
       log_request_body:
         type: boolean
       log_response_body:
         type: boolean
+      logging_enabled:
+        description: |-
+          LoggingEnabled — указатель, чтобы отличить «не прислано» (дефолт true,
+          сохраняет текущее поведение) от явного false (§22).
+        type: boolean
+      max_body_size:
+        maximum: 10000000
+        minimum: 0
+        type: integer
+      max_body_size_enabled:
+        type: boolean
+      outgoing_method:
+        enum:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        type: string
       path:
         maxLength: 255
         type: string
+      pull_batch_size:
+        maximum: 1000
+        minimum: 1
+        type: integer
+      pull_interval_sec:
+        maximum: 3600
+        minimum: 1
+        type: integer
+      pull_prefetch:
+        maximum: 1000
+        minimum: 1
+        type: integer
       retry_backoff_ms:
         type: integer
       retry_count:
         type: integer
+      rmq_host:
+        description: |-
+          §27: RabbitMQAsync. RMQPassword пустой в PUT = «оставить старый» (как
+          auth_credentials, разбирается в handler.Update). Диапазоны pull_* также
+          проверяет domain.Node.Validate и БД-constraint chk_rmq_fields.
+        maxLength: 253
+        type: string
+      rmq_password:
+        maxLength: 1024
+        type: string
+      rmq_port:
+        maximum: 65535
+        minimum: 1
+        type: integer
+      rmq_queue:
+        maxLength: 255
+        type: string
+      rmq_use_tls:
+        type: boolean
+      rmq_user:
+        maxLength: 255
+        type: string
+      rmq_vhost:
+        maxLength: 255
+        type: string
       root_method:
         enum:
         - request
         - requestAsync
+        - RabbitMQAsync
         type: string
       status:
         enum:
@@ -311,6 +512,67 @@ definitions:
     - path
     - root_method
     type: object
+  internal_web_adapter_in_http.addMemberRequest:
+    properties:
+      role:
+        enum:
+        - owner
+        - admin
+        - member
+        type: string
+      user_id:
+        type: string
+    required:
+    - role
+    - user_id
+    type: object
+  internal_web_adapter_in_http.attachHostRequest:
+    properties:
+      host_id:
+        type: string
+    type: object
+  internal_web_adapter_in_http.chTemplateRequest:
+    properties:
+      description:
+        type: string
+      is_default:
+        type: boolean
+      name:
+        type: string
+      spec:
+        $ref: '#/definitions/nexus_internal_domain.CHTemplateSpec'
+    type: object
+  internal_web_adapter_in_http.chTemplateResponse:
+    properties:
+      created_at:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      is_default:
+        type: boolean
+      name:
+        type: string
+      spec:
+        $ref: '#/definitions/nexus_internal_domain.CHTemplateSpec'
+      updated_at:
+        type: string
+    type: object
+  internal_web_adapter_in_http.changeOwnPasswordRequest:
+    properties:
+      current_password:
+        maxLength: 128
+        minLength: 1
+        type: string
+      new_password:
+        maxLength: 128
+        minLength: 8
+        type: string
+    required:
+    - current_password
+    - new_password
+    type: object
   internal_web_adapter_in_http.changePasswordRequest:
     properties:
       must_change_password:
@@ -321,6 +583,20 @@ definitions:
         type: string
     required:
     - new_password
+    type: object
+  internal_web_adapter_in_http.createTeamRequest:
+    properties:
+      name:
+        maxLength: 255
+        minLength: 1
+        type: string
+      slug:
+        maxLength: 32
+        minLength: 1
+        type: string
+    required:
+    - name
+    - slug
     type: object
   internal_web_adapter_in_http.createTokenRequest:
     properties:
@@ -365,10 +641,74 @@ definitions:
         enum:
         - admin
         - viewer
+        - manager
         type: string
     required:
     - login
     - role
+    type: object
+  internal_web_adapter_in_http.headerRequest:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+    type: object
+  internal_web_adapter_in_http.headerResponse:
+    properties:
+      created_at:
+        type: string
+      created_by:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      updated_at:
+        type: string
+      usage_count:
+        type: integer
+    type: object
+  internal_web_adapter_in_http.hostPreviewRequest:
+    properties:
+      kind:
+        type: string
+      pattern:
+        type: string
+      test_urls:
+        items:
+          type: string
+        type: array
+    type: object
+  internal_web_adapter_in_http.hostRequest:
+    properties:
+      description:
+        type: string
+      kind:
+        type: string
+      pattern:
+        type: string
+    type: object
+  internal_web_adapter_in_http.hostResponse:
+    properties:
+      created_at:
+        type: string
+      created_by:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      kind:
+        type: string
+      pattern:
+        type: string
+      updated_at:
+        type: string
+      usage_count:
+        type: integer
     type: object
   internal_web_adapter_in_http.loginRequest:
     properties:
@@ -383,6 +723,90 @@ definitions:
     required:
     - login
     - password
+    type: object
+  internal_web_adapter_in_http.overviewKPIDTO:
+    properties:
+      error_rate:
+        type: number
+      errors_24h:
+        type: integer
+      incoming_24h:
+        type: integer
+      kafka_queue:
+        type: integer
+      outgoing_24h:
+        type: integer
+      prometheus_available:
+        type: boolean
+    type: object
+  internal_web_adapter_in_http.switchTeamRequest:
+    properties:
+      team_id:
+        type: string
+    required:
+    - team_id
+    type: object
+  internal_web_adapter_in_http.teamResponse:
+    properties:
+      ch_database:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      slug:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  internal_web_adapter_in_http.testRMQRequest:
+    properties:
+      host:
+        maxLength: 253
+        type: string
+      password:
+        maxLength: 1024
+        type: string
+      port:
+        maximum: 65535
+        minimum: 1
+        type: integer
+      queue:
+        maxLength: 255
+        type: string
+      use_tls:
+        type: boolean
+      user:
+        maxLength: 255
+        type: string
+      vhost:
+        maxLength: 255
+        type: string
+    required:
+    - host
+    - queue
+    type: object
+  internal_web_adapter_in_http.updateMemberRoleRequest:
+    properties:
+      role:
+        enum:
+        - owner
+        - admin
+        - member
+        type: string
+    required:
+    - role
+    type: object
+  internal_web_adapter_in_http.updateTeamRequest:
+    properties:
+      name:
+        maxLength: 255
+        minLength: 1
+        type: string
+    required:
+    - name
     type: object
   internal_web_adapter_in_http.updateUserRequest:
     properties:
@@ -402,6 +826,7 @@ definitions:
         enum:
         - admin
         - viewer
+        - manager
         type: string
     required:
     - role
@@ -411,6 +836,8 @@ definitions:
       active:
         type: boolean
       created_at:
+        type: string
+      default_team_id:
         type: string
       email:
         type: string
@@ -426,13 +853,15 @@ definitions:
         type: boolean
       role:
         type: string
-      team_id:
-        type: string
     type: object
   nexus_internal_domain.AppSettings:
     properties:
       clickhouse:
         $ref: '#/definitions/nexus_internal_domain.ClickHouseSettings'
+      general:
+        $ref: '#/definitions/nexus_internal_domain.GeneralSettings'
+      notifications:
+        $ref: '#/definitions/nexus_internal_domain.NotificationsSettings'
       sentry:
         $ref: '#/definitions/nexus_internal_domain.SentrySettings'
       updated_at:
@@ -440,6 +869,65 @@ definitions:
       updated_by:
         description: user_id, кто последним обновил
         type: string
+    type: object
+  nexus_internal_domain.CHColumnOverride:
+    properties:
+      codec:
+        description: содержимое CODEC(...), напр. "ZSTD(3)" или "Delta, ZSTD"
+        type: string
+      name:
+        description: имя колонки из RequiredLogColumns
+        type: string
+    type: object
+  nexus_internal_domain.CHEngine:
+    enum:
+    - MergeTree
+    type: string
+    x-enum-varnames:
+    - CHEngineMergeTree
+  nexus_internal_domain.CHTTLMode:
+    enum:
+    - none
+    - ttl_days
+    type: string
+    x-enum-varnames:
+    - CHTTLModeNone
+    - CHTTLModeTTLDays
+  nexus_internal_domain.CHTemplateIndex:
+    properties:
+      expr:
+        description: имя обязательной колонки
+        type: string
+      granularity:
+        description: GRANULARITY N
+        type: integer
+      name:
+        description: '[A-Za-z0-9_]+'
+        type: string
+      type:
+        description: minmax | set(N) | bloom_filter(...) | tokenbf_v1(...) | ngrambf_v1(...)
+        type: string
+    type: object
+  nexus_internal_domain.CHTemplateSpec:
+    properties:
+      column_overrides:
+        items:
+          $ref: '#/definitions/nexus_internal_domain.CHColumnOverride'
+        type: array
+      engine:
+        $ref: '#/definitions/nexus_internal_domain.CHEngine'
+      indexes:
+        items:
+          $ref: '#/definitions/nexus_internal_domain.CHTemplateIndex'
+        type: array
+      order_by:
+        items:
+          type: string
+        type: array
+      partition_by:
+        type: string
+      ttl_mode:
+        $ref: '#/definitions/nexus_internal_domain.CHTTLMode'
     type: object
   nexus_internal_domain.ClickHouseSettings:
     properties:
@@ -462,6 +950,21 @@ definitions:
       workers:
         type: integer
     type: object
+  nexus_internal_domain.GeneralSettings:
+    properties:
+      public_base_url:
+        description: |-
+          PublicBaseURL — публичный адрес, под которым опубликован Web (origin без
+          хвостового слеша, напр. https://nexus.example.com). Если задан, UI
+          формирует полный адрес узла от него вместо window.location.origin.
+          nil/"" = не задан (UI берёт origin браузера). Не секрет — Get() не маскирует.
+        type: string
+    type: object
+  nexus_internal_domain.NotificationsSettings:
+    properties:
+      telegram:
+        $ref: '#/definitions/nexus_internal_domain.TelegramSettings'
+    type: object
   nexus_internal_domain.SentrySettings:
     properties:
       attach_stacktrace:
@@ -477,6 +980,17 @@ definitions:
       traces_sample_rate:
         type: number
       use:
+        type: boolean
+    type: object
+  nexus_internal_domain.TelegramSettings:
+    properties:
+      bot_token:
+        type: string
+      chat_id:
+        type: string
+      cron:
+        type: string
+      enabled:
         type: boolean
     type: object
   nexus_internal_web_usecase.DryRunReport:
@@ -500,6 +1014,35 @@ definitions:
       status:
         description: ok | failed | skipped
         type: string
+    type: object
+  nexus_internal_web_usecase.RMQCheck:
+    properties:
+      consumer_count:
+        type: integer
+      elapsed_ms:
+        type: integer
+      error:
+        type: string
+      message_count:
+        type: integer
+      ok:
+        type: boolean
+    type: object
+  nexus_internal_web_usecase.RMQChecks:
+    properties:
+      auth:
+        $ref: '#/definitions/nexus_internal_web_usecase.RMQCheck'
+      connect:
+        $ref: '#/definitions/nexus_internal_web_usecase.RMQCheck'
+      queue:
+        $ref: '#/definitions/nexus_internal_web_usecase.RMQCheck'
+    type: object
+  nexus_internal_web_usecase.RMQTestResult:
+    properties:
+      checks:
+        $ref: '#/definitions/nexus_internal_web_usecase.RMQChecks'
+      ok:
+        type: boolean
     type: object
   nexus_internal_web_usecase.ReplayResult:
     properties:
@@ -534,6 +1077,170 @@ info:
   title: Nexus Web API
   version: "1.0"
 paths:
+  /api/allowed-hosts:
+    get:
+      parameters:
+      - description: поиск по паттерну и описанию
+        in: query
+        name: q
+        type: string
+      - description: 'фильтр по типу: exact|wildcard|regex'
+        in: query
+        name: kind
+        type: string
+      - description: лимит (по умолчанию 50)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: 'Каталог разрешённых хостов: поиск/листинг (§23).'
+      tags:
+      - allowed-hosts
+    post:
+      consumes:
+      - application/json
+      description: 'Идемпотентно по case-insensitive паттерну: повтор вернёт существующую
+        запись.'
+      parameters:
+      - description: host
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.hostRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.hostResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Создать разрешённый хост (admin, §23).
+      tags:
+      - allowed-hosts
+  /api/allowed-hosts/{id}:
+    delete:
+      description: Нельзя удалить хост, используемый узлами (409).
+      parameters:
+      - description: host id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Удалить разрешённый хост (admin, §23).
+      tags:
+      - allowed-hosts
+    patch:
+      consumes:
+      - application/json
+      description: Описание меняется всегда; паттерн/тип — только если хост не используется
+        (usage_count=0).
+      parameters:
+      - description: host id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: host
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.hostRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Изменить разрешённый хост (admin, §23).
+      tags:
+      - allowed-hosts
+  /api/allowed-hosts/preview:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: preview
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.hostPreviewRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: 'Превью паттерна: какие URL разрешит/заблокирует (§23).'
+      tags:
+      - allowed-hosts
   /api/audit:
     get:
       description: 'Поддерживаемые actions: node.create/update/delete, user.create/update/delete/password_changed,
@@ -735,6 +1442,248 @@ paths:
       summary: Профиль текущей сессии.
       tags:
       - auth
+  /api/ch-templates:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Список шаблонов CH-таблиц (§19).
+      tags:
+      - ch-templates
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: template
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.chTemplateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.chTemplateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Создать шаблон CH-таблицы (admin, §19).
+      tags:
+      - ch-templates
+  /api/ch-templates/{id}:
+    delete:
+      description: Нельзя удалить default или используемый узлами шаблон (409).
+      parameters:
+      - description: template id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Удалить шаблон CH-таблицы (admin, §19).
+      tags:
+      - ch-templates
+    get:
+      parameters:
+      - description: template id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.chTemplateResponse'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Один шаблон CH-таблицы по id (§19).
+      tags:
+      - ch-templates
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: template id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: template
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.chTemplateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.chTemplateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Обновить шаблон CH-таблицы (admin, §19).
+      tags:
+      - ch-templates
+  /api/ch-templates/verify:
+    post:
+      consumes:
+      - application/json
+      description: Статическая валидация + пробное создание временной таблицы в ClickHouse.
+        Возвращает {ok} или {ok:false,error}.
+      parameters:
+      - description: template
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.chTemplateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: clickhouse unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Проверить шаблон CH-таблицы (admin, §19.4).
+      tags:
+      - ch-templates
+  /api/headers:
+    get:
+      parameters:
+      - description: prefix поиска по имени; пусто = топ-используемые
+        in: query
+        name: q
+        type: string
+      - description: лимит (по умолчанию 20)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: 'Справочник заголовков: автодополнение (§24).'
+      tags:
+      - headers
+    post:
+      consumes:
+      - application/json
+      description: 'Идемпотентно по case-insensitive имени: повтор вернёт существующую
+        запись (200), а не ошибку.'
+      parameters:
+      - description: header
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.headerRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.headerResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Создать заголовок в справочнике (admin, §24).
+      tags:
+      - headers
   /api/logs/{id}/replay:
     post:
       consumes:
@@ -789,6 +1738,198 @@ paths:
       summary: Повторно отправить запрос через шину (§7.4.1).
       tags:
       - logs
+  /api/me/password:
+    post:
+      consumes:
+      - application/json
+      description: Требует подтверждения текущего пароля; userID берётся из сессии
+        (§26). Все сессии пользователя завершаются (forced re-login).
+      parameters:
+      - description: current + new password
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.changeOwnPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: current password incorrect
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Сменить собственный пароль (self-service).
+      tags:
+      - auth
+  /api/me/switch-team:
+    post:
+      consumes:
+      - application/json
+      description: Multi-tenancy v2. team_id должен быть из списка GET /api/me/teams.
+      parameters:
+      - description: team_id
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.switchTeamRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: user is not a member of this team
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Сменить текущую команду в сессии.
+      tags:
+      - auth
+  /api/me/teams:
+    get:
+      description: Multi-tenancy v2 (§16 ТЗ). Используется UI team-switcher'ом.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Список команд, в которых состоит текущий пользователь.
+      tags:
+      - auth
+  /api/metrics/nodes:
+    get:
+      description: Источник — Prometheus (sum by node). Ключ node = path узла. Без
+        Prometheus — пустой список с prometheus_available=false.
+      parameters:
+      - description: 1h | 3h | 24h | 7d | 14d | 30d (default 1h)
+        in: query
+        name: range
+        type: string
+      - description: период с (RFC3339 или UnixMilli); вместе с to задаёт произвольный
+          период
+        in: query
+        name: from
+        type: string
+      - description: период по (RFC3339 или UnixMilli)
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      - ApiTokenAuth: []
+      summary: Per-node throughput за окно (§21).
+      tags:
+      - metrics
+  /api/metrics/nodes/{id}:
+    get:
+      description: Источник — Prometheus (per-node счётчики Sender'а; перцентили через
+        histogram_quantile). Без Prometheus → нули с chart_available=false.
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 1h | 3h | 24h | 7d | 14d | 30d (default 1h)
+        in: query
+        name: range
+        type: string
+      - description: период с (RFC3339 или UnixMilli); вместе с to задаёт произвольный
+          период
+        in: query
+        name: from
+        type: string
+      - description: период по (RFC3339 или UnixMilli)
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      - ApiTokenAuth: []
+      summary: KPI + временной ряд графика узла (§21).
+      tags:
+      - metrics
+  /api/metrics/overview:
+    get:
+      description: Источник — Prometheus. Без настроенного prometheus.url возвращает
+        нули с prometheus_available=false.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.overviewKPIDTO'
+      security:
+      - CookieAuth: []
+      - ApiTokenAuth: []
+      summary: Глобальные KPI панели за 24ч (§21).
+      tags:
+      - metrics
   /api/nodes:
     get:
       parameters:
@@ -956,6 +2097,93 @@ paths:
       summary: Обновить узел.
       tags:
       - nodes
+  /api/nodes/{id}/allowed-hosts:
+    get:
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Хосты, привязанные к узлу (§23).
+      tags:
+      - allowed-hosts
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: host_id
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.attachHostRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Привязать хост к узлу (admin, §23).
+      tags:
+      - allowed-hosts
+  /api/nodes/{id}/allowed-hosts/{host_id}:
+    delete:
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: host id
+        in: path
+        name: host_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Отвязать хост от узла (admin, §23).
+      tags:
+      - allowed-hosts
   /api/nodes/{id}/logs:
     get:
       parameters:
@@ -1049,6 +2277,58 @@ paths:
       summary: SSE live-tail логов узла (§7.4).
       tags:
       - logs
+  /api/nodes/{id}/move:
+    post:
+      consumes:
+      - application/json
+      description: Меняет team_id узла и переносит ClickHouse-таблицу логов (RENAME
+        TABLE, best-effort). Конфликт пути в целевой команде → 409.
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: target team slug
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.MoveNodeRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: same team / not allowed
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: node or target team not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: path already exists in target team
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Перенести узел в другую команду (admin only, multi-tenancy v2).
+      tags:
+      - nodes
   /api/nodes/dry-run:
     post:
       consumes:
@@ -1078,6 +2358,45 @@ paths:
       security:
       - CookieAuth: []
       summary: 'Dry-run: проверить конфиг узла без сохранения (§7.5.1).'
+      tags:
+      - nodes
+  /api/nodes/test-rmq:
+    post:
+      consumes:
+      - application/json
+      description: 'Реальный AMQP-handshake: TCP-connect, auth, passive queue.declare.
+        Не создаёт очередь и не забирает сообщения. Всегда 200; OK=false при любом
+        проваленном шаге (диагностика, не функциональный вызов). Доступно manager+,
+        rate-limit 10/мин на пользователя.'
+      parameters:
+      - description: RabbitMQ connection params
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.testRMQRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/nexus_internal_web_usecase.RMQTestResult'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "429":
+          description: rate limit exceeded
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Проверить подключение к RabbitMQ (§27.8).
       tags:
       - nodes
   /api/settings/app:
@@ -1228,6 +2547,69 @@ paths:
       summary: Проверить соединение с ClickHouse по patch'у настроек (§7.10).
       tags:
       - settings
+  /api/settings/notifications/test:
+    post:
+      consumes:
+      - application/json
+      description: Шлёт тестовое сообщение в чат с merge'нутыми (current + body) настройками.
+        Маскированный bot_token не используется. Возвращает {ok,latency_ms} или {ok:false,error}.
+        Не сохраняет.
+      parameters:
+      - description: patch
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/nexus_internal_domain.TelegramSettings'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/nexus_internal_web_usecase.TestResult'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Отправить тестовое уведомление в Telegram с patch'ем настроек (§20.7).
+      tags:
+      - settings
+  /api/settings/public:
+    get:
+      description: 'Лёгкий read-only эндпоинт для любого авторизованного пользователя:
+        возвращает {public_base_url} для сборки полного адреса узла в UI. Не требует
+        прав admin (в отличие от /api/settings/app).'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Публичный адрес приложения (§28, Пункт 1).
+      tags:
+      - settings
   /api/settings/sentry/test:
     post:
       consumes:
@@ -1266,6 +2648,247 @@ paths:
       summary: Отправить тестовое событие в Sentry с patch'ем настроек (§7.10).
       tags:
       - settings
+  /api/teams:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Список команд (admin only).
+      tags:
+      - teams
+    post:
+      consumes:
+      - application/json
+      description: 'Атомарно: row в teams + CREATE DATABASE nexus_<slug>. ch_database
+        вычисляется из slug. Creator → owner.'
+      parameters:
+      - description: slug + name
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.createTeamRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.teamResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: slug or ch_database exists
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: ClickHouse unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Создать команду (admin only).
+      tags:
+      - teams
+  /api/teams/{id}:
+    delete:
+      description: default-team удалить нельзя. ON DELETE RESTRICT на nodes — если
+        в команде есть узлы, удаление вернёт 409. ClickHouse-БД остаётся как orphan
+        (drop через UI «Orphans», Phase 10.D).
+      parameters:
+      - description: team id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "403":
+          description: cannot delete default team
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: team has nodes
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Удалить команду (admin only).
+      tags:
+      - teams
+    get:
+      parameters:
+      - description: team id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.teamResponse'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Одна команда по id (admin only).
+      tags:
+      - teams
+    put:
+      consumes:
+      - application/json
+      description: Slug и ch_database immutable после создания.
+      parameters:
+      - description: team id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: name
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.updateTeamRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.teamResponse'
+      security:
+      - CookieAuth: []
+      summary: Обновить имя команды (admin only).
+      tags:
+      - teams
+  /api/teams/{id}/members:
+    get:
+      parameters:
+      - description: team id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Список членов команды (admin only).
+      tags:
+      - teams
+    post:
+      consumes:
+      - application/json
+      description: Если membership уже есть — обновляется роль (UPSERT через ON CONFLICT).
+      parameters:
+      - description: team id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: user_id + role
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.addMemberRequest'
+      responses:
+        "204":
+          description: No Content
+      security:
+      - CookieAuth: []
+      summary: Добавить пользователя в команду (admin only).
+      tags:
+      - teams
+  /api/teams/{id}/members/{user_id}:
+    delete:
+      parameters:
+      - description: team id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: user id
+        in: path
+        name: user_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+      security:
+      - CookieAuth: []
+      summary: Убрать пользователя из команды (admin only).
+      tags:
+      - teams
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: team id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: user id
+        in: path
+        name: user_id
+        required: true
+        type: string
+      - description: role
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.updateMemberRoleRequest'
+      responses:
+        "204":
+          description: No Content
+      security:
+      - CookieAuth: []
+      summary: Изменить роль пользователя в команде (admin only).
+      tags:
+      - teams
   /api/tokens:
     get:
       description: Каждый видит только свои токены. Возвращает префикс, scopes, last_used_at
@@ -1558,6 +3181,22 @@ paths:
       summary: Сменить пароль пользователя (admin only).
       tags:
       - users
+  /api/version:
+    get:
+      description: 'Публичный read-only эндпоинт: текущая версия Web Service. Не требует
+        авторизации.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Версия приложения (§30).
+      tags:
+      - meta
 schemes:
 - http
 - https

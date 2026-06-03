@@ -55,7 +55,7 @@ services:
     image: clickhouse/clickhouse-server:24-alpine
     restart: unless-stopped
     environment:
-      CLICKHOUSE_DB: vika_logs
+      CLICKHOUSE_DB: nexus_default
       CLICKHOUSE_USER: ${CH_USER:-default}
       CLICKHOUSE_PASSWORD: ${CH_PASSWORD:-}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
@@ -124,12 +124,35 @@ services:
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-90d}
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus.alerts.yml:/etc/prometheus/prometheus.alerts.yml:ro
       - prometheus_data:/prometheus
     ports:
       - "9091:9090"
+    networks: [nexus_net]
+
+  # RabbitMQ — только для ручного тестирования узлов RabbitMQAsync на стенде
+  # (docs/STAND_TESTING.md). Под профилем `stand`, чтобы обычный
+  # `docker compose up` его не поднимал. Запуск: добавить `--profile stand`.
+  # Management UI: http://localhost:15672 (guest/guest).
+  rabbitmq:
+    profiles: ["stand"]
+    image: rabbitmq:3.13-management-alpine
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RMQ_PASSWORD:-guest}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     networks: [nexus_net]
 
   receiver:
@@ -163,7 +186,7 @@ services:
       kafka:      { condition: service_healthy }
       clickhouse: { condition: service_healthy }
     ports:
-      - "9090:9090"
+      - "9190:9190"
       - "9093:9091"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:9091/health"]

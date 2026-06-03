@@ -4,6 +4,7 @@ package grpc
 
 import (
 	"context"
+	"maps"
 	"strconv"
 
 	"nexus/internal/domain"
@@ -27,29 +28,30 @@ func NewServer(uc *usecase.SendUsecase, m *metrics.Metrics, logger logging.Logge
 
 func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1.SendResponse, error) {
 	headers := make(map[string]string, len(req.GetHeaders())+1)
-	for k, v := range req.GetHeaders() {
-		headers[k] = v
-	}
+	maps.Copy(headers, req.GetHeaders())
 	if a := req.GetAuth(); a != nil && a.GetAuthorizationHeader() != "" {
 		headers["Authorization"] = a.GetAuthorizationHeader()
 	}
 
 	out := s.uc.Send(ctx, usecase.SendInput{
-		ID:              req.GetId(),
-		NodePath:        req.GetNodePath(),
-		RootMethod:      domain.RootMethodRequest, // sync-путь
-		TargetURL:       req.GetTargetUrl(),
-		Method:          req.GetMethod(),
-		Headers:         headers,
-		Body:            req.GetBody(),
-		TimeoutMs:       req.GetTimeoutMs(),
-		RetryCount:      req.GetRetryCount(),
-		RetryBackoffMs:  req.GetRetryBackoffMs(),
-		ClickHouseTable: req.GetClickhouseTable(),
-		LogRequestBody:  req.GetLogRequestBody(),
-		LogResponseBody: req.GetLogResponseBody(),
-		LogHeaders:      req.GetLogHeaders(),
-		ClientIP:        req.GetClientIp(),
+		ID:                 req.GetId(),
+		NodePath:           req.GetNodePath(),
+		RootMethod:         domain.RootMethodRequest, // sync-путь
+		TargetURL:          req.GetTargetUrl(),
+		Method:             req.GetMethod(),
+		Headers:            headers,
+		Body:               req.GetBody(),
+		TimeoutMs:          req.GetTimeoutMs(),
+		RetryCount:         req.GetRetryCount(),
+		RetryBackoffMs:     req.GetRetryBackoffMs(),
+		ClickHouseTable:    req.GetClickhouseTable(),
+		LogRequestBody:     req.GetLogRequestBody(),
+		LogResponseBody:    req.GetLogResponseBody(),
+		LogHeaders:         req.GetLogHeaders(),
+		ClientIP:           req.GetClientIp(),
+		LoggingEnabled:     req.GetLoggingEnabled(),
+		MaxBodySizeEnabled: req.GetMaxBodySizeEnabled(),
+		MaxBodySize:        req.GetMaxBodySize(),
 	})
 
 	if s.metrics != nil {
@@ -57,6 +59,9 @@ func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 			WithLabelValues("request", req.GetNodePath(), strconv.FormatInt(int64(out.StatusCode), 10)).Inc()
 		s.metrics.RequestDuration.
 			WithLabelValues("request", req.GetNodePath()).Observe(float64(out.DurationMs) / 1000.0)
+		if out.StatusCode < 200 || out.StatusCode >= 300 {
+			s.metrics.RequestsIncompleteTotal.WithLabelValues("request", req.GetNodePath()).Inc()
+		}
 	}
 
 	return &senderv1.SendResponse{

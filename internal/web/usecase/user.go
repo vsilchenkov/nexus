@@ -13,32 +13,56 @@ import (
 )
 
 // UserUsecase — CRUD пользователей UI (§7.9, §7.10).
+//
+// teams + defaultTeamID — multi-tenancy v2 (Phase 11.A): List scope'ится
+// по членству в команде, Create добавляет membership в текущую команду.
 type UserUsecase struct {
-	users    port.UserRepo
-	sessions port.SessionRepo
-	audit    *AuditUsecase
-	logger   logging.Logger
+	users         port.UserRepo
+	sessions      port.SessionRepo
+	teams         port.TeamRepo
+	audit         *AuditUsecase
+	defaultTeamID string
+	logger        logging.Logger
 }
 
 func NewUserUsecase(
 	users port.UserRepo,
 	sessions port.SessionRepo,
+	teams port.TeamRepo,
 	audit *AuditUsecase,
+	defaultTeamID string,
 	logger logging.Logger,
 ) *UserUsecase {
-	return &UserUsecase{users: users, sessions: sessions, audit: audit, logger: logger}
+	return &UserUsecase{
+		users:         users,
+		sessions:      sessions,
+		teams:         teams,
+		audit:         audit,
+		defaultTeamID: defaultTeamID,
+		logger:        logger,
+	}
 }
 
 func (u *UserUsecase) Get(ctx context.Context, id string) (*domain.User, error) {
 	return u.users.Get(ctx, id)
 }
 
+// List возвращает пользователей текущей команды. Пустой f.TeamID →
+// defaultTeamID (fallback для CLI/legacy).
 func (u *UserUsecase) List(ctx context.Context, f port.ListUsersFilter) ([]*domain.User, error) {
+	if f.TeamID == "" {
+		f.TeamID = u.defaultTeamID
+	}
 	return u.users.List(ctx, f)
 }
 
 // Create — создание пользователя (admin only — проверка ролей в handler).
-func (u *UserUsecase) Create(ctx context.Context, actor Actor, in *domain.User, password string) error {
+//
+// teamID — команда, в которую добавляется membership (Phase 11.A): без
+// строки в user_teams пользователь не попал бы в scoped-список List.
+// Пустой teamID → defaultTeamID. default_team_id юзера выставляется
+// репозиторием (COALESCE на default), здесь же добавляем явное членство.
+func (u *UserUsecase) Create(ctx context.Context, actor Actor, teamID string, in *domain.User, password string) error {
 	if !in.Role.Valid() {
 		return errors.New("invalid role")
 	}
@@ -58,8 +82,19 @@ func (u *UserUsecase) Create(ctx context.Context, actor Actor, in *domain.User, 
 	if err := u.users.Create(ctx, in); err != nil {
 		return err
 	}
+	if teamID == "" {
+		teamID = u.defaultTeamID
+	}
+	if teamID != "" {
+		if err := u.teams.AddMember(ctx, in.ID, teamID, domain.TeamRoleMember); err != nil {
+			u.logger.Warn("add new user to team failed (user created, membership missed)",
+				u.logger.Str("user_id", in.ID),
+				u.logger.Str("team_id", teamID),
+				u.logger.Err(err))
+		}
+	}
 	u.audit.Log(ctx, actor, domain.ActionUserCreate, "user", in.ID, map[string]any{
-		"login": in.Login, "role": string(in.Role),
+		"login": in.Login, "role": string(in.Role), "team_id": teamID,
 	})
 	return nil
 }

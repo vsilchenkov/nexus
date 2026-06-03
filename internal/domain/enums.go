@@ -27,12 +27,43 @@ func (s NodeStatus) Valid() bool {
 type RootMethod string
 
 const (
-	RootMethodRequest      RootMethod = "request"
-	RootMethodRequestAsync RootMethod = "requestAsync"
+	RootMethodRequest       RootMethod = "request"
+	RootMethodRequestAsync  RootMethod = "requestAsync"
+	RootMethodRabbitMQAsync RootMethod = "RabbitMQAsync"
 )
 
 func (m RootMethod) Valid() bool {
-	return m == RootMethodRequest || m == RootMethodRequestAsync
+	switch m {
+	case RootMethodRequest, RootMethodRequestAsync, RootMethodRabbitMQAsync:
+		return true
+	}
+	return false
+}
+
+// IsPull сообщает, что узел сам забирает сообщения из внешнего источника
+// (RabbitMQAsync, §27), а не ждёт входящего HTTP-запроса. Для pull-узлов
+// нет смысла в incoming-авторизации и url_mode=from_request, и только для
+// них применимо runtime-состояние degraded.
+func (m RootMethod) IsPull() bool { return m == RootMethodRabbitMQAsync }
+
+// HTTPMethod — HTTP-метод узла (§3.2): отдельно для входящего запроса
+// (который узел принимает) и для исходящего вызова получателя. По умолчанию
+// POST. Множество ограничено четырьмя методами из ТЗ.
+type HTTPMethod string
+
+const (
+	HTTPMethodGET    HTTPMethod = "GET"
+	HTTPMethodPOST   HTTPMethod = "POST"
+	HTTPMethodPUT    HTTPMethod = "PUT"
+	HTTPMethodDELETE HTTPMethod = "DELETE"
+)
+
+func (m HTTPMethod) Valid() bool {
+	switch m {
+	case HTTPMethodGET, HTTPMethodPOST, HTTPMethodPUT, HTTPMethodDELETE:
+		return true
+	}
+	return false
 }
 
 // URLMode — режим определения целевого URL (§3.4).
@@ -108,16 +139,45 @@ func (a IncomingAuthType) Valid() bool {
 	return false
 }
 
-// UserRole — роль пользователя UI (§7.1).
+// UserRole — роль пользователя UI (§7.1, §26).
+//
+// Иерархия прав: viewer < manager < admin (см. Rank/AtLeast). Менеджер
+// управляет узлами и каталогами Allowed Hosts/Headers, видит Audit log и
+// меняет только свой пароль; общие настройки, пользователи, команды и
+// шаблоны CH остаются за admin (§26).
 type UserRole string
 
 const (
-	UserRoleAdmin  UserRole = "admin"
-	UserRoleViewer UserRole = "viewer"
+	UserRoleAdmin   UserRole = "admin"
+	UserRoleManager UserRole = "manager"
+	UserRoleViewer  UserRole = "viewer"
 )
 
-func (r UserRole) Valid() bool   { return r == UserRoleAdmin || r == UserRoleViewer }
+func (r UserRole) Valid() bool {
+	switch r {
+	case UserRoleAdmin, UserRoleManager, UserRoleViewer:
+		return true
+	}
+	return false
+}
+
 func (r UserRole) IsAdmin() bool { return r == UserRoleAdmin }
+
+// Rank — числовой ранг роли в иерархии (viewer=0, manager=1, admin=2).
+// Неизвестная роль трактуется как минимальный ранг.
+func (r UserRole) Rank() int {
+	switch r {
+	case UserRoleAdmin:
+		return 2
+	case UserRoleManager:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// AtLeast сообщает, что роль не ниже min по иерархии прав.
+func (r UserRole) AtLeast(min UserRole) bool { return r.Rank() >= min.Rank() }
 
 // UserLang — язык UI пользователя (§7.11).
 type UserLang string

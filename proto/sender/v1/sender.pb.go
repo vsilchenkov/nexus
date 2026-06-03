@@ -94,8 +94,12 @@ type SendRequest struct {
 	LogResponseBody bool   `protobuf:"varint,22,opt,name=log_response_body,json=logResponseBody,proto3" json:"log_response_body,omitempty"`
 	LogHeaders      bool   `protobuf:"varint,23,opt,name=log_headers,json=logHeaders,proto3" json:"log_headers,omitempty"`
 	ClientIp        string `protobuf:"bytes,24,opt,name=client_ip,json=clientIp,proto3" json:"client_ip,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// §22: контроль логирования узла.
+	LoggingEnabled     bool  `protobuf:"varint,25,opt,name=logging_enabled,json=loggingEnabled,proto3" json:"logging_enabled,omitempty"`                 // false → лог в ClickHouse не пишется совсем
+	MaxBodySizeEnabled bool  `protobuf:"varint,26,opt,name=max_body_size_enabled,json=maxBodySizeEnabled,proto3" json:"max_body_size_enabled,omitempty"` // включает обрезку сохраняемых тел
+	MaxBodySize        int32 `protobuf:"varint,27,opt,name=max_body_size,json=maxBodySize,proto3" json:"max_body_size,omitempty"`                        // макс. число символов (рун) в request/response
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *SendRequest) Reset() {
@@ -233,6 +237,27 @@ func (x *SendRequest) GetClientIp() string {
 	return ""
 }
 
+func (x *SendRequest) GetLoggingEnabled() bool {
+	if x != nil {
+		return x.LoggingEnabled
+	}
+	return false
+}
+
+func (x *SendRequest) GetMaxBodySizeEnabled() bool {
+	if x != nil {
+		return x.MaxBodySizeEnabled
+	}
+	return false
+}
+
+func (x *SendRequest) GetMaxBodySize() int32 {
+	if x != nil {
+		return x.MaxBodySize
+	}
+	return 0
+}
+
 type SendResponse struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
 	StatusCode int32                  `protobuf:"varint,1,opt,name=status_code,json=statusCode,proto3" json:"status_code,omitempty"`
@@ -326,7 +351,7 @@ const file_proto_sender_v1_sender_proto_rawDesc = "" +
 	"\x1cproto/sender/v1/sender.proto\x12\x0fnexus.sender.v1\"?\n" +
 	"\n" +
 	"AuthConfig\x121\n" +
-	"\x14authorization_header\x18\x01 \x01(\tR\x13authorizationHeader\"\xe0\x04\n" +
+	"\x14authorization_header\x18\x01 \x01(\tR\x13authorizationHeader\"\xe0\x05\n" +
 	"\vSendRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\tnode_path\x18\x02 \x01(\tR\bnodePath\x12\x1d\n" +
@@ -347,7 +372,10 @@ const file_proto_sender_v1_sender_proto_rawDesc = "" +
 	"\x11log_response_body\x18\x16 \x01(\bR\x0flogResponseBody\x12\x1f\n" +
 	"\vlog_headers\x18\x17 \x01(\bR\n" +
 	"logHeaders\x12\x1b\n" +
-	"\tclient_ip\x18\x18 \x01(\tR\bclientIp\x1a:\n" +
+	"\tclient_ip\x18\x18 \x01(\tR\bclientIp\x12'\n" +
+	"\x0flogging_enabled\x18\x19 \x01(\bR\x0eloggingEnabled\x121\n" +
+	"\x15max_body_size_enabled\x18\x1a \x01(\bR\x12maxBodySizeEnabled\x12\"\n" +
+	"\rmax_body_size\x18\x1b \x01(\x05R\vmaxBodySize\x1a:\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x98\x02\n" +

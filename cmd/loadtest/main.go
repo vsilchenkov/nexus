@@ -4,7 +4,7 @@
 //  1. Поднимает mock-сервер внешних узлов (HTTP).
 //  2. Логинится в Web (POST /api/auth/login).
 //  3. Создаёт N узлов через POST /api/nodes (с разными url_mode и auth_type).
-//  4. Гонит target_rps в течение duration в Receiver (/v1/request/*).
+//  4. Гонит target_rps в течение duration в Receiver (/api/v1/request/*).
 //  5. Считает p50/p95/p99, error rate; печатает отчёт.
 //  6. Сохраняет JSON-отчёт в --report и выходит с кодом 1 при нарушении
 //     критериев приёма (rps >= 95% target, p95 <= 200ms, error rate < 0.1%).
@@ -16,23 +16,29 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"sort"
+	"slices"
 	"sync"
-	"sync/atomic"
 	"time"
+
+	extlog "github.com/vsilchenkov/logging"
+
+	"nexus/internal/platform/safego"
 )
 
 type flags struct {
 	WebURL        string
 	ReceiverURL   string
+	TeamSlug      string
 	AdminLogin    string
 	AdminPass     string
 	TargetRPS     int
@@ -45,12 +51,37 @@ type flags struct {
 	MockPublicURL string
 	Cleanup       bool
 	Report        string
+	RatioRMQ      float64 // §27.12: доля узлов RabbitMQAsync
+	RMQURL        string  // amqp://user:pass@host:port/vhost для RMQ-нагрузки
+
+	// §10.2: микс трафика. Доли — независимые корзины узлов (см. planNodes),
+	// сумма ≤ 1, остаток — plain-sync. Дефолт 0 сохраняет старое поведение
+	// (`make loadtest` без флагов = чистый sync-smoke); микс задаётся профилем.
+	RatioAsync      float64
+	RatioDynamicURL float64
+	RatioAuthToken  float64
+	RatioAuthBasic  float64
+	MockJitter      time.Duration
+	RandomHeaders   bool
+
+	// §10.2: no-loss проверка через ClickHouse (async + rmq). Пустой CHAddr =
+	// проверка пропускается (локальный `make loadtest` без CH работает как раньше).
+	CHAddr       string
+	CHUser       string
+	CHPassword   string
+	CHTable      string
+	CHFlushGrace time.Duration
 }
 
 func parseFlags() flags {
 	var f flags
 	flag.StringVar(&f.WebURL, "web", "http://localhost:8000", "Web service base URL")
 	flag.StringVar(&f.ReceiverURL, "receiver", "http://localhost:8080", "Receiver base URL")
+	flag.StringVar(&f.TeamSlug, "team-slug", "default",
+		"Team slug used to address nodes in the request URL: /api/v1/request/<team_slug>/<node_path>. "+
+			"Must match the team the nodes are created in (Phase 10.E.1 multi-tenancy). Узлы с "+
+			"многосегментным path (loadtest/node-…) недостижимы по legacy-URL без слога — первый "+
+			"сегмент трактуется как team_slug.")
 	flag.StringVar(&f.AdminLogin, "admin-login", "admin", "Admin login")
 	flag.StringVar(&f.AdminPass, "admin-password", "", "Admin password (required)")
 	flag.IntVar(&f.TargetRPS, "target-rps", 500, "Target RPS")
@@ -65,18 +96,44 @@ func parseFlags() flags {
 		"Public base URL of the mock server as seen by Receiver/Sender (e.g. http://loadtest:9999). If empty, the listener URL is used — works only when loadtest, Receiver and Sender share the same network namespace.")
 	flag.BoolVar(&f.Cleanup, "cleanup", true, "Delete created nodes after test")
 	flag.StringVar(&f.Report, "report", "report.json", "Report file path")
+	flag.Float64Var(&f.RatioRMQ, "ratio-rmq", 0,
+		"§27: fraction of nodes created as RabbitMQAsync (0..1). Requires --rmq-url.")
+	flag.StringVar(&f.RMQURL, "rmq-url", "",
+		"AMQP URL for RabbitMQAsync load (amqp://user:pass@host:port/vhost). Queues are declared and published to during the run.")
+	flag.Float64Var(&f.RatioAsync, "ratio-async", 0,
+		"§10.2: fraction of nodes created as requestAsync (Kafka path). 0..1.")
+	flag.Float64Var(&f.RatioDynamicURL, "ratio-dynamic-url", 0,
+		"§10.2: fraction of nodes with url_mode=from_request (target passed via ?url_base=). 0..1.")
+	flag.Float64Var(&f.RatioAuthToken, "ratio-auth-token", 0,
+		"§10.2: fraction of nodes with auth_type=token_from_request (Bearer header). 0..1.")
+	flag.Float64Var(&f.RatioAuthBasic, "ratio-auth-basic", 0,
+		"§10.2: fraction of nodes with auth_type=basic_from_request (Basic header). 0..1.")
+	flag.DurationVar(&f.MockJitter, "mock-latency-jitter", 30*time.Millisecond,
+		"Mock server response latency jitter (±). §10.2.")
+	flag.BoolVar(&f.RandomHeaders, "random-headers", true,
+		"Send 1–3 random X-Lt-* headers per request (§10.2 header proxying/masking).")
+	flag.StringVar(&f.CHAddr, "ch-addr", "",
+		"ClickHouse native addr host:port for §10.2 no-loss check (e.g. clickhouse:9000). Empty = skip.")
+	flag.StringVar(&f.CHUser, "ch-user", "default", "ClickHouse user for no-loss check")
+	flag.StringVar(&f.CHPassword, "ch-password", "", "ClickHouse password for no-loss check")
+	flag.StringVar(&f.CHTable, "ch-table", "nexus_default.loadtest",
+		"ClickHouse log table to count async/rmq rows for no-loss check")
+	flag.DurationVar(&f.CHFlushGrace, "ch-flush-grace", 10*time.Second,
+		"Wait before counting CH rows (sender batch flush window)")
 	flag.Parse()
 	return f
 }
 
 func main() {
+	defer safego.Recover(extlog.NewLogger(slog.New(slog.NewTextHandler(os.Stderr, nil))), "loadtest.main")
+
 	f := parseFlags()
 	if f.AdminPass == "" {
 		fmt.Fprintln(os.Stderr, "--admin-password is required")
 		os.Exit(1)
 	}
 
-	mock, err := startMockServer(f.MockBind, f.MockLatency)
+	mock, err := startMockServer(f.MockBind, f.MockLatency, f.MockJitter)
 	if err != nil {
 		fail("start mock server: %v", err)
 	}
@@ -96,18 +153,44 @@ func main() {
 	}
 	fmt.Println("logged in OK")
 
-	nodes, err := client.createNodes(ctx, f.Nodes, targetURL)
+	// §27.12: часть узлов — RabbitMQAsync (нагрузка публикуется в их очереди).
+	httpNodes := f.Nodes
+	rmqNodes := 0
+	if f.RatioRMQ > 0 && f.RMQURL != "" {
+		rmqNodes = int(float64(f.Nodes)*f.RatioRMQ + 0.5)
+		httpNodes = f.Nodes - rmqNodes
+	} else if f.RatioRMQ > 0 {
+		fmt.Fprintln(os.Stderr, "--ratio-rmq requires --rmq-url; ignoring RMQ load")
+	}
+
+	modes := planNodes(httpNodes, f.Nodes, f)
+	nodes, err := client.createNodes(ctx, modes, targetURL)
 	if err != nil {
 		fail("create nodes: %v", err)
 	}
-	fmt.Printf("created %d nodes\n", len(nodes))
+	fmt.Printf("created %d http nodes (mix: %v)\n", len(nodes), modeCounts(modes))
 
 	if f.Cleanup {
-		defer client.deleteNodes(context.Background(), nodes)
+		defer client.deleteNodes(context.Background(), nodePaths(nodes))
 	}
 
+	// RMQ-нагрузка идёт параллельно HTTP-нагрузке.
+	rmqLoad := startRMQLoad(ctx, client, f, targetURL, rmqNodes)
+	defer rmqLoad.stop()
+
 	report := runLoad(ctx, client, nodes, f)
+
+	// §10.2 no-loss: сверяем async/rmq-строки в CH-логе с числом отправленных.
+	// rmqLoad.stop() (deferred) дождётся завершения publisher'а; здесь его
+	// счётчик уже финален (publisher живёт ту же f.Duration, что и runLoad).
+	var asyncSent int64
+	if m := report.Modes[string(modeAsync)]; m != nil {
+		asyncSent = m.Sent
+	}
+	report.applyNoLoss(checkNoLoss(ctx, f, asyncSent+rmqLoad.published.Load()))
+
 	report.print()
+	rmqLoad.report()
 	if err := report.save(f.Report); err != nil {
 		fmt.Fprintf(os.Stderr, "save report: %v\n", err)
 	}
@@ -123,10 +206,16 @@ func fail(format string, args ...any) {
 
 // ----- mock server ---------------------------------------------------------
 
-func startMockServer(bind string, latency time.Duration) (*httptest.Server, error) {
+func startMockServer(bind string, latency, jitter time.Duration) (*httptest.Server, error) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		jitter := time.Duration(rand.Int63n(int64(latency / 2)))
-		time.Sleep(latency - latency/4 + jitter)
+		// Задержка = latency ± uniform(jitter). Имитирует реальный внешний API.
+		d := latency
+		if jitter > 0 {
+			d += time.Duration(rand.Int63n(int64(2*jitter))) - jitter
+		}
+		if d > 0 {
+			time.Sleep(d)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprintln(w, `{"ok":true}`)
 	})
@@ -174,35 +263,6 @@ func (c *client) login(ctx context.Context, login, password string) error {
 	return fmt.Errorf("session cookie not set")
 }
 
-func (c *client) createNodes(ctx context.Context, n int, targetURL string) ([]string, error) {
-	paths := make([]string, 0, n)
-	for i := 0; i < n; i++ {
-		path := fmt.Sprintf("loadtest/node-%d-%d", time.Now().UnixNano(), i)
-		body, _ := json.Marshal(map[string]any{
-			"path":               path,
-			"root_method":        "request",
-			"target_url":         targetURL,
-			"auth_type":          "none",
-			"incoming_auth_type": "none",
-			"timeout_ms":         30000,
-			"clickhouse_table":   "vika_logs.loadtest",
-		})
-		req, _ := http.NewRequestWithContext(ctx, "POST", c.baseWeb+"/api/nodes", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.AddCookie(&http.Cookie{Name: "nexus_session", Value: c.cookie})
-		resp, err := c.hc.Do(req)
-		if err != nil {
-			return paths, err
-		}
-		resp.Body.Close()
-		if resp.StatusCode != 201 {
-			return paths, fmt.Errorf("create node %d status %d", i, resp.StatusCode)
-		}
-		paths = append(paths, path)
-	}
-	return paths, nil
-}
-
 func (c *client) deleteNodes(ctx context.Context, paths []string) {
 	// Узлы удаляются через /api/nodes/:id, но у нас нет id — пропускаем.
 	// Реальная очистка — отдельная задача (использовать GET список + DELETE).
@@ -211,32 +271,109 @@ func (c *client) deleteNodes(ctx context.Context, paths []string) {
 
 // ----- load ----------------------------------------------------------------
 
-type result struct {
-	Latencies []time.Duration
-	Errors    int64
-	Sent      int64
-	mu        sync.Mutex
+// modeAccum — накопитель по одному режиму узла. Под одним мьютексом result.mu.
+type modeAccum struct {
+	latencies []time.Duration
+	sent      int64
+	errors    int64
 }
 
-func (r *result) add(d time.Duration, errored bool) {
+type result struct {
+	mu    sync.Mutex
+	modes map[nodeMode]*modeAccum
+}
+
+func newResult() *result {
+	return &result{modes: make(map[nodeMode]*modeAccum)}
+}
+
+func (r *result) add(d time.Duration, errored bool, mode nodeMode) {
 	r.mu.Lock()
-	r.Latencies = append(r.Latencies, d)
-	r.mu.Unlock()
-	atomic.AddInt64(&r.Sent, 1)
+	defer r.mu.Unlock()
+	a := r.modes[mode]
+	if a == nil {
+		a = &modeAccum{}
+		r.modes[mode] = a
+	}
+	a.latencies = append(a.latencies, d)
+	a.sent++
 	if errored {
-		atomic.AddInt64(&r.Errors, 1)
+		a.errors++
 	}
 }
 
+// modeReport — per-mode срез отчёта (§10.2: реалистичный микс трафика).
+type modeReport struct {
+	Sent      int64   `json:"sent"`
+	Errors    int64   `json:"errors"`
+	ErrorRate float64 `json:"error_rate"`
+	P50Ms     float64 `json:"p50_ms"`
+	P95Ms     float64 `json:"p95_ms"`
+	P99Ms     float64 `json:"p99_ms"`
+}
+
 type report struct {
-	Sent        int64   `json:"sent"`
-	Errors      int64   `json:"errors"`
-	ErrorRate   float64 `json:"error_rate"`
-	AchievedRPS float64 `json:"achieved_rps"`
-	P50Ms       float64 `json:"p50_ms"`
-	P95Ms       float64 `json:"p95_ms"`
-	P99Ms       float64 `json:"p99_ms"`
-	Duration    string  `json:"duration"`
+	Sent        int64                  `json:"sent"`
+	Errors      int64                  `json:"errors"`
+	ErrorRate   float64                `json:"error_rate"`
+	AchievedRPS float64                `json:"achieved_rps"`
+	P50Ms       float64                `json:"p50_ms"`
+	P95Ms       float64                `json:"p95_ms"`
+	P99Ms       float64                `json:"p99_ms"`
+	Duration    string                 `json:"duration"`
+	Modes       map[string]*modeReport `json:"modes,omitempty"`
+
+	// §10.2 no-loss (async + rmq). NoLossChecked=false => CH-сверка не гонялась.
+	NoLossChecked  bool  `json:"no_loss_checked"`
+	NoLoss         bool  `json:"no_loss"`
+	CHRows         int64 `json:"ch_rows"`
+	NoLossExpected int64 `json:"no_loss_expected"`
+}
+
+// applyNoLoss переносит результат CH-сверки в отчёт.
+func (rep *report) applyNoLoss(nl noLossResult) {
+	rep.NoLossChecked = nl.enabled
+	if !nl.enabled {
+		return
+	}
+	rep.CHRows = nl.rows
+	rep.NoLossExpected = nl.expected
+	rep.NoLoss = nl.ok
+}
+
+// buildReport агрегирует per-mode накопители в отчёт (общий + по режимам).
+func buildReport(res *result, elapsed time.Duration) *report {
+	res.mu.Lock()
+	defer res.mu.Unlock()
+
+	rep := &report{Duration: elapsed.String(), Modes: make(map[string]*modeReport, len(res.modes))}
+	var all []time.Duration
+	for mode, a := range res.modes {
+		rep.Sent += a.sent
+		rep.Errors += a.errors
+		all = append(all, a.latencies...)
+		mr := &modeReport{
+			Sent:   a.sent,
+			Errors: a.errors,
+			P50Ms:  percentileMs(a.latencies, 0.50),
+			P95Ms:  percentileMs(a.latencies, 0.95),
+			P99Ms:  percentileMs(a.latencies, 0.99),
+		}
+		if a.sent > 0 {
+			mr.ErrorRate = float64(a.errors) / float64(a.sent)
+		}
+		rep.Modes[string(mode)] = mr
+	}
+	if elapsed > 0 {
+		rep.AchievedRPS = float64(rep.Sent) / elapsed.Seconds()
+	}
+	if rep.Sent > 0 {
+		rep.ErrorRate = float64(rep.Errors) / float64(rep.Sent)
+	}
+	rep.P50Ms = percentileMs(all, 0.50)
+	rep.P95Ms = percentileMs(all, 0.95)
+	rep.P99Ms = percentileMs(all, 0.99)
+	return rep
 }
 
 func (rep *report) print() {
@@ -247,6 +384,13 @@ func (rep *report) print() {
 	fmt.Printf("p50:          %.1f ms\n", rep.P50Ms)
 	fmt.Printf("p95:          %.1f ms\n", rep.P95Ms)
 	fmt.Printf("p99:          %.1f ms\n", rep.P99Ms)
+	for mode, m := range rep.Modes {
+		fmt.Printf("  [%-10s] sent=%-7d err=%.4f%% p50=%.1f p95=%.1f p99=%.1f\n",
+			mode, m.Sent, m.ErrorRate*100, m.P50Ms, m.P95Ms, m.P99Ms)
+	}
+	if rep.NoLossChecked {
+		fmt.Printf("no-loss:      ch_rows=%d expected>=%d -> %v\n", rep.CHRows, rep.NoLossExpected, rep.NoLoss)
+	}
 	fmt.Println("==========================================")
 }
 
@@ -271,36 +415,36 @@ func (rep *report) passed(targetRPS int) bool {
 		fmt.Fprintf(os.Stderr, "FAIL: error rate %.4f >= 0.001\n", rep.ErrorRate)
 		return false
 	}
+	if rep.NoLossChecked && !rep.NoLoss {
+		fmt.Fprintf(os.Stderr, "FAIL: message loss — ch_rows %d < expected %d (async+rmq)\n",
+			rep.CHRows, rep.NoLossExpected)
+		return false
+	}
 	fmt.Println("PASS: all criteria met")
 	return true
 }
 
-func runLoad(ctx context.Context, c *client, paths []string, f flags) *report {
+func runLoad(ctx context.Context, c *client, nodes []node, f flags) *report {
 	ctx, cancel := context.WithTimeout(ctx, f.Duration)
 	defer cancel()
 
-	res := &result{}
+	res := newResult()
 	t0 := time.Now()
 
 	// Простейший pacing: один тикёр на target_rps, рассылающий задания
 	// пулу из N воркеров. Не идеален для high-rps (>10k), для 500
 	// достаточно.
-	interval := time.Second / time.Duration(f.TargetRPS)
-	if interval < time.Microsecond {
-		interval = time.Microsecond
-	}
+	interval := max(time.Second/time.Duration(f.TargetRPS), time.Microsecond)
 
 	jobs := make(chan struct{}, f.TargetRPS*2)
 	workerCount := 200
 	var wg sync.WaitGroup
-	for i := 0; i < workerCount; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range workerCount {
+		wg.Go(func() {
 			for range jobs {
-				doRequest(c, paths, f, res)
+				doRequest(c, nodes, f, res)
 			}
-		}()
+		})
 	}
 
 	tick := time.NewTicker(interval)
@@ -321,50 +465,48 @@ loop:
 	wg.Wait()
 	elapsed := time.Since(t0)
 
-	rep := &report{
-		Sent:        atomic.LoadInt64(&res.Sent),
-		Errors:      atomic.LoadInt64(&res.Errors),
-		AchievedRPS: float64(res.Sent) / elapsed.Seconds(),
-		Duration:    elapsed.String(),
-	}
-	if rep.Sent > 0 {
-		rep.ErrorRate = float64(rep.Errors) / float64(rep.Sent)
-	}
-	rep.P50Ms = percentileMs(res.Latencies, 0.50)
-	rep.P95Ms = percentileMs(res.Latencies, 0.95)
-	rep.P99Ms = percentileMs(res.Latencies, 0.99)
-	return rep
+	return buildReport(res, elapsed)
 }
 
-func doRequest(c *client, paths []string, f flags, res *result) {
-	p := paths[rand.Intn(len(paths))]
+// doRequest шлёт один запрос к случайному узлу. URL и заголовки зависят от
+// режима узла (sync/async/dyn-url/auth-token/auth-basic) — см. requestURL и
+// контракт в internal/receiver/usecase. Узлы адресуются с явным team_slug:
+// без слога Receiver съедает первый сегмент пути (loadtest/...) как team_slug
+// и отвечает 404 (Phase 10.E.1 multi-tenancy).
+func doRequest(c *client, nodes []node, f flags, res *result) {
+	n := nodes[rand.Intn(len(nodes))]
 	size := f.PayloadMin + rand.Intn(f.PayloadMax-f.PayloadMin+1)
 	body := make([]byte, size)
 	for i := range body {
 		body[i] = 'a'
 	}
 
-	url := c.baseRecv + "/v1/request/" + p
 	t0 := time.Now()
-	req, _ := http.NewRequest("POST", url, bytes.NewReader(body))
+	req, _ := http.NewRequest("POST", requestURL(c.baseRecv, f.TeamSlug, n), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/octet-stream")
+	switch n.mode {
+	case modeAuthToken:
+		req.Header.Set("Authorization", "Bearer "+randomHex(32))
+	case modeAuthBasic:
+		req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("lt-user:lt-pass")))
+	}
+	if f.RandomHeaders {
+		addRandomHeaders(req)
+	}
 	resp, err := c.hc.Do(req)
 	d := time.Since(t0)
 	errored := err != nil || (resp != nil && resp.StatusCode >= 400)
 	if resp != nil {
 		resp.Body.Close()
 	}
-	res.add(d, errored)
+	res.add(d, errored, n.mode)
 }
 
 func percentileMs(values []time.Duration, p float64) float64 {
 	if len(values) == 0 {
 		return 0
 	}
-	sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
-	idx := int(float64(len(values))*p) - 1
-	if idx < 0 {
-		idx = 0
-	}
+	slices.Sort(values)
+	idx := max(int(float64(len(values))*p)-1, 0)
 	return float64(values[idx].Microseconds()) / 1000.0
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"nexus/internal/domain"
+	"nexus/internal/platform/clientip"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase"
 	"nexus/internal/web/usecase/port"
@@ -28,7 +29,7 @@ type createUserRequest struct {
 	Login              string `json:"login" binding:"required,min=1,max=255"`
 	Email              string `json:"email" binding:"omitempty,email,max=255"`
 	Password           string `json:"password" binding:"omitempty,min=8,max=128"`
-	Role               string `json:"role" binding:"required,oneof=admin viewer"`
+	Role               string `json:"role" binding:"required,oneof=admin viewer manager"`
 	Active             bool   `json:"active"`
 	Lang               string `json:"lang" binding:"omitempty,oneof=en ru"`
 	MustChangePassword bool   `json:"must_change_password"`
@@ -36,7 +37,7 @@ type createUserRequest struct {
 
 type updateUserRequest struct {
 	Email              string `json:"email" binding:"omitempty,email,max=255"`
-	Role               string `json:"role" binding:"required,oneof=admin viewer"`
+	Role               string `json:"role" binding:"required,oneof=admin viewer manager"`
 	Active             bool   `json:"active"`
 	Lang               string `json:"lang" binding:"omitempty,oneof=en ru"`
 	MustChangePassword bool   `json:"must_change_password"`
@@ -55,7 +56,7 @@ type userResponse struct {
 	Active             bool       `json:"active"`
 	Lang               string     `json:"lang"`
 	MustChangePassword bool       `json:"must_change_password"`
-	TeamID             string     `json:"team_id"`
+	DefaultTeamID      string     `json:"default_team_id"`
 	CreatedAt          time.Time  `json:"created_at"`
 	LastLoginAt        *time.Time `json:"last_login_at,omitempty"`
 }
@@ -64,7 +65,7 @@ func toUserResp(u *domain.User) userResponse {
 	return userResponse{
 		ID: u.ID, Login: u.Login, Email: u.Email,
 		Role: string(u.Role), Active: u.Active, Lang: string(u.Lang),
-		MustChangePassword: u.MustChangePassword, TeamID: u.TeamID,
+		MustChangePassword: u.MustChangePassword, DefaultTeamID: u.DefaultTeamID,
 		CreatedAt: u.CreatedAt, LastLoginAt: u.LastLoginAt,
 	}
 }
@@ -80,6 +81,7 @@ func toUserResp(u *domain.User) userResponse {
 // @Router   /api/users [get]
 func (h *UserHandler) List(c *gin.Context) {
 	users, err := h.uc.List(c.Request.Context(), port.ListUsersFilter{
+		TeamID: currentTeamID(c),
 		Search: c.Query("search"),
 	})
 	if err != nil {
@@ -141,7 +143,7 @@ func (h *UserHandler) Create(c *gin.Context) {
 	if u.Lang == "" {
 		u.Lang = domain.UserLangEN
 	}
-	if err := h.uc.Create(c.Request.Context(), userActor(c), u, req.Password); err != nil {
+	if err := h.uc.Create(c.Request.Context(), userActor(c), currentTeamID(c), u, req.Password); err != nil {
 		if errors.Is(err, domain.ErrUserAlreadyExists) {
 			c.JSON(http.StatusConflict, gin.H{"error": "login already exists"})
 			return
@@ -247,13 +249,17 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// userActor — отличается от actorFromCtx тем, что заполняет UserID/UserLogin
+// userActor — отличается от actorFromCtx тем, что заполняет UserID/TeamID
 // из проверенной сессии (если она есть). До auth-middleware — system.
+//
+// TeamID = s.CurrentTeamID (multi-tenancy v2, Phase 10.F.1): audit-журнал
+// получает scope актёра.
 func userActor(c *gin.Context) usecase.Actor {
 	a := usecase.SystemActor()
-	a.IPAddress = c.ClientIP()
+	a.IPAddress = clientip.NormalizeIPv4(c.ClientIP())
 	if s, ok := sessionFromCtx(c); ok {
 		a.UserID = s.UserID
+		a.TeamID = s.CurrentTeamID
 	}
 	return a
 }

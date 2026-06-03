@@ -3,12 +3,12 @@ package usecase
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
 	"nexus/internal/domain"
 	"nexus/internal/platform/logging"
+	"nexus/internal/platform/safego"
 	"nexus/internal/web/usecase/port"
 )
 
@@ -36,29 +36,42 @@ func NewLogsUsecase(logs port.LogReader, nodes port.NodeRepo, logger logging.Log
 //
 // sinceMs — Unix-миллисекунды; 0 = последние limit записей. limit — 1..500;
 // дефолт 100.
-func (u *LogsUsecase) ListSince(ctx context.Context, nodeID string, sinceMs int64, limit int) ([]*domain.LogRecord, error) {
-	n, err := u.nodes.Get(ctx, nodeID)
+//
+// teamID — multi-tenancy scope (Phase 10.D); пустая строка пропускает
+// проверку (legacy CLI/тесты). Чужой узел → ErrNodeNotFound.
+func (u *LogsUsecase) ListSince(ctx context.Context, nodeID, teamID string, sinceMs int64, limit int) ([]*domain.LogRecord, error) {
+	n, err := u.resolveNode(ctx, nodeID, teamID)
 	if err != nil {
 		return nil, err
-	}
-	if n.ClickHouseTable == "" {
-		return nil, fmt.Errorf("node %q has no clickhouse_table configured", n.Path)
 	}
 	return u.logs.ListSince(ctx, n.ClickHouseTable, sinceMs, limit)
 }
 
 // Search — snapshot с расширенными фильтрами (Phase 6.8).
 // Подставляет n.ClickHouseTable в q.Table.
-func (u *LogsUsecase) Search(ctx context.Context, nodeID string, q port.LogQuery) ([]*domain.LogRecord, error) {
+func (u *LogsUsecase) Search(ctx context.Context, nodeID, teamID string, q port.LogQuery) ([]*domain.LogRecord, error) {
+	n, err := u.resolveNode(ctx, nodeID, teamID)
+	if err != nil {
+		return nil, err
+	}
+	q.Table = n.ClickHouseTable
+	return u.logs.Search(ctx, q)
+}
+
+// resolveNode — общий путь: получить узел, проверить team scope, убедиться
+// что у него настроен ClickHouseTable.
+func (u *LogsUsecase) resolveNode(ctx context.Context, nodeID, teamID string) (*domain.Node, error) {
 	n, err := u.nodes.Get(ctx, nodeID)
 	if err != nil {
 		return nil, err
 	}
-	if n.ClickHouseTable == "" {
-		return nil, fmt.Errorf("node %q has no clickhouse_table configured", n.Path)
+	if teamID != "" && n.TeamID != teamID {
+		return nil, domain.ErrNodeNotFound
 	}
-	q.Table = n.ClickHouseTable
-	return u.logs.Search(ctx, q)
+	if n.ClickHouseTable == "" {
+		return nil, domain.ErrNodeLogsNotConfigured
+	}
+	return n, nil
 }
 
 // matchLogFilter — клиентский фильтр для live-tail. Совпадает по семантике
@@ -114,13 +127,10 @@ func matchLogFilter(r *domain.LogRecord, q port.LogQuery) bool {
 // Это не самая дешёвая реализация (каждый клиент = свой опрос ClickHouse),
 // но для админок этого хватает. Долгосрочный путь — pub/sub через
 // Kafka nexus.logs (out of scope в v1).
-func (u *LogsUsecase) Subscribe(ctx context.Context, nodeID string, filter port.LogQuery) (<-chan *domain.LogRecord, <-chan error, error) {
-	n, err := u.nodes.Get(ctx, nodeID)
+func (u *LogsUsecase) Subscribe(ctx context.Context, nodeID, teamID string, filter port.LogQuery) (<-chan *domain.LogRecord, <-chan error, error) {
+	n, err := u.resolveNode(ctx, nodeID, teamID)
 	if err != nil {
 		return nil, nil, err
-	}
-	if n.ClickHouseTable == "" {
-		return nil, nil, errors.New("node has no clickhouse_table configured")
 	}
 
 	ch := make(chan *domain.LogRecord, 64)
@@ -130,6 +140,7 @@ func (u *LogsUsecase) Subscribe(ctx context.Context, nodeID string, filter port.
 	go func() {
 		defer close(ch)
 		defer close(errCh)
+		defer safego.Recover(u.logger, "web.logsLiveTail")
 		tick := time.NewTicker(u.pollInterval)
 		defer tick.Stop()
 		for {

@@ -86,18 +86,23 @@ func NewL2(inner port.NodeReader, cfg L2Config, logger logging.Logger, metrics L
 	return r
 }
 
-// GetByPath — fresh-hit (L2) → downstream → write-back; при ошибке downstream
-// пробует stale-hit в пределах StaleTTL.
-func (r *L2Reader) GetByPath(ctx context.Context, path string) (*domain.Node, error) {
-	if n, ok := r.cache.Get(path); ok {
+// Get — fresh-hit (L2) → downstream → write-back; при ошибке downstream
+// пробует stale-hit в пределах StaleTTL. Ключ L2 — "<team_slug>/<path>",
+// потому что после Phase 10.1 path не глобально уникален.
+func (r *L2Reader) Get(ctx context.Context, teamSlug, path string) (*domain.Node, error) {
+	if teamSlug == "" {
+		teamSlug = domain.DefaultTeamSlug
+	}
+	key := teamSlug + "/" + path
+	if n, ok := r.cache.Get(key); ok {
 		r.mx.IncL2Hit("fresh")
 		return n, nil
 	}
 	r.mx.IncL2Miss()
 
-	n, err := r.inner.GetByPath(ctx, path)
+	n, err := r.inner.Get(ctx, teamSlug, path)
 	if err == nil {
-		r.cache.Set(path, n)
+		r.cache.Set(key, n)
 		r.mx.SetL2Size(r.cache.Len())
 		return n, nil
 	}
@@ -110,9 +115,10 @@ func (r *L2Reader) GetByPath(ctx context.Context, path string) (*domain.Node, er
 	// Для прочих ошибок (PG+Redis одновременно лежат, таймаут и т.п.) —
 	// пробуем вернуть протухшую запись в пределах StaleTTL.
 	if r.staleTTL > 0 {
-		if v, fresh, age, found := r.cache.GetStale(path); found && !fresh && age <= r.staleTTL {
+		if v, fresh, age, found := r.cache.GetStale(key); found && !fresh && age <= r.staleTTL {
 			r.mx.IncL2Hit("stale")
 			r.logger.Warn("nodecache L2 stale-hit (downstream error)",
+				r.logger.Str("team", teamSlug),
 				r.logger.Str("path", path),
 				r.logger.Int("age_ms", int(age.Milliseconds())),
 				r.logger.Err(err))

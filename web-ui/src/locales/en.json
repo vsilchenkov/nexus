@@ -1,43 +1,320 @@
 {
   "app": { "title": "Nexus" },
+  "ch_template": {
+    "not_found": "clickhouse template not found",
+    "already_exists": "a template with this name already exists",
+    "in_use": "the template is used by nodes and cannot be deleted",
+    "default_immutable": "the default template cannot be deleted",
+    "unavailable": "clickhouse is unavailable",
+    "name_format": "name may contain only latin letters, digits, space, hyphen and underscore, must start with a letter or digit and be at most 64 characters",
+    "description_length": "description must be at most 1000 characters",
+    "invalid_engine": "engine must be MergeTree",
+    "invalid_partition": "partitioning expression is not in the allowed set",
+    "empty_order_by": "order by must list at least one column",
+    "invalid_order_by": "order by may reference only required log columns",
+    "unknown_column": "a codec override references an unknown column",
+    "invalid_codec": "a column codec is invalid",
+    "invalid_index_name": "index name may contain only latin letters, digits and underscore",
+    "invalid_index_expr": "index expression must reference a required log column",
+    "invalid_index_type": "index type is invalid",
+    "invalid_index_granularity": "index granularity must be between 1 and 1000000",
+    "invalid_ttl_mode": "retention mode must be \"none\" or \"ttl_days\"",
+    "ttl_days_required": "retention days must be greater than 0 when TTL is enabled",
+    "invalid_table_name": "table name must be in db.table format"
+  },
   "auth": {
-    "login": "Sign in",
+    "login": "Sign in to the panel",
     "login_button": "Sign in",
     "login_failed": "Invalid login or password",
+    "login_field": "Login",
+    "password_field": "Password",
     "logout": "Sign out"
   },
   "nav": {
     "nodes": "Nodes",
     "audit": "Audit",
-    "settings": "Settings"
+    "settings": "Settings",
+    "team": "Team",
+    "language": "Language",
+    "theme": "Theme",
+    "api_docs": "API documentation",
+    "api_docs_tip": "Swagger API · opens in a new tab",
+    "api_docs_receiver": "for external clients",
+    "api_docs_web": "admin contract + API tokens"
+  },
+  "role": {
+    "admin": "full access",
+    "manager": "manage nodes",
+    "viewer": "read-only"
   },
   "overview": {
     "title": "Nodes",
     "new_node": "New node",
     "search_placeholder": "Search by path or URL…",
+    "kpi": {
+      "incoming": "Incoming (24h)",
+      "outgoing": "Outgoing (24h)",
+      "queue": "Kafka queue",
+      "errors": "Errors (24h)"
+    },
+    "filter": { "all_methods": "All methods", "all_statuses": "All statuses" },
+    "view": { "table": "Table", "cards": "Cards" },
+    "card": { "dynamic_url": "{URL from request}" },
+    "status": { "ok": "OK", "down": "Down", "queue": "Queue" },
     "table": {
-      "path": "Path",
+      "path": "Node",
       "method": "Method",
       "target": "Target",
       "status": "Status",
-      "auth": "Auth"
+      "auth": "Auth",
+      "in": "In",
+      "out": "Out",
+      "errors": "Errors"
     },
-    "empty": "No nodes yet"
+    "empty": "No nodes yet",
+    "move": {
+      "action": "Move",
+      "title": "Move node to team",
+      "target_team": "Target team",
+      "pick_team": "— pick team —",
+      "hint": "The node and its ClickHouse log table move to the selected team.",
+      "submit": "Move"
+    }
+  },
+  "metrics": {
+    "no_data": "no data",
+    "prometheus_off": "Prometheus is not configured — KPI, queue and charts are unavailable.",
+    "tab_overview": "Overview",
+    "traffic": "Traffic",
+    "recent": "Recent requests",
+    "all_logs": "All logs",
+    "kpi": {
+      "in": "In",
+      "delivered": "Delivered",
+      "p95": "p95 latency",
+      "p99": "p99",
+      "errors": "Errors",
+      "total": "Total",
+      "requests": "Requests"
+    },
+    "hints": {
+      "traffic": "Bar height is the number of requests in the interval. Blue is successful responses, red at the bottom is errors. Hover a bar for details.",
+      "requests": "Request distribution over time. Blue — successful, red — errors. Hover a bar for details.",
+      "in": "Total incoming requests for the selected period.",
+      "total": "Total processed requests for the period.",
+      "delivered": "Requests successfully delivered to the target (2xx/3xx).",
+      "errors": "Requests that failed (4xx/5xx or delivery failure).",
+      "p95": "95th percentile of response time: 95% of requests were within this time.",
+      "p99": "99th percentile of response time: 99% of requests were within this time.",
+      "tooltip": {
+        "requests": "{{n}} requests",
+        "errors": "{{n}} errors ({{pct}}%)"
+      }
+    },
+    "period": "Period",
+    "range": {
+      "15m": "15m",
+      "1h": "1h",
+      "3h": "3h",
+      "24h": "24h",
+      "7d": "7d",
+      "14d": "14d",
+      "30d": "30d",
+      "custom": "Custom"
+    }
   },
   "node": {
-    "tabs": { "overview": "Overview", "logs": "Logs", "config": "Config" },
+    "tabs": { "overview": "Overview", "logs": "Logs", "config": "Config", "metrics": "Metrics" },
     "status": {
       "enabled": "Active",
       "disabled": "Disabled",
       "paused": "Paused"
     },
     "actions": { "edit": "Edit", "delete": "Delete", "dry_run": "Dry-run", "replay": "Replay" },
+    "not_found": "Node not found",
+    "validation": {
+      "root_method": "Invalid node type",
+      "incoming_method": "Invalid incoming method (allowed: GET, POST, PUT, DELETE)",
+      "outgoing_method": "Invalid outgoing method (allowed: GET, POST, PUT, DELETE)",
+      "url_mode": "Invalid URL mode",
+      "auth_type": "Invalid outgoing auth type",
+      "incoming_auth_type": "Invalid incoming auth type",
+      "status": "Invalid status",
+      "path_length": "Path length must be between 1 and 255 characters",
+      "path_format": "Path may contain only latin letters, digits, slash, hyphen and underscore, and must start with a letter or digit",
+      "target_url_required": "Target URL is required when URL mode is «static»",
+      "target_url_length": "Target URL must be at most 2048 characters",
+      "url_param_name_length": "URL parameter name length must be between 1 and 64 characters",
+      "url_param_name_format": "URL parameter name must start with a letter and contain only letters, digits, hyphen and underscore",
+      "auth_dynamic_field_length": "Dynamic auth field name length must be between 1 and 64 characters",
+      "auth_dynamic_field_format": "Dynamic auth field name must start with a letter and contain only letters, digits, hyphen and underscore",
+      "auth_dynamic_source": "Dynamic auth source must be header or query",
+      "timeout_ms": "Timeout must be between 100 and 300000 ms",
+      "retry_count": "Retry count must be between 0 and 10",
+      "retry_backoff_ms": "Retry backoff must be between 0 and 60000 ms",
+      "allowed_hosts_size": "Allowed hosts list must have at most 50 entries",
+      "forward_headers_size": "Forward headers list must have at most 30 entries",
+      "webhook_sig_header_length": "Signature header name must be at most 128 characters",
+      "webhook_sig_prefix_length": "Signature prefix must be at most 64 characters",
+      "webhook_sig_header_required": "Signature header is required for webhook_signature auth",
+      "webhook_sig_secret_required": "Secret is required for webhook_signature auth",
+      "template_id": "ClickHouse template id must be a valid UUID",
+      "logs_not_configured": "Logging is enabled but no ClickHouse table name is set — pick a template or set the table name",
+      "max_body_size_range": "Max body size must be between 0 and 10000000 bytes",
+      "max_body_size_required": "Max body size must be greater than 0 when the limit is enabled",
+      "rmq_host": "RabbitMQ host is required (1..253 characters)",
+      "rmq_queue": "RabbitMQ queue name must be 1..255 characters and contain only letters, digits, dot, hyphen and underscore",
+      "pull_interval_sec": "Pull interval must be between 1 and 3600 seconds",
+      "pull_batch_size": "Pull batch size must be between 1 and 1000",
+      "pull_prefetch": "Pull prefetch must be between 1 and 1000"
+    },
+    "fields": {
+      "ch_template": "Table template",
+      "ch_template_manual": "(none / manual table)",
+      "ch_template_hint": "Pick a template — the log table is created automatically on save. Leave empty to manage the table manually.",
+      "method": "Method type",
+      "path": "Node path",
+      "url_mode": "URL mode",
+      "target_url": "Target URL",
+      "auth": "Auth",
+      "ch_table": "Log table"
+    },
     "webhook": {
       "hint": "Receive webhooks at POST /v1/callback/{path}. The signature is HMAC-SHA256 of the raw request body using the secret above, hex-encoded, optionally prefixed (e.g. \"sha256=\") and placed in the header."
+    },
+    "auth": {
+      "basic_in_hint": "Format: login:password separated by a colon (e.g. admin:s3cret). The client sends Authorization: Basic base64(login:password) — no need to base64-encode here.",
+      "basic_out_hint": "Format: login:password separated by a colon (e.g. admin:s3cret). Nexus base64-encodes it and sets Authorization: Basic … on the request to the node.",
+      "token_in_hint": "Token value only, without the \"Bearer \" prefix. The client sends Authorization: Bearer <token>.",
+      "token_out_hint": "Token value only, without the \"Bearer \" prefix. Nexus sets Authorization: Bearer <token> on the request to the node.",
+      "token_from_request_hint": "The token is taken from the incoming request (query / header / body field) and placed into Authorization: Bearer on the request to the node; the original value is stripped from the proxied request.",
+      "basic_from_request_hint": "The incoming Authorization: Basic … header is forwarded to the node as-is (Nexus stores no credentials)."
+    },
+    "form": {
+      "route": "Route",
+      "target": "Target",
+      "auth": "Authorization",
+      "logging": "Logging",
+      "headers": "Headers",
+      "forward_headers": "Forwarded headers",
+      "forward_headers_hint": "which headers to pass to the target node",
+      "add_header": "Add",
+      "method_type": "Method type",
+      "sync_desc": "sync, wait for node response",
+      "async_desc": "to Kafka, 200 immediately",
+      "rmq_desc": "pull from a RabbitMQ queue",
+      "incoming_method": "Incoming method",
+      "incoming_method_hint": "HTTP method the node accepts; other methods get 405",
+      "outgoing_method": "Outgoing method",
+      "outgoing_method_hint": "HTTP method used to call the target",
+      "full_address": "Full address",
+      "state": "State",
+      "url_static": "Static",
+      "url_static_desc": "address from Target URL",
+      "url_from_request": "From request",
+      "url_from_request_desc": "URL from a request parameter",
+      "param_name": "Parameter name",
+      "timeout_ms": "Timeout (ms)",
+      "retry_count": "Retries",
+      "incoming": "Incoming",
+      "outgoing": "Outgoing",
+      "credentials": "Credentials",
+      "keep_secret": "leave empty to keep current",
+      "webhook_secret": "Webhook secret",
+      "sig_header": "Signature header",
+      "sig_prefix": "Signature prefix",
+      "retention_days": "Retention (days)",
+      "log_what": "What to log",
+      "log_request": "Request body",
+      "log_response": "Response body",
+      "log_headers": "Headers",
+      "logging_enabled": "Logging enabled",
+      "max_body_enabled": "Limit body size",
+      "max_body_size": "Max body size",
+      "max_body_hint": "max characters; request/response are truncated to this value",
+      "preview": "Route preview",
+      "ssrf_warn": "\"From request\" mode: fill the host allowlist to prevent SSRF. Do not leave it empty in production.",
+      "comment": "Comment",
+      "comment_label": "Node description",
+      "comment_hint": "internal note for your team; not visible to external clients",
+      "comment_placeholder": "E.g., integration with system X, sends order events…"
+    },
+    "rmq": {
+      "source": "RabbitMQ — source",
+      "host_port": "Host and port",
+      "host_hint": "5672 for AMQP, 5671 for AMQPS. The TLS certificate must be trusted.",
+      "vhost": "Virtual host",
+      "auth": "Authentication",
+      "queue": "Queue",
+      "queue_hint": "The queue must already exist and be bound to the exchange. Nexus does not create queues in v1.",
+      "test": "Test connection",
+      "test_ok": "Connection succeeded",
+      "test_fail": "Connection failed",
+      "queue_stats": "queue exists, {{messages}} messages, {{consumers}} consumer(s)",
+      "pull_params": "Pull parameters",
+      "interval": "Interval",
+      "interval_hint": "How often the worker fetches a batch. Allowed 1–3600.",
+      "seconds": "seconds",
+      "batch_size": "Batch size",
+      "batch_hint": "Max messages per iteration. Allowed 1–1000.",
+      "prefetch": "Prefetch (QoS)",
+      "prefetch_hint": "AMQP basic.qos. Defaults to the batch size.",
+      "degraded": "Degraded",
+      "degraded_desc": "Cannot reach RabbitMQ or the queue is missing. Messages are not lost — they stay in the queue. The node returns to active automatically once the connection recovers.",
+      "queue_depth": "Queue depth",
+      "pull_rate": "Pull rate",
+      "conn_ok": "Active · connection OK",
+      "attempts": "attempts"
+    },
+    "headers_combo": {
+      "add_placeholder": "Add a header…",
+      "search": "Header name…",
+      "empty": "Nothing matched.",
+      "used": "{{count}} node(s)",
+      "create": "Create \"{{name}}\"",
+      "invalid": "Invalid name: latin letters, digits and - _ . ! # $ % & ' * + ^ ` | ~, 1–100 chars."
+    },
+    "allowed_hosts": {
+      "label": "Allowed hosts",
+      "hint_short": "patterns from the catalog; a URL outside the list → 403",
+      "add_placeholder": "Add a host from the catalog…",
+      "search": "Search the catalog…",
+      "not_found": "Nothing found. Create patterns in Settings → Allowed hosts.",
+      "hint": "Manage the catalog in Settings → Allowed hosts.",
+      "ssrf_title": "SSRF risk · any URL allowed",
+      "ssrf_desc": "Without an allowlist a client can make the bus call internal services. Add at least one pattern or use Static mode."
+    },
+    "delete": {
+      "title": "Delete node",
+      "confirm": "Delete permanently",
+      "drop_table": "Also drop the ClickHouse log table",
+      "drop_on": "The table will be dropped from ClickHouse:",
+      "drop_off": "The table stays in ClickHouse — drop it later from Settings → ClickHouse → Orphaned:",
+      "no_table": "This node has no log table.",
+      "type_to_confirm": "Type to confirm:"
     }
+  },
+  "replay": {
+    "title": "Replay request",
+    "body_label": "Request body (leave empty to reuse original)",
+    "sync": "Sync instead of async (wait for the response here)",
+    "use_node_auth": "Use the node's auth config",
+    "custom_auth": "Custom Authorization header",
+    "send": "Send replay",
+    "security": "Tokens and Basic creds from the original are not restored (already *** in the log). Enter them manually if needed.",
+    "result_status": "status"
+  },
+  "dryrun": {
+    "title": "Test request (dry-run)",
+    "subtitle": "config is not saved · no production logs are written",
+    "method": "Method",
+    "body": "Body",
+    "run": "Run",
+    "result": "Result"
   },
   "logs": {
     "empty": "No log entries",
+    "not_configured": "Logging is not configured for this node — no clickhouse_table set. Pick a ClickHouse template in node settings (the log table is created automatically) or set the table name manually.",
     "shown_count": "{{n}} shown",
     "page_size": "Page size",
     "live_on": "Live ▶",
@@ -92,6 +369,12 @@
   },
   "settings": {
     "title": "Settings",
+    "general": {
+      "title": "General",
+      "public_base_url": "Public application URL",
+      "public_base_url_hint": "Public address the app is published at. When set, node addresses are built from it instead of the browser host. Leave empty to use the current origin.",
+      "public_base_url_example": "Origin only, no path or trailing slash, e.g. https://nexus.example.com"
+    },
     "tokens": {
       "title": "API tokens",
       "new_token": "New token",
@@ -105,9 +388,44 @@
       "delete": "Delete",
       "empty": "No tokens yet"
     },
+    "allowed_hosts": {
+      "title": "Allowed hosts",
+      "subtitle": "Shared catalog for dynamic URLs (url_mode=from_request). Nodes pick patterns from this list; a pattern in use cannot be deleted.",
+      "add": "Add host",
+      "search": "Search by pattern or description…",
+      "empty": "Catalog is empty",
+      "filter_all": "All",
+      "used": "{{count}} node(s)",
+      "not_used": "not used",
+      "in_use_tip": "used by nodes — detach first",
+      "confirm_delete": "Delete pattern {{pattern}}?",
+      "col": { "pattern": "Pattern", "kind": "Kind", "description": "Description", "usage": "Usage" },
+      "kind": { "exact": "Exact", "wildcard": "Wildcard", "regex": "Regex" },
+      "field": { "kind": "Pattern kind", "pattern": "Pattern", "description": "Description", "test_urls": "Test URLs (one per line)" },
+      "dialog": {
+        "new": "Add allowed host",
+        "edit": "Edit allowed host",
+        "subtitle": "Appears in the catalog for all nodes of the installation",
+        "create": "Create"
+      },
+      "preview": { "allow": "Will allow", "block": "Will block", "invalid": "Invalid pattern — fix it to see the preview" }
+    },
     "language": {
-      "title": "Language",
+      "title": "UI language",
+      "subtitle": "Applies to the current user only. Takes effect immediately.",
       "note": "Applies to UI only; logs, metrics and ClickHouse stay in English."
+    },
+    "password": {
+      "title": "My password",
+      "subtitle": "Change your own password. You will be signed out everywhere after the change.",
+      "current": "Current password",
+      "new": "New password",
+      "new_hint": "min 8 chars",
+      "confirm": "Confirm new password",
+      "mismatch": "Passwords do not match.",
+      "submit": "Change password",
+      "saving": "Changing…",
+      "note": "All your active sessions are revoked; sign in again with the new password."
     },
     "theme": { "title": "Theme", "light": "Light", "dark": "Dark" },
     "common": {
@@ -150,6 +468,8 @@
       "role": {
         "admin": "Full access",
         "admin_hint": "Manage everything in Nexus.",
+        "manager": "Manage nodes",
+        "manager_hint": "Manage nodes, host/header catalogs and view audit; no users, global settings or CH templates.",
         "viewer": "Read-only",
         "viewer_hint": "View nodes, logs and audit; no modifications."
       },
@@ -195,6 +515,55 @@
         "submit": "Change password"
       }
     },
+    "teams": {
+      "title": "Teams",
+      "subtitle": "Multi-tenancy: each team has its own ClickHouse database (nexus_<slug>). Nodes, logs and API tokens are isolated by team.",
+      "add": "New team",
+      "empty": "No teams yet",
+      "col": {
+        "slug": "Slug",
+        "name": "Name",
+        "ch_database": "ClickHouse DB"
+      },
+      "action": {
+        "members": "Members",
+        "edit": "Rename",
+        "delete": "Delete"
+      },
+      "confirm_delete": "Delete team `{{slug}}`? CH database stays — drop manually via Orphans.",
+      "field": {
+        "slug": "Slug",
+        "slug_hint": "Lowercase letters / digits / underscore, 1..32 chars. Immutable after creation.",
+        "slug_immutable": "Slug and ClickHouse database name cannot be changed after creation.",
+        "name": "Display name",
+        "ch_database_preview": "ClickHouse database will be created as `{{db}}`."
+      },
+      "dialog": {
+        "new_title": "New team",
+        "new_subtitle": "PG row + CH database are created atomically.",
+        "edit_title": "Edit `{{slug}}`",
+        "edit_subtitle": "Only display name can be changed.",
+        "create": "Create team"
+      },
+      "role": {
+        "owner": "Owner",
+        "admin": "Admin",
+        "member": "Member"
+      },
+      "members": {
+        "title": "Members of `{{name}}`",
+        "add_user": "Add user",
+        "pick_user": "— pick user —",
+        "role": "Role",
+        "add": "Add",
+        "remove": "Remove",
+        "empty": "No members in this team",
+        "col": {
+          "user": "User",
+          "role": "Role"
+        }
+      }
+    },
     "clickhouse": {
       "title": "ClickHouse",
       "hint": "Override ClickHouse connection and batch writer settings.",
@@ -228,7 +597,49 @@
         "drop_confirm_2": "Type the table name to confirm:",
         "drop_mismatch": "Table name does not match.",
         "dropping": "Dropping…"
+      },
+      "templates": {
+        "title": "Table templates",
+        "hint": "DDL templates for node log tables. Configure compression (CODEC), indexes, partitioning and retention. Nodes pick a template and a table name — the table is created automatically.",
+        "new": "New template",
+        "empty": "No templates yet",
+        "name": "Name",
+        "description": "Description",
+        "engine": "Engine",
+        "partition_by": "Partition by",
+        "order_by": "Order by (comma-separated columns)",
+        "ttl_mode": "Retention (TTL)",
+        "ttl_none": "None (handled by housekeeping)",
+        "ttl_days": "TTL by date_create + retention days",
+        "is_default": "Default template",
+        "default_badge": "default",
+        "codecs": "Column compression (CODEC)",
+        "codecs_add": "Add codec",
+        "indexes": "Data-skipping indexes",
+        "indexes_add": "Add index",
+        "col": { "name": "Column", "codec": "CODEC", "index_name": "Name", "expr": "Column", "type": "Type", "granularity": "Granularity" },
+        "verify": "Verify",
+        "verifying": "Verifying…",
+        "verify_ok": "Template is valid",
+        "verify_failed": "Invalid: {{error}}",
+        "delete_confirm": "Delete template `{{name}}`?",
+        "in_use": "Template is used by nodes and cannot be deleted",
+        "remove": "Remove"
       }
+    },
+    "notifications": {
+      "title": "Notifications",
+      "hint": "Telegram alerts about node errors. The scheduler checks logs on a cron schedule and sends a summary only when there are errors.",
+      "telegram": "Telegram bot",
+      "enabled": "Enabled",
+      "chat_id": "Chat ID",
+      "bot_token": "Bot token",
+      "cron": "Schedule (cron)",
+      "cron_hint": "Standard 5-field cron, e.g. \"*/15 * * * *\" — every 15 minutes.",
+      "check": "Send test",
+      "checking": "Sending…",
+      "check_ok": "Test message sent",
+      "check_failed": "Failed: {{error}}"
     }
   },
   "common": {
@@ -237,6 +648,18 @@
     "ok": "OK",
     "cancel": "Cancel",
     "save": "Save",
-    "close": "Close"
+    "close": "Close",
+    "edit": "Edit",
+    "delete": "Delete",
+    "copy": "Copy",
+    "copied": "Copied",
+    "apply": "Apply"
+  },
+  "error_boundary": {
+    "title": "Something went wrong",
+    "hint": "An error occurred while rendering the page. Try reloading or going back to the home page.",
+    "reload": "Reload page",
+    "home": "Go home",
+    "details": "Details"
   }
 }

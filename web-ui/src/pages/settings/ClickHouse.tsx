@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { api } from "../../api/client";
 import { OrphanTablesPanel } from "../../components/OrphanTablesPanel";
+import { CHTemplatesPanel } from "../../components/CHTemplatesPanel";
 
 type ClickHouseSettings = {
   host?: string;
@@ -258,6 +259,8 @@ export function ClickHousePanel() {
       <p className="text-xs text-fg-muted">
         {t("settings.clickhouse.partial_hot_reload_note")}
       </p>
+
+      <CHTemplatesPanel />
 
       <OrphanTablesPanel />
     </div>

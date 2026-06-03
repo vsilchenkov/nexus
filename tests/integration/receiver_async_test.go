@@ -55,11 +55,11 @@ func TestSender_Async_E2E(t *testing.T) {
 
 	// 1. Mock внешнего узла. Считаем количество вызовов — нужно ровно 1.
 	var (
-		mu       sync.Mutex
-		hits     int32
-		gotBody  []byte
-		gotAuth  string
-		gotPath  string
+		mu      sync.Mutex
+		hits    int32
+		gotBody []byte
+		gotAuth string
+		gotPath string
 	)
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&hits, 1)
@@ -78,7 +78,9 @@ func TestSender_Async_E2E(t *testing.T) {
 	auditRepo := pgrepo.NewAuditRepoPg(pool, logger)
 	uow := pgrepo.NewUnitOfWorkPg(pool, cipher, logger)
 	auditUC := webuc.NewAuditUsecase(auditRepo, logger)
-	nodeUC := webuc.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, time.Minute, 0, logger)
+	defaultTeam := resolveDefaultTeamID(t, ctx, pool)
+	teamRepo := pgrepo.NewTeamRepoPg(pool, logger)
+	nodeUC := webuc.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, teamRepo, nil, nil, time.Minute, 0, defaultTeam, logger)
 
 	n := &domain.Node{
 		Path:                    "demo/async",
@@ -89,6 +91,7 @@ func TestSender_Async_E2E(t *testing.T) {
 		AuthCredentials:         "supersecret",
 		IncomingAuthType:        domain.IncomingAuthTypeNone,
 		Status:                  domain.NodeStatusEnabled,
+		LoggingEnabled:          true, // §22: иначе лог в ClickHouse не пишется
 		ClickHouseTable:         "test.demo_async",
 		ClickHouseRetentionDays: 30,
 		TimeoutMs:               5000,

@@ -50,7 +50,7 @@ message SendResponse {
 Таблица на каждый узел, схема едина:
 
 ```sql
-CREATE TABLE vika_logs.{node_table}
+CREATE TABLE nexus_default.{node_table}
 (
   ID String,
   type String,

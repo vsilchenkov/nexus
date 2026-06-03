@@ -55,7 +55,9 @@ func TestReceiver_Sync_E2E(t *testing.T) {
 	auditRepo := pgrepo.NewAuditRepoPg(pool, logger)
 	uow := pgrepo.NewUnitOfWorkPg(pool, cipher, logger)
 	auditUC := usecase.NewAuditUsecase(auditRepo, logger)
-	nodeUC := usecase.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, time.Minute, 0, logger)
+	defaultTeam := resolveDefaultTeamID(t, ctx, pool)
+	teamRepo := pgrepo.NewTeamRepoPg(pool, logger)
+	nodeUC := usecase.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, teamRepo, nil, nil, time.Minute, 0, defaultTeam, logger)
 
 	n := &domain.Node{
 		Path:                    "demo/sync",
@@ -110,13 +112,15 @@ func TestReceiver_Sync_E2E(t *testing.T) {
 }
 
 // fakeReader — соединяет web-port NodeRepo с receiver-port NodeReader.
+// teamSlug в Get игнорируется: интеграционные тесты pre-Phase 10 знают
+// path как глобально уникальный, узлы создаются в default-team.
 type fakeReader struct {
 	repo interface {
 		GetByPath(ctx context.Context, path string) (*domain.Node, error)
 	}
 }
 
-func (r *fakeReader) GetByPath(ctx context.Context, path string) (*domain.Node, error) {
+func (r *fakeReader) Get(ctx context.Context, _ string, path string) (*domain.Node, error) {
 	return r.repo.GetByPath(ctx, path)
 }
 

@@ -11,7 +11,7 @@ import (
 	"io/fs"
 )
 
-//go:embed index.html
+//go:embed index.html assets
 var rawFS embed.FS
 
 // FS возвращает корень embed-файловой системы.

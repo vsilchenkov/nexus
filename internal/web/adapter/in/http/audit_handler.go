@@ -31,6 +31,7 @@ type auditEntryResponse struct {
 	ID         string         `json:"id"`
 	UserID     string         `json:"user_id,omitempty"`
 	UserLogin  string         `json:"user_login"`
+	TeamID     string         `json:"team_id,omitempty"`
 	Action     string         `json:"action"`
 	TargetType string         `json:"target_type,omitempty"`
 	TargetID   string         `json:"target_id,omitempty"`
@@ -41,7 +42,7 @@ type auditEntryResponse struct {
 
 func toAuditResp(e *domain.AuditEntry) auditEntryResponse {
 	return auditEntryResponse{
-		ID: e.ID, UserID: e.UserID, UserLogin: e.UserLogin,
+		ID: e.ID, UserID: e.UserID, UserLogin: e.UserLogin, TeamID: e.TeamID,
 		Action: e.Action, TargetType: e.TargetType, TargetID: e.TargetID,
 		Details: e.Details, IPAddress: e.IPAddress, CreatedAt: e.CreatedAt,
 	}
@@ -49,9 +50,22 @@ func toAuditResp(e *domain.AuditEntry) auditEntryResponse {
 
 // auditFilterFromQuery собирает фильтр из query-параметров. defaultLimit —
 // значение по умолчанию для Limit (0 = без него). maxLimit — верхняя планка.
+//
+// TeamID по умолчанию — current_team_id из сессии (multi-tenancy v2,
+// Phase 10.F.1). Чтобы посмотреть глобальный аудит, admin может передать
+// ?team_id=* (или передать другой UUID — admin'у доверяем).
 func auditFilterFromQuery(c *gin.Context, defaultLimit, maxLimit int) port.AuditFilter {
+	teamScope := currentTeamID(c)
+	if v := c.Query("team_id"); v != "" {
+		if v == "*" {
+			teamScope = ""
+		} else {
+			teamScope = v
+		}
+	}
 	f := port.AuditFilter{
 		UserID:     c.Query("user_id"),
+		TeamID:     teamScope,
 		TargetType: c.Query("target_type"),
 		TargetID:   c.Query("target_id"),
 	}
@@ -168,7 +182,7 @@ func (h *AuditHandler) ExportCSV(c *gin.Context) {
 		return
 	}
 	header := []string{
-		"id", "created_at", "user_login", "user_id", "action",
+		"id", "created_at", "user_login", "user_id", "team_id", "action",
 		"target_type", "target_id", "ip_address", "details",
 	}
 	if err := w.Write(header); err != nil {
@@ -187,6 +201,7 @@ func (h *AuditHandler) ExportCSV(c *gin.Context) {
 			e.CreatedAt.Format(time.RFC3339Nano),
 			e.UserLogin,
 			e.UserID,
+			e.TeamID,
 			e.Action,
 			e.TargetType,
 			e.TargetID,

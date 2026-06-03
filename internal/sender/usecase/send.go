@@ -10,7 +10,6 @@ import (
 	"math/rand"
 	"net/url"
 	"os"
-	"strings"
 	"time"
 
 	"nexus/internal/domain"
@@ -38,6 +37,11 @@ type SendInput struct {
 	LogResponseBody bool
 	LogHeaders      bool
 	ClientIP        string
+
+	// §22: контроль логирования узла.
+	LoggingEnabled     bool  // false → лог в ClickHouse не пишется совсем
+	MaxBodySizeEnabled bool  // включает обрезку сохраняемых тел
+	MaxBodySize        int32 // макс. число символов (рун) в request/response
 }
 
 // SendOutput — результат, который Sender отдаёт обратно Receiver'у.
@@ -107,7 +111,7 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		IP:              in.ClientIP,
 	}
 	if in.LogRequestBody {
-		rec.Request = string(in.Body)
+		rec.Request = truncateRunes(string(in.Body), in.MaxBodySizeEnabled, in.MaxBodySize)
 	}
 
 	req := &port.HTTPRequest{
@@ -128,7 +132,9 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		rec.Done = false
 		rec.Reason = "circuit_breaker_open"
 		rec.Attempts = 0
-		u.logw.Write(ctx, in.ClickHouseTable, rec)
+		if in.LoggingEnabled {
+			u.logw.Write(ctx, in.ClickHouseTable, rec)
+		}
 		return SendOutput{
 			StatusCode: 503,
 			Error:      "circuit breaker open",
@@ -142,10 +148,7 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		attempts  []attempt
 		backoffMs int32
 	)
-	maxAttempts := in.RetryCount + 1
-	if maxAttempts < 1 {
-		maxAttempts = 1
-	}
+	maxAttempts := max(in.RetryCount+1, 1)
 	for n := int32(1); n <= maxAttempts; n++ {
 		if backoffMs > 0 {
 			time.Sleep(time.Duration(backoffMs) * time.Millisecond)
@@ -201,7 +204,7 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		rec.Done = resp.StatusCode >= 200 && resp.StatusCode < 300
 		rec.ChecksumResponse = md5hex(resp.Body)
 		if in.LogResponseBody {
-			rec.Response = string(resp.Body)
+			rec.Response = truncateRunes(string(resp.Body), in.MaxBodySizeEnabled, in.MaxBodySize)
 		}
 		if !rec.Done {
 			rec.Reason = fmt.Sprintf("HTTP %d", resp.StatusCode)
@@ -223,13 +226,34 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		}
 	}
 
-	u.logw.Write(ctx, in.ClickHouseTable, rec)
+	if in.LoggingEnabled {
+		u.logw.Write(ctx, in.ClickHouseTable, rec)
+	}
 	return out
 }
 
 func md5hex(b []byte) string {
 	sum := md5.Sum(b)
 	return hex.EncodeToString(sum[:])
+}
+
+// truncationMarker дописывается к сохраняемому телу, если оно было обрезано
+// по max_body_size (§22). Делает обрезку видимой в логах/UI.
+const truncationMarker = "…(truncated)"
+
+// truncateRunes режет строку до max СИМВОЛОВ (рун), если включён лимит.
+// Режем по рунам, а не по байтам, чтобы не порвать многобайтовый UTF-8 и не
+// получить битую запись в ClickHouse. checksum считается вызывающей стороной
+// по полному телу ДО обрезки — целостность исходного payload сохраняется.
+func truncateRunes(s string, enabled bool, max int32) string {
+	if !enabled || max <= 0 {
+		return s
+	}
+	runes := []rune(s)
+	if int32(len(runes)) <= max {
+		return s
+	}
+	return string(runes[:max]) + truncationMarker
 }
 
 // extractQuery возвращает query-string из URL без ведущего "?".
@@ -242,6 +266,3 @@ func extractQuery(rawURL string) string {
 	}
 	return u.RawQuery
 }
-
-// strings импортирован неявно для будущих расширений (mask логики).
-var _ = strings.TrimSpace

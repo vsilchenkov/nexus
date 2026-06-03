@@ -8,8 +8,13 @@ import (
 )
 
 // AuditFilter — параметры фильтрации в AuditRepo.List.
+//
+// TeamID — multi-tenancy v2 scope (Phase 10.F.1). Пустая строка = без
+// фильтра по команде; admin-handler передаёт current_team_id из сессии
+// при включённой scope-фильтрации.
 type AuditFilter struct {
 	UserID     string
+	TeamID     string
 	Actions    []string
 	TargetType string
 	TargetID   string

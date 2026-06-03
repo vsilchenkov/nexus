@@ -53,7 +53,6 @@ func TestIsSensitive(t *testing.T) {
 		{"empty string", "", false},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			if got := isSensitive(c.in); got != c.want {

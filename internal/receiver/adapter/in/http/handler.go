@@ -4,13 +4,16 @@ package http
 import (
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"nexus/internal/domain"
+	"nexus/internal/platform/clientip"
 	"nexus/internal/platform/logging"
+	"nexus/internal/platform/metrics"
 	"nexus/internal/receiver/usecase"
 )
 
@@ -31,25 +34,32 @@ func New(
 	return &Handler{route: route, routeAsync: routeAsync, logger: logger, maxBodyBytes: maxBodyBytes}
 }
 
-// Register вешает /v1/request/*path и /v1/requestAsync/*path на роутер.
+// Register вешает /api/v1/request/*path и /api/v1/requestAsync/*path на роутер.
 //
-// Префикс /v1/ обязателен; запрос без него — 404 с подсказкой (§3.1).
+// Phase 10.E.1: маршруты включают team_slug. Полный путь —
+// /api/v1/request/<team_slug>/<node_path>. Legacy без слога
+// (/api/v1/request/<node_path>) сохраняется как convenience для default-team:
+// запросы без префикса слога продолжают работать, NodeReader подставляет
+// domain.DefaultTeamSlug.
+//
+// Префикс /api/v1/ обязателен; запрос без него — 404 с подсказкой (§3.1).
 // mws — дополнительные middleware (rate-limit, audit, ...), применяются
 // перед основным handler'ом.
 func (h *Handler) Register(r *gin.Engine, mws ...gin.HandlerFunc) {
-	// Корневой 404 для запросов без /v1/.
+	// Корневой 404 для запросов без /api/v1/.
 	r.NoRoute(func(c *gin.Context) {
 		p := c.Request.URL.Path
-		if strings.HasPrefix(p, "/request") || strings.HasPrefix(p, "/requestAsync") || strings.HasPrefix(p, "/callback") {
+		if strings.HasPrefix(p, "/request") || strings.HasPrefix(p, "/requestAsync") ||
+			strings.HasPrefix(p, "/callback") || strings.HasPrefix(p, "/v1/") {
 			c.JSON(http.StatusNotFound, gin.H{
-				"error": "API version required, use /v1/...",
+				"error": "API version required, use /api/v1/...",
 			})
 			return
 		}
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 	})
 
-	v1 := r.Group("/v1", mws...)
+	v1 := r.Group("/api/v1", mws...)
 	{
 		v1.Any("/request/*path", h.handleSync)
 		v1.Any("/requestAsync/*path", h.handleAsync)
@@ -61,12 +71,45 @@ func (h *Handler) Register(r *gin.Engine, mws ...gin.HandlerFunc) {
 	}
 }
 
+// splitTeamSlugAndPath режет catch-all сегмент Gin (`/foo/bar/baz`) на
+// (team_slug, node_path). Первый сегмент — slug команды (мульти-tenancy
+// v2). Один сегмент = legacy URL без слога: возвращает teamSlug=""
+// (NodeReader подставит DefaultTeamSlug).
+//
+// Также допускается единственный «не-slug» сегмент, в котором есть
+// разрешённые в node_path символы '/' (после catch-all gin всегда даёт
+// строку с ведущим '/').
+func splitTeamSlugAndPath(raw string) (teamSlug, nodePath string) {
+	trimmed := strings.TrimPrefix(raw, "/")
+	if trimmed == "" {
+		return "", ""
+	}
+	parts := strings.SplitN(trimmed, "/", 2)
+	if len(parts) == 1 {
+		// Один сегмент — legacy URL, считаем что это node_path в default-team.
+		return "", parts[0]
+	}
+	return parts[0], parts[1]
+}
+
+// handleSync godoc
+// @Summary  Синхронный запрос через узел (§3.1).
+// @Description  Проксирует входящий запрос на внешний адрес узла и возвращает его ответ. Путь — /api/v1/request/<team_slug>/<node_path> (slug опционален для default-команды). Метод, тело и заголовки зависят от конфигурации узла.
+// @Tags     routing
+// @Param    path  path  string  true  "[<team_slug>/]<node_path>"
+// @Success  200  {object}  map[string]interface{}  "ответ внешнего узла (тело/код проксируются)"
+// @Failure  403  {object}  map[string]string  "url not in allowlist"
+// @Failure  404  {object}  map[string]string  "node not found"
+// @Router   /api/v1/request/{path} [post]
 func (h *Handler) handleSync(c *gin.Context) {
-	nodePath := strings.TrimPrefix(c.Param("path"), "/")
+	teamSlug, nodePath := splitTeamSlugAndPath(c.Param("path"))
 	if nodePath == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "empty node path"})
 		return
 	}
+	// Метка node для метрик — чистый путь узла (без слога команды), чтобы
+	// совпадать с меткой Sender и корректно мёрджить in/out на дашборде (§21).
+	c.Set(metrics.NodeLabelKey, nodePath)
 
 	body, err := readBody(c, h.maxBodyBytes)
 	if err != nil {
@@ -75,6 +118,7 @@ func (h *Handler) handleSync(c *gin.Context) {
 	}
 
 	in := usecase.RouteInput{
+		TeamSlug: teamSlug,
 		NodePath: nodePath,
 		Method:   c.Request.Method,
 		Header:   c.Request.Header,
@@ -111,8 +155,16 @@ func (h *Handler) handleSync(c *gin.Context) {
 //
 // Сама HMAC-проверка делается централизованно в CheckIncomingAuth внутри
 // RouteAsync — handler здесь не выполняет crypto-логику.
+// handleCallback godoc
+// @Summary  Webhook-callback (§16).
+// @Description  Приём входящего webhook'а от внешнего провайдера. Alias асинхронного маршрута с обязательной проверкой HMAC-подписи (узел должен быть incoming_auth_type=webhook_signature).
+// @Tags     routing
+// @Param    path  path  string  true  "[<team_slug>/]<node_path>"
+// @Success  200  {object}  map[string]interface{}
+// @Failure  400  {object}  map[string]string  "callback not allowed for this node"
+// @Router   /api/v1/callback/{path} [post]
 func (h *Handler) handleCallback(c *gin.Context) {
-	nodePath := strings.TrimPrefix(c.Param("path"), "/")
+	teamSlug, nodePath := splitTeamSlugAndPath(c.Param("path"))
 	if nodePath == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "empty node path"})
 		return
@@ -123,6 +175,7 @@ func (h *Handler) handleCallback(c *gin.Context) {
 		return
 	}
 	h.handleAsyncFromInput(c, usecase.RouteInput{
+		TeamSlug:        teamSlug,
 		NodePath:        nodePath,
 		Method:          c.Request.Method,
 		Header:          c.Request.Header,
@@ -133,8 +186,18 @@ func (h *Handler) handleCallback(c *gin.Context) {
 	})
 }
 
+// handleAsync godoc
+// @Summary  Асинхронный запрос через узел (§3.1).
+// @Description  Ставит запрос в очередь Kafka и сразу отвечает {result:true,id}. Доставку выполняет Sender-consumer. Путь — /api/v1/requestAsync/<team_slug>/<node_path>.
+// @Tags     routing
+// @Param    path  path  string  true  "[<team_slug>/]<node_path>"
+// @Success  200  {object}  map[string]interface{}  "{result:true,id}"
+// @Success  202  {object}  map[string]interface{}  "queued (paused node, §3.6)"
+// @Failure  404  {object}  map[string]interface{}  "{result:false,message} — node not found"
+// @Failure  405  {object}  map[string]interface{}  "{result:false,message} — method not allowed"
+// @Router   /api/v1/requestAsync/{path} [post]
 func (h *Handler) handleAsync(c *gin.Context) {
-	nodePath := strings.TrimPrefix(c.Param("path"), "/")
+	teamSlug, nodePath := splitTeamSlugAndPath(c.Param("path"))
 	if nodePath == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "empty node path"})
 		return
@@ -145,6 +208,7 @@ func (h *Handler) handleAsync(c *gin.Context) {
 		return
 	}
 	h.handleAsyncFromInput(c, usecase.RouteInput{
+		TeamSlug: teamSlug,
 		NodePath: nodePath,
 		Method:   c.Request.Method,
 		Header:   c.Request.Header,
@@ -158,9 +222,12 @@ func (h *Handler) handleAsync(c *gin.Context) {
 // RouteInput. Вызывается как из /v1/requestAsync, так и из sync-handler'а,
 // когда узел в paused (§3.6).
 func (h *Handler) handleAsyncFromInput(c *gin.Context, in usecase.RouteInput) {
+	// Метка node для метрик — чистый путь узла (см. handleSync).
+	c.Set(metrics.NodeLabelKey, in.NodePath)
 	res, err := h.routeAsync.RouteAsync(c.Request.Context(), in)
 	if err != nil {
-		h.replyDomainError(c, err, in.NodePath, "receiver.async")
+		// §3, #7: async-ошибка → {"result":false,"message":...}.
+		h.replyAsyncError(c, err, in.NodePath, "receiver.async")
 		return
 	}
 
@@ -192,16 +259,24 @@ func readBody(c *gin.Context, max int) ([]byte, error) {
 	return body, nil
 }
 
+// clientIP извлекает IP клиента (X-Forwarded-For → RemoteAddr) и нормализует
+// его к IPv4, где возможно (§4 ТЗ: в логах фиксируем ip4, а не ip6).
 func clientIP(r *http.Request) string {
+	return clientip.NormalizeIPv4(rawClientIP(r))
+}
+
+func rawClientIP(r *http.Request) string {
 	if xf := r.Header.Get("X-Forwarded-For"); xf != "" {
-		if i := strings.Index(xf, ","); i >= 0 {
-			return strings.TrimSpace(xf[:i])
+		if before, _, ok := strings.Cut(xf, ","); ok {
+			return strings.TrimSpace(before)
 		}
 		return strings.TrimSpace(xf)
 	}
 	if r.RemoteAddr != "" {
-		if i := strings.LastIndex(r.RemoteAddr, ":"); i >= 0 {
-			return r.RemoteAddr[:i]
+		// RemoteAddr — "host:port"; host может быть IPv6 в скобках
+		// ("[::1]:1234"). net.SplitHostPort корректно их разбирает.
+		if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+			return host
 		}
 		return r.RemoteAddr
 	}
@@ -217,27 +292,53 @@ func isHopByHopHeader(name string) bool {
 	return false
 }
 
-func (h *Handler) replyDomainError(c *gin.Context, err error, nodePath, op string) {
+// classifyDomainError маппит доменную ошибку маршрутизации в HTTP-код и
+// человекочитаемое сообщение. internal=true означает «непредвиденная ошибка»
+// (502) — её caller дополнительно логирует. Общая для sync (replyDomainError)
+// и async (replyAsyncError), чтобы коды и тексты не расходились.
+func classifyDomainError(err error) (status int, message string, internal bool) {
 	switch {
 	case errors.Is(err, domain.ErrNodeNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "node not found"})
+		return http.StatusNotFound, "node not found", false
 	case errors.Is(err, domain.ErrNodeDisabled):
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "node not available"})
+		return http.StatusServiceUnavailable, "node not available", false
+	case errors.Is(err, domain.ErrNodeMethodNotAllowed):
+		return http.StatusMethodNotAllowed, "http method not allowed for this node", false
 	case errors.Is(err, domain.ErrURLParamRequired),
 		errors.Is(err, domain.ErrCallbackNotAllowed):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return http.StatusBadRequest, err.Error(), false
 	case errors.Is(err, domain.ErrURLInvalid):
-		c.JSON(http.StatusBadRequest, gin.H{"error": "target url is invalid"})
+		return http.StatusBadRequest, "target url is invalid", false
 	case errors.Is(err, domain.ErrURLNotAllowed):
-		c.JSON(http.StatusForbidden, gin.H{"error": "target url not in allowlist"})
+		return http.StatusForbidden, "target url not in allowlist", false
 	case errors.Is(err, domain.ErrAuthHeaderMissing),
 		errors.Is(err, domain.ErrAuthHeaderMalformed),
 		errors.Is(err, domain.ErrAuthTokenRequired),
 		errors.Is(err, domain.ErrUnauthorized):
-		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		return http.StatusUnauthorized, err.Error(), false
 	default:
+		return http.StatusBadGateway, "internal routing error", true
+	}
+}
+
+// replyDomainError — sync-ответ об ошибке: {"error": <msg>}.
+func (h *Handler) replyDomainError(c *gin.Context, err error, nodePath, op string) {
+	status, msg, internal := classifyDomainError(err)
+	if internal {
 		h.logger.ErrorWithOp("receiver routing failed", err, op,
 			h.logger.Str("node", nodePath))
-		c.JSON(http.StatusBadGateway, gin.H{"error": "internal routing error"})
 	}
+	c.JSON(status, gin.H{"error": msg})
+}
+
+// replyAsyncError — async-ответ об ошибке (§3, #7): {"result": false,
+// "message": <причина>}. Тело отличается от sync-варианта, чтобы async-клиент
+// единообразно читал result/message и в успехе, и в ошибке.
+func (h *Handler) replyAsyncError(c *gin.Context, err error, nodePath, op string) {
+	status, msg, internal := classifyDomainError(err)
+	if internal {
+		h.logger.ErrorWithOp("receiver async routing failed", err, op,
+			h.logger.Str("node", nodePath))
+	}
+	c.JSON(status, gin.H{"result": false, "message": msg})
 }

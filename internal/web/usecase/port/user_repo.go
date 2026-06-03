@@ -8,7 +8,12 @@ import (
 )
 
 // ListUsersFilter — фильтры списка пользователей.
+//
+// TeamID — multi-tenancy v2 scope (Phase 11.A): список ограничивается
+// участниками команды через user_teams. Пустая строка = без фильтра по
+// команде (CLI/legacy); UserUsecase подставляет defaultTeamID.
 type ListUsersFilter struct {
+	TeamID string
 	Search string
 	Limit  int
 	Offset int

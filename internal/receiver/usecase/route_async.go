@@ -53,7 +53,7 @@ func NewRouteAsyncUsecase(
 // кладёт envelope в nexus.async с key=node_path (для сохранения
 // порядка обработки одного узла).
 func (u *RouteAsyncUsecase) RouteAsync(ctx context.Context, in RouteInput) (*RouteAsyncResult, error) {
-	node, err := u.nodes.GetByPath(ctx, in.NodePath)
+	node, err := resolveNode(ctx, u.nodes, in.TeamSlug, in.NodePath)
 	if err != nil {
 		return nil, err
 	}
@@ -64,6 +64,13 @@ func (u *RouteAsyncUsecase) RouteAsync(ctx context.Context, in RouteInput) (*Rou
 	// §16 ТЗ: callback-маршрут разрешён только для узлов с подписью.
 	if in.RequireCallback && node.IncomingAuthType != domain.IncomingAuthTypeWebhookSignature {
 		return nil, domain.ErrCallbackNotAllowed
+	}
+
+	// §3.2 (#5): узел принимает только сконфигурированный входящий метод.
+	// Callback (webhook) — исключение: маршрут уже зафиксирован как POST и
+	// защищён HMAC-подписью, метод диктует внешний провайдер.
+	if !in.RequireCallback && !methodMatches(in.Method, node.IncomingMethod) {
+		return nil, domain.ErrNodeMethodNotAllowed
 	}
 
 	// Любой root_method можно отправить через async — §3.6 «При paused
@@ -101,7 +108,7 @@ func (u *RouteAsyncUsecase) RouteAsync(ctx context.Context, in RouteInput) (*Rou
 	}
 
 	id := uuid.NewString()
-	env := BuildEnvelope(id, node, in.Method, targetURL, authHeader, in.ClientIP,
+	env := BuildEnvelope(id, node, string(node.OutgoingMethod), targetURL, authHeader, in.ClientIP,
 		effHeader, cleanQuery, effBody)
 
 	payload, err := json.Marshal(env)

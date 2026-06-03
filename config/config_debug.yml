@@ -67,7 +67,7 @@ clickhouse:
   # HTTP-порт — 18123:8123 (не используется коннектором clickhouse-go).
   host: ${CH_HOST:localhost}
   port: ${CH_PORT:19000}
-  database: ${CH_DATABASE:vika_logs}
+  database: ${CH_DATABASE:nexus_default}
   user: ${CH_USER:default}
   password: ${CH_PASSWORD:}
   batch_size: 100
@@ -125,7 +125,7 @@ receiver:
   max_header_bytes: 1048576
   rate_limit_per_node: 0
   sender_grpc:
-    addr: localhost:9090
+    addr: localhost:9190
     pool_size: 2
     timeout_ms: 60000
     keepalive_time_sec: 30
@@ -133,7 +133,7 @@ receiver:
   swagger_enabled: true
 
 sender:
-  grpc_addr: :9090
+  grpc_addr: :9190
   admin_http_addr: :9091
   grpc_max_concurrent_streams: 100
   http_client:

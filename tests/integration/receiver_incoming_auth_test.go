@@ -59,7 +59,9 @@ func TestReceiver_IncomingAuth_E2E(t *testing.T) {
 	auditRepo := pgrepo.NewAuditRepoPg(pool, logger)
 	uow := pgrepo.NewUnitOfWorkPg(pool, cipher, logger)
 	auditUC := webuc.NewAuditUsecase(auditRepo, logger)
-	nodeUC := webuc.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, time.Minute, 0, logger)
+	defaultTeam := resolveDefaultTeamID(t, ctx, pool)
+	teamRepo := pgrepo.NewTeamRepoPg(pool, logger)
+	nodeUC := webuc.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, teamRepo, nil, nil, time.Minute, 0, defaultTeam, logger)
 
 	makeNode := func(path string, inAuth domain.IncomingAuthType, creds string) *domain.Node {
 		n := &domain.Node{
@@ -97,8 +99,11 @@ func TestReceiver_IncomingAuth_E2E(t *testing.T) {
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	doPost := func(path string, headers map[string]string) (int, []byte) {
+		// §18: первый сегмент URL — team_slug (splitTeamSlugAndPath). Узлы
+		// созданы с многосегментным path ("auth/none" и т.п.), поэтому без
+		// слага "auth" был бы съеден как команда → 404. Префиксуем default-слогом.
 		req, err := http.NewRequestWithContext(ctx, "POST",
-			srv.URL+"/v1/request/"+path, bytes.NewReader([]byte(`{"x":1}`)))
+			srv.URL+"/api/v1/request/"+domain.DefaultTeamSlug+"/"+path, bytes.NewReader([]byte(`{"x":1}`)))
 		require.NoError(t, err)
 		req.Header.Set("Content-Type", "application/json")
 		for k, v := range headers {

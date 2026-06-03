@@ -1,0 +1,217 @@
+package postgres
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"nexus/internal/domain"
+	"nexus/internal/platform/logging"
+	"nexus/internal/web/usecase/port"
+)
+
+// TeamRepoPg — PG-реализация port.TeamRepo (multi-tenancy v2).
+//
+// CRUD по таблице teams + membership в user_teams. Запросы простые,
+// JOIN'ов нет до ListMembers / ListUserTeams.
+type TeamRepoPg struct {
+	pool   *pgxpool.Pool
+	logger logging.Logger
+}
+
+var _ port.TeamRepo = (*TeamRepoPg)(nil)
+
+func NewTeamRepoPg(pool *pgxpool.Pool, logger logging.Logger) *TeamRepoPg {
+	return &TeamRepoPg{pool: pool, logger: logger}
+}
+
+const teamCols = `id, slug, name, ch_database, created_at, updated_at`
+
+func (r *TeamRepoPg) scanRow(row pgx.Row) (*domain.Team, error) {
+	var t domain.Team
+	if err := row.Scan(&t.ID, &t.Slug, &t.Name, &t.CHDatabase, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrTeamNotFound
+		}
+		return nil, fmt.Errorf("scan team: %w", err)
+	}
+	return &t, nil
+}
+
+func (r *TeamRepoPg) GetByID(ctx context.Context, id string) (*domain.Team, error) {
+	return r.scanRow(r.pool.QueryRow(ctx,
+		`SELECT `+teamCols+` FROM teams WHERE id = $1::uuid`, id))
+}
+
+func (r *TeamRepoPg) GetBySlug(ctx context.Context, slug string) (*domain.Team, error) {
+	return r.scanRow(r.pool.QueryRow(ctx,
+		`SELECT `+teamCols+` FROM teams WHERE slug = $1`, slug))
+}
+
+func (r *TeamRepoPg) List(ctx context.Context) ([]*domain.Team, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+teamCols+` FROM teams ORDER BY slug`)
+	if err != nil {
+		return nil, fmt.Errorf("list teams: %w", err)
+	}
+	defer rows.Close()
+	var out []*domain.Team
+	for rows.Next() {
+		t, err := r.scanRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (r *TeamRepoPg) Create(ctx context.Context, t *domain.Team) error {
+	err := r.pool.QueryRow(ctx, `
+INSERT INTO teams (slug, name, ch_database)
+VALUES ($1, $2, $3)
+RETURNING id, created_at, updated_at`,
+		t.Slug, t.Name, t.CHDatabase,
+	).Scan(&t.ID, &t.CreatedAt, &t.UpdatedAt)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return domain.ErrTeamAlreadyExists
+		}
+		return fmt.Errorf("create team: %w", err)
+	}
+	return nil
+}
+
+func (r *TeamRepoPg) Update(ctx context.Context, t *domain.Team) error {
+	tag, err := r.pool.Exec(ctx, `
+UPDATE teams SET name = $2, ch_database = $3, updated_at = now()
+WHERE id = $1::uuid`,
+		t.ID, t.Name, t.CHDatabase,
+	)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return domain.ErrTeamAlreadyExists
+		}
+		return fmt.Errorf("update team: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrTeamNotFound
+	}
+	return nil
+}
+
+func (r *TeamRepoPg) Delete(ctx context.Context, id string) error {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM teams WHERE id = $1::uuid`, id)
+	if err != nil {
+		return fmt.Errorf("delete team: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrTeamNotFound
+	}
+	return nil
+}
+
+func (r *TeamRepoPg) AddMember(ctx context.Context, userID, teamID string, role domain.TeamRole) error {
+	if !role.Valid() {
+		return domain.ErrTeamInvalidRole
+	}
+	_, err := r.pool.Exec(ctx, `
+INSERT INTO user_teams (user_id, team_id, role)
+VALUES ($1::uuid, $2::uuid, $3)
+ON CONFLICT (user_id, team_id) DO UPDATE SET role = EXCLUDED.role`,
+		userID, teamID, string(role),
+	)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			return domain.ErrNotFound
+		}
+		return fmt.Errorf("add team member: %w", err)
+	}
+	return nil
+}
+
+func (r *TeamRepoPg) RemoveMember(ctx context.Context, userID, teamID string) error {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM user_teams WHERE user_id = $1::uuid AND team_id = $2::uuid`,
+		userID, teamID)
+	if err != nil {
+		return fmt.Errorf("remove team member: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrTeamMemberNotFound
+	}
+	return nil
+}
+
+func (r *TeamRepoPg) UpdateMemberRole(ctx context.Context, userID, teamID string, role domain.TeamRole) error {
+	if !role.Valid() {
+		return domain.ErrTeamInvalidRole
+	}
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE user_teams SET role = $3 WHERE user_id = $1::uuid AND team_id = $2::uuid`,
+		userID, teamID, string(role))
+	if err != nil {
+		return fmt.Errorf("update team member role: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrTeamMemberNotFound
+	}
+	return nil
+}
+
+func (r *TeamRepoPg) ListMembers(ctx context.Context, teamID string) ([]*domain.TeamMember, error) {
+	rows, err := r.pool.Query(ctx, `
+SELECT user_id, team_id, role, created_at
+FROM user_teams
+WHERE team_id = $1::uuid
+ORDER BY created_at`, teamID)
+	if err != nil {
+		return nil, fmt.Errorf("list team members: %w", err)
+	}
+	defer rows.Close()
+	var out []*domain.TeamMember
+	for rows.Next() {
+		var m domain.TeamMember
+		var role string
+		if err := rows.Scan(&m.UserID, &m.TeamID, &role, &m.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan team member: %w", err)
+		}
+		m.Role = domain.TeamRole(role)
+		out = append(out, &m)
+	}
+	return out, rows.Err()
+}
+
+func (r *TeamRepoPg) ListUserTeams(ctx context.Context, userID string) ([]*domain.UserTeam, error) {
+	rows, err := r.pool.Query(ctx, `
+SELECT t.id, t.slug, t.name, t.ch_database, t.created_at, t.updated_at, ut.role
+FROM user_teams ut
+JOIN teams t ON t.id = ut.team_id
+WHERE ut.user_id = $1::uuid
+ORDER BY t.slug`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list user teams: %w", err)
+	}
+	defer rows.Close()
+	var out []*domain.UserTeam
+	for rows.Next() {
+		var ut domain.UserTeam
+		var role string
+		if err := rows.Scan(
+			&ut.Team.ID, &ut.Team.Slug, &ut.Team.Name, &ut.Team.CHDatabase,
+			&ut.Team.CreatedAt, &ut.Team.UpdatedAt, &role,
+		); err != nil {
+			return nil, fmt.Errorf("scan user team: %w", err)
+		}
+		ut.Role = domain.TeamRole(role)
+		out = append(out, &ut)
+	}
+	return out, rows.Err()
+}

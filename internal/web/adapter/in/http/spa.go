@@ -19,6 +19,13 @@ func SPAFallback(r *gin.Engine, embedFS fs.FS) {
 		indexBytes = []byte("<html><body>Nexus UI not embedded</body></html>")
 	}
 
+	// Статика SPA (/assets/*) — отдаём напрямую из embed.FS с корректными
+	// MIME-типами (через http.FileServer). Иначе .js/.css проваливались бы
+	// в NoRoute и возвращали index.html с text/html → белый экран.
+	if assetsFS, subErr := fs.Sub(embedFS, "assets"); subErr == nil {
+		r.StaticFS("/assets", http.FS(assetsFS))
+	}
+
 	// NoRoute уже определён в Handler.Register; перепишем его — теперь
 	// fallback не на 404, а на index.html (с теми же исключениями).
 	r.NoRoute(func(c *gin.Context) {

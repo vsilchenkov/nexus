@@ -73,6 +73,10 @@ func applyDefaults(c *Config) {
 		c.ClickHouse.FallbackDir = "logs/clickhouse-fallback"
 	}
 
+	if c.Prometheus.TimeoutMs == 0 {
+		c.Prometheus.TimeoutMs = 5000
+	}
+
 	if c.Kafka.AsyncTopic == "" {
 		c.Kafka.AsyncTopic = "nexus.async"
 	}
@@ -102,7 +106,7 @@ func applyDefaults(c *Config) {
 		c.Receiver.MaxHeaderBytes = 1_048_576
 	}
 	if c.Receiver.SenderGRPC.Addr == "" {
-		c.Receiver.SenderGRPC.Addr = "sender:9090"
+		c.Receiver.SenderGRPC.Addr = "sender:9190"
 	}
 	if c.Receiver.SenderGRPC.PoolSize == 0 {
 		c.Receiver.SenderGRPC.PoolSize = 8
@@ -121,8 +125,14 @@ func applyDefaults(c *Config) {
 		c.Receiver.L2Cache.StaleTTLMs = 60000
 	}
 
+	// §27: Puller включён по умолчанию; узлов RabbitMQAsync может не быть —
+	// тогда reconcile просто ничего не поднимает.
+	if c.Receiver.Puller.ReconcileSec == 0 {
+		c.Receiver.Puller.ReconcileSec = 15
+	}
+
 	if c.Sender.GRPCAddr == "" {
-		c.Sender.GRPCAddr = ":9090"
+		c.Sender.GRPCAddr = ":9190"
 	}
 	if c.Sender.AdminHTTPAddr == "" {
 		c.Sender.AdminHTTPAddr = ":9091"
@@ -169,6 +179,9 @@ func applyDefaults(c *Config) {
 	}
 	if c.Web.APITokenRateLimitPerMin == 0 {
 		c.Web.APITokenRateLimitPerMin = 100
+	}
+	if c.Web.RMQTestRateLimitPerMin == 0 {
+		c.Web.RMQTestRateLimitPerMin = 10 // §27.8: POST /api/nodes/test-rmq
 	}
 	if c.Web.ReceiverURL == "" {
 		c.Web.ReceiverURL = "http://receiver:8080"

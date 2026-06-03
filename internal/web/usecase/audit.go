@@ -21,11 +21,16 @@ func NewAuditUsecase(repo port.AuditRepo, logger logging.Logger) *AuditUsecase {
 	return &AuditUsecase{repo: repo, logger: logger}
 }
 
-// Actor — кто выполнил действие. В Phase 2 — всегда system; в Phase 3
-// будем брать из request-context (middleware auth положит User).
+// Actor — кто выполнил действие.
+//
+// TeamID — UUID команды в контексте сессии актёра (multi-tenancy v2,
+// Phase 10.F.1). Прокидывается в audit-журнал, чтобы admin мог
+// фильтровать журнал по своей команде. Пустая строка = глобальное
+// действие или legacy single-team.
 type Actor struct {
 	UserID    string
 	UserLogin string
+	TeamID    string
 	IPAddress string
 }
 
@@ -40,6 +45,7 @@ func (u *AuditUsecase) Log(ctx context.Context, a Actor, action, targetType, tar
 	e := &domain.AuditEntry{
 		UserID:     a.UserID,
 		UserLogin:  a.UserLogin,
+		TeamID:     a.TeamID,
 		Action:     action,
 		TargetType: targetType,
 		TargetID:   targetID,
@@ -71,6 +77,7 @@ func auditEntry(a Actor, action, targetType, targetID string, details map[string
 	return &domain.AuditEntry{
 		UserID:     a.UserID,
 		UserLogin:  a.UserLogin,
+		TeamID:     a.TeamID,
 		Action:     action,
 		TargetType: targetType,
 		TargetID:   targetID,

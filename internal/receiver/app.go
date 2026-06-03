@@ -25,12 +25,16 @@ import (
 	otelpf "nexus/internal/platform/otel"
 	pgpf "nexus/internal/platform/pg"
 	"nexus/internal/platform/ratelimit"
+	recoverypf "nexus/internal/platform/recovery"
 	redispf "nexus/internal/platform/redis"
 	"nexus/internal/platform/reloader"
+	"nexus/internal/platform/requestid"
+	"nexus/internal/platform/safego"
 	sentrypf "nexus/internal/platform/sentry"
 	httpadapter "nexus/internal/receiver/adapter/in/http"
 	"nexus/internal/receiver/adapter/out/grpcsender"
 	"nexus/internal/receiver/adapter/out/nodecache"
+	rabbitmqadapter "nexus/internal/receiver/adapter/out/rabbitmq"
 	"nexus/internal/receiver/usecase"
 )
 
@@ -46,6 +50,10 @@ type App struct {
 	senderCl     *grpcsender.Client
 	producer     *kafkapf.Producer
 	otelShutdown otelpf.ShutdownFunc
+
+	// §27: Puller-воркеры RabbitMQAsync.
+	pullerCancel context.CancelFunc
+	pullerDone   chan struct{}
 }
 
 func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, cipher *crypto.Cipher, otelShutdown otelpf.ShutdownFunc, logger logging.Logger) *App {
@@ -79,6 +87,32 @@ func (a *App) Start(ctx context.Context) error {
 	a.producer = kafkapf.NewProducer(a.cfg)
 	routeAsyncUC := usecase.NewRouteAsyncUsecase(reader, a.producer, a.cfg.Kafka.AsyncTopic, a.logger)
 
+	// §27: Puller-менеджер RabbitMQAsync. Один воркer на узел; reconcile из PG.
+	// Запускается, если не выключен явно; при отсутствии узлов RabbitMQAsync —
+	// no-op. ClientIP/IP лога формируется как rabbitmq://host:port/vhost.
+	if !a.cfg.Receiver.Puller.Disabled {
+		pullerMgr := usecase.NewPullerManager(
+			rabbitmqadapter.NewNodeLister(a.pg, a.cipher, a.logger),
+			rabbitmqadapter.NewConnector(),
+			a.producer,
+			a.cfg.Kafka.AsyncTopic,
+			a.cfg.Kafka.Topic.MaxMessageBytes,
+			time.Duration(a.cfg.Receiver.Puller.ReconcileSec)*time.Second,
+			a.metrics,
+			rabbitmqadapter.NewHealthSink(a.redis),
+			a.logger,
+		)
+		pctx, pcancel := context.WithCancel(context.WithoutCancel(ctx))
+		a.pullerCancel = pcancel
+		a.pullerDone = make(chan struct{})
+		go func() {
+			defer close(a.pullerDone)
+			defer safego.Recover(a.logger, "receiver.pullerManager")
+			pullerMgr.Run(pctx)
+		}()
+		a.logger.Info("rabbitmq puller manager started")
+	}
+
 	handler := httpadapter.New(routeUC, routeAsyncUC, a.cfg.Receiver.MaxBodyBytes, a.logger)
 
 	rl := ratelimit.New(a.redis)
@@ -86,7 +120,13 @@ func (a *App) Start(ctx context.Context) error {
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(otelpf.GinMiddleware("receiver"), sentrypf.GinMiddleware("receiver"), metrics.GinMiddleware(a.metrics), gin.Recovery())
+	r.Use(
+		requestid.GinMiddleware(),
+		otelpf.GinMiddleware("receiver"),
+		sentrypf.GinMiddleware("receiver"),
+		recoverypf.GinMiddleware(a.logger),
+		metrics.GinMiddleware(a.metrics),
+	)
 
 	hc := healthcheck.New(
 		[]healthcheck.Checker{pgpf.HealthChecker("postgres", a.pg)},
@@ -102,7 +142,10 @@ func (a *App) Start(ctx context.Context) error {
 	reloadSub := reloader.NewSubscriber(a.redis, a.logger)
 	reloadSub.Register(reloader.SectionSentry,
 		bootstrap.SentryReloader(a.pg, a.cfg, a.cfg.Build.ProjectName, a.cfg.Build.Version, a.logger))
-	go reloadSub.Run(ctx)
+	go func() {
+		defer safego.Recover(a.logger, "receiver.reloadSubscriber")
+		reloadSub.Run(ctx)
+	}()
 
 	a.srv = &http.Server{
 		Addr:              a.cfg.Receiver.HTTPAddr,
@@ -119,6 +162,7 @@ func (a *App) Start(ctx context.Context) error {
 
 	errCh := make(chan error, 1)
 	go func() {
+		defer safego.Recover(a.logger, "receiver.listenAndServe")
 		if err := a.srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("receiver listen: %w", err)
 		}
@@ -137,6 +181,17 @@ func (a *App) Stop(ctx context.Context) error {
 	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	a.logger.Info("receiver shutting down")
+
+	// §27: останавливаем Puller-воркеры первыми (graceful: дождаться текущий
+	// батч, nack необработанных, закрыть каналы — это делает PullerManager).
+	if a.pullerCancel != nil {
+		a.pullerCancel()
+		select {
+		case <-a.pullerDone:
+		case <-shutdownCtx.Done():
+			a.logger.Warn("rabbitmq puller did not stop within shutdown deadline")
+		}
+	}
 
 	if a.srv != nil {
 		if err := a.srv.Shutdown(shutdownCtx); err != nil {

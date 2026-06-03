@@ -3,10 +3,16 @@ package domain
 import "time"
 
 // AuditEntry — запись журнала действий пользователя (§7.13).
+//
+// TeamID — UUID команды, в контексте которой выполнено действие
+// (multi-tenancy v2, миграция 0008). Пустая строка = глобальное
+// действие админа (например, создание новой команды до того, как
+// admin вошёл в её scope).
 type AuditEntry struct {
 	ID         string
 	UserID     string // пустая строка = system
 	UserLogin  string
+	TeamID     string
 	Action     string // машинно-читаемый код: node.create, user.login.success, ...
 	TargetType string
 	TargetID   string
@@ -36,6 +42,30 @@ const (
 
 	ActionNodeReplay = "node.replay"
 	ActionNodeDryRun = "node.dry_run"
+	ActionNodeMove   = "node.move"
 
 	ActionAppSettingsUpdate = "app_settings.update"
+
+	ActionCHTemplateCreate = "ch_template.create"
+	ActionCHTemplateUpdate = "ch_template.update"
+	ActionCHTemplateDelete = "ch_template.delete"
+
+	ActionTeamSwitch = "team.switch"
+
+	ActionTeamCreate       = "team.create"
+	ActionTeamUpdate       = "team.update"
+	ActionTeamDelete       = "team.delete"
+	ActionTeamMemberAdd    = "team.member.add"
+	ActionTeamMemberRemove = "team.member.remove"
+	ActionTeamMemberRole   = "team.member.role"
+
+	// Справочник заголовков (§24).
+	ActionHeaderCreate = "header.create"
+
+	// Каталог разрешённых хостов (§23).
+	ActionHostCreate = "host.create"
+	ActionHostUpdate = "host.update"
+	ActionHostDelete = "host.delete"
+	ActionHostAttach = "host.attach"
+	ActionHostDetach = "host.detach"
 )

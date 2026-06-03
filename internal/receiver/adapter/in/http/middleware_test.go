@@ -38,11 +38,11 @@ func newRouter(rl rateAllower, limitPerMin int) (*gin.Engine, *bool) {
 	r := gin.New()
 	r.Use(RateLimitMiddleware(rl, limitPerMin, logging.NewNoop()))
 	called := false
-	r.POST("/v1/request/*path", func(c *gin.Context) {
+	r.POST("/api/v1/request/*path", func(c *gin.Context) {
 		called = true
 		c.Status(http.StatusOK)
 	})
-	r.POST("/v1/requestAsync/*path", func(c *gin.Context) {
+	r.POST("/api/v1/requestAsync/*path", func(c *gin.Context) {
 		called = true
 		c.Status(http.StatusOK)
 	})
@@ -55,7 +55,7 @@ func TestRateLimitMiddleware_LimitZero_NoOp(t *testing.T) {
 	r, called := newRouter(rl, 0)
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest("POST", "/v1/request/demo", nil))
+	r.ServeHTTP(w, httptest.NewRequest("POST", "/api/v1/request/demo", nil))
 
 	if w.Code != http.StatusOK {
 		t.Errorf("status %d, want 200", w.Code)
@@ -74,7 +74,7 @@ func TestRateLimitMiddleware_Allowed(t *testing.T) {
 	r, called := newRouter(rl, 10)
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest("POST", "/v1/request/demo/path", nil))
+	r.ServeHTTP(w, httptest.NewRequest("POST", "/api/v1/request/demo/path", nil))
 
 	if w.Code != http.StatusOK {
 		t.Errorf("status %d, want 200", w.Code)
@@ -99,7 +99,7 @@ func TestRateLimitMiddleware_Denied(t *testing.T) {
 	r, called := newRouter(rl, 5)
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest("POST", "/v1/request/demo", nil))
+	r.ServeHTTP(w, httptest.NewRequest("POST", "/api/v1/request/demo", nil))
 
 	if w.Code != http.StatusTooManyRequests {
 		t.Errorf("status %d, want 429", w.Code)
@@ -115,7 +115,7 @@ func TestRateLimitMiddleware_FailOpenOnError(t *testing.T) {
 	r, called := newRouter(rl, 5)
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest("POST", "/v1/request/demo", nil))
+	r.ServeHTTP(w, httptest.NewRequest("POST", "/api/v1/request/demo", nil))
 
 	// fail-open: error → пропускаем запрос
 	if w.Code != http.StatusOK {
@@ -160,7 +160,7 @@ func TestRateLimitMiddleware_AsyncPath_KeyStripped(t *testing.T) {
 	r, _ := newRouter(rl, 10)
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest("POST", "/v1/requestAsync/some/sub", nil))
+	r.ServeHTTP(w, httptest.NewRequest("POST", "/api/v1/requestAsync/some/sub", nil))
 
 	if w.Code != http.StatusOK {
 		t.Errorf("status %d, want 200", w.Code)

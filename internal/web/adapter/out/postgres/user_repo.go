@@ -26,8 +26,10 @@ func NewUserRepoPg(pool *pgxpool.Pool, logger logging.Logger) *UserRepoPg {
 	return &UserRepoPg{pool: pool, logger: logger}
 }
 
-const userCols = `id, login, COALESCE(email,''), COALESCE(password_hash,''),
-	role, active, must_change_password, lang, team_id, created_at, last_login_at`
+// userCols квалифицированы алиасом u — в List есть JOIN с user_teams,
+// где тоже есть created_at (иначе ambiguous column).
+const userCols = `u.id, u.login, COALESCE(u.email,''), COALESCE(u.password_hash,''),
+	u.role, u.active, u.must_change_password, u.lang, u.default_team_id, u.created_at, u.last_login_at`
 
 func (r *UserRepoPg) scanRow(row pgx.Row) (*domain.User, error) {
 	var u domain.User
@@ -35,7 +37,7 @@ func (r *UserRepoPg) scanRow(row pgx.Row) (*domain.User, error) {
 	var lastLogin *time.Time
 	if err := row.Scan(
 		&u.ID, &u.Login, &u.Email, &u.PasswordHash,
-		&role, &u.Active, &u.MustChangePassword, &lang, &u.TeamID,
+		&role, &u.Active, &u.MustChangePassword, &lang, &u.DefaultTeamID,
 		&u.CreatedAt, &lastLogin,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -50,22 +52,30 @@ func (r *UserRepoPg) scanRow(row pgx.Row) (*domain.User, error) {
 }
 
 func (r *UserRepoPg) Get(ctx context.Context, id string) (*domain.User, error) {
-	return r.scanRow(r.pool.QueryRow(ctx, `SELECT `+userCols+` FROM users WHERE id = $1::uuid`, id))
+	return r.scanRow(r.pool.QueryRow(ctx, `SELECT `+userCols+` FROM users u WHERE u.id = $1::uuid`, id))
 }
 
 func (r *UserRepoPg) GetByLogin(ctx context.Context, login string) (*domain.User, error) {
-	return r.scanRow(r.pool.QueryRow(ctx, `SELECT `+userCols+` FROM users WHERE login = $1`, login))
+	return r.scanRow(r.pool.QueryRow(ctx, `SELECT `+userCols+` FROM users u WHERE u.login = $1`, login))
 }
 
 func (r *UserRepoPg) List(ctx context.Context, f port.ListUsersFilter) ([]*domain.User, error) {
-	q := `SELECT ` + userCols + ` FROM users WHERE 1=1`
+	// Phase 11.A: scope по членству в команде через JOIN user_teams.
+	// userCols квалифицированы алиасом u, чтобы created_at не был
+	// ambiguous с user_teams.created_at.
+	q := `SELECT ` + userCols + ` FROM users u`
 	args := []any{}
+	if f.TeamID != "" {
+		q += fmt.Sprintf(" JOIN user_teams ut ON ut.user_id = u.id AND ut.team_id = $%d::uuid", len(args)+1)
+		args = append(args, f.TeamID)
+	}
+	q += " WHERE 1=1"
 	if f.Search != "" {
-		q += fmt.Sprintf(" AND (login ILIKE $%d OR email ILIKE $%d)", len(args)+1, len(args)+2)
+		q += fmt.Sprintf(" AND (u.login ILIKE $%d OR u.email ILIKE $%d)", len(args)+1, len(args)+2)
 		like := "%" + f.Search + "%"
 		args = append(args, like, like)
 	}
-	q += " ORDER BY login"
+	q += " ORDER BY u.login"
 	if f.Limit > 0 {
 		q += fmt.Sprintf(" LIMIT $%d", len(args)+1)
 		args = append(args, f.Limit)
@@ -101,13 +111,17 @@ func (r *UserRepoPg) CountActiveAdmins(ctx context.Context) (int, error) {
 }
 
 func (r *UserRepoPg) Create(ctx context.Context, u *domain.User) error {
+	// default_team_id: если caller не передал — берём UUID 'default'-team
+	// из сидинга миграции 0008. NULLIF превращает пустую строку в NULL,
+	// COALESCE подставляет lookup.
 	const q = `
-INSERT INTO users (login, email, password_hash, role, active, must_change_password, lang, team_id)
-VALUES ($1, NULLIF($2,''), NULLIF($3,''), $4, $5, $6, $7, COALESCE(NULLIF($8,''), 'default'))
+INSERT INTO users (login, email, password_hash, role, active, must_change_password, lang, default_team_id)
+VALUES ($1, NULLIF($2,''), NULLIF($3,''), $4, $5, $6, $7,
+	COALESCE(NULLIF($8,'')::uuid, (SELECT id FROM teams WHERE slug = '` + domain.DefaultTeamSlug + `')))
 RETURNING id, created_at`
 	err := r.pool.QueryRow(ctx, q,
 		u.Login, u.Email, u.PasswordHash, string(u.Role), u.Active,
-		u.MustChangePassword, string(u.Lang), u.TeamID,
+		u.MustChangePassword, string(u.Lang), u.DefaultTeamID,
 	).Scan(&u.ID, &u.CreatedAt)
 	if err != nil {
 		var pgErr *pgconn.PgError

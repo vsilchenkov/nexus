@@ -78,8 +78,13 @@ func (h *DryRunHandler) Run(c *gin.Context) {
 		}
 	}
 
+	// Узел в dry-run не сохраняется в БД — но всё равно ставим TeamID из
+	// текущей сессии (multi-tenancy v2): writeAudit пишет node.ID, узел
+	// формы должен наследовать scope создателя.
+	dryNode := reqToDomain(req.Node)
+	dryNode.TeamID = currentTeamID(c)
 	rep, err := h.uc.Run(c.Request.Context(), actorFromCtx(c), usecase.DryRunRequest{
-		Node:    reqToDomain(req.Node),
+		Node:    dryNode,
 		Method:  method,
 		Query:   query,
 		Headers: headers,

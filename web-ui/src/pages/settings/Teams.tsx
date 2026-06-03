@@ -1,0 +1,452 @@
+import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
+
+import { api } from "../../api/client";
+
+// Multi-tenancy v2 (§16 ТЗ, Phase 10.F.2): admin создаёт команды, добавляет
+// в них пользователей. Каждой команде соответствует своя CH-БД nexus_<slug>.
+
+type Team = {
+  id: string;
+  slug: string;
+  name: string;
+  ch_database: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type TeamMember = {
+  user_id: string;
+  team_id: string;
+  role: "owner" | "admin" | "member";
+  created_at: string;
+};
+
+type User = {
+  id: string;
+  login: string;
+  email: string;
+};
+
+type ListResp<T> = { items: T[] };
+
+export function TeamsPanel() {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+
+  const list = useQuery({
+    queryKey: ["teams"],
+    queryFn: () => api.get<ListResp<Team>>("/api/teams"),
+  });
+
+  const [editing, setEditing] = useState<Team | "new" | null>(null);
+  const [membersOf, setMembersOf] = useState<Team | null>(null);
+
+  const del = useMutation({
+    mutationFn: (id: string) => api.del(`/api/teams/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["teams"] }),
+  });
+
+  return (
+    <div className="space-y-5">
+      <header className="flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <h2 className="text-lg font-semibold">{t("settings.teams.title")}</h2>
+          <p className="text-xs text-fg-muted mt-1">
+            {t("settings.teams.subtitle")}
+          </p>
+        </div>
+        <button
+          onClick={() => setEditing("new")}
+          className="bg-accent hover:bg-accent-hover px-3 py-2 rounded-md text-sm"
+        >
+          {t("settings.teams.add")}
+        </button>
+      </header>
+
+      {list.isLoading && (
+        <div className="text-fg-muted text-sm">{t("common.loading")}</div>
+      )}
+      {list.error && <div className="text-err text-sm">{t("common.error")}</div>}
+
+      {list.data && list.data.items.length === 0 && (
+        <div className="text-fg-muted text-sm">{t("settings.teams.empty")}</div>
+      )}
+
+      {list.data && list.data.items.length > 0 && (
+        <table className="w-full text-sm">
+          <thead className="text-fg-muted">
+            <tr>
+              <th className="text-left px-3 py-2">{t("settings.teams.col.slug")}</th>
+              <th className="text-left px-3 py-2">{t("settings.teams.col.name")}</th>
+              <th className="text-left px-3 py-2">{t("settings.teams.col.ch_database")}</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {list.data.items.map((team) => {
+              const isDefault = team.slug === "default";
+              return (
+                <tr key={team.id} className="border-t border-bg-muted">
+                  <td className="px-3 py-2 font-mono text-xs">{team.slug}</td>
+                  <td className="px-3 py-2">{team.name}</td>
+                  <td className="px-3 py-2 font-mono text-xs text-fg-muted">
+                    {team.ch_database}
+                  </td>
+                  <td className="px-3 py-2 text-right space-x-1 whitespace-nowrap">
+                    <button
+                      title={t("settings.teams.action.members")}
+                      onClick={() => setMembersOf(team)}
+                      className="px-1.5 py-1 hover:bg-bg-muted rounded text-fg-muted hover:text-fg text-sm"
+                    >
+                      👥
+                    </button>
+                    <button
+                      title={t("settings.teams.action.edit")}
+                      onClick={() => setEditing(team)}
+                      className="px-1.5 py-1 hover:bg-bg-muted rounded text-fg-muted hover:text-fg text-sm"
+                    >
+                      ✏️
+                    </button>
+                    {!isDefault && (
+                      <button
+                        title={t("settings.teams.action.delete")}
+                        onClick={() => {
+                          if (confirm(t("settings.teams.confirm_delete", { slug: team.slug }))) {
+                            del.mutate(team.id);
+                          }
+                        }}
+                        className="px-1.5 py-1 hover:bg-bg-muted rounded text-err text-sm"
+                      >
+                        🗑
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+
+      {editing && (
+        <TeamDialog
+          mode={editing === "new" ? "create" : "edit"}
+          initial={editing === "new" ? null : editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            qc.invalidateQueries({ queryKey: ["teams"] });
+          }}
+        />
+      )}
+
+      {membersOf && (
+        <MembersDialog team={membersOf} onClose={() => setMembersOf(null)} />
+      )}
+    </div>
+  );
+}
+
+type TeamDialogProps = {
+  mode: "create" | "edit";
+  initial: Team | null;
+  onClose: () => void;
+  onSaved: () => void;
+};
+
+function TeamDialog({ mode, initial, onClose, onSaved }: TeamDialogProps) {
+  const { t } = useTranslation();
+  const [slug, setSlug] = useState(initial?.slug ?? "");
+  const [name, setName] = useState(initial?.name ?? "");
+  const [error, setError] = useState<string | null>(null);
+
+  const save = useMutation({
+    mutationFn: async () => {
+      if (mode === "create") {
+        return api.post("/api/teams", { slug, name });
+      }
+      return api.put(`/api/teams/${initial!.id}`, { name });
+    },
+    onSuccess: () => onSaved(),
+    onError: (err: { response?: { data?: { error?: string } } }) => {
+      setError(err?.response?.data?.error ?? t("common.error"));
+    },
+  });
+
+  const canSubmit =
+    !save.isPending &&
+    name.length >= 1 &&
+    (mode === "edit" || /^[a-z][a-z0-9_]{0,31}$/.test(slug));
+
+  return (
+    <Modal onClose={onClose}>
+      <div className="space-y-4 w-[420px] max-w-full">
+        <header>
+          <h3 className="text-lg font-semibold">
+            {mode === "create"
+              ? t("settings.teams.dialog.new_title")
+              : t("settings.teams.dialog.edit_title", { slug: initial?.slug })}
+          </h3>
+          <p className="text-xs text-fg-muted mt-1">
+            {mode === "create"
+              ? t("settings.teams.dialog.new_subtitle")
+              : t("settings.teams.dialog.edit_subtitle")}
+          </p>
+        </header>
+
+        {error && (
+          <div className="bg-err/10 border border-err/40 text-err px-3 py-2 rounded text-sm">
+            {error}
+          </div>
+        )}
+
+        <div className="space-y-3">
+          <div className="space-y-1">
+            <label className="text-xs uppercase tracking-wider text-fg-muted">
+              {t("settings.teams.field.slug")}
+            </label>
+            <input
+              value={slug}
+              onChange={(e) => setSlug(e.target.value.toLowerCase())}
+              disabled={mode === "edit"}
+              placeholder="acme"
+              className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none disabled:opacity-60 font-mono text-xs"
+            />
+            <p className="text-xs text-fg-muted">
+              {mode === "edit"
+                ? t("settings.teams.field.slug_immutable")
+                : t("settings.teams.field.slug_hint")}
+            </p>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs uppercase tracking-wider text-fg-muted">
+              {t("settings.teams.field.name")}
+            </label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={mode === "create" ? "Acme Corp" : ""}
+              className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none"
+            />
+          </div>
+
+          {mode === "create" && slug && (
+            <div className="text-xs text-fg-muted">
+              {t("settings.teams.field.ch_database_preview", {
+                db: "nexus_" + slug,
+              })}
+            </div>
+          )}
+        </div>
+
+        <footer className="flex items-center justify-end gap-2 pt-2 border-t border-bg-muted">
+          <button onClick={onClose} className="px-3 py-2 text-sm text-fg-muted hover:text-fg">
+            {t("common.cancel")}
+          </button>
+          <button
+            onClick={() => save.mutate()}
+            disabled={!canSubmit}
+            className="bg-accent hover:bg-accent-hover px-4 py-2 rounded-md text-sm disabled:opacity-50"
+          >
+            {mode === "create"
+              ? t("settings.teams.dialog.create")
+              : t("common.save")}
+          </button>
+        </footer>
+      </div>
+    </Modal>
+  );
+}
+
+type MembersDialogProps = {
+  team: Team;
+  onClose: () => void;
+};
+
+function MembersDialog({ team, onClose }: MembersDialogProps) {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+
+  const members = useQuery({
+    queryKey: ["team-members", team.id],
+    queryFn: () => api.get<ListResp<TeamMember>>(`/api/teams/${team.id}/members`),
+  });
+
+  const users = useQuery({
+    queryKey: ["users-all"],
+    queryFn: () => api.get<ListResp<User>>("/api/users"),
+  });
+
+  const [newUserID, setNewUserID] = useState<string>("");
+  const [newRole, setNewRole] = useState<"owner" | "admin" | "member">("member");
+
+  const add = useMutation({
+    mutationFn: () =>
+      api.post(`/api/teams/${team.id}/members`, { user_id: newUserID, role: newRole }),
+    onSuccess: () => {
+      setNewUserID("");
+      qc.invalidateQueries({ queryKey: ["team-members", team.id] });
+    },
+  });
+
+  const remove = useMutation({
+    mutationFn: (userID: string) =>
+      api.del(`/api/teams/${team.id}/members/${userID}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["team-members", team.id] }),
+  });
+
+  const updateRole = useMutation({
+    mutationFn: ({ userID, role }: { userID: string; role: TeamMember["role"] }) =>
+      api.put(`/api/teams/${team.id}/members/${userID}`, { role }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["team-members", team.id] }),
+  });
+
+  // Список пользователей, которые ЕЩЁ не члены команды (для select).
+  const memberIDs = new Set((members.data?.items ?? []).map((m) => m.user_id));
+  const candidates = (users.data?.items ?? []).filter((u) => !memberIDs.has(u.id));
+
+  const loginByID = new Map((users.data?.items ?? []).map((u) => [u.id, u.login]));
+
+  return (
+    <Modal onClose={onClose}>
+      <div className="space-y-4 w-[520px] max-w-full">
+        <header>
+          <h3 className="text-lg font-semibold">
+            {t("settings.teams.members.title", { name: team.name })}
+          </h3>
+          <p className="text-xs text-fg-muted mt-1 font-mono">
+            slug={team.slug} · ch_database={team.ch_database}
+          </p>
+        </header>
+
+        <div className="flex items-end gap-2">
+          <div className="flex-1 space-y-1">
+            <label className="text-xs uppercase tracking-wider text-fg-muted">
+              {t("settings.teams.members.add_user")}
+            </label>
+            <select
+              value={newUserID}
+              onChange={(e) => setNewUserID(e.target.value)}
+              className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none"
+            >
+              <option value="">{t("settings.teams.members.pick_user")}</option>
+              {candidates.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.login}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="w-32 space-y-1">
+            <label className="text-xs uppercase tracking-wider text-fg-muted">
+              {t("settings.teams.members.role")}
+            </label>
+            <select
+              value={newRole}
+              onChange={(e) => setNewRole(e.target.value as typeof newRole)}
+              className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none"
+            >
+              <option value="owner">{t("settings.teams.role.owner")}</option>
+              <option value="admin">{t("settings.teams.role.admin")}</option>
+              <option value="member">{t("settings.teams.role.member")}</option>
+            </select>
+          </div>
+          <button
+            onClick={() => add.mutate()}
+            disabled={!newUserID || add.isPending}
+            className="bg-accent hover:bg-accent-hover px-4 py-2 rounded-md text-sm disabled:opacity-50"
+          >
+            {t("settings.teams.members.add")}
+          </button>
+        </div>
+
+        {members.isLoading && (
+          <div className="text-fg-muted text-sm">{t("common.loading")}</div>
+        )}
+
+        {members.data && members.data.items.length === 0 && (
+          <div className="text-fg-muted text-sm">{t("settings.teams.members.empty")}</div>
+        )}
+
+        {members.data && members.data.items.length > 0 && (
+          <table className="w-full text-sm">
+            <thead className="text-fg-muted">
+              <tr>
+                <th className="text-left px-3 py-2">{t("settings.teams.members.col.user")}</th>
+                <th className="text-left px-3 py-2">{t("settings.teams.members.col.role")}</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {members.data.items.map((m) => (
+                <tr key={m.user_id} className="border-t border-bg-muted">
+                  <td className="px-3 py-2 font-mono text-xs">
+                    {loginByID.get(m.user_id) ?? m.user_id}
+                  </td>
+                  <td className="px-3 py-2">
+                    <select
+                      value={m.role}
+                      onChange={(e) =>
+                        updateRole.mutate({
+                          userID: m.user_id,
+                          role: e.target.value as TeamMember["role"],
+                        })
+                      }
+                      className="px-2 py-1 bg-bg-muted rounded text-xs"
+                    >
+                      <option value="owner">{t("settings.teams.role.owner")}</option>
+                      <option value="admin">{t("settings.teams.role.admin")}</option>
+                      <option value="member">{t("settings.teams.role.member")}</option>
+                    </select>
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    <button
+                      onClick={() => remove.mutate(m.user_id)}
+                      className="px-1.5 py-1 hover:bg-bg-muted rounded text-err text-sm"
+                      title={t("settings.teams.members.remove")}
+                    >
+                      🗑
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        <footer className="flex items-center justify-end pt-2 border-t border-bg-muted">
+          <button onClick={onClose} className="px-3 py-2 text-sm text-fg-muted hover:text-fg">
+            {t("common.close")}
+          </button>
+        </footer>
+      </div>
+    </Modal>
+  );
+}
+
+function Modal({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-bg-elev rounded-xl border border-bg-muted p-5 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}

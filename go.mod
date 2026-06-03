@@ -1,6 +1,6 @@
 module nexus
 
-go 1.26.3
+go 1.26.4
 
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.46.0
@@ -12,7 +12,10 @@ require (
 	github.com/jinzhu/copier v0.4.0
 	github.com/kardianos/service v1.2.4
 	github.com/prometheus/client_golang v1.23.2
+	github.com/prometheus/common v0.67.5
+	github.com/rabbitmq/amqp091-go v1.11.0
 	github.com/redis/go-redis/v9 v9.19.0
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/segmentio/kafka-go v0.4.51
 	github.com/stretchr/testify v1.11.1
 	github.com/swaggo/files v1.0.1
@@ -21,7 +24,8 @@ require (
 	github.com/testcontainers/testcontainers-go v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/kafka v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
-	github.com/vsilchenkov/logging v1.7.8
+	github.com/testcontainers/testcontainers-go/modules/rabbitmq v0.42.0
+	github.com/vsilchenkov/logging v1.7.9
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.43.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.43.0
@@ -116,7 +120,6 @@ require (
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
-	github.com/prometheus/common v0.67.5 // indirect
 	github.com/prometheus/procfs v0.20.1 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/quic-go/quic-go v0.59.0 // indirect

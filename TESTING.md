@@ -1,5 +1,9 @@
 # TESTING.md — процедура запуска тестов Nexus
 
+> **Ручное сквозное тестирование на стенде** (поднять весь стек, создать узлы
+> всех типов, прогнать по 500 запросов, проверить UI/логи/метрики) — отдельная
+> пошаговая инструкция со скриптами: [docs/STAND_TESTING.md](docs/STAND_TESTING.md).
+
 ## Unit-тесты
 
 ```bash
@@ -37,6 +41,14 @@ make test-integration
 go test -tags=integration -count=1 -v ./tests/integration/...
 ```
 
+`make test-integration` гоняет пакет **под-прогонами по группам зависимостей**
+(§10.1): `test-int-pg`, `test-int-ch`, `test-int-catalog`, `test-int-receiver`,
+`test-int-rmq`, `test-int-sender` — каждая со своим `-timeout` (`INTEGRATION_TIMEOUT`,
+дефолт 20m). Это не даёт одному зависшему/упавшему тесту съесть бюджет всего
+пакета (`go test -timeout` общий на пакет) и замаскировать остальные группы.
+Группы выполняются последовательно; Kafka-группа (`test-int-sender`) идёт
+последней. Отдельную группу можно запустить точечно: `make test-int-rmq`.
+
 Покрытые сценарии:
 
 - **`TestNodeRepoCreate_E2E`** — реальный Postgres через `tcpg.Run`, миграции из `/migrations`,
@@ -45,6 +57,14 @@ go test -tags=integration -count=1 -v ./tests/integration/...
 - **`TestReceiver_Sync_E2E`** — Postgres + `httptest` mock внешнего узла + inline-stub Sender, который
   делает реальный HTTP-запрос вместо gRPC. Проверяет, что запрос дошёл до upstream с правильным path,
   body, и заголовком `Authorization: Bearer ...`.
+- **`TestNodeRepoRabbitMQAsync_E2E`** (§27) — Postgres: round-trip узла RabbitMQAsync через
+  `NodeUsecase`, шифрование `rmq_password`, сброс несовместимых полей, срабатывание `chk_rmq_fields`.
+- **`TestRMQPuller_E2E_NoLoss` / `…_KafkaDown_Requeue` / `…_DegradedOnMissingQueue`** (§27.12) —
+  реальный RabbitMQ через `tcrabbit.Run`: (1) публикуем N сообщений → `PullerWorker` забирает все,
+  складывает в fake-producer (Kafka-путь покрыт отдельно), очередь дренируется без потерь; envelope
+  содержит блок `rmq` и `IP=rabbitmq://…`; (2) при «упавшей» Kafka сообщения возвращаются в очередь
+  (`nack requeue`), потерь нет; (3) если очереди узла не существует (passive-declare 404), воркер
+  после `SetDegradeAfter` помечает узел `degraded` (health-снимок с `connection_state=down` и причиной).
 - **`TestSender_Async_E2E`** — Postgres + Kafka (KRaft) + mock upstream. Receiver-RouteAsync публикует
   Envelope в `nexus.async`, Sender ConsumerGroup читает, делает HTTP-вызов, пишет в capturing log
   writer. Покрывает §3.6 / §4.2 happy-path.
@@ -94,7 +114,36 @@ go run ./cmd/loadtest \
   --admin-password ... \
   --target-rps 500 --duration 10m --nodes 50 \
   --payload-min 100 --payload-max 5120 \
-  --mock-latency 50ms --report report.json
+  --mock-latency 50ms --mock-latency-jitter 30ms --report report.json
+```
+
+### Микс трафика (§10.2)
+
+Узлы — **односценарные корзины**: каждый упражняет ровно одну фичу, что даёт чистую per-mode
+статистику и понятные testcase'ы. Доли — независимые корзины (сумма ≤ 1, остаток — plain `sync`):
+
+| Флаг                  | Дефолт | Режим узла  | Что упражняет                                                |
+|-----------------------|--------|-------------|--------------------------------------------------------------|
+| `--ratio-async`       | `0`    | `async`     | `root_method=requestAsync` → Kafka-путь, `/api/v1/requestAsync/...` |
+| `--ratio-dynamic-url` | `0`    | `dyn-url`   | `url_mode=from_request`, target в `?url_base=` (allowlist пуст = allow-all) |
+| `--ratio-auth-token`  | `0`    | `auth-token`| `auth_type=token_from_request`, заголовок `Authorization: Bearer …` |
+| `--ratio-auth-basic`  | `0`    | `auth-basic`| `auth_type=basic_from_request`, заголовок `Authorization: Basic …`  |
+| `--random-headers`    | `true` | (все)       | 1–3 случайных `X-Lt-*` заголовка на запрос                    |
+
+Дефолт 0 для всех долей сохраняет старое поведение (`make loadtest` без переменных = чистый sync-smoke).
+В отчёт (`report.json`) добавлен блок `modes` — sent/errors/error_rate/p50/p95/p99 на каждый режим.
+
+### No-loss проверка async/rmq через ClickHouse (§10.2)
+
+При заданном `--ch-addr` loadtest после прогона ждёт `--ch-flush-grace` (батч-флаш sender'а в CH) и
+сверяет число строк `type IN ('requestAsync','RabbitMQAsync')` в `--ch-table` с числом отправленных
+async + rmq запросов. Потеря (`ch_rows < expected`) → exit 1. Дубликаты at-least-once
+(`ch_rows > expected`) нарушением не считаются. Пустой `--ch-addr` пропускает проверку.
+
+```bash
+go run ./cmd/loadtest --admin-password ... \
+  --target-rps 200 --duration 2m --nodes 20 \
+  --ratio-async 0.5 --ch-addr localhost:9000 --ch-flush-grace 10s
 ```
 
 ### Критерии pass/fail
@@ -107,12 +156,26 @@ Loadtest exit'ится с кодом 1, если:
 
 Это и есть критерий §10.2 для CI.
 
+### RabbitMQAsync-нагрузка (§27.12)
+
+Флаг `--ratio-rmq` (0..1) + `--rmq-url` поднимают долю узлов как `RabbitMQAsync`: loadtest объявляет
+их очереди и публикует payload'ы прямо в RabbitMQ (а не HTTP в Receiver). Пример:
+
+```bash
+go run ./cmd/loadtest \
+  --admin-password=admin --target-rps=200 --duration=2m --nodes=20 \
+  --ratio-rmq=0.3 --rmq-url=amqp://guest:guest@localhost:5672/
+```
+
+В отчёт печатается `rmq_published=N`. Критерий «нет потерь» = `N` ≤ числу строк в ClickHouse-логе
+узлов (`type=RabbitMQAsync`); сверка вручную/скриптом (loadtest не ходит в ClickHouse).
+
 ### Что не покрыто текущим loadtest
 
-- Все варианты `url_mode` / `auth_type` (сейчас static + auth=none).
-- Доля async / dynamic-url / token-auth-узлов из конфига (`--ratio-*` — следующая итерация).
-- Проверка числа сообщений в ClickHouse-логе == числу отправленных
-  (для async). Требует подключения к ClickHouse — TODO Phase 6.
+- Kafka consumer-lag в отчёте (§10.2 — опциональная диагностика, не acceptance-критерий;
+  «нет потерь» закрыто сверкой по числу строк CH). TODO.
+- Внутренний размер CH-буфера sender'а — извне ненаблюдаем; заменён фактической no-loss
+  сверкой числа строк.
 
 ## Swagger
 
@@ -214,7 +277,8 @@ pipeline'е (push в любую ветку) job `loadtest` создаётся к
 |----------------------------------|--------------------------------------------------|
 | `port already in use`            | освободить или поменять адрес в config_debug.yml |
 | Receiver 401 на запросе с узлом  | `incoming_auth_type=none` или верные креды       |
-| Receiver 404 на /v1/request/...  | узел существует и `status=enabled`               |
+| Receiver 404 на /api/v1/request/...  | узел существует и `status=enabled`           |
+| В ответ на запрос приходит HTML index.html | используешь `/api/v1/...` (не старый `/v1/...`); запрос идёт на Web `:8000` или Receiver `:8080` |
 | Sender DLQ заполняется           | внешний URL отвечает; CB не открыт; см. attempts_details |
 | Loadtest fail: rps < target      | проверить max_idle_conns_per_host в http-клиенте Sender; ограничения Receiver (read/write_timeout) |
 | `migration "dirty"`              | `psql ... SELECT * FROM schema_migrations`; вручную поправить, force-сбросить |

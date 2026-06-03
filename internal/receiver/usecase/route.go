@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -29,6 +30,10 @@ type SenderClient interface {
 
 // RouteInput — параметры входящего sync-запроса.
 type RouteInput struct {
+	// TeamSlug — slug команды, под которую был адресован запрос. Из URL
+	// /v1/request/<team_slug>/<path> (Phase 10.E.1). Пустая строка =
+	// legacy URL без слога; NodeReader подставит DefaultTeamSlug.
+	TeamSlug string
 	NodePath string
 	Method   string
 	Header   http.Header
@@ -62,7 +67,7 @@ func NewRouteUsecase(nodes port.NodeReader, sender SenderClient, logger logging.
 
 // Route — sync-обработка (POST /v1/request/{path}).
 func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, error) {
-	node, err := u.nodes.GetByPath(ctx, in.NodePath)
+	node, err := resolveNode(ctx, u.nodes, in.TeamSlug, in.NodePath)
 	if err != nil {
 		return nil, err
 	}
@@ -78,6 +83,11 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 
 	if node.RootMethod != domain.RootMethodRequest {
 		return nil, fmt.Errorf("%w: node is %s, not request", domain.ErrNodeNotFound, node.RootMethod)
+	}
+
+	// §3.2 (#5): узел принимает только сконфигурированный входящий метод.
+	if !methodMatches(in.Method, node.IncomingMethod) {
+		return nil, domain.ErrNodeMethodNotAllowed
 	}
 
 	if err := CheckIncomingAuth(node, in.Header, in.Body); err != nil {
@@ -121,21 +131,24 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 
 	id := uuid.NewString()
 	resp, err := u.sender.Send(ctx, &senderv1.SendRequest{
-		Id:              id,
-		NodePath:        node.Path,
-		TargetUrl:       finalURL,
-		Method:          in.Method,
-		Auth:            &senderv1.AuthConfig{AuthorizationHeader: authHeader},
-		Headers:         headers,
-		Body:            effBody,
-		TimeoutMs:       node.TimeoutMs,
-		RetryCount:      node.RetryCount,
-		RetryBackoffMs:  node.RetryBackoffMs,
-		ClickhouseTable: node.ClickHouseTable,
-		LogRequestBody:  node.LogRequestBody,
-		LogResponseBody: node.LogResponseBody,
-		LogHeaders:      node.LogHeaders,
-		ClientIp:        in.ClientIP,
+		Id:                 id,
+		NodePath:           node.Path,
+		TargetUrl:          finalURL,
+		Method:             string(node.OutgoingMethod),
+		Auth:               &senderv1.AuthConfig{AuthorizationHeader: authHeader},
+		Headers:            headers,
+		Body:               effBody,
+		TimeoutMs:          node.TimeoutMs,
+		RetryCount:         node.RetryCount,
+		RetryBackoffMs:     node.RetryBackoffMs,
+		ClickhouseTable:    node.ClickHouseTable,
+		LogRequestBody:     node.LogRequestBody,
+		LogResponseBody:    node.LogResponseBody,
+		LogHeaders:         node.LogHeaders,
+		ClientIp:           in.ClientIP,
+		LoggingEnabled:     node.LoggingEnabled,
+		MaxBodySizeEnabled: node.MaxBodySizeEnabled,
+		MaxBodySize:        node.MaxBodySize,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("sender.Send: %w", err)
@@ -157,6 +170,17 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 		}
 	}
 	return out, nil
+}
+
+// methodMatches сравнивает фактический HTTP-метод входящего запроса с
+// сконфигурированным методом узла (§3.2, #5), без учёта регистра. Пустой
+// want трактуется как POST (дефолт), чтобы узлы, созданные до миграции 0015 и
+// переживший её L1/Redis-кеш без поля, не отклоняли трафик.
+func methodMatches(got string, want domain.HTTPMethod) bool {
+	if want == "" {
+		want = domain.HTTPMethodPOST
+	}
+	return strings.EqualFold(got, string(want))
 }
 
 func appendQuery(target string, q url.Values) string {

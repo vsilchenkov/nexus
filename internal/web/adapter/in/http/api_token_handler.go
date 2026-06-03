@@ -32,6 +32,7 @@ type createTokenRequest struct {
 type tokenResponse struct {
 	ID         string     `json:"id"`
 	Name       string     `json:"name"`
+	TeamID     string     `json:"team_id"`
 	Prefix     string     `json:"prefix"`
 	Scopes     []string   `json:"scopes"`
 	CreatedAt  time.Time  `json:"created_at"`
@@ -42,7 +43,7 @@ type tokenResponse struct {
 
 func toTokenResp(t *domain.APIToken) tokenResponse {
 	return tokenResponse{
-		ID: t.ID, Name: t.Name, Prefix: t.Prefix, Scopes: t.Scopes,
+		ID: t.ID, Name: t.Name, TeamID: t.TeamID, Prefix: t.Prefix, Scopes: t.Scopes,
 		CreatedAt: t.CreatedAt, LastUsedAt: t.LastUsedAt,
 		ExpiresAt: t.ExpiresAt, RevokedAt: t.RevokedAt,
 	}
@@ -89,7 +90,7 @@ func (h *APITokenHandler) Create(c *gin.Context) {
 	}
 	s, _ := sessionFromCtx(c)
 	created, err := h.uc.Create(c.Request.Context(), userActor(c),
-		s.UserID, req.Name, req.Scopes, req.ExpiresAt)
+		s.UserID, s.CurrentTeamID, req.Name, req.Scopes, req.ExpiresAt)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

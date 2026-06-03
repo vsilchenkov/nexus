@@ -37,7 +37,7 @@
 | Сервис | Назначение | Порты |
 |---|---|---|
 | `receiver` | Receiver Service | `8080` |
-| `sender` | Sender Service | `9090` (gRPC) |
+| `sender` | Sender Service | `9190` (gRPC) |
 | `web` | Web UI + API | `8000` |
 | `postgres` | Хранилище конфига (источник правды) | `5432` |
 | `redis` | Кеш конфига, сессии, rate-limit, circuit-breaker | `6379` |

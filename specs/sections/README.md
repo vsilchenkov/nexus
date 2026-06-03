@@ -23,6 +23,19 @@
 | 15 | [15-acceptance.md](15-acceptance.md) | Критерии приёмки |
 | 16 | [16-out-of-scope.md](16-out-of-scope.md) | Out of scope в v1 / планы на v2 |
 | 17 | [17-patterns.md](17-patterns.md) | Паттерны разработки (Clean Architecture, фронтенд) |
+| 18 | [18-multi-tenancy.md](18-multi-tenancy.md) | Multi-tenancy v2 — команды, изоляция, CH-БД per team, перенос узлов |
+| 19 | [19-ch-templates.md](19-ch-templates.md) | Шаблоны запросов ClickHouse — каталог DDL, CODEC/индексы/TTL, авто-создание таблицы узла |
+| 20 | [20-notifications.md](20-notifications.md) | Уведомления операторам в Telegram — cron-расписание, ошибки узлов, тестовая отправка |
+| 21 | [21-ui-redesign.md](21-ui-redesign.md) | Редизайн UI под эталон (дизайн-токены, UI-kit, app-shell) + HTTP-API метрик панели (Prometheus + ClickHouse) |
+| 22 | [22-logging-controls-cards.md](22-logging-controls-cards.md) | Контроль логирования узла (тумблер, обрезка тел), раскладка карточками Overview, перевод Telegram-алертов на Prometheus |
+| 23 | [23-allowed-hosts-catalog.md](23-allowed-hosts-catalog.md) | Каталог разрешённых хостов (SSRF) — общий справочник exact/wildcard/regex, привязка к узлам, preview, denорм-снимок |
+| 24 | [24-headers-catalog.md](24-headers-catalog.md) | Справочник HTTP-заголовков — combobox с автодополнением и автосозданием, usage_count on-read |
+| 25 | [25-topbar-swagger.md](25-topbar-swagger.md) | Swagger в шапке — два дока (Receiver + Web), popover, раздача обоих Web-бинарём |
+| 26 | [26-roles-access-control.md](26-roles-access-control.md) | RBAC — три роли (Admin/Manager/Viewer), иерархия рангов, матрица доступа, self-service смена своего пароля |
+| 27 | [27-rabbitmq-async.md](27-rabbitmq-async.md) | Тип узла RabbitMQAsync — Puller-воркер RabbitMQ→Kafka, поля `rmq_*`/`pull_*`, runtime-`degraded`, `POST /api/nodes/test-rmq`, метрики, UI, сценарные тесты |
+| 28 | [28-online-metrics.md](28-online-metrics.md) | Онлайн-метрики и UX — публичный адрес приложения, онлайн-обновление метрик, период просмотра (1h..30d+календарь), маскирование данных авторизации, понятные ошибки валидации, фильтр RabbitMQAsync, багфиксы стенда (CH-таблица, резолв async) |
+| 29 | [29-node-comment.md](29-node-comment.md) | Комментарий узла — текстовое описание для команды (поле `comment`, форма/обзор узла), UI-метаданные вне маршрутизации |
+| 30 | [30-logging-panic-recovery.md](30-logging-panic-recovery.md) | Логирование, обработка паник и идентификация запросов — `safego.Recover` во всех горутинах, кастомный gin-recovery (500 + лог + Sentry), сквозной `request_id` (UUID v4, `X-Request-Id`) в логах/Sentry, версия приложения в футере SPA (`GET /api/version`), bump логгера до v1.7.9 (`WithContext`) |
 
 ## Как пользоваться
 

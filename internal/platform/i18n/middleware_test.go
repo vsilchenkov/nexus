@@ -34,7 +34,6 @@ func TestGinMiddleware_SetsLangFromHeader(t *testing.T) {
 		{"empty falls back", "", DefaultLang},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
 			req := httptest.NewRequest("GET", "/", nil)

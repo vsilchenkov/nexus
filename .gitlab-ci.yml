@@ -15,7 +15,7 @@
 # Документация GitLab CI variables: https://docs.gitlab.com/ee/ci/variables/
 
 variables:
-  GO_VERSION: "1.26.3"
+  GO_VERSION: "1.26.4"
   NODE_VERSION: "20"
   # Локальный GOPATH/GOCACHE/GOMODCACHE — кешируется между jobs.
   GOPATH: "$CI_PROJECT_DIR/.cache/go"
@@ -64,7 +64,12 @@ stages:
     policy: pull-push
 
 .go-base:
-  image: golang:${GO_VERSION}
+  image:
+    name: golang:${GO_VERSION}
+    # Fallback: при сетевом сбое к Docker Hub (TLS handshake timeout) берём
+    # локально закэшированный образ вместо падения job'а. Требует на раннере
+    # allowed_pull_policies = ["always", "if-not-present"] (config.toml).
+    pull_policy: [always, if-not-present]
   <<: *go-cache
   before_script:
     - go env -w GOPATH=$GOPATH GOCACHE=$GOCACHE GOMODCACHE=$GOMODCACHE
@@ -97,7 +102,7 @@ go-test:
     - 'echo "===== go vet ./... ====="'
     - go vet ./...
     - 'echo "===== installing gotestsum (для JUnit-отчёта в GitLab Tests tab) ====="'
-    - go install gotest.tools/gotestsum@latest
+    - go install gotest.tools/gotestsum@v1.13.0
     - 'echo "===== gotestsum -- -race -short -coverprofile ./... ====="'
     # gotestsum пробрасывает exit code go test'а, поэтому pipeline остаётся
     # красным при любом FAIL. --format pkgname-and-test-fails — лаконичный
@@ -129,7 +134,9 @@ go-test:
 
 go-lint:
   stage: lint
-  image: golangci/golangci-lint:v2.12-alpine
+  image:
+    name: golangci/golangci-lint:v2.12-alpine
+    pull_policy: [always, if-not-present]
   <<: *go-cache
   rules:
     - *skip-if-profiled-rule
@@ -150,8 +157,12 @@ swagger-drift:
   script:
     - 'echo "===== installing swag CLI ====="'
     - go install github.com/swaggo/swag/cmd/swag@v1.16.6
-    - 'echo "===== swag init -g cmd/web/main.go -o docs/web ====="'
-    - $GOPATH/bin/swag init -g cmd/web/main.go -o docs/web --parseDependency --parseDepth 2 --quiet
+    # Генерируем ОБА дока с теми же флагами, что цель `swagger` в Makefile (§25):
+    # web (instance swagger) и receiver (instance receiver). --exclude изолирует
+    # пакеты, иначе web-док подхватил бы /v1-маршруты Receiver.
+    - 'echo "===== swag init (web + receiver) ====="'
+    - $GOPATH/bin/swag init -g cmd/web/main.go -o docs/web --exclude cmd/receiver,internal/receiver --parseDependency --parseDepth 2 --quiet
+    - $GOPATH/bin/swag init -g cmd/receiver/main.go -o docs/receiver --instanceName receiver --exclude cmd/web,internal/web --parseDependency --parseDepth 2 --quiet
     - 'echo "===== git diff docs/ (должно быть пусто) ====="'
     - |
       if ! git diff --quiet docs/; then
@@ -179,7 +190,9 @@ go-build:
 
 ui-build:
   stage: build
-  image: node:${NODE_VERSION}
+  image:
+    name: node:${NODE_VERSION}
+    pull_policy: [always, if-not-present]
   cache:
     key:
       files:
@@ -222,7 +235,9 @@ ui-build:
 
 integration:
   stage: integration
-  image: golang:${GO_VERSION}
+  image:
+    name: golang:${GO_VERSION}
+    pull_policy: [always, if-not-present]
   <<: *go-cache
   # Services-секцию активируйте если runner — docker-executor:
   # services:
@@ -233,7 +248,7 @@ integration:
   #   DOCKER_TLS_CERTDIR: ""
   #   TESTCONTAINERS_HOST_OVERRIDE: "docker"
   #   TESTCONTAINERS_RYUK_DISABLED: "true"
-  timeout: 25 minutes
+  timeout: 35 minutes
   rules:
     - if: $RUN_PROFILE == "loadtest-only"
       when: never
@@ -246,7 +261,7 @@ integration:
   before_script:
     - go env -w GOPATH=$GOPATH GOCACHE=$GOCACHE GOMODCACHE=$GOMODCACHE
     - go mod download
-    - go install gotest.tools/gotestsum@latest
+    - go install gotest.tools/gotestsum@v1.13.0
     # NB: docker pre-pull убран. golang:${GO_VERSION} (debian) идёт без
     # docker CLI — testcontainers-go ходит к daemon'у напрямую через
     # docker.sock, а `docker pull` в before_script писал в лог
@@ -256,15 +271,20 @@ integration:
     - 'echo "===== integration test env ====="'
     - go version
     - 'echo "DOCKER_HOST = $DOCKER_HOST"'
-    - 'echo "===== gotestsum -tags=integration -timeout 20m -count=1 ./tests/integration/... ====="'
+    - 'echo "===== gotestsum -tags=integration -timeout 30m -count=1 ./tests/integration/... ====="'
     # JUnit-отчёт пишем в junit-integration.xml — отдельный файл от unit-тестов,
     # чтобы в GitLab Tests tab были две независимые вкладки и было видно, в
     # каком слое (unit vs integration) сломалось.
+    #
+    # --format standard-verbose: каждый тест стримит `=== RUN ...` сразу при
+    # старте (а не по завершении пакета). Без этого долгий прогон выглядит как
+    # зависание: testcontainers тянет образы PG/Redis/Kafka/ClickHouse и ждёт
+    # готовности CH до 180с на контейнер — несколько минут полной тишины.
     - $GOPATH/bin/gotestsum
         --junitfile junit-integration.xml
-        --format pkgname-and-test-fails
+        --format standard-verbose
         --
-        -tags=integration -timeout 20m -count=1 ./tests/integration/...
+        -tags=integration -timeout 30m -count=1 ./tests/integration/...
     - 'echo "===== integration done ====="'
   artifacts:
     when: always
@@ -274,10 +294,17 @@ integration:
       junit: junit-integration.xml
     expire_in: 1 month
 
-# ----------- LOADTEST (manual) ----------------------------------------------
-# Нагрузочный сценарий (§10.2 ТЗ) — поднимает изолированный compose-стек,
-# гонит cmd/loadtest и снимает стек. Запускается вручную из UI GitLab
-# (Pipelines → Run pipeline → loadtest или Job → Play на ручной job).
+# ----------- LOADTEST (единый job, §10.2) -----------------------------------
+# Один job `loadtest`: поднимает изолированный compose-стек (включая rabbitmq),
+# за ОДИН прогон гонит полный микс трафика (sync + async + dynamic-url +
+# auth-token + auth-basic + RabbitMQAsync), сверяет no-loss по ClickHouse,
+# снимает стек и генерит per-mode JUnit. Раньше было 5 отдельных профилей —
+# объединены в этот один job, чтобы не плодить кнопки в pipeline; разные
+# сценарии теперь задаются переопределением переменных в «Run pipeline».
+#
+# Когда запускается: авто на push в master (allow_failure — early-warning, не
+# gate) и под RUN_PROFILE=loadtest-only; manual (кнопка ▶) на dev. На
+# feature-ветках стаб не плодим — там только RUN_PROFILE=loadtest-only.
 #
 # Окружение собирается каждый запуск с нуля: COMPOSE_PROJECT_NAME содержит
 # pipeline+job id, поэтому сети/volumes уникальны, и параллельные запуски
@@ -289,38 +316,36 @@ integration:
 #     им же admin'у в свежей БД через `web --set-admin-password`, и им же
 #     loadtest логинится в Web.
 #
-# Опциональные переменные (можно переопределить при ручном запуске через
-# UI «Run pipeline» → Variables):
-#   - LOADTEST_TARGET_RPS  (default 300 — CI smoke-mode; для полного bench
-#                          §10.2 ТЗ передавай 500 через UI)
-#   - LOADTEST_DURATION    (default 2m)
-#   - LOADTEST_NODES       (default 50)
+# Переопределяемые через UI «Run pipeline» → Variables: LOADTEST_TARGET_RPS /
+# _DURATION / _NODES / _RATIO_ASYNC / _RATIO_DYNAMIC_URL / _RATIO_AUTH_TOKEN /
+# _RATIO_AUTH_BASIC / _RATIO_RMQ / _CH_NOLOSS (0|1) / _WITH_RMQ (0|1) / _P95_MS.
+# Например, capacity-bench: LOADTEST_TARGET_RPS=600, LOADTEST_P95_MS=400.
 
 loadtest:
   stage: integration
   # docker:27-cli: client API v1.45 для docker daemon v25+. На v24-cli
   # `docker cp/rm` падали с «client version 1.43 is too old, minimum
   # supported API is 1.44» — отчёт report.json не копировался из контейнера.
-  image: docker:27-cli
+  image:
+    name: docker:27-cli
+    pull_policy: [always, if-not-present]
+  timeout: 60 minutes
   rules:
     - if: $RUN_PROFILE == "integration-only"
       when: never
-    # При RUN_PROFILE=loadtest-only — стартует без ручного клика,
-    # как только pipeline создан (порядок в TESTING.md).
+    # Под RUN_PROFILE=loadtest-only — стартует без ручного клика.
     - if: $RUN_PROFILE == "loadtest-only"
       when: on_success
       allow_failure: true
-    # Auto-run на push в master: smoke-test инфраструктуры идёт вместе со
-    # всем pipeline. allow_failure: true — loadtest не блокирует master при
-    # временном недотягивании RPS (он зависит от загрузки runner-host'а);
-    # это early-warning, не gate. Полный capacity-bench всё равно гонять
-    # отдельно с RUN_PROFILE=loadtest-only и переопределёнными переменными.
+    # Auto-run на push в master: smoke инфраструктуры. allow_failure — не gate
+    # (RPS зависит от загрузки runner-host'а); полный bench гонять отдельно.
     - if: $CI_COMMIT_BRANCH == "master"
       when: on_success
       allow_failure: true
-    - when: manual
+    # Ручной запуск (кнопка ▶) на dev.
+    - if: $CI_COMMIT_BRANCH == "dev"
+      when: manual
       allow_failure: true
-  timeout: 60 minutes
   variables:
     COMPOSE_PROJECT_NAME: "loadtest-${CI_PIPELINE_ID}-${CI_JOB_ID}"
     # COMPOSE_FILE поддерживает несколько файлов через ":" (Linux). Второй
@@ -328,7 +353,7 @@ loadtest:
     # иначе CI пытается забиндить 5432/6379/8123/... — конфликт с зомби-контейнерами
     # или другими pipelines на runner-host.
     COMPOSE_FILE: "deploy/docker-compose.yml:deploy/docker-compose.loadtest.yml"
-    # ВАЖНО: это smoke-test инфраструктуры в CI, не полноценный capacity-тест.
+    # ВАЖНО: дефолты — smoke-test инфраструктуры в CI, не полноценный capacity-тест.
     # На self-hosted runner'е (общий docker daemon, параллельные builds, всё
     # на одной машине) реалистично 300-400 RPS — на 500 RPS pipeline валился
     # по `achieved < 95% of target` (см. §10.2 ТЗ acceptance criteria).
@@ -337,6 +362,20 @@ loadtest:
     LOADTEST_TARGET_RPS: "300"
     LOADTEST_DURATION: "2m"
     LOADTEST_NODES: "50"
+    # Полный микс трафика §10.2 (доли — независимые корзины, сумма ≤ 1; rmq
+    # вырезается отдельно, http-остаток добивается plain sync). Здесь
+    # упражняются все 6 режимов за один прогон.
+    LOADTEST_RATIO_ASYNC: "0.25"
+    LOADTEST_RATIO_DYNAMIC_URL: "0.2"
+    LOADTEST_RATIO_AUTH_TOKEN: "0.2"
+    LOADTEST_RATIO_AUTH_BASIC: "0.15"
+    LOADTEST_RATIO_RMQ: "0.1"
+    # no-loss async/rmq по ClickHouse (--ch-addr clickhouse:9000).
+    LOADTEST_CH_NOLOSS: "1"
+    # Поднимаем rabbitmq (profile stand) и передаём --rmq-url/--ratio-rmq.
+    LOADTEST_WITH_RMQ: "1"
+    # Порог p95 (мс) для acceptance- и per-mode testcase'ов JUnit.
+    LOADTEST_P95_MS: "200"
   before_script:
     # jq нужен в after_script для генерации JUnit-отчёта из report.json.
     - apk add --no-cache docker-cli-compose openssl jq
@@ -370,6 +409,8 @@ loadtest:
       SENTRY_DSN=
       SENTRY_ENVIRONMENT=loadtest
       ENCRYPTION_KEY=$(openssl rand -base64 32)
+      RMQ_USER=nexus
+      RMQ_PASSWORD=loadtest_local_rmq
       EOF
     - mkdir -p loadtest-report
   script:
@@ -389,9 +430,17 @@ loadtest:
     # снимаем `docker compose logs` в файл артефакта. На случай если что-то
     # пойдёт не так в [2/4] или [3/4] — этот файл будет содержать стартовую
     # часть логов, а after_script допишет финальную.
-    - echo "===== [1/4] docker compose up -d --build --wait postgres redis clickhouse kafka receiver sender web ====="
+    - echo "===== [1/4] docker compose up -d --build --wait (services depend on profile) ====="
     - |
-      docker compose up -d --build --wait postgres redis clickhouse kafka receiver sender web
+      # rabbitmq живёт в compose-профиле stand — поднимаем его только для RMQ-профиля.
+      WAIT_SVCS="postgres redis clickhouse kafka receiver sender web"
+      PROFILE_ARGS=""
+      if [ "$LOADTEST_WITH_RMQ" = "1" ]; then
+        WAIT_SVCS="$WAIT_SVCS rabbitmq"
+        PROFILE_ARGS="--profile stand"
+      fi
+      echo "--- wait services: $WAIT_SVCS (extra profiles: ${PROFILE_ARGS:-none}) ---"
+      docker compose $PROFILE_ARGS up -d --build --wait $WAIT_SVCS
       rc=$?
       echo "--- compose up exit code = $rc ---"
       echo "--- compose ps -a (включая упавшие) ---"
@@ -402,8 +451,8 @@ loadtest:
       docker compose logs --no-color --timestamps > loadtest-report/compose-logs-after-up.txt 2>&1 || true
       ls -lh loadtest-report/compose-logs-after-up.txt
       if [ "$rc" -ne 0 ]; then
-        echo "===== compose up FAILED — печатаю хвост 300 строк лога каждого сервиса ====="
-        for svc in postgres redis clickhouse kafka receiver sender web; do
+        echo "===== compose up FAILED — печатаю хвост 60 строк лога каждого сервиса ====="
+        for svc in $WAIT_SVCS; do
           echo "----- logs: $svc (tail 60) -----"
           docker compose logs --no-color --tail=60 "$svc" 2>&1 || true
         done
@@ -425,15 +474,15 @@ loadtest:
         --set-admin-password "$LOADTEST_ADMIN_PASSWORD"
     - echo "--- admin password установлен; web-container, что мы вызывали, удалён (--rm) ---"
     # ----- Шаг 2.5: ClickHouse таблица для логов loadtest-узлов -----
-    # cmd/loadtest создаёт 50 узлов с clickhouse_table=vika_logs.loadtest, но сам
+    # cmd/loadtest создаёт 50 узлов с clickhouse_table=nexus_default.loadtest, но сам
     # таблицу не создаёт. Без неё sender'овский chlog.Writer фейлится на каждом
-    # batch insert ("Table vika_logs.loadtest does not exist") → error rate 100%.
+    # batch insert ("Table nexus_default.loadtest does not exist") → error rate 100%.
     # Схема — §4.3 ТЗ (specs/sections/04-sender.md), единая для всех узлов.
-    - 'echo "===== [2.5/4] создаём CH-таблицу vika_logs.loadtest ====="'
+    - 'echo "===== [2.5/4] создаём CH-таблицу nexus_default.loadtest ====="'
     - |
       docker compose exec -T clickhouse clickhouse-client --multiquery --query "
-      CREATE DATABASE IF NOT EXISTS vika_logs;
-      CREATE TABLE IF NOT EXISTS vika_logs.loadtest (
+      CREATE DATABASE IF NOT EXISTS nexus_default;
+      CREATE TABLE IF NOT EXISTS nexus_default.loadtest (
         ID String,
         type String,
         url String,
@@ -460,8 +509,8 @@ loadtest:
       ORDER BY (date_create, date_request, method)
       SETTINGS index_granularity = 8192;
       "
-    - 'echo "--- проверка: SHOW TABLES FROM vika_logs ---"'
-    - docker compose exec -T clickhouse clickhouse-client --query "SHOW TABLES FROM vika_logs"
+    - 'echo "--- проверка: SHOW TABLES FROM nexus_default ---"'
+    - docker compose exec -T clickhouse clickhouse-client --query "SHOW TABLES FROM nexus_default"
     # ----- Шаг 3: запуск нагрузочного сценария -----
     - echo "===== [3/4] loadtest scenario ====="
     - echo "  target_rps = $LOADTEST_TARGET_RPS"
@@ -477,52 +526,97 @@ loadtest:
     # запоминаем в LOADTEST_RC и пробрасываем в самом конце.
     - |
       set +e
-      # --use-aliases КРИТИЧНО: иначе `docker compose run --name X loadtest`
-      # в v2.29.1 не даёт one-off контейнеру network-alias `loadtest`, и
-      # Sender'у некуда стучаться при target_url=http://loadtest:9999.
-      # Прошлый прогон: `getent loadtest → not found`, receiver direct-probe
-      # отдавал 502 Bad Gateway (sender StatusCode=0 = не достучался).
+      # Два НЕЗАВИСИМЫХ требования к сетевой/маршрутной части loadtest'а — оба
+      # обязательны одновременно (исторически их путали друг с другом):
+      #  1. --use-aliases — иначе `docker compose run --name X loadtest` не даёт
+      #     one-off контейнеру network-alias `loadtest`, и Sender не дозвонится
+      #     до mock'а (target_url=http://loadtest:9999) → StatusCode 0 → 502.
+      #  2. --team-slug default — узлы создаются с path=loadtest/node-… (со
+      #     слэшем) в команде default. Receiver-URL — /v1/request/{team_slug}/
+      #     {node_path}; без слога первый сегмент (loadtest) трактуется как
+      #     team_slug → узел не найден → 404 на КАЖДОМ запросе (error rate 100%,
+      #     p50≈1.6мс). Фикс — в cmd/loadtest doRequest (флаг --team-slug).
+      # NB: пост-прогонная diagnostic ниже НЕ проверяет связность с mock'ом —
+      # mock живёт только пока крутится этот `run` (процесс самого loadtest'а),
+      # к моменту diagnostic он уже мёртв (см. подробности там же).
+      #
+      # Профиль-зависимые флаги собираем в LT_ARGS (переменные не переживают
+      # между отдельными `-` шагами — поэтому здесь, в одном блоке с run):
+      #  - no-loss: --ch-addr clickhouse:9000 (сверка числа строк CH с async+rmq);
+      #  - rmq: --ratio-rmq + --rmq-url к compose-сервису rabbitmq (creds из .env).
+      LT_ARGS=""
+      if [ "$LOADTEST_CH_NOLOSS" = "1" ]; then
+        LT_ARGS="$LT_ARGS --ch-addr clickhouse:9000 --ch-user default --ch-flush-grace 15s"
+      fi
+      if [ "$LOADTEST_WITH_RMQ" = "1" ]; then
+        LT_ARGS="$LT_ARGS --ratio-rmq $LOADTEST_RATIO_RMQ --rmq-url amqp://nexus:loadtest_local_rmq@rabbitmq:5672/"
+      fi
+      echo "  ratios     = async:$LOADTEST_RATIO_ASYNC dyn-url:$LOADTEST_RATIO_DYNAMIC_URL token:$LOADTEST_RATIO_AUTH_TOKEN basic:$LOADTEST_RATIO_AUTH_BASIC rmq:$LOADTEST_RATIO_RMQ"
+      echo "  extra args = $LT_ARGS"
       docker compose --profile loadtest run \
         --use-aliases \
         --name "${COMPOSE_PROJECT_NAME}-loadtest-run" \
         loadtest \
           --web http://web:8000 \
           --receiver http://receiver:8080 \
+          --team-slug default \
           --mock-bind 0.0.0.0:9999 \
           --mock-public-url http://loadtest:9999 \
           --admin-password "$LOADTEST_ADMIN_PASSWORD" \
           --target-rps "$LOADTEST_TARGET_RPS" \
           --duration "$LOADTEST_DURATION" \
           --nodes "$LOADTEST_NODES" \
+          --ratio-async "$LOADTEST_RATIO_ASYNC" \
+          --ratio-dynamic-url "$LOADTEST_RATIO_DYNAMIC_URL" \
+          --ratio-auth-token "$LOADTEST_RATIO_AUTH_TOKEN" \
+          --ratio-auth-basic "$LOADTEST_RATIO_AUTH_BASIC" \
           --cleanup=false \
-          --report /tmp/report.json
+          --report /tmp/report.json \
+          $LT_ARGS
       LOADTEST_RC=$?
       echo "--- loadtest exit code = $LOADTEST_RC ---"
 
-      # ----- Шаг 4: извлечь отчёт из контейнера -----
-      echo "===== [4/4] копируем report.json из loadtest-контейнера ====="
+      # ----- Шаг 4: извлечь отчёт + логи из контейнера -----
+      echo "===== [4/4] копируем report.json + логи из loadtest-контейнера ====="
       docker cp "${COMPOSE_PROJECT_NAME}-loadtest-run":/tmp/report.json loadtest-report/report.json || true
+      # Логи самого run-контейнера (mock startup, "created N nodes", сам отчёт)
+      # снимаем ДО docker rm — в `docker compose logs` его нет, после rm теряются.
+      docker logs "${COMPOSE_PROJECT_NAME}-loadtest-run" > loadtest-report/loadtest-container.txt 2>&1 || true
       echo "--- размер артефактов ---"
       ls -lh loadtest-report/
       docker rm "${COMPOSE_PROJECT_NAME}-loadtest-run" || true
       echo "===== loadtest done ====="
 
-      # ----- Диагностика 100%-error: что в PG, что отвечает receiver -----
-      echo "===== diagnostic: sender DNS + connectivity ====="
-      docker compose exec -T sender getent hosts loadtest 2>&1 || echo "(getent loadtest → not found)"
+      # ----- Диагностика: МАРШРУТИЗАЦИЯ Receiver'а (НЕ связность с mock'ом) -----
+      # ВАЖНО: mock жил только во время `run` и к этому моменту уже мёртв,
+      # поэтому upstream-связность здесь проверить НЕЛЬЗЯ, и 502 на receiver-
+      # probe — ОЖИДАЕМО (sender не дозвонится до несуществующего mock'а).
+      # Полезен именно код СТАТУСА маршрутизации:
+      #   • 404/403/401 — баг в lookup/auth узла (например, неверный team_slug);
+      #   • 502        — маршрут найден, упал только upstream → НОРМА для probe.
+      # Реальные in-test ошибки смотри в loadtest-report/{report.json,
+      # loadtest-container.txt,compose-logs.txt}, а не по коду этого probe.
+      echo "===== diagnostic: sender DNS (long-lived сервисы) ====="
       docker compose exec -T sender getent hosts web 2>&1 || echo "(getent web → not found)"
+      # `loadtest` тут заведомо отсутствует (one-off контейнер удалён) — не баг,
+      # поэтому его и не пробуем: это лишь сбивало с толку в прошлых прогонах.
 
       echo "===== diagnostic: ноды в PostgreSQL ====="
       docker compose exec -T postgres psql -U nexus -d nexus -c "SELECT COUNT(*) AS total FROM nodes;" 2>&1
       docker compose exec -T postgres psql -U nexus -d nexus -c "SELECT path, target_url FROM nodes ORDER BY id DESC LIMIT 3;" 2>&1
 
-      echo "===== diagnostic: receiver direct response ====="
+      echo "===== diagnostic: receiver routing (со слогом vs legacy) ====="
       LOADTEST_PATH=$(docker compose exec -T postgres psql -U nexus -d nexus -t -c "SELECT path FROM nodes WHERE path LIKE 'loadtest/%' ORDER BY id DESC LIMIT 1;" 2>/dev/null | tr -d ' \n\r')
       echo "loadtest node path: '$LOADTEST_PATH'"
       if [ -n "$LOADTEST_PATH" ]; then
+        echo "--- correct: /v1/request/default/$LOADTEST_PATH (ждём НЕ 404; 502=mock мёртв, маршрут ОК) ---"
         docker compose exec -T sender wget -S -O- --post-data='diag' \
           --header='Content-Type: application/octet-stream' \
-          "http://receiver:8080/v1/request/$LOADTEST_PATH" 2>&1 | head -40
+          "http://receiver:8080/v1/request/default/$LOADTEST_PATH" 2>&1 | head -30
+        echo "--- legacy: /v1/request/$LOADTEST_PATH (демонстрирует 404 от team_slug-парсинга) ---"
+        docker compose exec -T sender wget -S -O- --post-data='diag' \
+          --header='Content-Type: application/octet-stream' \
+          "http://receiver:8080/v1/request/$LOADTEST_PATH" 2>&1 | head -15
       else
         echo "(loadtest_path пуст — нет нод в PG с префиксом loadtest/)"
       fi
@@ -558,57 +652,66 @@ loadtest:
     - tail -n 200 loadtest-report/compose-logs.txt || true
     - 'echo "===== /compose-logs.txt ====="'
     # ----- JUnit-отчёт для GitLab Tests tab -----
-    # 3 testcase из report.json — те же пороги, что в report.passed() в
-    # cmd/loadtest/main.go (acceptance criteria §10.2 ТЗ). Если report.json не
-    # родился (compose up упал на [1/4], или loadtest container не запустился) —
+    # Расширенный набор testcase'ов из report.json (§10.2):
+    #   - 3 общих acceptance-кейса (achieved_rps / p95 / error_rate);
+    #   - no_message_loss_async_rmq (если гонялась CH-сверка, .no_loss_checked);
+    #   - per-mode p95 и error_rate на каждый режим (.modes из cmd/loadtest).
+    # Suite назван по $CI_JOB_NAME — каждый профиль (loadtest/-mixed/-async/...)
+    # отдельной вкладкой. Пороги совпадают с report.passed() в cmd/loadtest.
+    # Если report.json не родился (compose up упал, loadtest не стартовал) —
     # один failure-кейс «infra unavailable» с указанием на compose-logs.txt.
-    # Файл попадает в artifacts.paths через loadtest-report/, а в
-    # artifacts.reports.junit — для рендера во вкладке Tests.
+    # jq печатает строки "name<TAB>ok(0|1)<TAB>msg", bash собирает XML и считает.
     - 'echo "===== генерируем loadtest-report/junit.xml ====="'
     - |
       REPORT=loadtest-report/report.json
       JUNIT=loadtest-report/junit.xml
+      SUITE="${CI_JOB_NAME:-loadtest}"
       if [ ! -s "$REPORT" ]; then
         cat > "$JUNIT" <<EOF
       <?xml version="1.0" encoding="UTF-8"?>
-      <testsuites name="loadtest" tests="1" failures="1">
+      <testsuites name="${SUITE}" tests="1" failures="1">
         <testsuite name="infra" tests="1" failures="1">
-          <testcase classname="loadtest.infra" name="report_produced">
+          <testcase classname="loadtest.${SUITE}" name="report_produced">
             <failure message="report.json not found">loadtest не успел/не смог записать report.json — см. loadtest-report/compose-logs.txt и stdout job'а</failure>
           </testcase>
         </testsuite>
       </testsuites>
       EOF
       else
-        ACHIEVED=$(jq -r '.achieved_rps' "$REPORT")
-        P95=$(jq -r '.p95_ms' "$REPORT")
-        ERATE=$(jq -r '.error_rate' "$REPORT")
-        SENT=$(jq -r '.sent' "$REPORT")
-        ERRORS=$(jq -r '.errors' "$REPORT")
         TARGET="${LOADTEST_TARGET_RPS:-300}"
-        MIN_RPS=$(awk -v t="$TARGET" 'BEGIN{printf "%.1f", t*0.95}')
-        # awk возвращает 1 если условие истинно, 0 если ложно — bash-сравнение через -eq.
-        RPS_FAIL=$(awk -v a="$ACHIEVED" -v m="$MIN_RPS" 'BEGIN{print (a<m)?1:0}')
-        P95_FAIL=$(awk -v p="$P95" 'BEGIN{print (p>200)?1:0}')
-        ERR_FAIL=$(awk -v e="$ERATE" 'BEGIN{print (e>=0.001)?1:0}')
-        FAILS=$((RPS_FAIL + P95_FAIL + ERR_FAIL))
-        # heredoc'и для failure-блоков — пустые если PASS, иначе <failure>...</failure>.
-        RPS_BODY=""
-        P95_BODY=""
-        ERR_BODY=""
-        [ "$RPS_FAIL" = "1" ] && RPS_BODY="<failure message=\"achieved_rps ${ACHIEVED} &lt; 95% of target ${TARGET} (min ${MIN_RPS})\">acceptance §10.2: achieved RPS должен быть не ниже 95% от target</failure>"
-        [ "$P95_FAIL" = "1" ] && P95_BODY="<failure message=\"p95 ${P95}ms &gt; 200ms\">acceptance §10.2: p95 latency не должна превышать 200ms</failure>"
-        [ "$ERR_FAIL" = "1" ] && ERR_BODY="<failure message=\"error_rate ${ERATE} &gt;= 0.001 (${ERRORS}/${SENT})\">acceptance §10.2: error rate должна быть строго ниже 0.1%</failure>"
-        cat > "$JUNIT" <<EOF
-      <?xml version="1.0" encoding="UTF-8"?>
-      <testsuites name="loadtest" tests="3" failures="${FAILS}">
-        <testsuite name="acceptance" tests="3" failures="${FAILS}">
-          <testcase classname="loadtest.acceptance" name="achieved_rps_at_least_95pct_of_target">${RPS_BODY}<system-out>achieved=${ACHIEVED} target=${TARGET} min=${MIN_RPS}</system-out></testcase>
-          <testcase classname="loadtest.acceptance" name="p95_latency_under_200ms">${P95_BODY}<system-out>p95=${P95}ms</system-out></testcase>
-          <testcase classname="loadtest.acceptance" name="error_rate_under_0.1pct">${ERR_BODY}<system-out>error_rate=${ERATE} (${ERRORS}/${SENT})</system-out></testcase>
-        </testsuite>
-      </testsuites>
-      EOF
+        P95MAX="${LOADTEST_P95_MS:-200}"
+        jq -r --argjson target "$TARGET" --argjson p95max "$P95MAX" '
+          def okf(c): if c then "1" else "0" end;
+          ( "achieved_rps_at_least_95pct_of_target\t" + okf(.achieved_rps >= ($target*0.95)) + "\tachieved=\(.achieved_rps) min=\($target*0.95)" ),
+          ( "p95_latency_under_\($p95max)ms\t" + okf(.p95_ms <= $p95max) + "\tp95=\(.p95_ms)ms" ),
+          ( "error_rate_under_0.1pct\t" + okf(.error_rate < 0.001) + "\terror_rate=\(.error_rate) errors=\(.errors)/\(.sent)" ),
+          ( if .no_loss_checked then ( "no_message_loss_async_rmq\t" + okf(.no_loss) + "\tch_rows=\(.ch_rows) expected_min=\(.no_loss_expected)" ) else empty end ),
+          ( (.modes // {}) | to_entries[] |
+              ( "p95_\(.key)_under_\($p95max)ms\t" + okf(.value.p95_ms <= $p95max) + "\tp95=\(.value.p95_ms)ms sent=\(.value.sent)" ),
+              ( "error_rate_\(.key)_under_0.1pct\t" + okf(.value.error_rate < 0.001) + "\terror_rate=\(.value.error_rate) errors=\(.value.errors)/\(.value.sent)" )
+          )
+        ' "$REPORT" > loadtest-report/cases.tsv
+        TESTS=0; FAILS=0; BODY=""
+        TAB=$(printf '\t')
+        while IFS="$TAB" read -r CASE_NAME CASE_OK CASE_MSG; do
+          [ -z "$CASE_NAME" ] && continue
+          TESTS=$((TESTS+1))
+          EMSG=$(printf '%s' "$CASE_MSG" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g')
+          if [ "$CASE_OK" = "1" ]; then
+            BODY="${BODY}    <testcase classname=\"loadtest.${SUITE}\" name=\"${CASE_NAME}\"><system-out>${EMSG}</system-out></testcase>\n"
+          else
+            FAILS=$((FAILS+1))
+            BODY="${BODY}    <testcase classname=\"loadtest.${SUITE}\" name=\"${CASE_NAME}\"><failure message=\"${EMSG}\">acceptance §10.2</failure></testcase>\n"
+          fi
+        done < loadtest-report/cases.tsv
+        {
+          echo '<?xml version="1.0" encoding="UTF-8"?>'
+          echo "<testsuites name=\"${SUITE}\" tests=\"${TESTS}\" failures=\"${FAILS}\">"
+          echo "  <testsuite name=\"${SUITE}\" tests=\"${TESTS}\" failures=\"${FAILS}\">"
+          printf "%b" "$BODY"
+          echo "  </testsuite>"
+          echo "</testsuites>"
+        } > "$JUNIT"
       fi
       echo "--- junit.xml (preview) ---"
       cat "$JUNIT"
@@ -672,7 +775,9 @@ govulncheck:
 # через `go list` → «Files: 0, Lines: 0» и артефакты не создаются.
 gosec:
   stage: security
-  image: golang:${GO_VERSION}-alpine
+  image:
+    name: golang:${GO_VERSION}-alpine
+    pull_policy: [always, if-not-present]
   <<: [*go-cache, *security-rules]
   allow_failure: true  # findings не блокируют — alerts only
   before_script:
@@ -711,6 +816,7 @@ trivy-fs:
   image:
     name: aquasec/trivy:0.55.0
     entrypoint: [""]
+    pull_policy: [always, if-not-present]
   <<: *security-rules
   allow_failure: true
   variables:
@@ -756,6 +862,7 @@ renovate:
   image:
     name: renovate/renovate:latest
     entrypoint: [""]
+    pull_policy: [always, if-not-present]
   rules:
     - *skip-if-profiled-rule
     - if: $CI_PIPELINE_SOURCE == "schedule"
@@ -799,10 +906,13 @@ renovate:
 
 release:
   stage: release
-  image: goreleaser/goreleaser:v2
+  image:
+    name: goreleaser/goreleaser:v2
+    pull_policy: [always, if-not-present]
   services:
     - name: docker:24-dind
       alias: docker
+      pull_policy: [always, if-not-present]
   variables:
     DOCKER_HOST: "tcp://docker:2375"
     DOCKER_TLS_CERTDIR: ""

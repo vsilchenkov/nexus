@@ -46,7 +46,11 @@ const nodeColumns = `
 	forward_headers, timeout_ms, retry_count, retry_backoff_ms,
 	clickhouse_table, clickhouse_retention_days, status, team_id,
 	log_request_body, log_response_body, log_headers,
-	created_at, updated_at`
+	logging_enabled, max_body_size_enabled, max_body_size,
+	created_at, updated_at, clickhouse_template_id,
+	rmq_host, rmq_port, rmq_vhost, rmq_user, rmq_password, rmq_queue, rmq_use_tls,
+	pull_interval_sec, pull_batch_size, pull_prefetch,
+	incoming_method, outgoing_method, comment`
 
 func (r *NodeRepoPg) Get(ctx context.Context, id string) (*domain.Node, error) {
 	row := r.db.QueryRow(ctx, `SELECT `+nodeColumns+` FROM nodes WHERE id = $1`, id)
@@ -115,6 +119,11 @@ func (r *NodeRepoPg) Create(ctx context.Context, n *domain.Node) error {
 	if err != nil {
 		return fmt.Errorf("encrypt incoming: %w", err)
 	}
+	encRMQ, err := r.cipher.Encrypt(n.RMQPassword)
+	if err != nil {
+		return fmt.Errorf("encrypt rmq: %w", err)
+	}
+	rmq := rmqArgs(n)
 
 	const q = `
 INSERT INTO nodes (
@@ -126,7 +135,12 @@ INSERT INTO nodes (
 	webhook_signature_header, webhook_signature_prefix,
 	forward_headers, timeout_ms, retry_count, retry_backoff_ms,
 	clickhouse_table, clickhouse_retention_days, status, team_id,
-	log_request_body, log_response_body, log_headers
+	log_request_body, log_response_body, log_headers,
+	logging_enabled, max_body_size_enabled, max_body_size,
+	clickhouse_template_id,
+	rmq_host, rmq_port, rmq_vhost, rmq_user, rmq_password, rmq_queue, rmq_use_tls,
+	pull_interval_sec, pull_batch_size, pull_prefetch,
+	incoming_method, outgoing_method, comment
 ) VALUES (
 	$1, $2,
 	$3, $4, $5, $6,
@@ -136,7 +150,12 @@ INSERT INTO nodes (
 	$14, $15,
 	$16, $17, $18, $19,
 	$20, $21, $22, $23,
-	$24, $25, $26
+	$24, $25, $26,
+	$27, $28, $29,
+	$30,
+	$31, $32, $33, $34, $35, $36, $37,
+	$38, $39, $40,
+	$41, $42, $43
 ) RETURNING id, created_at, updated_at`
 
 	err = r.db.QueryRow(ctx, q,
@@ -149,6 +168,11 @@ INSERT INTO nodes (
 		nullSafe(n.ForwardHeaders), n.TimeoutMs, n.RetryCount, n.RetryBackoffMs,
 		n.ClickHouseTable, n.ClickHouseRetentionDays, string(n.Status), n.TeamID,
 		n.LogRequestBody, n.LogResponseBody, n.LogHeaders,
+		n.LoggingEnabled, n.MaxBodySizeEnabled, n.MaxBodySize,
+		nullUUID(n.ClickHouseTemplateID),
+		rmq.host, rmq.port, rmq.vhost, rmq.user, encRMQ, rmq.queue, n.RMQUseTLS,
+		rmq.interval, rmq.batch, rmq.prefetch,
+		methodOrDefault(n.IncomingMethod), methodOrDefault(n.OutgoingMethod), n.Comment,
 	).Scan(&n.ID, &n.CreatedAt, &n.UpdatedAt)
 
 	if err != nil {
@@ -170,6 +194,11 @@ func (r *NodeRepoPg) Update(ctx context.Context, n *domain.Node) error {
 	if err != nil {
 		return fmt.Errorf("encrypt incoming: %w", err)
 	}
+	encRMQ, err := r.cipher.Encrypt(n.RMQPassword)
+	if err != nil {
+		return fmt.Errorf("encrypt rmq: %w", err)
+	}
+	rmq := rmqArgs(n)
 
 	const q = `
 UPDATE nodes SET
@@ -182,6 +211,12 @@ UPDATE nodes SET
 	forward_headers = $17, timeout_ms = $18, retry_count = $19, retry_backoff_ms = $20,
 	clickhouse_table = $21, clickhouse_retention_days = $22, status = $23, team_id = $24,
 	log_request_body = $25, log_response_body = $26, log_headers = $27,
+	logging_enabled = $28, max_body_size_enabled = $29, max_body_size = $30,
+	clickhouse_template_id = $31,
+	rmq_host = $32, rmq_port = $33, rmq_vhost = $34, rmq_user = $35,
+	rmq_password = $36, rmq_queue = $37, rmq_use_tls = $38,
+	pull_interval_sec = $39, pull_batch_size = $40, pull_prefetch = $41,
+	incoming_method = $42, outgoing_method = $43, comment = $44,
 	updated_at = now()
 WHERE id = $1
 RETURNING updated_at`
@@ -197,6 +232,11 @@ RETURNING updated_at`
 		nullSafe(n.ForwardHeaders), n.TimeoutMs, n.RetryCount, n.RetryBackoffMs,
 		n.ClickHouseTable, n.ClickHouseRetentionDays, string(n.Status), n.TeamID,
 		n.LogRequestBody, n.LogResponseBody, n.LogHeaders,
+		n.LoggingEnabled, n.MaxBodySizeEnabled, n.MaxBodySize,
+		nullUUID(n.ClickHouseTemplateID),
+		rmq.host, rmq.port, rmq.vhost, rmq.user, encRMQ, rmq.queue, n.RMQUseTLS,
+		rmq.interval, rmq.batch, rmq.prefetch,
+		methodOrDefault(n.IncomingMethod), methodOrDefault(n.OutgoingMethod), n.Comment,
 	).Scan(&n.UpdatedAt)
 
 	if err != nil {
@@ -223,6 +263,56 @@ func (r *NodeRepoPg) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// UpdateAllowedHostsSnapshot переписывает только колонку url_allowed_hosts
+// (денормализованный снимок паттернов из каталога, §23). Не трогает креды и
+// остальные поля — поэтому дешевле и безопаснее полного Update.
+func (r *NodeRepoPg) UpdateAllowedHostsSnapshot(ctx context.Context, nodeID string, patterns []string) error {
+	tag, err := r.db.Exec(ctx,
+		`UPDATE nodes SET url_allowed_hosts = $2, updated_at = now() WHERE id = $1`,
+		nodeID, nullSafe(patterns))
+	if err != nil {
+		return fmt.Errorf("update node allowed_hosts snapshot: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrNodeNotFound
+	}
+	return nil
+}
+
+// rmqValues — аргументы §27-полей для INSERT/UPDATE. Для не-pull узлов все
+// поля nil → SQL NULL (колонки nullable, chk_rmq_fields не применяется). Это
+// держит строки request/requestAsync чистыми, а не забитыми нулями.
+type rmqValues struct {
+	host, vhost, user, queue        any
+	port, interval, batch, prefetch any
+}
+
+// methodOrDefault страхует от пустого метода при прямой записи через репозиторий
+// (минуя usecase.SetDefaults): колонки incoming_method/outgoing_method —
+// NOT NULL с CHECK IN (...), пустая строка нарушила бы constraint. Пустое = POST.
+func methodOrDefault(m domain.HTTPMethod) string {
+	if m == "" {
+		return string(domain.HTTPMethodPOST)
+	}
+	return string(m)
+}
+
+func rmqArgs(n *domain.Node) rmqValues {
+	if !n.RootMethod.IsPull() {
+		return rmqValues{}
+	}
+	return rmqValues{
+		host:     n.RMQHost,
+		vhost:    n.RMQVHost,
+		user:     n.RMQUser,
+		queue:    n.RMQQueue,
+		port:     n.RMQPort,
+		interval: n.PullIntervalSec,
+		batch:    n.PullBatchSize,
+		prefetch: n.PullPrefetch,
+	}
+}
+
 // rowScanner — общий интерфейс между *pgx.Row и pgx.Rows для scan().
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -231,8 +321,12 @@ type rowScanner interface {
 func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 	var n domain.Node
 	var rootMethod, urlMode, authType, authDynSrc, incomingAuth, status string
+	var incomingMethod, outgoingMethod string
 	var encAuth, encInc string
 	var created, updated time.Time
+	var templateID *string
+	var rmqHost, rmqVHost, rmqUser, encRMQ, rmqQueue *string
+	var rmqPort, pullInterval, pullBatch, pullPrefetch *int32
 
 	err := row.Scan(
 		&n.ID, &n.Path, &rootMethod,
@@ -244,7 +338,11 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 		&n.ForwardHeaders, &n.TimeoutMs, &n.RetryCount, &n.RetryBackoffMs,
 		&n.ClickHouseTable, &n.ClickHouseRetentionDays, &status, &n.TeamID,
 		&n.LogRequestBody, &n.LogResponseBody, &n.LogHeaders,
-		&created, &updated,
+		&n.LoggingEnabled, &n.MaxBodySizeEnabled, &n.MaxBodySize,
+		&created, &updated, &templateID,
+		&rmqHost, &rmqPort, &rmqVHost, &rmqUser, &encRMQ, &rmqQueue, &n.RMQUseTLS,
+		&pullInterval, &pullBatch, &pullPrefetch,
+		&incomingMethod, &outgoingMethod, &n.Comment,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -254,6 +352,8 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 	}
 
 	n.RootMethod = domain.RootMethod(rootMethod)
+	n.IncomingMethod = domain.HTTPMethod(incomingMethod)
+	n.OutgoingMethod = domain.HTTPMethod(outgoingMethod)
 	n.URLMode = domain.URLMode(urlMode)
 	n.AuthType = domain.AuthType(authType)
 	n.AuthDynamicSource = domain.AuthDynSource(authDynSrc)
@@ -261,6 +361,9 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 	n.Status = domain.NodeStatus(status)
 	n.CreatedAt = created
 	n.UpdatedAt = updated
+	if templateID != nil {
+		n.ClickHouseTemplateID = *templateID
+	}
 
 	n.AuthCredentials, err = r.cipher.Decrypt(encAuth)
 	if err != nil {
@@ -269,6 +372,23 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 	n.IncomingAuthCredentials, err = r.cipher.Decrypt(encInc)
 	if err != nil {
 		return nil, fmt.Errorf("decrypt incoming: %w", err)
+	}
+
+	// §27: RabbitMQAsync-поля. Для request/requestAsync колонки NULL — оставляем
+	// zero-значения. rmq_password дешифруется по той же схеме, что auth.
+	n.RMQHost = derefStr(rmqHost)
+	n.RMQPort = derefInt32(rmqPort)
+	n.RMQVHost = derefStr(rmqVHost)
+	n.RMQUser = derefStr(rmqUser)
+	n.RMQQueue = derefStr(rmqQueue)
+	n.PullIntervalSec = derefInt32(pullInterval)
+	n.PullBatchSize = derefInt32(pullBatch)
+	n.PullPrefetch = derefInt32(pullPrefetch)
+	if encRMQ != nil {
+		n.RMQPassword, err = r.cipher.Decrypt(*encRMQ)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt rmq: %w", err)
+		}
 	}
 
 	// Нормализация: pgx может вернуть nil-slice; работаем как с пустым.

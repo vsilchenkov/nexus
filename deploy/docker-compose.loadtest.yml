@@ -22,6 +22,11 @@ services:
     ports: !reset []
   prometheus:
     ports: !reset []
+  # rabbitmq поднимается loadtest-job'ом (--profile stand, LOADTEST_WITH_RMQ=1);
+  # сбрасываем host-публикацию 5672/15672, иначе при параллельных pipeline'ах
+  # конфликт портов.
+  rabbitmq:
+    ports: !reset []
   receiver:
     ports: !reset []
   sender:

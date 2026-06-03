@@ -42,7 +42,9 @@ SELECT
 	forward_headers, timeout_ms, retry_count, retry_backoff_ms,
 	clickhouse_table, status, team_id,
 	log_request_body, log_response_body, log_headers,
-	created_at, updated_at
+	logging_enabled, max_body_size_enabled, max_body_size,
+	created_at, updated_at,
+	incoming_method, outgoing_method
 FROM nodes WHERE path = $1`
 
 // GetByPath возвращает актуальный конфиг узла. Использует sender'ом
@@ -52,6 +54,7 @@ func (r *Reader) GetByPath(ctx context.Context, path string) (*domain.Node, erro
 	row := r.pg.QueryRow(ctx, selectByPath, path)
 	var n domain.Node
 	var rootMethod, urlMode, authType, authDynSrc, incomingAuth, status string
+	var incomingMethod, outgoingMethod string
 	var encAuth, encInc string
 	var created, updated time.Time
 
@@ -65,7 +68,9 @@ func (r *Reader) GetByPath(ctx context.Context, path string) (*domain.Node, erro
 		&n.ForwardHeaders, &n.TimeoutMs, &n.RetryCount, &n.RetryBackoffMs,
 		&n.ClickHouseTable, &status, &n.TeamID,
 		&n.LogRequestBody, &n.LogResponseBody, &n.LogHeaders,
+		&n.LoggingEnabled, &n.MaxBodySizeEnabled, &n.MaxBodySize,
 		&created, &updated,
+		&incomingMethod, &outgoingMethod,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -75,6 +80,8 @@ func (r *Reader) GetByPath(ctx context.Context, path string) (*domain.Node, erro
 	}
 
 	n.RootMethod = domain.RootMethod(rootMethod)
+	n.IncomingMethod = domain.HTTPMethod(incomingMethod)
+	n.OutgoingMethod = domain.HTTPMethod(outgoingMethod)
 	n.URLMode = domain.URLMode(urlMode)
 	n.AuthType = domain.AuthType(authType)
 	n.AuthDynamicSource = domain.AuthDynSource(authDynSrc)

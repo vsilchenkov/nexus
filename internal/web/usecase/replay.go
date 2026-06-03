@@ -81,10 +81,12 @@ var ErrReplayRateLimit = errors.New("replay rate limit exceeded")
 var ErrReplayTooOldFailure = errors.New("cannot replay failed request older than 7 days")
 
 // Replay выполняет повторную отправку запроса через шину.
+//
+// teamID — multi-tenancy scope (Phase 10.D). Узел чужой команды → 404.
 func (u *ReplayUsecase) Replay(
 	ctx context.Context,
 	actor Actor,
-	logID, nodeID string,
+	logID, nodeID, teamID string,
 	opts ReplayOptions,
 ) (*ReplayResult, error) {
 	if actor.UserID != "" && u.rl != nil {
@@ -100,6 +102,9 @@ func (u *ReplayUsecase) Replay(
 	node, err := u.nodes.Get(ctx, nodeID)
 	if err != nil {
 		return nil, fmt.Errorf("replay get node: %w", err)
+	}
+	if teamID != "" && node.TeamID != teamID {
+		return nil, domain.ErrNodeNotFound
 	}
 	if node.Status == domain.NodeStatusDisabled {
 		return nil, fmt.Errorf("replay: %w", domain.ErrNodeDisabled)

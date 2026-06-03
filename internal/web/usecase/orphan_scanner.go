@@ -37,19 +37,26 @@ type OrphanTable struct {
 
 // OrphanScanner — usecase обнаружения и удаления orphan-таблиц (Phase 6.7).
 //
-// Алгоритм Scan():
-//  1. SELECT clickhouse_table FROM nodes  → known-set (lowercased).
-//  2. SELECT name, engine, total_rows, total_bytes, metadata_modification_time
-//     FROM system.tables WHERE database = ? AND engine LIKE '%MergeTree%'
-//     AND name NOT LIKE '.inner%' AND name NOT LIKE '.tmp%'.
-//  3. Те, что не входят в known-set, отдаются как orphan'ы.
+// Алгоритм Scan() (multi-tenancy v2, Phase 10.D.2):
+//  1. SELECT * FROM teams → allow-list БД (ch_database).
+//  2. SELECT clickhouse_table FROM nodes (всех команд) → known-set.
+//  3. Для каждой БД allow-list'а:
+//     SELECT name, engine, total_rows, total_bytes,
+//     metadata_modification_time
+//     FROM system.tables
+//     WHERE database = ? AND engine LIKE '%MergeTree%'
+//     AND name NOT LIKE '.inner%' AND name NOT LIKE '.tmp%'
+//  4. Те, что не входят в known-set, — orphan'ы.
 //
 // Drop(): DROP TABLE IF EXISTS db.table; имя строго валидируется
-// против isSafeTableName (защита от SQL-инъекции), действие пишется
-// в audit log (action="ch_table.drop", target_type="clickhouse_table").
+// против isSafeTableName (защита от SQL-инъекции), db обязан быть в
+// allow-list teams.ch_database (защита от удаления чужих/системных БД),
+// действие пишется в audit log
+// (action="ch_table.drop", target_type="clickhouse_table").
 type OrphanScanner struct {
 	ch       OrphanScannerConnProvider
 	nodeRepo port.NodeRepo
+	teamRepo port.TeamRepo
 	chCfg    *config.ClickHouseSection
 	audit    *AuditUsecase
 	logger   logging.Logger
@@ -58,6 +65,7 @@ type OrphanScanner struct {
 func NewOrphanScanner(
 	ch OrphanScannerConnProvider,
 	nodeRepo port.NodeRepo,
+	teamRepo port.TeamRepo,
 	chCfg *config.ClickHouseSection,
 	audit *AuditUsecase,
 	logger logging.Logger,
@@ -65,22 +73,28 @@ func NewOrphanScanner(
 	return &OrphanScanner{
 		ch:       ch,
 		nodeRepo: nodeRepo,
+		teamRepo: teamRepo,
 		chCfg:    chCfg,
 		audit:    audit,
 		logger:   logger,
 	}
 }
 
-// Scan возвращает список таблиц, которых нет в Postgres.nodes.
-// Сканируется только база, указанная в текущей секции ClickHouse (chCfg.Database) —
-// чужие БД не трогаем.
+// Scan возвращает список orphan-таблиц по всем БД allow-list'а
+// (teams.ch_database). Чужие БД (system, default и т.п.) не сканируются —
+// allow-list строго ограничен tenant-БД.
 func (s *OrphanScanner) Scan(ctx context.Context) ([]*OrphanTable, error) {
 	conn := s.ch.Conn()
 	if conn == nil {
 		return nil, errors.New("clickhouse conn is nil")
 	}
-	if s.chCfg == nil || s.chCfg.Database == "" {
-		return nil, errors.New("clickhouse database is empty in config")
+
+	allowedDBs, err := s.allowedDatabases(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("allowed databases: %w", err)
+	}
+	if len(allowedDBs) == 0 {
+		return nil, nil
 	}
 
 	known, err := s.knownTables(ctx)
@@ -88,6 +102,23 @@ func (s *OrphanScanner) Scan(ctx context.Context) ([]*OrphanTable, error) {
 		return nil, fmt.Errorf("known tables: %w", err)
 	}
 
+	var out []*OrphanTable
+	for _, db := range allowedDBs {
+		dbOrphans, err := s.scanDatabase(ctx, conn, db, known)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, dbOrphans...)
+	}
+	return out, nil
+}
+
+func (s *OrphanScanner) scanDatabase(
+	ctx context.Context,
+	conn chdriver.Conn,
+	db string,
+	known map[string]struct{},
+) ([]*OrphanTable, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
@@ -98,9 +129,9 @@ WHERE database = ?
   AND engine LIKE '%MergeTree%'
   AND name NOT LIKE '.inner%'
   AND name NOT LIKE '.tmp%'
-ORDER BY name`, s.chCfg.Database)
+ORDER BY name`, db)
 	if err != nil {
-		return nil, fmt.Errorf("query system.tables: %w", err)
+		return nil, fmt.Errorf("query system.tables for %s: %w", db, err)
 	}
 	defer rows.Close()
 
@@ -115,12 +146,12 @@ ORDER BY name`, s.chCfg.Database)
 		if err := rows.Scan(&name, &engine, &totalRows, &totalBytes, &modAt); err != nil {
 			return nil, fmt.Errorf("scan system.tables row: %w", err)
 		}
-		full := s.chCfg.Database + "." + name
+		full := db + "." + name
 		if _, ok := known[strings.ToLower(full)]; ok {
 			continue
 		}
 		out = append(out, &OrphanTable{
-			Database:   s.chCfg.Database,
+			Database:   db,
 			Table:      name,
 			FullName:   full,
 			Engine:     engine,
@@ -133,9 +164,10 @@ ORDER BY name`, s.chCfg.Database)
 }
 
 // Drop — DROP TABLE IF EXISTS для одной orphan-таблицы. Имя должно быть
-// безопасным (isSafeTableNameLocal) и принадлежать текущей CH-базе из cfg.
-// Не позволяем удалить таблицу узла, который есть в Postgres
-// (защита от двойного клика и race-condition).
+// безопасным (isSafeTableNameLocal), db обязан быть в allow-list
+// teams.ch_database (защита от удаления чужих/системных БД). Не позволяем
+// удалить таблицу узла, который есть в Postgres (защита от двойного
+// клика и race-condition).
 func (s *OrphanScanner) Drop(ctx context.Context, actor Actor, fullName string) error {
 	if !isSafeTableNameLocal(fullName) {
 		return fmt.Errorf("invalid table name: %q", fullName)
@@ -145,8 +177,20 @@ func (s *OrphanScanner) Drop(ctx context.Context, actor Actor, fullName string) 
 		return fmt.Errorf("expected db.table, got %q", fullName)
 	}
 	db, tbl := parts[0], parts[1]
-	if s.chCfg == nil || !strings.EqualFold(db, s.chCfg.Database) {
-		return fmt.Errorf("drop allowed only in configured database %q, got %q", s.chCfg.Database, db)
+
+	allowedDBs, err := s.allowedDatabases(ctx)
+	if err != nil {
+		return fmt.Errorf("allowed databases: %w", err)
+	}
+	allowed := false
+	for _, d := range allowedDBs {
+		if strings.EqualFold(d, db) {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return fmt.Errorf("drop allowed only in tenant databases (teams.ch_database), got %q", db)
 	}
 
 	// Защита от race: повторно проверяем, что эта таблица всё ещё orphan.
@@ -180,33 +224,57 @@ func (s *OrphanScanner) Drop(ctx context.Context, actor Actor, fullName string) 
 	return nil
 }
 
-// knownTables собирает множество lowercased "db.table" из всех узлов
-// в Postgres с непустым clickhouse_table.
+// knownTables собирает множество lowercased "db.table" из узлов всех
+// команд (multi-tenancy v2): orphan-таблица одной команды не должна
+// показываться как orphan, если её использует узел другой команды.
 func (s *OrphanScanner) knownTables(ctx context.Context) (map[string]struct{}, error) {
+	teams, err := s.teamRepo.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list teams: %w", err)
+	}
+
 	const pageSize = 500
 	known := make(map[string]struct{}, 64)
-	offset := 0
-	for {
-		nodes, err := s.nodeRepo.List(ctx, port.ListNodesFilter{
-			TeamID: "default",
-			Limit:  pageSize,
-			Offset: offset,
-		})
-		if err != nil {
-			return nil, err
-		}
-		for _, n := range nodes {
-			if n.ClickHouseTable == "" {
-				continue
+	for _, team := range teams {
+		offset := 0
+		for {
+			nodes, err := s.nodeRepo.List(ctx, port.ListNodesFilter{
+				TeamID: team.ID,
+				Limit:  pageSize,
+				Offset: offset,
+			})
+			if err != nil {
+				return nil, err
 			}
-			known[strings.ToLower(n.ClickHouseTable)] = struct{}{}
+			for _, n := range nodes {
+				if n.ClickHouseTable == "" {
+					continue
+				}
+				known[strings.ToLower(n.ClickHouseTable)] = struct{}{}
+			}
+			if len(nodes) < pageSize {
+				break
+			}
+			offset += pageSize
 		}
-		if len(nodes) < pageSize {
-			break
-		}
-		offset += pageSize
 	}
 	return known, nil
+}
+
+// allowedDatabases — список БД, в которых разрешено сканировать orphan'ы
+// и выполнять Drop. Источник: teams.ch_database.
+func (s *OrphanScanner) allowedDatabases(ctx context.Context) ([]string, error) {
+	teams, err := s.teamRepo.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list teams: %w", err)
+	}
+	out := make([]string, 0, len(teams))
+	for _, t := range teams {
+		if t.CHDatabase != "" {
+			out = append(out, t.CHDatabase)
+		}
+	}
+	return out, nil
 }
 
 // isSafeTableNameLocal — db.table из A-Za-z0-9_; обе части обязательны.

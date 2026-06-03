@@ -10,7 +10,9 @@ Read it before touching code. Apply every rule. When in doubt, ask — do not gu
 ## 0. Project orientation — обязательно прочитать первым делом
 
 Этот репозиторий — **Nexus**, шина данных из трёх Go-сервисов (Receiver + Sender + Web) + React SPA.
-Полное ТЗ — [specs/nexus_spec.md](specs/nexus_spec.md), нарезано на 17 файлов в [specs/sections/](specs/sections/).
+Полное ТЗ — [specs/nexus_spec.md](specs/nexus_spec.md), нарезано по разделам в [specs/sections/](specs/sections/)
+(`NN-<slug>.md` + индекс в `sections/README.md`). **Новые крупные фичи/ТЗ добавляются туда новым
+разделом** — см. правило в «Процесс работы» ниже.
 
 **Прежде чем что-либо менять — открой [specs/IMPLEMENTATION.md](specs/IMPLEMENTATION.md).** Это карта
 проделанных работ: статус каждого пункта ТЗ (✅/◐/⛔), ссылки на ключевые файлы кода, архитектурные
@@ -56,7 +58,15 @@ Web Service отдаёт REST API под `/api/*` и SPA (`embed.FS`) на вс�
 | Новый i18n-ключ              | [internal/platform/i18n/i18n.go](internal/platform/i18n/i18n.go) (backend) **и** [web-ui/src/locales/](web-ui/src/locales/) (frontend) |
 | Добавить SPA-страницу        | [web-ui/src/pages/](web-ui/src/pages/), маршрут в `App.tsx`, кнопку в `Topbar.tsx` |
 | Прогнать integration-тест    | `make test-integration` (нужен Docker daemon)                            |
+| Прогнать живой тестовый стенд (ручной сквозной прогон) | [docs/STAND_TESTING.md](docs/STAND_TESTING.md) — два варианта запуска (Docker / нативный), `scripts/stand/seed_and_test.{sh,ps1}`, чек-лист проверки по фичам |
 | Сгенерировать Swagger        | `make swagger` после правки аннотаций над handler'ом                     |
+
+> **Инфраструктура разработки.** На рабочей машине разработчика (Windows) установлен **Docker
+> Desktop** — integration-тесты (`make test-integration`, testcontainers поднимает PostgreSQL/
+> ClickHouse/Redis) и docker-compose можно запускать локально. То есть «нужен Docker» по тексту
+> ниже здесь выполнимо: после изменения миграций / репозиториев / схемы **прогоняй
+> `make test-integration`**, а не ограничивайся unit-тестами. Если CI integration-job всё же
+> падает — сперва отличай инфра-проблему раннера от ошибки в коде (см. [memory] feedback_ci_infra).
 
 ### Процесс работы — коммит на каждый завершённый блок + актуальный IMPLEMENTATION.md
 
@@ -68,13 +78,31 @@ Web Service отдаёт REST API под `/api/*` и SPA (`embed.FS`) на вс�
 
 1. **Прогнать сборку и тесты.**
    - `go build ./...` (на Windows при OOM-линкере — `go build -ldflags="-s -w" ./cmd/<name>` по одному).
+   - **Перед тестами — `go fix` + `gofmt`.** Прогони `go fix ./cmd/... ./internal/... ./tests/...`
+     (не `./...` из корня — он спотыкается о стороннюю `.go`-заглушку в `web-ui/node_modules/`),
+     затем `gofmt -w` на затронутые файлы (или `gofmt -l .` для проверки). Это держит код в
+     актуальных идиомах Go и не даёт упасть CI job `lint` (`golangci-lint` проверяет `gofmt`).
    - `make test` — unit-тесты зелёные.
+   - **`golangci-lint run --timeout=5m` — обязательно перед коммитом, не только `go vet`.**
+     `go vet`/`gofmt` НЕ ловят `nilerr` (проверил `err != nil` → вернул `nil`),
+     `staticcheck` (QF1001 De Morgan и пр.) и остальные линтеры из `.golangci.yml`. Их ловит
+     только golangci-lint, и CI job `lint` на них падает (образ `golangci/golangci-lint:v2.12-alpine`,
+     rolling — версия может обгонять локальную, гоняй именно его). Пропуск этого шага = красный CI
+     и перепушивание постфактум.
    - Если менял Swagger-аннотации — `make swagger`.
    - Если менял integration-сценарий — `make test-integration` (нужен Docker).
    - Если менял `web-ui/` (TS/TSX, package.json, eslint.config.js) — `cd web-ui && npm run lint && npm run build`.
      В CI ([.gitlab-ci.yml](.gitlab-ci.yml) job `ui-build`) lint запускается с `--max-warnings=0` —
      любой warning валит pipeline. Если меняешь зависимости — коммить и `package-lock.json`,
      иначе `npm ci` в CI развалится.
+   - **После правки `web-ui/` обязательно пересобери встроенный SPA и закоммить бандл в том же
+     коммите.** Web Service отдаёт фронт из `internal/web/static/` через `embed.FS` — правка только
+     исходников `web-ui/src/` НЕ доходит до пользователя, пока бандл не пересобран. Прогони
+     `make build-ui` (`npm run build` → копирует `web-ui/dist/*` в `internal/web/static/`), затем
+     `go build ./cmd/web`, и **закоммить изменённый `internal/web/static/`** (имена ассетов хешируются —
+     старый `index-<hash>.js` заменяется новым). Грабли: Phase E (UI RabbitMQAsync) поправил исходники,
+     но не пересобрал бандл — в проде показывались две карточки типа узла вместо трёх (см. коммит
+     `fix(ui): пересборка встроенного SPA`). Пропуск этого шага = «фича в `dev`, но её нет в интерфейсе».
 
 2. **Дописать результаты в [specs/IMPLEMENTATION.md](specs/IMPLEMENTATION.md).**
    - В разделе «Карта реализации по разделам ТЗ» — поменять статус (✅/◐/⛔) и добавить ссылки на
@@ -86,6 +114,12 @@ Web Service отдаёт REST API под `/api/*` и SPA (`embed.FS`) на вс�
    - Цель документа: чтобы следующий агент **не повторял твоё расследование**. Если ты что-то понял
      не из кода — запиши.
 
+   **Актуализировать `DEPLOYMENT.md` и `DEVELOPMENT.md`, если блок влияет на развёртывание или
+   процесс разработки** — в том же коммите. Триггеры: новая миграция, новый конфиг/ENV-параметр,
+   новый шаг генерации (proto/swagger), изменение зависимостей между сервисами (например «Telegram
+   теперь требует Prometheus»), новая Make-цель, изменение порядка запуска. Это часть обязательной
+   троицы: пропустишь — следующий деплой/онбординг наткнётся на сюрприз.
+
 3. **Сделать коммит блока** с осмысленным сообщением:
    - Формат: `Phase N.M: <одна строка summary>` + развёрнутое тело со списком файлов и пунктов ТЗ
      (см. историю — `git log --oneline` для образца).
@@ -95,6 +129,27 @@ Web Service отдаёт REST API под `/api/*` и SPA (`embed.FS`) на вс�
      «промежуточное сохранение».
    - Никогда не делай destructive операций (`push --force`, `reset --hard`, `drop migration`,
      `--no-verify`) без явной просьбы пользователя.
+
+**Ветвление: новое крупное ТЗ → отдельная ветка → слияние в `dev` после подтверждения.**
+Работу над новым ТЗ (крупная фича) веди в отдельной ветке, созданной от `dev`
+(`git switch -c feature/<slug>`). Все блочные коммиты (`Phase N.M: ...`) — в эту ветку.
+Самовольно в `dev`/`master` ничего не мержим и не пушим. Слияние ветки в `dev`
+(`git switch dev && git merge --no-ff feature/<slug>`) — **только после явного подтверждения
+пользователя**, что ТЗ завершено. `push` ветки/`dev` — тоже по явному запросу. Мелкие правки
+(багфиксы, стиль, тесты) можно делать прямо в текущей ветке без отдельной — правило про новую
+ветку касается именно нового ТЗ/крупной фичи.
+
+**Новая крупная фича/ТЗ → новый раздел в `specs/sections/`.** Когда работа вводит существенную
+новую возможность (а не правку существующей) — оформи её как ТЗ, а не только как код:
+
+1. Создай новый раздел `specs/sections/NN-<slug>.md` (следующий свободный номер, формат как у
+   соседних: `## NN. Заголовок` + подпункты `### NN.1`, ...). Опиши модель данных, API, UI, scope,
+   неочевидности — чтобы будущий агент понял замысел без раскопок по коду.
+2. Добавь строку в таблицу-оглавление `specs/sections/README.md`.
+3. Синхронизируй сводный `specs/nexus_spec.md` (источник истины) — допиши тот же раздел.
+4. Если фича была в `16-out-of-scope.md` как «план на v2» — пометь её там как реализованную со
+   ссылкой на новый раздел (см. как сделано с Multi-tenancy → §18).
+`IMPLEMENTATION.md` остаётся картой *реализации* (статусы/файлы/грабли); `sections/` — это само *ТЗ*.
 
 **В конце многоблочной сессии:** прогон полного `make test`, проверка `git log` («все коммиты на
 месте, ничего не амеnд'нуто»), и краткий итоговый отчёт пользователю с перечислением коммитов и
@@ -241,7 +296,22 @@ Run through this list every time. If any item fails, fix it before declaring suc
 
 ## 11. Skills
 
-42 Go skills from `samber/cc-skills-golang` are installed in `.claude/skills/`. Claude Code auto-loads their descriptions and triggers them by topic — no manual invocation needed. To browse: `ls .claude/skills/`; each skill's contract lives in its `SKILL.md`.
+Skills live in `.claude/skills/`. Claude Code auto-loads their descriptions and triggers them by
+topic — no manual invocation needed. To browse: `ls .claude/skills/`; each skill's contract lives in
+its `SKILL.md`. Three families are installed:
+
+- **42 Go skills** from `samber/cc-skills-golang` (`golang-*`) — language, libraries, testing, CI,
+  performance. The backbone for any work in `cmd/`, `internal/`, `tests/`.
+- **5 Nexus front-end skills** (`nexus-web-*`) — project-specific guides for the React SPA in
+  `web-ui/`, written against the actual code (not generic React advice). Start with
+  `nexus-web-overview`; then `nexus-web-data` (react-query + the `api` wrapper), `nexus-web-components`
+  (UI-kit atoms, `cn` + Tailwind tokens, **controlled `useState` forms — not react-hook-form**),
+  `nexus-web-i18n` (`en.json`/`ru.json` sync + backend key parity), `nexus-web-testing` (Vitest + RTL,
+  currently greenfield — no tests exist yet). **When touching `web-ui/`, consult these first** — they
+  encode the embed-and-rebuild contract and the `--max-warnings=0` CI gate.
+- **4 general engineering skills** from `mattpocock/skills` — `prototype` (throwaway UI/logic spikes),
+  `tdd` (red-green-refactor; applies to `web-ui/` where `golang-testing` doesn't), `setup-pre-commit`
+  (Husky + lint-staged + Prettier for the JS/TS side), `migrate-to-shoehorn` (TS test assertions).
 
 ---
 

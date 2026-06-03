@@ -2,29 +2,31 @@
 
 ### 3.1 Эндпоинты
 
-Два корневых маршрута — `/v1/request` и `/v1/requestAsync`. К корню добавляется путь конкретного узла, настроенный через UI:
+Два корневых маршрута — `/api/api/v1/request` и `/api/api/v1/requestAsync`. К корню добавляется путь конкретного узла, настроенный через UI:
 
 ```
-POST /v1/request/{node_path}        — синхронный
-POST /v1/requestAsync/{node_path}   — асинхронный
+POST /api/api/v1/request/{node_path}        — синхронный
+POST /api/api/v1/requestAsync/{node_path}   — асинхронный
 ```
 
-Примеры: `/v1/request/webhook/send`, `/v1/requestAsync/geo/notify`.
+Примеры: `/api/api/v1/request/webhook/send`, `/api/api/v1/requestAsync/geo/notify`.
 
 Глубина `node_path` произвольная (один или несколько сегментов через `/`).
 
-**Версионирование API.** Префикс `/v1/` — обязательная часть пути. Это публичный контракт для внешних клиентов, которые будут стучаться годами; любое breaking change ломает их. Стратегия:
+**Единый вход.** Боевой трафик идёт через тот же хост, что и админка (Web Service): Web реверс-проксирует `/api/api/v1/request|requestAsync|callback` в Receiver. Поэтому все публичные эндпоинты живут под общим префиксом `/api`, что позволяет ingress/SPA-fallback корректно разделять API и статику (без префикса `/api` запрос проваливался бы в SPA-fallback и возвращал `index.html`). Напрямую в Receiver те же пути тоже доступны.
 
-- При совместимом изменении (новые опциональные поля в теле, новые header'ы) — оставляем `/v1/`.
-- При несовместимом изменении (удалили поле, поменяли семантику, изменили формат ответа) — добавляем `/v2/` параллельно. Обе версии работают одновременно минимум 6 месяцев, после чего `/v1/` помечается как deprecated через заголовок ответа `Deprecation: true` и `Sunset: <дата>`.
+**Версионирование API.** Сегмент версии `v1` (под `/api/`) — обязательная часть пути. Это публичный контракт для внешних клиентов, которые будут стучаться годами; любое breaking change ломает их. Стратегия:
+
+- При совместимом изменении (новые опциональные поля в теле, новые header'ы) — оставляем `/api/v1/`.
+- При несовместимом изменении (удалили поле, поменяли семантику, изменили формат ответа) — добавляем `/api/v2/` параллельно. Обе версии работают одновременно минимум 6 месяцев, после чего `/api/v1/` помечается как deprecated через заголовок ответа `Deprecation: true` и `Sunset: <дата>`.
 - Старые версии живут до тех пор, пока есть значимый трафик. Метрика `nexus_requests_total{version="v1"}` позволяет видеть, кто ещё на старой версии.
-- Запрос без префикса версии (например, `POST /request/...`) возвращает 404 с подсказкой `{"error": "API version required, use /v1/..."}`.
+- Запрос без префикса версии (например, `POST /request/...`) возвращает 404 с подсказкой `{"error": "API version required, use /api/v1/..."}`.
 
-Web Service API (см. §11) — внутренний контракт админки и не имеет префикса версии, поскольку UI обновляется одновременно с backend.
+Web Service API админки (см. §11) живёт под `/api/*` без сегмента версии, поскольку UI обновляется одновременно с backend.
 
 ### 3.2 Семантика методов
 
-**`/v1/request/*` — синхронный:**
+**`/api/v1/request/*` — синхронный:**
 1. Receiver принимает JSON-тело и заголовки.
 2. По `node_path` находит конфиг узла (Redis → PostgreSQL).
 3. Проверяет авторизацию входящего запроса согласно настройкам узла.
@@ -33,11 +35,13 @@ Web Service API (см. §11) — внутренний контракт адми�
 6. Sender Service выполняет HTTP-запрос к внешнему узлу и возвращает ответ через gRPC.
 7. Receiver проксирует ответ внешнего узла клиенту как есть (status code, тело, релевантные заголовки).
 
-**`/v1/requestAsync/*` — асинхронный:**
+**`/api/v1/requestAsync/*` — асинхронный:**
 1. Receiver принимает JSON, проверяет авторизацию.
 2. Определяет целевой URL согласно `url_mode` узла (см. §3.4); валидирует. При невалидном URL — 400/403, в Kafka не кладётся.
 3. Кладёт сообщение в Kafka (topic = `nexus.async`, ключ = `node_path`, тело = JSON envelope с метаданными, включая разрешённый target URL).
-4. Сразу возвращает клиенту HTTP 200 и тело `{"result": true, "id": "<uuid>"}`.
+4. Сразу возвращает клиенту HTTP 200 и тело `{"result": true, "id": "<uuid>"}`. При ошибке постановки (узел не найден/выключен, неверный метод, невалидный URL и т.п.) — соответствующий HTTP-код и тело `{"result": false, "message": "<причина>"}` (#7).
+
+> **RabbitMQAsync и `result`-ответ (#8).** Формат `{"result":…}` применим только к HTTP-эндпоинту `requestAsync`. Узел `RabbitMQAsync` — pull-модель: Receiver сам забирает сообщения из очереди, синхронного HTTP-клиента, которому возвращать `{"result":…}`, нет. Поэтому #8 неприменим; успех/ошибка обработки вытянутого сообщения отражаются в логах ClickHouse, метриках и ack/requeue очереди (§27).
 
 ### 3.3 Конфигурация узла
 
@@ -45,6 +49,8 @@ Web Service API (см. §11) — внутренний контракт адми�
 
 - `path` — путь после корня (`webhook/send`)
 - `root_method` — `request` либо `requestAsync`
+- `incoming_method` — HTTP-метод, который узел принимает на вход (`GET`/`POST`/`PUT`/`DELETE`, по умолчанию `POST`). Запрос другим методом отклоняется с `405 Method Not Allowed`. Для pull-узлов (RabbitMQAsync) неприменим, для callback-маршрута (webhook) не проверяется.
+- `outgoing_method` — HTTP-метод, которым Sender вызывает получателя (`GET`/`POST`/`PUT`/`DELETE`, по умолчанию `POST`). Всегда диктует метод исходящего запроса независимо от метода входящего.
 - `url_mode` — режим определения целевого URL (см. §3.4): `static` (по умолчанию) или `from_request`
 - `target_url` — статичный адрес перенаправления (используется при `url_mode = static`; при `from_request` игнорируется)
 - `url_param_name` — имя query-параметра, в котором клиент передаёт URL (по умолчанию `url_base`, можно переопределить)
@@ -97,7 +103,7 @@ Web Service API (см. §11) — внутренний контракт адми�
 4. URL проверяется против allowlist (`url_allowed_hosts`). Если allowlist непустой и URL ни одному паттерну не матчит — 403 Forbidden.
 5. После всех проверок URL используется как целевой адрес запроса.
 
-Пример: `POST /v1/request/webhook/send?url_base=https://api.partner.com/hook` — Receiver валидирует `https://api.partner.com/hook`, проверяет против allowlist узла, и проксирует тело запроса по этому адресу.
+Пример: `POST /api/v1/request/webhook/send?url_base=https://api.partner.com/hook` — Receiver валидирует `https://api.partner.com/hook`, проверяет против allowlist узла, и проксирует тело запроса по этому адресу.
 
 **Параметр `url_base` исключается из итоговой query string** перед отправкой во внешний узел — служебный параметр шины не должен попадать к получателю. Остальные query-параметры (если есть) передаются как есть.
 
@@ -160,7 +166,7 @@ Web Service API (см. §11) — внутренний контракт адми�
 #### Примеры
 
 **Bearer из query:**
-`POST /v1/request/proxy/api?token=abc123` → шина проставляет `Authorization: Bearer abc123`, query пустая.
+`POST /api/v1/request/proxy/api?token=abc123` → шина проставляет `Authorization: Bearer abc123`, query пустая.
 
 **Bearer прозрачный (header):**
 `auth_dynamic_source = header`, `auth_dynamic_field = Authorization`, `auth_dynamic_strip_prefix = "Bearer "` →
@@ -177,7 +183,7 @@ Web Service API (см. §11) — внутренний контракт адми�
 #### Комбинация с `url_mode = from_request`
 
 Любой динамический `auth_type` совместим с динамическим URL. Пример:
-`POST /v1/request/proxy/api?url_base=https://api.partner.com/hook` с заголовком `Authorization: Basic YWRtaW46c2VjcmV0` (узел в режиме `basic_from_request`)
+`POST /api/v1/request/proxy/api?url_base=https://api.partner.com/hook` с заголовком `Authorization: Basic YWRtaW46c2VjcmV0` (узел в режиме `basic_from_request`)
 → шина проксирует тело на `https://api.partner.com/hook` с тем же `Authorization: Basic YWRtaW46c2VjcmV0`. Параметр `url_base` исключается из итоговой query.
 
 #### Безопасность

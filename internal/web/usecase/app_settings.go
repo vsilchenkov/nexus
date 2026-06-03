@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/robfig/cron/v3"
+
 	"nexus/internal/domain"
 	"nexus/internal/platform/logging"
 	"nexus/internal/platform/reloader"
@@ -50,6 +52,10 @@ func (u *AppSettingsUsecase) Get(ctx context.Context) (*domain.AppSettings, erro
 		masked := "***"
 		s.ClickHouse.Password = &masked
 	}
+	if s.Notifications.Telegram.BotToken != nil && *s.Notifications.Telegram.BotToken != "" {
+		masked := "***"
+		s.Notifications.Telegram.BotToken = &masked
+	}
 	return s, nil
 }
 
@@ -65,6 +71,15 @@ func (u *AppSettingsUsecase) Raw(ctx context.Context) (*domain.AppSettings, erro
 func (u *AppSettingsUsecase) Update(ctx context.Context, actor Actor, patch *domain.AppSettings) error {
 	if patch == nil {
 		return fmt.Errorf("patch is nil")
+	}
+
+	if err := validateTelegramPatch(patch); err != nil {
+		return err
+	}
+	if patch.General.PublicBaseURL != nil {
+		if err := domain.ValidatePublicBaseURL(*patch.General.PublicBaseURL); err != nil {
+			return err
+		}
 	}
 
 	current, err := u.repo.Get(ctx)
@@ -103,6 +118,11 @@ func (u *AppSettingsUsecase) Update(ctx context.Context, actor Actor, patch *dom
 // ("***", "https://***@...") НЕ перезаписывают current.
 func mergeAppSettings(current, patch *domain.AppSettings) *domain.AppSettings {
 	out := *current
+
+	// General (§28). PublicBaseURL не секрет — перезаписываем как есть.
+	if patch.General.PublicBaseURL != nil {
+		out.General.PublicBaseURL = patch.General.PublicBaseURL
+	}
 
 	// Sentry
 	if patch.Sentry.Use != nil {
@@ -155,13 +175,44 @@ func mergeAppSettings(current, patch *domain.AppSettings) *domain.AppSettings {
 	if patch.ClickHouse.Workers != nil {
 		out.ClickHouse.Workers = patch.ClickHouse.Workers
 	}
+
+	// Notifications → Telegram (§20). bot_token не перезаписываем маской.
+	tg := patch.Notifications.Telegram
+	if tg.Enabled != nil {
+		out.Notifications.Telegram.Enabled = tg.Enabled
+	}
+	if tg.ChatID != nil {
+		out.Notifications.Telegram.ChatID = tg.ChatID
+	}
+	if tg.BotToken != nil && *tg.BotToken != "***" {
+		out.Notifications.Telegram.BotToken = tg.BotToken
+	}
+	if tg.Cron != nil {
+		out.Notifications.Telegram.Cron = tg.Cron
+	}
 	return &out
+}
+
+// validateTelegramPatch проверяет cron-выражение в патче (§20.2). Пустой
+// cron или nil — пропускается (валидация на этапе включения уведомлений).
+func validateTelegramPatch(p *domain.AppSettings) error {
+	c := p.Notifications.Telegram.Cron
+	if c == nil || *c == "" {
+		return nil
+	}
+	if _, err := cron.ParseStandard(*c); err != nil {
+		return fmt.Errorf("%w: %v", domain.ErrTelegramCronInvalid, err)
+	}
+	return nil
 }
 
 // changedSections — список секций (sentry/clickhouse), в которых патч
 // содержит хотя бы одно не-nil поле. Используется в audit details.
 func changedSections(p *domain.AppSettings) []string {
 	var out []string
+	if p.General.PublicBaseURL != nil {
+		out = append(out, "general")
+	}
 	s := p.Sentry
 	if s.Use != nil || s.DSN != nil || s.Environment != nil || s.Level != nil ||
 		s.AttachStacktrace != nil || s.EnableTracing != nil || s.TracesSampleRate != nil {
@@ -171,6 +222,10 @@ func changedSections(p *domain.AppSettings) []string {
 	if c.Host != nil || c.Port != nil || c.Database != nil || c.User != nil || c.Password != nil ||
 		c.BatchSize != nil || c.FlushIntervalSec != nil || c.BufferMaxSize != nil || c.Workers != nil {
 		out = append(out, "clickhouse")
+	}
+	tg := p.Notifications.Telegram
+	if tg.Enabled != nil || tg.ChatID != nil || tg.BotToken != nil || tg.Cron != nil {
+		out = append(out, "notifications")
 	}
 	return out
 }

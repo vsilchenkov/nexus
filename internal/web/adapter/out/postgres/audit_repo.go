@@ -29,11 +29,11 @@ func (r *AuditRepoPg) Write(ctx context.Context, e *domain.AuditEntry) error {
 		details = []byte("{}")
 	}
 	const q = `
-INSERT INTO user_audit (user_id, user_login, action, target_type, target_id, details, ip_address)
-VALUES (NULLIF($1,'')::uuid, $2, $3, $4, $5, $6::jsonb, NULLIF($7,'')::inet)
+INSERT INTO user_audit (user_id, user_login, team_id, action, target_type, target_id, details, ip_address)
+VALUES (NULLIF($1,'')::uuid, $2, NULLIF($3,'')::uuid, $4, $5, $6, $7::jsonb, NULLIF($8,'')::inet)
 RETURNING id, created_at`
 	err = r.db.QueryRow(ctx, q,
-		e.UserID, e.UserLogin, e.Action, e.TargetType, e.TargetID,
+		e.UserID, e.UserLogin, e.TeamID, e.Action, e.TargetType, e.TargetID,
 		string(details), e.IPAddress,
 	).Scan(&e.ID, &e.CreatedAt)
 	if err != nil {
@@ -44,13 +44,18 @@ RETURNING id, created_at`
 
 func (r *AuditRepoPg) List(ctx context.Context, f port.AuditFilter) ([]*domain.AuditEntry, error) {
 	q := `
-SELECT id, COALESCE(user_id::text,''), user_login, action, target_type, target_id,
+SELECT id, COALESCE(user_id::text,''), user_login, COALESCE(team_id::text,''),
+       action, target_type, target_id,
        details, COALESCE(ip_address::text,''), created_at
 FROM user_audit WHERE 1=1`
 	args := []any{}
 	if f.UserID != "" {
 		q += fmt.Sprintf(" AND user_id = $%d::uuid", len(args)+1)
 		args = append(args, f.UserID)
+	}
+	if f.TeamID != "" {
+		q += fmt.Sprintf(" AND team_id = $%d::uuid", len(args)+1)
+		args = append(args, f.TeamID)
 	}
 	if len(f.Actions) > 0 {
 		q += fmt.Sprintf(" AND action = ANY($%d)", len(args)+1)
@@ -92,7 +97,7 @@ FROM user_audit WHERE 1=1`
 	for rows.Next() {
 		var e domain.AuditEntry
 		var detailsRaw []byte
-		if err := rows.Scan(&e.ID, &e.UserID, &e.UserLogin, &e.Action,
+		if err := rows.Scan(&e.ID, &e.UserID, &e.UserLogin, &e.TeamID, &e.Action,
 			&e.TargetType, &e.TargetID, &detailsRaw, &e.IPAddress, &e.CreatedAt); err != nil {
 			return nil, fmt.Errorf("audit scan: %w", err)
 		}

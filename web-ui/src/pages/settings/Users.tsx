@@ -3,12 +3,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
 import { api } from "../../api/client";
+import type { Role } from "../../lib/roles";
 
 type User = {
   id: string;
   login: string;
   email: string;
-  role: "admin" | "viewer";
+  role: Role;
   active: boolean;
   lang: "en" | "ru";
   must_change_password: boolean;
@@ -243,6 +244,8 @@ export function UsersPanel() {
                       className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs ${
                         u.role === "admin"
                           ? "bg-accent/15 text-accent"
+                          : u.role === "manager"
+                          ? "bg-ok/15 text-ok"
                           : "bg-fg-muted/15 text-fg-muted"
                       }`}
                     >
@@ -357,7 +360,7 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
   const [login, setLogin] = useState(initial?.login ?? "");
   const [email, setEmail] = useState(initial?.email ?? "");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState<"admin" | "viewer">(initial?.role ?? "viewer");
+  const [role, setRole] = useState<Role>(initial?.role ?? "viewer");
   const [active, setActive] = useState(initial?.active ?? true);
   const [mustChange, setMustChange] = useState(initial?.must_change_password ?? true);
   const [error, setError] = useState<string | null>(null);
@@ -485,8 +488,8 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
             <label className="text-xs uppercase tracking-wider text-fg-muted">
               {t("settings.users.field.role")}
             </label>
-            <div className="grid grid-cols-2 gap-2">
-              {(["admin", "viewer"] as const).map((r) => {
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              {(["admin", "manager", "viewer"] as const).map((r) => {
                 const disabledLastAdmin = isLastAdmin && r !== "admin";
                 const disabledSelf = isSelf && initial?.role === "admin" && r !== "admin";
                 const disabled = disabledLastAdmin || disabledSelf;

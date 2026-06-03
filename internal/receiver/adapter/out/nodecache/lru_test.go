@@ -130,11 +130,11 @@ func TestLRU_Concurrent(t *testing.T) {
 	t.Parallel()
 	c := NewLRU[int](128, time.Minute)
 	var wg sync.WaitGroup
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			for j := 0; j < 200; j++ {
+			for j := range 200 {
 				key := string(rune('a' + (id+j)%26))
 				c.Set(key, j)
 				_, _ = c.Get(key)

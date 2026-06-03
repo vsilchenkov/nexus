@@ -25,7 +25,7 @@ type fakeReader struct {
 
 var _ port.NodeReader = (*fakeReader)(nil)
 
-func (f *fakeReader) GetByPath(_ context.Context, path string) (*domain.Node, error) {
+func (f *fakeReader) Get(_ context.Context, _, path string) (*domain.Node, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
@@ -75,13 +75,13 @@ func TestL2_FreshHit(t *testing.T) {
 	mx := &stubMetrics{}
 	r := NewL2(inner, L2Config{Enabled: true, Size: 10, TTL: time.Minute, StaleTTL: time.Minute}, logging.NewNoop(), mx)
 
-	n, err := r.GetByPath(context.Background(), "foo")
+	n, err := r.Get(context.Background(), "", "foo")
 	require.NoError(t, err)
 	require.Equal(t, "foo", n.Path)
 	require.Equal(t, 1, inner.Calls(), "first call hits inner")
 
-	for i := 0; i < 5; i++ {
-		n, err := r.GetByPath(context.Background(), "foo")
+	for range 5 {
+		n, err := r.Get(context.Background(), "", "foo")
 		require.NoError(t, err)
 		require.Equal(t, "foo", n.Path)
 	}
@@ -97,8 +97,8 @@ func TestL2_NotFoundIsNotCached(t *testing.T) {
 	mx := &stubMetrics{}
 	r := NewL2(inner, L2Config{Enabled: true, Size: 10, TTL: time.Minute, StaleTTL: time.Minute}, logging.NewNoop(), mx)
 
-	for i := 0; i < 3; i++ {
-		_, err := r.GetByPath(context.Background(), "missing")
+	for range 3 {
+		_, err := r.Get(context.Background(), "", "missing")
 		require.ErrorIs(t, err, domain.ErrNodeNotFound)
 	}
 	require.Equal(t, 3, inner.Calls(), "ErrNodeNotFound must NOT be cached")
@@ -117,7 +117,7 @@ func TestL2_StaleFallbackOnDownstreamError(t *testing.T) {
 	r.cache.WithClock(clk)
 
 	// 1) Warm-up — fresh hit caches the entry.
-	_, err := r.GetByPath(context.Background(), "hot")
+	_, err := r.Get(context.Background(), "", "hot")
 	require.NoError(t, err)
 
 	// 2) Advance past TTL so the next call sees a miss in fresh cache,
@@ -125,14 +125,14 @@ func TestL2_StaleFallbackOnDownstreamError(t *testing.T) {
 	clk.Advance(2 * time.Second)
 	inner.err = errors.New("redis+pg both down")
 
-	got, err := r.GetByPath(context.Background(), "hot")
+	got, err := r.Get(context.Background(), "", "hot")
 	require.NoError(t, err, "stale-fallback kicks in")
 	require.Equal(t, "hot", got.Path)
 	require.EqualValues(t, 1, mx.stale.Load())
 
 	// 3) When stale entry exceeds StaleTTL, fallback no longer fires.
 	clk.Advance(40 * time.Second)
-	_, err = r.GetByPath(context.Background(), "hot")
+	_, err = r.Get(context.Background(), "", "hot")
 	require.Error(t, err)
 }
 
@@ -148,13 +148,13 @@ func TestL2_NoStaleFallbackWhenStaleTTLIsZero(t *testing.T) {
 	r := rPort.(*L2Reader)
 	r.cache.WithClock(clk)
 
-	_, err := r.GetByPath(context.Background(), "hot")
+	_, err := r.Get(context.Background(), "", "hot")
 	require.NoError(t, err)
 
 	clk.Advance(2 * time.Second)
 	inner.err = errors.New("boom")
 
-	_, err = r.GetByPath(context.Background(), "hot")
+	_, err = r.Get(context.Background(), "", "hot")
 	require.Error(t, err, "StaleTTL=0 → no fallback")
 	require.EqualValues(t, 0, mx.stale.Load())
 }

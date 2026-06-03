@@ -4,6 +4,8 @@ package integration
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"testing"
@@ -20,12 +22,23 @@ import (
 	"nexus/internal/platform/config"
 	"nexus/internal/platform/logging"
 	"nexus/internal/sender/adapter/out/chlog"
+	senderuc "nexus/internal/sender/usecase"
+	senderport "nexus/internal/sender/usecase/port"
 	webch "nexus/internal/web/adapter/out/clickhouse"
 	"nexus/internal/web/usecase/port"
 )
 
+// stubHTTP — фиксированный ответ внешнего узла для сквозных тестов логирования.
+type stubHTTP struct {
+	resp *senderport.HTTPResponse
+}
+
+func (s stubHTTP) Do(_ context.Context, _ *senderport.HTTPRequest) (*senderport.HTTPResponse, error) {
+	return s.resp, nil
+}
+
 // startClickHouse поднимает CH 24-alpine через generic testcontainer и
-// возвращает готовое driver.Conn + cleanup. База "vika_logs" создаётся
+// возвращает готовое driver.Conn + cleanup. База "nexus_default" создаётся
 // сразу (по умолчанию в Sender writer/LogReader работают с db.table-нотацией).
 func startClickHouse(t *testing.T, ctx context.Context) (chdriver.Conn, *config.ClickHouseSection, func()) {
 	t.Helper()
@@ -36,9 +49,9 @@ func startClickHouse(t *testing.T, ctx context.Context) (chdriver.Conn, *config.
 			"9000/tcp", // native TCP
 		},
 		Env: map[string]string{
-			"CLICKHOUSE_DB":                       "vika_logs",
-			"CLICKHOUSE_USER":                     "default",
-			"CLICKHOUSE_PASSWORD":                 "",
+			"CLICKHOUSE_DB":                        "nexus_default",
+			"CLICKHOUSE_USER":                      "default",
+			"CLICKHOUSE_PASSWORD":                  "",
 			"CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT": "1",
 		},
 		// CH alpine иногда логирует "Ready for connections." с точкой, иногда
@@ -60,7 +73,7 @@ func startClickHouse(t *testing.T, ctx context.Context) (chdriver.Conn, *config.
 	cfg := &config.ClickHouseSection{
 		Host:             host,
 		Port:             int(port.Num()),
-		Database:         "vika_logs",
+		Database:         "nexus_default",
 		User:             "default",
 		Password:         "",
 		BatchSize:        10,
@@ -139,7 +152,7 @@ func TestClickHouse_WriteAndRead(t *testing.T) {
 	conn, cfg, cleanup := startClickHouse(t, ctx)
 	defer cleanup()
 
-	const table = "vika_logs.test_e2e"
+	const table = "nexus_default.test_e2e"
 	createNodeLogTable(t, ctx, conn, table)
 
 	logger := logging.NewNoop()
@@ -226,8 +239,116 @@ func TestClickHouse_WriteAndRead(t *testing.T) {
 	require.Len(t, got, 2)
 
 	// Защита от SQL-инъекции: невалидное имя таблицы.
-	_, err = reader.GetByID(ctx, "vika_logs.test_e2e; DROP TABLE foo--", "x")
+	_, err = reader.GetByID(ctx, "nexus_default.test_e2e; DROP TABLE foo--", "x")
 	require.Error(t, err)
+}
+
+// TestClickHouse_Logging_Scenarios — сквозной путь SendUsecase → chlog.Writer →
+// ClickHouse (§22). Проверяет, что спецсимволы/JSON/большое тело сохраняются
+// байт-в-байт, обрезка по символам работает на реальном драйвере, а при
+// выключенном логировании запись в ClickHouse не появляется вообще.
+func TestClickHouse_Logging_Scenarios(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
+	defer cancel()
+
+	conn, cfg, cleanup := startClickHouse(t, ctx)
+	defer cleanup()
+
+	const table = "nexus_default.test_logging"
+	createNodeLogTable(t, ctx, conn, table)
+
+	logger := logging.NewNoop()
+	provider := clickhouse.StaticProvider(conn)
+	writer := chlog.New(provider, cfg, logger)
+	defer writer.Stop(ctx)
+	reader := webch.NewLogReader(provider, logger)
+
+	// Тело со спецсимволами, кавычками, переводами строк, табами, unicode и emoji.
+	specialReq := "line1\nline2\ttab \"quote\" \\back контроль 😀 <tag> & ;DROP"
+	specialResp := `{"k":"v\"al","nested":{"arr":[1,2,3]},"u":"привет 😀","big":"` +
+		strings.Repeat("ы", 200_000) + `"}`
+
+	baseInput := func(id string) senderuc.SendInput {
+		return senderuc.SendInput{
+			ID:              id,
+			NodePath:        "logging/test",
+			RootMethod:      domain.RootMethodRequest,
+			TargetURL:       "https://example.com/upstream?x=1",
+			Method:          "POST",
+			Body:            []byte(specialReq),
+			TimeoutMs:       1000,
+			ClickHouseTable: table,
+			LogRequestBody:  true,
+			LogResponseBody: true,
+			LoggingEnabled:  true,
+		}
+	}
+	uc := senderuc.NewSendUsecase(
+		stubHTTP{resp: &senderport.HTTPResponse{StatusCode: 200, Body: []byte(specialResp)}},
+		writer, nil, logger,
+	)
+
+	idSpecial := "22222222-0000-0000-0000-000000000001"
+	idTrunc := "22222222-0000-0000-0000-000000000002"
+	idDisabled := "22222222-0000-0000-0000-000000000003"
+
+	// 1) Спецсимволы/JSON/большое тело — без лимита, сохраняем как есть.
+	uc.Send(ctx, baseInput(idSpecial))
+
+	// 2) Лимит 100 символов — тела режутся, но запись есть. Тело запроса
+	// заведомо длиннее лимита (500 рун кириллицы), ответ — большой JSON.
+	truncReq := strings.Repeat("я", 500)
+	in := baseInput(idTrunc)
+	in.Body = []byte(truncReq)
+	in.MaxBodySizeEnabled = true
+	in.MaxBodySize = 100
+	uc.Send(ctx, in)
+
+	// 3) Логирование выключено — записи быть не должно.
+	in = baseInput(idDisabled)
+	in.LoggingEnabled = false
+	uc.Send(ctx, in)
+
+	require.NoError(t, writer.Flush(ctx))
+
+	// Ждём, пока появятся 2 ожидаемые записи (special + trunc), disabled не считаем.
+	deadline := time.Now().Add(20 * time.Second)
+	var n uint64
+	for time.Now().Before(deadline) {
+		row := conn.QueryRow(ctx, fmt.Sprintf("SELECT count() FROM %s", table))
+		require.NoError(t, row.Scan(&n))
+		if n >= 2 {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	// Кейс 3: выключенное логирование — строки с этим ID нет.
+	var disabledCnt uint64
+	require.NoError(t, conn.QueryRow(ctx,
+		fmt.Sprintf("SELECT count() FROM %s WHERE ID = ?", table), idDisabled).Scan(&disabledCnt))
+	require.EqualValues(t, 0, disabledCnt, "при LoggingEnabled=false запись не пишется")
+	require.EqualValues(t, 2, n, "ожидаем ровно 2 записи (special + truncated), без disabled")
+
+	// Кейс 1: спецсимволы/JSON/большое тело прочитались байт-в-байт.
+	recSpecial, err := reader.GetByID(ctx, table, idSpecial)
+	require.NoError(t, err)
+	require.Equal(t, specialReq, recSpecial.Request, "request со спецсимволами сохранён без изменений")
+	require.Equal(t, specialResp, recSpecial.Response, "большой JSON-ответ сохранён байт-в-байт")
+
+	// Кейс 2: обрезка — ровно 100 рун + маркер, checksum по полному телу.
+	recTrunc, err := reader.GetByID(ctx, table, idTrunc)
+	require.NoError(t, err)
+	require.Equal(t, strings.Repeat("я", 100)+"…(truncated)", recTrunc.Request, "request обрезан до 100 рун + маркер")
+	require.Equal(t, string([]rune(specialResp)[:100])+"…(truncated)", recTrunc.Response, "response обрезан до 100 рун + маркер")
+	require.Equal(t, md5hexStr([]byte(truncReq)), recTrunc.ChecksumRequest,
+		"checksum считается по полному телу, не по обрезанному")
+}
+
+// md5hexStr дублирует send.md5hex (не экспортирован) для проверки checksum в тесте.
+func md5hexStr(b []byte) string {
+	sum := md5.Sum(b)
+	return hex.EncodeToString(sum[:])
 }
 
 // TestClickHouse_GetByID_Deterministic — при двух записях с одним ID
@@ -241,7 +362,7 @@ func TestClickHouse_GetByID_Deterministic(t *testing.T) {
 	conn, cfg, cleanup := startClickHouse(t, ctx)
 	defer cleanup()
 
-	const table = "vika_logs.test_getbyid"
+	const table = "nexus_default.test_getbyid"
 	createNodeLogTable(t, ctx, conn, table)
 
 	logger := logging.NewNoop()

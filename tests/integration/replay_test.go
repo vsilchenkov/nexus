@@ -52,12 +52,14 @@ func TestReplay_E2E_ClickHouse(t *testing.T) {
 	cipher, _ := crypto.NewCipher(testEncryptionKey)
 
 	// 1. Узел в PG.
-	const chTable = "vika_logs.replay_e2e"
+	const chTable = "nexus_default.replay_e2e"
 	nodeRepo := pgrepo.NewNodeRepoPg(pool, cipher, logger)
 	auditRepo := pgrepo.NewAuditRepoPg(pool, logger)
 	uow := pgrepo.NewUnitOfWorkPg(pool, cipher, logger)
 	auditUC := webuc.NewAuditUsecase(auditRepo, logger)
-	nodeUC := webuc.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, time.Minute, 0, logger)
+	defaultTeam := resolveDefaultTeamID(t, ctx, pool)
+	teamRepo := pgrepo.NewTeamRepoPg(pool, logger)
+	nodeUC := webuc.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, teamRepo, nil, nil, time.Minute, 0, defaultTeam, logger)
 
 	n := &domain.Node{
 		Path:                    "demo/replay",
@@ -141,7 +143,7 @@ func TestReplay_E2E_ClickHouse(t *testing.T) {
 		UserLogin: "alice",
 		IPAddress: "127.0.0.1",
 	}
-	result, err := replayUC.Replay(ctx, actor, origID, n.ID, webuc.ReplayOptions{})
+	result, err := replayUC.Replay(ctx, actor, origID, n.ID, "", webuc.ReplayOptions{})
 	require.NoError(t, err)
 	require.NotEmpty(t, result.NewLogID, "replay must return new id")
 	require.Equal(t, 200, result.StatusCode)

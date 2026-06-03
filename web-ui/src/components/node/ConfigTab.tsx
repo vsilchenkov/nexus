@@ -1,0 +1,67 @@
+import { useTranslation } from "react-i18next";
+import { type ReactNode } from "react";
+
+import { type Node } from "../../api/client";
+import { useNodeUrlBuilder } from "../../lib/nodeUrl";
+import { Card, Chip, CopyButton } from "../ui";
+
+// ConfigTab — вкладка «Конфигурация» узла (§21): read-only сводка настроек.
+export function ConfigTab({ node }: { node: Node }) {
+  const { t } = useTranslation();
+  const isPull = node.root_method === "RabbitMQAsync";
+  const verb = node.root_method === "request" ? "request" : "requestAsync";
+  // §28 Пункт 1: адрес из публичного base URL приложения + slug команды.
+  const buildUrl = useNodeUrlBuilder();
+  const fullAddress = buildUrl(verb, node.path);
+  return (
+    <Card>
+      <dl className="divide-y divide-line">
+        <Row label={t("node.fields.method")}>
+          <Chip>{node.root_method}</Chip>
+        </Row>
+        <Row label={t("node.fields.path")}>
+          <span className="font-mono break-all">{node.path}</span>
+        </Row>
+        {!isPull && (
+          <Row label={t("node.form.full_address")}>
+            <div className="flex items-center gap-1.5">
+              <span className="min-w-0 break-all font-mono text-[12px]">{fullAddress}</span>
+              <CopyButton value={fullAddress} />
+            </div>
+          </Row>
+        )}
+        {!isPull && (
+          <Row label={t("node.form.incoming_method")}>
+            <Chip>{node.incoming_method || "POST"}</Chip>
+          </Row>
+        )}
+        <Row label={t("node.form.outgoing_method")}>
+          <Chip>{node.outgoing_method || "POST"}</Chip>
+        </Row>
+        <Row label={t("overview.table.status")}>{t(`node.status.${node.status}`)}</Row>
+        <Row label={t("node.fields.url_mode")}>{node.url_mode}</Row>
+        {node.url_mode === "static" && (
+          <Row label={t("node.fields.target_url")}>
+            <span className="font-mono break-all">{node.target_url || "—"}</span>
+          </Row>
+        )}
+        <Row label={t("node.fields.auth")}>{node.auth_type || "—"}</Row>
+        <Row label={t("node.fields.ch_table")}>
+          <span className="font-mono">{node.clickhouse_table || "—"}</span>
+        </Row>
+        <Row label={t("common.updated_at")}>
+          {new Date(node.updated_at).toLocaleString()}
+        </Row>
+      </dl>
+    </Card>
+  );
+}
+
+function Row({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="grid grid-cols-[160px_1fr] gap-4 py-3 text-[13px]">
+      <dt className="text-fg-muted">{label}</dt>
+      <dd>{children}</dd>
+    </div>
+  );
+}

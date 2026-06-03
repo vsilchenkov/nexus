@@ -12,6 +12,262 @@
     },
     "basePath": "/",
     "paths": {
+        "/api/allowed-hosts": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "allowed-hosts"
+                ],
+                "summary": "Каталог разрешённых хостов: поиск/листинг (§23).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "поиск по паттерну и описанию",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "фильтр по типу: exact|wildcard|regex",
+                        "name": "kind",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "лимит (по умолчанию 50)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Идемпотентно по case-insensitive паттерну: повтор вернёт существующую запись.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "allowed-hosts"
+                ],
+                "summary": "Создать разрешённый хост (admin, §23).",
+                "parameters": [
+                    {
+                        "description": "host",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.hostRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.hostResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/allowed-hosts/preview": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "allowed-hosts"
+                ],
+                "summary": "Превью паттерна: какие URL разрешит/заблокирует (§23).",
+                "parameters": [
+                    {
+                        "description": "preview",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.hostPreviewRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/allowed-hosts/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Нельзя удалить хост, используемый узлами (409).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "allowed-hosts"
+                ],
+                "summary": "Удалить разрешённый хост (admin, §23).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "host id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Описание меняется всегда; паттерн/тип — только если хост не используется (usage_count=0).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "allowed-hosts"
+                ],
+                "summary": "Изменить разрешённый хост (admin, §23).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "host id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "host",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.hostRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/audit": {
             "get": {
                 "security": [
@@ -321,6 +577,387 @@
                 }
             }
         },
+        "/api/ch-templates": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ch-templates"
+                ],
+                "summary": "Список шаблонов CH-таблиц (§19).",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ch-templates"
+                ],
+                "summary": "Создать шаблон CH-таблицы (admin, §19).",
+                "parameters": [
+                    {
+                        "description": "template",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.chTemplateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.chTemplateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/ch-templates/verify": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Статическая валидация + пробное создание временной таблицы в ClickHouse. Возвращает {ok} или {ok:false,error}.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ch-templates"
+                ],
+                "summary": "Проверить шаблон CH-таблицы (admin, §19.4).",
+                "parameters": [
+                    {
+                        "description": "template",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.chTemplateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "clickhouse unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/ch-templates/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ch-templates"
+                ],
+                "summary": "Один шаблон CH-таблицы по id (§19).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "template id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.chTemplateResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ch-templates"
+                ],
+                "summary": "Обновить шаблон CH-таблицы (admin, §19).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "template id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "template",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.chTemplateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.chTemplateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Нельзя удалить default или используемый узлами шаблон (409).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ch-templates"
+                ],
+                "summary": "Удалить шаблон CH-таблицы (admin, §19).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "template id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/headers": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "headers"
+                ],
+                "summary": "Справочник заголовков: автодополнение (§24).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "prefix поиска по имени; пусто = топ-используемые",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "лимит (по умолчанию 20)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Идемпотентно по case-insensitive имени: повтор вернёт существующую запись (200), а не ошибку.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "headers"
+                ],
+                "summary": "Создать заголовок в справочнике (admin, §24).",
+                "parameters": [
+                    {
+                        "description": "header",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.headerRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.headerResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/logs/{id}/replay": {
             "post": {
                 "security": [
@@ -398,6 +1035,304 @@
                             "additionalProperties": {
                                 "type": "string"
                             }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/me/password": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Требует подтверждения текущего пароля; userID берётся из сессии (§26). Все сессии пользователя завершаются (forced re-login).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Сменить собственный пароль (self-service).",
+                "parameters": [
+                    {
+                        "description": "current + new password",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.changeOwnPasswordRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "current password incorrect",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/me/switch-team": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Multi-tenancy v2. team_id должен быть из списка GET /api/me/teams.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Сменить текущую команду в сессии.",
+                "parameters": [
+                    {
+                        "description": "team_id",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.switchTeamRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "user is not a member of this team",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/me/teams": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Multi-tenancy v2 (§16 ТЗ). Используется UI team-switcher'ом.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Список команд, в которых состоит текущий пользователь.",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/metrics/nodes": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    },
+                    {
+                        "ApiTokenAuth": []
+                    }
+                ],
+                "description": "Источник — Prometheus (sum by node). Ключ node = path узла. Без Prometheus — пустой список с prometheus_available=false.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "metrics"
+                ],
+                "summary": "Per-node throughput за окно (§21).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "1h | 3h | 24h | 7d | 14d | 30d (default 1h)",
+                        "name": "range",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "период с (RFC3339 или UnixMilli); вместе с to задаёт произвольный период",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "период по (RFC3339 или UnixMilli)",
+                        "name": "to",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/metrics/nodes/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    },
+                    {
+                        "ApiTokenAuth": []
+                    }
+                ],
+                "description": "Источник — Prometheus (per-node счётчики Sender'а; перцентили через histogram_quantile). Без Prometheus → нули с chart_available=false.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "metrics"
+                ],
+                "summary": "KPI + временной ряд графика узла (§21).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "1h | 3h | 24h | 7d | 14d | 30d (default 1h)",
+                        "name": "range",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "период с (RFC3339 или UnixMilli); вместе с to задаёт произвольный период",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "период по (RFC3339 или UnixMilli)",
+                        "name": "to",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/metrics/overview": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    },
+                    {
+                        "ApiTokenAuth": []
+                    }
+                ],
+                "description": "Источник — Prometheus. Без настроенного prometheus.url возвращает нули с prometheus_available=false.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "metrics"
+                ],
+                "summary": "Глобальные KPI панели за 24ч (§21).",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.overviewKPIDTO"
                         }
                     }
                 }
@@ -550,6 +1485,63 @@
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/test-rmq": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Реальный AMQP-handshake: TCP-connect, auth, passive queue.declare. Не создаёт очередь и не забирает сообщения. Всегда 200; OK=false при любом проваленном шаге (диагностика, не функциональный вызов). Доступно manager+, rate-limit 10/мин на пользователя.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "nodes"
+                ],
+                "summary": "Проверить подключение к RabbitMQ (§27.8).",
+                "parameters": [
+                    {
+                        "description": "RabbitMQ connection params",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.testRMQRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nexus_internal_web_usecase.RMQTestResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "rate limit exceeded",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -714,6 +1706,144 @@
                 }
             }
         },
+        "/api/nodes/{id}/allowed-hosts": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "allowed-hosts"
+                ],
+                "summary": "Хосты, привязанные к узлу (§23).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "allowed-hosts"
+                ],
+                "summary": "Привязать хост к узлу (admin, §23).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "host_id",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.attachHostRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{id}/allowed-hosts/{host_id}": {
+            "delete": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "allowed-hosts"
+                ],
+                "summary": "Отвязать хост от узла (admin, §23).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "host id",
+                        "name": "host_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/{id}/logs": {
             "get": {
                 "security": [
@@ -847,6 +1977,85 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{id}/move": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Меняет team_id узла и переносит ClickHouse-таблицу логов (RENAME TABLE, best-effort). Конфликт пути в целевой команде → 409.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "nodes"
+                ],
+                "summary": "Перенести узел в другую команду (admin only, multi-tenancy v2).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "target team slug",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.MoveNodeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "same team / not allowed",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "node or target team not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "path already exists in target team",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -1084,6 +2293,100 @@
                 }
             }
         },
+        "/api/settings/notifications/test": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Шлёт тестовое сообщение в чат с merge'нутыми (current + body) настройками. Маскированный bot_token не используется. Возвращает {ok,latency_ms} или {ok:false,error}. Не сохраняет.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "settings"
+                ],
+                "summary": "Отправить тестовое уведомление в Telegram с patch'ем настроек (§20.7).",
+                "parameters": [
+                    {
+                        "description": "patch",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/nexus_internal_domain.TelegramSettings"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nexus_internal_web_usecase.TestResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/settings/public": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Лёгкий read-only эндпоинт для любого авторизованного пользователя: возвращает {public_base_url} для сборки полного адреса узла в UI. Не требует прав admin (в отличие от /api/settings/app).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "settings"
+                ],
+                "summary": "Публичный адрес приложения (§28, Пункт 1).",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/settings/sentry/test": {
             "post": {
                 "security": [
@@ -1137,6 +2440,384 @@
                                 "type": "string"
                             }
                         }
+                    }
+                }
+            }
+        },
+        "/api/teams": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "teams"
+                ],
+                "summary": "Список команд (admin only).",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Атомарно: row в teams + CREATE DATABASE nexus_\u003cslug\u003e. ch_database вычисляется из slug. Creator → owner.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "teams"
+                ],
+                "summary": "Создать команду (admin only).",
+                "parameters": [
+                    {
+                        "description": "slug + name",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.createTeamRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.teamResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "slug or ch_database exists",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "ClickHouse unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/teams/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "teams"
+                ],
+                "summary": "Одна команда по id (admin only).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "team id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.teamResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Slug и ch_database immutable после создания.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "teams"
+                ],
+                "summary": "Обновить имя команды (admin only).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "team id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "name",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.updateTeamRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.teamResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "default-team удалить нельзя. ON DELETE RESTRICT на nodes — если в команде есть узлы, удаление вернёт 409. ClickHouse-БД остаётся как orphan (drop через UI «Orphans», Phase 10.D).",
+                "tags": [
+                    "teams"
+                ],
+                "summary": "Удалить команду (admin only).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "team id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "403": {
+                        "description": "cannot delete default team",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "team has nodes",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/teams/{id}/members": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "teams"
+                ],
+                "summary": "Список членов команды (admin only).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "team id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Если membership уже есть — обновляется роль (UPSERT через ON CONFLICT).",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "teams"
+                ],
+                "summary": "Добавить пользователя в команду (admin only).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "team id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "user_id + role",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.addMemberRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
+        "/api/teams/{id}/members/{user_id}": {
+            "put": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "teams"
+                ],
+                "summary": "Изменить роль пользователя в команде (admin only).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "team id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "user id",
+                        "name": "user_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "role",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.updateMemberRoleRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "tags": [
+                    "teams"
+                ],
+                "summary": "Убрать пользователя из команды (admin only).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "team id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "user id",
+                        "name": "user_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
                     }
                 }
             }
@@ -1592,6 +3273,29 @@
                     }
                 }
             }
+        },
+        "/api/version": {
+            "get": {
+                "description": "Публичный read-only эндпоинт: текущая версия Web Service. Не требует авторизации.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "meta"
+                ],
+                "summary": "Версия приложения (§30).",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -1641,6 +3345,13 @@
                     "type": "string",
                     "maxLength": 129
                 },
+                "clickhouse_template_id": {
+                    "type": "string"
+                },
+                "comment": {
+                    "type": "string",
+                    "maxLength": 2000
+                },
                 "forward_headers": {
                     "type": "array",
                     "items": {
@@ -1660,6 +3371,15 @@
                         "webhook_signature"
                     ]
                 },
+                "incoming_method": {
+                    "type": "string",
+                    "enum": [
+                        "GET",
+                        "POST",
+                        "PUT",
+                        "DELETE"
+                    ]
+                },
                 "log_headers": {
                     "type": "boolean"
                 },
@@ -1669,9 +3389,45 @@
                 "log_response_body": {
                     "type": "boolean"
                 },
+                "logging_enabled": {
+                    "description": "LoggingEnabled — указатель, чтобы отличить «не прислано» (дефолт true,\nсохраняет текущее поведение) от явного false (§22).",
+                    "type": "boolean"
+                },
+                "max_body_size": {
+                    "type": "integer",
+                    "maximum": 10000000,
+                    "minimum": 0
+                },
+                "max_body_size_enabled": {
+                    "type": "boolean"
+                },
+                "outgoing_method": {
+                    "type": "string",
+                    "enum": [
+                        "GET",
+                        "POST",
+                        "PUT",
+                        "DELETE"
+                    ]
+                },
                 "path": {
                     "type": "string",
                     "maxLength": 255
+                },
+                "pull_batch_size": {
+                    "type": "integer",
+                    "maximum": 1000,
+                    "minimum": 1
+                },
+                "pull_interval_sec": {
+                    "type": "integer",
+                    "maximum": 3600,
+                    "minimum": 1
+                },
+                "pull_prefetch": {
+                    "type": "integer",
+                    "maximum": 1000,
+                    "minimum": 1
                 },
                 "retry_backoff_ms": {
                     "type": "integer"
@@ -1679,11 +3435,41 @@
                 "retry_count": {
                     "type": "integer"
                 },
+                "rmq_host": {
+                    "description": "§27: RabbitMQAsync. RMQPassword пустой в PUT = «оставить старый» (как\nauth_credentials, разбирается в handler.Update). Диапазоны pull_* также\nпроверяет domain.Node.Validate и БД-constraint chk_rmq_fields.",
+                    "type": "string",
+                    "maxLength": 253
+                },
+                "rmq_password": {
+                    "type": "string",
+                    "maxLength": 1024
+                },
+                "rmq_port": {
+                    "type": "integer",
+                    "maximum": 65535,
+                    "minimum": 1
+                },
+                "rmq_queue": {
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "rmq_use_tls": {
+                    "type": "boolean"
+                },
+                "rmq_user": {
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "rmq_vhost": {
+                    "type": "string",
+                    "maxLength": 255
+                },
                 "root_method": {
                     "type": "string",
                     "enum": [
                         "request",
-                        "requestAsync"
+                        "requestAsync",
+                        "RabbitMQAsync"
                     ]
                 },
                 "status": {
@@ -1782,6 +3568,17 @@
                 }
             }
         },
+        "internal_web_adapter_in_http.MoveNodeRequest": {
+            "type": "object",
+            "required": [
+                "target_team_slug"
+            ],
+            "properties": {
+                "target_team_slug": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_web_adapter_in_http.NodeResponse": {
             "type": "object",
             "properties": {
@@ -1806,6 +3603,12 @@
                 "clickhouse_table": {
                     "type": "string"
                 },
+                "clickhouse_template_id": {
+                    "type": "string"
+                },
+                "comment": {
+                    "type": "string"
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -1824,6 +3627,9 @@
                 "incoming_auth_type": {
                     "type": "string"
                 },
+                "incoming_method": {
+                    "type": "string"
+                },
                 "log_headers": {
                     "type": "boolean"
                 },
@@ -1833,14 +3639,60 @@
                 "log_response_body": {
                     "type": "boolean"
                 },
+                "logging_enabled": {
+                    "type": "boolean"
+                },
+                "max_body_size": {
+                    "type": "integer"
+                },
+                "max_body_size_enabled": {
+                    "type": "boolean"
+                },
+                "outgoing_method": {
+                    "type": "string"
+                },
                 "path": {
                     "type": "string"
+                },
+                "pull_batch_size": {
+                    "type": "integer"
+                },
+                "pull_interval_sec": {
+                    "type": "integer"
+                },
+                "pull_prefetch": {
+                    "type": "integer"
                 },
                 "retry_backoff_ms": {
                     "type": "integer"
                 },
                 "retry_count": {
                     "type": "integer"
+                },
+                "rmq_host": {
+                    "description": "§27: RabbitMQAsync. Пароль не возвращается — только флаг RMQPasswordSet.\nRMQStatus — runtime-health воркера (degraded/queue_depth/…), заполняется\nтолько для RabbitMQAsync; nil для request/requestAsync.",
+                    "type": "string"
+                },
+                "rmq_password_set": {
+                    "type": "boolean"
+                },
+                "rmq_port": {
+                    "type": "integer"
+                },
+                "rmq_queue": {
+                    "type": "string"
+                },
+                "rmq_status": {
+                    "$ref": "#/definitions/internal_web_adapter_in_http.RMQStatus"
+                },
+                "rmq_use_tls": {
+                    "type": "boolean"
+                },
+                "rmq_user": {
+                    "type": "string"
+                },
+                "rmq_vhost": {
+                    "type": "string"
                 },
                 "root_method": {
                     "type": "string"
@@ -1876,6 +3728,33 @@
                     "type": "string"
                 },
                 "webhook_signature_prefix": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.RMQStatus": {
+            "type": "object",
+            "properties": {
+                "attempts": {
+                    "type": "integer"
+                },
+                "connection_state": {
+                    "description": "down|connecting|up",
+                    "type": "string"
+                },
+                "consumer_count": {
+                    "type": "integer"
+                },
+                "degraded": {
+                    "type": "boolean"
+                },
+                "queue_depth": {
+                    "type": "integer"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "since": {
                     "type": "string"
                 }
             }
@@ -1949,6 +3828,13 @@
                     "type": "string",
                     "maxLength": 129
                 },
+                "clickhouse_template_id": {
+                    "type": "string"
+                },
+                "comment": {
+                    "type": "string",
+                    "maxLength": 2000
+                },
                 "forward_headers": {
                     "type": "array",
                     "items": {
@@ -1968,6 +3854,15 @@
                         "webhook_signature"
                     ]
                 },
+                "incoming_method": {
+                    "type": "string",
+                    "enum": [
+                        "GET",
+                        "POST",
+                        "PUT",
+                        "DELETE"
+                    ]
+                },
                 "log_headers": {
                     "type": "boolean"
                 },
@@ -1977,9 +3872,45 @@
                 "log_response_body": {
                     "type": "boolean"
                 },
+                "logging_enabled": {
+                    "description": "LoggingEnabled — указатель, чтобы отличить «не прислано» (дефолт true,\nсохраняет текущее поведение) от явного false (§22).",
+                    "type": "boolean"
+                },
+                "max_body_size": {
+                    "type": "integer",
+                    "maximum": 10000000,
+                    "minimum": 0
+                },
+                "max_body_size_enabled": {
+                    "type": "boolean"
+                },
+                "outgoing_method": {
+                    "type": "string",
+                    "enum": [
+                        "GET",
+                        "POST",
+                        "PUT",
+                        "DELETE"
+                    ]
+                },
                 "path": {
                     "type": "string",
                     "maxLength": 255
+                },
+                "pull_batch_size": {
+                    "type": "integer",
+                    "maximum": 1000,
+                    "minimum": 1
+                },
+                "pull_interval_sec": {
+                    "type": "integer",
+                    "maximum": 3600,
+                    "minimum": 1
+                },
+                "pull_prefetch": {
+                    "type": "integer",
+                    "maximum": 1000,
+                    "minimum": 1
                 },
                 "retry_backoff_ms": {
                     "type": "integer"
@@ -1987,11 +3918,41 @@
                 "retry_count": {
                     "type": "integer"
                 },
+                "rmq_host": {
+                    "description": "§27: RabbitMQAsync. RMQPassword пустой в PUT = «оставить старый» (как\nauth_credentials, разбирается в handler.Update). Диапазоны pull_* также\nпроверяет domain.Node.Validate и БД-constraint chk_rmq_fields.",
+                    "type": "string",
+                    "maxLength": 253
+                },
+                "rmq_password": {
+                    "type": "string",
+                    "maxLength": 1024
+                },
+                "rmq_port": {
+                    "type": "integer",
+                    "maximum": 65535,
+                    "minimum": 1
+                },
+                "rmq_queue": {
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "rmq_use_tls": {
+                    "type": "boolean"
+                },
+                "rmq_user": {
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "rmq_vhost": {
+                    "type": "string",
+                    "maxLength": 255
+                },
                 "root_method": {
                     "type": "string",
                     "enum": [
                         "request",
-                        "requestAsync"
+                        "requestAsync",
+                        "RabbitMQAsync"
                     ]
                 },
                 "status": {
@@ -2036,6 +3997,96 @@
                 }
             }
         },
+        "internal_web_adapter_in_http.addMemberRequest": {
+            "type": "object",
+            "required": [
+                "role",
+                "user_id"
+            ],
+            "properties": {
+                "role": {
+                    "type": "string",
+                    "enum": [
+                        "owner",
+                        "admin",
+                        "member"
+                    ]
+                },
+                "user_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.attachHostRequest": {
+            "type": "object",
+            "properties": {
+                "host_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.chTemplateRequest": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "is_default": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "spec": {
+                    "$ref": "#/definitions/nexus_internal_domain.CHTemplateSpec"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.chTemplateResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_default": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "spec": {
+                    "$ref": "#/definitions/nexus_internal_domain.CHTemplateSpec"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.changeOwnPasswordRequest": {
+            "type": "object",
+            "required": [
+                "current_password",
+                "new_password"
+            ],
+            "properties": {
+                "current_password": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                },
+                "new_password": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 8
+                }
+            }
+        },
         "internal_web_adapter_in_http.changePasswordRequest": {
             "type": "object",
             "required": [
@@ -2049,6 +4100,25 @@
                     "type": "string",
                     "maxLength": 128,
                     "minLength": 8
+                }
+            }
+        },
+        "internal_web_adapter_in_http.createTeamRequest": {
+            "type": "object",
+            "required": [
+                "name",
+                "slug"
+            ],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "slug": {
+                    "type": "string",
+                    "maxLength": 32,
+                    "minLength": 1
                 }
             }
         },
@@ -2114,8 +4184,106 @@
                     "type": "string",
                     "enum": [
                         "admin",
-                        "viewer"
+                        "viewer",
+                        "manager"
                     ]
+                }
+            }
+        },
+        "internal_web_adapter_in_http.headerRequest": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.headerResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "usage_count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.hostPreviewRequest": {
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string"
+                },
+                "pattern": {
+                    "type": "string"
+                },
+                "test_urls": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "internal_web_adapter_in_http.hostRequest": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "pattern": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.hostResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "pattern": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "usage_count": {
+                    "type": "integer"
                 }
             }
         },
@@ -2134,6 +4302,129 @@
                 "password": {
                     "type": "string",
                     "maxLength": 128,
+                    "minLength": 1
+                }
+            }
+        },
+        "internal_web_adapter_in_http.overviewKPIDTO": {
+            "type": "object",
+            "properties": {
+                "error_rate": {
+                    "type": "number"
+                },
+                "errors_24h": {
+                    "type": "integer"
+                },
+                "incoming_24h": {
+                    "type": "integer"
+                },
+                "kafka_queue": {
+                    "type": "integer"
+                },
+                "outgoing_24h": {
+                    "type": "integer"
+                },
+                "prometheus_available": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.switchTeamRequest": {
+            "type": "object",
+            "required": [
+                "team_id"
+            ],
+            "properties": {
+                "team_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.teamResponse": {
+            "type": "object",
+            "properties": {
+                "ch_database": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "slug": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.testRMQRequest": {
+            "type": "object",
+            "required": [
+                "host",
+                "queue"
+            ],
+            "properties": {
+                "host": {
+                    "type": "string",
+                    "maxLength": 253
+                },
+                "password": {
+                    "type": "string",
+                    "maxLength": 1024
+                },
+                "port": {
+                    "type": "integer",
+                    "maximum": 65535,
+                    "minimum": 1
+                },
+                "queue": {
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "use_tls": {
+                    "type": "boolean"
+                },
+                "user": {
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "vhost": {
+                    "type": "string",
+                    "maxLength": 255
+                }
+            }
+        },
+        "internal_web_adapter_in_http.updateMemberRoleRequest": {
+            "type": "object",
+            "required": [
+                "role"
+            ],
+            "properties": {
+                "role": {
+                    "type": "string",
+                    "enum": [
+                        "owner",
+                        "admin",
+                        "member"
+                    ]
+                }
+            }
+        },
+        "internal_web_adapter_in_http.updateTeamRequest": {
+            "type": "object",
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "maxLength": 255,
                     "minLength": 1
                 }
             }
@@ -2165,7 +4456,8 @@
                     "type": "string",
                     "enum": [
                         "admin",
-                        "viewer"
+                        "viewer",
+                        "manager"
                     ]
                 }
             }
@@ -2177,6 +4469,9 @@
                     "type": "boolean"
                 },
                 "created_at": {
+                    "type": "string"
+                },
+                "default_team_id": {
                     "type": "string"
                 },
                 "email": {
@@ -2199,9 +4494,6 @@
                 },
                 "role": {
                     "type": "string"
-                },
-                "team_id": {
-                    "type": "string"
                 }
             }
         },
@@ -2210,6 +4502,12 @@
             "properties": {
                 "clickhouse": {
                     "$ref": "#/definitions/nexus_internal_domain.ClickHouseSettings"
+                },
+                "general": {
+                    "$ref": "#/definitions/nexus_internal_domain.GeneralSettings"
+                },
+                "notifications": {
+                    "$ref": "#/definitions/nexus_internal_domain.NotificationsSettings"
                 },
                 "sentry": {
                     "$ref": "#/definitions/nexus_internal_domain.SentrySettings"
@@ -2220,6 +4518,92 @@
                 "updated_by": {
                     "description": "user_id, кто последним обновил",
                     "type": "string"
+                }
+            }
+        },
+        "nexus_internal_domain.CHColumnOverride": {
+            "type": "object",
+            "properties": {
+                "codec": {
+                    "description": "содержимое CODEC(...), напр. \"ZSTD(3)\" или \"Delta, ZSTD\"",
+                    "type": "string"
+                },
+                "name": {
+                    "description": "имя колонки из RequiredLogColumns",
+                    "type": "string"
+                }
+            }
+        },
+        "nexus_internal_domain.CHEngine": {
+            "type": "string",
+            "enum": [
+                "MergeTree"
+            ],
+            "x-enum-varnames": [
+                "CHEngineMergeTree"
+            ]
+        },
+        "nexus_internal_domain.CHTTLMode": {
+            "type": "string",
+            "enum": [
+                "none",
+                "ttl_days"
+            ],
+            "x-enum-varnames": [
+                "CHTTLModeNone",
+                "CHTTLModeTTLDays"
+            ]
+        },
+        "nexus_internal_domain.CHTemplateIndex": {
+            "type": "object",
+            "properties": {
+                "expr": {
+                    "description": "имя обязательной колонки",
+                    "type": "string"
+                },
+                "granularity": {
+                    "description": "GRANULARITY N",
+                    "type": "integer"
+                },
+                "name": {
+                    "description": "[A-Za-z0-9_]+",
+                    "type": "string"
+                },
+                "type": {
+                    "description": "minmax | set(N) | bloom_filter(...) | tokenbf_v1(...) | ngrambf_v1(...)",
+                    "type": "string"
+                }
+            }
+        },
+        "nexus_internal_domain.CHTemplateSpec": {
+            "type": "object",
+            "properties": {
+                "column_overrides": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/nexus_internal_domain.CHColumnOverride"
+                    }
+                },
+                "engine": {
+                    "$ref": "#/definitions/nexus_internal_domain.CHEngine"
+                },
+                "indexes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/nexus_internal_domain.CHTemplateIndex"
+                    }
+                },
+                "order_by": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "partition_by": {
+                    "type": "string"
+                },
+                "ttl_mode": {
+                    "$ref": "#/definitions/nexus_internal_domain.CHTTLMode"
                 }
             }
         },
@@ -2255,6 +4639,23 @@
                 }
             }
         },
+        "nexus_internal_domain.GeneralSettings": {
+            "type": "object",
+            "properties": {
+                "public_base_url": {
+                    "description": "PublicBaseURL — публичный адрес, под которым опубликован Web (origin без\nхвостового слеша, напр. https://nexus.example.com). Если задан, UI\nформирует полный адрес узла от него вместо window.location.origin.\nnil/\"\" = не задан (UI берёт origin браузера). Не секрет — Get() не маскирует.",
+                    "type": "string"
+                }
+            }
+        },
+        "nexus_internal_domain.NotificationsSettings": {
+            "type": "object",
+            "properties": {
+                "telegram": {
+                    "$ref": "#/definitions/nexus_internal_domain.TelegramSettings"
+                }
+            }
+        },
         "nexus_internal_domain.SentrySettings": {
             "type": "object",
             "properties": {
@@ -2277,6 +4678,23 @@
                     "type": "number"
                 },
                 "use": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "nexus_internal_domain.TelegramSettings": {
+            "type": "object",
+            "properties": {
+                "bot_token": {
+                    "type": "string"
+                },
+                "chat_id": {
+                    "type": "string"
+                },
+                "cron": {
+                    "type": "string"
+                },
+                "enabled": {
                     "type": "boolean"
                 }
             }
@@ -2311,6 +4729,51 @@
                 "status": {
                     "description": "ok | failed | skipped",
                     "type": "string"
+                }
+            }
+        },
+        "nexus_internal_web_usecase.RMQCheck": {
+            "type": "object",
+            "properties": {
+                "consumer_count": {
+                    "type": "integer"
+                },
+                "elapsed_ms": {
+                    "type": "integer"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message_count": {
+                    "type": "integer"
+                },
+                "ok": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "nexus_internal_web_usecase.RMQChecks": {
+            "type": "object",
+            "properties": {
+                "auth": {
+                    "$ref": "#/definitions/nexus_internal_web_usecase.RMQCheck"
+                },
+                "connect": {
+                    "$ref": "#/definitions/nexus_internal_web_usecase.RMQCheck"
+                },
+                "queue": {
+                    "$ref": "#/definitions/nexus_internal_web_usecase.RMQCheck"
+                }
+            }
+        },
+        "nexus_internal_web_usecase.RMQTestResult": {
+            "type": "object",
+            "properties": {
+                "checks": {
+                    "$ref": "#/definitions/nexus_internal_web_usecase.RMQChecks"
+                },
+                "ok": {
+                    "type": "boolean"
                 }
             }
         },

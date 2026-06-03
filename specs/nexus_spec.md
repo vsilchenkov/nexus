@@ -19,14 +19,16 @@
 
 ### 3.1 Эндпоинты
 
-Два корневых маршрута — `/v1/request` и `/v1/requestAsync`. К корню добавляется путь конкретного узла, настроенный через UI:
+Два корневых маршрута — `/api/v1/request` и `/api/v1/requestAsync`. К корню добавляется путь конкретного узла, настроенный через UI:
 
 ```
-POST /v1/request/{node_path}        — синхронный
-POST /v1/requestAsync/{node_path}   — асинхронный
+POST /api/v1/request/{node_path}        — синхронный
+POST /api/v1/requestAsync/{node_path}   — асинхронный
 ```
 
-Примеры: `/v1/request/webhook/send`, `/v1/requestAsync/geo/notify`.
+Примеры: `/api/v1/request/webhook/send`, `/api/v1/requestAsync/geo/notify`.
+
+Боевой трафик идёт через единый вход Web Service (тот же хост, что и админка): Web реверс-проксирует `/api/v1/request|requestAsync|callback` в Receiver. Префикс `/api` обязателен — иначе запрос провалится в SPA-fallback и вернёт `index.html`.
 
 Глубина `node_path` произвольная (один или несколько сегментов через `/`).
 
@@ -62,6 +64,8 @@ Web Service API (см. §11) — внутренний контракт адми�
 
 - `path` — путь после корня (`webhook/send`)
 - `root_method` — `request` либо `requestAsync`
+- `incoming_method` — HTTP-метод, который узел принимает на вход (`GET`/`POST`/`PUT`/`DELETE`, по умолчанию `POST`); другой метод → `405 Method Not Allowed`. Неприменим для pull-узлов, не проверяется для callback (webhook).
+- `outgoing_method` — HTTP-метод вызова получателя (`GET`/`POST`/`PUT`/`DELETE`, по умолчанию `POST`); всегда диктует метод исходящего запроса.
 - `url_mode` — режим определения целевого URL (см. §3.4): `static` (по умолчанию) или `from_request`
 - `target_url` — статичный адрес перенаправления (используется при `url_mode = static`; при `from_request` игнорируется)
 - `url_param_name` — имя query-параметра, в котором клиент передаёт URL (по умолчанию `url_base`, можно переопределить)
@@ -277,7 +281,7 @@ message SendResponse {
 Таблица на каждый узел, схема едина:
 
 ```sql
-CREATE TABLE vika_logs.{node_table}
+CREATE TABLE nexus_default.{node_table}
 (
   ID String,
   type String,
@@ -549,7 +553,26 @@ Redis работает в режиме одиночного инстанса д�
 - `nexus_clickhouse_buffer_size` — гейдж
 - `nexus_clickhouse_errors_total` — счётчик
 
-Prometheus поднимается в docker compose.
+Prometheus поднимается в docker compose. Глубина хранения задаётся флагом
+`--storage.tsdb.retention.time` (env `PROMETHEUS_RETENTION`, дефолт `90d`).
+
+### 6.1. Источник дашбордов Web-панели — только Prometheus
+
+Все показатели панели метрик (§21) — глобальные KPI Overview, очередь Kafka, per-node throughput, а
+также **per-node KPI и график на вкладке «Метрики» узла** (total/delivered/errors, перцентили
+p95/p99, временной ряд) — считаются **исключительно из Prometheus query API** (`prometheus.url`), а
+не из ClickHouse. ClickHouse используется **только для логов** (поиск, просмотр, replay).
+
+- total/errors узла — `increase(nexus_requests_total)` / `increase(nexus_request_incomplete_total{service="sender"})`
+  (errors = «незавершённые», non-2xx); delivered = total − errors.
+- p95/p99 — `histogram_quantile()` по `nexus_request_duration_seconds_bucket`. Бакеты гистограммы
+  расширены до 300с (под `timeout_ms` узла), перцентили — приблизительные (по бакетам).
+- Метка `node` = `domain.Node.Path`. Счётчики Sender'а пишутся **независимо от `logging_enabled`
+  узла**, поэтому метрики узла видны даже при выключенном логировании в ClickHouse.
+
+Деградация: при пустом `prometheus.url` или ошибке запроса панель не падает — отдаёт нули с
+`prometheus_available=false` / `chart_available=false`. Глубина доступной истории графиков
+ограничена retention Prometheus (`PROMETHEUS_RETENTION`).
 
 ## 7. Веб-интерфейс
 
@@ -624,7 +647,7 @@ Prometheus поднимается в docker compose.
 
 3. Таблица последних запросов из ClickHouse:
    - Колонки: время, статус-код, длительность, HTTP-метод, checksum_request / checksum_response.
-   - Имя таблицы (`vika_logs.{table}`) показано рядом с заголовком блока.
+   - Имя таблицы (`nexus_default.{table}`) показано рядом с заголовком блока.
    - Кнопки «Фильтр» и «Все логи» (переход на вкладку Логи).
    - Строки с ошибками подсвечены фоновой заливкой.
    - Клик по строке раскрывает её и показывает полное тело запроса, тело ответа, заголовки и причину ошибки.
@@ -1081,7 +1104,7 @@ clickhouse:
   # Начальные значения — потом перезаписываются из app_settings (PostgreSQL → Redis)
   host: ${CH_HOST:localhost}
   port: ${CH_PORT:9000}
-  database: vika_logs
+  database: nexus_default
   user: ${CH_USER:default}             # из .env
   password: ${CH_PASSWORD}             # из .env
   batch_size: 500                      # под 500 rps — секунда трафика в батче
@@ -1141,14 +1164,14 @@ receiver:
   rate_limit_per_node: 0               # 0 = без лимита
   # gRPC-клиент к Sender
   sender_grpc:
-    addr: sender:9090
+    addr: sender:9190
     pool_size: 8                       # пул gRPC-соединений
     timeout_ms: 30000
     keepalive_time_sec: 30
     keepalive_timeout_sec: 10
 
 sender:
-  grpc_addr: :9090
+  grpc_addr: :9190
   grpc_max_concurrent_streams: 1000
   http_client:
     timeout_ms: 30000
@@ -1470,7 +1493,7 @@ TESTING.md              процедура запуска всех видов т
 | Сервис | Назначение | Порты |
 |---|---|---|
 | `receiver` | Receiver Service | `8080` |
-| `sender` | Sender Service | `9090` (gRPC) |
+| `sender` | Sender Service | `9190` (gRPC) |
 | `web` | Web UI + API | `8000` |
 | `postgres` | Хранилище конфига (источник правды) | `5432` |
 | `redis` | Кеш конфига, сессии, rate-limit, circuit-breaker | `6379` |
@@ -1772,7 +1795,7 @@ s.logger.ErrorWithOp("kafka publish failed", err, "sender.publishAsync",
 - Consumer коммитит offset только после успешной доставки во внешний узел (`enable.auto.commit=false`); при рестарте Sender'а в середине обработки сообщения оно обрабатывается повторно, потерь нет.
 - В Settings → Language выбор «Русский» переключает UI без перезагрузки, сохраняется в `users.lang` и подтягивается при следующем входе; язык по умолчанию для нового пользователя — English (либо определяется по `Accept-Language`, если содержит `ru`).
 - Серверные ответы API учитывают заголовок `Accept-Language` и возвращают тексты ошибок на соответствующем языке; логи в ClickHouse, stderr и метрики Prometheus остаются на английском.
-- Все эндпоинты Receiver доступны только с префиксом `/v1/` (`/v1/request/...`, `/v1/requestAsync/...`); запрос без префикса возвращает 404 с подсказкой использовать `/v1/`. gRPC-сервис зарегистрирован с пакетом `nexus.sender.v1`.
+- Все эндпоинты Receiver доступны только с префиксом `/api/v1/` (`/api/v1/request/...`, `/api/v1/requestAsync/...`); запрос без префикса возвращает 404 с подсказкой использовать `/api/v1/`. Боевой трафик идёт через единый вход Web (`/api/v1/*` проксируется в Receiver). gRPC-сервис зарегистрирован с пакетом `nexus.sender.v1`.
 - Валидация полей узла (см. таблицу лимитов в §3.3) отвергает превышение длины / неверный формат с 400 Bad Request и понятным сообщением; БД-constraint'ы дополнительно защищают от обхода API.
 - При достижении `nodes_soft_limit` в UI появляется баннер на странице создания узла; при достижении `nodes_hard_limit` API возвращает 400 с сообщением о превышении лимита.
 - В ClickHouse-таблице узла поля `attempts` и `attempts_details` заполняются корректно: `attempts >= 1` всегда, `attempts_details` пустая строка при успехе с первой попытки, JSON-массив со всеми деталями попыток при наличии ретраев или ошибке.
@@ -1785,15 +1808,11 @@ s.logger.ErrorWithOp("kafka publish failed", err, "sender.publishAsync",
 
 Фичи, сознательно не вошедшие в первую версию ТЗ — зафиксированы здесь, чтобы не возвращаться к ним в каждом обсуждении. При реализации v2 этот список — отправная точка для нового ТЗ.
 
-### Multi-tenancy
+### Multi-tenancy — ✅ реализовано в v2 (см. §18)
 
-В v1 все узлы и пользователи живут в едином пространстве. Колонки `team_id` в `nodes` и `users` уже добавлены с дефолтом `'default'` (см. §5.1) — это закладка под будущее разделение по командам без миграции данных.
+Перенесено в полноценный раздел §18 (фазы Phase 10 + Phase 11). Команды (`teams`) с изоляцией узлов, логов, API-токенов и аудита; своя БД ClickHouse `nexus_<slug>` на команду; team-switcher в UI; Receiver URL `/v1/request/<team_slug>/<path>`; перенос узла между командами. Роль `team_admin` (RBAC по `user_teams.role`) и SaaS-onboarding остаются возможными расширениями — см. §18.8.
 
-В v2 предполагается:
-- Изоляция узлов и логов по `team_id` — пользователь команды A не видит узлы команды B даже в Audit log.
-- Роль `team_admin` — управление своей командой без глобальных прав.
-- Соответствующая фильтрация во всех API-эндпоинтах и UI-страницах.
-- Перенос дефолтных пользователей и узлов в правильные команды через миграцию-инструмент.
+Исторический контекст: в v1 колонки `team_id` были закладкой с дефолтом `'default'`; в v2 (миграция 0008) они стали реальными UUID FK на `teams`.
 
 ### Webhook signature verification
 
@@ -2423,3 +2442,624 @@ Zod-схемы дублируют backend-валидацию, но это нор
 - SQL-запросы **только параметризованные** (`$1`, `$2`) — никакой string concatenation с user input.
 - React-компонент **не делает** прямых fetch-вызовов — только через hook на TanStack Query.
 - Любая новая зависимость в `go.mod` или `package.json` — обсуждается на code review (защита от dependency hell).
+
+## 18. Multi-tenancy v2
+
+Multi-tenancy реализована в v2 (фазы Phase 10 + Phase 11). В v1 раздел был закладкой в §16 «Out of scope» — теперь это полноценный раздел ТЗ. Карта реализации с привязкой к коду — в `IMPLEMENTATION.md`.
+
+Назначение: с системой работают независимые команды (tenants). Узлы, логи, API-токены и аудит изолированы по команде; пользователь команды A не видит ресурсы команды B. Каждой команде соответствует своя БД ClickHouse для логов.
+
+### 18.1 Модель данных
+
+- `teams` — справочник команд:
+  - `id` (UUID, PK), `slug` (varchar, UNIQUE, формат `^[a-z][a-z0-9_]{0,31}$`), `name`, `ch_database` (varchar, UNIQUE, формат `^nexus_[a-z][a-z0-9_]{0,31}$`), `created_at`, `updated_at`.
+  - `slug` и `ch_database` **неизменяемы** после создания (переименование БД ClickHouse в полёте сломало бы Sender). Меняется только `name`.
+- `user_teams` — членство many-to-many: `user_id` × `team_id` × `role` (`owner` / `admin` / `member`), `created_at`. PK `(user_id, team_id)`, `ON DELETE CASCADE`.
+- Изменения существующих таблиц (миграция 0008):
+  - `nodes.team_id` — UUID FK на `teams` (`ON DELETE RESTRICT`). Снят глобальный `UNIQUE(path)`, поставлен **`UNIQUE(team_id, path)`** — две команды могут иметь узлы с одинаковым path.
+  - `users.team_id` → `users.default_team_id` (UUID FK) — команда по умолчанию при логине; реальная видимость — через `user_teams`.
+  - `api_tokens.team_id` (UUID FK) — токен ограничен одной командой.
+  - `user_audit.team_id` (UUID FK, NULL = глобальное действие).
+- Сидинг: команда `default` (`ch_database = nexus_default`), стартовый `admin` — её owner.
+- Нормализация: `nodes.clickhouse_table` приводится к формату `<db>.<table>` на write-time в Web (`NodeUsecase.normalizeCHTable` при создании/обновлении узла) — unprefixed `<x>` → `nexus_default.<x>`. Backfill-миграция для legacy-данных не нужна (стенд greenfield).
+
+### 18.2 ClickHouse: БД на команду
+
+- Каждая команда пишет логи в свою БД `nexus_<slug>` на одном ClickHouse-сервере (модель «1 сервер, много БД»).
+- `nodes.clickhouse_table` хранит полное имя `<team.ch_database>.<table>`. Нормализация — на write-time в Web (при создании/обновлении узла), а не на read-time в Sender: Sender за каждое сообщение не ходит в PG за именем БД.
+- Provisioning: при создании команды атомарно создаётся PG-запись + `CREATE DATABASE IF NOT EXISTS nexus_<slug>` (при ошибке CH — откат PG-записи). Создавать команду можно только при доступном ClickHouse.
+- Таблицы логов узлов автоматически кодом **не создаются** — это ответственность оператора / внешнего инструмента (как и в v1). Перенос узла переносит таблицу через `RENAME TABLE`, если она существует.
+
+### 18.3 Scope и сессия
+
+- В серверной сессии (Redis) хранится `current_team_id`. При логине = `default_team_id` пользователя.
+- `GET /api/me/teams` — список команд пользователя (+ текущая).
+- `POST /api/me/switch-team {team_id}` — смена текущей команды (проверяется членство в `user_teams`). Cookie не меняется, сессия не инвалидируется. Только для session-cookie: API-токены ограничены своей командой и переключать её не могут.
+- Scope-фильтрация по `current_team_id` во всех list/get/mutate:
+  - **nodes** — Create/Get/Update/Delete/List; cross-team → 404.
+  - **logs / replay / dry-run** — узел чужой команды → 404.
+  - **api_tokens** — токен наследует `current_team_id` создателя.
+  - **users** — список и создание ограничены участниками команды (`user_teams`); создание добавляет membership.
+  - **audit** — `user_audit.team_id` заполняется из сессии; по умолчанию admin видит журнал своей команды (`?team_id=*` — глобально).
+
+### 18.4 Receiver: URL с team_slug
+
+- Входящий маршрут: `/v1/request/<team_slug>/<node_path>` (и `requestAsync`, `callback`). Резолв узла — `JOIN teams ... WHERE teams.slug = ? AND nodes.path = ?`.
+- Legacy `/v1/request/<node_path>` (без слога) продолжает работать как `default`-team — для обратной совместимости существующих интеграций.
+- Cross-team изоляция: чужой `team_slug` → 404 (не утечка существования узла). Redis-ключ кеша — `node:<team_slug>:<path>`, L2-кеш — по `<team_slug>/<path>`.
+
+### 18.5 Перенос узла между командами
+
+- `POST /api/nodes/<id>/move {target_team_slug}` (admin-only).
+- PG-запись авторитетна: `team_id` и `clickhouse_table` (rebase на БД целевой команды) меняются в одной транзакции + audit `node.move`. Конфликт пути в целевой команде (`UNIQUE(team_id, path)`) → 409.
+- Логи следуют за узлом: `RENAME TABLE old_db.tbl TO new_db.tbl` (best-effort; если исходной таблицы нет — операция пропускается, узел переносится).
+
+### 18.6 Web UI
+
+- `Settings → Teams` (admin-only): CRUD команд (slug/name, preview `ch_database`), управление участниками (add / change role / remove). `default`-команду удалить нельзя.
+- Topbar team-switcher: `<select>` со списком команд; при смене — `POST /api/me/switch-team` + перезагрузка данных под новый scope.
+- Overview: действие «Move» — перенос узла в другую команду.
+
+### 18.7 Конфигурация
+
+- Redis ACL (Phase 11.C): поле `redis.username` (`${REDIS_USER:}`) — для серверов с включённым ACL и выключенным default-пользователем.
+
+### 18.8 Что осталось вне раздела (возможные расширения)
+
+- Роль `team_admin` с ограниченными правами (сейчас admin/viewer — глобальные роли UI; роли в `user_teams` хранятся, но RBAC по ним не разведён).
+- Квоты/биллинг per team, self-service onboarding (SaaS-режим).
+- Перенос узла между РАЗНЫМИ ClickHouse-серверами (сейчас только один сервер, RENAME в пределах него).
+
+## 19. Шаблоны запросов ClickHouse
+
+Реализовано в Phase F1. Полный раздел — [sections/19-ch-templates.md](sections/19-ch-templates.md).
+
+Оператор-админ ведёт глобальный каталог шаблонов DDL для таблиц логов; при
+настройке узла выбирается шаблон и имя таблицы — таблица создаётся автоматически
+при сохранении узла в БД его команды. Шаблоны настраивают сжатие (CODEC),
+индексы и TTL поверх обязательной схемы из 20 колонок (§4.3).
+
+### 19.1 Модель данных
+
+- `domain.RequiredLogColumns` — единый источник 20 обязательных колонок (порядок
+  INSERT/SELECT), инвариант кода.
+- Таблица `ch_templates` (PostgreSQL, глобальная; миграция 0009): `id`, `name`
+  (UNIQUE), `description`, `spec` (JSONB), `is_default` (partial-unique), таймстампы.
+  Сид `Standard logs` рендерится в схему §4.3.
+- `spec`: `engine` (MergeTree), `partition_by`, `order_by`, `column_overrides`
+  (CODEC), `indexes`, `ttl_mode` (`none`/`ttl_days`).
+- `nodes.clickhouse_template_id` (UUID, NULL FK, ON DELETE SET NULL); NULL =
+  ручная таблица (обратная совместимость).
+
+### 19.2 Верификация и применение
+
+- Статическая (`Validate`: белые списки CODEC/index/partition, 20 колонок по
+  построению) + live (`VerifyTemplate`: temp `CREATE`+`DROP` в CH).
+- При Create/Update узла с template_id таблица создаётся через
+  `TeamProvisioner.CreateTable` (`IF NOT EXISTS`) до PG-commit; `provisioner==nil`
+  + template_id → `ErrCHUnavailable`. Retention по умолчанию остаётся за
+  `ch_housekeeping` (`ttl_mode=none`).
+
+### 19.3 API / UI
+
+- `GET /api/ch-templates[/:id]` — любая сессия; `POST/PUT/DELETE` + `POST
+  /api/ch-templates/verify` — admin-only (DELETE default/используемого → 409/403).
+- UI: селектор шаблона в NodeSettings; управление шаблонами в Settings →
+  ClickHouse (admin-only).
+
+## 20. Уведомления операторам (Telegram)
+
+Реализовано в Phase F2. Полный раздел — [sections/20-notifications.md](sections/20-notifications.md).
+
+Web Service по cron-расписанию проверяет ошибки узлов за период и шлёт сводку в
+Telegram — только при наличии ошибок. Настраивается админом, есть тестовая отправка.
+
+### 20.1 Настройки и планировщик
+
+- `domain.AppSettings.notifications.telegram` = `{enabled, chat_id, bot_token,
+  cron}` (поля-указатели) в singleton `app_settings` (JSONB). `bot_token`
+  маскируется; `cron` валидируется (`robfig/cron`); reload-секция `notifications`.
+- `NotificationScheduler` (Web): cron-тики, окно `(last_check, now]` в Redis
+  (`nexus:notif:last_check`), подсчёт ошибок `status>=400 OR status=0 OR done=0`
+  по всем узлам (`LogReader.CountErrors`). Multi-instance — Redis-лок
+  `nexus:notif:lock` (SETNX, TTL). На send-fail checkpoint не двигается.
+
+### 20.2 Клиент / API / UI
+
+- `platform/telegram.Client` → `sendMessage` (HTML, своя HTTP-сессия). Сообщение
+  агрегирует ошибки по командам/узлам, режется по 4096.
+- `GET/PUT /api/settings/app` (секция notifications) + `POST
+  /api/settings/notifications/test` (admin-only).
+- UI: Settings → Notifications (admin-only) — enabled/chat_id/bot_token/cron +
+  «Проверить».
+- Неочевидность: `AppSettingsRepoPg.Update` обязан сериализовать `notifications`
+  (иначе молчаливая потеря) — закреплено round-trip integration-тестом.
+
+## 21. Редизайн UI под эталон + API метрик панели
+
+Реализовано в Phase 21. Полный раздел — [sections/21-ui-redesign.md](sections/21-ui-redesign.md).
+Визуальный эталон экранов — [nexus_ui.html](nexus_ui.html).
+
+Весь веб-интерфейс (§7) приведён к единому эталону (тёмная тема, дизайн-токены,
+левый сайдбар + тонкий топбар), достроены вкладки узла, KPI, графики и
+переключатель таблица/карточки; поздние разделы (Teams §18, Notifications §20,
+тема) оформлены в том же стиле; добавлен отсутствовавший HTTP-API метрик.
+
+### 21.1 Дизайн-система и shell
+
+- Токены/радиусы/шрифты эталона — `globals.css` + `tailwind.config.js`; UI-kit
+  `components/ui/*` (Button, Field, Card, Modal, Chip, Pill, Kpi, Seg, Hint,
+  PickGroup, Toggle3, TrafficChart). Тема тёмная основная, светлая зеркальная;
+  переключатель — в топбаре.
+- `AppShell`: постоянный Sidebar + Topbar (крошки, team-switcher, язык, тема,
+  выход); защищённые маршруты — layout-route через `<Outlet/>`. Настройки —
+  одна подстраница со своим вложенным меню (осознанное отклонение от сайдбара
+  эталона).
+
+### 21.2 API метрик панели
+
+- `GET /api/metrics/overview` (KPI 24ч), `/api/metrics/nodes?range=` (per-node
+  throughput), `/api/metrics/nodes/{id}?range=` (KPI + ряд графика). Scope
+  `metrics:read`.
+- Источники: Prometheus query API (`prometheus.url`) — глобальные KPI/очередь/
+  throughput; ClickHouse — точные `quantile(0.95/0.99)` и счётчики по таблице
+  узла. Деградация без Prometheus (`prometheus_available=false`) и без CH-таблицы
+  (`chart_available=false`) — без 500.
+- Prometheus — зависимость Web для дашбордов (DEPLOYMENT.md/DEVELOPMENT.md).
+
+### 21.3 Экраны
+
+- Node detail — вкладки Обзор/Логи/Конфигурация/Метрики. Overview — KPI + статус
+  OK/Очередь/Down + таблица/карточки. Node settings — двухколоночная форма +
+  предпросмотр маршрута. Удаление узла — чекбокс дропа таблицы + ввод path.
+  Диалоги Replay/Dry-run — общий Modal. Login/Language/Audit — на UI-kit.
+
+## 22. Контроль логирования узла, раскладка карточками, Telegram-алерты через Prometheus
+
+Подробное ТЗ — [sections/22-logging-controls-cards.md](sections/22-logging-controls-cards.md).
+
+### 22.1 Поля контроля логирования узла
+
+- `logging_enabled` (bool, дефолт true) — мастер-тумблер; при false узел не пишет лог в ClickHouse
+  совсем.
+- `max_body_size_enabled` (bool) + `max_body_size` (int32, число символов) — ограничение размера
+  сохраняемых тел. Миграция `0010_node_logging_controls`.
+
+### 22.2 Обрезка тел
+
+Поля `request`/`response` режутся до `max_body_size` символов (рун, не байт) с маркером
+`…(truncated)`. Контрольные суммы считаются по полному телу.
+
+### 22.3 Сценарные требования
+
+Запись не ломается на большом теле, спецсимволах, JSON, unicode/emoji (драйвер экранирует сам);
+при `logging_enabled=false` записей в таблице нет. Покрыто unit + integration тестами.
+
+### 22.4 Telegram-алерты через Prometheus
+
+Метрика Sender `nexus_request_incomplete_total{method,node}` (любой не-2xx = `done=0`). Планировщик
+уведомлений берёт ошибки из Prometheus (`sum by (node)(increase(...[window]))`) вместо ClickHouse —
+единый источник с графиками. Требует настроенного Prometheus.
+
+### 22.5 Раскладка карточками
+
+Overview-карточки под эталон `ui_cards.html`: полоса-акцент по статусу, chip+pill, 3 метрики
+(вход/p95/ошибки), спарклайн (12 точек), target URL, фильтр статусов, сортировка
+err→warn→paused→ok→disabled. p95 — из существующей гистограммы Sender; спарклайн — один range-запрос
+на весь список.
+
+### 22.6 Форма узла
+
+Блок «Заголовки и логирование» разделён на две карточки: «Заголовки» (forward_headers) и
+«Логирование» (мастер-тумблер + ClickHouse-настройки + max_body_size).
+
+## 23. Каталог разрешённых хостов (Allowed Hosts catalog)
+
+Раздел вводит общий для инсталляции **каталог разрешённых хостов** для защиты от SSRF при
+`url_mode = from_request`. До этого allowlist хранился только как per-node массив
+`nodes.url_allowed_hosts TEXT[]` (§3.4, миграция 0002) без переиспользования между узлами и без UI.
+Каталог делает паттерны общими, типизированными (exact/wildcard/regex) и управляемыми из админки.
+Мокап — [../ui_allowed_hosts.html](../ui_allowed_hosts.html).
+
+### 23.1. Модель данных
+
+- **`host_allowlist`** — каталог паттернов (общий для инсталляции, не per-team):
+  `id`, `pattern`, `kind` (`exact`|`wildcard`|`regex`), `description`, `usage_count`, `created_by`,
+  `created_at`, `updated_at`. Уникальность `pattern` без учёта регистра (`UNIQUE (lower(pattern))`).
+- **`node_allowed_hosts(node_id, host_id)`** — many-to-many привязка паттернов к узлам. У одного
+  хоста много узлов, у узла — до 50 хостов.
+- **`usage_count`** денормализован — обновляется PostgreSQL-trigger'ом при изменении
+  `node_allowed_hosts` (чтение дешевле, чем `COUNT(*)` на каждый рендер).
+- Миграция — `migrations/0011_host_allowlist.{up,down}.sql`.
+
+**Денормализованный снимок (ключевое решение).** `nodes.url_allowed_hosts TEXT[]` **сохраняется** как
+снимок паттернов привязанных хостов. Receiver читает его из JSON-кеша узла (Redis) и **не трогается**
+этой фичей — горячий путь неизменен. Источник истины — `node_allowed_hosts`; при привязке/отвязке Web
+пересобирает снимок и обновляет write-through кеш. `kind` кодируется в плоском массиве: `exact` →
+`api.partner.com`, `wildcard` → `*.partner.com`, `regex` → `re:<pattern>` (префикс `re:` безопасен —
+hostname не содержит `:`). Редактирование паттерна разрешено только при `usage_count = 0` → стейл-копий
+в снимках не бывает.
+
+### 23.2. Матчинг (единый для Receiver и preview)
+
+`domain.HostAllowed(host, patterns)` — единственная реализация матчинга, вызывается и из
+Receiver (`urlresolver.go`), и из Web preview (DRY). Правила: пустой список = разрешено всё; host
+нормализуется (lower-case, срез порта); `exact` — точное совпадение; `*.x` — любой поддомен `x`
+(но не сам `x`); `re:<re>` — `regexp.Compile` против hostname (regex **не** лоуэркейзится; невалидный
+regexp = deny). Sentinel-блокировки приватных диапазонов (§3.4) остаются поверх каталога — даже
+паттерн `.*` не пустит запрос в localhost/метаданные облака.
+
+### 23.3. API
+
+- `GET /api/allowed-hosts?q=&kind=&limit=` — поиск/листинг (любая сессия; combobox формы узла).
+- `POST /api/allowed-hosts` `{pattern, kind, description?}` — создать (admin). Идемпотентно по
+  case-insensitive паттерну: повтор возвращает существующую запись.
+- `PATCH /api/allowed-hosts/:id` — описание всегда; паттерн/тип только при `usage_count = 0` (иначе 409).
+- `DELETE /api/allowed-hosts/:id` — 409, если используется (FK RESTRICT — второй уровень защиты).
+- `POST /api/allowed-hosts/preview` `{pattern, kind, test_urls}` — `{allowed, blocked}` через
+  `domain.HostAllowed` (вся логика на сервере, не дублируется в JS).
+- `GET /api/nodes/:id/allowed-hosts` — привязанные паттерны (chips формы узла).
+- `POST /api/nodes/:id/allowed-hosts` `{host_id}` / `DELETE …/:host_id` — привязка/отвязка (admin):
+  в одной UoW-транзакции link/unlink + пересборка снимка + audit, затем write-through `cache.Set`.
+
+**Изменение контракта узла:** `POST/PUT /api/nodes` больше **не** задают allowlist из тела —
+снимок управляется только каталогом. Create стартует с пустым allowlist, Update сохраняет
+существующий снимок.
+
+### 23.4. UI
+
+- **Settings → Allowed Hosts** (`pages/settings/AllowedHosts.tsx`, admin): таблица с фильтром по типу
+  и поиском, кнопка добавления, диалог создания/редактирования с **живым превью «Разрешит /
+  Заблокирует»** (через preview-эндпоинт). Удаление заблокировано при `usage_count > 0`.
+- **Форма узла** (`components/node/AllowedHostsField.tsx`): в режиме `from_request` — chips
+  привязанных паттернов (с бейджем типа) + cmdk-combobox выбора из каталога. Для существующего узла —
+  attach/detach сразу; для нового — локальный список, привязка после создания. Создание новых паттернов —
+  на странице Settings (там выбор типа и превью). Пустой allowlist в `from_request` → красное
+  SSRF-предупреждение.
+
+### 23.5. Audit
+
+`host.create` / `host.update` / `host.delete` — изменения каталога; `host.attach` / `host.detach` —
+привязки к узлам (с `details.node_id`, `details.host_pattern`).
+
+## 24. Справочник заголовков (Headers catalog)
+
+Раздел вводит общий для инсталляции **справочник HTTP-заголовков** для combobox-автодополнения в
+секции «Проброс заголовков» формы узла (§7.5). До этого заголовки вводились вручную как свободный
+текст. Справочник делает имена переиспользуемыми, с автодополнением и автосозданием прямо из
+дропдауна. Мокап — [../ui_headers_combobox.html](../ui_headers_combobox.html).
+
+### 24.1. Модель данных
+
+- **`headers_catalog`** — `id`, `name` (VARCHAR 100), `description`, `created_by`, `created_at`,
+  `updated_at`. Уникальность имени без учёта регистра (`UNIQUE (lower(name))`). `CHECK` формата
+  по RFC 7230 token. Миграция — `migrations/0012_headers_catalog.{up,down}.sql`.
+- **`usage_count` НЕ хранится.** Источник привязки заголовка к узлу — денормализованный массив
+  `nodes.forward_headers TEXT[]` (его читает Receiver, §3.5). Отдельной M2M-таблицы нет.
+  Счётчик использования считается **on-read**: число узлов, у которых имя встречается в
+  `forward_headers` (без учёта регистра). Это исключает класс рассинхрона trigger'а на `TEXT[]`.
+
+Форма узла хранит выбранные заголовки как `string[]` имён — **Receiver не трогается**, гонок
+«фронт прислал имя, которого больше нет» нет (имена не привязаны к ID каталога).
+
+### 24.2. Валидация имени
+
+RFC 7230 token: `^[a-zA-Z0-9!#$%&'*+.^_`|~-]+$`, длина 1–100. Та же проверка на клиенте (перед
+показом «Создать») и на сервере (`POST /api/headers`), чтобы нельзя было обойти UI. Имя сохраняется
+как ввёл пользователь (без нормализации регистра); поиск и дедупликация — case-insensitive.
+
+### 24.3. API
+
+- `GET /api/headers?q=&limit=` — prefix-поиск (case-insensitive), сортировка по `usage_count desc`,
+  затем имени. Пустой `q` = топ-используемые. Любая сессия (combobox).
+- `POST /api/headers` `{name, description?}` — создать (admin). **Идемпотентно** по case-insensitive
+  имени: повтор возвращает существующую запись (200), а не ошибку — combobox создаёт без диалогов и
+  без гонок (unique-violation ловится и резолвится в существующую запись).
+
+### 24.4. UI
+
+`components/node/HeadersField.tsx` (cmdk): combobox с debounce 150 мс (TanStack Query, queryKey
+`['headers', q]`, staleTime 30 с), top-используемые при пустом вводе, автосоздание из дропдауна,
+case-insensitive дедупликация, chips выбранных. После успешного `POST` — invalidate `['headers']`,
+чтобы новый заголовок появился во всех открытых формах. Доступность — из cmdk.
+
+### 24.5. Audit
+
+`header.create` — добавление заголовка в справочник (`details.name`).
+
+## 25. Swagger в глобальной шапке (Topbar utility zone)
+
+Раздел добавляет иконку **документации API** в утилитарную зону глобальной шапки и вводит
+генерацию/раздачу **двух** swagger-доков. До этого генерировался и раздавался только Web API по
+`/swagger/index.html`; Receiver-док не существовал. Мокап — [../ui_topbar_utility.html](../ui_topbar_utility.html).
+
+### 25.1. Два swagger-дока
+
+`make swagger` генерирует оба дока (см. §11):
+
+- **Web API** → `docs/web` (instance `swagger`, default) — контракт админки `/api/*`.
+- **Receiver API** → `docs/receiver` (instance `receiver`) — публичный контракт `/v1/*`
+  (аннотации в `cmd/receiver/main.go` и `internal/receiver/adapter/in/http/handler.go`).
+
+Изоляция генерации через `--exclude`, чтобы web-док не подхватил `/v1`-маршруты, а receiver-док —
+web-handler'ы (cross-package типы). Оба встраиваются в **Web-бинарь** через `embed.FS` (Receiver —
+отдельный процесс без swagger UI; мокап это и предписывает).
+
+### 25.2. Раздача
+
+Web (`internal/web/app.go`) раздаёт оба дока двумя `ginswagger.WrapHandler(..., InstanceName(...))`:
+
+- `GET /swagger/web/*any` — Web API (instance `swagger`);
+- `GET /swagger/receiver/*any` — Receiver API (instance `receiver`).
+
+Старый `/swagger/index.html` редиректится на `/swagger/web/index.html` (обратная совместимость).
+CI-гейт `swagger-drift-check` проверяет оба `docs/`.
+
+### 25.3. UI
+
+`components/Topbar.tsx` (`SwaggerMenu`): иконка `FileText` с индикатором `↗` (внешний переход) и
+tooltip; клик открывает popover из двух пунктов (Receiver `/v1/*`, Web `/api/*`), каждый —
+`window.open(url, '_blank')`. Реализовано на Radix Popover/Tooltip (§17), `TooltipProvider`
+монтируется один раз в `AppShell`. Если в инсталляции останется один док — popover можно свернуть в
+прямую ссылку. Существующие переключатели языка/темы/выхода не меняются.
+
+## 26. Роли доступа и RBAC
+
+Раздел вводит третью роль `manager` между `viewer` и `admin` и фиксирует полную матрицу доступа. До
+этого в системе было две роли (§7.1): `admin` (полный доступ) и `viewer` (только просмотр).
+Промежуточного уровня не было — любой, кому нужно управлять узлами, был вынужден быть полным админом и
+получал доступ к опасным общим настройкам.
+
+### 26.1. Роли и иерархия
+
+- `viewer` — только просмотр (узлы, логи, метрики, аудит). Без мутаций.
+- `manager` — управление узлами; **новая роль**.
+- `admin` — полный доступ.
+
+Авторизация построена на **иерархии рангов**: `viewer (0) < manager (1) < admin (2)`. Проверка
+доступа — «роль не ниже требуемой» (`AtLeast`), поэтому `admin` автоматически проходит любые
+`manager`-проверки. На бэкенде ранги заданы в `domain.UserRole.Rank()`; на фронте зеркалятся в
+`web-ui/src/lib/roles.ts`. Роль хранится в существующей колонке `users.role` (без новых таблиц).
+Миграция `0013_user_role_manager` расширяет CHECK-constraint до `('admin','manager','viewer')`.
+
+### 26.2. Что может `manager`
+
+- **Может**: CRUD узлов (`POST/PUT/DELETE /api/nodes`), dry-run конфига, управление каталогами Allowed
+  Hosts (§23) и Headers (§24) и привязками хостов к узлам, **чтение** Audit log (§7.13), смену
+  **только своего** пароля (см. §26.4).
+- **Не может**: управлять пользователями и командами, менять общие настройки (ClickHouse / Sentry /
+  уведомления), редактировать шаблоны таблиц ClickHouse (§19), переносить узлы между командами
+  (`/api/nodes/:id/move` — операция multi-tenancy, остаётся за `admin`).
+
+### 26.3. Матрица доступа (endpoint × роль)
+
+| Группа / endpoint | viewer | manager | admin |
+|---|---|---|---|
+| Чтение узлов/логов/метрик | ✅ | ✅ | ✅ |
+| Свои API-токены (`/api/tokens`) | ✅ | ✅ | ✅ |
+| Смена своего пароля (`POST /api/me/password`) | ✅ | ✅ | ✅ |
+| Узлы CRUD + dry-run | ⛔ | ✅ | ✅ |
+| Каталоги Allowed Hosts / Headers (мутации, привязки) | ⛔ | ✅ | ✅ |
+| Audit log (чтение) | ⛔ | ✅ | ✅ |
+| Перенос узла между командами | ⛔ | ⛔ | ✅ |
+| Управление пользователями / командами | ⛔ | ⛔ | ✅ |
+| Общие настройки (app/CH/Sentry/Telegram) | ⛔ | ⛔ | ✅ |
+| Шаблоны таблиц ClickHouse / orphan-таблицы | ⛔ | ⛔ | ✅ |
+
+В UI вкладки Settings гейтятся по той же иерархии (`minRole`): `users`, `teams`, `sentry`,
+`clickhouse`, `notifications` → `admin`; `allowed-hosts` → `manager`; `tokens`, `language`,
+`password` → все роли.
+
+### 26.4. Self-service смена своего пароля
+
+Раньше отдельного эндпоинта смены своего пароля не было (только админский `POST
+/api/users/:id/password`), поэтому для менеджера добавлен self-service `POST /api/me/password`
+(доступен любой роли, только session-cookie — не для API-токенов). Тело `{current_password,
+new_password}` (минимум 8 символов); `userID` берётся **строго из сессии** (сменить чужой пароль
+нельзя); требуется подтверждение текущего пароля (`bcrypt`); при успехе `must_change_password`
+сбрасывается, **все** сессии пользователя инвалидируются (forced re-login), UI уводит на `/login`.
+
+### 26.5. Scope (вне раздела)
+
+Per-team роли (`user_teams.role`, multi-tenancy v2 §18) — отдельный механизм членства в команде, этим
+разделом не меняется. Гранулярные ACL уровня отдельных узлов — out of scope.
+
+## 27. Тип узла RabbitMQAsync (забор из RabbitMQ)
+
+Третий тип узла. В отличие от `request` / `requestAsync` (§3.2), которые ждут HTTP-вызова от клиента,
+`RabbitMQAsync` **сам периодически забирает** сообщения из очереди RabbitMQ, кладёт в Kafka
+`nexus.async`, дальше Sender обрабатывает их тем же конвейером, что `requestAsync`. Убирает прокси
+RabbitMQ→HTTP: единая трассировка, логирование, ретрай и DLQ. Полный раздел —
+[sections/27-rabbitmq-async.md](sections/27-rabbitmq-async.md). Макет UI — `nexus_rabbitmq_ui.html`.
+
+### 27.1. Поведение
+
+Фоновый компонент **Puller** (в Receiver) поднимает один воркер на узел. Цикл с интервалом
+`pull_interval_sec`: `basic.qos(prefetch)` → `basic.get` до `pull_batch_size` сообщений (manual ack) →
+публикация envelope в `nexus.async` (ключ `node.Path`) → после `acks=all` от Kafka `basic.ack` в
+RabbitMQ. Ошибка Kafka → `basic.nack(requeue=true)` (потерь нет). Сообщение > 10 МБ → `basic.reject`
+без requeue + Sentry `op="puller.rejectOversize"`. **Гарантия at-least-once**: дубль возможен при сбое
+между Kafka-ack и RabbitMQ-ack. При `SIGTERM`/удалении — graceful: дождаться батч (≤10с), nack
+необработанных, закрыть канал.
+
+### 27.2. Envelope
+
+Тот же `Envelope`, что у `requestAsync`, плюс блок `rmq{exchange, routing_key, delivery_tag,
+message_id, timestamp}`. `method="POST"`, `client_ip="rabbitmq://<host>:<port>/<vhost>"`; авто-заголовки
+`X-Nexus-Source: rabbitmq`, `X-Nexus-Routing-Key`; из AMQP-headers пробрасываются только перечисленные в
+`forward_headers`.
+
+### 27.3. degraded (runtime)
+
+`degraded` — runtime-состояние воркера (RabbitMQ недоступен > 5 мин или очередь не найдена), **не**
+значение `node.status`: enum `NodeStatus` и его CHECK не расширяются. Отдаётся отдельным полем в API +
+метрика `nexus_node_degraded{node,reason}`; снимается автоматически. Только для pull-узлов.
+
+### 27.4. Конфигурация
+
+Поля `rmq_host/rmq_port/rmq_vhost/rmq_user/rmq_password(шифр)/rmq_queue/rmq_use_tls` и
+`pull_interval_sec(1–3600, деф.5)/pull_batch_size(1–1000, деф.100)/pull_prefetch(=batch)`. Игнорируемые
+поля (`incoming_auth_*`, `url_mode=from_request`) backend молча сбрасывает в `none`/`static` +
+audit `cleared_incompatible_fields`. Исходящая авторизация — статичные `none/basic/token`.
+
+### 27.5. PostgreSQL
+
+Миграция `0014`: пересоздать CHECK таблицы `methods` (`+ 'RabbitMQAsync'`) + `INSERT`; nullable-колонки
+`rmq_*`/`pull_*` в `nodes`; `chk_rmq_fields` CHECK (host+queue NOT NULL, интервал/batch в диапазоне при
+`root_method='RabbitMQAsync'`).
+
+### 27.6. Web API
+
+`POST /api/nodes/test-rmq` (manager+, rate-limit 10/мин, всегда 200 с `ok+checks`, `queue.declare
+passive=true`, в audit не пишется). CRUD-эндпоинты принимают/возвращают новые поля; `rmq_password` →
+флаг `rmq_password_set`, «пусто = не менять». Health-снимок воркера — в `NodeResponse.rmq_status` для
+RabbitMQAsync (через Redis, без нового gRPC).
+
+### 27.7. Метрики и логирование
+
+`nexus_rmq_messages_pulled_total{node,status}`, `nexus_rmq_pull_duration_seconds{node}`,
+`nexus_rmq_connection_state{node}`, `nexus_rmq_queue_depth{node}`, `nexus_rmq_consumer_count{node}`,
+`nexus_node_degraded{node,reason}`. ClickHouse-лог: `IP=rabbitmq://…`, `method=POST`,
+`type=RabbitMQAsync`.
+
+### 27.8. Сценарные тесты
+
+e2e integration (testcontainers RabbitMQ+Kafka+CH+mock-HTTP): узел → publish → доставка на mock + лог в
+CH, без потерь; кейсы requeue (Kafka down) и degraded (нет очереди). Расширение `cmd/loadtest`: флаг
+`--ratio-rmq` публикует часть нагрузки прямо в RabbitMQ-очереди узлов; критерий «нет потерь».
+
+### 27.9. Out of scope / v2
+
+Exactly-once (дедуп по `message_id`), методы кроме POST, динамический URL/авторизация, несколько
+очередей на узел, шардинг воркера (leader election), push-consumer, exchange+bindings через UI.
+
+## 28. Онлайн-метрики, период просмотра, публичный адрес и UX-доработки
+
+Раздел объединяет пакет доработок «онлайн-метрики» (8 пунктов ТЗ). Полная версия —
+[sections/28-online-metrics.md](sections/28-online-metrics.md).
+
+### 28.1. Публичный адрес приложения (Пункт 1)
+
+Настройка `app_settings.general.public_base_url` (origin без пути/слеша). Если задана — UI собирает
+полный адрес узла от неё, иначе от `window.location.origin`. `GET /api/settings/public` доступен
+любому авторизованному; правка — `PUT /api/settings/app` (admin). Хелпер `lib/nodeUrl.buildNodeUrl`
+учитывает адрес и slug команды.
+
+### 28.2. Онлайн-обновление метрик (Пункт 2)
+
+Поллинг с единым `METRICS_REFETCH_MS = 12s` для всех метрик-запросов; метрики/графики на Overview и
+странице узла обновляются без перезагрузки.
+
+### 28.3. Маскирование данных авторизации (Пункт 3)
+
+Поля кред — `SecretInput` (звёздочки + глазик). Бэкенд значения секретов не отдаёт. viewer не
+редактирует узлы и не видит креды; просмотр/ввод — только manager/admin.
+
+### 28.4. Период просмотра метрик (Пункт 4)
+
+`PeriodPicker`: пресеты `1h/3h/24h/7d/14d/30d` + «Произвольный» (календарь), по умолчанию `1h`.
+API метрик принимает `range` или `from`/`to`. Prometheus-методы переведены на `(since, until)`.
+
+### 28.5. Понятные ошибки валидации узла (Пункт 5)
+
+Доменные ошибки → `{code, field}` (i18n `node.validation.*`, en/ru), inline-вывод у поля. Проверка:
+`logging_enabled` требует `clickhouse_table` (`ErrNodeLogsNotConfigured`).
+
+### 28.6. Фильтр RabbitMQAsync на Overview (Пункт 6)
+
+В фильтр типа узла добавлен `RabbitMQAsync`.
+
+### 28.7. Багфикс: CH-таблица узла без шаблона (Пункт 7)
+
+При `logging_enabled` и пустом `template_id` таблица создаётся из дефолтного шаблона каталога;
+иначе чтение логов/метрик падало с CH `code 60`.
+
+### 28.8. Багфикс: резолв async-узла по legacy-пути со слешем (Пункт 8)
+
+`resolveNode` в Receiver при miss и угаданном слоге повторяет резолв как
+`(default-team, "<slug>/<path>")`. Применяется в sync и async.
+
+## 29. Комментарий узла (описание для команды)
+
+### 29.1. Зачем
+
+При десятках узлов трудно понять назначение каждого. Поле «комментарий» — простое
+текстовое описание узла для внутреннего использования командой. Это UI-метаданные:
+в маршрутизации запросов не участвует, внешним клиентам не отдаётся.
+
+### 29.2. Модель данных
+
+Колонка `comment TEXT NOT NULL DEFAULT '' CHECK (length(comment) <= 2000)` в таблице
+`nodes` (миграция `0016_node_comment`). Домен — `domain.Node.Comment string`,
+валидация в `Validate()` по рунам (`utf8.RuneCountInString <= 2000`, совпадает с
+PG-CHECK и DTO-binding), ошибка `ErrNodeCommentLength`.
+
+### 29.3. API
+
+`comment` в `CreateNodeRequest`/`UpdateNodeRequest` (`binding:"omitempty,max=2000"`) и
+`NodeResponse`; мапперы `reqToDomain`/`nodeToResponse`. Swagger перегенерирован.
+
+### 29.4. UI
+
+Отдельный блок «Комментарий» в самом низу формы узла (`Textarea`, rows=4,
+maxLength=2000); read-only показ на вкладке «Обзор» узла, если задан. i18n-ключи
+`node.form.comment*` (ru/en).
+
+### 29.5. Receiver
+
+Receiver не использует `comment` (поле не участвует в маршрутизации).
+
+### 29.6. Out of scope (v1)
+
+История изменений, упоминания/уведомления, отдельные права на правку комментария.
+
+## 30. Логирование, обработка паник и идентификация запросов
+
+### 30.1. Зачем
+
+Сервисы (Receiver / Sender / Web) — долгоживущие процессы и не должны падать от
+паники: её нужно перехватить, залогировать как `error` (→ Sentry) и продолжить.
+Дополнительно каждому запросу нужен сквозной `request_id` для связки логов,
+Sentry-событий и трейсов между сервисами. Версия приложения видна в UI.
+
+Зависимость: логгер `github.com/vsilchenkov/logging` обновлён до **v1.7.9**
+(`Logger.With`/`WithContext`, методы логируют через `LogAttrs(ctx, ...)`) —
+`logger.WithContext(reqCtx).Error(...)` капчурит событие в request-scoped
+Sentry-hub со всеми тегами запроса.
+
+### 30.2. Перехват паник в горутинах — `safego`
+
+`internal/platform/safego`: `Recover(logger, op)` (defer в начале горутины: гасит
+панику, логирует `error`, не делает re-panic) и `RecoverCtx(ctx, logger, op)`.
+Правило: каждая продакшн-горутина ставит `defer safego.Recover(...)`; для пулов с
+`defer wg.Done()` — recover ставится после него в коде (выполнится первым, LIFO).
+Покрыты главная app-горутина (`runner`), все listeners, reloader, housekeeping,
+Kafka consumer-пул, CH writer/fallback, Puller-воркеры, и пр. Точки входа
+production-сервисов уже под `bootstrap.Shutdown`.
+
+### 30.3. Идентификация запросов — `request_id`
+
+`internal/platform/requestid`: `GinMiddleware()` (первым в цепочке) читает
+`X-Request-Id`, при отсутствии генерит UUID v4, существующий не перезаписывает,
+кладёт в контекст/`gin.Context` и в заголовок ответа. `FromContext`/`WithValue`.
+В Sentry `request_id` ставится тегом на scope hub'а (события) и на транзакцию
+(трейсы); не маскируется.
+
+### 30.4. gin recovery
+
+Встроенный `gin.Recovery()` заменён на `internal/platform/recovery.GinMiddleware`
+во всех движках: лог через `logger.WithContext` (capture в request-scoped hub) +
+ответ 500 JSON `{error, request_id}`. Порядок:
+`requestid → otel → sentry → recovery → metrics [→ i18n]` (recovery после sentry —
+для статуса 500 у span; раньше handler'ов — чтобы ловить их паники).
+
+### 30.5. Версия приложения в UI
+
+Публичный `GET /api/version` → `{"version": cfg.Build.Version}` (без авторизации).
+SPA (Sidebar) показывает `v{version}` в футере. Порядок присвоения версии — в
+`DEPLOYMENT.md` («Версионирование»).
+
+### 30.6. Out of scope (v1)
+
+Per-request обогащение логгера во всех handler'ах, отдельная группировка
+stacktrace-issue в Sentry, проброс `request_id` в исходящие запросы к узлам.

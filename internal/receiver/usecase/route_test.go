@@ -15,7 +15,7 @@ type stubNodeReader struct {
 	err  error
 }
 
-func (s stubNodeReader) GetByPath(_ context.Context, _ string) (*domain.Node, error) {
+func (s stubNodeReader) Get(_ context.Context, _, _ string) (*domain.Node, error) {
 	return s.node, s.err
 }
 
@@ -81,7 +81,7 @@ func TestRouteAsync_PausedQueued(t *testing.T) {
 	}
 	producer := &stubProducer{}
 	u := NewRouteAsyncUsecase(stubNodeReader{node: node}, producer, "nexus.async", logging.NewNoop())
-	res, err := u.RouteAsync(context.Background(), RouteInput{NodePath: "demo/path"})
+	res, err := u.RouteAsync(context.Background(), RouteInput{NodePath: "demo/path", Method: "POST"})
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
@@ -103,4 +103,58 @@ type stubProducer struct {
 func (s *stubProducer) Produce(_ context.Context, _, _ string, _ []byte, _ map[string]string) error {
 	s.calls++
 	return nil
+}
+
+// capturingSender запоминает последний SendRequest для проверки исходящего метода.
+type capturingSender struct {
+	last *senderv1.SendRequest
+	resp *senderv1.SendResponse
+}
+
+func (c *capturingSender) Send(_ context.Context, req *senderv1.SendRequest) (*senderv1.SendResponse, error) {
+	c.last = req
+	if c.resp == nil {
+		return &senderv1.SendResponse{StatusCode: 200, Body: []byte("ok")}, nil
+	}
+	return c.resp, nil
+}
+
+func methodTestNode() *domain.Node {
+	return &domain.Node{
+		Path:             "demo/path",
+		RootMethod:       domain.RootMethodRequest,
+		IncomingMethod:   domain.HTTPMethodPOST,
+		OutgoingMethod:   domain.HTTPMethodPUT,
+		URLMode:          domain.URLModeStatic,
+		TargetURL:        "https://example.com/hook",
+		AuthType:         domain.AuthTypeNone,
+		IncomingAuthType: domain.IncomingAuthTypeNone,
+		Status:           domain.NodeStatusEnabled,
+	}
+}
+
+// TestRoute_IncomingMethodMismatch: §3.2 (#5) — узел принимает только свой
+// входящий метод, иначе ErrNodeMethodNotAllowed (handler → 405).
+func TestRoute_IncomingMethodMismatch(t *testing.T) {
+	t.Parallel()
+	u := NewRouteUsecase(stubNodeReader{node: methodTestNode()}, &capturingSender{}, logging.NewNoop())
+	_, err := u.Route(context.Background(), RouteInput{NodePath: "demo/path", Method: "GET"})
+	if !errors.Is(err, domain.ErrNodeMethodNotAllowed) {
+		t.Fatalf("want ErrNodeMethodNotAllowed, got %v", err)
+	}
+}
+
+// TestRoute_OutgoingMethodUsed: §3.2 (#5) — исходящий вызов получателя идёт
+// методом из настройки узла (OutgoingMethod), а не методом входящего запроса.
+func TestRoute_OutgoingMethodUsed(t *testing.T) {
+	t.Parallel()
+	sender := &capturingSender{}
+	u := NewRouteUsecase(stubNodeReader{node: methodTestNode()}, sender, logging.NewNoop())
+	_, err := u.Route(context.Background(), RouteInput{NodePath: "demo/path", Method: "POST"})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if sender.last == nil || sender.last.GetMethod() != "PUT" {
+		t.Fatalf("want outgoing method PUT, got %v", sender.last.GetMethod())
+	}
 }

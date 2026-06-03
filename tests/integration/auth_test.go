@@ -43,9 +43,10 @@ func TestAuth_Login_E2E(t *testing.T) {
 	logger := logging.NewNoop()
 	userRepo := pgrepo.NewUserRepoPg(pool, logger)
 	sessionRepo := webredis.NewSessionRepoRedis(redisClient)
+	teamRepo := pgrepo.NewTeamRepoPg(pool, logger)
 	auditRepo := pgrepo.NewAuditRepoPg(pool, logger)
 	auditUC := webuc.NewAuditUsecase(auditRepo, logger)
-	authUC := webuc.NewAuthUsecase(userRepo, sessionRepo, auditUC, time.Hour, logger)
+	authUC := webuc.NewAuthUsecase(userRepo, sessionRepo, teamRepo, auditUC, time.Hour, logger)
 
 	// Создаём пользователя через UserRepo напрямую — Web-usecase для creation
 	// тестируется в unit'ах; здесь интересна вся цепочка login.
@@ -60,7 +61,8 @@ func TestAuth_Login_E2E(t *testing.T) {
 		Role:         domain.UserRoleAdmin,
 		Active:       true,
 		Lang:         domain.UserLangEN,
-		TeamID:       "default",
+		// DefaultTeamID пустой — UserRepo подставит UUID default-team
+		// через COALESCE с подзапросом по slug='default'.
 	}
 	require.NoError(t, userRepo.Create(ctx, u))
 	require.NotEmpty(t, u.ID)
@@ -116,7 +118,6 @@ func TestAuth_Login_E2E(t *testing.T) {
 		Role:         domain.UserRoleViewer,
 		Active:       false,
 		Lang:         domain.UserLangEN,
-		TeamID:       "default",
 	}
 	require.NoError(t, userRepo.Create(ctx, inactive))
 	_, _, err = authUC.Login(ctx, "bob", password, "127.0.0.1")
@@ -150,4 +151,70 @@ func TestAuth_Login_E2E(t *testing.T) {
 	require.Equal(t, domain.ActionUserLoginFailed, bobAudit[0].Action)
 	// Reason "inactive" должен попасть в Details.
 	require.Equal(t, "inactive", bobAudit[0].Details["reason"])
+}
+
+// TestUserRoleManager_E2E проверяет, что миграция 0013 принимает роль
+// `manager` (CHECK-constraint users_role_check) и что self-service смена
+// собственного пароля (ChangeOwnPassword, §26) работает end-to-end:
+//   - неверный текущий пароль → ErrUnauthorized, пароль не меняется;
+//   - верный → пароль сменён, все сессии инвалидированы.
+func TestUserRoleManager_E2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+
+	pool, pgCleanup := startPostgres(t, ctx)
+	defer pgCleanup()
+
+	redisClient, redisCleanup := startRedis(t, ctx)
+	defer redisCleanup()
+
+	logger := logging.NewNoop()
+	userRepo := pgrepo.NewUserRepoPg(pool, logger)
+	sessionRepo := webredis.NewSessionRepoRedis(redisClient)
+	teamRepo := pgrepo.NewTeamRepoPg(pool, logger)
+	auditUC := webuc.NewAuditUsecase(pgrepo.NewAuditRepoPg(pool, logger), logger)
+	authUC := webuc.NewAuthUsecase(userRepo, sessionRepo, teamRepo, auditUC, time.Hour, logger)
+
+	const password = "M4nagerPwd!"
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	require.NoError(t, err)
+
+	// (1) Создание пользователя с role='manager' проходит CHECK-constraint.
+	mgr := &domain.User{
+		Login:        "mgr",
+		PasswordHash: string(hash),
+		Role:         domain.UserRoleManager,
+		Active:       true,
+		Lang:         domain.UserLangEN,
+	}
+	require.NoError(t, userRepo.Create(ctx, mgr))
+	require.NotEmpty(t, mgr.ID)
+
+	got, err := userRepo.Get(ctx, mgr.ID)
+	require.NoError(t, err)
+	require.Equal(t, domain.UserRoleManager, got.Role)
+
+	// (2) Логинимся под менеджером и создаём сессию.
+	token, _, err := authUC.Login(ctx, "mgr", password, "127.0.0.1")
+	require.NoError(t, err)
+	require.NotEmpty(t, token)
+
+	actor := webuc.Actor{UserID: mgr.ID, UserLogin: mgr.Login, IPAddress: "127.0.0.1"}
+
+	// (3) Неверный текущий пароль → ErrUnauthorized, смены нет.
+	err = authUC.ChangeOwnPassword(ctx, actor, mgr.ID, "wrong-current", "BrandNew!99")
+	require.ErrorIs(t, err, domain.ErrUnauthorized)
+	_, _, err = authUC.Login(ctx, "mgr", password, "127.0.0.1")
+	require.NoError(t, err, "старый пароль должен ещё работать")
+
+	// (4) Верный текущий пароль → смена + инвалидация всех сессий.
+	require.NoError(t, authUC.ChangeOwnPassword(ctx, actor, mgr.ID, password, "BrandNew!99"))
+	_, err = authUC.Check(ctx, token)
+	require.ErrorIs(t, err, domain.ErrSessionNotFound, "сессии должны быть отозваны")
+
+	_, _, err = authUC.Login(ctx, "mgr", password, "127.0.0.1")
+	require.ErrorIs(t, err, domain.ErrUnauthorized, "старый пароль больше не работает")
+	tokenNew, _, err := authUC.Login(ctx, "mgr", "BrandNew!99", "127.0.0.1")
+	require.NoError(t, err)
+	require.NotEmpty(t, tokenNew)
 }

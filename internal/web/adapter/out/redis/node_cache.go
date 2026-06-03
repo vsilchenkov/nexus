@@ -19,7 +19,15 @@ import (
 //
 // Ключи:
 //
-//	node:{path} — сериализованный JSON конфига узла (включая plaintext-креды).
+//	node:{team_slug}:{path} — сериализованный JSON конфига узла (plaintext-креды).
+//
+// ВАЖНО: формат ключа обязан совпадать с тем, что читает Receiver
+// (internal/receiver/adapter/out/nodecache: "node:<team_slug>:<path>"). Иначе
+// write-through и инвалидация из Web не доходят до ключа Receiver, и изменения
+// узла вступают в силу только по истечении Redis-TTL (до 5 мин) вместо ~мгновенно.
+// В v1 команда всегда 'default' (team_id='default', §0), поэтому используем
+// domain.DefaultTeamSlug; multi-tenancy v2 потребует резолва реального slug
+// команды узла здесь (см. resolveCHDatabase в usecase/node.go как образец).
 //
 // Поскольку в Redis ложится plaintext (для быстрого использования
 // Receiver'ом), Redis должен жить в защищённом контуре. Это сознательный
@@ -35,7 +43,7 @@ func NewNodeCacheRedis(client *goredis.Client, logger logging.Logger) *NodeCache
 	return &NodeCacheRedis{client: client, logger: logger}
 }
 
-func nodeKey(path string) string { return "node:" + path }
+func nodeKey(path string) string { return "node:" + domain.DefaultTeamSlug + ":" + path }
 
 func (c *NodeCacheRedis) GetByPath(ctx context.Context, path string) (*domain.Node, error) {
 	data, err := c.client.Get(ctx, nodeKey(path)).Bytes()

@@ -28,9 +28,10 @@ const Channel = "nexus:config:reload"
 type Section string
 
 const (
-	SectionSentry     Section = "sentry"
-	SectionClickHouse Section = "clickhouse"
-	SectionAll        Section = "all"
+	SectionSentry        Section = "sentry"
+	SectionClickHouse    Section = "clickhouse"
+	SectionNotifications Section = "notifications"
+	SectionAll           Section = "all"
 )
 
 // Message — формат тела события.
@@ -131,7 +132,7 @@ func (s *Subscriber) handle(ctx context.Context, payload string) {
 	}
 	sections := []Section{msg.Section}
 	if msg.Section == SectionAll {
-		sections = []Section{SectionSentry, SectionClickHouse}
+		sections = []Section{SectionSentry, SectionClickHouse, SectionNotifications}
 	}
 
 	s.mu.RLock()

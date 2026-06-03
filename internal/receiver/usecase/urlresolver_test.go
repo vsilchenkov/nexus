@@ -102,6 +102,22 @@ func TestResolveURL_FromRequest_Wildcard(t *testing.T) {
 	}
 }
 
+func TestResolveURL_FromRequest_Regex(t *testing.T) {
+	n := &domain.Node{
+		URLMode:         domain.URLModeFromRequest,
+		URLParamName:    "url_base",
+		URLAllowedHosts: []string{`re:^api-\d+\.legacy\.io$`},
+	}
+	_, _, err := ResolveURL(n, url.Values{"url_base": {"https://api-42.legacy.io/cb"}})
+	if err != nil {
+		t.Errorf("api-42.legacy.io должен матчить regex: %v", err)
+	}
+	_, _, err = ResolveURL(n, url.Values{"url_base": {"https://api-x.legacy.io/cb"}})
+	if !errors.Is(err, domain.ErrURLNotAllowed) {
+		t.Fatalf("api-x.legacy.io не должен матчить regex, got %v", err)
+	}
+}
+
 func TestResolveURL_FromRequest_EmptyAllowlist(t *testing.T) {
 	n := &domain.Node{
 		URLMode:      domain.URLModeFromRequest,
