@@ -35,6 +35,7 @@
 | 27 | [27-rabbitmq-async.md](27-rabbitmq-async.md) | Тип узла RabbitMQAsync — Puller-воркер RabbitMQ→Kafka, поля `rmq_*`/`pull_*`, runtime-`degraded`, `POST /api/nodes/test-rmq`, метрики, UI, сценарные тесты |
 | 28 | [28-online-metrics.md](28-online-metrics.md) | Онлайн-метрики и UX — публичный адрес приложения, онлайн-обновление метрик, период просмотра (1h..30d+календарь), маскирование данных авторизации, понятные ошибки валидации, фильтр RabbitMQAsync, багфиксы стенда (CH-таблица, резолв async) |
 | 29 | [29-node-comment.md](29-node-comment.md) | Комментарий узла — текстовое описание для команды (поле `comment`, форма/обзор узла), UI-метаданные вне маршрутизации |
+| 30 | [30-logging-panic-recovery.md](30-logging-panic-recovery.md) | Логирование, обработка паник и идентификация запросов — `safego.Recover` во всех горутинах, кастомный gin-recovery (500 + лог + Sentry), сквозной `request_id` (UUID v4, `X-Request-Id`) в логах/Sentry, версия приложения в футере SPA (`GET /api/version`), bump логгера до v1.7.9 (`WithContext`) |
 
 ## Как пользоваться
 
