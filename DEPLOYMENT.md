@@ -82,6 +82,10 @@ Nexus — три stateless Go-сервиса плюс набор хранили�
 топиков упадёт с `InvalidReplicationFactor` (дефолты в `config.example.yml` рассчитаны
 на кластер из 3+ брокеров: RF=3, ISR=2).
 
+При обновлении готовыми образами из registry (§9.2) в `.env` дополнительно используется
+`REGISTRY_BASE` (адрес проекта в Container Registry, `= $CI_REGISTRY_IMAGE`) — он подставляется
+в `deploy/docker-compose.registry.yml`. Сами бинари его не читают; это compose-переменная.
+
 ### Метрики панели и Prometheus (§21)
 
 Дашборды Web-панели (KPI на Overview: входящие/исходящие/очередь/ошибки за 24ч; per-node
@@ -509,12 +513,65 @@ Compose пересоздаёт контейнеры с новыми образа
 > **Рекомендация:** перед обновлением, добавляющим миграции, сделайте дамп PostgreSQL
 > (`pg_dump`) — это страховка для отката БД (§10).
 
-### 9.2. Обновление через готовые образы из registry
+### 9.2. Обновление через готовые образы из registry (рекомендуемый прод-путь)
 
 Релизные образы публикуются GoReleaser'ом в GitLab Container Registry по тегу `v*`:
-`$CI_REGISTRY_IMAGE/{receiver,sender,web}:<version>`. Чтобы запускать их вместо локальной
-сборки, в override-файле замените `build:` на `image:` с нужным тегом и выполните
-`docker compose pull && docker compose up -d`. Смена версии = смена тега образа.
+`$CI_REGISTRY_IMAGE/{receiver,sender,web}:<version>` (multi-arch amd64+arm64, плюс `:latest`).
+Это путь без сборки на проде: CI собрал образы один раз, сервер только подтягивает и
+перезапускает контейнеры. Полный цикл «тег → образы → прод» — в §9.5.
+
+Базовые compose-файлы (`docker-compose.yml`, `docker-compose.app.yml`,
+`docker-compose.ch-external.yml`) собирают сервисы из исходников (`build:`). Чтобы запускать
+готовые образы, подменяем `build:` на `image:` в **override-файле** — он накладывается поверх
+базового через второй `-f` (как и `docker-compose.override.yml` из §7).
+
+**Шаг 1. Один раз создать override `deploy/docker-compose.registry.yml`:**
+
+```yaml
+services:
+  receiver:
+    build: !reset null        # убрать унаследованный build:, чтобы не пересобирать
+    image: ${REGISTRY_BASE}/receiver:${VERSION}
+  sender:
+    build: !reset null
+    image: ${REGISTRY_BASE}/sender:${VERSION}
+  web:
+    build: !reset null
+    image: ${REGISTRY_BASE}/web:${VERSION}
+```
+
+**Шаг 2. В `.env` задать адрес registry и версию:**
+
+```dotenv
+REGISTRY_BASE=registry.<gitlab-host>/<group>/<project>   # = $CI_REGISTRY_IMAGE проекта
+VERSION=1.0.0                                             # = тег образа и build.version/метрик
+```
+
+**Шаг 3. Залогиниться (один раз) и перекатить три сервиса** (пример для Варианта C —
+внешний ClickHouse; для A замените на `docker-compose.yml`, для B — на `docker-compose.app.yml`):
+
+```bash
+docker login registry.<gitlab-host>     # токен со scope read_registry
+
+docker compose \
+  -f deploy/docker-compose.ch-external.yml \
+  -f deploy/docker-compose.registry.yml \
+  pull web receiver sender
+
+docker compose \
+  -f deploy/docker-compose.ch-external.yml \
+  -f deploy/docker-compose.registry.yml \
+  up -d web receiver sender
+```
+
+Хранилища (bundled PG/Redis/Kafka в volume'ах + внешний ClickHouse) не пересоздаются;
+новые `*.up.sql` накатятся автоматически при старте `web`/`receiver` (§8). **Смена версии =
+поднять `VERSION` в `.env` и повторить `pull` + `up -d`.** Откат — вернуть прежний `VERSION`
+и снова `pull` + `up -d` (§10.1).
+
+> Чтобы compose всегда тянул свежий образ под тем же тегом (например `:latest`), можно
+> добавить сервисам `pull_policy: always` в том же override. Для пиннинга по точной версии
+> (`:1.0.0`) это не нужно — тег и так уникален.
 
 ### 9.3. Переход на новую мажорную версию
 
@@ -524,6 +581,70 @@ Compose пересоздаёт контейнеры с новыми образа
    сервисов под нагрузкой.
 4. Перекатить сервисы (§9.1).
 5. Проверить `/health` всех трёх сервисов и вход в UI.
+
+### 9.4. Откуда GoReleaser берёт версию (тег → ldflags)
+
+Релизные образы получают версию **автоматически** из имени git-тега — GoReleaser
+подставляет её в `build.Version`/`build.Commit`/`build.BuildDate` через `ldflags`
+(см. [.goreleaser.yaml](../.goreleaser.yaml), `-X bus/internal/platform/build.Version={{ .Version }}`).
+**Ручной правки `versioninfo.json` для релиза по тегу не требуется.** Файлы
+`cmd/{web,receiver,sender}/versioninfo.json` и `web-ui/package.json` нужны только для
+сборок без тега (нативные Windows-бинари, локальная сборка) — их синхронизируют вручную
+(§9.0). `VERSION` в `.env` — отдельный слой: задаёт тег образа в registry-override (§9.2)
+и значение в метриках; держите его равным тегу.
+
+### 9.5. Чек-лист выпуска новой версии (тег → registry → прод)
+
+Полный цикл для рекомендуемого пути (готовые образы из registry, §9.2). Пример — версия
+`1.0.0`, Вариант C (внешний ClickHouse).
+
+**A. Подготовка релиза (рабочая машина / репозиторий):**
+
+- [ ] Код выпускаемой версии находится в `dev`/`master` (не на feature-ветке) и проходит CI
+      (`make test`, `golangci-lint run`, `cd web-ui && npm run lint && npm run build`).
+- [ ] Встроенный SPA пересобран и закоммичен (`make build-ui` → `internal/web/static/`), если
+      менялся `web-ui/` — иначе фронт не доедет до прода.
+- [ ] Обновлён [CHANGELOG.md](./CHANGELOG.md) (фичи/фиксы/breaking-changes, список миграций).
+- [ ] (Опц., для согласованности нетеговых сборок) подняты `ProductVersion` во всех трёх
+      `cmd/*/versioninfo.json` и `version` в `web-ui/package.json` (§9.0). Для образов по тегу
+      это не обязательно — версию даст ldflags (§9.4).
+
+**B. Выпуск артефактов (git → CI):**
+
+- [ ] В GitLab → Settings → CI/CD → Variables задана переменная `GITLAB_TOKEN`
+      (scope `api` + `write_repository`) — без неё job `release` не создаст release.
+- [ ] Создан и запушен тег: `git tag v1.0.0 && git push origin v1.0.0`.
+- [ ] Job `release` ([.gitlab-ci.yml](../.gitlab-ci.yml), триггер `^v[0-9]`) завершился зелёным.
+- [ ] В Container Registry проекта появились образы
+      `{receiver,sender,web}:1.0.0` (+ `:latest`).
+
+**C. Подготовка прод-сервера (один раз):**
+
+- [ ] Есть override `deploy/docker-compose.registry.yml` (`build:` → `image:`, см. §9.2).
+- [ ] В `.env` заданы: `REGISTRY_BASE`, `VERSION=1.0.0`, реальные `CH_HOST/CH_PORT/CH_USER/CH_PASSWORD`
+      внешнего ClickHouse и **обязательный** `ENCRYPTION_KEY` (32 байта base64, §2).
+- [ ] Single-broker Kafka? Заданы `KAFKA_TOPIC_REPLICATION_FACTOR=1` и
+      `KAFKA_TOPIC_MIN_INSYNC_REPLICAS=1` (§2).
+- [ ] Используете дашборды панели / Telegram-алерты? Задан `PROMETHEUS_URL` (§21/§22).
+- [ ] У CH-пользователя есть право создавать БД/таблицы (`nexus_<slug>`, §5.3).
+- [ ] Выполнен `docker login` в registry (токен со scope `read_registry`).
+
+**D. Раскатка:**
+
+- [ ] **Перед обновлением с новыми миграциями** снят дамп PostgreSQL (`pg_dump`, §12) — страховка отката.
+- [ ] `docker compose -f deploy/docker-compose.ch-external.yml -f deploy/docker-compose.registry.yml pull web receiver sender`
+- [ ] `docker compose -f deploy/docker-compose.ch-external.yml -f deploy/docker-compose.registry.yml up -d web receiver sender`
+- [ ] Миграции применились на старте `web`/`receiver` (в логах нет ошибок миграций, §8).
+
+**E. Проверка:**
+
+- [ ] `/health` всех трёх сервисов отвечает: `:8000` (web), `:8080` (receiver), `:9093` (sender).
+- [ ] `GET /api/version` возвращает `1.0.0`; в футере SPA та же версия.
+- [ ] Вход в UI под `admin` работает; ключевые сценарии (создание узла, sync/async-запрос,
+      просмотр логов) проходят — при сомнениях сверьтесь с [docs/STAND_TESTING.md](./docs/STAND_TESTING.md).
+
+> **Откат:** вернуть прежний `VERSION` в `.env` → `pull` + `up -d` (§10.1). Схему БД
+> откатывать только при несовместимости и только с дампом (§10.2).
 
 ---
 
