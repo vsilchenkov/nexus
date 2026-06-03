@@ -4,32 +4,6 @@
 
 Шина данных — три Go-сервиса (Receiver, Sender, Web), которые принимают входящие HTTP-запросы, маршрутизируют их на сконфигурированные внешние узлы и логируют все вызовы. Конфигурация маршрутов хранится в PostgreSQL, редактируется через REST API и SPA (React 18 + Vite + Tailwind). Полное ТЗ — [specs/nexus_spec.md](./specs/nexus_spec.md); разделено по разделам в [specs/sections/](./specs/sections/).
 
-## Статус
-
-| Фаза     | Что готово                                                                       |
-|----------|----------------------------------------------------------------------------------|
-| Phase 0  | Скелет, docker-compose, healthcheck, миграции, kardianos/service runner          |
-| Phase 1  | Sync end-to-end: /v1/request/* → gRPC к Sender → внешний URL; ClickHouse-логи    |
-| Phase 1  | Все режимы auth (none/basic/token/token_from_request/basic_from_request)         |
-| Phase 1  | URL-режимы static / from_request с allowlist                                     |
-| Phase 1  | AES-256-GCM шифрование auth_credentials в БД                                     |
-| Phase 2  | Async /v1/requestAsync/* → Kafka (nexus.async/dlq); Sender-consumer; paused-pacing |
-| Phase 2  | Circuit breaker + rate-limit (Redis); audit log таблица + запись для CRUD узлов  |
-| Phase 3  | Web auth: users CRUD, sessions в Redis, login/logout/me, RBAC, --set-admin-password CLI |
-| Phase 3  | API-токены: SHA-256 hash, scopes, rate-limit, audit                              |
-| Phase 3  | SPA каркас через embed.FS (index.html-заглушка с REST-документацией)             |
-| Phase 4  | loadtest бинарь с pass/fail-критериями (§10.2)                                   |
-| Phase 4  | unit-тесты критических usecase'ов; housekeeping cron (audit retention)           |
-| Phase 5  | paused→202, dry-run (§7.5.1), replay (§7.4.1), SSE live-tail (§7.4)              |
-| Phase 5  | rotate-encryption-key utility (§5.5); CH partition-drop housekeeping (§4.3)      |
-| Phase 5  | Swagger generation + drift-check; port.UnitOfWork; Sentry tracing-spans          |
-| Phase 5  | i18n (Accept-Language en/ru); SPA на React 18 + Vite + Tailwind (Login, Overview, NodeDetail, NodeSettings, Audit, Settings/{API tokens,Language,Theme}) |
-| Phase 5  | integration-тесты testcontainers: node-repo + receiver sync end-to-end           |
-| Phase 5.1 | CH file-fallback (NDJSON); расширенный i18n на handlers; unit-тесты Replay/Logs/Sentry middleware |
-| Phase 6  | Prometheus метрики; app_settings + hot-reload Sentry/ClickHouse + test connection; Users CRUD; live-tail UI (подсветка/баннер); CSV-экспорт audit; CH orphan-tables; live-tail фильтры; audit diff |
-| Phase 7  | Swagger 100% endpoints + UI; L2 LRU кеш узлов; integration suite (Redis+CH через testcontainers); GitLab CI pipeline; Grafana dashboard + Prometheus alerts; **GoReleaser релизы + multi-arch docker в GitLab Container Registry; security scanning** |
-| Out-of-scope (v2) | KMS-интеграция, multi-tenancy логика, webhook signature verification, OpenTelemetry |
-
 ## Зависимости
 
 | Компонент    | Версия |
