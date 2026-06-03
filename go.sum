@@ -341,8 +341,8 @@ github.com/twitchyliquid64/golang-asm v0.15.1 h1:SU5vSMR7hnwNxj24w34ZyCi/FmDZTkS
 github.com/twitchyliquid64/golang-asm v0.15.1/go.mod h1:a1lVb/DtPvCB8fslRZhAngC2+aY1QWCk3Cedj/Gdt08=
 github.com/ugorji/go/codec v1.3.1 h1:waO7eEiFDwidsBN6agj1vJQ4AG7lh2yqXyOXqhgQuyY=
 github.com/ugorji/go/codec v1.3.1/go.mod h1:pRBVtBSKl77K30Bv8R2P+cLSGaTtex6fsA2Wjqmfxj4=
-github.com/vsilchenkov/logging v1.7.8 h1:u/h9Kpkw+nQ2po5eh7J66gzTt0thwXUB5F/G0oilILc=
-github.com/vsilchenkov/logging v1.7.8/go.mod h1:oteVxYRsHwmOFLE9woj20KYJMeVpWrQ4SJlsc78Y82o=
+github.com/vsilchenkov/logging v1.7.9 h1:YCqdlWZ1V06SpB2OHRNxgaEl7xxuhSjGUNcwB4hh5Nk=
+github.com/vsilchenkov/logging v1.7.9/go.mod h1:oteVxYRsHwmOFLE9woj20KYJMeVpWrQ4SJlsc78Y82o=
 github.com/xdg-go/pbkdf2 v1.0.0 h1:Su7DPu48wXMwC3bs7MCNG+z4FhcyEuz5dlvchbq0B0c=
 github.com/xdg-go/pbkdf2 v1.0.0/go.mod h1:jrpuAogTd400dnrH08LKmI/xc1MbPOebTwRqcT5RDeI=
 github.com/xdg-go/scram v1.1.1/go.mod h1:RaEWvsqvNKKvBPvcKeFjrG2cJqOkHTiyTpzz23ni57g=
