@@ -8,6 +8,7 @@ import (
 	"nexus/internal/domain"
 	"nexus/internal/platform/logging"
 	"nexus/internal/platform/metrics"
+	"nexus/internal/platform/safego"
 )
 
 // PullerManager — управляет жизненным циклом Puller-воркеров (§27.2). Один
@@ -132,11 +133,10 @@ func (mgr *PullerManager) startLocked(parent context.Context, n *domain.Node) {
 	w := NewPullerWorker(n, mgr.connector, mgr.producer, mgr.asyncTopic,
 		mgr.maxMessageBytes, mgr.metrics, mgr.sink, mgr.logger)
 	mgr.running[n.Path] = &workerHandle{cancel: cancel, updatedAt: n.UpdatedAt}
-	mgr.wg.Add(1)
-	go func() {
-		defer mgr.wg.Done()
+	mgr.wg.Go(func() {
+		defer safego.Recover(mgr.logger, "receiver.pullerWorker")
 		w.Run(wctx)
-	}()
+	})
 	mgr.logger.Info("puller: worker started", mgr.logger.Str("node", n.Path))
 }
 

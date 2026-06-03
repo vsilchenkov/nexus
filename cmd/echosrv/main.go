@@ -41,6 +41,10 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	extlog "github.com/vsilchenkov/logging"
+
+	"nexus/internal/platform/safego"
 )
 
 func main() {
@@ -48,6 +52,8 @@ func main() {
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	log := extlog.NewLogger(logger)
+	defer safego.Recover(log, "echosrv.main")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
@@ -63,6 +69,7 @@ func main() {
 	}
 
 	go func() {
+		defer safego.Recover(log, "echosrv.listen")
 		logger.Info("echosrv listening", slog.String("addr", *addr))
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("listen failed", slog.Any("err", err))

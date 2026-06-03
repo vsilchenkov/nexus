@@ -3181,6 +3181,22 @@ paths:
       summary: Сменить пароль пользователя (admin only).
       tags:
       - users
+  /api/version:
+    get:
+      description: 'Публичный read-only эндпоинт: текущая версия Web Service. Не требует
+        авторизации.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Версия приложения (§30).
+      tags:
+      - meta
 schemes:
 - http
 - https

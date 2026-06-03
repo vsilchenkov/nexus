@@ -12,6 +12,7 @@ import (
 
 	"nexus/internal/domain"
 	"nexus/internal/platform/logging"
+	"nexus/internal/platform/safego"
 	"nexus/internal/web/usecase/port"
 )
 
@@ -129,7 +130,10 @@ func (u *APITokenUsecase) Verify(ctx context.Context, value string) (*domain.API
 		return nil, nil, domain.ErrUserInactive
 	}
 	// Best-effort last_used_at; не блокирует ответ.
-	go func() { _ = u.repo.TouchLastUsed(context.Background(), t.ID) }()
+	go func() {
+		defer safego.Recover(u.logger, "web.tokenTouchLastUsed")
+		_ = u.repo.TouchLastUsed(context.Background(), t.ID)
+	}()
 	return t, user, nil
 }
 

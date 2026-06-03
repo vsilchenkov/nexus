@@ -25,7 +25,7 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/kafka v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/rabbitmq v0.42.0
-	github.com/vsilchenkov/logging v1.7.8
+	github.com/vsilchenkov/logging v1.7.9
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.43.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.43.0

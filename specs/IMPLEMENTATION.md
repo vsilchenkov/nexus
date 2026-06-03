@@ -216,7 +216,8 @@
 | `github.com/vsilchenkov/logging` через DI | ✅ | [platform/logging/logging.go](../internal/platform/logging/logging.go) — алиас `Logger`, `Init`, `NewNoop` для тестов |
 | `ErrorWithOp` с `op` для группировки | ✅ | используется во всех handlers/usecase |
 | Sentry с `BeforeSend`/`BeforeBreadcrumb` для маскирования | ✅ | [platform/sentry/sentry.go](../internal/platform/sentry/sentry.go) |
-| **Sentry tracing-middleware для Gin (§14.3)** | ✅ Phase 5 | [platform/sentry/middleware.go](../internal/platform/sentry/middleware.go) — span'ы с тегами service/node/root_method |
+| **Sentry tracing-middleware для Gin (§14.3)** | ✅ Phase 5 | [platform/sentry/middleware.go](../internal/platform/sentry/middleware.go) — span'ы с тегами service/node/root_method/**request_id** (§30) |
+| Обработка паник + `request_id` + версия в UI | ✅ §30 | логгер v1.7.9 (`WithContext`); см. карту §30 ниже и решение §4.27 |
 | `app_settings` PostgreSQL singleton + Web UI Sentry | ✅ Phase 6.3 | overlay поверх env, hot-reload Sentry/ClickHouse через Redis pub/sub, test connection (см. §8 строки 125-128) |
 
 ### §15 Критерии приёмки
@@ -403,6 +404,22 @@
 | PG repo + DTO + Swagger | ✅ Phase 29.A | comment последней колонкой в [node_repo.go](../internal/web/adapter/out/postgres/node_repo.go) (INSERT/UPDATE/scan), [dto.go](../internal/web/adapter/in/http/dto.go) (req/resp+мапперы); тесты [node_test.go](../internal/domain/node_test.go), [node_repo_test.go](../tests/integration/node_repo_test.go) |
 | UI: блок в форме + показ на «Обзоре» + i18n | ✅ Phase 29.B | [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx) (Card+Textarea внизу формы), [OverviewTab.tsx](../web-ui/src/components/node/OverviewTab.tsx) (read-only), `node.form.comment*` ([locales](../web-ui/src/locales/)) |
 | Багфикс: ключ node-кеша Web = формату Receiver | ✅ Phase Fix.B | [redis/node_cache.go](../internal/web/adapter/out/redis/node_cache.go) (`node:<DefaultTeamSlug>:<path>`) — см. §4.26 |
+
+---
+
+### §30 Логирование, обработка паник и идентификация запросов
+
+ТЗ — [sections/30-logging-panic-recovery.md](sections/30-logging-panic-recovery.md).
+Ветка `feature/logging-panic-requestid`. Зависимость: bump логгера до v1.7.9
+(`With`/`WithContext`).
+
+| Пункт | Статус | Где |
+|---|---|---|
+| Recover в горутинах (helper) | ✅ Phase 1–2 | [safego](../internal/platform/safego/safego.go) (`Recover`/`RecoverCtx`); `defer safego.Recover` в [runner.go](../internal/platform/runner/runner.go), всех горутинах [sender](../internal/sender/app.go)/[receiver](../internal/receiver/app.go)/[web](../internal/web/app.go) app.go, пулах ([kafka consumer](../internal/sender/adapter/in/kafka/consumer.go), [chlog writer](../internal/sender/adapter/out/chlog/writer.go), [puller_manager](../internal/receiver/usecase/puller_manager.go)), [ch manager](../internal/platform/clickhouse/manager.go), [api_token](../internal/web/usecase/api_token.go), [logs](../internal/web/usecase/logs.go) |
+| Recover в точках входа | ✅ Phase 2 | production `main` уже под `bootstrap.Shutdown`; [echosrv](../cmd/echosrv/main.go)/[loadtest](../cmd/loadtest/main.go) — `safego.Recover` в main |
+| gin recovery → лог + Sentry + 500 | ✅ Phase 3 | [recovery.GinMiddleware](../internal/platform/recovery/middleware.go) заменяет `gin.Recovery()` во всех движках; capture через `logger.WithContext` в request-scoped hub |
+| requestId (UUID v4, не перезаписывать) → Sentry | ✅ Phase 3 | [requestid](../internal/platform/requestid/requestid.go) (middleware первым в цепочке, `X-Request-Id`); тег на scope+транзакцию в [sentry/middleware.go](../internal/platform/sentry/middleware.go) |
+| Версия в UI | ✅ Phase 4 | публичный `GET /api/version` [version_handler.go](../internal/web/adapter/in/http/version_handler.go) (`cfg.Build.Version`); футер [Sidebar.tsx](../web-ui/src/components/Sidebar.tsx); порядок присвоения — [DEPLOYMENT.md §9.0](../DEPLOYMENT.md) |
 
 ---
 
@@ -1078,6 +1095,31 @@ filter, Create без TeamID). До блока B (team-switcher в сессии)
   В v1 команда всегда `default` (§0), поэтому достаточно; **v2 multi-tenancy** потребует резолва
   реального slug команды узла в этом адаптере (образец — `resolveCHDatabase` в `usecase/node.go`).
   После фикса изменения вступают в силу ≤ ~2с (L2 in-memory TTL Receiver).
+
+### 4.27 §30 — паники, request_id и привязка к Sentry-hub через WithContext
+
+- **Логгер v1.7.9 — `WithContext` доводит request-scoped hub до Sentry.** До v1.7.9
+  методы логгера вызывали slog без контекста, поэтому `logger.Error` всегда капчурил в
+  **глобальный** `sentry.CurrentHub()` — теги запроса (`request_id`/`node`), выставленные
+  на склонированный hub в [sentry/middleware.go](../internal/platform/sentry/middleware.go),
+  туда не попадали. В v1.7.9 методы логируют через `LogAttrs(l.context(), ...)`, и
+  `logger.WithContext(c.Request.Context()).Error(...)` отправляет событие в hub из
+  контекста (тот самый клонированный). Поэтому в [recovery-middleware](../internal/platform/recovery/middleware.go)
+  не нужен ручной `hub.RecoverWithContext` — он дал бы **дубль** события. Для фоновых
+  горутин (нет request-hub) `safego.Recover` логирует без контекста → в глобальный hub,
+  что корректно.
+- **Порядок middleware: `requestid → otel → sentry → recovery → metrics [→ i18n]`.**
+  recovery стоит **после** sentry (иначе при панике `span.Status` не успевал выставиться в
+  500 — sentry-middleware ставит его строкой после `c.Next()`), но **раньше** metrics и
+  handler'ов (чтобы перехватывать их паники). requestid — строго первым, чтобы id был в
+  контексте к моменту работы sentry/recovery. `gin.Recovery()` удалён везде.
+- **request_id не перезаписывается.** Если клиент/вышестоящий сервис прислал `X-Request-Id`
+  — он сохраняется (сквозная трассировка), иначе генерится UUID v4. Тег ставится и на
+  scope hub'а (события), и на транзакцию (трейсы).
+- **`safego.Recover` после `wg.Done()` в пулах.** В пулах (kafka consumer, chlog writer,
+  puller worker) `defer wg.Done()` регистрируется первым (выполнится последним), а
+  `defer safego.Recover` — после него в коде (выполнится первым, LIFO): сначала гасим
+  панику, затем отрабатывает `wg.Done`, не оставляя WaitGroup висеть.
 
 ### 4.24 §25 — два swagger одним Web-бинарём
 

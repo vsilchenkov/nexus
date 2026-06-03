@@ -3012,3 +3012,54 @@ Receiver не использует `comment` (поле не участвует �
 ### 29.6. Out of scope (v1)
 
 История изменений, упоминания/уведомления, отдельные права на правку комментария.
+
+## 30. Логирование, обработка паник и идентификация запросов
+
+### 30.1. Зачем
+
+Сервисы (Receiver / Sender / Web) — долгоживущие процессы и не должны падать от
+паники: её нужно перехватить, залогировать как `error` (→ Sentry) и продолжить.
+Дополнительно каждому запросу нужен сквозной `request_id` для связки логов,
+Sentry-событий и трейсов между сервисами. Версия приложения видна в UI.
+
+Зависимость: логгер `github.com/vsilchenkov/logging` обновлён до **v1.7.9**
+(`Logger.With`/`WithContext`, методы логируют через `LogAttrs(ctx, ...)`) —
+`logger.WithContext(reqCtx).Error(...)` капчурит событие в request-scoped
+Sentry-hub со всеми тегами запроса.
+
+### 30.2. Перехват паник в горутинах — `safego`
+
+`internal/platform/safego`: `Recover(logger, op)` (defer в начале горутины: гасит
+панику, логирует `error`, не делает re-panic) и `RecoverCtx(ctx, logger, op)`.
+Правило: каждая продакшн-горутина ставит `defer safego.Recover(...)`; для пулов с
+`defer wg.Done()` — recover ставится после него в коде (выполнится первым, LIFO).
+Покрыты главная app-горутина (`runner`), все listeners, reloader, housekeeping,
+Kafka consumer-пул, CH writer/fallback, Puller-воркеры, и пр. Точки входа
+production-сервисов уже под `bootstrap.Shutdown`.
+
+### 30.3. Идентификация запросов — `request_id`
+
+`internal/platform/requestid`: `GinMiddleware()` (первым в цепочке) читает
+`X-Request-Id`, при отсутствии генерит UUID v4, существующий не перезаписывает,
+кладёт в контекст/`gin.Context` и в заголовок ответа. `FromContext`/`WithValue`.
+В Sentry `request_id` ставится тегом на scope hub'а (события) и на транзакцию
+(трейсы); не маскируется.
+
+### 30.4. gin recovery
+
+Встроенный `gin.Recovery()` заменён на `internal/platform/recovery.GinMiddleware`
+во всех движках: лог через `logger.WithContext` (capture в request-scoped hub) +
+ответ 500 JSON `{error, request_id}`. Порядок:
+`requestid → otel → sentry → recovery → metrics [→ i18n]` (recovery после sentry —
+для статуса 500 у span; раньше handler'ов — чтобы ловить их паники).
+
+### 30.5. Версия приложения в UI
+
+Публичный `GET /api/version` → `{"version": cfg.Build.Version}` (без авторизации).
+SPA (Sidebar) показывает `v{version}` в футере. Порядок присвоения версии — в
+`DEPLOYMENT.md` («Версионирование»).
+
+### 30.6. Out of scope (v1)
+
+Per-request обогащение логгера во всех handler'ах, отдельная группировка
+stacktrace-issue в Sentry, проброс `request_id` в исходящие запросы к узлам.

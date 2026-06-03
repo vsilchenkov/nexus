@@ -8,6 +8,7 @@ import (
 
 	"nexus/internal/domain"
 	"nexus/internal/platform/logging"
+	"nexus/internal/platform/safego"
 	"nexus/internal/web/usecase/port"
 )
 
@@ -139,6 +140,7 @@ func (u *LogsUsecase) Subscribe(ctx context.Context, nodeID, teamID string, filt
 	go func() {
 		defer close(ch)
 		defer close(errCh)
+		defer safego.Recover(u.logger, "web.logsLiveTail")
 		tick := time.NewTicker(u.pollInterval)
 		defer tick.Stop()
 		for {

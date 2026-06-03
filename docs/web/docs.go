@@ -3276,6 +3276,29 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/api/version": {
+            "get": {
+                "description": "Публичный read-only эндпоинт: текущая версия Web Service. Не требует авторизации.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "meta"
+                ],
+                "summary": "Версия приложения (§30).",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {

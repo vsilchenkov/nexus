@@ -25,8 +25,11 @@ import (
 	otelpf "nexus/internal/platform/otel"
 	pgpf "nexus/internal/platform/pg"
 	"nexus/internal/platform/ratelimit"
+	recoverypf "nexus/internal/platform/recovery"
 	redispf "nexus/internal/platform/redis"
 	"nexus/internal/platform/reloader"
+	"nexus/internal/platform/requestid"
+	"nexus/internal/platform/safego"
 	sentrypf "nexus/internal/platform/sentry"
 	httpadapter "nexus/internal/receiver/adapter/in/http"
 	"nexus/internal/receiver/adapter/out/grpcsender"
@@ -104,6 +107,7 @@ func (a *App) Start(ctx context.Context) error {
 		a.pullerDone = make(chan struct{})
 		go func() {
 			defer close(a.pullerDone)
+			defer safego.Recover(a.logger, "receiver.pullerManager")
 			pullerMgr.Run(pctx)
 		}()
 		a.logger.Info("rabbitmq puller manager started")
@@ -116,7 +120,13 @@ func (a *App) Start(ctx context.Context) error {
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(otelpf.GinMiddleware("receiver"), sentrypf.GinMiddleware("receiver"), metrics.GinMiddleware(a.metrics), gin.Recovery())
+	r.Use(
+		requestid.GinMiddleware(),
+		otelpf.GinMiddleware("receiver"),
+		sentrypf.GinMiddleware("receiver"),
+		recoverypf.GinMiddleware(a.logger),
+		metrics.GinMiddleware(a.metrics),
+	)
 
 	hc := healthcheck.New(
 		[]healthcheck.Checker{pgpf.HealthChecker("postgres", a.pg)},
@@ -132,7 +142,10 @@ func (a *App) Start(ctx context.Context) error {
 	reloadSub := reloader.NewSubscriber(a.redis, a.logger)
 	reloadSub.Register(reloader.SectionSentry,
 		bootstrap.SentryReloader(a.pg, a.cfg, a.cfg.Build.ProjectName, a.cfg.Build.Version, a.logger))
-	go reloadSub.Run(ctx)
+	go func() {
+		defer safego.Recover(a.logger, "receiver.reloadSubscriber")
+		reloadSub.Run(ctx)
+	}()
 
 	a.srv = &http.Server{
 		Addr:              a.cfg.Receiver.HTTPAddr,
@@ -149,6 +162,7 @@ func (a *App) Start(ctx context.Context) error {
 
 	errCh := make(chan error, 1)
 	go func() {
+		defer safego.Recover(a.logger, "receiver.listenAndServe")
 		if err := a.srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("receiver listen: %w", err)
 		}
