@@ -63,6 +63,14 @@ type flags struct {
 	RatioAuthBasic  float64
 	MockJitter      time.Duration
 	RandomHeaders   bool
+
+	// §10.2: no-loss проверка через ClickHouse (async + rmq). Пустой CHAddr =
+	// проверка пропускается (локальный `make loadtest` без CH работает как раньше).
+	CHAddr       string
+	CHUser       string
+	CHPassword   string
+	CHTable      string
+	CHFlushGrace time.Duration
 }
 
 func parseFlags() flags {
@@ -104,6 +112,14 @@ func parseFlags() flags {
 		"Mock server response latency jitter (±). §10.2.")
 	flag.BoolVar(&f.RandomHeaders, "random-headers", true,
 		"Send 1–3 random X-Lt-* headers per request (§10.2 header proxying/masking).")
+	flag.StringVar(&f.CHAddr, "ch-addr", "",
+		"ClickHouse native addr host:port for §10.2 no-loss check (e.g. clickhouse:9000). Empty = skip.")
+	flag.StringVar(&f.CHUser, "ch-user", "default", "ClickHouse user for no-loss check")
+	flag.StringVar(&f.CHPassword, "ch-password", "", "ClickHouse password for no-loss check")
+	flag.StringVar(&f.CHTable, "ch-table", "nexus_default.loadtest",
+		"ClickHouse log table to count async/rmq rows for no-loss check")
+	flag.DurationVar(&f.CHFlushGrace, "ch-flush-grace", 10*time.Second,
+		"Wait before counting CH rows (sender batch flush window)")
 	flag.Parse()
 	return f
 }
@@ -163,6 +179,16 @@ func main() {
 	defer rmqLoad.stop()
 
 	report := runLoad(ctx, client, nodes, f)
+
+	// §10.2 no-loss: сверяем async/rmq-строки в CH-логе с числом отправленных.
+	// rmqLoad.stop() (deferred) дождётся завершения publisher'а; здесь его
+	// счётчик уже финален (publisher живёт ту же f.Duration, что и runLoad).
+	var asyncSent int64
+	if m := report.Modes[string(modeAsync)]; m != nil {
+		asyncSent = m.Sent
+	}
+	report.applyNoLoss(checkNoLoss(ctx, f, asyncSent+rmqLoad.published.Load()))
+
 	report.print()
 	rmqLoad.report()
 	if err := report.save(f.Report); err != nil {
@@ -296,6 +322,23 @@ type report struct {
 	P99Ms       float64                `json:"p99_ms"`
 	Duration    string                 `json:"duration"`
 	Modes       map[string]*modeReport `json:"modes,omitempty"`
+
+	// §10.2 no-loss (async + rmq). NoLossChecked=false => CH-сверка не гонялась.
+	NoLossChecked  bool  `json:"no_loss_checked"`
+	NoLoss         bool  `json:"no_loss"`
+	CHRows         int64 `json:"ch_rows"`
+	NoLossExpected int64 `json:"no_loss_expected"`
+}
+
+// applyNoLoss переносит результат CH-сверки в отчёт.
+func (rep *report) applyNoLoss(nl noLossResult) {
+	rep.NoLossChecked = nl.enabled
+	if !nl.enabled {
+		return
+	}
+	rep.CHRows = nl.rows
+	rep.NoLossExpected = nl.expected
+	rep.NoLoss = nl.ok
 }
 
 // buildReport агрегирует per-mode накопители в отчёт (общий + по режимам).
@@ -345,6 +388,9 @@ func (rep *report) print() {
 		fmt.Printf("  [%-10s] sent=%-7d err=%.4f%% p50=%.1f p95=%.1f p99=%.1f\n",
 			mode, m.Sent, m.ErrorRate*100, m.P50Ms, m.P95Ms, m.P99Ms)
 	}
+	if rep.NoLossChecked {
+		fmt.Printf("no-loss:      ch_rows=%d expected>=%d -> %v\n", rep.CHRows, rep.NoLossExpected, rep.NoLoss)
+	}
 	fmt.Println("==========================================")
 }
 
@@ -367,6 +413,11 @@ func (rep *report) passed(targetRPS int) bool {
 	}
 	if rep.ErrorRate >= 0.001 {
 		fmt.Fprintf(os.Stderr, "FAIL: error rate %.4f >= 0.001\n", rep.ErrorRate)
+		return false
+	}
+	if rep.NoLossChecked && !rep.NoLoss {
+		fmt.Fprintf(os.Stderr, "FAIL: message loss — ch_rows %d < expected %d (async+rmq)\n",
+			rep.CHRows, rep.NoLossExpected)
 		return false
 	}
 	fmt.Println("PASS: all criteria met")
