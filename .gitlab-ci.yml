@@ -294,11 +294,21 @@ integration:
       junit: junit-integration.xml
     expire_in: 1 month
 
-# ----------- LOADTEST (manual) ----------------------------------------------
-# Нагрузочный сценарий (§10.2 ТЗ) — поднимает изолированный compose-стек,
-# гонит cmd/loadtest и снимает стек. Запускается: авто-смоук на push в master
-# (allow_failure); кнопкой ▶ Play на pipeline ветки dev; либо через «Run
-# pipeline → RUN_PROFILE=loadtest-only» (на любой ветке, стартует сам).
+# ----------- LOADTEST (base + profiles) -------------------------------------
+# Нагрузочные сценарии (§10.2 ТЗ). Общее тело — в скрытом шаблоне
+# `.loadtest-base` (поднимает изолированный compose-стек, гонит cmd/loadtest,
+# снимает стек, генерит per-mode JUnit). Конкретные профили (`loadtest`,
+# `loadtest-mixed`, `loadtest-async`, `loadtest-rmq`, `loadtest-highrps`)
+# отличаются только `variables:` (микс долей / no-loss / RPS) и `rules:`.
+#
+# Какой профиль когда:
+#   - loadtest        — sync-smoke. Авто на push в master (allow_failure) и под
+#                       RUN_PROFILE=loadtest-only; manual на dev.
+#   - loadtest-mixed  — реалистичный микс §10.2 (async+dyn-url+auth) + no-loss.
+#                       Авто под RUN_PROFILE=loadtest-only; manual на dev.
+#   - loadtest-async  — async-ориентированный + строгая no-loss. Manual.
+#   - loadtest-rmq    — RabbitMQAsync-нагрузка (поднимает rabbitmq) + no-loss. Manual.
+#   - loadtest-highrps — capacity-bench на высоком RPS. Manual.
 # На feature-ветках manual-стаб не плодим — там только RUN_PROFILE=loadtest-only.
 #
 # Окружение собирается каждый запуск с нуля: COMPOSE_PROJECT_NAME содержит
@@ -311,14 +321,12 @@ integration:
 #     им же admin'у в свежей БД через `web --set-admin-password`, и им же
 #     loadtest логинится в Web.
 #
-# Опциональные переменные (можно переопределить при ручном запуске через
-# UI «Run pipeline» → Variables):
-#   - LOADTEST_TARGET_RPS  (default 300 — CI smoke-mode; для полного bench
-#                          §10.2 ТЗ передавай 500 через UI)
-#   - LOADTEST_DURATION    (default 2m)
-#   - LOADTEST_NODES       (default 50)
+# Опциональные переменные (переопределяются в `variables:` профиля или через
+# UI «Run pipeline» → Variables): LOADTEST_TARGET_RPS / _DURATION / _NODES /
+# _RATIO_ASYNC / _RATIO_DYNAMIC_URL / _RATIO_AUTH_TOKEN / _RATIO_AUTH_BASIC /
+# _RATIO_RMQ / _CH_NOLOSS (0|1) / _WITH_RMQ (0|1) / _P95_MS.
 
-loadtest:
+.loadtest-base:
   stage: integration
   # docker:27-cli: client API v1.45 для docker daemon v25+. На v24-cli
   # `docker cp/rm` падали с «client version 1.43 is too old, minimum
@@ -326,27 +334,6 @@ loadtest:
   image:
     name: docker:27-cli
     pull_policy: [always, if-not-present]
-  rules:
-    - if: $RUN_PROFILE == "integration-only"
-      when: never
-    # При RUN_PROFILE=loadtest-only — стартует без ручного клика,
-    # как только pipeline создан (порядок в TESTING.md).
-    - if: $RUN_PROFILE == "loadtest-only"
-      when: on_success
-      allow_failure: true
-    # Auto-run на push в master: smoke-test инфраструктуры идёт вместе со
-    # всем pipeline. allow_failure: true — loadtest не блокирует master при
-    # временном недотягивании RPS (он зависит от загрузки runner-host'а);
-    # это early-warning, не gate. Полный capacity-bench всё равно гонять
-    # отдельно с RUN_PROFILE=loadtest-only и переопределёнными переменными.
-    - if: $CI_COMMIT_BRANCH == "master"
-      when: on_success
-      allow_failure: true
-    # Ручной запуск (кнопка ▶ Play) — только на dev. На feature-ветках стаб
-    # не плодим; для разового прогона там используй RUN_PROFILE=loadtest-only.
-    - if: $CI_COMMIT_BRANCH == "dev"
-      when: manual
-      allow_failure: true
   timeout: 60 minutes
   variables:
     COMPOSE_PROJECT_NAME: "loadtest-${CI_PIPELINE_ID}-${CI_JOB_ID}"
@@ -355,7 +342,7 @@ loadtest:
     # иначе CI пытается забиндить 5432/6379/8123/... — конфликт с зомби-контейнерами
     # или другими pipelines на runner-host.
     COMPOSE_FILE: "deploy/docker-compose.yml:deploy/docker-compose.loadtest.yml"
-    # ВАЖНО: это smoke-test инфраструктуры в CI, не полноценный capacity-тест.
+    # ВАЖНО: дефолты — smoke-test инфраструктуры в CI, не полноценный capacity-тест.
     # На self-hosted runner'е (общий docker daemon, параллельные builds, всё
     # на одной машине) реалистично 300-400 RPS — на 500 RPS pipeline валился
     # по `achieved < 95% of target` (см. §10.2 ТЗ acceptance criteria).
@@ -364,6 +351,18 @@ loadtest:
     LOADTEST_TARGET_RPS: "300"
     LOADTEST_DURATION: "2m"
     LOADTEST_NODES: "50"
+    # Микс трафика §10.2 (доли — независимые корзины, сумма ≤ 1, остаток sync).
+    LOADTEST_RATIO_ASYNC: "0"
+    LOADTEST_RATIO_DYNAMIC_URL: "0"
+    LOADTEST_RATIO_AUTH_TOKEN: "0"
+    LOADTEST_RATIO_AUTH_BASIC: "0"
+    LOADTEST_RATIO_RMQ: "0"
+    # "1" => loadtest сверяет no-loss по ClickHouse (--ch-addr clickhouse:9000).
+    LOADTEST_CH_NOLOSS: "0"
+    # "1" => поднимаем rabbitmq (profile stand) и передаём --rmq-url/--ratio-rmq.
+    LOADTEST_WITH_RMQ: "0"
+    # Порог p95 (мс) для acceptance- и per-mode testcase'ов JUnit.
+    LOADTEST_P95_MS: "200"
   before_script:
     # jq нужен в after_script для генерации JUnit-отчёта из report.json.
     - apk add --no-cache docker-cli-compose openssl jq
@@ -397,6 +396,8 @@ loadtest:
       SENTRY_DSN=
       SENTRY_ENVIRONMENT=loadtest
       ENCRYPTION_KEY=$(openssl rand -base64 32)
+      RMQ_USER=nexus
+      RMQ_PASSWORD=loadtest_local_rmq
       EOF
     - mkdir -p loadtest-report
   script:
@@ -416,9 +417,17 @@ loadtest:
     # снимаем `docker compose logs` в файл артефакта. На случай если что-то
     # пойдёт не так в [2/4] или [3/4] — этот файл будет содержать стартовую
     # часть логов, а after_script допишет финальную.
-    - echo "===== [1/4] docker compose up -d --build --wait postgres redis clickhouse kafka receiver sender web ====="
+    - echo "===== [1/4] docker compose up -d --build --wait (services depend on profile) ====="
     - |
-      docker compose up -d --build --wait postgres redis clickhouse kafka receiver sender web
+      # rabbitmq живёт в compose-профиле stand — поднимаем его только для RMQ-профиля.
+      WAIT_SVCS="postgres redis clickhouse kafka receiver sender web"
+      PROFILE_ARGS=""
+      if [ "$LOADTEST_WITH_RMQ" = "1" ]; then
+        WAIT_SVCS="$WAIT_SVCS rabbitmq"
+        PROFILE_ARGS="--profile stand"
+      fi
+      echo "--- wait services: $WAIT_SVCS (extra profiles: ${PROFILE_ARGS:-none}) ---"
+      docker compose $PROFILE_ARGS up -d --build --wait $WAIT_SVCS
       rc=$?
       echo "--- compose up exit code = $rc ---"
       echo "--- compose ps -a (включая упавшие) ---"
@@ -429,8 +438,8 @@ loadtest:
       docker compose logs --no-color --timestamps > loadtest-report/compose-logs-after-up.txt 2>&1 || true
       ls -lh loadtest-report/compose-logs-after-up.txt
       if [ "$rc" -ne 0 ]; then
-        echo "===== compose up FAILED — печатаю хвост 300 строк лога каждого сервиса ====="
-        for svc in postgres redis clickhouse kafka receiver sender web; do
+        echo "===== compose up FAILED — печатаю хвост 60 строк лога каждого сервиса ====="
+        for svc in $WAIT_SVCS; do
           echo "----- logs: $svc (tail 60) -----"
           docker compose logs --no-color --tail=60 "$svc" 2>&1 || true
         done
@@ -517,6 +526,20 @@ loadtest:
       # NB: пост-прогонная diagnostic ниже НЕ проверяет связность с mock'ом —
       # mock живёт только пока крутится этот `run` (процесс самого loadtest'а),
       # к моменту diagnostic он уже мёртв (см. подробности там же).
+      #
+      # Профиль-зависимые флаги собираем в LT_ARGS (переменные не переживают
+      # между отдельными `-` шагами — поэтому здесь, в одном блоке с run):
+      #  - no-loss: --ch-addr clickhouse:9000 (сверка числа строк CH с async+rmq);
+      #  - rmq: --ratio-rmq + --rmq-url к compose-сервису rabbitmq (creds из .env).
+      LT_ARGS=""
+      if [ "$LOADTEST_CH_NOLOSS" = "1" ]; then
+        LT_ARGS="$LT_ARGS --ch-addr clickhouse:9000 --ch-user default --ch-flush-grace 15s"
+      fi
+      if [ "$LOADTEST_WITH_RMQ" = "1" ]; then
+        LT_ARGS="$LT_ARGS --ratio-rmq $LOADTEST_RATIO_RMQ --rmq-url amqp://nexus:loadtest_local_rmq@rabbitmq:5672/"
+      fi
+      echo "  ratios     = async:$LOADTEST_RATIO_ASYNC dyn-url:$LOADTEST_RATIO_DYNAMIC_URL token:$LOADTEST_RATIO_AUTH_TOKEN basic:$LOADTEST_RATIO_AUTH_BASIC rmq:$LOADTEST_RATIO_RMQ"
+      echo "  extra args = $LT_ARGS"
       docker compose --profile loadtest run \
         --use-aliases \
         --name "${COMPOSE_PROJECT_NAME}-loadtest-run" \
@@ -530,8 +553,13 @@ loadtest:
           --target-rps "$LOADTEST_TARGET_RPS" \
           --duration "$LOADTEST_DURATION" \
           --nodes "$LOADTEST_NODES" \
+          --ratio-async "$LOADTEST_RATIO_ASYNC" \
+          --ratio-dynamic-url "$LOADTEST_RATIO_DYNAMIC_URL" \
+          --ratio-auth-token "$LOADTEST_RATIO_AUTH_TOKEN" \
+          --ratio-auth-basic "$LOADTEST_RATIO_AUTH_BASIC" \
           --cleanup=false \
-          --report /tmp/report.json
+          --report /tmp/report.json \
+          $LT_ARGS
       LOADTEST_RC=$?
       echo "--- loadtest exit code = $LOADTEST_RC ---"
 
@@ -611,57 +639,66 @@ loadtest:
     - tail -n 200 loadtest-report/compose-logs.txt || true
     - 'echo "===== /compose-logs.txt ====="'
     # ----- JUnit-отчёт для GitLab Tests tab -----
-    # 3 testcase из report.json — те же пороги, что в report.passed() в
-    # cmd/loadtest/main.go (acceptance criteria §10.2 ТЗ). Если report.json не
-    # родился (compose up упал на [1/4], или loadtest container не запустился) —
+    # Расширенный набор testcase'ов из report.json (§10.2):
+    #   - 3 общих acceptance-кейса (achieved_rps / p95 / error_rate);
+    #   - no_message_loss_async_rmq (если гонялась CH-сверка, .no_loss_checked);
+    #   - per-mode p95 и error_rate на каждый режим (.modes из cmd/loadtest).
+    # Suite назван по $CI_JOB_NAME — каждый профиль (loadtest/-mixed/-async/...)
+    # отдельной вкладкой. Пороги совпадают с report.passed() в cmd/loadtest.
+    # Если report.json не родился (compose up упал, loadtest не стартовал) —
     # один failure-кейс «infra unavailable» с указанием на compose-logs.txt.
-    # Файл попадает в artifacts.paths через loadtest-report/, а в
-    # artifacts.reports.junit — для рендера во вкладке Tests.
+    # jq печатает строки "name<TAB>ok(0|1)<TAB>msg", bash собирает XML и считает.
     - 'echo "===== генерируем loadtest-report/junit.xml ====="'
     - |
       REPORT=loadtest-report/report.json
       JUNIT=loadtest-report/junit.xml
+      SUITE="${CI_JOB_NAME:-loadtest}"
       if [ ! -s "$REPORT" ]; then
         cat > "$JUNIT" <<EOF
       <?xml version="1.0" encoding="UTF-8"?>
-      <testsuites name="loadtest" tests="1" failures="1">
+      <testsuites name="${SUITE}" tests="1" failures="1">
         <testsuite name="infra" tests="1" failures="1">
-          <testcase classname="loadtest.infra" name="report_produced">
+          <testcase classname="loadtest.${SUITE}" name="report_produced">
             <failure message="report.json not found">loadtest не успел/не смог записать report.json — см. loadtest-report/compose-logs.txt и stdout job'а</failure>
           </testcase>
         </testsuite>
       </testsuites>
       EOF
       else
-        ACHIEVED=$(jq -r '.achieved_rps' "$REPORT")
-        P95=$(jq -r '.p95_ms' "$REPORT")
-        ERATE=$(jq -r '.error_rate' "$REPORT")
-        SENT=$(jq -r '.sent' "$REPORT")
-        ERRORS=$(jq -r '.errors' "$REPORT")
         TARGET="${LOADTEST_TARGET_RPS:-300}"
-        MIN_RPS=$(awk -v t="$TARGET" 'BEGIN{printf "%.1f", t*0.95}')
-        # awk возвращает 1 если условие истинно, 0 если ложно — bash-сравнение через -eq.
-        RPS_FAIL=$(awk -v a="$ACHIEVED" -v m="$MIN_RPS" 'BEGIN{print (a<m)?1:0}')
-        P95_FAIL=$(awk -v p="$P95" 'BEGIN{print (p>200)?1:0}')
-        ERR_FAIL=$(awk -v e="$ERATE" 'BEGIN{print (e>=0.001)?1:0}')
-        FAILS=$((RPS_FAIL + P95_FAIL + ERR_FAIL))
-        # heredoc'и для failure-блоков — пустые если PASS, иначе <failure>...</failure>.
-        RPS_BODY=""
-        P95_BODY=""
-        ERR_BODY=""
-        [ "$RPS_FAIL" = "1" ] && RPS_BODY="<failure message=\"achieved_rps ${ACHIEVED} &lt; 95% of target ${TARGET} (min ${MIN_RPS})\">acceptance §10.2: achieved RPS должен быть не ниже 95% от target</failure>"
-        [ "$P95_FAIL" = "1" ] && P95_BODY="<failure message=\"p95 ${P95}ms &gt; 200ms\">acceptance §10.2: p95 latency не должна превышать 200ms</failure>"
-        [ "$ERR_FAIL" = "1" ] && ERR_BODY="<failure message=\"error_rate ${ERATE} &gt;= 0.001 (${ERRORS}/${SENT})\">acceptance §10.2: error rate должна быть строго ниже 0.1%</failure>"
-        cat > "$JUNIT" <<EOF
-      <?xml version="1.0" encoding="UTF-8"?>
-      <testsuites name="loadtest" tests="3" failures="${FAILS}">
-        <testsuite name="acceptance" tests="3" failures="${FAILS}">
-          <testcase classname="loadtest.acceptance" name="achieved_rps_at_least_95pct_of_target">${RPS_BODY}<system-out>achieved=${ACHIEVED} target=${TARGET} min=${MIN_RPS}</system-out></testcase>
-          <testcase classname="loadtest.acceptance" name="p95_latency_under_200ms">${P95_BODY}<system-out>p95=${P95}ms</system-out></testcase>
-          <testcase classname="loadtest.acceptance" name="error_rate_under_0.1pct">${ERR_BODY}<system-out>error_rate=${ERATE} (${ERRORS}/${SENT})</system-out></testcase>
-        </testsuite>
-      </testsuites>
-      EOF
+        P95MAX="${LOADTEST_P95_MS:-200}"
+        jq -r --argjson target "$TARGET" --argjson p95max "$P95MAX" '
+          def okf(c): if c then "1" else "0" end;
+          ( "achieved_rps_at_least_95pct_of_target\t" + okf(.achieved_rps >= ($target*0.95)) + "\tachieved=\(.achieved_rps) min=\($target*0.95)" ),
+          ( "p95_latency_under_\($p95max)ms\t" + okf(.p95_ms <= $p95max) + "\tp95=\(.p95_ms)ms" ),
+          ( "error_rate_under_0.1pct\t" + okf(.error_rate < 0.001) + "\terror_rate=\(.error_rate) errors=\(.errors)/\(.sent)" ),
+          ( if .no_loss_checked then ( "no_message_loss_async_rmq\t" + okf(.no_loss) + "\tch_rows=\(.ch_rows) expected_min=\(.no_loss_expected)" ) else empty end ),
+          ( (.modes // {}) | to_entries[] |
+              ( "p95_\(.key)_under_\($p95max)ms\t" + okf(.value.p95_ms <= $p95max) + "\tp95=\(.value.p95_ms)ms sent=\(.value.sent)" ),
+              ( "error_rate_\(.key)_under_0.1pct\t" + okf(.value.error_rate < 0.001) + "\terror_rate=\(.value.error_rate) errors=\(.value.errors)/\(.value.sent)" )
+          )
+        ' "$REPORT" > loadtest-report/cases.tsv
+        TESTS=0; FAILS=0; BODY=""
+        TAB=$(printf '\t')
+        while IFS="$TAB" read -r CASE_NAME CASE_OK CASE_MSG; do
+          [ -z "$CASE_NAME" ] && continue
+          TESTS=$((TESTS+1))
+          EMSG=$(printf '%s' "$CASE_MSG" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g')
+          if [ "$CASE_OK" = "1" ]; then
+            BODY="${BODY}    <testcase classname=\"loadtest.${SUITE}\" name=\"${CASE_NAME}\"><system-out>${EMSG}</system-out></testcase>\n"
+          else
+            FAILS=$((FAILS+1))
+            BODY="${BODY}    <testcase classname=\"loadtest.${SUITE}\" name=\"${CASE_NAME}\"><failure message=\"${EMSG}\">acceptance §10.2</failure></testcase>\n"
+          fi
+        done < loadtest-report/cases.tsv
+        {
+          echo '<?xml version="1.0" encoding="UTF-8"?>'
+          echo "<testsuites name=\"${SUITE}\" tests=\"${TESTS}\" failures=\"${FAILS}\">"
+          echo "  <testsuite name=\"${SUITE}\" tests=\"${TESTS}\" failures=\"${FAILS}\">"
+          printf "%b" "$BODY"
+          echo "  </testsuite>"
+          echo "</testsuites>"
+        } > "$JUNIT"
       fi
       echo "--- junit.xml (preview) ---"
       cat "$JUNIT"
@@ -674,6 +711,98 @@ loadtest:
     reports:
       junit: loadtest-report/junit.xml
     expire_in: 1 month
+
+# --- Профили (отличаются только variables + rules; тело — в .loadtest-base) ---
+
+# loadtest — sync-smoke (текущее поведение). Авто на master + под loadtest-only;
+# manual на dev. Все доли = 0 (наследуются из base) => чистый sync.
+loadtest:
+  extends: .loadtest-base
+  rules:
+    - if: $RUN_PROFILE == "integration-only"
+      when: never
+    - if: $RUN_PROFILE == "loadtest-only"
+      when: on_success
+      allow_failure: true
+    # Auto-run на push в master: smoke инфраструктуры. allow_failure — не gate
+    # (RPS зависит от загрузки runner-host'а); полный bench гонять отдельно.
+    - if: $CI_COMMIT_BRANCH == "master"
+      when: on_success
+      allow_failure: true
+    - if: $CI_COMMIT_BRANCH == "dev"
+      when: manual
+      allow_failure: true
+
+# loadtest-mixed — реалистичный микс §10.2 + no-loss. Авто под loadtest-only,
+# manual на dev. Доли сумма 0.85 (остаток 0.15 — plain sync).
+loadtest-mixed:
+  extends: .loadtest-base
+  variables:
+    LOADTEST_RATIO_ASYNC: "0.3"
+    LOADTEST_RATIO_DYNAMIC_URL: "0.2"
+    LOADTEST_RATIO_AUTH_TOKEN: "0.2"
+    LOADTEST_RATIO_AUTH_BASIC: "0.15"
+    LOADTEST_CH_NOLOSS: "1"
+  rules:
+    - if: $RUN_PROFILE == "integration-only"
+      when: never
+    - if: $RUN_PROFILE == "loadtest-only"
+      when: on_success
+      allow_failure: true
+    - if: $CI_COMMIT_BRANCH == "dev"
+      when: manual
+      allow_failure: true
+
+# loadtest-async — async-ориентированный (Kafka-путь) + строгая no-loss.
+loadtest-async:
+  extends: .loadtest-base
+  variables:
+    LOADTEST_RATIO_ASYNC: "0.8"
+    LOADTEST_CH_NOLOSS: "1"
+  rules:
+    - if: $RUN_PROFILE == "integration-only"
+      when: never
+    - if: $RUN_PROFILE == "loadtest-only"
+      when: manual
+      allow_failure: true
+    - if: $CI_COMMIT_BRANCH == "dev"
+      when: manual
+      allow_failure: true
+
+# loadtest-rmq — RabbitMQAsync-нагрузка (поднимает rabbitmq, profile stand) + no-loss.
+loadtest-rmq:
+  extends: .loadtest-base
+  variables:
+    LOADTEST_WITH_RMQ: "1"
+    LOADTEST_RATIO_RMQ: "0.5"
+    LOADTEST_CH_NOLOSS: "1"
+  rules:
+    - if: $RUN_PROFILE == "integration-only"
+      when: never
+    - if: $RUN_PROFILE == "loadtest-only"
+      when: manual
+      allow_failure: true
+    - if: $CI_COMMIT_BRANCH == "dev"
+      when: manual
+      allow_failure: true
+
+# loadtest-highrps — capacity-bench на высоком RPS. На shared-runner может не
+# дотягивать — не gate (allow_failure). p95-порог ослаблен под высокую нагрузку.
+loadtest-highrps:
+  extends: .loadtest-base
+  variables:
+    LOADTEST_TARGET_RPS: "600"
+    LOADTEST_DURATION: "3m"
+    LOADTEST_P95_MS: "400"
+  rules:
+    - if: $RUN_PROFILE == "integration-only"
+      when: never
+    - if: $RUN_PROFILE == "loadtest-only"
+      when: manual
+      allow_failure: true
+    - if: $CI_COMMIT_BRANCH == "dev"
+      when: manual
+      allow_failure: true
 
 # ----------- SECURITY stage -------------------------------------------------
 # Не блокируют merge (`allow_failure: true` где есть) — early-warning, не gate.
