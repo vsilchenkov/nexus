@@ -20,6 +20,13 @@ export function Sidebar() {
       api.get<{ user: { user_id: string; login?: string; role: string } }>("/api/auth/me"),
   });
 
+  // §30: версия приложения (публичный эндпоинт, не меняется в рамках сессии).
+  const version = useQuery({
+    queryKey: ["version"],
+    queryFn: () => api.get<{ version: string }>("/api/version"),
+    staleTime: Infinity,
+  });
+
   const items: NavItem[] = [
     {
       to: "/",
@@ -84,6 +91,9 @@ export function Sidebar() {
             {login} · {role}
           </span>
         </div>
+        {version.data?.version && (
+          <div className="mt-1.5 px-1 text-[11px] text-fg-subtle">v{version.data.version}</div>
+        )}
       </div>
     </aside>
   );

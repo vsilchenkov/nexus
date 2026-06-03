@@ -102,6 +102,10 @@ func (a *App) Start(ctx context.Context) error {
 	hc.Register(r)
 	r.GET("/metrics", gin.WrapH(a.metrics.Handler()))
 
+	// Версия приложения (§30): публичный read-only эндпоинт на корневом
+	// движке (вне auth-группы RegisterAPI) — SPA показывает версию в футере.
+	r.GET("/api/version", httpadapter.NewVersionHandler(a.cfg.Build.Version).Get)
+
 	// Swagger UI (§11, §25 ТЗ): Web раздаёт два дока (оба собираются `make
 	// swagger` и встраиваются через embed-импорты выше).
 	//   /swagger/web/      — Web Service API  (instance "swagger", default);
