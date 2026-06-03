@@ -15,7 +15,7 @@
 # Документация GitLab CI variables: https://docs.gitlab.com/ee/ci/variables/
 
 variables:
-  GO_VERSION: "1.26.3"
+  GO_VERSION: "1.26.4"
   NODE_VERSION: "20"
   # Локальный GOPATH/GOCACHE/GOMODCACHE — кешируется между jobs.
   GOPATH: "$CI_PROJECT_DIR/.cache/go"
