@@ -296,7 +296,22 @@ Run through this list every time. If any item fails, fix it before declaring suc
 
 ## 11. Skills
 
-42 Go skills from `samber/cc-skills-golang` are installed in `.claude/skills/`. Claude Code auto-loads their descriptions and triggers them by topic — no manual invocation needed. To browse: `ls .claude/skills/`; each skill's contract lives in its `SKILL.md`.
+Skills live in `.claude/skills/`. Claude Code auto-loads their descriptions and triggers them by
+topic — no manual invocation needed. To browse: `ls .claude/skills/`; each skill's contract lives in
+its `SKILL.md`. Three families are installed:
+
+- **42 Go skills** from `samber/cc-skills-golang` (`golang-*`) — language, libraries, testing, CI,
+  performance. The backbone for any work in `cmd/`, `internal/`, `tests/`.
+- **5 Nexus front-end skills** (`nexus-web-*`) — project-specific guides for the React SPA in
+  `web-ui/`, written against the actual code (not generic React advice). Start with
+  `nexus-web-overview`; then `nexus-web-data` (react-query + the `api` wrapper), `nexus-web-components`
+  (UI-kit atoms, `cn` + Tailwind tokens, **controlled `useState` forms — not react-hook-form**),
+  `nexus-web-i18n` (`en.json`/`ru.json` sync + backend key parity), `nexus-web-testing` (Vitest + RTL,
+  currently greenfield — no tests exist yet). **When touching `web-ui/`, consult these first** — they
+  encode the embed-and-rebuild contract and the `--max-warnings=0` CI gate.
+- **4 general engineering skills** from `mattpocock/skills` — `prototype` (throwaway UI/logic spikes),
+  `tdd` (red-green-refactor; applies to `web-ui/` where `golang-testing` doesn't), `setup-pre-commit`
+  (Husky + lint-staged + Prettier for the JS/TS side), `migrate-to-shoehorn` (TS test assertions).
 
 ---
 
