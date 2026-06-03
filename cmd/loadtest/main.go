@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"net"
 	"net/http"
@@ -28,6 +29,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	extlog "github.com/vsilchenkov/logging"
+
+	"nexus/internal/platform/safego"
 )
 
 type flags struct {
@@ -82,6 +87,8 @@ func parseFlags() flags {
 }
 
 func main() {
+	defer safego.Recover(extlog.NewLogger(slog.New(slog.NewTextHandler(os.Stderr, nil))), "loadtest.main")
+
 	f := parseFlags()
 	if f.AdminPass == "" {
 		fmt.Fprintln(os.Stderr, "--admin-password is required")

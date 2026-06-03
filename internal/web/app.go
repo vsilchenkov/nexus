@@ -36,6 +36,7 @@ import (
 	"nexus/internal/platform/ratelimit"
 	redispf "nexus/internal/platform/redis"
 	"nexus/internal/platform/reloader"
+	"nexus/internal/platform/safego"
 	sentrypf "nexus/internal/platform/sentry"
 	"nexus/internal/platform/telegram"
 	httpadapter "nexus/internal/web/adapter/in/http"
@@ -288,11 +289,17 @@ func (a *App) Start(ctx context.Context) error {
 			notifScheduler.Reschedule(ctx)
 			return nil
 		})
-		go notifScheduler.Run(ctx)
+		go func() {
+			defer safego.Recover(a.logger, "web.notificationScheduler")
+			notifScheduler.Run(ctx)
+		}()
 	} else {
 		a.logger.Warn("telegram notifications disabled: prometheus not configured (§22)")
 	}
-	go reloadSub.Run(ctx)
+	go func() {
+		defer safego.Recover(a.logger, "web.reloadSubscriber")
+		reloadSub.Run(ctx)
+	}()
 
 	// Метрики панели (§21): единый источник — Prometheus (KPI/очередь/throughput
 	// и per-node KPI/график). Источник опционален — usecase деградирует
@@ -337,7 +344,10 @@ func (a *App) Start(ctx context.Context) error {
 
 	// Housekeeping cron: ежедневное удаление старых audit-записей (§7.13).
 	hk := usecase.NewHousekeeping(auditUC, a.cfg.Web.AuditRetentionDays, a.logger)
-	go hk.Run(ctx)
+	go func() {
+		defer safego.Recover(a.logger, "web.housekeeping")
+		hk.Run(ctx)
+	}()
 
 	a.srv = &http.Server{
 		Addr:              a.cfg.Web.HTTPAddr,
@@ -350,6 +360,7 @@ func (a *App) Start(ctx context.Context) error {
 
 	errCh := make(chan error, 1)
 	go func() {
+		defer safego.Recover(a.logger, "web.listenAndServe")
 		if err := a.srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("web listen: %w", err)
 		}

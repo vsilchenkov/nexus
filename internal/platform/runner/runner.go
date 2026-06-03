@@ -13,6 +13,7 @@ import (
 	"github.com/kardianos/service"
 
 	"nexus/internal/platform/logging"
+	"nexus/internal/platform/safego"
 )
 
 // App — контракт приложения, которое умеет стартовать и останавливаться.
@@ -60,6 +61,7 @@ type program struct {
 func (p *program) Start(_ service.Service) error {
 	p.ctx, p.cancel = context.WithCancel(context.Background())
 	go func() {
+		defer safego.Recover(p.logger, "runner.appStart")
 		if err := p.app.Start(p.ctx); err != nil {
 			p.logger.ErrorWithOp("app start failed", err, "runner.Start")
 			// В режиме интерактивного запуска просим обёртку остановиться,

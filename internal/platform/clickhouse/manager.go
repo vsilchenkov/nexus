@@ -11,6 +11,7 @@ import (
 
 	"nexus/internal/platform/config"
 	"nexus/internal/platform/logging"
+	"nexus/internal/platform/safego"
 )
 
 // ConnProvider — read-only доступ к актуальному ClickHouse-соединению.
@@ -152,6 +153,7 @@ func (m *Manager) closeWithDelay(c driver.Conn) {
 		return
 	}
 	go func() {
+		defer safego.Recover(m.logger, "clickhouse.delayedClose")
 		time.Sleep(m.closeDelay)
 		if err := c.Close(); err != nil {
 			m.logger.Warn("clickhouse old conn close failed",

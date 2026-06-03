@@ -24,6 +24,7 @@ import (
 	"nexus/internal/platform/config"
 	"nexus/internal/platform/logging"
 	"nexus/internal/platform/metrics"
+	"nexus/internal/platform/safego"
 	"nexus/internal/sender/usecase/port"
 )
 
@@ -86,15 +87,18 @@ func NewWithFallback(conn ConnProvider, cfg *config.ClickHouseSection, fallbackD
 		go w.run()
 	}
 	if w.fallback.Enabled() {
-		go w.fallback.Run(context.Background(), func(ctx context.Context, table string, batch []*domain.LogRecord) error {
-			if err := w.insertBatch(ctx, table, batch); err != nil {
-				return err
-			}
-			if w.metrics != nil {
-				w.metrics.CHFallbackTotal.WithLabelValues(table, "restored").Add(float64(len(batch)))
-			}
-			return nil
-		})
+		go func() {
+			defer safego.Recover(w.logger, "sender.chlogFallback")
+			w.fallback.Run(context.Background(), func(ctx context.Context, table string, batch []*domain.LogRecord) error {
+				if err := w.insertBatch(ctx, table, batch); err != nil {
+					return err
+				}
+				if w.metrics != nil {
+					w.metrics.CHFallbackTotal.WithLabelValues(table, "restored").Add(float64(len(batch)))
+				}
+				return nil
+			})
+		}()
 	}
 	return w
 }
@@ -123,6 +127,7 @@ func (w *Writer) Write(_ context.Context, table string, rec *domain.LogRecord) {
 
 func (w *Writer) run() {
 	defer w.wg.Done()
+	defer safego.Recover(w.logger, "sender.chlogWriter")
 	tick := time.NewTicker(time.Duration(w.cfg.FlushIntervalSec) * time.Second)
 	defer tick.Stop()
 

@@ -11,6 +11,7 @@ import (
 	"nexus/internal/platform/config"
 	kafkapf "nexus/internal/platform/kafka"
 	"nexus/internal/platform/logging"
+	"nexus/internal/platform/safego"
 	"nexus/internal/sender/usecase"
 )
 
@@ -56,6 +57,7 @@ func (g *ConsumerGroup) Start(ctx context.Context) {
 
 func (g *ConsumerGroup) runOne(ctx context.Context, c *kafkapf.Consumer, idx int) {
 	defer g.wg.Done()
+	defer safego.Recover(g.logger, "sender.kafkaConsumer")
 	g.logger.Info("async consumer started",
 		g.logger.Str("topic", g.topic),
 		g.logger.Int("idx", idx))

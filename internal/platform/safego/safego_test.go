@@ -63,12 +63,10 @@ func TestRecover_WorksAfterWgDone(t *testing.T) {
 	logger := bufLogger(&buf)
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		defer safego.Recover(logger, "pool.worker")
 		panic("worker down")
-	}()
+	})
 	wg.Wait() // wg.Done должен отработать несмотря на панику
 
 	if !strings.Contains(buf.String(), "pool.worker") {

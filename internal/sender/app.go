@@ -32,6 +32,7 @@ import (
 	otelpf "nexus/internal/platform/otel"
 	pgpf "nexus/internal/platform/pg"
 	"nexus/internal/platform/reloader"
+	"nexus/internal/platform/safego"
 	sentrypf "nexus/internal/platform/sentry"
 	grpcadapter "nexus/internal/sender/adapter/in/grpc"
 	kafkaadapter "nexus/internal/sender/adapter/in/kafka"
@@ -110,7 +111,10 @@ func (a *App) Start(ctx context.Context) error {
 
 	// CH partition-drop housekeeping (§4.3 ТЗ): фоновый цикл раз в сутки.
 	hk := usecase.NewCHHousekeeping(a.chMgr, nodeReader, a.logger)
-	go hk.Run(ctx)
+	go func() {
+		defer safego.Recover(a.logger, "sender.chHousekeeping")
+		hk.Run(ctx)
+	}()
 
 	// Kafka lag reporter (§6 ТЗ): раз в 15 секунд снимаем Stats() со всех
 	// инстансов consumer-группы и пушим в Prometheus.
@@ -127,12 +131,21 @@ func (a *App) Start(ctx context.Context) error {
 		reloadSub.Register(reloader.SectionClickHouse,
 			bootstrap.ClickHouseReloader(a.pg, a.cfg, a.chMgr,
 				[]bootstrap.WriterReloader{a.chWriter}, a.logger))
-		go reloadSub.Run(ctx)
+		go func() {
+			defer safego.Recover(a.logger, "sender.reloadSubscriber")
+			reloadSub.Run(ctx)
+		}()
 	}
 
 	errCh := make(chan error, 2)
-	go func() { errCh <- a.startGRPC(grpcSvc) }()
-	go func() { errCh <- a.startAdminHTTP() }()
+	go func() {
+		defer safego.Recover(a.logger, "sender.grpc")
+		errCh <- a.startGRPC(grpcSvc)
+	}()
+	go func() {
+		defer safego.Recover(a.logger, "sender.adminHTTP")
+		errCh <- a.startAdminHTTP()
+	}()
 
 	select {
 	case <-ctx.Done():
@@ -206,6 +219,7 @@ func (a *App) startAdminHTTP() error {
 // Опрашивает все consumer-инстансы группы и публикует Lag в Prometheus.
 // Интервал 15 секунд — компромисс между актуальностью и нагрузкой.
 func (a *App) reportKafkaLag(ctx context.Context) {
+	defer safego.Recover(a.logger, "sender.reportKafkaLag")
 	t := time.NewTicker(15 * time.Second)
 	defer t.Stop()
 	group := a.consumer.Group()
@@ -239,6 +253,7 @@ func (a *App) Stop(ctx context.Context) error {
 	if a.grpcSrv != nil {
 		done := make(chan struct{})
 		go func() {
+			defer safego.Recover(a.logger, "sender.grpcGracefulStop")
 			a.grpcSrv.GracefulStop()
 			close(done)
 		}()
