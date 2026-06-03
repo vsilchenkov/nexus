@@ -1,16 +1,27 @@
-# Nexus — стек с ВНЕШНИМ ClickHouse, остальные зависимости в Docker.
-# Поднимает PostgreSQL + Redis + Kafka + Prometheus + три сервиса Nexus,
-# БЕЗ контейнера ClickHouse. Адрес/логин/пароль внешнего CH задаются через
-# ../.env (CH_HOST, CH_PORT, CH_USER, CH_PASSWORD).
+# Nexus — ОСНОВНОЙ прод-стек (внешний только ClickHouse).
 #
-# Запуск:
-#   docker compose -f deploy/docker-compose.ch-external.yml up -d --build
+# Лежит в корне проекта намеренно: запускается стандартной командой без `-f`,
+# не нужно помнить, какой именно compose-файл прод. Поднимает PostgreSQL + Redis
+# + Kafka + Prometheus + три сервиса Nexus, БЕЗ контейнера ClickHouse. Адрес/
+# логин/пароль внешнего CH задаются через .env (CH_HOST, CH_PORT, CH_USER,
+# CH_PASSWORD).
+#
+# Запуск (из корня проекта):
+#   docker compose up -d --build
 # Остановить:
-#   docker compose -f deploy/docker-compose.ch-external.yml down
+#   docker compose down
+#
+# Конфиг приложения config/config.yml монтируется в три сервиса поверх зашитого
+# в образ /app/config/config.yml — правьте config/config.yml на хосте и
+# перезапускайте сервисы, образ пересобирать не нужно. Плейсхолдеры ${VAR}
+# в нём подставляются из .env.
 #
 # Если внешний ClickHouse крутится на самом docker-хосте — в .env укажи
 #   CH_HOST=host.docker.internal
 # (резолвится через extra_hosts у sender/web ниже).
+#
+# Прочие варианты установки (всё в Docker / все зависимости внешние) и запуск
+# готовых образов из registry — в deploy/ и DEPLOYMENT.md.
 
 name: nexus
 
@@ -95,8 +106,8 @@ services:
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-90d}
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./prometheus.alerts.yml:/etc/prometheus/prometheus.alerts.yml:ro
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/prometheus.alerts.yml:/etc/prometheus/prometheus.alerts.yml:ro
       - prometheus_data:/prometheus
     ports:
       - "9091:9090"
@@ -104,16 +115,18 @@ services:
 
   receiver:
     build:
-      context: ..
+      context: .
       dockerfile: deploy/docker/receiver.Dockerfile
     restart: unless-stopped
-    env_file: ../.env
+    env_file: .env
     depends_on:
       postgres: { condition: service_healthy }
       redis:    { condition: service_healthy }
       sender:   { condition: service_started }
     ports:
       - "8080:8080"
+    volumes:
+      - ./config/config.yml:/app/config/config.yml:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -126,16 +139,18 @@ services:
 
   sender:
     build:
-      context: ..
+      context: .
       dockerfile: deploy/docker/sender.Dockerfile
     restart: unless-stopped
-    env_file: ../.env
+    env_file: .env
     depends_on:
       postgres: { condition: service_healthy }
       kafka:    { condition: service_healthy }
     ports:
       - "9190:9190"
       - "9093:9091"
+    volumes:
+      - ./config/config.yml:/app/config/config.yml:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -148,15 +163,17 @@ services:
 
   web:
     build:
-      context: ..
+      context: .
       dockerfile: deploy/docker/web.Dockerfile
     restart: unless-stopped
-    env_file: ../.env
+    env_file: .env
     depends_on:
       postgres: { condition: service_healthy }
       redis:    { condition: service_healthy }
     ports:
       - "8000:8000"
+    volumes:
+      - ./config/config.yml:/app/config/config.yml:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:

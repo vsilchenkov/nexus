@@ -285,12 +285,19 @@ docker compose -f deploy/docker-compose.app.yml logs -f web receiver sender
 
 ---
 
-## 5. Вариант C — Docker, внешний только ClickHouse (PG/Redis/Kafka — в Docker)
+## 5. Вариант C — Docker, внешний только ClickHouse (PG/Redis/Kafka — в Docker) — основной прод-путь
 
 Когда есть отдельный (управляемый или кластерный) ClickHouse, а PostgreSQL, Redis и Kafka
-удобнее держать рядом в Docker. Поднимается через
-[deploy/docker-compose.ch-external.yml](./deploy/docker-compose.ch-external.yml): bundled
-PostgreSQL + Redis + Kafka + Prometheus + три сервиса Nexus, **без** контейнера ClickHouse.
+удобнее держать рядом в Docker. Это **рекомендуемый прод-вариант**, поэтому его compose лежит
+в корне проекта — [docker-compose.yml](./docker-compose.yml) — и запускается стандартной
+командой `docker compose up -d` **без** `-f` (не нужно помнить, какой файл прод). Поднимает
+bundled PostgreSQL + Redis + Kafka + Prometheus + три сервиса Nexus, **без** контейнера ClickHouse.
+
+> Корневой `docker-compose.yml` уже монтирует `config/config.yml` поверх зашитого в образ
+> `/app/config/config.yml` для всех трёх сервисов (см. §7) — отдельный override для конфига не
+> нужен. Перед первым запуском создайте `config/config.yml` из
+> [config/config.example.yml](./config/config.example.yml) (если правите дефолты; плейсхолдеры
+> `${VAR}` в нём берутся из `.env`).
 
 ### 5.1. Где указывать адрес/логин/пароль ClickHouse
 
@@ -318,14 +325,16 @@ ENCRYPTION_KEY=<base64 32 байта>
 
 ### 5.2. Запуск
 
+Из корня проекта, стандартной командой (compose сам берёт корневой `docker-compose.yml`):
+
 ```bash
-docker compose -f deploy/docker-compose.ch-external.yml up -d --build
+docker compose up -d --build
 
 # bootstrap пароля admin:
-docker compose -f deploy/docker-compose.ch-external.yml run --rm web --set-admin-password 'СильныйПароль'
+docker compose run --rm web --set-admin-password 'СильныйПароль'
 
-docker compose -f deploy/docker-compose.ch-external.yml ps
-docker compose -f deploy/docker-compose.ch-external.yml logs -f web receiver sender
+docker compose ps
+docker compose logs -f web receiver sender
 ```
 
 Миграции PostgreSQL применяются автоматически (§8) — БД `nexus` и Redis/Kafka подняты в этом
@@ -388,11 +397,18 @@ sudo systemctl enable --now nexus-web nexus-receiver nexus-sender
 
 ---
 
-## 7. Переопределение `config.yml` в Docker (опционально)
+## 7. Переопределение `config.yml` в Docker
 
-Если нужно изменить параметры приложения (например, увеличить пулы или таймауты), не
-пересобирая образ, — смонтируйте свой `config.yml` поверх зашитого. Создайте файл
-`deploy/docker-compose.override.yml`:
+Параметры приложения (пулы, таймауты, лимиты) можно менять без пересборки образа — монтированием
+своего `config/config.yml` поверх зашитого в образ `/app/config/config.yml`.
+
+**Корневой прод-`docker-compose.yml` (Вариант C, §5) делает это уже из коробки** — у `web`,
+`receiver` и `sender` прописан `- ./config/config.yml:/app/config/config.yml:ro`. Достаточно
+держать актуальный `config/config.yml` в корне проекта и перезапустить сервисы. Плейсхолдеры
+`${VAR}` в смонтированном файле по-прежнему подставляются из `.env`.
+
+Для прочих вариантов установки (`deploy/docker-compose.yml` — Вариант A, `deploy/docker-compose.app.yml`
+— Вариант B), где монтирования нет, создайте `deploy/docker-compose.override.yml`:
 
 ```yaml
 services:
@@ -407,8 +423,8 @@ services:
       - ../config/config.yml:/app/config/config.yml:ro
 ```
 
-Compose автоматически подхватывает `docker-compose.override.yml`, либо укажите его явно
-через `-f`. Плейсхолдеры `${VAR}` в смонтированном `config.yml` по-прежнему подставляются из `.env`.
+Compose автоматически подхватывает `docker-compose.override.yml`, лежащий рядом с базовым файлом,
+либо укажите его явно через `-f`.
 
 ---
 
@@ -499,11 +515,12 @@ git checkout <новая-версия>          # тег/ветка с нужн�
 #   VERSION=1.4.0
 
 # Пересобрать и перекатить только сервисы приложения:
+# Вариант C (основной прод, корневой docker-compose.yml — без -f):
+docker compose up -d --build web receiver sender
+# для варианта A (всё в Docker):
 docker compose -f deploy/docker-compose.yml up -d --build web receiver sender
-# для варианта B:
+# для варианта B (внешние сервисы):
 docker compose -f deploy/docker-compose.app.yml up -d --build
-# для варианта C:
-docker compose -f deploy/docker-compose.ch-external.yml up -d --build web receiver sender
 ```
 
 Compose пересоздаёт контейнеры с новыми образами; хранилища (в варианте A — в volume'ах,
@@ -520,10 +537,10 @@ Compose пересоздаёт контейнеры с новыми образа
 Это путь без сборки на проде: CI собрал образы один раз, сервер только подтягивает и
 перезапускает контейнеры. Полный цикл «тег → образы → прод» — в §9.5.
 
-Базовые compose-файлы (`docker-compose.yml`, `docker-compose.app.yml`,
-`docker-compose.ch-external.yml`) собирают сервисы из исходников (`build:`). Чтобы запускать
-готовые образы, подменяем `build:` на `image:` в **override-файле** — он накладывается поверх
-базового через второй `-f` (как и `docker-compose.override.yml` из §7).
+Базовые compose-файлы (корневой `docker-compose.yml` — Вариант C, а также
+`deploy/docker-compose.yml` и `deploy/docker-compose.app.yml`) собирают сервисы из исходников
+(`build:`). Чтобы запускать готовые образы, подменяем `build:` на `image:` в **override-файле**
+— он накладывается поверх базового через второй `-f` (как и `docker-compose.override.yml` из §7).
 
 **Шаг 1. Один раз создать override `deploy/docker-compose.registry.yml`:**
 
@@ -548,18 +565,19 @@ VERSION=1.0.0                                             # = тег образ�
 ```
 
 **Шаг 3. Залогиниться (один раз) и перекатить три сервиса** (пример для Варианта C —
-внешний ClickHouse; для A замените на `docker-compose.yml`, для B — на `docker-compose.app.yml`):
+внешний ClickHouse, корневой `docker-compose.yml`; для A замените на `deploy/docker-compose.yml`,
+для B — на `deploy/docker-compose.app.yml`):
 
 ```bash
 docker login registry.<gitlab-host>     # токен со scope read_registry
 
 docker compose \
-  -f deploy/docker-compose.ch-external.yml \
+  -f docker-compose.yml \
   -f deploy/docker-compose.registry.yml \
   pull web receiver sender
 
 docker compose \
-  -f deploy/docker-compose.ch-external.yml \
+  -f docker-compose.yml \
   -f deploy/docker-compose.registry.yml \
   up -d web receiver sender
 ```
@@ -632,8 +650,8 @@ docker compose \
 **D. Раскатка:**
 
 - [ ] **Перед обновлением с новыми миграциями** снят дамп PostgreSQL (`pg_dump`, §12) — страховка отката.
-- [ ] `docker compose -f deploy/docker-compose.ch-external.yml -f deploy/docker-compose.registry.yml pull web receiver sender`
-- [ ] `docker compose -f deploy/docker-compose.ch-external.yml -f deploy/docker-compose.registry.yml up -d web receiver sender`
+- [ ] `docker compose -f docker-compose.yml -f deploy/docker-compose.registry.yml pull web receiver sender`
+- [ ] `docker compose -f docker-compose.yml -f deploy/docker-compose.registry.yml up -d web receiver sender`
 - [ ] Миграции применились на старте `web`/`receiver` (в логах нет ошибок миграций, §8).
 
 **E. Проверка:**
