@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -8,9 +9,15 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"nexus/internal/platform/logging"
-	"nexus/internal/platform/ratelimit"
 	"nexus/internal/web/usecase"
 )
+
+// rateLimiter — узкий интерфейс лимитера на стороне потребителя (ISP):
+// удовлетворяется *ratelimit.Limiter. Позволяет подменять лимитер в тестах
+// без Redis.
+type rateLimiter interface {
+	Allow(ctx context.Context, key string, limitPerMin int) (bool, error)
+}
 
 // maxKafkaCustomWindow — лимит произвольного периода (§4.1 spec): защита от
 // слишком тяжёлых запросов к Prometheus.
@@ -30,7 +37,7 @@ func NewKafkaHandler(uc *usecase.KafkaMonitorUsecase, logger logging.Logger) *Ka
 // KafkaRateLimitMiddleware ограничивает /api/kafka/* на пользователя (§9 spec):
 // автообновление экрана раз в 10с не должно превращаться в dashboard-флуд.
 // Fail-open при недоступности Redis (как остальные лимиты).
-func KafkaRateLimitMiddleware(limiter *ratelimit.Limiter, limitPerMin int) gin.HandlerFunc {
+func KafkaRateLimitMiddleware(limiter rateLimiter, limitPerMin int) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		key := "kafka:anon"
 		if s, ok := sessionFromCtx(c); ok {
