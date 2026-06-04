@@ -164,8 +164,8 @@ func (u *AuthUsecase) SwitchTeam(ctx context.Context, actor Actor, token, teamID
 // ChangePassword — изменяет пароль пользователя (вызывается админом).
 // Все активные сессии этого пользователя удаляются (forced re-login, §7.1).
 func (u *AuthUsecase) ChangePassword(ctx context.Context, actor Actor, userID, newPassword string, mustChange bool) error {
-	if len(newPassword) < 8 {
-		return errors.New("password must be at least 8 characters")
+	if err := validatePassword(newPassword); err != nil {
+		return err
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
@@ -185,8 +185,8 @@ func (u *AuthUsecase) ChangePassword(ctx context.Context, actor Actor, userID, n
 // menedzheru это единственный способ сменить пароль. Все активные сессии
 // пользователя инвалидируются (forced re-login, §7.1).
 func (u *AuthUsecase) ChangeOwnPassword(ctx context.Context, actor Actor, userID, currentPassword, newPassword string) error {
-	if len(newPassword) < 8 {
-		return errors.New("password must be at least 8 characters")
+	if err := validatePassword(newPassword); err != nil {
+		return err
 	}
 	user, err := u.users.Get(ctx, userID)
 	if err != nil {
