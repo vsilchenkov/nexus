@@ -30,6 +30,10 @@ type fakeProm struct {
 	nodeKPIErr   error
 	nodeChart    []port.SeriesPoint
 	nodeChartErr error
+	kafkaOv      port.KafkaSummary
+	kafkaOvErr   error
+	kafkaSeries  map[string][]port.KafkaPoint
+	kafkaSerErr  error
 }
 
 func (f *fakeProm) GlobalTotals(_ context.Context, _ time.Duration) (port.GlobalTotals, error) {
@@ -52,10 +56,10 @@ func (f *fakeProm) NodeChart(_ context.Context, _ string, _, _ time.Time, _ int)
 	return f.nodeChart, f.nodeChartErr
 }
 func (f *fakeProm) KafkaOverview(_ context.Context, _, _ time.Time) (port.KafkaSummary, error) {
-	return port.KafkaSummary{}, nil
+	return f.kafkaOv, f.kafkaOvErr
 }
 func (f *fakeProm) KafkaTimeseries(_ context.Context, _, _ time.Time, _ time.Duration, _ []string) (map[string][]port.KafkaPoint, error) {
-	return nil, nil
+	return f.kafkaSeries, f.kafkaSerErr
 }
 
 // fakeNodeRepo встраивает port.NodeRepo (nil): usecase зовёт только Get.

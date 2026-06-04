@@ -113,6 +113,9 @@ var translations = map[Lang]map[string]string{
 		"node.paused":         "node is paused",
 		// RabbitMQAsync (§27)
 		"rmq.test_rate_limited": "too many RabbitMQ connection tests, try again in a minute",
+		// Kafka monitoring (§4 spec)
+		"kafka.rate_limited":    "too many Kafka monitoring requests, try again in a minute",
+		"kafka.period_too_long": "custom period must not exceed 90 days",
 		// replay
 		"replay.too_old": "cannot replay failed request older than 7 days",
 		// url
@@ -208,6 +211,8 @@ var translations = map[Lang]map[string]string{
 		"node.limit_reached":       "достигнут лимит узлов, обратитесь к администратору",
 		"node.paused":              "узел в паузе",
 		"rmq.test_rate_limited":    "слишком много проверок подключения к RabbitMQ, повторите через минуту",
+		"kafka.rate_limited":       "слишком много запросов мониторинга Kafka, повторите через минуту",
+		"kafka.period_too_long":    "произвольный период не может превышать 90 дней",
 		"replay.too_old":           "нельзя повторить запрос с ошибкой старше 7 дней",
 		"url.required":             "параметр URL обязателен",
 		"url.invalid":              "целевой URL невалиден",

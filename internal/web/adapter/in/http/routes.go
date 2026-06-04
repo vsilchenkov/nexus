@@ -22,6 +22,7 @@ type Handlers struct {
 	HostAllowlist *HostAllowlistHandler
 	HeaderCatalog *HeaderCatalogHandler
 	RMQTest       *RMQTestHandler
+	Kafka         *KafkaHandler
 }
 
 // Middlewares — общие middleware (auth-check, role-check, API token-check).
@@ -30,6 +31,7 @@ type Middlewares struct {
 	SessionAuth    gin.HandlerFunc // session-cookie auth
 	RequireAdmin   gin.HandlerFunc // роль admin
 	RequireManager gin.HandlerFunc // роль не ниже manager (manager+admin), §26
+	KafkaRateLimit gin.HandlerFunc // §9 spec: лимит /api/kafka/* на пользователя
 }
 
 // RegisterAPI вешает /api/* маршруты.
@@ -209,6 +211,18 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		if h.Orphan != nil {
 			authedAdmin.GET("/settings/clickhouse/orphans", h.Orphan.List)
 			authedAdmin.DELETE("/settings/clickhouse/orphans/:table", h.Orphan.Drop)
+		}
+
+		// Мониторинг Kafka (§4 spec): admin-only, read-only. Источники
+		// деградируют (флаги *_available), поэтому регистрируется всегда.
+		// Отдельный rate-limit на пользователя (§9) на всю группу /kafka/*.
+		if h.Kafka != nil {
+			kafka := authedAdmin.Group("/kafka", mw.KafkaRateLimit)
+			kafka.GET("/overview", h.Kafka.Overview)
+			kafka.GET("/timeseries", h.Kafka.Timeseries)
+			kafka.GET("/topics", h.Kafka.Topics)
+			kafka.GET("/by-node", h.Kafka.ByNode)
+			kafka.POST("/test", h.Kafka.Test)
 		}
 	}
 }

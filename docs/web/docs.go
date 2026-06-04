@@ -961,6 +961,242 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/kafka/by-node": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "top_producers (по числу async-сообщений) и top_failures (по ошибкам) из Prometheus (метка node). Admin-only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "kafka"
+                ],
+                "summary": "Топ-узлы по нагрузке и ошибкам за период (§4.4 spec).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "1h | 3h | 24h | 7d | 14d | 30d (default 1h)",
+                        "name": "range",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "период с",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "период по",
+                        "name": "to",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/kafka/overview": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "KPI produced/consumed/failed/lag/in-flight, дельта к предыдущему периоду, broker_health и severity health-banner. Источники деградируют (флаги *_available). Admin-only, rate-limit 60/мин.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "kafka"
+                ],
+                "summary": "Сводка экрана мониторинга Kafka за период (§4.1 spec).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "1h | 3h | 24h | 7d | 14d | 30d (default 1h)",
+                        "name": "range",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "период с (RFC3339 или UnixMilli); вместе с to — произвольный период (≤90д)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "период по (RFC3339 или UnixMilli)",
+                        "name": "to",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.kafkaOverviewDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "период длиннее 90 дней",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/kafka/test": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Подключение + Metadata к каждому брокеру, время отклика и предупреждения. Admin-only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "kafka"
+                ],
+                "summary": "Ping брокеров кластера (§4.5 spec).",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/kafka/timeseries": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "produced/consumed/errors (rate, сообщений/сек) и lag (абсолют) через Prometheus query_range. Шаг авто по периоду или явный (step). Admin-only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "kafka"
+                ],
+                "summary": "Временные ряды Kafka-графиков за период (§4.2 spec).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "1h | 3h | 24h | 7d | 14d | 30d (default 1h)",
+                        "name": "range",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "период с (RFC3339 или UnixMilli)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "период по",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "auto | 10s | 30s | 1m | 5m | 1h (default auto)",
+                        "name": "step",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "CSV из produced,consumed,errors,lag (default все)",
+                        "name": "metrics",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.kafkaTimeseriesDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/kafka/topics": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Партиции, RF, оценка числа сообщений, consumer-группы с lag, состояние реплик. Размер на диске недоступен (best-effort, 0). Кеш Redis 30с. Admin-only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "kafka"
+                ],
+                "summary": "Список топиков кластера (§4.3 spec).",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/api/logs/{id}/replay": {
             "post": {
                 "security": [
@@ -4286,6 +4522,142 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "usage_count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.kafkaBrokerHealthDTO": {
+            "type": "object",
+            "properties": {
+                "brokers_online": {
+                    "type": "integer"
+                },
+                "brokers_total": {
+                    "type": "integer"
+                },
+                "offline_partitions": {
+                    "type": "integer"
+                },
+                "under_replicated_partitions": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.kafkaDeltaDTO": {
+            "type": "object",
+            "properties": {
+                "consumed": {
+                    "type": "number"
+                },
+                "has_delta": {
+                    "type": "boolean"
+                },
+                "produced": {
+                    "type": "number"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.kafkaHealthDTO": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string"
+                },
+                "severity": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.kafkaOverviewDTO": {
+            "type": "object",
+            "properties": {
+                "broker_health": {
+                    "$ref": "#/definitions/internal_web_adapter_in_http.kafkaBrokerHealthDTO"
+                },
+                "delta_vs_previous_period": {
+                    "$ref": "#/definitions/internal_web_adapter_in_http.kafkaDeltaDTO"
+                },
+                "error_rate": {
+                    "type": "number"
+                },
+                "health": {
+                    "$ref": "#/definitions/internal_web_adapter_in_http.kafkaHealthDTO"
+                },
+                "kafka_available": {
+                    "type": "boolean"
+                },
+                "period": {
+                    "$ref": "#/definitions/internal_web_adapter_in_http.kafkaPeriodDTO"
+                },
+                "prometheus_available": {
+                    "type": "boolean"
+                },
+                "summary": {
+                    "$ref": "#/definitions/internal_web_adapter_in_http.kafkaSummaryDTO"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.kafkaPeriodDTO": {
+            "type": "object",
+            "properties": {
+                "from": {
+                    "type": "string"
+                },
+                "to": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.kafkaPointDTO": {
+            "type": "object",
+            "properties": {
+                "t": {
+                    "type": "integer"
+                },
+                "v": {
+                    "type": "number"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.kafkaSummaryDTO": {
+            "type": "object",
+            "properties": {
+                "consumed_total": {
+                    "type": "integer"
+                },
+                "current_lag": {
+                    "type": "integer"
+                },
+                "failed_consumed": {
+                    "type": "integer"
+                },
+                "failed_produced": {
+                    "type": "integer"
+                },
+                "in_flight_now": {
+                    "type": "integer"
+                },
+                "produced_total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.kafkaTimeseriesDTO": {
+            "type": "object",
+            "properties": {
+                "prometheus_available": {
+                    "type": "boolean"
+                },
+                "series": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.kafkaPointDTO"
+                        }
+                    }
+                },
+                "step_seconds": {
                     "type": "integer"
                 }
             }
