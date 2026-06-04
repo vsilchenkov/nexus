@@ -1245,6 +1245,29 @@ filter, Create без TeamID). До блока B (team-switcher в сессии)
   `docs/*`-пакетов регистрируют их в `swag.Registry`. Receiver — отдельный процесс, swagger UI к нему
   не подключён (мокап §25 это и предписывает).
 
+### 4.28 QA-2026-02 — пакет исправлений по ручному тестированию
+
+ТЗ и таблица всех 19 пунктов чек-листа — в [QA_FIXES_2026-02.md](QA_FIXES_2026-02.md);
+отчёт о прогоне на стенде — в [QA_FIXES_2026-02_REPORT.md](QA_FIXES_2026-02_REPORT.md).
+Ветка `fix/qa-2026-02`, блочные коммиты `Phase QA.N`. Неочевидности:
+
+- **Replay не восстановит нелогированное тело (П1).** Если узел создан с `LogRequestBody=false`,
+  `orig.Request` в логе пуст — replay физически не из чего собрать тело. Поэтому при пустом orig-теле
+  и не заданном override возвращается `ErrReplayBodyUnavailable` → 422, а не молчаливая отправка пустого
+  body (которая давала 400 «empty body» + circuit breaker 503). См.
+  [replay.go](../internal/web/usecase/replay.go).
+- **`AppSettingsRepoPg.Update` обязан перечислять ВСЕ секции (П8/П13).** JSON-документ собирается из
+  анонимного struct; забытая секция «молчаливо теряется» при записи (так пропал `general`). Тест-страж —
+  `TestAppSettingsRepo_GeneralRoundTrip_E2E`.
+- **must_change_password — реальный gate (П18).** Флаг живёт в `domain.Session` и проверяется middleware
+  `RequirePasswordChanged` (allowlist: `/me/password`, `/auth/me`, `/auth/logout`) → 403
+  `password_change_required`; фронт по этому показывает обязательный экран `ForcePasswordChange`.
+- **Аудит — manager+ (П6).** Бэкенд не ослаблялся (§26); скрыт пункт меню и роут `/audit` для viewer.
+- **Swagger Model (П10).** Все ответы декларируются конкретными DTO (`ErrorResponse` + обёртки в
+  [dto_common.go](../internal/web/adapter/in/http/dto_common.go)) вместо `map[string]any`.
+- **Модальное подтверждение (П16).** `useConfirm`/`ConfirmProvider` вместо `window.confirm` во всех
+  местах удаления; провайдер монтируется один раз в `main.tsx`.
+
 ---
 
 ## 5. Команды для типовых задач
