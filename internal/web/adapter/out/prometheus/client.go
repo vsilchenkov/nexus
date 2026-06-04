@@ -345,6 +345,116 @@ func (c *Client) NodeChart(ctx context.Context, node string, since, until time.T
 	return out, nil
 }
 
+// KafkaOverview — сводка Kafka-трафика за окно (since, until] (§4.1 spec).
+// Async-трафик выделяется фильтром method="requestAsync"; счётчики — increase()
+// за окно на момент until, lag/in-flight — instant nexus_kafka_lag, p95 —
+// histogram_quantile по длительности async-обработки Sender'а.
+func (c *Client) KafkaOverview(ctx context.Context, since, until time.Time) (port.KafkaSummary, error) {
+	w := promRange(until.Sub(since))
+	var s port.KafkaSummary
+	q := func(query string) (float64, error) { return c.instantScalarAt(ctx, query, until) }
+
+	var err error
+	if s.Produced, err = q(fmt.Sprintf(
+		`sum(increase(nexus_requests_total{service="receiver",method="requestAsync"}[%s]))`, w)); err != nil {
+		return s, err
+	}
+	if s.FailedProduced, err = q(fmt.Sprintf(
+		`sum(increase(nexus_requests_total{service="receiver",method="requestAsync",status=~"0|5.."}[%s]))`, w)); err != nil {
+		return s, err
+	}
+	if s.Consumed, err = q(fmt.Sprintf(
+		`sum(increase(nexus_requests_total{service="sender",method="requestAsync"}[%s]))`, w)); err != nil {
+		return s, err
+	}
+	if s.FailedConsumed, err = q(fmt.Sprintf(
+		`sum(increase(nexus_request_incomplete_total{method="requestAsync"}[%s]))`, w)); err != nil {
+		return s, err
+	}
+	if s.CurrentLag, err = c.instantScalarAt(ctx, `sum(nexus_kafka_lag)`, until); err != nil {
+		return s, err
+	}
+	s.InFlight = s.CurrentLag // прокси: отдельной in-flight метрики нет (см. port.KafkaSummary)
+	p95, err := q(fmt.Sprintf(
+		`histogram_quantile(0.95, sum by (le)(rate(nexus_request_duration_seconds_bucket{service="sender",method="requestAsync"}[%s])))`, w))
+	if err != nil {
+		return s, err
+	}
+	s.ProduceP95ms = quantileMs(p95)
+	return s, nil
+}
+
+// kafkaSeriesQuery — PromQL для одной метрики Kafka-ряда (§4.2 spec) с шагом
+// step. produced/consumed/errors — rate() (сообщений/сек), lag — gauge как есть.
+// Пустая строка → метрика неизвестна (пропускается вызывающим).
+func kafkaSeriesQuery(metric, step string) string {
+	switch metric {
+	case "produced":
+		return fmt.Sprintf(`sum(rate(nexus_requests_total{service="receiver",method="requestAsync"}[%s]))`, step)
+	case "consumed":
+		return fmt.Sprintf(`sum(rate(nexus_requests_total{service="sender",method="requestAsync"}[%s]))`, step)
+	case "errors":
+		return fmt.Sprintf(`sum(rate(nexus_request_incomplete_total{method="requestAsync"}[%s]))`, step)
+	case "lag":
+		return `sum(nexus_kafka_lag)`
+	default:
+		return ""
+	}
+}
+
+// KafkaTimeseries — ряды produced/consumed/errors/lag за окно (since, until] с
+// шагом step (§4.2 spec). По одному range-запросу на запрошенную метрику; точки
+// — (начало бакета, значение) в порядке возрастания времени.
+func (c *Client) KafkaTimeseries(ctx context.Context, since, until time.Time, step time.Duration, metrics []string) (map[string][]port.KafkaPoint, error) {
+	if step <= 0 {
+		step = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
+	rng := promv1.Range{Start: since, End: until, Step: step}
+	stepSel := promRange(step)
+	out := make(map[string][]port.KafkaPoint, len(metrics))
+	for _, m := range metrics {
+		query := kafkaSeriesQuery(m, stepSel)
+		if query == "" {
+			continue
+		}
+		pts, err := c.rangeSeriesPoints(ctx, query, rng)
+		if err != nil {
+			return nil, err
+		}
+		out[m] = pts
+	}
+	return out, nil
+}
+
+// rangeSeriesPoints выполняет range-query со скалярным агрегатом (sum(...) →
+// одна серия) и возвращает точки (ts, value) в порядке возрастания времени.
+// Пустой результат → nil без ошибки.
+func (c *Client) rangeSeriesPoints(ctx context.Context, query string, rng promv1.Range) ([]port.KafkaPoint, error) {
+	val, _, err := c.api.QueryRange(ctx, query, rng)
+	if err != nil {
+		return nil, fmt.Errorf("prometheus query_range %q: %w", query, err)
+	}
+	matrix, ok := val.(model.Matrix)
+	if !ok {
+		return nil, fmt.Errorf("prometheus query_range %q: unexpected result type %T", query, val)
+	}
+	if len(matrix) == 0 {
+		return nil, nil
+	}
+	pts := make([]port.KafkaPoint, 0, len(matrix[0].Values))
+	for _, sp := range matrix[0].Values {
+		v := float64(sp.Value)
+		if math.IsNaN(v) || v < 0 {
+			v = 0
+		}
+		pts = append(pts, port.KafkaPoint{TsMs: int64(sp.Timestamp), V: v})
+	}
+	return pts, nil
+}
+
 // rangeSeriesValues выполняет range-query со скалярным агрегатом (sum(...) →
 // одна серия) и возвращает её значения в порядке возрастания времени. Пустой
 // результат (нет данных за окно) → nil без ошибки.

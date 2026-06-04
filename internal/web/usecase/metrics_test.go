@@ -51,6 +51,12 @@ func (f *fakeProm) NodeKPI(_ context.Context, _ string, _, _ time.Time) (port.No
 func (f *fakeProm) NodeChart(_ context.Context, _ string, _, _ time.Time, _ int) ([]port.SeriesPoint, error) {
 	return f.nodeChart, f.nodeChartErr
 }
+func (f *fakeProm) KafkaOverview(_ context.Context, _, _ time.Time) (port.KafkaSummary, error) {
+	return port.KafkaSummary{}, nil
+}
+func (f *fakeProm) KafkaTimeseries(_ context.Context, _, _ time.Time, _ time.Duration, _ []string) (map[string][]port.KafkaPoint, error) {
+	return nil, nil
+}
 
 // fakeNodeRepo встраивает port.NodeRepo (nil): usecase зовёт только Get.
 type fakeNodeRepo struct {
