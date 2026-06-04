@@ -487,6 +487,36 @@
 
 ---
 
+### §33 Доработка тултипов графиков (chart tooltips)
+
+ТЗ — [sections/33-chart-tooltips.md](sections/33-chart-tooltips.md). Эталон —
+[nexus_chart_tooltip.html](nexus_chart_tooltip.html). **Статус: ✅ реализовано** (ветка
+`feature/chart-tooltips`, блоки Phase 33.1–33.4; встроенный SPA пересобран и закоммичен).
+
+| Пункт | Статус | Где |
+|---|---|---|
+| Компонент `<ChartTooltip>` | ✅ Phase 33.1 | [ChartTooltip.tsx](../web-ui/src/components/ui/ChartTooltip.tsx) (пропсы `period/primary/series/footer/action/compact`); хелпер `msToDatetimeLocal` ([format.ts](../web-ui/src/lib/format.ts)) |
+| Throughput/Lag Kafka (recharts `content`) | ✅ Phase 33.2 | [charts.tsx](../web-ui/src/components/kafka/charts.tsx) (`ThroughputTip`/`LagTip`-адаптеры payload→props, курсор-кроссхэйр), [KafkaMonitor.tsx](../web-ui/src/pages/KafkaMonitor.tsx) (`stepSeconds`) |
+| TrafficChart (Radix) | ✅ Phase 33.3 | [TrafficChart.tsx](../web-ui/src/components/ui/TrafficChart.tsx) — `ChartTooltip` в `content=`, подвал пик/дельта к среднему |
+| MiniSpark (добавлен тултип) | ✅ Phase 33.3 | [charts.tsx](../web-ui/src/components/kafka/charts.tsx) (`MiniTip`, при заданном `unit`) |
+| Sparkline Overview (вместо `title`) | ✅ Phase 33.3 | `Sparkline` в [Overview.tsx](../web-ui/src/pages/Overview.tsx) (Radix + compact `ChartTooltip`) |
+| Action «открыть логи за момент» | ✅ Phase 33.4 | клик по столбцу TrafficChart → `openLogsAt` ([NodeDetail.tsx](../web-ui/src/pages/NodeDetail.tsx)) → `LogsTab initialFilter` ([LogsTab.tsx](../web-ui/src/components/node/LogsTab.tsx)); проброс через [OverviewTab.tsx](../web-ui/src/components/node/OverviewTab.tsx)/[MetricsTab.tsx](../web-ui/src/components/node/MetricsTab.tsx) |
+| i18n `metrics.tooltip.*`/`kafka.tooltip.*` | ✅ Phase 33.4 | [en.json](../web-ui/src/locales/en.json)/[ru.json](../web-ui/src/locales/ru.json) (паритет ключей) |
+
+**Неочевидности / решения.**
+- **Без `@floating-ui/react`** (макет рекомендовал). Позиционирование/snap — штатные у recharts
+  (`content`-проп получает активную точку) и Radix (`side`/collision). Новый пакет не вводим.
+- **Action — клик по элементу графика, не кнопка в тултипе.** Hover-тултип ненадёжно ловит клик по
+  своей кнопке (исчезает при движении курсора к ней). Поэтому в `ChartTooltip` `action` — лишь
+  визуальная подсказка-affordance, а реальный `onClick` висит на самом столбце TrafficChart.
+- **Только фронт.** Partition-breakdown lag и сравнение «неделю назад» из макета **не реализованы** —
+  Prometheus отдаёт lag агрегатом (`sum(nexus_kafka_lag)`), per-partition ряда и week-ago ряда в
+  timeseries нет. Вынесено в out-of-scope §33.7; в `LagTip` оставлена заметка-задел.
+- **`ChartTooltip` — чистый презентационный.** Данные наполняют мапперы каждого графика; компонент не
+  знает про recharts/Radix. Один компонент переиспользуется во всех 5 местах (compact-режим для спарков).
+
+---
+
 ## 3. Где что лежит — карта каталогов
 
 ```text

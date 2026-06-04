@@ -3,14 +3,23 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
 import { api, type Node } from "../../api/client";
-import { Card, Kpi, KpiRow, LabelHint, Pill, PeriodPicker, TrafficChart, defaultPeriod, type Period } from "../ui";
+import { Card, Kpi, KpiRow, LabelHint, Pill, PeriodPicker, TrafficChart, defaultPeriod, type LogsRange, type Period } from "../ui";
 import { fmtNum } from "../../lib/format";
 import { useNodeMetrics, METRICS_REFETCH_MS } from "./useNodeMetrics";
 import { type LogsResp } from "./types";
 
 // OverviewTab — вкладка «Обзор» узла (§21): 4 KPI + график трафика + последние
 // запросы. KPI/график — из ClickHouse через /api/metrics; таблица — из логов.
-export function OverviewTab({ node, onAllLogs }: { node: Node; onAllLogs: () => void }) {
+// onOpenLogs (§33.4) — клик по столбцу графика открывает логи за момент.
+export function OverviewTab({
+  node,
+  onAllLogs,
+  onOpenLogs,
+}: {
+  node: Node;
+  onAllLogs: () => void;
+  onOpenLogs?: (range: LogsRange) => void;
+}) {
   const { t } = useTranslation();
   const [period, setPeriod] = useState<Period>(defaultPeriod);
   const m = useNodeMetrics(node.id, period);
@@ -68,7 +77,7 @@ export function OverviewTab({ node, onAllLogs }: { node: Node; onAllLogs: () => 
           </span>
           <PeriodPicker value={period} onChange={setPeriod} />
         </div>
-        <TrafficChart data={m.data?.series ?? []} />
+        <TrafficChart data={m.data?.series ?? []} onOpenLogs={hasLogsTable ? onOpenLogs : undefined} />
       </Card>
 
       <Card className="p-0">
