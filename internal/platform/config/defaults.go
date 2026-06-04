@@ -105,6 +105,10 @@ func applyDefaults(c *Config) {
 	if c.Receiver.MaxHeaderBytes == 0 {
 		c.Receiver.MaxHeaderBytes = 1_048_576
 	}
+	// §32: hop-лимит против зацикливания. 0 (не задан) → дефолт 5; < 0 → выкл.
+	if c.Receiver.MaxHops == 0 {
+		c.Receiver.MaxHops = 5
+	}
 	if c.Receiver.SenderGRPC.Addr == "" {
 		c.Receiver.SenderGRPC.Addr = "sender:9190"
 	}

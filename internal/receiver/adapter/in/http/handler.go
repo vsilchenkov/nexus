@@ -21,6 +21,7 @@ import (
 type Handler struct {
 	route        *usecase.RouteUsecase
 	routeAsync   *usecase.RouteAsyncUsecase
+	metrics      *metrics.Metrics
 	logger       logging.Logger
 	maxBodyBytes int
 }
@@ -29,9 +30,10 @@ func New(
 	route *usecase.RouteUsecase,
 	routeAsync *usecase.RouteAsyncUsecase,
 	maxBodyBytes int,
+	m *metrics.Metrics,
 	logger logging.Logger,
 ) *Handler {
-	return &Handler{route: route, routeAsync: routeAsync, logger: logger, maxBodyBytes: maxBodyBytes}
+	return &Handler{route: route, routeAsync: routeAsync, metrics: m, logger: logger, maxBodyBytes: maxBodyBytes}
 }
 
 // Register вешает /api/v1/request/*path и /api/v1/requestAsync/*path на роутер.
@@ -311,6 +313,9 @@ func classifyDomainError(err error) (status int, message string, internal bool) 
 		return http.StatusBadRequest, "target url is invalid", false
 	case errors.Is(err, domain.ErrURLNotAllowed):
 		return http.StatusForbidden, "target url not in allowlist", false
+	case errors.Is(err, domain.ErrLoopDetected):
+		// §32: запрос вернулся в шину больше max_hops раз — петля.
+		return http.StatusLoopDetected, "loop detected", false
 	case errors.Is(err, domain.ErrAuthHeaderMissing),
 		errors.Is(err, domain.ErrAuthHeaderMalformed),
 		errors.Is(err, domain.ErrAuthTokenRequired),
@@ -328,7 +333,23 @@ func (h *Handler) replyDomainError(c *gin.Context, err error, nodePath, op strin
 		h.logger.ErrorWithOp("receiver routing failed", err, op,
 			h.logger.Str("node", nodePath))
 	}
+	if errors.Is(err, domain.ErrLoopDetected) {
+		h.onLoopDetected(c, "sync", nodePath)
+	}
 	c.JSON(status, gin.H{"error": msg})
+}
+
+// onLoopDetected фиксирует обнаружение петли (§32): warn-лог + Prometheus-счётчик
+// nexus_loop_detected_total{mode}. metrics может быть nil в unit-тестах handler'а.
+func (h *Handler) onLoopDetected(c *gin.Context, mode, nodePath string) {
+	h.logger.Warn("loop detected: request exceeded max hops",
+		h.logger.Str("op", "receiver.loop"),
+		h.logger.Str("node", nodePath),
+		h.logger.Str("mode", mode),
+		h.logger.Str("hops", c.Request.Header.Get(usecase.HeaderHops)))
+	if h.metrics != nil {
+		h.metrics.IncLoopDetected(mode)
+	}
 }
 
 // replyAsyncError — async-ответ об ошибке (§3, #7): {"result": false,
@@ -339,6 +360,9 @@ func (h *Handler) replyAsyncError(c *gin.Context, err error, nodePath, op string
 	if internal {
 		h.logger.ErrorWithOp("receiver async routing failed", err, op,
 			h.logger.Str("node", nodePath))
+	}
+	if errors.Is(err, domain.ErrLoopDetected) {
+		h.onLoopDetected(c, "async", nodePath)
 	}
 	c.JSON(status, gin.H{"result": false, "message": msg})
 }

@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -146,6 +148,9 @@ func (a *App) Start(ctx context.Context) error {
 	auditUC := usecase.NewAuditUsecase(auditRepo, a.logger)
 	uow := pgrepo.NewUnitOfWorkPg(a.pg, a.cipher, a.logger)
 	chTemplateRepo := pgrepo.NewCHTemplateRepoPg(a.pg, a.logger)
+	// §32.2: список своих authority для self-reference валидации target_url.
+	// Явный конфиг приоритетен; иначе выводим из ReceiverURL.
+	selfIngressHosts := resolveSelfIngressHosts(a.cfg.Web.SelfIngressHosts, a.cfg.Web.ReceiverURL)
 	nodeUC := usecase.NewNodeUsecase(
 		nodeRepo,
 		nodeCache,
@@ -157,6 +162,7 @@ func (a *App) Start(ctx context.Context) error {
 		time.Duration(a.cfg.Redis.NodeTTLSec)*time.Second,
 		a.cfg.Web.NodesHardLimit,
 		defaultTeamID,
+		selfIngressHosts,
 		a.logger,
 	)
 	// §27.8: health-ридер Puller-воркеров из общего Redis-стора (rmq:health).
@@ -427,6 +433,25 @@ func (a *App) Stop(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// resolveSelfIngressHosts формирует список своих authority для self-reference
+// валидации target_url (§32.2). Явный конфиг (self_ingress_hosts) приоритетен;
+// если он пуст — выводим authority из receiverURL (host[:port]). Пустой
+// результат означает «проверка отключена».
+func resolveSelfIngressHosts(configured []string, receiverURL string) []string {
+	if len(configured) > 0 {
+		return configured
+	}
+	receiverURL = strings.TrimSpace(receiverURL)
+	if receiverURL == "" {
+		return nil
+	}
+	parsed, err := url.Parse(receiverURL)
+	if err != nil || parsed.Host == "" {
+		return nil
+	}
+	return []string{parsed.Host}
 }
 
 // kafkaThresholds маппит config-секцию порогов в usecase-тип (usecase не

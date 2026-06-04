@@ -28,6 +28,7 @@ var nodeValidationErrors = []nodeFieldError{
 	{domain.ErrNodePathFormat, "node.validation.path_format", "path"},
 	{domain.ErrNodeStaticNeedsTargetURL, "node.validation.target_url_required", "target_url"},
 	{domain.ErrNodeTargetURLLength, "node.validation.target_url_length", "target_url"},
+	{domain.ErrNodeTargetURLSelfReference, "node.validation.target_url_self", "target_url"},
 	{domain.ErrNodeParamNameLength, "node.validation.url_param_name_length", "url_param_name"},
 	{domain.ErrNodeParamNameFormat, "node.validation.url_param_name_format", "url_param_name"},
 	{domain.ErrNodeAuthDynFieldLength, "node.validation.auth_dynamic_field_length", "auth_dynamic_field"},

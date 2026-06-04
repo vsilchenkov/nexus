@@ -76,6 +76,7 @@ Nexus — три stateless Go-сервиса плюс набор хранили�
 | `SENTRY_DSN`          | DSN Sentry                                              | пусто                 |
 | `SENTRY_ENVIRONMENT`  | Окружение для Sentry                                    | `production`          |
 | `ENCRYPTION_KEY`      | **Обязателен.** Ключ AES-256-GCM для шифрования кредов узлов в БД — 32 байта в base64 | заглушка |
+| `NEXUS_RECEIVER_MAX_HOPS` | §32: лимит переходов запроса через шину (`X-Nexus-Hops`) до ответа 508 Loop Detected. `0` = дефолт 5; `<0` = защита от зацикливания выключена | `5` |
 
 Дополнительно при single-broker Kafka (один узел) задавайте в `.env`
 `KAFKA_TOPIC_REPLICATION_FACTOR=1` и `KAFKA_TOPIC_MIN_INSYNC_REPLICAS=1` — иначе создание

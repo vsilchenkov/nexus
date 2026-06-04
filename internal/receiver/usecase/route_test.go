@@ -41,7 +41,7 @@ func TestRoute_Paused(t *testing.T) {
 		IncomingAuthType: domain.IncomingAuthTypeNone,
 		Status:           domain.NodeStatusPaused,
 	}
-	u := NewRouteUsecase(stubNodeReader{node: node}, stubSenderClient{}, logging.NewNoop())
+	u := NewRouteUsecase(stubNodeReader{node: node}, stubSenderClient{}, 5, logging.NewNoop())
 	_, err := u.Route(context.Background(), RouteInput{NodePath: "demo/path"})
 	if !errors.Is(err, domain.ErrNodePaused) {
 		t.Fatalf("want ErrNodePaused, got %v", err)
@@ -59,7 +59,7 @@ func TestRoute_Disabled(t *testing.T) {
 		IncomingAuthType: domain.IncomingAuthTypeNone,
 		Status:           domain.NodeStatusDisabled,
 	}
-	u := NewRouteUsecase(stubNodeReader{node: node}, stubSenderClient{}, logging.NewNoop())
+	u := NewRouteUsecase(stubNodeReader{node: node}, stubSenderClient{}, 5, logging.NewNoop())
 	_, err := u.Route(context.Background(), RouteInput{NodePath: "demo/path"})
 	if !errors.Is(err, domain.ErrNodeNotFound) {
 		t.Fatalf("want ErrNodeNotFound, got %v", err)
@@ -80,7 +80,7 @@ func TestRouteAsync_PausedQueued(t *testing.T) {
 		Status:           domain.NodeStatusPaused,
 	}
 	producer := &stubProducer{}
-	u := NewRouteAsyncUsecase(stubNodeReader{node: node}, producer, "nexus.async", logging.NewNoop())
+	u := NewRouteAsyncUsecase(stubNodeReader{node: node}, producer, "nexus.async", 5, logging.NewNoop())
 	res, err := u.RouteAsync(context.Background(), RouteInput{NodePath: "demo/path", Method: "POST"})
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
@@ -137,7 +137,7 @@ func methodTestNode() *domain.Node {
 // входящий метод, иначе ErrNodeMethodNotAllowed (handler → 405).
 func TestRoute_IncomingMethodMismatch(t *testing.T) {
 	t.Parallel()
-	u := NewRouteUsecase(stubNodeReader{node: methodTestNode()}, &capturingSender{}, logging.NewNoop())
+	u := NewRouteUsecase(stubNodeReader{node: methodTestNode()}, &capturingSender{}, 5, logging.NewNoop())
 	_, err := u.Route(context.Background(), RouteInput{NodePath: "demo/path", Method: "GET"})
 	if !errors.Is(err, domain.ErrNodeMethodNotAllowed) {
 		t.Fatalf("want ErrNodeMethodNotAllowed, got %v", err)
@@ -149,7 +149,7 @@ func TestRoute_IncomingMethodMismatch(t *testing.T) {
 func TestRoute_OutgoingMethodUsed(t *testing.T) {
 	t.Parallel()
 	sender := &capturingSender{}
-	u := NewRouteUsecase(stubNodeReader{node: methodTestNode()}, sender, logging.NewNoop())
+	u := NewRouteUsecase(stubNodeReader{node: methodTestNode()}, sender, 5, logging.NewNoop())
 	_, err := u.Route(context.Background(), RouteInput{NodePath: "demo/path", Method: "POST"})
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
