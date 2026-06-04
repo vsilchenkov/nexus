@@ -57,7 +57,7 @@ func TestReceiver_Sync_E2E(t *testing.T) {
 	auditUC := usecase.NewAuditUsecase(auditRepo, logger)
 	defaultTeam := resolveDefaultTeamID(t, ctx, pool)
 	teamRepo := pgrepo.NewTeamRepoPg(pool, logger)
-	nodeUC := usecase.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, teamRepo, nil, nil, time.Minute, 0, defaultTeam, logger)
+	nodeUC := usecase.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, teamRepo, nil, nil, time.Minute, 0, defaultTeam, nil, logger)
 
 	n := &domain.Node{
 		Path:                    "demo/sync",
@@ -81,7 +81,7 @@ func TestReceiver_Sync_E2E(t *testing.T) {
 	// 4. SenderClient stub — реально делает HTTP-вызов.
 	sender := &httpSenderStub{client: http.DefaultClient}
 
-	routeUC := rcv.NewRouteUsecase(reader, sender, logger)
+	routeUC := rcv.NewRouteUsecase(reader, sender, 5, logger)
 
 	// 5. Sync-запрос.
 	out, err := routeUC.Route(ctx, rcv.RouteInput{

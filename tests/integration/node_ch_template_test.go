@@ -54,7 +54,7 @@ func TestNodeUC_CreateWithTemplate_E2E(t *testing.T) {
 
 	nodeUC := usecase.NewNodeUsecase(
 		nodeRepo, nopCache{}, auditUC, uow, teamRepo, provisioner, chTemplateRepo,
-		time.Minute, 0, defaultTeam, logger,
+		time.Minute, 0, defaultTeam, nil, logger,
 	)
 
 	n := &domain.Node{
@@ -109,7 +109,7 @@ func TestNodeUC_CreateNoTemplate_DefaultProvision_E2E(t *testing.T) {
 
 	nodeUC := usecase.NewNodeUsecase(
 		nodeRepo, nopCache{}, auditUC, uow, teamRepo, provisioner, chTemplateRepo,
-		time.Minute, 0, defaultTeam, logger,
+		time.Minute, 0, defaultTeam, nil, logger,
 	)
 
 	// Узел как со стенда: clickhouse_table без шаблона, логирование включено.

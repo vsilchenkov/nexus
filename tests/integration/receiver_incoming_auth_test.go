@@ -61,7 +61,7 @@ func TestReceiver_IncomingAuth_E2E(t *testing.T) {
 	auditUC := webuc.NewAuditUsecase(auditRepo, logger)
 	defaultTeam := resolveDefaultTeamID(t, ctx, pool)
 	teamRepo := pgrepo.NewTeamRepoPg(pool, logger)
-	nodeUC := webuc.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, teamRepo, nil, nil, time.Minute, 0, defaultTeam, logger)
+	nodeUC := webuc.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, teamRepo, nil, nil, time.Minute, 0, defaultTeam, nil, logger)
 
 	makeNode := func(path string, inAuth domain.IncomingAuthType, creds string) *domain.Node {
 		n := &domain.Node{
@@ -88,12 +88,12 @@ func TestReceiver_IncomingAuth_E2E(t *testing.T) {
 	// Receiver HTTP-сервер.
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
-	routeUC := rcv.NewRouteUsecase(&fakeReader{repo: nodeRepo}, &httpSenderStub{client: http.DefaultClient}, logger)
+	routeUC := rcv.NewRouteUsecase(&fakeReader{repo: nodeRepo}, &httpSenderStub{client: http.DefaultClient}, 5, logger)
 	// RouteAsyncUsecase: не используется в этом тесте (нет paused-узлов), но
 	// Handler требует non-nil. Producer тоже nil — он будет вызван только если
 	// мы попадём в async-path; в тестовых сценариях этого не происходит.
-	routeAsyncUC := rcv.NewRouteAsyncUsecase(&fakeReader{repo: nodeRepo}, nopAsyncProducer{}, "test.async", logger)
-	rcvhttp.New(routeUC, routeAsyncUC, 5*1024*1024, logger).Register(engine)
+	routeAsyncUC := rcv.NewRouteAsyncUsecase(&fakeReader{repo: nodeRepo}, nopAsyncProducer{}, "test.async", 5, logger)
+	rcvhttp.New(routeUC, routeAsyncUC, 5*1024*1024, nil, logger).Register(engine)
 	srv := httptest.NewServer(engine)
 	defer srv.Close()
 

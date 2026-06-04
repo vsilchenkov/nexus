@@ -71,7 +71,7 @@ func TestSender_Async_DLQ_E2E(t *testing.T) {
 	auditUC := webuc.NewAuditUsecase(auditRepo, logger)
 	defaultTeam := resolveDefaultTeamID(t, ctx, pool)
 	teamRepo := pgrepo.NewTeamRepoPg(pool, logger)
-	nodeUC := webuc.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, teamRepo, nil, nil, time.Minute, 0, defaultTeam, logger)
+	nodeUC := webuc.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, teamRepo, nil, nil, time.Minute, 0, defaultTeam, nil, logger)
 
 	n := &domain.Node{
 		Path:                    "demo/dlq",
@@ -126,7 +126,7 @@ func TestSender_Async_DLQ_E2E(t *testing.T) {
 	defer dlqReader.Close()
 
 	// 5. Receiver путь: RouteAsync публикует envelope в nexus.async.
-	routeAsyncUC := rcv.NewRouteAsyncUsecase(&fakeReader{repo: nodeRepo}, producer, cfg.Kafka.AsyncTopic, logger)
+	routeAsyncUC := rcv.NewRouteAsyncUsecase(&fakeReader{repo: nodeRepo}, producer, cfg.Kafka.AsyncTopic, 5, logger)
 	res, err := routeAsyncUC.RouteAsync(ctx, rcv.RouteInput{
 		NodePath: "demo/dlq",
 		Method:   "POST",

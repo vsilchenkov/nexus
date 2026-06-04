@@ -59,7 +59,7 @@ func TestReplay_E2E_ClickHouse(t *testing.T) {
 	auditUC := webuc.NewAuditUsecase(auditRepo, logger)
 	defaultTeam := resolveDefaultTeamID(t, ctx, pool)
 	teamRepo := pgrepo.NewTeamRepoPg(pool, logger)
-	nodeUC := webuc.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, teamRepo, nil, nil, time.Minute, 0, defaultTeam, logger)
+	nodeUC := webuc.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, teamRepo, nil, nil, time.Minute, 0, defaultTeam, nil, logger)
 
 	n := &domain.Node{
 		Path:                    "demo/replay",
