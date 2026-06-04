@@ -172,17 +172,21 @@ type KafkaConsumerSection struct {
 }
 
 type ReceiverSection struct {
-	HTTPAddr         string                   `yaml:"http_addr"`
-	ReadTimeoutMs    int                      `yaml:"read_timeout_ms"`
-	WriteTimeoutMs   int                      `yaml:"write_timeout_ms"`
-	IdleTimeoutSec   int                      `yaml:"idle_timeout_sec"`
-	MaxBodyBytes     int                      `yaml:"max_body_bytes"`
-	MaxHeaderBytes   int                      `yaml:"max_header_bytes"`
-	RateLimitPerNode int                      `yaml:"rate_limit_per_node"`
-	SenderGRPC       ReceiverSenderGRPCConfig `yaml:"sender_grpc"`
-	SwaggerEnabled   bool                     `yaml:"swagger_enabled"`
-	L2Cache          ReceiverL2CacheConfig    `yaml:"l2_cache"`
-	Puller           ReceiverPullerConfig     `yaml:"puller"`
+	HTTPAddr         string `yaml:"http_addr"`
+	ReadTimeoutMs    int    `yaml:"read_timeout_ms"`
+	WriteTimeoutMs   int    `yaml:"write_timeout_ms"`
+	IdleTimeoutSec   int    `yaml:"idle_timeout_sec"`
+	MaxBodyBytes     int    `yaml:"max_body_bytes"`
+	MaxHeaderBytes   int    `yaml:"max_header_bytes"`
+	RateLimitPerNode int    `yaml:"rate_limit_per_node"`
+	// MaxHops — лимит переходов запроса через шину (§32). Служебный заголовок
+	// X-Nexus-Hops инкрементится на каждом проходе; при достижении лимита
+	// запрос отклоняется (508 Loop Detected). 0 → дефолт 5; < 0 → защита выключена.
+	MaxHops        int                      `yaml:"max_hops"`
+	SenderGRPC     ReceiverSenderGRPCConfig `yaml:"sender_grpc"`
+	SwaggerEnabled bool                     `yaml:"swagger_enabled"`
+	L2Cache        ReceiverL2CacheConfig    `yaml:"l2_cache"`
+	Puller         ReceiverPullerConfig     `yaml:"puller"`
 }
 
 // ReceiverPullerConfig — параметры Puller-воркеров RabbitMQAsync (§27.2).

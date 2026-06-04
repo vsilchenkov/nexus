@@ -140,6 +140,7 @@ receiver:
   max_body_bytes: 5242880        # Лимит тела входящего запроса (байт) = 5 МиБ.
   max_header_bytes: 1048576      # Лимит заголовков входящего запроса (байт) = 1 МиБ.
   rate_limit_per_node: 0         # Лимит RPS на узел; 0 = без ограничения.
+  max_hops: 5                    # §32: лимит переходов через шину (X-Nexus-Hops). 0 = дефолт 5; <0 = выкл.
   # gRPC-клиент к Sender Service.
   sender_grpc:
     addr: sender:9190            # Адрес gRPC-сервера Sender (host:port).

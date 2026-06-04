@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	"github.com/google/uuid"
 
@@ -32,19 +33,24 @@ type RouteAsyncUsecase struct {
 	nodes      port.NodeReader
 	producer   AsyncProducer
 	asyncTopic string
+	maxHops    int
 	logger     logging.Logger
 }
 
+// NewRouteAsyncUsecase создаёт async-роутер. maxHops — лимит переходов запроса
+// через шину (§32, X-Nexus-Hops); <= 0 выключает защиту от зацикливания.
 func NewRouteAsyncUsecase(
 	nodes port.NodeReader,
 	producer AsyncProducer,
 	asyncTopic string,
+	maxHops int,
 	logger logging.Logger,
 ) *RouteAsyncUsecase {
 	return &RouteAsyncUsecase{
 		nodes:      nodes,
 		producer:   producer,
 		asyncTopic: asyncTopic,
+		maxHops:    maxHops,
 		logger:     logger,
 	}
 }
@@ -53,6 +59,12 @@ func NewRouteAsyncUsecase(
 // кладёт envelope в nexus.async с key=node_path (для сохранения
 // порядка обработки одного узла).
 func (u *RouteAsyncUsecase) RouteAsync(ctx context.Context, in RouteInput) (*RouteAsyncResult, error) {
+	// §32: защита от зацикливания (тот же hop-счётчик, что и в sync-пути).
+	hop, loop := nextHop(in.Header, u.maxHops)
+	if loop {
+		return nil, domain.ErrLoopDetected
+	}
+
 	node, err := resolveNode(ctx, u.nodes, in.TeamSlug, in.NodePath)
 	if err != nil {
 		return nil, err
@@ -110,6 +122,12 @@ func (u *RouteAsyncUsecase) RouteAsync(ctx context.Context, in RouteInput) (*Rou
 	id := uuid.NewString()
 	env := BuildEnvelope(id, node, string(node.OutgoingMethod), targetURL, authHeader, in.ClientIP,
 		effHeader, cleanQuery, effBody)
+	// §32: служебный hop-счётчик в обход allowlist узла. На стороне Sender
+	// заголовок уйдёт во внешний запрос; если цель — снова Receiver, счётчик
+	// продолжит расти и оборвёт петлю.
+	if u.maxHops > 0 {
+		env.Headers[HeaderHops] = strconv.Itoa(hop)
+	}
 
 	payload, err := json.Marshal(env)
 	if err != nil {

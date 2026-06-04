@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -56,17 +57,27 @@ type RouteOutput struct {
 
 // RouteUsecase — sync-роутер.
 type RouteUsecase struct {
-	nodes  port.NodeReader
-	sender SenderClient
-	logger logging.Logger
+	nodes   port.NodeReader
+	sender  SenderClient
+	maxHops int
+	logger  logging.Logger
 }
 
-func NewRouteUsecase(nodes port.NodeReader, sender SenderClient, logger logging.Logger) *RouteUsecase {
-	return &RouteUsecase{nodes: nodes, sender: sender, logger: logger}
+// NewRouteUsecase создаёт sync-роутер. maxHops — лимит переходов запроса через
+// шину (§32, X-Nexus-Hops); <= 0 выключает защиту от зацикливания.
+func NewRouteUsecase(nodes port.NodeReader, sender SenderClient, maxHops int, logger logging.Logger) *RouteUsecase {
+	return &RouteUsecase{nodes: nodes, sender: sender, maxHops: maxHops, logger: logger}
 }
 
 // Route — sync-обработка (POST /v1/request/{path}).
 func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, error) {
+	// §32: защита от зацикливания. Считаем переходы запроса через шину по
+	// служебному заголовку X-Nexus-Hops; превышение лимита — петля.
+	hop, loop := nextHop(in.Header, u.maxHops)
+	if loop {
+		return nil, domain.ErrLoopDetected
+	}
+
 	node, err := resolveNode(ctx, u.nodes, in.TeamSlug, in.NodePath)
 	if err != nil {
 		return nil, err
@@ -127,6 +138,10 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 	headers := pickForwardHeaders(effHeader, node.ForwardHeaders)
 	if ct := effHeader.Get("Content-Type"); ct != "" {
 		headers["Content-Type"] = ct
+	}
+	// §32: служебный hop-счётчик в обход allowlist узла.
+	if u.maxHops > 0 {
+		headers[HeaderHops] = strconv.Itoa(hop)
 	}
 
 	id := uuid.NewString()

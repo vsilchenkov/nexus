@@ -3092,7 +3092,7 @@ Prometheus `NodeThroughput` для top-узлов. Все источники д�
    читают счётчик; при `incoming >= receiver.max_hops` (дефолт `5`, env `NEXUS_RECEIVER_MAX_HOPS`,
    `< 0` — выкл.) запрос отклоняется **508 Loop Detected** и наружу не уходит. Покрывает sync и async
    (через `Envelope.Headers` в Kafka) и петлю любой топологии. Метрика
-   `nexus_receiver_loop_detected_total{mode}`.
+   `nexus_loop_detected_total{service="receiver",mode}`.
 2. **Self-reference валидация `target_url` (вспомогательная).** Web-сервис при `Create`/`Update`
    узла (`url_mode=static`) отклоняет `target_url`, чей `host:port` совпадает со «своим» ingress
    (`web.self_ingress_hosts`, дефолт — из `web.receiver_url`) и path начинается с `/v1/request` —

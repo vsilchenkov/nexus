@@ -82,10 +82,10 @@ func (a *App) Start(ctx context.Context) error {
 		TTL:      time.Duration(a.cfg.Receiver.L2Cache.TTLMs) * time.Millisecond,
 		StaleTTL: time.Duration(a.cfg.Receiver.L2Cache.StaleTTLMs) * time.Millisecond,
 	}, a.logger, a.metrics)
-	routeUC := usecase.NewRouteUsecase(reader, a.senderCl, a.logger)
+	routeUC := usecase.NewRouteUsecase(reader, a.senderCl, a.cfg.Receiver.MaxHops, a.logger)
 
 	a.producer = kafkapf.NewProducer(a.cfg, kafkapf.WithMetrics(a.metrics))
-	routeAsyncUC := usecase.NewRouteAsyncUsecase(reader, a.producer, a.cfg.Kafka.AsyncTopic, a.logger)
+	routeAsyncUC := usecase.NewRouteAsyncUsecase(reader, a.producer, a.cfg.Kafka.AsyncTopic, a.cfg.Receiver.MaxHops, a.logger)
 
 	// §27: Puller-менеджер RabbitMQAsync. Один воркer на узел; reconcile из PG.
 	// Запускается, если не выключен явно; при отсутствии узлов RabbitMQAsync —
@@ -113,7 +113,7 @@ func (a *App) Start(ctx context.Context) error {
 		a.logger.Info("rabbitmq puller manager started")
 	}
 
-	handler := httpadapter.New(routeUC, routeAsyncUC, a.cfg.Receiver.MaxBodyBytes, a.logger)
+	handler := httpadapter.New(routeUC, routeAsyncUC, a.cfg.Receiver.MaxBodyBytes, a.metrics, a.logger)
 
 	rl := ratelimit.New(a.redis)
 	rlMw := httpadapter.RateLimitMiddleware(rl, a.cfg.Receiver.RateLimitPerNode, a.logger)

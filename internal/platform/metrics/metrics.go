@@ -40,6 +40,7 @@ type Metrics struct {
 
 	RequestsTotal           *prometheus.CounterVec
 	RequestsIncompleteTotal *prometheus.CounterVec
+	LoopDetectedTotal       *prometheus.CounterVec // §32: запросы, отклонённые по hop-лимиту
 	RequestDuration         *prometheus.HistogramVec
 	KafkaLag                *prometheus.GaugeVec
 	KafkaInFlight           *prometheus.GaugeVec     // §31: сообщения «в полёте» (fetched, не committed)
@@ -89,6 +90,14 @@ func New(service string) *Metrics {
 			Help:        "Sender outbound calls that did not complete successfully (non-2xx) by method and node path.",
 			ConstLabels: constLabels,
 		}, []string{"method", "node"}),
+
+		// §32: запросы, отклонённые защитой от зацикливания (превышен hop-лимит
+		// X-Nexus-Hops). mode=sync|async — путь, на котором сработала защита.
+		LoopDetectedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "nexus_loop_detected_total",
+			Help:        "Requests rejected by the loop-protection hop limit (X-Nexus-Hops), by mode (sync, async).",
+			ConstLabels: constLabels,
+		}, []string{"mode"}),
 
 		RequestDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:        "nexus_request_duration_seconds",
@@ -213,6 +222,7 @@ func New(service string) *Metrics {
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 		m.RequestsTotal,
 		m.RequestsIncompleteTotal,
+		m.LoopDetectedTotal,
 		m.RequestDuration,
 		m.KafkaLag,
 		m.KafkaInFlight,
@@ -249,6 +259,10 @@ func (m *Metrics) IncL2Eviction() { m.L2CacheEvictions.Inc() }
 
 // SetL2Size обновляет текущий размер L2-кеша.
 func (m *Metrics) SetL2Size(n int) { m.L2CacheSize.Set(float64(n)) }
+
+// IncLoopDetected инкрементит счётчик запросов, отклонённых защитой от
+// зацикливания (§32). mode — "sync" либо "async".
+func (m *Metrics) IncLoopDetected(mode string) { m.LoopDetectedTotal.WithLabelValues(mode).Inc() }
 
 // Registry возвращает собственный prometheus.Registry — для тестов или
 // дополнительных кастомных collectors.

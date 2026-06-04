@@ -34,8 +34,9 @@ Detected**.
 **Конфиг:** `receiver.max_hops` (yaml) / `NEXUS_RECEIVER_MAX_HOPS` (env), дефолт `5`. Значение `< 0`
 полностью выключает проверку (служебный заголовок при этом не добавляется и не читается).
 
-**Наблюдаемость:** счётчик Prometheus `nexus_receiver_loop_detected_total` с меткой `mode` (`sync` /
-`async`) инкрементится при каждом отклонении по петле. Событие пишется в лог уровня `warn`.
+**Наблюдаемость:** счётчик Prometheus `nexus_loop_detected_total` (const-метка `service="receiver"`,
+метка `mode` = `sync` / `async`) инкрементится при каждом отклонении по петле. Событие пишется в лог
+уровня `warn`.
 
 ### 32.2. Self-reference валидация `target_url` (вспомогательный механизм)
 

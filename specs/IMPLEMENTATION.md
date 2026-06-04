@@ -458,6 +458,34 @@
 
 ---
 
+### §32 Защита от зацикливания запросов (loop protection)
+
+ТЗ — [sections/32-loop-protection.md](sections/32-loop-protection.md). Ветка `feature/loop-protection`.
+Две меры против петли, когда `target_url` указывает на сам Receiver.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| Sentinel-ошибки | ✅ Phase A | `ErrLoopDetected`, `ErrNodeTargetURLSelfReference` ([domain/errors.go](../internal/domain/errors.go)) |
+| Hop-счётчик `X-Nexus-Hops` (helper) | ✅ Phase B | [receiver/usecase/loop.go](../internal/receiver/usecase/loop.go) (`HeaderHops`, `nextHop`) |
+| Проверка+инкремент в sync/async | ✅ Phase B | [route.go](../internal/receiver/usecase/route.go), [route_async.go](../internal/receiver/usecase/route_async.go) (hop в `SendRequest.Headers` / `Envelope.Headers`) |
+| Конфиг `receiver.max_hops` | ✅ Phase B | [config.go](../internal/platform/config/config.go), [defaults.go](../internal/platform/config/defaults.go) (дефолт 5; <0 выкл.), [config.yml](../config/config.yml) (`NEXUS_RECEIVER_MAX_HOPS`) |
+| 508 в handler + метрика | ✅ Phase B | `classifyDomainError`/`onLoopDetected` ([handler.go](../internal/receiver/adapter/in/http/handler.go)); `nexus_loop_detected_total{mode}` ([metrics.go](../internal/platform/metrics/metrics.go)) |
+| Self-ref валидация `target_url` | ◐ Phase C | Web usecase (см. ниже после реализации блока C) |
+
+**Неочевидности.**
+- **Hop-заголовок в обход allowlist узла.** Шина форвардит только `forward_headers`; `X-Nexus-Hops`
+  служебный и добавляется в исходящую карту заголовков **после** `pickForwardHeaders` — поэтому он
+  всегда уходит наружу и читается на следующем витке. Sender про него не знает (просто переносит карту).
+- **Логика в usecase, не в handler.** `nextHop` вызывается в `Route`/`RouteAsync` (один helper на оба
+  пути) — чтобы и sync, и async ловили петлю одинаково и до отправки наружу.
+- **Метрика именуется `nexus_loop_detected_total`** (а не `nexus_receiver_*`): в проекте сервис
+  кодируется const-меткой `service="receiver"`, как у всех `nexus_*`. Инкремент — в handler
+  (`onLoopDetected`), где известен `mode=sync|async`; `metrics` может быть nil в unit-тестах.
+- **`max_hops=0` → дефолт 5, `<0` → выкл.** Паттерн defaults.go (`==0` подставляет дефолт) не даёт
+  выразить «0 = выключено», поэтому выключение — отрицательным значением.
+
+---
+
 ## 3. Где что лежит — карта каталогов
 
 ```text
