@@ -167,7 +167,7 @@
 | `/health` (liveness) + `/ready` (с degraded body) | ✅ | [platform/healthcheck/healthcheck.go](../internal/platform/healthcheck/healthcheck.go) |
 | Загрузочный тест 500 rps × 10 мин | ✅ | [cmd/loadtest/main.go](../cmd/loadtest/main.go), `make loadtest` |
 | Реалистичный микс трафика (§10.2: async / dynamic-url / auth token+basic / random headers) | ✅ Phase 10.2.A | [cmd/loadtest/nodes.go](../cmd/loadtest/nodes.go) — односценарные узлы по `--ratio-*`, per-mode отчёт |
-| No-loss async/rmq (число строк CH = числу отправленных, §10.2) | ✅ Phase 10.2.A.3 | [cmd/loadtest/noloss.go](../cmd/loadtest/noloss.go) — `--ch-addr`, фильтр `type IN (requestAsync,RabbitMQAsync)` |
+| No-loss async/rmq (число строк CH = числу отправленных, §10.2) | ✅ Phase 10.2.A.3 (poll-until-stable) | [cmd/loadtest/noloss.go](../cmd/loadtest/noloss.go) — `--ch-addr`, фильтр `type IN (requestAsync,RabbitMQAsync)`; опрос до стабилизации (`--ch-noloss-max-wait`), а не единичный замер |
 
 ### §10 Тестирование
 
@@ -548,6 +548,25 @@ RabbitMQ) подтвердил, см. [docs/STAND_TESTING.md](STAND_TESTING.md):
 Грабли локального запуска: `config_debug.yml` должен задавать `web.receiver_url:
 http://localhost:8080` (дефолт `http://receiver:8080` — docker-имя, локально не
 резолвится), иначе единый вход отдаёт 502.
+
+### 4.0.2 No-loss проверка loadtest — poll-until-stable, не единичный замер
+
+Проверка «нет потерь» ([cmd/loadtest/noloss.go](../cmd/loadtest/noloss.go))
+сверяет число строк `type IN (requestAsync,RabbitMQAsync)` в CH с числом
+отправленных async+rmq. **Грабли:** доставка async (Kafka) и rmq
+(RMQ→puller→Kafka) — асинхронная at-least-once. После остановки нагрузки sender
+ещё разгребает бэклог: на CI-раннере предлагаемая «логируемая» нагрузка
+(~105/с при 300 rps) обгоняет скорость дренажа, и к моменту замера в CH ещё не
+все строки. Изначальный единичный `count()` после фиксированных 15 с считал
+недоставленное «потерей» (ложный `FAIL: message loss`, см. прогон на master
+03.06.2026: `ch_rows=8713 < 13909`, при `errors=0`).
+
+Решение: `pollUntilStable` опрашивает CH с интервалом `--ch-flush-grace` и
+выходит когда `rows>=expected` (потерь нет, ранний выход), либо count перестал
+расти `noLossStableRounds=3` опросов подряд (плато → бэклог разгрёбся, и если
+`<expected` — это уже реальная потеря), либо истёк `--ch-noloss-max-wait` (деф.
+120 с). Так растущий бэклог («ещё дренируется») отличается от настоящей потери.
+Job `loadtest` в CI — `allow_failure: true` (early-warning, не gate).
 
 ### 4.1 Шифрование auth_credentials живёт только в `adapter/out/postgres`
 

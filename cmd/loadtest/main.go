@@ -66,11 +66,12 @@ type flags struct {
 
 	// §10.2: no-loss проверка через ClickHouse (async + rmq). Пустой CHAddr =
 	// проверка пропускается (локальный `make loadtest` без CH работает как раньше).
-	CHAddr       string
-	CHUser       string
-	CHPassword   string
-	CHTable      string
-	CHFlushGrace time.Duration
+	CHAddr          string
+	CHUser          string
+	CHPassword      string
+	CHTable         string
+	CHFlushGrace    time.Duration
+	CHNoLossMaxWait time.Duration
 }
 
 func parseFlags() flags {
@@ -119,7 +120,11 @@ func parseFlags() flags {
 	flag.StringVar(&f.CHTable, "ch-table", "nexus_default.loadtest",
 		"ClickHouse log table to count async/rmq rows for no-loss check")
 	flag.DurationVar(&f.CHFlushGrace, "ch-flush-grace", 10*time.Second,
-		"Wait before counting CH rows (sender batch flush window)")
+		"Poll interval between CH row counts (also the initial settle before the first count; sender batch flush window)")
+	flag.DurationVar(&f.CHNoLossMaxWait, "ch-noloss-max-wait", 120*time.Second,
+		"Max total wait for the async/rmq backlog to drain before declaring loss (§10.2). "+
+			"The check polls every --ch-flush-grace and exits early once rows>=expected (no loss) "+
+			"or the count plateaus below expected (real loss).")
 	flag.Parse()
 	return f
 }

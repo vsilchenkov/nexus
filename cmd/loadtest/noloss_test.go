@@ -2,10 +2,76 @@ package main
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+// seqCounter возвращает countFn, отдающую значения из seq по порядку; после
+// исчерпания повторяет последнее (имитирует «плато»).
+func seqCounter(seq ...int64) countFn {
+	i := 0
+	return func(context.Context) (int64, error) {
+		v := seq[i]
+		if i < len(seq)-1 {
+			i++
+		}
+		return v, nil
+	}
+}
+
+func TestPollUntilStableReachesExpected(t *testing.T) {
+	t.Parallel()
+	// Растущий бэклог добирает до expected — потерь нет, ранний выход.
+	rows, err := pollUntilStable(context.Background(), seqCounter(5, 10, 25),
+		20, time.Millisecond, 5*time.Second)
+	require.NoError(t, err)
+	assert.EqualValues(t, 25, rows)
+}
+
+func TestPollUntilStablePlateauBelowExpectedIsLoss(t *testing.T) {
+	t.Parallel()
+	// Count замер на 8 и не растёт — после noLossStableRounds признаём плато:
+	// 8 < 13 = реальная потеря (rows возвращается как есть, ok решает вызывающий).
+	rows, err := pollUntilStable(context.Background(), seqCounter(8),
+		13, time.Millisecond, 5*time.Second)
+	require.NoError(t, err)
+	assert.EqualValues(t, 8, rows)
+}
+
+func TestPollUntilStableHitsMaxWait(t *testing.T) {
+	t.Parallel()
+	// Count растёт бесконечно, expected недостижим — выходим по maxWait.
+	grow := int64(0)
+	cnt := func(context.Context) (int64, error) { grow++; return grow, nil }
+	rows, err := pollUntilStable(context.Background(), cnt,
+		1<<30, time.Millisecond, 20*time.Millisecond)
+	require.NoError(t, err)
+	assert.Positive(t, rows)
+	assert.Less(t, rows, int64(1<<30))
+}
+
+func TestPollUntilStablePropagatesError(t *testing.T) {
+	t.Parallel()
+	want := errors.New("ch down")
+	cnt := func(context.Context) (int64, error) { return 0, want }
+	_, err := pollUntilStable(context.Background(), cnt, 10, time.Millisecond, time.Second)
+	assert.ErrorIs(t, err, want)
+}
+
+func TestPollUntilStableCanceledBeforeFirstCount(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	called := false
+	cnt := func(context.Context) (int64, error) { called = true; return 0, nil }
+	_, err := pollUntilStable(ctx, cnt, 10, 50*time.Millisecond, time.Second)
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.False(t, called, "cnt не должен вызываться, если ctx отменён до первого опроса")
+}
 
 func TestCheckNoLossSkippedWithoutAddr(t *testing.T) {
 	t.Parallel()
