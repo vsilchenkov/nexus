@@ -11,6 +11,7 @@ import Settings from "./pages/Settings";
 import ForcePasswordChange from "./pages/ForcePasswordChange";
 import { AppShell } from "./components/AppShell";
 import { api } from "./api/client";
+import { roleAtLeast } from "./lib/roles";
 
 // useMe — проверка текущей сессии через /api/auth/me.
 // При 401 (isError) пользователь будет редиректнут на /login.
@@ -35,6 +36,15 @@ function Protected() {
   return <AppShell />;
 }
 
+// AuditRoute — журнал действий доступен только manager+ (§26, П6). Viewer,
+// открывший /audit по прямой ссылке, редиректится на список узлов (пункт меню
+// для него скрыт, бэкенд всё равно вернул бы 403).
+function AuditRoute() {
+  const { data } = useMe();
+  if (data && !roleAtLeast(data.user.role, "manager")) return <Navigate to="/" replace />;
+  return <AuditLog />;
+}
+
 export default function App() {
   return (
     <Routes>
@@ -44,7 +54,7 @@ export default function App() {
         <Route path="/nodes/new" element={<NodeSettings />} />
         <Route path="/nodes/:id" element={<NodeDetail />} />
         <Route path="/nodes/:id/edit" element={<NodeSettings />} />
-        <Route path="/audit" element={<AuditLog />} />
+        <Route path="/audit" element={<AuditRoute />} />
         <Route path="/kafka" element={<KafkaMonitor />} />
         <Route path="/settings/*" element={<Settings />} />
       </Route>
