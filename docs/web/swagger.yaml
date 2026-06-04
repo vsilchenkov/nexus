@@ -1971,6 +1971,12 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "422":
+          description: original body not logged — provide manually
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "429":
           description: rate limit exceeded
           schema:

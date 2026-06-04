@@ -1267,6 +1267,15 @@ const docTemplate = `{
                             }
                         }
                     },
+                    "422": {
+                        "description": "original body not logged — provide manually",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
                     "429": {
                         "description": "rate limit exceeded",
                         "schema": {
