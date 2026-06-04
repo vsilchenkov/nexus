@@ -164,6 +164,13 @@ Web Service отдаёт REST API под `/api/*` и SPA (`embed.FS`) на вс�
 - **Constructor injection.** Every dependency is passed through `New…(…)`. Components never construct their own collaborators.
 - **`context.Context` always.** First parameter of every function that performs I/O, blocks, spawns goroutines, or calls a method that does.
 - **Errors are values.** Return them, wrap them with `%w`, inspect them with `errors.Is` / `errors.As`. Never `panic` in library code.
+- **Panic recovery in every goroutine.** Каждая горутина в продакшн-коде первой строкой ставит
+  `defer safego.Recover(<logger>, "<op>")` (пакет [internal/platform/safego](internal/platform/safego/safego.go),
+  ТЗ §30.2): паника гасится, логируется как `error` (с капчуром в Sentry и stacktrace), процесс не
+  падает. Для горутин с request-scoped контекстом (несущим Sentry-hub) — `safego.RecoverCtx(ctx, <logger>, "<op>")`.
+  В пулах с `defer wg.Done()` recover ставится в коде **после** `wg.Done()` (LIFO — выполнится первым,
+  гасит панику до отработки `wg.Done`). Не пиши свой `recover()` — используй `safego`. `recover()` ловит
+  панику только в своей горутине, поэтому middleware-recovery родительской горутины дочернюю НЕ спасает.
 - **Small, focused units.** One file, one purpose. One function ≤ 40–50 lines. One type, one responsibility.
 
 If a change cannot satisfy these principles, stop and discuss the design before writing code.
@@ -285,6 +292,7 @@ Run through this list every time. If any item fails, fix it before declaring suc
 - [ ] No function exceeds ~50 lines; no type carries more than one responsibility.
 - [ ] Errors are wrapped with `%w` and handled exactly once.
 - [ ] No `panic` outside `main`. No `init()` with side effects.
+- [ ] Every new goroutine starts with `defer safego.Recover(<logger>, "<op>")` (or `RecoverCtx` for request-scoped ctx; after `wg.Done()` in pools). See §1 and ТЗ §30.2.
 - [ ] Tests added or updated for every changed behavior; mocks are interface-based.
 - [ ] `go vet ./...`, `golangci-lint run`, `go test -race ./...` all pass.
 - [ ] `go.mod` / `go.sum` tidy (`go mod tidy`).
