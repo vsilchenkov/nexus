@@ -710,6 +710,94 @@ definitions:
       usage_count:
         type: integer
     type: object
+  internal_web_adapter_in_http.kafkaBrokerHealthDTO:
+    properties:
+      brokers_online:
+        type: integer
+      brokers_total:
+        type: integer
+      offline_partitions:
+        type: integer
+      under_replicated_partitions:
+        type: integer
+    type: object
+  internal_web_adapter_in_http.kafkaDeltaDTO:
+    properties:
+      consumed:
+        type: number
+      has_delta:
+        type: boolean
+      produced:
+        type: number
+    type: object
+  internal_web_adapter_in_http.kafkaHealthDTO:
+    properties:
+      reason:
+        type: string
+      severity:
+        type: string
+    type: object
+  internal_web_adapter_in_http.kafkaOverviewDTO:
+    properties:
+      broker_health:
+        $ref: '#/definitions/internal_web_adapter_in_http.kafkaBrokerHealthDTO'
+      delta_vs_previous_period:
+        $ref: '#/definitions/internal_web_adapter_in_http.kafkaDeltaDTO'
+      error_rate:
+        type: number
+      health:
+        $ref: '#/definitions/internal_web_adapter_in_http.kafkaHealthDTO'
+      kafka_available:
+        type: boolean
+      period:
+        $ref: '#/definitions/internal_web_adapter_in_http.kafkaPeriodDTO'
+      prometheus_available:
+        type: boolean
+      summary:
+        $ref: '#/definitions/internal_web_adapter_in_http.kafkaSummaryDTO'
+    type: object
+  internal_web_adapter_in_http.kafkaPeriodDTO:
+    properties:
+      from:
+        type: string
+      to:
+        type: string
+    type: object
+  internal_web_adapter_in_http.kafkaPointDTO:
+    properties:
+      t:
+        type: integer
+      v:
+        type: number
+    type: object
+  internal_web_adapter_in_http.kafkaSummaryDTO:
+    properties:
+      consumed_total:
+        type: integer
+      current_lag:
+        type: integer
+      failed_consumed:
+        type: integer
+      failed_produced:
+        type: integer
+      in_flight_now:
+        type: integer
+      produced_total:
+        type: integer
+    type: object
+  internal_web_adapter_in_http.kafkaTimeseriesDTO:
+    properties:
+      prometheus_available:
+        type: boolean
+      series:
+        additionalProperties:
+          items:
+            $ref: '#/definitions/internal_web_adapter_in_http.kafkaPointDTO'
+          type: array
+        type: object
+      step_seconds:
+        type: integer
+    type: object
   internal_web_adapter_in_http.loginRequest:
     properties:
       login:
@@ -1684,6 +1772,162 @@ paths:
       summary: Создать заголовок в справочнике (admin, §24).
       tags:
       - headers
+  /api/kafka/by-node:
+    get:
+      description: top_producers (по числу async-сообщений) и top_failures (по ошибкам)
+        из Prometheus (метка node). Admin-only.
+      parameters:
+      - description: 1h | 3h | 24h | 7d | 14d | 30d (default 1h)
+        in: query
+        name: range
+        type: string
+      - description: период с
+        in: query
+        name: from
+        type: string
+      - description: период по
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Топ-узлы по нагрузке и ошибкам за период (§4.4 spec).
+      tags:
+      - kafka
+  /api/kafka/overview:
+    get:
+      description: KPI produced/consumed/failed/lag/in-flight, дельта к предыдущему
+        периоду, broker_health и severity health-banner. Источники деградируют (флаги
+        *_available). Admin-only, rate-limit 60/мин.
+      parameters:
+      - description: 1h | 3h | 24h | 7d | 14d | 30d (default 1h)
+        in: query
+        name: range
+        type: string
+      - description: период с (RFC3339 или UnixMilli); вместе с to — произвольный
+          период (≤90д)
+        in: query
+        name: from
+        type: string
+      - description: период по (RFC3339 или UnixMilli)
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.kafkaOverviewDTO'
+        "400":
+          description: период длиннее 90 дней
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Сводка экрана мониторинга Kafka за период (§4.1 spec).
+      tags:
+      - kafka
+  /api/kafka/test:
+    post:
+      description: Подключение + Metadata к каждому брокеру, время отклика и предупреждения.
+        Admin-only.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Ping брокеров кластера (§4.5 spec).
+      tags:
+      - kafka
+  /api/kafka/timeseries:
+    get:
+      description: produced/consumed/errors (rate, сообщений/сек) и lag (абсолют)
+        через Prometheus query_range. Шаг авто по периоду или явный (step). Admin-only.
+      parameters:
+      - description: 1h | 3h | 24h | 7d | 14d | 30d (default 1h)
+        in: query
+        name: range
+        type: string
+      - description: период с (RFC3339 или UnixMilli)
+        in: query
+        name: from
+        type: string
+      - description: период по
+        in: query
+        name: to
+        type: string
+      - description: auto | 10s | 30s | 1m | 5m | 1h (default auto)
+        in: query
+        name: step
+        type: string
+      - description: CSV из produced,consumed,errors,lag (default все)
+        in: query
+        name: metrics
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.kafkaTimeseriesDTO'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Временные ряды Kafka-графиков за период (§4.2 spec).
+      tags:
+      - kafka
+  /api/kafka/topics:
+    get:
+      description: Партиции, RF, оценка числа сообщений, consumer-группы с lag, состояние
+        реплик. Размер на диске недоступен (best-effort, 0). Кеш Redis 30с. Admin-only.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Список топиков кластера (§4.3 spec).
+      tags:
+      - kafka
   /api/logs/{id}/replay:
     post:
       consumes:

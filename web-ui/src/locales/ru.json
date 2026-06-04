@@ -33,6 +33,7 @@
   "nav": {
     "nodes": "Узлы",
     "audit": "Аудит",
+    "kafka": "Kafka",
     "settings": "Настройки",
     "team": "Команда",
     "language": "Язык",
@@ -122,6 +123,110 @@
       "30d": "30д",
       "custom": "Произвольный"
     }
+  },
+  "kafka": {
+    "title": "Мониторинг Kafka",
+    "subtitle": "Состояние кластера, throughput, ошибки и узлы-лидеры по нагрузке",
+    "updated_ago": "обновлено {{secs}} сек назад",
+    "refresh": "Обновить",
+    "check_cluster": "Проверить кластер",
+    "forbidden": "Мониторинг Kafka доступен только администраторам.",
+    "resolution": { "auto": "Авто" },
+    "legend": { "produced": "produced", "consumed": "consumed", "errors": "errors" },
+    "throughput": { "title": "Throughput", "unit": "сообщений/сек" },
+    "lag": {
+      "title": "Consumer lag",
+      "subtitle": "отставание от head топика",
+      "label": "lag"
+    },
+    "kpi": {
+      "messages": "Сообщений за период",
+      "lag": "Текущий lag",
+      "errors": "Ошибок за период",
+      "in_flight": "In-flight сейчас",
+      "vs_previous": "к предыдущему периоду",
+      "of_total": "от общего числа",
+      "in_flight_hint": "в обработке между produce и consume"
+    },
+    "topics": {
+      "title": "Топики",
+      "name": "Топик",
+      "partitions": "Партиций",
+      "replication": "Replication",
+      "size": "Размер",
+      "messages": "Сообщений ~",
+      "groups": "Consumer groups",
+      "health": "Состояние",
+      "empty": "Топиков нет",
+      "state": {
+        "ok": "OK",
+        "under_replicated": "under-replicated",
+        "lag": "растущий lag",
+        "offline": "offline партиции"
+      }
+    },
+    "top_producers": {
+      "title": "Top producers",
+      "node": "Узел",
+      "messages": "Сообщений",
+      "share": "Доля",
+      "empty": "Нет данных за период"
+    },
+    "top_failures": {
+      "title": "Top failures",
+      "node": "Узел",
+      "errors": "Ошибок",
+      "rate": "Error rate",
+      "empty": "Никаких ошибок не зафиксировано"
+    },
+    "brokers": {
+      "title": "Брокеры",
+      "online": "{{online}} из {{total}} online",
+      "recheck": "Перепроверить",
+      "empty": "Запустите проверку кластера, чтобы увидеть состояние брокеров",
+      "up": "online",
+      "down": "offline",
+      "ping": "Ping",
+      "warn": {
+        "unreachable": "Брокер недоступен",
+        "latency": "Задержка отклика выше среднего. Проверьте сеть до этого хоста."
+      }
+    },
+    "health": {
+      "healthy": {
+        "title": "Кластер здоров",
+        "details": "Все брокеры online, нет under-replicated партиций, lag не растёт."
+      },
+      "offline_partitions": {
+        "title": "Критично: offline партиции",
+        "details": "У {{offline}} партиц(ии) нет доступного лидера — producer не может писать. Требуется немедленная реакция."
+      },
+      "brokers_down": {
+        "title": "Критично: брокеры недоступны",
+        "details": "Online только {{online}} из {{total}} брокеров. Кластер под угрозой."
+      },
+      "error_rate_high": {
+        "title": "Повышенная доля ошибок",
+        "details": "{{error_rate}}% сообщений за период завершились ошибкой. Проверьте проблемные узлы ниже."
+      },
+      "lag_high": {
+        "title": "Высокий consumer lag",
+        "details": "Текущий lag {{lag}}. Consumer отстаёт от producer — проверьте Sender."
+      },
+      "lag_growing": {
+        "title": "Внимание: lag растёт быстрее, чем consumer обрабатывает",
+        "details": "Текущий lag {{lag}} растёт. Sender обрабатывает медленнее, чем producer пишет — проверьте загрузку Sender."
+      },
+      "under_replicated": {
+        "title": "Внимание: under-replicated партиции",
+        "details": "{{under_replicated}} партиц(ии) под-реплицированы. Часть реплик отстала или недоступна."
+      },
+      "produce_latency_high": {
+        "title": "Повышенная задержка обработки",
+        "details": "p95 длительности обработки выше порога. Проверьте загрузку брокеров и Sender."
+      }
+    },
+    "rate_limited": "Слишком много запросов, повторите через минуту."
   },
   "node": {
     "tabs": { "overview": "Обзор", "logs": "Логи", "config": "Конфиг", "metrics": "Метрики" },

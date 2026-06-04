@@ -40,6 +40,28 @@ type NodeThroughput struct {
 	P95ms  float64 // 95-й перцентиль длительности исходящих (Sender), мс
 }
 
+// KafkaSummary — сводка Kafka-трафика за окно (since, until] для экрана
+// Kafka-мониторинга (§4.1 spec). Источник — Prometheus, фильтр async-трафика
+// method="requestAsync". InFlight и ProduceP95ms берутся из выделенных метрик
+// nexus_kafka_in_flight / nexus_kafka_produce_duration_seconds (§31).
+type KafkaSummary struct {
+	Produced       float64 // принято Receiver'ом в Kafka (requestAsync)
+	Consumed       float64 // обработано Sender-consumer'ом (requestAsync)
+	FailedProduced float64 // отказы публикации на Receiver (status 0/5xx)
+	FailedConsumed float64 // незавершённые на Sender (non-2xx, incomplete_total)
+	CurrentLag     float64 // суммарный consumer lag сейчас (sum nexus_kafka_lag)
+	InFlight       float64 // сообщения «в полёте» (sum nexus_kafka_in_flight)
+	ProduceP95ms   float64 // p95 длительности публикации в Kafka, мс
+}
+
+// KafkaPoint — точка временного ряда Kafka-графика (§4.2 spec). TsMs — начало
+// бакета (UnixMilli), V — значение (rate в сообщениях/сек для produced/consumed/
+// errors; абсолютный lag для метрики lag).
+type KafkaPoint struct {
+	TsMs int64
+	V    float64
+}
+
 // PromMetrics — глобальные и кросс-сервисные метрики из Prometheus
 // (query API). Реализуется адаптером adapter/out/prometheus. Опционально:
 // при пустом prometheus.url в app.go провайдер не создаётся (nil), и
@@ -78,4 +100,18 @@ type PromMetrics interface {
 	// длина результата == buckets). Count — все исходящие вызовы, Errors —
 	// «незавершённые» (non-2xx). node — path узла.
 	NodeChart(ctx context.Context, node string, since, until time.Time, buckets int) ([]SeriesPoint, error)
+
+	// KafkaOverview — сводка Kafka-трафика за период (since, until] для §4.1
+	// spec: produced/consumed/failed/lag/in-flight/p95. Источник — Prometheus
+	// (async-трафик, method="requestAsync"); current_lag/in_flight — instant на
+	// момент until. Для дельты к предыдущему периоду usecase вызывает метод
+	// повторно на сдвинутом окне.
+	KafkaOverview(ctx context.Context, since, until time.Time) (KafkaSummary, error)
+
+	// KafkaTimeseries — временные ряды Kafka-графиков (§4.2 spec) за период
+	// (since, until] с шагом step. metrics — подмножество
+	// {"produced","consumed","errors","lag"}; возвращает по ряду на каждую
+	// запрошенную метрику (ключ — имя метрики, ASC по времени). produced/
+	// consumed/errors — rate (сообщений/сек), lag — абсолютное значение gauge.
+	KafkaTimeseries(ctx context.Context, since, until time.Time, step time.Duration, metrics []string) (map[string][]KafkaPoint, error)
 }

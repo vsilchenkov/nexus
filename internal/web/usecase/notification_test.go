@@ -73,6 +73,12 @@ func (p notifProm) NodeKPI(context.Context, string, time.Time, time.Time) (port.
 func (p notifProm) NodeChart(context.Context, string, time.Time, time.Time, int) ([]port.SeriesPoint, error) {
 	return nil, nil
 }
+func (p notifProm) KafkaOverview(context.Context, time.Time, time.Time) (port.KafkaSummary, error) {
+	return port.KafkaSummary{}, nil
+}
+func (p notifProm) KafkaTimeseries(context.Context, time.Time, time.Time, time.Duration, []string) (map[string][]port.KafkaPoint, error) {
+	return nil, nil
+}
 
 type notifSender struct {
 	msgs []string

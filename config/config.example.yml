@@ -192,3 +192,14 @@ web:
   rmq_test_rate_limit_per_min: 10               # Лимит POST /api/nodes/test-rmq на пользователя в минуту (§27.8).
   swagger_enabled: false                        # Отдавать ли Swagger UI Web'а (выключай в prod).
   receiver_url: http://receiver:8080            # Base URL Receiver: replay-запросы (§7.4.1) и проксирование идут через реальный pipeline.
+  kafka_monitor_rate_limit_per_min: 60          # Лимит запросов к /api/kafka/* на пользователя в минуту (экран Kafka-мониторинга, защита от dashboard-флуда). 0 = без лимита.
+  # Пороги индикации (жёлтый/красный) для health-banner и KPI экрана Kafka-мониторинга (§6 spec).
+  # Вычисляются на каждом /api/kafka/overview; в сам Kafka/Prometheus не пишутся.
+  kafka_alerts_thresholds:
+    lag_warning: 100                            # Текущий consumer lag (сообщений) → жёлтый.
+    lag_critical: 1000                          # Текущий consumer lag → красный.
+    lag_growth_critical_per_sec: 50             # Прирост lag/сек, держащийся 5 минут подряд → красный.
+    error_rate_warning: 0.001                   # Доля ошибок (produced+consumed) за период → жёлтый (0.001 = 0.1%).
+    error_rate_critical: 0.01                   # Доля ошибок за период → красный (0.01 = 1%).
+    produce_latency_p95_warning_ms: 100         # p95 produce latency (мс) → жёлтый.
+    produce_latency_p95_critical_ms: 500        # p95 produce latency (мс) → красный.

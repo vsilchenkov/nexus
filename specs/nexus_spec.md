@@ -3063,3 +3063,19 @@ SPA (Sidebar) показывает `v{version}` в футере. Порядок 
 
 Per-request обогащение логгера во всех handler'ах, отдельная группировка
 stacktrace-issue в Sentry, проброс `request_id` в исходящие запросы к узлам.
+
+## 31. Мониторинг Kafka
+
+Полный текст раздела — [sections/31-kafka-monitoring.md](sections/31-kafka-monitoring.md).
+
+Admin-only alarm-dashboard `/kafka` (в блоке «Аудит» навигации, **не** в «Настройках»): health-banner,
+4 KPI, графики throughput и lag (recharts), таблица топиков, top-узлы по нагрузке/ошибкам, карточки
+брокеров. API `/api/kafka/{overview,timeseries,topics,by-node,test}` (admin-only, rate-limit
+`web.kafka_monitor_rate_limit_per_min`, дефолт 60/мин). Источники: Prometheus (async-трафик по
+`method="requestAsync"`, без новых метрик) + Kafka Admin (`segmentio/kafka-go`, кеш Redis 30с) +
+Prometheus `NodeThroughput` для top-узлов. Все источники деградируют мягко (`prometheus_available`/
+`kafka_available`). Пороги индикации — `web.kafka_alerts_thresholds.*` (§31.5).
+
+Отклонения от черновика: пункт меню в блоке «Аудит» (а не «Настройки»), маршрут `/kafka`; метрики из
+существующих `nexus_*{method="requestAsync"}` (а не `databus_kafka_*`); размер топика на диске
+недоступен (`DescribeLogDirs` не в high-level API → `size_bytes=0`, best-effort).

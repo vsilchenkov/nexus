@@ -42,6 +42,8 @@ type Metrics struct {
 	RequestsIncompleteTotal *prometheus.CounterVec
 	RequestDuration         *prometheus.HistogramVec
 	KafkaLag                *prometheus.GaugeVec
+	KafkaInFlight           *prometheus.GaugeVec     // §31: сообщения «в полёте» (fetched, не committed)
+	KafkaProduceDuration    *prometheus.HistogramVec // §31: длительность публикации в Kafka по топику
 	CHBufferSize            *prometheus.GaugeVec
 	CHErrorsTotal           *prometheus.CounterVec
 	CHDroppedTotal          *prometheus.CounterVec
@@ -103,6 +105,22 @@ func New(service string) *Metrics {
 			Help:        "Kafka consumer lag in messages per topic/partition for the configured consumer group.",
 			ConstLabels: constLabels,
 		}, []string{"topic", "partition", "group"}),
+
+		// §31: сообщения, прочитанные consumer'ом, но ещё не закоммиченные
+		// (в обработке между produce и consume). Метка component=sender.
+		KafkaInFlight: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "nexus_kafka_in_flight",
+			Help:        "Kafka messages fetched but not yet committed (in-flight between produce and consume).",
+			ConstLabels: constLabels,
+		}, []string{"component"}),
+
+		// §31: время публикации одного сообщения в Kafka (WriteMessages) по топику.
+		KafkaProduceDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:        "nexus_kafka_produce_duration_seconds",
+			Help:        "Kafka produce duration in seconds per topic (Receiver/Sender producer).",
+			ConstLabels: constLabels,
+			Buckets:     []float64{.001, .0025, .005, .01, .025, .05, .1, .25, .5, 1, 2.5},
+		}, []string{"topic"}),
 
 		CHBufferSize: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name:        "nexus_clickhouse_buffer_size",
@@ -197,6 +215,8 @@ func New(service string) *Metrics {
 		m.RequestsIncompleteTotal,
 		m.RequestDuration,
 		m.KafkaLag,
+		m.KafkaInFlight,
+		m.KafkaProduceDuration,
 		m.CHBufferSize,
 		m.CHErrorsTotal,
 		m.CHDroppedTotal,
