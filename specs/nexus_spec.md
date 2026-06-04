@@ -3098,3 +3098,26 @@ Prometheus `NodeThroughput` для top-узлов. Все источники д�
    (`web.self_ingress_hosts`, дефолт — из `web.receiver_url`) и path начинается с `/v1/request` —
    **400**, код `node.validation.target_url_self`. Loopback (`localhost`/`127.0.0.1`/`::1`) намеренно
    не блокируется (тест-стенд). Пустой список — проверка пропускается.
+
+## 33. Доработка тултипов графиков (chart tooltips)
+
+Полный текст раздела — [sections/33-chart-tooltips.md](sections/33-chart-tooltips.md).
+Эталон дизайна — [nexus_chart_tooltip.html](nexus_chart_tooltip.html).
+
+Текущие тултипы графиков бедны (плоская строка `15:43–16:13 · 724`, дефолтный recharts-тултип,
+нативный `title` на спарклайне Overview). Раздел вводит **единый презентационный компонент**
+`<ChartTooltip>` (`web-ui/src/components/ui/ChartTooltip.tsx`) с устойчивой иерархией: период →
+главное значение (mono, цвет по tone) → серии с маркерами, повторяющими стиль линии/бара (сортировка
+по убыванию) → подвал/дельта → опц. действие. Реализация — **под текущую архитектуру**
+(recharts 3.8.1 + Radix Tooltip) **без новых зависимостей** (без `@floating-ui/react`), на уже
+доступных данных API.
+
+- **Интеграция во все графики:** ThroughputChart/LagChart (Kafka, через recharts `content`-адаптер),
+  TrafficChart (узел, в Radix `Tooltip`), MiniSpark (добавить тултип), Sparkline Overview (заменить
+  нативный `title` на Radix). Цвета приводятся к токенам Tailwind.
+- **Действие «открыть логи за момент»** для графиков узла — навигация на логи с `from`/`to` границами
+  бакета (backend `GET /api/nodes/{id}/logs?from=&to=` уже готов).
+- **UX:** задержка появления ~150 ms, мгновенное исчезновение, snap к точке, auto-flip из коробки.
+- **i18n:** новые клиентские ключи `metrics.tooltip.*` / `kafka.tooltip.*` синхронно в `en/ru.json`.
+- **Out of scope (задел v2, нет данных):** разбивка lag по партициям (Prometheus отдаёт агрегат) и
+  сравнение «неделю назад» в рядах (есть только дельта к предыдущему периоду той же длины).
