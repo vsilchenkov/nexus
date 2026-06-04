@@ -122,6 +122,17 @@
       "14d": "14d",
       "30d": "30d",
       "custom": "Custom"
+    },
+    "tooltip": {
+      "delivered": "delivered",
+      "errors": "errors",
+      "requests": "requests",
+      "peak": "peak in range",
+      "vs_avg": "vs avg",
+      "open_logs": "Open logs for this moment",
+      "seconds": "{{n}}s",
+      "minutes": "{{n}} min",
+      "hours": "{{n}} h"
     }
   },
   "kafka": {
@@ -226,7 +237,17 @@
         "details": "Processing p95 latency is above the threshold. Check broker and Sender load."
       }
     },
-    "rate_limited": "Too many requests, try again in a minute."
+    "rate_limited": "Too many requests, try again in a minute.",
+    "tooltip": {
+      "rate_unit": "/s",
+      "lag_unit": "messages",
+      "consumed_lt_produced": "consumed < produced",
+      "threshold": "critical threshold: {{n}}",
+      "threshold_near": "approaching threshold {{n}}",
+      "moment": "moment",
+      "window_s": "{{n}}s window",
+      "window_m": "{{n}}m window"
+    }
   },
   "node": {
     "tabs": { "overview": "Overview", "logs": "Logs", "config": "Config", "metrics": "Metrics" },

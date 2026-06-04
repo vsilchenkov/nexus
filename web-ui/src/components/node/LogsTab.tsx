@@ -11,24 +11,31 @@ import { type LogRow, type LogsResp } from "./types";
 type StatusFilter = "all" | "ok" | "err";
 type PageSize = 50 | 100 | 200;
 
+// LogsInitialFilter — стартовый фильтр логов, прокинутый кликом по графику (§33.4):
+// from/to в формате <input type="datetime-local"> (локальная зона).
+export type LogsInitialFilter = { from?: string; to?: string; status?: StatusFilter };
+
 const LIVE_BUFFER_LIMIT = 500;
 const HIGHLIGHT_DURATION_MS = 1000;
 const SCROLL_TOP_THRESHOLD_PX = 8;
 
 // LogsTab — вкладка «Логи» (§7.4): snapshot + SSE live-tail с буфером,
 // клиентскими фильтрами, расширенным поиском и replay-меню строки.
-export function LogsTab({ node }: { node: Node }) {
+export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: LogsInitialFilter }) {
   const { t } = useTranslation();
   const id = node.id;
   const hasLogsTable = !!node.clickhouse_table;
 
   const [pageSize, setPageSize] = useState<PageSize>(50);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(initialFilter?.status ?? "all");
   const [doneFilter, setDoneFilter] = useState<"all" | "done" | "pending">("all");
 
-  const [showAdv, setShowAdv] = useState(false);
-  const [advForm, setAdvForm] = useState({ q: "", ip: "", host: "", from: "", to: "" });
-  const [appliedFilters, setAppliedFilters] = useState(advForm);
+  // Стартовый временной фильтр из клика по графику (§33.4). LogsTab монтируется
+  // заново при переключении на вкладку, поэтому инициализация через useState ок.
+  const initForm = { q: "", ip: "", host: "", from: initialFilter?.from ?? "", to: initialFilter?.to ?? "" };
+  const [showAdv, setShowAdv] = useState(!!(initialFilter?.from || initialFilter?.to));
+  const [advForm, setAdvForm] = useState(initForm);
+  const [appliedFilters, setAppliedFilters] = useState(initForm);
 
   const advQueryParams = useMemo(() => {
     const p: Record<string, string | number> = { limit: pageSize };

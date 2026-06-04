@@ -18,10 +18,12 @@ import {
   Input,
   Kpi,
   KpiRow,
+  ChartTooltip,
   PeriodPicker,
   Pill,
   Seg,
   Select,
+  Tooltip,
   defaultPeriod,
   periodKey,
   periodParams,
@@ -424,9 +426,11 @@ function fmtBucket(start: number, end: number, multiDay: boolean): string {
 }
 
 // Sparkline — мини-график входящего трафика за период (§22, ui_cards.html).
-// На каждом столбце нативный тултип с конкретикой: окно времени бакета и число
-// входящих запросов (нативный title — легковесно, на Overview много карточек).
+// На каждом столбце единый тултип (§33): окно бакета + число входящих запросов.
+// Radix-тултип монтирует контент лениво на hover (провайдер общий в AppShell) —
+// на Overview много карточек, но накладные минимальны.
 function Sparkline({ data, variant, period }: { data: number[]; variant: Variant; period: Period }) {
+  const { t } = useTranslation();
   if (data.length === 0) {
     return <div className="h-7" />;
   }
@@ -447,12 +451,23 @@ function Sparkline({ data, variant, period }: { data: number[]; variant: Variant
       {data.map((v, i) => {
         const start = since + i * bucketW;
         return (
-          <span
+          <Tooltip
             key={i}
-            className={cn("flex-1 rounded-sm opacity-80", color)}
-            style={{ height: `${Math.max(4, (v / max) * 100)}%` }}
-            title={`${fmtBucket(start, start + bucketW, multiDay)} · ${fmtNum(Math.round(v))}`}
-          />
+            side="top"
+            delayDuration={150}
+            content={
+              <ChartTooltip
+                compact
+                period={{ from: fmtBucket(start, start + bucketW, multiDay) }}
+                primary={{ value: fmtNum(Math.round(v)), unit: t("metrics.tooltip.requests") }}
+              />
+            }
+          >
+            <span
+              className={cn("flex-1 rounded-sm opacity-80", color)}
+              style={{ height: `${Math.max(4, (v / max) * 100)}%` }}
+            />
+          </Tooltip>
         );
       })}
     </div>

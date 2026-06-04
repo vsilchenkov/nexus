@@ -137,6 +137,7 @@ export default function KafkaMonitor() {
         <ThroughputChart
           series={seriesQ.data?.series ?? {}}
           longRange={longRange}
+          stepSeconds={seriesQ.data?.step_seconds}
           labels={{
             produced: t("kafka.legend.produced"),
             consumed: t("kafka.legend.consumed"),
@@ -151,12 +152,7 @@ export default function KafkaMonitor() {
           {t("kafka.lag.title")}
           <span className="ml-2 text-[11.5px] font-normal text-fg-subtle">{t("kafka.lag.subtitle")}</span>
         </div>
-        <LagChart
-          points={seriesQ.data?.series.lag ?? []}
-          threshold={1000}
-          longRange={longRange}
-          lagLabel={t("kafka.lag.label")}
-        />
+        <LagChart points={seriesQ.data?.series.lag ?? []} threshold={1000} longRange={longRange} />
       </Card>
 
       {/* Топики (§5.6) */}
@@ -204,7 +200,7 @@ function KpiCards({
 
       <KpiCard label={t("kafka.kpi.lag")} value={s.current_lag.toLocaleString()} tone={lagTone}>
         <div className="-mx-1 mt-1">
-          <MiniSpark values={lagSpark} color={lagTone === "err" ? "#e85d5c" : lagTone === "warn" ? "#d9a441" : "#5b9bf0"} />
+          <MiniSpark values={lagSpark} color={lagTone === "err" ? "#e85d5c" : lagTone === "warn" ? "#d9a441" : "#5b9bf0"} unit={t("kafka.tooltip.lag_unit")} />
         </div>
       </KpiCard>
 
