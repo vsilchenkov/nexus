@@ -47,7 +47,7 @@ type DryRunSubrequest struct {
 // @Produce  json
 // @Param    body  body  DryRunRequest  true  "node + sub-request"
 // @Success  200   {object}  usecase.DryRunReport
-// @Failure  400   {object}  map[string]string
+// @Failure  400   {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/nodes/dry-run [post]
 func (h *DryRunHandler) Run(c *gin.Context) {

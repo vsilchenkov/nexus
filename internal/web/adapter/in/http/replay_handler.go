@@ -39,11 +39,11 @@ type ReplayRequest struct {
 // @Param    id    path  string         true  "log id (UUID v4)"
 // @Param    body  body  ReplayRequest  true  "опции"
 // @Success  200   {object}  usecase.ReplayResult
-// @Failure  400   {object}  map[string]string
-// @Failure  404   {object}  map[string]string
-// @Failure  409   {object}  map[string]string  "node disabled"
-// @Failure  422   {object}  map[string]string  "original body not logged — provide manually"
-// @Failure  429   {object}  map[string]string  "rate limit exceeded"
+// @Failure  400   {object}  ErrorResponse
+// @Failure  404   {object}  ErrorResponse
+// @Failure  409   {object}  ErrorResponse  "node disabled"
+// @Failure  422   {object}  ErrorResponse  "original body not logged — provide manually"
+// @Failure  429   {object}  ErrorResponse  "rate limit exceeded"
 // @Security CookieAuth
 // @Router   /api/logs/{id}/replay [post]
 func (h *ReplayHandler) Replay(c *gin.Context) {

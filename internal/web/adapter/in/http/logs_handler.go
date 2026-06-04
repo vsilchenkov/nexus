@@ -123,7 +123,7 @@ func parseTimeMs(v string) int64 {
 // @Param    status    query  string  false  "ok | err | (пусто)"
 // @Param    done      query  string  false  "yes | no | (пусто)"
 // @Param    q         query  string  false  "подстрока (case-insensitive) по url/request/response"
-// @Success  200       {object}  map[string]any
+// @Success  200       {object}  ListLogsResponse
 // @Security CookieAuth
 // @Security ApiTokenAuth
 // @Router   /api/nodes/{id}/logs [get]
@@ -178,8 +178,8 @@ func (h *LogsHandler) List(c *gin.Context) {
 // @Produce  text/event-stream
 // @Param    id  path  string  true  "node id"
 // @Success  200  {string}  string  "event-stream"
-// @Failure  403  {object}  map[string]string
-// @Failure  404  {object}  map[string]string
+// @Failure  403  {object}  ErrorResponse
+// @Failure  404  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/nodes/{id}/logs/stream [get]
 func (h *LogsHandler) Stream(c *gin.Context) {

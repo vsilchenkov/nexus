@@ -35,8 +35,8 @@ type orphanItemResp struct {
 // @Description  Возвращает таблицы из текущей CH-базы, у которых нет соответствующего узла в Postgres.
 // @Tags     settings
 // @Produce  json
-// @Success  200  {object}  map[string]interface{}
-// @Failure  500  {object}  map[string]string
+// @Success  200  {object}  ListOrphansResponse
+// @Failure  500  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/settings/clickhouse/orphans [get]
 func (h *OrphanHandler) List(c *gin.Context) {
@@ -68,8 +68,8 @@ func (h *OrphanHandler) List(c *gin.Context) {
 // @Param    table  path  string  true  "Полное имя db.table"
 // @Produce  json
 // @Success  204
-// @Failure  400  {object}  map[string]string
-// @Failure  500  {object}  map[string]string
+// @Failure  400  {object}  ErrorResponse
+// @Failure  500  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/settings/clickhouse/orphans/{table} [delete]
 func (h *OrphanHandler) Drop(c *gin.Context) {

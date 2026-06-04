@@ -52,7 +52,7 @@ func headerToResponse(e *domain.HeaderCatalogEntry) headerResponse {
 // @Produce  json
 // @Param    q      query  string  false  "prefix поиска по имени; пусто = топ-используемые"
 // @Param    limit  query  int     false  "лимит (по умолчанию 20)"
-// @Success  200  {object}  map[string]interface{}
+// @Success  200  {object}  ListHeadersResponse
 // @Security CookieAuth
 // @Router   /api/headers [get]
 func (h *HeaderCatalogHandler) Search(c *gin.Context) {
@@ -76,7 +76,7 @@ func (h *HeaderCatalogHandler) Search(c *gin.Context) {
 // @Produce  json
 // @Param    body  body  headerRequest  true  "header"
 // @Success  200  {object}  headerResponse
-// @Failure  400  {object}  map[string]string
+// @Failure  400  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/headers [post]
 func (h *HeaderCatalogHandler) Create(c *gin.Context) {

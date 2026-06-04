@@ -114,8 +114,8 @@ type kafkaOverviewDTO struct {
 // @Param    from   query  string  false  "период с (RFC3339 или UnixMilli); вместе с to — произвольный период (≤90д)"
 // @Param    to     query  string  false  "период по (RFC3339 или UnixMilli)"
 // @Success  200  {object}  kafkaOverviewDTO
-// @Failure  400  {object}  map[string]string  "период длиннее 90 дней"
-// @Failure  403  {object}  map[string]string
+// @Failure  400  {object}  ErrorResponse  "период длиннее 90 дней"
+// @Failure  403  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/kafka/overview [get]
 func (h *KafkaHandler) Overview(c *gin.Context) {
@@ -189,7 +189,7 @@ func parseMetrics(s string) []string {
 // @Param    step     query  string  false  "auto | 10s | 30s | 1m | 5m | 1h (default auto)"
 // @Param    metrics  query  string  false  "CSV из produced,consumed,errors,lag (default все)"
 // @Success  200  {object}  kafkaTimeseriesDTO
-// @Failure  400  {object}  map[string]string
+// @Failure  400  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/kafka/timeseries [get]
 func (h *KafkaHandler) Timeseries(c *gin.Context) {
@@ -234,7 +234,7 @@ type kafkaTopicDTO struct {
 // @Description  Партиции, RF, оценка числа сообщений, consumer-группы с lag, состояние реплик. Размер на диске недоступен (best-effort, 0). Кеш Redis 30с. Admin-only.
 // @Tags     kafka
 // @Produce  json
-// @Success  200  {object}  map[string]interface{}
+// @Success  200  {object}  KafkaTopicsResponse
 // @Security CookieAuth
 // @Router   /api/kafka/topics [get]
 func (h *KafkaHandler) Topics(c *gin.Context) {
@@ -274,8 +274,8 @@ type kafkaFailureDTO struct {
 // @Param    range  query  string  false  "1h | 3h | 24h | 7d | 14d | 30d (default 1h)"
 // @Param    from   query  string  false  "период с"
 // @Param    to     query  string  false  "период по"
-// @Success  200  {object}  map[string]interface{}
-// @Failure  400  {object}  map[string]string
+// @Success  200  {object}  KafkaByNodeResponse
+// @Failure  400  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/kafka/by-node [get]
 func (h *KafkaHandler) ByNode(c *gin.Context) {
@@ -310,7 +310,7 @@ type kafkaBrokerPingDTO struct {
 // @Description  Подключение + Metadata к каждому брокеру, время отклика и предупреждения. Admin-only.
 // @Tags     kafka
 // @Produce  json
-// @Success  200  {object}  map[string]interface{}
+// @Success  200  {object}  KafkaTestResponse
 // @Security CookieAuth
 // @Router   /api/kafka/test [post]
 func (h *KafkaHandler) Test(c *gin.Context) {

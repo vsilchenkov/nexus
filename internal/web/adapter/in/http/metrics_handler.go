@@ -144,7 +144,7 @@ type nodeThroughputDTO struct {
 // @Param    range  query  string  false  "1h | 3h | 24h | 7d | 14d | 30d (default 1h)"
 // @Param    from   query  string  false  "период с (RFC3339 или UnixMilli); вместе с to задаёт произвольный период"
 // @Param    to     query  string  false  "период по (RFC3339 или UnixMilli)"
-// @Success  200  {object}  map[string]any
+// @Success  200  {object}  NodesMetricsResponse
 // @Security CookieAuth
 // @Security ApiTokenAuth
 // @Router   /api/metrics/nodes [get]
@@ -191,8 +191,8 @@ type seriesPointDTO struct {
 // @Param    range  query  string  false  "1h | 3h | 24h | 7d | 14d | 30d (default 1h)"
 // @Param    from   query  string  false  "период с (RFC3339 или UnixMilli); вместе с to задаёт произвольный период"
 // @Param    to     query  string  false  "период по (RFC3339 или UnixMilli)"
-// @Success  200  {object}  map[string]any
-// @Failure  404  {object}  map[string]string
+// @Success  200  {object}  NodeMetricsResponse
+// @Failure  404  {object}  ErrorResponse
 // @Security CookieAuth
 // @Security ApiTokenAuth
 // @Router   /api/metrics/nodes/{id} [get]

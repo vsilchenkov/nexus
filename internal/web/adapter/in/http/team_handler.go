@@ -68,7 +68,7 @@ func toTeamResp(t *domain.Team) teamResponse {
 // @Summary  Список команд (admin only).
 // @Tags     teams
 // @Produce  json
-// @Success  200  {object}  map[string]any
+// @Success  200  {object}  ListTeamsResponse
 // @Security CookieAuth
 // @Router   /api/teams [get]
 func (h *TeamHandler) List(c *gin.Context) {
@@ -91,7 +91,7 @@ func (h *TeamHandler) List(c *gin.Context) {
 // @Produce  json
 // @Param    id   path  string  true  "team id"
 // @Success  200  {object}  teamResponse
-// @Failure  404  {object}  map[string]string
+// @Failure  404  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/teams/{id} [get]
 func (h *TeamHandler) Get(c *gin.Context) {
@@ -111,9 +111,9 @@ func (h *TeamHandler) Get(c *gin.Context) {
 // @Produce  json
 // @Param    body  body  createTeamRequest  true  "slug + name"
 // @Success  201   {object}  teamResponse
-// @Failure  400   {object}  map[string]string
-// @Failure  409   {object}  map[string]string  "slug or ch_database exists"
-// @Failure  503   {object}  map[string]string  "ClickHouse unavailable"
+// @Failure  400   {object}  ErrorResponse
+// @Failure  409   {object}  ErrorResponse  "slug or ch_database exists"
+// @Failure  503   {object}  ErrorResponse  "ClickHouse unavailable"
 // @Security CookieAuth
 // @Router   /api/teams [post]
 func (h *TeamHandler) Create(c *gin.Context) {
@@ -162,9 +162,9 @@ func (h *TeamHandler) Update(c *gin.Context) {
 // @Tags     teams
 // @Param    id   path  string  true  "team id"
 // @Success  204
-// @Failure  403  {object}  map[string]string  "cannot delete default team"
-// @Failure  404  {object}  map[string]string
-// @Failure  409  {object}  map[string]string  "team has nodes"
+// @Failure  403  {object}  ErrorResponse  "cannot delete default team"
+// @Failure  404  {object}  ErrorResponse
+// @Failure  409  {object}  ErrorResponse  "team has nodes"
 // @Security CookieAuth
 // @Router   /api/teams/{id} [delete]
 func (h *TeamHandler) Delete(c *gin.Context) {
@@ -180,7 +180,7 @@ func (h *TeamHandler) Delete(c *gin.Context) {
 // @Tags     teams
 // @Produce  json
 // @Param    id   path  string  true  "team id"
-// @Success  200  {object}  map[string]any
+// @Success  200  {object}  ListTeamMembersResponse
 // @Security CookieAuth
 // @Router   /api/teams/{id}/members [get]
 func (h *TeamHandler) ListMembers(c *gin.Context) {
