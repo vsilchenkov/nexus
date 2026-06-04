@@ -7,7 +7,8 @@
       "Edit(*)",
       "Write(*)",
       "Bash(rm -f internal/web/static/assets/* internal/web/static/index.html)",
-      "Bash(cp web-ui/dist/assets/* internal/web/static/assets/)"
+      "Bash(cp web-ui/dist/assets/* internal/web/static/assets/)",
+      "Bash(cp -r web-ui/dist/* internal/web/static/)"
     ],
     "deny": [
       "Bash(rm -rf *)",
