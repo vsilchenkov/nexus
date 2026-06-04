@@ -14,7 +14,9 @@ export type { Period, PresetRange } from "../../lib/period";
 export { PickGroup, Toggle, Toggle3 } from "./pickers";
 export type { PickOption } from "./pickers";
 export { TrafficChart } from "./TrafficChart";
-export type { SeriesPoint } from "./TrafficChart";
+export type { SeriesPoint, LogsRange } from "./TrafficChart";
+export { ChartTooltip } from "./ChartTooltip";
+export type { ChartTooltipProps, TooltipSeries, TooltipMarker } from "./ChartTooltip";
 // Radix/cmdk обёртки (§23–§25): popover, tooltip, combobox.
 export { Popover, PopoverTrigger, PopoverAnchor, PopoverContent } from "./Popover";
 export { Tooltip, TooltipProvider } from "./Tooltip";

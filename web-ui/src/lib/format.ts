@@ -5,6 +5,15 @@ export function fmtNum(n: number): string {
   return n.toLocaleString();
 }
 
+// msToDatetimeLocal — UnixMilli → строка для <input type="datetime-local">
+// (YYYY-MM-DDTHH:mm в локальной зоне). Используется для проброса границ бакета
+// графика в фильтр логов (§33.4).
+export function msToDatetimeLocal(ms: number): string {
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 // fmtBytes — человекочитаемый размер на диске (12.5 GB). 0 → «—» (размер
 // топика недоступен через high-level Kafka API, см. §4.3 spec).
 export function fmtBytes(n: number): string {
