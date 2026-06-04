@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
 import { api } from "../../api/client";
+import { useConfirm } from "../../lib/confirm";
 
 // Multi-tenancy v2 (§16 ТЗ, Phase 10.F.2): admin создаёт команды, добавляет
 // в них пользователей. Каждой команде соответствует своя CH-БД nexus_<slug>.
@@ -33,6 +34,7 @@ type ListResp<T> = { items: T[] };
 
 export function TeamsPanel() {
   const { t } = useTranslation();
+  const confirm = useConfirm();
   const qc = useQueryClient();
 
   const list = useQuery({
@@ -112,8 +114,15 @@ export function TeamsPanel() {
                     {!isDefault && (
                       <button
                         title={t("settings.teams.action.delete")}
-                        onClick={() => {
-                          if (confirm(t("settings.teams.confirm_delete", { slug: team.slug }))) {
+                        onClick={async () => {
+                          if (
+                            await confirm({
+                              title: t("settings.teams.confirm_delete_title"),
+                              message: t("settings.teams.confirm_delete", { slug: team.slug }),
+                              confirmLabel: t("settings.teams.action.delete"),
+                              danger: true,
+                            })
+                          ) {
                             del.mutate(team.id);
                           }
                         }}

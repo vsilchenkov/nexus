@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
 import { api } from "../../api/client";
+import { useConfirm } from "../../lib/confirm";
 
 type Token = {
   id: string;
@@ -21,6 +22,7 @@ const allScopes = ["logs:read", "nodes:read", "metrics:read", "audit:read"];
 
 export function ApiTokensPanel() {
   const { t } = useTranslation();
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const list = useQuery({
     queryKey: ["tokens"],
@@ -184,8 +186,16 @@ export function ApiTokensPanel() {
                     </button>
                   )}
                   <button
-                    onClick={() => {
-                      if (confirm(t("settings.tokens.confirm_delete"))) del.mutate(tk.id);
+                    onClick={async () => {
+                      if (
+                        await confirm({
+                          title: t("settings.tokens.delete"),
+                          message: t("settings.tokens.confirm_delete"),
+                          confirmLabel: t("settings.tokens.delete"),
+                          danger: true,
+                        })
+                      )
+                        del.mutate(tk.id);
                     }}
                     className="text-err hover:underline text-xs"
                   >

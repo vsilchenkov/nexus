@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Plus, Trash2 } from "lucide-react";
 
 import { api, type CHTemplate, type CHTemplateSpec } from "../api/client";
+import { useConfirm } from "../lib/confirm";
 
 // Обязательные колонки таблицы логов (§4.3 / domain.RequiredLogColumns).
 const LOG_COLUMNS = [
@@ -51,6 +52,7 @@ function emptyEditor(): Editor {
 
 export function CHTemplatesPanel() {
   const { t } = useTranslation();
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const list = useQuery({
     queryKey: ["ch-templates"],
@@ -147,7 +149,17 @@ export function CHTemplatesPanel() {
               {!tpl.is_default && (
                 <button
                   type="button"
-                  onClick={() => { if (confirm(t("settings.clickhouse.templates.delete_confirm", { name: tpl.name }))) remove.mutate(tpl.id); }}
+                  onClick={async () => {
+                    if (
+                      await confirm({
+                        title: t("node.actions.delete"),
+                        message: t("settings.clickhouse.templates.delete_confirm", { name: tpl.name }),
+                        confirmLabel: t("node.actions.delete"),
+                        danger: true,
+                      })
+                    )
+                      remove.mutate(tpl.id);
+                  }}
                   className="text-err hover:opacity-80"
                   title={t("node.actions.delete")}
                 >

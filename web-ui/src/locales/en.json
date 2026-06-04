@@ -674,7 +674,8 @@
         "edit": "Rename",
         "delete": "Delete"
       },
-      "confirm_delete": "Delete team `{{slug}}`? CH database stays — drop manually via Orphans.",
+      "confirm_delete_title": "Delete team",
+      "confirm_delete": "Delete team “{{slug}}”? Its ClickHouse database is kept — you can drop it later in Settings → ClickHouse → Orphans.",
       "field": {
         "slug": "Slug",
         "slug_hint": "Lowercase letters / digits / underscore, 1..32 chars. Immutable after creation.",
@@ -791,6 +792,7 @@
     "error": "Error",
     "ok": "OK",
     "cancel": "Cancel",
+    "confirm": "Confirm",
     "save": "Save",
     "close": "Close",
     "edit": "Edit",
