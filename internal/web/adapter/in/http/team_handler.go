@@ -273,6 +273,9 @@ func (h *TeamHandler) replyTeamError(c *gin.Context, err error) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "team member not found"})
 	case errors.Is(err, domain.ErrTeamAlreadyExists):
 		c.JSON(http.StatusConflict, gin.H{"error": "team with this slug or ch_database already exists"})
+	case errors.Is(err, domain.ErrTeamHasNodes):
+		// П17: команду с привязанными узлами удалить нельзя (FK RESTRICT).
+		c.JSON(http.StatusConflict, gin.H{"error": "team has attached nodes — move or delete them first"})
 	case errors.Is(err, domain.ErrTeamSlugFormat),
 		errors.Is(err, domain.ErrTeamNameLength),
 		errors.Is(err, domain.ErrTeamCHDatabaseFormat),
