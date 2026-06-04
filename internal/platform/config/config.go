@@ -249,6 +249,11 @@ type WebSection struct {
 	// Используется для replay-запросов (§7.4.1): Web отправляет реплай через
 	// реальный pipeline Receiver, а не через bypass.
 	ReceiverURL string `yaml:"receiver_url"`
+	// SelfIngressHosts — список «своих» authority (host или host:port) для
+	// self-reference валидации target_url узла (§32.2): запрет указывать в
+	// target_url адрес собственного ingress шины. Пустой список → при старте
+	// заполняется хостом из ReceiverURL; если и он пуст — проверка пропускается.
+	SelfIngressHosts []string `yaml:"self_ingress_hosts"`
 	// KafkaMonitorRateLimitPerMin — лимит запросов к /api/kafka/* на пользователя
 	// (дашборд Kafka-мониторинга, §9 spec). Защита от dashboard-флуда при
 	// автообновлении раз в 10с. 0 = без ограничений.

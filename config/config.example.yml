@@ -193,6 +193,9 @@ web:
   rmq_test_rate_limit_per_min: 10               # Лимит POST /api/nodes/test-rmq на пользователя в минуту (§27.8).
   swagger_enabled: false                        # Отдавать ли Swagger UI Web'а (выключай в prod).
   receiver_url: http://receiver:8080            # Base URL Receiver: replay-запросы (§7.4.1) и проксирование идут через реальный pipeline.
+  # §32.2: «свои» authority (host или host:port) для запрета self-referencing target_url узла.
+  # Пусто → выводится из receiver_url. Полезно за реверс-прокси, когда внешний адрес отличается.
+  self_ingress_hosts: []                        # напр.: ["nexus.example.com", "receiver:8080"]
   kafka_monitor_rate_limit_per_min: 60          # Лимит запросов к /api/kafka/* на пользователя в минуту (экран Kafka-мониторинга, защита от dashboard-флуда). 0 = без лимита.
   # Пороги индикации (жёлтый/красный) для health-banner и KPI экрана Kafka-мониторинга (§6 spec).
   # Вычисляются на каждом /api/kafka/overview; в сам Kafka/Prometheus не пишутся.

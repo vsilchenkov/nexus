@@ -470,7 +470,8 @@
 | Проверка+инкремент в sync/async | ✅ Phase B | [route.go](../internal/receiver/usecase/route.go), [route_async.go](../internal/receiver/usecase/route_async.go) (hop в `SendRequest.Headers` / `Envelope.Headers`) |
 | Конфиг `receiver.max_hops` | ✅ Phase B | [config.go](../internal/platform/config/config.go), [defaults.go](../internal/platform/config/defaults.go) (дефолт 5; <0 выкл.), [config.yml](../config/config.yml) (`NEXUS_RECEIVER_MAX_HOPS`) |
 | 508 в handler + метрика | ✅ Phase B | `classifyDomainError`/`onLoopDetected` ([handler.go](../internal/receiver/adapter/in/http/handler.go)); `nexus_loop_detected_total{mode}` ([metrics.go](../internal/platform/metrics/metrics.go)) |
-| Self-ref валидация `target_url` | ◐ Phase C | Web usecase (см. ниже после реализации блока C) |
+| Self-ref валидация `target_url` | ✅ Phase C | [node_selfref.go](../internal/web/usecase/node_selfref.go) (`checkSelfReference`/`isSelfReferenceTarget`), вызов в `Create`/`Update` ([node.go](../internal/web/usecase/node.go)); конфиг `web.self_ingress_hosts` → `resolveSelfIngressHosts` ([app.go](../internal/web/app.go)) |
+| Маппинг ошибки + i18n | ✅ Phase C | `node.validation.target_url_self` ([node_validation.go](../internal/web/adapter/in/http/node_validation.go), [i18n.go](../internal/platform/i18n/i18n.go) EN/RU, [en.json](../web-ui/src/locales/en.json)/[ru.json](../web-ui/src/locales/ru.json)) |
 
 **Неочевидности.**
 - **Hop-заголовок в обход allowlist узла.** Шина форвардит только `forward_headers`; `X-Nexus-Hops`

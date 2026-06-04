@@ -249,6 +249,7 @@
       "path_format": "Path may contain only latin letters, digits, slash, hyphen and underscore, and must start with a letter or digit",
       "target_url_required": "Target URL is required when URL mode is «static»",
       "target_url_length": "Target URL must be at most 2048 characters",
+      "target_url_self": "Target URL must not point at the Nexus ingress itself (would cause a request loop)",
       "url_param_name_length": "URL parameter name length must be between 1 and 64 characters",
       "url_param_name_format": "URL parameter name must start with a letter and contain only letters, digits, hyphen and underscore",
       "auth_dynamic_field_length": "Dynamic auth field name length must be between 1 and 64 characters",
