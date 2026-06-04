@@ -3079,3 +3079,22 @@ Prometheus `NodeThroughput` для top-узлов. Все источники д�
 Отклонения от черновика: пункт меню в блоке «Аудит» (а не «Настройки»), маршрут `/kafka`; метрики из
 существующих `nexus_*{method="requestAsync"}` (а не `databus_kafka_*`); размер топика на диске
 недоступен (`DescribeLogDirs` не в high-level API → `size_bytes=0`, best-effort).
+
+## 32. Защита от зацикливания запросов (loop protection)
+
+Полный текст раздела — [sections/32-loop-protection.md](sections/32-loop-protection.md).
+
+Две независимые меры против петли, когда `target_url` узла указывает на сам Receiver
+(`/v1/request` или `/v1/requestAsync`) и запрос лавинообразно возвращается во входной endpoint.
+
+1. **Hop-счётчик `X-Nexus-Hops` (основной).** Служебный заголовок, который Receiver инкрементит на
+   каждом проходе через шину (в обход allowlist `forward_headers`). На входе `Route`/`RouteAsync`
+   читают счётчик; при `incoming >= receiver.max_hops` (дефолт `5`, env `NEXUS_RECEIVER_MAX_HOPS`,
+   `< 0` — выкл.) запрос отклоняется **508 Loop Detected** и наружу не уходит. Покрывает sync и async
+   (через `Envelope.Headers` в Kafka) и петлю любой топологии. Метрика
+   `nexus_receiver_loop_detected_total{mode}`.
+2. **Self-reference валидация `target_url` (вспомогательная).** Web-сервис при `Create`/`Update`
+   узла (`url_mode=static`) отклоняет `target_url`, чей `host:port` совпадает со «своим» ingress
+   (`web.self_ingress_hosts`, дефолт — из `web.receiver_url`) и path начинается с `/v1/request` —
+   **400**, код `node.validation.target_url_self`. Loopback (`localhost`/`127.0.0.1`/`::1`) намеренно
+   не блокируется (тест-стенд). Пустой список — проверка пропускается.
