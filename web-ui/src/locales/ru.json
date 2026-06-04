@@ -66,7 +66,7 @@
     "filter": { "all_methods": "Все методы", "all_statuses": "Все статусы" },
     "view": { "table": "Таблица", "cards": "Карточки" },
     "card": { "dynamic_url": "{URL из запроса}" },
-    "status": { "ok": "OK", "down": "Down", "queue": "Очередь" },
+    "status": { "ok": "OK", "down": "Down", "queue": "Очередь", "unknown": "—" },
     "table": {
       "path": "Узел",
       "method": "Метод",
