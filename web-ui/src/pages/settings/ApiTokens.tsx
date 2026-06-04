@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 
 import { api } from "../../api/client";
 
@@ -19,6 +20,7 @@ type CreateResp = { token: string; api_token: Token };
 const allScopes = ["logs:read", "nodes:read", "metrics:read", "audit:read"];
 
 export function ApiTokensPanel() {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const list = useQuery({
     queryKey: ["tokens"],
@@ -60,23 +62,23 @@ export function ApiTokensPanel() {
   return (
     <div className="space-y-4">
       <header className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">API tokens</h2>
+        <h2 className="text-lg font-semibold">{t("settings.tokens.title")}</h2>
         <button
           onClick={() => setShowNew(true)}
           className="bg-accent hover:bg-accent-hover px-3 py-2 rounded-md text-sm"
         >
-          new token
+          {t("settings.tokens.new_token")}
         </button>
       </header>
 
       {created && (
         <div className="bg-warn/10 border border-warn/40 text-warn p-3 rounded-md text-sm space-y-2">
-          <div className="font-medium">copy this token now — it won't be shown again:</div>
+          <div className="font-medium">{t("settings.tokens.copy_now")}</div>
           <code className="block bg-bg-muted px-2 py-1 rounded font-mono select-all">
             {created.token}
           </code>
           <button onClick={() => setCreated(null)} className="underline text-xs">
-            close
+            {t("settings.tokens.close")}
           </button>
         </div>
       )}
@@ -84,7 +86,7 @@ export function ApiTokensPanel() {
       {showNew && (
         <div className="bg-bg-muted/40 p-4 rounded-md space-y-3">
           <input
-            placeholder="name (e.g. grafana-export)"
+            placeholder={t("settings.tokens.name_placeholder")}
             value={name}
             onChange={(e) => setName(e.target.value)}
             className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none"
@@ -106,7 +108,7 @@ export function ApiTokensPanel() {
             ))}
           </div>
           <div className="text-sm flex items-center gap-2">
-            expires in (days, empty = lifetime):
+            {t("settings.tokens.expires_days")} · {t("settings.tokens.expires_lifetime")}
             <input
               type="number"
               value={days}
@@ -122,72 +124,72 @@ export function ApiTokensPanel() {
               disabled={create.isPending || !name}
               className="bg-accent hover:bg-accent-hover px-3 py-2 rounded-md text-sm disabled:opacity-50"
             >
-              create
+              {t("settings.tokens.create")}
             </button>
             <button
               onClick={() => setShowNew(false)}
               className="px-3 py-2 text-sm text-fg-muted hover:text-fg"
             >
-              cancel
+              {t("settings.tokens.cancel")}
             </button>
           </div>
         </div>
       )}
 
       {list.data && list.data.items.length === 0 && (
-        <div className="text-fg-muted text-sm">no tokens yet</div>
+        <div className="text-fg-muted text-sm">{t("settings.tokens.empty")}</div>
       )}
 
       {list.data && list.data.items.length > 0 && (
         <table className="w-full text-sm">
           <thead className="text-fg-muted">
             <tr>
-              <th className="text-left px-3 py-2">name</th>
-              <th className="text-left px-3 py-2">prefix</th>
-              <th className="text-left px-3 py-2">scopes</th>
-              <th className="text-left px-3 py-2">created</th>
-              <th className="text-left px-3 py-2">last used</th>
-              <th className="text-left px-3 py-2">status</th>
+              <th className="text-left px-3 py-2">{t("settings.tokens.col_name")}</th>
+              <th className="text-left px-3 py-2">{t("settings.tokens.col_prefix")}</th>
+              <th className="text-left px-3 py-2">{t("settings.tokens.col_scopes")}</th>
+              <th className="text-left px-3 py-2">{t("settings.tokens.col_created")}</th>
+              <th className="text-left px-3 py-2">{t("settings.tokens.col_last_used")}</th>
+              <th className="text-left px-3 py-2">{t("settings.tokens.col_status")}</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {list.data.items.map((t) => (
-              <tr key={t.id} className="border-t border-bg-muted">
-                <td className="px-3 py-2">{t.name}</td>
-                <td className="px-3 py-2 font-mono text-xs">{t.prefix}</td>
-                <td className="px-3 py-2 font-mono text-xs">{t.scopes.join(", ")}</td>
+            {list.data.items.map((tk) => (
+              <tr key={tk.id} className="border-t border-bg-muted">
+                <td className="px-3 py-2">{tk.name}</td>
+                <td className="px-3 py-2 font-mono text-xs">{tk.prefix}</td>
+                <td className="px-3 py-2 font-mono text-xs">{tk.scopes.join(", ")}</td>
                 <td className="px-3 py-2 font-mono text-xs">
-                  {new Date(t.created_at).toLocaleDateString()}
+                  {new Date(tk.created_at).toLocaleDateString()}
                 </td>
                 <td className="px-3 py-2 font-mono text-xs text-fg-muted">
-                  {t.last_used_at ? new Date(t.last_used_at).toLocaleString() : "—"}
+                  {tk.last_used_at ? new Date(tk.last_used_at).toLocaleString() : "—"}
                 </td>
                 <td className="px-3 py-2">
-                  {t.revoked_at ? (
-                    <span className="text-err">revoked</span>
-                  ) : t.expires_at && new Date(t.expires_at) < new Date() ? (
-                    <span className="text-warn">expired</span>
+                  {tk.revoked_at ? (
+                    <span className="text-err">{t("settings.tokens.status_revoked")}</span>
+                  ) : tk.expires_at && new Date(tk.expires_at) < new Date() ? (
+                    <span className="text-warn">{t("settings.tokens.status_expired")}</span>
                   ) : (
-                    <span className="text-ok">active</span>
+                    <span className="text-ok">{t("settings.tokens.status_active")}</span>
                   )}
                 </td>
                 <td className="px-3 py-2 text-right space-x-2">
-                  {!t.revoked_at && (
+                  {!tk.revoked_at && (
                     <button
-                      onClick={() => revoke.mutate(t.id)}
+                      onClick={() => revoke.mutate(tk.id)}
                       className="text-warn hover:underline text-xs"
                     >
-                      revoke
+                      {t("settings.tokens.revoke")}
                     </button>
                   )}
                   <button
                     onClick={() => {
-                      if (confirm("delete token?")) del.mutate(t.id);
+                      if (confirm(t("settings.tokens.confirm_delete"))) del.mutate(tk.id);
                     }}
                     className="text-err hover:underline text-xs"
                   >
-                    delete
+                    {t("settings.tokens.delete")}
                   </button>
                 </td>
               </tr>
