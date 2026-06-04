@@ -66,7 +66,7 @@ export function TrafficChart({
   const bucketW = data.length > 1 ? data[1].ts - data[0].ts : 60_000;
 
   return (
-    <div className={cn("flex items-end gap-[3px]", className)} style={{ height }}>
+    <div className={cn("flex w-full items-end gap-[3px]", className)} style={{ height }}>
       {data.map((d, i) => {
         const h = Math.max(2, Math.round((d.count / max) * height));
         const errH = d.count > 0 ? Math.round((d.errors / d.count) * h) : 0;
