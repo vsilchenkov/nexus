@@ -50,3 +50,28 @@ func TestAppSettingsRepo_NotificationsRoundTrip_E2E(t *testing.T) {
 	require.NotNil(t, tg.Cron)
 	require.Equal(t, cronExpr, *tg.Cron)
 }
+
+// TestAppSettingsRepo_GeneralRoundTrip_E2E (§28, QA-2026-02 / П8, П13): защита от
+// регрессии — AppSettingsRepoPg.Update обязан сериализовать секцию general
+// (public_base_url). Раньше struct в Update пропускал General, поэтому
+// сохранённый публичный адрес «терялся», а Get возвращал general:{}.
+func TestAppSettingsRepo_GeneralRoundTrip_E2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	pool, cleanup := startPostgres(t, ctx)
+	defer cleanup()
+
+	repo := pgrepo.NewAppSettingsRepoPg(pool, logging.NewNoop())
+
+	publicURL := "https://nexus.example.com"
+	in := &domain.AppSettings{
+		General: domain.GeneralSettings{PublicBaseURL: &publicURL},
+	}
+	require.NoError(t, repo.Update(ctx, in))
+
+	got, err := repo.Get(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, got.General.PublicBaseURL, "public_base_url должен сохраниться")
+	require.Equal(t, publicURL, *got.General.PublicBaseURL)
+}
