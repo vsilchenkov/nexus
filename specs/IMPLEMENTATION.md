@@ -423,6 +423,35 @@
 | requestId (UUID v4, не перезаписывать) → Sentry | ✅ Phase 3 | [requestid](../internal/platform/requestid/requestid.go) (middleware первым в цепочке, `X-Request-Id`); тег на scope+транзакцию в [sentry/middleware.go](../internal/platform/sentry/middleware.go) |
 | Версия в UI | ✅ Phase 4 | публичный `GET /api/version` [version_handler.go](../internal/web/adapter/in/http/version_handler.go) (`cfg.Build.Version`); футер [Sidebar.tsx](../web-ui/src/components/Sidebar.tsx); порядок присвоения — [DEPLOYMENT.md §9.0](../DEPLOYMENT.md) |
 
+### §31 Мониторинг Kafka
+
+ТЗ — [sections/31-kafka-monitoring.md](sections/31-kafka-monitoring.md). Ветка
+`feature/kafka-monitoring`. Admin-only alarm-dashboard `/kafka` (в блоке «Аудит», не в «Настройках»).
+
+| Пункт | Статус | Где |
+|---|---|---|
+| Конфиг порогов + rate-limit | ✅ Phase A | `WebSection.KafkaAlerts`/`KafkaMonitorRateLimitPerMin` ([config.go](../internal/platform/config/config.go), [defaults.go](../internal/platform/config/defaults.go), [config.example.yml](../config/config.example.yml)) |
+| Prometheus Kafka-метрики | ✅ Phase A | `PromMetrics.KafkaOverview/KafkaTimeseries` ([port](../internal/web/usecase/port/metrics_provider.go), [client.go](../internal/web/adapter/out/prometheus/client.go)) — async по `method="requestAsync"` |
+| Kafka Admin-адаптер | ✅ Phase B | [kafkaadmin](../internal/web/adapter/out/kafkaadmin/) (Metadata/ListOffsets/ListGroups/OffsetFetch/DescribeGroups, ping через errgroup+safego.Recover) + порт [kafka_admin.go](../internal/web/usecase/port/kafka_admin.go) |
+| Redis-кеш метаданных (TTL 30с) | ✅ Phase B | [kafka_cache.go](../internal/web/adapter/out/redis/kafka_cache.go) (`port.KafkaCache`) |
+| usecase + health-banner | ✅ Phase C | [kafka_monitor.go](../internal/web/usecase/kafka_monitor.go), [kafka_bynode.go](../internal/web/usecase/kafka_bynode.go), [kafka_health.go](../internal/web/usecase/kafka_health.go) (`evaluateHealth`, reason-коды для i18n на фронте) |
+| 5 эндпоинтов + rate-limit + routes | ✅ Phase C | [kafka_handler.go](../internal/web/adapter/in/http/kafka_handler.go) (Swagger, лимит периода 90д, `KafkaRateLimitMiddleware`), [routes.go](../internal/web/adapter/in/http/routes.go) (`authedAdmin`/kafka group), DI [app.go](../internal/web/app.go) |
+| SPA страница `/kafka` (recharts) | ✅ Phase D | [KafkaMonitor.tsx](../web-ui/src/pages/KafkaMonitor.tsx) + [components/kafka/](../web-ui/src/components/kafka/); пункт в [Sidebar.tsx](../web-ui/src/components/Sidebar.tsx) (admin-only), маршрут [App.tsx](../web-ui/src/App.tsx) |
+
+**Неочевидности.**
+- **Метрики из `method="requestAsync"`, а не `databus_kafka_*`.** Отдельных kafka-метрик в проекте
+  нет; async-трафик уже размечен в `nexus_requests_total`/`nexus_request_incomplete_total`/
+  `nexus_request_duration_seconds` (Receiver/Sender, `method="requestAsync"`). Поэтому throughput/
+  ошибки/латентность взяты из них без новых метрик и без правок Receiver/Sender.
+- **Top-узлы из Prometheus, а не ClickHouse.** В CH логи лежат по одной таблице на узел (нет единой
+  колонки `node_path` для `GROUP BY`); Prometheus уже агрегирует по метке `node` (`NodeThroughput`).
+- **`size_bytes` топика = 0 (best-effort).** Высокоуровневый `segmentio/kafka-go` не экспонирует
+  `DescribeLogDirs`; `messages_estimate` считается надёжно из watermarks (ListOffsets).
+- **in-flight и produce p95 — прокси.** in-flight ≈ `sum(nexus_kafka_lag)`; produce p95 — p95
+  длительности async-обработки Sender'а (отдельных метрик нет).
+- **Мягкая деградация.** Нет Prometheus → KPI/графики нули; нет доступа к Kafka (или пустой
+  `kafka.brokers`) → admin-клиент не создаётся, блоки топиков/брокеров помечены недоступными.
+
 ---
 
 ## 3. Где что лежит — карта каталогов
