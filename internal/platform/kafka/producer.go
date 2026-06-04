@@ -9,11 +9,22 @@ import (
 	"github.com/segmentio/kafka-go/compress"
 
 	"nexus/internal/platform/config"
+	"nexus/internal/platform/metrics"
 )
 
 // Producer — обёртка над *kafka.Writer с параметрами из §5.3 ТЗ.
 type Producer struct {
-	w *kafka.Writer
+	w       *kafka.Writer
+	metrics *metrics.Metrics // §31: nil-safe; nil → produce-латентность не пишется
+}
+
+// ProducerOption — функциональная опция конструктора Producer.
+type ProducerOption func(*Producer)
+
+// WithMetrics включает метрику длительности публикации
+// (nexus_kafka_produce_duration_seconds по топику, §31).
+func WithMetrics(m *metrics.Metrics) ProducerOption {
+	return func(p *Producer) { p.metrics = m }
 }
 
 // NewProducer создаёт producer без привязки к конкретному топику —
@@ -26,7 +37,7 @@ type Producer struct {
 //	idempotent producer для exactly-once на retry'ах.
 //	compression: lz4.
 //	max.in.flight=5, retries=MaxInt.
-func NewProducer(cfg *config.Config) *Producer {
+func NewProducer(cfg *config.Config, opts ...ProducerOption) *Producer {
 	brokers := splitBrokers(cfg.Kafka.Brokers)
 	w := &kafka.Writer{
 		Addr:                   kafka.TCP(brokers...),
@@ -41,7 +52,11 @@ func NewProducer(cfg *config.Config) *Producer {
 		ReadTimeout:            time.Duration(cfg.Kafka.Producer.RequestTimeoutMs) * time.Millisecond,
 		AllowAutoTopicCreation: false,
 	}
-	return &Producer{w: w}
+	p := &Producer{w: w}
+	for _, o := range opts {
+		o(p)
+	}
+	return p
 }
 
 // Produce отправляет одно сообщение в указанный топик.
@@ -58,8 +73,14 @@ func (p *Producer) Produce(ctx context.Context, topic, key string, value []byte,
 		Value:   value,
 		Headers: hdrs,
 	}
+	start := time.Now()
 	if err := p.w.WriteMessages(ctx, msg); err != nil {
 		return fmt.Errorf("write to %s: %w", topic, err)
+	}
+	// §31: длительность успешной публикации (на ошибках не пишем — иначе p95
+	// смешивает время до таймаута с реальной латентностью).
+	if p.metrics != nil {
+		p.metrics.KafkaProduceDuration.WithLabelValues(topic).Observe(time.Since(start).Seconds())
 	}
 	return nil
 }

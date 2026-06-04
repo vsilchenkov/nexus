@@ -33,9 +33,10 @@
   - consumed ← `nexus_requests_total{service="sender",method="requestAsync"}`
   - errors ← `nexus_request_incomplete_total{method="requestAsync"}` (+ status-фильтр для produced)
   - lag ← `nexus_kafka_lag{topic,partition,group}`
-  - in-flight ≈ `sum(nexus_kafka_lag)` (прокси: отдельной метрики «в обработке» нет)
-  - produce p95 ← `nexus_request_duration_seconds_bucket{service="sender",method="requestAsync"}`
-    (прокси: отдельной produce-duration метрики нет)
+  - in-flight ← `sum(nexus_kafka_in_flight)` — выделенный gauge (Sender: fetched, но не
+    committed; §31 добавил его в consumer-цикл)
+  - produce p95 ← `nexus_kafka_produce_duration_seconds_bucket{topic}` — выделенная гистограмма
+    длительности публикации в Kafka (Receiver/Sender producer)
 - **Kafka Admin** (`segmentio/kafka-go` `*kafka.Client`) — метаданные топиков (партиции, RF, ISR,
   offline), consumer-группы и lag (ListGroups/OffsetFetch/ListOffsets), число сообщений
   (Σ high-low watermark), ping брокеров (Metadata). Кешируется в Redis (TTL 30с).

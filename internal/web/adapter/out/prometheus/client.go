@@ -374,9 +374,13 @@ func (c *Client) KafkaOverview(ctx context.Context, since, until time.Time) (por
 	if s.CurrentLag, err = c.instantScalarAt(ctx, `sum(nexus_kafka_lag)`, until); err != nil {
 		return s, err
 	}
-	s.InFlight = s.CurrentLag // прокси: отдельной in-flight метрики нет (см. port.KafkaSummary)
+	// §31: in-flight — реальный gauge (fetched, не committed) из Sender.
+	if s.InFlight, err = c.instantScalarAt(ctx, `sum(nexus_kafka_in_flight)`, until); err != nil {
+		return s, err
+	}
+	// §31: produce p95 — реальная длительность публикации в Kafka.
 	p95, err := q(fmt.Sprintf(
-		`histogram_quantile(0.95, sum by (le)(rate(nexus_request_duration_seconds_bucket{service="sender",method="requestAsync"}[%s])))`, w))
+		`histogram_quantile(0.95, sum by (le)(rate(nexus_kafka_produce_duration_seconds_bucket[%s])))`, w))
 	if err != nil {
 		return s, err
 	}

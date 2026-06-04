@@ -126,8 +126,12 @@ Admin-only экран `/kafka` (раздел «Аудит») питается и
   «Топики»/«Брокеры»/«Проверить кластер» помечаются недоступными (`kafka_available=false`), остальной
   экран (KPI/графики из Prometheus) работает. Размер топика на диске не показывается (high-level
   клиент не отдаёт `DescribeLogDirs`).
-- **Prometheus** тот же (`prometheus.url`); новых метрик не требуется — async-трафик берётся из
-  существующих `nexus_requests_total`/`nexus_request_incomplete_total` по `method="requestAsync"`.
+- **Prometheus** тот же (`prometheus.url`). Async-трафик берётся из существующих
+  `nexus_requests_total`/`nexus_request_incomplete_total` по `method="requestAsync"`. Дополнительно
+  Receiver/Sender теперь экспонируют две новые серии на тех же `/metrics` (отдельный scrape не нужен):
+  `nexus_kafka_in_flight{component="sender"}` (сообщения в обработке) и
+  `nexus_kafka_produce_duration_seconds{topic}` (длительность публикации) — источник KPI «In-flight»
+  и порога produce-latency.
 - **Новые параметры конфига** (секция `web:`): `kafka_monitor_rate_limit_per_min` (дефолт 60 —
   лимит `/api/kafka/*` на пользователя) и `kafka_alerts_thresholds.*` (пороги health-banner/KPI,
   §31.5). Дефолты безопасны — задавать необязательно.

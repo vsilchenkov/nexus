@@ -42,18 +42,16 @@ type NodeThroughput struct {
 
 // KafkaSummary — сводка Kafka-трафика за окно (since, until] для экрана
 // Kafka-мониторинга (§4.1 spec). Источник — Prometheus, фильтр async-трафика
-// method="requestAsync". InFlight — прокси через текущий суммарный lag
-// (отдельной метрики «в обработке между produce и consume» в проекте нет).
-// ProduceP95ms — прокси: p95 длительности обработки async (Sender), отдельной
-// produce-duration метрики нет.
+// method="requestAsync". InFlight и ProduceP95ms берутся из выделенных метрик
+// nexus_kafka_in_flight / nexus_kafka_produce_duration_seconds (§31).
 type KafkaSummary struct {
 	Produced       float64 // принято Receiver'ом в Kafka (requestAsync)
 	Consumed       float64 // обработано Sender-consumer'ом (requestAsync)
 	FailedProduced float64 // отказы публикации на Receiver (status 0/5xx)
 	FailedConsumed float64 // незавершённые на Sender (non-2xx, incomplete_total)
 	CurrentLag     float64 // суммарный consumer lag сейчас (sum nexus_kafka_lag)
-	InFlight       float64 // прокси = CurrentLag
-	ProduceP95ms   float64 // прокси: p95 длительности async-обработки (Sender), мс
+	InFlight       float64 // сообщения «в полёте» (sum nexus_kafka_in_flight)
+	ProduceP95ms   float64 // p95 длительности публикации в Kafka, мс
 }
 
 // KafkaPoint — точка временного ряда Kafka-графика (§4.2 spec). TsMs — начало

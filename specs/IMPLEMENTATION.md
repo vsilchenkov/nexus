@@ -446,9 +446,13 @@
 - **Top-узлы из Prometheus, а не ClickHouse.** В CH логи лежат по одной таблице на узел (нет единой
   колонки `node_path` для `GROUP BY`); Prometheus уже агрегирует по метке `node` (`NodeThroughput`).
 - **`size_bytes` топика = 0 (best-effort).** Высокоуровневый `segmentio/kafka-go` не экспонирует
-  `DescribeLogDirs`; `messages_estimate` считается надёжно из watermarks (ListOffsets).
-- **in-flight и produce p95 — прокси.** in-flight ≈ `sum(nexus_kafka_lag)`; produce p95 — p95
-  длительности async-обработки Sender'а (отдельных метрик нет).
+  `DescribeLogDirs`; `messages_estimate` считается надёжно из watermarks (ListOffsets). Опция на
+  будущее: если в Prometheus есть `kafka_exporter`/JMX — добавить fallback `sum by(topic)(kafka_log_log_size)`.
+- **in-flight и produce p95 — реальные метрики (Phase F).** Добавлены `nexus_kafka_in_flight{component}`
+  (Sender consumer: `Inc` после `FetchMessage`, `Dec` после `Handle`) и
+  `nexus_kafka_produce_duration_seconds{topic}` (producer, через опцию `WithMetrics`). Web берёт
+  in-flight из `sum(nexus_kafka_in_flight)`, produce p95 — из гистограммы (ранее были прокси
+  lag/обработка).
 - **Мягкая деградация.** Нет Prometheus → KPI/графики нули; нет доступа к Kafka (или пустой
   `kafka.brokers`) → admin-клиент не создаётся, блоки топиков/брокеров помечены недоступными.
 
