@@ -6,6 +6,7 @@ import Overview from "./pages/Overview";
 import NodeDetail from "./pages/NodeDetail";
 import NodeSettings from "./pages/NodeSettings";
 import AuditLog from "./pages/AuditLog";
+import KafkaMonitor from "./pages/KafkaMonitor";
 import Settings from "./pages/Settings";
 import { AppShell } from "./components/AppShell";
 import { api } from "./api/client";
@@ -37,6 +38,7 @@ export default function App() {
         <Route path="/nodes/:id" element={<NodeDetail />} />
         <Route path="/nodes/:id/edit" element={<NodeSettings />} />
         <Route path="/audit" element={<AuditLog />} />
+        <Route path="/kafka" element={<KafkaMonitor />} />
         <Route path="/settings/*" element={<Settings />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

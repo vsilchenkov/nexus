@@ -33,6 +33,7 @@
   "nav": {
     "nodes": "Nodes",
     "audit": "Audit",
+    "kafka": "Kafka",
     "settings": "Settings",
     "team": "Team",
     "language": "Language",
@@ -122,6 +123,110 @@
       "30d": "30d",
       "custom": "Custom"
     }
+  },
+  "kafka": {
+    "title": "Kafka monitoring",
+    "subtitle": "Cluster state, throughput, errors and load-leading nodes",
+    "updated_ago": "updated {{secs}}s ago",
+    "refresh": "Refresh",
+    "check_cluster": "Check cluster",
+    "forbidden": "Kafka monitoring is available to administrators only.",
+    "resolution": { "auto": "Auto" },
+    "legend": { "produced": "produced", "consumed": "consumed", "errors": "errors" },
+    "throughput": { "title": "Throughput", "unit": "messages/sec" },
+    "lag": {
+      "title": "Consumer lag",
+      "subtitle": "lag behind topic head",
+      "label": "lag"
+    },
+    "kpi": {
+      "messages": "Messages in period",
+      "lag": "Current lag",
+      "errors": "Errors in period",
+      "in_flight": "In-flight now",
+      "vs_previous": "vs previous period",
+      "of_total": "of total",
+      "in_flight_hint": "between produce and consume"
+    },
+    "topics": {
+      "title": "Topics",
+      "name": "Topic",
+      "partitions": "Partitions",
+      "replication": "Replication",
+      "size": "Size",
+      "messages": "Messages ~",
+      "groups": "Consumer groups",
+      "health": "State",
+      "empty": "No topics",
+      "state": {
+        "ok": "OK",
+        "under_replicated": "under-replicated",
+        "lag": "growing lag",
+        "offline": "offline partitions"
+      }
+    },
+    "top_producers": {
+      "title": "Top producers",
+      "node": "Node",
+      "messages": "Messages",
+      "share": "Share",
+      "empty": "No data for the period"
+    },
+    "top_failures": {
+      "title": "Top failures",
+      "node": "Node",
+      "errors": "Errors",
+      "rate": "Error rate",
+      "empty": "No errors recorded"
+    },
+    "brokers": {
+      "title": "Brokers",
+      "online": "{{online}} of {{total}} online",
+      "recheck": "Recheck",
+      "empty": "Run a cluster check to see broker status",
+      "up": "online",
+      "down": "offline",
+      "ping": "Ping",
+      "warn": {
+        "unreachable": "Broker unreachable",
+        "latency": "Response latency above average. Check the network to this host."
+      }
+    },
+    "health": {
+      "healthy": {
+        "title": "Cluster healthy",
+        "details": "All brokers online, no under-replicated partitions, lag is stable."
+      },
+      "offline_partitions": {
+        "title": "Critical: offline partitions",
+        "details": "{{offline}} partition(s) have no available leader — producers cannot write. Immediate action required."
+      },
+      "brokers_down": {
+        "title": "Critical: brokers unavailable",
+        "details": "Only {{online}} of {{total}} brokers online. The cluster is at risk."
+      },
+      "error_rate_high": {
+        "title": "Error rate elevated",
+        "details": "{{error_rate}}% of messages failed in the period. Check the failing nodes below."
+      },
+      "lag_high": {
+        "title": "Consumer lag is high",
+        "details": "Current lag is {{lag}}. The consumer is falling behind the producer — check Sender."
+      },
+      "lag_growing": {
+        "title": "Attention: lag is growing faster than it is consumed",
+        "details": "Current lag {{lag}} is rising. Sender is consuming slower than the producer writes — check Sender load."
+      },
+      "under_replicated": {
+        "title": "Attention: under-replicated partitions",
+        "details": "{{under_replicated}} partition(s) are under-replicated. Some replicas are behind or unavailable."
+      },
+      "produce_latency_high": {
+        "title": "Produce latency elevated",
+        "details": "Processing p95 latency is above the threshold. Check broker and Sender load."
+      }
+    },
+    "rate_limited": "Too many requests, try again in a minute."
   },
   "node": {
     "tabs": { "overview": "Overview", "logs": "Logs", "config": "Config", "metrics": "Metrics" },
