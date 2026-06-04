@@ -1,6 +1,6 @@
-import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { useSearchParams } from "react-router-dom";
 import { Download } from "lucide-react";
 
 import { api } from "../api/client";
@@ -32,7 +32,20 @@ function actionTone(action: string): "default" | "info" | "success" | "danger" |
 
 export default function AuditLog() {
   const { t } = useTranslation();
-  const [filter, setFilter] = useState("");
+  // Фильтр хранится в URL (?action=…), чтобы переживать F5 (П12): раньше был
+  // в useState и сбрасывался при перезагрузке страницы.
+  const [params, setParams] = useSearchParams();
+  const filter = params.get("action") ?? "";
+  const setFilter = (v: string) =>
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (v) next.set("action", v);
+        else next.delete("action");
+        return next;
+      },
+      { replace: true },
+    );
 
   const q = useQuery({
     queryKey: ["audit", filter],
