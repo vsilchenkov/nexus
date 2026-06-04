@@ -8,6 +8,7 @@ import NodeSettings from "./pages/NodeSettings";
 import AuditLog from "./pages/AuditLog";
 import KafkaMonitor from "./pages/KafkaMonitor";
 import Settings from "./pages/Settings";
+import ForcePasswordChange from "./pages/ForcePasswordChange";
 import { AppShell } from "./components/AppShell";
 import { api } from "./api/client";
 
@@ -16,15 +17,21 @@ import { api } from "./api/client";
 function useMe() {
   return useQuery({
     queryKey: ["me"],
-    queryFn: () => api.get<{ user: { user_id: string; role: string } }>("/api/auth/me"),
+    queryFn: () =>
+      api.get<{ user: { user_id: string; role: string; must_change_password?: boolean } }>(
+        "/api/auth/me",
+      ),
   });
 }
 
 // Protected — гейт сессии + общий каркас (AppShell с сайдбаром и топбаром).
+// Если у пользователя стоит must_change_password (П18), показываем обязательный
+// экран смены пароля вместо приложения — бэкенд всё равно блокирует API 403.
 function Protected() {
   const { isLoading, isError, data } = useMe();
   if (isLoading) return <div className="grid h-screen place-items-center text-fg-muted">Loading…</div>;
   if (isError || !data) return <Navigate to="/login" replace />;
+  if (data.user.must_change_password) return <ForcePasswordChange />;
   return <AppShell />;
 }
 

@@ -30,6 +30,11 @@
     "password_field": "Password",
     "logout": "Sign out"
   },
+  "force_password": {
+    "title": "Password change required",
+    "subtitle": "You must set a new password before continuing.",
+    "submit": "Set new password and sign in"
+  },
   "nav": {
     "nodes": "Nodes",
     "audit": "Audit",

@@ -49,7 +49,10 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 	{
 		api.POST("/auth/login", h.Auth.Login)
 
-		authed := api.Group("/", mw.APITokenAuth, mw.SessionAuth)
+		// RequirePasswordChanged (П18): пока сессия в режиме «требуется смена
+		// пароля», все эндпоинты ниже отдают 403 password_change_required,
+		// кроме /me/password и auth-служебных (allowlist внутри middleware).
+		authed := api.Group("/", mw.APITokenAuth, mw.SessionAuth, RequirePasswordChanged())
 		authed.POST("/auth/logout", h.Auth.Logout)
 		authed.GET("/auth/me", h.Auth.Me)
 

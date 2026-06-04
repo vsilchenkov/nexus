@@ -78,13 +78,14 @@ func (u *AuthUsecase) Login(ctx context.Context, login, password, ip string) (st
 	}
 	now := time.Now().UTC()
 	s := &domain.Session{
-		Token:         token,
-		UserID:        user.ID,
-		Role:          user.Role,
-		Lang:          user.Lang,
-		CurrentTeamID: user.DefaultTeamID,
-		CreatedAt:     now,
-		LastSeenAt:    now,
+		Token:              token,
+		UserID:             user.ID,
+		Role:               user.Role,
+		Lang:               user.Lang,
+		CurrentTeamID:      user.DefaultTeamID,
+		MustChangePassword: user.MustChangePassword,
+		CreatedAt:          now,
+		LastSeenAt:         now,
 	}
 	if err := u.sessions.Create(ctx, s, u.sessionTTL); err != nil {
 		return "", nil, fmt.Errorf("create session: %w", err)
