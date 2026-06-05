@@ -137,4 +137,5 @@ var (
 	ErrTeamCHDatabaseFormat = errors.New("domain: team ch_database must match ^nexus_[a-z][a-z0-9_]{0,31}$")
 	ErrTeamInvalidRole      = errors.New("domain: invalid team role")
 	ErrTeamMemberNotFound   = errors.New("domain: team membership not found")
+	ErrTeamHasNodes         = errors.New("domain: team has attached nodes and cannot be deleted")
 )

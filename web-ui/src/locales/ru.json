@@ -30,6 +30,11 @@
     "password_field": "Пароль",
     "logout": "Выйти"
   },
+  "force_password": {
+    "title": "Требуется смена пароля",
+    "subtitle": "Прежде чем продолжить, задайте новый пароль.",
+    "submit": "Задать пароль и войти"
+  },
   "nav": {
     "nodes": "Узлы",
     "audit": "Аудит",
@@ -61,7 +66,7 @@
     "filter": { "all_methods": "Все методы", "all_statuses": "Все статусы" },
     "view": { "table": "Таблица", "cards": "Карточки" },
     "card": { "dynamic_url": "{URL из запроса}" },
-    "status": { "ok": "OK", "down": "Down", "queue": "Очередь" },
+    "status": { "ok": "OK", "down": "Down", "queue": "Очередь", "unknown": "—" },
     "table": {
       "path": "Узел",
       "method": "Метод",
@@ -511,6 +516,18 @@
       "create": "Создать",
       "name_placeholder": "Имя (например, grafana-export)",
       "copy_now": "Скопируйте токен сейчас — повторно он не отображается",
+      "close": "закрыть",
+      "cancel": "Отмена",
+      "col_name": "имя",
+      "col_prefix": "префикс",
+      "col_scopes": "scopes",
+      "col_created": "создан",
+      "col_last_used": "посл. использование",
+      "col_status": "статус",
+      "status_active": "активен",
+      "status_expired": "истёк",
+      "status_revoked": "отозван",
+      "confirm_delete": "Удалить этот токен?",
       "revoke": "Отозвать",
       "delete": "Удалить",
       "empty": "Токенов пока нет"
@@ -657,7 +674,8 @@
         "edit": "Переименовать",
         "delete": "Удалить"
       },
-      "confirm_delete": "Удалить команду `{{slug}}`? CH-БД остаётся — удалите вручную через Orphans.",
+      "confirm_delete_title": "Удаление команды",
+      "confirm_delete": "Удалить команду «{{slug}}»? База ClickHouse этой команды останется — её можно удалить позже в Настройки → ClickHouse → Orphans.",
       "field": {
         "slug": "Slug",
         "slug_hint": "Строчные буквы / цифры / подчёркивание, 1..32 символа. Изменить нельзя.",
@@ -774,6 +792,7 @@
     "error": "Ошибка",
     "ok": "OK",
     "cancel": "Отмена",
+    "confirm": "Подтвердить",
     "save": "Сохранить",
     "close": "Закрыть",
     "edit": "Изменить",

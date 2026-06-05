@@ -46,8 +46,8 @@ type testRMQRequest struct {
 // @Produce  json
 // @Param    body  body  testRMQRequest  true  "RabbitMQ connection params"
 // @Success  200  {object}  usecase.RMQTestResult
-// @Failure  400  {object}  map[string]string
-// @Failure  429  {object}  map[string]string  "rate limit exceeded"
+// @Failure  400  {object}  ErrorResponse
+// @Failure  429  {object}  ErrorResponse  "rate limit exceeded"
 // @Security CookieAuth
 // @Router   /api/nodes/test-rmq [post]
 func (h *RMQTestHandler) TestRMQ(c *gin.Context) {

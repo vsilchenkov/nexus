@@ -35,6 +35,12 @@ coverage.txt
 # Playwright MCP — каталог вывода (скриншоты/снапшоты), браузеры в user-кеше
 /.playwright-mcp/
 
+# Delve debug-бинарники (go test/debug) — суффикс после .exe не ловится *.exe
+__debug_bin*
+
+# QA-артефакты ручного тестирования — рабочие файлы, в репо не коммитятся
+/specs/*.xlsx
+
 # OS
 .DS_Store
 Thumbs.db

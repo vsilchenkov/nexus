@@ -109,6 +109,13 @@ WHERE id = $1::uuid`,
 func (r *TeamRepoPg) Delete(ctx context.Context, id string) error {
 	tag, err := r.pool.Exec(ctx, `DELETE FROM teams WHERE id = $1::uuid`, id)
 	if err != nil {
+		// FK-нарушение (23503): на команду ссылаются узлы (ON DELETE RESTRICT).
+		// Раньше отдавали generic error → handler возвращал 500 (QA-2026-02 / П17).
+		// Теперь — доменная ошибка → 409 Conflict с понятным сообщением.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			return domain.ErrTeamHasNodes
+		}
 		return fmt.Errorf("delete team: %w", err)
 	}
 	if tag.RowsAffected() == 0 {

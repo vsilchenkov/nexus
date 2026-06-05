@@ -193,6 +193,42 @@ func TestRequireMinRole(t *testing.T) {
 	}
 }
 
+func TestRequirePasswordChanged(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		session *domain.Session
+		path    string
+		status  int
+	}{
+		{"flag set, protected path → 403", &domain.Session{MustChangePassword: true}, "/api/nodes", 403},
+		{"flag set, change-password path → ok", &domain.Session{MustChangePassword: true}, "/api/me/password", 200},
+		{"flag set, me path → ok", &domain.Session{MustChangePassword: true}, "/api/auth/me", 200},
+		{"flag set, logout path → ok", &domain.Session{MustChangePassword: true}, "/api/auth/logout", 200},
+		{"flag clear → ok", &domain.Session{MustChangePassword: false}, "/api/nodes", 200},
+		{"no session → ok (API-token)", nil, "/api/nodes", 200},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			gin.SetMode(gin.TestMode)
+			r := gin.New()
+			if c.session != nil {
+				r.Use(func(ctx *gin.Context) {
+					ctx.Set(ctxSessionKey, c.session)
+					ctx.Next()
+				})
+			}
+			r.Use(RequirePasswordChanged())
+			r.Any("/*any", func(ctx *gin.Context) { ctx.Status(200) })
+
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest("GET", c.path, nil))
+			assert.Equal(t, c.status, w.Code)
+		})
+	}
+}
+
 func TestSessionFromCtx(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)

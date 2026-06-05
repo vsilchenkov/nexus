@@ -47,14 +47,18 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
     return p;
   }, [pageSize, appliedFilters]);
 
+  const [live, setLive] = useState(false);
+
   const logsQ = useQuery({
     queryKey: ["logs", id, advQueryParams],
     queryFn: () => api.get<LogsResp>(`/api/nodes/${id}/logs`, advQueryParams),
     enabled: !!id && hasLogsTable,
-    refetchInterval: 5_000,
+    // П7: при включённом Live (SSE-стрим) НЕ опрашиваем snapshot каждые 5с —
+    // иначе сыпались дублирующие logs?limit=… запросы поверх потока. Polling
+    // только когда Live выключен.
+    refetchInterval: live ? false : 5_000,
   });
 
-  const [live, setLive] = useState(false);
   const [liveLogs, setLiveLogs] = useState<LogRow[]>([]);
   const [highlighted, setHighlighted] = useState<Set<string>>(new Set());
 

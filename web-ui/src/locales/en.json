@@ -30,6 +30,11 @@
     "password_field": "Password",
     "logout": "Sign out"
   },
+  "force_password": {
+    "title": "Password change required",
+    "subtitle": "You must set a new password before continuing.",
+    "submit": "Set new password and sign in"
+  },
   "nav": {
     "nodes": "Nodes",
     "audit": "Audit",
@@ -61,7 +66,7 @@
     "filter": { "all_methods": "All methods", "all_statuses": "All statuses" },
     "view": { "table": "Table", "cards": "Cards" },
     "card": { "dynamic_url": "{URL from request}" },
-    "status": { "ok": "OK", "down": "Down", "queue": "Queue" },
+    "status": { "ok": "OK", "down": "Down", "queue": "Queue", "unknown": "—" },
     "table": {
       "path": "Node",
       "method": "Method",
@@ -511,6 +516,18 @@
       "create": "Create",
       "name_placeholder": "Name (e.g. grafana-export)",
       "copy_now": "Copy this token now — it won't be shown again",
+      "close": "close",
+      "cancel": "Cancel",
+      "col_name": "name",
+      "col_prefix": "prefix",
+      "col_scopes": "scopes",
+      "col_created": "created",
+      "col_last_used": "last used",
+      "col_status": "status",
+      "status_active": "active",
+      "status_expired": "expired",
+      "status_revoked": "revoked",
+      "confirm_delete": "Delete this token?",
       "revoke": "Revoke",
       "delete": "Delete",
       "empty": "No tokens yet"
@@ -657,7 +674,8 @@
         "edit": "Rename",
         "delete": "Delete"
       },
-      "confirm_delete": "Delete team `{{slug}}`? CH database stays — drop manually via Orphans.",
+      "confirm_delete_title": "Delete team",
+      "confirm_delete": "Delete team “{{slug}}”? Its ClickHouse database is kept — you can drop it later in Settings → ClickHouse → Orphans.",
       "field": {
         "slug": "Slug",
         "slug_hint": "Lowercase letters / digits / underscore, 1..32 chars. Immutable after creation.",
@@ -774,6 +792,7 @@
     "error": "Error",
     "ok": "OK",
     "cancel": "Cancel",
+    "confirm": "Confirm",
     "save": "Save",
     "close": "Close",
     "edit": "Edit",

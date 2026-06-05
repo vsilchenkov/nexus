@@ -41,7 +41,7 @@ func NewNodeHandler(uc *usecase.NodeUsecase, health RMQHealthReader, logger logg
 // @Param    root_method  query  string  false  "request | requestAsync"
 // @Param    limit        query  int     false  "лимит, max 500"
 // @Param    offset       query  int     false  "смещение"
-// @Success  200          {object}  map[string]any
+// @Success  200          {object}  ListNodesResponse
 // @Security CookieAuth
 // @Security ApiTokenAuth
 // @Router   /api/nodes [get]
@@ -80,7 +80,7 @@ func (h *NodeHandler) List(c *gin.Context) {
 // @Produce  json
 // @Param    id   path  string  true  "node id"
 // @Success  200  {object}  NodeResponse
-// @Failure  404  {object}  map[string]string
+// @Failure  404  {object}  ErrorResponse
 // @Security CookieAuth
 // @Security ApiTokenAuth
 // @Router   /api/nodes/{id} [get]
@@ -108,8 +108,8 @@ func (h *NodeHandler) Get(c *gin.Context) {
 // @Produce  json
 // @Param    body  body  CreateNodeRequest  true  "node config"
 // @Success  201   {object}  NodeResponse
-// @Failure  400   {object}  map[string]string
-// @Failure  409   {object}  map[string]string  "path already exists"
+// @Failure  400   {object}  ErrorResponse
+// @Failure  409   {object}  ErrorResponse  "path already exists"
 // @Security CookieAuth
 // @Router   /api/nodes [post]
 func (h *NodeHandler) Create(c *gin.Context) {
@@ -151,9 +151,9 @@ func actorFromCtx(c *gin.Context) usecase.Actor {
 // @Param    id    path  string             true  "node id"
 // @Param    body  body  UpdateNodeRequest  true  "node config"
 // @Success  200   {object}  NodeResponse
-// @Failure  400   {object}  map[string]string
-// @Failure  404   {object}  map[string]string
-// @Failure  409   {object}  map[string]string  "path already exists"
+// @Failure  400   {object}  ErrorResponse
+// @Failure  404   {object}  ErrorResponse
+// @Failure  409   {object}  ErrorResponse  "path already exists"
 // @Security CookieAuth
 // @Router   /api/nodes/{id} [put]
 func (h *NodeHandler) Update(c *gin.Context) {
@@ -201,7 +201,7 @@ func (h *NodeHandler) Update(c *gin.Context) {
 // @Produce  json
 // @Param    id   path  string  true  "node id"
 // @Success  204
-// @Failure  404  {object}  map[string]string
+// @Failure  404  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/nodes/{id} [delete]
 func (h *NodeHandler) Delete(c *gin.Context) {
@@ -226,10 +226,10 @@ type MoveNodeRequest struct {
 // @Param    id    path  string           true  "node id"
 // @Param    body  body  MoveNodeRequest  true  "target team slug"
 // @Success  204
-// @Failure  400   {object}  map[string]string
-// @Failure  403   {object}  map[string]string  "same team / not allowed"
-// @Failure  404   {object}  map[string]string  "node or target team not found"
-// @Failure  409   {object}  map[string]string  "path already exists in target team"
+// @Failure  400   {object}  ErrorResponse
+// @Failure  403   {object}  ErrorResponse  "same team / not allowed"
+// @Failure  404   {object}  ErrorResponse  "node or target team not found"
+// @Failure  409   {object}  ErrorResponse  "path already exists in target team"
 // @Security CookieAuth
 // @Router   /api/nodes/{id}/move [post]
 func (h *NodeHandler) Move(c *gin.Context) {

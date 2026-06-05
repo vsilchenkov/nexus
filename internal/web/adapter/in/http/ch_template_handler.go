@@ -53,7 +53,7 @@ func chTemplateToResponse(t *domain.CHTemplate) chTemplateResponse {
 // @Summary  Список шаблонов CH-таблиц (§19).
 // @Tags     ch-templates
 // @Produce  json
-// @Success  200  {object}  map[string]interface{}
+// @Success  200  {object}  ListCHTemplatesResponse
 // @Security CookieAuth
 // @Router   /api/ch-templates [get]
 func (h *CHTemplateHandler) List(c *gin.Context) {
@@ -75,7 +75,7 @@ func (h *CHTemplateHandler) List(c *gin.Context) {
 // @Produce  json
 // @Param    id   path  string  true  "template id"
 // @Success  200  {object}  chTemplateResponse
-// @Failure  404  {object}  map[string]string
+// @Failure  404  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/ch-templates/{id} [get]
 func (h *CHTemplateHandler) Get(c *gin.Context) {
@@ -94,8 +94,8 @@ func (h *CHTemplateHandler) Get(c *gin.Context) {
 // @Produce  json
 // @Param    body  body  chTemplateRequest  true  "template"
 // @Success  201   {object}  chTemplateResponse
-// @Failure  400   {object}  map[string]string
-// @Failure  409   {object}  map[string]string
+// @Failure  400   {object}  ErrorResponse
+// @Failure  409   {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/ch-templates [post]
 func (h *CHTemplateHandler) Create(c *gin.Context) {
@@ -120,9 +120,9 @@ func (h *CHTemplateHandler) Create(c *gin.Context) {
 // @Param    id    path  string             true  "template id"
 // @Param    body  body  chTemplateRequest  true  "template"
 // @Success  200   {object}  chTemplateResponse
-// @Failure  400   {object}  map[string]string
-// @Failure  404   {object}  map[string]string
-// @Failure  409   {object}  map[string]string
+// @Failure  400   {object}  ErrorResponse
+// @Failure  404   {object}  ErrorResponse
+// @Failure  409   {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/ch-templates/{id} [put]
 func (h *CHTemplateHandler) Update(c *gin.Context) {
@@ -146,9 +146,9 @@ func (h *CHTemplateHandler) Update(c *gin.Context) {
 // @Produce  json
 // @Param    id   path  string  true  "template id"
 // @Success  204
-// @Failure  403  {object}  map[string]string
-// @Failure  404  {object}  map[string]string
-// @Failure  409  {object}  map[string]string
+// @Failure  403  {object}  ErrorResponse
+// @Failure  404  {object}  ErrorResponse
+// @Failure  409  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/ch-templates/{id} [delete]
 func (h *CHTemplateHandler) Delete(c *gin.Context) {
@@ -166,8 +166,8 @@ func (h *CHTemplateHandler) Delete(c *gin.Context) {
 // @Accept   json
 // @Produce  json
 // @Param    body  body  chTemplateRequest  true  "template"
-// @Success  200   {object}  map[string]interface{}
-// @Failure  503   {object}  map[string]string  "clickhouse unavailable"
+// @Success  200   {object}  CHTemplateVerifyResponse
+// @Failure  503   {object}  ErrorResponse  "clickhouse unavailable"
 // @Security CookieAuth
 // @Router   /api/ch-templates/verify [post]
 func (h *CHTemplateHandler) Verify(c *gin.Context) {

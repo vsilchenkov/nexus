@@ -81,6 +81,34 @@ func RequireMinRole(min domain.UserRole) gin.HandlerFunc {
 	}
 }
 
+// pwChangeAllowedPaths — эндпоинты, доступные при must_change_password=true:
+// смена собственного пароля + auth-служебные (узнать себя, выйти).
+var pwChangeAllowedPaths = map[string]bool{
+	"/api/me/password": true,
+	"/api/auth/me":     true,
+	"/api/auth/logout": true,
+}
+
+// RequirePasswordChanged блокирует все эндпоинты, кроме смены собственного
+// пароля и auth-служебных, пока у сессии стоит флаг must_change_password
+// (QA-2026-02 / П18). Возвращает 403 с кодом password_change_required —
+// по нему фронт показывает обязательный экран смены пароля. API-токены не
+// несут этот флаг (zero-value), поэтому не блокируются.
+func RequirePasswordChanged() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		s, ok := sessionFromCtx(c)
+		if ok && s.MustChangePassword && !pwChangeAllowedPaths[c.Request.URL.Path] {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": "password change required",
+				"code":  "password_change_required",
+			})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
 func sessionFromCtx(c *gin.Context) (*domain.Session, bool) {
 	v, ok := c.Get(ctxSessionKey)
 	if !ok {

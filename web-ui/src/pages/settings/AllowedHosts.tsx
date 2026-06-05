@@ -5,6 +5,7 @@ import { Plus, Pencil, Trash2, Check, X } from "lucide-react";
 
 import { api, type HostAllowlistEntry, type HostKind } from "../../api/client";
 import { Button, Chip, Input, Modal, Seg, type SegOption } from "../../components/ui";
+import { useConfirm } from "../../lib/confirm";
 
 type ListResp = { items: HostAllowlistEntry[] };
 // Превью всегда отвечает 200: valid=false означает недописанный/кривой паттерн
@@ -21,6 +22,7 @@ const kindTone: Record<HostKind, "success" | "info" | "warning"> = {
 // диалог создания/редактирования с живым превью «Разрешит / Заблокирует».
 export function AllowedHostsPanel() {
   const { t } = useTranslation();
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const [kind, setKind] = useState<"" | HostKind>("");
   const [q, setQ] = useState("");
@@ -106,8 +108,15 @@ export function AllowedHostsPanel() {
                     <Pencil className="h-4 w-4" />
                   </button>
                   <button
-                    onClick={() => {
-                      if (confirm(t("settings.allowed_hosts.confirm_delete", { pattern: h.pattern }))) {
+                    onClick={async () => {
+                      if (
+                        await confirm({
+                          title: t("common.delete"),
+                          message: t("settings.allowed_hosts.confirm_delete", { pattern: h.pattern }),
+                          confirmLabel: t("common.delete"),
+                          danger: true,
+                        })
+                      ) {
                         del.mutate(h.id);
                       }
                     }}

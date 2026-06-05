@@ -75,8 +75,8 @@ func toUserResp(u *domain.User) userResponse {
 // @Tags     users
 // @Produce  json
 // @Param    search  query  string  false  "поиск по login или email"
-// @Success  200     {object}  map[string]any
-// @Failure  500     {object}  map[string]string
+// @Success  200     {object}  ListUsersResponse
+// @Failure  500     {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/users [get]
 func (h *UserHandler) List(c *gin.Context) {
@@ -102,7 +102,7 @@ func (h *UserHandler) List(c *gin.Context) {
 // @Produce  json
 // @Param    id   path  string  true  "user id"
 // @Success  200  {object}  userResponse
-// @Failure  404  {object}  map[string]string
+// @Failure  404  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/users/{id} [get]
 func (h *UserHandler) Get(c *gin.Context) {
@@ -125,8 +125,8 @@ func (h *UserHandler) Get(c *gin.Context) {
 // @Produce  json
 // @Param    body  body  createUserRequest  true  "user fields"
 // @Success  201   {object}  userResponse
-// @Failure  400   {object}  map[string]string
-// @Failure  409   {object}  map[string]string  "login already exists"
+// @Failure  400   {object}  ErrorResponse
+// @Failure  409   {object}  ErrorResponse  "login already exists"
 // @Security CookieAuth
 // @Router   /api/users [post]
 func (h *UserHandler) Create(c *gin.Context) {
@@ -163,9 +163,9 @@ func (h *UserHandler) Create(c *gin.Context) {
 // @Param    id    path  string             true  "user id"
 // @Param    body  body  updateUserRequest  true  "user fields"
 // @Success  200   {object}  userResponse
-// @Failure  400   {object}  map[string]string
-// @Failure  403   {object}  map[string]string  "cannot demote yourself"
-// @Failure  404   {object}  map[string]string
+// @Failure  400   {object}  ErrorResponse
+// @Failure  403   {object}  ErrorResponse  "cannot demote yourself"
+// @Failure  404   {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/users/{id} [put]
 func (h *UserHandler) Update(c *gin.Context) {
@@ -212,7 +212,7 @@ func (h *UserHandler) Update(c *gin.Context) {
 // @Produce  json
 // @Param    id   path  string  true  "user id"
 // @Success  204
-// @Failure  400  {object}  map[string]string
+// @Failure  400  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/users/{id} [delete]
 func (h *UserHandler) Delete(c *gin.Context) {
@@ -232,7 +232,7 @@ func (h *UserHandler) Delete(c *gin.Context) {
 // @Param    id    path  string                  true  "user id"
 // @Param    body  body  changePasswordRequest   true  "new password"
 // @Success  204
-// @Failure  400   {object}  map[string]string
+// @Failure  400   {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/users/{id}/password [post]
 func (h *UserHandler) ChangePassword(c *gin.Context) {

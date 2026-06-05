@@ -39,10 +39,11 @@ type ReplayRequest struct {
 // @Param    id    path  string         true  "log id (UUID v4)"
 // @Param    body  body  ReplayRequest  true  "опции"
 // @Success  200   {object}  usecase.ReplayResult
-// @Failure  400   {object}  map[string]string
-// @Failure  404   {object}  map[string]string
-// @Failure  409   {object}  map[string]string  "node disabled"
-// @Failure  429   {object}  map[string]string  "rate limit exceeded"
+// @Failure  400   {object}  ErrorResponse
+// @Failure  404   {object}  ErrorResponse
+// @Failure  409   {object}  ErrorResponse  "node disabled"
+// @Failure  422   {object}  ErrorResponse  "original body not logged — provide manually"
+// @Failure  429   {object}  ErrorResponse  "rate limit exceeded"
 // @Security CookieAuth
 // @Router   /api/logs/{id}/replay [post]
 func (h *ReplayHandler) Replay(c *gin.Context) {
@@ -74,6 +75,8 @@ func (h *ReplayHandler) Replay(c *gin.Context) {
 		localizedError(c, http.StatusTooManyRequests, "error.rate_limited")
 	case errors.Is(err, usecase.ErrReplayTooOldFailure):
 		localizedError(c, http.StatusBadRequest, "replay.too_old")
+	case errors.Is(err, usecase.ErrReplayBodyUnavailable):
+		localizedError(c, http.StatusUnprocessableEntity, "replay.body_unavailable")
 	case errors.Is(err, domain.ErrNotFound):
 		localizedError(c, http.StatusNotFound, "error.not_found")
 	case errors.Is(err, domain.ErrNodeNotFound):

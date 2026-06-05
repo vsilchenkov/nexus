@@ -73,10 +73,10 @@ type changeOwnPasswordRequest struct {
 // @Accept   json
 // @Produce  json
 // @Param    body  body  loginRequest  true  "credentials"
-// @Success  200   {object}  map[string]any
-// @Failure  400   {object}  map[string]string
-// @Failure  401   {object}  map[string]string  "invalid credentials"
-// @Failure  403   {object}  map[string]string  "user inactive"
+// @Success  200   {object}  UserEnvelope
+// @Failure  400   {object}  ErrorResponse
+// @Failure  401   {object}  ErrorResponse  "invalid credentials"
+// @Failure  403   {object}  ErrorResponse  "user inactive"
 // @Router   /api/auth/login [post]
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req loginRequest
@@ -144,8 +144,8 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 // @Description  Возвращает user_id, login, email, role, lang и must_change_password.
 // @Tags     auth
 // @Produce  json
-// @Success  200  {object}  map[string]any
-// @Failure  401  {object}  map[string]string
+// @Success  200  {object}  UserEnvelope
+// @Failure  401  {object}  ErrorResponse
 // @Security CookieAuth
 // @Security ApiTokenAuth
 // @Router   /api/auth/me [get]
@@ -183,8 +183,8 @@ func (h *AuthHandler) Me(c *gin.Context) {
 // @Produce  json
 // @Param    body  body  changeOwnPasswordRequest  true  "current + new password"
 // @Success  204
-// @Failure  400   {object}  map[string]string
-// @Failure  401   {object}  map[string]string  "current password incorrect"
+// @Failure  400   {object}  ErrorResponse
+// @Failure  401   {object}  ErrorResponse  "current password incorrect"
 // @Security CookieAuth
 // @Router   /api/me/password [post]
 func (h *AuthHandler) ChangeOwnPassword(c *gin.Context) {
@@ -216,8 +216,8 @@ func (h *AuthHandler) ChangeOwnPassword(c *gin.Context) {
 // @Description  Multi-tenancy v2 (§16 ТЗ). Используется UI team-switcher'ом.
 // @Tags     auth
 // @Produce  json
-// @Success  200  {object}  map[string]any
-// @Failure  401  {object}  map[string]string
+// @Success  200  {object}  MyTeamsResponse
+// @Failure  401  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/me/teams [get]
 func (h *AuthHandler) MyTeams(c *gin.Context) {
@@ -249,10 +249,10 @@ func (h *AuthHandler) MyTeams(c *gin.Context) {
 // @Accept   json
 // @Produce  json
 // @Param    body  body  switchTeamRequest  true  "team_id"
-// @Success  200   {object}  map[string]any
-// @Failure  400   {object}  map[string]string
-// @Failure  401   {object}  map[string]string
-// @Failure  403   {object}  map[string]string  "user is not a member of this team"
+// @Success  200   {object}  SwitchTeamResponse
+// @Failure  400   {object}  ErrorResponse
+// @Failure  401   {object}  ErrorResponse
+// @Failure  403   {object}  ErrorResponse  "user is not a member of this team"
 // @Security CookieAuth
 // @Router   /api/me/switch-team [post]
 func (h *AuthHandler) SwitchTeam(c *gin.Context) {

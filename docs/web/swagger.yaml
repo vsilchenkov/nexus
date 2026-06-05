@@ -1,5 +1,14 @@
 basePath: /
 definitions:
+  internal_web_adapter_in_http.CHTemplateVerifyResponse:
+    properties:
+      code:
+        type: string
+      error:
+        type: string
+      ok:
+        type: boolean
+    type: object
   internal_web_adapter_in_http.CreateNodeRequest:
     properties:
       auth_credentials:
@@ -165,6 +174,13 @@ definitions:
     - path
     - root_method
     type: object
+  internal_web_adapter_in_http.CreateTokenResponse:
+    properties:
+      info:
+        $ref: '#/definitions/internal_web_adapter_in_http.tokenResponse'
+      token:
+        type: string
+    type: object
   internal_web_adapter_in_http.DryRunRequest:
     properties:
       node:
@@ -202,12 +218,209 @@ definitions:
           type: array
         type: object
     type: object
+  internal_web_adapter_in_http.ErrorResponse:
+    properties:
+      code:
+        example: password_change_required
+        type: string
+      error:
+        example: not found
+        type: string
+    type: object
+  internal_web_adapter_in_http.HostPreviewResponse:
+    properties:
+      allowed:
+        items:
+          type: string
+        type: array
+      blocked:
+        items:
+          type: string
+        type: array
+      valid:
+        type: boolean
+    type: object
+  internal_web_adapter_in_http.KafkaByNodeResponse:
+    properties:
+      prometheus_available:
+        type: boolean
+      top_failures:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.kafkaFailureDTO'
+        type: array
+      top_producers:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.kafkaProducerDTO'
+        type: array
+    type: object
+  internal_web_adapter_in_http.KafkaTestResponse:
+    properties:
+      brokers:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.kafkaBrokerPingDTO'
+        type: array
+      kafka_available:
+        type: boolean
+      ok:
+        type: boolean
+    type: object
+  internal_web_adapter_in_http.KafkaTopicsResponse:
+    properties:
+      kafka_available:
+        type: boolean
+      topics:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.kafkaTopicDTO'
+        type: array
+    type: object
+  internal_web_adapter_in_http.ListAuditResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.auditEntryResponse'
+        type: array
+    type: object
+  internal_web_adapter_in_http.ListCHTemplatesResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.chTemplateResponse'
+        type: array
+    type: object
+  internal_web_adapter_in_http.ListHeadersResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.headerResponse'
+        type: array
+    type: object
+  internal_web_adapter_in_http.ListHostsResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.hostResponse'
+        type: array
+    type: object
+  internal_web_adapter_in_http.ListLogsResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.LogRecordDTO'
+        type: array
+      logs_configured:
+        type: boolean
+    type: object
+  internal_web_adapter_in_http.ListNodesResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.NodeResponse'
+        type: array
+    type: object
+  internal_web_adapter_in_http.ListOrphansResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.orphanItemResp'
+        type: array
+    type: object
+  internal_web_adapter_in_http.ListTeamMembersResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.teamMemberResponse'
+        type: array
+    type: object
+  internal_web_adapter_in_http.ListTeamsResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.teamResponse'
+        type: array
+    type: object
+  internal_web_adapter_in_http.ListTokensResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.tokenResponse'
+        type: array
+    type: object
+  internal_web_adapter_in_http.ListUsersResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.userResponse'
+        type: array
+    type: object
+  internal_web_adapter_in_http.LogRecordDTO:
+    properties:
+      attempts:
+        type: integer
+      attempts_details:
+        type: string
+      checksum_request:
+        type: string
+      checksum_response:
+        type: string
+      date_request:
+        type: string
+      date_response:
+        type: string
+      done:
+        type: boolean
+      duration_ms:
+        type: integer
+      host:
+        type: string
+      id:
+        type: string
+      ip:
+        type: string
+      method:
+        type: string
+      parameters:
+        type: string
+      reason:
+        type: string
+      request:
+        type: string
+      response:
+        type: string
+      status:
+        type: integer
+      type:
+        type: string
+      url:
+        type: string
+    type: object
   internal_web_adapter_in_http.MoveNodeRequest:
     properties:
       target_team_slug:
         type: string
     required:
     - target_team_slug
+    type: object
+  internal_web_adapter_in_http.MyTeamsResponse:
+    properties:
+      current_team_id:
+        type: string
+      items:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.teamMembershipResponse'
+        type: array
+    type: object
+  internal_web_adapter_in_http.NodeMetricsResponse:
+    properties:
+      chart_available:
+        type: boolean
+      kpi:
+        $ref: '#/definitions/internal_web_adapter_in_http.nodeKPIDTO'
+      range_ms:
+        type: integer
+      series:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.seriesPointDTO'
+        type: array
     type: object
   internal_web_adapter_in_http.NodeResponse:
     properties:
@@ -314,6 +527,20 @@ definitions:
       webhook_signature_prefix:
         type: string
     type: object
+  internal_web_adapter_in_http.NodesMetricsResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.nodeThroughputDTO'
+        type: array
+      prometheus_available:
+        type: boolean
+    type: object
+  internal_web_adapter_in_http.PublicSettingsResponse:
+    properties:
+      public_base_url:
+        type: string
+    type: object
   internal_web_adapter_in_http.RMQStatus:
     properties:
       attempts:
@@ -346,6 +573,11 @@ definitions:
         type: boolean
     required:
     - node_id
+    type: object
+  internal_web_adapter_in_http.SwitchTeamResponse:
+    properties:
+      current_team_id:
+        type: string
     type: object
   internal_web_adapter_in_http.UpdateNodeRequest:
     properties:
@@ -512,6 +744,16 @@ definitions:
     - path
     - root_method
     type: object
+  internal_web_adapter_in_http.UserEnvelope:
+    properties:
+      user:
+        $ref: '#/definitions/internal_web_adapter_in_http.meResponse'
+    type: object
+  internal_web_adapter_in_http.VersionResponse:
+    properties:
+      version:
+        type: string
+    type: object
   internal_web_adapter_in_http.addMemberRequest:
     properties:
       role:
@@ -529,6 +771,30 @@ definitions:
   internal_web_adapter_in_http.attachHostRequest:
     properties:
       host_id:
+        type: string
+    type: object
+  internal_web_adapter_in_http.auditEntryResponse:
+    properties:
+      action:
+        type: string
+      created_at:
+        type: string
+      details:
+        additionalProperties: {}
+        type: object
+      id:
+        type: string
+      ip_address:
+        type: string
+      target_id:
+        type: string
+      target_type:
+        type: string
+      team_id:
+        type: string
+      user_id:
+        type: string
+      user_login:
         type: string
     type: object
   internal_web_adapter_in_http.chTemplateRequest:
@@ -721,6 +987,17 @@ definitions:
       under_replicated_partitions:
         type: integer
     type: object
+  internal_web_adapter_in_http.kafkaBrokerPingDTO:
+    properties:
+      addr:
+        type: string
+      elapsed_ms:
+        type: integer
+      ok:
+        type: boolean
+      warn:
+        type: string
+    type: object
   internal_web_adapter_in_http.kafkaDeltaDTO:
     properties:
       consumed:
@@ -728,6 +1005,15 @@ definitions:
       has_delta:
         type: boolean
       produced:
+        type: number
+    type: object
+  internal_web_adapter_in_http.kafkaFailureDTO:
+    properties:
+      failed:
+        type: integer
+      node_path:
+        type: string
+      rate:
         type: number
     type: object
   internal_web_adapter_in_http.kafkaHealthDTO:
@@ -770,6 +1056,15 @@ definitions:
       v:
         type: number
     type: object
+  internal_web_adapter_in_http.kafkaProducerDTO:
+    properties:
+      node_path:
+        type: string
+      produced:
+        type: integer
+      share:
+        type: number
+    type: object
   internal_web_adapter_in_http.kafkaSummaryDTO:
     properties:
       consumed_total:
@@ -798,6 +1093,38 @@ definitions:
       step_seconds:
         type: integer
     type: object
+  internal_web_adapter_in_http.kafkaTopicDTO:
+    properties:
+      consumer_groups:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.kafkaTopicGroupDTO'
+        type: array
+      messages_estimate:
+        type: integer
+      name:
+        type: string
+      offline_partitions:
+        type: integer
+      partitions:
+        type: integer
+      replication_factor:
+        type: integer
+      retention_ms:
+        type: integer
+      size_bytes:
+        type: integer
+      under_replicated:
+        type: integer
+    type: object
+  internal_web_adapter_in_http.kafkaTopicGroupDTO:
+    properties:
+      group:
+        type: string
+      lag_total:
+        type: integer
+      members:
+        type: integer
+    type: object
   internal_web_adapter_in_http.loginRequest:
     properties:
       login:
@@ -811,6 +1138,72 @@ definitions:
     required:
     - login
     - password
+    type: object
+  internal_web_adapter_in_http.meResponse:
+    properties:
+      current_team_id:
+        type: string
+      default_team_id:
+        type: string
+      email:
+        type: string
+      lang:
+        type: string
+      login:
+        type: string
+      must_change_password:
+        type: boolean
+      role:
+        type: string
+      user_id:
+        type: string
+    type: object
+  internal_web_adapter_in_http.nodeKPIDTO:
+    properties:
+      delivered:
+        type: integer
+      errors:
+        type: integer
+      p95_ms:
+        type: number
+      p99_ms:
+        type: number
+      total:
+        type: integer
+    type: object
+  internal_web_adapter_in_http.nodeThroughputDTO:
+    properties:
+      errors:
+        type: integer
+      in:
+        type: integer
+      node:
+        type: string
+      out:
+        type: integer
+      p95_ms:
+        type: number
+      spark:
+        items:
+          type: number
+        type: array
+    type: object
+  internal_web_adapter_in_http.orphanItemResp:
+    properties:
+      created_at:
+        type: string
+      database:
+        type: string
+      engine:
+        type: string
+      full_name:
+        type: string
+      table:
+        type: string
+      total_bytes:
+        type: integer
+      total_rows:
+        type: integer
     type: object
   internal_web_adapter_in_http.overviewKPIDTO:
     properties:
@@ -827,12 +1220,45 @@ definitions:
       prometheus_available:
         type: boolean
     type: object
+  internal_web_adapter_in_http.seriesPointDTO:
+    properties:
+      count:
+        type: integer
+      errors:
+        type: integer
+      ts:
+        type: integer
+    type: object
   internal_web_adapter_in_http.switchTeamRequest:
     properties:
       team_id:
         type: string
     required:
     - team_id
+    type: object
+  internal_web_adapter_in_http.teamMemberResponse:
+    properties:
+      created_at:
+        type: string
+      role:
+        type: string
+      team_id:
+        type: string
+      user_id:
+        type: string
+    type: object
+  internal_web_adapter_in_http.teamMembershipResponse:
+    properties:
+      ch_database:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      role:
+        type: string
+      slug:
+        type: string
     type: object
   internal_web_adapter_in_http.teamResponse:
     properties:
@@ -875,6 +1301,29 @@ definitions:
     required:
     - host
     - queue
+    type: object
+  internal_web_adapter_in_http.tokenResponse:
+    properties:
+      created_at:
+        type: string
+      expires_at:
+        type: string
+      id:
+        type: string
+      last_used_at:
+        type: string
+      name:
+        type: string
+      prefix:
+        type: string
+      revoked_at:
+        type: string
+      scopes:
+        items:
+          type: string
+        type: array
+      team_id:
+        type: string
     type: object
   internal_web_adapter_in_http.updateMemberRoleRequest:
     properties:
@@ -1186,8 +1635,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ListHostsResponse'
       security:
       - CookieAuth: []
       summary: 'Каталог разрешённых хостов: поиск/листинг (§23).'
@@ -1215,9 +1663,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Создать разрешённый хост (admin, §23).
@@ -1240,15 +1686,11 @@ paths:
         "404":
           description: Not Found
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "409":
           description: Conflict
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Удалить разрешённый хост (admin, §23).
@@ -1279,21 +1721,15 @@ paths:
         "400":
           description: Bad Request
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "409":
           description: Conflict
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Изменить разрешённый хост (admin, §23).
@@ -1316,14 +1752,11 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.HostPreviewResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: 'Превью паттерна: какие URL разрешит/заблокирует (§23).'
@@ -1377,14 +1810,11 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ListAuditResponse'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       - ApiTokenAuth: []
@@ -1443,9 +1873,7 @@ paths:
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       - ApiTokenAuth: []
@@ -1470,26 +1898,19 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.UserEnvelope'
         "400":
           description: Bad Request
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "401":
           description: invalid credentials
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "403":
           description: user inactive
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       summary: Логин по логину/паролю.
       tags:
       - auth
@@ -1516,14 +1937,11 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.UserEnvelope'
         "401":
           description: Unauthorized
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       - ApiTokenAuth: []
@@ -1538,8 +1956,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ListCHTemplatesResponse'
       security:
       - CookieAuth: []
       summary: Список шаблонов CH-таблиц (§19).
@@ -1565,15 +1982,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "409":
           description: Conflict
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Создать шаблон CH-таблицы (admin, §19).
@@ -1596,21 +2009,15 @@ paths:
         "403":
           description: Forbidden
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "409":
           description: Conflict
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Удалить шаблон CH-таблицы (admin, §19).
@@ -1633,9 +2040,7 @@ paths:
         "404":
           description: Not Found
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Один шаблон CH-таблицы по id (§19).
@@ -1666,21 +2071,15 @@ paths:
         "400":
           description: Bad Request
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "409":
           description: Conflict
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Обновить шаблон CH-таблицы (admin, §19).
@@ -1705,14 +2104,11 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.CHTemplateVerifyResponse'
         "503":
           description: clickhouse unavailable
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Проверить шаблон CH-таблицы (admin, §19.4).
@@ -1735,8 +2131,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ListHeadersResponse'
       security:
       - CookieAuth: []
       summary: 'Справочник заголовков: автодополнение (§24).'
@@ -1764,9 +2159,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Создать заголовок в справочнике (admin, §24).
@@ -1795,14 +2188,11 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.KafkaByNodeResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Топ-узлы по нагрузке и ошибкам за период (§4.4 spec).
@@ -1837,15 +2227,11 @@ paths:
         "400":
           description: период длиннее 90 дней
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "403":
           description: Forbidden
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Сводка экрана мониторинга Kafka за период (§4.1 spec).
@@ -1861,8 +2247,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.KafkaTestResponse'
       security:
       - CookieAuth: []
       summary: Ping брокеров кластера (§4.5 spec).
@@ -1903,9 +2288,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Временные ряды Kafka-графиков за период (§4.2 spec).
@@ -1921,8 +2304,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.KafkaTopicsResponse'
       security:
       - CookieAuth: []
       summary: Список топиков кластера (§4.3 spec).
@@ -1956,27 +2338,23 @@ paths:
         "400":
           description: Bad Request
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "409":
           description: node disabled
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "422":
+          description: original body not logged — provide manually
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "429":
           description: rate limit exceeded
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Повторно отправить запрос через шину (§7.4.1).
@@ -2003,15 +2381,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "401":
           description: current password incorrect
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Сменить собственный пароль (self-service).
@@ -2035,26 +2409,19 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.SwitchTeamResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "403":
           description: user is not a member of this team
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Сменить текущую команду в сессии.
@@ -2069,14 +2436,11 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.MyTeamsResponse'
         "401":
           description: Unauthorized
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Список команд, в которых состоит текущий пользователь.
@@ -2106,8 +2470,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.NodesMetricsResponse'
       security:
       - CookieAuth: []
       - ApiTokenAuth: []
@@ -2143,14 +2506,11 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.NodeMetricsResponse'
         "404":
           description: Not Found
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       - ApiTokenAuth: []
@@ -2199,8 +2559,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ListNodesResponse'
       security:
       - CookieAuth: []
       - ApiTokenAuth: []
@@ -2228,15 +2587,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "409":
           description: path already exists
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Создать узел.
@@ -2260,9 +2615,7 @@ paths:
         "404":
           description: Not Found
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Удалить узел.
@@ -2285,9 +2638,7 @@ paths:
         "404":
           description: Not Found
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       - ApiTokenAuth: []
@@ -2321,21 +2672,15 @@ paths:
         "400":
           description: Bad Request
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "409":
           description: path already exists
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Обновить узел.
@@ -2355,14 +2700,11 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ListHostsResponse'
         "404":
           description: Not Found
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Хосты, привязанные к узлу (§23).
@@ -2391,9 +2733,7 @@ paths:
         "404":
           description: Not Found
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Привязать хост к узлу (admin, §23).
@@ -2420,9 +2760,7 @@ paths:
         "404":
           description: Not Found
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Отвязать хост от узла (admin, §23).
@@ -2479,8 +2817,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ListLogsResponse'
       security:
       - CookieAuth: []
       - ApiTokenAuth: []
@@ -2507,15 +2844,11 @@ paths:
         "403":
           description: Forbidden
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: SSE live-tail логов узла (§7.4).
@@ -2547,27 +2880,19 @@ paths:
         "400":
           description: Bad Request
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "403":
           description: same team / not allowed
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "404":
           description: node or target team not found
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "409":
           description: path already exists in target team
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Перенести узел в другую команду (admin only, multi-tenancy v2).
@@ -2596,9 +2921,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: 'Dry-run: проверить конфиг узла без сохранения (§7.5.1).'
@@ -2629,15 +2952,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "429":
           description: rate limit exceeded
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Проверить подключение к RabbitMQ (§27.8).
@@ -2657,9 +2976,7 @@ paths:
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Текущие dynamic-настройки Sentry/ClickHouse (§14.5).
@@ -2685,15 +3002,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Обновить dynamic-настройки Sentry/ClickHouse (§14.5).
@@ -2709,14 +3022,11 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ListOrphansResponse'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Поиск orphan-таблиц в ClickHouse (§7.10).
@@ -2740,15 +3050,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Удалить orphan-таблицу (§7.10).
@@ -2777,15 +3083,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Проверить соединение с ClickHouse по patch'у настроек (§7.10).
@@ -2815,15 +3117,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Отправить тестовое уведомление в Telegram с patch'ем настроек (§20.7).
@@ -2840,15 +3138,11 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.PublicSettingsResponse'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Публичный адрес приложения (§28, Пункт 1).
@@ -2878,15 +3172,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Отправить тестовое событие в Sentry с patch'ем настроек (§7.10).
@@ -2900,8 +3190,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ListTeamsResponse'
       security:
       - CookieAuth: []
       summary: Список команд (admin only).
@@ -2929,21 +3218,15 @@ paths:
         "400":
           description: Bad Request
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "409":
           description: slug or ch_database exists
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "503":
           description: ClickHouse unavailable
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Создать команду (admin only).
@@ -2966,21 +3249,15 @@ paths:
         "403":
           description: cannot delete default team
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "409":
           description: team has nodes
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Удалить команду (admin only).
@@ -3003,9 +3280,7 @@ paths:
         "404":
           description: Not Found
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Одна команда по id (admin only).
@@ -3053,8 +3328,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ListTeamMembersResponse'
       security:
       - CookieAuth: []
       summary: Список членов команды (admin only).
@@ -3143,8 +3417,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ListTokensResponse'
       security:
       - CookieAuth: []
       summary: Список API-токенов текущего пользователя (§7.14).
@@ -3169,14 +3442,11 @@ paths:
         "201":
           description: token (plain) + info
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.CreateTokenResponse'
         "400":
           description: Bad Request
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Создать API-токен (§7.14).
@@ -3200,9 +3470,7 @@ paths:
         "404":
           description: Not Found
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Удалить API-токен.
@@ -3226,9 +3494,7 @@ paths:
         "404":
           description: Not Found
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Отозвать API-токен.
@@ -3247,14 +3513,11 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ListUsersResponse'
         "500":
           description: Internal Server Error
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Список пользователей (admin only).
@@ -3280,15 +3543,11 @@ paths:
         "400":
           description: Bad Request
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "409":
           description: login already exists
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Создать пользователя (admin only).
@@ -3311,9 +3570,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Удалить пользователя (admin only).
@@ -3336,9 +3593,7 @@ paths:
         "404":
           description: Not Found
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Один пользователь по id (admin only).
@@ -3371,21 +3626,15 @@ paths:
         "400":
           description: Bad Request
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "403":
           description: cannot demote yourself
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "404":
           description: Not Found
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Обновить пользователя (admin only).
@@ -3417,9 +3666,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       summary: Сменить пароль пользователя (admin only).
@@ -3435,9 +3682,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/internal_web_adapter_in_http.VersionResponse'
       summary: Версия приложения (§30).
       tags:
       - meta
