@@ -44,10 +44,17 @@ export function TeamsPanel() {
 
   const [editing, setEditing] = useState<Team | "new" | null>(null);
   const [membersOf, setMembersOf] = useState<Team | null>(null);
+  const [delError, setDelError] = useState<string | null>(null);
 
   const del = useMutation({
     mutationFn: (id: string) => api.del(`/api/teams/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["teams"] }),
+    onSuccess: () => {
+      setDelError(null);
+      qc.invalidateQueries({ queryKey: ["teams"] });
+    },
+    // П17: команду с узлами удалить нельзя (409) — показываем понятную ошибку.
+    onError: (err: { response?: { data?: { error?: string } } }) =>
+      setDelError(err?.response?.data?.error ?? t("common.error")),
   });
 
   return (
@@ -71,6 +78,11 @@ export function TeamsPanel() {
         <div className="text-fg-muted text-sm">{t("common.loading")}</div>
       )}
       {list.error && <div className="text-err text-sm">{t("common.error")}</div>}
+      {delError && (
+        <div className="rounded-md border border-err/40 bg-err/10 px-3 py-2 text-sm text-err">
+          {delError}
+        </div>
+      )}
 
       {list.data && list.data.items.length === 0 && (
         <div className="text-fg-muted text-sm">{t("settings.teams.empty")}</div>
