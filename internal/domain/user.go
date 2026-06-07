@@ -33,6 +33,7 @@ type User struct {
 type Session struct {
 	Token         string
 	UserID        string
+	Login         string
 	Role          UserRole
 	Lang          UserLang
 	CurrentTeamID string

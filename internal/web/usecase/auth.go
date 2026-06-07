@@ -80,6 +80,7 @@ func (u *AuthUsecase) Login(ctx context.Context, login, password, ip string) (st
 	s := &domain.Session{
 		Token:              token,
 		UserID:             user.ID,
+		Login:              user.Login,
 		Role:               user.Role,
 		Lang:               user.Lang,
 		CurrentTeamID:      user.DefaultTeamID,
