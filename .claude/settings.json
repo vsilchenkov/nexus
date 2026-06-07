@@ -18,7 +18,11 @@
       "mcp__playwright__browser_take_screenshot",
       "mcp__playwright__browser_navigate",
       "mcp__playwright__browser_close",
-      "mcp__playwright__browser_type"
+      "mcp__playwright__browser_type",
+      "mcp__playwright__browser_console_messages",
+      "mcp__playwright__browser_select_option",
+      "mcp__playwright__browser_resize",
+      "Bash(rm -f internal/web/static/assets/*)"
     ],
     "deny": [
       "Bash(rm -rf *)",
