@@ -76,6 +76,7 @@ Nexus — три stateless Go-сервиса плюс набор хранили�
 | `SENTRY_DSN`          | DSN Sentry                                              | пусто                 |
 | `SENTRY_ENVIRONMENT`  | Окружение для Sentry                                    | `production`          |
 | `ENCRYPTION_KEY`      | **Обязателен.** Ключ AES-256-GCM для шифрования кредов узлов в БД — 32 байта в base64 | заглушка |
+| `NEXUS_RECEIVER_MAX_HOPS` | §32: лимит переходов запроса через шину (`X-Nexus-Hops`) до ответа 508 Loop Detected. `0` = дефолт 5; `<0` = защита от зацикливания выключена | `5` |
 
 Дополнительно при single-broker Kafka (один узел) задавайте в `.env`
 `KAFKA_TOPIC_REPLICATION_FACTOR=1` и `KAFKA_TOPIC_MIN_INSYNC_REPLICAS=1` — иначе создание
@@ -114,6 +115,29 @@ Sender'а (`nexus_requests_total`, `nexus_request_incomplete_total`, гисто�
 (в лог пишется warning). Если используете Telegram-алерты — Prometheus обязателен. Метрика
 `nexus_request_incomplete_total{method,node}` отдаётся на `/metrics` Sender'а и должна попадать в
 scrape-конфиг.
+
+### Мониторинг Kafka (§31)
+
+Admin-only экран `/kafka` (раздел «Аудит») питается из **Prometheus** (throughput/lag/ошибки/top-узлы)
+и **Kafka Admin API** (топики/брокеры/ping). Что нужно для прод-развёртывания:
+
+- **Сетевой доступ Web → Kafka-брокеры.** Web Service теперь опционально подключается к брокерам
+  (read-only metadata: Metadata/ListOffsets/ListGroups/OffsetFetch) по адресам `kafka.brokers`
+  (`KAFKA_BROKERS`). Если доступа нет или `kafka.brokers` пуст — admin-клиент не создаётся, блоки
+  «Топики»/«Брокеры»/«Проверить кластер» помечаются недоступными (`kafka_available=false`), остальной
+  экран (KPI/графики из Prometheus) работает. Размер топика на диске не показывается (high-level
+  клиент не отдаёт `DescribeLogDirs`).
+- **Prometheus** тот же (`prometheus.url`). Async-трафик берётся из существующих
+  `nexus_requests_total`/`nexus_request_incomplete_total` по `method="requestAsync"`. Дополнительно
+  Receiver/Sender теперь экспонируют две новые серии на тех же `/metrics` (отдельный scrape не нужен):
+  `nexus_kafka_in_flight{component="sender"}` (сообщения в обработке) и
+  `nexus_kafka_produce_duration_seconds{topic}` (длительность публикации) — источник KPI «In-flight»
+  и порога produce-latency.
+- **Новые параметры конфига** (секция `web:`): `kafka_monitor_rate_limit_per_min` (дефолт 60 —
+  лимит `/api/kafka/*` на пользователя) и `kafka_alerts_thresholds.*` (пороги health-banner/KPI,
+  §31.5). Дефолты безопасны — задавать необязательно.
+- **Доступ.** Раздел и все `/api/kafka/*` — только для роли `admin` (для остальных 403); метаданные
+  кешируются в Redis (TTL 30с).
 
 **§28 — Публичный адрес приложения (после публикации за доменом/reverse-proxy).** Полный адрес
 узла, который показывает UI (`<origin>/api/v1/<verb>/<path>` + кнопка «Скопировать»), по умолчанию

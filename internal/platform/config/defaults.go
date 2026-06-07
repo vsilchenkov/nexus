@@ -105,6 +105,10 @@ func applyDefaults(c *Config) {
 	if c.Receiver.MaxHeaderBytes == 0 {
 		c.Receiver.MaxHeaderBytes = 1_048_576
 	}
+	// §32: hop-лимит против зацикливания. 0 (не задан) → дефолт 5; < 0 → выкл.
+	if c.Receiver.MaxHops == 0 {
+		c.Receiver.MaxHops = 5
+	}
 	if c.Receiver.SenderGRPC.Addr == "" {
 		c.Receiver.SenderGRPC.Addr = "sender:9190"
 	}
@@ -185,5 +189,35 @@ func applyDefaults(c *Config) {
 	}
 	if c.Web.ReceiverURL == "" {
 		c.Web.ReceiverURL = "http://receiver:8080"
+	}
+	if c.Web.KafkaMonitorRateLimitPerMin == 0 {
+		c.Web.KafkaMonitorRateLimitPerMin = 60 // §9 spec: лимит /api/kafka/* на пользователя
+	}
+	applyKafkaAlertsDefaults(&c.Web.KafkaAlerts)
+}
+
+// applyKafkaAlertsDefaults — пороги индикации экрана Kafka-мониторинга (§6 spec).
+// Дефолты совпадают с таблицей порогов ТЗ; нулевое значение поля → дефолт.
+func applyKafkaAlertsDefaults(k *KafkaAlertsSection) {
+	if k.LagWarning == 0 {
+		k.LagWarning = 100
+	}
+	if k.LagCritical == 0 {
+		k.LagCritical = 1000
+	}
+	if k.LagGrowthCriticalPerSec == 0 {
+		k.LagGrowthCriticalPerSec = 50
+	}
+	if k.ErrorRateWarning == 0 {
+		k.ErrorRateWarning = 0.001 // 0.1%
+	}
+	if k.ErrorRateCritical == 0 {
+		k.ErrorRateCritical = 0.01 // 1%
+	}
+	if k.ProduceLatencyP95WarningMs == 0 {
+		k.ProduceLatencyP95WarningMs = 100
+	}
+	if k.ProduceLatencyP95CriticalMs == 0 {
+		k.ProduceLatencyP95CriticalMs = 500
 	}
 }

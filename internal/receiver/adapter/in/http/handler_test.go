@@ -7,11 +7,13 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"nexus/internal/domain"
 	"nexus/internal/platform/logging"
+	"nexus/internal/platform/metrics"
 )
 
 // TestSplitTeamSlugAndPath фиксирует контракт парсинга URL Receiver'а
@@ -70,6 +72,7 @@ func TestClassifyDomainError(t *testing.T) {
 		{"disabled", domain.ErrNodeDisabled, http.StatusServiceUnavailable, false},
 		{"method not allowed", domain.ErrNodeMethodNotAllowed, http.StatusMethodNotAllowed, false},
 		{"url not allowed", domain.ErrURLNotAllowed, http.StatusForbidden, false},
+		{"loop detected", domain.ErrLoopDetected, http.StatusLoopDetected, false},
 		{"unauthorized", domain.ErrUnauthorized, http.StatusUnauthorized, false},
 		{"unknown -> 502 internal", assert.AnError, http.StatusBadGateway, true},
 	}
@@ -82,6 +85,25 @@ func TestClassifyDomainError(t *testing.T) {
 			assert.NotEmpty(t, msg)
 		})
 	}
+}
+
+// TestReplyDomainError_Loop: sync-ответ на петлю — 508 + инкремент
+// nexus_loop_detected_total{mode="sync"} (§32).
+func TestReplyDomainError_Loop(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+	m := metrics.New("receiver")
+	h := &Handler{metrics: m, logger: logging.NewNoop()}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/request/demo", nil)
+	c.Request.Header.Set("X-Nexus-Hops", "5")
+
+	h.replyDomainError(c, domain.ErrLoopDetected, "demo", "test")
+
+	require.Equal(t, http.StatusLoopDetected, w.Code)
+	assert.Equal(t, float64(1), testutil.ToFloat64(m.LoopDetectedTotal.WithLabelValues("sync")))
 }
 
 // TestReplyAsyncError_BodyShape: async-ошибка отвечает {"result":false,"message":...}

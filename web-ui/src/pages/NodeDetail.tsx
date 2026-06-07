@@ -5,10 +5,11 @@ import { Pencil } from "lucide-react";
 import { useState } from "react";
 
 import { api, type Node } from "../api/client";
-import { Button, Chip, Pill } from "../components/ui";
+import { Button, Chip, Pill, type LogsRange } from "../components/ui";
 import { cn } from "../lib/cn";
+import { msToDatetimeLocal } from "../lib/format";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
-import { LogsTab } from "../components/node/LogsTab";
+import { LogsTab, type LogsInitialFilter } from "../components/node/LogsTab";
 import { OverviewTab } from "../components/node/OverviewTab";
 import { ConfigTab } from "../components/node/ConfigTab";
 import { MetricsTab } from "../components/node/MetricsTab";
@@ -21,8 +22,20 @@ export default function NodeDetail() {
   const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
   const [tab, setTab] = useState<Tab>("overview");
+  // §33.4: фильтр логов, прокинутый кликом по столбцу графика (момент времени).
+  const [logsFilter, setLogsFilter] = useState<LogsInitialFilter | null>(null);
   // §26/§28 Пункт 3: редактирование узла — только manager+ (viewer не видит креды).
   const canEdit = useRoleAtLeast("manager");
+
+  // openLogsAt — переход на вкладку логов с временным окном бакета (§33.4).
+  const openLogsAt = (r: LogsRange) => {
+    setLogsFilter({
+      from: msToDatetimeLocal(r.from),
+      to: msToDatetimeLocal(r.to),
+      status: r.onlyErrors ? "err" : "all",
+    });
+    setTab("logs");
+  };
 
   const nodeQ = useQuery({
     queryKey: ["node", id],
@@ -94,7 +107,11 @@ export default function NodeDetail() {
           <button
             key={tb}
             type="button"
-            onClick={() => setTab(tb)}
+            onClick={() => {
+              setTab(tb);
+              // Ручной переход на логи — без унаследованного фильтра клика по графику.
+              if (tb !== "logs") setLogsFilter(null);
+            }}
             className={cn(
               "px-3.5 py-2.5 text-[13px]",
               tab === tb
@@ -107,10 +124,12 @@ export default function NodeDetail() {
         ))}
       </div>
 
-      {tab === "overview" && <OverviewTab node={node} onAllLogs={() => setTab("logs")} />}
-      {tab === "logs" && <LogsTab node={node} />}
+      {tab === "overview" && (
+        <OverviewTab node={node} onAllLogs={() => setTab("logs")} onOpenLogs={openLogsAt} />
+      )}
+      {tab === "logs" && <LogsTab node={node} initialFilter={logsFilter ?? undefined} />}
       {tab === "config" && <ConfigTab node={node} />}
-      {tab === "metrics" && <MetricsTab node={node} />}
+      {tab === "metrics" && <MetricsTab node={node} onOpenLogs={openLogsAt} />}
     </div>
   );
 }

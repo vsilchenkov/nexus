@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nexus — Settings / Kafka · мониторинг</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/tabler-icons.min.css">
+<style>
+:root {
+  --bg-app: #0f1115;
+  --bg-primary: #16191f;
+  --bg-secondary: #1c2027;
+  --bg-tertiary: #22272f;
+  --bg-info: rgba(74, 144, 226, 0.12);
+  --bg-success: rgba(60, 180, 120, 0.14);
+  --bg-warning: rgba(220, 160, 60, 0.14);
+  --bg-danger: rgba(226, 75, 74, 0.12);
+
+  --border-tertiary: #2a3038;
+  --border-strong: #38404a;
+  --border-danger: rgba(226, 75, 74, 0.5);
+  --border-warning: rgba(220, 160, 60, 0.4);
+  --border-success: rgba(60, 180, 120, 0.4);
+
+  --text-primary: #e6e9ef;
+  --text-secondary: #9aa3b2;
+  --text-tertiary: #5f6875;
+  --text-info: #5b9bf0;
+  --text-success: #4cc38a;
+  --text-warning: #d9a441;
+  --text-danger: #e85d5c;
+
+  --radius-sm: 4px;
+  --radius-md: 7px;
+  --radius-lg: 11px;
+
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font-sans); background: var(--bg-app); color: var(--text-primary); font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; padding: 32px; }
+code { font-family: var(--font-mono); font-size: 11px; background: var(--bg-secondary); padding: 1px 6px; border-radius: 3px; color: var(--text-info); }
+
+.intro { max-width: 1280px; margin: 0 auto 24px; }
+.intro .tag { display: inline-block; font-family: var(--font-mono); font-size: 11px; color: var(--text-info); background: var(--bg-info); padding: 3px 8px; border-radius: var(--radius-sm); margin-bottom: 10px; }
+.intro h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; margin-bottom: 6px; }
+.intro p { font-size: 13px; color: var(--text-secondary); line-height: 1.65; max-width: 860px; }
+
+.row { max-width: 1280px; margin: 0 auto 28px; }
+.row-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }
+.row-head .num { font-family: var(--font-mono); font-size: 11px; color: var(--text-info); background: var(--bg-info); padding: 3px 8px; border-radius: var(--radius-sm); }
+.row-head h2 { font-size: 15px; font-weight: 600; }
+.row-desc { font-size: 12.5px; color: var(--text-secondary); margin-bottom: 14px; max-width: 800px; line-height: 1.6; }
+
+/* Frame with sidebar */
+.frame { background: var(--bg-app); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
+.shell { display: grid; grid-template-columns: 220px 1fr; min-height: 1280px; }
+.sidebar { background: var(--bg-primary); border-right: 0.5px solid var(--border-tertiary); padding: 16px 12px; display: flex; flex-direction: column; }
+.brand { display: flex; align-items: center; gap: 9px; padding: 6px 10px 18px; font-weight: 600; font-size: 15px; }
+.brand .logo { width: 26px; height: 26px; border-radius: 7px; background: linear-gradient(135deg, #5b9bf0, #4cc38a); display: grid; place-items: center; color: #fff; font-size: 15px; }
+.nav-group-title { font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-tertiary); padding: 12px 10px 6px; }
+.nav-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--radius-md); font-size: 13px; color: var(--text-secondary); cursor: pointer; margin-bottom: 1px; }
+.nav-item:hover { background: var(--bg-secondary); color: var(--text-primary); }
+.nav-item.active { background: var(--bg-secondary); color: var(--text-primary); font-weight: 500; }
+.nav-item i { font-size: 17px; }
+
+.main { display: flex; flex-direction: column; min-width: 0; }
+.topbar { height: 56px; border-bottom: 0.5px solid var(--border-tertiary); display: flex; align-items: center; gap: 14px; padding: 0 22px; background: var(--bg-primary); }
+.crumbs { font-size: 13px; color: var(--text-secondary); display: flex; align-items: center; gap: 7px; }
+.crumbs .cur { color: var(--text-primary); }
+.crumbs i { font-size: 13px; color: var(--text-tertiary); }
+.spacer { flex: 1; }
+.icon-btn { width: 32px; height: 32px; border-radius: var(--radius-md); display: grid; place-items: center; color: var(--text-secondary); cursor: pointer; }
+.icon-btn:hover { background: var(--bg-secondary); color: var(--text-primary); }
+
+.content { padding: 22px 26px; overflow: auto; }
+
+/* Header with period selector */
+.page-head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 14px; gap: 16px; flex-wrap: wrap; }
+.page-head .ttl { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; margin-bottom: 4px; }
+.page-head .sub { font-size: 13px; color: var(--text-secondary); }
+
+.actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.btn { display: inline-flex; align-items: center; gap: 7px; padding: 7px 13px; border-radius: var(--radius-md); font-size: 12.5px; font-weight: 500; cursor: pointer; border: 0.5px solid var(--border-strong); background: var(--bg-secondary); color: var(--text-primary); font-family: var(--font-sans); }
+.btn:hover { background: var(--bg-tertiary); }
+.btn i { font-size: 14px; }
+.btn-ghost { background: transparent; }
+
+/* Period selector (per screenshot reference) */
+.period-bar { display: inline-flex; align-items: center; gap: 10px; padding: 5px 10px 5px 14px; background: var(--bg-secondary); border-radius: var(--radius-md); }
+.period-bar .label { font-size: 12px; color: var(--text-secondary); padding-right: 4px; }
+.period-bar .seg { display: inline-flex; gap: 2px; }
+.period-bar .seg button {
+  border: none; background: transparent; color: var(--text-secondary);
+  padding: 5px 12px; border-radius: 5px; font-size: 12px; cursor: pointer;
+  font-family: var(--font-sans);
+}
+.period-bar .seg button.on { background: var(--bg-tertiary); color: var(--text-primary); font-weight: 500; }
+.period-bar .custom {
+  border: 0.5px solid var(--border-strong); background: transparent;
+  padding: 5px 12px; border-radius: 5px; font-size: 12px; cursor: pointer;
+  color: var(--text-secondary); font-family: var(--font-sans);
+  margin-left: 4px;
+}
+.period-bar .custom:hover { color: var(--text-primary); }
+
+.fresh { font-size: 11px; color: var(--text-tertiary); display: inline-flex; align-items: center; gap: 6px; }
+.fresh .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-success); animation: pulse 2s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+/* Health banner */
+.health {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 14px 18px; border-radius: var(--radius-md);
+  margin-bottom: 18px; line-height: 1.5;
+}
+.health i { font-size: 22px; flex-shrink: 0; margin-top: 1px; }
+.health .ht { font-size: 14px; font-weight: 600; margin-bottom: 3px; }
+.health .hd { font-size: 12.5px; opacity: 0.9; }
+.health-ok { background: var(--bg-success); border: 0.5px solid var(--border-success); color: var(--text-success); }
+.health-warn { background: var(--bg-warning); border: 0.5px solid var(--border-warning); color: var(--text-warning); }
+.health-err { background: var(--bg-danger); border: 0.5px solid var(--border-danger); color: var(--text-danger); }
+.health .action {
+  margin-left: auto; flex-shrink: 0; padding: 6px 12px; border-radius: var(--radius-md);
+  font-size: 12px; font-weight: 500; cursor: pointer;
+  background: rgba(255,255,255,0.08); color: inherit;
+  border: 0.5px solid currentColor;
+}
+
+/* KPI row */
+.kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px; }
+.kpi {
+  background: var(--bg-primary);
+  border: 0.5px solid var(--border-tertiary);
+  border-radius: var(--radius-md);
+  padding: 14px 16px 12px;
+  display: flex; flex-direction: column;
+  min-height: 130px;
+}
+.kpi.warn { border-color: var(--border-warning); }
+.kpi.err { border-color: var(--border-danger); }
+
+.kpi .kl { font-size: 11px; color: var(--text-secondary); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.05em; }
+.kpi .kv { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; line-height: 1; }
+.kpi .kv .unit { font-size: 14px; color: var(--text-secondary); font-weight: 500; margin-left: 4px; }
+.kpi.warn .kv { color: var(--text-warning); }
+.kpi.err .kv { color: var(--text-danger); }
+.kpi .kdetails { font-size: 11.5px; color: var(--text-secondary); margin-top: 8px; line-height: 1.55; }
+.kpi .kdelta { font-size: 11px; margin-top: auto; padding-top: 8px; color: var(--text-tertiary); }
+.kpi .kdelta .up { color: var(--text-success); }
+.kpi .kdelta .down { color: var(--text-danger); }
+.kpi .spark { display: flex; align-items: flex-end; gap: 1.5px; height: 22px; margin-top: 6px; }
+.kpi .spark span { flex: 1; background: var(--text-info); border-radius: 1px 1px 0 0; opacity: 0.85; }
+.kpi.warn .spark span { background: var(--text-warning); }
+.kpi.err .spark span { background: var(--text-danger); }
+
+/* Chart card */
+.card {
+  background: var(--bg-primary);
+  border: 0.5px solid var(--border-tertiary);
+  border-radius: var(--radius-md);
+  padding: 16px 18px;
+  margin-bottom: 14px;
+}
+.card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.card-title { font-size: 13.5px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.card-title i { color: var(--text-secondary); }
+.card-sub { font-size: 11.5px; color: var(--text-tertiary); margin-left: 4px; font-weight: 400; }
+
+.legend { display: flex; gap: 14px; font-size: 11.5px; color: var(--text-secondary); }
+.legend .l { display: inline-flex; align-items: center; gap: 6px; }
+.legend .l .dot { width: 10px; height: 2px; border-radius: 1px; }
+.legend .l.dashed .dot { background: transparent; border-top: 2px dashed currentColor; }
+
+.seg-small { display: inline-flex; background: var(--bg-secondary); border-radius: var(--radius-md); padding: 2px; gap: 1px; }
+.seg-small button { border: none; background: transparent; color: var(--text-secondary); padding: 3px 9px; border-radius: 4px; font-size: 11px; cursor: pointer; font-family: var(--font-sans); }
+.seg-small button.on { background: var(--bg-tertiary); color: var(--text-primary); }
+
+/* Main chart svg container */
+.chart-main { width: 100%; height: 280px; position: relative; }
+.chart-lag { width: 100%; height: 170px; position: relative; }
+
+/* Two columns side-by-side */
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.split.large { grid-template-columns: 2fr 1fr; }
+
+/* Table */
+table.tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+table.tbl th { text-align: left; padding: 8px 10px; font-weight: 500; color: var(--text-secondary); border-bottom: 0.5px solid var(--border-tertiary); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+table.tbl td { padding: 9px 10px; border-bottom: 0.5px solid var(--border-tertiary); }
+table.tbl tr:hover td { background: var(--bg-secondary); }
+table.tbl tr:last-child td { border-bottom: none; }
+.mono { font-family: var(--font-mono); font-size: 12px; }
+
+.chip { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 10px; font-size: 11px; background: var(--bg-secondary); color: var(--text-secondary); }
+.chip-success { background: var(--bg-success); color: var(--text-success); }
+.chip-warning { background: var(--bg-warning); color: var(--text-warning); }
+.chip-danger { background: var(--bg-danger); color: var(--text-danger); }
+.chip-info { background: var(--bg-info); color: var(--text-info); }
+
+.pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 500; }
+.pill .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.pill-ok { background: var(--bg-success); color: var(--text-success); }
+.pill-warn { background: var(--bg-warning); color: var(--text-warning); }
+.pill-err { background: var(--bg-danger); color: var(--text-danger); }
+
+/* Mini spark in row */
+.mini-spark { display: inline-flex; align-items: flex-end; gap: 1.5px; height: 16px; width: 70px; }
+.mini-spark span { flex: 1; background: var(--text-info); opacity: 0.7; border-radius: 1px 1px 0 0; }
+.mini-spark.warn span { background: var(--text-warning); }
+.mini-spark.err span { background: var(--text-danger); }
+
+/* Broker card */
+.brokers-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.broker-card {
+  background: var(--bg-primary);
+  border: 0.5px solid var(--border-tertiary);
+  border-radius: var(--radius-md);
+  padding: 13px 15px;
+  position: relative;
+}
+.broker-card.warn { border-color: var(--border-warning); }
+.broker-card.err { border-color: var(--border-danger); }
+.broker-card .strip { position: absolute; left: 0; top: 12px; bottom: 12px; width: 3px; background: var(--text-success); border-radius: 2px; }
+.broker-card.warn .strip { background: var(--text-warning); }
+.broker-card.err .strip { background: var(--text-danger); }
+.broker-card .top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; padding-left: 8px; }
+.broker-card .addr { font-family: var(--font-mono); font-size: 13px; font-weight: 500; }
+.broker-card .stats { display: flex; gap: 14px; padding-left: 8px; padding-top: 6px; border-top: 0.5px solid var(--border-tertiary); margin-top: 6px; }
+.broker-card .stat .sl { font-size: 10px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.04em; }
+.broker-card .stat .sv { font-size: 14px; font-weight: 600; }
+.broker-card .warn-note { font-size: 10.5px; color: var(--text-warning); padding-left: 8px; margin-top: 6px; display: flex; align-items: center; gap: 4px; }
+
+/* Notes block */
+.notes { max-width: 1280px; margin: 8px auto 0; padding: 18px 22px; background: var(--bg-primary); border: 0.5px solid var(--border-tertiary); border-radius: var(--radius-lg); font-size: 12.5px; color: var(--text-secondary); line-height: 1.65; }
+.notes h3 { font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; margin-top: 14px; }
+.notes h3:first-child { margin-top: 0; }
+.notes ul { list-style: none; padding: 0; }
+.notes li { padding: 3px 0; }
+.notes li::before { content: "·"; color: var(--text-tertiary); margin-right: 8px; }
+
+/* mini empty for top-failures */
+.empty-state {
+  text-align: center;
+  padding: 28px 16px;
+  font-size: 12.5px;
+  color: var(--text-success);
+}
+.empty-state i { font-size: 28px; margin-bottom: 8px; display: block; }
+</style>
+</head>
+<body>
+
+<div class="intro">
+  <span class="tag">§7.17 · Settings → Kafka</span>
+  <h1>Мониторинг Kafka</h1>
+  <p>Один экран, открыв который администратор за полминуты понимает, всё ли в порядке с шиной. Селектор периода вверху, далее health-баннер (всегда показывает следующее действие), 4 KPI, главный график throughput, отдельный график lag (самый важный сигнал «что-то не так»), таблица топиков, top-узлы и состояние брокеров. Видно только админам.</p>
+</div>
+
+<!-- ============ MAIN VIEW ============ -->
+<div class="row">
+  <div class="frame"><div class="shell">
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="brand"><span class="logo"><i class="ti ti-arrows-exchange"></i></span> Nexus</div>
+      <div class="nav-item"><i class="ti ti-layout-grid"></i> Узлы</div>
+      <div class="nav-item"><i class="ti ti-history"></i> Audit log</div>
+      <div class="nav-group-title">Настройки</div>
+      <div class="nav-item"><i class="ti ti-database"></i> ClickHouse</div>
+      <div class="nav-item active"><i class="ti ti-stack-3"></i> Kafka</div>
+      <div class="nav-item"><i class="ti ti-users"></i> Пользователи</div>
+      <div class="nav-item"><i class="ti ti-key"></i> API Tokens</div>
+      <div class="nav-item"><i class="ti ti-list"></i> Headers Catalog</div>
+      <div class="nav-item"><i class="ti ti-shield-check"></i> Allowed Hosts</div>
+      <div class="nav-item"><i class="ti ti-bell"></i> Sentry</div>
+      <div class="nav-item"><i class="ti ti-language"></i> Язык</div>
+    </aside>
+
+    <div class="main">
+      <div class="topbar">
+        <div class="crumbs">Настройки <i class="ti ti-chevron-right"></i> <span class="cur">Kafka</span></div>
+        <div class="spacer"></div>
+        <div class="icon-btn"><i class="ti ti-file-text"></i></div>
+        <div class="icon-btn"><i class="ti ti-language"></i></div>
+        <div class="icon-btn"><i class="ti ti-moon"></i></div>
+      </div>
+
+      <div class="content">
+
+        <!-- Page header with period selector -->
+        <div class="page-head">
+          <div>
+            <div class="ttl">Мониторинг Kafka</div>
+            <div class="sub">Состояние кластера, throughput, ошибки и узлы-лидеры по нагрузке</div>
+          </div>
+          <div class="actions">
+            <div class="period-bar">
+              <span class="label">Период</span>
+              <div class="seg">
+                <button class="on">1ч</button>
+                <button>3ч</button>
+                <button>24ч</button>
+                <button>7д</button>
+                <button>14д</button>
+                <button>30д</button>
+              </div>
+              <button class="custom">Произвольный</button>
+            </div>
+            <span class="fresh"><span class="dot"></span>Обновлено 4 сек назад</span>
+            <button class="btn btn-ghost"><i class="ti ti-refresh"></i> Обновить</button>
+            <button class="btn"><i class="ti ti-plug-connected"></i> Проверить кластер</button>
+          </div>
+        </div>
+
+        <!-- Health banner -->
+        <div class="health health-warn">
+          <i class="ti ti-alert-triangle"></i>
+          <div>
+            <div class="ht">Внимание: lag растёт быстрее, чем consumer обрабатывает</div>
+            <div class="hd">За последние 5 минут lag на топике <code style="background:rgba(220,160,60,0.18);color:var(--text-warning);">databus.async</code> вырос с 0 до 1,247 (≈ 250 сообщений/мин). Sender справляется примерно вдвое медленнее, чем producer пишет. Проверьте загрузку Sender и рассмотрите увеличение <code style="background:rgba(220,160,60,0.18);color:var(--text-warning);">consumer.instances</code>.</div>
+          </div>
+          <button class="action">Открыть Sender</button>
+        </div>
+
+        <!-- KPI row -->
+        <div class="kpi-row">
+          <div class="kpi">
+            <div class="kl">Сообщений за период</div>
+            <div class="kv">1.24<span class="unit">M</span></div>
+            <div class="kdetails">
+              <span style="color:var(--text-success);">↑</span> produced 1,248,302 ·
+              <span style="color:var(--text-info);">↓</span> consumed 1,238,104
+            </div>
+            <div class="kdelta"><span class="up">+8.2%</span> к предыдущему 1ч</div>
+          </div>
+
+          <div class="kpi warn">
+            <div class="kl">Текущий lag</div>
+            <div class="kv">1,247</div>
+            <div class="spark warn">
+              <span style="height:5%"></span><span style="height:6%"></span><span style="height:5%"></span><span style="height:7%"></span><span style="height:6%"></span><span style="height:8%"></span><span style="height:12%"></span><span style="height:24%"></span><span style="height:48%"></span><span style="height:72%"></span><span style="height:90%"></span><span style="height:100%"></span>
+            </div>
+            <div class="kdelta"><span class="down">▲ растёт +250/мин</span></div>
+          </div>
+
+          <div class="kpi">
+            <div class="kl">Ошибок за период</div>
+            <div class="kv">196</div>
+            <div class="kdetails">12 produce · 184 consume</div>
+            <div class="kdelta">0.016% от общего числа</div>
+          </div>
+
+          <div class="kpi">
+            <div class="kl">In-flight сейчас</div>
+            <div class="kv">47</div>
+            <div class="kdetails">в обработке между produce и consume</div>
+            <div class="kdelta">~ 2 секунды при текущем темпе</div>
+          </div>
+        </div>
+
+        <!-- Main throughput chart -->
+        <div class="card">
+          <div class="card-head">
+            <div class="card-title">
+              <i class="ti ti-chart-line"></i>
+              Throughput
+              <span class="card-sub">сообщений/сек</span>
+            </div>
+            <div style="display:flex;gap:14px;align-items:center;">
+              <div class="legend">
+                <span class="l"><span class="dot" style="background:var(--text-info);"></span>produced</span>
+                <span class="l"><span class="dot" style="background:var(--text-success);"></span>consumed</span>
+                <span class="l dashed" style="color:var(--text-danger);"><span class="dot"></span>errors ×10</span>
+              </div>
+              <div class="seg-small">
+                <button>Auto</button>
+                <button class="on">30с</button>
+                <button>1м</button>
+                <button>5м</button>
+              </div>
+            </div>
+          </div>
+          <div class="chart-main">
+            <svg viewBox="0 0 1200 280" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" style="width:100%;height:100%;">
+              <!-- Grid -->
+              <defs>
+                <linearGradient id="g-produced" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="#5b9bf0" stop-opacity="0.25"/>
+                  <stop offset="100%" stop-color="#5b9bf0" stop-opacity="0"/>
+                </linearGradient>
+                <linearGradient id="g-consumed" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="#4cc38a" stop-opacity="0.18"/>
+                  <stop offset="100%" stop-color="#4cc38a" stop-opacity="0"/>
+                </linearGradient>
+              </defs>
+
+              <!-- Y grid lines -->
+              <g stroke="#2a3038" stroke-width="0.5">
+                <line x1="50" y1="40" x2="1180" y2="40"/>
+                <line x1="50" y1="100" x2="1180" y2="100"/>
+                <line x1="50" y1="160" x2="1180" y2="160"/>
+                <line x1="50" y1="220" x2="1180" y2="220"/>
+              </g>
+              <g fill="#5f6875" font-size="10" font-family="JetBrains Mono, monospace">
+                <text x="40" y="44" text-anchor="end">800</text>
+                <text x="40" y="104" text-anchor="end">600</text>
+                <text x="40" y="164" text-anchor="end">400</text>
+                <text x="40" y="224" text-anchor="end">200</text>
+                <text x="40" y="270" text-anchor="end">0</text>
+              </g>
+
+              <!-- X labels -->
+              <g fill="#5f6875" font-size="10" font-family="JetBrains Mono, monospace">
+                <text x="100" y="270" text-anchor="middle" dy="14">13:00</text>
+                <text x="280" y="270" text-anchor="middle" dy="14">13:10</text>
+                <text x="460" y="270" text-anchor="middle" dy="14">13:20</text>
+                <text x="640" y="270" text-anchor="middle" dy="14">13:30</text>
+                <text x="820" y="270" text-anchor="middle" dy="14">13:40</text>
+                <text x="1000" y="270" text-anchor="middle" dy="14">13:50</text>
+                <text x="1180" y="270" text-anchor="middle" dy="14">14:00</text>
+              </g>
+
+              <!-- Produced area + line -->
+              <path d="M 50 130 L 100 122 L 160 138 L 220 110 L 280 118 L 340 96 L 400 104 L 460 88 L 520 102 L 580 76 L 640 90 L 700 70 L 760 84 L 820 60 L 880 78 L 940 56 L 1000 62 L 1060 48 L 1120 54 L 1180 42 L 1180 260 L 50 260 Z"
+                    fill="url(#g-produced)"/>
+              <path d="M 50 130 L 100 122 L 160 138 L 220 110 L 280 118 L 340 96 L 400 104 L 460 88 L 520 102 L 580 76 L 640 90 L 700 70 L 760 84 L 820 60 L 880 78 L 940 56 L 1000 62 L 1060 48 L 1120 54 L 1180 42"
+                    fill="none" stroke="#5b9bf0" stroke-width="2"/>
+
+              <!-- Consumed area + line — diverges from produced after ~640 (lag growing) -->
+              <path d="M 50 134 L 100 128 L 160 142 L 220 116 L 280 124 L 340 104 L 400 112 L 460 98 L 520 110 L 580 88 L 640 102 L 700 108 L 760 124 L 820 118 L 880 138 L 940 132 L 1000 148 L 1060 142 L 1120 156 L 1180 150 L 1180 260 L 50 260 Z"
+                    fill="url(#g-consumed)"/>
+              <path d="M 50 134 L 100 128 L 160 142 L 220 116 L 280 124 L 340 104 L 400 112 L 460 98 L 520 110 L 580 88 L 640 102 L 700 108 L 760 124 L 820 118 L 880 138 L 940 132 L 1000 148 L 1060 142 L 1120 156 L 1180 150"
+                    fill="none" stroke="#4cc38a" stroke-width="2"/>
+
+              <!-- Errors (×10 scaled), dashed -->
+              <path d="M 50 252 L 220 250 L 400 248 L 580 252 L 760 244 L 940 240 L 1120 230 L 1180 232"
+                    fill="none" stroke="#e85d5c" stroke-width="1.5" stroke-dasharray="4 4"/>
+
+              <!-- Hover indicator (static demo) -->
+              <line x1="940" y1="40" x2="940" y2="260" stroke="#9aa3b2" stroke-width="0.5" stroke-dasharray="2 3"/>
+              <circle cx="940" cy="56" r="4" fill="#5b9bf0" stroke="#16191f" stroke-width="2"/>
+              <circle cx="940" cy="132" r="4" fill="#4cc38a" stroke="#16191f" stroke-width="2"/>
+
+              <!-- Tooltip -->
+              <g transform="translate(956, 36)">
+                <rect width="160" height="84" rx="6" fill="#1c2027" stroke="#38404a" stroke-width="0.5"/>
+                <text x="10" y="18" fill="#e6e9ef" font-size="11" font-family="Inter">13:48:30</text>
+                <text x="10" y="38" fill="#5b9bf0" font-size="11" font-family="JetBrains Mono">produced: 612/s</text>
+                <text x="10" y="54" fill="#4cc38a" font-size="11" font-family="JetBrains Mono">consumed: 318/s</text>
+                <text x="10" y="70" fill="#e85d5c" font-size="11" font-family="JetBrains Mono">errors: 0.4/s</text>
+              </g>
+
+              <!-- Live indicator at the very end -->
+              <circle cx="1180" cy="42" r="6" fill="#5b9bf0" opacity="0.4">
+                <animate attributeName="r" values="4;9;4" dur="2s" repeatCount="indefinite"/>
+                <animate attributeName="opacity" values="0.8;0;0.8" dur="2s" repeatCount="indefinite"/>
+              </circle>
+              <circle cx="1180" cy="42" r="3" fill="#5b9bf0"/>
+            </svg>
+          </div>
+        </div>
+
+        <!-- Lag chart -->
+        <div class="card">
+          <div class="card-head">
+            <div class="card-title">
+              <i class="ti ti-stack-2"></i>
+              Consumer lag
+              <span class="card-sub">отставание от head топика</span>
+            </div>
+            <div class="legend">
+              <span class="l"><span class="dot" style="background:var(--text-warning);"></span>lag</span>
+              <span class="l"><span class="dot" style="background:var(--text-danger);height:1.5px;border-radius:0;"></span>порог критичности (1000)</span>
+            </div>
+          </div>
+          <div class="chart-lag">
+            <svg viewBox="0 0 1200 170" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" style="width:100%;height:100%;">
+              <defs>
+                <linearGradient id="g-lag" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="#d9a441" stop-opacity="0.35"/>
+                  <stop offset="100%" stop-color="#d9a441" stop-opacity="0"/>
+                </linearGradient>
+              </defs>
+
+              <g stroke="#2a3038" stroke-width="0.5">
+                <line x1="50" y1="30" x2="1180" y2="30"/>
+                <line x1="50" y1="80" x2="1180" y2="80"/>
+                <line x1="50" y1="130" x2="1180" y2="130"/>
+              </g>
+              <g fill="#5f6875" font-size="10" font-family="JetBrains Mono, monospace">
+                <text x="40" y="34" text-anchor="end">1500</text>
+                <text x="40" y="84" text-anchor="end">1000</text>
+                <text x="40" y="134" text-anchor="end">500</text>
+                <text x="40" y="160" text-anchor="end">0</text>
+              </g>
+
+              <!-- Critical threshold line at lag=1000 (y=80) -->
+              <line x1="50" y1="80" x2="1180" y2="80" stroke="#e85d5c" stroke-width="1" stroke-dasharray="6 4" opacity="0.6"/>
+
+              <!-- Lag was 0 most of time, then started growing in second half -->
+              <path d="M 50 156 L 200 156 L 350 156 L 500 154 L 640 152 L 760 144 L 820 130 L 880 110 L 940 88 L 1000 70 L 1060 58 L 1120 50 L 1180 44 L 1180 156 L 50 156 Z"
+                    fill="url(#g-lag)"/>
+              <path d="M 50 156 L 200 156 L 350 156 L 500 154 L 640 152 L 760 144 L 820 130 L 880 110 L 940 88 L 1000 70 L 1060 58 L 1120 50 L 1180 44"
+                    fill="none" stroke="#d9a441" stroke-width="2"/>
+
+              <!-- Red zone overlay above threshold -->
+              <path d="M 940 88 L 1000 70 L 1060 58 L 1120 50 L 1180 44 L 1180 80 L 940 80 Z" fill="#e85d5c" opacity="0.18"/>
+
+              <!-- Live dot -->
+              <circle cx="1180" cy="44" r="6" fill="#d9a441" opacity="0.4">
+                <animate attributeName="r" values="4;9;4" dur="2s" repeatCount="indefinite"/>
+                <animate attributeName="opacity" values="0.8;0;0.8" dur="2s" repeatCount="indefinite"/>
+              </circle>
+              <circle cx="1180" cy="44" r="3" fill="#d9a441"/>
+
+              <!-- X labels -->
+              <g fill="#5f6875" font-size="10" font-family="JetBrains Mono, monospace">
+                <text x="100" y="160" text-anchor="middle" dy="12">13:00</text>
+                <text x="460" y="160" text-anchor="middle" dy="12">13:20</text>
+                <text x="820" y="160" text-anchor="middle" dy="12">13:40</text>
+                <text x="1180" y="160" text-anchor="middle" dy="12">14:00</text>
+              </g>
+            </svg>
+          </div>
+        </div>
+
+        <!-- Topics table -->
+        <div class="card">
+          <div class="card-head">
+            <div class="card-title">
+              <i class="ti ti-stack-3"></i>
+              Топики
+              <span class="card-sub">все топики кластера</span>
+            </div>
+          </div>
+          <table class="tbl">
+            <thead>
+              <tr>
+                <th>Топик</th><th>Партиций</th><th>Replication</th><th>Размер</th><th>Сообщений ~</th><th>Consumer groups</th><th>Состояние</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="mono">databus.async</td>
+                <td>4</td>
+                <td>3</td>
+                <td>12.5 GB</td>
+                <td>8,421,033</td>
+                <td><span class="chip chip-warning">sender-1 · lag 1,247</span></td>
+                <td><span class="pill pill-warn"><span class="dot"></span>растущий lag</span></td>
+              </tr>
+              <tr>
+                <td class="mono">databus.dlq</td>
+                <td>1</td>
+                <td>3</td>
+                <td>284 MB</td>
+                <td>14,802</td>
+                <td><span class="chip">—</span></td>
+                <td><span class="pill pill-ok"><span class="dot"></span>OK</span></td>
+              </tr>
+              <tr>
+                <td class="mono">databus.rmq.bridge</td>
+                <td>2</td>
+                <td>3</td>
+                <td>4.1 GB</td>
+                <td>2,103,440</td>
+                <td><span class="chip chip-success">sender-1 · lag 0</span></td>
+                <td><span class="pill pill-ok"><span class="dot"></span>OK</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Top producers + Top failures side by side -->
+        <div class="split">
+          <div class="card" style="margin-bottom:0;">
+            <div class="card-head">
+              <div class="card-title">
+                <i class="ti ti-trending-up"></i>
+                Top producers
+                <span class="card-sub">узлы по числу сообщений в Kafka</span>
+              </div>
+            </div>
+            <table class="tbl">
+              <thead><tr><th>Узел</th><th>Сообщений</th><th>Доля</th><th>Тренд</th></tr></thead>
+              <tbody>
+                <tr><td class="mono">billing-events</td><td>482,103</td><td>38.6%</td><td><span class="mini-spark"><span style="height:50%"></span><span style="height:62%"></span><span style="height:58%"></span><span style="height:74%"></span><span style="height:68%"></span><span style="height:84%"></span><span style="height:80%"></span><span style="height:96%"></span><span style="height:90%"></span><span style="height:100%"></span></span></td></tr>
+                <tr><td class="mono">geo/notify</td><td>312,044</td><td>25.0%</td><td><span class="mini-spark"><span style="height:60%"></span><span style="height:55%"></span><span style="height:64%"></span><span style="height:58%"></span><span style="height:70%"></span><span style="height:62%"></span><span style="height:75%"></span><span style="height:68%"></span><span style="height:78%"></span><span style="height:72%"></span></span></td></tr>
+                <tr><td class="mono">crm/sync</td><td>198,521</td><td>15.9%</td><td><span class="mini-spark"><span style="height:50%"></span><span style="height:48%"></span><span style="height:52%"></span><span style="height:50%"></span><span style="height:54%"></span><span style="height:48%"></span><span style="height:52%"></span><span style="height:50%"></span><span style="height:48%"></span><span style="height:52%"></span></span></td></tr>
+                <tr><td class="mono">analytics/track</td><td>142,801</td><td>11.5%</td><td><span class="mini-spark"><span style="height:38%"></span><span style="height:42%"></span><span style="height:40%"></span><span style="height:44%"></span><span style="height:40%"></span><span style="height:46%"></span><span style="height:42%"></span><span style="height:48%"></span><span style="height:44%"></span><span style="height:46%"></span></span></td></tr>
+                <tr><td class="mono">payments/webhook</td><td>87,022</td><td>7.0%</td><td><span class="mini-spark"><span style="height:30%"></span><span style="height:32%"></span><span style="height:28%"></span><span style="height:34%"></span><span style="height:30%"></span><span style="height:32%"></span><span style="height:28%"></span><span style="height:32%"></span><span style="height:30%"></span><span style="height:32%"></span></span></td></tr>
+                <tr><td class="mono">notifications/email</td><td>25,811</td><td>2.0%</td><td><span class="mini-spark"><span style="height:18%"></span><span style="height:20%"></span><span style="height:16%"></span><span style="height:22%"></span><span style="height:18%"></span><span style="height:20%"></span><span style="height:18%"></span><span style="height:22%"></span><span style="height:20%"></span><span style="height:18%"></span></span></td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="card" style="margin-bottom:0;">
+            <div class="card-head">
+              <div class="card-title">
+                <i class="ti ti-alert-circle"></i>
+                Top failures
+                <span class="card-sub">узлы с ошибками доставки</span>
+              </div>
+            </div>
+            <table class="tbl">
+              <thead><tr><th>Узел</th><th>Ошибок</th><th>Error rate</th></tr></thead>
+              <tbody>
+                <tr style="background:var(--bg-danger);"><td class="mono">old/legacy</td><td>142</td><td><span class="pill pill-err">12.4%</span></td></tr>
+                <tr style="background:var(--bg-warning);"><td class="mono">notifications/email</td><td>28</td><td><span class="pill pill-warn">3.1%</span></td></tr>
+                <tr><td class="mono">analytics/track</td><td>12</td><td><span class="chip">0.08%</span></td></tr>
+                <tr><td class="mono">geo/notify</td><td>9</td><td><span class="chip">0.003%</span></td></tr>
+                <tr><td class="mono">payments/webhook</td><td>4</td><td><span class="chip">0.005%</span></td></tr>
+                <tr><td class="mono">crm/sync</td><td>1</td><td><span class="chip">&lt;0.001%</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Brokers (after top blocks) -->
+        <div class="card" style="margin-top:14px;">
+          <div class="card-head">
+            <div class="card-title">
+              <i class="ti ti-server"></i>
+              Брокеры
+              <span class="card-sub">3 из 3 online</span>
+            </div>
+            <button class="btn btn-sm btn-ghost"><i class="ti ti-refresh"></i> Перепроверить</button>
+          </div>
+          <div class="brokers-grid">
+            <div class="broker-card">
+              <span class="strip"></span>
+              <div class="top">
+                <span class="addr">kafka-1:9092</span>
+                <span class="pill pill-ok"><span class="dot"></span>online</span>
+              </div>
+              <div class="stats">
+                <div class="stat"><div class="sl">Ping</div><div class="sv">12 ms</div></div>
+                <div class="stat"><div class="sl">Leader for</div><div class="sv">3 partitions</div></div>
+                <div class="stat"><div class="sl">ISR</div><div class="sv">3 / 3</div></div>
+              </div>
+            </div>
+            <div class="broker-card">
+              <span class="strip"></span>
+              <div class="top">
+                <span class="addr">kafka-2:9092</span>
+                <span class="pill pill-ok"><span class="dot"></span>online</span>
+              </div>
+              <div class="stats">
+                <div class="stat"><div class="sl">Ping</div><div class="sv">14 ms</div></div>
+                <div class="stat"><div class="sl">Leader for</div><div class="sv">2 partitions</div></div>
+                <div class="stat"><div class="sl">ISR</div><div class="sv">3 / 3</div></div>
+              </div>
+            </div>
+            <div class="broker-card warn">
+              <span class="strip"></span>
+              <div class="top">
+                <span class="addr">kafka-3:9092</span>
+                <span class="pill pill-warn"><span class="dot"></span>elevated latency</span>
+              </div>
+              <div class="stats">
+                <div class="stat"><div class="sl">Ping</div><div class="sv" style="color:var(--text-warning);">41 ms</div></div>
+                <div class="stat"><div class="sl">Leader for</div><div class="sv">2 partitions</div></div>
+                <div class="stat"><div class="sl">ISR</div><div class="sv">3 / 3</div></div>
+              </div>
+              <div class="warn-note"><i class="ti ti-alert-triangle" style="font-size:12px;"></i> Задержка отклика выше среднего (≥ 30 ms). Стоит проверить сеть до этого хоста.</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div></div>
+</div>
+
+<!-- Notes -->
+<div class="notes">
+  <h3>Главная идея экрана</h3>
+  <ul>
+    <li><b>Health banner</b> — самый важный элемент. Всегда говорит, что делать: «Lag растёт, проверьте Sender» а не «у вас ошибки». Если зелёный — просто «всё хорошо», ничего читать дальше не нужно.</li>
+    <li>KPI справа дают точные цифры; графики — динамику; таблица — детализацию по топикам. Админ сканирует сверху вниз и останавливается на первом, что бросилось в глаза.</li>
+    <li>Lag на отдельном графике (а не в общем) — потому что это <strong>самый важный</strong> сигнал. Когда lag растёт быстрее, чем producer пишет — система не справляется. Это критично, и должно быть видно само по себе.</li>
+  </ul>
+
+  <h3>Цветовые пороги (для индикации)</h3>
+  <ul>
+    <li><b>Lag:</b> зелёный &lt;100, жёлтый 100–1000, красный &gt;1000 или прирост &gt;50/сек 5 минут подряд.</li>
+    <li><b>Error rate:</b> зелёный &lt;0.1%, жёлтый 0.1–1%, красный &gt;1%.</li>
+    <li><b>Brokers:</b> любой offline в кластере &lt;3 — критично; offline и &gt;N/2 — критично всегда.</li>
+    <li><b>Under-replicated partitions:</b> ≥1 — жёлтый; ≥1 в кластере с replication_factor&gt;1 — красный.</li>
+  </ul>
+
+  <h3>Источники данных</h3>
+  <ul>
+    <li><b>Prometheus</b> — для throughput, ошибок, латентности через PromQL <code>rate(...)</code> и <code>sum_over_time(...)</code>.</li>
+    <li><b>Kafka AdminClient</b> — для метаданных топиков, размера на диске (DescribeLogDirs), состояния ISR, consumer group lag. Кешируется в Redis 30 секунд.</li>
+    <li><b>Топ-узлы</b> — из ClickHouse-логов, агрегация <code>COUNT(*) GROUP BY node_path</code> за период.</li>
+  </ul>
+
+  <h3>Автообновление</h3>
+  <ul>
+    <li>Раз в 10 секунд при открытом экране (полный refresh, инвалидация всех queries TanStack Query).</li>
+    <li>Кнопка «Обновить» — ручной immediate refresh.</li>
+    <li>Live-индикатор в правом конце линий графиков — пульсирующая точка, показывающая самые свежие значения.</li>
+    <li>При смене периода — все блоки перерисовываются мгновенно.</li>
+  </ul>
+
+  <h3>Что Claude Code должен учесть</h3>
+  <ul>
+    <li>Графики через <code>recharts</code> или <code>visx</code> — оба работают с SVG, поддерживают tooltip и легенду. Не Chart.js (canvas, хуже для интерактива).</li>
+    <li>Селектор периода — общий компонент <code>&lt;PeriodPicker /&gt;</code>; будет переиспользоваться на других мониторинговых экранах (если появятся).</li>
+    <li>Запросы к <code>/api/kafka/timeseries</code> — через TanStack Query с <code>queryKey: ['kafka', 'timeseries', period, metrics]</code>; при смене периода старые запросы отменяются через AbortController.</li>
+    <li>Health banner — отдельный компонент <code>&lt;HealthBanner severity="ok|warn|err" title="..." details="..." action={{label, href}} /&gt;</code>; пригодится и на других экранах.</li>
+    <li>SVG-чарты в этом мокапе — стилизация-эталон. В коде использовать библиотеку, не рисовать пути руками.</li>
+    <li><b>Доступ:</b> middleware на роутере <code>/settings/kafka</code> и на всех <code>/api/kafka/*</code> проверяет <code>user.role === 'admin'</code>. Возврат 403 для не-админов без редиректа.</li>
+  </ul>
+</div>
+
+</body>
+</html>

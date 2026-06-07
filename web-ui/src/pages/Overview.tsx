@@ -18,10 +18,12 @@ import {
   Input,
   Kpi,
   KpiRow,
+  ChartTooltip,
   PeriodPicker,
   Pill,
   Seg,
   Select,
+  Tooltip,
   defaultPeriod,
   periodKey,
   periodParams,
@@ -52,6 +54,9 @@ export default function Overview() {
   const { t } = useTranslation();
   // §26/§28 Пункт 3: создание/редактирование узлов — только manager+.
   const canEdit = useRoleAtLeast("manager");
+  // Перенос узла между командами — admin-only (как и сам /move-эндпоинт):
+  // не показываем кнопку «Перенести» viewer/manager, иначе клик упрётся в 403.
+  const canMove = useRoleAtLeast("admin");
   // §28 Пункт 4: период метрик per-node throughput (по умолчанию 1h).
   const [period, setPeriod] = useState<Period>(defaultPeriod);
   const [search, setSearch] = useState("");
@@ -94,23 +99,30 @@ export default function Overview() {
   // Сортировка: проблемные первыми (err → warn → paused → ok → disabled),
   // внутри статуса — по убыванию входящего трафика (§22, ui_cards.html).
   const sortRank: Record<Variant, number> = useMemo(
-    () => ({ err: 0, warn: 1, paused: 2, ok: 3, disabled: 4 }),
+    () => ({ err: 0, warn: 1, paused: 2, ok: 3, unknown: 4, disabled: 5 }),
     [],
   );
+
+  // metricsReady — метрики throughput реально пришли и Prometheus доступен.
+  // Пока не готовы, статус узла показываем нейтральным «unknown», а не зелёным
+  // «OK» (П11: статус мигал ОК→down при дозагрузке метрик).
+  const metricsReady = thrQ.isSuccess && (thrQ.data?.prometheus_available ?? false);
 
   const nodes = useMemo(() => {
     let items = nodesQ.data?.items ?? [];
     if (method) items = items.filter((n) => n.root_method === method);
     if (statusFilter !== "all") {
-      items = items.filter((n) => nodeVariant(n, throughput.get(n.path)) === statusFilter);
+      items = items.filter(
+        (n) => nodeVariant(n, throughput.get(n.path), metricsReady) === statusFilter,
+      );
     }
     return [...items].sort((a, b) => {
-      const va = nodeVariant(a, throughput.get(a.path));
-      const vb = nodeVariant(b, throughput.get(b.path));
+      const va = nodeVariant(a, throughput.get(a.path), metricsReady);
+      const vb = nodeVariant(b, throughput.get(b.path), metricsReady);
       if (sortRank[va] !== sortRank[vb]) return sortRank[va] - sortRank[vb];
       return (throughput.get(b.path)?.in ?? 0) - (throughput.get(a.path)?.in ?? 0);
     });
-  }, [nodesQ.data, method, statusFilter, throughput, sortRank]);
+  }, [nodesQ.data, method, statusFilter, throughput, sortRank, metricsReady]);
 
   const kpi = kpiQ.data;
   const errPct = kpi && kpi.error_rate > 0 ? (kpi.error_rate * 100).toFixed(2) + "%" : "0%";
@@ -196,9 +208,9 @@ export default function Overview() {
 
       {nodes.length > 0 &&
         (view === "table" ? (
-          <NodeTable nodes={nodes} throughput={throughput} onMove={setMoveTarget} period={period} />
+          <NodeTable nodes={nodes} throughput={throughput} onMove={canMove ? setMoveTarget : undefined} period={period} ready={metricsReady} />
         ) : (
-          <NodeCards nodes={nodes} throughput={throughput} onMove={setMoveTarget} period={period} />
+          <NodeCards nodes={nodes} throughput={throughput} onMove={canMove ? setMoveTarget : undefined} period={period} ready={metricsReady} />
         ))}
 
       {moveTarget && (
@@ -208,20 +220,21 @@ export default function Overview() {
   );
 }
 
-type Variant = "ok" | "warn" | "err" | "paused" | "disabled";
-type StatusInfo = { tone: "ok" | "err" | "warn"; label: string; variant: Variant };
+type Variant = "ok" | "warn" | "err" | "paused" | "disabled" | "unknown";
+type StatusInfo = { tone: "ok" | "err" | "warn" | "muted"; label: string; variant: Variant };
 
 // nodeVariant — чистая классификация статуса узла (без i18n), для фильтра,
-// сортировки и цвета акцента карточки (§22, ui_cards.html).
-function nodeVariant(n: Node, m?: Throughput): Variant {
+// сортировки и цвета акцента карточки (§22, ui_cards.html). ready=false (метрики
+// ещё не пришли / Prometheus недоступен) → нейтральный "unknown", чтобы не
+// показывать ложный зелёный «OK» до загрузки данных (П11).
+function nodeVariant(n: Node, m: Throughput | undefined, ready: boolean): Variant {
   if (n.status === "disabled") return "disabled";
   if (n.status === "paused") return "paused";
-  if (m) {
-    const rate = m.out > 0 ? m.errors / m.out : 0;
-    if (rate > 0.3) return "err";
-    if (n.root_method === "requestAsync" && m.in - m.out > Math.max(50, m.in * 0.1)) {
-      return "warn";
-    }
+  if (!ready || !m) return "unknown";
+  const rate = m.out > 0 ? m.errors / m.out : 0;
+  if (rate > 0.3) return "err";
+  if (n.root_method === "requestAsync" && m.in - m.out > Math.max(50, m.in * 0.1)) {
+    return "warn";
   }
   return "ok";
 }
@@ -233,12 +246,13 @@ const accentByVariant: Record<Variant, string> = {
   err: "border-l-err",
   paused: "border-l-accent",
   disabled: "border-l-fg-subtle",
+  unknown: "border-l-line",
 };
 
 function useStatus() {
   const { t } = useTranslation();
-  return (n: Node, m?: Throughput): StatusInfo => {
-    const variant = nodeVariant(n, m);
+  return (n: Node, m: Throughput | undefined, ready: boolean): StatusInfo => {
+    const variant = nodeVariant(n, m, ready);
     switch (variant) {
       case "disabled":
         return { variant, tone: "err", label: t("node.status.disabled") };
@@ -248,6 +262,8 @@ function useStatus() {
         return { variant, tone: "err", label: t("overview.status.down") };
       case "warn":
         return { variant, tone: "warn", label: t("overview.status.queue") };
+      case "unknown":
+        return { variant, tone: "muted", label: t("overview.status.unknown") };
       default:
         return { variant, tone: "ok", label: t("overview.status.ok") };
     }
@@ -259,11 +275,13 @@ function NodeTable({
   throughput,
   onMove,
   period,
+  ready,
 }: {
   nodes: Node[];
   throughput: Map<string, Throughput>;
-  onMove: (n: Node) => void;
+  onMove?: (n: Node) => void;
   period: Period;
+  ready: boolean;
 }) {
   const { t } = useTranslation();
   const status = useStatus();
@@ -286,7 +304,7 @@ function NodeTable({
         <tbody>
           {nodes.map((n) => {
             const m = throughput.get(n.path);
-            const s = status(n, m);
+            const s = status(n, m, ready);
             return (
               <tr key={n.id} className="border-b border-line last:border-0 hover:bg-bg-muted">
                 <td className="px-3 py-2.5 font-mono">
@@ -304,13 +322,15 @@ function NodeTable({
                   <Pill tone={s.tone}>{s.label}</Pill>
                 </td>
                 <td className="px-3 py-2.5 text-right">
-                  <button
-                    type="button"
-                    onClick={() => onMove(n)}
-                    className="text-xs text-fg-subtle hover:text-accent"
-                  >
-                    {t("overview.move.action")}
-                  </button>
+                  {onMove && (
+                    <button
+                      type="button"
+                      onClick={() => onMove(n)}
+                      className="text-xs text-fg-subtle hover:text-accent"
+                    >
+                      {t("overview.move.action")}
+                    </button>
+                  )}
                 </td>
               </tr>
             );
@@ -334,11 +354,13 @@ function NodeCards({
   throughput,
   onMove,
   period,
+  ready,
 }: {
   nodes: Node[];
   throughput: Map<string, Throughput>;
-  onMove: (n: Node) => void;
+  onMove?: (n: Node) => void;
   period: Period;
+  ready: boolean;
 }) {
   const { t } = useTranslation();
   const status = useStatus();
@@ -347,7 +369,7 @@ function NodeCards({
     <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
       {nodes.map((n) => {
         const m = throughput.get(n.path);
-        const s = status(n, m);
+        const s = status(n, m, ready);
         const target =
           n.url_mode === "from_request" ? t("overview.card.dynamic_url") : n.target_url || "—";
         return (
@@ -390,13 +412,15 @@ function NodeCards({
               <span className="truncate font-mono" title={target}>
                 {target}
               </span>
-              <button
-                type="button"
-                onClick={() => onMove(n)}
-                className="shrink-0 hover:text-accent"
-              >
-                {t("overview.move.action")}
-              </button>
+              {onMove && (
+                <button
+                  type="button"
+                  onClick={() => onMove(n)}
+                  className="shrink-0 hover:text-accent"
+                >
+                  {t("overview.move.action")}
+                </button>
+              )}
             </div>
           </Card>
         );
@@ -424,9 +448,11 @@ function fmtBucket(start: number, end: number, multiDay: boolean): string {
 }
 
 // Sparkline — мини-график входящего трафика за период (§22, ui_cards.html).
-// На каждом столбце нативный тултип с конкретикой: окно времени бакета и число
-// входящих запросов (нативный title — легковесно, на Overview много карточек).
+// На каждом столбце единый тултип (§33): окно бакета + число входящих запросов.
+// Radix-тултип монтирует контент лениво на hover (провайдер общий в AppShell) —
+// на Overview много карточек, но накладные минимальны.
 function Sparkline({ data, variant, period }: { data: number[]; variant: Variant; period: Period }) {
+  const { t } = useTranslation();
   if (data.length === 0) {
     return <div className="h-7" />;
   }
@@ -447,12 +473,23 @@ function Sparkline({ data, variant, period }: { data: number[]; variant: Variant
       {data.map((v, i) => {
         const start = since + i * bucketW;
         return (
-          <span
+          <Tooltip
             key={i}
-            className={cn("flex-1 rounded-sm opacity-80", color)}
-            style={{ height: `${Math.max(4, (v / max) * 100)}%` }}
-            title={`${fmtBucket(start, start + bucketW, multiDay)} · ${fmtNum(Math.round(v))}`}
-          />
+            side="top"
+            delayDuration={150}
+            content={
+              <ChartTooltip
+                compact
+                period={{ from: fmtBucket(start, start + bucketW, multiDay) }}
+                primary={{ value: fmtNum(Math.round(v)), unit: t("metrics.tooltip.requests") }}
+              />
+            }
+          >
+            <span
+              className={cn("flex-1 rounded-sm opacity-80", color)}
+              style={{ height: `${Math.max(4, (v / max) * 100)}%` }}
+            />
+          </Tooltip>
         );
       })}
     </div>

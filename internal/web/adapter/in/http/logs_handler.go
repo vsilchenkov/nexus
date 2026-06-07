@@ -53,15 +53,16 @@ type LogRecordDTO struct {
 	AttemptsDetails  string    `json:"attempts_details,omitempty"`
 }
 
-func toLogDTO(r *domain.LogRecord) LogRecordDTO {
-	return LogRecordDTO{
+// toLogDTO маппит запись лога в JSON-DTO. includeBodies=false вырезает тяжёлые
+// поля request/response (и parameters): списки/стрим отдают только метаданные,
+// чтобы snapshot из сотен строк с большими телами не вешал фронт. Полные тела
+// доступны через GET /api/nodes/{id}/log/{logId} лениво по клику (§7.4.1).
+func toLogDTO(r *domain.LogRecord, includeBodies bool) LogRecordDTO {
+	dto := LogRecordDTO{
 		ID:               r.ID,
 		Type:             string(r.Type),
 		URL:              r.URL,
 		Method:           r.Method,
-		Parameters:       r.Parameters,
-		Request:          r.Request,
-		Response:         r.Response,
 		Status:           r.Status,
 		Reason:           r.Reason,
 		DateRequest:      r.DateRequest,
@@ -75,6 +76,12 @@ func toLogDTO(r *domain.LogRecord) LogRecordDTO {
 		Attempts:         r.Attempts,
 		AttemptsDetails:  r.AttemptsDetails,
 	}
+	if includeBodies {
+		dto.Parameters = r.Parameters
+		dto.Request = r.Request
+		dto.Response = r.Response
+	}
+	return dto
 }
 
 // logQueryFromContext извлекает расширенные фильтры (§7.4, Phase 6.8) из
@@ -123,7 +130,7 @@ func parseTimeMs(v string) int64 {
 // @Param    status    query  string  false  "ok | err | (пусто)"
 // @Param    done      query  string  false  "yes | no | (пусто)"
 // @Param    q         query  string  false  "подстрока (case-insensitive) по url/request/response"
-// @Success  200       {object}  map[string]any
+// @Success  200       {object}  ListLogsResponse
 // @Security CookieAuth
 // @Security ApiTokenAuth
 // @Router   /api/nodes/{id}/logs [get]
@@ -166,9 +173,41 @@ func (h *LogsHandler) List(c *gin.Context) {
 	}
 	out := make([]LogRecordDTO, 0, len(recs))
 	for _, r := range recs {
-		out = append(out, toLogDTO(r))
+		out = append(out, toLogDTO(r, false))
 	}
 	c.JSON(http.StatusOK, gin.H{"items": out})
+}
+
+// Get godoc
+// @Summary  Одна запись лога целиком (с телами request/response).
+// @Description  Тела грузятся лениво по клику на строку — списки (List/Stream) их не возвращают, чтобы snapshot из сотен строк с большими JSON не вешал фронт (§7.4.1).
+// @Tags     logs
+// @Produce  json
+// @Param    id     path  string  true  "node id"
+// @Param    logId  path  string  true  "log record id"
+// @Success  200    {object}  LogRecordDTO
+// @Failure  404    {object}  ErrorResponse
+// @Security CookieAuth
+// @Security ApiTokenAuth
+// @Router   /api/nodes/{id}/log/{logId} [get]
+func (h *LogsHandler) Get(c *gin.Context) {
+	nodeID := c.Param("id")
+	logID := c.Param("logId")
+	rec, err := h.uc.GetByID(c.Request.Context(), nodeID, currentTeamID(c), logID)
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrNodeNotFound), errors.Is(err, domain.ErrNotFound):
+			localizedError(c, http.StatusNotFound, "node.not_found")
+		case errors.Is(err, domain.ErrNodeLogsNotConfigured):
+			localizedError(c, http.StatusNotFound, "node.not_found")
+		default:
+			h.logger.ErrorWithOp("log get failed", err, "logs.get",
+				h.logger.Str("node_id", nodeID))
+			localizedError(c, http.StatusInternalServerError, "error.internal")
+		}
+		return
+	}
+	c.JSON(http.StatusOK, toLogDTO(rec, true))
 }
 
 // Stream godoc
@@ -178,8 +217,8 @@ func (h *LogsHandler) List(c *gin.Context) {
 // @Produce  text/event-stream
 // @Param    id  path  string  true  "node id"
 // @Success  200  {string}  string  "event-stream"
-// @Failure  403  {object}  map[string]string
-// @Failure  404  {object}  map[string]string
+// @Failure  403  {object}  ErrorResponse
+// @Failure  404  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/nodes/{id}/logs/stream [get]
 func (h *LogsHandler) Stream(c *gin.Context) {
@@ -236,7 +275,7 @@ func (h *LogsHandler) Stream(c *gin.Context) {
 			if !ok {
 				return
 			}
-			c.SSEvent("log", toLogDTO(rec))
+			c.SSEvent("log", toLogDTO(rec, false))
 			c.Writer.Flush()
 		}
 	}

@@ -87,7 +87,7 @@ func newNodeUC(repo *memNodeRepo, prov *verifyProvisioner, templates *memCHTempl
 		tr = templates
 	}
 	// teams=nil (нормализация CH-таблицы выключена), uow=nil (не-tx путь).
-	return NewNodeUsecase(repo, nopNodeCache{}, audit, nil, nil, p, tr, time.Minute, 0, "default-team", logging.NewNoop())
+	return NewNodeUsecase(repo, nopNodeCache{}, audit, nil, nil, p, tr, time.Minute, 0, "default-team", nil, logging.NewNoop())
 }
 
 func nodeWithTemplate(templateID, table string) *domain.Node {

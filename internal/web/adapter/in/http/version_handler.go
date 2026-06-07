@@ -25,7 +25,7 @@ func NewVersionHandler(version string) *VersionHandler {
 // @Description  Публичный read-only эндпоинт: текущая версия Web Service. Не требует авторизации.
 // @Tags     meta
 // @Produce  json
-// @Success  200  {object}  map[string]string
+// @Success  200  {object}  VersionResponse
 // @Router   /api/version [get]
 func (h *VersionHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"version": h.version})

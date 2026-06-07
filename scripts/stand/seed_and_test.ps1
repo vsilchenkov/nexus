@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Полное «погружение» в тестирование стенда Nexus: создаёт узлы всех типов и
   вариантов авторизации, гоняет по N запросов на каждый и печатает сводку.
@@ -119,8 +119,9 @@ function Fire([hashtable]$node) {
       if ($null -eq $firstBody) { $firstBody = $_.Exception.Message }
     }
   }
+  $sumColor = if ($bad -eq 0) { "Green" } else { "Yellow" }
   Write-Host ("  {0,-26} method={1,-6} ok={2,-5} bad={3}" -f $node.path, $method, $ok, $bad) `
-    -ForegroundColor (if ($bad -eq 0) { "Green" } else { "Yellow" })
+    -ForegroundColor $sumColor
   if ($firstBody) { Write-Host ("      первый ответ: {0}" -f ($firstBody -replace "\s+", " ").Substring(0, [Math]::Min(160, $firstBody.Length))) -ForegroundColor DarkGray }
 }
 

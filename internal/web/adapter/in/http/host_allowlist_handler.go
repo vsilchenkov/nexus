@@ -67,7 +67,7 @@ type attachHostRequest struct {
 // @Param    q      query  string  false  "поиск по паттерну и описанию"
 // @Param    kind   query  string  false  "фильтр по типу: exact|wildcard|regex"
 // @Param    limit  query  int     false  "лимит (по умолчанию 50)"
-// @Success  200  {object}  map[string]interface{}
+// @Success  200  {object}  ListHostsResponse
 // @Security CookieAuth
 // @Router   /api/allowed-hosts [get]
 func (h *HostAllowlistHandler) Search(c *gin.Context) {
@@ -92,7 +92,7 @@ func (h *HostAllowlistHandler) Search(c *gin.Context) {
 // @Produce  json
 // @Param    body  body  hostRequest  true  "host"
 // @Success  201  {object}  hostResponse
-// @Failure  400  {object}  map[string]string
+// @Failure  400  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/allowed-hosts [post]
 func (h *HostAllowlistHandler) Create(c *gin.Context) {
@@ -121,9 +121,9 @@ func (h *HostAllowlistHandler) Create(c *gin.Context) {
 // @Param    id    path  string       true  "host id"
 // @Param    body  body  hostRequest  true  "host"
 // @Success  204
-// @Failure  400  {object}  map[string]string
-// @Failure  404  {object}  map[string]string
-// @Failure  409  {object}  map[string]string
+// @Failure  400  {object}  ErrorResponse
+// @Failure  404  {object}  ErrorResponse
+// @Failure  409  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/allowed-hosts/{id} [patch]
 func (h *HostAllowlistHandler) Update(c *gin.Context) {
@@ -146,8 +146,8 @@ func (h *HostAllowlistHandler) Update(c *gin.Context) {
 // @Produce  json
 // @Param    id   path  string  true  "host id"
 // @Success  204
-// @Failure  404  {object}  map[string]string
-// @Failure  409  {object}  map[string]string
+// @Failure  404  {object}  ErrorResponse
+// @Failure  409  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/allowed-hosts/{id} [delete]
 func (h *HostAllowlistHandler) Delete(c *gin.Context) {
@@ -164,8 +164,8 @@ func (h *HostAllowlistHandler) Delete(c *gin.Context) {
 // @Accept   json
 // @Produce  json
 // @Param    body  body  hostPreviewRequest  true  "preview"
-// @Success  200  {object}  map[string]interface{}
-// @Failure  400  {object}  map[string]string
+// @Success  200  {object}  HostPreviewResponse
+// @Failure  400  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/allowed-hosts/preview [post]
 func (h *HostAllowlistHandler) Preview(c *gin.Context) {
@@ -198,8 +198,8 @@ func (h *HostAllowlistHandler) Preview(c *gin.Context) {
 // @Tags     allowed-hosts
 // @Produce  json
 // @Param    id   path  string  true  "node id"
-// @Success  200  {object}  map[string]interface{}
-// @Failure  404  {object}  map[string]string
+// @Success  200  {object}  ListHostsResponse
+// @Failure  404  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/nodes/{id}/allowed-hosts [get]
 func (h *HostAllowlistHandler) ListByNode(c *gin.Context) {
@@ -223,7 +223,7 @@ func (h *HostAllowlistHandler) ListByNode(c *gin.Context) {
 // @Param    id    path  string             true  "node id"
 // @Param    body  body  attachHostRequest  true  "host_id"
 // @Success  204
-// @Failure  404  {object}  map[string]string
+// @Failure  404  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/nodes/{id}/allowed-hosts [post]
 func (h *HostAllowlistHandler) Attach(c *gin.Context) {
@@ -246,7 +246,7 @@ func (h *HostAllowlistHandler) Attach(c *gin.Context) {
 // @Param    id       path  string  true  "node id"
 // @Param    host_id  path  string  true  "host id"
 // @Success  204
-// @Failure  404  {object}  map[string]string
+// @Failure  404  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/nodes/{id}/allowed-hosts/{host_id} [delete]
 func (h *HostAllowlistHandler) Detach(c *gin.Context) {

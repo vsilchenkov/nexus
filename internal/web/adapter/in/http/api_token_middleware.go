@@ -80,6 +80,7 @@ func APITokenAuthMiddleware(
 		s := &domain.Session{
 			Token:         "",
 			UserID:        user.ID,
+			Login:         user.Login,
 			Role:          user.Role,
 			Lang:          user.Lang,
 			CurrentTeamID: token.TeamID,

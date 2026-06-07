@@ -3063,3 +3063,61 @@ SPA (Sidebar) показывает `v{version}` в футере. Порядок 
 
 Per-request обогащение логгера во всех handler'ах, отдельная группировка
 stacktrace-issue в Sentry, проброс `request_id` в исходящие запросы к узлам.
+
+## 31. Мониторинг Kafka
+
+Полный текст раздела — [sections/31-kafka-monitoring.md](sections/31-kafka-monitoring.md).
+
+Admin-only alarm-dashboard `/kafka` (в блоке «Аудит» навигации, **не** в «Настройках»): health-banner,
+4 KPI, графики throughput и lag (recharts), таблица топиков, top-узлы по нагрузке/ошибкам, карточки
+брокеров. API `/api/kafka/{overview,timeseries,topics,by-node,test}` (admin-only, rate-limit
+`web.kafka_monitor_rate_limit_per_min`, дефолт 60/мин). Источники: Prometheus (async-трафик по
+`method="requestAsync"`, без новых метрик) + Kafka Admin (`segmentio/kafka-go`, кеш Redis 30с) +
+Prometheus `NodeThroughput` для top-узлов. Все источники деградируют мягко (`prometheus_available`/
+`kafka_available`). Пороги индикации — `web.kafka_alerts_thresholds.*` (§31.5).
+
+Отклонения от черновика: пункт меню в блоке «Аудит» (а не «Настройки»), маршрут `/kafka`; метрики из
+существующих `nexus_*{method="requestAsync"}` (а не `databus_kafka_*`); размер топика на диске
+недоступен (`DescribeLogDirs` не в high-level API → `size_bytes=0`, best-effort).
+
+## 32. Защита от зацикливания запросов (loop protection)
+
+Полный текст раздела — [sections/32-loop-protection.md](sections/32-loop-protection.md).
+
+Две независимые меры против петли, когда `target_url` узла указывает на сам Receiver
+(`/v1/request` или `/v1/requestAsync`) и запрос лавинообразно возвращается во входной endpoint.
+
+1. **Hop-счётчик `X-Nexus-Hops` (основной).** Служебный заголовок, который Receiver инкрементит на
+   каждом проходе через шину (в обход allowlist `forward_headers`). На входе `Route`/`RouteAsync`
+   читают счётчик; при `incoming >= receiver.max_hops` (дефолт `5`, env `NEXUS_RECEIVER_MAX_HOPS`,
+   `< 0` — выкл.) запрос отклоняется **508 Loop Detected** и наружу не уходит. Покрывает sync и async
+   (через `Envelope.Headers` в Kafka) и петлю любой топологии. Метрика
+   `nexus_loop_detected_total{service="receiver",mode}`.
+2. **Self-reference валидация `target_url` (вспомогательная).** Web-сервис при `Create`/`Update`
+   узла (`url_mode=static`) отклоняет `target_url`, чей `host:port` совпадает со «своим» ingress
+   (`web.self_ingress_hosts`, дефолт — из `web.receiver_url`) и path начинается с `/v1/request` —
+   **400**, код `node.validation.target_url_self`. Loopback (`localhost`/`127.0.0.1`/`::1`) намеренно
+   не блокируется (тест-стенд). Пустой список — проверка пропускается.
+
+## 33. Доработка тултипов графиков (chart tooltips)
+
+Полный текст раздела — [sections/33-chart-tooltips.md](sections/33-chart-tooltips.md).
+Эталон дизайна — [nexus_chart_tooltip.html](nexus_chart_tooltip.html).
+
+Текущие тултипы графиков бедны (плоская строка `15:43–16:13 · 724`, дефолтный recharts-тултип,
+нативный `title` на спарклайне Overview). Раздел вводит **единый презентационный компонент**
+`<ChartTooltip>` (`web-ui/src/components/ui/ChartTooltip.tsx`) с устойчивой иерархией: период →
+главное значение (mono, цвет по tone) → серии с маркерами, повторяющими стиль линии/бара (сортировка
+по убыванию) → подвал/дельта → опц. действие. Реализация — **под текущую архитектуру**
+(recharts 3.8.1 + Radix Tooltip) **без новых зависимостей** (без `@floating-ui/react`), на уже
+доступных данных API.
+
+- **Интеграция во все графики:** ThroughputChart/LagChart (Kafka, через recharts `content`-адаптер),
+  TrafficChart (узел, в Radix `Tooltip`), MiniSpark (добавить тултип), Sparkline Overview (заменить
+  нативный `title` на Radix). Цвета приводятся к токенам Tailwind.
+- **Действие «открыть логи за момент»** для графиков узла — навигация на логи с `from`/`to` границами
+  бакета (backend `GET /api/nodes/{id}/logs?from=&to=` уже готов).
+- **UX:** задержка появления ~150 ms, мгновенное исчезновение, snap к точке, auto-flip из коробки.
+- **i18n:** новые клиентские ключи `metrics.tooltip.*` / `kafka.tooltip.*` синхронно в `en/ru.json`.
+- **Out of scope (задел v2, нет данных):** разбивка lag по партициям (Prometheus отдаёт агрегат) и
+  сравнение «неделю назад» в рядах (есть только дельта к предыдущему периоду той же длины).

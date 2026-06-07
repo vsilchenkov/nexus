@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
 import { api } from "../../api/client";
+import { useConfirm } from "../../lib/confirm";
 import type { Role } from "../../lib/roles";
 
 type User = {
@@ -90,6 +91,7 @@ function avatarColor(login: string): string {
 
 export function UsersPanel() {
   const { t, i18n } = useTranslation();
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const lang = i18n.language.startsWith("ru") ? "ru" : "en";
 
@@ -295,11 +297,14 @@ export function UsersPanel() {
                     {!isSelf && !isLastAdmin && (
                       <button
                         title={t("settings.users.action.delete")}
-                        onClick={() => {
+                        onClick={async () => {
                           if (
-                            confirm(
-                              t("settings.users.confirm_delete", { login: u.login }),
-                            )
+                            await confirm({
+                              title: t("settings.users.action.delete"),
+                              message: t("settings.users.confirm_delete", { login: u.login }),
+                              confirmLabel: t("settings.users.action.delete"),
+                              danger: true,
+                            })
                           ) {
                             del.mutate(u.id);
                           }

@@ -121,6 +121,7 @@
 | **POST /api/nodes/dry-run** (§7.5.1) с пошаговым отчётом | ✅ Phase 5 | [web/usecase/dry_run.go](../internal/web/usecase/dry_run.go), [http/dry_run_handler.go](../internal/web/adapter/in/http/dry_run_handler.go), UI: [components/DryRunDialog.tsx](../web-ui/src/components/DryRunDialog.tsx) |
 | **POST /api/logs/{id}/replay** (§7.4.1) + маркер `__replay_of` + rate-limit 10/мин | ✅ Phase 5 | [usecase/replay.go](../internal/web/usecase/replay.go), [http/replay_handler.go](../internal/web/adapter/in/http/replay_handler.go), [adapter/out/receiver/dispatcher.go](../internal/web/adapter/out/receiver/dispatcher.go), UI: [components/ReplayDialog.tsx](../web-ui/src/components/ReplayDialog.tsx) |
 | **SSE live-tail `/api/nodes/{id}/logs/stream`** (§7.4) с heartbeat | ✅ Phase 5 | [usecase/logs.go](../internal/web/usecase/logs.go) `Subscribe`, [http/logs_handler.go](../internal/web/adapter/in/http/logs_handler.go) `Stream` |
+| **Ленивые тела логов (§7.4.2): list/stream без `request`/`response`, тела по клику** | ✅ Phase QA.2026-06 | `GET /api/nodes/{id}/log/{logId}` ([logs_handler.go](../internal/web/adapter/in/http/logs_handler.go) `Get`, [logs.go](../internal/web/usecase/logs.go) `GetByID`, route в [routes.go](../internal/web/adapter/in/http/routes.go)); `toLogDTO(r, includeBodies)` режет тела для списков/SSE. UI: раскрытие строки в [LogsTab.tsx](../web-ui/src/components/node/LogsTab.tsx) (`LogBodies` грузит тело лениво); аудит — ленивый `<pre>` по `onToggle` в [AuditDetailsCell.tsx](../web-ui/src/components/AuditDetailsCell.tsx) |
 | Settings → API Tokens | ✅ Phase 5.1 | [pages/settings/ApiTokens.tsx](../web-ui/src/pages/settings/ApiTokens.tsx) |
 | Settings → Language / Theme | ✅ Phase 5.1 | [pages/settings/Language.tsx](../web-ui/src/pages/settings/Language.tsx), [Theme.tsx](../web-ui/src/pages/settings/Theme.tsx) |
 | Audit log страница | ✅ Phase 5.1 | [pages/AuditLog.tsx](../web-ui/src/pages/AuditLog.tsx) |
@@ -423,6 +424,98 @@
 | requestId (UUID v4, не перезаписывать) → Sentry | ✅ Phase 3 | [requestid](../internal/platform/requestid/requestid.go) (middleware первым в цепочке, `X-Request-Id`); тег на scope+транзакцию в [sentry/middleware.go](../internal/platform/sentry/middleware.go) |
 | Версия в UI | ✅ Phase 4 | публичный `GET /api/version` [version_handler.go](../internal/web/adapter/in/http/version_handler.go) (`cfg.Build.Version`); футер [Sidebar.tsx](../web-ui/src/components/Sidebar.tsx); порядок присвоения — [DEPLOYMENT.md §9.0](../DEPLOYMENT.md) |
 
+### §31 Мониторинг Kafka
+
+ТЗ — [sections/31-kafka-monitoring.md](sections/31-kafka-monitoring.md). Ветка
+`feature/kafka-monitoring`. Admin-only alarm-dashboard `/kafka` (в блоке «Аудит», не в «Настройках»).
+
+| Пункт | Статус | Где |
+|---|---|---|
+| Конфиг порогов + rate-limit | ✅ Phase A | `WebSection.KafkaAlerts`/`KafkaMonitorRateLimitPerMin` ([config.go](../internal/platform/config/config.go), [defaults.go](../internal/platform/config/defaults.go), [config.example.yml](../config/config.example.yml)) |
+| Prometheus Kafka-метрики | ✅ Phase A | `PromMetrics.KafkaOverview/KafkaTimeseries` ([port](../internal/web/usecase/port/metrics_provider.go), [client.go](../internal/web/adapter/out/prometheus/client.go)) — async по `method="requestAsync"` |
+| Kafka Admin-адаптер | ✅ Phase B | [kafkaadmin](../internal/web/adapter/out/kafkaadmin/) (Metadata/ListOffsets/ListGroups/OffsetFetch/DescribeGroups, ping через errgroup+safego.Recover) + порт [kafka_admin.go](../internal/web/usecase/port/kafka_admin.go) |
+| Redis-кеш метаданных (TTL 30с) | ✅ Phase B | [kafka_cache.go](../internal/web/adapter/out/redis/kafka_cache.go) (`port.KafkaCache`) |
+| usecase + health-banner | ✅ Phase C | [kafka_monitor.go](../internal/web/usecase/kafka_monitor.go), [kafka_bynode.go](../internal/web/usecase/kafka_bynode.go), [kafka_health.go](../internal/web/usecase/kafka_health.go) (`evaluateHealth`, reason-коды для i18n на фронте) |
+| 5 эндпоинтов + rate-limit + routes | ✅ Phase C | [kafka_handler.go](../internal/web/adapter/in/http/kafka_handler.go) (Swagger, лимит периода 90д, `KafkaRateLimitMiddleware`), [routes.go](../internal/web/adapter/in/http/routes.go) (`authedAdmin`/kafka group), DI [app.go](../internal/web/app.go) |
+| SPA страница `/kafka` (recharts) | ✅ Phase D | [KafkaMonitor.tsx](../web-ui/src/pages/KafkaMonitor.tsx) + [components/kafka/](../web-ui/src/components/kafka/); пункт в [Sidebar.tsx](../web-ui/src/components/Sidebar.tsx) (admin-only), маршрут [App.tsx](../web-ui/src/App.tsx) |
+
+**Неочевидности.**
+- **Метрики из `method="requestAsync"`, а не `databus_kafka_*`.** Отдельных kafka-метрик в проекте
+  нет; async-трафик уже размечен в `nexus_requests_total`/`nexus_request_incomplete_total`/
+  `nexus_request_duration_seconds` (Receiver/Sender, `method="requestAsync"`). Поэтому throughput/
+  ошибки/латентность взяты из них без новых метрик и без правок Receiver/Sender.
+- **Top-узлы из Prometheus, а не ClickHouse.** В CH логи лежат по одной таблице на узел (нет единой
+  колонки `node_path` для `GROUP BY`); Prometheus уже агрегирует по метке `node` (`NodeThroughput`).
+- **`size_bytes` топика = 0 (best-effort).** Высокоуровневый `segmentio/kafka-go` не экспонирует
+  `DescribeLogDirs`; `messages_estimate` считается надёжно из watermarks (ListOffsets). Опция на
+  будущее: если в Prometheus есть `kafka_exporter`/JMX — добавить fallback `sum by(topic)(kafka_log_log_size)`.
+- **in-flight и produce p95 — реальные метрики (Phase F).** Добавлены `nexus_kafka_in_flight{component}`
+  (Sender consumer: `Inc` после `FetchMessage`, `Dec` после `Handle`) и
+  `nexus_kafka_produce_duration_seconds{topic}` (producer, через опцию `WithMetrics`). Web берёт
+  in-flight из `sum(nexus_kafka_in_flight)`, produce p95 — из гистограммы (ранее были прокси
+  lag/обработка).
+- **Мягкая деградация.** Нет Prometheus → KPI/графики нули; нет доступа к Kafka (или пустой
+  `kafka.brokers`) → admin-клиент не создаётся, блоки топиков/брокеров помечены недоступными.
+
+---
+
+### §32 Защита от зацикливания запросов (loop protection)
+
+ТЗ — [sections/32-loop-protection.md](sections/32-loop-protection.md). Ветка `feature/loop-protection`.
+Две меры против петли, когда `target_url` указывает на сам Receiver.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| Sentinel-ошибки | ✅ Phase A | `ErrLoopDetected`, `ErrNodeTargetURLSelfReference` ([domain/errors.go](../internal/domain/errors.go)) |
+| Hop-счётчик `X-Nexus-Hops` (helper) | ✅ Phase B | [receiver/usecase/loop.go](../internal/receiver/usecase/loop.go) (`HeaderHops`, `nextHop`) |
+| Проверка+инкремент в sync/async | ✅ Phase B | [route.go](../internal/receiver/usecase/route.go), [route_async.go](../internal/receiver/usecase/route_async.go) (hop в `SendRequest.Headers` / `Envelope.Headers`) |
+| Конфиг `receiver.max_hops` | ✅ Phase B | [config.go](../internal/platform/config/config.go), [defaults.go](../internal/platform/config/defaults.go) (дефолт 5; <0 выкл.), [config.yml](../config/config.yml) (`NEXUS_RECEIVER_MAX_HOPS`) |
+| 508 в handler + метрика | ✅ Phase B | `classifyDomainError`/`onLoopDetected` ([handler.go](../internal/receiver/adapter/in/http/handler.go)); `nexus_loop_detected_total{mode}` ([metrics.go](../internal/platform/metrics/metrics.go)) |
+| Self-ref валидация `target_url` | ✅ Phase C | [node_selfref.go](../internal/web/usecase/node_selfref.go) (`checkSelfReference`/`isSelfReferenceTarget`), вызов в `Create`/`Update` ([node.go](../internal/web/usecase/node.go)); конфиг `web.self_ingress_hosts` → `resolveSelfIngressHosts` ([app.go](../internal/web/app.go)) |
+| Маппинг ошибки + i18n | ✅ Phase C | `node.validation.target_url_self` ([node_validation.go](../internal/web/adapter/in/http/node_validation.go), [i18n.go](../internal/platform/i18n/i18n.go) EN/RU, [en.json](../web-ui/src/locales/en.json)/[ru.json](../web-ui/src/locales/ru.json)) |
+
+**Неочевидности.**
+- **Hop-заголовок в обход allowlist узла.** Шина форвардит только `forward_headers`; `X-Nexus-Hops`
+  служебный и добавляется в исходящую карту заголовков **после** `pickForwardHeaders` — поэтому он
+  всегда уходит наружу и читается на следующем витке. Sender про него не знает (просто переносит карту).
+- **Логика в usecase, не в handler.** `nextHop` вызывается в `Route`/`RouteAsync` (один helper на оба
+  пути) — чтобы и sync, и async ловили петлю одинаково и до отправки наружу.
+- **Метрика именуется `nexus_loop_detected_total`** (а не `nexus_receiver_*`): в проекте сервис
+  кодируется const-меткой `service="receiver"`, как у всех `nexus_*`. Инкремент — в handler
+  (`onLoopDetected`), где известен `mode=sync|async`; `metrics` может быть nil в unit-тестах.
+- **`max_hops=0` → дефолт 5, `<0` → выкл.** Паттерн defaults.go (`==0` подставляет дефолт) не даёт
+  выразить «0 = выключено», поэтому выключение — отрицательным значением.
+
+---
+
+### §33 Доработка тултипов графиков (chart tooltips)
+
+ТЗ — [sections/33-chart-tooltips.md](sections/33-chart-tooltips.md). Эталон —
+[nexus_chart_tooltip.html](nexus_chart_tooltip.html). **Статус: ✅ реализовано** (ветка
+`feature/chart-tooltips`, блоки Phase 33.1–33.4; встроенный SPA пересобран и закоммичен).
+
+| Пункт | Статус | Где |
+|---|---|---|
+| Компонент `<ChartTooltip>` | ✅ Phase 33.1 | [ChartTooltip.tsx](../web-ui/src/components/ui/ChartTooltip.tsx) (пропсы `period/primary/series/footer/action/compact`); хелпер `msToDatetimeLocal` ([format.ts](../web-ui/src/lib/format.ts)) |
+| Throughput/Lag Kafka (recharts `content`) | ✅ Phase 33.2 | [charts.tsx](../web-ui/src/components/kafka/charts.tsx) (`ThroughputTip`/`LagTip`-адаптеры payload→props, курсор-кроссхэйр), [KafkaMonitor.tsx](../web-ui/src/pages/KafkaMonitor.tsx) (`stepSeconds`) |
+| TrafficChart (Radix) | ✅ Phase 33.3 | [TrafficChart.tsx](../web-ui/src/components/ui/TrafficChart.tsx) — `ChartTooltip` в `content=`, подвал пик/дельта к среднему |
+| MiniSpark (добавлен тултип) | ✅ Phase 33.3 | [charts.tsx](../web-ui/src/components/kafka/charts.tsx) (`MiniTip`, при заданном `unit`) |
+| Sparkline Overview (вместо `title`) | ✅ Phase 33.3 | `Sparkline` в [Overview.tsx](../web-ui/src/pages/Overview.tsx) (Radix + compact `ChartTooltip`) |
+| Action «открыть логи за момент» | ✅ Phase 33.4 | клик по столбцу TrafficChart → `openLogsAt` ([NodeDetail.tsx](../web-ui/src/pages/NodeDetail.tsx)) → `LogsTab initialFilter` ([LogsTab.tsx](../web-ui/src/components/node/LogsTab.tsx)); проброс через [OverviewTab.tsx](../web-ui/src/components/node/OverviewTab.tsx)/[MetricsTab.tsx](../web-ui/src/components/node/MetricsTab.tsx) |
+| i18n `metrics.tooltip.*`/`kafka.tooltip.*` | ✅ Phase 33.4 | [en.json](../web-ui/src/locales/en.json)/[ru.json](../web-ui/src/locales/ru.json) (паритет ключей) |
+
+**Неочевидности / решения.**
+- **Без `@floating-ui/react`** (макет рекомендовал). Позиционирование/snap — штатные у recharts
+  (`content`-проп получает активную точку) и Radix (`side`/collision). Новый пакет не вводим.
+- **Action — клик по элементу графика, не кнопка в тултипе.** Hover-тултип ненадёжно ловит клик по
+  своей кнопке (исчезает при движении курсора к ней). Поэтому в `ChartTooltip` `action` — лишь
+  визуальная подсказка-affordance, а реальный `onClick` висит на самом столбце TrafficChart.
+- **Только фронт.** Partition-breakdown lag и сравнение «неделю назад» из макета **не реализованы** —
+  Prometheus отдаёт lag агрегатом (`sum(nexus_kafka_lag)`), per-partition ряда и week-ago ряда в
+  timeseries нет. Вынесено в out-of-scope §33.7; в `LagTip` оставлена заметка-задел.
+- **`ChartTooltip` — чистый презентационный.** Данные наполняют мапперы каждого графика; компонент не
+  знает про recharts/Radix. Один компонент переиспользуется во всех 5 местах (compact-режим для спарков).
+
 ---
 
 ## 3. Где что лежит — карта каталогов
@@ -548,6 +641,37 @@ RabbitMQ) подтвердил, см. [docs/STAND_TESTING.md](STAND_TESTING.md):
 Грабли локального запуска: `config_debug.yml` должен задавать `web.receiver_url:
 http://localhost:8080` (дефолт `http://receiver:8080` — docker-имя, локально не
 резолвится), иначе единый вход отдаёт 502.
+
+### 4.0.2 QA-прогон 2026-06: найденные дефекты и фиксы
+
+Сквозной QA-прогон (unit+integration+lint+security, посев стенда, Playwright по UI
+под всеми ролями) выявил и закрыл:
+
+- **Атрибуция актёра в аудите.** `actorFromCtx` ставил `UserID`/`TeamID` из сессии, но
+  `UserLogin` оставался `"system"` (из `SystemActor`) — все действия писались как
+  «system» при верном `user_id`. Фикс: в `domain.Session` добавлено поле `Login`
+  (заполняется при входе и для API-токенов), `actorFromCtx` берёт логин из сессии
+  (на legacy-сессиях без поля — graceful fallback в «system»). Тест:
+  [actor_test.go](../internal/web/adapter/in/http/actor_test.go).
+- **Ленивые тела логов/аудита (§7.4.2).** list/stream возвращали полные
+  `request`/`response` для всех строк → на больших payload'ах фронт вис. Теперь тела
+  тянутся по клику на строку через `GET /api/nodes/{id}/log/{logId}`; аудит
+  сериализует JSON только при раскрытии. Тесты: `TestLogs_GetByID_*` в
+  [logs_test.go](../internal/web/usecase/logs_test.go).
+- **i18n: сырой ключ в UI.** [ConfigTab.tsx](../web-ui/src/components/node/ConfigTab.tsx)
+  запрашивал `common.updated_at`, которого не было в namespace `common` (он лежал в
+  `settings.common`) → подпись «common.updated_at». Добавлен ключ в `common` обеих
+  локалей.
+- **RBAC: кнопка «Перенести».** Move узла — admin-only, но кнопка показывалась
+  viewer/manager (бэк отвечал 403). Гейт по `useRoleAtLeast("admin")` в
+  [Overview.tsx](../web-ui/src/pages/Overview.tsx).
+- **Стенд-скрипт под Windows PowerShell 5.1.** `seed_and_test.ps1` (UTF-8 без BOM +
+  PS7-конструкция `(if …)`) не парсился штатным PS 5.1 — добавлен BOM, `(if …)`
+  заменён на присваивание во временную переменную.
+
+RBAC под Playwright подтверждён по трём ролям: admin (всё), manager (узлы CRUD +
+Аудит + Allowed Hosts, без Kafka/Users/Teams), viewer (только просмотр; New/Edit
+скрыты, формы редактирования и `/audit` редиректят, Kafka — in-page «только админ»).
 
 ### 4.0.2 No-loss проверка loadtest — poll-until-stable, не единичный замер
 
@@ -1152,6 +1276,29 @@ filter, Create без TeamID). До блока B (team-switcher в сессии)
   Web раздаёт оба через `ginswagger.WrapHandler(..., InstanceName(...))`; blank-импорты обоих
   `docs/*`-пакетов регистрируют их в `swag.Registry`. Receiver — отдельный процесс, swagger UI к нему
   не подключён (мокап §25 это и предписывает).
+
+### 4.28 QA-2026-02 — пакет исправлений по ручному тестированию
+
+ТЗ и таблица всех 19 пунктов чек-листа — в [QA_FIXES_2026-02.md](QA_FIXES_2026-02.md);
+отчёт о прогоне на стенде — в [QA_FIXES_2026-02_REPORT.md](QA_FIXES_2026-02_REPORT.md).
+Ветка `fix/qa-2026-02`, блочные коммиты `Phase QA.N`. Неочевидности:
+
+- **Replay не восстановит нелогированное тело (П1).** Если узел создан с `LogRequestBody=false`,
+  `orig.Request` в логе пуст — replay физически не из чего собрать тело. Поэтому при пустом orig-теле
+  и не заданном override возвращается `ErrReplayBodyUnavailable` → 422, а не молчаливая отправка пустого
+  body (которая давала 400 «empty body» + circuit breaker 503). См.
+  [replay.go](../internal/web/usecase/replay.go).
+- **`AppSettingsRepoPg.Update` обязан перечислять ВСЕ секции (П8/П13).** JSON-документ собирается из
+  анонимного struct; забытая секция «молчаливо теряется» при записи (так пропал `general`). Тест-страж —
+  `TestAppSettingsRepo_GeneralRoundTrip_E2E`.
+- **must_change_password — реальный gate (П18).** Флаг живёт в `domain.Session` и проверяется middleware
+  `RequirePasswordChanged` (allowlist: `/me/password`, `/auth/me`, `/auth/logout`) → 403
+  `password_change_required`; фронт по этому показывает обязательный экран `ForcePasswordChange`.
+- **Аудит — manager+ (П6).** Бэкенд не ослаблялся (§26); скрыт пункт меню и роут `/audit` для viewer.
+- **Swagger Model (П10).** Все ответы декларируются конкретными DTO (`ErrorResponse` + обёртки в
+  [dto_common.go](../internal/web/adapter/in/http/dto_common.go)) вместо `map[string]any`.
+- **Модальное подтверждение (П16).** `useConfirm`/`ConfirmProvider` вместо `window.confirm` во всех
+  местах удаления; провайдер монтируется один раз в `main.tsx`.
 
 ---
 

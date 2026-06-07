@@ -70,8 +70,8 @@ func (u *UserUsecase) Create(ctx context.Context, actor Actor, teamID string, in
 		in.Lang = domain.UserLangEN
 	}
 	if password != "" {
-		if len(password) < 8 {
-			return errors.New("password must be at least 8 characters")
+		if err := validatePassword(password); err != nil {
+			return err
 		}
 		hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 		if err != nil {

@@ -210,3 +210,48 @@ func TestReplay_BodyOverride(t *testing.T) {
 		t.Fatalf("body override ignored: %q", string(disp.gotReq.Body))
 	}
 }
+
+// TestReplay_BodyUnavailable (QA-2026-02 / П1): узел не логировал тело
+// (orig.Request пуст) и override не задан → явная ошибка вместо отправки
+// пустого тела во внешний target (которое возвращало невнятную 400).
+func TestReplay_BodyUnavailable(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{ID: "n1", Status: domain.NodeStatusEnabled, ClickHouseTable: "t.t"}
+	log := &domain.LogRecord{ID: "log1", Method: "POST", Request: "", DateRequest: time.Now(), Done: true}
+	disp := &stubDispatcher{}
+	uc := NewReplayUsecase(
+		&stubLogReader{log: log},
+		&stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
+		disp, nil,
+		NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10, logging.NewNoop(),
+	)
+	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{UseNodeAuth: true})
+	if !errors.Is(err, ErrReplayBodyUnavailable) {
+		t.Fatalf("want ErrReplayBodyUnavailable, got %v", err)
+	}
+	if disp.gotReq.NodePath != "" {
+		t.Fatalf("dispatch must not be called when body unavailable")
+	}
+}
+
+// TestReplay_ExplicitEmptyBody (QA-2026-02 / П1): если пользователь намеренно
+// задал пустое тело (BodyOverride = []byte{}), replay выполняется — это не
+// «отсутствие тела», а осознанный выбор.
+func TestReplay_ExplicitEmptyBody(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{ID: "n1", Status: domain.NodeStatusEnabled, ClickHouseTable: "t.t"}
+	log := &domain.LogRecord{ID: "log1", Method: "POST", Request: "", DateRequest: time.Now(), Done: true}
+	disp := &stubDispatcher{}
+	uc := NewReplayUsecase(
+		&stubLogReader{log: log},
+		&stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
+		disp, nil,
+		NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10, logging.NewNoop(),
+	)
+	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{
+		BodyOverride: []byte{}, UseNodeAuth: true,
+	})
+	if err != nil {
+		t.Fatalf("explicit empty body must replay: %v", err)
+	}
+}

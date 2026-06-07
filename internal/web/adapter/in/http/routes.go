@@ -22,6 +22,7 @@ type Handlers struct {
 	HostAllowlist *HostAllowlistHandler
 	HeaderCatalog *HeaderCatalogHandler
 	RMQTest       *RMQTestHandler
+	Kafka         *KafkaHandler
 }
 
 // Middlewares — общие middleware (auth-check, role-check, API token-check).
@@ -30,6 +31,7 @@ type Middlewares struct {
 	SessionAuth    gin.HandlerFunc // session-cookie auth
 	RequireAdmin   gin.HandlerFunc // роль admin
 	RequireManager gin.HandlerFunc // роль не ниже manager (manager+admin), §26
+	KafkaRateLimit gin.HandlerFunc // §9 spec: лимит /api/kafka/* на пользователя
 }
 
 // RegisterAPI вешает /api/* маршруты.
@@ -47,7 +49,10 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 	{
 		api.POST("/auth/login", h.Auth.Login)
 
-		authed := api.Group("/", mw.APITokenAuth, mw.SessionAuth)
+		// RequirePasswordChanged (П18): пока сессия в режиме «требуется смена
+		// пароля», все эндпоинты ниже отдают 403 password_change_required,
+		// кроме /me/password и auth-служебных (allowlist внутри middleware).
+		authed := api.Group("/", mw.APITokenAuth, mw.SessionAuth, RequirePasswordChanged())
 		authed.POST("/auth/logout", h.Auth.Logout)
 		authed.GET("/auth/me", h.Auth.Me)
 
@@ -93,6 +98,11 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		// Регистрируются только если включён ClickHouse (см. app.go).
 		if h.Logs != nil {
 			authed.GET("/nodes/:id/logs", RequireScope("logs:read"), h.Logs.List)
+			// Полное тело одной записи (§7.4.1): list/stream отдают только
+			// метаданные, тела request/response тянутся лениво по клику на
+			// строку. Путь "log" (не "logs") — чтобы не конфликтовать с
+			// статическим сегментом ".../logs/stream" в gin-роутере.
+			authed.GET("/nodes/:id/log/:logId", RequireScope("logs:read"), h.Logs.Get)
 			// SSE доступен только UI-сессиям (§7.14: для API-токенов — только
 			// snapshot).
 			authed.GET("/nodes/:id/logs/stream", RequireSessionOnly(), h.Logs.Stream)
@@ -209,6 +219,18 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		if h.Orphan != nil {
 			authedAdmin.GET("/settings/clickhouse/orphans", h.Orphan.List)
 			authedAdmin.DELETE("/settings/clickhouse/orphans/:table", h.Orphan.Drop)
+		}
+
+		// Мониторинг Kafka (§4 spec): admin-only, read-only. Источники
+		// деградируют (флаги *_available), поэтому регистрируется всегда.
+		// Отдельный rate-limit на пользователя (§9) на всю группу /kafka/*.
+		if h.Kafka != nil {
+			kafka := authedAdmin.Group("/kafka", mw.KafkaRateLimit)
+			kafka.GET("/overview", h.Kafka.Overview)
+			kafka.GET("/timeseries", h.Kafka.Timeseries)
+			kafka.GET("/topics", h.Kafka.Topics)
+			kafka.GET("/by-node", h.Kafka.ByNode)
+			kafka.POST("/test", h.Kafka.Test)
 		}
 	}
 }

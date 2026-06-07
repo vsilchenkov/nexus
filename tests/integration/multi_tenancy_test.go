@@ -58,7 +58,7 @@ func TestMultiTenancy_Isolation_E2E(t *testing.T) {
 		nodeRepo, nopCache{}, auditUC, uow, teamRepo,
 		nil, // provisioner: CH-rename не тестируется (нет ClickHouse в этом тесте)
 		nil, // templates: §19 не тестируется здесь
-		time.Minute, 0, defaultTeam, logger,
+		time.Minute, 0, defaultTeam, nil, logger,
 	)
 
 	// 1. Создаём команды acme и globex напрямую через repo (provisioner
@@ -212,7 +212,7 @@ func TestMultiTenancy_NodeMove_E2E(t *testing.T) {
 	defaultTeam := resolveDefaultTeamID(t, ctx, pool)
 	nodeUC := usecase.NewNodeUsecase(
 		nodeRepo, nopCache{}, auditUC, uow, teamRepo,
-		nil, nil, time.Minute, 0, defaultTeam, logger,
+		nil, nil, time.Minute, 0, defaultTeam, nil, logger,
 	)
 
 	acme := &domain.Team{Slug: "acme", Name: "Acme", CHDatabase: domain.CHDatabaseForSlug("acme")}

@@ -34,7 +34,7 @@ func NewAppSettingsHandler(uc *usecase.AppSettingsUsecase, tester *usecase.Setti
 // @Tags     settings
 // @Produce  json
 // @Success  200  {object}  domain.AppSettings
-// @Failure  500  {object}  map[string]string
+// @Failure  500  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/settings/app [get]
 func (h *AppSettingsHandler) Get(c *gin.Context) {
@@ -52,8 +52,8 @@ func (h *AppSettingsHandler) Get(c *gin.Context) {
 // @Description  Лёгкий read-only эндпоинт для любого авторизованного пользователя: возвращает {public_base_url} для сборки полного адреса узла в UI. Не требует прав admin (в отличие от /api/settings/app).
 // @Tags     settings
 // @Produce  json
-// @Success  200  {object}  map[string]string
-// @Failure  500  {object}  map[string]string
+// @Success  200  {object}  PublicSettingsResponse
+// @Failure  500  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/settings/public [get]
 func (h *AppSettingsHandler) GetPublic(c *gin.Context) {
@@ -78,8 +78,8 @@ func (h *AppSettingsHandler) GetPublic(c *gin.Context) {
 // @Produce  json
 // @Param    body  body  domain.AppSettings  true  "patch"
 // @Success  204
-// @Failure  400  {object}  map[string]string
-// @Failure  500  {object}  map[string]string
+// @Failure  400  {object}  ErrorResponse
+// @Failure  500  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/settings/app [put]
 func (h *AppSettingsHandler) Update(c *gin.Context) {
@@ -108,8 +108,8 @@ func (h *AppSettingsHandler) Update(c *gin.Context) {
 // @Produce  json
 // @Param    body  body  domain.ClickHouseSettings  true  "patch"
 // @Success  200  {object}  usecase.TestResult
-// @Failure  400  {object}  map[string]string
-// @Failure  500  {object}  map[string]string
+// @Failure  400  {object}  ErrorResponse
+// @Failure  500  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/settings/clickhouse/test [post]
 func (h *AppSettingsHandler) TestClickHouse(c *gin.Context) {
@@ -139,8 +139,8 @@ func (h *AppSettingsHandler) TestClickHouse(c *gin.Context) {
 // @Produce  json
 // @Param    body  body  domain.SentrySettings  true  "patch"
 // @Success  200  {object}  usecase.TestResult
-// @Failure  400  {object}  map[string]string
-// @Failure  500  {object}  map[string]string
+// @Failure  400  {object}  ErrorResponse
+// @Failure  500  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/settings/sentry/test [post]
 func (h *AppSettingsHandler) TestSentry(c *gin.Context) {
@@ -170,8 +170,8 @@ func (h *AppSettingsHandler) TestSentry(c *gin.Context) {
 // @Produce  json
 // @Param    body  body  domain.TelegramSettings  true  "patch"
 // @Success  200  {object}  usecase.TestResult
-// @Failure  400  {object}  map[string]string
-// @Failure  500  {object}  map[string]string
+// @Failure  400  {object}  ErrorResponse
+// @Failure  500  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/settings/notifications/test [post]
 func (h *AppSettingsHandler) TestTelegram(c *gin.Context) {

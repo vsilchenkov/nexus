@@ -54,7 +54,7 @@ func toTokenResp(t *domain.APIToken) tokenResponse {
 // @Description  Каждый видит только свои токены. Возвращает префикс, scopes, last_used_at — без полной строки токена.
 // @Tags     tokens
 // @Produce  json
-// @Success  200  {object}  map[string]any
+// @Success  200  {object}  ListTokensResponse
 // @Security CookieAuth
 // @Router   /api/tokens [get]
 func (h *APITokenHandler) List(c *gin.Context) {
@@ -78,8 +78,8 @@ func (h *APITokenHandler) List(c *gin.Context) {
 // @Accept   json
 // @Produce  json
 // @Param    body  body  createTokenRequest  true  "name + scopes + expires_at"
-// @Success  201   {object}  map[string]any  "token (plain) + info"
-// @Failure  400   {object}  map[string]string
+// @Success  201   {object}  CreateTokenResponse  "token (plain) + info"
+// @Failure  400   {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/tokens [post]
 func (h *APITokenHandler) Create(c *gin.Context) {
@@ -109,7 +109,7 @@ func (h *APITokenHandler) Create(c *gin.Context) {
 // @Produce  json
 // @Param    id   path  string  true  "token id"
 // @Success  204
-// @Failure  404  {object}  map[string]string
+// @Failure  404  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/tokens/{id}/revoke [post]
 func (h *APITokenHandler) Revoke(c *gin.Context) {
@@ -132,7 +132,7 @@ func (h *APITokenHandler) Revoke(c *gin.Context) {
 // @Produce  json
 // @Param    id   path  string  true  "token id"
 // @Success  204
-// @Failure  404  {object}  map[string]string
+// @Failure  404  {object}  ErrorResponse
 // @Security CookieAuth
 // @Router   /api/tokens/{id} [delete]
 func (h *APITokenHandler) Delete(c *gin.Context) {

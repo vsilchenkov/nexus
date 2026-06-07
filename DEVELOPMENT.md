@@ -185,6 +185,13 @@ docker compose -f deploy/docker-compose.deps.yml up -d
   поднимают RabbitMQ через testcontainers — отдельный брокер для `make test-integration` не нужен,
   только Docker daemon. Кнопка «Проверить подключение» в форме узла дёргает `POST /api/nodes/test-rmq`
   (manager+). Health воркера UI читает из Redis-hash `rmq:health`.
+- **Мониторинг Kafka (§31)** — admin-only экран `/kafka` (раздел «Аудит»). Источники: Prometheus
+  (async-трафик по `method="requestAsync"`) + Kafka Admin API (топики/брокеры; Web подключается к
+  `kafka.brokers`). Новая npm-зависимость **`recharts`** (графики) — при правке зависимостей коммитьте
+  `web-ui/package.json` + `package-lock.json`, иначе `npm ci` в CI развалится. После правки `web-ui/`
+  — `npm run lint` (`--max-warnings=0`) + `npm run build` + `make build-ui` + коммит `internal/web/static/`.
+  Для живых данных локально нужен Kafka (поднимается `deps: up`) и трафик через `requestAsync`-узлы
+  (генератор — `cmd/loadtest`, флаг async). Без Prometheus/Kafka экран деградирует, не падает.
 
 ---
 

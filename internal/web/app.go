@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -43,6 +45,7 @@ import (
 	"nexus/internal/platform/telegram"
 	httpadapter "nexus/internal/web/adapter/in/http"
 	chreader "nexus/internal/web/adapter/out/clickhouse"
+	kafkaadmin "nexus/internal/web/adapter/out/kafkaadmin"
 	pgrepo "nexus/internal/web/adapter/out/postgres"
 	prometheusreader "nexus/internal/web/adapter/out/prometheus"
 	rabbitmqadapter "nexus/internal/web/adapter/out/rabbitmq"
@@ -145,6 +148,9 @@ func (a *App) Start(ctx context.Context) error {
 	auditUC := usecase.NewAuditUsecase(auditRepo, a.logger)
 	uow := pgrepo.NewUnitOfWorkPg(a.pg, a.cipher, a.logger)
 	chTemplateRepo := pgrepo.NewCHTemplateRepoPg(a.pg, a.logger)
+	// §32.2: список своих authority для self-reference валидации target_url.
+	// Явный конфиг приоритетен; иначе выводим из ReceiverURL.
+	selfIngressHosts := resolveSelfIngressHosts(a.cfg.Web.SelfIngressHosts, a.cfg.Web.ReceiverURL)
 	nodeUC := usecase.NewNodeUsecase(
 		nodeRepo,
 		nodeCache,
@@ -156,6 +162,7 @@ func (a *App) Start(ctx context.Context) error {
 		time.Duration(a.cfg.Redis.NodeTTLSec)*time.Second,
 		a.cfg.Web.NodesHardLimit,
 		defaultTeamID,
+		selfIngressHosts,
 		a.logger,
 	)
 	// §27.8: health-ридер Puller-воркеров из общего Redis-стора (rmq:health).
@@ -320,11 +327,25 @@ func (a *App) Start(ctx context.Context) error {
 	metricsUC := usecase.NewMetricsUsecase(promMetrics, nodeRepo, a.logger)
 	metricsHandler := httpadapter.NewMetricsHandler(metricsUC, a.logger)
 
+	// Мониторинг Kafka (§4 spec): Prometheus (throughput/lag/KPI/top-узлы) +
+	// Kafka Admin (топики/брокеры/ping, только при заданных брокерах) + Redis-кеш
+	// метаданных (TTL 30с). Все источники опциональны — usecase деградирует.
+	var kafkaAdmin webport.KafkaAdmin
+	if a.cfg.Kafka.Brokers != "" {
+		kafkaAdmin = kafkaadmin.New(a.cfg.Kafka.Brokers, 5*time.Second, 30, a.logger)
+	}
+	kafkaUC := usecase.NewKafkaMonitorUsecase(
+		promMetrics, kafkaAdmin, rediscache.NewKafkaCacheRedis(a.redis, 30*time.Second),
+		kafkaThresholds(&a.cfg.Web.KafkaAlerts), a.logger,
+	)
+	kafkaHandler := httpadapter.NewKafkaHandler(kafkaUC, a.logger)
+
 	mw := httpadapter.Middlewares{
 		APITokenAuth:   httpadapter.APITokenAuthMiddleware(tokenUC, rl, a.cfg.Web.APITokenRateLimitPerMin, a.logger),
 		SessionAuth:    httpadapter.AuthMiddleware(authUC, &a.cfg.Web),
 		RequireAdmin:   httpadapter.RequireMinRole(domain.UserRoleAdmin),
 		RequireManager: httpadapter.RequireMinRole(domain.UserRoleManager),
+		KafkaRateLimit: httpadapter.KafkaRateLimitMiddleware(rl, a.cfg.Web.KafkaMonitorRateLimitPerMin),
 	}
 	httpadapter.RegisterAPI(r, httpadapter.Handlers{
 		Auth:          authHandler,
@@ -343,6 +364,7 @@ func (a *App) Start(ctx context.Context) error {
 		HostAllowlist: hostAllowlistHandler,
 		HeaderCatalog: headerCatalogHandler,
 		RMQTest:       rmqTestHandler,
+		Kafka:         kafkaHandler,
 	}, mw)
 
 	// Реверс-прокси боевых эндпоинтов Receiver (§17.1, единый вход): Web
@@ -411,4 +433,37 @@ func (a *App) Stop(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// resolveSelfIngressHosts формирует список своих authority для self-reference
+// валидации target_url (§32.2). Явный конфиг (self_ingress_hosts) приоритетен;
+// если он пуст — выводим authority из receiverURL (host[:port]). Пустой
+// результат означает «проверка отключена».
+func resolveSelfIngressHosts(configured []string, receiverURL string) []string {
+	if len(configured) > 0 {
+		return configured
+	}
+	receiverURL = strings.TrimSpace(receiverURL)
+	if receiverURL == "" {
+		return nil
+	}
+	parsed, err := url.Parse(receiverURL)
+	if err != nil || parsed.Host == "" {
+		return nil
+	}
+	return []string{parsed.Host}
+}
+
+// kafkaThresholds маппит config-секцию порогов в usecase-тип (usecase не
+// зависит от config). Значения уже с дефолтами (applyKafkaAlertsDefaults).
+func kafkaThresholds(c *config.KafkaAlertsSection) usecase.KafkaThresholds {
+	return usecase.KafkaThresholds{
+		LagWarning:              c.LagWarning,
+		LagCritical:             c.LagCritical,
+		LagGrowthCriticalPerSec: c.LagGrowthCriticalPerSec,
+		ErrorRateWarning:        c.ErrorRateWarning,
+		ErrorRateCritical:       c.ErrorRateCritical,
+		ProduceP95WarningMs:     c.ProduceLatencyP95WarningMs,
+		ProduceP95CriticalMs:    c.ProduceLatencyP95CriticalMs,
+	}
 }

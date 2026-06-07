@@ -80,6 +80,12 @@ var ErrReplayRateLimit = errors.New("replay rate limit exceeded")
 // ErrReplayTooOldFailure — replay недоступен для done=false старше 7 дней.
 var ErrReplayTooOldFailure = errors.New("cannot replay failed request older than 7 days")
 
+// ErrReplayBodyUnavailable — оригинальное тело запроса не сохранено (узел не
+// логирует тело, LogRequestBody=false), а пользователь не задал тело вручную.
+// Replay с пустым телом ушёл бы во внешний target и вернул бы невнятную 400
+// «empty body» (QA-2026-02 / П1). Возвращаем явную ошибку → handler отдаёт 422.
+var ErrReplayBodyUnavailable = errors.New("original request body was not logged; provide body manually")
+
 // Replay выполняет повторную отправку запроса через шину.
 //
 // teamID — multi-tenancy scope (Phase 10.D). Узел чужой команды → 404.
@@ -123,8 +129,15 @@ func (u *ReplayUsecase) Replay(
 	if method == "" {
 		method = "POST"
 	}
+	// Тело: при nil-override берём оригинал из лога. Если узел не логировал
+	// тело (orig.Request пуст) и пользователь его не задал — отказываем явно,
+	// иначе во внешний target ушёл бы пустой body → 400 «empty body» (П1).
+	// Явно переданное пустое тело (BodyOverride = []byte{}) считаем намеренным.
 	body := opts.BodyOverride
 	if body == nil {
+		if orig.Request == "" {
+			return nil, ErrReplayBodyUnavailable
+		}
 		body = []byte(orig.Request)
 	}
 

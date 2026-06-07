@@ -13,13 +13,18 @@ import (
 
 // logReaderMock — отдаёт фиксированные записи на каждый Subscribe-tick.
 type logReaderMock struct {
-	calls int
-	rows  []*domain.LogRecord
-	err   error
+	calls  int
+	rows   []*domain.LogRecord
+	err    error
+	getRow *domain.LogRecord
+	getErr error
 }
 
 func (m *logReaderMock) GetByID(_ context.Context, _, _ string) (*domain.LogRecord, error) {
-	return nil, domain.ErrNotFound
+	if m.getRow == nil && m.getErr == nil {
+		return nil, domain.ErrNotFound
+	}
+	return m.getRow, m.getErr
 }
 
 func (m *logReaderMock) ListSince(_ context.Context, _ string, _ int64, _ int) ([]*domain.LogRecord, error) {
@@ -52,6 +57,57 @@ func TestLogs_ListSinceForwardsToReader(t *testing.T) {
 	}
 	if len(rows) != 2 {
 		t.Fatalf("want 2 rows, got %d", len(rows))
+	}
+}
+
+func TestLogs_GetByID_ReturnsFullRecord(t *testing.T) {
+	t.Parallel()
+	want := &domain.LogRecord{ID: "log-1", Request: `{"big":"body"}`, Response: `{"ok":true}`}
+	r := &logReaderMock{getRow: want}
+	nodes := &stubNodeRepo{nodes: map[string]*domain.Node{
+		"n1": {ID: "n1", ClickHouseTable: "t.t", Status: domain.NodeStatusEnabled},
+	}}
+	uc := NewLogsUsecase(r, nodes, logging.NewNoop())
+
+	got, err := uc.GetByID(context.Background(), "n1", "", "log-1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Request != want.Request || got.Response != want.Response {
+		t.Fatalf("bodies not returned: %+v", got)
+	}
+}
+
+func TestLogs_GetByID_NoCHTable(t *testing.T) {
+	t.Parallel()
+	nodes := &stubNodeRepo{nodes: map[string]*domain.Node{
+		"n1": {ID: "n1", ClickHouseTable: "", Status: domain.NodeStatusEnabled},
+	}}
+	uc := NewLogsUsecase(&logReaderMock{}, nodes, logging.NewNoop())
+	_, err := uc.GetByID(context.Background(), "n1", "", "log-1")
+	if !errors.Is(err, domain.ErrNodeLogsNotConfigured) {
+		t.Fatalf("want ErrNodeLogsNotConfigured, got %v", err)
+	}
+}
+
+func TestLogs_GetByID_NodeNotFound(t *testing.T) {
+	t.Parallel()
+	uc := NewLogsUsecase(&logReaderMock{}, &stubNodeRepo{nodes: map[string]*domain.Node{}}, logging.NewNoop())
+	_, err := uc.GetByID(context.Background(), "nope", "", "log-1")
+	if !errors.Is(err, domain.ErrNodeNotFound) {
+		t.Fatalf("want ErrNodeNotFound, got %v", err)
+	}
+}
+
+func TestLogs_GetByID_RecordNotFound(t *testing.T) {
+	t.Parallel()
+	nodes := &stubNodeRepo{nodes: map[string]*domain.Node{
+		"n1": {ID: "n1", ClickHouseTable: "t.t", Status: domain.NodeStatusEnabled},
+	}}
+	uc := NewLogsUsecase(&logReaderMock{getErr: domain.ErrNotFound}, nodes, logging.NewNoop())
+	_, err := uc.GetByID(context.Background(), "n1", "", "missing")
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("want ErrNotFound, got %v", err)
 	}
 }
 

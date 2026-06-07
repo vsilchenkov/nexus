@@ -11,6 +11,7 @@ import (
 	"nexus/internal/platform/config"
 	kafkapf "nexus/internal/platform/kafka"
 	"nexus/internal/platform/logging"
+	"nexus/internal/platform/metrics"
 	"nexus/internal/platform/safego"
 	"nexus/internal/sender/usecase"
 )
@@ -21,9 +22,18 @@ type ConsumerGroup struct {
 	processor *usecase.AsyncProcessor
 	logger    logging.Logger
 	topic     string
+	metrics   *metrics.Metrics // §31: nil-safe; nil → in-flight не пишется
 
 	consumers []*kafkapf.Consumer
 	wg        sync.WaitGroup
+}
+
+// ConsumerOption — функциональная опция конструктора ConsumerGroup.
+type ConsumerOption func(*ConsumerGroup)
+
+// WithMetrics включает метрику nexus_kafka_in_flight (§31).
+func WithMetrics(m *metrics.Metrics) ConsumerOption {
+	return func(g *ConsumerGroup) { g.metrics = m }
 }
 
 func NewConsumerGroup(
@@ -31,13 +41,18 @@ func NewConsumerGroup(
 	topic string,
 	processor *usecase.AsyncProcessor,
 	logger logging.Logger,
+	opts ...ConsumerOption,
 ) *ConsumerGroup {
-	return &ConsumerGroup{
+	g := &ConsumerGroup{
 		cfg:       cfg,
 		processor: processor,
 		logger:    logger,
 		topic:     topic,
 	}
+	for _, o := range opts {
+		o(g)
+	}
+	return g
 }
 
 // Start запускает горутины. Возвращается сразу — горутины крутятся в фоне.
@@ -77,6 +92,9 @@ func (g *ConsumerGroup) runOne(ctx context.Context, c *kafkapf.Consumer, idx int
 			continue
 		}
 
+		// §31: сообщение прочитано, но ещё не закоммичено — «в полёте».
+		g.incInFlight()
+
 		// Извлекаем Kafka headers в map[string]string для OTel-propagator'а
 		// (Phase 8.4). Несколько значений на ключ Kafka в принципе допускает,
 		// но для propagator-keys это исключено — берём первое.
@@ -87,6 +105,7 @@ func (g *ConsumerGroup) runOne(ctx context.Context, c *kafkapf.Consumer, idx int
 			}
 		}
 		res := g.processor.Handle(ctx, msg.Value, hdrs)
+		g.decInFlight() // обработка завершена (committed/retry-left)
 		switch res {
 		case usecase.HandleAck, usecase.HandleDLQed:
 			if err := c.Commit(ctx, msg); err != nil {
@@ -99,6 +118,19 @@ func (g *ConsumerGroup) runOne(ctx context.Context, c *kafkapf.Consumer, idx int
 			// FetchMessage в этом инстансе либо при rebalance. Для paused
 			// это нормальное поведение (§3.6).
 		}
+	}
+}
+
+// incInFlight/decInFlight — nil-safe изменение gauge сообщений «в полёте».
+func (g *ConsumerGroup) incInFlight() {
+	if g.metrics != nil {
+		g.metrics.KafkaInFlight.WithLabelValues("sender").Inc()
+	}
+}
+
+func (g *ConsumerGroup) decInFlight() {
+	if g.metrics != nil {
+		g.metrics.KafkaInFlight.WithLabelValues("sender").Dec()
 	}
 }
 

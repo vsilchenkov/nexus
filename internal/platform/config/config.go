@@ -172,17 +172,21 @@ type KafkaConsumerSection struct {
 }
 
 type ReceiverSection struct {
-	HTTPAddr         string                   `yaml:"http_addr"`
-	ReadTimeoutMs    int                      `yaml:"read_timeout_ms"`
-	WriteTimeoutMs   int                      `yaml:"write_timeout_ms"`
-	IdleTimeoutSec   int                      `yaml:"idle_timeout_sec"`
-	MaxBodyBytes     int                      `yaml:"max_body_bytes"`
-	MaxHeaderBytes   int                      `yaml:"max_header_bytes"`
-	RateLimitPerNode int                      `yaml:"rate_limit_per_node"`
-	SenderGRPC       ReceiverSenderGRPCConfig `yaml:"sender_grpc"`
-	SwaggerEnabled   bool                     `yaml:"swagger_enabled"`
-	L2Cache          ReceiverL2CacheConfig    `yaml:"l2_cache"`
-	Puller           ReceiverPullerConfig     `yaml:"puller"`
+	HTTPAddr         string `yaml:"http_addr"`
+	ReadTimeoutMs    int    `yaml:"read_timeout_ms"`
+	WriteTimeoutMs   int    `yaml:"write_timeout_ms"`
+	IdleTimeoutSec   int    `yaml:"idle_timeout_sec"`
+	MaxBodyBytes     int    `yaml:"max_body_bytes"`
+	MaxHeaderBytes   int    `yaml:"max_header_bytes"`
+	RateLimitPerNode int    `yaml:"rate_limit_per_node"`
+	// MaxHops — лимит переходов запроса через шину (§32). Служебный заголовок
+	// X-Nexus-Hops инкрементится на каждом проходе; при достижении лимита
+	// запрос отклоняется (508 Loop Detected). 0 → дефолт 5; < 0 → защита выключена.
+	MaxHops        int                      `yaml:"max_hops"`
+	SenderGRPC     ReceiverSenderGRPCConfig `yaml:"sender_grpc"`
+	SwaggerEnabled bool                     `yaml:"swagger_enabled"`
+	L2Cache        ReceiverL2CacheConfig    `yaml:"l2_cache"`
+	Puller         ReceiverPullerConfig     `yaml:"puller"`
 }
 
 // ReceiverPullerConfig — параметры Puller-воркеров RabbitMQAsync (§27.2).
@@ -245,4 +249,35 @@ type WebSection struct {
 	// Используется для replay-запросов (§7.4.1): Web отправляет реплай через
 	// реальный pipeline Receiver, а не через bypass.
 	ReceiverURL string `yaml:"receiver_url"`
+	// SelfIngressHosts — список «своих» authority (host или host:port) для
+	// self-reference валидации target_url узла (§32.2): запрет указывать в
+	// target_url адрес собственного ingress шины. Пустой список → при старте
+	// заполняется хостом из ReceiverURL; если и он пуст — проверка пропускается.
+	SelfIngressHosts []string `yaml:"self_ingress_hosts"`
+	// KafkaMonitorRateLimitPerMin — лимит запросов к /api/kafka/* на пользователя
+	// (дашборд Kafka-мониторинга, §9 spec). Защита от dashboard-флуда при
+	// автообновлении раз в 10с. 0 = без ограничений.
+	KafkaMonitorRateLimitPerMin int `yaml:"kafka_monitor_rate_limit_per_min"`
+	// KafkaAlerts — пороги жёлтый/красный для health-banner и KPI экрана
+	// Kafka-мониторинга (§6 spec). Вычисляются на каждом /api/kafka/overview.
+	KafkaAlerts KafkaAlertsSection `yaml:"kafka_alerts_thresholds"`
+}
+
+// KafkaAlertsSection — пороги индикации (жёлтый/красный) для экрана
+// Kafka-мониторинга (§6 spec). Все значения настраиваемы; дефолты — в
+// defaults.go. Используются usecase'ом для расчёта severity health-banner и
+// цветовой подсветки KPI; в сам Kafka/Prometheus не пишутся.
+type KafkaAlertsSection struct {
+	// LagWarning / LagCritical — текущий consumer lag (сообщений).
+	LagWarning  int64 `yaml:"lag_warning"`
+	LagCritical int64 `yaml:"lag_critical"`
+	// LagGrowthCriticalPerSec — прирост lag/сек, держащийся 5 минут → критично.
+	LagGrowthCriticalPerSec float64 `yaml:"lag_growth_critical_per_sec"`
+	// ErrorRateWarning / ErrorRateCritical — доля ошибок (produced+consumed)
+	// за период, в долях единицы (0.001 = 0.1%).
+	ErrorRateWarning  float64 `yaml:"error_rate_warning"`
+	ErrorRateCritical float64 `yaml:"error_rate_critical"`
+	// ProduceLatencyP95WarningMs / CriticalMs — p95 produce latency, мс.
+	ProduceLatencyP95WarningMs  float64 `yaml:"produce_latency_p95_warning_ms"`
+	ProduceLatencyP95CriticalMs float64 `yaml:"produce_latency_p95_critical_ms"`
 }

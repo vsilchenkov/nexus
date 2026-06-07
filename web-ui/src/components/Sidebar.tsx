@@ -1,10 +1,11 @@
 import { NavLink, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
-import { LayoutGrid, History, Settings, ArrowLeftRight } from "lucide-react";
+import { LayoutGrid, History, Settings, ArrowLeftRight, Activity } from "lucide-react";
 
 import { api } from "../api/client";
 import { cn } from "../lib/cn";
+import { roleAtLeast } from "../lib/roles";
 
 type NavItem = { to: string; label: string; icon: React.ReactNode; match: (p: string) => boolean };
 
@@ -27,6 +28,12 @@ export function Sidebar() {
     staleTime: Infinity,
   });
 
+  // Пункт «Kafka» (§4 spec) — в блоке Аудита (рядом с Audit log), не в
+  // «Настройках»; виден только админам (роль admin), как и сам раздел.
+  const isAdmin = roleAtLeast(me.data?.user.role, "admin");
+  // Журнал действий (§26) доступен manager+ — viewer получал 403 (П6).
+  const isManager = roleAtLeast(me.data?.user.role, "manager");
+
   const items: NavItem[] = [
     {
       to: "/",
@@ -34,12 +41,26 @@ export function Sidebar() {
       icon: <LayoutGrid className="h-[18px] w-[18px]" />,
       match: (p) => p === "/" || p.startsWith("/nodes"),
     },
-    {
-      to: "/audit",
-      label: t("nav.audit"),
-      icon: <History className="h-[18px] w-[18px]" />,
-      match: (p) => p.startsWith("/audit"),
-    },
+    ...(isManager
+      ? [
+          {
+            to: "/audit",
+            label: t("nav.audit"),
+            icon: <History className="h-[18px] w-[18px]" />,
+            match: (p: string) => p.startsWith("/audit"),
+          },
+        ]
+      : []),
+    ...(isAdmin
+      ? [
+          {
+            to: "/kafka",
+            label: t("nav.kafka"),
+            icon: <Activity className="h-[18px] w-[18px]" />,
+            match: (p: string) => p.startsWith("/kafka"),
+          },
+        ]
+      : []),
     {
       to: "/settings/tokens",
       label: t("nav.settings"),

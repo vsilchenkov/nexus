@@ -118,8 +118,8 @@ func auditFilterFromQuery(c *gin.Context, defaultLimit, maxLimit int) port.Audit
 // @Param    to           query  string  false  "RFC3339 (конец)"
 // @Param    limit        query  int     false  "default 100, max 1000"
 // @Param    offset       query  int     false  "смещение"
-// @Success  200          {object}  map[string]any
-// @Failure  500          {object}  map[string]string
+// @Success  200          {object}  ListAuditResponse
+// @Failure  500          {object}  ErrorResponse
 // @Security CookieAuth
 // @Security ApiTokenAuth
 // @Router   /api/audit [get]
@@ -154,7 +154,7 @@ func (h *AuditHandler) List(c *gin.Context) {
 // @Param    limit        query  int     false  "default 10000, max 50000"
 // @Param    offset       query  int     false  "смещение"
 // @Success  200          {string}  string  "CSV"
-// @Failure  500          {object}  map[string]string
+// @Failure  500          {object}  ErrorResponse
 // @Security CookieAuth
 // @Security ApiTokenAuth
 // @Router   /api/audit/export.csv [get]

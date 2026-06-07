@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 // AuditDetailsCell — рендер ячейки `details` в Audit log (§7.13).
@@ -96,12 +97,23 @@ export function AuditDetailsCell({ action, details }: Props) {
   if (action === "node.update") {
     return <DiffTable details={details} />;
   }
+  return <LazyJson details={details} />;
+}
+
+// LazyJson — сериализует и рендерит JSON-тело деталей ТОЛЬКО при раскрытии
+// строки. У свёрнутого <details> контент всё равно попадает в DOM, поэтому
+// эагерный JSON.stringify по всем строкам аудита раздувает дерево и вешает
+// фронт на больших объёмах — здесь <pre> монтируется по onToggle.
+function LazyJson({ details }: { details: Record<string, unknown> }) {
+  const [open, setOpen] = useState(false);
   return (
-    <details>
+    <details onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}>
       <summary className="cursor-pointer text-fg-muted">json</summary>
-      <pre className="overflow-auto bg-bg-muted/40 p-1 rounded mt-1 text-[10px]">
-        {JSON.stringify(details, null, 2)}
-      </pre>
+      {open && (
+        <pre className="overflow-auto bg-bg-muted/40 p-1 rounded mt-1 text-[10px]">
+          {JSON.stringify(details, null, 2)}
+        </pre>
+      )}
     </details>
   );
 }

@@ -48,7 +48,10 @@ type NodeUsecase struct {
 	cacheTTL       time.Duration
 	nodesHardLimit int
 	defaultTeamID  string
-	logger         logging.Logger
+	// selfIngressHosts — список своих authority для self-reference валидации
+	// target_url (§32.2). Пустой → проверка отключена.
+	selfIngressHosts []string
+	logger           logging.Logger
 }
 
 func NewNodeUsecase(
@@ -62,20 +65,22 @@ func NewNodeUsecase(
 	cacheTTL time.Duration,
 	nodesHardLimit int,
 	defaultTeamID string,
+	selfIngressHosts []string,
 	logger logging.Logger,
 ) *NodeUsecase {
 	return &NodeUsecase{
-		repo:           repo,
-		cache:          cache,
-		audit:          audit,
-		uow:            uow,
-		teams:          teams,
-		provisioner:    provisioner,
-		templates:      templates,
-		cacheTTL:       cacheTTL,
-		nodesHardLimit: nodesHardLimit,
-		defaultTeamID:  defaultTeamID,
-		logger:         logger,
+		repo:             repo,
+		cache:            cache,
+		audit:            audit,
+		uow:              uow,
+		teams:            teams,
+		provisioner:      provisioner,
+		templates:        templates,
+		cacheTTL:         cacheTTL,
+		nodesHardLimit:   nodesHardLimit,
+		defaultTeamID:    defaultTeamID,
+		selfIngressHosts: selfIngressHosts,
+		logger:           logger,
 	}
 }
 
@@ -199,6 +204,10 @@ func (u *NodeUsecase) Create(ctx context.Context, actor Actor, n *domain.Node) e
 	if err := n.Validate(); err != nil {
 		return err
 	}
+	// §32.2: target_url не должен указывать на собственный ingress шины.
+	if err := u.checkSelfReference(n); err != nil {
+		return err
+	}
 
 	// §3.3 ТЗ: hard-limit nodes_hard_limit. Считаем вне транзакции —
 	// небольшая гонка возможна, но допустима: финальная сериализация
@@ -266,6 +275,10 @@ func (u *NodeUsecase) Update(ctx context.Context, actor Actor, n *domain.Node, t
 		return err
 	}
 	if err := n.Validate(); err != nil {
+		return err
+	}
+	// §32.2: target_url не должен указывать на собственный ingress шины.
+	if err := u.checkSelfReference(n); err != nil {
 		return err
 	}
 	old, err := u.repo.Get(ctx, n.ID)

@@ -30,9 +30,15 @@
     "password_field": "Password",
     "logout": "Sign out"
   },
+  "force_password": {
+    "title": "Password change required",
+    "subtitle": "You must set a new password before continuing.",
+    "submit": "Set new password and sign in"
+  },
   "nav": {
     "nodes": "Nodes",
     "audit": "Audit",
+    "kafka": "Kafka",
     "settings": "Settings",
     "team": "Team",
     "language": "Language",
@@ -60,7 +66,7 @@
     "filter": { "all_methods": "All methods", "all_statuses": "All statuses" },
     "view": { "table": "Table", "cards": "Cards" },
     "card": { "dynamic_url": "{URL from request}" },
-    "status": { "ok": "OK", "down": "Down", "queue": "Queue" },
+    "status": { "ok": "OK", "down": "Down", "queue": "Queue", "unknown": "—" },
     "table": {
       "path": "Node",
       "method": "Method",
@@ -121,6 +127,131 @@
       "14d": "14d",
       "30d": "30d",
       "custom": "Custom"
+    },
+    "tooltip": {
+      "delivered": "delivered",
+      "errors": "errors",
+      "requests": "requests",
+      "peak": "peak in range",
+      "vs_avg": "vs avg",
+      "open_logs": "Open logs for this moment",
+      "seconds": "{{n}}s",
+      "minutes": "{{n}} min",
+      "hours": "{{n}} h"
+    }
+  },
+  "kafka": {
+    "title": "Kafka monitoring",
+    "subtitle": "Cluster state, throughput, errors and load-leading nodes",
+    "updated_ago": "updated {{secs}}s ago",
+    "refresh": "Refresh",
+    "check_cluster": "Check cluster",
+    "forbidden": "Kafka monitoring is available to administrators only.",
+    "resolution": { "auto": "Auto" },
+    "legend": { "produced": "produced", "consumed": "consumed", "errors": "errors" },
+    "throughput": { "title": "Throughput", "unit": "messages/sec" },
+    "lag": {
+      "title": "Consumer lag",
+      "subtitle": "lag behind topic head",
+      "label": "lag"
+    },
+    "kpi": {
+      "messages": "Messages in period",
+      "lag": "Current lag",
+      "errors": "Errors in period",
+      "in_flight": "In-flight now",
+      "vs_previous": "vs previous period",
+      "of_total": "of total",
+      "in_flight_hint": "between produce and consume"
+    },
+    "topics": {
+      "title": "Topics",
+      "name": "Topic",
+      "partitions": "Partitions",
+      "replication": "Replication",
+      "size": "Size",
+      "messages": "Messages ~",
+      "groups": "Consumer groups",
+      "health": "State",
+      "empty": "No topics",
+      "state": {
+        "ok": "OK",
+        "under_replicated": "under-replicated",
+        "lag": "growing lag",
+        "offline": "offline partitions"
+      }
+    },
+    "top_producers": {
+      "title": "Top producers",
+      "node": "Node",
+      "messages": "Messages",
+      "share": "Share",
+      "empty": "No data for the period"
+    },
+    "top_failures": {
+      "title": "Top failures",
+      "node": "Node",
+      "errors": "Errors",
+      "rate": "Error rate",
+      "empty": "No errors recorded"
+    },
+    "brokers": {
+      "title": "Brokers",
+      "online": "{{online}} of {{total}} online",
+      "recheck": "Recheck",
+      "empty": "Run a cluster check to see broker status",
+      "up": "online",
+      "down": "offline",
+      "ping": "Ping",
+      "warn": {
+        "unreachable": "Broker unreachable",
+        "latency": "Response latency above average. Check the network to this host."
+      }
+    },
+    "health": {
+      "healthy": {
+        "title": "Cluster healthy",
+        "details": "All brokers online, no under-replicated partitions, lag is stable."
+      },
+      "offline_partitions": {
+        "title": "Critical: offline partitions",
+        "details": "{{offline}} partition(s) have no available leader — producers cannot write. Immediate action required."
+      },
+      "brokers_down": {
+        "title": "Critical: brokers unavailable",
+        "details": "Only {{online}} of {{total}} brokers online. The cluster is at risk."
+      },
+      "error_rate_high": {
+        "title": "Error rate elevated",
+        "details": "{{error_rate}}% of messages failed in the period. Check the failing nodes below."
+      },
+      "lag_high": {
+        "title": "Consumer lag is high",
+        "details": "Current lag is {{lag}}. The consumer is falling behind the producer — check Sender."
+      },
+      "lag_growing": {
+        "title": "Attention: lag is growing faster than it is consumed",
+        "details": "Current lag {{lag}} is rising. Sender is consuming slower than the producer writes — check Sender load."
+      },
+      "under_replicated": {
+        "title": "Attention: under-replicated partitions",
+        "details": "{{under_replicated}} partition(s) are under-replicated. Some replicas are behind or unavailable."
+      },
+      "produce_latency_high": {
+        "title": "Produce latency elevated",
+        "details": "Processing p95 latency is above the threshold. Check broker and Sender load."
+      }
+    },
+    "rate_limited": "Too many requests, try again in a minute.",
+    "tooltip": {
+      "rate_unit": "/s",
+      "lag_unit": "messages",
+      "consumed_lt_produced": "consumed < produced",
+      "threshold": "critical threshold: {{n}}",
+      "threshold_near": "approaching threshold {{n}}",
+      "moment": "moment",
+      "window_s": "{{n}}s window",
+      "window_m": "{{n}}m window"
     }
   },
   "node": {
@@ -144,6 +275,7 @@
       "path_format": "Path may contain only latin letters, digits, slash, hyphen and underscore, and must start with a letter or digit",
       "target_url_required": "Target URL is required when URL mode is «static»",
       "target_url_length": "Target URL must be at most 2048 characters",
+      "target_url_self": "Target URL must not point at the Nexus ingress itself (would cause a request loop)",
       "url_param_name_length": "URL parameter name length must be between 1 and 64 characters",
       "url_param_name_format": "URL parameter name must start with a letter and contain only letters, digits, hyphen and underscore",
       "auth_dynamic_field_length": "Dynamic auth field name length must be between 1 and 64 characters",
@@ -314,6 +446,12 @@
   },
   "logs": {
     "empty": "No log entries",
+    "detail": {
+      "request": "Request",
+      "response": "Response",
+      "empty": "(empty)",
+      "error": "Failed to load body"
+    },
     "not_configured": "Logging is not configured for this node — no clickhouse_table set. Pick a ClickHouse template in node settings (the log table is created automatically) or set the table name manually.",
     "shown_count": "{{n}} shown",
     "page_size": "Page size",
@@ -384,6 +522,18 @@
       "create": "Create",
       "name_placeholder": "Name (e.g. grafana-export)",
       "copy_now": "Copy this token now — it won't be shown again",
+      "close": "close",
+      "cancel": "Cancel",
+      "col_name": "name",
+      "col_prefix": "prefix",
+      "col_scopes": "scopes",
+      "col_created": "created",
+      "col_last_used": "last used",
+      "col_status": "status",
+      "status_active": "active",
+      "status_expired": "expired",
+      "status_revoked": "revoked",
+      "confirm_delete": "Delete this token?",
       "revoke": "Revoke",
       "delete": "Delete",
       "empty": "No tokens yet"
@@ -530,7 +680,8 @@
         "edit": "Rename",
         "delete": "Delete"
       },
-      "confirm_delete": "Delete team `{{slug}}`? CH database stays — drop manually via Orphans.",
+      "confirm_delete_title": "Delete team",
+      "confirm_delete": "Delete team “{{slug}}”? Its ClickHouse database is kept — you can drop it later in Settings → ClickHouse → Orphans.",
       "field": {
         "slug": "Slug",
         "slug_hint": "Lowercase letters / digits / underscore, 1..32 chars. Immutable after creation.",
@@ -643,10 +794,12 @@
     }
   },
   "common": {
+    "updated_at": "Updated",
     "loading": "Loading…",
     "error": "Error",
     "ok": "OK",
     "cancel": "Cancel",
+    "confirm": "Confirm",
     "save": "Save",
     "close": "Close",
     "edit": "Edit",

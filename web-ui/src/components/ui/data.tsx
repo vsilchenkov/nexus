@@ -36,12 +36,13 @@ export function Chip({
   );
 }
 
-type PillTone = "ok" | "err" | "warn";
+type PillTone = "ok" | "err" | "warn" | "muted";
 
 const pillTones: Record<PillTone, string> = {
   ok: "bg-ok/10 text-ok",
   err: "bg-err/10 text-err",
   warn: "bg-warn/10 text-warn",
+  muted: "bg-fg-subtle/10 text-fg-muted",
 };
 
 // Pill — статус-бейдж эталона (.pill).

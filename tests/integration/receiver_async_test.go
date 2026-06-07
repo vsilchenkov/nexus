@@ -80,7 +80,7 @@ func TestSender_Async_E2E(t *testing.T) {
 	auditUC := webuc.NewAuditUsecase(auditRepo, logger)
 	defaultTeam := resolveDefaultTeamID(t, ctx, pool)
 	teamRepo := pgrepo.NewTeamRepoPg(pool, logger)
-	nodeUC := webuc.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, teamRepo, nil, nil, time.Minute, 0, defaultTeam, logger)
+	nodeUC := webuc.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, teamRepo, nil, nil, time.Minute, 0, defaultTeam, nil, logger)
 
 	n := &domain.Node{
 		Path:                    "demo/async",
@@ -129,7 +129,7 @@ func TestSender_Async_E2E(t *testing.T) {
 	//    собранный AuthHeader и cleaned headers/query — это то, что
 	//    sync-тест проверял sync-путь, а здесь — async.
 	receiverReader := &fakeReader{repo: nodeRepo}
-	routeAsyncUC := rcv.NewRouteAsyncUsecase(receiverReader, producer, cfg.Kafka.AsyncTopic, logger)
+	routeAsyncUC := rcv.NewRouteAsyncUsecase(receiverReader, producer, cfg.Kafka.AsyncTopic, 5, logger)
 
 	res, err := routeAsyncUC.RouteAsync(ctx, rcv.RouteInput{
 		NodePath: "demo/async",

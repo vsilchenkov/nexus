@@ -30,9 +30,15 @@
     "password_field": "Пароль",
     "logout": "Выйти"
   },
+  "force_password": {
+    "title": "Требуется смена пароля",
+    "subtitle": "Прежде чем продолжить, задайте новый пароль.",
+    "submit": "Задать пароль и войти"
+  },
   "nav": {
     "nodes": "Узлы",
     "audit": "Аудит",
+    "kafka": "Kafka",
     "settings": "Настройки",
     "team": "Команда",
     "language": "Язык",
@@ -60,7 +66,7 @@
     "filter": { "all_methods": "Все методы", "all_statuses": "Все статусы" },
     "view": { "table": "Таблица", "cards": "Карточки" },
     "card": { "dynamic_url": "{URL из запроса}" },
-    "status": { "ok": "OK", "down": "Down", "queue": "Очередь" },
+    "status": { "ok": "OK", "down": "Down", "queue": "Очередь", "unknown": "—" },
     "table": {
       "path": "Узел",
       "method": "Метод",
@@ -121,6 +127,131 @@
       "14d": "14д",
       "30d": "30д",
       "custom": "Произвольный"
+    },
+    "tooltip": {
+      "delivered": "доставлено",
+      "errors": "ошибок",
+      "requests": "запросов",
+      "peak": "пик за период",
+      "vs_avg": "к среднему",
+      "open_logs": "Открыть логи за этот момент",
+      "seconds": "{{n}} сек",
+      "minutes": "{{n}} мин",
+      "hours": "{{n}} ч"
+    }
+  },
+  "kafka": {
+    "title": "Мониторинг Kafka",
+    "subtitle": "Состояние кластера, throughput, ошибки и узлы-лидеры по нагрузке",
+    "updated_ago": "обновлено {{secs}} сек назад",
+    "refresh": "Обновить",
+    "check_cluster": "Проверить кластер",
+    "forbidden": "Мониторинг Kafka доступен только администраторам.",
+    "resolution": { "auto": "Авто" },
+    "legend": { "produced": "produced", "consumed": "consumed", "errors": "errors" },
+    "throughput": { "title": "Throughput", "unit": "сообщений/сек" },
+    "lag": {
+      "title": "Consumer lag",
+      "subtitle": "отставание от head топика",
+      "label": "lag"
+    },
+    "kpi": {
+      "messages": "Сообщений за период",
+      "lag": "Текущий lag",
+      "errors": "Ошибок за период",
+      "in_flight": "In-flight сейчас",
+      "vs_previous": "к предыдущему периоду",
+      "of_total": "от общего числа",
+      "in_flight_hint": "в обработке между produce и consume"
+    },
+    "topics": {
+      "title": "Топики",
+      "name": "Топик",
+      "partitions": "Партиций",
+      "replication": "Replication",
+      "size": "Размер",
+      "messages": "Сообщений ~",
+      "groups": "Consumer groups",
+      "health": "Состояние",
+      "empty": "Топиков нет",
+      "state": {
+        "ok": "OK",
+        "under_replicated": "under-replicated",
+        "lag": "растущий lag",
+        "offline": "offline партиции"
+      }
+    },
+    "top_producers": {
+      "title": "Top producers",
+      "node": "Узел",
+      "messages": "Сообщений",
+      "share": "Доля",
+      "empty": "Нет данных за период"
+    },
+    "top_failures": {
+      "title": "Top failures",
+      "node": "Узел",
+      "errors": "Ошибок",
+      "rate": "Error rate",
+      "empty": "Никаких ошибок не зафиксировано"
+    },
+    "brokers": {
+      "title": "Брокеры",
+      "online": "{{online}} из {{total}} online",
+      "recheck": "Перепроверить",
+      "empty": "Запустите проверку кластера, чтобы увидеть состояние брокеров",
+      "up": "online",
+      "down": "offline",
+      "ping": "Ping",
+      "warn": {
+        "unreachable": "Брокер недоступен",
+        "latency": "Задержка отклика выше среднего. Проверьте сеть до этого хоста."
+      }
+    },
+    "health": {
+      "healthy": {
+        "title": "Кластер здоров",
+        "details": "Все брокеры online, нет under-replicated партиций, lag не растёт."
+      },
+      "offline_partitions": {
+        "title": "Критично: offline партиции",
+        "details": "У {{offline}} партиц(ии) нет доступного лидера — producer не может писать. Требуется немедленная реакция."
+      },
+      "brokers_down": {
+        "title": "Критично: брокеры недоступны",
+        "details": "Online только {{online}} из {{total}} брокеров. Кластер под угрозой."
+      },
+      "error_rate_high": {
+        "title": "Повышенная доля ошибок",
+        "details": "{{error_rate}}% сообщений за период завершились ошибкой. Проверьте проблемные узлы ниже."
+      },
+      "lag_high": {
+        "title": "Высокий consumer lag",
+        "details": "Текущий lag {{lag}}. Consumer отстаёт от producer — проверьте Sender."
+      },
+      "lag_growing": {
+        "title": "Внимание: lag растёт быстрее, чем consumer обрабатывает",
+        "details": "Текущий lag {{lag}} растёт. Sender обрабатывает медленнее, чем producer пишет — проверьте загрузку Sender."
+      },
+      "under_replicated": {
+        "title": "Внимание: under-replicated партиции",
+        "details": "{{under_replicated}} партиц(ии) под-реплицированы. Часть реплик отстала или недоступна."
+      },
+      "produce_latency_high": {
+        "title": "Повышенная задержка обработки",
+        "details": "p95 длительности обработки выше порога. Проверьте загрузку брокеров и Sender."
+      }
+    },
+    "rate_limited": "Слишком много запросов, повторите через минуту.",
+    "tooltip": {
+      "rate_unit": "/с",
+      "lag_unit": "сообщений",
+      "consumed_lt_produced": "consumed < produced",
+      "threshold": "критичный порог: {{n}}",
+      "threshold_near": "приближается к порогу {{n}}",
+      "moment": "момент времени",
+      "window_s": "окно {{n}} сек",
+      "window_m": "окно {{n}} мин"
     }
   },
   "node": {
@@ -144,6 +275,7 @@
       "path_format": "Путь может содержать только латинские буквы, цифры, слеш, дефис и подчёркивание и должен начинаться с буквы или цифры",
       "target_url_required": "Целевой URL обязателен при режиме URL «static»",
       "target_url_length": "Целевой URL не длиннее 2048 символов",
+      "target_url_self": "Целевой URL не должен указывать на сам вход Nexus (это вызовет зацикливание запросов)",
       "url_param_name_length": "Имя URL-параметра должно быть от 1 до 64 символов",
       "url_param_name_format": "Имя URL-параметра должно начинаться с буквы и содержать только буквы, цифры, дефис и подчёркивание",
       "auth_dynamic_field_length": "Имя поля динамической авторизации должно быть от 1 до 64 символов",
@@ -314,6 +446,12 @@
   },
   "logs": {
     "empty": "Записей нет",
+    "detail": {
+      "request": "Запрос",
+      "response": "Ответ",
+      "empty": "(пусто)",
+      "error": "Не удалось загрузить тело"
+    },
     "not_configured": "Логирование для этого узла не настроено — не задан clickhouse_table. Выберите шаблон ClickHouse в настройках узла (таблица логов создастся автоматически) или укажите имя таблицы вручную.",
     "shown_count": "Показано {{n}}",
     "page_size": "Размер страницы",
@@ -384,6 +522,18 @@
       "create": "Создать",
       "name_placeholder": "Имя (например, grafana-export)",
       "copy_now": "Скопируйте токен сейчас — повторно он не отображается",
+      "close": "закрыть",
+      "cancel": "Отмена",
+      "col_name": "имя",
+      "col_prefix": "префикс",
+      "col_scopes": "scopes",
+      "col_created": "создан",
+      "col_last_used": "посл. использование",
+      "col_status": "статус",
+      "status_active": "активен",
+      "status_expired": "истёк",
+      "status_revoked": "отозван",
+      "confirm_delete": "Удалить этот токен?",
       "revoke": "Отозвать",
       "delete": "Удалить",
       "empty": "Токенов пока нет"
@@ -530,7 +680,8 @@
         "edit": "Переименовать",
         "delete": "Удалить"
       },
-      "confirm_delete": "Удалить команду `{{slug}}`? CH-БД остаётся — удалите вручную через Orphans.",
+      "confirm_delete_title": "Удаление команды",
+      "confirm_delete": "Удалить команду «{{slug}}»? База ClickHouse этой команды останется — её можно удалить позже в Настройки → ClickHouse → Orphans.",
       "field": {
         "slug": "Slug",
         "slug_hint": "Строчные буквы / цифры / подчёркивание, 1..32 символа. Изменить нельзя.",
@@ -643,10 +794,12 @@
     }
   },
   "common": {
+    "updated_at": "Обновлено",
     "loading": "Загрузка…",
     "error": "Ошибка",
     "ok": "OK",
     "cancel": "Отмена",
+    "confirm": "Подтвердить",
     "save": "Сохранить",
     "close": "Закрыть",
     "edit": "Изменить",

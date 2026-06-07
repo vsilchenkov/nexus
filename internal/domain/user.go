@@ -33,9 +33,15 @@ type User struct {
 type Session struct {
 	Token         string
 	UserID        string
+	Login         string
 	Role          UserRole
 	Lang          UserLang
 	CurrentTeamID string
-	CreatedAt     time.Time
-	LastSeenAt    time.Time
+	// MustChangePassword — копия флага пользователя на момент входа (§7.1, П18).
+	// Пока true, middleware RequirePasswordChanged блокирует все эндпоинты,
+	// кроме смены собственного пароля. Сбрасывается при следующем входе после
+	// смены пароля (ChangeOwnPassword инвалидирует все сессии пользователя).
+	MustChangePassword bool
+	CreatedAt          time.Time
+	LastSeenAt         time.Time
 }

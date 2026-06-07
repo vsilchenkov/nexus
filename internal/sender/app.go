@@ -105,10 +105,10 @@ func (a *App) Start(ctx context.Context) error {
 	grpcSvc := grpcadapter.NewServer(sendUC, a.metrics, a.logger)
 
 	// Async consumer.
-	a.producer = kafkapf.NewProducer(a.cfg)
+	a.producer = kafkapf.NewProducer(a.cfg, kafkapf.WithMetrics(a.metrics))
 	nodeReader := nodepg.New(a.pg, a.cipher, a.logger)
 	asyncProc := usecase.NewAsyncProcessor(nodeReader, sendUC, a.producer, a.cfg.Kafka.DLQTopic, a.metrics, a.logger)
-	a.consumer = kafkaadapter.NewConsumerGroup(a.cfg, a.cfg.Kafka.AsyncTopic, asyncProc, a.logger)
+	a.consumer = kafkaadapter.NewConsumerGroup(a.cfg, a.cfg.Kafka.AsyncTopic, asyncProc, a.logger, kafkaadapter.WithMetrics(a.metrics))
 	a.consumer.Start(ctx)
 
 	// CH partition-drop housekeeping (§4.3 ТЗ): фоновый цикл раз в сутки.

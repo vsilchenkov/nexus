@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nexus — Tooltip на графиках</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/tabler-icons.min.css">
+<style>
+:root {
+  --bg-app: #0f1115;
+  --bg-primary: #16191f;
+  --bg-secondary: #1c2027;
+  --bg-tertiary: #22272f;
+  --bg-info: rgba(74, 144, 226, 0.12);
+  --bg-success: rgba(60, 180, 120, 0.14);
+  --bg-warning: rgba(220, 160, 60, 0.14);
+  --bg-danger: rgba(226, 75, 74, 0.12);
+
+  --border-tertiary: #2a3038;
+  --border-strong: #38404a;
+
+  --text-primary: #e6e9ef;
+  --text-secondary: #9aa3b2;
+  --text-tertiary: #5f6875;
+  --text-info: #5b9bf0;
+  --text-success: #4cc38a;
+  --text-warning: #d9a441;
+  --text-danger: #e85d5c;
+
+  --radius-sm: 4px;
+  --radius-md: 7px;
+  --radius-lg: 11px;
+
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font-sans); background: var(--bg-app); color: var(--text-primary); font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; padding: 32px; }
+code { font-family: var(--font-mono); font-size: 11px; background: var(--bg-secondary); padding: 1px 6px; border-radius: 3px; color: var(--text-info); }
+
+.intro { max-width: 1100px; margin: 0 auto 28px; }
+.intro .tag { display: inline-block; font-family: var(--font-mono); font-size: 11px; color: var(--text-info); background: var(--bg-info); padding: 3px 8px; border-radius: var(--radius-sm); margin-bottom: 10px; }
+.intro h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; margin-bottom: 6px; }
+.intro p { font-size: 13px; color: var(--text-secondary); line-height: 1.65; max-width: 800px; }
+
+.row { max-width: 1100px; margin: 0 auto 36px; }
+.row-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }
+.row-head .num { font-family: var(--font-mono); font-size: 11px; color: var(--text-info); background: var(--bg-info); padding: 3px 8px; border-radius: var(--radius-sm); }
+.row-head h2 { font-size: 15px; font-weight: 600; }
+.row-desc { font-size: 12.5px; color: var(--text-secondary); margin-bottom: 14px; max-width: 800px; line-height: 1.6; }
+
+.before-after { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: stretch; }
+.column h4 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-tertiary); margin-bottom: 8px; font-weight: 500; }
+.column.was h4 { color: var(--text-danger); }
+.column.now h4 { color: var(--text-success); }
+
+.frame {
+  background: var(--bg-primary);
+  border: 0.5px solid var(--border-tertiary);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  position: relative;
+  min-height: 200px;
+}
+.frame.demo { padding: 26px; }
+
+.stage {
+  background: var(--bg-app);
+  border-radius: var(--radius-md);
+  padding: 20px;
+  position: relative;
+  min-height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.stage.wide { min-height: 240px; }
+
+/* ======== Tooltip styles — the core deliverable ======== */
+
+/* "Was" tooltip — what it looks like now */
+.tip-old {
+  background: #0a0c10;
+  border: 0.5px solid #2a3038;
+  border-radius: 6px;
+  padding: 4px 9px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  position: relative;
+  display: inline-block;
+}
+
+/* New tooltip — minimal compact (for sparklines) */
+.tip {
+  background: rgba(22, 25, 31, 0.96);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 0.5px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255,255,255,0.04);
+  padding: 10px 12px;
+  font-family: var(--font-sans);
+  white-space: nowrap;
+  position: relative;
+  display: inline-block;
+  min-width: 140px;
+}
+/* Tooltip arrow / pointer */
+.tip::before {
+  content: '';
+  position: absolute;
+  width: 8px; height: 8px;
+  background: rgba(22, 25, 31, 0.96);
+  border-left: 0.5px solid var(--border-strong);
+  border-top: 0.5px solid var(--border-strong);
+  transform: rotate(45deg);
+}
+.tip.pt-down::before { left: 50%; top: -5px; margin-left: -4px; }
+.tip.pt-up::before   { left: 50%; bottom: -5px; margin-left: -4px; transform: rotate(225deg); }
+.tip.pt-right::before { left: -5px; top: 50%; margin-top: -4px; transform: rotate(-45deg); }
+.tip.pt-left::before { right: -5px; top: 50%; margin-top: -4px; transform: rotate(135deg); }
+
+/* Period range — header line */
+.tip-period {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-bottom: 6px;
+}
+.tip-period .duration {
+  font-size: 9px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  padding: 1px 5px;
+  border-radius: 7px;
+  margin-left: auto;
+}
+
+/* Value rows — series */
+.tip-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 2px 0;
+}
+.tip-row .marker {
+  width: 8px; height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.tip-row .marker.line { height: 2px; border-radius: 1px; }
+.tip-row .marker.dashed { background: transparent; border-top: 2px dashed currentColor; height: 0; width: 10px; }
+.tip-row .name { color: var(--text-secondary); flex: 1; font-size: 11.5px; }
+.tip-row .value { font-family: var(--font-mono); font-size: 12.5px; font-weight: 600; color: var(--text-primary); }
+.tip-row .unit { font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary); margin-left: 2px; }
+
+/* Bottom divider */
+.tip-foot {
+  border-top: 0.5px solid var(--border-tertiary);
+  margin-top: 8px;
+  padding-top: 7px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tip-foot.warn { color: var(--text-warning); }
+.tip-foot.err { color: var(--text-danger); }
+.tip-foot i { font-size: 13px; }
+.tip-foot .delta { margin-left: auto; font-family: var(--font-mono); font-size: 11px; }
+.tip-foot .delta.up { color: var(--text-success); }
+.tip-foot .delta.down { color: var(--text-danger); }
+
+/* "Big value" variant for sparkline tooltip */
+.tip-big {
+  font-family: var(--font-mono);
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  line-height: 1;
+  margin: 2px 0 4px;
+}
+.tip-big .unit { font-size: 12px; color: var(--text-secondary); font-weight: 500; margin-left: 3px; }
+.tip-big.warn { color: var(--text-warning); }
+.tip-big.danger { color: var(--text-danger); }
+
+/* Mini partition bars inside lag tooltip */
+.partitions { display: flex; gap: 3px; margin-top: 8px; padding-top: 8px; border-top: 0.5px solid var(--border-tertiary); }
+.partition { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1; }
+.partition .bar-track {
+  width: 100%; height: 24px; background: var(--bg-secondary); border-radius: 2px; position: relative; overflow: hidden;
+}
+.partition .bar-fill {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  background: var(--text-warning);
+  border-radius: 2px;
+}
+.partition .label { font-family: var(--font-mono); font-size: 9px; color: var(--text-tertiary); }
+.partition .val { font-family: var(--font-mono); font-size: 10px; color: var(--text-primary); font-weight: 600; }
+
+/* Action chip inside tooltip */
+.tip-action {
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 0.5px solid var(--border-tertiary);
+  font-size: 11px;
+  color: var(--text-info);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+.tip-action:hover { color: var(--text-primary); }
+
+/* Sparkline area (for demo state) */
+.spark-demo {
+  width: 280px; height: 40px;
+  display: flex; align-items: flex-end; gap: 2px;
+  position: relative;
+}
+.spark-demo span {
+  flex: 1; background: var(--text-warning); opacity: 0.85;
+  border-radius: 1px 1px 0 0;
+}
+.spark-demo .cursor {
+  position: absolute;
+  top: -4px; bottom: -4px;
+  width: 1px;
+  background: var(--text-warning);
+  pointer-events: none;
+}
+.spark-demo .crosshair {
+  position: absolute;
+  width: 12px; height: 12px;
+  background: var(--bg-app);
+  border: 2px solid var(--text-warning);
+  border-radius: 50%;
+  pointer-events: none;
+}
+.spark-demo .label-bottom {
+  position: absolute;
+  top: 48px;
+  left: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+/* Notes panel */
+.notes { max-width: 1100px; margin: 8px auto 0; padding: 18px 22px; background: var(--bg-primary); border: 0.5px solid var(--border-tertiary); border-radius: var(--radius-lg); font-size: 12.5px; color: var(--text-secondary); line-height: 1.65; }
+.notes h3 { font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; margin-top: 14px; }
+.notes h3:first-child { margin-top: 0; }
+.notes ul { list-style: none; padding: 0; }
+.notes li { padding: 3px 0; }
+.notes li::before { content: "·"; color: var(--text-tertiary); margin-right: 8px; }
+
+.color-info { color: var(--text-info); }
+.color-success { color: var(--text-success); }
+.color-warning { color: var(--text-warning); }
+.color-danger { color: var(--text-danger); }
+</style>
+</head>
+<body>
+
+<div class="intro">
+  <span class="tag">§7 · UI · tooltip</span>
+  <h1>Расшифровка графика при наведении</h1>
+  <p>Эталон тултипов для всех графиков Nexus — спарклайны в карточках узлов, главный multi-line график Kafka, lag-график, маркеры ошибок. Сейчас тултип на скриншоте показывает <code>15:43–16:13 · 724</code> в одну строку без иерархии и контекста. Ниже — переработка: иерархия (период → значение → детали), цветные маркеры серий, единица измерения, дельта к соседнему интервалу, опциональное действие.</p>
+</div>
+
+<!-- ============ BEFORE / AFTER on the same sparkline ============ -->
+<div class="row">
+  <div class="row-head"><span class="num">1</span><h2>Спарклайн в карточке узла · до и после</h2></div>
+  <p class="row-desc">Контекст со скриншота: hover над столбиком спарклайна узла. Цель — показать, <em>сколько</em>, <em>за какой интервал</em>, <em>как это соотносится с соседними</em>, и <em>что делать</em>.</p>
+
+  <div class="before-after">
+    <div class="column was">
+      <h4>Было</h4>
+      <div class="frame demo">
+        <div class="stage">
+          <div style="position:relative;">
+            <div class="spark-demo">
+              <span style="height:30%"></span><span style="height:45%"></span><span style="height:38%"></span><span style="height:55%"></span><span style="height:62%"></span><span style="height:90%" id="active-old"></span><span style="height:70%"></span><span style="height:50%"></span><span style="height:42%"></span><span style="height:48%"></span>
+              <div class="cursor" style="left: 50%;"></div>
+            </div>
+            <div style="position:absolute;left:50%;top:-44px;transform:translateX(-50%);">
+              <div class="tip-old">15:43–16:13 · 724</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="column now">
+      <h4>Стало</h4>
+      <div class="frame demo">
+        <div class="stage">
+          <div style="position:relative;">
+            <div class="spark-demo">
+              <span style="height:30%"></span><span style="height:45%"></span><span style="height:38%"></span><span style="height:55%"></span><span style="height:62%"></span><span style="height:90%" id="active-new"></span><span style="height:70%"></span><span style="height:50%"></span><span style="height:42%"></span><span style="height:48%"></span>
+              <div class="cursor" style="left: 50%;"></div>
+              <div class="crosshair" style="left: calc(50% - 6px); top: -4px;"></div>
+            </div>
+            <div style="position:absolute;left:50%;top:-126px;transform:translateX(-50%);">
+              <div class="tip pt-down">
+                <div class="tip-period">
+                  <span>15:43</span>
+                  <span style="color:var(--text-tertiary);">→</span>
+                  <span>16:13</span>
+                  <span class="duration">30 мин</span>
+                </div>
+                <div class="tip-big">724<span class="unit">запросов</span></div>
+                <div class="tip-row">
+                  <span class="marker" style="background:var(--text-success);"></span>
+                  <span class="name">доставлено</span>
+                  <span class="value">722</span>
+                </div>
+                <div class="tip-row">
+                  <span class="marker" style="background:var(--text-danger);"></span>
+                  <span class="name">ошибок</span>
+                  <span class="value">2</span>
+                </div>
+                <div class="tip-foot">
+                  <i class="ti ti-trending-up"></i> Пик за период
+                  <span class="delta up">+24% к среднему</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ Multi-line tooltip ============ -->
+<div class="row">
+  <div class="row-head"><span class="num">2</span><h2>Multi-line график · несколько серий разом</h2></div>
+  <p class="row-desc">Для главного графика Kafka и аналогов на странице узла. Несколько серий, у каждой свой цвет, общее время сверху. Серии отсортированы по убыванию значения — глаз сразу хватает доминирующую линию.</p>
+
+  <div class="frame demo">
+    <div class="stage wide" style="justify-content:flex-start;">
+      <svg viewBox="0 0 700 200" xmlns="http://www.w3.org/2000/svg" style="width:100%; max-width: 700px; height: 200px;">
+        <defs>
+          <linearGradient id="grad-prod" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#5b9bf0" stop-opacity="0.25"/><stop offset="100%" stop-color="#5b9bf0" stop-opacity="0"/></linearGradient>
+          <linearGradient id="grad-cons" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#4cc38a" stop-opacity="0.18"/><stop offset="100%" stop-color="#4cc38a" stop-opacity="0"/></linearGradient>
+        </defs>
+        <g stroke="#2a3038" stroke-width="0.5">
+          <line x1="40" y1="30" x2="690" y2="30"/>
+          <line x1="40" y1="80" x2="690" y2="80"/>
+          <line x1="40" y1="130" x2="690" y2="130"/>
+        </g>
+        <!-- Produced -->
+        <path d="M 40 100 L 110 90 L 180 110 L 250 78 L 320 85 L 390 65 L 460 70 L 530 50 L 600 60 L 670 42 L 670 180 L 40 180 Z" fill="url(#grad-prod)"/>
+        <path d="M 40 100 L 110 90 L 180 110 L 250 78 L 320 85 L 390 65 L 460 70 L 530 50 L 600 60 L 670 42" fill="none" stroke="#5b9bf0" stroke-width="2"/>
+        <!-- Consumed -->
+        <path d="M 40 104 L 110 95 L 180 115 L 250 83 L 320 90 L 390 78 L 460 95 L 530 102 L 600 125 L 670 142 L 670 180 L 40 180 Z" fill="url(#grad-cons)"/>
+        <path d="M 40 104 L 110 95 L 180 115 L 250 83 L 320 90 L 390 78 L 460 95 L 530 102 L 600 125 L 670 142" fill="none" stroke="#4cc38a" stroke-width="2"/>
+        <!-- Errors dashed -->
+        <path d="M 40 170 L 250 168 L 460 162 L 530 165 L 600 155 L 670 150" fill="none" stroke="#e85d5c" stroke-width="1.5" stroke-dasharray="4 4"/>
+
+        <!-- Crosshair -->
+        <line x1="460" y1="20" x2="460" y2="170" stroke="#9aa3b2" stroke-width="0.5" stroke-dasharray="2 3"/>
+        <circle cx="460" cy="70" r="4" fill="#5b9bf0" stroke="#0f1115" stroke-width="2"/>
+        <circle cx="460" cy="95" r="4" fill="#4cc38a" stroke="#0f1115" stroke-width="2"/>
+        <circle cx="460" cy="162" r="4" fill="#e85d5c" stroke="#0f1115" stroke-width="2"/>
+
+        <!-- Axis labels -->
+        <g fill="#5f6875" font-size="10" font-family="JetBrains Mono, monospace">
+          <text x="80" y="195">13:00</text>
+          <text x="320" y="195">13:30</text>
+          <text x="600" y="195">14:00</text>
+        </g>
+      </svg>
+
+      <!-- Tooltip positioned to the right of crosshair (anchored at x≈460) -->
+      <div style="position:absolute;left:55%;top:12px;">
+        <div class="tip pt-left" style="min-width:200px;">
+          <div class="tip-period">
+            <span>13:48</span>
+            <span style="color:var(--text-tertiary);">·</span>
+            <span style="color:var(--text-secondary);">30-секундное окно</span>
+          </div>
+          <div class="tip-row">
+            <span class="marker line" style="background:var(--text-info);"></span>
+            <span class="name">produced</span>
+            <span class="value">612<span class="unit">/с</span></span>
+          </div>
+          <div class="tip-row">
+            <span class="marker line" style="background:var(--text-success);"></span>
+            <span class="name">consumed</span>
+            <span class="value">318<span class="unit">/с</span></span>
+          </div>
+          <div class="tip-row">
+            <span class="marker dashed" style="color:var(--text-danger);"></span>
+            <span class="name">errors ×10</span>
+            <span class="value">0.4<span class="unit">/с</span></span>
+          </div>
+          <div class="tip-foot warn">
+            <i class="ti ti-alert-triangle"></i>
+            <span>consumed &lt; produced</span>
+            <span class="delta down">∆ −294/с</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ Lag tooltip with partition breakdown ============ -->
+<div class="row">
+  <div class="row-head"><span class="num">3</span><h2>Lag-график · с разбивкой по партициям</h2></div>
+  <p class="row-desc">Для consumer lag важно знать не только общую сумму, но и распределение по партициям — если одна партиция накопила весь lag, проблема в её consumer'е, а не в общем темпе. Поэтому в тултипе мини-bar чарт по партициям.</p>
+
+  <div class="frame demo">
+    <div class="stage wide" style="justify-content:flex-start;">
+      <svg viewBox="0 0 700 200" xmlns="http://www.w3.org/2000/svg" style="width:100%; max-width: 700px; height: 200px;">
+        <defs>
+          <linearGradient id="grad-lag" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#d9a441" stop-opacity="0.35"/><stop offset="100%" stop-color="#d9a441" stop-opacity="0"/></linearGradient>
+        </defs>
+        <g stroke="#2a3038" stroke-width="0.5">
+          <line x1="40" y1="30" x2="690" y2="30"/>
+          <line x1="40" y1="80" x2="690" y2="80"/>
+          <line x1="40" y1="130" x2="690" y2="130"/>
+        </g>
+        <!-- Threshold line -->
+        <line x1="40" y1="80" x2="690" y2="80" stroke="#e85d5c" stroke-width="1" stroke-dasharray="6 4" opacity="0.5"/>
+        <text x="50" y="74" fill="#e85d5c" font-size="9" font-family="JetBrains Mono, monospace" opacity="0.7">критичный порог: 1000</text>
+
+        <!-- Lag curve -->
+        <path d="M 40 170 L 150 168 L 260 165 L 370 155 L 460 130 L 530 95 L 600 65 L 670 48 L 670 180 L 40 180 Z" fill="url(#grad-lag)"/>
+        <path d="M 40 170 L 150 168 L 260 165 L 370 155 L 460 130 L 530 95 L 600 65 L 670 48" fill="none" stroke="#d9a441" stroke-width="2"/>
+
+        <!-- Red zone above threshold -->
+        <path d="M 530 95 L 600 65 L 670 48 L 670 80 L 530 80 Z" fill="#e85d5c" opacity="0.18"/>
+
+        <!-- Crosshair -->
+        <line x1="600" y1="20" x2="600" y2="170" stroke="#9aa3b2" stroke-width="0.5" stroke-dasharray="2 3"/>
+        <circle cx="600" cy="65" r="4" fill="#d9a441" stroke="#0f1115" stroke-width="2"/>
+
+        <!-- Axis labels -->
+        <g fill="#5f6875" font-size="10" font-family="JetBrains Mono, monospace">
+          <text x="80" y="195">13:00</text>
+          <text x="370" y="195">13:30</text>
+          <text x="670" y="195">14:00</text>
+        </g>
+      </svg>
+
+      <!-- Tooltip -->
+      <div style="position:absolute;left:36%;top:8px;">
+        <div class="tip pt-right" style="min-width:240px;">
+          <div class="tip-period">
+            <span>13:50</span>
+            <span style="color:var(--text-tertiary);">·</span>
+            <span style="color:var(--text-secondary);">момент времени</span>
+          </div>
+          <div class="tip-big warn">1,180<span class="unit">сообщений</span></div>
+          <div class="tip-row">
+            <span class="name" style="color:var(--text-tertiary);font-size:10.5px;text-transform:uppercase;letter-spacing:0.04em;">по партициям</span>
+          </div>
+          <div class="partitions">
+            <div class="partition"><div class="bar-track"><div class="bar-fill" style="height:88%;"></div></div><div class="val">920</div><div class="label">p0</div></div>
+            <div class="partition"><div class="bar-track"><div class="bar-fill" style="height:18%;background:var(--text-secondary);"></div></div><div class="val">180</div><div class="label">p1</div></div>
+            <div class="partition"><div class="bar-track"><div class="bar-fill" style="height:6%;background:var(--text-secondary);"></div></div><div class="val">64</div><div class="label">p2</div></div>
+            <div class="partition"><div class="bar-track"><div class="bar-fill" style="height:2%;background:var(--text-secondary);"></div></div><div class="val">16</div><div class="label">p3</div></div>
+          </div>
+          <div class="tip-foot err">
+            <i class="ti ti-alert-circle"></i>
+            <span>78% lag на p0 — проверьте consumer этой партиции</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ Single-series with comparison ============ -->
+<div class="row">
+  <div class="row-head"><span class="num">4</span><h2>Один ряд · сравнение с предыдущим периодом</h2></div>
+  <p class="row-desc">Когда на графике одна линия (например, RPS отдельного узла), тултип может показывать ещё и точку «в это же время вчера/неделю назад» — это первый ответ на вопрос «это нормально или просело?».</p>
+
+  <div class="frame demo">
+    <div class="stage" style="justify-content:flex-start;">
+      <svg viewBox="0 0 700 160" xmlns="http://www.w3.org/2000/svg" style="width:100%; max-width: 700px; height: 160px;">
+        <defs>
+          <linearGradient id="grad-rps" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#5b9bf0" stop-opacity="0.22"/><stop offset="100%" stop-color="#5b9bf0" stop-opacity="0"/></linearGradient>
+        </defs>
+        <g stroke="#2a3038" stroke-width="0.5">
+          <line x1="40" y1="30" x2="690" y2="30"/>
+          <line x1="40" y1="80" x2="690" y2="80"/>
+        </g>
+        <!-- Today (solid) -->
+        <path d="M 40 80 L 110 70 L 180 85 L 250 60 L 320 68 L 390 50 L 460 56 L 530 42 L 600 52 L 670 38 L 670 130 L 40 130 Z" fill="url(#grad-rps)"/>
+        <path d="M 40 80 L 110 70 L 180 85 L 250 60 L 320 68 L 390 50 L 460 56 L 530 42 L 600 52 L 670 38" fill="none" stroke="#5b9bf0" stroke-width="2"/>
+        <!-- Last week (dashed) -->
+        <path d="M 40 95 L 110 88 L 180 92 L 250 80 L 320 85 L 390 78 L 460 82 L 530 72 L 600 80 L 670 70" fill="none" stroke="#5b9bf0" stroke-width="1.5" stroke-dasharray="4 4" opacity="0.5"/>
+
+        <!-- Crosshair -->
+        <line x1="390" y1="20" x2="390" y2="130" stroke="#9aa3b2" stroke-width="0.5" stroke-dasharray="2 3"/>
+        <circle cx="390" cy="50" r="4" fill="#5b9bf0" stroke="#0f1115" stroke-width="2"/>
+        <circle cx="390" cy="78" r="3" fill="none" stroke="#5b9bf0" stroke-width="1.5" stroke-dasharray="2 2" opacity="0.6"/>
+      </svg>
+
+      <div style="position:absolute;left:50%;top:-46px;transform:translateX(-50%);">
+        <div class="tip pt-down" style="min-width:200px;">
+          <div class="tip-period">
+            <span>пн, 31 мая · 13:30</span>
+            <span class="duration">1 мин</span>
+          </div>
+          <div class="tip-big">412<span class="unit">RPS</span></div>
+          <div class="tip-row">
+            <span class="marker line" style="background:var(--text-info);"></span>
+            <span class="name">сегодня</span>
+            <span class="value">412</span>
+          </div>
+          <div class="tip-row">
+            <span class="marker dashed" style="color:var(--text-info);opacity:0.6;"></span>
+            <span class="name">неделю назад</span>
+            <span class="value" style="opacity:0.6;">318</span>
+          </div>
+          <div class="tip-foot">
+            <span class="delta up">▲ +29% к прошлой неделе</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ Error marker ============ -->
+<div class="row">
+  <div class="row-head"><span class="num">5</span><h2>Маркер ошибки · отдельное состояние</h2></div>
+  <p class="row-desc">Если на графике есть точечные событий (например, всплеск ошибок, deploy-маркер), при наведении на сам маркер тултип показывает <em>что случилось</em>, а не просто «значение в момент времени». С ссылкой-действием внутри.</p>
+
+  <div class="frame demo">
+    <div class="stage" style="justify-content:flex-start;">
+      <svg viewBox="0 0 700 160" xmlns="http://www.w3.org/2000/svg" style="width:100%; max-width: 700px; height: 160px;">
+        <defs>
+          <linearGradient id="grad-rps2" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#4cc38a" stop-opacity="0.22"/><stop offset="100%" stop-color="#4cc38a" stop-opacity="0"/></linearGradient>
+        </defs>
+        <g stroke="#2a3038" stroke-width="0.5">
+          <line x1="40" y1="30" x2="690" y2="30"/>
+          <line x1="40" y1="80" x2="690" y2="80"/>
+        </g>
+        <path d="M 40 70 L 110 65 L 180 75 L 250 60 L 320 105 L 390 50 L 460 58 L 530 45 L 600 55 L 670 42 L 670 130 L 40 130 Z" fill="url(#grad-rps2)"/>
+        <path d="M 40 70 L 110 65 L 180 75 L 250 60 L 320 105 L 390 50 L 460 58 L 530 45 L 600 55 L 670 42" fill="none" stroke="#4cc38a" stroke-width="2"/>
+
+        <!-- Error marker — diamond at the spike -->
+        <g transform="translate(320, 105)">
+          <circle r="11" fill="#e85d5c" opacity="0.25"/>
+          <circle r="6" fill="#e85d5c" stroke="#0f1115" stroke-width="1.5"/>
+          <text y="3" text-anchor="middle" fill="#fff" font-size="9" font-weight="700" font-family="Inter, sans-serif">!</text>
+        </g>
+
+        <line x1="320" y1="20" x2="320" y2="130" stroke="#e85d5c" stroke-width="0.5" stroke-dasharray="2 3" opacity="0.5"/>
+      </svg>
+
+      <div style="position:absolute;left:42%;top:-86px;">
+        <div class="tip pt-down" style="min-width:240px;border-color:rgba(226,75,74,0.4);">
+          <div class="tip-period">
+            <span>13:21:42</span>
+            <span style="color:var(--text-tertiary);">·</span>
+            <span style="color:var(--text-danger);">всплеск ошибок</span>
+          </div>
+          <div class="tip-big danger">42<span class="unit">ошибок за минуту</span></div>
+          <div class="tip-row">
+            <span class="marker" style="background:var(--text-danger);"></span>
+            <span class="name">timeout</span>
+            <span class="value">38</span>
+          </div>
+          <div class="tip-row">
+            <span class="marker" style="background:var(--text-danger);opacity:0.6;"></span>
+            <span class="name">5xx upstream</span>
+            <span class="value">4</span>
+          </div>
+          <div class="tip-action">
+            <i class="ti ti-external-link"></i>
+            Открыть логи за этот момент
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Notes -->
+<div class="notes">
+  <h3>Иерархия информации в тултипе</h3>
+  <ul>
+    <li><b>Сверху</b> — контекст времени: точка или интервал (<code>15:43 → 16:13</code>), плюс длительность отдельным шрифтом меньше (<code>30 мин</code>).</li>
+    <li><b>Под ним</b> — главное значение крупным шрифтом (24 px, <code>font-mono</code>, bold). Это то, что глаз ловит первым.</li>
+    <li><b>Дальше</b> — детализация серий или категорий: цветной маркер слева, имя серии, значение справа. Отсортировано по убыванию.</li>
+    <li><b>Подвал</b> — короткий вывод или дельта: «пик за период», «consumed &lt; produced ▼ −294/с», «всплеск ошибок». Один признак, не два — иначе теряется фокус.</li>
+    <li><b>Опционально</b> — кнопка-действие со ссылкой: «Открыть логи», «Перейти к узлу».</li>
+  </ul>
+
+  <h3>Визуальные правила</h3>
+  <ul>
+    <li>Полупрозрачный фон <code>rgba(22, 25, 31, 0.96)</code> + <code>backdrop-filter: blur(8px)</code> — чтобы тултип не «врезался» в график как кирпич.</li>
+    <li>Тонкая граница <code>0.5px solid var(--border-strong)</code> + двойная тень: близкая для глубины, дальняя мягкая.</li>
+    <li>Маленькая стрелка-указатель (<code>::before</code>) к точке курсора. Направление зависит от позиции тултипа: down / up / left / right.</li>
+    <li>Маркеры серий — квадратики 8×8 для bar-серий, тонкие линии 10×2 для line-серий, пунктир для dashed-серий. Точно соответствуют стилю серии на самом графике — это <strong>главное</strong>, иначе пользователь путается.</li>
+    <li>Шрифт: подписи серий — <code>font-sans</code>, значения — <code>font-mono</code>. Так числа выравниваются по разрядам, читать легче.</li>
+    <li>Цвет «главного значения» меняется в зависимости от категории: обычное — <code>--text-primary</code>, warn — оранжевое, error — красное. Не используем зелёный для главного значения — он используется для дельт.</li>
+  </ul>
+
+  <h3>Позиционирование (Floating UI / Popper)</h3>
+  <ul>
+    <li>По умолчанию — над курсором (<code>placement="top"</code>), смещение 12 px.</li>
+    <li>Если до верха края недостаточно — авто-флип вниз. Если до правого края — флип влево. Стрелка автоматически выравнивается на точку курсора.</li>
+    <li>Тултип не следует за курсором посимвольно — он привязан к ближайшей точке данных (snap). Это устраняет «дрожь» при медленном движении.</li>
+    <li>Появление с задержкой 150 ms (не сразу), исчезновение мгновенно. Это убирает мерцание при быстром проходе курсора по нескольким столбикам.</li>
+  </ul>
+
+  <h3>Что Claude Code должен использовать</h3>
+  <ul>
+    <li>Recharts <code>&lt;Tooltip content={...} /&gt;</code> или Visx tooltip — обе библиотеки позволяют рендерить произвольный React-компонент. Не использовать дефолтные тултипы — они не дают такой типографики.</li>
+    <li>Один компонент <code>&lt;ChartTooltip /&gt;</code> с пропсами <code>{ period, primary, series, footer, action }</code>. Переиспользовать на всех графиках Nexus.</li>
+    <li>Для позиционирования — <code>@floating-ui/react</code> (бывший Popper.js). Поддерживает auto-flip, shift, arrow из коробки.</li>
+    <li>Snap к ближайшей точке: <code>useTooltipInPortal</code> из visx или <code>activeIndex</code> в recharts.</li>
+  </ul>
+</div>
+
+</body>
+</html>

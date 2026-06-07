@@ -113,8 +113,12 @@ var translations = map[Lang]map[string]string{
 		"node.paused":         "node is paused",
 		// RabbitMQAsync (§27)
 		"rmq.test_rate_limited": "too many RabbitMQ connection tests, try again in a minute",
+		// Kafka monitoring (§4 spec)
+		"kafka.rate_limited":    "too many Kafka monitoring requests, try again in a minute",
+		"kafka.period_too_long": "custom period must not exceed 90 days",
 		// replay
-		"replay.too_old": "cannot replay failed request older than 7 days",
+		"replay.too_old":          "cannot replay failed request older than 7 days",
+		"replay.body_unavailable": "original request body was not logged for this node — enter the body manually to replay",
 		// url
 		"url.required":    "url parameter is required",
 		"url.invalid":     "target url is invalid",
@@ -167,6 +171,7 @@ var translations = map[Lang]map[string]string{
 		"node.validation.path_format":                 "path may contain only latin letters, digits, slash, hyphen and underscore, and must start with a letter or digit",
 		"node.validation.target_url_required":         "target URL is required when URL mode is static",
 		"node.validation.target_url_length":           "target URL must be at most 2048 characters",
+		"node.validation.target_url_self":             "target URL must not point at the Nexus ingress itself (would cause a request loop)",
 		"node.validation.url_param_name_length":       "URL parameter name length must be between 1 and 64 characters",
 		"node.validation.url_param_name_format":       "URL parameter name must start with a letter and contain only letters, digits, hyphen and underscore",
 		"node.validation.auth_dynamic_field_length":   "dynamic auth field name length must be between 1 and 64 characters",
@@ -208,7 +213,10 @@ var translations = map[Lang]map[string]string{
 		"node.limit_reached":       "достигнут лимит узлов, обратитесь к администратору",
 		"node.paused":              "узел в паузе",
 		"rmq.test_rate_limited":    "слишком много проверок подключения к RabbitMQ, повторите через минуту",
+		"kafka.rate_limited":       "слишком много запросов мониторинга Kafka, повторите через минуту",
+		"kafka.period_too_long":    "произвольный период не может превышать 90 дней",
 		"replay.too_old":           "нельзя повторить запрос с ошибкой старше 7 дней",
+		"replay.body_unavailable":  "тело исходного запроса не сохранялось для этого узла — введите тело вручную, чтобы повторить",
 		"url.required":             "параметр URL обязателен",
 		"url.invalid":              "целевой URL невалиден",
 		"url.not_allowed":          "целевой URL не входит в allowlist",
@@ -260,6 +268,7 @@ var translations = map[Lang]map[string]string{
 		"node.validation.path_format":                 "путь может содержать только латинские буквы, цифры, слеш, дефис и подчёркивание и должен начинаться с буквы или цифры",
 		"node.validation.target_url_required":         "целевой URL обязателен при режиме URL «static»",
 		"node.validation.target_url_length":           "целевой URL не длиннее 2048 символов",
+		"node.validation.target_url_self":             "целевой URL не должен указывать на сам вход Nexus (это вызовет зацикливание запросов)",
 		"node.validation.url_param_name_length":       "имя URL-параметра должно быть от 1 до 64 символов",
 		"node.validation.url_param_name_format":       "имя URL-параметра должно начинаться с буквы и содержать только буквы, цифры, дефис и подчёркивание",
 		"node.validation.auth_dynamic_field_length":   "имя поля динамической авторизации должно быть от 1 до 64 символов",

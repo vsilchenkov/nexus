@@ -2,13 +2,14 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { type Node } from "../../api/client";
-import { Card, Hint, Kpi, KpiRow, LabelHint, PeriodPicker, TrafficChart, type Period } from "../ui";
+import { Card, Hint, Kpi, KpiRow, LabelHint, PeriodPicker, TrafficChart, type LogsRange, type Period } from "../ui";
 import { fmtNum } from "../../lib/format";
 import { useNodeMetrics } from "./useNodeMetrics";
 
 // MetricsTab — вкладка «Метрики» узла (§21): перцентили + счётчики + график
 // за выбранный период. Источник — ClickHouse (точные quantile). По умолчанию 24h.
-export function MetricsTab({ node }: { node: Node }) {
+// onOpenLogs (§33.4) — клик по столбцу графика открывает логи за момент.
+export function MetricsTab({ node, onOpenLogs }: { node: Node; onOpenLogs?: (range: LogsRange) => void }) {
   const { t } = useTranslation();
   const [period, setPeriod] = useState<Period>({ kind: "preset", range: "24h" });
   const m = useNodeMetrics(node.id, period);
@@ -46,7 +47,11 @@ export function MetricsTab({ node }: { node: Node }) {
           {t("metrics.kpi.requests")}
           <LabelHint content={t("metrics.hints.requests")} />
         </div>
-        <TrafficChart data={m.data?.series ?? []} height={180} />
+        <TrafficChart
+          data={m.data?.series ?? []}
+          height={180}
+          onOpenLogs={node.clickhouse_table ? onOpenLogs : undefined}
+        />
       </Card>
     </div>
   );

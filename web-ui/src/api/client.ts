@@ -183,3 +183,54 @@ export type CHTemplate = {
   created_at: string;
   updated_at: string;
 };
+
+// Kafka monitoring (§4 spec, /api/kafka/*). Admin-only.
+export type KafkaSeverity = "ok" | "warn" | "err";
+export type KafkaOverview = {
+  period: { from: string; to: string };
+  summary: {
+    produced_total: number;
+    consumed_total: number;
+    failed_produced: number;
+    failed_consumed: number;
+    current_lag: number;
+    in_flight_now: number;
+  };
+  delta_vs_previous_period: { produced: number; consumed: number; has_delta: boolean };
+  error_rate: number;
+  broker_health: {
+    brokers_total: number;
+    brokers_online: number;
+    under_replicated_partitions: number;
+    offline_partitions: number;
+  };
+  health: { severity: KafkaSeverity; reason: string };
+  prometheus_available: boolean;
+  kafka_available: boolean;
+};
+export type KafkaPoint = { t: number; v: number };
+export type KafkaTimeseries = {
+  step_seconds: number;
+  series: Record<string, KafkaPoint[]>;
+  prometheus_available: boolean;
+};
+export type KafkaTopicGroup = { group: string; lag_total: number; members: number };
+export type KafkaTopic = {
+  name: string;
+  partitions: number;
+  replication_factor: number;
+  size_bytes: number;
+  messages_estimate: number;
+  retention_ms: number;
+  consumer_groups: KafkaTopicGroup[];
+  under_replicated: number;
+  offline_partitions: number;
+};
+export type KafkaTopicsResp = { topics: KafkaTopic[]; kafka_available: boolean };
+export type KafkaByNode = {
+  top_producers: { node_path: string; produced: number; share: number }[];
+  top_failures: { node_path: string; failed: number; rate: number }[];
+  prometheus_available: boolean;
+};
+export type KafkaBrokerPing = { addr: string; elapsed_ms: number; ok: boolean; warn?: string };
+export type KafkaTestResp = { ok: boolean; brokers: KafkaBrokerPing[]; kafka_available: boolean };

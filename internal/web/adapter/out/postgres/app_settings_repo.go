@@ -59,10 +59,11 @@ func (r *AppSettingsRepoPg) Get(ctx context.Context) (*domain.AppSettings, error
 
 func (r *AppSettingsRepoPg) Update(ctx context.Context, s *domain.AppSettings) error {
 	payload, err := json.Marshal(struct {
+		General       domain.GeneralSettings       `json:"general"`
 		Sentry        domain.SentrySettings        `json:"sentry"`
 		ClickHouse    domain.ClickHouseSettings    `json:"clickhouse"`
 		Notifications domain.NotificationsSettings `json:"notifications"`
-	}{s.Sentry, s.ClickHouse, s.Notifications})
+	}{s.General, s.Sentry, s.ClickHouse, s.Notifications})
 	if err != nil {
 		return fmt.Errorf("app_settings marshal: %w", err)
 	}
