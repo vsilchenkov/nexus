@@ -121,6 +121,7 @@
 | **POST /api/nodes/dry-run** (§7.5.1) с пошаговым отчётом | ✅ Phase 5 | [web/usecase/dry_run.go](../internal/web/usecase/dry_run.go), [http/dry_run_handler.go](../internal/web/adapter/in/http/dry_run_handler.go), UI: [components/DryRunDialog.tsx](../web-ui/src/components/DryRunDialog.tsx) |
 | **POST /api/logs/{id}/replay** (§7.4.1) + маркер `__replay_of` + rate-limit 10/мин | ✅ Phase 5 | [usecase/replay.go](../internal/web/usecase/replay.go), [http/replay_handler.go](../internal/web/adapter/in/http/replay_handler.go), [adapter/out/receiver/dispatcher.go](../internal/web/adapter/out/receiver/dispatcher.go), UI: [components/ReplayDialog.tsx](../web-ui/src/components/ReplayDialog.tsx) |
 | **SSE live-tail `/api/nodes/{id}/logs/stream`** (§7.4) с heartbeat | ✅ Phase 5 | [usecase/logs.go](../internal/web/usecase/logs.go) `Subscribe`, [http/logs_handler.go](../internal/web/adapter/in/http/logs_handler.go) `Stream` |
+| **Ленивые тела логов (§7.4.2): list/stream без `request`/`response`, тела по клику** | ✅ Phase QA.2026-06 | `GET /api/nodes/{id}/log/{logId}` ([logs_handler.go](../internal/web/adapter/in/http/logs_handler.go) `Get`, [logs.go](../internal/web/usecase/logs.go) `GetByID`, route в [routes.go](../internal/web/adapter/in/http/routes.go)); `toLogDTO(r, includeBodies)` режет тела для списков/SSE. UI: раскрытие строки в [LogsTab.tsx](../web-ui/src/components/node/LogsTab.tsx) (`LogBodies` грузит тело лениво); аудит — ленивый `<pre>` по `onToggle` в [AuditDetailsCell.tsx](../web-ui/src/components/AuditDetailsCell.tsx) |
 | Settings → API Tokens | ✅ Phase 5.1 | [pages/settings/ApiTokens.tsx](../web-ui/src/pages/settings/ApiTokens.tsx) |
 | Settings → Language / Theme | ✅ Phase 5.1 | [pages/settings/Language.tsx](../web-ui/src/pages/settings/Language.tsx), [Theme.tsx](../web-ui/src/pages/settings/Theme.tsx) |
 | Audit log страница | ✅ Phase 5.1 | [pages/AuditLog.tsx](../web-ui/src/pages/AuditLog.tsx) |
@@ -640,6 +641,37 @@ RabbitMQ) подтвердил, см. [docs/STAND_TESTING.md](STAND_TESTING.md):
 Грабли локального запуска: `config_debug.yml` должен задавать `web.receiver_url:
 http://localhost:8080` (дефолт `http://receiver:8080` — docker-имя, локально не
 резолвится), иначе единый вход отдаёт 502.
+
+### 4.0.2 QA-прогон 2026-06: найденные дефекты и фиксы
+
+Сквозной QA-прогон (unit+integration+lint+security, посев стенда, Playwright по UI
+под всеми ролями) выявил и закрыл:
+
+- **Атрибуция актёра в аудите.** `actorFromCtx` ставил `UserID`/`TeamID` из сессии, но
+  `UserLogin` оставался `"system"` (из `SystemActor`) — все действия писались как
+  «system» при верном `user_id`. Фикс: в `domain.Session` добавлено поле `Login`
+  (заполняется при входе и для API-токенов), `actorFromCtx` берёт логин из сессии
+  (на legacy-сессиях без поля — graceful fallback в «system»). Тест:
+  [actor_test.go](../internal/web/adapter/in/http/actor_test.go).
+- **Ленивые тела логов/аудита (§7.4.2).** list/stream возвращали полные
+  `request`/`response` для всех строк → на больших payload'ах фронт вис. Теперь тела
+  тянутся по клику на строку через `GET /api/nodes/{id}/log/{logId}`; аудит
+  сериализует JSON только при раскрытии. Тесты: `TestLogs_GetByID_*` в
+  [logs_test.go](../internal/web/usecase/logs_test.go).
+- **i18n: сырой ключ в UI.** [ConfigTab.tsx](../web-ui/src/components/node/ConfigTab.tsx)
+  запрашивал `common.updated_at`, которого не было в namespace `common` (он лежал в
+  `settings.common`) → подпись «common.updated_at». Добавлен ключ в `common` обеих
+  локалей.
+- **RBAC: кнопка «Перенести».** Move узла — admin-only, но кнопка показывалась
+  viewer/manager (бэк отвечал 403). Гейт по `useRoleAtLeast("admin")` в
+  [Overview.tsx](../web-ui/src/pages/Overview.tsx).
+- **Стенд-скрипт под Windows PowerShell 5.1.** `seed_and_test.ps1` (UTF-8 без BOM +
+  PS7-конструкция `(if …)`) не парсился штатным PS 5.1 — добавлен BOM, `(if …)`
+  заменён на присваивание во временную переменную.
+
+RBAC под Playwright подтверждён по трём ролям: admin (всё), manager (узлы CRUD +
+Аудит + Allowed Hosts, без Kafka/Users/Teams), viewer (только просмотр; New/Edit
+скрыты, формы редактирования и `/audit` редиректят, Kafka — in-page «только админ»).
 
 ### 4.0.2 No-loss проверка loadtest — poll-until-stable, не единичный замер
 

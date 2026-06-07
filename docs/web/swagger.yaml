@@ -2766,6 +2766,39 @@ paths:
       summary: Отвязать хост от узла (admin, §23).
       tags:
       - allowed-hosts
+  /api/nodes/{id}/log/{logId}:
+    get:
+      description: Тела грузятся лениво по клику на строку — списки (List/Stream)
+        их не возвращают, чтобы snapshot из сотен строк с большими JSON не вешал фронт
+        (§7.4.1).
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: log record id
+        in: path
+        name: logId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.LogRecordDTO'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      - ApiTokenAuth: []
+      summary: Одна запись лога целиком (с телами request/response).
+      tags:
+      - logs
   /api/nodes/{id}/logs:
     get:
       parameters:

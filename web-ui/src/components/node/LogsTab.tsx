@@ -1,12 +1,12 @@
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { RefreshCw, Settings, RotateCcw } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { RefreshCw, Settings, RotateCcw, ChevronRight, ChevronDown } from "lucide-react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, type Node } from "../../api/client";
 import { ReplayDialog } from "../ReplayDialog";
-import { type LogRow, type LogsResp } from "./types";
+import { type LogRow, type LogsResp, type LogDetail } from "./types";
 
 type StatusFilter = "all" | "ok" | "err";
 type PageSize = 50 | 100 | 200;
@@ -135,6 +135,10 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   }, [live, liveLogs, logsQ.data, statusFilter, doneFilter]);
 
   const [replayId, setReplayId] = useState<string | null>(null);
+  // Раскрытая строка: тела request/response грузятся лениво только для неё
+  // (GET /api/nodes/:id/log/:logId). Список этих данных не содержит — иначе
+  // сотни строк с большими JSON-телами вешают фронт (§7.4.1).
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const scrollToTop = () => {
     if (tableWrapRef.current) {
@@ -317,34 +321,54 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
               {visibleLogs.map((r) => {
                 const isHl = highlighted.has(r.id);
                 const isErr = !r.done || r.status >= 400 || r.status === 0;
+                const isOpen = expandedId === r.id;
                 return (
-                  <tr
-                    key={r.id}
-                    className={`border-t border-line transition-colors ${
-                      isHl ? "bg-accent/15" : isErr ? "bg-err/5" : ""
-                    }`}
-                  >
-                    <td className="px-3 py-2 font-mono text-xs">
-                      {new Date(r.date_request).toLocaleTimeString()}
-                    </td>
-                    <td className="px-3 py-2">{r.method}</td>
-                    <td className="max-w-[28rem] truncate px-3 py-2 font-mono text-xs text-fg-muted">
-                      {r.url}
-                    </td>
-                    <td className={`px-3 py-2 text-right ${isErr ? "text-err" : "text-ok"}`}>
-                      {r.status}
-                    </td>
-                    <td className="px-3 py-2 text-right">{r.duration_ms}</td>
-                    <td className="px-3 py-2 text-right">
-                      <button
-                        title={t("node.actions.replay")}
-                        onClick={() => setReplayId(r.id)}
-                        className="text-fg-muted hover:text-accent"
-                      >
-                        <RotateCcw className="h-4 w-4" />
-                      </button>
-                    </td>
-                  </tr>
+                  <Fragment key={r.id}>
+                    <tr
+                      onClick={() => setExpandedId(isOpen ? null : r.id)}
+                      className={`cursor-pointer border-t border-line transition-colors hover:bg-bg-muted/60 ${
+                        isHl ? "bg-accent/15" : isErr ? "bg-err/5" : ""
+                      }`}
+                    >
+                      <td className="px-3 py-2 font-mono text-xs">
+                        <span className="inline-flex items-center gap-1">
+                          {isOpen ? (
+                            <ChevronDown className="h-3 w-3 shrink-0" />
+                          ) : (
+                            <ChevronRight className="h-3 w-3 shrink-0" />
+                          )}
+                          {new Date(r.date_request).toLocaleTimeString()}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">{r.method}</td>
+                      <td className="max-w-[28rem] truncate px-3 py-2 font-mono text-xs text-fg-muted">
+                        {r.url}
+                      </td>
+                      <td className={`px-3 py-2 text-right ${isErr ? "text-err" : "text-ok"}`}>
+                        {r.status}
+                      </td>
+                      <td className="px-3 py-2 text-right">{r.duration_ms}</td>
+                      <td className="px-3 py-2 text-right">
+                        <button
+                          title={t("node.actions.replay")}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setReplayId(r.id);
+                          }}
+                          className="text-fg-muted hover:text-accent"
+                        >
+                          <RotateCcw className="h-4 w-4" />
+                        </button>
+                      </td>
+                    </tr>
+                    {isOpen && (
+                      <tr className="border-t border-line bg-bg-muted/30">
+                        <td colSpan={6} className="px-3 py-3">
+                          <LogBodies nodeId={id} logId={r.id} />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 );
               })}
               {visibleLogs.length === 0 && (
@@ -397,4 +421,49 @@ function SegmentedControl<T extends string>({ value, onChange, options }: Segmen
       ))}
     </div>
   );
+}
+
+// LogBodies — ленивая подгрузка тел request/response одной записи (§7.4.1).
+// Монтируется только при раскрытии строки, поэтому useQuery стартует по клику,
+// а не для всех строк сразу — большие JSON не грузятся разом и не вешают фронт.
+function LogBodies({ nodeId, logId }: { nodeId: string; logId: string }) {
+  const { t } = useTranslation();
+  const q = useQuery({
+    queryKey: ["log", nodeId, logId],
+    queryFn: () => api.get<LogDetail>(`/api/nodes/${nodeId}/log/${logId}`),
+    staleTime: 60_000,
+  });
+  if (q.isLoading) {
+    return <div className="text-xs text-fg-muted">{t("common.loading")}</div>;
+  }
+  if (q.isError || !q.data) {
+    return <div className="text-xs text-err">{t("logs.detail.error")}</div>;
+  }
+  return (
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+      <LogBodyBlock title={t("logs.detail.request")} body={q.data.request} />
+      <LogBodyBlock title={t("logs.detail.response")} body={q.data.response} />
+    </div>
+  );
+}
+
+function LogBodyBlock({ title, body }: { title: string; body?: string }) {
+  const { t } = useTranslation();
+  return (
+    <div className="min-w-0">
+      <div className="mb-1 text-[10px] uppercase tracking-wider text-fg-muted">{title}</div>
+      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded bg-bg-muted/50 p-2 font-mono text-[11px]">
+        {body ? prettyJson(body) : t("logs.detail.empty")}
+      </pre>
+    </div>
+  );
+}
+
+// prettyJson — форматирует JSON-тело с отступами; для не-JSON возвращает как есть.
+function prettyJson(s: string): string {
+  try {
+    return JSON.stringify(JSON.parse(s), null, 2);
+  } catch {
+    return s;
+  }
 }

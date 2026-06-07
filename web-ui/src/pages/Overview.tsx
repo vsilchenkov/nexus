@@ -54,6 +54,9 @@ export default function Overview() {
   const { t } = useTranslation();
   // §26/§28 Пункт 3: создание/редактирование узлов — только manager+.
   const canEdit = useRoleAtLeast("manager");
+  // Перенос узла между командами — admin-only (как и сам /move-эндпоинт):
+  // не показываем кнопку «Перенести» viewer/manager, иначе клик упрётся в 403.
+  const canMove = useRoleAtLeast("admin");
   // §28 Пункт 4: период метрик per-node throughput (по умолчанию 1h).
   const [period, setPeriod] = useState<Period>(defaultPeriod);
   const [search, setSearch] = useState("");
@@ -205,9 +208,9 @@ export default function Overview() {
 
       {nodes.length > 0 &&
         (view === "table" ? (
-          <NodeTable nodes={nodes} throughput={throughput} onMove={setMoveTarget} period={period} ready={metricsReady} />
+          <NodeTable nodes={nodes} throughput={throughput} onMove={canMove ? setMoveTarget : undefined} period={period} ready={metricsReady} />
         ) : (
-          <NodeCards nodes={nodes} throughput={throughput} onMove={setMoveTarget} period={period} ready={metricsReady} />
+          <NodeCards nodes={nodes} throughput={throughput} onMove={canMove ? setMoveTarget : undefined} period={period} ready={metricsReady} />
         ))}
 
       {moveTarget && (
@@ -276,7 +279,7 @@ function NodeTable({
 }: {
   nodes: Node[];
   throughput: Map<string, Throughput>;
-  onMove: (n: Node) => void;
+  onMove?: (n: Node) => void;
   period: Period;
   ready: boolean;
 }) {
@@ -319,13 +322,15 @@ function NodeTable({
                   <Pill tone={s.tone}>{s.label}</Pill>
                 </td>
                 <td className="px-3 py-2.5 text-right">
-                  <button
-                    type="button"
-                    onClick={() => onMove(n)}
-                    className="text-xs text-fg-subtle hover:text-accent"
-                  >
-                    {t("overview.move.action")}
-                  </button>
+                  {onMove && (
+                    <button
+                      type="button"
+                      onClick={() => onMove(n)}
+                      className="text-xs text-fg-subtle hover:text-accent"
+                    >
+                      {t("overview.move.action")}
+                    </button>
+                  )}
                 </td>
               </tr>
             );
@@ -353,7 +358,7 @@ function NodeCards({
 }: {
   nodes: Node[];
   throughput: Map<string, Throughput>;
-  onMove: (n: Node) => void;
+  onMove?: (n: Node) => void;
   period: Period;
   ready: boolean;
 }) {
@@ -407,13 +412,15 @@ function NodeCards({
               <span className="truncate font-mono" title={target}>
                 {target}
               </span>
-              <button
-                type="button"
-                onClick={() => onMove(n)}
-                className="shrink-0 hover:text-accent"
-              >
-                {t("overview.move.action")}
-              </button>
+              {onMove && (
+                <button
+                  type="button"
+                  onClick={() => onMove(n)}
+                  className="shrink-0 hover:text-accent"
+                >
+                  {t("overview.move.action")}
+                </button>
+              )}
             </div>
           </Card>
         );

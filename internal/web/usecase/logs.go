@@ -58,6 +58,20 @@ func (u *LogsUsecase) Search(ctx context.Context, nodeID, teamID string, q port.
 	return u.logs.Search(ctx, q)
 }
 
+// GetByID — одна запись лога целиком (включая тела request/response).
+//
+// Отдельный путь от ListSince/Search: списки возвращают только метаданные
+// (без тел), а полное тело тянется лениво по клику на конкретную строку —
+// иначе snapshot из сотен строк с большими JSON-телами вешает фронт (§7.4.1).
+// Запись не найдена → domain.ErrNotFound.
+func (u *LogsUsecase) GetByID(ctx context.Context, nodeID, teamID, logID string) (*domain.LogRecord, error) {
+	n, err := u.resolveNode(ctx, nodeID, teamID)
+	if err != nil {
+		return nil, err
+	}
+	return u.logs.GetByID(ctx, n.ClickHouseTable, logID)
+}
+
 // resolveNode — общий путь: получить узел, проверить team scope, убедиться
 // что у него настроен ClickHouseTable.
 func (u *LogsUsecase) resolveNode(ctx context.Context, nodeID, teamID string) (*domain.Node, error) {

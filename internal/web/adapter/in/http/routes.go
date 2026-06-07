@@ -98,6 +98,11 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		// Регистрируются только если включён ClickHouse (см. app.go).
 		if h.Logs != nil {
 			authed.GET("/nodes/:id/logs", RequireScope("logs:read"), h.Logs.List)
+			// Полное тело одной записи (§7.4.1): list/stream отдают только
+			// метаданные, тела request/response тянутся лениво по клику на
+			// строку. Путь "log" (не "logs") — чтобы не конфликтовать с
+			// статическим сегментом ".../logs/stream" в gin-роутере.
+			authed.GET("/nodes/:id/log/:logId", RequireScope("logs:read"), h.Logs.Get)
 			// SSE доступен только UI-сессиям (§7.14: для API-токенов — только
 			// snapshot).
 			authed.GET("/nodes/:id/logs/stream", RequireSessionOnly(), h.Logs.Stream)

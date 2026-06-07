@@ -1916,6 +1916,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/nodes/{id}/log/{logId}": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    },
+                    {
+                        "ApiTokenAuth": []
+                    }
+                ],
+                "description": "Тела грузятся лениво по клику на строку — списки (List/Stream) их не возвращают, чтобы snapshot из сотен строк с большими JSON не вешал фронт (§7.4.1).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logs"
+                ],
+                "summary": "Одна запись лога целиком (с телами request/response).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "log record id",
+                        "name": "logId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.LogRecordDTO"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/{id}/logs": {
             "get": {
                 "security": [

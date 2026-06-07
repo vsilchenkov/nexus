@@ -446,6 +446,12 @@
   },
   "logs": {
     "empty": "No log entries",
+    "detail": {
+      "request": "Request",
+      "response": "Response",
+      "empty": "(empty)",
+      "error": "Failed to load body"
+    },
     "not_configured": "Logging is not configured for this node — no clickhouse_table set. Pick a ClickHouse template in node settings (the log table is created automatically) or set the table name manually.",
     "shown_count": "{{n}} shown",
     "page_size": "Page size",
@@ -788,6 +794,7 @@
     }
   },
   "common": {
+    "updated_at": "Updated",
     "loading": "Loading…",
     "error": "Error",
     "ok": "OK",
