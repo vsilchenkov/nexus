@@ -5,12 +5,14 @@
 Формат основан на [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/),
 проект следует [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-> Версионирование запустится с первым git-тегом `v*` (см. job `release` в [.gitlab-ci.yml](.gitlab-ci.yml)).
-> До этого момента всё попадает в `[Unreleased]`, сгруппировано по фазам разработки.
+> Версионирование ведётся по git-тегам `v*` (job `release` в [.gitlab-ci.yml](.gitlab-ci.yml)).
+> Первый релиз — `1.0.0`; его записи сгруппированы по фазам разработки до тега.
 
 ---
 
 ## [Unreleased]
+
+## [1.0.0] - 2026-06-09
 
 ### Версионирование — единый источник истины git
 
