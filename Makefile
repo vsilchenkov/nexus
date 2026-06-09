@@ -7,6 +7,25 @@ BIN_DIR     ?= bin
 LDFLAGS     ?= -s -w
 PKG          = ./...
 
+# ----- version (единый источник истины: git) --------------------------------
+# Версия вшивается в бинарь из git на этапе сборки (ldflags -X), а не из .env.
+# Вычисляется один раз (:=), иначе git дёргается на каждую подстановку.
+#  - VERSION: `git describe` → "v1.2.3" / "v1.2.3-5-gabc1234" / "abc1234"
+#    (короткий хеш в репо без тегов); суффикс "-dirty" при незакоммиченном дереве.
+#  - BUILD_DATE: дата КОММИТА (%cI, ISO-8601) — переносимо Windows/Linux,
+#    в отличие от непортируемого `date -u`.
+GIT         ?= git
+# patsubst срезает ведущий `v` тега (v0.1.0 → 0.1.0) — как делает GoReleaser
+# ({{ .Version }}), иначе SPA-футер (он сам добавляет "v") покажет "vv0.1.0".
+# Короткий хеш (без тега) не начинается на `v` (hex) — остаётся как есть.
+VERSION     := $(patsubst v%,%,$(shell $(GIT) describe --tags --always --dirty 2>/dev/null || echo dev))
+GIT_COMMIT  := $(shell $(GIT) rev-parse --short HEAD 2>/dev/null || echo unknown)
+BUILD_DATE  := $(shell $(GIT) show -s --format=%cI HEAD 2>/dev/null || echo unknown)
+PKG_BUILD   := nexus/internal/platform/build
+VERSION_LDFLAGS := -X $(PKG_BUILD).Version=$(VERSION) -X $(PKG_BUILD).Commit=$(GIT_COMMIT) -X $(PKG_BUILD).BuildDate=$(BUILD_DATE)
+# LDFLAGS оставляем переопределяемым (base), полный набор с версией — LDFLAGS_FULL.
+LDFLAGS_FULL = $(LDFLAGS) $(VERSION_LDFLAGS)
+
 ifeq ($(OS),Windows_NT)
     GOEXE := .exe
     RM    := del /Q
@@ -38,27 +57,27 @@ help: ## Список доступных целей
 build: build-receiver build-sender build-web ## Сборка всех бинарей под текущую ОС
 
 build-receiver:
-	$(GO) build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o $(BIN_DIR)/receiver$(GOEXE) ./cmd/receiver
+	$(GO) build $(GOFLAGS) -ldflags="$(LDFLAGS_FULL)" -o $(BIN_DIR)/receiver$(GOEXE) ./cmd/receiver
 
 build-sender:
-	$(GO) build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o $(BIN_DIR)/sender$(GOEXE) ./cmd/sender
+	$(GO) build $(GOFLAGS) -ldflags="$(LDFLAGS_FULL)" -o $(BIN_DIR)/sender$(GOEXE) ./cmd/sender
 
 build-web:
-	$(GO) build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o $(BIN_DIR)/web$(GOEXE) ./cmd/web
+	$(GO) build $(GOFLAGS) -ldflags="$(LDFLAGS_FULL)" -o $(BIN_DIR)/web$(GOEXE) ./cmd/web
 
 build-ui: ## Сборка SPA (web-ui) и копирование в internal/web/static
 	cd web-ui && npm install && npm run build
 	cp -r web-ui/dist/* internal/web/static/ 2>/dev/null || true
 
 build-windows: ## Кросс-сборка под Windows (.exe)
-	GOOS=windows GOARCH=amd64 $(GO) build -ldflags="$(LDFLAGS)" -o $(BIN_DIR)/receiver.exe ./cmd/receiver
-	GOOS=windows GOARCH=amd64 $(GO) build -ldflags="$(LDFLAGS)" -o $(BIN_DIR)/sender.exe ./cmd/sender
-	GOOS=windows GOARCH=amd64 $(GO) build -ldflags="$(LDFLAGS)" -o $(BIN_DIR)/web.exe ./cmd/web
+	GOOS=windows GOARCH=amd64 $(GO) build -ldflags="$(LDFLAGS_FULL)" -o $(BIN_DIR)/receiver.exe ./cmd/receiver
+	GOOS=windows GOARCH=amd64 $(GO) build -ldflags="$(LDFLAGS_FULL)" -o $(BIN_DIR)/sender.exe ./cmd/sender
+	GOOS=windows GOARCH=amd64 $(GO) build -ldflags="$(LDFLAGS_FULL)" -o $(BIN_DIR)/web.exe ./cmd/web
 
 build-linux: ## Кросс-сборка под Linux
-	GOOS=linux GOARCH=amd64 $(GO) build -ldflags="$(LDFLAGS)" -o $(BIN_DIR)/receiver ./cmd/receiver
-	GOOS=linux GOARCH=amd64 $(GO) build -ldflags="$(LDFLAGS)" -o $(BIN_DIR)/sender ./cmd/sender
-	GOOS=linux GOARCH=amd64 $(GO) build -ldflags="$(LDFLAGS)" -o $(BIN_DIR)/web ./cmd/web
+	GOOS=linux GOARCH=amd64 $(GO) build -ldflags="$(LDFLAGS_FULL)" -o $(BIN_DIR)/receiver ./cmd/receiver
+	GOOS=linux GOARCH=amd64 $(GO) build -ldflags="$(LDFLAGS_FULL)" -o $(BIN_DIR)/sender ./cmd/sender
+	GOOS=linux GOARCH=amd64 $(GO) build -ldflags="$(LDFLAGS_FULL)" -o $(BIN_DIR)/web ./cmd/web
 
 # ----- run ------------------------------------------------------------------
 

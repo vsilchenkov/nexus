@@ -17,6 +17,11 @@
 variables:
   GO_VERSION: "1.26.4"
   NODE_VERSION: "20"
+  # Полная история + теги во всех jobs. Версия — единый источник истины git:
+  # она вшивается в бинари из `git describe --tags` (Makefile / Dockerfile) и
+  # из git-тега в GoReleaser. Shallow-клон (дефолт GitLab) не тянет теги →
+  # `git describe --tags` и GoReleaser сломались бы. 0 = полный клон.
+  GIT_DEPTH: "0"
   # Локальный GOPATH/GOCACHE/GOMODCACHE — кешируется между jobs.
   GOPATH: "$CI_PROJECT_DIR/.cache/go"
   GOCACHE: "$CI_PROJECT_DIR/.cache/go-build"
@@ -927,9 +932,9 @@ release:
     # См. шапку .goreleaser.yaml — это env-контракт для GoReleaser.
     DOCKER_REGISTRY_BASE: $CI_REGISTRY_IMAGE
     COMPARE_URL_BASE: "$CI_PROJECT_URL/-/compare"
-    # GoReleaser автодетектит GitLab по наличию GITLAB_TOKEN; для git operations
-    # дополнительно требуется fetch-depth: 0 — в GitLab он по умолчанию.
-    GIT_DEPTH: "0"
+    # GoReleaser автодетектит GitLab по наличию GITLAB_TOKEN. Полную историю +
+    # теги (GIT_DEPTH: 0, нужны GoReleaser'у для версии из тега и changelog)
+    # задаём глобально в variables — здесь не дублируем.
   rules:
     - *skip-if-profiled-rule
     - if: $CI_COMMIT_TAG =~ /^v[0-9]/

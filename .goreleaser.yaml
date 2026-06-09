@@ -4,7 +4,7 @@
 #   - локально, без публикации:   goreleaser release --snapshot --clean
 #   - CI релиз по тегу v*:        goreleaser release --clean (см. .gitlab-ci.yml job `release`)
 #
-# Версия / commit / дата сборки пробрасываются в bus/internal/platform/build через ldflags.
+# Версия / commit / дата сборки пробрасываются в nexus/internal/platform/build через ldflags.
 # Если переменные пустые (обычный go build) — fallback на versioninfo.json (см. NewOption).
 version: 2
 
@@ -27,9 +27,9 @@ builds:
         goarch: arm64
     ldflags:
       - -s -w
-      - -X bus/internal/platform/build.Version={{ .Version }}
-      - -X bus/internal/platform/build.Commit={{ .ShortCommit }}
-      - -X bus/internal/platform/build.BuildDate={{ .Date }}
+      - -X nexus/internal/platform/build.Version={{ .Version }}
+      - -X nexus/internal/platform/build.Commit={{ .ShortCommit }}
+      - -X nexus/internal/platform/build.BuildDate={{ .CommitDate }}
 
   - id: sender
     main: ./cmd/sender
@@ -43,9 +43,9 @@ builds:
         goarch: arm64
     ldflags:
       - -s -w
-      - -X bus/internal/platform/build.Version={{ .Version }}
-      - -X bus/internal/platform/build.Commit={{ .ShortCommit }}
-      - -X bus/internal/platform/build.BuildDate={{ .Date }}
+      - -X nexus/internal/platform/build.Version={{ .Version }}
+      - -X nexus/internal/platform/build.Commit={{ .ShortCommit }}
+      - -X nexus/internal/platform/build.BuildDate={{ .CommitDate }}
 
   - id: web
     main: ./cmd/web
@@ -59,9 +59,9 @@ builds:
         goarch: arm64
     ldflags:
       - -s -w
-      - -X bus/internal/platform/build.Version={{ .Version }}
-      - -X bus/internal/platform/build.Commit={{ .ShortCommit }}
-      - -X bus/internal/platform/build.BuildDate={{ .Date }}
+      - -X nexus/internal/platform/build.Version={{ .Version }}
+      - -X nexus/internal/platform/build.Commit={{ .ShortCommit }}
+      - -X nexus/internal/platform/build.BuildDate={{ .CommitDate }}
 
   - id: rotate-key
     main: ./cmd/rotate-key
@@ -75,9 +75,9 @@ builds:
         goarch: arm64
     ldflags:
       - -s -w
-      - -X bus/internal/platform/build.Version={{ .Version }}
-      - -X bus/internal/platform/build.Commit={{ .ShortCommit }}
-      - -X bus/internal/platform/build.BuildDate={{ .Date }}
+      - -X nexus/internal/platform/build.Version={{ .Version }}
+      - -X nexus/internal/platform/build.Commit={{ .ShortCommit }}
+      - -X nexus/internal/platform/build.BuildDate={{ .CommitDate }}
 
   - id: loadtest
     main: ./cmd/loadtest
@@ -91,9 +91,9 @@ builds:
         goarch: arm64
     ldflags:
       - -s -w
-      - -X bus/internal/platform/build.Version={{ .Version }}
-      - -X bus/internal/platform/build.Commit={{ .ShortCommit }}
-      - -X bus/internal/platform/build.BuildDate={{ .Date }}
+      - -X nexus/internal/platform/build.Version={{ .Version }}
+      - -X nexus/internal/platform/build.Commit={{ .ShortCommit }}
+      - -X nexus/internal/platform/build.BuildDate={{ .CommitDate }}
 
 archives:
   - id: default

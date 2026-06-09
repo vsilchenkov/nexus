@@ -13,7 +13,7 @@
     "FileSubType": "00"
   },
   "StringFileInfo": {
-    "ProductVersion": "0.1.0",
+    "ProductVersion": "0.0.0-dev",
     "CompanyName": "Vozovoz",
     "FileDescription": "Nexus Receiver Service",
     "InternalName": "receiver",
