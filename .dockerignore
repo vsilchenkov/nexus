@@ -1,0 +1,28 @@
+# Исключения из контекста сборки Docker (context = корень репозитория).
+#
+# ВАЖНО: .git НЕ исключаем — он нужен в builder-стейдже для `git describe`
+# (версия вшивается из git, см. deploy/docker/*.Dockerfile). Без .git версия
+# деградирует до fallback 0.0.0-dev.
+
+# Зависимости и сборочные артефакты фронта (SPA уже встроен в бинарь через
+# embed.FS из internal/web/static — node_modules/dist для go build не нужны).
+web-ui/node_modules
+web-ui/dist
+
+# Артефакты Go-сборки и релиза
+bin/
+dist/
+
+# Локальные секреты и боевой конфиг (в образ кладётся config.example.yml явным
+# COPY; .env передаётся в рантайме через env_file, а не в образ).
+.env
+.env.*
+config/config.yml
+
+# Тестовое и служебное
+coverage.out
+coverage.html
+*.log
+logs/
+.idea/
+.vscode/

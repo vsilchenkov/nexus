@@ -5,12 +5,37 @@
 Формат основан на [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/),
 проект следует [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-> Версионирование запустится с первым git-тегом `v*` (см. job `release` в [.gitlab-ci.yml](.gitlab-ci.yml)).
-> До этого момента всё попадает в `[Unreleased]`, сгруппировано по фазам разработки.
+> Версионирование ведётся по git-тегам `v*` (job `release` в [.gitlab-ci.yml](.gitlab-ci.yml)).
+> Первый релиз — `1.0.0`; его записи сгруппированы по фазам разработки до тега.
 
 ---
 
 ## [Unreleased]
+
+## [1.0.0] - 2026-06-09
+
+### Версионирование — единый источник истины git
+
+#### Fixed
+- Версия приложения теперь берётся **только** из git (ldflags), а не из `.env`/config.
+  Устранены три бага, из-за которых git-версия не доезжала: (1) GoReleaser инъектил в
+  несуществующий символ `bus/internal/platform/build.Version` (модуль — `nexus`), линкер
+  молча игнорировал `-X` → релиз по тегу не получал версию; (2) `bootstrap.go` не
+  перекрывал config-версию значением из ldflags; (3) `/api/version` показывал значение из
+  `.env`/дефолт, а не из сборки.
+
+#### Changed
+- `.goreleaser.yaml`: путь символа `bus/` → `nexus/` во всех `-X`; дата `{{ .Date }}` → `{{ .CommitDate }}`.
+- `bootstrap.go`: ldflags-версия (`buildOpt.Version`) перекрывает config (а она всегда непуста —
+  минимум `0.0.0-dev` из versioninfo.json); ключ `build.version` убран из `config.example.yml`
+  (в `config_debug.yml`, который под git skip-worktree, значение теперь игнорируется).
+- `Makefile` и `deploy/docker/*.Dockerfile`: версия вшивается из `git describe --tags --always --dirty`
+  (в Docker — внутри builder-стейджа, `.git` в контексте сборки); добавлен `.dockerignore`
+  (намеренно сохраняет `.git`).
+- `cmd/*/versioninfo.json`: `ProductVersion` → `0.0.0-dev` (fallback-маркер, вручную не бампается).
+- `.gitlab-ci.yml`: `GIT_DEPTH: 0` вынесен в глобальные `variables` (теги для `git describe`/GoReleaser).
+- `VERSION` в `.env` теперь только селектор тега образа на registry-пути, не версия приложения;
+  DEPLOYMENT.md §9.0/§9.4 переписаны.
 
 ### Phase 7.9 — pre-commit hooks (lefthook)
 

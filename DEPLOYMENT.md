@@ -56,7 +56,7 @@ Nexus — три stateless Go-сервиса плюс набор хранили�
 
 | Переменная            | Назначение                                              | Дефолт в шаблоне      |
 |-----------------------|---------------------------------------------------------|-----------------------|
-| `VERSION`             | Версия приложения (попадает в `build.version`, `--version`, метрики) | `0.1.0`  |
+| `VERSION`             | Тег образа для registry-override (§9.2), не версия приложения (та — из git, §9.0) | `0.1.0`  |
 | `PG_HOST`             | Хост PostgreSQL                                         | `postgres`            |
 | `PG_PORT`             | Порт PostgreSQL                                         | `5432`                |
 | `PG_USER`             | Логин PostgreSQL                                        | `nexus`               |
@@ -508,25 +508,35 @@ Compose автоматически подхватывает `docker-compose.over
 
 ### 9.0. Версионирование: откуда берётся версия и как присвоить новую
 
-Версия отдаётся в логах старта, флаге `--version`, метриках и публичном
-`GET /api/version` (его показывает SPA в футере, см. §30 ТЗ). Источник версии:
+**Единый источник истины — git.** Версия вшивается в бинарь на этапе **сборки** из
+`git describe --tags` (или имени git-тега в CI) через `ldflags` и далее без правок
+доезжает в логи старта, флаг `--version`, метрики, Sentry-release и публичный
+`GET /api/version` (его показывает SPA в футере, см. §30 ТЗ). **Версию руками — ни в
+файлах, ни на сервере — задавать не нужно.**
 
-- **Релизная сборка (рекомендуемый путь) — git-тег + GoReleaser.** Версия
-  проставляется через `ldflags` в `build.Version`/`build.Commit`/`build.BuildDate`
-  (см. `.goreleaser.yaml`). Чтобы выпустить новую версию: создать и запушить тег
-  `vX.Y.Z` (`git tag vX.Y.Z && git push origin vX.Y.Z`) — CI соберёт образы
-  `{receiver,sender,web}:X.Y.Z` с этой версией. **Ручной правки файлов не требуется.**
-- **Локальная сборка / Windows-бинарь без ldflags** берёт версию из
-  `cmd/<svc>/versioninfo.json` (`StringFileInfo.ProductVersion`). При выпуске новой
-  версии без тега синхронно поднимите `ProductVersion` во **всех трёх** файлах
-  `cmd/{web,receiver,sender}/versioninfo.json`.
-- **Docker / метрики** дополнительно читают `VERSION` из `.env` (см. карту переменных
-  §2) — держите его согласованным с тегом.
-- **`web-ui/package.json`** (`version`) — справочное значение фронта; на отдаваемую
-  `GET /api/version` не влияет (фронт берёт версию из бэкенда), но держите в синхроне.
+Как это работает по путям сборки:
 
-Итого при ручном бампе версии (без релизного тега) обновите: три `versioninfo.json`,
-`.env` (`VERSION=`), `web-ui/package.json`. При релизе через тег — достаточно тега.
+- **Релиз по тегу (рекомендуемый прод-путь) — git-тег + GoReleaser.** `git tag vX.Y.Z
+  && git push origin vX.Y.Z` → CI (job `release`) собирает образы
+  `{receiver,sender,web}:X.Y.Z`; GoReleaser проставляет версию в
+  `build.Version`/`build.Commit`/`build.BuildDate` через `ldflags`
+  (см. `.goreleaser.yaml`, `-X nexus/internal/platform/build.Version={{ .Version }}`).
+  **Достаточно тега — ручной правки файлов не требуется.**
+- **Сборка из исходников (`make build`, `docker compose build`)** вшивает версию из
+  `git describe --tags --always --dirty` текущего рабочего дерева: `make` — через блок
+  `version` в Makefile, Docker — внутри builder-стейджа (`.git` есть в контексте
+  сборки, см. `deploy/docker/*.Dockerfile`). Версия «сама подсасывается» из git.
+- **Fallback без git/ldflags** (голый `go build` без `.git`) — строка `0.0.0-dev` из
+  `cmd/<svc>/versioninfo.json`. Это маркер «несборочной» версии, а **не** значение для
+  бампа — поднимать его вручную НЕ нужно.
+
+`VERSION` в `.env` — это **селектор тега образа** на registry-пути (§9.2,
+`image: …/web:${VERSION}`): он говорит «какой артефакт запустить», а НЕ задаёт версию,
+которую приложение сообщает о себе (её несёт сам образ из git). `web-ui/package.json`
+(`version`) с `/api/version` не связан — фронт берёт версию из бэкенда.
+
+Итого: **новая версия = новый git-тег.** Никаких ручных правок версии в файлах или на
+сервере. Пошаговый рецепт выпуска (слить в `master` → тег → подтянуть на сервере) — в **§9.5**.
 
 ### 9.1. Обновление при сборке из исходников (варианты A/B/C)
 
@@ -535,8 +545,8 @@ cd nexus
 git fetch --tags
 git checkout <новая-версия>          # тег/ветка с нужной версией
 
-# (опционально) зафиксировать версию в .env для метрик и --version:
-#   VERSION=1.4.0
+# Версия вшьётся в образ из git автоматически (git describe текущего checkout'а,
+# §9.0) — править .env для версии приложения НЕ нужно.
 
 # Пересобрать и перекатить только сервисы приложения:
 # Вариант C (основной прод, корневой docker-compose.yml — без -f):
@@ -585,7 +595,7 @@ services:
 
 ```dotenv
 REGISTRY_BASE=registry.<gitlab-host>/<group>/<project>   # = $CI_REGISTRY_IMAGE проекта
-VERSION=1.0.0                                             # = тег образа и build.version/метрик
+VERSION=1.0.0                                             # = тег образа, который тянем; версию приложения несёт сам образ (§9.0)
 ```
 
 **Шаг 3. Залогиниться (один раз) и перекатить три сервиса** (пример для Варианта C —
@@ -628,34 +638,64 @@ docker compose \
 
 Релизные образы получают версию **автоматически** из имени git-тега — GoReleaser
 подставляет её в `build.Version`/`build.Commit`/`build.BuildDate` через `ldflags`
-(см. [.goreleaser.yaml](../.goreleaser.yaml), `-X bus/internal/platform/build.Version={{ .Version }}`).
-**Ручной правки `versioninfo.json` для релиза по тегу не требуется.** Файлы
-`cmd/{web,receiver,sender}/versioninfo.json` и `web-ui/package.json` нужны только для
-сборок без тега (нативные Windows-бинари, локальная сборка) — их синхронизируют вручную
-(§9.0). `VERSION` в `.env` — отдельный слой: задаёт тег образа в registry-override (§9.2)
-и значение в метриках; держите его равным тегу.
+(см. [.goreleaser.yaml](../.goreleaser.yaml),
+`-X nexus/internal/platform/build.Version={{ .Version }}`). **Ручной правки файлов для
+релиза по тегу не требуется.** `cmd/{web,receiver,sender}/versioninfo.json` содержат
+только fallback-маркер `0.0.0-dev` для сборок совсем без git и вручную не бампятся;
+`web-ui/package.json` к `/api/version` отношения не имеет. `VERSION` в `.env` — селектор
+тега образа в registry-override (§9.2), не версия приложения (её несёт сам образ из git).
 
-### 9.5. Чек-лист выпуска новой версии (тег → registry → прод)
+### 9.5. Выпуск новой версии (тег → registry → прод)
 
-Полный цикл для рекомендуемого пути (готовые образы из registry, §9.2). Пример — версия
-`1.0.0`, Вариант C (внешний ClickHouse).
+**Коротко — три шага.** Версия = git-тег: на рабочей машине слить релизный код в `master`
+и повесить тег `vX.Y.Z`, на сервере — подтянуть образы этого тега. Версию в файлах/`.env`
+как «версию приложения» поднимать НЕ нужно — её несёт сам образ из тега (§9.0/§9.4).
+
+```bash
+# 1. Рабочая машина: слить релизный код dev → master и поставить тег.
+git switch master
+git merge --no-ff dev                       # влить выпускаемый код в master
+git push origin master
+git tag -a v1.0.0 -m "Release 1.0.0"        # тег на коммите master
+git push origin v1.0.0
+#    → CI job `release` (триггер ^v[0-9]) соберёт через GoReleaser и запушит
+#      {receiver,sender,web}:1.0.0 (+ :latest) в Container Registry.
+
+# 2. Прод-сервер: указать тег и подтянуть образы.
+#    в .env:  VERSION=1.0.0   (это селектор тега образа, §9.2)
+#    override deploy/docker-compose.registry.yml уже создан один раз (§9.2)
+docker compose -f docker-compose.yml -f deploy/docker-compose.registry.yml pull  web receiver sender
+docker compose -f docker-compose.yml -f deploy/docker-compose.registry.yml up -d web receiver sender
+
+# 3. Проверка: приложение само сообщает версию из тега.
+curl -s http://<host>:8000/api/version       # → {"version":"1.0.0"}
+```
+
+> `VERSION` в `.env` на сервере выбирает, **какой тег образа** запустить, а не задаёт версию
+> приложения — её бинарь несёт в себе из git (вшита на сборке в CI). Смена версии на проде =
+> поднять `VERSION`, повторить `pull` + `up -d`. Откат — вернуть прежний `VERSION` (§10.1).
+
+Ниже — полный чек-лист этого же цикла с предусловиями (пример — версия `1.0.0`,
+Вариант C, внешний ClickHouse).
 
 **A. Подготовка релиза (рабочая машина / репозиторий):**
 
-- [ ] Код выпускаемой версии находится в `dev`/`master` (не на feature-ветке) и проходит CI
-      (`make test`, `golangci-lint run`, `cd web-ui && npm run lint && npm run build`).
+- [ ] Выпускаемый код проходит CI на `dev` (`make test`, `golangci-lint run`,
+      `cd web-ui && npm run lint && npm run build`).
 - [ ] Встроенный SPA пересобран и закоммичен (`make build-ui` → `internal/web/static/`), если
       менялся `web-ui/` — иначе фронт не доедет до прода.
 - [ ] Обновлён [CHANGELOG.md](./CHANGELOG.md) (фичи/фиксы/breaking-changes, список миграций).
-- [ ] (Опц., для согласованности нетеговых сборок) подняты `ProductVersion` во всех трёх
-      `cmd/*/versioninfo.json` и `version` в `web-ui/package.json` (§9.0). Для образов по тегу
-      это не обязательно — версию даст ldflags (§9.4).
+- [ ] Релизный код слит в `master`:
+      `git switch master && git merge --no-ff dev && git push origin master`.
+- [ ] Версию вручную нигде поднимать НЕ нужно — её несёт git-тег через ldflags (§9.0/§9.4).
 
 **B. Выпуск артефактов (git → CI):**
 
 - [ ] В GitLab → Settings → CI/CD → Variables задана переменная `GITLAB_TOKEN`
       (scope `api` + `write_repository`) — без неё job `release` не создаст release.
-- [ ] Создан и запушен тег: `git tag v1.0.0 && git push origin v1.0.0`.
+- [ ] На коммите `master` создан и запушен тег:
+      `git tag -a v1.0.0 -m "Release 1.0.0" && git push origin v1.0.0` (имя — строго `vX.Y.Z`,
+      триггер CI `^v[0-9]`; GoReleaser сам срежет `v` → версия `1.0.0`).
 - [ ] Job `release` ([.gitlab-ci.yml](../.gitlab-ci.yml), триггер `^v[0-9]`) завершился зелёным.
 - [ ] В Container Registry проекта появились образы
       `{receiver,sender,web}:1.0.0` (+ `:latest`).

@@ -3,9 +3,11 @@
 # Все секреты подставляются из .env через ${VAR} / ${VAR:default}.
 
 # Метаданные сборки. Подставляются в логи, Sentry-релиз, /health.
+# Версия здесь НЕ задаётся — единый источник истины git: она вшивается в бинарь
+# при сборке через ldflags (build.Version; см. Makefile / Dockerfile /
+# .goreleaser.yaml). VERSION в .env на это значение не влияет.
 build:
   project_name: nexus           # Имя проекта — попадает в логи/метрики как ярлык сервиса.
-  version: ${VERSION:0.1.0}      # Версия бинаря; в .env прокидывается CI, иначе дефолт 0.1.0.
 
 # Логирование (github.com/vsilchenkov/logging, §14.1 ТЗ).
 logging:

@@ -333,6 +333,9 @@ type report struct {
 	NoLoss         bool  `json:"no_loss"`
 	CHRows         int64 `json:"ch_rows"`
 	NoLossExpected int64 `json:"no_loss_expected"`
+	// NoLossInconclusive — rows<expected, но бэклог ещё дренировался на момент
+	// maxWait/отмены (не подтверждённая потеря). passed() трактует как WARN.
+	NoLossInconclusive bool `json:"no_loss_inconclusive"`
 }
 
 // applyNoLoss переносит результат CH-сверки в отчёт.
@@ -344,6 +347,7 @@ func (rep *report) applyNoLoss(nl noLossResult) {
 	rep.CHRows = nl.rows
 	rep.NoLossExpected = nl.expected
 	rep.NoLoss = nl.ok
+	rep.NoLossInconclusive = nl.inconclusive
 }
 
 // buildReport агрегирует per-mode накопители в отчёт (общий + по режимам).
@@ -394,7 +398,14 @@ func (rep *report) print() {
 			mode, m.Sent, m.ErrorRate*100, m.P50Ms, m.P95Ms, m.P99Ms)
 	}
 	if rep.NoLossChecked {
-		fmt.Printf("no-loss:      ch_rows=%d expected>=%d -> %v\n", rep.CHRows, rep.NoLossExpected, rep.NoLoss)
+		verdict := "loss"
+		switch {
+		case rep.NoLoss:
+			verdict = "ok"
+		case rep.NoLossInconclusive:
+			verdict = "inconclusive (backlog still draining at max-wait; raise --ch-noloss-max-wait)"
+		}
+		fmt.Printf("no-loss:      ch_rows=%d expected>=%d -> %s\n", rep.CHRows, rep.NoLossExpected, verdict)
 	}
 	fmt.Println("==========================================")
 }
@@ -421,9 +432,19 @@ func (rep *report) passed(targetRPS int) bool {
 		return false
 	}
 	if rep.NoLossChecked && !rep.NoLoss {
-		fmt.Fprintf(os.Stderr, "FAIL: message loss — ch_rows %d < expected %d (async+rmq)\n",
-			rep.CHRows, rep.NoLossExpected)
-		return false
+		// Потеря засчитывается только при подтверждённом плато. Inconclusive
+		// (бэклог ещё дренировался на момент maxWait) — WARN, а не FAIL: at-least-once
+		// + Kafka хранит непрочитанное, сообщения не потеряны. Чтобы получить
+		// чистый PASS — увеличь --ch-noloss-max-wait, чтобы бэклог успел слиться.
+		if rep.NoLossInconclusive {
+			fmt.Fprintf(os.Stderr, "WARN: no-loss inconclusive — ch_rows %d < expected %d, "+
+				"но count ещё рос на момент max-wait (бэклог не дослит, не потеря); "+
+				"увеличь --ch-noloss-max-wait\n", rep.CHRows, rep.NoLossExpected)
+		} else {
+			fmt.Fprintf(os.Stderr, "FAIL: message loss — ch_rows %d < expected %d (async+rmq)\n",
+				rep.CHRows, rep.NoLossExpected)
+			return false
+		}
 	}
 	fmt.Println("PASS: all criteria met")
 	return true

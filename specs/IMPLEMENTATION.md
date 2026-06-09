@@ -422,7 +422,7 @@
 | Recover в точках входа | ✅ Phase 2 | production `main` уже под `bootstrap.Shutdown`; [echosrv](../cmd/echosrv/main.go)/[loadtest](../cmd/loadtest/main.go) — `safego.Recover` в main |
 | gin recovery → лог + Sentry + 500 | ✅ Phase 3 | [recovery.GinMiddleware](../internal/platform/recovery/middleware.go) заменяет `gin.Recovery()` во всех движках; capture через `logger.WithContext` в request-scoped hub |
 | requestId (UUID v4, не перезаписывать) → Sentry | ✅ Phase 3 | [requestid](../internal/platform/requestid/requestid.go) (middleware первым в цепочке, `X-Request-Id`); тег на scope+транзакцию в [sentry/middleware.go](../internal/platform/sentry/middleware.go) |
-| Версия в UI | ✅ Phase 4 | публичный `GET /api/version` [version_handler.go](../internal/web/adapter/in/http/version_handler.go) (`cfg.Build.Version`); футер [Sidebar.tsx](../web-ui/src/components/Sidebar.tsx); порядок присвоения — [DEPLOYMENT.md §9.0](../DEPLOYMENT.md) |
+| Версия в UI | ✅ Phase 4 | публичный `GET /api/version` [version_handler.go](../internal/web/adapter/in/http/version_handler.go) (`cfg.Build.Version`, который теперь = `buildOpt.Version` из git-ldflags, см. ниже «Версия — единый источник git»); футер [Sidebar.tsx](../web-ui/src/components/Sidebar.tsx); порядок присвоения — [DEPLOYMENT.md §9.0](../DEPLOYMENT.md) |
 
 ### §31 Мониторинг Kafka
 
@@ -688,9 +688,72 @@ RBAC под Playwright подтверждён по трём ролям: admin (�
 Решение: `pollUntilStable` опрашивает CH с интервалом `--ch-flush-grace` и
 выходит когда `rows>=expected` (потерь нет, ранний выход), либо count перестал
 расти `noLossStableRounds=3` опросов подряд (плато → бэклог разгрёбся, и если
-`<expected` — это уже реальная потеря), либо истёк `--ch-noloss-max-wait` (деф.
-120 с). Так растущий бэклог («ещё дренируется») отличается от настоящей потери.
+`<expected` — это уже реальная потеря), либо истёк `--ch-noloss-max-wait`.
+Так растущий бэклог («ещё дренируется») отличается от настоящей потери.
 Job `loadtest` в CI — `allow_failure: true` (early-warning, не gate).
+
+**Грабли-2 (07.06.2026, `ch_rows=12808 < 13993`, `errors=0`):** poll-until-stable
+сам по себе не закрыл проблему — `pollOutcome` различает _три_ исхода, но старый
+код приравнивал «истёк maxWait, пока count ещё рос» к потере. На самом деле:
+- `pollPlateau` ниже expected — **подтверждённая** потеря (`FAIL`);
+- `pollMaxWait`/`pollCtxDone` при растущем count — **inconclusive** (`WARN`, не
+  `FAIL`): at-least-once + Kafka хранит непрочитанное, сообщения не потеряны, просто
+  не успели слиться. Поле `report.no_loss_inconclusive`, `passed()` такой прогон
+  не валит.
+
+Первопричина окна: async-consumer ([kafka/consumer.go](../internal/sender/adapter/in/kafka/consumer.go))
+обрабатывает сообщения **последовательно** на горутину (`FetchMessage`→`Handle`→
+синхронный HTTP ~50мс→`Commit`); при `instances=4` потолок ≈50-70 msg/s, а в async-путь
+при `target_rps=300` льётся ~117 msg/s (async ~87 + rmq-republish ~30). За 2 мин
+копится бэклог ~7-8k, дренаж ≈145с > дефолтных 120с maxWait → обрезка на растущем
+count. Фикс: CI передаёт `--ch-noloss-max-wait 5m` (var `LOADTEST_CH_NOLOSS_MAX_WAIT`),
+проверка успевает дойти до `rows>=expected` и даёт чистый PASS; семантика
+inconclusive — страховка от любого слишком короткого окна впредь.
+
+### 4.0.3 Версия — единый источник истины git (ldflags из `git describe`)
+
+Версия приложения берётся **только** из git и вшивается в бинарь на этапе сборки через
+`ldflags -X nexus/internal/platform/build.Version=…`. Дальше она без правок доезжает в
+логи старта, `--version`, метрики, Sentry-release и `GET /api/version`/футер SPA. На
+сервере и в файлах версию руками не задают — выпуск = новый git-тег. Источник версии —
+[DEPLOYMENT.md §9.0](../DEPLOYMENT.md).
+
+Рефакторинг закрыл **три бага**, из-за которых git-версия раньше не доезжала вообще:
+
+1. **Молчаливый промах ldflags в GoReleaser.** В `.goreleaser.yaml` путь символа был
+   `bus/internal/platform/build.Version`, а модуль — `nexus`. Линкер Go **молча
+   игнорирует** `-X` для несуществующего символа (by-design, не ошибка) → даже релиз по
+   тегу оставлял `build.Version=""` и падал на fallback `versioninfo.json`. Фикс:
+   `bus/` → `nexus/` во всех `-X` (builds receiver/sender/web/rotate-key/loadtest).
+2. **Config перекрывал ldflags.** [bootstrap.go](../internal/platform/bootstrap/bootstrap.go)
+   ставил `cfg.Build.Version = buildOpt.Version` только `if cfg.Build.Version == ""`, но
+   YAML всегда давал `version: ${VERSION:0.1.0}` (непусто) → guard не срабатывал. Фикс:
+   приоритет инвертирован — `if buildOpt.Version != "" { cfg.Build.Version = … }`. А
+   `buildOpt.Version` теперь **всегда непуст** (минимум `0.0.0-dev` из versioninfo.json),
+   значит config-версия всегда перекрывается. Ключ `build.version` убран из
+   `config.example.yml`; в `config_debug.yml` он остаётся (файл под git **skip-worktree**,
+   правится локально и в коммит не идёт), но игнорируется тем же override.
+3. **`/api/version` читал именно `cfg.Build.Version`** (не `buildOpt.Version`) — после
+   фикса #2 это та же git-версия.
+
+Неочевидности для будущих доработок:
+
+- **`cmd/*/versioninfo.json` теперь несут `ProductVersion: 0.0.0-dev`** — это fallback-маркер
+  «собрано без git/ldflags», а НЕ значение для бампа. `build.NewOption` использует его,
+  только если `build.Version` пуст. `web-ui/package.json` (`version`) к `/api/version`
+  отношения не имеет (фронт берёт версию из бэкенда).
+- **`VERSION` в `.env`** остался **селектором тега образа** на registry-пути (§9.2,
+  `image: …/web:${VERSION}`) — отвечает «какой артефакт запустить», а не «какую версию
+  сообщает приложение». Это разные слои, их рассинхрон больше не критичен.
+- **Docker-сборка из исходников** вычисляет `git describe` **внутри** builder-стейджа —
+  значит `.git` обязан попасть в build-контекст. В `.dockerignore` он намеренно **не**
+  исключён (см. комментарий в файле). Дата — `%cI` (дата коммита), переносимо Windows/Linux.
+- **Ведущий `v` тега срезается** (Makefile `patsubst v%,%`, Dockerfile `${VERSION#v}`):
+  `git describe` отдаёт `v0.1.0`, а GoReleaser `{{ .Version }}` — `0.1.0`, и футер SPA
+  ([Sidebar.tsx](../web-ui/src/components/Sidebar.tsx)) сам добавляет `v`. Без среза вышло
+  бы `vv0.1.0`. Короткий хеш (hex, без тега) на `v` не начинается — остаётся как есть.
+- **CI:** `GIT_DEPTH: "0"` вынесен в глобальные `variables` [.gitlab-ci.yml](../.gitlab-ci.yml) —
+  shallow-клон не тянет теги, и `git describe --tags`/GoReleaser сломались бы.
 
 ### 4.1 Шифрование auth_credentials живёт только в `adapter/out/postgres`
 

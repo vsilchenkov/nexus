@@ -50,7 +50,12 @@ func Init(versionInfoData []byte, projectName string) (*build.Option, config.Fla
 	if cfg.Build.ProjectName == "" {
 		cfg.Build.ProjectName = projectName
 	}
-	if cfg.Build.Version == "" {
+	// Версия — единый источник истины: git. build.Version вшивается в бинарь из
+	// git describe / git-тега через ldflags (см. Makefile, Dockerfile,
+	// .goreleaser.yaml) и перекрывает config. Если ldflags пуст (сборка без -X) —
+	// остаётся значение из конфига (для config_debug это пусто → fallback на
+	// versioninfo.json произошёл уже внутри build.NewOption).
+	if buildOpt.Version != "" {
 		cfg.Build.Version = buildOpt.Version
 	}
 
