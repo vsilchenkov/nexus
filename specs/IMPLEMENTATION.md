@@ -688,9 +688,27 @@ RBAC под Playwright подтверждён по трём ролям: admin (�
 Решение: `pollUntilStable` опрашивает CH с интервалом `--ch-flush-grace` и
 выходит когда `rows>=expected` (потерь нет, ранний выход), либо count перестал
 расти `noLossStableRounds=3` опросов подряд (плато → бэклог разгрёбся, и если
-`<expected` — это уже реальная потеря), либо истёк `--ch-noloss-max-wait` (деф.
-120 с). Так растущий бэклог («ещё дренируется») отличается от настоящей потери.
+`<expected` — это уже реальная потеря), либо истёк `--ch-noloss-max-wait`.
+Так растущий бэклог («ещё дренируется») отличается от настоящей потери.
 Job `loadtest` в CI — `allow_failure: true` (early-warning, не gate).
+
+**Грабли-2 (07.06.2026, `ch_rows=12808 < 13993`, `errors=0`):** poll-until-stable
+сам по себе не закрыл проблему — `pollOutcome` различает _три_ исхода, но старый
+код приравнивал «истёк maxWait, пока count ещё рос» к потере. На самом деле:
+- `pollPlateau` ниже expected — **подтверждённая** потеря (`FAIL`);
+- `pollMaxWait`/`pollCtxDone` при растущем count — **inconclusive** (`WARN`, не
+  `FAIL`): at-least-once + Kafka хранит непрочитанное, сообщения не потеряны, просто
+  не успели слиться. Поле `report.no_loss_inconclusive`, `passed()` такой прогон
+  не валит.
+
+Первопричина окна: async-consumer ([kafka/consumer.go](../internal/sender/adapter/in/kafka/consumer.go))
+обрабатывает сообщения **последовательно** на горутину (`FetchMessage`→`Handle`→
+синхронный HTTP ~50мс→`Commit`); при `instances=4` потолок ≈50-70 msg/s, а в async-путь
+при `target_rps=300` льётся ~117 msg/s (async ~87 + rmq-republish ~30). За 2 мин
+копится бэклог ~7-8k, дренаж ≈145с > дефолтных 120с maxWait → обрезка на растущем
+count. Фикс: CI передаёт `--ch-noloss-max-wait 5m` (var `LOADTEST_CH_NOLOSS_MAX_WAIT`),
+проверка успевает дойти до `rows>=expected` и даёт чистый PASS; семантика
+inconclusive — страховка от любого слишком короткого окна впредь.
 
 ### 4.1 Шифрование auth_credentials живёт только в `adapter/out/postgres`
 

@@ -372,6 +372,13 @@ loadtest:
     LOADTEST_RATIO_RMQ: "0.1"
     # no-loss async/rmq по ClickHouse (--ch-addr clickhouse:9000).
     LOADTEST_CH_NOLOSS: "1"
+    # Потолок ожидания дренажа async/rmq-бэклога перед вердиктом no-loss.
+    # При target_rps=300 в async-путь льётся ~117 msg/s (async ~87 + rmq ~30),
+    # а consumer (instances=4, последовательный HTTP ~50мс) тянет ~50-70 msg/s →
+    # за прогон копится бэклог ~7-8k, дренаж которого ≈145с. Дефолт cmd/loadtest
+    # 120с обрезал слив и давал ЛОЖНЫЙ FAIL (count ещё рос = не потеря). Берём 5m
+    # с запасом — проверка рано выходит по rows>=expected (чистый PASS).
+    LOADTEST_CH_NOLOSS_MAX_WAIT: "5m"
     # Поднимаем rabbitmq (profile stand) и передаём --rmq-url/--ratio-rmq.
     LOADTEST_WITH_RMQ: "1"
     # Порог p95 (мс) для acceptance- и per-mode testcase'ов JUnit.
@@ -546,7 +553,7 @@ loadtest:
       #  - rmq: --ratio-rmq + --rmq-url к compose-сервису rabbitmq (creds из .env).
       LT_ARGS=""
       if [ "$LOADTEST_CH_NOLOSS" = "1" ]; then
-        LT_ARGS="$LT_ARGS --ch-addr clickhouse:9000 --ch-user default --ch-flush-grace 15s"
+        LT_ARGS="$LT_ARGS --ch-addr clickhouse:9000 --ch-user default --ch-flush-grace 15s --ch-noloss-max-wait ${LOADTEST_CH_NOLOSS_MAX_WAIT:-5m}"
       fi
       if [ "$LOADTEST_WITH_RMQ" = "1" ]; then
         LT_ARGS="$LT_ARGS --ratio-rmq $LOADTEST_RATIO_RMQ --rmq-url amqp://nexus:loadtest_local_rmq@rabbitmq:5672/"
