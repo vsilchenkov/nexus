@@ -9,9 +9,10 @@ import (
 	"github.com/kardianos/service"
 )
 
-// Эти переменные заполняются линкером через -ldflags при release-сборке
-// (GoReleaser / make build-release). В обычной сборке остаются пустыми, и тогда
-// версия читается из встроенного versioninfo.json (см. NewOption).
+// Эти переменные заполняются линкером через -ldflags при сборке из git
+// (`make build` / `docker compose build` — версия из `git describe`, см.
+// Makefile и deploy/docker/*.Dockerfile). В сборке без ldflags остаются пустыми,
+// и тогда версия читается из встроенного versioninfo.json (см. NewOption).
 var (
 	Version   = ""
 	Commit    = ""

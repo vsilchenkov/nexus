@@ -758,9 +758,10 @@ inconclusive — страховка от любого слишком корот�
   ([Sidebar.tsx](../web-ui/src/components/Sidebar.tsx)) сам добавляет `v`. Без среза вышло
   бы `vv0.1.0`. Короткий хеш (hex, без тега) на `v` не начинается — остаётся как есть.
 - **CI не собирает образы.** Job `release` (GoReleaser → registry) удалён вместе со стадией
-  `release` и `GIT_DEPTH` ([.gitlab-ci.yml](../.gitlab-ci.yml)); тег `v*` гоняет лишь
-  test/lint/build. `.goreleaser.yaml`/`deploy/docker/release.Dockerfile`/make `release-*`
-  больше не задействованы (фикс `bus→nexus` из бага №1 в них остаётся, но не исполняется).
+  `release` и `GIT_DEPTH` ([.gitlab-ci.yml](../.gitlab-ci.yml)); тег `v*` гоняет
+  test/lint/build + loadtest (как `master`). `.goreleaser.yaml`,
+  `deploy/docker/release.Dockerfile` и make `release-*` **удалены** (фикс `bus→nexus`
+  из бага №1 ушёл вместе с ними — он касался уже неиспользуемого GoReleaser).
   Версионированные образы строит сервер при `docker compose up -d --build` — там `.git`
   нужен в контексте, дата `%cI`, ведущий `v` тега срезается (`${VERSION#v}`/`patsubst`).
 

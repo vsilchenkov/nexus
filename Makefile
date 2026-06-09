@@ -245,18 +245,6 @@ gosec: ## gosec — статический анализ безопасности
 
 security-scan: vuln-check gosec ## Локальный security-прогон (vuln + gosec)
 
-# ----- release (Phase 7.6) --------------------------------------------------
-
-.PHONY: release-check release-snapshot
-
-release-check: ## Проверить .goreleaser.yaml на синтаксис
-	goreleaser check
-
-release-snapshot: ## Локальный snapshot-релиз (без публикации) — артефакты в dist/
-	GITHUB_REPOSITORY=local/nexus \
-	GITHUB_REPOSITORY_LOWER=local/nexus \
-	goreleaser release --snapshot --clean --skip=publish
-
 # ----- clean ----------------------------------------------------------------
 
 .PHONY: clean

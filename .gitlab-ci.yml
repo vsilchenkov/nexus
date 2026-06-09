@@ -344,6 +344,10 @@ loadtest:
     - if: $CI_COMMIT_BRANCH == "master"
       when: on_success
       allow_failure: true
+    # Auto-run на тег v* — так же, как на master (smoke-прогон, allow_failure, не gate).
+    - if: $CI_COMMIT_TAG =~ /^v[0-9]/
+      when: on_success
+      allow_failure: true
     # Ручной запуск (кнопка ▶) на dev.
     - if: $CI_COMMIT_BRANCH == "dev"
       when: manual

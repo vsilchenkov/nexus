@@ -88,14 +88,11 @@ REST API задокументировано в [internal/web/static/index.html](
 
 OpenAPI / Swagger: `make swagger` генерирует [docs/web/](./docs/web/) из аннотаций в Go-handlers; `make swagger-drift-check` для CI. Интерактивный UI — `http://localhost:8000/swagger/index.html`.
 
-## Docker images (release builds)
+## Сборка образов и деплой
 
-Релизные multi-arch образы (amd64+arm64) собираются [.goreleaser.yaml](./.goreleaser.yaml)
-и публикуются в GitLab Container Registry по тегу `v*`:
-`$CI_REGISTRY_IMAGE/{receiver,sender,web}:<version>`.
-
-Локальный snapshot для проверки релизной сборки — `make release-snapshot`
-(артефакты в `dist/`).
+Образы в CI **не** собираются и в registry **не** публикуются. Деплой — сборкой из
+исходников на сервере: `docker compose up -d --build` (версия вшивается из git-тега —
+нужен checkout с `.git`, см. [DEPLOYMENT.md §9](./DEPLOYMENT.md)).
 
 ## CI/CD
 
@@ -107,9 +104,8 @@ runner с тегом `srv-d-android-l-docker` (docker-executor). Stages:
 | `test`        | `go vet ./...`, `go test -race -short ./...`                                |
 | `lint`        | `golangci-lint run`, `swagger-drift` (проверка `docs/` против аннотаций)    |
 | `build`       | `go build ./...`, `ui-build` (Vite + lint + build для `web-ui/`)            |
-| `integration` | testcontainers PG/Redis/Kafka/CH; `loadtest` (manual или RUN_PROFILE)       |
+| `integration` | testcontainers PG/Redis/Kafka/CH; `loadtest` (auto на master/теге `v*`, manual на dev) |
 | `security`    | `govulncheck`, `gosec`, `trivy-fs`, `renovate` (weekly schedule)            |
-| `release`     | `goreleaser release` на теги `v*` → GitLab Container Registry               |
 
 Селективный ручной запуск через **«Run pipeline»** в UI с переменной
 `RUN_PROFILE = integration-only | loadtest-only` (см. шапку [.gitlab-ci.yml](./.gitlab-ci.yml)

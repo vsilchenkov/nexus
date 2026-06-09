@@ -199,11 +199,11 @@ jobs на runner с тегом `srv-d-android-l-docker`.
 |--------------------------------------------|----------------------------------------------------------------------|
 | push в любую ветку                         | `go-test`, `go-lint`, `swagger-drift`, `go-build`, `ui-build`        |
 | push в master                              | + `integration` + security stage + `loadtest` (smoke)                |
-| push в dev/tag                             | + `integration` + security stage (govulncheck — gate)                |
+| push в dev                                 | + `integration` + security stage (govulncheck — gate)                |
 | MR с label `run-integration`               | + `integration`                                                      |
 | MR с изменениями go.mod/go.sum/Dockerfile  | + security stage (govulncheck/gosec/trivy)                           |
 | schedule (CI/CD → Schedules, weekly)       | security stage + `renovate`                                          |
-| tag `v[0-9]…`                              | + `release` (GoReleaser → GitLab Container Registry)                 |
+| tag `v[0-9]…`                              | + `integration` + security stage + `loadtest` (smoke, как на master) |
 
 `loadtest` на push в master — это **smoke-test инфраструктуры** (стек
 поднимается, ноды создаются, end-to-end запросы проходят). Помечен

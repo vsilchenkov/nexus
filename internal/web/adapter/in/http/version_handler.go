@@ -8,8 +8,8 @@ import (
 
 // VersionHandler — публичный эндпоинт версии приложения (§30 ТЗ).
 //
-// Версия берётся из build-конфига (cfg.Build.Version): versioninfo.json или
-// ldflags при релизной сборке (GoReleaser). Эндпоинт не требует авторизации —
+// Версия берётся из build-конфига (cfg.Build.Version): ldflags при сборке из git
+// (make / docker compose build) или fallback versioninfo.json. Не требует авторизации —
 // SPA показывает версию в футере в т.ч. до входа.
 type VersionHandler struct {
 	version string

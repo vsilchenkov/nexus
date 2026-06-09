@@ -22,9 +22,10 @@
   `variables` (в CI больше не нужен). Тег `v*` прогоняет обычные test/lint/build.
 - DEPLOYMENT.md §9 переписан: build-on-server — основной путь; registry-путь (§9.2),
   `VERSION`/`REGISTRY_BASE` в `.env` и раздел про GoReleaser — убраны.
-- `.goreleaser.yaml`, `deploy/docker/release.Dockerfile`, make-цели `release-check`/
-  `release-snapshot` больше не задействованы в CI (остаются для опционального ручного
-  использования или удаления).
+- Удалены `.goreleaser.yaml`, `deploy/docker/release.Dockerfile` и make-цели
+  `release-check`/`release-snapshot` (артефакты бывшего CI-релиза).
+- `.gitlab-ci.yml`: job `loadtest` теперь запускается и на тег `v*` — так же, как на
+  `master` (smoke-прогон, `allow_failure`).
 
 ## [1.0.1] - 2026-06-09
 

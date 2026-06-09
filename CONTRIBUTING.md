@@ -148,19 +148,19 @@ Pipeline живёт в [.gitlab-ci.yml](.gitlab-ci.yml) (self-hosted runner с �
   `master`/`dev`/тег, или на MR с label `run-integration`. Ручной селективный
   запуск через UI «Run pipeline» с переменной `RUN_PROFILE=integration-only`.
 - **loadtest** — нагрузочный сценарий, поднимает изолированный compose-стек и
-  гоняет `cmd/loadtest`. Manual или `RUN_PROFILE=loadtest-only`.
+  гоняет `cmd/loadtest`. Авто на push в `master` и на тег `v*` (smoke, `allow_failure`),
+  manual на `dev`, либо `RUN_PROFILE=loadtest-only`.
 - **security** — `govulncheck`, `gosec`, `trivy-fs` (SARIF в артефакты),
   `renovate` (weekly schedule, MR с обновлением зависимостей).
-- **release** — триггер по тегу `v*`: GoReleaser собирает бинари
-  (Linux/Windows/macOS × amd64+arm64) + multi-arch docker images в GitLab
-  Container Registry. Локальная проверка: `make release-check` (синтаксис) и
-  `make release-snapshot` (артефакты в `dist/` без публикации).
 
-Релизный workflow:
+Стадии `release` нет: Docker-образы в CI не собираются и в registry не публикуются.
+Деплой — сборкой из исходников на сервере (версия вшивается из git-тега).
+
+Релизный workflow (подробно — DEPLOYMENT.md §9.5):
 ```bash
-git tag v1.2.3
-git push origin v1.2.3
-# Дальше release.yml сам всё сделает
+git switch master && git merge --no-ff dev && git push origin master
+git tag -a v1.2.3 -m "Release 1.2.3" && git push origin v1.2.3
+# на сервере: git fetch --tags && git checkout v1.2.3 && docker compose up -d --build
 ```
 
 ---
