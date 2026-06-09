@@ -715,8 +715,13 @@ inconclusive — страховка от любого слишком корот�
 Версия приложения берётся **только** из git и вшивается в бинарь на этапе сборки через
 `ldflags -X nexus/internal/platform/build.Version=…`. Дальше она без правок доезжает в
 логи старта, `--version`, метрики, Sentry-release и `GET /api/version`/футер SPA. На
-сервере и в файлах версию руками не задают — выпуск = новый git-тег. Источник версии —
-[DEPLOYMENT.md §9.0](../DEPLOYMENT.md).
+сервере и в файлах версию руками не задают — выпуск = новый git-тег + пересборка на
+сервере (`docker compose up -d --build`). Источник версии — [DEPLOYMENT.md §9.0](../DEPLOYMENT.md).
+
+> **Образы в CI больше не собираются** (job `release`/GoReleaser удалён — требовал
+> DinD/buildx/docker.io-auth на раннере и нестабильно работал, см. [Unreleased] в
+> [CHANGELOG.md](../CHANGELOG.md)). Деплой — сборкой из исходников на сервере; версия там
+> вшивается из git точно так же (Dockerfile считает `git describe` внутри builder-стейджа).
 
 Рефакторинг закрыл **три бага**, из-за которых git-версия раньше не доезжала вообще:
 
@@ -742,9 +747,9 @@ inconclusive — страховка от любого слишком корот�
   «собрано без git/ldflags», а НЕ значение для бампа. `build.NewOption` использует его,
   только если `build.Version` пуст. `web-ui/package.json` (`version`) к `/api/version`
   отношения не имеет (фронт берёт версию из бэкенда).
-- **`VERSION` в `.env`** остался **селектором тега образа** на registry-пути (§9.2,
-  `image: …/web:${VERSION}`) — отвечает «какой артефакт запустить», а не «какую версию
-  сообщает приложение». Это разные слои, их рассинхрон больше не критичен.
+- **`VERSION` в `.env` больше не используется.** Был селектором тега образа на
+  registry-пути, но registry/CI-Docker убраны (деплой — сборкой на сервере, §9.1) —
+  строку можно удалить.
 - **Docker-сборка из исходников** вычисляет `git describe` **внутри** builder-стейджа —
   значит `.git` обязан попасть в build-контекст. В `.dockerignore` он намеренно **не**
   исключён (см. комментарий в файле). Дата — `%cI` (дата коммита), переносимо Windows/Linux.
@@ -752,8 +757,12 @@ inconclusive — страховка от любого слишком корот�
   `git describe` отдаёт `v0.1.0`, а GoReleaser `{{ .Version }}` — `0.1.0`, и футер SPA
   ([Sidebar.tsx](../web-ui/src/components/Sidebar.tsx)) сам добавляет `v`. Без среза вышло
   бы `vv0.1.0`. Короткий хеш (hex, без тега) на `v` не начинается — остаётся как есть.
-- **CI:** `GIT_DEPTH: "0"` вынесен в глобальные `variables` [.gitlab-ci.yml](../.gitlab-ci.yml) —
-  shallow-клон не тянет теги, и `git describe --tags`/GoReleaser сломались бы.
+- **CI не собирает образы.** Job `release` (GoReleaser → registry) удалён вместе со стадией
+  `release` и `GIT_DEPTH` ([.gitlab-ci.yml](../.gitlab-ci.yml)); тег `v*` гоняет лишь
+  test/lint/build. `.goreleaser.yaml`/`deploy/docker/release.Dockerfile`/make `release-*`
+  больше не задействованы (фикс `bus→nexus` из бага №1 в них остаётся, но не исполняется).
+  Версионированные образы строит сервер при `docker compose up -d --build` — там `.git`
+  нужен в контексте, дата `%cI`, ведущий `v` тега срезается (`${VERSION#v}`/`patsubst`).
 
 ### 4.1 Шифрование auth_credentials живёт только в `adapter/out/postgres`
 

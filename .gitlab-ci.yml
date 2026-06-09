@@ -1,27 +1,25 @@
 # GitLab CI/CD pipeline для Nexus (Phase 9.2).
 #
-# Один файл со всеми stages: test, lint, build, security, integration, release.
+# Один файл со всеми stages: test, lint, build, security, integration.
+# Docker-образы в CI НЕ собираются и в registry НЕ публикуются — деплой сборкой
+# на сервере (`docker compose up -d --build`, DEPLOYMENT.md §9.1).
 #
 # Runner: self-hosted docker-executor с тегом `srv-d-android-l-docker`.
-# Для integration и release jobs требуется доступ к Docker daemon
-# (services: [docker:dind] + privileged либо docker.sock смонтирован в runner).
+# Для integration job требуется доступ к Docker daemon (testcontainers поднимают
+# PostgreSQL/ClickHouse/Redis/Kafka через смонтированный docker.sock раннера).
 #
 # Триггеры:
 #   - push в любую ветку             → test, lint, build, swagger-drift, ui
 #   - merge_request                  → то же + integration (по labels)
 #   - schedule (weekly)              → security (govulncheck + gosec + trivy)
-#   - tag v*                         → release (GoReleaser → GitLab Container Registry)
+#   - tag v*                         → test/lint/build (валидация тега; деплой —
+#                                      сборкой на сервере, DEPLOYMENT.md §9.1)
 #
 # Документация GitLab CI variables: https://docs.gitlab.com/ee/ci/variables/
 
 variables:
   GO_VERSION: "1.26.4"
   NODE_VERSION: "20"
-  # Полная история + теги во всех jobs. Версия — единый источник истины git:
-  # она вшивается в бинари из `git describe --tags` (Makefile / Dockerfile) и
-  # из git-тега в GoReleaser. Shallow-клон (дефолт GitLab) не тянет теги →
-  # `git describe --tags` и GoReleaser сломались бы. 0 = полный клон.
-  GIT_DEPTH: "0"
   # Локальный GOPATH/GOCACHE/GOMODCACHE — кешируется между jobs.
   GOPATH: "$CI_PROJECT_DIR/.cache/go"
   GOCACHE: "$CI_PROJECT_DIR/.cache/go-build"
@@ -51,7 +49,6 @@ stages:
   - build
   - security
   - integration
-  - release
 
 # ----------- Reusable anchors -----------------------------------------------
 
@@ -898,66 +895,12 @@ renovate:
 # trivy. Если nancy потребуется вернуть — нужен OSS Index API token в
 # Settings → CI/CD → Variables и передача через --username/--token.
 
-# ----------- RELEASE stage --------------------------------------------------
-# Триггерится тегом v*. Использует GoReleaser → GitLab Container Registry
-# ($CI_REGISTRY_IMAGE/{receiver,sender,web}:<version>) для docker-образов
-# и GitLab Releases API для архивов и release-страницы.
+# ----------- RELEASE ---------------------------------------------------------
+# Отдельного release-job НЕТ. Раньше тег v* запускал GoReleaser, собиравший
+# Docker-образы и публиковавший их в GitLab Container Registry — это требовало
+# DinD/buildx/docker.io-auth на раннере и постоянно падало на инфре.
 #
-# DOCKER_REGISTRY_BASE и COMPARE_URL_BASE передаются через env (см. шапку
-# .goreleaser.yaml); GoReleaser автодетектит платформу по наличию GITLAB_TOKEN.
-#
-# Требования к runner:
-#   - доступ к Docker daemon через смонтированный docker.sock (runner
-#     srv-d-android-l монтирует его в job). DinD-сервис НЕ используем — он
-#     конфликтовал за /var/run/docker.sock ("device or resource busy").
-#   - привилегии для buildx/binfmt (privileged: true в config.toml runner'а).
-#
-# Required CI/CD Variables (Settings → CI/CD → Variables):
-#   - GITLAB_TOKEN — Project Access Token со scope `api` + `write_repository`;
-#     нужен GoReleaser'у для создания release entry в GitLab.
-
-release:
-  stage: release
-  image:
-    # goreleaser/goreleaser:v2 НЕ существует на Docker Hub (manifest unknown) —
-    # из-за этого падал первый релиз. :latest = актуальный GoReleaser v2.x.
-    name: goreleaser/goreleaser:latest
-    # ENTRYPOINT образа = goreleaser, поэтому GitLab иначе вызывает
-    # `goreleaser -c <script>` и падает ("unknown shorthand flag: 'c'").
-    # Сбрасываем entrypoint, чтобы job исполнял команды через sh.
-    entrypoint: [""]
-    pull_policy: [always, if-not-present]
-  # DinD НЕ используем: раннер монтирует docker.sock в job, и сервис
-  # docker:24-dind конфликтовал за /var/run/docker.sock ("device or resource
-  # busy"). docker CLI ходит в смонтированный сокет напрямую (DOCKER_HOST по
-  # умолчанию unix:///var/run/docker.sock).
-  variables:
-    # См. шапку .goreleaser.yaml — это env-контракт для GoReleaser.
-    DOCKER_REGISTRY_BASE: $CI_REGISTRY_IMAGE
-    COMPARE_URL_BASE: "$CI_PROJECT_URL/-/compare"
-    # GoReleaser автодетектит GitLab по наличию GITLAB_TOKEN. Полную историю +
-    # теги (GIT_DEPTH: 0, нужны GoReleaser'у для версии из тега и changelog)
-    # задаём глобально в variables — здесь не дублируем.
-  rules:
-    - *skip-if-profiled-rule
-    - if: $CI_COMMIT_TAG =~ /^v[0-9]/
-  timeout: 60 minutes
-  before_script:
-    - 'echo "===== release tag = $CI_COMMIT_TAG ====="'
-    # git уже есть в образе goreleaser:latest (Alpine, git 2.52+) — apk не нужен.
-    # Multi-arch buildx (для linux/amd64 + linux/arm64). QEMU включается через
-    # tonistiigi/binfmt — нужно privileged runner.
-    - 'echo "===== installing QEMU binfmt + buildx ====="'
-    - docker run --privileged --rm tonistiigi/binfmt --install all
-    - docker buildx create --use --name multiarch --driver docker-container
-    - docker buildx inspect --bootstrap
-    # Login в GitLab Container Registry — переменные CI_REGISTRY_* предоставляются
-    # GitLab автоматически (read+write для текущего проекта).
-    - 'echo "===== docker login to $CI_REGISTRY ====="'
-    - echo "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" --password-stdin
-  script:
-    - 'echo "===== goreleaser version ====="'
-    - goreleaser --version
-    - 'echo "===== goreleaser release --clean ====="'
-    - goreleaser release --clean
-    - 'echo "===== release done ====="'
+# Новый процесс: образы НЕ собираются в CI и НЕ кладутся в registry. Деплой —
+# сборкой из исходников на сервере: `docker compose up -d --build` (версия
+# вшивается из git, см. DEPLOYMENT.md §9.1). Тег v* остаётся маркером версии и
+# прогоняет обычные test/lint/build для валидации.

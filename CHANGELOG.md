@@ -12,14 +12,28 @@
 
 ## [Unreleased]
 
+### Changed — деплой без сборки образов в CI
+
+- **Сборка Docker-образов в CI и публикация в GitLab Container Registry убраны.**
+  Release-job (GoReleaser) требовал DinD/buildx/docker.io-auth на раннере и нестабильно
+  работал. Деплой теперь — сборкой из исходников на сервере: `docker compose up -d --build`
+  (версия по-прежнему вшивается из git, DEPLOYMENT.md §9.1/§9.5).
+- `.gitlab-ci.yml`: удалён job `release` и стадия `release`; `GIT_DEPTH: 0` убран из
+  `variables` (в CI больше не нужен). Тег `v*` прогоняет обычные test/lint/build.
+- DEPLOYMENT.md §9 переписан: build-on-server — основной путь; registry-путь (§9.2),
+  `VERSION`/`REGISTRY_BASE` в `.env` и раздел про GoReleaser — убраны.
+- `.goreleaser.yaml`, `deploy/docker/release.Dockerfile`, make-цели `release-check`/
+  `release-snapshot` больше не задействованы в CI (остаются для опционального ручного
+  использования или удаления).
+
 ## [1.0.1] - 2026-06-09
 
 ### Fixed
 - CI release-job ([.gitlab-ci.yml](.gitlab-ci.yml)): образ `goreleaser/goreleaser:v2`
   (несуществующий тег, `manifest unknown`) → `:latest`; убран конфликтующий сервис
   `docker:24-dind` (раннер монтирует `docker.sock` — был `device or resource busy`).
-  Из-за этого не опубликовался тег `1.0.0`; `1.0.1` — первый успешно собранный релиз
-  (наполнение приложения идентично `1.0.0`).
+  Историческое: позднее сборка образов в CI убрана целиком (см. [Unreleased]) — деплой
+  перешёл на сборку из исходников на сервере.
 
 ## [1.0.0] - 2026-06-09
 

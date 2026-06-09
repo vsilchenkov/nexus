@@ -56,7 +56,7 @@ Nexus — три stateless Go-сервиса плюс набор хранили�
 
 | Переменная            | Назначение                                              | Дефолт в шаблоне      |
 |-----------------------|---------------------------------------------------------|-----------------------|
-| `VERSION`             | Тег образа для registry-override (§9.2), не версия приложения (та — из git, §9.0) | `0.1.0`  |
+| `VERSION`             | Не используется (registry-путь убран, §9.2); версия приложения — из git (§9.0). Можно удалить | —        |
 | `PG_HOST`             | Хост PostgreSQL                                         | `postgres`            |
 | `PG_PORT`             | Порт PostgreSQL                                         | `5432`                |
 | `PG_USER`             | Логин PostgreSQL                                        | `nexus`               |
@@ -83,9 +83,9 @@ Nexus — три stateless Go-сервиса плюс набор хранили�
 топиков упадёт с `InvalidReplicationFactor` (дефолты в `config.example.yml` рассчитаны
 на кластер из 3+ брокеров: RF=3, ISR=2).
 
-При обновлении готовыми образами из registry (§9.2) в `.env` дополнительно используется
-`REGISTRY_BASE` (адрес проекта в Container Registry, `= $CI_REGISTRY_IMAGE`) — он подставляется
-в `deploy/docker-compose.registry.yml`. Сами бинари его не читают; это compose-переменная.
+Переменные `VERSION` и `REGISTRY_BASE` больше не используются: registry-путь деплоя убран
+(§9.2), деплой — сборкой из исходников на сервере (§9.1). Версия приложения берётся из git
+при сборке (§9.0).
 
 ### Метрики панели и Prometheus (§21)
 
@@ -514,29 +514,26 @@ Compose автоматически подхватывает `docker-compose.over
 `GET /api/version` (его показывает SPA в футере, см. §30 ТЗ). **Версию руками — ни в
 файлах, ни на сервере — задавать не нужно.**
 
-Как это работает по путям сборки:
+Как это работает:
 
-- **Релиз по тегу (рекомендуемый прод-путь) — git-тег + GoReleaser.** `git tag vX.Y.Z
-  && git push origin vX.Y.Z` → CI (job `release`) собирает образы
-  `{receiver,sender,web}:X.Y.Z`; GoReleaser проставляет версию в
-  `build.Version`/`build.Commit`/`build.BuildDate` через `ldflags`
-  (см. `.goreleaser.yaml`, `-X nexus/internal/platform/build.Version={{ .Version }}`).
-  **Достаточно тега — ручной правки файлов не требуется.**
-- **Сборка из исходников (`make build`, `docker compose build`)** вшивает версию из
-  `git describe --tags --always --dirty` текущего рабочего дерева: `make` — через блок
-  `version` в Makefile, Docker — внутри builder-стейджа (`.git` есть в контексте
-  сборки, см. `deploy/docker/*.Dockerfile`). Версия «сама подсасывается» из git.
+- **Сборка из исходников — основной (и единственный) путь.** `docker compose up -d --build`
+  (прод) или `make build` (локально) вшивают версию из `git describe --tags --always --dirty`
+  текущего рабочего дерева: Docker — внутри builder-стейджа (`.git` обязан быть в контексте
+  сборки, см. `deploy/docker/*.Dockerfile`), `make` — через блок `version` в Makefile. Версия
+  «сама подсасывается» из git, ручной правки файлов не требуется.
 - **Fallback без git/ldflags** (голый `go build` без `.git`) — строка `0.0.0-dev` из
   `cmd/<svc>/versioninfo.json`. Это маркер «несборочной» версии, а **не** значение для
   бампа — поднимать его вручную НЕ нужно.
 
-`VERSION` в `.env` — это **селектор тега образа** на registry-пути (§9.2,
-`image: …/web:${VERSION}`): он говорит «какой артефакт запустить», а НЕ задаёт версию,
-которую приложение сообщает о себе (её несёт сам образ из git). `web-ui/package.json`
-(`version`) с `/api/version` не связан — фронт берёт версию из бэкенда.
+> **CI не собирает Docker-образы и не публикует их в registry.** Раньше это делал GoReleaser
+> по тегу `v*`, но это требовало DinD/buildx/docker.io-auth на раннере и постоянно падало на
+> инфраструктуре. Поэтому release-job убран; деплой — сборкой на сервере (§9.1).
 
-Итого: **новая версия = новый git-тег.** Никаких ручных правок версии в файлах или на
-сервере. Пошаговый рецепт выпуска (слить в `master` → тег → подтянуть на сервере) — в **§9.5**.
+`VERSION` в `.env` больше **не используется** (это был селектор тега образа на registry-пути,
+который убран) — строку можно удалить. `web-ui/package.json` (`version`) с `/api/version` не
+связан — фронт берёт версию из бэкенда.
+
+Итого: **новая версия = новый git-тег + пересборка на сервере.** Пошаговый рецепт — в **§9.5**.
 
 ### 9.1. Обновление при сборке из исходников (варианты A/B/C)
 
@@ -564,66 +561,13 @@ Compose пересоздаёт контейнеры с новыми образа
 > **Рекомендация:** перед обновлением, добавляющим миграции, сделайте дамп PostgreSQL
 > (`pg_dump`) — это страховка для отката БД (§10).
 
-### 9.2. Обновление через готовые образы из registry (рекомендуемый прод-путь)
+### 9.2. Готовые образы из registry — больше не используется
 
-Релизные образы публикуются GoReleaser'ом в GitLab Container Registry по тегу `v*`:
-`$CI_REGISTRY_IMAGE/{receiver,sender,web}:<version>` (multi-arch amd64+arm64, плюс `:latest`).
-Это путь без сборки на проде: CI собрал образы один раз, сервер только подтягивает и
-перезапускает контейнеры. Полный цикл «тег → образы → прод» — в §9.5.
-
-Базовые compose-файлы (корневой `docker-compose.yml` — Вариант C, а также
-`deploy/docker-compose.yml` и `deploy/docker-compose.app.yml`) собирают сервисы из исходников
-(`build:`). Чтобы запускать готовые образы, подменяем `build:` на `image:` в **override-файле**
-— он накладывается поверх базового через второй `-f` (как и `docker-compose.override.yml` из §7).
-
-**Шаг 1. Один раз создать override `deploy/docker-compose.registry.yml`:**
-
-```yaml
-services:
-  receiver:
-    build: !reset null        # убрать унаследованный build:, чтобы не пересобирать
-    image: ${REGISTRY_BASE}/receiver:${VERSION}
-  sender:
-    build: !reset null
-    image: ${REGISTRY_BASE}/sender:${VERSION}
-  web:
-    build: !reset null
-    image: ${REGISTRY_BASE}/web:${VERSION}
-```
-
-**Шаг 2. В `.env` задать адрес registry и версию:**
-
-```dotenv
-REGISTRY_BASE=registry.<gitlab-host>/<group>/<project>   # = $CI_REGISTRY_IMAGE проекта
-VERSION=1.0.0                                             # = тег образа, который тянем; версию приложения несёт сам образ (§9.0)
-```
-
-**Шаг 3. Залогиниться (один раз) и перекатить три сервиса** (пример для Варианта C —
-внешний ClickHouse, корневой `docker-compose.yml`; для A замените на `deploy/docker-compose.yml`,
-для B — на `deploy/docker-compose.app.yml`):
-
-```bash
-docker login registry.<gitlab-host>     # токен со scope read_registry
-
-docker compose \
-  -f docker-compose.yml \
-  -f deploy/docker-compose.registry.yml \
-  pull web receiver sender
-
-docker compose \
-  -f docker-compose.yml \
-  -f deploy/docker-compose.registry.yml \
-  up -d web receiver sender
-```
-
-Хранилища (bundled PG/Redis/Kafka в volume'ах + внешний ClickHouse) не пересоздаются;
-новые `*.up.sql` накатятся автоматически при старте `web`/`receiver` (§8). **Смена версии =
-поднять `VERSION` в `.env` и повторить `pull` + `up -d`.** Откат — вернуть прежний `VERSION`
-и снова `pull` + `up -d` (§10.1).
-
-> Чтобы compose всегда тянул свежий образ под тем же тегом (например `:latest`), можно
-> добавить сервисам `pull_policy: always` в том же override. Для пиннинга по точной версии
-> (`:1.0.0`) это не нужно — тег и так уникален.
+Раньше образы публиковались GoReleaser'ом в GitLab Container Registry по тегу `v*`, и прод
+тянул их (`build:` → `image:` через override `deploy/docker-compose.registry.yml`). От этого
+**отказались**: сборка Docker-образов в CI требовала DinD/buildx/docker.io-auth на раннере и
+нестабильно работала. Деплой теперь — **сборкой из исходников на сервере** (§9.1). Registry,
+override-файл и переменная `VERSION` в `.env` для этого не нужны.
 
 ### 9.3. Переход на новую мажорную версию
 
@@ -634,98 +578,80 @@ docker compose \
 4. Перекатить сервисы (§9.1).
 5. Проверить `/health` всех трёх сервисов и вход в UI.
 
-### 9.4. Откуда GoReleaser берёт версию (тег → ldflags)
+### 9.4. Откуда берётся версия (git → ldflags)
 
-Релизные образы получают версию **автоматически** из имени git-тега — GoReleaser
-подставляет её в `build.Version`/`build.Commit`/`build.BuildDate` через `ldflags`
-(см. [.goreleaser.yaml](../.goreleaser.yaml),
-`-X nexus/internal/platform/build.Version={{ .Version }}`). **Ручной правки файлов для
-релиза по тегу не требуется.** `cmd/{web,receiver,sender}/versioninfo.json` содержат
-только fallback-маркер `0.0.0-dev` для сборок совсем без git и вручную не бампятся;
-`web-ui/package.json` к `/api/version` отношения не имеет. `VERSION` в `.env` — селектор
-тега образа в registry-override (§9.2), не версия приложения (её несёт сам образ из git).
+Версия вшивается в бинарь **на сборке** из `git describe --tags --always --dirty` — в Docker
+внутри builder-стейджа (`deploy/docker/*.Dockerfile`, нужен `.git` в контексте), локально
+через блок `version` в Makefile. `git describe` срезает ведущий `v` (тег `v1.0.0` → версия
+`1.0.0`). Поэтому для корректной версии на проде нужен **checkout тега с `.git`** перед
+`docker compose up -d --build`. `cmd/{web,receiver,sender}/versioninfo.json` содержат только
+fallback-маркер `0.0.0-dev` (сборка совсем без git) и вручную не бампятся; `web-ui/package.json`
+к `/api/version` отношения не имеет.
 
-### 9.5. Выпуск новой версии (тег → registry → прод)
+### 9.5. Выпуск новой версии (тег → сборка на сервере)
 
-**Коротко — три шага.** Версия = git-тег: на рабочей машине слить релизный код в `master`
-и повесить тег `vX.Y.Z`, на сервере — подтянуть образы этого тега. Версию в файлах/`.env`
-как «версию приложения» поднимать НЕ нужно — её несёт сам образ из тега (§9.0/§9.4).
+**Коротко — три шага.** Версия = git-тег; деплой = пересборка на сервере из этого тега
+(образы в CI/registry не собираются, §9.2).
 
 ```bash
 # 1. Рабочая машина: слить релизный код dev → master и поставить тег.
 git switch master
-git merge --no-ff dev                       # влить выпускаемый код в master
+git merge --no-ff dev
 git push origin master
 git tag -a v1.0.0 -m "Release 1.0.0"        # тег на коммите master
-git push origin v1.0.0
-#    → CI job `release` (триггер ^v[0-9]) соберёт через GoReleaser и запушит
-#      {receiver,sender,web}:1.0.0 (+ :latest) в Container Registry.
+git push origin v1.0.0                      # CI прогонит test/lint/build (валидация)
 
-# 2. Прод-сервер: указать тег и подтянуть образы.
-#    в .env:  VERSION=1.0.0   (это селектор тега образа, §9.2)
-#    override deploy/docker-compose.registry.yml уже создан один раз (§9.2)
-docker compose -f docker-compose.yml -f deploy/docker-compose.registry.yml pull  web receiver sender
-docker compose -f docker-compose.yml -f deploy/docker-compose.registry.yml up -d web receiver sender
+# 2. Прод-сервер: подтянуть тег и пересобрать (версия вшьётся из git).
+cd nexus
+git fetch --tags
+git checkout v1.0.0                         # checkout С .git — нужен для git describe
+docker compose up -d --build web receiver sender         # Вариант C (корневой compose)
+#   A: docker compose -f deploy/docker-compose.yml up -d --build web receiver sender
+#   B: docker compose -f deploy/docker-compose.app.yml up -d --build
 
-# 3. Проверка: приложение само сообщает версию из тега.
+# 3. Проверка.
 curl -s http://<host>:8000/api/version       # → {"version":"1.0.0"}
 ```
 
-> `VERSION` в `.env` на сервере выбирает, **какой тег образа** запустить, а не задаёт версию
-> приложения — её бинарь несёт в себе из git (вшита на сборке в CI). Смена версии на проде =
-> поднять `VERSION`, повторить `pull` + `up -d`. Откат — вернуть прежний `VERSION` (§10.1).
+> Тег `v*` запускает в CI обычные test/lint/build (валидация кода), но **не** собирает
+> образы — их собирает сам сервер при `--build`. Откат — `git checkout` прежнего тега +
+> `up -d --build` (§10.1).
 
-Ниже — полный чек-лист этого же цикла с предусловиями (пример — версия `1.0.0`,
-Вариант C, внешний ClickHouse).
+Полный чек-лист (пример — `1.0.0`, Вариант C, внешний ClickHouse):
 
-**A. Подготовка релиза (рабочая машина / репозиторий):**
+**A. Подготовка релиза (рабочая машина):**
 
-- [ ] Выпускаемый код проходит CI на `dev` (`make test`, `golangci-lint run`,
-      `cd web-ui && npm run lint && npm run build`).
-- [ ] Встроенный SPA пересобран и закоммичен (`make build-ui` → `internal/web/static/`), если
-      менялся `web-ui/` — иначе фронт не доедет до прода.
+- [ ] Код проходит CI на `dev` (`make test`, `golangci-lint run`, `cd web-ui && npm run lint && npm run build`).
+- [ ] Встроенный SPA пересобран и закоммичен (`make build-ui` → `internal/web/static/`), если менялся `web-ui/`.
 - [ ] Обновлён [CHANGELOG.md](./CHANGELOG.md) (фичи/фиксы/breaking-changes, список миграций).
-- [ ] Релизный код слит в `master`:
-      `git switch master && git merge --no-ff dev && git push origin master`.
-- [ ] Версию вручную нигде поднимать НЕ нужно — её несёт git-тег через ldflags (§9.0/§9.4).
+- [ ] Код слит в `master`: `git switch master && git merge --no-ff dev && git push origin master`.
+- [ ] Поставлен и запушен тег `vX.Y.Z`: `git tag -a v1.0.0 -m "Release 1.0.0" && git push origin v1.0.0`.
+      Версию в файлах поднимать НЕ нужно — её даёт git-тег при сборке (§9.0/§9.4).
 
-**B. Выпуск артефактов (git → CI):**
+**B. Подготовка прод-сервера (один раз):**
 
-- [ ] В GitLab → Settings → CI/CD → Variables задана переменная `GITLAB_TOKEN`
-      (scope `api` + `write_repository`) — без неё job `release` не создаст release.
-- [ ] На коммите `master` создан и запушен тег:
-      `git tag -a v1.0.0 -m "Release 1.0.0" && git push origin v1.0.0` (имя — строго `vX.Y.Z`,
-      триггер CI `^v[0-9]`; GoReleaser сам срежет `v` → версия `1.0.0`).
-- [ ] Job `release` ([.gitlab-ci.yml](../.gitlab-ci.yml), триггер `^v[0-9]`) завершился зелёным.
-- [ ] В Container Registry проекта появились образы
-      `{receiver,sender,web}:1.0.0` (+ `:latest`).
-
-**C. Подготовка прод-сервера (один раз):**
-
-- [ ] Есть override `deploy/docker-compose.registry.yml` (`build:` → `image:`, см. §9.2).
-- [ ] В `.env` заданы: `REGISTRY_BASE`, `VERSION=1.0.0`, реальные `CH_HOST/CH_PORT/CH_USER/CH_PASSWORD`
-      внешнего ClickHouse и **обязательный** `ENCRYPTION_KEY` (32 байта base64, §2).
-- [ ] Single-broker Kafka? Заданы `KAFKA_TOPIC_REPLICATION_FACTOR=1` и
-      `KAFKA_TOPIC_MIN_INSYNC_REPLICAS=1` (§2).
+- [ ] Репозиторий склонирован **с `.git`** (нужен для `git describe` при сборке образов).
+- [ ] В `.env` заданы реальные `CH_HOST/CH_PORT/CH_USER/CH_PASSWORD` внешнего ClickHouse и
+      **обязательный** `ENCRYPTION_KEY` (32 байта base64, §2). `VERSION` не нужен (registry-путь убран).
+- [ ] Single-broker Kafka? Заданы `KAFKA_TOPIC_REPLICATION_FACTOR=1` и `KAFKA_TOPIC_MIN_INSYNC_REPLICAS=1` (§2).
 - [ ] Используете дашборды панели / Telegram-алерты? Задан `PROMETHEUS_URL` (§21/§22).
 - [ ] У CH-пользователя есть право создавать БД/таблицы (`nexus_<slug>`, §5.3).
-- [ ] Выполнен `docker login` в registry (токен со scope `read_registry`).
 
-**D. Раскатка:**
+**C. Раскатка:**
 
 - [ ] **Перед обновлением с новыми миграциями** снят дамп PostgreSQL (`pg_dump`, §12) — страховка отката.
-- [ ] `docker compose -f docker-compose.yml -f deploy/docker-compose.registry.yml pull web receiver sender`
-- [ ] `docker compose -f docker-compose.yml -f deploy/docker-compose.registry.yml up -d web receiver sender`
+- [ ] `git fetch --tags && git checkout v1.0.0`.
+- [ ] `docker compose up -d --build web receiver sender` (Вариант C; для A/B — со своим `-f`).
 - [ ] Миграции применились на старте `web`/`receiver` (в логах нет ошибок миграций, §8).
 
-**E. Проверка:**
+**D. Проверка:**
 
 - [ ] `/health` всех трёх сервисов отвечает: `:8000` (web), `:8080` (receiver), `:9093` (sender).
 - [ ] `GET /api/version` возвращает `1.0.0`; в футере SPA та же версия.
 - [ ] Вход в UI под `admin` работает; ключевые сценарии (создание узла, sync/async-запрос,
       просмотр логов) проходят — при сомнениях сверьтесь с [docs/STAND_TESTING.md](./docs/STAND_TESTING.md).
 
-> **Откат:** вернуть прежний `VERSION` в `.env` → `pull` + `up -d` (§10.1). Схему БД
+> **Откат:** `git checkout` прежнего тега → `docker compose up -d --build` (§10.1). Схему БД
 > откатывать только при несовместимости и только с дампом (§10.2).
 
 ---
@@ -737,12 +663,9 @@ curl -s http://<host>:8000/api/version       # → {"version":"1.0.0"}
 ### 10.1. Откат кода (быстрый, безопасный)
 
 ```bash
-# из исходников:
+git fetch --tags
 git checkout <предыдущий-тег>
-docker compose -f deploy/docker-compose.yml up -d --build web receiver sender
-
-# из registry: верните прежний тег образа в override и
-docker compose pull && docker compose up -d web receiver sender
+docker compose up -d --build web receiver sender    # Вариант C; для A/B — со своим -f
 ```
 
 Если новая версия **не добавляла миграций**, этого достаточно — схема совместима.
