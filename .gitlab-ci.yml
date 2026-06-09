@@ -907,10 +907,10 @@ renovate:
 # .goreleaser.yaml); GoReleaser автодетектит платформу по наличию GITLAB_TOKEN.
 #
 # Требования к runner:
-#   - доступ к Docker daemon (через docker:dind service или docker.sock).
-#     По умолчанию настроен DinD; если runner — shell-executor с локальным
-#     docker, services-блок можно удалить.
-#   - привилегии на DinD (privileged: true в config.toml runner'а).
+#   - доступ к Docker daemon через смонтированный docker.sock (runner
+#     srv-d-android-l монтирует его в job). DinD-сервис НЕ используем — он
+#     конфликтовал за /var/run/docker.sock ("device or resource busy").
+#   - привилегии для buildx/binfmt (privileged: true в config.toml runner'а).
 #
 # Required CI/CD Variables (Settings → CI/CD → Variables):
 #   - GITLAB_TOKEN — Project Access Token со scope `api` + `write_repository`;
@@ -919,16 +919,15 @@ renovate:
 release:
   stage: release
   image:
-    name: goreleaser/goreleaser:v2
+    # goreleaser/goreleaser:v2 НЕ существует на Docker Hub (manifest unknown) —
+    # из-за этого падал первый релиз. :latest = актуальный GoReleaser v2.x.
+    name: goreleaser/goreleaser:latest
     pull_policy: [always, if-not-present]
-  services:
-    - name: docker:24-dind
-      alias: docker
-      pull_policy: [always, if-not-present]
+  # DinD НЕ используем: раннер монтирует docker.sock в job, и сервис
+  # docker:24-dind конфликтовал за /var/run/docker.sock ("device or resource
+  # busy"). docker CLI ходит в смонтированный сокет напрямую (DOCKER_HOST по
+  # умолчанию unix:///var/run/docker.sock).
   variables:
-    DOCKER_HOST: "tcp://docker:2375"
-    DOCKER_TLS_CERTDIR: ""
-    DOCKER_DRIVER: overlay2
     # См. шапку .goreleaser.yaml — это env-контракт для GoReleaser.
     DOCKER_REGISTRY_BASE: $CI_REGISTRY_IMAGE
     COMPARE_URL_BASE: "$CI_PROJECT_URL/-/compare"
@@ -941,7 +940,7 @@ release:
   timeout: 60 minutes
   before_script:
     - 'echo "===== release tag = $CI_COMMIT_TAG ====="'
-    - apk add --no-cache git
+    # git уже есть в образе goreleaser:latest (Alpine, git 2.52+) — apk не нужен.
     # Multi-arch buildx (для linux/amd64 + linux/arm64). QEMU включается через
     # tonistiigi/binfmt — нужно privileged runner.
     - 'echo "===== installing QEMU binfmt + buildx ====="'
