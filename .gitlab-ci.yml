@@ -922,6 +922,10 @@ release:
     # goreleaser/goreleaser:v2 НЕ существует на Docker Hub (manifest unknown) —
     # из-за этого падал первый релиз. :latest = актуальный GoReleaser v2.x.
     name: goreleaser/goreleaser:latest
+    # ENTRYPOINT образа = goreleaser, поэтому GitLab иначе вызывает
+    # `goreleaser -c <script>` и падает ("unknown shorthand flag: 'c'").
+    # Сбрасываем entrypoint, чтобы job исполнял команды через sh.
+    entrypoint: [""]
     pull_policy: [always, if-not-present]
   # DinD НЕ используем: раннер монтирует docker.sock в job, и сервис
   # docker:24-dind конфликтовал за /var/run/docker.sock ("device or resource
