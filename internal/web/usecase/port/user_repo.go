@@ -9,9 +9,10 @@ import (
 
 // ListUsersFilter — фильтры списка пользователей.
 //
-// TeamID — multi-tenancy v2 scope (Phase 11.A): список ограничивается
-// участниками команды через user_teams. Пустая строка = без фильтра по
-// команде (CLI/legacy); UserUsecase подставляет defaultTeamID.
+// TeamID — опциональный фильтр по команде (multi-tenancy v2): непустое
+// значение ограничивает список участниками команды через JOIN user_teams
+// (см. UserRepoPg.List). Пустая строка = глобальный список всех пользователей
+// (дефолт для /api/users, §18; раньше Phase 11.A скоупила по команде).
 type ListUsersFilter struct {
 	TeamID string
 	Search string

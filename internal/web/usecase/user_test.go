@@ -45,6 +45,22 @@ func TestUserUC_List_Delegates(t *testing.T) {
 	assert.Len(t, list, 2)
 }
 
+// TestUserUC_List_Global_NoTeamScope: List НЕ навязывает team-scope — пустой
+// фильтр уходит в repo как есть (TeamID==""), значит список глобальный (§18).
+// Раньше (Phase 11.A) usecase подставлял defaultTeamID, из-за чего в одной
+// команде не было видно пользователей другой.
+func TestUserUC_List_Global_NoTeamScope(t *testing.T) {
+	t.Parallel()
+	users := newAuthUserRepo()
+	users.put(&domain.User{ID: "u1"})
+	uc, _ := newUserUC(users, newMemSessionRepo()) // defaultTeamID непустой
+
+	_, err := uc.List(context.Background(), port.ListUsersFilter{})
+	require.NoError(t, err)
+	assert.Empty(t, users.lastListFilter.TeamID,
+		"List не должен подставлять team-scope — список глобальный (§18)")
+}
+
 func TestUserUC_Create_InvalidRole(t *testing.T) {
 	t.Parallel()
 	uc, _ := newUserUC(newAuthUserRepo(), newMemSessionRepo())

@@ -33,6 +33,7 @@ type authUserRepo struct {
 	updateCalls     int
 	createCalls     int
 	deleteCalls     int
+	lastListFilter  port.ListUsersFilter
 }
 
 type updatePassCall struct {
@@ -80,9 +81,10 @@ func (r *authUserRepo) GetByLogin(_ context.Context, login string) (*domain.User
 	return nil, domain.ErrUserNotFound
 }
 
-func (r *authUserRepo) List(_ context.Context, _ port.ListUsersFilter) ([]*domain.User, error) {
+func (r *authUserRepo) List(_ context.Context, f port.ListUsersFilter) ([]*domain.User, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.lastListFilter = f
 	out := make([]*domain.User, 0, len(r.byID))
 	for _, u := range r.byID {
 		out = append(out, u)

@@ -80,8 +80,11 @@ func toUserResp(u *domain.User) userResponse {
 // @Security CookieAuth
 // @Router   /api/users [get]
 func (h *UserHandler) List(c *gin.Context) {
+	// §18: список пользователей — глобальный (admin-only), без team-scope.
+	// Пользователь — глобальная сущность; членство в командах — отдельная ось
+	// (управляется в Teams → Members). Раньше скоупился по currentTeamID(c)
+	// (Phase 11.A) — из-за чего в одной команде не было видно юзеров другой.
 	users, err := h.uc.List(c.Request.Context(), port.ListUsersFilter{
-		TeamID: currentTeamID(c),
 		Search: c.Query("search"),
 	})
 	if err != nil {
