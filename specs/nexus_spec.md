@@ -1703,6 +1703,8 @@ s.logger.ErrorWithOp("kafka publish failed", err, "sender.publishAsync",
 
 **Теги для транзакций:** `service` (`receiver` / `sender` / `web`), `node` (имя узла), `root_method` (`request` / `requestAsync`), `release` (версия из `BuildConfig`).
 
+**Инфра-эндпоинты не трассируются.** Запросы к `/metrics` (скрейп Prometheus каждые ~15с × 3 сервиса), `/health` и `/ready` (docker-healthcheck) **не** оборачиваются в Sentry-транзакцию — иначе Sentry заваливается бесполезными транзакциями скрейпов. Пропуск зашит в Sentry `GinMiddleware` (`skipSentry`) и зеркалит такой же пропуск в Prometheus-`metrics.GinMiddleware`. Паники на этих путях всё равно ловит recovery-middleware.
+
 ### 14.4 Настройки Sentry в Web UI (Settings → Sentry)
 
 Раздел `Sentry` в боковой навигации настроек (см. §7.7) позволяет менять параметры отправки ошибок и performance-трассировок без рестарта сервиса:

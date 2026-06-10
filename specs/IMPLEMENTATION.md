@@ -219,7 +219,7 @@
 | `github.com/vsilchenkov/logging` через DI | ✅ | [platform/logging/logging.go](../internal/platform/logging/logging.go) — алиас `Logger`, `Init`, `NewNoop` для тестов |
 | `ErrorWithOp` с `op` для группировки | ✅ | используется во всех handlers/usecase |
 | Sentry с `BeforeSend`/`BeforeBreadcrumb` для маскирования | ✅ | [platform/sentry/sentry.go](../internal/platform/sentry/sentry.go) |
-| **Sentry tracing-middleware для Gin (§14.3)** | ✅ Phase 5 | [platform/sentry/middleware.go](../internal/platform/sentry/middleware.go) — span'ы с тегами service/node/root_method/**request_id** (§30) |
+| **Sentry tracing-middleware для Gin (§14.3)** | ✅ Phase 5 | [platform/sentry/middleware.go](../internal/platform/sentry/middleware.go) — span'ы с тегами service/node/root_method/**request_id** (§30). **Инфра-пути (`/metrics`, `/health`, `/ready`, `""`) пропускаются** (`skipSentry`) — иначе скрейпы Prometheus/healthcheck заваливают Sentry транзакциями; зеркалит пропуск в `metrics.GinMiddleware`. Тесты `TestSkipSentry`, `TestGinMiddleware_SkipsInfraPaths` |
 | Обработка паник + `request_id` + версия в UI | ✅ §30 | логгер v1.7.9 (`WithContext`); см. карту §30 ниже и решение §4.27 |
 | `app_settings` PostgreSQL singleton + Web UI Sentry | ✅ Phase 6.3 | overlay поверх env, hot-reload Sentry/ClickHouse через Redis pub/sub, test connection (см. §8 строки 125-128) |
 
