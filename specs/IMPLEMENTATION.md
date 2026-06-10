@@ -1487,6 +1487,14 @@ make proto                                     # перегенерация send
       трафик, а переход был TOCTOU-гонкой. Если результат пробного не записан
       (крэш процесса) — ключ самоочищается TTL 10 мин. Тесты:
       `TestCircuitBreaker_HalfOpen_SingleProbe`, `_ProbeFailureReopens`.
+    - **Shutdown-гигиена фоновых горутин** (Phase AUD.3): все фоновые горутины
+      App-уровня (reload-subscriber, housekeeping, kafka-lag reporter,
+      notification scheduler) запускаются через `safego.Go` (возвращает
+      done-канал) и ожидаются в `Stop()` через `safego.Await` с таймаутом 10s —
+      **до** закрытия pg/redis/CH-соединений. Иначе callbacks reload'а могли
+      бежать параллельно с закрытием пулов. goleak (`TestMain` +
+      `goleak.VerifyTestMain`) включён в пакетах `chlog`, `sender/usecase`,
+      `web/usecase`, `receiver/usecase` — регрессия утечки валит весь пакет.
     - **nodecache write-back** ([nodecache/reader.go](../internal/receiver/adapter/out/nodecache/reader.go)):
       горутина write-back обёрнута в `safego.Recover` и дедуплицируется по ключу
       (`inflight sync.Map`) — медленный Redis больше не порождает тысячи горутин

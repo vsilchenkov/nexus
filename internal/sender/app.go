@@ -61,6 +61,13 @@ type App struct {
 	producer     *kafkapf.Producer
 	consumer     *kafkaadapter.ConsumerGroup
 	otelShutdown otelpf.ShutdownFunc
+
+	// done-каналы фоновых горутин — Stop дожидается их завершения
+	// (Phase AUD.3): housekeeping/lag-reporter/reload-callbacks не должны
+	// бежать параллельно с закрытием CH/Kafka/Redis-соединений.
+	housekeepingDone <-chan struct{}
+	kafkaLagDone     <-chan struct{}
+	reloadDone       <-chan struct{}
 }
 
 func New(
@@ -113,14 +120,15 @@ func (a *App) Start(ctx context.Context) error {
 
 	// CH partition-drop housekeeping (§4.3 ТЗ): фоновый цикл раз в сутки.
 	hk := usecase.NewCHHousekeeping(a.chMgr, nodeReader, a.logger)
-	go func() {
-		defer safego.Recover(a.logger, "sender.chHousekeeping")
+	a.housekeepingDone = safego.Go(a.logger, "sender.chHousekeeping", func() {
 		hk.Run(ctx)
-	}()
+	})
 
 	// Kafka lag reporter (§6 ТЗ): раз в 15 секунд снимаем Stats() со всех
 	// инстансов consumer-группы и пушим в Prometheus.
-	go a.reportKafkaLag(ctx)
+	a.kafkaLagDone = safego.Go(a.logger, "sender.reportKafkaLag", func() {
+		a.reportKafkaLag(ctx)
+	})
 
 	// Hot-reload Sentry и ClickHouse (§14.5 / §8.4 ТЗ, Phase 6.3.2 + 6.3.2.5).
 	// Подписчик слушает Redis pub/sub и применяет изменения, опубликованные Web
@@ -133,10 +141,9 @@ func (a *App) Start(ctx context.Context) error {
 		reloadSub.Register(reloader.SectionClickHouse,
 			bootstrap.ClickHouseReloader(a.pg, a.cfg, a.chMgr,
 				[]bootstrap.WriterReloader{a.chWriter}, a.logger))
-		go func() {
-			defer safego.Recover(a.logger, "sender.reloadSubscriber")
+		a.reloadDone = safego.Go(a.logger, "sender.reloadSubscriber", func() {
 			reloadSub.Run(ctx)
-		}()
+		})
 	}
 
 	errCh := make(chan error, 2)
@@ -227,7 +234,6 @@ func (a *App) startAdminHTTP() error {
 // Опрашивает все consumer-инстансы группы и публикует Lag в Prometheus.
 // Интервал 15 секунд — компромисс между актуальностью и нагрузкой.
 func (a *App) reportKafkaLag(ctx context.Context) {
-	defer safego.Recover(a.logger, "sender.reportKafkaLag")
 	t := time.NewTicker(15 * time.Second)
 	defer t.Stop()
 	group := a.consumer.Group()
@@ -273,6 +279,14 @@ func (a *App) Stop(ctx context.Context) error {
 			a.grpcSrv.Stop()
 		}
 	}
+
+	// Фоновые горутины должны завершиться до закрытия CH/Kafka-ресурсов:
+	// runner уже отменил их ctx, здесь только дожидаемся выхода.
+	awaitCtx, awaitCancel := context.WithTimeout(ctx, 10*time.Second)
+	safego.Await(awaitCtx, a.housekeepingDone, a.logger, "sender.chHousekeeping")
+	safego.Await(awaitCtx, a.kafkaLagDone, a.logger, "sender.reportKafkaLag")
+	safego.Await(awaitCtx, a.reloadDone, a.logger, "sender.reloadSubscriber")
+	awaitCancel()
 
 	if a.chWriter != nil {
 		flushCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
