@@ -176,6 +176,11 @@ ClickHouse-батчинга, cookie-флаги) живут в `config/config.exa
   просто не загрузятся (graceful fallback на системные).
 - `session_cookie_samesite: none` без `session_cookie_secure: true` теперь даёт warning
   при старте — такая комбинация отбрасывается браузерами.
+- **Доверенные прокси (Phase AUD.5)**: `receiver.trusted_proxies` и `web.trusted_proxies` —
+  CIDR/IP, чьим заголовкам `X-Forwarded-For` сервис верит при определении IP клиента
+  (аудит, логи ClickHouse). Дефолт — loopback + приватные сети (RFC1918/ULA), что покрывает
+  docker-compose. Если перед Nexus стоит внешний reverse-proxy с публичным адресом —
+  перечислите его адрес явно, иначе IP клиента в логах будет адресом прокси.
 
 ---
 

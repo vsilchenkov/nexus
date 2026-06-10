@@ -81,6 +81,10 @@ func (r *Reader) Get(ctx context.Context, teamSlug, path string) (*domain.Node, 
 	return n, nil
 }
 
+// Креды в Redis-кеше шифруются тем же AES-256-GCM, что и в PostgreSQL
+// (Phase AUD.5): до этого расшифрованный Node маршалился в Redis целиком,
+// и plaintext-креды узлов лежали в кеше открытыми. domain.Node за пределами
+// adapter'а по-прежнему всегда содержит plaintext (carved-in правило).
 func (r *Reader) getFromRedis(ctx context.Context, teamSlug, path string) (*domain.Node, error) {
 	data, err := r.redis.Get(ctx, nodeKey(teamSlug, path)).Bytes()
 	if err != nil {
@@ -93,17 +97,33 @@ func (r *Reader) getFromRedis(ctx context.Context, teamSlug, path string) (*doma
 	if err := json.Unmarshal(data, &n); err != nil {
 		return nil, fmt.Errorf("unmarshal node: %w", err)
 	}
+	// Записи старого формата (plaintext-креды) не пройдут Decrypt — это
+	// трактуется как cache-miss с перечитыванием из PG (TTL короткий).
+	if n.AuthCredentials, err = r.cipher.Decrypt(n.AuthCredentials); err != nil {
+		return nil, fmt.Errorf("decrypt cached auth: %w", err)
+	}
+	if n.IncomingAuthCredentials, err = r.cipher.Decrypt(n.IncomingAuthCredentials); err != nil {
+		return nil, fmt.Errorf("decrypt cached incoming: %w", err)
+	}
 	return &n, nil
 }
 
 func (r *Reader) setToRedis(ctx context.Context, teamSlug string, n *domain.Node) {
 	ctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer cancel()
-	data, err := json.Marshal(n)
+	cp := *n
+	var err error
+	if cp.AuthCredentials, err = r.cipher.Encrypt(cp.AuthCredentials); err != nil {
+		return
+	}
+	if cp.IncomingAuthCredentials, err = r.cipher.Encrypt(cp.IncomingAuthCredentials); err != nil {
+		return
+	}
+	data, err := json.Marshal(&cp)
 	if err != nil {
 		return
 	}
-	_ = r.redis.Set(ctx, nodeKey(teamSlug, n.Path), data, r.ttl).Err()
+	_ = r.redis.Set(ctx, nodeKey(teamSlug, cp.Path), data, r.ttl).Err()
 }
 
 // pgSelectNodeByTeamSlugAndPath — резолв через JOIN с teams. Phase 10.1

@@ -1,5 +1,16 @@
 package config
 
+// defaultTrustedProxies — дефолтный список сетей, чьи X-Forwarded-For
+// принимаются на веру (Phase AUD.5): loopback + приватные диапазоны
+// (RFC1918 / IPv6 ULA). Покрывает docker-compose (Web-proxy → Receiver),
+// но отсекает подделку IP внешними клиентами из интернета.
+func defaultTrustedProxies() []string {
+	return []string{
+		"127.0.0.0/8", "::1/128",
+		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7",
+	}
+}
+
 // applyDefaults заполняет нулевые значения дефолтами из §8.3 ТЗ.
 // Применяется после yaml.Unmarshal — пустые поля в YAML получают эти значения.
 func applyDefaults(c *Config) {
@@ -189,6 +200,12 @@ func applyDefaults(c *Config) {
 	}
 	if c.Web.LoginRateLimitPerMin == 0 {
 		c.Web.LoginRateLimitPerMin = 10 // Phase AUD.4: анти-брутфорс /api/auth/login
+	}
+	if len(c.Receiver.TrustedProxies) == 0 {
+		c.Receiver.TrustedProxies = defaultTrustedProxies()
+	}
+	if len(c.Web.TrustedProxies) == 0 {
+		c.Web.TrustedProxies = defaultTrustedProxies()
 	}
 	if c.Web.ReceiverURL == "" {
 		c.Web.ReceiverURL = "http://receiver:8080"

@@ -93,6 +93,11 @@ func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, ch chdrive
 func (a *App) Start(ctx context.Context) error {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
+	// Phase AUD.5: X-Forwarded-For доверяем только перечисленным прокси
+	// (дефолт — loopback + приватные сети), иначе клиент подделывает IP в аудите.
+	if err := r.SetTrustedProxies(a.cfg.Web.TrustedProxies); err != nil {
+		return fmt.Errorf("web trusted_proxies: %w", err)
+	}
 	r.Use(
 		requestid.GinMiddleware(),
 		otelpf.GinMiddleware("web"),

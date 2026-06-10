@@ -84,8 +84,13 @@ func TestSessionRepo_E2E(t *testing.T) {
 	require.Equal(t, "user-1", got.UserID)
 	require.Equal(t, domain.UserRoleAdmin, got.Role)
 
-	// Touch продлевает TTL.
-	require.NoError(t, repo.Touch(ctx, "tok-1", 2*time.Hour))
+	// Touch продлевает TTL и пересохраняет сессию (включая LastSeenAt,
+	// Phase AUD.5 — раньше делал только EXPIRE).
+	got.LastSeenAt = now.Add(30 * time.Minute)
+	require.NoError(t, repo.Touch(ctx, got, 2*time.Hour))
+	touched, err := repo.Get(ctx, "tok-1")
+	require.NoError(t, err)
+	require.WithinDuration(t, now.Add(30*time.Minute), touched.LastSeenAt, time.Second)
 
 	// Вторая сессия того же пользователя — DeleteByUser должен снести обе.
 	s2 := &domain.Session{

@@ -53,8 +53,17 @@ func (r *SessionRepoRedis) Get(ctx context.Context, token string) (*domain.Sessi
 	return &s, nil
 }
 
-func (r *SessionRepoRedis) Touch(ctx context.Context, token string, ttl time.Duration) error {
-	return r.client.Expire(ctx, sessionKey(token), ttl).Err()
+// Touch пересохраняет сессию с новым TTL (один SET — дешевле, чем
+// GET+EXPIRE; LastSeenAt уже обновлён вызывающим, Phase AUD.5).
+func (r *SessionRepoRedis) Touch(ctx context.Context, s *domain.Session, ttl time.Duration) error {
+	data, err := json.Marshal(s)
+	if err != nil {
+		return fmt.Errorf("marshal session: %w", err)
+	}
+	if err := r.client.Set(ctx, sessionKey(s.Token), data, ttl).Err(); err != nil {
+		return fmt.Errorf("touch session: %w", err)
+	}
+	return nil
 }
 
 func (r *SessionRepoRedis) Delete(ctx context.Context, token string) error {

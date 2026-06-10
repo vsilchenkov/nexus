@@ -200,10 +200,13 @@ func (r *memSessionRepo) Get(_ context.Context, token string) (*domain.Session, 
 	}
 	return nil, domain.ErrSessionNotFound
 }
-func (r *memSessionRepo) Touch(_ context.Context, _ string, _ time.Duration) error {
+func (r *memSessionRepo) Touch(_ context.Context, s *domain.Session, _ time.Duration) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.touchCalls++
+	if s != nil {
+		r.byToken[s.Token] = s
+	}
 	return nil
 }
 func (r *memSessionRepo) Delete(_ context.Context, token string) error {

@@ -1511,6 +1511,19 @@ make proto                                     # перегенерация send
         Referrer-Policy. CSP пропускается для `/swagger/*` (inline-скрипт
         конфигурации Swagger UI);
       - warning при старте, если `session_cookie_samesite=none` без `secure`.
+    - **Phase AUD.5:**
+      - `trusted_proxies` (receiver/web) — `gin.SetTrustedProxies`: X-Forwarded-For
+        принимается только от перечисленных CIDR (дефолт loopback + приватные
+        сети, см. `defaultTrustedProxies` в [config/defaults.go](../internal/platform/config/defaults.go)) —
+        внешний клиент больше не подделывает IP в аудите/логах;
+      - `SessionRepo.Touch` принимает `*domain.Session` и пересохраняет её
+        целиком (один SET вместо EXPIRE) — `LastSeenAt` теперь реально
+        обновляется на каждый запрос (раньше замораживался на логине);
+      - креды узлов в Redis-кеше шифруются тем же AES-256-GCM
+        ([nodecache/reader.go](../internal/receiver/adapter/out/nodecache/reader.go)):
+        раньше расшифрованный Node маршалился в кеш целиком и plaintext-креды
+        лежали в Redis открытыми. Старые plaintext-записи кеша не проходят
+        Decrypt и трактуются как cache-miss (перечитываются из PG).
     - **nodecache write-back** ([nodecache/reader.go](../internal/receiver/adapter/out/nodecache/reader.go)):
       горутина write-back обёрнута в `safego.Recover` и дедуплицируется по ключу
       (`inflight sync.Map`) — медленный Redis больше не порождает тысячи горутин

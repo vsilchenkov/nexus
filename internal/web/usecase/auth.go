@@ -146,13 +146,15 @@ func (u *AuthUsecase) Logout(ctx context.Context, token string) error {
 	return u.sessions.Delete(ctx, token)
 }
 
-// Check валидирует session-token; продлевает TTL.
+// Check валидирует session-token; продлевает TTL и обновляет LastSeenAt
+// (Phase AUD.5 — иначе время последней активности замораживалось на логине).
 func (u *AuthUsecase) Check(ctx context.Context, token string) (*domain.Session, error) {
 	s, err := u.sessions.Get(ctx, token)
 	if err != nil {
 		return nil, err
 	}
-	_ = u.sessions.Touch(ctx, token, u.sessionTTL)
+	s.LastSeenAt = time.Now().UTC()
+	_ = u.sessions.Touch(ctx, s, u.sessionTTL)
 	return s, nil
 }
 

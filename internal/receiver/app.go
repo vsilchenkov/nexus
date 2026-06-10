@@ -125,6 +125,12 @@ func (a *App) Start(ctx context.Context) error {
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
+	// Phase AUD.5: X-Forwarded-For доверяем только перечисленным прокси
+	// (дефолт — loopback + приватные сети), иначе клиент подделывает IP
+	// в логах ClickHouse и аудите.
+	if err := r.SetTrustedProxies(a.cfg.Receiver.TrustedProxies); err != nil {
+		return fmt.Errorf("receiver trusted_proxies: %w", err)
+	}
 	r.Use(
 		requestid.GinMiddleware(),
 		otelpf.GinMiddleware("receiver"),
