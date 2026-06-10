@@ -193,6 +193,7 @@ web:
   nodes_hard_limit: 50000                       # Жёсткий лимит числа узлов (запрет создания сверх).
   api_token_rate_limit_per_min: 100             # Лимит запросов по API-токену в минуту.
   rmq_test_rate_limit_per_min: 10               # Лимит POST /api/nodes/test-rmq на пользователя в минуту (§27.8).
+  login_rate_limit_per_min: 10                  # Анти-брутфорс /api/auth/login: попыток/мин на IP и на login (Phase AUD.4). -1 = выключить.
   swagger_enabled: false                        # Отдавать ли Swagger UI Web'а (выключай в prod).
   receiver_url: http://receiver:8080            # Base URL Receiver: replay-запросы (§7.4.1) и проксирование идут через реальный pipeline.
   # §32.2: «свои» authority (host или host:port) для запрета self-referencing target_url узла.

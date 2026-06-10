@@ -354,6 +354,65 @@ func TestAuthUC_Login_HappyPath(t *testing.T) {
 	assert.Equal(t, "10.0.0.1", audit.entries[0].IPAddress)
 }
 
+// stubLoginLimiter — управляемый RateLimiter для тестов анти-брутфорса.
+type stubLoginLimiter struct {
+	denyKeys map[string]bool
+	err      error
+}
+
+func (s *stubLoginLimiter) Allow(_ context.Context, key string, _ int) (bool, error) {
+	if s.err != nil {
+		return true, s.err
+	}
+	return !s.denyKeys[key], nil
+}
+
+func TestAuthUC_Login_RateLimited(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		deny string
+	}{
+		{"лимит по IP", "login:ip:10.0.0.1"},
+		{"лимит по login (distributed brute-force)", "login:user:alice"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			users := newAuthUserRepo()
+			users.put(&domain.User{
+				ID: "u1", Login: "alice", Active: true,
+				PasswordHash: hash(t, "secret123"),
+			})
+			uc, audit := newAuthUC(users, newMemSessionRepo())
+			uc.WithLoginRateLimit(&stubLoginLimiter{denyKeys: map[string]bool{tt.deny: true}}, 10)
+
+			_, _, err := uc.Login(context.Background(), "alice", "secret123", "10.0.0.1")
+			require.ErrorIs(t, err, ErrLoginRateLimited)
+
+			require.NotEmpty(t, audit.entries)
+			last := audit.entries[len(audit.entries)-1]
+			assert.Equal(t, domain.ActionUserLoginFailed, last.Action)
+		})
+	}
+}
+
+func TestAuthUC_Login_RateLimiterError_FailOpen(t *testing.T) {
+	t.Parallel()
+	users := newAuthUserRepo()
+	users.put(&domain.User{
+		ID: "u1", Login: "alice", Active: true,
+		PasswordHash: hash(t, "secret123"),
+	})
+	uc, _ := newAuthUC(users, newMemSessionRepo())
+	uc.WithLoginRateLimit(&stubLoginLimiter{err: errors.New("redis down")}, 10)
+
+	// §9.4: сбой Redis не должен блокировать вход.
+	tok, _, err := uc.Login(context.Background(), "alice", "secret123", "10.0.0.1")
+	require.NoError(t, err)
+	assert.NotEmpty(t, tok)
+}
+
 func TestAuthUC_Login_GetError(t *testing.T) {
 	t.Parallel()
 	users := newAuthUserRepo()

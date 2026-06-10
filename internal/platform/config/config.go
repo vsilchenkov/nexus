@@ -244,7 +244,10 @@ type WebSection struct {
 	NodesHardLimit               int    `yaml:"nodes_hard_limit"`
 	APITokenRateLimitPerMin      int    `yaml:"api_token_rate_limit_per_min"`
 	RMQTestRateLimitPerMin       int    `yaml:"rmq_test_rate_limit_per_min"` // §27.8: лимит POST /api/nodes/test-rmq на пользователя
-	SwaggerEnabled               bool   `yaml:"swagger_enabled"`
+	// LoginRateLimitPerMin — анти-брутфорс /api/auth/login (Phase AUD.4):
+	// столько попыток в минуту на IP и отдельно на login. -1 = выключить.
+	LoginRateLimitPerMin int  `yaml:"login_rate_limit_per_min"`
+	SwaggerEnabled       bool `yaml:"swagger_enabled"`
 	// ReceiverURL — base URL Receiver Service (e.g. "http://receiver:8080").
 	// Используется для replay-запросов (§7.4.1): Web отправляет реплай через
 	// реальный pipeline Receiver, а не через bypass.

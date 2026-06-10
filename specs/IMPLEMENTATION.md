@@ -1495,6 +1495,22 @@ make proto                                     # перегенерация send
       бежать параллельно с закрытием пулов. goleak (`TestMain` +
       `goleak.VerifyTestMain`) включён в пакетах `chlog`, `sender/usecase`,
       `web/usecase`, `receiver/usecase` — регрессия утечки валит весь пакет.
+    - **Web security (Phase AUD.4):**
+      - анти-брутфорс `/api/auth/login` — `AuthUsecase.WithLoginRateLimit`
+        ([auth.go](../internal/web/usecase/auth.go)): две независимые квоты
+        (`login:ip:<ip>` и `login:user:<login>`) через общий Redis-лимитер,
+        конфиг `web.login_rate_limit_per_min` (дефолт 10, -1 = выключить),
+        429 + audit `user.login.failed{reason:rate_limited}`; fail-open при
+        сбое Redis (§9.4);
+      - CSRF Origin-check ([security_middleware.go](../internal/web/adapter/in/http/security_middleware.go))
+        на группе `/api/*`: мутации с чужим/`null` Origin → 403; Bearer-токены
+        и запросы без Origin (curl) пропускаются; reverse-proxy `/api/v1/*`
+        не затрагивается. Дополнение к SameSite-cookie, не замена;
+      - security-заголовки `SecurityHeaders()`: CSP (self + Google Fonts +
+        'unsafe-inline' для style), nosniff, X-Frame-Options DENY,
+        Referrer-Policy. CSP пропускается для `/swagger/*` (inline-скрипт
+        конфигурации Swagger UI);
+      - warning при старте, если `session_cookie_samesite=none` без `secure`.
     - **nodecache write-back** ([nodecache/reader.go](../internal/receiver/adapter/out/nodecache/reader.go)):
       горутина write-back обёрнута в `safego.Recover` и дедуплицируется по ключу
       (`inflight sync.Map`) — медленный Redis больше не порождает тысячи горутин

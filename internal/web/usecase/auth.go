@@ -17,6 +17,10 @@ import (
 
 const sessionTokenBytes = 32
 
+// ErrLoginRateLimited — превышен лимит попыток логина (анти-брутфорс,
+// Phase AUD.4). Handler отвечает 429.
+var ErrLoginRateLimited = errors.New("login rate limit exceeded")
+
 // AuthUsecase — login/logout/check; password operations; team-switcher.
 type AuthUsecase struct {
 	users      port.UserRepo
@@ -25,6 +29,11 @@ type AuthUsecase struct {
 	audit      *AuditUsecase
 	sessionTTL time.Duration
 	logger     logging.Logger
+
+	// Анти-брутфорс логина (Phase AUD.4): rl == nil или limit <= 0 —
+	// проверка выключена (unit-тесты, отсутствие Redis).
+	rl                 RateLimiter
+	loginRateLimitPMin int
 }
 
 func NewAuthUsecase(
@@ -45,9 +54,44 @@ func NewAuthUsecase(
 	}
 }
 
+// WithLoginRateLimit включает лимит попыток логина: limitPerMin попыток в
+// минуту на IP и столько же на конкретный login (две независимые квоты —
+// distributed-брутфорс одного аккаунта ловится по login-ключу, перебор
+// аккаунтов с одного адреса — по IP-ключу).
+func (u *AuthUsecase) WithLoginRateLimit(rl RateLimiter, limitPerMin int) *AuthUsecase {
+	u.rl = rl
+	u.loginRateLimitPMin = limitPerMin
+	return u
+}
+
+// checkLoginRateLimit — true, если попытку можно пропустить. Fail-open при
+// ошибке Redis (§9.4 ТЗ — лимиты при сбое Redis временно отключаются).
+func (u *AuthUsecase) checkLoginRateLimit(ctx context.Context, login, ip string) bool {
+	if u.rl == nil || u.loginRateLimitPMin <= 0 {
+		return true
+	}
+	for _, key := range []string{"login:ip:" + ip, "login:user:" + login} {
+		ok, err := u.rl.Allow(ctx, key, u.loginRateLimitPMin)
+		if err != nil {
+			u.logger.Warn("login rate limit check failed; allowing",
+				u.logger.Str("key", key), u.logger.Err(err))
+			continue
+		}
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // Login проверяет пару login/password и создаёт сессию.
 // Возвращает session-token (значение cookie) и пользователя.
 func (u *AuthUsecase) Login(ctx context.Context, login, password, ip string) (string, *domain.User, error) {
+	if !u.checkLoginRateLimit(ctx, login, ip) {
+		u.audit.Log(ctx, Actor{UserLogin: login, IPAddress: ip},
+			domain.ActionUserLoginFailed, "user", "", map[string]any{"reason": "rate_limited"})
+		return "", nil, ErrLoginRateLimited
+	}
 	user, err := u.users.GetByLogin(ctx, login)
 	if err != nil {
 		if errors.Is(err, domain.ErrUserNotFound) {

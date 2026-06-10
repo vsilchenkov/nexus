@@ -187,6 +187,9 @@ func applyDefaults(c *Config) {
 	if c.Web.RMQTestRateLimitPerMin == 0 {
 		c.Web.RMQTestRateLimitPerMin = 10 // §27.8: POST /api/nodes/test-rmq
 	}
+	if c.Web.LoginRateLimitPerMin == 0 {
+		c.Web.LoginRateLimitPerMin = 10 // Phase AUD.4: анти-брутфорс /api/auth/login
+	}
 	if c.Web.ReceiverURL == "" {
 		c.Web.ReceiverURL = "http://receiver:8080"
 	}

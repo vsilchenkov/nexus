@@ -100,7 +100,15 @@ func (a *App) Start(ctx context.Context) error {
 		recoverypf.GinMiddleware(a.logger),
 		metrics.GinMiddleware(a.metrics),
 		i18n.GinMiddleware(),
+		httpadapter.SecurityHeaders(), // Phase AUD.4: CSP/nosniff/frame-deny
 	)
+
+	// Phase AUD.4: cookie без Secure при SameSite=None бесполезна и опасна —
+	// браузеры такие куки отбрасывают, а CSRF-защита SameSite исчезает.
+	if strings.EqualFold(a.cfg.Web.SessionCookieSamesite, "none") && !a.cfg.Web.SessionCookieSecure {
+		a.logger.Warn("web.session_cookie_samesite=none без session_cookie_secure=true — " +
+			"куки будут отброшены браузером; включите secure или верните samesite=strict")
+	}
 
 	hc := healthcheck.New(
 		[]healthcheck.Checker{
@@ -237,6 +245,9 @@ func (a *App) Start(ctx context.Context) error {
 	dryRunHandler := httpadapter.NewDryRunHandler(dryRunUC, a.logger)
 
 	rl := ratelimit.New(a.redis)
+	// Анти-брутфорс /api/auth/login (Phase AUD.4): лимит попыток на IP и
+	// на login через общий Redis-лимитер; fail-open при сбое Redis (§9.4).
+	authUC.WithLoginRateLimit(rl, a.cfg.Web.LoginRateLimitPerMin)
 
 	// §27.8: проверка подключения к RabbitMQ (диагностический AMQP-handshake,
 	// rate-limit на пользователя через общий Redis-лимитер).
@@ -351,6 +362,7 @@ func (a *App) Start(ctx context.Context) error {
 		RequireAdmin:   httpadapter.RequireMinRole(domain.UserRoleAdmin),
 		RequireManager: httpadapter.RequireMinRole(domain.UserRoleManager),
 		KafkaRateLimit: httpadapter.KafkaRateLimitMiddleware(rl, a.cfg.Web.KafkaMonitorRateLimitPerMin),
+		CSRFCheck:      httpadapter.CSRFOriginCheck(a.logger),
 	}
 	httpadapter.RegisterAPI(r, httpadapter.Handlers{
 		Auth:          authHandler,

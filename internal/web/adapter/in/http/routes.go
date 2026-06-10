@@ -32,6 +32,7 @@ type Middlewares struct {
 	RequireAdmin   gin.HandlerFunc // роль admin
 	RequireManager gin.HandlerFunc // роль не ниже manager (manager+admin), §26
 	KafkaRateLimit gin.HandlerFunc // §9 spec: лимит /api/kafka/* на пользователя
+	CSRFCheck      gin.HandlerFunc // Phase AUD.4: Origin-check мутаций под session-cookie
 }
 
 // RegisterAPI вешает /api/* маршруты.
@@ -46,6 +47,12 @@ type Middlewares struct {
 // для каждого нужен соответствующий scope через RequireScope.
 func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 	api := r.Group("/api")
+	// CSRF Origin-check на весь /api/* (включая login): браузерная мутация
+	// с чужим Origin отклоняется до auth/handler'ов. Reverse-proxy /api/v1/*
+	// регистрируется отдельно (receiver_proxy) и не затрагивается.
+	if mw.CSRFCheck != nil {
+		api.Use(mw.CSRFCheck)
+	}
 	{
 		api.POST("/auth/login", h.Auth.Login)
 
