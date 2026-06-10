@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -19,6 +21,7 @@ import (
 	"nexus/internal/domain"
 	"nexus/internal/platform/crypto"
 	"nexus/internal/platform/logging"
+	"nexus/internal/platform/safego"
 	"nexus/internal/receiver/usecase/port"
 )
 
@@ -29,6 +32,11 @@ type Reader struct {
 	cipher *crypto.Cipher
 	ttl    time.Duration
 	logger logging.Logger
+
+	// inflight дедуплицирует фоновые write-back'и в Redis по ключу узла:
+	// при медленном Redis каждый cache-miss иначе порождал бы новую горутину
+	// (на 500ms таймаута) — при 500 rps это тысячи горутин.
+	inflight sync.Map
 }
 
 var _ port.NodeReader = (*Reader)(nil)
@@ -60,7 +68,16 @@ func (r *Reader) Get(ctx context.Context, teamSlug, path string) (*domain.Node, 
 		return nil, err
 	}
 	// Best-effort write-back: ошибка не блокирует обработку запроса.
-	go r.setToRedis(context.Background(), teamSlug, n)
+	// Дедуп по ключу: пока один write-back в полёте, повторные cache-miss'ы
+	// того же узла не плодят горутины (§30.2: recover обязателен).
+	key := nodeKey(teamSlug, path)
+	if _, busy := r.inflight.LoadOrStore(key, struct{}{}); !busy {
+		go func() {
+			defer r.inflight.Delete(key)
+			defer safego.Recover(r.logger, "nodecache.writeBack")
+			r.setToRedis(context.Background(), teamSlug, n)
+		}()
+	}
 	return n, nil
 }
 
@@ -170,10 +187,18 @@ func (r *Reader) getFromPg(ctx context.Context, teamSlug, path string) (*domain.
 }
 
 // isRedisUnavailable — все случаи, которые сводятся к «Redis сейчас лежит,
-// нужно идти в Postgres напрямую» (см. §9.4 ТЗ).
+// нужно идти в Postgres напрямую» (см. §9.4 ТЗ): сетевые ошибки, таймауты,
+// закрытый клиент. Остальное (например, битый JSON в кеше) — НЕ
+// «недоступность», такие ошибки логируются warn'ом в Get.
 func isRedisUnavailable(err error) bool {
-	// Простая проверка по тексту — pkg-уровневая sentinel у go-redis нет
-	// для disconnect/timeout. Phase 2: заменить на более точный детектор
-	// с метрикой nexus_redis_unavailable_total.
-	return err != nil
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, goredis.ErrClosed) ||
+		errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, context.Canceled) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr)
 }

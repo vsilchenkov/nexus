@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -92,6 +93,106 @@ func TestCircuitBreaker_HalfOpenAfterCooldown(t *testing.T) {
 	st, err := cb.State(ctx, key)
 	require.NoError(t, err)
 	assert.Equal(t, circuitbreaker.StateHalfOpen, st)
+}
+
+// TestCircuitBreaker_HalfOpen_SingleProbe — в half_open проходит ровно один
+// пробный запрос; конкурентные Allow после истечения cooldown не пролезают
+// «пробными» все разом (атомарность через Lua, Phase AUD.2).
+func TestCircuitBreaker_HalfOpen_SingleProbe(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short mode: skipping sleep-based cooldown test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	client, cleanup := startRedis(t, ctx)
+	defer cleanup()
+
+	cb := circuitbreaker.New(client, 2, 200*time.Millisecond)
+	key := "node-single-probe"
+
+	require.NoError(t, cb.RecordFailure(ctx, key))
+	require.NoError(t, cb.RecordFailure(ctx, key))
+	time.Sleep(300 * time.Millisecond) // cooldown истёк
+
+	// 20 конкурентных Allow: ровно один должен получить true.
+	const n = 20
+	results := make(chan bool, n)
+	var wg sync.WaitGroup
+	for range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ok, err := cb.Allow(ctx, key)
+			assert.NoError(t, err)
+			results <- ok
+		}()
+	}
+	wg.Wait()
+	close(results)
+
+	allowed := 0
+	for ok := range results {
+		if ok {
+			allowed++
+		}
+	}
+	assert.Equal(t, 1, allowed, "после cooldown проходит ровно один пробный запрос")
+
+	st, err := cb.State(ctx, key)
+	require.NoError(t, err)
+	assert.Equal(t, circuitbreaker.StateHalfOpen, st)
+
+	// Пока судьба пробного не решена — последующие Allow отбрасываются.
+	ok, err := cb.Allow(ctx, key)
+	require.NoError(t, err)
+	assert.False(t, ok, "half_open: до RecordSuccess/Failure новые запросы не проходят")
+
+	// Успех пробного → closed, трафик снова идёт.
+	require.NoError(t, cb.RecordSuccess(ctx, key))
+	ok, err = cb.Allow(ctx, key)
+	require.NoError(t, err)
+	assert.True(t, ok)
+}
+
+// TestCircuitBreaker_HalfOpen_ProbeFailureReopens — провал пробного запроса
+// возвращает breaker в open (и сбрасывает probe для следующего цикла).
+func TestCircuitBreaker_HalfOpen_ProbeFailureReopens(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short mode: skipping sleep-based cooldown test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	client, cleanup := startRedis(t, ctx)
+	defer cleanup()
+
+	cb := circuitbreaker.New(client, 2, 200*time.Millisecond)
+	key := "node-probe-fail"
+
+	require.NoError(t, cb.RecordFailure(ctx, key))
+	require.NoError(t, cb.RecordFailure(ctx, key))
+	time.Sleep(300 * time.Millisecond)
+
+	ok, err := cb.Allow(ctx, key)
+	require.NoError(t, err)
+	require.True(t, ok, "пробный должен пройти")
+
+	// Пробный провалился → снова open, cooldown заводится заново.
+	require.NoError(t, cb.RecordFailure(ctx, key))
+	st, err := cb.State(ctx, key)
+	require.NoError(t, err)
+	assert.Equal(t, circuitbreaker.StateOpen, st)
+
+	ok, err = cb.Allow(ctx, key)
+	require.NoError(t, err)
+	assert.False(t, ok, "свежий open → запросы отбрасываются до нового cooldown")
+
+	// Следующий цикл: cooldown истёк → снова ровно один пробный.
+	time.Sleep(300 * time.Millisecond)
+	ok, err = cb.Allow(ctx, key)
+	require.NoError(t, err)
+	assert.True(t, ok, "после повторного cooldown probe-счётчик должен быть сброшен")
 }
 
 // TestCircuitBreaker_RecordSuccessClosesBreaker — Success в любом состоянии

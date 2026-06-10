@@ -1480,6 +1480,19 @@ make proto                                     # перегенерация send
       не `time.Sleep`: иначе shutdown Sender'а висит до 30с на каждом paused-сообщении,
       а backlog из них полностью блокирует partition. Тест:
       `TestAsync_NodePaused_CtxCancelInterruptsWait`.
+    - **Circuit breaker — single-probe через Lua** ([circuitbreaker/redis.go](../internal/platform/circuitbreaker/redis.go)):
+      переход open→half_open и выдача пробного атомарны (`allowProbeScript`),
+      в half_open проходит ровно один запрос (HINCRBY probe == 1), остальные
+      отбрасываются до RecordSuccess/Failure. Раньше half_open пропускал ВЕСЬ
+      трафик, а переход был TOCTOU-гонкой. Если результат пробного не записан
+      (крэш процесса) — ключ самоочищается TTL 10 мин. Тесты:
+      `TestCircuitBreaker_HalfOpen_SingleProbe`, `_ProbeFailureReopens`.
+    - **nodecache write-back** ([nodecache/reader.go](../internal/receiver/adapter/out/nodecache/reader.go)):
+      горутина write-back обёрнута в `safego.Recover` и дедуплицируется по ключу
+      (`inflight sync.Map`) — медленный Redis больше не порождает тысячи горутин
+      при 500 rps. `isRedisUnavailable` стал реальным детектором (net.Error/
+      ErrClosed/deadline) — warn «redis read failed» теперь действительно пишется
+      для не-сетевых ошибок (раньше ветка была мёртвой: `err != nil` всегда true).
 
 ---
 
