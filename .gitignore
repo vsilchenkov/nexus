@@ -24,6 +24,10 @@ coverage.txt
 /config/config.yml
 .env
 
+# Docker Compose — локальные per-server оверрайды (напр. внешний PG вместо
+# bundled-контейнера на прод-сервере). Окружение-специфичны, в git не коммитятся.
+docker-compose.override.yml
+
 # Web UI build output
 /web-ui/dist/
 /web-ui/node_modules/
