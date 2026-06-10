@@ -5097,6 +5097,12 @@ const docTemplate = `{
                 "created_at": {
                     "type": "string"
                 },
+                "email": {
+                    "type": "string"
+                },
+                "login": {
+                    "type": "string"
+                },
                 "role": {
                     "type": "string"
                 },

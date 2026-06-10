@@ -35,6 +35,8 @@ type teamResponse struct {
 type teamMemberResponse struct {
 	UserID    string    `json:"user_id"`
 	TeamID    string    `json:"team_id"`
+	Login     string    `json:"login"`
+	Email     string    `json:"email,omitempty"`
 	Role      string    `json:"role"`
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -194,6 +196,7 @@ func (h *TeamHandler) ListMembers(c *gin.Context) {
 	for _, m := range members {
 		out = append(out, teamMemberResponse{
 			UserID: m.UserID, TeamID: m.TeamID,
+			Login: m.Login, Email: m.Email,
 			Role: string(m.Role), CreatedAt: m.CreatedAt,
 		})
 	}
