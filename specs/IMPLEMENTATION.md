@@ -1469,6 +1469,18 @@ make proto                                     # перегенерация send
     ([tests/integration/clickhouse_test.go](../tests/integration/clickhouse_test.go))
     проверяет контракт «два INSERT'а с одним ID → видим новейший».
 
+11. **Phase AUD (аудит 2026-06): семантика остановки и ожиданий.**
+    - `chlog.Writer.Stop` обязан **дренировать канал** `w.ch` после `wg.Wait()`:
+      воркеры выходят по `stopCh` через select без приоритета веток, и оставшиеся
+      в канале job'ы иначе молча теряются. Финальный flush идёт со **свежим**
+      `context.WithTimeout(Background, 10s)` — ctx вызывающего к этому моменту
+      может быть почти исчерпан (15s budget из sender/app.go). Тест:
+      `TestWriter_Stop_DrainsPendingJobs` ([writer_test.go](../internal/sender/adapter/out/chlog/writer_test.go)).
+    - Ожидание paused-узла в `AsyncProcessor.Handle` — `select(ctx.Done, time.After)`,
+      не `time.Sleep`: иначе shutdown Sender'а висит до 30с на каждом paused-сообщении,
+      а backlog из них полностью блокирует partition. Тест:
+      `TestAsync_NodePaused_CtxCancelInterruptsWait`.
+
 ---
 
 ## 7. Куда копать дальше (Phase 7+)

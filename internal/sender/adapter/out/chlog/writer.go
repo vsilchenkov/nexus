@@ -5,11 +5,13 @@
 //   - Фоновый воркер копит до batch_size или ждёт flush_interval_sec —
 //     потом batch INSERT в ClickHouse.
 //   - Отдельный батч на каждую таблицу узла (table → buffer).
-//   - При недоступности ClickHouse: метрика nexus_clickhouse_dropped_total
-//     (TODO Phase 4) + warning в логе; запрос НЕ блокируется (§9.4 ТЗ).
+//   - При недоступности ClickHouse: метрика nexus_clickhouse_errors_total
+//     и warning в логе; запрос НЕ блокируется (§9.4 ТЗ). Проваленный батч
+//     уходит в NDJSON file-fallback (см. fallback.go) и переотправляется
+//     фоновым циклом рестора.
 //
-// File-fallback при переполнении — TODO Phase 4. Сейчас при переполнении
-// канала запись просто отбрасывается.
+// При переполнении канала запись отбрасывается с метрикой
+// nexus_clickhouse_dropped_total{reason="buffer_full"}.
 package chlog
 
 import (
@@ -260,9 +262,28 @@ func (w *Writer) Flush(ctx context.Context) error {
 }
 
 // Stop останавливает воркеры и flush'ит остаток. Вызывается в App.Stop.
-func (w *Writer) Stop(ctx context.Context) {
+//
+// ctx вызывающего игнорируется намеренно: к моменту финального flush его
+// бюджет может быть почти исчерпан ожиданием воркеров, а терять последний
+// батч из-за этого нельзя — берём свежий таймаут (при провале батч уйдёт
+// в file-fallback, как обычно).
+func (w *Writer) Stop(_ context.Context) {
 	close(w.stopCh)
 	w.wg.Wait()
-	w.flushAll(ctx)
+	// Дренаж канала: воркеры могли выйти по stopCh, не выбрав остаток
+	// job'ов из w.ch (select между ветками не упорядочен) — без дренажа
+	// эти записи молча теряются при shutdown.
+drain:
+	for {
+		select {
+		case j := <-w.ch:
+			w.append(j.table, j.rec)
+		default:
+			break drain
+		}
+	}
+	flushCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	w.flushAll(flushCtx)
 	w.fallback.Stop()
 }
