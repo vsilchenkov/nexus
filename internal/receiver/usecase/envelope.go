@@ -40,7 +40,7 @@ type RMQMeta struct {
 	RoutingKey  string    `json:"routing_key,omitempty"`
 	DeliveryTag uint64    `json:"delivery_tag,omitempty"`
 	MessageID   string    `json:"message_id,omitempty"`
-	Timestamp   time.Time `json:"timestamp,omitempty"`
+	Timestamp   time.Time `json:"timestamp"`
 }
 
 // BuildEnvelope формирует Envelope из входящего запроса узла,

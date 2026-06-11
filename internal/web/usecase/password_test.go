@@ -20,7 +20,6 @@ func TestValidatePassword(t *testing.T) {
 		{"whitespace tabs", "\t\t\t\t", true},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			err := validatePassword(tt.pw)

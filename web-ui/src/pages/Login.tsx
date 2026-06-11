@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { ArrowLeftRight } from "lucide-react";
 
 import { api } from "../api/client";
-import { Button, Card, Field, Input } from "../components/ui";
+import { Button, Card, ErrorAlert, Field, Input } from "../components/ui";
 
 export default function Login() {
   const { t } = useTranslation();
@@ -59,7 +59,7 @@ export default function Login() {
                 required
               />
             </Field>
-            {error && <div className="text-sm text-err">{error}</div>}
+            {error && <ErrorAlert>{error}</ErrorAlert>}
             <Button type="submit" variant="primary" disabled={busy} className="w-full">
               {busy ? "…" : t("auth.login_button")}
             </Button>

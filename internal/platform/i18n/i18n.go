@@ -105,6 +105,7 @@ var translations = map[Lang]map[string]string{
 		"auth.invalid_credentials": "invalid credentials",
 		"auth.user_inactive":       "user is inactive",
 		"auth.session_expired":     "session expired",
+		"auth.rate_limited":        "too many login attempts, try again later",
 		// node
 		"node.not_found":      "node not found",
 		"node.already_exists": "node with this path already exists",
@@ -207,6 +208,7 @@ var translations = map[Lang]map[string]string{
 		"auth.invalid_credentials": "неверный логин или пароль",
 		"auth.user_inactive":       "пользователь отключён",
 		"auth.session_expired":     "сессия истекла",
+		"auth.rate_limited":        "слишком много попыток входа, попробуйте позже",
 		"node.not_found":           "узел не найден",
 		"node.already_exists":      "узел с таким путём уже существует",
 		"node.disabled":            "узел отключён; включите его перед replay",

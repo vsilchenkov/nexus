@@ -180,7 +180,17 @@ func (s *fallbackStore) restoreFile(ctx context.Context, path string, replay Rep
 		}
 	}
 	// Файл закрыт в readFallbackFile; на Windows нельзя удалить открытый файл.
-	return os.Remove(path)
+	if err := os.Remove(path); err != nil {
+		// Батч уже в ClickHouse — если оставить файл, следующий тик вставит
+		// его повторно (дубликаты). Помечаем как обработанный rename'ом:
+		// суффикс .done выводит файл из выборки tryRestoreOnce (*.ndjson).
+		if rerr := os.Rename(path, path+".done"); rerr != nil {
+			return fmt.Errorf("remove: %w (rename fallback failed too: %v)", err, rerr)
+		}
+		s.logger.Warn("fallback file could not be removed; renamed to .done",
+			s.logger.Str("file", path), s.logger.Err(err))
+	}
+	return nil
 }
 
 func readFallbackFile(path string) (map[string][]*domain.LogRecord, error) {

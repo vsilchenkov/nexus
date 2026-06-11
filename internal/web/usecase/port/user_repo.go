@@ -37,7 +37,11 @@ type UserRepo interface {
 type SessionRepo interface {
 	Create(ctx context.Context, s *domain.Session, ttl time.Duration) error
 	Get(ctx context.Context, token string) (*domain.Session, error)
-	Touch(ctx context.Context, token string, ttl time.Duration) error
+	// Touch продлевает TTL и пересохраняет сессию целиком (s уже загружен
+	// вызывающим; LastSeenAt обновляет вызывающий). Phase AUD.5: раньше Touch
+	// делал только EXPIRE — LastSeenAt замораживался на моменте логина и
+	// аудит/диагностика активности сессий показывали неправду.
+	Touch(ctx context.Context, s *domain.Session, ttl time.Duration) error
 	Delete(ctx context.Context, token string) error
 	DeleteByUser(ctx context.Context, userID string) (int, error)
 }

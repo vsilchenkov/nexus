@@ -1469,6 +1469,79 @@ make proto                                     # перегенерация send
     ([tests/integration/clickhouse_test.go](../tests/integration/clickhouse_test.go))
     проверяет контракт «два INSERT'а с одним ID → видим новейший».
 
+11. **Phase AUD (аудит 2026-06): семантика остановки и ожиданий.**
+    - `chlog.Writer.Stop` обязан **дренировать канал** `w.ch` после `wg.Wait()`:
+      воркеры выходят по `stopCh` через select без приоритета веток, и оставшиеся
+      в канале job'ы иначе молча теряются. Финальный flush идёт со **свежим**
+      `context.WithTimeout(Background, 10s)` — ctx вызывающего к этому моменту
+      может быть почти исчерпан (15s budget из sender/app.go). Тест:
+      `TestWriter_Stop_DrainsPendingJobs` ([writer_test.go](../internal/sender/adapter/out/chlog/writer_test.go)).
+    - Ожидание paused-узла в `AsyncProcessor.Handle` — `select(ctx.Done, time.After)`,
+      не `time.Sleep`: иначе shutdown Sender'а висит до 30с на каждом paused-сообщении,
+      а backlog из них полностью блокирует partition. Тест:
+      `TestAsync_NodePaused_CtxCancelInterruptsWait`.
+    - **Circuit breaker — single-probe через Lua** ([circuitbreaker/redis.go](../internal/platform/circuitbreaker/redis.go)):
+      переход open→half_open и выдача пробного атомарны (`allowProbeScript`),
+      в half_open проходит ровно один запрос (HINCRBY probe == 1), остальные
+      отбрасываются до RecordSuccess/Failure. Раньше half_open пропускал ВЕСЬ
+      трафик, а переход был TOCTOU-гонкой. Если результат пробного не записан
+      (крэш процесса) — ключ самоочищается TTL 10 мин. Тесты:
+      `TestCircuitBreaker_HalfOpen_SingleProbe`, `_ProbeFailureReopens`.
+    - **Shutdown-гигиена фоновых горутин** (Phase AUD.3): все фоновые горутины
+      App-уровня (reload-subscriber, housekeeping, kafka-lag reporter,
+      notification scheduler) запускаются через `safego.Go` (возвращает
+      done-канал) и ожидаются в `Stop()` через `safego.Await` с таймаутом 10s —
+      **до** закрытия pg/redis/CH-соединений. Иначе callbacks reload'а могли
+      бежать параллельно с закрытием пулов. goleak (`TestMain` +
+      `goleak.VerifyTestMain`) включён в пакетах `chlog`, `sender/usecase`,
+      `web/usecase`, `receiver/usecase` — регрессия утечки валит весь пакет.
+    - **Web security (Phase AUD.4):**
+      - анти-брутфорс `/api/auth/login` — `AuthUsecase.WithLoginRateLimit`
+        ([auth.go](../internal/web/usecase/auth.go)): две независимые квоты
+        (`login:ip:<ip>` и `login:user:<login>`) через общий Redis-лимитер,
+        конфиг `web.login_rate_limit_per_min` (дефолт 10, -1 = выключить),
+        429 + audit `user.login.failed{reason:rate_limited}`; fail-open при
+        сбое Redis (§9.4);
+      - CSRF Origin-check ([security_middleware.go](../internal/web/adapter/in/http/security_middleware.go))
+        на группе `/api/*`: мутации с чужим/`null` Origin → 403; Bearer-токены
+        и запросы без Origin (curl) пропускаются; reverse-proxy `/api/v1/*`
+        не затрагивается. Дополнение к SameSite-cookie, не замена;
+      - security-заголовки `SecurityHeaders()`: CSP (self + Google Fonts +
+        'unsafe-inline' для style), nosniff, X-Frame-Options DENY,
+        Referrer-Policy. CSP пропускается для `/swagger/*` (inline-скрипт
+        конфигурации Swagger UI);
+      - warning при старте, если `session_cookie_samesite=none` без `secure`.
+    - **Phase AUD.5:**
+      - `trusted_proxies` (receiver/web) — `gin.SetTrustedProxies`: X-Forwarded-For
+        принимается только от перечисленных CIDR (дефолт loopback + приватные
+        сети, см. `defaultTrustedProxies` в [config/defaults.go](../internal/platform/config/defaults.go)) —
+        внешний клиент больше не подделывает IP в аудите/логах;
+      - `SessionRepo.Touch` принимает `*domain.Session` и пересохраняет её
+        целиком (один SET вместо EXPIRE) — `LastSeenAt` теперь реально
+        обновляется на каждый запрос (раньше замораживался на логине);
+      - креды узлов в Redis-кеше шифруются тем же AES-256-GCM
+        ([nodecache/reader.go](../internal/receiver/adapter/out/nodecache/reader.go)):
+        раньше расшифрованный Node маршалился в кеш целиком и plaintext-креды
+        лежали в Redis открытыми. Старые plaintext-записи кеша не проходят
+        Decrypt и трактуются как cache-miss (перечитываются из PG).
+    - **Phase AUD.8 (мелочи):** fallback-файл, который не удалось удалить после
+      успешного рестора (Windows-lock), переименовывается в `.done` — иначе
+      следующий тик вставлял батч в CH повторно (дубликаты). Метрика
+      `nexus_ratelimit_check_errors_total{scope}` (через `ratelimit.WithErrorSink`,
+      реализуется `metrics.Metrics`) — единственный сигнал, что fail-open
+      лимиты фактически отключены из-за лежащего Redis; алертить при росте.
+      UI: единый `<ErrorAlert>` (components/ui), sticky-заголовки таблиц
+      Users/ApiTokens, клиентская валидация формы узла
+      ([lib/nodeValidation.ts](../web-ui/src/lib/nodeValidation.ts) — зеркало
+      `domain.Node.Validate` с теми же i18n-кодами; при изменении лимитов
+      backend'а синхронизировать оба места).
+    - **nodecache write-back** ([nodecache/reader.go](../internal/receiver/adapter/out/nodecache/reader.go)):
+      горутина write-back обёрнута в `safego.Recover` и дедуплицируется по ключу
+      (`inflight sync.Map`) — медленный Redis больше не порождает тысячи горутин
+      при 500 rps. `isRedisUnavailable` стал реальным детектором (net.Error/
+      ErrClosed/deadline) — warn «redis read failed» теперь действительно пишется
+      для не-сетевых ошибок (раньше ветка была мёртвой: `err != nil` всегда true).
+
 ---
 
 ## 7. Куда копать дальше (Phase 7+)

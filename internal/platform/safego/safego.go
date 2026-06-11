@@ -38,6 +38,37 @@ func Recover(logger logging.Logger, op string) {
 	)
 }
 
+// Go запускает fn в горутине с panic-recovery и возвращает канал, который
+// закрывается по её завершении. Используется для фоновых задач, которые
+// graceful shutdown обязан дождаться (Phase AUD.3):
+//
+//	done := safego.Go(logger, "web.housekeeping", func() { hk.Run(ctx) })
+//	// в Stop():
+//	safego.Await(stopCtx, done, logger, "web.housekeeping")
+func Go(logger logging.Logger, op string, fn func()) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer Recover(logger, op)
+		fn()
+	}()
+	return done
+}
+
+// Await ждёт закрытия done либо истечения ctx; во втором случае пишет warn —
+// фоновая задача не уложилась в shutdown-бюджет (диагностика зависших горутин).
+func Await(ctx context.Context, done <-chan struct{}, logger logging.Logger, op string) {
+	if done == nil {
+		return
+	}
+	select {
+	case <-done:
+	case <-ctx.Done():
+		logger.Warn("background task did not stop within shutdown deadline",
+			logger.Str("op", op))
+	}
+}
+
 // RecoverCtx — вариант Recover для горутин, у которых есть контекст с
 // привязанным Sentry-hub (например, отпочкованный от запроса через
 // context.WithoutCancel). Через logger.WithContext(ctx) событие попадёт в

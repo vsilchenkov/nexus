@@ -54,6 +54,11 @@ type App struct {
 	// §27: Puller-воркеры RabbitMQAsync.
 	pullerCancel context.CancelFunc
 	pullerDone   chan struct{}
+
+	// done-каналы фоновых горутин — Stop дожидается их завершения
+	// (Phase AUD.3: reload-callbacks не должны бежать параллельно
+	// с закрытием соединений).
+	reloadDone <-chan struct{}
 }
 
 func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, cipher *crypto.Cipher, otelShutdown otelpf.ShutdownFunc, logger logging.Logger) *App {
@@ -115,11 +120,17 @@ func (a *App) Start(ctx context.Context) error {
 
 	handler := httpadapter.New(routeUC, routeAsyncUC, a.cfg.Receiver.MaxBodyBytes, a.metrics, a.logger)
 
-	rl := ratelimit.New(a.redis)
+	rl := ratelimit.New(a.redis, ratelimit.WithErrorSink(a.metrics))
 	rlMw := httpadapter.RateLimitMiddleware(rl, a.cfg.Receiver.RateLimitPerNode, a.logger)
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
+	// Phase AUD.5: X-Forwarded-For доверяем только перечисленным прокси
+	// (дефолт — loopback + приватные сети), иначе клиент подделывает IP
+	// в логах ClickHouse и аудите.
+	if err := r.SetTrustedProxies(a.cfg.Receiver.TrustedProxies); err != nil {
+		return fmt.Errorf("receiver trusted_proxies: %w", err)
+	}
 	r.Use(
 		requestid.GinMiddleware(),
 		otelpf.GinMiddleware("receiver"),
@@ -142,10 +153,9 @@ func (a *App) Start(ctx context.Context) error {
 	reloadSub := reloader.NewSubscriber(a.redis, a.logger)
 	reloadSub.Register(reloader.SectionSentry,
 		bootstrap.SentryReloader(a.pg, a.cfg, a.cfg.Build.ProjectName, a.cfg.Build.Version, a.logger))
-	go func() {
-		defer safego.Recover(a.logger, "receiver.reloadSubscriber")
+	a.reloadDone = safego.Go(a.logger, "receiver.reloadSubscriber", func() {
 		reloadSub.Run(ctx)
-	}()
+	})
 
 	a.srv = &http.Server{
 		Addr:              a.cfg.Receiver.HTTPAddr,
@@ -198,6 +208,9 @@ func (a *App) Stop(ctx context.Context) error {
 			return fmt.Errorf("receiver shutdown: %w", err)
 		}
 	}
+	// Дожидаемся фоновых горутин до закрытия соединений: reload-callback
+	// не должен дёргать pg/redis, которые main уже закрывает.
+	safego.Await(shutdownCtx, a.reloadDone, a.logger, "receiver.reloadSubscriber")
 	if a.senderCl != nil {
 		_ = a.senderCl.Close()
 	}

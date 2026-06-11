@@ -161,6 +161,27 @@ ClickHouse-батчинга, cookie-флаги) живут в `config/config.exa
 нативном запуске; в Docker они уже зашиты в образ и при необходимости переопределяются
 монтированием своего `config.yml` (см. §7).
 
+### Безопасность Web (Phase AUD.4)
+
+- **Анти-брутфорс логина**: `web.login_rate_limit_per_min` (дефолт 10) — попыток
+  `/api/auth/login` в минуту на IP и отдельно на login; превышение → 429 + запись в audit.
+  `-1` отключает. При недоступном Redis лимит fail-open (вход не блокируется).
+- **CSRF**: мутации `/api/*` под session-cookie дополнительно проверяются по заголовку
+  `Origin` (несовпадение с Host → 403). Если публикуете Web за reverse-proxy, проследите,
+  чтобы proxy не переписывал `Host` относительно того origin'а, с которого открыт UI
+  (стандартная настройка `proxy_set_header Host $host` в nginx — корректна).
+- **Security-заголовки**: Web выставляет CSP/nosniff/X-Frame-Options/Referrer-Policy
+  автоматически; на `/swagger/*` CSP не ставится. SPA использует Google Fonts — CSP уже
+  разрешает `fonts.googleapis.com`/`fonts.gstatic.com`; в полностью офлайн-контуре шрифты
+  просто не загрузятся (graceful fallback на системные).
+- `session_cookie_samesite: none` без `session_cookie_secure: true` теперь даёт warning
+  при старте — такая комбинация отбрасывается браузерами.
+- **Доверенные прокси (Phase AUD.5)**: `receiver.trusted_proxies` и `web.trusted_proxies` —
+  CIDR/IP, чьим заголовкам `X-Forwarded-For` сервис верит при определении IP клиента
+  (аудит, логи ClickHouse). Дефолт — loopback + приватные сети (RFC1918/ULA), что покрывает
+  docker-compose. Если перед Nexus стоит внешний reverse-proxy с публичным адресом —
+  перечислите его адрес явно, иначе IP клиента в логах будет адресом прокси.
+
 ---
 
 ## 3. Вариант A — полностью в Docker (рекомендуемый путь установки)
