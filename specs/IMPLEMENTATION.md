@@ -1476,6 +1476,12 @@ make proto                                     # перегенерация send
       `context.WithTimeout(Background, 10s)` — ctx вызывающего к этому моменту
       может быть почти исчерпан (15s budget из sender/app.go). Тест:
       `TestWriter_Stop_DrainsPendingJobs` ([writer_test.go](../internal/sender/adapter/out/chlog/writer_test.go)).
+      **fallback-горутина запускается через `fallbackStore.Start()`** — `wg.Add(1)`
+      делается СИНХРОННО до старта горутины. Если `Add` внутри самой горутины (как было),
+      он гонится с `Wait()` в `Stop()` — data race на `WaitGroup`, ловится только `-race`
+      в CI (локально TSan сломан, [[project_race_detector_broken]]). Грабли: первый же
+      тест с включённым fallback (`t.TempDir()`) обнажил эту предсуществующую гонку,
+      а `go test -short` без `-race` её не видел → CI-job `go-test` упал после merge.
     - Ожидание paused-узла в `AsyncProcessor.Handle` — `select(ctx.Done, time.After)`,
       не `time.Sleep`: иначе shutdown Sender'а висит до 30с на каждом paused-сообщении,
       а backlog из них полностью блокирует partition. Тест:

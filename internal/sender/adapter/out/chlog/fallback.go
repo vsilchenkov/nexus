@@ -17,6 +17,7 @@ import (
 
 	"nexus/internal/domain"
 	"nexus/internal/platform/logging"
+	"nexus/internal/platform/safego"
 )
 
 // fallbackStore — пишет проваленный батч ClickHouse в NDJSON-файл
@@ -117,15 +118,24 @@ func (s *fallbackStore) Save(table string, batch []*domain.LogRecord) (string, e
 // Возвращает nil при успехе, ошибку при провале (тогда файл остаётся).
 type Replayer func(ctx context.Context, table string, batch []*domain.LogRecord) error
 
-// Run запускает фоновый цикл рестора. Завершается при ctx.Done или Stop.
-// Если store отключён — возвращается сразу.
-func (s *fallbackStore) Run(ctx context.Context, replay Replayer) {
+// Start запускает фоновый цикл рестора в отдельной горутине. wg.Add(1)
+// выполняется СИНХРОННО здесь, до старта горутины — иначе Add гонится с
+// Wait() в Stop() (data race на WaitGroup, ловится -race). Если store
+// отключён — no-op. Вызывается один раз владельцем (chlog.Writer).
+func (s *fallbackStore) Start(replay Replayer) {
 	if !s.Enabled() {
 		return
 	}
 	s.wg.Add(1)
-	defer s.wg.Done()
+	go func() {
+		defer s.wg.Done()
+		defer safego.Recover(s.logger, "sender.chlogFallback")
+		s.run(context.Background(), replay)
+	}()
+}
 
+// run — фоновый цикл рестора. Завершается при ctx.Done или Stop.
+func (s *fallbackStore) run(ctx context.Context, replay Replayer) {
 	tick := time.NewTicker(s.interval)
 	defer tick.Stop()
 

@@ -88,20 +88,17 @@ func NewWithFallback(conn ConnProvider, cfg *config.ClickHouseSection, fallbackD
 		w.wg.Add(1)
 		go w.run()
 	}
-	if w.fallback.Enabled() {
-		go func() {
-			defer safego.Recover(w.logger, "sender.chlogFallback")
-			w.fallback.Run(context.Background(), func(ctx context.Context, table string, batch []*domain.LogRecord) error {
-				if err := w.insertBatch(ctx, table, batch); err != nil {
-					return err
-				}
-				if w.metrics != nil {
-					w.metrics.CHFallbackTotal.WithLabelValues(table, "restored").Add(float64(len(batch)))
-				}
-				return nil
-			})
-		}()
-	}
+	// fallbackStore сам владеет своей горутиной (Start делает wg.Add синхронно
+	// до её старта — иначе Add гонится с Wait в Stop, см. fallback.go).
+	w.fallback.Start(func(ctx context.Context, table string, batch []*domain.LogRecord) error {
+		if err := w.insertBatch(ctx, table, batch); err != nil {
+			return err
+		}
+		if w.metrics != nil {
+			w.metrics.CHFallbackTotal.WithLabelValues(table, "restored").Add(float64(len(batch)))
+		}
+		return nil
+	})
 	return w
 }
 
