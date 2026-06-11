@@ -18,6 +18,9 @@ export type LogsInitialFilter = { from?: string; to?: string; status?: StatusFil
 const LIVE_BUFFER_LIMIT = 500;
 const HIGHLIGHT_DURATION_MS = 1000;
 const SCROLL_TOP_THRESHOLD_PX = 8;
+// Сколько ошибок SSE подряд терпим, прежде чем признать поток мёртвым.
+// Между ними браузер сам переподключается (нативный retry EventSource).
+const LIVE_MAX_CONSECUTIVE_ERRORS = 5;
 
 // LogsTab — вкладка «Логи» (§7.4): snapshot + SSE live-tail с буфером,
 // клиентскими фильтрами, расширенным поиском и replay-меню строки.
@@ -61,6 +64,12 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
 
   const [liveLogs, setLiveLogs] = useState<LogRow[]>([]);
   const [highlighted, setHighlighted] = useState<Set<string>>(new Set());
+  // Поток умер окончательно (LIVE_MAX_CONSECUTIVE_ERRORS ошибок подряд) —
+  // live выключен, показываем предупреждение вместо вечного спиннера.
+  const [liveLost, setLiveLost] = useState(false);
+  // Таймеры снятия подсветки: чистим при unmount/перезапуске потока, иначе
+  // setState стреляет по размонтированному компоненту.
+  const highlightTimersRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     if (!live || !id || !hasLogsTable) return;
@@ -70,12 +79,16 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
     if (appliedFilters.host) qs.set("host", appliedFilters.host);
     const suffix = qs.toString() ? `?${qs.toString()}` : "";
     const es = new EventSource(`/api/nodes/${id}/logs/stream${suffix}`);
+    const timers = highlightTimersRef.current;
+    let consecutiveErrors = 0;
     es.addEventListener("log", (e) => {
+      consecutiveErrors = 0;
       try {
         const rec = JSON.parse((e as MessageEvent).data) as LogRow;
         setLiveLogs((prev) => [rec, ...prev].slice(0, LIVE_BUFFER_LIMIT));
         setHighlighted((prev) => new Set(prev).add(rec.id));
-        window.setTimeout(() => {
+        const tid = window.setTimeout(() => {
+          timers.delete(tid);
           setHighlighted((prev) => {
             if (!prev.has(rec.id)) return prev;
             const next = new Set(prev);
@@ -83,12 +96,31 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
             return next;
           });
         }, HIGHLIGHT_DURATION_MS);
+        timers.add(tid);
       } catch {
         // Невалидный JSON в SSE-событии — пропускаем запись, поток продолжаем.
       }
     });
-    es.onerror = () => es.close();
-    return () => es.close();
+    es.onopen = () => {
+      consecutiveErrors = 0;
+    };
+    es.onerror = () => {
+      // Транзиентные обрывы браузер переподключает сам (readyState=CONNECTING).
+      // Фатально: сервер закрыл поток (CLOSED — например, 401/404) либо
+      // несколько ошибок подряд — выключаем live и показываем предупреждение,
+      // а не молча оставляем «Live ▶» со спиннером без данных.
+      consecutiveErrors += 1;
+      if (es.readyState === EventSource.CLOSED || consecutiveErrors >= LIVE_MAX_CONSECUTIVE_ERRORS) {
+        es.close();
+        setLive(false);
+        setLiveLost(true);
+      }
+    };
+    return () => {
+      es.close();
+      for (const tid of timers) window.clearTimeout(tid);
+      timers.clear();
+    };
   }, [live, id, hasLogsTable, appliedFilters.q, appliedFilters.ip, appliedFilters.host]);
 
   const tableWrapRef = useRef<HTMLDivElement | null>(null);
@@ -205,11 +237,15 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                 setLiveLogs([]);
                 setHighlighted(new Set());
                 setPendingCount(0);
+                setLiveLost(false);
                 setLive(e.target.checked);
               }}
             />
             {live ? t("logs.live_on") : t("logs.live_off")}
             {live && <RefreshCw className="h-3 w-3 animate-spin text-accent" />}
+            {liveLost && !live && (
+              <span className="text-xs text-warn">{t("logs.live_lost")}</span>
+            )}
           </label>
         </div>
       </header>

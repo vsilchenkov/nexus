@@ -1,5 +1,7 @@
 import axios from "axios";
 
+import { queryClient } from "../lib/queryClient";
+
 // Глобальный axios-клиент: одноимённый origin (см. §17.1 — Web Service отдаёт
 // и API, и SPA из одного бинаря), куки автоматически прикрепляются.
 const axiosInstance = axios.create({
@@ -8,11 +10,14 @@ const axiosInstance = axios.create({
   headers: { "Content-Type": "application/json" },
 });
 
-// На 401 редиректим на /login глобально (см. §17.6 ТЗ).
+// На 401 редиректим на /login глобально (см. §17.6 ТЗ). Перед редиректом
+// чистим react-query-кеш: следующий логин (возможно, другим пользователем
+// или с другой текущей командой) не должен видеть прежние данные (Phase AUD.6).
 axiosInstance.interceptors.response.use(
   (r) => r,
   (err) => {
     if (err?.response?.status === 401 && location.pathname !== "/login") {
+      queryClient.clear();
       location.href = "/login";
     }
     return Promise.reject(err);
