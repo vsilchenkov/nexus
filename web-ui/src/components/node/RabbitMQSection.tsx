@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Rabbit, PlugZap, RefreshCw, CircleCheck, CircleX } from "lucide-react";
 
 import { api, type RMQTestResult } from "../../api/client";
+import { parseNumInput } from "../../lib/numField";
 import { Button, Card, Field, Hint, Input, SecretInput, SectionHead } from "../ui";
 
 // §27: поля формы, относящиеся к RabbitMQAsync. Подмножество Form в NodeSettings.
@@ -86,7 +87,7 @@ export function RabbitMQSection({ form, set, isNew, errField, errMsg }: Props) {
               mono
               type="number"
               value={form.rmq_port}
-              onChange={(e) => set("rmq_port", Number(e.target.value))}
+              onChange={(e) => set("rmq_port", parseNumInput(e.target.value, form.rmq_port))}
               placeholder={form.rmq_use_tls ? "5671" : "5672"}
             />
             <label className="flex items-center gap-1.5 rounded-md border border-line px-2 text-xs">
@@ -165,7 +166,7 @@ export function RabbitMQSection({ form, set, isNew, errField, errMsg }: Props) {
               type="number"
               className="w-24 text-right"
               value={form.pull_interval_sec}
-              onChange={(e) => set("pull_interval_sec", Number(e.target.value))}
+              onChange={(e) => set("pull_interval_sec", parseNumInput(e.target.value, form.pull_interval_sec))}
             />
             <span className="text-xs text-fg-muted">{t("node.rmq.seconds")}</span>
             <div className="ml-auto flex gap-1">
@@ -189,7 +190,7 @@ export function RabbitMQSection({ form, set, isNew, errField, errMsg }: Props) {
               mono
               type="number"
               value={form.pull_batch_size}
-              onChange={(e) => set("pull_batch_size", Number(e.target.value))}
+              onChange={(e) => set("pull_batch_size", parseNumInput(e.target.value, form.pull_batch_size))}
             />
           </Field>
           <Field label={t("node.rmq.prefetch")} hint={t("node.rmq.prefetch_hint")}>
@@ -197,7 +198,7 @@ export function RabbitMQSection({ form, set, isNew, errField, errMsg }: Props) {
               mono
               type="number"
               value={form.pull_prefetch}
-              onChange={(e) => set("pull_prefetch", Number(e.target.value))}
+              onChange={(e) => set("pull_prefetch", parseNumInput(e.target.value, form.pull_prefetch))}
             />
           </Field>
         </div>

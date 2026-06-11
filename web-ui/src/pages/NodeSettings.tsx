@@ -18,6 +18,8 @@ import {
 import { api, type Node, type CHTemplate, type HostAllowlistEntry } from "../api/client";
 import { useNodeUrlBuilder } from "../lib/nodeUrl";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
+import { parseNumInput } from "../lib/numField";
+import { validateNodeForm } from "../lib/nodeValidation";
 import { DryRunDialog } from "../components/DryRunDialog";
 import { DeleteNodeDialog } from "../components/node/DeleteNodeDialog";
 import { AllowedHostsField } from "../components/node/AllowedHostsField";
@@ -170,6 +172,10 @@ export default function NodeSettings() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["nodes"] });
+      // Сброс формы: иначе при следующем заходе на /nodes/new остаются
+      // значения только что созданного узла (Phase AUD.7).
+      setForm(emptyForm);
+      setPendingHosts([]);
       navigate("/");
     },
     onError: (e: { response?: { data?: { error?: string; code?: string; field?: string } } }) => {
@@ -194,6 +200,20 @@ export default function NodeSettings() {
   }
   // errCls — класс красной рамки для поля с ошибкой.
   const errCls = (name: string) => (errField === name ? "border-err" : "");
+
+  // submit — клиентская валидация лимитов (зеркало domain.Node.Validate) до
+  // запроса: те же i18n-коды node.validation.*, что возвращает backend.
+  function submit() {
+    const v = validateNodeForm(form);
+    if (v) {
+      setErrField(v.field);
+      setError(t(v.code));
+      return;
+    }
+    setError(null);
+    setErrField(null);
+    save.mutate();
+  }
 
   const isPull = form.root_method === "RabbitMQAsync";
   const verb = form.root_method === "request" ? "request" : "requestAsync";
@@ -230,7 +250,7 @@ export default function NodeSettings() {
           <Button
             variant="primary"
             disabled={save.isPending || form.path.trim() === ""}
-            onClick={() => save.mutate()}
+            onClick={submit}
           >
             <Save className="h-4 w-4" /> {t("common.save")}
           </Button>
@@ -394,16 +414,24 @@ export default function NodeSettings() {
               <Field label={t("node.form.timeout_ms")}>
                 <Input
                   type="number"
+                  min={100}
+                  max={300000}
+                  className={errCls("timeout_ms")}
                   value={form.timeout_ms}
-                  onChange={(e) => set("timeout_ms", Number(e.target.value))}
+                  onChange={(e) => set("timeout_ms", parseNumInput(e.target.value, form.timeout_ms))}
                 />
+                {fieldErr("timeout_ms")}
               </Field>
               <Field label={t("node.form.retry_count")}>
                 <Input
                   type="number"
+                  min={0}
+                  max={10}
+                  className={errCls("retry_count")}
                   value={form.retry_count}
-                  onChange={(e) => set("retry_count", Number(e.target.value))}
+                  onChange={(e) => set("retry_count", parseNumInput(e.target.value, form.retry_count))}
                 />
+                {fieldErr("retry_count")}
               </Field>
             </div>
           </Card>
@@ -567,8 +595,11 @@ export default function NodeSettings() {
               <Field label={t("node.form.retention_days")} className="mt-3">
                 <Input
                   type="number"
+                  min={0}
                   value={form.clickhouse_retention_days}
-                  onChange={(e) => set("clickhouse_retention_days", Number(e.target.value))}
+                  onChange={(e) =>
+                    set("clickhouse_retention_days", parseNumInput(e.target.value, form.clickhouse_retention_days))
+                  }
                 />
               </Field>
               <Field label={t("node.form.log_what")} className="mt-3">
@@ -609,11 +640,13 @@ export default function NodeSettings() {
                   <Input
                     type="number"
                     min={0}
+                    className={errCls("max_body_size")}
                     disabled={!form.max_body_size_enabled}
                     value={form.max_body_size}
-                    onChange={(e) => set("max_body_size", Number(e.target.value))}
+                    onChange={(e) => set("max_body_size", parseNumInput(e.target.value, form.max_body_size))}
                     placeholder="10000"
                   />
+                  {fieldErr("max_body_size")}
                 </Field>
               </div>
             </fieldset>
