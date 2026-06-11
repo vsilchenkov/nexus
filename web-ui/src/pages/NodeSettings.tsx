@@ -29,6 +29,7 @@ import {
   Button,
   Card,
   CopyButton,
+  ErrorAlert,
   Field,
   Hint,
   Input,
@@ -257,7 +258,7 @@ export default function NodeSettings() {
         </div>
       </div>
 
-      {error && <div className="rounded-md bg-err/10 px-3 py-2 text-sm text-err">{error}</div>}
+      {error && !errField && <ErrorAlert>{error}</ErrorAlert>}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
         <div className="space-y-4">

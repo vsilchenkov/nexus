@@ -249,7 +249,7 @@ func (a *App) Start(ctx context.Context) error {
 	dryRunUC := usecase.NewDryRunUsecase(auditUC, a.logger)
 	dryRunHandler := httpadapter.NewDryRunHandler(dryRunUC, a.logger)
 
-	rl := ratelimit.New(a.redis)
+	rl := ratelimit.New(a.redis, ratelimit.WithErrorSink(a.metrics))
 	// Анти-брутфорс /api/auth/login (Phase AUD.4): лимит попыток на IP и
 	// на login через общий Redis-лимитер; fail-open при сбое Redis (§9.4).
 	authUC.WithLoginRateLimit(rl, a.cfg.Web.LoginRateLimitPerMin)

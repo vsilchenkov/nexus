@@ -41,14 +41,16 @@ type Metrics struct {
 	RequestsTotal           *prometheus.CounterVec
 	RequestsIncompleteTotal *prometheus.CounterVec
 	LoopDetectedTotal       *prometheus.CounterVec // §32: запросы, отклонённые по hop-лимиту
-	RequestDuration         *prometheus.HistogramVec
-	KafkaLag                *prometheus.GaugeVec
-	KafkaInFlight           *prometheus.GaugeVec     // §31: сообщения «в полёте» (fetched, не committed)
-	KafkaProduceDuration    *prometheus.HistogramVec // §31: длительность публикации в Kafka по топику
-	CHBufferSize            *prometheus.GaugeVec
-	CHErrorsTotal           *prometheus.CounterVec
-	CHDroppedTotal          *prometheus.CounterVec
-	CHFallbackTotal         *prometheus.CounterVec
+	// Phase AUD.8: сбои проверки rate-limit'а (fail-open, §9.4) по scope ключа.
+	RateLimitCheckErrorsTotal *prometheus.CounterVec
+	RequestDuration           *prometheus.HistogramVec
+	KafkaLag                  *prometheus.GaugeVec
+	KafkaInFlight             *prometheus.GaugeVec     // §31: сообщения «в полёте» (fetched, не committed)
+	KafkaProduceDuration      *prometheus.HistogramVec // §31: длительность публикации в Kafka по топику
+	CHBufferSize              *prometheus.GaugeVec
+	CHErrorsTotal             *prometheus.CounterVec
+	CHDroppedTotal            *prometheus.CounterVec
+	CHFallbackTotal           *prometheus.CounterVec
 
 	L2CacheHits      *prometheus.CounterVec
 	L2CacheMisses    prometheus.Counter
@@ -98,6 +100,16 @@ func New(service string) *Metrics {
 			Help:        "Requests rejected by the loop-protection hop limit (X-Nexus-Hops), by mode (sync, async).",
 			ConstLabels: constLabels,
 		}, []string{"mode"}),
+
+		// Phase AUD.8 (D.4): сбои проверки rate-limit'а (Redis недоступен и
+		// т.п.). Лимиты по §9.4 fail-open — этот счётчик единственный сигнал,
+		// что лимиты фактически не действуют; алертить при росте.
+		// scope — префикс ключа до первого ':' (login, replay, kafka, ...).
+		RateLimitCheckErrorsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "nexus_ratelimit_check_errors_total",
+			Help:        "Rate limit checks that failed (e.g. Redis down) and were allowed fail-open, by key scope.",
+			ConstLabels: constLabels,
+		}, []string{"scope"}),
 
 		RequestDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:        "nexus_request_duration_seconds",
@@ -223,6 +235,7 @@ func New(service string) *Metrics {
 		m.RequestsTotal,
 		m.RequestsIncompleteTotal,
 		m.LoopDetectedTotal,
+		m.RateLimitCheckErrorsTotal,
 		m.RequestDuration,
 		m.KafkaLag,
 		m.KafkaInFlight,
@@ -243,6 +256,12 @@ func New(service string) *Metrics {
 		m.NodeDegraded,
 	)
 	return m
+}
+
+// IncRateLimitCheckError реализует ratelimit.ErrorSink: учёт fail-open
+// пропусков при недоступном Redis (Phase AUD.8).
+func (m *Metrics) IncRateLimitCheckError(scope string) {
+	m.RateLimitCheckErrorsTotal.WithLabelValues(scope).Inc()
 }
 
 // IncL2Hit реализует nodecache.L2Metrics: счётчик попаданий в L2-кеш.

@@ -1524,6 +1524,17 @@ make proto                                     # перегенерация send
         раньше расшифрованный Node маршалился в кеш целиком и plaintext-креды
         лежали в Redis открытыми. Старые plaintext-записи кеша не проходят
         Decrypt и трактуются как cache-miss (перечитываются из PG).
+    - **Phase AUD.8 (мелочи):** fallback-файл, который не удалось удалить после
+      успешного рестора (Windows-lock), переименовывается в `.done` — иначе
+      следующий тик вставлял батч в CH повторно (дубликаты). Метрика
+      `nexus_ratelimit_check_errors_total{scope}` (через `ratelimit.WithErrorSink`,
+      реализуется `metrics.Metrics`) — единственный сигнал, что fail-open
+      лимиты фактически отключены из-за лежащего Redis; алертить при росте.
+      UI: единый `<ErrorAlert>` (components/ui), sticky-заголовки таблиц
+      Users/ApiTokens, клиентская валидация формы узла
+      ([lib/nodeValidation.ts](../web-ui/src/lib/nodeValidation.ts) — зеркало
+      `domain.Node.Validate` с теми же i18n-кодами; при изменении лимитов
+      backend'а синхронизировать оба места).
     - **nodecache write-back** ([nodecache/reader.go](../internal/receiver/adapter/out/nodecache/reader.go)):
       горутина write-back обёрнута в `safego.Recover` и дедуплицируется по ключу
       (`inflight sync.Map`) — медленный Redis больше не порождает тысячи горутин

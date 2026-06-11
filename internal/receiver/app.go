@@ -120,7 +120,7 @@ func (a *App) Start(ctx context.Context) error {
 
 	handler := httpadapter.New(routeUC, routeAsyncUC, a.cfg.Receiver.MaxBodyBytes, a.metrics, a.logger)
 
-	rl := ratelimit.New(a.redis)
+	rl := ratelimit.New(a.redis, ratelimit.WithErrorSink(a.metrics))
 	rlMw := httpadapter.RateLimitMiddleware(rl, a.cfg.Receiver.RateLimitPerNode, a.logger)
 
 	gin.SetMode(gin.ReleaseMode)

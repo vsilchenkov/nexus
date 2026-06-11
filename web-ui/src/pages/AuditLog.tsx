@@ -5,7 +5,7 @@ import { Download } from "lucide-react";
 
 import { api } from "../api/client";
 import { AuditDetailsCell } from "../components/AuditDetailsCell";
-import { Button, Card, Chip, Select } from "../components/ui";
+import { Button, Card, Chip, ErrorAlert, Select } from "../components/ui";
 
 type Entry = {
   id: string;
@@ -81,7 +81,7 @@ export default function AuditLog() {
       </div>
 
       {q.isLoading && <div className="text-fg-muted">{t("common.loading")}</div>}
-      {q.error && <div className="text-err">{(q.error as Error).message}</div>}
+      {q.error && <ErrorAlert />}
 
       {q.data && (
         <Card className="overflow-hidden p-0">

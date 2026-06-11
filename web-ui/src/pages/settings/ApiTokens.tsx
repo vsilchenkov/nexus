@@ -143,8 +143,9 @@ export function ApiTokensPanel() {
       )}
 
       {list.data && list.data.items.length > 0 && (
+        <div className="max-h-[65vh] overflow-y-auto">
         <table className="w-full text-sm">
-          <thead className="text-fg-muted">
+          <thead className="sticky top-0 z-10 bg-bg text-fg-muted">
             <tr>
               <th className="text-left px-3 py-2">{t("settings.tokens.col_name")}</th>
               <th className="text-left px-3 py-2">{t("settings.tokens.col_prefix")}</th>
@@ -206,6 +207,7 @@ export function ApiTokensPanel() {
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );
