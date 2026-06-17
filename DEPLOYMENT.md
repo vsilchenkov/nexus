@@ -609,6 +609,15 @@ override-файл и переменная `VERSION` в `.env` для этого 
 fallback-маркер `0.0.0-dev` (сборка совсем без git) и вручную не бампятся; `web-ui/package.json`
 к `/api/version` отношения не имеет.
 
+> **Суффикс `-dirty` (например `1.0.0-dirty`).** `git describe --dirty` дописывает `-dirty`, если
+> на момент сборки в рабочем дереве есть **незакоммиченные изменения отслеживаемых файлов** (staged
+> или unstaged; untracked-файлы не считаются). Так как образ собирается из текущего checkout'а
+> (`COPY . .` копирует дерево как есть), любая локальная правка на сервере уедет в версию образа —
+> и `/api/version` перестанет соответствовать тегу. **Перед `--build` дерево должно быть чистым:**
+> собирай из свежего detached-checkout тега и проверяй `git status --porcelain` (должно быть пусто).
+> Частый самострел — пересборка генерируемых, но отслеживаемых файлов (`docs/` через `make swagger`,
+> `internal/web/static/` через `make build-ui`) без коммита: закоммить их до сборки.
+
 ### 9.5. Выпуск новой версии (тег → сборка на сервере)
 
 **Коротко — три шага.** Версия = git-тег; деплой = пересборка на сервере из этого тега
@@ -626,6 +635,7 @@ git push origin v1.0.0                      # CI прогонит test/lint/buil
 cd nexus
 git fetch --tags
 git checkout v1.0.0                         # checkout С .git — нужен для git describe
+git status --porcelain                      # ДОЛЖНО быть пусто — иначе версия уедет как "-dirty" (§9.4)
 docker compose up -d --build web receiver sender         # Вариант C (корневой compose)
 #   A: docker compose -f deploy/docker-compose.yml up -d --build web receiver sender
 #   B: docker compose -f deploy/docker-compose.app.yml up -d --build

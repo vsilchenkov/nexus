@@ -26,6 +26,16 @@ VERSION_LDFLAGS := -X $(PKG_BUILD).Version=$(VERSION) -X $(PKG_BUILD).Commit=$(G
 # LDFLAGS оставляем переопределяемым (base), полный набор с версией — LDFLAGS_FULL.
 LDFLAGS_FULL = $(LDFLAGS) $(VERSION_LDFLAGS)
 
+# Грязное дерево вшивается в версию бинаря суффиксом "-dirty" (git describe --dirty).
+# Для build-целей предупреждаем (не блокируя): иначе в собранный артефакт уедет
+# версия вида "1.1.0-dirty", и строка версии перестаёт соответствовать тегу.
+# Чистая сборка тега — с detached-checkout: `git checkout vX.Y.Z` (git status пуст).
+ifneq (,$(findstring -dirty,$(VERSION)))
+ifneq (,$(filter build%,$(MAKECMDGOALS)))
+  $(warning ВНИМАНИЕ: рабочее дерево грязное — бинарь получит версию "$(VERSION)". Закоммить/застешь правки или собери с чистого тега (git checkout vX.Y.Z).)
+endif
+endif
+
 ifeq ($(OS),Windows_NT)
     GOEXE := .exe
     RM    := del /Q
