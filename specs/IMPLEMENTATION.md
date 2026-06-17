@@ -219,7 +219,7 @@
 | `github.com/vsilchenkov/logging` через DI | ✅ | [platform/logging/logging.go](../internal/platform/logging/logging.go) — алиас `Logger`, `Init`, `NewNoop` для тестов |
 | `ErrorWithOp` с `op` для группировки | ✅ | используется во всех handlers/usecase |
 | Sentry с `BeforeSend`/`BeforeBreadcrumb` для маскирования | ✅ | [platform/sentry/sentry.go](../internal/platform/sentry/sentry.go) |
-| **Sentry tracing-middleware для Gin (§14.3)** | ✅ Phase 5 | [platform/sentry/middleware.go](../internal/platform/sentry/middleware.go) — span'ы с тегами service/node/root_method/**request_id** (§30) |
+| **Sentry tracing-middleware для Gin (§14.3)** | ✅ Phase 5 | [platform/sentry/middleware.go](../internal/platform/sentry/middleware.go) — span'ы с тегами service/node/root_method/**request_id** (§30). **Инфра-пути (`/metrics`, `/health`, `/ready`, `""`) пропускаются** (`skipSentry`) — иначе скрейпы Prometheus/healthcheck заваливают Sentry транзакциями; зеркалит пропуск в `metrics.GinMiddleware`. Тесты `TestSkipSentry`, `TestGinMiddleware_SkipsInfraPaths` |
 | Обработка паник + `request_id` + версия в UI | ✅ §30 | логгер v1.7.9 (`WithContext`); см. карту §30 ниже и решение §4.27 |
 | `app_settings` PostgreSQL singleton + Web UI Sentry | ✅ Phase 6.3 | overlay поверх env, hot-reload Sentry/ClickHouse через Redis pub/sub, test connection (см. §8 строки 125-128) |
 
@@ -251,9 +251,11 @@
   - ✅ Phase 10.F.3: Topbar team-switcher — `<select>` со списком из `/api/me/teams`, при смене вызывает `/api/me/switch-team` и `qc.invalidateQueries()` (все списки nodes/audit/logs/tokens перерисовываются под новый scope).
   - ✅ Phase 10.G.1: end-to-end integration-тест `TestMultiTenancy_Isolation_E2E` (testcontainers PG) — 10 свойств: одинаковый path в двух командах, cross-team Get/Update/Delete возвращает 404, ClickHouseTable префиксуется через NodeUsecase, audit-записи несут team_id, FK ON DELETE RESTRICT блокирует удаление team с активными узлами. Прогон ~5 сек.
   - ✅ Phase 11.A: scope пользователей по членству — `ListUsersFilter.TeamID`, `UserRepoPg.List` через `JOIN user_teams` (userCols квалифицированы алиасом `u`, чтобы `created_at` не был ambiguous), `UserUsecase` принимает `TeamRepo` + `defaultTeamID`. `Create` добавляет membership в current_team через `AddMember` (иначе новый юзер не попал бы в scoped-список). Handler передаёт `currentTeamID(c)` в List/Create. Полное ТЗ — §18, см. [sections/18-multi-tenancy.md](sections/18-multi-tenancy.md).
+  - ✅ Phase 11.A-fix: `ListMembers` (участники команды) обогащается `login`/`email` через `JOIN users` ([team_repo.go](../internal/web/adapter/out/postgres/team_repo.go), поля в [domain.TeamMember](../internal/domain/team.go), `login`/`email` в `teamMemberResponse`). Раньше API отдавал только `user_id`, а SPA резолвил логин из team-scoped `/api/users` — для участника, которого нет в **текущей** команде (напр. owner `admin` в Default Team при активной команде `vika`), показывался сырой UUID. Теперь `MembersDialog` рендерит `login` (+ email) прямо из ответа ([Teams.tsx](../web-ui/src/pages/settings/Teams.tsx)).
   - ✅ Phase 11.B: перенос узла между командами — `POST /api/nodes/:id/move {target_team_slug}` (admin-only). `NodeUsecase.Move`: PG-перенос (team_id + clickhouse_table rebase на БД целевой команды) в UoW-транзакции + audit `node.move`; конфликт пути → `ErrNodeAlreadyExists` (409); перенос в свою команду → 403; чужой узел → 404. CH-таблица логов следует за узлом через `TeamProvisioner.RenameTable` (RENAME TABLE old_db.tbl TO new_db.tbl, best-effort: при отсутствии исходной таблицы — `ErrSourceTableAbsent`, пропуск). UI: кнопка «Move» на Overview + диалог выбора команды. Integration-тест `TestMultiTenancy_NodeMove_E2E`.
   - ✅ Phase 11.C: Redis ACL — `RedisSection.Username` (yaml `username`), проброшен в `goredis.Options.Username`. `config.example.yml`: `username: ${REDIS_USER:}`; `.env.example`: `REDIS_USER=`. Пустое значение = default-юзер (обратная совместимость). `config_debug.yml` не трогается (для локального ACL-Redis добавить `username: <user>` вручную).
   - ✅ Phase 11.D: multi-tenancy зафиксирована как ТЗ §18 — новый раздел [sections/18-multi-tenancy.md](sections/18-multi-tenancy.md) (модель данных, CH-БД per team, scope, Receiver URL, перенос узла, UI), пункт в `16-out-of-scope.md` помечен реализованным со ссылкой на §18, строка в `sections/README.md`, синхронизирован сводный `nexus_spec.md`. В `CLAUDE.md` — правило: новая крупная фича → новый раздел в `specs/sections/`.
+  - ✅ Phase 11.E: список пользователей де-scoped до **глобального** — `/api/users` (admin-only) возвращает всех пользователей, а не участников текущей команды. Снято в [user_handler.go](../internal/web/adapter/in/http/user_handler.go) (`List` больше не шлёт `currentTeamID(c)`) и [user.go](../internal/web/usecase/user.go) (`List` не подставляет `defaultTeamID`). SQL не менялся — `UserRepoPg.List` уже делает `JOIN user_teams` только при непустом `TeamID`. `Create` по-прежнему добавляет membership в текущую команду (не менялся). Фронт не трогался: `Settings → Users` и пикер `MembersDialog` (query `users-all`) автоматически получают всех (бонус: теперь в команду можно добавить любого не-члена). Причина: пользователь — глобальная сущность, членство в командах — отдельная ось; team-scope списка заставлял «искать людей по командам». Тест `TestUserUC_List_Global_NoTeamScope`. ТЗ — §18.3.
 - ~~Webhook signature verification (`/v1/callback/`)~~ — реализовано в Phase 8.1.
 - ~~OpenTelemetry distributed tracing~~ — реализовано в Phase 8.2 (HTTP-server-span'ы) + 8.3 (HTTP outbound + gRPC unary client/server interceptor'ы) + 8.4 (Kafka headers propagation для async-пути). End-to-end trace через UI → Web → Receiver → {gRPC → Sender → внешний URL} / {Kafka → Sender-consumer → внешний URL}.
 - ◐ Notifications для операторов — **Telegram реализован (Phase F2, см. §20)**;
@@ -1466,6 +1468,85 @@ make proto                                     # перегенерация send
     Integration-тест `TestClickHouse_GetByID_Deterministic`
     ([tests/integration/clickhouse_test.go](../tests/integration/clickhouse_test.go))
     проверяет контракт «два INSERT'а с одним ID → видим новейший».
+
+11. **Phase AUD (аудит 2026-06): семантика остановки и ожиданий.**
+    - `chlog.Writer.Stop` обязан **дренировать канал** `w.ch` после `wg.Wait()`:
+      воркеры выходят по `stopCh` через select без приоритета веток, и оставшиеся
+      в канале job'ы иначе молча теряются. Финальный flush идёт со **свежим**
+      `context.WithTimeout(Background, 10s)` — ctx вызывающего к этому моменту
+      может быть почти исчерпан (15s budget из sender/app.go). Тест:
+      `TestWriter_Stop_DrainsPendingJobs` ([writer_test.go](../internal/sender/adapter/out/chlog/writer_test.go)).
+      **fallback-горутина запускается через `fallbackStore.Start()`** — `wg.Add(1)`
+      делается СИНХРОННО до старта горутины. Если `Add` внутри самой горутины (как было),
+      он гонится с `Wait()` в `Stop()` — data race на `WaitGroup`. Грабли: первый же
+      тест с включённым fallback (`t.TempDir()`) обнажил эту предсуществующую гонку,
+      а `go test -short` без `-race` её не видел → CI-job `go-test` (с `-race`) упал
+      после merge. Урок: после правок с конкурентностью прогонять `-race`.
+    - Ожидание paused-узла в `AsyncProcessor.Handle` — `select(ctx.Done, time.After)`,
+      не `time.Sleep`: иначе shutdown Sender'а висит до 30с на каждом paused-сообщении,
+      а backlog из них полностью блокирует partition. Тест:
+      `TestAsync_NodePaused_CtxCancelInterruptsWait`.
+    - **Circuit breaker — single-probe через Lua** ([circuitbreaker/redis.go](../internal/platform/circuitbreaker/redis.go)):
+      переход open→half_open и выдача пробного атомарны (`allowProbeScript`),
+      в half_open проходит ровно один запрос (HINCRBY probe == 1), остальные
+      отбрасываются до RecordSuccess/Failure. Раньше half_open пропускал ВЕСЬ
+      трафик, а переход был TOCTOU-гонкой. Если результат пробного не записан
+      (крэш процесса) — ключ самоочищается TTL 10 мин. Тесты:
+      `TestCircuitBreaker_HalfOpen_SingleProbe`, `_ProbeFailureReopens`.
+    - **Shutdown-гигиена фоновых горутин** (Phase AUD.3): все фоновые горутины
+      App-уровня (reload-subscriber, housekeeping, kafka-lag reporter,
+      notification scheduler) запускаются через `safego.Go` (возвращает
+      done-канал) и ожидаются в `Stop()` через `safego.Await` с таймаутом 10s —
+      **до** закрытия pg/redis/CH-соединений. Иначе callbacks reload'а могли
+      бежать параллельно с закрытием пулов. goleak (`TestMain` +
+      `goleak.VerifyTestMain`) включён в пакетах `chlog`, `sender/usecase`,
+      `web/usecase`, `receiver/usecase` — регрессия утечки валит весь пакет.
+    - **Web security (Phase AUD.4):**
+      - анти-брутфорс `/api/auth/login` — `AuthUsecase.WithLoginRateLimit`
+        ([auth.go](../internal/web/usecase/auth.go)): две независимые квоты
+        (`login:ip:<ip>` и `login:user:<login>`) через общий Redis-лимитер,
+        конфиг `web.login_rate_limit_per_min` (дефолт 10, -1 = выключить),
+        429 + audit `user.login.failed{reason:rate_limited}`; fail-open при
+        сбое Redis (§9.4);
+      - CSRF Origin-check ([security_middleware.go](../internal/web/adapter/in/http/security_middleware.go))
+        на группе `/api/*`: мутации с чужим/`null` Origin → 403; Bearer-токены
+        и запросы без Origin (curl) пропускаются; reverse-proxy `/api/v1/*`
+        не затрагивается. Дополнение к SameSite-cookie, не замена;
+      - security-заголовки `SecurityHeaders()`: CSP (self + Google Fonts +
+        'unsafe-inline' для style), nosniff, X-Frame-Options DENY,
+        Referrer-Policy. CSP пропускается для `/swagger/*` (inline-скрипт
+        конфигурации Swagger UI);
+      - warning при старте, если `session_cookie_samesite=none` без `secure`.
+    - **Phase AUD.5:**
+      - `trusted_proxies` (receiver/web) — `gin.SetTrustedProxies`: X-Forwarded-For
+        принимается только от перечисленных CIDR (дефолт loopback + приватные
+        сети, см. `defaultTrustedProxies` в [config/defaults.go](../internal/platform/config/defaults.go)) —
+        внешний клиент больше не подделывает IP в аудите/логах;
+      - `SessionRepo.Touch` принимает `*domain.Session` и пересохраняет её
+        целиком (один SET вместо EXPIRE) — `LastSeenAt` теперь реально
+        обновляется на каждый запрос (раньше замораживался на логине);
+      - креды узлов в Redis-кеше шифруются тем же AES-256-GCM
+        ([nodecache/reader.go](../internal/receiver/adapter/out/nodecache/reader.go)):
+        раньше расшифрованный Node маршалился в кеш целиком и plaintext-креды
+        лежали в Redis открытыми. Старые plaintext-записи кеша не проходят
+        Decrypt и трактуются как cache-miss (перечитываются из PG).
+    - **Phase AUD.8 (мелочи):** fallback-файл, который не удалось удалить после
+      успешного рестора (Windows-lock), переименовывается в `.done` — иначе
+      следующий тик вставлял батч в CH повторно (дубликаты). Метрика
+      `nexus_ratelimit_check_errors_total{scope}` (через `ratelimit.WithErrorSink`,
+      реализуется `metrics.Metrics`) — единственный сигнал, что fail-open
+      лимиты фактически отключены из-за лежащего Redis; алертить при росте.
+      UI: единый `<ErrorAlert>` (components/ui), sticky-заголовки таблиц
+      Users/ApiTokens, клиентская валидация формы узла
+      ([lib/nodeValidation.ts](../web-ui/src/lib/nodeValidation.ts) — зеркало
+      `domain.Node.Validate` с теми же i18n-кодами; при изменении лимитов
+      backend'а синхронизировать оба места).
+    - **nodecache write-back** ([nodecache/reader.go](../internal/receiver/adapter/out/nodecache/reader.go)):
+      горутина write-back обёрнута в `safego.Recover` и дедуплицируется по ключу
+      (`inflight sync.Map`) — медленный Redis больше не порождает тысячи горутин
+      при 500 rps. `isRedisUnavailable` стал реальным детектором (net.Error/
+      ErrClosed/deadline) — warn «redis read failed» теперь действительно пишется
+      для не-сетевых ошибок (раньше ветка была мёртвой: `err != nil` всегда true).
 
 ---
 

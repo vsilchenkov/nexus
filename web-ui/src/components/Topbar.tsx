@@ -49,9 +49,17 @@ export function Topbar() {
     enabled: loc.pathname !== "/login",
   });
 
+  // team-независимые query-ключи: их перезагрузка при смене команды не
+  // нужна (Phase AUD.7) — остальное инвалидируется (nodes/logs/audit/
+  // metrics/tokens/teams и пр. живут в scope текущей команды). "me"/"me-teams"
+  // НЕ в списке: они несут current_team_id и обязаны перечитаться.
+  const TEAM_INDEPENDENT_KEYS = new Set(["settings-public", "version", "users-all"]);
   const switchTeam = useMutation({
     mutationFn: (team_id: string) => api.post("/api/me/switch-team", { team_id }),
-    onSuccess: () => qc.invalidateQueries(),
+    onSuccess: () =>
+      qc.invalidateQueries({
+        predicate: (q) => !TEAM_INDEPENDENT_KEYS.has(String(q.queryKey[0])),
+      }),
   });
 
   function toggleLang() {
@@ -70,6 +78,9 @@ export function Topbar() {
     } catch {
       // Локальный logout завершаем в любом случае.
     }
+    // Сброс кеша: следующий логин (другой пользователь/команда) не должен
+    // видеть данные предыдущей сессии (Phase AUD.6).
+    qc.clear();
     navigate("/login");
   }
 

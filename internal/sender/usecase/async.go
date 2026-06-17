@@ -116,8 +116,12 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 	if node.Status == domain.NodeStatusPaused {
 		// §3.6: «Sender-consumer пропускает сообщения для paused-узлов,
 		// переоткладывает обработку через delayed-redelivery либо
-		// не коммитит offset».
-		time.Sleep(p.pausedRetryAfter)
+		// не коммитит offset». Ожидание прерываемо ctx: при shutdown
+		// воркер не должен висеть до pausedRetryAfter на каждом сообщении.
+		select {
+		case <-ctx.Done():
+		case <-time.After(p.pausedRetryAfter):
+		}
 		return HandleRetry
 	}
 

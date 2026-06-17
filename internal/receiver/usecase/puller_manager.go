@@ -157,9 +157,13 @@ func (mgr *PullerManager) stopAll() {
 
 	done := make(chan struct{})
 	go func() { mgr.wg.Wait(); close(done) }()
+	// Таймаут ГЛОБАЛЬНЫЙ на все воркеры сразу, не per-worker: воркеры
+	// останавливаются параллельно, каждому хватает rmqBatchTimeout на
+	// добивание текущего батча, +2s — запас на nack/закрытие каналов.
 	select {
 	case <-done:
 	case <-time.After(rmqBatchTimeout + 2*time.Second):
-		mgr.logger.Warn("puller: graceful stop timed out, some workers may not have finished")
+		mgr.logger.Warn("puller: graceful stop timed out (global budget, not per-worker), some workers may not have finished",
+			mgr.logger.Int("budget_sec", int((rmqBatchTimeout+2*time.Second).Seconds())))
 	}
 }

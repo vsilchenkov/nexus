@@ -182,7 +182,12 @@ type ReceiverSection struct {
 	// MaxHops — лимит переходов запроса через шину (§32). Служебный заголовок
 	// X-Nexus-Hops инкрементится на каждом проходе; при достижении лимита
 	// запрос отклоняется (508 Loop Detected). 0 → дефолт 5; < 0 → защита выключена.
-	MaxHops        int                      `yaml:"max_hops"`
+	MaxHops int `yaml:"max_hops"`
+	// TrustedProxies — CIDR/IP, от которых принимается X-Forwarded-For
+	// (Phase AUD.5): иначе любой клиент подделывает IP в логах/аудите.
+	// Пустой список → дефолт: loopback + приватные сети (RFC1918/ULA) —
+	// покрывает docker-compose (Web-proxy → Receiver). ["*"] не поддерживается.
+	TrustedProxies []string                 `yaml:"trusted_proxies"`
 	SenderGRPC     ReceiverSenderGRPCConfig `yaml:"sender_grpc"`
 	SwaggerEnabled bool                     `yaml:"swagger_enabled"`
 	L2Cache        ReceiverL2CacheConfig    `yaml:"l2_cache"`
@@ -244,7 +249,13 @@ type WebSection struct {
 	NodesHardLimit               int    `yaml:"nodes_hard_limit"`
 	APITokenRateLimitPerMin      int    `yaml:"api_token_rate_limit_per_min"`
 	RMQTestRateLimitPerMin       int    `yaml:"rmq_test_rate_limit_per_min"` // §27.8: лимит POST /api/nodes/test-rmq на пользователя
-	SwaggerEnabled               bool   `yaml:"swagger_enabled"`
+	// LoginRateLimitPerMin — анти-брутфорс /api/auth/login (Phase AUD.4):
+	// столько попыток в минуту на IP и отдельно на login. -1 = выключить.
+	LoginRateLimitPerMin int `yaml:"login_rate_limit_per_min"`
+	// TrustedProxies — CIDR/IP, от которых принимается X-Forwarded-For
+	// (Phase AUD.5). Пустой список → дефолт: loopback + приватные сети.
+	TrustedProxies []string `yaml:"trusted_proxies"`
+	SwaggerEnabled bool     `yaml:"swagger_enabled"`
 	// ReceiverURL — base URL Receiver Service (e.g. "http://receiver:8080").
 	// Используется для replay-запросов (§7.4.1): Web отправляет реплай через
 	// реальный pipeline Receiver, а не через bypass.

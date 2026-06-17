@@ -18,8 +18,25 @@ import (
 //
 // Должен быть в начале цепочки middleware, до Recovery и логгера, чтобы
 // захватить весь жизненный цикл запроса (включая panic).
+// infraPaths — инфра-эндпоинты, которые НЕ оборачиваем в Sentry-транзакцию:
+// скрейпы Prometheus (/metrics каждые ~15с × 3 сервиса) и docker-healthcheck
+// (/health) иначе заваливают Sentry бесполезными транзакциями. Зеркалит
+// пропуск в metrics.GinMiddleware ("чтобы не зашумлять данные").
+func skipSentry(fullPath string) bool {
+	switch fullPath {
+	case "", "/metrics", "/health", "/ready":
+		return true
+	}
+	return false
+}
+
 func GinMiddleware(service string) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if skipSentry(c.FullPath()) {
+			c.Next()
+			return
+		}
+
 		hub := sentry.CurrentHub().Clone()
 		ctx := sentry.SetHubOnContext(c.Request.Context(), hub)
 

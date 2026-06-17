@@ -173,12 +173,17 @@ func (r *TeamRepoPg) UpdateMemberRole(ctx context.Context, userID, teamID string
 	return nil
 }
 
+// ListMembers — участники команды с обогащением login/email из users
+// (JOIN). Раньше отдавался только user_id, и UI показывал сырой UUID для
+// пользователей, которых нет в текущей (team-scoped) выборке /api/users.
+// INNER JOIN: висячих membership без users быть не может (FK на user_teams).
 func (r *TeamRepoPg) ListMembers(ctx context.Context, teamID string) ([]*domain.TeamMember, error) {
 	rows, err := r.pool.Query(ctx, `
-SELECT user_id, team_id, role, created_at
-FROM user_teams
-WHERE team_id = $1::uuid
-ORDER BY created_at`, teamID)
+SELECT ut.user_id, ut.team_id, u.login, COALESCE(u.email, ''), ut.role, ut.created_at
+FROM user_teams ut
+JOIN users u ON u.id = ut.user_id
+WHERE ut.team_id = $1::uuid
+ORDER BY ut.created_at`, teamID)
 	if err != nil {
 		return nil, fmt.Errorf("list team members: %w", err)
 	}
@@ -187,7 +192,7 @@ ORDER BY created_at`, teamID)
 	for rows.Next() {
 		var m domain.TeamMember
 		var role string
-		if err := rows.Scan(&m.UserID, &m.TeamID, &role, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.UserID, &m.TeamID, &m.Login, &m.Email, &role, &m.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan team member: %w", err)
 		}
 		m.Role = domain.TeamRole(role)

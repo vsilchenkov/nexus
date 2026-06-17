@@ -77,6 +77,7 @@ type changeOwnPasswordRequest struct {
 // @Failure  400   {object}  ErrorResponse
 // @Failure  401   {object}  ErrorResponse  "invalid credentials"
 // @Failure  403   {object}  ErrorResponse  "user inactive"
+// @Failure  429   {object}  ErrorResponse  "too many login attempts"
 // @Router   /api/auth/login [post]
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req loginRequest
@@ -88,6 +89,8 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	if err != nil {
 		lang := i18n.FromGin(c)
 		switch {
+		case errors.Is(err, usecase.ErrLoginRateLimited):
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": i18n.Translate(lang, "auth.rate_limited")})
 		case errors.Is(err, domain.ErrUnauthorized):
 			c.JSON(http.StatusUnauthorized, gin.H{"error": i18n.Translate(lang, "auth.invalid_credentials")})
 		case errors.Is(err, domain.ErrUserInactive):

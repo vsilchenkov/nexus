@@ -68,6 +68,13 @@ type App struct {
 
 	srv          *http.Server
 	otelShutdown otelpf.ShutdownFunc
+
+	// done-каналы фоновых горутин — Stop дожидается их завершения
+	// (Phase AUD.3): callbacks reload'а/housekeeping не должны бежать
+	// параллельно с закрытием pg/redis/CH-соединений.
+	notifDone        <-chan struct{}
+	reloadDone       <-chan struct{}
+	housekeepingDone <-chan struct{}
 }
 
 func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, ch chdriver.Conn, cipher *crypto.Cipher, otelShutdown otelpf.ShutdownFunc, logger logging.Logger) *App {
@@ -86,6 +93,11 @@ func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, ch chdrive
 func (a *App) Start(ctx context.Context) error {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
+	// Phase AUD.5: X-Forwarded-For доверяем только перечисленным прокси
+	// (дефолт — loopback + приватные сети), иначе клиент подделывает IP в аудите.
+	if err := r.SetTrustedProxies(a.cfg.Web.TrustedProxies); err != nil {
+		return fmt.Errorf("web trusted_proxies: %w", err)
+	}
 	r.Use(
 		requestid.GinMiddleware(),
 		otelpf.GinMiddleware("web"),
@@ -93,7 +105,15 @@ func (a *App) Start(ctx context.Context) error {
 		recoverypf.GinMiddleware(a.logger),
 		metrics.GinMiddleware(a.metrics),
 		i18n.GinMiddleware(),
+		httpadapter.SecurityHeaders(), // Phase AUD.4: CSP/nosniff/frame-deny
 	)
+
+	// Phase AUD.4: cookie без Secure при SameSite=None бесполезна и опасна —
+	// браузеры такие куки отбрасывают, а CSRF-защита SameSite исчезает.
+	if strings.EqualFold(a.cfg.Web.SessionCookieSamesite, "none") && !a.cfg.Web.SessionCookieSecure {
+		a.logger.Warn("web.session_cookie_samesite=none без session_cookie_secure=true — " +
+			"куки будут отброшены браузером; включите secure или верните samesite=strict")
+	}
 
 	hc := healthcheck.New(
 		[]healthcheck.Checker{
@@ -229,7 +249,10 @@ func (a *App) Start(ctx context.Context) error {
 	dryRunUC := usecase.NewDryRunUsecase(auditUC, a.logger)
 	dryRunHandler := httpadapter.NewDryRunHandler(dryRunUC, a.logger)
 
-	rl := ratelimit.New(a.redis)
+	rl := ratelimit.New(a.redis, ratelimit.WithErrorSink(a.metrics))
+	// Анти-брутфорс /api/auth/login (Phase AUD.4): лимит попыток на IP и
+	// на login через общий Redis-лимитер; fail-open при сбое Redis (§9.4).
+	authUC.WithLoginRateLimit(rl, a.cfg.Web.LoginRateLimitPerMin)
 
 	// §27.8: проверка подключения к RabbitMQ (диагностический AMQP-handshake,
 	// rate-limit на пользователя через общий Redis-лимитер).
@@ -309,17 +332,15 @@ func (a *App) Start(ctx context.Context) error {
 			notifScheduler.Reschedule(ctx)
 			return nil
 		})
-		go func() {
-			defer safego.Recover(a.logger, "web.notificationScheduler")
+		a.notifDone = safego.Go(a.logger, "web.notificationScheduler", func() {
 			notifScheduler.Run(ctx)
-		}()
+		})
 	} else {
 		a.logger.Warn("telegram notifications disabled: prometheus not configured (§22)")
 	}
-	go func() {
-		defer safego.Recover(a.logger, "web.reloadSubscriber")
+	a.reloadDone = safego.Go(a.logger, "web.reloadSubscriber", func() {
 		reloadSub.Run(ctx)
-	}()
+	})
 
 	// Метрики панели (§21): единый источник — Prometheus (KPI/очередь/throughput
 	// и per-node KPI/график). Источник опционален — usecase деградирует
@@ -346,6 +367,7 @@ func (a *App) Start(ctx context.Context) error {
 		RequireAdmin:   httpadapter.RequireMinRole(domain.UserRoleAdmin),
 		RequireManager: httpadapter.RequireMinRole(domain.UserRoleManager),
 		KafkaRateLimit: httpadapter.KafkaRateLimitMiddleware(rl, a.cfg.Web.KafkaMonitorRateLimitPerMin),
+		CSRFCheck:      httpadapter.CSRFOriginCheck(a.logger),
 	}
 	httpadapter.RegisterAPI(r, httpadapter.Handlers{
 		Auth:          authHandler,
@@ -379,10 +401,9 @@ func (a *App) Start(ctx context.Context) error {
 
 	// Housekeeping cron: ежедневное удаление старых audit-записей (§7.13).
 	hk := usecase.NewHousekeeping(auditUC, a.cfg.Web.AuditRetentionDays, a.logger)
-	go func() {
-		defer safego.Recover(a.logger, "web.housekeeping")
+	a.housekeepingDone = safego.Go(a.logger, "web.housekeeping", func() {
 		hk.Run(ctx)
-	}()
+	})
 
 	a.srv = &http.Server{
 		Addr:              a.cfg.Web.HTTPAddr,
@@ -420,6 +441,13 @@ func (a *App) Stop(ctx context.Context) error {
 	if err := a.srv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("web shutdown: %w", err)
 	}
+	// Дожидаемся фоновых горутин до закрытия соединений (runner уже отменил
+	// их ctx): callbacks reload'а трогают pg/CH, housekeeping — pg.
+	awaitCtx, awaitCancel := context.WithTimeout(ctx, 10*time.Second)
+	safego.Await(awaitCtx, a.notifDone, a.logger, "web.notificationScheduler")
+	safego.Await(awaitCtx, a.reloadDone, a.logger, "web.reloadSubscriber")
+	safego.Await(awaitCtx, a.housekeepingDone, a.logger, "web.housekeeping")
+	awaitCancel()
 	if a.chMgr != nil {
 		closeCtx, cancelClose := context.WithTimeout(ctx, 5*time.Second)
 		_ = a.chMgr.Close(closeCtx)

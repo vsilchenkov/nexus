@@ -17,6 +17,7 @@ import (
 
 	"nexus/internal/domain"
 	"nexus/internal/platform/logging"
+	"nexus/internal/platform/safego"
 )
 
 // fallbackStore — пишет проваленный батч ClickHouse в NDJSON-файл
@@ -117,15 +118,24 @@ func (s *fallbackStore) Save(table string, batch []*domain.LogRecord) (string, e
 // Возвращает nil при успехе, ошибку при провале (тогда файл остаётся).
 type Replayer func(ctx context.Context, table string, batch []*domain.LogRecord) error
 
-// Run запускает фоновый цикл рестора. Завершается при ctx.Done или Stop.
-// Если store отключён — возвращается сразу.
-func (s *fallbackStore) Run(ctx context.Context, replay Replayer) {
+// Start запускает фоновый цикл рестора в отдельной горутине. wg.Add(1)
+// выполняется СИНХРОННО здесь, до старта горутины — иначе Add гонится с
+// Wait() в Stop() (data race на WaitGroup, ловится -race). Если store
+// отключён — no-op. Вызывается один раз владельцем (chlog.Writer).
+func (s *fallbackStore) Start(replay Replayer) {
 	if !s.Enabled() {
 		return
 	}
 	s.wg.Add(1)
-	defer s.wg.Done()
+	go func() {
+		defer s.wg.Done()
+		defer safego.Recover(s.logger, "sender.chlogFallback")
+		s.run(context.Background(), replay)
+	}()
+}
 
+// run — фоновый цикл рестора. Завершается при ctx.Done или Stop.
+func (s *fallbackStore) run(ctx context.Context, replay Replayer) {
 	tick := time.NewTicker(s.interval)
 	defer tick.Stop()
 
@@ -180,7 +190,17 @@ func (s *fallbackStore) restoreFile(ctx context.Context, path string, replay Rep
 		}
 	}
 	// Файл закрыт в readFallbackFile; на Windows нельзя удалить открытый файл.
-	return os.Remove(path)
+	if err := os.Remove(path); err != nil {
+		// Батч уже в ClickHouse — если оставить файл, следующий тик вставит
+		// его повторно (дубликаты). Помечаем как обработанный rename'ом:
+		// суффикс .done выводит файл из выборки tryRestoreOnce (*.ndjson).
+		if rerr := os.Rename(path, path+".done"); rerr != nil {
+			return fmt.Errorf("remove: %w (rename fallback failed too: %v)", err, rerr)
+		}
+		s.logger.Warn("fallback file could not be removed; renamed to .done",
+			s.logger.Str("file", path), s.logger.Err(err))
+	}
+	return nil
 }
 
 func readFallbackFile(path string) (map[string][]*domain.LogRecord, error) {

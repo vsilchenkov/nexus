@@ -38,9 +38,16 @@ func (r TeamRole) Valid() bool {
 }
 
 // TeamMember — запись о членстве пользователя в команде (user_teams).
+//
+// Login и Email — обогащение из users при чтении (ListMembers) для UI
+// «Участники команды»: иначе фронт резолвил бы user_id→login из team-scoped
+// списка пользователей и для не-членов текущей команды показывал сырой UUID.
+// Membership-операции (AddMember/UpdateMemberRole) эти поля не используют.
 type TeamMember struct {
 	UserID    string
 	TeamID    string
+	Login     string
+	Email     string
 	Role      TeamRole
 	CreatedAt time.Time
 }

@@ -47,12 +47,12 @@ func (u *UserUsecase) Get(ctx context.Context, id string) (*domain.User, error) 
 	return u.users.Get(ctx, id)
 }
 
-// List возвращает пользователей текущей команды. Пустой f.TeamID →
-// defaultTeamID (fallback для CLI/legacy).
+// List возвращает пользователей. По умолчанию (пустой f.TeamID) список
+// глобальный: пользователь — глобальная сущность, членство в командах —
+// отдельная ось (§18). Непустой f.TeamID — опциональный фильтр по команде
+// (repo добавит JOIN user_teams). /api/users — admin-only, поэтому глобальный
+// список видит только глобальный админ.
 func (u *UserUsecase) List(ctx context.Context, f port.ListUsersFilter) ([]*domain.User, error) {
-	if f.TeamID == "" {
-		f.TeamID = u.defaultTeamID
-	}
 	return u.users.List(ctx, f)
 }
 

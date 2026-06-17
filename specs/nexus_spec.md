@@ -1703,6 +1703,8 @@ s.logger.ErrorWithOp("kafka publish failed", err, "sender.publishAsync",
 
 **Теги для транзакций:** `service` (`receiver` / `sender` / `web`), `node` (имя узла), `root_method` (`request` / `requestAsync`), `release` (версия из `BuildConfig`).
 
+**Инфра-эндпоинты не трассируются.** Запросы к `/metrics` (скрейп Prometheus каждые ~15с × 3 сервиса), `/health` и `/ready` (docker-healthcheck) **не** оборачиваются в Sentry-транзакцию — иначе Sentry заваливается бесполезными транзакциями скрейпов. Пропуск зашит в Sentry `GinMiddleware` (`skipSentry`) и зеркалит такой же пропуск в Prometheus-`metrics.GinMiddleware`. Паники на этих путях всё равно ловит recovery-middleware.
+
 ### 14.4 Настройки Sentry в Web UI (Settings → Sentry)
 
 Раздел `Sentry` в боковой навигации настроек (см. §7.7) позволяет менять параметры отправки ошибок и performance-трассировок без рестарта сервиса:
@@ -2479,7 +2481,7 @@ Multi-tenancy реализована в v2 (фазы Phase 10 + Phase 11). В v1
   - **nodes** — Create/Get/Update/Delete/List; cross-team → 404.
   - **logs / replay / dry-run** — узел чужой команды → 404.
   - **api_tokens** — токен наследует `current_team_id` создателя.
-  - **users** — список и создание ограничены участниками команды (`user_teams`); создание добавляет membership.
+  - **users** — **список глобальный** (все пользователи, admin-only): в отличие от прочих ресурсов, пользователь — глобальная сущность, а членство в командах — отдельная ось (Teams → Members). **Создание** по-прежнему добавляет membership в текущую команду (новый юзер сразу функционален). Изменено относительно Phase 11.A, где **список** скоупился по `user_teams`.
   - **audit** — `user_audit.team_id` заполняется из сессии; по умолчанию admin видит журнал своей команды (`?team_id=*` — глобально).
 
 ### 18.4 Receiver: URL с team_slug

@@ -145,6 +145,30 @@ func TestAsync_NodePaused_Retry(t *testing.T) {
 	assert.Equal(t, HandleRetry, got, "paused-узел → не коммитим offset, sleep+retry (§3.6)")
 }
 
+func TestAsync_NodePaused_CtxCancelInterruptsWait(t *testing.T) {
+	t.Parallel()
+
+	node := &domain.Node{
+		Path:   "partner/echo",
+		Status: domain.NodeStatusPaused,
+	}
+	p := newAsyncProcessorForTest(t,
+		&stubAsyncNodeReader{node: node},
+		nil, nil,
+		&stubDLQProducer{},
+	)
+	p.pausedRetryAfter = 10 * time.Second // долгое ожидание — прервём ctx'ом
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	start := time.Now()
+	got := p.Handle(ctx, makeEnvelope(t, "partner/echo"), nil)
+	assert.Equal(t, HandleRetry, got)
+	assert.Less(t, time.Since(start), 2*time.Second,
+		"отмена ctx (shutdown) должна прерывать ожидание paused-узла, а не висеть pausedRetryAfter")
+}
+
 func TestAsync_Enabled_2xx_Ack(t *testing.T) {
 	t.Parallel()
 

@@ -476,6 +476,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
+                    },
+                    "429": {
+                        "description": "too many login attempts",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
                     }
                 }
             }
@@ -5095,6 +5101,12 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "created_at": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "login": {
                     "type": "string"
                 },
                 "role": {

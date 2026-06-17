@@ -457,6 +457,7 @@
     "page_size": "Размер страницы",
     "live_on": "Live ▶",
     "live_off": "Live ⏸",
+    "live_lost": "Live-поток потерян — включите заново для переподключения",
     "new_records": "{{n}} новых",
     "advanced": {
       "toggle_on": "Расширенные фильтры ▾",

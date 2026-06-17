@@ -24,6 +24,6 @@ type RMQHealth struct {
 	QueueDepth    int64        `json:"queue_depth"`
 	ConsumerCount int64        `json:"consumer_count"`
 	Attempts      int64        `json:"attempts"`
-	Since         time.Time    `json:"since,omitempty"`
+	Since         time.Time    `json:"since"`
 	UpdatedAt     time.Time    `json:"updated_at"`
 }

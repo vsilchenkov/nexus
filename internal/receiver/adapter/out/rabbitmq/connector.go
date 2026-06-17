@@ -79,7 +79,7 @@ func (c *consumer) GetBatch(_ context.Context, max int) ([]usecase.RMQDelivery, 
 	// вызов. Отмену ctx обрабатывает воркер: pullOnce/handleDelivery делают
 	// nack(requeue) уже собранных сообщений при shutdown (graceful, §27.5).
 	out := make([]usecase.RMQDelivery, 0, max)
-	for i := 0; i < max; i++ {
+	for range max {
 		d, ok, err := c.ch.Get(c.queue, false) // autoAck=false → manual ack
 		if err != nil {
 			return out, fmt.Errorf("basic.get: %w", err)

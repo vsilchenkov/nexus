@@ -457,6 +457,7 @@
     "page_size": "Page size",
     "live_on": "Live ▶",
     "live_off": "Live ⏸",
+    "live_lost": "Live stream lost — re-enable to reconnect",
     "new_records": "{{n}} new",
     "advanced": {
       "toggle_on": "Advanced filters ▾",

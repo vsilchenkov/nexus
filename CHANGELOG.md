@@ -12,6 +12,48 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-06-17
+
+Релиз преимущественно из аудита надёжности/безопасности (ветка `fix/audit-2026-06`,
+блоки Phase AUD.1–AUD.8) плюс точечные правки Web/Sentry/loadtest.
+
+### Added
+
+- **Глобальный список пользователей** — эндпоинт `/api/users` выведен из-под team-scope:
+  пользователи видны и управляются глобально, а не в рамках одной команды.
+
+### Security — аудит 2026-06
+
+- **AUD.4 — web security.** Анти-брутфорс логина, проверка `Origin` для CSRF на
+  мутирующих запросах, набор security-заголовков в ответах Web Service.
+- **AUD.5.** Корректные trusted proxies (реальный клиентский IP за обратным прокси),
+  `LastSeenAt` обновляется в `Touch`, креды узлов шифруются и в Redis-кеше (а не только в PG).
+
+### Changed — аудит надёжности 2026-06
+
+- **AUD.1 — sender.** Прерываемое ожидание paused-узлов (реакция на shutdown без
+  залипания) + дренаж буфера ClickHouse-лога при `Stop`.
+- **AUD.2.** `nodecache` write-back под `recover`/дедупом; circuit breaker переведён на
+  single-probe half-open (одна пробная попытка вместо потока).
+- **AUD.3.** Shutdown-гигиена фоновых горутин через `safego.Go`/`Await`; покрытие `goleak`.
+- **AUD.6 — ui.** Устойчивый SSE live-tail (переподключение) + сброс query-кеша на
+  logout/401.
+- **AUD.7 — ui.** Клиентская валидация формы узла, NaN-guard, точечная инвалидация
+  кеша, сброс формы после сохранения.
+- **AUD.8.** UI-консистентность + мелочи backend: `.done`-маркер в file-fallback,
+  метрика срабатывания fail-open лимитов.
+- **chore.** `go fix` — модернизация идиом (range over int, loop var, `omitempty` на
+  `time.Time`); добавлен `docker-compose.override.yml` для локальной разработки.
+
+### Fixed
+
+- **teams.** Участники команды отображаются логином/email вместо сырого UUID.
+- **sentry.** Служебные трейсы `/metrics`, `/health`, `/ready` больше не отправляются в Sentry.
+- **loadtest.** Keep-alive пул соединений + дочитывание тела ответа (корректная переиспользуемость соединений).
+- **chlog.** Устранён data race на `WaitGroup` в file-fallback store (`Add` внутри горутины).
+
+## [1.0.3] - 2026-06-09
+
 ### Changed — деплой без сборки образов в CI
 
 - **Сборка Docker-образов в CI и публикация в GitLab Container Registry убраны.**
@@ -234,4 +276,7 @@
 
 ---
 
-[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/HEAD
+[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.1.0...HEAD
+[1.1.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.0.3...v1.1.0
+[1.0.3]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.0.1...v1.0.3
+[1.0.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.0.0...v1.0.1

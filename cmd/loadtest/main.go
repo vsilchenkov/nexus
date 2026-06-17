@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/rand"
 	"net"
@@ -150,8 +151,17 @@ func main() {
 	fmt.Printf("mock server: listen=%s target=%s\n", mock.URL, targetURL)
 
 	ctx := context.Background()
+	// Keep-alive-пул: при 200 воркерах дефолтный Transport (MaxIdleConnsPerHost=2)
+	// не переиспользует соединения → шквал новых TCP → исчерпание эфемерных
+	// портов (особенно на Windows: ~16k портов, TIME_WAIT 120с). Явный Transport
+	// с большим пулом держит соединения открытыми. Тело ответа в doRequest
+	// дочитывается до EOF перед Close — иначе соединение не вернётся в пул.
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.MaxIdleConns = 1024
+	tr.MaxIdleConnsPerHost = 1024
+	tr.IdleConnTimeout = 90 * time.Second
 	client := &client{baseWeb: f.WebURL, baseRecv: f.ReceiverURL,
-		hc: &http.Client{Timeout: 30 * time.Second}}
+		hc: &http.Client{Timeout: 30 * time.Second, Transport: tr}}
 
 	if err := client.login(ctx, f.AdminLogin, f.AdminPass); err != nil {
 		fail("login: %v", err)
@@ -523,6 +533,9 @@ func doRequest(c *client, nodes []node, f flags, res *result) {
 	d := time.Since(t0)
 	errored := err != nil || (resp != nil && resp.StatusCode >= 400)
 	if resp != nil {
+		// Дочитываем тело до EOF перед Close — обязательное условие
+		// возврата соединения в keep-alive-пул (иначе churn соединений).
+		_, _ = io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 	}
 	res.add(d, errored, n.mode)

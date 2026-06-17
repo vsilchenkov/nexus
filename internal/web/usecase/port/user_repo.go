@@ -9,9 +9,10 @@ import (
 
 // ListUsersFilter — фильтры списка пользователей.
 //
-// TeamID — multi-tenancy v2 scope (Phase 11.A): список ограничивается
-// участниками команды через user_teams. Пустая строка = без фильтра по
-// команде (CLI/legacy); UserUsecase подставляет defaultTeamID.
+// TeamID — опциональный фильтр по команде (multi-tenancy v2): непустое
+// значение ограничивает список участниками команды через JOIN user_teams
+// (см. UserRepoPg.List). Пустая строка = глобальный список всех пользователей
+// (дефолт для /api/users, §18; раньше Phase 11.A скоупила по команде).
 type ListUsersFilter struct {
 	TeamID string
 	Search string
@@ -36,7 +37,11 @@ type UserRepo interface {
 type SessionRepo interface {
 	Create(ctx context.Context, s *domain.Session, ttl time.Duration) error
 	Get(ctx context.Context, token string) (*domain.Session, error)
-	Touch(ctx context.Context, token string, ttl time.Duration) error
+	// Touch продлевает TTL и пересохраняет сессию целиком (s уже загружен
+	// вызывающим; LastSeenAt обновляет вызывающий). Phase AUD.5: раньше Touch
+	// делал только EXPIRE — LastSeenAt замораживался на моменте логина и
+	// аудит/диагностика активности сессий показывали неправду.
+	Touch(ctx context.Context, s *domain.Session, ttl time.Duration) error
 	Delete(ctx context.Context, token string) error
 	DeleteByUser(ctx context.Context, userID string) (int, error)
 }

@@ -20,6 +20,8 @@ type Team = {
 type TeamMember = {
   user_id: string;
   team_id: string;
+  login: string;
+  email?: string;
   role: "owner" | "admin" | "member";
   created_at: string;
 };
@@ -329,8 +331,6 @@ function MembersDialog({ team, onClose }: MembersDialogProps) {
   const memberIDs = new Set((members.data?.items ?? []).map((m) => m.user_id));
   const candidates = (users.data?.items ?? []).filter((u) => !memberIDs.has(u.id));
 
-  const loginByID = new Map((users.data?.items ?? []).map((u) => [u.id, u.login]));
-
   return (
     <Modal onClose={onClose}>
       <div className="space-y-4 w-[520px] max-w-full">
@@ -404,8 +404,11 @@ function MembersDialog({ team, onClose }: MembersDialogProps) {
             <tbody>
               {members.data.items.map((m) => (
                 <tr key={m.user_id} className="border-t border-bg-muted">
-                  <td className="px-3 py-2 font-mono text-xs">
-                    {loginByID.get(m.user_id) ?? m.user_id}
+                  <td className="px-3 py-2">
+                    <div className="font-mono text-xs">{m.login || m.user_id}</div>
+                    {m.email && (
+                      <div className="text-fg-muted text-[11px]">{m.email}</div>
+                    )}
                   </td>
                   <td className="px-3 py-2">
                     <select
