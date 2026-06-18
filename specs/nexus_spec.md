@@ -3186,3 +3186,31 @@ Prometheus `NodeThroughput` для top-узлов. Все источники д�
 
 **Out of scope:** удаление сообщений Kafka-DLQ; глобальный AlterConfigs retention (на экране Kafka);
 удаление CH-записей неудач (разрушает историю).
+
+## 36. Авто-репроцессор DLQ (повторная доставка неудачных async-сообщений до TTL)
+
+Развивает §34.4/§35. Полный текст — [sections/36-dlq-reprocessor.md](sections/36-dlq-reprocessor.md).
+
+После §35 «неудачные доставки» терминальны (короткий retry → `done=false` в CH + копия в `nexus.async.dlq`
++ commit) — авто-переотправки при восстановлении приёмника нет. §36 добавляет фоновый процесс, аккуратно
+дочищающий DLQ.
+
+- **Модель:** периодический sweeper в Sender (как `ch_housekeeping`, через `safego.Go`), тик раз в
+  `reprocess_interval` (дефолт 5 мин). Отдельная consumer-группа на `nexus.async.dlq`. Тик = базовый backoff.
+- **Логика на сообщение:** резолв узла → tombstone(`qcancel`)→drop → TTL (`now-received_at >
+  dlq_ttl_seconds`)→терминальный `ttl_expired` → статус (disabled→drop, paused→republish, enabled→далее) →
+  circuit breaker открыт→republish без попытки → попытка `SendUsecase.Send`: `2xx`→commit (в CH `done=true`,
+  «восстановлено»), иначе→republish-в-хвост (attempts+1)+commit. Republish прекращается на успех/TTL.
+- **Настройки:** per-node `dlq_ttl_seconds` (дефолт 86400=24ч, диапазон [60, 2592000]) — миграция 0017 +
+  domain/PG/DTO/UI/i18n. Global: `reprocess_enabled` (true), `reprocess_interval` (5m), `reprocess_max_scan`
+  (1000). Задел: per-node `dlq_reprocess_enabled` тем же паттерном.
+- **UI:** поле «TTL неудачных доставок» (в часах) в форме узла; подсказка «повторяется автоматически до
+  TTL» во вкладке «Очередь»; ручной «Повторить» остаётся (форс-повтор).
+- **Метрики:** `nexus_dlq_reprocess_total{node,result}`.
+
+**Неочевидности:** DLQ нельзя физически чистить → «удаление» успеха = commit без republish; TTL от
+`received_at` (предсказуемый суммарный срок); дубли в CH — observability, не баг; отдельная группа не
+конкурирует с §35-peek/основным consumer'ом.
+
+**Out of scope (v2):** экспоненциальный per-message backoff; delay-топик; UI-дашборд репроцессинга;
+bulk-replay.
