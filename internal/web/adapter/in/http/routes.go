@@ -254,6 +254,11 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			aq.GET("/messages/body", h.AsyncQueue.Body)
 			aq.DELETE("/messages/:msgId", h.AsyncQueue.DeleteOne)
 			aq.POST("/purge", h.AsyncQueue.Purge)
+			// §34.6: просмотр DLQ (неудачные сообщения; read-only — физически
+			// чистить DLQ нельзя: нет DeleteRecords, общая партиция).
+			aq.GET("/dlq/depth", h.AsyncQueue.DLQDepth)
+			aq.GET("/dlq/messages", h.AsyncQueue.DLQList)
+			aq.GET("/dlq/messages/body", h.AsyncQueue.DLQBody)
 		}
 	}
 }

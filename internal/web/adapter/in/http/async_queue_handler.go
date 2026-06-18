@@ -73,6 +73,98 @@ func toQueueMessageDTO(m port.QueueMessageMeta) queueMessageDTO {
 	}
 }
 
+// dlqMessageDTO — сообщение DLQ: метаданные очереди + причина/время последней попытки.
+type dlqMessageDTO struct {
+	queueMessageDTO
+	Reason        string `json:"reason"`
+	LastAttemptAt string `json:"last_attempt_at"`
+}
+
+type dlqListDTO struct {
+	Items          []dlqMessageDTO `json:"items"`
+	Capped         bool            `json:"capped"`
+	KafkaAvailable bool            `json:"kafka_available"`
+}
+
+// DLQDepth godoc
+// @Summary  Число неудачных сообщений узла в DLQ (§34.6).
+// @Tags     async-queue
+// @Produce  json
+// @Param    id  path  string  true  "node id"
+// @Success  200  {object}  queueDepthDTO
+// @Failure  404  {object}  ErrorResponse
+// @Security CookieAuth
+// @Router   /api/nodes/{id}/async-queue/dlq/depth [get]
+func (h *AsyncQueueHandler) DLQDepth(c *gin.Context) {
+	r, err := h.uc.DLQDepth(c.Request.Context(), c.Param("id"), currentTeamID(c))
+	if err != nil {
+		h.queueError(c, err, "async_queue.dlq_depth")
+		return
+	}
+	c.JSON(http.StatusOK, queueDepthDTO{Count: r.Count, Capped: r.Capped, KafkaAvailable: r.KafkaAvailable})
+}
+
+// DLQList godoc
+// @Summary  Последние 50 неудачных сообщений узла из DLQ (§34.6).
+// @Description  С причиной (reason) и временем последней попытки. Тело — лениво через .../dlq/messages/body. Admin-only.
+// @Tags     async-queue
+// @Produce  json
+// @Param    id  path  string  true  "node id"
+// @Success  200  {object}  dlqListDTO
+// @Failure  404  {object}  ErrorResponse
+// @Security CookieAuth
+// @Router   /api/nodes/{id}/async-queue/dlq/messages [get]
+func (h *AsyncQueueHandler) DLQList(c *gin.Context) {
+	r, err := h.uc.DLQList(c.Request.Context(), c.Param("id"), currentTeamID(c))
+	if err != nil {
+		h.queueError(c, err, "async_queue.dlq_list")
+		return
+	}
+	items := make([]dlqMessageDTO, 0, len(r.Items))
+	for _, m := range r.Items {
+		items = append(items, dlqMessageDTO{
+			queueMessageDTO: toQueueMessageDTO(m.QueueMessageMeta),
+			Reason:          m.Reason,
+			LastAttemptAt:   m.LastAttemptAt,
+		})
+	}
+	c.JSON(http.StatusOK, dlqListDTO{Items: items, Capped: r.Capped, KafkaAvailable: r.KafkaAvailable})
+}
+
+// DLQBody godoc
+// @Summary  Тело одного сообщения DLQ (§34.6).
+// @Tags     async-queue
+// @Produce  json
+// @Param    id         path   string  true   "node id"
+// @Param    partition  query  int     true   "partition"
+// @Param    offset     query  int     true   "offset"
+// @Success  200  {object}  queueBodyDTO
+// @Failure  400  {object}  ErrorResponse
+// @Failure  503  {object}  ErrorResponse  "kafka unavailable"
+// @Security CookieAuth
+// @Router   /api/nodes/{id}/async-queue/dlq/messages/body [get]
+func (h *AsyncQueueHandler) DLQBody(c *gin.Context) {
+	offset, err := strconv.ParseInt(c.Query("offset"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "offset required (int)"})
+		return
+	}
+	partition, err := strconv.Atoi(c.Query("partition"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "partition required (int)"})
+		return
+	}
+	body, err := h.uc.DLQBody(c.Request.Context(), c.Param("id"), currentTeamID(c), partition, offset)
+	if err != nil {
+		h.queueError(c, err, "async_queue.dlq_body")
+		return
+	}
+	c.JSON(http.StatusOK, queueBodyDTO{
+		ID: body.ID, Method: body.Method, TargetURL: body.TargetURL,
+		Headers: body.Headers, Body: string(body.Body),
+	})
+}
+
 // Depth godoc
 // @Summary  Глубина async-очереди узла (§34.4).
 // @Description  Число неконсюмированных сообщений узла в nexus.async (peek напрямую из Kafka). capped=true → нижняя оценка. Admin-only.
