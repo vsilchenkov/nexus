@@ -44,7 +44,8 @@ SELECT
 	log_request_body, log_response_body, log_headers,
 	logging_enabled, max_body_size_enabled, max_body_size,
 	created_at, updated_at,
-	incoming_method, outgoing_method
+	incoming_method, outgoing_method,
+	dlq_ttl_seconds, dlq_retry_delay_seconds
 FROM nodes WHERE path = $1`
 
 // GetByPath возвращает актуальный конфиг узла. Использует sender'ом
@@ -71,6 +72,7 @@ func (r *Reader) GetByPath(ctx context.Context, path string) (*domain.Node, erro
 		&n.LoggingEnabled, &n.MaxBodySizeEnabled, &n.MaxBodySize,
 		&created, &updated,
 		&incomingMethod, &outgoingMethod,
+		&n.DLQTTLSeconds, &n.DLQRetryDelaySeconds,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

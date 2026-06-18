@@ -660,6 +660,14 @@ DLQ) тормозила, «Очистить» был no-op, шапка плох�
   поэтому коммит следующего сообщения «проглотил» бы offset несохранённого. Перечит — на rebalance/рестарте.
 - **Метрика `result=dropped`** добавлена сверх 4 меток ТЗ — для терминальных drop'ов (узел удалён/disabled/
   отменён), которые не `ttl_dropped` и не `skipped`.
+- **Новую колонку узла, нужную Sender'у, добавлять В ОБА ридера.** Sender читает узлы НЕ через web-репозиторий
+  [node_repo.go](../internal/web/adapter/out/postgres/node_repo.go), а через свой
+  [sender/adapter/out/nodepg/reader.go](../internal/sender/adapter/out/nodepg/reader.go) (`selectByPath`).
+  Грабли (поймано стендом + integration `TestSender_DLQReprocessor_E2E`): B1/B1.2 добавили `dlq_ttl_seconds`/
+  `dlq_retry_delay_seconds` только в web-репозиторий → sender-ридер возвращал `DLQTTLSeconds=0` → в репроцессоре
+  `ttl=0` → `now-received_at > 0` истинно всегда → **репроцессор отправлял ВСЁ в `ttl_dropped`, повторной
+  доставки не было**. Unit-тесты строят `domain.Node` напрямую с TTL и баг не ловили — нужен integration через
+  реальный `nodepg.Reader`.
 
 ---
 
