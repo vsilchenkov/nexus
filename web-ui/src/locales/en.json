@@ -384,6 +384,7 @@
       "comment_label": "Node description",
       "comment_hint": "internal note for your team; not visible to external clients",
       "comment_placeholder": "E.g., integration with system X, sends order events…",
+      "dlq_section": "DLQ auto-retry",
       "dlq_ttl_seconds": "Failed-delivery TTL (sec)",
       "dlq_retry_delay_seconds": "Retry delay for failed deliveries (sec)",
       "dlq_retry_delay_hint": "minimum wait before re-attempting a failed delivery; default 5 min",

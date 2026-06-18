@@ -69,7 +69,10 @@ export function TrafficChart({
     <div className={cn("flex w-full items-end gap-[3px]", className)} style={{ height }}>
       {data.map((d, i) => {
         const h = Math.max(2, Math.round((d.count / max) * height));
-        const errH = d.count > 0 ? Math.round((d.errors / d.count) * h) : 0;
+        // errors может оказаться > count (rate()/сброс счётчиков Prometheus, дубли
+        // записей) — клампим долю ошибок в [0, h], иначе столбец вылезает за
+        // контейнер вверх и наезжает на заголовок (баг «графики поехали»).
+        const errH = d.count > 0 ? Math.min(h, Math.max(0, Math.round((d.errors / d.count) * h))) : 0;
         const ok = h - errH;
         const errPct = d.count > 0 ? (d.errors / d.count) * 100 : 0;
         const delivered = Math.max(0, d.count - d.errors);

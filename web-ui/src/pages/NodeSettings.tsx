@@ -13,6 +13,7 @@ import {
   List,
   ShieldAlert,
   MessageSquare,
+  RefreshCw,
 } from "lucide-react";
 
 import { api, type Node, type CHTemplate, type HostAllowlistEntry } from "../api/client";
@@ -607,38 +608,6 @@ export default function NodeSettings() {
                   }
                 />
               </Field>
-              {/* §36: TTL авто-репроцессора DLQ (только для requestAsync) — в секундах,
-                  с подсказкой в часах. По истечении received_at+TTL репроцессор сдаётся. */}
-              <Field label={t("node.form.dlq_ttl_seconds")} className="mt-3">
-                <Input
-                  type="number"
-                  min={60}
-                  max={2592000}
-                  className={errCls("dlq_ttl_seconds")}
-                  value={form.dlq_ttl_seconds}
-                  onChange={(e) => set("dlq_ttl_seconds", parseNumInput(e.target.value, form.dlq_ttl_seconds))}
-                />
-                <div className="mt-1 text-xs text-fg-muted">
-                  ≈ {Math.round((form.dlq_ttl_seconds / 3600) * 10) / 10} {t("node.form.hours")}
-                </div>
-                {fieldErr("dlq_ttl_seconds")}
-              </Field>
-              {/* §36: минимальная пауза перед повторной доставкой ошибочной
-                  отправки (per-message backoff поверх интервала прохода). */}
-              <Field label={t("node.form.dlq_retry_delay_seconds")} className="mt-3">
-                <Input
-                  type="number"
-                  min={1}
-                  max={86400}
-                  className={errCls("dlq_retry_delay_seconds")}
-                  value={form.dlq_retry_delay_seconds}
-                  onChange={(e) =>
-                    set("dlq_retry_delay_seconds", parseNumInput(e.target.value, form.dlq_retry_delay_seconds))
-                  }
-                />
-                <div className="mt-1 text-xs text-fg-muted">{t("node.form.dlq_retry_delay_hint")}</div>
-                {fieldErr("dlq_retry_delay_seconds")}
-              </Field>
               <Field label={t("node.form.log_what")} className="mt-3">
                 <div className="flex flex-col gap-1.5 text-xs">
                   <label className="flex items-center gap-2">
@@ -688,6 +657,45 @@ export default function NodeSettings() {
               </div>
             </fieldset>
           </Card>
+
+          {/* §36: авто-репроцессор DLQ — ОТДЕЛЬНЫЙ блок (не логирование, не внутри
+              disabled-fieldset логирования). Только для async-узлов (у sync `request`
+              нет очереди/DLQ). TTL в секундах + подсказка в часах; задержка повтора. */}
+          {form.root_method !== "request" && (
+            <Card>
+              <SectionHead icon={<RefreshCw className="h-4 w-4" />}>
+                {t("node.form.dlq_section")}
+              </SectionHead>
+              <Field label={t("node.form.dlq_ttl_seconds")}>
+                <Input
+                  type="number"
+                  min={60}
+                  max={2592000}
+                  className={errCls("dlq_ttl_seconds")}
+                  value={form.dlq_ttl_seconds}
+                  onChange={(e) => set("dlq_ttl_seconds", parseNumInput(e.target.value, form.dlq_ttl_seconds))}
+                />
+                <div className="mt-1 text-xs text-fg-muted">
+                  ≈ {Math.round((form.dlq_ttl_seconds / 3600) * 10) / 10} {t("node.form.hours")}
+                </div>
+                {fieldErr("dlq_ttl_seconds")}
+              </Field>
+              <Field label={t("node.form.dlq_retry_delay_seconds")} className="mt-3">
+                <Input
+                  type="number"
+                  min={1}
+                  max={86400}
+                  className={errCls("dlq_retry_delay_seconds")}
+                  value={form.dlq_retry_delay_seconds}
+                  onChange={(e) =>
+                    set("dlq_retry_delay_seconds", parseNumInput(e.target.value, form.dlq_retry_delay_seconds))
+                  }
+                />
+                <div className="mt-1 text-xs text-fg-muted">{t("node.form.dlq_retry_delay_hint")}</div>
+                {fieldErr("dlq_retry_delay_seconds")}
+              </Field>
+            </Card>
+          )}
 
           {/* §29: комментарий-описание узла — отдельным блоком в самом низу. */}
           <Card>
