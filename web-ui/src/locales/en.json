@@ -538,7 +538,11 @@
       "explain": "Failed deliveries are not removed: they stay in the logs (with reason and body) and can be replayed. To stop the growth, pause or disable the node; the dead-letter backlog expires by retention.",
       "pause": "Pause node",
       "disable": "Disable node",
-      "disable_confirm": "Disable the node? It will stop accepting and delivering requests until re-enabled."
+      "disable_confirm": "Disable the node? It will stop accepting and delivering requests until re-enabled.",
+      "resume": "Resume node",
+      "enable": "Enable node",
+      "state_paused": "The node is paused — new requests pile up in the queue below and are not delivered. Resume to drain it, or purge it.",
+      "state_disabled": "The node is disabled — incoming requests are rejected (nothing is queued)."
     },
     "failed": {
       "empty": "No failed deliveries in this period.",
@@ -548,7 +552,9 @@
         "status": "Status",
         "reason": "Reason"
       }
-    }
+    },
+    "empty_enabled": "Empty — an active node delivers right away, so nothing waits here. Undelivered requests are under “Failed deliveries” below.",
+    "empty_paused": "Nothing queued yet — while the node is paused, new requests pile up here."
   },
   "settings": {
     "title": "Settings",

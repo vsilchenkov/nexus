@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Trash2, ChevronRight, Pause, Power, RotateCcw } from "lucide-react";
+import { Trash2, ChevronRight, Pause, Power, Play, RotateCcw } from "lucide-react";
 
 import { api, type Node } from "../../api/client";
 import { Button, Kpi, KpiRow, Hint, Pill, PeriodPicker, periodWindow, defaultPeriod, type Period } from "../ui";
@@ -65,21 +65,25 @@ export function QueueTab({
   const [failedExpanded, setFailedExpanded] = useState<string | null>(null);
   const [replayId, setReplayId] = useState<string | null>(null);
 
-  // Живая очередь (pending) — только admin. Поллим лишь когда узел paused или
-  // есть pending — на enabled-узле очередь пуста, нет смысла молотить Kafka.
+  // Живая очередь (pending) — только admin. На паузе опрашиваем часто (очередь
+  // наполняется, нужна живая обратная связь); если есть pending — реже; на
+  // enabled с пустой очередью — не молотим Kafka впустую.
   const pendingQ = useQuery({
     queryKey: ["aq-list", id],
     queryFn: () => api.get<ListResp>(`/api/nodes/${id}/async-queue/messages`),
     enabled: isAdmin,
     refetchInterval: (q) => {
+      if (node.status === "paused") return 4_000;
       const data = q.state.data as ListResp | undefined;
-      return node.status === "paused" || (data?.items.length ?? 0) > 0 ? 30_000 : false;
+      return (data?.items.length ?? 0) > 0 ? 8_000 : false;
     },
   });
   const pending = pendingQ.data?.items ?? [];
   const pendingCount = pending.length;
   const pendingCapped = pendingQ.data?.capped ?? false;
-  const showPending = isAdmin && (node.status === "paused" || pendingCount > 0);
+  // Секцию показываем всегда (для admin) — пустое состояние объясняет, почему
+  // на активном узле в очереди пусто (см. §35: неудачи уходят в логи/DLQ).
+  const showPending = isAdmin;
 
   // Неудачные доставки — ClickHouse (done=0) за период.
   const failedCountQ = useQuery({
@@ -108,9 +112,12 @@ export function QueueTab({
     onSuccess: invalidatePending,
   });
   const setStatus = useMutation({
-    mutationFn: (status: "paused" | "disabled") =>
+    mutationFn: (status: "enabled" | "paused" | "disabled") =>
       api.patch(`/api/nodes/${id}/status`, { status }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["node", id] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["node", id] });
+      qc.invalidateQueries({ queryKey: ["aq-list", id] });
+    },
   });
 
   return (
@@ -132,37 +139,58 @@ export function QueueTab({
         />
       </KpiRow>
 
-      <Hint tone="warn">
+      <Hint tone={node.status === "enabled" ? "muted" : "warn"}>
         <div className="space-y-2">
-          <p>{t("queue.banner.explain")}</p>
-          {isManager && node.status === "enabled" && (
+          <p>
+            {node.status === "paused"
+              ? t("queue.banner.state_paused")
+              : node.status === "disabled"
+                ? t("queue.banner.state_disabled")
+                : t("queue.banner.explain")}
+          </p>
+          {isManager && (
             <div className="flex flex-wrap gap-2">
-              <Button
-                sm
-                variant="ghost"
-                disabled={setStatus.isPending}
-                onClick={() => setStatus.mutate("paused")}
-              >
-                <Pause className="h-3.5 w-3.5" /> {t("queue.banner.pause")}
-              </Button>
-              <Button
-                sm
-                variant="ghost"
-                disabled={setStatus.isPending}
-                onClick={async () => {
-                  if (
-                    await confirm({
-                      title: t("queue.banner.disable"),
-                      message: t("queue.banner.disable_confirm"),
-                      confirmLabel: t("queue.banner.disable"),
-                      danger: true,
-                    })
-                  )
-                    setStatus.mutate("disabled");
-                }}
-              >
-                <Power className="h-3.5 w-3.5" /> {t("queue.banner.disable")}
-              </Button>
+              {node.status !== "enabled" && (
+                <Button
+                  sm
+                  variant="ghost"
+                  disabled={setStatus.isPending}
+                  onClick={() => setStatus.mutate("enabled")}
+                >
+                  <Play className="h-3.5 w-3.5" />{" "}
+                  {node.status === "paused" ? t("queue.banner.resume") : t("queue.banner.enable")}
+                </Button>
+              )}
+              {node.status === "enabled" && (
+                <Button
+                  sm
+                  variant="ghost"
+                  disabled={setStatus.isPending}
+                  onClick={() => setStatus.mutate("paused")}
+                >
+                  <Pause className="h-3.5 w-3.5" /> {t("queue.banner.pause")}
+                </Button>
+              )}
+              {node.status !== "disabled" && (
+                <Button
+                  sm
+                  variant="ghost"
+                  disabled={setStatus.isPending}
+                  onClick={async () => {
+                    if (
+                      await confirm({
+                        title: t("queue.banner.disable"),
+                        message: t("queue.banner.disable_confirm"),
+                        confirmLabel: t("queue.banner.disable"),
+                        danger: true,
+                      })
+                    )
+                      setStatus.mutate("disabled");
+                  }}
+                >
+                  <Power className="h-3.5 w-3.5" /> {t("queue.banner.disable")}
+                </Button>
+              )}
             </div>
           )}
         </div>
@@ -219,7 +247,9 @@ export function QueueTab({
             )}
           </div>
           {pending.length === 0 ? (
-            <div className="text-fg-muted">{t("queue.empty")}</div>
+            <div className="text-fg-muted">
+              {node.status === "paused" ? t("queue.empty_paused") : t("queue.empty_enabled")}
+            </div>
           ) : (
             <div className="overflow-hidden rounded-md border border-line">
               <table className="w-full text-[13px]">
