@@ -565,6 +565,7 @@
     "failed": {
       "empty": "No failed deliveries in this period.",
       "no_logging": "Logging is not configured for this node — failed deliveries can't be shown.",
+      "reprocess_hint": "Retried automatically until TTL ({{hours}} h) — once the target recovers, they are delivered. “Replay” forces an immediate retry.",
       "replay": "Replay",
       "col": {
         "status": "Status",

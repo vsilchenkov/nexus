@@ -626,7 +626,7 @@ DLQ) тормозила, «Очистить» был no-op, шапка плох�
 ### §36 Авто-репроцессор DLQ (повторная доставка неудачных async-сообщений до TTL)
 
 ТЗ — [sections/36-dlq-reprocessor.md](sections/36-dlq-reprocessor.md).
-**Статус: ◐ в работе** (ветка `feature/dlq-reprocessor`).
+**Статус: ✅ реализовано** (ветка `feature/dlq-reprocessor`; B1–B4 готовы, ожидает пред-сдачных гейтов и merge).
 
 | Пункт | Статус | Где |
 |---|---|---|
@@ -634,7 +634,7 @@ DLQ) тормозила, «Очистить» был no-op, шапка плох�
 | §36.B1.2 Per-node `dlq_retry_delay_seconds` (дефолт 5 мин) | ✅ | миграция [0018_node_dlq_retry_delay](../migrations/0018_node_dlq_retry_delay.up.sql) (`NOT NULL DEFAULT 300` атомарно заполняет существующие узлы); [domain/node.go](../internal/domain/node.go) (`SetDefaults` 300 + `Validate` [1, 86400] + `ErrNodeDLQRetryDelayRange`); PG-маппер (последний столбец); DTO + swagger; UI-форма + `nodeValidation.ts` + i18n + пересборка бандла; min-backoff перед повтором ошибочной доставки (header `next_attempt_at`, §36.4). Дефолт 300с = `reprocess_interval` |
 | §36.B2 Sender-репроцессор (sweeper над DLQ) | ✅ | usecase [dlq_reprocess.go](../internal/sender/usecase/dlq_reprocess.go) (`DLQReprocessor.ProcessMessage`: резолв→tombstone→TTL→статус→retry-backoff→breaker→`Send`); адаптер-sweeper [adapter/in/kafka/dlq_reprocessor.go](../internal/sender/adapter/in/kafka/dlq_reprocessor.go) (период. проход, отдельная группа `<group>-dlq-reprocess`); [circuitbreaker.IsOpen](../internal/platform/circuitbreaker/redis.go) (read-only, open∧cooldown); [kafka.NewConsumerWithGroup](../internal/platform/kafka/consumer.go); метрики `nexus_dlq_reprocess_total`/`_duration_seconds` ([metrics.go](../internal/platform/metrics/metrics.go)); unit-тесты |
 | §36.B3 Global-конфиг + wiring (`safego.Go` в app.go, Stop) | ✅ | секция [config.go](../internal/platform/config/config.go) `SenderReprocessorConfig` (`disabled`/`interval_sec` 300/`max_scan` 1000) + [defaults.go](../internal/platform/config/defaults.go); wiring [sender/app.go](../internal/sender/app.go) (конструкция под `!disabled`, `safego.Go`, `Stop()`+`Await` done-канала); config-файлы (`config.yml`/`config.example.yml`/`config_debug.yml`); CHANGELOG + DEPLOYMENT |
-| §36.B4 UI-подсказка «повторяется до TTL» | ⛔ | — |
+| §36.B4 UI-подсказка «повторяется до TTL» | ✅ | [QueueTab.tsx](../web-ui/src/components/node/QueueTab.tsx) — под заголовком «Неудачные доставки» подсказка `queue.failed.reprocess_hint` (TTL узла в часах + про форс-«Повторить»); `dlq_ttl_seconds`/`dlq_retry_delay_seconds` добавлены в тип `Node` ([client.ts](../web-ui/src/api/client.ts)); i18n en/ru; бандл пересобран. Колонка «попыток» (header `attempts`) — опциональна, отложена |
 
 **Неочевидности (B1/B1.2).**
 - **Новый столбец узла — добавлять ПОСЛЕДНИМ** в `node_repo.go` (Create INSERT/VALUES/args, Update SET/args,

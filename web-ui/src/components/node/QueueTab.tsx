@@ -310,6 +310,12 @@ export function QueueTab({
             </button>
           )}
         </div>
+        {/* §36: подсказка про авто-репроцессор DLQ — повтор до TTL узла. */}
+        <p className="text-xs text-fg-muted">
+          {t("queue.failed.reprocess_hint", {
+            hours: Math.round(((node.dlq_ttl_seconds ?? 86400) / 3600) * 10) / 10,
+          })}
+        </p>
         {!hasLogsTable ? (
           <div className="text-fg-muted">{t("queue.failed.no_logging")}</div>
         ) : failed.length === 0 ? (
