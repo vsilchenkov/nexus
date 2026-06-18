@@ -126,12 +126,10 @@ func (s *fallbackStore) Start(replay Replayer) {
 	if !s.Enabled() {
 		return
 	}
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
+	s.wg.Go(func() {
 		defer safego.Recover(s.logger, "sender.chlogFallback")
 		s.run(context.Background(), replay)
-	}()
+	})
 }
 
 // run — фоновый цикл рестора. Завершается при ctx.Done или Stop.
