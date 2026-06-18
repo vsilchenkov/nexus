@@ -13,10 +13,11 @@ import { LogsTab, type LogsInitialFilter } from "../components/node/LogsTab";
 import { OverviewTab } from "../components/node/OverviewTab";
 import { ConfigTab } from "../components/node/ConfigTab";
 import { MetricsTab } from "../components/node/MetricsTab";
+import { QueueTab } from "../components/node/QueueTab";
 
-type Tab = "overview" | "logs" | "config" | "metrics";
+type Tab = "overview" | "logs" | "config" | "metrics" | "queue";
 
-const TABS: Tab[] = ["overview", "logs", "config", "metrics"];
+const BASE_TABS: Tab[] = ["overview", "logs", "config", "metrics"];
 
 export default function NodeDetail() {
   const { t } = useTranslation();
@@ -54,6 +55,9 @@ export default function NodeDetail() {
   const statusTone = node.status === "enabled" ? "ok" : node.status === "paused" ? "warn" : "err";
   const isPull = node.root_method === "RabbitMQAsync";
   const rmq = node.rmq_status;
+  // §34.4: вкладка управления async-очередью — только для requestAsync.
+  const tabs: Tab[] =
+    node.root_method === "requestAsync" ? [...BASE_TABS, "queue"] : BASE_TABS;
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">
@@ -103,7 +107,7 @@ export default function NodeDetail() {
       )}
 
       <div className="flex gap-1 border-b border-line">
-        {TABS.map((tb) => (
+        {tabs.map((tb) => (
           <button
             key={tb}
             type="button"
@@ -130,6 +134,7 @@ export default function NodeDetail() {
       {tab === "logs" && <LogsTab node={node} initialFilter={logsFilter ?? undefined} />}
       {tab === "config" && <ConfigTab node={node} />}
       {tab === "metrics" && <MetricsTab node={node} onOpenLogs={openLogsAt} />}
+      {tab === "queue" && <QueueTab node={node} />}
     </div>
   );
 }
