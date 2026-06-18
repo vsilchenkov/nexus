@@ -26,6 +26,8 @@ type BodyResp = {
   headers?: Record<string, string>;
   body: string;
 };
+type DlqMessage = QueueMessage & { reason: string; last_attempt_at: string };
+type DlqListResp = { items: DlqMessage[]; capped: boolean; kafka_available: boolean };
 
 function prettyJson(raw: string): string {
   try {
@@ -56,6 +58,18 @@ export function QueueTab({ node }: { node: Node }) {
     queryFn: () => api.get<ListResp>(`/api/nodes/${id}/async-queue/messages`),
     refetchInterval: 5000,
   });
+  // §34.6: DLQ (неудачные сообщения — куда уходят при недоступном адресе).
+  const dlqDepthQ = useQuery({
+    queryKey: ["aq-dlq-depth", id],
+    queryFn: () => api.get<DepthResp>(`/api/nodes/${id}/async-queue/dlq/depth`),
+    refetchInterval: 5000,
+  });
+  const dlqListQ = useQuery({
+    queryKey: ["aq-dlq-list", id],
+    queryFn: () => api.get<DlqListResp>(`/api/nodes/${id}/async-queue/dlq/messages`),
+    refetchInterval: 5000,
+  });
+  const [dlqExpanded, setDlqExpanded] = useState<string | null>(null);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["aq-depth", id] });
@@ -182,7 +196,93 @@ export function QueueTab({ node }: { node: Node }) {
           </table>
         </div>
       )}
+
+      {/* §34.6: DLQ — неудачные сообщения (куда уходят при недоступном адресе) */}
+      <div className="space-y-2 pt-2">
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-semibold text-fg">{t("queue.dlq.title")}</h3>
+          <span className="text-xs text-fg-muted">
+            {dlqDepthQ.data ? dlqDepthQ.data.count : "—"}
+            {dlqDepthQ.data?.capped && (
+              <span className="ml-1 text-warn">{t("queue.capped_mark")}</span>
+            )}
+          </span>
+        </div>
+        <p className="text-xs text-fg-subtle">{t("queue.dlq.hint")}</p>
+        {(dlqListQ.data?.items.length ?? 0) === 0 ? (
+          <div className="text-fg-muted">{t("queue.dlq.empty")}</div>
+        ) : (
+          <div className="overflow-hidden rounded-md border border-line">
+            <table className="w-full text-[13px]">
+              <thead className="bg-bg-soft text-left text-[11px] uppercase tracking-wide text-fg-subtle">
+                <tr>
+                  <th className="w-8 px-2 py-2"></th>
+                  <th className="px-2 py-2">{t("queue.col.received")}</th>
+                  <th className="px-2 py-2">{t("queue.dlq.col.reason")}</th>
+                  <th className="px-2 py-2">{t("queue.dlq.col.last_attempt")}</th>
+                  <th className="px-2 py-2 text-right">{t("queue.col.size")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(dlqListQ.data?.items ?? []).map((m) => {
+                  const open = dlqExpanded === m.id;
+                  return (
+                    <DlqRow
+                      key={`${m.partition}:${m.offset}`}
+                      m={m}
+                      nodeId={id}
+                      open={open}
+                      onToggle={() => setDlqExpanded(open ? null : m.id)}
+                    />
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
+  );
+}
+
+function DlqRow({
+  m,
+  nodeId,
+  open,
+  onToggle,
+}: {
+  m: DlqMessage;
+  nodeId: string;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <>
+      <tr className="border-t border-line hover:bg-bg-muted/40">
+        <td className="px-2 py-2">
+          <button type="button" onClick={onToggle} className="text-fg-muted hover:text-fg">
+            <ChevronRight className={cn("h-4 w-4 transition-transform", open && "rotate-90")} />
+          </button>
+        </td>
+        <td className="px-2 py-2 font-mono text-[11px] text-fg-muted">
+          {new Date(m.received_at).toLocaleString()}
+        </td>
+        <td className="max-w-xs truncate px-2 py-2 font-mono text-[11px] text-err" title={m.reason}>
+          {m.reason}
+        </td>
+        <td className="px-2 py-2 font-mono text-[11px] text-fg-muted">
+          {m.last_attempt_at ? new Date(m.last_attempt_at).toLocaleString() : "—"}
+        </td>
+        <td className="px-2 py-2 text-right font-mono text-[11px] text-fg-muted">{m.body_size}</td>
+      </tr>
+      {open && (
+        <tr className="border-t border-line bg-bg-muted/30">
+          <td colSpan={5} className="px-4 py-3">
+            <QueueBody nodeId={nodeId} partition={m.partition} offset={m.offset} dlq />
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 
@@ -245,16 +345,19 @@ function QueueBody({
   nodeId,
   partition,
   offset,
+  dlq = false,
 }: {
   nodeId: string;
   partition: number;
   offset: number;
+  dlq?: boolean;
 }) {
   const { t } = useTranslation();
+  const path = dlq ? "dlq/messages/body" : "messages/body";
   const q = useQuery({
-    queryKey: ["aq-body", nodeId, partition, offset],
+    queryKey: ["aq-body", dlq, nodeId, partition, offset],
     queryFn: () =>
-      api.get<BodyResp>(`/api/nodes/${nodeId}/async-queue/messages/body`, { partition, offset }),
+      api.get<BodyResp>(`/api/nodes/${nodeId}/async-queue/${path}`, { partition, offset }),
     staleTime: 60_000,
   });
   if (q.isLoading) return <div className="text-fg-muted">{t("common.loading")}</div>;
