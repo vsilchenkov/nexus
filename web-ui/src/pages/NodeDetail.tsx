@@ -1,7 +1,7 @@
 import { useParams, Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient, useIsFetching } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Pencil } from "lucide-react";
+import { Pencil, RefreshCw } from "lucide-react";
 import { useState } from "react";
 
 import { api, type Node } from "../api/client";
@@ -27,6 +27,10 @@ export default function NodeDetail() {
   const [logsFilter, setLogsFilter] = useState<LogsInitialFilter | null>(null);
   // §26/§28 Пункт 3: редактирование узла — только manager+ (viewer не видит креды).
   const canEdit = useRoleAtLeast("manager");
+  // Ручное обновление: инвалидируем все активные запросы → перезагружаются данные
+  // текущей вкладки и шапки узла. fetching>0 — крутим иконку.
+  const qc = useQueryClient();
+  const fetching = useIsFetching();
 
   // openLogsAt — переход на вкладку логов с временным окном бакета (§33.4).
   const openLogsAt = (r: LogsRange) => {
@@ -67,6 +71,16 @@ export default function NodeDetail() {
         <Pill tone={statusTone}>{t(`node.status.${node.status}`)}</Pill>
         {isPull && rmq?.degraded && <Pill tone="err">{t("node.rmq.degraded")}</Pill>}
         <div className="ml-auto flex items-center gap-2">
+          <Button
+            sm
+            variant="ghost"
+            disabled={fetching > 0}
+            onClick={() => void qc.invalidateQueries()}
+            title={t("node.actions.refresh")}
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5", fetching > 0 && "animate-spin")} />{" "}
+            {t("node.actions.refresh")}
+          </Button>
           {canEdit && (
             <Link to={`/nodes/${node.id}/edit`}>
               <Button sm variant="primary">

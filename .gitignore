@@ -48,3 +48,6 @@ __debug_bin*
 # OS
 .DS_Store
 Thumbs.db
+
+# Локальный тестовый стенд (бинари/логи/cookies) — не коммитим
+.stand_bin/

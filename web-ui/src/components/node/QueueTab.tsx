@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Trash2, ChevronRight, Pause, Power, Play, RotateCcw } from "lucide-react";
 
 import { api, type Node } from "../../api/client";
-import { Button, Kpi, KpiRow, Hint, Pill, PeriodPicker, periodWindow, defaultPeriod, type Period } from "../ui";
+import { Button, Kpi, KpiRow, Hint, Pill, PeriodPicker, periodWindow, periodKey, defaultPeriod, type Period } from "../ui";
 import { ReplayDialog } from "../ReplayDialog";
 import { type LogsInitialFilter } from "./LogsTab";
 import { type LogRow, type LogsResp, type LogDetail } from "./types";
@@ -86,14 +86,19 @@ export function QueueTab({
   const showPending = isAdmin;
 
   // Неудачные доставки — ClickHouse (done=0) за период.
+  // ВАЖНО: в queryKey — стабильный periodKey(period), НЕ periodWindow(period).
+  // periodWindow содержит until=Date.now() (меняется каждый рендер) → ключ
+  // нестабилен → react-query вечно перезапрашивает и данные не «устаканиваются»
+  // (KPI «—», список пуст). Окно from/to считается свежим в queryFn при каждом
+  // запросе (в т.ч. по refetchInterval), так что значения остаются актуальными.
   const failedCountQ = useQuery({
-    queryKey: ["aq-failed-count", id, periodWindow(period)],
+    queryKey: ["aq-failed-count", id, periodKey(period)],
     queryFn: () => api.get<FailedCountResp>(`/api/nodes/${id}/logs/failed-count`, periodIso()),
     enabled: hasLogsTable,
     refetchInterval: 15_000,
   });
   const failedListQ = useQuery({
-    queryKey: ["aq-failed-list", id, periodWindow(period)],
+    queryKey: ["aq-failed-list", id, periodKey(period)],
     queryFn: () => api.get<LogsResp>(`/api/nodes/${id}/logs`, { done: "no", ...periodIso(), limit: 50 }),
     enabled: hasLogsTable,
     refetchInterval: 15_000,

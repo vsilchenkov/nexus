@@ -255,13 +255,25 @@
     }
   },
   "node": {
-    "tabs": { "overview": "Обзор", "logs": "Логи", "config": "Конфиг", "metrics": "Метрики", "queue": "Очередь" },
+    "tabs": {
+      "overview": "Обзор",
+      "logs": "Логи",
+      "config": "Конфиг",
+      "metrics": "Метрики",
+      "queue": "Очередь"
+    },
     "status": {
       "enabled": "Активен",
       "disabled": "Отключён",
       "paused": "Пауза"
     },
-    "actions": { "edit": "Изменить", "delete": "Удалить", "dry_run": "Тестовый запрос", "replay": "Повтор" },
+    "actions": {
+      "edit": "Изменить",
+      "delete": "Удалить",
+      "dry_run": "Тестовый запрос",
+      "replay": "Повтор",
+      "refresh": "Обновить"
+    },
     "not_found": "Узел не найден",
     "validation": {
       "root_method": "Недопустимый тип узла",
