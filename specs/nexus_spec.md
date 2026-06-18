@@ -3157,3 +3157,32 @@ Prometheus `NodeThroughput` для top-узлов. Все источники д�
 
 **Out of scope:** физическое удаление из Kafka (невозможно; tombstone + retention); точный счётчик
 сверх cap (нижняя оценка + `capped`); управление очередью для RabbitMQAsync; override версии в проде.
+
+## 35. Переработка вкладки «Очередь» (перерабатывает §34.4/§34.6)
+
+Полный текст раздела — [sections/35-queue-tab-rework.md](sections/35-queue-tab-rework.md).
+
+Вкладка «Очередь» из §34 на стенде оказалась неработоспособной в реальном сценарии (узел enabled,
+адрес мёртв). Корень — неверная модель потока: при enabled-узле и мёртвом адресе сообщения НЕ копятся
+в `nexus.async`, а уходят в **DLQ** + коммит (Sender: `send.Send` → `publishDLQ`). Живая очередь
+наполняется только при **paused**. Прошлый тест на paused это замаскировал.
+
+- **Источник «неудачных» — ClickHouse, не Kafka-DLQ-peek.** `send.Send` всегда логирует ДО `publishDLQ`,
+  значит каждое DLQ'нутое сообщение есть в CH с `done=false` (status/reason/тело/attempts/время), читается
+  быстро. Дорогой DLQ-peek (`PeekDLQDepth/PeekDLQList`, до 5000×4 каждые 5с при 248k) — **удаляется**.
+  Добавляется дешёвый `LogReader.CountFailed` + `GET /api/nodes/{id}/logs/failed-count` (для KPI); список/
+  тело/replay — существующие `?done=no` + `/log/{id}` + `/logs/{id}/replay`.
+- **Честная семантика очистки.** Живая очередь — tombstone-purge (admin, кнопки только когда pending>0).
+  Неудачи — **без удаления** (Kafka-DLQ физически не чистится — нет `DeleteRecords`, общая партиция; CH —
+  история): фильтр по периоду + «Пауза»/«Отключить» узла (остановить рост) + replay. DLQ истекает по
+  retention (30д).
+- **`PATCH /api/nodes/{id}/status`** (manager+) — лёгкая смена статуса для кнопок «Пауза»/«Отключить»
+  (вместо полного PUT).
+- **RBAC-фикс §34.4:** failed-view — `logs:read` (viewer+); управление живой очередью — admin; вкладка
+  видна viewer+, admin-секция скрыта для не-admin (раньше все роли упирались в 403).
+- **Интерфейс:** KPI-шапка («Ожидают отправки» | «Неудачные доставки») + две секции + hint-баннер,
+  вместо «В очереди 0 / Очистить всё». Переиспользуются компоненты логов (`LogBodies`, `ReplayDialog`,
+  `LogsInitialFilter`+`done`).
+
+**Out of scope:** удаление сообщений Kafka-DLQ; глобальный AlterConfigs retention (на экране Kafka);
+удаление CH-записей неудач (разрушает историю).
