@@ -29,7 +29,6 @@ type AsyncQueueUsecase struct {
 	audit     *AuditUsecase
 	group     string
 	topic     string
-	dlqTopic  string // §34.6: nexus.async.dlq — просмотр неудачных сообщений
 	retention time.Duration
 	peekCap   int
 	logger    logging.Logger
@@ -40,13 +39,13 @@ func NewAsyncQueueUsecase(
 	cancel port.QueueCancelWriter,
 	nodes port.NodeRepo,
 	audit *AuditUsecase,
-	group, topic, dlqTopic string,
+	group, topic string,
 	retention time.Duration,
 	peekCap int,
 	logger logging.Logger,
 ) *AsyncQueueUsecase {
 	if peekCap <= 0 {
-		peekCap = 5000
+		peekCap = 1000
 	}
 	if retention <= 0 {
 		retention = 7 * 24 * time.Hour
@@ -58,7 +57,6 @@ func NewAsyncQueueUsecase(
 		audit:     audit,
 		group:     group,
 		topic:     topic,
-		dlqTopic:  dlqTopic,
 		retention: retention,
 		peekCap:   peekCap,
 		logger:    logger,
@@ -133,71 +131,6 @@ func (u *AsyncQueueUsecase) List(ctx context.Context, nodeID, teamID string) (Qu
 		r.Items = []port.QueueMessageMeta{}
 	}
 	return QueueListResult{Items: r.Items, Capped: r.Capped, KafkaAvailable: true}, nil
-}
-
-// DLQDepthResult / DLQListResult — результаты просмотра DLQ (§34.6).
-type DLQDepthResult struct {
-	Count          int64
-	Capped         bool
-	KafkaAvailable bool
-}
-
-type DLQListResult struct {
-	Items          []port.DLQMessageMeta
-	Capped         bool
-	KafkaAvailable bool
-}
-
-// DLQDepth — число неудачных сообщений узла в DLQ (§34.6).
-func (u *AsyncQueueUsecase) DLQDepth(ctx context.Context, nodeID, teamID string) (DLQDepthResult, error) {
-	node, err := u.resolveNode(ctx, nodeID, teamID)
-	if err != nil {
-		return DLQDepthResult{}, err
-	}
-	if u.peeker == nil || u.dlqTopic == "" {
-		return DLQDepthResult{}, nil
-	}
-	r, err := u.peeker.PeekDLQDepth(ctx, u.dlqTopic, node.Path, u.peekCap)
-	if err != nil {
-		u.logger.Warn("async dlq depth failed", u.logger.Str("node_path", node.Path), u.logger.Err(err))
-		return DLQDepthResult{}, nil
-	}
-	return DLQDepthResult{Count: r.Count, Capped: r.Capped, KafkaAvailable: true}, nil
-}
-
-// DLQList — последние 50 неудачных сообщений узла из DLQ (§34.6).
-func (u *AsyncQueueUsecase) DLQList(ctx context.Context, nodeID, teamID string) (DLQListResult, error) {
-	node, err := u.resolveNode(ctx, nodeID, teamID)
-	if err != nil {
-		return DLQListResult{}, err
-	}
-	if u.peeker == nil || u.dlqTopic == "" {
-		return DLQListResult{Items: []port.DLQMessageMeta{}}, nil
-	}
-	r, err := u.peeker.PeekDLQList(ctx, u.dlqTopic, node.Path, asyncQueueListLimit, u.peekCap)
-	if err != nil {
-		u.logger.Warn("async dlq list failed", u.logger.Str("node_path", node.Path), u.logger.Err(err))
-		return DLQListResult{Items: []port.DLQMessageMeta{}}, nil
-	}
-	if r.Items == nil {
-		r.Items = []port.DLQMessageMeta{}
-	}
-	return DLQListResult{Items: r.Items, Capped: r.Capped, KafkaAvailable: true}, nil
-}
-
-// DLQBody — тело одного DLQ-сообщения по (partition, offset). Топик — DLQ.
-func (u *AsyncQueueUsecase) DLQBody(ctx context.Context, nodeID, teamID string, partition int, offset int64) (port.QueueMessageBody, error) {
-	if _, err := u.resolveNode(ctx, nodeID, teamID); err != nil {
-		return port.QueueMessageBody{}, err
-	}
-	if u.peeker == nil || u.dlqTopic == "" {
-		return port.QueueMessageBody{}, ErrAsyncQueueUnavailable
-	}
-	body, err := u.peeker.PeekBody(ctx, u.dlqTopic, partition, offset)
-	if err != nil {
-		return port.QueueMessageBody{}, fmt.Errorf("async dlq body: %w", err)
-	}
-	return body, nil
 }
 
 // Body — тело одного сообщения по (partition, offset) для ленивой подгрузки.

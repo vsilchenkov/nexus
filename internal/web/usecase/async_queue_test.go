@@ -20,19 +20,10 @@ type stubPeeker struct {
 	list     port.PeekListResult
 	body     port.QueueMessageBody
 	scan     port.ScanIDsResult
-	dlqDepth port.PeekDepthResult
-	dlqList  port.DLQListResult
 	err      error
 	scanFrom time.Time
 	scanTo   time.Time
 	scanPath string
-}
-
-func (s *stubPeeker) PeekDLQDepth(_ context.Context, _, _ string, _ int) (port.PeekDepthResult, error) {
-	return s.dlqDepth, s.err
-}
-func (s *stubPeeker) PeekDLQList(_ context.Context, _, _ string, _, _ int) (port.DLQListResult, error) {
-	return s.dlqList, s.err
 }
 
 func (s *stubPeeker) PeekDepth(_ context.Context, _, _, _ string, _ int) (port.PeekDepthResult, error) {
@@ -73,7 +64,7 @@ func newQueueUC(peeker port.AsyncQueuePeeker, cancel port.QueueCancelWriter, nod
 	}
 	uc := NewAsyncQueueUsecase(peeker, cancel, nodes,
 		NewAuditUsecase(repo, logging.NewNoop()),
-		"nexus-sender", "nexus.async", "nexus.async.dlq", time.Hour, 5000, logging.NewNoop())
+		"nexus-sender", "nexus.async", time.Hour, 5000, logging.NewNoop())
 	return uc, repo
 }
 
@@ -178,40 +169,6 @@ func TestAsyncQueue_Mutations_Unavailable(t *testing.T) {
 	// peeker == nil → Body недоступен.
 	uc2, _ := newQueueUC(nil, &stubCancelWriter{}, asyncNode())
 	_, err = uc2.Body(context.Background(), "n1", "t1", 0, 0)
-	assert.ErrorIs(t, err, ErrAsyncQueueUnavailable)
-}
-
-func TestAsyncQueue_DLQ_DepthAndList(t *testing.T) {
-	t.Parallel()
-	peeker := &stubPeeker{
-		dlqDepth: port.PeekDepthResult{Count: 42, Capped: true},
-		dlqList: port.DLQListResult{Items: []port.DLQMessageMeta{
-			{QueueMessageMeta: port.QueueMessageMeta{ID: "f1"}, Reason: "status=502", LastAttemptAt: "2026-06-18T09:00:00Z"},
-		}},
-	}
-	uc, _ := newQueueUC(peeker, &stubCancelWriter{}, asyncNode())
-
-	d, err := uc.DLQDepth(context.Background(), "n1", "t1")
-	require.NoError(t, err)
-	assert.True(t, d.KafkaAvailable)
-	assert.Equal(t, int64(42), d.Count)
-	assert.True(t, d.Capped)
-
-	l, err := uc.DLQList(context.Background(), "n1", "t1")
-	require.NoError(t, err)
-	require.Len(t, l.Items, 1)
-	assert.Equal(t, "f1", l.Items[0].ID)
-	assert.Equal(t, "status=502", l.Items[0].Reason)
-	assert.Equal(t, "2026-06-18T09:00:00Z", l.Items[0].LastAttemptAt)
-}
-
-func TestAsyncQueue_DLQ_DegradedWhenNoPeeker(t *testing.T) {
-	t.Parallel()
-	uc, _ := newQueueUC(nil, &stubCancelWriter{}, asyncNode())
-	d, err := uc.DLQDepth(context.Background(), "n1", "t1")
-	require.NoError(t, err)
-	assert.False(t, d.KafkaAvailable)
-	_, err = uc.DLQBody(context.Background(), "n1", "t1", 0, 0)
 	assert.ErrorIs(t, err, ErrAsyncQueueUnavailable)
 }
 

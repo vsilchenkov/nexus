@@ -410,7 +410,7 @@ func (a *App) Start(ctx context.Context) error {
 	}
 	asyncQueueUC := usecase.NewAsyncQueueUsecase(
 		asyncPeeker, queueCancel, nodeRepo, auditUC,
-		a.cfg.Kafka.ConsumerGroup, a.cfg.Kafka.AsyncTopic, a.cfg.Kafka.DLQTopic,
+		a.cfg.Kafka.ConsumerGroup, a.cfg.Kafka.AsyncTopic,
 		time.Duration(a.cfg.Kafka.Topic.RetentionMs)*time.Millisecond, 0, a.logger,
 	)
 	asyncQueueHandler := httpadapter.NewAsyncQueueHandler(asyncQueueUC, a.logger)

@@ -52,32 +52,6 @@ func TestDecodeQueueMeta(t *testing.T) {
 	})
 }
 
-func TestDecodeDLQMeta(t *testing.T) {
-	t.Parallel()
-	env := queueEnvelope{ID: "id-9", NodePath: "partner/echo", Method: "POST", TargetURL: "https://x/y", Body: []byte(`{}`), ReceivedAt: time.Now().UTC()}
-	msg := mkMsg(t, "partner/echo", env, 0, 7)
-	msg.Headers = []kafka.Header{
-		{Key: "reason", Value: []byte("status=502 attempts=1")},
-		{Key: "last_attempt_at", Value: []byte("2026-06-18T09:00:00Z")},
-		{Key: "id", Value: []byte("id-9")},
-	}
-
-	t.Run("matching with headers", func(t *testing.T) {
-		t.Parallel()
-		m, ok := decodeDLQMeta(msg, "partner/echo")
-		require.True(t, ok)
-		assert.Equal(t, "id-9", m.ID)
-		assert.Equal(t, "status=502 attempts=1", m.Reason)
-		assert.Equal(t, "2026-06-18T09:00:00Z", m.LastAttemptAt)
-	})
-
-	t.Run("non-matching key", func(t *testing.T) {
-		t.Parallel()
-		_, ok := decodeDLQMeta(msg, "other/node")
-		assert.False(t, ok)
-	})
-}
-
 func TestInPeriod(t *testing.T) {
 	t.Parallel()
 	base := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
