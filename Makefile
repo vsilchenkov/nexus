@@ -198,7 +198,7 @@ INTEGRATION_TIMEOUT ?= 20m
 # группы успели отработать и отчитаться даже при её падении.
 # Регексы -run в ДВОЙНЫХ кавычках — переносимо между cmd.exe (Windows) и sh.
 # Запуск отдельной группы: `make test-int-rmq` и т.п.
-test-integration: test-int-pg test-int-ch test-int-catalog test-int-receiver test-int-rmq test-int-sender ## Integration-тесты под-прогонами (требует Docker; 20m на группу)
+test-integration: test-int-pg test-int-ch test-int-catalog test-int-receiver test-int-rmq test-int-sender test-int-queue ## Integration-тесты под-прогонами (требует Docker; 20m на группу)
 
 test-int-pg: ## integration: Postgres-узлы/миграции/multi-tenancy
 	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestNodeRepo|^TestNodeUC|^TestNodeCache|^TestMigrations|^TestMultiTenancy" ./tests/integration/...
@@ -217,6 +217,9 @@ test-int-rmq: ## integration: RabbitMQAsync Puller (§27)
 
 test-int-sender: ## integration: Sender async + DLQ (Kafka)
 	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestSender_Async" ./tests/integration/...
+
+test-int-queue: ## integration: управление async-очередью §35 + tombstones (Kafka+Redis)
+	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestAsyncQueue|^TestQueueCancel" ./tests/integration/...
 
 sqlc-gen: ## Phase 1: генерация Go-кода из SQL через sqlc
 	@echo "TODO Phase 1: sqlc generate"
