@@ -23,6 +23,7 @@ type Handlers struct {
 	HeaderCatalog *HeaderCatalogHandler
 	RMQTest       *RMQTestHandler
 	Kafka         *KafkaHandler
+	AsyncQueue    *AsyncQueueHandler
 }
 
 // Middlewares — общие middleware (auth-check, role-check, API token-check).
@@ -238,6 +239,21 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			kafka.GET("/topics", h.Kafka.Topics)
 			kafka.GET("/by-node", h.Kafka.ByNode)
 			kafka.POST("/test", h.Kafka.Test)
+		}
+
+		// Управление async-очередью узла (§34.4): admin-only, node-scoped.
+		// Чтение деградирует (kafka_available), мутации под глобальным CSRF
+		// и тем же rate-limit, что Kafka-экран (защита от peek-флуда брокеров).
+		if h.AsyncQueue != nil {
+			aq := authedAdmin.Group("/nodes/:id/async-queue")
+			if mw.KafkaRateLimit != nil {
+				aq.Use(mw.KafkaRateLimit)
+			}
+			aq.GET("/depth", h.AsyncQueue.Depth)
+			aq.GET("/messages", h.AsyncQueue.List)
+			aq.GET("/messages/body", h.AsyncQueue.Body)
+			aq.DELETE("/messages/:msgId", h.AsyncQueue.DeleteOne)
+			aq.POST("/purge", h.AsyncQueue.Purge)
 		}
 	}
 }

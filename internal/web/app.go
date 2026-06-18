@@ -35,6 +35,7 @@ import (
 	"nexus/internal/platform/metrics"
 	otelpf "nexus/internal/platform/otel"
 	pgpf "nexus/internal/platform/pg"
+	"nexus/internal/platform/queuecancel"
 	"nexus/internal/platform/ratelimit"
 	recoverypf "nexus/internal/platform/recovery"
 	redispf "nexus/internal/platform/redis"
@@ -389,14 +390,30 @@ func (a *App) Start(ctx context.Context) error {
 	// Kafka Admin (топики/брокеры/ping, только при заданных брокерах) + Redis-кеш
 	// метаданных (TTL 30с). Все источники опциональны — usecase деградирует.
 	var kafkaAdmin webport.KafkaAdmin
+	// §34.4: тот же admin-клиент реализует AsyncQueuePeeker (peek очереди).
+	var asyncPeeker webport.AsyncQueuePeeker
 	if a.cfg.Kafka.Brokers != "" {
-		kafkaAdmin = kafkaadmin.New(a.cfg.Kafka.Brokers, 5*time.Second, 30, a.logger)
+		kac := kafkaadmin.New(a.cfg.Kafka.Brokers, 5*time.Second, 30, a.logger)
+		kafkaAdmin = kac
+		asyncPeeker = kac
 	}
 	kafkaUC := usecase.NewKafkaMonitorUsecase(
 		promMetrics, kafkaAdmin, rediscache.NewKafkaCacheRedis(a.redis, 30*time.Second),
 		kafkaThresholds(&a.cfg.Web.KafkaAlerts), a.logger,
 	)
 	kafkaHandler := httpadapter.NewKafkaHandler(kafkaUC, a.logger)
+
+	// §34.4: управление async-очередью узла (peek + cancel-set tombstones).
+	var queueCancel webport.QueueCancelWriter
+	if a.redis != nil {
+		queueCancel = queuecancel.New(a.redis)
+	}
+	asyncQueueUC := usecase.NewAsyncQueueUsecase(
+		asyncPeeker, queueCancel, nodeRepo, auditUC,
+		a.cfg.Kafka.ConsumerGroup, a.cfg.Kafka.AsyncTopic,
+		time.Duration(a.cfg.Kafka.Topic.RetentionMs)*time.Millisecond, 0, a.logger,
+	)
+	asyncQueueHandler := httpadapter.NewAsyncQueueHandler(asyncQueueUC, a.logger)
 
 	mw := httpadapter.Middlewares{
 		APITokenAuth:   httpadapter.APITokenAuthMiddleware(tokenUC, rl, a.cfg.Web.APITokenRateLimitPerMin, a.logger),
@@ -424,6 +441,7 @@ func (a *App) Start(ctx context.Context) error {
 		HeaderCatalog: headerCatalogHandler,
 		RMQTest:       rmqTestHandler,
 		Kafka:         kafkaHandler,
+		AsyncQueue:    asyncQueueHandler,
 	}, mw)
 
 	// Реверс-прокси боевых эндпоинтов Receiver (§17.1, единый вход): Web
