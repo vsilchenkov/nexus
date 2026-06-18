@@ -523,7 +523,8 @@
 ### §34 Операбельность: навигация, сессия, версия, async-очередь Kafka, фикс replay
 
 ТЗ — [sections/34-ops-session-version-async-queue.md](sections/34-ops-session-version-async-queue.md).
-**Статус: ◐ в работе** (ветка `feature/ops-async-queue`, блоки Phase 34.0–34.E).
+**Статус: ✅ реализовано** (ветка `feature/ops-async-queue`, блоки Phase 34.0–34.E.6;
+встроенный SPA пересобран и закоммичен).
 
 | Пункт | Статус | Где |
 |---|---|---|
@@ -531,7 +532,7 @@
 | §34.1 «Настройки» вниз сайдбара | ✅ Phase 34.B | [Sidebar.tsx](../web-ui/src/components/Sidebar.tsx) — Settings вынесен из основной навигации в подвал (`mt-auto`, общий хелпер `renderNavLink`); бандл пересобран ([internal/web/static/](../internal/web/static/)) |
 | §34.3 Обогащённый `/api/version` + dev-override версии | ✅ Phase 34.C | [version_handler.go](../internal/web/adapter/in/http/version_handler.go) (`{version,commit,build_date,override_allowed}`, провайдер override), [app_settings.go](../internal/web/usecase/app_settings.go) (гейт `allowVersionOverride` + merge/changedSections general), [config.go](../internal/platform/config/config.go) (`web.allow_version_override`, `build.commit/build_date`), [bootstrap.go](../internal/platform/bootstrap/bootstrap.go); UI: [Sidebar.tsx](../web-ui/src/components/Sidebar.tsx) (tooltip), [settings/General.tsx](../web-ui/src/pages/settings/General.tsx) (поле под гейтом); тесты `version_handler_test.go`, `app_settings_test.go` |
 | §34.2 Настраиваемая длительность сессии | ✅ Phase 34.D | [session_ttl.go](../internal/web/usecase/session_ttl.go) (`SessionTTLProvider` atomic), [auth.go](../internal/web/usecase/auth.go) + [auth_handler.go](../internal/web/adapter/in/http/auth_handler.go) (TTL через провайдер), [app_settings.go](../internal/web/usecase/app_settings.go) (merge/validate/changedSections security), [domain/app_settings.go](../internal/domain/app_settings.go) (`SecuritySettings`, `ValidateSessionTTLSeconds` 5мин..30сут), [reloader.go](../internal/platform/reloader/reloader.go) (`SectionSecurity`), [app.go](../internal/web/app.go) (сидинг + hot-reload); UI: [settings/General.tsx](../web-ui/src/pages/settings/General.tsx) (поле в минутах); тесты `session_ttl_test.go`, `auth_test.go` (динамический TTL), `app_settings_test.go` |
-| §34.4 Управление async-очередью Kafka (tombstones) | ⛔ | — |
+| §34.4 Управление async-очередью Kafka (tombstones) | ✅ Phase 34.E.1–E.6 | tombstones [platform/queuecancel](../internal/platform/queuecancel/redis.go); проверка в Sender [sender/usecase/async.go](../internal/sender/usecase/async.go); peek [kafkaadmin/async_queue.go](../internal/web/adapter/out/kafkaadmin/async_queue.go) (порт `AsyncQueuePeeker`); usecase [web/usecase/async_queue.go](../internal/web/usecase/async_queue.go); API [http/async_queue_handler.go](../internal/web/adapter/in/http/async_queue_handler.go) (`/api/nodes/:id/async-queue/*`); UI [node/QueueTab.tsx](../web-ui/src/components/node/QueueTab.tsx) |
 
 **Неочевидности / решения.**
 - **§34.5 — корень бага.** В лог ClickHouse пишется **исходящий** метод узла: и sync
@@ -542,6 +543,19 @@
   endpoint Receiver'а, где метод валидируется против `node.IncomingMethod`. При `OutgoingMethod !=
   IncomingMethod` (POST-in / GET-out без тела) старое `orig.Method` давало 405. Фикс — брать
   `IncomingMethod`. `orig.Method` для сборки метода больше не используется.
+- **§34.4 — Kafka append-only → логическое удаление.** Физически удалить одно сообщение или вырезать
+  период из Kafka нельзя (`segmentio/kafka-go` не имеет даже `DeleteRecords`). Поэтому «удаление» —
+  Redis-tombstones `qcancel:<id>` (TTL = retention топика, самоистечение): Sender в `async.Handle`
+  ПЕРЕД отправкой (и ДО paused-блока — чтобы чистить бэклог paused-узла) проверяет cancel-set и
+  пропускает отменённые (Ack без отправки/DLQ). Fail-open при недоступном Redis. Сообщения физически
+  остаются до retention, но во внешний адрес не уходят.
+- **§34.4 — peek без GroupID.** Чтение очереди — транзиентный `kafka.Reader` без GroupID,
+  `SetOffset(committed)` от offset группы Sender до high-watermark, фильтр `key==node.Path`. Не входит
+  в группу, не коммитит, доставке не мешает. Ограничено cap (5000) и bounded-ctx (10с): глубина/список
+  — нижняя оценка при `capped`. Per-node счётчик требует скана (lag в Kafka только на партицию, не на
+  ключ). `Envelope` для декода продублирован локально в web-адаптере (как уже сделано в sender) —
+  чтобы web не зависел от receiver/sender; JSON-теги обязаны совпадать с каноном
+  [receiver/usecase/envelope.go](../internal/receiver/usecase/envelope.go).
 
 ---
 
