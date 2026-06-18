@@ -227,6 +227,13 @@ definitions:
         example: not found
         type: string
     type: object
+  internal_web_adapter_in_http.FailedCountResponse:
+    properties:
+      count:
+        type: integer
+      logs_configured:
+        type: boolean
+    type: object
   internal_web_adapter_in_http.HostPreviewResponse:
     properties:
       allowed:
@@ -3244,6 +3251,37 @@ paths:
       - CookieAuth: []
       - ApiTokenAuth: []
       summary: Snapshot логов узла из ClickHouse с фильтрами.
+      tags:
+      - logs
+  /api/nodes/{id}/logs/failed-count:
+    get:
+      description: Дешёвый count из ClickHouse для KPI «неудачные доставки» на вкладке
+        «Очередь». Узел без clickhouse_table → 200 + logs_configured=false, count=0.
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: начало диапазона (RFC3339 или UnixMilli)
+        in: query
+        name: from
+        type: string
+      - description: конец диапазона
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.FailedCountResponse'
+      security:
+      - CookieAuth: []
+      - ApiTokenAuth: []
+      summary: Число недоставленных записей узла (done=0) за период (§35).
       tags:
       - logs
   /api/nodes/{id}/logs/stream:

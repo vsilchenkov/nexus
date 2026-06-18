@@ -111,6 +111,8 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			// строку. Путь "log" (не "logs") — чтобы не конфликтовать с
 			// статическим сегментом ".../logs/stream" в gin-роутере.
 			authed.GET("/nodes/:id/log/:logId", RequireScope("logs:read"), h.Logs.Get)
+			// §35: дешёвый счётчик неудач (done=0) для KPI вкладки «Очередь».
+			authed.GET("/nodes/:id/logs/failed-count", RequireScope("logs:read"), h.Logs.CountFailed)
 			// SSE доступен только UI-сессиям (§7.14: для API-токенов — только
 			// snapshot).
 			authed.GET("/nodes/:id/logs/stream", RequireSessionOnly(), h.Logs.Stream)

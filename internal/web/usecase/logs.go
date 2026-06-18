@@ -72,6 +72,16 @@ func (u *LogsUsecase) GetByID(ctx context.Context, nodeID, teamID, logID string)
 	return u.logs.GetByID(ctx, n.ClickHouseTable, logID)
 }
 
+// CountFailed — число недоставленных записей узла (done=0) за окно (§35).
+// Для KPI «неудачные доставки» на вкладке «Очередь». teamID — scope.
+func (u *LogsUsecase) CountFailed(ctx context.Context, nodeID, teamID string, sinceMs, untilMs int64) (uint64, error) {
+	n, err := u.resolveNode(ctx, nodeID, teamID)
+	if err != nil {
+		return 0, err
+	}
+	return u.logs.CountFailed(ctx, n.ClickHouseTable, sinceMs, untilMs)
+}
+
 // resolveNode — общий путь: получить узел, проверить team scope, убедиться
 // что у него настроен ClickHouseTable.
 func (u *LogsUsecase) resolveNode(ctx context.Context, nodeID, teamID string) (*domain.Node, error) {

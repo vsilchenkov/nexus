@@ -2453,6 +2453,55 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/nodes/{id}/logs/failed-count": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    },
+                    {
+                        "ApiTokenAuth": []
+                    }
+                ],
+                "description": "Дешёвый count из ClickHouse для KPI «неудачные доставки» на вкладке «Очередь». Узел без clickhouse_table → 200 + logs_configured=false, count=0.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logs"
+                ],
+                "summary": "Число недоставленных записей узла (done=0) за период (§35).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "начало диапазона (RFC3339 или UnixMilli)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "конец диапазона",
+                        "name": "to",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.FailedCountResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/{id}/logs/stream": {
             "get": {
                 "security": [
@@ -3995,6 +4044,17 @@ const docTemplate = `{
                 "error": {
                     "type": "string",
                     "example": "not found"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.FailedCountResponse": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "logs_configured": {
+                    "type": "boolean"
                 }
             }
         },

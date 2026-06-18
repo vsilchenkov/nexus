@@ -93,6 +93,12 @@ type ListLogsResponse struct {
 	LogsConfigured bool           `json:"logs_configured,omitempty"`
 }
 
+// FailedCountResponse — GET /api/nodes/{id}/logs/failed-count (§35).
+type FailedCountResponse struct {
+	Count          uint64 `json:"count"`
+	LogsConfigured bool   `json:"logs_configured"`
+}
+
 // VersionResponse — GET /api/version (§34.3).
 type VersionResponse struct {
 	Version   string `json:"version"`
