@@ -520,6 +520,31 @@
 
 ---
 
+### §34 Операбельность: навигация, сессия, версия, async-очередь Kafka, фикс replay
+
+ТЗ — [sections/34-ops-session-version-async-queue.md](sections/34-ops-session-version-async-queue.md).
+**Статус: ◐ в работе** (ветка `feature/ops-async-queue`, блоки Phase 34.0–34.E).
+
+| Пункт | Статус | Где |
+|---|---|---|
+| §34.5 Фикс replay 405 (слать `IncomingMethod`, не залогированный `OutgoingMethod`) | ✅ Phase 34.A | [usecase/replay.go](../internal/web/usecase/replay.go) (метод = `node.IncomingMethod`, пустой → POST), тесты `TestReplay_UsesIncomingMethod`/`_IncomingMethodEmptyDefaultsPost` в [replay_test.go](../internal/web/usecase/replay_test.go) |
+| §34.1 «Настройки» вниз сайдбара | ⛔ | — |
+| §34.3 Обогащённый `/api/version` + dev-override версии | ⛔ | — |
+| §34.2 Настраиваемая длительность сессии | ⛔ | — |
+| §34.4 Управление async-очередью Kafka (tombstones) | ⛔ | — |
+
+**Неочевидности / решения.**
+- **§34.5 — корень бага.** В лог ClickHouse пишется **исходящий** метод узла: и sync
+  ([route.go:152](../internal/receiver/usecase/route.go#L152)), и async
+  ([route_async.go:123](../internal/receiver/usecase/route_async.go#L123)) кладут в запрос к Sender
+  `string(node.OutgoingMethod)`, а Sender логирует его как `rec.Method`
+  ([send.go:105](../internal/sender/usecase/send.go#L105)). Replay переинъецирует запрос через входной
+  endpoint Receiver'а, где метод валидируется против `node.IncomingMethod`. При `OutgoingMethod !=
+  IncomingMethod` (POST-in / GET-out без тела) старое `orig.Method` давало 405. Фикс — брать
+  `IncomingMethod`. `orig.Method` для сборки метода больше не используется.
+
+---
+
 ## 3. Где что лежит — карта каталогов
 
 ```text
