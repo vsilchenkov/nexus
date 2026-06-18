@@ -183,6 +183,12 @@ sender:
     dial_timeout_ms: 5000        # Таймаут установки TCP-соединения (мс).
     tls_handshake_timeout_ms: 5000 # Таймаут TLS-рукопожатия (мс).
   workers: 50                    # Число воркеров обработки async-задач.
+  # §36: авто-репроцессор DLQ — фоновый sweeper над nexus.async.dlq, повторно
+  # доставляет неудачные async-сообщения до per-node dlq_ttl_seconds.
+  reprocessor:
+    disabled: false              # Рубильник sweeper'а (false → включён).
+    interval_sec: 300            # Период прохода = базовый backoff (сек, 5 мин).
+    max_scan: 1000               # Максимум сообщений за один проход (защита брокеров).
 
 # Web Service — REST API под /api/* и встроенный SPA (embed.FS).
 web:

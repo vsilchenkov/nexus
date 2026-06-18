@@ -336,7 +336,7 @@ func (n *Node) SetDefaults() {
 		n.DLQTTLSeconds = 86_400 // §36: 24ч по умолчанию
 	}
 	if n.DLQRetryDelaySeconds == 0 {
-		n.DLQRetryDelaySeconds = 60 // §36: 60с по умолчанию
+		n.DLQRetryDelaySeconds = 300 // §36: 5 мин по умолчанию (= интервал прохода)
 	}
 	if n.RootMethod.IsPull() {
 		// (см. NormalizeForRootMethod — вызывается отдельно в usecase,

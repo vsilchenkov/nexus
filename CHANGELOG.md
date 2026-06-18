@@ -12,6 +12,30 @@
 
 ## [Unreleased]
 
+### Added
+
+- **§36 — авто-репроцессор DLQ.** Фоновый sweeper в Sender повторно доставляет неудачные
+  async-сообщения из `nexus.async.dlq` (отдельная consumer-группа `<group>-dlq-reprocess`,
+  периодический проход) до per-node TTL; при восстановлении приёмника сообщения уходят
+  автоматически. Уважает circuit breaker, tombstone'ы (§34.4) и статус узла. Метрики
+  `nexus_dlq_reprocess_total{node,result}` и `nexus_dlq_reprocess_duration_seconds`.
+
+### ⚠️ Новые параметры конфигурации (заполнить при выпуске релиза)
+
+- **`config.yml` → новая секция `sender.reprocessor`** (есть дефолты, секция опциональна):
+  - `disabled` (bool, дефолт `false` → репроцессор включён);
+  - `interval_sec` (int, дефолт `300` = 5 мин) — период прохода sweeper'а = базовый backoff;
+  - `max_scan` (int, дефолт `1000`) — максимум сообщений за один проход.
+
+  Образец — в [config/config.example.yml](config/config.example.yml). На dev-стенде
+  ([config/config_debug.yml](config/config_debug.yml)) `interval_sec: 30` для быстрой проверки.
+
+- **Новые миграции PostgreSQL (применяются автоматически на старте, аддитивные):**
+  - `0017_node_dlq_ttl` — колонка `nodes.dlq_ttl_seconds` (`NOT NULL DEFAULT 86400` = 24 ч);
+  - `0018_node_dlq_retry_delay` — колонка `nodes.dlq_retry_delay_seconds` (`NOT NULL DEFAULT 300`
+    = 5 мин). Обе с `NOT NULL DEFAULT` → существующие узлы заполняются дефолтами атомарно,
+    отдельный backfill не нужен. Оба параметра редактируются в форме узла (UI).
+
 ## [1.1.0] - 2026-06-17
 
 Релиз преимущественно из аудита надёжности/безопасности (ветка `fix/audit-2026-06`,

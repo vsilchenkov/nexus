@@ -170,6 +170,13 @@ func applyDefaults(c *Config) {
 	if c.Sender.Workers == 0 {
 		c.Sender.Workers = 50
 	}
+	// §36: авто-репроцессор DLQ включён по умолчанию (Disabled=false).
+	if c.Sender.Reprocessor.IntervalSec == 0 {
+		c.Sender.Reprocessor.IntervalSec = 300 // 5 мин — базовый backoff прохода
+	}
+	if c.Sender.Reprocessor.MaxScan == 0 {
+		c.Sender.Reprocessor.MaxScan = 1000
+	}
 
 	if c.Web.HTTPAddr == "" {
 		c.Web.HTTPAddr = ":8000"

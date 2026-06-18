@@ -631,9 +631,9 @@ DLQ) тормозила, «Очистить» был no-op, шапка плох�
 | Пункт | Статус | Где |
 |---|---|---|
 | §36.B1 Per-node `dlq_ttl_seconds` (дефолт 24ч) | ✅ | миграция [0017_node_dlq_ttl](../migrations/0017_node_dlq_ttl.up.sql); [domain/node.go](../internal/domain/node.go) (поле + `SetDefaults` 86400 + `Validate` [60, 2592000] + [errors.go](../internal/domain/errors.go) `ErrNodeDLQTTLRange`); PG-маппер [node_repo.go](../internal/web/adapter/out/postgres/node_repo.go) (последний столбец, без перенумерации $-параметров); DTO [dto.go](../internal/web/adapter/in/http/dto.go); UI-форма [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx) (в секундах + подсказка в часах) + [nodeValidation.ts](../web-ui/src/lib/nodeValidation.ts) + i18n; тесты domain + integration round-trip |
-| §36.B1.2 Per-node `dlq_retry_delay_seconds` (дефолт 60с) | ✅ | миграция [0018_node_dlq_retry_delay](../migrations/0018_node_dlq_retry_delay.up.sql) (`NOT NULL DEFAULT 60` атомарно заполняет существующие узлы); [domain/node.go](../internal/domain/node.go) (`SetDefaults` 60 + `Validate` [1, 86400] + `ErrNodeDLQRetryDelayRange`); PG-маппер (последний столбец); DTO + swagger; UI-форма + `nodeValidation.ts` + i18n + пересборка бандла; min-backoff перед повтором ошибочной доставки (header `next_attempt_at`, §36.4) |
-| §36.B2 Sender-репроцессор (sweeper над DLQ) | ✅ | usecase [dlq_reprocess.go](../internal/sender/usecase/dlq_reprocess.go) (`DLQReprocessor.ProcessMessage`: резолв→tombstone→TTL→статус→retry-backoff→breaker→`Send`); адаптер-sweeper [adapter/in/kafka/dlq_reprocessor.go](../internal/sender/adapter/in/kafka/dlq_reprocessor.go) (период. проход, отдельная группа `<group>-dlq-reprocess`); [circuitbreaker.IsOpen](../internal/platform/circuitbreaker/redis.go) (read-only, open∧cooldown); [kafka.NewConsumerWithGroup](../internal/platform/kafka/consumer.go); метрики `nexus_dlq_reprocess_total`/`_duration_seconds` ([metrics.go](../internal/platform/metrics/metrics.go)); unit-тесты. **Компонент готов и протестирован; подключение к `app.go` + global-конфиг — B3 (пока не запущен в проде).** |
-| §36.B3 Global-конфиг + wiring (`safego.Go` в app.go, Stop) | ⛔ | — |
+| §36.B1.2 Per-node `dlq_retry_delay_seconds` (дефолт 5 мин) | ✅ | миграция [0018_node_dlq_retry_delay](../migrations/0018_node_dlq_retry_delay.up.sql) (`NOT NULL DEFAULT 300` атомарно заполняет существующие узлы); [domain/node.go](../internal/domain/node.go) (`SetDefaults` 300 + `Validate` [1, 86400] + `ErrNodeDLQRetryDelayRange`); PG-маппер (последний столбец); DTO + swagger; UI-форма + `nodeValidation.ts` + i18n + пересборка бандла; min-backoff перед повтором ошибочной доставки (header `next_attempt_at`, §36.4). Дефолт 300с = `reprocess_interval` |
+| §36.B2 Sender-репроцессор (sweeper над DLQ) | ✅ | usecase [dlq_reprocess.go](../internal/sender/usecase/dlq_reprocess.go) (`DLQReprocessor.ProcessMessage`: резолв→tombstone→TTL→статус→retry-backoff→breaker→`Send`); адаптер-sweeper [adapter/in/kafka/dlq_reprocessor.go](../internal/sender/adapter/in/kafka/dlq_reprocessor.go) (период. проход, отдельная группа `<group>-dlq-reprocess`); [circuitbreaker.IsOpen](../internal/platform/circuitbreaker/redis.go) (read-only, open∧cooldown); [kafka.NewConsumerWithGroup](../internal/platform/kafka/consumer.go); метрики `nexus_dlq_reprocess_total`/`_duration_seconds` ([metrics.go](../internal/platform/metrics/metrics.go)); unit-тесты |
+| §36.B3 Global-конфиг + wiring (`safego.Go` в app.go, Stop) | ✅ | секция [config.go](../internal/platform/config/config.go) `SenderReprocessorConfig` (`disabled`/`interval_sec` 300/`max_scan` 1000) + [defaults.go](../internal/platform/config/defaults.go); wiring [sender/app.go](../internal/sender/app.go) (конструкция под `!disabled`, `safego.Go`, `Stop()`+`Await` done-канала); config-файлы (`config.yml`/`config.example.yml`/`config_debug.yml`); CHANGELOG + DEPLOYMENT |
 | §36.B4 UI-подсказка «повторяется до TTL» | ⛔ | — |
 
 **Неочевидности (B1/B1.2).**
@@ -646,8 +646,9 @@ DLQ) тормозила, «Очистить» был no-op, шапка плох�
 
 **Неочевидности (B2).**
 - **Backoff повтора — `max(reprocess_interval, dlq_retry_delay_seconds)`.** Sweeper тикает раз в интервал;
-  `next_attempt_at` лишь не даёт повторить РАНЬШЕ задержки. При дефолтах (5 мин / 60 с) доминирует интервал —
-  чтобы повтор шёл ближе к 60 с, B3 должен задать сопоставимый интервал прохода.
+  `next_attempt_at` лишь не даёт повторить РАНЬШЕ задержки. По умолчанию оба = 5 мин (`interval_sec` 300 =
+  `dlq_retry_delay_seconds` 300) → повтор раз в ~5 мин. Per-node задержка «прижимает» паузу снизу, если
+  глобальный интервал прохода меньше.
 - **`Breaker.IsOpen` (новый) — read-only и учитывает cooldown.** `State()` всегда возвращает `open` пока
   ключ жив (не учитывает истёкший cooldown), `Allow()` расходует half-open-пробу. Для шага 5 нужен именно
   «open И cooldown не истёк», без побочных эффектов — иначе восстановившийся адрес (cooldown прошёл) навсегда

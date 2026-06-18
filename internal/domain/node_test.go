@@ -69,7 +69,7 @@ func TestNode_SetDefaults(t *testing.T) {
 	if n.DLQTTLSeconds != 86_400 { // §36: 24ч
 		t.Errorf("dlq_ttl_seconds default = %d", n.DLQTTLSeconds)
 	}
-	if n.DLQRetryDelaySeconds != 60 { // §36: 60с
+	if n.DLQRetryDelaySeconds != 300 { // §36: 5 мин
 		t.Errorf("dlq_retry_delay_seconds default = %d", n.DLQRetryDelaySeconds)
 	}
 }

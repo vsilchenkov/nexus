@@ -110,7 +110,7 @@ const emptyForm: Form = {
   clickhouse_template_id: "",
   clickhouse_retention_days: 90,
   dlq_ttl_seconds: 86400,
-  dlq_retry_delay_seconds: 60,
+  dlq_retry_delay_seconds: 300,
   status: "enabled",
   forward_headers: [],
   log_request_body: false,

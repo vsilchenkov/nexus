@@ -226,11 +226,22 @@ type ReceiverSenderGRPCConfig struct {
 }
 
 type SenderSection struct {
-	GRPCAddr                 string                 `yaml:"grpc_addr"`
-	AdminHTTPAddr            string                 `yaml:"admin_http_addr"`
-	GRPCMaxConcurrentStreams uint32                 `yaml:"grpc_max_concurrent_streams"`
-	HTTPClient               SenderHTTPClientConfig `yaml:"http_client"`
-	Workers                  int                    `yaml:"workers"`
+	GRPCAddr                 string                  `yaml:"grpc_addr"`
+	AdminHTTPAddr            string                  `yaml:"admin_http_addr"`
+	GRPCMaxConcurrentStreams uint32                  `yaml:"grpc_max_concurrent_streams"`
+	HTTPClient               SenderHTTPClientConfig  `yaml:"http_client"`
+	Workers                  int                     `yaml:"workers"`
+	Reprocessor              SenderReprocessorConfig `yaml:"reprocessor"`
+}
+
+// SenderReprocessorConfig — глобальные параметры авто-репроцессора DLQ (§36).
+// Sweeper живёт только в Sender (читает nexus.async.dlq отдельной группой).
+// По умолчанию включён (Disabled=false, как у ReceiverPullerConfig) — узлов с
+// неудачными доставками может не быть, тогда проход — почти no-op.
+type SenderReprocessorConfig struct {
+	Disabled    bool `yaml:"disabled"`     // §36: выключатель sweeper'а (default false → включён)
+	IntervalSec int  `yaml:"interval_sec"` // §36: период прохода = базовый backoff (default 300)
+	MaxScan     int  `yaml:"max_scan"`     // §36: cap сообщений за проход (default 1000)
 }
 
 type SenderHTTPClientConfig struct {

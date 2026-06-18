@@ -142,7 +142,7 @@ func TestNodeRepoCreate_E2E(t *testing.T) {
 	if got.DLQTTLSeconds != 86_400 {
 		t.Fatalf("dlq_ttl_seconds round-trip mismatch: %d", got.DLQTTLSeconds)
 	}
-	if got.DLQRetryDelaySeconds != 60 {
+	if got.DLQRetryDelaySeconds != 300 {
 		t.Fatalf("dlq_retry_delay_seconds round-trip mismatch: %d", got.DLQRetryDelaySeconds)
 	}
 

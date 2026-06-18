@@ -3204,10 +3204,11 @@ Prometheus `NodeThroughput` для top-узлов. Все источники д�
   иначе→republish-в-хвост (attempts+1, `next_attempt_at = now + dlq_retry_delay_seconds`)+commit.
   Republish прекращается на успех/TTL.
 - **Настройки:** per-node `dlq_ttl_seconds` (дефолт 86400=24ч, [60, 2592000]) — миграция 0017; per-node
-  `dlq_retry_delay_seconds` (дефолт 60с, [1, 86400]) — минимальная пауза перед повтором ошибочной отправки,
-  миграция 0018; обе через domain/PG/DTO/UI/i18n. Global: `reprocess_enabled` (true), `reprocess_interval`
-  (5m), `reprocess_max_scan` (1000). Эффективная пауза повтора = `max(reprocess_interval,
-  dlq_retry_delay_seconds)`. Задел: per-node `dlq_reprocess_enabled` тем же паттерном.
+  `dlq_retry_delay_seconds` (дефолт 300с=5мин, [1, 86400]) — минимальная пауза перед повтором ошибочной
+  отправки, миграция 0018; обе через domain/PG/DTO/UI/i18n. Global секция `sender.reprocessor`: `disabled`
+  (false→включён), `interval_sec` (300), `max_scan` (1000). Эффективная пауза повтора =
+  `max(interval_sec, dlq_retry_delay_seconds)` (по умолчанию оба 5 мин). Задел: per-node
+  `dlq_reprocess_enabled` тем же паттерном.
 - **UI:** поля «TTL неудачных доставок» (в часах) и «Задержка переотправки» (в секундах) в форме узла;
   подсказка «повторяется автоматически до TTL» во вкладке «Очередь»; ручной «Повторить» остаётся (форс-повтор).
 - **Метрики:** `nexus_dlq_reprocess_total{node,result=succeeded|failed|ttl_dropped|skipped|dropped}` +

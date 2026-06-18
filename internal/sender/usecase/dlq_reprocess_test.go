@@ -78,7 +78,7 @@ func enabledNode() *domain.Node {
 		ClickHouseTable:      "nexus.log_partner_echo",
 		LoggingEnabled:       true,
 		DLQTTLSeconds:        86_400,
-		DLQRetryDelaySeconds: 60,
+		DLQRetryDelaySeconds: 300,
 	}
 }
 
@@ -227,8 +227,8 @@ func TestReprocess_Failed_Republish(t *testing.T) {
 	require.NotEmpty(t, msg.headers["next_attempt_at"], "неудача проставляет next_attempt_at")
 	next, err := time.Parse(time.RFC3339Nano, msg.headers["next_attempt_at"])
 	require.NoError(t, err)
-	assert.WithinDuration(t, time.Now().Add(60*time.Second), next, 5*time.Second,
-		"next_attempt_at ≈ now + 60с (dlq_retry_delay_seconds)")
+	assert.WithinDuration(t, time.Now().Add(300*time.Second), next, 5*time.Second,
+		"next_attempt_at ≈ now + 300с (dlq_retry_delay_seconds)")
 }
 
 // TestReprocess_NotDueYet_RepublishSkipped (§36.4): сообщение с next_attempt_at
