@@ -22,7 +22,9 @@
       "mcp__playwright__browser_console_messages",
       "mcp__playwright__browser_select_option",
       "mcp__playwright__browser_resize",
-      "Bash(rm -f internal/web/static/assets/*)"
+      "Bash(rm -f internal/web/static/assets/*)",
+      "Bash(make swagger *)",
+      "Bash(go build *)"
     ],
     "deny": [
       "Bash(rm -rf *)",

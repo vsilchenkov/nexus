@@ -514,7 +514,9 @@
       "public_base_url_hint": "Public address the app is published at. When set, node addresses are built from it instead of the browser host. Leave empty to use the current origin.",
       "public_base_url_example": "Origin only, no path or trailing slash, e.g. https://nexus.example.com",
       "version_override": "Application version (dev)",
-      "version_override_hint": "Overrides the displayed version in this build. Available in dev/staging only; production always uses the git version. Leave empty to use the git version."
+      "version_override_hint": "Overrides the displayed version in this build. Available in dev/staging only; production always uses the git version. Leave empty to use the git version.",
+      "session_ttl": "Session duration (minutes)",
+      "session_ttl_hint": "How many minutes a user session stays alive without activity. Allowed 5 minutes .. 30 days (43200 min). Applied without restart. Leave empty to use the config default."
     },
     "tokens": {
       "title": "API tokens",

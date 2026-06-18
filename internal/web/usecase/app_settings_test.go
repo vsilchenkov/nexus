@@ -287,6 +287,46 @@ func TestChangedSections_VersionOverride(t *testing.T) {
 	assert.Equal(t, []string{"general"}, changedSections(p))
 }
 
+// TestAppSettings_SessionTTL_MergeAndSection (§34.2): валидный TTL сохраняется,
+// секция security попадает в changed_sections.
+func TestAppSettings_SessionTTL_MergeAndSection(t *testing.T) {
+	t.Parallel()
+	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
+	pub := &fakeReloadPublisher{}
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, false, logging.NewNoop())
+
+	ttl := 7200
+	err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
+		Security: domain.SecuritySettings{SessionTTLSeconds: &ttl},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, repo.lastSaved)
+	require.NotNil(t, repo.lastSaved.Security.SessionTTLSeconds)
+	assert.Equal(t, 7200, *repo.lastSaved.Security.SessionTTLSeconds)
+	assert.Equal(t, []string{"security"}, pub.sections)
+}
+
+// TestAppSettings_SessionTTL_Invalid (§34.2): TTL вне диапазона отклоняется.
+func TestAppSettings_SessionTTL_Invalid(t *testing.T) {
+	t.Parallel()
+	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false, logging.NewNoop())
+
+	tooSmall := 5
+	err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
+		Security: domain.SecuritySettings{SessionTTLSeconds: &tooSmall},
+	})
+	assert.ErrorIs(t, err, domain.ErrSessionTTLInvalid)
+	assert.Nil(t, repo.lastSaved, "invalid TTL must not persist")
+}
+
+func TestChangedSections_Security(t *testing.T) {
+	t.Parallel()
+	ttl := 3600
+	p := &domain.AppSettings{Security: domain.SecuritySettings{SessionTTLSeconds: &ttl}}
+	assert.Equal(t, []string{"security"}, changedSections(p))
+}
+
 // ---- fakes ----
 
 type fakeAppSettingsRepo struct {

@@ -5354,6 +5354,9 @@ const docTemplate = `{
                 "notifications": {
                     "$ref": "#/definitions/nexus_internal_domain.NotificationsSettings"
                 },
+                "security": {
+                    "$ref": "#/definitions/nexus_internal_domain.SecuritySettings"
+                },
                 "sentry": {
                     "$ref": "#/definitions/nexus_internal_domain.SentrySettings"
                 },
@@ -5502,6 +5505,15 @@ const docTemplate = `{
             "properties": {
                 "telegram": {
                     "$ref": "#/definitions/nexus_internal_domain.TelegramSettings"
+                }
+            }
+        },
+        "nexus_internal_domain.SecuritySettings": {
+            "type": "object",
+            "properties": {
+                "session_ttl_seconds": {
+                    "description": "SessionTTLSeconds — длительность пользовательской сессии в секундах.\nnil = брать из env-конфига (cfg.Redis.SessionTTLSec). Применяется к новым\nсессиям и sliding-Touch без рестарта (через SessionTTLProvider).",
+                    "type": "integer"
                 }
             }
         },

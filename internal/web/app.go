@@ -190,8 +190,11 @@ func (a *App) Start(ctx context.Context) error {
 
 	userRepo := pgrepo.NewUserRepoPg(a.pg, a.logger)
 	sessionRepo := rediscache.NewSessionRepoRedis(a.redis)
-	sessionTTL := time.Duration(a.cfg.Redis.SessionTTLSec) * time.Second
-	authUC := usecase.NewAuthUsecase(userRepo, sessionRepo, teamRepo, auditUC, sessionTTL, a.logger)
+	// §34.2: длительность сессии через провайдер (live, без рестарта). Fallback —
+	// env-конфиг; сидинг из app_settings и hot-reload (секция security) — ниже,
+	// после создания appSettingsUC.
+	sessionTTLProvider := usecase.NewSessionTTLProvider(a.cfg.Redis.SessionTTLSec)
+	authUC := usecase.NewAuthUsecase(userRepo, sessionRepo, teamRepo, auditUC, sessionTTLProvider.Get, a.logger)
 	userUC := usecase.NewUserUsecase(userRepo, sessionRepo, teamRepo, auditUC, defaultTeamID, a.logger)
 
 	tokenRepo := pgrepo.NewAPITokenRepoPg(a.pg, a.logger)
@@ -231,7 +234,26 @@ func (a *App) Start(ctx context.Context) error {
 	reloadSub.Register(reloader.SectionSentry,
 		bootstrap.SentryReloader(a.pg, a.cfg, a.cfg.Build.ProjectName, a.cfg.Build.Version, a.logger))
 
-	authHandler := httpadapter.NewAuthHandler(authUC, &a.cfg.Web, sessionTTL, a.logger)
+	// §34.2: длительность сессии из app_settings (сидинг на старте + hot-reload
+	// секции security). nil → сброс провайдера на env-fallback.
+	applySessionTTL := func(ctx context.Context) error {
+		s, err := appSettingsUC.Raw(ctx)
+		if err != nil {
+			return err
+		}
+		if s != nil && s.Security.SessionTTLSeconds != nil {
+			sessionTTLProvider.Set(*s.Security.SessionTTLSeconds)
+		} else {
+			sessionTTLProvider.Set(0)
+		}
+		return nil
+	}
+	if err := applySessionTTL(ctx); err != nil {
+		a.logger.Warn("seed session TTL from app_settings failed; using env fallback", a.logger.Err(err))
+	}
+	reloadSub.Register(reloader.SectionSecurity, applySessionTTL)
+
+	authHandler := httpadapter.NewAuthHandler(authUC, &a.cfg.Web, sessionTTLProvider.Get, a.logger)
 	userHandler := httpadapter.NewUserHandler(userUC, authUC, a.logger)
 	tokenHandler := httpadapter.NewAPITokenHandler(tokenUC, a.logger)
 	auditHandler := httpadapter.NewAuditHandler(auditUC, a.logger)
