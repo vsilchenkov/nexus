@@ -201,7 +201,9 @@ export function QueueTab({
         <section className="space-y-2">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-fg">{t("queue.section.pending")}</h3>
-            {pendingCount > 0 && (
+            {/* Очистка доступна при наличии backlog ИЛИ на паузе (можно чистить, не
+                дожидаясь подсчёта; на пустой очереди purge просто вернёт cancelled:0). */}
+            {(pendingCount > 0 || node.status === "paused") && (
               <div className="flex gap-2">
                 <Button
                   sm

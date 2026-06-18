@@ -18,9 +18,13 @@ import (
 // коммитит и не мешает доставке.
 
 const (
-	peekCapDefault = 5000             // макс. число прочитанных сообщений за peek
-	peekTimeout    = 10 * time.Second // общий бюджет на скан очереди узла
-	peekMaxBytes   = 10 << 20         // 10 МБ на fetch
+	peekCapDefault = 5000                   // макс. число прочитанных сообщений за peek
+	peekTimeout    = 10 * time.Second       // общий бюджет на скан очереди узла
+	peekMaxBytes   = 10 << 20               // 10 МБ на fetch
+	peekMaxWait    = 500 * time.Millisecond // НЕ дефолтные 10с: после чтения последнего
+	// сообщения kafka.Reader в фоне пытается прочитать следующий (ещё пустой) offset и
+	// блокируется на MaxWait, а defer r.Close() ждёт этот fetch. С дефолтом 10с peek даже
+	// одного сообщения у конца очереди висел ~9с (стенд §35). 500мс держит peek быстрым.
 )
 
 var _ port.AsyncQueuePeeker = (*Client)(nil)
@@ -109,7 +113,7 @@ func (c *Client) PeekBody(ctx context.Context, topic string, partition int, offs
 	defer cancel()
 	r := kafka.NewReader(kafka.ReaderConfig{
 		Brokers: c.brokers, Topic: topic, Partition: partition,
-		MinBytes: 1, MaxBytes: peekMaxBytes,
+		MinBytes: 1, MaxBytes: peekMaxBytes, MaxWait: peekMaxWait,
 	})
 	defer r.Close()
 	if err := r.SetOffset(offset); err != nil {
@@ -181,7 +185,7 @@ func (c *Client) scanQueue(ctx context.Context, group, topic, nodePath string, c
 func (c *Client) scanPartition(ctx context.Context, topic string, pid int, start, hi int64, nodePath string, capN int, read *int, visit func(port.QueueMessageMeta) bool) (capped, stop bool) {
 	r := kafka.NewReader(kafka.ReaderConfig{
 		Brokers: c.brokers, Topic: topic, Partition: pid,
-		MinBytes: 1, MaxBytes: peekMaxBytes,
+		MinBytes: 1, MaxBytes: peekMaxBytes, MaxWait: peekMaxWait,
 	})
 	defer r.Close()
 	if err := r.SetOffset(start); err != nil {
