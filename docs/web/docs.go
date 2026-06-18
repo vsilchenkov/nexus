@@ -1922,184 +1922,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/nodes/{id}/async-queue/depth": {
-            "get": {
-                "security": [
-                    {
-                        "CookieAuth": []
-                    }
-                ],
-                "description": "Число неконсюмированных сообщений узла в nexus.async (peek напрямую из Kafka). capped=true → нижняя оценка. Admin-only.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "async-queue"
-                ],
-                "summary": "Глубина async-очереди узла (§34.4).",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "node id",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/internal_web_adapter_in_http.queueDepthDTO"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/nodes/{id}/async-queue/dlq/depth": {
-            "get": {
-                "security": [
-                    {
-                        "CookieAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "async-queue"
-                ],
-                "summary": "Число неудачных сообщений узла в DLQ (§34.6).",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "node id",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/internal_web_adapter_in_http.queueDepthDTO"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/nodes/{id}/async-queue/dlq/messages": {
-            "get": {
-                "security": [
-                    {
-                        "CookieAuth": []
-                    }
-                ],
-                "description": "С причиной (reason) и временем последней попытки. Тело — лениво через .../dlq/messages/body. Admin-only.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "async-queue"
-                ],
-                "summary": "Последние 50 неудачных сообщений узла из DLQ (§34.6).",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "node id",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/internal_web_adapter_in_http.dlqListDTO"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/nodes/{id}/async-queue/dlq/messages/body": {
-            "get": {
-                "security": [
-                    {
-                        "CookieAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "async-queue"
-                ],
-                "summary": "Тело одного сообщения DLQ (§34.6).",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "node id",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "integer",
-                        "description": "partition",
-                        "name": "partition",
-                        "in": "query",
-                        "required": true
-                    },
-                    {
-                        "type": "integer",
-                        "description": "offset",
-                        "name": "offset",
-                        "in": "query",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/internal_web_adapter_in_http.queueBodyDTO"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
-                        }
-                    },
-                    "503": {
-                        "description": "kafka unavailable",
-                        "schema": {
-                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/api/nodes/{id}/async-queue/messages": {
             "get": {
                 "security": [
@@ -2453,6 +2275,55 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/nodes/{id}/logs/failed-count": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    },
+                    {
+                        "ApiTokenAuth": []
+                    }
+                ],
+                "description": "Дешёвый count из ClickHouse для KPI «неудачные доставки» на вкладке «Очередь». Узел без clickhouse_table → 200 + logs_configured=false, count=0.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logs"
+                ],
+                "summary": "Число недоставленных записей узла (done=0) за период (§35).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "начало диапазона (RFC3339 или UnixMilli)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "конец диапазона",
+                        "name": "to",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.FailedCountResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/{id}/logs/stream": {
             "get": {
                 "security": [
@@ -2559,6 +2430,61 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "path already exists in target team",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{id}/status": {
+            "patch": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Лёгкая замена полного PUT для кнопок «Пауза»/«Отключить». manager+. Меняет лишь status, не трогая прочие поля/креды.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "nodes"
+                ],
+                "summary": "Сменить только статус узла (§35).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "enabled | paused | disabled",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.UpdateNodeStatusRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
@@ -3998,6 +3924,17 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_web_adapter_in_http.FailedCountResponse": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "logs_configured": {
+                    "type": "boolean"
+                }
+            }
+        },
         "internal_web_adapter_in_http.HostPreviewResponse": {
             "type": "object",
             "properties": {
@@ -4748,6 +4685,22 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_web_adapter_in_http.UpdateNodeStatusRequest": {
+            "type": "object",
+            "required": [
+                "status"
+            ],
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "enabled",
+                        "paused",
+                        "disabled"
+                    ]
+                }
+            }
+        },
         "internal_web_adapter_in_http.UserEnvelope": {
             "type": "object",
             "properties": {
@@ -5000,55 +4953,6 @@ const docTemplate = `{
                         "viewer",
                         "manager"
                     ]
-                }
-            }
-        },
-        "internal_web_adapter_in_http.dlqListDTO": {
-            "type": "object",
-            "properties": {
-                "capped": {
-                    "type": "boolean"
-                },
-                "items": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/internal_web_adapter_in_http.dlqMessageDTO"
-                    }
-                },
-                "kafka_available": {
-                    "type": "boolean"
-                }
-            }
-        },
-        "internal_web_adapter_in_http.dlqMessageDTO": {
-            "type": "object",
-            "properties": {
-                "body_size": {
-                    "type": "integer"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "last_attempt_at": {
-                    "type": "string"
-                },
-                "method": {
-                    "type": "string"
-                },
-                "offset": {
-                    "type": "integer"
-                },
-                "partition": {
-                    "type": "integer"
-                },
-                "reason": {
-                    "type": "string"
-                },
-                "received_at": {
-                    "type": "string"
-                },
-                "target_url": {
-                    "type": "string"
                 }
             }
         },
@@ -5542,20 +5446,6 @@ const docTemplate = `{
                 },
                 "target_url": {
                     "type": "string"
-                }
-            }
-        },
-        "internal_web_adapter_in_http.queueDepthDTO": {
-            "type": "object",
-            "properties": {
-                "capped": {
-                    "type": "boolean"
-                },
-                "count": {
-                    "type": "integer"
-                },
-                "kafka_available": {
-                    "type": "boolean"
                 }
             }
         },

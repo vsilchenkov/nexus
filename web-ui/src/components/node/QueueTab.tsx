@@ -1,12 +1,17 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Trash2, ChevronRight } from "lucide-react";
+import { Trash2, ChevronRight, Pause, Power, RotateCcw } from "lucide-react";
 
 import { api, type Node } from "../../api/client";
-import { Button, PeriodPicker, periodWindow, defaultPeriod, type Period } from "../ui";
+import { Button, Kpi, KpiRow, Hint, Pill, PeriodPicker, periodWindow, defaultPeriod, type Period } from "../ui";
+import { ReplayDialog } from "../ReplayDialog";
+import { type LogsInitialFilter } from "./LogsTab";
+import { type LogRow, type LogsResp, type LogDetail } from "./types";
 import { cn } from "../../lib/cn";
+import { msToDatetimeLocal } from "../../lib/format";
 import { useConfirm } from "../../lib/confirm";
+import { useRoleAtLeast } from "../../lib/useCurrentRole";
 
 type QueueMessage = {
   id: string;
@@ -17,17 +22,9 @@ type QueueMessage = {
   received_at: string;
   body_size: number;
 };
-type DepthResp = { count: number; capped: boolean; kafka_available: boolean };
 type ListResp = { items: QueueMessage[]; capped: boolean; kafka_available: boolean };
-type BodyResp = {
-  id: string;
-  method: string;
-  target_url: string;
-  headers?: Record<string, string>;
-  body: string;
-};
-type DlqMessage = QueueMessage & { reason: string; last_attempt_at: string };
-type DlqListResp = { items: DlqMessage[]; capped: boolean; kafka_available: boolean };
+type BodyResp = { id: string; method: string; target_url: string; headers?: Record<string, string>; body: string };
+type FailedCountResp = { count: number; logs_configured: boolean };
 
 function prettyJson(raw: string): string {
   try {
@@ -37,180 +34,249 @@ function prettyJson(raw: string): string {
   }
 }
 
-// QueueTab — управление накопившейся async-очередью Kafka узла requestAsync (§34.4):
-// глубина, первые 50 запросов (с ленивой подгрузкой тела), удаление одного /
-// очистка за период / очистка всей очереди. Только для root_method=requestAsync.
-export function QueueTab({ node }: { node: Node }) {
+// QueueTab — вкладка «Очередь» узла requestAsync (§35). Две части:
+//  • «Ожидают отправки» — живая очередь nexus.async (peek, только admin; непуста
+//    лишь для paused-узлов/лежащего Sender) с удалением/очисткой через tombstones;
+//  • «Неудачные доставки» — из ClickHouse-логов (done=0, быстро), с reason/телом/
+//    replay. Очистка неудач не через Kafka (нельзя), а пауза/отключение узла +
+//    replay; фильтр по периоду показывает свежие.
+export function QueueTab({
+  node,
+  onOpenFailedLogs,
+}: {
+  node: Node;
+  onOpenFailedLogs?: (f: LogsInitialFilter) => void;
+}) {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const confirm = useConfirm();
   const id = node.id;
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const isAdmin = useRoleAtLeast("admin");
+  const isManager = useRoleAtLeast("manager");
+  const hasLogsTable = !!node.clickhouse_table;
+
   const [period, setPeriod] = useState<Period>(defaultPeriod);
-
-  const depthQ = useQuery({
-    queryKey: ["aq-depth", id],
-    queryFn: () => api.get<DepthResp>(`/api/nodes/${id}/async-queue/depth`),
-    refetchInterval: 5000,
-  });
-  const listQ = useQuery({
-    queryKey: ["aq-list", id],
-    queryFn: () => api.get<ListResp>(`/api/nodes/${id}/async-queue/messages`),
-    refetchInterval: 5000,
-  });
-  // §34.6: DLQ (неудачные сообщения — куда уходят при недоступном адресе).
-  const dlqDepthQ = useQuery({
-    queryKey: ["aq-dlq-depth", id],
-    queryFn: () => api.get<DepthResp>(`/api/nodes/${id}/async-queue/dlq/depth`),
-    refetchInterval: 5000,
-  });
-  const dlqListQ = useQuery({
-    queryKey: ["aq-dlq-list", id],
-    queryFn: () => api.get<DlqListResp>(`/api/nodes/${id}/async-queue/dlq/messages`),
-    refetchInterval: 5000,
-  });
-  const [dlqExpanded, setDlqExpanded] = useState<string | null>(null);
-
-  const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ["aq-depth", id] });
-    qc.invalidateQueries({ queryKey: ["aq-list", id] });
+  const periodIso = () => {
+    const { since, until } = periodWindow(period);
+    return { from: new Date(since).toISOString(), to: new Date(until).toISOString() };
   };
 
+  const [pendingExpanded, setPendingExpanded] = useState<string | null>(null);
+  const [failedExpanded, setFailedExpanded] = useState<string | null>(null);
+  const [replayId, setReplayId] = useState<string | null>(null);
+
+  // Живая очередь (pending) — только admin. Поллим лишь когда узел paused или
+  // есть pending — на enabled-узле очередь пуста, нет смысла молотить Kafka.
+  const pendingQ = useQuery({
+    queryKey: ["aq-list", id],
+    queryFn: () => api.get<ListResp>(`/api/nodes/${id}/async-queue/messages`),
+    enabled: isAdmin,
+    refetchInterval: (q) => {
+      const data = q.state.data as ListResp | undefined;
+      return node.status === "paused" || (data?.items.length ?? 0) > 0 ? 30_000 : false;
+    },
+  });
+  const pending = pendingQ.data?.items ?? [];
+  const pendingCount = pending.length;
+  const pendingCapped = pendingQ.data?.capped ?? false;
+  const showPending = isAdmin && (node.status === "paused" || pendingCount > 0);
+
+  // Неудачные доставки — ClickHouse (done=0) за период.
+  const failedCountQ = useQuery({
+    queryKey: ["aq-failed-count", id, periodWindow(period)],
+    queryFn: () => api.get<FailedCountResp>(`/api/nodes/${id}/logs/failed-count`, periodIso()),
+    enabled: hasLogsTable,
+    refetchInterval: 15_000,
+  });
+  const failedListQ = useQuery({
+    queryKey: ["aq-failed-list", id, periodWindow(period)],
+    queryFn: () => api.get<LogsResp>(`/api/nodes/${id}/logs`, { done: "no", ...periodIso(), limit: 50 }),
+    enabled: hasLogsTable,
+    refetchInterval: 15_000,
+  });
+  const failed = failedListQ.data?.items ?? [];
+
+  const invalidatePending = () => qc.invalidateQueries({ queryKey: ["aq-list", id] });
   const del = useMutation({
     mutationFn: (msgId: string) =>
       api.del(`/api/nodes/${id}/async-queue/messages/${encodeURIComponent(msgId)}`),
-    onSuccess: invalidate,
+    onSuccess: invalidatePending,
   });
   const purge = useMutation({
     mutationFn: (body: { from?: string; to?: string }) =>
       api.post(`/api/nodes/${id}/async-queue/purge`, body),
-    onSuccess: invalidate,
+    onSuccess: invalidatePending,
   });
-
-  const kafkaAvailable =
-    (depthQ.data?.kafka_available ?? true) && (listQ.data?.kafka_available ?? true);
-  const capped = depthQ.data?.capped || listQ.data?.capped;
-  const items = listQ.data?.items ?? [];
-
-  if (!kafkaAvailable && !depthQ.isLoading) {
-    return <div className="text-fg-muted">{t("queue.unavailable")}</div>;
-  }
+  const setStatus = useMutation({
+    mutationFn: (status: "paused" | "disabled") =>
+      api.patch(`/api/nodes/${id}/status`, { status }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["node", id] }),
+  });
 
   return (
     <div className="space-y-4">
-      {/* Глубина очереди + очистка всего */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-line bg-bg-soft px-4 py-3">
-        <div>
-          <div className="text-[11px] uppercase tracking-wide text-fg-subtle">
-            {t("queue.depth")}
-          </div>
-          <div className="text-lg font-semibold text-fg">
-            {depthQ.data ? depthQ.data.count : "—"}
-            {capped && <span className="ml-1 text-[11px] text-warn">{t("queue.capped_mark")}</span>}
-          </div>
-        </div>
-        <Button
-          sm
-          variant="danger"
-          disabled={purge.isPending}
-          onClick={async () => {
-            if (
-              await confirm({
-                title: t("queue.purge_all"),
-                message: t("queue.purge_all_confirm"),
-                confirmLabel: t("queue.purge_all"),
-                danger: true,
-              })
-            )
-              purge.mutate({});
-          }}
-        >
-          {t("queue.purge_all")}
-        </Button>
-      </div>
-
-      {capped && <div className="text-xs text-warn">{t("queue.capped_hint")}</div>}
-
-      {/* Очистка за период */}
-      <div className="flex flex-wrap items-center gap-3 rounded-md border border-line px-4 py-3">
-        <span className="text-xs text-fg-muted">{t("queue.purge_period")}</span>
+      <div className="flex flex-wrap items-center justify-end gap-3">
         <PeriodPicker value={period} onChange={setPeriod} />
-        <Button
-          sm
-          variant="ghost"
-          disabled={purge.isPending}
-          onClick={async () => {
-            const { since, until } = periodWindow(period);
-            if (
-              await confirm({
-                title: t("queue.purge_period"),
-                message: t("queue.purge_period_confirm"),
-                confirmLabel: t("queue.purge_period"),
-                danger: true,
-              })
-            )
-              purge.mutate({
-                from: new Date(since).toISOString(),
-                to: new Date(until).toISOString(),
-              });
-          }}
-        >
-          {t("queue.purge")}
-        </Button>
       </div>
 
-      {/* Список запросов */}
-      {listQ.isLoading ? (
-        <div className="text-fg-muted">{t("common.loading")}</div>
-      ) : items.length === 0 ? (
-        <div className="text-fg-muted">{t("queue.empty")}</div>
-      ) : (
-        <div className="overflow-hidden rounded-md border border-line">
-          <table className="w-full text-[13px]">
-            <thead className="bg-bg-soft text-left text-[11px] uppercase tracking-wide text-fg-subtle">
-              <tr>
-                <th className="w-8 px-2 py-2"></th>
-                <th className="px-2 py-2">{t("queue.col.received")}</th>
-                <th className="px-2 py-2">{t("queue.col.method")}</th>
-                <th className="px-2 py-2">{t("queue.col.target")}</th>
-                <th className="px-2 py-2 text-right">{t("queue.col.size")}</th>
-                <th className="w-10 px-2 py-2"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((m) => {
-                const open = expanded === m.id;
-                return (
-                  <FragmentRow
-                    key={m.id}
-                    m={m}
-                    nodeId={id}
-                    open={open}
-                    onToggle={() => setExpanded(open ? null : m.id)}
-                    onDelete={() => del.mutate(m.id)}
-                    deleting={del.isPending}
-                  />
-                );
-              })}
-            </tbody>
-          </table>
+      <KpiRow cols={2}>
+        <Kpi
+          label={t("queue.kpi.pending")}
+          value={isAdmin ? `${pendingCount}${pendingCapped ? "+" : ""}` : "—"}
+          hint={t("queue.kpi.pending_hint")}
+        />
+        <Kpi
+          label={t("queue.kpi.failed")}
+          value={hasLogsTable ? String(failedCountQ.data?.count ?? "—") : "—"}
+          hint={t("queue.kpi.failed_hint")}
+        />
+      </KpiRow>
+
+      <Hint tone="warn">
+        <div className="space-y-2">
+          <p>{t("queue.banner.explain")}</p>
+          {isManager && node.status === "enabled" && (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                sm
+                variant="ghost"
+                disabled={setStatus.isPending}
+                onClick={() => setStatus.mutate("paused")}
+              >
+                <Pause className="h-3.5 w-3.5" /> {t("queue.banner.pause")}
+              </Button>
+              <Button
+                sm
+                variant="ghost"
+                disabled={setStatus.isPending}
+                onClick={async () => {
+                  if (
+                    await confirm({
+                      title: t("queue.banner.disable"),
+                      message: t("queue.banner.disable_confirm"),
+                      confirmLabel: t("queue.banner.disable"),
+                      danger: true,
+                    })
+                  )
+                    setStatus.mutate("disabled");
+                }}
+              >
+                <Power className="h-3.5 w-3.5" /> {t("queue.banner.disable")}
+              </Button>
+            </div>
+          )}
         </div>
+      </Hint>
+
+      {/* Секция «Ожидают отправки» — живая очередь (admin) */}
+      {showPending && (
+        <section className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-fg">{t("queue.section.pending")}</h3>
+            {pendingCount > 0 && (
+              <div className="flex gap-2">
+                <Button
+                  sm
+                  variant="ghost"
+                  disabled={purge.isPending}
+                  onClick={async () => {
+                    const { since, until } = periodWindow(period);
+                    if (
+                      await confirm({
+                        title: t("queue.purge_period"),
+                        message: t("queue.purge_period_confirm"),
+                        confirmLabel: t("queue.purge_period"),
+                        danger: true,
+                      })
+                    )
+                      purge.mutate({
+                        from: new Date(since).toISOString(),
+                        to: new Date(until).toISOString(),
+                      });
+                  }}
+                >
+                  {t("queue.purge_period")}
+                </Button>
+                <Button
+                  sm
+                  variant="danger"
+                  disabled={purge.isPending}
+                  onClick={async () => {
+                    if (
+                      await confirm({
+                        title: t("queue.purge_all"),
+                        message: t("queue.purge_all_confirm"),
+                        confirmLabel: t("queue.purge_all"),
+                        danger: true,
+                      })
+                    )
+                      purge.mutate({});
+                  }}
+                >
+                  {t("queue.purge_all")}
+                </Button>
+              </div>
+            )}
+          </div>
+          {pending.length === 0 ? (
+            <div className="text-fg-muted">{t("queue.empty")}</div>
+          ) : (
+            <div className="overflow-hidden rounded-md border border-line">
+              <table className="w-full text-[13px]">
+                <thead className="bg-bg-soft text-left text-[11px] uppercase tracking-wide text-fg-subtle">
+                  <tr>
+                    <th className="w-8 px-2 py-2"></th>
+                    <th className="px-2 py-2">{t("queue.col.received")}</th>
+                    <th className="px-2 py-2">{t("queue.col.method")}</th>
+                    <th className="px-2 py-2">{t("queue.col.target")}</th>
+                    <th className="px-2 py-2 text-right">{t("queue.col.size")}</th>
+                    <th className="w-10 px-2 py-2"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pending.map((m) => (
+                    <PendingRow
+                      key={m.id}
+                      m={m}
+                      nodeId={id}
+                      open={pendingExpanded === m.id}
+                      onToggle={() => setPendingExpanded(pendingExpanded === m.id ? null : m.id)}
+                      onDelete={() => del.mutate(m.id)}
+                      deleting={del.isPending}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
       )}
 
-      {/* §34.6: DLQ — неудачные сообщения (куда уходят при недоступном адресе) */}
-      <div className="space-y-2 pt-2">
-        <div className="flex items-center gap-2">
-          <h3 className="text-sm font-semibold text-fg">{t("queue.dlq.title")}</h3>
-          <span className="text-xs text-fg-muted">
-            {dlqDepthQ.data ? dlqDepthQ.data.count : "—"}
-            {dlqDepthQ.data?.capped && (
-              <span className="ml-1 text-warn">{t("queue.capped_mark")}</span>
-            )}
-          </span>
+      {/* Секция «Неудачные доставки» — ClickHouse done=0 */}
+      <section className="space-y-2">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-fg">{t("queue.section.failed")}</h3>
+          {hasLogsTable && onOpenFailedLogs && (
+            <button
+              type="button"
+              className="text-xs text-accent transition-colors hover:text-fg"
+              onClick={() => {
+                const { since, until } = periodWindow(period);
+                onOpenFailedLogs({
+                  from: msToDatetimeLocal(since),
+                  to: msToDatetimeLocal(until),
+                  done: "no",
+                });
+              }}
+            >
+              {t("queue.open_in_logs")}
+            </button>
+          )}
         </div>
-        <p className="text-xs text-fg-subtle">{t("queue.dlq.hint")}</p>
-        {(dlqListQ.data?.items.length ?? 0) === 0 ? (
-          <div className="text-fg-muted">{t("queue.dlq.empty")}</div>
+        {!hasLogsTable ? (
+          <div className="text-fg-muted">{t("queue.failed.no_logging")}</div>
+        ) : failed.length === 0 ? (
+          <div className="text-fg-muted">{t("queue.failed.empty")}</div>
         ) : (
           <div className="overflow-hidden rounded-md border border-line">
             <table className="w-full text-[13px]">
@@ -218,75 +284,35 @@ export function QueueTab({ node }: { node: Node }) {
                 <tr>
                   <th className="w-8 px-2 py-2"></th>
                   <th className="px-2 py-2">{t("queue.col.received")}</th>
-                  <th className="px-2 py-2">{t("queue.dlq.col.reason")}</th>
-                  <th className="px-2 py-2">{t("queue.dlq.col.last_attempt")}</th>
-                  <th className="px-2 py-2 text-right">{t("queue.col.size")}</th>
+                  <th className="px-2 py-2">{t("queue.col.method")}</th>
+                  <th className="px-2 py-2">{t("queue.failed.col.status")}</th>
+                  <th className="px-2 py-2">{t("queue.failed.col.reason")}</th>
+                  <th className="w-10 px-2 py-2"></th>
                 </tr>
               </thead>
               <tbody>
-                {(dlqListQ.data?.items ?? []).map((m) => {
-                  const open = dlqExpanded === m.id;
-                  return (
-                    <DlqRow
-                      key={`${m.partition}:${m.offset}`}
-                      m={m}
-                      nodeId={id}
-                      open={open}
-                      onToggle={() => setDlqExpanded(open ? null : m.id)}
-                    />
-                  );
-                })}
+                {failed.map((r) => (
+                  <FailedRow
+                    key={r.id}
+                    r={r}
+                    nodeId={id}
+                    open={failedExpanded === r.id}
+                    onToggle={() => setFailedExpanded(failedExpanded === r.id ? null : r.id)}
+                    onReplay={() => setReplayId(r.id)}
+                  />
+                ))}
               </tbody>
             </table>
           </div>
         )}
-      </div>
+      </section>
+
+      {replayId && <ReplayDialog logId={replayId} nodeId={id} onClose={() => setReplayId(null)} />}
     </div>
   );
 }
 
-function DlqRow({
-  m,
-  nodeId,
-  open,
-  onToggle,
-}: {
-  m: DlqMessage;
-  nodeId: string;
-  open: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <>
-      <tr className="border-t border-line hover:bg-bg-muted/40">
-        <td className="px-2 py-2">
-          <button type="button" onClick={onToggle} className="text-fg-muted hover:text-fg">
-            <ChevronRight className={cn("h-4 w-4 transition-transform", open && "rotate-90")} />
-          </button>
-        </td>
-        <td className="px-2 py-2 font-mono text-[11px] text-fg-muted">
-          {new Date(m.received_at).toLocaleString()}
-        </td>
-        <td className="max-w-xs truncate px-2 py-2 font-mono text-[11px] text-err" title={m.reason}>
-          {m.reason}
-        </td>
-        <td className="px-2 py-2 font-mono text-[11px] text-fg-muted">
-          {m.last_attempt_at ? new Date(m.last_attempt_at).toLocaleString() : "—"}
-        </td>
-        <td className="px-2 py-2 text-right font-mono text-[11px] text-fg-muted">{m.body_size}</td>
-      </tr>
-      {open && (
-        <tr className="border-t border-line bg-bg-muted/30">
-          <td colSpan={5} className="px-4 py-3">
-            <QueueBody nodeId={nodeId} partition={m.partition} offset={m.offset} dlq />
-          </td>
-        </tr>
-      )}
-    </>
-  );
-}
-
-function FragmentRow({
+function PendingRow({
   m,
   nodeId,
   open,
@@ -333,7 +359,7 @@ function FragmentRow({
       {open && (
         <tr className="border-t border-line bg-bg-muted/30">
           <td colSpan={6} className="px-4 py-3">
-            <QueueBody nodeId={nodeId} partition={m.partition} offset={m.offset} />
+            <PendingBody nodeId={nodeId} partition={m.partition} offset={m.offset} />
           </td>
         </tr>
       )}
@@ -341,23 +367,12 @@ function FragmentRow({
   );
 }
 
-function QueueBody({
-  nodeId,
-  partition,
-  offset,
-  dlq = false,
-}: {
-  nodeId: string;
-  partition: number;
-  offset: number;
-  dlq?: boolean;
-}) {
+function PendingBody({ nodeId, partition, offset }: { nodeId: string; partition: number; offset: number }) {
   const { t } = useTranslation();
-  const path = dlq ? "dlq/messages/body" : "messages/body";
   const q = useQuery({
-    queryKey: ["aq-body", dlq, nodeId, partition, offset],
+    queryKey: ["aq-body", nodeId, partition, offset],
     queryFn: () =>
-      api.get<BodyResp>(`/api/nodes/${nodeId}/async-queue/${path}`, { partition, offset }),
+      api.get<BodyResp>(`/api/nodes/${nodeId}/async-queue/messages/body`, { partition, offset }),
     staleTime: 60_000,
   });
   if (q.isLoading) return <div className="text-fg-muted">{t("common.loading")}</div>;
@@ -366,5 +381,90 @@ function QueueBody({
     <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded bg-bg-muted/50 p-2 font-mono text-[11px]">
       {q.data.body ? prettyJson(q.data.body) : t("queue.body_empty")}
     </pre>
+  );
+}
+
+function FailedRow({
+  r,
+  nodeId,
+  open,
+  onToggle,
+  onReplay,
+}: {
+  r: LogRow;
+  nodeId: string;
+  open: boolean;
+  onToggle: () => void;
+  onReplay: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <>
+      <tr className="border-t border-line hover:bg-bg-muted/40">
+        <td className="px-2 py-2">
+          <button type="button" onClick={onToggle} className="text-fg-muted hover:text-fg">
+            <ChevronRight className={cn("h-4 w-4 transition-transform", open && "rotate-90")} />
+          </button>
+        </td>
+        <td className="px-2 py-2 font-mono text-[11px] text-fg-muted">
+          {new Date(r.date_request).toLocaleString()}
+        </td>
+        <td className="px-2 py-2 font-mono">{r.method}</td>
+        <td className="px-2 py-2">
+          <Pill tone="err">{r.status || "—"}</Pill>
+        </td>
+        <td className="max-w-xs truncate px-2 py-2 font-mono text-[11px] text-err" title={r.reason}>
+          {r.reason}
+        </td>
+        <td className="px-2 py-2">
+          <button
+            type="button"
+            onClick={onReplay}
+            className="text-fg-muted hover:text-accent"
+            title={t("queue.failed.replay")}
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+          </button>
+        </td>
+      </tr>
+      {open && (
+        <tr className="border-t border-line bg-bg-muted/30">
+          <td colSpan={6} className="px-4 py-3">
+            <FailedBody nodeId={nodeId} logId={r.id} />
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+function FailedBody({ nodeId, logId }: { nodeId: string; logId: string }) {
+  const { t } = useTranslation();
+  const q = useQuery({
+    queryKey: ["log", nodeId, logId],
+    queryFn: () => api.get<LogDetail>(`/api/nodes/${nodeId}/log/${logId}`),
+    staleTime: 60_000,
+  });
+  if (q.isLoading) return <div className="text-fg-muted">{t("common.loading")}</div>;
+  if (q.isError || !q.data) return <div className="text-err">{t("common.error")}</div>;
+  return (
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+      <div className="min-w-0">
+        <div className="mb-1 text-[10px] uppercase tracking-wider text-fg-muted">
+          {t("logs.detail.request")}
+        </div>
+        <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded bg-bg-muted/50 p-2 font-mono text-[11px]">
+          {q.data.request ? prettyJson(q.data.request) : t("logs.detail.empty")}
+        </pre>
+      </div>
+      <div className="min-w-0">
+        <div className="mb-1 text-[10px] uppercase tracking-wider text-fg-muted">
+          {t("logs.detail.response")}
+        </div>
+        <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded bg-bg-muted/50 p-2 font-mono text-[11px]">
+          {q.data.response ? prettyJson(q.data.response) : t("logs.detail.empty")}
+        </pre>
+      </div>
+    </div>
   );
 }

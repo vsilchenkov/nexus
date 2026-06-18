@@ -111,6 +111,8 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			// строку. Путь "log" (не "logs") — чтобы не конфликтовать с
 			// статическим сегментом ".../logs/stream" в gin-роутере.
 			authed.GET("/nodes/:id/log/:logId", RequireScope("logs:read"), h.Logs.Get)
+			// §35: дешёвый счётчик неудач (done=0) для KPI вкладки «Очередь».
+			authed.GET("/nodes/:id/logs/failed-count", RequireScope("logs:read"), h.Logs.CountFailed)
 			// SSE доступен только UI-сессиям (§7.14: для API-токенов — только
 			// snapshot).
 			authed.GET("/nodes/:id/logs/stream", RequireSessionOnly(), h.Logs.Stream)
@@ -145,6 +147,8 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		authedManager := authed.Group("/", mw.RequireManager)
 		authedManager.POST("/nodes", h.Node.Create)
 		authedManager.PUT("/nodes/:id", h.Node.Update)
+		// §35: лёгкая смена статуса (пауза/отключение) — manager+.
+		authedManager.PATCH("/nodes/:id/status", h.Node.UpdateStatus)
 		authedManager.DELETE("/nodes/:id", h.Node.Delete)
 		// §7.5.1: dry-run без сохранения конфига.
 		authedManager.POST("/nodes/dry-run", h.DryRun.Run)
@@ -249,16 +253,10 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			if mw.KafkaRateLimit != nil {
 				aq.Use(mw.KafkaRateLimit)
 			}
-			aq.GET("/depth", h.AsyncQueue.Depth)
 			aq.GET("/messages", h.AsyncQueue.List)
 			aq.GET("/messages/body", h.AsyncQueue.Body)
 			aq.DELETE("/messages/:msgId", h.AsyncQueue.DeleteOne)
 			aq.POST("/purge", h.AsyncQueue.Purge)
-			// §34.6: просмотр DLQ (неудачные сообщения; read-only — физически
-			// чистить DLQ нельзя: нет DeleteRecords, общая партиция).
-			aq.GET("/dlq/depth", h.AsyncQueue.DLQDepth)
-			aq.GET("/dlq/messages", h.AsyncQueue.DLQList)
-			aq.GET("/dlq/messages/body", h.AsyncQueue.DLQBody)
 		}
 	}
 }

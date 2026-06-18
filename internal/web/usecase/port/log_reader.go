@@ -51,4 +51,11 @@ type LogReader interface {
 	// CountErrors — число записей-ошибок (status>=400 OR status=0 OR done=0)
 	// в таблице за окно (sinceMs, untilMs]. Используется уведомлениями (§20.3).
 	CountErrors(ctx context.Context, table string, sinceMs, untilMs int64) (uint64, error)
+
+	// CountFailed — число НЕдоставленных записей (строго done=0) в таблице за
+	// окно (sinceMs, untilMs]. §35: KPI «неудачные доставки» на вкладке «Очередь»
+	// (каждая такая запись соответствует сообщению, ушедшему в DLQ). Уже,
+	// чем CountErrors (тот включает status>=400 даже при done=1 — невозможно
+	// для async, но семантически отдельный сигнал).
+	CountFailed(ctx context.Context, table string, sinceMs, untilMs int64) (uint64, error)
 }

@@ -57,6 +57,9 @@ func (s *stubLogReader) Search(_ context.Context, _ port.LogQuery) ([]*domain.Lo
 func (s *stubLogReader) CountErrors(_ context.Context, _ string, _, _ int64) (uint64, error) {
 	return 0, nil
 }
+func (s *stubLogReader) CountFailed(_ context.Context, _ string, _, _ int64) (uint64, error) {
+	return 0, nil
+}
 
 // stubDispatcher — реализует port.ReceiverDispatcher; сохраняет последний
 // запрос для проверки.

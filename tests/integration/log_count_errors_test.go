@@ -73,4 +73,14 @@ func TestLogReader_CountErrors_E2E(t *testing.T) {
 	n, err = reader.CountErrors(ctx, table, now.Add(-2*time.Hour).UnixMilli(), now.Add(-time.Hour).UnixMilli())
 	require.NoError(t, err)
 	require.EqualValues(t, 0, n)
+
+	// §35: CountFailed считает СТРОГО done=0 (исключает 500/done=1, которого для
+	// этих данных нет, но семантика уже): из 4 строк done=0 у трёх (id 2,3,4).
+	nf, err := reader.CountFailed(ctx, table, sinceMs, untilMs)
+	require.NoError(t, err)
+	require.EqualValues(t, 3, nf, "3 done=0 rows expected")
+
+	nf, err = reader.CountFailed(ctx, table, now.Add(-2*time.Hour).UnixMilli(), now.Add(-time.Hour).UnixMilli())
+	require.NoError(t, err)
+	require.EqualValues(t, 0, nf)
 }

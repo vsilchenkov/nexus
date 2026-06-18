@@ -224,6 +224,35 @@ func (r *LogReaderCH) CountErrors(ctx context.Context, table string, sinceMs, un
 	return n, nil
 }
 
+// CountFailed считает НЕдоставленные записи (строго done=0) за окно
+// (sinceMs, untilMs] (§35 — KPI «неудачные доставки»). Каждая такая запись —
+// сообщение, ушедшее в DLQ.
+func (r *LogReaderCH) CountFailed(ctx context.Context, table string, sinceMs, untilMs int64) (uint64, error) {
+	if !isSafeTableName(table) {
+		return 0, fmt.Errorf("invalid table name: %q", table)
+	}
+	conds := []string{"done = 0"}
+	var args []any
+	if sinceMs > 0 {
+		conds = append(conds, "toUnixTimestamp64Milli(toDateTime64(date_request, 3)) > ?")
+		args = append(args, sinceMs)
+	}
+	if untilMs > 0 {
+		conds = append(conds, "toUnixTimestamp64Milli(toDateTime64(date_request, 3)) <= ?")
+		args = append(args, untilMs)
+	}
+	conn, err := r.liveConn()
+	if err != nil {
+		return 0, err
+	}
+	var n uint64
+	q := fmt.Sprintf("SELECT count() FROM %s WHERE %s", table, strings.Join(conds, " AND "))
+	if err := conn.QueryRow(ctx, q, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("clickhouse count failed: %w", err)
+	}
+	return n, nil
+}
+
 func scanLogRow(rows chdriver.Rows) (*domain.LogRecord, error) {
 	var (
 		r          domain.LogRecord

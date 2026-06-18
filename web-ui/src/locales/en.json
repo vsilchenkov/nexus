@@ -508,28 +508,46 @@
   },
   "queue": {
     "unavailable": "Kafka queue is unavailable (cluster not configured).",
-    "depth": "In queue now",
     "capped_mark": "(may be more)",
     "capped_hint": "Showing the first of a limited scan — the queue may be larger.",
-    "purge_all": "Purge all",
-    "purge_all_confirm": "Delete all node messages from the queue? They will not be sent to the target.",
-    "purge_period": "Purge by period",
-    "purge_period_confirm": "Delete messages in the selected period? They will not be sent.",
-    "purge": "Purge",
-    "empty": "Queue is empty.",
+    "empty": "No messages are waiting.",
     "delete": "Delete request",
     "body_empty": "(empty body)",
+    "purge_all": "Purge all waiting",
+    "purge_all_confirm": "Delete all waiting messages from the queue? They will not be sent to the target.",
+    "purge_period": "Purge selected period",
+    "purge_period_confirm": "Delete waiting messages received in the selected period? They will not be sent.",
+    "open_in_logs": "Open in logs →",
     "col": {
       "received": "Received",
       "method": "Method",
       "target": "Target URL",
       "size": "Size"
     },
-    "dlq": {
-      "title": "DLQ (failed)",
-      "hint": "Messages that failed delivery (target unreachable, etc.) — the Sender moved them to the dead-letter queue. They expire by retention (30 days). View only: the DLQ can't be physically purged (shared partition, no DeleteRecords). To stop the growth, pause or disable the node.",
-      "empty": "DLQ is empty.",
-      "col": { "reason": "Reason", "last_attempt": "Last attempt" }
+    "kpi": {
+      "pending": "Pending delivery",
+      "pending_hint": "Messages still sitting in the Kafka queue (not yet consumed). Normally 0; grows when the node is paused or the Sender is down. Admin only.",
+      "failed": "Failed deliveries",
+      "failed_hint": "Requests that were delivered to the target and failed (from the logs) over the selected period."
+    },
+    "section": {
+      "pending": "Pending delivery",
+      "failed": "Failed deliveries"
+    },
+    "banner": {
+      "explain": "Failed deliveries are not removed: they stay in the logs (with reason and body) and can be replayed. To stop the growth, pause or disable the node; the dead-letter backlog expires by retention.",
+      "pause": "Pause node",
+      "disable": "Disable node",
+      "disable_confirm": "Disable the node? It will stop accepting and delivering requests until re-enabled."
+    },
+    "failed": {
+      "empty": "No failed deliveries in this period.",
+      "no_logging": "Logging is not configured for this node — failed deliveries can't be shown.",
+      "replay": "Replay",
+      "col": {
+        "status": "Status",
+        "reason": "Reason"
+      }
     }
   },
   "settings": {

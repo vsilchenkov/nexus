@@ -533,7 +533,7 @@
 | §34.3 Обогащённый `/api/version` + dev-override версии | ✅ Phase 34.C | [version_handler.go](../internal/web/adapter/in/http/version_handler.go) (`{version,commit,build_date,override_allowed}`, провайдер override), [app_settings.go](../internal/web/usecase/app_settings.go) (гейт `allowVersionOverride` + merge/changedSections general), [config.go](../internal/platform/config/config.go) (`web.allow_version_override`, `build.commit/build_date`), [bootstrap.go](../internal/platform/bootstrap/bootstrap.go); UI: [Sidebar.tsx](../web-ui/src/components/Sidebar.tsx) (tooltip), [settings/General.tsx](../web-ui/src/pages/settings/General.tsx) (поле под гейтом); тесты `version_handler_test.go`, `app_settings_test.go` |
 | §34.2 Настраиваемая длительность сессии | ✅ Phase 34.D | [session_ttl.go](../internal/web/usecase/session_ttl.go) (`SessionTTLProvider` atomic), [auth.go](../internal/web/usecase/auth.go) + [auth_handler.go](../internal/web/adapter/in/http/auth_handler.go) (TTL через провайдер), [app_settings.go](../internal/web/usecase/app_settings.go) (merge/validate/changedSections security), [domain/app_settings.go](../internal/domain/app_settings.go) (`SecuritySettings`, `ValidateSessionTTLSeconds` 5мин..30сут), [reloader.go](../internal/platform/reloader/reloader.go) (`SectionSecurity`), [app.go](../internal/web/app.go) (сидинг + hot-reload); UI: [settings/General.tsx](../web-ui/src/pages/settings/General.tsx) (поле в минутах); тесты `session_ttl_test.go`, `auth_test.go` (динамический TTL), `app_settings_test.go` |
 | §34.4 Управление async-очередью Kafka (tombstones) | ✅ Phase 34.E.1–E.6 | tombstones [platform/queuecancel](../internal/platform/queuecancel/redis.go); проверка в Sender [sender/usecase/async.go](../internal/sender/usecase/async.go); peek [kafkaadmin/async_queue.go](../internal/web/adapter/out/kafkaadmin/async_queue.go) (порт `AsyncQueuePeeker`); usecase [web/usecase/async_queue.go](../internal/web/usecase/async_queue.go); API [http/async_queue_handler.go](../internal/web/adapter/in/http/async_queue_handler.go) (`/api/nodes/:id/async-queue/*`); UI [node/QueueTab.tsx](../web-ui/src/components/node/QueueTab.tsx) |
-| §34.6 Просмотр DLQ во вкладке «Очередь» | ✅ Phase 34.6 | DLQ-peek `PeekDLQDepth/PeekDLQList` (recent high-cap..high, headers reason/last_attempt) в [kafkaadmin/async_queue.go](../internal/web/adapter/out/kafkaadmin/async_queue.go); usecase `DLQDepth/DLQList/DLQBody`; API `/api/nodes/:id/async-queue/dlq/*` (read-only); UI — вторая секция «DLQ» в [QueueTab.tsx](../web-ui/src/components/node/QueueTab.tsx) |
+| §34.6 Просмотр DLQ во вкладке «Очередь» | ♻️ переработан §35 | DLQ-peek был дорогим (5000×4 партиции каждые 5с) и дублировал ClickHouse — **удалён**. Неудачные доставки теперь берутся из CH-логов (`done=0`). См. §35 ниже. |
 
 **Неочевидности / решения.**
 - **§34.6 — мёртвый адрес → DLQ, не живая очередь (поймано на стенде).** При недоступном внешнем
@@ -573,6 +573,38 @@
   ключ). `Envelope` для декода продублирован локально в web-адаптере (как уже сделано в sender) —
   чтобы web не зависел от receiver/sender; JSON-теги обязаны совпадать с каноном
   [receiver/usecase/envelope.go](../internal/receiver/usecase/envelope.go).
+
+### §35 Переработка вкладки «Очередь» (производительность, источник из логов, честная семантика, RBAC)
+
+ТЗ — [sections/35-queue-tab-rework.md](sections/35-queue-tab-rework.md).
+**Статус: ✅ реализовано** (ветка `feature/queue-tab-rework`, блоки Phase 35.B1–B5 + F).
+Переработка §34.4/§34.6: вкладка на стенде (узел `webhook/sendasynq`, enabled, мёртвый адрес, 248k в
+DLQ) тормозила, «Очистить» был no-op, шапка плоха, под non-admin — 403.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| §35.B2 Счётчик неудач из ClickHouse (`done=0`) | ✅ | `CountFailed` в [port/log_reader.go](../internal/web/usecase/port/log_reader.go) + [clickhouse/log_reader.go](../internal/web/adapter/out/clickhouse/log_reader.go); usecase [logs.go](../internal/web/usecase/logs.go); `GET /api/nodes/:id/logs/failed-count` ([logs_handler.go](../internal/web/adapter/in/http/logs_handler.go), scope `logs:read`); integration [log_count_errors_test.go](../tests/integration/log_count_errors_test.go) |
+| §35.B3 Лёгкая смена статуса `PATCH /nodes/:id/status` | ✅ | `NodeUsecase.SetStatus` ([node.go](../internal/web/usecase/node.go)) — только Status, без перепровижина; handler `UpdateStatus` ([node_handler.go](../internal/web/adapter/in/http/node_handler.go), `oneof=enabled paused disabled`); роут `authedManager.PATCH` ([routes.go](../internal/web/adapter/in/http/routes.go)); тест `TestNodeUC_SetStatus` |
+| §35.B1+B5 Удалить дорогой DLQ-peek, удешевить живую очередь | ✅ | Удалены `PeekDLQDepth/PeekDLQList/decodeDLQMeta/scanRecent/scanPartitionRaw` + порт/типы/usecase `DLQ*`/`/dlq/*` роуты/`dlqTopic`; живая очередь (`PeekList/Body/ScanIDs`) оставлена; `peekCapDefault` 5000→1000; мёртвый `/depth` (`PeekDepth/Depth`) убран по ISP — счётчик «ожидают» берётся из длины `PeekList` |
+| §35.B4 RBAC-фикс вкладки | ✅ | Failed-view = `logs:read` (viewer+); живая очередь = admin (секция «Ожидают» скрыта для не-admin через `useRoleAtLeast("admin")`); пауза/отключение = manager+ |
+| §35.F Переписать вкладку «Очередь» | ✅ | [QueueTab.tsx](../web-ui/src/components/node/QueueTab.tsx): KPI-шапка (ожидают/неудачи) + баннер (пауза/отключить) + 2 секции; failed из CH (`?done=no`), ленивое тело (`/log/:id`), replay (`ReplayDialog`), дип-линк «Открыть в логах» (`LogsInitialFilter.done`); i18n en/ru; бандл пересобран |
+
+**Неочевидности / решения.**
+- **§35 — неудачи уже в ClickHouse, дублировать Kafka-peek было ошибкой.** `send.Send` логирует запись
+  (`done=false`, с reason/телом/attempts) ДО `publishDLQ` — неудачные доставки уже в CH, быстро
+  доступны по индексам `done`/`date_request`. §34.6-peek читал то же самое из Kafka, но дорого. §35
+  убирает peek и берёт из CH (`CountFailed` + существующий `GET /logs?done=no`).
+- **§35 — честная семантика очистки.** Удалить неудачи нельзя (DLQ: нет DeleteRecords, общая партиция;
+  CH-логи — история, не трогаем). Вместо «Очистить DLQ» (был no-op) — фильтр по периоду + пауза/
+  отключение узла (`PATCH status`) + replay. DLQ-бэклог истекает по retention.
+- **§35 — поллинг живой очереди только когда есть смысл.** `pendingQ` опрашивается раз в 30с лишь если
+  узел `paused` ИЛИ уже есть pending; на `enabled`-узле очередь пуста (committed==high → `scanQueue`
+  читает ~0), polling выключен — не молотим Kafka впустую. Секция «Ожидают отправки» и сам peek скрыты
+  для не-admin (не дёргаем admin-эндпоинты из вкладки, видимой viewer+).
+- **§35 — `SetStatus` vs полный `Update`.** Кнопки паузы/отключения шлют `PATCH /nodes/:id/status`, а не
+  `PUT` (который перезаписал бы все поля и перепровижинил CH-таблицу). `SetStatus` читает узел
+  (расшифрованные креды), меняет только `Status`, сохраняет как есть — audit-дифф `{status: before→after}`,
+  no-op при том же статусе.
 
 ---
 
