@@ -46,7 +46,7 @@ func TestAuth_Login_E2E(t *testing.T) {
 	teamRepo := pgrepo.NewTeamRepoPg(pool, logger)
 	auditRepo := pgrepo.NewAuditRepoPg(pool, logger)
 	auditUC := webuc.NewAuditUsecase(auditRepo, logger)
-	authUC := webuc.NewAuthUsecase(userRepo, sessionRepo, teamRepo, auditUC, time.Hour, logger)
+	authUC := webuc.NewAuthUsecase(userRepo, sessionRepo, teamRepo, auditUC, func() time.Duration { return time.Hour }, logger)
 
 	// Создаём пользователя через UserRepo напрямую — Web-usecase для creation
 	// тестируется в unit'ах; здесь интересна вся цепочка login.
@@ -173,7 +173,7 @@ func TestUserRoleManager_E2E(t *testing.T) {
 	sessionRepo := webredis.NewSessionRepoRedis(redisClient)
 	teamRepo := pgrepo.NewTeamRepoPg(pool, logger)
 	auditUC := webuc.NewAuditUsecase(pgrepo.NewAuditRepoPg(pool, logger), logger)
-	authUC := webuc.NewAuthUsecase(userRepo, sessionRepo, teamRepo, auditUC, time.Hour, logger)
+	authUC := webuc.NewAuthUsecase(userRepo, sessionRepo, teamRepo, auditUC, func() time.Duration { return time.Hour }, logger)
 
 	const password = "M4nagerPwd!"
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
