@@ -53,6 +53,7 @@ type Node struct {
 	ClickHouseTable         string
 	ClickHouseTemplateID    string // §19: FK на ch_templates; пусто = ручная таблица (legacy)
 	ClickHouseRetentionDays int32  // §4.3: TTL по партициям (housekeeping)
+	DLQTTLSeconds           int32  // §36: TTL повторной доставки неудачных async-сообщений из DLQ (секунды)
 
 	Status NodeStatus
 	TeamID string
@@ -210,6 +211,9 @@ func (n *Node) Validate() error {
 	if n.RetryBackoffMs < 0 || n.RetryBackoffMs > 60_000 {
 		return ErrNodeRetryBackoffRange
 	}
+	if n.DLQTTLSeconds < 60 || n.DLQTTLSeconds > 2_592_000 {
+		return ErrNodeDLQTTLRange
+	}
 	if len(n.URLAllowedHosts) > 50 {
 		return ErrNodeAllowedHostsSize
 	}
@@ -323,6 +327,9 @@ func (n *Node) SetDefaults() {
 	}
 	if n.ClickHouseRetentionDays == 0 {
 		n.ClickHouseRetentionDays = 90
+	}
+	if n.DLQTTLSeconds == 0 {
+		n.DLQTTLSeconds = 86_400 // §36: 24ч по умолчанию
 	}
 	if n.RootMethod.IsPull() {
 		// (см. NormalizeForRootMethod — вызывается отдельно в usecase,

@@ -46,6 +46,10 @@ definitions:
       comment:
         maxLength: 2000
         type: string
+      dlq_ttl_seconds:
+        maximum: 2592000
+        minimum: 60
+        type: integer
       forward_headers:
         items:
           type: string
@@ -451,6 +455,8 @@ definitions:
         type: string
       created_at:
         type: string
+      dlq_ttl_seconds:
+        type: integer
       forward_headers:
         items:
           type: string
@@ -623,6 +629,10 @@ definitions:
       comment:
         maxLength: 2000
         type: string
+      dlq_ttl_seconds:
+        maximum: 2592000
+        minimum: 60
+        type: integer
       forward_headers:
         items:
           type: string

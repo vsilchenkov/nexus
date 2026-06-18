@@ -3681,6 +3681,11 @@
                     "type": "string",
                     "maxLength": 2000
                 },
+                "dlq_ttl_seconds": {
+                    "type": "integer",
+                    "maximum": 2592000,
+                    "minimum": 60
+                },
                 "forward_headers": {
                     "type": "array",
                     "items": {
@@ -4267,6 +4272,9 @@
                 "created_at": {
                     "type": "string"
                 },
+                "dlq_ttl_seconds": {
+                    "type": "integer"
+                },
                 "forward_headers": {
                     "type": "array",
                     "items": {
@@ -4519,6 +4527,11 @@
                 "comment": {
                     "type": "string",
                     "maxLength": 2000
+                },
+                "dlq_ttl_seconds": {
+                    "type": "integer",
+                    "maximum": 2592000,
+                    "minimum": 60
                 },
                 "forward_headers": {
                     "type": "array",

@@ -3684,6 +3684,11 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 2000
                 },
+                "dlq_ttl_seconds": {
+                    "type": "integer",
+                    "maximum": 2592000,
+                    "minimum": 60
+                },
                 "forward_headers": {
                     "type": "array",
                     "items": {
@@ -4270,6 +4275,9 @@ const docTemplate = `{
                 "created_at": {
                     "type": "string"
                 },
+                "dlq_ttl_seconds": {
+                    "type": "integer"
+                },
                 "forward_headers": {
                     "type": "array",
                     "items": {
@@ -4522,6 +4530,11 @@ const docTemplate = `{
                 "comment": {
                     "type": "string",
                     "maxLength": 2000
+                },
+                "dlq_ttl_seconds": {
+                    "type": "integer",
+                    "maximum": 2592000,
+                    "minimum": 60
                 },
                 "forward_headers": {
                     "type": "array",

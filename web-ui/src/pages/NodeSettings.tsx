@@ -64,6 +64,7 @@ type Form = {
   clickhouse_table: string;
   clickhouse_template_id: string;
   clickhouse_retention_days: number;
+  dlq_ttl_seconds: number;
   status: "enabled" | "disabled" | "paused";
   forward_headers: string[];
   log_request_body: boolean;
@@ -107,6 +108,7 @@ const emptyForm: Form = {
   clickhouse_table: "",
   clickhouse_template_id: "",
   clickhouse_retention_days: 90,
+  dlq_ttl_seconds: 86400,
   status: "enabled",
   forward_headers: [],
   log_request_body: false,
@@ -602,6 +604,22 @@ export default function NodeSettings() {
                     set("clickhouse_retention_days", parseNumInput(e.target.value, form.clickhouse_retention_days))
                   }
                 />
+              </Field>
+              {/* §36: TTL авто-репроцессора DLQ (только для requestAsync) — в секундах,
+                  с подсказкой в часах. По истечении received_at+TTL репроцессор сдаётся. */}
+              <Field label={t("node.form.dlq_ttl_seconds")} className="mt-3">
+                <Input
+                  type="number"
+                  min={60}
+                  max={2592000}
+                  className={errCls("dlq_ttl_seconds")}
+                  value={form.dlq_ttl_seconds}
+                  onChange={(e) => set("dlq_ttl_seconds", parseNumInput(e.target.value, form.dlq_ttl_seconds))}
+                />
+                <div className="mt-1 text-xs text-fg-muted">
+                  ≈ {Math.round((form.dlq_ttl_seconds / 3600) * 10) / 10} {t("node.form.hours")}
+                </div>
+                {fieldErr("dlq_ttl_seconds")}
               </Field>
               <Field label={t("node.form.log_what")} className="mt-3">
                 <div className="flex flex-col gap-1.5 text-xs">

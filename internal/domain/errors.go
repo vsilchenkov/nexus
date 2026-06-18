@@ -35,6 +35,7 @@ var (
 	ErrNodeTimeoutRange           = errors.New("domain: timeout_ms must be 100..300000")
 	ErrNodeRetryCountRange        = errors.New("domain: retry_count must be 0..10")
 	ErrNodeRetryBackoffRange      = errors.New("domain: retry_backoff_ms must be 0..60000")
+	ErrNodeDLQTTLRange            = errors.New("domain: dlq_ttl_seconds must be 60..2592000")
 	ErrNodeAllowedHostsSize       = errors.New("domain: url_allowed_hosts must have at most 50 elements")
 	ErrNodeForwardHeadersSize     = errors.New("domain: forward_headers must have at most 30 elements")
 	ErrNodeDisabled               = errors.New("domain: node disabled")

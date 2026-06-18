@@ -310,7 +310,8 @@
       "rmq_queue": "RabbitMQ queue name must be 1..255 characters and contain only letters, digits, dot, hyphen and underscore",
       "pull_interval_sec": "Pull interval must be between 1 and 3600 seconds",
       "pull_batch_size": "Pull batch size must be between 1 and 1000",
-      "pull_prefetch": "Pull prefetch must be between 1 and 1000"
+      "pull_prefetch": "Pull prefetch must be between 1 and 1000",
+      "dlq_ttl_seconds": "DLQ TTL must be between 60 and 2592000 seconds"
     },
     "fields": {
       "ch_template": "Table template",
@@ -381,7 +382,9 @@
       "comment": "Comment",
       "comment_label": "Node description",
       "comment_hint": "internal note for your team; not visible to external clients",
-      "comment_placeholder": "E.g., integration with system X, sends order events…"
+      "comment_placeholder": "E.g., integration with system X, sends order events…",
+      "dlq_ttl_seconds": "Failed-delivery TTL (sec)",
+      "hours": "h"
     },
     "rmq": {
       "source": "RabbitMQ — source",

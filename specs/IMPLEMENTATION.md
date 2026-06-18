@@ -623,6 +623,23 @@ DLQ) тормозила, «Очистить» был no-op, шапка плох�
   (расшифрованные креды), меняет только `Status`, сохраняет как есть — audit-дифф `{status: before→after}`,
   no-op при том же статусе.
 
+### §36 Авто-репроцессор DLQ (повторная доставка неудачных async-сообщений до TTL)
+
+ТЗ — [sections/36-dlq-reprocessor.md](sections/36-dlq-reprocessor.md).
+**Статус: ◐ в работе** (ветка `feature/dlq-reprocessor`).
+
+| Пункт | Статус | Где |
+|---|---|---|
+| §36.B1 Per-node `dlq_ttl_seconds` (дефолт 24ч) | ✅ | миграция [0017_node_dlq_ttl](../migrations/0017_node_dlq_ttl.up.sql); [domain/node.go](../internal/domain/node.go) (поле + `SetDefaults` 86400 + `Validate` [60, 2592000] + [errors.go](../internal/domain/errors.go) `ErrNodeDLQTTLRange`); PG-маппер [node_repo.go](../internal/web/adapter/out/postgres/node_repo.go) (последний столбец, без перенумерации $-параметров); DTO [dto.go](../internal/web/adapter/in/http/dto.go); UI-форма [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx) (в секундах + подсказка в часах) + [nodeValidation.ts](../web-ui/src/lib/nodeValidation.ts) + i18n; тесты domain + integration round-trip |
+| §36.B2 Sender-репроцессор (sweeper над DLQ) | ⛔ | — |
+| §36.B3 Global-конфиг + wiring + метрики | ⛔ | — |
+| §36.B4 UI-подсказка «повторяется до TTL» | ⛔ | — |
+
+**Неочевидности (B1).**
+- **Новый столбец узла — добавлять ПОСЛЕДНИМ** в `node_repo.go` (Create INSERT/VALUES/args, Update SET/args,
+  `nodeColumns` SELECT + scan): тогда новый позиционный `$N` — в конце, без перенумерации существующих
+  параметров (риск рассинхрона). Проверять обязательно integration `make test-int-pg` (round-trip).
+
 ---
 
 ## 3. Где что лежит — карта каталогов
