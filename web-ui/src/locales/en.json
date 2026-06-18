@@ -524,6 +524,12 @@
       "method": "Method",
       "target": "Target URL",
       "size": "Size"
+    },
+    "dlq": {
+      "title": "DLQ (failed)",
+      "hint": "Messages that failed delivery (target unreachable, etc.) — the Sender moved them to the dead-letter queue. They expire by retention (30 days). View only: the DLQ can't be physically purged (shared partition, no DeleteRecords). To stop the growth, pause or disable the node.",
+      "empty": "DLQ is empty.",
+      "col": { "reason": "Reason", "last_attempt": "Last attempt" }
     }
   },
   "settings": {

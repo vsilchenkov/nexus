@@ -24,6 +24,27 @@ type AsyncQueuePeeker interface {
 	// ScanIDs — ID сообщений node_path с фильтром по периоду ReceivedAt ∈ [from,to]
 	// (нулевые границы = без фильтра). Для purge (§34.4).
 	ScanIDs(ctx context.Context, group, topic, nodePath string, from, to time.Time, cap int) (ScanIDsResult, error)
+
+	// PeekDLQDepth — число сообщений node_path в DLQ-топике (§34.6). У DLQ нет
+	// consumer-группы: читаем последние cap сообщений (от high-cap до high).
+	PeekDLQDepth(ctx context.Context, dlqTopic, nodePath string, cap int) (PeekDepthResult, error)
+	// PeekDLQList — последние limit неудачных сообщений node_path из DLQ
+	// (с reason/last_attempt из Kafka-headers). Тело тянется через PeekBody.
+	PeekDLQList(ctx context.Context, dlqTopic, nodePath string, limit, cap int) (DLQListResult, error)
+}
+
+// DLQMessageMeta — метаданные одного сообщения DLQ: то же, что у живой очереди,
+// плюс причина и время последней попытки (из Kafka-headers, §34.6).
+type DLQMessageMeta struct {
+	QueueMessageMeta
+	Reason        string `json:"reason"`
+	LastAttemptAt string `json:"last_attempt_at"`
+}
+
+// DLQListResult — последние N неудачных сообщений + признак переполнения cap'а.
+type DLQListResult struct {
+	Items  []DLQMessageMeta
+	Capped bool
 }
 
 // PeekDepthResult — глубина очереди узла. Capped=true → Count это нижняя оценка

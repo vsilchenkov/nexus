@@ -1962,6 +1962,144 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/nodes/{id}/async-queue/dlq/depth": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "async-queue"
+                ],
+                "summary": "Число неудачных сообщений узла в DLQ (§34.6).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.queueDepthDTO"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{id}/async-queue/dlq/messages": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "С причиной (reason) и временем последней попытки. Тело — лениво через .../dlq/messages/body. Admin-only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "async-queue"
+                ],
+                "summary": "Последние 50 неудачных сообщений узла из DLQ (§34.6).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.dlqListDTO"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{id}/async-queue/dlq/messages/body": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "async-queue"
+                ],
+                "summary": "Тело одного сообщения DLQ (§34.6).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "partition",
+                        "name": "partition",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "offset",
+                        "name": "offset",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.queueBodyDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "kafka unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/{id}/async-queue/messages": {
             "get": {
                 "security": [
@@ -4862,6 +5000,55 @@ const docTemplate = `{
                         "viewer",
                         "manager"
                     ]
+                }
+            }
+        },
+        "internal_web_adapter_in_http.dlqListDTO": {
+            "type": "object",
+            "properties": {
+                "capped": {
+                    "type": "boolean"
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.dlqMessageDTO"
+                    }
+                },
+                "kafka_available": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.dlqMessageDTO": {
+            "type": "object",
+            "properties": {
+                "body_size": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "last_attempt_at": {
+                    "type": "string"
+                },
+                "method": {
+                    "type": "string"
+                },
+                "offset": {
+                    "type": "integer"
+                },
+                "partition": {
+                    "type": "integer"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "received_at": {
+                    "type": "string"
+                },
+                "target_url": {
+                    "type": "string"
                 }
             }
         },

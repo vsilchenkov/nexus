@@ -55,7 +55,7 @@ func aqEngine(node *domain.Node, nodeErr error) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	uc := usecase.NewAsyncQueueUsecase(nil, nil, &aqNodeRepo{node: node, err: nodeErr},
 		usecase.NewAuditUsecase(aqAuditRepo{}, logging.NewNoop()),
-		"nexus-sender", "nexus.async", time.Hour, 0, logging.NewNoop())
+		"nexus-sender", "nexus.async", "nexus.async.dlq", time.Hour, 0, logging.NewNoop())
 	h := NewAsyncQueueHandler(uc, logging.NewNoop())
 
 	r := gin.New()
@@ -68,6 +68,9 @@ func aqEngine(node *domain.Node, nodeErr error) *gin.Engine {
 	g.GET("/messages/body", h.Body)
 	g.DELETE("/messages/:msgId", h.DeleteOne)
 	g.POST("/purge", h.Purge)
+	g.GET("/dlq/depth", h.DLQDepth)
+	g.GET("/dlq/messages", h.DLQList)
+	g.GET("/dlq/messages/body", h.DLQBody)
 	return r
 }
 
@@ -123,6 +126,33 @@ func TestAQHandler_DeleteOne_UnavailableWhenNoRedis_503(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/api/nodes/n1/async-queue/messages/m1", nil))
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+func TestAQHandler_DLQ_DepthDegraded_200(t *testing.T) {
+	t.Parallel()
+	r := aqEngine(aqNode(), nil) // peeker=nil → kafka_available=false
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/nodes/n1/async-queue/dlq/depth", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp queueDepthDTO
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.False(t, resp.KafkaAvailable)
+}
+
+func TestAQHandler_DLQ_NodeNotFound_404(t *testing.T) {
+	t.Parallel()
+	r := aqEngine(nil, domain.ErrNodeNotFound)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/nodes/zzz/async-queue/dlq/messages", nil))
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestAQHandler_DLQ_Body_BadParams_400(t *testing.T) {
+	t.Parallel()
+	r := aqEngine(aqNode(), nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/nodes/n1/async-queue/dlq/messages/body?partition=0", nil))
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestAQHandler_Purge_FromAfterTo_400(t *testing.T) {
