@@ -13,7 +13,12 @@ type PageSize = 50 | 100 | 200;
 
 // LogsInitialFilter — стартовый фильтр логов, прокинутый кликом по графику (§33.4):
 // from/to в формате <input type="datetime-local"> (локальная зона).
-export type LogsInitialFilter = { from?: string; to?: string; status?: StatusFilter };
+export type LogsInitialFilter = {
+  from?: string;
+  to?: string;
+  status?: StatusFilter;
+  done?: "yes" | "no"; // §35: дип-линк из вкладки «Очередь» (только неудачные)
+};
 
 const LIVE_BUFFER_LIMIT = 500;
 const HIGHLIGHT_DURATION_MS = 1000;
@@ -31,7 +36,9 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
 
   const [pageSize, setPageSize] = useState<PageSize>(50);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(initialFilter?.status ?? "all");
-  const [doneFilter, setDoneFilter] = useState<"all" | "done" | "pending">("all");
+  const [doneFilter, setDoneFilter] = useState<"all" | "done" | "pending">(
+    initialFilter?.done === "no" ? "pending" : initialFilter?.done === "yes" ? "done" : "all",
+  );
 
   // Стартовый временной фильтр из клика по графику (§33.4). LogsTab монтируется
   // заново при переключении на вкладку, поэтому инициализация через useState ок.
