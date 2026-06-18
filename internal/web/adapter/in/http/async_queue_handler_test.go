@@ -64,7 +64,7 @@ func aqEngine(node *domain.Node, nodeErr error) *gin.Engine {
 		c.Next()
 	})
 	g := r.Group("/api/nodes/:id/async-queue")
-	g.GET("/depth", h.Depth)
+	g.GET("/messages", h.List)
 	g.GET("/messages/body", h.Body)
 	g.DELETE("/messages/:msgId", h.DeleteOne)
 	g.POST("/purge", h.Purge)
@@ -75,13 +75,13 @@ func aqNode() *domain.Node {
 	return &domain.Node{ID: "n1", Path: "partner/echo", TeamID: "t1", Status: domain.NodeStatusEnabled}
 }
 
-func TestAQHandler_Depth_DegradedWhenNoKafka(t *testing.T) {
+func TestAQHandler_List_DegradedWhenNoKafka(t *testing.T) {
 	t.Parallel()
 	r := aqEngine(aqNode(), nil)
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/nodes/n1/async-queue/depth", nil))
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/nodes/n1/async-queue/messages", nil))
 	require.Equal(t, http.StatusOK, w.Code)
-	var resp queueDepthDTO
+	var resp queueListDTO
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.False(t, resp.KafkaAvailable, "без Kafka — деградация, не ошибка")
 }

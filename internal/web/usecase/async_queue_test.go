@@ -16,7 +16,6 @@ import (
 
 // stubPeeker — управляемый AsyncQueuePeeker; фиксирует аргументы ScanIDs.
 type stubPeeker struct {
-	depth    port.PeekDepthResult
 	list     port.PeekListResult
 	body     port.QueueMessageBody
 	scan     port.ScanIDsResult
@@ -26,9 +25,6 @@ type stubPeeker struct {
 	scanPath string
 }
 
-func (s *stubPeeker) PeekDepth(_ context.Context, _, _, _ string, _ int) (port.PeekDepthResult, error) {
-	return s.depth, s.err
-}
 func (s *stubPeeker) PeekList(_ context.Context, _, _, _ string, _, _ int) (port.PeekListResult, error) {
 	return s.list, s.err
 }
@@ -72,22 +68,14 @@ func asyncNode() *domain.Node {
 	return &domain.Node{ID: "n1", Path: "partner/echo", TeamID: "t1", Status: domain.NodeStatusEnabled, RootMethod: domain.RootMethodRequestAsync}
 }
 
-func TestAsyncQueue_Depth_HappyAndDegraded(t *testing.T) {
+func TestAsyncQueue_List_Degraded(t *testing.T) {
 	t.Parallel()
-	peeker := &stubPeeker{depth: port.PeekDepthResult{Count: 7, Capped: true}}
-	uc, _ := newQueueUC(peeker, &stubCancelWriter{}, asyncNode())
-
-	r, err := uc.Depth(context.Background(), "n1", "t1")
+	// peeker == nil → деградация (kafka_available=false, пустой список).
+	uc, _ := newQueueUC(nil, &stubCancelWriter{}, asyncNode())
+	r, err := uc.List(context.Background(), "n1", "t1")
 	require.NoError(t, err)
-	assert.True(t, r.KafkaAvailable)
-	assert.Equal(t, int64(7), r.Count)
-	assert.True(t, r.Capped)
-
-	// peeker == nil → деградация.
-	uc2, _ := newQueueUC(nil, &stubCancelWriter{}, asyncNode())
-	r2, err := uc2.Depth(context.Background(), "n1", "t1")
-	require.NoError(t, err)
-	assert.False(t, r2.KafkaAvailable)
+	assert.False(t, r.KafkaAvailable)
+	assert.Empty(t, r.Items)
 }
 
 func TestAsyncQueue_List_Happy(t *testing.T) {
@@ -105,7 +93,7 @@ func TestAsyncQueue_TeamScope_NotFound(t *testing.T) {
 	t.Parallel()
 	uc, _ := newQueueUC(&stubPeeker{}, &stubCancelWriter{}, asyncNode())
 	// Чужая команда → 404.
-	_, err := uc.Depth(context.Background(), "n1", "other-team")
+	_, err := uc.List(context.Background(), "n1", "other-team")
 	assert.ErrorIs(t, err, domain.ErrNodeNotFound)
 }
 

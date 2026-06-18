@@ -25,12 +25,6 @@ func NewAsyncQueueHandler(uc *usecase.AsyncQueueUsecase, logger logging.Logger) 
 	return &AsyncQueueHandler{uc: uc, logger: logger}
 }
 
-type queueDepthDTO struct {
-	Count          int64 `json:"count"`
-	Capped         bool  `json:"capped"`
-	KafkaAvailable bool  `json:"kafka_available"`
-}
-
 type queueMessageDTO struct {
 	ID         string    `json:"id"`
 	Partition  int       `json:"partition"`
@@ -71,25 +65,6 @@ func toQueueMessageDTO(m port.QueueMessageMeta) queueMessageDTO {
 		ID: m.ID, Partition: m.Partition, Offset: m.Offset, Method: m.Method,
 		TargetURL: m.TargetURL, ReceivedAt: m.ReceivedAt, BodySize: m.BodySize,
 	}
-}
-
-// Depth godoc
-// @Summary  Глубина async-очереди узла (§34.4).
-// @Description  Число неконсюмированных сообщений узла в nexus.async (peek напрямую из Kafka). capped=true → нижняя оценка. Admin-only.
-// @Tags     async-queue
-// @Produce  json
-// @Param    id  path  string  true  "node id"
-// @Success  200  {object}  queueDepthDTO
-// @Failure  404  {object}  ErrorResponse
-// @Security CookieAuth
-// @Router   /api/nodes/{id}/async-queue/depth [get]
-func (h *AsyncQueueHandler) Depth(c *gin.Context) {
-	r, err := h.uc.Depth(c.Request.Context(), c.Param("id"), currentTeamID(c))
-	if err != nil {
-		h.queueError(c, err, "async_queue.depth")
-		return
-	}
-	c.JSON(http.StatusOK, queueDepthDTO{Count: r.Count, Capped: r.Capped, KafkaAvailable: r.KafkaAvailable})
 }
 
 // List godoc

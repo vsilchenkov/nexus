@@ -72,19 +72,6 @@ func inPeriod(t, from, to time.Time) bool {
 	return true
 }
 
-// PeekDepth считает неконсюмированные сообщения узла (до cap).
-func (c *Client) PeekDepth(ctx context.Context, group, topic, nodePath string, capN int) (port.PeekDepthResult, error) {
-	var n int64
-	capped, err := c.scanQueue(ctx, group, topic, nodePath, capN, func(port.QueueMessageMeta) bool {
-		n++
-		return true
-	})
-	if err != nil {
-		return port.PeekDepthResult{}, err
-	}
-	return port.PeekDepthResult{Count: n, Capped: capped}, nil
-}
-
 // PeekList собирает первые limit метаданных сообщений узла.
 func (c *Client) PeekList(ctx context.Context, group, topic, nodePath string, limit, capN int) (port.PeekListResult, error) {
 	if limit <= 0 {

@@ -1922,46 +1922,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/nodes/{id}/async-queue/depth": {
-            "get": {
-                "security": [
-                    {
-                        "CookieAuth": []
-                    }
-                ],
-                "description": "Число неконсюмированных сообщений узла в nexus.async (peek напрямую из Kafka). capped=true → нижняя оценка. Admin-only.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "async-queue"
-                ],
-                "summary": "Глубина async-очереди узла (§34.4).",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "node id",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/internal_web_adapter_in_http.queueDepthDTO"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/api/nodes/{id}/async-queue/messages": {
             "get": {
                 "security": [
@@ -5486,20 +5446,6 @@ const docTemplate = `{
                 },
                 "target_url": {
                     "type": "string"
-                }
-            }
-        },
-        "internal_web_adapter_in_http.queueDepthDTO": {
-            "type": "object",
-            "properties": {
-                "capped": {
-                    "type": "boolean"
-                },
-                "count": {
-                    "type": "integer"
-                },
-                "kafka_available": {
-                    "type": "boolean"
                 }
             }
         },

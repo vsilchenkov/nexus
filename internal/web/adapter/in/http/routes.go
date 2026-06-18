@@ -253,7 +253,6 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			if mw.KafkaRateLimit != nil {
 				aq.Use(mw.KafkaRateLimit)
 			}
-			aq.GET("/depth", h.AsyncQueue.Depth)
 			aq.GET("/messages", h.AsyncQueue.List)
 			aq.GET("/messages/body", h.AsyncQueue.Body)
 			aq.DELETE("/messages/:msgId", h.AsyncQueue.DeleteOne)

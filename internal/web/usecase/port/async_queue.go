@@ -15,8 +15,6 @@ import (
 // что usecase реально вызывает (ISP). Все методы ограничены cap'ом сообщений —
 // при переполнении возвращается флаг Capped (число/список — нижняя оценка).
 type AsyncQueuePeeker interface {
-	// PeekDepth — число неконсюмированных сообщений node_path в очереди.
-	PeekDepth(ctx context.Context, group, topic, nodePath string, cap int) (PeekDepthResult, error)
 	// PeekList — первые limit метаданных сообщений node_path (без тела).
 	PeekList(ctx context.Context, group, topic, nodePath string, limit, cap int) (PeekListResult, error)
 	// PeekBody — тело одного сообщения по физической координате (partition, offset).
@@ -24,13 +22,6 @@ type AsyncQueuePeeker interface {
 	// ScanIDs — ID сообщений node_path с фильтром по периоду ReceivedAt ∈ [from,to]
 	// (нулевые границы = без фильтра). Для purge (§34.4).
 	ScanIDs(ctx context.Context, group, topic, nodePath string, from, to time.Time, cap int) (ScanIDsResult, error)
-}
-
-// PeekDepthResult — глубина очереди узла. Capped=true → Count это нижняя оценка
-// (упёрлись в cap, очередь больше).
-type PeekDepthResult struct {
-	Count  int64
-	Capped bool
 }
 
 // QueueMessageMeta — метаданные одного сообщения очереди (без тела).

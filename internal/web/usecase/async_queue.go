@@ -63,13 +63,6 @@ func NewAsyncQueueUsecase(
 	}
 }
 
-// QueueDepthResult — глубина очереди узла.
-type QueueDepthResult struct {
-	Count          int64
-	Capped         bool
-	KafkaAvailable bool
-}
-
 // QueueListResult — первые N сообщений очереди узла.
 type QueueListResult struct {
 	Items          []port.QueueMessageMeta
@@ -94,23 +87,6 @@ func (u *AsyncQueueUsecase) resolveNode(ctx context.Context, nodeID, teamID stri
 		return nil, domain.ErrNodeNotFound
 	}
 	return node, nil
-}
-
-// Depth — число неконсюмированных сообщений узла в очереди.
-func (u *AsyncQueueUsecase) Depth(ctx context.Context, nodeID, teamID string) (QueueDepthResult, error) {
-	node, err := u.resolveNode(ctx, nodeID, teamID)
-	if err != nil {
-		return QueueDepthResult{}, err
-	}
-	if u.peeker == nil {
-		return QueueDepthResult{}, nil
-	}
-	r, err := u.peeker.PeekDepth(ctx, u.group, u.topic, node.Path, u.peekCap)
-	if err != nil {
-		u.logger.Warn("async queue depth failed", u.logger.Str("node_path", node.Path), u.logger.Err(err))
-		return QueueDepthResult{}, nil
-	}
-	return QueueDepthResult{Count: r.Count, Capped: r.Capped, KafkaAvailable: true}, nil
 }
 
 // List — первые 50 метаданных сообщений узла (без тела).
