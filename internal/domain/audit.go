@@ -44,6 +44,9 @@ const (
 	ActionNodeDryRun = "node.dry_run"
 	ActionNodeMove   = "node.move"
 
+	// §34.4: очистка/удаление сообщений async-очереди Kafka.
+	ActionAsyncQueuePurge = "async_queue.purge"
+
 	ActionAppSettingsUpdate = "app_settings.update"
 
 	ActionCHTemplateCreate = "ch_template.create"

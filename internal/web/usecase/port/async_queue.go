@@ -64,3 +64,11 @@ type ScanIDsResult struct {
 	IDs    []string
 	Capped bool
 }
+
+// QueueCancelWriter — пишет tombstone'ы отменённых async-сообщений (§34.4).
+// Реализуется internal/platform/queuecancel (Redis). Опционален: nil при
+// отсутствии Redis. ttl = retention топика (tombstone истекает вместе с
+// физическим устареванием сообщения).
+type QueueCancelWriter interface {
+	Cancel(ctx context.Context, ids []string, ttl time.Duration) (int, error)
+}
