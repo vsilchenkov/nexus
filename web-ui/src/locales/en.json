@@ -512,7 +512,9 @@
       "title": "General",
       "public_base_url": "Public application URL",
       "public_base_url_hint": "Public address the app is published at. When set, node addresses are built from it instead of the browser host. Leave empty to use the current origin.",
-      "public_base_url_example": "Origin only, no path or trailing slash, e.g. https://nexus.example.com"
+      "public_base_url_example": "Origin only, no path or trailing slash, e.g. https://nexus.example.com",
+      "version_override": "Application version (dev)",
+      "version_override_hint": "Overrides the displayed version in this build. Available in dev/staging only; production always uses the git version. Leave empty to use the git version."
     },
     "tokens": {
       "title": "API tokens",

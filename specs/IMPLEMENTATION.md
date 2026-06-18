@@ -529,7 +529,7 @@
 |---|---|---|
 | §34.5 Фикс replay 405 (слать `IncomingMethod`, не залогированный `OutgoingMethod`) | ✅ Phase 34.A | [usecase/replay.go](../internal/web/usecase/replay.go) (метод = `node.IncomingMethod`, пустой → POST), тесты `TestReplay_UsesIncomingMethod`/`_IncomingMethodEmptyDefaultsPost` в [replay_test.go](../internal/web/usecase/replay_test.go) |
 | §34.1 «Настройки» вниз сайдбара | ✅ Phase 34.B | [Sidebar.tsx](../web-ui/src/components/Sidebar.tsx) — Settings вынесен из основной навигации в подвал (`mt-auto`, общий хелпер `renderNavLink`); бандл пересобран ([internal/web/static/](../internal/web/static/)) |
-| §34.3 Обогащённый `/api/version` + dev-override версии | ⛔ | — |
+| §34.3 Обогащённый `/api/version` + dev-override версии | ✅ Phase 34.C | [version_handler.go](../internal/web/adapter/in/http/version_handler.go) (`{version,commit,build_date,override_allowed}`, провайдер override), [app_settings.go](../internal/web/usecase/app_settings.go) (гейт `allowVersionOverride` + merge/changedSections general), [config.go](../internal/platform/config/config.go) (`web.allow_version_override`, `build.commit/build_date`), [bootstrap.go](../internal/platform/bootstrap/bootstrap.go); UI: [Sidebar.tsx](../web-ui/src/components/Sidebar.tsx) (tooltip), [settings/General.tsx](../web-ui/src/pages/settings/General.tsx) (поле под гейтом); тесты `version_handler_test.go`, `app_settings_test.go` |
 | §34.2 Настраиваемая длительность сессии | ⛔ | — |
 | §34.4 Управление async-очередью Kafka (tombstones) | ⛔ | — |
 

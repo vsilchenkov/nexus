@@ -21,10 +21,17 @@ export function Sidebar() {
       api.get<{ user: { user_id: string; login?: string; role: string } }>("/api/auth/me"),
   });
 
-  // §30: версия приложения (публичный эндпоинт, не меняется в рамках сессии).
+  // §30/§34.3: версия приложения (публичный эндпоинт). commit/build_date —
+  // в tooltip; version может быть переопределена в dev (override_allowed).
   const version = useQuery({
     queryKey: ["version"],
-    queryFn: () => api.get<{ version: string }>("/api/version"),
+    queryFn: () =>
+      api.get<{
+        version: string;
+        commit?: string;
+        build_date?: string;
+        override_allowed?: boolean;
+      }>("/api/version"),
     staleTime: Infinity,
   });
 
@@ -123,7 +130,17 @@ export function Sidebar() {
           </span>
         </div>
         {version.data?.version && (
-          <div className="mt-1.5 px-1 text-[11px] text-fg-subtle">v{version.data.version}</div>
+          <div
+            className="mt-1.5 px-1 text-[11px] text-fg-subtle"
+            title={[
+              version.data.commit && `commit: ${version.data.commit}`,
+              version.data.build_date && `build: ${version.data.build_date}`,
+            ]
+              .filter(Boolean)
+              .join("\n")}
+          >
+            v{version.data.version}
+          </div>
         )}
       </div>
     </aside>

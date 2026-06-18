@@ -58,6 +58,13 @@ func Init(versionInfoData []byte, projectName string) (*build.Option, config.Fla
 	if buildOpt.Version != "" {
 		cfg.Build.Version = buildOpt.Version
 	}
+	// Commit/BuildDate — из git через ldflags (§34.3): отдаются в /api/version.
+	if buildOpt.Commit != "" {
+		cfg.Build.Commit = buildOpt.Commit
+	}
+	if buildOpt.BuildDate != "" {
+		cfg.Build.BuildDate = buildOpt.BuildDate
+	}
 
 	if err := sentrypf.Init(&cfg.Sentry, projectName, buildOpt.Version); err != nil {
 		fmt.Fprintf(os.Stderr, "sentry init: %v\n", err)

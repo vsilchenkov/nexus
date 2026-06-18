@@ -129,6 +129,10 @@ var (
 	// Общие настройки (§28, Пункт 1)
 	ErrPublicBaseURLInvalid = errors.New("domain: public_base_url must be an http(s) origin without path or trailing slash")
 
+	// Версия и сессия (§34.2 / §34.3)
+	ErrVersionOverrideForbidden = errors.New("domain: version override is not allowed (web.allow_version_override is off)")
+	ErrSessionTTLInvalid        = errors.New("domain: session_ttl_seconds must be within [300, 2592000]")
+
 	// Team (multi-tenancy v2)
 	ErrTeamNotFound         = errors.New("domain: team not found")
 	ErrTeamAlreadyExists    = errors.New("domain: team with this slug or ch_database already exists")

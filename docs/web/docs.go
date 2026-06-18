@@ -3280,14 +3280,14 @@ const docTemplate = `{
         },
         "/api/version": {
             "get": {
-                "description": "Публичный read-only эндпоинт: текущая версия Web Service. Не требует авторизации.",
+                "description": "Публичный read-only эндпоинт: версия Web Service + commit/build_date. Не требует авторизации. В dev (override_allowed) version может быть переопределена настройкой.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "meta"
                 ],
-                "summary": "Версия приложения (§30).",
+                "summary": "Версия приложения (§30, §34.3).",
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -4368,6 +4368,16 @@ const docTemplate = `{
         "internal_web_adapter_in_http.VersionResponse": {
             "type": "object",
             "properties": {
+                "build_date": {
+                    "type": "string"
+                },
+                "commit": {
+                    "type": "string"
+                },
+                "override_allowed": {
+                    "description": "OverrideAllowed — true в dev (web.allow_version_override): UI показывает\nполе ручного override версии; в проде false (версия всегда из git).",
+                    "type": "boolean"
+                },
                 "version": {
                     "type": "string"
                 }
@@ -5479,6 +5489,10 @@ const docTemplate = `{
             "properties": {
                 "public_base_url": {
                     "description": "PublicBaseURL — публичный адрес, под которым опубликован Web (origin без\nхвостового слеша, напр. https://nexus.example.com). Если задан, UI\nформирует полный адрес узла от него вместо window.location.origin.\nnil/\"\" = не задан (UI берёт origin браузера). Не секрет — Get() не маскирует.",
+                    "type": "string"
+                },
+                "version_override": {
+                    "description": "VersionOverride — ручное переопределение отображаемой версии (§34.3).\nПрименяется и редактируется ТОЛЬКО при включённом web.allow_version_override\n(dev/staging); в проде флаг выключен → значение игнорируется, а запись\nотклоняется (ErrVersionOverrideForbidden). nil/\"\" = версия из git (ldflags).",
                     "type": "string"
                 }
             }

@@ -125,9 +125,8 @@ func (a *App) Start(ctx context.Context) error {
 	hc.Register(r)
 	r.GET("/metrics", gin.WrapH(a.metrics.Handler()))
 
-	// Версия приложения (§30): публичный read-only эндпоинт на корневом
-	// движке (вне auth-группы RegisterAPI) — SPA показывает версию в футере.
-	r.GET("/api/version", httpadapter.NewVersionHandler(a.cfg.Build.Version).Get)
+	// Версия приложения (§30/§34.3): публичный read-only эндпоинт регистрируется
+	// ниже, после создания appSettingsUC — он нужен провайдеру dev-override версии.
 
 	// Swagger UI (§11, §25 ТЗ): Web раздаёт два дока (оба собираются `make
 	// swagger` и встраиваются через embed-импорты выше).
@@ -200,7 +199,23 @@ func (a *App) Start(ctx context.Context) error {
 
 	appSettingsRepo := pgrepo.NewAppSettingsRepoPg(a.pg, a.logger)
 	reloadPublisher := reloader.NewPublisher(a.redis)
-	appSettingsUC := usecase.NewAppSettingsUsecase(appSettingsRepo, auditUC, reloadPublisher, a.logger)
+	appSettingsUC := usecase.NewAppSettingsUsecase(appSettingsRepo, auditUC, reloadPublisher, a.cfg.Web.AllowVersionOverride, a.logger)
+
+	// Версия приложения (§30/§34.3): публичный эндпоинт на корневом движке (вне
+	// auth-группы) — SPA показывает версию в футере (+ commit/build_date в
+	// tooltip). В dev (allow_version_override) version можно переопределить через
+	// app_settings.general.version_override.
+	versionOverride := func(ctx context.Context) string {
+		s, err := appSettingsUC.Raw(ctx)
+		if err != nil || s == nil || s.General.VersionOverride == nil {
+			return ""
+		}
+		return *s.General.VersionOverride
+	}
+	r.GET("/api/version", httpadapter.NewVersionHandler(
+		a.cfg.Build.Version, a.cfg.Build.Commit, a.cfg.Build.BuildDate,
+		a.cfg.Web.AllowVersionOverride, versionOverride,
+	).Get)
 	// Telegram-клиент (§20): для тестовой отправки и планировщика уведомлений.
 	telegramClient := telegram.New(a.logger)
 	// SettingsTester (Phase 6.3.2.6): test connection без сохранения.

@@ -138,7 +138,7 @@ func TestAppSettingsUsecase_GetMasksSecrets(t *testing.T) {
 			ClickHouse: domain.ClickHouseSettings{Password: &realPwd},
 		},
 	}
-	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, logging.NewNoop())
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false, logging.NewNoop())
 
 	got, err := uc.Get(context.Background())
 	require.NoError(t, err)
@@ -161,7 +161,7 @@ func TestAppSettingsUsecase_UpdateMergesAndAudits(t *testing.T) {
 	}
 	audit := &fakeAuditRepo{}
 	pub := &fakeReloadPublisher{}
-	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(audit, logging.NewNoop()), pub, logging.NewNoop())
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(audit, logging.NewNoop()), pub, false, logging.NewNoop())
 
 	err := uc.Update(context.Background(), Actor{UserID: "u-1"}, &domain.AppSettings{
 		Sentry: domain.SentrySettings{Environment: &envNew},
@@ -189,7 +189,7 @@ func TestAppSettings_GetMasksBotToken(t *testing.T) {
 			BotToken: new("123456:secret-bot-token"),
 		}},
 	}}
-	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, logging.NewNoop())
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false, logging.NewNoop())
 
 	got, err := uc.Get(context.Background())
 	require.NoError(t, err)
@@ -223,7 +223,7 @@ func TestChangedSections_Notifications(t *testing.T) {
 func TestAppSettings_Update_InvalidCron(t *testing.T) {
 	t.Parallel()
 	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
-	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, logging.NewNoop())
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false, logging.NewNoop())
 
 	err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
 		Notifications: domain.NotificationsSettings{Telegram: domain.TelegramSettings{Cron: new("not a cron")}},
@@ -236,7 +236,7 @@ func TestAppSettings_Update_ValidCron(t *testing.T) {
 	t.Parallel()
 	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
 	pub := &fakeReloadPublisher{}
-	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, logging.NewNoop())
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, false, logging.NewNoop())
 
 	err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
 		Notifications: domain.NotificationsSettings{Telegram: domain.TelegramSettings{
@@ -246,6 +246,45 @@ func TestAppSettings_Update_ValidCron(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, repo.lastSaved)
 	assert.Equal(t, []string{"notifications"}, pub.sections)
+}
+
+// TestAppSettings_VersionOverride_GatedInProd (§34.3): при выключенном
+// allowVersionOverride попытка задать version_override отклоняется и не
+// сохраняется.
+func TestAppSettings_VersionOverride_GatedInProd(t *testing.T) {
+	t.Parallel()
+	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false, logging.NewNoop())
+
+	err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
+		General: domain.GeneralSettings{VersionOverride: new("dev-local")},
+	})
+	assert.ErrorIs(t, err, domain.ErrVersionOverrideForbidden)
+	assert.Nil(t, repo.lastSaved, "version override must not persist in prod")
+}
+
+// TestAppSettings_VersionOverride_AllowedInDev (§34.3): при включённом гейте
+// override сохраняется, секция general попадает в changed_sections.
+func TestAppSettings_VersionOverride_AllowedInDev(t *testing.T) {
+	t.Parallel()
+	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
+	pub := &fakeReloadPublisher{}
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, true, logging.NewNoop())
+
+	err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
+		General: domain.GeneralSettings{VersionOverride: new("dev-local")},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, repo.lastSaved)
+	require.NotNil(t, repo.lastSaved.General.VersionOverride)
+	assert.Equal(t, "dev-local", *repo.lastSaved.General.VersionOverride)
+	assert.Equal(t, []string{"general"}, pub.sections)
+}
+
+func TestChangedSections_VersionOverride(t *testing.T) {
+	t.Parallel()
+	p := &domain.AppSettings{General: domain.GeneralSettings{VersionOverride: new("x")}}
+	assert.Equal(t, []string{"general"}, changedSections(p))
 }
 
 // ---- fakes ----

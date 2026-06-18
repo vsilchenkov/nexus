@@ -53,6 +53,12 @@ type GeneralSettings struct {
 	// формирует полный адрес узла от него вместо window.location.origin.
 	// nil/"" = не задан (UI берёт origin браузера). Не секрет — Get() не маскирует.
 	PublicBaseURL *string `json:"public_base_url,omitempty"`
+
+	// VersionOverride — ручное переопределение отображаемой версии (§34.3).
+	// Применяется и редактируется ТОЛЬКО при включённом web.allow_version_override
+	// (dev/staging); в проде флаг выключен → значение игнорируется, а запись
+	// отклоняется (ErrVersionOverrideForbidden). nil/"" = версия из git (ldflags).
+	VersionOverride *string `json:"version_override,omitempty"`
 }
 
 // NotificationsSettings — настройки уведомлений операторам (§20).
