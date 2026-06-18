@@ -2615,6 +2615,61 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/nodes/{id}/status": {
+            "patch": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Лёгкая замена полного PUT для кнопок «Пауза»/«Отключить». manager+. Меняет лишь status, не трогая прочие поля/креды.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "nodes"
+                ],
+                "summary": "Сменить только статус узла (§35).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "enabled | paused | disabled",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.UpdateNodeStatusRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/settings/app": {
             "get": {
                 "security": [
@@ -4805,6 +4860,22 @@ const docTemplate = `{
                 "webhook_signature_prefix": {
                     "type": "string",
                     "maxLength": 64
+                }
+            }
+        },
+        "internal_web_adapter_in_http.UpdateNodeStatusRequest": {
+            "type": "object",
+            "required": [
+                "status"
+            ],
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "enabled",
+                        "paused",
+                        "disabled"
+                    ]
                 }
             }
         },

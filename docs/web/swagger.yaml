@@ -751,6 +751,17 @@ definitions:
     - path
     - root_method
     type: object
+  internal_web_adapter_in_http.UpdateNodeStatusRequest:
+    properties:
+      status:
+        enum:
+        - enabled
+        - paused
+        - disabled
+        type: string
+    required:
+    - status
+    type: object
   internal_web_adapter_in_http.UserEnvelope:
     properties:
       user:
@@ -3356,6 +3367,42 @@ paths:
       security:
       - CookieAuth: []
       summary: Перенести узел в другую команду (admin only, multi-tenancy v2).
+      tags:
+      - nodes
+  /api/nodes/{id}/status:
+    patch:
+      consumes:
+      - application/json
+      description: Лёгкая замена полного PUT для кнопок «Пауза»/«Отключить». manager+.
+        Меняет лишь status, не трогая прочие поля/креды.
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: enabled | paused | disabled
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.UpdateNodeStatusRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Сменить только статус узла (§35).
       tags:
       - nodes
   /api/nodes/dry-run:

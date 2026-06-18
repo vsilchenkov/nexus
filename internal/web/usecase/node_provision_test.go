@@ -90,6 +90,34 @@ func newNodeUC(repo *memNodeRepo, prov *verifyProvisioner, templates *memCHTempl
 	return NewNodeUsecase(repo, nopNodeCache{}, audit, nil, nil, p, tr, time.Minute, 0, "default-team", nil, logging.NewNoop())
 }
 
+// TestNodeUC_SetStatus (§35): SetStatus меняет только статус, пишет audit,
+// уважает team-scope, валидирует статус, no-op при том же значении.
+func TestNodeUC_SetStatus(t *testing.T) {
+	t.Parallel()
+	repo := newMemNodeRepo()
+	repo.items["n1"] = &domain.Node{
+		ID: "n1", Path: "svc/x", TeamID: "team1", TargetURL: "https://x",
+		Status: domain.NodeStatusEnabled, RootMethod: domain.RootMethodRequestAsync,
+	}
+	auditRepo := &stubAuditRepo{}
+	uc := NewNodeUsecase(repo, nopNodeCache{}, NewAuditUsecase(auditRepo, logging.NewNoop()),
+		nil, nil, nil, nil, time.Minute, 0, "default-team", nil, logging.NewNoop())
+	ctx := context.Background()
+
+	require.NoError(t, uc.SetStatus(ctx, SystemActor(), "n1", "team1", domain.NodeStatusPaused))
+	assert.Equal(t, domain.NodeStatusPaused, repo.items["n1"].Status)
+	require.Len(t, auditRepo.entries, 1)
+	assert.Equal(t, domain.ActionNodeUpdate, auditRepo.entries[0].Action)
+
+	assert.ErrorIs(t, uc.SetStatus(ctx, SystemActor(), "n1", "team1", domain.NodeStatus("bogus")), domain.ErrNodeInvalidStatus)
+	assert.ErrorIs(t, uc.SetStatus(ctx, SystemActor(), "n1", "other", domain.NodeStatusDisabled), domain.ErrNodeNotFound)
+	assert.Equal(t, domain.NodeStatusPaused, repo.items["n1"].Status, "чужая команда/невалид не меняют статус")
+
+	// no-op: тот же статус — без ошибки и без новой audit-записи.
+	require.NoError(t, uc.SetStatus(ctx, SystemActor(), "n1", "team1", domain.NodeStatusPaused))
+	assert.Len(t, auditRepo.entries, 1)
+}
+
 func nodeWithTemplate(templateID, table string) *domain.Node {
 	return &domain.Node{
 		Path: "svc/hook", RootMethod: domain.RootMethodRequest, TargetURL: "https://x",

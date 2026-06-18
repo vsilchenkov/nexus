@@ -147,6 +147,8 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		authedManager := authed.Group("/", mw.RequireManager)
 		authedManager.POST("/nodes", h.Node.Create)
 		authedManager.PUT("/nodes/:id", h.Node.Update)
+		// §35: лёгкая смена статуса (пауза/отключение) — manager+.
+		authedManager.PATCH("/nodes/:id/status", h.Node.UpdateStatus)
 		authedManager.DELETE("/nodes/:id", h.Node.Delete)
 		// §7.5.1: dry-run без сохранения конфига.
 		authedManager.POST("/nodes/dry-run", h.DryRun.Run)

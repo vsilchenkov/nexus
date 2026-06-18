@@ -199,6 +199,37 @@ func (h *NodeHandler) Update(c *gin.Context) {
 	c.JSON(http.StatusOK, nodeToResponse(updated))
 }
 
+// UpdateNodeStatusRequest — тело PATCH /api/nodes/{id}/status (§35).
+type UpdateNodeStatusRequest struct {
+	Status string `json:"status" binding:"required,oneof=enabled paused disabled"`
+}
+
+// UpdateStatus godoc
+// @Summary  Сменить только статус узла (§35).
+// @Description  Лёгкая замена полного PUT для кнопок «Пауза»/«Отключить». manager+. Меняет лишь status, не трогая прочие поля/креды.
+// @Tags     nodes
+// @Accept   json
+// @Produce  json
+// @Param    id    path  string                  true  "node id"
+// @Param    body  body  UpdateNodeStatusRequest  true  "enabled | paused | disabled"
+// @Success  204
+// @Failure  400   {object}  ErrorResponse
+// @Failure  404   {object}  ErrorResponse
+// @Security CookieAuth
+// @Router   /api/nodes/{id}/status [patch]
+func (h *NodeHandler) UpdateStatus(c *gin.Context) {
+	var req UpdateNodeStatusRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.uc.SetStatus(c.Request.Context(), actorFromCtx(c), c.Param("id"), currentTeamID(c), domain.NodeStatus(req.Status)); err != nil {
+		h.replyDomainError(c, err, "node.set_status")
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 // Delete godoc
 // @Summary  Удалить узел.
 // @Description  Только admin. Удаляет запись и инвалидирует Redis-кеш. ClickHouse-таблица узла остаётся (см. §7.10 — orphan-cleanup).
