@@ -83,15 +83,24 @@ func (r *DLQReprocessor) Run(ctx context.Context) {
 	}
 }
 
-// sweepOnce — один проход: дренируем доступные DLQ-сообщения (до maxScan),
-// обрабатываем и коммитим. Останавливаемся, встретив сообщение, уже виденное в
-// ЭТОМ проходе (догнали собственный republish-хвост → ждём следующего прохода).
+// sweepOnce — один проход: обрабатываем DLQ-сообщения (до maxScan), КАЖДОЕ
+// прочитанное КОММИТИМ, и завершаем проход, когда «догнали» собственный
+// republish-хвост (встретили id, уже обработанный В ЭТОМ проходе). Свежие
+// republish-копии обрабатываются на следующем проходе — естественный backoff
+// (§36.4) без busy-loop'а.
+//
+// КЛЮЧЕВОЕ (грабли, поймано стендом): проверка wrap'а (seen[id]) и break — СТРОГО
+// ПОСЛЕ Commit прочитанного сообщения. kafka-go продвигает курсор за каждое
+// прочитанное; если прерваться, НЕ закоммитив его, коммит последующих сообщений
+// прокатит offset мимо незакоммиченного → потеря. Коммитя каждое прочитанное
+// перед break'ом, мы держим committed-offset = живой republish-копии у хвоста,
+// которая перечитается следующим проходом.
 func (r *DLQReprocessor) sweepOnce(ctx context.Context) {
 	start := time.Now()
 	seen := make(map[string]bool)
-	scanned, delivered := 0, 0
+	delivered := 0
 
-	for scanned < r.maxScan {
+	for i := 0; i < r.maxScan; i++ {
 		if ctx.Err() != nil {
 			return
 		}
@@ -100,25 +109,14 @@ func (r *DLQReprocessor) sweepOnce(ctx context.Context) {
 		msg, err := r.consumer.FetchMessage(fetchCtx)
 		cancel()
 		if err != nil {
-			break // shutdown (родительский ctx) либо нет сообщений — проход завершён
+			break
 		}
 
 		hdrs := headersToMap(msg.Headers)
-		// §36.4: повторно опубликованные в хвост копии не трогаем в ТЕКУЩЕМ
-		// проходе. Встретили уже виденный id → догнали republish-хвост: НЕ
-		// коммитим (копия обработается на следующем проходе) и завершаем проход.
-		if id := hdrs["id"]; id != "" {
-			if seen[id] {
-				break
-			}
-			seen[id] = true
-		}
-		scanned++
-
 		res := r.processor.ProcessMessage(ctx, msg.Value, hdrs)
 		if res == usecase.ReprocessRetry {
-			// Транзиентный сбой — не коммитим и прерываем проход, чтобы не
-			// закоммитить offset ПОЗА этим сообщением (commit «до и включительно»).
+			// Транзиентный сбой (republish не записался / временная ошибка чтения):
+			// не коммитим, перечит — на rebalance/рестарте (как у основного consumer'а).
 			break
 		}
 		if err := r.consumer.Commit(ctx, msg); err != nil {
@@ -126,6 +124,16 @@ func (r *DLQReprocessor) sweepOnce(ctx context.Context) {
 				r.logger.Str("topic", r.topic))
 		}
 		delivered++
+
+		// Догнали собственный republish-хвост (id уже обрабатывали в этом проходе) —
+		// завершаем. Сообщение уже закоммичено выше, его republish-копия (если была)
+		// лежит у хвоста на committed-offset и перечитается следующим проходом.
+		if id := hdrs["id"]; id != "" {
+			if seen[id] {
+				break
+			}
+			seen[id] = true
+		}
 	}
 
 	if r.metrics != nil {

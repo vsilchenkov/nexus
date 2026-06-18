@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -178,18 +179,15 @@ func TestSender_Async_DLQ_E2E(t *testing.T) {
 	require.EqualValues(t, 3, rec.rec.Attempts)
 }
 
-// TestSender_DLQReprocessor_E2E (§36): сообщение лежит в nexus.async.dlq (как
-// после неудачной доставки), внешний приёмник доступен — фоновый DLQ-репроцессор
-// САМ доставляет его повторно (в ClickHouse появляется запись done=true) без
-// ручного вмешательства. Это основной сценарий §36 «приёмник вернулся».
+// TestSender_DLQReprocessor_E2E (§36): N сообщений лежат в nexus.async.dlq;
+// приёмник сначала мёртв (500), потом «возвращается» (200) — фоновый
+// DLQ-репроцессор САМ доставляет ВСЕ N повторно (done=true), НИ ОДНО не теряется.
 //
-// Сообщение кладётся в DLQ напрямую (путь основной consumer→DLQ уже покрыт
-// TestSender_Async_DLQ_E2E) — так тест изолирует именно репроцессор и не зависит
-// от тайминга join'а основной consumer-группы.
-//
-// Регрессии, которые тест ловит: репроцессор не запускается / читает не ту
-// группу/топик / не доходит до Send / TTL ошибочно дропает свежие сообщения /
-// breaker-гейт блокирует доставку при закрытом breaker'е / не пишет done=true.
+// Цикл «падает → republish → восстановление» обязателен: именно он ловит потерю
+// сообщения из-за анти-busy-loop'а (ранний `seen[id]`+break стрэндил republish-
+// копию → коммит последующих прокатывал offset мимо неё → потеря). Поэтому
+// проверяем РОВНО `len(delivered)==N`, а не «хотя бы одно». Сообщения кладём в DLQ
+// напрямую (путь основной consumer→DLQ покрыт TestSender_Async_DLQ_E2E).
 func TestSender_DLQReprocessor_E2E(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 	defer cancel()
@@ -203,12 +201,20 @@ func TestSender_DLQReprocessor_E2E(t *testing.T) {
 	logger := logging.NewNoop()
 	cipher, _ := crypto.NewCipher(testEncryptionKey)
 
-	// 1. Mock внешнего узла — доступен (200): приёмник «вернулся».
-	var hits int32
+	// 1. Mock: 500 пока recovered=false, затем 200 — «приёмник был мёртв, ожил».
+	var (
+		recovered atomic.Bool
+		hits      int32
+	)
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		atomic.AddInt32(&hits, 1)
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`ok`))
+		if recovered.Load() {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`ok`))
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"err":"boom"}`))
 	}))
 	defer mock.Close()
 
@@ -251,49 +257,66 @@ func TestSender_DLQReprocessor_E2E(t *testing.T) {
 	producer := kafkapf.NewProducer(cfg)
 	defer producer.Close()
 
-	// 3. Кладём сообщение прямо в DLQ — как это сделал бы основной consumer после
-	// исчерпания retry (envelope + служебные headers §34.6, без next_attempt_at).
-	const dlqID = "reproc-e2e-1"
-	env := senderuc.Envelope{
-		ID:         dlqID,
-		NodePath:   "demo/reproc",
-		Method:     "POST",
-		TargetURL:  mock.URL + "/upstream",
-		Body:       []byte(`{"hello":"reproc"}`),
-		ReceivedAt: time.Now().UTC(),
+	// 3. Кладём N сообщений прямо в DLQ (как основной consumer после retry).
+	const n0 = 5
+	ids := make(map[string]bool, n0)
+	for i := 0; i < n0; i++ {
+		id := fmt.Sprintf("reproc-e2e-%d", i)
+		ids[id] = true
+		env := senderuc.Envelope{
+			ID: id, NodePath: "demo/reproc", Method: "POST",
+			TargetURL: mock.URL + "/upstream", Body: []byte(`{"hello":"reproc"}`),
+			ReceivedAt: time.Now().UTC(),
+		}
+		raw, err := json.Marshal(env)
+		require.NoError(t, err)
+		require.NoError(t, producer.Produce(ctx, cfg.Kafka.DLQTopic, env.NodePath, raw, map[string]string{
+			"id": id, "node_path": env.NodePath, "orig_topic": "nexus.async",
+			"reason": "status=500 attempts=1", "last_attempt_at": time.Now().UTC().Format(time.RFC3339Nano),
+		}), "seed DLQ message")
 	}
-	raw, err := json.Marshal(env)
-	require.NoError(t, err)
-	require.NoError(t, producer.Produce(ctx, cfg.Kafka.DLQTopic, env.NodePath, raw, map[string]string{
-		"id":              dlqID,
-		"node_path":       env.NodePath,
-		"orig_topic":      "nexus.async",
-		"reason":          "status=503 attempts=1 err=circuit_breaker_open",
-		"last_attempt_at": time.Now().UTC().Format(time.RFC3339Nano),
-	}), "seed DLQ message")
 
-	// 4. Запускаем DLQ-репроцессор (компонент под тестом): отдельная группа
-	// <group>-dlq-reprocess, короткий интервал прохода.
+	// 4. Репроцессор (отдельная группа, короткий интервал).
 	reprocUC := senderuc.NewDLQReprocessor(nodeReader, sendUC, producer, logw, nil, nil, cfg.Kafka.DLQTopic, nil, logger)
 	reproc := kafkaadapter.NewDLQReprocessor(cfg, reprocUC, time.Second, 100, nil, logger)
 	reprocCtx, reprocCancel := context.WithCancel(ctx)
 	go reproc.Run(reprocCtx)
 	defer func() { reprocCancel(); reproc.Stop() }()
 
-	// 5. Репроцессор должен САМ доставить сообщение: в логах появляется запись
-	// done=true / status=200 с тем же ID (сообщение «восстановлено»).
+	// 5. Дать репроцессору несколько проходов с мёртвым приёмником — сообщения
+	// падают (500) и republish'атся в хвост (тот самый путь, где терялись).
 	require.Eventually(t, func() bool {
 		logw.mu.Lock()
 		defer logw.mu.Unlock()
+		fails := 0
 		for _, r := range logw.records {
-			if r.rec.ID == dlqID && r.rec.Done && r.rec.Status == 200 {
-				return true
+			if ids[r.rec.ID] && !r.rec.Done {
+				fails++
 			}
 		}
-		return false
-	}, 180*time.Second, 500*time.Millisecond, "DLQ reprocessor must redeliver the DLQ message (done=true, 200)")
+		return fails >= n0 // каждое хотя бы раз не доставилось через репроцессор
+	}, 60*time.Second, 200*time.Millisecond, "reprocessor must attempt+fail while target is down")
 
-	require.GreaterOrEqual(t, atomic.LoadInt32(&hits), int32(1), "reprocessor must hit the recovered upstream")
+	// 6. Приёмник «вернулся».
+	recovered.Store(true)
+
+	// 7. Все N должны быть доставлены повторно (done=true/200), НИ ОДНО не потеряно.
+	delivered := func() map[string]bool {
+		logw.mu.Lock()
+		defer logw.mu.Unlock()
+		d := make(map[string]bool)
+		for _, r := range logw.records {
+			if ids[r.rec.ID] && r.rec.Done && r.rec.Status == 200 {
+				d[r.rec.ID] = true
+			}
+		}
+		return d
+	}
+	require.Eventually(t, func() bool { return len(delivered()) == n0 },
+		180*time.Second, 500*time.Millisecond,
+		"DLQ reprocessor must redeliver ALL messages after recovery (none lost)")
+
+	require.GreaterOrEqual(t, atomic.LoadInt32(&hits), int32(n0), "reprocessor must hit the upstream for each message")
 }
 
 // kafkaHeadersToMap — берём первое значение на ключ (как делает Sender).
