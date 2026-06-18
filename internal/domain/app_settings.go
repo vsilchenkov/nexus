@@ -38,12 +38,36 @@ func ValidatePublicBaseURL(raw string) error {
 // оператор очистил поле в UI.
 type AppSettings struct {
 	General       GeneralSettings       `json:"general"`
+	Security      SecuritySettings      `json:"security"`
 	Sentry        SentrySettings        `json:"sentry"`
 	ClickHouse    ClickHouseSettings    `json:"clickhouse"`
 	Notifications NotificationsSettings `json:"notifications"`
 
 	UpdatedAt time.Time `json:"updated_at"`
 	UpdatedBy string    `json:"updated_by,omitempty"` // user_id, кто последним обновил
+}
+
+// Границы длительности сессии (§34.2): 5 минут .. 30 суток.
+const (
+	SessionTTLMinSeconds = 300            // 5 минут
+	SessionTTLMaxSeconds = 30 * 24 * 3600 // 30 суток
+)
+
+// SecuritySettings — настройки безопасности, меняемые оператором (§34.2).
+type SecuritySettings struct {
+	// SessionTTLSeconds — длительность пользовательской сессии в секундах.
+	// nil = брать из env-конфига (cfg.Redis.SessionTTLSec). Применяется к новым
+	// сессиям и sliding-Touch без рестарта (через SessionTTLProvider).
+	SessionTTLSeconds *int `json:"session_ttl_seconds,omitempty"`
+}
+
+// ValidateSessionTTLSeconds проверяет длительность сессии (§34.2): значение
+// должно лежать в [SessionTTLMinSeconds, SessionTTLMaxSeconds].
+func ValidateSessionTTLSeconds(v int) error {
+	if v < SessionTTLMinSeconds || v > SessionTTLMaxSeconds {
+		return ErrSessionTTLInvalid
+	}
+	return nil
 }
 
 // GeneralSettings — общесистемные настройки приложения (§28, Пункт 1).
@@ -53,6 +77,12 @@ type GeneralSettings struct {
 	// формирует полный адрес узла от него вместо window.location.origin.
 	// nil/"" = не задан (UI берёт origin браузера). Не секрет — Get() не маскирует.
 	PublicBaseURL *string `json:"public_base_url,omitempty"`
+
+	// VersionOverride — ручное переопределение отображаемой версии (§34.3).
+	// Применяется и редактируется ТОЛЬКО при включённом web.allow_version_override
+	// (dev/staging); в проде флаг выключен → значение игнорируется, а запись
+	// отклоняется (ErrVersionOverrideForbidden). nil/"" = версия из git (ldflags).
+	VersionOverride *string `json:"version_override,omitempty"`
 }
 
 // NotificationsSettings — настройки уведомлений операторам (§20).

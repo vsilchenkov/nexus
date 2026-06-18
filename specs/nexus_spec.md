@@ -3123,3 +3123,37 @@ Prometheus `NodeThroughput` для top-узлов. Все источники д�
 - **i18n:** новые клиентские ключи `metrics.tooltip.*` / `kafka.tooltip.*` синхронно в `en/ru.json`.
 - **Out of scope (задел v2, нет данных):** разбивка lag по партициям (Prometheus отдаёт агрегат) и
   сравнение «неделю назад» в рядах (есть только дельта к предыдущему периоду той же длины).
+
+## 34. Операбельность: навигация, сессия, версия, async-очередь Kafka, фикс replay
+
+Полный текст раздела — [sections/34-ops-session-version-async-queue.md](sections/34-ops-session-version-async-queue.md).
+
+Пять эксплуатационных доработок, дающих оператору контроль над зашитым в код/конфиг или сломанным.
+
+1. **Навигация (§34.1).** Пункт «Настройки» опускается вниз сайдбара (`mt-auto`, к блоку
+   пользователь/версия) — это вспомогательный функционал, основная навигация остаётся вверху.
+2. **Длительность сессии (§34.2).** TTL сессии (сейчас жёстко из `cfg.Redis.SessionTTLSec`, только
+   рестартом) выносится в UI-настройку, хранится в `app_settings.security.session_ttl_seconds`
+   (`nil`=env). `AuthUsecase` берёт TTL через провайдер `func() time.Duration` (атомарный
+   `SessionTTLProvider`), обновляемый hot-reload'ом (новая секция `security`) — применяется к новым
+   сессиям и sliding-`Touch` **без рестарта**. Валидация `[5 мин, 30 сут]`.
+3. **Версия (§34.3).** `GET /api/version` обогащается до `{version, commit, build_date,
+   override_allowed}` (футер + tooltip). Ручной override отображаемой версии хранится в
+   `app_settings.general.version_override`, но **применяется и редактируется только при включённом
+   серверном флаге** `web.allow_version_override` (дефолт `false`=прод). В проде — всегда git-версия
+   из ldflags, запись override отклоняется (403), поле в UI скрыто.
+4. **Async-очередь Kafka (§34.4).** Новая вкладка «Очередь» на узле `requestAsync`: глубина и список
+   первых 50 сообщений (peek транзиентным `kafka.Reader` без GroupID, от committed до high-watermark,
+   фильтр key=`node.Path`, cap 5000→`capped`) + ленивое тело; удаление выбранного / за период
+   (`PeriodPicker`) / всего. Kafka append-only (нет `DeleteRecords` в `segmentio/kafka-go`) →
+   **логическое удаление через Redis-tombstones** `qcancel:<id>` (TTL=retention): Sender-consumer
+   перед отправкой проверяет cancel-set и пропускает отменённые (commit без отправки/DLQ; fail-open
+   при недоступном Redis). API `/api/nodes/:id/async-queue/{depth,messages,messages/body,purge}` +
+   `DELETE messages/:msgId`, admin + CSRF + audit.
+5. **Фикс replay 405 (§34.5).** Повтор запроса без тела падал с `405 http method not allowed`, т.к.
+   replay слал залогированный **исходящий** метод узла (`orig.Method`=`OutgoingMethod`) как входящий,
+   а Receiver валидирует против `IncomingMethod` (классика: POST-in / GET-out без тела). Фикс: replay
+   шлёт `node.IncomingMethod` (пустой → `POST`).
+
+**Out of scope:** физическое удаление из Kafka (невозможно; tombstone + retention); точный счётчик
+сверх cap (нижняя оценка + `capped`); управление очередью для RabbitMQAsync; override версии в проде.

@@ -35,6 +35,7 @@ import (
 	"nexus/internal/platform/metrics"
 	otelpf "nexus/internal/platform/otel"
 	pgpf "nexus/internal/platform/pg"
+	"nexus/internal/platform/queuecancel"
 	"nexus/internal/platform/ratelimit"
 	recoverypf "nexus/internal/platform/recovery"
 	redispf "nexus/internal/platform/redis"
@@ -125,9 +126,8 @@ func (a *App) Start(ctx context.Context) error {
 	hc.Register(r)
 	r.GET("/metrics", gin.WrapH(a.metrics.Handler()))
 
-	// Версия приложения (§30): публичный read-only эндпоинт на корневом
-	// движке (вне auth-группы RegisterAPI) — SPA показывает версию в футере.
-	r.GET("/api/version", httpadapter.NewVersionHandler(a.cfg.Build.Version).Get)
+	// Версия приложения (§30/§34.3): публичный read-only эндпоинт регистрируется
+	// ниже, после создания appSettingsUC — он нужен провайдеру dev-override версии.
 
 	// Swagger UI (§11, §25 ТЗ): Web раздаёт два дока (оба собираются `make
 	// swagger` и встраиваются через embed-импорты выше).
@@ -191,8 +191,11 @@ func (a *App) Start(ctx context.Context) error {
 
 	userRepo := pgrepo.NewUserRepoPg(a.pg, a.logger)
 	sessionRepo := rediscache.NewSessionRepoRedis(a.redis)
-	sessionTTL := time.Duration(a.cfg.Redis.SessionTTLSec) * time.Second
-	authUC := usecase.NewAuthUsecase(userRepo, sessionRepo, teamRepo, auditUC, sessionTTL, a.logger)
+	// §34.2: длительность сессии через провайдер (live, без рестарта). Fallback —
+	// env-конфиг; сидинг из app_settings и hot-reload (секция security) — ниже,
+	// после создания appSettingsUC.
+	sessionTTLProvider := usecase.NewSessionTTLProvider(a.cfg.Redis.SessionTTLSec)
+	authUC := usecase.NewAuthUsecase(userRepo, sessionRepo, teamRepo, auditUC, sessionTTLProvider.Get, a.logger)
 	userUC := usecase.NewUserUsecase(userRepo, sessionRepo, teamRepo, auditUC, defaultTeamID, a.logger)
 
 	tokenRepo := pgrepo.NewAPITokenRepoPg(a.pg, a.logger)
@@ -200,7 +203,23 @@ func (a *App) Start(ctx context.Context) error {
 
 	appSettingsRepo := pgrepo.NewAppSettingsRepoPg(a.pg, a.logger)
 	reloadPublisher := reloader.NewPublisher(a.redis)
-	appSettingsUC := usecase.NewAppSettingsUsecase(appSettingsRepo, auditUC, reloadPublisher, a.logger)
+	appSettingsUC := usecase.NewAppSettingsUsecase(appSettingsRepo, auditUC, reloadPublisher, a.cfg.Web.AllowVersionOverride, a.logger)
+
+	// Версия приложения (§30/§34.3): публичный эндпоинт на корневом движке (вне
+	// auth-группы) — SPA показывает версию в футере (+ commit/build_date в
+	// tooltip). В dev (allow_version_override) version можно переопределить через
+	// app_settings.general.version_override.
+	versionOverride := func(ctx context.Context) string {
+		s, err := appSettingsUC.Raw(ctx)
+		if err != nil || s == nil || s.General.VersionOverride == nil {
+			return ""
+		}
+		return *s.General.VersionOverride
+	}
+	r.GET("/api/version", httpadapter.NewVersionHandler(
+		a.cfg.Build.Version, a.cfg.Build.Commit, a.cfg.Build.BuildDate,
+		a.cfg.Web.AllowVersionOverride, versionOverride,
+	).Get)
 	// Telegram-клиент (§20): для тестовой отправки и планировщика уведомлений.
 	telegramClient := telegram.New(a.logger)
 	// SettingsTester (Phase 6.3.2.6): test connection без сохранения.
@@ -216,7 +235,26 @@ func (a *App) Start(ctx context.Context) error {
 	reloadSub.Register(reloader.SectionSentry,
 		bootstrap.SentryReloader(a.pg, a.cfg, a.cfg.Build.ProjectName, a.cfg.Build.Version, a.logger))
 
-	authHandler := httpadapter.NewAuthHandler(authUC, &a.cfg.Web, sessionTTL, a.logger)
+	// §34.2: длительность сессии из app_settings (сидинг на старте + hot-reload
+	// секции security). nil → сброс провайдера на env-fallback.
+	applySessionTTL := func(ctx context.Context) error {
+		s, err := appSettingsUC.Raw(ctx)
+		if err != nil {
+			return err
+		}
+		if s != nil && s.Security.SessionTTLSeconds != nil {
+			sessionTTLProvider.Set(*s.Security.SessionTTLSeconds)
+		} else {
+			sessionTTLProvider.Set(0)
+		}
+		return nil
+	}
+	if err := applySessionTTL(ctx); err != nil {
+		a.logger.Warn("seed session TTL from app_settings failed; using env fallback", a.logger.Err(err))
+	}
+	reloadSub.Register(reloader.SectionSecurity, applySessionTTL)
+
+	authHandler := httpadapter.NewAuthHandler(authUC, &a.cfg.Web, sessionTTLProvider.Get, a.logger)
 	userHandler := httpadapter.NewUserHandler(userUC, authUC, a.logger)
 	tokenHandler := httpadapter.NewAPITokenHandler(tokenUC, a.logger)
 	auditHandler := httpadapter.NewAuditHandler(auditUC, a.logger)
@@ -352,14 +390,30 @@ func (a *App) Start(ctx context.Context) error {
 	// Kafka Admin (топики/брокеры/ping, только при заданных брокерах) + Redis-кеш
 	// метаданных (TTL 30с). Все источники опциональны — usecase деградирует.
 	var kafkaAdmin webport.KafkaAdmin
+	// §34.4: тот же admin-клиент реализует AsyncQueuePeeker (peek очереди).
+	var asyncPeeker webport.AsyncQueuePeeker
 	if a.cfg.Kafka.Brokers != "" {
-		kafkaAdmin = kafkaadmin.New(a.cfg.Kafka.Brokers, 5*time.Second, 30, a.logger)
+		kac := kafkaadmin.New(a.cfg.Kafka.Brokers, 5*time.Second, 30, a.logger)
+		kafkaAdmin = kac
+		asyncPeeker = kac
 	}
 	kafkaUC := usecase.NewKafkaMonitorUsecase(
 		promMetrics, kafkaAdmin, rediscache.NewKafkaCacheRedis(a.redis, 30*time.Second),
 		kafkaThresholds(&a.cfg.Web.KafkaAlerts), a.logger,
 	)
 	kafkaHandler := httpadapter.NewKafkaHandler(kafkaUC, a.logger)
+
+	// §34.4: управление async-очередью узла (peek + cancel-set tombstones).
+	var queueCancel webport.QueueCancelWriter
+	if a.redis != nil {
+		queueCancel = queuecancel.New(a.redis)
+	}
+	asyncQueueUC := usecase.NewAsyncQueueUsecase(
+		asyncPeeker, queueCancel, nodeRepo, auditUC,
+		a.cfg.Kafka.ConsumerGroup, a.cfg.Kafka.AsyncTopic,
+		time.Duration(a.cfg.Kafka.Topic.RetentionMs)*time.Millisecond, 0, a.logger,
+	)
+	asyncQueueHandler := httpadapter.NewAsyncQueueHandler(asyncQueueUC, a.logger)
 
 	mw := httpadapter.Middlewares{
 		APITokenAuth:   httpadapter.APITokenAuthMiddleware(tokenUC, rl, a.cfg.Web.APITokenRateLimitPerMin, a.logger),
@@ -387,6 +441,7 @@ func (a *App) Start(ctx context.Context) error {
 		HeaderCatalog: headerCatalogHandler,
 		RMQTest:       rmqTestHandler,
 		Kafka:         kafkaHandler,
+		AsyncQueue:    asyncQueueHandler,
 	}, mw)
 
 	// Реверс-прокси боевых эндпоинтов Receiver (§17.1, единый вход): Web

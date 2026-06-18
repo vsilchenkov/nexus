@@ -89,8 +89,14 @@ func (h *AppSettingsHandler) Update(c *gin.Context) {
 		return
 	}
 	if err := h.uc.Update(c.Request.Context(), actorFromCtx(c), &patch); err != nil {
-		if errors.Is(err, domain.ErrPublicBaseURLInvalid) || errors.Is(err, domain.ErrTelegramCronInvalid) {
+		if errors.Is(err, domain.ErrPublicBaseURLInvalid) || errors.Is(err, domain.ErrTelegramCronInvalid) ||
+			errors.Is(err, domain.ErrSessionTTLInvalid) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		// §34.3: попытка задать override версии в проде — 403.
+		if errors.Is(err, domain.ErrVersionOverrideForbidden) {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 			return
 		}
 		h.logger.ErrorWithOp("app_settings update failed", err, "settings.update")

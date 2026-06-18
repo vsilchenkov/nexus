@@ -25,11 +25,19 @@ type DLQProducer interface {
 	Produce(ctx context.Context, topic, key string, value []byte, headers map[string]string) error
 }
 
+// CancelSet — проверка отменённых через UI async-сообщений (§34.4).
+// Реализация — internal/platform/queuecancel (Redis). nil → проверка выключена
+// (нет Redis). Объявлен на стороне consumer'а (accept interfaces, §17.2).
+type CancelSet interface {
+	IsCancelled(ctx context.Context, id string) (bool, error)
+}
+
 // AsyncProcessor — обработчик одного Kafka-сообщения для Sender.
 type AsyncProcessor struct {
 	nodes    NodeReader
 	send     *SendUsecase
 	dlq      DLQProducer
+	cancel   CancelSet // §34.4: может быть nil (Redis отсутствует)
 	dlqTopic string
 	logger   logging.Logger
 	metrics  *metrics.Metrics
@@ -41,6 +49,7 @@ func NewAsyncProcessor(
 	nodes NodeReader,
 	send *SendUsecase,
 	dlq DLQProducer,
+	cancel CancelSet,
 	dlqTopic string,
 	m *metrics.Metrics,
 	logger logging.Logger,
@@ -49,6 +58,7 @@ func NewAsyncProcessor(
 		nodes:            nodes,
 		send:             send,
 		dlq:              dlq,
+		cancel:           cancel,
 		dlqTopic:         dlqTopic,
 		logger:           logger,
 		metrics:          m,
@@ -113,6 +123,28 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 			p.logger.Str("id", env.ID))
 		return HandleAck
 	}
+
+	// §34.4: сообщение отменено оператором через UI — не отправляем во внешний
+	// адрес, коммитим offset (физически из лога Kafka удалить нельзя). Проверка
+	// ДО paused-блока: бэклог paused-узла (мёртвый внешний адрес) — основной
+	// сценарий, его тоже надо иметь возможность очистить. Ошибка Redis →
+	// fail-open: доставку не блокируем (§9.4).
+	if p.cancel != nil {
+		cancelled, err := p.cancel.IsCancelled(ctx, env.ID)
+		if err != nil {
+			p.logger.Warn("cancel-set check failed; delivering",
+				p.logger.Str("id", env.ID), p.logger.Err(err))
+		} else if cancelled {
+			p.logger.Info("async drop: cancelled by operator",
+				p.logger.Str("node_path", env.NodePath),
+				p.logger.Str("id", env.ID))
+			if p.metrics != nil {
+				p.metrics.RequestsTotal.WithLabelValues("requestAsync", env.NodePath, "cancelled").Inc()
+			}
+			return HandleAck
+		}
+	}
+
 	if node.Status == domain.NodeStatusPaused {
 		// §3.6: «Sender-consumer пропускает сообщения для paused-узлов,
 		// переоткладывает обработку через delayed-redelivery либо

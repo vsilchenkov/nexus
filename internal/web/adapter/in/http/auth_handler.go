@@ -17,16 +17,18 @@ import (
 
 // AuthHandler — /api/auth/* (login/logout/me).
 type AuthHandler struct {
-	uc     *usecase.AuthUsecase
-	cfg    *config.WebSection
-	ttl    time.Duration
+	uc  *usecase.AuthUsecase
+	cfg *config.WebSection
+	// ttl — провайдер длительности сессии (§34.2): cookie MaxAge берёт live-TTL,
+	// настраиваемый без рестарта.
+	ttl    func() time.Duration
 	logger logging.Logger
 }
 
 func NewAuthHandler(
 	uc *usecase.AuthUsecase,
 	cfg *config.WebSection,
-	ttl time.Duration,
+	ttl func() time.Duration,
 	logger logging.Logger,
 ) *AuthHandler {
 	return &AuthHandler{uc: uc, cfg: cfg, ttl: ttl, logger: logger}
@@ -110,7 +112,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		sameSite = http.SameSiteNoneMode
 	}
 	c.SetSameSite(sameSite)
-	c.SetCookie(h.cfg.SessionCookieName, token, int(h.ttl.Seconds()), "/", "",
+	c.SetCookie(h.cfg.SessionCookieName, token, int(h.ttl().Seconds()), "/", "",
 		h.cfg.SessionCookieSecure, true)
 
 	c.JSON(http.StatusOK, gin.H{

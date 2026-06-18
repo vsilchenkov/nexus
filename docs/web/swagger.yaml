@@ -751,6 +751,15 @@ definitions:
     type: object
   internal_web_adapter_in_http.VersionResponse:
     properties:
+      build_date:
+        type: string
+      commit:
+        type: string
+      override_allowed:
+        description: |-
+          OverrideAllowed — true в dev (web.allow_version_override): UI показывает
+          поле ручного override версии; в проде false (версия всегда из git).
+        type: boolean
       version:
         type: string
     type: object
@@ -1220,6 +1229,74 @@ definitions:
       prometheus_available:
         type: boolean
     type: object
+  internal_web_adapter_in_http.queueBodyDTO:
+    properties:
+      body:
+        type: string
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      id:
+        type: string
+      method:
+        type: string
+      target_url:
+        type: string
+    type: object
+  internal_web_adapter_in_http.queueDepthDTO:
+    properties:
+      capped:
+        type: boolean
+      count:
+        type: integer
+      kafka_available:
+        type: boolean
+    type: object
+  internal_web_adapter_in_http.queueListDTO:
+    properties:
+      capped:
+        type: boolean
+      items:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.queueMessageDTO'
+        type: array
+      kafka_available:
+        type: boolean
+    type: object
+  internal_web_adapter_in_http.queueMessageDTO:
+    properties:
+      body_size:
+        type: integer
+      id:
+        type: string
+      method:
+        type: string
+      offset:
+        type: integer
+      partition:
+        type: integer
+      received_at:
+        type: string
+      target_url:
+        type: string
+    type: object
+  internal_web_adapter_in_http.queuePurgeDTO:
+    properties:
+      cancelled:
+        type: integer
+      capped:
+        type: boolean
+      kafka_available:
+        type: boolean
+    type: object
+  internal_web_adapter_in_http.queuePurgeRequest:
+    properties:
+      from:
+        type: string
+      to:
+        type: string
+    type: object
   internal_web_adapter_in_http.seriesPointDTO:
     properties:
       count:
@@ -1403,6 +1480,8 @@ definitions:
         $ref: '#/definitions/nexus_internal_domain.GeneralSettings'
       notifications:
         $ref: '#/definitions/nexus_internal_domain.NotificationsSettings'
+      security:
+        $ref: '#/definitions/nexus_internal_domain.SecuritySettings'
       sentry:
         $ref: '#/definitions/nexus_internal_domain.SentrySettings'
       updated_at:
@@ -1500,11 +1579,27 @@ definitions:
           формирует полный адрес узла от него вместо window.location.origin.
           nil/"" = не задан (UI берёт origin браузера). Не секрет — Get() не маскирует.
         type: string
+      version_override:
+        description: |-
+          VersionOverride — ручное переопределение отображаемой версии (§34.3).
+          Применяется и редактируется ТОЛЬКО при включённом web.allow_version_override
+          (dev/staging); в проде флаг выключен → значение игнорируется, а запись
+          отклоняется (ErrVersionOverrideForbidden). nil/"" = версия из git (ldflags).
+        type: string
     type: object
   nexus_internal_domain.NotificationsSettings:
     properties:
       telegram:
         $ref: '#/definitions/nexus_internal_domain.TelegramSettings'
+    type: object
+  nexus_internal_domain.SecuritySettings:
+    properties:
+      session_ttl_seconds:
+        description: |-
+          SessionTTLSeconds — длительность пользовательской сессии в секундах.
+          nil = брать из env-конфига (cfg.Redis.SessionTTLSec). Применяется к новым
+          сессиям и sliding-Touch без рестарта (через SessionTTLProvider).
+        type: integer
     type: object
   nexus_internal_domain.SentrySettings:
     properties:
@@ -2774,6 +2869,172 @@ paths:
       summary: Отвязать хост от узла (admin, §23).
       tags:
       - allowed-hosts
+  /api/nodes/{id}/async-queue/depth:
+    get:
+      description: Число неконсюмированных сообщений узла в nexus.async (peek напрямую
+        из Kafka). capped=true → нижняя оценка. Admin-only.
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.queueDepthDTO'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Глубина async-очереди узла (§34.4).
+      tags:
+      - async-queue
+  /api/nodes/{id}/async-queue/messages:
+    get:
+      description: Метаданные сообщений (без тела, как в логах). Тело тянется лениво
+        через .../messages/body. Admin-only.
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.queueListDTO'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Первые 50 сообщений async-очереди узла (§34.4).
+      tags:
+      - async-queue
+  /api/nodes/{id}/async-queue/messages/{msgId}:
+    delete:
+      description: 'Логическое удаление через cancel-set: Sender пропустит сообщение
+        при доставке. Admin-only.'
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: message id (Envelope.ID)
+        in: path
+        name: msgId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "503":
+          description: queue management unavailable
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Удалить (отменить) одно сообщение очереди (§34.4).
+      tags:
+      - async-queue
+  /api/nodes/{id}/async-queue/messages/body:
+    get:
+      description: Ленивая подгрузка тела по физической координате (partition, offset)
+        из списка. Admin-only.
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: partition
+        in: query
+        name: partition
+        required: true
+        type: integer
+      - description: offset
+        in: query
+        name: offset
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.queueBodyDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "503":
+          description: kafka unavailable
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Тело одного сообщения async-очереди (§34.4).
+      tags:
+      - async-queue
+  /api/nodes/{id}/async-queue/purge:
+    post:
+      consumes:
+      - application/json
+      description: Отменяет сообщения с ReceivedAt ∈ [from,to] (логически, через cancel-set).
+        Пустые from/to = очистить всё. Admin-only.
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: период (пусто = всё)
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.queuePurgeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.queuePurgeDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Очистить async-очередь узла за период или целиком (§34.4).
+      tags:
+      - async-queue
   /api/nodes/{id}/log/{logId}:
     get:
       description: Тела грузятся лениво по клику на строку — списки (List/Stream)
@@ -3715,8 +3976,9 @@ paths:
       - users
   /api/version:
     get:
-      description: 'Публичный read-only эндпоинт: текущая версия Web Service. Не требует
-        авторизации.'
+      description: 'Публичный read-only эндпоинт: версия Web Service + commit/build_date.
+        Не требует авторизации. В dev (override_allowed) version может быть переопределена
+        настройкой.'
       produces:
       - application/json
       responses:
@@ -3724,7 +3986,7 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/internal_web_adapter_in_http.VersionResponse'
-      summary: Версия приложения (§30).
+      summary: Версия приложения (§30, §34.3).
       tags:
       - meta
 schemes:

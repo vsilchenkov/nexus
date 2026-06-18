@@ -255,3 +255,58 @@ func TestReplay_ExplicitEmptyBody(t *testing.T) {
 		t.Fatalf("explicit empty body must replay: %v", err)
 	}
 }
+
+// TestReplay_UsesIncomingMethod (§34.5): replay должен слать ВХОДЯЩИЙ метод
+// узла, а не залогированный исходящий (orig.Method == OutgoingMethod). Узел
+// POST-in / GET-out (внешний GET без тела) логировал method=GET; раньше replay
+// слал GET во входной endpoint и получал 405 ErrNodeMethodNotAllowed. Теперь —
+// IncomingMethod (POST).
+func TestReplay_UsesIncomingMethod(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{
+		ID:              "n1",
+		Path:            "demo/async",
+		Status:          domain.NodeStatusEnabled,
+		ClickHouseTable: "t.t",
+		IncomingMethod:  domain.HTTPMethodPOST,
+		OutgoingMethod:  domain.HTTPMethodGET,
+	}
+	// В логе зафиксирован исходящий метод GET (то, чем Sender ходил наружу).
+	log := &domain.LogRecord{ID: "log1", Method: "GET", Request: `{"orig":true}`, DateRequest: time.Now(), Done: true}
+	disp := &stubDispatcher{}
+	uc := NewReplayUsecase(
+		&stubLogReader{log: log},
+		&stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
+		disp, nil,
+		NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10, logging.NewNoop(),
+	)
+	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{UseNodeAuth: true})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if disp.gotReq.Method != "POST" {
+		t.Fatalf("replay must dispatch IncomingMethod POST, got %q (regression of 405)", disp.gotReq.Method)
+	}
+}
+
+// TestReplay_IncomingMethodEmptyDefaultsPost (§34.5): пустой IncomingMethod
+// узла трактуется как POST — так же, как methodMatches в Receiver.
+func TestReplay_IncomingMethodEmptyDefaultsPost(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{ID: "n1", Path: "demo/x", Status: domain.NodeStatusEnabled, ClickHouseTable: "t.t"}
+	log := &domain.LogRecord{ID: "log1", Method: "GET", Request: `{"a":1}`, DateRequest: time.Now(), Done: true}
+	disp := &stubDispatcher{}
+	uc := NewReplayUsecase(
+		&stubLogReader{log: log},
+		&stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
+		disp, nil,
+		NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10, logging.NewNoop(),
+	)
+	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{UseNodeAuth: true})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if disp.gotReq.Method != "POST" {
+		t.Fatalf("empty IncomingMethod must default to POST, got %q", disp.gotReq.Method)
+	}
+}

@@ -36,3 +36,31 @@ func TestValidatePublicBaseURL(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateSessionTTLSeconds(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		in      int
+		wantErr bool
+	}{
+		{"below min", SessionTTLMinSeconds - 1, true},
+		{"at min", SessionTTLMinSeconds, false},
+		{"middle", 86400, false},
+		{"at max", SessionTTLMaxSeconds, false},
+		{"above max", SessionTTLMaxSeconds + 1, true},
+		{"zero", 0, true},
+		{"negative", -10, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateSessionTTLSeconds(tt.in)
+			if tt.wantErr {
+				require.ErrorIs(t, err, ErrSessionTTLInvalid)
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
+}

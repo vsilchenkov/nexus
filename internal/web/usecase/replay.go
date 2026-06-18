@@ -125,7 +125,15 @@ func (u *ReplayUsecase) Replay(
 	}
 
 	// Сборка нового запроса.
-	method := orig.Method
+	// Метод берём из ВХОДЯЩЕГО метода узла, а не из orig.Method: в лог пишется
+	// ИСХОДЯЩИЙ метод (node.OutgoingMethod — им Sender ходит во внешний target,
+	// см. route.go/route_async.go + send.go). Replay же переинъецирует запрос
+	// через входной endpoint Receiver'а, где метод валидируется против
+	// node.IncomingMethod. При OutgoingMethod != IncomingMethod (классика:
+	// POST-in / GET-out без тела) использование orig.Method давало 405
+	// ErrNodeMethodNotAllowed (§34.5). Пустой IncomingMethod → POST, как
+	// трактует methodMatches в Receiver.
+	method := string(node.IncomingMethod)
 	if method == "" {
 		method = "POST"
 	}

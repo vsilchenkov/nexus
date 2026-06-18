@@ -255,7 +255,7 @@
     }
   },
   "node": {
-    "tabs": { "overview": "Overview", "logs": "Logs", "config": "Config", "metrics": "Metrics" },
+    "tabs": { "overview": "Overview", "logs": "Logs", "config": "Config", "metrics": "Metrics", "queue": "Queue" },
     "status": {
       "enabled": "Active",
       "disabled": "Disabled",
@@ -506,13 +506,37 @@
       "details": "Details"
     }
   },
+  "queue": {
+    "unavailable": "Kafka queue is unavailable (cluster not configured).",
+    "depth": "In queue now",
+    "capped_mark": "(may be more)",
+    "capped_hint": "Showing the first of a limited scan — the queue may be larger.",
+    "purge_all": "Purge all",
+    "purge_all_confirm": "Delete all node messages from the queue? They will not be sent to the target.",
+    "purge_period": "Purge by period",
+    "purge_period_confirm": "Delete messages in the selected period? They will not be sent.",
+    "purge": "Purge",
+    "empty": "Queue is empty.",
+    "delete": "Delete request",
+    "body_empty": "(empty body)",
+    "col": {
+      "received": "Received",
+      "method": "Method",
+      "target": "Target URL",
+      "size": "Size"
+    }
+  },
   "settings": {
     "title": "Settings",
     "general": {
       "title": "General",
       "public_base_url": "Public application URL",
       "public_base_url_hint": "Public address the app is published at. When set, node addresses are built from it instead of the browser host. Leave empty to use the current origin.",
-      "public_base_url_example": "Origin only, no path or trailing slash, e.g. https://nexus.example.com"
+      "public_base_url_example": "Origin only, no path or trailing slash, e.g. https://nexus.example.com",
+      "version_override": "Application version (dev)",
+      "version_override_hint": "Overrides the displayed version in this build. Available in dev/staging only; production always uses the git version. Leave empty to use the git version.",
+      "session_ttl": "Session duration (minutes)",
+      "session_ttl_hint": "How many minutes a user session stays alive without activity. Allowed 5 minutes .. 30 days (43200 min). Applied without restart. Leave empty to use the config default."
     },
     "tokens": {
       "title": "API tokens",
