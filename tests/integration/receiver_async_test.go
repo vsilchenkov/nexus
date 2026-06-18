@@ -119,7 +119,7 @@ func TestSender_Async_E2E(t *testing.T) {
 	producer := kafkapf.NewProducer(cfg)
 	defer producer.Close()
 
-	asyncProc := senderuc.NewAsyncProcessor(nodeReader, sendUC, producer, cfg.Kafka.DLQTopic, nil, logger)
+	asyncProc := senderuc.NewAsyncProcessor(nodeReader, sendUC, producer, nil, cfg.Kafka.DLQTopic, nil, logger)
 	consumer := kafkaadapter.NewConsumerGroup(cfg, cfg.Kafka.AsyncTopic, asyncProc, logger)
 	consumer.Start(ctx)
 	defer consumer.Stop()

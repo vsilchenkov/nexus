@@ -31,6 +31,7 @@ import (
 	"nexus/internal/platform/metrics"
 	otelpf "nexus/internal/platform/otel"
 	pgpf "nexus/internal/platform/pg"
+	"nexus/internal/platform/queuecancel"
 	recoverypf "nexus/internal/platform/recovery"
 	"nexus/internal/platform/reloader"
 	"nexus/internal/platform/requestid"
@@ -114,7 +115,13 @@ func (a *App) Start(ctx context.Context) error {
 	// Async consumer.
 	a.producer = kafkapf.NewProducer(a.cfg, kafkapf.WithMetrics(a.metrics))
 	nodeReader := nodepg.New(a.pg, a.cipher, a.logger)
-	asyncProc := usecase.NewAsyncProcessor(nodeReader, sendUC, a.producer, a.cfg.Kafka.DLQTopic, a.metrics, a.logger)
+	// §34.4: cancel-set отменённых через UI сообщений (Redis). nil при отсутствии
+	// Redis — проверка в AsyncProcessor тогда выключена.
+	var cancelSet usecase.CancelSet
+	if a.redis != nil {
+		cancelSet = queuecancel.New(a.redis)
+	}
+	asyncProc := usecase.NewAsyncProcessor(nodeReader, sendUC, a.producer, cancelSet, a.cfg.Kafka.DLQTopic, a.metrics, a.logger)
 	a.consumer = kafkaadapter.NewConsumerGroup(a.cfg, a.cfg.Kafka.AsyncTopic, asyncProc, a.logger, kafkaadapter.WithMetrics(a.metrics))
 	a.consumer.Start(ctx)
 
