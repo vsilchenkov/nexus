@@ -142,7 +142,8 @@ docker-build: ## Сборка всех Docker-образов
 docker-up: ## Поднять полный стек
 	$(COMPOSE) $(COMPOSE_F) up -d
 
-docker-up-dev: ## Поднять только зависимости (для локального make run-*)
+docker-up-dev: ## Поднять зависимости nexus-* (НЕ нужно, если уже есть стек `services` — см. docs/STAND_TESTING.md §1)
+	@echo "ВНИМАНИЕ: если уже запущен docker-стек 'services' (postgres/redis/clickhouse/kafka), эту цель запускать НЕ НУЖНО — config_debug.yml указывает на него. Иначе создашь дублирующие nexus-* на занятых портах."
 	$(COMPOSE) $(COMPOSE_DEV) up -d postgres redis clickhouse kafka prometheus
 
 docker-down: ## Остановить стек

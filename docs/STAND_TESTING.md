@@ -37,11 +37,20 @@
 | RabbitMQ management | http://localhost:15672 (guest/guest) |
 | echosrv (получатель) | http://localhost:9999 |
 
-Зависимости (порты, опубликованные на хост для нативного запуска): PostgreSQL
-`:5432`, Redis `:6379`, ClickHouse `:19000` (native protocol), Kafka `:9092`,
-Prometheus `:9099`. Адреса/креды для нативного запуска зашиты в
-[config/config_debug.yml](../config/config_debug.yml); для Docker-стека — в `.env`
-(docker-сетевые хосты `postgres`/`redis`/`clickhouse`/`kafka`).
+Зависимости для нативного запуска берутся из **постоянного docker-стека `services`**
+(compose-проект `services`, уже запущен на машине разработчика): PostgreSQL `:5432`,
+Redis `:6379`, ClickHouse `:19000` (native) / `:18123` (HTTP), Kafka `:9092`.
+Адреса/креды зашиты в [config/config_debug.yml](../config/config_debug.yml) и **уже
+соответствуют `services`** (postgres `postgres`/`vOkjDn`/db `nexus`; redis ACL-пользователь
+`sa`/`I2MV5s`; clickhouse `default` без пароля; kafka `localhost:9092`).
+
+> **Не поднимай свои зависимости через `make docker-up-dev`** — это создаёт
+> дублирующие контейнеры `nexus-*`, которые не могут занять опубликованные порты
+> (их держит `services`) и только путают (две Redis/Postgres). Используй уже
+> поднятый `services`. Prometheus в `services` **нет** — метрики панели (Overview
+> KPI/throughput) деградируют в нули (это норма; per-node KPI/график узла всё равно
+> считаются из ClickHouse). RabbitMQ в `services` тоже нет — для RabbitMQAsync подними
+> его отдельно. Docker-стек Варианта A (`.env`) — отдельная история.
 
 ---
 
@@ -61,26 +70,26 @@ make set-admin-password PASSWORD=secret   # bootstrap пароля admin (иде
 `ENCRYPTION_KEY` сервисы получают из `.env` (`env_file`). echosrv виден Receiver'у
 как `http://host.docker.internal:9999`.
 
-### Вариант B — зависимости в Docker, сервисы нативно (быстрая итерация)
+### Вариант B — зависимости из стека `services`, сервисы нативно (быстрая итерация)
+
+Зависимости НЕ поднимаем — используем уже запущенный стек `services` (см. §0).
+Проверить, что он жив: `docker ps --filter label=com.docker.compose.project=services`
+(ожидаем postgres/redis/clickhouse/kafka — healthy). **`make docker-up-dev` не запускаем.**
 
 ```bash
-make docker-up-dev             # только postgres/redis/clickhouse/kafka/prometheus
-
 # ВАЖНО: нативный --debug-запуск читает ENCRYPTION_KEY из окружения (НЕ из .env).
 # Ключ должен совпадать с тем, которым зашифрованы креды в БД (значение из .env).
-# Плюс PROMETHEUS_URL — иначе Web считает Prometheus недоступным и метрики панели
-# (Overview KPI/throughput) будут НУЛЕВЫМИ (prometheus_available=false). Prometheus
-# из deps скрейпит нативные сервисы по host.docker.internal; на хосте он на :9099.
+# PROMETHEUS_URL опционален: в стеке `services` Prometheus НЕТ — без него метрики
+# панели деградируют в нули (норма). Если нужен — подними Prometheus отдельно и
+# задай PROMETHEUS_URL на его адрес.
 # PowerShell:
 $env:ENCRYPTION_KEY = (Select-String -Path .env -Pattern '^ENCRYPTION_KEY=').Line.Split('=',2)[1]
-$env:PROMETHEUS_URL = 'http://localhost:9099'
 # bash:
 export $(grep -E '^ENCRYPTION_KEY=' .env)
-export PROMETHEUS_URL=http://localhost:9099
 
-make set-admin-password PASSWORD=secret   # bootstrap пароля admin
-# три сервиса — каждый в своём терминале (config_debug.yml → localhost; для метрик
-# панели run-web должен видеть PROMETHEUS_URL в окружении):
+make migrate-up                            # применить миграции (свежая/обновлённая схема)
+make set-admin-password PASSWORD=secret123 # bootstrap пароля admin (≥8 символов)
+# три сервиса — каждый в своём терминале (config_debug.yml → localhost = стек `services`):
 make run-receiver
 make run-sender
 make run-web
