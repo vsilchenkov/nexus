@@ -42,15 +42,19 @@
    - `disabled` → drop (узел выключен, доставлять некуда).
    - `paused` → republish в хвост DLQ без попытки (вернёмся, когда узел снова активен).
    - `enabled` → дальше.
-5. **Circuit breaker узла открыт** (адрес ещё мёртв) → не пытаемся (иначе fast-fail-churn); republish в
-   хвост (attempts+1). Backoff = интервал прохода.
-6. **Попытка доставки** через переиспользуемый `SendUsecase.Send` (тот же путь, что у основного
+5. **Retry-backoff** (§36.4): если в header'е есть `next_attempt_at` и `now < next_attempt_at` →
+   рано: republish без попытки, сохраняя `next_attempt_at` (attempts не растёт). Метрика `skipped`.
+6. **Circuit breaker узла открыт** (адрес ещё мёртв) → не пытаемся (иначе fast-fail-churn); republish в
+   хвост (attempts+1). Backoff = интервал прохода. Проверка read-only (`Breaker.IsOpen`: open И cooldown
+   не истёк) — не расходует half-open-пробу, в отличие от `Allow`.
+7. **Попытка доставки** через переиспользуемый `SendUsecase.Send` (тот же путь, что у основного
    consumer'а: retry/breaker/логирование в CH):
    - `2xx` (`done=true`) → **успех**: commit, без republish. В CH появляется запись `done=true` →
      сообщение «восстановлено», счётчик «Неудачные доставки» за период падает. Метрика
      `dlq_reprocess_succeeded`.
-   - не-`2xx` → republish в хвост DLQ (attempts+1, обновить `last_attempt_at`) + commit. Повтор на
-     следующем проходе. Метрика `dlq_reprocess_failed`.
+   - не-`2xx` → republish в хвост DLQ (attempts+1, обновить `last_attempt_at`,
+     `next_attempt_at = now + dlq_retry_delay_seconds`) + commit. Повтор после задержки. Метрика
+     `dlq_reprocess_failed`.
 
 Republish-в-хвост: физически сообщение дублируется в топике со временем, но «живая» копия одна (старую
 закоммитили, читаем новую). На успех/TTL republish прекращается — циркуляция останавливается. DLQ
@@ -58,10 +62,23 @@ Republish-в-хвост: физически сообщение дублируе�
 
 ### 36.4 Backoff
 
-v1 — фиксированный: backoff = `reprocess_interval` (дефолт 5 мин). Опционально (v2/неочевидность) —
-экспоненциальный: пропускать сообщение `min(2^attempts, cap)` проходов через header `next_attempt_at`
-(если `now < next_attempt_at` → republish без попытки). v1 достаточно для основного сценария
-«приёмник вернулся».
+Два уровня:
+
+1. **Интервал прохода** (`reprocess_interval`, глобально, дефолт 5 мин) — базовый темп sweeper'а.
+2. **Per-message задержка повторной доставки** (`dlq_retry_delay_seconds`, per-node, дефолт **60 с**) —
+   при неудачной доставке (не-2xx) сообщение переотправляется в хвост DLQ с header
+   `next_attempt_at = now + dlq_retry_delay_seconds`. На последующих проходах, пока
+   `now < next_attempt_at`, доставку **не пытаемся**: republish без попытки, сохраняя `next_attempt_at`
+   и не инкрементируя `attempts` (метрика `skipped`, reason `retry_backoff`). Это минимальный «пол»
+   паузы между повторами одной ошибочной отправки, независимый от общего темпа прохода.
+
+**Эффективная пауза между повторами = `max(reprocess_interval, dlq_retry_delay_seconds)`.** При дефолтах
+(5 мин интервал, 60 с задержка) повтор фактически происходит на следующем проходе (интервал доминирует);
+`dlq_retry_delay_seconds` начинает «прижимать» паузу, если интервал прохода меньше задержки. Чтобы
+повтор шёл ближе к заданным 60 с, интервал прохода нужно сделать сопоставимым (настройка B3).
+
+Экспоненциальный backoff (`min(2^attempts, cap)`) — out of scope v1; механика `next_attempt_at` уже
+заложена и наращивается тем же header'ом при желании.
 
 ### 36.5 Настройки
 
@@ -69,6 +86,11 @@ v1 — фиксированный: backoff = `reprocess_interval` (дефолт 
 - `dlq_ttl_seconds` `INTEGER NOT NULL DEFAULT 86400` (24 ч), диапазон `[60, 2592000]` (1 мин .. 30 сут).
   Сколько держать сообщение в DLQ и пытаться переотправить, прежде чем сдаться. Миграция `0017`,
   `domain.Node` (+`SetDefaults`/`Validate`/`ErrNodeDLQTTLRange`), PG-маппер, DTO, UI-форма, i18n.
+- `dlq_retry_delay_seconds` `INTEGER NOT NULL DEFAULT 60` (60 с), диапазон `[1, 86400]` (1 с .. 24 ч).
+  Минимальная задержка перед повторной доставкой ошибочной отправки (header `next_attempt_at`, §36.4).
+  Миграция `0018` (`NOT NULL DEFAULT 60` атомарно заполняет существующие узлы), `domain.Node`
+  (+`SetDefaults`/`Validate`/`ErrNodeDLQRetryDelayRange`), PG-маппер (новый столбец последним), DTO,
+  UI-форма, i18n.
 
 **Global (config.yml, секция `kafka` или новая `reprocessor`):**
 - `reprocess_enabled` `bool` (дефолт `true`) — общий рубильник фонового sweeper'а.
@@ -88,7 +110,11 @@ v1 — фиксированный: backoff = `reprocess_interval` (дефолт 
 
 ### 36.7 Метрики (Prometheus)
 
-`nexus_dlq_reprocess_total{node,result=succeeded|failed|ttl_dropped|skipped}` + длительность прохода.
+`nexus_dlq_reprocess_total{node,result=succeeded|failed|ttl_dropped|skipped|dropped}` +
+`nexus_dlq_reprocess_duration_seconds` (длительность одного прохода). Метки `result`:
+`succeeded` (доставлено 2xx), `failed` (не-2xx → republish), `ttl_dropped` (истёк TTL),
+`skipped` (paused / breaker-open / retry-backoff → republish без попытки),
+`dropped` (узел удалён / disabled / отменён оператором — терминальный drop).
 
 ### 36.8 Scope
 

@@ -3199,14 +3199,19 @@ Prometheus `NodeThroughput` для top-узлов. Все источники д�
   `reprocess_interval` (дефолт 5 мин). Отдельная consumer-группа на `nexus.async.dlq`. Тик = базовый backoff.
 - **Логика на сообщение:** резолв узла → tombstone(`qcancel`)→drop → TTL (`now-received_at >
   dlq_ttl_seconds`)→терминальный `ttl_expired` → статус (disabled→drop, paused→republish, enabled→далее) →
-  circuit breaker открыт→republish без попытки → попытка `SendUsecase.Send`: `2xx`→commit (в CH `done=true`,
-  «восстановлено»), иначе→republish-в-хвост (attempts+1)+commit. Republish прекращается на успех/TTL.
-- **Настройки:** per-node `dlq_ttl_seconds` (дефолт 86400=24ч, диапазон [60, 2592000]) — миграция 0017 +
-  domain/PG/DTO/UI/i18n. Global: `reprocess_enabled` (true), `reprocess_interval` (5m), `reprocess_max_scan`
-  (1000). Задел: per-node `dlq_reprocess_enabled` тем же паттерном.
-- **UI:** поле «TTL неудачных доставок» (в часах) в форме узла; подсказка «повторяется автоматически до
-  TTL» во вкладке «Очередь»; ручной «Повторить» остаётся (форс-повтор).
-- **Метрики:** `nexus_dlq_reprocess_total{node,result}`.
+  retry-backoff (`now < next_attempt_at`→republish без попытки) → circuit breaker открыт→republish без
+  попытки → попытка `SendUsecase.Send`: `2xx`→commit (в CH `done=true`, «восстановлено»),
+  иначе→republish-в-хвост (attempts+1, `next_attempt_at = now + dlq_retry_delay_seconds`)+commit.
+  Republish прекращается на успех/TTL.
+- **Настройки:** per-node `dlq_ttl_seconds` (дефолт 86400=24ч, [60, 2592000]) — миграция 0017; per-node
+  `dlq_retry_delay_seconds` (дефолт 60с, [1, 86400]) — минимальная пауза перед повтором ошибочной отправки,
+  миграция 0018; обе через domain/PG/DTO/UI/i18n. Global: `reprocess_enabled` (true), `reprocess_interval`
+  (5m), `reprocess_max_scan` (1000). Эффективная пауза повтора = `max(reprocess_interval,
+  dlq_retry_delay_seconds)`. Задел: per-node `dlq_reprocess_enabled` тем же паттерном.
+- **UI:** поля «TTL неудачных доставок» (в часах) и «Задержка переотправки» (в секундах) в форме узла;
+  подсказка «повторяется автоматически до TTL» во вкладке «Очередь»; ручной «Повторить» остаётся (форс-повтор).
+- **Метрики:** `nexus_dlq_reprocess_total{node,result=succeeded|failed|ttl_dropped|skipped|dropped}` +
+  `nexus_dlq_reprocess_duration_seconds`.
 
 **Неочевидности:** DLQ нельзя физически чистить → «удаление» успеха = commit без republish; TTL от
 `received_at` (предсказуемый суммарный срок); дубли в CH — observability, не баг; отдельная группа не

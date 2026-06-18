@@ -8,6 +8,8 @@ import (
 	"errors"
 	"sync"
 
+	kafka "github.com/segmentio/kafka-go"
+
 	"nexus/internal/platform/config"
 	kafkapf "nexus/internal/platform/kafka"
 	"nexus/internal/platform/logging"
@@ -15,6 +17,20 @@ import (
 	"nexus/internal/platform/safego"
 	"nexus/internal/sender/usecase"
 )
+
+// headersToMap сворачивает Kafka-заголовки в map[string]string. Kafka в
+// принципе допускает несколько значений на один ключ, но для наших служебных
+// заголовков (OTel-propagator, id/reason/attempts DLQ) это исключено — берём
+// первое значение. Общий helper основного consumer'а и DLQ-sweeper'а.
+func headersToMap(hs []kafka.Header) map[string]string {
+	m := make(map[string]string, len(hs))
+	for _, h := range hs {
+		if _, exists := m[h.Key]; !exists {
+			m[h.Key] = string(h.Value)
+		}
+	}
+	return m
+}
 
 // ConsumerGroup — пул из cfg.Kafka.Consumer.Instances consumer-горутин.
 type ConsumerGroup struct {
@@ -98,12 +114,7 @@ func (g *ConsumerGroup) runOne(ctx context.Context, c *kafkapf.Consumer, idx int
 		// Извлекаем Kafka headers в map[string]string для OTel-propagator'а
 		// (Phase 8.4). Несколько значений на ключ Kafka в принципе допускает,
 		// но для propagator-keys это исключено — берём первое.
-		hdrs := make(map[string]string, len(msg.Headers))
-		for _, h := range msg.Headers {
-			if _, exists := hdrs[h.Key]; !exists {
-				hdrs[h.Key] = string(h.Value)
-			}
-		}
+		hdrs := headersToMap(msg.Headers)
 		res := g.processor.Handle(ctx, msg.Value, hdrs)
 		g.decInFlight() // обработка завершена (committed/retry-left)
 		switch res {

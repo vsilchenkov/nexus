@@ -631,14 +631,34 @@ DLQ) тормозила, «Очистить» был no-op, шапка плох�
 | Пункт | Статус | Где |
 |---|---|---|
 | §36.B1 Per-node `dlq_ttl_seconds` (дефолт 24ч) | ✅ | миграция [0017_node_dlq_ttl](../migrations/0017_node_dlq_ttl.up.sql); [domain/node.go](../internal/domain/node.go) (поле + `SetDefaults` 86400 + `Validate` [60, 2592000] + [errors.go](../internal/domain/errors.go) `ErrNodeDLQTTLRange`); PG-маппер [node_repo.go](../internal/web/adapter/out/postgres/node_repo.go) (последний столбец, без перенумерации $-параметров); DTO [dto.go](../internal/web/adapter/in/http/dto.go); UI-форма [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx) (в секундах + подсказка в часах) + [nodeValidation.ts](../web-ui/src/lib/nodeValidation.ts) + i18n; тесты domain + integration round-trip |
-| §36.B2 Sender-репроцессор (sweeper над DLQ) | ⛔ | — |
-| §36.B3 Global-конфиг + wiring + метрики | ⛔ | — |
+| §36.B1.2 Per-node `dlq_retry_delay_seconds` (дефолт 60с) | ✅ | миграция [0018_node_dlq_retry_delay](../migrations/0018_node_dlq_retry_delay.up.sql) (`NOT NULL DEFAULT 60` атомарно заполняет существующие узлы); [domain/node.go](../internal/domain/node.go) (`SetDefaults` 60 + `Validate` [1, 86400] + `ErrNodeDLQRetryDelayRange`); PG-маппер (последний столбец); DTO + swagger; UI-форма + `nodeValidation.ts` + i18n + пересборка бандла; min-backoff перед повтором ошибочной доставки (header `next_attempt_at`, §36.4) |
+| §36.B2 Sender-репроцессор (sweeper над DLQ) | ✅ | usecase [dlq_reprocess.go](../internal/sender/usecase/dlq_reprocess.go) (`DLQReprocessor.ProcessMessage`: резолв→tombstone→TTL→статус→retry-backoff→breaker→`Send`); адаптер-sweeper [adapter/in/kafka/dlq_reprocessor.go](../internal/sender/adapter/in/kafka/dlq_reprocessor.go) (период. проход, отдельная группа `<group>-dlq-reprocess`); [circuitbreaker.IsOpen](../internal/platform/circuitbreaker/redis.go) (read-only, open∧cooldown); [kafka.NewConsumerWithGroup](../internal/platform/kafka/consumer.go); метрики `nexus_dlq_reprocess_total`/`_duration_seconds` ([metrics.go](../internal/platform/metrics/metrics.go)); unit-тесты. **Компонент готов и протестирован; подключение к `app.go` + global-конфиг — B3 (пока не запущен в проде).** |
+| §36.B3 Global-конфиг + wiring (`safego.Go` в app.go, Stop) | ⛔ | — |
 | §36.B4 UI-подсказка «повторяется до TTL» | ⛔ | — |
 
-**Неочевидности (B1).**
+**Неочевидности (B1/B1.2).**
 - **Новый столбец узла — добавлять ПОСЛЕДНИМ** в `node_repo.go` (Create INSERT/VALUES/args, Update SET/args,
   `nodeColumns` SELECT + scan): тогда новый позиционный `$N` — в конце, без перенумерации существующих
   параметров (риск рассинхрона). Проверять обязательно integration `make test-int-pg` (round-trip).
+- **`Node.Validate()` безусловно проверяет диапазон новых int-полей** — узлы, собираемые в тестах ВРУЧНУЮ
+  (без `SetDefaults`), должны явно задавать `DLQTTLSeconds`/`DLQRetryDelaySeconds`, иначе `Validate` падает на
+  нуле (поймано в `receiver/usecase/webhook_signature_test.go` — латентно с B1).
+
+**Неочевидности (B2).**
+- **Backoff повтора — `max(reprocess_interval, dlq_retry_delay_seconds)`.** Sweeper тикает раз в интервал;
+  `next_attempt_at` лишь не даёт повторить РАНЬШЕ задержки. При дефолтах (5 мин / 60 с) доминирует интервал —
+  чтобы повтор шёл ближе к 60 с, B3 должен задать сопоставимый интервал прохода.
+- **`Breaker.IsOpen` (новый) — read-only и учитывает cooldown.** `State()` всегда возвращает `open` пока
+  ключ жив (не учитывает истёкший cooldown), `Allow()` расходует half-open-пробу. Для шага 5 нужен именно
+  «open И cooldown не истёк», без побочных эффектов — иначе восстановившийся адрес (cooldown прошёл) навсегда
+  бы откладывался.
+- **Анти-busy-loop в одном проходе.** Sweeper держит `seen[id]`; встретив republish-копию (тот же `id`) —
+  завершает проход, не коммитя её (обработается на следующем проходе). Иначе republish-в-хвост читался бы тут
+  же по кругу до `max_scan`.
+- **`ReprocessRetry` прерывает проход** (не коммитим и не идём дальше): commit в kafka-go — «до и включительно»,
+  поэтому коммит следующего сообщения «проглотил» бы offset несохранённого. Перечит — на rebalance/рестарте.
+- **Метрика `result=dropped`** добавлена сверх 4 меток ТЗ — для терминальных drop'ов (узел удалён/disabled/
+  отменён), которые не `ttl_dropped` и не `skipped`.
 
 ---
 

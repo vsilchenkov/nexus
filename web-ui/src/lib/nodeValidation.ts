@@ -13,6 +13,7 @@ export type NodeFormLimits = {
   retry_count: number;
   retry_backoff_ms: number;
   dlq_ttl_seconds: number;
+  dlq_retry_delay_seconds: number;
   max_body_size_enabled: boolean;
   max_body_size: number;
   rmq_host: string;
@@ -60,6 +61,9 @@ export function validateNodeForm(f: NodeFormLimits): NodeFieldError | null {
   }
   if (f.dlq_ttl_seconds < 60 || f.dlq_ttl_seconds > 2592000) {
     return { field: "dlq_ttl_seconds", code: "node.validation.dlq_ttl_seconds" };
+  }
+  if (f.dlq_retry_delay_seconds < 1 || f.dlq_retry_delay_seconds > 86400) {
+    return { field: "dlq_retry_delay_seconds", code: "node.validation.dlq_retry_delay_seconds" };
   }
   if (f.max_body_size_enabled && f.max_body_size <= 0) {
     return { field: "max_body_size", code: "node.validation.max_body_size_required" };

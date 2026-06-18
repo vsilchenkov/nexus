@@ -65,6 +65,7 @@ type Form = {
   clickhouse_template_id: string;
   clickhouse_retention_days: number;
   dlq_ttl_seconds: number;
+  dlq_retry_delay_seconds: number;
   status: "enabled" | "disabled" | "paused";
   forward_headers: string[];
   log_request_body: boolean;
@@ -109,6 +110,7 @@ const emptyForm: Form = {
   clickhouse_template_id: "",
   clickhouse_retention_days: 90,
   dlq_ttl_seconds: 86400,
+  dlq_retry_delay_seconds: 60,
   status: "enabled",
   forward_headers: [],
   log_request_body: false,
@@ -620,6 +622,22 @@ export default function NodeSettings() {
                   ≈ {Math.round((form.dlq_ttl_seconds / 3600) * 10) / 10} {t("node.form.hours")}
                 </div>
                 {fieldErr("dlq_ttl_seconds")}
+              </Field>
+              {/* §36: минимальная пауза перед повторной доставкой ошибочной
+                  отправки (per-message backoff поверх интервала прохода). */}
+              <Field label={t("node.form.dlq_retry_delay_seconds")} className="mt-3">
+                <Input
+                  type="number"
+                  min={1}
+                  max={86400}
+                  className={errCls("dlq_retry_delay_seconds")}
+                  value={form.dlq_retry_delay_seconds}
+                  onChange={(e) =>
+                    set("dlq_retry_delay_seconds", parseNumInput(e.target.value, form.dlq_retry_delay_seconds))
+                  }
+                />
+                <div className="mt-1 text-xs text-fg-muted">{t("node.form.dlq_retry_delay_hint")}</div>
+                {fieldErr("dlq_retry_delay_seconds")}
               </Field>
               <Field label={t("node.form.log_what")} className="mt-3">
                 <div className="flex flex-col gap-1.5 text-xs">

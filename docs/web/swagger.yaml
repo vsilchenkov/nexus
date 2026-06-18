@@ -46,6 +46,10 @@ definitions:
       comment:
         maxLength: 2000
         type: string
+      dlq_retry_delay_seconds:
+        maximum: 86400
+        minimum: 1
+        type: integer
       dlq_ttl_seconds:
         maximum: 2592000
         minimum: 60
@@ -455,6 +459,8 @@ definitions:
         type: string
       created_at:
         type: string
+      dlq_retry_delay_seconds:
+        type: integer
       dlq_ttl_seconds:
         type: integer
       forward_headers:
@@ -629,6 +635,10 @@ definitions:
       comment:
         maxLength: 2000
         type: string
+      dlq_retry_delay_seconds:
+        maximum: 86400
+        minimum: 1
+        type: integer
       dlq_ttl_seconds:
         maximum: 2592000
         minimum: 60

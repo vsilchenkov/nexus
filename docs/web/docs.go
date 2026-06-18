@@ -3684,6 +3684,11 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 2000
                 },
+                "dlq_retry_delay_seconds": {
+                    "type": "integer",
+                    "maximum": 86400,
+                    "minimum": 1
+                },
                 "dlq_ttl_seconds": {
                     "type": "integer",
                     "maximum": 2592000,
@@ -4275,6 +4280,9 @@ const docTemplate = `{
                 "created_at": {
                     "type": "string"
                 },
+                "dlq_retry_delay_seconds": {
+                    "type": "integer"
+                },
                 "dlq_ttl_seconds": {
                     "type": "integer"
                 },
@@ -4530,6 +4538,11 @@ const docTemplate = `{
                 "comment": {
                     "type": "string",
                     "maxLength": 2000
+                },
+                "dlq_retry_delay_seconds": {
+                    "type": "integer",
+                    "maximum": 86400,
+                    "minimum": 1
                 },
                 "dlq_ttl_seconds": {
                     "type": "integer",

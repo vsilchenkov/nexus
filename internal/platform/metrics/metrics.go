@@ -64,6 +64,10 @@ type Metrics struct {
 	RMQQueueDepth          *prometheus.GaugeVec // {node}
 	RMQConsumerCount       *prometheus.GaugeVec // {node}
 	NodeDegraded           *prometheus.GaugeVec // {node, reason}: 1 при degraded
+
+	// §36: авто-репроцессор DLQ (повторная доставка неудачных async-сообщений).
+	DLQReprocessTotal    *prometheus.CounterVec // {node, result=succeeded|failed|ttl_dropped|skipped|dropped}
+	DLQReprocessDuration prometheus.Histogram   // длительность одного прохода sweeper'а (секунды)
 }
 
 // New создаёт новый экземпляр Metrics для указанного сервиса.
@@ -227,6 +231,24 @@ func New(service string) *Metrics {
 			Help:        "Pull node (RabbitMQAsync) degraded state: 1 when degraded, 0 otherwise.",
 			ConstLabels: constLabels,
 		}, []string{"node", "reason"}),
+
+		// §36: исход обработки одного DLQ-сообщения авто-репроцессором.
+		// result: succeeded (доставлено 2xx), failed (не-2xx → republish),
+		// ttl_dropped (истёк TTL), skipped (paused/breaker → republish без попытки),
+		// dropped (узел удалён/disabled/отменён оператором).
+		DLQReprocessTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "nexus_dlq_reprocess_total",
+			Help:        "DLQ reprocessor outcomes per node and result (succeeded, failed, ttl_dropped, skipped, dropped).",
+			ConstLabels: constLabels,
+		}, []string{"node", "result"}),
+
+		// §36: длительность одного прохода sweeper'а над DLQ.
+		DLQReprocessDuration: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:        "nexus_dlq_reprocess_duration_seconds",
+			Help:        "DLQ reprocessor single sweep pass duration in seconds.",
+			ConstLabels: constLabels,
+			Buckets:     []float64{.01, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60},
+		}),
 	}
 
 	reg.MustRegister(
@@ -254,6 +276,8 @@ func New(service string) *Metrics {
 		m.RMQQueueDepth,
 		m.RMQConsumerCount,
 		m.NodeDegraded,
+		m.DLQReprocessTotal,
+		m.DLQReprocessDuration,
 	)
 	return m
 }

@@ -137,6 +137,14 @@ func TestNodeRepoCreate_E2E(t *testing.T) {
 	if got.Comment != "интеграция с системой X — события заказов" {
 		t.Fatalf("comment round-trip mismatch: %q", got.Comment)
 	}
+	// §36: DLQ-настройки (новые столбцы) должны заполниться дефолтами и
+	// прочитаться обратно без рассинхрона $-параметров (см. неочевидность B1).
+	if got.DLQTTLSeconds != 86_400 {
+		t.Fatalf("dlq_ttl_seconds round-trip mismatch: %d", got.DLQTTLSeconds)
+	}
+	if got.DLQRetryDelaySeconds != 60 {
+		t.Fatalf("dlq_retry_delay_seconds round-trip mismatch: %d", got.DLQRetryDelaySeconds)
+	}
 
 	// Audit-запись должна существовать (атомарная транзакция).
 	entries, err := auditRepo.List(ctx, port.AuditFilter{TargetID: n.ID, Limit: 10})
