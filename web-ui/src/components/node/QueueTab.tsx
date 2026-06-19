@@ -127,6 +127,13 @@ export function QueueTab({
       api.post(`/api/nodes/${id}/async-queue/purge-failed`, body),
     onSuccess: invalidateFailed,
   });
+  // §36.11: «Повторить все сейчас» — пере-инжектит все неудачные через Receiver
+  // и отменяет их оригиналы в DLQ (без двойной доставки).
+  const replayFailed = useMutation({
+    mutationFn: (body: { from?: string; to?: string }) =>
+      api.post(`/api/nodes/${id}/async-queue/replay-failed`, body),
+    onSuccess: invalidateFailed,
+  });
   const setStatus = useMutation({
     mutationFn: (status: "enabled" | "paused" | "disabled") =>
       api.patch(`/api/nodes/${id}/status`, { status }),
@@ -272,20 +279,44 @@ export function QueueTab({
       <section className="space-y-2">
         <div className="flex items-center justify-between gap-3">
           <h3 className="text-sm font-semibold text-fg">{t("queue.section.failed")}</h3>
-          <div className="flex items-center gap-3">
-            {/* §36: очистка неудачных — отменяет повтор в DLQ + удаляет из логов. */}
-            {isManager && hasLogsTable && (
-              <PurgeButtons
-                period={period}
-                busy={purgeFailed.isPending}
-                onPurge={(b) => purgeFailed.mutate(b)}
-                labels={{
-                  period: t("queue.purge_failed_period"),
-                  periodConfirm: t("queue.purge_failed_period_confirm"),
-                  all: t("queue.purge_failed_all"),
-                  allConfirm: t("queue.purge_failed_all_confirm"),
-                }}
-              />
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {/* §36.11/§36.10: повтор всех сейчас + очистка неудачных. Admin-only
+                (маршруты async-queue под authedAdmin). */}
+            {isAdmin && hasLogsTable && (
+              <>
+                <Button
+                  sm
+                  variant="ghost"
+                  disabled={replayFailed.isPending}
+                  onClick={async () => {
+                    const { since, until } = periodWindow(period);
+                    if (
+                      await confirm({
+                        title: t("queue.replay_failed_all"),
+                        message: t("queue.replay_failed_all_confirm"),
+                        confirmLabel: t("queue.replay_failed_all"),
+                      })
+                    )
+                      replayFailed.mutate({
+                        from: new Date(since).toISOString(),
+                        to: new Date(until).toISOString(),
+                      });
+                  }}
+                >
+                  <RotateCcw className="h-3.5 w-3.5" /> {t("queue.replay_failed_all")}
+                </Button>
+                <PurgeButtons
+                  period={period}
+                  busy={purgeFailed.isPending}
+                  onPurge={(b) => purgeFailed.mutate(b)}
+                  labels={{
+                    period: t("queue.purge_failed_period"),
+                    periodConfirm: t("queue.purge_failed_period_confirm"),
+                    all: t("queue.purge_failed_all"),
+                    allConfirm: t("queue.purge_failed_all_confirm"),
+                  }}
+                />
+              </>
             )}
             {hasLogsTable && onOpenFailedLogs && (
               <button

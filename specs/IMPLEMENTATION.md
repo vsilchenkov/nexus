@@ -596,13 +596,22 @@ DLQ) тормозила, «Очистить» был no-op, шапка плох�
   убирает peek и берёт из CH (`CountFailed` + существующий `GET /logs?done=no`).
 - **§35/§36.10 — очистка неудачных доставок (обновлено).** Раньше: «удалить неудачи нельзя» (DLQ без
   DeleteRecords, CH-логи — история). Теперь оператор может принудительно очистить «Неудачные доставки»
-  узла (`POST /api/nodes/:id/async-queue/purge-failed`, admin/manager): (1) ID `done=0`-сообщений за окно
+  узла (`POST /api/nodes/:id/async-queue/purge-failed`, admin-only): (1) ID `done=0`-сообщений за окно
   отменяются tombstone'ом (как §34.4) → DLQ-репроцессор дропает их (`result=dropped`, перестаёт повторять);
   (2) записи `done=0` удаляются из CH-таблицы узла **lightweight DELETE** → счётчик/список обнуляются сразу.
   Физически DLQ по-прежнему не чистится (tombstone + commit). Реализация: `AsyncQueueUsecase.PurgeFailed`
   → порт `FailedLogsPurger` (`LogReaderCH.FailedIDs`/`DeleteFailed`) + `QueueCancelWriter`. Без CH/таблицы —
   no-op. Тесты: unit `TestAsyncQueue_PurgeFailed_*`, integration `TestAsyncQueue_PurgeFailed_E2E`
   (qcancel в Redis + DELETE в CH). Replay и пауза/отключение остаются как раньше.
+- **§36.11 — «Повторить все сейчас».** Форс-повтор всех неудачных узла (`POST
+  /api/nodes/:id/async-queue/replay-failed`, admin-only): каждое `done=0`-сообщение за окно
+  пере-инжектируется через Receiver (`replayOne`, вынесен из `Replay`) и при успехе его оригинал в DLQ
+  отменяется (qcancel) — иначе при восстановлении адреса доставилось бы дважды (replay-копия + авто-повтор;
+  выбор пользователя — «Re-send + отменить оригиналы»). `ReplayUsecase` получил опц. `cancel`+`retention`
+  через `NewReplayUsecaseWithCancel` (старый ctor делегирует с nil — тесты не трогаются); `FailedIDs`
+  добавлен в порт `LogReader` (общий набор сообщений с §36.10). Cap 500/вызов (`capped`), один rate-limit
+  на операцию, при отмене ctx — частичный результат с ошибкой. Тесты: `TestReplay_ReplayFailed_*` (отмена
+  оригиналов, dispatch-error не отменяет, disabled→409).
 - **§35 — peek-`MaxWait` = 500мс (грабли стенд-теста, тормоз ~9с).** `kafka.Reader` в `scanPartition`/
   `PeekBody` НЕ задавал `MaxWait` → дефолт kafka-go 10с. После чтения последнего сообщения фоновый
   fetch-цикл reader'а пытается прочитать следующий (ещё пустой) offset и блокируется на `MaxWait`, а
@@ -614,8 +623,9 @@ DLQ) тормозила, «Очистить» был no-op, шапка плох�
   живой очереди на не-paused узле (была ошибочная интерпретация наблюдения как требования). Теперь
   «Очистить за период»/«Очистить все ожидающие» видны всегда (admin): на активном узле очередь обычно
   пуста (доставка сразу) → purge вернёт `cancelled:0` (безвредно), на паузе/при лежащем Sender чистят
-  backlog. Кнопки очистки неудачных — аналогично (manager+, при наличии CH-таблицы). Общий компонент
-  `PurgeButtons` (QueueTab.tsx) переиспользуется для обеих секций.
+  backlog. Кнопки очистки неудачных + «Повторить все сейчас» — **admin-only** (маршруты async-queue под
+  `authedAdmin`; гейт UI выровнен с маршрутом — иначе менеджер видел бы кнопку и ловил 403). Общий компонент
+  `PurgeButtons` (QueueTab.tsx) переиспользуется для pending и failed.
 - **§35 — поллинг живой очереди только когда есть смысл.** `pendingQ`: 4с на паузе (очередь
   наполняется — нужна живая обратная связь), 8с при наличии backlog, на `enabled` с пустой очередью —
   выключен (committed==high → `scanQueue` читает ~0, не молотим Kafka). Сам peek и admin-операции скрыты

@@ -327,15 +327,22 @@ func (a *App) Start(ctx context.Context) error {
 		nodeLogMetrics webport.NodeLogMetrics   // §21: per-node KPI/график из CH (nil без CH)
 		failedPurger   webport.FailedLogsPurger // §35/§36: очистка неудачных доставок (nil без CH)
 	)
+	// §34.4/§36.11: cancel-set tombstones (Redis) — общий для очистки очереди и
+	// отмены оригиналов при «Повторить все сейчас». nil без Redis.
+	var queueCancel webport.QueueCancelWriter
+	if a.redis != nil {
+		queueCancel = queuecancel.New(a.redis)
+	}
+	dlqRetention := time.Duration(a.cfg.Kafka.Topic.RetentionMs) * time.Millisecond
 	if a.ch != nil {
 		// a.chMgr уже создан выше (вместе с teamProvisioner).
 		logReader := chreader.NewLogReader(a.chMgr, a.logger)
 		nodeLogMetrics = logReader // точные per-node метрики узла из CH-логов
 		failedPurger = logReader   // очистка «Неудачных доставок» из CH-логов
 		dispatcher := rcvdispatcher.NewHTTPDispatcher(a.cfg.Web.ReceiverURL, 30*time.Second, a.logger)
-		replayUC := usecase.NewReplayUsecase(
+		replayUC := usecase.NewReplayUsecaseWithCancel(
 			logReader, nodeRepo, dispatcher, rl, auditUC,
-			a.cfg.Web.ReplayRateLimitPerUserPerMin, a.logger,
+			a.cfg.Web.ReplayRateLimitPerUserPerMin, queueCancel, dlqRetention, a.logger,
 		)
 		logsUC := usecase.NewLogsUsecase(logReader, nodeRepo, a.logger)
 		replayHandler = httpadapter.NewReplayHandler(replayUC, a.logger)
@@ -409,14 +416,11 @@ func (a *App) Start(ctx context.Context) error {
 	kafkaHandler := httpadapter.NewKafkaHandler(kafkaUC, a.logger)
 
 	// §34.4: управление async-очередью узла (peek + cancel-set tombstones).
-	var queueCancel webport.QueueCancelWriter
-	if a.redis != nil {
-		queueCancel = queuecancel.New(a.redis)
-	}
+	// queueCancel создан выше (общий с replay «Повторить все»).
 	asyncQueueUC := usecase.NewAsyncQueueUsecase(
 		asyncPeeker, queueCancel, failedPurger, nodeRepo, auditUC,
 		a.cfg.Kafka.ConsumerGroup, a.cfg.Kafka.AsyncTopic,
-		time.Duration(a.cfg.Kafka.Topic.RetentionMs)*time.Millisecond, 0, a.logger,
+		dlqRetention, 0, a.logger,
 	)
 	asyncQueueHandler := httpadapter.NewAsyncQueueHandler(asyncQueueUC, a.logger)
 

@@ -58,4 +58,9 @@ type LogReader interface {
 	// чем CountErrors (тот включает status>=400 даже при done=1 — невозможно
 	// для async, но семантически отдельный сигнал).
 	CountFailed(ctx context.Context, table string, sinceMs, untilMs int64) (uint64, error)
+
+	// FailedIDs — уникальные ID записей done=0 за окно (sinceMs, untilMs], до cap
+	// (capped=true, если есть ещё). §36: используется «Очистить все неудачные»
+	// (qcancel) и «Повторить все сейчас» (массовый replay) — общий набор сообщений.
+	FailedIDs(ctx context.Context, table string, sinceMs, untilMs int64, cap int) ([]string, bool, error)
 }

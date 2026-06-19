@@ -47,7 +47,9 @@ type ReplayUsecase struct {
 	dispatcher port.ReceiverDispatcher
 	rl         RateLimiter
 	audit      *AuditUsecase
-	rateLimit  int // запросов/мин на пользователя (§7.4.1: 10)
+	cancel     port.QueueCancelWriter // §36.11: отмена оригиналов при «Повторить все» (nil без Redis)
+	retention  time.Duration          // TTL tombstone'а отмены (= retention топика)
+	rateLimit  int                    // запросов/мин на пользователя (§7.4.1: 10)
 	logger     logging.Logger
 }
 
@@ -60,8 +62,29 @@ func NewReplayUsecase(
 	rateLimit int,
 	logger logging.Logger,
 ) *ReplayUsecase {
+	return NewReplayUsecaseWithCancel(logs, nodes, dispatcher, rl, audit, rateLimit, nil, 0, logger)
+}
+
+// NewReplayUsecaseWithCancel — конструктор с cancel-writer'ом для «Повторить все»
+// (§36.11): успешно пере-инжектированные сообщения отменяют свой оригинал в DLQ,
+// чтобы авто-репроцессор не доставил их повторно. cancel может быть nil (без Redis)
+// — тогда массовый replay не отменяет оригиналы (как построчный «Повторить»).
+func NewReplayUsecaseWithCancel(
+	logs port.LogReader,
+	nodes port.NodeRepo,
+	dispatcher port.ReceiverDispatcher,
+	rl RateLimiter,
+	audit *AuditUsecase,
+	rateLimit int,
+	cancel port.QueueCancelWriter,
+	retention time.Duration,
+	logger logging.Logger,
+) *ReplayUsecase {
 	if rateLimit <= 0 {
 		rateLimit = 10
+	}
+	if retention <= 0 {
+		retention = 7 * 24 * time.Hour
 	}
 	return &ReplayUsecase{
 		logs:       logs,
@@ -69,6 +92,8 @@ func NewReplayUsecase(
 		dispatcher: dispatcher,
 		rl:         rl,
 		audit:      audit,
+		cancel:     cancel,
+		retention:  retention,
 		rateLimit:  rateLimit,
 		logger:     logger,
 	}
@@ -95,16 +120,45 @@ func (u *ReplayUsecase) Replay(
 	logID, nodeID, teamID string,
 	opts ReplayOptions,
 ) (*ReplayResult, error) {
-	if actor.UserID != "" && u.rl != nil {
-		ok, err := u.rl.Allow(ctx, "replay:"+actor.UserID, u.rateLimit)
-		if err != nil {
-			u.logger.Warn("replay rate limit check failed; allowing",
-				u.logger.Str("user_id", actor.UserID), u.logger.Err(err))
-		} else if !ok {
-			return nil, ErrReplayRateLimit
-		}
+	if err := u.checkReplayRate(ctx, actor); err != nil {
+		return nil, err
 	}
+	node, err := u.resolveReplayNode(ctx, nodeID, teamID)
+	if err != nil {
+		return nil, err
+	}
+	res, err := u.replayOne(ctx, node, logID, opts)
+	if err != nil {
+		return nil, err
+	}
+	u.audit.Log(ctx, actor, domain.ActionNodeReplay, "log", logID, map[string]any{
+		"node_id":       node.ID,
+		"new_log_id":    res.NewLogID,
+		"status_code":   res.StatusCode,
+		"sync_override": opts.SyncOverride,
+	})
+	return res, nil
+}
 
+// checkReplayRate — per-user rate-limit (§7.4.1). Ошибка проверки — fail-open.
+func (u *ReplayUsecase) checkReplayRate(ctx context.Context, actor Actor) error {
+	if actor.UserID == "" || u.rl == nil {
+		return nil
+	}
+	ok, err := u.rl.Allow(ctx, "replay:"+actor.UserID, u.rateLimit)
+	if err != nil {
+		u.logger.Warn("replay rate limit check failed; allowing",
+			u.logger.Str("user_id", actor.UserID), u.logger.Err(err))
+		return nil
+	}
+	if !ok {
+		return ErrReplayRateLimit
+	}
+	return nil
+}
+
+// resolveReplayNode — узел по id с team-scope и проверкой «не disabled».
+func (u *ReplayUsecase) resolveReplayNode(ctx context.Context, nodeID, teamID string) (*domain.Node, error) {
 	node, err := u.nodes.Get(ctx, nodeID)
 	if err != nil {
 		return nil, fmt.Errorf("replay get node: %w", err)
@@ -115,7 +169,13 @@ func (u *ReplayUsecase) Replay(
 	if node.Status == domain.NodeStatusDisabled {
 		return nil, fmt.Errorf("replay: %w", domain.ErrNodeDisabled)
 	}
+	return node, nil
+}
 
+// replayOne — пере-инжектирует один залогированный запрос logID через Receiver
+// (узел уже резолвлен). Без rate-limit/резолва/аудита — их делают вызывающие
+// (Replay — построчно, ReplayFailed — массово).
+func (u *ReplayUsecase) replayOne(ctx context.Context, node *domain.Node, logID string, opts ReplayOptions) (*ReplayResult, error) {
 	orig, err := u.logs.GetByID(ctx, node.ClickHouseTable, logID)
 	if err != nil {
 		return nil, fmt.Errorf("replay get original log: %w", err)
@@ -185,21 +245,73 @@ func (u *ReplayUsecase) Replay(
 		return nil, fmt.Errorf("dispatch replay: %w", err)
 	}
 
-	newID := uuid.NewString()
-	u.audit.Log(ctx, actor, domain.ActionNodeReplay, "log", logID, map[string]any{
-		"node_id":       node.ID,
-		"new_log_id":    newID,
-		"status_code":   resp.StatusCode,
-		"sync_override": opts.SyncOverride,
-		"async":         async,
-	})
-
 	return &ReplayResult{
-		NewLogID:    newID,
+		NewLogID:    uuid.NewString(),
 		StatusCode:  resp.StatusCode,
 		BodyPreview: previewBody(resp.Body, 512),
 		Headers:     resp.Headers,
 	}, nil
+}
+
+// ReplayBulkResult — итог «Повторить все сейчас» (§36.11).
+type ReplayBulkResult struct {
+	Total    int  `json:"total"`    // уникальных неудачных найдено (в пределах cap)
+	Replayed int  `json:"replayed"` // пере-инжектировано (оригинал отменён в DLQ)
+	Failed   int  `json:"failed"`   // ошибок replay (оригинал НЕ отменён — остаётся авто-репроцессору)
+	Capped   bool `json:"capped"`
+}
+
+// replayAllCap — верхняя граница числа сообщений за один «Повторить все»
+// (защита от долгого синхронного прохода/таймаута). Превышение → Capped=true.
+const replayAllCap = 500
+
+// ReplayFailed — «Повторить все сейчас» (§36.11): пере-инжектирует через Receiver
+// все неудачные (done=0) запросы узла за окно [from,to] (нулевые = всё) и при
+// успехе отменяет (qcancel) оригинал в DLQ, чтобы авто-репроцессор не доставил
+// их повторно (без двойной доставки). Узел резолвится с team-scope; disabled →
+// 409; нет CH-таблицы → no-op. Один rate-limit на всю операцию.
+func (u *ReplayUsecase) ReplayFailed(ctx context.Context, actor Actor, nodeID, teamID string, from, to time.Time) (ReplayBulkResult, error) {
+	if err := u.checkReplayRate(ctx, actor); err != nil {
+		return ReplayBulkResult{}, err
+	}
+	node, err := u.resolveReplayNode(ctx, nodeID, teamID)
+	if err != nil {
+		return ReplayBulkResult{}, err
+	}
+	if node.ClickHouseTable == "" {
+		return ReplayBulkResult{}, nil
+	}
+	ids, capped, err := u.logs.FailedIDs(ctx, node.ClickHouseTable, toMs(from), toMs(to), replayAllCap)
+	if err != nil {
+		return ReplayBulkResult{}, fmt.Errorf("replay-all failed ids: %w", err)
+	}
+	res := ReplayBulkResult{Total: len(ids), Capped: capped}
+	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return res, err // контекст отменён (клиент отвалился) — прерываем
+		}
+		if _, rerr := u.replayOne(ctx, node, id, ReplayOptions{UseNodeAuth: true}); rerr != nil {
+			res.Failed++
+			u.logger.Warn("replay-all: one message failed",
+				u.logger.Str("log_id", id), u.logger.Err(rerr))
+			continue
+		}
+		// Успех → отменяем оригинал в DLQ: авто-репроцессор дропнет его по
+		// tombstone, иначе при восстановлении адреса сообщение доставилось бы
+		// дважды (replay-копия + авто-повтор оригинала).
+		if u.cancel != nil {
+			if _, cerr := u.cancel.Cancel(ctx, []string{id}, u.retention); cerr != nil {
+				u.logger.Warn("replay-all: cancel original failed",
+					u.logger.Str("log_id", id), u.logger.Err(cerr))
+			}
+		}
+		res.Replayed++
+	}
+	u.audit.Log(ctx, actor, domain.ActionNodeReplay, "node", node.ID, map[string]any{
+		"op": "replay_all", "total": res.Total, "replayed": res.Replayed,
+		"failed": res.Failed, "capped": res.Capped,
+	})
+	return res, nil
 }
 
 func previewBody(b []byte, max int) string {

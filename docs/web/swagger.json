@@ -2189,6 +2189,75 @@
                 }
             }
         },
+        "/api/nodes/{id}/async-queue/replay-failed": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Пере-инжектирует через Receiver все неудачные (done=0) запросы узла за период и отменяет их оригиналы в DLQ (без двойной доставки). Пустые from/to = всё. Admin-only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "async-queue"
+                ],
+                "summary": "Повторить все неудачные доставки узла сейчас (§36.11).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "период (пусто = всё)",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.queuePurgeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nexus_internal_web_usecase.ReplayBulkResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "node disabled",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "rate limit exceeded",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/{id}/log/{logId}": {
             "get": {
                 "security": [
@@ -6150,6 +6219,26 @@
                 },
                 "ok": {
                     "type": "boolean"
+                }
+            }
+        },
+        "nexus_internal_web_usecase.ReplayBulkResult": {
+            "type": "object",
+            "properties": {
+                "capped": {
+                    "type": "boolean"
+                },
+                "failed": {
+                    "description": "ошибок replay (оригинал НЕ отменён — остаётся авто-репроцессору)",
+                    "type": "integer"
+                },
+                "replayed": {
+                    "description": "пере-инжектировано (оригинал отменён в DLQ)",
+                    "type": "integer"
+                },
+                "total": {
+                    "description": "уникальных неудачных найдено (в пределах cap)",
+                    "type": "integer"
                 }
             }
         },

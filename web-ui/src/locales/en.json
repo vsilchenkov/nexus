@@ -540,6 +540,8 @@
     "purge_failed_all_confirm": "Clear all failed deliveries? Their automatic retry stops and the records are removed from the logs. This cannot be undone.",
     "purge_failed_period": "Clear failed (period)",
     "purge_failed_period_confirm": "Clear failed deliveries in the selected period? Their automatic retry stops and the records are removed from the logs. This cannot be undone.",
+    "replay_failed_all": "Retry all now",
+    "replay_failed_all_confirm": "Re-send all failed deliveries in the selected period now? They are re-injected as new requests and their DLQ originals are cancelled (so the auto-reprocessor won't deliver them twice).",
     "open_in_logs": "Open in logs →",
     "col": {
       "received": "Received",

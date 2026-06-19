@@ -3222,7 +3222,12 @@ Prometheus `NodeThroughput` для top-узлов. Все источники д�
 (вкладка «Очередь»): (1) отменяет (tombstone, как §34.4) ID `done=0`-сообщений за окно → DLQ-репроцессор
 дропает их (`result=dropped`, перестаёт повторять); (2) lightweight-`DELETE` записей `done=0` из CH-таблицы
 узла → счётчик/список обнуляются сразу. Эндпоинт `POST /api/nodes/{id}/async-queue/purge-failed`
-(admin/manager, `{from?,to?}`). Очистка pending (`.../purge`) теперь доступна всегда (не только на паузе).
+(admin-only, `{from?,to?}`). Очистка pending (`.../purge`) теперь доступна всегда (не только на паузе).
 
-**Out of scope (v2):** экспоненциальный per-message backoff; delay-топик; UI-дашборд репроцессинга;
-bulk-replay.
+**«Повторить все сейчас» (§36.11):** форс-повтор всех неудачных узла за период — каждое `done=0`-сообщение
+пере-инжектируется через Receiver (как построчный replay) и при успехе его оригинал в DLQ отменяется
+(qcancel), чтобы не задвоить доставку (replay-копия + авто-повтор). Эндпоинт `POST
+/api/nodes/{id}/async-queue/replay-failed` (admin-only), cap 500/вызов. Реализация —
+`ReplayUsecase.ReplayFailed` (общий `LogReader.FailedIDs` с §36.10 + `QueueCancelWriter`).
+
+**Out of scope (v2):** экспоненциальный per-message backoff; delay-топик; UI-дашборд репроцессинга.

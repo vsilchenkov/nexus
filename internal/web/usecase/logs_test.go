@@ -45,6 +45,9 @@ func (m *logReaderMock) CountErrors(_ context.Context, _ string, _, _ int64) (ui
 func (m *logReaderMock) CountFailed(_ context.Context, _ string, _, _ int64) (uint64, error) {
 	return m.failedCount, m.countErr
 }
+func (m *logReaderMock) FailedIDs(_ context.Context, _ string, _, _ int64, _ int) ([]string, bool, error) {
+	return nil, false, nil
+}
 
 func TestLogs_ListSinceForwardsToReader(t *testing.T) {
 	t.Parallel()

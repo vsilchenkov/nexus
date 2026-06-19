@@ -1709,6 +1709,20 @@ definitions:
       ok:
         type: boolean
     type: object
+  nexus_internal_web_usecase.ReplayBulkResult:
+    properties:
+      capped:
+        type: boolean
+      failed:
+        description: ошибок replay (оригинал НЕ отменён — остаётся авто-репроцессору)
+        type: integer
+      replayed:
+        description: пере-инжектировано (оригинал отменён в DLQ)
+        type: integer
+      total:
+        description: уникальных неудачных найдено (в пределах cap)
+        type: integer
+    type: object
   nexus_internal_web_usecase.ReplayResult:
     properties:
       body_preview:
@@ -3074,6 +3088,52 @@ paths:
       security:
       - CookieAuth: []
       summary: Очистить «Неудачные доставки» узла за период или целиком (§35/§36).
+      tags:
+      - async-queue
+  /api/nodes/{id}/async-queue/replay-failed:
+    post:
+      consumes:
+      - application/json
+      description: Пере-инжектирует через Receiver все неудачные (done=0) запросы
+        узла за период и отменяет их оригиналы в DLQ (без двойной доставки). Пустые
+        from/to = всё. Admin-only.
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: период (пусто = всё)
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.queuePurgeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/nexus_internal_web_usecase.ReplayBulkResult'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "409":
+          description: node disabled
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "429":
+          description: rate limit exceeded
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Повторить все неудачные доставки узла сейчас (§36.11).
       tags:
       - async-queue
   /api/nodes/{id}/log/{logId}:
