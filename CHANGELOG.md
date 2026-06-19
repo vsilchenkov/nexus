@@ -12,39 +12,66 @@
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-06-19
+
+Релиз вокруг надёжности async-доставки: авто-репроцессор DLQ (§36), точные per-node метрики из
+ClickHouse (§21), идентификатор узла в логах для общих CH-таблиц (§37) и переработка вкладки
+«Очередь» (§35).
+
+### ⚠️ Изменения конфигурации (важно при апгрейде)
+
+- **`config.yml` → новая опциональная секция `sender.reprocessor`** (есть дефолты — можно не
+  добавлять; образец в [config/config.example.yml](config/config.example.yml)):
+  - `disabled` (bool, дефолт `false`) — рубильник DLQ-репроцессора;
+  - `interval_sec` (int, **дефолт `60` = раз в минуту**) — период прохода sweeper'а. Эффективная пауза
+    повтора сообщения = `max(interval_sec, dlq_retry_delay_seconds узла)`; держите `interval_sec` ≤
+    минимального per-node `dlq_retry_delay_seconds`, который хотите задавать (иначе его уменьшение ниже
+    `interval_sec` не даёт эффекта). На dev-стенде ([config_debug.yml](config/config_debug.yml))
+    `interval_sec: 30`;
+  - `max_scan` (int, дефолт `1000`) — максимум сообщений за один проход (защита брокеров).
+- **Новые per-node параметры (миграции PostgreSQL `0017`/`0018` — применяются автоматически на старте,
+  аддитивные; редактируются в форме узла):**
+  - `nodes.dlq_ttl_seconds` (`NOT NULL DEFAULT 86400` = 24 ч) — до какого срока (от приёма) репроцессор
+    повторяет неудачную async-доставку;
+  - `nodes.dlq_retry_delay_seconds` (`NOT NULL DEFAULT 300` = 5 мин) — минимальная пауза перед повтором.
+  - Обе с `NOT NULL DEFAULT` → существующие узлы заполняются дефолтами атомарно (backfill не нужен).
+- **Новая колонка ClickHouse-логов `node_id` (§37)** — добавляется **автоматически** на старте Web и
+  Sender (`ALTER TABLE … ADD COLUMN IF NOT EXISTS node_id String DEFAULT ''`, идемпотентно; новые
+  таблицы — из шаблона). Конфиг менять не нужно. Старые записи получают пустой `node_id` (legacy,
+  истекают по TTL); per-node разделение метрик/логов вступает в силу на новом трафике.
+
 ### Added
 
-- **§36 — авто-репроцессор DLQ.** Фоновый sweeper в Sender повторно доставляет неудачные
-  async-сообщения из `nexus.async.dlq` (отдельная consumer-группа `<group>-dlq-reprocess`,
-  периодический проход) до per-node TTL; при восстановлении приёмника сообщения уходят
-  автоматически. Уважает circuit breaker, tombstone'ы (§34.4) и статус узла. Метрики
-  `nexus_dlq_reprocess_total{node,result}` и `nexus_dlq_reprocess_duration_seconds`.
+- **§36 — авто-репроцессор DLQ.** Фоновый sweeper в Sender повторно доставляет неудачные async-сообщения
+  из `nexus.async.dlq` (отдельная consumer-группа `<group>-dlq-reprocess`) до per-node TTL; при
+  восстановлении приёмника сообщения уходят автоматически. Уважает circuit breaker, tombstone'ы (§34.4)
+  и статус узла. Метрики `nexus_dlq_reprocess_total{node,result}` и `nexus_dlq_reprocess_duration_seconds`.
+- **§36.10 — очистка «Неудачных доставок» узла** (`POST /api/nodes/{id}/async-queue/purge-failed`,
+  admin): отменяет авто-повтор (qcancel) и удаляет записи `done=0` из CH-логов узла.
+- **§36.11 — «Повторить все сейчас»** (`POST .../async-queue/replay-failed`, admin): массовый форс-повтор
+  всех неудачных узла через Receiver с отменой оригиналов в DLQ (без двойной доставки).
+- **§37 — идентификатор узла в логах** (`node_id`): per-node атрибуция для узлов, делящих одну
+  CH-таблицу (счётчики/графики/очистка/replay фильтруют по узлу; `DeleteFailed` не задевает чужие
+  записи). Node id выведен во вкладку «Конфиг» узла.
+- **§35 — переработка вкладки «Очередь»**: KPI, секции «Ожидают отправки»/«Неудачные доставки»,
+  источник из ClickHouse-логов, RBAC.
 
-### ⚠️ Новые параметры конфигурации (заполнить при выпуске релиза)
+### Changed
 
-- **`config.yml` → новая секция `sender.reprocessor`** (есть дефолты, секция опциональна):
-  - `disabled` (bool, дефолт `false` → репроцессор включён);
-  - `interval_sec` (int, **дефолт `60` = раз в минуту**) — период прохода sweeper'а. Эффективная
-    пауза повтора сообщения = `max(interval_sec, dlq_retry_delay_seconds узла)`, поэтому держите
-    `interval_sec` ≤ минимального per-node `dlq_retry_delay_seconds`, который хотите задавать (иначе
-    уменьшение per-node параметра ниже `interval_sec` не даёт эффекта). **При апгрейде с прежнего
-    дефолта `300`:** если в вашем `config.yml` `interval_sec` задан явно как `300` и вы хотите более
-    частые повторы — уменьшите до `60`;
-  - `max_scan` (int, дефолт `1000`) — максимум сообщений за один проход.
+- **§21 — per-node метрики из ClickHouse вместо Prometheus.** Страница узла («Обзор»/«Метрики») и
+  throughput рабочего стола (таблица/карточки) считаются по CH-логам узла — точные мгновенные счётчики
+  по уникальным запросам, без неточного `increase()` и без мерцания; цифры стола и страницы узла
+  совпадают.
+- Очистка pending-очереди узла доступна в **любом** статусе (не только на паузе).
 
-  Образец — в [config/config.example.yml](config/config.example.yml). На dev-стенде
-  ([config/config_debug.yml](config/config_debug.yml)) `interval_sec: 30` для быстрой проверки.
+### Fixed
 
-- **Очистка «Неудачных доставок» узла (§36.10)** — без новых конфиг-параметров: новый эндпоинт
-  `POST /api/nodes/{id}/async-queue/purge-failed` (admin/manager). Отменяет авто-повтор неудачных
-  (DLQ-репроцессор перестаёт их повторять) и удаляет записи `done=0` из CH-логов узла. Очистка
-  pending-очереди (`.../purge`) теперь доступна на узле в любом статусе (не только на паузе).
-
-- **Новые миграции PostgreSQL (применяются автоматически на старте, аддитивные):**
-  - `0017_node_dlq_ttl` — колонка `nodes.dlq_ttl_seconds` (`NOT NULL DEFAULT 86400` = 24 ч);
-  - `0018_node_dlq_retry_delay` — колонка `nodes.dlq_retry_delay_seconds` (`NOT NULL DEFAULT 300`
-    = 5 мин). Обе с `NOT NULL DEFAULT` → существующие узлы заполняются дефолтами атомарно,
-    отдельный backfill не нужен. Оба параметра редактируются в форме узла (UI).
+- **§36 критбаги:** потеря DLQ-сообщения в sweeper'е (seen-break до commit); Sender не читал
+  `dlq_ttl`/`dlq_retry_delay` из БД → репроцессор всё дропал как `ttl_dropped`.
+- **§35:** peek живой очереди висел ~9с (короткий `MaxWait` у `kafka.Reader`); нестабильный
+  react-query `queryKey` (вкладка «Очередь» не показывала неудачи); статус-зависимые кнопки/секции.
+- **UI:** анти-мерцание метрик (рабочий стол/Kafka/узел) через общий `useStableData`; возврат в окно
+  узла после save/cancel.
 
 ## [1.1.0] - 2026-06-17
 
@@ -310,7 +337,8 @@
 
 ---
 
-[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.1.0...HEAD
+[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.2.0...HEAD
+[1.2.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.1.0...v1.2.0
 [1.1.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.0.3...v1.1.0
 [1.0.3]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.0.1...v1.0.3
 [1.0.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.0.0...v1.0.1
