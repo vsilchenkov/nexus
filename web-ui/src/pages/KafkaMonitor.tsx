@@ -20,6 +20,7 @@ import { TopNodes } from "../components/kafka/TopNodes";
 import { Brokers } from "../components/kafka/Brokers";
 import { fmtNum } from "../lib/format";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
+import { useStableData } from "../lib/useStableData";
 
 const REFRESH_MS = 10_000; // §7 spec: автообновление раз в 10с.
 type Resolution = "auto" | "10s" | "1m" | "5m";
@@ -74,6 +75,12 @@ export default function KafkaMonitor() {
     enabled: isAdmin,
   });
 
+  // Анти-мерцание: держим последний ответ с prometheus_available=true (§ useStableData).
+  // ВАЖНО: хуки — до раннего return ниже (rules-of-hooks).
+  const ov = useStableData(overviewQ.data, pk, (d) => d.prometheus_available);
+  const series = useStableData(seriesQ.data, `${pk}:${resolution}`, (d) => d.prometheus_available);
+  const byNode = useStableData(byNodeQ.data, pk, (d) => d.prometheus_available);
+
   // Тикаем раз в секунду для индикатора «обновлено N секунд назад».
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
@@ -84,7 +91,6 @@ export default function KafkaMonitor() {
     return <div className="mx-auto max-w-6xl py-10 text-center text-fg-muted">{t("kafka.forbidden")}</div>;
   }
 
-  const ov = overviewQ.data;
   const secsAgo = overviewQ.dataUpdatedAt ? Math.max(0, Math.floor((now - overviewQ.dataUpdatedAt) / 1000)) : 0;
 
   function refreshAll() {
@@ -114,7 +120,7 @@ export default function KafkaMonitor() {
       {ov && <HealthBanner ov={ov} />}
 
       {/* KPI (§5.3) */}
-      {ov && <KpiCards ov={ov} lagSpark={(seriesQ.data?.series.lag ?? []).map((p) => p.v)} t={t} />}
+      {ov && <KpiCards ov={ov} lagSpark={(series?.series.lag ?? []).map((p) => p.v)} t={t} />}
 
       {/* Главный график throughput (§5.4) */}
       <Card className="p-4">
@@ -135,9 +141,9 @@ export default function KafkaMonitor() {
           />
         </div>
         <ThroughputChart
-          series={seriesQ.data?.series ?? {}}
+          series={series?.series ?? {}}
           longRange={longRange}
-          stepSeconds={seriesQ.data?.step_seconds}
+          stepSeconds={series?.step_seconds}
           labels={{
             produced: t("kafka.legend.produced"),
             consumed: t("kafka.legend.consumed"),
@@ -152,14 +158,14 @@ export default function KafkaMonitor() {
           {t("kafka.lag.title")}
           <span className="ml-2 text-[11.5px] font-normal text-fg-subtle">{t("kafka.lag.subtitle")}</span>
         </div>
-        <LagChart points={seriesQ.data?.series.lag ?? []} threshold={1000} longRange={longRange} />
+        <LagChart points={series?.series.lag ?? []} threshold={1000} longRange={longRange} />
       </Card>
 
       {/* Топики (§5.6) */}
       <TopicsTable topics={topicsQ.data?.topics ?? []} />
 
       {/* Топ-узлы (§5.7) */}
-      {byNodeQ.data && <TopNodes data={byNodeQ.data} />}
+      {byNode && <TopNodes data={byNode} />}
 
       {/* Брокеры (§5.8) */}
       <Brokers data={testQ.data} onRecheck={() => testQ.refetch()} rechecking={testQ.isFetching} />
