@@ -133,7 +133,8 @@ func createNodeLogTable(t *testing.T, ctx context.Context, conn chdriver.Conn, t
 		Host String,
 		IP String,
 		attempts Int32,
-		attempts_details String
+		attempts_details String,
+		node_id String
 	) ENGINE = MergeTree
 	PARTITION BY toYYYYMM(date_create)
 	ORDER BY (date_create, date_request, method)`, table)

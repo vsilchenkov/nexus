@@ -41,21 +41,28 @@ func (s *stubNodeRepo) UpdateAllowedHostsSnapshot(_ context.Context, _ string, _
 
 // stubLogReader — реализует port.LogReader для одной запись.
 type stubLogReader struct {
-	log *domain.LogRecord
-	err error
+	log       *domain.LogRecord
+	err       error
+	failedIDs []string // §36.11: для ReplayFailed
 }
 
 func (s *stubLogReader) GetByID(_ context.Context, _, _ string) (*domain.LogRecord, error) {
 	return s.log, s.err
 }
-func (s *stubLogReader) ListSince(_ context.Context, _ string, _ int64, _ int) ([]*domain.LogRecord, error) {
+func (s *stubLogReader) ListSince(_ context.Context, _, _ string, _ int64, _ int) ([]*domain.LogRecord, error) {
 	return nil, nil
 }
 func (s *stubLogReader) Search(_ context.Context, _ port.LogQuery) ([]*domain.LogRecord, error) {
 	return nil, nil
 }
-func (s *stubLogReader) CountErrors(_ context.Context, _ string, _, _ int64) (uint64, error) {
+func (s *stubLogReader) CountErrors(_ context.Context, _, _ string, _, _ int64) (uint64, error) {
 	return 0, nil
+}
+func (s *stubLogReader) CountFailed(_ context.Context, _, _ string, _, _ int64) (uint64, error) {
+	return 0, nil
+}
+func (s *stubLogReader) FailedIDs(_ context.Context, _, _ string, _, _ int64, _ int) ([]string, bool, error) {
+	return s.failedIDs, false, s.err
 }
 
 // stubDispatcher — реализует port.ReceiverDispatcher; сохраняет последний
@@ -253,5 +260,128 @@ func TestReplay_ExplicitEmptyBody(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("explicit empty body must replay: %v", err)
+	}
+}
+
+// TestReplay_UsesIncomingMethod (§34.5): replay должен слать ВХОДЯЩИЙ метод
+// узла, а не залогированный исходящий (orig.Method == OutgoingMethod). Узел
+// POST-in / GET-out (внешний GET без тела) логировал method=GET; раньше replay
+// слал GET во входной endpoint и получал 405 ErrNodeMethodNotAllowed. Теперь —
+// IncomingMethod (POST).
+func TestReplay_UsesIncomingMethod(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{
+		ID:              "n1",
+		Path:            "demo/async",
+		Status:          domain.NodeStatusEnabled,
+		ClickHouseTable: "t.t",
+		IncomingMethod:  domain.HTTPMethodPOST,
+		OutgoingMethod:  domain.HTTPMethodGET,
+	}
+	// В логе зафиксирован исходящий метод GET (то, чем Sender ходил наружу).
+	log := &domain.LogRecord{ID: "log1", Method: "GET", Request: `{"orig":true}`, DateRequest: time.Now(), Done: true}
+	disp := &stubDispatcher{}
+	uc := NewReplayUsecase(
+		&stubLogReader{log: log},
+		&stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
+		disp, nil,
+		NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10, logging.NewNoop(),
+	)
+	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{UseNodeAuth: true})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if disp.gotReq.Method != "POST" {
+		t.Fatalf("replay must dispatch IncomingMethod POST, got %q (regression of 405)", disp.gotReq.Method)
+	}
+}
+
+// TestReplay_IncomingMethodEmptyDefaultsPost (§34.5): пустой IncomingMethod
+// узла трактуется как POST — так же, как methodMatches в Receiver.
+func TestReplay_IncomingMethodEmptyDefaultsPost(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{ID: "n1", Path: "demo/x", Status: domain.NodeStatusEnabled, ClickHouseTable: "t.t"}
+	log := &domain.LogRecord{ID: "log1", Method: "GET", Request: `{"a":1}`, DateRequest: time.Now(), Done: true}
+	disp := &stubDispatcher{}
+	uc := NewReplayUsecase(
+		&stubLogReader{log: log},
+		&stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
+		disp, nil,
+		NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10, logging.NewNoop(),
+	)
+	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{UseNodeAuth: true})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if disp.gotReq.Method != "POST" {
+		t.Fatalf("empty IncomingMethod must default to POST, got %q", disp.gotReq.Method)
+	}
+}
+
+// §36.11: «Повторить все сейчас» — пере-инжектирует все неудачные и отменяет их
+// оригиналы в DLQ (без двойной доставки).
+func TestReplay_ReplayFailed_AllAndCancelsOriginals(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{ID: "n1", Path: "demo/async", Status: domain.NodeStatusEnabled, ClickHouseTable: "test.async"}
+	log := &domain.LogRecord{ID: "x", Method: "POST", Type: domain.RootMethodRequestAsync, Request: `{"a":1}`, DateRequest: time.Now(), Done: false}
+	disp := &stubDispatcher{}
+	cancelW := &stubCancelWriter{}
+	logs := &stubLogReader{log: log, failedIDs: []string{"f1", "f2", "f3"}}
+	uc := NewReplayUsecaseWithCancel(
+		logs, &stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
+		disp, nil, NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10,
+		cancelW, time.Hour, logging.NewNoop(),
+	)
+
+	res, err := uc.ReplayFailed(context.Background(), SystemActor(), "n1", "", time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("replay-all: %v", err)
+	}
+	if res.Total != 3 || res.Replayed != 3 || res.Failed != 0 {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+	if len(cancelW.gotIDs) != 3 {
+		t.Fatalf("expected 3 originals cancelled, got %v", cancelW.gotIDs)
+	}
+}
+
+// При ошибке dispatch — оригинал НЕ отменяется (остаётся авто-репроцессору).
+func TestReplay_ReplayFailed_DispatchError_KeepsOriginals(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{ID: "n1", Path: "demo/async", Status: domain.NodeStatusEnabled, ClickHouseTable: "test.async"}
+	log := &domain.LogRecord{ID: "x", Method: "POST", Type: domain.RootMethodRequestAsync, Request: `{"a":1}`, DateRequest: time.Now(), Done: false}
+	disp := &stubDispatcher{err: errors.New("receiver down")}
+	cancelW := &stubCancelWriter{}
+	logs := &stubLogReader{log: log, failedIDs: []string{"f1", "f2"}}
+	uc := NewReplayUsecaseWithCancel(
+		logs, &stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
+		disp, nil, NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10,
+		cancelW, time.Hour, logging.NewNoop(),
+	)
+
+	res, err := uc.ReplayFailed(context.Background(), SystemActor(), "n1", "", time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("replay-all: %v", err)
+	}
+	if res.Replayed != 0 || res.Failed != 2 {
+		t.Fatalf("expected all failed, got %+v", res)
+	}
+	if len(cancelW.gotIDs) != 0 {
+		t.Fatalf("failed replays must not cancel originals, got %v", cancelW.gotIDs)
+	}
+}
+
+// disabled-узел → ошибка (не реинжектим в отключённый узел).
+func TestReplay_ReplayFailed_DisabledNode(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{ID: "n1", Path: "demo/async", Status: domain.NodeStatusDisabled, ClickHouseTable: "test.async"}
+	uc := NewReplayUsecaseWithCancel(
+		&stubLogReader{failedIDs: []string{"f1"}}, &stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
+		&stubDispatcher{}, nil, NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10,
+		&stubCancelWriter{}, time.Hour, logging.NewNoop(),
+	)
+	_, err := uc.ReplayFailed(context.Background(), SystemActor(), "n1", "", time.Time{}, time.Time{})
+	if !errors.Is(err, domain.ErrNodeDisabled) {
+		t.Fatalf("expected ErrNodeDisabled, got %v", err)
 	}
 }

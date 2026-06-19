@@ -178,6 +178,46 @@ func (h *LogsHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": out})
 }
 
+// CountFailed godoc
+// @Summary  Число недоставленных записей узла (done=0) за период (§35).
+// @Description  Дешёвый count из ClickHouse для KPI «неудачные доставки» на вкладке «Очередь». Узел без clickhouse_table → 200 + logs_configured=false, count=0.
+// @Tags     logs
+// @Produce  json
+// @Param    id    path   string  true   "node id"
+// @Param    from  query  string  false  "начало диапазона (RFC3339 или UnixMilli)"
+// @Param    to    query  string  false  "конец диапазона"
+// @Success  200   {object}  FailedCountResponse
+// @Security CookieAuth
+// @Security ApiTokenAuth
+// @Router   /api/nodes/{id}/logs/failed-count [get]
+func (h *LogsHandler) CountFailed(c *gin.Context) {
+	nodeID := c.Param("id")
+	var sinceMs, untilMs int64
+	if v := c.Query("from"); v != "" {
+		sinceMs = parseTimeMs(v)
+	}
+	if v := c.Query("to"); v != "" {
+		untilMs = parseTimeMs(v)
+	}
+	n, err := h.uc.CountFailed(c.Request.Context(), nodeID, currentTeamID(c), sinceMs, untilMs)
+	if err != nil {
+		if errors.Is(err, domain.ErrNodeNotFound) {
+			localizedError(c, http.StatusNotFound, "node.not_found")
+			return
+		}
+		// Логирование не настроено — штатно (как List): 200 + флаг, без 500/спама.
+		if errors.Is(err, domain.ErrNodeLogsNotConfigured) {
+			c.JSON(http.StatusOK, gin.H{"count": 0, "logs_configured": false})
+			return
+		}
+		h.logger.ErrorWithOp("logs failed-count failed", err, "logs.failed_count",
+			h.logger.Str("node_id", nodeID))
+		localizedError(c, http.StatusInternalServerError, "error.internal")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"count": n, "logs_configured": true})
+}
+
 // Get godoc
 // @Summary  Одна запись лога целиком (с телами request/response).
 // @Description  Тела грузятся лениво по клику на строку — списки (List/Stream) их не возвращают, чтобы snapshot из сотен строк с большими JSON не вешал фронт (§7.4.1).

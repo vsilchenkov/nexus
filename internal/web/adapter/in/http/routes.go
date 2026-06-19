@@ -23,6 +23,7 @@ type Handlers struct {
 	HeaderCatalog *HeaderCatalogHandler
 	RMQTest       *RMQTestHandler
 	Kafka         *KafkaHandler
+	AsyncQueue    *AsyncQueueHandler
 }
 
 // Middlewares — общие middleware (auth-check, role-check, API token-check).
@@ -110,6 +111,8 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			// строку. Путь "log" (не "logs") — чтобы не конфликтовать с
 			// статическим сегментом ".../logs/stream" в gin-роутере.
 			authed.GET("/nodes/:id/log/:logId", RequireScope("logs:read"), h.Logs.Get)
+			// §35: дешёвый счётчик неудач (done=0) для KPI вкладки «Очередь».
+			authed.GET("/nodes/:id/logs/failed-count", RequireScope("logs:read"), h.Logs.CountFailed)
 			// SSE доступен только UI-сессиям (§7.14: для API-токенов — только
 			// snapshot).
 			authed.GET("/nodes/:id/logs/stream", RequireSessionOnly(), h.Logs.Stream)
@@ -144,6 +147,8 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		authedManager := authed.Group("/", mw.RequireManager)
 		authedManager.POST("/nodes", h.Node.Create)
 		authedManager.PUT("/nodes/:id", h.Node.Update)
+		// §35: лёгкая смена статуса (пауза/отключение) — manager+.
+		authedManager.PATCH("/nodes/:id/status", h.Node.UpdateStatus)
 		authedManager.DELETE("/nodes/:id", h.Node.Delete)
 		// §7.5.1: dry-run без сохранения конфига.
 		authedManager.POST("/nodes/dry-run", h.DryRun.Run)
@@ -238,6 +243,26 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			kafka.GET("/topics", h.Kafka.Topics)
 			kafka.GET("/by-node", h.Kafka.ByNode)
 			kafka.POST("/test", h.Kafka.Test)
+		}
+
+		// Управление async-очередью узла (§34.4): admin-only, node-scoped.
+		// Чтение деградирует (kafka_available), мутации под глобальным CSRF
+		// и тем же rate-limit, что Kafka-экран (защита от peek-флуда брокеров).
+		if h.AsyncQueue != nil {
+			aq := authedAdmin.Group("/nodes/:id/async-queue")
+			if mw.KafkaRateLimit != nil {
+				aq.Use(mw.KafkaRateLimit)
+			}
+			aq.GET("/messages", h.AsyncQueue.List)
+			aq.GET("/messages/body", h.AsyncQueue.Body)
+			aq.DELETE("/messages/:msgId", h.AsyncQueue.DeleteOne)
+			aq.POST("/purge", h.AsyncQueue.Purge)
+			aq.POST("/purge-failed", h.AsyncQueue.PurgeFailed)
+			// §36.11: «Повторить все сейчас» — handler в ReplayHandler (нужен
+			// dispatcher), но маршрут admin-only под async-queue, как purge-failed.
+			if h.Replay != nil {
+				aq.POST("/replay-failed", h.Replay.ReplayFailed)
+			}
 		}
 	}
 }

@@ -48,6 +48,10 @@ message SendRequest {
   bool logging_enabled       = 25;  // false → лог в ClickHouse не пишется совсем
   bool max_body_size_enabled = 26;  // включает обрезку сохраняемых тел
   int32 max_body_size        = 27;  // макс. число символов (рун) в request/response
+
+  // §37: UUID узла — пишется в колонку node_id лог-таблицы, чтобы различать узлы,
+  // делящие одну ClickHouse-таблицу (per-node атрибуция метрик/логов/очистки).
+  string node_id = 28;
 }
 
 message SendResponse {

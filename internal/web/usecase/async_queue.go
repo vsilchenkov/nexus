@@ -1,0 +1,245 @@
+package usecase
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"nexus/internal/domain"
+	"nexus/internal/platform/logging"
+	"nexus/internal/web/usecase/port"
+)
+
+// ErrAsyncQueueUnavailable — операция управления очередью недоступна (нет Kafka
+// peeker / cancel-set, т.е. кластер/Redis не сконфигурированы). Handler → 503.
+var ErrAsyncQueueUnavailable = errors.New("async queue management unavailable")
+
+const asyncQueueListLimit = 50 // «первые 50, как в логах» (§34.4)
+
+// AsyncQueueUsecase — управление async-очередью Kafka на узле requestAsync (§34.4).
+//
+// peeker/cancel опциональны (nil при отсутствии Kafka/Redis): чтение тогда
+// деградирует (KafkaAvailable=false), мутации возвращают ErrAsyncQueueUnavailable.
+// Узел резолвится по id с проверкой team-scope (чужой узел → 404), как в replay.
+type AsyncQueueUsecase struct {
+	peeker    port.AsyncQueuePeeker
+	cancel    port.QueueCancelWriter
+	failed    port.FailedLogsPurger // ClickHouse-логи (очистка неудачных), nil без CH
+	nodes     port.NodeRepo
+	audit     *AuditUsecase
+	group     string
+	topic     string
+	retention time.Duration
+	peekCap   int
+	logger    logging.Logger
+}
+
+func NewAsyncQueueUsecase(
+	peeker port.AsyncQueuePeeker,
+	cancel port.QueueCancelWriter,
+	failed port.FailedLogsPurger,
+	nodes port.NodeRepo,
+	audit *AuditUsecase,
+	group, topic string,
+	retention time.Duration,
+	peekCap int,
+	logger logging.Logger,
+) *AsyncQueueUsecase {
+	if peekCap <= 0 {
+		peekCap = 1000
+	}
+	if retention <= 0 {
+		retention = 7 * 24 * time.Hour
+	}
+	return &AsyncQueueUsecase{
+		peeker:    peeker,
+		cancel:    cancel,
+		failed:    failed,
+		nodes:     nodes,
+		audit:     audit,
+		group:     group,
+		topic:     topic,
+		retention: retention,
+		peekCap:   peekCap,
+		logger:    logger,
+	}
+}
+
+// QueueListResult — первые N сообщений очереди узла.
+type QueueListResult struct {
+	Items          []port.QueueMessageMeta
+	Capped         bool
+	KafkaAvailable bool
+}
+
+// QueuePurgeResult — итог операции очистки.
+type QueuePurgeResult struct {
+	Cancelled      int
+	Capped         bool
+	KafkaAvailable bool
+}
+
+// resolveNode возвращает узел по id с проверкой team-scope (§34.4 / Phase 10).
+func (u *AsyncQueueUsecase) resolveNode(ctx context.Context, nodeID, teamID string) (*domain.Node, error) {
+	node, err := u.nodes.Get(ctx, nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("async queue get node: %w", err)
+	}
+	if teamID != "" && node.TeamID != teamID {
+		return nil, domain.ErrNodeNotFound
+	}
+	return node, nil
+}
+
+// List — первые 50 метаданных сообщений узла (без тела).
+func (u *AsyncQueueUsecase) List(ctx context.Context, nodeID, teamID string) (QueueListResult, error) {
+	node, err := u.resolveNode(ctx, nodeID, teamID)
+	if err != nil {
+		return QueueListResult{}, err
+	}
+	if u.peeker == nil {
+		return QueueListResult{Items: []port.QueueMessageMeta{}}, nil
+	}
+	r, err := u.peeker.PeekList(ctx, u.group, u.topic, node.Path, asyncQueueListLimit, u.peekCap)
+	if err != nil {
+		u.logger.Warn("async queue list failed", u.logger.Str("node_path", node.Path), u.logger.Err(err))
+		return QueueListResult{Items: []port.QueueMessageMeta{}}, nil
+	}
+	if r.Items == nil {
+		r.Items = []port.QueueMessageMeta{}
+	}
+	return QueueListResult{Items: r.Items, Capped: r.Capped, KafkaAvailable: true}, nil
+}
+
+// Body — тело одного сообщения по (partition, offset) для ленивой подгрузки.
+func (u *AsyncQueueUsecase) Body(ctx context.Context, nodeID, teamID string, partition int, offset int64) (port.QueueMessageBody, error) {
+	if _, err := u.resolveNode(ctx, nodeID, teamID); err != nil {
+		return port.QueueMessageBody{}, err
+	}
+	if u.peeker == nil {
+		return port.QueueMessageBody{}, ErrAsyncQueueUnavailable
+	}
+	body, err := u.peeker.PeekBody(ctx, u.topic, partition, offset)
+	if err != nil {
+		return port.QueueMessageBody{}, fmt.Errorf("async queue body: %w", err)
+	}
+	return body, nil
+}
+
+// DeleteOne — отменить одно сообщение очереди (логическое удаление, §34.4).
+func (u *AsyncQueueUsecase) DeleteOne(ctx context.Context, actor Actor, nodeID, teamID, msgID string) error {
+	node, err := u.resolveNode(ctx, nodeID, teamID)
+	if err != nil {
+		return err
+	}
+	if u.cancel == nil {
+		return ErrAsyncQueueUnavailable
+	}
+	if msgID == "" {
+		return fmt.Errorf("empty message id")
+	}
+	n, err := u.cancel.Cancel(ctx, []string{msgID}, u.retention)
+	if err != nil {
+		return fmt.Errorf("cancel message: %w", err)
+	}
+	u.audit.Log(ctx, actor, domain.ActionAsyncQueuePurge, "node", node.ID, map[string]any{
+		"op": "delete_one", "msg_id": msgID, "cancelled": n,
+	})
+	return nil
+}
+
+// PurgePeriod — отменить сообщения узла с ReceivedAt ∈ [from, to]. Нулевые
+// границы = очистить всё (PurgeAll).
+func (u *AsyncQueueUsecase) PurgePeriod(ctx context.Context, actor Actor, nodeID, teamID string, from, to time.Time) (QueuePurgeResult, error) {
+	op := "purge_period"
+	if from.IsZero() && to.IsZero() {
+		op = "purge_all"
+	}
+	return u.purge(ctx, actor, nodeID, teamID, from, to, op)
+}
+
+// PurgeAll — отменить все сообщения узла в очереди.
+func (u *AsyncQueueUsecase) PurgeAll(ctx context.Context, actor Actor, nodeID, teamID string) (QueuePurgeResult, error) {
+	return u.purge(ctx, actor, nodeID, teamID, time.Time{}, time.Time{}, "purge_all")
+}
+
+func (u *AsyncQueueUsecase) purge(ctx context.Context, actor Actor, nodeID, teamID string, from, to time.Time, op string) (QueuePurgeResult, error) {
+	node, err := u.resolveNode(ctx, nodeID, teamID)
+	if err != nil {
+		return QueuePurgeResult{}, err
+	}
+	if u.peeker == nil || u.cancel == nil {
+		return QueuePurgeResult{}, nil
+	}
+	scan, err := u.peeker.ScanIDs(ctx, u.group, u.topic, node.Path, from, to, u.peekCap)
+	if err != nil {
+		return QueuePurgeResult{}, fmt.Errorf("async queue scan ids: %w", err)
+	}
+	cancelled := 0
+	if len(scan.IDs) > 0 {
+		cancelled, err = u.cancel.Cancel(ctx, scan.IDs, u.retention)
+		if err != nil {
+			return QueuePurgeResult{}, fmt.Errorf("async queue cancel: %w", err)
+		}
+	}
+	u.audit.Log(ctx, actor, domain.ActionAsyncQueuePurge, "node", node.ID, map[string]any{
+		"op": op, "cancelled": cancelled, "capped": scan.Capped,
+	})
+	return QueuePurgeResult{Cancelled: cancelled, Capped: scan.Capped, KafkaAvailable: true}, nil
+}
+
+// toMs переводит время в UnixMilli; нулевое время → 0 (без границы окна).
+func toMs(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.UnixMilli()
+}
+
+// PurgeFailed — очистка «Неудачных доставок» узла за окно [from,to] (нулевые
+// границы = всё): (1) отменяет (qcancel) ID этих сообщений, чтобы DLQ-репроцессор
+// перестал их повторять (§34.4 tombstone), и (2) lightweight-DELETE'ит записи
+// done=0 из CH-таблицы узла — чтобы они исчезли из вида. Без CH (failed==nil) или
+// у узла нет таблицы → no-op (нечего чистить). Cancelled в результате — число
+// удалённых записей (видимый «очищено N»).
+func (u *AsyncQueueUsecase) PurgeFailed(ctx context.Context, actor Actor, nodeID, teamID string, from, to time.Time) (QueuePurgeResult, error) {
+	node, err := u.resolveNode(ctx, nodeID, teamID)
+	if err != nil {
+		return QueuePurgeResult{}, err
+	}
+	op := "purge_failed_period"
+	if from.IsZero() && to.IsZero() {
+		op = "purge_failed_all"
+	}
+	if u.failed == nil || node.ClickHouseTable == "" {
+		return QueuePurgeResult{}, nil
+	}
+	sinceMs, untilMs := toMs(from), toMs(to)
+
+	// 1) Снимаем повторную доставку: репроцессор дропнет эти ID по tombstone.
+	cancelled, capped := 0, false
+	if u.cancel != nil {
+		ids, c, err := u.failed.FailedIDs(ctx, node.ClickHouseTable, node.ID, sinceMs, untilMs, u.peekCap)
+		if err != nil {
+			return QueuePurgeResult{}, fmt.Errorf("async queue failed ids: %w", err)
+		}
+		capped = c
+		if len(ids) > 0 {
+			if cancelled, err = u.cancel.Cancel(ctx, ids, u.retention); err != nil {
+				return QueuePurgeResult{}, fmt.Errorf("async queue cancel failed: %w", err)
+			}
+		}
+	}
+
+	// 2) Удаляем записи done=0 из вида «Неудачные доставки».
+	deleted, err := u.failed.DeleteFailed(ctx, node.ClickHouseTable, node.ID, sinceMs, untilMs)
+	if err != nil {
+		return QueuePurgeResult{}, fmt.Errorf("async queue delete failed: %w", err)
+	}
+
+	u.audit.Log(ctx, actor, domain.ActionAsyncQueuePurge, "node", node.ID, map[string]any{
+		"op": op, "cancelled": cancelled, "deleted": deleted, "capped": capped,
+	})
+	return QueuePurgeResult{Cancelled: int(deleted), Capped: capped, KafkaAvailable: u.cancel != nil}, nil
+}

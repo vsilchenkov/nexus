@@ -79,6 +79,9 @@ export type Node = {
   logging_enabled: boolean;
   max_body_size_enabled: boolean;
   max_body_size: number;
+  // §36: авто-репроцессор DLQ — TTL повтора и минимальная задержка между повторами (сек).
+  dlq_ttl_seconds?: number;
+  dlq_retry_delay_seconds?: number;
   // §29: произвольный комментарий-описание узла.
   comment?: string;
   // §27: RabbitMQAsync (пустые/нулевые для request/requestAsync).

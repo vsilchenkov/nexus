@@ -29,11 +29,20 @@ type AppSettingsUsecase struct {
 	repo      port.AppSettingsRepo
 	audit     *AuditUsecase
 	publisher ReloadPublisher
-	logger    logging.Logger
+	// allowVersionOverride — гейт §34.3: при false запись general.version_override
+	// отклоняется (прод). Значение из cfg.Web.AllowVersionOverride.
+	allowVersionOverride bool
+	logger               logging.Logger
 }
 
-func NewAppSettingsUsecase(repo port.AppSettingsRepo, audit *AuditUsecase, publisher ReloadPublisher, logger logging.Logger) *AppSettingsUsecase {
-	return &AppSettingsUsecase{repo: repo, audit: audit, publisher: publisher, logger: logger}
+func NewAppSettingsUsecase(repo port.AppSettingsRepo, audit *AuditUsecase, publisher ReloadPublisher, allowVersionOverride bool, logger logging.Logger) *AppSettingsUsecase {
+	return &AppSettingsUsecase{
+		repo:                 repo,
+		audit:                audit,
+		publisher:            publisher,
+		allowVersionOverride: allowVersionOverride,
+		logger:               logger,
+	}
 }
 
 // Get возвращает текущие настройки + флаги «значение задано».
@@ -81,6 +90,16 @@ func (u *AppSettingsUsecase) Update(ctx context.Context, actor Actor, patch *dom
 			return err
 		}
 	}
+	// §34.3: override версии разрешён только в dev (web.allow_version_override).
+	if patch.General.VersionOverride != nil && !u.allowVersionOverride {
+		return domain.ErrVersionOverrideForbidden
+	}
+	// §34.2: длительность сессии в допустимом диапазоне.
+	if patch.Security.SessionTTLSeconds != nil {
+		if err := domain.ValidateSessionTTLSeconds(*patch.Security.SessionTTLSeconds); err != nil {
+			return err
+		}
+	}
 
 	current, err := u.repo.Get(ctx)
 	if err != nil {
@@ -122,6 +141,15 @@ func mergeAppSettings(current, patch *domain.AppSettings) *domain.AppSettings {
 	// General (§28). PublicBaseURL не секрет — перезаписываем как есть.
 	if patch.General.PublicBaseURL != nil {
 		out.General.PublicBaseURL = patch.General.PublicBaseURL
+	}
+	// §34.3: version_override (гейт проверен в Update до merge).
+	if patch.General.VersionOverride != nil {
+		out.General.VersionOverride = patch.General.VersionOverride
+	}
+
+	// §34.2: Security — длительность сессии (не секрет).
+	if patch.Security.SessionTTLSeconds != nil {
+		out.Security.SessionTTLSeconds = patch.Security.SessionTTLSeconds
 	}
 
 	// Sentry
@@ -210,8 +238,11 @@ func validateTelegramPatch(p *domain.AppSettings) error {
 // содержит хотя бы одно не-nil поле. Используется в audit details.
 func changedSections(p *domain.AppSettings) []string {
 	var out []string
-	if p.General.PublicBaseURL != nil {
+	if p.General.PublicBaseURL != nil || p.General.VersionOverride != nil {
 		out = append(out, "general")
+	}
+	if p.Security.SessionTTLSeconds != nil {
+		out = append(out, "security")
 	}
 	s := p.Sentry
 	if s.Use != nil || s.DSN != nil || s.Environment != nil || s.Level != nil ||

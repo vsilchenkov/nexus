@@ -171,6 +171,10 @@ type memSessionRepo struct {
 	deleteCalls   int
 	touchCalls    int
 	deletedByUser []string
+	// §34.2: последний TTL, переданный в Create/Touch — для проверки
+	// динамической длительности сессии.
+	lastCreateTTL time.Duration
+	lastTouchTTL  time.Duration
 }
 
 func newMemSessionRepo() *memSessionRepo {
@@ -180,12 +184,13 @@ func newMemSessionRepo() *memSessionRepo {
 	}
 }
 
-func (r *memSessionRepo) Create(_ context.Context, s *domain.Session, _ time.Duration) error {
+func (r *memSessionRepo) Create(_ context.Context, s *domain.Session, ttl time.Duration) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.createErr != nil {
 		return r.createErr
 	}
+	r.lastCreateTTL = ttl
 	r.byToken[s.Token] = s
 	return nil
 }
@@ -200,10 +205,11 @@ func (r *memSessionRepo) Get(_ context.Context, token string) (*domain.Session, 
 	}
 	return nil, domain.ErrSessionNotFound
 }
-func (r *memSessionRepo) Touch(_ context.Context, s *domain.Session, _ time.Duration) error {
+func (r *memSessionRepo) Touch(_ context.Context, s *domain.Session, ttl time.Duration) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.touchCalls++
+	r.lastTouchTTL = ttl
 	if s != nil {
 		r.byToken[s.Token] = s
 	}
@@ -241,7 +247,7 @@ func hash(t *testing.T, pw string) string {
 func newAuthUC(users *authUserRepo, sessions port.SessionRepo) (*AuthUsecase, *stubAuditRepo) {
 	repo := &stubAuditRepo{}
 	audit := NewAuditUsecase(repo, logging.NewNoop())
-	return NewAuthUsecase(users, sessions, &nopTeamRepo{}, audit, time.Hour, logging.NewNoop()), repo
+	return NewAuthUsecase(users, sessions, &nopTeamRepo{}, audit, func() time.Duration { return time.Hour }, logging.NewNoop()), repo
 }
 
 // nopTeamRepo — заглушка port.TeamRepo для unit-тестов AuthUsecase.
@@ -355,6 +361,31 @@ func TestAuthUC_Login_HappyPath(t *testing.T) {
 	require.Len(t, audit.entries, 1)
 	assert.Equal(t, domain.ActionUserLogin, audit.entries[0].Action)
 	assert.Equal(t, "10.0.0.1", audit.entries[0].IPAddress)
+}
+
+// TestAuthUC_DynamicSessionTTL (§34.2): Login и sliding-Touch берут актуальное
+// значение TTL из провайдера; смена провайдера между логином и Check меняет
+// TTL без рестарта.
+func TestAuthUC_DynamicSessionTTL(t *testing.T) {
+	t.Parallel()
+	users := newAuthUserRepo()
+	users.put(&domain.User{ID: "u1", Login: "alice", Active: true, PasswordHash: hash(t, "secret123")})
+	sessions := newMemSessionRepo()
+	audit := NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop())
+
+	ttl := 2 * time.Hour
+	uc := NewAuthUsecase(users, sessions, &nopTeamRepo{}, audit,
+		func() time.Duration { return ttl }, logging.NewNoop())
+
+	tok, _, err := uc.Login(context.Background(), "alice", "secret123", "10.0.0.1")
+	require.NoError(t, err)
+	assert.Equal(t, 2*time.Hour, sessions.lastCreateTTL, "Login must use current provider TTL")
+
+	// Меняем TTL «в рантайме» (как сделал бы hot-reload) — следующий Touch берёт новое значение.
+	ttl = 30 * time.Minute
+	_, err = uc.Check(context.Background(), tok)
+	require.NoError(t, err)
+	assert.Equal(t, 30*time.Minute, sessions.lastTouchTTL, "Touch must use updated TTL without restart")
 }
 
 // stubLoginLimiter — управляемый RateLimiter для тестов анти-брутфорса.

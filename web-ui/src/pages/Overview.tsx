@@ -10,6 +10,7 @@ import {
   type OverviewKPI,
   type NodesThroughputResp,
 } from "../api/client";
+import { useStableData } from "../lib/useStableData";
 import {
   Button,
   Card,
@@ -88,13 +89,16 @@ export default function Overview() {
     refetchInterval: METRICS_REFETCH_MS,
   });
 
+  // Анти-мерцание: держим последний ответ с prometheus_available=true (§ useStableData).
+  const thrData = useStableData(thrQ.data, periodKey(period), (d) => d.prometheus_available);
+
   const throughput = useMemo(() => {
     const m = new Map<string, Throughput>();
-    for (const it of thrQ.data?.items ?? []) {
+    for (const it of thrData?.items ?? []) {
       m.set(it.node, { in: it.in, out: it.out, errors: it.errors, p95: it.p95_ms, spark: it.spark ?? [] });
     }
     return m;
-  }, [thrQ.data]);
+  }, [thrData]);
 
   // Сортировка: проблемные первыми (err → warn → paused → ok → disabled),
   // внутри статуса — по убыванию входящего трафика (§22, ui_cards.html).
@@ -106,7 +110,7 @@ export default function Overview() {
   // metricsReady — метрики throughput реально пришли и Prometheus доступен.
   // Пока не готовы, статус узла показываем нейтральным «unknown», а не зелёным
   // «OK» (П11: статус мигал ОК→down при дозагрузке метрик).
-  const metricsReady = thrQ.isSuccess && (thrQ.data?.prometheus_available ?? false);
+  const metricsReady = thrQ.isSuccess && (thrData?.prometheus_available ?? false);
 
   const nodes = useMemo(() => {
     let items = nodesQ.data?.items ?? [];
@@ -124,7 +128,7 @@ export default function Overview() {
     });
   }, [nodesQ.data, method, statusFilter, throughput, sortRank, metricsReady]);
 
-  const kpi = kpiQ.data;
+  const kpi = useStableData(kpiQ.data, "overview-kpi", (d) => d.prometheus_available);
   const errPct = kpi && kpi.error_rate > 0 ? (kpi.error_rate * 100).toFixed(2) + "%" : "0%";
 
   return (

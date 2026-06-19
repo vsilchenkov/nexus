@@ -16,6 +16,12 @@ export function ConfigTab({ node }: { node: Node }) {
   return (
     <Card>
       <dl className="divide-y divide-line">
+        <Row label={t("node.fields.id")}>
+          <div className="flex items-center gap-1.5">
+            <span className="min-w-0 break-all font-mono text-[12px]">{node.id}</span>
+            <CopyButton value={node.id} />
+          </div>
+        </Row>
         <Row label={t("node.fields.method")}>
           <Chip>{node.root_method}</Chip>
         </Row>

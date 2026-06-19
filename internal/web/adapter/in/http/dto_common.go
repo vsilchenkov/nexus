@@ -93,9 +93,20 @@ type ListLogsResponse struct {
 	LogsConfigured bool           `json:"logs_configured,omitempty"`
 }
 
-// VersionResponse — GET /api/version.
+// FailedCountResponse — GET /api/nodes/{id}/logs/failed-count (§35).
+type FailedCountResponse struct {
+	Count          uint64 `json:"count"`
+	LogsConfigured bool   `json:"logs_configured"`
+}
+
+// VersionResponse — GET /api/version (§34.3).
 type VersionResponse struct {
-	Version string `json:"version"`
+	Version   string `json:"version"`
+	Commit    string `json:"commit,omitempty"`
+	BuildDate string `json:"build_date,omitempty"`
+	// OverrideAllowed — true в dev (web.allow_version_override): UI показывает
+	// поле ручного override версии; в проде false (версия всегда из git).
+	OverrideAllowed bool `json:"override_allowed"`
 }
 
 // PublicSettingsResponse — GET /api/settings/public.

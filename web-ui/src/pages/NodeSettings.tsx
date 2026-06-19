@@ -13,6 +13,7 @@ import {
   List,
   ShieldAlert,
   MessageSquare,
+  RefreshCw,
 } from "lucide-react";
 
 import { api, type Node, type CHTemplate, type HostAllowlistEntry } from "../api/client";
@@ -64,6 +65,8 @@ type Form = {
   clickhouse_table: string;
   clickhouse_template_id: string;
   clickhouse_retention_days: number;
+  dlq_ttl_seconds: number;
+  dlq_retry_delay_seconds: number;
   status: "enabled" | "disabled" | "paused";
   forward_headers: string[];
   log_request_body: boolean;
@@ -107,6 +110,8 @@ const emptyForm: Form = {
   clickhouse_table: "",
   clickhouse_template_id: "",
   clickhouse_retention_days: 90,
+  dlq_ttl_seconds: 86400,
+  dlq_retry_delay_seconds: 300,
   status: "enabled",
   forward_headers: [],
   log_request_body: false,
@@ -171,13 +176,16 @@ export default function NodeSettings() {
       }
       return node;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ["nodes"] });
       // Сброс формы: иначе при следующем заходе на /nodes/new остаются
       // значения только что созданного узла (Phase AUD.7).
       setForm(emptyForm);
       setPendingHosts([]);
-      navigate("/");
+      // После сохранения возвращаемся в ОКНО УЗЛА (detail), а не на список:
+      // правка существующего → его страница; создание → страница нового узла.
+      const nodeId = isNew ? (data as { id?: string } | undefined)?.id : id;
+      navigate(nodeId ? `/nodes/${nodeId}` : "/");
     },
     onError: (e: { response?: { data?: { error?: string; code?: string; field?: string } } }) => {
       const d = e?.response?.data;
@@ -237,7 +245,7 @@ export default function NodeSettings() {
           {isNew ? t("overview.new_node") : `${t("node.actions.edit")}: ${form.path}`}
         </h1>
         <div className="flex flex-wrap items-center gap-2">
-          <Link to="/">
+          <Link to={isNew ? "/" : `/nodes/${id}`}>
             <Button variant="ghost">{t("common.cancel")}</Button>
           </Link>
           <Button onClick={() => setShowDryRun(true)}>
@@ -652,6 +660,45 @@ export default function NodeSettings() {
               </div>
             </fieldset>
           </Card>
+
+          {/* §36: авто-репроцессор DLQ — ОТДЕЛЬНЫЙ блок (не логирование, не внутри
+              disabled-fieldset логирования). Только для async-узлов (у sync `request`
+              нет очереди/DLQ). TTL в секундах + подсказка в часах; задержка повтора. */}
+          {form.root_method !== "request" && (
+            <Card>
+              <SectionHead icon={<RefreshCw className="h-4 w-4" />}>
+                {t("node.form.dlq_section")}
+              </SectionHead>
+              <Field label={t("node.form.dlq_ttl_seconds")}>
+                <Input
+                  type="number"
+                  min={60}
+                  max={2592000}
+                  className={errCls("dlq_ttl_seconds")}
+                  value={form.dlq_ttl_seconds}
+                  onChange={(e) => set("dlq_ttl_seconds", parseNumInput(e.target.value, form.dlq_ttl_seconds))}
+                />
+                <div className="mt-1 text-xs text-fg-muted">
+                  ≈ {Math.round((form.dlq_ttl_seconds / 3600) * 10) / 10} {t("node.form.hours")}
+                </div>
+                {fieldErr("dlq_ttl_seconds")}
+              </Field>
+              <Field label={t("node.form.dlq_retry_delay_seconds")} className="mt-3">
+                <Input
+                  type="number"
+                  min={1}
+                  max={86400}
+                  className={errCls("dlq_retry_delay_seconds")}
+                  value={form.dlq_retry_delay_seconds}
+                  onChange={(e) =>
+                    set("dlq_retry_delay_seconds", parseNumInput(e.target.value, form.dlq_retry_delay_seconds))
+                  }
+                />
+                <div className="mt-1 text-xs text-fg-muted">{t("node.form.dlq_retry_delay_hint")}</div>
+                {fieldErr("dlq_retry_delay_seconds")}
+              </Field>
+            </Card>
+          )}
 
           {/* §29: комментарий-описание узла — отдельным блоком в самом низу. */}
           <Card>

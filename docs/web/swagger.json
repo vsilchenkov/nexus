@@ -1919,6 +1919,345 @@
                 }
             }
         },
+        "/api/nodes/{id}/async-queue/messages": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Метаданные сообщений (без тела, как в логах). Тело тянется лениво через .../messages/body. Admin-only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "async-queue"
+                ],
+                "summary": "Первые 50 сообщений async-очереди узла (§34.4).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.queueListDTO"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{id}/async-queue/messages/body": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Ленивая подгрузка тела по физической координате (partition, offset) из списка. Admin-only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "async-queue"
+                ],
+                "summary": "Тело одного сообщения async-очереди (§34.4).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "partition",
+                        "name": "partition",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "offset",
+                        "name": "offset",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.queueBodyDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "kafka unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{id}/async-queue/messages/{msgId}": {
+            "delete": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Логическое удаление через cancel-set: Sender пропустит сообщение при доставке. Admin-only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "async-queue"
+                ],
+                "summary": "Удалить (отменить) одно сообщение очереди (§34.4).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "message id (Envelope.ID)",
+                        "name": "msgId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "queue management unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{id}/async-queue/purge": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Отменяет сообщения с ReceivedAt ∈ [from,to] (логически, через cancel-set). Пустые from/to = очистить всё. Admin-only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "async-queue"
+                ],
+                "summary": "Очистить async-очередь узла за период или целиком (§34.4).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "период (пусто = всё)",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.queuePurgeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.queuePurgeDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{id}/async-queue/purge-failed": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Отменяет повторную доставку (DLQ-репроцессор перестаёт повторять) и удаляет записи done=0 из CH-логов узла за [from,to]. Пустые from/to = всё. Cancelled = число удалённых. Admin-only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "async-queue"
+                ],
+                "summary": "Очистить «Неудачные доставки» узла за период или целиком (§35/§36).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "период (пусто = всё)",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.queuePurgeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.queuePurgeDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{id}/async-queue/replay-failed": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Пере-инжектирует через Receiver все неудачные (done=0) запросы узла за период и отменяет их оригиналы в DLQ (без двойной доставки). Пустые from/to = всё. Admin-only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "async-queue"
+                ],
+                "summary": "Повторить все неудачные доставки узла сейчас (§36.11).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "период (пусто = всё)",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.queuePurgeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nexus_internal_web_usecase.ReplayBulkResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "node disabled",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "rate limit exceeded",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/{id}/log/{logId}": {
             "get": {
                 "security": [
@@ -2059,6 +2398,55 @@
                 }
             }
         },
+        "/api/nodes/{id}/logs/failed-count": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    },
+                    {
+                        "ApiTokenAuth": []
+                    }
+                ],
+                "description": "Дешёвый count из ClickHouse для KPI «неудачные доставки» на вкладке «Очередь». Узел без clickhouse_table → 200 + logs_configured=false, count=0.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logs"
+                ],
+                "summary": "Число недоставленных записей узла (done=0) за период (§35).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "начало диапазона (RFC3339 или UnixMilli)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "конец диапазона",
+                        "name": "to",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.FailedCountResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/{id}/logs/stream": {
             "get": {
                 "security": [
@@ -2165,6 +2553,61 @@
                     },
                     "409": {
                         "description": "path already exists in target team",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{id}/status": {
+            "patch": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Лёгкая замена полного PUT для кнопок «Пауза»/«Отключить». manager+. Меняет лишь status, не трогая прочие поля/креды.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "nodes"
+                ],
+                "summary": "Сменить только статус узла (§35).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "enabled | paused | disabled",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.UpdateNodeStatusRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
@@ -3277,14 +3720,14 @@
         },
         "/api/version": {
             "get": {
-                "description": "Публичный read-only эндпоинт: текущая версия Web Service. Не требует авторизации.",
+                "description": "Публичный read-only эндпоинт: версия Web Service + commit/build_date. Не требует авторизации. В dev (override_allowed) version может быть переопределена настройкой.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "meta"
                 ],
-                "summary": "Версия приложения (§30).",
+                "summary": "Версия приложения (§30, §34.3).",
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -3363,6 +3806,16 @@
                 "comment": {
                     "type": "string",
                     "maxLength": 2000
+                },
+                "dlq_retry_delay_seconds": {
+                    "type": "integer",
+                    "maximum": 86400,
+                    "minimum": 1
+                },
+                "dlq_ttl_seconds": {
+                    "type": "integer",
+                    "maximum": 2592000,
+                    "minimum": 60
                 },
                 "forward_headers": {
                     "type": "array",
@@ -3601,6 +4054,17 @@
                 "error": {
                     "type": "string",
                     "example": "not found"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.FailedCountResponse": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "logs_configured": {
+                    "type": "boolean"
                 }
             }
         },
@@ -3939,6 +4403,12 @@
                 "created_at": {
                     "type": "string"
                 },
+                "dlq_retry_delay_seconds": {
+                    "type": "integer"
+                },
+                "dlq_ttl_seconds": {
+                    "type": "integer"
+                },
                 "forward_headers": {
                     "type": "array",
                     "items": {
@@ -4192,6 +4662,16 @@
                     "type": "string",
                     "maxLength": 2000
                 },
+                "dlq_retry_delay_seconds": {
+                    "type": "integer",
+                    "maximum": 86400,
+                    "minimum": 1
+                },
+                "dlq_ttl_seconds": {
+                    "type": "integer",
+                    "maximum": 2592000,
+                    "minimum": 60
+                },
                 "forward_headers": {
                     "type": "array",
                     "items": {
@@ -4354,6 +4834,22 @@
                 }
             }
         },
+        "internal_web_adapter_in_http.UpdateNodeStatusRequest": {
+            "type": "object",
+            "required": [
+                "status"
+            ],
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "enabled",
+                        "paused",
+                        "disabled"
+                    ]
+                }
+            }
+        },
         "internal_web_adapter_in_http.UserEnvelope": {
             "type": "object",
             "properties": {
@@ -4365,6 +4861,16 @@
         "internal_web_adapter_in_http.VersionResponse": {
             "type": "object",
             "properties": {
+                "build_date": {
+                    "type": "string"
+                },
+                "commit": {
+                    "type": "string"
+                },
+                "override_allowed": {
+                    "description": "OverrideAllowed — true в dev (web.allow_version_override): UI показывает\nполе ручного override версии; в проде false (версия всегда из git).",
+                    "type": "boolean"
+                },
                 "version": {
                     "type": "string"
                 }
@@ -5069,6 +5575,97 @@
                 }
             }
         },
+        "internal_web_adapter_in_http.queueBodyDTO": {
+            "type": "object",
+            "properties": {
+                "body": {
+                    "type": "string"
+                },
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "id": {
+                    "type": "string"
+                },
+                "method": {
+                    "type": "string"
+                },
+                "target_url": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.queueListDTO": {
+            "type": "object",
+            "properties": {
+                "capped": {
+                    "type": "boolean"
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.queueMessageDTO"
+                    }
+                },
+                "kafka_available": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.queueMessageDTO": {
+            "type": "object",
+            "properties": {
+                "body_size": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "method": {
+                    "type": "string"
+                },
+                "offset": {
+                    "type": "integer"
+                },
+                "partition": {
+                    "type": "integer"
+                },
+                "received_at": {
+                    "type": "string"
+                },
+                "target_url": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.queuePurgeDTO": {
+            "type": "object",
+            "properties": {
+                "cancelled": {
+                    "type": "integer"
+                },
+                "capped": {
+                    "type": "boolean"
+                },
+                "kafka_available": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.queuePurgeRequest": {
+            "type": "object",
+            "properties": {
+                "from": {
+                    "type": "string"
+                },
+                "to": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_web_adapter_in_http.seriesPointDTO": {
             "type": "object",
             "properties": {
@@ -5341,6 +5938,9 @@
                 "notifications": {
                     "$ref": "#/definitions/nexus_internal_domain.NotificationsSettings"
                 },
+                "security": {
+                    "$ref": "#/definitions/nexus_internal_domain.SecuritySettings"
+                },
                 "sentry": {
                     "$ref": "#/definitions/nexus_internal_domain.SentrySettings"
                 },
@@ -5477,6 +6077,10 @@
                 "public_base_url": {
                     "description": "PublicBaseURL — публичный адрес, под которым опубликован Web (origin без\nхвостового слеша, напр. https://nexus.example.com). Если задан, UI\nформирует полный адрес узла от него вместо window.location.origin.\nnil/\"\" = не задан (UI берёт origin браузера). Не секрет — Get() не маскирует.",
                     "type": "string"
+                },
+                "version_override": {
+                    "description": "VersionOverride — ручное переопределение отображаемой версии (§34.3).\nПрименяется и редактируется ТОЛЬКО при включённом web.allow_version_override\n(dev/staging); в проде флаг выключен → значение игнорируется, а запись\nотклоняется (ErrVersionOverrideForbidden). nil/\"\" = версия из git (ldflags).",
+                    "type": "string"
                 }
             }
         },
@@ -5485,6 +6089,15 @@
             "properties": {
                 "telegram": {
                     "$ref": "#/definitions/nexus_internal_domain.TelegramSettings"
+                }
+            }
+        },
+        "nexus_internal_domain.SecuritySettings": {
+            "type": "object",
+            "properties": {
+                "session_ttl_seconds": {
+                    "description": "SessionTTLSeconds — длительность пользовательской сессии в секундах.\nnil = брать из env-конфига (cfg.Redis.SessionTTLSec). Применяется к новым\nсессиям и sliding-Touch без рестарта (через SessionTTLProvider).",
+                    "type": "integer"
                 }
             }
         },
@@ -5606,6 +6219,26 @@
                 },
                 "ok": {
                     "type": "boolean"
+                }
+            }
+        },
+        "nexus_internal_web_usecase.ReplayBulkResult": {
+            "type": "object",
+            "properties": {
+                "capped": {
+                    "type": "boolean"
+                },
+                "failed": {
+                    "description": "ошибок replay (оригинал НЕ отменён — остаётся авто-репроцессору)",
+                    "type": "integer"
+                },
+                "replayed": {
+                    "description": "пере-инжектировано (оригинал отменён в DLQ)",
+                    "type": "integer"
+                },
+                "total": {
+                    "description": "уникальных неудачных найдено (в пределах cap)",
+                    "type": "integer"
                 }
             }
         },

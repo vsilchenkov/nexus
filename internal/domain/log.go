@@ -25,4 +25,5 @@ type LogRecord struct {
 	IP               string
 	Attempts         int32
 	AttemptsDetails  string // JSON-массив попыток или пустая строка
+	NodeID           string // §37: UUID узла-владельца (различает узлы в общей таблице); "" у legacy-записей
 }

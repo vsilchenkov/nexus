@@ -255,13 +255,25 @@
     }
   },
   "node": {
-    "tabs": { "overview": "Overview", "logs": "Logs", "config": "Config", "metrics": "Metrics" },
+    "tabs": {
+      "overview": "Overview",
+      "logs": "Logs",
+      "config": "Config",
+      "metrics": "Metrics",
+      "queue": "Queue"
+    },
     "status": {
       "enabled": "Active",
       "disabled": "Disabled",
       "paused": "Paused"
     },
-    "actions": { "edit": "Edit", "delete": "Delete", "dry_run": "Dry-run", "replay": "Replay" },
+    "actions": {
+      "edit": "Edit",
+      "delete": "Delete",
+      "dry_run": "Dry-run",
+      "replay": "Replay",
+      "refresh": "Refresh"
+    },
     "not_found": "Node not found",
     "validation": {
       "root_method": "Invalid node type",
@@ -298,12 +310,15 @@
       "rmq_queue": "RabbitMQ queue name must be 1..255 characters and contain only letters, digits, dot, hyphen and underscore",
       "pull_interval_sec": "Pull interval must be between 1 and 3600 seconds",
       "pull_batch_size": "Pull batch size must be between 1 and 1000",
-      "pull_prefetch": "Pull prefetch must be between 1 and 1000"
+      "pull_prefetch": "Pull prefetch must be between 1 and 1000",
+      "dlq_ttl_seconds": "DLQ TTL must be between 60 and 2592000 seconds",
+      "dlq_retry_delay_seconds": "Retry delay must be between 1 and 86400 seconds"
     },
     "fields": {
       "ch_template": "Table template",
       "ch_template_manual": "(none / manual table)",
       "ch_template_hint": "Pick a template — the log table is created automatically on save. Leave empty to manage the table manually.",
+      "id": "Node ID",
       "method": "Method type",
       "path": "Node path",
       "url_mode": "URL mode",
@@ -369,7 +384,12 @@
       "comment": "Comment",
       "comment_label": "Node description",
       "comment_hint": "internal note for your team; not visible to external clients",
-      "comment_placeholder": "E.g., integration with system X, sends order events…"
+      "comment_placeholder": "E.g., integration with system X, sends order events…",
+      "dlq_section": "DLQ auto-retry",
+      "dlq_ttl_seconds": "Failed-delivery TTL (sec)",
+      "dlq_retry_delay_seconds": "Retry delay for failed deliveries (sec)",
+      "dlq_retry_delay_hint": "minimum wait before re-attempting a failed delivery; default 5 min",
+      "hours": "h"
     },
     "rmq": {
       "source": "RabbitMQ — source",
@@ -506,13 +526,74 @@
       "details": "Details"
     }
   },
+  "queue": {
+    "unavailable": "Kafka queue is unavailable (cluster not configured).",
+    "capped_mark": "(may be more)",
+    "capped_hint": "Showing the first of a limited scan — the queue may be larger.",
+    "empty": "No messages are waiting.",
+    "delete": "Delete request",
+    "body_empty": "(empty body)",
+    "purge_all": "Purge all waiting",
+    "purge_all_confirm": "Delete all waiting messages from the queue? They will not be sent to the target.",
+    "purge_period": "Purge selected period",
+    "purge_period_confirm": "Delete waiting messages received in the selected period? They will not be sent.",
+    "purge_failed_all": "Clear all failed",
+    "purge_failed_all_confirm": "Clear all failed deliveries? Their automatic retry stops and the records are removed from the logs. This cannot be undone.",
+    "purge_failed_period": "Clear failed (period)",
+    "purge_failed_period_confirm": "Clear failed deliveries in the selected period? Their automatic retry stops and the records are removed from the logs. This cannot be undone.",
+    "replay_failed_all": "Retry all now",
+    "replay_failed_all_confirm": "Re-send all failed deliveries in the selected period now? They are re-injected as new requests and their DLQ originals are cancelled (so the auto-reprocessor won't deliver them twice).",
+    "open_in_logs": "Open in logs →",
+    "col": {
+      "received": "Received",
+      "method": "Method",
+      "target": "Target URL",
+      "size": "Size"
+    },
+    "kpi": {
+      "pending": "Pending delivery",
+      "pending_hint": "Messages still sitting in the Kafka queue (not yet consumed). Normally 0; grows when the node is paused or the Sender is down. Admin only.",
+      "failed": "Failed deliveries",
+      "failed_hint": "Requests that were delivered to the target and failed (from the logs) over the selected period."
+    },
+    "section": {
+      "pending": "Pending delivery",
+      "failed": "Failed deliveries"
+    },
+    "banner": {
+      "explain": "Failed deliveries stay in the logs (with reason and body) and can be replayed. To stop the growth, pause or disable the node; to remove them and stop the automatic retry, use “Clear failed”. The dead-letter backlog expires by retention.",
+      "pause": "Pause node",
+      "disable": "Disable node",
+      "disable_confirm": "Disable the node? It will stop accepting and delivering requests until re-enabled.",
+      "resume": "Resume node",
+      "enable": "Enable node",
+      "state_paused": "The node is paused — new requests pile up in the queue below and are not delivered. Resume to drain it, or purge it.",
+      "state_disabled": "The node is disabled — incoming requests are rejected (nothing is queued)."
+    },
+    "failed": {
+      "empty": "No failed deliveries in this period.",
+      "no_logging": "Logging is not configured for this node — failed deliveries can't be shown.",
+      "reprocess_hint": "Retried automatically until TTL ({{hours}} h) — once the target recovers, they are delivered. “Replay” forces an immediate retry.",
+      "replay": "Replay",
+      "col": {
+        "status": "Status",
+        "reason": "Reason"
+      }
+    },
+    "empty_enabled": "Empty — an active node delivers right away, so nothing waits here. Undelivered requests are under “Failed deliveries” below.",
+    "empty_paused": "Nothing queued yet — while the node is paused, new requests pile up here."
+  },
   "settings": {
     "title": "Settings",
     "general": {
       "title": "General",
       "public_base_url": "Public application URL",
       "public_base_url_hint": "Public address the app is published at. When set, node addresses are built from it instead of the browser host. Leave empty to use the current origin.",
-      "public_base_url_example": "Origin only, no path or trailing slash, e.g. https://nexus.example.com"
+      "public_base_url_example": "Origin only, no path or trailing slash, e.g. https://nexus.example.com",
+      "version_override": "Application version (dev)",
+      "version_override_hint": "Overrides the displayed version in this build. Available in dev/staging only; production always uses the git version. Leave empty to use the git version.",
+      "session_ttl": "Session duration (minutes)",
+      "session_ttl_hint": "How many minutes a user session stays alive without activity. Allowed 5 minutes .. 30 days (43200 min). Applied without restart. Leave empty to use the config default."
     },
     "tokens": {
       "title": "API tokens",

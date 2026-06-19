@@ -56,7 +56,85 @@ func newAsyncProcessorForTest(t *testing.T, nr NodeReader, httpResp *port.HTTPRe
 	}
 	logw := &stubLogWriter{}
 	send := NewSendUsecase(httpc, logw, nil, logging.NewNoop())
-	return NewAsyncProcessor(nr, send, dlq, "nexus.async.dlq", nil, logging.NewNoop())
+	return NewAsyncProcessor(nr, send, dlq, nil, "nexus.async.dlq", nil, logging.NewNoop())
+}
+
+// stubCancelSet — управляемый CancelSet для тестов §34.4.
+type stubCancelSet struct {
+	cancelled map[string]bool
+	err       error
+}
+
+func (s *stubCancelSet) IsCancelled(_ context.Context, id string) (bool, error) {
+	if s.err != nil {
+		return false, s.err
+	}
+	return s.cancelled[id], nil
+}
+
+// newAsyncProcessorWithCancel — как newAsyncProcessorForTest, но с cancel-set и
+// доступом к httpc (чтобы проверить, был ли HTTP-вызов).
+func newAsyncProcessorWithCancel(t *testing.T, nr NodeReader, httpResp *port.HTTPResponse, dlq DLQProducer, cancel CancelSet) (*AsyncProcessor, *stubHTTPCaller) {
+	t.Helper()
+	httpc := &stubHTTPCaller{}
+	if httpResp != nil {
+		httpc.responses = []*port.HTTPResponse{httpResp}
+	}
+	send := NewSendUsecase(httpc, &stubLogWriter{}, nil, logging.NewNoop())
+	return NewAsyncProcessor(nr, send, dlq, cancel, "nexus.async.dlq", nil, logging.NewNoop()), httpc
+}
+
+// TestAsync_Cancelled_Ack (§34.4): отменённое сообщение → Ack без HTTP-вызова и
+// без DLQ. Узел enabled и ответ был бы 5xx (→ DLQ), но cancel короткозамыкает.
+func TestAsync_Cancelled_Ack(t *testing.T) {
+	t.Parallel()
+
+	node := &domain.Node{Path: "partner/echo", Status: domain.NodeStatusEnabled, TimeoutMs: 1000, ClickHouseTable: "nexus.log_x"}
+	dlq := &stubDLQProducer{}
+	p, httpc := newAsyncProcessorWithCancel(t,
+		&stubAsyncNodeReader{node: node},
+		&port.HTTPResponse{StatusCode: 502, Body: []byte("bad")},
+		dlq,
+		&stubCancelSet{cancelled: map[string]bool{"id-1": true}},
+	)
+	got := p.Handle(context.Background(), makeEnvelope(t, "partner/echo"), nil)
+	assert.Equal(t, HandleAck, got, "отменённое сообщение → Ack")
+	assert.Equal(t, 0, httpc.calls, "отменённое — HTTP-вызов не идёт")
+	assert.Empty(t, dlq.produced, "отменённое — в DLQ не уходит")
+}
+
+// TestAsync_CancelledPausedNode_Ack (§34.4): проверка отмены идёт ДО paused —
+// бэклог paused-узла можно чистить.
+func TestAsync_CancelledPausedNode_Ack(t *testing.T) {
+	t.Parallel()
+
+	node := &domain.Node{Path: "partner/echo", Status: domain.NodeStatusPaused}
+	p, httpc := newAsyncProcessorWithCancel(t,
+		&stubAsyncNodeReader{node: node},
+		nil, &stubDLQProducer{},
+		&stubCancelSet{cancelled: map[string]bool{"id-1": true}},
+	)
+	p.pausedRetryAfter = 10 * time.Second // если бы дошли до paused — зависли бы
+	got := p.Handle(context.Background(), makeEnvelope(t, "partner/echo"), nil)
+	assert.Equal(t, HandleAck, got, "отменённое сообщение paused-узла → Ack (не Retry)")
+	assert.Equal(t, 0, httpc.calls)
+}
+
+// TestAsync_CancelSetError_Delivers (§34.4): ошибка проверки cancel-set →
+// fail-open, сообщение доставляется (2xx → Ack, HTTP вызван).
+func TestAsync_CancelSetError_Delivers(t *testing.T) {
+	t.Parallel()
+
+	node := &domain.Node{Path: "partner/echo", Status: domain.NodeStatusEnabled, TimeoutMs: 1000, ClickHouseTable: "nexus.log_x"}
+	p, httpc := newAsyncProcessorWithCancel(t,
+		&stubAsyncNodeReader{node: node},
+		&port.HTTPResponse{StatusCode: 200, Body: []byte("ok")},
+		&stubDLQProducer{},
+		&stubCancelSet{err: assertSomeError()},
+	)
+	got := p.Handle(context.Background(), makeEnvelope(t, "partner/echo"), nil)
+	assert.Equal(t, HandleAck, got, "ошибка cancel-set → доставляем (fail-open), 2xx → Ack")
+	assert.Equal(t, 1, httpc.calls, "fail-open: HTTP-вызов идёт")
 }
 
 func makeEnvelope(t *testing.T, nodePath string) []byte {

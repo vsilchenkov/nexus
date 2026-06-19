@@ -336,6 +336,49 @@ func (u *NodeUsecase) Update(ctx context.Context, actor Actor, n *domain.Node, t
 	return nil
 }
 
+// SetStatus меняет ТОЛЬКО статус узла (§35) — лёгкая альтернатива полному Update
+// для кнопок «Пауза»/«Отключить». Узел читается из репо (с расшифрованными
+// кредами) и сохраняется как есть, меняется лишь Status — прочие поля/креды/
+// allowlist-снимок не трогаются, таблица CH не перепровижинится.
+func (u *NodeUsecase) SetStatus(ctx context.Context, actor Actor, id, teamID string, status domain.NodeStatus) error {
+	if !status.Valid() {
+		return domain.ErrNodeInvalidStatus
+	}
+	old, err := u.repo.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if teamID != "" && old.TeamID != teamID {
+		return domain.ErrNodeNotFound
+	}
+	if old.Status == status {
+		return nil // no-op
+	}
+	updated := *old
+	updated.Status = status
+	diff := map[string]any{"status": map[string]string{"before": string(old.Status), "after": string(status)}}
+	if u.uow != nil {
+		if err := u.uow.Execute(ctx, func(ctx context.Context, r port.Repos) error {
+			if err := r.Nodes.Update(ctx, &updated); err != nil {
+				return err
+			}
+			return r.Audit.Write(ctx, auditEntry(actor, domain.ActionNodeUpdate, "node", id, diff))
+		}); err != nil {
+			return err
+		}
+	} else {
+		if err := u.repo.Update(ctx, &updated); err != nil {
+			return err
+		}
+		u.audit.Log(ctx, actor, domain.ActionNodeUpdate, "node", id, diff)
+	}
+	if err := u.cache.Set(ctx, &updated, u.cacheTTL); err != nil {
+		u.logger.Warn("cache set after status change failed",
+			u.logger.Str("path", updated.Path), u.logger.Err(err))
+	}
+	return nil
+}
+
 // Delete удаляет узел. teamID — scope multi-tenancy v2.
 func (u *NodeUsecase) Delete(ctx context.Context, actor Actor, id, teamID string) error {
 	n, err := u.repo.Get(ctx, id)

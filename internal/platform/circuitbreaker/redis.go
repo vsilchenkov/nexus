@@ -127,6 +127,28 @@ func (b *Breaker) RecordFailure(ctx context.Context, key string) error {
 	return nil
 }
 
+// IsOpen — read-only проверка: breaker открыт И cooldown ещё НЕ истёк
+// (адрес считается мёртвым прямо сейчас). Открытый breaker с истёкшим cooldown
+// → false: пусть следующий Allow выдаст half-open-пробу. half_open и closed →
+// false. В отличие от Allow без побочных эффектов — не расходует half-open-пробу
+// и не меняет состояние. Используется DLQ-репроцессором (§36.3 шаг5), чтобы не
+// плодить fast-fail-churn, пока адрес мёртв.
+func (b *Breaker) IsOpen(ctx context.Context, key string) (bool, error) {
+	k := "circuit:" + key
+	vals, err := b.client.HMGet(ctx, k, "state", "opened_at").Result()
+	if err != nil {
+		// fail-open: при ошибке Redis не считаем breaker открытым (§9.4).
+		return false, fmt.Errorf("hmget: %w", err)
+	}
+	state, _ := vals[0].(string)
+	if State(state) != StateOpen {
+		return false, nil
+	}
+	openedStr, _ := vals[1].(string)
+	opened, _ := strconv.ParseInt(openedStr, 10, 64)
+	return time.Now().UnixNano()-opened < b.cooldown.Nanoseconds(), nil
+}
+
 // State возвращает текущее состояние (для диагностики/UI).
 func (b *Breaker) State(ctx context.Context, key string) (State, error) {
 	v, err := b.client.HGet(ctx, "circuit:"+key, "state").Result()

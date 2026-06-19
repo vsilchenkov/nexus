@@ -505,6 +505,14 @@ Compose автоматически подхватывает `docker-compose.over
   (`disabled` — по умолчанию false, `reconcile_sec` — 15) — Puller-воркеры живут в Receiver; при
   отсутствии узлов RabbitMQAsync это no-op. Health-снимки воркеров пишутся в Redis-hash `rmq:health`
   (Web читает для UI) — дополнительной инфраструктуры не требуют.
+- **§36 — авто-репроцессор DLQ.** Миграции `0017_node_dlq_ttl` и `0018_node_dlq_retry_delay` добавляют в
+  `nodes` колонки `dlq_ttl_seconds` (`NOT NULL DEFAULT 86400` = 24 ч) и `dlq_retry_delay_seconds`
+  (`NOT NULL DEFAULT 300` = 5 мин). Аддитивные: `NOT NULL DEFAULT` атомарно заполняет существующие узлы
+  дефолтами — отдельный backfill не нужен, поведение существующих узлов не меняется. Откат (`down`) просто
+  удаляет колонки. **Новый конфиг:** опциональная секция `sender.reprocessor` (`disabled` false→включён,
+  `interval_sec` 300, `max_scan` 1000) — есть дефолты, при отсутствии секции репроцессор работает с ними.
+  Отдельной инфраструктуры/ENV не требует: sweeper читает существующий `nexus.async.dlq` отдельной
+  consumer-группой `<consumer_group>-dlq-reprocess`.
 - **Вручную** (для контролируемых деплоев — применить до старта трафика):
 
   | Действие | Команда (нативно) | Команда (в Docker) |
@@ -609,6 +617,15 @@ override-файл и переменная `VERSION` в `.env` для этого 
 fallback-маркер `0.0.0-dev` (сборка совсем без git) и вручную не бампятся; `web-ui/package.json`
 к `/api/version` отношения не имеет.
 
+> **Суффикс `-dirty` (например `1.0.0-dirty`).** `git describe --dirty` дописывает `-dirty`, если
+> на момент сборки в рабочем дереве есть **незакоммиченные изменения отслеживаемых файлов** (staged
+> или unstaged; untracked-файлы не считаются). Так как образ собирается из текущего checkout'а
+> (`COPY . .` копирует дерево как есть), любая локальная правка на сервере уедет в версию образа —
+> и `/api/version` перестанет соответствовать тегу. **Перед `--build` дерево должно быть чистым:**
+> собирай из свежего detached-checkout тега и проверяй `git status --porcelain` (должно быть пусто).
+> Частый самострел — пересборка генерируемых, но отслеживаемых файлов (`docs/` через `make swagger`,
+> `internal/web/static/` через `make build-ui`) без коммита: закоммить их до сборки.
+
 ### 9.5. Выпуск новой версии (тег → сборка на сервере)
 
 **Коротко — три шага.** Версия = git-тег; деплой = пересборка на сервере из этого тега
@@ -626,6 +643,7 @@ git push origin v1.0.0                      # CI прогонит test/lint/buil
 cd nexus
 git fetch --tags
 git checkout v1.0.0                         # checkout С .git — нужен для git describe
+git status --porcelain                      # ДОЛЖНО быть пусто — иначе версия уедет как "-dirty" (§9.4)
 docker compose up -d --build web receiver sender         # Вариант C (корневой compose)
 #   A: docker compose -f deploy/docker-compose.yml up -d --build web receiver sender
 #   B: docker compose -f deploy/docker-compose.app.yml up -d --build

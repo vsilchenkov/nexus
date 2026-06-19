@@ -4,11 +4,18 @@ import { useTranslation } from "react-i18next";
 
 import { api } from "../../api/client";
 
-type GeneralSettings = { public_base_url?: string };
+type GeneralSettings = { public_base_url?: string; version_override?: string };
+type SecuritySettings = { session_ttl_seconds?: number };
 type AppSettings = {
   general?: GeneralSettings;
+  security?: SecuritySettings;
   updated_at?: string;
 };
+type VersionInfo = { version: string; override_allowed?: boolean };
+
+// Длительность сессии задаётся в минутах в UI, хранится в секундах (§34.2).
+const SESSION_MIN_MINUTES = 5; // 300 c
+const SESSION_MAX_MINUTES = 30 * 24 * 60; // 30 суток
 
 // GeneralPanel — общие настройки приложения (§28, Пункт 1): публичный адрес,
 // под которым опубликован Web. Если задан, UI собирает полный адрес узла от
@@ -22,20 +29,46 @@ export function GeneralPanel() {
     queryFn: () => api.get<AppSettings>("/api/settings/app"),
   });
 
+  // §34.3: поле ручного override версии видно только если бэкенд разрешает
+  // (web.allow_version_override — dev/staging). В проде гейт выключен.
+  const version = useQuery({
+    queryKey: ["version"],
+    queryFn: () => api.get<VersionInfo>("/api/version"),
+    staleTime: Infinity,
+  });
+  const overrideAllowed = version.data?.override_allowed ?? false;
+
   const [url, setUrl] = useState("");
+  const [versionOverride, setVersionOverride] = useState("");
+  const [sessionMinutes, setSessionMinutes] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (data) setUrl(data.general?.public_base_url ?? "");
+    if (data) {
+      setUrl(data.general?.public_base_url ?? "");
+      setVersionOverride(data.general?.version_override ?? "");
+      const secs = data.security?.session_ttl_seconds;
+      setSessionMinutes(secs ? String(Math.round(secs / 60)) : "");
+    }
   }, [data]);
 
   const save = useMutation({
-    mutationFn: () =>
-      api.put("/api/settings/app", { general: { public_base_url: url.trim() } }),
+    mutationFn: () => {
+      const general: GeneralSettings = { public_base_url: url.trim() };
+      if (overrideAllowed) general.version_override = versionOverride.trim();
+      const body: { general: GeneralSettings; security?: SecuritySettings } = { general };
+      // Длительность сессии: пусто — не трогаем (остаётся из env/текущего).
+      const mins = sessionMinutes.trim();
+      if (mins !== "") {
+        body.security = { session_ttl_seconds: Math.round(Number(mins) * 60) };
+      }
+      return api.put("/api/settings/app", body);
+    },
     onSuccess: () => {
       setError(null);
       qc.invalidateQueries({ queryKey: ["app-settings"] });
       qc.invalidateQueries({ queryKey: ["public-settings"] });
+      qc.invalidateQueries({ queryKey: ["version"] });
     },
     onError: (e: { response?: { data?: { error?: string } } }) =>
       setError(e?.response?.data?.error ?? t("common.error")),
@@ -70,6 +103,38 @@ export function GeneralPanel() {
           className="w-full rounded-md bg-bg-muted px-3 py-2 font-mono text-xs outline-none"
         />
         <p className="text-xs text-fg-subtle">{t("settings.general.public_base_url_example")}</p>
+      </div>
+
+      {overrideAllowed && (
+        <div className="max-w-3xl space-y-1">
+          <label className="text-xs uppercase tracking-wider text-fg-muted">
+            {t("settings.general.version_override")}
+          </label>
+          <input
+            type="text"
+            value={versionOverride}
+            onChange={(e) => setVersionOverride(e.target.value)}
+            placeholder={version.data?.version ?? "dev-local"}
+            className="w-full rounded-md bg-bg-muted px-3 py-2 font-mono text-xs outline-none"
+          />
+          <p className="text-xs text-fg-subtle">{t("settings.general.version_override_hint")}</p>
+        </div>
+      )}
+
+      <div className="max-w-3xl space-y-1">
+        <label className="text-xs uppercase tracking-wider text-fg-muted">
+          {t("settings.general.session_ttl")}
+        </label>
+        <input
+          type="number"
+          min={SESSION_MIN_MINUTES}
+          max={SESSION_MAX_MINUTES}
+          value={sessionMinutes}
+          onChange={(e) => setSessionMinutes(e.target.value)}
+          placeholder="1440"
+          className="w-full rounded-md bg-bg-muted px-3 py-2 font-mono text-xs outline-none"
+        />
+        <p className="text-xs text-fg-subtle">{t("settings.general.session_ttl_hint")}</p>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">

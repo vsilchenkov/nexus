@@ -98,8 +98,11 @@ type SendRequest struct {
 	LoggingEnabled     bool  `protobuf:"varint,25,opt,name=logging_enabled,json=loggingEnabled,proto3" json:"logging_enabled,omitempty"`                 // false → лог в ClickHouse не пишется совсем
 	MaxBodySizeEnabled bool  `protobuf:"varint,26,opt,name=max_body_size_enabled,json=maxBodySizeEnabled,proto3" json:"max_body_size_enabled,omitempty"` // включает обрезку сохраняемых тел
 	MaxBodySize        int32 `protobuf:"varint,27,opt,name=max_body_size,json=maxBodySize,proto3" json:"max_body_size,omitempty"`                        // макс. число символов (рун) в request/response
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// §37: UUID узла — пишется в колонку node_id лог-таблицы, чтобы различать узлы,
+	// делящие одну ClickHouse-таблицу (per-node атрибуция метрик/логов/очистки).
+	NodeId        string `protobuf:"bytes,28,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SendRequest) Reset() {
@@ -258,6 +261,13 @@ func (x *SendRequest) GetMaxBodySize() int32 {
 	return 0
 }
 
+func (x *SendRequest) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
+	}
+	return ""
+}
+
 type SendResponse struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
 	StatusCode int32                  `protobuf:"varint,1,opt,name=status_code,json=statusCode,proto3" json:"status_code,omitempty"`
@@ -351,7 +361,7 @@ const file_proto_sender_v1_sender_proto_rawDesc = "" +
 	"\x1cproto/sender/v1/sender.proto\x12\x0fnexus.sender.v1\"?\n" +
 	"\n" +
 	"AuthConfig\x121\n" +
-	"\x14authorization_header\x18\x01 \x01(\tR\x13authorizationHeader\"\xe0\x05\n" +
+	"\x14authorization_header\x18\x01 \x01(\tR\x13authorizationHeader\"\xf9\x05\n" +
 	"\vSendRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\tnode_path\x18\x02 \x01(\tR\bnodePath\x12\x1d\n" +
@@ -375,7 +385,8 @@ const file_proto_sender_v1_sender_proto_rawDesc = "" +
 	"\tclient_ip\x18\x18 \x01(\tR\bclientIp\x12'\n" +
 	"\x0flogging_enabled\x18\x19 \x01(\bR\x0eloggingEnabled\x121\n" +
 	"\x15max_body_size_enabled\x18\x1a \x01(\bR\x12maxBodySizeEnabled\x12\"\n" +
-	"\rmax_body_size\x18\x1b \x01(\x05R\vmaxBodySize\x1a:\n" +
+	"\rmax_body_size\x18\x1b \x01(\x05R\vmaxBodySize\x12\x17\n" +
+	"\anode_id\x18\x1c \x01(\tR\x06nodeId\x1a:\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x98\x02\n" +

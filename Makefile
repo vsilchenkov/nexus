@@ -26,6 +26,16 @@ VERSION_LDFLAGS := -X $(PKG_BUILD).Version=$(VERSION) -X $(PKG_BUILD).Commit=$(G
 # LDFLAGS оставляем переопределяемым (base), полный набор с версией — LDFLAGS_FULL.
 LDFLAGS_FULL = $(LDFLAGS) $(VERSION_LDFLAGS)
 
+# Грязное дерево вшивается в версию бинаря суффиксом "-dirty" (git describe --dirty).
+# Для build-целей предупреждаем (не блокируя): иначе в собранный артефакт уедет
+# версия вида "1.1.0-dirty", и строка версии перестаёт соответствовать тегу.
+# Чистая сборка тега — с detached-checkout: `git checkout vX.Y.Z` (git status пуст).
+ifneq (,$(findstring -dirty,$(VERSION)))
+ifneq (,$(filter build%,$(MAKECMDGOALS)))
+  $(warning ВНИМАНИЕ: рабочее дерево грязное — бинарь получит версию "$(VERSION)". Закоммить/застешь правки или собери с чистого тега (git checkout vX.Y.Z).)
+endif
+endif
+
 ifeq ($(OS),Windows_NT)
     GOEXE := .exe
     RM    := del /Q
@@ -132,7 +142,8 @@ docker-build: ## Сборка всех Docker-образов
 docker-up: ## Поднять полный стек
 	$(COMPOSE) $(COMPOSE_F) up -d
 
-docker-up-dev: ## Поднять только зависимости (для локального make run-*)
+docker-up-dev: ## Поднять зависимости nexus-* (НЕ нужно, если уже есть стек `services` — см. docs/STAND_TESTING.md §1)
+	@echo "ВНИМАНИЕ: если уже запущен docker-стек 'services' (postgres/redis/clickhouse/kafka), эту цель запускать НЕ НУЖНО — config_debug.yml указывает на него. Иначе создашь дублирующие nexus-* на занятых портах."
 	$(COMPOSE) $(COMPOSE_DEV) up -d postgres redis clickhouse kafka prometheus
 
 docker-down: ## Остановить стек
@@ -187,7 +198,7 @@ INTEGRATION_TIMEOUT ?= 20m
 # группы успели отработать и отчитаться даже при её падении.
 # Регексы -run в ДВОЙНЫХ кавычках — переносимо между cmd.exe (Windows) и sh.
 # Запуск отдельной группы: `make test-int-rmq` и т.п.
-test-integration: test-int-pg test-int-ch test-int-catalog test-int-receiver test-int-rmq test-int-sender ## Integration-тесты под-прогонами (требует Docker; 20m на группу)
+test-integration: test-int-pg test-int-ch test-int-catalog test-int-receiver test-int-rmq test-int-sender test-int-queue ## Integration-тесты под-прогонами (требует Docker; 20m на группу)
 
 test-int-pg: ## integration: Postgres-узлы/миграции/multi-tenancy
 	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestNodeRepo|^TestNodeUC|^TestNodeCache|^TestMigrations|^TestMultiTenancy" ./tests/integration/...
@@ -204,8 +215,11 @@ test-int-receiver: ## integration: Receiver sync/incoming-auth
 test-int-rmq: ## integration: RabbitMQAsync Puller (§27)
 	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestRMQPuller" ./tests/integration/...
 
-test-int-sender: ## integration: Sender async + DLQ (Kafka)
-	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestSender_Async" ./tests/integration/...
+test-int-sender: ## integration: Sender async + DLQ + DLQ-репроцессор (Kafka)
+	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestSender_" ./tests/integration/...
+
+test-int-queue: ## integration: управление async-очередью §35 + tombstones (Kafka+Redis)
+	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestAsyncQueue|^TestQueueCancel" ./tests/integration/...
 
 sqlc-gen: ## Phase 1: генерация Go-кода из SQL через sqlc
 	@echo "TODO Phase 1: sqlc generate"

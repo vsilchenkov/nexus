@@ -21,6 +21,7 @@ import (
 type SendInput struct {
 	ID         string
 	NodePath   string
+	NodeID     string // §37: UUID узла → колонка node_id лога (per-node атрибуция)
 	RootMethod domain.RootMethod
 
 	TargetURL string
@@ -109,6 +110,7 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		DateRequest:     t0,
 		Host:            u.host,
 		IP:              in.ClientIP,
+		NodeID:          in.NodeID,
 	}
 	if in.LogRequestBody {
 		rec.Request = truncateRunes(string(in.Body), in.MaxBodySizeEnabled, in.MaxBodySize)

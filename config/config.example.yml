@@ -183,6 +183,14 @@ sender:
     dial_timeout_ms: 5000        # Таймаут установки TCP-соединения (мс).
     tls_handshake_timeout_ms: 5000 # Таймаут TLS-рукопожатия (мс).
   workers: 50                    # Число воркеров обработки async-задач.
+  # §36: авто-репроцессор DLQ — фоновый sweeper над nexus.async.dlq, повторно
+  # доставляет неудачные async-сообщения до per-node dlq_ttl_seconds.
+  reprocessor:
+    disabled: false              # Рубильник sweeper'а (false → включён).
+    interval_sec: 60             # Период прохода (сек, раз в минуту). Эффективная пауза
+                                 # повтора = max(interval_sec, dlq_retry_delay_seconds узла);
+                                 # держите ≤ минимального per-node delay, который хотите задавать.
+    max_scan: 1000               # Максимум сообщений за один проход (защита брокеров).
 
 # Web Service — REST API под /api/* и встроенный SPA (embed.FS).
 web:
@@ -199,6 +207,7 @@ web:
   login_rate_limit_per_min: 10                  # Анти-брутфорс /api/auth/login: попыток/мин на IP и на login (Phase AUD.4). -1 = выключить.
   # trusted_proxies: ["10.0.0.0/8"]                # Phase AUD.5: чьим X-Forwarded-For верить; дефолт — loopback + приватные сети.
   swagger_enabled: false                        # Отдавать ли Swagger UI Web'а (выключай в prod).
+  allow_version_override: false                 # §34.3: разрешить ручной override версии в настройках (dev/staging). В prod — false: версия всегда из git.
   receiver_url: http://receiver:8080            # Base URL Receiver: replay-запросы (§7.4.1) и проксирование идут через реальный pipeline.
   # §32.2: «свои» authority (host или host:port) для запрета self-referencing target_url узла.
   # Пусто → выводится из receiver_url. Полезно за реверс-прокси, когда внешний адрес отличается.

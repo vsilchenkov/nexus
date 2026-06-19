@@ -53,6 +53,10 @@ type OtelSection struct {
 type BuildSection struct {
 	ProjectName string `yaml:"project_name"`
 	Version     string `yaml:"version"`
+	// Commit / BuildDate — вшиваются ldflags'ом из git (см. Makefile) и
+	// копируются из build.Option в bootstrap. Отдаются в GET /api/version (§34.3).
+	Commit    string `yaml:"commit"`
+	BuildDate string `yaml:"build_date"`
 }
 
 // LoggingSection — параметры логгера. Поля совпадают с
@@ -222,11 +226,22 @@ type ReceiverSenderGRPCConfig struct {
 }
 
 type SenderSection struct {
-	GRPCAddr                 string                 `yaml:"grpc_addr"`
-	AdminHTTPAddr            string                 `yaml:"admin_http_addr"`
-	GRPCMaxConcurrentStreams uint32                 `yaml:"grpc_max_concurrent_streams"`
-	HTTPClient               SenderHTTPClientConfig `yaml:"http_client"`
-	Workers                  int                    `yaml:"workers"`
+	GRPCAddr                 string                  `yaml:"grpc_addr"`
+	AdminHTTPAddr            string                  `yaml:"admin_http_addr"`
+	GRPCMaxConcurrentStreams uint32                  `yaml:"grpc_max_concurrent_streams"`
+	HTTPClient               SenderHTTPClientConfig  `yaml:"http_client"`
+	Workers                  int                     `yaml:"workers"`
+	Reprocessor              SenderReprocessorConfig `yaml:"reprocessor"`
+}
+
+// SenderReprocessorConfig — глобальные параметры авто-репроцессора DLQ (§36).
+// Sweeper живёт только в Sender (читает nexus.async.dlq отдельной группой).
+// По умолчанию включён (Disabled=false, как у ReceiverPullerConfig) — узлов с
+// неудачными доставками может не быть, тогда проход — почти no-op.
+type SenderReprocessorConfig struct {
+	Disabled    bool `yaml:"disabled"`     // §36: выключатель sweeper'а (default false → включён)
+	IntervalSec int  `yaml:"interval_sec"` // §36: период прохода (default 60с — раз в минуту)
+	MaxScan     int  `yaml:"max_scan"`     // §36: cap сообщений за проход (default 1000)
 }
 
 type SenderHTTPClientConfig struct {
@@ -256,6 +271,11 @@ type WebSection struct {
 	// (Phase AUD.5). Пустой список → дефолт: loopback + приватные сети.
 	TrustedProxies []string `yaml:"trusted_proxies"`
 	SwaggerEnabled bool     `yaml:"swagger_enabled"`
+	// AllowVersionOverride — гейт ручного override версии (§34.3). Дефолт false
+	// (прод-безопасно): только в dev/staging-конфиге ставится true, разрешая
+	// admin'у задать app_settings.general.version_override. В проде версия всегда
+	// из git (ldflags), а запись override отклоняется (403).
+	AllowVersionOverride bool `yaml:"allow_version_override"`
 	// ReceiverURL — base URL Receiver Service (e.g. "http://receiver:8080").
 	// Используется для replay-запросов (§7.4.1): Web отправляет реплай через
 	// реальный pipeline Receiver, а не через bypass.

@@ -37,6 +37,8 @@ type CreateNodeRequest struct {
 	ClickHouseTable         string   `json:"clickhouse_table" binding:"omitempty,max=129"`
 	ClickHouseTemplateID    string   `json:"clickhouse_template_id" binding:"omitempty,uuid"`
 	ClickHouseRetentionDays int32    `json:"clickhouse_retention_days" binding:"omitempty,min=0,max=3650"`
+	DLQTTLSeconds           int32    `json:"dlq_ttl_seconds" binding:"omitempty,min=60,max=2592000"`
+	DLQRetryDelaySeconds    int32    `json:"dlq_retry_delay_seconds" binding:"omitempty,min=1,max=86400"`
 	Comment                 string   `json:"comment" binding:"omitempty,max=2000"`
 	Status                  string   `json:"status" binding:"omitempty,oneof=enabled disabled paused"`
 	LogRequestBody          bool     `json:"log_request_body"`
@@ -94,6 +96,8 @@ type NodeResponse struct {
 	ClickHouseTable         string   `json:"clickhouse_table"`
 	ClickHouseTemplateID    string   `json:"clickhouse_template_id"`
 	ClickHouseRetentionDays int32    `json:"clickhouse_retention_days"`
+	DLQTTLSeconds           int32    `json:"dlq_ttl_seconds"`
+	DLQRetryDelaySeconds    int32    `json:"dlq_retry_delay_seconds"`
 	Comment                 string   `json:"comment"`
 	Status                  string   `json:"status"`
 	TeamID                  string   `json:"team_id"`
@@ -193,6 +197,8 @@ func reqToDomain(r CreateNodeRequest) *domain.Node {
 		ClickHouseTable:         r.ClickHouseTable,
 		ClickHouseTemplateID:    r.ClickHouseTemplateID,
 		ClickHouseRetentionDays: r.ClickHouseRetentionDays,
+		DLQTTLSeconds:           r.DLQTTLSeconds,
+		DLQRetryDelaySeconds:    r.DLQRetryDelaySeconds,
 		Comment:                 r.Comment,
 		Status:                  domain.NodeStatus(r.Status),
 		LogRequestBody:          r.LogRequestBody,
@@ -241,6 +247,8 @@ func nodeToResponse(n *domain.Node) NodeResponse {
 		ClickHouseTable:         n.ClickHouseTable,
 		ClickHouseTemplateID:    n.ClickHouseTemplateID,
 		ClickHouseRetentionDays: n.ClickHouseRetentionDays,
+		DLQTTLSeconds:           n.DLQTTLSeconds,
+		DLQRetryDelaySeconds:    n.DLQRetryDelaySeconds,
 		Comment:                 n.Comment,
 		Status:                  string(n.Status),
 		TeamID:                  n.TeamID,

@@ -31,6 +31,7 @@ const (
 	SectionSentry        Section = "sentry"
 	SectionClickHouse    Section = "clickhouse"
 	SectionNotifications Section = "notifications"
+	SectionSecurity      Section = "security" // §34.2: длительность сессии
 	SectionAll           Section = "all"
 )
 
@@ -132,7 +133,7 @@ func (s *Subscriber) handle(ctx context.Context, payload string) {
 	}
 	sections := []Section{msg.Section}
 	if msg.Section == SectionAll {
-		sections = []Section{SectionSentry, SectionClickHouse, SectionNotifications}
+		sections = []Section{SectionSentry, SectionClickHouse, SectionNotifications, SectionSecurity}
 	}
 
 	s.mu.RLock()

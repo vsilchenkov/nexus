@@ -37,11 +37,20 @@
 | RabbitMQ management | http://localhost:15672 (guest/guest) |
 | echosrv (получатель) | http://localhost:9999 |
 
-Зависимости (порты, опубликованные на хост для нативного запуска): PostgreSQL
-`:5432`, Redis `:6379`, ClickHouse `:19000` (native protocol), Kafka `:9092`,
-Prometheus `:9099`. Адреса/креды для нативного запуска зашиты в
-[config/config_debug.yml](../config/config_debug.yml); для Docker-стека — в `.env`
-(docker-сетевые хосты `postgres`/`redis`/`clickhouse`/`kafka`).
+Зависимости для нативного запуска берутся из **постоянного docker-стека `services`**
+(compose-проект `services`, уже запущен на машине разработчика): PostgreSQL `:5432`,
+Redis `:6379`, ClickHouse `:19000` (native) / `:18123` (HTTP), Kafka `:9092`.
+Адреса/креды зашиты в [config/config_debug.yml](../config/config_debug.yml) и **уже
+соответствуют `services`** (postgres `postgres`/`vOkjDn`/db `nexus`; redis ACL-пользователь
+`sa`/`I2MV5s`; clickhouse `default` без пароля; kafka `localhost:9092`).
+
+> **Не поднимай свои зависимости через `make docker-up-dev`** — это создаёт
+> дублирующие контейнеры `nexus-*`, которые не могут занять опубликованные порты
+> (их держит `services`) и только путают (две Redis/Postgres). Используй уже
+> поднятый `services`. Prometheus в `services` **нет** — метрики панели (Overview
+> KPI/throughput) деградируют в нули (это норма; per-node KPI/график узла всё равно
+> считаются из ClickHouse). RabbitMQ в `services` тоже нет — для RabbitMQAsync подними
+> его отдельно. Docker-стек Варианта A (`.env`) — отдельная история.
 
 ---
 
@@ -61,26 +70,26 @@ make set-admin-password PASSWORD=secret   # bootstrap пароля admin (иде
 `ENCRYPTION_KEY` сервисы получают из `.env` (`env_file`). echosrv виден Receiver'у
 как `http://host.docker.internal:9999`.
 
-### Вариант B — зависимости в Docker, сервисы нативно (быстрая итерация)
+### Вариант B — зависимости из стека `services`, сервисы нативно (быстрая итерация)
+
+Зависимости НЕ поднимаем — используем уже запущенный стек `services` (см. §0).
+Проверить, что он жив: `docker ps --filter label=com.docker.compose.project=services`
+(ожидаем postgres/redis/clickhouse/kafka — healthy). **`make docker-up-dev` не запускаем.**
 
 ```bash
-make docker-up-dev             # только postgres/redis/clickhouse/kafka/prometheus
-
 # ВАЖНО: нативный --debug-запуск читает ENCRYPTION_KEY из окружения (НЕ из .env).
 # Ключ должен совпадать с тем, которым зашифрованы креды в БД (значение из .env).
-# Плюс PROMETHEUS_URL — иначе Web считает Prometheus недоступным и метрики панели
-# (Overview KPI/throughput) будут НУЛЕВЫМИ (prometheus_available=false). Prometheus
-# из deps скрейпит нативные сервисы по host.docker.internal; на хосте он на :9099.
+# PROMETHEUS_URL опционален: в стеке `services` Prometheus НЕТ — без него метрики
+# панели деградируют в нули (норма). Если нужен — подними Prometheus отдельно и
+# задай PROMETHEUS_URL на его адрес.
 # PowerShell:
 $env:ENCRYPTION_KEY = (Select-String -Path .env -Pattern '^ENCRYPTION_KEY=').Line.Split('=',2)[1]
-$env:PROMETHEUS_URL = 'http://localhost:9099'
 # bash:
 export $(grep -E '^ENCRYPTION_KEY=' .env)
-export PROMETHEUS_URL=http://localhost:9099
 
-make set-admin-password PASSWORD=secret   # bootstrap пароля admin
-# три сервиса — каждый в своём терминале (config_debug.yml → localhost; для метрик
-# панели run-web должен видеть PROMETHEUS_URL в окружении):
+make migrate-up                            # применить миграции (свежая/обновлённая схема)
+make set-admin-password PASSWORD=secret123 # bootstrap пароля admin (≥8 символов)
+# три сервиса — каждый в своём терминале (config_debug.yml → localhost = стек `services`):
 make run-receiver
 make run-sender
 make run-web
@@ -288,6 +297,41 @@ echosrv (`go run ./cmd/echosrv`) тоже закрыть (`Ctrl+C` / `taskkill /
 
 > Для агента Claude Code: если в ходе задачи ты сам поднимал сервисы стенда (включая временные
 > экземпляры на других портах), **в конце задачи погаси их** и убедись, что порты освобождены.
+
+---
+
+## Браузерная проверка UI (обязательна перед сдачей ТЗ с фронтом)
+
+Backend/unit/integration-тесты, `golangci-lint` и `npm run lint --max-warnings=0` **не ловят
+фронт-баги** (нестабильный react-query `queryKey`, пустой UI при рабочем API, неверная видимость
+кнопок по роли/статусу). Поэтому любое изменение в `web-ui/` перед сдачей **прокликивается живьём
+через Playwright/chromium MCP-агента**. Грабли §35: `queryKey: [..., periodWindow(period)]` (с
+`until: Date.now()`) → вечный refetch → KPI «Неудачные доставки» = «—» при 42 строках в CH; бэкенд,
+unit, integration и линтеры — все зелёные, поймал только браузер.
+
+**Процедура.**
+1. Собрать бандл и пересобрать web (иначе браузер увидит старый embed): `make build-ui` →
+   `go build ./cmd/web` → поднять стенд (Вариант B выше).
+2. Один раз поставить браузер MCP: `npx @playwright/mcp@latest install-browser chrome-for-testing`.
+3. `browser_navigate http://localhost:8000` → логин (admin) → открыть изменённые страницы.
+4. `browser_snapshot` — проверить, что данные/KPI/счётчики **реальны** (не «—»/пусто), сверить с CH
+   (`docker exec clickhouse clickhouse-client -q "SELECT count() FROM <table> WHERE done=0 AND
+   date_request > now() - INTERVAL 1 HOUR"`).
+5. Прокликать действия и снять `browser_snapshot` после каждого; `browser_console_messages
+   onlyErrors=true` обязан быть **0**.
+6. В конце — `browser_close`, погасить стенд.
+
+**Чек-лист вкладки «Очередь» (узел requestAsync, §35).**
+- [ ] KPI «Неудачные доставки» = число из CH (не «—»); список `done=no` за период не пуст, если в CH есть падения.
+- [ ] KPI «Ожидают отправки» = 0 на активном узле (живая очередь пуста — норма).
+- [ ] «Поставить на паузу» → статус-чип «Пауза», баннер про паузу, кнопки → «Возобновить узел» + «Отключить узел».
+- [ ] На паузе видны «Очистить за период» / «Очистить все ожидающие»; на активном — скрыты (чистить нечего).
+- [ ] «Возобновить узел» → статус «Активен», прежние кнопки.
+- [ ] Кнопка «Обновить» в шапке (рядом с «Изменить») крутит иконку и перезагружает данные всех вкладок.
+- [ ] Под viewer/manager вкладка открывается без 403 (failed-view виден; admin-секция/кнопки скрыты).
+- [ ] Консоль без ошибок.
+
+См. [memory] `feedback_browser_testing`.
 
 См. также общий [TESTING.md](../TESTING.md) (unit/integration/loadtest) и
 [DEVELOPMENT.md](../DEVELOPMENT.md) (локальный запуск).

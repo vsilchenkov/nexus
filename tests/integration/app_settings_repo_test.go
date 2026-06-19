@@ -75,3 +75,28 @@ func TestAppSettingsRepo_GeneralRoundTrip_E2E(t *testing.T) {
 	require.NotNil(t, got.General.PublicBaseURL, "public_base_url должен сохраниться")
 	require.Equal(t, publicURL, *got.General.PublicBaseURL)
 }
+
+// TestAppSettingsRepo_SecurityRoundTrip_E2E (§34.2): защита от той же регрессии
+// для секции security — Update обязан сериализовать session_ttl_seconds, иначе
+// Get вернёт security:{} (баг, пойманный на живом стенде: struct в Update
+// пропускал Security).
+func TestAppSettingsRepo_SecurityRoundTrip_E2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	pool, cleanup := startPostgres(t, ctx)
+	defer cleanup()
+
+	repo := pgrepo.NewAppSettingsRepoPg(pool, logging.NewNoop())
+
+	ttl := 600
+	in := &domain.AppSettings{
+		Security: domain.SecuritySettings{SessionTTLSeconds: &ttl},
+	}
+	require.NoError(t, repo.Update(ctx, in))
+
+	got, err := repo.Get(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, got.Security.SessionTTLSeconds, "session_ttl_seconds должен сохраниться")
+	require.Equal(t, 600, *got.Security.SessionTTLSeconds)
+}

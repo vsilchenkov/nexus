@@ -13,11 +13,13 @@ import (
 
 // logReaderMock — отдаёт фиксированные записи на каждый Subscribe-tick.
 type logReaderMock struct {
-	calls  int
-	rows   []*domain.LogRecord
-	err    error
-	getRow *domain.LogRecord
-	getErr error
+	calls       int
+	rows        []*domain.LogRecord
+	err         error
+	getRow      *domain.LogRecord
+	getErr      error
+	failedCount uint64
+	countErr    error
 }
 
 func (m *logReaderMock) GetByID(_ context.Context, _, _ string) (*domain.LogRecord, error) {
@@ -27,7 +29,7 @@ func (m *logReaderMock) GetByID(_ context.Context, _, _ string) (*domain.LogReco
 	return m.getRow, m.getErr
 }
 
-func (m *logReaderMock) ListSince(_ context.Context, _ string, _ int64, _ int) ([]*domain.LogRecord, error) {
+func (m *logReaderMock) ListSince(_ context.Context, _, _ string, _ int64, _ int) ([]*domain.LogRecord, error) {
 	m.calls++
 	return m.rows, m.err
 }
@@ -36,8 +38,15 @@ func (m *logReaderMock) Search(_ context.Context, _ port.LogQuery) ([]*domain.Lo
 	return m.rows, m.err
 }
 
-func (m *logReaderMock) CountErrors(_ context.Context, _ string, _, _ int64) (uint64, error) {
+func (m *logReaderMock) CountErrors(_ context.Context, _, _ string, _, _ int64) (uint64, error) {
 	return 0, nil
+}
+
+func (m *logReaderMock) CountFailed(_ context.Context, _, _ string, _, _ int64) (uint64, error) {
+	return m.failedCount, m.countErr
+}
+func (m *logReaderMock) FailedIDs(_ context.Context, _, _ string, _, _ int64, _ int) ([]string, bool, error) {
+	return nil, false, nil
 }
 
 func TestLogs_ListSinceForwardsToReader(t *testing.T) {
@@ -57,6 +66,40 @@ func TestLogs_ListSinceForwardsToReader(t *testing.T) {
 	}
 	if len(rows) != 2 {
 		t.Fatalf("want 2 rows, got %d", len(rows))
+	}
+}
+
+func TestLogs_CountFailed_ForwardsToReader(t *testing.T) {
+	t.Parallel()
+	r := &logReaderMock{failedCount: 42}
+	nodes := &stubNodeRepo{nodes: map[string]*domain.Node{
+		"n1": {ID: "n1", ClickHouseTable: "t.t", TeamID: "team1", Status: domain.NodeStatusEnabled},
+	}}
+	uc := NewLogsUsecase(r, nodes, logging.NewNoop())
+
+	n, err := uc.CountFailed(context.Background(), "n1", "team1", 0, 0)
+	if err != nil {
+		t.Fatalf("count failed: %v", err)
+	}
+	if n != 42 {
+		t.Fatalf("want 42, got %d", n)
+	}
+}
+
+func TestLogs_CountFailed_TeamScopeAndNoTable(t *testing.T) {
+	t.Parallel()
+	nodes := &stubNodeRepo{nodes: map[string]*domain.Node{
+		"n1": {ID: "n1", ClickHouseTable: "", TeamID: "team1", Status: domain.NodeStatusEnabled},
+	}}
+	uc := NewLogsUsecase(&logReaderMock{failedCount: 5}, nodes, logging.NewNoop())
+
+	// Чужая команда → 404.
+	if _, err := uc.CountFailed(context.Background(), "n1", "other", 0, 0); !errors.Is(err, domain.ErrNodeNotFound) {
+		t.Fatalf("want ErrNodeNotFound, got %v", err)
+	}
+	// Нет таблицы → ErrNodeLogsNotConfigured.
+	if _, err := uc.CountFailed(context.Background(), "n1", "team1", 0, 0); !errors.Is(err, domain.ErrNodeLogsNotConfigured) {
+		t.Fatalf("want ErrNodeLogsNotConfigured, got %v", err)
 	}
 }
 

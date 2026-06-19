@@ -23,11 +23,14 @@ var ErrLoginRateLimited = errors.New("login rate limit exceeded")
 
 // AuthUsecase — login/logout/check; password operations; team-switcher.
 type AuthUsecase struct {
-	users      port.UserRepo
-	sessions   port.SessionRepo
-	teams      port.TeamRepo
-	audit      *AuditUsecase
-	sessionTTL time.Duration
+	users    port.UserRepo
+	sessions port.SessionRepo
+	teams    port.TeamRepo
+	audit    *AuditUsecase
+	// sessionTTL — провайдер актуальной длительности сессии (§34.2). Не
+	// фиксированное значение: возвращает live-TTL, обновляемый из настроек без
+	// рестарта (см. SessionTTLProvider). Новые сессии и sliding-Touch берут его.
+	sessionTTL func() time.Duration
 	logger     logging.Logger
 
 	// Анти-брутфорс логина (Phase AUD.4): rl == nil или limit <= 0 —
@@ -41,7 +44,7 @@ func NewAuthUsecase(
 	sessions port.SessionRepo,
 	teams port.TeamRepo,
 	audit *AuditUsecase,
-	sessionTTL time.Duration,
+	sessionTTL func() time.Duration,
 	logger logging.Logger,
 ) *AuthUsecase {
 	return &AuthUsecase{
@@ -132,7 +135,7 @@ func (u *AuthUsecase) Login(ctx context.Context, login, password, ip string) (st
 		CreatedAt:          now,
 		LastSeenAt:         now,
 	}
-	if err := u.sessions.Create(ctx, s, u.sessionTTL); err != nil {
+	if err := u.sessions.Create(ctx, s, u.sessionTTL()); err != nil {
 		return "", nil, fmt.Errorf("create session: %w", err)
 	}
 	_ = u.users.UpdateLastLogin(ctx, user.ID, now)
@@ -154,7 +157,7 @@ func (u *AuthUsecase) Check(ctx context.Context, token string) (*domain.Session,
 		return nil, err
 	}
 	s.LastSeenAt = time.Now().UTC()
-	_ = u.sessions.Touch(ctx, s, u.sessionTTL)
+	_ = u.sessions.Touch(ctx, s, u.sessionTTL())
 	return s, nil
 }
 
@@ -202,7 +205,7 @@ func (u *AuthUsecase) SwitchTeam(ctx context.Context, actor Actor, token, teamID
 	}
 
 	s.CurrentTeamID = teamID
-	if err := u.sessions.Create(ctx, s, u.sessionTTL); err != nil {
+	if err := u.sessions.Create(ctx, s, u.sessionTTL()); err != nil {
 		return nil, fmt.Errorf("update session: %w", err)
 	}
 	u.audit.Log(ctx, actor, domain.ActionTeamSwitch, "team", teamID, nil)

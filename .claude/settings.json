@@ -22,7 +22,10 @@
       "mcp__playwright__browser_console_messages",
       "mcp__playwright__browser_select_option",
       "mcp__playwright__browser_resize",
-      "Bash(rm -f internal/web/static/assets/*)"
+      "Bash(rm -f internal/web/static/assets/*)",
+      "Bash(make swagger *)",
+      "Bash(go build *)",
+      "Bash(node -e \"const en=require\\('./web-ui/src/locales/en.json'\\),ru=require\\('./web-ui/src/locales/ru.json'\\);function keys\\(o,p=''\\){return Object.entries\\(o\\).flatMap\\(\\([k,v]\\)=>typeof v==='object'&&v?keys\\(v,p+k+'.'\\):[p+k]\\);}const a=new Set\\(keys\\(en\\)\\),b=new Set\\(keys\\(ru\\)\\);const onlyEn=[...a].filter\\(x=>!b.has\\(x\\)\\),onlyRu=[...b].filter\\(x=>!a.has\\(x\\)\\);console.log\\('only en:',onlyEn.length,'only ru:',onlyRu.length\\); if\\(onlyEn.length||onlyRu.length\\){console.log\\(onlyEn,onlyRu\\);process.exit\\(1\\)}\")"
     ],
     "deny": [
       "Bash(rm -rf *)",

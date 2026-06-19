@@ -31,6 +31,7 @@ import (
 	"nexus/internal/platform/metrics"
 	otelpf "nexus/internal/platform/otel"
 	pgpf "nexus/internal/platform/pg"
+	"nexus/internal/platform/queuecancel"
 	recoverypf "nexus/internal/platform/recovery"
 	"nexus/internal/platform/reloader"
 	"nexus/internal/platform/requestid"
@@ -60,6 +61,7 @@ type App struct {
 	chWriter     *chlog.WriterManager
 	producer     *kafkapf.Producer
 	consumer     *kafkaadapter.ConsumerGroup
+	dlqReproc    *kafkaadapter.DLQReprocessor // §36: авто-репроцессор DLQ (nil если выключен)
 	otelShutdown otelpf.ShutdownFunc
 
 	// done-каналы фоновых горутин — Stop дожидается их завершения
@@ -68,6 +70,7 @@ type App struct {
 	housekeepingDone <-chan struct{}
 	kafkaLagDone     <-chan struct{}
 	reloadDone       <-chan struct{}
+	dlqReprocDone    <-chan struct{} // §36: done-канал sweeper'а DLQ
 }
 
 func New(
@@ -102,9 +105,13 @@ func (a *App) Start(ctx context.Context) error {
 
 	// Circuit breaker per node — порог 5 ошибок подряд, cooldown 30s.
 	// Параметры можно вынести в конфиг в Phase 4.
-	var cb usecase.CircuitBreaker
+	var (
+		cb      usecase.CircuitBreaker
+		breaker usecase.BreakerInspector // §36: read-only IsOpen для репроцессора DLQ
+	)
 	if a.redis != nil {
-		cb = circuitbreaker.New(a.redis, 5, 30*time.Second)
+		b := circuitbreaker.New(a.redis, 5, 30*time.Second)
+		cb, breaker = b, b
 	}
 	sendUC := usecase.NewSendUsecase(httpc, a.chWriter, cb, a.logger)
 
@@ -114,9 +121,42 @@ func (a *App) Start(ctx context.Context) error {
 	// Async consumer.
 	a.producer = kafkapf.NewProducer(a.cfg, kafkapf.WithMetrics(a.metrics))
 	nodeReader := nodepg.New(a.pg, a.cipher, a.logger)
-	asyncProc := usecase.NewAsyncProcessor(nodeReader, sendUC, a.producer, a.cfg.Kafka.DLQTopic, a.metrics, a.logger)
+
+	// §37: миграция CH-таблиц — добавить колонку node_id ДО старта consumer'а и
+	// репроцессора (иначе INSERT по новой схеме упадёт на старых таблицах).
+	// Идемпотентно (ALTER … IF NOT EXISTS); новые таблицы — из шаблона.
+	if a.chMgr != nil {
+		if tables, err := nodeReader.ListClickHouseTables(ctx); err != nil {
+			a.logger.Warn("§37 ensure node_id: list tables failed", a.logger.Err(err))
+		} else {
+			chpf.EnsureNodeIDColumn(ctx, a.chMgr.Conn(), tables, a.logger)
+		}
+	}
+	// §34.4: cancel-set отменённых через UI сообщений (Redis). nil при отсутствии
+	// Redis — проверка в AsyncProcessor тогда выключена.
+	var cancelSet usecase.CancelSet
+	if a.redis != nil {
+		cancelSet = queuecancel.New(a.redis)
+	}
+	asyncProc := usecase.NewAsyncProcessor(nodeReader, sendUC, a.producer, cancelSet, a.cfg.Kafka.DLQTopic, a.metrics, a.logger)
 	a.consumer = kafkaadapter.NewConsumerGroup(a.cfg, a.cfg.Kafka.AsyncTopic, asyncProc, a.logger, kafkaadapter.WithMetrics(a.metrics))
 	a.consumer.Start(ctx)
+
+	// §36: авто-репроцессор DLQ — фоновый sweeper над nexus.async.dlq, повторно
+	// доставляет неудачные async-сообщения до TTL. Отдельная consumer-группа,
+	// не мешает основному consumer'у. Выключается sender.reprocessor.disabled.
+	if !a.cfg.Sender.Reprocessor.Disabled {
+		reprocUC := usecase.NewDLQReprocessor(
+			nodeReader, sendUC, a.producer, a.chWriter, cancelSet, breaker,
+			a.cfg.Kafka.DLQTopic, a.metrics, a.logger)
+		a.dlqReproc = kafkaadapter.NewDLQReprocessor(
+			a.cfg, reprocUC,
+			time.Duration(a.cfg.Sender.Reprocessor.IntervalSec)*time.Second,
+			a.cfg.Sender.Reprocessor.MaxScan, a.metrics, a.logger)
+		a.dlqReprocDone = safego.Go(a.logger, "sender.dlqReprocessor", func() {
+			a.dlqReproc.Run(ctx)
+		})
+	}
 
 	// CH partition-drop housekeeping (§4.3 ТЗ): фоновый цикл раз в сутки.
 	hk := usecase.NewCHHousekeeping(a.chMgr, nodeReader, a.logger)
@@ -263,6 +303,11 @@ func (a *App) Stop(ctx context.Context) error {
 	if a.consumer != nil {
 		a.consumer.Stop()
 	}
+	// §36: закрываем consumer DLQ-sweeper'а — Run выйдет из FetchMessage и
+	// завершит горутину (дожидаемся ниже через dlqReprocDone).
+	if a.dlqReproc != nil {
+		a.dlqReproc.Stop()
+	}
 
 	if a.grpcSrv != nil {
 		done := make(chan struct{})
@@ -286,6 +331,7 @@ func (a *App) Stop(ctx context.Context) error {
 	safego.Await(awaitCtx, a.housekeepingDone, a.logger, "sender.chHousekeeping")
 	safego.Await(awaitCtx, a.kafkaLagDone, a.logger, "sender.reportKafkaLag")
 	safego.Await(awaitCtx, a.reloadDone, a.logger, "sender.reloadSubscriber")
+	safego.Await(awaitCtx, a.dlqReprocDone, a.logger, "sender.dlqReprocessor")
 	awaitCancel()
 
 	if a.chWriter != nil {

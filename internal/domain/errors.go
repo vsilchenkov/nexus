@@ -35,6 +35,8 @@ var (
 	ErrNodeTimeoutRange           = errors.New("domain: timeout_ms must be 100..300000")
 	ErrNodeRetryCountRange        = errors.New("domain: retry_count must be 0..10")
 	ErrNodeRetryBackoffRange      = errors.New("domain: retry_backoff_ms must be 0..60000")
+	ErrNodeDLQTTLRange            = errors.New("domain: dlq_ttl_seconds must be 60..2592000")
+	ErrNodeDLQRetryDelayRange     = errors.New("domain: dlq_retry_delay_seconds must be 1..86400")
 	ErrNodeAllowedHostsSize       = errors.New("domain: url_allowed_hosts must have at most 50 elements")
 	ErrNodeForwardHeadersSize     = errors.New("domain: forward_headers must have at most 30 elements")
 	ErrNodeDisabled               = errors.New("domain: node disabled")
@@ -128,6 +130,10 @@ var (
 
 	// Общие настройки (§28, Пункт 1)
 	ErrPublicBaseURLInvalid = errors.New("domain: public_base_url must be an http(s) origin without path or trailing slash")
+
+	// Версия и сессия (§34.2 / §34.3)
+	ErrVersionOverrideForbidden = errors.New("domain: version override is not allowed (web.allow_version_override is off)")
+	ErrSessionTTLInvalid        = errors.New("domain: session_ttl_seconds must be within [300, 2592000]")
 
 	// Team (multi-tenancy v2)
 	ErrTeamNotFound         = errors.New("domain: team not found")

@@ -31,8 +31,8 @@ func TestDefaultCHTemplateSpec_SeedJSON(t *testing.T) {
 	}
 }
 
-// TestRequiredLogColumns_MatchSpec фиксирует обязательную схему §4.3: 20
-// колонок в точном порядке и с точными типами. Если кто-то поменяет
+// TestRequiredLogColumns_MatchSpec фиксирует обязательную схему §4.3/§37: 21
+// колонка в точном порядке и с точными типами. Если кто-то поменяет
 // RequiredLogColumns, разойдясь с insertSQL/selectCols/createNodeLogTable —
 // тест упадёт.
 func TestRequiredLogColumns_MatchSpec(t *testing.T) {
@@ -43,7 +43,7 @@ func TestRequiredLogColumns_MatchSpec(t *testing.T) {
 		{"date_request", "DateTime"}, {"date_response", "DateTime"}, {"duration", "Int32"},
 		{"done", "UInt8"}, {"checksum_request", "FixedString(32)"},
 		{"checksum_response", "FixedString(32)"}, {"Host", "String"}, {"IP", "String"},
-		{"attempts", "Int32"}, {"attempts_details", "String"},
+		{"attempts", "Int32"}, {"attempts_details", "String"}, {"node_id", "String"},
 	}
 	if len(RequiredLogColumns) != len(want) {
 		t.Fatalf("len = %d, want %d", len(RequiredLogColumns), len(want))
@@ -142,7 +142,8 @@ func TestCHTemplate_RenderCreateTable_Default(t *testing.T) {
     Host String,
     IP String,
     attempts Int32,
-    attempts_details String
+    attempts_details String,
+    node_id String
 ) ENGINE = MergeTree
 PARTITION BY toYYYYMM(date_create)
 ORDER BY (date_create, date_request, method)`

@@ -3123,3 +3123,137 @@ Prometheus `NodeThroughput` для top-узлов. Все источники д�
 - **i18n:** новые клиентские ключи `metrics.tooltip.*` / `kafka.tooltip.*` синхронно в `en/ru.json`.
 - **Out of scope (задел v2, нет данных):** разбивка lag по партициям (Prometheus отдаёт агрегат) и
   сравнение «неделю назад» в рядах (есть только дельта к предыдущему периоду той же длины).
+
+## 34. Операбельность: навигация, сессия, версия, async-очередь Kafka, фикс replay
+
+Полный текст раздела — [sections/34-ops-session-version-async-queue.md](sections/34-ops-session-version-async-queue.md).
+
+Пять эксплуатационных доработок, дающих оператору контроль над зашитым в код/конфиг или сломанным.
+
+1. **Навигация (§34.1).** Пункт «Настройки» опускается вниз сайдбара (`mt-auto`, к блоку
+   пользователь/версия) — это вспомогательный функционал, основная навигация остаётся вверху.
+2. **Длительность сессии (§34.2).** TTL сессии (сейчас жёстко из `cfg.Redis.SessionTTLSec`, только
+   рестартом) выносится в UI-настройку, хранится в `app_settings.security.session_ttl_seconds`
+   (`nil`=env). `AuthUsecase` берёт TTL через провайдер `func() time.Duration` (атомарный
+   `SessionTTLProvider`), обновляемый hot-reload'ом (новая секция `security`) — применяется к новым
+   сессиям и sliding-`Touch` **без рестарта**. Валидация `[5 мин, 30 сут]`.
+3. **Версия (§34.3).** `GET /api/version` обогащается до `{version, commit, build_date,
+   override_allowed}` (футер + tooltip). Ручной override отображаемой версии хранится в
+   `app_settings.general.version_override`, но **применяется и редактируется только при включённом
+   серверном флаге** `web.allow_version_override` (дефолт `false`=прод). В проде — всегда git-версия
+   из ldflags, запись override отклоняется (403), поле в UI скрыто.
+4. **Async-очередь Kafka (§34.4).** Новая вкладка «Очередь» на узле `requestAsync`: глубина и список
+   первых 50 сообщений (peek транзиентным `kafka.Reader` без GroupID, от committed до high-watermark,
+   фильтр key=`node.Path`, cap 5000→`capped`) + ленивое тело; удаление выбранного / за период
+   (`PeriodPicker`) / всего. Kafka append-only (нет `DeleteRecords` в `segmentio/kafka-go`) →
+   **логическое удаление через Redis-tombstones** `qcancel:<id>` (TTL=retention): Sender-consumer
+   перед отправкой проверяет cancel-set и пропускает отменённые (commit без отправки/DLQ; fail-open
+   при недоступном Redis). API `/api/nodes/:id/async-queue/{depth,messages,messages/body,purge}` +
+   `DELETE messages/:msgId`, admin + CSRF + audit.
+5. **Фикс replay 405 (§34.5).** Повтор запроса без тела падал с `405 http method not allowed`, т.к.
+   replay слал залогированный **исходящий** метод узла (`orig.Method`=`OutgoingMethod`) как входящий,
+   а Receiver валидирует против `IncomingMethod` (классика: POST-in / GET-out без тела). Фикс: replay
+   шлёт `node.IncomingMethod` (пустой → `POST`).
+
+**Out of scope:** физическое удаление из Kafka (невозможно; tombstone + retention); точный счётчик
+сверх cap (нижняя оценка + `capped`); управление очередью для RabbitMQAsync; override версии в проде.
+
+## 35. Переработка вкладки «Очередь» (перерабатывает §34.4/§34.6)
+
+Полный текст раздела — [sections/35-queue-tab-rework.md](sections/35-queue-tab-rework.md).
+
+Вкладка «Очередь» из §34 на стенде оказалась неработоспособной в реальном сценарии (узел enabled,
+адрес мёртв). Корень — неверная модель потока: при enabled-узле и мёртвом адресе сообщения НЕ копятся
+в `nexus.async`, а уходят в **DLQ** + коммит (Sender: `send.Send` → `publishDLQ`). Живая очередь
+наполняется только при **paused**. Прошлый тест на paused это замаскировал.
+
+- **Источник «неудачных» — ClickHouse, не Kafka-DLQ-peek.** `send.Send` всегда логирует ДО `publishDLQ`,
+  значит каждое DLQ'нутое сообщение есть в CH с `done=false` (status/reason/тело/attempts/время), читается
+  быстро. Дорогой DLQ-peek (`PeekDLQDepth/PeekDLQList`, до 5000×4 каждые 5с при 248k) — **удаляется**.
+  Добавляется дешёвый `LogReader.CountFailed` + `GET /api/nodes/{id}/logs/failed-count` (для KPI); список/
+  тело/replay — существующие `?done=no` + `/log/{id}` + `/logs/{id}/replay`.
+- **Честная семантика очистки.** Живая очередь — tombstone-purge (admin, кнопки только когда pending>0).
+  Неудачи — **без удаления** (Kafka-DLQ физически не чистится — нет `DeleteRecords`, общая партиция; CH —
+  история): фильтр по периоду + «Пауза»/«Отключить» узла (остановить рост) + replay. DLQ истекает по
+  retention (30д).
+- **`PATCH /api/nodes/{id}/status`** (manager+) — лёгкая смена статуса для кнопок «Пауза»/«Отключить»
+  (вместо полного PUT).
+- **RBAC-фикс §34.4:** failed-view — `logs:read` (viewer+); управление живой очередью — admin; вкладка
+  видна viewer+, admin-секция скрыта для не-admin (раньше все роли упирались в 403).
+- **Интерфейс:** KPI-шапка («Ожидают отправки» | «Неудачные доставки») + две секции + hint-баннер,
+  вместо «В очереди 0 / Очистить всё». Переиспользуются компоненты логов (`LogBodies`, `ReplayDialog`,
+  `LogsInitialFilter`+`done`).
+
+**Out of scope:** удаление сообщений Kafka-DLQ; глобальный AlterConfigs retention (на экране Kafka);
+удаление CH-записей неудач (разрушает историю).
+
+## 36. Авто-репроцессор DLQ (повторная доставка неудачных async-сообщений до TTL)
+
+Развивает §34.4/§35. Полный текст — [sections/36-dlq-reprocessor.md](sections/36-dlq-reprocessor.md).
+
+После §35 «неудачные доставки» терминальны (короткий retry → `done=false` в CH + копия в `nexus.async.dlq`
++ commit) — авто-переотправки при восстановлении приёмника нет. §36 добавляет фоновый процесс, аккуратно
+дочищающий DLQ.
+
+- **Модель:** периодический sweeper в Sender (как `ch_housekeeping`, через `safego.Go`), тик раз в
+  `reprocess_interval` (дефолт 5 мин). Отдельная consumer-группа на `nexus.async.dlq`. Тик = базовый backoff.
+- **Логика на сообщение:** резолв узла → tombstone(`qcancel`)→drop → TTL (`now-received_at >
+  dlq_ttl_seconds`)→терминальный `ttl_expired` → статус (disabled→drop, paused→republish, enabled→далее) →
+  retry-backoff (`now < next_attempt_at`→republish без попытки) → circuit breaker открыт→republish без
+  попытки → попытка `SendUsecase.Send`: `2xx`→commit (в CH `done=true`, «восстановлено»),
+  иначе→republish-в-хвост (attempts+1, `next_attempt_at = now + dlq_retry_delay_seconds`)+commit.
+  Republish прекращается на успех/TTL.
+- **Настройки:** per-node `dlq_ttl_seconds` (дефолт 86400=24ч, [60, 2592000]) — миграция 0017; per-node
+  `dlq_retry_delay_seconds` (дефолт 300с=5мин, [1, 86400]) — минимальная пауза перед повтором ошибочной
+  отправки, миграция 0018; обе через domain/PG/DTO/UI/i18n. Global секция `sender.reprocessor`: `disabled`
+  (false→включён), `interval_sec` (дефолт 60с = раз в минуту), `max_scan` (1000). Эффективная пауза
+  повтора = `max(interval_sec, dlq_retry_delay_seconds)` (по умолчанию 1 мин и 5 мин → 5 мин);
+  `interval_sec` держат ≤ минимального per-node delay. Задел: per-node `dlq_reprocess_enabled` тем же паттерном.
+- **UI:** поля «TTL неудачных доставок» (в часах) и «Задержка переотправки» (в секундах) в форме узла;
+  подсказка «повторяется автоматически до TTL» во вкладке «Очередь»; ручной «Повторить» остаётся (форс-повтор).
+- **Метрики:** `nexus_dlq_reprocess_total{node,result=succeeded|failed|ttl_dropped|skipped|dropped}` +
+  `nexus_dlq_reprocess_duration_seconds`.
+
+**Неочевидности:** DLQ нельзя физически чистить → «удаление» успеха = commit без republish; TTL от
+`received_at` (предсказуемый суммарный срок); дубли в CH — observability, не баг; отдельная группа не
+конкурирует с §35-peek/основным consumer'ом.
+
+**Ручная очистка неудачных (§36.10):** оператор может принудительно очистить «Неудачные доставки» узла
+(вкладка «Очередь»): (1) отменяет (tombstone, как §34.4) ID `done=0`-сообщений за окно → DLQ-репроцессор
+дропает их (`result=dropped`, перестаёт повторять); (2) lightweight-`DELETE` записей `done=0` из CH-таблицы
+узла → счётчик/список обнуляются сразу. Эндпоинт `POST /api/nodes/{id}/async-queue/purge-failed`
+(admin-only, `{from?,to?}`). Очистка pending (`.../purge`) теперь доступна всегда (не только на паузе).
+
+**«Повторить все сейчас» (§36.11):** форс-повтор всех неудачных узла за период — каждое `done=0`-сообщение
+пере-инжектируется через Receiver (как построчный replay) и при успехе его оригинал в DLQ отменяется
+(qcancel), чтобы не задвоить доставку (replay-копия + авто-повтор). Эндпоинт `POST
+/api/nodes/{id}/async-queue/replay-failed` (admin-only), cap 500/вызов. Реализация —
+`ReplayUsecase.ReplayFailed` (общий `LogReader.FailedIDs` с §36.10 + `QueueCancelWriter`).
+
+**Out of scope (v2):** экспоненциальный per-message backoff; delay-топик; UI-дашборд репроцессинга.
+
+## 37. Идентификатор узла в логах (per-node атрибуция в общих ClickHouse-таблицах)
+
+Несколько узлов могут писать в одну CH-таблицу логов (`clickhouse_table` задаётся оператором; типичный
+случай — sync+async варианты одного эндпоинта). Без идентификатора узла в записи все per-node запросы на
+общей таблице смешивали узлы (одинаковые счётчики/графики; очистка/replay одного узла задевали другого,
+включая опасный `DELETE`). §37 добавляет колонку **`node_id String`** (UUID узла) в схему лога и фильтр
+по ней.
+
+**Запись (Sender):** `node.ID` прокидывается во все точки записи — sync через gRPC `SendRequest.node_id`
+→ `SendInput.NodeID` → `rec.NodeID`; async/DLQ через `buildSendInput`/`logTTLExpired` (узел резолвится
+локально). File-fallback сериализует поле автоматически.
+
+**Миграция:** колонка в шаблоне → новые таблицы получают её; существующие — идемпотентный
+`ALTER TABLE … ADD COLUMN IF NOT EXISTS node_id String DEFAULT ''` на старте Web и Sender
+(`platform/clickhouse.EnsureNodeIDColumn`).
+
+**Чтение/удаление (Web):** все per-node запросы `LogReaderCH` (ListSince/Search/CountErrors/CountFailed/
+FailedIDs/DeleteFailed/NodeKPI/NodeChart) фильтруют `(node_id = ? OR node_id = '')`; `GetByID` — нет (по
+уникальному ID). `nodeID` прокидывается из usecase (`n.ID`). Legacy-записи (`node_id=''`) видны/чистятся у
+любого co-table узла (старые данные неразличимы — компромисс), новый трафик строго per-node.
+
+**UI:** node id (UUID) выводится во вкладке «Конфиг» узла (read-only, копируемый). Подробности —
+[sections/37-node-id-in-logs.md](sections/37-node-id-in-logs.md).
+
+**Out of scope:** бэкфилл node_id старых записей; вторичный индекс по node_id; запрет общих таблиц.
