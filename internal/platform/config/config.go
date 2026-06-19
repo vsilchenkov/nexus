@@ -240,7 +240,7 @@ type SenderSection struct {
 // неудачными доставками может не быть, тогда проход — почти no-op.
 type SenderReprocessorConfig struct {
 	Disabled    bool `yaml:"disabled"`     // §36: выключатель sweeper'а (default false → включён)
-	IntervalSec int  `yaml:"interval_sec"` // §36: период прохода = базовый backoff (default 300)
+	IntervalSec int  `yaml:"interval_sec"` // §36: период прохода (default 60с — раз в минуту)
 	MaxScan     int  `yaml:"max_scan"`     // §36: cap сообщений за проход (default 1000)
 }
 

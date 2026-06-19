@@ -24,11 +24,21 @@
 
 - **`config.yml` → новая секция `sender.reprocessor`** (есть дефолты, секция опциональна):
   - `disabled` (bool, дефолт `false` → репроцессор включён);
-  - `interval_sec` (int, дефолт `300` = 5 мин) — период прохода sweeper'а = базовый backoff;
+  - `interval_sec` (int, **дефолт `60` = раз в минуту**) — период прохода sweeper'а. Эффективная
+    пауза повтора сообщения = `max(interval_sec, dlq_retry_delay_seconds узла)`, поэтому держите
+    `interval_sec` ≤ минимального per-node `dlq_retry_delay_seconds`, который хотите задавать (иначе
+    уменьшение per-node параметра ниже `interval_sec` не даёт эффекта). **При апгрейде с прежнего
+    дефолта `300`:** если в вашем `config.yml` `interval_sec` задан явно как `300` и вы хотите более
+    частые повторы — уменьшите до `60`;
   - `max_scan` (int, дефолт `1000`) — максимум сообщений за один проход.
 
   Образец — в [config/config.example.yml](config/config.example.yml). На dev-стенде
   ([config/config_debug.yml](config/config_debug.yml)) `interval_sec: 30` для быстрой проверки.
+
+- **Очистка «Неудачных доставок» узла (§36.10)** — без новых конфиг-параметров: новый эндпоинт
+  `POST /api/nodes/{id}/async-queue/purge-failed` (admin/manager). Отменяет авто-повтор неудачных
+  (DLQ-репроцессор перестаёт их повторять) и удаляет записи `done=0` из CH-логов узла. Очистка
+  pending-очереди (`.../purge`) теперь доступна на узле в любом статусе (не только на паузе).
 
 - **Новые миграции PostgreSQL (применяются автоматически на старте, аддитивные):**
   - `0017_node_dlq_ttl` — колонка `nodes.dlq_ttl_seconds` (`NOT NULL DEFAULT 86400` = 24 ч);

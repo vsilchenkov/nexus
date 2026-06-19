@@ -172,7 +172,9 @@ func applyDefaults(c *Config) {
 	}
 	// §36: авто-репроцессор DLQ включён по умолчанию (Disabled=false).
 	if c.Sender.Reprocessor.IntervalSec == 0 {
-		c.Sender.Reprocessor.IntervalSec = 300 // 5 мин — базовый backoff прохода
+		// 60с — проход раз в минуту: позволяет per-node dlq_retry_delay_seconds
+		// опускать вплоть до ~1 мин (эффективная пауза = max(interval, delay)).
+		c.Sender.Reprocessor.IntervalSec = 60
 	}
 	if c.Sender.Reprocessor.MaxScan == 0 {
 		c.Sender.Reprocessor.MaxScan = 1000

@@ -187,7 +187,9 @@ sender:
   # доставляет неудачные async-сообщения до per-node dlq_ttl_seconds.
   reprocessor:
     disabled: false              # Рубильник sweeper'а (false → включён).
-    interval_sec: 300            # Период прохода = базовый backoff (сек, 5 мин).
+    interval_sec: 60             # Период прохода (сек, раз в минуту). Эффективная пауза
+                                 # повтора = max(interval_sec, dlq_retry_delay_seconds узла);
+                                 # держите ≤ минимального per-node delay, который хотите задавать.
     max_scan: 1000               # Максимум сообщений за один проход (защита брокеров).
 
 # Web Service — REST API под /api/* и встроенный SPA (embed.FS).

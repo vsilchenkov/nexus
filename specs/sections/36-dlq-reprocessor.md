@@ -73,9 +73,10 @@ Republish-в-хвост: физически сообщение дублируе�
    паузы между повторами одной ошибочной отправки, независимый от общего темпа прохода.
 
 **Эффективная пауза между повторами = `max(reprocess_interval, dlq_retry_delay_seconds)`.** По умолчанию
-оба равны 5 мин → повтор раз в ~5 мин. `dlq_retry_delay_seconds` «прижимает» паузу снизу, когда интервал
-прохода меньше задержки (например, если sweeper тикает чаще). Чтобы повтор шёл реже/чаще для конкретного
-узла — крутят per-node задержку; общий темп прохода — глобальный `reprocess_interval`.
+`reprocess_interval` = 1 мин (sweeper тикает раз в минуту), `dlq_retry_delay_seconds` = 5 мин → повтор
+раз в ~5 мин. `dlq_retry_delay_seconds` «прижимает» паузу снизу: чтобы повтор шёл реже/чаще для конкретного
+узла — крутят per-node задержку (вплоть до ~1 мин — ниже глобального интервала смысла нет). Общий темп
+прохода — глобальный `reprocess_interval`; держите его ≤ минимального per-node delay, который хотите задавать.
 
 Экспоненциальный backoff (`min(2^attempts, cap)`) — out of scope v1; механика `next_attempt_at` уже
 заложена и наращивается тем же header'ом при желании.
@@ -94,7 +95,8 @@ Republish-в-хвост: физически сообщение дублируе�
 
 **Global (config.yml, секция `sender.reprocessor`):**
 - `disabled` `bool` (дефолт `false` → включён, как `receiver.puller.disabled`) — рубильник sweeper'а.
-- `interval_sec` `int` (дефолт `300` = 5 мин) — период прохода = базовый backoff.
+- `interval_sec` `int` (дефолт `60` = раз в минуту) — период прохода sweeper'а; держите ≤ минимального
+  per-node `dlq_retry_delay_seconds` (эффективная пауза = `max(interval_sec, dlq_retry_delay_seconds)`).
 - `max_scan` `int` (дефолт `1000`) — cap сообщений за один проход (защита брокеров).
 
 «Ещё настройки по TTL по необходимости» — заложено: при желании per-node `dlq_reprocess_enabled bool`
