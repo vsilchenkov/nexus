@@ -62,6 +62,16 @@ type KafkaPoint struct {
 	V    float64
 }
 
+// NodeLogMetrics — ТОЧНЫЕ per-node KPI и временной ряд графика узла ИЗ
+// ClickHouse-логов (§21, вкладки «Обзор»/«Метрики»). Реализуется LogReaderCH.
+// В отличие от Prometheus increase(): точные счётчики по уникальным запросам, без
+// rate-экстраполяции и без зависимости от доступности Prometheus (нет мерцания).
+// table — CH-таблица узла (db.table); пустая → у узла нет логирования.
+type NodeLogMetrics interface {
+	NodeKPI(ctx context.Context, table string, sinceMs, untilMs int64) (NodeKPI, error)
+	NodeChart(ctx context.Context, table string, sinceMs, untilMs int64, buckets int) ([]SeriesPoint, error)
+}
+
 // PromMetrics — глобальные и кросс-сервисные метрики из Prometheus
 // (query API). Реализуется адаптером adapter/out/prometheus. Опционально:
 // при пустом prometheus.url в app.go провайдер не создаётся (nil), и

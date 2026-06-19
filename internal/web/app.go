@@ -320,14 +320,16 @@ func (a *App) Start(ctx context.Context) error {
 	// ConnProvider — clickhouse.Manager, чтобы при hot-reload (Phase 6.3.2.5)
 	// LogReaderCH автоматически переключился на новый conn.
 	var (
-		replayHandler *httpadapter.ReplayHandler
-		logsHandler   *httpadapter.LogsHandler
-		orphanHandler *httpadapter.OrphanHandler
-		teamHandler   *httpadapter.TeamHandler
+		replayHandler  *httpadapter.ReplayHandler
+		logsHandler    *httpadapter.LogsHandler
+		orphanHandler  *httpadapter.OrphanHandler
+		teamHandler    *httpadapter.TeamHandler
+		nodeLogMetrics webport.NodeLogMetrics // §21: per-node KPI/график из CH (nil без CH)
 	)
 	if a.ch != nil {
 		// a.chMgr уже создан выше (вместе с teamProvisioner).
 		logReader := chreader.NewLogReader(a.chMgr, a.logger)
+		nodeLogMetrics = logReader // точные per-node метрики узла из CH-логов
 		dispatcher := rcvdispatcher.NewHTTPDispatcher(a.cfg.Web.ReceiverURL, 30*time.Second, a.logger)
 		replayUC := usecase.NewReplayUsecase(
 			logReader, nodeRepo, dispatcher, rl, auditUC,
@@ -380,10 +382,11 @@ func (a *App) Start(ctx context.Context) error {
 		reloadSub.Run(ctx)
 	})
 
-	// Метрики панели (§21): единый источник — Prometheus (KPI/очередь/throughput
-	// и per-node KPI/график). Источник опционален — usecase деградирует
-	// (prometheus_available/chart_available=false), поэтому handler создаётся всегда.
-	metricsUC := usecase.NewMetricsUsecase(promMetrics, nodeRepo, a.logger)
+	// Метрики панели (§21): Prometheus (глобальные KPI/очередь/throughput) +
+	// ClickHouse (ТОЧНЫЕ per-node KPI/график узла). Оба источника опциональны —
+	// usecase деградирует (prometheus_available/chart_available=false), поэтому
+	// handler создаётся всегда.
+	metricsUC := usecase.NewMetricsUsecase(promMetrics, nodeLogMetrics, nodeRepo, a.logger)
 	metricsHandler := httpadapter.NewMetricsHandler(metricsUC, a.logger)
 
 	// Мониторинг Kafka (§4 spec): Prometheus (throughput/lag/KPI/top-узлы) +

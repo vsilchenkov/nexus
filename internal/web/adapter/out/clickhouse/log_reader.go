@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -251,6 +252,115 @@ func (r *LogReaderCH) CountFailed(ctx context.Context, table string, sinceMs, un
 		return 0, fmt.Errorf("clickhouse count failed: %w", err)
 	}
 	return n, nil
+}
+
+// NodeKPI — ТОЧНЫЕ per-node KPI из ClickHouse-логов за окно (sinceMs, untilMs]
+// (§21, вкладки «Обзор»/«Метрики» узла). В отличие от Prometheus increase() —
+// мгновенные точные счётчики по уникальным запросам (ID), без rate-экстраполяции
+// и без зависимости от доступности Prometheus:
+//
+//	Total     = countDistinct(ID)         — уникальных запросов за окно;
+//	Delivered = uniqExactIf(ID, done = 1) — из них хотя бы раз доставлены (2xx);
+//	Errors    = Total - Delivered         — так и не доставлены;
+//	P95/P99   = перцентили длительности (мс) по всем попыткам.
+func (r *LogReaderCH) NodeKPI(ctx context.Context, table string, sinceMs, untilMs int64) (port.NodeKPI, error) {
+	if !isSafeTableName(table) {
+		return port.NodeKPI{}, fmt.Errorf("invalid table name: %q", table)
+	}
+	conds := []string{"1"}
+	var args []any
+	if sinceMs > 0 {
+		conds = append(conds, "toUnixTimestamp64Milli(toDateTime64(date_request, 3)) > ?")
+		args = append(args, sinceMs)
+	}
+	if untilMs > 0 {
+		conds = append(conds, "toUnixTimestamp64Milli(toDateTime64(date_request, 3)) <= ?")
+		args = append(args, untilMs)
+	}
+	conn, err := r.liveConn()
+	if err != nil {
+		return port.NodeKPI{}, err
+	}
+	q := fmt.Sprintf(`SELECT
+		countDistinct(ID) AS total,
+		uniqExactIf(ID, done = 1) AS delivered,
+		quantile(0.95)(duration) AS p95,
+		quantile(0.99)(duration) AS p99
+	FROM %s WHERE %s`, table, strings.Join(conds, " AND "))
+	var total, delivered uint64
+	var p95, p99 float64
+	if err := conn.QueryRow(ctx, q, args...).Scan(&total, &delivered, &p95, &p99); err != nil {
+		return port.NodeKPI{}, fmt.Errorf("clickhouse node kpi: %w", err)
+	}
+	if delivered > total {
+		delivered = total
+	}
+	if math.IsNaN(p95) {
+		p95 = 0
+	}
+	if math.IsNaN(p99) {
+		p99 = 0
+	}
+	return port.NodeKPI{Total: total, Delivered: delivered, Errors: total - delivered, P95ms: p95, P99ms: p99}, nil
+}
+
+// NodeChart — временной ряд трафика узла за окно (sinceMs, untilMs], разбитый на
+// buckets равных бакетов (count() и countIf(done=0) на бакет). Плотный ряд:
+// отсутствующие бакеты — нули, ASC по времени, выравнивание бакетов как у
+// toStartOfInterval (по эпохе). Источник графика «Трафик» вкладки «Обзор».
+func (r *LogReaderCH) NodeChart(ctx context.Context, table string, sinceMs, untilMs int64, buckets int) ([]port.SeriesPoint, error) {
+	if !isSafeTableName(table) {
+		return nil, fmt.Errorf("invalid table name: %q", table)
+	}
+	if buckets <= 0 {
+		buckets = 48
+	}
+	if untilMs <= sinceMs {
+		return []port.SeriesPoint{}, nil
+	}
+	stepSec := (untilMs - sinceMs) / int64(buckets) / 1000
+	if stepSec < 1 {
+		stepSec = 1
+	}
+	stepMs := stepSec * 1000
+	conn, err := r.liveConn()
+	if err != nil {
+		return nil, err
+	}
+	q := fmt.Sprintf(`SELECT
+		toInt64(toUnixTimestamp(toStartOfInterval(date_request, INTERVAL %d SECOND))) AS bucket_s,
+		count() AS cnt,
+		countIf(done = 0) AS errs
+	FROM %s
+	WHERE toUnixTimestamp64Milli(toDateTime64(date_request, 3)) > ?
+	  AND toUnixTimestamp64Milli(toDateTime64(date_request, 3)) <= ?
+	GROUP BY bucket_s ORDER BY bucket_s`, stepSec, table)
+	rows, err := conn.Query(ctx, q, sinceMs, untilMs)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse node chart: %w", err)
+	}
+	defer rows.Close()
+	type bkt struct{ cnt, errs uint64 }
+	got := make(map[int64]bkt)
+	for rows.Next() {
+		var bsec int64
+		var cnt, errs uint64
+		if err := rows.Scan(&bsec, &cnt, &errs); err != nil {
+			return nil, fmt.Errorf("scan node chart: %w", err)
+		}
+		got[bsec*1000] = bkt{cnt: cnt, errs: errs}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Плотный ряд от выровненного начала окна (как toStartOfInterval по эпохе).
+	startMs := (sinceMs / stepMs) * stepMs
+	out := make([]port.SeriesPoint, 0, buckets+2)
+	for ts := startMs; ts <= untilMs; ts += stepMs {
+		b := got[ts]
+		out = append(out, port.SeriesPoint{TsMs: ts, Count: b.cnt, Errors: b.errs})
+	}
+	return out, nil
 }
 
 func scanLogRow(rows chdriver.Rows) (*domain.LogRecord, error) {
