@@ -77,15 +77,19 @@ func (f *fakeNodeLogs) NodeChart(_ context.Context, _ string, _, _ int64, _ int)
 	return f.chart, f.chartErr
 }
 
-// fakeNodeRepo встраивает port.NodeRepo (nil): usecase зовёт только Get.
+// fakeNodeRepo встраивает port.NodeRepo (nil): usecase зовёт Get и List.
 type fakeNodeRepo struct {
 	port.NodeRepo
 	node *domain.Node
+	list []*domain.Node
 	err  error
 }
 
 func (f *fakeNodeRepo) Get(_ context.Context, _ string) (*domain.Node, error) {
 	return f.node, f.err
+}
+func (f *fakeNodeRepo) List(_ context.Context, _ port.ListNodesFilter) ([]*domain.Node, error) {
+	return f.list, f.err
 }
 
 // --- Overview --------------------------------------------------------------
@@ -136,7 +140,7 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 	t.Run("no prometheus → empty degraded", func(t *testing.T) {
 		t.Parallel()
 		uc := NewMetricsUsecase(nil, nil, &fakeNodeRepo{}, log)
-		got := uc.NodesOverview(context.Background(), time.Now().Add(-time.Hour), time.Now())
+		got := uc.NodesOverview(context.Background(), "", time.Now().Add(-time.Hour), time.Now())
 		require.False(t, got.PrometheusAvailable)
 		require.Empty(t, got.Items)
 	})
@@ -147,7 +151,7 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 			"webhook/send": {In: 4201, Out: 4198, Errors: 2},
 		}}
 		uc := NewMetricsUsecase(prom, nil, &fakeNodeRepo{}, log)
-		got := uc.NodesOverview(context.Background(), time.Now().Add(-time.Hour), time.Now())
+		got := uc.NodesOverview(context.Background(), "", time.Now().Add(-time.Hour), time.Now())
 		require.True(t, got.PrometheusAvailable)
 		require.Len(t, got.Items, 1)
 		require.Equal(t, "webhook/send", got.Items[0].Node)
@@ -160,9 +164,36 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 		t.Parallel()
 		prom := &fakeProm{thrErr: errors.New("boom")}
 		uc := NewMetricsUsecase(prom, nil, &fakeNodeRepo{}, log)
-		got := uc.NodesOverview(context.Background(), time.Now().Add(-time.Hour), time.Now())
+		got := uc.NodesOverview(context.Background(), "", time.Now().Add(-time.Hour), time.Now())
 		require.False(t, got.PrometheusAvailable)
 		require.Empty(t, got.Items)
+	})
+
+	t.Run("clickhouse source matches node detail (per-node KPI)", func(t *testing.T) {
+		t.Parallel()
+		// nodeLogs != nil → берём из CH (как страница узла), не из Prometheus.
+		repo := &fakeNodeRepo{list: []*domain.Node{
+			{Path: "a/x", ClickHouseTable: "db.a"},
+			{Path: "b/y", ClickHouseTable: ""}, // нет логирования → нули
+		}}
+		logs := &fakeNodeLogs{
+			kpi:   port.NodeKPI{Total: 50, Delivered: 47, Errors: 3, P95ms: 12},
+			chart: []port.SeriesPoint{{Count: 5}, {Count: 7}},
+		}
+		uc := NewMetricsUsecase(nil, logs, repo, log) // prom=nil — путь именно CH
+		got := uc.NodesOverview(context.Background(), "default", time.Now().Add(-time.Hour), time.Now())
+		require.True(t, got.PrometheusAvailable)
+		require.Len(t, got.Items, 2)
+		byNode := map[string]NodeThroughputRow{}
+		for _, it := range got.Items {
+			byNode[it.Node] = it
+		}
+		require.EqualValues(t, 50, byNode["a/x"].In)
+		require.EqualValues(t, 47, byNode["a/x"].Out)
+		require.EqualValues(t, 3, byNode["a/x"].Errors)
+		require.EqualValues(t, 12, byNode["a/x"].P95ms)
+		require.Equal(t, []float64{5, 7}, byNode["a/x"].Spark)
+		require.Zero(t, byNode["b/y"].In, "узел без CH-таблицы → нули")
 	})
 }
 

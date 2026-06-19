@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"nexus/internal/domain"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase/port"
@@ -13,11 +15,13 @@ import (
 //
 // Два источника:
 //   - Prometheus (prom, может быть nil): ГЛОБАЛЬНЫЕ/кросс-сервисные метрики —
-//     KPI Overview, per-node throughput рабочего стола, Kafka-мониторинг. При
-//     пустом prometheus.url prom == nil → деградация (PrometheusAvailable=false).
-//   - ClickHouse (nodeLogs): ТОЧНЫЕ per-node KPI и график на странице узла
-//     (вкладки «Обзор»/«Метрики»). Из логов узла — без rate-экстраполяции
-//     Prometheus и без мерцания (CH всегда доступен). См. §21.
+//     KPI Overview (incoming/outgoing/errors 24ч), Kafka-мониторинг. При пустом
+//     prometheus.url prom == nil → деградация (PrometheusAvailable=false).
+//   - ClickHouse (nodeLogs): ТОЧНЫЕ per-node метрики — KPI/график страницы узла
+//     (вкладки «Обзор»/«Метрики») И per-node throughput рабочего стола
+//     (NodesOverview): один источник → цифры стола и узла совпадают, без
+//     rate-экстраполяции Prometheus и без мерцания. Без CH NodesOverview
+//     деградирует на Prometheus. См. §21.
 type MetricsUsecase struct {
 	prom     port.PromMetrics    // может быть nil
 	nodeLogs port.NodeLogMetrics // ClickHouse-логи (per-node KPI/график)
@@ -102,17 +106,81 @@ func (u *MetricsUsecase) Overview(ctx context.Context) OverviewKPI {
 	}
 }
 
-// NodesOverview — per-node throughput за период (since, until]. Деградирует
-// без Prometheus. Пустой период нормализуется в последний час.
-func (u *MetricsUsecase) NodesOverview(ctx context.Context, since, until time.Time) NodesOverview {
-	if u.prom == nil {
-		return NodesOverview{Items: []NodeThroughputRow{}}
-	}
+// nodesSparkBuckets — число точек спарклайна per-node на рабочем столе.
+const nodesSparkBuckets = 12
+
+// NodesOverview — per-node throughput за период (since, until]. Источник — те же
+// ClickHouse-логи узла, что и вкладки «Обзор»/«Метрики» (§21): чтобы счётчики
+// рабочего стола (вход/выход/ошибки/p95) и спарклайн ТОЧНО совпадали со страницей
+// узла. Без ClickHouse (nodeLogs==nil) деградирует на Prometheus (старый путь).
+// Пустой период нормализуется в последний час.
+func (u *MetricsUsecase) NodesOverview(ctx context.Context, teamID string, since, until time.Time) NodesOverview {
 	if until.IsZero() {
 		until = time.Now()
 	}
 	if since.IsZero() || !since.Before(until) {
 		since = until.Add(-time.Hour)
+	}
+	if u.nodeLogs != nil {
+		return u.nodesOverviewCH(ctx, teamID, since, until)
+	}
+	return u.nodesOverviewProm(ctx, since, until)
+}
+
+// nodesOverviewCH — per-node throughput из CH-логов. Для каждого узла с таблицей
+// конкурентно (cap'нутый errgroup) считаем KPI (вход=Total, выход=Delivered,
+// ошибки, p95) и спарклайн (count по бакетам) — тем же NodeKPI/NodeChart, что и
+// страница узла, поэтому цифры совпадают. Ошибка по одному узлу деградирует его до
+// нулей, не валя весь список.
+func (u *MetricsUsecase) nodesOverviewCH(ctx context.Context, teamID string, since, until time.Time) NodesOverview {
+	nodes, err := u.nodes.List(ctx, port.ListNodesFilter{TeamID: teamID})
+	if err != nil {
+		u.logger.Warn("nodes overview: list nodes failed", u.logger.Err(err))
+		return NodesOverview{Items: []NodeThroughputRow{}}
+	}
+	sinceMs, untilMs := since.UnixMilli(), until.UnixMilli()
+	rows := make([]NodeThroughputRow, len(nodes))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(12)
+	for i, n := range nodes {
+		i, n := i, n
+		rows[i] = NodeThroughputRow{Node: n.Path, Spark: []float64{}}
+		if n.ClickHouseTable == "" {
+			continue // нет логирования → нет per-node CH-метрик
+		}
+		g.Go(func() error {
+			kpi, kerr := u.nodeLogs.NodeKPI(gctx, n.ClickHouseTable, sinceMs, untilMs)
+			if kerr != nil {
+				u.logger.Warn("nodes overview: node kpi failed",
+					u.logger.Str("node", n.Path), u.logger.Err(kerr))
+				return nil
+			}
+			// Спарклайн — отдельный запрос; для узлов без трафика (Total=0) он всё
+			// равно плоский, поэтому второй запрос делаем только при наличии трафика.
+			spark := []float64{}
+			if kpi.Total > 0 {
+				if series, serr := u.nodeLogs.NodeChart(gctx, n.ClickHouseTable, sinceMs, untilMs, nodesSparkBuckets); serr == nil {
+					spark = make([]float64, len(series))
+					for j, p := range series {
+						spark[j] = float64(p.Count)
+					}
+				}
+			}
+			rows[i] = NodeThroughputRow{
+				Node: n.Path, In: kpi.Total, Out: kpi.Delivered,
+				Errors: kpi.Errors, P95ms: kpi.P95ms, Spark: spark,
+			}
+			return nil
+		})
+	}
+	_ = g.Wait() // ошибки узлов уже залогированы и проглочены внутри
+	return NodesOverview{Items: rows, PrometheusAvailable: true}
+}
+
+// nodesOverviewProm — fallback на Prometheus (когда ClickHouse не подключён).
+func (u *MetricsUsecase) nodesOverviewProm(ctx context.Context, since, until time.Time) NodesOverview {
+	if u.prom == nil {
+		return NodesOverview{Items: []NodeThroughputRow{}}
 	}
 	m, err := u.prom.NodeThroughput(ctx, since, until)
 	if err != nil {
@@ -121,8 +189,7 @@ func (u *MetricsUsecase) NodesOverview(ctx context.Context, since, until time.Ti
 	}
 	// Спарклайн (12 точек) одним range-запросом на весь список. Ошибка
 	// спарклайна не валит throughput — деградируем до пустых рядов.
-	const sparkBuckets = 12
-	series, err := u.prom.NodeSeries(ctx, since, until, sparkBuckets)
+	series, err := u.prom.NodeSeries(ctx, since, until, nodesSparkBuckets)
 	if err != nil {
 		u.logger.Warn("prometheus node series failed", u.logger.Err(err))
 		series = map[string][]float64{}

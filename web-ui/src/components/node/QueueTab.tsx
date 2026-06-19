@@ -132,7 +132,14 @@ export function QueueTab({
   const replayFailed = useMutation({
     mutationFn: (body: { from?: string; to?: string }) =>
       api.post(`/api/nodes/${id}/async-queue/replay-failed`, body),
-    onSuccess: invalidateFailed,
+    onSuccess: () => {
+      // Ре-инжекция асинхронна (Receiver→Kafka→Sender→CH ≈ пара секунд): сразу
+      // обновляем + ещё раз с задержкой, чтобы список/счётчик актуализировались
+      // под новые результаты, не дожидаясь 15с-поллинга.
+      invalidateFailed();
+      window.setTimeout(invalidateFailed, 2500);
+      window.setTimeout(invalidateFailed, 6000);
+    },
   });
   const setStatus = useMutation({
     mutationFn: (status: "enabled" | "paused" | "disabled") =>
