@@ -148,6 +148,7 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 	resp, err := u.sender.Send(ctx, &senderv1.SendRequest{
 		Id:                 id,
 		NodePath:           node.Path,
+		NodeId:             node.ID,
 		TargetUrl:          finalURL,
 		Method:             string(node.OutgoingMethod),
 		Auth:               &senderv1.AuthConfig{AuthorizationHeader: authHeader},

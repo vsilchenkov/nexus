@@ -44,7 +44,8 @@ SELECT
 	log_request_body, log_response_body, log_headers,
 	logging_enabled, max_body_size_enabled, max_body_size,
 	created_at, updated_at,
-	incoming_method, outgoing_method
+	incoming_method, outgoing_method,
+	dlq_ttl_seconds, dlq_retry_delay_seconds
 FROM nodes WHERE path = $1`
 
 // GetByPath возвращает актуальный конфиг узла. Использует sender'ом
@@ -71,6 +72,7 @@ func (r *Reader) GetByPath(ctx context.Context, path string) (*domain.Node, erro
 		&n.LoggingEnabled, &n.MaxBodySizeEnabled, &n.MaxBodySize,
 		&created, &updated,
 		&incomingMethod, &outgoingMethod,
+		&n.DLQTTLSeconds, &n.DLQRetryDelaySeconds,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -106,6 +108,26 @@ func (r *Reader) GetByPath(ctx context.Context, path string) (*domain.Node, erro
 		n.ForwardHeaders = []string{}
 	}
 	return &n, nil
+}
+
+// ListClickHouseTables (§37) — уникальные имена CH-таблиц логов всех узлов с
+// логированием (без фильтра по retention, в отличие от ListForHousekeeping).
+// Для стартовой миграции схемы (добавление колонки node_id во все таблицы).
+func (r *Reader) ListClickHouseTables(ctx context.Context) ([]string, error) {
+	rows, err := r.pg.Query(ctx, `SELECT DISTINCT clickhouse_table FROM nodes WHERE clickhouse_table <> ''`)
+	if err != nil {
+		return nil, fmt.Errorf("list ch tables: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, fmt.Errorf("scan ch table: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
 }
 
 // ListForHousekeeping — все узлы с заданной CH-таблицей и retention > 0.

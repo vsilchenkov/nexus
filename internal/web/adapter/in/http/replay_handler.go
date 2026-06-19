@@ -89,3 +89,48 @@ func (h *ReplayHandler) Replay(c *gin.Context) {
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 	}
 }
+
+// ReplayFailed godoc
+// @Summary  Повторить все неудачные доставки узла сейчас (§36.11).
+// @Description  Пере-инжектирует через Receiver все неудачные (done=0) запросы узла за период и отменяет их оригиналы в DLQ (без двойной доставки). Пустые from/to = всё. Admin-only.
+// @Tags     async-queue
+// @Accept   json
+// @Produce  json
+// @Param    id    path  string             true   "node id"
+// @Param    body  body  queuePurgeRequest  false  "период (пусто = всё)"
+// @Success  200   {object}  usecase.ReplayBulkResult
+// @Failure  400   {object}  ErrorResponse
+// @Failure  404   {object}  ErrorResponse
+// @Failure  409   {object}  ErrorResponse  "node disabled"
+// @Failure  429   {object}  ErrorResponse  "rate limit exceeded"
+// @Security CookieAuth
+// @Router   /api/nodes/{id}/async-queue/replay-failed [post]
+func (h *ReplayHandler) ReplayFailed(c *gin.Context) {
+	var req queuePurgeRequest
+	if c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+	if !req.From.IsZero() && !req.To.IsZero() && req.From.After(req.To) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "from must be before to"})
+		return
+	}
+	res, err := h.uc.ReplayFailed(c.Request.Context(), actorFromCtx(c), c.Param("id"), currentTeamID(c), req.From, req.To)
+	switch {
+	case err == nil:
+		c.JSON(http.StatusOK, res)
+	case errors.Is(err, usecase.ErrReplayRateLimit):
+		c.Header("Retry-After", "60")
+		localizedError(c, http.StatusTooManyRequests, "error.rate_limited")
+	case errors.Is(err, domain.ErrNodeNotFound):
+		localizedError(c, http.StatusNotFound, "node.not_found")
+	case errors.Is(err, domain.ErrNodeDisabled):
+		localizedError(c, http.StatusConflict, "node.disabled")
+	default:
+		h.logger.ErrorWithOp("replay-all failed", err, "node.replay_all",
+			h.logger.Str("node_id", c.Param("id")))
+		localizedError(c, http.StatusInternalServerError, "error.internal")
+	}
+}

@@ -157,34 +157,7 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 		return HandleRetry
 	}
 
-	headers := env.Headers
-	if headers == nil {
-		headers = map[string]string{}
-	}
-	if env.AuthHeader != "" {
-		headers["Authorization"] = env.AuthHeader
-	}
-
-	out := p.send.Send(ctx, SendInput{
-		ID:                 env.ID,
-		NodePath:           env.NodePath,
-		RootMethod:         domain.RootMethodRequestAsync,
-		TargetURL:          env.TargetURL,
-		Method:             env.Method,
-		Headers:            headers,
-		Body:               env.Body,
-		TimeoutMs:          node.TimeoutMs,
-		RetryCount:         node.RetryCount,
-		RetryBackoffMs:     node.RetryBackoffMs,
-		ClickHouseTable:    node.ClickHouseTable,
-		LogRequestBody:     node.LogRequestBody,
-		LogResponseBody:    node.LogResponseBody,
-		LogHeaders:         node.LogHeaders,
-		ClientIP:           env.ClientIP,
-		LoggingEnabled:     node.LoggingEnabled,
-		MaxBodySizeEnabled: node.MaxBodySizeEnabled,
-		MaxBodySize:        node.MaxBodySize,
-	})
+	out := p.send.Send(ctx, buildSendInput(node, env))
 
 	if p.metrics != nil {
 		p.metrics.RequestsTotal.

@@ -144,6 +144,8 @@ func TestNode_Validate_WebhookSignatureRequiresHeaderAndSecret(t *testing.T) {
 			AuthDynamicField:        "token",
 			Status:                  domain.NodeStatusEnabled,
 			TimeoutMs:               5000,
+			DLQTTLSeconds:           86_400, // §36: иначе Validate отвергнет 0 (узел строится без SetDefaults)
+			DLQRetryDelaySeconds:    60,     // §36
 			IncomingAuthType:        domain.IncomingAuthTypeWebhookSignature,
 			IncomingAuthCredentials: "secret",
 			WebhookSignatureHeader:  "X-Hub-Signature-256",

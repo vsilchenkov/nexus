@@ -19,14 +19,26 @@ type Consumer struct {
 	r *kafka.Reader
 }
 
-// NewConsumer создаёт consumer для одного топика и одной consumer-group.
-// При множественных инстансах партиции распределяются автоматически.
+// NewConsumer создаёт consumer для одного топика под основной consumer-group
+// (cfg.Kafka.ConsumerGroup). При множественных инстансах партиции
+// распределяются автоматически.
 func NewConsumer(cfg *config.Config, topic string) *Consumer {
+	return NewConsumerWithGroup(cfg, topic, cfg.Kafka.ConsumerGroup)
+}
+
+// NewConsumerWithGroup — как NewConsumer, но с произвольной consumer-group.
+// Используется DLQ-репроцессором (§36.2): отдельная группа
+// "<group>-dlq-reprocess" читает nexus.async.dlq независимо и не конкурирует с
+// основным async-consumer'ом. Пустой groupID → дефолтная группа.
+func NewConsumerWithGroup(cfg *config.Config, topic, groupID string) *Consumer {
+	if groupID == "" {
+		groupID = cfg.Kafka.ConsumerGroup
+	}
 	brokers := splitBrokers(cfg.Kafka.Brokers)
 	r := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:           brokers,
 		Topic:             topic,
-		GroupID:           cfg.Kafka.ConsumerGroup,
+		GroupID:           groupID,
 		MinBytes:          cfg.Kafka.Consumer.FetchMinBytes,
 		MaxBytes:          cfg.Kafka.Consumer.FetchMaxBytes,
 		MaxWait:           500 * time.Millisecond,

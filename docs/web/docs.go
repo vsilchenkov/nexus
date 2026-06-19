@@ -2135,6 +2135,132 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/nodes/{id}/async-queue/purge-failed": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Отменяет повторную доставку (DLQ-репроцессор перестаёт повторять) и удаляет записи done=0 из CH-логов узла за [from,to]. Пустые from/to = всё. Cancelled = число удалённых. Admin-only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "async-queue"
+                ],
+                "summary": "Очистить «Неудачные доставки» узла за период или целиком (§35/§36).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "период (пусто = всё)",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.queuePurgeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.queuePurgeDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{id}/async-queue/replay-failed": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Пере-инжектирует через Receiver все неудачные (done=0) запросы узла за период и отменяет их оригиналы в DLQ (без двойной доставки). Пустые from/to = всё. Admin-only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "async-queue"
+                ],
+                "summary": "Повторить все неудачные доставки узла сейчас (§36.11).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "период (пусто = всё)",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.queuePurgeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nexus_internal_web_usecase.ReplayBulkResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "node disabled",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "rate limit exceeded",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/{id}/log/{logId}": {
             "get": {
                 "security": [
@@ -3684,6 +3810,16 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 2000
                 },
+                "dlq_retry_delay_seconds": {
+                    "type": "integer",
+                    "maximum": 86400,
+                    "minimum": 1
+                },
+                "dlq_ttl_seconds": {
+                    "type": "integer",
+                    "maximum": 2592000,
+                    "minimum": 60
+                },
                 "forward_headers": {
                     "type": "array",
                     "items": {
@@ -4270,6 +4406,12 @@ const docTemplate = `{
                 "created_at": {
                     "type": "string"
                 },
+                "dlq_retry_delay_seconds": {
+                    "type": "integer"
+                },
+                "dlq_ttl_seconds": {
+                    "type": "integer"
+                },
                 "forward_headers": {
                     "type": "array",
                     "items": {
@@ -4522,6 +4664,16 @@ const docTemplate = `{
                 "comment": {
                     "type": "string",
                     "maxLength": 2000
+                },
+                "dlq_retry_delay_seconds": {
+                    "type": "integer",
+                    "maximum": 86400,
+                    "minimum": 1
+                },
+                "dlq_ttl_seconds": {
+                    "type": "integer",
+                    "maximum": 2592000,
+                    "minimum": 60
                 },
                 "forward_headers": {
                     "type": "array",
@@ -6070,6 +6222,26 @@ const docTemplate = `{
                 },
                 "ok": {
                     "type": "boolean"
+                }
+            }
+        },
+        "nexus_internal_web_usecase.ReplayBulkResult": {
+            "type": "object",
+            "properties": {
+                "capped": {
+                    "type": "boolean"
+                },
+                "failed": {
+                    "description": "ошибок replay (оригинал НЕ отменён — остаётся авто-репроцессору)",
+                    "type": "integer"
+                },
+                "replayed": {
+                    "description": "пере-инжектировано (оригинал отменён в DLQ)",
+                    "type": "integer"
+                },
+                "total": {
+                    "description": "уникальных неудачных найдено (в пределах cap)",
+                    "type": "integer"
                 }
             }
         },

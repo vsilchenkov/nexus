@@ -63,3 +63,22 @@ type ScanIDsResult struct {
 type QueueCancelWriter interface {
 	Cancel(ctx context.Context, ids []string, ttl time.Duration) (int, error)
 }
+
+// FailedLogsPurger — очистка «Неудачных доставок» узла из ClickHouse-логов
+// (§35/§36). Реализуется adapter/out/clickhouse.LogReaderCH. Опционален: nil при
+// отсутствии ClickHouse. table — CH-таблица узла (db.table).
+//
+// Очистка неудачных = отмена (qcancel) их ID, чтобы DLQ-репроцессор перестал их
+// повторять (FailedIDs → QueueCancelWriter.Cancel), + lightweight DELETE записей
+// done=0 за окно (чтобы они исчезли из вида). Окно — (sinceMs, untilMs]; нулевые
+// границы = всё.
+// §37: nodeID — UUID узла для per-node атрибуции в общей CH-таблице (пусто —
+// без фильтра). Важно для DeleteFailed: иначе очистка одного узла удалит записи
+// другого, делящего таблицу.
+type FailedLogsPurger interface {
+	// FailedIDs — уникальные ID записей done=0 за окно (до cap; capped=true, если
+	// есть ещё). Для отмены повторной доставки этих сообщений в DLQ.
+	FailedIDs(ctx context.Context, table, nodeID string, sinceMs, untilMs int64, cap int) ([]string, bool, error)
+	// DeleteFailed — удалить записи done=0 за окно; возвращает число удалённых.
+	DeleteFailed(ctx context.Context, table, nodeID string, sinceMs, untilMs int64) (uint64, error)
+}

@@ -25,6 +25,7 @@ const asyncQueueListLimit = 50 // «первые 50, как в логах» (§3
 type AsyncQueueUsecase struct {
 	peeker    port.AsyncQueuePeeker
 	cancel    port.QueueCancelWriter
+	failed    port.FailedLogsPurger // ClickHouse-логи (очистка неудачных), nil без CH
 	nodes     port.NodeRepo
 	audit     *AuditUsecase
 	group     string
@@ -37,6 +38,7 @@ type AsyncQueueUsecase struct {
 func NewAsyncQueueUsecase(
 	peeker port.AsyncQueuePeeker,
 	cancel port.QueueCancelWriter,
+	failed port.FailedLogsPurger,
 	nodes port.NodeRepo,
 	audit *AuditUsecase,
 	group, topic string,
@@ -53,6 +55,7 @@ func NewAsyncQueueUsecase(
 	return &AsyncQueueUsecase{
 		peeker:    peeker,
 		cancel:    cancel,
+		failed:    failed,
 		nodes:     nodes,
 		audit:     audit,
 		group:     group,
@@ -184,4 +187,59 @@ func (u *AsyncQueueUsecase) purge(ctx context.Context, actor Actor, nodeID, team
 		"op": op, "cancelled": cancelled, "capped": scan.Capped,
 	})
 	return QueuePurgeResult{Cancelled: cancelled, Capped: scan.Capped, KafkaAvailable: true}, nil
+}
+
+// toMs переводит время в UnixMilli; нулевое время → 0 (без границы окна).
+func toMs(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.UnixMilli()
+}
+
+// PurgeFailed — очистка «Неудачных доставок» узла за окно [from,to] (нулевые
+// границы = всё): (1) отменяет (qcancel) ID этих сообщений, чтобы DLQ-репроцессор
+// перестал их повторять (§34.4 tombstone), и (2) lightweight-DELETE'ит записи
+// done=0 из CH-таблицы узла — чтобы они исчезли из вида. Без CH (failed==nil) или
+// у узла нет таблицы → no-op (нечего чистить). Cancelled в результате — число
+// удалённых записей (видимый «очищено N»).
+func (u *AsyncQueueUsecase) PurgeFailed(ctx context.Context, actor Actor, nodeID, teamID string, from, to time.Time) (QueuePurgeResult, error) {
+	node, err := u.resolveNode(ctx, nodeID, teamID)
+	if err != nil {
+		return QueuePurgeResult{}, err
+	}
+	op := "purge_failed_period"
+	if from.IsZero() && to.IsZero() {
+		op = "purge_failed_all"
+	}
+	if u.failed == nil || node.ClickHouseTable == "" {
+		return QueuePurgeResult{}, nil
+	}
+	sinceMs, untilMs := toMs(from), toMs(to)
+
+	// 1) Снимаем повторную доставку: репроцессор дропнет эти ID по tombstone.
+	cancelled, capped := 0, false
+	if u.cancel != nil {
+		ids, c, err := u.failed.FailedIDs(ctx, node.ClickHouseTable, node.ID, sinceMs, untilMs, u.peekCap)
+		if err != nil {
+			return QueuePurgeResult{}, fmt.Errorf("async queue failed ids: %w", err)
+		}
+		capped = c
+		if len(ids) > 0 {
+			if cancelled, err = u.cancel.Cancel(ctx, ids, u.retention); err != nil {
+				return QueuePurgeResult{}, fmt.Errorf("async queue cancel failed: %w", err)
+			}
+		}
+	}
+
+	// 2) Удаляем записи done=0 из вида «Неудачные доставки».
+	deleted, err := u.failed.DeleteFailed(ctx, node.ClickHouseTable, node.ID, sinceMs, untilMs)
+	if err != nil {
+		return QueuePurgeResult{}, fmt.Errorf("async queue delete failed: %w", err)
+	}
+
+	u.audit.Log(ctx, actor, domain.ActionAsyncQueuePurge, "node", node.ID, map[string]any{
+		"op": op, "cancelled": cancelled, "deleted": deleted, "capped": capped,
+	})
+	return QueuePurgeResult{Cancelled: int(deleted), Capped: capped, KafkaAvailable: u.cancel != nil}, nil
 }

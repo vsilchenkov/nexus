@@ -220,7 +220,7 @@ const insertSQL = `INSERT INTO %s (
 	ID, type, url, method, parameters, request, response,
 	status, reason, date_create, date_request, date_response,
 	duration, done, checksum_request, checksum_response,
-	Host, IP, attempts, attempts_details
+	Host, IP, attempts, attempts_details, node_id
 )`
 
 func (w *Writer) insertBatch(ctx context.Context, table string, batch []*domain.LogRecord) error {
@@ -240,7 +240,7 @@ func (w *Writer) insertBatch(ctx context.Context, table string, batch []*domain.
 			r.ID, string(r.Type), r.URL, r.Method, r.Parameters, r.Request, r.Response,
 			r.Status, r.Reason, r.DateCreate, r.DateRequest, r.DateResponse,
 			r.Duration, r.Done, r.ChecksumRequest, r.ChecksumResponse,
-			r.Host, r.IP, r.Attempts, r.AttemptsDetails,
+			r.Host, r.IP, r.Attempts, r.AttemptsDetails, r.NodeID,
 		)
 		if err != nil {
 			return fmt.Errorf("append row: %w", err)

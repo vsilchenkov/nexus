@@ -46,6 +46,14 @@ definitions:
       comment:
         maxLength: 2000
         type: string
+      dlq_retry_delay_seconds:
+        maximum: 86400
+        minimum: 1
+        type: integer
+      dlq_ttl_seconds:
+        maximum: 2592000
+        minimum: 60
+        type: integer
       forward_headers:
         items:
           type: string
@@ -451,6 +459,10 @@ definitions:
         type: string
       created_at:
         type: string
+      dlq_retry_delay_seconds:
+        type: integer
+      dlq_ttl_seconds:
+        type: integer
       forward_headers:
         items:
           type: string
@@ -623,6 +635,14 @@ definitions:
       comment:
         maxLength: 2000
         type: string
+      dlq_retry_delay_seconds:
+        maximum: 86400
+        minimum: 1
+        type: integer
+      dlq_ttl_seconds:
+        maximum: 2592000
+        minimum: 60
+        type: integer
       forward_headers:
         items:
           type: string
@@ -1688,6 +1708,20 @@ definitions:
         $ref: '#/definitions/nexus_internal_web_usecase.RMQChecks'
       ok:
         type: boolean
+    type: object
+  nexus_internal_web_usecase.ReplayBulkResult:
+    properties:
+      capped:
+        type: boolean
+      failed:
+        description: ошибок replay (оригинал НЕ отменён — остаётся авто-репроцессору)
+        type: integer
+      replayed:
+        description: пере-инжектировано (оригинал отменён в DLQ)
+        type: integer
+      total:
+        description: уникальных неудачных найдено (в пределах cap)
+        type: integer
     type: object
   nexus_internal_web_usecase.ReplayResult:
     properties:
@@ -3016,6 +3050,90 @@ paths:
       security:
       - CookieAuth: []
       summary: Очистить async-очередь узла за период или целиком (§34.4).
+      tags:
+      - async-queue
+  /api/nodes/{id}/async-queue/purge-failed:
+    post:
+      consumes:
+      - application/json
+      description: Отменяет повторную доставку (DLQ-репроцессор перестаёт повторять)
+        и удаляет записи done=0 из CH-логов узла за [from,to]. Пустые from/to = всё.
+        Cancelled = число удалённых. Admin-only.
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: период (пусто = всё)
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.queuePurgeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.queuePurgeDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Очистить «Неудачные доставки» узла за период или целиком (§35/§36).
+      tags:
+      - async-queue
+  /api/nodes/{id}/async-queue/replay-failed:
+    post:
+      consumes:
+      - application/json
+      description: Пере-инжектирует через Receiver все неудачные (done=0) запросы
+        узла за период и отменяет их оригиналы в DLQ (без двойной доставки). Пустые
+        from/to = всё. Admin-only.
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: период (пусто = всё)
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.queuePurgeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/nexus_internal_web_usecase.ReplayBulkResult'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "409":
+          description: node disabled
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "429":
+          description: rate limit exceeded
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Повторить все неудачные доставки узла сейчас (§36.11).
       tags:
       - async-queue
   /api/nodes/{id}/log/{logId}:

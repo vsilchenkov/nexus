@@ -163,6 +163,22 @@ func (a *App) Start(ctx context.Context) error {
 	}
 
 	nodeRepo := pgrepo.NewNodeRepoPg(a.pg, a.cipher, a.logger)
+
+	// §37: миграция существующих CH-таблиц — добавить колонку node_id, иначе
+	// SELECT по новой схеме упадёт. Идемпотентно (ALTER … IF NOT EXISTS), до
+	// старта HTTP-сервера. Новые таблицы получают колонку из шаблона.
+	if a.chMgr != nil {
+		if nodes, err := nodeRepo.List(ctx, webport.ListNodesFilter{TeamID: defaultTeamID}); err != nil {
+			a.logger.Warn("§37 ensure node_id: list nodes failed", a.logger.Err(err))
+		} else {
+			tables := make([]string, 0, len(nodes))
+			for _, n := range nodes {
+				tables = append(tables, n.ClickHouseTable)
+			}
+			chpf.EnsureNodeIDColumn(ctx, a.chMgr.Conn(), tables, a.logger)
+		}
+	}
+
 	nodeCache := rediscache.NewNodeCacheRedis(a.redis, a.logger)
 	auditRepo := pgrepo.NewAuditRepoPg(a.pg, a.logger)
 	auditUC := usecase.NewAuditUsecase(auditRepo, a.logger)
@@ -320,18 +336,29 @@ func (a *App) Start(ctx context.Context) error {
 	// ConnProvider — clickhouse.Manager, чтобы при hot-reload (Phase 6.3.2.5)
 	// LogReaderCH автоматически переключился на новый conn.
 	var (
-		replayHandler *httpadapter.ReplayHandler
-		logsHandler   *httpadapter.LogsHandler
-		orphanHandler *httpadapter.OrphanHandler
-		teamHandler   *httpadapter.TeamHandler
+		replayHandler  *httpadapter.ReplayHandler
+		logsHandler    *httpadapter.LogsHandler
+		orphanHandler  *httpadapter.OrphanHandler
+		teamHandler    *httpadapter.TeamHandler
+		nodeLogMetrics webport.NodeLogMetrics   // §21: per-node KPI/график из CH (nil без CH)
+		failedPurger   webport.FailedLogsPurger // §35/§36: очистка неудачных доставок (nil без CH)
 	)
+	// §34.4/§36.11: cancel-set tombstones (Redis) — общий для очистки очереди и
+	// отмены оригиналов при «Повторить все сейчас». nil без Redis.
+	var queueCancel webport.QueueCancelWriter
+	if a.redis != nil {
+		queueCancel = queuecancel.New(a.redis)
+	}
+	dlqRetention := time.Duration(a.cfg.Kafka.Topic.RetentionMs) * time.Millisecond
 	if a.ch != nil {
 		// a.chMgr уже создан выше (вместе с teamProvisioner).
 		logReader := chreader.NewLogReader(a.chMgr, a.logger)
+		nodeLogMetrics = logReader // точные per-node метрики узла из CH-логов
+		failedPurger = logReader   // очистка «Неудачных доставок» из CH-логов
 		dispatcher := rcvdispatcher.NewHTTPDispatcher(a.cfg.Web.ReceiverURL, 30*time.Second, a.logger)
-		replayUC := usecase.NewReplayUsecase(
+		replayUC := usecase.NewReplayUsecaseWithCancel(
 			logReader, nodeRepo, dispatcher, rl, auditUC,
-			a.cfg.Web.ReplayRateLimitPerUserPerMin, a.logger,
+			a.cfg.Web.ReplayRateLimitPerUserPerMin, queueCancel, dlqRetention, a.logger,
 		)
 		logsUC := usecase.NewLogsUsecase(logReader, nodeRepo, a.logger)
 		replayHandler = httpadapter.NewReplayHandler(replayUC, a.logger)
@@ -380,10 +407,11 @@ func (a *App) Start(ctx context.Context) error {
 		reloadSub.Run(ctx)
 	})
 
-	// Метрики панели (§21): единый источник — Prometheus (KPI/очередь/throughput
-	// и per-node KPI/график). Источник опционален — usecase деградирует
-	// (prometheus_available/chart_available=false), поэтому handler создаётся всегда.
-	metricsUC := usecase.NewMetricsUsecase(promMetrics, nodeRepo, a.logger)
+	// Метрики панели (§21): Prometheus (глобальные KPI/очередь/throughput) +
+	// ClickHouse (ТОЧНЫЕ per-node KPI/график узла). Оба источника опциональны —
+	// usecase деградирует (prometheus_available/chart_available=false), поэтому
+	// handler создаётся всегда.
+	metricsUC := usecase.NewMetricsUsecase(promMetrics, nodeLogMetrics, nodeRepo, a.logger)
 	metricsHandler := httpadapter.NewMetricsHandler(metricsUC, a.logger)
 
 	// Мониторинг Kafka (§4 spec): Prometheus (throughput/lag/KPI/top-узлы) +
@@ -404,14 +432,11 @@ func (a *App) Start(ctx context.Context) error {
 	kafkaHandler := httpadapter.NewKafkaHandler(kafkaUC, a.logger)
 
 	// §34.4: управление async-очередью узла (peek + cancel-set tombstones).
-	var queueCancel webport.QueueCancelWriter
-	if a.redis != nil {
-		queueCancel = queuecancel.New(a.redis)
-	}
+	// queueCancel создан выше (общий с replay «Повторить все»).
 	asyncQueueUC := usecase.NewAsyncQueueUsecase(
-		asyncPeeker, queueCancel, nodeRepo, auditUC,
+		asyncPeeker, queueCancel, failedPurger, nodeRepo, auditUC,
 		a.cfg.Kafka.ConsumerGroup, a.cfg.Kafka.AsyncTopic,
-		time.Duration(a.cfg.Kafka.Topic.RetentionMs)*time.Millisecond, 0, a.logger,
+		dlqRetention, 0, a.logger,
 	)
 	asyncQueueHandler := httpadapter.NewAsyncQueueHandler(asyncQueueUC, a.logger)
 

@@ -3186,3 +3186,74 @@ Prometheus `NodeThroughput` для top-узлов. Все источники д�
 
 **Out of scope:** удаление сообщений Kafka-DLQ; глобальный AlterConfigs retention (на экране Kafka);
 удаление CH-записей неудач (разрушает историю).
+
+## 36. Авто-репроцессор DLQ (повторная доставка неудачных async-сообщений до TTL)
+
+Развивает §34.4/§35. Полный текст — [sections/36-dlq-reprocessor.md](sections/36-dlq-reprocessor.md).
+
+После §35 «неудачные доставки» терминальны (короткий retry → `done=false` в CH + копия в `nexus.async.dlq`
++ commit) — авто-переотправки при восстановлении приёмника нет. §36 добавляет фоновый процесс, аккуратно
+дочищающий DLQ.
+
+- **Модель:** периодический sweeper в Sender (как `ch_housekeeping`, через `safego.Go`), тик раз в
+  `reprocess_interval` (дефолт 5 мин). Отдельная consumer-группа на `nexus.async.dlq`. Тик = базовый backoff.
+- **Логика на сообщение:** резолв узла → tombstone(`qcancel`)→drop → TTL (`now-received_at >
+  dlq_ttl_seconds`)→терминальный `ttl_expired` → статус (disabled→drop, paused→republish, enabled→далее) →
+  retry-backoff (`now < next_attempt_at`→republish без попытки) → circuit breaker открыт→republish без
+  попытки → попытка `SendUsecase.Send`: `2xx`→commit (в CH `done=true`, «восстановлено»),
+  иначе→republish-в-хвост (attempts+1, `next_attempt_at = now + dlq_retry_delay_seconds`)+commit.
+  Republish прекращается на успех/TTL.
+- **Настройки:** per-node `dlq_ttl_seconds` (дефолт 86400=24ч, [60, 2592000]) — миграция 0017; per-node
+  `dlq_retry_delay_seconds` (дефолт 300с=5мин, [1, 86400]) — минимальная пауза перед повтором ошибочной
+  отправки, миграция 0018; обе через domain/PG/DTO/UI/i18n. Global секция `sender.reprocessor`: `disabled`
+  (false→включён), `interval_sec` (дефолт 60с = раз в минуту), `max_scan` (1000). Эффективная пауза
+  повтора = `max(interval_sec, dlq_retry_delay_seconds)` (по умолчанию 1 мин и 5 мин → 5 мин);
+  `interval_sec` держат ≤ минимального per-node delay. Задел: per-node `dlq_reprocess_enabled` тем же паттерном.
+- **UI:** поля «TTL неудачных доставок» (в часах) и «Задержка переотправки» (в секундах) в форме узла;
+  подсказка «повторяется автоматически до TTL» во вкладке «Очередь»; ручной «Повторить» остаётся (форс-повтор).
+- **Метрики:** `nexus_dlq_reprocess_total{node,result=succeeded|failed|ttl_dropped|skipped|dropped}` +
+  `nexus_dlq_reprocess_duration_seconds`.
+
+**Неочевидности:** DLQ нельзя физически чистить → «удаление» успеха = commit без republish; TTL от
+`received_at` (предсказуемый суммарный срок); дубли в CH — observability, не баг; отдельная группа не
+конкурирует с §35-peek/основным consumer'ом.
+
+**Ручная очистка неудачных (§36.10):** оператор может принудительно очистить «Неудачные доставки» узла
+(вкладка «Очередь»): (1) отменяет (tombstone, как §34.4) ID `done=0`-сообщений за окно → DLQ-репроцессор
+дропает их (`result=dropped`, перестаёт повторять); (2) lightweight-`DELETE` записей `done=0` из CH-таблицы
+узла → счётчик/список обнуляются сразу. Эндпоинт `POST /api/nodes/{id}/async-queue/purge-failed`
+(admin-only, `{from?,to?}`). Очистка pending (`.../purge`) теперь доступна всегда (не только на паузе).
+
+**«Повторить все сейчас» (§36.11):** форс-повтор всех неудачных узла за период — каждое `done=0`-сообщение
+пере-инжектируется через Receiver (как построчный replay) и при успехе его оригинал в DLQ отменяется
+(qcancel), чтобы не задвоить доставку (replay-копия + авто-повтор). Эндпоинт `POST
+/api/nodes/{id}/async-queue/replay-failed` (admin-only), cap 500/вызов. Реализация —
+`ReplayUsecase.ReplayFailed` (общий `LogReader.FailedIDs` с §36.10 + `QueueCancelWriter`).
+
+**Out of scope (v2):** экспоненциальный per-message backoff; delay-топик; UI-дашборд репроцессинга.
+
+## 37. Идентификатор узла в логах (per-node атрибуция в общих ClickHouse-таблицах)
+
+Несколько узлов могут писать в одну CH-таблицу логов (`clickhouse_table` задаётся оператором; типичный
+случай — sync+async варианты одного эндпоинта). Без идентификатора узла в записи все per-node запросы на
+общей таблице смешивали узлы (одинаковые счётчики/графики; очистка/replay одного узла задевали другого,
+включая опасный `DELETE`). §37 добавляет колонку **`node_id String`** (UUID узла) в схему лога и фильтр
+по ней.
+
+**Запись (Sender):** `node.ID` прокидывается во все точки записи — sync через gRPC `SendRequest.node_id`
+→ `SendInput.NodeID` → `rec.NodeID`; async/DLQ через `buildSendInput`/`logTTLExpired` (узел резолвится
+локально). File-fallback сериализует поле автоматически.
+
+**Миграция:** колонка в шаблоне → новые таблицы получают её; существующие — идемпотентный
+`ALTER TABLE … ADD COLUMN IF NOT EXISTS node_id String DEFAULT ''` на старте Web и Sender
+(`platform/clickhouse.EnsureNodeIDColumn`).
+
+**Чтение/удаление (Web):** все per-node запросы `LogReaderCH` (ListSince/Search/CountErrors/CountFailed/
+FailedIDs/DeleteFailed/NodeKPI/NodeChart) фильтруют `(node_id = ? OR node_id = '')`; `GetByID` — нет (по
+уникальному ID). `nodeID` прокидывается из usecase (`n.ID`). Legacy-записи (`node_id=''`) видны/чистятся у
+любого co-table узла (старые данные неразличимы — компромисс), новый трафик строго per-node.
+
+**UI:** node id (UUID) выводится во вкладке «Конфиг» узла (read-only, копируемый). Подробности —
+[sections/37-node-id-in-logs.md](sections/37-node-id-in-logs.md).
+
+**Out of scope:** бэкфилл node_id старых записей; вторичный индекс по node_id; запрет общих таблиц.

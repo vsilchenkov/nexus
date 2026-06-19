@@ -66,6 +66,12 @@ func TestNode_SetDefaults(t *testing.T) {
 	if n.TimeoutMs != 30_000 {
 		t.Errorf("timeout_ms default = %d", n.TimeoutMs)
 	}
+	if n.DLQTTLSeconds != 86_400 { // §36: 24ч
+		t.Errorf("dlq_ttl_seconds default = %d", n.DLQTTLSeconds)
+	}
+	if n.DLQRetryDelaySeconds != 300 { // §36: 5 мин
+		t.Errorf("dlq_retry_delay_seconds default = %d", n.DLQRetryDelaySeconds)
+	}
 }
 
 func TestNode_Validate_OK(t *testing.T) {
@@ -96,6 +102,10 @@ func TestNode_Validate_Errors(t *testing.T) {
 		{"static without url", func(n *Node) { n.TargetURL = "" }, ErrNodeStaticNeedsTargetURL},
 		{"bad timeout", func(n *Node) { n.TimeoutMs = 1 }, ErrNodeTimeoutRange},
 		{"bad retry", func(n *Node) { n.RetryCount = 999 }, ErrNodeRetryCountRange},
+		{"bad dlq_ttl low", func(n *Node) { n.DLQTTLSeconds = 10 }, ErrNodeDLQTTLRange},
+		{"bad dlq_ttl high", func(n *Node) { n.DLQTTLSeconds = 9_999_999 }, ErrNodeDLQTTLRange},
+		{"bad dlq_retry_delay low", func(n *Node) { n.DLQRetryDelaySeconds = 0 }, ErrNodeDLQRetryDelayRange},
+		{"bad dlq_retry_delay high", func(n *Node) { n.DLQRetryDelaySeconds = 99_999 }, ErrNodeDLQRetryDelayRange},
 		{"comment too long", func(n *Node) { n.Comment = strings.Repeat("я", 2001) }, ErrNodeCommentLength},
 	}
 	for _, c := range cases {

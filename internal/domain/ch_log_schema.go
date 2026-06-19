@@ -33,6 +33,9 @@ var RequiredLogColumns = []CHLogColumn{
 	{"IP", "String"},
 	{"attempts", "Int32"},
 	{"attempts_details", "String"},
+	// §37: UUID узла-владельца записи. Различает узлы, делящие одну таблицу
+	// (per-node атрибуция). Старые записи (до миграции) — пустая строка.
+	{"node_id", "String"},
 }
 
 // IsRequiredLogColumn сообщает, входит ли колонка с таким именем в

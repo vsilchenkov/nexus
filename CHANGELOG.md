@@ -12,6 +12,40 @@
 
 ## [Unreleased]
 
+### Added
+
+- **§36 — авто-репроцессор DLQ.** Фоновый sweeper в Sender повторно доставляет неудачные
+  async-сообщения из `nexus.async.dlq` (отдельная consumer-группа `<group>-dlq-reprocess`,
+  периодический проход) до per-node TTL; при восстановлении приёмника сообщения уходят
+  автоматически. Уважает circuit breaker, tombstone'ы (§34.4) и статус узла. Метрики
+  `nexus_dlq_reprocess_total{node,result}` и `nexus_dlq_reprocess_duration_seconds`.
+
+### ⚠️ Новые параметры конфигурации (заполнить при выпуске релиза)
+
+- **`config.yml` → новая секция `sender.reprocessor`** (есть дефолты, секция опциональна):
+  - `disabled` (bool, дефолт `false` → репроцессор включён);
+  - `interval_sec` (int, **дефолт `60` = раз в минуту**) — период прохода sweeper'а. Эффективная
+    пауза повтора сообщения = `max(interval_sec, dlq_retry_delay_seconds узла)`, поэтому держите
+    `interval_sec` ≤ минимального per-node `dlq_retry_delay_seconds`, который хотите задавать (иначе
+    уменьшение per-node параметра ниже `interval_sec` не даёт эффекта). **При апгрейде с прежнего
+    дефолта `300`:** если в вашем `config.yml` `interval_sec` задан явно как `300` и вы хотите более
+    частые повторы — уменьшите до `60`;
+  - `max_scan` (int, дефолт `1000`) — максимум сообщений за один проход.
+
+  Образец — в [config/config.example.yml](config/config.example.yml). На dev-стенде
+  ([config/config_debug.yml](config/config_debug.yml)) `interval_sec: 30` для быстрой проверки.
+
+- **Очистка «Неудачных доставок» узла (§36.10)** — без новых конфиг-параметров: новый эндпоинт
+  `POST /api/nodes/{id}/async-queue/purge-failed` (admin/manager). Отменяет авто-повтор неудачных
+  (DLQ-репроцессор перестаёт их повторять) и удаляет записи `done=0` из CH-логов узла. Очистка
+  pending-очереди (`.../purge`) теперь доступна на узле в любом статусе (не только на паузе).
+
+- **Новые миграции PostgreSQL (применяются автоматически на старте, аддитивные):**
+  - `0017_node_dlq_ttl` — колонка `nodes.dlq_ttl_seconds` (`NOT NULL DEFAULT 86400` = 24 ч);
+  - `0018_node_dlq_retry_delay` — колонка `nodes.dlq_retry_delay_seconds` (`NOT NULL DEFAULT 300`
+    = 5 мин). Обе с `NOT NULL DEFAULT` → существующие узлы заполняются дефолтами атомарно,
+    отдельный backfill не нужен. Оба параметра редактируются в форме узла (UI).
+
 ## [1.1.0] - 2026-06-17
 
 Релиз преимущественно из аудита надёжности/безопасности (ветка `fix/audit-2026-06`,

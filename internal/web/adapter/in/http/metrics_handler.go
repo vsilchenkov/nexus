@@ -150,7 +150,7 @@ type nodeThroughputDTO struct {
 // @Router   /api/metrics/nodes [get]
 func (h *MetricsHandler) NodesOverview(c *gin.Context) {
 	since, until, _ := resolveWindow(c)
-	res := h.uc.NodesOverview(c.Request.Context(), since, until)
+	res := h.uc.NodesOverview(c.Request.Context(), currentTeamID(c), since, until)
 	items := make([]nodeThroughputDTO, 0, len(res.Items))
 	for _, it := range res.Items {
 		spark := it.Spark

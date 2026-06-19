@@ -257,6 +257,12 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			aq.GET("/messages/body", h.AsyncQueue.Body)
 			aq.DELETE("/messages/:msgId", h.AsyncQueue.DeleteOne)
 			aq.POST("/purge", h.AsyncQueue.Purge)
+			aq.POST("/purge-failed", h.AsyncQueue.PurgeFailed)
+			// §36.11: «Повторить все сейчас» — handler в ReplayHandler (нужен
+			// dispatcher), но маршрут admin-only под async-queue, как purge-failed.
+			if h.Replay != nil {
+				aq.POST("/replay-failed", h.Replay.ReplayFailed)
+			}
 		}
 	}
 }

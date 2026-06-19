@@ -170,6 +170,15 @@ func applyDefaults(c *Config) {
 	if c.Sender.Workers == 0 {
 		c.Sender.Workers = 50
 	}
+	// §36: авто-репроцессор DLQ включён по умолчанию (Disabled=false).
+	if c.Sender.Reprocessor.IntervalSec == 0 {
+		// 60с — проход раз в минуту: позволяет per-node dlq_retry_delay_seconds
+		// опускать вплоть до ~1 мин (эффективная пауза = max(interval, delay)).
+		c.Sender.Reprocessor.IntervalSec = 60
+	}
+	if c.Sender.Reprocessor.MaxScan == 0 {
+		c.Sender.Reprocessor.MaxScan = 1000
+	}
 
 	if c.Web.HTTPAddr == "" {
 		c.Web.HTTPAddr = ":8000"

@@ -100,7 +100,7 @@
 | **`nexus_requests_total` + `nexus_request_duration_seconds`** | ✅ Phase 6.1 | Gin middleware [platform/metrics/gin.go](../internal/platform/metrics/gin.go) — Receiver/Web; gRPC [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go) и async [usecase/async.go](../internal/sender/usecase/async.go) — Sender |
 | **`nexus_kafka_lag`** | ✅ Phase 6.1 | reporter в [sender/app.go](../internal/sender/app.go) `reportKafkaLag()` — раз в 15 сек снимает `Stats()` со всех consumer-инстансов |
 | **`nexus_clickhouse_buffer_size` / `_errors_total` / `_dropped_total` / `_fallback_total`** | ✅ Phase 6.1 | [chlog/writer.go](../internal/sender/adapter/out/chlog/writer.go) обновляет в `append`/`flushTable`/`Write` |
-| **HTTP-API метрик для панели (§21)** | ✅ Phase 21.1 | Web опрашивает Prometheus query API: [adapter/out/prometheus/client.go](../internal/web/adapter/out/prometheus/client.go) (глобальные KPI/очередь/throughput) + per-node агрегаты из ClickHouse [adapter/out/clickhouse/metrics_reader.go](../internal/web/adapter/out/clickhouse/metrics_reader.go) (точные p95/p99). Usecase [usecase/metrics.go](../internal/web/usecase/metrics.go), порт [port/metrics_provider.go](../internal/web/usecase/port/metrics_provider.go), handler [metrics_handler.go](../internal/web/adapter/in/http/metrics_handler.go): `GET /api/metrics/overview`, `/api/metrics/nodes`, `/api/metrics/nodes/{id}`. Конфиг `prometheus.url` ([config.go](../internal/platform/config/config.go)); деградация при отсутствии Prometheus. |
+| **HTTP-API метрик для панели (§21)** | ✅ Phase 21.1 (+§21 CH-источник) | Глобальные KPI Overview (incoming/outgoing/errors 24ч) и Kafka-мониторинг — из Prometheus ([adapter/out/prometheus/client.go](../internal/web/adapter/out/prometheus/client.go)). **Per-node метрики — из ClickHouse-логов** ([adapter/out/clickhouse/log_reader.go](../internal/web/adapter/out/clickhouse/log_reader.go) `NodeKPI`/`NodeChart`): и страница узла (вкладки «Обзор»/«Метрики»), и **throughput рабочего стола** (`NodesOverview`, per-node конкурентно) — один источник, цифры стола = цифры узла, без неточного `increase()`. Usecase [usecase/metrics.go](../internal/web/usecase/metrics.go), порт [port/metrics_provider.go](../internal/web/usecase/port/metrics_provider.go) + [port/log_reader.go](../internal/web/usecase/port/log_reader.go), handler [metrics_handler.go](../internal/web/adapter/in/http/metrics_handler.go): `GET /api/metrics/overview`, `/api/metrics/nodes`, `/api/metrics/nodes/{id}`. Без CH `NodesOverview` деградирует на Prometheus. |
 
 ### §7 Веб-интерфейс
 
@@ -594,9 +594,38 @@ DLQ) тормозила, «Очистить» был no-op, шапка плох�
   (`done=false`, с reason/телом/attempts) ДО `publishDLQ` — неудачные доставки уже в CH, быстро
   доступны по индексам `done`/`date_request`. §34.6-peek читал то же самое из Kafka, но дорого. §35
   убирает peek и берёт из CH (`CountFailed` + существующий `GET /logs?done=no`).
-- **§35 — честная семантика очистки.** Удалить неудачи нельзя (DLQ: нет DeleteRecords, общая партиция;
-  CH-логи — история, не трогаем). Вместо «Очистить DLQ» (был no-op) — фильтр по периоду + пауза/
-  отключение узла (`PATCH status`) + replay. DLQ-бэклог истекает по retention.
+- **§35/§36.10 — очистка неудачных доставок (обновлено).** Раньше: «удалить неудачи нельзя» (DLQ без
+  DeleteRecords, CH-логи — история). Теперь оператор может принудительно очистить «Неудачные доставки»
+  узла (`POST /api/nodes/:id/async-queue/purge-failed`, admin-only): (1) ID `done=0`-сообщений за окно
+  отменяются tombstone'ом (как §34.4) → DLQ-репроцессор дропает их (`result=dropped`, перестаёт повторять);
+  (2) записи `done=0` удаляются из CH-таблицы узла **lightweight DELETE** → счётчик/список обнуляются сразу.
+  Физически DLQ по-прежнему не чистится (tombstone + commit). Реализация: `AsyncQueueUsecase.PurgeFailed`
+  → порт `FailedLogsPurger` (`LogReaderCH.FailedIDs`/`DeleteFailed`) + `QueueCancelWriter`. Без CH/таблицы —
+  no-op. Тесты: unit `TestAsyncQueue_PurgeFailed_*`, integration `TestAsyncQueue_PurgeFailed_E2E`
+  (qcancel в Redis + DELETE в CH). Replay и пауза/отключение остаются как раньше.
+- **§36.11 — «Повторить все сейчас».** Форс-повтор всех неудачных узла (`POST
+  /api/nodes/:id/async-queue/replay-failed`, admin-only): каждое `done=0`-сообщение за окно
+  пере-инжектируется через Receiver (`replayOne`, вынесен из `Replay`) и при успехе его оригинал в DLQ
+  отменяется (qcancel) — иначе при восстановлении адреса доставилось бы дважды (replay-копия + авто-повтор;
+  выбор пользователя — «Re-send + отменить оригиналы»). `ReplayUsecase` получил опц. `cancel`+`retention`
+  через `NewReplayUsecaseWithCancel` (старый ctor делегирует с nil — тесты не трогаются); `FailedIDs`
+  добавлен в порт `LogReader` (общий набор сообщений с §36.10). Cap 500/вызов (`capped`), один rate-limit
+  на операцию, при отмене ctx — частичный результат с ошибкой. Тесты: `TestReplay_ReplayFailed_*` (отмена
+  оригиналов, dispatch-error не отменяет, disabled→409).
+- **§37 — node_id в логах (per-node атрибуция в общих CH-таблицах).** Узлы могут делить одну
+  `clickhouse_table`; до §37 per-node запросы смешивали их (одинаковые счётчики на рабочем столе/странице
+  узла; `DeleteFailed` одного удалял записи другого). Добавлена колонка `node_id String` (UUID) в схему
+  лога ([ch_log_schema.go](../internal/domain/ch_log_schema.go), 21 колонка) + поле `LogRecord.NodeID`.
+  **Запись:** `node.ID` прокинут sync через gRPC `SendRequest.node_id` (поле 28, перегенерён proto) →
+  `SendInput.NodeID` → `rec.NodeID`; async/DLQ — через `buildSendInput`/`logTTLExpired`. **Миграция
+  существующих таблиц:** `platform/clickhouse.EnsureNodeIDColumn` (`ALTER … ADD COLUMN IF NOT EXISTS`,
+  идемпотентно) на старте **и Web, и Sender** (порядок деплоя не гарантирован; список таблиц — `nodeRepo.List`
+  / `nodepg.ListClickHouseTables`). **Чтение/удаление:** 8 методов `LogReaderCH` фильтруют
+  `(node_id = ? OR node_id = '')` (legacy `''` видны/чистятся у любого co-table узла — компромисс, новый
+  трафик чист); `GetByID` — нет (уникальный ID). `nodeID` прокинут в порты (LogReader/NodeLogMetrics/
+  FailedLogsPurger) и вызовы (logs/metrics/replay/async_queue). **UI:** node id во вкладке «Конфиг».
+  Тест `TestLogReader_NodeIDFilter_E2E` (shared-table: фильтр + DeleteFailed не задевает чужие). Почему
+  `node_id` (UUID), а не path — устойчив к переименованию (см. [sections/37-node-id-in-logs.md](sections/37-node-id-in-logs.md)).
 - **§35 — peek-`MaxWait` = 500мс (грабли стенд-теста, тормоз ~9с).** `kafka.Reader` в `scanPartition`/
   `PeekBody` НЕ задавал `MaxWait` → дефолт kafka-go 10с. После чтения последнего сообщения фоновый
   fetch-цикл reader'а пытается прочитать следующий (ещё пустой) offset и блокируется на `MaxWait`, а
@@ -604,9 +633,13 @@ DLQ) тормозила, «Очистить» был no-op, шапка плох�
   ~9с (а не из-за длины скана — на стенде LAG=1, читалось 1 сообщение). Лечится коротким
   `MaxWait: peekMaxWait` (500мс): peek 9с→0.4с. Особенно проявляется на paused-узле, где commit
   consumer-группы застревает у high и peek читает у самой границы.
-- **§35 — purge-кнопки доступны и на паузе.** Очистка живой очереди показывается при `pending>0` ИЛИ
-  `status==paused` (не ждём подсчёта; на пустой очереди purge вернёт `cancelled:0`). Иначе при медленном/
-  не успевшем загрузиться peek пользователь не видел кнопки «Очистить» на запаузенном узле.
+- **§35/§36.10 — purge-кнопки pending доступны всегда (обновлено).** Раньше UI прятал кнопки очистки
+  живой очереди на не-paused узле (была ошибочная интерпретация наблюдения как требования). Теперь
+  «Очистить за период»/«Очистить все ожидающие» видны всегда (admin): на активном узле очередь обычно
+  пуста (доставка сразу) → purge вернёт `cancelled:0` (безвредно), на паузе/при лежащем Sender чистят
+  backlog. Кнопки очистки неудачных + «Повторить все сейчас» — **admin-only** (маршруты async-queue под
+  `authedAdmin`; гейт UI выровнен с маршрутом — иначе менеджер видел бы кнопку и ловил 403). Общий компонент
+  `PurgeButtons` (QueueTab.tsx) переиспользуется для pending и failed.
 - **§35 — поллинг живой очереди только когда есть смысл.** `pendingQ`: 4с на паузе (очередь
   наполняется — нужна живая обратная связь), 8с при наличии backlog, на `enabled` с пустой очередью —
   выключен (committed==high → `scanQueue` читает ~0, не молотим Kafka). Сам peek и admin-операции скрыты
@@ -622,6 +655,58 @@ DLQ) тормозила, «Очистить» был no-op, шапка плох�
   `PUT` (который перезаписал бы все поля и перепровижинил CH-таблицу). `SetStatus` читает узел
   (расшифрованные креды), меняет только `Status`, сохраняет как есть — audit-дифф `{status: before→after}`,
   no-op при том же статусе.
+
+### §36 Авто-репроцессор DLQ (повторная доставка неудачных async-сообщений до TTL)
+
+ТЗ — [sections/36-dlq-reprocessor.md](sections/36-dlq-reprocessor.md).
+**Статус: ✅ реализовано** (ветка `feature/dlq-reprocessor`; B1–B4 готовы, ожидает пред-сдачных гейтов и merge).
+
+| Пункт | Статус | Где |
+|---|---|---|
+| §36.B1 Per-node `dlq_ttl_seconds` (дефолт 24ч) | ✅ | миграция [0017_node_dlq_ttl](../migrations/0017_node_dlq_ttl.up.sql); [domain/node.go](../internal/domain/node.go) (поле + `SetDefaults` 86400 + `Validate` [60, 2592000] + [errors.go](../internal/domain/errors.go) `ErrNodeDLQTTLRange`); PG-маппер [node_repo.go](../internal/web/adapter/out/postgres/node_repo.go) (последний столбец, без перенумерации $-параметров); DTO [dto.go](../internal/web/adapter/in/http/dto.go); UI-форма [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx) (в секундах + подсказка в часах) + [nodeValidation.ts](../web-ui/src/lib/nodeValidation.ts) + i18n; тесты domain + integration round-trip |
+| §36.B1.2 Per-node `dlq_retry_delay_seconds` (дефолт 5 мин) | ✅ | миграция [0018_node_dlq_retry_delay](../migrations/0018_node_dlq_retry_delay.up.sql) (`NOT NULL DEFAULT 300` атомарно заполняет существующие узлы); [domain/node.go](../internal/domain/node.go) (`SetDefaults` 300 + `Validate` [1, 86400] + `ErrNodeDLQRetryDelayRange`); PG-маппер (последний столбец); DTO + swagger; UI-форма + `nodeValidation.ts` + i18n + пересборка бандла; min-backoff перед повтором ошибочной доставки (header `next_attempt_at`, §36.4). Дефолт 300с = `reprocess_interval` |
+| §36.B2 Sender-репроцессор (sweeper над DLQ) | ✅ | usecase [dlq_reprocess.go](../internal/sender/usecase/dlq_reprocess.go) (`DLQReprocessor.ProcessMessage`: резолв→tombstone→TTL→статус→retry-backoff→breaker→`Send`); адаптер-sweeper [adapter/in/kafka/dlq_reprocessor.go](../internal/sender/adapter/in/kafka/dlq_reprocessor.go) (период. проход, отдельная группа `<group>-dlq-reprocess`); [circuitbreaker.IsOpen](../internal/platform/circuitbreaker/redis.go) (read-only, open∧cooldown); [kafka.NewConsumerWithGroup](../internal/platform/kafka/consumer.go); метрики `nexus_dlq_reprocess_total`/`_duration_seconds` ([metrics.go](../internal/platform/metrics/metrics.go)); unit-тесты |
+| §36.B3 Global-конфиг + wiring (`safego.Go` в app.go, Stop) | ✅ | секция [config.go](../internal/platform/config/config.go) `SenderReprocessorConfig` (`disabled`/`interval_sec` 300/`max_scan` 1000) + [defaults.go](../internal/platform/config/defaults.go); wiring [sender/app.go](../internal/sender/app.go) (конструкция под `!disabled`, `safego.Go`, `Stop()`+`Await` done-канала); config-файлы (`config.yml`/`config.example.yml`/`config_debug.yml`); CHANGELOG + DEPLOYMENT |
+| §36.B4 UI-подсказка «повторяется до TTL» | ✅ | [QueueTab.tsx](../web-ui/src/components/node/QueueTab.tsx) — под заголовком «Неудачные доставки» подсказка `queue.failed.reprocess_hint` (TTL узла в часах + про форс-«Повторить»); `dlq_ttl_seconds`/`dlq_retry_delay_seconds` добавлены в тип `Node` ([client.ts](../web-ui/src/api/client.ts)); i18n en/ru; бандл пересобран. Колонка «попыток» (header `attempts`) — опциональна, отложена |
+
+**Неочевидности (B1/B1.2).**
+- **Новый столбец узла — добавлять ПОСЛЕДНИМ** в `node_repo.go` (Create INSERT/VALUES/args, Update SET/args,
+  `nodeColumns` SELECT + scan): тогда новый позиционный `$N` — в конце, без перенумерации существующих
+  параметров (риск рассинхрона). Проверять обязательно integration `make test-int-pg` (round-trip).
+- **`Node.Validate()` безусловно проверяет диапазон новых int-полей** — узлы, собираемые в тестах ВРУЧНУЮ
+  (без `SetDefaults`), должны явно задавать `DLQTTLSeconds`/`DLQRetryDelaySeconds`, иначе `Validate` падает на
+  нуле (поймано в `receiver/usecase/webhook_signature_test.go` — латентно с B1).
+
+**Неочевидности (B2).**
+- **Backoff повтора — `max(reprocess_interval, dlq_retry_delay_seconds)`.** Sweeper тикает раз в интервал;
+  `next_attempt_at` лишь не даёт повторить РАНЬШЕ задержки. По умолчанию оба = 5 мин (`interval_sec` 300 =
+  `dlq_retry_delay_seconds` 300) → повтор раз в ~5 мин. Per-node задержка «прижимает» паузу снизу, если
+  глобальный интервал прохода меньше.
+- **`Breaker.IsOpen` (новый) — read-only и учитывает cooldown.** `State()` всегда возвращает `open` пока
+  ключ жив (не учитывает истёкший cooldown), `Allow()` расходует half-open-пробу. Для шага 5 нужен именно
+  «open И cooldown не истёк», без побочных эффектов — иначе восстановившийся адрес (cooldown прошёл) навсегда
+  бы откладывался.
+- **Анти-busy-loop `seen[id]`+break — проверять wrap СТРОГО ПОСЛЕ `Commit`.** Sweeper завершает проход,
+  встретив id, уже обработанный в этом проходе (догнал свой republish-хвост); копии за хвостом — на следующем
+  проходе. **Грабли (поймано стендом, потеря данных):** ранний вариант делал `break` ДО `Commit` — kafka-go
+  продвигает курсор за каждое прочитанное, поэтому прерывание без коммита оставляло republish-копию
+  незакоммиченной, а коммит последующих сообщений прокатывал offset мимо неё → **сообщение терялось**. Фикс:
+  Commit прочитанного → потом seen-check/break; тогда committed-offset = живой republish-копии у хвоста,
+  она перечитается следующим проходом. `ReadLag` для bounding НЕ годится — kafka-go возвращает
+  `errNotAvailableWithGroup` для consumer-group ридеров. Integration с 1 сообщением баг не ловил — нужен
+  мульти-сообщение + цикл fail→republish→recovery (на стенде терялось 1 из 6).
+- **`ReprocessRetry` прерывает проход** (не коммитим и не идём дальше): commit в kafka-go — «до и включительно»,
+  поэтому коммит следующего сообщения «проглотил» бы offset несохранённого. Перечит — на rebalance/рестарте.
+- **Метрика `result=dropped`** добавлена сверх 4 меток ТЗ — для терминальных drop'ов (узел удалён/disabled/
+  отменён), которые не `ttl_dropped` и не `skipped`.
+- **Новую колонку узла, нужную Sender'у, добавлять В ОБА ридера.** Sender читает узлы НЕ через web-репозиторий
+  [node_repo.go](../internal/web/adapter/out/postgres/node_repo.go), а через свой
+  [sender/adapter/out/nodepg/reader.go](../internal/sender/adapter/out/nodepg/reader.go) (`selectByPath`).
+  Грабли (поймано стендом + integration `TestSender_DLQReprocessor_E2E`): B1/B1.2 добавили `dlq_ttl_seconds`/
+  `dlq_retry_delay_seconds` только в web-репозиторий → sender-ридер возвращал `DLQTTLSeconds=0` → в репроцессоре
+  `ttl=0` → `now-received_at > 0` истинно всегда → **репроцессор отправлял ВСЁ в `ttl_dropped`, повторной
+  доставки не было**. Unit-тесты строят `domain.Node` напрямую с TTL и баг не ловили — нужен integration через
+  реальный `nodepg.Reader`.
 
 ---
 
