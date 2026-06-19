@@ -176,13 +176,16 @@ export default function NodeSettings() {
       }
       return node;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ["nodes"] });
       // Сброс формы: иначе при следующем заходе на /nodes/new остаются
       // значения только что созданного узла (Phase AUD.7).
       setForm(emptyForm);
       setPendingHosts([]);
-      navigate("/");
+      // После сохранения возвращаемся в ОКНО УЗЛА (detail), а не на список:
+      // правка существующего → его страница; создание → страница нового узла.
+      const nodeId = isNew ? (data as { id?: string } | undefined)?.id : id;
+      navigate(nodeId ? `/nodes/${nodeId}` : "/");
     },
     onError: (e: { response?: { data?: { error?: string; code?: string; field?: string } } }) => {
       const d = e?.response?.data;
@@ -242,7 +245,7 @@ export default function NodeSettings() {
           {isNew ? t("overview.new_node") : `${t("node.actions.edit")}: ${form.path}`}
         </h1>
         <div className="flex flex-wrap items-center gap-2">
-          <Link to="/">
+          <Link to={isNew ? "/" : `/nodes/${id}`}>
             <Button variant="ghost">{t("common.cancel")}</Button>
           </Link>
           <Button onClick={() => setShowDryRun(true)}>
