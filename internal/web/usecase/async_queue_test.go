@@ -53,15 +53,41 @@ func (s *stubCancelWriter) Cancel(_ context.Context, ids []string, ttl time.Dura
 }
 
 func newQueueUC(peeker port.AsyncQueuePeeker, cancel port.QueueCancelWriter, node *domain.Node) (*AsyncQueueUsecase, *stubAuditRepo) {
+	return newQueueUCFull(peeker, cancel, nil, node)
+}
+
+func newQueueUCFull(peeker port.AsyncQueuePeeker, cancel port.QueueCancelWriter, failed port.FailedLogsPurger, node *domain.Node) (*AsyncQueueUsecase, *stubAuditRepo) {
 	repo := &stubAuditRepo{}
 	nodes := &stubNodeRepo{nodes: map[string]*domain.Node{}}
 	if node != nil {
 		nodes.nodes[node.ID] = node
 	}
-	uc := NewAsyncQueueUsecase(peeker, cancel, nodes,
+	uc := NewAsyncQueueUsecase(peeker, cancel, failed, nodes,
 		NewAuditUsecase(repo, logging.NewNoop()),
 		"nexus-sender", "nexus.async", time.Hour, 5000, logging.NewNoop())
 	return uc, repo
+}
+
+// stubFailedPurger — управляемый FailedLogsPurger; фиксирует аргументы.
+type stubFailedPurger struct {
+	ids       []string
+	capped    bool
+	deleted   uint64
+	idsErr    error
+	delErr    error
+	gotTable  string
+	gotSince  int64
+	gotUntil  int64
+	delCalled bool
+}
+
+func (s *stubFailedPurger) FailedIDs(_ context.Context, table string, sinceMs, untilMs int64, _ int) ([]string, bool, error) {
+	s.gotTable, s.gotSince, s.gotUntil = table, sinceMs, untilMs
+	return s.ids, s.capped, s.idsErr
+}
+func (s *stubFailedPurger) DeleteFailed(_ context.Context, _ string, _, _ int64) (uint64, error) {
+	s.delCalled = true
+	return s.deleted, s.delErr
 }
 
 func asyncNode() *domain.Node {
@@ -169,4 +195,69 @@ func TestAsyncQueue_PurgeCancelError(t *testing.T) {
 	_, err := uc.PurgeAll(context.Background(), Actor{UserID: "u"}, "n1", "t1")
 	require.Error(t, err)
 	assert.Empty(t, audit.entries, "при ошибке cancel audit не пишется")
+}
+
+func asyncNodeCH() *domain.Node {
+	n := asyncNode()
+	n.ClickHouseTable = "nexus_default.partner_echo"
+	return n
+}
+
+func TestAsyncQueue_PurgeFailed_CancelsAndDeletes(t *testing.T) {
+	t.Parallel()
+	cancelW := &stubCancelWriter{}
+	failed := &stubFailedPurger{ids: []string{"f1", "f2"}, deleted: 5}
+	uc, audit := newQueueUCFull(&stubPeeker{}, cancelW, failed, asyncNodeCH())
+
+	from := time.Date(2026, 6, 18, 10, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
+	r, err := uc.PurgeFailed(context.Background(), Actor{UserID: "u"}, "n1", "t1", from, to)
+	require.NoError(t, err)
+
+	// 1) ID неудачных отменены (репроцессор перестанет повторять).
+	assert.Equal(t, []string{"f1", "f2"}, cancelW.gotIDs)
+	// 2) CH-записи удалены; Cancelled = число удалённых (видимый «очищено N»).
+	assert.True(t, failed.delCalled)
+	assert.Equal(t, 5, r.Cancelled)
+	// Окно проброшено в FailedIDs (ms).
+	assert.Equal(t, "nexus_default.partner_echo", failed.gotTable)
+	assert.Equal(t, from.UnixMilli(), failed.gotSince)
+	assert.Equal(t, to.UnixMilli(), failed.gotUntil)
+	// Audit.
+	require.Len(t, audit.entries, 1)
+	assert.Equal(t, domain.ActionAsyncQueuePurge, audit.entries[0].Action)
+}
+
+func TestAsyncQueue_PurgeFailed_AllZeroWindow(t *testing.T) {
+	t.Parallel()
+	failed := &stubFailedPurger{ids: []string{"x"}, deleted: 1}
+	uc, _ := newQueueUCFull(&stubPeeker{}, &stubCancelWriter{}, failed, asyncNodeCH())
+
+	_, err := uc.PurgeFailed(context.Background(), Actor{UserID: "u"}, "n1", "t1", time.Time{}, time.Time{})
+	require.NoError(t, err)
+	assert.Zero(t, failed.gotSince, "purge all → нулевая нижняя граница")
+	assert.Zero(t, failed.gotUntil, "purge all → нулевая верхняя граница")
+}
+
+func TestAsyncQueue_PurgeFailed_NoCH_Noop(t *testing.T) {
+	t.Parallel()
+	failed := &stubFailedPurger{ids: []string{"x"}, deleted: 9}
+	// Узел без ClickHouseTable → чистить нечего (no-op, без вызова purger/audit).
+	uc, audit := newQueueUCFull(&stubPeeker{}, &stubCancelWriter{}, failed, asyncNode())
+
+	r, err := uc.PurgeFailed(context.Background(), Actor{UserID: "u"}, "n1", "t1", time.Time{}, time.Time{})
+	require.NoError(t, err)
+	assert.Zero(t, r.Cancelled)
+	assert.False(t, failed.delCalled)
+	assert.Empty(t, audit.entries)
+}
+
+func TestAsyncQueue_PurgeFailed_DeleteError(t *testing.T) {
+	t.Parallel()
+	failed := &stubFailedPurger{ids: []string{"x"}, delErr: errors.New("ch down")}
+	uc, audit := newQueueUCFull(&stubPeeker{}, &stubCancelWriter{}, failed, asyncNodeCH())
+
+	_, err := uc.PurgeFailed(context.Background(), Actor{UserID: "u"}, "n1", "t1", time.Time{}, time.Time{})
+	require.Error(t, err)
+	assert.Empty(t, audit.entries, "при ошибке delete audit не пишется")
 }

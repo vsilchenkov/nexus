@@ -254,6 +254,83 @@ func (r *LogReaderCH) CountFailed(ctx context.Context, table string, sinceMs, un
 	return n, nil
 }
 
+// failedConds — условия «done=0 в окне (sinceMs, untilMs]» + позиционные args.
+func failedConds(sinceMs, untilMs int64) ([]string, []any) {
+	conds := []string{"done = 0"}
+	var args []any
+	if sinceMs > 0 {
+		conds = append(conds, "toUnixTimestamp64Milli(toDateTime64(date_request, 3)) > ?")
+		args = append(args, sinceMs)
+	}
+	if untilMs > 0 {
+		conds = append(conds, "toUnixTimestamp64Milli(toDateTime64(date_request, 3)) <= ?")
+		args = append(args, untilMs)
+	}
+	return conds, args
+}
+
+// FailedIDs — уникальные ID записей done=0 за окно (sinceMs, untilMs], до cap
+// (capped=true, если есть ещё). Для очистки «Неудачных доставок»: эти ID
+// отменяются (qcancel), чтобы DLQ-репроцессор перестал их повторять (§34.4).
+func (r *LogReaderCH) FailedIDs(ctx context.Context, table string, sinceMs, untilMs int64, cap int) ([]string, bool, error) {
+	if !isSafeTableName(table) {
+		return nil, false, fmt.Errorf("invalid table name: %q", table)
+	}
+	if cap <= 0 {
+		cap = 10000
+	}
+	conds, args := failedConds(sinceMs, untilMs)
+	conn, err := r.liveConn()
+	if err != nil {
+		return nil, false, err
+	}
+	q := fmt.Sprintf("SELECT DISTINCT ID FROM %s WHERE %s LIMIT %d", table, strings.Join(conds, " AND "), cap+1)
+	rows, err := conn.Query(ctx, q, args...)
+	if err != nil {
+		return nil, false, fmt.Errorf("clickhouse failed ids: %w", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, false, fmt.Errorf("scan failed id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	capped := len(ids) > cap
+	if capped {
+		ids = ids[:cap]
+	}
+	return ids, capped, nil
+}
+
+// DeleteFailed — lightweight DELETE записей done=0 за окно (sinceMs, untilMs] из
+// CH-таблицы узла (очистка вида «Неудачные доставки»). Возвращает число удалённых
+// (посчитано до DELETE — CH lightweight delete счётчик не отдаёт).
+func (r *LogReaderCH) DeleteFailed(ctx context.Context, table string, sinceMs, untilMs int64) (uint64, error) {
+	if !isSafeTableName(table) {
+		return 0, fmt.Errorf("invalid table name: %q", table)
+	}
+	n, err := r.CountFailed(ctx, table, sinceMs, untilMs)
+	if err != nil || n == 0 {
+		return 0, err
+	}
+	conds, args := failedConds(sinceMs, untilMs)
+	conn, err := r.liveConn()
+	if err != nil {
+		return 0, err
+	}
+	stmt := fmt.Sprintf("DELETE FROM %s WHERE %s", table, strings.Join(conds, " AND "))
+	if err := conn.Exec(ctx, stmt, args...); err != nil {
+		return 0, fmt.Errorf("clickhouse delete failed: %w", err)
+	}
+	return n, nil
+}
+
 // NodeKPI — ТОЧНЫЕ per-node KPI из ClickHouse-логов за окно (sinceMs, untilMs]
 // (§21, вкладки «Обзор»/«Метрики» узла). В отличие от Prometheus increase() —
 // мгновенные точные счётчики по уникальным запросам (ID), без rate-экстраполяции

@@ -181,6 +181,39 @@ func (h *AsyncQueueHandler) Purge(c *gin.Context) {
 	c.JSON(http.StatusOK, queuePurgeDTO{Cancelled: r.Cancelled, Capped: r.Capped, KafkaAvailable: r.KafkaAvailable})
 }
 
+// PurgeFailed godoc
+// @Summary  Очистить «Неудачные доставки» узла за период или целиком (§35/§36).
+// @Description  Отменяет повторную доставку (DLQ-репроцессор перестаёт повторять) и удаляет записи done=0 из CH-логов узла за [from,to]. Пустые from/to = всё. Cancelled = число удалённых. Admin-only.
+// @Tags     async-queue
+// @Accept   json
+// @Produce  json
+// @Param    id    path  string             true   "node id"
+// @Param    body  body  queuePurgeRequest  false  "период (пусто = всё)"
+// @Success  200  {object}  queuePurgeDTO
+// @Failure  400  {object}  ErrorResponse
+// @Failure  404  {object}  ErrorResponse
+// @Security CookieAuth
+// @Router   /api/nodes/{id}/async-queue/purge-failed [post]
+func (h *AsyncQueueHandler) PurgeFailed(c *gin.Context) {
+	var req queuePurgeRequest
+	if c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+	if !req.From.IsZero() && !req.To.IsZero() && req.From.After(req.To) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "from must be before to"})
+		return
+	}
+	r, err := h.uc.PurgeFailed(c.Request.Context(), actorFromCtx(c), c.Param("id"), currentTeamID(c), req.From, req.To)
+	if err != nil {
+		h.queueError(c, err, "async_queue.purge_failed")
+		return
+	}
+	c.JSON(http.StatusOK, queuePurgeDTO{Cancelled: r.Cancelled, Capped: r.Capped, KafkaAvailable: r.KafkaAvailable})
+}
+
 // queueError — единый маппинг ошибок управления очередью.
 func (h *AsyncQueueHandler) queueError(c *gin.Context, err error, op string) {
 	switch {

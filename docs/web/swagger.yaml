@@ -3038,6 +3038,44 @@ paths:
       summary: Очистить async-очередь узла за период или целиком (§34.4).
       tags:
       - async-queue
+  /api/nodes/{id}/async-queue/purge-failed:
+    post:
+      consumes:
+      - application/json
+      description: Отменяет повторную доставку (DLQ-репроцессор перестаёт повторять)
+        и удаляет записи done=0 из CH-логов узла за [from,to]. Пустые from/to = всё.
+        Cancelled = число удалённых. Admin-only.
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: период (пусто = всё)
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.queuePurgeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.queuePurgeDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Очистить «Неудачные доставки» узла за период или целиком (§35/§36).
+      tags:
+      - async-queue
   /api/nodes/{id}/log/{logId}:
     get:
       description: Тела грузятся лениво по клику на строку — списки (List/Stream)

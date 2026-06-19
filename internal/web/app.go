@@ -324,12 +324,14 @@ func (a *App) Start(ctx context.Context) error {
 		logsHandler    *httpadapter.LogsHandler
 		orphanHandler  *httpadapter.OrphanHandler
 		teamHandler    *httpadapter.TeamHandler
-		nodeLogMetrics webport.NodeLogMetrics // §21: per-node KPI/график из CH (nil без CH)
+		nodeLogMetrics webport.NodeLogMetrics   // §21: per-node KPI/график из CH (nil без CH)
+		failedPurger   webport.FailedLogsPurger // §35/§36: очистка неудачных доставок (nil без CH)
 	)
 	if a.ch != nil {
 		// a.chMgr уже создан выше (вместе с teamProvisioner).
 		logReader := chreader.NewLogReader(a.chMgr, a.logger)
 		nodeLogMetrics = logReader // точные per-node метрики узла из CH-логов
+		failedPurger = logReader   // очистка «Неудачных доставок» из CH-логов
 		dispatcher := rcvdispatcher.NewHTTPDispatcher(a.cfg.Web.ReceiverURL, 30*time.Second, a.logger)
 		replayUC := usecase.NewReplayUsecase(
 			logReader, nodeRepo, dispatcher, rl, auditUC,
@@ -412,7 +414,7 @@ func (a *App) Start(ctx context.Context) error {
 		queueCancel = queuecancel.New(a.redis)
 	}
 	asyncQueueUC := usecase.NewAsyncQueueUsecase(
-		asyncPeeker, queueCancel, nodeRepo, auditUC,
+		asyncPeeker, queueCancel, failedPurger, nodeRepo, auditUC,
 		a.cfg.Kafka.ConsumerGroup, a.cfg.Kafka.AsyncTopic,
 		time.Duration(a.cfg.Kafka.Topic.RetentionMs)*time.Millisecond, 0, a.logger,
 	)

@@ -53,7 +53,7 @@ func (aqAuditRepo) DeleteOlderThan(_ context.Context, _ time.Time) (int, error) 
 // async-queue роутами. peeker/cancel = nil → деградация/unavailable.
 func aqEngine(node *domain.Node, nodeErr error) *gin.Engine {
 	gin.SetMode(gin.TestMode)
-	uc := usecase.NewAsyncQueueUsecase(nil, nil, &aqNodeRepo{node: node, err: nodeErr},
+	uc := usecase.NewAsyncQueueUsecase(nil, nil, nil, &aqNodeRepo{node: node, err: nodeErr},
 		usecase.NewAuditUsecase(aqAuditRepo{}, logging.NewNoop()),
 		"nexus-sender", "nexus.async", time.Hour, 0, logging.NewNoop())
 	h := NewAsyncQueueHandler(uc, logging.NewNoop())
@@ -68,6 +68,7 @@ func aqEngine(node *domain.Node, nodeErr error) *gin.Engine {
 	g.GET("/messages/body", h.Body)
 	g.DELETE("/messages/:msgId", h.DeleteOne)
 	g.POST("/purge", h.Purge)
+	g.POST("/purge-failed", h.PurgeFailed)
 	return r
 }
 

@@ -116,6 +116,17 @@ export function QueueTab({
       api.post(`/api/nodes/${id}/async-queue/purge`, body),
     onSuccess: invalidatePending,
   });
+  const invalidateFailed = () => {
+    qc.invalidateQueries({ queryKey: ["aq-failed-count", id] });
+    qc.invalidateQueries({ queryKey: ["aq-failed-list", id] });
+  };
+  // §35/§36: очистка «Неудачных доставок» — отменяет повтор (DLQ-репроцессор
+  // перестаёт повторять) и удаляет записи done=0 из CH-логов узла.
+  const purgeFailed = useMutation({
+    mutationFn: (body: { from?: string; to?: string }) =>
+      api.post(`/api/nodes/${id}/async-queue/purge-failed`, body),
+    onSuccess: invalidateFailed,
+  });
   const setStatus = useMutation({
     mutationFn: (status: "enabled" | "paused" | "disabled") =>
       api.patch(`/api/nodes/${id}/status`, { status }),
@@ -206,53 +217,20 @@ export function QueueTab({
         <section className="space-y-2">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-fg">{t("queue.section.pending")}</h3>
-            {/* Очистка очереди доступна ТОЛЬКО когда узел на паузе: на активном
-                узле сообщения доставляются сразу (чистить нечего и опасно —
-                можно удалить то, что вот-вот уйдёт). Сценарий: пауза → очистка backlog. */}
-            {node.status === "paused" && (
-              <div className="flex gap-2">
-                <Button
-                  sm
-                  variant="ghost"
-                  disabled={purge.isPending}
-                  onClick={async () => {
-                    const { since, until } = periodWindow(period);
-                    if (
-                      await confirm({
-                        title: t("queue.purge_period"),
-                        message: t("queue.purge_period_confirm"),
-                        confirmLabel: t("queue.purge_period"),
-                        danger: true,
-                      })
-                    )
-                      purge.mutate({
-                        from: new Date(since).toISOString(),
-                        to: new Date(until).toISOString(),
-                      });
-                  }}
-                >
-                  {t("queue.purge_period")}
-                </Button>
-                <Button
-                  sm
-                  variant="danger"
-                  disabled={purge.isPending}
-                  onClick={async () => {
-                    if (
-                      await confirm({
-                        title: t("queue.purge_all"),
-                        message: t("queue.purge_all_confirm"),
-                        confirmLabel: t("queue.purge_all"),
-                        danger: true,
-                      })
-                    )
-                      purge.mutate({});
-                  }}
-                >
-                  {t("queue.purge_all")}
-                </Button>
-              </div>
-            )}
+            {/* Очистка ожидающих доступна всегда (admin): на активном узле очередь
+                обычно пуста (доставка сразу) — кнопки безвредны; на паузе/при
+                лежащем Sender чистят накопленный backlog (tombstones). */}
+            <PurgeButtons
+              period={period}
+              busy={purge.isPending}
+              onPurge={(b) => purge.mutate(b)}
+              labels={{
+                period: t("queue.purge_period"),
+                periodConfirm: t("queue.purge_period_confirm"),
+                all: t("queue.purge_all"),
+                allConfirm: t("queue.purge_all_confirm"),
+              }}
+            />
           </div>
           {pending.length === 0 ? (
             <div className="text-fg-muted">
@@ -292,24 +270,40 @@ export function QueueTab({
 
       {/* Секция «Неудачные доставки» — ClickHouse done=0 */}
       <section className="space-y-2">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3">
           <h3 className="text-sm font-semibold text-fg">{t("queue.section.failed")}</h3>
-          {hasLogsTable && onOpenFailedLogs && (
-            <button
-              type="button"
-              className="text-xs text-accent transition-colors hover:text-fg"
-              onClick={() => {
-                const { since, until } = periodWindow(period);
-                onOpenFailedLogs({
-                  from: msToDatetimeLocal(since),
-                  to: msToDatetimeLocal(until),
-                  done: "no",
-                });
-              }}
-            >
-              {t("queue.open_in_logs")}
-            </button>
-          )}
+          <div className="flex items-center gap-3">
+            {/* §36: очистка неудачных — отменяет повтор в DLQ + удаляет из логов. */}
+            {isManager && hasLogsTable && (
+              <PurgeButtons
+                period={period}
+                busy={purgeFailed.isPending}
+                onPurge={(b) => purgeFailed.mutate(b)}
+                labels={{
+                  period: t("queue.purge_failed_period"),
+                  periodConfirm: t("queue.purge_failed_period_confirm"),
+                  all: t("queue.purge_failed_all"),
+                  allConfirm: t("queue.purge_failed_all_confirm"),
+                }}
+              />
+            )}
+            {hasLogsTable && onOpenFailedLogs && (
+              <button
+                type="button"
+                className="text-xs text-accent transition-colors hover:text-fg"
+                onClick={() => {
+                  const { since, until } = periodWindow(period);
+                  onOpenFailedLogs({
+                    from: msToDatetimeLocal(since),
+                    to: msToDatetimeLocal(until),
+                    done: "no",
+                  });
+                }}
+              >
+                {t("queue.open_in_logs")}
+              </button>
+            )}
+          </div>
         </div>
         {/* §36: подсказка про авто-репроцессор DLQ — повтор до TTL узла. */}
         <p className="text-xs text-fg-muted">
@@ -352,6 +346,50 @@ export function QueueTab({
       </section>
 
       {replayId && <ReplayDialog logId={replayId} nodeId={id} onClose={() => setReplayId(null)} />}
+    </div>
+  );
+}
+
+// PurgeButtons — пара кнопок «Очистить за период» / «Очистить все» с
+// подтверждением. Переиспользуется для pending-очереди и неудачных доставок —
+// меняются лишь подписи (labels) и обработчик onPurge (разные эндпоинты).
+function PurgeButtons({
+  period,
+  busy,
+  labels,
+  onPurge,
+}: {
+  period: Period;
+  busy: boolean;
+  labels: { period: string; periodConfirm: string; all: string; allConfirm: string };
+  onPurge: (body: { from?: string; to?: string }) => void;
+}) {
+  const confirm = useConfirm();
+  return (
+    <div className="flex gap-2">
+      <Button
+        sm
+        variant="ghost"
+        disabled={busy}
+        onClick={async () => {
+          const { since, until } = periodWindow(period);
+          if (await confirm({ title: labels.period, message: labels.periodConfirm, confirmLabel: labels.period, danger: true }))
+            onPurge({ from: new Date(since).toISOString(), to: new Date(until).toISOString() });
+        }}
+      >
+        {labels.period}
+      </Button>
+      <Button
+        sm
+        variant="danger"
+        disabled={busy}
+        onClick={async () => {
+          if (await confirm({ title: labels.all, message: labels.allConfirm, confirmLabel: labels.all, danger: true }))
+            onPurge({});
+        }}
+      >
+        {labels.all}
+      </Button>
     </div>
   );
 }

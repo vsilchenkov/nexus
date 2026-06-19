@@ -536,6 +536,10 @@
     "purge_all_confirm": "Delete all waiting messages from the queue? They will not be sent to the target.",
     "purge_period": "Purge selected period",
     "purge_period_confirm": "Delete waiting messages received in the selected period? They will not be sent.",
+    "purge_failed_all": "Clear all failed",
+    "purge_failed_all_confirm": "Clear all failed deliveries? Their automatic retry stops and the records are removed from the logs. This cannot be undone.",
+    "purge_failed_period": "Clear failed (period)",
+    "purge_failed_period_confirm": "Clear failed deliveries in the selected period? Their automatic retry stops and the records are removed from the logs. This cannot be undone.",
     "open_in_logs": "Open in logs →",
     "col": {
       "received": "Received",
@@ -554,7 +558,7 @@
       "failed": "Failed deliveries"
     },
     "banner": {
-      "explain": "Failed deliveries are not removed: they stay in the logs (with reason and body) and can be replayed. To stop the growth, pause or disable the node; the dead-letter backlog expires by retention.",
+      "explain": "Failed deliveries stay in the logs (with reason and body) and can be replayed. To stop the growth, pause or disable the node; to remove them and stop the automatic retry, use “Clear failed”. The dead-letter backlog expires by retention.",
       "pause": "Pause node",
       "disable": "Disable node",
       "disable_confirm": "Disable the node? It will stop accepting and delivering requests until re-enabled.",

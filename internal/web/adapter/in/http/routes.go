@@ -257,6 +257,7 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			aq.GET("/messages/body", h.AsyncQueue.Body)
 			aq.DELETE("/messages/:msgId", h.AsyncQueue.DeleteOne)
 			aq.POST("/purge", h.AsyncQueue.Purge)
+			aq.POST("/purge-failed", h.AsyncQueue.PurgeFailed)
 		}
 	}
 }
