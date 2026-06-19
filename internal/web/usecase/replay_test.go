@@ -49,19 +49,19 @@ type stubLogReader struct {
 func (s *stubLogReader) GetByID(_ context.Context, _, _ string) (*domain.LogRecord, error) {
 	return s.log, s.err
 }
-func (s *stubLogReader) ListSince(_ context.Context, _ string, _ int64, _ int) ([]*domain.LogRecord, error) {
+func (s *stubLogReader) ListSince(_ context.Context, _, _ string, _ int64, _ int) ([]*domain.LogRecord, error) {
 	return nil, nil
 }
 func (s *stubLogReader) Search(_ context.Context, _ port.LogQuery) ([]*domain.LogRecord, error) {
 	return nil, nil
 }
-func (s *stubLogReader) CountErrors(_ context.Context, _ string, _, _ int64) (uint64, error) {
+func (s *stubLogReader) CountErrors(_ context.Context, _, _ string, _, _ int64) (uint64, error) {
 	return 0, nil
 }
-func (s *stubLogReader) CountFailed(_ context.Context, _ string, _, _ int64) (uint64, error) {
+func (s *stubLogReader) CountFailed(_ context.Context, _, _ string, _, _ int64) (uint64, error) {
 	return 0, nil
 }
-func (s *stubLogReader) FailedIDs(_ context.Context, _ string, _, _ int64, _ int) ([]string, bool, error) {
+func (s *stubLogReader) FailedIDs(_ context.Context, _, _ string, _, _ int64, _ int) ([]string, bool, error) {
 	return s.failedIDs, false, s.err
 }
 

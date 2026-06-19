@@ -72,10 +72,13 @@ type QueueCancelWriter interface {
 // повторять (FailedIDs → QueueCancelWriter.Cancel), + lightweight DELETE записей
 // done=0 за окно (чтобы они исчезли из вида). Окно — (sinceMs, untilMs]; нулевые
 // границы = всё.
+// §37: nodeID — UUID узла для per-node атрибуции в общей CH-таблице (пусто —
+// без фильтра). Важно для DeleteFailed: иначе очистка одного узла удалит записи
+// другого, делящего таблицу.
 type FailedLogsPurger interface {
 	// FailedIDs — уникальные ID записей done=0 за окно (до cap; capped=true, если
 	// есть ещё). Для отмены повторной доставки этих сообщений в DLQ.
-	FailedIDs(ctx context.Context, table string, sinceMs, untilMs int64, cap int) ([]string, bool, error)
+	FailedIDs(ctx context.Context, table, nodeID string, sinceMs, untilMs int64, cap int) ([]string, bool, error)
 	// DeleteFailed — удалить записи done=0 за окно; возвращает число удалённых.
-	DeleteFailed(ctx context.Context, table string, sinceMs, untilMs int64) (uint64, error)
+	DeleteFailed(ctx context.Context, table, nodeID string, sinceMs, untilMs int64) (uint64, error)
 }

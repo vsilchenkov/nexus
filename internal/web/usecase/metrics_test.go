@@ -70,10 +70,10 @@ type fakeNodeLogs struct {
 	chartErr error
 }
 
-func (f *fakeNodeLogs) NodeKPI(_ context.Context, _ string, _, _ int64) (port.NodeKPI, error) {
+func (f *fakeNodeLogs) NodeKPI(_ context.Context, _, _ string, _, _ int64) (port.NodeKPI, error) {
 	return f.kpi, f.kpiErr
 }
-func (f *fakeNodeLogs) NodeChart(_ context.Context, _ string, _, _ int64, _ int) ([]port.SeriesPoint, error) {
+func (f *fakeNodeLogs) NodeChart(_ context.Context, _, _ string, _, _ int64, _ int) ([]port.SeriesPoint, error) {
 	return f.chart, f.chartErr
 }
 

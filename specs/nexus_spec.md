@@ -3231,3 +3231,29 @@ Prometheus `NodeThroughput` для top-узлов. Все источники д�
 `ReplayUsecase.ReplayFailed` (общий `LogReader.FailedIDs` с §36.10 + `QueueCancelWriter`).
 
 **Out of scope (v2):** экспоненциальный per-message backoff; delay-топик; UI-дашборд репроцессинга.
+
+## 37. Идентификатор узла в логах (per-node атрибуция в общих ClickHouse-таблицах)
+
+Несколько узлов могут писать в одну CH-таблицу логов (`clickhouse_table` задаётся оператором; типичный
+случай — sync+async варианты одного эндпоинта). Без идентификатора узла в записи все per-node запросы на
+общей таблице смешивали узлы (одинаковые счётчики/графики; очистка/replay одного узла задевали другого,
+включая опасный `DELETE`). §37 добавляет колонку **`node_id String`** (UUID узла) в схему лога и фильтр
+по ней.
+
+**Запись (Sender):** `node.ID` прокидывается во все точки записи — sync через gRPC `SendRequest.node_id`
+→ `SendInput.NodeID` → `rec.NodeID`; async/DLQ через `buildSendInput`/`logTTLExpired` (узел резолвится
+локально). File-fallback сериализует поле автоматически.
+
+**Миграция:** колонка в шаблоне → новые таблицы получают её; существующие — идемпотентный
+`ALTER TABLE … ADD COLUMN IF NOT EXISTS node_id String DEFAULT ''` на старте Web и Sender
+(`platform/clickhouse.EnsureNodeIDColumn`).
+
+**Чтение/удаление (Web):** все per-node запросы `LogReaderCH` (ListSince/Search/CountErrors/CountFailed/
+FailedIDs/DeleteFailed/NodeKPI/NodeChart) фильтруют `(node_id = ? OR node_id = '')`; `GetByID` — нет (по
+уникальному ID). `nodeID` прокидывается из usecase (`n.ID`). Legacy-записи (`node_id=''`) видны/чистятся у
+любого co-table узла (старые данные неразличимы — компромисс), новый трафик строго per-node.
+
+**UI:** node id (UUID) выводится во вкладке «Конфиг» узла (read-only, копируемый). Подробности —
+[sections/37-node-id-in-logs.md](sections/37-node-id-in-logs.md).
+
+**Out of scope:** бэкфилл node_id старых записей; вторичный индекс по node_id; запрет общих таблиц.

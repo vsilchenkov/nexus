@@ -29,7 +29,7 @@ func (m *logReaderMock) GetByID(_ context.Context, _, _ string) (*domain.LogReco
 	return m.getRow, m.getErr
 }
 
-func (m *logReaderMock) ListSince(_ context.Context, _ string, _ int64, _ int) ([]*domain.LogRecord, error) {
+func (m *logReaderMock) ListSince(_ context.Context, _, _ string, _ int64, _ int) ([]*domain.LogRecord, error) {
 	m.calls++
 	return m.rows, m.err
 }
@@ -38,14 +38,14 @@ func (m *logReaderMock) Search(_ context.Context, _ port.LogQuery) ([]*domain.Lo
 	return m.rows, m.err
 }
 
-func (m *logReaderMock) CountErrors(_ context.Context, _ string, _, _ int64) (uint64, error) {
+func (m *logReaderMock) CountErrors(_ context.Context, _, _ string, _, _ int64) (uint64, error) {
 	return 0, nil
 }
 
-func (m *logReaderMock) CountFailed(_ context.Context, _ string, _, _ int64) (uint64, error) {
+func (m *logReaderMock) CountFailed(_ context.Context, _, _ string, _, _ int64) (uint64, error) {
 	return m.failedCount, m.countErr
 }
-func (m *logReaderMock) FailedIDs(_ context.Context, _ string, _, _ int64, _ int) ([]string, bool, error) {
+func (m *logReaderMock) FailedIDs(_ context.Context, _, _ string, _, _ int64, _ int) ([]string, bool, error) {
 	return nil, false, nil
 }
 

@@ -612,6 +612,20 @@ DLQ) тормозила, «Очистить» был no-op, шапка плох�
   добавлен в порт `LogReader` (общий набор сообщений с §36.10). Cap 500/вызов (`capped`), один rate-limit
   на операцию, при отмене ctx — частичный результат с ошибкой. Тесты: `TestReplay_ReplayFailed_*` (отмена
   оригиналов, dispatch-error не отменяет, disabled→409).
+- **§37 — node_id в логах (per-node атрибуция в общих CH-таблицах).** Узлы могут делить одну
+  `clickhouse_table`; до §37 per-node запросы смешивали их (одинаковые счётчики на рабочем столе/странице
+  узла; `DeleteFailed` одного удалял записи другого). Добавлена колонка `node_id String` (UUID) в схему
+  лога ([ch_log_schema.go](../internal/domain/ch_log_schema.go), 21 колонка) + поле `LogRecord.NodeID`.
+  **Запись:** `node.ID` прокинут sync через gRPC `SendRequest.node_id` (поле 28, перегенерён proto) →
+  `SendInput.NodeID` → `rec.NodeID`; async/DLQ — через `buildSendInput`/`logTTLExpired`. **Миграция
+  существующих таблиц:** `platform/clickhouse.EnsureNodeIDColumn` (`ALTER … ADD COLUMN IF NOT EXISTS`,
+  идемпотентно) на старте **и Web, и Sender** (порядок деплоя не гарантирован; список таблиц — `nodeRepo.List`
+  / `nodepg.ListClickHouseTables`). **Чтение/удаление:** 8 методов `LogReaderCH` фильтруют
+  `(node_id = ? OR node_id = '')` (legacy `''` видны/чистятся у любого co-table узла — компромисс, новый
+  трафик чист); `GetByID` — нет (уникальный ID). `nodeID` прокинут в порты (LogReader/NodeLogMetrics/
+  FailedLogsPurger) и вызовы (logs/metrics/replay/async_queue). **UI:** node id во вкладке «Конфиг».
+  Тест `TestLogReader_NodeIDFilter_E2E` (shared-table: фильтр + DeleteFailed не задевает чужие). Почему
+  `node_id` (UUID), а не path — устойчив к переименованию (см. [sections/37-node-id-in-logs.md](sections/37-node-id-in-logs.md)).
 - **§35 — peek-`MaxWait` = 500мс (грабли стенд-теста, тормоз ~9с).** `kafka.Reader` в `scanPartition`/
   `PeekBody` НЕ задавал `MaxWait` → дефолт kafka-go 10с. После чтения последнего сообщения фоновый
   fetch-цикл reader'а пытается прочитать следующий (ещё пустой) offset и блокируется на `MaxWait`, а

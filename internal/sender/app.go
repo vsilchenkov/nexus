@@ -121,6 +121,17 @@ func (a *App) Start(ctx context.Context) error {
 	// Async consumer.
 	a.producer = kafkapf.NewProducer(a.cfg, kafkapf.WithMetrics(a.metrics))
 	nodeReader := nodepg.New(a.pg, a.cipher, a.logger)
+
+	// §37: миграция CH-таблиц — добавить колонку node_id ДО старта consumer'а и
+	// репроцессора (иначе INSERT по новой схеме упадёт на старых таблицах).
+	// Идемпотентно (ALTER … IF NOT EXISTS); новые таблицы — из шаблона.
+	if a.chMgr != nil {
+		if tables, err := nodeReader.ListClickHouseTables(ctx); err != nil {
+			a.logger.Warn("§37 ensure node_id: list tables failed", a.logger.Err(err))
+		} else {
+			chpf.EnsureNodeIDColumn(ctx, a.chMgr.Conn(), tables, a.logger)
+		}
+	}
 	// §34.4: cancel-set отменённых через UI сообщений (Redis). nil при отсутствии
 	// Redis — проверка в AsyncProcessor тогда выключена.
 	var cancelSet usecase.CancelSet

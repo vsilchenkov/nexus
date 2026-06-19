@@ -163,6 +163,22 @@ func (a *App) Start(ctx context.Context) error {
 	}
 
 	nodeRepo := pgrepo.NewNodeRepoPg(a.pg, a.cipher, a.logger)
+
+	// §37: миграция существующих CH-таблиц — добавить колонку node_id, иначе
+	// SELECT по новой схеме упадёт. Идемпотентно (ALTER … IF NOT EXISTS), до
+	// старта HTTP-сервера. Новые таблицы получают колонку из шаблона.
+	if a.chMgr != nil {
+		if nodes, err := nodeRepo.List(ctx, webport.ListNodesFilter{TeamID: defaultTeamID}); err != nil {
+			a.logger.Warn("§37 ensure node_id: list nodes failed", a.logger.Err(err))
+		} else {
+			tables := make([]string, 0, len(nodes))
+			for _, n := range nodes {
+				tables = append(tables, n.ClickHouseTable)
+			}
+			chpf.EnsureNodeIDColumn(ctx, a.chMgr.Conn(), tables, a.logger)
+		}
+	}
+
 	nodeCache := rediscache.NewNodeCacheRedis(a.redis, a.logger)
 	auditRepo := pgrepo.NewAuditRepoPg(a.pg, a.logger)
 	auditUC := usecase.NewAuditUsecase(auditRepo, a.logger)

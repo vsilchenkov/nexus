@@ -281,7 +281,7 @@ func (u *ReplayUsecase) ReplayFailed(ctx context.Context, actor Actor, nodeID, t
 	if node.ClickHouseTable == "" {
 		return ReplayBulkResult{}, nil
 	}
-	ids, capped, err := u.logs.FailedIDs(ctx, node.ClickHouseTable, toMs(from), toMs(to), replayAllCap)
+	ids, capped, err := u.logs.FailedIDs(ctx, node.ClickHouseTable, node.ID, toMs(from), toMs(to), replayAllCap)
 	if err != nil {
 		return ReplayBulkResult{}, fmt.Errorf("replay-all failed ids: %w", err)
 	}

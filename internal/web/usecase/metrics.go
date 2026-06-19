@@ -149,7 +149,7 @@ func (u *MetricsUsecase) nodesOverviewCH(ctx context.Context, teamID string, sin
 			continue // нет логирования → нет per-node CH-метрик
 		}
 		g.Go(func() error {
-			kpi, kerr := u.nodeLogs.NodeKPI(gctx, n.ClickHouseTable, sinceMs, untilMs)
+			kpi, kerr := u.nodeLogs.NodeKPI(gctx, n.ClickHouseTable, n.ID, sinceMs, untilMs)
 			if kerr != nil {
 				u.logger.Warn("nodes overview: node kpi failed",
 					u.logger.Str("node", n.Path), u.logger.Err(kerr))
@@ -159,7 +159,7 @@ func (u *MetricsUsecase) nodesOverviewCH(ctx context.Context, teamID string, sin
 			// равно плоский, поэтому второй запрос делаем только при наличии трафика.
 			spark := []float64{}
 			if kpi.Total > 0 {
-				if series, serr := u.nodeLogs.NodeChart(gctx, n.ClickHouseTable, sinceMs, untilMs, nodesSparkBuckets); serr == nil {
+				if series, serr := u.nodeLogs.NodeChart(gctx, n.ClickHouseTable, n.ID, sinceMs, untilMs, nodesSparkBuckets); serr == nil {
 					spark = make([]float64, len(series))
 					for j, p := range series {
 						spark[j] = float64(p.Count)
@@ -242,12 +242,12 @@ func (u *MetricsUsecase) NodeMetrics(ctx context.Context, nodeID, teamID string,
 		return res, nil
 	}
 	sinceMs, untilMs := since.UnixMilli(), until.UnixMilli()
-	kpi, err := u.nodeLogs.NodeKPI(ctx, n.ClickHouseTable, sinceMs, untilMs)
+	kpi, err := u.nodeLogs.NodeKPI(ctx, n.ClickHouseTable, n.ID, sinceMs, untilMs)
 	if err != nil {
 		u.logger.Warn("clickhouse node kpi failed", u.logger.Err(err))
 		return res, nil
 	}
-	series, err := u.nodeLogs.NodeChart(ctx, n.ClickHouseTable, sinceMs, untilMs, buckets)
+	series, err := u.nodeLogs.NodeChart(ctx, n.ClickHouseTable, n.ID, sinceMs, untilMs, buckets)
 	if err != nil {
 		u.logger.Warn("clickhouse node chart failed", u.logger.Err(err))
 		return res, nil

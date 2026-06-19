@@ -271,6 +271,7 @@ func (r *DLQReprocessor) logTTLExpired(ctx context.Context, node *domain.Node, e
 		Reason:       "ttl_expired",
 		Host:         r.host,
 		IP:           env.ClientIP,
+		NodeID:       node.ID,
 	}
 	r.logw.Write(ctx, node.ClickHouseTable, rec)
 }

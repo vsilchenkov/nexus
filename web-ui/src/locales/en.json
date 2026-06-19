@@ -318,6 +318,7 @@
       "ch_template": "Table template",
       "ch_template_manual": "(none / manual table)",
       "ch_template_hint": "Pick a template — the log table is created automatically on save. Leave empty to manage the table manually.",
+      "id": "Node ID",
       "method": "Method type",
       "path": "Node path",
       "url_mode": "URL mode",

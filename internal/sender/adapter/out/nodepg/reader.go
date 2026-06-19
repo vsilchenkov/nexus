@@ -110,6 +110,26 @@ func (r *Reader) GetByPath(ctx context.Context, path string) (*domain.Node, erro
 	return &n, nil
 }
 
+// ListClickHouseTables (§37) — уникальные имена CH-таблиц логов всех узлов с
+// логированием (без фильтра по retention, в отличие от ListForHousekeeping).
+// Для стартовой миграции схемы (добавление колонки node_id во все таблицы).
+func (r *Reader) ListClickHouseTables(ctx context.Context) ([]string, error) {
+	rows, err := r.pg.Query(ctx, `SELECT DISTINCT clickhouse_table FROM nodes WHERE clickhouse_table <> ''`)
+	if err != nil {
+		return nil, fmt.Errorf("list ch tables: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, fmt.Errorf("scan ch table: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // ListForHousekeeping — все узлы с заданной CH-таблицей и retention > 0.
 // Используется CHHousekeeping (§4.3 ТЗ). Чувствительные поля не нужны,
 // поэтому скан без crypto.Decrypt.

@@ -39,6 +39,7 @@ func buildSendInput(node *domain.Node, env Envelope) SendInput {
 	return SendInput{
 		ID:                 env.ID,
 		NodePath:           env.NodePath,
+		NodeID:             node.ID,
 		RootMethod:         domain.RootMethodRequestAsync,
 		TargetURL:          env.TargetURL,
 		Method:             env.Method,

@@ -76,17 +76,20 @@ type stubFailedPurger struct {
 	idsErr    error
 	delErr    error
 	gotTable  string
+	gotNodeID string
 	gotSince  int64
 	gotUntil  int64
 	delCalled bool
+	delNodeID string
 }
 
-func (s *stubFailedPurger) FailedIDs(_ context.Context, table string, sinceMs, untilMs int64, _ int) ([]string, bool, error) {
-	s.gotTable, s.gotSince, s.gotUntil = table, sinceMs, untilMs
+func (s *stubFailedPurger) FailedIDs(_ context.Context, table, nodeID string, sinceMs, untilMs int64, _ int) ([]string, bool, error) {
+	s.gotTable, s.gotNodeID, s.gotSince, s.gotUntil = table, nodeID, sinceMs, untilMs
 	return s.ids, s.capped, s.idsErr
 }
-func (s *stubFailedPurger) DeleteFailed(_ context.Context, _ string, _, _ int64) (uint64, error) {
+func (s *stubFailedPurger) DeleteFailed(_ context.Context, _, nodeID string, _, _ int64) (uint64, error) {
 	s.delCalled = true
+	s.delNodeID = nodeID
 	return s.deleted, s.delErr
 }
 

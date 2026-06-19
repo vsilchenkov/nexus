@@ -36,6 +36,7 @@ func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 	out := s.uc.Send(ctx, usecase.SendInput{
 		ID:                 req.GetId(),
 		NodePath:           req.GetNodePath(),
+		NodeID:             req.GetNodeId(),
 		RootMethod:         domain.RootMethodRequest, // sync-путь
 		TargetURL:          req.GetTargetUrl(),
 		Method:             req.GetMethod(),

@@ -220,7 +220,7 @@ func (u *AsyncQueueUsecase) PurgeFailed(ctx context.Context, actor Actor, nodeID
 	// 1) Снимаем повторную доставку: репроцессор дропнет эти ID по tombstone.
 	cancelled, capped := 0, false
 	if u.cancel != nil {
-		ids, c, err := u.failed.FailedIDs(ctx, node.ClickHouseTable, sinceMs, untilMs, u.peekCap)
+		ids, c, err := u.failed.FailedIDs(ctx, node.ClickHouseTable, node.ID, sinceMs, untilMs, u.peekCap)
 		if err != nil {
 			return QueuePurgeResult{}, fmt.Errorf("async queue failed ids: %w", err)
 		}
@@ -233,7 +233,7 @@ func (u *AsyncQueueUsecase) PurgeFailed(ctx context.Context, actor Actor, nodeID
 	}
 
 	// 2) Удаляем записи done=0 из вида «Неудачные доставки».
-	deleted, err := u.failed.DeleteFailed(ctx, node.ClickHouseTable, sinceMs, untilMs)
+	deleted, err := u.failed.DeleteFailed(ctx, node.ClickHouseTable, node.ID, sinceMs, untilMs)
 	if err != nil {
 		return QueuePurgeResult{}, fmt.Errorf("async queue delete failed: %w", err)
 	}

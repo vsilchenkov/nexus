@@ -44,7 +44,7 @@ func (u *LogsUsecase) ListSince(ctx context.Context, nodeID, teamID string, sinc
 	if err != nil {
 		return nil, err
 	}
-	return u.logs.ListSince(ctx, n.ClickHouseTable, sinceMs, limit)
+	return u.logs.ListSince(ctx, n.ClickHouseTable, n.ID, sinceMs, limit)
 }
 
 // Search — snapshot с расширенными фильтрами (Phase 6.8).
@@ -55,6 +55,7 @@ func (u *LogsUsecase) Search(ctx context.Context, nodeID, teamID string, q port.
 		return nil, err
 	}
 	q.Table = n.ClickHouseTable
+	q.NodeID = n.ID
 	return u.logs.Search(ctx, q)
 }
 
@@ -79,7 +80,7 @@ func (u *LogsUsecase) CountFailed(ctx context.Context, nodeID, teamID string, si
 	if err != nil {
 		return 0, err
 	}
-	return u.logs.CountFailed(ctx, n.ClickHouseTable, sinceMs, untilMs)
+	return u.logs.CountFailed(ctx, n.ClickHouseTable, n.ID, sinceMs, untilMs)
 }
 
 // resolveNode — общий путь: получить узел, проверить team scope, убедиться
@@ -172,7 +173,7 @@ func (u *LogsUsecase) Subscribe(ctx context.Context, nodeID, teamID string, filt
 			case <-ctx.Done():
 				return
 			case <-tick.C:
-				recs, err := u.logs.ListSince(ctx, n.ClickHouseTable, cursor, u.streamLimit)
+				recs, err := u.logs.ListSince(ctx, n.ClickHouseTable, n.ID, cursor, u.streamLimit)
 				if err != nil {
 					if errors.Is(err, context.Canceled) {
 						return

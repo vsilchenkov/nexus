@@ -52,7 +52,18 @@ func (r *LogReaderCH) liveConn() (chdriver.Conn, error) {
 const selectCols = `ID, type, url, method, parameters, request, response,
 	status, reason, date_create, date_request, date_response,
 	duration, done, checksum_request, checksum_response,
-	Host, IP, attempts, attempts_details`
+	Host, IP, attempts, attempts_details, node_id`
+
+// nodeFilterCond — условие per-node атрибуции «(node_id = ? OR node_id = ”)» и
+// его аргумент (§37). Пустой node_id у legacy-записей (до миграции) трактуем как
+// принадлежащий любому co-table узлу — старые данные неразличимы, истекают по TTL;
+// НОВЫЙ трафик строго per-node. nodeID == "" → фильтр не добавляется (нет узла).
+func nodeFilterCond(nodeID string) (string, []any) {
+	if nodeID == "" {
+		return "", nil
+	}
+	return "(node_id = ? OR node_id = '')", []any{nodeID}
+}
 
 // GetByID — одна запись по ID (UUID v4) из указанной таблицы.
 //
@@ -88,21 +99,27 @@ func (r *LogReaderCH) GetByID(ctx context.Context, table, id string) (*domain.Lo
 	return rec, nil
 }
 
-// ListSince — записи с date_request_unix_ms > cursor; ASC, LIMIT.
-func (r *LogReaderCH) ListSince(ctx context.Context, table string, cursor int64, limit int) ([]*domain.LogRecord, error) {
+// ListSince — записи узла nodeID с date_request_unix_ms > cursor; ASC, LIMIT.
+func (r *LogReaderCH) ListSince(ctx context.Context, table, nodeID string, cursor int64, limit int) ([]*domain.LogRecord, error) {
 	if !isSafeTableName(table) {
 		return nil, fmt.Errorf("invalid table name: %q", table)
 	}
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
+	conds := []string{"toUnixTimestamp64Milli(toDateTime64(date_request, 3)) > ?"}
+	args := []any{cursor}
+	if c, a := nodeFilterCond(nodeID); c != "" {
+		conds = append([]string{c}, conds...)
+		args = append(a, args...)
+	}
 	conn, err := r.liveConn()
 	if err != nil {
 		return nil, err
 	}
 	rows, err := conn.Query(ctx, fmt.Sprintf(
-		`SELECT %s FROM %s WHERE toUnixTimestamp64Milli(toDateTime64(date_request, 3)) > ?
-		 ORDER BY date_request ASC LIMIT ?`, selectCols, table), cursor, limit)
+		`SELECT %s FROM %s WHERE %s ORDER BY date_request ASC LIMIT ?`,
+		selectCols, table, strings.Join(conds, " AND ")), append(args, limit)...)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse list since: %w", err)
 	}
@@ -135,6 +152,10 @@ func (r *LogReaderCH) Search(ctx context.Context, q port.LogQuery) ([]*domain.Lo
 		conds []string
 		args  []any
 	)
+	if c, a := nodeFilterCond(q.NodeID); c != "" {
+		conds = append(conds, c)
+		args = append(args, a...)
+	}
 	if q.SinceMs > 0 {
 		conds = append(conds, "toUnixTimestamp64Milli(toDateTime64(date_request, 3)) > ?")
 		args = append(args, q.SinceMs)
@@ -199,12 +220,17 @@ func (r *LogReaderCH) Search(ctx context.Context, q port.LogQuery) ([]*domain.Lo
 
 // CountErrors считает записи-ошибки в таблице за окно (sinceMs, untilMs]
 // (§20.3). Ошибка = status>=400 OR status=0 (сетевой сбой) OR done=0.
-func (r *LogReaderCH) CountErrors(ctx context.Context, table string, sinceMs, untilMs int64) (uint64, error) {
+func (r *LogReaderCH) CountErrors(ctx context.Context, table, nodeID string, sinceMs, untilMs int64) (uint64, error) {
 	if !isSafeTableName(table) {
 		return 0, fmt.Errorf("invalid table name: %q", table)
 	}
-	conds := []string{"(status >= 400 OR status = 0 OR done = 0)"}
+	var conds []string
 	var args []any
+	if c, a := nodeFilterCond(nodeID); c != "" {
+		conds = append(conds, c)
+		args = append(args, a...)
+	}
+	conds = append(conds, "(status >= 400 OR status = 0 OR done = 0)")
 	if sinceMs > 0 {
 		conds = append(conds, "toUnixTimestamp64Milli(toDateTime64(date_request, 3)) > ?")
 		args = append(args, sinceMs)
@@ -228,20 +254,11 @@ func (r *LogReaderCH) CountErrors(ctx context.Context, table string, sinceMs, un
 // CountFailed считает НЕдоставленные записи (строго done=0) за окно
 // (sinceMs, untilMs] (§35 — KPI «неудачные доставки»). Каждая такая запись —
 // сообщение, ушедшее в DLQ.
-func (r *LogReaderCH) CountFailed(ctx context.Context, table string, sinceMs, untilMs int64) (uint64, error) {
+func (r *LogReaderCH) CountFailed(ctx context.Context, table, nodeID string, sinceMs, untilMs int64) (uint64, error) {
 	if !isSafeTableName(table) {
 		return 0, fmt.Errorf("invalid table name: %q", table)
 	}
-	conds := []string{"done = 0"}
-	var args []any
-	if sinceMs > 0 {
-		conds = append(conds, "toUnixTimestamp64Milli(toDateTime64(date_request, 3)) > ?")
-		args = append(args, sinceMs)
-	}
-	if untilMs > 0 {
-		conds = append(conds, "toUnixTimestamp64Milli(toDateTime64(date_request, 3)) <= ?")
-		args = append(args, untilMs)
-	}
+	conds, args := failedConds(nodeID, sinceMs, untilMs)
 	conn, err := r.liveConn()
 	if err != nil {
 		return 0, err
@@ -254,10 +271,16 @@ func (r *LogReaderCH) CountFailed(ctx context.Context, table string, sinceMs, un
 	return n, nil
 }
 
-// failedConds — условия «done=0 в окне (sinceMs, untilMs]» + позиционные args.
-func failedConds(sinceMs, untilMs int64) ([]string, []any) {
-	conds := []string{"done = 0"}
+// failedConds — условия «done=0 в окне (sinceMs, untilMs] для узла nodeID» +
+// позиционные args (§35/§37). nodeID == "" → без per-node фильтра.
+func failedConds(nodeID string, sinceMs, untilMs int64) ([]string, []any) {
+	var conds []string
 	var args []any
+	if c, a := nodeFilterCond(nodeID); c != "" {
+		conds = append(conds, c)
+		args = append(args, a...)
+	}
+	conds = append(conds, "done = 0")
 	if sinceMs > 0 {
 		conds = append(conds, "toUnixTimestamp64Milli(toDateTime64(date_request, 3)) > ?")
 		args = append(args, sinceMs)
@@ -272,14 +295,14 @@ func failedConds(sinceMs, untilMs int64) ([]string, []any) {
 // FailedIDs — уникальные ID записей done=0 за окно (sinceMs, untilMs], до cap
 // (capped=true, если есть ещё). Для очистки «Неудачных доставок»: эти ID
 // отменяются (qcancel), чтобы DLQ-репроцессор перестал их повторять (§34.4).
-func (r *LogReaderCH) FailedIDs(ctx context.Context, table string, sinceMs, untilMs int64, cap int) ([]string, bool, error) {
+func (r *LogReaderCH) FailedIDs(ctx context.Context, table, nodeID string, sinceMs, untilMs int64, cap int) ([]string, bool, error) {
 	if !isSafeTableName(table) {
 		return nil, false, fmt.Errorf("invalid table name: %q", table)
 	}
 	if cap <= 0 {
 		cap = 10000
 	}
-	conds, args := failedConds(sinceMs, untilMs)
+	conds, args := failedConds(nodeID, sinceMs, untilMs)
 	conn, err := r.liveConn()
 	if err != nil {
 		return nil, false, err
@@ -311,15 +334,15 @@ func (r *LogReaderCH) FailedIDs(ctx context.Context, table string, sinceMs, unti
 // DeleteFailed — lightweight DELETE записей done=0 за окно (sinceMs, untilMs] из
 // CH-таблицы узла (очистка вида «Неудачные доставки»). Возвращает число удалённых
 // (посчитано до DELETE — CH lightweight delete счётчик не отдаёт).
-func (r *LogReaderCH) DeleteFailed(ctx context.Context, table string, sinceMs, untilMs int64) (uint64, error) {
+func (r *LogReaderCH) DeleteFailed(ctx context.Context, table, nodeID string, sinceMs, untilMs int64) (uint64, error) {
 	if !isSafeTableName(table) {
 		return 0, fmt.Errorf("invalid table name: %q", table)
 	}
-	n, err := r.CountFailed(ctx, table, sinceMs, untilMs)
+	n, err := r.CountFailed(ctx, table, nodeID, sinceMs, untilMs)
 	if err != nil || n == 0 {
 		return 0, err
 	}
-	conds, args := failedConds(sinceMs, untilMs)
+	conds, args := failedConds(nodeID, sinceMs, untilMs)
 	conn, err := r.liveConn()
 	if err != nil {
 		return 0, err
@@ -340,12 +363,16 @@ func (r *LogReaderCH) DeleteFailed(ctx context.Context, table string, sinceMs, u
 //	Delivered = uniqExactIf(ID, done = 1) — из них хотя бы раз доставлены (2xx);
 //	Errors    = Total - Delivered         — так и не доставлены;
 //	P95/P99   = перцентили длительности (мс) по всем попыткам.
-func (r *LogReaderCH) NodeKPI(ctx context.Context, table string, sinceMs, untilMs int64) (port.NodeKPI, error) {
+func (r *LogReaderCH) NodeKPI(ctx context.Context, table, nodeID string, sinceMs, untilMs int64) (port.NodeKPI, error) {
 	if !isSafeTableName(table) {
 		return port.NodeKPI{}, fmt.Errorf("invalid table name: %q", table)
 	}
 	conds := []string{"1"}
 	var args []any
+	if c, a := nodeFilterCond(nodeID); c != "" {
+		conds = append(conds, c)
+		args = append(args, a...)
+	}
 	if sinceMs > 0 {
 		conds = append(conds, "toUnixTimestamp64Milli(toDateTime64(date_request, 3)) > ?")
 		args = append(args, sinceMs)
@@ -385,7 +412,7 @@ func (r *LogReaderCH) NodeKPI(ctx context.Context, table string, sinceMs, untilM
 // buckets равных бакетов (count() и countIf(done=0) на бакет). Плотный ряд:
 // отсутствующие бакеты — нули, ASC по времени, выравнивание бакетов как у
 // toStartOfInterval (по эпохе). Источник графика «Трафик» вкладки «Обзор».
-func (r *LogReaderCH) NodeChart(ctx context.Context, table string, sinceMs, untilMs int64, buckets int) ([]port.SeriesPoint, error) {
+func (r *LogReaderCH) NodeChart(ctx context.Context, table, nodeID string, sinceMs, untilMs int64, buckets int) ([]port.SeriesPoint, error) {
 	if !isSafeTableName(table) {
 		return nil, fmt.Errorf("invalid table name: %q", table)
 	}
@@ -404,15 +431,23 @@ func (r *LogReaderCH) NodeChart(ctx context.Context, table string, sinceMs, unti
 	if err != nil {
 		return nil, err
 	}
+	conds := []string{
+		"toUnixTimestamp64Milli(toDateTime64(date_request, 3)) > ?",
+		"toUnixTimestamp64Milli(toDateTime64(date_request, 3)) <= ?",
+	}
+	args := []any{sinceMs, untilMs}
+	if c, a := nodeFilterCond(nodeID); c != "" {
+		conds = append([]string{c}, conds...)
+		args = append(a, args...)
+	}
 	q := fmt.Sprintf(`SELECT
 		toInt64(toUnixTimestamp(toStartOfInterval(date_request, INTERVAL %d SECOND))) AS bucket_s,
 		count() AS cnt,
 		countIf(done = 0) AS errs
 	FROM %s
-	WHERE toUnixTimestamp64Milli(toDateTime64(date_request, 3)) > ?
-	  AND toUnixTimestamp64Milli(toDateTime64(date_request, 3)) <= ?
-	GROUP BY bucket_s ORDER BY bucket_s`, stepSec, table)
-	rows, err := conn.Query(ctx, q, sinceMs, untilMs)
+	WHERE %s
+	GROUP BY bucket_s ORDER BY bucket_s`, stepSec, table, strings.Join(conds, " AND "))
+	rows, err := conn.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse node chart: %w", err)
 	}
@@ -452,7 +487,7 @@ func scanLogRow(rows chdriver.Rows) (*domain.LogRecord, error) {
 		&r.ID, &typ, &r.URL, &r.Method, &r.Parameters, &r.Request, &r.Response,
 		&r.Status, &r.Reason, &dateCreate, &dateReq, &dateResp,
 		&r.Duration, &r.Done, &r.ChecksumRequest, &r.ChecksumResponse,
-		&r.Host, &r.IP, &r.Attempts, &r.AttemptsDetails,
+		&r.Host, &r.IP, &r.Attempts, &r.AttemptsDetails, &r.NodeID,
 	); err != nil {
 		return nil, fmt.Errorf("scan log row: %w", err)
 	}
