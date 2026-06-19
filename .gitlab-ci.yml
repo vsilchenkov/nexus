@@ -515,7 +515,8 @@ loadtest:
         Host String,
         IP String,
         attempts Int32,
-        attempts_details String
+        attempts_details String,
+        node_id String
       )
       ENGINE = MergeTree
       PARTITION BY toYYYYMM(date_create)
