@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
 	"strings"
 	"time"
 
@@ -16,6 +17,34 @@ import (
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase/port"
 )
+
+// chUnavailable сообщает, что err — ошибка ДОСТУПНОСТИ ClickHouse (сервер
+// лежит, dial refused, таймаут, отменённый контекст), а не серверная ошибка
+// запроса (битый SQL, нет таблицы — это *clickhouse.Exception). Только такие
+// ошибки read-path деградирует мягко (см. domain.ErrLogsBackendUnavailable);
+// серверные — пробрасывает как есть, чтобы реальные баги не маскировались.
+func chUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr)
+}
+
+// classifyCHErr оборачивает ошибку CH-запроса контекстом op. Если это сбой
+// доступности — дополнительно помечает её domain.ErrLogsBackendUnavailable
+// (через errors.Join, чтобы errors.Is ловил и sentinel, и исходную ошибку, а
+// текст лога сохранял детали).
+func classifyCHErr(op string, err error) error {
+	wrapped := fmt.Errorf("%s: %w", op, err)
+	if chUnavailable(err) {
+		return errors.Join(wrapped, domain.ErrLogsBackendUnavailable)
+	}
+	return wrapped
+}
 
 // ConnProvider — узкий read-only доступ к ClickHouse-соединению.
 // Определён на стороне consumer'а (CLAUDE.md §3): LogReaderCH не должен
@@ -86,7 +115,7 @@ func (r *LogReaderCH) GetByID(ctx context.Context, table, id string) (*domain.Lo
 	rows, err := conn.Query(ctx,
 		fmt.Sprintf(`SELECT %s FROM %s WHERE ID = ? ORDER BY date_request DESC LIMIT 1`, selectCols, table), id)
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse select log: %w", err)
+		return nil, classifyCHErr("clickhouse select log", err)
 	}
 	defer rows.Close()
 	if !rows.Next() {
@@ -121,7 +150,7 @@ func (r *LogReaderCH) ListSince(ctx context.Context, table, nodeID string, curso
 		`SELECT %s FROM %s WHERE %s ORDER BY date_request ASC LIMIT ?`,
 		selectCols, table, strings.Join(conds, " AND ")), append(args, limit)...)
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse list since: %w", err)
+		return nil, classifyCHErr("clickhouse list since", err)
 	}
 	defer rows.Close()
 
@@ -203,7 +232,7 @@ func (r *LogReaderCH) Search(ctx context.Context, q port.LogQuery) ([]*domain.Lo
 		`SELECT %s FROM %s%s ORDER BY date_request DESC LIMIT ?`,
 		selectCols, q.Table, where), append(args, limit)...)
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse search: %w", err)
+		return nil, classifyCHErr("clickhouse search", err)
 	}
 	defer rows.Close()
 
@@ -266,7 +295,7 @@ func (r *LogReaderCH) CountFailed(ctx context.Context, table, nodeID string, sin
 	var n uint64
 	q := fmt.Sprintf("SELECT count() FROM %s WHERE %s", table, strings.Join(conds, " AND "))
 	if err := conn.QueryRow(ctx, q, args...).Scan(&n); err != nil {
-		return 0, fmt.Errorf("clickhouse count failed: %w", err)
+		return 0, classifyCHErr("clickhouse count failed", err)
 	}
 	return n, nil
 }
@@ -521,6 +550,3 @@ func isSafeTableName(name string) bool {
 	}
 	return dot > 0 && dot < len(name)-1
 }
-
-// Unused — silence unused-import warning if package compiled standalone.
-var _ = errors.New

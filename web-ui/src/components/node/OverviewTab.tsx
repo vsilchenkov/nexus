@@ -121,7 +121,11 @@ export function OverviewTab({
             {hasLogsTable && (recentQ.data?.items?.length ?? 0) === 0 && (
               <tr>
                 <td colSpan={5} className="px-4 py-6 text-center text-fg-muted">
-                  {recentQ.isLoading ? t("common.loading") : t("logs.empty")}
+                  {recentQ.isLoading
+                    ? t("common.loading")
+                    : recentQ.data?.logs_available === false
+                      ? t("logs.unavailable")
+                      : t("logs.empty")}
                 </td>
               </tr>
             )}

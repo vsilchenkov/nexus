@@ -65,6 +65,14 @@ var (
 	ErrNodePullBatchRange    = errors.New("domain: pull_batch_size must be 1..1000")
 	ErrNodePullPrefetchRange = errors.New("domain: pull_prefetch must be 1..1000")
 
+	// Чтение логов/метрик из ClickHouse (read-path).
+	// ErrLogsBackendUnavailable — backend логов (ClickHouse) временно недоступен
+	// (сеть/таймаут/сервер лежит), в отличие от серверной ошибки запроса
+	// (битый SQL, нет таблицы). Read-эндпоинты деградируют мягко: 200 с пустыми
+	// данными + флаг logs_available=false и WARN-лог (не ERROR) — чтобы поллинг
+	// UI не сыпал 500 и не флудил Sentry, скрывая реальные write-path ошибки CH.
+	ErrLogsBackendUnavailable = errors.New("domain: logs backend (clickhouse) temporarily unavailable")
+
 	// User / Session
 	ErrUserNotFound      = errors.New("domain: user not found")
 	ErrUserAlreadyExists = errors.New("domain: user with this login already exists")
