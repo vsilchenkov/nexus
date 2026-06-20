@@ -70,7 +70,7 @@
 | Kafka-consumer + DLQ + paused-pacing | ✅ | [adapter/in/kafka/consumer.go](../internal/sender/adapter/in/kafka/consumer.go), [usecase/async.go](../internal/sender/usecase/async.go) |
 | Offset коммитится только после успешной доставки | ✅ | `enable_auto_commit: false` + `MarkMessage` after deliver |
 | ClickHouse batch writer | ✅ | [adapter/out/chlog/writer.go](../internal/sender/adapter/out/chlog/writer.go) |
-| **NDJSON file-fallback при недоступности CH** | ✅ Phase 5.1 | [chlog/fallback.go](../internal/sender/adapter/out/chlog/fallback.go) |
+| **Durable-retry проваленных батчей через Kafka (§38, заменил NDJSON)** | ✅ §38 | [chlogretry/retrier.go](../internal/sender/adapter/out/chlogretry/retrier.go), [clogwire](../internal/sender/clogwire/clogwire.go), retry-consumer [clog_retry_consumer.go](../internal/sender/adapter/in/kafka/clog_retry_consumer.go) |
 | **CH partition-drop housekeeping (§4.3)** | ✅ Phase 5 | [sender/usecase/ch_housekeeping.go](../internal/sender/usecase/ch_housekeeping.go), миграция [0005](../migrations/0005_node_retention.up.sql) |
 | Все 20 полей `LogRecord` (включая `attempts_details`) | ✅ | [domain/log.go](../internal/domain/log.go), `INSERT` в `writer.go` |
 
@@ -162,7 +162,7 @@
 | **Локальный LRU L2-кеш (1-5 сек) + stale-fallback при ошибках downstream** | ✅ Phase 7.2 | [nodecache/lru.go](../internal/receiver/adapter/out/nodecache/lru.go) + [nodecache/l2.go](../internal/receiver/adapter/out/nodecache/l2.go); конфиг `receiver.l2_cache.{enabled,size,ttl_ms,stale_ttl_ms}`; метрики `nexus_l2_cache_{hits,misses,evictions}_total` + `nexus_l2_cache_size` |
 | Pool соединений PG/Redis по конфигу | ✅ | `MaxOpenConns`, `PoolSize` в YAML |
 | **Graceful shutdown с дренажом CH-буфера и Kafka offset** | ✅ | `App.Stop` в каждом сервисе, `chWriter.Stop(ctx)` |
-| **CH file-fallback при недоступности (§9.4)** | ✅ Phase 5.1 | [chlog/fallback.go](../internal/sender/adapter/out/chlog/fallback.go) |
+| **Durable-retry при недоступности CH (§9.4 → §38, Kafka вместо NDJSON)** | ✅ §38 | [chlogretry/retrier.go](../internal/sender/adapter/out/chlogretry/retrier.go) + retry-consumer |
 | Circuit breaker per-node в Redis | ✅ | [platform/circuitbreaker/redis.go](../internal/platform/circuitbreaker/redis.go) |
 | Rate-limit per-node + per-token | ✅ | [platform/ratelimit/redis.go](../internal/platform/ratelimit/redis.go) |
 | `/health` (liveness) + `/ready` (с degraded body) | ✅ | [platform/healthcheck/healthcheck.go](../internal/platform/healthcheck/healthcheck.go) |
@@ -827,7 +827,8 @@ RabbitMQ) подтвердил, см. [docs/STAND_TESTING.md](STAND_TESTING.md):
   `result`-ответа нет (ожидаемо).
 - **#4** IP в аудите и в ClickHouse-логах = `127.0.0.1` (IPv4), не `::1`.
 - CH-шаблон (default «Standard logs») → авто-создание таблицы и запись логов;
-  без шаблона — file-fallback NDJSON в `logs/clickhouse-fallback/`.
+  при недоступности CH проваленный батч уходит в Kafka-топик `nexus.logs.retry`
+  и дренится обратно после восстановления (§38, заменил NDJSON-fallback).
 - Метрики `nexus_requests_total{method,node,status}` растут по узлам (200/404/405).
 
 Грабли локального запуска: `config_debug.yml` должен задавать `web.receiver_url:
@@ -1178,7 +1179,7 @@ failed`, заваливая реальные write-path ошибки CH (`clickh
 KPI «Неудачные доставки» — «—» (а не вводящий в заблуждение «0»). Проверено на стенде: при остановленном
 CH read-path даёт **0** новых Sentry-событий и 0 console-ошибок, тогда как write-path
 `clickhouse batch insert failed` продолжает уходить в Sentry, а sync/async-отправка не затрагивается
-(см. также §9.4 file-fallback). Единообразно с метриками выше.
+(durable-retry проваленных батчей — §38, Kafka вместо NDJSON). Единообразно с метриками выше.
 
 **Консистентность метки `node` (in/out merge на дашборде).** Sender пишет метку `node = node.Path`
 (без слога команды), а `GinMiddleware` по умолчанию брал сырой URL-параметр Receiver'а, который для
@@ -1649,9 +1650,13 @@ make proto                                     # перегенерация send
 3. **testcontainers требует Docker daemon.** На Windows — Docker Desktop запущен и
    расшарен с WSL2. На Linux/macOS — `systemctl start docker`.
 
-4. **CH file-fallback каталог нужно бэкапить.** Если ClickHouse недоступен дольше
-   суток, в `logs/clickhouse-fallback/` копится много NDJSON-файлов. Не удаляйте
-   их вручную — они автоматически переотправляются раз в 30 секунд.
+4. **Проваленные CH-батчи буферизуются в Kafka (§38), не на диске.** При
+   недоступности ClickHouse проваленный лог-батч продьюсится в топик
+   `nexus.logs.retry` и дренится обратно отдельным consumer'ом
+   (`<consumer_group>-clog-retry`) после восстановления — retry-in-place с
+   бэкоффом. Под длительный простой CH рассчитывайте `kafka.topic.retention_ms`
+   (объём логов × максимальный простой). Прежний локальный NDJSON-fallback
+   (`logs/clickhouse-fallback/`, `clickhouse.fallback_dir`) удалён.
 
 5. **Replay не работает без ClickHouse.** Web Service стартует даже если CH
    недоступен (опциональная зависимость через `bootstrap.TryClickHouse`), но

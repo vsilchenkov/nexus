@@ -80,9 +80,6 @@ func applyDefaults(c *Config) {
 	if c.ClickHouse.Workers == 0 {
 		c.ClickHouse.Workers = 2
 	}
-	if c.ClickHouse.FallbackDir == "" {
-		c.ClickHouse.FallbackDir = "logs/clickhouse-fallback"
-	}
 
 	if c.Prometheus.TimeoutMs == 0 {
 		c.Prometheus.TimeoutMs = 5000
@@ -93,6 +90,9 @@ func applyDefaults(c *Config) {
 	}
 	if c.Kafka.DLQTopic == "" {
 		c.Kafka.DLQTopic = "nexus.async.dlq"
+	}
+	if c.Kafka.RetryTopic == "" {
+		c.Kafka.RetryTopic = "nexus.logs.retry"
 	}
 	if c.Kafka.ConsumerGroup == "" {
 		c.Kafka.ConsumerGroup = "nexus-sender"

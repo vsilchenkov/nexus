@@ -3257,3 +3257,32 @@ FailedIDs/DeleteFailed/NodeKPI/NodeChart) фильтруют `(node_id = ? OR no
 [sections/37-node-id-in-logs.md](sections/37-node-id-in-logs.md).
 
 **Out of scope:** бэкфилл node_id старых записей; вторичный индекс по node_id; запрет общих таблиц.
+
+## 38. Durable-retry проваленных ClickHouse-батчей через Kafka (замена NDJSON-fallback)
+
+При недоступности ClickHouse `INSERT` лог-батча в Sender падает — **отправка данных не блокируется**
+(§9.4): sync-ответ и async-доставка уже состоялись, падает только логирование. До §38 проваленный
+батч сохранялся в локальный NDJSON-файл (`logs/clickhouse-fallback/`) и переотправлялся фоновым
+циклом каждые 30с. §38 заменяет локальный fallback на **durable-буфер в Kafka** (топик
+`nexus.logs.retry`): Sender продьюсит проваленный батч в Kafka, отдельная consumer-group
+`<consumer_group>-clog-retry` дренит его обратно в CH после восстановления. Реплицируемо, без
+локальных файлов; Kafka нагружается **только во время простоя CH** (одно сообщение на батч ~100
+строк, не на каждый запрос) — в норме прямой `INSERT` как прежде.
+
+**Поток:** `flushTable` → `INSERT` ok → готово; иначе ERROR-лог `clickhouse batch insert failed`
+(→ Sentry) + метрика, затем `BatchRetrier.Retry` → produce в `nexus.logs.retry` (формат
+`clogwire.Envelope{table, logs}`, JSON; ключ = таблица; крупный батч режется `clogwire.Split` под
+`max.message.bytes`). Retry-consumer (`ChLogRetryConsumer` + `ChLogRetryHandler`) декодирует и делает
+**прямой** `InsertBatch` в обход буфера (цикла produce↔consume нет).
+
+**Retry-in-place:** kafka-go `FetchMessage` без commit'а не передоставляет сообщение на том же
+reader'е; поэтому при сбое INSERT (CH ещё лежит) consumer не пропускает сообщение, а переобрабатывает
+**тот же** батч с экспоненциальным бэкоффом (1с→…→15с) до успеха или отмены ctx, и только потом
+коммитит offset. Гарантия: батч доедет в CH сразу после восстановления, без потери и без рестарта
+Sender. Метрики: `nexus_clickhouse_fallback_total{op="queued"|"restored"}`,
+`nexus_clickhouse_errors_total{op="insert"|"retry_produce"}`; lag `nexus.logs.retry` → `nexus_kafka_lag`.
+
+**Конфиг:** `kafka.retry_topic` (дефолт `nexus.logs.retry`; пусто → retry выключен, потеря при сбое
+CH). Удалён `clickhouse.fallback_dir`. Топик создаётся при старте Sender. Ошибки CH по-прежнему идут в
+Sentry; отправка sync/async не затрагивается. Полный перевод логов на Kafka (сообщение на каждый
+запрос) вне scope. Подробности — [sections/38-clog-retry-kafka.md](sections/38-clog-retry-kafka.md).

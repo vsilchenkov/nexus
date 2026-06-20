@@ -77,7 +77,9 @@ clickhouse:
   flush_interval_sec: 5          # Принудительный flush буфера (сек), даже если батч не заполнен.
   buffer_max_size: 100000        # Потолок строк в памяти; при достижении — backpressure/сброс.
   workers: 2                     # Число воркеров-писателей в CH.
-  fallback_dir: logs/clickhouse-fallback # Каталог NDJSON-fallback при недоступности CH (§9.4). Пусто = fallback off, батчи теряются.
+  # §38: проваленные при недоступности CH батчи уходят в Kafka-топик
+  # kafka.retry_topic (durable, реплицируемый), откуда их дренит обратно в CH
+  # отдельный consumer. Заменил прежний локальный NDJSON-fallback (fallback_dir).
 
 # Prometheus — источник метрик для дашбордов Web-панели (§21, §6).
 # Это адрес сервера Prometheus (query API), а НЕ /metrics самих сервисов.
@@ -92,6 +94,7 @@ kafka:
   brokers: ${KAFKA_BROKERS:kafka:9092}   # Список брокеров через запятую (host:port).
   async_topic: nexus.async               # Топик основной очереди async-запросов.
   dlq_topic: nexus.async.dlq             # Dead-letter топик для неуспешно обработанных сообщений.
+  retry_topic: nexus.logs.retry          # §38: durable-буфер проваленных CH-батчей (дренится обратно в CH). Пусто = retry off, батчи теряются при сбое CH.
   consumer_group: nexus-sender           # Consumer-group, под которой Sender читает топик.
   # Параметры авто-создания топика (EnsureTopics при старте).
   topic:

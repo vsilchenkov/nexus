@@ -49,7 +49,12 @@ func main() {
 
 	cipher := bootstrap.MustCipher(logger)
 
-	bootstrap.MustEnsureKafkaTopics(ctx, cfg, logger, cfg.Kafka.AsyncTopic, cfg.Kafka.DLQTopic)
+	// §38: nexus.logs.retry — durable-буфер проваленных CH-батчей (если задан).
+	retryTopics := []string{cfg.Kafka.AsyncTopic, cfg.Kafka.DLQTopic}
+	if cfg.Kafka.RetryTopic != "" {
+		retryTopics = append(retryTopics, cfg.Kafka.RetryTopic)
+	}
+	bootstrap.MustEnsureKafkaTopics(ctx, cfg, logger, retryTopics...)
 
 	otelShutdown := bootstrap.MustOtel(ctx, cfg, "sender", logger)
 

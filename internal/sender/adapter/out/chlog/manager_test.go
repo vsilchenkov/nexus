@@ -35,7 +35,7 @@ func TestWriterManager_Reload_Recreates(t *testing.T) {
 
 	cfg := defaultCfg()
 	provider := &stubProvider{}
-	wm := chlog.NewManagerWithFallback(provider, cfg, "", nil, logging.NewNoop())
+	wm := chlog.NewManagerWithRetrier(provider, cfg, nil, nil, logging.NewNoop())
 	t.Cleanup(func() { wm.Stop(context.Background()) })
 
 	// Меняем cfg — Reload должен подхватить новые значения при создании writer'а.
@@ -46,14 +46,14 @@ func TestWriterManager_Reload_Recreates(t *testing.T) {
 	// Smoke: Write после Reload не падает; Stop корректно останавливает горутины.
 	wm.Write(context.Background(), "test_table", &domain.LogRecord{ID: "x"})
 	// flush в Stop не сработает: provider.Conn() == nil → insertBatch вернёт ошибку,
-	// fallback отключён, writer просто залогирует — без паники.
+	// retrier == nil → writer просто залогирует — без паники.
 }
 
 func TestWriterManager_Stop_IsIdempotent(t *testing.T) {
 	t.Parallel()
 
 	cfg := defaultCfg()
-	wm := chlog.NewManagerWithFallback(&stubProvider{}, cfg, "", nil, logging.NewNoop())
+	wm := chlog.NewManagerWithRetrier(&stubProvider{}, cfg, nil, nil, logging.NewNoop())
 
 	wm.Stop(context.Background())
 	wm.Stop(context.Background())
@@ -63,7 +63,7 @@ func TestWriterManager_Reload_AfterStop_IsNoop(t *testing.T) {
 	t.Parallel()
 
 	cfg := defaultCfg()
-	wm := chlog.NewManagerWithFallback(&stubProvider{}, cfg, "", nil, logging.NewNoop())
+	wm := chlog.NewManagerWithRetrier(&stubProvider{}, cfg, nil, nil, logging.NewNoop())
 	wm.Stop(context.Background())
 
 	require.NoError(t, wm.Reload(context.Background()))
@@ -73,7 +73,7 @@ func TestWriterManager_Write_AfterStop_IsNoop(t *testing.T) {
 	t.Parallel()
 
 	cfg := defaultCfg()
-	wm := chlog.NewManagerWithFallback(&stubProvider{}, cfg, "", nil, logging.NewNoop())
+	wm := chlog.NewManagerWithRetrier(&stubProvider{}, cfg, nil, nil, logging.NewNoop())
 	wm.Stop(context.Background())
 
 	// Не должно паниковать (current == nil после Stop).
@@ -85,7 +85,7 @@ func TestWriterManager_Reload_FreshWriterUsesNewCfg(t *testing.T) {
 
 	cfg := defaultCfg()
 	cfg.Workers = 1
-	wm := chlog.NewManagerWithFallback(&stubProvider{}, cfg, "", nil, logging.NewNoop())
+	wm := chlog.NewManagerWithRetrier(&stubProvider{}, cfg, nil, nil, logging.NewNoop())
 	t.Cleanup(func() { wm.Stop(context.Background()) })
 
 	// Изменили cfg — это сразу же отражается на manager.cfg (один указатель).
