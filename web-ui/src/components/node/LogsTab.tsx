@@ -74,6 +74,11 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   // Поток умер окончательно (LIVE_MAX_CONSECUTIVE_ERRORS ошибок подряд) —
   // live выключен, показываем предупреждение вместо вечного спиннера.
   const [liveLost, setLiveLost] = useState(false);
+  // ClickHouse временно недоступен в live-режиме (SSE-событие logs_unavailable).
+  const [liveUnavailable, setLiveUnavailable] = useState(false);
+  // Snapshot-запрос вернул logs_available=false (CH недоступен): показываем
+  // мягкий индикатор «логи временно недоступны», а не пустой список/спиннер.
+  const logsUnavailable = logsQ.data?.logs_available === false;
   // Таймеры снятия подсветки: чистим при unmount/перезапуске потока, иначе
   // setState стреляет по размонтированному компоненту.
   const highlightTimersRef = useRef<Set<number>>(new Set());
@@ -107,6 +112,13 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
       } catch {
         // Невалидный JSON в SSE-событии — пропускаем запись, поток продолжаем.
       }
+    });
+    // Бэкенд прислал, что CH недоступен — закрываем поток и показываем
+    // индикатор недоступности (не вечный спиннер, не «поток потерян»).
+    es.addEventListener("logs_unavailable", () => {
+      es.close();
+      setLive(false);
+      setLiveUnavailable(true);
     });
     es.onopen = () => {
       consecutiveErrors = 0;
@@ -245,6 +257,7 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                 setHighlighted(new Set());
                 setPendingCount(0);
                 setLiveLost(false);
+                setLiveUnavailable(false);
                 setLive(e.target.checked);
               }}
             />
@@ -252,6 +265,9 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
             {live && <RefreshCw className="h-3 w-3 animate-spin text-accent" />}
             {liveLost && !live && (
               <span className="text-xs text-warn">{t("logs.live_lost")}</span>
+            )}
+            {liveUnavailable && !live && (
+              <span className="text-xs text-warn">{t("logs.unavailable")}</span>
             )}
           </label>
         </div>
@@ -336,6 +352,12 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
         </div>
       )}
 
+      {(logsUnavailable || liveUnavailable) && hasLogsTable && (
+        <div className="border-b border-warn/30 bg-warn/10 px-4 py-2 text-center text-xs text-warn">
+          {t("logs.unavailable")}
+        </div>
+      )}
+
       {!hasLogsTable ? (
         <div className="space-y-3 px-4 py-10 text-center text-fg-muted">
           <p className="mx-auto max-w-xl">{t("logs.not_configured")}</p>
@@ -417,7 +439,11 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
               {visibleLogs.length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-3 py-6 text-center text-fg-muted">
-                    {logsQ.isLoading ? t("common.loading") : t("logs.empty")}
+                    {logsQ.isLoading
+                      ? t("common.loading")
+                      : logsUnavailable
+                        ? t("logs.unavailable")
+                        : t("logs.empty")}
                   </td>
                 </tr>
               )}

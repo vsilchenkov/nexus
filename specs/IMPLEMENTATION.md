@@ -1159,6 +1159,27 @@ Prometheus убрал последнюю зависимость метрик о�
 Overview/NodesOverview, чтобы поллинг UI не спамил ошибками
 (см. [usecase/metrics.go](../internal/web/usecase/metrics.go)).
 
+**Read-path логов тоже мягко деградирует при недоступности ClickHouse (CH-outage тест).**
+Раньше эндпоинты ЧТЕНИЯ логов из CH — `List`/`CountFailed`/`Get`/`Stream` в
+[logs_handler.go](../internal/web/adapter/in/http/logs_handler.go) — при лежащем ClickHouse возвращали
+**500** и логировали `ERROR`. На вкладках «Логи»/«Очередь» и в виджете «Последние запросы» это давало
+вечный спиннер/«—» и, главное, **шторм 500-поллинга** (react-query retry + 12с-поллинг): за пару минут
+открытой страницы read-path сгенерировал десятки Sentry-событий `logs list failed`/`logs failed-count
+failed`, заваливая реальные write-path ошибки CH (`clickhouse batch insert failed` из Sender) в
+соотношении ~9:1. Это подрывало саму цель «ошибки CH видны в Sentry».
+Фикс: адаптер [log_reader.go](../internal/web/adapter/out/clickhouse/log_reader.go) классифицирует
+ошибку (`classifyCHErr`/`chUnavailable`): сбой **доступности** (net.Error / `context.DeadlineExceeded` /
+`Canceled`) помечается sentinel'ом `domain.ErrLogsBackendUnavailable`, а **серверная** ошибка запроса
+(`*clickhouse.Exception` — битый SQL, нет таблицы) — нет (остаётся 500, чтобы баги не маскировались).
+Хендлеры на sentinel отдают **200 с пустыми данными + `logs_available=false`** и логируют **WARN**
+(не ERROR → не флудит Sentry). Фронт по флагу показывает индикатор «Логи временно недоступны
+(ClickHouse)» (`logs.unavailable`, [LogsTab](../web-ui/src/components/node/LogsTab.tsx)/
+[OverviewTab](../web-ui/src/components/node/OverviewTab.tsx)/[QueueTab](../web-ui/src/components/node/QueueTab.tsx)),
+KPI «Неудачные доставки» — «—» (а не вводящий в заблуждение «0»). Проверено на стенде: при остановленном
+CH read-path даёт **0** новых Sentry-событий и 0 console-ошибок, тогда как write-path
+`clickhouse batch insert failed` продолжает уходить в Sentry, а sync/async-отправка не затрагивается
+(см. также §9.4 file-fallback). Единообразно с метриками выше.
+
 **Консистентность метки `node` (in/out merge на дашборде).** Sender пишет метку `node = node.Path`
 (без слога команды), а `GinMiddleware` по умолчанию брал сырой URL-параметр Receiver'а, который для
 `/api/v1/request/<team>/<path>` включал слог (`default/stand/...`). Из-за этого per-node merge
