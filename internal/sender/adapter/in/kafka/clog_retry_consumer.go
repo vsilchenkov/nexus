@@ -41,6 +41,7 @@ type ChLogRetryConsumer struct {
 	handler   retryProcessor
 	logger    logging.Logger
 	consumers []*kafkapf.Consumer
+	cancel    context.CancelFunc
 	wg        sync.WaitGroup
 }
 
@@ -49,8 +50,13 @@ func NewChLogRetryConsumer(cfg *config.Config, topic, groupID string, handler re
 	return &ChLogRetryConsumer{cfg: cfg, topic: topic, groupID: groupID, handler: handler, logger: logger}
 }
 
-// Start запускает Instances горутин. Возвращается сразу.
+// Start запускает Instances горутин. Возвращается сразу. Горутины завязаны на
+// собственный производный контекст, который Stop отменяет — поэтому Stop не
+// зависит от того, отменил ли вызывающий внешний ctx (иначе FetchMessage после
+// Close мог бы крутиться до дедлайна внешнего ctx).
 func (g *ChLogRetryConsumer) Start(ctx context.Context) {
+	cctx, cancel := context.WithCancel(ctx)
+	g.cancel = cancel
 	instances := g.cfg.Kafka.Consumer.Instances
 	if instances <= 0 {
 		instances = 1
@@ -59,7 +65,7 @@ func (g *ChLogRetryConsumer) Start(ctx context.Context) {
 		c := kafkapf.NewConsumerWithGroup(g.cfg, g.topic, g.groupID)
 		g.consumers = append(g.consumers, c)
 		g.wg.Add(1)
-		go g.runOne(ctx, c, i)
+		go g.runOne(cctx, c, i)
 	}
 }
 
@@ -119,8 +125,12 @@ func (g *ChLogRetryConsumer) processWithRetry(ctx context.Context, value []byte,
 	}
 }
 
-// Stop корректно завершает все горутины.
+// Stop корректно завершает все горутины: отменяет производный контекст (чтобы
+// FetchMessage/бэкофф вышли немедленно), затем закрывает reader'ы и ждёт.
 func (g *ChLogRetryConsumer) Stop() {
+	if g.cancel != nil {
+		g.cancel()
+	}
 	for _, c := range g.consumers {
 		_ = c.Close()
 	}
