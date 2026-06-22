@@ -24,7 +24,7 @@ Nexus — три stateless Go-сервиса плюс набор хранили�
 | PostgreSQL  | 16     | `5432`         | Конфиг узлов, пользователи, audit, настройки  |
 | Redis       | 7      | `6379`         | Кеш узлов, сессии, rate-limit, circuit breaker |
 | ClickHouse  | 24     | `8123`/`9000`  | Логи всех вызовов                             |
-| Kafka       | 3.9 (KRaft) | `9092`     | Очередь async-запросов (`nexus.async`/`.dlq`) |
+| Kafka       | 3.9 (KRaft) | `9092`     | Очередь async-запросов (`nexus.async`/`.dlq`) + durable-буфер проваленных CH-батчей (`nexus.logs.retry`, §38) |
 | Prometheus  | 2.55   | `9091→9090`    | Scrape метрик сервисов **и источник дашбордов панели** (KPI/очередь/графики, §21) |
 
 Сервисы — stateless: всё состояние в хранилищах. Поэтому обновление и откат сводятся
@@ -324,8 +324,12 @@ docker compose -f deploy/docker-compose.app.yml logs -f web receiver sender
 - **ClickHouse**: пользователь должен иметь право создавать БД и таблицы — Nexus заводит
   по БД на команду (`nexus_<slug>`, для default — `nexus_default`) и создаёт таблицы логов.
 - **Kafka**: автосоздание топиков на брокере должно быть **разрешено**, либо заранее
-  создайте `nexus.async` и `nexus.async.dlq` (Nexus сам пытается их завести с retention
-  30 дней; на single-broker не забудьте RF=1/ISR=1 — см. §2).
+  создайте `nexus.async`, `nexus.async.dlq` и `nexus.logs.retry` (Nexus сам пытается их завести с
+  retention 30 дней; на single-broker не забудьте RF=1/ISR=1 — см. §2). Топик `nexus.logs.retry`
+  (§38) — durable-буфер проваленных CH-батчей при недоступности ClickHouse; его retention должен
+  покрывать максимально ожидаемый простой CH × объём логов (иначе при очень долгом простое старые
+  батчи истекут по retention и не доедут в CH). Имя настраивается `kafka.retry_topic`; пустое
+  значение полностью выключает retry (батчи теряются при сбое CH).
 - **Redis**: при включённом ACL задайте `REDIS_USER` и `REDIS_PASSWORD`.
 
 ---
@@ -625,6 +629,14 @@ fallback-маркер `0.0.0-dev` (сборка совсем без git) и вр
 > собирай из свежего detached-checkout тега и проверяй `git status --porcelain` (должно быть пусто).
 > Частый самострел — пересборка генерируемых, но отслеживаемых файлов (`docs/` через `make swagger`,
 > `internal/web/static/` через `make build-ui`) без коммита: закоммить их до сборки.
+>
+> **Ложный `-dirty` при чистом `git status` на сервере.** `git describe`, в отличие от
+> `git status`, **не освежает** stat-кэш индекса. После `COPY . .` у файлов в Docker-слое новые
+> `mtime`/`inode`, и `git describe --dirty` без refresh принимает неизменённое дерево за грязное —
+> версия уезжает как `v1.2.0-dirty`, хотя на хосте `git status` чист. Поэтому в
+> `deploy/docker/*.Dockerfile` перед `git describe` стоит `git update-index -q --refresh` (он
+> сверяет содержимое и обновляет stat-кэш; реальная грязь по-прежнему даёт `-dirty`). Если правишь
+> эти Dockerfile — **не выкидывай** строку с `update-index`, иначе ложный суффикс вернётся.
 
 ### 9.5. Выпуск новой версии (тег → сборка на сервере)
 

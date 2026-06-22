@@ -40,6 +40,7 @@ import (
 	grpcadapter "nexus/internal/sender/adapter/in/grpc"
 	kafkaadapter "nexus/internal/sender/adapter/in/kafka"
 	"nexus/internal/sender/adapter/out/chlog"
+	"nexus/internal/sender/adapter/out/chlogretry"
 	"nexus/internal/sender/adapter/out/httpclient"
 	"nexus/internal/sender/adapter/out/nodepg"
 	"nexus/internal/sender/usecase"
@@ -55,14 +56,15 @@ type App struct {
 	cipher  *crypto.Cipher
 	metrics *metrics.Metrics
 
-	grpcSrv      *grpc.Server
-	adminSrv     *http.Server
-	chMgr        *chpf.Manager
-	chWriter     *chlog.WriterManager
-	producer     *kafkapf.Producer
-	consumer     *kafkaadapter.ConsumerGroup
-	dlqReproc    *kafkaadapter.DLQReprocessor // §36: авто-репроцессор DLQ (nil если выключен)
-	otelShutdown otelpf.ShutdownFunc
+	grpcSrv       *grpc.Server
+	adminSrv      *http.Server
+	chMgr         *chpf.Manager
+	chWriter      *chlog.WriterManager
+	producer      *kafkapf.Producer
+	consumer      *kafkaadapter.ConsumerGroup
+	retryConsumer *kafkaadapter.ChLogRetryConsumer // §38: дренаж nexus.logs.retry в CH (nil если retry выключен)
+	dlqReproc     *kafkaadapter.DLQReprocessor     // §36: авто-репроцессор DLQ (nil если выключен)
+	otelShutdown  otelpf.ShutdownFunc
 
 	// done-каналы фоновых горутин — Stop дожидается их завершения
 	// (Phase AUD.3): housekeeping/lag-reporter/reload-callbacks не должны
@@ -100,7 +102,14 @@ func (a *App) Start(ctx context.Context) error {
 	// Все consumers (chWriter, CHHousekeeping, HealthChecker) идут через него,
 	// а не через raw a.ch, чтобы при reload swap conn'а был для них прозрачным.
 	a.chMgr = chpf.NewManager(a.ch, chpf.New, &a.cfg.ClickHouse, a.logger)
-	a.chWriter = chlog.NewManagerWithFallback(a.chMgr, &a.cfg.ClickHouse, a.cfg.ClickHouse.FallbackDir, a.metrics, a.logger)
+	// §38: Kafka-продьюсер нужен и async/DLQ, и retrier'у проваленных CH-батчей —
+	// создаём ДО chWriter (раньше создавался ниже, в секции async-consumer).
+	a.producer = kafkapf.NewProducer(a.cfg, kafkapf.WithMetrics(a.metrics))
+	var chRetrier chlog.BatchRetrier
+	if a.cfg.Kafka.RetryTopic != "" {
+		chRetrier = chlogretry.New(a.producer, a.cfg.Kafka.RetryTopic, a.cfg.Kafka.Topic.MaxMessageBytes, a.logger)
+	}
+	a.chWriter = chlog.NewManagerWithRetrier(a.chMgr, &a.cfg.ClickHouse, chRetrier, a.metrics, a.logger)
 	httpc := httpclient.New(&a.cfg.Sender.HTTPClient, a.logger)
 
 	// Circuit breaker per node — порог 5 ошибок подряд, cooldown 30s.
@@ -118,8 +127,7 @@ func (a *App) Start(ctx context.Context) error {
 	// gRPC adapter для sync.
 	grpcSvc := grpcadapter.NewServer(sendUC, a.metrics, a.logger)
 
-	// Async consumer.
-	a.producer = kafkapf.NewProducer(a.cfg, kafkapf.WithMetrics(a.metrics))
+	// Async consumer. (Продьюсер уже создан выше — §38.)
 	nodeReader := nodepg.New(a.pg, a.cipher, a.logger)
 
 	// §37: миграция CH-таблиц — добавить колонку node_id ДО старта consumer'а и
@@ -141,6 +149,18 @@ func (a *App) Start(ctx context.Context) error {
 	asyncProc := usecase.NewAsyncProcessor(nodeReader, sendUC, a.producer, cancelSet, a.cfg.Kafka.DLQTopic, a.metrics, a.logger)
 	a.consumer = kafkaadapter.NewConsumerGroup(a.cfg, a.cfg.Kafka.AsyncTopic, asyncProc, a.logger, kafkaadapter.WithMetrics(a.metrics))
 	a.consumer.Start(ctx)
+
+	// §38: retry-консьюмер дренит nexus.logs.retry обратно в CH. Отдельная
+	// consumer-group (<group>-clog-retry), чтобы не конкурировать за партиции
+	// с основным async-consumer'ом. Прямой INSERT в обход буфера Writer'а —
+	// при сбое CH не коммитит offset, Kafka передоставит (цикла нет).
+	if a.cfg.Kafka.RetryTopic != "" {
+		retryHandler := kafkaadapter.NewChLogRetryHandler(a.chWriter, a.metrics, a.logger)
+		a.retryConsumer = kafkaadapter.NewChLogRetryConsumer(
+			a.cfg, a.cfg.Kafka.RetryTopic, a.cfg.Kafka.ConsumerGroup+"-clog-retry",
+			retryHandler, a.logger)
+		a.retryConsumer.Start(ctx)
+	}
 
 	// §36: авто-репроцессор DLQ — фоновый sweeper над nexus.async.dlq, повторно
 	// доставляет неудачные async-сообщения до TTL. Отдельная consumer-группа,
@@ -293,6 +313,21 @@ func (a *App) reportKafkaLag(ctx context.Context) {
 				}
 				a.metrics.KafkaLag.WithLabelValues(topic, part, group).Set(float64(snap.Lag))
 			}
+			// §38: lag retry-топика = объём проваленных батчей, ждущих CH.
+			if a.retryConsumer != nil {
+				rgroup := a.retryConsumer.Group()
+				for _, snap := range a.retryConsumer.Snapshot() {
+					topic := snap.Topic
+					if topic == "" {
+						topic = a.cfg.Kafka.RetryTopic
+					}
+					part := snap.Partition
+					if part == "" {
+						part = "all"
+					}
+					a.metrics.KafkaLag.WithLabelValues(topic, part, rgroup).Set(float64(snap.Lag))
+				}
+			}
 		}
 	}
 }
@@ -302,6 +337,11 @@ func (a *App) Stop(ctx context.Context) error {
 
 	if a.consumer != nil {
 		a.consumer.Stop()
+	}
+	// §38: retry-консьюмер останавливаем до chWriter — его InsertBatch ходит
+	// через chWriter; после Stop chWriter вернёт ошибку и offset не закоммитится.
+	if a.retryConsumer != nil {
+		a.retryConsumer.Stop()
 	}
 	// §36: закрываем consumer DLQ-sweeper'а — Run выйдет из FetchMessage и
 	// завершит горутину (дожидаемся ниже через dlqReprocDone).

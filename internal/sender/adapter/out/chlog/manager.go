@@ -2,6 +2,7 @@ package chlog
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"nexus/internal/domain"
@@ -10,6 +11,10 @@ import (
 	"nexus/internal/platform/metrics"
 	"nexus/internal/sender/usecase/port"
 )
+
+// errClosedManager — InsertBatch после Stop (current==nil): retry-consumer не
+// коммитит offset, Kafka передоставит позже.
+var errClosedManager = errors.New("chlog: writer manager stopped")
 
 // WriterManager — обёртка над *Writer, реализующая port.LogWriter и
 // поддерживающая полное пересоздание writer'а при hot-reload (§6.3.2.5
@@ -29,11 +34,11 @@ import (
 //     На практике hot-reload идёт раз в минуты/часы, а flush укладывается
 //     в миллисекунды, так что потери не накапливаются.
 type WriterManager struct {
-	provider    ConnProvider
-	cfg         *config.ClickHouseSection
-	fallbackDir string
-	metrics     *metrics.Metrics
-	logger      logging.Logger
+	provider ConnProvider
+	cfg      *config.ClickHouseSection
+	retrier  BatchRetrier
+	metrics  *metrics.Metrics
+	logger   logging.Logger
 
 	mu      sync.RWMutex
 	current *Writer
@@ -42,18 +47,19 @@ type WriterManager struct {
 
 var _ port.LogWriter = (*WriterManager)(nil)
 
-// NewManagerWithFallback создаёт WriterManager и сразу поднимает первый
+// NewManagerWithRetrier создаёт WriterManager и сразу поднимает первый
 // Writer с переданными параметрами. cfg — указатель на живую секцию
-// конфига, которую Reload использует при пересоздании.
-func NewManagerWithFallback(provider ConnProvider, cfg *config.ClickHouseSection, fallbackDir string, m *metrics.Metrics, logger logging.Logger) *WriterManager {
+// конфига, которую Reload использует при пересоздании. retrier (§38) —
+// durable-retry проваленных батчей через Kafka; nil → потеря при сбое CH.
+func NewManagerWithRetrier(provider ConnProvider, cfg *config.ClickHouseSection, retrier BatchRetrier, m *metrics.Metrics, logger logging.Logger) *WriterManager {
 	wm := &WriterManager{
-		provider:    provider,
-		cfg:         cfg,
-		fallbackDir: fallbackDir,
-		metrics:     m,
-		logger:      logger,
+		provider: provider,
+		cfg:      cfg,
+		retrier:  retrier,
+		metrics:  m,
+		logger:   logger,
 	}
-	wm.current = NewWithFallback(provider, cfg, fallbackDir, m, logger)
+	wm.current = NewWithRetrier(provider, cfg, retrier, m, logger)
 	return wm
 }
 
@@ -66,6 +72,20 @@ func (m *WriterManager) Write(ctx context.Context, table string, rec *domain.Log
 		return
 	}
 	w.Write(ctx, table, rec)
+}
+
+// InsertBatch — прямой синхронный INSERT в обход буфера (§38), делегируется
+// текущему writer'у. Используется retry-consumer'ом для дренажа nexus.logs.retry.
+// После Stop (current==nil) возвращает ошибку — consumer не закоммитит offset
+// и Kafka передоставит сообщение позже.
+func (m *WriterManager) InsertBatch(ctx context.Context, table string, batch []*domain.LogRecord) error {
+	m.mu.RLock()
+	w := m.current
+	m.mu.RUnlock()
+	if w == nil {
+		return errClosedManager
+	}
+	return w.InsertBatch(ctx, table, batch)
 }
 
 // Flush делегирует текущему writer'у.
@@ -90,7 +110,7 @@ func (m *WriterManager) Reload(ctx context.Context) error {
 		return nil
 	}
 	old := m.current
-	fresh := NewWithFallback(m.provider, m.cfg, m.fallbackDir, m.metrics, m.logger)
+	fresh := NewWithRetrier(m.provider, m.cfg, m.retrier, m.metrics, m.logger)
 	m.current = fresh
 	m.mu.Unlock()
 

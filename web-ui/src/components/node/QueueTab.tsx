@@ -24,7 +24,7 @@ type QueueMessage = {
 };
 type ListResp = { items: QueueMessage[]; capped: boolean; kafka_available: boolean };
 type BodyResp = { id: string; method: string; target_url: string; headers?: Record<string, string>; body: string };
-type FailedCountResp = { count: number; logs_configured: boolean };
+type FailedCountResp = { count: number; logs_configured: boolean; logs_available?: boolean };
 
 function prettyJson(raw: string): string {
   try {
@@ -104,6 +104,11 @@ export function QueueTab({
     refetchInterval: 15_000,
   });
   const failed = failedListQ.data?.items ?? [];
+  // CH временно недоступен: бэкенд отдаёт logs_available=false (а не 500).
+  // KPI «неудачные доставки» показываем «—» (не «0», чтобы не вводить в
+  // заблуждение), а список — индикатор недоступности.
+  const failedUnavailable =
+    failedCountQ.data?.logs_available === false || failedListQ.data?.logs_available === false;
 
   const invalidatePending = () => qc.invalidateQueries({ queryKey: ["aq-list", id] });
   const del = useMutation({
@@ -164,8 +169,8 @@ export function QueueTab({
         />
         <Kpi
           label={t("queue.kpi.failed")}
-          value={hasLogsTable ? String(failedCountQ.data?.count ?? "—") : "—"}
-          hint={t("queue.kpi.failed_hint")}
+          value={hasLogsTable && !failedUnavailable ? String(failedCountQ.data?.count ?? "—") : "—"}
+          hint={failedUnavailable ? t("logs.unavailable") : t("queue.kpi.failed_hint")}
         />
       </KpiRow>
 
@@ -351,6 +356,10 @@ export function QueueTab({
         </p>
         {!hasLogsTable ? (
           <div className="text-fg-muted">{t("queue.failed.no_logging")}</div>
+        ) : failedUnavailable ? (
+          <div className="rounded-md border border-warn/30 bg-warn/10 px-3 py-2 text-xs text-warn">
+            {t("logs.unavailable")}
+          </div>
         ) : failed.length === 0 ? (
           <div className="text-fg-muted">{t("queue.failed.empty")}</div>
         ) : (

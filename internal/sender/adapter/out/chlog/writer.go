@@ -6,9 +6,10 @@
 //     потом batch INSERT в ClickHouse.
 //   - Отдельный батч на каждую таблицу узла (table → buffer).
 //   - При недоступности ClickHouse: метрика nexus_clickhouse_errors_total
-//     и warning в логе; запрос НЕ блокируется (§9.4 ТЗ). Проваленный батч
-//     уходит в NDJSON file-fallback (см. fallback.go) и переотправляется
-//     фоновым циклом рестора.
+//     и ERROR в логе (уходит в Sentry); запрос НЕ блокируется (§9.4 ТЗ).
+//     Проваленный батч отправляется в durable-топик Kafka nexus.logs.retry
+//     (§38, см. BatchRetrier) — отдельный consumer-group дренит его обратно
+//     в CH после восстановления. Заменяет прежний локальный NDJSON-fallback.
 //
 // При переполнении канала запись отбрасывается с метрикой
 // nexus_clickhouse_dropped_total{reason="buffer_full"}.
@@ -38,6 +39,15 @@ type ConnProvider interface {
 	Conn() chdriver.Conn
 }
 
+// BatchRetrier отправляет проваленный (не вставленный в CH) батч в durable-
+// буфер (Kafka-топик nexus.logs.retry, §38), откуда его позже дренит обратно
+// в CH отдельный consumer. Определён на стороне consumer'а (CLAUDE.md §3);
+// реализуется adapter/out/chlogretry. nil → проваленные батчи теряются
+// (как было с пустым fallback-каталогом).
+type BatchRetrier interface {
+	Retry(ctx context.Context, table string, batch []*domain.LogRecord) error
+}
+
 // Writer реализует port.LogWriter.
 type Writer struct {
 	conn    ConnProvider
@@ -51,7 +61,7 @@ type Writer struct {
 	buffers  map[string][]*domain.LogRecord
 	bufferAt map[string]time.Time
 
-	fallback *fallbackStore // §9.4 ТЗ: NDJSON-fallback при недоступности CH
+	retrier BatchRetrier // §38: durable-retry проваленных батчей через Kafka
 
 	wg     sync.WaitGroup
 	stopCh chan struct{}
@@ -65,14 +75,14 @@ type job struct {
 }
 
 func New(conn ConnProvider, cfg *config.ClickHouseSection, logger logging.Logger) *Writer {
-	return NewWithFallback(conn, cfg, "", nil, logger)
+	return NewWithRetrier(conn, cfg, nil, nil, logger)
 }
 
-// NewWithFallback — вариант с явным каталогом для file-fallback (§9.4)
-// и опциональными Prometheus-метриками (§6 ТЗ).
-// fallbackDir = "" — fallback отключён, проваленные батчи теряются (как в Phase 1).
+// NewWithRetrier — вариант с durable-retry проваленных батчей через Kafka
+// (§38) и опциональными Prometheus-метриками (§6 ТЗ).
+// retrier = nil — retry отключён, проваленные батчи теряются (как в Phase 1).
 // m = nil — метрики не публикуются (тестовый режим).
-func NewWithFallback(conn ConnProvider, cfg *config.ClickHouseSection, fallbackDir string, m *metrics.Metrics, logger logging.Logger) *Writer {
+func NewWithRetrier(conn ConnProvider, cfg *config.ClickHouseSection, retrier BatchRetrier, m *metrics.Metrics, logger logging.Logger) *Writer {
 	w := &Writer{
 		conn:     conn,
 		cfg:      cfg,
@@ -81,24 +91,13 @@ func NewWithFallback(conn ConnProvider, cfg *config.ClickHouseSection, fallbackD
 		ch:       make(chan job, cfg.BufferMaxSize),
 		buffers:  make(map[string][]*domain.LogRecord),
 		bufferAt: make(map[string]time.Time),
-		fallback: newFallbackStore(fallbackDir, 30*time.Second, logger),
+		retrier:  retrier,
 		stopCh:   make(chan struct{}),
 	}
 	for i := 0; i < cfg.Workers; i++ {
 		w.wg.Add(1)
 		go w.run()
 	}
-	// fallbackStore сам владеет своей горутиной (Start делает wg.Add синхронно
-	// до её старта — иначе Add гонится с Wait в Stop, см. fallback.go).
-	w.fallback.Start(func(ctx context.Context, table string, batch []*domain.LogRecord) error {
-		if err := w.insertBatch(ctx, table, batch); err != nil {
-			return err
-		}
-		if w.metrics != nil {
-			w.metrics.CHFallbackTotal.WithLabelValues(table, "restored").Add(float64(len(batch)))
-		}
-		return nil
-	})
 	return w
 }
 
@@ -195,21 +194,24 @@ func (w *Writer) flushTable(ctx context.Context, table string) {
 		if w.metrics != nil {
 			w.metrics.CHErrorsTotal.WithLabelValues(table, "insert").Inc()
 		}
-		if w.fallback.Enabled() {
-			path, ferr := w.fallback.Save(table, batch)
-			if ferr != nil {
-				w.logger.ErrorWithOp("fallback save failed", ferr, "chlog.flushTable.fallback",
+		// §38: проваленный батч уходит в durable-топик Kafka nexus.logs.retry;
+		// отдельный consumer дренит его обратно в CH после восстановления.
+		if w.retrier != nil {
+			if rerr := w.retrier.Retry(ctx, table, batch); rerr != nil {
+				// И CH, и Kafka недоступны — батч потерян (NDJSON-fallback
+				// убран по §38). ERROR → Sentry, чтобы потеря была видна.
+				w.logger.ErrorWithOp("clickhouse batch retry-produce failed", rerr, "chlog.flushTable.retry",
 					w.logger.Str("table", table),
 					w.logger.Int("rows", len(batch)))
 				if w.metrics != nil {
-					w.metrics.CHErrorsTotal.WithLabelValues(table, "fallback_save").Inc()
+					w.metrics.CHErrorsTotal.WithLabelValues(table, "retry_produce").Inc()
 				}
 			} else {
-				w.logger.Info("batch persisted to file-fallback",
-					w.logger.Str("file", path),
+				w.logger.Info("batch queued to kafka retry topic",
+					w.logger.Str("table", table),
 					w.logger.Int("rows", len(batch)))
 				if w.metrics != nil {
-					w.metrics.CHFallbackTotal.WithLabelValues(table, "saved").Inc()
+					w.metrics.CHFallbackTotal.WithLabelValues(table, "queued").Add(float64(len(batch)))
 				}
 			}
 		}
@@ -252,6 +254,14 @@ func (w *Writer) insertBatch(ctx context.Context, table string, batch []*domain.
 	return nil
 }
 
+// InsertBatch — прямой синхронный INSERT батча в CH, в обход буфера (§38).
+// Используется retry-consumer'ом для дренажа nexus.logs.retry обратно в CH.
+// НЕ вызывает retrier при ошибке (иначе возник бы цикл produce↔consume) —
+// ошибку возвращает вызывающему, тот не коммитит offset и Kafka передоставит.
+func (w *Writer) InsertBatch(ctx context.Context, table string, batch []*domain.LogRecord) error {
+	return w.insertBatch(ctx, table, batch)
+}
+
 // Flush — сбрасывает все буферы; используется в graceful shutdown.
 func (w *Writer) Flush(ctx context.Context) error {
 	w.flushAll(ctx)
@@ -263,7 +273,7 @@ func (w *Writer) Flush(ctx context.Context) error {
 // ctx вызывающего игнорируется намеренно: к моменту финального flush его
 // бюджет может быть почти исчерпан ожиданием воркеров, а терять последний
 // батч из-за этого нельзя — берём свежий таймаут (при провале батч уйдёт
-// в file-fallback, как обычно).
+// в Kafka retry-топик, как обычно — §38).
 func (w *Writer) Stop(_ context.Context) {
 	close(w.stopCh)
 	w.wg.Wait()
@@ -282,5 +292,4 @@ drain:
 	flushCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	w.flushAll(flushCtx)
-	w.fallback.Stop()
 }

@@ -12,6 +12,57 @@
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-06-22
+
+Релиз вокруг устойчивости к недоступности ClickHouse: durable-retry проваленных лог-батчей через
+Kafka (§38) взамен локального NDJSON-fallback, мягкая деградация чтения логов в Web при простое CH,
+плюс инфраструктурный фикс ложного суффикса `-dirty` в версии при сборке образов.
+
+### ⚠️ Изменения конфигурации (важно при апгрейде)
+
+- **`config.yml` → новый `kafka.retry_topic`** (дефолт `nexus.logs.retry`) — топик durable-буфера
+  проваленных ClickHouse-батчей. Создаётся **автоматически** при старте Sender (провижининг топиков),
+  добавлять руками не обязательно; образец в [config/config.example.yml](config/config.example.yml).
+- **Удалён параметр `clickhouse.fallback_dir`** — локальный NDJSON-fallback заменён durable-retry
+  через Kafka. Если он оставался в вашем `config.yml`, его можно убрать (теперь игнорируется).
+- Миграций БД в этом релизе нет.
+
+### Added
+
+- **§38 — durable-retry проваленных ClickHouse-батчей через Kafka.** При недоступности ClickHouse
+  INSERT лог-батча в Sender падает (отправка данных при этом **не** блокируется, §9.4 — падает только
+  логирование). Раньше проваленный батч писался в локальный NDJSON-файл; теперь он продьюсится в топик
+  `nexus.logs.retry`, а отдельная consumer-group (`<group>-clog-retry`) дренит его обратно в CH после
+  восстановления — retry-in-place с экспоненциальным бэкоффом (1с→15с), без рестарта Sender. Реплицируемо,
+  без локальных файлов; Kafka нагружается **только** во время простоя CH (сообщение на батч ~100 строк,
+  не на запрос) — в норме прямой INSERT как прежде. Спека: [specs/sections/38-clog-retry-kafka.md](specs/sections/38-clog-retry-kafka.md).
+- **Новые метрики:** `nexus_clickhouse_fallback_total{op="queued"|"restored"}`,
+  `nexus_clickhouse_errors_total{op="insert"|"retry_produce"}`; lag топика `nexus.logs.retry` —
+  в `nexus_kafka_lag`.
+
+### Changed
+
+- **Read-path логов в Web мягко деградирует при недоступности ClickHouse** (List/CountFailed/Get/Stream):
+  `200` + `logs_available=false` и WARN вместо шторма `500` и Sentry-flood. Фронт показывает индикатор
+  «Логи временно недоступны (ClickHouse)».
+- Формат сообщения retry-буфера — `Envelope{table, logs}` с резкой по `max.message.bytes` (`clogwire`).
+
+### Fixed
+
+- **Ложный суффикс `-dirty` в версии при сборке образов на сервере** (`deploy/docker/*.Dockerfile`).
+  Перед `git describe --tags --always --dirty` добавлен `git update-index -q --refresh`: после
+  `COPY . .` у файлов в Docker-слое новые `mtime`/`inode`, а `git describe` (в отличие от
+  `git status`) сам индекс не освежает — и принимал неизменённое дерево за грязное. Из-за этого
+  `/api/version` и футер SPA показывали, например, `v1.2.0-dirty` при **чистом** `git status` на
+  сервере. Refresh обновляет stat-кэш индекса по содержимому; реальная грязь (изменённое
+  содержимое отслеживаемых файлов) по-прежнему корректно даёт `-dirty`. См. DEPLOYMENT.md §9.4.
+- CI loadtest: добавлена колонка `node_id` в ClickHouse-таблицу загрузочного теста (§37).
+
+### Removed
+
+- Локальный NDJSON-fallback Sender'а (`internal/sender/adapter/out/chlog/fallback.go`) и параметр
+  `clickhouse.fallback_dir` — заменены durable-retry через Kafka (§38).
+
 ## [1.2.0] - 2026-06-19
 
 Релиз вокруг надёжности async-доставки: авто-репроцессор DLQ (§36), точные per-node метрики из
@@ -337,7 +388,8 @@ ClickHouse (§21), идентификатор узла в логах для об
 
 ---
 
-[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.2.0...HEAD
+[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.3.0...HEAD
+[1.3.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.2.0...v1.3.0
 [1.2.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.1.0...v1.2.0
 [1.1.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.0.3...v1.1.0
 [1.0.3]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.0.1...v1.0.3
