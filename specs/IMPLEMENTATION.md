@@ -51,6 +51,8 @@
 | **Единый вход: Web reverse-proxy `/api/v1/request\|requestAsync\|callback` → Receiver** | ✅ | [internal/web/adapter/in/http/receiver_proxy.go](../internal/web/adapter/in/http/receiver_proxy.go) `RegisterReceiverProxy`, регистрируется в [app.go](../internal/web/app.go) до `SPAFallback`. Без этого боевой путь проваливался в SPA-fallback и возвращал `index.html`. |
 | `url_mode = static` / `from_request` + allowlist + wildcard (`*.partner.com`) | ✅ | [urlresolver.go](../internal/receiver/usecase/urlresolver.go) |
 | `url_base` исключается из проксируемой query | ✅ | `ResolveURL`: `clean.Del(param)` |
+| **Path-passthrough (§39): хвост входящего пути → `target_url`, opt-in флаг `path_passthrough`** | ✅ §39 | [resolver.go](../internal/receiver/usecase/resolver.go) `resolveNode`/`prefixMatch` (longest-prefix + remainder), [urlresolver.go](../internal/receiver/usecase/urlresolver.go) `appendPathSuffix` (`JoinPath`, traversal-safe), миграция [0019](../migrations/0019_node_path_passthrough.up.sql) |
+| **Лог-колонки `http_method` (глагол) + `method` (репурпозен → подпуть passthrough) (§39)** | ✅ §39 | [ch_log_schema.go](../internal/domain/ch_log_schema.go), gRPC `request_path`, envelope, [ensure_schema.go](../internal/platform/clickhouse/ensure_schema.go) `EnsureHTTPMethodColumn` |
 | Все режимы incoming auth (none/basic/token) | ✅ | [auth.go](../internal/receiver/usecase/auth.go) `CheckIncomingAuth` |
 | Все режимы outgoing auth (none/basic/token/token_from_request/basic_from_request) | ✅ | [auth_dynamic.go](../internal/receiver/usecase/auth_dynamic.go) `BuildDynamicOutgoingAuth` |
 | Исключение служебных значений из проксируемого запроса (§3.5 «Исключение») | ✅ | `buildTokenFromRequest`, `buildBasicFromRequest` |
@@ -615,7 +617,7 @@ DLQ) тормозила, «Очистить» был no-op, шапка плох�
 - **§37 — node_id в логах (per-node атрибуция в общих CH-таблицах).** Узлы могут делить одну
   `clickhouse_table`; до §37 per-node запросы смешивали их (одинаковые счётчики на рабочем столе/странице
   узла; `DeleteFailed` одного удалял записи другого). Добавлена колонка `node_id String` (UUID) в схему
-  лога ([ch_log_schema.go](../internal/domain/ch_log_schema.go), 21 колонка) + поле `LogRecord.NodeID`.
+  лога ([ch_log_schema.go](../internal/domain/ch_log_schema.go); §39 довёл до 22 колонок) + поле `LogRecord.NodeID`.
   **Запись:** `node.ID` прокинут sync через gRPC `SendRequest.node_id` (поле 28, перегенерён proto) →
   `SendInput.NodeID` → `rec.NodeID`; async/DLQ — через `buildSendInput`/`logTTLExpired`. **Миграция
   существующих таблиц:** `platform/clickhouse.EnsureNodeIDColumn` (`ALTER … ADD COLUMN IF NOT EXISTS`,
@@ -626,6 +628,21 @@ DLQ) тормозила, «Очистить» был no-op, шапка плох�
   FailedLogsPurger) и вызовы (logs/metrics/replay/async_queue). **UI:** node id во вкладке «Конфиг».
   Тест `TestLogReader_NodeIDFilter_E2E` (shared-table: фильтр + DeleteFailed не задевает чужие). Почему
   `node_id` (UUID), а не path — устойчив к переименованию (см. [sections/37-node-id-in-logs.md](sections/37-node-id-in-logs.md)).
+- **§39 — path-passthrough + лог-колонки `http_method`/`method`.** Opt-in флаг узла `path_passthrough`
+  (миграция `0019`, по умолчанию off → нулевая регрессия). `resolveNode` →
+  `(node, remainder, error)`: exact-матч первым, при промахе `prefixMatch` (longest-prefix, первый
+  существующий узел-префикс выигрывает; passthrough off → 404, без провала к коротким — нет footgun
+  `a`/`a/b`). Хвост клеится `appendPathSuffix` (`url.URL.JoinPath` — кодирование + резолв `..` против
+  traversal) в Receiver (sync/async), Sender/proto для МАРШРУТА не трогаются. **Пересечение адресов
+  детерминировано:** точный узел `ozon/GetAuthToken` затеняет свой подпуть, остальное под `ozon` идёт
+  через passthrough. **Логи:** колонка `http_method` (глагол, после `type`) + `method` репурпозен →
+  подпуть (для passthrough; пусто иначе) — `RequiredLogColumns` теперь 22 колонки; подпуть прокинут
+  gRPC `SendRequest.request_path` (поле 29) + envelope; кросс-маппинг в `send.go`
+  (глагол→`http_method`, подпуть→`method`); миграция существующих таблиц `EnsureHTTPMethodColumn`
+  (`AFTER type`) в Web+Sender. **Replay** passthrough-записи — по полному подпути
+  (`node.Path + "/" + orig.Method`). Тесты: `TestResolveNode_PathPassthrough`, `TestAppendPathSuffix`,
+  `TestReplay_PathPassthrough_ReconstructsSubpath`, integration `TestReceiver_PathPassthrough_Sync_E2E`
+  (см. [sections/39-path-passthrough.md](sections/39-path-passthrough.md)).
 - **§35 — peek-`MaxWait` = 500мс (грабли стенд-теста, тормоз ~9с).** `kafka.Reader` в `scanPartition`/
   `PeekBody` НЕ задавал `MaxWait` → дефолт kafka-go 10с. После чтения последнего сообщения фоновый
   fetch-цикл reader'а пытается прочитать следующий (ещё пустой) offset и блокируется на `MaxWait`, а

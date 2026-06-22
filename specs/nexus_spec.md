@@ -3286,3 +3286,43 @@ Sender. Метрики: `nexus_clickhouse_fallback_total{op="queued"|"restored"}
 CH). Удалён `clickhouse.fallback_dir`. Топик создаётся при старте Sender. Ошибки CH по-прежнему идут в
 Sentry; отправка sync/async не затрагивается. Полный перевод логов на Kafka (сообщение на каждый
 запрос) вне scope. Подробности — [sections/38-clog-retry-kafka.md](sections/38-clog-retry-kafka.md).
+
+## 39. Path-passthrough — приклеивание хвоста пути к Target URL + лог-колонки http_method/method
+
+До §39 Receiver матчил узел по **точному** пути (`node_path`) и в режиме `static` отправлял запрос
+ровно на `target_url`, не учитывая «хвост» пути после имени узла: узел `ozon` принимал только
+`…/request/<team>/ozon`, а `…/request/<team>/ozon/GetAuthToken` давал `404`. §39 добавляет
+**опциональный** path-passthrough (хвост входящего пути приклеивается к `target_url`) и разводит в
+логах HTTP-глагол и вызываемый подпуть по двум колонкам.
+
+**Модель данных.** Поле узла `path_passthrough BOOLEAN NOT NULL DEFAULT false` (миграция `0019`). По
+умолчанию выключено — точный матч и `404` на лишний хвост сохраняются (нулевая регрессия). Проходит
+DTO → PostgreSQL → Redis → Receiver (читается в `nodecache`). Для pull-узлов сбрасывается в
+`NormalizeForRootMethod`.
+
+**Резолв.** `resolveNode` возвращает `(node, remainder, error)`: сначала точный матч (обе интерпретации
+слога), при промахе — `prefixMatch` от длинного префикса к короткому; первый существующий узел-префикс
+выигрывает, и если у него `path_passthrough=true` — возвращается с `remainder` (хвост), иначе `404` без
+провала к более коротким. Хвост приклеивается `appendPathSuffix` (`url.URL.JoinPath`: кодирование +
+резолв `..`, query сохраняется), в Receiver (sync `route.go`, async `route_async.go`); в Sender уходит
+готовый URL. Работает для `static` и `from_request`.
+
+**Пересечение адресов.** Узел `ozon` (passthrough) и `ozon/GetAuthToken` (точный) детерминированы:
+`…/ozon/GetAuthToken` → точный узел (exact до prefix); `…/ozon/Foo` → `ozon`+passthrough → `<target>/Foo`.
+Точный узел затеняет ровно свой подпуть.
+
+**Лог-колонки.** В `RequiredLogColumns` добавлена `http_method String` (после `type`) — HTTP-глагол,
+всегда; колонка `method` репурпозена → подпуть запроса (хвост passthrough; пусто у обычных узлов).
+Порядок: `ID, type, http_method, url, method, …`. Проброс подпути из Receiver в Sender по образцу §37:
+gRPC `SendRequest.request_path=29` (sync) + поле `request_path` в Kafka-envelope (async/DLQ). Кросс-
+маппинг в Sender: глагол→`http_method`, подпуть→`method`. Миграция существующих таблиц —
+`EnsureHTTPMethodColumn` (идемпотентный `ALTER … ADD COLUMN IF NOT EXISTS http_method String DEFAULT ''
+AFTER type`) на старте Web и Sender.
+
+**Replay.** Для passthrough-узла реинъекция по полному подпути: `NodePath = node.Path + "/" + orig.Method`
+(подпуть из колонки `method`); глагол по-прежнему из `node.IncomingMethod` (§34.5).
+
+**UI.** Переключатель «Проксировать хвост пути» в форме узла (под Target URL, для request/requestAsync);
+колонки «HTTP» (глагол) и «Метод» (подпуть) во вкладке логов.
+
+Подробности — [sections/39-path-passthrough.md](sections/39-path-passthrough.md).
