@@ -325,7 +325,7 @@ export default function NodeSettings() {
                 >
                   {HTTP_METHODS.map((m) => (
                     <option key={m} value={m}>
-                      {m}
+                      {m === "ANY" ? t("node.method.any") : m}
                     </option>
                   ))}
                 </Select>
