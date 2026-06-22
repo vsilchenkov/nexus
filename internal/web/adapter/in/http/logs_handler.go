@@ -166,6 +166,16 @@ func (h *LogsHandler) List(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"items": []LogRecordDTO{}, "logs_configured": false})
 			return
 		}
+		// ClickHouse временно недоступен (сеть/таймаут/сервер лёг) — мягкая
+		// деградация, как у метрик: 200 + logs_available=false и WARN-лог
+		// (не ERROR). Иначе поллинг UI сыпал бы 500 и флудил Sentry, скрывая
+		// реальные write-path ошибки CH (см. domain.ErrLogsBackendUnavailable).
+		if errors.Is(err, domain.ErrLogsBackendUnavailable) {
+			h.logger.Warn("logs list degraded: clickhouse unavailable",
+				h.logger.Str("node_id", nodeID), h.logger.Err(err))
+			c.JSON(http.StatusOK, gin.H{"items": []LogRecordDTO{}, "logs_available": false})
+			return
+		}
 		h.logger.ErrorWithOp("logs list failed", err, "logs.list",
 			h.logger.Str("node_id", nodeID))
 		localizedError(c, http.StatusInternalServerError, "error.internal")
@@ -175,7 +185,7 @@ func (h *LogsHandler) List(c *gin.Context) {
 	for _, r := range recs {
 		out = append(out, toLogDTO(r, false))
 	}
-	c.JSON(http.StatusOK, gin.H{"items": out})
+	c.JSON(http.StatusOK, gin.H{"items": out, "logs_available": true})
 }
 
 // CountFailed godoc
@@ -210,12 +220,21 @@ func (h *LogsHandler) CountFailed(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"count": 0, "logs_configured": false})
 			return
 		}
+		// ClickHouse недоступен — мягкая деградация (см. List): 200 +
+		// logs_available=false, WARN-лог. KPI «неудачные доставки» на вкладке
+		// «Очередь» покажет «—», а не «0» и не сорвётся в 500-поллинг.
+		if errors.Is(err, domain.ErrLogsBackendUnavailable) {
+			h.logger.Warn("logs failed-count degraded: clickhouse unavailable",
+				h.logger.Str("node_id", nodeID), h.logger.Err(err))
+			c.JSON(http.StatusOK, gin.H{"count": 0, "logs_configured": true, "logs_available": false})
+			return
+		}
 		h.logger.ErrorWithOp("logs failed-count failed", err, "logs.failed_count",
 			h.logger.Str("node_id", nodeID))
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"count": n, "logs_configured": true})
+	c.JSON(http.StatusOK, gin.H{"count": n, "logs_configured": true, "logs_available": true})
 }
 
 // Get godoc
@@ -240,6 +259,12 @@ func (h *LogsHandler) Get(c *gin.Context) {
 			localizedError(c, http.StatusNotFound, "node.not_found")
 		case errors.Is(err, domain.ErrNodeLogsNotConfigured):
 			localizedError(c, http.StatusNotFound, "node.not_found")
+		case errors.Is(err, domain.ErrLogsBackendUnavailable):
+			// CH недоступен — 503 + WARN (не ERROR/500): запись лога тянется
+			// лениво по клику, временная недоступность не должна флудить Sentry.
+			h.logger.Warn("log get degraded: clickhouse unavailable",
+				h.logger.Str("node_id", nodeID), h.logger.Err(err))
+			localizedError(c, http.StatusServiceUnavailable, "error.logs_unavailable")
 		default:
 			h.logger.ErrorWithOp("log get failed", err, "logs.get",
 				h.logger.Str("node_id", nodeID))
@@ -286,6 +311,14 @@ func (h *LogsHandler) Stream(c *gin.Context) {
 			c.SSEvent("error", gin.H{"error": "logs not configured"})
 			return
 		}
+		// CH недоступен — мягкая деградация: отдельное событие logs_unavailable
+		// и WARN (не ERROR), чтобы live-tail не флудил Sentry при простое CH.
+		if errors.Is(err, domain.ErrLogsBackendUnavailable) {
+			h.logger.Warn("logs stream degraded: clickhouse unavailable",
+				h.logger.Str("node_id", nodeID), h.logger.Err(err))
+			c.SSEvent("logs_unavailable", gin.H{"logs_available": false})
+			return
+		}
 		h.logger.ErrorWithOp("logs subscribe failed", err, "logs.stream",
 			h.logger.Str("node_id", nodeID))
 		c.SSEvent("error", gin.H{"error": "internal error"})
@@ -306,6 +339,14 @@ func (h *LogsHandler) Stream(c *gin.Context) {
 			c.Writer.Flush()
 		case e, ok := <-errCh:
 			if !ok {
+				return
+			}
+			// CH отвалился во время live-tail — мягкое событие, без ERROR/Sentry.
+			if errors.Is(e, domain.ErrLogsBackendUnavailable) {
+				h.logger.Warn("logs stream degraded mid-tail: clickhouse unavailable",
+					h.logger.Str("node_id", nodeID), h.logger.Err(e))
+				c.SSEvent("logs_unavailable", gin.H{"logs_available": false})
+				c.Writer.Flush()
 				return
 			}
 			c.SSEvent("error", gin.H{"error": e.Error()})

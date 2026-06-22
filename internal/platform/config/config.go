@@ -121,15 +121,17 @@ type ClickHouseSection struct {
 	FlushIntervalSec int    `yaml:"flush_interval_sec"`
 	BufferMaxSize    int    `yaml:"buffer_max_size"`
 	Workers          int    `yaml:"workers"`
-	// FallbackDir — каталог для NDJSON-fallback при недоступности CH (§9.4 ТЗ).
-	// Пустое значение = fallback отключён, проваленные батчи теряются.
-	FallbackDir string `yaml:"fallback_dir"`
 }
 
 type KafkaSection struct {
-	Brokers       string               `yaml:"brokers"`
-	AsyncTopic    string               `yaml:"async_topic"`
-	DLQTopic      string               `yaml:"dlq_topic"`
+	Brokers    string `yaml:"brokers"`
+	AsyncTopic string `yaml:"async_topic"`
+	DLQTopic   string `yaml:"dlq_topic"`
+	// RetryTopic — топик durable-буфера проваленных CH-батчей (§38). Sender
+	// продьюсит сюда батч, который не удалось вставить в ClickHouse (CH лежит),
+	// а отдельный consumer-group дренит его обратно в CH после восстановления.
+	// Заменяет локальный NDJSON-fallback. Пусто → retry-через-Kafka выключен.
+	RetryTopic    string               `yaml:"retry_topic"`
 	ConsumerGroup string               `yaml:"consumer_group"`
 	Topic         KafkaTopicSection    `yaml:"topic"`
 	Producer      KafkaProducerSection `yaml:"producer"`

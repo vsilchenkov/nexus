@@ -1,12 +1,9 @@
 package chlog_test
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -17,21 +14,45 @@ import (
 	"nexus/internal/sender/adapter/out/chlog"
 )
 
+// stubRetrier — собирает все батчи, которые Writer пытался переотправить
+// (insertBatch упал, т.к. provider.Conn()==nil). Заменяет прежний NDJSON-stub.
+type stubRetrier struct {
+	mu    sync.Mutex
+	rows  int
+	calls int
+}
+
+func (s *stubRetrier) Retry(_ context.Context, _ string, batch []*domain.LogRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls++
+	s.rows += len(batch)
+	return nil
+}
+
+func (s *stubRetrier) Rows() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rows
+}
+
+var _ chlog.BatchRetrier = (*stubRetrier)(nil)
+
 // TestWriter_Stop_DrainsPendingJobs — записи, оставшиеся в канале на момент
-// Stop, не должны теряться: Stop дренирует канал и flush'ит остаток.
-// Conn == nil → insertBatch падает → батч уходит в file-fallback, по которому
-// и проверяем, что все записи дошли до финального flush.
+// Stop, не теряются: Stop дренирует канал и flush'ит остаток. Conn==nil →
+// insertBatch падает → батч уходит в retrier (§38), по нему и проверяем, что
+// все записи дошли до финального flush.
 func TestWriter_Stop_DrainsPendingJobs(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
 	cfg := &config.ClickHouseSection{
 		BatchSize:        100,
 		FlushIntervalSec: 60, // тик не сработает в тесте
 		BufferMaxSize:    64,
 		Workers:          1,
 	}
-	w := chlog.NewWithFallback(&stubProvider{}, cfg, dir, nil, logging.NewNoop())
+	retrier := &stubRetrier{}
+	w := chlog.NewWithRetrier(&stubProvider{}, cfg, retrier, nil, logging.NewNoop())
 
 	const n = 20
 	for i := range n {
@@ -39,31 +60,6 @@ func TestWriter_Stop_DrainsPendingJobs(t *testing.T) {
 	}
 	w.Stop(context.Background())
 
-	require.Equal(t, n, countFallbackRecords(t, dir),
-		"все записи должны попасть в финальный flush (через дренаж канала)")
-}
-
-// countFallbackRecords — суммарное число NDJSON-строк во всех fallback-файлах.
-func countFallbackRecords(t *testing.T, dir string) int {
-	t.Helper()
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	total := 0
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".ndjson") {
-			continue
-		}
-		f, err := os.Open(filepath.Join(dir, e.Name()))
-		require.NoError(t, err)
-		sc := bufio.NewScanner(f)
-		sc.Buffer(make([]byte, 1024*1024), 1024*1024)
-		for sc.Scan() {
-			if strings.TrimSpace(sc.Text()) != "" {
-				total++
-			}
-		}
-		require.NoError(t, sc.Err())
-		_ = f.Close()
-	}
-	return total
+	require.Equal(t, n, retrier.Rows(),
+		"все записи должны попасть в финальный flush (через дренаж канала) и уйти в retry")
 }

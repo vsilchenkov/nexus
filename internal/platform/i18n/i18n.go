@@ -94,13 +94,14 @@ func T(ctx context.Context, key string) string {
 var translations = map[Lang]map[string]string{
 	LangEN: {
 		// generic
-		"error.internal":     "internal error",
-		"error.bad_request":  "bad request",
-		"error.unauthorized": "unauthorized",
-		"error.forbidden":    "forbidden",
-		"error.not_found":    "not found",
-		"error.conflict":     "conflict",
-		"error.rate_limited": "rate limit exceeded",
+		"error.internal":         "internal error",
+		"error.bad_request":      "bad request",
+		"error.unauthorized":     "unauthorized",
+		"error.forbidden":        "forbidden",
+		"error.not_found":        "not found",
+		"error.conflict":         "conflict",
+		"error.rate_limited":     "rate limit exceeded",
+		"error.logs_unavailable": "logs backend (ClickHouse) is temporarily unavailable",
 		// auth
 		"auth.invalid_credentials": "invalid credentials",
 		"auth.user_inactive":       "user is inactive",
@@ -205,6 +206,7 @@ var translations = map[Lang]map[string]string{
 		"error.not_found":          "не найдено",
 		"error.conflict":           "конфликт",
 		"error.rate_limited":       "превышен лимит запросов",
+		"error.logs_unavailable":   "backend логов (ClickHouse) временно недоступен",
 		"auth.invalid_credentials": "неверный логин или пароль",
 		"auth.user_inactive":       "пользователь отключён",
 		"auth.session_expired":     "сессия истекла",

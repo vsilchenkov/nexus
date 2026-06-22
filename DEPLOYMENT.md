@@ -24,7 +24,7 @@ Nexus — три stateless Go-сервиса плюс набор хранили�
 | PostgreSQL  | 16     | `5432`         | Конфиг узлов, пользователи, audit, настройки  |
 | Redis       | 7      | `6379`         | Кеш узлов, сессии, rate-limit, circuit breaker |
 | ClickHouse  | 24     | `8123`/`9000`  | Логи всех вызовов                             |
-| Kafka       | 3.9 (KRaft) | `9092`     | Очередь async-запросов (`nexus.async`/`.dlq`) |
+| Kafka       | 3.9 (KRaft) | `9092`     | Очередь async-запросов (`nexus.async`/`.dlq`) + durable-буфер проваленных CH-батчей (`nexus.logs.retry`, §38) |
 | Prometheus  | 2.55   | `9091→9090`    | Scrape метрик сервисов **и источник дашбордов панели** (KPI/очередь/графики, §21) |
 
 Сервисы — stateless: всё состояние в хранилищах. Поэтому обновление и откат сводятся
@@ -324,8 +324,12 @@ docker compose -f deploy/docker-compose.app.yml logs -f web receiver sender
 - **ClickHouse**: пользователь должен иметь право создавать БД и таблицы — Nexus заводит
   по БД на команду (`nexus_<slug>`, для default — `nexus_default`) и создаёт таблицы логов.
 - **Kafka**: автосоздание топиков на брокере должно быть **разрешено**, либо заранее
-  создайте `nexus.async` и `nexus.async.dlq` (Nexus сам пытается их завести с retention
-  30 дней; на single-broker не забудьте RF=1/ISR=1 — см. §2).
+  создайте `nexus.async`, `nexus.async.dlq` и `nexus.logs.retry` (Nexus сам пытается их завести с
+  retention 30 дней; на single-broker не забудьте RF=1/ISR=1 — см. §2). Топик `nexus.logs.retry`
+  (§38) — durable-буфер проваленных CH-батчей при недоступности ClickHouse; его retention должен
+  покрывать максимально ожидаемый простой CH × объём логов (иначе при очень долгом простое старые
+  батчи истекут по retention и не доедут в CH). Имя настраивается `kafka.retry_topic`; пустое
+  значение полностью выключает retry (батчи теряются при сбое CH).
 - **Redis**: при включённом ACL задайте `REDIS_USER` и `REDIS_PASSWORD`.
 
 ---
