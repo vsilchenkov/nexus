@@ -643,6 +643,11 @@ DLQ) тормозила, «Очистить» был no-op, шапка плох�
   (`node.Path + "/" + orig.Method`). Тесты: `TestResolveNode_PathPassthrough`, `TestAppendPathSuffix`,
   `TestReplay_PathPassthrough_ReconstructsSubpath`, integration `TestReceiver_PathPassthrough_Sync_E2E`
   (см. [sections/39-path-passthrough.md](sections/39-path-passthrough.md)).
+- **Контекстная справка к полям узла (§7.6).** Каждый параметр формы узла — иконка-«вопросик» с
+  тултипом «зачем параметр». Переиспользован готовый `LabelHint` (HelpCircle+Tooltip, focus-доступный);
+  в обёртку `Field` ([web-ui/src/components/ui/form.tsx](../web-ui/src/components/ui/form.tsx)) добавлен
+  проп `help` (иконка рядом с лейблом, вне `<label>`); для тумблеров `LabelHint` ставится вручную.
+  Тексты — `node.help.*` (+ `node.rmq.*_help`) в en/ru синхронно. `hint` (приписка «·») сохранён.
 - **§35 — peek-`MaxWait` = 500мс (грабли стенд-теста, тормоз ~9с).** `kafka.Reader` в `scanPartition`/
   `PeekBody` НЕ задавал `MaxWait` → дефолт kafka-go 10с. После чтения последнего сообщения фоновый
   fetch-цикл reader'а пытается прочитать следующий (ещё пустой) offset и блокируется на `MaxWait`, а
