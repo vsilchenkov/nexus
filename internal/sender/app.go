@@ -138,6 +138,7 @@ func (a *App) Start(ctx context.Context) error {
 			a.logger.Warn("§37 ensure node_id: list tables failed", a.logger.Err(err))
 		} else {
 			chpf.EnsureNodeIDColumn(ctx, a.chMgr.Conn(), tables, a.logger)
+			chpf.EnsureHTTPMethodColumn(ctx, a.chMgr.Conn(), tables, a.logger) // §39
 		}
 	}
 	// §34.4: cancel-set отменённых через UI сообщений (Redis). nil при отсутствии

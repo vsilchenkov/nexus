@@ -318,6 +318,37 @@ func TestReplay_IncomingMethodEmptyDefaultsPost(t *testing.T) {
 	}
 }
 
+// TestReplay_PathPassthrough_ReconstructsSubpath (§39): для passthrough-узла
+// replay реинъектит по ПОЛНОМУ пути (узел + подпуть из колонки method), иначе
+// запрос ушёл бы на корень узла, а не на исходный эндпоинт.
+func TestReplay_PathPassthrough_ReconstructsSubpath(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{
+		ID:              "n1",
+		Path:            "demo/svc",
+		Status:          domain.NodeStatusEnabled,
+		ClickHouseTable: "t.t",
+		IncomingMethod:  domain.HTTPMethodPOST,
+		PathPassthrough: true,
+	}
+	// §39: orig.Method хранит подпуть passthrough (не глагол).
+	log := &domain.LogRecord{ID: "log1", Method: "v1/GetParcelsInfo", Request: `{"a":1}`, DateRequest: time.Now(), Done: true}
+	disp := &stubDispatcher{}
+	uc := NewReplayUsecase(
+		&stubLogReader{log: log},
+		&stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
+		disp, nil,
+		NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10, logging.NewNoop(),
+	)
+	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{UseNodeAuth: true})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if disp.gotReq.NodePath != "demo/svc/v1/GetParcelsInfo" {
+		t.Fatalf("passthrough replay must reinject full subpath, got %q", disp.gotReq.NodePath)
+	}
+}
+
 // §36.11: «Повторить все сейчас» — пере-инжектирует все неудачные и отменяет их
 // оригиналы в DLQ (без двойной доставки).
 func TestReplay_ReplayFailed_AllAndCancelsOriginals(t *testing.T) {

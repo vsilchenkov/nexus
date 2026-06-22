@@ -50,6 +50,9 @@ type CreateNodeRequest struct {
 	MaxBodySizeEnabled bool  `json:"max_body_size_enabled"`
 	MaxBodySize        int32 `json:"max_body_size" binding:"omitempty,min=0,max=10000000"`
 
+	// §39: path-passthrough — приклеивать хвост входящего пути к target URL.
+	PathPassthrough bool `json:"path_passthrough"`
+
 	// §27: RabbitMQAsync. RMQPassword пустой в PUT = «оставить старый» (как
 	// auth_credentials, разбирается в handler.Update). Диапазоны pull_* также
 	// проверяет domain.Node.Validate и БД-constraint chk_rmq_fields.
@@ -107,6 +110,7 @@ type NodeResponse struct {
 	LoggingEnabled          bool     `json:"logging_enabled"`
 	MaxBodySizeEnabled      bool     `json:"max_body_size_enabled"`
 	MaxBodySize             int32    `json:"max_body_size"`
+	PathPassthrough         bool     `json:"path_passthrough"`
 
 	// §27: RabbitMQAsync. Пароль не возвращается — только флаг RMQPasswordSet.
 	// RMQStatus — runtime-health воркера (degraded/queue_depth/…), заполняется
@@ -207,6 +211,7 @@ func reqToDomain(r CreateNodeRequest) *domain.Node {
 		LoggingEnabled:          loggingEnabled,
 		MaxBodySizeEnabled:      r.MaxBodySizeEnabled,
 		MaxBodySize:             r.MaxBodySize,
+		PathPassthrough:         r.PathPassthrough,
 		RMQHost:                 r.RMQHost,
 		RMQPort:                 r.RMQPort,
 		RMQVHost:                r.RMQVHost,
@@ -258,6 +263,7 @@ func nodeToResponse(n *domain.Node) NodeResponse {
 		LoggingEnabled:          n.LoggingEnabled,
 		MaxBodySizeEnabled:      n.MaxBodySizeEnabled,
 		MaxBodySize:             n.MaxBodySize,
+		PathPassthrough:         n.PathPassthrough,
 		RMQHost:                 n.RMQHost,
 		RMQPort:                 n.RMQPort,
 		RMQVHost:                n.RMQVHost,

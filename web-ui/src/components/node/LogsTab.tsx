@@ -375,6 +375,7 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
             <thead className="sticky top-0 z-10 bg-bg-muted text-fg-muted">
               <tr>
                 <th className="px-3 py-2 text-left">{t("logs.col.time")}</th>
+                <th className="px-3 py-2 text-left">{t("logs.col.http_method")}</th>
                 <th className="px-3 py-2 text-left">{t("logs.col.method")}</th>
                 <th className="px-3 py-2 text-left">{t("logs.col.url")}</th>
                 <th className="px-3 py-2 text-right">{t("logs.col.status")}</th>
@@ -405,7 +406,8 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                           {new Date(r.date_request).toLocaleTimeString()}
                         </span>
                       </td>
-                      <td className="px-3 py-2">{r.method}</td>
+                      <td className="px-3 py-2">{r.http_method}</td>
+                      <td className="px-3 py-2 font-mono text-xs text-fg-muted">{r.method}</td>
                       <td className="max-w-[28rem] truncate px-3 py-2 font-mono text-xs text-fg-muted">
                         {r.url}
                       </td>
@@ -428,7 +430,7 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                     </tr>
                     {isOpen && (
                       <tr className="border-t border-line bg-bg-muted/30">
-                        <td colSpan={6} className="px-3 py-3">
+                        <td colSpan={7} className="px-3 py-3">
                           <LogBodies nodeId={id} logId={r.id} />
                         </td>
                       </tr>
@@ -438,7 +440,7 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
               })}
               {visibleLogs.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-3 py-6 text-center text-fg-muted">
+                  <td colSpan={7} className="px-3 py-6 text-center text-fg-muted">
                     {logsQ.isLoading
                       ? t("common.loading")
                       : logsUnavailable

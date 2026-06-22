@@ -34,6 +34,7 @@ import {
   Field,
   Hint,
   Input,
+  LabelHint,
   PickGroup,
   SecretInput,
   SectionHead,
@@ -52,6 +53,7 @@ type Form = {
   outgoing_method: "GET" | "POST" | "PUT" | "DELETE";
   url_mode: "static" | "from_request";
   target_url: string;
+  path_passthrough: boolean;
   url_param_name: string;
   auth_type: string;
   auth_credentials: string;
@@ -97,6 +99,7 @@ const emptyForm: Form = {
   outgoing_method: "POST",
   url_mode: "static",
   target_url: "",
+  path_passthrough: false,
   url_param_name: "url_base",
   auth_type: "none",
   auth_credentials: "",
@@ -272,7 +275,7 @@ export default function NodeSettings() {
         <div className="space-y-4">
           <Card>
             <SectionHead icon={<RouteIcon className="h-4 w-4" />}>{t("node.form.route")}</SectionHead>
-            <Field label={t("node.form.method_type")}>
+            <Field label={t("node.form.method_type")} help={t("node.help.method_type")}>
               <PickGroup
                 value={form.root_method}
                 onChange={(v) => set("root_method", v)}
@@ -283,7 +286,7 @@ export default function NodeSettings() {
                 ]}
               />
             </Field>
-            <Field label={t("node.fields.path")} className="mt-3">
+            <Field label={t("node.fields.path")} help={t("node.help.path")} className="mt-3">
               <Input
                 mono
                 className={errCls("path")}
@@ -306,6 +309,7 @@ export default function NodeSettings() {
               <Field
                 label={t("node.form.incoming_method")}
                 hint={t("node.form.incoming_method_hint")}
+                help={t("node.help.incoming_method")}
                 className="mt-3"
               >
                 <Select
@@ -322,7 +326,7 @@ export default function NodeSettings() {
                 </Select>
               </Field>
             )}
-            <Field label={t("node.form.state")} className="mt-3">
+            <Field label={t("node.form.state")} help={t("node.help.status")} className="mt-3">
               <Toggle3
                 value={form.status}
                 onChange={(v) => set("status", v)}
@@ -352,7 +356,7 @@ export default function NodeSettings() {
             {/* §27.11: для pull-узлов url_mode=from_request скрыт — нет входящего
                 HTTP-запроса, из которого можно взять URL. Только статичный адрес. */}
             {!isPull && (
-              <Field label={t("node.fields.url_mode")}>
+              <Field label={t("node.fields.url_mode")} help={t("node.help.url_mode")}>
                 <PickGroup
                   value={form.url_mode}
                   onChange={(v) => set("url_mode", v)}
@@ -364,7 +368,7 @@ export default function NodeSettings() {
               </Field>
             )}
             {(form.url_mode === "static" || isPull) && (
-              <Field label={t("node.fields.target_url")} className={isPull ? "" : "mt-3"}>
+              <Field label={t("node.fields.target_url")} help={t("node.help.target_url")} className={isPull ? "" : "mt-3"}>
                 <Input
                   mono
                   className={errCls("target_url")}
@@ -376,7 +380,7 @@ export default function NodeSettings() {
               </Field>
             )}
             {form.url_mode === "from_request" && !isPull && (
-              <Field label={t("node.form.param_name")} className="mt-3">
+              <Field label={t("node.form.param_name")} help={t("node.help.url_param_name")} className="mt-3">
                 <Input
                   mono
                   value={form.url_param_name}
@@ -391,6 +395,7 @@ export default function NodeSettings() {
               <Field
                 label={t("node.allowed_hosts.label")}
                 hint={t("node.allowed_hosts.hint_short")}
+                help={t("node.help.allowed_hosts")}
                 className="mt-3"
               >
                 <AllowedHostsField
@@ -401,9 +406,25 @@ export default function NodeSettings() {
                 />
               </Field>
             )}
+            {/* §39: path-passthrough — приклеивание хвоста входящего пути к target URL.
+                Не применимо к pull-узлам (нет входящего HTTP-пути). */}
+            {!isPull && (
+              <div className="mt-3 border-t border-line pt-3">
+                <div className="flex items-center gap-1">
+                  <Toggle
+                    checked={form.path_passthrough}
+                    onChange={(v) => set("path_passthrough", v)}
+                    label={t("node.form.path_passthrough")}
+                  />
+                  <LabelHint content={t("node.help.path_passthrough")} />
+                </div>
+                <p className="mt-1 text-xs text-fg-subtle">{t("node.form.path_passthrough_hint")}</p>
+              </div>
+            )}
             <Field
               label={t("node.form.outgoing_method")}
               hint={t("node.form.outgoing_method_hint")}
+              help={t("node.help.outgoing_method")}
               className="mt-3"
             >
               <Select
@@ -420,7 +441,7 @@ export default function NodeSettings() {
               </Select>
             </Field>
             <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Field label={t("node.form.timeout_ms")}>
+              <Field label={t("node.form.timeout_ms")} help={t("node.help.timeout_ms")}>
                 <Input
                   type="number"
                   min={100}
@@ -431,7 +452,7 @@ export default function NodeSettings() {
                 />
                 {fieldErr("timeout_ms")}
               </Field>
-              <Field label={t("node.form.retry_count")}>
+              <Field label={t("node.form.retry_count")} help={t("node.help.retry_count")}>
                 <Input
                   type="number"
                   min={0}
@@ -451,7 +472,7 @@ export default function NodeSettings() {
                 HTTP-запросов нет, некого авторизовывать. */}
             {!isPull && (
               <>
-            <Field label={t("node.form.incoming")}>
+            <Field label={t("node.form.incoming")} help={t("node.help.incoming_auth")}>
               <Select
                 value={form.incoming_auth_type}
                 onChange={(e) => set("incoming_auth_type", e.target.value)}
@@ -469,6 +490,7 @@ export default function NodeSettings() {
                     ? t("node.form.webhook_secret")
                     : t("node.form.credentials")
                 }
+                help={t("node.help.incoming_credentials")}
                 className="mt-3"
               >
                 <SecretInput
@@ -488,14 +510,14 @@ export default function NodeSettings() {
             )}
             {form.incoming_auth_type === "webhook_signature" && (
               <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <Field label={t("node.form.sig_header")}>
+                <Field label={t("node.form.sig_header")} help={t("node.help.sig_header")}>
                   <Input
                     mono
                     value={form.webhook_signature_header}
                     onChange={(e) => set("webhook_signature_header", e.target.value)}
                   />
                 </Field>
-                <Field label={t("node.form.sig_prefix")}>
+                <Field label={t("node.form.sig_prefix")} help={t("node.help.sig_prefix")}>
                   <Input
                     mono
                     value={form.webhook_signature_prefix}
@@ -511,7 +533,7 @@ export default function NodeSettings() {
             )}
               </>
             )}
-            <Field label={t("node.form.outgoing")} className={isPull ? "" : "mt-3"}>
+            <Field label={t("node.form.outgoing")} help={t("node.help.outgoing_auth")} className={isPull ? "" : "mt-3"}>
               <Select value={form.auth_type} onChange={(e) => set("auth_type", e.target.value)}>
                 <option value="none">none</option>
                 <option value="basic">basic</option>
@@ -523,7 +545,7 @@ export default function NodeSettings() {
               </Select>
             </Field>
             {(form.auth_type === "basic" || form.auth_type === "token") && (
-              <Field label={t("node.form.credentials")} className="mt-3">
+              <Field label={t("node.form.credentials")} help={t("node.help.outgoing_credentials")} className="mt-3">
                 <SecretInput
                   value={form.auth_credentials}
                   onChange={(e) => set("auth_credentials", e.target.value)}
@@ -554,7 +576,7 @@ export default function NodeSettings() {
             <SectionHead icon={<List className="h-4 w-4" />}>
               {t("node.form.headers")}
             </SectionHead>
-            <Field label={t("node.form.forward_headers")} hint={t("node.form.forward_headers_hint")}>
+            <Field label={t("node.form.forward_headers")} hint={t("node.form.forward_headers_hint")} help={t("node.help.forward_headers")}>
               <HeadersField
                 value={form.forward_headers}
                 onChange={(v) => set("forward_headers", v)}
@@ -567,17 +589,20 @@ export default function NodeSettings() {
               <SectionHead icon={<ListChecks className="h-4 w-4" />} className="mb-0">
                 {t("node.form.logging")}
               </SectionHead>
-              <Toggle
-                checked={form.logging_enabled}
-                onChange={(v) => set("logging_enabled", v)}
-                label={t("node.form.logging_enabled")}
-              />
+              <div className="flex items-center gap-1">
+                <Toggle
+                  checked={form.logging_enabled}
+                  onChange={(v) => set("logging_enabled", v)}
+                  label={t("node.form.logging_enabled")}
+                />
+                <LabelHint content={t("node.help.logging_enabled")} />
+              </div>
             </div>
             <fieldset
               disabled={!form.logging_enabled}
               className={form.logging_enabled ? "" : "pointer-events-none opacity-50"}
             >
-              <Field label={t("node.fields.ch_template")} hint={t("node.fields.ch_template_hint")}>
+              <Field label={t("node.fields.ch_template")} hint={t("node.fields.ch_template_hint")} help={t("node.fields.ch_template_hint")}>
                 <Select
                   value={form.clickhouse_template_id}
                   onChange={(e) => set("clickhouse_template_id", e.target.value)}
@@ -591,7 +616,7 @@ export default function NodeSettings() {
                   ))}
                 </Select>
               </Field>
-              <Field label={t("node.fields.ch_table")} className="mt-3">
+              <Field label={t("node.fields.ch_table")} help={t("node.help.ch_table")} className="mt-3">
                 <Input
                   mono
                   className={errCls("clickhouse_table")}
@@ -601,7 +626,7 @@ export default function NodeSettings() {
                 />
                 {fieldErr("clickhouse_table")}
               </Field>
-              <Field label={t("node.form.retention_days")} className="mt-3">
+              <Field label={t("node.form.retention_days")} help={t("node.help.retention_days")} className="mt-3">
                 <Input
                   type="number"
                   min={0}
@@ -611,7 +636,7 @@ export default function NodeSettings() {
                   }
                 />
               </Field>
-              <Field label={t("node.form.log_what")} className="mt-3">
+              <Field label={t("node.form.log_what")} help={t("node.help.log_what")} className="mt-3">
                 <div className="flex flex-col gap-1.5 text-xs">
                   <label className="flex items-center gap-2">
                     <input
@@ -640,12 +665,15 @@ export default function NodeSettings() {
                 </div>
               </Field>
               <div className="mt-4 border-t border-line pt-3">
-                <Toggle
-                  checked={form.max_body_size_enabled}
-                  onChange={(v) => set("max_body_size_enabled", v)}
-                  label={t("node.form.max_body_enabled")}
-                />
-                <Field label={t("node.form.max_body_size")} hint={t("node.form.max_body_hint")} className="mt-2">
+                <div className="flex items-center gap-1">
+                  <Toggle
+                    checked={form.max_body_size_enabled}
+                    onChange={(v) => set("max_body_size_enabled", v)}
+                    label={t("node.form.max_body_enabled")}
+                  />
+                  <LabelHint content={t("node.help.max_body")} />
+                </div>
+                <Field label={t("node.form.max_body_size")} hint={t("node.form.max_body_hint")} help={t("node.help.max_body")} className="mt-2">
                   <Input
                     type="number"
                     min={0}
@@ -669,7 +697,7 @@ export default function NodeSettings() {
               <SectionHead icon={<RefreshCw className="h-4 w-4" />}>
                 {t("node.form.dlq_section")}
               </SectionHead>
-              <Field label={t("node.form.dlq_ttl_seconds")}>
+              <Field label={t("node.form.dlq_ttl_seconds")} help={t("node.help.dlq_ttl")}>
                 <Input
                   type="number"
                   min={60}
@@ -683,7 +711,7 @@ export default function NodeSettings() {
                 </div>
                 {fieldErr("dlq_ttl_seconds")}
               </Field>
-              <Field label={t("node.form.dlq_retry_delay_seconds")} className="mt-3">
+              <Field label={t("node.form.dlq_retry_delay_seconds")} help={t("node.help.dlq_retry_delay")} className="mt-3">
                 <Input
                   type="number"
                   min={1}
@@ -705,7 +733,7 @@ export default function NodeSettings() {
             <SectionHead icon={<MessageSquare className="h-4 w-4" />}>
               {t("node.form.comment")}
             </SectionHead>
-            <Field label={t("node.form.comment_label")} hint={t("node.form.comment_hint")}>
+            <Field label={t("node.form.comment_label")} hint={t("node.form.comment_hint")} help={t("node.help.comment")}>
               <Textarea
                 mono={false}
                 rows={4}

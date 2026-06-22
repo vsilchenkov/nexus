@@ -7,6 +7,7 @@ import {
 } from "react";
 
 import { cn } from "../../lib/cn";
+import { LabelHint } from "./LabelHint";
 
 const fieldBase =
   "w-full bg-app border border-line rounded-md text-[13px] text-fg " +
@@ -60,25 +61,33 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
   },
 );
 
-// Field — подпись + контрол (label.fld эталона).
+// Field — подпись + контрол (label.fld эталона). help — необязательная
+// контекстная справка: иконка-«вопросик» с тултипом рядом с лейблом (вне
+// <label>, чтобы клик по иконке не фокусировал контрол). hint — короткая
+// текстовая приписка через «·», может сосуществовать с help.
 export function Field({
   label,
   hint,
+  help,
   children,
   className,
 }: {
   label?: ReactNode;
   hint?: ReactNode;
+  help?: ReactNode;
   children: ReactNode;
   className?: string;
 }) {
   return (
     <div className={cn("space-y-1.5", className)}>
       {label && (
-        <label className="block text-xs text-fg-muted">
-          {label}
-          {hint && <span className="text-fg-subtle"> · {hint}</span>}
-        </label>
+        <div className="flex items-center gap-1">
+          <label className="block text-xs text-fg-muted">
+            {label}
+            {hint && <span className="text-fg-subtle"> · {hint}</span>}
+          </label>
+          {help && <LabelHint content={help} />}
+        </div>
       )}
       {children}
     </div>

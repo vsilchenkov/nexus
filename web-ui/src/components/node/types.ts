@@ -2,7 +2,8 @@
 export type LogRow = {
   id: string;
   url: string;
-  method: string;
+  http_method?: string; // §39: HTTP-глагол (GET/POST/…)
+  method: string; // §39: подпуть запроса (хвост passthrough); пусто у обычных узлов
   status: number;
   duration_ms: number;
   date_request: string;

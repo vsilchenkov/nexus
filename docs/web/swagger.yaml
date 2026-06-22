@@ -102,6 +102,10 @@ definitions:
       path:
         maxLength: 255
         type: string
+      path_passthrough:
+        description: '§39: path-passthrough — приклеивать хвост входящего пути к target
+          URL.'
+        type: boolean
       pull_batch_size:
         maximum: 1000
         minimum: 1
@@ -387,11 +391,15 @@ definitions:
         type: integer
       host:
         type: string
+      http_method:
+        description: '§39: HTTP-глагол (GET/POST/…)'
+        type: string
       id:
         type: string
       ip:
         type: string
       method:
+        description: '§39: подпуть запроса (хвост passthrough)'
         type: string
       parameters:
         type: string
@@ -491,6 +499,8 @@ definitions:
         type: string
       path:
         type: string
+      path_passthrough:
+        type: boolean
       pull_batch_size:
         type: integer
       pull_interval_sec:
@@ -691,6 +701,10 @@ definitions:
       path:
         maxLength: 255
         type: string
+      path_passthrough:
+        description: '§39: path-passthrough — приклеивать хвост входящего пути к target
+          URL.'
+        type: boolean
       pull_batch_size:
         maximum: 1000
         minimum: 1

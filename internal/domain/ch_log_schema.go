@@ -15,7 +15,14 @@ type CHLogColumn struct {
 var RequiredLogColumns = []CHLogColumn{
 	{"ID", "String"},
 	{"type", "String"},
+	// §39: HTTP-глагол вызова (GET/POST/…). Рядом с type, ДО url. Заполняется
+	// всегда. Раньше глагол писался в `method` — теперь `method` хранит подпуть
+	// запроса (хвост path-passthrough), см. ниже.
+	{"http_method", "String"},
 	{"url", "String"},
+	// §39: подпуть запроса после пути узла (хвост path-passthrough), напр.
+	// "v1/GetParcelsInfo"; пусто у обычных (не-passthrough) узлов. Семантика
+	// изменена: до §39 здесь был HTTP-глагол (теперь он в http_method).
 	{"method", "String"},
 	{"parameters", "String"},
 	{"request", "String"},

@@ -5,9 +5,13 @@ import "time"
 // LogRecord — одна запись лога вызова, попадающая в ClickHouse-таблицу
 // узла (§4.3 ТЗ). Поля совпадают с CREATE TABLE из спеки.
 type LogRecord struct {
-	ID               string
-	Type             RootMethod
-	URL              string
+	ID         string
+	Type       RootMethod
+	HTTPMethod string // §39: HTTP-глагол (GET/POST/…) → колонка http_method
+	URL        string
+	// Method → колонка `method`. §39: подпуть запроса (хвост path-passthrough),
+	// напр. "v1/GetParcelsInfo"; пусто у обычных узлов. До §39 здесь был
+	// HTTP-глагол (теперь он в HTTPMethod).
 	Method           string
 	Parameters       string
 	Request          string
