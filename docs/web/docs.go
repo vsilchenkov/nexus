@@ -4300,6 +4300,10 @@ const docTemplate = `{
                 "host": {
                     "type": "string"
                 },
+                "http_method": {
+                    "description": "§39: HTTP-глагол (GET/POST/…)",
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
                 },
@@ -4307,6 +4311,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "method": {
+                    "description": "§39: подпуть запроса (хвост passthrough)",
                     "type": "string"
                 },
                 "parameters": {

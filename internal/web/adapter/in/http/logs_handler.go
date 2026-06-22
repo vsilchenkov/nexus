@@ -34,8 +34,9 @@ func NewLogsHandler(uc *usecase.LogsUsecase, logger logging.Logger) *LogsHandler
 type LogRecordDTO struct {
 	ID               string    `json:"id"`
 	Type             string    `json:"type"`
+	HTTPMethod       string    `json:"http_method"` // §39: HTTP-глагол (GET/POST/…)
 	URL              string    `json:"url"`
-	Method           string    `json:"method"`
+	Method           string    `json:"method"` // §39: подпуть запроса (хвост passthrough)
 	Parameters       string    `json:"parameters"`
 	Request          string    `json:"request,omitempty"`
 	Response         string    `json:"response,omitempty"`
@@ -61,6 +62,7 @@ func toLogDTO(r *domain.LogRecord, includeBodies bool) LogRecordDTO {
 	dto := LogRecordDTO{
 		ID:               r.ID,
 		Type:             string(r.Type),
+		HTTPMethod:       r.HTTPMethod,
 		URL:              r.URL,
 		Method:           r.Method,
 		Status:           r.Status,

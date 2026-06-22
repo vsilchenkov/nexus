@@ -504,6 +504,7 @@
     },
     "col": {
       "time": "Time",
+      "http_method": "HTTP",
       "method": "Method",
       "url": "URL",
       "status": "Status",
