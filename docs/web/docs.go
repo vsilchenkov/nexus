@@ -3882,6 +3882,10 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 255
                 },
+                "path_passthrough": {
+                    "description": "§39: path-passthrough — приклеивать хвост входящего пути к target URL.",
+                    "type": "boolean"
+                },
                 "pull_batch_size": {
                     "type": "integer",
                     "maximum": 1000,
@@ -4454,6 +4458,9 @@ const docTemplate = `{
                 "path": {
                     "type": "string"
                 },
+                "path_passthrough": {
+                    "type": "boolean"
+                },
                 "pull_batch_size": {
                     "type": "integer"
                 },
@@ -4736,6 +4743,10 @@ const docTemplate = `{
                 "path": {
                     "type": "string",
                     "maxLength": 255
+                },
+                "path_passthrough": {
+                    "description": "§39: path-passthrough — приклеивать хвост входящего пути к target URL.",
+                    "type": "boolean"
                 },
                 "pull_batch_size": {
                     "type": "integer",
