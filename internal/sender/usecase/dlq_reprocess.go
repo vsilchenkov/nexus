@@ -258,10 +258,12 @@ func (r *DLQReprocessor) logTTLExpired(ctx context.Context, node *domain.Node, e
 		return
 	}
 	rec := &domain.LogRecord{
-		ID:           env.ID,
-		Type:         domain.RootMethodRequestAsync,
-		URL:          env.TargetURL,
-		Method:       env.Method,
+		ID:   env.ID,
+		Type: domain.RootMethodRequestAsync,
+		URL:  env.TargetURL,
+		// §39: HTTP-глагол → http_method; подпуть passthrough → method.
+		HTTPMethod:   env.Method,
+		Method:       env.RequestPath,
 		Parameters:   extractQuery(env.TargetURL),
 		DateCreate:   env.ReceivedAt,
 		DateRequest:  env.ReceivedAt,

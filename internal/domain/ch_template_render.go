@@ -12,7 +12,7 @@ import (
 var chFullTableNamePattern = regexp.MustCompile(`^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$`)
 
 // RenderCreateTable детерминированно собирает `CREATE TABLE IF NOT EXISTS`
-// из шаблона (§19.3). Все 20 обязательных колонок берутся из RequiredLogColumns
+// из шаблона (§19.3). Все обязательные колонки берутся из RequiredLogColumns
 // в фиксированном порядке; CODEC/индексы/TTL — из шаблона. Имя таблицы и ttlDays
 // передаются параметрами (а не плейсхолдерами) и валидируются — защита от инъекции.
 func (t *CHTemplate) RenderCreateTable(table string, ttlDays int32) (string, error) {

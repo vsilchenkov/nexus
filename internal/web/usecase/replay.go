@@ -185,12 +185,12 @@ func (u *ReplayUsecase) replayOne(ctx context.Context, node *domain.Node, logID 
 	}
 
 	// Сборка нового запроса.
-	// Метод берём из ВХОДЯЩЕГО метода узла, а не из orig.Method: в лог пишется
-	// ИСХОДЯЩИЙ метод (node.OutgoingMethod — им Sender ходит во внешний target,
-	// см. route.go/route_async.go + send.go). Replay же переинъецирует запрос
-	// через входной endpoint Receiver'а, где метод валидируется против
-	// node.IncomingMethod. При OutgoingMethod != IncomingMethod (классика:
-	// POST-in / GET-out без тела) использование orig.Method давало 405
+	// HTTP-глагол берём из ВХОДЯЩЕГО метода узла, а не из лога. §39: глагол
+	// записан в колонку http_method (orig.HTTPMethod = исходящий метод), а
+	// orig.Method теперь хранит подпуть passthrough — не глагол. Replay
+	// переинъецирует запрос через входной endpoint Receiver'а, где метод
+	// валидируется против node.IncomingMethod; при OutgoingMethod != IncomingMethod
+	// (POST-in / GET-out) использование залогированного метода давало 405
 	// ErrNodeMethodNotAllowed (§34.5). Пустой IncomingMethod → POST, как
 	// трактует methodMatches в Receiver.
 	method := string(node.IncomingMethod)
@@ -233,8 +233,17 @@ func (u *ReplayUsecase) replayOne(ctx context.Context, node *domain.Node, logID 
 		// CustomAuth вручную (см. §7.4.1).
 	}
 
+	// §39: для passthrough-узла исходный запрос бил в подпуть (сохранён в
+	// orig.Method — колонка method). Реинъектим по полному пути, иначе replay
+	// уйдёт на корень узла вместо исходного эндпоинта; Receiver переразрешит
+	// его через prefixMatch обратно на этот же узел + хвост.
+	nodePath := node.Path
+	if node.PathPassthrough && orig.Method != "" {
+		nodePath = node.Path + "/" + orig.Method
+	}
+
 	resp, err := u.dispatcher.Dispatch(ctx, port.DispatchRequest{
-		NodePath: node.Path,
+		NodePath: nodePath,
 		Async:    async,
 		Method:   method,
 		Query:    q,

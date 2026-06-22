@@ -32,6 +32,12 @@ type Node struct {
 	URLParamName    string
 	URLAllowedHosts []string
 
+	// §39: path-passthrough. Когда true, хвост входящего пути после пути узла
+	// приклеивается к резолвнутому целевому URL (для url_mode=static и
+	// from_request). По умолчанию false — точный матч пути (текущее поведение).
+	// Неприменимо к pull-узлам (RabbitMQAsync) — нет входящего HTTP-пути.
+	PathPassthrough bool
+
 	AuthType               AuthType
 	AuthCredentials        string // plaintext в памяти, шифр в БД
 	AuthDynamicSource      AuthDynSource
@@ -136,6 +142,11 @@ func (n *Node) NormalizeForRootMethod() []string {
 		n.AuthType = AuthTypeNone
 		n.AuthCredentials = ""
 		cleared = append(cleared, "auth_type")
+	}
+	if n.PathPassthrough {
+		// §39: у pull-узла нет входящего HTTP-пути, приклеивать нечего.
+		n.PathPassthrough = false
+		cleared = append(cleared, "path_passthrough")
 	}
 	return cleared
 }

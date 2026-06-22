@@ -74,7 +74,7 @@ export function RabbitMQSection({ form, set, isNew, errField, errMsg }: Props) {
           {t("node.rmq.source")}
         </SectionHead>
 
-        <Field label={t("node.rmq.host_port")}>
+        <Field label={t("node.rmq.host_port")} help={t("node.rmq.host_hint")}>
           <div className="grid grid-cols-[2fr_100px_auto] gap-2">
             <Input
               mono
@@ -103,7 +103,7 @@ export function RabbitMQSection({ form, set, isNew, errField, errMsg }: Props) {
           {fieldErr("rmq_host")}
         </Field>
 
-        <Field label={t("node.rmq.vhost")} className="mt-3">
+        <Field label={t("node.rmq.vhost")} help={t("node.rmq.vhost_help")} className="mt-3">
           <Input
             mono
             value={form.rmq_vhost}
@@ -112,7 +112,7 @@ export function RabbitMQSection({ form, set, isNew, errField, errMsg }: Props) {
           />
         </Field>
 
-        <Field label={t("node.rmq.auth")} className="mt-3">
+        <Field label={t("node.rmq.auth")} help={t("node.rmq.auth_help")} className="mt-3">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <Input
               value={form.rmq_user}
@@ -127,7 +127,7 @@ export function RabbitMQSection({ form, set, isNew, errField, errMsg }: Props) {
           </div>
         </Field>
 
-        <Field label={t("node.rmq.queue")} className="mt-3">
+        <Field label={t("node.rmq.queue")} help={t("node.rmq.queue_hint")} className="mt-3">
           <Input
             mono
             className={errCls("rmq_queue")}
@@ -159,7 +159,7 @@ export function RabbitMQSection({ form, set, isNew, errField, errMsg }: Props) {
       <Card>
         <SectionHead icon={<RefreshCw className="h-4 w-4" />}>{t("node.rmq.pull_params")}</SectionHead>
 
-        <Field label={t("node.rmq.interval")} hint={t("node.rmq.interval_hint")}>
+        <Field label={t("node.rmq.interval")} hint={t("node.rmq.interval_hint")} help={t("node.rmq.interval_hint")}>
           <div className="flex items-center gap-2">
             <Input
               mono
@@ -185,7 +185,7 @@ export function RabbitMQSection({ form, set, isNew, errField, errMsg }: Props) {
         </Field>
 
         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label={t("node.rmq.batch_size")} hint={t("node.rmq.batch_hint")}>
+          <Field label={t("node.rmq.batch_size")} hint={t("node.rmq.batch_hint")} help={t("node.rmq.batch_hint")}>
             <Input
               mono
               type="number"
@@ -193,7 +193,7 @@ export function RabbitMQSection({ form, set, isNew, errField, errMsg }: Props) {
               onChange={(e) => set("pull_batch_size", parseNumInput(e.target.value, form.pull_batch_size))}
             />
           </Field>
-          <Field label={t("node.rmq.prefetch")} hint={t("node.rmq.prefetch_hint")}>
+          <Field label={t("node.rmq.prefetch")} hint={t("node.rmq.prefetch_hint")} help={t("node.rmq.prefetch_hint")}>
             <Input
               mono
               type="number"

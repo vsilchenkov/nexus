@@ -39,6 +39,7 @@ func TestBuildEnvelope_HappyPath(t *testing.T) {
 		"https://api.example.com/hook",
 		"Bearer xyz",
 		"10.0.0.1",
+		"v1/GetParcelsInfo",
 		hdr,
 		url.Values{"limit": []string{"10"}},
 		[]byte(`{"a":1}`),
@@ -51,6 +52,7 @@ func TestBuildEnvelope_HappyPath(t *testing.T) {
 	assert.Equal(t, "https://api.example.com/hook?limit=10", env.TargetURL)
 	assert.Equal(t, "Bearer xyz", env.AuthHeader)
 	assert.Equal(t, "10.0.0.1", env.ClientIP)
+	assert.Equal(t, "v1/GetParcelsInfo", env.RequestPath)
 	assert.Equal(t, []byte(`{"a":1}`), env.Body)
 
 	// ForwardHeaders + Content-Type — только.
@@ -77,6 +79,7 @@ func TestBuildEnvelope_EmptyForwardHeaders_OnlyContentType(t *testing.T) {
 		node,
 		http.MethodGet,
 		"https://api.example.com/x",
+		"",
 		"",
 		"",
 		hdr,
@@ -107,6 +110,7 @@ func TestBuildEnvelope_NoContentType_NoQuery(t *testing.T) {
 		"https://api.example.com/r",
 		"",
 		"127.0.0.1",
+		"",
 		hdr,
 		nil,
 		nil,
@@ -130,6 +134,7 @@ func TestBuildEnvelope_QueryMergedWithExistingURL(t *testing.T) {
 		node,
 		http.MethodGet,
 		"https://api.example.com/x?already=1",
+		"",
 		"",
 		"",
 		http.Header{},
@@ -159,6 +164,7 @@ func TestBuildEnvelope_ForwardHeaders_CaseInsensitive(t *testing.T) {
 		node,
 		http.MethodPost,
 		"https://api.example.com/x",
+		"",
 		"",
 		"",
 		hdr,

@@ -27,6 +27,10 @@ type Envelope struct {
 	Body       []byte            `json:"body,omitempty"`
 	ClientIP   string            `json:"client_ip,omitempty"`
 	ReceivedAt time.Time         `json:"received_at"`
+	// RequestPath — §39: подпуть запроса (хвост path-passthrough), для колонки
+	// `method` лог-таблицы. Пусто у обычных узлов. ВАЖНО: держать синхронным с
+	// Sender-копией Envelope (internal/sender/usecase/async_envelope.go).
+	RequestPath string `json:"request_path,omitempty"`
 
 	// RMQ — служебный блок для узлов RabbitMQAsync (§27.3). nil для
 	// request/requestAsync. Sender обрабатывает envelope одинаково; блок несёт
@@ -48,7 +52,7 @@ type RMQMeta struct {
 func BuildEnvelope(
 	id string,
 	node *domain.Node,
-	method, targetURL, authHeader, clientIP string,
+	method, targetURL, authHeader, clientIP, requestPath string,
 	headers http.Header,
 	cleanQuery url.Values,
 	body []byte,
@@ -59,14 +63,15 @@ func BuildEnvelope(
 		picked["Content-Type"] = ct
 	}
 	return &Envelope{
-		ID:         id,
-		NodePath:   node.Path,
-		Method:     method,
-		TargetURL:  finalURL,
-		AuthHeader: authHeader,
-		Headers:    picked,
-		Body:       body,
-		ClientIP:   clientIP,
-		ReceivedAt: time.Now().UTC(),
+		ID:          id,
+		NodePath:    node.Path,
+		Method:      method,
+		TargetURL:   finalURL,
+		AuthHeader:  authHeader,
+		Headers:     picked,
+		Body:        body,
+		ClientIP:    clientIP,
+		ReceivedAt:  time.Now().UTC(),
+		RequestPath: requestPath,
 	}
 }

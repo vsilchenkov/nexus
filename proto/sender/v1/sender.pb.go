@@ -100,7 +100,11 @@ type SendRequest struct {
 	MaxBodySize        int32 `protobuf:"varint,27,opt,name=max_body_size,json=maxBodySize,proto3" json:"max_body_size,omitempty"`                        // макс. число символов (рун) в request/response
 	// §37: UUID узла — пишется в колонку node_id лог-таблицы, чтобы различать узлы,
 	// делящие одну ClickHouse-таблицу (per-node атрибуция метрик/логов/очистки).
-	NodeId        string `protobuf:"bytes,28,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	NodeId string `protobuf:"bytes,28,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	// §39: подпуть запроса (хвост path-passthrough после пути узла), напр.
+	// "v1/GetParcelsInfo". Пишется в колонку `method` лог-таблицы. Пусто у
+	// обычных узлов. HTTP-глагол по-прежнему в поле method (= колонка http_method).
+	RequestPath   string `protobuf:"bytes,29,opt,name=request_path,json=requestPath,proto3" json:"request_path,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -268,6 +272,13 @@ func (x *SendRequest) GetNodeId() string {
 	return ""
 }
 
+func (x *SendRequest) GetRequestPath() string {
+	if x != nil {
+		return x.RequestPath
+	}
+	return ""
+}
+
 type SendResponse struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
 	StatusCode int32                  `protobuf:"varint,1,opt,name=status_code,json=statusCode,proto3" json:"status_code,omitempty"`
@@ -361,7 +372,7 @@ const file_proto_sender_v1_sender_proto_rawDesc = "" +
 	"\x1cproto/sender/v1/sender.proto\x12\x0fnexus.sender.v1\"?\n" +
 	"\n" +
 	"AuthConfig\x121\n" +
-	"\x14authorization_header\x18\x01 \x01(\tR\x13authorizationHeader\"\xf9\x05\n" +
+	"\x14authorization_header\x18\x01 \x01(\tR\x13authorizationHeader\"\x9c\x06\n" +
 	"\vSendRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\tnode_path\x18\x02 \x01(\tR\bnodePath\x12\x1d\n" +
@@ -386,7 +397,8 @@ const file_proto_sender_v1_sender_proto_rawDesc = "" +
 	"\x0flogging_enabled\x18\x19 \x01(\bR\x0eloggingEnabled\x121\n" +
 	"\x15max_body_size_enabled\x18\x1a \x01(\bR\x12maxBodySizeEnabled\x12\"\n" +
 	"\rmax_body_size\x18\x1b \x01(\x05R\vmaxBodySize\x12\x17\n" +
-	"\anode_id\x18\x1c \x01(\tR\x06nodeId\x1a:\n" +
+	"\anode_id\x18\x1c \x01(\tR\x06nodeId\x12!\n" +
+	"\frequest_path\x18\x1d \x01(\tR\vrequestPath\x1a:\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x98\x02\n" +

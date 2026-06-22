@@ -78,7 +78,7 @@ func (r *LogReaderCH) liveConn() (chdriver.Conn, error) {
 	return c, nil
 }
 
-const selectCols = `ID, type, url, method, parameters, request, response,
+const selectCols = `ID, type, http_method, url, method, parameters, request, response,
 	status, reason, date_create, date_request, date_response,
 	duration, done, checksum_request, checksum_response,
 	Host, IP, attempts, attempts_details, node_id`
@@ -451,10 +451,7 @@ func (r *LogReaderCH) NodeChart(ctx context.Context, table, nodeID string, since
 	if untilMs <= sinceMs {
 		return []port.SeriesPoint{}, nil
 	}
-	stepSec := (untilMs - sinceMs) / int64(buckets) / 1000
-	if stepSec < 1 {
-		stepSec = 1
-	}
+	stepSec := max((untilMs-sinceMs)/int64(buckets)/1000, 1)
 	stepMs := stepSec * 1000
 	conn, err := r.liveConn()
 	if err != nil {
@@ -513,7 +510,7 @@ func scanLogRow(rows chdriver.Rows) (*domain.LogRecord, error) {
 		dateResp   time.Time
 	)
 	if err := rows.Scan(
-		&r.ID, &typ, &r.URL, &r.Method, &r.Parameters, &r.Request, &r.Response,
+		&r.ID, &typ, &r.HTTPMethod, &r.URL, &r.Method, &r.Parameters, &r.Request, &r.Response,
 		&r.Status, &r.Reason, &dateCreate, &dateReq, &dateResp,
 		&r.Duration, &r.Done, &r.ChecksumRequest, &r.ChecksumResponse,
 		&r.Host, &r.IP, &r.Attempts, &r.AttemptsDetails, &r.NodeID,

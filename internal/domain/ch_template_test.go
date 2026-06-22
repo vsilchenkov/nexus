@@ -31,13 +31,14 @@ func TestDefaultCHTemplateSpec_SeedJSON(t *testing.T) {
 	}
 }
 
-// TestRequiredLogColumns_MatchSpec фиксирует обязательную схему §4.3/§37: 21
-// колонка в точном порядке и с точными типами. Если кто-то поменяет
+// TestRequiredLogColumns_MatchSpec фиксирует обязательную схему §4.3/§37/§39: 22
+// колонки в точном порядке и с точными типами. Если кто-то поменяет
 // RequiredLogColumns, разойдясь с insertSQL/selectCols/createNodeLogTable —
 // тест упадёт.
 func TestRequiredLogColumns_MatchSpec(t *testing.T) {
 	want := []CHLogColumn{
-		{"ID", "String"}, {"type", "String"}, {"url", "String"}, {"method", "String"},
+		{"ID", "String"}, {"type", "String"}, {"http_method", "String"},
+		{"url", "String"}, {"method", "String"},
 		{"parameters", "String"}, {"request", "String"}, {"response", "String"},
 		{"status", "Int32"}, {"reason", "String"}, {"date_create", "Date"},
 		{"date_request", "DateTime"}, {"date_response", "DateTime"}, {"duration", "Int32"},
@@ -125,6 +126,7 @@ func TestCHTemplate_RenderCreateTable_Default(t *testing.T) {
 	const want = `CREATE TABLE IF NOT EXISTS nexus_default.webhook_send (
     ID String,
     type String,
+    http_method String,
     url String,
     method String,
     parameters String,
