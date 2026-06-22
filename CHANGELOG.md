@@ -12,6 +12,49 @@
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-06-22
+
+Релиз вокруг прозрачного проксирования: опциональный **path-passthrough** (хвост входящего пути
+приклеивается к Target URL узла, §39), разведение HTTP-глагола и вызванного подпути по двум лог-колонкам
+ClickHouse, плюс контекстная справка-«вопросики» у каждого поля формы узла (§7.6).
+
+### ⚠️ Изменения при апгрейде
+
+- **Миграция БД `0019_node_path_passthrough`** — добавляет в `nodes` колонку `path_passthrough`
+  (`BOOLEAN NOT NULL DEFAULT false`). Аддитивно, поведение существующих узлов не меняется (passthrough
+  по умолчанию выключен). Применяется автоматически на старте `web`/`receiver`.
+- **ClickHouse-таблицы логов: новая колонка `http_method`** добавляется автоматически на старте `web`
+  и `sender` (идемпотентный `ALTER TABLE … ADD COLUMN IF NOT EXISTS http_method String DEFAULT ''
+  AFTER type`, по образцу §37) — отдельного шага не требуется.
+- **Изменена семантика колонки `method`** в логах: теперь хранит подпуть запроса (хвост passthrough,
+  напр. `v1/GetParcelsInfo`), а **HTTP-глагол** (GET/POST) переехал в новую колонку `http_method`.
+  Миграции данных нет — старые записи остаются как есть, новый трафик пишется по новой схеме.
+- Изменений `config.yml` в этом релизе нет.
+
+### Added
+
+- **§39 — path-passthrough маршрутизация.** Опциональный per-node флаг `path_passthrough` (тумблер
+  «Проксировать хвост пути» в форме узла). Когда включён, хвост входящего пути после пути узла
+  приклеивается к `target_url`: один узел обслуживает много методов приёмника (напр. узел `ozon` +
+  запрос `…/ozon/GetAuthToken` → `<target>/GetAuthToken`). Резолв через longest-prefix (первый
+  существующий узел-префикс «выигрывает»), приклеивание через `url.URL.JoinPath` (кодирование сегментов
+  + резолв `..` — защита от path-traversal). Работает для sync и async, обоих URL-режимов
+  (`static`/`from_request`); **точный матч узла приоритетнее** префиксного (пересечение адресов
+  детерминировано). По умолчанию выключен — точный матч и `404` на лишний хвост сохраняются.
+  Спека: [specs/sections/39-path-passthrough.md](specs/sections/39-path-passthrough.md).
+- **Лог-колонка `http_method`** (HTTP-глагол вызова) в ClickHouse-таблице логов — рядом с `type`,
+  заполняется всегда. Подпуть passthrough пробрасывается из Receiver в Sender (gRPC
+  `SendRequest.request_path`, Kafka-envelope) и пишется в колонку `method`. Колонки `HTTP` и `Метод`
+  показаны во вкладке логов узла.
+- **§7.6 — контекстная справка к полям узла.** У каждого параметра формы узла — иконка-«?» с тултипом
+  «зачем параметр» (`LabelHint`: `HelpCircle` + `Tooltip`, доступна с клавиатуры). Тексты в `node.help.*`
+  (en/ru). Существующая короткая приписка `hint` сохранена.
+
+### Changed
+
+- **Replay для passthrough-узлов** реинъектит по полному подпути (`node.Path + "/" + method` из лога),
+  иначе повтор уходил бы на корень узла; HTTP-глагол по-прежнему берётся из `incoming_method` (§34.5).
+
 ## [1.3.0] - 2026-06-22
 
 Релиз вокруг устойчивости к недоступности ClickHouse: durable-retry проваленных лог-батчей через
@@ -388,7 +431,8 @@ ClickHouse (§21), идентификатор узла в логах для об
 
 ---
 
-[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.3.0...HEAD
+[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.4.0...HEAD
+[1.4.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.3.0...v1.4.0
 [1.3.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.2.0...v1.3.0
 [1.2.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.1.0...v1.2.0
 [1.1.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.0.3...v1.1.0
