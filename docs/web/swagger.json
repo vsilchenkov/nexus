@@ -3842,7 +3842,8 @@
                         "GET",
                         "POST",
                         "PUT",
-                        "DELETE"
+                        "DELETE",
+                        "ANY"
                     ]
                 },
                 "log_headers": {
@@ -3872,7 +3873,8 @@
                         "GET",
                         "POST",
                         "PUT",
-                        "DELETE"
+                        "DELETE",
+                        "ANY"
                     ]
                 },
                 "path": {
@@ -4709,7 +4711,8 @@
                         "GET",
                         "POST",
                         "PUT",
-                        "DELETE"
+                        "DELETE",
+                        "ANY"
                     ]
                 },
                 "log_headers": {
@@ -4739,7 +4742,8 @@
                         "GET",
                         "POST",
                         "PUT",
-                        "DELETE"
+                        "DELETE",
+                        "ANY"
                     ]
                 },
                 "path": {

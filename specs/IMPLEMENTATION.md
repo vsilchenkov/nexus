@@ -53,6 +53,7 @@
 | `url_base` исключается из проксируемой query | ✅ | `ResolveURL`: `clean.Del(param)` |
 | **Path-passthrough (§39): хвост входящего пути → `target_url`, opt-in флаг `path_passthrough`** | ✅ §39 | [resolver.go](../internal/receiver/usecase/resolver.go) `resolveNode`/`prefixMatch` (longest-prefix + remainder), [urlresolver.go](../internal/receiver/usecase/urlresolver.go) `appendPathSuffix` (`JoinPath`, traversal-safe), миграция [0019](../migrations/0019_node_path_passthrough.up.sql) |
 | **Лог-колонки `http_method` (глагол) + `method` (репурпозен → подпуть passthrough) (§39)** | ✅ §39 | [ch_log_schema.go](../internal/domain/ch_log_schema.go), gRPC `request_path`, envelope, [ensure_schema.go](../internal/platform/clickhouse/ensure_schema.go) `EnsureHTTPMethodColumn` |
+| **HTTP-метод `ANY` (вх: accept-all; исх: зеркало входящего) (§40)** | ✅ §40 | [enums.go](../internal/domain/enums.go) `HTTPMethodAny`, [route.go](../internal/receiver/usecase/route.go) `methodMatches`/`effectiveOutgoingMethod`, [puller.go](../internal/receiver/usecase/puller.go), миграция [0020](../migrations/0020_node_method_any.up.sql) |
 | Все режимы incoming auth (none/basic/token) | ✅ | [auth.go](../internal/receiver/usecase/auth.go) `CheckIncomingAuth` |
 | Все режимы outgoing auth (none/basic/token/token_from_request/basic_from_request) | ✅ | [auth_dynamic.go](../internal/receiver/usecase/auth_dynamic.go) `BuildDynamicOutgoingAuth` |
 | Исключение служебных значений из проксируемого запроса (§3.5 «Исключение») | ✅ | `buildTokenFromRequest`, `buildBasicFromRequest` |
@@ -648,6 +649,16 @@ DLQ) тормозила, «Очистить» был no-op, шапка плох�
   в обёртку `Field` ([web-ui/src/components/ui/form.tsx](../web-ui/src/components/ui/form.tsx)) добавлен
   проп `help` (иконка рядом с лейблом, вне `<label>`); для тумблеров `LabelHint` ставится вручную.
   Тексты — `node.help.*` (+ `node.rmq.*_help`) в en/ru синхронно. `hint` (приписка «·») сохранён.
+- **§40 — HTTP-метод `ANY` («Любой»).** Вх=ANY → `methodMatches` accept-all (нет 405); исх=ANY →
+  `effectiveOutgoingMethod(node, in.Method)` зеркалит метод входящего запроса (пустой → POST), резолв в
+  Receiver (sync `route.go`, async `route_async.go`) — Sender/proto получают конкретный метод. Pull-узлы:
+  исх ANY → POST (входящего метода нет, [puller.go](../internal/receiver/usecase/puller.go)). Replay
+  ANY-узла берёт залогированный глагол `orig.HTTPMethod` (§39), а не литерал «ANY»
+  ([replay.go](../internal/web/usecase/replay.go)). Хранение строкой `'ANY'`, миграция `0020`
+  пересоздаёт CHECK с `'ANY'`; DTO `oneof …ANY`; UI-пункт «Любой» (`node.method.any`). Тесты:
+  `TestMethodMatches_Any`, `TestEffectiveOutgoingMethod`, `TestReplay_AnyIncomingUsesLoggedMethod`,
+  integration `TestReceiver_AnyMethod_E2E` (PUT/DELETE/GET + зеркало + проброс тела/заголовка ответа).
+  По умолчанию ничего не меняется (см. [sections/40-any-http-method.md](sections/40-any-http-method.md)).
 - **§35 — peek-`MaxWait` = 500мс (грабли стенд-теста, тормоз ~9с).** `kafka.Reader` в `scanPartition`/
   `PeekBody` НЕ задавал `MaxWait` → дефолт kafka-go 10с. После чтения последнего сообщения фоновый
   fetch-цикл reader'а пытается прочитать следующий (ещё пустой) offset и блокируется на `MaxWait`, а

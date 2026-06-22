@@ -12,6 +12,28 @@
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-06-22
+
+HTTP-метод **«Любой» (ANY)** для входящего и исходящего метода узла (§40) — прозрачный проксинг метода.
+
+### ⚠️ Изменения при апгрейде
+
+- **Миграция БД `0020_node_method_any`** — пересоздаёт CHECK-констрейнты `incoming_method`/
+  `outgoing_method` с включением значения `'ANY'`. Аддитивно: существующие `GET/POST/PUT/DELETE` валидны,
+  дефолт колонок — `POST`, применяется автоматически на старте. Откат удалит `'ANY'` из CHECK (упадёт,
+  если остались узлы со значением `ANY`).
+
+### Added
+
+- **§40 — значение `ANY` («Любой») для `incoming_method`/`outgoing_method` узла.**
+  Входящий `ANY` — узел принимает запрос с **любым** HTTP-методом (без `405`). Исходящий `ANY` — Sender
+  вызывает приёмник **тем же методом, что пришёл от клиента** (зеркало источника: PUT→PUT, DELETE→DELETE).
+  Комбинация вх=ANY + исх=ANY = полный прозрачный проксинг метода, совместим с path-passthrough (§39).
+  Резолв `effectiveOutgoingMethod` в Receiver; pull-узлы (RabbitMQAsync) — исходящий `ANY` сводится к
+  `POST` (входящего метода нет); replay узла с вх=ANY реинъектит по залогированному `http_method`. В UI —
+  пункт «Любой»/«Any» в селектах входящего и исходящего метода. По умолчанию ничего не меняется.
+  Спека: [specs/sections/40-any-http-method.md](specs/sections/40-any-http-method.md).
+
 ## [1.4.1] - 2026-06-22
 
 Патч поверх 1.4.0: UI-фикс «отложенного» отображения изменений узла.
@@ -444,7 +466,8 @@ ClickHouse (§21), идентификатор узла в логах для об
 
 ---
 
-[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.4.1...HEAD
+[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.5.0...HEAD
+[1.5.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.4.1...v1.5.0
 [1.4.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.4.0...v1.4.1
 [1.4.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.3.0...v1.4.0
 [1.3.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.2.0...v1.3.0

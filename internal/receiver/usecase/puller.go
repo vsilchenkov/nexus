@@ -306,7 +306,8 @@ func (w *PullerWorker) buildPayload(msg RMQDelivery) ([]byte, error) {
 	headers["X-Nexus-Routing-Key"] = msg.RoutingKey
 
 	outMethod := string(w.node.OutgoingMethod) // §3.2 (#5): метод вызова получателя
-	if outMethod == "" {
+	// §40: у pull-узла нет входящего HTTP-метода, зеркалить (ANY) нечего → POST.
+	if outMethod == "" || w.node.OutgoingMethod == domain.HTTPMethodAny {
 		outMethod = "POST"
 	}
 	env := &Envelope{

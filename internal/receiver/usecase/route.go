@@ -152,7 +152,7 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 		NodePath:           node.Path,
 		NodeId:             node.ID,
 		TargetUrl:          finalURL,
-		Method:             string(node.OutgoingMethod),
+		Method:             effectiveOutgoingMethod(node, in.Method),
 		RequestPath:        remainder,
 		Auth:               &senderv1.AuthConfig{AuthorizationHeader: authHeader},
 		Headers:            headers,
@@ -196,10 +196,31 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 // want трактуется как POST (дефолт), чтобы узлы, созданные до миграции 0015 и
 // переживший её L1/Redis-кеш без поля, не отклоняли трафик.
 func methodMatches(got string, want domain.HTTPMethod) bool {
+	// §40: ANY — узел принимает запрос с любым входящим методом.
+	if want == domain.HTTPMethodAny {
+		return true
+	}
 	if want == "" {
 		want = domain.HTTPMethodPOST
 	}
 	return strings.EqualFold(got, string(want))
+}
+
+// effectiveOutgoingMethod вычисляет HTTP-метод исходящего вызова получателя.
+// §40: OutgoingMethod=ANY → зеркалит метод входящего запроса (incomingMethod);
+// пустой incoming → POST. Иначе — сконфигурированный метод узла (пустой → POST,
+// как трактует БД-дефолт и старое поведение).
+func effectiveOutgoingMethod(node *domain.Node, incomingMethod string) string {
+	if node.OutgoingMethod == domain.HTTPMethodAny {
+		if m := strings.ToUpper(strings.TrimSpace(incomingMethod)); m != "" {
+			return m
+		}
+		return string(domain.HTTPMethodPOST)
+	}
+	if node.OutgoingMethod == "" {
+		return string(domain.HTTPMethodPOST)
+	}
+	return string(node.OutgoingMethod)
 }
 
 func appendQuery(target string, q url.Values) string {
