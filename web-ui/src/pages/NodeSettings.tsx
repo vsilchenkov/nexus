@@ -180,14 +180,19 @@ export default function NodeSettings() {
       return node;
     },
     onSuccess: (data) => {
+      const nodeId = isNew ? (data as { id?: string } | undefined)?.id : id;
       qc.invalidateQueries({ queryKey: ["nodes"] });
+      // Инвалидируем и конкретный узел: иначе детальная/форма (staleTime 30с,
+      // queryKey ["node", id]) после правки ~30с показывают устаревший кэш —
+      // только что изменённое поле «отъезжает» к старому значению, пока не
+      // истечёт staleTime. Точечная инвалидация даёт мгновенный refetch.
+      if (nodeId) qc.invalidateQueries({ queryKey: ["node", nodeId] });
       // Сброс формы: иначе при следующем заходе на /nodes/new остаются
       // значения только что созданного узла (Phase AUD.7).
       setForm(emptyForm);
       setPendingHosts([]);
       // После сохранения возвращаемся в ОКНО УЗЛА (detail), а не на список:
       // правка существующего → его страница; создание → страница нового узла.
-      const nodeId = isNew ? (data as { id?: string } | undefined)?.id : id;
       navigate(nodeId ? `/nodes/${nodeId}` : "/");
     },
     onError: (e: { response?: { data?: { error?: string; code?: string; field?: string } } }) => {
