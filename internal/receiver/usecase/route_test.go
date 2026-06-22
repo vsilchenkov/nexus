@@ -28,6 +28,53 @@ func (s stubSenderClient) Send(_ context.Context, _ *senderv1.SendRequest) (*sen
 	return s.resp, s.err
 }
 
+// TestMethodMatches_Any (§40): ANY принимает любой входящий метод; остальное —
+// как было (пустой want = POST, регистронезависимо).
+func TestMethodMatches_Any(t *testing.T) {
+	t.Parallel()
+	for _, m := range []string{"GET", "POST", "PUT", "DELETE", "PATCH", "head"} {
+		if !methodMatches(m, domain.HTTPMethodAny) {
+			t.Errorf("methodMatches(%q, ANY) = false, want true", m)
+		}
+	}
+	if methodMatches("GET", domain.HTTPMethodPOST) {
+		t.Error("GET vs POST не должны совпадать")
+	}
+	if !methodMatches("post", domain.HTTPMethodPOST) {
+		t.Error("post vs POST должны совпадать (без учёта регистра)")
+	}
+	if !methodMatches("POST", "") {
+		t.Error("пустой want трактуется как POST")
+	}
+}
+
+// TestEffectiveOutgoingMethod (§40): ANY зеркалит входящий метод; конкретный —
+// остаётся; пустой → POST.
+func TestEffectiveOutgoingMethod(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		outgoing domain.HTTPMethod
+		incoming string
+		want     string
+	}{
+		{"ANY зеркалит PUT", domain.HTTPMethodAny, "PUT", "PUT"},
+		{"ANY зеркалит нижний регистр", domain.HTTPMethodAny, "delete", "DELETE"},
+		{"ANY без входящего → POST", domain.HTTPMethodAny, "", "POST"},
+		{"конкретный GET остаётся GET", domain.HTTPMethodGET, "POST", "GET"},
+		{"пустой → POST", "", "PUT", "POST"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			n := &domain.Node{OutgoingMethod: c.outgoing}
+			if got := effectiveOutgoingMethod(n, c.incoming); got != c.want {
+				t.Errorf("effectiveOutgoingMethod(%q, %q) = %q, want %q", c.outgoing, c.incoming, got, c.want)
+			}
+		})
+	}
+}
+
 // TestRoute_Paused: §3.6 — sync на paused-узел отдаёт ErrNodePaused,
 // handler по этой ошибке переключается на async и возвращает 202.
 func TestRoute_Paused(t *testing.T) {

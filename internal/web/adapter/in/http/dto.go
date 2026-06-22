@@ -15,8 +15,8 @@ const CredentialsMask = "***"
 type CreateNodeRequest struct {
 	Path                    string   `json:"path" binding:"required,max=255"`
 	RootMethod              string   `json:"root_method" binding:"required,oneof=request requestAsync RabbitMQAsync"`
-	IncomingMethod          string   `json:"incoming_method" binding:"omitempty,oneof=GET POST PUT DELETE"`
-	OutgoingMethod          string   `json:"outgoing_method" binding:"omitempty,oneof=GET POST PUT DELETE"`
+	IncomingMethod          string   `json:"incoming_method" binding:"omitempty,oneof=GET POST PUT DELETE ANY"`
+	OutgoingMethod          string   `json:"outgoing_method" binding:"omitempty,oneof=GET POST PUT DELETE ANY"`
 	URLMode                 string   `json:"url_mode" binding:"omitempty,oneof=static from_request"`
 	TargetURL               string   `json:"target_url" binding:"omitempty,max=2048"`
 	URLParamName            string   `json:"url_param_name" binding:"omitempty,max=64"`

@@ -48,7 +48,9 @@ func (m RootMethod) IsPull() bool { return m == RootMethodRabbitMQAsync }
 
 // HTTPMethod — HTTP-метод узла (§3.2): отдельно для входящего запроса
 // (который узел принимает) и для исходящего вызова получателя. По умолчанию
-// POST. Множество ограничено четырьмя методами из ТЗ.
+// POST. Кроме четырёх конкретных методов есть «Любой» (ANY, §40): для входящего
+// — принимать запрос с любым методом (без 405); для исходящего — вызывать
+// получателя тем же методом, что пришёл от клиента (зеркало источника).
 type HTTPMethod string
 
 const (
@@ -56,11 +58,14 @@ const (
 	HTTPMethodPOST   HTTPMethod = "POST"
 	HTTPMethodPUT    HTTPMethod = "PUT"
 	HTTPMethodDELETE HTTPMethod = "DELETE"
+	// HTTPMethodAny — §40 «Любой». Вх: узел принимает любой метод. Исх: Sender
+	// зеркалит метод входящего запроса (для pull-узлов — fallback POST).
+	HTTPMethodAny HTTPMethod = "ANY"
 )
 
 func (m HTTPMethod) Valid() bool {
 	switch m {
-	case HTTPMethodGET, HTTPMethodPOST, HTTPMethodPUT, HTTPMethodDELETE:
+	case HTTPMethodGET, HTTPMethodPOST, HTTPMethodPUT, HTTPMethodDELETE, HTTPMethodAny:
 		return true
 	}
 	return false

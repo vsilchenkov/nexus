@@ -194,6 +194,12 @@ func (u *ReplayUsecase) replayOne(ctx context.Context, node *domain.Node, logID 
 	// ErrNodeMethodNotAllowed (§34.5). Пустой IncomingMethod → POST, как
 	// трактует methodMatches в Receiver.
 	method := string(node.IncomingMethod)
+	// §40: ANY-узел принимает любой метод — "ANY" не валидный HTTP-глагол для
+	// реинъекции. Берём залогированный глагол исходного запроса (orig.HTTPMethod,
+	// колонка http_method §39); fallback POST.
+	if node.IncomingMethod == domain.HTTPMethodAny {
+		method = orig.HTTPMethod
+	}
 	if method == "" {
 		method = "POST"
 	}

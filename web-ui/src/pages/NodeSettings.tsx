@@ -44,13 +44,13 @@ import {
   Toggle3,
 } from "../components/ui";
 
-const HTTP_METHODS = ["GET", "POST", "PUT", "DELETE"] as const;
+const HTTP_METHODS = ["GET", "POST", "PUT", "DELETE", "ANY"] as const;
 
 type Form = {
   path: string;
   root_method: "request" | "requestAsync" | "RabbitMQAsync";
-  incoming_method: "GET" | "POST" | "PUT" | "DELETE";
-  outgoing_method: "GET" | "POST" | "PUT" | "DELETE";
+  incoming_method: "GET" | "POST" | "PUT" | "DELETE" | "ANY";
+  outgoing_method: "GET" | "POST" | "PUT" | "DELETE" | "ANY";
   url_mode: "static" | "from_request";
   target_url: string;
   path_passthrough: boolean;
@@ -325,7 +325,7 @@ export default function NodeSettings() {
                 >
                   {HTTP_METHODS.map((m) => (
                     <option key={m} value={m}>
-                      {m}
+                      {m === "ANY" ? t("node.method.any") : m}
                     </option>
                   ))}
                 </Select>
@@ -440,7 +440,7 @@ export default function NodeSettings() {
               >
                 {HTTP_METHODS.map((m) => (
                   <option key={m} value={m}>
-                    {m}
+                    {m === "ANY" ? t("node.method.any") : m}
                   </option>
                 ))}
               </Select>

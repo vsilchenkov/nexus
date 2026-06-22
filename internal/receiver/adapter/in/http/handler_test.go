@@ -1,9 +1,11 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -14,6 +16,8 @@ import (
 	"nexus/internal/domain"
 	"nexus/internal/platform/logging"
 	"nexus/internal/platform/metrics"
+	"nexus/internal/receiver/usecase"
+	senderv1 "nexus/proto/sender/v1"
 )
 
 // TestSplitTeamSlugAndPath фиксирует контракт парсинга URL Receiver'а
@@ -126,4 +130,65 @@ func TestReplyAsyncError_BodyShape(t *testing.T) {
 	assert.Equal(t, "node not found", body["message"])
 	_, hasError := body["error"]
 	assert.False(t, hasError, "async error body must not use the sync 'error' key")
+}
+
+// syncStubReader — port.NodeReader для sync-теста: всегда отдаёт заданный узел.
+type syncStubReader struct{ node *domain.Node }
+
+func (r syncStubReader) Get(_ context.Context, _, _ string) (*domain.Node, error) {
+	return r.node, nil
+}
+
+// syncStubSender — usecase.SenderClient: возвращает заранее заданный ответ
+// внешнего узла (тело + заголовки + статус), имитируя Sender.
+type syncStubSender struct{ resp *senderv1.SendResponse }
+
+func (s syncStubSender) Send(_ context.Context, _ *senderv1.SendRequest) (*senderv1.SendResponse, error) {
+	return s.resp, nil
+}
+
+// TestHandleSync_ForwardsResponseBodyAndHeaders фиксирует сквозной проброс
+// ОТВЕТА внешнего узла клиенту: тело, заголовки и статус возвращаются как есть;
+// hop-by-hop-заголовки (Connection и т.п.) вырезаются (§3.1, #6).
+func TestHandleSync_ForwardsResponseBodyAndHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	node := &domain.Node{
+		Path:             "demo",
+		RootMethod:       domain.RootMethodRequest,
+		Status:           domain.NodeStatusEnabled,
+		URLMode:          domain.URLModeStatic,
+		TargetURL:        "http://upstream.local/hook",
+		IncomingMethod:   domain.HTTPMethodPOST,
+		OutgoingMethod:   domain.HTTPMethodPOST,
+		AuthType:         domain.AuthTypeNone,
+		IncomingAuthType: domain.IncomingAuthTypeNone,
+	}
+	sender := syncStubSender{resp: &senderv1.SendResponse{
+		StatusCode: http.StatusCreated,
+		Body:       []byte(`{"token":"abc","ok":true}`),
+		Headers: map[string]string{
+			"Content-Type":   "application/json",
+			"X-Echo":         "1",
+			"X-Custom-Resp":  "vovo",
+			"Connection":     "keep-alive", // hop-by-hop → должен быть вырезан
+			"Content-Length": "25",         // hop-by-hop в нашем смысле? нет — но gin перезапишет
+		},
+	}}
+	route := usecase.NewRouteUsecase(syncStubReader{node: node}, sender, 5, logging.NewNoop())
+	h := New(route, nil, 0, nil, logging.NewNoop())
+
+	r := gin.New()
+	h.Register(r)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/request/demo", strings.NewReader(`{"q":1}`))
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code, "статус ответа внешнего узла должен проброситься")
+	assert.Equal(t, `{"token":"abc","ok":true}`, w.Body.String(), "ТЕЛО ответа должно проброситься клиенту дословно")
+	assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+	assert.Equal(t, "1", w.Header().Get("X-Echo"), "заголовок ответа узла должен проброситься")
+	assert.Equal(t, "vovo", w.Header().Get("X-Custom-Resp"), "произвольный заголовок ответа должен проброситься")
+	assert.Empty(t, w.Header().Get("Connection"), "hop-by-hop заголовок должен быть вырезан")
 }
