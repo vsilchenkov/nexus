@@ -354,6 +354,8 @@
       "incoming_method_hint": "HTTP-метод, который принимает узел; остальные получают 405",
       "outgoing_method": "Исходящий метод",
       "outgoing_method_hint": "HTTP-метод вызова получателя",
+      "path_passthrough": "Проксировать хвост пути",
+      "path_passthrough_hint": "Хвост входящего пути после пути узла приклеивается к Target URL. Напр. узел ozon + запрос /ozon/GetAuthToken → <target>/GetAuthToken. Выключено — точный матч пути (лишний хвост → 404).",
       "full_address": "Полный адрес",
       "state": "Состояние",
       "url_static": "Статичный",

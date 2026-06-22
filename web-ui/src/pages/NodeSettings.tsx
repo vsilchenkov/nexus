@@ -52,6 +52,7 @@ type Form = {
   outgoing_method: "GET" | "POST" | "PUT" | "DELETE";
   url_mode: "static" | "from_request";
   target_url: string;
+  path_passthrough: boolean;
   url_param_name: string;
   auth_type: string;
   auth_credentials: string;
@@ -97,6 +98,7 @@ const emptyForm: Form = {
   outgoing_method: "POST",
   url_mode: "static",
   target_url: "",
+  path_passthrough: false,
   url_param_name: "url_base",
   auth_type: "none",
   auth_credentials: "",
@@ -400,6 +402,18 @@ export default function NodeSettings() {
                   onPendingChange={setPendingHosts}
                 />
               </Field>
+            )}
+            {/* §39: path-passthrough — приклеивание хвоста входящего пути к target URL.
+                Не применимо к pull-узлам (нет входящего HTTP-пути). */}
+            {!isPull && (
+              <div className="mt-3 border-t border-line pt-3">
+                <Toggle
+                  checked={form.path_passthrough}
+                  onChange={(v) => set("path_passthrough", v)}
+                  label={t("node.form.path_passthrough")}
+                />
+                <p className="mt-1 text-xs text-fg-subtle">{t("node.form.path_passthrough_hint")}</p>
+              </div>
             )}
             <Field
               label={t("node.form.outgoing_method")}

@@ -68,6 +68,8 @@ export type Node = {
   outgoing_method?: HTTPMethod;
   url_mode: "static" | "from_request";
   target_url: string;
+  // §39: path-passthrough — приклеивать хвост входящего пути к target URL.
+  path_passthrough?: boolean;
   status: "enabled" | "disabled" | "paused";
   auth_type: string;
   clickhouse_table: string;

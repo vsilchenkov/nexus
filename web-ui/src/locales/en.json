@@ -354,6 +354,8 @@
       "incoming_method_hint": "HTTP method the node accepts; other methods get 405",
       "outgoing_method": "Outgoing method",
       "outgoing_method_hint": "HTTP method used to call the target",
+      "path_passthrough": "Pass through path tail",
+      "path_passthrough_hint": "The incoming path tail after the node path is appended to the Target URL. E.g. node ozon + request /ozon/GetAuthToken → <target>/GetAuthToken. Off — exact path match (extra tail → 404).",
       "full_address": "Full address",
       "state": "State",
       "url_static": "Static",
