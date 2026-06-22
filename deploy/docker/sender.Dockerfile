@@ -11,7 +11,12 @@ COPY . .
 # Версия — единый источник истины git: вшивается из git на этапе сборки (.git
 # попадает в контекст, git установлен выше). safe.directory — страховка от
 # "detected dubious ownership" при несовпадении uid контекста сборки.
+# `git update-index --refresh` освежает stat-кэш индекса: после `COPY . .` у файлов
+# в слое новые mtime/inode, а `git describe --dirty` (он, в отличие от `git status`,
+# refresh не делает) принял бы неизменённое дерево за грязное → ложный суффикс
+# "-dirty" в версии ДАЖЕ при чистом `git status` на сервере. См. DEPLOYMENT.md §9.4.
 RUN git config --global --add safe.directory /src && \
+    git update-index -q --refresh >/dev/null 2>&1 || true; \
     VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)" && \
     VERSION="${VERSION#v}" && \
     GIT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" && \
