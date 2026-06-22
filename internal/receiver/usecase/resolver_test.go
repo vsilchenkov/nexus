@@ -147,6 +147,48 @@ func TestResolveNode_PathPassthrough(t *testing.T) {
 	})
 }
 
+// TestResolveNode_OverlappingNodes (§39, вопрос пользователя): узел-passthrough
+// `ozon` и точный узел `ozon/GetAuthToken` в одной команде. Точный матч всегда
+// приоритетнее префикса; «затеняется» ровно подпуть точного узла. Если точный
+// узел без passthrough, путь ГЛУБЖЕ него даёт 404 (longest-existing-prefix wins,
+// без провала на короткий passthrough-узел).
+func TestResolveNode_OverlappingNodes(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	ozon := &domain.Node{Path: "ozon", PathPassthrough: true}                   // Нода 1: passthrough
+	ozonAuth := &domain.Node{Path: "ozon/GetAuthToken", PathPassthrough: false} // Нода 2: прямой
+	reader := mapNodeReader{nodes: map[string]*domain.Node{
+		"vika/ozon":              ozon,
+		"vika/ozon/GetAuthToken": ozonAuth,
+	}}
+
+	cases := []struct {
+		name          string
+		path          string // nodePath после splitTeamSlugAndPath (team=vika)
+		wantNode      *domain.Node
+		wantRemainder string
+		wantNotFound  bool
+	}{
+		{"точный подпуть → прямой узел (Нода 2), без приклеивания", "ozon/GetAuthToken", ozonAuth, "", false},
+		{"другой подпуть → passthrough (Нода 1) + хвост", "ozon/Orders", ozon, "Orders", false},
+		{"базовый путь узла → Нода 1 без хвоста", "ozon", ozon, "", false},
+		{"глубже точного узла (passthrough off) → 404, НЕ уезжает на Ноду 1", "ozon/GetAuthToken/v2", nil, "", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			node, remainder, err := resolveNode(ctx, reader, "vika", c.path)
+			if c.wantNotFound {
+				assert.ErrorIs(t, err, domain.ErrNodeNotFound)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, c.wantNode, node)
+			assert.Equal(t, c.wantRemainder, remainder)
+		})
+	}
+}
+
 // TestAppendPathSuffix — §39: корректное приклеивание хвоста к целевому URL.
 func TestAppendPathSuffix(t *testing.T) {
 	t.Parallel()
