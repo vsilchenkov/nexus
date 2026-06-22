@@ -349,6 +349,36 @@ func TestReplay_PathPassthrough_ReconstructsSubpath(t *testing.T) {
 	}
 }
 
+// TestReplay_AnyIncomingUsesLoggedMethod (§40): у узла с IncomingMethod=ANY
+// нет единственного входящего метода — для реинъекции берём залогированный
+// глагол исходного запроса (orig.HTTPMethod, колонка http_method §39), а не
+// литерал "ANY".
+func TestReplay_AnyIncomingUsesLoggedMethod(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{
+		ID:              "n1",
+		Path:            "demo/any",
+		Status:          domain.NodeStatusEnabled,
+		ClickHouseTable: "t.t",
+		IncomingMethod:  domain.HTTPMethodAny,
+	}
+	log := &domain.LogRecord{ID: "log1", HTTPMethod: "PUT", Request: `{"a":1}`, DateRequest: time.Now(), Done: true}
+	disp := &stubDispatcher{}
+	uc := NewReplayUsecase(
+		&stubLogReader{log: log},
+		&stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
+		disp, nil,
+		NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10, logging.NewNoop(),
+	)
+	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{UseNodeAuth: true})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if disp.gotReq.Method != "PUT" {
+		t.Fatalf("ANY-узел: replay должен слать залогированный метод PUT, got %q", disp.gotReq.Method)
+	}
+}
+
 // §36.11: «Повторить все сейчас» — пере-инжектирует все неудачные и отменяет их
 // оригиналы в DLQ (без двойной доставки).
 func TestReplay_ReplayFailed_AllAndCancelsOriginals(t *testing.T) {

@@ -3845,7 +3845,8 @@ const docTemplate = `{
                         "GET",
                         "POST",
                         "PUT",
-                        "DELETE"
+                        "DELETE",
+                        "ANY"
                     ]
                 },
                 "log_headers": {
@@ -3875,7 +3876,8 @@ const docTemplate = `{
                         "GET",
                         "POST",
                         "PUT",
-                        "DELETE"
+                        "DELETE",
+                        "ANY"
                     ]
                 },
                 "path": {
@@ -4712,7 +4714,8 @@ const docTemplate = `{
                         "GET",
                         "POST",
                         "PUT",
-                        "DELETE"
+                        "DELETE",
+                        "ANY"
                     ]
                 },
                 "log_headers": {
@@ -4742,7 +4745,8 @@ const docTemplate = `{
                         "GET",
                         "POST",
                         "PUT",
-                        "DELETE"
+                        "DELETE",
+                        "ANY"
                     ]
                 },
                 "path": {
