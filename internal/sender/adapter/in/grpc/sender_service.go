@@ -40,6 +40,7 @@ func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 		RootMethod:         domain.RootMethodRequest, // sync-путь
 		TargetURL:          req.GetTargetUrl(),
 		Method:             req.GetMethod(),
+		RequestPath:        req.GetRequestPath(),
 		Headers:            headers,
 		Body:               req.GetBody(),
 		TimeoutMs:          req.GetTimeoutMs(),

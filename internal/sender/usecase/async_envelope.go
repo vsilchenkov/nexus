@@ -22,6 +22,10 @@ type Envelope struct {
 	Body       []byte            `json:"body,omitempty"`
 	ClientIP   string            `json:"client_ip,omitempty"`
 	ReceivedAt time.Time         `json:"received_at"`
+	// RequestPath — §39: подпуть запроса (хвост path-passthrough), для колонки
+	// `method` лог-таблицы. Держать синхронным с Receiver-копией Envelope
+	// (internal/receiver/usecase/envelope.go).
+	RequestPath string `json:"request_path,omitempty"`
 }
 
 // buildSendInput собирает SendInput из актуального узла и envelope — общий код
@@ -43,6 +47,7 @@ func buildSendInput(node *domain.Node, env Envelope) SendInput {
 		RootMethod:         domain.RootMethodRequestAsync,
 		TargetURL:          env.TargetURL,
 		Method:             env.Method,
+		RequestPath:        env.RequestPath,
 		Headers:            headers,
 		Body:               env.Body,
 		TimeoutMs:          node.TimeoutMs,

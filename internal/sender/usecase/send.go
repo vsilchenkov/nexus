@@ -25,9 +25,12 @@ type SendInput struct {
 	RootMethod domain.RootMethod
 
 	TargetURL string
-	Method    string
-	Headers   map[string]string
-	Body      []byte
+	Method    string // HTTP-глагол (GET/POST/…) → колонка http_method
+	// RequestPath — §39: подпуть запроса (хвост path-passthrough) → колонка
+	// `method` лог-таблицы. Пусто у обычных узлов. На сам HTTP-вызов не влияет.
+	RequestPath string
+	Headers     map[string]string
+	Body        []byte
 
 	TimeoutMs      int32
 	RetryCount     int32
@@ -100,10 +103,13 @@ type attempt struct {
 func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 	t0 := time.Now()
 	rec := &domain.LogRecord{
-		ID:              in.ID,
-		Type:            in.RootMethod,
-		URL:             in.TargetURL,
-		Method:          in.Method,
+		ID:   in.ID,
+		Type: in.RootMethod,
+		URL:  in.TargetURL,
+		// §39 кросс-маппинг: HTTP-глагол (in.Method) → колонка http_method;
+		// подпуть запроса (in.RequestPath) → колонка method.
+		HTTPMethod:      in.Method,
+		Method:          in.RequestPath,
 		Parameters:      extractQuery(in.TargetURL),
 		ChecksumRequest: md5hex(in.Body),
 		DateCreate:      t0,

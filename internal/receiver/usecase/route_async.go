@@ -122,7 +122,7 @@ func (u *RouteAsyncUsecase) RouteAsync(ctx context.Context, in RouteInput) (*Rou
 	targetURL = appendPathSuffix(targetURL, remainder)
 
 	id := uuid.NewString()
-	env := BuildEnvelope(id, node, string(node.OutgoingMethod), targetURL, authHeader, in.ClientIP,
+	env := BuildEnvelope(id, node, string(node.OutgoingMethod), targetURL, authHeader, in.ClientIP, remainder,
 		effHeader, cleanQuery, effBody)
 	// §32: служебный hop-счётчик в обход allowlist узла. На стороне Sender
 	// заголовок уйдёт во внешний запрос; если цель — снова Receiver, счётчик

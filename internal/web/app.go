@@ -176,6 +176,7 @@ func (a *App) Start(ctx context.Context) error {
 				tables = append(tables, n.ClickHouseTable)
 			}
 			chpf.EnsureNodeIDColumn(ctx, a.chMgr.Conn(), tables, a.logger)
+			chpf.EnsureHTTPMethodColumn(ctx, a.chMgr.Conn(), tables, a.logger) // §39
 		}
 	}
 

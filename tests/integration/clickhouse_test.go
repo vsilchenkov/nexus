@@ -116,6 +116,7 @@ func createNodeLogTable(t *testing.T, ctx context.Context, conn chdriver.Conn, t
 	ddl := fmt.Sprintf(`CREATE TABLE %s (
 		ID String,
 		type String,
+		http_method String,
 		url String,
 		method String,
 		parameters String,
