@@ -3326,3 +3326,24 @@ AFTER type`) на старте Web и Sender.
 колонки «HTTP» (глагол) и «Метод» (подпуть) во вкладке логов.
 
 Подробности — [sections/39-path-passthrough.md](sections/39-path-passthrough.md).
+
+## 40. HTTP-метод «Любой» (ANY) для входящего и исходящего метода узла
+
+До §40 входящий/исходящий HTTP-метод узла (§3.2) ограничивался `GET/POST/PUT/DELETE`. §40 добавляет
+значение **`ANY`** («Любой») для обоих полей.
+
+**Семантика.** Входящий `ANY` — узел принимает запрос с любым методом (без `405`; `methodMatches` для
+`want=ANY` всегда true). Исходящий `ANY` — Sender вызывает получателя тем же методом, что пришёл от
+клиента (зеркало источника); резолв в Receiver через `effectiveOutgoingMethod(node, in.Method)` (пустой
+входящий → POST). Вх=ANY + исх=ANY = полный прозрачный проксинг метода, совместим с path-passthrough
+(§39): `PUT …/node/sub` → `PUT <target>/sub`. Фактический метод пишется в лог-колонку `http_method`.
+
+**Где.** `enums.go` (`HTTPMethodAny`, `Valid()`); `route.go`/`route_async.go` (`methodMatches`,
+`effectiveOutgoingMethod` в sync и async); `puller.go` (pull-узел: исх ANY → POST, входящего метода нет);
+`replay.go` (узел вх=ANY → реинъекция по залогированному `http_method`, не литералом `ANY`).
+
+**Хранение/API/миграция.** Строка `'ANY'`; миграция `0020_node_method_any` пересоздаёт CHECK-констрейнты
+`nodes_{incoming,outgoing}_method_check` с `'ANY'` (аддитивно, дефолт колонок — POST). DTO
+`oneof=GET POST PUT DELETE ANY`. UI: пункт «Любой»/«Any» (`node.method.any`) в селектах вх/исх метода.
+
+Подробности — [sections/40-any-http-method.md](sections/40-any-http-method.md).
