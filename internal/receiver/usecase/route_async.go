@@ -65,7 +65,7 @@ func (u *RouteAsyncUsecase) RouteAsync(ctx context.Context, in RouteInput) (*Rou
 		return nil, domain.ErrLoopDetected
 	}
 
-	node, err := resolveNode(ctx, u.nodes, in.TeamSlug, in.NodePath)
+	node, remainder, err := resolveNode(ctx, u.nodes, in.TeamSlug, in.NodePath)
 	if err != nil {
 		return nil, err
 	}
@@ -118,6 +118,8 @@ func (u *RouteAsyncUsecase) RouteAsync(ctx context.Context, in RouteInput) (*Rou
 	if err != nil {
 		return nil, err
 	}
+	// §39: при path-passthrough приклеиваем хвост входящего пути к целевому URL.
+	targetURL = appendPathSuffix(targetURL, remainder)
 
 	id := uuid.NewString()
 	env := BuildEnvelope(id, node, string(node.OutgoingMethod), targetURL, authHeader, in.ClientIP,

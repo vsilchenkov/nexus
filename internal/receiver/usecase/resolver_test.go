@@ -39,29 +39,135 @@ func TestResolveNode_Fallback(t *testing.T) {
 
 	t.Run("legacy slash-path найден по адресу без слога (фикс #8)", func(t *testing.T) {
 		// URL /api/v1/requestAsync/webhook/sendasynq → split → (webhook, sendasynq).
-		got, err := resolveNode(ctx, reader, "webhook", "sendasynq")
+		got, remainder, err := resolveNode(ctx, reader, "webhook", "sendasynq")
 		require.NoError(t, err)
 		assert.Equal(t, legacy, got)
+		assert.Empty(t, remainder)
 	})
 
 	t.Run("явный слог команды имеет приоритет", func(t *testing.T) {
 		// URL /api/v1/request/partner/orders → split → (partner, orders).
-		got, err := resolveNode(ctx, reader, "partner", "orders")
+		got, remainder, err := resolveNode(ctx, reader, "partner", "orders")
 		require.NoError(t, err)
 		assert.Equal(t, teamScoped, got)
+		assert.Empty(t, remainder)
 	})
 
 	t.Run("single-segment default-team путь", func(t *testing.T) {
 		reader2 := mapNodeReader{nodes: map[string]*domain.Node{
 			domain.DefaultTeamSlug + "/ping": {Path: "ping"},
 		}}
-		got, err := resolveNode(ctx, reader2, "", "ping")
+		got, remainder, err := resolveNode(ctx, reader2, "", "ping")
 		require.NoError(t, err)
 		assert.Equal(t, "ping", got.Path)
+		assert.Empty(t, remainder)
 	})
 
 	t.Run("реально несуществующий узел → not found", func(t *testing.T) {
-		_, err := resolveNode(ctx, reader, "nope", "missing")
+		_, _, err := resolveNode(ctx, reader, "nope", "missing")
 		assert.ErrorIs(t, err, domain.ErrNodeNotFound)
 	})
+}
+
+// TestResolveNode_PathPassthrough — §39: префиксный матч с приклеиванием хвоста.
+func TestResolveNode_PathPassthrough(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	t.Run("passthrough on → найден узел-префикс + remainder (с явным слогом)", func(t *testing.T) {
+		// URL /api/v1/request/vika/ozon/GetAuthToken → split → (vika, ozon/GetAuthToken).
+		ozon := &domain.Node{Path: "ozon", PathPassthrough: true}
+		reader := mapNodeReader{nodes: map[string]*domain.Node{"vika/ozon": ozon}}
+
+		got, remainder, err := resolveNode(ctx, reader, "vika", "ozon/GetAuthToken")
+		require.NoError(t, err)
+		assert.Equal(t, ozon, got)
+		assert.Equal(t, "GetAuthToken", remainder)
+	})
+
+	t.Run("passthrough on → multi-segment remainder", func(t *testing.T) {
+		svc := &domain.Node{Path: "svc", PathPassthrough: true}
+		reader := mapNodeReader{nodes: map[string]*domain.Node{"team/svc": svc}}
+
+		got, remainder, err := resolveNode(ctx, reader, "team", "svc/user/123")
+		require.NoError(t, err)
+		assert.Equal(t, svc, got)
+		assert.Equal(t, "user/123", remainder)
+	})
+
+	t.Run("passthrough on → legacy без слога (default-team)", func(t *testing.T) {
+		// URL /api/v1/request/ozon/GetAuthToken → split → (ozon, GetAuthToken).
+		ozon := &domain.Node{Path: "ozon", PathPassthrough: true}
+		reader := mapNodeReader{nodes: map[string]*domain.Node{
+			domain.DefaultTeamSlug + "/ozon": ozon,
+		}}
+
+		got, remainder, err := resolveNode(ctx, reader, "ozon", "GetAuthToken")
+		require.NoError(t, err)
+		assert.Equal(t, ozon, got)
+		assert.Equal(t, "GetAuthToken", remainder)
+	})
+
+	t.Run("passthrough off → 404 (текущее поведение сохранено)", func(t *testing.T) {
+		ozon := &domain.Node{Path: "ozon", PathPassthrough: false}
+		reader := mapNodeReader{nodes: map[string]*domain.Node{"vika/ozon": ozon}}
+
+		_, _, err := resolveNode(ctx, reader, "vika", "ozon/GetAuthToken")
+		assert.ErrorIs(t, err, domain.ErrNodeNotFound)
+	})
+
+	t.Run("longest-prefix wins: более длинный узел без passthrough → 404, не уезжает на короткий", func(t *testing.T) {
+		// Узел a (passthrough) и a/b (без). Запрос a/b/c должен матчить a/b
+		// (точнее всех), а раз у него passthrough off → 404, а не уехать на a.
+		aNode := &domain.Node{Path: "a", PathPassthrough: true}
+		abNode := &domain.Node{Path: "a/b", PathPassthrough: false}
+		reader := mapNodeReader{nodes: map[string]*domain.Node{
+			"team/a":   aNode,
+			"team/a/b": abNode,
+		}}
+
+		_, _, err := resolveNode(ctx, reader, "team", "a/b/c")
+		assert.ErrorIs(t, err, domain.ErrNodeNotFound)
+	})
+
+	t.Run("точное совпадение приоритетнее префикса", func(t *testing.T) {
+		// Узлы svc (passthrough) и svc/user (точный). Запрос svc/user → точный.
+		svc := &domain.Node{Path: "svc", PathPassthrough: true}
+		svcUser := &domain.Node{Path: "svc/user", PathPassthrough: false}
+		reader := mapNodeReader{nodes: map[string]*domain.Node{
+			"team/svc":      svc,
+			"team/svc/user": svcUser,
+		}}
+
+		got, remainder, err := resolveNode(ctx, reader, "team", "svc/user")
+		require.NoError(t, err)
+		assert.Equal(t, svcUser, got)
+		assert.Empty(t, remainder)
+	})
+}
+
+// TestAppendPathSuffix — §39: корректное приклеивание хвоста к целевому URL.
+func TestAppendPathSuffix(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		target    string
+		remainder string
+		want      string
+	}{
+		{"пустой remainder → URL без изменений", "https://api.ozon.ru:443", "", "https://api.ozon.ru:443"},
+		{"корневой target + один сегмент", "https://api.ozon.ru:443", "GetAuthToken", "https://api.ozon.ru:443/GetAuthToken"},
+		{"target с путём + хвост", "https://api.partner.com/hook", "user/123", "https://api.partner.com/hook/user/123"},
+		{"target с trailing slash без дублей", "https://api.partner.com/hook/", "user/123", "https://api.partner.com/hook/user/123"},
+		{"сохранение query целевого URL", "https://api.partner.com/hook?k=v", "tail", "https://api.partner.com/hook/tail?k=v"},
+		{"traversal «..» обезврежен (не выходит за базу)", "https://api.partner.com/base", "../evil", "https://api.partner.com/evil"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, appendPathSuffix(tt.target, tt.remainder))
+		})
+	}
 }

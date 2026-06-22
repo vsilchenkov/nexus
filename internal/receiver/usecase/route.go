@@ -78,7 +78,7 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 		return nil, domain.ErrLoopDetected
 	}
 
-	node, err := resolveNode(ctx, u.nodes, in.TeamSlug, in.NodePath)
+	node, remainder, err := resolveNode(ctx, u.nodes, in.TeamSlug, in.NodePath)
 	if err != nil {
 		return nil, err
 	}
@@ -133,6 +133,8 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 	if err != nil {
 		return nil, err
 	}
+	// §39: при path-passthrough приклеиваем хвост входящего пути к целевому URL.
+	targetURL = appendPathSuffix(targetURL, remainder)
 	finalURL := appendQuery(targetURL, cleanQuery)
 
 	headers := pickForwardHeaders(effHeader, node.ForwardHeaders)
