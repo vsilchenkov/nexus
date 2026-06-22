@@ -141,6 +141,7 @@ SELECT
 	n.clickhouse_table, n.status, n.team_id,
 	n.log_request_body, n.log_response_body, n.log_headers,
 	n.logging_enabled, n.max_body_size_enabled, n.max_body_size,
+	n.path_passthrough,
 	n.created_at, n.updated_at,
 	n.incoming_method, n.outgoing_method
 FROM nodes n
@@ -167,6 +168,7 @@ func (r *Reader) getFromPg(ctx context.Context, teamSlug, path string) (*domain.
 		&n.ClickHouseTable, &status, &n.TeamID,
 		&n.LogRequestBody, &n.LogResponseBody, &n.LogHeaders,
 		&n.LoggingEnabled, &n.MaxBodySizeEnabled, &n.MaxBodySize,
+		&n.PathPassthrough,
 		&created, &updated,
 		&incomingMethod, &outgoingMethod,
 	)
