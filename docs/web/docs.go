@@ -3830,6 +3830,18 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 1024
                 },
+                "incoming_auth_dynamic_field": {
+                    "type": "string",
+                    "maxLength": 64
+                },
+                "incoming_auth_dynamic_source": {
+                    "description": "§41: источник и имя поля для входящей динамической авторизации.",
+                    "type": "string",
+                    "enum": [
+                        "header",
+                        "query"
+                    ]
+                },
                 "incoming_auth_type": {
                     "type": "string",
                     "enum": [
@@ -4435,6 +4447,12 @@ const docTemplate = `{
                 "incoming_auth_credentials_set": {
                     "type": "boolean"
                 },
+                "incoming_auth_dynamic_field": {
+                    "type": "string"
+                },
+                "incoming_auth_dynamic_source": {
+                    "type": "string"
+                },
                 "incoming_auth_type": {
                     "type": "string"
                 },
@@ -4698,6 +4716,18 @@ const docTemplate = `{
                 "incoming_auth_credentials": {
                     "type": "string",
                     "maxLength": 1024
+                },
+                "incoming_auth_dynamic_field": {
+                    "type": "string",
+                    "maxLength": 64
+                },
+                "incoming_auth_dynamic_source": {
+                    "description": "§41: источник и имя поля для входящей динамической авторизации.",
+                    "type": "string",
+                    "enum": [
+                        "header",
+                        "query"
+                    ]
                 },
                 "incoming_auth_type": {
                     "type": "string",

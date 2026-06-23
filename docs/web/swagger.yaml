@@ -61,6 +61,15 @@ definitions:
       incoming_auth_credentials:
         maxLength: 1024
         type: string
+      incoming_auth_dynamic_field:
+        maxLength: 64
+        type: string
+      incoming_auth_dynamic_source:
+        description: '§41: источник и имя поля для входящей динамической авторизации.'
+        enum:
+        - header
+        - query
+        type: string
       incoming_auth_type:
         enum:
         - none
@@ -481,6 +490,10 @@ definitions:
         type: string
       incoming_auth_credentials_set:
         type: boolean
+      incoming_auth_dynamic_field:
+        type: string
+      incoming_auth_dynamic_source:
+        type: string
       incoming_auth_type:
         type: string
       incoming_method:
@@ -661,6 +674,15 @@ definitions:
         type: array
       incoming_auth_credentials:
         maxLength: 1024
+        type: string
+      incoming_auth_dynamic_field:
+        maxLength: 64
+        type: string
+      incoming_auth_dynamic_source:
+        description: '§41: источник и имя поля для входящей динамической авторизации.'
+        enum:
+        - header
+        - query
         type: string
       incoming_auth_type:
         enum:
