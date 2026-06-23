@@ -12,6 +12,13 @@
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-06-23
+
+### Changed
+
+- **UI: пункт `ANY` в селектах входящего/исходящего метода узла теперь подписан «Any» (вместо «Любой»).**
+  Косметика поверх §40 — единый англоязычный лейбл метода в селектах и в подсказках (`?`) к полям.
+
 ## [1.5.0] - 2026-06-22
 
 HTTP-метод **«Любой» (ANY)** для входящего и исходящего метода узла (§40) — прозрачный проксинг метода.
@@ -466,7 +473,8 @@ ClickHouse (§21), идентификатор узла в логах для об
 
 ---
 
-[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.5.0...HEAD
+[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.5.1...HEAD
+[1.5.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.5.0...v1.5.1
 [1.5.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.4.1...v1.5.0
 [1.4.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.4.0...v1.4.1
 [1.4.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.3.0...v1.4.0
