@@ -2308,6 +2308,144 @@
                 }
             }
         },
+        "/api/nodes/{id}/log/{logId}/body": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    },
+                    {
+                        "ApiTokenAuth": []
+                    }
+                ],
+                "description": "Для постраничной подгрузки «показать весь»: возвращает срез тела и его полную длину в рунах. which обязателен (request|response); offset/limit — в рунах (limit капится).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logs"
+                ],
+                "summary": "Срез тела (request|response) одной записи лога по рунам (§42).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "log record id",
+                        "name": "logId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "request | response",
+                        "name": "which",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "смещение в рунах (default 0)",
+                        "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "сколько рун вернуть (default 65536, max 4194304)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.LogBodyChunkResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{id}/log/{logId}/body/download": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    },
+                    {
+                        "ApiTokenAuth": []
+                    }
+                ],
+                "description": "Стримит полное тело как text/plain attachment, нарезая по рунам — память на сервере ограничена размером среза. which обязателен.",
+                "produces": [
+                    "text/plain"
+                ],
+                "tags": [
+                    "logs"
+                ],
+                "summary": "Скачать тело (request|response) записи лога целиком файлом (§42).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "log record id",
+                        "name": "logId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "request | response",
+                        "name": "which",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "body stream",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/{id}/logs": {
             "get": {
                 "security": [
@@ -4373,6 +4511,35 @@
                 }
             }
         },
+        "internal_web_adapter_in_http.LogBodyChunkResponse": {
+            "type": "object",
+            "properties": {
+                "chunk": {
+                    "description": "сам срез",
+                    "type": "string"
+                },
+                "eof": {
+                    "description": "достигнут конец тела",
+                    "type": "boolean"
+                },
+                "offset": {
+                    "description": "смещение среза в рунах",
+                    "type": "integer"
+                },
+                "returned": {
+                    "description": "сколько рун в chunk",
+                    "type": "integer"
+                },
+                "total": {
+                    "description": "полная длина тела в рунах",
+                    "type": "integer"
+                },
+                "which": {
+                    "description": "request | response",
+                    "type": "string"
+                }
+            }
+        },
         "internal_web_adapter_in_http.LogRecordDTO": {
             "type": "object",
             "properties": {
@@ -4426,8 +4593,15 @@
                 "request": {
                     "type": "string"
                 },
+                "request_len": {
+                    "description": "§42: полные длины тел в рунах. В Get поля request/response несут только\nПРЕВЬЮ (первые bodyPreviewRunes рун); если *_len \u003e длины превью, на фронте\nпоказывается «показать весь / скачать». В списках (List/Stream) не заданы.",
+                    "type": "integer"
+                },
                 "response": {
                     "type": "string"
+                },
+                "response_len": {
+                    "type": "integer"
                 },
                 "status": {
                     "type": "integer"

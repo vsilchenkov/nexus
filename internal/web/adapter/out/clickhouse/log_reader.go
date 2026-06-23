@@ -83,6 +83,39 @@ const selectCols = `ID, type, http_method, url, method, parameters, request, res
 	duration, done, checksum_request, checksum_response,
 	Host, IP, attempts, attempts_details, node_id`
 
+// previewCols — как selectCols, но тела заменены префиксом substringUTF8(col,1,?)
+// (превью), а в конец добавлены полные длины lengthUTF8(col). Не тянет тела
+// целиком в Go ради дефолтного разворачивания строки лога (§42). Порядок
+// колонок совпадает с selectCols, плюс две длины в хвосте.
+const previewCols = `ID, type, http_method, url, method, parameters,
+	substringUTF8(request, 1, ?), substringUTF8(response, 1, ?),
+	status, reason, date_create, date_request, date_response,
+	duration, done, checksum_request, checksum_response,
+	Host, IP, attempts, attempts_details, node_id,
+	lengthUTF8(request), lengthUTF8(response)`
+
+const (
+	// defaultBodyPreviewRunes — сколько рун тела отдаёт GetByIDPreview по
+	// умолчанию (первое разворачивание строки в UI).
+	defaultBodyPreviewRunes = 64 * 1024
+	// defaultBodyChunkRunes — дефолтный размер среза GetBodyChunk (постраничная
+	// подгрузка «показать весь» и потоковое скачивание).
+	defaultBodyChunkRunes = 1 * 1024 * 1024
+)
+
+// bodyColumn — whitelist «which» → имя колонки тела. Пользовательский ввод
+// НИКОГДА не интерполируется как идентификатор колонки напрямую (§42).
+func bodyColumn(which string) (string, bool) {
+	switch which {
+	case "request":
+		return "request", true
+	case "response":
+		return "response", true
+	default:
+		return "", false
+	}
+}
+
 // nodeFilterCond — условие per-node атрибуции «(node_id = ? OR node_id = ”)» и
 // его аргумент (§37). Пустой node_id у legacy-записей (до миграции) трактуем как
 // принадлежащий любому co-table узлу — старые данные неразличимы, истекают по TTL;
@@ -126,6 +159,74 @@ func (r *LogReaderCH) GetByID(ctx context.Context, table, id string) (*domain.Lo
 		return nil, err
 	}
 	return rec, nil
+}
+
+// GetByIDPreview — метаданные записи + превью тел (первые previewRunes рун
+// request/response) + их полные длины в рунах (§42). Один запрос; substringUTF8
+// и lengthUTF8 считаются в ClickHouse, тело целиком в Go не приезжает.
+func (r *LogReaderCH) GetByIDPreview(ctx context.Context, table, id string, previewRunes int) (*domain.LogRecord, int64, int64, error) {
+	if !isSafeTableName(table) {
+		return nil, 0, 0, fmt.Errorf("invalid table name: %q", table)
+	}
+	if previewRunes <= 0 {
+		previewRunes = defaultBodyPreviewRunes
+	}
+	conn, err := r.liveConn()
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	rows, err := conn.Query(ctx, fmt.Sprintf(
+		`SELECT %s FROM %s WHERE ID = ? ORDER BY date_request DESC LIMIT 1`, previewCols, table),
+		previewRunes, previewRunes, id)
+	if err != nil {
+		return nil, 0, 0, classifyCHErr("clickhouse select log preview", err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, 0, 0, domain.ErrNotFound
+	}
+	return scanLogRowPreview(rows)
+}
+
+// GetBodyChunk — срез одного тела (which) по рунам: substringUTF8(col,
+// offsetRunes+1, limitRunes) + полная длина lengthUTF8(col) (§42). CH использует
+// 1-based индекс, поэтому offsetRunes+1. which вне whitelist → ошибка.
+func (r *LogReaderCH) GetBodyChunk(ctx context.Context, table, id, which string, offsetRunes, limitRunes int) (string, int64, error) {
+	if !isSafeTableName(table) {
+		return "", 0, fmt.Errorf("invalid table name: %q", table)
+	}
+	col, ok := bodyColumn(which)
+	if !ok {
+		return "", 0, fmt.Errorf("invalid body selector: %q", which)
+	}
+	if offsetRunes < 0 {
+		offsetRunes = 0
+	}
+	if limitRunes <= 0 {
+		limitRunes = defaultBodyChunkRunes
+	}
+	conn, err := r.liveConn()
+	if err != nil {
+		return "", 0, err
+	}
+	rows, err := conn.Query(ctx, fmt.Sprintf(
+		`SELECT substringUTF8(%s, ?, ?), lengthUTF8(%s) FROM %s WHERE ID = ? ORDER BY date_request DESC LIMIT 1`,
+		col, col, table), offsetRunes+1, limitRunes, id)
+	if err != nil {
+		return "", 0, classifyCHErr("clickhouse select body chunk", err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return "", 0, domain.ErrNotFound
+	}
+	var (
+		chunk string
+		total uint64
+	)
+	if err := rows.Scan(&chunk, &total); err != nil {
+		return "", 0, fmt.Errorf("scan body chunk: %w", err)
+	}
+	return chunk, int64(total), nil
 }
 
 // ListSince — записи узла nodeID с date_request_unix_ms > cursor; ASC, LIMIT.
@@ -522,6 +623,34 @@ func scanLogRow(rows chdriver.Rows) (*domain.LogRecord, error) {
 	r.DateRequest = dateReq
 	r.DateResponse = dateResp
 	return &r, nil
+}
+
+// scanLogRowPreview — как scanLogRow, но Request/Response держат превью, а в
+// хвосте идут полные длины тел (lengthUTF8, UInt64) — порядок колонок previewCols.
+func scanLogRowPreview(rows chdriver.Rows) (*domain.LogRecord, int64, int64, error) {
+	var (
+		r          domain.LogRecord
+		typ        string
+		dateCreate time.Time
+		dateReq    time.Time
+		dateResp   time.Time
+		reqLen     uint64
+		respLen    uint64
+	)
+	if err := rows.Scan(
+		&r.ID, &typ, &r.HTTPMethod, &r.URL, &r.Method, &r.Parameters, &r.Request, &r.Response,
+		&r.Status, &r.Reason, &dateCreate, &dateReq, &dateResp,
+		&r.Duration, &r.Done, &r.ChecksumRequest, &r.ChecksumResponse,
+		&r.Host, &r.IP, &r.Attempts, &r.AttemptsDetails, &r.NodeID,
+		&reqLen, &respLen,
+	); err != nil {
+		return nil, 0, 0, fmt.Errorf("scan log row preview: %w", err)
+	}
+	r.Type = domain.RootMethod(typ)
+	r.DateCreate = dateCreate
+	r.DateRequest = dateReq
+	r.DateResponse = dateResp
+	return &r, int64(reqLen), int64(respLen), nil
 }
 
 // isSafeTableName — db.table из A-Za-z0-9_; обе части обязательны.

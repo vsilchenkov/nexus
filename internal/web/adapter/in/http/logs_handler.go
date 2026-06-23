@@ -52,7 +52,23 @@ type LogRecordDTO struct {
 	IP               string    `json:"ip,omitempty"`
 	Attempts         int32     `json:"attempts"`
 	AttemptsDetails  string    `json:"attempts_details,omitempty"`
+
+	// §42: полные длины тел в рунах. В Get поля request/response несут только
+	// ПРЕВЬЮ (первые bodyPreviewRunes рун); если *_len > длины превью, на фронте
+	// показывается «показать весь / скачать». В списках (List/Stream) не заданы.
+	RequestLen  int64 `json:"request_len,omitempty"`
+	ResponseLen int64 `json:"response_len,omitempty"`
 }
+
+const (
+	// bodyPreviewRunes — сколько рун тела отдаём при первом разворачивании строки
+	// лога (GET /log/:logId). Остальное — лениво через /body (§42).
+	bodyPreviewRunes = 64 * 1024
+	// bodyChunkMaxRunes — верхний кап на limit одного среза GET /body.
+	bodyChunkMaxRunes = 4 * 1024 * 1024
+	// bodyDownloadChunkRunes — размер среза при потоковом скачивании тела.
+	bodyDownloadChunkRunes = 1 * 1024 * 1024
+)
 
 // toLogDTO маппит запись лога в JSON-DTO. includeBodies=false вырезает тяжёлые
 // поля request/response (и parameters): списки/стрим отдают только метаданные,
@@ -254,27 +270,171 @@ func (h *LogsHandler) CountFailed(c *gin.Context) {
 func (h *LogsHandler) Get(c *gin.Context) {
 	nodeID := c.Param("id")
 	logID := c.Param("logId")
-	rec, err := h.uc.GetByID(c.Request.Context(), nodeID, currentTeamID(c), logID)
-	if err != nil {
-		switch {
-		case errors.Is(err, domain.ErrNodeNotFound), errors.Is(err, domain.ErrNotFound):
-			localizedError(c, http.StatusNotFound, "node.not_found")
-		case errors.Is(err, domain.ErrNodeLogsNotConfigured):
-			localizedError(c, http.StatusNotFound, "node.not_found")
-		case errors.Is(err, domain.ErrLogsBackendUnavailable):
-			// CH недоступен — 503 + WARN (не ERROR/500): запись лога тянется
-			// лениво по клику, временная недоступность не должна флудить Sentry.
-			h.logger.Warn("log get degraded: clickhouse unavailable",
-				h.logger.Str("node_id", nodeID), h.logger.Err(err))
-			localizedError(c, http.StatusServiceUnavailable, "error.logs_unavailable")
-		default:
-			h.logger.ErrorWithOp("log get failed", err, "logs.get",
-				h.logger.Str("node_id", nodeID))
-			localizedError(c, http.StatusInternalServerError, "error.internal")
-		}
+	// §42: только ПРЕВЬЮ тел (первые bodyPreviewRunes рун) + полные длины —
+	// большой ответ больше не тянется целиком и не вешает фронт. Полное тело —
+	// лениво через GET /body. Replay по-прежнему читает полное тело (GetByID).
+	rec, reqLen, respLen, err := h.uc.GetByIDPreview(c.Request.Context(), nodeID, currentTeamID(c), logID, bodyPreviewRunes)
+	if h.writeLogReadError(c, nodeID, "logs.get", err) {
 		return
 	}
-	c.JSON(http.StatusOK, toLogDTO(rec, true))
+	dto := toLogDTO(rec, true)
+	dto.RequestLen = reqLen
+	dto.ResponseLen = respLen
+	c.JSON(http.StatusOK, dto)
+}
+
+// writeLogReadError мапит ошибку чтения лога из ClickHouse в HTTP-ответ (общая
+// для Get/GetBody/GetBodyDownload). Возвращает true, если ошибка обработана и
+// ответ отправлен. CH-недоступность → 503 + WARN (не ERROR/500): тела тянутся
+// лениво по клику, временная недоступность не должна флудить Sentry.
+func (h *LogsHandler) writeLogReadError(c *gin.Context, nodeID, op string, err error) bool {
+	if err == nil {
+		return false
+	}
+	switch {
+	case errors.Is(err, domain.ErrNodeNotFound), errors.Is(err, domain.ErrNotFound),
+		errors.Is(err, domain.ErrNodeLogsNotConfigured):
+		localizedError(c, http.StatusNotFound, "node.not_found")
+	case errors.Is(err, domain.ErrLogsBackendUnavailable):
+		h.logger.Warn("log read degraded: clickhouse unavailable",
+			h.logger.Str("node_id", nodeID), h.logger.Err(err))
+		localizedError(c, http.StatusServiceUnavailable, "error.logs_unavailable")
+	default:
+		h.logger.ErrorWithOp("log read failed", err, op, h.logger.Str("node_id", nodeID))
+		localizedError(c, http.StatusInternalServerError, "error.internal")
+	}
+	return true
+}
+
+// GetBody godoc
+// @Summary  Срез тела (request|response) одной записи лога по рунам (§42).
+// @Description  Для постраничной подгрузки «показать весь»: возвращает срез тела и его полную длину в рунах. which обязателен (request|response); offset/limit — в рунах (limit капится).
+// @Tags     logs
+// @Produce  json
+// @Param    id      path   string  true   "node id"
+// @Param    logId   path   string  true   "log record id"
+// @Param    which   query  string  true   "request | response"
+// @Param    offset  query  int     false  "смещение в рунах (default 0)"
+// @Param    limit   query  int     false  "сколько рун вернуть (default 65536, max 4194304)"
+// @Success  200     {object}  LogBodyChunkResponse
+// @Failure  400     {object}  ErrorResponse
+// @Failure  404     {object}  ErrorResponse
+// @Security CookieAuth
+// @Security ApiTokenAuth
+// @Router   /api/nodes/{id}/log/{logId}/body [get]
+func (h *LogsHandler) GetBody(c *gin.Context) {
+	nodeID := c.Param("id")
+	logID := c.Param("logId")
+	which := c.Query("which")
+	if which != "request" && which != "response" {
+		localizedError(c, http.StatusBadRequest, "error.bad_request")
+		return
+	}
+	offset, _ := strconv.Atoi(c.Query("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	if limit <= 0 {
+		limit = bodyPreviewRunes
+	}
+	if limit > bodyChunkMaxRunes {
+		limit = bodyChunkMaxRunes
+	}
+	chunk, total, err := h.uc.GetBodyChunk(c.Request.Context(), nodeID, currentTeamID(c), logID, which, offset, limit)
+	if h.writeLogReadError(c, nodeID, "logs.body", err) {
+		return
+	}
+	returned := len([]rune(chunk))
+	c.JSON(http.StatusOK, gin.H{
+		"which":    which,
+		"total":    total,
+		"offset":   offset,
+		"returned": returned,
+		"chunk":    chunk,
+		"eof":      int64(offset+returned) >= total,
+	})
+}
+
+// GetBodyDownload godoc
+// @Summary  Скачать тело (request|response) записи лога целиком файлом (§42).
+// @Description  Стримит полное тело как text/plain attachment, нарезая по рунам — память на сервере ограничена размером среза. which обязателен.
+// @Tags     logs
+// @Produce  plain
+// @Param    id     path   string  true   "node id"
+// @Param    logId  path   string  true   "log record id"
+// @Param    which  query  string  true   "request | response"
+// @Success  200    {string}  string  "body stream"
+// @Failure  400    {object}  ErrorResponse
+// @Failure  404    {object}  ErrorResponse
+// @Security CookieAuth
+// @Security ApiTokenAuth
+// @Router   /api/nodes/{id}/log/{logId}/body/download [get]
+func (h *LogsHandler) GetBodyDownload(c *gin.Context) {
+	nodeID := c.Param("id")
+	logID := c.Param("logId")
+	which := c.Query("which")
+	if which != "request" && which != "response" {
+		localizedError(c, http.StatusBadRequest, "error.bad_request")
+		return
+	}
+	ctx := c.Request.Context()
+	team := currentTeamID(c)
+
+	// Первый срез фетчим ДО отправки заголовков: он отдаёт total и валидирует
+	// запись, чтобы ошибку (404/503) вернуть нормальным JSON, а не битым стримом.
+	first, total, err := h.uc.GetBodyChunk(ctx, nodeID, team, logID, which, 0, bodyDownloadChunkRunes)
+	if h.writeLogReadError(c, nodeID, "logs.body.download", err) {
+		return
+	}
+
+	filename := fmt.Sprintf("%s-%s.txt", which, safeFilePart(logID))
+	c.Header("Content-Type", "text/plain; charset=utf-8")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	c.Header("X-Content-Type-Options", "nosniff")
+
+	w := c.Writer
+	if _, err := w.WriteString(first); err != nil {
+		return
+	}
+	w.Flush()
+	offset := len([]rune(first))
+	for int64(offset) < total {
+		chunk, _, err := h.uc.GetBodyChunk(ctx, nodeID, team, logID, which, offset, bodyDownloadChunkRunes)
+		if err != nil {
+			// Заголовки уже ушли — корректный JSON-ответ невозможен, обрываем
+			// поток и логируем (WARN: частая причина — клиент закрыл соединение).
+			h.logger.Warn("log body download interrupted",
+				h.logger.Str("node_id", nodeID), h.logger.Err(err))
+			return
+		}
+		n := len([]rune(chunk))
+		if n == 0 {
+			break
+		}
+		if _, err := w.WriteString(chunk); err != nil {
+			return
+		}
+		w.Flush()
+		offset += n
+	}
+}
+
+// safeFilePart оставляет только безопасные для имени файла и HTTP-заголовка
+// символы [A-Za-z0-9._-] — защита от header-инъекции в Content-Disposition.
+func safeFilePart(s string) string {
+	b := make([]rune, 0, len(s))
+	for _, c := range s {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9',
+			c == '-', c == '_', c == '.':
+			b = append(b, c)
+		}
+	}
+	if len(b) == 0 {
+		return "body"
+	}
+	return string(b)
 }
 
 // Stream godoc
