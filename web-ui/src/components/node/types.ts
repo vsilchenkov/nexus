@@ -22,8 +22,13 @@ export type LogsResp = { items: LogRow[]; logs_available?: boolean };
 export type LogDetail = LogRow & {
   type?: string;
   parameters?: string;
+  // §42: request/response несут только ПРЕВЬЮ (первые ~64K рун). Полные длины
+  // тел в рунах — в request_len/response_len; если длина > длины превью, на
+  // фронте показывается «показать весь / скачать».
   request?: string;
   response?: string;
+  request_len?: number;
+  response_len?: number;
   date_response?: string;
   checksum_request?: string;
   checksum_response?: string;
@@ -31,4 +36,15 @@ export type LogDetail = LogRow & {
   ip?: string;
   attempts?: number;
   attempts_details?: string;
+};
+
+// §42: срез тела (GET /api/nodes/:id/log/:logId/body) — постраничная подгрузка
+// «показать весь».
+export type LogBodyChunk = {
+  which: "request" | "response";
+  total: number; // полная длина тела в рунах
+  offset: number;
+  returned: number;
+  chunk: string;
+  eof: boolean;
 };

@@ -73,6 +73,29 @@ func (u *LogsUsecase) GetByID(ctx context.Context, nodeID, teamID, logID string)
 	return u.logs.GetByID(ctx, n.ClickHouseTable, logID)
 }
 
+// GetByIDPreview — метаданные записи + ОГРАНИЧЕННОЕ превью тел (первые
+// previewRunes рун request/response) + их полные длины в рунах (§42). Дефолтный
+// путь разворачивания строки лога в UI: не тянет тела целиком, поэтому большой
+// ответ не вешает фронт. Полное тело — лениво через GetBodyChunk.
+func (u *LogsUsecase) GetByIDPreview(ctx context.Context, nodeID, teamID, logID string, previewRunes int) (*domain.LogRecord, int64, int64, error) {
+	n, err := u.resolveNode(ctx, nodeID, teamID)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	return u.logs.GetByIDPreview(ctx, n.ClickHouseTable, logID, previewRunes)
+}
+
+// GetBodyChunk — срез одного тела (which = "request"|"response") записи по рунам
+// + его полная длина (§42). Для постраничной подгрузки «показать весь» и
+// потокового скачивания. teamID — scope.
+func (u *LogsUsecase) GetBodyChunk(ctx context.Context, nodeID, teamID, logID, which string, offset, limit int) (string, int64, error) {
+	n, err := u.resolveNode(ctx, nodeID, teamID)
+	if err != nil {
+		return "", 0, err
+	}
+	return u.logs.GetBodyChunk(ctx, n.ClickHouseTable, logID, which, offset, limit)
+}
+
 // CountFailed — число недоставленных записей узла (done=0) за окно (§35).
 // Для KPI «неудачные доставки» на вкладке «Очередь». teamID — scope.
 func (u *LogsUsecase) CountFailed(ctx context.Context, nodeID, teamID string, sinceMs, untilMs int64) (uint64, error) {

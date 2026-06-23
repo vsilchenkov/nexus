@@ -1,12 +1,14 @@
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { RefreshCw, Settings, RotateCcw, ChevronRight, ChevronDown } from "lucide-react";
+import { RefreshCw, Settings, RotateCcw, ChevronRight, ChevronDown, Download } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, type Node } from "../../api/client";
+import { FETCH_CHUNK, LARGE_WARN_RUNES, formatRunes, prettyMaybe } from "../../lib/logBody";
+import { CopyButton } from "../ui/CopyButton";
 import { ReplayDialog } from "../ReplayDialog";
-import { type LogRow, type LogsResp, type LogDetail } from "./types";
+import { type LogRow, type LogsResp, type LogDetail, type LogBodyChunk } from "./types";
 
 type StatusFilter = "all" | "ok" | "err";
 type PageSize = 50 | 100 | 200;
@@ -494,9 +496,10 @@ function SegmentedControl<T extends string>({ value, onChange, options }: Segmen
   );
 }
 
-// LogBodies — ленивая подгрузка тел request/response одной записи (§7.4.1).
-// Монтируется только при раскрытии строки, поэтому useQuery стартует по клику,
-// а не для всех строк сразу — большие JSON не грузятся разом и не вешают фронт.
+// LogBodies — ленивая подгрузка тел request/response одной записи (§7.4.1/§42).
+// Монтируется только при раскрытии строки. Get отдаёт ПРЕВЬЮ тел (первые ~64K
+// рун) + полные длины — большое тело не грузится разом и не вешает фронт;
+// остаток тянется по кнопке «Показать весь» или скачивается файлом.
 function LogBodies({ nodeId, logId }: { nodeId: string; logId: string }) {
   const { t } = useTranslation();
   const q = useQuery({
@@ -512,29 +515,124 @@ function LogBodies({ nodeId, logId }: { nodeId: string; logId: string }) {
   }
   return (
     <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-      <LogBodyBlock title={t("logs.detail.request")} body={q.data.request} />
-      <LogBodyBlock title={t("logs.detail.response")} body={q.data.response} />
+      <LogBodyBlock
+        nodeId={nodeId}
+        logId={logId}
+        which="request"
+        title={t("logs.detail.request")}
+        preview={q.data.request ?? ""}
+        total={q.data.request_len ?? 0}
+      />
+      <LogBodyBlock
+        nodeId={nodeId}
+        logId={logId}
+        which="response"
+        title={t("logs.detail.response")}
+        preview={q.data.response ?? ""}
+        total={q.data.response_len ?? 0}
+      />
     </div>
   );
 }
 
-function LogBodyBlock({ title, body }: { title: string; body?: string }) {
+function LogBodyBlock({
+  nodeId,
+  logId,
+  which,
+  title,
+  preview,
+  total,
+}: {
+  nodeId: string;
+  logId: string;
+  which: "request" | "response";
+  title: string;
+  preview: string;
+  total: number;
+}) {
   const { t } = useTranslation();
+  const [full, setFull] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const previewRunes = useMemo(() => [...preview].length, [preview]);
+  // total из бэкенда в рунах; 0 → длины нет (пустое тело / старый ответ).
+  const totalRunes = total || previewRunes;
+  const hasMore = full === null && totalRunes > previewRunes;
+  const shown = full ?? preview;
+  const isEmpty = previewRunes === 0 && totalRunes === 0;
+
+  async function loadFull() {
+    if (loading) return;
+    if (
+      totalRunes > LARGE_WARN_RUNES &&
+      !window.confirm(t("logs.detail.large_warning", { mb: Math.ceil(totalRunes / (1024 * 1024)) }))
+    ) {
+      return;
+    }
+    setLoading(true);
+    try {
+      let offset = 0;
+      let acc = "";
+      for (;;) {
+        const r = await api.get<LogBodyChunk>(`/api/nodes/${nodeId}/log/${logId}/body`, {
+          which,
+          offset,
+          limit: FETCH_CHUNK,
+        });
+        acc += r.chunk;
+        offset += r.returned;
+        if (r.eof || r.returned === 0) break;
+      }
+      setFull(acc);
+    } catch {
+      // тело не догрузилось — оставляем превью; пользователь может повторить/скачать
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const downloadUrl = `/api/nodes/${nodeId}/log/${logId}/body/download?which=${which}`;
+
   return (
     <div className="min-w-0">
-      <div className="mb-1 text-[10px] uppercase tracking-wider text-fg-muted">{title}</div>
-      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded bg-bg-muted/50 p-2 font-mono text-[11px]">
-        {body ? prettyJson(body) : t("logs.detail.empty")}
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="text-[10px] uppercase tracking-wider text-fg-muted">{title}</span>
+        {!isEmpty && (
+          <div className="flex items-center gap-1.5">
+            <CopyButton value={shown} />
+            <a
+              href={downloadUrl}
+              download
+              title={t("logs.detail.download")}
+              className="inline-flex shrink-0 items-center gap-1 rounded border border-line px-1.5 py-1 text-fg-muted transition-colors hover:bg-bg-muted hover:text-fg"
+            >
+              <Download className="h-3.5 w-3.5" />
+            </a>
+          </div>
+        )}
+      </div>
+      <pre
+        className={`${full !== null ? "max-h-[32rem]" : "max-h-72"} overflow-auto whitespace-pre-wrap break-all rounded bg-bg-muted/50 p-2 font-mono text-[11px]`}
+      >
+        {isEmpty ? t("logs.detail.empty") : prettyMaybe(shown)}
       </pre>
+      {hasMore && (
+        <div className="mt-1 flex items-center gap-2 text-[11px] text-fg-muted">
+          <span>
+            {t("logs.detail.shown_of", {
+              shown: formatRunes(previewRunes),
+              total: formatRunes(totalRunes),
+            })}
+          </span>
+          <button
+            onClick={loadFull}
+            disabled={loading}
+            className="rounded border border-line px-1.5 py-0.5 hover:bg-bg-muted hover:text-fg disabled:opacity-50"
+          >
+            {loading ? t("logs.detail.loading_full") : t("logs.detail.show_full")}
+          </button>
+        </div>
+      )}
     </div>
   );
-}
-
-// prettyJson — форматирует JSON-тело с отступами; для не-JSON возвращает как есть.
-function prettyJson(s: string): string {
-  try {
-    return JSON.stringify(JSON.parse(s), null, 2);
-  } catch {
-    return s;
-  }
 }

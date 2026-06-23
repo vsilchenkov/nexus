@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"time"
+	"unicode/utf8"
 
 	"nexus/internal/domain"
 	"nexus/internal/platform/logging"
@@ -118,8 +119,24 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		IP:              in.ClientIP,
 		NodeID:          in.NodeID,
 	}
+	// §43: жёсткий лимит размера тела. Тело запроса превышает лимит → НЕ вызываем
+	// upstream, фиксируем в логе (done=0, reason, БЕЗ тела; checksum по полному —
+	// целостность видна), возвращаем 413. Для async синхронного ответа клиенту
+	// нет — остаётся только запись в логе (done=0).
+	if exceedsBodyLimit(in.Body, in.MaxBodySizeEnabled, in.MaxBodySize) {
+		rec.DateResponse = time.Now()
+		rec.Duration = int32(time.Since(t0).Milliseconds())
+		rec.Status = 413
+		rec.Done = false
+		rec.Reason = oversizeReason("request", in.Body, in.MaxBodySize)
+		if in.LoggingEnabled {
+			u.logw.Write(ctx, in.ClickHouseTable, rec)
+		}
+		// Запрос не дошёл до внешнего узла — его состояние (circuit breaker) не трогаем.
+		return SendOutput{StatusCode: 413, Error: rec.Reason, DurationMs: rec.Duration}
+	}
 	if in.LogRequestBody {
-		rec.Request = truncateRunes(string(in.Body), in.MaxBodySizeEnabled, in.MaxBodySize)
+		rec.Request = string(in.Body)
 	}
 
 	req := &port.HTTPRequest{
@@ -205,24 +222,38 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		rec.Done = false
 		rec.Reason = lastErr.Error()
 	case resp != nil:
-		out.StatusCode = resp.StatusCode
-		out.Headers = resp.Headers
-		out.Body = resp.Body
-		rec.Status = resp.StatusCode
-		rec.Done = resp.StatusCode >= 200 && resp.StatusCode < 300
 		rec.ChecksumResponse = md5hex(resp.Body)
-		if in.LogResponseBody {
-			rec.Response = truncateRunes(string(resp.Body), in.MaxBodySizeEnabled, in.MaxBodySize)
-		}
-		if !rec.Done {
-			rec.Reason = fmt.Sprintf("HTTP %d", resp.StatusCode)
+		// §43: тело ответа превышает лимит → клиенту НЕ отдаём (502), фиксируем в
+		// логе (done=0, reason, без тела; checksum по полному). upstream уже
+		// ответил — для circuit breaker это его реальный статус (ниже), reject —
+		// наша политика, не вина внешнего узла.
+		if exceedsBodyLimit(resp.Body, in.MaxBodySizeEnabled, in.MaxBodySize) {
+			out.StatusCode = 502
+			out.Error = oversizeReason("response", resp.Body, in.MaxBodySize)
+			rec.Status = 502
+			rec.Done = false
+			rec.Reason = out.Error
 		} else {
-			rec.Reason = "OK"
+			out.StatusCode = resp.StatusCode
+			out.Headers = resp.Headers
+			out.Body = resp.Body
+			rec.Status = resp.StatusCode
+			rec.Done = resp.StatusCode >= 200 && resp.StatusCode < 300
+			if in.LogResponseBody {
+				rec.Response = string(resp.Body)
+			}
+			if !rec.Done {
+				rec.Reason = fmt.Sprintf("HTTP %d", resp.StatusCode)
+			} else {
+				rec.Reason = "OK"
+			}
 		}
 	}
 
-	// Обновляем circuit breaker по итогу.
-	if rec.Done {
+	// Circuit breaker отражает здоровье ВНЕШНЕГО узла, а не нашу oversize-политику:
+	// ответ 2xx (даже если мы reject'нули его за размер) означает, что узел жив.
+	upstreamHealthy := lastErr == nil && resp != nil && resp.StatusCode >= 200 && resp.StatusCode < 300
+	if upstreamHealthy {
 		_ = u.cb.RecordSuccess(ctx, in.NodePath)
 	} else {
 		_ = u.cb.RecordFailure(ctx, in.NodePath)
@@ -245,23 +276,17 @@ func md5hex(b []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// truncationMarker дописывается к сохраняемому телу, если оно было обрезано
-// по max_body_size (§22). Делает обрезку видимой в логах/UI.
-const truncationMarker = "…(truncated)"
+// exceedsBodyLimit сообщает, что тело превышает лимит max_body_size (в рунах),
+// когда лимит на узле включён (§43). Считаем руны напрямую по байтам, без
+// аллокации []rune.
+func exceedsBodyLimit(b []byte, enabled bool, max int32) bool {
+	return enabled && max > 0 && int32(utf8.RuneCount(b)) > max
+}
 
-// truncateRunes режет строку до max СИМВОЛОВ (рун), если включён лимит.
-// Режем по рунам, а не по байтам, чтобы не порвать многобайтовый UTF-8 и не
-// получить битую запись в ClickHouse. checksum считается вызывающей стороной
-// по полному телу ДО обрезки — целостность исходного payload сохраняется.
-func truncateRunes(s string, enabled bool, max int32) string {
-	if !enabled || max <= 0 {
-		return s
-	}
-	runes := []rune(s)
-	if int32(len(runes)) <= max {
-		return s
-	}
-	return string(runes[:max]) + truncationMarker
+// oversizeReason — человекочитаемая причина превышения лимита тела (§43) для
+// поля reason лога и ошибки клиенту. kind — "request" | "response".
+func oversizeReason(kind string, b []byte, max int32) string {
+	return fmt.Sprintf("%s body exceeds max_body_size: %d > %d runes", kind, utf8.RuneCount(b), max)
 }
 
 // extractQuery возвращает query-string из URL без ведущего "?".

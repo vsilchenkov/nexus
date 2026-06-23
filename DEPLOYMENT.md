@@ -94,6 +94,15 @@ Nexus — три stateless Go-сервиса плюс набор хранили�
 > `kafka.topic.max_message_bytes`, иначе крупные retry-батчи отвергаются
 > (`Message Size Too Large`) и логи теряются.
 
+> **Большие тела сквозь шину (§42).** Лимит размера одного gRPC-сообщения Receiver↔Sender
+> задаётся `receiver.sender_grpc.max_message_bytes` и `sender.grpc_max_message_bytes` (оба
+> дефолт **64 МиБ**). Прежний дефолт gRPC (4 МиБ) рвал большой ответ апстрима
+> `ResourceExhausted desc = grpc: received message larger than max`. Значения **двух сервисов
+> должны совпадать**; держите их `≥ receiver.max_body_bytes`. Для ответов крупнее 64 МиБ —
+> поднимите оба параметра. Async-путь: producer публикует сообщение размером до
+> `kafka.topic.max_message_bytes` (BatchBytes продьюсера авто-подтягивается до этого лимита) —
+> убедитесь, что брокерский `message.max.bytes` его не перебивает (см. выше).
+
 Переменные `VERSION` и `REGISTRY_BASE` больше не используются: registry-путь деплоя убран
 (§9.2), деплой — сборкой из исходников на сервере (§9.1). Версия приложения берётся из git
 при сборке (§9.0).

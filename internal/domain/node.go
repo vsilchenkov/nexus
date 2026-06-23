@@ -294,12 +294,40 @@ func (n *Node) Validate() error {
 	if n.LoggingEnabled && n.ClickHouseTable == "" {
 		return ErrNodeLogsNotConfigured
 	}
+	// §42: имя таблицы (если задано) должно быть строго db.table из [A-Za-z0-9_].
+	// Иначе Sender пишет, а UI-чтение падает позже на «invalid table name» —
+	// ловим на сохранении и показываем понятную ошибку у поля.
+	if n.ClickHouseTable != "" && !isValidCHTableName(n.ClickHouseTable) {
+		return ErrNodeClickHouseTableInvalid
+	}
 	if n.RootMethod.IsPull() {
 		if err := n.validateRMQ(); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// isValidCHTableName — имя в формате db.table из [A-Za-z0-9_]: обе части
+// обязательны, ровно одна точка. Зеркалит isSafeTableName в ClickHouse-адаптерах
+// (read/write), чтобы кривое имя отлавливалось при сохранении узла, а не позже
+// на «invalid table name» при чтении логов/метрик.
+func isValidCHTableName(name string) bool {
+	dot := -1
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c == '.':
+			if dot >= 0 {
+				return false
+			}
+			dot = i
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '_':
+		default:
+			return false
+		}
+	}
+	return dot > 0 && dot < len(name)-1
 }
 
 // validateRMQ проверяет инварианты узла RabbitMQAsync (§27.6). Дублирует

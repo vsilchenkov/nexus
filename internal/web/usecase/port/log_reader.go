@@ -41,8 +41,22 @@ type LogQuery struct {
 // LogReader — read-only доступ к ClickHouse-логам узлов (§7.4 ТЗ).
 // Используется replay (§7.4.1) и live-tail (§7.4).
 type LogReader interface {
-	// GetByID — найти одну запись в указанной таблице.
+	// GetByID — найти одну запись в указанной таблице (с ПОЛНЫМИ телами).
+	// Используется replay (§7.4.1), которому нужно исходное тело целиком.
 	GetByID(ctx context.Context, table, id string) (*domain.LogRecord, error)
+
+	// GetByIDPreview — метаданные записи + ОГРАНИЧЕННОЕ превью тел (первые
+	// previewRunes рун request/response) + их полные длины в рунах (§42).
+	// Один запрос к ClickHouse, не тянет тела целиком — для дефолтного
+	// разворачивания строки лога в UI, чтобы большой ответ не вешал фронт.
+	// previewRunes <= 0 → дефолт адаптера. Запись не найдена → domain.ErrNotFound.
+	GetByIDPreview(ctx context.Context, table, id string, previewRunes int) (rec *domain.LogRecord, reqRunes, respRunes int64, err error)
+
+	// GetBodyChunk — срез одного тела (which = "request"|"response") записи по
+	// рунам: substringUTF8(col, offsetRunes+1, limitRunes) + полная длина (§42).
+	// Для постраничной подгрузки «показать весь» и потокового скачивания —
+	// ships только запрошенный срез, не всё тело. which вне whitelist → ошибка.
+	GetBodyChunk(ctx context.Context, table, id, which string, offsetRunes, limitRunes int) (chunk string, totalRunes int64, err error)
 
 	// ListSince — записи узла nodeID после cursor (date_request > cursor) по
 	// таблице, ASC. Используется для SSE live-tail. §37: nodeID фильтрует

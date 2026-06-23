@@ -233,6 +233,11 @@ func (a *App) startGRPC(svc *grpcadapter.Server) error {
 
 	a.grpcSrv = grpc.NewServer(
 		grpc.MaxConcurrentStreams(a.cfg.Sender.GRPCMaxConcurrentStreams),
+		// §42: лимит размера сообщения (оба направления). Дефолт gRPC recv 4 МиБ
+		// мал — тело запроса (до receiver.max_body_bytes) и тело ответа апстрима
+		// (десятки МБ) иначе режутся ResourceExhausted.
+		grpc.MaxRecvMsgSize(a.cfg.Sender.GRPCMaxMessageBytes),
+		grpc.MaxSendMsgSize(a.cfg.Sender.GRPCMaxMessageBytes),
 		// OTel: extract traceparent из incoming metadata + server-span
 		// вокруг каждого unary-вызова (§16 ТЗ, Phase 8.3).
 		grpc.UnaryInterceptor(otelpf.UnaryServerInterceptor()),

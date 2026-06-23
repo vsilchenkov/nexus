@@ -1,7 +1,9 @@
 package sentry
 
 import (
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/getsentry/sentry-go"
 
@@ -225,6 +227,110 @@ func TestBeforeBreadcrumb_Nil(t *testing.T) {
 	t.Parallel()
 	if got := beforeBreadcrumb(nil, nil); got != nil {
 		t.Errorf("nil breadcrumb: got %v", got)
+	}
+}
+
+func TestTruncateValue(t *testing.T) {
+	t.Parallel()
+	// Короткая строка — без изменений.
+	if got := truncateValue("hello"); got != "hello" {
+		t.Errorf("short string changed: %q", got)
+	}
+	// Большая строка — режется до maxSentryValueBytes + маркер, итог много меньше.
+	big := strings.Repeat("a", 1_000_000)
+	got := truncateValue(big)
+	if len(got) >= len(big) {
+		t.Errorf("large string not truncated: len=%d", len(got))
+	}
+	if !strings.HasPrefix(got, strings.Repeat("a", maxSentryValueBytes)) {
+		t.Error("prefix not preserved")
+	}
+	if !strings.Contains(got, "1000000 bytes total") {
+		t.Errorf("missing size marker: %q", got[len(got)-40:])
+	}
+	// Многобайтовое тело — обрезка по границе руны даёт валидный UTF-8.
+	cyr := truncateValue(strings.Repeat("я", 1_000_000))
+	if !utf8.ValidString(cyr) {
+		t.Error("truncated cyrillic is not valid UTF-8")
+	}
+}
+
+// TestBeforeSend_TruncatesLargeBody — §42: большое тело, просочившееся в message
+// / exception value / contexts, режется до ≈maxSentryValueBytes и не уезжает в
+// Sentry целиком.
+func TestBeforeSend_TruncatesLargeBody(t *testing.T) {
+	t.Parallel()
+	body := strings.Repeat("X", 20*1024*1024) // 20 МиБ «тело»
+	ev := &sentry.Event{
+		Message:   body,
+		Exception: []sentry.Exception{{Value: body}},
+		Contexts:  map[string]sentry.Context{"payload": {"response": body, "status": 500}},
+		Breadcrumbs: []*sentry.Breadcrumb{
+			{Message: body, Data: map[string]any{"request": body}},
+		},
+	}
+	out := beforeSend(ev, nil)
+
+	limit := maxSentryValueBytes + 64 // запас на маркер
+	if len(out.Message) > limit {
+		t.Errorf("Message not capped: %d", len(out.Message))
+	}
+	if len(out.Exception[0].Value) > limit {
+		t.Errorf("Exception value not capped: %d", len(out.Exception[0].Value))
+	}
+	if s, _ := out.Contexts["payload"]["response"].(string); len(s) > limit {
+		t.Errorf("Contexts value not capped: %d", len(s))
+	}
+	if out.Contexts["payload"]["status"] != 500 {
+		t.Errorf("non-string context value changed: %v", out.Contexts["payload"]["status"])
+	}
+	if len(out.Breadcrumbs[0].Message) > limit {
+		t.Errorf("Breadcrumb message not capped: %d", len(out.Breadcrumbs[0].Message))
+	}
+	if s, _ := out.Breadcrumbs[0].Data["request"].(string); len(s) > limit {
+		t.Errorf("Breadcrumb data not capped: %d", len(s))
+	}
+}
+
+// TestBeforeSendTransaction_ScrubsSpans — §42: транзакции performance тоже
+// маскируются и режутся (спаны: tags по секрету → ***, большая data → обрезана).
+func TestBeforeSendTransaction_ScrubsSpans(t *testing.T) {
+	t.Parallel()
+	body := strings.Repeat("Z", 5*1024*1024)
+	ev := &sentry.Event{
+		Type:    "transaction",
+		Message: body,
+		Spans: []*sentry.Span{
+			{
+				Description: body,
+				Tags:        map[string]string{"authorization": "Bearer x", "node": "demo"},
+				Data:        map[string]any{"response": body, "code": 200},
+			},
+		},
+	}
+	out := beforeSendTransaction(ev, nil)
+	if out == nil {
+		t.Fatal("nil out")
+	}
+	limit := maxSentryValueBytes + 64
+	if len(out.Message) > limit {
+		t.Errorf("transaction message not capped: %d", len(out.Message))
+	}
+	sp := out.Spans[0]
+	if sp.Tags["authorization"] != "***" {
+		t.Errorf("span auth tag not masked: %q", sp.Tags["authorization"])
+	}
+	if sp.Tags["node"] != "demo" {
+		t.Errorf("span node tag changed: %q", sp.Tags["node"])
+	}
+	if len(sp.Description) > limit {
+		t.Errorf("span description not capped: %d", len(sp.Description))
+	}
+	if s, _ := sp.Data["response"].(string); len(s) > limit {
+		t.Errorf("span data not capped: %d", len(s))
+	}
+	if sp.Data["code"] != 200 {
+		t.Errorf("non-string span data changed: %v", sp.Data["code"])
 	}
 }
 

@@ -45,6 +45,7 @@ var nodeValidationErrors = []nodeFieldError{
 	{domain.ErrNodeWebhookSigSecretRequired, "node.validation.webhook_sig_secret_required", "incoming_auth_credentials"},
 	{domain.ErrNodeInvalidTemplateID, "node.validation.template_id", "clickhouse_template_id"},
 	{domain.ErrNodeLogsNotConfigured, "node.validation.logs_not_configured", "clickhouse_table"},
+	{domain.ErrNodeClickHouseTableInvalid, "node.validation.clickhouse_table_format", "clickhouse_table"},
 	{domain.ErrNodeMaxBodySizeRange, "node.validation.max_body_size_range", "max_body_size"},
 	{domain.ErrNodeMaxBodySizeRequired, "node.validation.max_body_size_required", "max_body_size"},
 	{domain.ErrNodeRMQHostRequired, "node.validation.rmq_host", "rmq_host"},

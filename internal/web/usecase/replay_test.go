@@ -64,6 +64,12 @@ func (s *stubLogReader) CountFailed(_ context.Context, _, _ string, _, _ int64) 
 func (s *stubLogReader) FailedIDs(_ context.Context, _, _ string, _, _ int64, _ int) ([]string, bool, error) {
 	return s.failedIDs, false, s.err
 }
+func (s *stubLogReader) GetByIDPreview(_ context.Context, _, _ string, _ int) (*domain.LogRecord, int64, int64, error) {
+	return s.log, 0, 0, s.err
+}
+func (s *stubLogReader) GetBodyChunk(_ context.Context, _, _, _ string, _, _ int) (string, int64, error) {
+	return "", 0, s.err
+}
 
 // stubDispatcher — реализует port.ReceiverDispatcher; сохраняет последний
 // запрос для проверки.

@@ -20,6 +20,8 @@ type logReaderMock struct {
 	getErr      error
 	failedCount uint64
 	countErr    error
+	bodyChunk   string
+	bodyTotal   int64
 }
 
 func (m *logReaderMock) GetByID(_ context.Context, _, _ string) (*domain.LogRecord, error) {
@@ -47,6 +49,20 @@ func (m *logReaderMock) CountFailed(_ context.Context, _, _ string, _, _ int64) 
 }
 func (m *logReaderMock) FailedIDs(_ context.Context, _, _ string, _, _ int64, _ int) ([]string, bool, error) {
 	return nil, false, nil
+}
+
+func (m *logReaderMock) GetByIDPreview(_ context.Context, _, _ string, _ int) (*domain.LogRecord, int64, int64, error) {
+	if m.getRow == nil {
+		if m.getErr != nil {
+			return nil, 0, 0, m.getErr
+		}
+		return nil, 0, 0, domain.ErrNotFound
+	}
+	return m.getRow, int64(len([]rune(m.getRow.Request))), int64(len([]rune(m.getRow.Response))), m.getErr
+}
+
+func (m *logReaderMock) GetBodyChunk(_ context.Context, _, _, _ string, _, _ int) (string, int64, error) {
+	return m.bodyChunk, m.bodyTotal, m.getErr
 }
 
 func TestLogs_ListSinceForwardsToReader(t *testing.T) {

@@ -21,6 +21,7 @@ function base(): NodeFormLimits {
     dlq_retry_delay_seconds: 300,
     max_body_size_enabled: false,
     max_body_size: 0,
+    clickhouse_table: "",
     rmq_host: "",
     rmq_queue: "",
     pull_interval_sec: 5,
@@ -68,5 +69,28 @@ describe("validateNodeForm — §41 обязательность поля дин
         incoming_auth_dynamic_field: "Authorization",
       }),
     ).toBeNull();
+  });
+});
+
+describe("validateNodeForm — §42 формат имени CH-таблицы", () => {
+  it("пустое имя ок (логирование опционально)", () => {
+    expect(validateNodeForm({ ...base(), clickhouse_table: "" })).toBeNull();
+  });
+
+  it("корректное db.table ок", () => {
+    expect(validateNodeForm({ ...base(), clickhouse_table: "nexus_default.my_table" })).toBeNull();
+  });
+
+  it.each([
+    ["без БД", "my_table"],
+    ["с пробелом", "db.my table"],
+    ["спецсимвол", "db.my-table"],
+    ["две точки", "db.schema.table"],
+    ["точка в конце", "db."],
+    ["SQL-инъекция", "nexus.x; DROP TABLE y--"],
+  ])("невалидное имя (%s) → ошибка формата", (_name, table) => {
+    const v = validateNodeForm({ ...base(), clickhouse_table: table });
+    expect(v?.field).toBe("clickhouse_table");
+    expect(v?.code).toBe("node.validation.clickhouse_table_format");
   });
 });
