@@ -12,6 +12,47 @@
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-06-23
+
+Универсальная динамическая авторизация (вход + выход) + умный Bearer + пересмотр статуса «Down» (§41).
+
+### ⚠️ Изменения при апгрейде
+
+- **Миграции БД `0021_incoming_auth_dynamic` и `0022_request_fields_catalog`** (применяются автоматически
+  на старте). `0021` добавляет в `nodes` колонки `incoming_auth_dynamic_source` (`header`/`query`, дефолт
+  `header`) и `incoming_auth_dynamic_field` (дефолт `Authorization`) — существующие узлы ведут себя как
+  раньше. **Плюс data-fix**: пинит существующие `basic_from_request` на `header`/`Authorization`
+  (обязательно — иначе после выката source/field-aware код читал бы query-параметр `token` вместо
+  заголовка `Authorization` и сломал бы проброс). `0022` создаёт справочник `request_fields_catalog`.
+- **Семантика статуса «Down» в Overview изменена** — теперь по исходу **последнего** исходящего вызова
+  узла (новая метрика `nexus_node_last_request_error{node}` у Sender), а не по доле ошибок за период.
+  Новой ENV/инфраструктуры нет.
+- **Поведение пустого поля динамической авторизации:** при отсутствии/пустоте поля исходящий запрос
+  уходит **без** `Authorization` (раньше — `401`); входящая авторизация по-прежнему отдаёт `401`.
+
+### Added
+
+- **§41 — источник креды (заголовок/query-параметр) + имя поля для входящей и исходящей динамической
+  авторизации.** Исходящие `token_from_request`/`basic_from_request` получили редактируемые в UI
+  `auth_dynamic_source`/`auth_dynamic_field`; входящие `token`/`basic` — новые колонки
+  `incoming_auth_dynamic_source`/`field`. `source=header` сохраняет схему `Bearer`/`Basic` в значении,
+  `source=query` берёт значение параметра напрямую; сравнение constant-time. `basic_from_request` теперь
+  honored source/field.
+- **Каталог «полей запроса»** (`request_fields_catalog`, `GET/POST /api/request-fields`) — combobox-
+  автодополнение имён заголовков/параметров с автосозданием; для динамических режимов выбор поля
+  обязателен (форма блокирует сохранение).
+- **Умный дедуп схемы.** Если извлечённое значение уже начинается с `Bearer `/`Basic `
+  (регистронезависимо) — пробрасывается как есть (исключает удвоение `Bearer Bearer <jwt>` для кейса
+  `?Bearer=Bearer+<jwt>`).
+- **Метрика `nexus_node_last_request_error{node}`** у Sender — исход последнего исходящего вызова узла
+  (источник нового статуса «Down»).
+  Спека: [specs/sections/41-universal-request-auth.md](specs/sections/41-universal-request-auth.md).
+
+### Changed
+
+- **Overview: статус «Down» считается по последнему вызову** (см. «Изменения при апгрейде»); колонки
+  in/out/errors остаются за выбранный период.
+
 ## [1.5.1] - 2026-06-23
 
 ### Changed
