@@ -196,6 +196,34 @@ func TestNode_Validate_LoggingRequiresTable(t *testing.T) {
 	}
 }
 
+func TestNode_Validate_ClickHouseTableFormat(t *testing.T) {
+	// §42: имя таблицы (если задано) должно быть строго db.table из [A-Za-z0-9_].
+	base := func(table string) *Node {
+		n := &Node{Path: "x", RootMethod: RootMethodRequest, TargetURL: "https://example.com", ClickHouseTable: table}
+		n.SetDefaults()
+		return n
+	}
+	bad := []string{
+		"my_table",                // без БД
+		"db.my table",             // пробел
+		"db.my-table",             // дефис
+		"db.schema.table",         // две точки
+		"db.",                     // пустая таблица
+		".table",                  // пустая БД
+		"nexus.x; DROP TABLE y--", // SQL-инъекция
+	}
+	for _, table := range bad {
+		if err := base(table).Validate(); !errors.Is(err, ErrNodeClickHouseTableInvalid) {
+			t.Errorf("table %q: want ErrNodeClickHouseTableInvalid, got %v", table, err)
+		}
+	}
+	for _, table := range []string{"nexus_default.my_table", "db1.t2", "A_b.C_d"} {
+		if err := base(table).Validate(); err != nil {
+			t.Errorf("valid table %q: want nil, got %v", table, err)
+		}
+	}
+}
+
 func TestNode_Validate_RabbitMQAsync(t *testing.T) {
 	base := func() *Node {
 		n := &Node{

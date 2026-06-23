@@ -305,6 +305,7 @@
       "webhook_sig_secret_required": "Для авторизации webhook_signature требуется секрет",
       "template_id": "Идентификатор шаблона ClickHouse должен быть корректным UUID",
       "logs_not_configured": "Логирование включено, но не задано имя таблицы ClickHouse — выберите шаблон или укажите имя таблицы",
+      "clickhouse_table_format": "Имя таблицы ClickHouse должно быть в формате db.table из латинских букв, цифр и подчёркивания (напр. nexus_default.my_table)",
       "max_body_size_range": "Максимальный размер тела должен быть от 0 до 10000000 байт",
       "max_body_size_required": "Максимальный размер тела должен быть больше 0, когда лимит включён",
       "rmq_host": "Хост RabbitMQ обязателен (1..253 символа)",

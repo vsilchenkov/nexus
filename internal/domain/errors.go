@@ -59,6 +59,9 @@ var (
 	ErrNodeMaxBodySizeRange    = errors.New("domain: max_body_size must be 0..10000000")
 	ErrNodeMaxBodySizeRequired = errors.New("domain: max_body_size must be > 0 when max_body_size_enabled")
 
+	// §42: формат имени ClickHouse-таблицы — строго db.table из [A-Za-z0-9_].
+	ErrNodeClickHouseTableInvalid = errors.New("domain: clickhouse_table must be db.table of [A-Za-z0-9_]")
+
 	// §29: комментарий узла.
 	ErrNodeCommentLength = errors.New("domain: comment length must be <= 2000")
 

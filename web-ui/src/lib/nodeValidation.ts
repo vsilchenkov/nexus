@@ -22,6 +22,8 @@ export type NodeFormLimits = {
   dlq_retry_delay_seconds: number;
   max_body_size_enabled: boolean;
   max_body_size: number;
+  // §42: имя CH-таблицы (опционально) — формат db.table из [A-Za-z0-9_].
+  clickhouse_table: string;
   rmq_host: string;
   rmq_queue: string;
   pull_interval_sec: number;
@@ -33,6 +35,8 @@ export type NodeFieldError = { field: string; code: string };
 
 const PATH_RE = /^[a-zA-Z0-9][a-zA-Z0-9/_-]*$/;
 const PARAM_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
+// §42: db.table из [A-Za-z0-9_], ровно одна точка (зеркало isValidCHTableName).
+const CH_TABLE_RE = /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/;
 
 export function validateNodeForm(f: NodeFormLimits): NodeFieldError | null {
   if (f.path.length < 1 || f.path.length > 255) {
@@ -92,6 +96,10 @@ export function validateNodeForm(f: NodeFormLimits): NodeFieldError | null {
   }
   if (f.max_body_size < 0 || f.max_body_size > 10_000_000) {
     return { field: "max_body_size", code: "node.validation.max_body_size_range" };
+  }
+  // §42: имя CH-таблицы опционально, но если задано — строго db.table.
+  if (f.clickhouse_table.trim() !== "" && !CH_TABLE_RE.test(f.clickhouse_table.trim())) {
+    return { field: "clickhouse_table", code: "node.validation.clickhouse_table_format" };
   }
   if (isPull) {
     if (f.rmq_host.trim() === "" || f.rmq_host.length > 253) {

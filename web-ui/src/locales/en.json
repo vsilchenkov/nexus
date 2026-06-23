@@ -305,6 +305,7 @@
       "webhook_sig_secret_required": "Secret is required for webhook_signature auth",
       "template_id": "ClickHouse template id must be a valid UUID",
       "logs_not_configured": "Logging is enabled but no ClickHouse table name is set — pick a template or set the table name",
+      "clickhouse_table_format": "ClickHouse table name must be db.table using only letters, digits and underscore (e.g. nexus_default.my_table)",
       "max_body_size_range": "Max body size must be between 0 and 10000000 bytes",
       "max_body_size_required": "Max body size must be greater than 0 when the limit is enabled",
       "rmq_host": "RabbitMQ host is required (1..253 characters)",
