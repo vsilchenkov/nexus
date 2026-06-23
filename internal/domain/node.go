@@ -342,11 +342,23 @@ func (n *Node) SetDefaults() {
 	if n.AuthType == "" {
 		n.AuthType = AuthTypeNone
 	}
+	// §41: дефолты источника/поля исходящей динамической авторизации зависят от
+	// режима. basic_from_request исторически читал заголовок Authorization
+	// (прозрачный проброс) — для него дефолт header/Authorization, чтобы новый
+	// source/field-aware код вёл себя как раньше. token_from_request — query/token.
 	if n.AuthDynamicSource == "" {
-		n.AuthDynamicSource = AuthDynSourceQuery
+		if n.AuthType == AuthTypeBasicFromRequest {
+			n.AuthDynamicSource = AuthDynSourceHeader
+		} else {
+			n.AuthDynamicSource = AuthDynSourceQuery
+		}
 	}
 	if n.AuthDynamicField == "" {
-		n.AuthDynamicField = "token"
+		if n.AuthType == AuthTypeBasicFromRequest {
+			n.AuthDynamicField = "Authorization"
+		} else {
+			n.AuthDynamicField = "token"
+		}
 	}
 	if n.AuthDynamicStripPrefix == "" && n.AuthType == AuthTypeTokenFromRequest && n.AuthDynamicSource == AuthDynSourceHeader {
 		n.AuthDynamicStripPrefix = "Bearer "

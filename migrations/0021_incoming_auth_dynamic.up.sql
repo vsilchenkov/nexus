@@ -27,3 +27,14 @@ ALTER TABLE nodes ADD CONSTRAINT nodes_inc_auth_dyn_fld_fmt
     CHECK (incoming_auth_dynamic_field ~ '^[a-zA-Z][a-zA-Z0-9_-]*$');
 ALTER TABLE nodes ADD CONSTRAINT nodes_inc_auth_dyn_fld_len
     CHECK (char_length(incoming_auth_dynamic_field) BETWEEN 1 AND 64);
+
+-- §41 back-compat: исходящий basic_from_request раньше игнорировал
+-- auth_dynamic_source/field и всегда читал заголовок Authorization. Теперь он
+-- их honored — поэтому существующие строки (с дефолтами колонок query/token из
+-- 0002) надо пнуть на header/Authorization, иначе после выката код стал бы
+-- читать query-параметр token вместо заголовка и сломал бы проброс. Старое
+-- поведение всегда = Authorization header, поэтому это точная миграция.
+UPDATE nodes
+   SET auth_dynamic_source = 'header',
+       auth_dynamic_field  = 'Authorization'
+ WHERE auth_type = 'basic_from_request';
