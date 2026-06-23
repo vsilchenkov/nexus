@@ -1632,6 +1632,26 @@ filter, Create без TeamID). До блока B (team-switcher в сессии)
 - **Модальное подтверждение (П16).** `useConfirm`/`ConfirmProvider` вместо `window.confirm` во всех
   местах удаления; провайдер монтируется один раз в `main.tsx`.
 
+### 4.0.4 §38 durable-retry — выравнивание лимита размера сообщения Kafka
+
+`Message Size Too Large` при produce в `nexus.logs.retry` (всплыло в loadtest
+22.06.2026 вместе с грабли-3 §4.0.2). Цепочка: при недоступности CH §38 шлёт
+проваленный батч логов в Kafka; батч несёт тела request/response и достигает
+неск. МБ. Топик создаётся с `max.message.bytes = kafka.topic.max_message_bytes`
+(config.yml = 10 МиБ), и `clogwire.Split` режет под этот же порог — но
+**брокер** kafka в [deploy/docker-compose.yml](../deploy/docker-compose.yml) не
+задавал `message.max.bytes`, и его **дефолт ~1 МиБ перебивал** per-topic-конфиг
+→ сообщение >1 МиБ отвергалось, строки терялись (NDJSON-fallback убран в §38).
+
+Это **прод-баг**, не только CI: тот же брокер-compose в проде, тот же дефолт.
+Фикс — две части:
+1. **Брокер.** `KAFKA_MESSAGE_MAX_BYTES`/`KAFKA_REPLICA_FETCH_MAX_BYTES = 10485760`
+   в compose — брокерский потолок не ниже per-topic лимита.
+2. **Запас на фрейминг.** `chunkLimit` ([chlogretry/retrier.go](../internal/sender/adapter/out/chlogretry/retrier.go))
+   режет под-батчи на `max.message.bytes − 128 КиБ`: `clogwire.Split` меряет
+   только JSON-конверт, а Kafka добавляет обвязку record-batch/ключ/заголовки —
+   под-батч ровно на лимите иначе отвергается после фрейминга.
+
 ---
 
 ## 5. Команды для типовых задач

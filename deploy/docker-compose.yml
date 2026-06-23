@@ -102,6 +102,16 @@ services:
       KAFKA_NUM_PARTITIONS: "4"
       KAFKA_DEFAULT_REPLICATION_FACTOR: "1"
       KAFKA_MIN_INSYNC_REPLICAS: "1"
+      # Брокерский потолок размера сообщения. Должен быть НЕ МЕНЬШЕ per-topic
+      # max.message.bytes (config.yml kafka.topic.max_message_bytes = 10 МиБ),
+      # иначе брокерский дефолт (~1 МиБ) перебивает топик-конфиг и отвергает
+      # крупные сообщения ("Message Size Too Large"). Бьёт по §38 durable-retry:
+      # при недоступности CH под нагрузкой Sender шлёт проваленные батчи логов
+      # (с телами request/response, до ~неск. МБ) в nexus.logs.retry — без этого
+      # они отвергаются и теряются. replica.fetch.max.bytes держим >= того же
+      # (нужно для репликации при RF>1; для single-broker не вредит).
+      KAFKA_MESSAGE_MAX_BYTES: "10485760"
+      KAFKA_REPLICA_FETCH_MAX_BYTES: "10485760"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"

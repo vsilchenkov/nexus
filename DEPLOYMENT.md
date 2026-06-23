@@ -83,6 +83,17 @@ Nexus — три stateless Go-сервиса плюс набор хранили�
 топиков упадёт с `InvalidReplicationFactor` (дефолты в `config.example.yml` рассчитаны
 на кластер из 3+ брокеров: RF=3, ISR=2).
 
+> **Внешний Kafka — лимит размера сообщения.** §38 durable-retry при недоступности
+> ClickHouse шлёт проваленные батчи логов (с телами request/response, до неск. МБ) в
+> топик `nexus.logs.retry`. Топики создаются с `max.message.bytes` из
+> `kafka.topic.max_message_bytes` (по умолчанию **10 МиБ**), но **брокерский** дефолт
+> `message.max.bytes`/`replica.fetch.max.bytes` (~1 МиБ) перебивает per-topic-конфиг.
+> В bundled-compose это уже выставлено (`KAFKA_MESSAGE_MAX_BYTES`/
+> `KAFKA_REPLICA_FETCH_MAX_BYTES = 10485760`). При **внешнем** Kafka-кластере выставьте
+> на брокерах `message.max.bytes` и `replica.fetch.max.bytes` **не ниже**
+> `kafka.topic.max_message_bytes`, иначе крупные retry-батчи отвергаются
+> (`Message Size Too Large`) и логи теряются.
+
 Переменные `VERSION` и `REGISTRY_BASE` больше не используются: registry-путь деплоя убран
 (§9.2), деплой — сборкой из исходников на сервере (§9.1). Версия приложения берётся из git
 при сборке (§9.0).
