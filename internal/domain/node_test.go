@@ -120,9 +120,9 @@ func TestNode_Validate_Errors(t *testing.T) {
 			n.AuthType = AuthTypeBasicFromRequest
 			n.AuthDynamicSource = "nonsense"
 		}, ErrNodeInvalidAuthDynSource},
-		// §41: входящая динамическая авторизация.
+		// §41: входящая динамическая авторизация (непустые невалидные значения;
+		// пустые трактуются как дефолт header/Authorization и валидны).
 		{"incoming dyn source invalid", func(n *Node) { n.IncomingAuthDynamicSource = "body" }, ErrNodeInvalidIncomingAuthDynSource},
-		{"incoming dyn field empty", func(n *Node) { n.IncomingAuthDynamicField = "" }, ErrNodeIncomingAuthDynFieldLength},
 		{"incoming dyn field format", func(n *Node) { n.IncomingAuthDynamicField = "1bad" }, ErrNodeIncomingAuthDynFieldFormat},
 	}
 	for _, c := range cases {

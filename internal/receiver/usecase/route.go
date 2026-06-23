@@ -101,7 +101,7 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 		return nil, domain.ErrNodeMethodNotAllowed
 	}
 
-	if err := CheckIncomingAuth(node, in.Header, in.Body); err != nil {
+	if err := CheckIncomingAuth(node, in.Header, in.Query, in.Body); err != nil {
 		return nil, err
 	}
 

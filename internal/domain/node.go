@@ -224,17 +224,21 @@ func (n *Node) Validate() error {
 	if n.AuthType.IsDynamic() && !n.AuthDynamicSource.Valid() {
 		return ErrNodeInvalidAuthDynSource
 	}
-	// §41: входящая динамическая авторизация. Поля всегда забэкфилены
-	// SetDefaults (header/Authorization), поэтому проверяем формат всегда —
-	// как для исходящего AuthDynamicField.
-	if !n.IncomingAuthDynamicSource.Valid() {
+	// §41: входящая динамическая авторизация. Пустые source/field трактуются
+	// как дефолт header/Authorization (согласовано с SetDefaults и runtime
+	// incomingAuthValue) — поэтому проверяем только непустые значения, чтобы не
+	// ломать узлы, построенные без SetDefaults. Обязательность выбора поля для
+	// динамических режимов — UX-гейт фронта (на бэке всегда есть дефолт).
+	if n.IncomingAuthDynamicSource != "" && !n.IncomingAuthDynamicSource.Valid() {
 		return ErrNodeInvalidIncomingAuthDynSource
 	}
-	if l := len(n.IncomingAuthDynamicField); l < 1 || l > 64 {
-		return ErrNodeIncomingAuthDynFieldLength
-	}
-	if !paramNamePattern.MatchString(n.IncomingAuthDynamicField) {
-		return ErrNodeIncomingAuthDynFieldFormat
+	if n.IncomingAuthDynamicField != "" {
+		if len(n.IncomingAuthDynamicField) > 64 {
+			return ErrNodeIncomingAuthDynFieldLength
+		}
+		if !paramNamePattern.MatchString(n.IncomingAuthDynamicField) {
+			return ErrNodeIncomingAuthDynFieldFormat
+		}
 	}
 	if n.TimeoutMs < 100 || n.TimeoutMs > 300_000 {
 		return ErrNodeTimeoutRange

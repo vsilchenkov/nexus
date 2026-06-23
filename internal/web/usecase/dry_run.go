@@ -71,7 +71,7 @@ func (u *DryRunUsecase) Run(ctx context.Context, actor Actor, req DryRunRequest)
 	rep := &DryRunReport{ID: uuid.NewString(), OK: true}
 
 	// 1. Incoming auth.
-	if err := rcv.CheckIncomingAuth(req.Node, req.Headers, req.Body); err != nil {
+	if err := rcv.CheckIncomingAuth(req.Node, req.Headers, req.Query, req.Body); err != nil {
 		rep.Steps = append(rep.Steps, DryRunStep{
 			Name: "auth.incoming", Status: "failed", Message: err.Error(),
 		})
