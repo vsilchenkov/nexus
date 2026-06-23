@@ -3347,3 +3347,35 @@ AFTER type`) на старте Web и Sender.
 `oneof=GET POST PUT DELETE ANY`. UI: пункт «Любой»/«Any» (`node.method.any`) в селектах вх/исх метода.
 
 Подробности — [sections/40-any-http-method.md](sections/40-any-http-method.md).
+
+## 41. Универсальная динамическая авторизация + умный Bearer + пересмотр статуса «Down»
+
+Динамическая авторизация (извлечение креды из запроса) становится универсальной для **входа** и
+**выхода**, с настройкой источника и имени поля в UI, каталогом «полей запроса», умным дедупом схемы и
+мягкой обработкой пустого поля.
+
+**Источник + поле.** Исходящие `token_from_request`/`basic_from_request` получают редактируемые
+`auth_dynamic_source` (`header`/`query`; legacy `body` скрыт в UI) и `auth_dynamic_field`;
+`basic_from_request` теперь honored source/field. Входящие `token`/`basic` получают новые колонки
+`incoming_auth_dynamic_source` (`header`/`query`, дефолт `header`) и `incoming_auth_dynamic_field`
+(дефолт `Authorization`): `source=header` сохраняет схему `Bearer`/`Basic`, `source=query` берёт
+значение параметра напрямую; сравнение constant-time, query не вырезается (read-only гейт).
+
+**Каталог «полей запроса».** `request_fields_catalog` (`/api/request-fields`, GET любой сессии / POST
+manager+, идемпотентно), `usage_count` on-read по `auth_dynamic_field`+`incoming_auth_dynamic_field`.
+Выбор поля обязателен для динамических режимов (UX-гейт; на бэке дефолт).
+
+**Умный Bearer + пустое поле.** Если извлечённое значение уже начинается с `Bearer `/`Basic `
+(регистронезависимо) — идёт как есть (исключает `Bearer Bearer <jwt>` для `?Bearer=Bearer+<jwt>`).
+Пустое/отсутствующее поле: исход → запрос **без `Authorization`** (не 401); вход → **401** (гейт).
+
+**Статус «Down».** Переопределён: узел «Down», если **последний** исходящий вызов завершился ошибкой
+(`status 0/4xx/5xx`); если последний прошёл (2xx) — приёмник доступен. Источник — gauge
+`nexus_node_last_request_error{node}` (Sender), Web берёт `max by(node)` и накладывает `last_error` на
+строки Overview (`nodeVariant`). Снимок «сейчас», независим от окна; колонки in/out/errors — за период.
+
+**Хранение/API/миграции.** Миграции `0021_incoming_auth_dynamic` (колонки + data-fix существующих
+`basic_from_request` → `header`/`Authorization`) и `0022_request_fields_catalog`. DTO узла
+`incoming_auth_dynamic_source`/`field` (plaintext — имена полей, не секреты), `nodeThroughputDTO.last_error`.
+
+Подробности — [sections/41-universal-request-auth.md](sections/41-universal-request-auth.md).

@@ -22,8 +22,8 @@ type Producer interface {
 	Produce(ctx context.Context, topic, key string, value []byte, headers map[string]string) error
 }
 
-// Retrier продьюсит проваленные батчи в Kafka. maxBytes — порог резки
-// под-батчей под Kafka max.message.bytes (0 → без резки).
+// Retrier продьюсит проваленные батчи в Kafka. maxBytes — Kafka
+// max.message.bytes топика (0 → без резки).
 type Retrier struct {
 	producer Producer
 	topic    string
@@ -31,10 +31,28 @@ type Retrier struct {
 	logger   logging.Logger
 }
 
-// New создаёт Retrier. maxBytes обычно = cfg.Kafka.Topic.MaxMessageBytes с
-// небольшим запасом.
+// New создаёт Retrier. maxBytes = cfg.Kafka.Topic.MaxMessageBytes (лимит топика);
+// запас на обвязку Kafka резервируется внутри (chunkLimit), отдельно вычитать
+// не нужно.
 func New(producer Producer, topic string, maxBytes int, logger logging.Logger) *Retrier {
 	return &Retrier{producer: producer, topic: topic, maxBytes: maxBytes, logger: logger}
+}
+
+// framingReserve — запас под обвязку Kafka (record-batch header, ключ-сообщения,
+// заголовки), которую clogwire.Split НЕ учитывает: он меряет только размер
+// JSON-конверта. Без запаса под-батч размером ровно в max.message.bytes после
+// фрейминга превышает лимит и отвергается брокером ("Message Size Too Large").
+const framingReserve = 128 * 1024
+
+// chunkLimit — порог резки под-батчей: лимит топика за вычетом запаса на фрейминг.
+// Для маленьких лимитов (<= запаса; в основном тесты) запас не вычитаем, чтобы не
+// уйти в ноль/минус и не выключить резку. maxBytes<=0 пробрасывается как есть
+// (Split трактует как «без резки»).
+func chunkLimit(maxBytes int) int {
+	if maxBytes > framingReserve {
+		return maxBytes - framingReserve
+	}
+	return maxBytes
 }
 
 // Retry отправляет батч в топик retry. Большой батч режется на под-батчи
@@ -45,7 +63,7 @@ func (r *Retrier) Retry(ctx context.Context, table string, batch []*domain.LogRe
 	if len(batch) == 0 {
 		return nil
 	}
-	chunks := clogwire.Split(batch, r.maxBytes)
+	chunks := clogwire.Split(batch, chunkLimit(r.maxBytes))
 	for i, chunk := range chunks {
 		value, err := clogwire.Marshal(table, chunk)
 		if err != nil {

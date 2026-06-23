@@ -51,7 +51,8 @@ const nodeColumns = `
 	rmq_host, rmq_port, rmq_vhost, rmq_user, rmq_password, rmq_queue, rmq_use_tls,
 	pull_interval_sec, pull_batch_size, pull_prefetch,
 	incoming_method, outgoing_method, comment, dlq_ttl_seconds, dlq_retry_delay_seconds,
-	path_passthrough`
+	path_passthrough,
+	incoming_auth_dynamic_source, incoming_auth_dynamic_field`
 
 func (r *NodeRepoPg) Get(ctx context.Context, id string) (*domain.Node, error) {
 	row := r.db.QueryRow(ctx, `SELECT `+nodeColumns+` FROM nodes WHERE id = $1`, id)
@@ -142,7 +143,8 @@ INSERT INTO nodes (
 	rmq_host, rmq_port, rmq_vhost, rmq_user, rmq_password, rmq_queue, rmq_use_tls,
 	pull_interval_sec, pull_batch_size, pull_prefetch,
 	incoming_method, outgoing_method, comment, dlq_ttl_seconds, dlq_retry_delay_seconds,
-	path_passthrough
+	path_passthrough,
+	incoming_auth_dynamic_source, incoming_auth_dynamic_field
 ) VALUES (
 	$1, $2,
 	$3, $4, $5, $6,
@@ -158,7 +160,8 @@ INSERT INTO nodes (
 	$31, $32, $33, $34, $35, $36, $37,
 	$38, $39, $40,
 	$41, $42, $43, $44, $45,
-	$46
+	$46,
+	$47, $48
 ) RETURNING id, created_at, updated_at`
 
 	err = r.db.QueryRow(ctx, q,
@@ -178,6 +181,7 @@ INSERT INTO nodes (
 		methodOrDefault(n.IncomingMethod), methodOrDefault(n.OutgoingMethod), n.Comment,
 		n.DLQTTLSeconds, n.DLQRetryDelaySeconds,
 		n.PathPassthrough,
+		incomingAuthDynSrc(n), incomingAuthDynField(n),
 	).Scan(&n.ID, &n.CreatedAt, &n.UpdatedAt)
 
 	if err != nil {
@@ -223,6 +227,7 @@ UPDATE nodes SET
 	pull_interval_sec = $39, pull_batch_size = $40, pull_prefetch = $41,
 	incoming_method = $42, outgoing_method = $43, comment = $44, dlq_ttl_seconds = $45,
 	dlq_retry_delay_seconds = $46, path_passthrough = $47,
+	incoming_auth_dynamic_source = $48, incoming_auth_dynamic_field = $49,
 	updated_at = now()
 WHERE id = $1
 RETURNING updated_at`
@@ -245,6 +250,7 @@ RETURNING updated_at`
 		methodOrDefault(n.IncomingMethod), methodOrDefault(n.OutgoingMethod), n.Comment,
 		n.DLQTTLSeconds, n.DLQRetryDelaySeconds,
 		n.PathPassthrough,
+		incomingAuthDynSrc(n), incomingAuthDynField(n),
 	).Scan(&n.UpdatedAt)
 
 	if err != nil {
@@ -305,6 +311,25 @@ func methodOrDefault(m domain.HTTPMethod) string {
 	return string(m)
 }
 
+// incomingAuthDynSrc / incomingAuthDynField (§41) страхуют прямую запись через
+// репозиторий (минуя usecase.SetDefaults): колонки incoming_auth_dynamic_* —
+// NOT NULL с CHECK (source IN ('header','query'); field — формат имени), пустые
+// значения нарушили бы constraint. Пусто = дефолт header/Authorization
+// (прежнее поведение).
+func incomingAuthDynSrc(n *domain.Node) string {
+	if n.IncomingAuthDynamicSource == "" {
+		return string(domain.IncomingAuthSourceHeader)
+	}
+	return string(n.IncomingAuthDynamicSource)
+}
+
+func incomingAuthDynField(n *domain.Node) string {
+	if n.IncomingAuthDynamicField == "" {
+		return "Authorization"
+	}
+	return n.IncomingAuthDynamicField
+}
+
 func rmqArgs(n *domain.Node) rmqValues {
 	if !n.RootMethod.IsPull() {
 		return rmqValues{}
@@ -329,6 +354,7 @@ type rowScanner interface {
 func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 	var n domain.Node
 	var rootMethod, urlMode, authType, authDynSrc, incomingAuth, status string
+	var incAuthDynSrc string
 	var incomingMethod, outgoingMethod string
 	var encAuth, encInc string
 	var created, updated time.Time
@@ -352,6 +378,7 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 		&pullInterval, &pullBatch, &pullPrefetch,
 		&incomingMethod, &outgoingMethod, &n.Comment, &n.DLQTTLSeconds, &n.DLQRetryDelaySeconds,
 		&n.PathPassthrough,
+		&incAuthDynSrc, &n.IncomingAuthDynamicField,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -367,6 +394,7 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 	n.AuthType = domain.AuthType(authType)
 	n.AuthDynamicSource = domain.AuthDynSource(authDynSrc)
 	n.IncomingAuthType = domain.IncomingAuthType(incomingAuth)
+	n.IncomingAuthDynamicSource = domain.IncomingAuthSource(incAuthDynSrc)
 	n.Status = domain.NodeStatus(status)
 	n.CreatedAt = created
 	n.UpdatedAt = updated

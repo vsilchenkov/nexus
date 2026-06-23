@@ -2615,6 +2615,87 @@
                 }
             }
         },
+        "/api/request-fields": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "request-fields"
+                ],
+                "summary": "Справочник полей запроса: автодополнение (§41).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "prefix поиска по имени; пусто = топ-используемые",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "лимит (по умолчанию 20)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ListRequestFieldsResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Идемпотентно по case-insensitive имени: повтор вернёт существующую запись (200), а не ошибку.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "request-fields"
+                ],
+                "summary": "Создать поле запроса в справочнике (manager, §41).",
+                "parameters": [
+                    {
+                        "description": "request field",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.requestFieldRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.requestFieldResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/settings/app": {
             "get": {
                 "security": [
@@ -3827,6 +3908,18 @@
                     "type": "string",
                     "maxLength": 1024
                 },
+                "incoming_auth_dynamic_field": {
+                    "type": "string",
+                    "maxLength": 64
+                },
+                "incoming_auth_dynamic_source": {
+                    "description": "§41: источник и имя поля для входящей динамической авторизации.",
+                    "type": "string",
+                    "enum": [
+                        "header",
+                        "query"
+                    ]
+                },
                 "incoming_auth_type": {
                     "type": "string",
                     "enum": [
@@ -4225,6 +4318,17 @@
                 }
             }
         },
+        "internal_web_adapter_in_http.ListRequestFieldsResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.requestFieldResponse"
+                    }
+                }
+            }
+        },
         "internal_web_adapter_in_http.ListTeamMembersResponse": {
             "type": "object",
             "properties": {
@@ -4431,6 +4535,12 @@
                 },
                 "incoming_auth_credentials_set": {
                     "type": "boolean"
+                },
+                "incoming_auth_dynamic_field": {
+                    "type": "string"
+                },
+                "incoming_auth_dynamic_source": {
+                    "type": "string"
                 },
                 "incoming_auth_type": {
                     "type": "string"
@@ -4695,6 +4805,18 @@
                 "incoming_auth_credentials": {
                     "type": "string",
                     "maxLength": 1024
+                },
+                "incoming_auth_dynamic_field": {
+                    "type": "string",
+                    "maxLength": 64
+                },
+                "incoming_auth_dynamic_source": {
+                    "description": "§41: источник и имя поля для входящей динамической авторизации.",
+                    "type": "string",
+                    "enum": [
+                        "header",
+                        "query"
+                    ]
                 },
                 "incoming_auth_type": {
                     "type": "string",
@@ -5529,6 +5651,10 @@
                 "in": {
                     "type": "integer"
                 },
+                "last_error": {
+                    "description": "§41 («Down»): последний исходящий вызов узла завершился ошибкой.",
+                    "type": "boolean"
+                },
                 "node": {
                     "type": "string"
                 },
@@ -5683,6 +5809,43 @@
                 },
                 "to": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.requestFieldRequest": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.requestFieldResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "usage_count": {
+                    "type": "integer"
                 }
             }
         },

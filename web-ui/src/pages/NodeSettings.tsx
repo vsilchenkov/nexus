@@ -25,6 +25,7 @@ import { DryRunDialog } from "../components/DryRunDialog";
 import { DeleteNodeDialog } from "../components/node/DeleteNodeDialog";
 import { AllowedHostsField } from "../components/node/AllowedHostsField";
 import { HeadersField } from "../components/node/HeadersField";
+import { RequestFieldField } from "../components/node/RequestFieldField";
 import { RabbitMQSection, type RMQSetter } from "../components/node/RabbitMQSection";
 import {
   Button,
@@ -59,6 +60,12 @@ type Form = {
   auth_credentials: string;
   incoming_auth_type: string;
   incoming_auth_credentials: string;
+  // §41: динамическая авторизация — источник (header/query) и имя поля.
+  auth_dynamic_source: string;
+  auth_dynamic_field: string;
+  auth_dynamic_strip_prefix: string; // скрыто в UI, round-trip для back-compat
+  incoming_auth_dynamic_source: string;
+  incoming_auth_dynamic_field: string;
   webhook_signature_header: string;
   webhook_signature_prefix: string;
   timeout_ms: number;
@@ -105,6 +112,11 @@ const emptyForm: Form = {
   auth_credentials: "",
   incoming_auth_type: "none",
   incoming_auth_credentials: "",
+  auth_dynamic_source: "query",
+  auth_dynamic_field: "",
+  auth_dynamic_strip_prefix: "",
+  incoming_auth_dynamic_source: "header",
+  incoming_auth_dynamic_field: "Authorization",
   webhook_signature_header: "X-Hub-Signature-256",
   webhook_signature_prefix: "sha256=",
   timeout_ms: 30000,
@@ -325,7 +337,7 @@ export default function NodeSettings() {
                 >
                   {HTTP_METHODS.map((m) => (
                     <option key={m} value={m}>
-                      {m === "ANY" ? t("node.method.any") : m}
+                      {m}
                     </option>
                   ))}
                 </Select>
@@ -440,7 +452,7 @@ export default function NodeSettings() {
               >
                 {HTTP_METHODS.map((m) => (
                   <option key={m} value={m}>
-                    {m === "ANY" ? t("node.method.any") : m}
+                    {m}
                   </option>
                 ))}
               </Select>
@@ -513,6 +525,38 @@ export default function NodeSettings() {
                   : t("node.auth.token_in_hint")}
               </Hint>
             )}
+            {/* §41: источник креды клиента — заголовок (по умолчанию Authorization)
+                или query-параметр — и имя поля (обязательно при query). */}
+            {(form.incoming_auth_type === "basic" ||
+              form.incoming_auth_type === "token") && (
+              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Field label={t("node.form.auth_source")} help={t("node.help.auth_source_in")}>
+                  <Select
+                    value={form.incoming_auth_dynamic_source}
+                    onChange={(e) => {
+                      const src = e.target.value;
+                      set("incoming_auth_dynamic_source", src);
+                      if (src === "query" && form.incoming_auth_dynamic_field === "Authorization") {
+                        set("incoming_auth_dynamic_field", "");
+                      } else if (src === "header" && form.incoming_auth_dynamic_field === "") {
+                        set("incoming_auth_dynamic_field", "Authorization");
+                      }
+                    }}
+                  >
+                    <option value="header">{t("node.auth_source.header")}</option>
+                    <option value="query">{t("node.auth_source.query")}</option>
+                  </Select>
+                </Field>
+                <Field label={t("node.form.auth_field")} help={t("node.help.auth_field_in")}>
+                  <RequestFieldField
+                    value={form.incoming_auth_dynamic_field}
+                    onChange={(v) => set("incoming_auth_dynamic_field", v)}
+                    invalid={errField === "incoming_auth_dynamic_field"}
+                  />
+                  {fieldErr("incoming_auth_dynamic_field")}
+                </Field>
+              </div>
+            )}
             {form.incoming_auth_type === "webhook_signature" && (
               <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Field label={t("node.form.sig_header")} help={t("node.help.sig_header")}>
@@ -575,6 +619,33 @@ export default function NodeSettings() {
                 {t("node.auth.basic_from_request_hint")}
               </Hint>
             )}
+            {/* §41: источник креды (заголовок/параметр) + обязательное имя поля
+                для динамических исходящих режимов. */}
+            {!isPull &&
+              (form.auth_type === "token_from_request" ||
+                form.auth_type === "basic_from_request") && (
+                <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <Field label={t("node.form.auth_source")} help={t("node.help.auth_source_out")}>
+                    <Select
+                      value={form.auth_dynamic_source}
+                      onChange={(e) => set("auth_dynamic_source", e.target.value)}
+                    >
+                      <option value="header">{t("node.auth_source.header")}</option>
+                      <option value="query">{t("node.auth_source.query")}</option>
+                      {/* body — legacy: показываем опцию только если узел уже на ней. */}
+                      {form.auth_dynamic_source === "body" && <option value="body">body</option>}
+                    </Select>
+                  </Field>
+                  <Field label={t("node.form.auth_field")} help={t("node.help.auth_field_out")}>
+                    <RequestFieldField
+                      value={form.auth_dynamic_field}
+                      onChange={(v) => set("auth_dynamic_field", v)}
+                      invalid={errField === "auth_dynamic_field"}
+                    />
+                    {fieldErr("auth_dynamic_field")}
+                  </Field>
+                </div>
+              )}
           </Card>
 
           <Card>

@@ -3,7 +3,6 @@ package usecase
 import (
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -31,6 +30,43 @@ func TestBuildDynamicOutgoingAuth_TokenFromQuery(t *testing.T) {
 	}
 	if res.Query.Get("other") != "x" {
 		t.Errorf("other lost")
+	}
+}
+
+// §41 п.2: значение в query уже содержит схему "Bearer <jwt>" (кейс
+// ?Bearer=Bearer+<jwt>) — умный дедуп не должен удваивать префикс.
+func TestBuildDynamicOutgoingAuth_SmartBearer_NoDoublePrefix(t *testing.T) {
+	n := &domain.Node{
+		AuthType:          domain.AuthTypeTokenFromRequest,
+		AuthDynamicSource: domain.AuthDynSourceQuery,
+		AuthDynamicField:  "Bearer",
+	}
+	q := url.Values{"Bearer": {"Bearer eyJabc"}}
+	res, err := BuildDynamicOutgoingAuth(n, http.Header{}, q, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Header != "Bearer eyJabc" {
+		t.Errorf("smart dedup failed: header=%q (ожидался один префикс)", res.Header)
+	}
+	if res.Query.Get("Bearer") != "" {
+		t.Errorf("служебный параметр Bearer должен быть вырезан: %v", res.Query)
+	}
+}
+
+// Регистронезависимость дедупа: "bearer x" не получает второй "Bearer ".
+func TestBuildDynamicOutgoingAuth_SmartBearer_CaseInsensitive(t *testing.T) {
+	n := &domain.Node{
+		AuthType:          domain.AuthTypeTokenFromRequest,
+		AuthDynamicSource: domain.AuthDynSourceQuery,
+		AuthDynamicField:  "token",
+	}
+	res, err := BuildDynamicOutgoingAuth(n, http.Header{}, url.Values{"token": {"bearer xyz"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Header != "bearer xyz" {
+		t.Errorf("case-insensitive dedup failed: header=%q", res.Header)
 	}
 }
 
@@ -97,20 +133,34 @@ func TestBuildDynamicOutgoingAuth_TokenFromBody(t *testing.T) {
 	}
 }
 
-func TestBuildDynamicOutgoingAuth_TokenMissing(t *testing.T) {
+// §41: поле не пришло/пустое → Header=="" (запрос уходит без Authorization),
+// ошибки нет, остальные query-параметры пробрасываются.
+func TestBuildDynamicOutgoingAuth_TokenMissing_NoAuthForwarded(t *testing.T) {
 	n := &domain.Node{
 		AuthType:          domain.AuthTypeTokenFromRequest,
 		AuthDynamicSource: domain.AuthDynSourceQuery,
 		AuthDynamicField:  "token",
 	}
-	_, err := BuildDynamicOutgoingAuth(n, http.Header{}, url.Values{}, nil)
-	if !errors.Is(err, domain.ErrAuthTokenRequired) {
-		t.Fatalf("want ErrAuthTokenRequired, got %v", err)
+	res, err := BuildDynamicOutgoingAuth(n, http.Header{}, url.Values{"other": {"keep"}}, nil)
+	if err != nil {
+		t.Fatalf("пустой токен не должен быть ошибкой: %v", err)
+	}
+	if res.Header != "" {
+		t.Errorf("ожидался пустой Header (без Authorization), got %q", res.Header)
+	}
+	if res.Query.Get("other") != "keep" {
+		t.Errorf("остальные параметры должны пробрасываться: %v", res.Query)
 	}
 }
 
-func TestBuildDynamicOutgoingAuth_BasicFromRequest_Passthrough(t *testing.T) {
-	n := &domain.Node{AuthType: domain.AuthTypeBasicFromRequest}
+// §41: basic_from_request теперь honored source/field. Дефолтный режим
+// (header/Authorization) — прозрачный проброс "Basic <base64>".
+func TestBuildDynamicOutgoingAuth_BasicFromHeader_Passthrough(t *testing.T) {
+	n := &domain.Node{
+		AuthType:          domain.AuthTypeBasicFromRequest,
+		AuthDynamicSource: domain.AuthDynSourceHeader,
+		AuthDynamicField:  "Authorization",
+	}
 	enc := base64.StdEncoding.EncodeToString([]byte("user:pass"))
 	h := http.Header{}
 	h.Set("Authorization", "Basic "+enc)
@@ -126,28 +176,40 @@ func TestBuildDynamicOutgoingAuth_BasicFromRequest_Passthrough(t *testing.T) {
 	}
 }
 
-func TestBuildDynamicOutgoingAuth_BasicFromRequest_Missing(t *testing.T) {
-	n := &domain.Node{AuthType: domain.AuthTypeBasicFromRequest}
-	_, err := BuildDynamicOutgoingAuth(n, http.Header{}, url.Values{}, nil)
-	if !errors.Is(err, domain.ErrAuthHeaderMissing) {
-		t.Fatalf("want ErrAuthHeaderMissing, got %v", err)
+// §41: basic из query-параметра — значение это base64(login:password),
+// схема "Basic " добавляется умным дедупом.
+func TestBuildDynamicOutgoingAuth_BasicFromQuery(t *testing.T) {
+	n := &domain.Node{
+		AuthType:          domain.AuthTypeBasicFromRequest,
+		AuthDynamicSource: domain.AuthDynSourceQuery,
+		AuthDynamicField:  "creds",
 	}
-
-	hWrong := http.Header{}
-	hWrong.Set("Authorization", "Bearer x")
-	_, err = BuildDynamicOutgoingAuth(n, hWrong, url.Values{}, nil)
-	if !errors.Is(err, domain.ErrAuthHeaderMissing) {
-		t.Fatalf("Bearer вместо Basic: want ErrAuthHeaderMissing, got %v", err)
+	enc := base64.StdEncoding.EncodeToString([]byte("user:pass"))
+	res, err := BuildDynamicOutgoingAuth(n, http.Header{}, url.Values{"creds": {enc}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Header != "Basic "+enc {
+		t.Errorf("basic from query failed: got %q", res.Header)
+	}
+	if res.Query.Get("creds") != "" {
+		t.Errorf("служебный параметр creds должен быть вырезан: %v", res.Query)
 	}
 }
 
-func TestBuildDynamicOutgoingAuth_BasicFromRequest_InvalidBase64(t *testing.T) {
-	n := &domain.Node{AuthType: domain.AuthTypeBasicFromRequest}
-	h := http.Header{}
-	h.Set("Authorization", "Basic not!valid!base64!")
-	_, err := BuildDynamicOutgoingAuth(n, h, url.Values{}, nil)
-	if !errors.Is(err, domain.ErrAuthHeaderMalformed) {
-		t.Fatalf("want ErrAuthHeaderMalformed, got %v", err)
+// §41: basic без креды на входе → Header=="" (без Authorization), не ошибка.
+func TestBuildDynamicOutgoingAuth_BasicMissing_NoAuthForwarded(t *testing.T) {
+	n := &domain.Node{
+		AuthType:          domain.AuthTypeBasicFromRequest,
+		AuthDynamicSource: domain.AuthDynSourceHeader,
+		AuthDynamicField:  "Authorization",
+	}
+	res, err := BuildDynamicOutgoingAuth(n, http.Header{}, url.Values{}, nil)
+	if err != nil {
+		t.Fatalf("пустая креда не должна быть ошибкой: %v", err)
+	}
+	if res.Header != "" {
+		t.Errorf("ожидался пустой Header, got %q", res.Header)
 	}
 }
 

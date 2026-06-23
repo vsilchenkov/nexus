@@ -486,45 +486,12 @@ loadtest:
       timeout 60s docker compose run --rm --no-deps web \
         --set-admin-password "$LOADTEST_ADMIN_PASSWORD"
     - echo "--- admin password установлен; web-container, что мы вызывали, удалён (--rm) ---"
-    # ----- Шаг 2.5: ClickHouse таблица для логов loadtest-узлов -----
-    # cmd/loadtest создаёт 50 узлов с clickhouse_table=nexus_default.loadtest, но сам
-    # таблицу не создаёт. Без неё sender'овский chlog.Writer фейлится на каждом
-    # batch insert ("Table nexus_default.loadtest does not exist") → error rate 100%.
-    # Схема — §4.3 ТЗ (specs/sections/04-sender.md), единая для всех узлов.
-    - 'echo "===== [2.5/4] создаём CH-таблицу nexus_default.loadtest ====="'
-    - |
-      docker compose exec -T clickhouse clickhouse-client --multiquery --query "
-      CREATE DATABASE IF NOT EXISTS nexus_default;
-      CREATE TABLE IF NOT EXISTS nexus_default.loadtest (
-        ID String,
-        type String,
-        url String,
-        method String,
-        parameters String,
-        request String,
-        response String,
-        status Int32,
-        reason String,
-        date_create Date,
-        date_request DateTime,
-        date_response DateTime,
-        duration Int32,
-        done Bool,
-        checksum_request FixedString(32),
-        checksum_response FixedString(32),
-        Host String,
-        IP String,
-        attempts Int32,
-        attempts_details String,
-        node_id String
-      )
-      ENGINE = MergeTree
-      PARTITION BY toYYYYMM(date_create)
-      ORDER BY (date_create, date_request, method)
-      SETTINGS index_granularity = 8192;
-      "
-    - 'echo "--- проверка: SHOW TABLES FROM nexus_default ---"'
-    - docker compose exec -T clickhouse clickhouse-client --query "SHOW TABLES FROM nexus_default"
+    # ----- Шаг 2.5 удалён: CH-таблицу логов создаёт сам cmd/loadtest -----
+    # из канонной схемы (domain.RequiredLogColumns → RenderCreateTable), см.
+    # cmd/loadtest/ensure_table.go. Раньше тут дублировался рукописный CREATE
+    # TABLE, отстававший от схемы при добавлении колонок (напр. http_method §39)
+    # → batch INSERT падал, no-loss валил job. Единый источник истины убирает
+    # дрейф; таблица создаётся loadtest'ом при переданном --ch-addr (см. шаг 3).
     # ----- Шаг 3: запуск нагрузочного сценария -----
     - echo "===== [3/4] loadtest scenario ====="
     - echo "  target_rps = $LOADTEST_TARGET_RPS"

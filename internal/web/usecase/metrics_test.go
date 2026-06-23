@@ -24,6 +24,8 @@ type fakeProm struct {
 	thrErr       error
 	nodeErrs     map[string]float64
 	nodeErrErr   error
+	lastErrs     map[string]float64
+	lastErrsErr  error
 	series       map[string][]float64
 	seriesErr    error
 	nodeKPI      port.NodeKPI
@@ -45,6 +47,9 @@ func (f *fakeProm) NodeThroughput(_ context.Context, _, _ time.Time) (map[string
 }
 func (f *fakeProm) NodeErrors(_ context.Context, _ time.Duration) (map[string]float64, error) {
 	return f.nodeErrs, f.nodeErrErr
+}
+func (f *fakeProm) NodeLastErrors(_ context.Context, _ time.Time) (map[string]float64, error) {
+	return f.lastErrs, f.lastErrsErr
 }
 func (f *fakeProm) NodeSeries(_ context.Context, _, _ time.Time, _ int) (map[string][]float64, error) {
 	return f.series, f.seriesErr
@@ -147,9 +152,13 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 
 	t.Run("maps rows by node", func(t *testing.T) {
 		t.Parallel()
-		prom := &fakeProm{throughput: map[string]port.NodeThroughput{
-			"webhook/send": {In: 4201, Out: 4198, Errors: 2},
-		}}
+		prom := &fakeProm{
+			throughput: map[string]port.NodeThroughput{
+				"webhook/send": {In: 4201, Out: 4198, Errors: 2},
+			},
+			// §41: последний вызов узла — ошибка → LastError=true.
+			lastErrs: map[string]float64{"webhook/send": 1},
+		}
 		uc := NewMetricsUsecase(prom, nil, &fakeNodeRepo{}, log)
 		got := uc.NodesOverview(context.Background(), "", time.Now().Add(-time.Hour), time.Now())
 		require.True(t, got.PrometheusAvailable)
@@ -158,6 +167,7 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 		require.EqualValues(t, 4201, got.Items[0].In)
 		require.EqualValues(t, 4198, got.Items[0].Out)
 		require.EqualValues(t, 2, got.Items[0].Errors)
+		require.True(t, got.Items[0].LastError, "§41: последний вызов — ошибка → Down")
 	})
 
 	t.Run("prom error degrades", func(t *testing.T) {

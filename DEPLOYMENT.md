@@ -83,6 +83,17 @@ Nexus — три stateless Go-сервиса плюс набор хранили�
 топиков упадёт с `InvalidReplicationFactor` (дефолты в `config.example.yml` рассчитаны
 на кластер из 3+ брокеров: RF=3, ISR=2).
 
+> **Внешний Kafka — лимит размера сообщения.** §38 durable-retry при недоступности
+> ClickHouse шлёт проваленные батчи логов (с телами request/response, до неск. МБ) в
+> топик `nexus.logs.retry`. Топики создаются с `max.message.bytes` из
+> `kafka.topic.max_message_bytes` (по умолчанию **10 МиБ**), но **брокерский** дефолт
+> `message.max.bytes`/`replica.fetch.max.bytes` (~1 МиБ) перебивает per-topic-конфиг.
+> В bundled-compose это уже выставлено (`KAFKA_MESSAGE_MAX_BYTES`/
+> `KAFKA_REPLICA_FETCH_MAX_BYTES = 10485760`). При **внешнем** Kafka-кластере выставьте
+> на брокерах `message.max.bytes` и `replica.fetch.max.bytes` **не ниже**
+> `kafka.topic.max_message_bytes`, иначе крупные retry-батчи отвергаются
+> (`Message Size Too Large`) и логи теряются.
+
 Переменные `VERSION` и `REGISTRY_BASE` больше не используются: registry-путь деплоя убран
 (§9.2), деплой — сборкой из исходников на сервере (§9.1). Версия приложения берётся из git
 при сборке (§9.0).
@@ -531,6 +542,16 @@ Compose автоматически подхватывает `docker-compose.over
   применяется автоматически на старте, дефолт колонок — POST). Откат (`down`) вернёт CHECK без `'ANY'` —
   упадёт, если остались узлы со значением `ANY` (привести к конкретному методу до отката). Новой
   ENV/инфраструктуры нет.
+- **§41 — универсальная динамическая авторизация + каталог полей запроса.** Две миграции (применяются
+  автоматически на старте): `0021_incoming_auth_dynamic` добавляет в `nodes` колонки
+  `incoming_auth_dynamic_source` (CHECK `header|query`, дефолт `header`) и `incoming_auth_dynamic_field`
+  (дефолт `Authorization`) — существующие узлы ведут себя как раньше; **плюс data-fix**: пинит
+  существующие `basic_from_request` на `header`/`Authorization` (обязательно — иначе после выката
+  source/field-aware код читал бы query `token` вместо заголовка `Authorization` и сломал бы проброс).
+  `0022_request_fields_catalog` создаёт справочник `request_fields_catalog`. Новой ENV/инфраструктуры
+  нет; метрика `nexus_node_last_request_error{node}` (Sender) появляется автоматически. Откат (`down`)
+  удаляет колонки/таблицу (для `0021` basic_from_request-узлы остаются на `header`/`Authorization` —
+  безопасно).
 - **Вручную** (для контролируемых деплоев — применить до старта трафика):
 
   | Действие | Команда (нативно) | Команда (в Docker) |

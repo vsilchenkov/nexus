@@ -134,6 +134,8 @@ type nodeThroughputDTO struct {
 	Errors uint64    `json:"errors"`
 	P95ms  float64   `json:"p95_ms"`
 	Spark  []float64 `json:"spark"`
+	// §41 («Down»): последний исходящий вызов узла завершился ошибкой.
+	LastError bool `json:"last_error"`
 }
 
 // NodesOverview godoc
@@ -159,7 +161,7 @@ func (h *MetricsHandler) NodesOverview(c *gin.Context) {
 		}
 		items = append(items, nodeThroughputDTO{
 			Node: it.Node, In: it.In, Out: it.Out, Errors: it.Errors,
-			P95ms: it.P95ms, Spark: spark,
+			P95ms: it.P95ms, Spark: spark, LastError: it.LastError,
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{

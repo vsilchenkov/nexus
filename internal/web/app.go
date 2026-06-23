@@ -301,6 +301,13 @@ func (a *App) Start(ctx context.Context) error {
 	)
 	headerCatalogHandler := httpadapter.NewHeaderCatalogHandler(headerCatalogUC, a.logger)
 
+	// Справочник полей запроса (§41). usage_count считается on-read из
+	// nodes.auth_dynamic_field / incoming_auth_dynamic_field.
+	requestFieldUC := usecase.NewRequestFieldCatalogUsecase(
+		pgrepo.NewRequestFieldCatalogRepoPg(a.pg, a.logger), auditUC, a.logger,
+	)
+	requestFieldHandler := httpadapter.NewRequestFieldCatalogHandler(requestFieldUC, a.logger)
+
 	dryRunUC := usecase.NewDryRunUsecase(auditUC, a.logger)
 	dryRunHandler := httpadapter.NewDryRunHandler(dryRunUC, a.logger)
 
@@ -465,6 +472,7 @@ func (a *App) Start(ctx context.Context) error {
 		CHTemplate:    chTemplateHandler,
 		HostAllowlist: hostAllowlistHandler,
 		HeaderCatalog: headerCatalogHandler,
+		RequestField:  requestFieldHandler,
 		RMQTest:       rmqTestHandler,
 		Kafka:         kafkaHandler,
 		AsyncQueue:    asyncQueueHandler,

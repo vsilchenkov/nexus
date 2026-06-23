@@ -95,6 +95,12 @@ type PromMetrics interface {
 	// Используется планировщиком Telegram-алертов (§22) вместо ClickHouse.
 	NodeErrors(ctx context.Context, window time.Duration) (map[string]float64, error)
 
+	// NodeLastErrors — per-node исход ПОСЛЕДНЕГО исходящего вызова (instant
+	// gauge nexus_node_last_request_error на момент at): >=1 если последний
+	// вызов завершился ошибкой (status 0/4xx/5xx), иначе 0/отсутствует. Ключ —
+	// path узла. Источник статуса «Down» в Overview (§41), независим от окна.
+	NodeLastErrors(ctx context.Context, at time.Time) (map[string]float64, error)
+
 	// NodeSeries — спарклайн входящего трафика per-node: range-запрос за период
 	// (since, until], разбитый на buckets точек (один запрос на весь список,
 	// §22/§28). Ключ — path узла; длина слайса == buckets (недостающие — нули).

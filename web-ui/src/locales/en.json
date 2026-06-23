@@ -290,6 +290,7 @@
       "target_url_self": "Target URL must not point at the Nexus ingress itself (would cause a request loop)",
       "url_param_name_length": "URL parameter name length must be between 1 and 64 characters",
       "url_param_name_format": "URL parameter name must start with a letter and contain only letters, digits, hyphen and underscore",
+      "auth_field_required": "Pick a field name for the credential source",
       "auth_dynamic_field_length": "Dynamic auth field name length must be between 1 and 64 characters",
       "auth_dynamic_field_format": "Dynamic auth field name must start with a letter and contain only letters, digits, hyphen and underscore",
       "auth_dynamic_source": "Dynamic auth source must be header or query",
@@ -326,20 +327,17 @@
       "auth": "Auth",
       "ch_table": "Log table"
     },
-    "method": {
-      "any": "Any"
-    },
     "help": {
       "method_type": "Route type. request — synchronous: Nexus waits for the node's response and returns it to the client. requestAsync — enqueues into Kafka and replies 200 immediately (background Sender delivers). RabbitMQAsync — the node pulls messages from a RabbitMQ queue (no inbound HTTP).",
       "path": "Node identifier in the URL: /api/v1/request/<team>/<path>. Letters, digits, /, -, _ allowed. Nexus uses it to find the node config and route the request.",
-      "incoming_method": "HTTP method the node accepts inbound. Other methods get 405. Defaults to POST. «Any» — accept a request with any method (no 405).",
+      "incoming_method": "HTTP method the node accepts inbound. Other methods get 405. Defaults to POST. «ANY» — accept a request with any method (no 405).",
       "status": "Active — handles requests. Paused — sync requests are queued (202) and accumulate until unpaused. Disabled — node rejects requests (404).",
       "url_mode": "Where the target address comes from. Static — always the Target URL below. From request — the URL arrives in a query parameter on each request (validated against the allowlist).",
       "target_url": "Where Nexus forwards the request (external receiver). Full address with scheme and, if needed, port/path. Used in Static mode.",
       "path_passthrough": "When on, the incoming path tail after the node path is appended to the Target URL: one node serves many receiver methods. Off — exact path match (extra tail → 404).",
       "url_param_name": "Name of the query parameter that carries the target URL in From-request mode. The parameter itself is stripped from the proxied request.",
       "allowed_hosts": "Allowlist of receiver hosts (SSRF protection). A URL outside the list → 403. Exact hosts and wildcards (*.partner.com) are supported.",
-      "outgoing_method": "HTTP method the Sender uses to call the receiver. May differ from the inbound one (e.g. POST in → GET out). «Any» — call the receiver with the same method the client sent (mirror).",
+      "outgoing_method": "HTTP method the Sender uses to call the receiver. May differ from the inbound one (e.g. POST in → GET out). «ANY» — call the receiver with the same method the client sent (mirror).",
       "timeout_ms": "Max time to wait for the receiver's response, ms (100–300000). On expiry — timeout (504/502).",
       "retry_count": "How many times to retry the receiver call on error/5xx (0–10), with exponential backoff. 4xx responses are not retried.",
       "incoming_auth": "How Nexus authorizes the inbound request from the client: none — no check; basic/token — by the credentials below; webhook_signature — HMAC body signature.",
@@ -348,6 +346,10 @@
       "sig_prefix": "Prefix before the hex signature in the header, stripped before verification (e.g. sha256=).",
       "outgoing_auth": "How Nexus authenticates to the receiver: none — none; basic/token — credentials below; *_from_request — credentials taken from the inbound request.",
       "outgoing_credentials": "Outbound auth secret (login:password for basic, token for token). Never returned by the API; leave empty on edit to keep the current one.",
+      "auth_source_in": "Where to read the client credential from: Header (default Authorization) or Query parameter. Header keeps the standard scheme (Bearer/Basic); Query reads the raw value.",
+      "auth_field_in": "Name of the header or query parameter that carries the client credential.",
+      "auth_source_out": "Where to take the credential from the inbound request to forward to the receiver: Header or Query parameter.",
+      "auth_field_out": "Name of the header or query parameter that carries the credential. Required.",
       "forward_headers": "Which inbound request headers to forward to the receiver. Others are not passed (Content-Type is always forwarded).",
       "logging_enabled": "Whether to write the node's call log to ClickHouse. Off — the node is not logged at all (no metrics or history for it).",
       "ch_table": "Log table name in db.table form. Multiple nodes may write to one table (distinguished by node_id).",
@@ -366,13 +368,28 @@
       "basic_out_hint": "Format: login:password separated by a colon (e.g. admin:s3cret). Nexus base64-encodes it and sets Authorization: Basic … on the request to the node.",
       "token_in_hint": "Token value only, without the \"Bearer \" prefix. The client sends Authorization: Bearer <token>.",
       "token_out_hint": "Token value only, without the \"Bearer \" prefix. Nexus sets Authorization: Bearer <token> on the request to the node.",
-      "token_from_request_hint": "The token is taken from the incoming request (query / header / body field) and placed into Authorization: Bearer on the request to the node; the original value is stripped from the proxied request.",
-      "basic_from_request_hint": "The incoming Authorization: Basic … header is forwarded to the node as-is (Nexus stores no credentials)."
+      "token_from_request_hint": "The token is taken from the incoming request (header or query parameter, by the field name below) and placed into Authorization: Bearer on the request to the node; the original value is stripped from the proxied request. If the value already starts with \"Bearer \", it is forwarded as-is (no double prefix). If the field is missing/empty, the request is sent without Authorization.",
+      "basic_from_request_hint": "The Basic credential is taken from the incoming request (header or query parameter, by the field name below) and forwarded as Authorization: Basic … (Nexus stores no credentials). If the field is missing/empty, the request is sent without Authorization."
+    },
+    "auth_source": {
+      "header": "Header",
+      "query": "Query parameter"
+    },
+    "request_field_combo": {
+      "placeholder": "Pick a field…",
+      "search": "Search or create a field…",
+      "empty": "No fields found",
+      "used": "{{count}} node",
+      "used_plural": "{{count}} nodes",
+      "create": "Create \"{{name}}\"",
+      "invalid": "Field name must start with a letter; letters, digits, hyphen and underscore only"
     },
     "form": {
       "route": "Route",
       "target": "Target",
       "auth": "Authorization",
+      "auth_source": "Credential source",
+      "auth_field": "Field name",
       "logging": "Logging",
       "headers": "Headers",
       "forward_headers": "Forwarded headers",
