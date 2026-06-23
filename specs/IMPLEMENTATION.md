@@ -936,6 +936,18 @@ count. Фикс: CI передаёт `--ch-noloss-max-wait 5m` (var `LOADTEST_CH
 проверка успевает дойти до `rows>=expected` и даёт чистый PASS; семантика
 inconclusive — страховка от любого слишком короткого окна впредь.
 
+**Грабли-3 (22.06.2026, `ch_rows=0 < 13788`, `errors=0`):** при зелёном HTTP-слое
+no-loss упал с **нулём** строк. Причина — дрейф схемы: §39 добавил колонку
+`http_method` в канон ([RequiredLogColumns](../internal/domain/ch_log_schema.go)),
+а CH-таблицу `nexus_default.loadtest` CI создавал **рукописным** `CREATE TABLE` в
+`.gitlab-ci.yml` (шаг 2.5), который колонку не получил → каждый batch INSERT
+Sender'а падал с `No such column http_method`, §38-retry в Kafka тоже падал
+(`Message Size Too Large`, см. 4.0.4) → строки не доходили никуда. **Фикс:** таблицу
+теперь создаёт сам `cmd/loadtest` из канонной схемы тем же рендерером, что и
+прод-таблицы узлов ([ensure_table.go](../cmd/loadtest/ensure_table.go) →
+`domain.CHTemplate.RenderCreateTable`); инлайн-DDL из CI удалён. Единый источник
+истины — **не возвращать рукописный DDL в CI**, иначе дрейф повторится.
+
 ### 4.0.3 Версия — единый источник истины git (ldflags из `git describe`)
 
 Версия приложения берётся **только** из git и вшивается в бинарь на этапе сборки через

@@ -168,6 +168,12 @@ func main() {
 	}
 	fmt.Println("logged in OK")
 
+	// §10.2: создаём CH-таблицу логов из канонной схемы ДО старта трафика —
+	// иначе первый batch INSERT Sender'а упадёт. Пустой --ch-addr = пропуск.
+	if err := ensureCHTable(ctx, f); err != nil {
+		fail("ensure clickhouse table: %v", err)
+	}
+
 	// §27.12: часть узлов — RabbitMQAsync (нагрузка публикуется в их очереди).
 	httpNodes := f.Nodes
 	rmqNodes := 0
