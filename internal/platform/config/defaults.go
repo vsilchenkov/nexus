@@ -1,5 +1,12 @@
 package config
 
+// defaultGRPCMaxMessageBytes — дефолтный лимит размера одного gRPC-сообщения
+// Receiver↔Sender (оба направления), 64 МиБ. Дефолт gRPC (4 МиБ) мал для больших
+// тел: ответ апстрима на десятки МБ → ResourceExhausted. Применяется и к клиенту
+// Receiver (`sender_grpc.max_message_bytes`), и к серверу Sender
+// (`grpc_max_message_bytes`).
+const defaultGRPCMaxMessageBytes = 64 * 1024 * 1024
+
 // defaultTrustedProxies — дефолтный список сетей, чьи X-Forwarded-For
 // принимаются на веру (Phase AUD.5): loopback + приватные диапазоны
 // (RFC1918 / IPv6 ULA). Покрывает docker-compose (Web-proxy → Receiver),
@@ -129,6 +136,9 @@ func applyDefaults(c *Config) {
 	if c.Receiver.SenderGRPC.TimeoutMs == 0 {
 		c.Receiver.SenderGRPC.TimeoutMs = 30000
 	}
+	if c.Receiver.SenderGRPC.MaxMessageBytes == 0 {
+		c.Receiver.SenderGRPC.MaxMessageBytes = defaultGRPCMaxMessageBytes
+	}
 
 	if c.Receiver.L2Cache.Size == 0 {
 		c.Receiver.L2Cache.Size = 1000
@@ -154,6 +164,9 @@ func applyDefaults(c *Config) {
 	}
 	if c.Sender.GRPCMaxConcurrentStreams == 0 {
 		c.Sender.GRPCMaxConcurrentStreams = 1000
+	}
+	if c.Sender.GRPCMaxMessageBytes == 0 {
+		c.Sender.GRPCMaxMessageBytes = defaultGRPCMaxMessageBytes
 	}
 	if c.Sender.HTTPClient.TimeoutMs == 0 {
 		c.Sender.HTTPClient.TimeoutMs = 30000

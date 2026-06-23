@@ -46,7 +46,7 @@ func NewProducer(cfg *config.Config, opts ...ProducerOption) *Producer {
 		Async:                  false,
 		Compression:            compress.Lz4,
 		BatchSize:              cfg.Kafka.Producer.BatchSize / 1024, // примерно сообщений на батч
-		BatchBytes:             int64(cfg.Kafka.Producer.BatchSize),
+		BatchBytes:             producerBatchBytes(cfg),
 		BatchTimeout:           time.Duration(cfg.Kafka.Producer.LingerMs) * time.Millisecond,
 		WriteTimeout:           time.Duration(cfg.Kafka.Producer.RequestTimeoutMs) * time.Millisecond,
 		ReadTimeout:            time.Duration(cfg.Kafka.Producer.RequestTimeoutMs) * time.Millisecond,
@@ -57,6 +57,21 @@ func NewProducer(cfg *config.Config, opts ...ProducerOption) *Producer {
 		o(p)
 	}
 	return p
+}
+
+// producerBatchBytes — лимит байт батча kafka.Writer. segmentio kafka-go
+// отвергает ЕДИНИЧНОЕ сообщение крупнее BatchBytes (MessageTooLargeError) ещё до
+// брокера, поэтому BatchBytes обязан быть ≥ размера самого большого сообщения —
+// то есть ≥ лимита топика max.message.bytes. Иначе большое async-тело (§42) не
+// публикуется, хотя топик его допускает. Берём максимум из настройки батча
+// продьюсера и лимита топика.
+func producerBatchBytes(cfg *config.Config) int64 {
+	batch := int64(cfg.Kafka.Producer.BatchSize)
+	topic := int64(cfg.Kafka.Topic.MaxMessageBytes)
+	if topic > batch {
+		return topic
+	}
+	return batch
 }
 
 // Produce отправляет одно сообщение в указанный топик.

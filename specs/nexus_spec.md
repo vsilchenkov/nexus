@@ -3405,6 +3405,13 @@ manager+, идемпотентно), `usage_count` on-read по `auth_dynamic_fi
 предупреждение), «Скачать файлом», «Копировать». `prettyMaybe` парсит JSON только до 256K символов —
 выше показывает сырьём (убирает фриз). Помощники вынесены в `web-ui/src/lib/logBody.ts` (+Vitest).
 
-**Хранение/миграции.** Нет — тела уже в ClickHouse; read-only фича, без новых ENV/зависимостей.
+**Транспорт больших тел (§42.8).** Параллельно вскрылось, что большое тело не доезжало по шине: gRPC
+Receiver↔Sender держал дефолтный лимит 4 МиБ (`ResourceExhausted` на ответе апстрима), а Kafka-producer
+отвергал async-тело крупнее `producer.batch_size` (64 КиБ). Лимит gRPC поднят на сервере и клиенте
+(конфиг `sender.grpc_max_message_bytes` / `receiver.sender_grpc.max_message_bytes`, дефолт 64 МиБ);
+producer `BatchBytes = max(batch_size, topic.max_message_bytes)`.
+
+**Хранение/миграции.** Тела уже в ClickHouse; миграций нет. Добавлены конфиг-параметры размера
+gRPC-сообщения (с дефолтами — обратная совместимость).
 
 Подробности — [sections/42-log-body-streaming.md](sections/42-log-body-streaming.md).

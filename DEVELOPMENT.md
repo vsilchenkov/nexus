@@ -183,6 +183,15 @@ docker compose -f deploy/docker-compose.deps.yml up -d
   аннотаций — `make swagger`. Чистые UI-помощники тел — `web-ui/src/lib/logBody.ts` (+Vitest), пороги
   превью/pretty/warn там же. Тесты: `tests/integration/clickhouse_bodychunk_test.go`,
   `internal/web/adapter/in/http/logs_handler_test.go`.
+- **Транспорт больших тел (§42.8)** — большое тело должно доезжать по самой шине, не только
+  отображаться. gRPC Receiver↔Sender держал дефолтный лимит сообщения 4 МиБ → большой ответ апстрима
+  падал `ResourceExhausted`. Лимит конфигурируется: `sender.grpc_max_message_bytes` (сервер,
+  `MaxRecvMsgSize`/`MaxSendMsgSize` в `sender/app.go`) и `receiver.sender_grpc.max_message_bytes` (клиент,
+  `MaxCallRecvMsgSize`/`MaxCallSendMsgSize` в `grpcsender/client.go`), оба дефолт 64 МиБ — **держи их
+  равными** и `≥ receiver.max_body_bytes`. Async: Kafka producer `BatchBytes` теперь
+  `max(producer.batch_size, topic.max_message_bytes)` (`producerBatchBytes` в `platform/kafka/producer.go`).
+  Тесты: `internal/receiver/adapter/out/grpcsender/client_largemsg_test.go` (8 МиБ round-trip + негативный
+  контроль), `internal/platform/kafka/producer_batchbytes_test.go`.
 - **Новые поля формы узла** (§22): в `web-ui` — карточки «Заголовки»/«Логирование», компонент
   `Toggle`; после правки `web-ui/` обязательны `npm run lint` (`--max-warnings=0`) и `npm run build`,
   затем пересборка встроенного SPA (`make build-ui` или копирование `web-ui/dist/*` в

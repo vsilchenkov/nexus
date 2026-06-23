@@ -225,15 +225,26 @@ type ReceiverSenderGRPCConfig struct {
 	TimeoutMs           int    `yaml:"timeout_ms"`
 	KeepaliveTimeSec    int    `yaml:"keepalive_time_sec"`
 	KeepaliveTimeoutSec int    `yaml:"keepalive_timeout_sec"`
+	// MaxMessageBytes — лимит размера одного gRPC-сообщения для КЛИЕНТА Receiver→
+	// Sender, оба направления (запрос с телом запроса и ответ с телом ответа).
+	// Дефолт gRPC — 4 МиБ, чего мало для больших тел (ответ апстрима на десятки
+	// МБ → ResourceExhausted). Должен быть ≥ `receiver.max_body_bytes` и
+	// согласован с `sender.grpc_max_message_bytes`. 0 → дефолт 64 МиБ.
+	MaxMessageBytes int `yaml:"max_message_bytes"`
 }
 
 type SenderSection struct {
-	GRPCAddr                 string                  `yaml:"grpc_addr"`
-	AdminHTTPAddr            string                  `yaml:"admin_http_addr"`
-	GRPCMaxConcurrentStreams uint32                  `yaml:"grpc_max_concurrent_streams"`
-	HTTPClient               SenderHTTPClientConfig  `yaml:"http_client"`
-	Workers                  int                     `yaml:"workers"`
-	Reprocessor              SenderReprocessorConfig `yaml:"reprocessor"`
+	GRPCAddr                 string `yaml:"grpc_addr"`
+	AdminHTTPAddr            string `yaml:"admin_http_addr"`
+	GRPCMaxConcurrentStreams uint32 `yaml:"grpc_max_concurrent_streams"`
+	// GRPCMaxMessageBytes — лимит размера одного gRPC-сообщения для СЕРВЕРА Sender,
+	// оба направления (recv тела запроса от Receiver, send тела ответа обратно).
+	// Дефолт gRPC recv — 4 МиБ, чего мало для больших тел. Должен совпадать с
+	// `receiver.sender_grpc.max_message_bytes`. 0 → дефолт 64 МиБ.
+	GRPCMaxMessageBytes int                     `yaml:"grpc_max_message_bytes"`
+	HTTPClient          SenderHTTPClientConfig  `yaml:"http_client"`
+	Workers             int                     `yaml:"workers"`
+	Reprocessor         SenderReprocessorConfig `yaml:"reprocessor"`
 }
 
 // SenderReprocessorConfig — глобальные параметры авто-репроцессора DLQ (§36).

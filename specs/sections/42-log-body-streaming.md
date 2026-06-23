@@ -80,8 +80,31 @@ Vitest. Пороги: `bodyPreviewRunes`=64K, `PRETTY_MAX`=256K, `LARGE_WARN_RUN
   скачивание ставит `Content-Disposition` и стримит тело — unit (httptest).
 - `prettyMaybe` не парсит тела больше `PRETTY_MAX` (нет фриза); `formatRunes` форматирует длины — Vitest.
 
+### 42.8. Транспорт больших тел через шину (gRPC + Kafka)
+
+Параллельно с UI вскрылась более глубокая проблема: большое тело **не доезжало по самой шине**.
+
+- **gRPC Receiver↔Sender** использовал дефолтный лимит сообщения **4 МиБ** в обе стороны. Уже тело
+  запроса до `receiver.max_body_bytes` (5 МиБ) не доходило до Sender, а ответ апстрима в десятки МБ —
+  обратно к Receiver/клиенту: `ResourceExhausted desc = grpc: received message larger than max
+  (… vs. 4194304)`. Лимит поднят на **сервере Sender** (`grpc.MaxRecvMsgSize`/`MaxSendMsgSize`) и
+  **клиенте Receiver** (`grpc.MaxCallRecvMsgSize`/`MaxCallSendMsgSize`) — значение из новых
+  конфиг-параметров `sender.grpc_max_message_bytes` и `receiver.sender_grpc.max_message_bytes` (оба
+  дефолт **64 МиБ**; должны совпадать и быть `≥ receiver.max_body_bytes`).
+- **Async через Kafka.** Producer `BatchBytes` равнялся `producer.batch_size` (64 КиБ в дефолте), и
+  segmentio kafka-go отвергал единичное сообщение крупнее него (`MessageTooLargeError`) ещё до брокера —
+  хотя топик допускал `topic.max_message_bytes` (10 МиБ). Теперь `BatchBytes =
+  max(producer.batch_size, topic.max_message_bytes)`, так что async-envelope с большим телом
+  публикуется в пределах лимита топика.
+
+Проверки: gRPC loopback round-trip тела 8 МиБ (> 4 МиБ) в обе стороны + негативный контроль (клиент с
+дефолтным лимитом → `ResourceExhausted`); unit на `producerBatchBytes`. Сквозной прогон sync и async
+большого тела — на живом стенде.
+
 ### 42.7. Документация развёртывания
 
-Изменения read-only, без новых миграций/ENV/зависимостей между сервисами — `DEPLOYMENT.md` не
-затрагивается. В `DEVELOPMENT.md` отражены новые эндпоинты тел логов и регенерация Swagger после правки
-аннотаций (`make swagger`).
+UI-часть read-only без миграций. Транспортная часть (§42.8) добавила **конфиг-параметры**
+`sender.grpc_max_message_bytes` и `receiver.sender_grpc.max_message_bytes` (дефолт 64 МиБ) — отражены в
+`config.example.yml`/`config.yml`/`config_debug.yml`, `DEPLOYMENT.md` (согласование двух сервисов и
+брокерского `message.max.bytes`) и `CHANGELOG`. В `DEVELOPMENT.md` — новые эндпоинты тел логов и
+регенерация Swagger (`make swagger`).
