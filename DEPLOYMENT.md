@@ -542,6 +542,16 @@ Compose автоматически подхватывает `docker-compose.over
   применяется автоматически на старте, дефолт колонок — POST). Откат (`down`) вернёт CHECK без `'ANY'` —
   упадёт, если остались узлы со значением `ANY` (привести к конкретному методу до отката). Новой
   ENV/инфраструктуры нет.
+- **§41 — универсальная динамическая авторизация + каталог полей запроса.** Две миграции (применяются
+  автоматически на старте): `0021_incoming_auth_dynamic` добавляет в `nodes` колонки
+  `incoming_auth_dynamic_source` (CHECK `header|query`, дефолт `header`) и `incoming_auth_dynamic_field`
+  (дефолт `Authorization`) — существующие узлы ведут себя как раньше; **плюс data-fix**: пинит
+  существующие `basic_from_request` на `header`/`Authorization` (обязательно — иначе после выката
+  source/field-aware код читал бы query `token` вместо заголовка `Authorization` и сломал бы проброс).
+  `0022_request_fields_catalog` создаёт справочник `request_fields_catalog`. Новой ENV/инфраструктуры
+  нет; метрика `nexus_node_last_request_error{node}` (Sender) появляется автоматически. Откат (`down`)
+  удаляет колонки/таблицу (для `0021` basic_from_request-узлы остаются на `header`/`Authorization` —
+  безопасно).
 - **Вручную** (для контролируемых деплоев — применить до старта трафика):
 
   | Действие | Команда (нативно) | Команда (в Docker) |
