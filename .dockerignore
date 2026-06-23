@@ -26,3 +26,15 @@ coverage.html
 logs/
 .idea/
 .vscode/
+
+# §9.4 (ложный «-dirty» в версии): .env.example и .vscode/*.json ОТСЛЕЖИВАЮТСЯ
+# git'ом. Если оставить их под исключениями выше (.env.* / .vscode/), то в
+# builder-стейдже после `COPY . .` они отсутствуют → `git describe --dirty`
+# считает дерево грязным → версия уезжает как vX.Y.Z-dirty ДАЖЕ при чистом
+# git status на сервере. `git update-index --refresh` это НЕ чинит (файлы реально
+# отсутствуют, а не просто mtime). Возвращаем их в контекст сборки — в финальный
+# образ они не попадают (builder-only, образ берёт лишь /out/<bin> + явные COPY).
+!.env.example
+!.vscode/launch.json
+!.vscode/settings.json
+!.vscode/tasks.json
