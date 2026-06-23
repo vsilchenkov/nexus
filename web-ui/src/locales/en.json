@@ -429,7 +429,7 @@
       "logging_enabled": "Logging enabled",
       "max_body_enabled": "Limit body size",
       "max_body_size": "Max body size",
-      "max_body_hint": "max characters; request/response are truncated to this value",
+      "max_body_hint": "max characters; only the body stored in the log is truncated — the client still receives the full response, and the checksum is computed over the full body",
       "preview": "Route preview",
       "ssrf_warn": "\"From request\" mode: fill the host allowlist to prevent SSRF. Do not leave it empty in production.",
       "comment": "Comment",
