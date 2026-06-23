@@ -72,6 +72,14 @@ func TestNode_SetDefaults(t *testing.T) {
 	if n.DLQRetryDelaySeconds != 300 { // §36: 5 мин
 		t.Errorf("dlq_retry_delay_seconds default = %d", n.DLQRetryDelaySeconds)
 	}
+	// §41: входящая динамическая авторизация — дефолты сохраняют прежнее
+	// поведение (читать заголовок Authorization).
+	if n.IncomingAuthDynamicSource != IncomingAuthSourceHeader {
+		t.Errorf("incoming_auth_dynamic_source default = %q", n.IncomingAuthDynamicSource)
+	}
+	if n.IncomingAuthDynamicField != "Authorization" {
+		t.Errorf("incoming_auth_dynamic_field default = %q", n.IncomingAuthDynamicField)
+	}
 }
 
 func TestNode_Validate_OK(t *testing.T) {
@@ -107,6 +115,15 @@ func TestNode_Validate_Errors(t *testing.T) {
 		{"bad dlq_retry_delay low", func(n *Node) { n.DLQRetryDelaySeconds = 0 }, ErrNodeDLQRetryDelayRange},
 		{"bad dlq_retry_delay high", func(n *Node) { n.DLQRetryDelaySeconds = 99_999 }, ErrNodeDLQRetryDelayRange},
 		{"comment too long", func(n *Node) { n.Comment = strings.Repeat("я", 2001) }, ErrNodeCommentLength},
+		// §41: исходящий basic_from_request тоже требует валидного source.
+		{"basic_from_request bad source", func(n *Node) {
+			n.AuthType = AuthTypeBasicFromRequest
+			n.AuthDynamicSource = "nonsense"
+		}, ErrNodeInvalidAuthDynSource},
+		// §41: входящая динамическая авторизация.
+		{"incoming dyn source invalid", func(n *Node) { n.IncomingAuthDynamicSource = "body" }, ErrNodeInvalidIncomingAuthDynSource},
+		{"incoming dyn field empty", func(n *Node) { n.IncomingAuthDynamicField = "" }, ErrNodeIncomingAuthDynFieldLength},
+		{"incoming dyn field format", func(n *Node) { n.IncomingAuthDynamicField = "1bad" }, ErrNodeIncomingAuthDynFieldFormat},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -116,6 +133,44 @@ func TestNode_Validate_Errors(t *testing.T) {
 			err := n.Validate()
 			if !errors.Is(err, c.want) {
 				t.Fatalf("want %v, got %v", c.want, err)
+			}
+		})
+	}
+}
+
+// §41: входящая авторизация из query-параметра и заголовка проходит валидацию;
+// существующие basic/token-узлы (дефолтный source=header) остаются валидны.
+func TestNode_Validate_IncomingDynamicAuth(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		mut  func(*Node)
+	}{
+		{"token via header (back-compat)", func(n *Node) {
+			n.IncomingAuthType = IncomingAuthTypeToken
+			n.IncomingAuthCredentials = "secret"
+		}},
+		{"token via query field", func(n *Node) {
+			n.IncomingAuthType = IncomingAuthTypeToken
+			n.IncomingAuthCredentials = "secret"
+			n.IncomingAuthDynamicSource = IncomingAuthSourceQuery
+			n.IncomingAuthDynamicField = "apikey"
+		}},
+		{"basic via query field", func(n *Node) {
+			n.IncomingAuthType = IncomingAuthTypeBasic
+			n.IncomingAuthCredentials = "user:pass"
+			n.IncomingAuthDynamicSource = IncomingAuthSourceQuery
+			n.IncomingAuthDynamicField = "creds"
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			n := &Node{Path: "x", RootMethod: RootMethodRequest, TargetURL: "https://example.com"}
+			c.mut(n)
+			n.SetDefaults()
+			if err := n.Validate(); err != nil {
+				t.Fatalf("want valid, got %v", err)
 			}
 		})
 	}

@@ -47,6 +47,13 @@ type Node struct {
 	IncomingAuthType        IncomingAuthType
 	IncomingAuthCredentials string // plaintext в памяти, шифр в БД
 
+	// §41: источник и имя поля для входящей динамической авторизации
+	// (basic/token). Source=header (дефолт) + Field=Authorization → прежнее
+	// поведение (читать заголовок Authorization). Source=query — брать креду
+	// из query-параметра с именем Field. 'body' для входа не поддерживается.
+	IncomingAuthDynamicSource IncomingAuthSource
+	IncomingAuthDynamicField  string
+
 	// Параметры webhook-подписи (§16 ТЗ, IncomingAuthType="webhook_signature").
 	// Сам секрет лежит в IncomingAuthCredentials.
 	WebhookSignatureHeader string // имя HTTP-заголовка, напр. "X-Hub-Signature-256"
@@ -211,8 +218,23 @@ func (n *Node) Validate() error {
 	if !paramNamePattern.MatchString(n.AuthDynamicField) {
 		return ErrNodeAuthDynFieldFormat
 	}
-	if n.AuthType == AuthTypeTokenFromRequest && !n.AuthDynamicSource.Valid() {
+	// §41: источник обязателен для обоих динамических исходящих режимов
+	// (token_from_request и basic_from_request — последний теперь тоже
+	// настраиваемый по source/field).
+	if n.AuthType.IsDynamic() && !n.AuthDynamicSource.Valid() {
 		return ErrNodeInvalidAuthDynSource
+	}
+	// §41: входящая динамическая авторизация. Поля всегда забэкфилены
+	// SetDefaults (header/Authorization), поэтому проверяем формат всегда —
+	// как для исходящего AuthDynamicField.
+	if !n.IncomingAuthDynamicSource.Valid() {
+		return ErrNodeInvalidIncomingAuthDynSource
+	}
+	if l := len(n.IncomingAuthDynamicField); l < 1 || l > 64 {
+		return ErrNodeIncomingAuthDynFieldLength
+	}
+	if !paramNamePattern.MatchString(n.IncomingAuthDynamicField) {
+		return ErrNodeIncomingAuthDynFieldFormat
 	}
 	if n.TimeoutMs < 100 || n.TimeoutMs > 300_000 {
 		return ErrNodeTimeoutRange
@@ -327,6 +349,14 @@ func (n *Node) SetDefaults() {
 	}
 	if n.IncomingAuthType == "" {
 		n.IncomingAuthType = IncomingAuthTypeNone
+	}
+	// §41: дефолты header/Authorization сохраняют прежнее поведение basic/token
+	// и старого кэш-JSON без этих полей (zero-value → header/Authorization).
+	if n.IncomingAuthDynamicSource == "" {
+		n.IncomingAuthDynamicSource = IncomingAuthSourceHeader
+	}
+	if n.IncomingAuthDynamicField == "" {
+		n.IncomingAuthDynamicField = "Authorization"
 	}
 	if n.Status == "" {
 		n.Status = NodeStatusEnabled
