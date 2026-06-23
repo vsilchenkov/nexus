@@ -3379,3 +3379,32 @@ manager+, идемпотентно), `usage_count` on-read по `auth_dynamic_fi
 `incoming_auth_dynamic_source`/`field` (plaintext — имена полей, не секреты), `nodeThroughputDTO.last_error`.
 
 Подробности — [sections/41-universal-request-auth.md](sections/41-universal-request-auth.md).
+
+## 42. Динамическая подгрузка тел логов — превью, «показать весь», скачивание
+
+Убирает зависание вкладки «Логи» при разворачивании записи с большим телом. Раньше `Get` тянул всё тело
+(мегабайты), а фронт синхронно делал `JSON.parse`+`stringify` и рендерил гигантскую строку в `<pre>` —
+главный поток вставал. Единственным предохранителем был лимит §22 (выключен по умолчанию, режет только
+сохраняемую копию).
+
+**Принцип.** Никогда не тянуть/рендерить тело неограниченного размера. По умолчанию — **превью** (первые
+64K рун, нарезка `substringUTF8` прямо в ClickHouse); остаток — срезами по требованию; очень большое —
+скачиванием файлом. Нарезка по рунам (`substringUTF8`/`lengthUTF8`), не по байтам. `GetByID` (полное
+тело) сохранён для replay.
+
+**Чтение.** `port.LogReader.GetByIDPreview` (метаданные + превью тел + полные длины рун) и `GetBodyChunk`
+(срез `which=request|response` по рунам + total). `which` — строго whitelist, не интерполируется как имя
+колонки.
+
+**API.** `GET …/log/{logId}` (изменён) отдаёт превью + `request_len`/`response_len`; `GET
+…/log/{logId}/body?which=&offset=&limit=` — срез `{total,offset,returned,chunk,eof}` (limit капится);
+`GET …/log/{logId}/body/download?which=` — потоковое скачивание `text/plain` attachment (нарезка по
+рунам). Все scope `logs:read`; общий `writeLogReadError` (404/503/500); имя файла санитизируется.
+
+**UI.** `LogBodyBlock`: превью + футер «показано N из M» + «Показать весь» (догрузка срезами; для >2 МБ —
+предупреждение), «Скачать файлом», «Копировать». `prettyMaybe` парсит JSON только до 256K символов —
+выше показывает сырьём (убирает фриз). Помощники вынесены в `web-ui/src/lib/logBody.ts` (+Vitest).
+
+**Хранение/миграции.** Нет — тела уже в ClickHouse; read-only фича, без новых ENV/зависимостей.
+
+Подробности — [sections/42-log-body-streaming.md](sections/42-log-body-streaming.md).

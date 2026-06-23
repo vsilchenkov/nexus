@@ -173,7 +173,16 @@ docker compose -f deploy/docker-compose.deps.yml up -d
 - **Сценарные тесты логирования (§22)** — `internal/sender/usecase/send_test.go` (обрезка по рунам,
   отключение логирования, спецсимволы) и `tests/integration/clickhouse_test.go`
   (`TestClickHouse_Logging_Scenarios`, требует Docker: большое тело/JSON/unicode + кейс «логирование
-  выключено → count==0»).
+  выключено → count==0»). Сценарий большого тела (клиент получает полное, в логе усечено, checksum по
+  полному) — `tests/integration/clickhouse_largebody_test.go`.
+- **Динамическая подгрузка тел логов (§42)** — большое тело лога больше не тянется/рендерится целиком.
+  Эндпоинты (Web, scope `logs:read`): `GET /api/nodes/:id/log/:logId` отдаёт **превью** тел (первые 64K
+  рун) + `request_len`/`response_len`; `GET …/log/:logId/body?which=&offset=&limit=` — срез тела по
+  рунам; `GET …/log/:logId/body/download?which=` — потоковое скачивание файлом. Срезы режутся в
+  ClickHouse (`substringUTF8`/`lengthUTF8`), порт `LogReader.GetByIDPreview`/`GetBodyChunk`. После правки
+  аннотаций — `make swagger`. Чистые UI-помощники тел — `web-ui/src/lib/logBody.ts` (+Vitest), пороги
+  превью/pretty/warn там же. Тесты: `tests/integration/clickhouse_bodychunk_test.go`,
+  `internal/web/adapter/in/http/logs_handler_test.go`.
 - **Новые поля формы узла** (§22): в `web-ui` — карточки «Заголовки»/«Логирование», компонент
   `Toggle`; после правки `web-ui/` обязательны `npm run lint` (`--max-warnings=0`) и `npm run build`,
   затем пересборка встроенного SPA (`make build-ui` или копирование `web-ui/dist/*` в
