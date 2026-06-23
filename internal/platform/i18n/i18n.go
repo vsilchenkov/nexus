@@ -141,6 +141,12 @@ var translations = map[Lang]map[string]string{
 		"header.name_length":        "header name length must be between 1 and 100 characters",
 		"header.name_format":        "header name must be a valid RFC 7230 token (no spaces)",
 		"header.description_length": "description must be at most 500 characters",
+		// request fields catalog (§41)
+		"request_field.not_found":          "request field not found",
+		"request_field.already_exists":     "a request field with this name already exists",
+		"request_field.name_length":        "request field name length must be between 1 and 64 characters",
+		"request_field.name_format":        "request field name must start with a letter and contain only letters, digits, hyphen and underscore",
+		"request_field.description_length": "description must be at most 500 characters",
 		// ch-templates (§19)
 		"ch_template.not_found":                       "clickhouse template not found",
 		"ch_template.already_exists":                  "a template with this name already exists",
@@ -240,6 +246,12 @@ var translations = map[Lang]map[string]string{
 		"header.name_length":        "длина имени заголовка должна быть от 1 до 100 символов",
 		"header.name_format":        "имя заголовка должно быть валидным RFC 7230 token (без пробелов)",
 		"header.description_length": "описание должно быть не длиннее 500 символов",
+		// request fields catalog (§41)
+		"request_field.not_found":          "поле запроса не найдено",
+		"request_field.already_exists":     "поле запроса с таким именем уже существует",
+		"request_field.name_length":        "длина имени поля запроса должна быть от 1 до 64 символов",
+		"request_field.name_format":        "имя поля запроса должно начинаться с буквы и содержать только буквы, цифры, дефис и подчёркивание",
+		"request_field.description_length": "описание должно быть не длиннее 500 символов",
 		// ch-templates (§19)
 		"ch_template.not_found":                       "шаблон ClickHouse не найден",
 		"ch_template.already_exists":                  "шаблон с таким названием уже существует",

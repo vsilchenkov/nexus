@@ -142,6 +142,28 @@ func TestIncomingAuthType_Valid(t *testing.T) {
 	}
 }
 
+func TestIncomingAuthSource_Valid(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		s    IncomingAuthSource
+		want bool
+	}{
+		{"header", IncomingAuthSourceHeader, true},
+		{"query", IncomingAuthSourceQuery, true},
+		{"body-not-supported-for-incoming", IncomingAuthSource("body"), false},
+		{"empty", IncomingAuthSource(""), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := c.s.Valid(); got != c.want {
+				t.Errorf("%q.Valid() = %v, want %v", c.s, got, c.want)
+			}
+		})
+	}
+}
+
 func TestUserRole_Valid_And_IsAdmin(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

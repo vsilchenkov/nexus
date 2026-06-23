@@ -40,7 +40,7 @@ import { METRICS_REFETCH_MS } from "../components/node/useNodeMetrics";
 type ListResp = { items: Node[] };
 type View = "table" | "cards";
 type StatusFilter = "all" | "ok" | "warn" | "err" | "paused" | "disabled";
-type Throughput = { in: number; out: number; errors: number; p95: number; spark: number[] };
+type Throughput = { in: number; out: number; errors: number; p95: number; spark: number[]; lastError: boolean };
 
 const VIEW_KEY = "nexus.overview.view";
 
@@ -95,7 +95,7 @@ export default function Overview() {
   const throughput = useMemo(() => {
     const m = new Map<string, Throughput>();
     for (const it of thrData?.items ?? []) {
-      m.set(it.node, { in: it.in, out: it.out, errors: it.errors, p95: it.p95_ms, spark: it.spark ?? [] });
+      m.set(it.node, { in: it.in, out: it.out, errors: it.errors, p95: it.p95_ms, spark: it.spark ?? [], lastError: it.last_error });
     }
     return m;
   }, [thrData]);
@@ -231,12 +231,16 @@ type StatusInfo = { tone: "ok" | "err" | "warn" | "muted"; label: string; varian
 // сортировки и цвета акцента карточки (§22, ui_cards.html). ready=false (метрики
 // ещё не пришли / Prometheus недоступен) → нейтральный "unknown", чтобы не
 // показывать ложный зелёный «OK» до загрузки данных (П11).
+//
+// §41: «Down» (err) определяется по ИСХОДУ ПОСЛЕДНЕГО исходящего вызова узла
+// (m.lastError), а не по доле ошибок за период. Это снимок «сейчас»: если
+// последний вызов прошёл (2xx) — приёмник доступен; ошибка последнего —
+// «Down». Колонки in/out/errors остаются за выбранный период.
 function nodeVariant(n: Node, m: Throughput | undefined, ready: boolean): Variant {
   if (n.status === "disabled") return "disabled";
   if (n.status === "paused") return "paused";
   if (!ready || !m) return "unknown";
-  const rate = m.out > 0 ? m.errors / m.out : 0;
-  if (rate > 0.3) return "err";
+  if (m.lastError) return "err";
   if (n.root_method === "requestAsync" && m.in - m.out > Math.max(50, m.in * 0.1)) {
     return "warn";
   }

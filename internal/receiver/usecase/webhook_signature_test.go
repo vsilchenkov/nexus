@@ -123,11 +123,11 @@ func TestCheckIncomingAuth_WebhookSignature_RoutesToVerify(t *testing.T) {
 	n := webhookNode()
 	hOK := http.Header{}
 	hOK.Set("X-Hub-Signature-256", "sha256="+sign("shared-secret", string(body)))
-	require.NoError(t, CheckIncomingAuth(n, hOK, body))
+	require.NoError(t, CheckIncomingAuth(n, hOK, nil, body))
 
 	hBad := http.Header{}
 	hBad.Set("X-Hub-Signature-256", "sha256="+sign("shared-secret", "other"))
-	err := CheckIncomingAuth(n, hBad, body)
+	err := CheckIncomingAuth(n, hBad, nil, body)
 	assert.ErrorIs(t, err, domain.ErrUnauthorized)
 }
 

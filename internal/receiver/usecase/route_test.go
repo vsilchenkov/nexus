@@ -3,6 +3,8 @@ package usecase
 import (
 	"context"
 	"errors"
+	"net/url"
+	"strings"
 	"testing"
 
 	"nexus/internal/domain"
@@ -203,5 +205,57 @@ func TestRoute_OutgoingMethodUsed(t *testing.T) {
 	}
 	if sender.last == nil || sender.last.GetMethod() != "PUT" {
 		t.Fatalf("want outgoing method PUT, got %v", sender.last.GetMethod())
+	}
+}
+
+// dynAuthTestNode — узел с исходящей token_from_request из query-параметра Bearer.
+func dynAuthTestNode() *domain.Node {
+	return &domain.Node{
+		Path:              "demo/dyn",
+		RootMethod:        domain.RootMethodRequest,
+		IncomingMethod:    domain.HTTPMethodPOST,
+		OutgoingMethod:    domain.HTTPMethodPOST,
+		URLMode:           domain.URLModeStatic,
+		TargetURL:         "https://example.com/hook",
+		AuthType:          domain.AuthTypeTokenFromRequest,
+		AuthDynamicSource: domain.AuthDynSourceQuery,
+		AuthDynamicField:  "Bearer",
+		IncomingAuthType:  domain.IncomingAuthTypeNone,
+		Status:            domain.NodeStatusEnabled,
+	}
+}
+
+// TestRoute_DynamicAuth_TokenForwarded (§41): значение ?Bearer=Bearer+<jwt>
+// доходит до Sender как один Authorization: Bearer <jwt>, а служебный параметр
+// вырезается из проксируемого target URL.
+func TestRoute_DynamicAuth_TokenForwarded(t *testing.T) {
+	t.Parallel()
+	sender := &capturingSender{}
+	u := NewRouteUsecase(stubNodeReader{node: dynAuthTestNode()}, sender, 5, logging.NewNoop())
+	q := url.Values{"Bearer": {"Bearer eyJabc"}}
+	_, err := u.Route(context.Background(), RouteInput{NodePath: "demo/dyn", Method: "POST", Query: q})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if got := sender.last.GetAuth().GetAuthorizationHeader(); got != "Bearer eyJabc" {
+		t.Fatalf("auth header = %q, want single 'Bearer eyJabc'", got)
+	}
+	if strings.Contains(sender.last.GetTargetUrl(), "Bearer") {
+		t.Fatalf("служебный параметр Bearer не должен попасть в target URL: %s", sender.last.GetTargetUrl())
+	}
+}
+
+// TestRoute_DynamicAuth_MissingToken_NoAuth (§41): поле не пришло → Sender
+// получает пустой Authorization, запрос не падает.
+func TestRoute_DynamicAuth_MissingToken_NoAuth(t *testing.T) {
+	t.Parallel()
+	sender := &capturingSender{}
+	u := NewRouteUsecase(stubNodeReader{node: dynAuthTestNode()}, sender, 5, logging.NewNoop())
+	_, err := u.Route(context.Background(), RouteInput{NodePath: "demo/dyn", Method: "POST", Query: url.Values{}})
+	if err != nil {
+		t.Fatalf("отсутствие токена не должно быть ошибкой: %v", err)
+	}
+	if got := sender.last.GetAuth().GetAuthorizationHeader(); got != "" {
+		t.Fatalf("ожидался пустой Authorization, got %q", got)
 	}
 }

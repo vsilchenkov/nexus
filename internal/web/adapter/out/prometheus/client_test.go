@@ -36,6 +36,9 @@ func newTestServer(t *testing.T) *httptest.Server {
 		switch {
 		case strings.Contains(q, "nexus_kafka_lag"):
 			_, _ = w.Write([]byte(vectorResp(sample("{}", "312"))))
+		case strings.Contains(q, "nexus_node_last_request_error"):
+			// §41 («Down»): последний вызов webhook/send — ошибка (1).
+			_, _ = w.Write([]byte(vectorResp(sample(`{"node":"webhook/send"}`, "1"))))
 		case strings.Contains(q, "status=~") && strings.Contains(q, "by (node)"):
 			_, _ = w.Write([]byte(vectorResp(sample(`{"node":"webhook/send"}`, "2"))))
 		case strings.Contains(q, `service="receiver"`) && strings.Contains(q, "by (node)"):
@@ -102,6 +105,21 @@ func TestClient_NodeThroughput(t *testing.T) {
 	require.EqualValues(t, 4201, m["webhook/send"].In)
 	require.EqualValues(t, 4198, m["webhook/send"].Out)
 	require.EqualValues(t, 2, m["webhook/send"].Errors)
+}
+
+// TestClient_NodeLastErrors (§41, «Down»): instant gauge последнего вызова
+// per-node парсится в map (1 = последний вызов был ошибкой).
+func TestClient_NodeLastErrors(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	defer srv.Close()
+
+	c, err := New(srv.URL, time.Second, logging.NewNoop())
+	require.NoError(t, err)
+
+	m, err := c.NodeLastErrors(context.Background(), time.Now())
+	require.NoError(t, err)
+	require.EqualValues(t, 1, m["webhook/send"])
 }
 
 func TestClient_NodeKPI(t *testing.T) {

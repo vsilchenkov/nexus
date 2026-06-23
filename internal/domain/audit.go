@@ -65,6 +65,9 @@ const (
 	// Справочник заголовков (§24).
 	ActionHeaderCreate = "header.create"
 
+	// Справочник полей запроса (§41).
+	ActionRequestFieldCreate = "request_field.create"
+
 	// Каталог разрешённых хостов (§23).
 	ActionHostCreate = "host.create"
 	ActionHostUpdate = "host.update"

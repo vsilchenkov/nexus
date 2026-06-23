@@ -9,6 +9,12 @@ export type NodeFormLimits = {
   url_mode: "static" | "from_request";
   target_url: string;
   url_param_name: string;
+  // §41: динамическая авторизация — обязательность выбора поля.
+  auth_type: string;
+  auth_dynamic_field: string;
+  incoming_auth_type: string;
+  incoming_auth_dynamic_source: string;
+  incoming_auth_dynamic_field: string;
   timeout_ms: number;
   retry_count: number;
   retry_backoff_ms: number;
@@ -49,6 +55,22 @@ export function validateNodeForm(f: NodeFormLimits): NodeFieldError | null {
     if (!PARAM_NAME_RE.test(f.url_param_name)) {
       return { field: "url_param_name", code: "node.validation.url_param_name_format" };
     }
+  }
+  // §41: исходящие token_from_request / basic_from_request требуют выбранного
+  // поля. Для входящих token/basic поле обязательно только при source=query
+  // (для source=header дефолт Authorization подставляется на бэкенде).
+  if (
+    (f.auth_type === "token_from_request" || f.auth_type === "basic_from_request") &&
+    f.auth_dynamic_field.trim() === ""
+  ) {
+    return { field: "auth_dynamic_field", code: "node.validation.auth_field_required" };
+  }
+  if (
+    (f.incoming_auth_type === "basic" || f.incoming_auth_type === "token") &&
+    f.incoming_auth_dynamic_source === "query" &&
+    f.incoming_auth_dynamic_field.trim() === ""
+  ) {
+    return { field: "incoming_auth_dynamic_field", code: "node.validation.auth_field_required" };
   }
   if (f.timeout_ms < 100 || f.timeout_ms > 300000) {
     return { field: "timeout_ms", code: "node.validation.timeout_ms" };

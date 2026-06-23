@@ -61,6 +61,15 @@ definitions:
       incoming_auth_credentials:
         maxLength: 1024
         type: string
+      incoming_auth_dynamic_field:
+        maxLength: 64
+        type: string
+      incoming_auth_dynamic_source:
+        description: '§41: источник и имя поля для входящей динамической авторизации.'
+        enum:
+        - header
+        - query
+        type: string
       incoming_auth_type:
         enum:
         - none
@@ -345,6 +354,13 @@ definitions:
           $ref: '#/definitions/internal_web_adapter_in_http.orphanItemResp'
         type: array
     type: object
+  internal_web_adapter_in_http.ListRequestFieldsResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.requestFieldResponse'
+        type: array
+    type: object
   internal_web_adapter_in_http.ListTeamMembersResponse:
     properties:
       items:
@@ -481,6 +497,10 @@ definitions:
         type: string
       incoming_auth_credentials_set:
         type: boolean
+      incoming_auth_dynamic_field:
+        type: string
+      incoming_auth_dynamic_source:
+        type: string
       incoming_auth_type:
         type: string
       incoming_method:
@@ -661,6 +681,15 @@ definitions:
         type: array
       incoming_auth_credentials:
         maxLength: 1024
+        type: string
+      incoming_auth_dynamic_field:
+        maxLength: 64
+        type: string
+      incoming_auth_dynamic_source:
+        description: '§41: источник и имя поля для входящей динамической авторизации.'
+        enum:
+        - header
+        - query
         type: string
       incoming_auth_type:
         enum:
@@ -1242,6 +1271,9 @@ definitions:
         type: integer
       in:
         type: integer
+      last_error:
+        description: '§41 («Down»): последний исходящий вызов узла завершился ошибкой.'
+        type: boolean
       node:
         type: string
       out:
@@ -1343,6 +1375,30 @@ definitions:
         type: string
       to:
         type: string
+    type: object
+  internal_web_adapter_in_http.requestFieldRequest:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+    type: object
+  internal_web_adapter_in_http.requestFieldResponse:
+    properties:
+      created_at:
+        type: string
+      created_by:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      updated_at:
+        type: string
+      usage_count:
+        type: integer
     type: object
   internal_web_adapter_in_http.seriesPointDTO:
     properties:
@@ -3450,6 +3506,57 @@ paths:
       summary: Проверить подключение к RabbitMQ (§27.8).
       tags:
       - nodes
+  /api/request-fields:
+    get:
+      parameters:
+      - description: prefix поиска по имени; пусто = топ-используемые
+        in: query
+        name: q
+        type: string
+      - description: лимит (по умолчанию 20)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ListRequestFieldsResponse'
+      security:
+      - CookieAuth: []
+      summary: 'Справочник полей запроса: автодополнение (§41).'
+      tags:
+      - request-fields
+    post:
+      consumes:
+      - application/json
+      description: 'Идемпотентно по case-insensitive имени: повтор вернёт существующую
+        запись (200), а не ошибку.'
+      parameters:
+      - description: request field
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.requestFieldRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.requestFieldResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Создать поле запроса в справочнике (manager, §41).
+      tags:
+      - request-fields
   /api/settings/app:
     get:
       description: Возвращает merge'нутые значения из БД. Секреты (DSN, password)

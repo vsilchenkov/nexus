@@ -72,6 +72,13 @@ export type Node = {
   path_passthrough?: boolean;
   status: "enabled" | "disabled" | "paused";
   auth_type: string;
+  // §41: динамическая авторизация (исходящая token/basic_from_request).
+  auth_dynamic_source?: string;
+  auth_dynamic_field?: string;
+  auth_dynamic_strip_prefix?: string;
+  // §41: динамическая авторизация на входе (источник+поле для token/basic).
+  incoming_auth_dynamic_source?: string;
+  incoming_auth_dynamic_field?: string;
   clickhouse_table: string;
   clickhouse_template_id: string;
   forward_headers: string[];
@@ -139,6 +146,17 @@ export type HeaderCatalogEntry = {
   updated_at: string;
 };
 
+// §41: справочник полей запроса (см. /api/request-fields).
+export type RequestFieldCatalogEntry = {
+  id: string;
+  name: string;
+  description: string;
+  usage_count: number;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
 // §21: метрики панели (см. /api/metrics/*).
 export type OverviewKPI = {
   incoming_24h: number;
@@ -155,6 +173,8 @@ export type NodeThroughput = {
   errors: number;
   p95_ms: number;
   spark: number[];
+  // §41 («Down»): последний исходящий вызов узла завершился ошибкой.
+  last_error: boolean;
 };
 export type NodesThroughputResp = {
   items: NodeThroughput[];

@@ -144,6 +144,25 @@ func (a IncomingAuthType) Valid() bool {
 	return false
 }
 
+// IncomingAuthSource — источник креды для входящей авторизации (§41):
+// заголовок (по умолчанию — прежнее поведение, читается Authorization) или
+// query-параметр. В отличие от исходящей AuthDynSource, 'body' не поддерживается
+// (для гейта на входе нет реального кейса).
+type IncomingAuthSource string
+
+const (
+	IncomingAuthSourceHeader IncomingAuthSource = "header"
+	IncomingAuthSourceQuery  IncomingAuthSource = "query"
+)
+
+func (s IncomingAuthSource) Valid() bool {
+	switch s {
+	case IncomingAuthSourceHeader, IncomingAuthSourceQuery:
+		return true
+	}
+	return false
+}
+
 // UserRole — роль пользователя UI (§7.1, §26).
 //
 // Иерархия прав: viewer < manager < admin (см. Rank/AtLeast). Менеджер

@@ -89,7 +89,7 @@ func (u *RouteAsyncUsecase) RouteAsync(ctx context.Context, in RouteInput) (*Rou
 	// все запросы превращаются в async». Поэтому RouteAsync доступен
 	// и для request-узлов, если они в paused.
 
-	if err := CheckIncomingAuth(node, in.Header, in.Body); err != nil {
+	if err := CheckIncomingAuth(node, in.Header, in.Query, in.Body); err != nil {
 		return nil, err
 	}
 

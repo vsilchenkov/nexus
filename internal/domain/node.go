@@ -47,6 +47,13 @@ type Node struct {
 	IncomingAuthType        IncomingAuthType
 	IncomingAuthCredentials string // plaintext в памяти, шифр в БД
 
+	// §41: источник и имя поля для входящей динамической авторизации
+	// (basic/token). Source=header (дефолт) + Field=Authorization → прежнее
+	// поведение (читать заголовок Authorization). Source=query — брать креду
+	// из query-параметра с именем Field. 'body' для входа не поддерживается.
+	IncomingAuthDynamicSource IncomingAuthSource
+	IncomingAuthDynamicField  string
+
 	// Параметры webhook-подписи (§16 ТЗ, IncomingAuthType="webhook_signature").
 	// Сам секрет лежит в IncomingAuthCredentials.
 	WebhookSignatureHeader string // имя HTTP-заголовка, напр. "X-Hub-Signature-256"
@@ -211,8 +218,27 @@ func (n *Node) Validate() error {
 	if !paramNamePattern.MatchString(n.AuthDynamicField) {
 		return ErrNodeAuthDynFieldFormat
 	}
-	if n.AuthType == AuthTypeTokenFromRequest && !n.AuthDynamicSource.Valid() {
+	// §41: источник обязателен для обоих динамических исходящих режимов
+	// (token_from_request и basic_from_request — последний теперь тоже
+	// настраиваемый по source/field).
+	if n.AuthType.IsDynamic() && !n.AuthDynamicSource.Valid() {
 		return ErrNodeInvalidAuthDynSource
+	}
+	// §41: входящая динамическая авторизация. Пустые source/field трактуются
+	// как дефолт header/Authorization (согласовано с SetDefaults и runtime
+	// incomingAuthValue) — поэтому проверяем только непустые значения, чтобы не
+	// ломать узлы, построенные без SetDefaults. Обязательность выбора поля для
+	// динамических режимов — UX-гейт фронта (на бэке всегда есть дефолт).
+	if n.IncomingAuthDynamicSource != "" && !n.IncomingAuthDynamicSource.Valid() {
+		return ErrNodeInvalidIncomingAuthDynSource
+	}
+	if n.IncomingAuthDynamicField != "" {
+		if len(n.IncomingAuthDynamicField) > 64 {
+			return ErrNodeIncomingAuthDynFieldLength
+		}
+		if !paramNamePattern.MatchString(n.IncomingAuthDynamicField) {
+			return ErrNodeIncomingAuthDynFieldFormat
+		}
 	}
 	if n.TimeoutMs < 100 || n.TimeoutMs > 300_000 {
 		return ErrNodeTimeoutRange
@@ -316,17 +342,37 @@ func (n *Node) SetDefaults() {
 	if n.AuthType == "" {
 		n.AuthType = AuthTypeNone
 	}
+	// §41: дефолты источника/поля исходящей динамической авторизации зависят от
+	// режима. basic_from_request исторически читал заголовок Authorization
+	// (прозрачный проброс) — для него дефолт header/Authorization, чтобы новый
+	// source/field-aware код вёл себя как раньше. token_from_request — query/token.
 	if n.AuthDynamicSource == "" {
-		n.AuthDynamicSource = AuthDynSourceQuery
+		if n.AuthType == AuthTypeBasicFromRequest {
+			n.AuthDynamicSource = AuthDynSourceHeader
+		} else {
+			n.AuthDynamicSource = AuthDynSourceQuery
+		}
 	}
 	if n.AuthDynamicField == "" {
-		n.AuthDynamicField = "token"
+		if n.AuthType == AuthTypeBasicFromRequest {
+			n.AuthDynamicField = "Authorization"
+		} else {
+			n.AuthDynamicField = "token"
+		}
 	}
 	if n.AuthDynamicStripPrefix == "" && n.AuthType == AuthTypeTokenFromRequest && n.AuthDynamicSource == AuthDynSourceHeader {
 		n.AuthDynamicStripPrefix = "Bearer "
 	}
 	if n.IncomingAuthType == "" {
 		n.IncomingAuthType = IncomingAuthTypeNone
+	}
+	// §41: дефолты header/Authorization сохраняют прежнее поведение basic/token
+	// и старого кэш-JSON без этих полей (zero-value → header/Authorization).
+	if n.IncomingAuthDynamicSource == "" {
+		n.IncomingAuthDynamicSource = IncomingAuthSourceHeader
+	}
+	if n.IncomingAuthDynamicField == "" {
+		n.IncomingAuthDynamicField = "Authorization"
 	}
 	if n.Status == "" {
 		n.Status = NodeStatusEnabled

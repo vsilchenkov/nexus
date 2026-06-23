@@ -56,6 +56,9 @@
 | **HTTP-метод `ANY` (вх: accept-all; исх: зеркало входящего) (§40)** | ✅ §40 | [enums.go](../internal/domain/enums.go) `HTTPMethodAny`, [route.go](../internal/receiver/usecase/route.go) `methodMatches`/`effectiveOutgoingMethod`, [puller.go](../internal/receiver/usecase/puller.go), миграция [0020](../migrations/0020_node_method_any.up.sql) |
 | Все режимы incoming auth (none/basic/token) | ✅ | [auth.go](../internal/receiver/usecase/auth.go) `CheckIncomingAuth` |
 | Все режимы outgoing auth (none/basic/token/token_from_request/basic_from_request) | ✅ | [auth_dynamic.go](../internal/receiver/usecase/auth_dynamic.go) `BuildDynamicOutgoingAuth` |
+| **Универсальная динамическая авторизация: источник+поле для входа и выхода; умный Bearer; пусто→без auth (§41)** | ✅ §41 | [auth.go](../internal/receiver/usecase/auth.go) `CheckIncomingAuth`(source/field), [auth_dynamic.go](../internal/receiver/usecase/auth_dynamic.go) `buildFromRequest`/`withScheme`, [enums.go](../internal/domain/enums.go) `IncomingAuthSource`, миграция [0021](../migrations/0021_incoming_auth_dynamic.up.sql) |
+| **Каталог «полей запроса» `request_fields_catalog` + `/api/request-fields` (§41)** | ✅ §41 | [domain/request_field_catalog.go](../internal/domain/request_field_catalog.go), [usecase](../internal/web/usecase/request_field_catalog.go), [repo](../internal/web/adapter/out/postgres/request_field_catalog_repo.go), [handler](../internal/web/adapter/in/http/request_field_catalog_handler.go), миграция [0022](../migrations/0022_request_fields_catalog.up.sql) |
+| **Статус «Down» в Overview = по последнему вызову (gauge `nexus_node_last_request_error`) (§41)** | ✅ §41 | [metrics.go](../internal/platform/metrics/metrics.go) `NodeLastRequestError`, Sender `sender_service.go`/`async.go`, [prometheus/client.go](../internal/web/adapter/out/prometheus/client.go) `NodeLastErrors`, [usecase/metrics.go](../internal/web/usecase/metrics.go) `applyLastErrors`, [Overview.tsx](../web-ui/src/pages/Overview.tsx) `nodeVariant` |
 | Исключение служебных значений из проксируемого запроса (§3.5 «Исключение») | ✅ | `buildTokenFromRequest`, `buildBasicFromRequest` |
 | Маскирование `***` в логах и Sentry | ✅ | `maskAuthHeader` (dry-run), [sentry/sentry.go](../internal/platform/sentry/sentry.go) `isSensitive` |
 | **Методы узла: входящий (enforcement, иначе 405) + исходящий (диктует вызов получателя), деф. POST (#5)** | ✅ | [domain/enums.go](../internal/domain/enums.go) `HTTPMethod`, [domain/node.go](../internal/domain/node.go), миграция [0015](../migrations/0015_node_methods.up.sql), [route.go](../internal/receiver/usecase/route.go) `methodMatches` + `OutgoingMethod`, [route_async.go](../internal/receiver/usecase/route_async.go), [puller.go](../internal/receiver/usecase/puller.go) |
@@ -659,6 +662,26 @@ DLQ) тормозила, «Очистить» был no-op, шапка плох�
   `TestMethodMatches_Any`, `TestEffectiveOutgoingMethod`, `TestReplay_AnyIncomingUsesLoggedMethod`,
   integration `TestReceiver_AnyMethod_E2E` (PUT/DELETE/GET + зеркало + проброс тела/заголовка ответа).
   По умолчанию ничего не меняется (см. [sections/40-any-http-method.md](sections/40-any-http-method.md)).
+- **§41 — универсальная динамическая авторизация + умный Bearer + «Down» по последнему вызову.**
+  Источник (`header`/`query`) + имя поля выведены в UI и для **входящей** (`token`/`basic`, новые колонки
+  `incoming_auth_dynamic_*`, миграция `0021`), и для **исходящей** (`*_from_request`). Входящая —
+  `CheckIncomingAuth(node,h,q,body)` (плагирование query в route/route_async/dry_run); `source=header`
+  сохраняет схему Bearer/Basic, `source=query` берёт значение напрямую; constant-time. Исходящая —
+  `buildFromRequest`/`extractDynamicValue`/`withScheme`: умный дедуп (значение, уже начинающееся с
+  `Bearer `/`Basic `, не удваивается — кейс `?Bearer=Bearer+<jwt>`), пустое поле → `Header=""` (запрос
+  без `Authorization`, не 401); `basic_from_request` теперь honored source/field, миграция `0021` пинит
+  существующие строки на `header`/`Authorization`. Дефолты `SetDefaults` зависят от режима. Каталог
+  «полей запроса» (`request_fields_catalog`, миграция `0022`, `/api/request-fields`, usage по двум
+  колонкам) + обязательный single-select picker (UX-гейт; на бэке дефолт). **«Down»** переопределён:
+  по исходу ПОСЛЕДНЕГО вызова — gauge `nexus_node_last_request_error{node}` (Sender) → `max by(node)` в
+  Web → overlay `applyLastErrors` поверх обеих веток Overview → `nodeVariant` по `last_error` (снимок
+  «сейчас», независим от окна). Грабли: (1) `basic_from_request` back-compat data-fix в миграции —
+  без него source/field-aware код читал бы query `token` вместо заголовка; (2) валидация домена входящих
+  полей толерантна к пустым (узлы без `SetDefaults` в тестах не падают); (3) «Down» в CH-ветке Overview —
+  gauge только в Prometheus, потому overlay в общем `NodesOverview`, а не в каждой ветке. Тесты: unit
+  (auth/auth_dynamic/route/metrics/client/usecase/domain), integration (`receiver_dynamic_auth_test`,
+  `request_field_catalog_repo_test`, node_repo round-trip), Vitest (nodeValidation, RequestFieldField).
+  См. [sections/41-universal-request-auth.md](sections/41-universal-request-auth.md).
 - **§35 — peek-`MaxWait` = 500мс (грабли стенд-теста, тормоз ~9с).** `kafka.Reader` в `scanPartition`/
   `PeekBody` НЕ задавал `MaxWait` → дефолт kafka-go 10с. После чтения последнего сообщения фоновый
   fetch-цикл reader'а пытается прочитать следующий (ещё пустой) offset и блокируется на `MaxWait`, а

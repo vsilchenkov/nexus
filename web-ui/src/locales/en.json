@@ -290,6 +290,7 @@
       "target_url_self": "Target URL must not point at the Nexus ingress itself (would cause a request loop)",
       "url_param_name_length": "URL parameter name length must be between 1 and 64 characters",
       "url_param_name_format": "URL parameter name must start with a letter and contain only letters, digits, hyphen and underscore",
+      "auth_field_required": "Pick a field name for the credential source",
       "auth_dynamic_field_length": "Dynamic auth field name length must be between 1 and 64 characters",
       "auth_dynamic_field_format": "Dynamic auth field name must start with a letter and contain only letters, digits, hyphen and underscore",
       "auth_dynamic_source": "Dynamic auth source must be header or query",
@@ -345,6 +346,10 @@
       "sig_prefix": "Prefix before the hex signature in the header, stripped before verification (e.g. sha256=).",
       "outgoing_auth": "How Nexus authenticates to the receiver: none — none; basic/token — credentials below; *_from_request — credentials taken from the inbound request.",
       "outgoing_credentials": "Outbound auth secret (login:password for basic, token for token). Never returned by the API; leave empty on edit to keep the current one.",
+      "auth_source_in": "Where to read the client credential from: Header (default Authorization) or Query parameter. Header keeps the standard scheme (Bearer/Basic); Query reads the raw value.",
+      "auth_field_in": "Name of the header or query parameter that carries the client credential.",
+      "auth_source_out": "Where to take the credential from the inbound request to forward to the receiver: Header or Query parameter.",
+      "auth_field_out": "Name of the header or query parameter that carries the credential. Required.",
       "forward_headers": "Which inbound request headers to forward to the receiver. Others are not passed (Content-Type is always forwarded).",
       "logging_enabled": "Whether to write the node's call log to ClickHouse. Off — the node is not logged at all (no metrics or history for it).",
       "ch_table": "Log table name in db.table form. Multiple nodes may write to one table (distinguished by node_id).",
@@ -363,13 +368,28 @@
       "basic_out_hint": "Format: login:password separated by a colon (e.g. admin:s3cret). Nexus base64-encodes it and sets Authorization: Basic … on the request to the node.",
       "token_in_hint": "Token value only, without the \"Bearer \" prefix. The client sends Authorization: Bearer <token>.",
       "token_out_hint": "Token value only, without the \"Bearer \" prefix. Nexus sets Authorization: Bearer <token> on the request to the node.",
-      "token_from_request_hint": "The token is taken from the incoming request (query / header / body field) and placed into Authorization: Bearer on the request to the node; the original value is stripped from the proxied request.",
-      "basic_from_request_hint": "The incoming Authorization: Basic … header is forwarded to the node as-is (Nexus stores no credentials)."
+      "token_from_request_hint": "The token is taken from the incoming request (header or query parameter, by the field name below) and placed into Authorization: Bearer on the request to the node; the original value is stripped from the proxied request. If the value already starts with \"Bearer \", it is forwarded as-is (no double prefix). If the field is missing/empty, the request is sent without Authorization.",
+      "basic_from_request_hint": "The Basic credential is taken from the incoming request (header or query parameter, by the field name below) and forwarded as Authorization: Basic … (Nexus stores no credentials). If the field is missing/empty, the request is sent without Authorization."
+    },
+    "auth_source": {
+      "header": "Header",
+      "query": "Query parameter"
+    },
+    "request_field_combo": {
+      "placeholder": "Pick a field…",
+      "search": "Search or create a field…",
+      "empty": "No fields found",
+      "used": "{{count}} node",
+      "used_plural": "{{count}} nodes",
+      "create": "Create \"{{name}}\"",
+      "invalid": "Field name must start with a letter; letters, digits, hyphen and underscore only"
     },
     "form": {
       "route": "Route",
       "target": "Target",
       "auth": "Authorization",
+      "auth_source": "Credential source",
+      "auth_field": "Field name",
       "logging": "Logging",
       "headers": "Headers",
       "forward_headers": "Forwarded headers",

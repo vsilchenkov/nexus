@@ -209,6 +209,15 @@ func (c *Client) NodeThroughput(ctx context.Context, since, until time.Time) (ma
 	return res, nil
 }
 
+// NodeLastErrors — per-node исход последнего исходящего вызова (§41, «Down»):
+// instant gauge nexus_node_last_request_error на момент at. max by(node) — при
+// нескольких репликах Sender узел «Down», если у любой последний вызов был
+// ошибкой. Окно не используется (gauge мгновенный).
+func (c *Client) NodeLastErrors(ctx context.Context, at time.Time) (map[string]float64, error) {
+	return c.instantByNode(ctx,
+		`max by (node)(nexus_node_last_request_error{service="sender"})`, at)
+}
+
 // NodeSeries — спарклайн входящего трафика per-node одним range-запросом
 // (§22). Возвращает по buckets точек на узел; недостающие — нули.
 func (c *Client) NodeSeries(ctx context.Context, since, until time.Time, buckets int) (map[string][]float64, error) {

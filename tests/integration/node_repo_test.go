@@ -244,6 +244,76 @@ func TestNodeRepoRabbitMQAsync_E2E(t *testing.T) {
 	}
 }
 
+// TestNodeRepoIncomingAuthDynamic_E2E (§41): round-trip входящих динамических
+// колонок (incoming_auth_dynamic_source/field) через NodeUsecase + node_repo,
+// и проверка, что дефолты (header/Authorization) проставляются для узлов,
+// которые их не задают.
+func TestNodeRepoIncomingAuthDynamic_E2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	pool, cleanup := startPostgres(t, ctx)
+	defer cleanup()
+
+	cipher, err := crypto.NewCipher(testEncryptionKey)
+	if err != nil {
+		t.Fatalf("cipher: %v", err)
+	}
+	logger := logging.NewNoop()
+	nodeRepo := pgrepo.NewNodeRepoPg(pool, cipher, logger)
+	auditRepo := pgrepo.NewAuditRepoPg(pool, logger)
+	uow := pgrepo.NewUnitOfWorkPg(pool, cipher, logger)
+	auditUC := usecase.NewAuditUsecase(auditRepo, logger)
+	defaultTeam := resolveDefaultTeamID(t, ctx, pool)
+	teamRepo := pgrepo.NewTeamRepoPg(pool, logger)
+	nodeUC := usecase.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, teamRepo, nil, nil, time.Minute, 0, defaultTeam, nil, logger)
+
+	// Узел с входящим token из query-параметра apikey.
+	n := &domain.Node{
+		Path:                      "dyn/incoming",
+		RootMethod:                domain.RootMethodRequest,
+		URLMode:                   domain.URLModeStatic,
+		TargetURL:                 "https://example.com/hook",
+		IncomingAuthType:          domain.IncomingAuthTypeToken,
+		IncomingAuthCredentials:   "s3cr3t",
+		IncomingAuthDynamicSource: domain.IncomingAuthSourceQuery,
+		IncomingAuthDynamicField:  "apikey",
+	}
+	if err := nodeUC.Create(ctx, usecase.SystemActor(), n); err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	got, err := nodeRepo.Get(ctx, n.ID)
+	if err != nil {
+		t.Fatalf("get node: %v", err)
+	}
+	if got.IncomingAuthDynamicSource != domain.IncomingAuthSourceQuery {
+		t.Fatalf("incoming source round-trip mismatch: %q", got.IncomingAuthDynamicSource)
+	}
+	if got.IncomingAuthDynamicField != "apikey" {
+		t.Fatalf("incoming field round-trip mismatch: %q", got.IncomingAuthDynamicField)
+	}
+
+	// Узел без явных входящих динамических полей → дефолты header/Authorization.
+	n2 := &domain.Node{
+		Path:       "dyn/defaults",
+		RootMethod: domain.RootMethodRequest,
+		URLMode:    domain.URLModeStatic,
+		TargetURL:  "https://example.com/hook",
+	}
+	if err := nodeUC.Create(ctx, usecase.SystemActor(), n2); err != nil {
+		t.Fatalf("create node2: %v", err)
+	}
+	got2, err := nodeRepo.Get(ctx, n2.ID)
+	if err != nil {
+		t.Fatalf("get node2: %v", err)
+	}
+	if got2.IncomingAuthDynamicSource != domain.IncomingAuthSourceHeader ||
+		got2.IncomingAuthDynamicField != "Authorization" {
+		t.Fatalf("incoming dynamic defaults not applied: src=%q field=%q",
+			got2.IncomingAuthDynamicSource, got2.IncomingAuthDynamicField)
+	}
+}
+
 // nopCache — заглушка port.NodeCache: NodeUsecase кеширует через write-through,
 // но в тестах кеш не нужен; ошибки игнорируем.
 type nopCache struct{}
