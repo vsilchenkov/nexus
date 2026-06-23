@@ -3415,3 +3415,20 @@ producer `BatchBytes = max(batch_size, topic.max_message_bytes)`.
 gRPC-сообщения (с дефолтами — обратная совместимость).
 
 Подробности — [sections/42-log-body-streaming.md](sections/42-log-body-streaming.md).
+
+## 43. Жёсткий лимит размера тела (reject вместо усечения)
+
+Меняет семантику `max_body_size` (§22.2 superseded): при включённом лимите тело > лимита **не усекается
+тихо**, а отклоняется, событие фиксируется в логе. sync (`request`): тело запроса > лимита → **413**
+(upstream не вызывается), тело ответа > лимита → **502** (тело не отдаётся). async (`requestAsync`/
+`RabbitMQAsync`): не доставляется (запрос) / запись неуспешна (ответ). Во всех случаях лог `done=0`,
+`status` 413/502, `reason` `request|response body exceeds max_body_size: N > M runes`, тело **не пишется**,
+`checksum_*` — по ПОЛНОМУ телу. Лимит — в рунах.
+
+Единая точка — `SendUsecase.Send` (sync через gRPC и async через consumer вызывают тот же `Send`):
+`exceedsBodyLimit` (по рунам, `utf8.RuneCount`), ранний выход на превышении запроса (без upstream и без
+изменения circuit breaker), 502 на превышении ответа; CB считается по **реальному** статусу upstream
+(`upstreamHealthy`), а не по `rec.Done`. Функция усечения `truncateRunes` удалена. По умолчанию
+(`max_body_size_enabled=false`) поведение прежнее — большие тела проходят и показываются через §42.
+
+Подробности — [sections/43-body-size-hard-limit.md](sections/43-body-size-hard-limit.md).
