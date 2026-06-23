@@ -721,6 +721,9 @@ loadtest:
     - *skip-if-profiled-rule
     - if: $CI_COMMIT_BRANCH == "master"
     - if: $CI_COMMIT_BRANCH == "dev"
+    # Релизный пайплайн: security-сканеры (govulncheck/gosec/trivy-fs) идут и на
+    # тегах vX.Y.Z — релиз должен быть просканирован (govulncheck остаётся гейтом).
+    - if: $CI_COMMIT_TAG
     - if: $CI_PIPELINE_SOURCE == "schedule"
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
