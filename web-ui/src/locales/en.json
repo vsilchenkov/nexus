@@ -524,7 +524,12 @@
       "request": "Request",
       "response": "Response",
       "empty": "(empty)",
-      "error": "Failed to load body"
+      "error": "Failed to load body",
+      "shown_of": "showing {{shown}} of {{total}}",
+      "show_full": "Show full",
+      "loading_full": "Loading…",
+      "download": "Download as file",
+      "large_warning": "The body is about {{mb}} MB. Rendering it in the browser may freeze the tab. Show it anyway? (Downloading as a file is safer.)"
     },
     "not_configured": "Logging is not configured for this node — no clickhouse_table set. Pick a ClickHouse template in node settings (the log table is created automatically) or set the table name manually.",
     "shown_count": "{{n}} shown",
