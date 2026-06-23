@@ -498,6 +498,7 @@ loadtest:
       CREATE TABLE IF NOT EXISTS nexus_default.loadtest (
         ID String,
         type String,
+        http_method String,
         url String,
         method String,
         parameters String,
