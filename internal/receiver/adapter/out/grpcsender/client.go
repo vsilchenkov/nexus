@@ -28,9 +28,17 @@ type Client struct {
 	logger  logging.Logger
 }
 
+// defaultMaxMessageBytes — fallback лимита gRPC-сообщения, если в конфиге не
+// задан (0). 64 МиБ; согласован с config.defaults (defaultGRPCMaxMessageBytes).
+const defaultMaxMessageBytes = 64 * 1024 * 1024
+
 func New(cfg *config.ReceiverSenderGRPCConfig, logger logging.Logger) (*Client, error) {
 	if cfg.PoolSize <= 0 {
 		cfg.PoolSize = 1
+	}
+	maxMsg := cfg.MaxMessageBytes
+	if maxMsg <= 0 {
+		maxMsg = defaultMaxMessageBytes
 	}
 	conns := make([]*grpc.ClientConn, 0, cfg.PoolSize)
 	clients := make([]senderv1.SenderServiceClient, 0, cfg.PoolSize)
@@ -42,6 +50,12 @@ func New(cfg *config.ReceiverSenderGRPCConfig, logger logging.Logger) (*Client, 
 				Time:    time.Duration(cfg.KeepaliveTimeSec) * time.Second,
 				Timeout: time.Duration(cfg.KeepaliveTimeoutSec) * time.Second,
 			}),
+			// §42: лимит размера сообщения (оба направления). Дефолт recv 4 МиБ
+			// рубит большой ответ апстрима (Sender→Receiver) ResourceExhausted.
+			grpc.WithDefaultCallOptions(
+				grpc.MaxCallRecvMsgSize(maxMsg),
+				grpc.MaxCallSendMsgSize(maxMsg),
+			),
 			// OTel client-span + traceparent injection в outgoing metadata
 			// (§16 ТЗ, Phase 8.3). При Enable=false — no-op.
 			grpc.WithUnaryInterceptor(otelpf.UnaryClientInterceptor()),

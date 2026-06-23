@@ -1,0 +1,110 @@
+## 42. Динамическая подгрузка тел логов — превью, «показать весь», скачивание
+
+Раздел убирает зависание вкладки «Логи» при разворачивании записи с большим телом и вводит управляемую
+работу с телами любого размера: превью по умолчанию, догрузку остатка по требованию и скачивание файлом.
+
+### 42.1. Проблема
+
+Тела `request`/`response` пишутся в ClickHouse целиком (ограничение §22 `max_body_size` по умолчанию
+выключено и режет только сохраняемую копию — см. §22.2). При разворачивании строки лога фронт:
+
+1. запрашивал `GET /api/nodes/{id}/log/{logId}`, который отдавал **всё** тело (мегабайты);
+2. синхронно выполнял `JSON.parse` + `JSON.stringify(…, null, 2)` (pretty-print) над всей строкой;
+3. рендерил результат в один `<pre>` с переносом — браузер раскладывал миллионы символов.
+
+Шаги 2–3 блокировали главный поток: вкладка «намертво» зависала, тело не отображалось. То есть
+единственным предохранителем был лимит §22, который к тому же выключен по умолчанию и задуман как
+ограничение *хранимого* лога, а не как защита UI.
+
+### 42.2. Модель и принцип
+
+Новых данных/таблиц/миграций нет — тела уже лежат в ClickHouse. Меняется только способ их чтения и
+показа. Принцип: **никогда не тянуть и не рендерить тело неограниченного размера**.
+
+- По умолчанию грузится **превью** — первые `bodyPreviewRunes` рун (64K) каждого тела — нарезается
+  прямо в ClickHouse (`substringUTF8`), полное тело в Go/JSON не приезжает.
+- Остаток подгружается **по требованию** срезами по рунам.
+- Очень большое тело — **скачивается файлом** (потоково, нарезкой по рунам), без рендера в DOM.
+
+Нарезка — по **рунам** (`substringUTF8`/`lengthUTF8`), а не по байтам, чтобы не разорвать многобайтовый
+UTF-8 (как и обрезка §22.2). `GetByID` (полное тело) сохранён без изменений — он нужен replay (§7.4.1),
+которому требуется исходное тело целиком.
+
+### 42.3. Слой чтения (порт + адаптер ClickHouse)
+
+В `port.LogReader` добавлены два метода:
+
+- `GetByIDPreview(ctx, table, id, previewRunes) → (rec, reqRunes, respRunes, err)` — метаданные записи +
+  превью тел (первые `previewRunes` рун) + их **полные длины** в рунах. Один запрос: `substringUTF8(col,
+  1, ?)` для тел и `lengthUTF8(col)` для длин.
+- `GetBodyChunk(ctx, table, id, which, offsetRunes, limitRunes) → (chunk, totalRunes, err)` — срез одного
+  тела (`which = request|response`) + полная длина. `which` резолвится строго через whitelist
+  (`bodyColumn`) — пользовательский ввод никогда не интерполируется как идентификатор колонки; имя
+  таблицы — через существующий `isSafeTableName`; `limitRunes` клампится.
+
+### 42.4. HTTP API
+
+| Метод/маршрут | Назначение |
+|---|---|
+| `GET /api/nodes/{id}/log/{logId}` | (изменён) метаданные + **превью** тел (первые 64K рун) + поля `request_len`/`response_len` (полные длины в рунах). Большое тело больше не тянется целиком. |
+| `GET /api/nodes/{id}/log/{logId}/body?which=&offset=&limit=` | срез тела по рунам: `{which,total,offset,returned,chunk,eof}`. `which` обязателен (`request|response`); `offset`/`limit` в рунах, `limit` капится (`bodyChunkMaxRunes` = 4M). |
+| `GET /api/nodes/{id}/log/{logId}/body/download?which=` | потоковое скачивание тела целиком: `text/plain; charset=utf-8`, `Content-Disposition: attachment; filename="<which>-<logId>.txt"`. Нарезка по рунам (`bodyDownloadChunkRunes` = 1M), память на сервере ограничена размером среза. |
+
+Все три — scope `logs:read` (как остальные чтения логов). Ошибки чтения мапятся общим `writeLogReadError`
+(404 not found / 503 CH недоступен (WARN, не флудит Sentry) / 500). При скачивании первый срез
+фетчится **до** отправки заголовков — чтобы 404/503 вернуть нормальным JSON, а не битым стримом.
+Имя файла санитизируется (`safeFilePart`, только `[A-Za-z0-9._-]`) — защита от header-инъекции.
+
+### 42.5. UI (вкладка «Логи»)
+
+`LogBodyBlock` (внутри `LogsTab`) переписан:
+
+- По умолчанию рендерит **превью** + (если `total > длины превью`) футер «показано N из M» с кнопкой
+  **«Показать весь»**. Кнопка догружает остаток срезами через `/body` (цикл по `offset` до `eof`); для
+  тел `> LARGE_WARN_RUNES` (2 МБ) — сначала предупреждение `window.confirm` (рендер десятков МБ в DOM
+  тяжёлый, скачивание безопаснее).
+- Кнопка **«Скачать файлом»** — `<a download>` на `/body/download` (cookie-сессия, тот же origin).
+- Кнопка **«Копировать»** — переиспользует `CopyButton` (копирует показанный текст).
+- `prettyMaybe` — JSON pretty-print **только** для тел до `PRETTY_MAX` (256K символов); выше — сырьём,
+  без `JSON.parse`/`stringify`. Это и убирает синхронный фриз главного потока.
+
+Чистые помощники (`prettyMaybe`, `formatRunes`, пороги) вынесены в `web-ui/src/lib/logBody.ts` и покрыты
+Vitest. Пороги: `bodyPreviewRunes`=64K, `PRETTY_MAX`=256K, `LARGE_WARN_RUNES`=2M, `FETCH_CHUNK`=1M рун.
+
+### 42.6. Сценарные требования и тесты
+
+- Превью отдаёт первые N рун + корректные полные длины; срез `GetBodyChunk` режет по рунам на
+  многобайтовом UTF-8; последовательная сборка чанками (как при скачивании) даёт тело байт-в-байт —
+  integration на реальном контейнере ClickHouse.
+- Хендлеры: `which` вне whitelist → 400; `limit` выше капа клампится; `Get` отдаёт превью + длины;
+  скачивание ставит `Content-Disposition` и стримит тело — unit (httptest).
+- `prettyMaybe` не парсит тела больше `PRETTY_MAX` (нет фриза); `formatRunes` форматирует длины — Vitest.
+
+### 42.8. Транспорт больших тел через шину (gRPC + Kafka)
+
+Параллельно с UI вскрылась более глубокая проблема: большое тело **не доезжало по самой шине**.
+
+- **gRPC Receiver↔Sender** использовал дефолтный лимит сообщения **4 МиБ** в обе стороны. Уже тело
+  запроса до `receiver.max_body_bytes` (5 МиБ) не доходило до Sender, а ответ апстрима в десятки МБ —
+  обратно к Receiver/клиенту: `ResourceExhausted desc = grpc: received message larger than max
+  (… vs. 4194304)`. Лимит поднят на **сервере Sender** (`grpc.MaxRecvMsgSize`/`MaxSendMsgSize`) и
+  **клиенте Receiver** (`grpc.MaxCallRecvMsgSize`/`MaxCallSendMsgSize`) — значение из новых
+  конфиг-параметров `sender.grpc_max_message_bytes` и `receiver.sender_grpc.max_message_bytes` (оба
+  дефолт **64 МиБ**; должны совпадать и быть `≥ receiver.max_body_bytes`).
+- **Async через Kafka.** Producer `BatchBytes` равнялся `producer.batch_size` (64 КиБ в дефолте), и
+  segmentio kafka-go отвергал единичное сообщение крупнее него (`MessageTooLargeError`) ещё до брокера —
+  хотя топик допускал `topic.max_message_bytes` (10 МиБ). Теперь `BatchBytes =
+  max(producer.batch_size, topic.max_message_bytes)`, так что async-envelope с большим телом
+  публикуется в пределах лимита топика.
+
+Проверки: gRPC loopback round-trip тела 8 МиБ (> 4 МиБ) в обе стороны + негативный контроль (клиент с
+дефолтным лимитом → `ResourceExhausted`); unit на `producerBatchBytes`. Сквозной прогон sync и async
+большого тела — на живом стенде.
+
+### 42.7. Документация развёртывания
+
+UI-часть read-only без миграций. Транспортная часть (§42.8) добавила **конфиг-параметры**
+`sender.grpc_max_message_bytes` и `receiver.sender_grpc.max_message_bytes` (дефолт 64 МиБ) — отражены в
+`config.example.yml`/`config.yml`/`config_debug.yml`, `DEPLOYMENT.md` (согласование двух сервисов и
+брокерского `message.max.bytes`) и `CHANGELOG`. В `DEVELOPMENT.md` — новые эндпоинты тел логов и
+регенерация Swagger (`make swagger`).

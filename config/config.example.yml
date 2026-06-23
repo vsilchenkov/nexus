@@ -156,6 +156,7 @@ receiver:
     timeout_ms: 30000            # Таймаут одного gRPC-вызова (мс).
     keepalive_time_sec: 30       # Период keepalive-ping'ов по соединению (сек).
     keepalive_timeout_sec: 10    # Ожидание ответа на keepalive-ping до разрыва (сек).
+    max_message_bytes: 67108864  # Лимит размера gRPC-сообщения клиента (оба напр.) = 64 МиБ. Дефолт gRPC 4 МиБ мал для больших тел (ответ апстрима → ResourceExhausted). Должен быть ≥ receiver.max_body_bytes и совпадать с sender.grpc_max_message_bytes.
   swagger_enabled: false         # Отдавать ли Swagger UI Receiver'а (выключай в prod).
   # In-memory L2-кеш конфига узлов (§9.2). Снимает нагрузку с Redis на
   # пиковом RPS и спасает при кратковременном Redis-flutter'е. При
@@ -177,6 +178,7 @@ sender:
   grpc_addr: :9190               # Адрес/порт gRPC-сервера Sender.
   admin_http_addr: :9091         # Адрес/порт admin-HTTP (health, метрики, housekeeping).
   grpc_max_concurrent_streams: 1000 # Лимит одновременных gRPC-стримов на соединение.
+  grpc_max_message_bytes: 67108864  # Лимит размера gRPC-сообщения сервера (recv тела запроса + send тела ответа) = 64 МиБ. Должен совпадать с receiver.sender_grpc.max_message_bytes.
   # HTTP-клиент для исходящих запросов к внешним системам.
   http_client:
     timeout_ms: 30000            # Общий таймаут внешнего HTTP-запроса (мс).

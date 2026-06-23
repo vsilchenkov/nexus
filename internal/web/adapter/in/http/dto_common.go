@@ -104,6 +104,17 @@ type FailedCountResponse struct {
 	LogsConfigured bool   `json:"logs_configured"`
 }
 
+// LogBodyChunkResponse — GET /api/nodes/{id}/log/{logId}/body (§42): срез тела
+// записи по рунам + полная длина для постраничной подгрузки «показать весь».
+type LogBodyChunkResponse struct {
+	Which    string `json:"which"`    // request | response
+	Total    int64  `json:"total"`    // полная длина тела в рунах
+	Offset   int    `json:"offset"`   // смещение среза в рунах
+	Returned int    `json:"returned"` // сколько рун в chunk
+	Chunk    string `json:"chunk"`    // сам срез
+	EOF      bool   `json:"eof"`      // достигнут конец тела
+}
+
 // VersionResponse — GET /api/version (§34.3).
 type VersionResponse struct {
 	Version   string `json:"version"`

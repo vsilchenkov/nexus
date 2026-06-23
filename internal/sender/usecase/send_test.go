@@ -7,7 +7,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -346,7 +345,7 @@ func TestSend_NoopBreakerWhenNil(t *testing.T) {
 
 // --- §22: контроль логирования ---------------------------------------------
 
-func TestTruncateRunes(t *testing.T) {
+func TestExceedsBodyLimit(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -354,24 +353,23 @@ func TestTruncateRunes(t *testing.T) {
 		in      string
 		enabled bool
 		max     int32
-		want    string
+		want    bool
 	}{
-		{"disabled passes through", "hello world", false, 5, "hello world"},
-		{"max<=0 passes through", "hello", true, 0, "hello"},
-		{"shorter than limit", "hi", true, 5, "hi"},
-		{"exactly at limit", "hello", true, 5, "hello"},
-		{"longer than limit", "hello world", true, 5, "hello" + truncationMarker},
-		{"empty string", "", true, 5, ""},
-		// Многобайтовые руны: режем по символам, не по байтам.
-		{"cyrillic by runes", "привет мир", true, 6, "привет" + truncationMarker},
-		{"emoji by runes", "😀😀😀😀😀", true, 2, "😀😀" + truncationMarker},
+		{"disabled never exceeds", "hello world", false, 5, false},
+		{"max<=0 never exceeds", "hello", true, 0, false},
+		{"shorter than limit", "hi", true, 5, false},
+		{"exactly at limit", "hello", true, 5, false},
+		{"longer than limit", "hello world", true, 5, true},
+		{"empty string", "", true, 5, false},
+		// Лимит по РУНАМ, не по байтам: 6 кириллических рун = 12 байт, лимит 6 → не превышает.
+		{"cyrillic by runes at limit", "привет", true, 6, false},
+		{"cyrillic by runes over", "привет!", true, 6, true},
+		{"emoji by runes", "😀😀😀", true, 2, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := truncateRunes(tc.in, tc.enabled, tc.max)
-			assert.Equal(t, tc.want, got)
-			assert.True(t, utf8.ValidString(got), "результат должен быть валидным UTF-8")
+			assert.Equal(t, tc.want, exceedsBodyLimit([]byte(tc.in), tc.enabled, tc.max))
 		})
 	}
 }
@@ -411,15 +409,14 @@ func TestSend_LoggingDisabled_NoWrite(t *testing.T) {
 	})
 }
 
-func TestSend_MaxBodySize_TruncatesStoredBodies_ChecksumOverFull(t *testing.T) {
+// §43: тело запроса превышает лимит → 413, upstream НЕ вызывается, лог done=0 с
+// reason, тело в лог НЕ пишется, checksum по полному телу.
+func TestSend_MaxBodySize_RequestOverLimit_Rejects413(t *testing.T) {
 	t.Parallel()
 
-	// 100 рун кириллицы в запросе, 100 emoji в ответе — обе длиннее лимита.
-	reqBody := []byte(strings.Repeat("я", 100))
-	respBody := []byte(strings.Repeat("😀", 100))
-
+	reqBody := []byte(strings.Repeat("я", 100)) // 100 рун > лимит 10
 	httpc := &stubHTTPCaller{
-		responses: []*port.HTTPResponse{{StatusCode: 200, Body: respBody}},
+		responses: []*port.HTTPResponse{{StatusCode: 200, Body: []byte("never used")}},
 	}
 	logw := &stubLogWriter{}
 	uc := NewSendUsecase(httpc, logw, &stubBreaker{allow: true}, logging.NewNoop())
@@ -431,19 +428,82 @@ func TestSend_MaxBodySize_TruncatesStoredBodies_ChecksumOverFull(t *testing.T) {
 	in.MaxBodySizeEnabled = true
 	in.MaxBodySize = 10
 
-	uc.Send(context.Background(), in)
+	out := uc.Send(context.Background(), in)
 
+	assert.Equal(t, int32(413), out.StatusCode, "sync: превышение запроса → 413")
+	assert.Equal(t, 0, httpc.calls, "upstream НЕ должен вызываться при превышении запроса")
+	require.Len(t, logw.written, 1, "событие должно фиксироваться в логе")
+	rec := logw.written[0].rec
+	assert.False(t, rec.Done, "запись помечена как неуспешная (done=0)")
+	assert.EqualValues(t, 413, rec.Status)
+	assert.Contains(t, rec.Reason, "request body exceeds max_body_size")
+	assert.Empty(t, rec.Request, "тело в лог не пишется при превышении")
+	assert.Empty(t, rec.Response)
+	// checksum по ПОЛНОМУ телу — целостность видна.
+	assert.Equal(t, md5hex(reqBody), rec.ChecksumRequest)
+}
+
+// §43: тело ответа превышает лимит → клиенту 502 (без тела), лог done=0 с reason,
+// тело ответа в лог НЕ пишется, checksum по полному ответу.
+func TestSend_MaxBodySize_ResponseOverLimit_Rejects502(t *testing.T) {
+	t.Parallel()
+
+	respBody := []byte(strings.Repeat("😀", 100)) // 100 рун > лимит 10
+	httpc := &stubHTTPCaller{
+		responses: []*port.HTTPResponse{{StatusCode: 200, Body: respBody}},
+	}
+	logw := &stubLogWriter{}
+	uc := NewSendUsecase(httpc, logw, &stubBreaker{allow: true}, logging.NewNoop())
+
+	in := baseInput()
+	in.Body = []byte("small")
+	in.LogRequestBody = true
+	in.LogResponseBody = true
+	in.MaxBodySizeEnabled = true
+	in.MaxBodySize = 10
+
+	out := uc.Send(context.Background(), in)
+
+	assert.Equal(t, int32(502), out.StatusCode, "sync: превышение ответа → 502")
+	assert.Empty(t, out.Body, "огромный ответ клиенту НЕ отдаётся")
 	require.Len(t, logw.written, 1)
 	rec := logw.written[0].rec
-
-	assert.Equal(t, strings.Repeat("я", 10)+truncationMarker, rec.Request)
-	assert.Equal(t, strings.Repeat("😀", 10)+truncationMarker, rec.Response)
-	assert.True(t, utf8.ValidString(rec.Request))
-	assert.True(t, utf8.ValidString(rec.Response))
-
-	// checksum считается по ПОЛНОМУ телу, не по обрезанному.
-	assert.Equal(t, md5hex(reqBody), rec.ChecksumRequest)
+	assert.False(t, rec.Done)
+	assert.EqualValues(t, 502, rec.Status)
+	assert.Contains(t, rec.Reason, "response body exceeds max_body_size")
+	assert.Empty(t, rec.Response, "тело ответа в лог не пишется при превышении")
+	assert.Equal(t, "small", rec.Request, "запрос под лимитом сохраняется полностью")
+	// checksum по ПОЛНОМУ ответу.
 	assert.Equal(t, md5hex(respBody), rec.ChecksumResponse)
+}
+
+// §43: под лимитом — обычное поведение (200, полное тело клиенту и в лог).
+func TestSend_MaxBodySize_UnderLimit_PassesThrough(t *testing.T) {
+	t.Parallel()
+
+	respBody := []byte("short ok")
+	httpc := &stubHTTPCaller{
+		responses: []*port.HTTPResponse{{StatusCode: 200, Body: respBody}},
+	}
+	logw := &stubLogWriter{}
+	uc := NewSendUsecase(httpc, logw, &stubBreaker{allow: true}, logging.NewNoop())
+
+	in := baseInput()
+	in.Body = []byte("req")
+	in.LogRequestBody = true
+	in.LogResponseBody = true
+	in.MaxBodySizeEnabled = true
+	in.MaxBodySize = 1000
+
+	out := uc.Send(context.Background(), in)
+
+	assert.Equal(t, int32(200), out.StatusCode)
+	assert.Equal(t, respBody, out.Body, "под лимитом ответ отдаётся полностью")
+	require.Len(t, logw.written, 1)
+	rec := logw.written[0].rec
+	assert.True(t, rec.Done)
+	assert.Equal(t, "req", rec.Request)
+	assert.Equal(t, "short ok", rec.Response)
 }
 
 func TestSend_SpecialCharsAndJSON_StoredIntactWithoutLimit(t *testing.T) {
