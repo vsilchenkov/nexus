@@ -2618,6 +2618,87 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/request-fields": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "request-fields"
+                ],
+                "summary": "Справочник полей запроса: автодополнение (§41).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "prefix поиска по имени; пусто = топ-используемые",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "лимит (по умолчанию 20)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ListRequestFieldsResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Идемпотентно по case-insensitive имени: повтор вернёт существующую запись (200), а не ошибку.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "request-fields"
+                ],
+                "summary": "Создать поле запроса в справочнике (manager, §41).",
+                "parameters": [
+                    {
+                        "description": "request field",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.requestFieldRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.requestFieldResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/settings/app": {
             "get": {
                 "security": [
@@ -4240,6 +4321,17 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_web_adapter_in_http.ListRequestFieldsResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.requestFieldResponse"
+                    }
+                }
+            }
+        },
         "internal_web_adapter_in_http.ListTeamMembersResponse": {
             "type": "object",
             "properties": {
@@ -5716,6 +5808,43 @@ const docTemplate = `{
                 },
                 "to": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.requestFieldRequest": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.requestFieldResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "usage_count": {
+                    "type": "integer"
                 }
             }
         },

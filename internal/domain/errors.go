@@ -137,6 +137,13 @@ var (
 	ErrHeaderNameFormat        = errors.New("domain: header name must be a valid RFC 7230 token")
 	ErrHeaderDescriptionLength = errors.New("domain: header description length must be <= 500")
 
+	// §41: каталог полей запроса (request_fields_catalog).
+	ErrRequestFieldNotFound          = errors.New("domain: request field not found")
+	ErrRequestFieldAlreadyExists     = errors.New("domain: request field with this name already exists")
+	ErrRequestFieldNameLength        = errors.New("domain: request field name length must be 1..64")
+	ErrRequestFieldNameFormat        = errors.New("domain: request field name must match ^[a-zA-Z][a-zA-Z0-9_-]*$")
+	ErrRequestFieldDescriptionLength = errors.New("domain: request field description length must be <= 500")
+
 	// Уведомления (§20)
 	ErrTelegramCronInvalid = errors.New("domain: invalid telegram cron expression")
 

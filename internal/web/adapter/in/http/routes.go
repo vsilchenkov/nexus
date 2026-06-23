@@ -21,6 +21,7 @@ type Handlers struct {
 	CHTemplate    *CHTemplateHandler
 	HostAllowlist *HostAllowlistHandler
 	HeaderCatalog *HeaderCatalogHandler
+	RequestField  *RequestFieldCatalogHandler
 	RMQTest       *RMQTestHandler
 	Kafka         *KafkaHandler
 	AsyncQueue    *AsyncQueueHandler
@@ -102,6 +103,12 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			authed.GET("/headers", h.HeaderCatalog.Search)
 		}
 
+		// Справочник полей запроса (§41). GET — combobox любой сессии; POST —
+		// manager (создание из формы узла) ниже.
+		if h.RequestField != nil {
+			authed.GET("/request-fields", h.RequestField.Search)
+		}
+
 		// Логи узла (§7.4): snapshot + SSE live-tail.
 		// Регистрируются только если включён ClickHouse (см. app.go).
 		if h.Logs != nil {
@@ -171,6 +178,11 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		// Справочник заголовков (§24): create из combobox.
 		if h.HeaderCatalog != nil {
 			authedManager.POST("/headers", h.HeaderCatalog.Create)
+		}
+
+		// Справочник полей запроса (§41): create из combobox.
+		if h.RequestField != nil {
+			authedManager.POST("/request-fields", h.RequestField.Create)
 		}
 
 		// Audit log: чтение доступно manager+admin (§26); scope audit:read нужен

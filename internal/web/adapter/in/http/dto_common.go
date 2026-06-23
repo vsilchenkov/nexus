@@ -70,6 +70,11 @@ type ListHeadersResponse struct {
 	Items []headerResponse `json:"items"`
 }
 
+// ListRequestFieldsResponse — GET /api/request-fields (§41).
+type ListRequestFieldsResponse struct {
+	Items []requestFieldResponse `json:"items"`
+}
+
 // ListOrphansResponse — GET /api/settings/clickhouse/orphans.
 type ListOrphansResponse struct {
 	Items []orphanItemResp `json:"items"`
