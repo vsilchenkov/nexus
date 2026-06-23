@@ -8,11 +8,33 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"nexus/internal/platform/metrics"
 )
+
+// TestSetNodeLastRequestError (§41, «Down»): gauge = 1 при ошибке последнего
+// вызова, 0 при успехе; последний вызов перезаписывает значение.
+func TestSetNodeLastRequestError(t *testing.T) {
+	t.Parallel()
+	m := metrics.New("sender")
+
+	m.SetNodeLastRequestError("svc/ok", false)
+	if v := testutil.ToFloat64(m.NodeLastRequestError.WithLabelValues("svc/ok")); v != 0 {
+		t.Fatalf("ok node gauge = %v, want 0", v)
+	}
+	m.SetNodeLastRequestError("svc/bad", true)
+	if v := testutil.ToFloat64(m.NodeLastRequestError.WithLabelValues("svc/bad")); v != 1 {
+		t.Fatalf("bad node gauge = %v, want 1", v)
+	}
+	// Последний успешный вызов гасит «Down».
+	m.SetNodeLastRequestError("svc/bad", false)
+	if v := testutil.ToFloat64(m.NodeLastRequestError.WithLabelValues("svc/bad")); v != 0 {
+		t.Fatalf("after recovery gauge = %v, want 0", v)
+	}
+}
 
 func TestNew_RegistersAllRequiredMetrics(t *testing.T) {
 	t.Parallel()

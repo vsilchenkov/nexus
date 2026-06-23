@@ -51,6 +51,9 @@ type NodeThroughputRow struct {
 	Errors uint64
 	P95ms  float64   // §22: p95 латентности исходящих (Prometheus)
 	Spark  []float64 // §22: спарклайн входящего трафика (range-запрос)
+	// §41 («Down»): true, если последний исходящий вызов узла завершился
+	// ошибкой (status 0/4xx/5xx). Overview красит узел в «Down» по этому флагу.
+	LastError bool
 }
 
 // NodesOverview — батч per-node throughput за окно.
@@ -121,10 +124,35 @@ func (u *MetricsUsecase) NodesOverview(ctx context.Context, teamID string, since
 	if since.IsZero() || !since.Before(until) {
 		since = until.Add(-time.Hour)
 	}
+	var res NodesOverview
 	if u.nodeLogs != nil {
-		return u.nodesOverviewCH(ctx, teamID, since, until)
+		res = u.nodesOverviewCH(ctx, teamID, since, until)
+	} else {
+		res = u.nodesOverviewProm(ctx, since, until)
 	}
-	return u.nodesOverviewProm(ctx, since, until)
+	// §41 («Down»): оверлей исхода последнего вызова поверх любой ветки
+	// (CH-источник его не считает, gauge живёт только в Prometheus).
+	u.applyLastErrors(ctx, until, &res)
+	return res
+}
+
+// applyLastErrors проставляет NodeThroughputRow.LastError из instant-gauge
+// nexus_node_last_request_error (§41). Деградирует мягко: нет Prometheus или
+// ошибка запроса → флаги остаются false (узлы не красятся в «Down» по нему).
+func (u *MetricsUsecase) applyLastErrors(ctx context.Context, at time.Time, res *NodesOverview) {
+	if u.prom == nil || len(res.Items) == 0 {
+		return
+	}
+	le, err := u.prom.NodeLastErrors(ctx, at)
+	if err != nil {
+		u.logger.Warn("prometheus node last errors failed", u.logger.Err(err))
+		return
+	}
+	for i := range res.Items {
+		if le[res.Items[i].Node] >= 1 {
+			res.Items[i].LastError = true
+		}
+	}
 }
 
 // nodesOverviewCH — per-node throughput из CH-логов. Для каждого узла с таблицей

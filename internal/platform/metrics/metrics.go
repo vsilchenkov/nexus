@@ -40,7 +40,13 @@ type Metrics struct {
 
 	RequestsTotal           *prometheus.CounterVec
 	RequestsIncompleteTotal *prometheus.CounterVec
-	LoopDetectedTotal       *prometheus.CounterVec // §32: запросы, отклонённые по hop-лимиту
+	// §41 («Down»): исход ПОСЛЕДНЕГО исходящего вызова Sender по узлу — 1 если
+	// последний вызов завершился ошибкой (status 0/4xx/5xx), 0 если 2xx. Overview
+	// определяет «Down» по этой метрике (снимок «сейчас»), а не по доле ошибок за
+	// период. Caveat мульти-реплик: каждая держит своё значение, Web берёт
+	// max by(node).
+	NodeLastRequestError *prometheus.GaugeVec
+	LoopDetectedTotal    *prometheus.CounterVec // §32: запросы, отклонённые по hop-лимиту
 	// Phase AUD.8: сбои проверки rate-limit'а (fail-open, §9.4) по scope ключа.
 	RateLimitCheckErrorsTotal *prometheus.CounterVec
 	RequestDuration           *prometheus.HistogramVec
@@ -96,6 +102,13 @@ func New(service string) *Metrics {
 			Help:        "Sender outbound calls that did not complete successfully (non-2xx) by method and node path.",
 			ConstLabels: constLabels,
 		}, []string{"method", "node"}),
+
+		// §41 («Down»): см. комментарий у поля NodeLastRequestError.
+		NodeLastRequestError: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        "nexus_node_last_request_error",
+			Help:        "Last Sender outbound call outcome per node: 1 if the most recent call errored (status 0/4xx/5xx), 0 if 2xx. Drives Overview 'Down' (§41).",
+			ConstLabels: constLabels,
+		}, []string{"node"}),
 
 		// §32: запросы, отклонённые защитой от зацикливания (превышен hop-лимит
 		// X-Nexus-Hops). mode=sync|async — путь, на котором сработала защита.
@@ -256,6 +269,7 @@ func New(service string) *Metrics {
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 		m.RequestsTotal,
 		m.RequestsIncompleteTotal,
+		m.NodeLastRequestError,
 		m.LoopDetectedTotal,
 		m.RateLimitCheckErrorsTotal,
 		m.RequestDuration,
@@ -306,6 +320,17 @@ func (m *Metrics) SetL2Size(n int) { m.L2CacheSize.Set(float64(n)) }
 // IncLoopDetected инкрементит счётчик запросов, отклонённых защитой от
 // зацикливания (§32). mode — "sync" либо "async".
 func (m *Metrics) IncLoopDetected(mode string) { m.LoopDetectedTotal.WithLabelValues(mode).Inc() }
+
+// SetNodeLastRequestError фиксирует исход последнего исходящего вызова узла
+// (§41, «Down»): isError=true → 1 (ошибка/недоступность, status 0/4xx/5xx),
+// false → 0 (успех, 2xx). Управляет статусом «Down» в Overview.
+func (m *Metrics) SetNodeLastRequestError(node string, isError bool) {
+	v := 0.0
+	if isError {
+		v = 1
+	}
+	m.NodeLastRequestError.WithLabelValues(node).Set(v)
+}
 
 // Registry возвращает собственный prometheus.Registry — для тестов или
 // дополнительных кастомных collectors.

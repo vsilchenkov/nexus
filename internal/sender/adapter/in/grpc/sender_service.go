@@ -61,9 +61,12 @@ func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 			WithLabelValues("request", req.GetNodePath(), strconv.FormatInt(int64(out.StatusCode), 10)).Inc()
 		s.metrics.RequestDuration.
 			WithLabelValues("request", req.GetNodePath()).Observe(float64(out.DurationMs) / 1000.0)
-		if out.StatusCode < 200 || out.StatusCode >= 300 {
+		isErr := out.StatusCode < 200 || out.StatusCode >= 300
+		if isErr {
 			s.metrics.RequestsIncompleteTotal.WithLabelValues("request", req.GetNodePath()).Inc()
 		}
+		// §41 («Down»): исход последнего вызова узла.
+		s.metrics.SetNodeLastRequestError(req.GetNodePath(), isErr)
 	}
 
 	return &senderv1.SendResponse{

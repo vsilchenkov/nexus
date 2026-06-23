@@ -64,6 +64,9 @@ func (p notifProm) NodeThroughput(context.Context, time.Time, time.Time) (map[st
 func (p notifProm) NodeErrors(context.Context, time.Duration) (map[string]float64, error) {
 	return p.errs, p.err
 }
+func (p notifProm) NodeLastErrors(context.Context, time.Time) (map[string]float64, error) {
+	return nil, nil
+}
 func (p notifProm) NodeSeries(context.Context, time.Time, time.Time, int) (map[string][]float64, error) {
 	return nil, nil
 }

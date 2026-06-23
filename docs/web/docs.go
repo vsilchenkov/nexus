@@ -5654,6 +5654,10 @@ const docTemplate = `{
                 "in": {
                     "type": "integer"
                 },
+                "last_error": {
+                    "description": "§41 («Down»): последний исходящий вызов узла завершился ошибкой.",
+                    "type": "boolean"
+                },
                 "node": {
                     "type": "string"
                 },
