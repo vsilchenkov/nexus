@@ -43,17 +43,20 @@ Sentry в Nexus поднимается одинаково в трёх серви
 
 **Важно:** DSN из URL (`https://<public_key>@sentry.vozovoz.ru/52`) — это **ingest**-ключ (отправка
 событий), им **нельзя читать** issues. Для чтения нужен **Sentry API auth token** (User/Org token с
-scope `project:read`, `event:read`). Если токена нет — попроси его у пользователя (или путь к нему в env).
+scope `project:read`, `event:read`).
 
-Инстанс: `https://sentry.vozovoz.ru`, проект id `52`. API (`Authorization: Bearer <TOKEN>`):
+> **Токен СОХРАНЁН в памяти** — `[memory] reference_sentry_api` (User Auth Token `sntryu_…`). Оттуда же
+> берётся инстанс/org/project. Если токен протух — попроси новый у пользователя и обнови memory.
+
+Инстанс: `https://sentry.vozovoz.ru`; org **`vzv`** («Возовоз»), project **`nexus`** (id `52`, platform
+`go-gin`). API (`Authorization: Bearer <TOKEN>`):
 
 ```bash
-TOKEN=...   # Sentry auth token (НЕ DSN)
+TOKEN=...   # из [memory] reference_sentry_api (НЕ DSN)
 BASE=https://sentry.vozovoz.ru/api/0
 # топ незакрытых issue за 14 дней по частоте:
 curl -s -H "Authorization: Bearer $TOKEN" \
-  "$BASE/projects/<org>/<project_slug>/issues/?query=is:unresolved&sort=freq&statsPeriod=14d" | jq '.[] | {id,title,count,culprit,permalink}'
-# (org/project_slug видно в URL веб-Sentry; project id=52)
+  "$BASE/projects/vzv/nexus/issues/?query=is:unresolved&sort=freq&statsPeriod=14d" | jq '.[] | {id,title,count,culprit,permalink}'
 # последнее событие issue (stacktrace, теги request_id/node/service, breadcrumbs):
 curl -s -H "Authorization: Bearer $TOKEN" "$BASE/issues/<issue_id>/events/latest/" | jq '{culprit, tags, entries}'
 ```
