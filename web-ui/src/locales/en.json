@@ -520,6 +520,7 @@
   },
   "logs": {
     "empty": "No log entries",
+    "no_more": "No more entries",
     "unavailable": "Logs are temporarily unavailable — the ClickHouse backend is unreachable. Request delivery is unaffected; logs will reappear once ClickHouse recovers.",
     "detail": {
       "request": "Request",

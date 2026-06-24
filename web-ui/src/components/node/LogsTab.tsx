@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { RefreshCw, Settings, RotateCcw, ChevronRight, ChevronDown, Download } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
@@ -25,6 +25,8 @@ export type LogsInitialFilter = {
 const LIVE_BUFFER_LIMIT = 500;
 const HIGHLIGHT_DURATION_MS = 1000;
 const SCROLL_TOP_THRESHOLD_PX = 8;
+// Близость к низу скролл-контейнера, при которой подгружаем следующую страницу.
+const SCROLL_BOTTOM_THRESHOLD_PX = 200;
 // Сколько ошибок SSE подряд терпим, прежде чем признать поток мёртвым.
 // Между ними браузер сам переподключается (нативный retry EventSource).
 const LIVE_MAX_CONSECUTIVE_ERRORS = 5;
@@ -60,15 +62,32 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   }, [pageSize, appliedFilters]);
 
   const [live, setLive] = useState(false);
+  // «У верха» скролл-контейнера. Управляет авто-рефетчем (см. logsQ ниже):
+  // вверху — обновляем свежие записи каждые 5с; прокрутил вниз (листает историю)
+  // — замораживаем; вернулся вверх — снова размораживаем.
+  const [atTop, setAtTop] = useState(true);
 
-  const logsQ = useQuery({
+  // Бесконечный скролл (§7.4): первая страница — последние pageSize записей
+  // (ORDER BY date_request DESC), скролл вниз подгружает следующие pageSize
+  // более старых через курсор `to` = date_request самой старой загруженной.
+  const logsQ = useInfiniteQuery({
     queryKey: ["logs", id, advQueryParams],
-    queryFn: () => api.get<LogsResp>(`/api/nodes/${id}/logs`, advQueryParams),
-    enabled: !!id && hasLogsTable,
-    // П7: при включённом Live (SSE-стрим) НЕ опрашиваем snapshot каждые 5с —
-    // иначе сыпались дублирующие logs?limit=… запросы поверх потока. Polling
-    // только когда Live выключен.
-    refetchInterval: live ? false : 5_000,
+    enabled: !!id && hasLogsTable && !live, // в Live snapshot не нужен — читаем SSE-буфер
+    initialPageParam: null as number | null,
+    queryFn: ({ pageParam }) => {
+      const params: Record<string, string | number> = { ...advQueryParams };
+      // Курсор страниц >1: граница date_request <= to ВКЛЮЧИТЕЛЬНА (дедуп по id ниже).
+      if (pageParam != null) params.to = pageParam;
+      return api.get<LogsResp>(`/api/nodes/${id}/logs`, params);
+    },
+    getNextPageParam: (lastPage) => {
+      const items = lastPage.items ?? [];
+      if (items.length < Number(advQueryParams.limit)) return undefined; // конец истории
+      const oldest = items[items.length - 1]; // DESC → последний самый старый
+      return oldest ? new Date(oldest.date_request).getTime() : undefined;
+    },
+    // Авто-рефетч только пока пользователь у верха (см. atTop). При Live выключен.
+    refetchInterval: !live && atTop ? 5_000 : false,
   });
 
   const [liveLogs, setLiveLogs] = useState<LogRow[]>([]);
@@ -80,7 +99,24 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   const [liveUnavailable, setLiveUnavailable] = useState(false);
   // Snapshot-запрос вернул logs_available=false (CH недоступен): показываем
   // мягкий индикатор «логи временно недоступны», а не пустой список/спиннер.
-  const logsUnavailable = logsQ.data?.logs_available === false;
+  const logsUnavailable = logsQ.data?.pages?.[0]?.logs_available === false;
+
+  // Плоский список из всех подгруженных страниц с дедупом по id: курсорная
+  // граница `to` включительна, поэтому самая старая запись страницы приходит
+  // повторно первой записью следующей. Порядок DESC сохраняется.
+  const infiniteItems = useMemo(() => {
+    const pages = logsQ.data?.pages ?? [];
+    const seen = new Set<string>();
+    const out: LogRow[] = [];
+    for (const p of pages) {
+      for (const r of p.items ?? []) {
+        if (seen.has(r.id)) continue;
+        seen.add(r.id);
+        out.push(r);
+      }
+    }
+    return out;
+  }, [logsQ.data]);
   // Таймеры снятия подсветки: чистим при unmount/перезапуске потока, иначе
   // setState стреляет по размонтированному компоненту.
   const highlightTimersRef = useRef<Set<number>>(new Set());
@@ -149,11 +185,27 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   const [pendingCount, setPendingCount] = useState(0);
   const lastLiveLenRef = useRef(0);
 
+  const atTopRef = useRef(true);
+
   const onScroll = () => {
     const el = tableWrapRef.current;
     if (!el) return;
-    autoScrollRef.current = el.scrollTop <= SCROLL_TOP_THRESHOLD_PX;
-    if (autoScrollRef.current) setPendingCount(0);
+    const nowAtTop = el.scrollTop <= SCROLL_TOP_THRESHOLD_PX;
+    autoScrollRef.current = nowAtTop;
+    if (nowAtTop) setPendingCount(0);
+    // atTop управляет авто-рефетчем (logsQ): ре-рендерим только на пересечении
+    // порога, чтобы не дёргать состояние на каждом событии скролла.
+    if (nowAtTop !== atTopRef.current) {
+      atTopRef.current = nowAtTop;
+      setAtTop(nowAtTop);
+    }
+    // Бесконечный скролл вниз — только не в Live (Live добавляет записи сверху).
+    if (!live) {
+      const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_BOTTOM_THRESHOLD_PX;
+      if (nearBottom && logsQ.hasNextPage && !logsQ.isFetchingNextPage) {
+        logsQ.fetchNextPage();
+      }
+    }
   };
 
   useEffect(() => {
@@ -177,7 +229,7 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   }, [live, liveLogs]);
 
   const visibleLogs = useMemo(() => {
-    const src = live ? liveLogs : (logsQ.data?.items ?? []);
+    const src = live ? liveLogs : infiniteItems;
     return src.filter((r) => {
       if (statusFilter === "ok" && !(r.done && r.status >= 200 && r.status < 400)) return false;
       if (statusFilter === "err" && r.done && r.status >= 200 && r.status < 400) return false;
@@ -185,7 +237,20 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
       if (doneFilter === "pending" && r.done) return false;
       return true;
     });
-  }, [live, liveLogs, logsQ.data, statusFilter, doneFilter]);
+  }, [live, liveLogs, infiniteItems, statusFilter, doneFilter]);
+
+  // Догрузка при недоборе высоты: если контента меньше высоты контейнера (нет
+  // скроллбара) или клиентский фильтр выел строки — доскроллить нельзя, тянем
+  // следующую страницу сами, пока есть что и пока влезает.
+  useEffect(() => {
+    if (live) return;
+    const el = tableWrapRef.current;
+    if (!el) return;
+    if (el.scrollHeight <= el.clientHeight && logsQ.hasNextPage && !logsQ.isFetchingNextPage) {
+      logsQ.fetchNextPage();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live, visibleLogs.length, logsQ.hasNextPage, logsQ.isFetchingNextPage]);
 
   const [replayId, setReplayId] = useState<string | null>(null);
   // Раскрытая строка: тела request/response грузятся лениво только для неё
@@ -448,6 +513,20 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                       : logsUnavailable
                         ? t("logs.unavailable")
                         : t("logs.empty")}
+                  </td>
+                </tr>
+              )}
+              {!live && logsQ.isFetchingNextPage && (
+                <tr>
+                  <td colSpan={7} className="px-3 py-4 text-center text-xs text-fg-muted">
+                    {t("common.loading")}
+                  </td>
+                </tr>
+              )}
+              {!live && !logsQ.hasNextPage && visibleLogs.length > 0 && (
+                <tr>
+                  <td colSpan={7} className="px-3 py-3 text-center text-[11px] text-fg-muted">
+                    {t("logs.no_more")}
                   </td>
                 </tr>
               )}
