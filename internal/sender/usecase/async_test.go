@@ -55,7 +55,7 @@ func newAsyncProcessorForTest(t *testing.T, nr NodeReader, httpResp *port.HTTPRe
 		httpc.errs = []error{httpErr}
 	}
 	logw := &stubLogWriter{}
-	send := NewSendUsecase(httpc, logw, nil, logging.NewNoop())
+	send := NewSendUsecase(httpc, logw, nil, logging.NewNoop(), 64<<20)
 	return NewAsyncProcessor(nr, send, dlq, nil, "nexus.async.dlq", nil, logging.NewNoop())
 }
 
@@ -80,7 +80,7 @@ func newAsyncProcessorWithCancel(t *testing.T, nr NodeReader, httpResp *port.HTT
 	if httpResp != nil {
 		httpc.responses = []*port.HTTPResponse{httpResp}
 	}
-	send := NewSendUsecase(httpc, &stubLogWriter{}, nil, logging.NewNoop())
+	send := NewSendUsecase(httpc, &stubLogWriter{}, nil, logging.NewNoop(), 64<<20)
 	return NewAsyncProcessor(nr, send, dlq, cancel, "nexus.async.dlq", nil, logging.NewNoop()), httpc
 }
 

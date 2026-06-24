@@ -102,9 +102,9 @@ func TestSender_Async_DLQ_E2E(t *testing.T) {
 
 	// 3. Sender pipeline.
 	nodeReader := nodepg.New(pool, cipher, logger)
-	httpc := httpclient.New(&cfg.Sender.HTTPClient, logger)
+	httpc := httpclient.New(&cfg.Sender.HTTPClient, logger, 64<<20)
 	logw := &capturingLogWriter{}
-	sendUC := senderuc.NewSendUsecase(httpc, logw, nil, logger)
+	sendUC := senderuc.NewSendUsecase(httpc, logw, nil, logger, 64<<20)
 
 	producer := kafkapf.NewProducer(cfg)
 	defer producer.Close()
@@ -251,9 +251,9 @@ func TestSender_DLQReprocessor_E2E(t *testing.T) {
 		"ensure topics")
 
 	nodeReader := nodepg.New(pool, cipher, logger)
-	httpc := httpclient.New(&cfg.Sender.HTTPClient, logger)
+	httpc := httpclient.New(&cfg.Sender.HTTPClient, logger, 64<<20)
 	logw := &capturingLogWriter{}
-	sendUC := senderuc.NewSendUsecase(httpc, logw, nil, logger)
+	sendUC := senderuc.NewSendUsecase(httpc, logw, nil, logger, 64<<20)
 	producer := kafkapf.NewProducer(cfg)
 	defer producer.Close()
 

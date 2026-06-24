@@ -51,7 +51,7 @@ func TestClickHouse_BodyPreviewAndChunk(t *testing.T) {
 
 	uc := senderuc.NewSendUsecase(
 		stubHTTP{resp: &senderport.HTTPResponse{StatusCode: 200, Body: []byte(respBody)}},
-		writer, nil, logger,
+		writer, nil, logger, 64<<20,
 	)
 
 	const id = "44444444-0000-0000-0000-000000000001"

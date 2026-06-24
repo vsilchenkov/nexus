@@ -36,4 +36,8 @@ type HTTPResponse struct {
 	StatusCode int32
 	Headers    map[string]string
 	Body       []byte
+	// TooLarge — тело ответа превысило транспортный лимит (config
+	// sender.grpc_max_message_bytes): чтение оборвано на лимите (memory-safe,
+	// Body не дочитан), вызывающая сторона отдаёт клиенту 502 (§43-rev).
+	TooLarge bool
 }

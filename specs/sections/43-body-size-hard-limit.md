@@ -1,55 +1,49 @@
-## 43. Жёсткий лимит размера тела (reject вместо усечения)
+## 43. Лимиты размера тела: per-node лог-усечение vs транспортные лимиты из конфига
 
-Раздел меняет семантику `max_body_size` (§22.2): при включённом лимите тело, превышающее лимит, больше
-**не усекается тихо** — запрос/ответ **отклоняется**, а событие фиксируется в логе. Так оператор не
-теряет данные молча и сразу видит факт превышения.
+> **История.** Первая редакция §43 ошибочно сделала per-node `max_body_size` жёстким reject (413/502).
+> Это исправлено: `max_body_size` снова режет ТОЛЬКО лог (§22.2), а 413/502 даёт превышение
+> **транспортных лимитов из конфига**.
 
-### 43.1. Новое поведение
+### 43.1. Два разных механизма
 
-При `max_body_size_enabled = true` и теле (запроса ИЛИ ответа) длиннее `max_body_size` **рун**:
+| Что | Где задаётся | Единица | Что делает при превышении |
+|---|---|---|---|
+| `max_body_size` (тумблер «Ограничить размер тела») | per-node, форма узла (PostgreSQL) | руны | Режет ТОЛЬКО копию тела в ClickHouse-логе (`…(truncated)`). На ответ клиенту и HTTP-код НЕ влияет; checksum по полному телу (§22.2) |
+| `receiver.max_body_bytes` | config | байты | Тело ЗАПРОСА больше → **413** (Receiver, до Sender; sync/async/callback) |
+| `sender.grpc_max_message_bytes` (= `receiver.sender_grpc.max_message_bytes`) | config | байты | Тело ОТВЕТА апстрима больше → **502** (Sender, ответ не отдаётся клиенту) |
 
-| Путь | Тело запроса > лимита | Тело ответа > лимита |
-|---|---|---|
-| **sync** (`request`) | **413** клиенту, upstream НЕ вызывается | **502** клиенту, тело ответа НЕ отдаётся |
-| **async** (`requestAsync`, `RabbitMQAsync`) | НЕ доставляется (upstream не вызывается) | доставка состоялась, но запись помечается неуспешной |
+Связи лимитов (инварианты, продублированы комментарием в `config.example.yml`/`config.yml`):
+`receiver.max_body_bytes` **<** `grpc_max_message_bytes` и **<** `kafka.topic.max_message_bytes` (запас под
+envelope); `kafka.consumer.fetch_max_bytes` **≥** `topic.max_message_bytes`; брокерский `message.max.bytes`
+**≥** topic.
 
-Во **всех** случаях пишется запись лога: `done = 0`, `status` = 413/502, `reason` = `request|response body
-exceeds max_body_size: N > M runes`. Тело в лог **не записывается** (раз «не резать» — не пишем огромное
-тело и не режем его), но **`checksum_request`/`checksum_response` считаются по ПОЛНОМУ телу** —
-целостность исходного payload видна в логе. Лимит измеряется в **рунах** (как и прежде, чтобы не рвать
-многобайтовый UTF-8).
+### 43.2. Запрос больше `receiver.max_body_bytes` → 413
 
-«Прямых» (sync) клиент получает код ошибки **вместо** усечённого/полного тела. Async синхронного ответа
-клиенту не имеет (`{result:true,id}` уже возвращён) — поэтому только запись в логе.
+`readBody` ([receiver/.../handler.go](internal/receiver/adapter/in/http/handler.go)) читает тело с
+`io.LimitReader(max+1)`; при превышении возвращает sentinel `errBodyTooLarge`, который `replyReadBodyError`
+мапит в **413 Payload Too Large** (а не 400). Покрывает sync/async/callback. В ClickHouse такая запись не
+пишется (Receiver лог не ведёт) — код клиенту + WARN.
 
-### 43.2. Где реализовано
+### 43.3. Ответ больше `grpc_max_message_bytes` → 502 (memory-safe)
 
-Единая точка — `SendUsecase.Send` ([send.go](internal/sender/usecase/send.go)), через которую идут и sync
-(gRPC-адаптер), и async (consumer вызывает тот же `Send`):
+Тело ответа физически ограничено gRPC-транспортом Sender→Receiver. httpclient
+([sender/.../httpclient/client.go](internal/sender/adapter/out/httpclient/client.go)) читает ответ через
+`io.LimitReader(maxResp+1)`, где `maxResp = sender.grpc_max_message_bytes − запас под envelope`. Если тело
+перевалило за лимит — `port.HTTPResponse{TooLarge: true}` без тела (НЕ затягиваем гигантский ответ в память
+— защита от OOM). `SendUsecase.Send` ([send.go](internal/sender/usecase/send.go)): при `resp.TooLarge` →
+клиенту **502**, лог `done=0`, `reason="response body exceeds transport limit: > N bytes"`, тело и checksum
+не пишутся (тело не прочитано). Circuit breaker — по реальному статусу upstream.
 
-- `exceedsBodyLimit(body, enabled, max)` — превышение по рунам (`utf8.RuneCount`, без аллокации `[]rune`).
-- Тело запроса > лимита → ранний выход: лог (done=0, 413, reason, без тела, checksum по полному), `SendOutput{413}`,
-  **без** вызова upstream и **без** изменения circuit breaker (запрос не дошёл до внешнего узла).
-- Тело ответа > лимита → `SendOutput{502, Body: nil}`, лог (done=0, 502, reason, без тела ответа, checksum
-  по полному). Circuit breaker при этом отражает **реальный** статус upstream (ответ 2xx → узел жив; reject —
-  наша политика, не вина узла) — для этого CB считается по `upstreamHealthy`, а не по `rec.Done`.
+### 43.4. `max_body_size` снова усекает только лог (§22.2)
 
-Прежняя функция усечения `truncateRunes`/маркер `…(truncated)` (§22.2) удалена — тело либо помещается в
-лимит (хранится целиком), либо запись отклоняется.
+Восстановлены `truncateRunes`/`truncationMarker`: `rec.Request`/`rec.Response` режутся по per-node
+`max_body_size` (руны), `checksum_*` — по полному телу, клиент получает полный `resp.Body`. Поведение
+полностью соответствует §22.2.
 
-### 43.3. Совместимость
+### 43.5. Тесты
 
-- `max_body_size_enabled = false` (дефолт) — поведение не меняется: тела любого размера проходят и
-  хранятся целиком; их отображение в UI — через динамическую подгрузку (§42).
-- Меняется поведение только узлов, у которых лимит **включён** (раньше — тихое усечение лога при полном
-  ответе клиенту; теперь — reject + лог). См. §22.2 (помечено superseded) и CHANGELOG.
-
-### 43.4. Тесты
-
-- Unit ([send_test.go](internal/sender/usecase/send_test.go)): `exceedsBodyLimit`; запрос > лимита → 413,
-  upstream не вызван (`httpc.calls == 0`), лог done=0/reason, тело не записано, checksum по полному; ответ
-  > лимита → 502, тело клиенту пустое, лог done=0/reason; под лимитом → 200 + полное тело.
-- Integration ([clickhouse_test.go](tests/integration/clickhouse_test.go) кейс §43,
-  [clickhouse_largebody_test.go](tests/integration/clickhouse_largebody_test.go)): запись reject читается
-  из ClickHouse — status/done/reason/checksum, тело не сохранено; параллельно — что без лимита большое
-  тело хранится целиком.
+- send_test: `TestTruncateRunes`; `max_body_size` → лог усечён + маркер, КЛИЕНТ получает полное тело,
+  checksum по полному; `resp.TooLarge` → 502 (done=0, reason, без тела/checksum); under-limit → 200.
+- httpclient: ответ > лимита → `TooLarge`, тело не дочитано; ≤ лимита → полное.
+- receiver handler: тело запроса > `max_body_bytes` → 413; `readBody`/`replyReadBodyError` маппинг.
+- integration: лимит off → полное; лимит on → лог усечён + клиент полное; ответ > конфиг-лимита → 502.

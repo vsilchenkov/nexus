@@ -41,7 +41,7 @@ func newReprocessorForTest(t *testing.T, node *domain.Node, nodeErr error, httpR
 	}
 	logw := &stubLogWriter{}
 	dlq := &stubDLQProducer{}
-	send := NewSendUsecase(httpc, logw, nil, logging.NewNoop())
+	send := NewSendUsecase(httpc, logw, nil, logging.NewNoop(), 64<<20)
 	var bi BreakerInspector
 	if breaker != nil {
 		bi = breaker

@@ -287,7 +287,7 @@ func TestClickHouse_Logging_Scenarios(t *testing.T) {
 	}
 	uc := senderuc.NewSendUsecase(
 		stubHTTP{resp: &senderport.HTTPResponse{StatusCode: 200, Body: []byte(specialResp)}},
-		writer, nil, logger,
+		writer, nil, logger, 64<<20,
 	)
 
 	idSpecial := "22222222-0000-0000-0000-000000000001"
@@ -297,11 +297,11 @@ func TestClickHouse_Logging_Scenarios(t *testing.T) {
 	// 1) Спецсимволы/JSON/большое тело — без лимита, сохраняем как есть.
 	uc.Send(ctx, baseInput(idSpecial))
 
-	// 2) §43: тело запроса длиннее лимита (500 рун > 100) → reject 413, upstream
-	// НЕ вызывается, запись есть (done=0, reason, без тела, checksum по полному).
-	overReq := strings.Repeat("я", 500)
+	// 2) §22.2: лимит 100 рун — лог-копия тела режется, но запись есть, ответ
+	// клиенту полный. Тело запроса заведомо длиннее лимита (500 рун кириллицы).
+	truncReq := strings.Repeat("я", 500)
 	in := baseInput(idTrunc)
-	in.Body = []byte(overReq)
+	in.Body = []byte(truncReq)
 	in.MaxBodySizeEnabled = true
 	in.MaxBodySize = 100
 	uc.Send(ctx, in)
@@ -330,7 +330,7 @@ func TestClickHouse_Logging_Scenarios(t *testing.T) {
 	require.NoError(t, conn.QueryRow(ctx,
 		fmt.Sprintf("SELECT count() FROM %s WHERE ID = ?", table), idDisabled).Scan(&disabledCnt))
 	require.EqualValues(t, 0, disabledCnt, "при LoggingEnabled=false запись не пишется")
-	require.EqualValues(t, 2, n, "ожидаем ровно 2 записи (special + reject), без disabled")
+	require.EqualValues(t, 2, n, "ожидаем ровно 2 записи (special + truncated), без disabled")
 
 	// Кейс 1: спецсимволы/JSON/большое тело прочитались байт-в-байт.
 	recSpecial, err := reader.GetByID(ctx, table, idSpecial)
@@ -338,17 +338,14 @@ func TestClickHouse_Logging_Scenarios(t *testing.T) {
 	require.Equal(t, specialReq, recSpecial.Request, "request со спецсимволами сохранён без изменений")
 	require.Equal(t, specialResp, recSpecial.Response, "большой JSON-ответ сохранён байт-в-байт")
 
-	// Кейс 2 (§43): превышение запроса → 413, done=0, тело в лог не пишется,
-	// checksum по полному телу.
-	recOver, err := reader.GetByID(ctx, table, idTrunc)
+	// Кейс 2 (§22.2): лог-копия обрезана до 100 рун + маркер; ответ доставлен
+	// (200, done=1); checksum по ПОЛНОМУ телу.
+	recTrunc, err := reader.GetByID(ctx, table, idTrunc)
 	require.NoError(t, err)
-	require.EqualValues(t, 413, recOver.Status, "превышение тела запроса → 413")
-	require.False(t, recOver.Done, "запись помечена неуспешной")
-	require.Contains(t, recOver.Reason, "request body exceeds max_body_size")
-	require.Empty(t, recOver.Request, "тело запроса в лог не пишется при превышении")
-	require.Empty(t, recOver.Response, "ответа нет — upstream не вызывался")
-	require.Equal(t, md5hexStr([]byte(overReq)), recOver.ChecksumRequest,
-		"checksum по полному телу, не по обрезанному")
+	require.EqualValues(t, 200, recTrunc.Status, "ответ клиенту доставлен — лимит только на лог")
+	require.True(t, recTrunc.Done)
+	require.Equal(t, strings.Repeat("я", 100)+"…(truncated)", recTrunc.Request, "request в логе обрезан до 100 рун + маркер")
+	require.Equal(t, md5hexStr([]byte(truncReq)), recTrunc.ChecksumRequest, "checksum по полному телу")
 }
 
 // md5hexStr дублирует send.md5hex (не экспортирован) для проверки checksum в тесте.
