@@ -251,9 +251,23 @@ func (h *Handler) handleAsyncFromInput(c *gin.Context, in usecase.RouteInput) {
 // а не «битый запрос» (§43-rev).
 var errBodyTooLarge = errors.New("request body too large")
 
+// drainCap — потолок «дренажа» остатка тела при превышении лимита: дочитываем
+// и выбрасываем (io.Discard, без памяти) до этого объёма, чтобы запрос завершился
+// штатно и ответ 413 дошёл до клиента/прокси, а не превратился в TCP-reset → 502.
+// Очень большие тела (> лимит + drainCap) всё равно оборвут соединение — это
+// защита от slow/DoS-дренажа.
+const drainCap = 8 << 20 // 8 МиБ
+
 func readBody(c *gin.Context, max int) ([]byte, error) {
 	if max <= 0 {
 		max = 5 * 1024 * 1024
+	}
+	// Ранний отказ по заявленному Content-Length — ДО чтения тела. Для клиентов
+	// с Expect: 100-continue (curl добавляет его на тела > 1 МБ) это даёт чистый
+	// 413 без reset'а: получив 413 на Expect, клиент тело вообще не отправляет,
+	// и ответ цельным доходит через Web-прокси (а не превращается в 502).
+	if c.Request.ContentLength > int64(max) {
+		return nil, errBodyTooLarge
 	}
 	r := io.LimitReader(c.Request.Body, int64(max+1))
 	body, err := io.ReadAll(r)
@@ -261,6 +275,10 @@ func readBody(c *gin.Context, max int) ([]byte, error) {
 		return nil, err
 	}
 	if len(body) > max {
+		// chunked / без Content-Length: дренируем ограниченный остаток, чтобы
+		// 413 дошёл цельным ответом (иначе сервер reset'ит соединение с
+		// непрочитанным телом → прокси 502).
+		_, _ = io.CopyN(io.Discard, c.Request.Body, drainCap)
 		return nil, errBodyTooLarge
 	}
 	return body, nil

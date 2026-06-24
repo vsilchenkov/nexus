@@ -228,10 +228,18 @@ func TestReadBody_LimitAndErrorMapping(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "hello", string(body))
 
-	// больше лимита — sentinel.
+	// больше лимита (Content-Length известен) — ранний sentinel.
 	c2, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c2.Request = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(strings.Repeat("x", 50)))
 	_, err = readBody(c2, 10)
+	require.ErrorIs(t, err, errBodyTooLarge)
+
+	// chunked / без Content-Length: пред-проверка по CL не срабатывает, ловим по
+	// факту чтения (LimitReader + дренаж остатка).
+	c2b, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c2b.Request = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(strings.Repeat("x", 50)))
+	c2b.Request.ContentLength = -1
+	_, err = readBody(c2b, 10)
 	require.ErrorIs(t, err, errBodyTooLarge)
 
 	// маппинг: sentinel → 413.
