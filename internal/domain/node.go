@@ -297,7 +297,7 @@ func (n *Node) Validate() error {
 	// §42: имя таблицы (если задано) должно быть строго db.table из [A-Za-z0-9_].
 	// Иначе Sender пишет, а UI-чтение падает позже на «invalid table name» —
 	// ловим на сохранении и показываем понятную ошибку у поля.
-	if n.ClickHouseTable != "" && !isValidCHTableName(n.ClickHouseTable) {
+	if n.ClickHouseTable != "" && !IsValidCHTableName(n.ClickHouseTable) {
 		return ErrNodeClickHouseTableInvalid
 	}
 	if n.RootMethod.IsPull() {
@@ -308,11 +308,12 @@ func (n *Node) Validate() error {
 	return nil
 }
 
-// isValidCHTableName — имя в формате db.table из [A-Za-z0-9_]: обе части
+// IsValidCHTableName — имя в формате db.table из [A-Za-z0-9_]: обе части
 // обязательны, ровно одна точка. Зеркалит isSafeTableName в ClickHouse-адаптерах
-// (read/write), чтобы кривое имя отлавливалось при сохранении узла, а не позже
-// на «invalid table name» при чтении логов/метрик.
-func isValidCHTableName(name string) bool {
+// (read/write). Экспортирован, чтобы read-слой (логи/метрики) мог заранее отсеять
+// узлы с кривым именем таблицы и деградировать мягко, а не флудить Sentry
+// «invalid table name» на каждом поллинге (§43.1).
+func IsValidCHTableName(name string) bool {
 	dot := -1
 	for i := 0; i < len(name); i++ {
 		c := name[i]

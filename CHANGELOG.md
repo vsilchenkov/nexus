@@ -12,6 +12,17 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Узел с кривым именем CH-таблицы флудил Sentry** (по анализу Sentry, issue 157314 — 55 событий
+  `invalid table name: "…yandex-delivery"`). Чтение логов узла с именем таблицы не формата `db.table`
+  (напр. legacy-узел с дефисом) теперь деградирует мягко как «логи не настроены» (200 + флаг, WARN), а
+  не падает с ERROR на каждом поллинге. `domain.IsValidCHTableName` экспортирован и применяется в
+  read-слое (`LogsUsecase.resolveNode`).
+- **Кривое имя CH-таблицы при провижене узла → 500 вместо валидации** (Sentry issue 157318
+  `domain: table name must match db.table`). `ErrCHTemplateInvalidTableName` теперь мапится в 400 у поля
+  `clickhouse_table` (как и `ErrNodeClickHouseTableInvalid` из §42.6), а не в `replyServerError`/Sentry.
+
 ## [1.7.0] - 2026-06-23
 
 Большие тела сквозь шину и в логах (§42): фикс зависания вкладки «Логи» на большом теле + устранение

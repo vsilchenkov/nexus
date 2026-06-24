@@ -119,6 +119,12 @@ func (u *LogsUsecase) resolveNode(ctx context.Context, nodeID, teamID string) (*
 	if n.ClickHouseTable == "" {
 		return nil, domain.ErrNodeLogsNotConfigured
 	}
+	// §43.1: имя таблицы кривого формата (напр. legacy-узел с дефисом) — CH-чтение
+	// упало бы на «invalid table name» и флудило Sentry на каждом поллинге.
+	// Трактуем как «логи не настроены»: мягкая деградация (200 + флаг), без ERROR.
+	if !domain.IsValidCHTableName(n.ClickHouseTable) {
+		return nil, domain.ErrNodeLogsNotConfigured
+	}
 	return n, nil
 }
 
