@@ -65,6 +65,26 @@ func (m *logReaderMock) GetBodyChunk(_ context.Context, _, _, _ string, _, _ int
 	return m.bodyChunk, m.bodyTotal, m.getErr
 }
 
+// §43.1: узел с кривым именем CH-таблицы (legacy с дефисом) на чтении логов
+// деградирует как «логи не настроены» (мягко), а не падает с «invalid table name»
+// и не флудит Sentry (Sentry issue 157314).
+func TestLogs_InvalidTableName_DegradesAsNotConfigured(t *testing.T) {
+	t.Parallel()
+	nodes := &stubNodeRepo{nodes: map[string]*domain.Node{
+		"bad":  {ID: "bad", ClickHouseTable: "nexus_vika_dev.yandex-delivery", Status: domain.NodeStatusEnabled},
+		"good": {ID: "good", ClickHouseTable: "nexus_default.ok", Status: domain.NodeStatusEnabled},
+	}}
+	uc := NewLogsUsecase(&logReaderMock{}, nodes, logging.NewNoop())
+
+	_, err := uc.Search(context.Background(), "bad", "", port.LogQuery{})
+	if !errors.Is(err, domain.ErrNodeLogsNotConfigured) {
+		t.Fatalf("кривое имя: want ErrNodeLogsNotConfigured (мягко), got %v", err)
+	}
+	if _, err := uc.Search(context.Background(), "good", "", port.LogQuery{}); err != nil {
+		t.Fatalf("валидное имя: want nil, got %v", err)
+	}
+}
+
 func TestLogs_ListSinceForwardsToReader(t *testing.T) {
 	t.Parallel()
 	r := &logReaderMock{rows: []*domain.LogRecord{
