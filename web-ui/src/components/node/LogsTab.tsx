@@ -382,7 +382,6 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                 <th className="px-3 py-2 text-left">{t("logs.col.url")}</th>
                 <th className="px-3 py-2 text-right">{t("logs.col.status")}</th>
                 <th className="px-3 py-2 text-right">{t("logs.col.ms")}</th>
-                <th className="px-3 py-2 text-left">{t("logs.col.reason")}</th>
                 <th className="px-3 py-2" />
               </tr>
             </thead>
@@ -418,12 +417,6 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                         {r.status}
                       </td>
                       <td className="px-3 py-2 text-right">{r.duration_ms}</td>
-                      <td
-                        className={`max-w-[22rem] truncate px-3 py-2 text-xs ${isErr ? "text-err" : "text-fg-muted"}`}
-                        title={r.reason && r.reason !== "OK" ? r.reason : undefined}
-                      >
-                        {r.reason && r.reason !== "OK" ? r.reason : ""}
-                      </td>
                       <td className="px-3 py-2 text-right">
                         <button
                           title={t("node.actions.replay")}
@@ -439,7 +432,7 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                     </tr>
                     {isOpen && (
                       <tr className="border-t border-line bg-bg-muted/30">
-                        <td colSpan={8} className="px-3 py-3">
+                        <td colSpan={7} className="px-3 py-3">
                           <LogBodies nodeId={id} logId={r.id} />
                         </td>
                       </tr>
@@ -449,7 +442,7 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
               })}
               {visibleLogs.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-3 py-6 text-center text-fg-muted">
+                  <td colSpan={7} className="px-3 py-6 text-center text-fg-muted">
                     {logsQ.isLoading
                       ? t("common.loading")
                       : logsUnavailable
