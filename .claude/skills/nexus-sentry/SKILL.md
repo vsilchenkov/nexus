@@ -78,11 +78,36 @@ curl -s -H "Authorization: Bearer $TOKEN" "$BASE/issues/<issue_id>/events/latest
 
 ## 5. Метрики/производительность
 
+**Когда пользователь просит «проверь метрики в Sentry» — выполняй проверку ниже.**
+
 - **Sentry performance** = транзакции `http.server` из `GinMiddleware`: длительность транзакции = латентность
   запроса; теги `service`/`node`/`root_method`; статус спана из HTTP-кода (`httpStatusToSpanStatus`).
   Сэмплирование — `traces_sample_rate` (дефолт 0.1), гейт `enable_tracing`. Инфра-пути (`/metrics`,
   `/health`, `/ready`) исключены (`skipSentry`), чтобы не зашумлять. Медленный эндпоинт → транзакции с
   высоким `transaction.duration`; группировка по route-шаблону (`SourceRoute`).
+
+  **Как проверить (Discover/events API, токен из [memory] reference_sentry_api):**
+
+  ```bash
+  curl -s -G -H "Authorization: Bearer $TOKEN" \
+    --data-urlencode 'field=transaction' --data-urlencode 'field=count()' \
+    --data-urlencode 'field=p50()' --data-urlencode 'field=p95()' --data-urlencode 'field=p99()' \
+    --data-urlencode 'field=failure_rate()' \
+    --data-urlencode 'query=event.type:transaction' --data-urlencode 'statsPeriod=24h' \
+    --data-urlencode 'project=52' --data-urlencode 'sort=-count' \
+    https://sentry.vozovoz.ru/api/0/organizations/vzv/events/
+  ```
+
+  `statsPeriod` допускает только `''`/`24h`/`14d`. Бери **24h** для актуальной картины (14d тащит
+  историю старых сборок). На что смотреть:
+  - **`failure_rate` > 0** на эндпоинте → разобрать причину (часто коррелирует с issue из §3); напр.
+    `GET /api/nodes/:id/logs` высокий fail = кривое имя CH-таблицы (§43.1).
+  - **`p95`/`p99` всплески** → медленный путь; `POST /api/v1/request/*path` p99 высокий — это большие тела
+    (норма после §42/§43, тело не вешает).
+  - **Шум `GET /metrics`/`/health`** в 24h → `skipSentry` сломан (баг); если только в 14d — историческое,
+    норма. Инфра-пути не должны давать транзакции в актуальном окне.
+  - Убедись, что в спанах/контекстах транзакций **нет больших тел/секретов** — за это отвечает
+    `beforeSendTransaction` (§42); при сомнении глянь сэмпл события `…/events/<id>/`.
 - **Источник истины по перфу — Prometheus** (always-on, не сэмплирован): `nexus_request_duration_seconds`
   (Sender, sync+async), панель метрик §21 (`/api/metrics/*`), Kafka-мониторинг §31. Sentry-трейсы —
   выборочная детализация поверх; для «запросы медленные/быстрые» сверяйся с Prometheus/панелью.
