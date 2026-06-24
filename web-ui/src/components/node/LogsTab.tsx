@@ -513,24 +513,36 @@ function LogBodies({ nodeId, logId }: { nodeId: string; logId: string }) {
   if (q.isError || !q.data) {
     return <div className="text-xs text-err">{t("logs.detail.error")}</div>;
   }
+  // Причина для не-успешных записей (done=0 / 4xx-5xx): напр. §43 «response body
+  // exceeds max_body_size: N > M runes» — иначе пустой 502 выглядит загадочно.
+  const reason = q.data.reason?.trim();
+  const showReason = !!reason && reason !== "OK";
   return (
-    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-      <LogBodyBlock
-        nodeId={nodeId}
-        logId={logId}
-        which="request"
-        title={t("logs.detail.request")}
-        preview={q.data.request ?? ""}
-        total={q.data.request_len ?? 0}
-      />
-      <LogBodyBlock
-        nodeId={nodeId}
-        logId={logId}
-        which="response"
-        title={t("logs.detail.response")}
-        preview={q.data.response ?? ""}
-        total={q.data.response_len ?? 0}
-      />
+    <div className="space-y-3">
+      {showReason && (
+        <div className="rounded border border-warn/30 bg-warn/10 px-2 py-1.5 text-[11px] text-warn">
+          <span className="font-medium">{t("logs.detail.reason")}: </span>
+          <span className="break-all font-mono">{reason}</span>
+        </div>
+      )}
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <LogBodyBlock
+          nodeId={nodeId}
+          logId={logId}
+          which="request"
+          title={t("logs.detail.request")}
+          preview={q.data.request ?? ""}
+          total={q.data.request_len ?? 0}
+        />
+        <LogBodyBlock
+          nodeId={nodeId}
+          logId={logId}
+          which="response"
+          title={t("logs.detail.response")}
+          preview={q.data.response ?? ""}
+          total={q.data.response_len ?? 0}
+        />
+      </div>
     </div>
   );
 }

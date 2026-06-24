@@ -525,6 +525,7 @@
     "detail": {
       "request": "Запрос",
       "response": "Ответ",
+      "reason": "Причина",
       "empty": "(пусто)",
       "error": "Не удалось загрузить тело",
       "shown_of": "показано {{shown}} из {{total}}",

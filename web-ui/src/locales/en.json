@@ -524,6 +524,7 @@
     "detail": {
       "request": "Request",
       "response": "Response",
+      "reason": "Reason",
       "empty": "(empty)",
       "error": "Failed to load body",
       "shown_of": "showing {{shown}} of {{total}}",
