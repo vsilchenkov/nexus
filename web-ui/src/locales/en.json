@@ -566,8 +566,7 @@
       "method": "Method",
       "url": "URL",
       "status": "Status",
-      "ms": "ms",
-      "reason": "Reason"
+      "ms": "ms"
     }
   },
   "audit": {
