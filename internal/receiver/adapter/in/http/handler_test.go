@@ -192,3 +192,52 @@ func TestHandleSync_ForwardsResponseBodyAndHeaders(t *testing.T) {
 	assert.Equal(t, "vovo", w.Header().Get("X-Custom-Resp"), "произвольный заголовок ответа должен проброситься")
 	assert.Empty(t, w.Header().Get("Connection"), "hop-by-hop заголовок должен быть вырезан")
 }
+
+// §43-rev: тело запроса больше receiver.max_body_bytes → 413 (не 400, не 502).
+// readBody общий для sync/async/callback — проверяем sync и async.
+func TestHandle_BodyTooLarge_Returns413(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	node := &domain.Node{
+		Path: "demo", RootMethod: domain.RootMethodRequest, Status: domain.NodeStatusEnabled,
+		URLMode: domain.URLModeStatic, TargetURL: "http://upstream.local/hook",
+		IncomingMethod: domain.HTTPMethodPOST, OutgoingMethod: domain.HTTPMethodPOST,
+		AuthType: domain.AuthTypeNone, IncomingAuthType: domain.IncomingAuthTypeNone,
+	}
+	route := usecase.NewRouteUsecase(syncStubReader{node: node},
+		syncStubSender{resp: &senderv1.SendResponse{StatusCode: 200}}, 5, logging.NewNoop())
+	h := New(route, nil, 8, nil, logging.NewNoop()) // max_body_bytes = 8
+	r := gin.New()
+	h.Register(r)
+
+	big := strings.NewReader(strings.Repeat("X", 100)) // 100 > 8
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/request/demo", big))
+	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code, "sync: тело > max_body_bytes → 413")
+}
+
+// readBody возвращает sentinel errBodyTooLarge при превышении; replyReadBodyError
+// мапит его в 413, прочие ошибки — в 400.
+func TestReadBody_LimitAndErrorMapping(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	// под лимитом — ок.
+	c1, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c1.Request = httptest.NewRequest(http.MethodPost, "/", strings.NewReader("hello"))
+	body, err := readBody(c1, 10)
+	require.NoError(t, err)
+	assert.Equal(t, "hello", string(body))
+
+	// больше лимита — sentinel.
+	c2, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c2.Request = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(strings.Repeat("x", 50)))
+	_, err = readBody(c2, 10)
+	require.ErrorIs(t, err, errBodyTooLarge)
+
+	// маппинг: sentinel → 413.
+	w := httptest.NewRecorder()
+	c3, _ := gin.CreateTestContext(w)
+	c3.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+	replyReadBodyError(c3, errBodyTooLarge)
+	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
+}

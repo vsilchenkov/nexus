@@ -47,6 +47,11 @@ import (
 	senderv1 "nexus/proto/sender/v1"
 )
 
+// grpcResponseEnvelopeReserve — запас под envelope gRPC SendResponse (заголовки,
+// статус) при вычислении лимита тела ответа из grpc_max_message_bytes (§43-rev):
+// тело + envelope должны влезть в gRPC-сообщение, иначе ResourceExhausted.
+const grpcResponseEnvelopeReserve = 1 << 20 // 1 МиБ
+
 type App struct {
 	cfg     *config.Config
 	logger  logging.Logger
@@ -110,7 +115,11 @@ func (a *App) Start(ctx context.Context) error {
 		chRetrier = chlogretry.New(a.producer, a.cfg.Kafka.RetryTopic, a.cfg.Kafka.Topic.MaxMessageBytes, a.logger)
 	}
 	a.chWriter = chlog.NewManagerWithRetrier(a.chMgr, &a.cfg.ClickHouse, chRetrier, a.metrics, a.logger)
-	httpc := httpclient.New(&a.cfg.Sender.HTTPClient, a.logger)
+	// §43-rev: транспортный лимит тела ОТВЕТА = gRPC-потолок минус запас под
+	// envelope SendResponse (заголовки/статус). httpclient оборвёт чтение на нём
+	// (memory-safe), Send отдаст клиенту 502. Один источник — config.
+	respLimit := a.cfg.Sender.GRPCMaxMessageBytes - grpcResponseEnvelopeReserve
+	httpc := httpclient.New(&a.cfg.Sender.HTTPClient, a.logger, respLimit)
 
 	// Circuit breaker per node — порог 5 ошибок подряд, cooldown 30s.
 	// Параметры можно вынести в конфиг в Phase 4.
@@ -122,7 +131,7 @@ func (a *App) Start(ctx context.Context) error {
 		b := circuitbreaker.New(a.redis, 5, 30*time.Second)
 		cb, breaker = b, b
 	}
-	sendUC := usecase.NewSendUsecase(httpc, a.chWriter, cb, a.logger)
+	sendUC := usecase.NewSendUsecase(httpc, a.chWriter, cb, a.logger, respLimit)
 
 	// gRPC adapter для sync.
 	grpcSvc := grpcadapter.NewServer(sendUC, a.metrics, a.logger)

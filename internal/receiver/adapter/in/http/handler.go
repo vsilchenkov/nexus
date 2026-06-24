@@ -115,7 +115,7 @@ func (h *Handler) handleSync(c *gin.Context) {
 
 	body, err := readBody(c, h.maxBodyBytes)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		replyReadBodyError(c, err) // §43-rev: превышение max_body_bytes → 413
 		return
 	}
 
@@ -173,7 +173,7 @@ func (h *Handler) handleCallback(c *gin.Context) {
 	}
 	body, err := readBody(c, h.maxBodyBytes)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		replyReadBodyError(c, err) // §43-rev: превышение max_body_bytes → 413
 		return
 	}
 	h.handleAsyncFromInput(c, usecase.RouteInput{
@@ -206,7 +206,7 @@ func (h *Handler) handleAsync(c *gin.Context) {
 	}
 	body, err := readBody(c, h.maxBodyBytes)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		replyReadBodyError(c, err) // §43-rev: превышение max_body_bytes → 413
 		return
 	}
 	h.handleAsyncFromInput(c, usecase.RouteInput{
@@ -246,6 +246,11 @@ func (h *Handler) handleAsyncFromInput(c *gin.Context, in usecase.RouteInput) {
 	c.JSON(http.StatusOK, gin.H{"result": true, "id": res.ID})
 }
 
+// errBodyTooLarge — тело запроса превысило receiver.max_body_bytes (config).
+// Обрабатывается как 413 (а не 400) в хендлерах — это транспортный лимит шины,
+// а не «битый запрос» (§43-rev).
+var errBodyTooLarge = errors.New("request body too large")
+
 func readBody(c *gin.Context, max int) ([]byte, error) {
 	if max <= 0 {
 		max = 5 * 1024 * 1024
@@ -256,9 +261,19 @@ func readBody(c *gin.Context, max int) ([]byte, error) {
 		return nil, err
 	}
 	if len(body) > max {
-		return nil, errors.New("request body too large")
+		return nil, errBodyTooLarge
 	}
 	return body, nil
+}
+
+// replyReadBodyError мапит ошибку readBody в HTTP-ответ: превышение лимита →
+// 413 Payload Too Large, прочее (обрыв чтения) → 400.
+func replyReadBodyError(c *gin.Context, err error) {
+	if errors.Is(err, errBodyTooLarge) {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 }
 
 // clientIP извлекает IP клиента (X-Forwarded-For → RemoteAddr) и нормализует

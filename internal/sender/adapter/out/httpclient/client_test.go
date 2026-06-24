@@ -49,7 +49,7 @@ func TestClient_Do_HappyPath_200(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(testCfg(), logging.NewNoop())
+	c := New(testCfg(), logging.NewNoop(), 0)
 	resp, err := c.Do(context.Background(), &port.HTTPRequest{
 		Method:    "POST",
 		URL:       srv.URL + "/x",
@@ -78,7 +78,7 @@ func TestClient_Do_PreservesNon2xxStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(testCfg(), logging.NewNoop())
+	c := New(testCfg(), logging.NewNoop(), 0)
 	resp, err := c.Do(context.Background(), &port.HTTPRequest{
 		Method: "GET",
 		URL:    srv.URL,
@@ -102,7 +102,7 @@ func TestClient_Do_TimeoutFromRequest(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(testCfg(), logging.NewNoop())
+	c := New(testCfg(), logging.NewNoop(), 0)
 	resp, err := c.Do(context.Background(), &port.HTTPRequest{
 		Method:    "GET",
 		URL:       srv.URL,
@@ -129,7 +129,7 @@ func TestClient_Do_DefaultsTimeoutWhenZero(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(testCfg(), logging.NewNoop())
+	c := New(testCfg(), logging.NewNoop(), 0)
 	resp, err := c.Do(context.Background(), &port.HTTPRequest{
 		Method:    "GET",
 		URL:       srv.URL,
@@ -143,7 +143,7 @@ func TestClient_Do_ConnectionRefused(t *testing.T) {
 	t.Parallel()
 
 	// 127.0.0.1:1 практически гарантированно даёт connection refused.
-	c := New(testCfg(), logging.NewNoop())
+	c := New(testCfg(), logging.NewNoop(), 0)
 	resp, err := c.Do(context.Background(), &port.HTTPRequest{
 		Method:    "GET",
 		URL:       "http://127.0.0.1:1/",
@@ -158,7 +158,7 @@ func TestClient_Do_InvalidMethod_ReturnsBuildError(t *testing.T) {
 
 	// Method содержит запрещённый символ → http.NewRequestWithContext
 	// возвращает ошибку "net/http: invalid method".
-	c := New(testCfg(), logging.NewNoop())
+	c := New(testCfg(), logging.NewNoop(), 0)
 	resp, err := c.Do(context.Background(), &port.HTTPRequest{
 		Method: "BAD METHOD",
 		URL:    "http://example.com/",
@@ -182,7 +182,7 @@ func TestClient_Do_ContextCancel(t *testing.T) {
 		cancel()
 	}()
 
-	c := New(testCfg(), logging.NewNoop())
+	c := New(testCfg(), logging.NewNoop(), 0)
 	_, err := c.Do(ctx, &port.HTTPRequest{
 		Method:    "GET",
 		URL:       srv.URL,
@@ -202,7 +202,7 @@ func TestClient_Do_LargeResponseBody(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(testCfg(), logging.NewNoop())
+	c := New(testCfg(), logging.NewNoop(), 0)
 	resp, err := c.Do(context.Background(), &port.HTTPRequest{
 		Method:    "GET",
 		URL:       srv.URL,
@@ -210,4 +210,33 @@ func TestClient_Do_LargeResponseBody(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, size, len(resp.Body), "большое тело ответа целиком прочитано")
+}
+
+// §43-rev: ответ больше maxResponseBytes → TooLarge, тело НЕ дочитано в память
+// (memory-safe); под лимитом — тело отдаётся целиком.
+func TestDo_ResponseTooLarge_BoundedRead(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(strings.Repeat("a", 10_000)))
+	}))
+	defer srv.Close()
+
+	t.Run("over limit → TooLarge, empty body", func(t *testing.T) {
+		c := New(testCfg(), logging.NewNoop(), 1000) // лимит < 10000
+		resp, err := c.Do(context.Background(), &port.HTTPRequest{Method: "GET", URL: srv.URL, TimeoutMs: 2000})
+		require.NoError(t, err)
+		assert.True(t, resp.TooLarge, "ответ больше лимита → TooLarge")
+		assert.Empty(t, resp.Body, "тело не дочитано в память")
+		assert.EqualValues(t, 200, resp.StatusCode)
+	})
+
+	t.Run("under limit → full body", func(t *testing.T) {
+		c := New(testCfg(), logging.NewNoop(), 1<<20) // лимит > 10000
+		resp, err := c.Do(context.Background(), &port.HTTPRequest{Method: "GET", URL: srv.URL, TimeoutMs: 2000})
+		require.NoError(t, err)
+		assert.False(t, resp.TooLarge)
+		assert.Equal(t, 10_000, len(resp.Body))
+	})
 }

@@ -3416,19 +3416,21 @@ gRPC-сообщения (с дефолтами — обратная совмес
 
 Подробности — [sections/42-log-body-streaming.md](sections/42-log-body-streaming.md).
 
-## 43. Жёсткий лимит размера тела (reject вместо усечения)
+## 43. Лимиты размера тела: per-node лог-усечение vs транспортные лимиты из конфига
 
-Меняет семантику `max_body_size` (§22.2 superseded): при включённом лимите тело > лимита **не усекается
-тихо**, а отклоняется, событие фиксируется в логе. sync (`request`): тело запроса > лимита → **413**
-(upstream не вызывается), тело ответа > лимита → **502** (тело не отдаётся). async (`requestAsync`/
-`RabbitMQAsync`): не доставляется (запрос) / запись неуспешна (ответ). Во всех случаях лог `done=0`,
-`status` 413/502, `reason` `request|response body exceeds max_body_size: N > M runes`, тело **не пишется**,
-`checksum_*` — по ПОЛНОМУ телу. Лимит — в рунах.
+> Первая редакция §43 ошибочно сделала per-node `max_body_size` жёстким reject (413/502). Исправлено.
 
-Единая точка — `SendUsecase.Send` (sync через gRPC и async через consumer вызывают тот же `Send`):
-`exceedsBodyLimit` (по рунам, `utf8.RuneCount`), ранний выход на превышении запроса (без upstream и без
-изменения circuit breaker), 502 на превышении ответа; CB считается по **реальному** статусу upstream
-(`upstreamHealthy`), а не по `rec.Done`. Функция усечения `truncateRunes` удалена. По умолчанию
-(`max_body_size_enabled=false`) поведение прежнее — большие тела проходят и показываются через §42.
+Два РАЗНЫХ механизма. **(1) `max_body_size`** (тумблер «Ограничить размер тела», per-node, руны) режет
+ТОЛЬКО копию тела в ClickHouse-логе (§22.2, `…(truncated)`); на ответ клиенту и HTTP-код НЕ влияет,
+checksum по полному телу. **(2) Транспортные лимиты из конфига** (байты) дают коды:
+- тело ЗАПРОСА > `receiver.max_body_bytes` → **413** (Receiver, sync/async/callback; `readBody` →
+  `errBodyTooLarge` → `replyReadBodyError`);
+- тело ОТВЕТА апстрима > `sender.grpc_max_message_bytes` → **502** (httpclient читает через
+  `io.LimitReader`, при превышении `port.HTTPResponse.TooLarge=true` без тела — memory-safe, не тянем
+  гигантский ответ в память; `Send` отдаёт 502, лог `done=0`+reason, без тела/checksum).
+
+Инварианты (комментарий в `config.example.yml`/`config.yml`): `receiver.max_body_bytes` < `grpc_max_message_bytes`
+и < `kafka.topic.max_message_bytes`; `consumer.fetch_max_bytes` ≥ `topic.max_message_bytes`; брокер
+`message.max.bytes` ≥ topic. Восстановлен `truncateRunes`; удалён ошибочный `exceedsBodyLimit`.
 
 Подробности — [sections/43-body-size-hard-limit.md](sections/43-body-size-hard-limit.md).

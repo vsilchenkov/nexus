@@ -20,15 +20,15 @@ import (
 	webch "nexus/internal/web/adapter/out/clickhouse"
 )
 
-// TestClickHouse_LargeBody_LimitDisabledFull_LimitEnabledRejects — §42/§43,
-// сценарий большого тела на уровне SendUsecase → ClickHouse.
+// TestClickHouse_LargeBody_TruncatesLog_And_TooLargeRejects — §22.2 + §43-rev на
+// уровне SendUsecase → ClickHouse.
 //
-//   - Лимит ВЫКЛЮЧЕН (§42): большой ответ доезжает целиком — клиент получает
-//     полное тело (SendOutput.Body байт-в-байт), в логе тоже полное.
-//   - Лимит ВКЛЮЧЁН (§43): ответ больше max_body_size → клиенту 502 (тело НЕ
-//     отдаётся), запись лога done=0 с reason, тело ответа в лог не пишется,
-//     checksum по полному телу.
-func TestClickHouse_LargeBody_LimitDisabledFull_LimitEnabledRejects(t *testing.T) {
+//   - max_body_size ВЫКЛЮЧЕН: большой ответ доезжает целиком (клиент + лог).
+//   - max_body_size ВКЛЮЧЁН: клиент получает ПОЛНОЕ тело, в логе оно УСЕЧЕНО до
+//     лимита (руны) + маркер; checksum по полному.
+//   - ответ помечен TooLarge (превысил транспортный лимит config): клиенту 502,
+//     лог done=0 + reason, тело/checksum не пишутся.
+func TestClickHouse_LargeBody_TruncatesLog_And_TooLargeRejects(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
@@ -47,74 +47,77 @@ func TestClickHouse_LargeBody_LimitDisabledFull_LimitEnabledRejects(t *testing.T
 	const size = 1 * 1024 * 1024 // 1 МБ
 	respBody := bytes.Repeat([]byte("X"), size)
 
-	uc := senderuc.NewSendUsecase(
+	ucFull := senderuc.NewSendUsecase(
 		stubHTTP{resp: &senderport.HTTPResponse{StatusCode: 200, Body: respBody}},
-		writer, nil, logger,
+		writer, nil, logger, 64<<20,
+	)
+	ucTooLarge := senderuc.NewSendUsecase(
+		stubHTTP{resp: &senderport.HTTPResponse{StatusCode: 200, TooLarge: true}},
+		writer, nil, logger, 50_000,
 	)
 
 	base := func(id string) senderuc.SendInput {
 		return senderuc.SendInput{
-			ID:              id,
-			NodePath:        "largebody/test",
-			RootMethod:      domain.RootMethodRequest,
-			TargetURL:       "https://example.com/upstream",
-			Method:          "POST",
-			Body:            []byte(`{"req":"small"}`),
-			TimeoutMs:       1000,
-			ClickHouseTable: table,
-			LogRequestBody:  true,
-			LogResponseBody: true,
-			LoggingEnabled:  true,
+			ID: id, NodePath: "largebody/test", RootMethod: domain.RootMethodRequest,
+			TargetURL: "https://example.com/upstream", Method: "POST", Body: []byte(`{"req":"small"}`),
+			TimeoutMs: 1000, ClickHouseTable: table, LogRequestBody: true, LogResponseBody: true,
+			LoggingEnabled: true,
 		}
 	}
 
 	const (
 		idFull   = "33333333-0000-0000-0000-000000000001"
-		idReject = "33333333-0000-0000-0000-000000000002"
+		idTrunc  = "33333333-0000-0000-0000-000000000002"
+		idReject = "33333333-0000-0000-0000-000000000003"
 		maxRunes = 1000
 	)
 
-	// 1) Лимит выключен — клиент получает ПОЛНЫЙ 1 МБ ответ.
-	outFull := uc.Send(ctx, base(idFull))
+	// 1) Лимит выключен — клиент полный 1 МБ.
+	outFull := ucFull.Send(ctx, base(idFull))
 	require.EqualValues(t, 200, outFull.StatusCode)
 	require.Len(t, outFull.Body, size, "без лимита клиент получает полный ответ")
-	require.True(t, bytes.Equal(outFull.Body, respBody), "тело клиента байт-в-байт равно ответу апстрима")
 
-	// 2) Лимит включён, ответ 1 МБ > maxRunes → 502, тело не отдаётся.
-	inReject := base(idReject)
-	inReject.MaxBodySizeEnabled = true
-	inReject.MaxBodySize = maxRunes
-	outReject := uc.Send(ctx, inReject)
-	require.EqualValues(t, 502, outReject.StatusCode, "превышение ответа → 502")
-	require.Empty(t, outReject.Body, "огромный ответ клиенту не отдаётся")
+	// 2) Лимит включён — клиент ПОЛНЫЙ ответ, лог усечён.
+	inTrunc := base(idTrunc)
+	inTrunc.MaxBodySizeEnabled = true
+	inTrunc.MaxBodySize = maxRunes
+	outTrunc := ucFull.Send(ctx, inTrunc)
+	require.EqualValues(t, 200, outTrunc.StatusCode, "лимит на лог не меняет код")
+	require.Len(t, outTrunc.Body, size, "клиент получает ПОЛНОЕ тело при включённом max_body_size")
+
+	// 3) Ответ превысил транспортный лимит → 502.
+	outReject := ucTooLarge.Send(ctx, base(idReject))
+	require.EqualValues(t, 502, outReject.StatusCode, "TooLarge → 502")
+	require.Empty(t, outReject.Body)
 
 	require.NoError(t, writer.Flush(ctx))
 
-	// Ждём обе записи.
 	deadline := time.Now().Add(30 * time.Second)
 	var n uint64
 	for time.Now().Before(deadline) {
 		require.NoError(t, conn.QueryRow(ctx, "SELECT count() FROM "+table).Scan(&n))
-		if n >= 2 {
+		if n >= 3 {
 			break
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	require.GreaterOrEqual(t, n, uint64(2))
+	require.GreaterOrEqual(t, n, uint64(3))
 
-	// Запись без лимита — полное тело сохранено.
 	recFull, err := reader.GetByID(ctx, table, idFull)
 	require.NoError(t, err)
 	require.Len(t, []rune(recFull.Response), size, "без лимита в логе полное тело")
 
-	// Запись с лимитом — done=0, reason, тело НЕ записано, checksum по полному.
+	recTrunc, err := reader.GetByID(ctx, table, idTrunc)
+	require.NoError(t, err)
+	require.EqualValues(t, 200, recTrunc.Status)
+	require.True(t, recTrunc.Done)
+	require.Equal(t, strings.Repeat("X", maxRunes)+"…(truncated)", recTrunc.Response, "лог усечён до лимита + маркер")
+	require.Equal(t, md5hexStr(respBody), recTrunc.ChecksumResponse, "checksum по полному телу")
+
 	recReject, err := reader.GetByID(ctx, table, idReject)
 	require.NoError(t, err)
 	require.EqualValues(t, 502, recReject.Status)
 	require.False(t, recReject.Done)
-	require.Contains(t, recReject.Reason, "response body exceeds max_body_size")
-	require.Empty(t, recReject.Response, "тело ответа в лог не пишется при превышении")
-	require.Equal(t, md5hexStr(respBody), recReject.ChecksumResponse,
-		"checksum_response по полному телу")
-	require.NotEmpty(t, strings.TrimSpace(recReject.ChecksumResponse))
+	require.Contains(t, recReject.Reason, "exceeds transport limit")
+	require.Empty(t, recReject.Response, "тело ответа не дочитано — в лог не пишется")
 }

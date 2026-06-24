@@ -430,7 +430,7 @@
       "logging_enabled": "Logging enabled",
       "max_body_enabled": "Limit body size",
       "max_body_size": "Max body size",
-      "max_body_hint": "max characters; on overflow the body is NOT truncated — the request/response is rejected (sync: 413 for the request, 502 for the response), async is not delivered; the event is recorded in the log (done=0), checksum over the full body",
+      "max_body_hint": "max characters; truncates ONLY the body stored in the ClickHouse log — the client still receives the full response, and the checksum is computed over the full body. Hard transport limits (413/502) are set in the config, not here.",
       "preview": "Route preview",
       "ssrf_warn": "\"From request\" mode: fill the host allowlist to prevent SSRF. Do not leave it empty in production.",
       "comment": "Comment",

@@ -149,8 +149,8 @@ func TestAsyncQueueMgmt_E2E(t *testing.T) {
 	// 6. Sender consumer: отменённые ПРОПУСКАЮТСЯ (0 доставок на upstream),
 	// очередь дренирует (committed догоняет high → List пуст).
 	nodeReader := nodepg.New(pool, cipher, logger)
-	httpc := httpclient.New(&cfg.Sender.HTTPClient, logger)
-	sendUC := senderuc.NewSendUsecase(httpc, &capturingLogWriter{}, nil, logger)
+	httpc := httpclient.New(&cfg.Sender.HTTPClient, logger, 64<<20)
+	sendUC := senderuc.NewSendUsecase(httpc, &capturingLogWriter{}, nil, logger, 64<<20)
 	asyncProc := senderuc.NewAsyncProcessor(nodeReader, sendUC, producer, cancelSet, cfg.Kafka.DLQTopic, nil, logger)
 	consumer := kafkaadapter.NewConsumerGroup(cfg, cfg.Kafka.AsyncTopic, asyncProc, logger)
 	consumer.Start(ctx)

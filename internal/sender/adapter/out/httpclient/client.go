@@ -23,13 +23,18 @@ import (
 
 // Client реализует port.HTTPCaller.
 type Client struct {
-	hc     *http.Client
-	logger logging.Logger
+	hc      *http.Client
+	logger  logging.Logger
+	maxResp int // транспортный лимит тела ответа (байт); 0 = без лимита.
 }
 
 var _ port.HTTPCaller = (*Client)(nil)
 
-func New(cfg *config.SenderHTTPClientConfig, logger logging.Logger) *Client {
+// New создаёт HTTP-клиент. maxResponseBytes — лимит размера тела ОТВЕТА (байт),
+// = sender.grpc_max_message_bytes минус запас под envelope: чтение оборвётся на
+// нём (io.LimitReader), тело не дочитается в память (§43-rev, memory-safe). 0 =
+// без лимита.
+func New(cfg *config.SenderHTTPClientConfig, logger logging.Logger, maxResponseBytes int) *Client {
 	transport := &http.Transport{
 		MaxIdleConns:        cfg.MaxIdleConns,
 		MaxIdleConnsPerHost: cfg.MaxIdleConnsPerHost,
@@ -47,7 +52,8 @@ func New(cfg *config.SenderHTTPClientConfig, logger logging.Logger) *Client {
 			Transport: transport,
 			Timeout:   time.Duration(cfg.TimeoutMs) * time.Millisecond,
 		},
-		logger: logger,
+		logger:  logger,
+		maxResp: maxResponseBytes,
 	}
 }
 
@@ -81,7 +87,14 @@ func (c *Client) Do(ctx context.Context, req *port.HTTPRequest) (*port.HTTPRespo
 	}
 	defer hresp.Body.Close()
 
-	body, err := io.ReadAll(hresp.Body)
+	// §43-rev: читаем тело ответа с лимитом (maxResp+1), чтобы НЕ затягивать в
+	// память гигантский ответ (защита от OOM). Если перевалили за лимит — отдаём
+	// TooLarge и пустое тело; вызывающая сторона вернёт клиенту 502.
+	reader := io.Reader(hresp.Body)
+	if c.maxResp > 0 {
+		reader = io.LimitReader(hresp.Body, int64(c.maxResp)+1)
+	}
+	body, err := io.ReadAll(reader)
 	if err != nil {
 		spanFinish(hresp.StatusCode, err)
 		return nil, fmt.Errorf("read response body: %w", err)
@@ -93,6 +106,14 @@ func (c *Client) Do(ctx context.Context, req *port.HTTPRequest) (*port.HTTPRespo
 		if len(v) > 0 {
 			hdrs[k] = v[0]
 		}
+	}
+	if c.maxResp > 0 && len(body) > c.maxResp {
+		// Тело больше лимита — не держим его в памяти и не отдаём дальше.
+		return &port.HTTPResponse{
+			StatusCode: int32(hresp.StatusCode),
+			Headers:    hdrs,
+			TooLarge:   true,
+		}, nil
 	}
 	return &port.HTTPResponse{
 		StatusCode: int32(hresp.StatusCode),

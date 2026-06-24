@@ -136,6 +136,19 @@ kafka:
     isolation_level: read_committed # Читать только закоммиченные сообщения (для транзакционного producer'а).
     instances: 4                # Число consumer-инстансов (горутин-воркеров) в этом процессе.
 
+# ─────────────────────────────────────────────────────────────────────────────
+# СВЯЗИ ЛИМИТОВ РАЗМЕРА ТЕЛА (§43-rev). Держите инварианты, иначе большое тело
+# рвётся не там и не тем кодом:
+#   • receiver.max_body_bytes  <  sender.grpc_max_message_bytes
+#       и  receiver.max_body_bytes  <  kafka.topic.max_message_bytes
+#     (запас под envelope gRPC/Kafka). Тело ЗАПРОСА больше max_body_bytes → 413.
+#   • sender.grpc_max_message_bytes  ==  receiver.sender_grpc.max_message_bytes
+#     — это потолок ОТВЕТА (Sender→Receiver). Тело ОТВЕТА больше него → 502.
+#   • kafka.consumer.fetch_max_bytes  ≥  kafka.topic.max_message_bytes; брокерский
+#     message.max.bytes / replica.fetch.max.bytes  ≥  topic.max_message_bytes.
+#   • per-node «Ограничить размер тела» (max_body_size, в форме узла) режет ТОЛЬКО
+#     сохраняемый лог ClickHouse (в рунах) — на ответ клиенту и на 413/502 НЕ влияет.
+# ─────────────────────────────────────────────────────────────────────────────
 # Receiver Service — точка входа HTTP, auth/resolve/masking, проксирование в Sender.
 receiver:
   http_addr: :8080               # Адрес/порт HTTP-сервера Receiver.
