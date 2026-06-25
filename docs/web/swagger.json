@@ -1317,6 +1317,54 @@
                 }
             }
         },
+        "/api/metrics/diagnostics": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    },
+                    {
+                        "ApiTokenAuth": []
+                    }
+                ],
+                "description": "Возвращает обе стороны (Prometheus — попытки/increase; ClickHouse — уникальные запросы) и per-node-сверку. Помогает объяснить расхождение шапки/таблицы (ретраи → outgoing\u003eincoming в Prometheus; CH-ошибки ≥ Prometheus при 3xx/висящих; занижение increase). Деградирует при недоступном источнике.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "metrics"
+                ],
+                "summary": "Сверка счётчиков Prometheus↔ClickHouse за окно (§43.E).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "1h | 3h | 24h | 7d | 14d | 30d (default 1h)",
+                        "name": "range",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "период с (RFC3339 или UnixMilli)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "период по (RFC3339 или UnixMilli)",
+                        "name": "to",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.diagnosticsDTO"
+                        }
+                    }
+                }
+            }
+        },
         "/api/metrics/nodes": {
             "get": {
                 "security": [
@@ -5422,6 +5470,78 @@
                         "viewer",
                         "manager"
                     ]
+                }
+            }
+        },
+        "internal_web_adapter_in_http.diagNodeDTO": {
+            "type": "object",
+            "properties": {
+                "ch_errors": {
+                    "type": "integer"
+                },
+                "ch_in": {
+                    "type": "integer"
+                },
+                "ch_out": {
+                    "type": "integer"
+                },
+                "node": {
+                    "type": "string"
+                },
+                "prom_errors": {
+                    "type": "integer"
+                },
+                "prom_in": {
+                    "type": "integer"
+                },
+                "prom_out": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.diagSourceDTO": {
+            "type": "object",
+            "properties": {
+                "available": {
+                    "type": "boolean"
+                },
+                "errors": {
+                    "type": "integer"
+                },
+                "incoming": {
+                    "type": "integer"
+                },
+                "outgoing": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.diagnosticsDTO": {
+            "type": "object",
+            "properties": {
+                "clickhouse": {
+                    "$ref": "#/definitions/internal_web_adapter_in_http.diagSourceDTO"
+                },
+                "clickhouse_available": {
+                    "type": "boolean"
+                },
+                "nodes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.diagNodeDTO"
+                    }
+                },
+                "prometheus": {
+                    "$ref": "#/definitions/internal_web_adapter_in_http.diagSourceDTO"
+                },
+                "prometheus_available": {
+                    "type": "boolean"
+                },
+                "since_ms": {
+                    "type": "integer"
+                },
+                "until_ms": {
+                    "type": "integer"
                 }
             }
         },

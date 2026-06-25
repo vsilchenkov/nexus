@@ -306,3 +306,96 @@ func (u *MetricsUsecase) NodeMetrics(ctx context.Context, nodeID, teamID string,
 	res.ChartAvailable = true
 	return res, nil
 }
+
+// DiagSource — агрегат одного источника для reconciliation (§43.E).
+type DiagSource struct {
+	Incoming  uint64
+	Outgoing  uint64
+	Errors    uint64
+	Available bool
+}
+
+// DiagNode — сверка одного узла: ClickHouse (уникальные запросы) vs Prometheus
+// (попытки). Ключ — path узла.
+type DiagNode struct {
+	Node                        string
+	CHIn, CHOut, CHErrors       uint64
+	PromIn, PromOut, PromErrors uint64
+}
+
+// Diagnostics — сверка счётчиков между источниками (§43.E): Prometheus (попытки,
+// increase) против ClickHouse (уникальные запросы). Помогает объяснить
+// расхождения шапки/таблицы: ретраи раздувают исходящие Prometheus
+// (outgoing>incoming), увеличение CH-ошибок против Prometheus (3xx/висящие),
+// занижение increase. Используется скилом анализа боевого Nexus.
+type Diagnostics struct {
+	SinceMs             int64
+	UntilMs             int64
+	Prometheus          DiagSource // глобальные попытки (GlobalTotals)
+	ClickHouse          DiagSource // Σ уникальных (NodesOverview.Totals)
+	Nodes               []DiagNode
+	PrometheusAvailable bool
+	ClickHouseAvailable bool
+}
+
+// Diagnostics собирает обе стороны за окно и per-node-сверку. CH-сторона
+// переиспользует NodesOverview (тот же расчёт, что и таблица/шапка). Деградирует
+// мягко: недоступный источник → нули + Available=false.
+func (u *MetricsUsecase) Diagnostics(ctx context.Context, teamID string, since, until time.Time) Diagnostics {
+	if until.IsZero() {
+		until = time.Now()
+	}
+	if since.IsZero() || !since.Before(until) {
+		since = until.Add(-time.Hour)
+	}
+	d := Diagnostics{SinceMs: since.UnixMilli(), UntilMs: until.UnixMilli()}
+
+	// ClickHouse-сторона = NodesOverview (per-node + Totals). При nil CH —
+	// Prometheus-fallback, тогда обе стороны совпадут (это нормально).
+	ch := u.NodesOverview(ctx, teamID, since, until)
+	d.ClickHouseAvailable = u.nodeLogs != nil
+	d.ClickHouse = DiagSource{
+		Incoming: ch.Totals.Incoming, Outgoing: ch.Totals.Outgoing,
+		Errors: ch.Totals.Errors, Available: d.ClickHouseAvailable,
+	}
+
+	// Prometheus-сторона: глобальные попытки + per-node.
+	promByNode := map[string]port.NodeThroughput{}
+	if u.prom != nil {
+		if gt, err := u.prom.GlobalTotals(ctx, until.Sub(since)); err == nil {
+			d.Prometheus = DiagSource{
+				Incoming: f2u(gt.Incoming), Outgoing: f2u(gt.Outgoing),
+				Errors: f2u(gt.Errors), Available: true,
+			}
+			d.PrometheusAvailable = true
+		} else {
+			u.logger.Warn("diagnostics: prometheus global totals failed", u.logger.Err(err))
+		}
+		if pt, err := u.prom.NodeThroughput(ctx, since, until); err == nil {
+			promByNode = pt
+		} else {
+			u.logger.Warn("diagnostics: prometheus node throughput failed", u.logger.Err(err))
+		}
+	}
+
+	// Per-node merge: узлы из CH + те, что есть только в Prometheus (orphan).
+	d.Nodes = make([]DiagNode, 0, len(ch.Items))
+	seen := make(map[string]bool, len(ch.Items))
+	for _, it := range ch.Items {
+		p := promByNode[it.Node]
+		d.Nodes = append(d.Nodes, DiagNode{
+			Node: it.Node, CHIn: it.In, CHOut: it.Out, CHErrors: it.Errors,
+			PromIn: f2u(p.In), PromOut: f2u(p.Out), PromErrors: f2u(p.Errors),
+		})
+		seen[it.Node] = true
+	}
+	for node, p := range promByNode {
+		if seen[node] {
+			continue
+		}
+		d.Nodes = append(d.Nodes, DiagNode{
+			Node: node, PromIn: f2u(p.In), PromOut: f2u(p.Out), PromErrors: f2u(p.Errors),
+		})
+	}
+	return d
+}

@@ -185,6 +185,68 @@ func (h *MetricsHandler) NodesOverview(c *gin.Context) {
 	})
 }
 
+// diagSourceDTO / diagNodeDTO / diagnosticsDTO — сверка источников (§43.E).
+type diagSourceDTO struct {
+	Incoming  uint64 `json:"incoming"`
+	Outgoing  uint64 `json:"outgoing"`
+	Errors    uint64 `json:"errors"`
+	Available bool   `json:"available"`
+}
+
+type diagNodeDTO struct {
+	Node       string `json:"node"`
+	CHIn       uint64 `json:"ch_in"`
+	CHOut      uint64 `json:"ch_out"`
+	CHErrors   uint64 `json:"ch_errors"`
+	PromIn     uint64 `json:"prom_in"`
+	PromOut    uint64 `json:"prom_out"`
+	PromErrors uint64 `json:"prom_errors"`
+}
+
+type diagnosticsDTO struct {
+	SinceMs             int64         `json:"since_ms"`
+	UntilMs             int64         `json:"until_ms"`
+	Prometheus          diagSourceDTO `json:"prometheus"`
+	ClickHouse          diagSourceDTO `json:"clickhouse"`
+	Nodes               []diagNodeDTO `json:"nodes"`
+	PrometheusAvailable bool          `json:"prometheus_available"`
+	ClickHouseAvailable bool          `json:"clickhouse_available"`
+}
+
+// Diagnostics godoc
+// @Summary  Сверка счётчиков Prometheus↔ClickHouse за окно (§43.E).
+// @Description  Возвращает обе стороны (Prometheus — попытки/increase; ClickHouse — уникальные запросы) и per-node-сверку. Помогает объяснить расхождение шапки/таблицы (ретраи → outgoing>incoming в Prometheus; CH-ошибки ≥ Prometheus при 3xx/висящих; занижение increase). Деградирует при недоступном источнике.
+// @Tags     metrics
+// @Produce  json
+// @Param    range  query  string  false  "1h | 3h | 24h | 7d | 14d | 30d (default 1h)"
+// @Param    from   query  string  false  "период с (RFC3339 или UnixMilli)"
+// @Param    to     query  string  false  "период по (RFC3339 или UnixMilli)"
+// @Success  200  {object}  diagnosticsDTO
+// @Security CookieAuth
+// @Security ApiTokenAuth
+// @Router   /api/metrics/diagnostics [get]
+func (h *MetricsHandler) Diagnostics(c *gin.Context) {
+	since, until, _ := resolveWindow(c)
+	res := h.uc.Diagnostics(c.Request.Context(), currentTeamID(c), since, until)
+	nodes := make([]diagNodeDTO, 0, len(res.Nodes))
+	for _, n := range res.Nodes {
+		nodes = append(nodes, diagNodeDTO{
+			Node: n.Node, CHIn: n.CHIn, CHOut: n.CHOut, CHErrors: n.CHErrors,
+			PromIn: n.PromIn, PromOut: n.PromOut, PromErrors: n.PromErrors,
+		})
+	}
+	src := func(s usecase.DiagSource) diagSourceDTO {
+		return diagSourceDTO{Incoming: s.Incoming, Outgoing: s.Outgoing, Errors: s.Errors, Available: s.Available}
+	}
+	c.JSON(http.StatusOK, diagnosticsDTO{
+		SinceMs: res.SinceMs, UntilMs: res.UntilMs,
+		Prometheus: src(res.Prometheus), ClickHouse: src(res.ClickHouse),
+		Nodes:               nodes,
+		PrometheusAvailable: res.PrometheusAvailable,
+		ClickHouseAvailable: res.ClickHouseAvailable,
+	})
+}
+
 type nodeKPIDTO struct {
 	Total     uint64  `json:"total"`
 	Delivered uint64  `json:"delivered"`

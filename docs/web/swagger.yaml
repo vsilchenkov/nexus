@@ -1040,6 +1040,53 @@ definitions:
     - login
     - role
     type: object
+  internal_web_adapter_in_http.diagNodeDTO:
+    properties:
+      ch_errors:
+        type: integer
+      ch_in:
+        type: integer
+      ch_out:
+        type: integer
+      node:
+        type: string
+      prom_errors:
+        type: integer
+      prom_in:
+        type: integer
+      prom_out:
+        type: integer
+    type: object
+  internal_web_adapter_in_http.diagSourceDTO:
+    properties:
+      available:
+        type: boolean
+      errors:
+        type: integer
+      incoming:
+        type: integer
+      outgoing:
+        type: integer
+    type: object
+  internal_web_adapter_in_http.diagnosticsDTO:
+    properties:
+      clickhouse:
+        $ref: '#/definitions/internal_web_adapter_in_http.diagSourceDTO'
+      clickhouse_available:
+        type: boolean
+      nodes:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.diagNodeDTO'
+        type: array
+      prometheus:
+        $ref: '#/definitions/internal_web_adapter_in_http.diagSourceDTO'
+      prometheus_available:
+        type: boolean
+      since_ms:
+        type: integer
+      until_ms:
+        type: integer
+    type: object
   internal_web_adapter_in_http.headerRequest:
     properties:
       description:
@@ -2706,6 +2753,38 @@ paths:
       summary: Список команд, в которых состоит текущий пользователь.
       tags:
       - auth
+  /api/metrics/diagnostics:
+    get:
+      description: Возвращает обе стороны (Prometheus — попытки/increase; ClickHouse
+        — уникальные запросы) и per-node-сверку. Помогает объяснить расхождение шапки/таблицы
+        (ретраи → outgoing>incoming в Prometheus; CH-ошибки ≥ Prometheus при 3xx/висящих;
+        занижение increase). Деградирует при недоступном источнике.
+      parameters:
+      - description: 1h | 3h | 24h | 7d | 14d | 30d (default 1h)
+        in: query
+        name: range
+        type: string
+      - description: период с (RFC3339 или UnixMilli)
+        in: query
+        name: from
+        type: string
+      - description: период по (RFC3339 или UnixMilli)
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.diagnosticsDTO'
+      security:
+      - CookieAuth: []
+      - ApiTokenAuth: []
+      summary: Сверка счётчиков Prometheus↔ClickHouse за окно (§43.E).
+      tags:
+      - metrics
   /api/metrics/nodes:
     get:
       description: Источник — ClickHouse-логи (уникальные запросы), fallback Prometheus.

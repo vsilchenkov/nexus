@@ -224,6 +224,59 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 	})
 }
 
+// --- Diagnostics (§43.E) ---------------------------------------------------
+
+// TestMetricsUsecase_Diagnostics кодирует гипотезы расхождения счётчиков:
+// Prometheus считает ПОПЫТКИ (ретраи → outgoing>incoming), ClickHouse —
+// УНИКАЛЬНЫЕ запросы (out≤in); CH-ошибки ≥ Prometheus (3xx/висящие).
+func TestMetricsUsecase_Diagnostics(t *testing.T) {
+	t.Parallel()
+	log := logging.NewNoop()
+
+	// CH-сторона: узел a/x с уникальными 809/739/70 (out≤in).
+	repo := &fakeNodeRepo{list: []*domain.Node{{Path: "a/x", ClickHouseTable: "db.a"}}}
+	logs := &fakeNodeLogs{kpi: port.NodeKPI{Total: 809, Delivered: 739, Errors: 70}}
+	// Prometheus-сторона: попытки 794/807/68 (outgoing>incoming из-за ретраев).
+	prom := &fakeProm{
+		totals:     port.GlobalTotals{Incoming: 794, Outgoing: 807, Errors: 68},
+		throughput: map[string]port.NodeThroughput{"a/x": {In: 794, Out: 807, Errors: 68}},
+	}
+	uc := NewMetricsUsecase(prom, logs, repo, log)
+	d := uc.Diagnostics(context.Background(), "default", time.Now().Add(-24*time.Hour), time.Now())
+
+	require.True(t, d.ClickHouseAvailable)
+	require.True(t, d.PrometheusAvailable)
+	// ClickHouse (уникальные): out ≤ in.
+	require.EqualValues(t, 809, d.ClickHouse.Incoming)
+	require.EqualValues(t, 739, d.ClickHouse.Outgoing)
+	require.EqualValues(t, 70, d.ClickHouse.Errors)
+	require.LessOrEqual(t, d.ClickHouse.Outgoing, d.ClickHouse.Incoming, "CH: уникальные доставленные ≤ уникальные")
+	// Prometheus (попытки): outgoing > incoming (ретраи).
+	require.EqualValues(t, 794, d.Prometheus.Incoming)
+	require.EqualValues(t, 807, d.Prometheus.Outgoing)
+	require.Greater(t, d.Prometheus.Outgoing, d.Prometheus.Incoming, "Prometheus: ретраи раздувают исходящие")
+	// CH-ошибки ≥ Prometheus-ошибки (3xx/висящие у CH).
+	require.GreaterOrEqual(t, d.ClickHouse.Errors, d.Prometheus.Errors)
+	// Per-node сверка присутствует.
+	require.Len(t, d.Nodes, 1)
+	require.Equal(t, "a/x", d.Nodes[0].Node)
+	require.EqualValues(t, 809, d.Nodes[0].CHIn)
+	require.EqualValues(t, 794, d.Nodes[0].PromIn)
+}
+
+func TestMetricsUsecase_Diagnostics_NoPrometheus(t *testing.T) {
+	t.Parallel()
+	log := logging.NewNoop()
+	repo := &fakeNodeRepo{list: []*domain.Node{{Path: "a/x", ClickHouseTable: "db.a"}}}
+	logs := &fakeNodeLogs{kpi: port.NodeKPI{Total: 10, Delivered: 9, Errors: 1}}
+	uc := NewMetricsUsecase(nil, logs, repo, log) // prom=nil
+	d := uc.Diagnostics(context.Background(), "default", time.Now().Add(-time.Hour), time.Now())
+	require.True(t, d.ClickHouseAvailable)
+	require.False(t, d.PrometheusAvailable)
+	require.False(t, d.Prometheus.Available)
+	require.EqualValues(t, 10, d.ClickHouse.Incoming)
+}
+
 // --- NodeMetrics -----------------------------------------------------------
 
 func TestMetricsUsecase_NodeMetrics(t *testing.T) {
