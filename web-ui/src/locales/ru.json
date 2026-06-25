@@ -56,6 +56,7 @@
   "overview": {
     "title": "Узлы",
     "new_node": "Новый узел",
+    "set_default_period": "По умолчанию",
     "search_placeholder": "Поиск по пути или URL…",
     "kpi": {
       "incoming": "Входящие",

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Search, Plus } from "lucide-react";
+import { Search, Plus, Star } from "lucide-react";
 
 import {
   api,
@@ -25,7 +25,8 @@ import {
   Seg,
   Select,
   Tooltip,
-  defaultPeriod,
+  loadDefaultPeriod,
+  saveDefaultPeriod,
   periodKey,
   periodParams,
   periodLabel,
@@ -58,8 +59,10 @@ export default function Overview() {
   // Перенос узла между командами — admin-only (как и сам /move-эндпоинт):
   // не показываем кнопку «Перенести» viewer/manager, иначе клик упрётся в 403.
   const canMove = useRoleAtLeast("admin");
-  // §28 Пункт 4: период метрик per-node throughput (по умолчанию 1h).
-  const [period, setPeriod] = useState<Period>(defaultPeriod);
+  // §28/§43.B: период метрик; стартовый = пользовательский дефолт из localStorage
+  // (или 24ч). savedDefault — для подсветки активного «по умолчанию».
+  const [period, setPeriod] = useState<Period>(() => loadDefaultPeriod());
+  const [savedDefault, setSavedDefault] = useState<Period>(() => loadDefaultPeriod());
   const [search, setSearch] = useState("");
   const [method, setMethod] = useState<"" | "request" | "requestAsync" | "RabbitMQAsync">("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -207,6 +210,31 @@ export default function Overview() {
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs text-fg-muted">{t("metrics.period")}</span>
         <PeriodPicker value={period} onChange={setPeriod} />
+        {/* §43.B: «под себя» — сохранить текущий период как дефолт (только пресет). */}
+        {period.kind === "preset" && (
+          <button
+            type="button"
+            onClick={() => {
+              saveDefaultPeriod(period);
+              setSavedDefault(period);
+            }}
+            disabled={
+              savedDefault.kind === "preset" && savedDefault.range === period.range
+            }
+            title={t("overview.set_default_period")}
+            className="inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-fg-muted hover:text-accent disabled:cursor-default disabled:opacity-50"
+          >
+            <Star
+              className={cn(
+                "h-3.5 w-3.5",
+                savedDefault.kind === "preset" &&
+                  savedDefault.range === period.range &&
+                  "fill-current text-accent",
+              )}
+            />
+            {t("overview.set_default_period")}
+          </button>
+        )}
       </div>
 
       {nodesQ.isLoading && <div className="text-fg-muted">{t("common.loading")}</div>}
