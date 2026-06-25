@@ -83,6 +83,35 @@ type GeneralSettings struct {
 	// (dev/staging); в проде флаг выключен → значение игнорируется, а запись
 	// отклоняется (ErrVersionOverrideForbidden). nil/"" = версия из git (ldflags).
 	VersionOverride *string `json:"version_override,omitempty"`
+
+	// MetricsRefetchMs — интервал автообновления метрик на дашборде и страницах
+	// узлов, мс (§44.C). nil = дефолт MetricsRefetchDefaultMs. Диапазон
+	// [MetricsRefetchMinMs, MetricsRefetchMaxMs]. Отдаётся всем авторизованным
+	// через /api/settings/public (не секрет).
+	MetricsRefetchMs *int `json:"metrics_refetch_ms,omitempty"`
+
+	// MetricsApproxCounts — режим подсчёта уникальных запросов в KPI узлов и
+	// счётчиках дашборда (§44-perf). nil/false = ТОЧНО (countDistinct/uniqExact,
+	// дефолт); true = ПРИБЛИЗИТЕЛЬНО (uniq/uniqIf, HyperLogLog: ~3× дешевле по CPU,
+	// ошибка ~0.3%). Оператор включает приблизительный режим, когда узлов/данных
+	// много и точный distinct упирает ClickHouse в 100% CPU. Не секрет.
+	MetricsApproxCounts *bool `json:"metrics_approx_counts,omitempty"`
+}
+
+// Интервал автообновления метрик (§44.C): дефолт 12с, диапазон 1с..120с.
+const (
+	MetricsRefetchDefaultMs = 12000
+	MetricsRefetchMinMs     = 1000
+	MetricsRefetchMaxMs     = 120000
+)
+
+// ValidateMetricsRefetchMs проверяет интервал автообновления метрик (§44.C):
+// значение в [MetricsRefetchMinMs, MetricsRefetchMaxMs].
+func ValidateMetricsRefetchMs(v int) error {
+	if v < MetricsRefetchMinMs || v > MetricsRefetchMaxMs {
+		return ErrMetricsRefetchInvalid
+	}
+	return nil
 }
 
 // NotificationsSettings — настройки уведомлений операторам (§20).

@@ -419,7 +419,7 @@ func (a *App) Start(ctx context.Context) error {
 	// ClickHouse (ТОЧНЫЕ per-node KPI/график узла). Оба источника опциональны —
 	// usecase деградирует (prometheus_available/chart_available=false), поэтому
 	// handler создаётся всегда.
-	metricsUC := usecase.NewMetricsUsecase(promMetrics, nodeLogMetrics, nodeRepo, a.logger)
+	metricsUC := usecase.NewMetricsUsecase(promMetrics, nodeLogMetrics, nodeRepo, appSettingsRepo, a.logger)
 	metricsHandler := httpadapter.NewMetricsHandler(metricsUC, a.logger)
 
 	// Мониторинг Kafka (§4 spec): Prometheus (throughput/lag/KPI/top-узлы) +

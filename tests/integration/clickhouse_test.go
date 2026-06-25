@@ -354,6 +354,94 @@ func md5hexStr(b []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// TestClickHouse_KeysetPagination_DenseSecond_E2E — keyset-пагинация (§44/45-fix):
+// при сотнях строк с ОДИНАКОВЫМ date_request (секундная точность) простой курсор
+// `date_request <= to` зацикливался на одной секунде (следующая страница — те же
+// строки → дедуп → стопор скролла). Составной курсор (date_request, ID) должен
+// перешагивать плотную секунду: все строки отдаются ровно по разу, без повторов.
+func TestClickHouse_KeysetPagination_DenseSecond_E2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
+	defer cancel()
+
+	conn, cfg, cleanup := startClickHouse(t, ctx)
+	defer cleanup()
+
+	const table = "nexus_default.test_keyset"
+	createNodeLogTable(t, ctx, conn, table)
+
+	logger := logging.NewNoop()
+	provider := clickhouse.StaticProvider(conn)
+	writer := chlog.New(provider, cfg, logger)
+	defer writer.Stop(ctx)
+
+	// Все строки В ОДНОЙ СЕКУНДЕ — это и есть «плотная секунда».
+	sec := time.Now().UTC().Truncate(time.Second)
+	const total = 5
+	for i := 1; i <= total; i++ {
+		writer.Write(ctx, table, &domain.LogRecord{
+			ID:               fmt.Sprintf("00000000-0000-0000-0000-00000000000%d", i),
+			Type:             domain.RootMethodRequest,
+			URL:              "https://example.com/u",
+			Method:           "POST",
+			Status:           200,
+			DateCreate:       sec,
+			DateRequest:      sec,
+			DateResponse:     sec,
+			Done:             true,
+			ChecksumRequest:  strings.Repeat("a", 32),
+			ChecksumResponse: strings.Repeat("b", 32),
+			Host:             "h",
+			IP:               "127.0.0.1",
+			Attempts:         1,
+			AttemptsDetails:  "[]",
+		})
+	}
+	require.NoError(t, writer.Flush(ctx))
+
+	deadline := time.Now().Add(20 * time.Second)
+	var n uint64
+	for time.Now().Before(deadline) {
+		require.NoError(t, conn.QueryRow(ctx, fmt.Sprintf("SELECT count() FROM %s", table)).Scan(&n))
+		if n >= total {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	require.EqualValues(t, total, n, "expected %d rows in %s", total, table)
+
+	reader := webch.NewLogReader(provider, logger)
+
+	// Пагинация keyset'ом с limit < total — все строки одной секунды.
+	const limit = 2
+	seen := map[string]bool{}
+	var cursorMs int64
+	var cursorID string
+	for page := 0; page <= total+2; page++ {
+		require.LessOrEqual(t, page, total+1, "keyset не должен зацикливаться на плотной секунде")
+		q := port.LogQuery{Table: table, Limit: limit}
+		if cursorID != "" {
+			q.UntilMs = cursorMs
+			q.BeforeID = cursorID
+		}
+		recs, err := reader.Search(ctx, q)
+		require.NoError(t, err)
+		if len(recs) == 0 {
+			break
+		}
+		for _, r := range recs {
+			require.False(t, seen[r.ID], "дубликат %s — keyset не перешагнул плотную секунду", r.ID)
+			seen[r.ID] = true
+		}
+		oldest := recs[len(recs)-1]
+		cursorMs = oldest.DateRequest.UnixMilli()
+		cursorID = oldest.ID
+		if len(recs) < limit {
+			break
+		}
+	}
+	require.Len(t, seen, total, "keyset-пагинация отдала все строки одной секунды ровно по разу")
+}
+
 // TestClickHouse_GetByID_Deterministic — при двух записях с одним ID
 // (file-fallback restore + повторный INSERT, или ручной replay одной и той же
 // записи) GetByID должен возвращать самую свежую по date_request, а не

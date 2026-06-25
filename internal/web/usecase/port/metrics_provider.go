@@ -70,7 +70,10 @@ type KafkaPoint struct {
 // §37: nodeID — UUID узла для per-node атрибуции в общей CH-таблице (пусто —
 // без фильтра).
 type NodeLogMetrics interface {
-	NodeKPI(ctx context.Context, table, nodeID string, sinceMs, untilMs int64) (NodeKPI, error)
+	// NodeKPI — KPI узла за окно. approx (§44-perf): false = точный счёт уникальных
+	// (countDistinct/uniqExact), true = приблизительный HyperLogLog (uniq/uniqIf,
+	// ~3× дешевле, ошибка ~0.3%). Управляется app_settings.general.metrics_approx_counts.
+	NodeKPI(ctx context.Context, table, nodeID string, sinceMs, untilMs int64, approx bool) (NodeKPI, error)
 	NodeChart(ctx context.Context, table, nodeID string, sinceMs, untilMs int64, buckets int) ([]SeriesPoint, error)
 }
 

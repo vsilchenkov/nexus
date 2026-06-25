@@ -176,8 +176,18 @@ export type NodeThroughput = {
   // §41 («Down»): последний исходящий вызов узла завершился ошибкой.
   last_error: boolean;
 };
+// §44.A: totals = СУММА строк items за выбранный период (CH, уникальные
+// запросы). KPI шапки берёт incoming/outgoing/errors отсюда → шапка сходится
+// с таблицей. error_rate = errors/incoming (0..1).
+export type OverviewTotals = {
+  incoming: number;
+  outgoing: number;
+  errors: number;
+  error_rate: number;
+};
 export type NodesThroughputResp = {
   items: NodeThroughput[];
+  totals: OverviewTotals;
   prometheus_available: boolean;
 };
 export type NodeMetricsResp = {

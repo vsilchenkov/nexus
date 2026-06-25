@@ -56,6 +56,36 @@ func (u *UserUsecase) List(ctx context.Context, f port.ListUsersFilter) ([]*doma
 	return u.users.List(ctx, f)
 }
 
+// UserWithTeams — пользователь + его команды (членства) для списка (§44.G).
+type UserWithTeams struct {
+	User  *domain.User
+	Teams []*domain.UserTeam
+}
+
+// ListWithTeams — список пользователей, обогащённый членствами в командах (§44.G,
+// колонка «Команды» в Settings → Users). Членства тянутся одним батч-запросом
+// (без N+1). Ошибка обогащения деградирует до списка без команд (не 500).
+func (u *UserUsecase) ListWithTeams(ctx context.Context, f port.ListUsersFilter) ([]UserWithTeams, error) {
+	users, err := u.users.List(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, len(users))
+	for i, usr := range users {
+		ids[i] = usr.ID
+	}
+	byUser, err := u.teams.ListTeamsByUsers(ctx, ids)
+	if err != nil {
+		u.logger.Warn("list users: teams enrichment failed", u.logger.Err(err))
+		byUser = map[string][]*domain.UserTeam{}
+	}
+	out := make([]UserWithTeams, len(users))
+	for i, usr := range users {
+		out[i] = UserWithTeams{User: usr, Teams: byUser[usr.ID]}
+	}
+	return out, nil
+}
+
 // Create — создание пользователя (admin only — проверка ролей в handler).
 //
 // teamID — команда, в которую добавляется membership (Phase 11.A): без
@@ -125,6 +155,43 @@ func (u *UserUsecase) Update(ctx context.Context, actor Actor, in *domain.User) 
 		_, _ = u.sessions.DeleteByUser(ctx, in.ID)
 	}
 	u.audit.Log(ctx, actor, domain.ActionUserUpdate, "user", in.ID, nil)
+	return nil
+}
+
+// SetDefaultTeam меняет команду по умолчанию пользователя (§45, inline-смена в
+// списке Settings → Users). Валидирует, что teamID входит в членства пользователя
+// (иначе ErrUserNotTeamMember): сделать дефолтной чужую команду нельзя — §18.9 при
+// входе всё равно перекинул бы на команду по фактическому членству. Существующие
+// сессии не трогаем: default_team_id влияет на резолв current_team при СЛЕДУЮЩЕМ
+// входе, активная сессия уже несёт свой current_team.
+func (u *UserUsecase) SetDefaultTeam(ctx context.Context, actor Actor, userID, teamID string) error {
+	if userID == "" || teamID == "" {
+		return domain.ErrUserNotFound
+	}
+	// Пользователь должен существовать (даёт 404 на невалидный/несуществующий id).
+	if _, err := u.users.Get(ctx, userID); err != nil {
+		return err
+	}
+	memberships, err := u.teams.ListUserTeams(ctx, userID)
+	if err != nil {
+		return err
+	}
+	member := false
+	for _, m := range memberships {
+		if m.Team.ID == teamID {
+			member = true
+			break
+		}
+	}
+	if !member {
+		return domain.ErrUserNotTeamMember
+	}
+	if err := u.users.UpdateDefaultTeam(ctx, userID, teamID); err != nil {
+		return err
+	}
+	u.audit.Log(ctx, actor, domain.ActionUserUpdate, "user", userID, map[string]any{
+		"default_team_id": teamID,
+	})
 	return nil
 }
 

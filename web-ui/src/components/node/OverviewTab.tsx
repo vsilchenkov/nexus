@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { api, type Node } from "../../api/client";
 import { Card, Kpi, KpiRow, LabelHint, Pill, PeriodPicker, TrafficChart, defaultPeriod, type LogsRange, type Period } from "../ui";
-import { fmtNum } from "../../lib/format";
+import { fmtLogTs, fmtNum } from "../../lib/format";
 import { useNodeMetrics, METRICS_REFETCH_MS } from "./useNodeMetrics";
 import { type LogsResp } from "./types";
 
@@ -106,8 +106,8 @@ export function OverviewTab({
               const isErr = !r.done || r.status >= 400 || r.status === 0;
               return (
                 <tr key={r.id} className={`border-b border-line last:border-0 ${isErr ? "bg-err/5" : ""}`}>
-                  <td className="px-4 py-2 font-mono text-xs">
-                    {new Date(r.date_request).toLocaleTimeString()}
+                  <td className="whitespace-nowrap px-4 py-2 font-mono text-xs">
+                    {fmtLogTs(r.date_request)}
                   </td>
                   <td className="px-4 py-2">
                     <Pill tone={isErr ? "err" : "ok"}>{r.status}</Pill>

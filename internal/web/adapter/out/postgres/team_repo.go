@@ -34,7 +34,7 @@ const teamCols = `id, slug, name, ch_database, created_at, updated_at`
 func (r *TeamRepoPg) scanRow(row pgx.Row) (*domain.Team, error) {
 	var t domain.Team
 	if err := row.Scan(&t.ID, &t.Slug, &t.Name, &t.CHDatabase, &t.CreatedAt, &t.UpdatedAt); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) || isInvalidUUID(err) {
 			return nil, domain.ErrTeamNotFound
 		}
 		return nil, fmt.Errorf("scan team: %w", err)
@@ -154,6 +154,21 @@ func (r *TeamRepoPg) RemoveMember(ctx context.Context, userID, teamID string) er
 	if tag.RowsAffected() == 0 {
 		return domain.ErrTeamMemberNotFound
 	}
+	// §44.H: держим users.default_team_id согласованным с членствами. Если
+	// удалили команду, бывшую дефолтом пользователя, и у него остались другие
+	// команды — переводим default_team_id на первую из оставшихся (ORDER BY
+	// team_id, детерминированно). Если других нет — оставляем как есть (логин
+	// деградирует на DefaultTeamID, рассинхрон виден в списке пользователей).
+	// Подзапрос пуст ⇒ FROM не даёт строк ⇒ UPDATE не выполняется.
+	if _, err := r.pool.Exec(ctx, `
+UPDATE users u
+SET default_team_id = sub.team_id
+FROM (
+	SELECT team_id FROM user_teams WHERE user_id = $1::uuid ORDER BY team_id LIMIT 1
+) sub
+WHERE u.id = $1::uuid AND u.default_team_id = $2::uuid`, userID, teamID); err != nil {
+		return fmt.Errorf("reassign default team after member removal: %w", err)
+	}
 	return nil
 }
 
@@ -224,6 +239,39 @@ ORDER BY t.slug`, userID)
 		}
 		ut.Role = domain.TeamRole(role)
 		out = append(out, &ut)
+	}
+	return out, rows.Err()
+}
+
+// ListTeamsByUsers — членства для набора пользователей одним запросом (§44.G):
+// ключ карты — user_id. Пустой userIDs → пустая карта (без запроса). Порядок
+// команд внутри пользователя — по slug (как ListUserTeams).
+func (r *TeamRepoPg) ListTeamsByUsers(ctx context.Context, userIDs []string) (map[string][]*domain.UserTeam, error) {
+	out := make(map[string][]*domain.UserTeam, len(userIDs))
+	if len(userIDs) == 0 {
+		return out, nil
+	}
+	rows, err := r.pool.Query(ctx, `
+SELECT ut.user_id, t.id, t.slug, t.name, t.ch_database, t.created_at, t.updated_at, ut.role
+FROM user_teams ut
+JOIN teams t ON t.id = ut.team_id
+WHERE ut.user_id = ANY($1::uuid[])
+ORDER BY ut.user_id, t.slug`, userIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list teams by users: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var userID, role string
+		var ut domain.UserTeam
+		if err := rows.Scan(
+			&userID, &ut.Team.ID, &ut.Team.Slug, &ut.Team.Name, &ut.Team.CHDatabase,
+			&ut.Team.CreatedAt, &ut.Team.UpdatedAt, &role,
+		); err != nil {
+			return nil, fmt.Errorf("scan teams by users: %w", err)
+		}
+		ut.Role = domain.TeamRole(role)
+		out[userID] = append(out[userID], &ut)
 	}
 	return out, rows.Err()
 }

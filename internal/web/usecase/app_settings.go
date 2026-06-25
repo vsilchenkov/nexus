@@ -90,6 +90,12 @@ func (u *AppSettingsUsecase) Update(ctx context.Context, actor Actor, patch *dom
 			return err
 		}
 	}
+	// §44.C: интервал автообновления метрик в допустимом диапазоне.
+	if patch.General.MetricsRefetchMs != nil {
+		if err := domain.ValidateMetricsRefetchMs(*patch.General.MetricsRefetchMs); err != nil {
+			return err
+		}
+	}
 	// §34.3: override версии разрешён только в dev (web.allow_version_override).
 	if patch.General.VersionOverride != nil && !u.allowVersionOverride {
 		return domain.ErrVersionOverrideForbidden
@@ -145,6 +151,14 @@ func mergeAppSettings(current, patch *domain.AppSettings) *domain.AppSettings {
 	// §34.3: version_override (гейт проверен в Update до merge).
 	if patch.General.VersionOverride != nil {
 		out.General.VersionOverride = patch.General.VersionOverride
+	}
+	// §44.C: интервал автообновления метрик (не секрет).
+	if patch.General.MetricsRefetchMs != nil {
+		out.General.MetricsRefetchMs = patch.General.MetricsRefetchMs
+	}
+	// §44-perf: режим подсчёта уникальных (точно/приблизительно), не секрет.
+	if patch.General.MetricsApproxCounts != nil {
+		out.General.MetricsApproxCounts = patch.General.MetricsApproxCounts
 	}
 
 	// §34.2: Security — длительность сессии (не секрет).
@@ -238,7 +252,8 @@ func validateTelegramPatch(p *domain.AppSettings) error {
 // содержит хотя бы одно не-nil поле. Используется в audit details.
 func changedSections(p *domain.AppSettings) []string {
 	var out []string
-	if p.General.PublicBaseURL != nil || p.General.VersionOverride != nil {
+	if p.General.PublicBaseURL != nil || p.General.VersionOverride != nil ||
+		p.General.MetricsRefetchMs != nil || p.General.MetricsApproxCounts != nil {
 		out = append(out, "general")
 	}
 	if p.Security.SessionTTLSeconds != nil {

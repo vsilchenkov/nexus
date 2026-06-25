@@ -9,6 +9,7 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -311,6 +312,40 @@ func TestNodeRepoIncomingAuthDynamic_E2E(t *testing.T) {
 		got2.IncomingAuthDynamicField != "Authorization" {
 		t.Fatalf("incoming dynamic defaults not applied: src=%q field=%q",
 			got2.IncomingAuthDynamicSource, got2.IncomingAuthDynamicField)
+	}
+}
+
+// TestNodeRepoGet_InvalidUUID_E2E: невалидный `:id` (не UUID) в Get → not-found
+// (404), а не 500 + шум в Sentry (NEXUS-7, §44.I). Запрос приводит `$1::uuid`,
+// pg отдаёт SQLSTATE 22P02 — репозитории трактуют его как Err…NotFound. Имя с
+// префиксом TestNodeRepo — чтобы попасть под фильтр прогона test-int-pg.
+func TestNodeRepoGet_InvalidUUID_E2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	pool, cleanup := startPostgres(t, ctx)
+	defer cleanup()
+
+	cipher, err := crypto.NewCipher(testEncryptionKey)
+	if err != nil {
+		t.Fatalf("cipher: %v", err)
+	}
+	logger := logging.NewNoop()
+
+	nodeRepo := pgrepo.NewNodeRepoPg(pool, cipher, logger)
+	userRepo := pgrepo.NewUserRepoPg(pool, logger)
+	teamRepo := pgrepo.NewTeamRepoPg(pool, logger)
+
+	const badID = "not-a-uuid"
+
+	if _, err := nodeRepo.Get(ctx, badID); !errors.Is(err, domain.ErrNodeNotFound) {
+		t.Fatalf("node Get(bad uuid): want ErrNodeNotFound, got %v", err)
+	}
+	if _, err := userRepo.Get(ctx, badID); !errors.Is(err, domain.ErrUserNotFound) {
+		t.Fatalf("user Get(bad uuid): want ErrUserNotFound, got %v", err)
+	}
+	if _, err := teamRepo.GetByID(ctx, badID); !errors.Is(err, domain.ErrTeamNotFound) {
+		t.Fatalf("team GetByID(bad uuid): want ErrTeamNotFound, got %v", err)
 	}
 }
 

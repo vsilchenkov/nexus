@@ -130,7 +130,7 @@ func (u *AuthUsecase) Login(ctx context.Context, login, password, ip string) (st
 		Login:              user.Login,
 		Role:               user.Role,
 		Lang:               user.Lang,
-		CurrentTeamID:      user.DefaultTeamID,
+		CurrentTeamID:      u.resolveLoginTeam(ctx, user),
 		MustChangePassword: user.MustChangePassword,
 		CreatedAt:          now,
 		LastSeenAt:         now,
@@ -142,6 +142,43 @@ func (u *AuthUsecase) Login(ctx context.Context, login, password, ip string) (st
 	u.audit.Log(ctx, Actor{UserID: user.ID, UserLogin: user.Login, IPAddress: ip},
 		domain.ActionUserLogin, "user", user.ID, nil)
 	return token, user, nil
+}
+
+// resolveLoginTeam определяет current_team_id для новой сессии (§44.H):
+// команда из user.DefaultTeamID, ЕСЛИ пользователь в ней реально состоит;
+// иначе — первая из его членств (детерминированно: ListUserTeams отдаёт
+// ORDER BY slug); если членств нет вовсе — оставляем DefaultTeamID как было.
+//
+// Чинит ситуацию, когда default_team_id указывает на команду, из которой
+// пользователя убрали (членство удалили, колонку не переписали): без этой
+// проверки сессия скоупилась на чужую команду, а переключатель был заблокирован
+// (одна доступная команда ≠ current_team), и до своих узлов было не добраться.
+// Ошибку доступа к членствам НЕ эскалируем — логин не блокируем.
+func (u *AuthUsecase) resolveLoginTeam(ctx context.Context, user *domain.User) string {
+	memberships, err := u.teams.ListUserTeams(ctx, user.ID)
+	if err != nil {
+		u.logger.Warn("resolve login team: list memberships failed; using default_team_id",
+			u.logger.Str("user_id", user.ID), u.logger.Err(err))
+		return user.DefaultTeamID
+	}
+	if len(memberships) == 0 || teamInMemberships(user.DefaultTeamID, memberships) {
+		return user.DefaultTeamID
+	}
+	u.logger.Warn("login: default_team_id is not among memberships; using first membership",
+		u.logger.Str("user_id", user.ID),
+		u.logger.Str("default_team_id", user.DefaultTeamID),
+		u.logger.Str("resolved_team_id", memberships[0].Team.ID))
+	return memberships[0].Team.ID
+}
+
+// teamInMemberships — true, если teamID присутствует среди членств.
+func teamInMemberships(teamID string, memberships []*domain.UserTeam) bool {
+	for _, m := range memberships {
+		if m.Team.ID == teamID {
+			return true
+		}
+	}
+	return false
 }
 
 // Logout удаляет сессию.
@@ -168,10 +205,35 @@ func (u *AuthUsecase) Me(ctx context.Context, userID string) (*domain.User, erro
 	return u.users.Get(ctx, userID)
 }
 
-// MyTeams — список команд, в которых состоит пользователь (multi-tenancy
-// v2). Используется UI для team-switcher'а.
-func (u *AuthUsecase) MyTeams(ctx context.Context, userID string) ([]*domain.UserTeam, error) {
-	return u.teams.ListUserTeams(ctx, userID)
+// MyTeamsAndCurrent — членства пользователя + актуальный current_team_id с
+// САМОЛЕЧЕНИЕМ сессии (§44.H). Если current_team из сессии не входит в членства
+// (сессия выдана до фикса, либо пользователя убрали из команды), а членства
+// есть — переключаем на первую доступную команду и (для cookie-сессий,
+// token != "") персистим: «битая» сессия чинится без ре-логина. Псевдо-сессии
+// API-токена (token == "") имеют фиксированную команду — не трогаем. Возвращает
+// (членства, актуальный current_team_id).
+// Возвращает (членства, current_team_id, healed) — healed=true, если сессия
+// была переключена (UI по нему инвалидирует team-scoped кеш, чтобы дашборд
+// сразу показал ноды верной команды).
+func (u *AuthUsecase) MyTeamsAndCurrent(ctx context.Context, s *domain.Session) ([]*domain.UserTeam, string, bool, error) {
+	memberships, err := u.teams.ListUserTeams(ctx, s.UserID)
+	if err != nil {
+		return nil, "", false, fmt.Errorf("list memberships: %w", err)
+	}
+	current := s.CurrentTeamID
+	healed := false
+	if s.Token != "" && len(memberships) > 0 && !teamInMemberships(current, memberships) {
+		current = memberships[0].Team.ID
+		s.CurrentTeamID = current
+		healed = true
+		if err := u.sessions.Create(ctx, s, u.sessionTTL()); err != nil {
+			// Не валим запрос: вернём исправленный current — UI покажет верную
+			// команду, сессия дочинится при следующем заходе.
+			u.logger.Warn("heal session current_team failed",
+				u.logger.Str("user_id", s.UserID), u.logger.Err(err))
+		}
+	}
+	return memberships, current, healed, nil
 }
 
 // SwitchTeam меняет current_team_id в активной сессии. Проверяет, что

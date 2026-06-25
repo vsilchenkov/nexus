@@ -15,6 +15,15 @@ func isForeignKeyViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23503"
 }
 
+// isInvalidUUID сообщает, что ошибка — невалидный текст для типа uuid
+// (SQLSTATE 22P02, invalid_text_representation): `:id` из пути не является UUID
+// и не прошёл cast `$1::uuid`. Репозитории трактуют это как «не найдено»
+// (Err…NotFound → 404), а не как 500 + шум в Sentry. См. NEXUS-7 (§44).
+func isInvalidUUID(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "22P02"
+}
+
 // DBTX — общий минимальный интерфейс над pgxpool.Pool и pgx.Tx.
 //
 // Используется в репозиториях: NodeRepoPg, AuditRepoPg принимают DBTX

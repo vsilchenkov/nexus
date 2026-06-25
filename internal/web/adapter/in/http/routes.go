@@ -142,6 +142,8 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			authed.GET("/metrics/overview", RequireScope("metrics:read"), h.Metrics.Overview)
 			authed.GET("/metrics/nodes", RequireScope("metrics:read"), h.Metrics.NodesOverview)
 			authed.GET("/metrics/nodes/:id", RequireScope("metrics:read"), h.Metrics.Node)
+			// §44.E: сверка Prometheus↔ClickHouse (диагностика расхождений счётчиков).
+			authed.GET("/metrics/diagnostics", RequireScope("metrics:read"), h.Metrics.Diagnostics)
 		}
 
 		// Публичный адрес приложения (§28, Пункт 1): read-only для любого
@@ -205,6 +207,7 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		authedAdmin.GET("/users/:id", h.User.Get)
 		authedAdmin.POST("/users", h.User.Create)
 		authedAdmin.PUT("/users/:id", h.User.Update)
+		authedAdmin.PUT("/users/:id/default-team", h.User.SetDefaultTeam) // §45
 		authedAdmin.DELETE("/users/:id", h.User.Delete)
 		authedAdmin.POST("/users/:id/password", h.User.ChangePassword)
 

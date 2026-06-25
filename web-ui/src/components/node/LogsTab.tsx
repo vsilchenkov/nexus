@@ -5,6 +5,7 @@ import { RefreshCw, Settings, RotateCcw, ChevronRight, ChevronDown, Download } f
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, type Node } from "../../api/client";
+import { fmtLogTs } from "../../lib/format";
 import { FETCH_CHUNK, LARGE_WARN_RUNES, formatRunes, prettyMaybe } from "../../lib/logBody";
 import { CopyButton } from "../ui/CopyButton";
 import { ReplayDialog } from "../ReplayDialog";
@@ -12,6 +13,9 @@ import { type LogRow, type LogsResp, type LogDetail, type LogBodyChunk } from ".
 
 type StatusFilter = "all" | "ok" | "err";
 type PageSize = 50 | 100 | 200;
+// LogsCursor — keyset-курсор бесконечного скролла (§44/45-fix): время самой
+// старой загруженной строки (мс) + её id как тай-брейкер для «плотных» секунд.
+type LogsCursor = { to: number; beforeId: string };
 
 // LogsInitialFilter — стартовый фильтр логов, прокинутый кликом по графику (§33.4):
 // from/to в формате <input type="datetime-local"> (локальная зона).
@@ -30,6 +34,12 @@ const SCROLL_BOTTOM_THRESHOLD_PX = 200;
 // Сколько ошибок SSE подряд терпим, прежде чем признать поток мёртвым.
 // Между ними браузер сам переподключается (нативный retry EventSource).
 const LIVE_MAX_CONSECUTIVE_ERRORS = 5;
+
+// Потолок строк, накапливаемых бесконечным скроллом (§44: фикс зависания на
+// узлах с сотнями тысяч логов). Без виртуализации неограниченный append раздувал
+// DOM и вешал прокрутку. Достигнут потолок — подгрузка вниз останавливается,
+// показываем подсказку сузить период/фильтр (точечный поиск — через фильтры).
+const MAX_INFINITE_ROWS = 1000;
 
 // LogsTab — вкладка «Логи» (§7.4): snapshot + SSE live-tail с буфером,
 // клиентскими фильтрами, расширенным поиском и replay-меню строки.
@@ -73,18 +83,24 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   const logsQ = useInfiniteQuery({
     queryKey: ["logs", id, advQueryParams],
     enabled: !!id && hasLogsTable && !live, // в Live snapshot не нужен — читаем SSE-буфер
-    initialPageParam: null as number | null,
+    initialPageParam: null as LogsCursor | null,
     queryFn: ({ pageParam }) => {
       const params: Record<string, string | number> = { ...advQueryParams };
-      // Курсор страниц >1: граница date_request <= to ВКЛЮЧИТЕЛЬНА (дедуп по id ниже).
-      if (pageParam != null) params.to = pageParam;
+      // §44/45-fix: keyset-курсор (date_request, id) — строгая граница
+      // (date_request < to) ИЛИ (= to И id < before_id). Перешагивает «плотные»
+      // секунды (сотни записей с одинаковым date_request), где простой `to <=`
+      // зацикливался → скролл не двигался вниз. Дедуп по id ниже — страховка.
+      if (pageParam) {
+        params.to = pageParam.to;
+        params.before_id = pageParam.beforeId;
+      }
       return api.get<LogsResp>(`/api/nodes/${id}/logs`, params);
     },
     getNextPageParam: (lastPage) => {
       const items = lastPage.items ?? [];
       if (items.length < Number(advQueryParams.limit)) return undefined; // конец истории
       const oldest = items[items.length - 1]; // DESC → последний самый старый
-      return oldest ? new Date(oldest.date_request).getTime() : undefined;
+      return oldest ? { to: new Date(oldest.date_request).getTime(), beforeId: oldest.id } : undefined;
     },
     // Авто-рефетч только пока пользователь у верха (см. atTop). При Live выключен.
     refetchInterval: !live && atTop ? 5_000 : false,
@@ -202,7 +218,12 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
     // Бесконечный скролл вниз — только не в Live (Live добавляет записи сверху).
     if (!live) {
       const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_BOTTOM_THRESHOLD_PX;
-      if (nearBottom && logsQ.hasNextPage && !logsQ.isFetchingNextPage) {
+      if (
+        nearBottom &&
+        logsQ.hasNextPage &&
+        !logsQ.isFetchingNextPage &&
+        infiniteItems.length < MAX_INFINITE_ROWS
+      ) {
         logsQ.fetchNextPage();
       }
     }
@@ -246,7 +267,12 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
     if (live) return;
     const el = tableWrapRef.current;
     if (!el) return;
-    if (el.scrollHeight <= el.clientHeight && logsQ.hasNextPage && !logsQ.isFetchingNextPage) {
+    if (
+      el.scrollHeight <= el.clientHeight &&
+      logsQ.hasNextPage &&
+      !logsQ.isFetchingNextPage &&
+      infiniteItems.length < MAX_INFINITE_ROWS
+    ) {
       logsQ.fetchNextPage();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -463,14 +489,14 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                         isHl ? "bg-accent/15" : isErr ? "bg-err/5" : ""
                       }`}
                     >
-                      <td className="px-3 py-2 font-mono text-xs">
+                      <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">
                         <span className="inline-flex items-center gap-1">
                           {isOpen ? (
                             <ChevronDown className="h-3 w-3 shrink-0" />
                           ) : (
                             <ChevronRight className="h-3 w-3 shrink-0" />
                           )}
-                          {new Date(r.date_request).toLocaleTimeString()}
+                          {fmtLogTs(r.date_request)}
                         </span>
                       </td>
                       <td className="px-3 py-2">{r.http_method}</td>
@@ -530,6 +556,17 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                   </td>
                 </tr>
               )}
+              {/* §44: достигнут потолок строк — дальше не подгружаем (защита от
+                  зависания на узлах с сотнями тысяч логов), просим сузить поиск. */}
+              {!live &&
+                logsQ.hasNextPage &&
+                infiniteItems.length >= MAX_INFINITE_ROWS && (
+                  <tr>
+                    <td colSpan={7} className="px-3 py-3 text-center text-[11px] text-warn">
+                      {t("logs.cap_reached", { n: MAX_INFINITE_ROWS })}
+                    </td>
+                  </tr>
+                )}
             </tbody>
           </table>
         </div>

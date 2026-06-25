@@ -107,8 +107,8 @@ type overviewKPIDTO struct {
 }
 
 // Overview godoc
-// @Summary  Глобальные KPI панели за 24ч (§21).
-// @Description  Источник — Prometheus. Без настроенного prometheus.url возвращает нули с prometheus_available=false.
+// @Summary  KPI шапки: очередь Kafka + доступность Prometheus (§21, §44.A).
+// @Description  Только очередь Kafka (мгновенный lag, Prometheus). Трафик (входящие/исходящие/ошибки) переехал в GET /api/metrics/nodes → totals (за выбранный период, ClickHouse), чтобы шапка сходилась с таблицей. Без prometheus.url — нули с prometheus_available=false.
 // @Tags     metrics
 // @Produce  json
 // @Success  200  {object}  overviewKPIDTO
@@ -138,9 +138,18 @@ type nodeThroughputDTO struct {
 	LastError bool `json:"last_error"`
 }
 
+// overviewTotalsDTO — агрегат для KPI шапки (§44.A): СУММА строк items за тот же
+// период. error_rate = errors/incoming (0..1).
+type overviewTotalsDTO struct {
+	Incoming  uint64  `json:"incoming"`
+	Outgoing  uint64  `json:"outgoing"`
+	Errors    uint64  `json:"errors"`
+	ErrorRate float64 `json:"error_rate"`
+}
+
 // NodesOverview godoc
-// @Summary  Per-node throughput за окно (§21).
-// @Description  Источник — Prometheus (sum by node). Ключ node = path узла. Без Prometheus — пустой список с prometheus_available=false.
+// @Summary  Per-node throughput за окно + агрегат для шапки (§21, §44.A).
+// @Description  Источник — ClickHouse-логи (уникальные запросы), fallback Prometheus. Ключ node = path узла. Поле totals = СУММА строк (incoming/outgoing/errors/error_rate) для KPI шапки. Без источника — пустой список с prometheus_available=false.
 // @Tags     metrics
 // @Produce  json
 // @Param    range  query  string  false  "1h | 3h | 24h | 7d | 14d | 30d (default 1h)"
@@ -165,8 +174,76 @@ func (h *MetricsHandler) NodesOverview(c *gin.Context) {
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"items":                items,
+		"items": items,
+		"totals": overviewTotalsDTO{
+			Incoming:  res.Totals.Incoming,
+			Outgoing:  res.Totals.Outgoing,
+			Errors:    res.Totals.Errors,
+			ErrorRate: res.Totals.ErrorRate,
+		},
 		"prometheus_available": res.PrometheusAvailable,
+	})
+}
+
+// diagSourceDTO / diagNodeDTO / diagnosticsDTO — сверка источников (§44.E).
+type diagSourceDTO struct {
+	Incoming  uint64 `json:"incoming"`
+	Outgoing  uint64 `json:"outgoing"`
+	Errors    uint64 `json:"errors"`
+	Available bool   `json:"available"`
+}
+
+type diagNodeDTO struct {
+	Node       string `json:"node"`
+	CHIn       uint64 `json:"ch_in"`
+	CHOut      uint64 `json:"ch_out"`
+	CHErrors   uint64 `json:"ch_errors"`
+	PromIn     uint64 `json:"prom_in"`
+	PromOut    uint64 `json:"prom_out"`
+	PromErrors uint64 `json:"prom_errors"`
+}
+
+type diagnosticsDTO struct {
+	SinceMs             int64         `json:"since_ms"`
+	UntilMs             int64         `json:"until_ms"`
+	Prometheus          diagSourceDTO `json:"prometheus"`
+	ClickHouse          diagSourceDTO `json:"clickhouse"`
+	Nodes               []diagNodeDTO `json:"nodes"`
+	PrometheusAvailable bool          `json:"prometheus_available"`
+	ClickHouseAvailable bool          `json:"clickhouse_available"`
+}
+
+// Diagnostics godoc
+// @Summary  Сверка счётчиков Prometheus↔ClickHouse за окно (§44.E).
+// @Description  Возвращает обе стороны (Prometheus — попытки/increase; ClickHouse — уникальные запросы) и per-node-сверку. Помогает объяснить расхождение шапки/таблицы (ретраи → outgoing>incoming в Prometheus; CH-ошибки ≥ Prometheus при 3xx/висящих; занижение increase). Деградирует при недоступном источнике.
+// @Tags     metrics
+// @Produce  json
+// @Param    range  query  string  false  "1h | 3h | 24h | 7d | 14d | 30d (default 1h)"
+// @Param    from   query  string  false  "период с (RFC3339 или UnixMilli)"
+// @Param    to     query  string  false  "период по (RFC3339 или UnixMilli)"
+// @Success  200  {object}  diagnosticsDTO
+// @Security CookieAuth
+// @Security ApiTokenAuth
+// @Router   /api/metrics/diagnostics [get]
+func (h *MetricsHandler) Diagnostics(c *gin.Context) {
+	since, until, _ := resolveWindow(c)
+	res := h.uc.Diagnostics(c.Request.Context(), currentTeamID(c), since, until)
+	nodes := make([]diagNodeDTO, 0, len(res.Nodes))
+	for _, n := range res.Nodes {
+		nodes = append(nodes, diagNodeDTO{
+			Node: n.Node, CHIn: n.CHIn, CHOut: n.CHOut, CHErrors: n.CHErrors,
+			PromIn: n.PromIn, PromOut: n.PromOut, PromErrors: n.PromErrors,
+		})
+	}
+	src := func(s usecase.DiagSource) diagSourceDTO {
+		return diagSourceDTO{Incoming: s.Incoming, Outgoing: s.Outgoing, Errors: s.Errors, Available: s.Available}
+	}
+	c.JSON(http.StatusOK, diagnosticsDTO{
+		SinceMs: res.SinceMs, UntilMs: res.UntilMs,
+		Prometheus: src(res.Prometheus), ClickHouse: src(res.ClickHouse),
+		Nodes:               nodes,
+		PrometheusAvailable: res.PrometheusAvailable,
+		ClickHouseAvailable: res.ClickHouseAvailable,
 	})
 }
 

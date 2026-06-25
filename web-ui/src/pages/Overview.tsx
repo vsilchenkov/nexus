@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Search, Plus } from "lucide-react";
+import { Search, Plus, Star, Play, Pause } from "lucide-react";
 
 import {
   api,
@@ -25,7 +25,8 @@ import {
   Seg,
   Select,
   Tooltip,
-  defaultPeriod,
+  loadDefaultPeriod,
+  saveDefaultPeriod,
   periodKey,
   periodParams,
   periodLabel,
@@ -35,7 +36,7 @@ import {
 import { Modal } from "../components/ui/Modal";
 import { cn } from "../lib/cn";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
-import { METRICS_REFETCH_MS } from "../components/node/useNodeMetrics";
+import { useMetricsRefetchMs } from "../components/node/useNodeMetrics";
 
 type ListResp = { items: Node[] };
 type View = "table" | "cards";
@@ -43,6 +44,7 @@ type StatusFilter = "all" | "ok" | "warn" | "err" | "paused" | "disabled";
 type Throughput = { in: number; out: number; errors: number; p95: number; spark: number[]; lastError: boolean };
 
 const VIEW_KEY = "nexus.overview.view";
+const AUTOREFRESH_KEY = "nexus.overview.autorefresh";
 
 // fmtNum — компактный формат больших чисел (1.24M / 12.0k) и разделители для мелких.
 function fmtNum(n: number): string {
@@ -58,8 +60,10 @@ export default function Overview() {
   // Перенос узла между командами — admin-only (как и сам /move-эндпоинт):
   // не показываем кнопку «Перенести» viewer/manager, иначе клик упрётся в 403.
   const canMove = useRoleAtLeast("admin");
-  // §28 Пункт 4: период метрик per-node throughput (по умолчанию 1h).
-  const [period, setPeriod] = useState<Period>(defaultPeriod);
+  // §28/§44.B: период метрик; стартовый = пользовательский дефолт из localStorage
+  // (или 24ч). savedDefault — для подсветки активного «по умолчанию».
+  const [period, setPeriod] = useState<Period>(() => loadDefaultPeriod());
+  const [savedDefault, setSavedDefault] = useState<Period>(() => loadDefaultPeriod());
   const [search, setSearch] = useState("");
   const [method, setMethod] = useState<"" | "request" | "requestAsync" | "RabbitMQAsync">("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -67,8 +71,15 @@ export default function Overview() {
     () => (localStorage.getItem(VIEW_KEY) as View) || "table",
   );
   const [moveTarget, setMoveTarget] = useState<Node | null>(null);
+  // §44.C: автообновление рабочего стола — тоггл паузы (по умолчанию вкл),
+  // персист в localStorage; интервал берётся из настроек (useMetricsRefetchMs).
+  const [autoRefresh, setAutoRefresh] = useState(
+    () => localStorage.getItem(AUTOREFRESH_KEY) !== "0",
+  );
+  const refetchMs = useMetricsRefetchMs();
 
   useEffect(() => localStorage.setItem(VIEW_KEY, view), [view]);
+  useEffect(() => localStorage.setItem(AUTOREFRESH_KEY, autoRefresh ? "1" : "0"), [autoRefresh]);
 
   const nodesQ = useQuery({
     queryKey: ["nodes", search],
@@ -78,15 +89,15 @@ export default function Overview() {
   const kpiQ = useQuery({
     queryKey: ["metrics-overview"],
     queryFn: () => api.get<OverviewKPI>("/api/metrics/overview"),
-    refetchInterval: METRICS_REFETCH_MS,
+    refetchInterval: autoRefresh ? refetchMs : false,
   });
 
-  // §28 Пункт 4: период per-node throughput выбирается (по умолчанию 1h),
-  // §28 Пункт 2: обновляется онлайн через refetchInterval.
+  // §28 Пункт 4: период per-node throughput выбирается (по умолчанию 24ч),
+  // §28 Пункт 2 / §44.C: обновляется онлайн, если автообновление включено.
   const thrQ = useQuery({
     queryKey: ["metrics-nodes", periodKey(period)],
     queryFn: () => api.get<NodesThroughputResp>("/api/metrics/nodes", periodParams(period)),
-    refetchInterval: METRICS_REFETCH_MS,
+    refetchInterval: autoRefresh ? refetchMs : false,
   });
 
   // Анти-мерцание: держим последний ответ с prometheus_available=true (§ useStableData).
@@ -129,19 +140,24 @@ export default function Overview() {
   }, [nodesQ.data, method, statusFilter, throughput, sortRank, metricsReady]);
 
   const kpi = useStableData(kpiQ.data, "overview-kpi", (d) => d.prometheus_available);
-  const errPct = kpi && kpi.error_rate > 0 ? (kpi.error_rate * 100).toFixed(2) + "%" : "0%";
+  // §44.A: трафик KPI шапки = totals из throughput (сумма строк таблицы за
+  // выбранный период, ClickHouse) → шапка сходится с таблицей. Очередь Kafka —
+  // из kpiQ (мгновенный lag, только в Prometheus). Ярлык несёт выбранный период.
+  const tot = thrData?.totals;
+  const kpiPeriod = periodLabel(period, t);
+  const errPct = tot && tot.error_rate > 0 ? (tot.error_rate * 100).toFixed(2) + "%" : "0%";
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">
       <KpiRow>
-        <Kpi label={t("overview.kpi.incoming")} value={kpi ? fmtNum(kpi.incoming_24h) : "—"} />
-        <Kpi label={t("overview.kpi.outgoing")} value={kpi ? fmtNum(kpi.outgoing_24h) : "—"} />
+        <Kpi label={`${t("overview.kpi.incoming")} ${kpiPeriod}`} value={tot ? fmtNum(tot.incoming) : "—"} />
+        <Kpi label={`${t("overview.kpi.outgoing")} ${kpiPeriod}`} value={tot ? fmtNum(tot.outgoing) : "—"} />
         <Kpi label={t("overview.kpi.queue")} value={kpi ? fmtNum(kpi.kafka_queue) : "—"} />
         <Kpi
-          label={t("overview.kpi.errors")}
-          value={kpi ? fmtNum(kpi.errors_24h) : "—"}
-          delta={kpi ? errPct : undefined}
-          deltaTone={kpi && kpi.error_rate > 0.01 ? "down" : "muted"}
+          label={`${t("overview.kpi.errors")} ${kpiPeriod}`}
+          value={tot ? fmtNum(tot.errors) : "—"}
+          delta={tot ? errPct : undefined}
+          deltaTone={tot && tot.error_rate > 0.01 ? "down" : "muted"}
         />
       </KpiRow>
 
@@ -202,6 +218,50 @@ export default function Overview() {
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs text-fg-muted">{t("metrics.period")}</span>
         <PeriodPicker value={period} onChange={setPeriod} />
+        {/* §44.B: «под себя» — сохранить текущий период как дефолт (только пресет). */}
+        {period.kind === "preset" && (
+          <button
+            type="button"
+            onClick={() => {
+              saveDefaultPeriod(period);
+              setSavedDefault(period);
+            }}
+            disabled={
+              savedDefault.kind === "preset" && savedDefault.range === period.range
+            }
+            title={t("overview.set_default_period")}
+            className="inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-fg-muted hover:text-accent disabled:cursor-default disabled:opacity-50"
+          >
+            <Star
+              className={cn(
+                "h-3.5 w-3.5",
+                savedDefault.kind === "preset" &&
+                  savedDefault.range === period.range &&
+                  "fill-current text-accent",
+              )}
+            />
+            {t("overview.set_default_period")}
+          </button>
+        )}
+        {/* §44.C: пауза/запуск автообновления рабочего стола. */}
+        <button
+          type="button"
+          onClick={() => setAutoRefresh((v) => !v)}
+          title={autoRefresh ? t("overview.autorefresh_on") : t("overview.autorefresh_off")}
+          className="ml-auto inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-fg-muted hover:text-accent"
+        >
+          {autoRefresh ? (
+            <>
+              <Pause className="h-3.5 w-3.5" />
+              {t("overview.autorefresh_on")}
+            </>
+          ) : (
+            <>
+              <Play className="h-3.5 w-3.5" />
+              {t("overview.autorefresh_off")}
+            </>
+          )}
+        </button>
       </div>
 
       {nodesQ.isLoading && <div className="text-fg-muted">{t("common.loading")}</div>}
@@ -325,7 +385,18 @@ function NodeTable({
                 </td>
                 <td className="px-3 py-2.5 font-mono">{m ? fmtNum(m.in) : "—"}</td>
                 <td className="px-3 py-2.5 font-mono">{m ? fmtNum(m.out) : "—"}</td>
-                <td className="px-3 py-2.5 font-mono">{m ? fmtNum(m.errors) : "—"}</td>
+                <td className="px-3 py-2.5 font-mono">
+                  {m ? (
+                    <span className="inline-flex items-baseline gap-1.5">
+                      {fmtNum(m.errors)}
+                      {nodeErrPct(m) && (
+                        <span className="text-[11px] text-err">{nodeErrPct(m)}</span>
+                      )}
+                    </span>
+                  ) : (
+                    "—"
+                  )}
+                </td>
                 <td className="px-3 py-2.5">
                   <Pill tone={s.tone}>{s.label}</Pill>
                 </td>
@@ -355,6 +426,13 @@ function fmtMs(ms: number): string {
   if (ms <= 0) return "—";
   if (ms >= 1000) return (ms / 1000).toFixed(1) + "s";
   return Math.round(ms) + "ms";
+}
+
+// nodeErrPct — доля ошибок узла (errors/in) как "%" (§44.D, как в шапке).
+// null, если ошибок нет или нет входящих — тогда процент НЕ выводим.
+function nodeErrPct(m: Throughput): string | null {
+  if (m.errors <= 0 || m.in <= 0) return null;
+  return ((m.errors / m.in) * 100).toFixed(2) + "%";
 }
 
 function NodeCards({
@@ -413,6 +491,7 @@ function NodeCards({
                 label={t("overview.table.errors")}
                 value={m ? fmtNum(m.errors) : "—"}
                 tone={m && m.errors > 0 ? "err" : undefined}
+                sub={m ? nodeErrPct(m) : null}
               />
             </div>
             <Sparkline data={m?.spark ?? []} variant={s.variant} period={period} />
@@ -437,10 +516,23 @@ function NodeCards({
   );
 }
 
-function CardStat({ label, value, tone }: { label: string; value: string; tone?: "err" }) {
+function CardStat({
+  label,
+  value,
+  tone,
+  sub,
+}: {
+  label: string;
+  value: string;
+  tone?: "err";
+  sub?: string | null;
+}) {
   return (
     <div>
-      <div className={cn("font-mono text-[15px]", tone === "err" && "text-err")}>{value}</div>
+      <div className={cn("font-mono text-[15px]", tone === "err" && "text-err")}>
+        {value}
+        {sub && <span className="ml-1 align-baseline text-[11px] text-err">{sub}</span>}
+      </div>
       <div className="text-[10px] uppercase tracking-wide text-fg-subtle">{label}</div>
     </div>
   );

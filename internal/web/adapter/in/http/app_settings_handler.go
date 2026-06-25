@@ -67,7 +67,13 @@ func (h *AppSettingsHandler) GetPublic(c *gin.Context) {
 	if s.General.PublicBaseURL != nil {
 		url = *s.General.PublicBaseURL
 	}
-	c.JSON(http.StatusOK, gin.H{"public_base_url": url})
+	// §44.C: интервал автообновления метрик (резолв nil → дефолт) — нужен
+	// дашборду/страницам узлов всем авторизованным, не только admin.
+	refetch := domain.MetricsRefetchDefaultMs
+	if s.General.MetricsRefetchMs != nil {
+		refetch = *s.General.MetricsRefetchMs
+	}
+	c.JSON(http.StatusOK, gin.H{"public_base_url": url, "metrics_refetch_ms": refetch})
 }
 
 // Update godoc
@@ -90,7 +96,7 @@ func (h *AppSettingsHandler) Update(c *gin.Context) {
 	}
 	if err := h.uc.Update(c.Request.Context(), actorFromCtx(c), &patch); err != nil {
 		if errors.Is(err, domain.ErrPublicBaseURLInvalid) || errors.Is(err, domain.ErrTelegramCronInvalid) ||
-			errors.Is(err, domain.ErrSessionTTLInvalid) {
+			errors.Is(err, domain.ErrSessionTTLInvalid) || errors.Is(err, domain.ErrMetricsRefetchInvalid) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
