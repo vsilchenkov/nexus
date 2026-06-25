@@ -1770,6 +1770,14 @@ definitions:
     type: object
   nexus_internal_domain.GeneralSettings:
     properties:
+      metrics_approx_counts:
+        description: |-
+          MetricsApproxCounts — режим подсчёта уникальных запросов в KPI узлов и
+          счётчиках дашборда (§44-perf). nil/false = ТОЧНО (countDistinct/uniqExact,
+          дефолт); true = ПРИБЛИЗИТЕЛЬНО (uniq/uniqIf, HyperLogLog: ~3× дешевле по CPU,
+          ошибка ~0.3%). Оператор включает приблизительный режим, когда узлов/данных
+          много и точный distinct упирает ClickHouse в 100% CPU. Не секрет.
+        type: boolean
       metrics_refetch_ms:
         description: |-
           MetricsRefetchMs — интервал автообновления метрик на дашборде и страницах

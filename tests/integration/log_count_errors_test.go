@@ -139,7 +139,7 @@ func TestLogReader_NodeKPI_Chart_E2E(t *testing.T) {
 	untilMs := now.Add(time.Hour).UnixMilli()
 
 	// KPI — по уникальным запросам (ID): Total=3 (A,B,C), Delivered=2 (A,C), Errors=1 (B).
-	kpi, err := reader.NodeKPI(ctx, table, "", sinceMs, untilMs)
+	kpi, err := reader.NodeKPI(ctx, table, "", sinceMs, untilMs, false)
 	require.NoError(t, err)
 	require.EqualValues(t, 3, kpi.Total, "3 уникальных запроса (A,B,C)")
 	require.EqualValues(t, 2, kpi.Delivered, "A и C хотя бы раз доставлены")
@@ -160,7 +160,7 @@ func TestLogReader_NodeKPI_Chart_E2E(t *testing.T) {
 	require.EqualValues(t, 2, sumErr, "2 строки done=0 (A-fail, B)")
 
 	// Окно в прошлом — пусто.
-	past, err := reader.NodeKPI(ctx, table, "", now.Add(-2*time.Hour).UnixMilli(), now.Add(-time.Hour).UnixMilli())
+	past, err := reader.NodeKPI(ctx, table, "", now.Add(-2*time.Hour).UnixMilli(), now.Add(-time.Hour).UnixMilli(), false)
 	require.NoError(t, err)
 	require.Zero(t, past.Total)
 }
@@ -232,7 +232,7 @@ func TestLogReader_NodeIDFilter_E2E(t *testing.T) {
 	require.NotContains(t, ids, "00000000-0000-0000-0000-0000000000b1")
 
 	// NodeKPI nodeA — 3 уникальных (2 свои + legacy), все ошибки.
-	kpi, err := reader.NodeKPI(ctx, table, nodeA, 0, 0)
+	kpi, err := reader.NodeKPI(ctx, table, nodeA, 0, 0, false)
 	require.NoError(t, err)
 	require.EqualValues(t, 3, kpi.Total)
 	require.EqualValues(t, 3, kpi.Errors)

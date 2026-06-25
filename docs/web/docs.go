@@ -6587,6 +6587,10 @@ const docTemplate = `{
         "nexus_internal_domain.GeneralSettings": {
             "type": "object",
             "properties": {
+                "metrics_approx_counts": {
+                    "description": "MetricsApproxCounts — режим подсчёта уникальных запросов в KPI узлов и\nсчётчиках дашборда (§44-perf). nil/false = ТОЧНО (countDistinct/uniqExact,\nдефолт); true = ПРИБЛИЗИТЕЛЬНО (uniq/uniqIf, HyperLogLog: ~3× дешевле по CPU,\nошибка ~0.3%). Оператор включает приблизительный режим, когда узлов/данных\nмного и точный distinct упирает ClickHouse в 100% CPU. Не секрет.",
+                    "type": "boolean"
+                },
                 "metrics_refetch_ms": {
                     "description": "MetricsRefetchMs — интервал автообновления метрик на дашборде и страницах\nузлов, мс (§44.C). nil = дефолт MetricsRefetchDefaultMs. Диапазон\n[MetricsRefetchMinMs, MetricsRefetchMaxMs]. Отдаётся всем авторизованным\nчерез /api/settings/public (не секрет).",
                     "type": "integer"

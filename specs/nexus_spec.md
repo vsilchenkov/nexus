@@ -3462,6 +3462,10 @@ checksum по полному телу. **(2) Транспортные лимит
 - **44.J Дата в логах.** Время в таблице логов и «последних запросах» дополнено датой `DD.MM HH:MM:SS`
   (nowrap, без слома разметки).
 - **44.G Колонка «Команды» в Users** (батч `ListTeamsByUsers`); warn-чип при `default_team_id` вне членств.
+- **44.L Режим подсчёта уникальных** (`app_settings.general.metrics_approx_counts`, дефолт false=точно).
+  `true` — `uniq`/`uniqIf` (HyperLogLog, ~0.3% ошибка, ~3× дешевле CPU) вместо `countDistinct`; для
+  больших объёмов/много узлов, когда точный distinct упирает ClickHouse в 100% CPU за 30д. Тоггл в
+  `Settings → General`, применяется на лету; инвариант «шапка=Σ таблицы» сохраняется.
 - **Смежно:** резолв current_team по членству при входе (§18.9); невалидный UUID `:id`→404 (Sentry NEXUS-7).
 
 Подробности — [sections/44-dashboard-counters.md](sections/44-dashboard-counters.md). Анализ боевого

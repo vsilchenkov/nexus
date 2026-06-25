@@ -26,11 +26,27 @@ type MetricsUsecase struct {
 	prom     port.PromMetrics    // может быть nil
 	nodeLogs port.NodeLogMetrics // ClickHouse-логи (per-node KPI/график)
 	nodes    port.NodeRepo
+	settings port.AppSettingsRepo // §44-perf: режим подсчёта уникальных (может быть nil)
 	logger   logging.Logger
 }
 
-func NewMetricsUsecase(prom port.PromMetrics, nodeLogs port.NodeLogMetrics, nodes port.NodeRepo, logger logging.Logger) *MetricsUsecase {
-	return &MetricsUsecase{prom: prom, nodeLogs: nodeLogs, nodes: nodes, logger: logger}
+func NewMetricsUsecase(prom port.PromMetrics, nodeLogs port.NodeLogMetrics, nodes port.NodeRepo, settings port.AppSettingsRepo, logger logging.Logger) *MetricsUsecase {
+	return &MetricsUsecase{prom: prom, nodeLogs: nodeLogs, nodes: nodes, settings: settings, logger: logger}
+}
+
+// approxCounts читает режим подсчёта уникальных из app_settings (§44-perf):
+// false (дефолт) = точно (countDistinct/uniqExact), true = приблизительно
+// (uniq/uniqIf, HyperLogLog). Деградирует в точный режим при nil settings или
+// ошибке чтения — точность важнее, потеря производительности безопаснее ошибки.
+func (u *MetricsUsecase) approxCounts(ctx context.Context) bool {
+	if u.settings == nil {
+		return false
+	}
+	s, err := u.settings.Get(ctx)
+	if err != nil || s == nil || s.General.MetricsApproxCounts == nil {
+		return false
+	}
+	return *s.General.MetricsApproxCounts
 }
 
 // OverviewKPI — 4 KPI головного экрана + флаг доступности Prometheus.
@@ -188,6 +204,9 @@ func (u *MetricsUsecase) nodesOverviewCH(ctx context.Context, teamID string, sin
 		return NodesOverview{Items: []NodeThroughputRow{}}
 	}
 	sinceMs, untilMs := since.UnixMilli(), until.UnixMilli()
+	// §44-perf: режим подсчёта уникальных читаем ОДИН раз на весь батч (а не на
+	// каждый узел) и передаём во все горутины.
+	approx := u.approxCounts(ctx)
 	rows := make([]NodeThroughputRow, len(nodes))
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(12)
@@ -198,7 +217,7 @@ func (u *MetricsUsecase) nodesOverviewCH(ctx context.Context, teamID string, sin
 			continue // нет логирования → нет per-node CH-метрик
 		}
 		g.Go(func() error {
-			kpi, kerr := u.nodeLogs.NodeKPI(gctx, n.ClickHouseTable, n.ID, sinceMs, untilMs)
+			kpi, kerr := u.nodeLogs.NodeKPI(gctx, n.ClickHouseTable, n.ID, sinceMs, untilMs, approx)
 			if kerr != nil {
 				u.logger.Warn("nodes overview: node kpi failed",
 					u.logger.Str("node", n.Path), u.logger.Err(kerr))
@@ -291,7 +310,7 @@ func (u *MetricsUsecase) NodeMetrics(ctx context.Context, nodeID, teamID string,
 		return res, nil
 	}
 	sinceMs, untilMs := since.UnixMilli(), until.UnixMilli()
-	kpi, err := u.nodeLogs.NodeKPI(ctx, n.ClickHouseTable, n.ID, sinceMs, untilMs)
+	kpi, err := u.nodeLogs.NodeKPI(ctx, n.ClickHouseTable, n.ID, sinceMs, untilMs, u.approxCounts(ctx))
 	if err != nil {
 		u.logger.Warn("clickhouse node kpi failed", u.logger.Err(err))
 		return res, nil

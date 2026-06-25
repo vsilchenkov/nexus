@@ -662,7 +662,9 @@
       "session_ttl": "Session duration (minutes)",
       "session_ttl_hint": "How many minutes a user session stays alive without activity. Allowed 5 minutes .. 30 days (43200 min). Applied without restart. Leave empty to use the config default.",
       "metrics_refetch": "Metrics auto-refresh interval (seconds)",
-      "metrics_refetch_hint": "How often the dashboard and node pages refresh metrics. Allowed 1 .. 120 seconds. Leave empty for the default (12 s)."
+      "metrics_refetch_hint": "How often the dashboard and node pages refresh metrics. Allowed 1 .. 120 seconds. Leave empty for the default (12 s).",
+      "metrics_approx": "Approximate unique-request counts (faster)",
+      "metrics_approx_hint": "Off (default) — exact counts (countDistinct). On — approximate (HyperLogLog, ~0.3% error) but ~3× cheaper on CPU. Enable when there are many nodes/data and the exact count pushes ClickHouse to 100% CPU on the dashboard."
     },
     "tokens": {
       "title": "API tokens",

@@ -89,6 +89,13 @@ type GeneralSettings struct {
 	// [MetricsRefetchMinMs, MetricsRefetchMaxMs]. Отдаётся всем авторизованным
 	// через /api/settings/public (не секрет).
 	MetricsRefetchMs *int `json:"metrics_refetch_ms,omitempty"`
+
+	// MetricsApproxCounts — режим подсчёта уникальных запросов в KPI узлов и
+	// счётчиках дашборда (§44-perf). nil/false = ТОЧНО (countDistinct/uniqExact,
+	// дефолт); true = ПРИБЛИЗИТЕЛЬНО (uniq/uniqIf, HyperLogLog: ~3× дешевле по CPU,
+	// ошибка ~0.3%). Оператор включает приблизительный режим, когда узлов/данных
+	// много и точный distinct упирает ClickHouse в 100% CPU. Не секрет.
+	MetricsApproxCounts *bool `json:"metrics_approx_counts,omitempty"`
 }
 
 // Интервал автообновления метрик (§44.C): дефолт 12с, диапазон 1с..120с.

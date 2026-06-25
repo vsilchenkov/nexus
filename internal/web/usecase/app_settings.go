@@ -156,6 +156,10 @@ func mergeAppSettings(current, patch *domain.AppSettings) *domain.AppSettings {
 	if patch.General.MetricsRefetchMs != nil {
 		out.General.MetricsRefetchMs = patch.General.MetricsRefetchMs
 	}
+	// §44-perf: режим подсчёта уникальных (точно/приблизительно), не секрет.
+	if patch.General.MetricsApproxCounts != nil {
+		out.General.MetricsApproxCounts = patch.General.MetricsApproxCounts
+	}
 
 	// §34.2: Security — длительность сессии (не секрет).
 	if patch.Security.SessionTTLSeconds != nil {
@@ -248,7 +252,8 @@ func validateTelegramPatch(p *domain.AppSettings) error {
 // содержит хотя бы одно не-nil поле. Используется в audit details.
 func changedSections(p *domain.AppSettings) []string {
 	var out []string
-	if p.General.PublicBaseURL != nil || p.General.VersionOverride != nil || p.General.MetricsRefetchMs != nil {
+	if p.General.PublicBaseURL != nil || p.General.VersionOverride != nil ||
+		p.General.MetricsRefetchMs != nil || p.General.MetricsApproxCounts != nil {
 		out = append(out, "general")
 	}
 	if p.Security.SessionTTLSeconds != nil {

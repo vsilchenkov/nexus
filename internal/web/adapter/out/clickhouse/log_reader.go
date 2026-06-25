@@ -514,16 +514,27 @@ func (r *LogReaderCH) DeleteFailed(ctx context.Context, table, nodeID string, si
 	return n, nil
 }
 
-// NodeKPI — ТОЧНЫЕ per-node KPI из ClickHouse-логов за окно (sinceMs, untilMs]
-// (§21, вкладки «Обзор»/«Метрики» узла). В отличие от Prometheus increase() —
-// мгновенные точные счётчики по уникальным запросам (ID), без rate-экстраполяции
-// и без зависимости от доступности Prometheus:
+// NodeKPI — per-node KPI из ClickHouse-логов за окно (sinceMs, untilMs] (§21,
+// вкладки «Обзор»/«Метрики» узла; §44.A — счётчики шапки дашборда). В отличие от
+// Prometheus increase() — мгновенные счётчики по уникальным запросам (ID), без
+// rate-экстраполяции и без зависимости от доступности Prometheus.
 //
-//	Total     = countDistinct(ID)         — уникальных запросов за окно;
-//	Delivered = uniqExactIf(ID, done = 1) — из них хотя бы раз доставлены (2xx);
-//	Errors    = Total - Delivered         — так и не доставлены;
-//	P95/P99   = перцентили длительности (мс) по всем попыткам.
-func (r *LogReaderCH) NodeKPI(ctx context.Context, table, nodeID string, sinceMs, untilMs int64) (port.NodeKPI, error) {
+// §44-perf: режим подсчёта уникальных управляется флагом approx (настройка
+// app_settings.general.metrics_approx_counts, дефолт false = точно):
+//
+//   - approx=false (по умолчанию): countDistinct/uniqExactIf — ТОЧНЫЙ счёт
+//     (полный хэш-сет ID). Дороже на больших объёмах.
+//
+//   - approx=true: uniq/uniqIf — HyperLogLog, ПРИБЛИЗИТЕЛЬНО (ошибка ~0.3%), но
+//     в ~3× дешевле по CPU. Включается оператором, когда узлов/данных много и
+//     точный distinct упирает ClickHouse в 100% CPU. Инвариант «шапка = Σ строк
+//     таблицы» сохраняется в обоих режимах (обе стороны из одной агрегации).
+//
+//     Total     = countDistinct|uniq(ID)            — уникальных запросов за окно;
+//     Delivered = uniqExactIf|uniqIf(ID, done = 1)  — из них хотя бы раз доставлены (2xx);
+//     Errors    = Total - Delivered                 — так и не доставлены (guard delivered≤total);
+//     P95/P99   = перцентили длительности (мс) по всем попыткам.
+func (r *LogReaderCH) NodeKPI(ctx context.Context, table, nodeID string, sinceMs, untilMs int64, approx bool) (port.NodeKPI, error) {
 	if !isSafeTableName(table) {
 		return port.NodeKPI{}, fmt.Errorf("invalid table name: %q", table)
 	}
@@ -545,12 +556,16 @@ func (r *LogReaderCH) NodeKPI(ctx context.Context, table, nodeID string, sinceMs
 	if err != nil {
 		return port.NodeKPI{}, err
 	}
+	totalExpr, deliveredExpr := "countDistinct(ID)", "uniqExactIf(ID, done = 1)"
+	if approx {
+		totalExpr, deliveredExpr = "uniq(ID)", "uniqIf(ID, done = 1)"
+	}
 	q := fmt.Sprintf(`SELECT
-		countDistinct(ID) AS total,
-		uniqExactIf(ID, done = 1) AS delivered,
+		%s AS total,
+		%s AS delivered,
 		quantile(0.95)(duration) AS p95,
 		quantile(0.99)(duration) AS p99
-	FROM %s WHERE %s`, table, strings.Join(conds, " AND "))
+	FROM %s WHERE %s`, totalExpr, deliveredExpr, table, strings.Join(conds, " AND "))
 	var total, delivered uint64
 	var p95, p99 float64
 	if err := conn.QueryRow(ctx, q, args...).Scan(&total, &delivered, &p95, &p99); err != nil {
