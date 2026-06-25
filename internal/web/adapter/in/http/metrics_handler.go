@@ -107,8 +107,8 @@ type overviewKPIDTO struct {
 }
 
 // Overview godoc
-// @Summary  Глобальные KPI панели за 24ч (§21).
-// @Description  Источник — Prometheus. Без настроенного prometheus.url возвращает нули с prometheus_available=false.
+// @Summary  KPI шапки: очередь Kafka + доступность Prometheus (§21, §43.A).
+// @Description  Только очередь Kafka (мгновенный lag, Prometheus). Трафик (входящие/исходящие/ошибки) переехал в GET /api/metrics/nodes → totals (за выбранный период, ClickHouse), чтобы шапка сходилась с таблицей. Без prometheus.url — нули с prometheus_available=false.
 // @Tags     metrics
 // @Produce  json
 // @Success  200  {object}  overviewKPIDTO
@@ -138,9 +138,18 @@ type nodeThroughputDTO struct {
 	LastError bool `json:"last_error"`
 }
 
+// overviewTotalsDTO — агрегат для KPI шапки (§43.A): СУММА строк items за тот же
+// период. error_rate = errors/incoming (0..1).
+type overviewTotalsDTO struct {
+	Incoming  uint64  `json:"incoming"`
+	Outgoing  uint64  `json:"outgoing"`
+	Errors    uint64  `json:"errors"`
+	ErrorRate float64 `json:"error_rate"`
+}
+
 // NodesOverview godoc
-// @Summary  Per-node throughput за окно (§21).
-// @Description  Источник — Prometheus (sum by node). Ключ node = path узла. Без Prometheus — пустой список с prometheus_available=false.
+// @Summary  Per-node throughput за окно + агрегат для шапки (§21, §43.A).
+// @Description  Источник — ClickHouse-логи (уникальные запросы), fallback Prometheus. Ключ node = path узла. Поле totals = СУММА строк (incoming/outgoing/errors/error_rate) для KPI шапки. Без источника — пустой список с prometheus_available=false.
 // @Tags     metrics
 // @Produce  json
 // @Param    range  query  string  false  "1h | 3h | 24h | 7d | 14d | 30d (default 1h)"
@@ -165,7 +174,13 @@ func (h *MetricsHandler) NodesOverview(c *gin.Context) {
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"items":                items,
+		"items": items,
+		"totals": overviewTotalsDTO{
+			Incoming:  res.Totals.Incoming,
+			Outgoing:  res.Totals.Outgoing,
+			Errors:    res.Totals.Errors,
+			ErrorRate: res.Totals.ErrorRate,
+		},
 		"prometheus_available": res.PrometheusAvailable,
 	})
 }

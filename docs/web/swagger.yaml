@@ -2697,8 +2697,9 @@ paths:
       - auth
   /api/metrics/nodes:
     get:
-      description: Источник — Prometheus (sum by node). Ключ node = path узла. Без
-        Prometheus — пустой список с prometheus_available=false.
+      description: Источник — ClickHouse-логи (уникальные запросы), fallback Prometheus.
+        Ключ node = path узла. Поле totals = СУММА строк (incoming/outgoing/errors/error_rate)
+        для KPI шапки. Без источника — пустой список с prometheus_available=false.
       parameters:
       - description: 1h | 3h | 24h | 7d | 14d | 30d (default 1h)
         in: query
@@ -2723,7 +2724,7 @@ paths:
       security:
       - CookieAuth: []
       - ApiTokenAuth: []
-      summary: Per-node throughput за окно (§21).
+      summary: Per-node throughput за окно + агрегат для шапки (§21, §43.A).
       tags:
       - metrics
   /api/metrics/nodes/{id}:
@@ -2768,8 +2769,9 @@ paths:
       - metrics
   /api/metrics/overview:
     get:
-      description: Источник — Prometheus. Без настроенного prometheus.url возвращает
-        нули с prometheus_available=false.
+      description: Только очередь Kafka (мгновенный lag, Prometheus). Трафик (входящие/исходящие/ошибки)
+        переехал в GET /api/metrics/nodes → totals (за выбранный период, ClickHouse),
+        чтобы шапка сходилась с таблицей. Без prometheus.url — нули с prometheus_available=false.
       produces:
       - application/json
       responses:
@@ -2780,7 +2782,7 @@ paths:
       security:
       - CookieAuth: []
       - ApiTokenAuth: []
-      summary: Глобальные KPI панели за 24ч (§21).
+      summary: 'KPI шапки: очередь Kafka + доступность Prometheus (§21, §43.A).'
       tags:
       - metrics
   /api/nodes:

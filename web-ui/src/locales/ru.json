@@ -58,10 +58,10 @@
     "new_node": "Новый узел",
     "search_placeholder": "Поиск по пути или URL…",
     "kpi": {
-      "incoming": "Входящие за 24ч",
-      "outgoing": "Исходящие за 24ч",
+      "incoming": "Входящие",
+      "outgoing": "Исходящие",
       "queue": "Очередь Kafka",
-      "errors": "Ошибки за 24ч"
+      "errors": "Ошибки"
     },
     "filter": { "all_methods": "Все методы", "all_statuses": "Все статусы" },
     "view": { "table": "Таблица", "cards": "Карточки" },

@@ -1330,14 +1330,14 @@ const docTemplate = `{
                         "ApiTokenAuth": []
                     }
                 ],
-                "description": "Источник — Prometheus (sum by node). Ключ node = path узла. Без Prometheus — пустой список с prometheus_available=false.",
+                "description": "Источник — ClickHouse-логи (уникальные запросы), fallback Prometheus. Ключ node = path узла. Поле totals = СУММА строк (incoming/outgoing/errors/error_rate) для KPI шапки. Без источника — пустой список с prometheus_available=false.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "metrics"
                 ],
-                "summary": "Per-node throughput за окно (§21).",
+                "summary": "Per-node throughput за окно + агрегат для шапки (§21, §43.A).",
                 "parameters": [
                     {
                         "type": "string",
@@ -1439,14 +1439,14 @@ const docTemplate = `{
                         "ApiTokenAuth": []
                     }
                 ],
-                "description": "Источник — Prometheus. Без настроенного prometheus.url возвращает нули с prometheus_available=false.",
+                "description": "Только очередь Kafka (мгновенный lag, Prometheus). Трафик (входящие/исходящие/ошибки) переехал в GET /api/metrics/nodes → totals (за выбранный период, ClickHouse), чтобы шапка сходилась с таблицей. Без prometheus.url — нули с prometheus_available=false.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "metrics"
                 ],
-                "summary": "Глобальные KPI панели за 24ч (§21).",
+                "summary": "KPI шапки: очередь Kafka + доступность Prometheus (§21, §43.A).",
                 "responses": {
                     "200": {
                         "description": "OK",

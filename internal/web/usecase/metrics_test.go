@@ -99,6 +99,8 @@ func (f *fakeNodeRepo) List(_ context.Context, _ port.ListNodesFilter) ([]*domai
 
 // --- Overview --------------------------------------------------------------
 
+// §43.A: Overview отдаёт только очередь Kafka + флаг доступности Prometheus.
+// Трафик (входящие/исходящие/ошибки) переехал в NodesOverview.Totals.
 func TestMetricsUsecase_Overview(t *testing.T) {
 	t.Parallel()
 	log := logging.NewNoop()
@@ -108,28 +110,25 @@ func TestMetricsUsecase_Overview(t *testing.T) {
 		uc := NewMetricsUsecase(nil, nil, &fakeNodeRepo{}, log)
 		got := uc.Overview(context.Background())
 		require.False(t, got.PrometheusAvailable)
-		require.Zero(t, got.Incoming24h)
+		require.Zero(t, got.KafkaQueue)
 	})
 
-	t.Run("happy path computes rate", func(t *testing.T) {
+	t.Run("happy path → kafka queue + available", func(t *testing.T) {
 		t.Parallel()
-		prom := &fakeProm{
-			totals: port.GlobalTotals{Incoming: 1_240_000, Outgoing: 1_230_000, Errors: 1_845.6},
-			queue:  312,
-		}
+		prom := &fakeProm{queue: 312}
 		uc := NewMetricsUsecase(prom, nil, &fakeNodeRepo{}, log)
 		got := uc.Overview(context.Background())
 		require.True(t, got.PrometheusAvailable)
-		require.EqualValues(t, 1_240_000, got.Incoming24h)
-		require.EqualValues(t, 1_230_000, got.Outgoing24h)
 		require.EqualValues(t, 312, got.KafkaQueue)
-		require.EqualValues(t, 1846, got.Errors24h) // округление
-		require.InDelta(t, 1845.6/1_230_000, got.ErrorRate, 1e-9)
+		// Трафик в шапке больше не считается здесь (§43.A).
+		require.Zero(t, got.Incoming24h)
+		require.Zero(t, got.Outgoing24h)
+		require.Zero(t, got.Errors24h)
 	})
 
-	t.Run("prom error degrades, not panics", func(t *testing.T) {
+	t.Run("kafka queue error degrades, not panics", func(t *testing.T) {
 		t.Parallel()
-		prom := &fakeProm{totalsErr: errors.New("boom")}
+		prom := &fakeProm{queueErr: errors.New("boom")}
 		uc := NewMetricsUsecase(prom, nil, &fakeNodeRepo{}, log)
 		got := uc.Overview(context.Background())
 		require.False(t, got.PrometheusAvailable)
@@ -168,6 +167,11 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 		require.EqualValues(t, 4198, got.Items[0].Out)
 		require.EqualValues(t, 2, got.Items[0].Errors)
 		require.True(t, got.Items[0].LastError, "§41: последний вызов — ошибка → Down")
+		// §43.A: шапка = сумма строк (Prometheus-ветка).
+		require.EqualValues(t, 4201, got.Totals.Incoming)
+		require.EqualValues(t, 4198, got.Totals.Outgoing)
+		require.EqualValues(t, 2, got.Totals.Errors)
+		require.InDelta(t, 2.0/4201.0, got.Totals.ErrorRate, 1e-9)
 	})
 
 	t.Run("prom error degrades", func(t *testing.T) {
@@ -204,6 +208,19 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 		require.EqualValues(t, 12, byNode["a/x"].P95ms)
 		require.Equal(t, []float64{5, 7}, byNode["a/x"].Spark)
 		require.Zero(t, byNode["b/y"].In, "узел без CH-таблицы → нули")
+		// §43.A: шапка = сумма строк (CH-ветка) = только узел a/x (b/y нулевой).
+		require.EqualValues(t, 50, got.Totals.Incoming)
+		require.EqualValues(t, 47, got.Totals.Outgoing)
+		require.EqualValues(t, 3, got.Totals.Errors)
+		require.InDelta(t, 3.0/50.0, got.Totals.ErrorRate, 1e-9)
+	})
+
+	t.Run("totals: пустой список → нулевой агрегат без паники", func(t *testing.T) {
+		t.Parallel()
+		uc := NewMetricsUsecase(nil, &fakeNodeLogs{}, &fakeNodeRepo{list: nil}, log)
+		got := uc.NodesOverview(context.Background(), "default", time.Now().Add(-time.Hour), time.Now())
+		require.Zero(t, got.Totals.Incoming)
+		require.Zero(t, got.Totals.ErrorRate)
 	})
 }
 

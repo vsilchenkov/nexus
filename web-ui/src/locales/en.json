@@ -58,10 +58,10 @@
     "new_node": "New node",
     "search_placeholder": "Search by path or URL…",
     "kpi": {
-      "incoming": "Incoming (24h)",
-      "outgoing": "Outgoing (24h)",
+      "incoming": "Incoming",
+      "outgoing": "Outgoing",
       "queue": "Kafka queue",
-      "errors": "Errors (24h)"
+      "errors": "Errors"
     },
     "filter": { "all_methods": "All methods", "all_statuses": "All statuses" },
     "view": { "table": "Table", "cards": "Cards" },

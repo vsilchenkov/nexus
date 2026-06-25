@@ -129,19 +129,24 @@ export default function Overview() {
   }, [nodesQ.data, method, statusFilter, throughput, sortRank, metricsReady]);
 
   const kpi = useStableData(kpiQ.data, "overview-kpi", (d) => d.prometheus_available);
-  const errPct = kpi && kpi.error_rate > 0 ? (kpi.error_rate * 100).toFixed(2) + "%" : "0%";
+  // §43.A: трафик KPI шапки = totals из throughput (сумма строк таблицы за
+  // выбранный период, ClickHouse) → шапка сходится с таблицей. Очередь Kafka —
+  // из kpiQ (мгновенный lag, только в Prometheus). Ярлык несёт выбранный период.
+  const tot = thrData?.totals;
+  const kpiPeriod = periodLabel(period, t);
+  const errPct = tot && tot.error_rate > 0 ? (tot.error_rate * 100).toFixed(2) + "%" : "0%";
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">
       <KpiRow>
-        <Kpi label={t("overview.kpi.incoming")} value={kpi ? fmtNum(kpi.incoming_24h) : "—"} />
-        <Kpi label={t("overview.kpi.outgoing")} value={kpi ? fmtNum(kpi.outgoing_24h) : "—"} />
+        <Kpi label={`${t("overview.kpi.incoming")} ${kpiPeriod}`} value={tot ? fmtNum(tot.incoming) : "—"} />
+        <Kpi label={`${t("overview.kpi.outgoing")} ${kpiPeriod}`} value={tot ? fmtNum(tot.outgoing) : "—"} />
         <Kpi label={t("overview.kpi.queue")} value={kpi ? fmtNum(kpi.kafka_queue) : "—"} />
         <Kpi
-          label={t("overview.kpi.errors")}
-          value={kpi ? fmtNum(kpi.errors_24h) : "—"}
-          delta={kpi ? errPct : undefined}
-          deltaTone={kpi && kpi.error_rate > 0.01 ? "down" : "muted"}
+          label={`${t("overview.kpi.errors")} ${kpiPeriod}`}
+          value={tot ? fmtNum(tot.errors) : "—"}
+          delta={tot ? errPct : undefined}
+          deltaTone={tot && tot.error_rate > 0.01 ? "down" : "muted"}
         />
       </KpiRow>
 

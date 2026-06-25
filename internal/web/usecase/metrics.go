@@ -56,10 +56,38 @@ type NodeThroughputRow struct {
 	LastError bool
 }
 
-// NodesOverview — батч per-node throughput за окно.
+// OverviewTotals — агрегат счётчиков шапки = СУММА строк таблицы узлов за тот же
+// период и из того же источника (§43.A). Раньше шапка считалась отдельно из
+// Prometheus (попытки, фикс. 24ч) и не сходилась с таблицей (CH, уникальные
+// запросы). Теперь «итог в шапке = сумме видимых строк» по построению.
+type OverviewTotals struct {
+	Incoming  uint64
+	Outgoing  uint64
+	Errors    uint64
+	ErrorRate float64 // errors / incoming (0..1)
+}
+
+// NodesOverview — батч per-node throughput за окно + агрегат для шапки.
 type NodesOverview struct {
 	Items               []NodeThroughputRow
+	Totals              OverviewTotals
 	PrometheusAvailable bool
+}
+
+// sumTotals — агрегат строк для шапки (§43.A). ErrorRate = доля недоставленных
+// от входящих (Errors/Incoming), а не от исходящих — интуитивнее «X% входящих
+// не доставлены».
+func sumTotals(items []NodeThroughputRow) OverviewTotals {
+	var t OverviewTotals
+	for _, it := range items {
+		t.Incoming += it.In
+		t.Outgoing += it.Out
+		t.Errors += it.Errors
+	}
+	if t.Incoming > 0 {
+		t.ErrorRate = float64(t.Errors) / float64(t.Incoming)
+	}
+	return t
 }
 
 // NodeMetrics — KPI + временной ряд одного узла.
@@ -78,16 +106,14 @@ func f2u(v float64) uint64 {
 	return uint64(v + 0.5)
 }
 
-// Overview — глобальные KPI за 24ч. Без Prometheus возвращает нули с
-// PrometheusAvailable=false. Ошибки запроса логируются и тоже деградируют
-// (не 500) — поллинг UI не должен спамить ошибками.
+// Overview — KPI шапки, которые НЕ агрегируются из таблицы узлов: очередь Kafka
+// (мгновенный lag, только в Prometheus) + флаг доступности Prometheus. Трафик
+// (входящие/исходящие/ошибки) переехал в /api/metrics/nodes → totals (§43.A):
+// там он = сумме строк таблицы за выбранный период (CH, уникальные запросы),
+// поэтому шапка и таблица сходятся. Без Prometheus — нули с
+// PrometheusAvailable=false; ошибка запроса деградирует (не 500).
 func (u *MetricsUsecase) Overview(ctx context.Context) OverviewKPI {
 	if u.prom == nil {
-		return OverviewKPI{}
-	}
-	totals, err := u.prom.GlobalTotals(ctx, 24*time.Hour)
-	if err != nil {
-		u.logger.Warn("prometheus global totals failed", u.logger.Err(err))
 		return OverviewKPI{}
 	}
 	queue, err := u.prom.KafkaQueue(ctx)
@@ -95,16 +121,8 @@ func (u *MetricsUsecase) Overview(ctx context.Context) OverviewKPI {
 		u.logger.Warn("prometheus kafka queue failed", u.logger.Err(err))
 		return OverviewKPI{}
 	}
-	var rate float64
-	if totals.Outgoing > 0 {
-		rate = totals.Errors / totals.Outgoing
-	}
 	return OverviewKPI{
-		Incoming24h:         f2u(totals.Incoming),
-		Outgoing24h:         f2u(totals.Outgoing),
 		KafkaQueue:          f2u(queue),
-		Errors24h:           f2u(totals.Errors),
-		ErrorRate:           rate,
 		PrometheusAvailable: true,
 	}
 }
@@ -133,6 +151,9 @@ func (u *MetricsUsecase) NodesOverview(ctx context.Context, teamID string, since
 	// §41 («Down»): оверлей исхода последнего вызова поверх любой ветки
 	// (CH-источник его не считает, gauge живёт только в Prometheus).
 	u.applyLastErrors(ctx, until, &res)
+	// §43.A: агрегат для шапки = сумма строк (в любом источнике, за тот же
+	// период) → «итог в шапке = сумме видимых строк таблицы».
+	res.Totals = sumTotals(res.Items)
 	return res
 }
 
