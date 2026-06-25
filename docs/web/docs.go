@@ -2542,8 +2542,14 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "конец диапазона (RFC3339 или UnixMilli)",
+                        "description": "конец диапазона (RFC3339 или UnixMilli); для keyset-пагинации — date_request самой старой загруженной строки",
                         "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "тай-брейкер keyset-пагинации: id самой старой загруженной строки (вместе с to — строгий курсор по плотным секундам)",
+                        "name": "before_id",
                         "in": "query"
                     },
                     {

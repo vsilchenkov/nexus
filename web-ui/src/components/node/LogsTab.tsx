@@ -13,6 +13,9 @@ import { type LogRow, type LogsResp, type LogDetail, type LogBodyChunk } from ".
 
 type StatusFilter = "all" | "ok" | "err";
 type PageSize = 50 | 100 | 200;
+// LogsCursor — keyset-курсор бесконечного скролла (§44/45-fix): время самой
+// старой загруженной строки (мс) + её id как тай-брейкер для «плотных» секунд.
+type LogsCursor = { to: number; beforeId: string };
 
 // LogsInitialFilter — стартовый фильтр логов, прокинутый кликом по графику (§33.4):
 // from/to в формате <input type="datetime-local"> (локальная зона).
@@ -80,18 +83,24 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   const logsQ = useInfiniteQuery({
     queryKey: ["logs", id, advQueryParams],
     enabled: !!id && hasLogsTable && !live, // в Live snapshot не нужен — читаем SSE-буфер
-    initialPageParam: null as number | null,
+    initialPageParam: null as LogsCursor | null,
     queryFn: ({ pageParam }) => {
       const params: Record<string, string | number> = { ...advQueryParams };
-      // Курсор страниц >1: граница date_request <= to ВКЛЮЧИТЕЛЬНА (дедуп по id ниже).
-      if (pageParam != null) params.to = pageParam;
+      // §44/45-fix: keyset-курсор (date_request, id) — строгая граница
+      // (date_request < to) ИЛИ (= to И id < before_id). Перешагивает «плотные»
+      // секунды (сотни записей с одинаковым date_request), где простой `to <=`
+      // зацикливался → скролл не двигался вниз. Дедуп по id ниже — страховка.
+      if (pageParam) {
+        params.to = pageParam.to;
+        params.before_id = pageParam.beforeId;
+      }
       return api.get<LogsResp>(`/api/nodes/${id}/logs`, params);
     },
     getNextPageParam: (lastPage) => {
       const items = lastPage.items ?? [];
       if (items.length < Number(advQueryParams.limit)) return undefined; // конец истории
       const oldest = items[items.length - 1]; // DESC → последний самый старый
-      return oldest ? new Date(oldest.date_request).getTime() : undefined;
+      return oldest ? { to: new Date(oldest.date_request).getTime(), beforeId: oldest.id } : undefined;
     },
     // Авто-рефетч только пока пользователь у верха (см. atTop). При Live выключен.
     refetchInterval: !live && atTop ? 5_000 : false,

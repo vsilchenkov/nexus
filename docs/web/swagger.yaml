@@ -3491,9 +3491,15 @@ paths:
         in: query
         name: from
         type: string
-      - description: конец диапазона (RFC3339 или UnixMilli)
+      - description: конец диапазона (RFC3339 или UnixMilli); для keyset-пагинации
+          — date_request самой старой загруженной строки
         in: query
         name: to
+        type: string
+      - description: 'тай-брейкер keyset-пагинации: id самой старой загруженной строки
+          (вместе с to — строгий курсор по плотным секундам)'
+        in: query
+        name: before_id
         type: string
       - description: exact match по IP клиента
         in: query

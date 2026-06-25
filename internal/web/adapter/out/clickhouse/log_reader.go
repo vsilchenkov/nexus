@@ -310,8 +310,19 @@ func (r *LogReaderCH) Search(ctx context.Context, q port.LogQuery) ([]*domain.Lo
 		args = append(args, q.SinceMs)
 	}
 	if q.UntilMs > 0 {
-		conds = append(conds, "toUnixTimestamp64Milli(toDateTime64(date_request, 3)) <= ?")
-		args = append(args, q.UntilMs)
+		if q.BeforeID != "" {
+			// §44/45-fix: строгий keyset-курсор (date_request, ID) — перешагивает
+			// «плотные» секунды (сотни строк с одинаковым date_request секундной
+			// точности), где простой `<=` зацикливался на одной секунде. Монотонные
+			// функции CH индексирует — гранулы по date_request прунятся.
+			conds = append(conds,
+				"(toUnixTimestamp64Milli(toDateTime64(date_request, 3)) < ? "+
+					"OR (toUnixTimestamp64Milli(toDateTime64(date_request, 3)) = ? AND ID < ?))")
+			args = append(args, q.UntilMs, q.UntilMs, q.BeforeID)
+		} else {
+			conds = append(conds, "toUnixTimestamp64Milli(toDateTime64(date_request, 3)) <= ?")
+			args = append(args, q.UntilMs)
+		}
 	}
 	if q.IP != "" {
 		conds = append(conds, "IP = ?")
@@ -349,7 +360,7 @@ func (r *LogReaderCH) Search(ctx context.Context, q port.LogQuery) ([]*domain.Lo
 		return nil, err
 	}
 	rows, err := conn.Query(ctx, fmt.Sprintf(
-		`SELECT %s FROM %s%s ORDER BY date_request DESC LIMIT ?`,
+		`SELECT %s FROM %s%s ORDER BY date_request DESC, ID DESC LIMIT ?`,
 		listCols, q.Table, where), append(args, limit)...)
 	if err != nil {
 		return nil, classifyCHErr("clickhouse search", err)
