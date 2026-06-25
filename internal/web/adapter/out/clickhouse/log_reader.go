@@ -88,9 +88,14 @@ const selectCols = `ID, type, http_method, url, method, parameters, request, res
 // тянутся при разворачивании строки через GetByIDPreview/GetBodyChunk). Чтение
 // тяжёлых body-колонок для КАЖДОЙ строки списка раздувало I/O и сеть на узлах с
 // большими телами и тормозило пагинацию при скролле (§44). Порядок/число колонок
-// совпадает с selectCols — используется общий scanLogRow. Контентный поиск (q)
-// по-прежнему фильтрует по реальным телам в WHERE (там колонки и читаются).
-const listCols = `ID, type, http_method, url, method, parameters, '' AS request, '' AS response,
+// совпадает с selectCols — используется общий scanLogRow (скан по позиции, имя
+// алиаса неважно). Контентный поиск (q) по-прежнему фильтрует по реальным телам в
+// WHERE (там body-колонки и читаются — только при q).
+//
+// ВАЖНО: алиасы НЕ называем request/response — в ClickHouse алиас SELECT затеняет
+// одноимённую колонку в WHERE, и q-поиск (position(request, ?)) искал бы по пустой
+// строке. С нейтральными именами WHERE фильтрует по реальным колонкам.
+const listCols = `ID, type, http_method, url, method, parameters, '' AS list_req, '' AS list_resp,
 	status, reason, date_create, date_request, date_response,
 	duration, done, checksum_request, checksum_response,
 	Host, IP, attempts, attempts_details, node_id`
