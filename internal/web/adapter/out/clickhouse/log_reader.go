@@ -83,6 +83,18 @@ const selectCols = `ID, type, http_method, url, method, parameters, request, res
 	duration, done, checksum_request, checksum_response,
 	Host, IP, attempts, attempts_details, node_id`
 
+// listCols — как selectCols, но тела (request/response) НЕ читаются с диска:
+// возвращаются пустыми (”). Список логов их не показывает (§42 — тела ленивые,
+// тянутся при разворачивании строки через GetByIDPreview/GetBodyChunk). Чтение
+// тяжёлых body-колонок для КАЖДОЙ строки списка раздувало I/O и сеть на узлах с
+// большими телами и тормозило пагинацию при скролле (§44). Порядок/число колонок
+// совпадает с selectCols — используется общий scanLogRow. Контентный поиск (q)
+// по-прежнему фильтрует по реальным телам в WHERE (там колонки и читаются).
+const listCols = `ID, type, http_method, url, method, parameters, '' AS request, '' AS response,
+	status, reason, date_create, date_request, date_response,
+	duration, done, checksum_request, checksum_response,
+	Host, IP, attempts, attempts_details, node_id`
+
 // previewCols — как selectCols, но тела заменены префиксом substringUTF8(col,1,?)
 // (превью), а в конец добавлены полные длины lengthUTF8(col). Не тянет тела
 // целиком в Go ради дефолтного разворачивания строки лога (§42). Порядок
@@ -237,6 +249,8 @@ func (r *LogReaderCH) ListSince(ctx context.Context, table, nodeID string, curso
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
+	// §44: тела не читаем (listCols) — SSE-поток их не шлёт (toLogDTO с
+	// includeBodies=false), тянутся лениво при разворачивании строки.
 	conds := []string{"toUnixTimestamp64Milli(toDateTime64(date_request, 3)) > ?"}
 	args := []any{cursor}
 	if c, a := nodeFilterCond(nodeID); c != "" {
@@ -249,7 +263,7 @@ func (r *LogReaderCH) ListSince(ctx context.Context, table, nodeID string, curso
 	}
 	rows, err := conn.Query(ctx, fmt.Sprintf(
 		`SELECT %s FROM %s WHERE %s ORDER BY date_request ASC LIMIT ?`,
-		selectCols, table, strings.Join(conds, " AND ")), append(args, limit)...)
+		listCols, table, strings.Join(conds, " AND ")), append(args, limit)...)
 	if err != nil {
 		return nil, classifyCHErr("clickhouse list since", err)
 	}
@@ -331,7 +345,7 @@ func (r *LogReaderCH) Search(ctx context.Context, q port.LogQuery) ([]*domain.Lo
 	}
 	rows, err := conn.Query(ctx, fmt.Sprintf(
 		`SELECT %s FROM %s%s ORDER BY date_request DESC LIMIT ?`,
-		selectCols, q.Table, where), append(args, limit)...)
+		listCols, q.Table, where), append(args, limit)...)
 	if err != nil {
 		return nil, classifyCHErr("clickhouse search", err)
 	}
