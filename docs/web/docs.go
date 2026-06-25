@@ -3945,6 +3945,61 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/users/{id}/default-team": {
+            "put": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Назначает default_team_id. team_id должен быть среди команд, в\nкоторых пользователь состоит (иначе 400) — сделать дефолтной чужую\nкоманду нельзя (§18.9 при входе перекинул бы по членству).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Сменить команду по умолчанию пользователя (admin only, §45).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "user id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "team id",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.setDefaultTeamRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "не член команды / битый запрос",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "пользователь не найден",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/users/{id}/password": {
             "post": {
                 "security": [
@@ -6167,6 +6222,17 @@ const docTemplate = `{
                 },
                 "ts": {
                     "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.setDefaultTeamRequest": {
+            "type": "object",
+            "required": [
+                "team_id"
+            ],
+            "properties": {
+                "team_id": {
+                    "type": "string"
                 }
             }
         },

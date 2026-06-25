@@ -3470,3 +3470,20 @@ checksum по полному телу. **(2) Транспортные лимит
 
 Подробности — [sections/44-dashboard-counters.md](sections/44-dashboard-counters.md). Анализ боевого
 инстанса — скил `.claude/skills/nexus-prod`.
+
+## 45. Смена команды по умолчанию пользователя прямо в списке
+
+Inline-смена `users.default_team_id` админом — клик по чипу команды в колонке «Команды» списка
+`Settings → Users` (§44.G). Меняется только `default_team_id` (определяет `current_team` при входе,
+§18.9); членства не трогаются.
+
+- **Правило:** дефолтной можно сделать лишь команду из членств пользователя (иначе 400
+  `ErrUserNotTeamMember`) — §18.9 при входе всё равно перекинул бы на команду по членству. Warn-чип
+  «⚠ default» (рассинхрон, §44.G) как цель клика не кликабелен.
+- **API:** `PUT /api/users/:id/default-team` (admin), тело `{ "team_id": "<uuid>" }` → 204; 400 при
+  не-членстве; 404 (вкл. невалидный UUID, §44.I). Узкий эндпоинт, а не расширение `PUT /api/users/:id`.
+- **Слои:** handler `SetDefaultTeam` → usecase `SetDefaultTeam` (валидация членства через
+  `ListUserTeams`, audit) → repo `UpdateDefaultTeam`. UI: чипы членств кликабельны, `useMutation` →
+  `invalidateQueries(["users"])`. Активные сессии не трогаются (дефолт влияет на следующий вход).
+
+Подробности — [sections/45-user-default-team.md](sections/45-user-default-team.md).

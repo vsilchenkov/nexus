@@ -28,6 +28,9 @@ type UserRepo interface {
 	CountActiveAdmins(ctx context.Context) (int, error)
 	Create(ctx context.Context, u *domain.User) error
 	Update(ctx context.Context, u *domain.User) error
+	// UpdateDefaultTeam меняет только default_team_id пользователя (§45). Членство
+	// валидируется в usecase; репозиторий лишь пишет колонку.
+	UpdateDefaultTeam(ctx context.Context, userID, teamID string) error
 	UpdatePassword(ctx context.Context, id, passwordHash string, mustChange bool) error
 	UpdateLastLogin(ctx context.Context, id string, at time.Time) error
 	Delete(ctx context.Context, id string) error

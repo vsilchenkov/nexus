@@ -1489,6 +1489,13 @@ definitions:
       ts:
         type: integer
     type: object
+  internal_web_adapter_in_http.setDefaultTeamRequest:
+    properties:
+      team_id:
+        type: string
+    required:
+    - team_id
+    type: object
   internal_web_adapter_in_http.switchTeamRequest:
     properties:
       team_id:
@@ -4474,6 +4481,44 @@ paths:
       security:
       - CookieAuth: []
       summary: Обновить пользователя (admin only).
+      tags:
+      - users
+  /api/users/{id}/default-team:
+    put:
+      consumes:
+      - application/json
+      description: |-
+        Назначает default_team_id. team_id должен быть среди команд, в
+        которых пользователь состоит (иначе 400) — сделать дефолтной чужую
+        команду нельзя (§18.9 при входе перекинул бы по членству).
+      parameters:
+      - description: user id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: team id
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.setDefaultTeamRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: не член команды / битый запрос
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "404":
+          description: пользователь не найден
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Сменить команду по умолчанию пользователя (admin only, §45).
       tags:
       - users
   /api/users/{id}/password:

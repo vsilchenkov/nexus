@@ -207,6 +207,7 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		authedAdmin.GET("/users/:id", h.User.Get)
 		authedAdmin.POST("/users", h.User.Create)
 		authedAdmin.PUT("/users/:id", h.User.Update)
+		authedAdmin.PUT("/users/:id/default-team", h.User.SetDefaultTeam) // §45
 		authedAdmin.DELETE("/users/:id", h.User.Delete)
 		authedAdmin.POST("/users/:id/password", h.User.ChangePassword)
 

@@ -158,6 +158,43 @@ func (u *UserUsecase) Update(ctx context.Context, actor Actor, in *domain.User) 
 	return nil
 }
 
+// SetDefaultTeam меняет команду по умолчанию пользователя (§45, inline-смена в
+// списке Settings → Users). Валидирует, что teamID входит в членства пользователя
+// (иначе ErrUserNotTeamMember): сделать дефолтной чужую команду нельзя — §18.9 при
+// входе всё равно перекинул бы на команду по фактическому членству. Существующие
+// сессии не трогаем: default_team_id влияет на резолв current_team при СЛЕДУЮЩЕМ
+// входе, активная сессия уже несёт свой current_team.
+func (u *UserUsecase) SetDefaultTeam(ctx context.Context, actor Actor, userID, teamID string) error {
+	if userID == "" || teamID == "" {
+		return domain.ErrUserNotFound
+	}
+	// Пользователь должен существовать (даёт 404 на невалидный/несуществующий id).
+	if _, err := u.users.Get(ctx, userID); err != nil {
+		return err
+	}
+	memberships, err := u.teams.ListUserTeams(ctx, userID)
+	if err != nil {
+		return err
+	}
+	member := false
+	for _, m := range memberships {
+		if m.Team.ID == teamID {
+			member = true
+			break
+		}
+	}
+	if !member {
+		return domain.ErrUserNotTeamMember
+	}
+	if err := u.users.UpdateDefaultTeam(ctx, userID, teamID); err != nil {
+		return err
+	}
+	u.audit.Log(ctx, actor, domain.ActionUserUpdate, "user", userID, map[string]any{
+		"default_team_id": teamID,
+	})
+	return nil
+}
+
 // Delete — удаление. Та же проверка по последнему активному админу.
 func (u *UserUsecase) Delete(ctx context.Context, actor Actor, id string) error {
 	if actor.UserID != "" && actor.UserID == id {

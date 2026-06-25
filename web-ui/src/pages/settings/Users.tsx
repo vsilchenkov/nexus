@@ -152,6 +152,13 @@ export function UsersPanel() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
   });
 
+  // §45: смена команды по умолчанию кликом по чипу членства в колонке «Команды».
+  const setDefaultTeam = useMutation({
+    mutationFn: ({ id, teamId }: { id: string; teamId: string }) =>
+      api.put(`/api/users/${id}/default-team`, { team_id: teamId }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
+  });
+
   return (
     <div className="space-y-5">
       <header className="flex items-center justify-between gap-4 flex-wrap">
@@ -265,16 +272,27 @@ export function UsersPanel() {
                       {(u.teams ?? []).map((tm) => {
                         const isDefault = tm.id === u.default_team_id;
                         return (
-                          <span
+                          <button
                             key={tm.id}
-                            title={isDefault ? t("settings.users.teams.default") : tm.name}
+                            type="button"
+                            disabled={isDefault || setDefaultTeam.isPending}
+                            onClick={() =>
+                              !isDefault && setDefaultTeam.mutate({ id: u.id, teamId: tm.id })
+                            }
+                            title={
+                              isDefault
+                                ? t("settings.users.teams.default")
+                                : t("settings.users.teams.set_as_default", { name: tm.name })
+                            }
                             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${
-                              isDefault ? "bg-accent/15 text-accent" : "bg-fg-muted/15 text-fg-muted"
+                              isDefault
+                                ? "bg-accent/15 text-accent cursor-default"
+                                : "bg-fg-muted/15 text-fg-muted hover:bg-accent/15 hover:text-accent cursor-pointer disabled:opacity-50"
                             }`}
                           >
                             {isDefault && <span className="text-[10px]">★</span>}
                             {tm.slug}
-                          </span>
+                          </button>
                         );
                       })}
                       {/* §44.G/H: default_team_id вне членств — рассинхрон. */}

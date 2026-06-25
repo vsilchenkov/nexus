@@ -154,6 +154,24 @@ WHERE id = $1::uuid`
 	return nil
 }
 
+// UpdateDefaultTeam меняет default_team_id пользователя (§45). Невалидный UUID в
+// id/teamID → 22P02, маппится в ErrUserNotFound (§44.I, isInvalidUUID). Членство
+// в команде проверяет usecase до вызова.
+func (r *UserRepoPg) UpdateDefaultTeam(ctx context.Context, userID, teamID string) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE users SET default_team_id = $2::uuid WHERE id = $1::uuid`, userID, teamID)
+	if err != nil {
+		if isInvalidUUID(err) {
+			return domain.ErrUserNotFound
+		}
+		return fmt.Errorf("update user default team: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrUserNotFound
+	}
+	return nil
+}
+
 func (r *UserRepoPg) UpdatePassword(ctx context.Context, id, passwordHash string, mustChange bool) error {
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE users SET password_hash=$2, must_change_password=$3 WHERE id=$1::uuid`,

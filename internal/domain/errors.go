@@ -84,6 +84,10 @@ var (
 	ErrUserNotFound      = errors.New("domain: user not found")
 	ErrUserAlreadyExists = errors.New("domain: user with this login already exists")
 	ErrUserInactive      = errors.New("domain: user inactive")
+	// ErrUserNotTeamMember — §45: попытка назначить пользователю дефолтную
+	// команду, в которой он не состоит. Нельзя сделать дефолтной чужую команду
+	// (иначе §18.9 при входе всё равно перекинет на команду по членству).
+	ErrUserNotTeamMember = errors.New("domain: user is not a member of the team")
 	ErrSessionNotFound   = errors.New("domain: session not found")
 	ErrSessionExpired    = errors.New("domain: session expired")
 

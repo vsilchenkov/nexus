@@ -121,6 +121,16 @@ func (r *authUserRepo) Update(_ context.Context, u *domain.User) error {
 	return nil
 }
 
+func (r *authUserRepo) UpdateDefaultTeam(_ context.Context, userID, teamID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if u, ok := r.byID[userID]; ok {
+		u.DefaultTeamID = teamID
+		return nil
+	}
+	return domain.ErrUserNotFound
+}
+
 func (r *authUserRepo) UpdatePassword(_ context.Context, id, hash string, mustChange bool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

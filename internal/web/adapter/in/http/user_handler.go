@@ -48,6 +48,11 @@ type changePasswordRequest struct {
 	MustChangePassword bool   `json:"must_change_password"`
 }
 
+// setDefaultTeamRequest — §45: смена команды по умолчанию пользователя.
+type setDefaultTeamRequest struct {
+	TeamID string `json:"team_id" binding:"required"`
+}
+
 // userTeamBrief — команда пользователя для колонки «Команды» (§44.G).
 type userTeamBrief struct {
 	ID   string `json:"id"`
@@ -222,6 +227,43 @@ func (h *UserHandler) Update(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, toUserResp(&updated))
+}
+
+// SetDefaultTeam godoc
+// @Summary  Сменить команду по умолчанию пользователя (admin only, §45).
+// @Description  Назначает default_team_id. team_id должен быть среди команд, в
+// @Description  которых пользователь состоит (иначе 400) — сделать дефолтной чужую
+// @Description  команду нельзя (§18.9 при входе перекинул бы по членству).
+// @Tags     users
+// @Accept   json
+// @Produce  json
+// @Param    id    path  string                 true  "user id"
+// @Param    body  body  setDefaultTeamRequest  true  "team id"
+// @Success  204
+// @Failure  400  {object}  ErrorResponse  "не член команды / битый запрос"
+// @Failure  404  {object}  ErrorResponse  "пользователь не найден"
+// @Security CookieAuth
+// @Router   /api/users/{id}/default-team [put]
+func (h *UserHandler) SetDefaultTeam(c *gin.Context) {
+	var req setDefaultTeamRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	err := h.uc.SetDefaultTeam(c.Request.Context(), userActor(c), c.Param("id"), req.TeamID)
+	if err != nil {
+		if errors.Is(err, domain.ErrUserNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+			return
+		}
+		if errors.Is(err, domain.ErrUserNotTeamMember) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "user is not a member of the team"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 // Delete godoc

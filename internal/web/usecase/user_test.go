@@ -235,6 +235,69 @@ func TestUserUC_Update_NoRoleNoActiveChange_NoSessionPurge(t *testing.T) {
 	assert.Empty(t, sessions.deletedByUser, "session purge must skip when role/active unchanged")
 }
 
+// membershipTeamRepo — teams-фейк с фиксированным набором членств пользователя
+// (§45, валидация SetDefaultTeam).
+type membershipTeamRepo struct {
+	nopTeamRepo
+	memberships []*domain.UserTeam
+}
+
+func (r *membershipTeamRepo) ListUserTeams(context.Context, string) ([]*domain.UserTeam, error) {
+	return r.memberships, nil
+}
+
+func newUserUCWithTeams(users *authUserRepo, teams port.TeamRepo) (*UserUsecase, *stubAuditRepo) {
+	repo := &stubAuditRepo{}
+	audit := NewAuditUsecase(repo, logging.NewNoop())
+	uc := NewUserUsecase(users, newMemSessionRepo(), teams, audit,
+		"00000000-0000-0000-0000-000000000000", logging.NewNoop())
+	return uc, repo
+}
+
+// §45: назначение дефолтной команды из членств — успех + audit + запись колонки.
+func TestUserUC_SetDefaultTeam_Member_OK(t *testing.T) {
+	t.Parallel()
+	users := newAuthUserRepo()
+	users.put(&domain.User{ID: "u1", Login: "alice", DefaultTeamID: "team-old"})
+	teams := &membershipTeamRepo{memberships: []*domain.UserTeam{
+		{Team: domain.Team{ID: "team-new"}, Role: domain.TeamRoleMember},
+	}}
+	uc, audit := newUserUCWithTeams(users, teams)
+
+	err := uc.SetDefaultTeam(context.Background(), SystemActor(), "u1", "team-new")
+	require.NoError(t, err)
+	got, _ := users.Get(context.Background(), "u1")
+	assert.Equal(t, "team-new", got.DefaultTeamID, "default_team_id должен обновиться")
+	require.Len(t, audit.entries, 1)
+	assert.Equal(t, domain.ActionUserUpdate, audit.entries[0].Action)
+	assert.Equal(t, "team-new", audit.entries[0].Details["default_team_id"])
+}
+
+// §45: нельзя назначить дефолтной команду, в которой пользователь не состоит.
+func TestUserUC_SetDefaultTeam_NotMember_Rejected(t *testing.T) {
+	t.Parallel()
+	users := newAuthUserRepo()
+	users.put(&domain.User{ID: "u1", Login: "alice", DefaultTeamID: "team-old"})
+	teams := &membershipTeamRepo{memberships: []*domain.UserTeam{
+		{Team: domain.Team{ID: "team-a"}, Role: domain.TeamRoleMember},
+	}}
+	uc, audit := newUserUCWithTeams(users, teams)
+
+	err := uc.SetDefaultTeam(context.Background(), SystemActor(), "u1", "team-foreign")
+	require.ErrorIs(t, err, domain.ErrUserNotTeamMember)
+	got, _ := users.Get(context.Background(), "u1")
+	assert.Equal(t, "team-old", got.DefaultTeamID, "при не-членстве колонка не меняется")
+	assert.Empty(t, audit.entries, "при отказе audit не пишется")
+}
+
+// §45: несуществующий пользователь → ErrUserNotFound (до проверки членства).
+func TestUserUC_SetDefaultTeam_UserNotFound(t *testing.T) {
+	t.Parallel()
+	uc, _ := newUserUCWithTeams(newAuthUserRepo(), &membershipTeamRepo{})
+	err := uc.SetDefaultTeam(context.Background(), SystemActor(), "ghost", "team-x")
+	require.ErrorIs(t, err, domain.ErrUserNotFound)
+}
+
 func TestUserUC_Delete_SelfRejected(t *testing.T) {
 	t.Parallel()
 	uc, _ := newUserUC(newAuthUserRepo(), newMemSessionRepo())
