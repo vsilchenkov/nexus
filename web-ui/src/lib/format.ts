@@ -14,6 +14,15 @@ export function msToDatetimeLocal(ms: number): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+// fmtLogTs — компактная дата+время лога "DD.MM HH:MM:SS" (24ч, локальная зона,
+// без года). Детерминированный формат (не toLocale*) — фиксированная ширина,
+// чтобы колонка времени в таблице логов не ехала по разметке (§43.J).
+export function fmtLogTs(dateStr: string): string {
+  const d = new Date(dateStr);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getDate())}.${p(d.getMonth() + 1)} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
 // fmtBytes — человекочитаемый размер на диске (12.5 GB). 0 → «—» (размер
 // топика недоступен через high-level Kafka API, см. §4.3 spec).
 export function fmtBytes(n: number): string {

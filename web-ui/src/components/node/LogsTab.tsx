@@ -5,6 +5,7 @@ import { RefreshCw, Settings, RotateCcw, ChevronRight, ChevronDown, Download } f
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, type Node } from "../../api/client";
+import { fmtLogTs } from "../../lib/format";
 import { FETCH_CHUNK, LARGE_WARN_RUNES, formatRunes, prettyMaybe } from "../../lib/logBody";
 import { CopyButton } from "../ui/CopyButton";
 import { ReplayDialog } from "../ReplayDialog";
@@ -463,14 +464,14 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                         isHl ? "bg-accent/15" : isErr ? "bg-err/5" : ""
                       }`}
                     >
-                      <td className="px-3 py-2 font-mono text-xs">
+                      <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">
                         <span className="inline-flex items-center gap-1">
                           {isOpen ? (
                             <ChevronDown className="h-3 w-3 shrink-0" />
                           ) : (
                             <ChevronRight className="h-3 w-3 shrink-0" />
                           )}
-                          {new Date(r.date_request).toLocaleTimeString()}
+                          {fmtLogTs(r.date_request)}
                         </span>
                       </td>
                       <td className="px-3 py-2">{r.http_method}</td>
