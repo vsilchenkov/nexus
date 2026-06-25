@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronRight, Languages, Moon, Sun, LogOut, FileText, ExternalLink, Route, ServerCog } from "lucide-react";
 
 import { api } from "../api/client";
@@ -16,7 +16,17 @@ type TeamMembership = {
   ch_database: string;
   role: "owner" | "admin" | "member";
 };
-type MyTeamsResp = { items: TeamMembership[]; current_team_id: string };
+// healed (§43.H): сервер переключил current_team в сессии, т.к. он больше не
+// входил в членства (напр. пользователя убрали из команды, бывшей дефолтом).
+// По этому флагу UI инвалидирует team-scoped кеш — иначе дашборд показывал бы
+// ноды старой команды до ручного обновления.
+type MyTeamsResp = { items: TeamMembership[]; current_team_id: string; healed?: boolean };
+
+// team-независимые query-ключи: их перезагрузка при смене команды не нужна
+// (Phase AUD.7) — остальное живёт в scope текущей команды (nodes/logs/audit/
+// metrics/tokens/teams). "me"/"me-teams" НЕ в списке: они несут current_team_id
+// и обязаны перечитаться. На модульном уровне — стабильная ссылка для хуков.
+const TEAM_INDEPENDENT_KEYS = new Set(["settings-public", "version", "users-all"]);
 
 // crumbsFor — хлебные крошки из маршрута (секция + при наличии второй уровень).
 function crumbsFor(path: string, t: (k: string) => string): string[] {
@@ -49,11 +59,6 @@ export function Topbar() {
     enabled: loc.pathname !== "/login",
   });
 
-  // team-независимые query-ключи: их перезагрузка при смене команды не
-  // нужна (Phase AUD.7) — остальное инвалидируется (nodes/logs/audit/
-  // metrics/tokens/teams и пр. живут в scope текущей команды). "me"/"me-teams"
-  // НЕ в списке: они несут current_team_id и обязаны перечитаться.
-  const TEAM_INDEPENDENT_KEYS = new Set(["settings-public", "version", "users-all"]);
   const switchTeam = useMutation({
     mutationFn: (team_id: string) => api.post("/api/me/switch-team", { team_id }),
     onSuccess: () =>
@@ -61,6 +66,19 @@ export function Topbar() {
         predicate: (q) => !TEAM_INDEPENDENT_KEYS.has(String(q.queryKey[0])),
       }),
   });
+
+  // §43.H: сервер самозалечил current_team (был вне членств) — обновляем
+  // team-scoped кеш, чтобы дашборд сразу показал ноды верной команды, а не
+  // старой. healed=true приходит лишь на запросе, где произошло переключение.
+  const healedRef = useRef(false);
+  useEffect(() => {
+    if (myTeams.data?.healed && !healedRef.current) {
+      healedRef.current = true;
+      qc.invalidateQueries({
+        predicate: (q) => !TEAM_INDEPENDENT_KEYS.has(String(q.queryKey[0])),
+      });
+    }
+  }, [myTeams.data?.healed, qc]);
 
   function toggleLang() {
     i18n.changeLanguage(i18n.language.startsWith("ru") ? "en" : "ru");

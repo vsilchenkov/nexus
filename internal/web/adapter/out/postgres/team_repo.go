@@ -154,6 +154,21 @@ func (r *TeamRepoPg) RemoveMember(ctx context.Context, userID, teamID string) er
 	if tag.RowsAffected() == 0 {
 		return domain.ErrTeamMemberNotFound
 	}
+	// §43.H: держим users.default_team_id согласованным с членствами. Если
+	// удалили команду, бывшую дефолтом пользователя, и у него остались другие
+	// команды — переводим default_team_id на первую из оставшихся (ORDER BY
+	// team_id, детерминированно). Если других нет — оставляем как есть (логин
+	// деградирует на DefaultTeamID, рассинхрон виден в списке пользователей).
+	// Подзапрос пуст ⇒ FROM не даёт строк ⇒ UPDATE не выполняется.
+	if _, err := r.pool.Exec(ctx, `
+UPDATE users u
+SET default_team_id = sub.team_id
+FROM (
+	SELECT team_id FROM user_teams WHERE user_id = $1::uuid ORDER BY team_id LIMIT 1
+) sub
+WHERE u.id = $1::uuid AND u.default_team_id = $2::uuid`, userID, teamID); err != nil {
+		return fmt.Errorf("reassign default team after member removal: %w", err)
+	}
 	return nil
 }
 
