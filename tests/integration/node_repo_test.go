@@ -316,7 +316,7 @@ func TestNodeRepoIncomingAuthDynamic_E2E(t *testing.T) {
 }
 
 // TestRepoGet_InvalidUUID_E2E: невалидный `:id` (не UUID) в Get → not-found
-// (404), а не 500 + шум в Sentry (NEXUS-7, §43.I). Запрос приводит `$1::uuid`,
+// (404), а не 500 + шум в Sentry (NEXUS-7, §44.I). Запрос приводит `$1::uuid`,
 // pg отдаёт SQLSTATE 22P02 — репозитории трактуют его как Err…NotFound.
 func TestRepoGet_InvalidUUID_E2E(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)

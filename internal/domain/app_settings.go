@@ -85,20 +85,20 @@ type GeneralSettings struct {
 	VersionOverride *string `json:"version_override,omitempty"`
 
 	// MetricsRefetchMs — интервал автообновления метрик на дашборде и страницах
-	// узлов, мс (§43.C). nil = дефолт MetricsRefetchDefaultMs. Диапазон
+	// узлов, мс (§44.C). nil = дефолт MetricsRefetchDefaultMs. Диапазон
 	// [MetricsRefetchMinMs, MetricsRefetchMaxMs]. Отдаётся всем авторизованным
 	// через /api/settings/public (не секрет).
 	MetricsRefetchMs *int `json:"metrics_refetch_ms,omitempty"`
 }
 
-// Интервал автообновления метрик (§43.C): дефолт 12с, диапазон 1с..120с.
+// Интервал автообновления метрик (§44.C): дефолт 12с, диапазон 1с..120с.
 const (
 	MetricsRefetchDefaultMs = 12000
 	MetricsRefetchMinMs     = 1000
 	MetricsRefetchMaxMs     = 120000
 )
 
-// ValidateMetricsRefetchMs проверяет интервал автообновления метрик (§43.C):
+// ValidateMetricsRefetchMs проверяет интервал автообновления метрик (§44.C):
 // значение в [MetricsRefetchMinMs, MetricsRefetchMaxMs].
 func ValidateMetricsRefetchMs(v int) error {
 	if v < MetricsRefetchMinMs || v > MetricsRefetchMaxMs {

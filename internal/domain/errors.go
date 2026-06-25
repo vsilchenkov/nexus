@@ -153,7 +153,7 @@ var (
 	// Общие настройки (§28, Пункт 1)
 	ErrPublicBaseURLInvalid = errors.New("domain: public_base_url must be an http(s) origin without path or trailing slash")
 
-	// Интервал автообновления метрик (§43.C)
+	// Интервал автообновления метрик (§44.C)
 	ErrMetricsRefetchInvalid = errors.New("domain: metrics_refetch_ms must be within [1000, 120000]")
 
 	// Версия и сессия (§34.2 / §34.3)

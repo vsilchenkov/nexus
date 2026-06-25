@@ -16,7 +16,7 @@ export function msToDatetimeLocal(ms: number): string {
 
 // fmtLogTs — компактная дата+время лога "DD.MM HH:MM:SS" (24ч, локальная зона,
 // без года). Детерминированный формат (не toLocale*) — фиксированная ширина,
-// чтобы колонка времени в таблице логов не ехала по разметке (§43.J).
+// чтобы колонка времени в таблице логов не ехала по разметке (§44.J).
 export function fmtLogTs(dateStr: string): string {
   const d = new Date(dateStr);
   const p = (n: number) => String(n).padStart(2, "0");

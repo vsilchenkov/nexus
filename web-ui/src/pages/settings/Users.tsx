@@ -6,7 +6,7 @@ import { api } from "../../api/client";
 import { useConfirm } from "../../lib/confirm";
 import type { Role } from "../../lib/roles";
 
-// TeamBrief — команда пользователя для колонки «Команды» (§43.G).
+// TeamBrief — команда пользователя для колонки «Команды» (§44.G).
 type TeamBrief = { id: string; slug: string; name: string; role: string };
 
 type User = {
@@ -277,7 +277,7 @@ export function UsersPanel() {
                           </span>
                         );
                       })}
-                      {/* §43.G/H: default_team_id вне членств — рассинхрон. */}
+                      {/* §44.G/H: default_team_id вне членств — рассинхрон. */}
                       {u.default_team_id &&
                         !(u.teams ?? []).some((tm) => tm.id === u.default_team_id) && (
                           <span

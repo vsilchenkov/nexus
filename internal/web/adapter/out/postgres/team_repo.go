@@ -154,7 +154,7 @@ func (r *TeamRepoPg) RemoveMember(ctx context.Context, userID, teamID string) er
 	if tag.RowsAffected() == 0 {
 		return domain.ErrTeamMemberNotFound
 	}
-	// §43.H: держим users.default_team_id согласованным с членствами. Если
+	// §44.H: держим users.default_team_id согласованным с членствами. Если
 	// удалили команду, бывшую дефолтом пользователя, и у него остались другие
 	// команды — переводим default_team_id на первую из оставшихся (ORDER BY
 	// team_id, детерминированно). Если других нет — оставляем как есть (логин
@@ -243,7 +243,7 @@ ORDER BY t.slug`, userID)
 	return out, rows.Err()
 }
 
-// ListTeamsByUsers — членства для набора пользователей одним запросом (§43.G):
+// ListTeamsByUsers — членства для набора пользователей одним запросом (§44.G):
 // ключ карты — user_id. Пустой userIDs → пустая карта (без запроса). Порядок
 // команд внутри пользователя — по slug (как ListUserTeams).
 func (r *TeamRepoPg) ListTeamsByUsers(ctx context.Context, userIDs []string) (map[string][]*domain.UserTeam, error) {

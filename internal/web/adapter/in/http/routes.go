@@ -142,7 +142,7 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			authed.GET("/metrics/overview", RequireScope("metrics:read"), h.Metrics.Overview)
 			authed.GET("/metrics/nodes", RequireScope("metrics:read"), h.Metrics.NodesOverview)
 			authed.GET("/metrics/nodes/:id", RequireScope("metrics:read"), h.Metrics.Node)
-			// §43.E: сверка Prometheus↔ClickHouse (диагностика расхождений счётчиков).
+			// §44.E: сверка Prometheus↔ClickHouse (диагностика расхождений счётчиков).
 			authed.GET("/metrics/diagnostics", RequireScope("metrics:read"), h.Metrics.Diagnostics)
 		}
 

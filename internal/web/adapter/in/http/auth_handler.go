@@ -231,7 +231,7 @@ func (h *AuthHandler) MyTeams(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
-	// §43.H: вместе со списком — самолечение current_team в сессии, если он
+	// §44.H: вместе со списком — самолечение current_team в сессии, если он
 	// больше не входит в членства (иначе пользователь застревал на чужой команде).
 	memberships, current, healed, err := h.uc.MyTeamsAndCurrent(c.Request.Context(), s)
 	if err != nil {

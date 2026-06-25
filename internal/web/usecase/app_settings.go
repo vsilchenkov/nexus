@@ -90,7 +90,7 @@ func (u *AppSettingsUsecase) Update(ctx context.Context, actor Actor, patch *dom
 			return err
 		}
 	}
-	// §43.C: интервал автообновления метрик в допустимом диапазоне.
+	// §44.C: интервал автообновления метрик в допустимом диапазоне.
 	if patch.General.MetricsRefetchMs != nil {
 		if err := domain.ValidateMetricsRefetchMs(*patch.General.MetricsRefetchMs); err != nil {
 			return err
@@ -152,7 +152,7 @@ func mergeAppSettings(current, patch *domain.AppSettings) *domain.AppSettings {
 	if patch.General.VersionOverride != nil {
 		out.General.VersionOverride = patch.General.VersionOverride
 	}
-	// §43.C: интервал автообновления метрик (не секрет).
+	// §44.C: интервал автообновления метрик (не секрет).
 	if patch.General.MetricsRefetchMs != nil {
 		out.General.MetricsRefetchMs = patch.General.MetricsRefetchMs
 	}

@@ -6,12 +6,12 @@ import { useStableData } from "../../lib/useStableData";
 
 // METRICS_REFETCH_MS — фолбэк интервала авто-обновления метрик (§28, Пункт 2),
 // если сервер не вернул значение. Реальный интервал настраивается оператором
-// (§43.C, app_settings.general.metrics_refetch_ms) и отдаётся в
+// (§44.C, app_settings.general.metrics_refetch_ms) и отдаётся в
 // /api/settings/public — см. useMetricsRefetchMs.
 export const METRICS_REFETCH_MS = 12_000;
 
 // useMetricsRefetchMs — настраиваемый интервал автообновления метрик из
-// public-настроек (§43.C). Кешируется (staleTime 5м) и переиспользует тот же
+// public-настроек (§44.C). Кешируется (staleTime 5м) и переиспользует тот же
 // query, что и useNodeUrlBuilder. Фолбэк — METRICS_REFETCH_MS.
 export function useMetricsRefetchMs(): number {
   const q = useQuery({

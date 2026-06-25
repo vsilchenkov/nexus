@@ -8,12 +8,12 @@ export type Period =
 
 export const PRESET_RANGES: PresetRange[] = ["1h", "3h", "24h", "7d", "14d", "30d"];
 
-// defaultPeriod — дефолт периода метрик (§43.B): 24ч (раньше 1ч). На рабочем
+// defaultPeriod — дефолт периода метрик (§44.B): 24ч (раньше 1ч). На рабочем
 // столе перекрывается пользовательским дефолтом из localStorage (loadDefaultPeriod).
 export const defaultPeriod: Period = { kind: "preset", range: "24h" };
 
 // PERIOD_DEFAULT_KEY — localStorage-ключ пользовательского дефолтного периода
-// рабочего стола («под себя», §43.B). Хранится только пресет.
+// рабочего стола («под себя», §44.B). Хранится только пресет.
 const PERIOD_DEFAULT_KEY = "nexus.overview.period";
 
 // loadDefaultPeriod — пользовательский дефолтный период из localStorage, иначе

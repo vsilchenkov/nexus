@@ -128,7 +128,7 @@ type VersionResponse struct {
 // PublicSettingsResponse — GET /api/settings/public.
 type PublicSettingsResponse struct {
 	PublicBaseURL string `json:"public_base_url"`
-	// §43.C: интервал автообновления метрик (мс) для дашборда/страниц узлов.
+	// §44.C: интервал автообновления метрик (мс) для дашборда/страниц узлов.
 	MetricsRefetchMs int `json:"metrics_refetch_ms"`
 }
 

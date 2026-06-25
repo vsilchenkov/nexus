@@ -144,7 +144,7 @@ func (u *AuthUsecase) Login(ctx context.Context, login, password, ip string) (st
 	return token, user, nil
 }
 
-// resolveLoginTeam определяет current_team_id для новой сессии (§43.H):
+// resolveLoginTeam определяет current_team_id для новой сессии (§44.H):
 // команда из user.DefaultTeamID, ЕСЛИ пользователь в ней реально состоит;
 // иначе — первая из его членств (детерминированно: ListUserTeams отдаёт
 // ORDER BY slug); если членств нет вовсе — оставляем DefaultTeamID как было.
@@ -206,7 +206,7 @@ func (u *AuthUsecase) Me(ctx context.Context, userID string) (*domain.User, erro
 }
 
 // MyTeamsAndCurrent — членства пользователя + актуальный current_team_id с
-// САМОЛЕЧЕНИЕМ сессии (§43.H). Если current_team из сессии не входит в членства
+// САМОЛЕЧЕНИЕМ сессии (§44.H). Если current_team из сессии не входит в членства
 // (сессия выдана до фикса, либо пользователя убрали из команды), а членства
 // есть — переключаем на первую доступную команду и (для cookie-сессий,
 // token != "") персистим: «битая» сессия чинится без ре-логина. Псевдо-сессии

@@ -176,7 +176,7 @@ export type NodeThroughput = {
   // §41 («Down»): последний исходящий вызов узла завершился ошибкой.
   last_error: boolean;
 };
-// §43.A: totals = СУММА строк items за выбранный период (CH, уникальные
+// §44.A: totals = СУММА строк items за выбранный период (CH, уникальные
 // запросы). KPI шапки берёт incoming/outgoing/errors отсюда → шапка сходится
 // с таблицей. error_rate = errors/incoming (0..1).
 export type OverviewTotals = {

@@ -10,7 +10,7 @@ import (
 
 // TestIsInvalidUUID проверяет, что хелпер распознаёт pg SQLSTATE 22P02
 // (invalid_text_representation — не-UUID в `$1::uuid`) и только его, в т.ч.
-// когда ошибка обёрнута через %w (NEXUS-7, §43.I).
+// когда ошибка обёрнута через %w (NEXUS-7, §44.I).
 func TestIsInvalidUUID(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

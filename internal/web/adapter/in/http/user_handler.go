@@ -48,7 +48,7 @@ type changePasswordRequest struct {
 	MustChangePassword bool   `json:"must_change_password"`
 }
 
-// userTeamBrief — команда пользователя для колонки «Команды» (§43.G).
+// userTeamBrief — команда пользователя для колонки «Команды» (§44.G).
 type userTeamBrief struct {
 	ID   string `json:"id"`
 	Slug string `json:"slug"`

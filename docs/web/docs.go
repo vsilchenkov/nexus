@@ -1337,7 +1337,7 @@ const docTemplate = `{
                 "tags": [
                     "metrics"
                 ],
-                "summary": "Сверка счётчиков Prometheus↔ClickHouse за окно (§43.E).",
+                "summary": "Сверка счётчиков Prometheus↔ClickHouse за окно (§44.E).",
                 "parameters": [
                     {
                         "type": "string",
@@ -1385,7 +1385,7 @@ const docTemplate = `{
                 "tags": [
                     "metrics"
                 ],
-                "summary": "Per-node throughput за окно + агрегат для шапки (§21, §43.A).",
+                "summary": "Per-node throughput за окно + агрегат для шапки (§21, §44.A).",
                 "parameters": [
                     {
                         "type": "string",
@@ -1494,7 +1494,7 @@ const docTemplate = `{
                 "tags": [
                     "metrics"
                 ],
-                "summary": "KPI шапки: очередь Kafka + доступность Prometheus (§21, §43.A).",
+                "summary": "KPI шапки: очередь Kafka + доступность Prometheus (§21, §44.A).",
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -4896,7 +4896,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "metrics_refetch_ms": {
-                    "description": "§43.C: интервал автообновления метрик (мс) для дашборда/страниц узлов.",
+                    "description": "§44.C: интервал автообновления метрик (мс) для дашборда/страниц узлов.",
                     "type": "integer"
                 },
                 "public_base_url": {
@@ -6582,7 +6582,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "metrics_refetch_ms": {
-                    "description": "MetricsRefetchMs — интервал автообновления метрик на дашборде и страницах\nузлов, мс (§43.C). nil = дефолт MetricsRefetchDefaultMs. Диапазон\n[MetricsRefetchMinMs, MetricsRefetchMaxMs]. Отдаётся всем авторизованным\nчерез /api/settings/public (не секрет).",
+                    "description": "MetricsRefetchMs — интервал автообновления метрик на дашборде и страницах\nузлов, мс (§44.C). nil = дефолт MetricsRefetchDefaultMs. Диапазон\n[MetricsRefetchMinMs, MetricsRefetchMaxMs]. Отдаётся всем авторизованным\nчерез /api/settings/public (не секрет).",
                     "type": "integer"
                 },
                 "public_base_url": {

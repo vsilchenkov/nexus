@@ -57,7 +57,7 @@ type NodeThroughputRow struct {
 }
 
 // OverviewTotals — агрегат счётчиков шапки = СУММА строк таблицы узлов за тот же
-// период и из того же источника (§43.A). Раньше шапка считалась отдельно из
+// период и из того же источника (§44.A). Раньше шапка считалась отдельно из
 // Prometheus (попытки, фикс. 24ч) и не сходилась с таблицей (CH, уникальные
 // запросы). Теперь «итог в шапке = сумме видимых строк» по построению.
 type OverviewTotals struct {
@@ -74,7 +74,7 @@ type NodesOverview struct {
 	PrometheusAvailable bool
 }
 
-// sumTotals — агрегат строк для шапки (§43.A). ErrorRate = доля недоставленных
+// sumTotals — агрегат строк для шапки (§44.A). ErrorRate = доля недоставленных
 // от входящих (Errors/Incoming), а не от исходящих — интуитивнее «X% входящих
 // не доставлены».
 func sumTotals(items []NodeThroughputRow) OverviewTotals {
@@ -108,7 +108,7 @@ func f2u(v float64) uint64 {
 
 // Overview — KPI шапки, которые НЕ агрегируются из таблицы узлов: очередь Kafka
 // (мгновенный lag, только в Prometheus) + флаг доступности Prometheus. Трафик
-// (входящие/исходящие/ошибки) переехал в /api/metrics/nodes → totals (§43.A):
+// (входящие/исходящие/ошибки) переехал в /api/metrics/nodes → totals (§44.A):
 // там он = сумме строк таблицы за выбранный период (CH, уникальные запросы),
 // поэтому шапка и таблица сходятся. Без Prometheus — нули с
 // PrometheusAvailable=false; ошибка запроса деградирует (не 500).
@@ -151,7 +151,7 @@ func (u *MetricsUsecase) NodesOverview(ctx context.Context, teamID string, since
 	// §41 («Down»): оверлей исхода последнего вызова поверх любой ветки
 	// (CH-источник его не считает, gauge живёт только в Prometheus).
 	u.applyLastErrors(ctx, until, &res)
-	// §43.A: агрегат для шапки = сумма строк (в любом источнике, за тот же
+	// §44.A: агрегат для шапки = сумма строк (в любом источнике, за тот же
 	// период) → «итог в шапке = сумме видимых строк таблицы».
 	res.Totals = sumTotals(res.Items)
 	return res
@@ -307,7 +307,7 @@ func (u *MetricsUsecase) NodeMetrics(ctx context.Context, nodeID, teamID string,
 	return res, nil
 }
 
-// DiagSource — агрегат одного источника для reconciliation (§43.E).
+// DiagSource — агрегат одного источника для reconciliation (§44.E).
 type DiagSource struct {
 	Incoming  uint64
 	Outgoing  uint64
@@ -323,7 +323,7 @@ type DiagNode struct {
 	PromIn, PromOut, PromErrors uint64
 }
 
-// Diagnostics — сверка счётчиков между источниками (§43.E): Prometheus (попытки,
+// Diagnostics — сверка счётчиков между источниками (§44.E): Prometheus (попытки,
 // increase) против ClickHouse (уникальные запросы). Помогает объяснить
 // расхождения шапки/таблицы: ретраи раздувают исходящие Prometheus
 // (outgoing>incoming), увеличение CH-ошибок против Prometheus (3xx/висящие),

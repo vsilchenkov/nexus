@@ -3440,3 +3440,29 @@ checksum по полному телу. **(2) Транспортные лимит
 `message.max.bytes` ≥ topic. Восстановлен `truncateRunes`; удалён ошибочный `exceedsBodyLimit`.
 
 Подробности — [sections/43-body-size-hard-limit.md](sections/43-body-size-hard-limit.md).
+
+---
+
+## 44. Счётчики дашборда: согласование, настройки периода/автообновления, диагностика
+
+Согласование счётчиков рабочего стола (Overview) + смежные UX-доработки. Повод — боевой баг: KPI в
+шапке не сходились с суммой по таблице узлов даже при одном периоде, т.к. считались из разных
+источников разными единицами.
+
+- **44.A Унификация шапки.** Шапка = Σ строк таблицы за выбранный период из ClickHouse (уникальные
+  запросы: `In=countDistinct(ID)`, `Out=uniqExactIf(ID,done=1)`, `Errors=In−Out`), а не из Prometheus
+  (попытки/`increase`, фикс. 24ч). `error_rate=errors/incoming`. Очередь Kafka — из Prometheus.
+  `NodesOverview.Totals` (Σ строк), `Overview()` урезан до Kafka; `/api/metrics/nodes` отдаёт `totals`.
+- **44.B Дефолтный период 24ч** (было 1ч) + сохранение «под себя» в localStorage (`nexus.overview.period`).
+- **44.C Автообновление.** Тоггл паузы (localStorage) + интервал в `app_settings.general.metrics_refetch_ms`
+  (1..120с, дефолт 12с), отдаётся в `/api/settings/public`, настраивается в `Settings → General`.
+- **44.D Процент ошибок по узлу** (`errors/in`) в таблице и карточках; скрыт при 0.
+- **44.E Диагностика.** `GET /api/metrics/diagnostics` — сверка Prometheus(попытки)↔ClickHouse(уникальные)
+  + per-node + объяснение расхождений (ретраи, занижение increase, разное определение ошибки).
+- **44.J Дата в логах.** Время в таблице логов и «последних запросах» дополнено датой `DD.MM HH:MM:SS`
+  (nowrap, без слома разметки).
+- **44.G Колонка «Команды» в Users** (батч `ListTeamsByUsers`); warn-чип при `default_team_id` вне членств.
+- **Смежно:** резолв current_team по членству при входе (§18.9); невалидный UUID `:id`→404 (Sentry NEXUS-7).
+
+Подробности — [sections/44-dashboard-counters.md](sections/44-dashboard-counters.md). Анализ боевого
+инстанса — скил `.claude/skills/nexus-prod`.

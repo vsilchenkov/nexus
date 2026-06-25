@@ -60,7 +60,7 @@ export default function Overview() {
   // Перенос узла между командами — admin-only (как и сам /move-эндпоинт):
   // не показываем кнопку «Перенести» viewer/manager, иначе клик упрётся в 403.
   const canMove = useRoleAtLeast("admin");
-  // §28/§43.B: период метрик; стартовый = пользовательский дефолт из localStorage
+  // §28/§44.B: период метрик; стартовый = пользовательский дефолт из localStorage
   // (или 24ч). savedDefault — для подсветки активного «по умолчанию».
   const [period, setPeriod] = useState<Period>(() => loadDefaultPeriod());
   const [savedDefault, setSavedDefault] = useState<Period>(() => loadDefaultPeriod());
@@ -71,7 +71,7 @@ export default function Overview() {
     () => (localStorage.getItem(VIEW_KEY) as View) || "table",
   );
   const [moveTarget, setMoveTarget] = useState<Node | null>(null);
-  // §43.C: автообновление рабочего стола — тоггл паузы (по умолчанию вкл),
+  // §44.C: автообновление рабочего стола — тоггл паузы (по умолчанию вкл),
   // персист в localStorage; интервал берётся из настроек (useMetricsRefetchMs).
   const [autoRefresh, setAutoRefresh] = useState(
     () => localStorage.getItem(AUTOREFRESH_KEY) !== "0",
@@ -93,7 +93,7 @@ export default function Overview() {
   });
 
   // §28 Пункт 4: период per-node throughput выбирается (по умолчанию 24ч),
-  // §28 Пункт 2 / §43.C: обновляется онлайн, если автообновление включено.
+  // §28 Пункт 2 / §44.C: обновляется онлайн, если автообновление включено.
   const thrQ = useQuery({
     queryKey: ["metrics-nodes", periodKey(period)],
     queryFn: () => api.get<NodesThroughputResp>("/api/metrics/nodes", periodParams(period)),
@@ -140,7 +140,7 @@ export default function Overview() {
   }, [nodesQ.data, method, statusFilter, throughput, sortRank, metricsReady]);
 
   const kpi = useStableData(kpiQ.data, "overview-kpi", (d) => d.prometheus_available);
-  // §43.A: трафик KPI шапки = totals из throughput (сумма строк таблицы за
+  // §44.A: трафик KPI шапки = totals из throughput (сумма строк таблицы за
   // выбранный период, ClickHouse) → шапка сходится с таблицей. Очередь Kafka —
   // из kpiQ (мгновенный lag, только в Prometheus). Ярлык несёт выбранный период.
   const tot = thrData?.totals;
@@ -218,7 +218,7 @@ export default function Overview() {
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs text-fg-muted">{t("metrics.period")}</span>
         <PeriodPicker value={period} onChange={setPeriod} />
-        {/* §43.B: «под себя» — сохранить текущий период как дефолт (только пресет). */}
+        {/* §44.B: «под себя» — сохранить текущий период как дефолт (только пресет). */}
         {period.kind === "preset" && (
           <button
             type="button"
@@ -243,7 +243,7 @@ export default function Overview() {
             {t("overview.set_default_period")}
           </button>
         )}
-        {/* §43.C: пауза/запуск автообновления рабочего стола. */}
+        {/* §44.C: пауза/запуск автообновления рабочего стола. */}
         <button
           type="button"
           onClick={() => setAutoRefresh((v) => !v)}
@@ -428,7 +428,7 @@ function fmtMs(ms: number): string {
   return Math.round(ms) + "ms";
 }
 
-// nodeErrPct — доля ошибок узла (errors/in) как "%" (§43.D, как в шапке).
+// nodeErrPct — доля ошибок узла (errors/in) как "%" (§44.D, как в шапке).
 // null, если ошибок нет или нет входящих — тогда процент НЕ выводим.
 function nodeErrPct(m: Throughput): string | null {
   if (m.errors <= 0 || m.in <= 0) return null;

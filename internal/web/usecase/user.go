@@ -56,13 +56,13 @@ func (u *UserUsecase) List(ctx context.Context, f port.ListUsersFilter) ([]*doma
 	return u.users.List(ctx, f)
 }
 
-// UserWithTeams — пользователь + его команды (членства) для списка (§43.G).
+// UserWithTeams — пользователь + его команды (членства) для списка (§44.G).
 type UserWithTeams struct {
 	User  *domain.User
 	Teams []*domain.UserTeam
 }
 
-// ListWithTeams — список пользователей, обогащённый членствами в командах (§43.G,
+// ListWithTeams — список пользователей, обогащённый членствами в командах (§44.G,
 // колонка «Команды» в Settings → Users). Членства тянутся одним батч-запросом
 // (без N+1). Ошибка обогащения деградирует до списка без команд (не 500).
 func (u *UserUsecase) ListWithTeams(ctx context.Context, f port.ListUsersFilter) ([]UserWithTeams, error) {

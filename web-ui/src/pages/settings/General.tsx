@@ -45,7 +45,7 @@ export function GeneralPanel() {
   const [url, setUrl] = useState("");
   const [versionOverride, setVersionOverride] = useState("");
   const [sessionMinutes, setSessionMinutes] = useState("");
-  // §43.C: интервал автообновления метрик — в UI задаётся в секундах, хранится в мс.
+  // §44.C: интервал автообновления метрик — в UI задаётся в секундах, хранится в мс.
   const [refetchSec, setRefetchSec] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -64,7 +64,7 @@ export function GeneralPanel() {
     mutationFn: () => {
       const general: GeneralSettings = { public_base_url: url.trim() };
       if (overrideAllowed) general.version_override = versionOverride.trim();
-      // §43.C: интервал в секундах → мс; пусто — не трогаем (дефолт/текущее).
+      // §44.C: интервал в секундах → мс; пусто — не трогаем (дефолт/текущее).
       const sec = refetchSec.trim();
       if (sec !== "") general.metrics_refetch_ms = Math.round(Number(sec) * 1000);
       const body: { general: GeneralSettings; security?: SecuritySettings } = { general };

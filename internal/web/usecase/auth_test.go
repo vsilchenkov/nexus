@@ -282,7 +282,7 @@ func (nopTeamRepo) ListTeamsByUsers(context.Context, []string) (map[string][]*do
 	return nil, nil
 }
 
-// stubTeamRepo — TeamRepo с настраиваемым ListUserTeams (§43.H): остальные
+// stubTeamRepo — TeamRepo с настраиваемым ListUserTeams (§44.H): остальные
 // методы от nopTeamRepo, ListUserTeams возвращает заданные членства/ошибку.
 type stubTeamRepo struct {
 	nopTeamRepo
@@ -298,7 +298,7 @@ func userTeam(id, slug string) *domain.UserTeam {
 	return &domain.UserTeam{Team: domain.Team{ID: id, Slug: slug}, Role: domain.TeamRoleMember}
 }
 
-// TestAuthUC_Login_ResolvesTeam (§43.H): current_team новой сессии резолвится
+// TestAuthUC_Login_ResolvesTeam (§44.H): current_team новой сессии резолвится
 // по членству, а не слепо из default_team_id.
 func TestAuthUC_Login_ResolvesTeam(t *testing.T) {
 	t.Parallel()
@@ -350,7 +350,7 @@ func TestAuthUC_Login_ResolvesTeam(t *testing.T) {
 	}
 }
 
-// TestAuthUC_Login_TeamListError_FallsBack (§43.H): ошибка чтения членств не
+// TestAuthUC_Login_TeamListError_FallsBack (§44.H): ошибка чтения членств не
 // блокирует логин — current_team деградирует на default_team_id.
 func TestAuthUC_Login_TeamListError_FallsBack(t *testing.T) {
 	t.Parallel()
@@ -369,7 +369,7 @@ func TestAuthUC_Login_TeamListError_FallsBack(t *testing.T) {
 	assert.Equal(t, "tDefault", s.CurrentTeamID)
 }
 
-// TestAuthUC_MyTeamsAndCurrent (§43.H): самолечение current_team в сессии.
+// TestAuthUC_MyTeamsAndCurrent (§44.H): самолечение current_team в сессии.
 func TestAuthUC_MyTeamsAndCurrent(t *testing.T) {
 	t.Parallel()
 

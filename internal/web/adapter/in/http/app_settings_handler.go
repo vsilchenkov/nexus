@@ -67,7 +67,7 @@ func (h *AppSettingsHandler) GetPublic(c *gin.Context) {
 	if s.General.PublicBaseURL != nil {
 		url = *s.General.PublicBaseURL
 	}
-	// §43.C: интервал автообновления метрик (резолв nil → дефолт) — нужен
+	// §44.C: интервал автообновления метрик (резолв nil → дефолт) — нужен
 	// дашборду/страницам узлов всем авторизованным, не только admin.
 	refetch := domain.MetricsRefetchDefaultMs
 	if s.General.MetricsRefetchMs != nil {

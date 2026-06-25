@@ -99,7 +99,7 @@ func (f *fakeNodeRepo) List(_ context.Context, _ port.ListNodesFilter) ([]*domai
 
 // --- Overview --------------------------------------------------------------
 
-// §43.A: Overview отдаёт только очередь Kafka + флаг доступности Prometheus.
+// §44.A: Overview отдаёт только очередь Kafka + флаг доступности Prometheus.
 // Трафик (входящие/исходящие/ошибки) переехал в NodesOverview.Totals.
 func TestMetricsUsecase_Overview(t *testing.T) {
 	t.Parallel()
@@ -120,7 +120,7 @@ func TestMetricsUsecase_Overview(t *testing.T) {
 		got := uc.Overview(context.Background())
 		require.True(t, got.PrometheusAvailable)
 		require.EqualValues(t, 312, got.KafkaQueue)
-		// Трафик в шапке больше не считается здесь (§43.A).
+		// Трафик в шапке больше не считается здесь (§44.A).
 		require.Zero(t, got.Incoming24h)
 		require.Zero(t, got.Outgoing24h)
 		require.Zero(t, got.Errors24h)
@@ -167,7 +167,7 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 		require.EqualValues(t, 4198, got.Items[0].Out)
 		require.EqualValues(t, 2, got.Items[0].Errors)
 		require.True(t, got.Items[0].LastError, "§41: последний вызов — ошибка → Down")
-		// §43.A: шапка = сумма строк (Prometheus-ветка).
+		// §44.A: шапка = сумма строк (Prometheus-ветка).
 		require.EqualValues(t, 4201, got.Totals.Incoming)
 		require.EqualValues(t, 4198, got.Totals.Outgoing)
 		require.EqualValues(t, 2, got.Totals.Errors)
@@ -208,7 +208,7 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 		require.EqualValues(t, 12, byNode["a/x"].P95ms)
 		require.Equal(t, []float64{5, 7}, byNode["a/x"].Spark)
 		require.Zero(t, byNode["b/y"].In, "узел без CH-таблицы → нули")
-		// §43.A: шапка = сумма строк (CH-ветка) = только узел a/x (b/y нулевой).
+		// §44.A: шапка = сумма строк (CH-ветка) = только узел a/x (b/y нулевой).
 		require.EqualValues(t, 50, got.Totals.Incoming)
 		require.EqualValues(t, 47, got.Totals.Outgoing)
 		require.EqualValues(t, 3, got.Totals.Errors)
@@ -224,7 +224,7 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 	})
 }
 
-// --- Diagnostics (§43.E) ---------------------------------------------------
+// --- Diagnostics (§44.E) ---------------------------------------------------
 
 // TestMetricsUsecase_Diagnostics кодирует гипотезы расхождения счётчиков:
 // Prometheus считает ПОПЫТКИ (ретраи → outgoing>incoming), ClickHouse —

@@ -619,7 +619,7 @@ definitions:
   internal_web_adapter_in_http.PublicSettingsResponse:
     properties:
       metrics_refetch_ms:
-        description: '§43.C: интервал автообновления метрик (мс) для дашборда/страниц
+        description: '§44.C: интервал автообновления метрик (мс) для дашборда/страниц
           узлов.'
         type: integer
       public_base_url:
@@ -1773,7 +1773,7 @@ definitions:
       metrics_refetch_ms:
         description: |-
           MetricsRefetchMs — интервал автообновления метрик на дашборде и страницах
-          узлов, мс (§43.C). nil = дефолт MetricsRefetchDefaultMs. Диапазон
+          узлов, мс (§44.C). nil = дефолт MetricsRefetchDefaultMs. Диапазон
           [MetricsRefetchMinMs, MetricsRefetchMaxMs]. Отдаётся всем авторизованным
           через /api/settings/public (не секрет).
         type: integer
@@ -2797,7 +2797,7 @@ paths:
       security:
       - CookieAuth: []
       - ApiTokenAuth: []
-      summary: Сверка счётчиков Prometheus↔ClickHouse за окно (§43.E).
+      summary: Сверка счётчиков Prometheus↔ClickHouse за окно (§44.E).
       tags:
       - metrics
   /api/metrics/nodes:
@@ -2829,7 +2829,7 @@ paths:
       security:
       - CookieAuth: []
       - ApiTokenAuth: []
-      summary: Per-node throughput за окно + агрегат для шапки (§21, §43.A).
+      summary: Per-node throughput за окно + агрегат для шапки (§21, §44.A).
       tags:
       - metrics
   /api/metrics/nodes/{id}:
@@ -2887,7 +2887,7 @@ paths:
       security:
       - CookieAuth: []
       - ApiTokenAuth: []
-      summary: 'KPI шапки: очередь Kafka + доступность Prometheus (§21, §43.A).'
+      summary: 'KPI шапки: очередь Kafka + доступность Prometheus (§21, §44.A).'
       tags:
       - metrics
   /api/nodes:

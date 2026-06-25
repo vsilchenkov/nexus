@@ -107,7 +107,7 @@ type overviewKPIDTO struct {
 }
 
 // Overview godoc
-// @Summary  KPI шапки: очередь Kafka + доступность Prometheus (§21, §43.A).
+// @Summary  KPI шапки: очередь Kafka + доступность Prometheus (§21, §44.A).
 // @Description  Только очередь Kafka (мгновенный lag, Prometheus). Трафик (входящие/исходящие/ошибки) переехал в GET /api/metrics/nodes → totals (за выбранный период, ClickHouse), чтобы шапка сходилась с таблицей. Без prometheus.url — нули с prometheus_available=false.
 // @Tags     metrics
 // @Produce  json
@@ -138,7 +138,7 @@ type nodeThroughputDTO struct {
 	LastError bool `json:"last_error"`
 }
 
-// overviewTotalsDTO — агрегат для KPI шапки (§43.A): СУММА строк items за тот же
+// overviewTotalsDTO — агрегат для KPI шапки (§44.A): СУММА строк items за тот же
 // период. error_rate = errors/incoming (0..1).
 type overviewTotalsDTO struct {
 	Incoming  uint64  `json:"incoming"`
@@ -148,7 +148,7 @@ type overviewTotalsDTO struct {
 }
 
 // NodesOverview godoc
-// @Summary  Per-node throughput за окно + агрегат для шапки (§21, §43.A).
+// @Summary  Per-node throughput за окно + агрегат для шапки (§21, §44.A).
 // @Description  Источник — ClickHouse-логи (уникальные запросы), fallback Prometheus. Ключ node = path узла. Поле totals = СУММА строк (incoming/outgoing/errors/error_rate) для KPI шапки. Без источника — пустой список с prometheus_available=false.
 // @Tags     metrics
 // @Produce  json
@@ -185,7 +185,7 @@ func (h *MetricsHandler) NodesOverview(c *gin.Context) {
 	})
 }
 
-// diagSourceDTO / diagNodeDTO / diagnosticsDTO — сверка источников (§43.E).
+// diagSourceDTO / diagNodeDTO / diagnosticsDTO — сверка источников (§44.E).
 type diagSourceDTO struct {
 	Incoming  uint64 `json:"incoming"`
 	Outgoing  uint64 `json:"outgoing"`
@@ -214,7 +214,7 @@ type diagnosticsDTO struct {
 }
 
 // Diagnostics godoc
-// @Summary  Сверка счётчиков Prometheus↔ClickHouse за окно (§43.E).
+// @Summary  Сверка счётчиков Prometheus↔ClickHouse за окно (§44.E).
 // @Description  Возвращает обе стороны (Prometheus — попытки/increase; ClickHouse — уникальные запросы) и per-node-сверку. Помогает объяснить расхождение шапки/таблицы (ретраи → outgoing>incoming в Prometheus; CH-ошибки ≥ Prometheus при 3xx/висящих; занижение increase). Деградирует при недоступном источнике.
 // @Tags     metrics
 // @Produce  json
