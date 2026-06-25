@@ -56,6 +56,36 @@ func (u *UserUsecase) List(ctx context.Context, f port.ListUsersFilter) ([]*doma
 	return u.users.List(ctx, f)
 }
 
+// UserWithTeams — пользователь + его команды (членства) для списка (§43.G).
+type UserWithTeams struct {
+	User  *domain.User
+	Teams []*domain.UserTeam
+}
+
+// ListWithTeams — список пользователей, обогащённый членствами в командах (§43.G,
+// колонка «Команды» в Settings → Users). Членства тянутся одним батч-запросом
+// (без N+1). Ошибка обогащения деградирует до списка без команд (не 500).
+func (u *UserUsecase) ListWithTeams(ctx context.Context, f port.ListUsersFilter) ([]UserWithTeams, error) {
+	users, err := u.users.List(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, len(users))
+	for i, usr := range users {
+		ids[i] = usr.ID
+	}
+	byUser, err := u.teams.ListTeamsByUsers(ctx, ids)
+	if err != nil {
+		u.logger.Warn("list users: teams enrichment failed", u.logger.Err(err))
+		byUser = map[string][]*domain.UserTeam{}
+	}
+	out := make([]UserWithTeams, len(users))
+	for i, usr := range users {
+		out[i] = UserWithTeams{User: usr, Teams: byUser[usr.ID]}
+	}
+	return out, nil
+}
+
 // Create — создание пользователя (admin only — проверка ролей в handler).
 //
 // teamID — команда, в которую добавляется membership (Phase 11.A): без

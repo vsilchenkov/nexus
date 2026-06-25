@@ -6407,6 +6407,29 @@ const docTemplate = `{
                 },
                 "role": {
                     "type": "string"
+                },
+                "teams": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.userTeamBrief"
+                    }
+                }
+            }
+        },
+        "internal_web_adapter_in_http.userTeamBrief": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string"
+                },
+                "slug": {
+                    "type": "string"
                 }
             }
         },

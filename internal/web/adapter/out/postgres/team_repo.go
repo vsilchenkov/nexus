@@ -242,3 +242,36 @@ ORDER BY t.slug`, userID)
 	}
 	return out, rows.Err()
 }
+
+// ListTeamsByUsers — членства для набора пользователей одним запросом (§43.G):
+// ключ карты — user_id. Пустой userIDs → пустая карта (без запроса). Порядок
+// команд внутри пользователя — по slug (как ListUserTeams).
+func (r *TeamRepoPg) ListTeamsByUsers(ctx context.Context, userIDs []string) (map[string][]*domain.UserTeam, error) {
+	out := make(map[string][]*domain.UserTeam, len(userIDs))
+	if len(userIDs) == 0 {
+		return out, nil
+	}
+	rows, err := r.pool.Query(ctx, `
+SELECT ut.user_id, t.id, t.slug, t.name, t.ch_database, t.created_at, t.updated_at, ut.role
+FROM user_teams ut
+JOIN teams t ON t.id = ut.team_id
+WHERE ut.user_id = ANY($1::uuid[])
+ORDER BY ut.user_id, t.slug`, userIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list teams by users: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var userID, role string
+		var ut domain.UserTeam
+		if err := rows.Scan(
+			&userID, &ut.Team.ID, &ut.Team.Slug, &ut.Team.Name, &ut.Team.CHDatabase,
+			&ut.Team.CreatedAt, &ut.Team.UpdatedAt, &role,
+		); err != nil {
+			return nil, fmt.Errorf("scan teams by users: %w", err)
+		}
+		ut.Role = domain.TeamRole(role)
+		out[userID] = append(out[userID], &ut)
+	}
+	return out, rows.Err()
+}

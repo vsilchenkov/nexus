@@ -6,6 +6,9 @@ import { api } from "../../api/client";
 import { useConfirm } from "../../lib/confirm";
 import type { Role } from "../../lib/roles";
 
+// TeamBrief — команда пользователя для колонки «Команды» (§43.G).
+type TeamBrief = { id: string; slug: string; name: string; role: string };
+
 type User = {
   id: string;
   login: string;
@@ -14,7 +17,8 @@ type User = {
   active: boolean;
   lang: "en" | "ru";
   must_change_password: boolean;
-  team_id: string;
+  default_team_id: string;
+  teams?: TeamBrief[];
   created_at: string;
   last_login_at?: string;
 };
@@ -207,6 +211,7 @@ export function UsersPanel() {
             <tr>
               <th className="text-left px-3 py-2">{t("settings.users.col.user")}</th>
               <th className="text-left px-3 py-2">{t("settings.users.col.role")}</th>
+              <th className="text-left px-3 py-2">{t("settings.users.col.teams")}</th>
               <th className="text-left px-3 py-2">{t("settings.users.col.status")}</th>
               <th className="text-left px-3 py-2">{t("settings.users.col.last_login")}</th>
               <th></th>
@@ -254,6 +259,38 @@ export function UsersPanel() {
                     >
                       {t(`settings.users.role.${u.role}`)}
                     </span>
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="flex flex-wrap gap-1">
+                      {(u.teams ?? []).map((tm) => {
+                        const isDefault = tm.id === u.default_team_id;
+                        return (
+                          <span
+                            key={tm.id}
+                            title={isDefault ? t("settings.users.teams.default") : tm.name}
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${
+                              isDefault ? "bg-accent/15 text-accent" : "bg-fg-muted/15 text-fg-muted"
+                            }`}
+                          >
+                            {isDefault && <span className="text-[10px]">★</span>}
+                            {tm.slug}
+                          </span>
+                        );
+                      })}
+                      {/* §43.G/H: default_team_id вне членств — рассинхрон. */}
+                      {u.default_team_id &&
+                        !(u.teams ?? []).some((tm) => tm.id === u.default_team_id) && (
+                          <span
+                            title={t("settings.users.teams.default_not_member")}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-warn/15 text-warn"
+                          >
+                            ⚠ default
+                          </span>
+                        )}
+                      {(u.teams ?? []).length === 0 && !u.default_team_id && (
+                        <span className="text-xs text-fg-subtle">{t("settings.users.teams.none")}</span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-3 py-2">
                     {u.active ? (

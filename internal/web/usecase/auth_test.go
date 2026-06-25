@@ -278,6 +278,9 @@ func (nopTeamRepo) ListMembers(context.Context, string) ([]*domain.TeamMember, e
 func (nopTeamRepo) ListUserTeams(context.Context, string) ([]*domain.UserTeam, error) {
 	return nil, nil
 }
+func (nopTeamRepo) ListTeamsByUsers(context.Context, []string) (map[string][]*domain.UserTeam, error) {
+	return nil, nil
+}
 
 // stubTeamRepo — TeamRepo с настраиваемым ListUserTeams (§43.H): остальные
 // методы от nopTeamRepo, ListUserTeams возвращает заданные членства/ошибку.

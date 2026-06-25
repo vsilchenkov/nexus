@@ -762,8 +762,14 @@
       "col": {
         "user": "User",
         "role": "Role",
+        "teams": "Teams",
         "status": "Status",
         "last_login": "Last login"
+      },
+      "teams": {
+        "none": "—",
+        "default": "Default team (current_team on login)",
+        "default_not_member": "Default team, but the user is not a member — inconsistent; on login they land in their first available team"
       },
       "role": {
         "admin": "Full access",

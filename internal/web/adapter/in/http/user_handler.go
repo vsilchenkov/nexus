@@ -48,17 +48,26 @@ type changePasswordRequest struct {
 	MustChangePassword bool   `json:"must_change_password"`
 }
 
+// userTeamBrief — команда пользователя для колонки «Команды» (§43.G).
+type userTeamBrief struct {
+	ID   string `json:"id"`
+	Slug string `json:"slug"`
+	Name string `json:"name"`
+	Role string `json:"role"`
+}
+
 type userResponse struct {
-	ID                 string     `json:"id"`
-	Login              string     `json:"login"`
-	Email              string     `json:"email"`
-	Role               string     `json:"role"`
-	Active             bool       `json:"active"`
-	Lang               string     `json:"lang"`
-	MustChangePassword bool       `json:"must_change_password"`
-	DefaultTeamID      string     `json:"default_team_id"`
-	CreatedAt          time.Time  `json:"created_at"`
-	LastLoginAt        *time.Time `json:"last_login_at,omitempty"`
+	ID                 string          `json:"id"`
+	Login              string          `json:"login"`
+	Email              string          `json:"email"`
+	Role               string          `json:"role"`
+	Active             bool            `json:"active"`
+	Lang               string          `json:"lang"`
+	MustChangePassword bool            `json:"must_change_password"`
+	DefaultTeamID      string          `json:"default_team_id"`
+	Teams              []userTeamBrief `json:"teams,omitempty"`
+	CreatedAt          time.Time       `json:"created_at"`
+	LastLoginAt        *time.Time      `json:"last_login_at,omitempty"`
 }
 
 func toUserResp(u *domain.User) userResponse {
@@ -84,7 +93,7 @@ func (h *UserHandler) List(c *gin.Context) {
 	// Пользователь — глобальная сущность; членство в командах — отдельная ось
 	// (управляется в Teams → Members). Раньше скоупился по currentTeamID(c)
 	// (Phase 11.A) — из-за чего в одной команде не было видно юзеров другой.
-	users, err := h.uc.List(c.Request.Context(), port.ListUsersFilter{
+	users, err := h.uc.ListWithTeams(c.Request.Context(), port.ListUsersFilter{
 		Search: c.Query("search"),
 	})
 	if err != nil {
@@ -93,8 +102,15 @@ func (h *UserHandler) List(c *gin.Context) {
 		return
 	}
 	out := make([]userResponse, 0, len(users))
-	for _, u := range users {
-		out = append(out, toUserResp(u))
+	for _, uw := range users {
+		r := toUserResp(uw.User)
+		r.Teams = make([]userTeamBrief, 0, len(uw.Teams))
+		for _, ut := range uw.Teams {
+			r.Teams = append(r.Teams, userTeamBrief{
+				ID: ut.Team.ID, Slug: ut.Team.Slug, Name: ut.Team.Name, Role: string(ut.Role),
+			})
+		}
+		out = append(out, r)
 	}
 	c.JSON(http.StatusOK, gin.H{"items": out})
 }
