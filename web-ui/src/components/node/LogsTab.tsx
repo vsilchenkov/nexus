@@ -32,6 +32,12 @@ const SCROLL_BOTTOM_THRESHOLD_PX = 200;
 // Между ними браузер сам переподключается (нативный retry EventSource).
 const LIVE_MAX_CONSECUTIVE_ERRORS = 5;
 
+// Потолок строк, накапливаемых бесконечным скроллом (§44: фикс зависания на
+// узлах с сотнями тысяч логов). Без виртуализации неограниченный append раздувал
+// DOM и вешал прокрутку. Достигнут потолок — подгрузка вниз останавливается,
+// показываем подсказку сузить период/фильтр (точечный поиск — через фильтры).
+const MAX_INFINITE_ROWS = 1000;
+
 // LogsTab — вкладка «Логи» (§7.4): snapshot + SSE live-tail с буфером,
 // клиентскими фильтрами, расширенным поиском и replay-меню строки.
 export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: LogsInitialFilter }) {
@@ -203,7 +209,12 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
     // Бесконечный скролл вниз — только не в Live (Live добавляет записи сверху).
     if (!live) {
       const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_BOTTOM_THRESHOLD_PX;
-      if (nearBottom && logsQ.hasNextPage && !logsQ.isFetchingNextPage) {
+      if (
+        nearBottom &&
+        logsQ.hasNextPage &&
+        !logsQ.isFetchingNextPage &&
+        infiniteItems.length < MAX_INFINITE_ROWS
+      ) {
         logsQ.fetchNextPage();
       }
     }
@@ -247,7 +258,12 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
     if (live) return;
     const el = tableWrapRef.current;
     if (!el) return;
-    if (el.scrollHeight <= el.clientHeight && logsQ.hasNextPage && !logsQ.isFetchingNextPage) {
+    if (
+      el.scrollHeight <= el.clientHeight &&
+      logsQ.hasNextPage &&
+      !logsQ.isFetchingNextPage &&
+      infiniteItems.length < MAX_INFINITE_ROWS
+    ) {
       logsQ.fetchNextPage();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -531,6 +547,17 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                   </td>
                 </tr>
               )}
+              {/* §44: достигнут потолок строк — дальше не подгружаем (защита от
+                  зависания на узлах с сотнями тысяч логов), просим сузить поиск. */}
+              {!live &&
+                logsQ.hasNextPage &&
+                infiniteItems.length >= MAX_INFINITE_ROWS && (
+                  <tr>
+                    <td colSpan={7} className="px-3 py-3 text-center text-[11px] text-warn">
+                      {t("logs.cap_reached", { n: MAX_INFINITE_ROWS })}
+                    </td>
+                  </tr>
+                )}
             </tbody>
           </table>
         </div>

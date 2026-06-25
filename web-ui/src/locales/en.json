@@ -524,6 +524,7 @@
   "logs": {
     "empty": "No log entries",
     "no_more": "No more entries",
+    "cap_reached": "Showing the first {{n}} entries. Narrow the period or use filters for a targeted search.",
     "unavailable": "Logs are temporarily unavailable — the ClickHouse backend is unreachable. Request delivery is unaffected; logs will reappear once ClickHouse recovers.",
     "detail": {
       "request": "Request",

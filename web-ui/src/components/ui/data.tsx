@@ -94,7 +94,9 @@ export function Kpi({
         {hint && <LabelHint content={hint} />}
       </div>
       <div className="text-[23px] font-semibold leading-none tracking-tight">{value}</div>
-      {delta != null && <div className={cn("mt-1 text-[11px]", deltaCls)}>{delta}</div>}
+      {/* §44: строка delta резервируется всегда (nbsp-плейсхолдер) — высота
+          карточки постоянна, интерфейс не прыгает при дозагрузке цифр. */}
+      <div className={cn("mt-1 text-[11px]", deltaCls)}>{delta != null ? delta : " "}</div>
     </div>
   );
 }
