@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Search, Plus, Star } from "lucide-react";
+import { Search, Plus, Star, Play, Pause } from "lucide-react";
 
 import {
   api,
@@ -36,7 +36,7 @@ import {
 import { Modal } from "../components/ui/Modal";
 import { cn } from "../lib/cn";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
-import { METRICS_REFETCH_MS } from "../components/node/useNodeMetrics";
+import { useMetricsRefetchMs } from "../components/node/useNodeMetrics";
 
 type ListResp = { items: Node[] };
 type View = "table" | "cards";
@@ -44,6 +44,7 @@ type StatusFilter = "all" | "ok" | "warn" | "err" | "paused" | "disabled";
 type Throughput = { in: number; out: number; errors: number; p95: number; spark: number[]; lastError: boolean };
 
 const VIEW_KEY = "nexus.overview.view";
+const AUTOREFRESH_KEY = "nexus.overview.autorefresh";
 
 // fmtNum — компактный формат больших чисел (1.24M / 12.0k) и разделители для мелких.
 function fmtNum(n: number): string {
@@ -70,8 +71,15 @@ export default function Overview() {
     () => (localStorage.getItem(VIEW_KEY) as View) || "table",
   );
   const [moveTarget, setMoveTarget] = useState<Node | null>(null);
+  // §43.C: автообновление рабочего стола — тоггл паузы (по умолчанию вкл),
+  // персист в localStorage; интервал берётся из настроек (useMetricsRefetchMs).
+  const [autoRefresh, setAutoRefresh] = useState(
+    () => localStorage.getItem(AUTOREFRESH_KEY) !== "0",
+  );
+  const refetchMs = useMetricsRefetchMs();
 
   useEffect(() => localStorage.setItem(VIEW_KEY, view), [view]);
+  useEffect(() => localStorage.setItem(AUTOREFRESH_KEY, autoRefresh ? "1" : "0"), [autoRefresh]);
 
   const nodesQ = useQuery({
     queryKey: ["nodes", search],
@@ -81,15 +89,15 @@ export default function Overview() {
   const kpiQ = useQuery({
     queryKey: ["metrics-overview"],
     queryFn: () => api.get<OverviewKPI>("/api/metrics/overview"),
-    refetchInterval: METRICS_REFETCH_MS,
+    refetchInterval: autoRefresh ? refetchMs : false,
   });
 
-  // §28 Пункт 4: период per-node throughput выбирается (по умолчанию 1h),
-  // §28 Пункт 2: обновляется онлайн через refetchInterval.
+  // §28 Пункт 4: период per-node throughput выбирается (по умолчанию 24ч),
+  // §28 Пункт 2 / §43.C: обновляется онлайн, если автообновление включено.
   const thrQ = useQuery({
     queryKey: ["metrics-nodes", periodKey(period)],
     queryFn: () => api.get<NodesThroughputResp>("/api/metrics/nodes", periodParams(period)),
-    refetchInterval: METRICS_REFETCH_MS,
+    refetchInterval: autoRefresh ? refetchMs : false,
   });
 
   // Анти-мерцание: держим последний ответ с prometheus_available=true (§ useStableData).
@@ -235,6 +243,25 @@ export default function Overview() {
             {t("overview.set_default_period")}
           </button>
         )}
+        {/* §43.C: пауза/запуск автообновления рабочего стола. */}
+        <button
+          type="button"
+          onClick={() => setAutoRefresh((v) => !v)}
+          title={autoRefresh ? t("overview.autorefresh_on") : t("overview.autorefresh_off")}
+          className="ml-auto inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-fg-muted hover:text-accent"
+        >
+          {autoRefresh ? (
+            <>
+              <Pause className="h-3.5 w-3.5" />
+              {t("overview.autorefresh_on")}
+            </>
+          ) : (
+            <>
+              <Play className="h-3.5 w-3.5" />
+              {t("overview.autorefresh_off")}
+            </>
+          )}
+        </button>
       </div>
 
       {nodesQ.isLoading && <div className="text-fg-muted">{t("common.loading")}</div>}

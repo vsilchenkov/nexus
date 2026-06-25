@@ -153,6 +153,9 @@ var (
 	// Общие настройки (§28, Пункт 1)
 	ErrPublicBaseURLInvalid = errors.New("domain: public_base_url must be an http(s) origin without path or trailing slash")
 
+	// Интервал автообновления метрик (§43.C)
+	ErrMetricsRefetchInvalid = errors.New("domain: metrics_refetch_ms must be within [1000, 120000]")
+
 	// Версия и сессия (§34.2 / §34.3)
 	ErrVersionOverrideForbidden = errors.New("domain: version override is not allowed (web.allow_version_override is off)")
 	ErrSessionTTLInvalid        = errors.New("domain: session_ttl_seconds must be within [300, 2592000]")

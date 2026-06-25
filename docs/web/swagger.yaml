@@ -618,6 +618,10 @@ definitions:
     type: object
   internal_web_adapter_in_http.PublicSettingsResponse:
     properties:
+      metrics_refetch_ms:
+        description: '§43.C: интервал автообновления метрик (мс) для дашборда/страниц
+          узлов.'
+        type: integer
       public_base_url:
         type: string
     type: object
@@ -1704,6 +1708,13 @@ definitions:
     type: object
   nexus_internal_domain.GeneralSettings:
     properties:
+      metrics_refetch_ms:
+        description: |-
+          MetricsRefetchMs — интервал автообновления метрик на дашборде и страницах
+          узлов, мс (§43.C). nil = дефолт MetricsRefetchDefaultMs. Диапазон
+          [MetricsRefetchMinMs, MetricsRefetchMaxMs]. Отдаётся всем авторизованным
+          через /api/settings/public (не секрет).
+        type: integer
       public_base_url:
         description: |-
           PublicBaseURL — публичный адрес, под которым опубликован Web (origin без

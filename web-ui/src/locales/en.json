@@ -57,6 +57,8 @@
     "title": "Nodes",
     "new_node": "New node",
     "set_default_period": "Set as default",
+    "autorefresh_on": "Auto",
+    "autorefresh_off": "Paused",
     "search_placeholder": "Search by path or URL…",
     "kpi": {
       "incoming": "Incoming",
@@ -657,7 +659,9 @@
       "version_override": "Application version (dev)",
       "version_override_hint": "Overrides the displayed version in this build. Available in dev/staging only; production always uses the git version. Leave empty to use the git version.",
       "session_ttl": "Session duration (minutes)",
-      "session_ttl_hint": "How many minutes a user session stays alive without activity. Allowed 5 minutes .. 30 days (43200 min). Applied without restart. Leave empty to use the config default."
+      "session_ttl_hint": "How many minutes a user session stays alive without activity. Allowed 5 minutes .. 30 days (43200 min). Applied without restart. Leave empty to use the config default.",
+      "metrics_refetch": "Metrics auto-refresh interval (seconds)",
+      "metrics_refetch_hint": "How often the dashboard and node pages refresh metrics. Allowed 1 .. 120 seconds. Leave empty for the default (12 s)."
     },
     "tokens": {
       "title": "API tokens",

@@ -4847,6 +4847,10 @@ const docTemplate = `{
         "internal_web_adapter_in_http.PublicSettingsResponse": {
             "type": "object",
             "properties": {
+                "metrics_refetch_ms": {
+                    "description": "§43.C: интервал автообновления метрик (мс) для дашборда/страниц узлов.",
+                    "type": "integer"
+                },
                 "public_base_url": {
                     "type": "string"
                 }
@@ -6434,6 +6438,10 @@ const docTemplate = `{
         "nexus_internal_domain.GeneralSettings": {
             "type": "object",
             "properties": {
+                "metrics_refetch_ms": {
+                    "description": "MetricsRefetchMs — интервал автообновления метрик на дашборде и страницах\nузлов, мс (§43.C). nil = дефолт MetricsRefetchDefaultMs. Диапазон\n[MetricsRefetchMinMs, MetricsRefetchMaxMs]. Отдаётся всем авторизованным\nчерез /api/settings/public (не секрет).",
+                    "type": "integer"
+                },
                 "public_base_url": {
                     "description": "PublicBaseURL — публичный адрес, под которым опубликован Web (origin без\nхвостового слеша, напр. https://nexus.example.com). Если задан, UI\nформирует полный адрес узла от него вместо window.location.origin.\nnil/\"\" = не задан (UI берёт origin браузера). Не секрет — Get() не маскирует.",
                     "type": "string"
