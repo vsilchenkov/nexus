@@ -40,7 +40,7 @@ func (r *UserRepoPg) scanRow(row pgx.Row) (*domain.User, error) {
 		&role, &u.Active, &u.MustChangePassword, &lang, &u.DefaultTeamID,
 		&u.CreatedAt, &lastLogin,
 	); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) || isInvalidUUID(err) {
 			return nil, domain.ErrUserNotFound
 		}
 		return nil, fmt.Errorf("scan user: %w", err)

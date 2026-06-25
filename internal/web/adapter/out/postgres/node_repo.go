@@ -381,7 +381,7 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 		&incAuthDynSrc, &n.IncomingAuthDynamicField,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) || isInvalidUUID(err) {
 			return nil, domain.ErrNodeNotFound
 		}
 		return nil, fmt.Errorf("scan node: %w", err)

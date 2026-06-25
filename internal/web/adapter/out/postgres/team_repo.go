@@ -34,7 +34,7 @@ const teamCols = `id, slug, name, ch_database, created_at, updated_at`
 func (r *TeamRepoPg) scanRow(row pgx.Row) (*domain.Team, error) {
 	var t domain.Team
 	if err := row.Scan(&t.ID, &t.Slug, &t.Name, &t.CHDatabase, &t.CreatedAt, &t.UpdatedAt); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) || isInvalidUUID(err) {
 			return nil, domain.ErrTeamNotFound
 		}
 		return nil, fmt.Errorf("scan team: %w", err)

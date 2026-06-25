@@ -12,6 +12,13 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Невалидный UUID в пути `:id` → 404 вместо 500 (Sentry NEXUS-7).** Запросы к `/api/nodes/{id}/…`,
+  `/api/users/{id}`, `/api/teams/{id}` с `id`, не являющимся UUID, доходили до приведения `$1::uuid`
+  в PostgreSQL (SQLSTATE 22P02) и падали в 500 + событие Sentry. Теперь репозитории трактуют `22P02`
+  как «не найдено» (`Err…NotFound` → 404), как и `pgx.ErrNoRows`.
+
 ## [1.8.0] - 2026-06-24
 
 ### Added
