@@ -32,15 +32,24 @@ type CancelSet interface {
 	IsCancelled(ctx context.Context, id string) (bool, error)
 }
 
+// NodeStatusWriter — персист исхода последнего исходящего вызова узла (§46).
+// Реализация — internal/platform/nodestatus (Redis) либо Noop при отсутствии
+// Redis. Best-effort: без возврата ошибки (фиксация статуса не влияет на
+// доставку). Объявлен на стороне consumer'а (accept interfaces, §17.2).
+type NodeStatusWriter interface {
+	SetLastError(ctx context.Context, nodePath string, errored bool)
+}
+
 // AsyncProcessor — обработчик одного Kafka-сообщения для Sender.
 type AsyncProcessor struct {
-	nodes    NodeReader
-	send     *SendUsecase
-	dlq      DLQProducer
-	cancel   CancelSet // §34.4: может быть nil (Redis отсутствует)
-	dlqTopic string
-	logger   logging.Logger
-	metrics  *metrics.Metrics
+	nodes      NodeReader
+	send       *SendUsecase
+	dlq        DLQProducer
+	cancel     CancelSet        // §34.4: может быть nil (Redis отсутствует)
+	nodeStatus NodeStatusWriter // §46: персист «Down» в Redis (Noop без Redis)
+	dlqTopic   string
+	logger     logging.Logger
+	metrics    *metrics.Metrics
 
 	pausedRetryAfter time.Duration
 }
@@ -50,6 +59,7 @@ func NewAsyncProcessor(
 	send *SendUsecase,
 	dlq DLQProducer,
 	cancel CancelSet,
+	nodeStatus NodeStatusWriter,
 	dlqTopic string,
 	m *metrics.Metrics,
 	logger logging.Logger,
@@ -59,6 +69,7 @@ func NewAsyncProcessor(
 		send:             send,
 		dlq:              dlq,
 		cancel:           cancel,
+		nodeStatus:       nodeStatus,
 		dlqTopic:         dlqTopic,
 		logger:           logger,
 		metrics:          m,
@@ -159,17 +170,21 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 
 	out := p.send.Send(ctx, buildSendInput(node, env))
 
+	isErr := out.StatusCode < 200 || out.StatusCode >= 300
 	if p.metrics != nil {
 		p.metrics.RequestsTotal.
 			WithLabelValues("requestAsync", env.NodePath, strconv.FormatInt(int64(out.StatusCode), 10)).Inc()
 		p.metrics.RequestDuration.
 			WithLabelValues("requestAsync", env.NodePath).Observe(float64(out.DurationMs) / 1000.0)
-		isErr := out.StatusCode < 200 || out.StatusCode >= 300
 		if isErr {
 			p.metrics.RequestsIncompleteTotal.WithLabelValues("requestAsync", env.NodePath).Inc()
 		}
-		// §41 («Down»): исход последнего вызова узла.
+		// §41 («Down»): исход последнего вызова узла (in-memory гаудж).
 		p.metrics.SetNodeLastRequestError(env.NodePath, isErr)
+	}
+	// §46: персистентный исход в Redis (переживает рестарт; Noop без Redis).
+	if p.nodeStatus != nil {
+		p.nodeStatus.SetLastError(ctx, env.NodePath, isErr)
 	}
 
 	if out.StatusCode >= 200 && out.StatusCode < 300 {

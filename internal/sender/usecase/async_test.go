@@ -56,7 +56,7 @@ func newAsyncProcessorForTest(t *testing.T, nr NodeReader, httpResp *port.HTTPRe
 	}
 	logw := &stubLogWriter{}
 	send := NewSendUsecase(httpc, logw, nil, logging.NewNoop(), 64<<20)
-	return NewAsyncProcessor(nr, send, dlq, nil, "nexus.async.dlq", nil, logging.NewNoop())
+	return NewAsyncProcessor(nr, send, dlq, nil, nil, "nexus.async.dlq", nil, logging.NewNoop())
 }
 
 // stubCancelSet — управляемый CancelSet для тестов §34.4.
@@ -81,7 +81,7 @@ func newAsyncProcessorWithCancel(t *testing.T, nr NodeReader, httpResp *port.HTT
 		httpc.responses = []*port.HTTPResponse{httpResp}
 	}
 	send := NewSendUsecase(httpc, &stubLogWriter{}, nil, logging.NewNoop(), 64<<20)
-	return NewAsyncProcessor(nr, send, dlq, cancel, "nexus.async.dlq", nil, logging.NewNoop()), httpc
+	return NewAsyncProcessor(nr, send, dlq, cancel, nil, "nexus.async.dlq", nil, logging.NewNoop()), httpc
 }
 
 // TestAsync_Cancelled_Ack (§34.4): отменённое сообщение → Ack без HTTP-вызова и
@@ -293,6 +293,59 @@ func TestAsync_Enabled_5xx_DLQ(t *testing.T) {
 	assert.Contains(t, msg.headers["reason"], "status=502",
 		"DLQ-headers должны содержать причину и статус")
 	assert.NotEmpty(t, msg.headers["last_attempt_at"])
+}
+
+// stubNodeStatus фиксирует вызовы NodeStatusWriter (§46). Handle синхронен —
+// запись происходит на вызывающей горутине, мьютекс не нужен.
+type stubNodeStatus struct {
+	calls []nodeStatusRec
+}
+
+type nodeStatusRec struct {
+	path    string
+	errored bool
+}
+
+func (s *stubNodeStatus) SetLastError(_ context.Context, path string, errored bool) {
+	s.calls = append(s.calls, nodeStatusRec{path: path, errored: errored})
+}
+
+// TestAsync_WritesNodeStatus (§46): async-обработка пишет исход последнего вызова
+// в NodeStatusWriter — errored=false на 2xx, true на не-2xx (как in-memory гаудж).
+func TestAsync_WritesNodeStatus(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name        string
+		status      int32
+		wantErrored bool
+	}{
+		{"2xx → ok (false)", 200, false},
+		{"5xx → error (true)", 502, true},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			node := &domain.Node{
+				Path:            "partner/echo",
+				Status:          domain.NodeStatusEnabled,
+				TimeoutMs:       1000,
+				RetryCount:      0,
+				ClickHouseTable: "nexus.log_partner_echo",
+			}
+			ns := &stubNodeStatus{}
+			httpc := &stubHTTPCaller{responses: []*port.HTTPResponse{{StatusCode: tc.status, Body: []byte("x")}}}
+			send := NewSendUsecase(httpc, &stubLogWriter{}, nil, logging.NewNoop(), 64<<20)
+			p := NewAsyncProcessor(&stubAsyncNodeReader{node: node}, send, &stubDLQProducer{},
+				nil, ns, "nexus.async.dlq", nil, logging.NewNoop())
+
+			p.Handle(context.Background(), makeEnvelope(t, "partner/echo"), nil)
+
+			require.Len(t, ns.calls, 1, "§46: SetLastError вызывается ровно раз на сообщение")
+			assert.Equal(t, "partner/echo", ns.calls[0].path)
+			assert.Equal(t, tc.wantErrored, ns.calls[0].errored)
+		})
+	}
 }
 
 func TestAsync_DLQProduceFails_Retry(t *testing.T) {
