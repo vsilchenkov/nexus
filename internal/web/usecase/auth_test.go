@@ -121,6 +121,16 @@ func (r *authUserRepo) Update(_ context.Context, u *domain.User) error {
 	return nil
 }
 
+func (r *authUserRepo) UpdateDefaultTeam(_ context.Context, userID, teamID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if u, ok := r.byID[userID]; ok {
+		u.DefaultTeamID = teamID
+		return nil
+	}
+	return domain.ErrUserNotFound
+}
+
 func (r *authUserRepo) UpdatePassword(_ context.Context, id, hash string, mustChange bool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -277,6 +287,153 @@ func (nopTeamRepo) ListMembers(context.Context, string) ([]*domain.TeamMember, e
 }
 func (nopTeamRepo) ListUserTeams(context.Context, string) ([]*domain.UserTeam, error) {
 	return nil, nil
+}
+func (nopTeamRepo) ListTeamsByUsers(context.Context, []string) (map[string][]*domain.UserTeam, error) {
+	return nil, nil
+}
+
+// stubTeamRepo — TeamRepo с настраиваемым ListUserTeams (§44.H): остальные
+// методы от nopTeamRepo, ListUserTeams возвращает заданные членства/ошибку.
+type stubTeamRepo struct {
+	nopTeamRepo
+	teams   []*domain.UserTeam
+	listErr error
+}
+
+func (r *stubTeamRepo) ListUserTeams(context.Context, string) ([]*domain.UserTeam, error) {
+	return r.teams, r.listErr
+}
+
+func userTeam(id, slug string) *domain.UserTeam {
+	return &domain.UserTeam{Team: domain.Team{ID: id, Slug: slug}, Role: domain.TeamRoleMember}
+}
+
+// TestAuthUC_Login_ResolvesTeam (§44.H): current_team новой сессии резолвится
+// по членству, а не слепо из default_team_id.
+func TestAuthUC_Login_ResolvesTeam(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		defaultTeam string
+		memberships []*domain.UserTeam
+		wantTeam    string
+	}{
+		{
+			name:        "default team среди членств → он",
+			defaultTeam: "tA",
+			memberships: []*domain.UserTeam{userTeam("tA", "a"), userTeam("tB", "b")},
+			wantTeam:    "tA",
+		},
+		{
+			name:        "default team не член → первое членство (баг p.nikonov)",
+			defaultTeam: "tDefault",
+			memberships: []*domain.UserTeam{userTeam("tVika", "vika")},
+			wantTeam:    "tVika",
+		},
+		{
+			name:        "нет членств → оставляем default team",
+			defaultTeam: "tDefault",
+			memberships: nil,
+			wantTeam:    "tDefault",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			users := newAuthUserRepo()
+			users.put(&domain.User{
+				ID: "u1", Login: "alice", Active: true,
+				PasswordHash:  hash(t, "secret123"),
+				DefaultTeamID: tt.defaultTeam,
+			})
+			sessions := newMemSessionRepo()
+			audit := NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop())
+			uc := NewAuthUsecase(users, sessions, &stubTeamRepo{teams: tt.memberships}, audit,
+				func() time.Duration { return time.Hour }, logging.NewNoop())
+
+			tok, _, err := uc.Login(context.Background(), "alice", "secret123", "1.2.3.4")
+			require.NoError(t, err)
+			s, err := sessions.Get(context.Background(), tok)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantTeam, s.CurrentTeamID)
+		})
+	}
+}
+
+// TestAuthUC_Login_TeamListError_FallsBack (§44.H): ошибка чтения членств не
+// блокирует логин — current_team деградирует на default_team_id.
+func TestAuthUC_Login_TeamListError_FallsBack(t *testing.T) {
+	t.Parallel()
+	users := newAuthUserRepo()
+	users.put(&domain.User{ID: "u1", Login: "alice", Active: true,
+		PasswordHash: hash(t, "secret123"), DefaultTeamID: "tDefault"})
+	sessions := newMemSessionRepo()
+	audit := NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop())
+	uc := NewAuthUsecase(users, sessions, &stubTeamRepo{listErr: errors.New("db down")}, audit,
+		func() time.Duration { return time.Hour }, logging.NewNoop())
+
+	tok, _, err := uc.Login(context.Background(), "alice", "secret123", "")
+	require.NoError(t, err)
+	s, err := sessions.Get(context.Background(), tok)
+	require.NoError(t, err)
+	assert.Equal(t, "tDefault", s.CurrentTeamID)
+}
+
+// TestAuthUC_MyTeamsAndCurrent (§44.H): самолечение current_team в сессии.
+func TestAuthUC_MyTeamsAndCurrent(t *testing.T) {
+	t.Parallel()
+
+	t.Run("current не член → переключение + persist", func(t *testing.T) {
+		t.Parallel()
+		sessions := newMemSessionRepo()
+		s := &domain.Session{Token: "tok", UserID: "u1", CurrentTeamID: "tStale"}
+		sessions.byToken["tok"] = s
+		teams := &stubTeamRepo{teams: []*domain.UserTeam{userTeam("tVika", "vika")}}
+		uc := NewAuthUsecase(newAuthUserRepo(), sessions, teams,
+			NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()),
+			func() time.Duration { return time.Hour }, logging.NewNoop())
+
+		ms, current, healed, err := uc.MyTeamsAndCurrent(context.Background(), s)
+		require.NoError(t, err)
+		require.Len(t, ms, 1)
+		assert.True(t, healed)
+		assert.Equal(t, "tVika", current)
+		assert.Equal(t, "tVika", s.CurrentTeamID)
+		stored, err := sessions.Get(context.Background(), "tok")
+		require.NoError(t, err)
+		assert.Equal(t, "tVika", stored.CurrentTeamID)
+	})
+
+	t.Run("current член → без изменений", func(t *testing.T) {
+		t.Parallel()
+		sessions := newMemSessionRepo()
+		s := &domain.Session{Token: "tok", UserID: "u1", CurrentTeamID: "tVika"}
+		sessions.byToken["tok"] = s
+		teams := &stubTeamRepo{teams: []*domain.UserTeam{userTeam("tVika", "vika"), userTeam("tB", "b")}}
+		uc := NewAuthUsecase(newAuthUserRepo(), sessions, teams,
+			NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()),
+			func() time.Duration { return time.Hour }, logging.NewNoop())
+
+		_, current, healed, err := uc.MyTeamsAndCurrent(context.Background(), s)
+		require.NoError(t, err)
+		assert.False(t, healed)
+		assert.Equal(t, "tVika", current)
+	})
+
+	t.Run("API-токен (пустой token) → не лечим", func(t *testing.T) {
+		t.Parallel()
+		sessions := newMemSessionRepo()
+		s := &domain.Session{Token: "", UserID: "u1", CurrentTeamID: "tFixed"}
+		teams := &stubTeamRepo{teams: []*domain.UserTeam{userTeam("tVika", "vika")}}
+		uc := NewAuthUsecase(newAuthUserRepo(), sessions, teams,
+			NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()),
+			func() time.Duration { return time.Hour }, logging.NewNoop())
+
+		_, current, healed, err := uc.MyTeamsAndCurrent(context.Background(), s)
+		require.NoError(t, err)
+		assert.False(t, healed)
+		assert.Equal(t, "tFixed", current)
+	})
 }
 
 func TestAuthUC_Login_UnknownUser(t *testing.T) {

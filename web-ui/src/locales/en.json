@@ -56,12 +56,15 @@
   "overview": {
     "title": "Nodes",
     "new_node": "New node",
+    "set_default_period": "Set as default",
+    "autorefresh_on": "Auto",
+    "autorefresh_off": "Paused",
     "search_placeholder": "Search by path or URL…",
     "kpi": {
-      "incoming": "Incoming (24h)",
-      "outgoing": "Outgoing (24h)",
+      "incoming": "Incoming",
+      "outgoing": "Outgoing",
       "queue": "Kafka queue",
-      "errors": "Errors (24h)"
+      "errors": "Errors"
     },
     "filter": { "all_methods": "All methods", "all_statuses": "All statuses" },
     "view": { "table": "Table", "cards": "Cards" },
@@ -521,6 +524,7 @@
   "logs": {
     "empty": "No log entries",
     "no_more": "No more entries",
+    "cap_reached": "Showing the first {{n}} entries. Narrow the period or use filters for a targeted search.",
     "unavailable": "Logs are temporarily unavailable — the ClickHouse backend is unreachable. Request delivery is unaffected; logs will reappear once ClickHouse recovers.",
     "detail": {
       "request": "Request",
@@ -656,7 +660,11 @@
       "version_override": "Application version (dev)",
       "version_override_hint": "Overrides the displayed version in this build. Available in dev/staging only; production always uses the git version. Leave empty to use the git version.",
       "session_ttl": "Session duration (minutes)",
-      "session_ttl_hint": "How many minutes a user session stays alive without activity. Allowed 5 minutes .. 30 days (43200 min). Applied without restart. Leave empty to use the config default."
+      "session_ttl_hint": "How many minutes a user session stays alive without activity. Allowed 5 minutes .. 30 days (43200 min). Applied without restart. Leave empty to use the config default.",
+      "metrics_refetch": "Metrics auto-refresh interval (seconds)",
+      "metrics_refetch_hint": "How often the dashboard and node pages refresh metrics. Allowed 1 .. 120 seconds. Leave empty for the default (12 s).",
+      "metrics_approx": "Approximate unique-request counts (faster)",
+      "metrics_approx_hint": "Off (default) — exact counts (countDistinct). On — approximate (HyperLogLog, ~0.3% error) but ~3× cheaper on CPU. Enable when there are many nodes/data and the exact count pushes ClickHouse to 100% CPU on the dashboard."
     },
     "tokens": {
       "title": "API tokens",
@@ -757,8 +765,15 @@
       "col": {
         "user": "User",
         "role": "Role",
+        "teams": "Teams",
         "status": "Status",
         "last_login": "Last login"
+      },
+      "teams": {
+        "none": "—",
+        "default": "Default team (current_team on login)",
+        "default_not_member": "Default team, but the user is not a member — inconsistent; on login they land in their first available team",
+        "set_as_default": "Make {{name}} the default team (current_team on login)"
       },
       "role": {
         "admin": "Full access",

@@ -88,9 +88,10 @@ func (s *userRepoStub) GetByLogin(_ context.Context, _ string) (*domain.User, er
 func (s *userRepoStub) List(_ context.Context, _ port.ListUsersFilter) ([]*domain.User, error) {
 	return nil, nil
 }
-func (s *userRepoStub) CountActiveAdmins(_ context.Context) (int, error) { return 1, nil }
-func (s *userRepoStub) Create(_ context.Context, _ *domain.User) error   { return nil }
-func (s *userRepoStub) Update(_ context.Context, _ *domain.User) error   { return nil }
+func (s *userRepoStub) CountActiveAdmins(_ context.Context) (int, error)       { return 1, nil }
+func (s *userRepoStub) Create(_ context.Context, _ *domain.User) error         { return nil }
+func (s *userRepoStub) Update(_ context.Context, _ *domain.User) error         { return nil }
+func (s *userRepoStub) UpdateDefaultTeam(_ context.Context, _, _ string) error { return nil }
 func (s *userRepoStub) UpdatePassword(_ context.Context, _, _ string, _ bool) error {
 	return nil
 }

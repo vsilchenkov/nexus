@@ -40,7 +40,7 @@ func (r *UserRepoPg) scanRow(row pgx.Row) (*domain.User, error) {
 		&role, &u.Active, &u.MustChangePassword, &lang, &u.DefaultTeamID,
 		&u.CreatedAt, &lastLogin,
 	); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) || isInvalidUUID(err) {
 			return nil, domain.ErrUserNotFound
 		}
 		return nil, fmt.Errorf("scan user: %w", err)
@@ -147,6 +147,24 @@ WHERE id = $1::uuid`
 	)
 	if err != nil {
 		return fmt.Errorf("update user: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrUserNotFound
+	}
+	return nil
+}
+
+// UpdateDefaultTeam меняет default_team_id пользователя (§45). Невалидный UUID в
+// id/teamID → 22P02, маппится в ErrUserNotFound (§44.I, isInvalidUUID). Членство
+// в команде проверяет usecase до вызова.
+func (r *UserRepoPg) UpdateDefaultTeam(ctx context.Context, userID, teamID string) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE users SET default_team_id = $2::uuid WHERE id = $1::uuid`, userID, teamID)
+	if err != nil {
+		if isInvalidUUID(err) {
+			return domain.ErrUserNotFound
+		}
+		return fmt.Errorf("update user default team: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return domain.ErrUserNotFound

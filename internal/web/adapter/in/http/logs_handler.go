@@ -119,6 +119,9 @@ func logQueryFromContext(c *gin.Context) port.LogQuery {
 	if v := c.Query("to"); v != "" {
 		q.UntilMs = parseTimeMs(v)
 	}
+	// §44/45-fix: тай-брейкер keyset-пагинации (ID самой старой строки прошлой
+	// страницы) — вместе с to даёт строгий курсор (date_request, ID).
+	q.BeforeID = c.Query("before_id")
 	return q
 }
 
@@ -142,7 +145,8 @@ func parseTimeMs(v string) int64 {
 // @Param    since_ms  query  int     false  "legacy cursor по date_request (UnixMilli); если задан — фильтры from/to/ip/host/status/done/q игнорируются"
 // @Param    limit     query  int     false  "1..500, default 100"
 // @Param    from      query  string  false  "начало диапазона (RFC3339 или UnixMilli)"
-// @Param    to        query  string  false  "конец диапазона (RFC3339 или UnixMilli)"
+// @Param    to        query  string  false  "конец диапазона (RFC3339 или UnixMilli); для keyset-пагинации — date_request самой старой загруженной строки"
+// @Param    before_id query  string  false  "тай-брейкер keyset-пагинации: id самой старой загруженной строки (вместе с to — строгий курсор по плотным секундам)"
 // @Param    ip        query  string  false  "exact match по IP клиента"
 // @Param    host      query  string  false  "exact match по Host"
 // @Param    status    query  string  false  "ok | err | (пусто)"

@@ -4,7 +4,12 @@ import { useTranslation } from "react-i18next";
 
 import { api } from "../../api/client";
 
-type GeneralSettings = { public_base_url?: string; version_override?: string };
+type GeneralSettings = {
+  public_base_url?: string;
+  version_override?: string;
+  metrics_refetch_ms?: number;
+  metrics_approx_counts?: boolean;
+};
 type SecuritySettings = { session_ttl_seconds?: number };
 type AppSettings = {
   general?: GeneralSettings;
@@ -41,6 +46,10 @@ export function GeneralPanel() {
   const [url, setUrl] = useState("");
   const [versionOverride, setVersionOverride] = useState("");
   const [sessionMinutes, setSessionMinutes] = useState("");
+  // §44.C: интервал автообновления метрик — в UI задаётся в секундах, хранится в мс.
+  const [refetchSec, setRefetchSec] = useState("");
+  // §44-perf: режим подсчёта уникальных (точно/приблизительно).
+  const [approxCounts, setApproxCounts] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -49,6 +58,9 @@ export function GeneralPanel() {
       setVersionOverride(data.general?.version_override ?? "");
       const secs = data.security?.session_ttl_seconds;
       setSessionMinutes(secs ? String(Math.round(secs / 60)) : "");
+      const ms = data.general?.metrics_refetch_ms;
+      setRefetchSec(ms ? String(Math.round(ms / 1000)) : "");
+      setApproxCounts(data.general?.metrics_approx_counts ?? false);
     }
   }, [data]);
 
@@ -56,6 +68,11 @@ export function GeneralPanel() {
     mutationFn: () => {
       const general: GeneralSettings = { public_base_url: url.trim() };
       if (overrideAllowed) general.version_override = versionOverride.trim();
+      // §44.C: интервал в секундах → мс; пусто — не трогаем (дефолт/текущее).
+      const sec = refetchSec.trim();
+      if (sec !== "") general.metrics_refetch_ms = Math.round(Number(sec) * 1000);
+      // §44-perf: режим подсчёта уникальных (всегда шлём текущее значение тоггла).
+      general.metrics_approx_counts = approxCounts;
       const body: { general: GeneralSettings; security?: SecuritySettings } = { general };
       // Длительность сессии: пусто — не трогаем (остаётся из env/текущего).
       const mins = sessionMinutes.trim();
@@ -135,6 +152,37 @@ export function GeneralPanel() {
           className="w-full rounded-md bg-bg-muted px-3 py-2 font-mono text-xs outline-none"
         />
         <p className="text-xs text-fg-subtle">{t("settings.general.session_ttl_hint")}</p>
+      </div>
+
+      <div className="max-w-3xl space-y-1">
+        <label className="text-xs uppercase tracking-wider text-fg-muted">
+          {t("settings.general.metrics_refetch")}
+        </label>
+        <input
+          type="number"
+          min={1}
+          max={120}
+          value={refetchSec}
+          onChange={(e) => setRefetchSec(e.target.value)}
+          placeholder="12"
+          className="w-full rounded-md bg-bg-muted px-3 py-2 font-mono text-xs outline-none"
+        />
+        <p className="text-xs text-fg-subtle">{t("settings.general.metrics_refetch_hint")}</p>
+      </div>
+
+      <div className="max-w-3xl space-y-1">
+        <label className="flex cursor-pointer items-center gap-2">
+          <input
+            type="checkbox"
+            checked={approxCounts}
+            onChange={(e) => setApproxCounts(e.target.checked)}
+            className="h-4 w-4 accent-accent"
+          />
+          <span className="text-xs uppercase tracking-wider text-fg-muted">
+            {t("settings.general.metrics_approx")}
+          </span>
+        </label>
+        <p className="text-xs text-fg-subtle">{t("settings.general.metrics_approx_hint")}</p>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">

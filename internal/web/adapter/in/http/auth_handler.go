@@ -231,7 +231,9 @@ func (h *AuthHandler) MyTeams(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
-	memberships, err := h.uc.MyTeams(c.Request.Context(), s.UserID)
+	// §44.H: вместе со списком — самолечение current_team в сессии, если он
+	// больше не входит в членства (иначе пользователь застревал на чужой команде).
+	memberships, current, healed, err := h.uc.MyTeamsAndCurrent(c.Request.Context(), s)
 	if err != nil {
 		h.logger.ErrorWithOp("list user teams", err, "auth.my_teams")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
@@ -244,7 +246,7 @@ func (h *AuthHandler) MyTeams(c *gin.Context) {
 			CHDatabase: m.Team.CHDatabase, Role: string(m.Role),
 		})
 	}
-	c.JSON(http.StatusOK, gin.H{"items": items, "current_team_id": s.CurrentTeamID})
+	c.JSON(http.StatusOK, gin.H{"items": items, "current_team_id": current, "healed": healed})
 }
 
 // SwitchTeam godoc

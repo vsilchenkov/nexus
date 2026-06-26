@@ -618,6 +618,10 @@ definitions:
     type: object
   internal_web_adapter_in_http.PublicSettingsResponse:
     properties:
+      metrics_refetch_ms:
+        description: '§44.C: интервал автообновления метрик (мс) для дашборда/страниц
+          узлов.'
+        type: integer
       public_base_url:
         type: string
     type: object
@@ -1036,6 +1040,53 @@ definitions:
     - login
     - role
     type: object
+  internal_web_adapter_in_http.diagNodeDTO:
+    properties:
+      ch_errors:
+        type: integer
+      ch_in:
+        type: integer
+      ch_out:
+        type: integer
+      node:
+        type: string
+      prom_errors:
+        type: integer
+      prom_in:
+        type: integer
+      prom_out:
+        type: integer
+    type: object
+  internal_web_adapter_in_http.diagSourceDTO:
+    properties:
+      available:
+        type: boolean
+      errors:
+        type: integer
+      incoming:
+        type: integer
+      outgoing:
+        type: integer
+    type: object
+  internal_web_adapter_in_http.diagnosticsDTO:
+    properties:
+      clickhouse:
+        $ref: '#/definitions/internal_web_adapter_in_http.diagSourceDTO'
+      clickhouse_available:
+        type: boolean
+      nodes:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.diagNodeDTO'
+        type: array
+      prometheus:
+        $ref: '#/definitions/internal_web_adapter_in_http.diagSourceDTO'
+      prometheus_available:
+        type: boolean
+      since_ms:
+        type: integer
+      until_ms:
+        type: integer
+    type: object
   internal_web_adapter_in_http.headerRequest:
     properties:
       description:
@@ -1438,6 +1489,13 @@ definitions:
       ts:
         type: integer
     type: object
+  internal_web_adapter_in_http.setDefaultTeamRequest:
+    properties:
+      team_id:
+        type: string
+    required:
+    - team_id
+    type: object
   internal_web_adapter_in_http.switchTeamRequest:
     properties:
       team_id:
@@ -1603,6 +1661,21 @@ definitions:
         type: boolean
       role:
         type: string
+      teams:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.userTeamBrief'
+        type: array
+    type: object
+  internal_web_adapter_in_http.userTeamBrief:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+      role:
+        type: string
+      slug:
+        type: string
     type: object
   nexus_internal_domain.AppSettings:
     properties:
@@ -1704,6 +1777,21 @@ definitions:
     type: object
   nexus_internal_domain.GeneralSettings:
     properties:
+      metrics_approx_counts:
+        description: |-
+          MetricsApproxCounts — режим подсчёта уникальных запросов в KPI узлов и
+          счётчиках дашборда (§44-perf). nil/false = ТОЧНО (countDistinct/uniqExact,
+          дефолт); true = ПРИБЛИЗИТЕЛЬНО (uniq/uniqIf, HyperLogLog: ~3× дешевле по CPU,
+          ошибка ~0.3%). Оператор включает приблизительный режим, когда узлов/данных
+          много и точный distinct упирает ClickHouse в 100% CPU. Не секрет.
+        type: boolean
+      metrics_refetch_ms:
+        description: |-
+          MetricsRefetchMs — интервал автообновления метрик на дашборде и страницах
+          узлов, мс (§44.C). nil = дефолт MetricsRefetchDefaultMs. Диапазон
+          [MetricsRefetchMinMs, MetricsRefetchMaxMs]. Отдаётся всем авторизованным
+          через /api/settings/public (не секрет).
+        type: integer
       public_base_url:
         description: |-
           PublicBaseURL — публичный адрес, под которым опубликован Web (origin без
@@ -2695,10 +2783,43 @@ paths:
       summary: Список команд, в которых состоит текущий пользователь.
       tags:
       - auth
+  /api/metrics/diagnostics:
+    get:
+      description: Возвращает обе стороны (Prometheus — попытки/increase; ClickHouse
+        — уникальные запросы) и per-node-сверку. Помогает объяснить расхождение шапки/таблицы
+        (ретраи → outgoing>incoming в Prometheus; CH-ошибки ≥ Prometheus при 3xx/висящих;
+        занижение increase). Деградирует при недоступном источнике.
+      parameters:
+      - description: 1h | 3h | 24h | 7d | 14d | 30d (default 1h)
+        in: query
+        name: range
+        type: string
+      - description: период с (RFC3339 или UnixMilli)
+        in: query
+        name: from
+        type: string
+      - description: период по (RFC3339 или UnixMilli)
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.diagnosticsDTO'
+      security:
+      - CookieAuth: []
+      - ApiTokenAuth: []
+      summary: Сверка счётчиков Prometheus↔ClickHouse за окно (§44.E).
+      tags:
+      - metrics
   /api/metrics/nodes:
     get:
-      description: Источник — Prometheus (sum by node). Ключ node = path узла. Без
-        Prometheus — пустой список с prometheus_available=false.
+      description: Источник — ClickHouse-логи (уникальные запросы), fallback Prometheus.
+        Ключ node = path узла. Поле totals = СУММА строк (incoming/outgoing/errors/error_rate)
+        для KPI шапки. Без источника — пустой список с prometheus_available=false.
       parameters:
       - description: 1h | 3h | 24h | 7d | 14d | 30d (default 1h)
         in: query
@@ -2723,7 +2844,7 @@ paths:
       security:
       - CookieAuth: []
       - ApiTokenAuth: []
-      summary: Per-node throughput за окно (§21).
+      summary: Per-node throughput за окно + агрегат для шапки (§21, §44.A).
       tags:
       - metrics
   /api/metrics/nodes/{id}:
@@ -2768,8 +2889,9 @@ paths:
       - metrics
   /api/metrics/overview:
     get:
-      description: Источник — Prometheus. Без настроенного prometheus.url возвращает
-        нули с prometheus_available=false.
+      description: Только очередь Kafka (мгновенный lag, Prometheus). Трафик (входящие/исходящие/ошибки)
+        переехал в GET /api/metrics/nodes → totals (за выбранный период, ClickHouse),
+        чтобы шапка сходилась с таблицей. Без prometheus.url — нули с prometheus_available=false.
       produces:
       - application/json
       responses:
@@ -2780,7 +2902,7 @@ paths:
       security:
       - CookieAuth: []
       - ApiTokenAuth: []
-      summary: Глобальные KPI панели за 24ч (§21).
+      summary: 'KPI шапки: очередь Kafka + доступность Prometheus (§21, §44.A).'
       tags:
       - metrics
   /api/nodes:
@@ -3384,9 +3506,15 @@ paths:
         in: query
         name: from
         type: string
-      - description: конец диапазона (RFC3339 или UnixMilli)
+      - description: конец диапазона (RFC3339 или UnixMilli); для keyset-пагинации
+          — date_request самой старой загруженной строки
         in: query
         name: to
+        type: string
+      - description: 'тай-брейкер keyset-пагинации: id самой старой загруженной строки
+          (вместе с to — строгий курсор по плотным секундам)'
+        in: query
+        name: before_id
         type: string
       - description: exact match по IP клиента
         in: query
@@ -4353,6 +4481,44 @@ paths:
       security:
       - CookieAuth: []
       summary: Обновить пользователя (admin only).
+      tags:
+      - users
+  /api/users/{id}/default-team:
+    put:
+      consumes:
+      - application/json
+      description: |-
+        Назначает default_team_id. team_id должен быть среди команд, в
+        которых пользователь состоит (иначе 400) — сделать дефолтной чужую
+        команду нельзя (§18.9 при входе перекинул бы по членству).
+      parameters:
+      - description: user id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: team id
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.setDefaultTeamRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: не член команды / битый запрос
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "404":
+          description: пользователь не найден
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Сменить команду по умолчанию пользователя (admin only, §45).
       tags:
       - users
   /api/users/{id}/password:

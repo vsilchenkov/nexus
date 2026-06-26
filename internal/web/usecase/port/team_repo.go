@@ -27,4 +27,7 @@ type TeamRepo interface {
 	UpdateMemberRole(ctx context.Context, userID, teamID string, role domain.TeamRole) error
 	ListMembers(ctx context.Context, teamID string) ([]*domain.TeamMember, error)
 	ListUserTeams(ctx context.Context, userID string) ([]*domain.UserTeam, error)
+	// ListTeamsByUsers — членства для набора пользователей одним запросом (§44.G,
+	// без N+1): ключ карты — user_id. Пустой список → пустая карта.
+	ListTeamsByUsers(ctx context.Context, userIDs []string) (map[string][]*domain.UserTeam, error)
 }

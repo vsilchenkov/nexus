@@ -26,11 +26,27 @@ type MetricsUsecase struct {
 	prom     port.PromMetrics    // может быть nil
 	nodeLogs port.NodeLogMetrics // ClickHouse-логи (per-node KPI/график)
 	nodes    port.NodeRepo
+	settings port.AppSettingsRepo // §44-perf: режим подсчёта уникальных (может быть nil)
 	logger   logging.Logger
 }
 
-func NewMetricsUsecase(prom port.PromMetrics, nodeLogs port.NodeLogMetrics, nodes port.NodeRepo, logger logging.Logger) *MetricsUsecase {
-	return &MetricsUsecase{prom: prom, nodeLogs: nodeLogs, nodes: nodes, logger: logger}
+func NewMetricsUsecase(prom port.PromMetrics, nodeLogs port.NodeLogMetrics, nodes port.NodeRepo, settings port.AppSettingsRepo, logger logging.Logger) *MetricsUsecase {
+	return &MetricsUsecase{prom: prom, nodeLogs: nodeLogs, nodes: nodes, settings: settings, logger: logger}
+}
+
+// approxCounts читает режим подсчёта уникальных из app_settings (§44-perf):
+// false (дефолт) = точно (countDistinct/uniqExact), true = приблизительно
+// (uniq/uniqIf, HyperLogLog). Деградирует в точный режим при nil settings или
+// ошибке чтения — точность важнее, потеря производительности безопаснее ошибки.
+func (u *MetricsUsecase) approxCounts(ctx context.Context) bool {
+	if u.settings == nil {
+		return false
+	}
+	s, err := u.settings.Get(ctx)
+	if err != nil || s == nil || s.General.MetricsApproxCounts == nil {
+		return false
+	}
+	return *s.General.MetricsApproxCounts
 }
 
 // OverviewKPI — 4 KPI головного экрана + флаг доступности Prometheus.
@@ -56,10 +72,38 @@ type NodeThroughputRow struct {
 	LastError bool
 }
 
-// NodesOverview — батч per-node throughput за окно.
+// OverviewTotals — агрегат счётчиков шапки = СУММА строк таблицы узлов за тот же
+// период и из того же источника (§44.A). Раньше шапка считалась отдельно из
+// Prometheus (попытки, фикс. 24ч) и не сходилась с таблицей (CH, уникальные
+// запросы). Теперь «итог в шапке = сумме видимых строк» по построению.
+type OverviewTotals struct {
+	Incoming  uint64
+	Outgoing  uint64
+	Errors    uint64
+	ErrorRate float64 // errors / incoming (0..1)
+}
+
+// NodesOverview — батч per-node throughput за окно + агрегат для шапки.
 type NodesOverview struct {
 	Items               []NodeThroughputRow
+	Totals              OverviewTotals
 	PrometheusAvailable bool
+}
+
+// sumTotals — агрегат строк для шапки (§44.A). ErrorRate = доля недоставленных
+// от входящих (Errors/Incoming), а не от исходящих — интуитивнее «X% входящих
+// не доставлены».
+func sumTotals(items []NodeThroughputRow) OverviewTotals {
+	var t OverviewTotals
+	for _, it := range items {
+		t.Incoming += it.In
+		t.Outgoing += it.Out
+		t.Errors += it.Errors
+	}
+	if t.Incoming > 0 {
+		t.ErrorRate = float64(t.Errors) / float64(t.Incoming)
+	}
+	return t
 }
 
 // NodeMetrics — KPI + временной ряд одного узла.
@@ -78,16 +122,14 @@ func f2u(v float64) uint64 {
 	return uint64(v + 0.5)
 }
 
-// Overview — глобальные KPI за 24ч. Без Prometheus возвращает нули с
-// PrometheusAvailable=false. Ошибки запроса логируются и тоже деградируют
-// (не 500) — поллинг UI не должен спамить ошибками.
+// Overview — KPI шапки, которые НЕ агрегируются из таблицы узлов: очередь Kafka
+// (мгновенный lag, только в Prometheus) + флаг доступности Prometheus. Трафик
+// (входящие/исходящие/ошибки) переехал в /api/metrics/nodes → totals (§44.A):
+// там он = сумме строк таблицы за выбранный период (CH, уникальные запросы),
+// поэтому шапка и таблица сходятся. Без Prometheus — нули с
+// PrometheusAvailable=false; ошибка запроса деградирует (не 500).
 func (u *MetricsUsecase) Overview(ctx context.Context) OverviewKPI {
 	if u.prom == nil {
-		return OverviewKPI{}
-	}
-	totals, err := u.prom.GlobalTotals(ctx, 24*time.Hour)
-	if err != nil {
-		u.logger.Warn("prometheus global totals failed", u.logger.Err(err))
 		return OverviewKPI{}
 	}
 	queue, err := u.prom.KafkaQueue(ctx)
@@ -95,16 +137,8 @@ func (u *MetricsUsecase) Overview(ctx context.Context) OverviewKPI {
 		u.logger.Warn("prometheus kafka queue failed", u.logger.Err(err))
 		return OverviewKPI{}
 	}
-	var rate float64
-	if totals.Outgoing > 0 {
-		rate = totals.Errors / totals.Outgoing
-	}
 	return OverviewKPI{
-		Incoming24h:         f2u(totals.Incoming),
-		Outgoing24h:         f2u(totals.Outgoing),
 		KafkaQueue:          f2u(queue),
-		Errors24h:           f2u(totals.Errors),
-		ErrorRate:           rate,
 		PrometheusAvailable: true,
 	}
 }
@@ -133,6 +167,9 @@ func (u *MetricsUsecase) NodesOverview(ctx context.Context, teamID string, since
 	// §41 («Down»): оверлей исхода последнего вызова поверх любой ветки
 	// (CH-источник его не считает, gauge живёт только в Prometheus).
 	u.applyLastErrors(ctx, until, &res)
+	// §44.A: агрегат для шапки = сумма строк (в любом источнике, за тот же
+	// период) → «итог в шапке = сумме видимых строк таблицы».
+	res.Totals = sumTotals(res.Items)
 	return res
 }
 
@@ -167,6 +204,9 @@ func (u *MetricsUsecase) nodesOverviewCH(ctx context.Context, teamID string, sin
 		return NodesOverview{Items: []NodeThroughputRow{}}
 	}
 	sinceMs, untilMs := since.UnixMilli(), until.UnixMilli()
+	// §44-perf: режим подсчёта уникальных читаем ОДИН раз на весь батч (а не на
+	// каждый узел) и передаём во все горутины.
+	approx := u.approxCounts(ctx)
 	rows := make([]NodeThroughputRow, len(nodes))
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(12)
@@ -177,7 +217,7 @@ func (u *MetricsUsecase) nodesOverviewCH(ctx context.Context, teamID string, sin
 			continue // нет логирования → нет per-node CH-метрик
 		}
 		g.Go(func() error {
-			kpi, kerr := u.nodeLogs.NodeKPI(gctx, n.ClickHouseTable, n.ID, sinceMs, untilMs)
+			kpi, kerr := u.nodeLogs.NodeKPI(gctx, n.ClickHouseTable, n.ID, sinceMs, untilMs, approx)
 			if kerr != nil {
 				u.logger.Warn("nodes overview: node kpi failed",
 					u.logger.Str("node", n.Path), u.logger.Err(kerr))
@@ -270,7 +310,7 @@ func (u *MetricsUsecase) NodeMetrics(ctx context.Context, nodeID, teamID string,
 		return res, nil
 	}
 	sinceMs, untilMs := since.UnixMilli(), until.UnixMilli()
-	kpi, err := u.nodeLogs.NodeKPI(ctx, n.ClickHouseTable, n.ID, sinceMs, untilMs)
+	kpi, err := u.nodeLogs.NodeKPI(ctx, n.ClickHouseTable, n.ID, sinceMs, untilMs, u.approxCounts(ctx))
 	if err != nil {
 		u.logger.Warn("clickhouse node kpi failed", u.logger.Err(err))
 		return res, nil
@@ -284,4 +324,97 @@ func (u *MetricsUsecase) NodeMetrics(ctx context.Context, nodeID, teamID string,
 	res.Series = series
 	res.ChartAvailable = true
 	return res, nil
+}
+
+// DiagSource — агрегат одного источника для reconciliation (§44.E).
+type DiagSource struct {
+	Incoming  uint64
+	Outgoing  uint64
+	Errors    uint64
+	Available bool
+}
+
+// DiagNode — сверка одного узла: ClickHouse (уникальные запросы) vs Prometheus
+// (попытки). Ключ — path узла.
+type DiagNode struct {
+	Node                        string
+	CHIn, CHOut, CHErrors       uint64
+	PromIn, PromOut, PromErrors uint64
+}
+
+// Diagnostics — сверка счётчиков между источниками (§44.E): Prometheus (попытки,
+// increase) против ClickHouse (уникальные запросы). Помогает объяснить
+// расхождения шапки/таблицы: ретраи раздувают исходящие Prometheus
+// (outgoing>incoming), увеличение CH-ошибок против Prometheus (3xx/висящие),
+// занижение increase. Используется скилом анализа боевого Nexus.
+type Diagnostics struct {
+	SinceMs             int64
+	UntilMs             int64
+	Prometheus          DiagSource // глобальные попытки (GlobalTotals)
+	ClickHouse          DiagSource // Σ уникальных (NodesOverview.Totals)
+	Nodes               []DiagNode
+	PrometheusAvailable bool
+	ClickHouseAvailable bool
+}
+
+// Diagnostics собирает обе стороны за окно и per-node-сверку. CH-сторона
+// переиспользует NodesOverview (тот же расчёт, что и таблица/шапка). Деградирует
+// мягко: недоступный источник → нули + Available=false.
+func (u *MetricsUsecase) Diagnostics(ctx context.Context, teamID string, since, until time.Time) Diagnostics {
+	if until.IsZero() {
+		until = time.Now()
+	}
+	if since.IsZero() || !since.Before(until) {
+		since = until.Add(-time.Hour)
+	}
+	d := Diagnostics{SinceMs: since.UnixMilli(), UntilMs: until.UnixMilli()}
+
+	// ClickHouse-сторона = NodesOverview (per-node + Totals). При nil CH —
+	// Prometheus-fallback, тогда обе стороны совпадут (это нормально).
+	ch := u.NodesOverview(ctx, teamID, since, until)
+	d.ClickHouseAvailable = u.nodeLogs != nil
+	d.ClickHouse = DiagSource{
+		Incoming: ch.Totals.Incoming, Outgoing: ch.Totals.Outgoing,
+		Errors: ch.Totals.Errors, Available: d.ClickHouseAvailable,
+	}
+
+	// Prometheus-сторона: глобальные попытки + per-node.
+	promByNode := map[string]port.NodeThroughput{}
+	if u.prom != nil {
+		if gt, err := u.prom.GlobalTotals(ctx, until.Sub(since)); err == nil {
+			d.Prometheus = DiagSource{
+				Incoming: f2u(gt.Incoming), Outgoing: f2u(gt.Outgoing),
+				Errors: f2u(gt.Errors), Available: true,
+			}
+			d.PrometheusAvailable = true
+		} else {
+			u.logger.Warn("diagnostics: prometheus global totals failed", u.logger.Err(err))
+		}
+		if pt, err := u.prom.NodeThroughput(ctx, since, until); err == nil {
+			promByNode = pt
+		} else {
+			u.logger.Warn("diagnostics: prometheus node throughput failed", u.logger.Err(err))
+		}
+	}
+
+	// Per-node merge: узлы из CH + те, что есть только в Prometheus (orphan).
+	d.Nodes = make([]DiagNode, 0, len(ch.Items))
+	seen := make(map[string]bool, len(ch.Items))
+	for _, it := range ch.Items {
+		p := promByNode[it.Node]
+		d.Nodes = append(d.Nodes, DiagNode{
+			Node: it.Node, CHIn: it.In, CHOut: it.Out, CHErrors: it.Errors,
+			PromIn: f2u(p.In), PromOut: f2u(p.Out), PromErrors: f2u(p.Errors),
+		})
+		seen[it.Node] = true
+	}
+	for node, p := range promByNode {
+		if seen[node] {
+			continue
+		}
+		d.Nodes = append(d.Nodes, DiagNode{
+			Node: node, PromIn: f2u(p.In), PromOut: f2u(p.Out), PromErrors: f2u(p.Errors),
+		})
+	}
+	return d
 }
