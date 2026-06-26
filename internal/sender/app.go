@@ -29,6 +29,7 @@ import (
 	kafkapf "nexus/internal/platform/kafka"
 	"nexus/internal/platform/logging"
 	"nexus/internal/platform/metrics"
+	"nexus/internal/platform/nodestatus"
 	otelpf "nexus/internal/platform/otel"
 	pgpf "nexus/internal/platform/pg"
 	"nexus/internal/platform/queuecancel"
@@ -133,8 +134,15 @@ func (a *App) Start(ctx context.Context) error {
 	}
 	sendUC := usecase.NewSendUsecase(httpc, a.chWriter, cb, a.logger, respLimit)
 
+	// §46: персист исхода последнего вызова узла в Redis (переживает рестарт →
+	// статус «Down» корректен после деплоя). Noop без Redis — поведение как §41.
+	var nodeStatus usecase.NodeStatusWriter = nodestatus.Noop{}
+	if a.redis != nil {
+		nodeStatus = nodestatus.NewRedisWriter(a.redis, a.logger)
+	}
+
 	// gRPC adapter для sync.
-	grpcSvc := grpcadapter.NewServer(sendUC, a.metrics, a.logger)
+	grpcSvc := grpcadapter.NewServer(sendUC, a.metrics, nodeStatus, a.logger)
 
 	// Async consumer. (Продьюсер уже создан выше — §38.)
 	nodeReader := nodepg.New(a.pg, a.cipher, a.logger)
@@ -156,7 +164,7 @@ func (a *App) Start(ctx context.Context) error {
 	if a.redis != nil {
 		cancelSet = queuecancel.New(a.redis)
 	}
-	asyncProc := usecase.NewAsyncProcessor(nodeReader, sendUC, a.producer, cancelSet, a.cfg.Kafka.DLQTopic, a.metrics, a.logger)
+	asyncProc := usecase.NewAsyncProcessor(nodeReader, sendUC, a.producer, cancelSet, nodeStatus, a.cfg.Kafka.DLQTopic, a.metrics, a.logger)
 	a.consumer = kafkaadapter.NewConsumerGroup(a.cfg, a.cfg.Kafka.AsyncTopic, asyncProc, a.logger, kafkaadapter.WithMetrics(a.metrics))
 	a.consumer.Start(ctx)
 

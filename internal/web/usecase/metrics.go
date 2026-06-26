@@ -23,15 +23,16 @@ import (
 //     rate-экстраполяции Prometheus и без мерцания. Без CH NodesOverview
 //     деградирует на Prometheus. См. §21.
 type MetricsUsecase struct {
-	prom     port.PromMetrics    // может быть nil
-	nodeLogs port.NodeLogMetrics // ClickHouse-логи (per-node KPI/график)
-	nodes    port.NodeRepo
-	settings port.AppSettingsRepo // §44-perf: режим подсчёта уникальных (может быть nil)
-	logger   logging.Logger
+	prom       port.PromMetrics    // может быть nil
+	nodeLogs   port.NodeLogMetrics // ClickHouse-логи (per-node KPI/график)
+	nodes      port.NodeRepo
+	settings   port.AppSettingsRepo  // §44-perf: режим подсчёта уникальных (может быть nil)
+	nodeStatus port.NodeStatusReader // §46: персистентный «Down» из Redis (может быть nil)
+	logger     logging.Logger
 }
 
-func NewMetricsUsecase(prom port.PromMetrics, nodeLogs port.NodeLogMetrics, nodes port.NodeRepo, settings port.AppSettingsRepo, logger logging.Logger) *MetricsUsecase {
-	return &MetricsUsecase{prom: prom, nodeLogs: nodeLogs, nodes: nodes, settings: settings, logger: logger}
+func NewMetricsUsecase(prom port.PromMetrics, nodeLogs port.NodeLogMetrics, nodes port.NodeRepo, settings port.AppSettingsRepo, nodeStatus port.NodeStatusReader, logger logging.Logger) *MetricsUsecase {
+	return &MetricsUsecase{prom: prom, nodeLogs: nodeLogs, nodes: nodes, settings: settings, nodeStatus: nodeStatus, logger: logger}
 }
 
 // approxCounts читает режим подсчёта уникальных из app_settings (§44-perf):
@@ -173,20 +174,45 @@ func (u *MetricsUsecase) NodesOverview(ctx context.Context, teamID string, since
 	return res
 }
 
-// applyLastErrors проставляет NodeThroughputRow.LastError из instant-gauge
-// nexus_node_last_request_error (§41). Деградирует мягко: нет Prometheus или
-// ошибка запроса → флаги остаются false (узлы не красятся в «Down» по нему).
+// applyLastErrors проставляет NodeThroughputRow.LastError из ДВУХ источников
+// (§46): персистентный Redis (приоритет — переживает рестарт Sender/Web) и
+// instant-gauge Prometheus nexus_node_last_request_error (§41, fallback для
+// узлов, которых ещё нет в Redis). На узел: значение из Redis, если есть; иначе
+// Prometheus (>=1 → ошибка). Деградирует мягко: нет ни Redis, ни Prometheus
+// (или ошибки запросов) → флаги остаются false.
 func (u *MetricsUsecase) applyLastErrors(ctx context.Context, at time.Time, res *NodesOverview) {
-	if u.prom == nil || len(res.Items) == 0 {
+	if len(res.Items) == 0 {
 		return
 	}
-	le, err := u.prom.NodeLastErrors(ctx, at)
-	if err != nil {
-		u.logger.Warn("prometheus node last errors failed", u.logger.Err(err))
-		return
+	// Redis — приоритетный источник (персистентный, §46).
+	var redisLE map[string]bool
+	if u.nodeStatus != nil {
+		paths := make([]string, len(res.Items))
+		for i := range res.Items {
+			paths[i] = res.Items[i].Node
+		}
+		if m, err := u.nodeStatus.GetLastErrors(ctx, paths); err != nil {
+			u.logger.Warn("redis node last errors failed", u.logger.Err(err))
+		} else {
+			redisLE = m
+		}
+	}
+	// Prometheus — fallback (§41) для узлов без записи в Redis.
+	var promLE map[string]float64
+	if u.prom != nil {
+		if m, err := u.prom.NodeLastErrors(ctx, at); err != nil {
+			u.logger.Warn("prometheus node last errors failed", u.logger.Err(err))
+		} else {
+			promLE = m
+		}
 	}
 	for i := range res.Items {
-		if le[res.Items[i].Node] >= 1 {
+		node := res.Items[i].Node
+		if v, ok := redisLE[node]; ok {
+			res.Items[i].LastError = v
+			continue
+		}
+		if promLE[node] >= 1 {
 			res.Items[i].LastError = true
 		}
 	}

@@ -419,7 +419,14 @@ func (a *App) Start(ctx context.Context) error {
 	// ClickHouse (ТОЧНЫЕ per-node KPI/график узла). Оба источника опциональны —
 	// usecase деградирует (prometheus_available/chart_available=false), поэтому
 	// handler создаётся всегда.
-	metricsUC := usecase.NewMetricsUsecase(promMetrics, nodeLogMetrics, nodeRepo, appSettingsRepo, a.logger)
+	// §46: персистентный статус «Down» из Redis (приоритетнее Prometheus-гауджа,
+	// переживает рестарт). nil без Redis → applyLastErrors деградирует на Prometheus.
+	// ВАЖНО: тип переменной — интерфейс, иначе typed-nil попал бы в non-nil интерфейс.
+	var nodeStatusReader webport.NodeStatusReader
+	if a.redis != nil {
+		nodeStatusReader = rediscache.NewNodeStatusReaderRedis(a.redis, a.logger)
+	}
+	metricsUC := usecase.NewMetricsUsecase(promMetrics, nodeLogMetrics, nodeRepo, appSettingsRepo, nodeStatusReader, a.logger)
 	metricsHandler := httpadapter.NewMetricsHandler(metricsUC, a.logger)
 
 	// Мониторинг Kafka (§4 spec): Prometheus (throughput/lag/KPI/top-узлы) +
