@@ -3487,3 +3487,20 @@ Inline-смена `users.default_team_id` админом — клик по чи�
   `invalidateQueries(["users"])`. Активные сессии не трогаются (дефолт влияет на следующий вход).
 
 Подробности — [sections/45-user-default-team.md](sections/45-user-default-team.md).
+
+## 46. Персистентный статус «Down» узла через Redis (переживает рестарт)
+
+Делает индикатор «Down/OK» узла (§41) персистентным. Сейчас «Down» считается по in-memory
+Prometheus-гауджу `nexus_node_last_request_error` (ставит Sender, читает Web): при рестарте/деплое
+серия теряется → все узлы ложно показывают «OK», пока не придёт новый трафик. Подтверждено на бою
+(statusnpd: последний запрос с ошибкой в 09:02, но после деплоя ~11:00 — `last_error=false`).
+
+- **Решение:** Sender дополнительно пишет исход последнего вызова в Redis (`nexus:node:last_error:<path>`,
+  ошибка = `status==0 || status>=400`), Web читает «Down» из Redis (fallback на Prometheus-гаудж при
+  отсутствии Redis). Гаудж остаётся для Prometheus-алертинга; источник UI-бейджа — Redis.
+- **Слои:** Sender-порт `NodeStatusWriter.SetLastError` (fire-and-forget, nil-safe, в точках
+  `SetNodeLastRequestError` — sync/async); Web-порт `NodeStatusReader.GetLastErrors` (MGET, читается
+  в `applyLastErrors` до Prometheus). Обе реализации — `adapter/out/redis`.
+- **После деплоя** статус сразу корректен (Redis переживает рестарт). Без Redis — поведение = §41.
+
+Подробности — [sections/46-node-status-redis.md](sections/46-node-status-redis.md).
