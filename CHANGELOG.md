@@ -12,6 +12,16 @@
 
 ## [Unreleased]
 
+## [1.9.1] - 2026-06-26
+
+### Security
+
+- **Поднят `github.com/jackc/pgx/v5` v5.5.4 → v5.9.2 (GO-2026-5004).** govulncheck (gate в CI по тегу)
+  обнаружил уязвимость *SQL Injection via placeholder confusion with dollar quoted string literals*
+  в `pgx/v5`: затронут путь `sanitize.SanitizeSQL`, на трассе — `TeamRepoPg.ListTeamsByUsers`
+  (колонка «Команды», §44.G). БД уязвимостей `vuln.go.dev` обновилась 2026-06-25, поэтому всплыло
+  сразу после релиза 1.9.0. Драйвер обновлён до версии с фиксом; `govulncheck ./...` — чисто.
+
 ## [1.9.0] - 2026-06-26
 
 ### Added
