@@ -385,18 +385,7 @@ function NodeTable({
                 </td>
                 <td className="px-3 py-2.5 font-mono">{m ? fmtNum(m.in) : "—"}</td>
                 <td className="px-3 py-2.5 font-mono">{m ? fmtNum(m.out) : "—"}</td>
-                <td className="px-3 py-2.5 font-mono">
-                  {m ? (
-                    <span className="inline-flex items-baseline gap-1.5">
-                      {fmtNum(m.errors)}
-                      {nodeErrPct(m) && (
-                        <span className="text-[11px] text-err">{nodeErrPct(m)}</span>
-                      )}
-                    </span>
-                  ) : (
-                    "—"
-                  )}
-                </td>
+                <td className="px-3 py-2.5 font-mono">{m ? fmtNum(m.errors) : "—"}</td>
                 <td className="px-3 py-2.5">
                   <Pill tone={s.tone}>{s.label}</Pill>
                 </td>
@@ -426,13 +415,6 @@ function fmtMs(ms: number): string {
   if (ms <= 0) return "—";
   if (ms >= 1000) return (ms / 1000).toFixed(1) + "s";
   return Math.round(ms) + "ms";
-}
-
-// nodeErrPct — доля ошибок узла (errors/in) как "%" (§44.D, как в шапке).
-// null, если ошибок нет или нет входящих — тогда процент НЕ выводим.
-function nodeErrPct(m: Throughput): string | null {
-  if (m.errors <= 0 || m.in <= 0) return null;
-  return ((m.errors / m.in) * 100).toFixed(2) + "%";
 }
 
 function NodeCards({
@@ -491,7 +473,6 @@ function NodeCards({
                 label={t("overview.table.errors")}
                 value={m ? fmtNum(m.errors) : "—"}
                 tone={m && m.errors > 0 ? "err" : undefined}
-                sub={m ? nodeErrPct(m) : null}
               />
             </div>
             <Sparkline data={m?.spark ?? []} variant={s.variant} period={period} />
@@ -520,19 +501,14 @@ function CardStat({
   label,
   value,
   tone,
-  sub,
 }: {
   label: string;
   value: string;
   tone?: "err";
-  sub?: string | null;
 }) {
   return (
     <div>
-      <div className={cn("font-mono text-[15px]", tone === "err" && "text-err")}>
-        {value}
-        {sub && <span className="ml-1 align-baseline text-[11px] text-err">{sub}</span>}
-      </div>
+      <div className={cn("font-mono text-[15px]", tone === "err" && "text-err")}>{value}</div>
       <div className="text-[10px] uppercase tracking-wide text-fg-subtle">{label}</div>
     </div>
   );

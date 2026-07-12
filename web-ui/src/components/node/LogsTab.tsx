@@ -633,12 +633,30 @@ function LogBodies({ nodeId, logId }: { nodeId: string; logId: string }) {
   // exceeds max_body_size: N > M runes» — иначе пустой 502 выглядит загадочно.
   const reason = q.data.reason?.trim();
   const showReason = !!reason && reason !== "OK";
+  // §47.2: параметры запроса (query) — показываем блок только если непусты,
+  // иначе поле не занимает место. Рендер как у тела (prettyMaybe + копирование);
+  // приходят в detail-ответе целиком, отдельная подгрузка чанками не нужна.
+  const parameters = q.data.parameters ?? "";
+  const showParams = parameters.trim().length > 0;
   return (
     <div className="space-y-3">
       {showReason && (
         <div className="rounded border border-warn/30 bg-warn/10 px-2 py-1.5 text-[11px] text-warn">
           <span className="font-medium">{t("logs.detail.reason")}: </span>
           <span className="break-all font-mono">{reason}</span>
+        </div>
+      )}
+      {showParams && (
+        <div className="min-w-0">
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <span className="text-[10px] uppercase tracking-wider text-fg-muted">
+              {t("logs.detail.parameters")}
+            </span>
+            <CopyButton value={parameters} />
+          </div>
+          <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded bg-bg-muted/50 p-2 font-mono text-[11px]">
+            {prettyMaybe(parameters)}
+          </pre>
         </div>
       )}
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
