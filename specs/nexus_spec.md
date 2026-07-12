@@ -3522,5 +3522,11 @@ Prometheus-гауджу `nexus_node_last_request_error` (ставит Sender, ч
 - **47.3 Убрать per-node процент ошибок из Overview (частичный реверс §44).** `nodeErrPct(errors/in)`
   в карточках и таблице узлов удаляется вместе с расчётом. Общий процент ошибок в шапке дашборда
   (`error_rate`) сохраняется.
+- **47.4 Кликабельный спарклайн дашборда — дип-линк в логи узла.** Клик по столбцу мини-графика на
+  карточке узла открывает логи этого узла за окно бакета (как клик по графику на странице узла).
+  `Sparkline` получает `onOpenLogs`; карточка навигирует на `/nodes/:id?tab=logs&from&to` (мс),
+  `NodeDetail` читает эти query-параметры (`useSearchParams`) и стартует на вкладке «Логи» с
+  `LogsInitialFilter` (`status=all`). Только для узлов с таблицей логов; per-bucket ошибок у спарклайна
+  нет → открываются все запросы бакета.
 
 Подробности — [sections/47-logs-filter-refinements.md](sections/47-logs-filter-refinements.md).
