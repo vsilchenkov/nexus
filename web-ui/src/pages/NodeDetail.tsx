@@ -1,4 +1,4 @@
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient, useIsFetching } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Pencil, RefreshCw } from "lucide-react";
@@ -22,9 +22,20 @@ const BASE_TABS: Tab[] = ["overview", "logs", "config", "metrics"];
 export default function NodeDetail() {
   const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
-  const [tab, setTab] = useState<Tab>("overview");
+  // §47.4: дип-линк со спарклайна дашборда — /nodes/:id?tab=logs&from&to (ms).
+  // Стартуем на вкладке логов с окном бакета (как клик по графику узла, §33.4).
+  const [searchParams] = useSearchParams();
+  const qsFrom = Number(searchParams.get("from"));
+  const qsTo = Number(searchParams.get("to"));
+  const hasQsWindow =
+    !!searchParams.get("from") && !!searchParams.get("to") && Number.isFinite(qsFrom) && Number.isFinite(qsTo);
+  const [tab, setTab] = useState<Tab>(searchParams.get("tab") === "logs" ? "logs" : "overview");
   // §33.4: фильтр логов, прокинутый кликом по столбцу графика (момент времени).
-  const [logsFilter, setLogsFilter] = useState<LogsInitialFilter | null>(null);
+  const [logsFilter, setLogsFilter] = useState<LogsInitialFilter | null>(
+    hasQsWindow
+      ? { from: msToDatetimeLocal(qsFrom), to: msToDatetimeLocal(qsTo), status: "all" }
+      : null,
+  );
   // §26/§28 Пункт 3: редактирование узла — только manager+ (viewer не видит креды).
   const canEdit = useRoleAtLeast("manager");
   // Ручное обновление: инвалидируем все активные запросы → перезагружаются данные
