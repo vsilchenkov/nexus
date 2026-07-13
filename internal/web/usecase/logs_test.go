@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"nexus/internal/domain"
+	"nexus/internal/domain/logsearch"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase/port"
 )
@@ -22,6 +23,10 @@ type logReaderMock struct {
 	countErr    error
 	bodyChunk   string
 	bodyTotal   int64
+	lastQuery   port.LogQuery // последний Search-запрос (для проверки QExpr, §48)
+	methods     []string      // ответ DistinctMethods (§48)
+	rangeMin    int64         // ответ DateRange (§48)
+	rangeMax    int64
 }
 
 func (m *logReaderMock) GetByID(_ context.Context, _, _ string) (*domain.LogRecord, error) {
@@ -36,7 +41,8 @@ func (m *logReaderMock) ListSince(_ context.Context, _, _ string, _ int64, _ int
 	return m.rows, m.err
 }
 
-func (m *logReaderMock) Search(_ context.Context, _ port.LogQuery) ([]*domain.LogRecord, error) {
+func (m *logReaderMock) Search(_ context.Context, q port.LogQuery) ([]*domain.LogRecord, error) {
+	m.lastQuery = q
 	return m.rows, m.err
 }
 
@@ -63,6 +69,14 @@ func (m *logReaderMock) GetByIDPreview(_ context.Context, _, _ string, _ int) (*
 
 func (m *logReaderMock) GetBodyChunk(_ context.Context, _, _, _ string, _, _ int) (string, int64, error) {
 	return m.bodyChunk, m.bodyTotal, m.getErr
+}
+
+func (m *logReaderMock) DistinctMethods(_ context.Context, _, _ string, _ int) ([]string, error) {
+	return m.methods, m.err
+}
+
+func (m *logReaderMock) DateRange(_ context.Context, _, _ string) (int64, int64, error) {
+	return m.rangeMin, m.rangeMax, m.err
 }
 
 // §43.1: узел с кривым именем CH-таблицы (legacy с дефисом) на чтении логов
@@ -231,6 +245,135 @@ func TestLogs_Subscribe_NodeMissing(t *testing.T) {
 	_, _, err := uc.Subscribe(context.Background(), "nope", "", port.LogQuery{})
 	if !errors.Is(err, domain.ErrNodeNotFound) {
 		t.Fatalf("want ErrNodeNotFound, got %v", err)
+	}
+}
+
+// §48: невалидное поисковое выражение → ErrBadQuery ещё ДО резолва узла
+// (даже если узла нет / логи не настроены — 400 приоритетнее).
+func TestLogs_Search_BadQuery(t *testing.T) {
+	t.Parallel()
+	uc := NewLogsUsecase(&logReaderMock{}, &stubNodeRepo{nodes: map[string]*domain.Node{}}, logging.NewNoop())
+
+	_, err := uc.Search(context.Background(), "nope", "", port.LogQuery{Q: "(", QRegex: true})
+	if !errors.Is(err, logsearch.ErrBadQuery) {
+		t.Fatalf("regex: want ErrBadQuery (до ErrNodeNotFound), got %v", err)
+	}
+	_, err = uc.Search(context.Background(), "nope", "", port.LogQuery{Q: "a & & b"})
+	if !errors.Is(err, logsearch.ErrBadQuery) {
+		t.Fatalf("мини-язык: want ErrBadQuery, got %v", err)
+	}
+	_, _, err = uc.Subscribe(context.Background(), "nope", "", port.LogQuery{Q: "(", QRegex: true})
+	if !errors.Is(err, logsearch.ErrBadQuery) {
+		t.Fatalf("subscribe: want ErrBadQuery, got %v", err)
+	}
+}
+
+// §48: Search парсит сырое Q по флагам и передаёт адаптеру готовый QExpr.
+func TestLogs_Search_FillsQExpr(t *testing.T) {
+	t.Parallel()
+	r := &logReaderMock{}
+	nodes := &stubNodeRepo{nodes: map[string]*domain.Node{
+		"n1": {ID: "n1", ClickHouseTable: "t.t", Status: domain.NodeStatusEnabled},
+	}}
+	uc := NewLogsUsecase(r, nodes, logging.NewNoop())
+
+	if _, err := uc.Search(context.Background(), "n1", "", port.LogQuery{Q: "a & -url:b", QCase: true}); err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	e := r.lastQuery.QExpr
+	if e == nil {
+		t.Fatal("QExpr не заполнен")
+	}
+	if !e.CaseSensitive || e.Regex || e.WholeWord {
+		t.Fatalf("флаги не проброшены: %+v", e)
+	}
+	if len(e.Groups) != 1 || len(e.Groups[0]) != 2 {
+		t.Fatalf("want 1 группа из 2 термов, got %+v", e.Groups)
+	}
+	// Пустое Q → фильтр выключен.
+	if _, err := uc.Search(context.Background(), "n1", "", port.LogQuery{}); err != nil {
+		t.Fatalf("search empty: %v", err)
+	}
+	if r.lastQuery.QExpr != nil {
+		t.Fatal("пустое Q: QExpr должен быть nil")
+	}
+}
+
+// §48: зеркало SQL-фильтра для live-tail — method + QExpr (скоупы/негация/
+// parameters). Тела в live пустые (ListSince) — здесь матчинг по url/params.
+func TestMatchLogFilter_Extended(t *testing.T) {
+	t.Parallel()
+	rec := &domain.LogRecord{
+		URL:        "/v1/orders",
+		Method:     "v1/orders",
+		Parameters: "id=42&debug=1",
+		Status:     200,
+		Done:       true,
+	}
+	mustExpr := func(q string, opts logsearch.Options) *logsearch.Expr {
+		t.Helper()
+		e, err := logsearch.Parse(q, opts)
+		if err != nil {
+			t.Fatalf("parse %q: %v", q, err)
+		}
+		return e
+	}
+	tests := []struct {
+		name string
+		q    port.LogQuery
+		want bool
+	}{
+		{name: "без фильтров", q: port.LogQuery{}, want: true},
+		{name: "method совпал", q: port.LogQuery{Method: "v1/orders"}, want: true},
+		{name: "method не совпал", q: port.LogQuery{Method: "v1/parcels"}, want: false},
+		{name: "q по url", q: port.LogQuery{QExpr: mustExpr("orders", logsearch.Options{})}, want: true},
+		{name: "q по parameters", q: port.LogQuery{QExpr: mustExpr("debug=1", logsearch.Options{})}, want: true},
+		{name: "q AND: один терм мимо", q: port.LogQuery{QExpr: mustExpr("orders & nope", logsearch.Options{})}, want: false},
+		{name: "q OR", q: port.LogQuery{QExpr: mustExpr("nope | debug", logsearch.Options{})}, want: true},
+		{name: "негация присутствующего", q: port.LogQuery{QExpr: mustExpr("-orders", logsearch.Options{})}, want: false},
+		{name: "скоуп params: найден", q: port.LogQuery{QExpr: mustExpr("params:debug", logsearch.Options{})}, want: true},
+		{name: "скоуп url: не найден (текст в params)", q: port.LogQuery{QExpr: mustExpr("url:debug", logsearch.Options{})}, want: false},
+		{name: "method + q вместе", q: port.LogQuery{Method: "v1/orders", QExpr: mustExpr("debug", logsearch.Options{})}, want: true},
+	}
+	for _, tt := range tests {
+		if got := matchLogFilter(rec, tt.q); got != tt.want {
+			t.Errorf("%s: want %v, got %v", tt.name, tt.want, got)
+		}
+	}
+}
+
+// §48.3: фасеты Methods/DateRange — форвардинг к reader'у, team scope и
+// деградация «логи не настроены» как у остальных читающих методов.
+func TestLogs_Facets_ForwardAndScope(t *testing.T) {
+	t.Parallel()
+	r := &logReaderMock{methods: []string{"a", "b"}, rangeMin: 100, rangeMax: 200}
+	nodes := &stubNodeRepo{nodes: map[string]*domain.Node{
+		"n1":    {ID: "n1", ClickHouseTable: "t.t", TeamID: "team1", Status: domain.NodeStatusEnabled},
+		"notab": {ID: "notab", ClickHouseTable: "", TeamID: "team1", Status: domain.NodeStatusEnabled},
+	}}
+	uc := NewLogsUsecase(r, nodes, logging.NewNoop())
+
+	ms, err := uc.Methods(context.Background(), "n1", "team1")
+	if err != nil || len(ms) != 2 {
+		t.Fatalf("methods: want 2, got %v / %v", ms, err)
+	}
+	lo, hi, err := uc.DateRange(context.Background(), "n1", "team1")
+	if err != nil || lo != 100 || hi != 200 {
+		t.Fatalf("date range: want 100/200, got %d/%d / %v", lo, hi, err)
+	}
+	// Чужая команда → 404.
+	if _, err := uc.Methods(context.Background(), "n1", "other"); !errors.Is(err, domain.ErrNodeNotFound) {
+		t.Fatalf("methods team scope: want ErrNodeNotFound, got %v", err)
+	}
+	if _, _, err := uc.DateRange(context.Background(), "n1", "other"); !errors.Is(err, domain.ErrNodeNotFound) {
+		t.Fatalf("range team scope: want ErrNodeNotFound, got %v", err)
+	}
+	// Нет таблицы → ErrNodeLogsNotConfigured.
+	if _, err := uc.Methods(context.Background(), "notab", "team1"); !errors.Is(err, domain.ErrNodeLogsNotConfigured) {
+		t.Fatalf("methods no table: want ErrNodeLogsNotConfigured, got %v", err)
+	}
+	if _, _, err := uc.DateRange(context.Background(), "notab", "team1"); !errors.Is(err, domain.ErrNodeLogsNotConfigured) {
+		t.Fatalf("range no table: want ErrNodeLogsNotConfigured, got %v", err)
 	}
 }
 

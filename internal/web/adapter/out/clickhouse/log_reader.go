@@ -344,10 +344,19 @@ func (r *LogReaderCH) Search(ctx context.Context, q port.LogQuery) ([]*domain.Lo
 	case "no":
 		conds = append(conds, "done = 0")
 	}
-	if q.Q != "" {
-		conds = append(conds,
-			"(positionCaseInsensitiveUTF8(url, ?) > 0 OR positionCaseInsensitiveUTF8(request, ?) > 0 OR positionCaseInsensitiveUTF8(response, ?) > 0)")
-		args = append(args, q.Q, q.Q, q.Q)
+	if q.Method != "" {
+		conds = append(conds, "method = ?")
+		args = append(args, q.Method)
+	}
+	// §48: полнотекстовый фильтр строится из распарсенного AST (usecase кладёт
+	// QExpr через logsearch.Parse; сырое q.Q адаптер не использует). Работает
+	// поверх listCols: алиасы list_req/list_resp не затеняют реальные колонки
+	// request/response — position*/match в WHERE читают их с диска (см.
+	// комментарий к listCols).
+	if q.QExpr != nil {
+		c, a := exprConds(q.QExpr)
+		conds = append(conds, c)
+		args = append(args, a...)
 	}
 
 	where := ""
@@ -489,6 +498,84 @@ func (r *LogReaderCH) FailedIDs(ctx context.Context, table, nodeID string, since
 		ids = ids[:cap]
 	}
 	return ids, capped, nil
+}
+
+// maxDistinctMethods — кап числа значений фасета Method (§48.3): дропдауну UI
+// больше не нужно, а DISTINCT по всей таблице ограничивается LIMIT'ом.
+const maxDistinctMethods = 200
+
+// DistinctMethods — уникальные непустые значения колонки method узла (§48.3),
+// отсортированные, до limit (кап maxDistinctMethods). method — 3-я компонента
+// ORDER BY-ключа таблицы, чтение сравнительно дешёвое.
+func (r *LogReaderCH) DistinctMethods(ctx context.Context, table, nodeID string, limit int) ([]string, error) {
+	if !isSafeTableName(table) {
+		return nil, fmt.Errorf("invalid table name: %q", table)
+	}
+	if limit <= 0 || limit > maxDistinctMethods {
+		limit = maxDistinctMethods
+	}
+	conds := []string{"method != ''"}
+	var args []any
+	if c, a := nodeFilterCond(nodeID); c != "" {
+		conds = append(conds, c)
+		args = append(args, a...)
+	}
+	conn, err := r.liveConn()
+	if err != nil {
+		return nil, err
+	}
+	q := fmt.Sprintf("SELECT DISTINCT method FROM %s WHERE %s ORDER BY method LIMIT ?",
+		table, strings.Join(conds, " AND "))
+	rows, err := conn.Query(ctx, q, append(args, limit)...)
+	if err != nil {
+		return nil, classifyCHErr("clickhouse distinct methods", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var m string
+		if err := rows.Scan(&m); err != nil {
+			return nil, fmt.Errorf("scan method: %w", err)
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// DateRange — min/max date_request узла в UnixMilli (§48.3). count() в том же
+// запросе служит guard'ом: min() по пустому набору в CH возвращает epoch-1970,
+// а не NULL — при нуле строк отдаём (0, 0) («ограничений нет»).
+func (r *LogReaderCH) DateRange(ctx context.Context, table, nodeID string) (int64, int64, error) {
+	if !isSafeTableName(table) {
+		return 0, 0, fmt.Errorf("invalid table name: %q", table)
+	}
+	where := ""
+	var args []any
+	if c, a := nodeFilterCond(nodeID); c != "" {
+		where = " WHERE " + c
+		args = a
+	}
+	conn, err := r.liveConn()
+	if err != nil {
+		return 0, 0, err
+	}
+	q := fmt.Sprintf(`SELECT
+		toUnixTimestamp64Milli(toDateTime64(min(date_request), 3)),
+		toUnixTimestamp64Milli(toDateTime64(max(date_request), 3)),
+		count()
+	FROM %s%s`, table, where)
+	var minMs, maxMs int64
+	var n uint64
+	if err := conn.QueryRow(ctx, q, args...).Scan(&minMs, &maxMs, &n); err != nil {
+		return 0, 0, classifyCHErr("clickhouse date range", err)
+	}
+	if n == 0 {
+		return 0, 0, nil
+	}
+	return minMs, maxMs, nil
 }
 
 // DeleteFailed — lightweight DELETE записей done=0 за окно (sinceMs, untilMs] из

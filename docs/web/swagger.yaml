@@ -410,6 +410,28 @@ definitions:
         description: request | response
         type: string
     type: object
+  internal_web_adapter_in_http.LogDateRangeResponse:
+    properties:
+      logs_available:
+        type: boolean
+      logs_configured:
+        type: boolean
+      max_ms:
+        type: integer
+      min_ms:
+        type: integer
+    type: object
+  internal_web_adapter_in_http.LogMethodsResponse:
+    properties:
+      items:
+        items:
+          type: string
+        type: array
+      logs_available:
+        type: boolean
+      logs_configured:
+        type: boolean
+    type: object
   internal_web_adapter_in_http.LogRecordDTO:
     properties:
       attempts:
@@ -3516,11 +3538,12 @@ paths:
         in: query
         name: before_id
         type: string
-      - description: exact match по IP клиента
+      - description: exact match по IP клиента (с §48 недоступно из UI, параметр API
+          сохранён)
         in: query
         name: ip
         type: string
-      - description: exact match по Host
+      - description: exact match по Host (с §48 недоступно из UI, параметр API сохранён)
         in: query
         name: host
         type: string
@@ -3532,10 +3555,28 @@ paths:
         in: query
         name: done
         type: string
-      - description: подстрока (case-insensitive) по url/request/response
+      - description: exact match по подпути запроса (колонка method, §39/§48)
+        in: query
+        name: method
+        type: string
+      - description: 'поиск по url/parameters/request/response (§48.1): & — И, | —
+          ИЛИ, -терм — НЕ, префиксы url:/params:/req:/resp: скоупят на колонку, \\
+          экранирует спецсимволы; в regex-режиме весь q — одно RE2'
         in: query
         name: q
         type: string
+      - description: 1/true — с учётом регистра (§48.2)
+        in: query
+        name: q_case
+        type: boolean
+      - description: 1/true — только целое слово (§48.2)
+        in: query
+        name: q_word
+        type: boolean
+      - description: 1/true — q как RE2-выражение, мини-язык отключён (§48.2)
+        in: query
+        name: q_regex
+        type: boolean
       produces:
       - application/json
       responses:
@@ -3543,10 +3584,43 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/internal_web_adapter_in_http.ListLogsResponse'
+        "400":
+          description: невалидный поисковый запрос (синтаксис/regex)
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       - ApiTokenAuth: []
       summary: Snapshot логов узла из ClickHouse с фильтрами.
+      tags:
+      - logs
+  /api/nodes/{id}/logs/date-range:
+    get:
+      description: Фасет для ограничения полей дат фильтра (атрибуты min/max). Дёргается
+        лениво при фокусе поля даты — всегда свежие данные (логи прибывают, пока страница
+        открыта). Нет записей → min_ms=0, max_ms=0 (ограничения не ставятся). Деградация
+        как у /logs/methods.
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.LogDateRangeResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      - ApiTokenAuth: []
+      summary: Диапазон дат логов узла (min/max date_request, UnixMilli) (§48.3).
       tags:
       - logs
   /api/nodes/{id}/logs/failed-count:
@@ -3580,16 +3654,68 @@ paths:
       summary: Число недоставленных записей узла (done=0) за период (§35).
       tags:
       - logs
-  /api/nodes/{id}/logs/stream:
+  /api/nodes/{id}/logs/methods:
     get:
-      description: Доступно только UI-сессиям (API-токены отклоняются — §7.14). Каждое
-        новое событие приходит как SSE event "log".
+      description: DISTINCT по колонке method (подпуть запроса, §39) для дропдауна
+        Method. Дёргается лениво при открытии списка — всегда свежие данные. До 200
+        значений, отсортированы. Узел без clickhouse_table → 200 + logs_configured=false;
+        CH недоступен → 200 + logs_available=false.
       parameters:
       - description: node id
         in: path
         name: id
         required: true
         type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.LogMethodsResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      - ApiTokenAuth: []
+      summary: Уникальные значения method узла для фасета фильтра (§48.3).
+      tags:
+      - logs
+  /api/nodes/{id}/logs/stream:
+    get:
+      description: Доступно только UI-сессиям (API-токены отклоняются — §7.14). Каждое
+        новое событие приходит как SSE event "log". Принимает те же фильтры, что и
+        List (q/q_case/q_word/q_regex/method/status/done/ip/host, §48); термы по телам
+        request/response в live не матчатся — тела в потоке не читаются (§48.6). Невалидный
+        q → SSE event "error".
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: exact match по подпути запроса (§48)
+        in: query
+        name: method
+        type: string
+      - description: поисковое выражение (§48.1); в live ищет по url+parameters
+        in: query
+        name: q
+        type: string
+      - description: 1/true — с учётом регистра
+        in: query
+        name: q_case
+        type: boolean
+      - description: 1/true — только целое слово
+        in: query
+        name: q_word
+        type: boolean
+      - description: 1/true — q как RE2
+        in: query
+        name: q_regex
+        type: boolean
       produces:
       - text/event-stream
       responses:

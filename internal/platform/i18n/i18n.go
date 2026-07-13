@@ -102,6 +102,8 @@ var translations = map[Lang]map[string]string{
 		"error.conflict":         "conflict",
 		"error.rate_limited":     "rate limit exceeded",
 		"error.logs_unavailable": "logs backend (ClickHouse) is temporarily unavailable",
+		// §48: синтаксис мини-языка поиска / RE2
+		"error.bad_search_query": "invalid search query (check syntax or regular expression)",
 		// auth
 		"auth.invalid_credentials": "invalid credentials",
 		"auth.user_inactive":       "user is inactive",
@@ -214,6 +216,7 @@ var translations = map[Lang]map[string]string{
 		"error.conflict":           "конфликт",
 		"error.rate_limited":       "превышен лимит запросов",
 		"error.logs_unavailable":   "backend логов (ClickHouse) временно недоступен",
+		"error.bad_search_query":   "некорректный поисковый запрос (проверьте синтаксис или регулярное выражение)",
 		"auth.invalid_credentials": "неверный логин или пароль",
 		"auth.user_inactive":       "пользователь отключён",
 		"auth.session_expired":     "сессия истекла",

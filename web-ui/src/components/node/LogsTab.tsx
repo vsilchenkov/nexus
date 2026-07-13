@@ -7,8 +7,11 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { api, type Node } from "../../api/client";
 import { fmtLogTs } from "../../lib/format";
 import { FETCH_CHUNK, LARGE_WARN_RUNES, formatRunes, prettyMaybe } from "../../lib/logBody";
+import { LabelHint } from "../ui";
 import { CopyButton } from "../ui/CopyButton";
 import { ReplayDialog } from "../ReplayDialog";
+import { LogDateField } from "./LogDateField";
+import { LogMethodFilter } from "./LogMethodFilter";
 import { type LogRow, type LogsResp, type LogDetail, type LogBodyChunk } from "./types";
 
 type StatusFilter = "all" | "ok" | "err";
@@ -56,16 +59,52 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
 
   // Стартовый временной фильтр из клика по графику (§33.4). LogsTab монтируется
   // заново при переключении на вкладку, поэтому инициализация через useState ок.
-  const initForm = { q: "", ip: "", host: "", from: initialFilter?.from ?? "", to: initialFilter?.to ?? "" };
+  // §48: поля ip/host убраны из UI (API их по-прежнему принимает); добавлены
+  // method и режимы поиска qCase/qWord/qRegex (кнопки Aa / ab| / .*).
+  const initFormEmpty = {
+    q: "",
+    method: "",
+    from: "",
+    to: "",
+    qCase: false,
+    qWord: false,
+    qRegex: false,
+  };
+  const initForm = {
+    ...initFormEmpty,
+    from: initialFilter?.from ?? "",
+    to: initialFilter?.to ?? "",
+  };
   const [showAdv, setShowAdv] = useState(!!(initialFilter?.from || initialFilter?.to));
   const [advForm, setAdvForm] = useState(initForm);
   const [appliedFilters, setAppliedFilters] = useState(initForm);
 
+  // §48.4: min/max дат из логов узла — лениво при фокусе поля даты, каждый раз
+  // заново (страница может жить долго, логи прибывают). Ошибку фетча глотаем —
+  // атрибуты просто не выставляются.
+  const [dateRange, setDateRange] = useState<{ min: number; max: number } | null>(null);
+  const dateRangeInFlight = useRef(false);
+  const fetchDateRange = () => {
+    if (dateRangeInFlight.current) return;
+    dateRangeInFlight.current = true;
+    api
+      .get<{ min_ms: number; max_ms: number }>(`/api/nodes/${id}/logs/date-range`)
+      .then((r) => setDateRange({ min: r.min_ms, max: r.max_ms }))
+      .catch(() => undefined)
+      .finally(() => {
+        dateRangeInFlight.current = false;
+      });
+  };
+
   const advQueryParams = useMemo(() => {
     const p: Record<string, string | number> = { limit: pageSize };
-    if (appliedFilters.q) p.q = appliedFilters.q;
-    if (appliedFilters.ip) p.ip = appliedFilters.ip;
-    if (appliedFilters.host) p.host = appliedFilters.host;
+    if (appliedFilters.q) {
+      p.q = appliedFilters.q;
+      if (appliedFilters.qCase) p.q_case = "1";
+      if (appliedFilters.qWord) p.q_word = "1";
+      if (appliedFilters.qRegex) p.q_regex = "1";
+    }
+    if (appliedFilters.method) p.method = appliedFilters.method;
     if (appliedFilters.from) p.from = new Date(appliedFilters.from).toISOString();
     if (appliedFilters.to) p.to = new Date(appliedFilters.to).toISOString();
     return p;
@@ -104,7 +143,17 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
     },
     // Авто-рефетч только пока пользователь у верха (см. atTop). При Live выключен.
     refetchInterval: !live && atTop ? 5_000 : false,
+    // §48: 4xx (невалидный поисковый запрос → 400) не ретраим — покажем ошибку
+    // сразу; глобальная политика ретраит всё, кроме 401/403.
+    retry: (failureCount, error: unknown) => {
+      const status = (error as { response?: { status?: number } })?.response?.status;
+      if (status && status >= 400 && status < 500) return false;
+      return failureCount < 2;
+    },
   });
+  // §48: 400 от List = некорректный синтаксис/regex в поле «Поиск».
+  const badQuery =
+    (logsQ.error as { response?: { status?: number } } | null)?.response?.status === 400;
 
   const [liveLogs, setLiveLogs] = useState<LogRow[]>([]);
   const [highlighted, setHighlighted] = useState<Set<string>>(new Set());
@@ -140,9 +189,13 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   useEffect(() => {
     if (!live || !id || !hasLogsTable) return;
     const qs = new URLSearchParams();
-    if (appliedFilters.q) qs.set("q", appliedFilters.q);
-    if (appliedFilters.ip) qs.set("ip", appliedFilters.ip);
-    if (appliedFilters.host) qs.set("host", appliedFilters.host);
+    if (appliedFilters.q) {
+      qs.set("q", appliedFilters.q);
+      if (appliedFilters.qCase) qs.set("q_case", "1");
+      if (appliedFilters.qWord) qs.set("q_word", "1");
+      if (appliedFilters.qRegex) qs.set("q_regex", "1");
+    }
+    if (appliedFilters.method) qs.set("method", appliedFilters.method);
     const suffix = qs.toString() ? `?${qs.toString()}` : "";
     const es = new EventSource(`/api/nodes/${id}/logs/stream${suffix}`);
     const timers = highlightTimersRef.current;
@@ -194,7 +247,9 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
       for (const tid of timers) window.clearTimeout(tid);
       timers.clear();
     };
-  }, [live, id, hasLogsTable, appliedFilters.q, appliedFilters.ip, appliedFilters.host]);
+    // appliedFilters заменяется атомарно по Apply — объект в deps перезапускает
+    // поток при любой смене применённого фильтра (§48).
+  }, [live, id, hasLogsTable, appliedFilters]);
 
   const tableWrapRef = useRef<HTMLDivElement | null>(null);
   const autoScrollRef = useRef(true);
@@ -368,68 +423,105 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
 
       {showAdv && (
         <div className="grid grid-cols-1 items-end gap-3 border-b border-line px-4 py-3 md:grid-cols-12">
-          <div className="space-y-1 md:col-span-5">
-            <label className="text-[10px] uppercase tracking-wider text-fg-muted">
+          {/* Ряд 1: Поиск (тумблеры Aa/ab|/.* внутри поля + подсказка) и Method (§48.4) */}
+          <div className="space-y-1 md:col-span-8">
+            <label className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-fg-muted">
               {t("logs.advanced.q")}
+              <LabelHint
+                side="right"
+                content={
+                  <div className="max-w-xs space-y-1 text-left">
+                    <div>{t("logs.advanced.hint_fields")}</div>
+                    <div>{t("logs.advanced.hint_syntax")}</div>
+                    <div>{t("logs.advanced.hint_prefix")}</div>
+                    <div>{t("logs.advanced.hint_escape")}</div>
+                    <div>{t("logs.advanced.hint_modes")}</div>
+                    <div>{t("logs.advanced.hint_regex_note")}</div>
+                  </div>
+                }
+              />
             </label>
-            <input
-              type="text"
-              value={advForm.q}
-              onChange={(e) => setAdvForm({ ...advForm, q: e.target.value })}
-              placeholder={t("logs.advanced.q_placeholder")}
-              className="w-full rounded-md bg-bg-muted px-3 py-1.5 text-sm outline-none"
-            />
+            <div className="relative">
+              <input
+                type="text"
+                value={advForm.q}
+                onChange={(e) => setAdvForm({ ...advForm, q: e.target.value })}
+                placeholder={t("logs.advanced.q_placeholder")}
+                className="w-full rounded-md bg-bg-muted py-1.5 pl-3 pr-24 text-sm outline-none"
+              />
+              {/* Кнопки-тумблеры режимов как в VS Code (§48.2) */}
+              <div className="absolute inset-y-0 right-1.5 flex items-center gap-0.5">
+                {(
+                  [
+                    { key: "qCase", label: "Aa", title: t("logs.advanced.case_tooltip") },
+                    { key: "qWord", label: "ab|", title: t("logs.advanced.word_tooltip") },
+                    { key: "qRegex", label: ".*", title: t("logs.advanced.regex_tooltip") },
+                  ] as const
+                ).map((b) => (
+                  <button
+                    key={b.key}
+                    type="button"
+                    title={b.title}
+                    aria-pressed={advForm[b.key]}
+                    onClick={() => setAdvForm({ ...advForm, [b.key]: !advForm[b.key] })}
+                    className={`rounded px-1 py-0.5 font-mono text-[11px] leading-none transition-colors ${
+                      advForm[b.key]
+                        ? "bg-accent/20 text-accent"
+                        : "text-fg-subtle hover:text-fg-muted"
+                    }`}
+                  >
+                    {b.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {badQuery && <div className="text-xs text-err">{t("logs.advanced.bad_query")}</div>}
           </div>
-          <div className="space-y-1 md:col-span-2">
+          <div className="space-y-1 md:col-span-4">
             <label className="text-[10px] uppercase tracking-wider text-fg-muted">
-              {t("logs.advanced.ip")}
+              {t("logs.advanced.method")}
             </label>
-            <input
-              type="text"
-              value={advForm.ip}
-              onChange={(e) => setAdvForm({ ...advForm, ip: e.target.value })}
-              className="w-full rounded-md bg-bg-muted px-3 py-1.5 font-mono text-sm outline-none"
+            <LogMethodFilter
+              nodeId={id}
+              value={advForm.method}
+              onChange={(m) => setAdvForm({ ...advForm, method: m })}
             />
           </div>
-          <div className="space-y-1 md:col-span-2">
-            <label className="text-[10px] uppercase tracking-wider text-fg-muted">
-              {t("logs.advanced.host")}
-            </label>
-            <input
-              type="text"
-              value={advForm.host}
-              onChange={(e) => setAdvForm({ ...advForm, host: e.target.value })}
-              className="w-full rounded-md bg-bg-muted px-3 py-1.5 font-mono text-sm outline-none"
-            />
-          </div>
+          {/* Ряд 2: даты С/По (календарь react-day-picker; min/max — лениво из
+              /logs/date-range при открытии) + кнопки. §48.8 */}
           <div className="space-y-1 md:col-span-3">
             <label className="text-[10px] uppercase tracking-wider text-fg-muted">
               {t("logs.advanced.from")}
             </label>
-            <input
-              type="datetime-local"
+            <LogDateField
               value={advForm.from}
-              onChange={(e) => setAdvForm({ ...advForm, from: e.target.value })}
-              className="w-full rounded-md bg-bg-muted px-3 py-1.5 text-sm outline-none"
+              onChange={(v) => setAdvForm({ ...advForm, from: v })}
+              min={dateRange && dateRange.min > 0 ? new Date(dateRange.min) : undefined}
+              max={dateRange && dateRange.max > 0 ? new Date(dateRange.max) : undefined}
+              defaultTime="00:00"
+              placeholder={t("logs.advanced.from")}
+              onOpen={fetchDateRange}
             />
           </div>
           <div className="space-y-1 md:col-span-3">
             <label className="text-[10px] uppercase tracking-wider text-fg-muted">
               {t("logs.advanced.to")}
             </label>
-            <input
-              type="datetime-local"
+            <LogDateField
               value={advForm.to}
-              onChange={(e) => setAdvForm({ ...advForm, to: e.target.value })}
-              className="w-full rounded-md bg-bg-muted px-3 py-1.5 text-sm outline-none"
+              onChange={(v) => setAdvForm({ ...advForm, to: v })}
+              min={dateRange && dateRange.min > 0 ? new Date(dateRange.min) : undefined}
+              max={dateRange && dateRange.max > 0 ? new Date(dateRange.max) : undefined}
+              defaultTime="23:59"
+              placeholder={t("logs.advanced.to")}
+              onOpen={fetchDateRange}
             />
           </div>
           <div className="flex items-center justify-end gap-2 md:col-span-6">
             <button
               onClick={() => {
-                const reset = { q: "", ip: "", host: "", from: "", to: "" };
-                setAdvForm(reset);
-                setAppliedFilters(reset);
+                setAdvForm(initFormEmpty);
+                setAppliedFilters(initFormEmpty);
               }}
               className="rounded-md bg-bg-muted px-3 py-1.5 text-sm hover:bg-bg-3"
             >

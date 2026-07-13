@@ -42,6 +42,14 @@ func (stubLogReaderUnavailable) CountFailed(_ context.Context, _, _ string, _, _
 	return 0, domain.ErrLogsBackendUnavailable
 }
 
+func (stubLogReaderUnavailable) DistinctMethods(_ context.Context, _, _ string, _ int) ([]string, error) {
+	return nil, domain.ErrLogsBackendUnavailable
+}
+
+func (stubLogReaderUnavailable) DateRange(_ context.Context, _, _ string) (int64, int64, error) {
+	return 0, 0, domain.ErrLogsBackendUnavailable
+}
+
 // stubLogReaderOK — чтения успешны (пустой результат).
 type stubLogReaderOK struct{ port.LogReader }
 
@@ -53,6 +61,14 @@ func (stubLogReaderOK) CountFailed(_ context.Context, _, _ string, _, _ int64) (
 	return 0, nil
 }
 
+func (stubLogReaderOK) DistinctMethods(_ context.Context, _, _ string, _ int) ([]string, error) {
+	return []string{"v1/a", "v1/b"}, nil
+}
+
+func (stubLogReaderOK) DateRange(_ context.Context, _, _ string) (int64, int64, error) {
+	return 1_700_000_000_000, 1_800_000_000_000, nil
+}
+
 func newLogsRouter(reader port.LogReader) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	node := &domain.Node{ClickHouseTable: "nexus_default.t"}
@@ -61,6 +77,8 @@ func newLogsRouter(reader port.LogReader) *gin.Engine {
 	r := gin.New()
 	r.GET("/nodes/:id/logs", h.List)
 	r.GET("/nodes/:id/logs/failed-count", h.CountFailed)
+	r.GET("/nodes/:id/logs/methods", h.Methods)
+	r.GET("/nodes/:id/logs/date-range", h.DateRange)
 	return r
 }
 
@@ -94,6 +112,113 @@ func TestLogsFailedCount_CHUnavailable_Degrades(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Equal(t, false, body["logs_available"])
 	assert.EqualValues(t, 0, body["count"])
+}
+
+// stubLogReaderCapture — запоминает LogQuery, дошедший до адаптера
+// (проверка прокидывания параметров §48 через handler → usecase).
+type stubLogReaderCapture struct {
+	port.LogReader
+	last port.LogQuery
+}
+
+func (s *stubLogReaderCapture) Search(_ context.Context, q port.LogQuery) ([]*domain.LogRecord, error) {
+	s.last = q
+	return nil, nil
+}
+
+// TestLogsList_SearchParams_Parsed — параметры §48 (q/q_case/q_word/method и
+// сохранённые ip/host) доходят до адаптера; QExpr распарсен usecase'ом.
+func TestLogsList_SearchParams_Parsed(t *testing.T) {
+	t.Parallel()
+	reader := &stubLogReaderCapture{}
+	r := newLogsRouter(reader)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet,
+		"/nodes/n1/logs?q=foo+%26+url%3Abar&q_case=1&q_word=true&method=v1%2Fx&ip=1.2.3.4&host=h1", nil))
+
+	require.Equal(t, http.StatusOK, w.Code)
+	q := reader.last
+	assert.Equal(t, "foo & url:bar", q.Q)
+	assert.True(t, q.QCase)
+	assert.True(t, q.QWord, "q_word=true — валидное значение флага")
+	assert.False(t, q.QRegex)
+	assert.Equal(t, "v1/x", q.Method)
+	assert.Equal(t, "1.2.3.4", q.IP)
+	assert.Equal(t, "h1", q.Host)
+	require.NotNil(t, q.QExpr, "usecase обязан распарсить Q в QExpr")
+	assert.True(t, q.QExpr.CaseSensitive)
+	assert.True(t, q.QExpr.WholeWord)
+	require.Len(t, q.QExpr.Groups, 1)
+	assert.Len(t, q.QExpr.Groups[0], 2)
+}
+
+// TestLogsList_BadSearchQuery_400 — невалидный поисковый запрос (regex или
+// мини-язык) → 400 с локализованной ошибкой, а не 500 (§48).
+func TestLogsList_BadSearchQuery_400(t *testing.T) {
+	t.Parallel()
+	r := newLogsRouter(stubLogReaderOK{})
+
+	for name, target := range map[string]string{
+		"невалидный regex":      "/nodes/n1/logs?q=%28&q_regex=1",
+		"пустой терм в И":       "/nodes/n1/logs?q=a+%26+%26+b",
+		"префикс без текста":    "/nodes/n1/logs?q=url%3A",
+		"висячее экранирование": "/nodes/n1/logs?q=foo%5C",
+	} {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, target, nil))
+		require.Equal(t, http.StatusBadRequest, w.Code, "case %q", name)
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+		assert.NotEmpty(t, body["error"], "case %q", name)
+	}
+}
+
+// TestLogsFacets_OK — счастливый путь фасетов §48.3: methods отсортированный
+// список, date-range — min/max в миллисекундах, оба с logs_available=true.
+func TestLogsFacets_OK(t *testing.T) {
+	t.Parallel()
+	r := newLogsRouter(stubLogReaderOK{})
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/nodes/n1/logs/methods", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+	var mBody map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &mBody))
+	assert.Equal(t, []any{"v1/a", "v1/b"}, mBody["items"])
+	assert.Equal(t, true, mBody["logs_available"])
+
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/nodes/n1/logs/date-range", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+	var dBody map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &dBody))
+	assert.EqualValues(t, 1_700_000_000_000, dBody["min_ms"])
+	assert.EqualValues(t, 1_800_000_000_000, dBody["max_ms"])
+	assert.Equal(t, true, dBody["logs_available"])
+}
+
+// TestLogsFacets_CHUnavailable_Degrades — CH недоступен: фасеты отдают
+// 200 + logs_available=false и пустой payload (не 500, не спам Sentry).
+func TestLogsFacets_CHUnavailable_Degrades(t *testing.T) {
+	t.Parallel()
+	r := newLogsRouter(stubLogReaderUnavailable{})
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/nodes/n1/logs/methods", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+	var mBody map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &mBody))
+	assert.Equal(t, false, mBody["logs_available"])
+	items, _ := mBody["items"].([]any)
+	assert.Empty(t, items)
+
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/nodes/n1/logs/date-range", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+	var dBody map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &dBody))
+	assert.Equal(t, false, dBody["logs_available"])
+	assert.EqualValues(t, 0, dBody["min_ms"])
 }
 
 // TestLogsList_OK_AvailableTrue — счастливый путь: logs_available=true.

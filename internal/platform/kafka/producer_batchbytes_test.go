@@ -25,7 +25,6 @@ func TestProducerBatchBytes(t *testing.T) {
 		{"topic unset → batch", 1 << 20, 0, 1 << 20},
 	}
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			cfg := &config.Config{}
