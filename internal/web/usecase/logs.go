@@ -3,10 +3,10 @@ package usecase
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
 
 	"nexus/internal/domain"
+	"nexus/internal/domain/logsearch"
 	"nexus/internal/platform/logging"
 	"nexus/internal/platform/safego"
 	"nexus/internal/web/usecase/port"
@@ -47,9 +47,14 @@ func (u *LogsUsecase) ListSince(ctx context.Context, nodeID, teamID string, sinc
 	return u.logs.ListSince(ctx, n.ClickHouseTable, n.ID, sinceMs, limit)
 }
 
-// Search — snapshot с расширенными фильтрами (Phase 6.8).
+// Search — snapshot с расширенными фильтрами (Phase 6.8, §48).
 // Подставляет n.ClickHouseTable в q.Table.
 func (u *LogsUsecase) Search(ctx context.Context, nodeID, teamID string, q port.LogQuery) ([]*domain.LogRecord, error) {
+	// §48: разбор q ДО резолва узла — синтаксическая ошибка (→400) приоритетнее
+	// деградации «логи не настроены».
+	if err := parseSearch(&q); err != nil {
+		return nil, err
+	}
 	n, err := u.resolveNode(ctx, nodeID, teamID)
 	if err != nil {
 		return nil, err
@@ -57,6 +62,27 @@ func (u *LogsUsecase) Search(ctx context.Context, nodeID, teamID string, q port.
 	q.Table = n.ClickHouseTable
 	q.NodeID = n.ID
 	return u.logs.Search(ctx, q)
+}
+
+// parseSearch — разбор сырого Q (мини-язык §48.1 либо RE2 в regex-режиме
+// §48.2) в QExpr по флагам QCase/QWord/QRegex. Ошибка синтаксиса/regex —
+// logsearch.ErrBadQuery (handler мапит на HTTP 400). Пустое Q → фильтр
+// выключен.
+func parseSearch(q *port.LogQuery) error {
+	if q.Q == "" {
+		q.QExpr = nil
+		return nil
+	}
+	expr, err := logsearch.Parse(q.Q, logsearch.Options{
+		CaseSensitive: q.QCase,
+		WholeWord:     q.QWord,
+		Regex:         q.QRegex,
+	})
+	if err != nil {
+		return err
+	}
+	q.QExpr = expr
+	return nil
 }
 
 // GetByID — одна запись лога целиком (включая тела request/response).
@@ -131,12 +157,21 @@ func (u *LogsUsecase) resolveNode(ctx context.Context, nodeID, teamID string) (*
 // matchLogFilter — клиентский фильтр для live-tail. Совпадает по семантике
 // с SQL-фильтром в LogReaderCH.Search, но применяется in-memory ко всем
 // событиям перед отправкой клиенту (избегаем динамической перестройки
-// polling-запроса при смене фильтра в UI).
+// polling-запроса при смене фильтра в UI). Полнотекстовая часть зеркалится
+// через общий logsearch.Expr.Match — тот же AST, что у exprConds адаптера.
+//
+// §48.6: записи приходят из ListSince (listCols) с ПУСТЫМИ телами
+// request/response — в live термы по телам не матчатся (безпрефиксный терм
+// фактически ищет по url+parameters; req:/resp:-термы не совпадают никогда).
+// Pre-existing ограничение §42; snapshot ищет по полным телам всегда.
 func matchLogFilter(r *domain.LogRecord, q port.LogQuery) bool {
 	if q.IP != "" && r.IP != q.IP {
 		return false
 	}
 	if q.Host != "" && r.Host != q.Host {
+		return false
+	}
+	if q.Method != "" && r.Method != q.Method {
 		return false
 	}
 	switch q.Status {
@@ -159,13 +194,8 @@ func matchLogFilter(r *domain.LogRecord, q port.LogQuery) bool {
 			return false
 		}
 	}
-	if q.Q != "" {
-		needle := strings.ToLower(q.Q)
-		if !strings.Contains(strings.ToLower(r.URL), needle) &&
-			!strings.Contains(strings.ToLower(r.Request), needle) &&
-			!strings.Contains(strings.ToLower(r.Response), needle) {
-			return false
-		}
+	if q.QExpr != nil && !q.QExpr.Match(r.URL, r.Parameters, r.Request, r.Response) {
+		return false
 	}
 	return true
 }
@@ -182,6 +212,10 @@ func matchLogFilter(r *domain.LogRecord, q port.LogQuery) bool {
 // но для админок этого хватает. Долгосрочный путь — pub/sub через
 // Kafka nexus.logs (out of scope в v1).
 func (u *LogsUsecase) Subscribe(ctx context.Context, nodeID, teamID string, filter port.LogQuery) (<-chan *domain.LogRecord, <-chan error, error) {
+	// §48: как в Search — сначала валидация поискового выражения (→400).
+	if err := parseSearch(&filter); err != nil {
+		return nil, nil, err
+	}
 	n, err := u.resolveNode(ctx, nodeID, teamID)
 	if err != nil {
 		return nil, nil, err

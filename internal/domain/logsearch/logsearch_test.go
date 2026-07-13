@@ -113,6 +113,29 @@ func TestParse_Grammar(t *testing.T) {
 			q:    "  foo bar  ",
 			want: [][]flatTerm{{{logsearch.FieldAll, false, "foo bar"}}},
 		},
+		{
+			name: "combined: (url:a AND NOT b) OR params:c OR NOT resp:d",
+			q:    "url:a & -b | params:c | -resp:d",
+			want: [][]flatTerm{
+				{{logsearch.FieldURL, false, "a"}, {logsearch.FieldAll, true, "b"}},
+				{{logsearch.FieldParams, false, "c"}},
+				{{logsearch.FieldResponse, true, "d"}},
+			},
+		},
+		{
+			name: "three AND terms in one group",
+			q:    "a & b & c",
+			want: [][]flatTerm{{
+				{logsearch.FieldAll, false, "a"},
+				{logsearch.FieldAll, false, "b"},
+				{logsearch.FieldAll, false, "c"},
+			}},
+		},
+		{
+			name: "negated prefixed with escape inside text",
+			q:    `-url:a\&b`,
+			want: [][]flatTerm{{{logsearch.FieldURL, true, "a&b"}}},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -241,6 +264,13 @@ func TestExprMatch(t *testing.T) {
 		{name: "regex case-sensitive miss", q: "PARCELS", opts: logsearch.Options{Regex: true, CaseSensitive: true}, want: false},
 		{name: "regex whole word", q: "concat", opts: logsearch.Options{Regex: true, WholeWord: true}, want: false},
 		{name: "regex minilanguage disabled", q: `id=42\&token`, opts: logsearch.Options{Regex: true}, want: true},
+		{name: "combined field AND negation: both hold", q: "url:parcels & -resp:failure", want: true},
+		{name: "combined field AND negation: negated present", q: "url:parcels & -resp:ok", want: false},
+		{name: "three OR groups, last hits", q: "nope1 | nope2 | params:token", want: true},
+		{name: "AND of three terms", q: "parcels & token & мир", want: true},
+		{name: "AND of three, one missing", q: "parcels & token & nope", want: false},
+		{name: "word mode with field scope", q: "resp:OK", opts: logsearch.Options{WholeWord: true}, want: true},
+		{name: "word mode with field scope, substring only", q: "resp:conca", opts: logsearch.Options{WholeWord: true}, want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

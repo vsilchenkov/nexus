@@ -292,10 +292,14 @@ func TestClickHouse_SearchExtended_E2E(t *testing.T) {
 		id1 = "00000000-0000-0000-0000-000000000101" // orders: cat в теле, debug в params
 		id2 = "00000000-0000-0000-0000-000000000102" // parcels: concatenate, timeout в ответе
 		id3 = "00000000-0000-0000-0000-000000000103" // health: кириллица, PONG
+		id4 = "00000000-0000-0000-0000-000000000104" // refunds: ошибка 500, done=0
 	)
 	writer.Write(ctx, table, mk(id1, "/v1/orders", "v1/orders", "id=42&debug=1", `{"cat":"grumpy"}`, `{"ok":true}`))
 	writer.Write(ctx, table, mk(id2, "/v1/parcels", "v1/parcels", "token=abc", `{"concatenate":"x"}`, `{"error":"timeout"}`))
 	writer.Write(ctx, table, mk(id3, "/health", "health", "", "Привет мир", "PONG"))
+	failed := mk(id4, "/v2/refunds", "v2/refunds", "", `{"note":"failed refund"}`, `{"error":"boom"}`)
+	failed.Status, failed.Done = 500, false
+	writer.Write(ctx, table, failed)
 	require.NoError(t, writer.Flush(ctx))
 
 	deadline := time.Now().Add(20 * time.Second)
@@ -303,12 +307,12 @@ func TestClickHouse_SearchExtended_E2E(t *testing.T) {
 	for time.Now().Before(deadline) {
 		row := conn.QueryRow(ctx, fmt.Sprintf("SELECT count() FROM %s", table))
 		require.NoError(t, row.Scan(&n))
-		if n >= 3 {
+		if n >= 4 {
 			break
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	require.EqualValues(t, 3, n)
+	require.EqualValues(t, 4, n)
 
 	reader := webch.NewLogReader(provider, logger)
 	ids := func(recs []*domain.LogRecord) []string {
@@ -335,7 +339,12 @@ func TestClickHouse_SearchExtended_E2E(t *testing.T) {
 		{name: "поиск по parameters", q: "debug=1", want: []string{id1}},
 		{name: "AND", q: "orders & grumpy", want: []string{id1}},
 		{name: "OR", q: "grumpy | timeout", want: []string{id1, id2}},
-		{name: "NOT исключает", q: "-timeout", want: []string{id1, id3}},
+		{name: "NOT исключает", q: "-timeout", want: []string{id1, id3, id4}},
+		{name: "NOT со скоупом поля", q: "-resp:error", want: []string{id1, id3}},
+		{name: "три OR-группы", q: "grumpy | timeout | привет", want: []string{id1, id2, id3}},
+		{name: "AND из трёх термов", q: "parcels & token & concat", want: []string{id2}},
+		{name: "комбинация (И НЕ) ИЛИ поле", q: "error & -boom | url:health", want: []string{id2, id3}},
+		{name: "экранированный & — литерал", q: `id=42\&debug`, want: []string{id1}},
 		{name: "url: скоуп находит", q: "url:parcels", want: []string{id2}},
 		{name: "resp: скоуп не находит текст из url", q: "resp:parcels", want: nil},
 		{name: "params: скоуп", q: "params:token", want: []string{id2}},
@@ -359,6 +368,17 @@ func TestClickHouse_SearchExtended_E2E(t *testing.T) {
 		search(port.LogQuery{Method: "v1/parcels", QExpr: mustSearchExpr(t, "timeout", logsearch.Options{})}))
 	require.Empty(t,
 		search(port.LogQuery{Method: "health", QExpr: mustSearchExpr(t, "timeout", logsearch.Options{})}))
+
+	// Комбинации q со «старыми» фильтрами Status/Done (§48 не ломает §7.4).
+	require.ElementsMatch(t, []string{id2, id4},
+		search(port.LogQuery{QExpr: mustSearchExpr(t, "resp:error", logsearch.Options{})}))
+	require.ElementsMatch(t, []string{id4},
+		search(port.LogQuery{Status: "err", QExpr: mustSearchExpr(t, "resp:error", logsearch.Options{})}))
+	require.ElementsMatch(t, []string{id2},
+		search(port.LogQuery{Done: "yes", QExpr: mustSearchExpr(t, "resp:error", logsearch.Options{})}))
+	require.Empty(t,
+		search(port.LogQuery{Method: "v2/refunds", QExpr: mustSearchExpr(t, "-boom", logsearch.Options{})}),
+		"негация исключает единственную запись метода")
 }
 
 // TestClickHouse_Logging_Scenarios — сквозной путь SendUsecase → chlog.Writer →
