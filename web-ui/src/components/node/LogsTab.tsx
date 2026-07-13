@@ -5,11 +5,12 @@ import { RefreshCw, Settings, RotateCcw, ChevronRight, ChevronDown, Download } f
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, type Node } from "../../api/client";
-import { fmtLogTs, msToDatetimeLocal } from "../../lib/format";
+import { fmtLogTs } from "../../lib/format";
 import { FETCH_CHUNK, LARGE_WARN_RUNES, formatRunes, prettyMaybe } from "../../lib/logBody";
 import { LabelHint } from "../ui";
 import { CopyButton } from "../ui/CopyButton";
 import { ReplayDialog } from "../ReplayDialog";
+import { LogDateField } from "./LogDateField";
 import { LogMethodFilter } from "./LogMethodFilter";
 import { type LogRow, type LogsResp, type LogDetail, type LogBodyChunk } from "./types";
 
@@ -486,33 +487,34 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
               onChange={(m) => setAdvForm({ ...advForm, method: m })}
             />
           </div>
-          {/* Ряд 2: даты С/По (min/max — лениво из /logs/date-range при фокусе) + кнопки */}
+          {/* Ряд 2: даты С/По (календарь react-day-picker; min/max — лениво из
+              /logs/date-range при открытии) + кнопки. §48.8 */}
           <div className="space-y-1 md:col-span-3">
             <label className="text-[10px] uppercase tracking-wider text-fg-muted">
               {t("logs.advanced.from")}
             </label>
-            <input
-              type="datetime-local"
+            <LogDateField
               value={advForm.from}
-              min={dateRange && dateRange.min > 0 ? msToDatetimeLocal(dateRange.min) : undefined}
-              max={dateRange && dateRange.max > 0 ? msToDatetimeLocal(dateRange.max) : undefined}
-              onFocus={fetchDateRange}
-              onChange={(e) => setAdvForm({ ...advForm, from: e.target.value })}
-              className="w-full rounded-md bg-bg-muted px-3 py-1.5 text-sm outline-none"
+              onChange={(v) => setAdvForm({ ...advForm, from: v })}
+              min={dateRange && dateRange.min > 0 ? new Date(dateRange.min) : undefined}
+              max={dateRange && dateRange.max > 0 ? new Date(dateRange.max) : undefined}
+              defaultTime="00:00"
+              placeholder={t("logs.advanced.from")}
+              onOpen={fetchDateRange}
             />
           </div>
           <div className="space-y-1 md:col-span-3">
             <label className="text-[10px] uppercase tracking-wider text-fg-muted">
               {t("logs.advanced.to")}
             </label>
-            <input
-              type="datetime-local"
+            <LogDateField
               value={advForm.to}
-              min={dateRange && dateRange.min > 0 ? msToDatetimeLocal(dateRange.min) : undefined}
-              max={dateRange && dateRange.max > 0 ? msToDatetimeLocal(dateRange.max) : undefined}
-              onFocus={fetchDateRange}
-              onChange={(e) => setAdvForm({ ...advForm, to: e.target.value })}
-              className="w-full rounded-md bg-bg-muted px-3 py-1.5 text-sm outline-none"
+              onChange={(v) => setAdvForm({ ...advForm, to: v })}
+              min={dateRange && dateRange.min > 0 ? new Date(dateRange.min) : undefined}
+              max={dateRange && dateRange.max > 0 ? new Date(dateRange.max) : undefined}
+              defaultTime="23:59"
+              placeholder={t("logs.advanced.to")}
+              onOpen={fetchDateRange}
             />
           </div>
           <div className="flex items-center justify-end gap-2 md:col-span-6">
