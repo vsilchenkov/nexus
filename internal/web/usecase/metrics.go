@@ -237,7 +237,6 @@ func (u *MetricsUsecase) nodesOverviewCH(ctx context.Context, teamID string, sin
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(12)
 	for i, n := range nodes {
-		i, n := i, n
 		rows[i] = NodeThroughputRow{Node: n.Path, Spark: []float64{}}
 		if n.ClickHouseTable == "" {
 			continue // нет логирования → нет per-node CH-метрик

@@ -323,7 +323,6 @@ func TestAsync_WritesNodeStatus(t *testing.T) {
 		{"5xx → error (true)", 502, true},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			node := &domain.Node{
