@@ -37,7 +37,6 @@ func TestClassifyCHErr(t *testing.T) {
 		{"generic error", errors.New("scan failed"), false},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got := classifyCHErr("clickhouse search", tt.err)

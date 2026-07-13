@@ -72,8 +72,12 @@ export function TrafficChart({
         // errors может оказаться > count (rate()/сброс счётчиков Prometheus, дубли
         // записей) — клампим долю ошибок в [0, h], иначе столбец вылезает за
         // контейнер вверх и наезжает на заголовок (баг «графики поехали»).
-        const errH = d.count > 0 ? Math.min(h, Math.max(0, Math.round((d.errors / d.count) * h))) : 0;
-        const ok = h - errH;
+        // §47.1: при наличии ошибок красному сегменту гарантируем минимальную
+        // высоту (2px), иначе при малой доле ошибок он схлопывается в 0 и по нему
+        // нельзя кликнуть, чтобы открыть логи-ошибки.
+        const rawErrH = d.count > 0 ? Math.round((d.errors / d.count) * h) : 0;
+        const errH = d.errors > 0 ? Math.min(h, Math.max(2, rawErrH)) : 0;
+        const ok = Math.max(0, h - errH);
         const errPct = d.count > 0 ? (d.errors / d.count) * 100 : 0;
         const delivered = Math.max(0, d.count - d.errors);
         const from = d.ts;
@@ -118,12 +122,23 @@ export function TrafficChart({
               />
             }
           >
-            <div
-              className={cn("flex flex-1 flex-col justify-end", onOpenLogs && "cursor-pointer")}
-              onClick={onOpenLogs ? () => onOpenLogs({ from, to, onlyErrors: d.errors > 0 }) : undefined}
-            >
-              {errH > 0 && <div className="rounded-t-sm bg-err/70" style={{ height: errH }} />}
-              <div className={cn("bg-accent/60", errH === 0 && "rounded-t-sm")} style={{ height: ok }} />
+            {/* §47.1: сегменты столбца кликаются раздельно — красный (ошибки)
+                открывает логи бакета с фильтром «ошибки», синий (успешные) — все
+                запросы бакета. Раньше клик по всему столбцу слал onlyErrors при
+                любой ошибке → из N запросов открывались только ошибочные. */}
+            <div className="flex flex-1 flex-col justify-end">
+              {errH > 0 && (
+                <div
+                  className={cn("rounded-t-sm bg-err/70", onOpenLogs && "cursor-pointer")}
+                  style={{ height: errH }}
+                  onClick={onOpenLogs ? () => onOpenLogs({ from, to, onlyErrors: true }) : undefined}
+                />
+              )}
+              <div
+                className={cn("bg-accent/60", errH === 0 && "rounded-t-sm", onOpenLogs && "cursor-pointer")}
+                style={{ height: ok }}
+                onClick={onOpenLogs ? () => onOpenLogs({ from, to, onlyErrors: false }) : undefined}
+              />
             </div>
           </Tooltip>
         );

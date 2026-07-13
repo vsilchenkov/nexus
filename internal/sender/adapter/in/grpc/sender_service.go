@@ -17,13 +17,14 @@ import (
 // Server реализует senderv1.SenderServiceServer.
 type Server struct {
 	senderv1.UnimplementedSenderServiceServer
-	uc      *usecase.SendUsecase
-	logger  logging.Logger
-	metrics *metrics.Metrics
+	uc         *usecase.SendUsecase
+	logger     logging.Logger
+	metrics    *metrics.Metrics
+	nodeStatus usecase.NodeStatusWriter // §46: персист «Down» в Redis (Noop без Redis)
 }
 
-func NewServer(uc *usecase.SendUsecase, m *metrics.Metrics, logger logging.Logger) *Server {
-	return &Server{uc: uc, metrics: m, logger: logger}
+func NewServer(uc *usecase.SendUsecase, m *metrics.Metrics, nodeStatus usecase.NodeStatusWriter, logger logging.Logger) *Server {
+	return &Server{uc: uc, metrics: m, nodeStatus: nodeStatus, logger: logger}
 }
 
 func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1.SendResponse, error) {
@@ -56,17 +57,21 @@ func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 		MaxBodySize:        req.GetMaxBodySize(),
 	})
 
+	isErr := out.StatusCode < 200 || out.StatusCode >= 300
 	if s.metrics != nil {
 		s.metrics.RequestsTotal.
 			WithLabelValues("request", req.GetNodePath(), strconv.FormatInt(int64(out.StatusCode), 10)).Inc()
 		s.metrics.RequestDuration.
 			WithLabelValues("request", req.GetNodePath()).Observe(float64(out.DurationMs) / 1000.0)
-		isErr := out.StatusCode < 200 || out.StatusCode >= 300
 		if isErr {
 			s.metrics.RequestsIncompleteTotal.WithLabelValues("request", req.GetNodePath()).Inc()
 		}
-		// §41 («Down»): исход последнего вызова узла.
+		// §41 («Down»): исход последнего вызова узла (in-memory гаудж).
 		s.metrics.SetNodeLastRequestError(req.GetNodePath(), isErr)
+	}
+	// §46: персистентный исход в Redis (переживает рестарт; Noop без Redis).
+	if s.nodeStatus != nil {
+		s.nodeStatus.SetLastError(ctx, req.GetNodePath(), isErr)
 	}
 
 	return &senderv1.SendResponse{

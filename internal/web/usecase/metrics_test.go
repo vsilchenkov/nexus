@@ -97,6 +97,16 @@ func (f *fakeNodeRepo) List(_ context.Context, _ port.ListNodesFilter) ([]*domai
 	return f.list, f.err
 }
 
+// fakeNodeStatus — Redis-источник «Down» (§46, port.NodeStatusReader).
+type fakeNodeStatus struct {
+	m   map[string]bool
+	err error
+}
+
+func (f *fakeNodeStatus) GetLastErrors(_ context.Context, _ []string) (map[string]bool, error) {
+	return f.m, f.err
+}
+
 // --- Overview --------------------------------------------------------------
 
 // §44.A: Overview отдаёт только очередь Kafka + флаг доступности Prometheus.
@@ -107,7 +117,7 @@ func TestMetricsUsecase_Overview(t *testing.T) {
 
 	t.Run("no prometheus → degraded", func(t *testing.T) {
 		t.Parallel()
-		uc := NewMetricsUsecase(nil, nil, &fakeNodeRepo{}, nil, log)
+		uc := NewMetricsUsecase(nil, nil, &fakeNodeRepo{}, nil, nil, log)
 		got := uc.Overview(context.Background())
 		require.False(t, got.PrometheusAvailable)
 		require.Zero(t, got.KafkaQueue)
@@ -116,7 +126,7 @@ func TestMetricsUsecase_Overview(t *testing.T) {
 	t.Run("happy path → kafka queue + available", func(t *testing.T) {
 		t.Parallel()
 		prom := &fakeProm{queue: 312}
-		uc := NewMetricsUsecase(prom, nil, &fakeNodeRepo{}, nil, log)
+		uc := NewMetricsUsecase(prom, nil, &fakeNodeRepo{}, nil, nil, log)
 		got := uc.Overview(context.Background())
 		require.True(t, got.PrometheusAvailable)
 		require.EqualValues(t, 312, got.KafkaQueue)
@@ -129,7 +139,7 @@ func TestMetricsUsecase_Overview(t *testing.T) {
 	t.Run("kafka queue error degrades, not panics", func(t *testing.T) {
 		t.Parallel()
 		prom := &fakeProm{queueErr: errors.New("boom")}
-		uc := NewMetricsUsecase(prom, nil, &fakeNodeRepo{}, nil, log)
+		uc := NewMetricsUsecase(prom, nil, &fakeNodeRepo{}, nil, nil, log)
 		got := uc.Overview(context.Background())
 		require.False(t, got.PrometheusAvailable)
 	})
@@ -143,7 +153,7 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 
 	t.Run("no prometheus → empty degraded", func(t *testing.T) {
 		t.Parallel()
-		uc := NewMetricsUsecase(nil, nil, &fakeNodeRepo{}, nil, log)
+		uc := NewMetricsUsecase(nil, nil, &fakeNodeRepo{}, nil, nil, log)
 		got := uc.NodesOverview(context.Background(), "", time.Now().Add(-time.Hour), time.Now())
 		require.False(t, got.PrometheusAvailable)
 		require.Empty(t, got.Items)
@@ -158,7 +168,7 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 			// §41: последний вызов узла — ошибка → LastError=true.
 			lastErrs: map[string]float64{"webhook/send": 1},
 		}
-		uc := NewMetricsUsecase(prom, nil, &fakeNodeRepo{}, nil, log)
+		uc := NewMetricsUsecase(prom, nil, &fakeNodeRepo{}, nil, nil, log)
 		got := uc.NodesOverview(context.Background(), "", time.Now().Add(-time.Hour), time.Now())
 		require.True(t, got.PrometheusAvailable)
 		require.Len(t, got.Items, 1)
@@ -177,10 +187,48 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 	t.Run("prom error degrades", func(t *testing.T) {
 		t.Parallel()
 		prom := &fakeProm{thrErr: errors.New("boom")}
-		uc := NewMetricsUsecase(prom, nil, &fakeNodeRepo{}, nil, log)
+		uc := NewMetricsUsecase(prom, nil, &fakeNodeRepo{}, nil, nil, log)
 		got := uc.NodesOverview(context.Background(), "", time.Now().Add(-time.Hour), time.Now())
 		require.False(t, got.PrometheusAvailable)
 		require.Empty(t, got.Items)
+	})
+
+	// §46: «Down» из двух источников — Redis приоритетнее Prometheus, узлы без
+	// записи в Redis добираются из Prometheus.
+	t.Run("last error: redis priority + prometheus fallback", func(t *testing.T) {
+		t.Parallel()
+		prom := &fakeProm{
+			throughput: map[string]port.NodeThroughput{
+				"a/x": {In: 1}, "b/y": {In: 1}, "c/z": {In: 1},
+			},
+			// Prometheus говорит «у всех последний вызов ошибочный».
+			lastErrs: map[string]float64{"a/x": 1, "b/y": 1, "c/z": 1},
+		}
+		// Redis: a/x → ok (перебивает Prometheus=1), b/y → error; c/z отсутствует.
+		rs := &fakeNodeStatus{m: map[string]bool{"a/x": false, "b/y": true}}
+		uc := NewMetricsUsecase(prom, nil, &fakeNodeRepo{}, nil, rs, log)
+		got := uc.NodesOverview(context.Background(), "", time.Now().Add(-time.Hour), time.Now())
+		by := map[string]NodeThroughputRow{}
+		for _, it := range got.Items {
+			by[it.Node] = it
+		}
+		require.False(t, by["a/x"].LastError, "Redis ok перебивает Prometheus=1")
+		require.True(t, by["b/y"].LastError, "Redis error")
+		require.True(t, by["c/z"].LastError, "нет в Redis → fallback на Prometheus=1")
+	})
+
+	// §46: ошибка Redis не валит — деградация на Prometheus.
+	t.Run("redis error degrades to prometheus", func(t *testing.T) {
+		t.Parallel()
+		prom := &fakeProm{
+			throughput: map[string]port.NodeThroughput{"a/x": {In: 1}},
+			lastErrs:   map[string]float64{"a/x": 1},
+		}
+		rs := &fakeNodeStatus{err: errors.New("redis down")}
+		uc := NewMetricsUsecase(prom, nil, &fakeNodeRepo{}, nil, rs, log)
+		got := uc.NodesOverview(context.Background(), "", time.Now().Add(-time.Hour), time.Now())
+		require.Len(t, got.Items, 1)
+		require.True(t, got.Items[0].LastError, "ошибка Redis → fallback на Prometheus")
 	})
 
 	t.Run("clickhouse source matches node detail (per-node KPI)", func(t *testing.T) {
@@ -194,7 +242,7 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 			kpi:   port.NodeKPI{Total: 50, Delivered: 47, Errors: 3, P95ms: 12},
 			chart: []port.SeriesPoint{{Count: 5}, {Count: 7}},
 		}
-		uc := NewMetricsUsecase(nil, logs, repo, nil, log) // prom=nil — путь именно CH
+		uc := NewMetricsUsecase(nil, logs, repo, nil, nil, log) // prom=nil — путь именно CH
 		got := uc.NodesOverview(context.Background(), "default", time.Now().Add(-time.Hour), time.Now())
 		require.True(t, got.PrometheusAvailable)
 		require.Len(t, got.Items, 2)
@@ -217,7 +265,7 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 
 	t.Run("totals: пустой список → нулевой агрегат без паники", func(t *testing.T) {
 		t.Parallel()
-		uc := NewMetricsUsecase(nil, &fakeNodeLogs{}, &fakeNodeRepo{list: nil}, nil, log)
+		uc := NewMetricsUsecase(nil, &fakeNodeLogs{}, &fakeNodeRepo{list: nil}, nil, nil, log)
 		got := uc.NodesOverview(context.Background(), "default", time.Now().Add(-time.Hour), time.Now())
 		require.Zero(t, got.Totals.Incoming)
 		require.Zero(t, got.Totals.ErrorRate)
@@ -241,7 +289,7 @@ func TestMetricsUsecase_Diagnostics(t *testing.T) {
 		totals:     port.GlobalTotals{Incoming: 794, Outgoing: 807, Errors: 68},
 		throughput: map[string]port.NodeThroughput{"a/x": {In: 794, Out: 807, Errors: 68}},
 	}
-	uc := NewMetricsUsecase(prom, logs, repo, nil, log)
+	uc := NewMetricsUsecase(prom, logs, repo, nil, nil, log)
 	d := uc.Diagnostics(context.Background(), "default", time.Now().Add(-24*time.Hour), time.Now())
 
 	require.True(t, d.ClickHouseAvailable)
@@ -269,7 +317,7 @@ func TestMetricsUsecase_Diagnostics_NoPrometheus(t *testing.T) {
 	log := logging.NewNoop()
 	repo := &fakeNodeRepo{list: []*domain.Node{{Path: "a/x", ClickHouseTable: "db.a"}}}
 	logs := &fakeNodeLogs{kpi: port.NodeKPI{Total: 10, Delivered: 9, Errors: 1}}
-	uc := NewMetricsUsecase(nil, logs, repo, nil, log) // prom=nil
+	uc := NewMetricsUsecase(nil, logs, repo, nil, nil, log) // prom=nil
 	d := uc.Diagnostics(context.Background(), "default", time.Now().Add(-time.Hour), time.Now())
 	require.True(t, d.ClickHouseAvailable)
 	require.False(t, d.PrometheusAvailable)
@@ -286,7 +334,7 @@ func TestMetricsUsecase_NodeMetrics(t *testing.T) {
 	t.Run("node not found propagates", func(t *testing.T) {
 		t.Parallel()
 		repo := &fakeNodeRepo{err: domain.ErrNodeNotFound}
-		uc := NewMetricsUsecase(nil, nil, repo, nil, log)
+		uc := NewMetricsUsecase(nil, nil, repo, nil, nil, log)
 		_, err := uc.NodeMetrics(context.Background(), "x", "default", time.Now().Add(-time.Hour), time.Now(), 10)
 		require.ErrorIs(t, err, domain.ErrNodeNotFound)
 	})
@@ -294,7 +342,7 @@ func TestMetricsUsecase_NodeMetrics(t *testing.T) {
 	t.Run("team mismatch → not found", func(t *testing.T) {
 		t.Parallel()
 		repo := &fakeNodeRepo{node: &domain.Node{ID: "n1", Path: "p", TeamID: "other"}}
-		uc := NewMetricsUsecase(nil, nil, repo, nil, log)
+		uc := NewMetricsUsecase(nil, nil, repo, nil, nil, log)
 		_, err := uc.NodeMetrics(context.Background(), "n1", "default", time.Now().Add(-time.Hour), time.Now(), 10)
 		require.ErrorIs(t, err, domain.ErrNodeNotFound)
 	})
@@ -303,7 +351,7 @@ func TestMetricsUsecase_NodeMetrics(t *testing.T) {
 		t.Parallel()
 		// Узел без ClickHouseTable (логирование выключено) → метрики недоступны.
 		repo := &fakeNodeRepo{node: &domain.Node{ID: "n1", Path: "p", TeamID: "default"}}
-		uc := NewMetricsUsecase(nil, &fakeNodeLogs{}, repo, nil, log)
+		uc := NewMetricsUsecase(nil, &fakeNodeLogs{}, repo, nil, nil, log)
 		got, err := uc.NodeMetrics(context.Background(), "n1", "default", time.Now().Add(-time.Hour), time.Now(), 10)
 		require.NoError(t, err)
 		require.False(t, got.ChartAvailable)
@@ -314,7 +362,7 @@ func TestMetricsUsecase_NodeMetrics(t *testing.T) {
 		t.Parallel()
 		repo := &fakeNodeRepo{node: &domain.Node{ID: "n1", Path: "p", TeamID: "default", ClickHouseTable: "db.t"}}
 		logs := &fakeNodeLogs{kpiErr: errors.New("boom")}
-		uc := NewMetricsUsecase(nil, logs, repo, nil, log)
+		uc := NewMetricsUsecase(nil, logs, repo, nil, nil, log)
 		got, err := uc.NodeMetrics(context.Background(), "n1", "default", time.Now().Add(-time.Hour), time.Now(), 10)
 		require.NoError(t, err)
 		require.False(t, got.ChartAvailable)
@@ -327,7 +375,7 @@ func TestMetricsUsecase_NodeMetrics(t *testing.T) {
 			kpi:   port.NodeKPI{Total: 100, Delivered: 98, Errors: 2, P95ms: 87, P99ms: 142},
 			chart: []port.SeriesPoint{{TsMs: 1, Count: 10}, {TsMs: 2, Count: 20}},
 		}
-		uc := NewMetricsUsecase(nil, logs, repo, nil, log)
+		uc := NewMetricsUsecase(nil, logs, repo, nil, nil, log)
 		got, err := uc.NodeMetrics(context.Background(), "n1", "default", time.Now().Add(-time.Hour), time.Now(), 10)
 		require.NoError(t, err)
 		require.True(t, got.ChartAvailable)
@@ -340,7 +388,7 @@ func TestMetricsUsecase_NodeMetrics(t *testing.T) {
 	t.Run("empty teamID skips scope check", func(t *testing.T) {
 		t.Parallel()
 		repo := &fakeNodeRepo{node: &domain.Node{ID: "n1", Path: "p", TeamID: "whatever"}}
-		uc := NewMetricsUsecase(nil, nil, repo, nil, log)
+		uc := NewMetricsUsecase(nil, nil, repo, nil, nil, log)
 		_, err := uc.NodeMetrics(context.Background(), "n1", "", time.Now().Add(-time.Hour), time.Now(), 10)
 		require.NoError(t, err)
 	})

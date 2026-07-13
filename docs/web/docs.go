@@ -2554,13 +2554,13 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "exact match по IP клиента",
+                        "description": "exact match по IP клиента (с §48 недоступно из UI, параметр API сохранён)",
                         "name": "ip",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "exact match по Host",
+                        "description": "exact match по Host (с §48 недоступно из UI, параметр API сохранён)",
                         "name": "host",
                         "in": "query"
                     },
@@ -2578,8 +2578,32 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "подстрока (case-insensitive) по url/request/response",
+                        "description": "exact match по подпути запроса (колонка method, §39/§48)",
+                        "name": "method",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "поиск по url/parameters/request/response (§48.1): \u0026 — И, | — ИЛИ, -терм — НЕ, префиксы url:/params:/req:/resp: скоупят на колонку, \\\\ экранирует спецсимволы; в regex-режиме весь q — одно RE2",
                         "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "1/true — с учётом регистра (§48.2)",
+                        "name": "q_case",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "1/true — только целое слово (§48.2)",
+                        "name": "q_word",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "1/true — q как RE2-выражение, мини-язык отключён (§48.2)",
+                        "name": "q_regex",
                         "in": "query"
                     }
                 ],
@@ -2588,6 +2612,55 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ListLogsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "невалидный поисковый запрос (синтаксис/regex)",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{id}/logs/date-range": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    },
+                    {
+                        "ApiTokenAuth": []
+                    }
+                ],
+                "description": "Фасет для ограничения полей дат фильтра (атрибуты min/max). Дёргается лениво при фокусе поля даты — всегда свежие данные (логи прибывают, пока страница открыта). Нет записей → min_ms=0, max_ms=0 (ограничения не ставятся). Деградация как у /logs/methods.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logs"
+                ],
+                "summary": "Диапазон дат логов узла (min/max date_request, UnixMilli) (§48.3).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.LogDateRangeResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
                     }
                 }
@@ -2642,6 +2715,49 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/nodes/{id}/logs/methods": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    },
+                    {
+                        "ApiTokenAuth": []
+                    }
+                ],
+                "description": "DISTINCT по колонке method (подпуть запроса, §39) для дропдауна Method. Дёргается лениво при открытии списка — всегда свежие данные. До 200 значений, отсортированы. Узел без clickhouse_table → 200 + logs_configured=false; CH недоступен → 200 + logs_available=false.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logs"
+                ],
+                "summary": "Уникальные значения method узла для фасета фильтра (§48.3).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.LogMethodsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/{id}/logs/stream": {
             "get": {
                 "security": [
@@ -2649,7 +2765,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Доступно только UI-сессиям (API-токены отклоняются — §7.14). Каждое новое событие приходит как SSE event \"log\".",
+                "description": "Доступно только UI-сессиям (API-токены отклоняются — §7.14). Каждое новое событие приходит как SSE event \"log\". Принимает те же фильтры, что и List (q/q_case/q_word/q_regex/method/status/done/ip/host, §48); термы по телам request/response в live не матчатся — тела в потоке не читаются (§48.6). Невалидный q → SSE event \"error\".",
                 "produces": [
                     "text/event-stream"
                 ],
@@ -2664,6 +2780,36 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "exact match по подпути запроса (§48)",
+                        "name": "method",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "поисковое выражение (§48.1); в live ищет по url+parameters",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "1/true — с учётом регистра",
+                        "name": "q_case",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "1/true — только целое слово",
+                        "name": "q_word",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "1/true — q как RE2",
+                        "name": "q_regex",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -4649,6 +4795,40 @@ const docTemplate = `{
                 "which": {
                     "description": "request | response",
                     "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.LogDateRangeResponse": {
+            "type": "object",
+            "properties": {
+                "logs_available": {
+                    "type": "boolean"
+                },
+                "logs_configured": {
+                    "type": "boolean"
+                },
+                "max_ms": {
+                    "type": "integer"
+                },
+                "min_ms": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.LogMethodsResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "logs_available": {
+                    "type": "boolean"
+                },
+                "logs_configured": {
+                    "type": "boolean"
                 }
             }
         },

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Search, Plus, Star, Play, Pause } from "lucide-react";
@@ -385,18 +385,7 @@ function NodeTable({
                 </td>
                 <td className="px-3 py-2.5 font-mono">{m ? fmtNum(m.in) : "—"}</td>
                 <td className="px-3 py-2.5 font-mono">{m ? fmtNum(m.out) : "—"}</td>
-                <td className="px-3 py-2.5 font-mono">
-                  {m ? (
-                    <span className="inline-flex items-baseline gap-1.5">
-                      {fmtNum(m.errors)}
-                      {nodeErrPct(m) && (
-                        <span className="text-[11px] text-err">{nodeErrPct(m)}</span>
-                      )}
-                    </span>
-                  ) : (
-                    "—"
-                  )}
-                </td>
+                <td className="px-3 py-2.5 font-mono">{m ? fmtNum(m.errors) : "—"}</td>
                 <td className="px-3 py-2.5">
                   <Pill tone={s.tone}>{s.label}</Pill>
                 </td>
@@ -428,13 +417,6 @@ function fmtMs(ms: number): string {
   return Math.round(ms) + "ms";
 }
 
-// nodeErrPct — доля ошибок узла (errors/in) как "%" (§44.D, как в шапке).
-// null, если ошибок нет или нет входящих — тогда процент НЕ выводим.
-function nodeErrPct(m: Throughput): string | null {
-  if (m.errors <= 0 || m.in <= 0) return null;
-  return ((m.errors / m.in) * 100).toFixed(2) + "%";
-}
-
 function NodeCards({
   nodes,
   throughput,
@@ -451,6 +433,7 @@ function NodeCards({
   const { t } = useTranslation();
   const status = useStatus();
   const plabel = periodLabel(period, t);
+  const navigate = useNavigate();
   return (
     <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
       {nodes.map((n) => {
@@ -491,10 +474,21 @@ function NodeCards({
                 label={t("overview.table.errors")}
                 value={m ? fmtNum(m.errors) : "—"}
                 tone={m && m.errors > 0 ? "err" : undefined}
-                sub={m ? nodeErrPct(m) : null}
               />
             </div>
-            <Sparkline data={m?.spark ?? []} variant={s.variant} period={period} />
+            <Sparkline
+              data={m?.spark ?? []}
+              variant={s.variant}
+              period={period}
+              onOpenLogs={
+                n.clickhouse_table
+                  ? (r) =>
+                      navigate(
+                        `/nodes/${n.id}?tab=logs&from=${Math.round(r.from)}&to=${Math.round(r.to)}`,
+                      )
+                  : undefined
+              }
+            />
             <div className="flex items-center justify-between gap-2 text-[11px] text-fg-subtle">
               <span className="truncate font-mono" title={target}>
                 {target}
@@ -520,19 +514,14 @@ function CardStat({
   label,
   value,
   tone,
-  sub,
 }: {
   label: string;
   value: string;
   tone?: "err";
-  sub?: string | null;
 }) {
   return (
     <div>
-      <div className={cn("font-mono text-[15px]", tone === "err" && "text-err")}>
-        {value}
-        {sub && <span className="ml-1 align-baseline text-[11px] text-err">{sub}</span>}
-      </div>
+      <div className={cn("font-mono text-[15px]", tone === "err" && "text-err")}>{value}</div>
       <div className="text-[10px] uppercase tracking-wide text-fg-subtle">{label}</div>
     </div>
   );
@@ -551,7 +540,20 @@ function fmtBucket(start: number, end: number, multiDay: boolean): string {
 // На каждом столбце единый тултип (§33): окно бакета + число входящих запросов.
 // Radix-тултип монтирует контент лениво на hover (провайдер общий в AppShell) —
 // на Overview много карточек, но накладные минимальны.
-function Sparkline({ data, variant, period }: { data: number[]; variant: Variant; period: Period }) {
+// onOpenLogs (§47.4) — клик по столбцу спарклайна открывает логи узла за окно
+// этого бакета (как клик по графику на странице узла). Задаётся только для
+// узлов с таблицей логов; иначе бары некликабельны.
+function Sparkline({
+  data,
+  variant,
+  period,
+  onOpenLogs,
+}: {
+  data: number[];
+  variant: Variant;
+  period: Period;
+  onOpenLogs?: (range: { from: number; to: number }) => void;
+}) {
   const { t } = useTranslation();
   if (data.length === 0) {
     return <div className="h-7" />;
@@ -586,8 +588,11 @@ function Sparkline({ data, variant, period }: { data: number[]; variant: Variant
             }
           >
             <span
-              className={cn("flex-1 rounded-sm opacity-80", color)}
+              className={cn("flex-1 rounded-sm opacity-80", color, onOpenLogs && "cursor-pointer")}
               style={{ height: `${Math.max(4, (v / max) * 100)}%` }}
+              onClick={
+                onOpenLogs ? () => onOpenLogs({ from: start, to: start + bucketW }) : undefined
+              }
             />
           </Tooltip>
         );

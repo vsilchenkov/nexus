@@ -43,6 +43,10 @@
 Рядом со счётчиком «Ошибки» в таблице и карточках узлов — доля `errors/in` (как в шапке). Если
 ошибок нет (или нет входящих) — процент не выводится.
 
+> **Отменено в §47.3.** Per-node процент ошибок (`nodeErrPct`) убран из карточек и таблицы узлов
+> Overview («сливается» с числом ошибок). Общий процент ошибок в шапке дашборда (§44.A,
+> `error_rate`) сохранён. См. [47-logs-filter-refinements.md](47-logs-filter-refinements.md).
+
 ### 44.E Диагностический reconciliation API
 
 `GET /api/metrics/diagnostics?range=…|from/to` (scope `metrics:read`) отдаёт обе стороны рядом —

@@ -136,3 +136,16 @@ type PromMetrics interface {
 	// consumed/errors — rate (сообщений/сек), lag — абсолютное значение gauge.
 	KafkaTimeseries(ctx context.Context, since, until time.Time, step time.Duration, metrics []string) (map[string][]KafkaPoint, error)
 }
+
+// NodeStatusReader — персистентный исход последнего исходящего вызова узла из
+// Redis (§46). В отличие от Prometheus-гауджа nexus_node_last_request_error
+// (in-memory, теряется при рестарте Sender'а), Redis-ключ переживает рестарт →
+// статус «Down» на дашборде корректен после деплоя. Источник истины для бейджа
+// «Down»; Prometheus остаётся fallback'ом. Реализуется adapter/out/redis.
+// Может быть nil (нет Redis) → applyLastErrors деградирует на Prometheus.
+type NodeStatusReader interface {
+	// GetLastErrors возвращает исход последнего вызова для указанных путей узлов:
+	// map[path]bool (true = последний вызов ошибочный). Узлы без записи в Redis в
+	// карту НЕ попадают (вызывающий добивает их из Prometheus).
+	GetLastErrors(ctx context.Context, nodePaths []string) (map[string]bool, error)
+}
