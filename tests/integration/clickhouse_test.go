@@ -18,6 +18,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"nexus/internal/domain"
+	"nexus/internal/domain/logsearch"
 	"nexus/internal/platform/clickhouse"
 	"nexus/internal/platform/config"
 	"nexus/internal/platform/logging"
@@ -232,7 +233,8 @@ func TestClickHouse_WriteAndRead(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got, 2, "two rows from 127.0.0.1")
 
-	got, err = reader.Search(ctx, port.LogQuery{Table: table, Q: "hello", Limit: 50})
+	// §48: адаптер читает распарсенный QExpr, а не сырое Q.
+	got, err = reader.Search(ctx, port.LogQuery{Table: table, QExpr: mustSearchExpr(t, "hello", logsearch.Options{}), Limit: 50})
 	require.NoError(t, err)
 	require.Len(t, got, 3, "all rows contain 'hello' in request body")
 
@@ -243,6 +245,120 @@ func TestClickHouse_WriteAndRead(t *testing.T) {
 	// Защита от SQL-инъекции: невалидное имя таблицы.
 	_, err = reader.GetByID(ctx, "nexus_default.test_e2e; DROP TABLE foo--", "x")
 	require.Error(t, err)
+}
+
+// mustSearchExpr — распарсенное поисковое выражение §48 для передачи в
+// port.LogQuery.QExpr (адаптер сырое Q не использует).
+func mustSearchExpr(t *testing.T, q string, opts logsearch.Options) *logsearch.Expr {
+	t.Helper()
+	e, err := logsearch.Parse(q, opts)
+	require.NoError(t, err, "parse search query %q", q)
+	return e
+}
+
+// TestClickHouse_SearchExtended_E2E — семантика расширенного поиска §48 на
+// реальном ClickHouse: мини-язык (& | - префиксы), поиск по parameters,
+// режимы Aa/ab|/.* и фильтр по method. Зеркальная in-memory семантика
+// покрыта unit-тестами logsearch и matchLogFilter.
+func TestClickHouse_SearchExtended_E2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
+	defer cancel()
+
+	conn, cfg, cleanup := startClickHouse(t, ctx)
+	defer cleanup()
+
+	const table = "nexus_default.test_search48"
+	createNodeLogTable(t, ctx, conn, table)
+
+	logger := logging.NewNoop()
+	provider := clickhouse.StaticProvider(conn)
+	writer := chlog.New(provider, cfg, logger)
+	defer writer.Stop(ctx)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	mk := func(id, url, method, params, req, resp string) *domain.LogRecord {
+		return &domain.LogRecord{
+			ID: id, Type: domain.RootMethodRequest,
+			URL: url, Method: method, Parameters: params,
+			Request: req, Response: resp,
+			Status: 200, DateCreate: now, DateRequest: now,
+			DateResponse: now, Duration: 1, Done: true,
+			ChecksumRequest:  strings.Repeat("a", 32),
+			ChecksumResponse: strings.Repeat("b", 32),
+			Host:             "h", IP: "127.0.0.1", Attempts: 1, AttemptsDetails: "[]",
+		}
+	}
+	const (
+		id1 = "00000000-0000-0000-0000-000000000101" // orders: cat в теле, debug в params
+		id2 = "00000000-0000-0000-0000-000000000102" // parcels: concatenate, timeout в ответе
+		id3 = "00000000-0000-0000-0000-000000000103" // health: кириллица, PONG
+	)
+	writer.Write(ctx, table, mk(id1, "/v1/orders", "v1/orders", "id=42&debug=1", `{"cat":"grumpy"}`, `{"ok":true}`))
+	writer.Write(ctx, table, mk(id2, "/v1/parcels", "v1/parcels", "token=abc", `{"concatenate":"x"}`, `{"error":"timeout"}`))
+	writer.Write(ctx, table, mk(id3, "/health", "health", "", "Привет мир", "PONG"))
+	require.NoError(t, writer.Flush(ctx))
+
+	deadline := time.Now().Add(20 * time.Second)
+	var n uint64
+	for time.Now().Before(deadline) {
+		row := conn.QueryRow(ctx, fmt.Sprintf("SELECT count() FROM %s", table))
+		require.NoError(t, row.Scan(&n))
+		if n >= 3 {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	require.EqualValues(t, 3, n)
+
+	reader := webch.NewLogReader(provider, logger)
+	ids := func(recs []*domain.LogRecord) []string {
+		out := make([]string, 0, len(recs))
+		for _, r := range recs {
+			out = append(out, r.ID)
+		}
+		return out
+	}
+	search := func(q port.LogQuery) []string {
+		t.Helper()
+		q.Table, q.Limit = table, 50
+		got, err := reader.Search(ctx, q)
+		require.NoError(t, err)
+		return ids(got)
+	}
+
+	tests := []struct {
+		name string
+		q    string
+		opts logsearch.Options
+		want []string // ожидаемые ID (порядок не важен)
+	}{
+		{name: "поиск по parameters", q: "debug=1", want: []string{id1}},
+		{name: "AND", q: "orders & grumpy", want: []string{id1}},
+		{name: "OR", q: "grumpy | timeout", want: []string{id1, id2}},
+		{name: "NOT исключает", q: "-timeout", want: []string{id1, id3}},
+		{name: "url: скоуп находит", q: "url:parcels", want: []string{id2}},
+		{name: "resp: скоуп не находит текст из url", q: "resp:parcels", want: nil},
+		{name: "params: скоуп", q: "params:token", want: []string{id2}},
+		{name: "регистронезависимый дефолт", q: "pong", want: []string{id3}},
+		{name: "Aa: регистрозависимый мисс", q: "pong", opts: logsearch.Options{CaseSensitive: true}, want: nil},
+		{name: "Aa: регистрозависимый хит", q: "PONG", opts: logsearch.Options{CaseSensitive: true}, want: []string{id3}},
+		{name: "ab|: целое слово не матчит внутри слова", q: "cat", opts: logsearch.Options{WholeWord: true}, want: []string{id1}},
+		{name: "regex: альтернация", q: "time(out|r)", opts: logsearch.Options{Regex: true}, want: []string{id2}},
+		{name: "regex: кириллица без учёта регистра", q: "ПРИВЕТ.*МИР", opts: logsearch.Options{Regex: true}, want: []string{id3}},
+		{name: "кириллический case-fold в plain", q: "привет", want: []string{id3}},
+	}
+	for _, tt := range tests {
+		got := search(port.LogQuery{QExpr: mustSearchExpr(t, tt.q, tt.opts)})
+		require.ElementsMatch(t, tt.want, got, "case %q", tt.name)
+	}
+
+	// Фильтр по method (точное совпадение) и комбинация с q.
+	require.ElementsMatch(t, []string{id1}, search(port.LogQuery{Method: "v1/orders"}))
+	require.Empty(t, search(port.LogQuery{Method: "v1"}), "method — exact match, не префикс")
+	require.ElementsMatch(t, []string{id2},
+		search(port.LogQuery{Method: "v1/parcels", QExpr: mustSearchExpr(t, "timeout", logsearch.Options{})}))
+	require.Empty(t,
+		search(port.LogQuery{Method: "health", QExpr: mustSearchExpr(t, "timeout", logsearch.Options{})}))
 }
 
 // TestClickHouse_Logging_Scenarios — сквозной путь SendUsecase → chlog.Writer →

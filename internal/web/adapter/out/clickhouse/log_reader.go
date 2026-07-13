@@ -344,10 +344,19 @@ func (r *LogReaderCH) Search(ctx context.Context, q port.LogQuery) ([]*domain.Lo
 	case "no":
 		conds = append(conds, "done = 0")
 	}
-	if q.Q != "" {
-		conds = append(conds,
-			"(positionCaseInsensitiveUTF8(url, ?) > 0 OR positionCaseInsensitiveUTF8(request, ?) > 0 OR positionCaseInsensitiveUTF8(response, ?) > 0)")
-		args = append(args, q.Q, q.Q, q.Q)
+	if q.Method != "" {
+		conds = append(conds, "method = ?")
+		args = append(args, q.Method)
+	}
+	// §48: полнотекстовый фильтр строится из распарсенного AST (usecase кладёт
+	// QExpr через logsearch.Parse; сырое q.Q адаптер не использует). Работает
+	// поверх listCols: алиасы list_req/list_resp не затеняют реальные колонки
+	// request/response — position*/match в WHERE читают их с диска (см.
+	// комментарий к listCols).
+	if q.QExpr != nil {
+		c, a := exprConds(q.QExpr)
+		conds = append(conds, c)
+		args = append(args, a...)
 	}
 
 	where := ""

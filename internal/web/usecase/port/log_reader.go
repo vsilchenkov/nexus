@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"nexus/internal/domain"
+	"nexus/internal/domain/logsearch"
 )
 
 // LogQuery — параметры расширенного поиска по логам узла (§7.4, Phase 6.8).
@@ -41,9 +42,23 @@ type LogQuery struct {
 	// Done — "yes" / "no" / "" (любой).
 	Done string
 
-	// Q — подстрока полнотекстового поиска по URL + Request + Response.
-	// Регистронезависимый поиск через positionCaseInsensitiveUTF8.
+	// Method — exact match по колонке method (§39 подпуть запроса; §48).
+	Method string
+
+	// Q — сырой ввод поля «Поиск» (мини-язык §48.1 либо RE2 в regex-режиме).
+	// Адаптер это поле НЕ использует — usecase парсит его в QExpr.
 	Q string
+
+	// QCase / QWord / QRegex — режимы поиска (§48.2, кнопки Aa / ab| / .*).
+	// Сырые флаги из query-параметров; влияют на разбор Q в usecase.
+	QCase  bool
+	QWord  bool
+	QRegex bool
+
+	// QExpr — распарсенный Q (заполняет usecase через logsearch.Parse).
+	// Единственный источник поискового условия для адаптера (SQL) и
+	// in-memory зеркала live-tail. nil → полнотекстовый фильтр выключен.
+	QExpr *logsearch.Expr
 }
 
 // LogReader — read-only доступ к ClickHouse-логам узлов (§7.4 ТЗ).
