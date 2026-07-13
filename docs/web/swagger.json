@@ -2551,13 +2551,13 @@
                     },
                     {
                         "type": "string",
-                        "description": "exact match по IP клиента",
+                        "description": "exact match по IP клиента (с §48 недоступно из UI, параметр API сохранён)",
                         "name": "ip",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "exact match по Host",
+                        "description": "exact match по Host (с §48 недоступно из UI, параметр API сохранён)",
                         "name": "host",
                         "in": "query"
                     },
@@ -2575,8 +2575,32 @@
                     },
                     {
                         "type": "string",
-                        "description": "подстрока (case-insensitive) по url/request/response",
+                        "description": "exact match по подпути запроса (колонка method, §39/§48)",
+                        "name": "method",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "поиск по url/parameters/request/response (§48.1): \u0026 — И, | — ИЛИ, -терм — НЕ, префиксы url:/params:/req:/resp: скоупят на колонку, \\\\ экранирует спецсимволы; в regex-режиме весь q — одно RE2",
                         "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "1/true — с учётом регистра (§48.2)",
+                        "name": "q_case",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "1/true — только целое слово (§48.2)",
+                        "name": "q_word",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "1/true — q как RE2-выражение, мини-язык отключён (§48.2)",
+                        "name": "q_regex",
                         "in": "query"
                     }
                 ],
@@ -2585,6 +2609,12 @@
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ListLogsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "невалидный поисковый запрос (синтаксис/regex)",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
                     }
                 }
@@ -2646,7 +2676,7 @@
                         "CookieAuth": []
                     }
                 ],
-                "description": "Доступно только UI-сессиям (API-токены отклоняются — §7.14). Каждое новое событие приходит как SSE event \"log\".",
+                "description": "Доступно только UI-сессиям (API-токены отклоняются — §7.14). Каждое новое событие приходит как SSE event \"log\". Принимает те же фильтры, что и List (q/q_case/q_word/q_regex/method/status/done/ip/host, §48); термы по телам request/response в live не матчатся — тела в потоке не читаются (§48.6). Невалидный q → SSE event \"error\".",
                 "produces": [
                     "text/event-stream"
                 ],
@@ -2661,6 +2691,36 @@
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "exact match по подпути запроса (§48)",
+                        "name": "method",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "поисковое выражение (§48.1); в live ищет по url+parameters",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "1/true — с учётом регистра",
+                        "name": "q_case",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "1/true — только целое слово",
+                        "name": "q_word",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "1/true — q как RE2",
+                        "name": "q_regex",
+                        "in": "query"
                     }
                 ],
                 "responses": {

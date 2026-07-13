@@ -96,6 +96,65 @@ func TestLogsFailedCount_CHUnavailable_Degrades(t *testing.T) {
 	assert.EqualValues(t, 0, body["count"])
 }
 
+// stubLogReaderCapture — запоминает LogQuery, дошедший до адаптера
+// (проверка прокидывания параметров §48 через handler → usecase).
+type stubLogReaderCapture struct {
+	port.LogReader
+	last port.LogQuery
+}
+
+func (s *stubLogReaderCapture) Search(_ context.Context, q port.LogQuery) ([]*domain.LogRecord, error) {
+	s.last = q
+	return nil, nil
+}
+
+// TestLogsList_SearchParams_Parsed — параметры §48 (q/q_case/q_word/method и
+// сохранённые ip/host) доходят до адаптера; QExpr распарсен usecase'ом.
+func TestLogsList_SearchParams_Parsed(t *testing.T) {
+	t.Parallel()
+	reader := &stubLogReaderCapture{}
+	r := newLogsRouter(reader)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet,
+		"/nodes/n1/logs?q=foo+%26+url%3Abar&q_case=1&q_word=true&method=v1%2Fx&ip=1.2.3.4&host=h1", nil))
+
+	require.Equal(t, http.StatusOK, w.Code)
+	q := reader.last
+	assert.Equal(t, "foo & url:bar", q.Q)
+	assert.True(t, q.QCase)
+	assert.True(t, q.QWord, "q_word=true — валидное значение флага")
+	assert.False(t, q.QRegex)
+	assert.Equal(t, "v1/x", q.Method)
+	assert.Equal(t, "1.2.3.4", q.IP)
+	assert.Equal(t, "h1", q.Host)
+	require.NotNil(t, q.QExpr, "usecase обязан распарсить Q в QExpr")
+	assert.True(t, q.QExpr.CaseSensitive)
+	assert.True(t, q.QExpr.WholeWord)
+	require.Len(t, q.QExpr.Groups, 1)
+	assert.Len(t, q.QExpr.Groups[0], 2)
+}
+
+// TestLogsList_BadSearchQuery_400 — невалидный поисковый запрос (regex или
+// мини-язык) → 400 с локализованной ошибкой, а не 500 (§48).
+func TestLogsList_BadSearchQuery_400(t *testing.T) {
+	t.Parallel()
+	r := newLogsRouter(stubLogReaderOK{})
+
+	for name, target := range map[string]string{
+		"невалидный regex":      "/nodes/n1/logs?q=%28&q_regex=1",
+		"пустой терм в И":       "/nodes/n1/logs?q=a+%26+%26+b",
+		"префикс без текста":    "/nodes/n1/logs?q=url%3A",
+		"висячее экранирование": "/nodes/n1/logs?q=foo%5C",
+	} {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, target, nil))
+		require.Equal(t, http.StatusBadRequest, w.Code, "case %q", name)
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+		assert.NotEmpty(t, body["error"], "case %q", name)
+	}
+}
+
 // TestLogsList_OK_AvailableTrue — счастливый путь: logs_available=true.
 func TestLogsList_OK_AvailableTrue(t *testing.T) {
 	t.Parallel()
