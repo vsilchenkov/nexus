@@ -410,6 +410,28 @@ definitions:
         description: request | response
         type: string
     type: object
+  internal_web_adapter_in_http.LogDateRangeResponse:
+    properties:
+      logs_available:
+        type: boolean
+      logs_configured:
+        type: boolean
+      max_ms:
+        type: integer
+      min_ms:
+        type: integer
+    type: object
+  internal_web_adapter_in_http.LogMethodsResponse:
+    properties:
+      items:
+        items:
+          type: string
+        type: array
+      logs_available:
+        type: boolean
+      logs_configured:
+        type: boolean
+    type: object
   internal_web_adapter_in_http.LogRecordDTO:
     properties:
       attempts:
@@ -3572,6 +3594,35 @@ paths:
       summary: Snapshot логов узла из ClickHouse с фильтрами.
       tags:
       - logs
+  /api/nodes/{id}/logs/date-range:
+    get:
+      description: Фасет для ограничения полей дат фильтра (атрибуты min/max). Дёргается
+        лениво при фокусе поля даты — всегда свежие данные (логи прибывают, пока страница
+        открыта). Нет записей → min_ms=0, max_ms=0 (ограничения не ставятся). Деградация
+        как у /logs/methods.
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.LogDateRangeResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      - ApiTokenAuth: []
+      summary: Диапазон дат логов узла (min/max date_request, UnixMilli) (§48.3).
+      tags:
+      - logs
   /api/nodes/{id}/logs/failed-count:
     get:
       description: Дешёвый count из ClickHouse для KPI «неудачные доставки» на вкладке
@@ -3601,6 +3652,35 @@ paths:
       - CookieAuth: []
       - ApiTokenAuth: []
       summary: Число недоставленных записей узла (done=0) за период (§35).
+      tags:
+      - logs
+  /api/nodes/{id}/logs/methods:
+    get:
+      description: DISTINCT по колонке method (подпуть запроса, §39) для дропдауна
+        Method. Дёргается лениво при открытии списка — всегда свежие данные. До 200
+        значений, отсортированы. Узел без clickhouse_table → 200 + logs_configured=false;
+        CH недоступен → 200 + logs_available=false.
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.LogMethodsResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      - ApiTokenAuth: []
+      summary: Уникальные значения method узла для фасета фильтра (§48.3).
       tags:
       - logs
   /api/nodes/{id}/logs/stream:

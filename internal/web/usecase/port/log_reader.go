@@ -106,4 +106,13 @@ type LogReader interface {
 	// (qcancel) и «Повторить все сейчас» (массовый replay) — общий набор сообщений.
 	// §37: nodeID фильтрует per-node на общей таблице.
 	FailedIDs(ctx context.Context, table, nodeID string, sinceMs, untilMs int64, cap int) ([]string, bool, error)
+
+	// DistinctMethods — уникальные непустые значения колонки method узла
+	// (§48.3, фасет дропдауна Method), отсортированные, до limit (кап адаптера).
+	// §37: nodeID фильтрует per-node на общей таблице.
+	DistinctMethods(ctx context.Context, table, nodeID string, limit int) ([]string, error)
+
+	// DateRange — min/max date_request узла в UnixMilli (§48.3, фасет
+	// ограничения полей дат). Пустая таблица/нет записей узла → (0, 0).
+	DateRange(ctx context.Context, table, nodeID string) (minMs, maxMs int64, err error)
 }

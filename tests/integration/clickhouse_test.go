@@ -379,6 +379,29 @@ func TestClickHouse_SearchExtended_E2E(t *testing.T) {
 	require.Empty(t,
 		search(port.LogQuery{Method: "v2/refunds", QExpr: mustSearchExpr(t, "-boom", logsearch.Options{})}),
 		"негация исключает единственную запись метода")
+
+	// §48.3: фасеты — DistinctMethods (сортировка, только непустые) и DateRange.
+	methods, err := reader.DistinctMethods(ctx, table, "", 0)
+	require.NoError(t, err)
+	require.Equal(t, []string{"health", "v1/orders", "v1/parcels", "v2/refunds"}, methods,
+		"отсортированный distinct без пустых")
+
+	lo, hi, err := reader.DateRange(ctx, table, "")
+	require.NoError(t, err)
+	wantMs := now.UnixMilli()
+	require.Equal(t, wantMs, lo, "min = единственная секунда фикстур")
+	require.Equal(t, wantMs, hi, "max = единственная секунда фикстур")
+
+	// Пустая таблица → 0/0 (guard от epoch-1970 у min()) и пустой methods.
+	const emptyTable = "nexus_default.test_search48_empty"
+	createNodeLogTable(t, ctx, conn, emptyTable)
+	methods, err = reader.DistinctMethods(ctx, emptyTable, "", 0)
+	require.NoError(t, err)
+	require.Empty(t, methods)
+	lo, hi, err = reader.DateRange(ctx, emptyTable, "")
+	require.NoError(t, err)
+	require.Zero(t, lo)
+	require.Zero(t, hi)
 }
 
 // TestClickHouse_Logging_Scenarios — сквозной путь SendUsecase → chlog.Writer →

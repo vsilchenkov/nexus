@@ -281,6 +281,81 @@ func (h *LogsHandler) CountFailed(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"count": n, "logs_configured": true, "logs_available": true})
 }
 
+// Methods godoc
+// @Summary  Уникальные значения method узла для фасета фильтра (§48.3).
+// @Description  DISTINCT по колонке method (подпуть запроса, §39) для дропдауна Method. Дёргается лениво при открытии списка — всегда свежие данные. До 200 значений, отсортированы. Узел без clickhouse_table → 200 + logs_configured=false; CH недоступен → 200 + logs_available=false.
+// @Tags     logs
+// @Produce  json
+// @Param    id  path  string  true  "node id"
+// @Success  200  {object}  LogMethodsResponse
+// @Failure  404  {object}  ErrorResponse
+// @Security CookieAuth
+// @Security ApiTokenAuth
+// @Router   /api/nodes/{id}/logs/methods [get]
+func (h *LogsHandler) Methods(c *gin.Context) {
+	nodeID := c.Param("id")
+	items, err := h.uc.Methods(c.Request.Context(), nodeID, currentTeamID(c))
+	if h.writeFacetError(c, nodeID, "logs.methods", err, gin.H{"items": []string{}}) {
+		return
+	}
+	if items == nil {
+		items = []string{}
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items, "logs_configured": true, "logs_available": true})
+}
+
+// DateRange godoc
+// @Summary  Диапазон дат логов узла (min/max date_request, UnixMilli) (§48.3).
+// @Description  Фасет для ограничения полей дат фильтра (атрибуты min/max). Дёргается лениво при фокусе поля даты — всегда свежие данные (логи прибывают, пока страница открыта). Нет записей → min_ms=0, max_ms=0 (ограничения не ставятся). Деградация как у /logs/methods.
+// @Tags     logs
+// @Produce  json
+// @Param    id  path  string  true  "node id"
+// @Success  200  {object}  LogDateRangeResponse
+// @Failure  404  {object}  ErrorResponse
+// @Security CookieAuth
+// @Security ApiTokenAuth
+// @Router   /api/nodes/{id}/logs/date-range [get]
+func (h *LogsHandler) DateRange(c *gin.Context) {
+	nodeID := c.Param("id")
+	minMs, maxMs, err := h.uc.DateRange(c.Request.Context(), nodeID, currentTeamID(c))
+	if h.writeFacetError(c, nodeID, "logs.date_range", err, gin.H{"min_ms": 0, "max_ms": 0}) {
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"min_ms": minMs, "max_ms": maxMs, "logs_configured": true, "logs_available": true})
+}
+
+// writeFacetError — общий маппинг ошибок фасет-эндпоинтов §48 (Methods/
+// DateRange) в HTTP: 404 по узлу, мягкая деградация «не настроено» /
+// «CH недоступен» (200 + флаги + пустой payload), 500 на прочее. Возвращает
+// true, если ответ уже отправлен.
+func (h *LogsHandler) writeFacetError(c *gin.Context, nodeID, op string, err error, empty gin.H) bool {
+	if err == nil {
+		return false
+	}
+	switch {
+	case errors.Is(err, domain.ErrNodeNotFound):
+		localizedError(c, http.StatusNotFound, "node.not_found")
+	case errors.Is(err, domain.ErrNodeLogsNotConfigured):
+		payload := gin.H{"logs_configured": false, "logs_available": false}
+		for k, v := range empty {
+			payload[k] = v
+		}
+		c.JSON(http.StatusOK, payload)
+	case errors.Is(err, domain.ErrLogsBackendUnavailable):
+		h.logger.Warn("logs facet degraded: clickhouse unavailable",
+			h.logger.Str("node_id", nodeID), h.logger.Err(err))
+		payload := gin.H{"logs_configured": true, "logs_available": false}
+		for k, v := range empty {
+			payload[k] = v
+		}
+		c.JSON(http.StatusOK, payload)
+	default:
+		h.logger.ErrorWithOp("logs facet failed", err, op, h.logger.Str("node_id", nodeID))
+		localizedError(c, http.StatusInternalServerError, "error.internal")
+	}
+	return true
+}
+
 // Get godoc
 // @Summary  Одна запись лога целиком (с телами request/response).
 // @Description  Тела грузятся лениво по клику на строку — списки (List/Stream) их не возвращают, чтобы snapshot из сотен строк с большими JSON не вешал фронт (§7.4.1).

@@ -2620,6 +2620,49 @@
                 }
             }
         },
+        "/api/nodes/{id}/logs/date-range": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    },
+                    {
+                        "ApiTokenAuth": []
+                    }
+                ],
+                "description": "Фасет для ограничения полей дат фильтра (атрибуты min/max). Дёргается лениво при фокусе поля даты — всегда свежие данные (логи прибывают, пока страница открыта). Нет записей → min_ms=0, max_ms=0 (ограничения не ставятся). Деградация как у /logs/methods.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logs"
+                ],
+                "summary": "Диапазон дат логов узла (min/max date_request, UnixMilli) (§48.3).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.LogDateRangeResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/{id}/logs/failed-count": {
             "get": {
                 "security": [
@@ -2664,6 +2707,49 @@
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.FailedCountResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{id}/logs/methods": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    },
+                    {
+                        "ApiTokenAuth": []
+                    }
+                ],
+                "description": "DISTINCT по колонке method (подпуть запроса, §39) для дропдауна Method. Дёргается лениво при открытии списка — всегда свежие данные. До 200 значений, отсортированы. Узел без clickhouse_table → 200 + logs_configured=false; CH недоступен → 200 + logs_available=false.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logs"
+                ],
+                "summary": "Уникальные значения method узла для фасета фильтра (§48.3).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.LogMethodsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
                     }
                 }
@@ -4706,6 +4792,40 @@
                 "which": {
                     "description": "request | response",
                     "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.LogDateRangeResponse": {
+            "type": "object",
+            "properties": {
+                "logs_available": {
+                    "type": "boolean"
+                },
+                "logs_configured": {
+                    "type": "boolean"
+                },
+                "max_ms": {
+                    "type": "integer"
+                },
+                "min_ms": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.LogMethodsResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "logs_available": {
+                    "type": "boolean"
+                },
+                "logs_configured": {
+                    "type": "boolean"
                 }
             }
         },

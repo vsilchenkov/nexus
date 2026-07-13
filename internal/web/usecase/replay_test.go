@@ -70,6 +70,12 @@ func (s *stubLogReader) GetByIDPreview(_ context.Context, _, _ string, _ int) (*
 func (s *stubLogReader) GetBodyChunk(_ context.Context, _, _, _ string, _, _ int) (string, int64, error) {
 	return "", 0, s.err
 }
+func (s *stubLogReader) DistinctMethods(_ context.Context, _, _ string, _ int) ([]string, error) {
+	return nil, s.err
+}
+func (s *stubLogReader) DateRange(_ context.Context, _, _ string) (int64, int64, error) {
+	return 0, 0, s.err
+}
 
 // stubDispatcher — реализует port.ReceiverDispatcher; сохраняет последний
 // запрос для проверки.

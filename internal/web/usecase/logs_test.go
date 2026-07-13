@@ -24,6 +24,9 @@ type logReaderMock struct {
 	bodyChunk   string
 	bodyTotal   int64
 	lastQuery   port.LogQuery // последний Search-запрос (для проверки QExpr, §48)
+	methods     []string      // ответ DistinctMethods (§48)
+	rangeMin    int64         // ответ DateRange (§48)
+	rangeMax    int64
 }
 
 func (m *logReaderMock) GetByID(_ context.Context, _, _ string) (*domain.LogRecord, error) {
@@ -66,6 +69,14 @@ func (m *logReaderMock) GetByIDPreview(_ context.Context, _, _ string, _ int) (*
 
 func (m *logReaderMock) GetBodyChunk(_ context.Context, _, _, _ string, _, _ int) (string, int64, error) {
 	return m.bodyChunk, m.bodyTotal, m.getErr
+}
+
+func (m *logReaderMock) DistinctMethods(_ context.Context, _, _ string, _ int) ([]string, error) {
+	return m.methods, m.err
+}
+
+func (m *logReaderMock) DateRange(_ context.Context, _, _ string) (int64, int64, error) {
+	return m.rangeMin, m.rangeMax, m.err
 }
 
 // §43.1: узел с кривым именем CH-таблицы (legacy с дефисом) на чтении логов
@@ -328,6 +339,41 @@ func TestMatchLogFilter_Extended(t *testing.T) {
 		if got := matchLogFilter(rec, tt.q); got != tt.want {
 			t.Errorf("%s: want %v, got %v", tt.name, tt.want, got)
 		}
+	}
+}
+
+// §48.3: фасеты Methods/DateRange — форвардинг к reader'у, team scope и
+// деградация «логи не настроены» как у остальных читающих методов.
+func TestLogs_Facets_ForwardAndScope(t *testing.T) {
+	t.Parallel()
+	r := &logReaderMock{methods: []string{"a", "b"}, rangeMin: 100, rangeMax: 200}
+	nodes := &stubNodeRepo{nodes: map[string]*domain.Node{
+		"n1":    {ID: "n1", ClickHouseTable: "t.t", TeamID: "team1", Status: domain.NodeStatusEnabled},
+		"notab": {ID: "notab", ClickHouseTable: "", TeamID: "team1", Status: domain.NodeStatusEnabled},
+	}}
+	uc := NewLogsUsecase(r, nodes, logging.NewNoop())
+
+	ms, err := uc.Methods(context.Background(), "n1", "team1")
+	if err != nil || len(ms) != 2 {
+		t.Fatalf("methods: want 2, got %v / %v", ms, err)
+	}
+	lo, hi, err := uc.DateRange(context.Background(), "n1", "team1")
+	if err != nil || lo != 100 || hi != 200 {
+		t.Fatalf("date range: want 100/200, got %d/%d / %v", lo, hi, err)
+	}
+	// Чужая команда → 404.
+	if _, err := uc.Methods(context.Background(), "n1", "other"); !errors.Is(err, domain.ErrNodeNotFound) {
+		t.Fatalf("methods team scope: want ErrNodeNotFound, got %v", err)
+	}
+	if _, _, err := uc.DateRange(context.Background(), "n1", "other"); !errors.Is(err, domain.ErrNodeNotFound) {
+		t.Fatalf("range team scope: want ErrNodeNotFound, got %v", err)
+	}
+	// Нет таблицы → ErrNodeLogsNotConfigured.
+	if _, err := uc.Methods(context.Background(), "notab", "team1"); !errors.Is(err, domain.ErrNodeLogsNotConfigured) {
+		t.Fatalf("methods no table: want ErrNodeLogsNotConfigured, got %v", err)
+	}
+	if _, _, err := uc.DateRange(context.Background(), "notab", "team1"); !errors.Is(err, domain.ErrNodeLogsNotConfigured) {
+		t.Fatalf("range no table: want ErrNodeLogsNotConfigured, got %v", err)
 	}
 }
 

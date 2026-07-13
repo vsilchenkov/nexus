@@ -132,6 +132,27 @@ func (u *LogsUsecase) CountFailed(ctx context.Context, nodeID, teamID string, si
 	return u.logs.CountFailed(ctx, n.ClickHouseTable, n.ID, sinceMs, untilMs)
 }
 
+// Methods — уникальные значения колонки method узла (§48.3, фасет дропдауна
+// Method в фильтре логов). Лениво дёргается UI при открытии списка — данные
+// всегда свежие. teamID — scope.
+func (u *LogsUsecase) Methods(ctx context.Context, nodeID, teamID string) ([]string, error) {
+	n, err := u.resolveNode(ctx, nodeID, teamID)
+	if err != nil {
+		return nil, err
+	}
+	return u.logs.DistinctMethods(ctx, n.ClickHouseTable, n.ID, 0)
+}
+
+// DateRange — min/max date_request узла в UnixMilli (§48.3, ограничение полей
+// дат фильтра). (0, 0) — записей нет, ограничения не ставятся. teamID — scope.
+func (u *LogsUsecase) DateRange(ctx context.Context, nodeID, teamID string) (int64, int64, error) {
+	n, err := u.resolveNode(ctx, nodeID, teamID)
+	if err != nil {
+		return 0, 0, err
+	}
+	return u.logs.DateRange(ctx, n.ClickHouseTable, n.ID)
+}
+
 // resolveNode — общий путь: получить узел, проверить team scope, убедиться
 // что у него настроен ClickHouseTable.
 func (u *LogsUsecase) resolveNode(ctx context.Context, nodeID, teamID string) (*domain.Node, error) {

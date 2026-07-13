@@ -104,6 +104,24 @@ type FailedCountResponse struct {
 	LogsConfigured bool   `json:"logs_configured"`
 }
 
+// LogMethodsResponse — GET /api/nodes/{id}/logs/methods (§48.3): уникальные
+// значения колонки method узла для фасета дропдауна Method.
+type LogMethodsResponse struct {
+	Items          []string `json:"items"`
+	LogsConfigured bool     `json:"logs_configured"`
+	LogsAvailable  bool     `json:"logs_available"`
+}
+
+// LogDateRangeResponse — GET /api/nodes/{id}/logs/date-range (§48.3): min/max
+// date_request узла (UnixMilli) для ограничения полей дат фильтра. 0/0 —
+// записей нет, ограничения не ставятся.
+type LogDateRangeResponse struct {
+	MinMs          int64 `json:"min_ms"`
+	MaxMs          int64 `json:"max_ms"`
+	LogsConfigured bool  `json:"logs_configured"`
+	LogsAvailable  bool  `json:"logs_available"`
+}
+
 // LogBodyChunkResponse — GET /api/nodes/{id}/log/{logId}/body (§42): срез тела
 // записи по рунам + полная длина для постраничной подгрузки «показать весь».
 type LogBodyChunkResponse struct {
