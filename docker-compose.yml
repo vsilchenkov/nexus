@@ -82,6 +82,12 @@ services:
       KAFKA_NUM_PARTITIONS: "4"
       KAFKA_DEFAULT_REPLICATION_FACTOR: "1"
       KAFKA_MIN_INSYNC_REPLICAS: "1"
+      # Брокерный дефолт retention. Топики nexus.* создаются приложением с ЯВНЫМ
+      # конфигом (config.yml kafka.topic → CreateTopics), поэтому эти значения —
+      # запасной потолок для любых прочих/авто-топиков и держат брокер согласованным
+      # с топик-конфигом: 7 дней и 50 ГиБ на партицию (log.retention.bytes — per-partition).
+      KAFKA_LOG_RETENTION_MS: "604800000"
+      KAFKA_LOG_RETENTION_BYTES: "53687091200"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"

@@ -104,9 +104,11 @@ kafka:
     # иначе EnsureTopics зависнет/упадёт на InvalidReplicationFactor.
     replication_factor: ${KAFKA_TOPIC_REPLICATION_FACTOR:3}   # Фактор репликации партиций.
     min_insync_replicas: ${KAFKA_TOPIC_MIN_INSYNC_REPLICAS:2} # Минимум синхронных реплик для acks=all.
-    retention_ms: 2592000000   # Хранение сообщений по времени (мс) = 30 дней.
-    retention_bytes: -1        # Хранение по размеру (байт); -1 = без лимита по объёму.
-    segment_ms: 86400000       # Период ротации сегмента лога (мс) = 1 день.
+    retention_ms: 604800000       # Хранение сообщений по времени (мс) = 7 дней (неделя).
+    retention_bytes: 53687091200  # Хранение по размеру (байт) = 50 ГиБ. ВНИМАНИЕ: лимит на ПАРТИЦИЮ,
+                                  # суммарно по топику = retention_bytes × partitions. Предохранитель диска:
+                                  # Kafka удаляет старые сегменты при превышении, даже если они младше retention_ms.
+    segment_ms: 86400000          # Период ротации сегмента лога (мс) = 1 день.
     cleanup_policy: delete     # Политика очистки: delete (по retention) или compact.
     compression_type: lz4      # Компрессия на стороне топика.
     max_message_bytes: 10485760 # Максимальный размер сообщения (байт) = 10 МиБ.

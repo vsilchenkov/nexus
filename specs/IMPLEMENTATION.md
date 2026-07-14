@@ -96,7 +96,7 @@
 | **Нормализация `nodes.clickhouse_table` → `<team.ch_database>.<table>`** | ✅ Phase 10.C.2 | [usecase/node.go](../internal/web/usecase/node.go) `normalizeCHTable` — write-time префикс при Create/Update; unprefixed `<x>` → `nexus_default.<x>`. Backfill-миграция (0009) удалена как ненужная (стенд greenfield) |
 | Up/Down + `make migrate-up`/`-down N=1`/`-status` | ✅ | [Makefile](../Makefile) |
 | ClickHouse driver `clickhouse-go/v2`, batch INSERT | ✅ | [platform/clickhouse/clickhouse.go](../internal/platform/clickhouse/clickhouse.go) |
-| Kafka admin + producer + consumer (`segmentio/kafka-go`) с автосозданием топиков с retention 30 дней, acks=all, idempotence | ✅ | [platform/kafka/](../internal/platform/kafka/) |
+| Kafka admin + producer + consumer (`segmentio/kafka-go`) с автосозданием топиков с retention 7 дней + `retention.bytes=50 ГиБ`/партицию, acks=all, idempotence | ✅ | [platform/kafka/](../internal/platform/kafka/) |
 | Redis: NodeCache (TTL 5min), sessions (24h), ratelimit, circuit-breaker | ✅ | [platform/redis/](../internal/platform/redis/), [circuitbreaker/redis.go](../internal/platform/circuitbreaker/redis.go), [ratelimit/redis.go](../internal/platform/ratelimit/redis.go) |
 | AES-256-GCM v1-формат `v1:nonce:ct:tag` | ✅ | [platform/crypto/aesgcm.go](../internal/platform/crypto/aesgcm.go) |
 | Валидация ENCRYPTION_KEY на старте, exit 1 при невалидном | ✅ | [bootstrap.go](../internal/platform/bootstrap/bootstrap.go) `MustCipher` |
@@ -1768,6 +1768,12 @@ make proto                                     # перегенерация send
    бэкоффом. Под длительный простой CH рассчитывайте `kafka.topic.retention_ms`
    (объём логов × максимальный простой). Прежний локальный NDJSON-fallback
    (`logs/clickhouse-fallback/`, `clickhouse.fallback_dir`) удалён.
+   **Retention всех топиков `nexus.*`:** дефолт `retention.ms=7 дней` +
+   `retention.bytes=50 ГиБ`/партицию (`kafka.topic` в `config.yml`). Топики
+   создаются через `CreateTopics`, **`AlterConfigs` в коде нет** — правка
+   `config.yml` применяется лишь при создании; на живом топике меняйте через
+   `kafka-configs --alter` (нагрузочный тест и рекомендации — TESTING.md,
+   команда смены — DEPLOYMENT.md §4.3).
 
 5. **Replay не работает без ClickHouse.** Web Service стартует даже если CH
    недоступен (опциональная зависимость через `bootstrap.TryClickHouse`), но
