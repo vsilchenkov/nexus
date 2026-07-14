@@ -105,7 +105,7 @@ kafka:
     replication_factor: ${KAFKA_TOPIC_REPLICATION_FACTOR:3}   # Фактор репликации партиций.
     min_insync_replicas: ${KAFKA_TOPIC_MIN_INSYNC_REPLICAS:2} # Минимум синхронных реплик для acks=all.
     retention_ms: 604800000       # Хранение сообщений по времени (мс) = 7 дней (неделя).
-    retention_bytes: 53687091200  # Хранение по размеру (байт) = 50 ГиБ. ВНИМАНИЕ: лимит на ПАРТИЦИЮ,
+    retention_bytes: 42949672960  # Хранение по размеру (байт) = 40 ГиБ. ВНИМАНИЕ: лимит на ПАРТИЦИЮ,
                                   # суммарно по топику = retention_bytes × partitions. Предохранитель диска:
                                   # Kafka удаляет старые сегменты при превышении, даже если они младше retention_ms.
     segment_ms: 86400000          # Период ротации сегмента лога (мс) = 1 день.

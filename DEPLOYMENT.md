@@ -345,7 +345,7 @@ docker compose -f deploy/docker-compose.app.yml logs -f web receiver sender
   по БД на команду (`nexus_<slug>`, для default — `nexus_default`) и создаёт таблицы логов.
 - **Kafka**: автосоздание топиков на брокере должно быть **разрешено**, либо заранее
   создайте `nexus.async`, `nexus.async.dlq` и `nexus.logs.retry` (Nexus сам пытается их завести с
-  `retention.ms=7 дней` + `retention.bytes=50 ГиБ` **на партицию**; на single-broker не забудьте
+  `retention.ms=7 дней` + `retention.bytes=40 ГиБ` **на партицию**; на single-broker не забудьте
   RF=1/ISR=1 — см. §2). Топик `nexus.logs.retry`
   (§38) — durable-буфер проваленных CH-батчей при недоступности ClickHouse; его retention должен
   покрывать максимально ожидаемый простой CH × объём логов (иначе при очень долгом простое старые
@@ -362,7 +362,7 @@ docker compose -f deploy/docker-compose.app.yml logs -f web receiver sender
   > # retention.bytes — ПЕР-ПАРТИЦИЯ (суммарно по топику = значение × partitions)
   > kafka-configs.sh --bootstrap-server <broker>:9092 --entity-type topics \
   >   --entity-name nexus.async --alter \
-  >   --add-config retention.ms=604800000,retention.bytes=53687091200
+  >   --add-config retention.ms=604800000,retention.bytes=42949672960
   > # проверить: --describe вместо --alter/--add-config
   > ```
   >
