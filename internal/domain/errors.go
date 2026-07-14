@@ -143,6 +143,7 @@ var (
 	ErrHeaderNameLength        = errors.New("domain: header name length must be 1..100")
 	ErrHeaderNameFormat        = errors.New("domain: header name must be a valid RFC 7230 token")
 	ErrHeaderDescriptionLength = errors.New("domain: header description length must be <= 500")
+	ErrHeaderInUse             = errors.New("domain: header is used by nodes and cannot be renamed or deleted")
 
 	// §41: каталог полей запроса (request_fields_catalog).
 	ErrRequestFieldNotFound          = errors.New("domain: request field not found")

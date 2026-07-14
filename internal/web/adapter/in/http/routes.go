@@ -250,6 +250,14 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			authedAdmin.POST("/ch-templates/verify", h.CHTemplate.Verify)
 		}
 
+		// Справочник заголовков (§24): переименование/удаление — admin-only
+		// (страница управления в Настройках). GET/POST остаются выше (combobox
+		// формы узла: чтение — любая сессия, idempotent create — manager+).
+		if h.HeaderCatalog != nil {
+			authedAdmin.PATCH("/headers/:id", h.HeaderCatalog.Update)
+			authedAdmin.DELETE("/headers/:id", h.HeaderCatalog.Delete)
+		}
+
 		// Orphan-таблицы ClickHouse (§7.10 / Phase 6.7). Admin-only.
 		// Регистрируется только если включён ClickHouse (см. app.go).
 		if h.Orphan != nil {

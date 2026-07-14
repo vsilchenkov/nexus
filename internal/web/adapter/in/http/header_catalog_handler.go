@@ -14,7 +14,8 @@ import (
 )
 
 // HeaderCatalogHandler — справочник HTTP-заголовков (§24). GET доступен любой
-// сессии (combobox); POST (idempotent create из combobox) — admin-only.
+// сессии (combobox формы узла и страница управления); POST (идемпотентный create
+// из combobox) — manager+; PATCH/DELETE (управление справочником) — admin-only.
 type HeaderCatalogHandler struct {
 	uc     *usecase.HeaderCatalogUsecase
 	logger logging.Logger
@@ -93,6 +94,52 @@ func (h *HeaderCatalogHandler) Create(c *gin.Context) {
 	c.JSON(http.StatusOK, headerToResponse(e))
 }
 
+// Update godoc
+// @Summary  Изменить заголовок справочника (admin, §24).
+// @Description  Описание меняется всегда; имя — только если заголовок не используется узлами (usage_count=0), иначе 409.
+// @Tags     headers
+// @Accept   json
+// @Produce  json
+// @Param    id    path  string         true  "header id"
+// @Param    body  body  headerRequest  true  "header"
+// @Success  204
+// @Failure  400  {object}  ErrorResponse
+// @Failure  404  {object}  ErrorResponse
+// @Failure  409  {object}  ErrorResponse
+// @Security CookieAuth
+// @Router   /api/headers/{id} [patch]
+func (h *HeaderCatalogHandler) Update(c *gin.Context) {
+	var req headerRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.uc.Update(c.Request.Context(), actorFromCtx(c), c.Param("id"), req.Name, req.Description); err != nil {
+		h.replyDomainError(c, err, "header.update")
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// Delete godoc
+// @Summary  Удалить заголовок из справочника (admin, §24).
+// @Description  Нельзя удалить заголовок, используемый узлами (409).
+// @Tags     headers
+// @Produce  json
+// @Param    id   path  string  true  "header id"
+// @Success  204
+// @Failure  404  {object}  ErrorResponse
+// @Failure  409  {object}  ErrorResponse
+// @Security CookieAuth
+// @Router   /api/headers/{id} [delete]
+func (h *HeaderCatalogHandler) Delete(c *gin.Context) {
+	if err := h.uc.Delete(c.Request.Context(), actorFromCtx(c), c.Param("id")); err != nil {
+		h.replyDomainError(c, err, "header.delete")
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 func (h *HeaderCatalogHandler) replyDomainError(c *gin.Context, err error, op string) {
 	switch {
 	case errors.Is(err, domain.ErrHeaderNameLength):
@@ -103,6 +150,10 @@ func (h *HeaderCatalogHandler) replyDomainError(c *gin.Context, err error, op st
 		h.replyCode(c, http.StatusBadRequest, "header.description_length")
 	case errors.Is(err, domain.ErrHeaderNotFound):
 		h.replyCode(c, http.StatusNotFound, "header.not_found")
+	case errors.Is(err, domain.ErrHeaderAlreadyExists):
+		h.replyCode(c, http.StatusConflict, "header.already_exists")
+	case errors.Is(err, domain.ErrHeaderInUse):
+		h.replyCode(c, http.StatusConflict, "header.in_use")
 	default:
 		h.replyServerError(c, err, op)
 	}
