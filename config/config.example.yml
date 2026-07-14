@@ -98,7 +98,7 @@ kafka:
   consumer_group: nexus-sender           # Consumer-group, под которой Sender читает топик.
   # Параметры авто-создания топика (EnsureTopics при старте).
   topic:
-    partitions: 4                        # Число партиций топика (параллелизм потребления).
+    partitions: 4                        # Число партиций топика = потолок параллелизма обработки (min с consumer.instances). Увеличивается без пересоздания (kafka-topics --alter), уменьшить нельзя.
     # Дефолты — для multi-broker prod-кластера. На single-broker (локальный
     # docker-compose, CI loadtest) переопределяй через env: RF=1, ISR=1 —
     # иначе EnsureTopics зависнет/упадёт на InvalidReplicationFactor.
@@ -136,7 +136,7 @@ kafka:
     max_poll_records: 500       # Максимум сообщений за один poll.
     max_poll_interval_ms: 300000 # Макс. пауза между poll'ами (мс) = 5 мин; дольше → ребаланс.
     isolation_level: read_committed # Читать только закоммиченные сообщения (для транзакционного producer'а).
-    instances: 4                # Число consumer-инстансов (горутин-воркеров) в этом процессе.
+    instances: 4                # Число consumer-инстансов (горутин-readers) в этом процессе. Активны min(instances, partitions); держи = topic.partitions при одной реплике Sender, либо дели партиции между репликами.
 
 # ─────────────────────────────────────────────────────────────────────────────
 # СВЯЗИ ЛИМИТОВ РАЗМЕРА ТЕЛА (§43-rev). Держите инварианты, иначе большое тело
