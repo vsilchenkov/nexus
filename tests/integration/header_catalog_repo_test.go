@@ -108,6 +108,80 @@ func TestHeaderCatalog_Usecase_IdempotentCreate(t *testing.T) {
 	}
 }
 
+// TestHeaderCatalog_Repo_CRUD: Get/UpdateName/UpdateDescription/Delete на реальном
+// PG (§24). Проверяет коллизию lower(name) при переименовании, обновление
+// updated_at и ErrHeaderNotFound для отсутствующего id.
+func TestHeaderCatalog_Repo_CRUD(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	pool, cleanup := startPostgres(t, ctx)
+	defer cleanup()
+
+	logger := logging.NewNoop()
+	repo := pgrepo.NewHeaderCatalogRepoPg(pool, logger)
+
+	h := &domain.HeaderCatalogEntry{Name: "X-Alpha", Description: "first", CreatedBy: "admin"}
+	if err := repo.Create(ctx, h); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	other := &domain.HeaderCatalogEntry{Name: "X-Beta"}
+	if err := repo.Create(ctx, other); err != nil {
+		t.Fatalf("create other: %v", err)
+	}
+
+	// Get по id.
+	got, err := repo.Get(ctx, h.ID)
+	if err != nil || got.Name != "X-Alpha" {
+		t.Fatalf("Get: got=%+v err=%v", got, err)
+	}
+
+	// UpdateDescription бампит updated_at.
+	if err := repo.UpdateDescription(ctx, h.ID, "renamed desc"); err != nil {
+		t.Fatalf("UpdateDescription: %v", err)
+	}
+	got, _ = repo.Get(ctx, h.ID)
+	if got.Description != "renamed desc" {
+		t.Fatalf("description = %q, want %q", got.Description, "renamed desc")
+	}
+	if !got.UpdatedAt.After(h.UpdatedAt) {
+		t.Fatalf("updated_at not bumped: %v !> %v", got.UpdatedAt, h.UpdatedAt)
+	}
+
+	// UpdateName — успешное переименование.
+	if err := repo.UpdateName(ctx, h.ID, "X-Alpha-2"); err != nil {
+		t.Fatalf("UpdateName: %v", err)
+	}
+	got, _ = repo.Get(ctx, h.ID)
+	if got.Name != "X-Alpha-2" {
+		t.Fatalf("name = %q, want X-Alpha-2", got.Name)
+	}
+
+	// UpdateName — коллизия lower(name) с существующим (другой регистр).
+	if err := repo.UpdateName(ctx, h.ID, "x-beta"); !errors.Is(err, domain.ErrHeaderAlreadyExists) {
+		t.Fatalf("rename collision err = %v, want ErrHeaderAlreadyExists", err)
+	}
+
+	// Delete + повторный Get → ErrHeaderNotFound.
+	if err := repo.Delete(ctx, h.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := repo.Get(ctx, h.ID); !errors.Is(err, domain.ErrHeaderNotFound) {
+		t.Fatalf("Get after delete err = %v, want ErrHeaderNotFound", err)
+	}
+
+	// Мутации несуществующего id → ErrHeaderNotFound.
+	if err := repo.Delete(ctx, h.ID); !errors.Is(err, domain.ErrHeaderNotFound) {
+		t.Fatalf("Delete missing err = %v, want ErrHeaderNotFound", err)
+	}
+	if err := repo.UpdateName(ctx, h.ID, "X-Ghost"); !errors.Is(err, domain.ErrHeaderNotFound) {
+		t.Fatalf("UpdateName missing err = %v, want ErrHeaderNotFound", err)
+	}
+	if err := repo.UpdateDescription(ctx, h.ID, "x"); !errors.Is(err, domain.ErrHeaderNotFound) {
+		t.Fatalf("UpdateDescription missing err = %v, want ErrHeaderNotFound", err)
+	}
+}
+
 func names(items []*domain.HeaderCatalogEntry) []string {
 	out := make([]string, len(items))
 	for i, e := range items {
