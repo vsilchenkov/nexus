@@ -76,7 +76,10 @@ export function LogMethodFilter({
           </span>
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-[280px] p-0">
+      {/* Ширина по содержимому: значения method могут быть длинными (в этой
+          инсталляции туда попадают path'ы). Растём до 92vw/560px, длинные
+          значения переносятся (break-all), а не обрезаются. */}
+      <PopoverContent align="start" className="w-[max(280px,min(92vw,560px))] p-0">
         <Command>
           <CommandInput placeholder={t("logs.advanced.method_search")} />
           <CommandList>
@@ -89,8 +92,10 @@ export function LogMethodFilter({
               </span>
             </CommandItem>
             {items.map((m) => (
-              <CommandItem key={m} value={m} onSelect={() => pick(m)}>
-                <span className={`font-mono text-[13px] ${m === value ? "text-accent" : ""}`}>
+              <CommandItem key={m} value={m} onSelect={() => pick(m)} className="items-start">
+                <span
+                  className={`min-w-0 whitespace-normal break-all font-mono text-[13px] ${m === value ? "text-accent" : ""}`}
+                >
                   {m}
                 </span>
               </CommandItem>

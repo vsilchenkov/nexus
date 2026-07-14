@@ -2524,6 +2524,72 @@ paths:
       summary: Создать заголовок в справочнике (admin, §24).
       tags:
       - headers
+  /api/headers/{id}:
+    delete:
+      description: Нельзя удалить заголовок, используемый узлами (409).
+      parameters:
+      - description: header id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Удалить заголовок из справочника (admin, §24).
+      tags:
+      - headers
+    patch:
+      consumes:
+      - application/json
+      description: Описание меняется всегда; имя — только если заголовок не используется
+        узлами (usage_count=0), иначе 409.
+      parameters:
+      - description: header id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: header
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.headerRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Изменить заголовок справочника (admin, §24).
+      tags:
+      - headers
   /api/kafka/by-node:
     get:
       description: top_producers (по числу async-сообщений) и top_failures (по ошибкам)

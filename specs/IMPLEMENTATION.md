@@ -96,7 +96,7 @@
 | **Нормализация `nodes.clickhouse_table` → `<team.ch_database>.<table>`** | ✅ Phase 10.C.2 | [usecase/node.go](../internal/web/usecase/node.go) `normalizeCHTable` — write-time префикс при Create/Update; unprefixed `<x>` → `nexus_default.<x>`. Backfill-миграция (0009) удалена как ненужная (стенд greenfield) |
 | Up/Down + `make migrate-up`/`-down N=1`/`-status` | ✅ | [Makefile](../Makefile) |
 | ClickHouse driver `clickhouse-go/v2`, batch INSERT | ✅ | [platform/clickhouse/clickhouse.go](../internal/platform/clickhouse/clickhouse.go) |
-| Kafka admin + producer + consumer (`segmentio/kafka-go`) с автосозданием топиков с retention 30 дней, acks=all, idempotence | ✅ | [platform/kafka/](../internal/platform/kafka/) |
+| Kafka admin + producer + consumer (`segmentio/kafka-go`) с автосозданием топиков с retention 7 дней + `retention.bytes=40 ГиБ`/партицию, acks=all, idempotence | ✅ | [platform/kafka/](../internal/platform/kafka/) |
 | Redis: NodeCache (TTL 5min), sessions (24h), ratelimit, circuit-breaker | ✅ | [platform/redis/](../internal/platform/redis/), [circuitbreaker/redis.go](../internal/platform/circuitbreaker/redis.go), [ratelimit/redis.go](../internal/platform/ratelimit/redis.go) |
 | AES-256-GCM v1-формат `v1:nonce:ct:tag` | ✅ | [platform/crypto/aesgcm.go](../internal/platform/crypto/aesgcm.go) |
 | Валидация ENCRYPTION_KEY на старте, exit 1 при невалидном | ✅ | [bootstrap.go](../internal/platform/bootstrap/bootstrap.go) `MustCipher` |
@@ -372,6 +372,8 @@
 | Миграция `headers_catalog` (UNIQUE lower(name)) + домен | ✅ Phase 24.B.1 | [0012](../migrations/0012_headers_catalog.up.sql), [domain/header_catalog.go](../internal/domain/header_catalog.go) |
 | Port+repo (usage on-read) + usecase (идемпотентный create) + HTTP | ✅ Phase 24.B.2 | [postgres/header_catalog_repo.go](../internal/web/adapter/out/postgres/header_catalog_repo.go), [usecase/header_catalog.go](../internal/web/usecase/header_catalog.go), [http/header_catalog_handler.go](../internal/web/adapter/in/http/header_catalog_handler.go) |
 | UI: combobox (debounce, top-used, автосоздание) в форме узла | ✅ Phase 24.B.3 | [components/node/HeadersField.tsx](../web-ui/src/components/node/HeadersField.tsx) |
+| CRUD-управление: Get/Update/Delete (port/repo/usecase/HTTP), guard usage>0 → `ErrHeaderInUse`, audit `header.update`/`header.delete`, `PATCH`/`DELETE /api/headers/:id` (admin) | ✅ Phase 24.6 | [postgres/header_catalog_repo.go](../internal/web/adapter/out/postgres/header_catalog_repo.go), [usecase/header_catalog.go](../internal/web/usecase/header_catalog.go), [http/header_catalog_handler.go](../internal/web/adapter/in/http/header_catalog_handler.go), [routes.go](../internal/web/adapter/in/http/routes.go) |
+| UI: страница управления Настройки → «Заголовки» (admin) — таблица, add/rename/delete | ✅ Phase 24.7 | [pages/settings/Headers.tsx](../web-ui/src/pages/settings/Headers.tsx), [Settings.tsx](../web-ui/src/pages/Settings.tsx) |
 
 ### §25 Swagger в шапке (Topbar) + два дока
 
@@ -1565,6 +1567,16 @@ filter, Create без TeamID). До блока B (team-switcher в сессии)
   trigger'ом на массив (тот хрупок). Форма узла шлёт имена (`string[]`), не ID — Receiver нетронут.
 - **POST идемпотентен по `lower(name)`**: unique-violation ловится в usecase и резолвится в
   существующую запись (200). Combobox создаёт без диалогов и без гонок.
+- **CRUD-управление (Phase 24.6/24.7): guard-при-использовании, а не каскад.** Т.к. узлы ссылаются на
+  заголовок по имени (строкой в `forward_headers`), а не по ID, переименование/удаление используемой
+  записи «осиротило» бы ссылки. Выбран самый безопасный вариант — блокировка: `usage_count > 0` →
+  `ErrHeaderInUse` (409) на rename и delete, по образцу §23 `ErrHostInUse`; описание правится всегда.
+  Узлы не трогаются (никакого `UPDATE nodes ...`), Receiver нетронут.
+- **RBAC-асимметрия сознательна.** Страница управления и `PATCH`/`DELETE /api/headers/:id` — admin-only
+  (`authedAdmin`), но `POST /api/headers` оставлен на manager+ (`authedManager`): тот же эндпоинт
+  дёргает combobox формы узла (§24.4), доступный менеджерам — перенос create в admin сломал бы
+  inline-создание. Вкладка Настройки → «Заголовки» гейтится `minRole: "admin"` в двух местах
+  (`visibleTabs` + условный `<Route>`), как и остальные admin-вкладки.
 
 ### 4.25 §27 — RabbitMQAsync: неочевидности
 
@@ -1756,6 +1768,12 @@ make proto                                     # перегенерация send
    бэкоффом. Под длительный простой CH рассчитывайте `kafka.topic.retention_ms`
    (объём логов × максимальный простой). Прежний локальный NDJSON-fallback
    (`logs/clickhouse-fallback/`, `clickhouse.fallback_dir`) удалён.
+   **Retention всех топиков `nexus.*`:** дефолт `retention.ms=7 дней` +
+   `retention.bytes=40 ГиБ`/партицию (`kafka.topic` в `config.yml`). Топики
+   создаются через `CreateTopics`, **`AlterConfigs` в коде нет** — правка
+   `config.yml` применяется лишь при создании; на живом топике меняйте через
+   `kafka-configs --alter` (нагрузочный тест и рекомендации — TESTING.md,
+   команда смены — DEPLOYMENT.md §4.3).
 
 5. **Replay не работает без ClickHouse.** Web Service стартует даже если CH
    недоступен (опциональная зависимость через `bootstrap.TryClickHouse`), но

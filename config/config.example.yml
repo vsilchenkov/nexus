@@ -98,15 +98,17 @@ kafka:
   consumer_group: nexus-sender           # Consumer-group, под которой Sender читает топик.
   # Параметры авто-создания топика (EnsureTopics при старте).
   topic:
-    partitions: 4                        # Число партиций топика (параллелизм потребления).
+    partitions: 4                        # Число партиций топика = потолок параллелизма обработки (min с consumer.instances). Увеличивается без пересоздания (kafka-topics --alter), уменьшить нельзя.
     # Дефолты — для multi-broker prod-кластера. На single-broker (локальный
     # docker-compose, CI loadtest) переопределяй через env: RF=1, ISR=1 —
     # иначе EnsureTopics зависнет/упадёт на InvalidReplicationFactor.
     replication_factor: ${KAFKA_TOPIC_REPLICATION_FACTOR:3}   # Фактор репликации партиций.
     min_insync_replicas: ${KAFKA_TOPIC_MIN_INSYNC_REPLICAS:2} # Минимум синхронных реплик для acks=all.
-    retention_ms: 2592000000   # Хранение сообщений по времени (мс) = 30 дней.
-    retention_bytes: -1        # Хранение по размеру (байт); -1 = без лимита по объёму.
-    segment_ms: 86400000       # Период ротации сегмента лога (мс) = 1 день.
+    retention_ms: 604800000       # Хранение сообщений по времени (мс) = 7 дней (неделя).
+    retention_bytes: 42949672960  # Хранение по размеру (байт) = 40 ГиБ. ВНИМАНИЕ: лимит на ПАРТИЦИЮ,
+                                  # суммарно по топику = retention_bytes × partitions. Предохранитель диска:
+                                  # Kafka удаляет старые сегменты при превышении, даже если они младше retention_ms.
+    segment_ms: 86400000          # Период ротации сегмента лога (мс) = 1 день.
     cleanup_policy: delete     # Политика очистки: delete (по retention) или compact.
     compression_type: lz4      # Компрессия на стороне топика.
     max_message_bytes: 10485760 # Максимальный размер сообщения (байт) = 10 МиБ.
@@ -134,7 +136,7 @@ kafka:
     max_poll_records: 500       # Максимум сообщений за один poll.
     max_poll_interval_ms: 300000 # Макс. пауза между poll'ами (мс) = 5 мин; дольше → ребаланс.
     isolation_level: read_committed # Читать только закоммиченные сообщения (для транзакционного producer'а).
-    instances: 4                # Число consumer-инстансов (горутин-воркеров) в этом процессе.
+    instances: 4                # Число consumer-инстансов (горутин-readers) в этом процессе. Активны min(instances, partitions); держи = topic.partitions при одной реплике Sender, либо дели партиции между репликами.
 
 # ─────────────────────────────────────────────────────────────────────────────
 # СВЯЗИ ЛИМИТОВ РАЗМЕРА ТЕЛА (§43-rev). Держите инварианты, иначе большое тело

@@ -2753,21 +2753,39 @@ RFC 7230 token: `^[a-zA-Z0-9!#$%&'*+.^_`|~-]+$`, длина 1–100. Та же �
 ### 24.3. API
 
 - `GET /api/headers?q=&limit=` — prefix-поиск (case-insensitive), сортировка по `usage_count desc`,
-  затем имени. Пустой `q` = топ-используемые. Любая сессия (combobox).
-- `POST /api/headers` `{name, description?}` — создать (admin). **Идемпотентно** по case-insensitive
-  имени: повтор возвращает существующую запись (200), а не ошибку — combobox создаёт без диалогов и
-  без гонок (unique-violation ловится и резолвится в существующую запись).
+  затем имени. Пустой `q` = топ-используемые. Любая сессия (combobox и страница управления).
+- `POST /api/headers` `{name, description?}` — создать (**manager+**). **Идемпотентно** по
+  case-insensitive имени: повтор возвращает существующую запись (200), а не ошибку — combobox создаёт
+  без диалогов и без гонок (unique-violation ловится и резолвится в существующую запись).
+- `PATCH /api/headers/:id` `{name, description?}` — изменить (**admin**). Описание меняется всегда;
+  имя — только если заголовок не используется узлами (`usage_count = 0`), иначе `409` `header.in_use`
+  (узлы ссылаются на заголовок по имени строкой в `forward_headers`, авто-каскада нет — переименование
+  «осиротило» бы ссылки). Переименование в занятое имя → `409` `header.already_exists`.
+- `DELETE /api/headers/:id` — удалить (**admin**). Нельзя удалить используемый заголовок
+  (`usage_count > 0`) → `409` `header.in_use`.
+
+RBAC-нюанс: `POST` остаётся на manager+ (его дёргает combobox формы узла, доступный менеджерам),
+а страница управления и `PATCH`/`DELETE` — admin-only.
 
 ### 24.4. UI
 
-`components/node/HeadersField.tsx` (cmdk): combobox с debounce 150 мс (TanStack Query, queryKey
-`['headers', q]`, staleTime 30 с), top-используемые при пустом вводе, автосоздание из дропдауна,
-case-insensitive дедупликация, chips выбранных. После успешного `POST` — invalidate `['headers']`,
-чтобы новый заголовок появился во всех открытых формах. Доступность — из cmdk.
+**Combobox формы узла** — `components/node/HeadersField.tsx` (cmdk): debounce 150 мс (TanStack Query,
+queryKey `['headers', q]`, staleTime 30 с), top-используемые при пустом вводе, автосоздание из
+дропдауна, case-insensitive дедупликация, chips выбранных. После успешного `POST` — invalidate
+`['headers']`, чтобы новый заголовок появился во всех открытых формах. Доступность — из cmdk.
+
+**Страница управления** — `pages/settings/Headers.tsx`, вкладка Настройки → «Заголовки»
+(admin-only, рядом с «Разрешённые хосты»). Таблица всех записей (имя / описание / использование),
+добавление, переименование, удаление; диалог на controlled `useState`, `useConfirm` для удаления.
+Кнопка удаления и поле имени заблокированы для используемого заголовка (`usage_count > 0`); клиентская
+валидация имени по RFC 7230 token перед «Сохранить». Мутации инвалидируют `['headers-catalog']`
+(страница) и `['headers']` (combobox), чтобы автодополнение не устаревало.
 
 ### 24.5. Audit
 
-`header.create` — добавление заголовка в справочник (`details.name`).
+- `header.create` — добавление заголовка в справочник (`details.name`).
+- `header.update` — изменение (`details.name`, `details.name_changed`).
+- `header.delete` — удаление (`details.name`).
 
 ## 25. Swagger в глобальной шапке (Topbar utility zone)
 

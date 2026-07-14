@@ -729,6 +729,26 @@
       },
       "preview": { "allow": "Will allow", "block": "Will block", "invalid": "Invalid pattern — fix it to see the preview" }
     },
+    "headers": {
+      "title": "Headers",
+      "subtitle": "Catalog of forwarded HTTP headers. Nodes pick names from this list; a header in use cannot be renamed or deleted.",
+      "add": "Add header",
+      "search": "Search by name…",
+      "empty": "Catalog is empty",
+      "used": "{{count}} node(s)",
+      "not_used": "not used",
+      "in_use_tip": "used by nodes — remove from forwarding first",
+      "name_format": "Name must be a valid RFC 7230 token (letters, digits and !#$%&'*+.^_`|~-, no spaces), 1–100 chars",
+      "confirm_delete": "Delete header {{name}}?",
+      "col": { "name": "Name", "description": "Description", "usage": "Usage" },
+      "field": { "name": "Header name", "description": "Description" },
+      "dialog": {
+        "new": "Add header",
+        "edit": "Edit header",
+        "subtitle": "Appears in the catalog for all nodes of the installation",
+        "create": "Create"
+      }
+    },
     "language": {
       "title": "UI language",
       "subtitle": "Applies to the current user only. Takes effect immediately.",

@@ -64,6 +64,8 @@ const (
 
 	// Справочник заголовков (§24).
 	ActionHeaderCreate = "header.create"
+	ActionHeaderUpdate = "header.update"
+	ActionHeaderDelete = "header.delete"
 
 	// Справочник полей запроса (§41).
 	ActionRequestFieldCreate = "request_field.create"

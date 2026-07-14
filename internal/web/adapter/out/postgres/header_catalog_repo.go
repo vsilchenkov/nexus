@@ -68,6 +68,12 @@ LIMIT $2`, q, limit)
 	return out, rows.Err()
 }
 
+func (r *HeaderCatalogRepoPg) Get(ctx context.Context, id string) (*domain.HeaderCatalogEntry, error) {
+	return r.scan(r.db.QueryRow(ctx,
+		`SELECT id, name, description, created_by, created_at, updated_at, `+usageExpr+` AS usage_count
+		 FROM headers_catalog WHERE id = $1::uuid`, id))
+}
+
 func (r *HeaderCatalogRepoPg) GetByName(ctx context.Context, name string) (*domain.HeaderCatalogEntry, error) {
 	return r.scan(r.db.QueryRow(ctx,
 		`SELECT id, name, description, created_by, created_at, updated_at, `+usageExpr+` AS usage_count
@@ -86,6 +92,49 @@ RETURNING id, created_at, updated_at`,
 			return domain.ErrHeaderAlreadyExists
 		}
 		return fmt.Errorf("create headers_catalog: %w", err)
+	}
+	return nil
+}
+
+func (r *HeaderCatalogRepoPg) UpdateName(ctx context.Context, id, name string) error {
+	tag, err := r.db.Exec(ctx,
+		`UPDATE headers_catalog SET name = $2, updated_at = now() WHERE id = $1::uuid`,
+		id, name)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return domain.ErrHeaderAlreadyExists
+		}
+		return fmt.Errorf("update headers_catalog name: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrHeaderNotFound
+	}
+	return nil
+}
+
+func (r *HeaderCatalogRepoPg) UpdateDescription(ctx context.Context, id, description string) error {
+	tag, err := r.db.Exec(ctx,
+		`UPDATE headers_catalog SET description = $2, updated_at = now() WHERE id = $1::uuid`,
+		id, description)
+	if err != nil {
+		return fmt.Errorf("update headers_catalog description: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrHeaderNotFound
+	}
+	return nil
+}
+
+// Delete удаляет заголовок из справочника. Привязки к узлам живут строками в
+// nodes.forward_headers (не FK), поэтому единственная защита от удаления
+// используемого заголовка — usage_count-guard в usecase.
+func (r *HeaderCatalogRepoPg) Delete(ctx context.Context, id string) error {
+	tag, err := r.db.Exec(ctx, `DELETE FROM headers_catalog WHERE id = $1::uuid`, id)
+	if err != nil {
+		return fmt.Errorf("delete headers_catalog: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrHeaderNotFound
 	}
 	return nil
 }

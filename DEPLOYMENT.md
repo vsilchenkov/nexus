@@ -345,11 +345,32 @@ docker compose -f deploy/docker-compose.app.yml logs -f web receiver sender
   по БД на команду (`nexus_<slug>`, для default — `nexus_default`) и создаёт таблицы логов.
 - **Kafka**: автосоздание топиков на брокере должно быть **разрешено**, либо заранее
   создайте `nexus.async`, `nexus.async.dlq` и `nexus.logs.retry` (Nexus сам пытается их завести с
-  retention 30 дней; на single-broker не забудьте RF=1/ISR=1 — см. §2). Топик `nexus.logs.retry`
+  `retention.ms=7 дней` + `retention.bytes=40 ГиБ` **на партицию**; на single-broker не забудьте
+  RF=1/ISR=1 — см. §2). Топик `nexus.logs.retry`
   (§38) — durable-буфер проваленных CH-батчей при недоступности ClickHouse; его retention должен
   покрывать максимально ожидаемый простой CH × объём логов (иначе при очень долгом простое старые
   батчи истекут по retention и не доедут в CH). Имя настраивается `kafka.retry_topic`; пустое
   значение полностью выключает retry (батчи теряются при сбое CH).
+
+  > **Смена retention/размера на УЖЕ существующем топике.** Nexus применяет `kafka.topic.*` из
+  > `config.yml` **только при создании топика** (`CreateTopics`); `AlterConfigs` в коде нет, поэтому
+  > правка `config.yml` **не меняет живой топик**. Чтобы изменить retention на работающем брокере
+  > **без пересоздания и без простоя** — примените конфиг напрямую (изменение мгновенное, данные
+  > и оффсеты сохраняются):
+  >
+  > ```bash
+  > # retention.bytes — ПЕР-ПАРТИЦИЯ (суммарно по топику = значение × partitions)
+  > kafka-configs.sh --bootstrap-server <broker>:9092 --entity-type topics \
+  >   --entity-name nexus.async --alter \
+  >   --add-config retention.ms=604800000,retention.bytes=42949672960
+  > # проверить: --describe вместо --alter/--add-config
+  > ```
+  >
+  > В Docker: `docker exec <kafka-контейнер> /opt/kafka/bin/kafka-configs.sh ...` (образ
+  > `apache/kafka` — путь `/opt/kafka/bin`). Повторите для `nexus.async.dlq` и `nexus.logs.retry`,
+  > чтобы все топики совпадали с `config.yml`. Альтернатива (с кратким простоем) — обновить
+  > `KAFKA_LOG_RETENTION_*` в compose и `docker compose up -d kafka`, но брокерный дефолт бьёт
+  > **только по новым** топикам; существующие всё равно правятся `kafka-configs --alter`.
 - **Redis**: при включённом ACL задайте `REDIS_USER` и `REDIS_PASSWORD`.
 
 ---

@@ -488,11 +488,9 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
             />
           </div>
           {/* Ряд 2: даты С/По (календарь react-day-picker; min/max — лениво из
-              /logs/date-range при открытии) + кнопки. §48.8 */}
-          <div className="space-y-1 md:col-span-3">
-            <label className="text-[10px] uppercase tracking-wider text-fg-muted">
-              {t("logs.advanced.from")}
-            </label>
+              /logs/date-range при открытии) + кнопки. §48.8. Подпись «С»/«По» —
+              в самом плейсхолдере поля, отдельный label над ним не дублируем. */}
+          <div className="md:col-span-3">
             <LogDateField
               value={advForm.from}
               onChange={(v) => setAdvForm({ ...advForm, from: v })}
@@ -503,10 +501,7 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
               onOpen={fetchDateRange}
             />
           </div>
-          <div className="space-y-1 md:col-span-3">
-            <label className="text-[10px] uppercase tracking-wider text-fg-muted">
-              {t("logs.advanced.to")}
-            </label>
+          <div className="md:col-span-3">
             <LogDateField
               value={advForm.to}
               onChange={(v) => setAdvForm({ ...advForm, to: v })}
