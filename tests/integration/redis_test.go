@@ -14,6 +14,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"nexus/internal/domain"
+	"nexus/internal/platform/crypto"
 	"nexus/internal/platform/logging"
 	webredis "nexus/internal/web/adapter/out/redis"
 )
@@ -141,7 +142,11 @@ func TestNodeCache_E2E(t *testing.T) {
 	client, cleanup := startRedis(t, ctx)
 	defer cleanup()
 
-	cache := webredis.NewNodeCacheRedis(client, logging.NewNoop())
+	cipher, err := crypto.NewCipher(testEncryptionKey)
+	require.NoError(t, err)
+	cache := webredis.NewNodeCacheRedis(client, cipher, logging.NewNoop())
+
+	const teamSlug = "acme" // §50: ключ теперь неймспейсится командой
 
 	n := &domain.Node{
 		ID:               "id-1",
@@ -155,19 +160,28 @@ func TestNodeCache_E2E(t *testing.T) {
 		Status:           domain.NodeStatusEnabled,
 		TimeoutMs:        5000,
 	}
-	require.NoError(t, cache.Set(ctx, n, time.Minute))
+	require.NoError(t, cache.Set(ctx, teamSlug, n, time.Minute))
 
-	got, err := cache.GetByPath(ctx, "demo/cache")
+	// §50: креды в кеше зашифрованы — сырой ключ Redis не содержит plaintext.
+	raw, err := client.Get(ctx, "node:"+teamSlug+":demo/cache").Result()
+	require.NoError(t, err)
+	require.NotContains(t, raw, "secret-token", "креды в кеше должны быть зашифрованы")
+
+	got, err := cache.GetByPath(ctx, teamSlug, "demo/cache")
 	require.NoError(t, err)
 	require.Equal(t, "id-1", got.ID)
 	require.Equal(t, "https://example.com/hook", got.TargetURL)
-	require.Equal(t, "secret-token", got.AuthCredentials)
+	require.Equal(t, "secret-token", got.AuthCredentials) // расшифровка вернула plaintext
 
-	_, err = cache.GetByPath(ctx, "no/such/path")
+	// Другой team_slug тот же path не видит (изоляция по команде).
+	_, err = cache.GetByPath(ctx, "globex", "demo/cache")
 	require.ErrorIs(t, err, domain.ErrNodeNotFound)
 
-	require.NoError(t, cache.InvalidateByPath(ctx, "demo/cache"))
-	_, err = cache.GetByPath(ctx, "demo/cache")
+	_, err = cache.GetByPath(ctx, teamSlug, "no/such/path")
+	require.ErrorIs(t, err, domain.ErrNodeNotFound)
+
+	require.NoError(t, cache.InvalidateByPath(ctx, teamSlug, "demo/cache"))
+	_, err = cache.GetByPath(ctx, teamSlug, "demo/cache")
 	require.ErrorIs(t, err, domain.ErrNodeNotFound)
 }
 

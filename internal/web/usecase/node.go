@@ -254,11 +254,64 @@ func (u *NodeUsecase) Create(ctx context.Context, actor Actor, n *domain.Node) e
 		u.audit.Log(ctx, actor, domain.ActionNodeCreate, "node", n.ID, auditDetails)
 	}
 
-	if err := u.cache.Set(ctx, n, u.cacheTTL); err != nil {
-		u.logger.Warn("cache set after create failed",
-			u.logger.Str("path", n.Path), u.logger.Err(err))
-	}
+	u.cacheSet(ctx, n, "create")
 	return nil
+}
+
+// cacheTeamSlug резолвит slug команды узла для ключа кеша (§50). Ключ Receiver'а —
+// "node:<team_slug>:<path>", а в usecase на руках только team_id (UUID).
+//
+// Пустая строка на выходе = «не трогать кеш»: писать/чистить ключ чужой команды
+// хуже, чем подождать TTL (redis.node_ttl_sec) — иначе конфиг узла одной команды
+// затрёт кеш одноимённого пути в другой (после §18 path уникален лишь внутри
+// команды).
+func (u *NodeUsecase) cacheTeamSlug(ctx context.Context, teamID string) string {
+	return resolveCacheTeamSlug(ctx, u.teams, teamID, u.logger)
+}
+
+// resolveCacheTeamSlug — общий резолв team_id → slug для ключа кеша узла (§50).
+// Используют NodeUsecase и HostAllowlistUsecase: обе пишут один и тот же ключ.
+func resolveCacheTeamSlug(ctx context.Context, teams port.TeamRepo, teamID string, logger logging.Logger) string {
+	if teamID == "" {
+		return domain.DefaultTeamSlug
+	}
+	if teams == nil {
+		logger.Warn("node cache: TeamRepo is nil, skip cache op",
+			logger.Str("team_id", teamID))
+		return ""
+	}
+	t, err := teams.GetByID(ctx, teamID)
+	if err != nil {
+		logger.Warn("node cache: resolve team slug failed, skip cache op",
+			logger.Str("team_id", teamID), logger.Err(err))
+		return ""
+	}
+	return t.Slug
+}
+
+// cacheSet — write-through записи узла в кеш (§9.2). Ошибки не эскалируются:
+// узел уже сохранён в PG, кеш догонит по TTL. op — для сообщения в логе.
+func (u *NodeUsecase) cacheSet(ctx context.Context, n *domain.Node, op string) {
+	slug := u.cacheTeamSlug(ctx, n.TeamID)
+	if slug == "" {
+		return
+	}
+	if err := u.cache.Set(ctx, slug, n, u.cacheTTL); err != nil {
+		u.logger.Warn("cache set after "+op+" failed",
+			u.logger.Str("team", slug), u.logger.Str("path", n.Path), u.logger.Err(err))
+	}
+}
+
+// cacheInvalidate — сброс ключа узла (teamID — команда, которой принадлежит путь).
+func (u *NodeUsecase) cacheInvalidate(ctx context.Context, teamID, path, op string) {
+	slug := u.cacheTeamSlug(ctx, teamID)
+	if slug == "" {
+		return
+	}
+	if err := u.cache.InvalidateByPath(ctx, slug, path); err != nil {
+		u.logger.Warn("cache invalidate after "+op+" failed",
+			u.logger.Str("team", slug), u.logger.Str("path", path), u.logger.Err(err))
+	}
 }
 
 // Update обновляет узел. teamID — scope multi-tenancy v2; при несовпадении
@@ -324,15 +377,11 @@ func (u *NodeUsecase) Update(ctx context.Context, actor Actor, n *domain.Node, t
 	}
 
 	if old.Path != n.Path {
-		if err := u.cache.InvalidateByPath(ctx, old.Path); err != nil {
-			u.logger.Warn("cache invalidate old path failed",
-				u.logger.Str("old_path", old.Path), u.logger.Err(err))
-		}
+		// Команда при Update не меняется (проверка выше) — старый путь чистим
+		// в той же команде.
+		u.cacheInvalidate(ctx, old.TeamID, old.Path, "update (old path)")
 	}
-	if err := u.cache.Set(ctx, n, u.cacheTTL); err != nil {
-		u.logger.Warn("cache set after update failed",
-			u.logger.Str("path", n.Path), u.logger.Err(err))
-	}
+	u.cacheSet(ctx, n, "update")
 	return nil
 }
 
@@ -372,10 +421,7 @@ func (u *NodeUsecase) SetStatus(ctx context.Context, actor Actor, id, teamID str
 		}
 		u.audit.Log(ctx, actor, domain.ActionNodeUpdate, "node", id, diff)
 	}
-	if err := u.cache.Set(ctx, &updated, u.cacheTTL); err != nil {
-		u.logger.Warn("cache set after status change failed",
-			u.logger.Str("path", updated.Path), u.logger.Err(err))
-	}
+	u.cacheSet(ctx, &updated, "status change")
 	return nil
 }
 
@@ -411,10 +457,7 @@ func (u *NodeUsecase) Delete(ctx context.Context, actor Actor, id, teamID string
 		u.audit.Log(ctx, actor, domain.ActionNodeDelete, "node", n.ID, details)
 	}
 
-	if err := u.cache.InvalidateByPath(ctx, n.Path); err != nil {
-		u.logger.Warn("cache invalidate after delete failed",
-			u.logger.Str("path", n.Path), u.logger.Err(err))
-	}
+	u.cacheInvalidate(ctx, n.TeamID, n.Path, "delete")
 	return nil
 }
 
@@ -493,10 +536,10 @@ func (u *NodeUsecase) Move(ctx context.Context, actor Actor, nodeID, currentTeam
 		}
 	}
 
-	if err := u.cache.InvalidateByPath(ctx, n.Path); err != nil {
-		u.logger.Warn("cache invalidate after move failed",
-			u.logger.Str("path", n.Path), u.logger.Err(err))
-	}
+	// Чистим ключ ИСХОДНОЙ команды (n.TeamID — до переноса): иначе трафик по
+	// старому пути ещё TTL шёл бы на уехавший узел. Ключ целевой команды
+	// наполнит сам Receiver при первом запросе (write-back).
+	u.cacheInvalidate(ctx, n.TeamID, n.Path, "move")
 	return nil
 }
 

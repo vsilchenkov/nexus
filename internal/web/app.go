@@ -180,7 +180,7 @@ func (a *App) Start(ctx context.Context) error {
 		}
 	}
 
-	nodeCache := rediscache.NewNodeCacheRedis(a.redis, a.logger)
+	nodeCache := rediscache.NewNodeCacheRedis(a.redis, a.cipher, a.logger)
 	auditRepo := pgrepo.NewAuditRepoPg(a.pg, a.logger)
 	auditUC := usecase.NewAuditUsecase(auditRepo, a.logger)
 	uow := pgrepo.NewUnitOfWorkPg(a.pg, a.cipher, a.logger)
@@ -289,7 +289,7 @@ func (a *App) Start(ctx context.Context) error {
 	// write-through кеш (тот же TTL, что у NodeUsecase).
 	hostAllowlistUC := usecase.NewHostAllowlistUsecase(
 		pgrepo.NewHostAllowlistRepoPg(a.pg, a.logger),
-		nodeRepo, nodeCache, uow, auditUC,
+		nodeRepo, nodeCache, teamRepo, uow, auditUC,
 		time.Duration(a.cfg.Redis.NodeTTLSec)*time.Second,
 		a.logger,
 	)

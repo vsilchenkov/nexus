@@ -23,6 +23,9 @@ type HostAllowlistUsecase struct {
 	repo     port.HostAllowlistRepo
 	nodeRepo port.NodeRepo
 	cache    port.NodeCache
+	// teams — резолв team_id → slug для ключа кеша узла (§50). nil → кеш
+	// не трогаем (изменение догонит по TTL), см. resolveCacheTeamSlug.
+	teams    port.TeamRepo
 	uow      port.UnitOfWork
 	audit    *AuditUsecase
 	cacheTTL time.Duration
@@ -33,6 +36,7 @@ func NewHostAllowlistUsecase(
 	repo port.HostAllowlistRepo,
 	nodeRepo port.NodeRepo,
 	cache port.NodeCache,
+	teams port.TeamRepo,
 	uow port.UnitOfWork,
 	audit *AuditUsecase,
 	cacheTTL time.Duration,
@@ -42,6 +46,7 @@ func NewHostAllowlistUsecase(
 		repo:     repo,
 		nodeRepo: nodeRepo,
 		cache:    cache,
+		teams:    teams,
 		uow:      uow,
 		audit:    audit,
 		cacheTTL: cacheTTL,
@@ -259,9 +264,13 @@ func (u *HostAllowlistUsecase) refreshCache(ctx context.Context, nodeID string) 
 			u.logger.Str("node_id", nodeID), u.logger.Err(err))
 		return
 	}
-	if err := u.cache.Set(ctx, n, u.cacheTTL); err != nil {
+	slug := resolveCacheTeamSlug(ctx, u.teams, n.TeamID, u.logger)
+	if slug == "" {
+		return
+	}
+	if err := u.cache.Set(ctx, slug, n, u.cacheTTL); err != nil {
 		u.logger.Warn("host allowlist: cache set failed",
-			u.logger.Str("path", n.Path), u.logger.Err(err))
+			u.logger.Str("team", slug), u.logger.Str("path", n.Path), u.logger.Err(err))
 	}
 }
 

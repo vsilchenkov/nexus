@@ -131,19 +131,27 @@ type recordingCache struct {
 	last     *domain.Node
 }
 
-func (c *recordingCache) GetByPath(context.Context, string) (*domain.Node, error) {
+func (c *recordingCache) GetByPath(context.Context, string, string) (*domain.Node, error) {
 	return nil, domain.ErrNotFound
 }
-func (c *recordingCache) Set(_ context.Context, n *domain.Node, _ time.Duration) error {
+func (c *recordingCache) Set(_ context.Context, _ string, n *domain.Node, _ time.Duration) error {
 	c.setCalls++
 	c.last = n
 	return nil
 }
-func (c *recordingCache) InvalidateByPath(context.Context, string) error { return nil }
+func (c *recordingCache) InvalidateByPath(context.Context, string, string) error { return nil }
+
+// slugTeams — teams-стаб для §50: GetByID возвращает команду, у которой slug = id,
+// чтобы resolveCacheTeamSlug вернул непустой slug и кеш реально дёргался.
+type slugTeams struct{ nopTeamRepo }
+
+func (slugTeams) GetByID(_ context.Context, id string) (*domain.Team, error) {
+	return &domain.Team{ID: id, Slug: id}, nil
+}
 
 func newHostUC(hosts *memHostRepo, nodes *memNodeRepo, cache *recordingCache) *HostAllowlistUsecase {
 	audit := NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop())
-	return NewHostAllowlistUsecase(hosts, nodes, cache, nil, audit, time.Minute, logging.NewNoop())
+	return NewHostAllowlistUsecase(hosts, nodes, cache, slugTeams{}, nil, audit, time.Minute, logging.NewNoop())
 }
 
 func TestHostUC_Create_Idempotent(t *testing.T) {
