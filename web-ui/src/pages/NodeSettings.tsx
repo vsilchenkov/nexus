@@ -830,7 +830,7 @@ export default function NodeSettings() {
                 <>
                   <div>
                     <span className="rounded bg-warn/10 px-2 py-0.5 text-[11px] text-warn">RabbitMQ</span>{" "}
-                    <span className="font-mono">{form.rmq_queue || "{queue}"}</span>
+                    <span className="break-all font-mono">{form.rmq_queue || "{queue}"}</span>
                   </div>
                   <div className="pl-2">↓ Puller (Receiver)</div>
                   <div className="pl-2">↓ Kafka (async)</div>
@@ -855,7 +855,7 @@ export default function NodeSettings() {
                 <span className="rounded bg-bg-muted px-1.5 py-0.5 text-[11px] text-fg-muted">
                   {form.outgoing_method}
                 </span>{" "}
-                → <span className="font-mono text-fg">{form.target_url || "{target_url}"}</span>
+                → <span className="break-all font-mono text-fg">{form.target_url || "{target_url}"}</span>
               </div>
             </div>
           </Card>
