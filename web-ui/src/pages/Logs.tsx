@@ -1,0 +1,197 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
+import { ArrowDown, ChevronDown, ChevronRight } from "lucide-react";
+
+import { api } from "../api/client";
+import { cn } from "../lib/cn";
+import { LogsToolbar } from "../components/logs/LogsToolbar";
+import { ErrorAlert } from "../components/ui";
+import {
+  filterEntries,
+  formatTs,
+  levelBadgeClass,
+  levelFromInt,
+  levelToInt,
+  logsQueryKey,
+  stableStringify,
+  SERVICES,
+  type LevelName,
+  type ServiceLogEntry,
+  type ServiceName,
+} from "../lib/logsUtils";
+
+type AppSettings = { logging?: { level?: number } };
+
+const LIVE_REFETCH_MS = 2500;
+// Кап DOM-строк консоли (§51.6) — сервер и так отдаёт не больше limit≤2000.
+const MAX_ROWS = 2000;
+
+// LogsPage — консоль служебных логов трёх сервисов (§51.6, admin-only):
+// follow-tail поток (новые снизу, автоскролл при Live, пауза при ручном
+// скролле вверх), чипсы сервисов, сегмент уровня (меняет РЕАЛЬНЫЙ порог),
+// поиск, скачивание файла, раскрытие строки в атрибуты.
+export default function LogsPage() {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+
+  const [services, setServices] = useState<ServiceName[]>([]); // пусто = все
+  const [query, setQuery] = useState("");
+  const [live, setLive] = useState(true);
+  const [limit, setLimit] = useState(200);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [stick, setStick] = useState(true);
+
+  const logs = useQuery({
+    queryKey: logsQueryKey(limit),
+    queryFn: () => api.get<ServiceLogEntry[]>("/api/logs", { limit }),
+    refetchInterval: live ? LIVE_REFETCH_MS : false,
+  });
+
+  const settings = useQuery({
+    queryKey: ["app-settings"],
+    queryFn: () => api.get<AppSettings>("/api/settings/app"),
+  });
+  const level = levelFromInt(settings.data?.logging?.level);
+  const setLevel = useMutation({
+    mutationFn: (l: LevelName) => api.put("/api/settings/app", { logging: { level: levelToInt(l) } }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app-settings"] }),
+  });
+
+  // Сервер отдаёт свежие первыми; консоль рисует хронологически (новые снизу).
+  const visible = useMemo(() => {
+    const filtered = filterEntries(logs.data ?? [], { services, query });
+    return filtered.slice(0, MAX_ROWS).reverse();
+  }, [logs.data, services, query]);
+
+  // Follow-tail: пока «прилипли» к низу — держим низ при каждом обновлении.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el && stick) el.scrollTop = el.scrollHeight;
+  }, [visible, stick]);
+
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    setStick(atBottom);
+  };
+
+  const downloadHref = useMemo(() => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (services.length > 0 && services.length < SERVICES.length) {
+      params.set("service", services.join(","));
+    }
+    return `/api/logs/download?${params.toString()}`;
+  }, [services, limit]);
+
+  const rowKey = (e: ServiceLogEntry, i: number) => `${e.ts}|${e.service}|${i}`;
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex items-center gap-2 pb-2">
+        <h1 className="text-lg font-semibold">{t("logs.viewer.title")}</h1>
+        <span className="text-xs text-fg-muted">{t("logs.viewer.subtitle")}</span>
+      </div>
+
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-line bg-bg">
+        <LogsToolbar
+          services={services}
+          onServicesChange={setServices}
+          level={level}
+          onLevelChange={(l) => setLevel.mutate(l)}
+          levelPending={setLevel.isPending || settings.isLoading}
+          query={query}
+          onQueryChange={setQuery}
+          live={live}
+          onLiveToggle={() => setLive((v) => !v)}
+          limit={limit}
+          onLimitChange={setLimit}
+          onRefresh={() => void logs.refetch()}
+          downloadHref={downloadHref}
+        />
+
+        <div
+          ref={scrollRef}
+          onScroll={onScroll}
+          className="min-h-0 flex-1 overflow-y-auto px-2 py-1 font-mono text-[12px] leading-5"
+        >
+          {logs.isLoading && <div className="p-3 text-fg-muted">{t("common.loading")}</div>}
+          {logs.isError && (
+            <div className="p-3">
+              <ErrorAlert />
+            </div>
+          )}
+          {!logs.isLoading && !logs.isError && visible.length === 0 && (
+            <div className="p-3 text-fg-muted">{t("logs.viewer.empty")}</div>
+          )}
+
+          {visible.map((e, i) => {
+            const key = rowKey(e, i);
+            const isOpen = expanded === key;
+            const hasAttrs = e.attrs != null && Object.keys(e.attrs).length > 0;
+            return (
+              <div key={key} className="border-b border-line/40 last:border-0">
+                <button
+                  type="button"
+                  onClick={() => setExpanded(isOpen ? null : key)}
+                  className={cn(
+                    "flex w-full items-start gap-2 px-1 py-0.5 text-left hover:bg-bg-muted",
+                    isOpen && "bg-bg-muted",
+                  )}
+                >
+                  <span className="mt-0.5 shrink-0 text-fg-subtle">
+                    {hasAttrs ? (
+                      isOpen ? (
+                        <ChevronDown className="h-3 w-3" />
+                      ) : (
+                        <ChevronRight className="h-3 w-3" />
+                      )
+                    ) : (
+                      <span className="inline-block w-3" />
+                    )}
+                  </span>
+                  <span className="shrink-0 text-fg-subtle">{formatTs(e.ts)}</span>
+                  <span className={cn("w-12 shrink-0 uppercase", levelBadgeClass(e.level))}>
+                    {e.level}
+                  </span>
+                  <span className="w-16 shrink-0 text-fg-muted">{e.service}</span>
+                  <span className="min-w-0 flex-1 whitespace-pre-wrap break-words text-fg">
+                    {e.msg}
+                  </span>
+                </button>
+                {isOpen && hasAttrs && (
+                  <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 px-8 py-1.5 text-[11.5px]">
+                    {Object.entries(e.attrs ?? {}).map(([k, v]) => (
+                      <div key={k} className="contents">
+                        <span className="text-fg-subtle">{k}</span>
+                        <span className="break-all text-fg-muted">
+                          {typeof v === "object" && v !== null ? stableStringify(v) : String(v)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {!stick && (
+          <button
+            type="button"
+            onClick={() => {
+              const el = scrollRef.current;
+              if (el) el.scrollTop = el.scrollHeight;
+              setStick(true);
+            }}
+            className="absolute bottom-4 right-6 flex items-center gap-1.5 rounded-full border border-line bg-bg-elev px-3 py-1.5 text-xs text-fg shadow-md hover:bg-bg-muted"
+          >
+            <ArrowDown className="h-3.5 w-3.5" /> {t("logs.viewer.to_latest")}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}

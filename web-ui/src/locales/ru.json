@@ -39,6 +39,7 @@
     "nodes": "Узлы",
     "audit": "Аудит",
     "kafka": "Kafka",
+    "logs": "Логи",
     "settings": "Настройки",
     "team": "Команда",
     "language": "Язык",
@@ -530,6 +531,27 @@
     "result": "Результат"
   },
   "logs": {
+    "viewer": {
+      "title": "Логи сервисов",
+      "subtitle": "slog-вывод Receiver, Sender и Web (не логи запросов узлов)",
+      "services": "Сервисы",
+      "all_services": "Все",
+      "level_hint": "Меняет РЕАЛЬНЫЙ уровень логирования всех трёх сервисов (применяется без рестарта)",
+      "level": {
+        "error": "Error",
+        "warn": "Warn",
+        "info": "Info",
+        "debug": "Debug"
+      },
+      "search_placeholder": "Поиск…",
+      "limit": "Строк",
+      "live": "Live",
+      "paused": "Пауза",
+      "refresh": "Обновить",
+      "download": "Скачать",
+      "to_latest": "К последним",
+      "empty": "Записей пока нет"
+    },
     "empty": "Записей нет",
     "no_more": "Больше записей нет",
     "cap_reached": "Показаны первые {{n}} записей. Сузьте период или используйте фильтры для точечного поиска.",

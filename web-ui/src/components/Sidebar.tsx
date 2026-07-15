@@ -1,7 +1,7 @@
 import { NavLink, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
-import { LayoutGrid, History, Settings, ArrowLeftRight, Activity } from "lucide-react";
+import { LayoutGrid, History, Settings, ArrowLeftRight, Activity, ScrollText } from "lucide-react";
 
 import { api } from "../api/client";
 import { cn } from "../lib/cn";
@@ -67,6 +67,13 @@ export function Sidebar() {
             label: t("nav.kafka"),
             icon: <Activity className="h-[18px] w-[18px]" />,
             match: (p: string) => p.startsWith("/kafka"),
+          },
+          // §51: консоль служебных логов трёх сервисов (admin-only).
+          {
+            to: "/logs",
+            label: t("nav.logs"),
+            icon: <ScrollText className="h-[18px] w-[18px]" />,
+            match: (p: string) => p.startsWith("/logs"),
           },
         ]
       : []),

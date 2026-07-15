@@ -214,6 +214,9 @@ ui-build:
     - npm ci
     - 'echo "===== npm run lint --if-present ====="'
     - npm run lint --if-present
+    # §51.8: фронтовые unit-тесты (vitest) — гоняются в CI наравне с lint/build.
+    - 'echo "===== npm run test ====="'
+    - npm run test
     - 'echo "===== npm run build ====="'
     - npm run build
     - 'echo "===== dist/ содержимое ====="'
