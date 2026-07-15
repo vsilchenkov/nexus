@@ -54,6 +54,9 @@ const (
 	ActionCHTemplateDelete = "ch_template.delete"
 
 	ActionTeamSwitch = "team.switch"
+	// ActionUserFavoriteTeams — §49: пользователь заменил свой список
+	// избранных команд (добавление/удаление/переупорядочивание — один PUT).
+	ActionUserFavoriteTeams = "user.favorite_teams.update"
 
 	ActionTeamCreate       = "team.create"
 	ActionTeamUpdate       = "team.update"
