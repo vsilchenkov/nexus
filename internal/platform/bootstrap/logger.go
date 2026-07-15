@@ -117,6 +117,19 @@ type LogController struct {
 // когда app_settings.logging.level не задан.
 func (c *LogController) FallbackLevel() int { return c.fallbackLevel }
 
+// NewLogController собирает контроллер с собственными LevelVar и кольцом —
+// для integration-тестов, где полноценный Init (флаги/конфиг/Sentry) не нужен.
+// fallbackLevel — YAML-шкала 2..5.
+func NewLogController(fallbackLevel int, service string) *LogController {
+	lv := new(slog.LevelVar)
+	lv.Set(slogLevelFromInt(fallbackLevel))
+	return &LogController{
+		Level:         lv,
+		Ring:          logsink.NewRingHandler(lv, service),
+		fallbackLevel: fallbackLevel,
+	}
+}
+
 // StartRedisShipper запускает фоновый шиппер кольца в Redis (nexus:logs:<svc>).
 // Nil-safe и идемпотентен (первый вызов выигрывает). Возвращает done-канал
 // горутины шиппера — Stop сервиса дожидается его (Phase AUD.3); при no-op

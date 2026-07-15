@@ -198,7 +198,7 @@ INTEGRATION_TIMEOUT ?= 20m
 # группы успели отработать и отчитаться даже при её падении.
 # Регексы -run в ДВОЙНЫХ кавычках — переносимо между cmd.exe (Windows) и sh.
 # Запуск отдельной группы: `make test-int-rmq` и т.п.
-test-integration: test-int-pg test-int-ch test-int-catalog test-int-receiver test-int-rmq test-int-sender test-int-queue ## Integration-тесты под-прогонами (требует Docker; 20m на группу)
+test-integration: test-int-pg test-int-ch test-int-catalog test-int-logs test-int-receiver test-int-rmq test-int-sender test-int-queue ## Integration-тесты под-прогонами (требует Docker; 20m на группу)
 
 test-int-pg: ## integration: Postgres-узлы/миграции/multi-tenancy
 	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestNodeRepo|^TestNodeUC|^TestNodeCache|^TestMigrations|^TestMultiTenancy" ./tests/integration/...
@@ -208,6 +208,9 @@ test-int-ch: ## integration: ClickHouse/шаблоны/метрики/replay
 
 test-int-catalog: ## integration: каталоги/auth/сессии/нотификации/circuit-breaker
 	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestHostAllowlist|^TestHeaderCatalog|^TestAuth|^TestSession|^TestUserRoleManager|^TestAppSettingsRepo|^TestNotif|^TestCircuitBreaker" ./tests/integration/...
+
+test-int-logs: ## integration: консоль служебных логов §51 (Redis+PG: шиппер/мерж/reload уровня/маскировка/неблокируемость)
+	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestServiceLogs" ./tests/integration/...
 
 test-int-receiver: ## integration: Receiver sync/incoming-auth
 	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestReceiver_" ./tests/integration/...
