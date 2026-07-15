@@ -162,6 +162,13 @@ func (a *App) Start(ctx context.Context) error {
 	reloadSub := reloader.NewSubscriber(a.redis, a.logger)
 	reloadSub.Register(reloader.SectionSentry,
 		bootstrap.SentryReloader(a.pg, a.cfg, a.cfg.Build.ProjectName, a.cfg.Build.Version, a.logger))
+	// §51: runtime-уровень логов из app_settings.logging.level. Тот же Reloader
+	// сидирует стартовое значение (Init построил логгер до чтения app_settings).
+	applyLogLevel := bootstrap.LogLevelReloader(a.pg, a.logCtl, a.logger)
+	if err := applyLogLevel(ctx); err != nil {
+		a.logger.Warn("seed log level from app_settings failed; using yaml level", a.logger.Err(err))
+	}
+	reloadSub.Register(reloader.SectionLogging, applyLogLevel)
 	a.reloadDone = safego.Go(a.logger, "receiver.reloadSubscriber", func() {
 		reloadSub.Run(ctx)
 	})

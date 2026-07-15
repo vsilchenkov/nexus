@@ -42,9 +42,33 @@ type AppSettings struct {
 	Sentry        SentrySettings        `json:"sentry"`
 	ClickHouse    ClickHouseSettings    `json:"clickhouse"`
 	Notifications NotificationsSettings `json:"notifications"`
+	Logging       LoggingSettings       `json:"logging"`
 
 	UpdatedAt time.Time `json:"updated_at"`
 	UpdatedBy string    `json:"updated_by,omitempty"` // user_id, кто последним обновил
+}
+
+// Границы уровня логирования сервисов (§51): 2=error .. 5=debug —
+// та же шкала, что logging.level в YAML.
+const (
+	LogLevelMin = 2
+	LogLevelMax = 5
+)
+
+// LoggingSettings — runtime-настройки служебного логирования (§51).
+type LoggingSettings struct {
+	// Level — уровень логирования всех трёх сервисов (2=error, 3=warn,
+	// 4=info, 5=debug). nil = брать из YAML (cfg.Logging.Level). Применяется
+	// без рестарта через reloader.SectionLogging (LevelVar в цепочке хендлеров).
+	Level *int `json:"level,omitempty"`
+}
+
+// ValidateLogLevel проверяет уровень логирования (§51): [LogLevelMin, LogLevelMax].
+func ValidateLogLevel(v int) error {
+	if v < LogLevelMin || v > LogLevelMax {
+		return ErrLogLevelInvalid
+	}
+	return nil
 }
 
 // Границы длительности сессии (§34.2): 5 минут .. 30 суток.

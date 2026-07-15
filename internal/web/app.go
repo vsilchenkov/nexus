@@ -280,6 +280,13 @@ func (a *App) Start(ctx context.Context) error {
 	}
 	reloadSub.Register(reloader.SectionSecurity, applySessionTTL)
 
+	// §51: runtime-уровень логов из app_settings.logging.level (+ сид старта).
+	applyLogLevel := bootstrap.LogLevelReloader(a.pg, a.logCtl, a.logger)
+	if err := applyLogLevel(ctx); err != nil {
+		a.logger.Warn("seed log level from app_settings failed; using yaml level", a.logger.Err(err))
+	}
+	reloadSub.Register(reloader.SectionLogging, applyLogLevel)
+
 	authHandler := httpadapter.NewAuthHandler(authUC, &a.cfg.Web, sessionTTLProvider.Get, a.logger)
 	userHandler := httpadapter.NewUserHandler(userUC, authUC, a.logger)
 	tokenHandler := httpadapter.NewAPITokenHandler(tokenUC, a.logger)

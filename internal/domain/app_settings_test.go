@@ -37,6 +37,35 @@ func TestValidatePublicBaseURL(t *testing.T) {
 	}
 }
 
+func TestValidateLogLevel(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		in      int
+		wantErr bool
+	}{
+		{"error min", LogLevelMin, false},
+		{"warn", 3, false},
+		{"info", 4, false},
+		{"debug max", LogLevelMax, false},
+		{"below min", 1, true},
+		{"above max", 6, true},
+		{"zero", 0, true},
+		{"negative", -1, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateLogLevel(tt.in)
+			if tt.wantErr {
+				require.ErrorIs(t, err, ErrLogLevelInvalid)
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
+}
+
 func TestValidateSessionTTLSeconds(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

@@ -32,6 +32,7 @@ const (
 	SectionClickHouse    Section = "clickhouse"
 	SectionNotifications Section = "notifications"
 	SectionSecurity      Section = "security" // §34.2: длительность сессии
+	SectionLogging       Section = "logging"  // §51: runtime-уровень логов
 	SectionAll           Section = "all"
 )
 
@@ -131,10 +132,7 @@ func (s *Subscriber) handle(ctx context.Context, payload string) {
 			s.logger.Err(err))
 		return
 	}
-	sections := []Section{msg.Section}
-	if msg.Section == SectionAll {
-		sections = []Section{SectionSentry, SectionClickHouse, SectionNotifications, SectionSecurity}
-	}
+	sections := sectionsFor(msg.Section)
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -148,4 +146,13 @@ func (s *Subscriber) handle(ctx context.Context, payload string) {
 	}
 	s.logger.Info("reloader applied",
 		s.logger.Str("section", string(msg.Section)))
+}
+
+// sectionsFor разворачивает SectionAll в полный список конкретных секций.
+// Новая секция ОБЯЗАНА быть добавлена сюда — иначе publish("all") её не тронет.
+func sectionsFor(s Section) []Section {
+	if s != SectionAll {
+		return []Section{s}
+	}
+	return []Section{SectionSentry, SectionClickHouse, SectionNotifications, SectionSecurity, SectionLogging}
 }

@@ -327,6 +327,76 @@ func TestChangedSections_Security(t *testing.T) {
 	assert.Equal(t, []string{"security"}, changedSections(p))
 }
 
+// TestMergeAppSettings_Logging (§51): nil сохраняет current, значение
+// перекрывает, соседние секции не тронуты.
+func TestMergeAppSettings_Logging(t *testing.T) {
+	t.Parallel()
+	current := &domain.AppSettings{
+		Logging: domain.LoggingSettings{Level: new(4)},
+		Sentry:  domain.SentrySettings{Environment: new("prod")},
+	}
+
+	out := mergeAppSettings(current, &domain.AppSettings{})
+	require.NotNil(t, out.Logging.Level)
+	assert.Equal(t, 4, *out.Logging.Level, "nil patch must keep current level")
+
+	out = mergeAppSettings(current, &domain.AppSettings{
+		Logging: domain.LoggingSettings{Level: new(2)},
+	})
+	require.NotNil(t, out.Logging.Level)
+	assert.Equal(t, 2, *out.Logging.Level)
+	require.NotNil(t, out.Sentry.Environment)
+	assert.Equal(t, "prod", *out.Sentry.Environment, "neighbour sections untouched")
+}
+
+func TestChangedSections_Logging(t *testing.T) {
+	t.Parallel()
+	p := &domain.AppSettings{Logging: domain.LoggingSettings{Level: new(5)}}
+	assert.Equal(t, []string{"logging"}, changedSections(p))
+
+	mixed := &domain.AppSettings{
+		Logging:  domain.LoggingSettings{Level: new(5)},
+		Security: domain.SecuritySettings{SessionTTLSeconds: new(3600)},
+	}
+	assert.Equal(t, []string{"security", "logging"}, changedSections(mixed))
+}
+
+// TestAppSettings_LogLevel_MergeAndPublish (§51): валидный уровень сохраняется,
+// publisher получает секцию "logging" (имя = reloader.SectionLogging).
+func TestAppSettings_LogLevel_MergeAndPublish(t *testing.T) {
+	t.Parallel()
+	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
+	pub := &fakeReloadPublisher{}
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, false, logging.NewNoop())
+
+	err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
+		Logging: domain.LoggingSettings{Level: new(2)},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, repo.lastSaved)
+	require.NotNil(t, repo.lastSaved.Logging.Level)
+	assert.Equal(t, 2, *repo.lastSaved.Logging.Level)
+	assert.Equal(t, []string{string(reloader.SectionLogging)}, pub.sections)
+}
+
+// TestAppSettings_LogLevel_Invalid (§51): уровень вне 2..5 отклоняется,
+// ничего не сохраняется и не публикуется.
+func TestAppSettings_LogLevel_Invalid(t *testing.T) {
+	t.Parallel()
+	for _, lvl := range []int{0, 1, 6, -3} {
+		repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
+		pub := &fakeReloadPublisher{}
+		uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, false, logging.NewNoop())
+
+		err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
+			Logging: domain.LoggingSettings{Level: &lvl},
+		})
+		assert.ErrorIs(t, err, domain.ErrLogLevelInvalid, "level %d", lvl)
+		assert.Nil(t, repo.lastSaved, "invalid level must not persist")
+		assert.Empty(t, pub.sections, "invalid level must not publish")
+	}
+}
+
 // ---- fakes ----
 
 type fakeAppSettingsRepo struct {

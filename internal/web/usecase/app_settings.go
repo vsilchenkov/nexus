@@ -106,6 +106,12 @@ func (u *AppSettingsUsecase) Update(ctx context.Context, actor Actor, patch *dom
 			return err
 		}
 	}
+	// §51: уровень логирования сервисов в допустимом диапазоне (2..5).
+	if patch.Logging.Level != nil {
+		if err := domain.ValidateLogLevel(*patch.Logging.Level); err != nil {
+			return err
+		}
+	}
 
 	current, err := u.repo.Get(ctx)
 	if err != nil {
@@ -164,6 +170,11 @@ func mergeAppSettings(current, patch *domain.AppSettings) *domain.AppSettings {
 	// §34.2: Security — длительность сессии (не секрет).
 	if patch.Security.SessionTTLSeconds != nil {
 		out.Security.SessionTTLSeconds = patch.Security.SessionTTLSeconds
+	}
+
+	// §51: уровень логирования сервисов (не секрет).
+	if patch.Logging.Level != nil {
+		out.Logging.Level = patch.Logging.Level
 	}
 
 	// Sentry
@@ -272,6 +283,11 @@ func changedSections(p *domain.AppSettings) []string {
 	tg := p.Notifications.Telegram
 	if tg.Enabled != nil || tg.ChatID != nil || tg.BotToken != nil || tg.Cron != nil {
 		out = append(out, "notifications")
+	}
+	// §51: имя обязано совпадать с reloader.SectionLogging — publish кастует
+	// строку в reloader.Section без маппинга.
+	if p.Logging.Level != nil {
+		out = append(out, "logging")
 	}
 	return out
 }
