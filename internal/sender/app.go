@@ -79,6 +79,10 @@ type App struct {
 	kafkaLagDone     <-chan struct{}
 	reloadDone       <-chan struct{}
 	dlqReprocDone    <-chan struct{} // §36: done-канал sweeper'а DLQ
+	shipperDone      <-chan struct{} // §51: done-канал шиппера служебных логов
+
+	// §51: ручка runtime-уровня логов + кольцо для Redis-шиппера.
+	logCtl *bootstrap.LogController
 }
 
 func New(
@@ -89,6 +93,7 @@ func New(
 	cipher *crypto.Cipher,
 	otelShutdown otelpf.ShutdownFunc,
 	logger logging.Logger,
+	logCtl *bootstrap.LogController,
 ) *App {
 	return &App{
 		cfg:          cfg,
@@ -99,6 +104,7 @@ func New(
 		cipher:       cipher,
 		metrics:      metrics.New("sender"),
 		otelShutdown: otelShutdown,
+		logCtl:       logCtl,
 	}
 }
 
@@ -213,6 +219,9 @@ func (a *App) Start(ctx context.Context) error {
 	// после PUT /api/settings/app. Sentry — sentry.Init c новыми параметрами.
 	// CH — полный reconnect через chpf.Manager + пересоздание chlog.Writer.
 	if a.redis != nil {
+		// §51: шиппер служебных логов в Redis (nexus:logs:sender).
+		a.shipperDone = a.logCtl.StartRedisShipper(ctx, a.redis, a.logger)
+
 		reloadSub := reloader.NewSubscriber(a.redis, a.logger)
 		reloadSub.Register(reloader.SectionSentry,
 			bootstrap.SentryReloader(a.pg, a.cfg, a.cfg.Build.ProjectName, a.cfg.Build.Version, a.logger))
@@ -395,6 +404,7 @@ func (a *App) Stop(ctx context.Context) error {
 	safego.Await(awaitCtx, a.kafkaLagDone, a.logger, "sender.reportKafkaLag")
 	safego.Await(awaitCtx, a.reloadDone, a.logger, "sender.reloadSubscriber")
 	safego.Await(awaitCtx, a.dlqReprocDone, a.logger, "sender.dlqReprocessor")
+	safego.Await(awaitCtx, a.shipperDone, a.logger, "sender.logShipper")
 	awaitCancel()
 
 	if a.chWriter != nil {

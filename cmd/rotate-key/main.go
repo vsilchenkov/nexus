@@ -41,7 +41,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	_, _, cfg, logger := bootstrap.Init(nil, projectName)
+	_, _, cfg, logger, _ := bootstrap.Init(nil, projectName)
 	defer bootstrap.Shutdown(logger)
 
 	oldC, err := crypto.NewCipher(*oldKey)

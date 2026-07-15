@@ -58,10 +58,14 @@ type App struct {
 	// done-каналы фоновых горутин — Stop дожидается их завершения
 	// (Phase AUD.3: reload-callbacks не должны бежать параллельно
 	// с закрытием соединений).
-	reloadDone <-chan struct{}
+	reloadDone  <-chan struct{}
+	shipperDone <-chan struct{}
+
+	// §51: ручка runtime-уровня логов + кольцо для Redis-шиппера.
+	logCtl *bootstrap.LogController
 }
 
-func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, cipher *crypto.Cipher, otelShutdown otelpf.ShutdownFunc, logger logging.Logger) *App {
+func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, cipher *crypto.Cipher, otelShutdown otelpf.ShutdownFunc, logger logging.Logger, logCtl *bootstrap.LogController) *App {
 	return &App{
 		cfg:          cfg,
 		logger:       logger,
@@ -70,6 +74,7 @@ func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, cipher *cr
 		cipher:       cipher,
 		metrics:      metrics.New("receiver"),
 		otelShutdown: otelShutdown,
+		logCtl:       logCtl,
 	}
 }
 
@@ -148,6 +153,10 @@ func (a *App) Start(ctx context.Context) error {
 
 	handler.Register(r, rlMw)
 
+	// §51: шиппер служебных логов в Redis (nexus:logs:receiver) — консоль
+	// «Логи» в Web показывает записи всех трёх сервисов.
+	a.shipperDone = a.logCtl.StartRedisShipper(ctx, a.redis, a.logger)
+
 	// Hot-reload Sentry: подписываемся на pub/sub-канал, чтобы менять DSN/level
 	// без рестарта при изменении app_settings через UI Web (§14.5 ТЗ).
 	reloadSub := reloader.NewSubscriber(a.redis, a.logger)
@@ -211,6 +220,7 @@ func (a *App) Stop(ctx context.Context) error {
 	// Дожидаемся фоновых горутин до закрытия соединений: reload-callback
 	// не должен дёргать pg/redis, которые main уже закрывает.
 	safego.Await(shutdownCtx, a.reloadDone, a.logger, "receiver.reloadSubscriber")
+	safego.Await(shutdownCtx, a.shipperDone, a.logger, "receiver.logShipper")
 	if a.senderCl != nil {
 		_ = a.senderCl.Close()
 	}
