@@ -233,7 +233,7 @@ func TestSend_CircuitBreakerOpen_Returns503WithoutHTTPCall(t *testing.T) {
 	assert.Equal(t, int32(0), rec.Attempts)
 }
 
-func TestSend_4xx_NoRetryAndRecordsFailure(t *testing.T) {
+func TestSend_4xx_NoRetry_BreakerStaysHealthy(t *testing.T) {
 	t.Parallel()
 
 	httpc := &stubHTTPCaller{
@@ -260,9 +260,46 @@ func TestSend_4xx_NoRetryAndRecordsFailure(t *testing.T) {
 	assert.Equal(t, int32(404), rec.Status)
 	assert.Equal(t, "HTTP 404", rec.Reason)
 
-	// Breaker: 4xx — это failure (Done=false → RecordFailure).
-	assert.Equal(t, 0, cb.successCount)
-	assert.Equal(t, 1, cb.failureCount)
+	// Breaker (§50.4): 4xx — ошибка данных/клиента, узел жив и ответил →
+	// RecordSuccess, НЕ failure. Иначе серия 4xx (напр. 422 NotRegistered
+	// протухших FCM-токенов) открывала бы breaker и блокировала валидные
+	// запросы (боевой инцидент site/push). В лог при этом пишется done=false.
+	assert.Equal(t, 1, cb.successCount)
+	assert.Equal(t, 0, cb.failureCount)
+}
+
+// TestSend_BreakerHealth_5xxFails_4xxDoesNot (§50.4): breaker открывают только
+// транспортные ошибки и 5xx; серия 4xx счётчик отказов не растит.
+func TestSend_BreakerHealth_5xxFails_4xxDoesNot(t *testing.T) {
+	t.Parallel()
+
+	mk := func(status int32) (*stubBreaker, SendOutput) {
+		httpc := &stubHTTPCaller{responses: []*port.HTTPResponse{{StatusCode: status}}}
+		cb := &stubBreaker{allow: true}
+		uc := NewSendUsecase(httpc, &stubLogWriter{}, cb, logging.NewNoop(), 64<<20)
+		return cb, uc.Send(context.Background(), baseInput())
+	}
+
+	tests := []struct {
+		name        string
+		status      int32
+		wantSuccess int
+		wantFailure int
+	}{
+		{"422 (данные клиента) → healthy", 422, 1, 0},
+		{"429 (rate limit клиента) → healthy", 429, 1, 0},
+		{"500 → failure", 500, 0, 1},
+		{"503 → failure", 503, 0, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cb, out := mk(tt.status)
+			assert.Equal(t, tt.status, out.StatusCode)
+			assert.Equal(t, tt.wantSuccess, cb.successCount)
+			assert.Equal(t, tt.wantFailure, cb.failureCount)
+		})
+	}
 }
 
 func TestSend_5xxRetriesUntilSuccess(t *testing.T) {

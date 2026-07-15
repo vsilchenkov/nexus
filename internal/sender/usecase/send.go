@@ -248,9 +248,13 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		rec.Reason = appendRedirectNote(rec.Reason, resp.Redirects)
 	}
 
-	// Circuit breaker отражает здоровье ВНЕШНЕГО узла, а не нашу oversize-политику:
-	// ответ 2xx (даже если мы reject'нули его за размер) означает, что узел жив.
-	upstreamHealthy := lastErr == nil && resp != nil && resp.StatusCode >= 200 && resp.StatusCode < 300
+	// Circuit breaker отражает здоровье ВНЕШНЕГО узла. Нездоровье — транспортная
+	// ошибка (timeout/refused) или 5xx. ЛЮБОЙ ответ < 500 — узел жив и отвечает:
+	// 4xx — ошибка данных/клиента (напр. 422 NotRegistered протухшего FCM-токена),
+	// по ней breaker НЕ открывается — иначе серия 4xx от «плохих» адресатов
+	// блокировала бы доставку валидных запросов 503-ми (боевой инцидент
+	// site/push, §50.4). Oversize-политика (§43-rev) на здоровье тоже не влияет.
+	upstreamHealthy := lastErr == nil && resp != nil && resp.StatusCode < 500
 	if upstreamHealthy {
 		_ = u.cb.RecordSuccess(ctx, in.NodePath)
 	} else {
