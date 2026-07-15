@@ -63,6 +63,13 @@ type switchTeamRequest struct {
 	TeamID string `json:"team_id" binding:"required,uuid"`
 }
 
+// setFavoriteTeamsRequest — PUT /api/me/favorite-teams (§49). Без
+// binding:"required" на слайсе: пустой массив легален (очистить избранное),
+// а required у gin режет и его.
+type setFavoriteTeamsRequest struct {
+	TeamIDs []string `json:"team_ids" binding:"omitempty,dive,uuid"`
+}
+
 type changeOwnPasswordRequest struct {
 	CurrentPassword string `json:"current_password" binding:"required,min=1,max=128"`
 	NewPassword     string `json:"new_password" binding:"required,min=8,max=128"`
@@ -246,7 +253,55 @@ func (h *AuthHandler) MyTeams(c *gin.Context) {
 			CHDatabase: m.Team.CHDatabase, Role: string(m.Role),
 		})
 	}
-	c.JSON(http.StatusOK, gin.H{"items": items, "current_team_id": current, "healed": healed})
+	// §49: избранное едет вместе с членствами — один источник истины для UI
+	// (свитчер + сайдбар), без второго запроса. При сбое — пустой список.
+	favorites := h.uc.FavoriteTeamIDs(c.Request.Context(), s.UserID)
+	c.JSON(http.StatusOK, gin.H{
+		"items": items, "current_team_id": current, "healed": healed,
+		"favorites": favorites,
+	})
+}
+
+// SetFavoriteTeams godoc
+// @Summary  Заменить список избранных команд текущего пользователя.
+// @Description  §49: полная замена упорядоченного списка (позиция = индекс в team_ids). Пустой массив очищает избранное. Каждый team_id должен входить в членства пользователя (GET /api/me/teams).
+// @Tags     auth
+// @Accept   json
+// @Produce  json
+// @Param    body  body  setFavoriteTeamsRequest  true  "ordered team_ids"
+// @Success  200   {object}  FavoriteTeamsResponse
+// @Failure  400   {object}  ErrorResponse  "duplicates / too many / not a member"
+// @Failure  401   {object}  ErrorResponse
+// @Security CookieAuth
+// @Router   /api/me/favorite-teams [put]
+func (h *AuthHandler) SetFavoriteTeams(c *gin.Context) {
+	s, ok := sessionFromCtx(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	var req setFavoriteTeamsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.TeamIDs == nil {
+		req.TeamIDs = []string{}
+	}
+	err := h.uc.SetFavoriteTeams(c.Request.Context(), userActor(c), s.UserID, req.TeamIDs)
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrUserNotTeamMember):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "team is not among user memberships"})
+		case errors.Is(err, domain.ErrFavoriteTeamsInvalid):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "favorite teams list invalid (duplicates or too many)"})
+		default:
+			h.logger.ErrorWithOp("set favorite teams", err, "auth.set_favorite_teams")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"team_ids": req.TeamIDs})
 }
 
 // SwitchTeam godoc

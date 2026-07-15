@@ -257,6 +257,13 @@ definitions:
       logs_configured:
         type: boolean
     type: object
+  internal_web_adapter_in_http.FavoriteTeamsResponse:
+    properties:
+      team_ids:
+        items:
+          type: string
+        type: array
+    type: object
   internal_web_adapter_in_http.HostPreviewResponse:
     properties:
       allowed:
@@ -496,6 +503,16 @@ definitions:
     properties:
       current_team_id:
         type: string
+      favorites:
+        description: 'Favorites — §49: упорядоченный список id избранных команд пользователя.'
+        items:
+          type: string
+        type: array
+      healed:
+        description: |-
+          Healed — §44.H: current_team в сессии был вне членств и переключён
+          сервером; UI по этому флагу инвалидирует team-scoped кеш.
+        type: boolean
       items:
         items:
           $ref: '#/definitions/internal_web_adapter_in_http.teamMembershipResponse'
@@ -1517,6 +1534,13 @@ definitions:
         type: string
     required:
     - team_id
+    type: object
+  internal_web_adapter_in_http.setFavoriteTeamsRequest:
+    properties:
+      team_ids:
+        items:
+          type: string
+        type: array
     type: object
   internal_web_adapter_in_http.switchTeamRequest:
     properties:
@@ -2785,6 +2809,40 @@ paths:
       summary: Повторно отправить запрос через шину (§7.4.1).
       tags:
       - logs
+  /api/me/favorite-teams:
+    put:
+      consumes:
+      - application/json
+      description: '§49: полная замена упорядоченного списка (позиция = индекс в team_ids).
+        Пустой массив очищает избранное. Каждый team_id должен входить в членства
+        пользователя (GET /api/me/teams).'
+      parameters:
+      - description: ordered team_ids
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.setFavoriteTeamsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.FavoriteTeamsResponse'
+        "400":
+          description: duplicates / too many / not a member
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Заменить список избранных команд текущего пользователя.
+      tags:
+      - auth
   /api/me/password:
     post:
       consumes:

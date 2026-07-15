@@ -3589,3 +3589,36 @@ CH-адаптера, и in-memory зеркалом live-tail (`matchLogFilter`):
 требуется пересборка SPA-бандла.
 
 Подробности — [sections/48-log-search-extended.md](sections/48-log-search-extended.md).
+
+## 49. Избранные команды (favorite teams)
+
+Развивает §18 (multi-tenancy, переключатель команд) и §45 (валидация «команда ∈ членства»).
+
+- **49.1 Отображаемое имя.** В шапке и в списке переключателя — только `Team.Name`, без slug и
+  скобок (было `Name (slug)`). Триггер переключателя показывает имя текущей команды; нативный
+  `<select>` заменён кастомным Radix Popover (`<option>` не умеет звезду/разметку).
+- **49.2 Избранное.** Звезда возле команды в переключателе добавляет/убирает её из избранного
+  (соседняя кнопка, не вложенная — не переключает команду). Секция «Избранное» в сайдбаре:
+  избранные в пользовательском порядке, клик переключает текущую команду (текущая подсвечена),
+  0 избранных → секция скрыта, drag-and-drop (`@dnd-kit`, порог 6px) меняет порядок.
+- **49.3 Модель.** Миграция `0023_user_team_favorites`: `user_team_favorites(user_id, team_id,
+  position)`, PK `(user_id, team_id)`, **составной FK на `user_teams` ON DELETE CASCADE** — один
+  каскад покрывает удаление пользователя/команды/исключение из членства + инвариант «избранное ⊆
+  членство». Дырки в position терпимы (чтение сортирует, запись перезаписывает компактно).
+- **49.4 API.** Чтение — поле `favorites: [team_id...]` в `GET /api/me/teams` (один источник
+  истины, `healed` §44.H не тронут). Запись — `PUT /api/me/favorite-teams {"team_ids":[...]}` —
+  полная замена (позиция = индекс, пустой массив = очистить; `RequireSessionOnly`). 400 —
+  дубликаты/лимит 100 (`ErrFavoriteTeamsInvalid`) или id вне членств (`ErrUserNotTeamMember`).
+- **49.5 Слои.** Отдельный малый порт `FavoriteTeamRepo` (не расширение `TeamRepo` — стабы тестов
+  целы); impl на `TeamRepoPg` (Replace = tx DELETE+INSERT, FK 23503 → `ErrUserNotTeamMember`);
+  usecase `AuthUsecase.WithFavoriteTeams` (builder), `FavoriteTeamIDs` — никогда не ошибка
+  (деградация в пустой список), `SetFavoriteTeams` — валидация + аудит `user.favorite_teams.update`.
+- **49.6 UI.** Общий слой `web-ui/src/lib/teams.ts` (`useMyTeams`/`useSwitchTeam`/
+  `useSetFavoriteTeams`): optimistic update избранного с откатом; 403 при switch протухшей
+  избранной → invalidate `me-teams` (самоизлечение). Компоненты `TeamSwitcher.tsx`,
+  `SidebarFavorites.tsx` (`useSortable` в отдельном `FavoriteItem`).
+
+Требуется пересборка SPA-бандла. Хранение пер-пользовательское в PG (не localStorage) —
+переживает смену устройства.
+
+Подробности — [sections/49-favorite-teams.md](sections/49-favorite-teams.md).

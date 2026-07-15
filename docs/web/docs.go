@@ -1286,6 +1286,57 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/me/favorite-teams": {
+            "put": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "§49: полная замена упорядоченного списка (позиция = индекс в team_ids). Пустой массив очищает избранное. Каждый team_id должен входить в членства пользователя (GET /api/me/teams).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Заменить список избранных команд текущего пользователя.",
+                "parameters": [
+                    {
+                        "description": "ordered team_ids",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.setFavoriteTeamsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.FavoriteTeamsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "duplicates / too many / not a member",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/me/password": {
             "post": {
                 "security": [
@@ -4665,6 +4716,17 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_web_adapter_in_http.FavoriteTeamsResponse": {
+            "type": "object",
+            "properties": {
+                "team_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "internal_web_adapter_in_http.HostPreviewResponse": {
             "type": "object",
             "properties": {
@@ -5024,6 +5086,17 @@ const docTemplate = `{
             "properties": {
                 "current_team_id": {
                     "type": "string"
+                },
+                "favorites": {
+                    "description": "Favorites — §49: упорядоченный список id избранных команд пользователя.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "healed": {
+                    "description": "Healed — §44.H: current_team в сессии был вне членств и переключён\nсервером; UI по этому флагу инвалидирует team-scoped кеш.",
+                    "type": "boolean"
                 },
                 "items": {
                     "type": "array",
@@ -6515,6 +6588,17 @@ const docTemplate = `{
             "properties": {
                 "team_id": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.setFavoriteTeamsRequest": {
+            "type": "object",
+            "properties": {
+                "team_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },

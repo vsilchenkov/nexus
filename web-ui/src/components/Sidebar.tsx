@@ -6,6 +6,7 @@ import { LayoutGrid, History, Settings, ArrowLeftRight, Activity } from "lucide-
 import { api } from "../api/client";
 import { cn } from "../lib/cn";
 import { roleAtLeast } from "../lib/roles";
+import { SidebarFavorites } from "./SidebarFavorites";
 
 type NavItem = { to: string; label: string; icon: React.ReactNode; match: (p: string) => boolean };
 
@@ -114,6 +115,9 @@ export function Sidebar() {
       </div>
 
       <nav className="space-y-0.5">{items.map(renderNavLink)}</nav>
+
+      {/* §49: избранные команды — клик переключает команду, drag меняет порядок. */}
+      <SidebarFavorites />
 
       {/* Подвал: «Настройки» + пользователь/версия — прижаты к низу (§34.1). */}
       <nav className="mt-auto space-y-0.5 border-t border-line pt-2.5">

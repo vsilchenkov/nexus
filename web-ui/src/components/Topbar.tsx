@@ -1,32 +1,15 @@
 import { useTranslation } from "react-i18next";
 import { useNavigate, useLocation } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { ChevronRight, Languages, Moon, Sun, LogOut, FileText, ExternalLink, Route, ServerCog } from "lucide-react";
 
 import { api } from "../api/client";
 import { cn } from "../lib/cn";
+import { invalidateTeamScoped, useMyTeams } from "../lib/teams";
 import { getTheme, setTheme, type Theme } from "../lib/theme";
+import { TeamSwitcher } from "./TeamSwitcher";
 import { Popover, PopoverTrigger, PopoverContent, Tooltip } from "./ui";
-
-type TeamMembership = {
-  id: string;
-  slug: string;
-  name: string;
-  ch_database: string;
-  role: "owner" | "admin" | "member";
-};
-// healed (§44.H): сервер переключил current_team в сессии, т.к. он больше не
-// входил в членства (напр. пользователя убрали из команды, бывшей дефолтом).
-// По этому флагу UI инвалидирует team-scoped кеш — иначе дашборд показывал бы
-// ноды старой команды до ручного обновления.
-type MyTeamsResp = { items: TeamMembership[]; current_team_id: string; healed?: boolean };
-
-// team-независимые query-ключи: их перезагрузка при смене команды не нужна
-// (Phase AUD.7) — остальное живёт в scope текущей команды (nodes/logs/audit/
-// metrics/tokens/teams). "me"/"me-teams" НЕ в списке: они несут current_team_id
-// и обязаны перечитаться. На модульном уровне — стабильная ссылка для хуков.
-const TEAM_INDEPENDENT_KEYS = new Set(["settings-public", "version", "users-all"]);
 
 // crumbsFor — хлебные крошки из маршрута (секция + при наличии второй уровень).
 function crumbsFor(path: string, t: (k: string) => string): string[] {
@@ -53,19 +36,7 @@ export function Topbar() {
   const qc = useQueryClient();
   const [theme, setThemeState] = useState<Theme>(getTheme());
 
-  const myTeams = useQuery({
-    queryKey: ["me-teams"],
-    queryFn: () => api.get<MyTeamsResp>("/api/me/teams"),
-    enabled: loc.pathname !== "/login",
-  });
-
-  const switchTeam = useMutation({
-    mutationFn: (team_id: string) => api.post("/api/me/switch-team", { team_id }),
-    onSuccess: () =>
-      qc.invalidateQueries({
-        predicate: (q) => !TEAM_INDEPENDENT_KEYS.has(String(q.queryKey[0])),
-      }),
-  });
+  const myTeams = useMyTeams();
 
   // §44.H: сервер самозалечил current_team (был вне членств) — обновляем
   // team-scoped кеш, чтобы дашборд сразу показал ноды верной команды, а не
@@ -74,9 +45,7 @@ export function Topbar() {
   useEffect(() => {
     if (myTeams.data?.healed && !healedRef.current) {
       healedRef.current = true;
-      qc.invalidateQueries({
-        predicate: (q) => !TEAM_INDEPENDENT_KEYS.has(String(q.queryKey[0])),
-      });
+      void invalidateTeamScoped(qc);
     }
   }, [myTeams.data?.healed, qc]);
 
@@ -117,20 +86,7 @@ export function Topbar() {
 
       <div className="flex-1" />
 
-      {myTeams.data && myTeams.data.items.length > 0 && (
-        <select
-          className="rounded-md border border-line bg-app px-2 py-1 text-xs text-fg outline-none focus:border-accent"
-          value={myTeams.data.current_team_id}
-          onChange={(e) => switchTeam.mutate(e.target.value)}
-          disabled={switchTeam.isPending || myTeams.data.items.length <= 1}
-        >
-          {myTeams.data.items.map((tm) => (
-            <option key={tm.id} value={tm.id}>
-              {tm.name} ({tm.slug})
-            </option>
-          ))}
-        </select>
-      )}
+      <TeamSwitcher />
 
       <SwaggerMenu />
 

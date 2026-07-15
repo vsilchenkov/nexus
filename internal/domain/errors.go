@@ -88,8 +88,11 @@ var (
 	// команду, в которой он не состоит. Нельзя сделать дефолтной чужую команду
 	// (иначе §18.9 при входе всё равно перекинет на команду по членству).
 	ErrUserNotTeamMember = errors.New("domain: user is not a member of the team")
-	ErrSessionNotFound   = errors.New("domain: session not found")
-	ErrSessionExpired    = errors.New("domain: session expired")
+	// ErrFavoriteTeamsInvalid — §49: список избранных команд не проходит
+	// валидацию (дубликаты team_id или больше лимита).
+	ErrFavoriteTeamsInvalid = errors.New("domain: favorite teams list invalid")
+	ErrSessionNotFound      = errors.New("domain: session not found")
+	ErrSessionExpired       = errors.New("domain: session expired")
 
 	// Auth (входящий запрос)
 	ErrUnauthorized        = errors.New("domain: unauthorized")

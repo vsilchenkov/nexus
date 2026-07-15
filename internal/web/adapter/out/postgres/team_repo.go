@@ -23,7 +23,10 @@ type TeamRepoPg struct {
 	logger logging.Logger
 }
 
-var _ port.TeamRepo = (*TeamRepoPg)(nil)
+var (
+	_ port.TeamRepo         = (*TeamRepoPg)(nil)
+	_ port.FavoriteTeamRepo = (*TeamRepoPg)(nil)
+)
 
 func NewTeamRepoPg(pool *pgxpool.Pool, logger logging.Logger) *TeamRepoPg {
 	return &TeamRepoPg{pool: pool, logger: logger}
@@ -241,6 +244,62 @@ ORDER BY t.slug`, userID)
 		out = append(out, &ut)
 	}
 	return out, rows.Err()
+}
+
+// ListFavoriteTeamIDs — id избранных команд пользователя в сохранённом
+// порядке (§49). JOIN с user_teams — страховка поверх составного FK: даже
+// при рассинхроне избранное никогда не выйдет за пределы членств.
+func (r *TeamRepoPg) ListFavoriteTeamIDs(ctx context.Context, userID string) ([]string, error) {
+	rows, err := r.pool.Query(ctx, `
+SELECT f.team_id
+FROM user_team_favorites f
+JOIN user_teams ut ON ut.user_id = f.user_id AND ut.team_id = f.team_id
+WHERE f.user_id = $1::uuid
+ORDER BY f.position`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list favorite team ids: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan favorite team id: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// ReplaceFavoriteTeams — полная замена списка избранного в одной транзакции:
+// DELETE + INSERT с position = индексу. FK-нарушение (id вне членств — гонка
+// с исключением из команды) → domain.ErrUserNotTeamMember.
+func (r *TeamRepoPg) ReplaceFavoriteTeams(ctx context.Context, userID string, teamIDs []string) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("replace favorite teams: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // no-op после успешного Commit
+
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM user_team_favorites WHERE user_id = $1::uuid`, userID); err != nil {
+		return fmt.Errorf("replace favorite teams: delete: %w", err)
+	}
+	for i, teamID := range teamIDs {
+		if _, err := tx.Exec(ctx, `
+INSERT INTO user_team_favorites (user_id, team_id, position)
+VALUES ($1::uuid, $2::uuid, $3)`, userID, teamID, i); err != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+				return domain.ErrUserNotTeamMember
+			}
+			return fmt.Errorf("replace favorite teams: insert: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("replace favorite teams: commit: %w", err)
+	}
+	return nil
 }
 
 // ListTeamsByUsers — членства для набора пользователей одним запросом (§44.G):

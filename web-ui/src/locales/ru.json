@@ -46,7 +46,14 @@
     "api_docs": "Документация API",
     "api_docs_tip": "Swagger API · откроется в новой вкладке",
     "api_docs_receiver": "для внешних клиентов",
-    "api_docs_web": "контракт админки + API-токены"
+    "api_docs_web": "контракт админки + API-токены",
+    "favorites": "Избранное"
+  },
+  "teams": {
+    "switcher_label": "Текущая команда",
+    "favorite_add": "В избранное",
+    "favorite_remove": "Убрать из избранного",
+    "drag_hint": "Перетащите, чтобы изменить порядок"
   },
   "role": {
     "admin": "полный доступ",
