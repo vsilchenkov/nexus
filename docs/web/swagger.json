@@ -1207,6 +1207,123 @@
                 }
             }
         },
+        "/api/logs": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Свежие записи slog-логов Receiver/Sender/Web из Redis-колец nexus:logs:*, слитые по времени (новые первыми). Это логи самих сервисов, не логи запросов узлов.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "service-logs"
+                ],
+                "summary": "Хвост служебных логов сервисов (§51.5).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "all (дефолт) | csv из receiver,sender,web",
+                        "name": "service",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "максимум записей (дефолт 500, кап 2000)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "минимальный уровень: debug|info|warn|error",
+                        "name": "min_level",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/nexus_internal_domain.ServiceLogEntry"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/logs/download": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Тот же хвост, что GET /api/logs, но text/plain attachment (nexus-logs-\u003cts\u003e.log), строки в хронологическом порядке.",
+                "produces": [
+                    "text/plain"
+                ],
+                "tags": [
+                    "service-logs"
+                ],
+                "summary": "Скачать служебные логи файлом (§51.5).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "all (дефолт) | csv из receiver,sender,web",
+                        "name": "service",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "максимум записей (дефолт 500, кап 2000)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "минимальный уровень: debug|info|warn|error",
+                        "name": "min_level",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "лог-файл",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/logs/{id}/replay": {
             "post": {
                 "security": [
@@ -6877,6 +6994,9 @@
                 "general": {
                     "$ref": "#/definitions/nexus_internal_domain.GeneralSettings"
                 },
+                "logging": {
+                    "$ref": "#/definitions/nexus_internal_domain.LoggingSettings"
+                },
                 "notifications": {
                     "$ref": "#/definitions/nexus_internal_domain.NotificationsSettings"
                 },
@@ -7034,6 +7154,15 @@
                 }
             }
         },
+        "nexus_internal_domain.LoggingSettings": {
+            "type": "object",
+            "properties": {
+                "level": {
+                    "description": "Level — уровень логирования всех трёх сервисов (2=error, 3=warn,\n4=info, 5=debug). nil = брать из YAML (cfg.Logging.Level). Применяется\nбез рестарта через reloader.SectionLogging (LevelVar в цепочке хендлеров).",
+                    "type": "integer"
+                }
+            }
+        },
         "nexus_internal_domain.NotificationsSettings": {
             "type": "object",
             "properties": {
@@ -7074,6 +7203,27 @@
                 },
                 "use": {
                     "type": "boolean"
+                }
+            }
+        },
+        "nexus_internal_domain.ServiceLogEntry": {
+            "type": "object",
+            "properties": {
+                "attrs": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "level": {
+                    "type": "string"
+                },
+                "msg": {
+                    "type": "string"
+                },
+                "service": {
+                    "type": "string"
+                },
+                "ts": {
+                    "type": "string"
                 }
             }
         },

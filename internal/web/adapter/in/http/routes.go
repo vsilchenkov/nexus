@@ -25,6 +25,7 @@ type Handlers struct {
 	RMQTest       *RMQTestHandler
 	Kafka         *KafkaHandler
 	AsyncQueue    *AsyncQueueHandler
+	ServiceLogs   *ServiceLogsHandler
 }
 
 // Middlewares — общие middleware (auth-check, role-check, API token-check).
@@ -232,6 +233,14 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			authedAdmin.POST("/teams/:id/members", h.Team.AddMember)
 			authedAdmin.PUT("/teams/:id/members/:user_id", h.Team.UpdateMemberRole)
 			authedAdmin.DELETE("/teams/:id/members/:user_id", h.Team.RemoveMember)
+		}
+
+		// Консоль служебных логов (§51.5): хвост slog-логов трёх сервисов из
+		// Redis-колец + скачивание файлом. Admin-only, НЕ путать с per-node
+		// /nodes/:id/logs (ClickHouse). Смена уровня — PUT /settings/app.
+		if h.ServiceLogs != nil {
+			authedAdmin.GET("/logs", h.ServiceLogs.List)
+			authedAdmin.GET("/logs/download", h.ServiceLogs.Download)
 		}
 
 		// Dynamic-настройки Sentry/ClickHouse (§14.5). Admin-only.

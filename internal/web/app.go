@@ -293,6 +293,11 @@ func (a *App) Start(ctx context.Context) error {
 	auditHandler := httpadapter.NewAuditHandler(auditUC, a.logger)
 	appSettingsHandler := httpadapter.NewAppSettingsHandler(appSettingsUC, settingsTester, a.logger)
 
+	// §51: консоль служебных логов — хвост Redis-колец nexus:logs:* трёх
+	// сервисов (admin-only, маршруты /api/logs*).
+	serviceLogsUC := usecase.NewServiceLogsUsecase(rediscache.NewServiceLogReaderRedis(a.redis, a.logger), a.logger)
+	serviceLogsHandler := httpadapter.NewServiceLogsHandler(serviceLogsUC, a.logger)
+
 	// Шаблоны CH-таблиц (§19). chTemplateRepo создан выше (для NodeUsecase);
 	// usecase/handler создаём всегда (GET работает без ClickHouse); provisioner
 	// может быть nil — Verify тогда вернёт 503.
@@ -499,6 +504,7 @@ func (a *App) Start(ctx context.Context) error {
 		RMQTest:       rmqTestHandler,
 		Kafka:         kafkaHandler,
 		AsyncQueue:    asyncQueueHandler,
+		ServiceLogs:   serviceLogsHandler,
 	}, mw)
 
 	// Реверс-прокси боевых эндпоинтов Receiver (§17.1, единый вход): Web
