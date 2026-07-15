@@ -3653,3 +3653,34 @@ CH-адаптера, и in-memory зеркалом live-tail (`matchLogFilter`):
   запись 4xx по-прежнему done=false. Точка решения одна — `SendUsecase.Send` (sync+async).
 
 Подробности — [sections/50-node-cache-teamslug-redirects.md](sections/50-node-cache-teamslug-redirects.md).
+
+## 51. Управление логированием сервисов (консоль «Логи»)
+
+ТЗ зафиксировано, реализация не начата (план — ветка `feature/service-logging`, блоки 51.1–51.6).
+Служебные slog-логи трёх процессов (Receiver/Sender/Web) в UI + runtime-смена уровня. НЕ путать с
+логами запросов узлов (ClickHouse, §7.4/§42).
+
+- **51.1 Зачем.** Расследования (§50) упираются в недоступность служебных логов Sender/Receiver из
+  UI; уровень логирования фиксируется на старте (YAML, int 2..5) — смена требует рестарта.
+- **51.2 Архитектура.** Логгер строится вендорным `Initlogger` с фиксированным `slog.Level` — нужна
+  собственная сборка цепочки хендлеров из экспортируемых примитивов (`NewMultiHandler`/`SentryHandler`/
+  `NewLogger`) с `*slog.LevelVar` (runtime-уровень) + `RingHandler`. Кросс-процессная доставка — Redis:
+  каждый сервис пишет в `nexus:logs:<service>` (LPUSH+LTRIM ~2000+EXPIRE ~1ч), Web мержит три ключа.
+- **51.3 Ядро.** Пакет `internal/platform/logsink`: `RingHandler` маскирует значения по
+  `sensitiveKeys`, кладёт в in-process кольцо + буферизованный канал; фоновый батч-шиппер в Redis;
+  канал полон → дроп (лог-путь не блокируется). `bootstrap.Init` возвращает `LogController`
+  (level+ring); шиппер подключается в `app.New` (`StartRedisShipper`).
+- **51.4 Runtime-уровень.** `LoggingSettings{Level *int}` в `app_settings` (секция `logging`, JSONB —
+  без миграции), publish `reloader.SectionLogging`; применятель по образцу `SessionTTLProvider`;
+  подписка во ВСЕХ трёх сервисах (Receiver/Sender получают минимальный PG-ридер уровня).
+- **51.5 API (admin).** `GET /api/logs?service=&limit=` (мерж трёх ключей, desc),
+  `GET /api/logs/download` (`text/plain` attachment); смена уровня — существующий
+  `PUT /api/settings/app {logging:{level}}`.
+- **51.6 UI.** Отдельный пункт сайдбара «Логи» (admin, маршрут `/logs`, полная высота) — консоль
+  follow-tail (стиль Vercel/Railway): липкий тулбар (чипсы сервисов, сегментированный уровень —
+  меняет РЕАЛЬНЫЙ порог, поиск, `● Live` с паузой, скачать), плотный моноширинный поток с
+  автоскроллом, паузой при ручном скролле и «↓ к последним», раскрытие строки в атрибуты, кап ~2000.
+- **Вне scope:** SysLog-тумблер, SSE-стриминг, персистентное хранилище служебных логов,
+  per-service уровень.
+
+Подробности — [sections/51-service-logging.md](sections/51-service-logging.md).
