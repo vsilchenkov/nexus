@@ -46,7 +46,14 @@
     "api_docs": "API documentation",
     "api_docs_tip": "Swagger API · opens in a new tab",
     "api_docs_receiver": "for external clients",
-    "api_docs_web": "admin contract + API tokens"
+    "api_docs_web": "admin contract + API tokens",
+    "favorites": "Favorites"
+  },
+  "teams": {
+    "switcher_label": "Current team",
+    "favorite_add": "Add to favorites",
+    "favorite_remove": "Remove from favorites",
+    "drag_hint": "Drag to reorder"
   },
   "role": {
     "admin": "full access",
