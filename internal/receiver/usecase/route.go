@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -82,6 +83,16 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 	if err != nil {
 		return nil, err
 	}
+	// §51.9: маршрутизация невосстановима постфактум — на debug видно, какой
+	// узел выбран и какой хвост пути уйдёт дальше.
+	u.logger.Debug("route: node resolved",
+		u.logger.Str("team", in.TeamSlug),
+		u.logger.Str("path", in.NodePath),
+		u.logger.Str("node", node.Path),
+		u.logger.Str("node_id", node.ID),
+		u.logger.Str("remainder", remainder),
+		u.logger.Str("status", string(node.Status)),
+		u.logger.Int("hop", hop))
 
 	switch node.Status {
 	case domain.NodeStatusDisabled:
@@ -147,6 +158,17 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 	}
 
 	id := uuid.NewString()
+	// §51.9: параметры исходящего вызова (URL без query — там могут быть
+	// токены; тело/заголовки не логируем).
+	u.logger.Debug("route: forwarding to sender",
+		u.logger.Str("id", id),
+		u.logger.Str("node", node.Path),
+		u.logger.Str("method", effectiveOutgoingMethod(node, in.Method)),
+		u.logger.Str("target", redactURLString(finalURL)),
+		u.logger.Int("body_len", len(effBody)),
+		u.logger.Int("timeout_ms", int(node.TimeoutMs)),
+		u.logger.Int("retry_count", int(node.RetryCount)))
+	start := time.Now()
 	resp, err := u.sender.Send(ctx, &senderv1.SendRequest{
 		Id:                 id,
 		NodePath:           node.Path,
@@ -172,6 +194,14 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 	if err != nil {
 		return nil, fmt.Errorf("sender.Send: %w", err)
 	}
+	// §51.9: итог вызова — статус, попытки и длительности (внешняя + полная).
+	u.logger.Debug("route: sender responded",
+		u.logger.Str("id", id),
+		u.logger.Str("node", node.Path),
+		u.logger.Int("status", int(resp.GetStatusCode())),
+		u.logger.Int("attempts", int(resp.GetAttempts())),
+		u.logger.Int("upstream_ms", int(resp.GetDurationMs())),
+		u.logger.Int("total_ms", int(time.Since(start).Milliseconds())))
 
 	out := &RouteOutput{
 		StatusCode: int(resp.GetStatusCode()),
@@ -189,6 +219,22 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 		}
 	}
 	return out, nil
+}
+
+// redactURLString отрезает query/fragment от URL для логов (§51.9): в query
+// могут быть токены динамической авторизации. Невалидный URL — как есть без
+// части после «?».
+func redactURLString(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		if i := strings.IndexByte(raw, '?'); i >= 0 {
+			return raw[:i]
+		}
+		return raw
+	}
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
 }
 
 // methodMatches сравнивает фактический HTTP-метод входящего запроса с

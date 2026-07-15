@@ -299,7 +299,12 @@ func (u *NodeUsecase) cacheSet(ctx context.Context, n *domain.Node, op string) {
 	if err := u.cache.Set(ctx, slug, n, u.cacheTTL); err != nil {
 		u.logger.Warn("cache set after "+op+" failed",
 			u.logger.Str("team", slug), u.logger.Str("path", n.Path), u.logger.Err(err))
+		return
 	}
+	// §51.9 (грабли §50): «какой slug реально ушёл в ключ» — частая причина
+	// «инвалидировали не тот кеш»; успешный write-through виден на debug.
+	u.logger.Debug("node cache: set",
+		u.logger.Str("team", slug), u.logger.Str("path", n.Path), u.logger.Str("op", op))
 }
 
 // cacheInvalidate — сброс ключа узла (teamID — команда, которой принадлежит путь).
@@ -311,7 +316,10 @@ func (u *NodeUsecase) cacheInvalidate(ctx context.Context, teamID, path, op stri
 	if err := u.cache.InvalidateByPath(ctx, slug, path); err != nil {
 		u.logger.Warn("cache invalidate after "+op+" failed",
 			u.logger.Str("team", slug), u.logger.Str("path", path), u.logger.Err(err))
+		return
 	}
+	u.logger.Debug("node cache: invalidated",
+		u.logger.Str("team", slug), u.logger.Str("path", path), u.logger.Str("op", op))
 }
 
 // Update обновляет узел. teamID — scope multi-tenancy v2; при несовпадении

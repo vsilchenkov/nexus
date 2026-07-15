@@ -138,7 +138,13 @@ func (u *AppSettingsUsecase) Update(ctx context.Context, actor Actor, patch *dom
 				u.logger.Warn("reload publish failed",
 					u.logger.Str("section", s),
 					u.logger.Err(err))
+				continue
 			}
+			// §51.9: успешный publish раньше молчал — «настройка сохранилась,
+			// но сервисы не перечитали» было видно только по audit-записи.
+			u.logger.Debug("app_settings: reload published",
+				u.logger.Str("section", s),
+				u.logger.Str("actor", actor.UserID))
 		}
 	}
 	return nil

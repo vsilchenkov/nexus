@@ -168,9 +168,24 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 		return HandleRetry
 	}
 
+	// §51.9: старт обработки async-сообщения — привязка id↔узел на debug.
+	p.logger.Debug("async: delivering message",
+		p.logger.Str("id", env.ID),
+		p.logger.Str("node_path", env.NodePath),
+		p.logger.Int("body_len", len(env.Body)))
+
 	out := p.send.Send(ctx, buildSendInput(node, env))
 
 	isErr := out.StatusCode < 200 || out.StatusCode >= 300
+	// §51.9: исход доставки (решение ack/dlq — ниже) раньше был виден только
+	// в метриках/CH.
+	p.logger.Debug("async: delivery finished",
+		p.logger.Str("id", env.ID),
+		p.logger.Str("node_path", env.NodePath),
+		p.logger.Int("status", int(out.StatusCode)),
+		p.logger.Int("attempts", int(out.Attempts)),
+		p.logger.Int("duration_ms", int(out.DurationMs)),
+		p.logger.Any("is_err", isErr))
 	if p.metrics != nil {
 		p.metrics.RequestsTotal.
 			WithLabelValues("requestAsync", env.NodePath, strconv.FormatInt(int64(out.StatusCode), 10)).Inc()
@@ -197,6 +212,14 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 			p.logger.Str("id", env.ID))
 		return HandleRetry
 	}
+	// §51.9: успешный уход в DLQ раньше молчал — сообщение «исчезало» из
+	// основного потока без следа в служебных логах.
+	p.logger.Debug("async: message sent to dlq",
+		p.logger.Str("id", env.ID),
+		p.logger.Str("node_path", env.NodePath),
+		p.logger.Str("dlq_topic", p.dlqTopic),
+		p.logger.Int("status", int(out.StatusCode)),
+		p.logger.Int("attempts", int(out.Attempts)))
 	return HandleDLQed
 }
 

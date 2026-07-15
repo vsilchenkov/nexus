@@ -187,7 +187,15 @@ func (w *Writer) flushTable(ctx context.Context, table string) {
 		return
 	}
 
-	if err := w.insertBatch(ctx, table, batch); err != nil {
+	// §51.9: успешный INSERT раньше не оставлял следа (rows/длительность видны
+	// только на ошибке) — «куда делись логи узла» было нечем диагностировать.
+	insertStart := time.Now()
+	if err := w.insertBatch(ctx, table, batch); err == nil {
+		w.logger.Debug("clickhouse batch inserted",
+			w.logger.Str("table", table),
+			w.logger.Int("rows", len(batch)),
+			w.logger.Int("duration_ms", int(time.Since(insertStart).Milliseconds())))
+	} else {
 		w.logger.ErrorWithOp("clickhouse batch insert failed", err, "chlog.flushTable",
 			w.logger.Str("table", table),
 			w.logger.Int("rows", len(batch)))

@@ -172,6 +172,16 @@ Web Service отдаёт REST API под `/api/*` и SPA (`embed.FS`) на вс�
   гасит панику до отработки `wg.Done`). Не пиши свой `recover()` — используй `safego`. `recover()` ловит
   панику только в своей горутине, поэтому middleware-recovery родительской горутины дочернюю НЕ спасает.
 - **Small, focused units.** One file, one purpose. One function ≤ 40–50 lines. One type, one responsibility.
+- **Debug-логирование неочевидных мест (ТЗ §51.9).** Уровень логов меняется в runtime через
+  консоль «Логи» — debug-строки видны без рестарта, поэтому в новом коде их надо ЗАКЛАДЫВАТЬ:
+  в местах, где возможны проблемы или потребуется анализ (ветвления маршрутизации, выбор
+  источника/ветки), в нечётких/опасных/сложных неявных местах (тихие fallback'ы, проглоченные
+  best-effort-ошибки, кеш-промахи, дропы/деградации, fail-open решения), вокруг внешних вызовов
+  (параметры + длительность + исход, ретраи/breaker). Типовые варианты: `logger.Debug("<op>: <что
+  произошло>", node/path/id, status, duration_ms, reason)` на решение; Debug на КАЖДОМ тихом
+  `return`/`_ = err`; Debug с исходом после каждого внешнего вызова. Правила: структурные атрибуты,
+  НИКАКИХ секретов/тел/кред в значениях (URL — без query, см. `redactURL`), дорогое построение
+  атрибутов — за проверкой уровня; debug не дублирует существующие info/warn.
 
 If a change cannot satisfy these principles, stop and discuss the design before writing code.
 
@@ -293,6 +303,7 @@ Run through this list every time. If any item fails, fix it before declaring suc
 - [ ] Errors are wrapped with `%w` and handled exactly once.
 - [ ] No `panic` outside `main`. No `init()` with side effects.
 - [ ] Every new goroutine starts with `defer safego.Recover(<logger>, "<op>")` (or `RecoverCtx` for request-scoped ctx; after `wg.Done()` in pools). See §1 and ТЗ §30.2.
+- [ ] Non-obvious/dangerous/silent spots in new code carry `logger.Debug` instrumentation (structured attrs, no secrets/bodies; URLs without query). See §1 and ТЗ §51.9.
 - [ ] Tests added or updated for every changed behavior; mocks are interface-based.
 - [ ] `go vet ./...`, `golangci-lint run`, `go test -race ./...` all pass.
 - [ ] `go.mod` / `go.sum` tidy (`go mod tidy`).

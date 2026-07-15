@@ -141,7 +141,17 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 	// Circuit breaker per node (§9.5). Если breaker open — сразу
 	// 503 без попытки + лог. Это снижает нагрузку на проблемный
 	// внешний узел и ускоряет fail-fast в DLQ для async.
-	if allowed, _ := u.cb.Allow(ctx, in.NodePath); !allowed {
+	allowed, cbErr := u.cb.Allow(ctx, in.NodePath)
+	if cbErr != nil {
+		// §51.9: ошибка breaker'а (Redis) раньше проглатывалась в «_» —
+		// fail-open невидим. Allow при ошибке разрешает вызов, фиксируем след.
+		u.logger.Debug("send: circuit breaker check failed (fail-open)",
+			u.logger.Str("node", in.NodePath), u.logger.Err(cbErr))
+	}
+	if !allowed {
+		u.logger.Debug("send: circuit breaker open, fail-fast 503",
+			u.logger.Str("id", in.ID),
+			u.logger.Str("node", in.NodePath))
 		rec.DateResponse = time.Now()
 		rec.Duration = int32(time.Since(t0).Milliseconds())
 		rec.Status = 0
@@ -186,6 +196,17 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 			}
 		}
 		attempts = append(attempts, a)
+		// §51.9: детали попыток раньше были видны только в CH (attempts_details,
+		// и то не всегда) — на debug каждая попытка с исходом и backoff.
+		u.logger.Debug("send: attempt finished",
+			u.logger.Str("id", in.ID),
+			u.logger.Str("node", in.NodePath),
+			u.logger.Int("attempt", int(n)),
+			u.logger.Int("max_attempts", int(maxAttempts)),
+			u.logger.Int("status", int(a.Status)),
+			u.logger.Str("reason", a.Reason),
+			u.logger.Int("duration_ms", int(dur)),
+			u.logger.Int("backoff_before_ms", int(a.BackoffBeforeMs)))
 
 		if lastErr == nil && resp != nil && resp.StatusCode < 500 {
 			break // успех или 4xx — retry не помогает
@@ -259,6 +280,13 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		_ = u.cb.RecordSuccess(ctx, in.NodePath)
 	} else {
 		_ = u.cb.RecordFailure(ctx, in.NodePath)
+		// §51.9: незасчитанное здоровье узла (открытие breaker'а после серии) —
+		// след решения на debug; сами Record-ошибки некритичны (best-effort).
+		u.logger.Debug("send: recorded upstream failure for breaker",
+			u.logger.Str("id", in.ID),
+			u.logger.Str("node", in.NodePath),
+			u.logger.Int("status", int(rec.Status)),
+			u.logger.Str("reason", rec.Reason))
 	}
 
 	if len(attempts) > 1 || !rec.Done {
