@@ -212,7 +212,8 @@ func (a *App) Start(ctx context.Context) error {
 	// env-конфиг; сидинг из app_settings и hot-reload (секция security) — ниже,
 	// после создания appSettingsUC.
 	sessionTTLProvider := usecase.NewSessionTTLProvider(a.cfg.Redis.SessionTTLSec)
-	authUC := usecase.NewAuthUsecase(userRepo, sessionRepo, teamRepo, auditUC, sessionTTLProvider.Get, a.logger)
+	authUC := usecase.NewAuthUsecase(userRepo, sessionRepo, teamRepo, auditUC, sessionTTLProvider.Get, a.logger).
+		WithFavoriteTeams(teamRepo) // §49: избранные команды (TeamRepoPg реализует и FavoriteTeamRepo)
 	userUC := usecase.NewUserUsecase(userRepo, sessionRepo, teamRepo, auditUC, defaultTeamID, a.logger)
 
 	tokenRepo := pgrepo.NewAPITokenRepoPg(a.pg, a.logger)

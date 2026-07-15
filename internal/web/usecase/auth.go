@@ -37,6 +37,10 @@ type AuthUsecase struct {
 	// проверка выключена (unit-тесты, отсутствие Redis).
 	rl                 RateLimiter
 	loginRateLimitPMin int
+
+	// favorites — избранные команды пользователя (§49). nil — фича выключена
+	// (unit-тесты без WithFavoriteTeams): чтение отдаёт пустой список.
+	favorites port.FavoriteTeamRepo
 }
 
 func NewAuthUsecase(
@@ -65,6 +69,74 @@ func (u *AuthUsecase) WithLoginRateLimit(rl RateLimiter, limitPerMin int) *AuthU
 	u.rl = rl
 	u.loginRateLimitPMin = limitPerMin
 	return u
+}
+
+// WithFavoriteTeams включает избранные команды (§49). Builder-паттерн (как
+// WithLoginRateLimit): существующие вызовы NewAuthUsecase не меняются.
+func (u *AuthUsecase) WithFavoriteTeams(repo port.FavoriteTeamRepo) *AuthUsecase {
+	u.favorites = repo
+	return u
+}
+
+// maxFavoriteTeams — верхняя граница списка избранного (§49): защита от
+// раздувания payload'а и позиций; членств столько на практике не бывает.
+const maxFavoriteTeams = 100
+
+// FavoriteTeamIDs — id избранных команд пользователя в сохранённом порядке
+// (§49). Никогда не возвращает ошибку: избранное — декорация к MyTeams, при
+// сбое (или невключённом репозитории) деградирует в пустой список, а не
+// валит весь ответ со списком членств.
+func (u *AuthUsecase) FavoriteTeamIDs(ctx context.Context, userID string) []string {
+	if u.favorites == nil {
+		return []string{}
+	}
+	ids, err := u.favorites.ListFavoriteTeamIDs(ctx, userID)
+	if err != nil {
+		u.logger.Warn("list favorite teams failed; returning empty",
+			u.logger.Str("user_id", userID), u.logger.Err(err))
+		return []string{}
+	}
+	if ids == nil {
+		ids = []string{}
+	}
+	return ids
+}
+
+// SetFavoriteTeams — полная замена списка избранных команд пользователя (§49):
+// добавление/удаление/переупорядочивание — один вызов, позиция = индексу.
+// Валидация: лимит, отсутствие дубликатов, каждый id входит в членства
+// (прецедент §45 SetDefaultTeam) — иначе ErrUserNotTeamMember. Пустой список
+// допустим (очистить избранное).
+func (u *AuthUsecase) SetFavoriteTeams(ctx context.Context, actor Actor, userID string, teamIDs []string) error {
+	if u.favorites == nil {
+		return fmt.Errorf("favorite teams: %w", domain.ErrNotFound)
+	}
+	if len(teamIDs) > maxFavoriteTeams {
+		return domain.ErrFavoriteTeamsInvalid
+	}
+	seen := make(map[string]struct{}, len(teamIDs))
+	for _, id := range teamIDs {
+		if _, dup := seen[id]; dup {
+			return domain.ErrFavoriteTeamsInvalid
+		}
+		seen[id] = struct{}{}
+	}
+	memberships, err := u.teams.ListUserTeams(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("list memberships: %w", err)
+	}
+	for _, id := range teamIDs {
+		if !teamInMemberships(id, memberships) {
+			return domain.ErrUserNotTeamMember
+		}
+	}
+	if err := u.favorites.ReplaceFavoriteTeams(ctx, userID, teamIDs); err != nil {
+		return fmt.Errorf("replace favorite teams: %w", err)
+	}
+	u.audit.Log(ctx, actor, domain.ActionUserFavoriteTeams, "user", userID, map[string]any{
+		"team_ids": teamIDs, "count": len(teamIDs),
+	})
+	return nil
 }
 
 // checkLoginRateLimit — true, если попытку можно пропустить. Fail-open при

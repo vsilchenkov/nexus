@@ -69,6 +69,9 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		// API-токены ограничены одной командой по token.team_id.
 		authed.GET("/me/teams", h.Auth.MyTeams)
 		authed.POST("/me/switch-team", RequireSessionOnly(), h.Auth.SwitchTeam)
+		// §49: избранные команды — self-service, только session-cookie
+		// (API-токен ограничен одной командой, избранное ему ни к чему).
+		authed.PUT("/me/favorite-teams", RequireSessionOnly(), h.Auth.SetFavoriteTeams)
 		// Self-service смена собственного пароля (§26): любая роль, только
 		// session-cookie (API-токенам пароль менять незачем).
 		authed.POST("/me/password", RequireSessionOnly(), h.Auth.ChangeOwnPassword)
