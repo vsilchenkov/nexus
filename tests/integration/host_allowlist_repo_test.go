@@ -170,7 +170,8 @@ func TestHostAllowlist_Usecase_SnapshotRebuild(t *testing.T) {
 	nodeRepo := pgrepo.NewNodeRepoPg(pool, cipher, logger)
 	uow := pgrepo.NewUnitOfWorkPg(pool, cipher, logger)
 	auditUC := usecase.NewAuditUsecase(pgrepo.NewAuditRepoPg(pool, logger), logger)
-	uc := usecase.NewHostAllowlistUsecase(repo, nodeRepo, nopCache{}, uow, auditUC, time.Minute, logger)
+	teamRepo := pgrepo.NewTeamRepoPg(pool, logger)
+	uc := usecase.NewHostAllowlistUsecase(repo, nodeRepo, nopCache{}, teamRepo, uow, auditUC, time.Minute, logger)
 	teamID := resolveDefaultTeamID(t, ctx, pool)
 
 	exact := &domain.HostAllowlistEntry{Pattern: "api.partner.com", Kind: domain.HostKindExact}

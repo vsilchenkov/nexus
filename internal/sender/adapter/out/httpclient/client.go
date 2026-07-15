@@ -11,8 +11,10 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	"nexus/internal/platform/config"
@@ -20,6 +22,9 @@ import (
 	otelpf "nexus/internal/platform/otel"
 	"nexus/internal/sender/usecase/port"
 )
+
+// maxRedirects — как в дефолте net/http: следуем не дальше 10 переходов (§50).
+const maxRedirects = 10
 
 // Client реализует port.HTTPCaller.
 type Client struct {
@@ -80,7 +85,22 @@ func (c *Client) Do(ctx context.Context, req *port.HTTPRequest) (*port.HTTPRespo
 	}
 	otelpf.InjectHTTPHeaders(reqCtx, hreq.Header)
 
-	hresp, err := c.hc.Do(hreq)
+	// §50: следуем 3xx-редиректам (как дефолт Go), но логируем каждый переход и
+	// накапливаем хопы для reason лога. Копия клиента на вызов — Transport общий
+	// (пул соединений не рвётся), закрытие захватывает node path и срез хопов.
+	var hops []port.RedirectHop
+	hc := *c.hc
+	hc.CheckRedirect = func(nextReq *http.Request, via []*http.Request) error {
+		hop := c.redirectHop(nextReq, via)
+		hops = append(hops, hop)
+		c.logRedirect(req.NodePath, hop)
+		if len(via) >= maxRedirects {
+			return fmt.Errorf("stopped after %d redirects", maxRedirects)
+		}
+		return nil
+	}
+
+	hresp, err := hc.Do(hreq)
 	if err != nil {
 		spanFinish(0, err)
 		return nil, err
@@ -113,11 +133,73 @@ func (c *Client) Do(ctx context.Context, req *port.HTTPRequest) (*port.HTTPRespo
 			StatusCode: int32(hresp.StatusCode),
 			Headers:    hdrs,
 			TooLarge:   true,
+			Redirects:  hops,
 		}, nil
 	}
 	return &port.HTTPResponse{
 		StatusCode: int32(hresp.StatusCode),
 		Headers:    hdrs,
 		Body:       body,
+		Redirects:  hops,
 	}, nil
+}
+
+// redirectHop строит запись о переходе 3xx (§50): via[len-1] — запрос, вызвавший
+// редирект; nextReq — следующий. nextReq.Response — 3xx-ответ, породивший переход.
+func (c *Client) redirectHop(nextReq *http.Request, via []*http.Request) port.RedirectHop {
+	prev := via[len(via)-1]
+	status := 0
+	if nextReq.Response != nil {
+		status = nextReq.Response.StatusCode
+	}
+	return port.RedirectHop{
+		Status:       status,
+		From:         redactURL(prev.URL),
+		To:           redactURL(nextReq.URL),
+		FromMethod:   prev.Method,
+		ToMethod:     nextReq.Method,
+		SchemeChange: schemeChange(prev.URL, nextReq.URL),
+	}
+}
+
+// logRedirect пишет служебный лог перехода. Warn — если сменился метод
+// (301/302/303 POST→GET молча теряет тело запроса, реальный риск); иначе Info.
+func (c *Client) logRedirect(nodePath string, hop port.RedirectHop) {
+	attrs := []slog.Attr{
+		c.logger.Str("node", nodePath),
+		c.logger.Int("status", hop.Status),
+		c.logger.Str("from", hop.From),
+		c.logger.Str("to", hop.To),
+		c.logger.Str("from_method", hop.FromMethod),
+		c.logger.Str("to_method", hop.ToMethod),
+		c.logger.Str("scheme_change", hop.SchemeChange),
+	}
+	if hop.FromMethod != hop.ToMethod {
+		c.logger.Warn("sender redirect changed method (request body dropped)", attrs...)
+	} else {
+		c.logger.Info("sender follows external redirect", attrs...)
+	}
+}
+
+// redactURL — scheme://host/path без query: в query бывают токены, а логи и
+// Sentry query не маскируют (зеркалит otel.sanitizeURL). nil → "".
+func redactURL(u *url.URL) string {
+	if u == nil {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host + u.Path
+}
+
+// schemeChange классифицирует смену схемы between from→to.
+func schemeChange(from, to *url.URL) string {
+	if from == nil || to == nil || from.Scheme == to.Scheme {
+		return "same"
+	}
+	if from.Scheme == "http" && to.Scheme == "https" {
+		return "upgrade"
+	}
+	if from.Scheme == "https" && to.Scheme == "http" {
+		return "downgrade"
+	}
+	return "same"
 }

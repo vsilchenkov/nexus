@@ -66,15 +66,11 @@ func (r *memNodeRepo) UpdateAllowedHostsSnapshot(_ context.Context, nodeID strin
 // nopNodeCache — заглушка port.NodeCache.
 type nopNodeCache struct{}
 
-func (nopNodeCache) Get(context.Context, string) (*domain.Node, error) {
+func (nopNodeCache) GetByPath(context.Context, string, string) (*domain.Node, error) {
 	return nil, domain.ErrNotFound
 }
-func (nopNodeCache) GetByPath(context.Context, string) (*domain.Node, error) {
-	return nil, domain.ErrNotFound
-}
-func (nopNodeCache) Set(context.Context, *domain.Node, time.Duration) error { return nil }
-func (nopNodeCache) Invalidate(context.Context, string) error               { return nil }
-func (nopNodeCache) InvalidateByPath(context.Context, string) error         { return nil }
+func (nopNodeCache) Set(context.Context, string, *domain.Node, time.Duration) error { return nil }
+func (nopNodeCache) InvalidateByPath(context.Context, string, string) error         { return nil }
 
 func newNodeUC(repo *memNodeRepo, prov *verifyProvisioner, templates *memCHTemplateRepo) *NodeUsecase {
 	audit := NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop())

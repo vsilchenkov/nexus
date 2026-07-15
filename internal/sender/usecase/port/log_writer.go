@@ -24,11 +24,25 @@ type HTTPCaller interface {
 
 // HTTPRequest — параметры исходящего запроса.
 type HTTPRequest struct {
-	Method    string
-	URL       string
+	Method string
+	URL    string
+	// NodePath — путь узла (§50): только для служебного лога редиректов
+	// (поле node=...); на сам HTTP-вызов не влияет.
+	NodePath  string
 	Headers   map[string]string
 	Body      []byte
 	TimeoutMs int32
+}
+
+// RedirectHop — один шаг 3xx-редиректа, за которым последовал httpclient (§50).
+// URL уже отредачены (без query — там бывают токены).
+type RedirectHop struct {
+	Status       int    // 3xx-код, породивший переход
+	From         string // scheme://host/path (query отрезан)
+	To           string // scheme://host/path (query отрезан)
+	FromMethod   string
+	ToMethod     string // отличается от FromMethod при 301/302/303 POST→GET
+	SchemeChange string // "upgrade" (http→https) | "downgrade" | "same"
 }
 
 // HTTPResponse — то, что вернул внешний узел.
@@ -40,4 +54,8 @@ type HTTPResponse struct {
 	// sender.grpc_max_message_bytes): чтение оборвано на лимите (memory-safe,
 	// Body не дочитан), вызывающая сторона отдаёт клиенту 502 (§43-rev).
 	TooLarge bool
+	// Redirects — цепочка 3xx-редиректов, за которыми последовал клиент (§50).
+	// Пустая, если редиректов не было. Sender дописывает их в reason лога, чтобы
+	// в UI было видно, что фактический адрес отличается от target_url.
+	Redirects []RedirectHop
 }

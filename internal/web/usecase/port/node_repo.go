@@ -36,8 +36,12 @@ type NodeRepo interface {
 }
 
 // NodeCache — кеш для node-конфигов в Redis (§9.2: write-through, cache-aside).
+//
+// teamSlug обязателен во всех методах (§50): ключ кеша — "node:<team_slug>:<path>",
+// потому что после §18 (multi-tenancy) path уникален только внутри команды.
+// Пустой teamSlug трактуется как domain.DefaultTeamSlug.
 type NodeCache interface {
-	GetByPath(ctx context.Context, path string) (*domain.Node, error)
-	Set(ctx context.Context, node *domain.Node, ttl time.Duration) error
-	InvalidateByPath(ctx context.Context, path string) error
+	GetByPath(ctx context.Context, teamSlug, path string) (*domain.Node, error)
+	Set(ctx context.Context, teamSlug string, node *domain.Node, ttl time.Duration) error
+	InvalidateByPath(ctx context.Context, teamSlug, path string) error
 }

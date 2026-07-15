@@ -132,6 +132,7 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 	req := &port.HTTPRequest{
 		Method:    in.Method,
 		URL:       in.TargetURL,
+		NodePath:  in.NodePath, // §50: только для служебного лога редиректов
 		Headers:   in.Headers,
 		Body:      in.Body,
 		TimeoutMs: in.TimeoutMs,
@@ -239,9 +240,21 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		}
 	}
 
-	// Circuit breaker отражает здоровье ВНЕШНЕГО узла, а не нашу oversize-политику:
-	// ответ 2xx (даже если мы reject'нули его за размер) означает, что узел жив.
-	upstreamHealthy := lastErr == nil && resp != nil && resp.StatusCode >= 200 && resp.StatusCode < 300
+	// §50: если httpclient следовал 3xx-редиректам — дописываем это в reason
+	// лога, чтобы в UI (деталь строки, «Причина») было видно, что фактический
+	// адрес отличается от target_url узла (частая причина «поставили http, а
+	// идёт https»). Одна запись лога на запрос — редиректы внутри одного вызова.
+	if resp != nil && len(resp.Redirects) > 0 {
+		rec.Reason = appendRedirectNote(rec.Reason, resp.Redirects)
+	}
+
+	// Circuit breaker отражает здоровье ВНЕШНЕГО узла. Нездоровье — транспортная
+	// ошибка (timeout/refused) или 5xx. ЛЮБОЙ ответ < 500 — узел жив и отвечает:
+	// 4xx — ошибка данных/клиента (напр. 422 NotRegistered протухшего FCM-токена),
+	// по ней breaker НЕ открывается — иначе серия 4xx от «плохих» адресатов
+	// блокировала бы доставку валидных запросов 503-ми (боевой инцидент
+	// site/push, §50.4). Oversize-политика (§43-rev) на здоровье тоже не влияет.
+	upstreamHealthy := lastErr == nil && resp != nil && resp.StatusCode < 500
 	if upstreamHealthy {
 		_ = u.cb.RecordSuccess(ctx, in.NodePath)
 	} else {
@@ -283,6 +296,33 @@ func truncateRunes(s string, enabled bool, max int32) string {
 		return s
 	}
 	return string(runes[:max]) + truncationMarker
+}
+
+// appendRedirectNote дописывает к reason лога краткую сводку по редиректам (§50):
+// сколько переходов, смена схемы, и предупреждение о потере тела при смене
+// метода (301/302/303 POST→GET). URL берутся уже отредаченными из httpclient.
+// Пример: "OK · 1 редирект: http→https; тело запроса потеряно (POST→GET) —
+// http://x/a → https://x/a".
+func appendRedirectNote(reason string, hops []port.RedirectHop) string {
+	if len(hops) == 0 {
+		return reason
+	}
+	first, last := hops[0], hops[len(hops)-1]
+	bodyDropped := false
+	for _, h := range hops {
+		if h.FromMethod != h.ToMethod {
+			bodyDropped = true
+			break
+		}
+	}
+	note := fmt.Sprintf("%d редирект(ов) — %s → %s", len(hops), first.From, last.To)
+	if bodyDropped {
+		note += "; тело запроса потеряно (POST→GET)"
+	}
+	if reason == "" {
+		return note
+	}
+	return reason + " · " + note
 }
 
 // extractQuery возвращает query-string из URL без ведущего "?".
