@@ -3687,6 +3687,11 @@ CH-адаптера, и in-memory зеркалом live-tail (`matchLogFilter`):
   нагрузкой; Make-цель `test-int-logs`); закрытие существующих дыр покрытия затронутой вертикали
   (bootstrap, app_settings_handler, reloader); аудит-карта пробелов покрытия по всему репо в
   `IMPLEMENTATION.md` (тесты вне вертикали — долг); vitest добавляется в CI job `ui-build`.
+- **51.9 Debug-инструментирование.** Runtime-debug полезен только с реальными debug-строками:
+  анализ ключевых путей трёх сервисов (Receiver — резолв узла/кеш/auth/sync-async; Sender —
+  исходящий вызов/ретраи/breaker/async/CH-буфер; Web — кеш узла/reload/app_settings) и добавление
+  `logger.Debug` со структурными атрибутами без секретов; дорогие атрибуты — за проверкой уровня;
+  итог анализа — в `IMPLEMENTATION.md`.
 - **Вне scope:** SysLog-тумблер, SSE-стриминг, персистентное хранилище служебных логов,
   per-service уровень.
 
