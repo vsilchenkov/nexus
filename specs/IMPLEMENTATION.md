@@ -1886,6 +1886,44 @@ make proto                                     # перегенерация send
 
 ---
 
+## 6.1 Карта пробелов тестового покрытия (аудит §51.8, 2026-07-15)
+
+Снято `go test -short -cover ./internal/...` (unit-%). Правила чтения карты: низкий unit-% у
+адаптеров сам по себе НЕ долг — многие из них покрыты integration-тестами (testcontainers) и
+стендом; долгом считается пакет без покрытия и unit, и integration. Тесты в рамках §51 добиты
+только по затронутой вертикали (решение пользователя); остальное — долг на будущие итерации.
+
+**Долг (приоритетно, ни unit, ни integration):**
+
+| Пакет | Unit | Чего не хватает | Приоритет |
+|---|---|---|---|
+| `platform/ratelimit` | 0% | unit на лимитер (окно/ключи/деградация при ошибке Redis — используется на боевом пути Receiver) | **высокий** |
+| `web/adapter/in/http` | 21% | unit на непокрытые handler'ы (auth/node/user/token/team — сейчас тесты есть у logs/kafka/team/version/async_queue/app_settings/service_logs) | **высокий** |
+| `platform/safego` | 22% | unit на `Go`/`Await` (покрыт только Recover) | средний |
+| `platform/kafka` | 6% | unit на producer-опции/EnsureTopics парс-логику (сетевые пути — integration) | средний |
+| `sender/adapter/in/kafka` | 14% | consumer-цикл покрыт integration; unit на headersToMap/retry-ветвления | средний |
+| `web/adapter/out/receiver` | 0% | reverse-proxy клиент — unit на httptest | средний |
+| `web/adapter/out/rabbitmq` | 0% | test-connection клиент — unit на диалер/ошибки | низкий |
+| `platform/runner` | 0% | service-host (kardianos) — вручную/стендом; unit малополезен | низкий |
+| `platform/logging` | 0% | тонкие re-export'ы вендора; смысла в unit мало | низкий |
+| `platform/redis`, `platform/pg` | 0% | фабрики подключений; косвенно гоняются каждым integration | низкий |
+
+**НЕ долг (0% unit, но есть integration/стенд):** `platform/circuitbreaker`
+(`TestCircuitBreaker*`, test-int-catalog), `platform/nodestatus` (`TestNodeStatus_*`),
+`platform/queuecancel` (`TestQueueCancel*`), `sender/adapter/out/nodepg` (sender-integration),
+`receiver/adapter/out/rabbitmq` (`TestRMQPuller*`), `web/adapter/out/postgres` (0.3% unit — но
+это самый плотно покрытый integration-слой: node/team/audit/app_settings/favorites),
+`web/adapter/out/clickhouse`/`kafkaadmin`/`redis` (integration + §51), `internal/{receiver,sender,web}`
++ `cmd/*` (wiring — нетестируемо by design, проверяется стендом), `*/usecase/port` (интерфейсы),
+`web/static` (embed).
+
+**Закрыто в §51:** `platform/bootstrap` (было 0 тестов → logger/overlay/reload-применятель; Must*-хелперы
+с `os.Exit` в unit не берутся), `platform/reloader` (22% unit + реальный Redis pub/sub в
+integration), `app_settings_handler` (было 0), `platform/logsink`/`sensitive` (новые, 84–100%),
+vitest во фронте (было 3 теста без CI-запуска → +2 файла §51 и гейт в ui-build).
+
+---
+
 ## 7. Куда копать дальше (Phase 7+)
 
 Если будете расширять — вот логичные следующие шаги, в порядке полезности:
