@@ -142,6 +142,35 @@ func TestExtractQuery(t *testing.T) {
 	}
 }
 
+// TestAppendRedirectNote (§50): сводка редиректов дописывается к reason, при
+// смене метода — предупреждение о потере тела; пустой список не трогает reason.
+func TestAppendRedirectNote(t *testing.T) {
+	t.Parallel()
+
+	up := port.RedirectHop{
+		Status: 301, From: "http://x/a", To: "https://x/a",
+		FromMethod: "GET", ToMethod: "GET", SchemeChange: "upgrade",
+	}
+	dropped := port.RedirectHop{
+		Status: 301, From: "http://x/a", To: "https://x/a",
+		FromMethod: "POST", ToMethod: "GET", SchemeChange: "upgrade",
+	}
+
+	assert.Equal(t, "OK", appendRedirectNote("OK", nil), "нет редиректов — reason не тронут")
+
+	got := appendRedirectNote("OK", []port.RedirectHop{up})
+	assert.Contains(t, got, "OK · ")
+	assert.Contains(t, got, "http://x/a → https://x/a")
+	assert.NotContains(t, got, "тело запроса потеряно")
+
+	got = appendRedirectNote("OK", []port.RedirectHop{dropped})
+	assert.Contains(t, got, "тело запроса потеряно (POST→GET)")
+
+	got = appendRedirectNote("", []port.RedirectHop{up})
+	assert.NotContains(t, got, " · ", "пустой reason — без разделителя")
+	assert.Contains(t, got, "редирект")
+}
+
 func TestSend_Success_RecordsLogAndUpdatesBreaker(t *testing.T) {
 	t.Parallel()
 
