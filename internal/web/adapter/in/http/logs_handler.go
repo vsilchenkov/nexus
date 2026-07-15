@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"strconv"
 	"time"
@@ -337,17 +338,13 @@ func (h *LogsHandler) writeFacetError(c *gin.Context, nodeID, op string, err err
 		localizedError(c, http.StatusNotFound, "node.not_found")
 	case errors.Is(err, domain.ErrNodeLogsNotConfigured):
 		payload := gin.H{"logs_configured": false, "logs_available": false}
-		for k, v := range empty {
-			payload[k] = v
-		}
+		maps.Copy(payload, empty)
 		c.JSON(http.StatusOK, payload)
 	case errors.Is(err, domain.ErrLogsBackendUnavailable):
 		h.logger.Warn("logs facet degraded: clickhouse unavailable",
 			h.logger.Str("node_id", nodeID), h.logger.Err(err))
 		payload := gin.H{"logs_configured": true, "logs_available": false}
-		for k, v := range empty {
-			payload[k] = v
-		}
+		maps.Copy(payload, empty)
 		c.JSON(http.StatusOK, payload)
 	default:
 		h.logger.ErrorWithOp("logs facet failed", err, op, h.logger.Str("node_id", nodeID))
