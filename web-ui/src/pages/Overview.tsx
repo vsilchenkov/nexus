@@ -40,8 +40,16 @@ import { useMetricsRefetchMs } from "../components/node/useNodeMetrics";
 
 type ListResp = { items: Node[] };
 type View = "table" | "cards";
-type StatusFilter = "all" | "ok" | "warn" | "err" | "paused" | "disabled";
-type Throughput = { in: number; out: number; errors: number; p95: number; spark: number[]; lastError: boolean };
+type StatusFilter = "all" | "ok" | "warn" | "degraded" | "err" | "paused" | "disabled";
+type Throughput = {
+  in: number;
+  out: number;
+  errors: number;
+  p95: number;
+  spark: number[];
+  // §52: исход последнего вызова узла (ok/degraded/down).
+  lastOutcome: "ok" | "degraded" | "down";
+};
 
 const VIEW_KEY = "nexus.overview.view";
 const AUTOREFRESH_KEY = "nexus.overview.autorefresh";
@@ -106,15 +114,15 @@ export default function Overview() {
   const throughput = useMemo(() => {
     const m = new Map<string, Throughput>();
     for (const it of thrData?.items ?? []) {
-      m.set(it.node, { in: it.in, out: it.out, errors: it.errors, p95: it.p95_ms, spark: it.spark ?? [], lastError: it.last_error });
+      m.set(it.node, { in: it.in, out: it.out, errors: it.errors, p95: it.p95_ms, spark: it.spark ?? [], lastOutcome: it.last_outcome });
     }
     return m;
   }, [thrData]);
 
-  // Сортировка: проблемные первыми (err → warn → paused → ok → disabled),
-  // внутри статуса — по убыванию входящего трафика (§22, ui_cards.html).
+  // Сортировка: проблемные первыми (err → degraded → warn → paused → ok →
+  // disabled), внутри статуса — по убыванию входящего трафика (§22, ui_cards.html).
   const sortRank: Record<Variant, number> = useMemo(
-    () => ({ err: 0, warn: 1, paused: 2, ok: 3, unknown: 4, disabled: 5 }),
+    () => ({ err: 0, degraded: 1, warn: 2, paused: 3, ok: 4, unknown: 5, disabled: 6 }),
     [],
   );
 
@@ -193,6 +201,7 @@ export default function Overview() {
           <option value="all">{t("overview.filter.all_statuses")}</option>
           <option value="ok">{t("overview.status.ok")}</option>
           <option value="warn">{t("overview.status.queue")}</option>
+          <option value="degraded">{t("overview.status.degraded")}</option>
           <option value="err">{t("overview.status.down")}</option>
           <option value="paused">{t("node.status.paused")}</option>
           <option value="disabled">{t("node.status.disabled")}</option>
@@ -284,7 +293,7 @@ export default function Overview() {
   );
 }
 
-type Variant = "ok" | "warn" | "err" | "paused" | "disabled" | "unknown";
+type Variant = "ok" | "warn" | "degraded" | "err" | "paused" | "disabled" | "unknown";
 type StatusInfo = { tone: "ok" | "err" | "warn" | "muted"; label: string; variant: Variant };
 
 // nodeVariant — чистая классификация статуса узла (без i18n), для фильтра,
@@ -292,15 +301,18 @@ type StatusInfo = { tone: "ok" | "err" | "warn" | "muted"; label: string; varian
 // ещё не пришли / Prometheus недоступен) → нейтральный "unknown", чтобы не
 // показывать ложный зелёный «OK» до загрузки данных (П11).
 //
-// §41: «Down» (err) определяется по ИСХОДУ ПОСЛЕДНЕГО исходящего вызова узла
-// (m.lastError), а не по доле ошибок за период. Это снимок «сейчас»: если
-// последний вызов прошёл (2xx) — приёмник доступен; ошибка последнего —
-// «Down». Колонки in/out/errors остаются за выбранный период.
+// §41/§52: runtime-статус определяется по ИСХОДУ ПОСЛЕДНЕГО исходящего вызова
+// узла (m.lastOutcome), а не по доле ошибок за период. Это снимок «сейчас»:
+// down (err, красный) — транспортная ошибка или 5xx; degraded (жёлтый) — узел
+// ответил, но не-2xx <500 (ошибка данных/клиента, §50.4 — узел жив); 2xx — ok.
+// "degraded" — отдельный вариант от "warn" (warn = отставание async-очереди).
+// Колонки in/out/errors остаются за выбранный период.
 function nodeVariant(n: Node, m: Throughput | undefined, ready: boolean): Variant {
   if (n.status === "disabled") return "disabled";
   if (n.status === "paused") return "paused";
   if (!ready || !m) return "unknown";
-  if (m.lastError) return "err";
+  if (m.lastOutcome === "down") return "err";
+  if (m.lastOutcome === "degraded") return "degraded";
   if (n.root_method === "requestAsync" && m.in - m.out > Math.max(50, m.in * 0.1)) {
     return "warn";
   }
@@ -311,6 +323,7 @@ function nodeVariant(n: Node, m: Throughput | undefined, ready: boolean): Varian
 const accentByVariant: Record<Variant, string> = {
   ok: "border-l-ok",
   warn: "border-l-warn",
+  degraded: "border-l-warn",
   err: "border-l-err",
   paused: "border-l-accent",
   disabled: "border-l-fg-subtle",
@@ -328,6 +341,8 @@ function useStatus() {
         return { variant, tone: "warn", label: t("node.status.paused") };
       case "err":
         return { variant, tone: "err", label: t("overview.status.down") };
+      case "degraded":
+        return { variant, tone: "warn", label: t("overview.status.degraded") };
       case "warn":
         return { variant, tone: "warn", label: t("overview.status.queue") };
       case "unknown":

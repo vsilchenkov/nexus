@@ -173,8 +173,11 @@ export type NodeThroughput = {
   errors: number;
   p95_ms: number;
   spark: number[];
-  // §41 («Down»): последний исходящий вызов узла завершился ошибкой.
+  // §41 (back-compat, = last_outcome != "ok"): UI использует last_outcome.
   last_error: boolean;
+  // §52: исход последнего исходящего вызова узла — ok (2xx) / degraded
+  // (ответил не-2xx <500) / down (транспортная ошибка или 5xx).
+  last_outcome: "ok" | "degraded" | "down";
 };
 // §44.A: totals = СУММА строк items за выбранный период (CH, уникальные
 // запросы). KPI шапки берёт incoming/outgoing/errors отсюда → шапка сходится
