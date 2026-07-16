@@ -9,6 +9,12 @@ export type LogRow = {
   date_request: string;
   done: boolean;
   reason?: string;
+  // §42-доп: истинные размеры тел в БАЙТАХ до усечения лог-копии (в отличие
+  // от request_len/response_len в LogDetail — рун усечённой копии). 0 — тела
+  // нет / транспортная ошибка / TooLarge. Optional — старый бэкенд полей не
+  // отдаёт (rolling deploy).
+  request_size?: number;
+  response_size?: number;
 };
 // logs_available=false — backend логов (ClickHouse) временно недоступен:
 // бэкенд отдаёт 200 с пустым items + этот флаг (а не 500), чтобы поллинг UI

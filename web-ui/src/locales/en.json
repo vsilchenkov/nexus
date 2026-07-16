@@ -616,8 +616,11 @@
       "method": "Method",
       "url": "URL",
       "status": "Status",
-      "ms": "ms"
-    }
+      "ms": "ms",
+      "resp_size": "Resp",
+      "resp_size_title": "Response body size"
+    },
+    "size_units": "B|KB|MB|GB|TB"
   },
   "audit": {
     "title": "Audit log",
