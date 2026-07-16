@@ -3700,3 +3700,35 @@ CH-адаптера, и in-memory зеркалом live-tail (`matchLogFilter`):
   per-service уровень.
 
 Подробности — [sections/51-service-logging.md](sections/51-service-logging.md).
+
+## 52. Трёхсостоянье статуса узла: OK / Degraded / Down
+
+Продолжение инцидента §50.4 (site/push, 422 NotRegistered): breaker по 4xx больше не открывается,
+но бейдж узла на Overview всё равно **Down** — флаг «последний вызов ошибочен» булев («любой
+не-2xx»). Живой узел горит красным = ложная тревога оператору.
+
+- **52.2 Модель.** `domain.NodeOutcome` — исход последнего вызова: `ok` (2xx), `degraded`
+  (узел ответил, не-2xx и < 500 — жёлтый бейдж), `down` (транспортная ошибка/status 0 или 5xx —
+  красный). Граница `< 500` = upstreamHealthy §50.4. Синтезированные шиной 503 breaker-open и
+  502 oversize (§43-rev) — `down` (недоставка); отклонение от breaker'а намеренное.
+- **52.3 Кодировки.** Gauge `nexus_node_last_request_error` (§41): имя сохранено, значения
+  0=ok/1=degraded/2=down (`max by (node)` = худшее между репликами; старые алерты `>=1` живы).
+  Redis `nexus:node:last_error:<path>` (§46): `"0"`=ok/`"1"`=down/`"2"`=degraded — кодировка
+  НАМЕРЕННО отличается от gauge ради legacy `"1"` («любой не-2xx» → worst case down) и
+  rolling-совместимости; кодек только в `platform/nodestatus`.
+- **52.4 Порты.** `NodeStatusWriter.SetLastOutcome` (Sender), `NodeStatusReader.GetLastOutcomes`
+  (Web); `PromMetrics.NodeLastErrors` не меняется (сырой float, маппинг в usecase);
+  `NodeThroughputRow.LastOutcome`.
+- **52.5 API.** `GET /api/metrics/nodes`: новое поле `last_outcome` (`ok|degraded|down`),
+  `last_error` сохранён (back-compat, = `last_outcome != "ok"`).
+- **52.6 UI.** Новый Variant `degraded` (тон warn — отдельный от Queue), подпись «Degraded» в обеих
+  локалях, сортировка err→degraded→queue→…, опция в фильтре статусов.
+- **52.7 Тесты.** Юнит: классификатор (таблица границ), Redis-кодек (вкл. legacy), gauge, НОВЫЙ тест
+  gRPC-адаптера Sender (реальный usecase + стабы), async-путь, web-usecase (приоритет Redis/
+  fallback Prometheus). Интеграционные: round-trip writer→reader (реальный Redis) + сценарий
+  422→degraded, 500→down, 200→ok через `AsyncProcessor.Handle`.
+- **Вне scope:** `nexus_request_incomplete_total` и счётчики ошибок §44 (ClickHouse `done`) не
+  меняются; DLQ-reprocess по-прежнему не пишет статус узла (существующий пробел); runtime-бейдж в
+  NodeDetail; Telegram-алерты §22.
+
+Подробности — [sections/52-node-degraded-status.md](sections/52-node-degraded-status.md).
