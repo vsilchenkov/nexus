@@ -62,6 +62,7 @@
 | **Динамическая подгрузка тел логов: превью + срез по рунам + скачивание (§42)** | ✅ §42 | порт [log_reader.go](../internal/web/usecase/port/log_reader.go) `GetByIDPreview`/`GetBodyChunk`, адаптер [clickhouse/log_reader.go](../internal/web/adapter/out/clickhouse/log_reader.go) (`previewCols`, `bodyColumn` whitelist), [usecase/logs.go](../internal/web/usecase/logs.go), [logs_handler.go](../internal/web/adapter/in/http/logs_handler.go) (`Get`→preview, `GetBody`, `GetBodyDownload`, `writeLogReadError`), [routes.go](../internal/web/adapter/in/http/routes.go); integration [clickhouse_bodychunk_test.go](../tests/integration/clickhouse_bodychunk_test.go) |
 | **UI логов: превью / «показать весь» (с предупреждением >2 МБ) / «скачать» / «копировать»; `prettyMaybe` без фриза (§42)** | ✅ §42 | [LogsTab.tsx](../web-ui/src/components/node/LogsTab.tsx) (`LogBodyBlock`), [lib/logBody.ts](../web-ui/src/lib/logBody.ts) (+[logBody.test.ts](../web-ui/src/lib/logBody.test.ts)), [types.ts](../web-ui/src/components/node/types.ts) (`request_len`/`response_len`/`LogBodyChunk`), i18n `logs.detail.*` (ru/en) |
 | **Бесконечный скролл списка логов (§42.9)** — `useInfiniteQuery`, курсор по времени (`to`=date_request, дедуп по id), без изменений бэка; авто-рефетч по позиции скролла (`atTop`), отключён в Live | ✅ §42.9 | [LogsTab.tsx](../web-ui/src/components/node/LogsTab.tsx) (`useInfiniteQuery`, `infiniteItems` дедуп, `onScroll` низ-детекция, `atTop`, loading/`no_more` строки), i18n `logs.no_more` (ru/en); бэкенд переиспользует курсор `GET /api/nodes/{id}/logs` (`to`/`limit`) — без правок |
+| **Истинные размеры тел `request_size`/`response_size` (байты, до усечения) + backfill-миграция + колонка «Ответ» в UI (§42.10)** | ✅ §42.10 | схема [ch_log_schema.go](../internal/domain/ch_log_schema.go) (+2 колонки Int64), [log.go](../internal/domain/log.go), заполнение [send.go](../internal/sender/usecase/send.go) (`len()` до `truncateRunes`; TooLarge/resp==nil → 0), INSERT [chlog/writer.go](../internal/sender/adapter/out/chlog/writer.go), миграция [ensure_schema.go](../internal/platform/clickhouse/ensure_schema.go) `EnsureBodySizeColumns`+`BackfillBodySizes` (вызовы в обоих app.go), SELECT/scan [clickhouse/log_reader.go](../internal/web/adapter/out/clickhouse/log_reader.go), DTO [logs_handler.go](../internal/web/adapter/in/http/logs_handler.go) (`request_size`/`response_size`, всегда), UI [LogsTab.tsx](../web-ui/src/components/node/LogsTab.tsx) (колонка «Ответ», скобки в заголовках панелей), [format.ts](../web-ui/src/lib/format.ts) `fmtSize` + i18n `logs.size_units`; integration [clickhouse_bodysize_backfill_test.go](../tests/integration/clickhouse_bodysize_backfill_test.go) |
 | **Транспорт больших тел: gRPC-лимит 4 МиБ → 64 МиБ (server+client), Kafka producer BatchBytes (§42.8)** | ✅ §42.8 | конфиг [config.go](../internal/platform/config/config.go)/[defaults.go](../internal/platform/config/defaults.go) (`grpc_max_message_bytes`, `sender_grpc.max_message_bytes`); сервер [sender/app.go](../internal/sender/app.go) (`MaxRecvMsgSize`/`MaxSendMsgSize`); клиент [grpcsender/client.go](../internal/receiver/adapter/out/grpcsender/client.go) (`MaxCallRecv/SendMsgSize`); Kafka [producer.go](../internal/platform/kafka/producer.go) (`producerBatchBytes`); тесты [client_largemsg_test.go](../internal/receiver/adapter/out/grpcsender/client_largemsg_test.go) (8 МиБ round-trip + негативный `ResourceExhausted`), [producer_batchbytes_test.go](../internal/platform/kafka/producer_batchbytes_test.go) |
 | Исключение служебных значений из проксируемого запроса (§3.5 «Исключение») | ✅ | `buildTokenFromRequest`, `buildBasicFromRequest` |
 | Маскирование `***` в логах и Sentry | ✅ | `maskAuthHeader` (dry-run), [sentry/sentry.go](../internal/platform/sentry/sentry.go) `isSensitive` |
@@ -664,6 +665,22 @@ DLQ) тормозила, «Очистить» был no-op, шапка плох�
   (`node.Path + "/" + orig.Method`). Тесты: `TestResolveNode_PathPassthrough`, `TestAppendPathSuffix`,
   `TestReplay_PathPassthrough_ReconstructsSubpath`, integration `TestReceiver_PathPassthrough_Sync_E2E`
   (см. [sections/39-path-passthrough.md](sections/39-path-passthrough.md)).
+- **§42.10 — истинные размеры тел в логах (`request_size`/`response_size`) + backfill.** Байты
+  ПОЛНОГО тела (`len()` до `truncateRunes`, независимо от `log_request_body`/`log_response_body` —
+  инвариант checksum'а), НЕ путать с `request_len`/`response_len` API (руны сохранённой усечённой
+  копии, `lengthUTF8`). 0 = нет тела / transport-ошибка / TooLarge §43 (тело не в памяти — размер
+  неизвестен). Колонки в КОНЦЕ `RequiredLogColumns` (24 шт.) — ALTER без `AFTER` даёт тот же порядок,
+  что рендер новых таблиц. Миграция на старте Web+Sender: `EnsureBodySizeColumns` (идемпотентный
+  ALTER, образец §37) + `BackfillBodySizes` — разовые мутации `ALTER…UPDATE size = length(col)` для
+  исторических строк (нижняя граница у усечённых записей; guard-`count()` не даёт планировать мутации
+  на каждом старте; мутации асинхронные, завершения не ждём). Kafka retry-конверт (§38) — JSON
+  `LogRecord`: legacy-записи без полей десериализуются в 0 (тест `TestUnmarshal_LegacyEnvelopeWithoutSizes`).
+  DTO отдаёт поля ВСЕГДА (без omitempty — фронт не ветвится на undefined); listCols читает их напрямую
+  (дешёвые Int64, в отличие от тел). UI: колонка «Ответ» (`fmtSize` + локализованные единицы
+  `logs.size_units` «Б|КБ|…»; НЕ fmtBytes — у того en-единицы) — при добавлении колонок в таблицу
+  логов не забыть bump всех `colSpan`; размеры в скобках в заголовках панелей `LogBodies`.
+  Integration: `TestClickHouse_BodySizeBackfill` (старая схема → Ensure+Backfill → повторный запуск
+  без новых мутаций).
 - **Контекстная справка к полям узла (§7.6).** Каждый параметр формы узла — иконка-«вопросик» с
   тултипом «зачем параметр». Переиспользован готовый `LabelHint` (HelpCircle+Tooltip, focus-доступный);
   в обёртку `Field` ([web-ui/src/components/ui/form.tsx](../web-ui/src/components/ui/form.tsx)) добавлен
