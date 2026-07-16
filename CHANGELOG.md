@@ -12,6 +12,25 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Трёхсостоянье runtime-статуса узла: OK / Degraded / Down (§52).** Продолжение инцидента
+  site/push (§50.4): серия 422 от протухших FCM-токенов красила живой узел в «Down». Теперь бейдж
+  узла на Overview различает **Degraded** (жёлтый — узел ответил, но не-2xx и < 500: ошибка
+  данных/клиента, узел жив) и **Down** (красный — транспортная ошибка или 5xx; включая
+  503 breaker-open и 502 oversize). Граница `< 500` = здоровье breaker'а из §50.4. Новая опция
+  «Degraded» в фильтре статусов; сортировка «проблемные первыми»: Down → Degraded → Queue.
+  API `GET /api/metrics/nodes`: новое поле `items[].last_outcome` (`ok|degraded|down`),
+  `last_error` сохранён (back-compat). Счётчики ошибок (§44) и `nexus_request_incomplete_total`
+  не меняются — 4xx остаётся ошибкой доставки.
+
+### Changed
+
+- **Метрика `nexus_node_last_request_error{node}` расширена** (§52): 0=ok, 1=degraded, 2=down
+  (было 0/1). Алерты `>= 1` продолжают ловить любую проблему; «только down» — `>= 2`.
+  Redis-ключ `nexus:node:last_error:<path>` кодируется как `"0"`=ok/`"1"`=down/`"2"`=degraded
+  (legacy `"1"` читается как down; rolling-деплой безопасен, см. DEPLOYMENT.md).
+
 ## [1.11.0] - 2026-07-14
 
 ### Added

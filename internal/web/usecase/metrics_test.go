@@ -97,13 +97,14 @@ func (f *fakeNodeRepo) List(_ context.Context, _ port.ListNodesFilter) ([]*domai
 	return f.list, f.err
 }
 
-// fakeNodeStatus — Redis-источник «Down» (§46, port.NodeStatusReader).
+// fakeNodeStatus — Redis-источник исхода последнего вызова (§46/§52,
+// port.NodeStatusReader).
 type fakeNodeStatus struct {
-	m   map[string]bool
+	m   map[string]domain.NodeOutcome
 	err error
 }
 
-func (f *fakeNodeStatus) GetLastErrors(_ context.Context, _ []string) (map[string]bool, error) {
+func (f *fakeNodeStatus) GetLastOutcomes(_ context.Context, _ []string) (map[string]domain.NodeOutcome, error) {
 	return f.m, f.err
 }
 
@@ -165,8 +166,8 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 			throughput: map[string]port.NodeThroughput{
 				"webhook/send": {In: 4201, Out: 4198, Errors: 2},
 			},
-			// §41: последний вызов узла — ошибка → LastError=true.
-			lastErrs: map[string]float64{"webhook/send": 1},
+			// §41/§52: gauge=2 → последний вызов — down.
+			lastErrs: map[string]float64{"webhook/send": 2},
 		}
 		uc := NewMetricsUsecase(prom, nil, &fakeNodeRepo{}, nil, nil, log)
 		got := uc.NodesOverview(context.Background(), "", time.Now().Add(-time.Hour), time.Now())
@@ -176,7 +177,8 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 		require.EqualValues(t, 4201, got.Items[0].In)
 		require.EqualValues(t, 4198, got.Items[0].Out)
 		require.EqualValues(t, 2, got.Items[0].Errors)
-		require.True(t, got.Items[0].LastError, "§41: последний вызов — ошибка → Down")
+		require.Equal(t, domain.NodeOutcomeDown, got.Items[0].LastOutcome,
+			"§41/§52: gauge=2 → Down")
 		// §44.A: шапка = сумма строк (Prometheus-ветка).
 		require.EqualValues(t, 4201, got.Totals.Incoming)
 		require.EqualValues(t, 4198, got.Totals.Outgoing)
@@ -193,28 +195,36 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 		require.Empty(t, got.Items)
 	})
 
-	// §46: «Down» из двух источников — Redis приоритетнее Prometheus, узлы без
-	// записи в Redis добираются из Prometheus.
-	t.Run("last error: redis priority + prometheus fallback", func(t *testing.T) {
+	// §46/§52: исход из двух источников — Redis приоритетнее Prometheus, узлы
+	// без записи в Redis добираются из Prometheus (0→ok, 1→degraded, 2→down).
+	t.Run("last outcome: redis priority + prometheus fallback", func(t *testing.T) {
 		t.Parallel()
 		prom := &fakeProm{
 			throughput: map[string]port.NodeThroughput{
-				"a/x": {In: 1}, "b/y": {In: 1}, "c/z": {In: 1},
+				"a/x": {In: 1}, "b/y": {In: 1}, "c/z": {In: 1}, "d/w": {In: 1},
 			},
-			// Prometheus говорит «у всех последний вызов ошибочный».
-			lastErrs: map[string]float64{"a/x": 1, "b/y": 1, "c/z": 1},
+			// Prometheus: a/x — down, c/z — degraded, d/w — ok (нет значения).
+			lastErrs: map[string]float64{"a/x": 2, "b/y": 2, "c/z": 1},
 		}
-		// Redis: a/x → ok (перебивает Prometheus=1), b/y → error; c/z отсутствует.
-		rs := &fakeNodeStatus{m: map[string]bool{"a/x": false, "b/y": true}}
+		// Redis: a/x → degraded (перебивает Prometheus down), b/y → down;
+		// c/z и d/w отсутствуют → fallback на Prometheus.
+		rs := &fakeNodeStatus{m: map[string]domain.NodeOutcome{
+			"a/x": domain.NodeOutcomeDegraded,
+			"b/y": domain.NodeOutcomeDown,
+		}}
 		uc := NewMetricsUsecase(prom, nil, &fakeNodeRepo{}, nil, rs, log)
 		got := uc.NodesOverview(context.Background(), "", time.Now().Add(-time.Hour), time.Now())
 		by := map[string]NodeThroughputRow{}
 		for _, it := range got.Items {
 			by[it.Node] = it
 		}
-		require.False(t, by["a/x"].LastError, "Redis ok перебивает Prometheus=1")
-		require.True(t, by["b/y"].LastError, "Redis error")
-		require.True(t, by["c/z"].LastError, "нет в Redis → fallback на Prometheus=1")
+		require.Equal(t, domain.NodeOutcomeDegraded, by["a/x"].LastOutcome,
+			"Redis degraded перебивает Prometheus down")
+		require.Equal(t, domain.NodeOutcomeDown, by["b/y"].LastOutcome, "Redis down")
+		require.Equal(t, domain.NodeOutcomeDegraded, by["c/z"].LastOutcome,
+			"нет в Redis → fallback на Prometheus gauge=1 → degraded")
+		require.Equal(t, domain.NodeOutcomeOK, by["d/w"].LastOutcome,
+			"нет ни в Redis, ни в Prometheus → ok")
 	})
 
 	// §46: ошибка Redis не валит — деградация на Prometheus.
@@ -222,13 +232,14 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 		t.Parallel()
 		prom := &fakeProm{
 			throughput: map[string]port.NodeThroughput{"a/x": {In: 1}},
-			lastErrs:   map[string]float64{"a/x": 1},
+			lastErrs:   map[string]float64{"a/x": 2},
 		}
 		rs := &fakeNodeStatus{err: errors.New("redis down")}
 		uc := NewMetricsUsecase(prom, nil, &fakeNodeRepo{}, nil, rs, log)
 		got := uc.NodesOverview(context.Background(), "", time.Now().Add(-time.Hour), time.Now())
 		require.Len(t, got.Items, 1)
-		require.True(t, got.Items[0].LastError, "ошибка Redis → fallback на Prometheus")
+		require.Equal(t, domain.NodeOutcomeDown, got.Items[0].LastOutcome,
+			"ошибка Redis → fallback на Prometheus")
 	})
 
 	t.Run("clickhouse source matches node detail (per-node KPI)", func(t *testing.T) {

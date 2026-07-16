@@ -3,6 +3,8 @@ package port
 import (
 	"context"
 	"time"
+
+	"nexus/internal/domain"
 )
 
 // NodeKPI — сводные показатели одного узла за окно (§21, вкладки
@@ -99,9 +101,11 @@ type PromMetrics interface {
 	NodeErrors(ctx context.Context, window time.Duration) (map[string]float64, error)
 
 	// NodeLastErrors — per-node исход ПОСЛЕДНЕГО исходящего вызова (instant
-	// gauge nexus_node_last_request_error на момент at): >=1 если последний
-	// вызов завершился ошибкой (status 0/4xx/5xx), иначе 0/отсутствует. Ключ —
-	// path узла. Источник статуса «Down» в Overview (§41), независим от окна.
+	// gauge nexus_node_last_request_error на момент at): 0/отсутствует = ok
+	// (2xx), 1 = degraded (ответил не-2xx <500), 2 = down (транспортная ошибка
+	// или 5xx) — §52; маппинг в usecase через domain.OutcomeFromGaugeValue.
+	// Ключ — path узла. Fallback-источник бейджа узла в Overview (§41),
+	// независим от окна.
 	NodeLastErrors(ctx context.Context, at time.Time) (map[string]float64, error)
 
 	// NodeSeries — спарклайн входящего трафика per-node: range-запрос за период
@@ -138,14 +142,14 @@ type PromMetrics interface {
 }
 
 // NodeStatusReader — персистентный исход последнего исходящего вызова узла из
-// Redis (§46). В отличие от Prometheus-гауджа nexus_node_last_request_error
+// Redis (§46, §52). В отличие от Prometheus-гауджа nexus_node_last_request_error
 // (in-memory, теряется при рестарте Sender'а), Redis-ключ переживает рестарт →
-// статус «Down» на дашборде корректен после деплоя. Источник истины для бейджа
-// «Down»; Prometheus остаётся fallback'ом. Реализуется adapter/out/redis.
-// Может быть nil (нет Redis) → applyLastErrors деградирует на Prometheus.
+// runtime-бейдж узла на дашборде корректен после деплоя. Источник истины для
+// бейджа; Prometheus остаётся fallback'ом. Реализуется adapter/out/redis.
+// Может быть nil (нет Redis) → applyLastOutcomes деградирует на Prometheus.
 type NodeStatusReader interface {
-	// GetLastErrors возвращает исход последнего вызова для указанных путей узлов:
-	// map[path]bool (true = последний вызов ошибочный). Узлы без записи в Redis в
-	// карту НЕ попадают (вызывающий добивает их из Prometheus).
-	GetLastErrors(ctx context.Context, nodePaths []string) (map[string]bool, error)
+	// GetLastOutcomes возвращает исход последнего вызова (ok/degraded/down) для
+	// указанных путей узлов. Узлы без записи в Redis либо с нераспознанным
+	// значением в карту НЕ попадают (вызывающий добивает их из Prometheus).
+	GetLastOutcomes(ctx context.Context, nodePaths []string) (map[string]domain.NodeOutcome, error)
 }
