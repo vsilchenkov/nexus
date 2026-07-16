@@ -43,6 +43,9 @@ const (
 	ActionNodeReplay = "node.replay"
 	ActionNodeDryRun = "node.dry_run"
 	ActionNodeMove   = "node.move"
+	// §53: клонирование узла (отдельное от node.create действие — в журнале
+	// видна провенансная связь source_node_id → новый узел).
+	ActionNodeCopy = "node.copy"
 
 	// §34.4: очистка/удаление сообщений async-очереди Kafka.
 	ActionAsyncQueuePurge = "async_queue.purge"

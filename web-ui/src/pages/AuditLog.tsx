@@ -68,6 +68,7 @@ export default function AuditLog() {
           <option value="node.delete">node.delete</option>
           <option value="node.replay">node.replay</option>
           <option value="node.dry_run">node.dry_run</option>
+          <option value="node.copy">node.copy</option>
           <option value="user.login.success">user.login.success</option>
           <option value="user.login.failed">user.login.failed</option>
           <option value="api_token.create">api_token.create</option>

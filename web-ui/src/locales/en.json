@@ -280,10 +280,17 @@
     },
     "actions": {
       "edit": "Edit",
+      "copy": "Copy",
       "delete": "Delete",
       "dry_run": "Dry-run",
       "replay": "Replay",
       "refresh": "Refresh"
+    },
+    "copy": {
+      "title": "Copy node",
+      "new_path": "New path",
+      "hint": "Settings and credentials are cloned; the copy is created paused",
+      "submit": "Create copy"
     },
     "not_found": "Node not found",
     "validation": {

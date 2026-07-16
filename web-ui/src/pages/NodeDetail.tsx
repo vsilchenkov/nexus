@@ -1,13 +1,15 @@
-import { useParams, Link, useSearchParams } from "react-router-dom";
-import { useQuery, useQueryClient, useIsFetching } from "@tanstack/react-query";
+import { useParams, Link, useSearchParams, useNavigate } from "react-router-dom";
+import { useMutation, useQuery, useQueryClient, useIsFetching } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Pencil, RefreshCw } from "lucide-react";
+import { Copy as CopyIcon, Pencil, RefreshCw } from "lucide-react";
 import { useState } from "react";
 
 import { api, type Node } from "../api/client";
-import { Button, Chip, Pill, type LogsRange } from "../components/ui";
+import { Button, Chip, Field, Input, Pill, type LogsRange } from "../components/ui";
+import { Modal } from "../components/ui/Modal";
 import { cn } from "../lib/cn";
 import { msToDatetimeLocal } from "../lib/format";
+import { validateNodePath } from "../lib/nodeValidation";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { LogsTab, type LogsInitialFilter } from "../components/node/LogsTab";
 import { OverviewTab } from "../components/node/OverviewTab";
@@ -38,6 +40,8 @@ export default function NodeDetail() {
   );
   // §26/§28 Пункт 3: редактирование узла — только manager+ (viewer не видит креды).
   const canEdit = useRoleAtLeast("manager");
+  // §53: диалог «Скопировать узел» (manager+, как создание).
+  const [copyOpen, setCopyOpen] = useState(false);
   // Ручное обновление: инвалидируем все активные запросы → перезагружаются данные
   // текущей вкладки и шапки узла. fetching>0 — крутим иконку.
   const qc = useQueryClient();
@@ -93,14 +97,21 @@ export default function NodeDetail() {
             {t("node.actions.refresh")}
           </Button>
           {canEdit && (
-            <Link to={`/nodes/${node.id}/edit`}>
-              <Button sm variant="primary">
-                <Pencil className="h-3.5 w-3.5" /> {t("node.actions.edit")}
+            <>
+              <Button sm variant="ghost" onClick={() => setCopyOpen(true)}>
+                <CopyIcon className="h-3.5 w-3.5" /> {t("node.actions.copy")}
               </Button>
-            </Link>
+              <Link to={`/nodes/${node.id}/edit`}>
+                <Button sm variant="primary">
+                  <Pencil className="h-3.5 w-3.5" /> {t("node.actions.edit")}
+                </Button>
+              </Link>
+            </>
           )}
         </div>
       </div>
+
+      {copyOpen && <CopyNodeDialog node={node} onClose={() => setCopyOpen(false)} />}
 
       {isPull && rmq && (
         <div
@@ -169,6 +180,67 @@ export default function NodeDetail() {
         />
       )}
     </div>
+  );
+}
+
+// CopyNodeDialog — диалог «Скопировать узел» (§53, по образцу MoveNodeDialog):
+// вводится только новый path, копию создаёт бэкенд (POST /api/nodes/:id/copy —
+// все настройки включая креды, статус всегда paused), затем переход на страницу
+// копии.
+function CopyNodeDialog({ node, onClose }: { node: Node; onClose: () => void }) {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const [path, setPath] = useState(`${node.path}-copy`);
+  const [error, setError] = useState<string | null>(null);
+
+  const pathCode = validateNodePath(path);
+
+  const copy = useMutation({
+    mutationFn: () => api.post<Node>(`/api/nodes/${node.id}/copy`, { path }),
+    onSuccess: (created) => {
+      qc.invalidateQueries({ queryKey: ["nodes"] });
+      onClose();
+      navigate(`/nodes/${created.id}`);
+    },
+    onError: (err: { response?: { data?: { error?: string } } }) => {
+      setError(err?.response?.data?.error ?? t("common.error"));
+    },
+  });
+
+  return (
+    <Modal
+      title={t("node.copy.title")}
+      subtitle={node.path}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            {t("common.cancel")}
+          </Button>
+          <Button
+            variant="primary"
+            disabled={!!pathCode || copy.isPending}
+            onClick={() => copy.mutate()}
+          >
+            {t("node.copy.submit")}
+          </Button>
+        </>
+      }
+    >
+      {error && (
+        <div className="mb-3 rounded-md bg-err/10 px-3 py-2 text-sm text-err">{error}</div>
+      )}
+      <Field label={t("node.copy.new_path")} hint={t("node.copy.hint")}>
+        <Input
+          value={path}
+          onChange={(e) => setPath(e.target.value)}
+          className="font-mono"
+          autoFocus
+        />
+      </Field>
+      {pathCode && <div className="mt-1 text-xs text-err">{t(pathCode)}</div>}
+    </Modal>
   );
 }
 

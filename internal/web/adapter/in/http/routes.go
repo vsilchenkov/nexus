@@ -171,6 +171,8 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		authedManager.PUT("/nodes/:id", h.Node.Update)
 		// §35: лёгкая смена статуса (пауза/отключение) — manager+.
 		authedManager.PATCH("/nodes/:id/status", h.Node.UpdateStatus)
+		// §53: клонирование узла (включая креды) с новым path, копия — paused.
+		authedManager.POST("/nodes/:id/copy", h.Node.Copy)
 		authedManager.DELETE("/nodes/:id", h.Node.Delete)
 		// §7.5.1: dry-run без сохранения конфига.
 		authedManager.POST("/nodes/dry-run", h.DryRun.Run)

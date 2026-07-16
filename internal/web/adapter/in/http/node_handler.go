@@ -283,6 +283,39 @@ func (h *NodeHandler) Move(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// CopyNodeRequest — тело POST /api/nodes/{id}/copy (§53).
+type CopyNodeRequest struct {
+	Path string `json:"path" binding:"required,max=255"`
+}
+
+// Copy godoc
+// @Summary  Скопировать узел (§53).
+// @Description  Manager+. Создаёт клон узла с новым path в той же команде: копируются все настройки, включая креды (перешифровка только внутри бэкенда, в ответе значения не возвращаются) и привязки allowlist-хостов. Копия всегда создаётся в статусе paused.
+// @Tags     nodes
+// @Accept   json
+// @Produce  json
+// @Param    id    path  string           true  "source node id"
+// @Param    body  body  CopyNodeRequest  true  "new path"
+// @Success  201   {object}  NodeResponse
+// @Failure  400   {object}  ErrorResponse  "invalid path / limit reached"
+// @Failure  404   {object}  ErrorResponse  "node not found"
+// @Failure  409   {object}  ErrorResponse  "path already exists"
+// @Security CookieAuth
+// @Router   /api/nodes/{id}/copy [post]
+func (h *NodeHandler) Copy(c *gin.Context) {
+	var req CopyNodeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	n, err := h.uc.Copy(c.Request.Context(), actorFromCtx(c), c.Param("id"), req.Path, currentTeamID(c))
+	if err != nil {
+		h.replyDomainError(c, err, "node.copy")
+		return
+	}
+	c.JSON(http.StatusCreated, nodeToResponse(n))
+}
+
 func (h *NodeHandler) replyDomainError(c *gin.Context, err error, op string) {
 	switch {
 	case errors.Is(err, domain.ErrNodeNotFound),
