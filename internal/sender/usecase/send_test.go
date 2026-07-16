@@ -547,6 +547,72 @@ func TestSend_ResponseTooLarge_Rejects502(t *testing.T) {
 	assert.Empty(t, rec.ChecksumResponse, "checksum нет (тело не прочитано)")
 }
 
+// §42-доп: истинные размеры тел — в БАЙТАХ по полному телу (до усечения
+// лог-копии и независимо от LogRequestBody/LogResponseBody); при транспортной
+// ошибке и TooLarge размер ответа остаётся 0.
+func TestSend_BodySizes(t *testing.T) {
+	t.Parallel()
+
+	t.Run("полные байты при усечении и выключенном логировании тел", func(t *testing.T) {
+		t.Parallel()
+		reqBody := []byte(strings.Repeat("я", 100))  // 100 рун = 200 байт
+		respBody := []byte(strings.Repeat("😀", 100)) // 100 рун = 400 байт
+		httpc := &stubHTTPCaller{
+			responses: []*port.HTTPResponse{{StatusCode: 200, Body: respBody}},
+		}
+		logw := &stubLogWriter{}
+		uc := NewSendUsecase(httpc, logw, &stubBreaker{allow: true}, logging.NewNoop(), 64<<20)
+
+		in := baseInput()
+		in.Body = reqBody
+		in.LogRequestBody = true
+		in.LogResponseBody = false // тело ответа в лог не пишем — размер всё равно есть
+		in.MaxBodySizeEnabled = true
+		in.MaxBodySize = 10
+
+		uc.Send(context.Background(), in)
+
+		require.Len(t, logw.written, 1)
+		rec := logw.written[0].rec
+		assert.EqualValues(t, len(reqBody), rec.RequestSize, "байты полного запроса, не руны и не усечённая копия")
+		assert.EqualValues(t, len(respBody), rec.ResponseSize, "байты полного ответа при LogResponseBody=false")
+		assert.Equal(t, strings.Repeat("я", 10)+truncationMarker, rec.Request, "копия усечена, размер — нет")
+		assert.Empty(t, rec.Response)
+	})
+
+	t.Run("транспортная ошибка — ResponseSize 0", func(t *testing.T) {
+		t.Parallel()
+		httpc := &stubHTTPCaller{errs: []error{errors.New("dial tcp: refused")}}
+		logw := &stubLogWriter{}
+		uc := NewSendUsecase(httpc, logw, &stubBreaker{allow: true}, logging.NewNoop(), 64<<20)
+
+		in := baseInput()
+		uc.Send(context.Background(), in)
+
+		require.Len(t, logw.written, 1)
+		rec := logw.written[0].rec
+		assert.EqualValues(t, len(in.Body), rec.RequestSize, "размер запроса известен и при ошибке")
+		assert.Zero(t, rec.ResponseSize)
+	})
+
+	t.Run("TooLarge — ResponseSize 0 (тело не дочитано)", func(t *testing.T) {
+		t.Parallel()
+		httpc := &stubHTTPCaller{
+			responses: []*port.HTTPResponse{{StatusCode: 200, TooLarge: true}},
+		}
+		logw := &stubLogWriter{}
+		uc := NewSendUsecase(httpc, logw, &stubBreaker{allow: true}, logging.NewNoop(), 50_000)
+
+		in := baseInput()
+		uc.Send(context.Background(), in)
+
+		require.Len(t, logw.written, 1)
+		rec := logw.written[0].rec
+		assert.EqualValues(t, len(in.Body), rec.RequestSize)
+		assert.Zero(t, rec.ResponseSize, "истинный размер неизвестен — остаётся 0")
+	})
+}
+
 // §22.2: под лимитом — обычное поведение (200, полное тело клиенту и в лог).
 func TestSend_MaxBodySize_UnderLimit_PassesThrough(t *testing.T) {
 	t.Parallel()

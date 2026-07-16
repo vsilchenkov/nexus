@@ -116,11 +116,14 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		Method:          in.RequestPath,
 		Parameters:      extractQuery(in.TargetURL),
 		ChecksumRequest: md5hex(in.Body),
-		DateCreate:      t0,
-		DateRequest:     t0,
-		Host:            u.host,
-		IP:              in.ClientIP,
-		NodeID:          in.NodeID,
+		// §42-доп: истинный размер тела в байтах — как checksum, по ПОЛНОМУ
+		// телу до truncateRunes ниже и независимо от LogRequestBody.
+		RequestSize: int64(len(in.Body)),
+		DateCreate:  t0,
+		DateRequest: t0,
+		Host:        u.host,
+		IP:          in.ClientIP,
+		NodeID:      in.NodeID,
 	}
 	// §22.2: сохраняемая в лог копия тела запроса режется по per-node max_body_size
 	// (в рунах) — checksum считается по ПОЛНОМУ телу (выше). На сам запрос к
@@ -237,6 +240,7 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		// §43-rev: тело ответа превысило ТРАНСПОРТНЫЙ лимит (config
 		// grpc_max_message_bytes) — httpclient оборвал чтение, тело не в памяти.
 		// Клиенту 502, лог done=0 + reason; тела и checksum нет (не дочитано).
+		// §42-доп: ResponseSize остаётся 0 — истинный размер неизвестен.
 		out.StatusCode = 502
 		out.Error = fmt.Sprintf("response body exceeds transport limit: > %d bytes", u.maxResponseBytes)
 		rec.Status = 502
@@ -249,6 +253,9 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		rec.Status = resp.StatusCode
 		rec.Done = resp.StatusCode >= 200 && resp.StatusCode < 300
 		rec.ChecksumResponse = md5hex(resp.Body)
+		// §42-доп: истинный размер тела ответа в байтах — по полному телу до
+		// truncateRunes ниже и независимо от LogResponseBody.
+		rec.ResponseSize = int64(len(resp.Body))
 		// §22.2: лог-копия ответа режется по per-node max_body_size; checksum по
 		// полному телу. Клиент получает полный resp.Body (выше).
 		if in.LogResponseBody {
