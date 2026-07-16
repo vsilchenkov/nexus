@@ -2579,6 +2579,70 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/nodes/{id}/copy": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Manager+. Создаёт клон узла с новым path в той же команде: копируются все настройки, включая креды (перешифровка только внутри бэкенда, в ответе значения не возвращаются) и привязки allowlist-хостов. Копия всегда создаётся в статусе paused.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "nodes"
+                ],
+                "summary": "Скопировать узел (§53).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "source node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "new path",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.CopyNodeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.NodeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid path / limit reached",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "node not found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "path already exists",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/{id}/log/{logId}": {
             "get": {
                 "security": [
@@ -4498,6 +4562,18 @@ const docTemplate = `{
                 },
                 "ok": {
                     "type": "boolean"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.CopyNodeRequest": {
+            "type": "object",
+            "required": [
+                "path"
+            ],
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "maxLength": 255
                 }
             }
         },

@@ -186,7 +186,12 @@ func (u *NodeUsecase) List(ctx context.Context, f port.ListNodesFilter) ([]*doma
 	return u.repo.List(ctx, f)
 }
 
-func (u *NodeUsecase) Create(ctx context.Context, actor Actor, n *domain.Node) error {
+// prepareNewNode — общий пайплайн подготовки узла перед вставкой как нового
+// (Create и Copy, §53): дефолты, сброс снимка allowlist, нормализация под
+// RootMethod и CH-таблицу, валидация, self-reference, hard-limit и
+// провижининг CH-таблицы. Мутирует n; возвращает имена молча сброшенных
+// несовместимых полей (для audit, §27.6).
+func (u *NodeUsecase) prepareNewNode(ctx context.Context, n *domain.Node) ([]string, error) {
 	n.SetDefaults()
 	// §23: allowlist хостов — производный снимок каталога (node_allowed_hosts).
 	// Новый узел создаётся с пустым allowlist; паттерны привязываются отдельно
@@ -199,14 +204,14 @@ func (u *NodeUsecase) Create(ctx context.Context, actor Actor, n *domain.Node) e
 	// url_mode=from_request, динамическая исходящая авторизация).
 	cleared := n.NormalizeForRootMethod()
 	if err := u.normalizeCHTable(ctx, n); err != nil {
-		return err
+		return nil, err
 	}
 	if err := n.Validate(); err != nil {
-		return err
+		return nil, err
 	}
 	// §32.2: target_url не должен указывать на собственный ingress шины.
 	if err := u.checkSelfReference(n); err != nil {
-		return err
+		return nil, err
 	}
 
 	// §3.3 ТЗ: hard-limit nodes_hard_limit. Считаем вне транзакции —
@@ -214,15 +219,23 @@ func (u *NodeUsecase) Create(ctx context.Context, actor Actor, n *domain.Node) e
 	// гарантируется уникальным path в БД.
 	count, err := u.repo.Count(ctx, n.TeamID)
 	if err != nil {
-		return fmt.Errorf("count nodes for limit check: %w", err)
+		return nil, fmt.Errorf("count nodes for limit check: %w", err)
 	}
 	if u.nodesHardLimit > 0 && count >= u.nodesHardLimit {
-		return domain.ErrLimitReached
+		return nil, domain.ErrLimitReached
 	}
 
 	// §19.5: создаём CH-таблицу из шаблона ДО PG-commit. CREATE TABLE
 	// идемпотентен (IF NOT EXISTS); при падении узел не создаётся.
 	if err := u.provisionTable(ctx, n); err != nil {
+		return nil, err
+	}
+	return cleared, nil
+}
+
+func (u *NodeUsecase) Create(ctx context.Context, actor Actor, n *domain.Node) error {
+	cleared, err := u.prepareNewNode(ctx, n)
+	if err != nil {
 		return err
 	}
 

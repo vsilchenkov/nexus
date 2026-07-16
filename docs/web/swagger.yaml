@@ -9,6 +9,14 @@ definitions:
       ok:
         type: boolean
     type: object
+  internal_web_adapter_in_http.CopyNodeRequest:
+    properties:
+      path:
+        maxLength: 255
+        type: string
+    required:
+    - path
+    type: object
   internal_web_adapter_in_http.CreateNodeRequest:
     properties:
       auth_credentials:
@@ -3646,6 +3654,50 @@ paths:
       summary: Повторить все неудачные доставки узла сейчас (§36.11).
       tags:
       - async-queue
+  /api/nodes/{id}/copy:
+    post:
+      consumes:
+      - application/json
+      description: 'Manager+. Создаёт клон узла с новым path в той же команде: копируются
+        все настройки, включая креды (перешифровка только внутри бэкенда, в ответе
+        значения не возвращаются) и привязки allowlist-хостов. Копия всегда создаётся
+        в статусе paused.'
+      parameters:
+      - description: source node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: new path
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.CopyNodeRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.NodeResponse'
+        "400":
+          description: invalid path / limit reached
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "404":
+          description: node not found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "409":
+          description: path already exists
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Скопировать узел (§53).
+      tags:
+      - nodes
   /api/nodes/{id}/log/{logId}:
     get:
       description: Тела грузятся лениво по клику на строку — списки (List/Stream)

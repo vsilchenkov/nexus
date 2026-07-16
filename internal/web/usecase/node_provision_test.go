@@ -36,6 +36,12 @@ func (r *memNodeRepo) List(_ context.Context, _ port.ListNodesFilter) ([]*domain
 }
 func (r *memNodeRepo) Count(_ context.Context, _ string) (int, error) { return len(r.items), nil }
 func (r *memNodeRepo) Create(_ context.Context, n *domain.Node) error {
+	// Как UNIQUE(team_id, path) в БД (§18) — нужен тестам Copy на конфликт пути.
+	for _, x := range r.items {
+		if x.TeamID == n.TeamID && x.Path == n.Path {
+			return domain.ErrNodeAlreadyExists
+		}
+	}
 	r.seq++
 	n.ID = string(rune('a'+r.seq)) + "-node"
 	cp := *n
