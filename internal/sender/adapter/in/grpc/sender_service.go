@@ -57,21 +57,23 @@ func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 		MaxBodySize:        req.GetMaxBodySize(),
 	})
 
-	isErr := out.StatusCode < 200 || out.StatusCode >= 300
+	// §52: outcome (ok/degraded/down) — для бейджа узла; isErr («любой
+	// не-2xx») — прежняя семантика incomplete_total.
+	outcome := domain.OutcomeFromStatusCode(out.StatusCode)
 	if s.metrics != nil {
 		s.metrics.RequestsTotal.
 			WithLabelValues("request", req.GetNodePath(), strconv.FormatInt(int64(out.StatusCode), 10)).Inc()
 		s.metrics.RequestDuration.
 			WithLabelValues("request", req.GetNodePath()).Observe(float64(out.DurationMs) / 1000.0)
-		if isErr {
+		if outcome.IsError() {
 			s.metrics.RequestsIncompleteTotal.WithLabelValues("request", req.GetNodePath()).Inc()
 		}
-		// §41 («Down»): исход последнего вызова узла (in-memory гаудж).
-		s.metrics.SetNodeLastRequestError(req.GetNodePath(), isErr)
+		// §41/§52: исход последнего вызова узла (in-memory гаудж).
+		s.metrics.SetNodeLastRequestOutcome(req.GetNodePath(), outcome)
 	}
 	// §46: персистентный исход в Redis (переживает рестарт; Noop без Redis).
 	if s.nodeStatus != nil {
-		s.nodeStatus.SetLastError(ctx, req.GetNodePath(), isErr)
+		s.nodeStatus.SetLastOutcome(ctx, req.GetNodePath(), outcome)
 	}
 
 	return &senderv1.SendResponse{

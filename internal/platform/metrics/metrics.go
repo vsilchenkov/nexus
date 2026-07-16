@@ -28,6 +28,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"nexus/internal/domain"
 )
 
 // Metrics — контейнер всех Prometheus-метрик одного сервиса.
@@ -106,7 +108,7 @@ func New(service string) *Metrics {
 		// §41 («Down»): см. комментарий у поля NodeLastRequestError.
 		NodeLastRequestError: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name:        "nexus_node_last_request_error",
-			Help:        "Last Sender outbound call outcome per node: 1 if the most recent call errored (status 0/4xx/5xx), 0 if 2xx. Drives Overview 'Down' (§41).",
+			Help:        "Last Sender outbound call outcome per node: 0 ok (2xx), 1 degraded (responded non-2xx <500), 2 down (transport error or 5xx). Drives Overview badge (§41, §52).",
 			ConstLabels: constLabels,
 		}, []string{"node"}),
 
@@ -321,15 +323,12 @@ func (m *Metrics) SetL2Size(n int) { m.L2CacheSize.Set(float64(n)) }
 // зацикливания (§32). mode — "sync" либо "async".
 func (m *Metrics) IncLoopDetected(mode string) { m.LoopDetectedTotal.WithLabelValues(mode).Inc() }
 
-// SetNodeLastRequestError фиксирует исход последнего исходящего вызова узла
-// (§41, «Down»): isError=true → 1 (ошибка/недоступность, status 0/4xx/5xx),
-// false → 0 (успех, 2xx). Управляет статусом «Down» в Overview.
-func (m *Metrics) SetNodeLastRequestError(node string, isError bool) {
-	v := 0.0
-	if isError {
-		v = 1
-	}
-	m.NodeLastRequestError.WithLabelValues(node).Set(v)
+// SetNodeLastRequestOutcome фиксирует исход последнего исходящего вызова узла
+// (§41/§52): 0=ok (2xx), 1=degraded (ответил не-2xx <500), 2=down (транспортная
+// ошибка или 5xx). Порядок значений важен: PromQL `max by (node)` между
+// репликами Sender выбирает худшее состояние. Управляет бейджем узла в Overview.
+func (m *Metrics) SetNodeLastRequestOutcome(node string, outcome domain.NodeOutcome) {
+	m.NodeLastRequestError.WithLabelValues(node).Set(outcome.GaugeValue())
 }
 
 // Registry возвращает собственный prometheus.Registry — для тестов или

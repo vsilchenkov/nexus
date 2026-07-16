@@ -295,7 +295,7 @@ func TestAsync_Enabled_5xx_DLQ(t *testing.T) {
 	assert.NotEmpty(t, msg.headers["last_attempt_at"])
 }
 
-// stubNodeStatus фиксирует вызовы NodeStatusWriter (§46). Handle синхронен —
+// stubNodeStatus фиксирует вызовы NodeStatusWriter (§46/§52). Handle синхронен —
 // запись происходит на вызывающей горутине, мьютекс не нужен.
 type stubNodeStatus struct {
 	calls []nodeStatusRec
@@ -303,24 +303,31 @@ type stubNodeStatus struct {
 
 type nodeStatusRec struct {
 	path    string
-	errored bool
+	outcome domain.NodeOutcome
 }
 
-func (s *stubNodeStatus) SetLastError(_ context.Context, path string, errored bool) {
-	s.calls = append(s.calls, nodeStatusRec{path: path, errored: errored})
+func (s *stubNodeStatus) SetLastOutcome(_ context.Context, path string, outcome domain.NodeOutcome) {
+	s.calls = append(s.calls, nodeStatusRec{path: path, outcome: outcome})
 }
 
-// TestAsync_WritesNodeStatus (§46): async-обработка пишет исход последнего вызова
-// в NodeStatusWriter — errored=false на 2xx, true на не-2xx (как in-memory гаудж).
+// TestAsync_WritesNodeStatus (§46/§52): async-обработка пишет исход последнего
+// вызова в NodeStatusWriter — ok на 2xx, degraded на 3xx/4xx (узел жив, §50.4),
+// down на 5xx и транспортной ошибке. Решение ack/DLQ от §52 не зависит:
+// любой не-2xx по-прежнему уходит в DLQ.
 func TestAsync_WritesNodeStatus(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name        string
 		status      int32
-		wantErrored bool
+		callErr     error
+		wantOutcome domain.NodeOutcome
+		wantDLQ     bool
 	}{
-		{"2xx → ok (false)", 200, false},
-		{"5xx → error (true)", 502, true},
+		{"2xx → ok", 200, nil, domain.NodeOutcomeOK, false},
+		{"3xx → degraded", 302, nil, domain.NodeOutcomeDegraded, true},
+		{"4xx (422, §50.4) → degraded", 422, nil, domain.NodeOutcomeDegraded, true},
+		{"5xx → down", 502, nil, domain.NodeOutcomeDown, true},
+		{"транспортная ошибка → down", 0, assertSomeError(), domain.NodeOutcomeDown, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -333,16 +340,27 @@ func TestAsync_WritesNodeStatus(t *testing.T) {
 				ClickHouseTable: "nexus.log_partner_echo",
 			}
 			ns := &stubNodeStatus{}
-			httpc := &stubHTTPCaller{responses: []*port.HTTPResponse{{StatusCode: tc.status, Body: []byte("x")}}}
+			httpc := &stubHTTPCaller{}
+			if tc.callErr != nil {
+				httpc.errs = []error{tc.callErr}
+			} else {
+				httpc.responses = []*port.HTTPResponse{{StatusCode: tc.status, Body: []byte("x")}}
+			}
+			dlq := &stubDLQProducer{}
 			send := NewSendUsecase(httpc, &stubLogWriter{}, nil, logging.NewNoop(), 64<<20)
-			p := NewAsyncProcessor(&stubAsyncNodeReader{node: node}, send, &stubDLQProducer{},
+			p := NewAsyncProcessor(&stubAsyncNodeReader{node: node}, send, dlq,
 				nil, ns, "nexus.async.dlq", nil, logging.NewNoop())
 
 			p.Handle(context.Background(), makeEnvelope(t, "partner/echo"), nil)
 
-			require.Len(t, ns.calls, 1, "§46: SetLastError вызывается ровно раз на сообщение")
+			require.Len(t, ns.calls, 1, "§46: SetLastOutcome вызывается ровно раз на сообщение")
 			assert.Equal(t, "partner/echo", ns.calls[0].path)
-			assert.Equal(t, tc.wantErrored, ns.calls[0].errored)
+			assert.Equal(t, tc.wantOutcome, ns.calls[0].outcome)
+			if tc.wantDLQ {
+				assert.Len(t, dlq.produced, 1, "не-2xx уходит в DLQ — §52 это не меняет")
+			} else {
+				assert.Empty(t, dlq.produced, "успешная доставка не пишет в DLQ")
+			}
 		})
 	}
 }
