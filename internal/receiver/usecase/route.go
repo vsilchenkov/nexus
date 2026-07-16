@@ -227,8 +227,8 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 func redactURLString(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil {
-		if i := strings.IndexByte(raw, '?'); i >= 0 {
-			return raw[:i]
+		if before, _, ok := strings.Cut(raw, "?"); ok {
+			return before
 		}
 		return raw
 	}
