@@ -481,9 +481,18 @@ definitions:
           ПРЕВЬЮ (первые bodyPreviewRunes рун); если *_len > длины превью, на фронте
           показывается «показать весь / скачать». В списках (List/Stream) не заданы.
         type: integer
+      request_size:
+        description: |-
+          §42-доп: истинные размеры тел в БАЙТАХ до усечения лог-копии — в отличие
+          от request_len/response_len (руны сохранённой, возможно усечённой копии).
+          Возвращаются всегда (и в list, и в detail); 0 — нет тела / транспортная
+          ошибка / TooLarge (§43) / legacy-строка до backfill-миграции.
+        type: integer
       response:
         type: string
       response_len:
+        type: integer
+      response_size:
         type: integer
       status:
         type: integer

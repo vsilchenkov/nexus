@@ -5167,10 +5167,17 @@
                     "description": "§42: полные длины тел в рунах. В Get поля request/response несут только\nПРЕВЬЮ (первые bodyPreviewRunes рун); если *_len \u003e длины превью, на фронте\nпоказывается «показать весь / скачать». В списках (List/Stream) не заданы.",
                     "type": "integer"
                 },
+                "request_size": {
+                    "description": "§42-доп: истинные размеры тел в БАЙТАХ до усечения лог-копии — в отличие\nот request_len/response_len (руны сохранённой, возможно усечённой копии).\nВозвращаются всегда (и в list, и в detail); 0 — нет тела / транспортная\nошибка / TooLarge (§43) / legacy-строка до backfill-миграции.",
+                    "type": "integer"
+                },
                 "response": {
                     "type": "string"
                 },
                 "response_len": {
+                    "type": "integer"
+                },
+                "response_size": {
                     "type": "integer"
                 },
                 "status": {
