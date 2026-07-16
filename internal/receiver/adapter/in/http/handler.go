@@ -365,6 +365,16 @@ func (h *Handler) replyDomainError(c *gin.Context, err error, nodePath, op strin
 	if internal {
 		h.logger.ErrorWithOp("receiver routing failed", err, op,
 			h.logger.Str("node", nodePath))
+	} else {
+		// §51.9: 4xx раньше уходили молча — «почему клиенту 404/401?» было
+		// невосстановимо. Debug, чтобы не шуметь на проде на каждый скан.
+		h.logger.Debug("receiver request rejected",
+			h.logger.Int("status", status),
+			h.logger.Str("node", nodePath),
+			h.logger.Str("op", op),
+			h.logger.Str("method", c.Request.Method),
+			h.logger.Str("client_ip", c.ClientIP()),
+			h.logger.Err(err))
 	}
 	if errors.Is(err, domain.ErrLoopDetected) {
 		h.onLoopDetected(c, "sync", nodePath)
@@ -393,6 +403,15 @@ func (h *Handler) replyAsyncError(c *gin.Context, err error, nodePath, op string
 	if internal {
 		h.logger.ErrorWithOp("receiver async routing failed", err, op,
 			h.logger.Str("node", nodePath))
+	} else {
+		// §51.9: см. replyDomainError — отказы клиенту видны на debug.
+		h.logger.Debug("receiver async request rejected",
+			h.logger.Int("status", status),
+			h.logger.Str("node", nodePath),
+			h.logger.Str("op", op),
+			h.logger.Str("method", c.Request.Method),
+			h.logger.Str("client_ip", c.ClientIP()),
+			h.logger.Err(err))
 	}
 	if errors.Is(err, domain.ErrLoopDetected) {
 		h.onLoopDetected(c, "async", nodePath)

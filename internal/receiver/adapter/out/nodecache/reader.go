@@ -61,12 +61,24 @@ func (r *Reader) Get(ctx context.Context, teamSlug, path string) (*domain.Node, 
 		r.logger.Warn("redis read failed, falling back to postgres",
 			r.logger.Str("team", teamSlug),
 			r.logger.Str("path", path), r.logger.Err(err))
+	} else {
+		// §51.9: miss/decrypt-fail раньше молча превращались в поход в PG —
+		// главное слепое пятно кеша (в т.ч. «старый формат после ротации ключа»).
+		r.logger.Debug("node cache: redis miss, reading postgres",
+			r.logger.Str("team", teamSlug),
+			r.logger.Str("path", path),
+			r.logger.Err(err))
 	}
 
+	pgStart := time.Now()
 	n, err := r.getFromPg(ctx, teamSlug, path)
 	if err != nil {
 		return nil, err
 	}
+	r.logger.Debug("node cache: loaded from postgres",
+		r.logger.Str("team", teamSlug),
+		r.logger.Str("path", path),
+		r.logger.Int("duration_ms", int(time.Since(pgStart).Milliseconds())))
 	// Best-effort write-back: ошибка не блокирует обработку запроса.
 	// Дедуп по ключу: пока один write-back в полёте, повторные cache-miss'ы
 	// того же узла не плодят горутины (§30.2: recover обязателен).
@@ -114,16 +126,27 @@ func (r *Reader) setToRedis(ctx context.Context, teamSlug string, n *domain.Node
 	cp := *n
 	var err error
 	if cp.AuthCredentials, err = r.cipher.Encrypt(cp.AuthCredentials); err != nil {
+		r.logger.Debug("node cache: write-back skipped (encrypt auth)",
+			r.logger.Str("team", teamSlug), r.logger.Str("path", cp.Path), r.logger.Err(err))
 		return
 	}
 	if cp.IncomingAuthCredentials, err = r.cipher.Encrypt(cp.IncomingAuthCredentials); err != nil {
+		r.logger.Debug("node cache: write-back skipped (encrypt incoming)",
+			r.logger.Str("team", teamSlug), r.logger.Str("path", cp.Path), r.logger.Err(err))
 		return
 	}
 	data, err := json.Marshal(&cp)
 	if err != nil {
+		r.logger.Debug("node cache: write-back skipped (marshal)",
+			r.logger.Str("team", teamSlug), r.logger.Str("path", cp.Path), r.logger.Err(err))
 		return
 	}
-	_ = r.redis.Set(ctx, nodeKey(teamSlug, cp.Path), data, r.ttl).Err()
+	// §51.9: ошибки write-back раньше проглатывались полностью — «узел вечно
+	// ходит в PG» было невидимо.
+	if err := r.redis.Set(ctx, nodeKey(teamSlug, cp.Path), data, r.ttl).Err(); err != nil {
+		r.logger.Debug("node cache: write-back failed",
+			r.logger.Str("team", teamSlug), r.logger.Str("path", cp.Path), r.logger.Err(err))
+	}
 }
 
 // pgSelectNodeByTeamSlugAndPath — резолв через JOIN с teams. Phase 10.1

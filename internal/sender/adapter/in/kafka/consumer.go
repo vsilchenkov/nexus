@@ -115,6 +115,14 @@ func (g *ConsumerGroup) runOne(ctx context.Context, c *kafkapf.Consumer, idx int
 		// (Phase 8.4). Несколько значений на ключ Kafka в принципе допускает,
 		// но для propagator-keys это исключено — берём первое.
 		hdrs := headersToMap(msg.Headers)
+		// §51.9: partition/offset доступны только здесь (usecase их не видит) —
+		// на debug видна привязка сообщения к позиции в топике.
+		g.logger.Debug("kafka: message fetched",
+			g.logger.Str("topic", g.topic),
+			g.logger.Int("partition", msg.Partition),
+			g.logger.Any("offset", msg.Offset),
+			g.logger.Str("key", string(msg.Key)),
+			g.logger.Int("size", len(msg.Value)))
 		res := g.processor.Handle(ctx, msg.Value, hdrs)
 		g.decInFlight() // обработка завершена (committed/retry-left)
 		switch res {

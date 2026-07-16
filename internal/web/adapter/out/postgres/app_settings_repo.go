@@ -58,13 +58,17 @@ func (r *AppSettingsRepoPg) Get(ctx context.Context) (*domain.AppSettings, error
 }
 
 func (r *AppSettingsRepoPg) Update(ctx context.Context, s *domain.AppSettings) error {
+	// ВНИМАНИЕ: новая секция domain.AppSettings обязана попасть и сюда —
+	// иначе она молча теряется при сохранении (грабли §51: logging нашёл
+	// integration-сценарий TestServiceLogs_ReloadLevelAcrossServices).
 	payload, err := json.Marshal(struct {
 		General       domain.GeneralSettings       `json:"general"`
 		Security      domain.SecuritySettings      `json:"security"`
 		Sentry        domain.SentrySettings        `json:"sentry"`
 		ClickHouse    domain.ClickHouseSettings    `json:"clickhouse"`
 		Notifications domain.NotificationsSettings `json:"notifications"`
-	}{s.General, s.Security, s.Sentry, s.ClickHouse, s.Notifications})
+		Logging       domain.LoggingSettings       `json:"logging"`
+	}{s.General, s.Security, s.Sentry, s.ClickHouse, s.Notifications, s.Logging})
 	if err != nil {
 		return fmt.Errorf("app_settings marshal: %w", err)
 	}

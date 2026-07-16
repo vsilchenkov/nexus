@@ -1729,6 +1729,8 @@ definitions:
         $ref: '#/definitions/nexus_internal_domain.ClickHouseSettings'
       general:
         $ref: '#/definitions/nexus_internal_domain.GeneralSettings'
+      logging:
+        $ref: '#/definitions/nexus_internal_domain.LoggingSettings'
       notifications:
         $ref: '#/definitions/nexus_internal_domain.NotificationsSettings'
       security:
@@ -1853,6 +1855,15 @@ definitions:
           отклоняется (ErrVersionOverrideForbidden). nil/"" = версия из git (ldflags).
         type: string
     type: object
+  nexus_internal_domain.LoggingSettings:
+    properties:
+      level:
+        description: |-
+          Level — уровень логирования всех трёх сервисов (2=error, 3=warn,
+          4=info, 5=debug). nil = брать из YAML (cfg.Logging.Level). Применяется
+          без рестарта через reloader.SectionLogging (LevelVar в цепочке хендлеров).
+        type: integer
+    type: object
   nexus_internal_domain.NotificationsSettings:
     properties:
       telegram:
@@ -1883,6 +1894,20 @@ definitions:
         type: number
       use:
         type: boolean
+    type: object
+  nexus_internal_domain.ServiceLogEntry:
+    properties:
+      attrs:
+        additionalProperties: {}
+        type: object
+      level:
+        type: string
+      msg:
+        type: string
+      service:
+        type: string
+      ts:
+        type: string
     type: object
   nexus_internal_domain.TelegramSettings:
     properties:
@@ -2759,6 +2784,46 @@ paths:
       summary: Список топиков кластера (§4.3 spec).
       tags:
       - kafka
+  /api/logs:
+    get:
+      description: Свежие записи slog-логов Receiver/Sender/Web из Redis-колец nexus:logs:*,
+        слитые по времени (новые первыми). Это логи самих сервисов, не логи запросов
+        узлов.
+      parameters:
+      - description: all (дефолт) | csv из receiver,sender,web
+        in: query
+        name: service
+        type: string
+      - description: максимум записей (дефолт 500, кап 2000)
+        in: query
+        name: limit
+        type: integer
+      - description: 'минимальный уровень: debug|info|warn|error'
+        in: query
+        name: min_level
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/nexus_internal_domain.ServiceLogEntry'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Хвост служебных логов сервисов (§51.5).
+      tags:
+      - service-logs
   /api/logs/{id}/replay:
     post:
       consumes:
@@ -2809,6 +2874,43 @@ paths:
       summary: Повторно отправить запрос через шину (§7.4.1).
       tags:
       - logs
+  /api/logs/download:
+    get:
+      description: Тот же хвост, что GET /api/logs, но text/plain attachment (nexus-logs-<ts>.log),
+        строки в хронологическом порядке.
+      parameters:
+      - description: all (дефолт) | csv из receiver,sender,web
+        in: query
+        name: service
+        type: string
+      - description: максимум записей (дефолт 500, кап 2000)
+        in: query
+        name: limit
+        type: integer
+      - description: 'минимальный уровень: debug|info|warn|error'
+        in: query
+        name: min_level
+        type: string
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: лог-файл
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Скачать служебные логи файлом (§51.5).
+      tags:
+      - service-logs
   /api/me/favorite-teams:
     put:
       consumes:

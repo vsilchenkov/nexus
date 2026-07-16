@@ -52,6 +52,39 @@ func ClickHouseOverlayReloader(pool *pgxpool.Pool, cfg *config.Config, logger lo
 	}
 }
 
+// LogLevelReloader возвращает Reloader, который перечитывает
+// app_settings.logging.level и применяет его к LevelVar контроллера (§51):
+// валидный уровень (2..5) → установка; nil/невалидный → откат на YAML-уровень.
+// Тот же Reloader используется как сид стартового значения (первый вызов
+// сразу после создания подписчика в app.New каждого сервиса).
+func LogLevelReloader(pool *pgxpool.Pool, ctl *LogController, logger logging.Logger) reloader.Reloader {
+	return func(ctx context.Context) error {
+		o, err := readAppSettings(ctx, pool)
+		if err != nil {
+			return err
+		}
+		applyLogLevelFromOverlay(o, ctl)
+		logger.Info("log level applied from app_settings",
+			logger.Str("level", ctl.Level.Level().String()))
+		return nil
+	}
+}
+
+// applyLogLevelFromOverlay — чистый применятель уровня: валидное значение
+// из overlay → LevelVar; nil или вне 2..5 → откат на YAML-уровень (fallback).
+func applyLogLevelFromOverlay(o *appSettingsOverlay, ctl *LogController) {
+	if ctl == nil || ctl.Level == nil {
+		return
+	}
+	if o != nil && o.Logging.Level != nil {
+		if lvl, ok := intLevel(*o.Logging.Level); ok {
+			ctl.Level.Set(lvl)
+			return
+		}
+	}
+	ctl.Level.Set(slogLevelFromInt(ctl.fallbackLevel))
+}
+
 // WriterReloader — узкий интерфейс, который реализует chlog.WriterManager
 // (sender) и в будущем — любой другой держатель CH-зависимостей. Объявлен
 // в bootstrap'е, чтобы избежать import cycle с sender/chlog (config →

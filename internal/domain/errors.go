@@ -168,6 +168,13 @@ var (
 	ErrVersionOverrideForbidden = errors.New("domain: version override is not allowed (web.allow_version_override is off)")
 	ErrSessionTTLInvalid        = errors.New("domain: session_ttl_seconds must be within [300, 2592000]")
 
+	// Уровень логирования сервисов (§51)
+	ErrLogLevelInvalid = errors.New("domain: logging.level must be within [2, 5] (2=error..5=debug)")
+
+	// Консоль служебных логов (§51.5)
+	ErrServiceLogInvalidService = errors.New("domain: unknown service (want receiver|sender|web|all)")
+	ErrServiceLogInvalidLevel   = errors.New("domain: invalid min_level (want error|warn|info|debug)")
+
 	// Team (multi-tenancy v2)
 	ErrTeamNotFound         = errors.New("domain: team not found")
 	ErrTeamAlreadyExists    = errors.New("domain: team with this slug or ch_database already exists")

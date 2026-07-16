@@ -224,6 +224,15 @@ docker compose -f deploy/docker-compose.deps.yml up -d
 
 Логин в UI: `admin` + пароль, заданный на шаге 3.
 
+### Тесты (§51 — что добавилось)
+
+- `make test-int-logs` — integration-группа консоли служебных логов (Redis+PG: шиппер, мерж,
+  кросс-сервисный reload уровня, маскировка, неблокируемость); входит в общий `make test-integration`.
+- Фронтовые unit-тесты: `cd web-ui && npm run test` (vitest + RTL, setup `src/test/setup.ts` с
+  jest-dom). **Гоняются в CI** (job `ui-build`) — падение vitest валит pipeline, как и lint/build.
+- Правило §51.9 (CLAUDE.md §1): в новом коде закладывайте `logger.Debug` в неочевидных/опасных/
+  тихих местах — уровень включается в runtime через консоль «Логи» без рестарта.
+
 ---
 
 ## 6. Запуск на уже поднятых внешних сервисах (Docker Desktop)

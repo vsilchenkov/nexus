@@ -100,3 +100,28 @@ func TestAppSettingsRepo_SecurityRoundTrip_E2E(t *testing.T) {
 	require.NotNil(t, got.Security.SessionTTLSeconds, "session_ttl_seconds должен сохраниться")
 	require.Equal(t, 600, *got.Security.SessionTTLSeconds)
 }
+
+// TestAppSettingsRepo_LoggingRoundTrip_E2E (§51): та же регрессия для секции
+// logging — Update обязан сериализовать logging.level (баг реально пойман
+// сценарием TestServiceLogs_ReloadLevelAcrossServices: struct в Update
+// пропускал Logging → уровень «сохранялся», но терялся при записи).
+func TestAppSettingsRepo_LoggingRoundTrip_E2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	pool, cleanup := startPostgres(t, ctx)
+	defer cleanup()
+
+	repo := pgrepo.NewAppSettingsRepoPg(pool, logging.NewNoop())
+
+	level := 5
+	in := &domain.AppSettings{
+		Logging: domain.LoggingSettings{Level: &level},
+	}
+	require.NoError(t, repo.Update(ctx, in))
+
+	got, err := repo.Get(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, got.Logging.Level, "logging.level должен сохраниться")
+	require.Equal(t, 5, *got.Logging.Level)
+}

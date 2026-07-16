@@ -76,9 +76,13 @@ type App struct {
 	notifDone        <-chan struct{}
 	reloadDone       <-chan struct{}
 	housekeepingDone <-chan struct{}
+	shipperDone      <-chan struct{} // §51: done-канал шиппера служебных логов
+
+	// §51: ручка runtime-уровня логов + кольцо для Redis-шиппера.
+	logCtl *bootstrap.LogController
 }
 
-func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, ch chdriver.Conn, cipher *crypto.Cipher, otelShutdown otelpf.ShutdownFunc, logger logging.Logger) *App {
+func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, ch chdriver.Conn, cipher *crypto.Cipher, otelShutdown otelpf.ShutdownFunc, logger logging.Logger, logCtl *bootstrap.LogController) *App {
 	return &App{
 		cfg:          cfg,
 		logger:       logger,
@@ -88,6 +92,7 @@ func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, ch chdrive
 		cipher:       cipher,
 		metrics:      metrics.New("web"),
 		otelShutdown: otelShutdown,
+		logCtl:       logCtl,
 	}
 }
 
@@ -246,6 +251,9 @@ func (a *App) Start(ctx context.Context) error {
 		a.cfg.Build.ProjectName, a.cfg.Build.Version, a.logger,
 	)
 
+	// §51: шиппер служебных логов в Redis (nexus:logs:web).
+	a.shipperDone = a.logCtl.StartRedisShipper(ctx, a.redis, a.logger)
+
 	// Подписчик hot-reload (§14.5). Web сам слушает события, чтобы admin-инстансы
 	// в кластере применили изменения, отправленные через другой инстанс.
 	// ClickHouseReloader регистрируется ниже — после создания chMgr (если CH доступен).
@@ -272,11 +280,23 @@ func (a *App) Start(ctx context.Context) error {
 	}
 	reloadSub.Register(reloader.SectionSecurity, applySessionTTL)
 
+	// §51: runtime-уровень логов из app_settings.logging.level (+ сид старта).
+	applyLogLevel := bootstrap.LogLevelReloader(a.pg, a.logCtl, a.logger)
+	if err := applyLogLevel(ctx); err != nil {
+		a.logger.Warn("seed log level from app_settings failed; using yaml level", a.logger.Err(err))
+	}
+	reloadSub.Register(reloader.SectionLogging, applyLogLevel)
+
 	authHandler := httpadapter.NewAuthHandler(authUC, &a.cfg.Web, sessionTTLProvider.Get, a.logger)
 	userHandler := httpadapter.NewUserHandler(userUC, authUC, a.logger)
 	tokenHandler := httpadapter.NewAPITokenHandler(tokenUC, a.logger)
 	auditHandler := httpadapter.NewAuditHandler(auditUC, a.logger)
 	appSettingsHandler := httpadapter.NewAppSettingsHandler(appSettingsUC, settingsTester, a.logger)
+
+	// §51: консоль служебных логов — хвост Redis-колец nexus:logs:* трёх
+	// сервисов (admin-only, маршруты /api/logs*).
+	serviceLogsUC := usecase.NewServiceLogsUsecase(rediscache.NewServiceLogReaderRedis(a.redis, a.logger), a.logger)
+	serviceLogsHandler := httpadapter.NewServiceLogsHandler(serviceLogsUC, a.logger)
 
 	// Шаблоны CH-таблиц (§19). chTemplateRepo создан выше (для NodeUsecase);
 	// usecase/handler создаём всегда (GET работает без ClickHouse); provisioner
@@ -484,6 +504,7 @@ func (a *App) Start(ctx context.Context) error {
 		RMQTest:       rmqTestHandler,
 		Kafka:         kafkaHandler,
 		AsyncQueue:    asyncQueueHandler,
+		ServiceLogs:   serviceLogsHandler,
 	}, mw)
 
 	// Реверс-прокси боевых эндпоинтов Receiver (§17.1, единый вход): Web
@@ -544,6 +565,7 @@ func (a *App) Stop(ctx context.Context) error {
 	safego.Await(awaitCtx, a.notifDone, a.logger, "web.notificationScheduler")
 	safego.Await(awaitCtx, a.reloadDone, a.logger, "web.reloadSubscriber")
 	safego.Await(awaitCtx, a.housekeepingDone, a.logger, "web.housekeeping")
+	safego.Await(awaitCtx, a.shipperDone, a.logger, "web.logShipper")
 	awaitCancel()
 	if a.chMgr != nil {
 		closeCtx, cancelClose := context.WithTimeout(ctx, 5*time.Second)

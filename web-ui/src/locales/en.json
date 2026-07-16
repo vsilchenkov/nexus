@@ -39,6 +39,7 @@
     "nodes": "Nodes",
     "audit": "Audit",
     "kafka": "Kafka",
+    "logs": "Logs",
     "settings": "Settings",
     "team": "Team",
     "language": "Language",
@@ -529,6 +530,27 @@
     "result": "Result"
   },
   "logs": {
+    "viewer": {
+      "title": "Service logs",
+      "subtitle": "slog output of Receiver, Sender and Web (not node request logs)",
+      "services": "Services",
+      "all_services": "All",
+      "level_hint": "Changes the REAL logging level of all three services (applied without restart)",
+      "level": {
+        "error": "Error",
+        "warn": "Warn",
+        "info": "Info",
+        "debug": "Debug"
+      },
+      "search_placeholder": "Search…",
+      "limit": "Lines",
+      "live": "Live",
+      "paused": "Paused",
+      "refresh": "Refresh",
+      "download": "Download",
+      "to_latest": "To latest",
+      "empty": "No log entries yet"
+    },
     "empty": "No log entries",
     "no_more": "No more entries",
     "cap_reached": "Showing the first {{n}} entries. Narrow the period or use filters for a targeted search.",

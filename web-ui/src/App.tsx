@@ -7,6 +7,7 @@ import NodeDetail from "./pages/NodeDetail";
 import NodeSettings from "./pages/NodeSettings";
 import AuditLog from "./pages/AuditLog";
 import KafkaMonitor from "./pages/KafkaMonitor";
+import LogsPage from "./pages/Logs";
 import Settings from "./pages/Settings";
 import ForcePasswordChange from "./pages/ForcePasswordChange";
 import { AppShell } from "./components/AppShell";
@@ -45,6 +46,14 @@ function AuditRoute() {
   return <AuditLog />;
 }
 
+// LogsRoute — консоль служебных логов (§51) доступна только admin: пункт меню
+// для остальных скрыт, а бэкенд вернул бы 403 на /api/logs.
+function LogsRoute() {
+  const { data } = useMe();
+  if (data && !roleAtLeast(data.user.role, "admin")) return <Navigate to="/" replace />;
+  return <LogsPage />;
+}
+
 export default function App() {
   return (
     <Routes>
@@ -56,6 +65,7 @@ export default function App() {
         <Route path="/nodes/:id/edit" element={<NodeSettings />} />
         <Route path="/audit" element={<AuditRoute />} />
         <Route path="/kafka" element={<KafkaMonitor />} />
+        <Route path="/logs" element={<LogsRoute />} />
         <Route path="/settings/*" element={<Settings />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
