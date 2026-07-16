@@ -136,7 +136,9 @@ func createNodeLogTable(t *testing.T, ctx context.Context, conn chdriver.Conn, t
 		IP String,
 		attempts Int32,
 		attempts_details String,
-		node_id String
+		node_id String,
+		request_size Int64,
+		response_size Int64
 	) ENGINE = MergeTree
 	PARTITION BY toYYYYMM(date_create)
 	ORDER BY (date_create, date_request, method)`, table)
@@ -187,6 +189,8 @@ func TestClickHouse_WriteAndRead(t *testing.T) {
 			IP:               ip,
 			Attempts:         1,
 			AttemptsDetails:  "[]",
+			RequestSize:      17, // §42-доп: len(`{"hello":"world"}`)
+			ResponseSize:     11, // len(`{"ok":true}`)
 		}
 	}
 
@@ -218,6 +222,9 @@ func TestClickHouse_WriteAndRead(t *testing.T) {
 	require.EqualValues(t, 200, rec.Status)
 	require.True(t, rec.Done)
 	require.Equal(t, "127.0.0.1", rec.IP)
+	// §42-доп: размеры тел переживают write→read round-trip.
+	require.EqualValues(t, 17, rec.RequestSize)
+	require.EqualValues(t, 11, rec.ResponseSize)
 
 	_, err = reader.GetByID(ctx, table, "00000000-0000-0000-0000-00000000ffff")
 	require.ErrorIs(t, err, domain.ErrNotFound)

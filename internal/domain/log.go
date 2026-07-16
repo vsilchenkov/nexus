@@ -30,4 +30,8 @@ type LogRecord struct {
 	Attempts         int32
 	AttemptsDetails  string // JSON-массив попыток или пустая строка
 	NodeID           string // §37: UUID узла-владельца (различает узлы в общей таблице); "" у legacy-записей
+	// §42-доп: истинные размеры тел в байтах, до усечения лог-копии по
+	// max_body_size. 0 — тела нет / транспортная ошибка / TooLarge (§43).
+	RequestSize  int64
+	ResponseSize int64
 }

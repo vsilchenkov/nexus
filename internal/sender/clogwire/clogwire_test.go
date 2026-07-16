@@ -15,7 +15,8 @@ func TestMarshalUnmarshal_Roundtrip(t *testing.T) {
 	t.Parallel()
 	logs := []*domain.LogRecord{
 		{ID: "1", URL: "https://a", Method: "POST", Status: 500, Done: false},
-		{ID: "2", URL: "https://b", Method: "GET", Status: 200, Done: true},
+		{ID: "2", URL: "https://b", Method: "GET", Status: 200, Done: true,
+			RequestSize: 123, ResponseSize: 4567}, // §42-доп
 	}
 	b, err := clogwire.Marshal("nexus_default.t", logs)
 	require.NoError(t, err)
@@ -26,6 +27,22 @@ func TestMarshalUnmarshal_Roundtrip(t *testing.T) {
 	require.Len(t, env.Logs, 2)
 	assert.Equal(t, "1", env.Logs[0].ID)
 	assert.Equal(t, int32(200), env.Logs[1].Status)
+	assert.Equal(t, int64(123), env.Logs[1].RequestSize, "§42-доп: размеры переживают Kafka retry")
+	assert.Equal(t, int64(4567), env.Logs[1].ResponseSize)
+}
+
+// TestUnmarshal_LegacyEnvelopeWithoutSizes — конверт, записанный бинарём до
+// §42-доп (без RequestSize/ResponseSize), читается новым кодом: размеры — 0.
+// Rolling-совместимость дренажа nexus.logs.retry при смешанных версиях.
+func TestUnmarshal_LegacyEnvelopeWithoutSizes(t *testing.T) {
+	t.Parallel()
+	legacy := []byte(`{"table":"nexus_default.t","logs":[{"ID":"old-1","Status":200,"Done":true}]}`)
+	env, err := clogwire.Unmarshal(legacy)
+	require.NoError(t, err)
+	require.Len(t, env.Logs, 1)
+	assert.Equal(t, "old-1", env.Logs[0].ID)
+	assert.Zero(t, env.Logs[0].RequestSize)
+	assert.Zero(t, env.Logs[0].ResponseSize)
 }
 
 func TestUnmarshal_Bad(t *testing.T) {

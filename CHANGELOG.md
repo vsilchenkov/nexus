@@ -23,6 +23,14 @@
   API `GET /api/metrics/nodes`: новое поле `items[].last_outcome` (`ok|degraded|down`),
   `last_error` сохранён (back-compat). Счётчики ошибок (§44) и `nexus_request_incomplete_total`
   не меняются — 4xx остаётся ошибкой доставки.
+- **Истинные размеры тел в логах: колонки `request_size`/`response_size` + колонка «Ответ» в UI
+  (§42.10).** Лог-таблицы ClickHouse получают размеры тел запроса/ответа в байтах — по ПОЛНОМУ телу,
+  до усечения лог-копии по `max_body_size` (не путать с `request_len`/`response_len` — рунами
+  сохранённой копии). На старте Web/Sender — авто-`ALTER` (`EnsureBodySizeColumns`) и **разовый
+  backfill исторических строк** (`BackfillBodySizes`, `length()` сохранённой копии — нижняя граница
+  у усечённых). API логов отдаёт `request_size`/`response_size` всегда (list/stream/detail). UI:
+  компактная колонка «Ответ» в таблице логов («12.0 КБ», «—» = тела нет; локализованные единицы) и
+  размеры в скобках в заголовках панелей раскрытой записи — «Запрос (12.0 КБ)» / «Ответ (34.5 КБ)».
 
 ### Changed
 

@@ -81,7 +81,7 @@ func (r *LogReaderCH) liveConn() (chdriver.Conn, error) {
 const selectCols = `ID, type, http_method, url, method, parameters, request, response,
 	status, reason, date_create, date_request, date_response,
 	duration, done, checksum_request, checksum_response,
-	Host, IP, attempts, attempts_details, node_id`
+	Host, IP, attempts, attempts_details, node_id, request_size, response_size`
 
 // listCols — как selectCols, но тела (request/response) НЕ читаются с диска:
 // возвращаются пустыми (”). Список логов их не показывает (§42 — тела ленивые,
@@ -98,7 +98,7 @@ const selectCols = `ID, type, http_method, url, method, parameters, request, res
 const listCols = `ID, type, http_method, url, method, parameters, '' AS list_req, '' AS list_resp,
 	status, reason, date_create, date_request, date_response,
 	duration, done, checksum_request, checksum_response,
-	Host, IP, attempts, attempts_details, node_id`
+	Host, IP, attempts, attempts_details, node_id, request_size, response_size`
 
 // previewCols — как selectCols, но тела заменены префиксом substringUTF8(col,1,?)
 // (превью), а в конец добавлены полные длины lengthUTF8(col). Не тянет тела
@@ -108,7 +108,7 @@ const previewCols = `ID, type, http_method, url, method, parameters,
 	substringUTF8(request, 1, ?), substringUTF8(response, 1, ?),
 	status, reason, date_create, date_request, date_response,
 	duration, done, checksum_request, checksum_response,
-	Host, IP, attempts, attempts_details, node_id,
+	Host, IP, attempts, attempts_details, node_id, request_size, response_size,
 	lengthUTF8(request), lengthUTF8(response)`
 
 const (
@@ -747,6 +747,7 @@ func scanLogRow(rows chdriver.Rows) (*domain.LogRecord, error) {
 		&r.Status, &r.Reason, &dateCreate, &dateReq, &dateResp,
 		&r.Duration, &r.Done, &r.ChecksumRequest, &r.ChecksumResponse,
 		&r.Host, &r.IP, &r.Attempts, &r.AttemptsDetails, &r.NodeID,
+		&r.RequestSize, &r.ResponseSize,
 	); err != nil {
 		return nil, fmt.Errorf("scan log row: %w", err)
 	}
@@ -774,6 +775,7 @@ func scanLogRowPreview(rows chdriver.Rows) (*domain.LogRecord, int64, int64, err
 		&r.Status, &r.Reason, &dateCreate, &dateReq, &dateResp,
 		&r.Duration, &r.Done, &r.ChecksumRequest, &r.ChecksumResponse,
 		&r.Host, &r.IP, &r.Attempts, &r.AttemptsDetails, &r.NodeID,
+		&r.RequestSize, &r.ResponseSize,
 		&reqLen, &respLen,
 	); err != nil {
 		return nil, 0, 0, fmt.Errorf("scan log row preview: %w", err)
