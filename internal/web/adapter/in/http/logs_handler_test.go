@@ -292,6 +292,52 @@ func TestLogsGet_PreviewLengths(t *testing.T) {
 	assert.EqualValues(t, 20_000_000, body["response_len"])
 }
 
+// TestLogsGet_BodySizes — §42-доп: Get отдаёт истинные размеры тел
+// request_size/response_size (байты, до усечения).
+func TestLogsGet_BodySizes(t *testing.T) {
+	t.Parallel()
+	reader := &stubLogReaderBody{
+		preview: &domain.LogRecord{ID: "l1", RequestSize: 12_288, ResponseSize: 34_567},
+	}
+	r := newLogsBodyRouter(reader)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/nodes/n1/log/l1", nil))
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.EqualValues(t, 12_288, body["request_size"])
+	assert.EqualValues(t, 34_567, body["response_size"])
+}
+
+// stubLogReaderList — Search отдаёт одну запись с размерами тел (§42-доп).
+type stubLogReaderList struct{ port.LogReader }
+
+func (stubLogReaderList) Search(_ context.Context, _ port.LogQuery) ([]*domain.LogRecord, error) {
+	return []*domain.LogRecord{{ID: "l1", ResponseSize: 2048}}, nil
+}
+
+// TestLogsList_BodySizes — §42-доп: размеры возвращаются и в СПИСКЕ (не только
+// в detail), причём нулевой request_size присутствует в JSON (нет omitempty) —
+// фронт различает «0 байт» без ветвлений на undefined.
+func TestLogsList_BodySizes(t *testing.T) {
+	t.Parallel()
+	r := newLogsRouter(stubLogReaderList{})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/nodes/n1/logs", nil))
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body struct {
+		Items []map[string]any `json:"items"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Len(t, body.Items, 1)
+	assert.EqualValues(t, 2048, body.Items[0]["response_size"])
+	reqSize, ok := body.Items[0]["request_size"]
+	require.True(t, ok, "request_size присутствует в JSON даже при нуле")
+	assert.EqualValues(t, 0, reqSize)
+}
+
 // TestLogsBody_InvalidWhich_400 — без валидного which → 400.
 func TestLogsBody_InvalidWhich_400(t *testing.T) {
 	t.Parallel()

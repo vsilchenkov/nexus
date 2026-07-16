@@ -1,16 +1,20 @@
 package httpclient
 
 import (
+	"bytes"
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	extlog "github.com/vsilchenkov/logging"
 
 	"nexus/internal/platform/config"
 	"nexus/internal/platform/logging"
@@ -239,4 +243,109 @@ func TestDo_ResponseTooLarge_BoundedRead(t *testing.T) {
 		assert.False(t, resp.TooLarge)
 		assert.Equal(t, 10_000, len(resp.Body))
 	})
+}
+
+// bufLogger — логгер поверх bytes.Buffer с уровнем Info (NewNoop глушит Info/Warn).
+func bufLogger() (logging.Logger, *bytes.Buffer) {
+	buf := &bytes.Buffer{}
+	l := extlog.NewLogger(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	return l, buf
+}
+
+// TestClient_Do_FollowsRedirect_GET_Info (§50): GET-редирект следуется, метод не
+// меняется → Info-лог; resp.Redirects несёт хоп; тело берётся с финального узла.
+func TestClient_Do_FollowsRedirect_GET_Info(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("final"))
+	}))
+	defer upstream.Close()
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, upstream.URL+"/final", http.StatusFound) // 302
+	}))
+	defer front.Close()
+
+	logger, buf := bufLogger()
+	c := New(testCfg(), logger, 0)
+	resp, err := c.Do(context.Background(), &port.HTTPRequest{
+		Method: "GET", URL: front.URL, NodePath: "svc/hook", TimeoutMs: 2000,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int32(200), resp.StatusCode)
+	assert.Equal(t, "final", string(resp.Body), "тело с финального адреса")
+	require.Len(t, resp.Redirects, 1)
+	assert.Equal(t, 302, resp.Redirects[0].Status)
+	assert.Equal(t, "GET", resp.Redirects[0].FromMethod)
+	assert.Equal(t, "GET", resp.Redirects[0].ToMethod)
+	assert.NotContains(t, resp.Redirects[0].From, "?", "URL отредачен без query")
+	log := buf.String()
+	assert.Contains(t, log, "sender follows external redirect")
+	assert.Contains(t, log, "node=svc/hook")
+	assert.NotContains(t, log, "changed method", "GET-редирект не меняет метод")
+}
+
+// TestClient_Do_Redirect_POST_301_ChangesMethod_Warn (§50): 301 на POST
+// превращает его в GET (тело теряется) → Warn-лог + флаг в хопе.
+func TestClient_Do_Redirect_POST_301_ChangesMethod_Warn(t *testing.T) {
+	t.Parallel()
+
+	var upstreamMethod string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamMethod = r.Method
+		w.WriteHeader(200)
+	}))
+	defer upstream.Close()
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, upstream.URL+"/moved", http.StatusMovedPermanently) // 301
+	}))
+	defer front.Close()
+
+	logger, buf := bufLogger()
+	c := New(testCfg(), logger, 0)
+	resp, err := c.Do(context.Background(), &port.HTTPRequest{
+		Method: "POST", URL: front.URL, NodePath: "svc/hook", Body: []byte(`{"a":1}`), TimeoutMs: 2000,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int32(200), resp.StatusCode)
+	assert.Equal(t, "GET", upstreamMethod, "301 превратил POST в GET на финальном узле")
+	require.Len(t, resp.Redirects, 1)
+	assert.Equal(t, "POST", resp.Redirects[0].FromMethod)
+	assert.Equal(t, "GET", resp.Redirects[0].ToMethod)
+	assert.Contains(t, buf.String(), "sender redirect changed method (request body dropped)")
+}
+
+// TestClient_Do_TooManyRedirects_Errors (§50): бесконечный редирект на себя
+// обрывается после лимита с ошибкой (как дефолт Go).
+func TestClient_Do_TooManyRedirects_Errors(t *testing.T) {
+	t.Parallel()
+
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, srv.URL+"/loop", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	c := New(testCfg(), logging.NewNoop(), 0)
+	_, err := c.Do(context.Background(), &port.HTTPRequest{
+		Method: "GET", URL: srv.URL, TimeoutMs: 2000,
+	})
+	require.Error(t, err, "цикл редиректов должен оборваться ошибкой")
+	assert.Contains(t, err.Error(), "redirects")
+}
+
+// TestRedactURL_And_SchemeChange (§50): чистые хелперы — query отрезан, схема
+// классифицирована.
+func TestRedactURL_And_SchemeChange(t *testing.T) {
+	t.Parallel()
+
+	u, _ := url.Parse("http://x.io/a/b?token=secret&x=1")
+	assert.Equal(t, "http://x.io/a/b", redactURL(u), "query отрезан (токен не течёт)")
+	assert.Equal(t, "", redactURL(nil))
+
+	mk := func(s string) *url.URL { u, _ := url.Parse(s); return u }
+	assert.Equal(t, "upgrade", schemeChange(mk("http://x/a"), mk("https://x/a")))
+	assert.Equal(t, "downgrade", schemeChange(mk("https://x/a"), mk("http://x/a")))
+	assert.Equal(t, "same", schemeChange(mk("https://x/a"), mk("https://y/b")))
 }

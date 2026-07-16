@@ -68,9 +68,10 @@ type NodeThroughputRow struct {
 	Errors uint64
 	P95ms  float64   // §22: p95 латентности исходящих (Prometheus)
 	Spark  []float64 // §22: спарклайн входящего трафика (range-запрос)
-	// §41 («Down»): true, если последний исходящий вызов узла завершился
-	// ошибкой (status 0/4xx/5xx). Overview красит узел в «Down» по этому флагу.
-	LastError bool
+	// §41/§52: исход последнего исходящего вызова узла — ok (2xx) / degraded
+	// (ответил не-2xx <500) / down (транспортная ошибка или 5xx). Overview
+	// красит runtime-бейдж узла по этому полю.
+	LastOutcome domain.NodeOutcome
 }
 
 // OverviewTotals — агрегат счётчиков шапки = СУММА строк таблицы узлов за тот же
@@ -165,36 +166,36 @@ func (u *MetricsUsecase) NodesOverview(ctx context.Context, teamID string, since
 	} else {
 		res = u.nodesOverviewProm(ctx, since, until)
 	}
-	// §41 («Down»): оверлей исхода последнего вызова поверх любой ветки
+	// §41/§52: оверлей исхода последнего вызова поверх любой ветки
 	// (CH-источник его не считает, gauge живёт только в Prometheus).
-	u.applyLastErrors(ctx, until, &res)
+	u.applyLastOutcomes(ctx, until, &res)
 	// §44.A: агрегат для шапки = сумма строк (в любом источнике, за тот же
 	// период) → «итог в шапке = сумме видимых строк таблицы».
 	res.Totals = sumTotals(res.Items)
 	return res
 }
 
-// applyLastErrors проставляет NodeThroughputRow.LastError из ДВУХ источников
-// (§46): персистентный Redis (приоритет — переживает рестарт Sender/Web) и
-// instant-gauge Prometheus nexus_node_last_request_error (§41, fallback для
-// узлов, которых ещё нет в Redis). На узел: значение из Redis, если есть; иначе
-// Prometheus (>=1 → ошибка). Деградирует мягко: нет ни Redis, ни Prometheus
-// (или ошибки запросов) → флаги остаются false.
-func (u *MetricsUsecase) applyLastErrors(ctx context.Context, at time.Time, res *NodesOverview) {
+// applyLastOutcomes проставляет NodeThroughputRow.LastOutcome из ДВУХ
+// источников (§46, §52): персистентный Redis (приоритет — переживает рестарт
+// Sender/Web) и instant-gauge Prometheus nexus_node_last_request_error (§41,
+// fallback для узлов, которых ещё нет в Redis; маппинг значений 0/1/2 —
+// domain.OutcomeFromGaugeValue). Деградирует мягко: нет ни Redis, ни
+// Prometheus (или ошибки запросов) → узел остаётся ok.
+func (u *MetricsUsecase) applyLastOutcomes(ctx context.Context, at time.Time, res *NodesOverview) {
 	if len(res.Items) == 0 {
 		return
 	}
 	// Redis — приоритетный источник (персистентный, §46).
-	var redisLE map[string]bool
+	var redisLO map[string]domain.NodeOutcome
 	if u.nodeStatus != nil {
 		paths := make([]string, len(res.Items))
 		for i := range res.Items {
 			paths[i] = res.Items[i].Node
 		}
-		if m, err := u.nodeStatus.GetLastErrors(ctx, paths); err != nil {
-			u.logger.Warn("redis node last errors failed", u.logger.Err(err))
+		if m, err := u.nodeStatus.GetLastOutcomes(ctx, paths); err != nil {
+			u.logger.Warn("redis node last outcomes failed", u.logger.Err(err))
 		} else {
-			redisLE = m
+			redisLO = m
 		}
 	}
 	// Prometheus — fallback (§41) для узлов без записи в Redis.
@@ -208,13 +209,11 @@ func (u *MetricsUsecase) applyLastErrors(ctx context.Context, at time.Time, res 
 	}
 	for i := range res.Items {
 		node := res.Items[i].Node
-		if v, ok := redisLE[node]; ok {
-			res.Items[i].LastError = v
+		if v, ok := redisLO[node]; ok {
+			res.Items[i].LastOutcome = v
 			continue
 		}
-		if promLE[node] >= 1 {
-			res.Items[i].LastError = true
-		}
+		res.Items[i].LastOutcome = domain.OutcomeFromGaugeValue(promLE[node])
 	}
 }
 

@@ -37,3 +37,17 @@ export function fmtBytes(n: number): string {
   }
   return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
+
+// fmtSize — как fmtBytes, но единицы локализованные (§42-доп: «12.0 КБ» в ru).
+// units — массив из i18n-ключа logs.size_units ("Б|КБ|МБ|…".split("|")).
+// n <= 0 → «—» (нет тела / legacy-запись без размера).
+export function fmtSize(n: number, units: string[]): string {
+  if (n <= 0 || units.length === 0) return "—";
+  let v = n;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}

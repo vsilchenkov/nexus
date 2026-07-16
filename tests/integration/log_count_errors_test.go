@@ -167,7 +167,7 @@ func TestLogReader_NodeKPI_Chart_E2E(t *testing.T) {
 
 // TestLogReader_NodeIDFilter_E2E (§37): несколько узлов в ОДНОЙ таблице
 // различаются по node_id. Все per-node чтения/удаления фильтруют
-// (node_id = ? OR node_id = ''); legacy-записи (node_id='') видны любому узлу.
+// (node_id = ? OR node_id = ”); legacy-записи (node_id=”) видны любому узлу.
 // Критично: DeleteFailed одного узла НЕ трогает записи другого.
 func TestLogReader_NodeIDFilter_E2E(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)

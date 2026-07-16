@@ -159,6 +159,17 @@ type UserEnvelope struct {
 type MyTeamsResponse struct {
 	Items         []teamMembershipResponse `json:"items"`
 	CurrentTeamID string                   `json:"current_team_id"`
+	// Healed — §44.H: current_team в сессии был вне членств и переключён
+	// сервером; UI по этому флагу инвалидирует team-scoped кеш.
+	Healed bool `json:"healed"`
+	// Favorites — §49: упорядоченный список id избранных команд пользователя.
+	Favorites []string `json:"favorites"`
+}
+
+// FavoriteTeamsResponse — PUT /api/me/favorite-teams (§49): сохранённый
+// упорядоченный список.
+type FavoriteTeamsResponse struct {
+	TeamIDs []string `json:"team_ids"`
 }
 
 // SwitchTeamResponse — POST /api/me/switch-team.
@@ -168,8 +179,10 @@ type SwitchTeamResponse struct {
 
 // NodesMetricsResponse — GET /api/metrics/nodes.
 type NodesMetricsResponse struct {
-	Items               []nodeThroughputDTO `json:"items"`
-	PrometheusAvailable bool                `json:"prometheus_available"`
+	Items []nodeThroughputDTO `json:"items"`
+	// Totals — агрегат KPI шапки (§44.A): сумма строк items за тот же период.
+	Totals              overviewTotalsDTO `json:"totals"`
+	PrometheusAvailable bool              `json:"prometheus_available"`
 }
 
 // NodeMetricsResponse — GET /api/metrics/nodes/{id}.

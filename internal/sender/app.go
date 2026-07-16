@@ -79,6 +79,10 @@ type App struct {
 	kafkaLagDone     <-chan struct{}
 	reloadDone       <-chan struct{}
 	dlqReprocDone    <-chan struct{} // §36: done-канал sweeper'а DLQ
+	shipperDone      <-chan struct{} // §51: done-канал шиппера служебных логов
+
+	// §51: ручка runtime-уровня логов + кольцо для Redis-шиппера.
+	logCtl *bootstrap.LogController
 }
 
 func New(
@@ -89,6 +93,7 @@ func New(
 	cipher *crypto.Cipher,
 	otelShutdown otelpf.ShutdownFunc,
 	logger logging.Logger,
+	logCtl *bootstrap.LogController,
 ) *App {
 	return &App{
 		cfg:          cfg,
@@ -99,6 +104,7 @@ func New(
 		cipher:       cipher,
 		metrics:      metrics.New("sender"),
 		otelShutdown: otelShutdown,
+		logCtl:       logCtl,
 	}
 }
 
@@ -156,6 +162,8 @@ func (a *App) Start(ctx context.Context) error {
 		} else {
 			chpf.EnsureNodeIDColumn(ctx, a.chMgr.Conn(), tables, a.logger)
 			chpf.EnsureHTTPMethodColumn(ctx, a.chMgr.Conn(), tables, a.logger) // §39
+			chpf.EnsureBodySizeColumns(ctx, a.chMgr.Conn(), tables, a.logger)  // §42-доп
+			chpf.BackfillBodySizes(ctx, a.chMgr.Conn(), tables, a.logger)      // §42-доп
 		}
 	}
 	// §34.4: cancel-set отменённых через UI сообщений (Redis). nil при отсутствии
@@ -213,12 +221,21 @@ func (a *App) Start(ctx context.Context) error {
 	// после PUT /api/settings/app. Sentry — sentry.Init c новыми параметрами.
 	// CH — полный reconnect через chpf.Manager + пересоздание chlog.Writer.
 	if a.redis != nil {
+		// §51: шиппер служебных логов в Redis (nexus:logs:sender).
+		a.shipperDone = a.logCtl.StartRedisShipper(ctx, a.redis, a.logger)
+
 		reloadSub := reloader.NewSubscriber(a.redis, a.logger)
 		reloadSub.Register(reloader.SectionSentry,
 			bootstrap.SentryReloader(a.pg, a.cfg, a.cfg.Build.ProjectName, a.cfg.Build.Version, a.logger))
 		reloadSub.Register(reloader.SectionClickHouse,
 			bootstrap.ClickHouseReloader(a.pg, a.cfg, a.chMgr,
 				[]bootstrap.WriterReloader{a.chWriter}, a.logger))
+		// §51: runtime-уровень логов из app_settings.logging.level (+ сид старта).
+		applyLogLevel := bootstrap.LogLevelReloader(a.pg, a.logCtl, a.logger)
+		if err := applyLogLevel(ctx); err != nil {
+			a.logger.Warn("seed log level from app_settings failed; using yaml level", a.logger.Err(err))
+		}
+		reloadSub.Register(reloader.SectionLogging, applyLogLevel)
 		a.reloadDone = safego.Go(a.logger, "sender.reloadSubscriber", func() {
 			reloadSub.Run(ctx)
 		})
@@ -395,6 +412,7 @@ func (a *App) Stop(ctx context.Context) error {
 	safego.Await(awaitCtx, a.kafkaLagDone, a.logger, "sender.reportKafkaLag")
 	safego.Await(awaitCtx, a.reloadDone, a.logger, "sender.reloadSubscriber")
 	safego.Await(awaitCtx, a.dlqReprocDone, a.logger, "sender.dlqReprocessor")
+	safego.Await(awaitCtx, a.shipperDone, a.logger, "sender.logShipper")
 	awaitCancel()
 
 	if a.chWriter != nil {

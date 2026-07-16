@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -147,11 +148,21 @@ func (u *RouteAsyncUsecase) RouteAsync(ctx context.Context, in RouteInput) (*Rou
 	// же trace, что и входящий HTTP-запрос /v1/requestAsync.
 	produceCtx, finish := otelpf.StartKafkaProducerSpan(ctx, u.asyncTopic)
 	otelpf.InjectKafkaHeaders(produceCtx, headers)
+	start := time.Now()
 	if err := u.producer.Produce(produceCtx, u.asyncTopic, node.Path, payload, headers); err != nil {
 		finish(err)
 		return nil, fmt.Errorf("produce: %w", err)
 	}
 	finish(nil)
+	// §51.9: публикация envelope в Kafka — id/размер/длительность; offset
+	// producer наружу не отдаёт (интерфейс возвращает только error).
+	u.logger.Debug("route: async envelope produced",
+		u.logger.Str("id", id),
+		u.logger.Str("node", node.Path),
+		u.logger.Str("topic", u.asyncTopic),
+		u.logger.Int("payload_bytes", len(payload)),
+		u.logger.Int("duration_ms", int(time.Since(start).Milliseconds())),
+		u.logger.Any("queued", node.Status == domain.NodeStatusPaused))
 
 	return &RouteAsyncResult{
 		ID:         id,

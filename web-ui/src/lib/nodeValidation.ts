@@ -38,12 +38,22 @@ const PARAM_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 // §42: db.table из [A-Za-z0-9_], ровно одна точка (зеркало isValidCHTableName).
 const CH_TABLE_RE = /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/;
 
-export function validateNodeForm(f: NodeFormLimits): NodeFieldError | null {
-  if (f.path.length < 1 || f.path.length > 255) {
-    return { field: "path", code: "node.validation.path_length" };
+// validateNodePath — отдельная проверка path (§53: диалог «Скопировать узел»,
+// где валидируется только новый путь). Возвращает i18n-код или null.
+export function validateNodePath(path: string): string | null {
+  if (path.length < 1 || path.length > 255) {
+    return "node.validation.path_length";
   }
-  if (!PATH_RE.test(f.path)) {
-    return { field: "path", code: "node.validation.path_format" };
+  if (!PATH_RE.test(path)) {
+    return "node.validation.path_format";
+  }
+  return null;
+}
+
+export function validateNodeForm(f: NodeFormLimits): NodeFieldError | null {
+  const pathCode = validateNodePath(f.path);
+  if (pathCode) {
+    return { field: "path", code: pathCode };
   }
   const isPull = f.root_method === "RabbitMQAsync";
   if ((f.url_mode === "static" || isPull) && f.target_url.trim() === "") {

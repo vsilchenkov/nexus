@@ -142,6 +142,35 @@ func TestExtractQuery(t *testing.T) {
 	}
 }
 
+// TestAppendRedirectNote (§50): сводка редиректов дописывается к reason, при
+// смене метода — предупреждение о потере тела; пустой список не трогает reason.
+func TestAppendRedirectNote(t *testing.T) {
+	t.Parallel()
+
+	up := port.RedirectHop{
+		Status: 301, From: "http://x/a", To: "https://x/a",
+		FromMethod: "GET", ToMethod: "GET", SchemeChange: "upgrade",
+	}
+	dropped := port.RedirectHop{
+		Status: 301, From: "http://x/a", To: "https://x/a",
+		FromMethod: "POST", ToMethod: "GET", SchemeChange: "upgrade",
+	}
+
+	assert.Equal(t, "OK", appendRedirectNote("OK", nil), "нет редиректов — reason не тронут")
+
+	got := appendRedirectNote("OK", []port.RedirectHop{up})
+	assert.Contains(t, got, "OK · ")
+	assert.Contains(t, got, "http://x/a → https://x/a")
+	assert.NotContains(t, got, "тело запроса потеряно")
+
+	got = appendRedirectNote("OK", []port.RedirectHop{dropped})
+	assert.Contains(t, got, "тело запроса потеряно (POST→GET)")
+
+	got = appendRedirectNote("", []port.RedirectHop{up})
+	assert.NotContains(t, got, " · ", "пустой reason — без разделителя")
+	assert.Contains(t, got, "редирект")
+}
+
 func TestSend_Success_RecordsLogAndUpdatesBreaker(t *testing.T) {
 	t.Parallel()
 
@@ -204,7 +233,7 @@ func TestSend_CircuitBreakerOpen_Returns503WithoutHTTPCall(t *testing.T) {
 	assert.Equal(t, int32(0), rec.Attempts)
 }
 
-func TestSend_4xx_NoRetryAndRecordsFailure(t *testing.T) {
+func TestSend_4xx_NoRetry_BreakerStaysHealthy(t *testing.T) {
 	t.Parallel()
 
 	httpc := &stubHTTPCaller{
@@ -231,9 +260,46 @@ func TestSend_4xx_NoRetryAndRecordsFailure(t *testing.T) {
 	assert.Equal(t, int32(404), rec.Status)
 	assert.Equal(t, "HTTP 404", rec.Reason)
 
-	// Breaker: 4xx — это failure (Done=false → RecordFailure).
-	assert.Equal(t, 0, cb.successCount)
-	assert.Equal(t, 1, cb.failureCount)
+	// Breaker (§50.4): 4xx — ошибка данных/клиента, узел жив и ответил →
+	// RecordSuccess, НЕ failure. Иначе серия 4xx (напр. 422 NotRegistered
+	// протухших FCM-токенов) открывала бы breaker и блокировала валидные
+	// запросы (боевой инцидент site/push). В лог при этом пишется done=false.
+	assert.Equal(t, 1, cb.successCount)
+	assert.Equal(t, 0, cb.failureCount)
+}
+
+// TestSend_BreakerHealth_5xxFails_4xxDoesNot (§50.4): breaker открывают только
+// транспортные ошибки и 5xx; серия 4xx счётчик отказов не растит.
+func TestSend_BreakerHealth_5xxFails_4xxDoesNot(t *testing.T) {
+	t.Parallel()
+
+	mk := func(status int32) (*stubBreaker, SendOutput) {
+		httpc := &stubHTTPCaller{responses: []*port.HTTPResponse{{StatusCode: status}}}
+		cb := &stubBreaker{allow: true}
+		uc := NewSendUsecase(httpc, &stubLogWriter{}, cb, logging.NewNoop(), 64<<20)
+		return cb, uc.Send(context.Background(), baseInput())
+	}
+
+	tests := []struct {
+		name        string
+		status      int32
+		wantSuccess int
+		wantFailure int
+	}{
+		{"422 (данные клиента) → healthy", 422, 1, 0},
+		{"429 (rate limit клиента) → healthy", 429, 1, 0},
+		{"500 → failure", 500, 0, 1},
+		{"503 → failure", 503, 0, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cb, out := mk(tt.status)
+			assert.Equal(t, tt.status, out.StatusCode)
+			assert.Equal(t, tt.wantSuccess, cb.successCount)
+			assert.Equal(t, tt.wantFailure, cb.failureCount)
+		})
+	}
 }
 
 func TestSend_5xxRetriesUntilSuccess(t *testing.T) {
@@ -479,6 +545,72 @@ func TestSend_ResponseTooLarge_Rejects502(t *testing.T) {
 	assert.Contains(t, rec.Reason, "exceeds transport limit")
 	assert.Empty(t, rec.Response, "тело ответа не дочитано — в лог не пишется")
 	assert.Empty(t, rec.ChecksumResponse, "checksum нет (тело не прочитано)")
+}
+
+// §42-доп: истинные размеры тел — в БАЙТАХ по полному телу (до усечения
+// лог-копии и независимо от LogRequestBody/LogResponseBody); при транспортной
+// ошибке и TooLarge размер ответа остаётся 0.
+func TestSend_BodySizes(t *testing.T) {
+	t.Parallel()
+
+	t.Run("полные байты при усечении и выключенном логировании тел", func(t *testing.T) {
+		t.Parallel()
+		reqBody := []byte(strings.Repeat("я", 100))  // 100 рун = 200 байт
+		respBody := []byte(strings.Repeat("😀", 100)) // 100 рун = 400 байт
+		httpc := &stubHTTPCaller{
+			responses: []*port.HTTPResponse{{StatusCode: 200, Body: respBody}},
+		}
+		logw := &stubLogWriter{}
+		uc := NewSendUsecase(httpc, logw, &stubBreaker{allow: true}, logging.NewNoop(), 64<<20)
+
+		in := baseInput()
+		in.Body = reqBody
+		in.LogRequestBody = true
+		in.LogResponseBody = false // тело ответа в лог не пишем — размер всё равно есть
+		in.MaxBodySizeEnabled = true
+		in.MaxBodySize = 10
+
+		uc.Send(context.Background(), in)
+
+		require.Len(t, logw.written, 1)
+		rec := logw.written[0].rec
+		assert.EqualValues(t, len(reqBody), rec.RequestSize, "байты полного запроса, не руны и не усечённая копия")
+		assert.EqualValues(t, len(respBody), rec.ResponseSize, "байты полного ответа при LogResponseBody=false")
+		assert.Equal(t, strings.Repeat("я", 10)+truncationMarker, rec.Request, "копия усечена, размер — нет")
+		assert.Empty(t, rec.Response)
+	})
+
+	t.Run("транспортная ошибка — ResponseSize 0", func(t *testing.T) {
+		t.Parallel()
+		httpc := &stubHTTPCaller{errs: []error{errors.New("dial tcp: refused")}}
+		logw := &stubLogWriter{}
+		uc := NewSendUsecase(httpc, logw, &stubBreaker{allow: true}, logging.NewNoop(), 64<<20)
+
+		in := baseInput()
+		uc.Send(context.Background(), in)
+
+		require.Len(t, logw.written, 1)
+		rec := logw.written[0].rec
+		assert.EqualValues(t, len(in.Body), rec.RequestSize, "размер запроса известен и при ошибке")
+		assert.Zero(t, rec.ResponseSize)
+	})
+
+	t.Run("TooLarge — ResponseSize 0 (тело не дочитано)", func(t *testing.T) {
+		t.Parallel()
+		httpc := &stubHTTPCaller{
+			responses: []*port.HTTPResponse{{StatusCode: 200, TooLarge: true}},
+		}
+		logw := &stubLogWriter{}
+		uc := NewSendUsecase(httpc, logw, &stubBreaker{allow: true}, logging.NewNoop(), 50_000)
+
+		in := baseInput()
+		uc.Send(context.Background(), in)
+
+		require.Len(t, logw.written, 1)
+		rec := logw.written[0].rec
+		assert.EqualValues(t, len(in.Body), rec.RequestSize)
+		assert.Zero(t, rec.ResponseSize, "истинный размер неизвестен — остаётся 0")
+	})
 }
 
 // §22.2: под лимитом — обычное поведение (200, полное тело клиенту и в лог).

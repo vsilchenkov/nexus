@@ -1,4 +1,4 @@
-# Шина данных — техническое задание
+﻿# Шина данных — техническое задание
 
 ## 1. Назначение
 
@@ -3368,6 +3368,9 @@ AFTER type`) на старте Web и Sender.
 
 ## 41. Универсальная динамическая авторизация + умный Bearer + пересмотр статуса «Down»
 
+> Статус «Down» пересмотрен §52: булев флаг → трёхсостоянье ok/degraded/down
+> (4xx больше не красит узел в Down), gauge расширен до 0/1/2.
+
 Динамическая авторизация (извлечение креды из запроса) становится универсальной для **входа** и
 **выхода**, с настройкой источника и имени поля в UI, каталогом «полей запроса», умным дедупом схемы и
 мягкой обработкой пустого поля.
@@ -3438,6 +3441,15 @@ gRPC-сообщения (с дефолтами — обратная совмес
 (переиспользует курсорный `GET /api/nodes/{id}/logs`). Авто-обновление привязано к позиции скролла
 (у верха — вкл, в истории — заморожено, назад вверх — снова вкл); в Live-режиме подгрузка отключена.
 
+**Истинные размеры тел (§42.10).** Колонки `request_size`/`response_size` (Int64, байты) в лог-таблицах:
+размер полного тела запроса/ответа ДО усечения лог-копии (инвариант checksum'а; не путать с
+`request_len`/`response_len` — рунами усечённой копии). Заполняет Sender в `Send`; 0 — тела нет /
+транспортная ошибка / `TooLarge` §43. Миграция на старте Web и Sender: `EnsureBodySizeColumns`
+(идемпотентный ALTER) + `BackfillBodySizes` (разовые мутации `length()` сохранённой копии для
+исторических строк, guard-count против повторов). API отдаёт поля всегда (list/stream/detail). UI:
+компактная колонка «Ответ» в таблице логов («12.0 КБ», `—` = тела нет) + размеры в скобках в
+заголовках панелей раскрытой записи («Запрос (12.0 КБ)»).
+
 Подробности — [sections/42-log-body-streaming.md](sections/42-log-body-streaming.md).
 
 ## 43. Лимиты размера тела: per-node лог-усечение vs транспортные лимиты из конфига
@@ -3507,6 +3519,9 @@ Inline-смена `users.default_team_id` админом — клик по чи�
 Подробности — [sections/45-user-default-team.md](sections/45-user-default-team.md).
 
 ## 46. Персистентный статус «Down» узла через Redis (переживает рестарт)
+
+> Пересмотрено §52: значение ключа — трёхсостоянье ("0"=ok, "1"=down,
+> "2"=degraded; legacy "1" → down), порты SetLastOutcome/GetLastOutcomes.
 
 Делает индикатор «Down/OK» узла (§41) персистентным. Сейчас «Down» считается по in-memory
 Prometheus-гауджу `nexus_node_last_request_error` (ставит Sender, читает Web): при рестарте/деплое
@@ -3589,3 +3604,178 @@ CH-адаптера, и in-memory зеркалом live-tail (`matchLogFilter`):
 требуется пересборка SPA-бандла.
 
 Подробности — [sections/48-log-search-extended.md](sections/48-log-search-extended.md).
+
+## 49. Избранные команды (favorite teams)
+
+Развивает §18 (multi-tenancy, переключатель команд) и §45 (валидация «команда ∈ членства»).
+
+- **49.1 Отображаемое имя.** В шапке и в списке переключателя — только `Team.Name`, без slug и
+  скобок (было `Name (slug)`). Триггер переключателя показывает имя текущей команды; нативный
+  `<select>` заменён кастомным Radix Popover (`<option>` не умеет звезду/разметку).
+- **49.2 Избранное.** Звезда возле команды в переключателе добавляет/убирает её из избранного
+  (соседняя кнопка, не вложенная — не переключает команду). Секция «Избранное» в сайдбаре:
+  избранные в пользовательском порядке, клик переключает текущую команду (текущая подсвечена),
+  0 избранных → секция скрыта, drag-and-drop (`@dnd-kit`, порог 6px) меняет порядок.
+- **49.3 Модель.** Миграция `0023_user_team_favorites`: `user_team_favorites(user_id, team_id,
+  position)`, PK `(user_id, team_id)`, **составной FK на `user_teams` ON DELETE CASCADE** — один
+  каскад покрывает удаление пользователя/команды/исключение из членства + инвариант «избранное ⊆
+  членство». Дырки в position терпимы (чтение сортирует, запись перезаписывает компактно).
+- **49.4 API.** Чтение — поле `favorites: [team_id...]` в `GET /api/me/teams` (один источник
+  истины, `healed` §44.H не тронут). Запись — `PUT /api/me/favorite-teams {"team_ids":[...]}` —
+  полная замена (позиция = индекс, пустой массив = очистить; `RequireSessionOnly`). 400 —
+  дубликаты/лимит 100 (`ErrFavoriteTeamsInvalid`) или id вне членств (`ErrUserNotTeamMember`).
+- **49.5 Слои.** Отдельный малый порт `FavoriteTeamRepo` (не расширение `TeamRepo` — стабы тестов
+  целы); impl на `TeamRepoPg` (Replace = tx DELETE+INSERT, FK 23503 → `ErrUserNotTeamMember`);
+  usecase `AuthUsecase.WithFavoriteTeams` (builder), `FavoriteTeamIDs` — никогда не ошибка
+  (деградация в пустой список), `SetFavoriteTeams` — валидация + аудит `user.favorite_teams.update`.
+- **49.6 UI.** Общий слой `web-ui/src/lib/teams.ts` (`useMyTeams`/`useSwitchTeam`/
+  `useSetFavoriteTeams`): optimistic update избранного с откатом; 403 при switch протухшей
+  избранной → invalidate `me-teams` (самоизлечение). Компоненты `TeamSwitcher.tsx`,
+  `SidebarFavorites.tsx` (`useSortable` в отдельном `FavoriteItem`).
+
+Требуется пересборка SPA-бандла. Хранение пер-пользовательское в PG (не localStorage) —
+переживает смену устройства.
+
+Подробности — [sections/49-favorite-teams.md](sections/49-favorite-teams.md).
+
+## 50. Кеш узла по реальной команде + видимость редиректов Sender
+
+Закрывает боевой баг «правки узла не применяются до 5 минут» и добавляет видимость 3xx-редиректов.
+Развивает §9.2 (горячий кеш узла), §18 (multi-tenancy), §22/§42 (логи узла).
+
+- **50.1 Баг.** Web писал/инвалидировал Redis-ключ конфига узла всегда как `node:default:<path>`
+  (хардкод с v1), а Receiver читает `node:<team_slug>:<path>`. После §18 для узла вне команды
+  `default` write-through и инвалидация промахивались мимо ключа Receiver — правки (target_url,
+  авторизация, таймауты, выключение/пауза, удаление, перенос) не доходили до истечения
+  `redis.node_ttl_sec` (до 5 мин). Симптом на бою: `http`-target узла команды `task` ещё 5 минут
+  ходил на старый `https` и падал на TLS.
+- **50.2 Фикс.** `port.NodeCache` получает `teamSlug`; адаптер строит `node:<slug>:<path>`
+  (совпадает с ключом Receiver'а); usecase резолвит `team_id → slug` через `teams.GetByID`
+  (`resolveCacheTeamSlug`; пустой slug = не трогать кеш). Креды в кеше теперь **шифруются**
+  AES-256-GCM — Receiver читает кеш и делает Decrypt (раньше Web клал plaintext → cache-miss).
+  Грабли деплоя: старые записи в Redis не расшифруются → cache-miss с перечиткой из PG (безопасно).
+- **50.3 Видимость редиректов.** Sender следовал 3xx молча (дефолт Go); при 301/302/303 POST→GET
+  тело терялось незаметно. Теперь `CheckRedirect` логирует каждый хоп (Info; Warn при смене метода),
+  накапливает их в `HTTPResponse.Redirects`, а Sender дописывает сводку в `reason` записи лога —
+  видно в UI в блоке «Причина» (одна запись на запрос, счётчики §44 не меняются). `redactURL` режет
+  query (токены). Следование редиректам оставлено (лимит 10 хопов). Запрет редиректов и метрика
+  Prometheus — вне scope.
+- **50.4 Circuit breaker не открывается по 4xx.** Боевой инцидент site/push: 5 подряд 422
+  `NotRegistered` (протухшие FCM-токены) открывали breaker → 30с ВСЕ пуши узла, включая валидные,
+  отбивались `circuit_breaker_open` (503 без вызова upstream) и терялись; пробный запрос попадал на
+  очередной плохой токен — волны переоткрытий. Фикс: нездоровье = транспортная ошибка или 5xx;
+  любой ответ < 500 (4xx = ошибка данных клиента, узел жив) — RecordSuccess для breaker'а; в лог
+  запись 4xx по-прежнему done=false. Точка решения одна — `SendUsecase.Send` (sync+async).
+
+Подробности — [sections/50-node-cache-teamslug-redirects.md](sections/50-node-cache-teamslug-redirects.md).
+
+## 51. Управление логированием сервисов (консоль «Логи»)
+
+ТЗ зафиксировано, реализация не начата (план — ветка `feature/service-logging`, блоки 51.0–51.8).
+Служебные slog-логи трёх процессов (Receiver/Sender/Web) в UI + runtime-смена уровня. НЕ путать с
+логами запросов узлов (ClickHouse, §7.4/§42).
+
+- **51.1 Зачем.** Расследования (§50) упираются в недоступность служебных логов Sender/Receiver из
+  UI; уровень логирования фиксируется на старте (YAML, int 2..5) — смена требует рестарта.
+- **51.2 Архитектура.** Логгер строится вендорным `Initlogger` с фиксированным `slog.Level` — нужна
+  собственная сборка цепочки хендлеров из экспортируемых примитивов (`NewMultiHandler`/`SentryHandler`/
+  `NewLogger`) с `*slog.LevelVar` (runtime-уровень) + `RingHandler`. Кросс-процессная доставка — Redis:
+  каждый сервис пишет в `nexus:logs:<service>` (LPUSH+LTRIM ~2000+EXPIRE ~1ч), Web мержит три ключа.
+- **51.3 Ядро.** Пакет `internal/platform/logsink`: `RingHandler` маскирует значения по
+  `sensitiveKeys`, кладёт в in-process кольцо + буферизованный канал; фоновый батч-шиппер в Redis;
+  канал полон → дроп (лог-путь не блокируется). `bootstrap.Init` возвращает `LogController`
+  (level+ring); шиппер подключается в `app.New` (`StartRedisShipper`).
+- **51.4 Runtime-уровень.** `LoggingSettings{Level *int}` в `app_settings` (секция `logging`, JSONB —
+  без миграции), publish `reloader.SectionLogging`; применятель по образцу `SessionTTLProvider`;
+  подписка во ВСЕХ трёх сервисах (Receiver/Sender получают минимальный PG-ридер уровня).
+- **51.5 API (admin).** `GET /api/logs?service=&limit=` (мерж трёх ключей, desc),
+  `GET /api/logs/download` (`text/plain` attachment); смена уровня — существующий
+  `PUT /api/settings/app {logging:{level}}`.
+- **51.6 UI.** Отдельный пункт сайдбара «Логи» (admin, маршрут `/logs`, полная высота) — консоль
+  follow-tail (стиль Vercel/Railway): липкий тулбар (чипсы сервисов, сегментированный уровень —
+  меняет РЕАЛЬНЫЙ порог, поиск, `● Live` с паузой, скачать), плотный моноширинный поток с
+  автоскроллом, паузой при ручном скролле и «↓ к последним», раскрытие строки в атрибуты, кап ~2000.
+- **51.8 Тестовый контур и аудит покрытия.** Юнит-тесты каждого блока (маскировка/кольцо/дроп/
+  неблокируемость logsink, parity цепочки хендлеров, app_settings-вертикаль, API, UI-утилиты);
+  сценарные integration-тесты (шиппер→Redis, мерж трёх ключей, кросс-сервисный reload уровня через
+  реальный Redis pub/sub — закрывает пробел `Subscriber.Run`, маскировка e2e, неблокируемость под
+  нагрузкой; Make-цель `test-int-logs`); закрытие существующих дыр покрытия затронутой вертикали
+  (bootstrap, app_settings_handler, reloader); аудит-карта пробелов покрытия по всему репо в
+  `IMPLEMENTATION.md` (тесты вне вертикали — долг); vitest добавляется в CI job `ui-build`.
+- **51.9 Debug-инструментирование.** Runtime-debug полезен только с реальными debug-строками:
+  анализ ключевых путей трёх сервисов (Receiver — резолв узла/кеш/auth/sync-async; Sender —
+  исходящий вызов/ретраи/breaker/async/CH-буфер; Web — кеш узла/reload/app_settings) и добавление
+  `logger.Debug` со структурными атрибутами без секретов; дорогие атрибуты — за проверкой уровня;
+  итог анализа — в `IMPLEMENTATION.md`. **Правило впредь (CLAUDE.md §1 + чек-лист §10):** в новом
+  коде debug-логирование закладывается сразу — в местах возможных проблем/анализа и в нечётких/
+  опасных/сложных неявных местах; типовые варианты: след решения на ветвлении, Debug на каждом
+  тихом `return`/проглоченной best-effort-ошибке, исход внешнего вызова (status/attempts/
+  duration_ms), кеш-события.
+- **Вне scope:** SysLog-тумблер, SSE-стриминг, персистентное хранилище служебных логов,
+  per-service уровень.
+
+Подробности — [sections/51-service-logging.md](sections/51-service-logging.md).
+
+## 52. Трёхсостоянье статуса узла: OK / Degraded / Down
+
+Продолжение инцидента §50.4 (site/push, 422 NotRegistered): breaker по 4xx больше не открывается,
+но бейдж узла на Overview всё равно **Down** — флаг «последний вызов ошибочен» булев («любой
+не-2xx»). Живой узел горит красным = ложная тревога оператору.
+
+- **52.2 Модель.** `domain.NodeOutcome` — исход последнего вызова: `ok` (2xx), `degraded`
+  (узел ответил, не-2xx и < 500 — жёлтый бейдж), `down` (транспортная ошибка/status 0 или 5xx —
+  красный). Граница `< 500` = upstreamHealthy §50.4. Синтезированные шиной 503 breaker-open и
+  502 oversize (§43-rev) — `down` (недоставка); отклонение от breaker'а намеренное.
+- **52.3 Кодировки.** Gauge `nexus_node_last_request_error` (§41): имя сохранено, значения
+  0=ok/1=degraded/2=down (`max by (node)` = худшее между репликами; старые алерты `>=1` живы).
+  Redis `nexus:node:last_error:<path>` (§46): `"0"`=ok/`"1"`=down/`"2"`=degraded — кодировка
+  НАМЕРЕННО отличается от gauge ради legacy `"1"` («любой не-2xx» → worst case down) и
+  rolling-совместимости; кодек только в `platform/nodestatus`.
+- **52.4 Порты.** `NodeStatusWriter.SetLastOutcome` (Sender), `NodeStatusReader.GetLastOutcomes`
+  (Web); `PromMetrics.NodeLastErrors` не меняется (сырой float, маппинг в usecase);
+  `NodeThroughputRow.LastOutcome`.
+- **52.5 API.** `GET /api/metrics/nodes`: новое поле `last_outcome` (`ok|degraded|down`),
+  `last_error` сохранён (back-compat, = `last_outcome != "ok"`).
+- **52.6 UI.** Новый Variant `degraded` (тон warn — отдельный от Queue), подпись «Degraded» в обеих
+  локалях, сортировка err→degraded→queue→…, опция в фильтре статусов.
+- **52.7 Тесты.** Юнит: классификатор (таблица границ), Redis-кодек (вкл. legacy), gauge, НОВЫЙ тест
+  gRPC-адаптера Sender (реальный usecase + стабы), async-путь, web-usecase (приоритет Redis/
+  fallback Prometheus). Интеграционные: round-trip writer→reader (реальный Redis) + сценарий
+  422→degraded, 500→down, 200→ok через `AsyncProcessor.Handle`.
+- **Вне scope:** `nexus_request_incomplete_total` и счётчики ошибок §44 (ClickHouse `done`) не
+  меняются; DLQ-reprocess по-прежнему не пишет статус узла (существующий пробел); runtime-бейдж в
+  NodeDetail; Telegram-алерты §22.
+
+Подробности — [sections/52-node-degraded-status.md](sections/52-node-degraded-status.md).
+
+## 53. Копирование узла — кнопка «Скопировать узел»
+
+Клонирование узла одним действием: полная копия конфигурации (включая креды) с новым `path` в той
+же команде. Закрывает ручное перебивание десятков полей формы при создании похожего узла.
+Развивает §3.3, §5.5, §18, §23, §26.
+
+- **53.1 Scope.** Копия в той же команде (кросс-командное — Move §18); доступ manager+
+  (`authedManager`). Копирование серверное: креды не возвращаются через API (§5.5), поэтому
+  клиентское предзаполнение формы их бы не перенесло; endpoint клонирует узел в памяти
+  (usecase получает расшифрованные креды, pg-адаптер перешифровывает при INSERT).
+- **53.2 API.** `POST /api/nodes/{id}/copy` `{ "path": "..." }` → `201` + `NodeResponse` копии
+  (только флаги `*_set`). Ошибки: 400 невалидный path/hard-limit, 404 источник не найден или чужая
+  команда, 409 path занят (`UNIQUE(team_id, path)`).
+- **53.3 Клонирование.** Сброс: `ID`, таймстемпы; `Path` ← из запроса; `Status` — **всегда
+  `paused`** (копия активного узла не начинает молча принимать трафик). Копируются: креды,
+  методы/URL-режим/auth, таймауты/ретраи/DLQ, логирование, `rmq_*`/`pull_*`, `comment`,
+  **CH-таблица как есть** (несколько узлов на одну таблицу — §37, `provisionTable` идемпотентен).
+  Клон проходит стандартный Create-пайплайн (общий `prepareNewNode`).
+- **53.4 Allowlist.** Ссылки `node_allowed_hosts` клонируются в той же UoW-транзакции + пересборка
+  снимка `url_allowed_hosts` — иначе копия from_request-узла была бы fail-closed. Без UoW ссылки
+  не клонируются (debug-лог, §51.9).
+- **53.5 Аудит.** Новое действие `node.copy` (транзакционно): details
+  `source_node_id`/`source_path`/`path`/`status`/`allowed_hosts_cloned`; добавлено в фильтр UI.
+- **53.6 UI.** Кнопка «Копировать» в шапке NodeDetail (manager+) → диалог с полем «Новый путь»
+  (префилл `<path>-copy`), клиентская валидация path, hint «копия создаётся на паузе»; успех →
+  переход на страницу копии.
+- **53.7 Неочевидности.** Write-through кеш (Receiver видит paused-узел → §3.6); paused pull-узел
+  не опрашивается, но после включения копия конкурирует с источником за одну RMQ-очередь; Copy —
+  manager+ (не пересекает границу команды), Move остаётся admin-only.
+
+Подробности — [sections/53-copy-node.md](sections/53-copy-node.md).

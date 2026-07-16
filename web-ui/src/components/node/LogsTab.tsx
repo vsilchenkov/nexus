@@ -5,7 +5,7 @@ import { RefreshCw, Settings, RotateCcw, ChevronRight, ChevronDown, Download } f
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, type Node } from "../../api/client";
-import { fmtLogTs } from "../../lib/format";
+import { fmtLogTs, fmtSize } from "../../lib/format";
 import { FETCH_CHUNK, LARGE_WARN_RUNES, formatRunes, prettyMaybe } from "../../lib/logBody";
 import { LabelHint } from "../ui";
 import { CopyButton } from "../ui/CopyButton";
@@ -44,10 +44,18 @@ const LIVE_MAX_CONSECUTIVE_ERRORS = 5;
 // показываем подсказку сузить период/фильтр (точечный поиск — через фильтры).
 const MAX_INFINITE_ROWS = 1000;
 
+// useSizeUnits — локализованные единицы размера тела (§42-доп): «Б|КБ|…» из
+// i18n-ключа logs.size_units, сплит по «|» для fmtSize.
+function useSizeUnits(): string[] {
+  const { t } = useTranslation();
+  return useMemo(() => t("logs.size_units").split("|"), [t]);
+}
+
 // LogsTab — вкладка «Логи» (§7.4): snapshot + SSE live-tail с буфером,
 // клиентскими фильтрами, расширенным поиском и replay-меню строки.
 export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: LogsInitialFilter }) {
   const { t } = useTranslation();
+  const sizeUnits = useSizeUnits();
   const id = node.id;
   const hasLogsTable = !!node.clickhouse_table;
 
@@ -560,6 +568,10 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                 <th className="px-3 py-2 text-left">{t("logs.col.url")}</th>
                 <th className="px-3 py-2 text-right">{t("logs.col.status")}</th>
                 <th className="px-3 py-2 text-right">{t("logs.col.ms")}</th>
+                {/* §42-доп: размер тела ответа; короткий заголовок, полное имя в тултипе */}
+                <th className="px-3 py-2 text-right" title={t("logs.col.resp_size_title")}>
+                  {t("logs.col.resp_size")}
+                </th>
                 <th className="px-3 py-2" />
               </tr>
             </thead>
@@ -595,6 +607,10 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                         {r.status}
                       </td>
                       <td className="px-3 py-2 text-right">{r.duration_ms}</td>
+                      {/* §42-доп: размер тела ответа; «—» = тела нет (0 байт) */}
+                      <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-xs text-fg-muted">
+                        {fmtSize(r.response_size ?? 0, sizeUnits)}
+                      </td>
                       <td className="px-3 py-2 text-right">
                         <button
                           title={t("node.actions.replay")}
@@ -610,7 +626,7 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                     </tr>
                     {isOpen && (
                       <tr className="border-t border-line bg-bg-muted/30">
-                        <td colSpan={7} className="px-3 py-3">
+                        <td colSpan={8} className="px-3 py-3">
                           <LogBodies nodeId={id} logId={r.id} />
                         </td>
                       </tr>
@@ -620,7 +636,7 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
               })}
               {visibleLogs.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-3 py-6 text-center text-fg-muted">
+                  <td colSpan={8} className="px-3 py-6 text-center text-fg-muted">
                     {logsQ.isLoading
                       ? t("common.loading")
                       : logsUnavailable
@@ -631,14 +647,14 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
               )}
               {!live && logsQ.isFetchingNextPage && (
                 <tr>
-                  <td colSpan={7} className="px-3 py-4 text-center text-xs text-fg-muted">
+                  <td colSpan={8} className="px-3 py-4 text-center text-xs text-fg-muted">
                     {t("common.loading")}
                   </td>
                 </tr>
               )}
               {!live && !logsQ.hasNextPage && visibleLogs.length > 0 && (
                 <tr>
-                  <td colSpan={7} className="px-3 py-3 text-center text-[11px] text-fg-muted">
+                  <td colSpan={8} className="px-3 py-3 text-center text-[11px] text-fg-muted">
                     {t("logs.no_more")}
                   </td>
                 </tr>
@@ -649,7 +665,7 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                 logsQ.hasNextPage &&
                 infiniteItems.length >= MAX_INFINITE_ROWS && (
                   <tr>
-                    <td colSpan={7} className="px-3 py-3 text-center text-[11px] text-warn">
+                    <td colSpan={8} className="px-3 py-3 text-center text-[11px] text-warn">
                       {t("logs.cap_reached", { n: MAX_INFINITE_ROWS })}
                     </td>
                   </tr>
@@ -705,6 +721,7 @@ function SegmentedControl<T extends string>({ value, onChange, options }: Segmen
 // остаток тянется по кнопке «Показать весь» или скачивается файлом.
 function LogBodies({ nodeId, logId }: { nodeId: string; logId: string }) {
   const { t } = useTranslation();
+  const sizeUnits = useSizeUnits();
   const q = useQuery({
     queryKey: ["log", nodeId, logId],
     queryFn: () => api.get<LogDetail>(`/api/nodes/${nodeId}/log/${logId}`),
@@ -725,6 +742,10 @@ function LogBodies({ nodeId, logId }: { nodeId: string; logId: string }) {
   // приходят в detail-ответе целиком, отдельная подгрузка чанками не нужна.
   const parameters = q.data.parameters ?? "";
   const showParams = parameters.trim().length > 0;
+  // §42-доп: истинный размер тела (байты) в скобках рядом с заголовком панели —
+  // «Запрос (12.0 КБ)». При 0 (нет тела / legacy-запись) скобки не показываем.
+  const sizedTitle = (key: string, size: number) =>
+    t(key) + (size > 0 ? ` (${fmtSize(size, sizeUnits)})` : "");
   return (
     <div className="space-y-3">
       {showReason && (
@@ -751,7 +772,7 @@ function LogBodies({ nodeId, logId }: { nodeId: string; logId: string }) {
           nodeId={nodeId}
           logId={logId}
           which="request"
-          title={t("logs.detail.request")}
+          title={sizedTitle("logs.detail.request", q.data.request_size ?? 0)}
           preview={q.data.request ?? ""}
           total={q.data.request_len ?? 0}
         />
@@ -759,7 +780,7 @@ function LogBodies({ nodeId, logId }: { nodeId: string; logId: string }) {
           nodeId={nodeId}
           logId={logId}
           which="response"
-          title={t("logs.detail.response")}
+          title={sizedTitle("logs.detail.response", q.data.response_size ?? 0)}
           preview={q.data.response ?? ""}
           total={q.data.response_len ?? 0}
         />

@@ -43,6 +43,9 @@ const (
 	ActionNodeReplay = "node.replay"
 	ActionNodeDryRun = "node.dry_run"
 	ActionNodeMove   = "node.move"
+	// §53: клонирование узла (отдельное от node.create действие — в журнале
+	// видна провенансная связь source_node_id → новый узел).
+	ActionNodeCopy = "node.copy"
 
 	// §34.4: очистка/удаление сообщений async-очереди Kafka.
 	ActionAsyncQueuePurge = "async_queue.purge"
@@ -54,6 +57,9 @@ const (
 	ActionCHTemplateDelete = "ch_template.delete"
 
 	ActionTeamSwitch = "team.switch"
+	// ActionUserFavoriteTeams — §49: пользователь заменил свой список
+	// избранных команд (добавление/удаление/переупорядочивание — один PUT).
+	ActionUserFavoriteTeams = "user.favorite_teams.update"
 
 	ActionTeamCreate       = "team.create"
 	ActionTeamUpdate       = "team.update"

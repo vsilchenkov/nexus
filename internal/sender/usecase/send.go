@@ -116,11 +116,14 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		Method:          in.RequestPath,
 		Parameters:      extractQuery(in.TargetURL),
 		ChecksumRequest: md5hex(in.Body),
-		DateCreate:      t0,
-		DateRequest:     t0,
-		Host:            u.host,
-		IP:              in.ClientIP,
-		NodeID:          in.NodeID,
+		// §42-доп: истинный размер тела в байтах — как checksum, по ПОЛНОМУ
+		// телу до truncateRunes ниже и независимо от LogRequestBody.
+		RequestSize: int64(len(in.Body)),
+		DateCreate:  t0,
+		DateRequest: t0,
+		Host:        u.host,
+		IP:          in.ClientIP,
+		NodeID:      in.NodeID,
 	}
 	// §22.2: сохраняемая в лог копия тела запроса режется по per-node max_body_size
 	// (в рунах) — checksum считается по ПОЛНОМУ телу (выше). На сам запрос к
@@ -132,6 +135,7 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 	req := &port.HTTPRequest{
 		Method:    in.Method,
 		URL:       in.TargetURL,
+		NodePath:  in.NodePath, // §50: только для служебного лога редиректов
 		Headers:   in.Headers,
 		Body:      in.Body,
 		TimeoutMs: in.TimeoutMs,
@@ -140,7 +144,17 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 	// Circuit breaker per node (§9.5). Если breaker open — сразу
 	// 503 без попытки + лог. Это снижает нагрузку на проблемный
 	// внешний узел и ускоряет fail-fast в DLQ для async.
-	if allowed, _ := u.cb.Allow(ctx, in.NodePath); !allowed {
+	allowed, cbErr := u.cb.Allow(ctx, in.NodePath)
+	if cbErr != nil {
+		// §51.9: ошибка breaker'а (Redis) раньше проглатывалась в «_» —
+		// fail-open невидим. Allow при ошибке разрешает вызов, фиксируем след.
+		u.logger.Debug("send: circuit breaker check failed (fail-open)",
+			u.logger.Str("node", in.NodePath), u.logger.Err(cbErr))
+	}
+	if !allowed {
+		u.logger.Debug("send: circuit breaker open, fail-fast 503",
+			u.logger.Str("id", in.ID),
+			u.logger.Str("node", in.NodePath))
 		rec.DateResponse = time.Now()
 		rec.Duration = int32(time.Since(t0).Milliseconds())
 		rec.Status = 0
@@ -185,6 +199,17 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 			}
 		}
 		attempts = append(attempts, a)
+		// §51.9: детали попыток раньше были видны только в CH (attempts_details,
+		// и то не всегда) — на debug каждая попытка с исходом и backoff.
+		u.logger.Debug("send: attempt finished",
+			u.logger.Str("id", in.ID),
+			u.logger.Str("node", in.NodePath),
+			u.logger.Int("attempt", int(n)),
+			u.logger.Int("max_attempts", int(maxAttempts)),
+			u.logger.Int("status", int(a.Status)),
+			u.logger.Str("reason", a.Reason),
+			u.logger.Int("duration_ms", int(dur)),
+			u.logger.Int("backoff_before_ms", int(a.BackoffBeforeMs)))
 
 		if lastErr == nil && resp != nil && resp.StatusCode < 500 {
 			break // успех или 4xx — retry не помогает
@@ -215,6 +240,7 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		// §43-rev: тело ответа превысило ТРАНСПОРТНЫЙ лимит (config
 		// grpc_max_message_bytes) — httpclient оборвал чтение, тело не в памяти.
 		// Клиенту 502, лог done=0 + reason; тела и checksum нет (не дочитано).
+		// §42-доп: ResponseSize остаётся 0 — истинный размер неизвестен.
 		out.StatusCode = 502
 		out.Error = fmt.Sprintf("response body exceeds transport limit: > %d bytes", u.maxResponseBytes)
 		rec.Status = 502
@@ -227,6 +253,9 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		rec.Status = resp.StatusCode
 		rec.Done = resp.StatusCode >= 200 && resp.StatusCode < 300
 		rec.ChecksumResponse = md5hex(resp.Body)
+		// §42-доп: истинный размер тела ответа в байтах — по полному телу до
+		// truncateRunes ниже и независимо от LogResponseBody.
+		rec.ResponseSize = int64(len(resp.Body))
 		// §22.2: лог-копия ответа режется по per-node max_body_size; checksum по
 		// полному телу. Клиент получает полный resp.Body (выше).
 		if in.LogResponseBody {
@@ -239,13 +268,32 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		}
 	}
 
-	// Circuit breaker отражает здоровье ВНЕШНЕГО узла, а не нашу oversize-политику:
-	// ответ 2xx (даже если мы reject'нули его за размер) означает, что узел жив.
-	upstreamHealthy := lastErr == nil && resp != nil && resp.StatusCode >= 200 && resp.StatusCode < 300
+	// §50: если httpclient следовал 3xx-редиректам — дописываем это в reason
+	// лога, чтобы в UI (деталь строки, «Причина») было видно, что фактический
+	// адрес отличается от target_url узла (частая причина «поставили http, а
+	// идёт https»). Одна запись лога на запрос — редиректы внутри одного вызова.
+	if resp != nil && len(resp.Redirects) > 0 {
+		rec.Reason = appendRedirectNote(rec.Reason, resp.Redirects)
+	}
+
+	// Circuit breaker отражает здоровье ВНЕШНЕГО узла. Нездоровье — транспортная
+	// ошибка (timeout/refused) или 5xx. ЛЮБОЙ ответ < 500 — узел жив и отвечает:
+	// 4xx — ошибка данных/клиента (напр. 422 NotRegistered протухшего FCM-токена),
+	// по ней breaker НЕ открывается — иначе серия 4xx от «плохих» адресатов
+	// блокировала бы доставку валидных запросов 503-ми (боевой инцидент
+	// site/push, §50.4). Oversize-политика (§43-rev) на здоровье тоже не влияет.
+	upstreamHealthy := lastErr == nil && resp != nil && resp.StatusCode < 500
 	if upstreamHealthy {
 		_ = u.cb.RecordSuccess(ctx, in.NodePath)
 	} else {
 		_ = u.cb.RecordFailure(ctx, in.NodePath)
+		// §51.9: незасчитанное здоровье узла (открытие breaker'а после серии) —
+		// след решения на debug; сами Record-ошибки некритичны (best-effort).
+		u.logger.Debug("send: recorded upstream failure for breaker",
+			u.logger.Str("id", in.ID),
+			u.logger.Str("node", in.NodePath),
+			u.logger.Int("status", int(rec.Status)),
+			u.logger.Str("reason", rec.Reason))
 	}
 
 	if len(attempts) > 1 || !rec.Done {
@@ -283,6 +331,33 @@ func truncateRunes(s string, enabled bool, max int32) string {
 		return s
 	}
 	return string(runes[:max]) + truncationMarker
+}
+
+// appendRedirectNote дописывает к reason лога краткую сводку по редиректам (§50):
+// сколько переходов, смена схемы, и предупреждение о потере тела при смене
+// метода (301/302/303 POST→GET). URL берутся уже отредаченными из httpclient.
+// Пример: "OK · 1 редирект: http→https; тело запроса потеряно (POST→GET) —
+// http://x/a → https://x/a".
+func appendRedirectNote(reason string, hops []port.RedirectHop) string {
+	if len(hops) == 0 {
+		return reason
+	}
+	first, last := hops[0], hops[len(hops)-1]
+	bodyDropped := false
+	for _, h := range hops {
+		if h.FromMethod != h.ToMethod {
+			bodyDropped = true
+			break
+		}
+	}
+	note := fmt.Sprintf("%d редирект(ов) — %s → %s", len(hops), first.From, last.To)
+	if bodyDropped {
+		note += "; тело запроса потеряно (POST→GET)"
+	}
+	if reason == "" {
+		return note
+	}
+	return reason + " · " + note
 }
 
 // extractQuery возвращает query-string из URL без ведущего "?".

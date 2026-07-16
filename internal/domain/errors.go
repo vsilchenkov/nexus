@@ -88,8 +88,11 @@ var (
 	// команду, в которой он не состоит. Нельзя сделать дефолтной чужую команду
 	// (иначе §18.9 при входе всё равно перекинет на команду по членству).
 	ErrUserNotTeamMember = errors.New("domain: user is not a member of the team")
-	ErrSessionNotFound   = errors.New("domain: session not found")
-	ErrSessionExpired    = errors.New("domain: session expired")
+	// ErrFavoriteTeamsInvalid — §49: список избранных команд не проходит
+	// валидацию (дубликаты team_id или больше лимита).
+	ErrFavoriteTeamsInvalid = errors.New("domain: favorite teams list invalid")
+	ErrSessionNotFound      = errors.New("domain: session not found")
+	ErrSessionExpired       = errors.New("domain: session expired")
 
 	// Auth (входящий запрос)
 	ErrUnauthorized        = errors.New("domain: unauthorized")
@@ -164,6 +167,13 @@ var (
 	// Версия и сессия (§34.2 / §34.3)
 	ErrVersionOverrideForbidden = errors.New("domain: version override is not allowed (web.allow_version_override is off)")
 	ErrSessionTTLInvalid        = errors.New("domain: session_ttl_seconds must be within [300, 2592000]")
+
+	// Уровень логирования сервисов (§51)
+	ErrLogLevelInvalid = errors.New("domain: logging.level must be within [2, 5] (2=error..5=debug)")
+
+	// Консоль служебных логов (§51.5)
+	ErrServiceLogInvalidService = errors.New("domain: unknown service (want receiver|sender|web|all)")
+	ErrServiceLogInvalidLevel   = errors.New("domain: invalid min_level (want error|warn|info|debug)")
 
 	// Team (multi-tenancy v2)
 	ErrTeamNotFound         = errors.New("domain: team not found")

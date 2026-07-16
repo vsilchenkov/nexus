@@ -1207,6 +1207,123 @@
                 }
             }
         },
+        "/api/logs": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Свежие записи slog-логов Receiver/Sender/Web из Redis-колец nexus:logs:*, слитые по времени (новые первыми). Это логи самих сервисов, не логи запросов узлов.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "service-logs"
+                ],
+                "summary": "Хвост служебных логов сервисов (§51.5).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "all (дефолт) | csv из receiver,sender,web",
+                        "name": "service",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "максимум записей (дефолт 500, кап 2000)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "минимальный уровень: debug|info|warn|error",
+                        "name": "min_level",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/nexus_internal_domain.ServiceLogEntry"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/logs/download": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Тот же хвост, что GET /api/logs, но text/plain attachment (nexus-logs-\u003cts\u003e.log), строки в хронологическом порядке.",
+                "produces": [
+                    "text/plain"
+                ],
+                "tags": [
+                    "service-logs"
+                ],
+                "summary": "Скачать служебные логи файлом (§51.5).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "all (дефолт) | csv из receiver,sender,web",
+                        "name": "service",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "максимум записей (дефолт 500, кап 2000)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "минимальный уровень: debug|info|warn|error",
+                        "name": "min_level",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "лог-файл",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/logs/{id}/replay": {
             "post": {
                 "security": [
@@ -1276,6 +1393,57 @@
                     },
                     "429": {
                         "description": "rate limit exceeded",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/me/favorite-teams": {
+            "put": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "§49: полная замена упорядоченного списка (позиция = индекс в team_ids). Пустой массив очищает избранное. Каждый team_id должен входить в членства пользователя (GET /api/me/teams).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Заменить список избранных команд текущего пользователя.",
+                "parameters": [
+                    {
+                        "description": "ordered team_ids",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.setFavoriteTeamsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.FavoriteTeamsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "duplicates / too many / not a member",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
@@ -2401,6 +2569,70 @@
                     },
                     "429": {
                         "description": "rate limit exceeded",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{id}/copy": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Manager+. Создаёт клон узла с новым path в той же команде: копируются все настройки, включая креды (перешифровка только внутри бэкенда, в ответе значения не возвращаются) и привязки allowlist-хостов. Копия всегда создаётся в статусе paused.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "nodes"
+                ],
+                "summary": "Скопировать узел (§53).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "source node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "new path",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.CopyNodeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.NodeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid path / limit reached",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "node not found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "path already exists",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
@@ -4330,6 +4562,18 @@
                 }
             }
         },
+        "internal_web_adapter_in_http.CopyNodeRequest": {
+            "type": "object",
+            "required": [
+                "path"
+            ],
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "maxLength": 255
+                }
+            }
+        },
         "internal_web_adapter_in_http.CreateNodeRequest": {
             "type": "object",
             "required": [
@@ -4662,6 +4906,17 @@
                 }
             }
         },
+        "internal_web_adapter_in_http.FavoriteTeamsResponse": {
+            "type": "object",
+            "properties": {
+                "team_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "internal_web_adapter_in_http.HostPreviewResponse": {
             "type": "object",
             "properties": {
@@ -4988,10 +5243,17 @@
                     "description": "§42: полные длины тел в рунах. В Get поля request/response несут только\nПРЕВЬЮ (первые bodyPreviewRunes рун); если *_len \u003e длины превью, на фронте\nпоказывается «показать весь / скачать». В списках (List/Stream) не заданы.",
                     "type": "integer"
                 },
+                "request_size": {
+                    "description": "§42-доп: истинные размеры тел в БАЙТАХ до усечения лог-копии — в отличие\nот request_len/response_len (руны сохранённой, возможно усечённой копии).\nВозвращаются всегда (и в list, и в detail); 0 — нет тела / транспортная\nошибка / TooLarge (§43) / legacy-строка до backfill-миграции.",
+                    "type": "integer"
+                },
                 "response": {
                     "type": "string"
                 },
                 "response_len": {
+                    "type": "integer"
+                },
+                "response_size": {
                     "type": "integer"
                 },
                 "status": {
@@ -5021,6 +5283,17 @@
             "properties": {
                 "current_team_id": {
                     "type": "string"
+                },
+                "favorites": {
+                    "description": "Favorites — §49: упорядоченный список id избранных команд пользователя.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "healed": {
+                    "description": "Healed — §44.H: current_team в сессии был вне членств и переключён\nсервером; UI по этому флагу инвалидирует team-scoped кеш.",
+                    "type": "boolean"
                 },
                 "items": {
                     "type": "array",
@@ -5229,6 +5502,14 @@
                 },
                 "prometheus_available": {
                     "type": "boolean"
+                },
+                "totals": {
+                    "description": "Totals — агрегат KPI шапки (§44.A): сумма строк items за тот же период.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.overviewTotalsDTO"
+                        }
+                    ]
                 }
             }
         },
@@ -6293,8 +6574,17 @@
                     "type": "integer"
                 },
                 "last_error": {
-                    "description": "§41 («Down»): последний исходящий вызов узла завершился ошибкой.",
+                    "description": "§41 (back-compat): последний исходящий вызов узла завершился ошибкой\n(«любой не-2xx» = last_outcome != \"ok\"). UI использует last_outcome;\nполе сохранено для внешних потребителей metrics:read.",
                     "type": "boolean"
+                },
+                "last_outcome": {
+                    "description": "§52: исход последнего исходящего вызова узла — \"ok\" (2xx) | \"degraded\"\n(ответил не-2xx \u003c500) | \"down\" (транспортная ошибка или 5xx).",
+                    "type": "string",
+                    "enum": [
+                        "ok",
+                        "degraded",
+                        "down"
+                    ]
                 },
                 "node": {
                     "type": "string"
@@ -6359,6 +6649,23 @@
                 },
                 "prometheus_available": {
                     "type": "boolean"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.overviewTotalsDTO": {
+            "type": "object",
+            "properties": {
+                "error_rate": {
+                    "type": "number"
+                },
+                "errors": {
+                    "type": "integer"
+                },
+                "incoming": {
+                    "type": "integer"
+                },
+                "outgoing": {
+                    "type": "integer"
                 }
             }
         },
@@ -6512,6 +6819,17 @@
             "properties": {
                 "team_id": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.setFavoriteTeamsRequest": {
+            "type": "object",
+            "properties": {
+                "team_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -6793,6 +7111,9 @@
                 "general": {
                     "$ref": "#/definitions/nexus_internal_domain.GeneralSettings"
                 },
+                "logging": {
+                    "$ref": "#/definitions/nexus_internal_domain.LoggingSettings"
+                },
                 "notifications": {
                     "$ref": "#/definitions/nexus_internal_domain.NotificationsSettings"
                 },
@@ -6950,6 +7271,15 @@
                 }
             }
         },
+        "nexus_internal_domain.LoggingSettings": {
+            "type": "object",
+            "properties": {
+                "level": {
+                    "description": "Level — уровень логирования всех трёх сервисов (2=error, 3=warn,\n4=info, 5=debug). nil = брать из YAML (cfg.Logging.Level). Применяется\nбез рестарта через reloader.SectionLogging (LevelVar в цепочке хендлеров).",
+                    "type": "integer"
+                }
+            }
+        },
         "nexus_internal_domain.NotificationsSettings": {
             "type": "object",
             "properties": {
@@ -6990,6 +7320,27 @@
                 },
                 "use": {
                     "type": "boolean"
+                }
+            }
+        },
+        "nexus_internal_domain.ServiceLogEntry": {
+            "type": "object",
+            "properties": {
+                "attrs": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "level": {
+                    "type": "string"
+                },
+                "msg": {
+                    "type": "string"
+                },
+                "service": {
+                    "type": "string"
+                },
+                "ts": {
+                    "type": "string"
                 }
             }
         },

@@ -187,7 +187,15 @@ func (w *Writer) flushTable(ctx context.Context, table string) {
 		return
 	}
 
-	if err := w.insertBatch(ctx, table, batch); err != nil {
+	// §51.9: успешный INSERT раньше не оставлял следа (rows/длительность видны
+	// только на ошибке) — «куда делись логи узла» было нечем диагностировать.
+	insertStart := time.Now()
+	if err := w.insertBatch(ctx, table, batch); err == nil {
+		w.logger.Debug("clickhouse batch inserted",
+			w.logger.Str("table", table),
+			w.logger.Int("rows", len(batch)),
+			w.logger.Int("duration_ms", int(time.Since(insertStart).Milliseconds())))
+	} else {
 		w.logger.ErrorWithOp("clickhouse batch insert failed", err, "chlog.flushTable",
 			w.logger.Str("table", table),
 			w.logger.Int("rows", len(batch)))
@@ -222,7 +230,8 @@ const insertSQL = `INSERT INTO %s (
 	ID, type, http_method, url, method, parameters, request, response,
 	status, reason, date_create, date_request, date_response,
 	duration, done, checksum_request, checksum_response,
-	Host, IP, attempts, attempts_details, node_id
+	Host, IP, attempts, attempts_details, node_id,
+	request_size, response_size
 )`
 
 func (w *Writer) insertBatch(ctx context.Context, table string, batch []*domain.LogRecord) error {
@@ -243,6 +252,7 @@ func (w *Writer) insertBatch(ctx context.Context, table string, batch []*domain.
 			r.Status, r.Reason, r.DateCreate, r.DateRequest, r.DateResponse,
 			r.Duration, r.Done, r.ChecksumRequest, r.ChecksumResponse,
 			r.Host, r.IP, r.Attempts, r.AttemptsDetails, r.NodeID,
+			r.RequestSize, r.ResponseSize,
 		)
 		if err != nil {
 			return fmt.Errorf("append row: %w", err)

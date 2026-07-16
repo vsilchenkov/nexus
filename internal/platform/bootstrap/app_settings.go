@@ -38,6 +38,10 @@ type appSettingsOverlay struct {
 		BufferMaxSize    *int    `json:"buffer_max_size,omitempty"`
 		Workers          *int    `json:"workers,omitempty"`
 	} `json:"clickhouse"`
+	// §51: runtime-уровень служебного логирования (nil = YAML-уровень).
+	Logging struct {
+		Level *int `json:"level,omitempty"`
+	} `json:"logging"`
 }
 
 // ApplyAppSettings читает singleton-строку app_settings и накладывает
@@ -68,6 +72,12 @@ func readAppSettings(ctx context.Context, pool *pgxpool.Pool) (*appSettingsOverl
 		}
 		return nil, fmt.Errorf("query app_settings: %w", err)
 	}
+	return decodeAppSettings(raw)
+}
+
+// decodeAppSettings разбирает JSONB-значение app_settings в overlay.
+// Чистая функция — извлечена из readAppSettings ради unit-тестов без pgxpool.
+func decodeAppSettings(raw []byte) (*appSettingsOverlay, error) {
 	o := &appSettingsOverlay{}
 	if len(raw) == 0 || string(raw) == "{}" {
 		return o, nil

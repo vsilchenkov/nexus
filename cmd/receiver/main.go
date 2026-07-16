@@ -37,7 +37,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	_, flags, cfg, logger := bootstrap.Init(versionInfoData, projectName)
+	_, flags, cfg, logger, logCtl := bootstrap.Init(versionInfoData, projectName)
 	defer bootstrap.Shutdown(logger)
 
 	if bootstrap.HandleMigrateFlags(flags, cfg, logger) {
@@ -61,7 +61,7 @@ func main() {
 
 	otelShutdown := bootstrap.MustOtel(ctx, cfg, "receiver", logger)
 
-	app := receiver.New(cfg, pgPool, redisClient, cipher, otelShutdown, logger)
+	app := receiver.New(cfg, pgPool, redisClient, cipher, otelShutdown, logger, logCtl)
 
 	if err := runner.Run(serviceName, displayName, description, app, logger); err != nil {
 		logger.ErrorWithOp("service stopped", err, "main")

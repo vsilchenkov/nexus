@@ -32,12 +32,13 @@ type CancelSet interface {
 	IsCancelled(ctx context.Context, id string) (bool, error)
 }
 
-// NodeStatusWriter — персист исхода последнего исходящего вызова узла (§46).
-// Реализация — internal/platform/nodestatus (Redis) либо Noop при отсутствии
-// Redis. Best-effort: без возврата ошибки (фиксация статуса не влияет на
-// доставку). Объявлен на стороне consumer'а (accept interfaces, §17.2).
+// NodeStatusWriter — персист исхода последнего исходящего вызова узла
+// (§46, §52: ok/degraded/down). Реализация — internal/platform/nodestatus
+// (Redis) либо Noop при отсутствии Redis. Best-effort: без возврата ошибки
+// (фиксация статуса не влияет на доставку). Объявлен на стороне consumer'а
+// (accept interfaces, §17.2).
 type NodeStatusWriter interface {
-	SetLastError(ctx context.Context, nodePath string, errored bool)
+	SetLastOutcome(ctx context.Context, nodePath string, outcome domain.NodeOutcome)
 }
 
 // AsyncProcessor — обработчик одного Kafka-сообщения для Sender.
@@ -168,9 +169,27 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 		return HandleRetry
 	}
 
+	// §51.9: старт обработки async-сообщения — привязка id↔узел на debug.
+	p.logger.Debug("async: delivering message",
+		p.logger.Str("id", env.ID),
+		p.logger.Str("node_path", env.NodePath),
+		p.logger.Int("body_len", len(env.Body)))
+
 	out := p.send.Send(ctx, buildSendInput(node, env))
 
-	isErr := out.StatusCode < 200 || out.StatusCode >= 300
+	// §52: outcome (ok/degraded/down) — для бейджа узла; isErr («любой
+	// не-2xx») — прежняя семантика для incomplete_total и решения ack/dlq.
+	outcome := domain.OutcomeFromStatusCode(out.StatusCode)
+	isErr := outcome.IsError()
+	// §51.9: исход доставки (решение ack/dlq — ниже) раньше был виден только
+	// в метриках/CH.
+	p.logger.Debug("async: delivery finished",
+		p.logger.Str("id", env.ID),
+		p.logger.Str("node_path", env.NodePath),
+		p.logger.Int("status", int(out.StatusCode)),
+		p.logger.Int("attempts", int(out.Attempts)),
+		p.logger.Int("duration_ms", int(out.DurationMs)),
+		p.logger.Str("outcome", string(outcome)))
 	if p.metrics != nil {
 		p.metrics.RequestsTotal.
 			WithLabelValues("requestAsync", env.NodePath, strconv.FormatInt(int64(out.StatusCode), 10)).Inc()
@@ -179,12 +198,12 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 		if isErr {
 			p.metrics.RequestsIncompleteTotal.WithLabelValues("requestAsync", env.NodePath).Inc()
 		}
-		// §41 («Down»): исход последнего вызова узла (in-memory гаудж).
-		p.metrics.SetNodeLastRequestError(env.NodePath, isErr)
+		// §41/§52: исход последнего вызова узла (in-memory гаудж).
+		p.metrics.SetNodeLastRequestOutcome(env.NodePath, outcome)
 	}
 	// §46: персистентный исход в Redis (переживает рестарт; Noop без Redis).
 	if p.nodeStatus != nil {
-		p.nodeStatus.SetLastError(ctx, env.NodePath, isErr)
+		p.nodeStatus.SetLastOutcome(ctx, env.NodePath, outcome)
 	}
 
 	if out.StatusCode >= 200 && out.StatusCode < 300 {
@@ -197,6 +216,14 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 			p.logger.Str("id", env.ID))
 		return HandleRetry
 	}
+	// §51.9: успешный уход в DLQ раньше молчал — сообщение «исчезало» из
+	// основного потока без следа в служебных логах.
+	p.logger.Debug("async: message sent to dlq",
+		p.logger.Str("id", env.ID),
+		p.logger.Str("node_path", env.NodePath),
+		p.logger.Str("dlq_topic", p.dlqTopic),
+		p.logger.Int("status", int(out.StatusCode)),
+		p.logger.Int("attempts", int(out.Attempts)))
 	return HandleDLQed
 }
 

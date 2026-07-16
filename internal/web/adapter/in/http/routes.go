@@ -25,6 +25,7 @@ type Handlers struct {
 	RMQTest       *RMQTestHandler
 	Kafka         *KafkaHandler
 	AsyncQueue    *AsyncQueueHandler
+	ServiceLogs   *ServiceLogsHandler
 }
 
 // Middlewares — общие middleware (auth-check, role-check, API token-check).
@@ -69,6 +70,9 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		// API-токены ограничены одной командой по token.team_id.
 		authed.GET("/me/teams", h.Auth.MyTeams)
 		authed.POST("/me/switch-team", RequireSessionOnly(), h.Auth.SwitchTeam)
+		// §49: избранные команды — self-service, только session-cookie
+		// (API-токен ограничен одной командой, избранное ему ни к чему).
+		authed.PUT("/me/favorite-teams", RequireSessionOnly(), h.Auth.SetFavoriteTeams)
 		// Self-service смена собственного пароля (§26): любая роль, только
 		// session-cookie (API-токенам пароль менять незачем).
 		authed.POST("/me/password", RequireSessionOnly(), h.Auth.ChangeOwnPassword)
@@ -167,6 +171,8 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		authedManager.PUT("/nodes/:id", h.Node.Update)
 		// §35: лёгкая смена статуса (пауза/отключение) — manager+.
 		authedManager.PATCH("/nodes/:id/status", h.Node.UpdateStatus)
+		// §53: клонирование узла (включая креды) с новым path, копия — paused.
+		authedManager.POST("/nodes/:id/copy", h.Node.Copy)
 		authedManager.DELETE("/nodes/:id", h.Node.Delete)
 		// §7.5.1: dry-run без сохранения конфига.
 		authedManager.POST("/nodes/dry-run", h.DryRun.Run)
@@ -229,6 +235,14 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			authedAdmin.POST("/teams/:id/members", h.Team.AddMember)
 			authedAdmin.PUT("/teams/:id/members/:user_id", h.Team.UpdateMemberRole)
 			authedAdmin.DELETE("/teams/:id/members/:user_id", h.Team.RemoveMember)
+		}
+
+		// Консоль служебных логов (§51.5): хвост slog-логов трёх сервисов из
+		// Redis-колец + скачивание файлом. Admin-only, НЕ путать с per-node
+		// /nodes/:id/logs (ClickHouse). Смена уровня — PUT /settings/app.
+		if h.ServiceLogs != nil {
+			authedAdmin.GET("/logs", h.ServiceLogs.List)
+			authedAdmin.GET("/logs/download", h.ServiceLogs.Download)
 		}
 
 		// Dynamic-настройки Sentry/ClickHouse (§14.5). Admin-only.

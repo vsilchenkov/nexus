@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	chdrv "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -31,9 +32,10 @@ import (
 const encryptionKeyEnv = "ENCRYPTION_KEY"
 
 // Init выполняет общие шаги старта: парсит флаги, загружает конфиг,
-// инициализирует Sentry и логгер.
-// При фатальной ошибке завершает процесс.
-func Init(versionInfoData []byte, projectName string) (*build.Option, config.Flags, *config.Config, logging.Logger) {
+// инициализирует Sentry и логгер (собственная сборка цепочки хендлеров с
+// runtime-уровнем — §51; возвращаемый LogController отдаёт LevelVar и кольцо
+// служебных логов). При фатальной ошибке завершает процесс.
+func Init(versionInfoData []byte, projectName string) (*build.Option, config.Flags, *config.Config, logging.Logger, *LogController) {
 	buildOpt, err := build.NewOption(versionInfoData, projectName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "build option: %v\n", err)
@@ -96,7 +98,9 @@ func Init(versionInfoData []byte, projectName string) (*build.Option, config.Fla
 		os.Exit(1)
 	}
 
-	logger := logging.Init(&logCfg, &sentryCfg)
+	// §51: собственная сборка цепочки хендлеров вместо вендорного Initlogger —
+	// уровень базового вывода и кольца логов управляется LevelVar в runtime.
+	logger, logCtl := buildLogger(&logCfg, &sentryCfg, strings.ToLower(projectName))
 	fields := []slog.Attr{
 		logger.Str("service", projectName),
 		logger.Str("version", buildOpt.Version),
@@ -110,7 +114,7 @@ func Init(versionInfoData []byte, projectName string) (*build.Option, config.Fla
 	}
 	logger.Info("starting service", fields...)
 
-	return buildOpt, flags, cfg, logger
+	return buildOpt, flags, cfg, logger, logCtl
 }
 
 // Shutdown — defer-friendly: flush Sentry, recover panic.

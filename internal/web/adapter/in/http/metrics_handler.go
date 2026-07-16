@@ -134,8 +134,13 @@ type nodeThroughputDTO struct {
 	Errors uint64    `json:"errors"`
 	P95ms  float64   `json:"p95_ms"`
 	Spark  []float64 `json:"spark"`
-	// §41 («Down»): последний исходящий вызов узла завершился ошибкой.
+	// §41 (back-compat): последний исходящий вызов узла завершился ошибкой
+	// («любой не-2xx» = last_outcome != "ok"). UI использует last_outcome;
+	// поле сохранено для внешних потребителей metrics:read.
 	LastError bool `json:"last_error"`
+	// §52: исход последнего исходящего вызова узла — "ok" (2xx) | "degraded"
+	// (ответил не-2xx <500) | "down" (транспортная ошибка или 5xx).
+	LastOutcome string `json:"last_outcome" enums:"ok,degraded,down"`
 }
 
 // overviewTotalsDTO — агрегат для KPI шапки (§44.A): СУММА строк items за тот же
@@ -170,7 +175,9 @@ func (h *MetricsHandler) NodesOverview(c *gin.Context) {
 		}
 		items = append(items, nodeThroughputDTO{
 			Node: it.Node, In: it.In, Out: it.Out, Errors: it.Errors,
-			P95ms: it.P95ms, Spark: spark, LastError: it.LastError,
+			P95ms: it.P95ms, Spark: spark,
+			LastError:   it.LastOutcome.IsError(),
+			LastOutcome: string(it.LastOutcome),
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{

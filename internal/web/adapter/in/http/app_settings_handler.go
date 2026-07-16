@@ -96,7 +96,8 @@ func (h *AppSettingsHandler) Update(c *gin.Context) {
 	}
 	if err := h.uc.Update(c.Request.Context(), actorFromCtx(c), &patch); err != nil {
 		if errors.Is(err, domain.ErrPublicBaseURLInvalid) || errors.Is(err, domain.ErrTelegramCronInvalid) ||
-			errors.Is(err, domain.ErrSessionTTLInvalid) || errors.Is(err, domain.ErrMetricsRefetchInvalid) {
+			errors.Is(err, domain.ErrSessionTTLInvalid) || errors.Is(err, domain.ErrMetricsRefetchInvalid) ||
+			errors.Is(err, domain.ErrLogLevelInvalid) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}

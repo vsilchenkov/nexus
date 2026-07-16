@@ -9,6 +9,14 @@ definitions:
       ok:
         type: boolean
     type: object
+  internal_web_adapter_in_http.CopyNodeRequest:
+    properties:
+      path:
+        maxLength: 255
+        type: string
+    required:
+    - path
+    type: object
   internal_web_adapter_in_http.CreateNodeRequest:
     properties:
       auth_credentials:
@@ -257,6 +265,13 @@ definitions:
       logs_configured:
         type: boolean
     type: object
+  internal_web_adapter_in_http.FavoriteTeamsResponse:
+    properties:
+      team_ids:
+        items:
+          type: string
+        type: array
+    type: object
   internal_web_adapter_in_http.HostPreviewResponse:
     properties:
       allowed:
@@ -474,9 +489,18 @@ definitions:
           ПРЕВЬЮ (первые bodyPreviewRunes рун); если *_len > длины превью, на фронте
           показывается «показать весь / скачать». В списках (List/Stream) не заданы.
         type: integer
+      request_size:
+        description: |-
+          §42-доп: истинные размеры тел в БАЙТАХ до усечения лог-копии — в отличие
+          от request_len/response_len (руны сохранённой, возможно усечённой копии).
+          Возвращаются всегда (и в list, и в detail); 0 — нет тела / транспортная
+          ошибка / TooLarge (§43) / legacy-строка до backfill-миграции.
+        type: integer
       response:
         type: string
       response_len:
+        type: integer
+      response_size:
         type: integer
       status:
         type: integer
@@ -496,6 +520,16 @@ definitions:
     properties:
       current_team_id:
         type: string
+      favorites:
+        description: 'Favorites — §49: упорядоченный список id избранных команд пользователя.'
+        items:
+          type: string
+        type: array
+      healed:
+        description: |-
+          Healed — §44.H: current_team в сессии был вне членств и переключён
+          сервером; UI по этому флагу инвалидирует team-scoped кеш.
+        type: boolean
       items:
         items:
           $ref: '#/definitions/internal_web_adapter_in_http.teamMembershipResponse'
@@ -637,6 +671,11 @@ definitions:
         type: array
       prometheus_available:
         type: boolean
+      totals:
+        allOf:
+        - $ref: '#/definitions/internal_web_adapter_in_http.overviewTotalsDTO'
+        description: 'Totals — агрегат KPI шапки (§44.A): сумма строк items за тот
+          же период.'
     type: object
   internal_web_adapter_in_http.PublicSettingsResponse:
     properties:
@@ -1374,8 +1413,20 @@ definitions:
       in:
         type: integer
       last_error:
-        description: '§41 («Down»): последний исходящий вызов узла завершился ошибкой.'
+        description: |-
+          §41 (back-compat): последний исходящий вызов узла завершился ошибкой
+          («любой не-2xx» = last_outcome != "ok"). UI использует last_outcome;
+          поле сохранено для внешних потребителей metrics:read.
         type: boolean
+      last_outcome:
+        description: |-
+          §52: исход последнего исходящего вызова узла — "ok" (2xx) | "degraded"
+          (ответил не-2xx <500) | "down" (транспортная ошибка или 5xx).
+        enum:
+        - ok
+        - degraded
+        - down
+        type: string
       node:
         type: string
       out:
@@ -1418,6 +1469,17 @@ definitions:
         type: integer
       prometheus_available:
         type: boolean
+    type: object
+  internal_web_adapter_in_http.overviewTotalsDTO:
+    properties:
+      error_rate:
+        type: number
+      errors:
+        type: integer
+      incoming:
+        type: integer
+      outgoing:
+        type: integer
     type: object
   internal_web_adapter_in_http.queueBodyDTO:
     properties:
@@ -1517,6 +1579,13 @@ definitions:
         type: string
     required:
     - team_id
+    type: object
+  internal_web_adapter_in_http.setFavoriteTeamsRequest:
+    properties:
+      team_ids:
+        items:
+          type: string
+        type: array
     type: object
   internal_web_adapter_in_http.switchTeamRequest:
     properties:
@@ -1705,6 +1774,8 @@ definitions:
         $ref: '#/definitions/nexus_internal_domain.ClickHouseSettings'
       general:
         $ref: '#/definitions/nexus_internal_domain.GeneralSettings'
+      logging:
+        $ref: '#/definitions/nexus_internal_domain.LoggingSettings'
       notifications:
         $ref: '#/definitions/nexus_internal_domain.NotificationsSettings'
       security:
@@ -1829,6 +1900,15 @@ definitions:
           отклоняется (ErrVersionOverrideForbidden). nil/"" = версия из git (ldflags).
         type: string
     type: object
+  nexus_internal_domain.LoggingSettings:
+    properties:
+      level:
+        description: |-
+          Level — уровень логирования всех трёх сервисов (2=error, 3=warn,
+          4=info, 5=debug). nil = брать из YAML (cfg.Logging.Level). Применяется
+          без рестарта через reloader.SectionLogging (LevelVar в цепочке хендлеров).
+        type: integer
+    type: object
   nexus_internal_domain.NotificationsSettings:
     properties:
       telegram:
@@ -1859,6 +1939,20 @@ definitions:
         type: number
       use:
         type: boolean
+    type: object
+  nexus_internal_domain.ServiceLogEntry:
+    properties:
+      attrs:
+        additionalProperties: {}
+        type: object
+      level:
+        type: string
+      msg:
+        type: string
+      service:
+        type: string
+      ts:
+        type: string
     type: object
   nexus_internal_domain.TelegramSettings:
     properties:
@@ -2735,6 +2829,46 @@ paths:
       summary: Список топиков кластера (§4.3 spec).
       tags:
       - kafka
+  /api/logs:
+    get:
+      description: Свежие записи slog-логов Receiver/Sender/Web из Redis-колец nexus:logs:*,
+        слитые по времени (новые первыми). Это логи самих сервисов, не логи запросов
+        узлов.
+      parameters:
+      - description: all (дефолт) | csv из receiver,sender,web
+        in: query
+        name: service
+        type: string
+      - description: максимум записей (дефолт 500, кап 2000)
+        in: query
+        name: limit
+        type: integer
+      - description: 'минимальный уровень: debug|info|warn|error'
+        in: query
+        name: min_level
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/nexus_internal_domain.ServiceLogEntry'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Хвост служебных логов сервисов (§51.5).
+      tags:
+      - service-logs
   /api/logs/{id}/replay:
     post:
       consumes:
@@ -2785,6 +2919,77 @@ paths:
       summary: Повторно отправить запрос через шину (§7.4.1).
       tags:
       - logs
+  /api/logs/download:
+    get:
+      description: Тот же хвост, что GET /api/logs, но text/plain attachment (nexus-logs-<ts>.log),
+        строки в хронологическом порядке.
+      parameters:
+      - description: all (дефолт) | csv из receiver,sender,web
+        in: query
+        name: service
+        type: string
+      - description: максимум записей (дефолт 500, кап 2000)
+        in: query
+        name: limit
+        type: integer
+      - description: 'минимальный уровень: debug|info|warn|error'
+        in: query
+        name: min_level
+        type: string
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: лог-файл
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Скачать служебные логи файлом (§51.5).
+      tags:
+      - service-logs
+  /api/me/favorite-teams:
+    put:
+      consumes:
+      - application/json
+      description: '§49: полная замена упорядоченного списка (позиция = индекс в team_ids).
+        Пустой массив очищает избранное. Каждый team_id должен входить в членства
+        пользователя (GET /api/me/teams).'
+      parameters:
+      - description: ordered team_ids
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.setFavoriteTeamsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.FavoriteTeamsResponse'
+        "400":
+          description: duplicates / too many / not a member
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Заменить список избранных команд текущего пользователя.
+      tags:
+      - auth
   /api/me/password:
     post:
       consumes:
@@ -3449,6 +3654,50 @@ paths:
       summary: Повторить все неудачные доставки узла сейчас (§36.11).
       tags:
       - async-queue
+  /api/nodes/{id}/copy:
+    post:
+      consumes:
+      - application/json
+      description: 'Manager+. Создаёт клон узла с новым path в той же команде: копируются
+        все настройки, включая креды (перешифровка только внутри бэкенда, в ответе
+        значения не возвращаются) и привязки allowlist-хостов. Копия всегда создаётся
+        в статусе paused.'
+      parameters:
+      - description: source node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: new path
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.CopyNodeRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.NodeResponse'
+        "400":
+          description: invalid path / limit reached
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "404":
+          description: node not found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "409":
+          description: path already exists
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Скопировать узел (§53).
+      tags:
+      - nodes
   /api/nodes/{id}/log/{logId}:
     get:
       description: Тела грузятся лениво по клику на строку — списки (List/Stream)

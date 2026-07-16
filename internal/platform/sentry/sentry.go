@@ -5,13 +5,13 @@ package sentry
 
 import (
 	"fmt"
-	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/getsentry/sentry-go"
 
 	"nexus/internal/platform/config"
+	"nexus/internal/platform/sensitive"
 )
 
 // maxSentryValueBytes — кап длины ЛЮБОГО строкового значения, уходящего в Sentry
@@ -22,25 +22,9 @@ import (
 const maxSentryValueBytes = 8 * 1024
 
 // sensitiveKeys — имена полей/заголовков, значения которых стираются в Sentry.
-var sensitiveKeys = []string{
-	"password",
-	"passwd",
-	"secret",
-	"token",
-	"api_key",
-	"apikey",
-	"authorization",
-	"auth_credentials",
-	"incoming_auth_credentials",
-	"rmq_password",
-	"encryption_key",
-	"cookie",
-	"set-cookie",
-	"x-api-key",
-	"x-auth-token",
-	"x-csrf-token",
-	"client_secret",
-}
+// Источник истины — platform/sensitive (§51: тот же список маскирует служебные
+// логи в logsink).
+var sensitiveKeys = sensitive.Keys()
 
 // Init инициализирует Sentry SDK. Если Use=false — no-op, возвращает nil.
 // Имя проекта (`server_name`) и release заполняются из buildVersion/projectName.
@@ -211,11 +195,5 @@ func maskAny(m map[string]any) map[string]any {
 }
 
 func isSensitive(name string) bool {
-	low := strings.ToLower(name)
-	for _, k := range sensitiveKeys {
-		if low == k || strings.Contains(low, k) {
-			return true
-		}
-	}
-	return false
+	return sensitive.IsSensitive(name)
 }

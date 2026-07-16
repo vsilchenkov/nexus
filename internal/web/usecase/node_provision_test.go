@@ -36,6 +36,12 @@ func (r *memNodeRepo) List(_ context.Context, _ port.ListNodesFilter) ([]*domain
 }
 func (r *memNodeRepo) Count(_ context.Context, _ string) (int, error) { return len(r.items), nil }
 func (r *memNodeRepo) Create(_ context.Context, n *domain.Node) error {
+	// Как UNIQUE(team_id, path) в БД (§18) — нужен тестам Copy на конфликт пути.
+	for _, x := range r.items {
+		if x.TeamID == n.TeamID && x.Path == n.Path {
+			return domain.ErrNodeAlreadyExists
+		}
+	}
 	r.seq++
 	n.ID = string(rune('a'+r.seq)) + "-node"
 	cp := *n
@@ -66,15 +72,11 @@ func (r *memNodeRepo) UpdateAllowedHostsSnapshot(_ context.Context, nodeID strin
 // nopNodeCache — заглушка port.NodeCache.
 type nopNodeCache struct{}
 
-func (nopNodeCache) Get(context.Context, string) (*domain.Node, error) {
+func (nopNodeCache) GetByPath(context.Context, string, string) (*domain.Node, error) {
 	return nil, domain.ErrNotFound
 }
-func (nopNodeCache) GetByPath(context.Context, string) (*domain.Node, error) {
-	return nil, domain.ErrNotFound
-}
-func (nopNodeCache) Set(context.Context, *domain.Node, time.Duration) error { return nil }
-func (nopNodeCache) Invalidate(context.Context, string) error               { return nil }
-func (nopNodeCache) InvalidateByPath(context.Context, string) error         { return nil }
+func (nopNodeCache) Set(context.Context, string, *domain.Node, time.Duration) error { return nil }
+func (nopNodeCache) InvalidateByPath(context.Context, string, string) error         { return nil }
 
 func newNodeUC(repo *memNodeRepo, prov *verifyProvisioner, templates *memCHTemplateRepo) *NodeUsecase {
 	audit := NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop())

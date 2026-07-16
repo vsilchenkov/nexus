@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"strconv"
 	"time"
@@ -59,6 +60,13 @@ type LogRecordDTO struct {
 	// показывается «показать весь / скачать». В списках (List/Stream) не заданы.
 	RequestLen  int64 `json:"request_len,omitempty"`
 	ResponseLen int64 `json:"response_len,omitempty"`
+
+	// §42-доп: истинные размеры тел в БАЙТАХ до усечения лог-копии — в отличие
+	// от request_len/response_len (руны сохранённой, возможно усечённой копии).
+	// Возвращаются всегда (и в list, и в detail); 0 — нет тела / транспортная
+	// ошибка / TooLarge (§43) / legacy-строка до backfill-миграции.
+	RequestSize  int64 `json:"request_size"`
+	ResponseSize int64 `json:"response_size"`
 }
 
 const (
@@ -94,6 +102,8 @@ func toLogDTO(r *domain.LogRecord, includeBodies bool) LogRecordDTO {
 		IP:               r.IP,
 		Attempts:         r.Attempts,
 		AttemptsDetails:  r.AttemptsDetails,
+		RequestSize:      r.RequestSize,
+		ResponseSize:     r.ResponseSize,
 	}
 	if includeBodies {
 		dto.Parameters = r.Parameters
@@ -337,17 +347,13 @@ func (h *LogsHandler) writeFacetError(c *gin.Context, nodeID, op string, err err
 		localizedError(c, http.StatusNotFound, "node.not_found")
 	case errors.Is(err, domain.ErrNodeLogsNotConfigured):
 		payload := gin.H{"logs_configured": false, "logs_available": false}
-		for k, v := range empty {
-			payload[k] = v
-		}
+		maps.Copy(payload, empty)
 		c.JSON(http.StatusOK, payload)
 	case errors.Is(err, domain.ErrLogsBackendUnavailable):
 		h.logger.Warn("logs facet degraded: clickhouse unavailable",
 			h.logger.Str("node_id", nodeID), h.logger.Err(err))
 		payload := gin.H{"logs_configured": true, "logs_available": false}
-		for k, v := range empty {
-			payload[k] = v
-		}
+		maps.Copy(payload, empty)
 		c.JSON(http.StatusOK, payload)
 	default:
 		h.logger.ErrorWithOp("logs facet failed", err, op, h.logger.Str("node_id", nodeID))

@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -434,6 +435,139 @@ func TestAuthUC_MyTeamsAndCurrent(t *testing.T) {
 		assert.False(t, healed)
 		assert.Equal(t, "tFixed", current)
 	})
+}
+
+// stubFavoriteTeamRepo — port.FavoriteTeamRepo для unit-тестов (§49):
+// запоминает последний Replace, отдаёт настраиваемые список/ошибки.
+type stubFavoriteTeamRepo struct {
+	ids        []string
+	listErr    error
+	replaceErr error
+	replaced   [][]string
+}
+
+func (r *stubFavoriteTeamRepo) ListFavoriteTeamIDs(context.Context, string) ([]string, error) {
+	return r.ids, r.listErr
+}
+
+func (r *stubFavoriteTeamRepo) ReplaceFavoriteTeams(_ context.Context, _ string, teamIDs []string) error {
+	if r.replaceErr != nil {
+		return r.replaceErr
+	}
+	r.replaced = append(r.replaced, teamIDs)
+	return nil
+}
+
+// TestAuthUC_SetFavoriteTeams (§49): валидация и запись списка избранного.
+func TestAuthUC_SetFavoriteTeams(t *testing.T) {
+	t.Parallel()
+
+	memberships := []*domain.UserTeam{userTeam("tA", "a"), userTeam("tB", "b")}
+	tests := []struct {
+		name      string
+		teamIDs   []string
+		favorites *stubFavoriteTeamRepo // nil = WithFavoriteTeams не вызывается
+		wantErr   error
+		wantSaved []string
+		wantAudit int
+	}{
+		{
+			name:    "ок: два членства, порядок сохраняется",
+			teamIDs: []string{"tB", "tA"}, favorites: &stubFavoriteTeamRepo{},
+			wantSaved: []string{"tB", "tA"}, wantAudit: 1,
+		},
+		{
+			name:    "ок: пустой список очищает",
+			teamIDs: []string{}, favorites: &stubFavoriteTeamRepo{},
+			wantSaved: []string{}, wantAudit: 1,
+		},
+		{
+			name:    "не-член → ErrUserNotTeamMember",
+			teamIDs: []string{"tA", "tGhost"}, favorites: &stubFavoriteTeamRepo{},
+			wantErr: domain.ErrUserNotTeamMember,
+		},
+		{
+			name:    "дубликат → ErrFavoriteTeamsInvalid",
+			teamIDs: []string{"tA", "tA"}, favorites: &stubFavoriteTeamRepo{},
+			wantErr: domain.ErrFavoriteTeamsInvalid,
+		},
+		{
+			name:    "без WithFavoriteTeams → ErrNotFound",
+			teamIDs: []string{"tA"}, favorites: nil,
+			wantErr: domain.ErrNotFound,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			auditRepo := &stubAuditRepo{}
+			uc := NewAuthUsecase(newAuthUserRepo(), newMemSessionRepo(),
+				&stubTeamRepo{teams: memberships},
+				NewAuditUsecase(auditRepo, logging.NewNoop()),
+				func() time.Duration { return time.Hour }, logging.NewNoop())
+			if tt.favorites != nil {
+				uc = uc.WithFavoriteTeams(tt.favorites)
+			}
+
+			err := uc.SetFavoriteTeams(context.Background(), Actor{UserID: "u1"}, "u1", tt.teamIDs)
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+				if tt.favorites != nil {
+					assert.Empty(t, tt.favorites.replaced, "невалидный список не должен доходить до repo")
+				}
+				assert.Empty(t, auditRepo.entries, "ошибка не аудируется")
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, tt.favorites.replaced, 1)
+			assert.Equal(t, tt.wantSaved, tt.favorites.replaced[0])
+			require.Len(t, auditRepo.entries, tt.wantAudit)
+			assert.Equal(t, domain.ActionUserFavoriteTeams, auditRepo.entries[0].Action)
+		})
+	}
+
+	t.Run("слишком длинный список → ErrFavoriteTeamsInvalid", func(t *testing.T) {
+		t.Parallel()
+		ids := make([]string, 101)
+		for i := range ids {
+			ids[i] = fmt.Sprintf("t%d", i)
+		}
+		uc := NewAuthUsecase(newAuthUserRepo(), newMemSessionRepo(),
+			&stubTeamRepo{teams: memberships},
+			NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()),
+			func() time.Duration { return time.Hour }, logging.NewNoop()).
+			WithFavoriteTeams(&stubFavoriteTeamRepo{})
+		err := uc.SetFavoriteTeams(context.Background(), Actor{UserID: "u1"}, "u1", ids)
+		require.ErrorIs(t, err, domain.ErrFavoriteTeamsInvalid)
+	})
+}
+
+// TestAuthUC_FavoriteTeamIDs (§49): чтение деградирует в пустой список.
+func TestAuthUC_FavoriteTeamIDs(t *testing.T) {
+	t.Parallel()
+
+	mk := func(fav *stubFavoriteTeamRepo) *AuthUsecase {
+		uc := NewAuthUsecase(newAuthUserRepo(), newMemSessionRepo(), &nopTeamRepo{},
+			NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()),
+			func() time.Duration { return time.Hour }, logging.NewNoop())
+		if fav != nil {
+			uc = uc.WithFavoriteTeams(fav)
+		}
+		return uc
+	}
+
+	assert.Equal(t, []string{"tB", "tA"},
+		mk(&stubFavoriteTeamRepo{ids: []string{"tB", "tA"}}).FavoriteTeamIDs(context.Background(), "u1"),
+		"порядок из репозитория сохраняется")
+	assert.Equal(t, []string{},
+		mk(&stubFavoriteTeamRepo{listErr: errors.New("db down")}).FavoriteTeamIDs(context.Background(), "u1"),
+		"ошибка репозитория → пустой список, не ошибка")
+	assert.Equal(t, []string{},
+		mk(nil).FavoriteTeamIDs(context.Background(), "u1"),
+		"без WithFavoriteTeams → пустой список")
+	assert.Equal(t, []string{},
+		mk(&stubFavoriteTeamRepo{ids: nil}).FavoriteTeamIDs(context.Background(), "u1"),
+		"nil из репозитория нормализуется в пустой слайс (JSON [] вместо null)")
 }
 
 func TestAuthUC_Login_UnknownUser(t *testing.T) {
