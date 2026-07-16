@@ -37,8 +37,10 @@ func newTestServer(t *testing.T) *httptest.Server {
 		case strings.Contains(q, "nexus_kafka_lag"):
 			_, _ = w.Write([]byte(vectorResp(sample("{}", "312"))))
 		case strings.Contains(q, "nexus_node_last_request_error"):
-			// §41 («Down»): последний вызов webhook/send — ошибка (1).
-			_, _ = w.Write([]byte(vectorResp(sample(`{"node":"webhook/send"}`, "1"))))
+			// §41/§52: webhook/send — degraded (1), webhook/push — down (2).
+			_, _ = w.Write([]byte(vectorResp(
+				sample(`{"node":"webhook/send"}`, "1"),
+				sample(`{"node":"webhook/push"}`, "2"))))
 		case strings.Contains(q, "status=~") && strings.Contains(q, "by (node)"):
 			_, _ = w.Write([]byte(vectorResp(sample(`{"node":"webhook/send"}`, "2"))))
 		case strings.Contains(q, `service="receiver"`) && strings.Contains(q, "by (node)"):
@@ -107,8 +109,9 @@ func TestClient_NodeThroughput(t *testing.T) {
 	require.EqualValues(t, 2, m["webhook/send"].Errors)
 }
 
-// TestClient_NodeLastErrors (§41, «Down»): instant gauge последнего вызова
-// per-node парсится в map (1 = последний вызов был ошибкой).
+// TestClient_NodeLastErrors (§41/§52): instant gauge последнего вызова
+// per-node парсится в map как сырой float (0=ok, 1=degraded, 2=down);
+// маппинг в NodeOutcome делает usecase.
 func TestClient_NodeLastErrors(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t)
@@ -120,6 +123,7 @@ func TestClient_NodeLastErrors(t *testing.T) {
 	m, err := c.NodeLastErrors(context.Background(), time.Now())
 	require.NoError(t, err)
 	require.EqualValues(t, 1, m["webhook/send"])
+	require.EqualValues(t, 2, m["webhook/push"])
 }
 
 func TestClient_NodeKPI(t *testing.T) {

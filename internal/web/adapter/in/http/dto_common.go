@@ -179,8 +179,10 @@ type SwitchTeamResponse struct {
 
 // NodesMetricsResponse — GET /api/metrics/nodes.
 type NodesMetricsResponse struct {
-	Items               []nodeThroughputDTO `json:"items"`
-	PrometheusAvailable bool                `json:"prometheus_available"`
+	Items []nodeThroughputDTO `json:"items"`
+	// Totals — агрегат KPI шапки (§44.A): сумма строк items за тот же период.
+	Totals              overviewTotalsDTO `json:"totals"`
+	PrometheusAvailable bool              `json:"prometheus_available"`
 }
 
 // NodeMetricsResponse — GET /api/metrics/nodes/{id}.

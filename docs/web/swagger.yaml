@@ -654,6 +654,11 @@ definitions:
         type: array
       prometheus_available:
         type: boolean
+      totals:
+        allOf:
+        - $ref: '#/definitions/internal_web_adapter_in_http.overviewTotalsDTO'
+        description: 'Totals — агрегат KPI шапки (§44.A): сумма строк items за тот
+          же период.'
     type: object
   internal_web_adapter_in_http.PublicSettingsResponse:
     properties:
@@ -1391,8 +1396,20 @@ definitions:
       in:
         type: integer
       last_error:
-        description: '§41 («Down»): последний исходящий вызов узла завершился ошибкой.'
+        description: |-
+          §41 (back-compat): последний исходящий вызов узла завершился ошибкой
+          («любой не-2xx» = last_outcome != "ok"). UI использует last_outcome;
+          поле сохранено для внешних потребителей metrics:read.
         type: boolean
+      last_outcome:
+        description: |-
+          §52: исход последнего исходящего вызова узла — "ok" (2xx) | "degraded"
+          (ответил не-2xx <500) | "down" (транспортная ошибка или 5xx).
+        enum:
+        - ok
+        - degraded
+        - down
+        type: string
       node:
         type: string
       out:
@@ -1435,6 +1452,17 @@ definitions:
         type: integer
       prometheus_available:
         type: boolean
+    type: object
+  internal_web_adapter_in_http.overviewTotalsDTO:
+    properties:
+      error_rate:
+        type: number
+      errors:
+        type: integer
+      incoming:
+        type: integer
+      outgoing:
+        type: integer
     type: object
   internal_web_adapter_in_http.queueBodyDTO:
     properties:

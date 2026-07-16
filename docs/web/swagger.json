@@ -5419,6 +5419,14 @@
                 },
                 "prometheus_available": {
                     "type": "boolean"
+                },
+                "totals": {
+                    "description": "Totals — агрегат KPI шапки (§44.A): сумма строк items за тот же период.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.overviewTotalsDTO"
+                        }
+                    ]
                 }
             }
         },
@@ -6483,8 +6491,17 @@
                     "type": "integer"
                 },
                 "last_error": {
-                    "description": "§41 («Down»): последний исходящий вызов узла завершился ошибкой.",
+                    "description": "§41 (back-compat): последний исходящий вызов узла завершился ошибкой\n(«любой не-2xx» = last_outcome != \"ok\"). UI использует last_outcome;\nполе сохранено для внешних потребителей metrics:read.",
                     "type": "boolean"
+                },
+                "last_outcome": {
+                    "description": "§52: исход последнего исходящего вызова узла — \"ok\" (2xx) | \"degraded\"\n(ответил не-2xx \u003c500) | \"down\" (транспортная ошибка или 5xx).",
+                    "type": "string",
+                    "enum": [
+                        "ok",
+                        "degraded",
+                        "down"
+                    ]
                 },
                 "node": {
                     "type": "string"
@@ -6549,6 +6566,23 @@
                 },
                 "prometheus_available": {
                     "type": "boolean"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.overviewTotalsDTO": {
+            "type": "object",
+            "properties": {
+                "error_rate": {
+                    "type": "number"
+                },
+                "errors": {
+                    "type": "integer"
+                },
+                "incoming": {
+                    "type": "integer"
+                },
+                "outgoing": {
+                    "type": "integer"
                 }
             }
         },
