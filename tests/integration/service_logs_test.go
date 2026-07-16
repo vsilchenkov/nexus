@@ -59,10 +59,25 @@ func TestServiceLogs_ShipperToRealRedis(t *testing.T) {
 	}
 
 	key := logsink.Key("web")
+	reader := webredis.NewServiceLogReaderRedis(client, logging.NewNoop())
+	// Ждём, пока шиппер отгрузит ВСЕ батчи. LTRIM держит список на keyCap уже
+	// после 5-го батча (в голове i=49), поэтому одного `LLEN == keyCap` мало:
+	// на медленном раннере голова ловится на середине отгрузки (напр. i=79 из
+	// 120) — гонка. Корректное терминальное условие — самая свежая запись
+	// (i=total-1) в голове списка (LPUSH-порядок). Attrs["i"] после JSON-раунда
+	// через Redis — float64.
 	require.Eventually(t, func() bool {
 		n, err := client.LLen(ctx, key).Result()
-		return err == nil && n == keyCap
-	}, 15*time.Second, 100*time.Millisecond, "LTRIM must cap the list at keyCap")
+		if err != nil || n != keyCap {
+			return false
+		}
+		head, err := reader.Tail(ctx, "web", keyCap)
+		if err != nil || len(head) != keyCap {
+			return false
+		}
+		iv, ok := head[0].Attrs["i"].(float64)
+		return ok && int(iv) == total-1
+	}, 15*time.Second, 100*time.Millisecond, "shipper delivers all batches; head = freshest record")
 
 	ttl, err := client.TTL(ctx, key).Result()
 	require.NoError(t, err)
@@ -70,7 +85,6 @@ func TestServiceLogs_ShipperToRealRedis(t *testing.T) {
 	assert.LessOrEqual(t, ttl, time.Hour)
 
 	// Индекс 0 — самая свежая запись (LPUSH-порядок).
-	reader := webredis.NewServiceLogReaderRedis(client, logging.NewNoop())
 	entries, err := reader.Tail(ctx, "web", keyCap)
 	require.NoError(t, err)
 	require.Len(t, entries, keyCap)
