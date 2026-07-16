@@ -56,20 +56,28 @@ export function stableStringify(v: unknown): string {
   return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(",")}}`;
 }
 
-// filterEntries — клиентский фильтр консоли: чипсы сервисов + подстрочный
-// поиск (case-insensitive) по msg и атрибутам.
+// filterEntries — клиентский фильтр консоли: подстрочный поиск
+// (case-insensitive) по msg и атрибутам. Фильтр по сервисам сюда НЕ входит:
+// он серверный (см. serviceParam) — иначе один «болтливый» сервис выбирает
+// весь limit при мерже, и строки остальных до браузера не доезжают вовсе.
 export function filterEntries(
   entries: ServiceLogEntry[],
-  opts: { services: ServiceName[]; query: string },
+  opts: { query: string },
 ): ServiceLogEntry[] {
-  const all = opts.services.length === 0 || opts.services.length === SERVICES.length;
   const q = opts.query.trim().toLowerCase();
+  if (q === "") return entries;
   return entries.filter((e) => {
-    if (!all && !opts.services.includes(e.service as ServiceName)) return false;
-    if (q === "") return true;
     if (e.msg.toLowerCase().includes(q)) return true;
     return e.attrs != null && stableStringify(e.attrs).toLowerCase().includes(q);
   });
+}
+
+// serviceParam — значение query-параметра `service` для GET /api/logs:
+// пусто/все три → undefined (сервер отдаёт мерж всех), иначе csv в
+// стабильном порядке SERVICES (ключ кеша не зависит от порядка кликов).
+export function serviceParam(services: ServiceName[]): string | undefined {
+  if (services.length === 0 || services.length === SERVICES.length) return undefined;
+  return SERVICES.filter((s) => services.includes(s)).join(",");
 }
 
 // formatTs — компактное время строки консоли (локальное, с мс).
@@ -90,10 +98,13 @@ export function formatEntryLine(e: ServiceLogEntry): string {
   return `${formatTs(e.ts)} ${e.level.toUpperCase()} [${e.service}] ${e.msg}${attrs}`;
 }
 
-// logsQueryKey — СТАБИЛЬНЫЙ ключ react-query для GET /api/logs: только limit
-// (чипсы сервисов и поиск — клиентские фильтры и в ключе не участвуют).
+// logsQueryKey — СТАБИЛЬНЫЙ ключ react-query для GET /api/logs: limit +
+// серверный фильтр сервисов (поиск — клиентский и в ключе не участвует).
 // Никаких волатильных частей (Date.now и т.п.) — иначе кеш промахивается на
 // каждом рендере и консоль вечно пуста (грабли §44).
-export function logsQueryKey(limit: number): readonly [string, number] {
-  return ["service-logs", limit] as const;
+export function logsQueryKey(
+  services: ServiceName[],
+  limit: number,
+): readonly [string, string, number] {
+  return ["service-logs", serviceParam(services) ?? "all", limit] as const;
 }

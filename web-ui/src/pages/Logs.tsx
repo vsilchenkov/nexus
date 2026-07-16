@@ -14,8 +14,8 @@ import {
   levelFromInt,
   levelToInt,
   logsQueryKey,
+  serviceParam,
   stableStringify,
-  SERVICES,
   type LevelName,
   type ServiceLogEntry,
   type ServiceName,
@@ -42,9 +42,14 @@ export default function LogsPage() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [stick, setStick] = useState(true);
 
+  // Фильтр сервисов — СЕРВЕРНЫЙ (limit применяется к выбранным сервисам).
+  // Клиентским он был бы бесполезен: «болтливый» сервис выбирает весь limit
+  // при мерже, и строки остальных до браузера не доезжают (поймано на стенде).
+  const svcParam = serviceParam(services);
   const logs = useQuery({
-    queryKey: logsQueryKey(limit),
-    queryFn: () => api.get<ServiceLogEntry[]>("/api/logs", { limit }),
+    queryKey: logsQueryKey(services, limit),
+    queryFn: () =>
+      api.get<ServiceLogEntry[]>("/api/logs", svcParam ? { limit, service: svcParam } : { limit }),
     refetchInterval: live ? LIVE_REFETCH_MS : false,
   });
 
@@ -60,9 +65,9 @@ export default function LogsPage() {
 
   // Сервер отдаёт свежие первыми; консоль рисует хронологически (новые снизу).
   const visible = useMemo(() => {
-    const filtered = filterEntries(logs.data ?? [], { services, query });
+    const filtered = filterEntries(logs.data ?? [], { query });
     return filtered.slice(0, MAX_ROWS).reverse();
-  }, [logs.data, services, query]);
+  }, [logs.data, query]);
 
   // Follow-tail: пока «прилипли» к низу — держим низ при каждом обновлении.
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -80,11 +85,9 @@ export default function LogsPage() {
 
   const downloadHref = useMemo(() => {
     const params = new URLSearchParams({ limit: String(limit) });
-    if (services.length > 0 && services.length < SERVICES.length) {
-      params.set("service", services.join(","));
-    }
+    if (svcParam) params.set("service", svcParam);
     return `/api/logs/download?${params.toString()}`;
-  }, [services, limit]);
+  }, [svcParam, limit]);
 
   const rowKey = (e: ServiceLogEntry, i: number) => `${e.ts}|${e.service}|${i}`;
 

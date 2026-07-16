@@ -7,6 +7,7 @@ import {
   levelFromInt,
   levelToInt,
   logsQueryKey,
+  serviceParam,
   stableStringify,
   type ServiceLogEntry,
 } from "./logsUtils";
@@ -58,31 +59,44 @@ describe("filterEntries", () => {
     entry({ service: "web", msg: "settings updated" }),
   ];
 
-  it("empty services = all", () => {
-    expect(filterEntries(entries, { services: [], query: "" })).toHaveLength(3);
-  });
-
-  it("filters by service chips", () => {
-    const got = filterEntries(entries, { services: ["sender"], query: "" });
-    expect(got).toHaveLength(1);
-    expect(got[0].service).toBe("sender");
+  it("empty query keeps everything", () => {
+    expect(filterEntries(entries, { query: "" })).toHaveLength(3);
+    expect(filterEntries(entries, { query: "   " })).toHaveLength(3);
   });
 
   it("searches msg case-insensitively", () => {
-    const got = filterEntries(entries, { services: [], query: "REDIRECT" });
+    const got = filterEntries(entries, { query: "REDIRECT" });
     expect(got).toHaveLength(1);
     expect(got[0].msg).toBe("redirect followed");
   });
 
   it("searches inside attrs", () => {
-    const got = filterEntries(entries, { services: [], query: "site-push" });
+    const got = filterEntries(entries, { query: "site-push" });
     expect(got).toHaveLength(1);
     expect(got[0].service).toBe("sender");
   });
 
-  it("combines service and query", () => {
-    expect(filterEntries(entries, { services: ["web"], query: "redirect" })).toHaveLength(0);
-    expect(filterEntries(entries, { services: ["sender"], query: "redirect" })).toHaveLength(1);
+  it("no match → empty", () => {
+    expect(filterEntries(entries, { query: "nothing-here" })).toHaveLength(0);
+  });
+});
+
+describe("serviceParam", () => {
+  // Фильтр сервисов серверный: клиентский отсекал бы строки уже ПОСЛЕ того,
+  // как болтливый сервис выбрал весь limit при мерже (поймано на стенде).
+  it("empty or all three → undefined (server merges everything)", () => {
+    expect(serviceParam([])).toBeUndefined();
+    expect(serviceParam(["receiver", "sender", "web"])).toBeUndefined();
+  });
+
+  it("subset → csv in stable SERVICES order", () => {
+    expect(serviceParam(["sender"])).toBe("sender");
+    expect(serviceParam(["web", "receiver"])).toBe("receiver,web");
+    expect(serviceParam(["sender", "receiver"])).toBe("receiver,sender");
+  });
+
+  it("order of clicks does not change the param", () => {
+    expect(serviceParam(["web", "receiver"])).toBe(serviceParam(["receiver", "web"]));
   });
 });
 
@@ -107,12 +121,20 @@ describe("stableStringify / formatEntryLine", () => {
 
 describe("logsQueryKey", () => {
   it("is stable for equal inputs (no volatile parts)", () => {
-    expect(logsQueryKey(200)).toEqual(logsQueryKey(200));
-    expect(JSON.stringify(logsQueryKey(500))).toBe(JSON.stringify(logsQueryKey(500)));
+    expect(logsQueryKey([], 200)).toEqual(logsQueryKey([], 200));
+    expect(JSON.stringify(logsQueryKey(["sender"], 500))).toBe(
+      JSON.stringify(logsQueryKey(["sender"], 500)),
+    );
   });
 
-  it("differs only by limit", () => {
-    expect(logsQueryKey(200)).not.toEqual(logsQueryKey(500));
-    expect(logsQueryKey(200)[0]).toBe("service-logs");
+  it("differs by limit and by service selection", () => {
+    expect(logsQueryKey([], 200)).not.toEqual(logsQueryKey([], 500));
+    expect(logsQueryKey([], 200)).not.toEqual(logsQueryKey(["sender"], 200));
+    expect(logsQueryKey([], 200)[0]).toBe("service-logs");
+    expect(logsQueryKey([], 200)[1]).toBe("all");
+  });
+
+  it("is insensitive to chip click order (stable cache key)", () => {
+    expect(logsQueryKey(["web", "receiver"], 200)).toEqual(logsQueryKey(["receiver", "web"], 200));
   });
 });
