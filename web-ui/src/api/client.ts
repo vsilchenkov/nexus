@@ -24,6 +24,13 @@ axiosInstance.interceptors.response.use(
   },
 );
 
+// isNotFound — ошибка запроса означает 404. Узел/ресурс чужой команды (§18)
+// неотличим от несуществующего by design (не утекает факт существования),
+// поэтому UI разбирает именно 404.
+export function isNotFound(error: unknown): boolean {
+  return (error as { response?: { status?: number } })?.response?.status === 404;
+}
+
 export const api = {
   async get<T>(url: string, params?: Record<string, unknown>): Promise<T> {
     const r = await axiosInstance.get<T>(url, { params });

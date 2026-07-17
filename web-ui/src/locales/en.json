@@ -293,6 +293,7 @@
       "submit": "Create copy"
     },
     "not_found": "Node not found",
+    "foreign_team": "This node belongs to another team — switch to it in the header to save your changes. Your edits are not lost.",
     "validation": {
       "root_method": "Invalid node type",
       "incoming_method": "Invalid incoming method (allowed: GET, POST, PUT, DELETE)",

@@ -53,7 +53,11 @@ export type MyTeamsResp = {
 // НЕ добавлять сюда: "me"/"me-teams" (несут current_team_id — обязаны
 // перечитываться), "node-hosts" (team-scoped через ListByNode).
 export const TEAM_INDEPENDENT_KEYS = new Set([
-  "settings-public",
+  // public-settings, а не settings-public: ключ был записан перевёрнутым и
+  // потому не работал — публичные настройки зря перечитывались при каждой
+  // смене команды. Имя обязано совпадать с queryKey[0] (lib/nodeUrl.ts,
+  // node/useNodeMetrics.ts, settings/General.tsx).
+  "public-settings",
   "version",
   "app-settings",
   "users",
