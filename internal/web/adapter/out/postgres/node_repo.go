@@ -64,6 +64,34 @@ func (r *NodeRepoPg) GetByPath(ctx context.Context, path string) (*domain.Node, 
 	return r.scan(row)
 }
 
+// ListClickHouseTables — уникальные имена CH-таблиц логов ВСЕХ узлов, без
+// фильтра по команде. Для стартовой миграции схемы (§37/§39/§42-доп): таблица
+// хранится полным именем `db.table`, поэтому одного соединения хватает на любую
+// БД команды.
+//
+// Умышленно без team-фильтра и симметрично Sender'у
+// (nodepg.Reader.ListClickHouseTables): раньше Web брал таблицы через
+// List(TeamID: defaultTeamID) и не альтерил БД не-default команд вовсе — на
+// мультикомандном бою SELECT новых колонок падал с CH code 47 (Sentry 158619),
+// пока таблицу не доальтерит рестарт Sender'а. Два сервиса — один источник
+// списка, дрейф исключён.
+func (r *NodeRepoPg) ListClickHouseTables(ctx context.Context) ([]string, error) {
+	rows, err := r.db.Query(ctx, `SELECT DISTINCT clickhouse_table FROM nodes WHERE clickhouse_table <> ''`)
+	if err != nil {
+		return nil, fmt.Errorf("list ch tables: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, fmt.Errorf("scan ch table: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 func (r *NodeRepoPg) List(ctx context.Context, f port.ListNodesFilter) ([]*domain.Node, error) {
 	q := `SELECT ` + nodeColumns + ` FROM nodes WHERE team_id = $1`
 	args := []any{f.TeamID}

@@ -645,8 +645,9 @@ DLQ) тормозила, «Очистить» был no-op, шапка плох�
   **Запись:** `node.ID` прокинут sync через gRPC `SendRequest.node_id` (поле 28, перегенерён proto) →
   `SendInput.NodeID` → `rec.NodeID`; async/DLQ — через `buildSendInput`/`logTTLExpired`. **Миграция
   существующих таблиц:** `platform/clickhouse.EnsureNodeIDColumn` (`ALTER … ADD COLUMN IF NOT EXISTS`,
-  идемпотентно) на старте **и Web, и Sender** (порядок деплоя не гарантирован; список таблиц — `nodeRepo.List`
-  / `nodepg.ListClickHouseTables`). **Чтение/удаление:** 8 методов `LogReaderCH` фильтруют
+  идемпотентно) на старте **и Web, и Sender** (порядок деплоя не гарантирован; список таблиц —
+  `nodeRepo.ListClickHouseTables` / `nodepg.ListClickHouseTables` — оба **без team-фильтра**; до 1.13.2 Web
+  брал `nodeRepo.List(TeamID: defaultTeamID)` и не альтерил БД не-default команд — см. §4.32). **Чтение/удаление:** 8 методов `LogReaderCH` фильтруют
   `(node_id = ? OR node_id = '')` (legacy `''` видны/чистятся у любого co-table узла — компромисс, новый
   трафик чист); `GetByID` — нет (уникальный ID). `nodeID` прокинут в порты (LogReader/NodeLogMetrics/
   FailedLogsPurger) и вызовы (logs/metrics/replay/async_queue). **UI:** node id во вкладке «Конфиг».
@@ -1777,6 +1778,36 @@ filter, Create без TeamID). До блока B (team-switcher в сессии)
   включения. Paused pull-узел Puller'ом не опрашивается.
 - **uow=nil fallback (CLI/юнит-тесты) не клонирует host-ссылки** — Link+снимок вне транзакции могли
   бы разъехаться с созданием узла; пропуск виден на debug (§51.9). Production-wiring всегда с UoW.
+
+### 4.32 Стартовая миграция CH-схемы: список таблиц — по ВСЕМ командам (боевой инцидент)
+
+- **Симптом (Sentry 158619, прод 1.12.0):** открытие логов узла команды `vika` → 500,
+  `clickhouse search: code: 47, Unknown expression identifier 'request_size' … FROM nexus_vika.dadata`.
+- **Корень — не там, где ищется.** ALTER'ы (`EnsureNodeIDColumn` §37 / `EnsureHTTPMethodColumn` §39 /
+  `EnsureBodySizeColumns`+`BackfillBodySizes` §42-доп) выполняются на старте Web и Sender — это верно.
+  Дефект был в **списке таблиц**: Web брал его как `nodeRepo.List(ctx, ListNodesFilter{TeamID:
+  defaultTeamID})`, то есть альтерил только `nexus_default.*`. У Sender'а фильтра нет
+  (`nodepg.ListClickHouseTables` = `SELECT DISTINCT clickhouse_table FROM nodes`). На мультикомандной
+  установке (весь боевой трафик живёт в `nexus_vika`) Web **не альтерил боевые таблицы никогда** —
+  схему чинил только рестарт Sender'а. Окно отказа = «новый Web поднят, новый Sender ещё нет»; если у
+  Sender `chMgr == nil` или его ALTER упал в `log+continue` — окно бесконечно.
+- **Почему не замечали:** дефект родился в §37 и был скопирован в §39/§42.10 вместе с образцом блока.
+  К моменту каждого следующего релиза Sender успевал доальтерить прошлые колонки, и симптом не
+  всплывал — до §42.10, когда логи открыли раньше рестарта Sender'а.
+- **Фикс (1.13.2):** `NodeRepoPg.ListClickHouseTables` — беcфильтровый, симметричный Sender'у; оба
+  сервиса ходят по одному источнику, дрейф исключён. Полное имя `db.table` в `nodes.clickhouse_table`
+  делает одно CH-соединение достаточным для любой БД команды.
+- **Читатель не деградирует мягко и это осознанно:** `chUnavailable()` ([log_reader.go](../internal/web/adapter/out/clickhouse/log_reader.go))
+  возвращает `false` для `*clickhouse.Exception` (code 47) → не `ErrLogsBackendUnavailable`, а 500 в
+  Sentry. Значит **любая** будущая рассинхронизация схемы будет видна сразу, а не замаскирована.
+  Список колонок `listCols`/`selectCols`/`previewCols` — хардкод (инвариант `domain.RequiredLogColumns`),
+  интроспекции схемы нет by design.
+- **Грабля для тестов:** `clickhouse_bodysize_backfill_test.go` передаёт таблицы литералом и потому
+  дыру не ловил — покрыт был `ensure_schema.go`, а баг жил в `app.go`. Регрессия закрыта
+  [node_ch_tables_migration_test.go](../tests/integration/node_ch_tables_migration_test.go): узлы в
+  двух командах → в списке обе таблицы, а контрольный `List(TeamID)` видит только default.
+- **Документация врала:** `DEPLOYMENT.md` §42.10 утверждал «порядок деплоя не важен, новый Web/Sender
+  сами выполняют Ensure» — для не-default команд это было неверно; поправлено врезкой.
 
 ### 4.31 §54 — фильтры Overview: почему гибрид URL+зеркало, а не только URL
 

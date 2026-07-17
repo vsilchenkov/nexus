@@ -172,14 +172,17 @@ func (a *App) Start(ctx context.Context) error {
 	// §37: миграция существующих CH-таблиц — добавить колонку node_id, иначе
 	// SELECT по новой схеме упадёт. Идемпотентно (ALTER … IF NOT EXISTS), до
 	// старта HTTP-сервера. Новые таблицы получают колонку из шаблона.
+	//
+	// Список таблиц — по ВСЕМ командам (ListClickHouseTables, без team-фильтра),
+	// как у Sender. Раньше брался List(TeamID: defaultTeamID) → БД не-default
+	// команд Web не альтерил вообще, и на мультикомандном бою чтение логов
+	// падало с CH code 47 «Unknown expression identifier request_size» до
+	// рестарта Sender'а (Sentry 158619).
 	if a.chMgr != nil {
-		if nodes, err := nodeRepo.List(ctx, webport.ListNodesFilter{TeamID: defaultTeamID}); err != nil {
-			a.logger.Warn("§37 ensure node_id: list nodes failed", a.logger.Err(err))
+		if tables, err := nodeRepo.ListClickHouseTables(ctx); err != nil {
+			a.logger.Warn("§37 ensure ch columns: list ch tables failed", a.logger.Err(err))
 		} else {
-			tables := make([]string, 0, len(nodes))
-			for _, n := range nodes {
-				tables = append(tables, n.ClickHouseTable)
-			}
+			a.logger.Debug("ensure ch columns: tables collected", a.logger.Int("count", len(tables)))
 			chpf.EnsureNodeIDColumn(ctx, a.chMgr.Conn(), tables, a.logger)
 			chpf.EnsureHTTPMethodColumn(ctx, a.chMgr.Conn(), tables, a.logger) // §39
 			chpf.EnsureBodySizeColumns(ctx, a.chMgr.Conn(), tables, a.logger)  // §42-доп
