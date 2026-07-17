@@ -209,7 +209,9 @@ describe("saveFilters / loadFilters", () => {
 });
 
 describe("storage failures (private mode)", () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   it("saveFilters does not throw when the storage throws", () => {
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
