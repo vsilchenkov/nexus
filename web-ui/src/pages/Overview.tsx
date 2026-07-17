@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Search, Plus, Star, Play, Pause } from "lucide-react";
@@ -34,13 +34,22 @@ import {
   type Period,
 } from "../components/ui";
 import { Modal } from "../components/ui/Modal";
+import {
+  applyFilters,
+  hasFilterParams,
+  loadFilters,
+  parseFilters,
+  saveFilters,
+  type MethodFilter,
+  type OverviewFilters,
+  type StatusFilter,
+} from "../lib/overviewFilters";
 import { cn } from "../lib/cn";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { useMetricsRefetchMs } from "../components/node/useNodeMetrics";
 
 type ListResp = { items: Node[] };
 type View = "table" | "cards";
-type StatusFilter = "all" | "ok" | "warn" | "degraded" | "err" | "paused" | "disabled";
 type Throughput = {
   in: number;
   out: number;
@@ -68,13 +77,40 @@ export default function Overview() {
   // Перенос узла между командами — admin-only (как и сам /move-эндпоинт):
   // не показываем кнопку «Перенести» viewer/manager, иначе клик упрётся в 403.
   const canMove = useRoleAtLeast("admin");
-  // §28/§44.B: период метрик; стартовый = пользовательский дефолт из localStorage
-  // (или 24ч). savedDefault — для подсветки активного «по умолчанию».
-  const [period, setPeriod] = useState<Period>(() => loadDefaultPeriod());
+  // §54: фильтры (поиск/метод/статус/живой период) — производные от URL, не
+  // useState: иначе они умирают при уходе на страницу узла (Overview — дочерний
+  // Outlet, размонтируется) и «Назад» возвращает пустой экран. Зеркало в
+  // sessionStorage добавляет кейс, где query теряется (кнопка «Узлы» = to="/").
+  const [params, setParams] = useSearchParams();
+  const filters = useMemo(() => parseFilters(params), [params]);
+  const { search, method, status: statusFilter, period } = filters;
+
+  // updateFilters — единая точка записи. saveFilters строго ДО setParams (§54.4):
+  // иначе при ручной очистке фильтров restore-эффект ниже увидит «URL пуст,
+  // зеркало ещё непусто» и воскресит только что очищенное.
+  const updateFilters = useCallback(
+    (patch: Partial<OverviewFilters>) => {
+      const next = { ...filters, ...patch };
+      saveFilters(next);
+      setParams((prev) => applyFilters(prev, next), { replace: true });
+    },
+    [filters, setParams],
+  );
+
+  // Восстановление и зеркалирование. Пустой URL + непустое зеркало → вернуть
+  // фильтры (replace, чтобы не ломать Back). Иначе URL — истина, зеркалим его.
+  useEffect(() => {
+    if (hasFilterParams(params)) {
+      saveFilters(parseFilters(params));
+      return;
+    }
+    const stored = loadFilters();
+    if (!stored) return;
+    setParams((prev) => applyFilters(prev, stored), { replace: true });
+  }, [params, setParams]);
+
+  // §44.B: savedDefault — для подсветки активного «по умолчанию» (звёздочки).
   const [savedDefault, setSavedDefault] = useState<Period>(() => loadDefaultPeriod());
-  const [search, setSearch] = useState("");
-  const [method, setMethod] = useState<"" | "request" | "requestAsync" | "RabbitMQAsync">("");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [view, setView] = useState<View>(
     () => (localStorage.getItem(VIEW_KEY) as View) || "table",
   );
@@ -85,6 +121,31 @@ export default function Overview() {
     () => localStorage.getItem(AUTOREFRESH_KEY) !== "0",
   );
   const refetchMs = useMetricsRefetchMs();
+
+  // §54.4: поиск коммитится в URL с задержкой. Не косметика — Safari троттлит
+  // history.replaceState (~100 вызовов/30с, дальше SecurityError), а запись на
+  // каждый keystroke в этот лимит упирается. Побочно снимает спам в /api/nodes.
+  const [searchInput, setSearchInput] = useState(search);
+  // committed — последнее значение, доехавшее до URL. Нужен, чтобы sync ниже не
+  // затирал ввод пользователя, набранный уже после коммита.
+  const committed = useRef(search);
+
+  useEffect(() => {
+    // Внешнее изменение поиска (восстановление, «Назад», дип-линк) → в инпут.
+    if (search !== committed.current) {
+      committed.current = search;
+      setSearchInput(search);
+    }
+  }, [search]);
+
+  useEffect(() => {
+    if (searchInput === committed.current) return;
+    const id = setTimeout(() => {
+      committed.current = searchInput;
+      updateFilters({ search: searchInput });
+    }, 300);
+    return () => clearTimeout(id);
+  }, [searchInput, updateFilters]);
 
   useEffect(() => localStorage.setItem(VIEW_KEY, view), [view]);
   useEffect(() => localStorage.setItem(AUTOREFRESH_KEY, autoRefresh ? "1" : "0"), [autoRefresh]);
@@ -179,14 +240,14 @@ export default function Overview() {
           <Input
             className="pl-9"
             placeholder={t("overview.search_placeholder")}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
           />
         </div>
         <Select
           className="w-40"
           value={method}
-          onChange={(e) => setMethod(e.target.value as typeof method)}
+          onChange={(e) => updateFilters({ method: e.target.value as MethodFilter })}
         >
           <option value="">{t("overview.filter.all_methods")}</option>
           <option value="request">request</option>
@@ -196,7 +257,7 @@ export default function Overview() {
         <Select
           className="w-40"
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+          onChange={(e) => updateFilters({ status: e.target.value as StatusFilter })}
         >
           <option value="all">{t("overview.filter.all_statuses")}</option>
           <option value="ok">{t("overview.status.ok")}</option>
@@ -226,7 +287,7 @@ export default function Overview() {
       {/* §28 Пункт 4: период метрик — отдельной строкой под фильтрами. */}
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs text-fg-muted">{t("metrics.period")}</span>
-        <PeriodPicker value={period} onChange={setPeriod} />
+        <PeriodPicker value={period} onChange={(p) => updateFilters({ period: p })} />
         {/* §44.B: «под себя» — сохранить текущий период как дефолт (только пресет). */}
         {period.kind === "preset" && (
           <button
