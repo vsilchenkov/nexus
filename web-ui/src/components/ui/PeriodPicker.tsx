@@ -1,9 +1,18 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "../../lib/cn";
 import { PRESET_RANGES, type Period, type PresetRange } from "../../lib/period";
 import { Seg } from "./data";
+
+// toLocalInput — RFC3339 → значение <input type="datetime-local">
+// (YYYY-MM-DDTHH:mm в локальной зоне; конструктор datetime-local зону не несёт).
+function toLocalInput(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(+d)) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 // PeriodPicker — пресеты периода (1h..30d) + «Произвольный» с двумя
 // datetime-local (календарь), §28 Пункт 4. По умолчанию 1h.
@@ -19,8 +28,24 @@ export function PeriodPicker({
   const { t } = useTranslation();
   const isCustom = value.kind === "custom";
   const [showCustom, setShowCustom] = useState(isCustom);
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  // Поля календаря засеваются из value: пришедший извне произвольный период
+  // (§54 — восстановление фильтров, дип-линк) должен быть виден в полях, а не
+  // только применён к метрикам.
+  const [from, setFrom] = useState(() => (value.kind === "custom" ? toLocalInput(value.from) : ""));
+  const [to, setTo] = useState(() => (value.kind === "custom" ? toLocalInput(value.to) : ""));
+
+  // Засева в useState мало: период может прийти уже ПОСЛЕ монтирования, без
+  // ремоунта компонента (§54 — клик «Узлы» на активной странице восстанавливает
+  // фильтры эффектом). Зависимости — строки, поэтому набранное в полях не
+  // затирается: пользовательский ввод value не меняет.
+  const customFrom = value.kind === "custom" ? toLocalInput(value.from) : null;
+  const customTo = value.kind === "custom" ? toLocalInput(value.to) : null;
+  useEffect(() => {
+    if (customFrom === null || customTo === null) return;
+    setFrom(customFrom);
+    setTo(customTo);
+    setShowCustom(true);
+  }, [customFrom, customTo]);
 
   function applyCustom() {
     if (!from || !to) return;
