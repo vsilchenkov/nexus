@@ -884,7 +884,12 @@ export default function NodeSettings() {
         </div>
       </div>
 
-      {showDryRun && <DryRunDialog node={form} onClose={() => setShowDryRun(false)} />}
+      {/* §55.6: при редактировании поле кредов пустое по смыслу («оставить
+          старое»), поэтому id обязателен — иначе реальный тест ушёл бы без
+          авторизации. При создании (isNew) сохранённого конфига нет. */}
+      {showDryRun && (
+        <DryRunDialog node={form} nodeId={id} onClose={() => setShowDryRun(false)} />
+      )}
       {showDelete && existing.data && (
         <DeleteNodeDialog node={existing.data} onClose={() => setShowDelete(false)} />
       )}

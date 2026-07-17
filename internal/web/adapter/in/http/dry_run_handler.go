@@ -52,10 +52,15 @@ type DryRunRequest struct {
 // DryRunSubrequest — параметры синтетического запроса, который пользователь
 // «отправляет» через шину для проверки конфигурации (§7.5.1).
 type DryRunSubrequest struct {
-	Method  string              `json:"method" binding:"omitempty,oneof=GET POST PUT DELETE PATCH"`
-	Query   map[string][]string `json:"query"`
-	Headers map[string][]string `json:"headers"`
-	Body    string              `json:"body"`
+	Method string `json:"method" binding:"omitempty,oneof=GET POST PUT DELETE PATCH"`
+	// PathTail — хвост входящего пути после пути узла (§39 path-passthrough),
+	// например "orders/42". Боевой Receiver приклеивает его к target URL, и без
+	// него тест passthrough-узла бил бы в базовый адрес (§55.9). Узел без
+	// passthrough хвост игнорирует — отчёт это показывает.
+	PathTail string              `json:"path_tail" binding:"omitempty,max=2048"`
+	Query    map[string][]string `json:"query"`
+	Headers  map[string][]string `json:"headers"`
+	Body     string              `json:"body"`
 }
 
 // Run godoc
@@ -108,12 +113,13 @@ func (h *DryRunHandler) Run(c *gin.Context) {
 		return
 	}
 	rep, err := h.uc.Run(c.Request.Context(), actorFromCtx(c), usecase.DryRunRequest{
-		Node:    dryNode,
-		Method:  method,
-		Query:   query,
-		Headers: headers,
-		Body:    []byte(req.Request.Body),
-		UseMock: useMock,
+		Node:     dryNode,
+		Method:   method,
+		PathTail: req.Request.PathTail,
+		Query:    query,
+		Headers:  headers,
+		Body:     []byte(req.Request.Body),
+		UseMock:  useMock,
 	})
 	if err != nil {
 		if isValidationError(err) {

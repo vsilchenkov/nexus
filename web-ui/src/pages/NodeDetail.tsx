@@ -7,7 +7,7 @@ import {
   type Query,
 } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Copy as CopyIcon, Pencil, RefreshCw } from "lucide-react";
+import { Copy as CopyIcon, Pencil, Play, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { api, isNotFound, type Node } from "../api/client";
@@ -17,6 +17,7 @@ import { cn } from "../lib/cn";
 import { msToDatetimeLocal } from "../lib/format";
 import { validateNodePath } from "../lib/nodeValidation";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
+import { DryRunDialog } from "../components/DryRunDialog";
 import { LogsTab, type LogsInitialFilter } from "../components/node/LogsTab";
 import { OverviewTab } from "../components/node/OverviewTab";
 import { ConfigTab } from "../components/node/ConfigTab";
@@ -48,6 +49,8 @@ export default function NodeDetail() {
   const canEdit = useRoleAtLeast("manager");
   // §53: диалог «Скопировать узел» (manager+, как создание).
   const [copyOpen, setCopyOpen] = useState(false);
+  // §55.2: тестовый запрос по сохранённому узлу, не заходя в редактирование.
+  const [dryRunOpen, setDryRunOpen] = useState(false);
   // Ручное обновление: перезагружаем данные ЭТОЙ страницы — шапку узла и
   // текущую вкладку. Фильтр по id: у всех запросов страницы он идёт вторым
   // элементом ключа (["node", id], ["node-metrics", id, …], ["logs", id, …],
@@ -129,6 +132,9 @@ export default function NodeDetail() {
           </Button>
           {canEdit && (
             <>
+              <Button sm variant="ghost" onClick={() => setDryRunOpen(true)}>
+                <Play className="h-3.5 w-3.5" /> {t("node.actions.dry_run")}
+              </Button>
               <Button sm variant="ghost" onClick={() => setCopyOpen(true)}>
                 <CopyIcon className="h-3.5 w-3.5" /> {t("node.actions.copy")}
               </Button>
@@ -143,6 +149,12 @@ export default function NodeDetail() {
       </div>
 
       {copyOpen && <CopyNodeDialog node={node} onClose={() => setCopyOpen(false)} />}
+
+      {/* §55.2: сохранённый узел тестируется как есть. node_id обязателен —
+          по нему сервер подмешает креды, наружу они не отдаются (§55.6). */}
+      {dryRunOpen && (
+        <DryRunDialog node={node} nodeId={node.id} onClose={() => setDryRunOpen(false)} />
+      )}
 
       {isPull && rmq && (
         <div

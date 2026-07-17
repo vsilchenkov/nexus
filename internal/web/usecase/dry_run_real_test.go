@@ -240,6 +240,142 @@ func TestDryRun_Mock_DoesNotCallSender(t *testing.T) {
 	assert.LessOrEqual(t, d["duration_ms"], 100)
 }
 
+// §55.9 / §40: узел с фиксированным outgoing_method переопределяет метод формы.
+// До этого dry-run слал метод формы как есть — тест узла с outgoing_method=PUT
+// бил PUT'ом в проде и POST'ом в тесте.
+func TestDryRun_RealCall_OutgoingMethodOverridesForm(t *testing.T) {
+	t.Parallel()
+
+	sender := &stubSender{resp: &senderv1.SendResponse{StatusCode: 200, Attempts: 1}}
+	uc, _ := newDryRunUCWithSender(sender, nil)
+
+	n := dryRunNode()
+	n.IncomingMethod = domain.HTTPMethodAny // принимаем что угодно
+	n.OutgoingMethod = domain.HTTPMethodPUT // но наружу всегда PUT
+
+	rep, err := uc.Run(context.Background(), SystemActor(), dryRunReq(n, false)) // форма шлёт POST
+	require.NoError(t, err)
+	require.True(t, rep.OK)
+
+	assert.Equal(t, http.MethodPut, sender.got.GetMethod(),
+		"в target должен уйти метод узла, а не метод формы")
+
+	d, ok := stepOf(t, rep, "method.incoming").Detail.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, http.MethodPost, d["incoming"])
+	assert.Equal(t, http.MethodPut, d["outgoing"], "отчёт показывает подмену метода")
+}
+
+// §40: outgoing_method=ANY зеркалит входящий метод.
+func TestDryRun_RealCall_OutgoingMethodAnyMirrors(t *testing.T) {
+	t.Parallel()
+
+	sender := &stubSender{resp: &senderv1.SendResponse{StatusCode: 200, Attempts: 1}}
+	uc, _ := newDryRunUCWithSender(sender, nil)
+
+	n := dryRunNode()
+	n.IncomingMethod = domain.HTTPMethodAny
+	n.OutgoingMethod = domain.HTTPMethodAny
+
+	req := dryRunReq(n, false)
+	req.Method = http.MethodDelete
+	rep, err := uc.Run(context.Background(), SystemActor(), req)
+	require.NoError(t, err)
+	require.True(t, rep.OK)
+
+	assert.Equal(t, http.MethodDelete, sender.got.GetMethod())
+}
+
+// §40: узел не принимает такой входящий метод — прод ответил бы отказом, тест
+// обязан показать это, а не «успешно» дойти до target.
+func TestDryRun_IncomingMethodRejected(t *testing.T) {
+	t.Parallel()
+
+	sender := &stubSender{resp: &senderv1.SendResponse{StatusCode: 200}}
+	uc, audit := newDryRunUCWithSender(sender, nil)
+
+	n := dryRunNode()
+	n.IncomingMethod = domain.HTTPMethodGET // узел принимает только GET
+
+	rep, err := uc.Run(context.Background(), SystemActor(), dryRunReq(n, false)) // форма шлёт POST
+	require.NoError(t, err)
+	assert.False(t, rep.OK)
+
+	step := stepOf(t, rep, "method.incoming")
+	assert.Equal(t, "failed", step.Status)
+	assert.Nil(t, sender.got, "до target запрос дойти не должен")
+	require.Len(t, audit.entries, 1)
+	assert.Equal(t, "failed:method.incoming", audit.entries[0].Details["outcome"])
+}
+
+// §39 / §55.9: хвост пути приклеивается к target — тест passthrough-узла обязан
+// бить в реальный URL, а не в базовый адрес.
+func TestDryRun_RealCall_PathTailAppended(t *testing.T) {
+	t.Parallel()
+
+	sender := &stubSender{resp: &senderv1.SendResponse{StatusCode: 200, Attempts: 1}}
+	uc, _ := newDryRunUCWithSender(sender, nil)
+
+	n := dryRunNode()
+	n.PathPassthrough = true
+
+	req := dryRunReq(n, false)
+	req.PathTail = "orders/42"
+	rep, err := uc.Run(context.Background(), SystemActor(), req)
+	require.NoError(t, err)
+	require.True(t, rep.OK)
+
+	assert.Equal(t, "https://example.com/hook/orders/42", sender.got.GetTargetUrl())
+	d, ok := stepOf(t, rep, "url.resolve").Detail.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "orders/42", d["path_tail"])
+}
+
+// Тот же код, что в бою: JoinPath режет «../» — хвостом нельзя выйти за пределы
+// target_url (иначе тест стал бы SSRF-обходом allowlist §23).
+func TestDryRun_RealCall_PathTailCannotEscapeTarget(t *testing.T) {
+	t.Parallel()
+
+	sender := &stubSender{resp: &senderv1.SendResponse{StatusCode: 200, Attempts: 1}}
+	uc, _ := newDryRunUCWithSender(sender, nil)
+
+	n := dryRunNode()
+	n.PathPassthrough = true
+	n.TargetURL = "https://example.com/base/hook"
+
+	req := dryRunReq(n, false)
+	req.PathTail = "../../../etc/passwd"
+	rep, err := uc.Run(context.Background(), SystemActor(), req)
+	require.NoError(t, err)
+	require.True(t, rep.OK)
+
+	assert.Equal(t, "https://example.com/etc/passwd", sender.got.GetTargetUrl(),
+		"хост неизменен — за пределы схемы/хоста target выйти нельзя")
+	assert.True(t, strings.HasPrefix(sender.got.GetTargetUrl(), "https://example.com/"))
+}
+
+// Узел без passthrough хвост игнорирует (как в бою) и сообщает об этом — иначе
+// оператор решит, что тест молча «съел» его ввод.
+func TestDryRun_PathTailIgnoredWithoutPassthrough(t *testing.T) {
+	t.Parallel()
+
+	sender := &stubSender{resp: &senderv1.SendResponse{StatusCode: 200, Attempts: 1}}
+	uc, _ := newDryRunUCWithSender(sender, nil)
+
+	n := dryRunNode()
+	n.PathPassthrough = false
+
+	req := dryRunReq(n, false)
+	req.PathTail = "orders/42"
+	rep, err := uc.Run(context.Background(), SystemActor(), req)
+	require.NoError(t, err)
+
+	assert.Equal(t, "https://example.com/hook", sender.got.GetTargetUrl())
+	d, ok := stepOf(t, rep, "url.resolve").Detail.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, true, d["path_tail_ignored"], "отчёт объясняет, почему хвост не применён")
+}
+
 // Эхо-заголовки внешнего узла не должны светить креды в отчёте.
 func TestDryRun_RealCall_MasksAuthInResponseHeaders(t *testing.T) {
 	t.Parallel()

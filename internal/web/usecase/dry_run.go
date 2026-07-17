@@ -25,12 +25,16 @@ import (
 // шину. UseMock=true (по умолчанию) — реальный HTTP-вызов внешнего
 // узла НЕ выполняется; Sender замещается фиктивным 200-ответом.
 type DryRunRequest struct {
-	Node    *domain.Node
-	Method  string
-	Query   url.Values
-	Headers http.Header
-	Body    []byte
-	UseMock bool
+	Node   *domain.Node
+	Method string
+	// PathTail — хвост входящего пути после пути узла (§39 path-passthrough).
+	// Боевой Receiver приклеивает его к target URL; без него тест
+	// passthrough-узла бил бы в базовый адрес, а не в реальный (§55.9).
+	PathTail string
+	Query    url.Values
+	Headers  http.Header
+	Body     []byte
+	UseMock  bool
 }
 
 // DryRunStep — один шаг отчёта (§7.5.1 ТЗ).
@@ -84,6 +88,33 @@ func (u *DryRunUsecase) Run(ctx context.Context, actor Actor, req DryRunRequest)
 	}
 
 	rep := &DryRunReport{ID: uuid.NewString(), OK: true}
+
+	// 0. §40: метод. Боевой Receiver сперва проверяет, принимает ли узел такой
+	// входящий метод, и только потом вычисляет исходящий (ANY = зеркалить
+	// входящий, иначе — фиксированный метод узла). Без этих двух шагов dry-run
+	// врал: узел с incoming_method=GET «принимал» POST, а узел с
+	// outgoing_method=PUT получал в тесте POST вместо PUT (§55.9).
+	if !rcv.MethodMatches(req.Method, req.Node.IncomingMethod) {
+		rep.Steps = append(rep.Steps, DryRunStep{
+			Name: "method.incoming", Status: "failed",
+			Message: fmt.Sprintf("node accepts %s, got %s", req.Node.IncomingMethod, req.Method),
+		})
+		rep.OK = false
+		u.writeAudit(ctx, actor, req.Node, rep, "failed:method.incoming")
+		return rep, nil
+	}
+	outMethod := rcv.EffectiveOutgoingMethod(req.Node, req.Method)
+	rep.Steps = append(rep.Steps, DryRunStep{
+		Name: "method.incoming", Status: "ok",
+		Message: fmt.Sprintf("%s → %s", req.Method, outMethod),
+		Detail: map[string]any{
+			"incoming":          req.Method,
+			"outgoing":          outMethod,
+			"node_incoming":     string(req.Node.IncomingMethod),
+			"node_outgoing":     string(req.Node.OutgoingMethod),
+			"outgoing_mirrored": req.Node.OutgoingMethod == domain.HTTPMethodAny,
+		},
+	})
 
 	// 1. Incoming auth.
 	if err := rcv.CheckIncomingAuth(req.Node, req.Headers, req.Query, req.Body); err != nil {
@@ -146,12 +177,25 @@ func (u *DryRunUsecase) Run(ctx context.Context, actor Actor, req DryRunRequest)
 		u.writeAudit(ctx, actor, req.Node, rep, "failed:url.resolve")
 		return rep, nil //nolint:nilerr // dry-run: ошибка узла — это результат, а не сбой операции
 	}
+	// §39: хвост входящего пути приклеивается к резолвнутому адресу — тем же
+	// кодом, что в боевом Receiver (JoinPath режет «../», клиент не выйдет за
+	// пределы target_url).
+	tail := req.PathTail
+	if !req.Node.PathPassthrough {
+		// Узел без passthrough хвост игнорирует — показываем это явно, иначе
+		// оператор решит, что тест «съел» его ввод.
+		tail = ""
+	}
+	target = rcv.AppendPathSuffix(target, tail)
 	finalURL := appendQueryToURL(target, cleanQuery)
 	rep.Steps = append(rep.Steps, DryRunStep{
 		Name: "url.resolve", Status: "ok", Message: finalURL,
 		Detail: map[string]any{
-			"mode":             string(req.Node.URLMode),
-			"allowlist_passed": true,
+			"mode":              string(req.Node.URLMode),
+			"allowlist_passed":  true,
+			"path_passthrough":  req.Node.PathPassthrough,
+			"path_tail":         tail,
+			"path_tail_ignored": req.PathTail != "" && !req.Node.PathPassthrough,
 		},
 	})
 
@@ -191,7 +235,7 @@ func (u *DryRunUsecase) Run(ctx context.Context, actor Actor, req DryRunRequest)
 			},
 		})
 	} else {
-		step := u.realCall(ctx, req, finalURL, authHeader, fwd, effBody)
+		step := u.realCall(ctx, req, outMethod, finalURL, authHeader, fwd, effBody)
 		rep.Steps = append(rep.Steps, step)
 		if step.Status == "failed" {
 			rep.OK = false
@@ -204,10 +248,12 @@ func (u *DryRunUsecase) Run(ctx context.Context, actor Actor, req DryRunRequest)
 	rep.Steps = append(rep.Steps, DryRunStep{
 		Name: "clickhouse.would_log", Status: "ok",
 		Detail: map[string]any{
-			"table":  req.Node.ClickHouseTable,
-			"id":     rep.ID,
-			"url":    finalURL,
-			"method": req.Method,
+			"table": req.Node.ClickHouseTable,
+			"id":    rep.ID,
+			"url":   finalURL,
+			// Метод исходящего вызова (§40), а не метод формы: в логах узла
+			// пишется именно он.
+			"method": outMethod,
 		},
 	})
 
@@ -224,9 +270,12 @@ const dryRunPathPrefix = "__dryrun_"
 // realCall — шаг «Response» в реальном режиме: вызов target через Sender (§55.3).
 // Идёт тем же путём и тем же HTTP-клиентом, что боевой трафик, поэтому
 // показывает настоящие таймауты, TLS-ошибки и редиректы — ради этого §55.
+// outMethod — исходящий метод, уже пересчитанный по §40 (может отличаться от
+// метода формы: узел с фиксированным outgoing_method переопределяет входящий).
 func (u *DryRunUsecase) realCall(
 	ctx context.Context,
 	req DryRunRequest,
+	outMethod string,
 	finalURL, authHeader string,
 	fwd map[string]string,
 	body []byte,
@@ -258,7 +307,7 @@ func (u *DryRunUsecase) realCall(
 		// Изолированное имя вместо реального пути — см. dryRunPathPrefix.
 		NodePath:  dryRunPathPrefix + req.Node.Path,
 		TargetUrl: finalURL,
-		Method:    req.Method,
+		Method:    outMethod,
 		Headers:   headers,
 		Body:      body,
 		TimeoutMs: req.Node.TimeoutMs,

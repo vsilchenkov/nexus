@@ -4890,6 +4890,11 @@ const docTemplate = `{
                         "PATCH"
                     ]
                 },
+                "path_tail": {
+                    "description": "PathTail — хвост входящего пути после пути узла (§39 path-passthrough),\nнапример \"orders/42\". Боевой Receiver приклеивает его к target URL, и без\nнего тест passthrough-узла бил бы в базовый адрес (§55.9). Узел без\npassthrough хвост игнорирует — отчёт это показывает.",
+                    "type": "string",
+                    "maxLength": 2048
+                },
                 "query": {
                     "type": "object",
                     "additionalProperties": {

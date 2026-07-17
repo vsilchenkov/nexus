@@ -229,6 +229,19 @@ web:
   swagger_enabled: false                        # Отдавать ли Swagger UI Web'а (выключай в prod).
   allow_version_override: false                 # §34.3: разрешить ручной override версии в настройках (dev/staging). В prod — false: версия всегда из git.
   receiver_url: http://receiver:8080            # Base URL Receiver: replay-запросы (§7.4.1) и проксирование идут через реальный pipeline.
+  # §55: адрес Sender'а для dry-run в РЕАЛЬНОМ режиме (тестовый запрос со снятой
+  # галкой mock уходит на target тем же путём, что боевой трафик). Секция
+  # опциональна: пустой addr → реальный режим недоступен (шаг «Response» вернёт
+  # skipped), mock работает как прежде. Тест не пишет в ClickHouse и не влияет на
+  # метрики, статус узла и circuit breaker — гейт `dry_run` на стороне Sender'а,
+  # поэтому при обновлении Sender выкатывается ПЕРВЫМ (старый флаг проигнорирует).
+  sender_grpc:
+    addr: sender:9190            # Адрес gRPC-сервера Sender (host:port). Пусто = реальный режим выключен.
+    pool_size: 2                 # Пул соединений: dry-run — ручная операция, большой пул не нужен.
+    timeout_ms: 30000            # Таймаут gRPC-вызова (мс). Должен покрывать timeout_ms узла + ретраи, иначе тест «висящего» узла оборвётся раньше срока.
+    keepalive_time_sec: 30       # Период keepalive-ping'ов по соединению (сек).
+    keepalive_timeout_sec: 10    # Ожидание ответа на keepalive-ping до разрыва (сек).
+    max_message_bytes: 67108864  # Лимит размера gRPC-сообщения = 64 МиБ (как у receiver.sender_grpc).
   # §32.2: «свои» authority (host или host:port) для запрета self-referencing target_url узла.
   # Пусто → выводится из receiver_url. Полезно за реверс-прокси, когда внешний адрес отличается.
   self_ingress_hosts: []                        # напр.: ["nexus.example.com", "receiver:8080"]
