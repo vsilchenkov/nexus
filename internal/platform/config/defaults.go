@@ -196,6 +196,20 @@ func applyDefaults(c *Config) {
 	if c.Web.HTTPAddr == "" {
 		c.Web.HTTPAddr = ":8000"
 	}
+	// §55: адрес Sender'а для dry-run в реальном режиме. Addr НЕ подставляем по
+	// умолчанию: пустой = реальный режим выключен, и это правильный дефолт —
+	// dry-run обязан ходить в тот же Sender, что обслуживает боевой трафик, а
+	// угадать его за оператора нельзя (в dev Web часто живёт без Sender'а). Пул
+	// маленький: dry-run — ручное действие, не горячий путь.
+	if c.Web.SenderGRPC.PoolSize == 0 {
+		c.Web.SenderGRPC.PoolSize = 2
+	}
+	if c.Web.SenderGRPC.TimeoutMs == 0 {
+		c.Web.SenderGRPC.TimeoutMs = 30000
+	}
+	if c.Web.SenderGRPC.MaxMessageBytes == 0 {
+		c.Web.SenderGRPC.MaxMessageBytes = defaultGRPCMaxMessageBytes
+	}
 	if c.Web.SessionCookieName == "" {
 		c.Web.SessionCookieName = "nexus_session"
 	}

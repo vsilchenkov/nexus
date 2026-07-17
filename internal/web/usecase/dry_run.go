@@ -4,16 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 
 	"nexus/internal/domain"
 	"nexus/internal/platform/logging"
 	rcv "nexus/internal/receiver/usecase"
+	"nexus/internal/web/usecase/port"
+	senderv1 "nexus/proto/sender/v1"
 )
 
 // DryRunRequest — что приходит в POST /api/nodes/dry-run.
@@ -46,14 +48,27 @@ type DryRunReport struct {
 	OK    bool         `json:"ok"`
 }
 
-// DryRunUsecase — реализует §7.5.1 (тестовый запрос).
+// DryRunUsecase — реализует §7.5.1 (тестовый запрос) и §55 (реальный вызов).
 type DryRunUsecase struct {
-	audit  *AuditUsecase
-	logger logging.Logger
+	audit *AuditUsecase
+	// sender — вызов target'а в реальном режиме (§55). nil → реальный режим
+	// недоступен (шаг response = skipped), mock работает как прежде: Web не
+	// обязан знать про Sender ради базового сценария.
+	sender port.SenderClient
+	// selfIngressHosts — свои authority для проверки §32.2: реальный вызов не
+	// должен бить в собственный ingress шины (петля). Пусто → проверка
+	// пропускается (как в NodeUsecase).
+	selfIngressHosts []string
+	logger           logging.Logger
 }
 
-func NewDryRunUsecase(audit *AuditUsecase, logger logging.Logger) *DryRunUsecase {
-	return &DryRunUsecase{audit: audit, logger: logger}
+func NewDryRunUsecase(
+	audit *AuditUsecase,
+	sender port.SenderClient,
+	selfIngressHosts []string,
+	logger logging.Logger,
+) *DryRunUsecase {
+	return &DryRunUsecase{audit: audit, sender: sender, selfIngressHosts: selfIngressHosts, logger: logger}
 }
 
 // Run выполняет шаги pipeline'а Receiver на копии конфига узла из формы
@@ -160,25 +175,29 @@ func (u *DryRunUsecase) Run(ctx context.Context, actor Actor, req DryRunRequest)
 		},
 	})
 
-	// 6. Response (mock).
-	if !req.UseMock {
-		// v1 поддерживает только mock-режим (см. §7.5.1 ТЗ комментарий).
-		// Реальный outbound HTTP — TODO Phase 4.
-		rep.Steps = append(rep.Steps, DryRunStep{
-			Name: "response", Status: "skipped",
-			Message: "real outbound mode is not supported in v1; use mock",
-		})
-	} else {
-		mockLatency := 50 * time.Millisecond
+	// 6. Response: mock (по умолчанию) или реальный вызов target через Sender (§55).
+	if req.UseMock {
+		// §7.5.1: mock отвечает 200 со случайной задержкой 50–100 мс. Живёт в
+		// Web, а не в Sender: gRPC-хоп ради синтетики не нужен, и зависимость
+		// Web→Sender остаётся опциональной (см. §55.7).
+		mockLatency := 50 + rand.Intn(51) //nolint:gosec // не крипто: имитация задержки
 		rep.Steps = append(rep.Steps, DryRunStep{
 			Name: "response", Status: "ok",
 			Detail: map[string]any{
 				"status":      200,
-				"duration_ms": int(mockLatency / time.Millisecond),
+				"duration_ms": mockLatency,
 				"body":        `{"mock":true}`,
 				"source":      "mock-server",
 			},
 		})
+	} else {
+		step := u.realCall(ctx, req, finalURL, authHeader, fwd, effBody)
+		rep.Steps = append(rep.Steps, step)
+		if step.Status == "failed" {
+			rep.OK = false
+			u.writeAudit(ctx, actor, req.Node, rep, "failed:response")
+			return rep, nil
+		}
 	}
 
 	// 7. Would log to ClickHouse.
@@ -194,6 +213,141 @@ func (u *DryRunUsecase) Run(ctx context.Context, actor Actor, req DryRunRequest)
 
 	u.writeAudit(ctx, actor, req.Node, rep, "ok")
 	return rep, nil
+}
+
+// dryRunPathPrefix — префикс временного пути для реального вызова (§55.4).
+// Sender гасит побочку по флагу dry_run, но node_path всё равно подменяем: если
+// какой-то гейт будет забыт при будущих правках, метрика/breaker/Redis-ключ
+// уйдут в изолированное имя, а не на боевой узел.
+const dryRunPathPrefix = "__dryrun_"
+
+// realCall — шаг «Response» в реальном режиме: вызов target через Sender (§55.3).
+// Идёт тем же путём и тем же HTTP-клиентом, что боевой трафик, поэтому
+// показывает настоящие таймауты, TLS-ошибки и редиректы — ради этого §55.
+func (u *DryRunUsecase) realCall(
+	ctx context.Context,
+	req DryRunRequest,
+	finalURL, authHeader string,
+	fwd map[string]string,
+	body []byte,
+) DryRunStep {
+	if u.sender == nil {
+		return DryRunStep{
+			Name: "response", Status: "skipped",
+			Message: "real call is not available: web.sender_grpc.addr is not configured",
+		}
+	}
+	// §32.2: реальный вызов не должен бить в собственный ingress шины — это
+	// петля через самих себя. При mock проверка не нужна (запрос никуда не
+	// уходит), поэтому она здесь, а не в общей части. Та же функция, что у
+	// NodeUsecase при сохранении узла, — но по РЕЗОЛВНУТОМУ URL (у from_request
+	// статического target нет, а реальный адрес известен только сейчас).
+	if len(u.selfIngressHosts) > 0 && isSelfReferenceTarget(finalURL, u.selfIngressHosts) {
+		return DryRunStep{
+			Name: "response", Status: "failed",
+			Message: domain.ErrNodeTargetURLSelfReference.Error(),
+		}
+	}
+
+	headers := make(map[string]string, len(fwd))
+	for k, v := range fwd {
+		headers[k] = v
+	}
+	grpcReq := &senderv1.SendRequest{
+		Id: uuid.NewString(),
+		// Изолированное имя вместо реального пути — см. dryRunPathPrefix.
+		NodePath:  dryRunPathPrefix + req.Node.Path,
+		TargetUrl: finalURL,
+		Method:    req.Method,
+		Headers:   headers,
+		Body:      body,
+		TimeoutMs: req.Node.TimeoutMs,
+		// Ретраи узла воспроизводим: оператор должен видеть то же поведение,
+		// что у боевого трафика (в т.ч. сколько раз шина пыталась достучаться).
+		RetryCount:     req.Node.RetryCount,
+		RetryBackoffMs: req.Node.RetryBackoffMs,
+		// §55.4: три гейта. logging_enabled=false + dry_run=true → ни записи в
+		// ClickHouse, ни метрик/статуса узла, ни участия в circuit breaker.
+		LoggingEnabled: false,
+		DryRun:         true,
+	}
+	if authHeader != "" {
+		grpcReq.Auth = &senderv1.AuthConfig{AuthorizationHeader: authHeader}
+	}
+
+	// Длительность берём из ответа Sender'а (он мерит сам вызов, без gRPC-хопа) —
+	// это то же число, что видит боевой трафик в логах.
+	resp, err := u.sender.Send(ctx, grpcReq)
+	if err != nil {
+		// Сбой самого gRPC (Sender недоступен) — это не «узел не ответил»,
+		// а отказ инструмента: различаем в сообщении.
+		u.logger.Debug("dry-run: sender call failed",
+			u.logger.Str("url", redactQuery(finalURL)), u.logger.Err(err))
+		return DryRunStep{
+			Name: "response", Status: "failed",
+			Message: "sender is unavailable: " + err.Error(),
+		}
+	}
+
+	detail := map[string]any{
+		"status":      resp.GetStatusCode(),
+		"duration_ms": resp.GetDurationMs(),
+		"attempts":    resp.GetAttempts(),
+		"body":        bodyPreview(resp.GetBody(), 256),
+		"headers":     maskAuthMap(resp.GetHeaders()),
+		"source":      "sender",
+	}
+	if e := resp.GetError(); e != "" {
+		detail["error"] = e
+	}
+	u.logger.Debug("dry-run: real call finished",
+		u.logger.Str("url", redactQuery(finalURL)),
+		u.logger.Int("status", int(resp.GetStatusCode())),
+		u.logger.Int("duration_ms", int(resp.GetDurationMs())),
+		u.logger.Int("attempts", int(resp.GetAttempts())))
+
+	// Узел не ответил или ответил ошибкой транспорта — это результат теста
+	// (failed), а не сбой операции. HTTP-статус 4xx/5xx считаем успешным
+	// шагом: ответ получен, оператор видит код и решает сам.
+	if resp.GetStatusCode() == 0 {
+		return DryRunStep{
+			Name: "response", Status: "failed",
+			Message: firstNonEmpty(resp.GetError(), "no response from target"),
+			Detail:  detail,
+		}
+	}
+	return DryRunStep{Name: "response", Status: "ok", Detail: detail}
+}
+
+// maskAuthMap — копия заголовков ответа с маскированной авторизацией: эхо
+// внешнего узла не должно светить креды в отчёте.
+func maskAuthMap(h map[string]string) map[string]string {
+	out := make(map[string]string, len(h))
+	for k, v := range h {
+		if strings.EqualFold(k, "Authorization") {
+			out[k] = maskAuthHeader(v)
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// redactQuery — URL без query для логов: там живут токены (§50 redactURL).
+func redactQuery(raw string) string {
+	if i := strings.IndexByte(raw, '?'); i >= 0 {
+		return raw[:i]
+	}
+	return raw
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func (u *DryRunUsecase) writeAudit(ctx context.Context, actor Actor, n *domain.Node, rep *DryRunReport, outcome string) {

@@ -32,7 +32,9 @@ func (s *stubAuditRepo) DeleteOlderThan(_ context.Context, _ time.Time) (int, er
 func newDryRunUC() (*DryRunUsecase, *stubAuditRepo) {
 	repo := &stubAuditRepo{}
 	audit := NewAuditUsecase(repo, logging.NewNoop())
-	return NewDryRunUsecase(audit, logging.NewNoop()), repo
+	// sender=nil: реальный режим не сконфигурирован (mock-сценарии).
+	// Тесты реального вызова — в dry_run_real_test.go.
+	return NewDryRunUsecase(audit, nil, nil, logging.NewNoop()), repo
 }
 
 // TestDryRun_StaticNoneOK — happy path: static URL + auth_type=none.

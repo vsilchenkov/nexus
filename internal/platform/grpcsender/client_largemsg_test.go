@@ -14,8 +14,8 @@ import (
 	"google.golang.org/grpc/status"
 
 	"nexus/internal/platform/config"
+	"nexus/internal/platform/grpcsender"
 	"nexus/internal/platform/logging"
-	"nexus/internal/receiver/adapter/out/grpcsender"
 	senderv1 "nexus/proto/sender/v1"
 )
 

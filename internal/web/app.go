@@ -29,6 +29,7 @@ import (
 	chpf "nexus/internal/platform/clickhouse"
 	"nexus/internal/platform/config"
 	"nexus/internal/platform/crypto"
+	"nexus/internal/platform/grpcsender"
 	"nexus/internal/platform/healthcheck"
 	"nexus/internal/platform/i18n"
 	"nexus/internal/platform/logging"
@@ -69,6 +70,9 @@ type App struct {
 
 	srv          *http.Server
 	otelShutdown otelpf.ShutdownFunc
+	// senderClient — §55: gRPC-пул к Sender для dry-run в реальном режиме.
+	// nil, если web.sender_grpc.addr не задан. Закрывается в Stop.
+	senderClient *grpcsender.Client
 
 	// done-каналы фоновых горутин — Stop дожидается их завершения
 	// (Phase AUD.3): callbacks reload'а/housekeeping не должны бежать
@@ -335,7 +339,23 @@ func (a *App) Start(ctx context.Context) error {
 	)
 	requestFieldHandler := httpadapter.NewRequestFieldCatalogHandler(requestFieldUC, a.logger)
 
-	dryRunUC := usecase.NewDryRunUsecase(auditUC, a.logger)
+	// §55: клиент к Sender для dry-run в реальном режиме. Опционален — адрес не
+	// задан → реальный вызов недоступен (шаг «Response» вернёт skipped), mock
+	// работает как прежде. Ошибку создания не эскалируем: Web не должен падать
+	// из-за инструмента отладки; nil-клиент отчёт объяснит.
+	var senderClient webport.SenderClient
+	if addr := a.cfg.Web.SenderGRPC.Addr; addr != "" {
+		sc, err := grpcsender.New(&a.cfg.Web.SenderGRPC, a.logger)
+		if err != nil {
+			a.logger.Warn("§55 dry-run: sender client init failed, real mode disabled",
+				a.logger.Str("addr", addr), a.logger.Err(err))
+		} else {
+			senderClient = sc
+			a.senderClient = sc
+			a.logger.Debug("§55 dry-run: sender client ready", a.logger.Str("addr", addr))
+		}
+	}
+	dryRunUC := usecase.NewDryRunUsecase(auditUC, senderClient, a.cfg.Web.SelfIngressHosts, a.logger)
 	dryRunHandler := httpadapter.NewDryRunHandler(dryRunUC, a.logger)
 
 	rl := ratelimit.New(a.redis, ratelimit.WithErrorSink(a.metrics))
@@ -577,6 +597,13 @@ func (a *App) Stop(ctx context.Context) error {
 		closeCtx, cancelClose := context.WithTimeout(ctx, 5*time.Second)
 		_ = a.chMgr.Close(closeCtx)
 		cancelClose()
+	}
+	// §55: пул gRPC-соединений к Sender (dry-run). nil, если реальный режим не
+	// сконфигурирован.
+	if a.senderClient != nil {
+		if err := a.senderClient.Close(); err != nil {
+			a.logger.Warn("web: sender grpc client close failed", a.logger.Err(err))
+		}
 	}
 	if a.otelShutdown != nil {
 		otelCtx, cancelOtel := context.WithTimeout(ctx, 5*time.Second)
