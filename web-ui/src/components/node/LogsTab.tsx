@@ -559,20 +559,38 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
         </div>
       ) : (
         <div ref={tableWrapRef} onScroll={onScroll} className="relative max-h-[60vh] overflow-y-auto">
-          <table className="w-full text-sm">
+          {/*
+            table-fixed + colgroup, а не auto-layout: иначе таблица требует ширину
+            по содержимому (URL резервировал max-w 28rem, «Время» — nowrap-штамп),
+            сумма перерастает контейнер, и он даёт горизонтальный скролл —
+            overflow-y-auto по CSS-спеке вычисляет overflow-x в auto. Служебные
+            колонки фиксированы по px, «Метод» и «URL» делят остаток и обрезаются
+            (полное значение — в title, см. ячейки ниже).
+          */}
+          <table className="w-full table-fixed text-sm">
+            <colgroup>
+              <col className="w-[164px]" />
+              <col className="w-[76px]" />
+              <col />
+              <col />
+              <col className="w-[76px]" />
+              <col className="w-[68px]" />
+              <col className="w-[84px]" />
+              <col className="w-[48px]" />
+            </colgroup>
             <thead className="sticky top-0 z-10 bg-bg-muted text-fg-muted">
               <tr>
                 <th className="px-3 py-2 text-left">{t("logs.col.time")}</th>
-                <th className="px-3 py-2 text-left">{t("logs.col.http_method")}</th>
+                <th className="px-2 py-2 text-left">{t("logs.col.http_method")}</th>
                 <th className="px-3 py-2 text-left">{t("logs.col.method")}</th>
                 <th className="px-3 py-2 text-left">{t("logs.col.url")}</th>
-                <th className="px-3 py-2 text-right">{t("logs.col.status")}</th>
-                <th className="px-3 py-2 text-right">{t("logs.col.ms")}</th>
+                <th className="px-2 py-2 text-right">{t("logs.col.status")}</th>
+                <th className="px-2 py-2 text-right">{t("logs.col.ms")}</th>
                 {/* §42-доп: размер тела ответа; короткий заголовок, полное имя в тултипе */}
-                <th className="px-3 py-2 text-right" title={t("logs.col.resp_size_title")}>
+                <th className="px-2 py-2 text-right" title={t("logs.col.resp_size_title")}>
                   {t("logs.col.resp_size")}
                 </th>
-                <th className="px-3 py-2" />
+                <th className="px-2 py-2" />
               </tr>
             </thead>
             <tbody>
@@ -598,20 +616,27 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                           {fmtLogTs(r.date_request)}
                         </span>
                       </td>
-                      <td className="px-3 py-2">{r.http_method}</td>
-                      <td className="px-3 py-2 font-mono text-xs text-fg-muted">{r.method}</td>
-                      <td className="max-w-[28rem] truncate px-3 py-2 font-mono text-xs text-fg-muted">
+                      <td className="truncate px-2 py-2">{r.http_method}</td>
+                      {/* Метод (подпуть §39) и URL делят остаток ширины и обрезаются —
+                          полное значение отдаём в title, иначе оно нечитаемо. */}
+                      <td
+                        className="truncate px-3 py-2 font-mono text-xs text-fg-muted"
+                        title={r.method}
+                      >
+                        {r.method}
+                      </td>
+                      <td className="truncate px-3 py-2 font-mono text-xs text-fg-muted" title={r.url}>
                         {r.url}
                       </td>
-                      <td className={`px-3 py-2 text-right ${isErr ? "text-err" : "text-ok"}`}>
+                      <td className={`px-2 py-2 text-right ${isErr ? "text-err" : "text-ok"}`}>
                         {r.status}
                       </td>
-                      <td className="px-3 py-2 text-right">{r.duration_ms}</td>
+                      <td className="px-2 py-2 text-right">{r.duration_ms}</td>
                       {/* §42-доп: размер тела ответа; «—» = тела нет (0 байт) */}
-                      <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-xs text-fg-muted">
+                      <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-xs text-fg-muted">
                         {fmtSize(r.response_size ?? 0, sizeUnits)}
                       </td>
-                      <td className="px-3 py-2 text-right">
+                      <td className="px-2 py-2 text-right">
                         <button
                           title={t("node.actions.replay")}
                           onClick={(e) => {
