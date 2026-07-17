@@ -35,17 +35,17 @@ func (s stubSenderClient) Send(_ context.Context, _ *senderv1.SendRequest) (*sen
 func TestMethodMatches_Any(t *testing.T) {
 	t.Parallel()
 	for _, m := range []string{"GET", "POST", "PUT", "DELETE", "PATCH", "head"} {
-		if !methodMatches(m, domain.HTTPMethodAny) {
-			t.Errorf("methodMatches(%q, ANY) = false, want true", m)
+		if !MethodMatches(m, domain.HTTPMethodAny) {
+			t.Errorf("MethodMatches(%q, ANY) = false, want true", m)
 		}
 	}
-	if methodMatches("GET", domain.HTTPMethodPOST) {
+	if MethodMatches("GET", domain.HTTPMethodPOST) {
 		t.Error("GET vs POST не должны совпадать")
 	}
-	if !methodMatches("post", domain.HTTPMethodPOST) {
+	if !MethodMatches("post", domain.HTTPMethodPOST) {
 		t.Error("post vs POST должны совпадать (без учёта регистра)")
 	}
-	if !methodMatches("POST", "") {
+	if !MethodMatches("POST", "") {
 		t.Error("пустой want трактуется как POST")
 	}
 }
@@ -70,8 +70,8 @@ func TestEffectiveOutgoingMethod(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			n := &domain.Node{OutgoingMethod: c.outgoing}
-			if got := effectiveOutgoingMethod(n, c.incoming); got != c.want {
-				t.Errorf("effectiveOutgoingMethod(%q, %q) = %q, want %q", c.outgoing, c.incoming, got, c.want)
+			if got := EffectiveOutgoingMethod(n, c.incoming); got != c.want {
+				t.Errorf("EffectiveOutgoingMethod(%q, %q) = %q, want %q", c.outgoing, c.incoming, got, c.want)
 			}
 		})
 	}

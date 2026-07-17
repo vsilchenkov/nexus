@@ -55,7 +55,26 @@ func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 		LoggingEnabled:     req.GetLoggingEnabled(),
 		MaxBodySizeEnabled: req.GetMaxBodySizeEnabled(),
 		MaxBodySize:        req.GetMaxBodySize(),
+		DryRun:             req.GetDryRun(), // §55
 	})
+
+	// §55: тестовый вызов (dry-run из UI) не оставляет следов на узле — ни в
+	// метриках, ни в гаудже исхода, ни в персистентном статусе. Иначе неудачный
+	// тест покрасил бы живой узел в Down на дашборде и накрутил счётчики
+	// ошибок. Сам HTTP-вызов при этом настоящий (см. §55.3).
+	if req.GetDryRun() {
+		s.logger.Debug("send: dry-run, metrics and node status skipped",
+			s.logger.Str("id", req.GetId()),
+			s.logger.Int("status", int(out.StatusCode)))
+		return &senderv1.SendResponse{
+			StatusCode: out.StatusCode,
+			Body:       out.Body,
+			Headers:    out.Headers,
+			Error:      out.Error,
+			Attempts:   out.Attempts,
+			DurationMs: out.DurationMs,
+		}, nil
+	}
 
 	// §52: outcome (ok/degraded/down) — для бейджа узла; isErr («любой
 	// не-2xx») — прежняя семантика incomplete_total.

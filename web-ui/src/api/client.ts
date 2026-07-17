@@ -86,6 +86,12 @@ export type Node = {
   // §41: динамическая авторизация на входе (источник+поле для token/basic).
   incoming_auth_dynamic_source?: string;
   incoming_auth_dynamic_field?: string;
+  // §55.6: сами креды наружу не отдаются никогда — только признаки *_set.
+  incoming_auth_type?: string;
+  auth_credentials_set?: boolean;
+  incoming_auth_credentials_set?: boolean;
+  // §16: имя заголовка с HMAC-подписью (incoming_auth_type=webhook_signature).
+  webhook_signature_header?: string;
   clickhouse_table: string;
   clickhouse_template_id: string;
   forward_headers: string[];

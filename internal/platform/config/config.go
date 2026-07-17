@@ -305,6 +305,12 @@ type WebSection struct {
 	// KafkaAlerts — пороги жёлтый/красный для health-banner и KPI экрана
 	// Kafka-мониторинга (§6 spec). Вычисляются на каждом /api/kafka/overview.
 	KafkaAlerts KafkaAlertsSection `yaml:"kafka_alerts_thresholds"`
+	// SenderGRPC — адрес Sender Service для dry-run в реальном режиме (§55):
+	// тестовый вызов идёт тем же путём и клиентом, что боевой трафик. Пустой
+	// Addr → реальный режим недоступен (шаг «Response» вернёт skipped), mock
+	// работает как прежде — Web не обязан знать про Sender ради базового
+	// сценария. Тип общий с receiver.sender_grpc.
+	SenderGRPC ReceiverSenderGRPCConfig `yaml:"sender_grpc"`
 }
 
 // KafkaAlertsSection — пороги индикации (жёлтый/красный) для экрана

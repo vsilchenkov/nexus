@@ -108,7 +108,7 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 	}
 
 	// §3.2 (#5): узел принимает только сконфигурированный входящий метод.
-	if !methodMatches(in.Method, node.IncomingMethod) {
+	if !MethodMatches(in.Method, node.IncomingMethod) {
 		return nil, domain.ErrNodeMethodNotAllowed
 	}
 
@@ -145,7 +145,7 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 		return nil, err
 	}
 	// §39: при path-passthrough приклеиваем хвост входящего пути к целевому URL.
-	targetURL = appendPathSuffix(targetURL, remainder)
+	targetURL = AppendPathSuffix(targetURL, remainder)
 	finalURL := appendQuery(targetURL, cleanQuery)
 
 	headers := pickForwardHeaders(effHeader, node.ForwardHeaders)
@@ -163,7 +163,7 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 	u.logger.Debug("route: forwarding to sender",
 		u.logger.Str("id", id),
 		u.logger.Str("node", node.Path),
-		u.logger.Str("method", effectiveOutgoingMethod(node, in.Method)),
+		u.logger.Str("method", EffectiveOutgoingMethod(node, in.Method)),
 		u.logger.Str("target", redactURLString(finalURL)),
 		u.logger.Int("body_len", len(effBody)),
 		u.logger.Int("timeout_ms", int(node.TimeoutMs)),
@@ -174,7 +174,7 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 		NodePath:           node.Path,
 		NodeId:             node.ID,
 		TargetUrl:          finalURL,
-		Method:             effectiveOutgoingMethod(node, in.Method),
+		Method:             EffectiveOutgoingMethod(node, in.Method),
 		RequestPath:        remainder,
 		Auth:               &senderv1.AuthConfig{AuthorizationHeader: authHeader},
 		Headers:            headers,
@@ -241,7 +241,7 @@ func redactURLString(raw string) string {
 // сконфигурированным методом узла (§3.2, #5), без учёта регистра. Пустой
 // want трактуется как POST (дефолт), чтобы узлы, созданные до миграции 0015 и
 // переживший её L1/Redis-кеш без поля, не отклоняли трафик.
-func methodMatches(got string, want domain.HTTPMethod) bool {
+func MethodMatches(got string, want domain.HTTPMethod) bool {
 	// §40: ANY — узел принимает запрос с любым входящим методом.
 	if want == domain.HTTPMethodAny {
 		return true
@@ -256,7 +256,7 @@ func methodMatches(got string, want domain.HTTPMethod) bool {
 // §40: OutgoingMethod=ANY → зеркалит метод входящего запроса (incomingMethod);
 // пустой incoming → POST. Иначе — сконфигурированный метод узла (пустой → POST,
 // как трактует БД-дефолт и старое поведение).
-func effectiveOutgoingMethod(node *domain.Node, incomingMethod string) string {
+func EffectiveOutgoingMethod(node *domain.Node, incomingMethod string) string {
 	if node.OutgoingMethod == domain.HTTPMethodAny {
 		if m := strings.ToUpper(strings.TrimSpace(incomingMethod)); m != "" {
 			return m

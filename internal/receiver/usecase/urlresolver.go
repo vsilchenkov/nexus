@@ -41,12 +41,12 @@ func ResolveURL(node *domain.Node, incomingQuery url.Values) (target string, cle
 	}
 }
 
-// appendPathSuffix приклеивает remainder (хвост входящего пути, §39 path-passthrough)
+// AppendPathSuffix приклеивает remainder (хвост входящего пути, §39 path-passthrough)
 // к целевому URL, сохраняя его query-часть. Использует (*url.URL).JoinPath:
 // он корректно кодирует сегменты и резолвит «.»/«..» — клиент не может через
 // «../» выйти за пределы базового пути target_url. Применяется и к static, и к
 // from_request URL (хвост клеится к любому резолвнутому адресу).
-func appendPathSuffix(target, remainder string) string {
+func AppendPathSuffix(target, remainder string) string {
 	if remainder == "" {
 		return target
 	}

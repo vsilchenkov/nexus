@@ -46,6 +46,13 @@ type SendInput struct {
 	LoggingEnabled     bool  // false → лог в ClickHouse не пишется совсем
 	MaxBodySizeEnabled bool  // включает обрезку сохраняемых тел
 	MaxBodySize        int32 // макс. число символов (рун) в request/response
+
+	// §55: вызов тестовый (dry-run из UI). HTTP-запрос выполняется по-настоящему
+	// и тем же клиентом, но следов на узле не остаётся: ни лога в ClickHouse, ни
+	// метрик/статуса (гасятся в gRPC-адаптере), ни участия в circuit breaker.
+	// Иначе тест по мёртвому адресу открыл бы breaker живого узла и тот начал бы
+	// отдавать 503 боевому трафику.
+	DryRun bool
 }
 
 // SendOutput — результат, который Sender отдаёт обратно Receiver'у.
@@ -144,12 +151,21 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 	// Circuit breaker per node (§9.5). Если breaker open — сразу
 	// 503 без попытки + лог. Это снижает нагрузку на проблемный
 	// внешний узел и ускоряет fail-fast в DLQ для async.
-	allowed, cbErr := u.cb.Allow(ctx, in.NodePath)
-	if cbErr != nil {
-		// §51.9: ошибка breaker'а (Redis) раньше проглатывалась в «_» —
-		// fail-open невидим. Allow при ошибке разрешает вызов, фиксируем след.
-		u.logger.Debug("send: circuit breaker check failed (fail-open)",
-			u.logger.Str("node", in.NodePath), u.logger.Err(cbErr))
+	//
+	// §55: dry-run breaker не трогает вообще. Ни Allow (иначе тест конфига
+	// упирался бы в чужой открытый breaker и не показал бы реальную причину),
+	// ни Record* ниже (иначе серия тестов по мёртвому адресу открыла бы breaker
+	// живого узла и тот начал бы отдавать 503 боевому трафику).
+	allowed := true
+	if !in.DryRun {
+		var cbErr error
+		allowed, cbErr = u.cb.Allow(ctx, in.NodePath)
+		if cbErr != nil {
+			// §51.9: ошибка breaker'а (Redis) раньше проглатывалась в «_» —
+			// fail-open невидим. Allow при ошибке разрешает вызов, фиксируем след.
+			u.logger.Debug("send: circuit breaker check failed (fail-open)",
+				u.logger.Str("node", in.NodePath), u.logger.Err(cbErr))
+		}
 	}
 	if !allowed {
 		u.logger.Debug("send: circuit breaker open, fail-fast 503",
@@ -161,7 +177,7 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		rec.Done = false
 		rec.Reason = "circuit_breaker_open"
 		rec.Attempts = 0
-		if in.LoggingEnabled {
+		if in.LoggingEnabled && !in.DryRun {
 			u.logw.Write(ctx, in.ClickHouseTable, rec)
 		}
 		return SendOutput{
@@ -283,9 +299,16 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 	// блокировала бы доставку валидных запросов 503-ми (боевой инцидент
 	// site/push, §50.4). Oversize-политика (§43-rev) на здоровье тоже не влияет.
 	upstreamHealthy := lastErr == nil && resp != nil && resp.StatusCode < 500
-	if upstreamHealthy {
+	switch {
+	case in.DryRun:
+		// §55: тестовый вызов на здоровье узла не влияет — иначе серия dry-run по
+		// мёртвому адресу открыла бы breaker и живой узел начал бы отдавать 503.
+		u.logger.Debug("send: dry-run, breaker not touched",
+			u.logger.Str("id", in.ID),
+			u.logger.Int("status", int(rec.Status)))
+	case upstreamHealthy:
 		_ = u.cb.RecordSuccess(ctx, in.NodePath)
-	} else {
+	default:
 		_ = u.cb.RecordFailure(ctx, in.NodePath)
 		// §51.9: незасчитанное здоровье узла (открытие breaker'а после серии) —
 		// след решения на debug; сами Record-ошибки некритичны (best-effort).
@@ -302,7 +325,9 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		}
 	}
 
-	if in.LoggingEnabled {
+	// §55: !DryRun — второй гейт поверх LoggingEnabled. Тестовый вызов не пишет в
+	// production-таблицу НИКОГДА, даже если логирование узла включено в форме.
+	if in.LoggingEnabled && !in.DryRun {
 		u.logw.Write(ctx, in.ClickHouseTable, rec)
 	}
 	return out

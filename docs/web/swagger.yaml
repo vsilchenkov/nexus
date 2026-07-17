@@ -216,6 +216,15 @@ definitions:
     properties:
       node:
         $ref: '#/definitions/internal_web_adapter_in_http.CreateNodeRequest'
+      node_id:
+        description: |-
+          NodeID — id сохранённого узла, если тест запускают для существующего
+          конфига (кнопка «Тестовый запрос» на странице узла, §55.6). Нужен из-за
+          кредов: наружу они не отдаются никогда (nodeToResponse даёт лишь
+          *_credentials_set), поэтому без подмешивания реальный вызов ушёл бы с
+          пустым `Authorization` и вернул 401 — оператор решил бы, что сломана
+          авторизация узла. Пусто → конфиг берётся только из тела (создание узла).
+        type: string
       request:
         $ref: '#/definitions/internal_web_adapter_in_http.DryRunSubrequest'
       use_mock:
@@ -241,6 +250,14 @@ definitions:
         - PUT
         - DELETE
         - PATCH
+        type: string
+      path_tail:
+        description: |-
+          PathTail — хвост входящего пути после пути узла (§39 path-passthrough),
+          например "orders/42". Боевой Receiver приклеивает его к target URL, и без
+          него тест passthrough-узла бил бы в базовый адрес (§55.9). Узел без
+          passthrough хвост игнорирует — отчёт это показывает.
+        maxLength: 2048
         type: string
       query:
         additionalProperties:
@@ -4148,8 +4165,11 @@ paths:
     post:
       consumes:
       - application/json
-      description: Прогоняет synthetic-запрос через pipeline шины и возвращает пошаговый
-        отчёт.
+      description: 'Прогоняет synthetic-запрос через pipeline шины и возвращает пошаговый
+        отчёт. use_mock=false (§55) — реальный вызов target через Sender: побочки
+        нет (не пишет в ClickHouse, не влияет на метрики, статус узла и circuit breaker).
+        node_id — подмешать креды сохранённого узла (пустые креды в body = оставить
+        старые, §5.5).'
       parameters:
       - description: node + sub-request
         in: body
@@ -4168,9 +4188,13 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "404":
+          description: node_id not found in current team
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
-      summary: 'Dry-run: проверить конфиг узла без сохранения (§7.5.1).'
+      summary: 'Dry-run: проверить конфиг узла без сохранения (§7.5.1, §55).'
       tags:
       - nodes
   /api/nodes/test-rmq:

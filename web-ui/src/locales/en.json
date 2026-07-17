@@ -535,7 +535,32 @@
     "method": "Method",
     "body": "Body",
     "run": "Run",
-    "result": "Result"
+    "result": "Result",
+    "method_help": "Method of the incoming request. If the node has a fixed outgoing method, that one is sent — the report shows the substitution.",
+    "path_tail": "Path tail",
+    "path_tail_help": "§39: appended to the target URL, exactly as in production.",
+    "path_tail_ph": "orders/42",
+    "headers": "Headers",
+    "header_name": "Header name",
+    "header_value": "Value",
+    "query": "Query parameters",
+    "query_name": "Parameter name",
+    "query_value": "Value",
+    "use_suggestion": "Insert {{name}}",
+    "use_mock": "Use mock server",
+    "use_mock_help": "The request will not leave the bus: a 200 response is simulated.",
+    "real_help": "The request goes to the node's real target. The test writes no logs and does not affect metrics, node status or the circuit breaker.",
+    "real_warning": "The request will really be sent to {{target}} — side effects are possible",
+    "real_target_unknown": "the resolved address",
+    "hint": {
+      "header": "The node expects the {{field}} header.",
+      "query": "The node expects the {{field}} query parameter.",
+      "scheme": {
+        "basic": "Format: Basic base64(login:password).",
+        "token": "Format: Bearer <token>.",
+        "signature": "The value is an HMAC signature of the request body."
+      }
+    }
   },
   "logs": {
     "viewer": {
