@@ -146,6 +146,43 @@ func TestAPITokenAuthMiddleware_Valid_SetsSessionAndToken(t *testing.T) {
 	assert.Same(t, tok, seenToken)
 }
 
+// §18.3: псевдо-сессия токена получает команду ИЗ ТОКЕНА (api_tokens.team_id),
+// а не из default_team пользователя — на этом стоит вся изоляция данных для
+// API-токенов, и до сих пор инвариант держался только на комментариях: ни один
+// тест не проверял CurrentTeamID. Пустой Token — маркер псевдо-сессии
+// (по нему самолечение MyTeamsAndCurrent её не трогает).
+func TestAPITokenAuthMiddleware_Valid_TeamScopeFromToken(t *testing.T) {
+	t.Parallel()
+	tok := &domain.APIToken{ID: "tok1", UserID: "u1", TeamID: "team-vika"}
+	usr := &domain.User{ID: "u1", Role: domain.UserRoleAdmin, Lang: domain.UserLangRU}
+	v := &stubVerifier{token: tok, user: usr}
+	gin.SetMode(gin.TestMode)
+
+	var seenTeam string
+	var seenSessionToken string
+	r := gin.New()
+	r.Use(APITokenAuthMiddleware(v, nil, 0, logging.NewNoop()))
+	r.GET("/", func(c *gin.Context) {
+		seenTeam = currentTeamID(c) // та же точка резолва, что у всех handler'ов
+		if s, ok := c.Get(ctxSessionKey); ok {
+			if sess, okType := s.(*domain.Session); okType {
+				seenSessionToken = sess.Token
+			}
+		}
+		c.Status(200)
+	})
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Authorization", "Bearer "+usecase.APITokenPrefix+"valid")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "team-vika", seenTeam,
+		"scope запроса обязан браться из api_tokens.team_id — иначе токен увидит чужую команду")
+	assert.Empty(t, seenSessionToken, "псевдо-сессия помечается пустым Token")
+}
+
 func TestAPITokenAuthMiddleware_RateLimit_429(t *testing.T) {
 	t.Parallel()
 	tok := &domain.APIToken{ID: "tok2"}

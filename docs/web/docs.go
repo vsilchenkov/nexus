@@ -4068,7 +4068,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Каждый видит только свои токены. Возвращает префикс, scopes, last_used_at — без полной строки токена.",
+                "description": "Каждый видит только свои токены — по всем своим командам («Настройки» не скоупятся переключателем команд; команда токена приходит в team_id). Возвращает префикс, scopes, team_id, last_used_at — без полной строки токена.",
                 "produces": [
                     "application/json"
                 ],
@@ -4104,7 +4104,7 @@ const docTemplate = `{
                 "summary": "Создать API-токен (§7.14).",
                 "parameters": [
                     {
-                        "description": "name + scopes + expires_at",
+                        "description": "name + scopes + team_id + expires_in_days",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -4122,6 +4122,12 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "команда не входит в членства пользователя",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
@@ -6039,8 +6045,11 @@ const docTemplate = `{
                 "scopes"
             ],
             "properties": {
-                "expires_at": {
-                    "type": "string"
+                "expires_in_days": {
+                    "description": "ExpiresInDays — срок жизни в днях; null/отсутствие = бессрочный. Дни, а\nне дата: срок считает сервер по своим часам. Поле называлось expires_at\nи не совпадало с тем, что шлёт UI (expires_in_days), поэтому срок молча\nтерялся и все токены выходили бессрочными.",
+                    "type": "integer",
+                    "maximum": 3650,
+                    "minimum": 1
                 },
                 "name": {
                     "type": "string",
@@ -6053,6 +6062,10 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "team_id": {
+                    "description": "TeamID — команда, в которой будет действовать токен (§18.3: токен\nограничен одной командой). Выбирается в форме; пусто — текущая команда\nсессии (старый контракт). Членство проверяется в usecase.",
+                    "type": "string"
                 }
             }
         },

@@ -31,11 +31,43 @@ export type MyTeamsResp = {
   favorites: string[];
 };
 
-// team-независимые query-ключи: их перезагрузка при смене команды не нужна
-// (Phase AUD.7) — остальное живёт в scope текущей команды (nodes/logs/audit/
-// metrics/tokens/teams). "me"/"me-teams" НЕ в списке: они несут current_team_id
-// и обязаны перечитаться. На модульном уровне — стабильная ссылка для хуков.
-export const TEAM_INDEPENDENT_KEYS = new Set(["settings-public", "version", "users-all"]);
+// TEAM_INDEPENDENT_KEYS — ключи, которые смена команды НЕ трогает. Правило:
+// ключ живёт здесь тогда и только тогда, когда его эндпоинт не фильтрует по
+// команде на бэкенде. В scope команды остаются nodes/logs/audit/metrics — там
+// currentTeamID(c) реально меняет ответ.
+//
+// **Раздел «Настройки» — вне скоупа команды целиком** (личный и
+// административный раздел; переключатель в шапке не должен его дёргать, иначе
+// одни вкладки мигают, другие нет). Это не «отключение обновления», а
+// приведение кеша в соответствие с бэкендом: у всех перечисленных ниже
+// эндпоинтов Настроек team-фильтра нет. Каждый ключ проверен:
+//   app-settings   — глобальные настройки инстанса (General/Sentry/ClickHouse/Notifications)
+//   users          — /api/users глобальный («список глобальный, без team-scope» в user_handler)
+//   users-all      — тот же /api/users под вторым ключом (был освобождён и раньше)
+//   teams          — uc.List(ctx), все команды
+//   team-members   — скоуп берётся из :id в URL, а не из текущей команды
+//   tokens         — токены пользователя по всем командам (команда видна колонкой, §18.3)
+//   ch-templates / headers-catalog / headers / allowed-hosts / host-preview /
+//   orphan-tables  — глобальные справочники и чистые функции
+//
+// НЕ добавлять сюда: "me"/"me-teams" (несут current_team_id — обязаны
+// перечитываться), "node-hosts" (team-scoped через ListByNode).
+export const TEAM_INDEPENDENT_KEYS = new Set([
+  "settings-public",
+  "version",
+  "app-settings",
+  "users",
+  "users-all",
+  "teams",
+  "team-members",
+  "tokens",
+  "ch-templates",
+  "headers-catalog",
+  "headers",
+  "allowed-hosts",
+  "host-preview",
+  "orphan-tables",
+]);
 
 export const MY_TEAMS_KEY = ["me-teams"] as const;
 

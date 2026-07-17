@@ -22,21 +22,31 @@ const APITokenPrefix = "db_"
 
 const tokenRandomBytes = 32
 
+// teamMembershipLister — членства пользователя. Узкий интерфейс на стороне
+// консьюмера (ISP): из TeamRepo здесь нужен ровно один метод, и стабы
+// существующих тестов от этого не ломаются (тот же приём, что у §49
+// FavoriteTeamRepo).
+type teamMembershipLister interface {
+	ListUserTeams(ctx context.Context, userID string) ([]*domain.UserTeam, error)
+}
+
 // APITokenUsecase — CRUD + проверка токенов.
 type APITokenUsecase struct {
 	repo   port.APITokenRepo
 	audit  *AuditUsecase
 	users  port.UserRepo
+	teams  teamMembershipLister
 	logger logging.Logger
 }
 
 func NewAPITokenUsecase(
 	repo port.APITokenRepo,
 	users port.UserRepo,
+	teams teamMembershipLister,
 	audit *AuditUsecase,
 	logger logging.Logger,
 ) *APITokenUsecase {
-	return &APITokenUsecase{repo: repo, users: users, audit: audit, logger: logger}
+	return &APITokenUsecase{repo: repo, users: users, teams: teams, audit: audit, logger: logger}
 }
 
 // CreatedToken — то, что возвращается при создании. Поле PlainToken
@@ -48,17 +58,38 @@ type CreatedToken struct {
 
 // Create генерирует токен и сохраняет SHA-256(token) в БД.
 // teamID — UUID команды, к которой будет привязан токен (multi-tenancy v2,
-// миграция 0008). Пустая строка — fallback на default-team через подзапрос
-// в api_token_repo.Create.
+// миграция 0008); выбирается в форме создания. Пустая строка — fallback на
+// default-team через подзапрос в api_token_repo.Create.
+//
+// Членство в команде проверяется здесь: teamID приходит от клиента, и без
+// проверки любой пользователь выписал бы себе токен в чужую команду — обход
+// изоляции §18. Образец — AuthUsecase.SwitchTeam.
+//
+// expiresInDays — срок жизни в днях от «сейчас»; nil = бессрочный. Дни, а не
+// готовая дата: считать срок должен сервер по своим часам, иначе кривые часы
+// клиента дают кривой срок. Раньше UI слал expires_in_days, а handler принимал
+// expires_at — поле молча терялось, и ВСЕ выданные токены были бессрочными
+// вопреки выбранному в интерфейсе сроку.
 func (u *APITokenUsecase) Create(
 	ctx context.Context,
 	actor Actor,
 	userID, teamID, name string,
 	scopes []string,
-	expiresAt *time.Time,
+	expiresInDays *int,
 ) (*CreatedToken, error) {
 	if name == "" {
 		return nil, errors.New("name is required")
+	}
+	if err := u.ensureMembership(ctx, userID, teamID); err != nil {
+		return nil, err
+	}
+	var expiresAt *time.Time
+	if expiresInDays != nil {
+		if *expiresInDays <= 0 {
+			return nil, errors.New("expires_in_days must be positive")
+		}
+		exp := time.Now().Add(time.Duration(*expiresInDays) * 24 * time.Hour)
+		expiresAt = &exp
 	}
 	plain, err := generateToken()
 	if err != nil {
@@ -84,6 +115,27 @@ func (u *APITokenUsecase) Create(
 	return &CreatedToken{Token: t, Plain: plain}, nil
 }
 
+// ensureMembership — пользователь состоит в команде, для которой выписывается
+// токен. Пустой teamID пропускаем: это старый контракт (репозиторий подставит
+// default-team), клиент команду не выбирал.
+func (u *APITokenUsecase) ensureMembership(ctx context.Context, userID, teamID string) error {
+	if teamID == "" || u.teams == nil {
+		return nil
+	}
+	memberships, err := u.teams.ListUserTeams(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("list memberships: %w", err)
+	}
+	for _, ut := range memberships {
+		if ut.Team.ID == teamID {
+			return nil
+		}
+	}
+	return domain.ErrPermissionDenied
+}
+
+// ListByUser — все токены пользователя (по всем командам): «Настройки» вне
+// скоупа команды; команда каждого токена видна в ответе (TeamID).
 func (u *APITokenUsecase) ListByUser(ctx context.Context, userID string) ([]*domain.APIToken, error) {
 	return u.repo.ListByUser(ctx, userID)
 }

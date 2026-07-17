@@ -227,7 +227,8 @@ func (a *App) Start(ctx context.Context) error {
 	userUC := usecase.NewUserUsecase(userRepo, sessionRepo, teamRepo, auditUC, defaultTeamID, a.logger)
 
 	tokenRepo := pgrepo.NewAPITokenRepoPg(a.pg, a.logger)
-	tokenUC := usecase.NewAPITokenUsecase(tokenRepo, userRepo, auditUC, a.logger)
+	// teamRepo — для проверки членства при выборе команды токена (§18.3).
+	tokenUC := usecase.NewAPITokenUsecase(tokenRepo, userRepo, teamRepo, auditUC, a.logger)
 
 	appSettingsRepo := pgrepo.NewAppSettingsRepoPg(a.pg, a.logger)
 	reloadPublisher := reloader.NewPublisher(a.redis)

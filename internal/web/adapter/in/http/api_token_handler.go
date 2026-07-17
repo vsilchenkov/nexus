@@ -24,9 +24,17 @@ func NewAPITokenHandler(uc *usecase.APITokenUsecase, logger logging.Logger) *API
 }
 
 type createTokenRequest struct {
-	Name      string     `json:"name" binding:"required,min=1,max=255"`
-	Scopes    []string   `json:"scopes" binding:"required,min=1,dive,oneof=logs:read nodes:read metrics:read audit:read"`
-	ExpiresAt *time.Time `json:"expires_at"`
+	Name   string   `json:"name" binding:"required,min=1,max=255"`
+	Scopes []string `json:"scopes" binding:"required,min=1,dive,oneof=logs:read nodes:read metrics:read audit:read"`
+	// TeamID — команда, в которой будет действовать токен (§18.3: токен
+	// ограничен одной командой). Выбирается в форме; пусто — текущая команда
+	// сессии (старый контракт). Членство проверяется в usecase.
+	TeamID string `json:"team_id" binding:"omitempty,uuid"`
+	// ExpiresInDays — срок жизни в днях; null/отсутствие = бессрочный. Дни, а
+	// не дата: срок считает сервер по своим часам. Поле называлось expires_at
+	// и не совпадало с тем, что шлёт UI (expires_in_days), поэтому срок молча
+	// терялся и все токены выходили бессрочными.
+	ExpiresInDays *int `json:"expires_in_days" binding:"omitempty,min=1,max=3650"`
 }
 
 type tokenResponse struct {
@@ -51,7 +59,7 @@ func toTokenResp(t *domain.APIToken) tokenResponse {
 
 // List godoc
 // @Summary  Список API-токенов текущего пользователя (§7.14).
-// @Description  Каждый видит только свои токены. Возвращает префикс, scopes, last_used_at — без полной строки токена.
+// @Description  Каждый видит только свои токены — по всем своим командам («Настройки» не скоупятся переключателем команд; команда токена приходит в team_id). Возвращает префикс, scopes, team_id, last_used_at — без полной строки токена.
 // @Tags     tokens
 // @Produce  json
 // @Success  200  {object}  ListTokensResponse
@@ -59,6 +67,8 @@ func toTokenResp(t *domain.APIToken) tokenResponse {
 // @Router   /api/tokens [get]
 func (h *APITokenHandler) List(c *gin.Context) {
 	s, _ := sessionFromCtx(c)
+	// Без team-скоупа: «Настройки» — личный раздел, переключатель команд в
+	// шапке его не трогает. Команда каждого токена едет в team_id.
 	tokens, err := h.uc.ListByUser(c.Request.Context(), s.UserID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
@@ -77,9 +87,10 @@ func (h *APITokenHandler) List(c *gin.Context) {
 // @Tags     tokens
 // @Accept   json
 // @Produce  json
-// @Param    body  body  createTokenRequest  true  "name + scopes + expires_at"
+// @Param    body  body  createTokenRequest  true  "name + scopes + team_id + expires_in_days"
 // @Success  201   {object}  CreateTokenResponse  "token (plain) + info"
 // @Failure  400   {object}  ErrorResponse
+// @Failure  403   {object}  ErrorResponse  "команда не входит в членства пользователя"
 // @Security CookieAuth
 // @Router   /api/tokens [post]
 func (h *APITokenHandler) Create(c *gin.Context) {
@@ -89,9 +100,20 @@ func (h *APITokenHandler) Create(c *gin.Context) {
 		return
 	}
 	s, _ := sessionFromCtx(c)
+	// Команда выбирается в форме (§18.3: токен ограничен одной командой).
+	// Пусто — текущая команда сессии (старый контракт). Членство проверяет
+	// usecase: team_id пришёл от клиента.
+	teamID := req.TeamID
+	if teamID == "" {
+		teamID = s.CurrentTeamID
+	}
 	created, err := h.uc.Create(c.Request.Context(), userActor(c),
-		s.UserID, s.CurrentTeamID, req.Name, req.Scopes, req.ExpiresAt)
+		s.UserID, teamID, req.Name, req.Scopes, req.ExpiresInDays)
 	if err != nil {
+		if errors.Is(err, domain.ErrPermissionDenied) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "team membership required"})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
