@@ -179,7 +179,7 @@ func (u *DryRunUsecase) Run(ctx context.Context, actor Actor, req DryRunRequest)
 	if req.UseMock {
 		// §7.5.1: mock отвечает 200 со случайной задержкой 50–100 мс. Живёт в
 		// Web, а не в Sender: gRPC-хоп ради синтетики не нужен, и зависимость
-		// Web→Sender остаётся опциональной (см. §55.7).
+		// Web→Sender остаётся опциональной (см. §55.8).
 		mockLatency := 50 + rand.Intn(51) //nolint:gosec // не крипто: имитация задержки
 		rep.Steps = append(rep.Steps, DryRunStep{
 			Name: "response", Status: "ok",

@@ -1884,7 +1884,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Прогоняет synthetic-запрос через pipeline шины и возвращает пошаговый отчёт.",
+                "description": "Прогоняет synthetic-запрос через pipeline шины и возвращает пошаговый отчёт. use_mock=false (§55) — реальный вызов target через Sender: побочки нет (не пишет в ClickHouse, не влияет на метрики, статус узла и circuit breaker). node_id — подмешать креды сохранённого узла (пустые креды в body = оставить старые, §5.5).",
                 "consumes": [
                     "application/json"
                 ],
@@ -1894,7 +1894,7 @@ const docTemplate = `{
                 "tags": [
                     "nodes"
                 ],
-                "summary": "Dry-run: проверить конфиг узла без сохранения (§7.5.1).",
+                "summary": "Dry-run: проверить конфиг узла без сохранения (§7.5.1, §55).",
                 "parameters": [
                     {
                         "description": "node + sub-request",
@@ -1915,6 +1915,12 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "node_id not found in current team",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
@@ -4846,6 +4852,10 @@ const docTemplate = `{
             "properties": {
                 "node": {
                     "$ref": "#/definitions/internal_web_adapter_in_http.CreateNodeRequest"
+                },
+                "node_id": {
+                    "description": "NodeID — id сохранённого узла, если тест запускают для существующего\nконфига (кнопка «Тестовый запрос» на странице узла, §55.6). Нужен из-за\nкредов: наружу они не отдаются никогда (nodeToResponse даёт лишь\n*_credentials_set), поэтому без подмешивания реальный вызов ушёл бы с\nпустым ` + "`" + `Authorization` + "`" + ` и вернул 401 — оператор решил бы, что сломана\nавторизация узла. Пусто → конфиг берётся только из тела (создание узла).",
+                    "type": "string"
                 },
                 "request": {
                     "$ref": "#/definitions/internal_web_adapter_in_http.DryRunSubrequest"
