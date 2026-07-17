@@ -1884,7 +1884,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Прогоняет synthetic-запрос через pipeline шины и возвращает пошаговый отчёт.",
+                "description": "Прогоняет synthetic-запрос через pipeline шины и возвращает пошаговый отчёт. use_mock=false (§55) — реальный вызов target через Sender: побочки нет (не пишет в ClickHouse, не влияет на метрики, статус узла и circuit breaker). node_id — подмешать креды сохранённого узла (пустые креды в body = оставить старые, §5.5).",
                 "consumes": [
                     "application/json"
                 ],
@@ -1894,7 +1894,7 @@ const docTemplate = `{
                 "tags": [
                     "nodes"
                 ],
-                "summary": "Dry-run: проверить конфиг узла без сохранения (§7.5.1).",
+                "summary": "Dry-run: проверить конфиг узла без сохранения (§7.5.1, §55).",
                 "parameters": [
                     {
                         "description": "node + sub-request",
@@ -1915,6 +1915,12 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "node_id not found in current team",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
@@ -4068,7 +4074,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Каждый видит только свои токены. Возвращает префикс, scopes, last_used_at — без полной строки токена.",
+                "description": "Каждый видит только свои токены — по всем своим командам («Настройки» не скоупятся переключателем команд; команда токена приходит в team_id). Возвращает префикс, scopes, team_id, last_used_at — без полной строки токена.",
                 "produces": [
                     "application/json"
                 ],
@@ -4104,7 +4110,7 @@ const docTemplate = `{
                 "summary": "Создать API-токен (§7.14).",
                 "parameters": [
                     {
-                        "description": "name + scopes + expires_at",
+                        "description": "name + scopes + team_id + expires_in_days",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -4122,6 +4128,12 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "команда не входит в членства пользователя",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
@@ -4841,6 +4853,10 @@ const docTemplate = `{
                 "node": {
                     "$ref": "#/definitions/internal_web_adapter_in_http.CreateNodeRequest"
                 },
+                "node_id": {
+                    "description": "NodeID — id сохранённого узла, если тест запускают для существующего\nконфига (кнопка «Тестовый запрос» на странице узла, §55.6). Нужен из-за\nкредов: наружу они не отдаются никогда (nodeToResponse даёт лишь\n*_credentials_set), поэтому без подмешивания реальный вызов ушёл бы с\nпустым ` + "`" + `Authorization` + "`" + ` и вернул 401 — оператор решил бы, что сломана\nавторизация узла. Пусто → конфиг берётся только из тела (создание узла).",
+                    "type": "string"
+                },
                 "request": {
                     "$ref": "#/definitions/internal_web_adapter_in_http.DryRunSubrequest"
                 },
@@ -4873,6 +4889,11 @@ const docTemplate = `{
                         "DELETE",
                         "PATCH"
                     ]
+                },
+                "path_tail": {
+                    "description": "PathTail — хвост входящего пути после пути узла (§39 path-passthrough),\nнапример \"orders/42\". Боевой Receiver приклеивает его к target URL, и без\nнего тест passthrough-узла бил бы в базовый адрес (§55.9). Узел без\npassthrough хвост игнорирует — отчёт это показывает.",
+                    "type": "string",
+                    "maxLength": 2048
                 },
                 "query": {
                     "type": "object",
@@ -6039,8 +6060,11 @@ const docTemplate = `{
                 "scopes"
             ],
             "properties": {
-                "expires_at": {
-                    "type": "string"
+                "expires_in_days": {
+                    "description": "ExpiresInDays — срок жизни в днях; null/отсутствие = бессрочный. Дни, а\nне дата: срок считает сервер по своим часам. Поле называлось expires_at\nи не совпадало с тем, что шлёт UI (expires_in_days), поэтому срок молча\nтерялся и все токены выходили бессрочными.",
+                    "type": "integer",
+                    "maximum": 3650,
+                    "minimum": 1
                 },
                 "name": {
                     "type": "string",
@@ -6053,6 +6077,10 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "team_id": {
+                    "description": "TeamID — команда, в которой будет действовать токен (§18.3: токен\nограничен одной командой). Выбирается в форме; пусто — текущая команда\nсессии (старый контракт). Членство проверяется в usecase.",
+                    "type": "string"
                 }
             }
         },

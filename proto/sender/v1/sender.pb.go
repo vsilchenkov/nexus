@@ -104,7 +104,18 @@ type SendRequest struct {
 	// §39: подпуть запроса (хвост path-passthrough после пути узла), напр.
 	// "v1/GetParcelsInfo". Пишется в колонку `method` лог-таблицы. Пусто у
 	// обычных узлов. HTTP-глагол по-прежнему в поле method (= колонка http_method).
-	RequestPath   string `protobuf:"bytes,29,opt,name=request_path,json=requestPath,proto3" json:"request_path,omitempty"`
+	RequestPath string `protobuf:"bytes,29,opt,name=request_path,json=requestPath,proto3" json:"request_path,omitempty"`
+	// §55: вызов — тестовый (dry-run из UI), а не боевой трафик. Sender выполняет
+	// реальный HTTP-запрос тем же клиентом, но НЕ оставляет следов на узле:
+	//   - не пишет лог в ClickHouse (двойной гейт вместе с logging_enabled);
+	//   - не пишет метрики (§6) и gauge исхода последнего вызова (§41/§52);
+	//   - не персистит статус узла в Redis (§46);
+	//   - не трогает circuit breaker (§9.5/§50.4) — ни Allow, ни Record*.
+	//
+	// Иначе тест конфига по мёртвому адресу покрасил бы живой узел в Down и открыл
+	// его breaker, начав отдавать 503 боевому трафику. Порядок деплоя: Sender → Web
+	// (старый Sender поле проигнорирует и побочку не погасит).
+	DryRun        bool `protobuf:"varint,30,opt,name=dry_run,json=dryRun,proto3" json:"dry_run,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -279,6 +290,13 @@ func (x *SendRequest) GetRequestPath() string {
 	return ""
 }
 
+func (x *SendRequest) GetDryRun() bool {
+	if x != nil {
+		return x.DryRun
+	}
+	return false
+}
+
 type SendResponse struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
 	StatusCode int32                  `protobuf:"varint,1,opt,name=status_code,json=statusCode,proto3" json:"status_code,omitempty"`
@@ -372,7 +390,7 @@ const file_proto_sender_v1_sender_proto_rawDesc = "" +
 	"\x1cproto/sender/v1/sender.proto\x12\x0fnexus.sender.v1\"?\n" +
 	"\n" +
 	"AuthConfig\x121\n" +
-	"\x14authorization_header\x18\x01 \x01(\tR\x13authorizationHeader\"\x9c\x06\n" +
+	"\x14authorization_header\x18\x01 \x01(\tR\x13authorizationHeader\"\xb5\x06\n" +
 	"\vSendRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\tnode_path\x18\x02 \x01(\tR\bnodePath\x12\x1d\n" +
@@ -398,7 +416,8 @@ const file_proto_sender_v1_sender_proto_rawDesc = "" +
 	"\x15max_body_size_enabled\x18\x1a \x01(\bR\x12maxBodySizeEnabled\x12\"\n" +
 	"\rmax_body_size\x18\x1b \x01(\x05R\vmaxBodySize\x12\x17\n" +
 	"\anode_id\x18\x1c \x01(\tR\x06nodeId\x12!\n" +
-	"\frequest_path\x18\x1d \x01(\tR\vrequestPath\x1a:\n" +
+	"\frequest_path\x18\x1d \x01(\tR\vrequestPath\x12\x17\n" +
+	"\adry_run\x18\x1e \x01(\bR\x06dryRun\x1a:\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x98\x02\n" +

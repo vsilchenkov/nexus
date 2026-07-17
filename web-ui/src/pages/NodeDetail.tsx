@@ -1,16 +1,23 @@
 import { useParams, Link, useSearchParams, useNavigate } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient, useIsFetching } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  useIsFetching,
+  type Query,
+} from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Copy as CopyIcon, Pencil, RefreshCw } from "lucide-react";
-import { useState } from "react";
+import { Copy as CopyIcon, Pencil, Play, RefreshCw } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
-import { api, type Node } from "../api/client";
+import { api, isNotFound, type Node } from "../api/client";
 import { Button, Chip, Field, Input, Pill, type LogsRange } from "../components/ui";
 import { Modal } from "../components/ui/Modal";
 import { cn } from "../lib/cn";
 import { msToDatetimeLocal } from "../lib/format";
 import { validateNodePath } from "../lib/nodeValidation";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
+import { DryRunDialog } from "../components/DryRunDialog";
 import { LogsTab, type LogsInitialFilter } from "../components/node/LogsTab";
 import { OverviewTab } from "../components/node/OverviewTab";
 import { ConfigTab } from "../components/node/ConfigTab";
@@ -42,10 +49,23 @@ export default function NodeDetail() {
   const canEdit = useRoleAtLeast("manager");
   // §53: диалог «Скопировать узел» (manager+, как создание).
   const [copyOpen, setCopyOpen] = useState(false);
-  // Ручное обновление: инвалидируем все активные запросы → перезагружаются данные
-  // текущей вкладки и шапки узла. fetching>0 — крутим иконку.
+  // §55.2: тестовый запрос по сохранённому узлу, не заходя в редактирование.
+  const [dryRunOpen, setDryRunOpen] = useState(false);
+  // Ручное обновление: перезагружаем данные ЭТОЙ страницы — шапку узла и
+  // текущую вкладку. Фильтр по id: у всех запросов страницы он идёт вторым
+  // элементом ключа (["node", id], ["node-metrics", id, …], ["logs", id, …],
+  // ["log", id, logId], ["log-methods", id], ["aq-*", id, …]).
+  //
+  // Раньше и счётчик, и инвалидация были глобальными (без фильтра): иконка
+  // крутилась от любого фонового запроса в приложении (метрики шапки, поллинг
+  // соседних страниц), а клик перезагружал кеш всего SPA.
   const qc = useQueryClient();
-  const fetching = useIsFetching();
+  const navigate = useNavigate();
+  const nodeQueries = useMemo(
+    () => ({ predicate: (q: Query) => q.queryKey[1] === id }),
+    [id],
+  );
+  const fetching = useIsFetching(nodeQueries);
 
   // openLogsAt — переход на вкладку логов с временным окном бакета (§33.4).
   const openLogsAt = (r: LogsRange) => {
@@ -62,13 +82,27 @@ export default function NodeDetail() {
     queryFn: () => api.get<Node>(`/api/nodes/${id}`),
     enabled: !!id,
     // §27: для RabbitMQAsync live-обновляем health-снимок (queue depth/degraded).
+    // Пока узел недоступен (напр. 404 после смены команды) — не поллим: иначе
+    // цикл «поллинг → 404» крутится вечно.
     refetchInterval: (q) =>
-      (q.state.data as Node | undefined)?.root_method === "RabbitMQAsync" ? 5000 : false,
+      !q.state.error && (q.state.data as Node | undefined)?.root_method === "RabbitMQAsync"
+        ? 5000
+        : false,
   });
 
   const node = nodeQ.data;
 
+  // Узел чужой команды (§18): после переключения команды в шапке GET отдаёт 404,
+  // но react-query держит последние успешные data — без этой ветки страница
+  // продолжала показывать узел ЧУЖОЙ команды со старыми данными, без ошибки и
+  // редиректа (проверка `!node` ниже для этого случая не срабатывает).
+  const notFound = isNotFound(nodeQ.error);
+  useEffect(() => {
+    if (notFound) navigate("/", { replace: true });
+  }, [notFound, navigate]);
+
   if (nodeQ.isLoading) return <div className="text-fg-muted">{t("common.loading")}</div>;
+  if (notFound) return <div className="text-fg-muted">{t("common.loading")}</div>;
   if (!node) return <div className="text-err">{t("node.not_found")}</div>;
 
   const statusTone = node.status === "enabled" ? "ok" : node.status === "paused" ? "warn" : "err";
@@ -90,7 +124,7 @@ export default function NodeDetail() {
             sm
             variant="ghost"
             disabled={fetching > 0}
-            onClick={() => void qc.invalidateQueries()}
+            onClick={() => void qc.invalidateQueries(nodeQueries)}
             title={t("node.actions.refresh")}
           >
             <RefreshCw className={cn("h-3.5 w-3.5", fetching > 0 && "animate-spin")} />{" "}
@@ -98,6 +132,9 @@ export default function NodeDetail() {
           </Button>
           {canEdit && (
             <>
+              <Button sm variant="ghost" onClick={() => setDryRunOpen(true)}>
+                <Play className="h-3.5 w-3.5" /> {t("node.actions.dry_run")}
+              </Button>
               <Button sm variant="ghost" onClick={() => setCopyOpen(true)}>
                 <CopyIcon className="h-3.5 w-3.5" /> {t("node.actions.copy")}
               </Button>
@@ -112,6 +149,12 @@ export default function NodeDetail() {
       </div>
 
       {copyOpen && <CopyNodeDialog node={node} onClose={() => setCopyOpen(false)} />}
+
+      {/* §55.2: сохранённый узел тестируется как есть. node_id обязателен —
+          по нему сервер подмешает креды, наружу они не отдаются (§55.6). */}
+      {dryRunOpen && (
+        <DryRunDialog node={node} nodeId={node.id} onClose={() => setDryRunOpen(false)} />
+      )}
 
       {isPull && rmq && (
         <div

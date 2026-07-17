@@ -29,6 +29,7 @@ import (
 	chpf "nexus/internal/platform/clickhouse"
 	"nexus/internal/platform/config"
 	"nexus/internal/platform/crypto"
+	"nexus/internal/platform/grpcsender"
 	"nexus/internal/platform/healthcheck"
 	"nexus/internal/platform/i18n"
 	"nexus/internal/platform/logging"
@@ -69,6 +70,9 @@ type App struct {
 
 	srv          *http.Server
 	otelShutdown otelpf.ShutdownFunc
+	// senderClient — §55: gRPC-пул к Sender для dry-run в реальном режиме.
+	// nil, если web.sender_grpc.addr не задан. Закрывается в Stop.
+	senderClient *grpcsender.Client
 
 	// done-каналы фоновых горутин — Stop дожидается их завершения
 	// (Phase AUD.3): callbacks reload'а/housekeeping не должны бежать
@@ -172,14 +176,17 @@ func (a *App) Start(ctx context.Context) error {
 	// §37: миграция существующих CH-таблиц — добавить колонку node_id, иначе
 	// SELECT по новой схеме упадёт. Идемпотентно (ALTER … IF NOT EXISTS), до
 	// старта HTTP-сервера. Новые таблицы получают колонку из шаблона.
+	//
+	// Список таблиц — по ВСЕМ командам (ListClickHouseTables, без team-фильтра),
+	// как у Sender. Раньше брался List(TeamID: defaultTeamID) → БД не-default
+	// команд Web не альтерил вообще, и на мультикомандном бою чтение логов
+	// падало с CH code 47 «Unknown expression identifier request_size» до
+	// рестарта Sender'а (Sentry 158619).
 	if a.chMgr != nil {
-		if nodes, err := nodeRepo.List(ctx, webport.ListNodesFilter{TeamID: defaultTeamID}); err != nil {
-			a.logger.Warn("§37 ensure node_id: list nodes failed", a.logger.Err(err))
+		if tables, err := nodeRepo.ListClickHouseTables(ctx); err != nil {
+			a.logger.Warn("§37 ensure ch columns: list ch tables failed", a.logger.Err(err))
 		} else {
-			tables := make([]string, 0, len(nodes))
-			for _, n := range nodes {
-				tables = append(tables, n.ClickHouseTable)
-			}
+			a.logger.Debug("ensure ch columns: tables collected", a.logger.Int("count", len(tables)))
 			chpf.EnsureNodeIDColumn(ctx, a.chMgr.Conn(), tables, a.logger)
 			chpf.EnsureHTTPMethodColumn(ctx, a.chMgr.Conn(), tables, a.logger) // §39
 			chpf.EnsureBodySizeColumns(ctx, a.chMgr.Conn(), tables, a.logger)  // §42-доп
@@ -224,7 +231,8 @@ func (a *App) Start(ctx context.Context) error {
 	userUC := usecase.NewUserUsecase(userRepo, sessionRepo, teamRepo, auditUC, defaultTeamID, a.logger)
 
 	tokenRepo := pgrepo.NewAPITokenRepoPg(a.pg, a.logger)
-	tokenUC := usecase.NewAPITokenUsecase(tokenRepo, userRepo, auditUC, a.logger)
+	// teamRepo — для проверки членства при выборе команды токена (§18.3).
+	tokenUC := usecase.NewAPITokenUsecase(tokenRepo, userRepo, teamRepo, auditUC, a.logger)
 
 	appSettingsRepo := pgrepo.NewAppSettingsRepoPg(a.pg, a.logger)
 	reloadPublisher := reloader.NewPublisher(a.redis)
@@ -331,8 +339,24 @@ func (a *App) Start(ctx context.Context) error {
 	)
 	requestFieldHandler := httpadapter.NewRequestFieldCatalogHandler(requestFieldUC, a.logger)
 
-	dryRunUC := usecase.NewDryRunUsecase(auditUC, a.logger)
-	dryRunHandler := httpadapter.NewDryRunHandler(dryRunUC, a.logger)
+	// §55: клиент к Sender для dry-run в реальном режиме. Опционален — адрес не
+	// задан → реальный вызов недоступен (шаг «Response» вернёт skipped), mock
+	// работает как прежде. Ошибку создания не эскалируем: Web не должен падать
+	// из-за инструмента отладки; nil-клиент отчёт объяснит.
+	var senderClient webport.SenderClient
+	if addr := a.cfg.Web.SenderGRPC.Addr; addr != "" {
+		sc, err := grpcsender.New(&a.cfg.Web.SenderGRPC, a.logger)
+		if err != nil {
+			a.logger.Warn("§55 dry-run: sender client init failed, real mode disabled",
+				a.logger.Str("addr", addr), a.logger.Err(err))
+		} else {
+			senderClient = sc
+			a.senderClient = sc
+			a.logger.Debug("§55 dry-run: sender client ready", a.logger.Str("addr", addr))
+		}
+	}
+	dryRunUC := usecase.NewDryRunUsecase(auditUC, senderClient, a.cfg.Web.SelfIngressHosts, a.logger)
+	dryRunHandler := httpadapter.NewDryRunHandler(dryRunUC, nodeUC, a.logger)
 
 	rl := ratelimit.New(a.redis, ratelimit.WithErrorSink(a.metrics))
 	// Анти-брутфорс /api/auth/login (Phase AUD.4): лимит попыток на IP и
@@ -573,6 +597,13 @@ func (a *App) Stop(ctx context.Context) error {
 		closeCtx, cancelClose := context.WithTimeout(ctx, 5*time.Second)
 		_ = a.chMgr.Close(closeCtx)
 		cancelClose()
+	}
+	// §55: пул gRPC-соединений к Sender (dry-run). nil, если реальный режим не
+	// сконфигурирован.
+	if a.senderClient != nil {
+		if err := a.senderClient.Close(); err != nil {
+			a.logger.Warn("web: sender grpc client close failed", a.logger.Err(err))
+		}
 	}
 	if a.otelShutdown != nil {
 		otelCtx, cancelOtel := context.WithTimeout(ctx, 5*time.Second)

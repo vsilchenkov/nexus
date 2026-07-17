@@ -24,6 +24,13 @@ axiosInstance.interceptors.response.use(
   },
 );
 
+// isNotFound — ошибка запроса означает 404. Узел/ресурс чужой команды (§18)
+// неотличим от несуществующего by design (не утекает факт существования),
+// поэтому UI разбирает именно 404.
+export function isNotFound(error: unknown): boolean {
+  return (error as { response?: { status?: number } })?.response?.status === 404;
+}
+
 export const api = {
   async get<T>(url: string, params?: Record<string, unknown>): Promise<T> {
     const r = await axiosInstance.get<T>(url, { params });
@@ -79,6 +86,12 @@ export type Node = {
   // §41: динамическая авторизация на входе (источник+поле для token/basic).
   incoming_auth_dynamic_source?: string;
   incoming_auth_dynamic_field?: string;
+  // §55.6: сами креды наружу не отдаются никогда — только признаки *_set.
+  incoming_auth_type?: string;
+  auth_credentials_set?: boolean;
+  incoming_auth_credentials_set?: boolean;
+  // §16: имя заголовка с HMAC-подписью (incoming_auth_type=webhook_signature).
+  webhook_signature_header?: string;
   clickhouse_table: string;
   clickhouse_template_id: string;
   forward_headers: string[];

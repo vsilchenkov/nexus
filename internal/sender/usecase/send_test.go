@@ -72,12 +72,14 @@ func (s *stubLogWriter) Flush(_ context.Context) error {
 // stubBreaker — программируемый CircuitBreaker.
 type stubBreaker struct {
 	allow        bool
+	allowCount   int // §55: dry-run не должен спрашивать breaker вообще
 	successCount int
 	failureCount int
 	allowErr     error
 }
 
 func (b *stubBreaker) Allow(_ context.Context, _ string) (bool, error) {
+	b.allowCount++
 	return b.allow, b.allowErr
 }
 func (b *stubBreaker) RecordSuccess(_ context.Context, _ string) error {
@@ -667,4 +669,122 @@ func TestSend_SpecialCharsAndJSON_StoredIntactWithoutLimit(t *testing.T) {
 	rec := logw.written[0].rec
 	assert.Equal(t, string(reqBody), rec.Request, "спецсимволы сохраняются без изменений")
 	assert.Equal(t, string(jsonResp), rec.Response, "JSON сохраняется как есть")
+}
+
+// §55: dry-run выполняет НАСТОЯЩИЙ HTTP-вызов тем же клиентом, но не оставляет
+// следов на узле. Каждый гейт проверяется отдельно: забытый = боевой инцидент
+// (лог в production-таблице / узел покрашен в Down / открытый breaker → 503
+// реальному трафику).
+func TestSend_DryRun_NoSideEffects(t *testing.T) {
+	t.Parallel()
+
+	httpc := &stubHTTPCaller{responses: []*port.HTTPResponse{{StatusCode: 200, Body: []byte(`{"ok":true}`)}}}
+	logw := &stubLogWriter{}
+	cb := &stubBreaker{allow: true}
+	uc := NewSendUsecase(httpc, logw, cb, logging.NewNoop(), 64<<20)
+
+	in := baseInput()
+	in.DryRun = true
+	in.LoggingEnabled = true // логирование узла ВКЛЮЧЕНО — dry-run всё равно не пишет
+
+	out := uc.Send(context.Background(), in)
+
+	assert.Equal(t, int32(200), out.StatusCode, "вызов настоящий — ответ реальный")
+	assert.Equal(t, 1, httpc.calls, "HTTP-запрос обязан быть выполнен: тем же клиентом, тем же путём")
+	assert.Empty(t, logw.written, "dry-run не пишет в production-таблицу даже при logging_enabled=true")
+	assert.Zero(t, cb.allowCount, "dry-run не спрашивает breaker")
+	assert.Zero(t, cb.successCount, "dry-run не засчитывает здоровье узла")
+	assert.Zero(t, cb.failureCount)
+}
+
+// Главный риск §55: серия тестов по мёртвому адресу НЕ должна открыть breaker
+// живого узла — иначе боевой трафик начнёт получать 503 из-за чужой отладки.
+func TestSend_DryRun_FailuresDoNotOpenBreaker(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		resp *port.HTTPResponse
+		err  error
+	}{
+		{name: "таймаут/транспорт", err: errors.New("context deadline exceeded")},
+		{name: "5xx от узла", resp: &port.HTTPResponse{StatusCode: 502}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			httpc := &stubHTTPCaller{}
+			if tt.resp != nil {
+				httpc.responses = []*port.HTTPResponse{tt.resp}
+			}
+			if tt.err != nil {
+				httpc.errs = []error{tt.err}
+			}
+			logw := &stubLogWriter{}
+			cb := &stubBreaker{allow: true}
+			uc := NewSendUsecase(httpc, logw, cb, logging.NewNoop(), 64<<20)
+
+			in := baseInput()
+			in.DryRun = true
+
+			uc.Send(context.Background(), in)
+
+			assert.Zero(t, cb.failureCount, "неудачный dry-run не портит здоровье узла")
+			assert.Zero(t, cb.allowCount)
+			assert.Empty(t, logw.written)
+		})
+	}
+}
+
+// Обратная сторона: dry-run не должен упираться в уже открытый breaker — иначе
+// оператор увидит «circuit breaker open» вместо реальной причины (напр. таймаута).
+func TestSend_DryRun_NotBlockedByOpenBreaker(t *testing.T) {
+	t.Parallel()
+
+	httpc := &stubHTTPCaller{responses: []*port.HTTPResponse{{StatusCode: 200}}}
+	logw := &stubLogWriter{}
+	cb := &stubBreaker{allow: false} // breaker узла открыт боевым трафиком
+	uc := NewSendUsecase(httpc, logw, cb, logging.NewNoop(), 64<<20)
+
+	in := baseInput()
+	in.DryRun = true
+
+	out := uc.Send(context.Background(), in)
+
+	assert.Equal(t, int32(200), out.StatusCode)
+	assert.Equal(t, 1, httpc.calls, "dry-run идёт к узлу, несмотря на открытый breaker")
+	assert.NotEqual(t, int32(503), out.StatusCode)
+}
+
+// РЕГРЕССИЯ: боевой путь (DryRun=false) обязан работать как раньше — гейты §55
+// не должны его задеть.
+func TestSend_NormalCall_KeepsSideEffects(t *testing.T) {
+	t.Parallel()
+
+	t.Run("успех: пишет лог и засчитывает здоровье", func(t *testing.T) {
+		t.Parallel()
+		httpc := &stubHTTPCaller{responses: []*port.HTTPResponse{{StatusCode: 200}}}
+		logw := &stubLogWriter{}
+		cb := &stubBreaker{allow: true}
+		uc := NewSendUsecase(httpc, logw, cb, logging.NewNoop(), 64<<20)
+
+		uc.Send(context.Background(), baseInput()) // DryRun=false
+
+		require.Len(t, logw.written, 1, "боевой вызов пишет в ClickHouse")
+		assert.Equal(t, 1, cb.allowCount, "боевой вызов спрашивает breaker")
+		assert.Equal(t, 1, cb.successCount)
+	})
+
+	t.Run("ошибка: открывает breaker", func(t *testing.T) {
+		t.Parallel()
+		httpc := &stubHTTPCaller{errs: []error{errors.New("dial tcp: i/o timeout")}}
+		logw := &stubLogWriter{}
+		cb := &stubBreaker{allow: true}
+		uc := NewSendUsecase(httpc, logw, cb, logging.NewNoop(), 64<<20)
+
+		uc.Send(context.Background(), baseInput())
+
+		assert.Equal(t, 1, cb.failureCount, "боевой сбой по-прежнему влияет на breaker")
+		require.Len(t, logw.written, 1)
+	})
 }

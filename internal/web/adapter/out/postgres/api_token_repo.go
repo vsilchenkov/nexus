@@ -53,6 +53,10 @@ func (r *APITokenRepoPg) GetByHash(ctx context.Context, hash string) (*domain.AP
 		`SELECT `+apiTokenCols+` FROM api_tokens WHERE token_hash = $1`, hash))
 }
 
+// ListByUser — все токены пользователя, по всем командам. Без team-фильтра
+// намеренно: «Настройки» — личный раздел и не скоупятся переключателем команд
+// в шапке; команда токена (§18.3) видна отдельной колонкой и выбирается в
+// форме создания.
 func (r *APITokenRepoPg) ListByUser(ctx context.Context, userID string) ([]*domain.APIToken, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT `+apiTokenCols+` FROM api_tokens WHERE user_id = $1::uuid ORDER BY created_at DESC`,

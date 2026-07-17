@@ -42,8 +42,19 @@ func (r *inMemAPITokenRepo) GetByHash(_ context.Context, hash string) (*domain.A
 	}
 	return nil, domain.ErrNotFound
 }
-func (r *inMemAPITokenRepo) ListByUser(_ context.Context, _ string) ([]*domain.APIToken, error) {
-	return nil, nil
+
+// ListByUser — эмуляция `WHERE user_id = $1` (без team-фильтра): список токенов
+// не скоупится командой, поэтому и стаб не фильтрует.
+func (r *inMemAPITokenRepo) ListByUser(_ context.Context, userID string) ([]*domain.APIToken, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []*domain.APIToken
+	for _, t := range r.byHash {
+		if t.UserID == userID {
+			out = append(out, t)
+		}
+	}
+	return out, nil
 }
 func (r *inMemAPITokenRepo) Create(_ context.Context, t *domain.APIToken) error {
 	r.mu.Lock()
@@ -65,6 +76,29 @@ func (r *inMemAPITokenRepo) TouchLastUsed(_ context.Context, id string) error {
 	defer r.mu.Unlock()
 	r.touched = append(r.touched, id)
 	return nil
+}
+
+// teamsStub — teamMembershipLister: членства пользователя. По умолчанию
+// (nil-мапа) членств нет, поэтому тесты, где команда важна, задают их явно.
+type teamsStub struct {
+	byUser map[string][]string // userID → teamIDs
+	err    error
+}
+
+func (s *teamsStub) ListUserTeams(_ context.Context, userID string) ([]*domain.UserTeam, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	var out []*domain.UserTeam
+	for _, id := range s.byUser[userID] {
+		out = append(out, &domain.UserTeam{Team: domain.Team{ID: id}})
+	}
+	return out, nil
+}
+
+// memberOf — стаб членств для «пользователь состоит во всех перечисленных командах».
+func memberOf(userID string, teamIDs ...string) *teamsStub {
+	return &teamsStub{byUser: map[string][]string{userID: teamIDs}}
 }
 
 // userRepoStub — UserRepo, отвечает на Get конкретным набором пользователей.
@@ -146,7 +180,7 @@ func TestAPITokenUsecase_Create_HappyPath(t *testing.T) {
 	auditRepo := &stubAuditRepo{}
 	audit := NewAuditUsecase(auditRepo, logging.NewNoop())
 
-	uc := NewAPITokenUsecase(repo, users, audit, logging.NewNoop())
+	uc := NewAPITokenUsecase(repo, users, nil, audit, logging.NewNoop())
 
 	created, err := uc.Create(context.Background(), Actor{UserLogin: "alice"},
 		"u-1", "team-1", "prod-token", []string{domain.ScopeLogsRead}, nil)
@@ -174,13 +208,121 @@ func TestAPITokenUsecase_Create_HappyPath(t *testing.T) {
 	assert.Equal(t, "prod-token", auditRepo.entries[0].Details["name"])
 }
 
+// Срок действия: раньше UI слал expires_in_days, а handler принимал expires_at —
+// поле молча терялось и ВСЕ токены выходили бессрочными вопреки выбранному сроку.
+func TestAPITokenUsecase_Create_ExpiresInDays(t *testing.T) {
+	t.Parallel()
+
+	newUC := func() *APITokenUsecase {
+		return NewAPITokenUsecase(newInMemAPITokenRepo(), &userRepoStub{}, memberOf("u-1", "team-1"),
+			NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), logging.NewNoop())
+	}
+
+	t.Run("срок в днях считает сервер от своего времени", func(t *testing.T) {
+		t.Parallel()
+		days := 30
+		before := time.Now()
+		created, err := newUC().Create(context.Background(), Actor{}, "u-1", "team-1", "t",
+			[]string{domain.ScopeLogsRead}, &days)
+		require.NoError(t, err)
+		require.NotNil(t, created.Token.ExpiresAt, "срок обязан быть проставлен")
+
+		want := before.Add(30 * 24 * time.Hour)
+		assert.WithinDuration(t, want, *created.Token.ExpiresAt, time.Minute)
+		assert.True(t, created.Token.IsActive(time.Now()), "свежий токен активен")
+		assert.False(t, created.Token.IsActive(want.Add(time.Hour)), "после срока — неактивен")
+	})
+
+	t.Run("nil = бессрочный", func(t *testing.T) {
+		t.Parallel()
+		created, err := newUC().Create(context.Background(), Actor{}, "u-1", "team-1", "t",
+			[]string{domain.ScopeLogsRead}, nil)
+		require.NoError(t, err)
+		assert.Nil(t, created.Token.ExpiresAt)
+	})
+
+	t.Run("неположительный срок отклоняется", func(t *testing.T) {
+		t.Parallel()
+		for _, days := range []int{0, -1} {
+			created, err := newUC().Create(context.Background(), Actor{}, "u-1", "team-1", "t",
+				[]string{domain.ScopeLogsRead}, &days)
+			require.Error(t, err, "days=%d", days)
+			assert.Nil(t, created)
+		}
+	})
+}
+
+// «Настройки» вне скоупа команды: список отдаёт токены пользователя по ВСЕМ
+// его командам (команду показывает колонка), но чужие токены — никогда.
+func TestAPITokenUsecase_ListByUser_AllTeamsButOwnOnly(t *testing.T) {
+	t.Parallel()
+
+	uc := NewAPITokenUsecase(newInMemAPITokenRepo(), &userRepoStub{}, memberOf("u-1", "team-a", "team-b"),
+		NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), logging.NewNoop())
+	ctx := context.Background()
+
+	_, err := uc.Create(ctx, Actor{}, "u-1", "team-a", "in-a", []string{domain.ScopeLogsRead}, nil)
+	require.NoError(t, err)
+	_, err = uc.Create(ctx, Actor{}, "u-1", "team-b", "in-b", []string{domain.ScopeLogsRead}, nil)
+	require.NoError(t, err)
+
+	mine, err := uc.ListByUser(ctx, "u-1")
+	require.NoError(t, err)
+	require.Len(t, mine, 2, "видны токены обеих команд — список не скоупится")
+	byName := map[string]string{}
+	for _, tk := range mine {
+		byName[tk.Name] = tk.TeamID
+	}
+	assert.Equal(t, map[string]string{"in-a": "team-a", "in-b": "team-b"}, byName,
+		"team_id отдаётся наружу — UI показывает команду колонкой")
+
+	alien, err := uc.ListByUser(ctx, "u-2")
+	require.NoError(t, err)
+	assert.Empty(t, alien, "чужие токены не видны")
+}
+
+// Токен создаётся в выбранной команде — инвариант §18.3, который раньше не
+// проверял ни один assert.
+func TestAPITokenUsecase_Create_BindsToTeam(t *testing.T) {
+	t.Parallel()
+
+	uc := NewAPITokenUsecase(newInMemAPITokenRepo(), &userRepoStub{}, memberOf("u-1", "team-vika"),
+		NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), logging.NewNoop())
+
+	created, err := uc.Create(context.Background(), Actor{}, "u-1", "team-vika", "t",
+		[]string{domain.ScopeLogsRead}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "team-vika", created.Token.TeamID)
+}
+
+// team_id приходит от клиента (селект в форме), поэтому членство обязано
+// проверяться на сервере — иначе любой выпишет себе токен в чужую команду и
+// обойдёт изоляцию §18.
+func TestAPITokenUsecase_Create_ForeignTeam_Denied(t *testing.T) {
+	t.Parallel()
+
+	repo := newInMemAPITokenRepo()
+	uc := NewAPITokenUsecase(repo, &userRepoStub{}, memberOf("u-1", "team-a"),
+		NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), logging.NewNoop())
+
+	created, err := uc.Create(context.Background(), Actor{}, "u-1", "team-foreign", "t",
+		[]string{domain.ScopeLogsRead}, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrPermissionDenied)
+	assert.Nil(t, created)
+
+	mine, err := uc.ListByUser(context.Background(), "u-1")
+	require.NoError(t, err)
+	assert.Empty(t, mine, "токен не должен быть создан")
+}
+
 func TestAPITokenUsecase_Create_RequiresName(t *testing.T) {
 	t.Parallel()
 
 	repo := newInMemAPITokenRepo()
 	users := &userRepoStub{}
 	audit := NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop())
-	uc := NewAPITokenUsecase(repo, users, audit, logging.NewNoop())
+	uc := NewAPITokenUsecase(repo, users, nil, audit, logging.NewNoop())
 
 	created, err := uc.Create(context.Background(), Actor{}, "u-1", "team-1", "", nil, nil)
 	require.Error(t, err)
@@ -197,7 +339,7 @@ func TestAPITokenUsecase_Verify_HappyPath_TouchesLastUsed(t *testing.T) {
 		uid: {ID: uid, Login: "bob", Active: true},
 	}}
 	audit := NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop())
-	uc := NewAPITokenUsecase(repo, users, audit, logging.NewNoop())
+	uc := NewAPITokenUsecase(repo, users, nil, audit, logging.NewNoop())
 
 	created, err := uc.Create(context.Background(), Actor{}, uid, "team-1", "tok", []string{domain.ScopeLogsRead}, nil)
 	require.NoError(t, err)
@@ -220,7 +362,7 @@ func TestAPITokenUsecase_Verify_HappyPath_TouchesLastUsed(t *testing.T) {
 func TestAPITokenUsecase_Verify_BadPrefix(t *testing.T) {
 	t.Parallel()
 
-	uc := NewAPITokenUsecase(newInMemAPITokenRepo(), &userRepoStub{},
+	uc := NewAPITokenUsecase(newInMemAPITokenRepo(), &userRepoStub{}, nil,
 		NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), logging.NewNoop())
 
 	tests := []struct {
@@ -249,7 +391,7 @@ func TestAPITokenUsecase_Verify_UnknownToken_Unauthorized(t *testing.T) {
 	repo := newInMemAPITokenRepo() // пустой
 	users := &userRepoStub{}
 	audit := NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop())
-	uc := NewAPITokenUsecase(repo, users, audit, logging.NewNoop())
+	uc := NewAPITokenUsecase(repo, users, nil, audit, logging.NewNoop())
 
 	// Сгенерируем валидный по форме токен, но в БД его нет.
 	v, err := generateToken()
@@ -267,12 +409,15 @@ func TestAPITokenUsecase_Verify_ExpiredToken_Unauthorized(t *testing.T) {
 	repo := newInMemAPITokenRepo()
 	users := &userRepoStub{byID: map[string]*domain.User{"u-1": {ID: "u-1", Active: true}}}
 	audit := NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop())
-	uc := NewAPITokenUsecase(repo, users, audit, logging.NewNoop())
+	uc := NewAPITokenUsecase(repo, users, nil, audit, logging.NewNoop())
 
-	past := time.Now().Add(-time.Hour)
 	created, err := uc.Create(context.Background(), Actor{}, "u-1", "team-1", "expired",
-		[]string{domain.ScopeLogsRead}, &past)
+		[]string{domain.ScopeLogsRead}, nil)
 	require.NoError(t, err)
+	// Create принимает срок в днях и прошедшее не пропустит (сервер считает от
+	// «сейчас»), поэтому протухание эмулируем на уровне хранилища.
+	past := time.Now().Add(-time.Hour)
+	created.Token.ExpiresAt = &past
 
 	_, _, err = uc.Verify(context.Background(), created.Plain)
 	require.Error(t, err)
@@ -285,7 +430,7 @@ func TestAPITokenUsecase_Verify_RevokedToken_Unauthorized(t *testing.T) {
 	repo := newInMemAPITokenRepo()
 	users := &userRepoStub{byID: map[string]*domain.User{"u-1": {ID: "u-1", Active: true}}}
 	audit := NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop())
-	uc := NewAPITokenUsecase(repo, users, audit, logging.NewNoop())
+	uc := NewAPITokenUsecase(repo, users, nil, audit, logging.NewNoop())
 
 	created, err := uc.Create(context.Background(), Actor{}, "u-1", "team-1", "t",
 		[]string{domain.ScopeLogsRead}, nil)
@@ -306,7 +451,7 @@ func TestAPITokenUsecase_Verify_InactiveUser_ErrUserInactive(t *testing.T) {
 	repo := newInMemAPITokenRepo()
 	users := &userRepoStub{byID: map[string]*domain.User{"u-1": {ID: "u-1", Active: false}}}
 	audit := NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop())
-	uc := NewAPITokenUsecase(repo, users, audit, logging.NewNoop())
+	uc := NewAPITokenUsecase(repo, users, nil, audit, logging.NewNoop())
 
 	created, err := uc.Create(context.Background(), Actor{}, "u-1", "team-1", "t",
 		[]string{domain.ScopeLogsRead}, nil)

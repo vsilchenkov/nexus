@@ -82,7 +82,7 @@ func (u *RouteAsyncUsecase) RouteAsync(ctx context.Context, in RouteInput) (*Rou
 	// §3.2 (#5): узел принимает только сконфигурированный входящий метод.
 	// Callback (webhook) — исключение: маршрут уже зафиксирован как POST и
 	// защищён HMAC-подписью, метод диктует внешний провайдер.
-	if !in.RequireCallback && !methodMatches(in.Method, node.IncomingMethod) {
+	if !in.RequireCallback && !MethodMatches(in.Method, node.IncomingMethod) {
 		return nil, domain.ErrNodeMethodNotAllowed
 	}
 
@@ -120,10 +120,10 @@ func (u *RouteAsyncUsecase) RouteAsync(ctx context.Context, in RouteInput) (*Rou
 		return nil, err
 	}
 	// §39: при path-passthrough приклеиваем хвост входящего пути к целевому URL.
-	targetURL = appendPathSuffix(targetURL, remainder)
+	targetURL = AppendPathSuffix(targetURL, remainder)
 
 	id := uuid.NewString()
-	env := BuildEnvelope(id, node, effectiveOutgoingMethod(node, in.Method), targetURL, authHeader, in.ClientIP, remainder,
+	env := BuildEnvelope(id, node, EffectiveOutgoingMethod(node, in.Method), targetURL, authHeader, in.ClientIP, remainder,
 		effHeader, cleanQuery, effBody)
 	// §32: служебный hop-счётчик в обход allowlist узла. На стороне Sender
 	// заголовок уйдёт во внешний запрос; если цель — снова Receiver, счётчик

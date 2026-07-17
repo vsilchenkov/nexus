@@ -1,13 +1,18 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
 import { api } from "../../api/client";
 import { useConfirm } from "../../lib/confirm";
+import { useMyTeams } from "../../lib/teams";
 
 type Token = {
   id: string;
   name: string;
+  // team_id (§18.3): токен действует только в своей команде. Показываем его
+  // явно — раньше скоуп был невидим, и токен молча наследовал команду,
+  // выбранную в шапке в момент создания.
+  team_id: string;
   prefix: string;
   scopes: string[];
   created_at: string;
@@ -16,7 +21,9 @@ type Token = {
   revoked_at?: string;
 };
 type ListResp = { items: Token[] };
-type CreateResp = { token: string; api_token: Token };
+// info, а не api_token: так поле называется в ответе бэкенда (раньше здесь
+// было api_token → created.api_token всегда undefined).
+type CreateResp = { token: string; info: Token };
 
 const allScopes = ["logs:read", "nodes:read", "metrics:read", "audit:read"];
 
@@ -28,6 +35,12 @@ export function ApiTokensPanel() {
     queryKey: ["tokens"],
     queryFn: () => api.get<ListResp>("/api/tokens"),
   });
+  // Членства: источник селекта команды в форме и имён в колонке «Команда».
+  // Список токенов НЕ скоупится командой — «Настройки» не реагируют на
+  // переключатель в шапке (ключ ["tokens"] в TEAM_INDEPENDENT_KEYS).
+  const teams = useMyTeams();
+  const teamName = (id: string) =>
+    teams.data?.items.find((x) => x.id === id)?.name ?? id.slice(0, 8);
 
   const [showNew, setShowNew] = useState(false);
   const [created, setCreated] = useState<CreateResp | null>(null);
@@ -35,12 +48,25 @@ export function ApiTokensPanel() {
   const [name, setName] = useState("");
   const [scopes, setScopes] = useState<string[]>(["logs:read"]);
   const [days, setDays] = useState<number | "">(365);
+  // Команда токена (§18.3) выбирается явно. Отправная точка — текущая команда
+  // на момент ОТКРЫТИЯ формы (см. openNew): это удобный дефолт, а не реакция на
+  // шапку — сама страница переключением команд не управляется.
+  const [teamID, setTeamID] = useState("");
+  useEffect(() => {
+    if (!teamID && teams.data) setTeamID(teams.data.current_team_id);
+  }, [teams.data, teamID]);
+
+  const openNew = () => {
+    if (teams.data) setTeamID(teams.data.current_team_id);
+    setShowNew(true);
+  };
 
   const create = useMutation({
     mutationFn: () =>
       api.post<CreateResp>("/api/tokens", {
         name,
         scopes,
+        team_id: teamID,
         expires_in_days: days === "" ? null : days,
       }),
     onSuccess: (r) => {
@@ -66,7 +92,7 @@ export function ApiTokensPanel() {
       <header className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">{t("settings.tokens.title")}</h2>
         <button
-          onClick={() => setShowNew(true)}
+          onClick={openNew}
           className="bg-accent hover:bg-accent-hover px-3 py-2 rounded-md text-sm"
         >
           {t("settings.tokens.new_token")}
@@ -87,6 +113,23 @@ export function ApiTokensPanel() {
 
       {showNew && (
         <div className="bg-bg-muted/40 p-4 rounded-md space-y-3">
+          {/* §18.3: токен действует только в одной команде — выбираем её явно
+              здесь, а не наследуем молча из переключателя в шапке. Список —
+              только свои команды: сервер проверяет членство (403). */}
+          <label className="flex items-center gap-2 text-sm">
+            <span className="text-fg-muted">{t("settings.tokens.team_label")}</span>
+            <select
+              value={teamID}
+              onChange={(e) => setTeamID(e.target.value)}
+              className="bg-bg-muted rounded-md px-2 py-1 outline-none"
+            >
+              {(teams.data?.items ?? []).map((tm) => (
+                <option key={tm.id} value={tm.id}>
+                  {tm.name}
+                </option>
+              ))}
+            </select>
+          </label>
           <input
             placeholder={t("settings.tokens.name_placeholder")}
             value={name}
@@ -148,6 +191,7 @@ export function ApiTokensPanel() {
           <thead className="sticky top-0 z-10 bg-bg text-fg-muted">
             <tr>
               <th className="text-left px-3 py-2">{t("settings.tokens.col_name")}</th>
+              <th className="text-left px-3 py-2">{t("settings.tokens.col_team")}</th>
               <th className="text-left px-3 py-2">{t("settings.tokens.col_prefix")}</th>
               <th className="text-left px-3 py-2">{t("settings.tokens.col_scopes")}</th>
               <th className="text-left px-3 py-2">{t("settings.tokens.col_created")}</th>
@@ -160,6 +204,7 @@ export function ApiTokensPanel() {
             {list.data.items.map((tk) => (
               <tr key={tk.id} className="border-t border-bg-muted">
                 <td className="px-3 py-2">{tk.name}</td>
+                <td className="px-3 py-2 text-fg-muted">{teamName(tk.team_id)}</td>
                 <td className="px-3 py-2 font-mono text-xs">{tk.prefix}</td>
                 <td className="px-3 py-2 font-mono text-xs">{tk.scopes.join(", ")}</td>
                 <td className="px-3 py-2 font-mono text-xs">

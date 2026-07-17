@@ -106,3 +106,78 @@ func TestServer_Send_NodeOutcome(t *testing.T) {
 		})
 	}
 }
+
+// §55: dry-run (тест конфига из UI) не оставляет следов на узле — ни в
+// метриках, ни в гаудже исхода (§41/§52), ни в персистентном статусе (§46).
+// Иначе неудачный тест покрасил бы живой узел в Down на дашборде и накрутил
+// счётчики ошибок. Сам HTTP-вызов при этом настоящий.
+func TestServer_Send_DryRun_NoMetricsNoNodeStatus(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		status  int32
+		callErr error
+	}{
+		{"успешный тест", 200, nil},
+		{"неудачный тест (5xx) — самый опасный случай", 500, nil},
+		{"таймаут — боевой кейс §55", 0, errors.New("context deadline exceeded")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			httpc := &stubHTTPCaller{err: tc.callErr}
+			if tc.callErr == nil {
+				httpc.resp = &port.HTTPResponse{StatusCode: tc.status, Body: []byte("x")}
+			}
+			uc := usecase.NewSendUsecase(httpc, stubLogWriter{}, nil, logging.NewNoop(), 64<<20)
+			m := metrics.New("sender")
+			ns := &stubNodeStatus{}
+			srv := NewServer(uc, m, ns, logging.NewNoop())
+
+			resp, err := srv.Send(context.Background(), &senderv1.SendRequest{
+				Id:        "dry-1",
+				NodePath:  "partner/echo",
+				TargetUrl: "https://api.example.com/hook",
+				Method:    "POST",
+				TimeoutMs: 1000,
+				DryRun:    true,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tc.status, resp.GetStatusCode(), "ответ настоящий — вызов выполнен")
+
+			assert.Empty(t, ns.calls, "статус узла не персистится (§46) — узел не красится в Down")
+			assert.Zero(t, testutil.CollectAndCount(m.RequestsTotal), "счётчик запросов не тронут")
+			assert.Zero(t, testutil.CollectAndCount(m.RequestsIncompleteTotal), "счётчик ошибок не тронут")
+			assert.Zero(t, testutil.CollectAndCount(m.RequestDuration), "гистограмма латентности не тронута")
+		})
+	}
+}
+
+// РЕГРЕССИЯ: боевой вызов (dry_run=false) по-прежнему пишет метрики и статус —
+// гейт §55 не должен задеть основной путь.
+func TestServer_Send_NormalCall_KeepsMetricsAndStatus(t *testing.T) {
+	t.Parallel()
+
+	uc := usecase.NewSendUsecase(
+		&stubHTTPCaller{resp: &port.HTTPResponse{StatusCode: 500}},
+		stubLogWriter{}, nil, logging.NewNoop(), 64<<20,
+	)
+	m := metrics.New("sender")
+	ns := &stubNodeStatus{}
+	srv := NewServer(uc, m, ns, logging.NewNoop())
+
+	_, err := srv.Send(context.Background(), &senderv1.SendRequest{
+		Id:        "req-1",
+		NodePath:  "partner/echo",
+		TargetUrl: "https://api.example.com/hook",
+		Method:    "POST",
+		TimeoutMs: 1000,
+	})
+	require.NoError(t, err)
+
+	require.Len(t, ns.calls, 1, "боевой вызов персистит статус узла")
+	assert.Equal(t, domain.NodeOutcomeDown, ns.calls[0].outcome)
+	assert.NotZero(t, testutil.CollectAndCount(m.RequestsTotal), "боевые метрики пишутся")
+}

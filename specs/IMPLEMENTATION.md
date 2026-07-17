@@ -347,6 +347,7 @@
 | **§52: трёхсостоянье статуса узла OK / Degraded / Down** | ✅ §52 | ТЗ [52-node-degraded-status.md](sections/52-node-degraded-status.md), ветка `feature/node-degraded-status`. Продолжение §50.4: серия 422 красила живой узел в «Down» (флаг был булев «любой не-2xx»). **Phase 52.2**: [domain/node_outcome.go](../internal/domain/node_outcome.go) — `NodeOutcome` (ok/degraded/down), `OutcomeFromStatusCode` (2xx→ok; <=0 или >=500→down, вкл. 503 breaker-open/502 oversize; иначе degraded — граница = upstreamHealthy §50.4), `IsError()` (прежняя семантика), `GaugeValue`/`OutcomeFromGaugeValue` (0/1/2). **Phase 52.3 (писатель)**: gauge `SetNodeLastRequestOutcome` 0=ok/1=degraded/2=down ([platform/metrics](../internal/platform/metrics/metrics.go)); Redis-кодек `EncodeOutcome`/`DecodeOutcome` — «свап» "1"=down/"2"=degraded ради legacy/rolling (см. 4.29; [platform/nodestatus](../internal/platform/nodestatus/redis.go)); порт `NodeStatusWriter.SetLastOutcome`; обе точки записи ([sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go) + [async.go](../internal/sender/usecase/async.go)); `incomplete_total`/ack/DLQ не менялись. **Первый тест gRPC-адаптера** [sender_service_test.go](../internal/sender/adapter/in/grpc/sender_service_test.go) (реальный SendUsecase, таблица 200/302/422/500/транспорт). **Phase 52.4 (читатель)**: порт `NodeStatusReader.GetLastOutcomes`; reader MGET+декод ([node_status.go](../internal/web/adapter/out/redis/node_status.go)); `NodeThroughputRow.LastOutcome` + `applyLastOutcomes` (Redis приоритет → Prom `OutcomeFromGaugeValue` → ok; [metrics.go](../internal/web/usecase/metrics.go)); API `last_outcome` аддитивно + `last_error` back-compat (= IsError; [metrics_handler.go](../internal/web/adapter/in/http/metrics_handler.go)); попутно устранён swagger-дрейф `NodesMetricsResponse` (не было `totals`). **Phase 52.5 (UI)**: Variant `degraded` (отдельный от `warn`=Queue), Pill tone warn «Degraded» (латиницей в обеих локалях), сортировка err→degraded→queue, опция фильтра, `Throughput.lastOutcome` ([Overview.tsx](../web-ui/src/pages/Overview.tsx)); бандл пересобран. **Phase 52.6 (integration)**: round-trip всех исходов + legacy "1"→down + мусор→fallback ([nodestatus_test.go](../tests/integration/nodestatus_test.go)); сценарий инцидента 422×3→degraded, 500→down, 200→ok через реальные AsyncProcessor+Redis ([nodestatus_scenario_test.go](../tests/integration/nodestatus_scenario_test.go)). Полный gRPC-E2E сознательно не делался (тонкий маппинг закрыт юнитом). Неочевидности — §4.29 |
 | **§53: копирование узла — кнопка «Скопировать узел»** | ✅ §53 | ТЗ [53-copy-node.md](sections/53-copy-node.md), ветка `feature/copy-node`. **Phase 1.1 (backend)**: `POST /api/nodes/:id/copy` (manager+, [routes.go](../internal/web/adapter/in/http/routes.go)) → `NodeHandler.Copy` + `CopyNodeRequest` ([node_handler.go](../internal/web/adapter/in/http/node_handler.go), ошибки через общий `replyDomainError`: 404/409/400, новых i18n-ключей не потребовалось); usecase [node_copy.go](../internal/web/usecase/node_copy.go) — `Copy` (team-scope как Get, клон `cloneNodeForCopy`: сброс ID/таймстемпов, **всегда paused**, `slices.Clone` для ForwardHeaders; креды копируются plaintext-в-памяти → re-encrypt в pg-адаптере), клонирование ссылок allowlist-хостов `copyHostLinks` в той же UoW-транзакции + пересборка снимка, аудит `domain.ActionNodeCopy` ([audit.go](../internal/domain/audit.go)) с `source_node_id`/`source_path`/`allowed_hosts_cloned`; из `Create` извлечён общий пайплайн `prepareNewNode` ([node.go](../internal/web/usecase/node.go)) — поведение Create не изменено; CH-таблица копируется как есть (§37). Unit [node_copy_test.go](../internal/web/usecase/node_copy_test.go) (happy/scope/конфликт path — `memNodeRepo` научен UNIQUE(team_id,path)/невалидный path/hard-limit/host-links через `fakeUow`/идемпотентный провижининг). **Phase 1.2**: integration `TestNodeUC_Copy_E2E` ([node_copy_test.go](../tests/integration/node_copy_test.go), группа test-int-pg) — decrypt→re-encrypt round-trip кредов, paused, клон ссылок+снимка, аудит, 409, team-scope. **Phase 2.1 (UI)**: кнопка «Копировать» в шапке [NodeDetail.tsx](../web-ui/src/pages/NodeDetail.tsx) (manager+) + `CopyNodeDialog` (префилл `<path>-copy`, `validateNodePath` из [nodeValidation.ts](../web-ui/src/lib/nodeValidation.ts), POST → invalidate `["nodes"]` → navigate на копию); i18n `node.actions.copy`+`node.copy.*` en/ru; `node.copy` в фильтре [AuditLog.tsx](../web-ui/src/pages/AuditLog.tsx); бандл пересобран → `internal/web/static/` |
 | **§54: сохранение фильтров рабочего стола (Overview)** | ✅ §54 | ТЗ [54-overview-filter-persistence.md](sections/54-overview-filter-persistence.md), ветка `feature/overview-filter-persistence`. **Баг-репорт**: фильтр на рабочем столе сбрасывался при открытии узла и возврате — «Назад» браузера ИЛИ кнопка «Узлы». Причина: `search`/`method`/`statusFilter`/живой `period` в чистом `useState`, а Overview — дочерний `Outlet` (при переходе на `/nodes/:id` размонтируется). Кнопка «Узлы» — `NavLink to="/"` ([Sidebar.tsx](../web-ui/src/components/Sidebar.tsx)) **без query**, поэтому одного URL мало → гибрид. **Phase 2.1**: чистый модуль [lib/overviewFilters.ts](../web-ui/src/lib/overviewFilters.ts) по образцу [lib/period.ts](../web-ui/src/lib/period.ts) — `parseFilters` (толерантен: junk → дефолт по-полю независимо, `range` приоритетнее `from`/`to`), `serializeFilters` (**только отличия от дефолта** → чистый URL при дефолтных фильтрах), `applyFilters` (не трогает чужие query-ключи), `saveFilters`/`loadFilters` (зеркало; всё-дефолт → `removeItem`), `FILTERS_STORAGE` — одна константа выбора хранилища. Канонический формат в URL и зеркале один — сериализованная query-строка, поэтому restore = `parse → serialize → setParams` и заодно санитизирует мусор из хранилища. Тесты [overviewFilters.test.ts](../web-ui/src/lib/overviewFilters.test.ts) (42 кейса). **Phase 3.1**: [Overview.tsx](../web-ui/src/pages/Overview.tsx) — 4 `useState` → состояние из `useSearchParams` (конвенция [AuditLog.tsx](../web-ui/src/pages/AuditLog.tsx), фикс П12) + зеркало `sessionStorage`; `updateFilters` (единая точка записи), restore/mirror-эффект, debounce поиска 300мс. Звёздочка §44.B, `view`, `autoRefresh` не тронуты. **Phase 3.2** (найдено стендом): [PeriodPicker.tsx](../web-ui/src/components/ui/PeriodPicker.tsx) держал `from`/`to` в своём `useState("")` и не инициализировал их из `value` → восстановленный произвольный период был применён, но поля календаря пустые. Дефект предсуществующий (раньше custom-период не переживал уход со страницы) — §54 сделал кейс регулярным. Фикс: `toLocalInput` (RFC3339 → datetime-local в локальной зоне) + засев `useState` + эффект синхронизации (период приходит ПОСЛЕ монтирования, без ремоунта — клик «Узлы» на активной странице); тесты [PeriodPicker.test.tsx](../web-ui/src/components/ui/PeriodPicker.test.tsx) (4 кейса, 2 падают на старом коде — проверено откатом). Затрагивает 5 страниц (Overview/KafkaMonitor/вкладки узла) — везде показанный период теперь соответствует `value`. Бандл пересобран → `internal/web/static/`. **Гейты сдачи**: vitest 104 ✅, lint `--max-warnings=0` ✅, `golangci-lint` 0 issues ✅, полный `-race` в контейнере golang:1.26 ✅, `make test-integration` ✅, браузерный прогон на стенде `services` (Playwright) ✅ — оба кейса баг-репорта («Назад» и «Узлы»), клик «Узлы» на активной странице, F5, дип-линк с мусором (`status=banana&range=99h` → дефолты по-полю, **зеркало санитизировано**), ручная очистка (зеркало `removeItem`, фильтр не воскресает), чистая сессия → период от звёздочки 14д, custom-период в полях `01.07.2026 03:00`. Неочевидности — §4.31 |
+| **§55: dry-run — реальный вызов target и полный диалог теста** | ✅ §55 | ТЗ [55-dry-run-real-call.md](sections/55-dry-run-real-call.md), ветка `feature/dry-run-real-call`. **Инцидент-триггер**: боевой узел `vika_task` отдавал `context deadline exceeded` 30с, оператор открыл dry-run и упёрся в `auth.incoming: authorization header missing` — подставить заголовок было нечем (диалог реализовывал 2 поля из 5), а с `use_mock=false` шаг «Response» отдавал `skipped` («real outbound mode is not supported in v1»). **Phase 2 (proto+Sender)**: `bool dry_run = 30` в [sender.proto](../proto/sender/v1/sender.proto) (аддитивно); гейты в [send.go](../internal/sender/usecase/send.go) — breaker целиком пропускается (`if !in.DryRun`), CH под двойным гейтом `LoggingEnabled && !DryRun`; [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go) — ранний return до метрик/nodeStatus. **Phase 3 (Web)**: порт [port/sender.go](../internal/web/usecase/port/sender.go); gRPC-клиент переехал `receiver/adapter/out/grpcsender` → [platform/grpcsender](../internal/platform/grpcsender/client.go) (общий для Receiver и Web, `git mv`); конфиг `web.sender_grpc` ([config.go](../internal/platform/config/config.go), `addr` намеренно без дефолта → пусто = реальный режим выключен, шаг `skipped`); [dry_run.go](../internal/web/usecase/dry_run.go) — `realCall` через Sender, `node_path = __dryrun_<path>` (страховка на забытый гейт), self-reference §32.2 (в dry-run её не было вовсе), маскирование auth в эхо-заголовках. **Phase 3b (§55.6)**: креды наружу не отдаются (`nodeToResponse` даёт лишь `*_credentials_set`) → тест сохранённого узла ушёл бы с пустым токеном → 401 → ложный вывод «сломана авторизация». Решение — конвенция §5.5 (как `PUT /api/nodes/{id}`): `node_id` в запросе, пустой кред = взять сохранённый; узел читается в скоупе `currentTeamID` (чужой → 404); зависимость узким портом `nodeCredsLoader` (1 метод, ISP). **Phase 4 (UI + §55.9)**: [DryRunDialog.tsx](../web-ui/src/components/DryRunDialog.tsx) — chips ([dryrun/KeyValueChips.tsx](../web-ui/src/components/dryrun/KeyValueChips.tsx): `HeadersField` не подошёл — он комбобокс ИМЁН из каталога §24), подсказка ([lib/dryRunHint.ts](../web-ui/src/lib/dryRunHint.ts) — зеркалит `incomingAuthValue` Receiver'а с его дефолтами), тумблер mock (вкл. по умолчанию) + предупреждение с реальным target, кнопка «Тестовый запрос» в шапке [NodeDetail.tsx](../web-ui/src/pages/NodeDetail.tsx) (manager+). **§55.9** (найдено при разборе диалога): dry-run расходился с боевым pipeline — не проверял входящий метод, не вычислял исходящий (`outgoing_method=PUT` тестировался POST'ом) и не клеил хвост §39 (passthrough-узел тестировался по БАЗОВОМУ адресу). Фикс — переиспользование того же кода Receiver'а: `MethodMatches`/`EffectiveOutgoingMethod`/`AppendPathSuffix` экспортированы. **Phase 5**: integration [dry_run_no_traces_test.go](../tests/integration/dry_run_no_traces_test.go) на реальных CH+Redis. **Гейты сдачи**: `golangci-lint` 0 issues ✅, `make test` ✅, vitest 130 ✅, lint `--max-warnings=0` ✅, полный `-race` в контейнере golang:1.26 ✅, `make test-integration` ✅, браузерный прогон на стенде ✅ (узел с токеном → 200 с подмешанными кредами; passthrough → echosrv принял `/noauth/echo/v1/orders/42`; побочка не тронута: CH 3844→3844, `last_error` без изменений, метрик по боевому `node_path` — ноль). Неочевидности — §4.35 |
 | UI формы: Toggle, карточки «Заголовки» / «Логирование» | ✅ Phase 22.3 | [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx) (две карточки, мастер-тумблер гасит `<fieldset disabled>`), компонент [Toggle](../web-ui/src/components/ui/pickers.tsx), i18n ru/en |
 | Telegram-алерты через Prometheus + метрика `nexus_request_incomplete_total` | ✅ Phase 22.4 | [notification.go](../internal/web/usecase/notification.go) (`PromMetrics.NodeErrors` вместо `LogReader.CountErrors`), [metrics.go](../internal/platform/metrics/metrics.go), инкремент в [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go)/[async.go](../internal/sender/usecase/async.go), wiring [app.go](../internal/web/app.go) (требует Prometheus) |
 | Карточки Overview под `ui_cards.html` (спарклайн, p95, фильтр) | ✅ Phase 22.5 | [Overview.tsx](../web-ui/src/pages/Overview.tsx) (полоса-акцент, chip+pill, 3 метрики, спарклайн, target, фильтр статусов, сортировка); backend [prometheus/client.go](../internal/web/adapter/out/prometheus/client.go) (`NodeSeries` range-запрос + p95 в `NodeThroughput`), [metrics.go](../internal/web/usecase/metrics.go), DTO [metrics_handler.go](../internal/web/adapter/in/http/metrics_handler.go) |
@@ -645,8 +646,9 @@ DLQ) тормозила, «Очистить» был no-op, шапка плох�
   **Запись:** `node.ID` прокинут sync через gRPC `SendRequest.node_id` (поле 28, перегенерён proto) →
   `SendInput.NodeID` → `rec.NodeID`; async/DLQ — через `buildSendInput`/`logTTLExpired`. **Миграция
   существующих таблиц:** `platform/clickhouse.EnsureNodeIDColumn` (`ALTER … ADD COLUMN IF NOT EXISTS`,
-  идемпотентно) на старте **и Web, и Sender** (порядок деплоя не гарантирован; список таблиц — `nodeRepo.List`
-  / `nodepg.ListClickHouseTables`). **Чтение/удаление:** 8 методов `LogReaderCH` фильтруют
+  идемпотентно) на старте **и Web, и Sender** (порядок деплоя не гарантирован; список таблиц —
+  `nodeRepo.ListClickHouseTables` / `nodepg.ListClickHouseTables` — оба **без team-фильтра**; до 1.13.2 Web
+  брал `nodeRepo.List(TeamID: defaultTeamID)` и не альтерил БД не-default команд — см. §4.32). **Чтение/удаление:** 8 методов `LogReaderCH` фильтруют
   `(node_id = ? OR node_id = '')` (legacy `''` видны/чистятся у любого co-table узла — компромисс, новый
   трафик чист); `GetByID` — нет (уникальный ID). `nodeID` прокинут в порты (LogReader/NodeLogMetrics/
   FailedLogsPurger) и вызовы (logs/metrics/replay/async_queue). **UI:** node id во вкладке «Конфиг».
@@ -1778,6 +1780,113 @@ filter, Create без TeamID). До блока B (team-switcher в сессии)
 - **uow=nil fallback (CLI/юнит-тесты) не клонирует host-ссылки** — Link+снимок вне транзакции могли
   бы разъехаться с созданием узла; пропуск виден на debug (§51.9). Production-wiring всегда с UoW.
 
+### 4.34 Смена команды при открытой ноде: 404-цикл, чужие данные на экране, затирание формы
+
+Жалоба «кнопка Обновить долго висит» вскрыла четыре независимых дефекта.
+
+- **На экране оставался узел ЧУЖОЙ команды со старыми данными.** После переключения команды все
+  запросы узла отдают 404 (team-scope, `NodeUsecase.Get`), но react-query держит последние успешные
+  `data`. Проверка `if (!node) → «Узел не найден»` ([NodeDetail.tsx](../web-ui/src/pages/NodeDetail.tsx))
+  для этого сценария **мертва**: `isLoading` уже `false` (рефетч успешного запроса не `pending`), а
+  `node` не пустой. Ни ошибки, ни редиректа — самый неинформативный исход. Фикс: явный разбор 404
+  (`isNotFound`, [api/client.ts](../web-ui/src/api/client.ts)) → `navigate("/", {replace: true})`.
+- **404 ретраился и давал вечный спиннер.** Глобальная политика ([queryClient.ts](../web-ui/src/lib/queryClient.ts))
+  исключала из ретраев только 401/403 → 404 повторялся 3× с бэкоффом ≈3с. Поверх этого
+  `refetchInterval` (узел 5с у RabbitMQAsync, метрики 12с, логи 12с) перезапускал цикл снова и
+  снова: `useIsFetching() > 0` практически всегда → кнопка «Обновить» **бесконечно** disabled.
+  Фикс: не ретраить весь класс 4xx (ответ «так не бывает» повтором не исправить); ретраи остаются
+  для 5xx/сетевых. Плюс `refetchInterval` узла гасится при `q.state.error`.
+- **Кнопка «Обновить» была глобальной.** `useIsFetching()` без фильтра считал ВСЕ запросы SPA
+  (включая поллинг шапки и соседних страниц), а клик звал `qc.invalidateQueries()` без аргументов —
+  инвалидация кеша всего приложения. Сужено фильтром `q.queryKey[1] === id`: у всех запросов
+  страницы узла id идёт вторым элементом ключа (`["node", id]`, `["node-metrics", id, …]`,
+  `["logs", id, …]`, `["aq-*", id, …]`).
+- **Форма редактирования затиралась фоновым рефетчем** ([NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx)):
+  `useEffect(… setForm(existing.data), [existing.data])` без защиты + глобально включённый
+  `refetchOnWindowFocus` → ушёл в другое окно, вернулся — несохранённые правки исчезли. К командам
+  отношения не имеет, воспроизводилось всегда. Фикс: `filledRef` — форма заполняется из сервера
+  ровно один раз.
+- **Почему на форме редактирования НЕ редирект:** он уничтожил бы несохранённые правки. Там баннер
+  `node.foreign_team` + заблокированное сохранение (PUT всё равно вернёт 404 — team-проверка в
+  `NodeHandler.Update` перед записью; данные в чужую команду не утекают). Редирект — только на
+  странице просмотра.
+- **Мёртвая запись в кеш-политике:** `TEAM_INDEPENDENT_KEYS` содержал `"settings-public"`, тогда как
+  реальный ключ — `["public-settings"]` ([lib/nodeUrl.ts](../web-ui/src/lib/nodeUrl.ts),
+  [node/useNodeMetrics.ts](../web-ui/src/components/node/useNodeMetrics.ts)). Перевёрнутое имя не
+  совпадало ни с чем → публичные настройки зря перечитывались при каждой смене команды. Имя в этом
+  списке обязано совпадать с `queryKey[0]` — опечатка тут не ломает ничего явно и потому живёт долго.
+
+### 4.33 «Настройки» вне скоупа команды + команда API-токена выбирается явно
+
+- **Что было.** Токен молча наследовал `s.CurrentTeamID` — состояние тим-свитчера в момент клика
+  «Создать» ([api_token_handler.go](../internal/web/adapter/in/http/api_token_handler.go)). В UI
+  команда не выбиралась, не показывалась в списке и не упоминалась в §7.14 (спека диалога писалась
+  в v1, до §18/Phase 10, и не была досинхронизирована). Пользователь получил токен, видящий одну
+  команду, ничего не выбирая. **Скоуп — by design (§18.3), непрозрачность скоупа — дефект.**
+- **Кеш-политика Настроек была ложной.** `invalidateTeamScoped` ([lib/teams.ts](../web-ui/src/lib/teams.ts))
+  сбрасывает всё, чего нет в `TEAM_INDEPENDENT_KEYS`. Из ~10 ключей Настроек **ни один** не был
+  team-scoped на бэкенде: `app-settings` глобальны, `/api/users` глобален по построению (в хендлере
+  об этом прямой комментарий), `/api/teams` отдаёт все команды, участники скоупятся `:id` из URL,
+  каталоги — общие. То есть 4+ вкладки перезапрашивались зря. Кульминация: `/api/users` читался под
+  `["users-all"]` (освобождён) и `["users"]` (не освобождён) — один эндпоинт, две противоположные
+  политики. Теперь принцип зафиксирован в §7.14.1 и в комментарии у константы: **раздел «Настройки»
+  не реагирует на переключатель команд**; в скоупе остаются рабочий стол/логи/аудит/метрики.
+- **Почему не «список токенов по текущей команде»** (первая, отвергнутая итерация): тогда Настройки
+  сами становятся скоуплены, и получается «одна вкладка реагирует, другая нет». Плюс токен,
+  созданный для другой команды, сразу исчезал бы из списка («создал — не вижу»). Решение: список —
+  все мои токены (колонка «Команда» обязательна как признак), команда — селект в форме.
+- **Валидация членства обязательна именно из-за селекта.** Пока `team_id` брался из сессии, проверка
+  была не нужна (членство проверено в `SwitchTeam`/`resolveLoginTeam`). Как только поле приходит от
+  клиента — без проверки любой выпишет себе токен в чужую команду и обойдёт §18. Реализовано узким
+  интерфейсом на стороне консьюмера (`teamMembershipLister`, один метод) — не жирный `port.TeamRepo`
+  (11 методов); прецедент — §49 `FavoriteTeamRepo`. `ErrPermissionDenied` → **403** (отказ в праве,
+  не кривой ввод). `teams == nil` → проверка пропускается (прецедент §49 «nil → фича выключена»),
+  в проде `app.go` всегда передаёт `teamRepo`.
+- **Срок действия токена был фикцией.** UI слал `expires_in_days`, handler принимал
+  `ExpiresAt *time.Time json:"expires_at"` — поле молча терялось, **все боевые токены бессрочные**
+  вопреки выбранным в интерфейсе 365 дням. Контракт согласован по UI (`expires_in_days`), дату
+  считает сервер: часы клиента на срок не влияют. Рядом чинился `CreateResp`: UI ждал `api_token`,
+  бэкенд отдаёт `info` → `created.api_token` всегда был `undefined` (работало лишь потому, что
+  читался только `r.token`).
+- **Инвариант §18.3 не был покрыт ничем, кроме комментариев:** в `api_token_middleware_test.go` не
+  было ни одного упоминания team, в `api_token_test.go` `"team-1"` передавался без единого assert'а.
+  Закрыто тестом «псевдо-сессия получает `CurrentTeamID == token.TeamID`».
+- **Ловушка на будущее (не трогать наивно):** семантика пустого `teamID` рассогласована —
+  `NodeUsecase.Get("")` = «любая команда», `NodeUsecase.List("")` = «default-team»
+  ([node.go](../internal/web/usecase/node.go)). Пока это живо, выражать «все команды» пустой строкой
+  нельзя: получится тихая дыра в изоляции. Мульти-командный токен (`TeamIDs []string`) потребовал бы
+  правки ТЗ §18.1/§18.3 и ~30 call-sites скоуп-слоя — сознательно не делаем.
+
+### 4.32 Стартовая миграция CH-схемы: список таблиц — по ВСЕМ командам (боевой инцидент)
+
+- **Симптом (Sentry 158619, прод 1.12.0):** открытие логов узла команды `vika` → 500,
+  `clickhouse search: code: 47, Unknown expression identifier 'request_size' … FROM nexus_vika.dadata`.
+- **Корень — не там, где ищется.** ALTER'ы (`EnsureNodeIDColumn` §37 / `EnsureHTTPMethodColumn` §39 /
+  `EnsureBodySizeColumns`+`BackfillBodySizes` §42-доп) выполняются на старте Web и Sender — это верно.
+  Дефект был в **списке таблиц**: Web брал его как `nodeRepo.List(ctx, ListNodesFilter{TeamID:
+  defaultTeamID})`, то есть альтерил только `nexus_default.*`. У Sender'а фильтра нет
+  (`nodepg.ListClickHouseTables` = `SELECT DISTINCT clickhouse_table FROM nodes`). На мультикомандной
+  установке (весь боевой трафик живёт в `nexus_vika`) Web **не альтерил боевые таблицы никогда** —
+  схему чинил только рестарт Sender'а. Окно отказа = «новый Web поднят, новый Sender ещё нет»; если у
+  Sender `chMgr == nil` или его ALTER упал в `log+continue` — окно бесконечно.
+- **Почему не замечали:** дефект родился в §37 и был скопирован в §39/§42.10 вместе с образцом блока.
+  К моменту каждого следующего релиза Sender успевал доальтерить прошлые колонки, и симптом не
+  всплывал — до §42.10, когда логи открыли раньше рестарта Sender'а.
+- **Фикс (1.13.2):** `NodeRepoPg.ListClickHouseTables` — беcфильтровый, симметричный Sender'у; оба
+  сервиса ходят по одному источнику, дрейф исключён. Полное имя `db.table` в `nodes.clickhouse_table`
+  делает одно CH-соединение достаточным для любой БД команды.
+- **Читатель не деградирует мягко и это осознанно:** `chUnavailable()` ([log_reader.go](../internal/web/adapter/out/clickhouse/log_reader.go))
+  возвращает `false` для `*clickhouse.Exception` (code 47) → не `ErrLogsBackendUnavailable`, а 500 в
+  Sentry. Значит **любая** будущая рассинхронизация схемы будет видна сразу, а не замаскирована.
+  Список колонок `listCols`/`selectCols`/`previewCols` — хардкод (инвариант `domain.RequiredLogColumns`),
+  интроспекции схемы нет by design.
+- **Грабля для тестов:** `clickhouse_bodysize_backfill_test.go` передаёт таблицы литералом и потому
+  дыру не ловил — покрыт был `ensure_schema.go`, а баг жил в `app.go`. Регрессия закрыта
+  [node_ch_tables_migration_test.go](../tests/integration/node_ch_tables_migration_test.go): узлы в
+  двух командах → в списке обе таблицы, а контрольный `List(TeamID)` видит только default.
+- **Документация врала:** `DEPLOYMENT.md` §42.10 утверждал «порядок деплоя не важен, новый Web/Sender
+  сами выполняют Ensure» — для не-default команд это было неверно; поправлено врезкой.
+
 ### 4.31 §54 — фильтры Overview: почему гибрид URL+зеркало, а не только URL
 
 - **Только URL кейс пользователя не закрывает.** Кнопка «Узлы» в сайдбаре — `NavLink to="/"`
@@ -2807,3 +2916,53 @@ vitest во фронте (было 3 теста без CI-запуска → +2 
   MergeTree-таблица → LogReaderCH (`GetByID`, `Search` с фильтрами
   status/IP/Done/full-text, защита от SQL-инъекции в имени таблицы).
   Весь интеграционный набор (PG + Kafka + Redis + CH) проходит за ~200s.
+
+### 4.35 §55 — dry-run с реальным вызовом: что здесь неочевидно
+
+- **`logging_enabled=false` НЕ достаточно, чтобы «не оставить следов».** Это главная ловушка раздела.
+  Обычный `Send` помимо ClickHouse трогает: метрики §6 (`requests_total`/`duration`/`incomplete`),
+  gauge исхода §41/§52, персист статуса узла в Redis §46 и **circuit breaker §9.5/§50.4**. Погасив
+  только логи, получаешь инструмент, который при диагностике зависшего узла **красит его в Down на
+  дашборде и открывает breaker → 503 боевому трафику**. Отсюда отдельный флаг `dry_run` в
+  [sender.proto](../proto/sender/v1/sender.proto), а не переиспользование существующего.
+  Проверено на боевых данных: `vika_task` за сутки — 108 ошибок из 297, из них **58 уже
+  `circuit_breaker_open`**; пара dry-run без гейта добила бы breaker и зарезала бы те 189 запросов,
+  что ещё проходили.
+- **`__dryrun_<path>` — не паранойя, а страховка.** Гейты живут в трёх местах (usecase, gRPC-адаптер,
+  writer). Если будущая правка добавит четвёртое и забудет гейт, изолированный `node_path` уведёт
+  метрику/breaker/Redis-ключ в чужое имя, а не на боевой узел. Дёшево и спасает от целого класса
+  регрессий.
+- **Порядок деплоя Sender → Web.** Старый Sender новое поле `dry_run` проигнорирует, и побочка не
+  погасится. Web без Sender'а безопасен (реальный режим = `skipped`), Sender без Web — тем более.
+  Зафиксировано в [../DEPLOYMENT.md](../DEPLOYMENT.md).
+- **Креды сохранённого узла в браузере отсутствуют — сервер обязан их подмешать (§55.6).** Легко
+  упустить: `GET /api/nodes/{id}` выглядит как «полный конфиг», но `auth_credentials` там нет
+  никогда (только `*_credentials_set: bool`). Тест такого узла без подмешивания уходит с пустым
+  `Bearer ` → target отвечает 401 → оператор чинит несуществующую поломку авторизации. Конвенция уже
+  была в проекте (§5.5, `PUT /api/nodes/{id}`) — переиспользована, а не изобретена заново.
+- **Mock живёт в Web, а не в Sender** — сознательное отступление от буквы §7.5.1 («Sender вызывает
+  встроенный mock»): ради синтетики gRPC-хоп не нужен, и зависимость Web→Sender остаётся
+  **опциональной** (`web.sender_grpc.addr` пуст → mock работает как прежде). Не «упрощение» —
+  условие того, что dev-стенд без Sender'а не ломается.
+- **§55.9: тест обязан повторять бой, иначе он врёт.** Пока ответ был синтетическим mock-200,
+  расхождения с pipeline никого не жгли, и накопились три: не проверялся входящий метод
+  (`incoming_method=GET` «принимал» POST), не вычислялся исходящий (узел с `outgoing_method=PUT`
+  тестировался POST'ом), не клеился хвост §39 (**passthrough-узел тестировался по базовому адресу**).
+  Последнее особенно коварно: боевой `vika_task` — как раз `path_passthrough=true`, и падают у него
+  хвосты `vika.openLink`/`vika.getScriptCall`, а базовый `/task2/hs/vika` мог бы отвечать нормально →
+  dry-run показал бы «всё хорошо» при лежащем узле. Лечится не копией логики, а **экспортом**
+  `MethodMatches`/`EffectiveOutgoingMethod`/`AppendPathSuffix` из `receiver/usecase`: одна реализация
+  на бой и на тест — расхождение не сможет вернуться незаметно.
+- **`AppendPathSuffix` через `url.JoinPath` режет `../`** — хвостом нельзя выйти за пределы
+  `target_url` и обойти allowlist §23. Покрыто тестом (`TestDryRun_RealCall_PathTailCannotEscapeTarget`),
+  потому что это единственное, что отделяет поле ввода от SSRF-примитива.
+- **Отчёт маскирует `Authorization`, но тело ответа — это ответ ВНЕШНЕЙ системы.** Заголовки эха
+  маскируются (`maskAuthMap`), однако target, который эхом возвращает запрос (как `echosrv`), покажет
+  кред в теле. Замаскировать произвольное тело нельзя — неизвестно, что там секрет. Это внутри уже
+  принятого риска §55.5/§55.6: manager+ и так может направить узел на свой сервер и снять
+  `Authorization` с боевого трафика; аудит фиксирует. Важно не считать, что «отчёт безопасен by
+  design» — он безопасен ровно в объёме своих собственных шагов.
+- **Тест на breaker должен содержать контроль.** `TestDryRun_DoesNotOpenBreaker` после проверки
+  «breaker закрыт» гоняет ту же серию **без** `dry_run` и требует, чтобы breaker открылся. Без этой
+  половины тест был бы зелёным и в случае «breaker вообще не работает» — то есть не проверял бы
+  ничего.

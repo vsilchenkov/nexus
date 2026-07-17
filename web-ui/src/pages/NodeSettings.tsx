@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, Link, Navigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -16,7 +16,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 
-import { api, type Node, type CHTemplate, type HostAllowlistEntry } from "../api/client";
+import { api, isNotFound, type Node, type CHTemplate, type HostAllowlistEntry } from "../api/client";
 import { useNodeUrlBuilder } from "../lib/nodeUrl";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { parseNumInput } from "../lib/numField";
@@ -177,9 +177,21 @@ export default function NodeSettings() {
     queryFn: () => api.get<{ items: CHTemplate[] }>("/api/ch-templates"),
   });
 
+  // Форма заполняется серверными данными ОДИН раз — при первой загрузке узла.
+  // Иначе любой фоновый рефетч (refetchOnWindowFocus: ушёл в другое окно и
+  // вернулся; invalidate при смене команды) затирал несохранённые правки.
+  const filledRef = useRef(false);
   useEffect(() => {
-    if (existing.data) setForm({ ...emptyForm, ...(existing.data as unknown as Form) });
+    if (existing.data && !filledRef.current) {
+      filledRef.current = true;
+      setForm({ ...emptyForm, ...(existing.data as unknown as Form) });
+    }
   }, [existing.data]);
+
+  // Узел чужой команды (§18): переключили команду, не выходя из формы. Редирект
+  // здесь НЕ делаем — он уничтожил бы несохранённые правки; показываем баннер и
+  // блокируем сохранение (оно всё равно вернёт 404 — team-scope в handler'е).
+  const foreignTeam = isNotFound(existing.error);
 
   const save = useMutation({
     mutationFn: async () => {
@@ -278,13 +290,18 @@ export default function NodeSettings() {
           )}
           <Button
             variant="primary"
-            disabled={save.isPending || form.path.trim() === ""}
+            disabled={save.isPending || form.path.trim() === "" || foreignTeam}
             onClick={submit}
           >
             <Save className="h-4 w-4" /> {t("common.save")}
           </Button>
         </div>
       </div>
+
+      {/* §18: узел остался в другой команде — сохранить нельзя (сервер вернёт
+          404), но правки на экране сохраняем: уводить со страницы без спроса
+          нельзя. */}
+      {foreignTeam && <ErrorAlert>{t("node.foreign_team")}</ErrorAlert>}
 
       {error && !errField && <ErrorAlert>{error}</ErrorAlert>}
 
@@ -867,7 +884,12 @@ export default function NodeSettings() {
         </div>
       </div>
 
-      {showDryRun && <DryRunDialog node={form} onClose={() => setShowDryRun(false)} />}
+      {/* §55.6: при редактировании поле кредов пустое по смыслу («оставить
+          старое»), поэтому id обязателен — иначе реальный тест ушёл бы без
+          авторизации. При создании (isNew) сохранённого конфига нет. */}
+      {showDryRun && (
+        <DryRunDialog node={form} nodeId={id} onClose={() => setShowDryRun(false)} />
+      )}
       {showDelete && existing.data && (
         <DeleteNodeDialog node={existing.data} onClose={() => setShowDelete(false)} />
       )}
