@@ -128,11 +128,18 @@ export default function NodeDetail() {
   return (
     <div className="mx-auto max-w-6xl space-y-4">
       <div className="flex items-center gap-3">
-        <h1 className="font-mono text-xl font-semibold">{node.path}</h1>
-        <Chip>{node.root_method}</Chip>
-        <Pill tone={statusTone}>{t(`node.status.${node.status}`)}</Pill>
-        {isPull && rmq?.degraded && <Pill tone="err">{t("node.rmq.degraded")}</Pill>}
-        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+        {/* Заголовок+бейджи усекаются (min-w-0 truncate), группа действий закреплена
+            справа (shrink-0) — кнопки всегда в один ряд и не обрезаются даже при
+            длинном пути узла (полный путь — в tooltip и предпросмотре «Конфиг»). */}
+        <div className="flex min-w-0 items-center gap-3">
+          <h1 className="min-w-0 truncate font-mono text-xl font-semibold" title={node.path}>
+            {node.path}
+          </h1>
+          <Chip>{node.root_method}</Chip>
+          <Pill tone={statusTone}>{t(`node.status.${node.status}`)}</Pill>
+          {isPull && rmq?.degraded && <Pill tone="err">{t("node.rmq.degraded")}</Pill>}
+        </div>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
           <Button
             sm
             variant="ghost"

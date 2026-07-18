@@ -303,11 +303,16 @@ export default function NodeSettings() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-lg font-semibold">
+      <div className="flex items-center justify-between gap-3">
+        {/* Заголовок усекается, группа действий закреплена справа (shrink-0) —
+            кнопки всегда в один ряд даже при длинном пути узла. */}
+        <h1
+          className="min-w-0 truncate text-lg font-semibold"
+          title={isNew ? undefined : `${t("node.actions.edit")}: ${form.path}`}
+        >
           {isNew ? t("overview.new_node") : `${t("node.actions.edit")}: ${form.path}`}
         </h1>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <Link to={isNew ? "/" : `/nodes/${id}`}>
             <Button variant="ghost">{t("common.cancel")}</Button>
           </Link>
