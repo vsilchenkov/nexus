@@ -210,6 +210,46 @@ func (u *NodeUsecase) Get(ctx context.Context, id, teamID string) (*domain.Node,
 	return n, nil
 }
 
+// ResolveTeam возвращает команду, которой принадлежит узел, если вызывающий
+// пользователь состоит в ней (§58). Нужен для шаринга ссылки на страницу узла:
+// фронт узнаёт команду узла ДО загрузки самого узла (team-scoped Get вернул бы
+// 404 при несовпадении текущей команды сессии) и авто-переключает сессию на неё.
+//
+// Единый ErrNodeNotFound на «узла нет» И «пользователь не член команды узла» —
+// та же no-leak-семантика, что у Get: существование чужих узлов не утекает
+// (§18). Handler маппит его в 404, фронт показывает «Узел не доступен» (§58, п.3).
+func (u *NodeUsecase) ResolveTeam(ctx context.Context, userID, nodeID string) (*domain.Team, error) {
+	if u.teams == nil {
+		return nil, fmt.Errorf("resolve node team: team repo unavailable")
+	}
+	n, err := u.repo.Get(ctx, nodeID)
+	if err != nil {
+		if errors.Is(err, domain.ErrNodeNotFound) {
+			return nil, domain.ErrNodeNotFound
+		}
+		return nil, fmt.Errorf("resolve node team: get node: %w", err)
+	}
+	memberships, err := u.teams.ListUserTeams(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve node team: list memberships: %w", err)
+	}
+	for _, m := range memberships {
+		if m.Team.ID == n.TeamID {
+			team := m.Team
+			u.logger.Debug("resolve node team: matched",
+				u.logger.Str("node_id", nodeID), u.logger.Str("team_id", team.ID))
+			return &team, nil
+		}
+	}
+	// Пользователь не состоит в команде узла → узел ему недоступен (§58, п.3).
+	// Тихий отказ логируем на debug (§51.9): помогает разобрать «почему у
+	// коллеги "Узел не доступен"» без утечки в info/warn.
+	u.logger.Debug("resolve node team: user is not a member of node team",
+		u.logger.Str("node_id", nodeID), u.logger.Str("node_team_id", n.TeamID),
+		u.logger.Str("user_id", userID))
+	return nil, domain.ErrNodeNotFound
+}
+
 func (u *NodeUsecase) List(ctx context.Context, f port.ListNodesFilter) ([]*domain.Node, error) {
 	if f.TeamID == "" {
 		f.TeamID = u.defaultTeamID

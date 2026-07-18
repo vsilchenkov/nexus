@@ -88,6 +88,10 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		// Чтение узлов: scope nodes:read для API tokens.
 		authed.GET("/nodes", RequireScope("nodes:read"), h.Node.List)
 		authed.GET("/nodes/:id", RequireScope("nodes:read"), h.Node.Get)
+		// §58: команда узла для авто-переключения при открытии шаренной ссылки.
+		// Только session-cookie: API-токены однокомандные и команду не меняют.
+		// Проверяет членство пользователя — узел чужой команды скрыт (404, no-leak).
+		authed.GET("/nodes/:id/team", RequireSessionOnly(), h.Node.ResolveTeam)
 
 		// Шаблоны CH-таблиц (§19). GET доступен любой сессии (селектор
 		// при настройке узла); мутации/verify — admin-only ниже.

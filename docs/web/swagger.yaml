@@ -736,6 +736,15 @@ definitions:
     required:
     - node_id
     type: object
+  internal_web_adapter_in_http.ResolveTeamResponse:
+    properties:
+      team_id:
+        type: string
+      team_name:
+        type: string
+      team_slug:
+        type: string
+    type: object
   internal_web_adapter_in_http.RotateTokenResponse:
     properties:
       token:
@@ -4262,6 +4271,35 @@ paths:
       security:
       - CookieAuth: []
       summary: Сменить только статус узла (§35).
+      tags:
+      - nodes
+  /api/nodes/{id}/team:
+    get:
+      description: 'Возвращает команду, которой принадлежит узел, если вызывающий
+        пользователь состоит в ней. Нужен для шаринга ссылки на страницу узла: фронт
+        узнаёт команду ДО загрузки узла (team-scoped GET вернул бы 404 при несовпадении
+        текущей команды) и переключает сессию. Если узла нет или пользователь не член
+        его команды — 404 (без утечки существования).'
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ResolveTeamResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Команда узла для авто-переключения (§58).
       tags:
       - nodes
   /api/nodes/dry-run:
