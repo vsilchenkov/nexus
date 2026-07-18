@@ -63,7 +63,23 @@ type L2Reader struct {
 	mx       L2Metrics
 }
 
-var _ port.NodeReader = (*L2Reader)(nil)
+var (
+	_ port.NodeReader = (*L2Reader)(nil)
+	_ Invalidator     = (*L2Reader)(nil)
+)
+
+// Invalidate выселяет узел из L1 (LRU) и делегирует инвалидацию внутрь (Redis
+// DEL у Reader), чтобы следующий Get перечитал свежий конфиг из PG (§57).
+func (r *L2Reader) Invalidate(ctx context.Context, teamSlug, path string) error {
+	if teamSlug == "" {
+		teamSlug = domain.DefaultTeamSlug
+	}
+	r.cache.Delete(teamSlug + "/" + path)
+	if inv, ok := r.inner.(Invalidator); ok {
+		return inv.Invalidate(ctx, teamSlug, path)
+	}
+	return nil
+}
 
 // NewL2 оборачивает inner-reader L2-кешем. Если cfg.Enabled=false — возвращает
 // inner без изменений (caller продолжает работать через тот же интерфейс).

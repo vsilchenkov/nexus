@@ -3887,3 +3887,27 @@ CH-адаптера, и in-memory зеркалом live-tail (`matchLogFilter`):
   `../` — хвостом не обойти allowlist §23.
 
 Подробности — [sections/55-dry-run-real-call.md](sections/55-dry-run-real-call.md).
+
+## 57. Гарантированная инвалидация конфига узла в Receiver
+
+Закрывает окно рассинхрона конфигурации узла между Web (запись) и Receiver
+(чтение). В норме write-through в Redis из `NodeUsecase.Update` действует
+sub-second, но при провале резолва team-slug (`teams.GetByID` упал) он молча
+становится no-op → старый конфиг (в т.ч. авторизация) живёт до TTL (до 300 с
+prod); а L1 in-memory кеш Receiver'а (`L2Reader`) Web инвалидировать не мог.
+
+- **57.2 Выделенный pub/sub канал** `nexus:nodes:invalidate`
+  ([platform/nodeevents](../internal/platform/nodeevents/nodeevents.go)): событие
+  несёт `team_id`+`path`(+`old_path`). Web публикует после commit в Create/Update/
+  Delete/Move/SetStatus (best-effort, write-through остаётся быстрым путём);
+  Receiver подписан → резолвит `team_id`→slug → выселяет узел из L1
+  (`L2Reader.Invalidate`) и Redis (`DEL node:<slug>:<path>`) → следующий запрос
+  читает свежий конфиг из PG.
+- **57.3 По `team_id`, а не slug:** провал резолва slug на Web — тот же сбой, что
+  ломает write-through; slug резолвит Receiver, инвалидация от Web-резолва не
+  зависит.
+- **57.4** Инвалидация (`DEL`), а не перезапись — следующий Get идёт в PG
+  (авторитет). Best-effort с обеих сторон: потеря события → окно = TTL (деградация,
+  не поломка). При переименовании выселяется и `old_path`.
+
+Подробности — [sections/57-node-cache-invalidation.md](sections/57-node-cache-invalidation.md).

@@ -34,6 +34,7 @@ import (
 	"nexus/internal/platform/i18n"
 	"nexus/internal/platform/logging"
 	"nexus/internal/platform/metrics"
+	"nexus/internal/platform/nodeevents"
 	otelpf "nexus/internal/platform/otel"
 	pgpf "nexus/internal/platform/pg"
 	"nexus/internal/platform/queuecancel"
@@ -216,6 +217,9 @@ func (a *App) Start(ctx context.Context) error {
 		selfIngressHosts,
 		a.logger,
 	)
+	// §57: гарантированная инвалидация конфига узла в Receiver — Web публикует
+	// событие при изменении узла, Receiver выселяет его из кешей.
+	nodeUC.SetInvalidationPublisher(nodeevents.NewPublisher(a.redis))
 	// §27.8: health-ридер Puller-воркеров из общего Redis-стора (rmq:health).
 	rmqHealthReader := rediscache.NewRMQHealthReaderRedis(a.redis)
 	nodeHandler := httpadapter.NewNodeHandler(nodeUC, rmqHealthReader, a.logger)

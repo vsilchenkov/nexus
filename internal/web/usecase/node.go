@@ -51,7 +51,38 @@ type NodeUsecase struct {
 	// selfIngressHosts — список своих authority для self-reference валидации
 	// target_url (§32.2). Пустой → проверка отключена.
 	selfIngressHosts []string
-	logger           logging.Logger
+	// events — публикатор событий инвалидации узла (§57). Опционален (nil =
+	// no-op): инъекция сеттером, т.к. позиционный параметр затронул бы ~16
+	// вызовов NewNodeUsecase (интеграционные тесты).
+	events nodeInvalidationPublisher
+	logger logging.Logger
+}
+
+// nodeInvalidationPublisher публикует событие «конфиг узла изменился», чтобы
+// Receiver выселил его из кешей (§57). Определён на стороне консьюмера (ISP).
+type nodeInvalidationPublisher interface {
+	PublishNodeChange(ctx context.Context, teamID, path, oldPath string) error
+}
+
+// SetInvalidationPublisher инъектирует publisher событий инвалидации (§57).
+// Вызывается один раз в main-wiring; nil оставляет публикацию no-op.
+func (u *NodeUsecase) SetInvalidationPublisher(p nodeInvalidationPublisher) {
+	u.events = p
+}
+
+// publishInvalidate — best-effort уведомление Receiver'а об изменении узла (§57).
+// Ошибка логируется, но не эскалируется: узел уже сохранён, TTL кеша — страховка.
+func (u *NodeUsecase) publishInvalidate(ctx context.Context, teamID, path, oldPath string) {
+	if u.events == nil || path == "" {
+		return
+	}
+	if err := u.events.PublishNodeChange(ctx, teamID, path, oldPath); err != nil {
+		u.logger.Warn("node invalidation publish failed",
+			u.logger.Str("team_id", teamID), u.logger.Str("path", path), u.logger.Err(err))
+		return
+	}
+	u.logger.Debug("node invalidation published",
+		u.logger.Str("team_id", teamID), u.logger.Str("path", path), u.logger.Str("old_path", oldPath))
 }
 
 func NewNodeUsecase(
@@ -268,6 +299,7 @@ func (u *NodeUsecase) Create(ctx context.Context, actor Actor, n *domain.Node) e
 	}
 
 	u.cacheSet(ctx, n, "create")
+	u.publishInvalidate(ctx, n.TeamID, n.Path, "")
 	return nil
 }
 
@@ -403,6 +435,13 @@ func (u *NodeUsecase) Update(ctx context.Context, actor Actor, n *domain.Node, t
 		u.cacheInvalidate(ctx, old.TeamID, old.Path, "update (old path)")
 	}
 	u.cacheSet(ctx, n, "update")
+	// §57: гарантированная инвалидация в Receiver. При переименовании передаём и
+	// старый путь — иначе старый ключ ещё TTL указывал бы на переехавший узел.
+	oldPath := ""
+	if old.Path != n.Path {
+		oldPath = old.Path
+	}
+	u.publishInvalidate(ctx, n.TeamID, n.Path, oldPath)
 	return nil
 }
 
@@ -443,6 +482,7 @@ func (u *NodeUsecase) SetStatus(ctx context.Context, actor Actor, id, teamID str
 		u.audit.Log(ctx, actor, domain.ActionNodeUpdate, "node", id, diff)
 	}
 	u.cacheSet(ctx, &updated, "status change")
+	u.publishInvalidate(ctx, updated.TeamID, updated.Path, "")
 	return nil
 }
 
@@ -479,6 +519,7 @@ func (u *NodeUsecase) Delete(ctx context.Context, actor Actor, id, teamID string
 	}
 
 	u.cacheInvalidate(ctx, n.TeamID, n.Path, "delete")
+	u.publishInvalidate(ctx, n.TeamID, n.Path, "")
 	return nil
 }
 
@@ -561,6 +602,10 @@ func (u *NodeUsecase) Move(ctx context.Context, actor Actor, nodeID, currentTeam
 	// старому пути ещё TTL шёл бы на уехавший узел. Ключ целевой команды
 	// наполнит сам Receiver при первом запросе (write-back).
 	u.cacheInvalidate(ctx, n.TeamID, n.Path, "move")
+	// §57: путь не меняется, меняется команда — выселяем и исходную (n.TeamID),
+	// и целевую (moved.TeamID) команду; Receiver наполнит целевую при первом запросе.
+	u.publishInvalidate(ctx, n.TeamID, n.Path, "")
+	u.publishInvalidate(ctx, moved.TeamID, n.Path, "")
 	return nil
 }
 
