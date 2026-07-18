@@ -42,7 +42,9 @@ const (
 
 	ActionNodeReplay = "node.replay"
 	ActionNodeDryRun = "node.dry_run"
-	ActionNodeMove   = "node.move"
+	// §56: применение ALTER'ов синхронизации схемы CH к таблице узла.
+	ActionNodeCHSchemaSync = "node.ch_schema_sync"
+	ActionNodeMove         = "node.move"
 	// §53: клонирование узла (отдельное от node.create действие — в журнале
 	// видна провенансная связь source_node_id → новый узел).
 	ActionNodeCopy = "node.copy"

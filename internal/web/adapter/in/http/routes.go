@@ -19,6 +19,7 @@ type Handlers struct {
 	AppSettings   *AppSettingsHandler
 	Orphan        *OrphanHandler
 	CHTemplate    *CHTemplateHandler
+	CHSchema      *CHSchemaHandler
 	HostAllowlist *HostAllowlistHandler
 	HeaderCatalog *HeaderCatalogHandler
 	RequestField  *RequestFieldCatalogHandler
@@ -176,6 +177,12 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		authedManager.DELETE("/nodes/:id", h.Node.Delete)
 		// §7.5.1: dry-run без сохранения конфига.
 		authedManager.POST("/nodes/dry-run", h.DryRun.Run)
+		// §56: синхронизация схемы CH-таблицы узла (ALTER). Plan — предпросмотр
+		// (read-only), Apply — исполнение. manager+ (как и правка узла).
+		if h.CHSchema != nil {
+			authedManager.POST("/nodes/:id/ch-schema/plan", RequireSessionOnly(), h.CHSchema.Plan)
+			authedManager.POST("/nodes/:id/ch-schema/apply", RequireSessionOnly(), h.CHSchema.Apply)
+		}
 		// §27.8: проверка подключения к RabbitMQ (только session, manager+,
 		// rate-limit внутри handler'а). Регистрируется только если включён.
 		if h.RMQTest != nil {

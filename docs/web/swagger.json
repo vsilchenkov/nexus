@@ -2582,6 +2582,98 @@
                 }
             }
         },
+        "/api/nodes/{id}/ch-schema/apply": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Исполняет применимые ALTER'ы по порядку (CODEC / ADD·DROP INDEX / MODIFY·REMOVE TTL). Неприменимое возвращается, но не блокирует остальное. Пишет аудит node.ch_schema_sync. Операции ClickHouse могут быть тяжёлыми/частично необратимыми.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "nodes"
+                ],
+                "summary": "Применить синхронизацию схемы CH-таблицы узла (§56).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nexus_internal_web_usecase.SchemaSyncResult"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "ClickHouse недоступен",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{id}/ch-schema/plan": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Read-only: читает схему существующей таблицы из ClickHouse, диффит против шаблона узла и возвращает ALTER-операторы + список неприменимого (движок/ORDER BY/PARTITION BY — нужна пересоздача). ClickHouse не меняет.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "nodes"
+                ],
+                "summary": "Предпросмотр синхронизации схемы CH-таблицы узла (§56).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nexus_internal_web_usecase.SchemaSyncResult"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "ClickHouse недоступен",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/{id}/copy": {
             "post": {
                 "security": [
@@ -7316,6 +7408,41 @@
                 }
             }
         },
+        "nexus_internal_domain.SchemaSyncPlan": {
+            "type": "object",
+            "properties": {
+                "rejections": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/nexus_internal_domain.SchemaSyncRejection"
+                    }
+                },
+                "statements": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "nexus_internal_domain.SchemaSyncRejection": {
+            "type": "object",
+            "properties": {
+                "current": {
+                    "type": "string"
+                },
+                "desired": {
+                    "type": "string"
+                },
+                "kind": {
+                    "description": "engine | order_by | partition_by",
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                }
+            }
+        },
         "nexus_internal_domain.SecuritySettings": {
             "type": "object",
             "properties": {
@@ -7507,6 +7634,24 @@
                 },
                 "status_code": {
                     "type": "integer"
+                }
+            }
+        },
+        "nexus_internal_web_usecase.SchemaSyncResult": {
+            "type": "object",
+            "properties": {
+                "applied": {
+                    "description": "Applied — сколько ALTER'ов реально исполнено (только для Apply).",
+                    "type": "integer"
+                },
+                "plan": {
+                    "$ref": "#/definitions/nexus_internal_domain.SchemaSyncPlan"
+                },
+                "table": {
+                    "type": "string"
+                },
+                "table_missing": {
+                    "type": "boolean"
                 }
             }
         },

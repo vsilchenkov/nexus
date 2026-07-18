@@ -314,6 +314,16 @@ func (a *App) Start(ctx context.Context) error {
 	chTemplateUC := usecase.NewCHTemplateUsecase(chTemplateRepo, teamProvisioner, teamRepo, auditUC, a.logger)
 	chTemplateHandler := httpadapter.NewCHTemplateHandler(chTemplateUC, a.logger)
 
+	// §56: синхронизация схемы CH-таблицы узла через ALTER. Инспектор nil при
+	// отсутствии ClickHouse → usecase вернёт ErrCHUnavailable (503). Handler
+	// создаём всегда: endpoint деградирует, а не исчезает.
+	var chSchemaInspector webport.CHSchemaInspector
+	if a.chMgr != nil {
+		chSchemaInspector = chreader.NewSchemaInspector(a.chMgr, a.logger)
+	}
+	chSchemaUC := usecase.NewCHSchemaSyncUsecase(nodeUC, chTemplateRepo, chSchemaInspector, auditUC, a.logger)
+	chSchemaHandler := httpadapter.NewCHSchemaHandler(chSchemaUC, a.logger)
+
 	// Каталог разрешённых хостов (§23). Не зависит от ClickHouse — создаётся
 	// всегда. Привязка к узлу пересобирает снимок nodes.url_allowed_hosts и
 	// write-through кеш (тот же TTL, что у NodeUsecase).
@@ -524,6 +534,7 @@ func (a *App) Start(ctx context.Context) error {
 		AppSettings:   appSettingsHandler,
 		Orphan:        orphanHandler,
 		CHTemplate:    chTemplateHandler,
+		CHSchema:      chSchemaHandler,
 		HostAllowlist: hostAllowlistHandler,
 		HeaderCatalog: headerCatalogHandler,
 		RequestField:  requestFieldHandler,
