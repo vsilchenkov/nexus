@@ -3900,6 +3900,34 @@ CH-адаптера, и in-memory зеркалом live-tail (`matchLogFilter`):
 
 Подробности — [sections/55-dry-run-real-call.md](sections/55-dry-run-real-call.md).
 
+## 56. Синхронизация схемы ClickHouse существующей таблицы (ALTER)
+
+Закрывает ловушку §19/C.1: смена шаблона или CH-настроек узла **не применялась к
+уже существующей таблице** — таблица создаётся один раз (`CREATE TABLE IF NOT EXISTS`,
+no-op по существующей), синхронизации схемы с шаблоном не было. §56 применяет её через
+`ALTER`.
+
+- **56.2 Модель — предпросмотр + явное применение** (не побочка сохранения: ALTER'ы CH
+  тяжёлые и частично необратимы). `POST /api/nodes/{id}/ch-schema/plan` (read-only) читает
+  схему таблицы из ClickHouse, диффит против целевого шаблона и возвращает список
+  ALTER-операторов + список неприменимого; `apply` исполняет по подтверждению (аудит
+  `node.ch_schema_sync`, manager+). Диффит чистый планировщик `PlanSchemaSync`
+  ([internal/domain/ch_schema_sync.go](../internal/domain/ch_schema_sync.go), юнит-тестируемо).
+- **56.3 Применимо ALTER'ом:** CODEC обязательной колонки (`MODIFY COLUMN … [CODEC(…)]`),
+  data-skipping индексы (`ADD`/`DROP INDEX`, изменение = DROP+ADD), native-TTL
+  (`MODIFY`/`REMOVE TTL`). **Неприменимо** (→ rejection, нужна пересоздача таблицы): движок,
+  `ORDER BY`, `PARTITION BY`. Порядок: CODEC → DROP INDEX → ADD INDEX → TTL.
+- **56.4 Интроспекция** — `system.columns.compression_codec`,
+  `system.data_skipping_indices`, `system.tables`. Пустые поля снимка = «неизвестно», не
+  дают rejection.
+- **56.5 Неочевидности.** Нормализация CODEC best-effort (`ZSTD` vs `ZSTD(1)` — возможен
+  идемпотентный «ложный» MODIFY, DDL виден в предпросмотре). `ADD INDEX` покрывает только
+  новые парты — историю оператор материализует вручную (`MATERIALIZE INDEX`). Retention
+  остаётся двухконтурным: native-TTL шаблона и partition-drop housekeeping'а
+  (`clickhouse_retention_days`, §4.3) — разные механизмы.
+
+Подробности — [sections/56-ch-schema-sync.md](sections/56-ch-schema-sync.md).
+
 ## 57. Гарантированная инвалидация конфига узла в Receiver
 
 Закрывает окно рассинхрона конфигурации узла между Web (запись) и Receiver

@@ -22,6 +22,19 @@
     "ttl_days_required": "retention days must be greater than 0 when TTL is enabled",
     "invalid_table_name": "table name must be in db.table format"
   },
+  "ch_sync": {
+    "title": "ClickHouse schema sync",
+    "subtitle": "apply template settings to the existing table via ALTER",
+    "button": "Sync schema",
+    "loading": "Reading table schema…",
+    "up_to_date": "The table schema already matches the template.",
+    "table_missing": "The table does not exist yet (no logs written) — nothing to sync. It will be created on first write from the current template.",
+    "statements_head": "Will run",
+    "rejections_head": "Cannot apply via ALTER (table recreation required)",
+    "apply": "Apply",
+    "apply_warning": "ClickHouse ALTERs may be heavy and partially irreversible",
+    "applied": "Applied statements: {{n}}"
+  },
   "auth": {
     "login": "Sign in to the panel",
     "login_button": "Sign in",
