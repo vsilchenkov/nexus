@@ -2892,7 +2892,7 @@ vitest во фронте (было 3 теста без CI-запуска → +2 
   `ErrNodeNotFound` НЕ кешируется. Метрики `nexus_l2_cache_hits_total{kind}`,
   `_misses_total`, `_evictions_total`, `_size`. Unit-тесты на детерминированных
   `Clock` (без real sleep).
-- 7.5 Grafana dashboard + Prometheus alert rules:
+- 7.5 Grafana dashboards + Prometheus alert rules:
   · `deploy/grafana/nexus.json` — 10 панелей: RPS, error rate (%),
   request duration p50/p95/p99, Kafka lag, CH buffer per table, CH
   errors/dropped/fallback, L2 cache hit ratio (fresh vs stale), L2
@@ -2904,6 +2904,33 @@ vitest во фронте (было 3 теста без CI-запуска → +2 
   `deploy/prometheus.yml`, том смонтирован в compose (`prometheus.alerts.yml`).
   · `deploy/grafana/README.md` — инструкция импорта (UI + provisioning).
   Валидация: `promtool check config/rules` — оба файла приняты.
+- 7.6 Per-node мониторинг + фикс дашборда (расширение 7.5):
+  · **Фикс `nexus.json`.** Панели «Go runtime: heap/goroutines» фильтровались
+  по `service=~"$service"`, но у `go_*`/`process_*` метрик нет const-label
+  `service` (он навешивается только на `nexus_*` в
+  [metrics.go](../internal/platform/metrics/metrics.go), `ConstLabels`) — панели
+  показывали «No Data». Заменено на `job=~"nexus-.*"` (label `job` из scrape-конфига).
+  Верифицировано на TSDB стенда: на одном timestamp новый expr = 24 серии,
+  старый = 0. Панель latency p50/p95/p99 переведена на разрез `sum by (service, le)`.
+  · **Новый `deploy/grafana/nexus-nodes.json`** (uid `nexus-nodes`, 13 панелей):
+  счётчики Nodes DOWN/DEGRADED/OK + таблица «Problem nodes» (мгновенно видно
+  проблемные узлы по `nexus_node_last_request_error` 0/1/2), сводная таблица всех
+  узлов за период (requests/errors/error%/p95/status, join через `joinByField` по
+  `node`, подсветка порогами), per-node timeseries (RPS, ошибки top-15, p95),
+  state-timeline истории статуса, секция RabbitMQAsync pull-узлов (conn state,
+  queue depth, pulled by status, degraded). Исходы доставки берутся со стороны
+  **Sender** (`service="sender"`). Переменная `node`.
+  · **Новый `deploy/grafana/nexus-kafka.json`** (uid `nexus-kafka`, 9 панелей):
+  consumer lag по group/topic/partition (порог 10k), in-flight, produce p95 by
+  topic, конвейер produced→delivered→failed (async восстанавливается из
+  `nexus_requests_total{method="requestAsync"}`: produced=receiver,
+  delivered=sender), ошибки async по узлам, cancelled, DLQ reprocess outcomes +
+  p95, loop detections. CH-панели намеренно не дублируются (живут в Overview).
+  · **Новая группа алертов `nexus.nodes`** (8 правил) в `prometheus.alerts.yml`:
+  NexusNodeDown/Degraded/HighErrorRate (per-node по sender-метрикам),
+  RMQNodeDisconnected/PullNodeDegraded/RMQQueueBacklog (pull-узлы),
+  DLQReprocessFailing/MessagesLost. `promtool check rules` → SUCCESS 17 rules.
+  Все per-node метрики уже существовали — Go-код не менялся, только deploy-артефакты.
 - 7.4 CI pipeline в [.gitlab-ci.yml](../.gitlab-ci.yml) — параллельные jobs
   `go-test` (race -short), `go-build` (`go build ./...`), `go-lint`
   (`golangci-lint v2.12`), `swagger-drift` (regen `swag init` → `git diff`),

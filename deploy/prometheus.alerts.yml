@@ -119,3 +119,109 @@ groups:
         annotations:
           summary: "Receiver is serving stale node configs from L2"
           description: "Redis + PostgreSQL are unavailable; Receiver falls back to expired LRU entries."
+
+  - name: nexus.nodes
+    interval: 30s
+    rules:
+
+      # ----- Per-node delivery health (сторона Sender) -----
+
+      - alert: NexusNodeDown
+        # Последний исходящий запрос к узлу — transport error или 5xx (gauge=2) дольше 5 минут.
+        # for=5m: gauge отражает только ПОСЛЕДНИЙ запрос, одиночный сбой при низком трафике не должен будить.
+        expr: max by (node) (nexus_node_last_request_error) == 2
+        for: 5m
+        labels:
+          severity: critical
+          service: sender
+        annotations:
+          summary: "Node {{ $labels.node }} is DOWN (transport error or 5xx)"
+          description: "Sender's last outbound request to the node keeps failing with a transport error or 5xx for 5 minutes."
+
+      - alert: NexusNodeDegraded
+        # Последний запрос — non-2xx < 500 (gauge=1): узел жив, но отвечает ошибками (auth/данные/конфиг upstream).
+        expr: max by (node) (nexus_node_last_request_error) == 1
+        for: 15m
+        labels:
+          severity: warning
+          service: sender
+        annotations:
+          summary: "Node {{ $labels.node }} is degraded (non-2xx responses)"
+          description: "Node answers with 3xx/4xx for 15 minutes; upstream misconfiguration or auth issue is likely."
+
+      - alert: NexusNodeHighErrorRate
+        # >20% неуспешных доставок на узел за 10 минут при заметном трафике (>0.05 rps — guard от шума).
+        expr: |
+          (
+            sum by (node) (rate(nexus_request_incomplete_total{service="sender"}[10m]))
+            /
+            sum by (node) (rate(nexus_requests_total{service="sender"}[10m]))
+          ) > 0.2
+          and
+          sum by (node) (rate(nexus_requests_total{service="sender"}[10m])) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: sender
+        annotations:
+          summary: "Node {{ $labels.node }} error rate > 20% for 10m"
+          description: "More than 20% of outbound requests to the node are non-2xx (traffic guard: >0.05 rps)."
+
+      # ----- RabbitMQ pull-узлы (сторона Receiver) -----
+
+      - alert: NexusRMQNodeDisconnected
+        # Соединение с RMQ узла в состоянии down (0) 5 минут — pull-сообщения не идут.
+        expr: max by (node) (nexus_rmq_connection_state) == 0
+        for: 5m
+        labels:
+          severity: critical
+          service: receiver
+        annotations:
+          summary: "RMQ connection for node {{ $labels.node }} is down"
+          description: "Receiver cannot connect to the node's RabbitMQ for 5 minutes; pulled messages are not flowing."
+
+      - alert: NexusPullNodeDegraded
+        # Receiver пометил pull-узел деградировавшим (nexus_node_degraded=1).
+        expr: max by (node, reason) (nexus_node_degraded) == 1
+        for: 10m
+        labels:
+          severity: warning
+          service: receiver
+        annotations:
+          summary: "Pull node {{ $labels.node }} degraded ({{ $labels.reason }})"
+          description: "RabbitMQAsync pull node is marked degraded for 10 minutes."
+
+      - alert: NexusRMQQueueBacklog
+        # Очередь узла копится (>10k) — consumer не успевает или стоит.
+        expr: max by (node) (nexus_rmq_queue_depth) > 10000
+        for: 10m
+        labels:
+          severity: warning
+          service: receiver
+        annotations:
+          summary: "RMQ queue for node {{ $labels.node }} > 10k messages"
+          description: "Queue depth is above 10k for 10 minutes; check consumer count and pull errors."
+
+      # ----- DLQ reprocess (сторона Sender) -----
+
+      - alert: NexusDLQReprocessFailing
+        # Повторная доставка из DLQ стабильно фейлится 10 минут.
+        expr: sum by (node) (increase(nexus_dlq_reprocess_total{result="failed"}[10m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+          service: sender
+        annotations:
+          summary: "DLQ reprocess keeps failing for node {{ $labels.node }}"
+          description: "DLQ messages for the node fail redelivery for 10+ minutes; they will eventually hit TTL."
+
+      - alert: NexusDLQMessagesLost
+        # ttl_dropped/dropped = сообщение потеряно навсегда — потеря данных по узлу.
+        expr: sum by (node, result) (increase(nexus_dlq_reprocess_total{result=~"ttl_dropped|dropped"}[10m])) > 0
+        for: 0m
+        labels:
+          severity: critical
+          service: sender
+        annotations:
+          summary: "DLQ messages dropped for node {{ $labels.node }} ({{ $labels.result }})"
+          description: "Async messages were permanently dropped from the DLQ; data loss for this node."

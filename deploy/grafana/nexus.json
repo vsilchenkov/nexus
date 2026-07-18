@@ -108,18 +108,18 @@
       "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
       "targets": [
         {
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(nexus_request_duration_seconds_bucket{service=~\"$service\",method=\"request\"}[5m])))",
-          "legendFormat": "p50",
+          "expr": "histogram_quantile(0.5, sum by (service, le) (rate(nexus_request_duration_seconds_bucket{service=~\"$service\",method=\"request\"}[5m])))",
+          "legendFormat": "{{service}} p50",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(nexus_request_duration_seconds_bucket{service=~\"$service\",method=\"request\"}[5m])))",
-          "legendFormat": "p95",
+          "expr": "histogram_quantile(0.95, sum by (service, le) (rate(nexus_request_duration_seconds_bucket{service=~\"$service\",method=\"request\"}[5m])))",
+          "legendFormat": "{{service}} p95",
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(nexus_request_duration_seconds_bucket{service=~\"$service\",method=\"request\"}[5m])))",
-          "legendFormat": "p99",
+          "expr": "histogram_quantile(0.99, sum by (service, le) (rate(nexus_request_duration_seconds_bucket{service=~\"$service\",method=\"request\"}[5m])))",
+          "legendFormat": "{{service}} p99",
           "refId": "C"
         }
       ]
@@ -228,8 +228,8 @@
       "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
       "targets": [
         {
-          "expr": "go_memstats_heap_alloc_bytes{service=~\"$service\"}",
-          "legendFormat": "{{service}}",
+          "expr": "go_memstats_heap_alloc_bytes{job=~\"nexus-.*\"}",
+          "legendFormat": "{{job}}",
           "refId": "A"
         }
       ]
@@ -243,8 +243,8 @@
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
       "targets": [
         {
-          "expr": "go_goroutines{service=~\"$service\"}",
-          "legendFormat": "{{service}}",
+          "expr": "go_goroutines{job=~\"nexus-.*\"}",
+          "legendFormat": "{{job}}",
           "refId": "A"
         }
       ]
