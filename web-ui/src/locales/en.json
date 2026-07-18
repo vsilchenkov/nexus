@@ -1089,7 +1089,8 @@
     "delete": "Delete",
     "copy": "Copy",
     "copied": "Copied",
-    "apply": "Apply"
+    "apply": "Apply",
+    "no_permission": "No permission"
   },
   "error_boundary": {
     "title": "Something went wrong",

@@ -384,6 +384,7 @@ export function QueueTab({
                     open={failedExpanded === r.id}
                     onToggle={() => setFailedExpanded(failedExpanded === r.id ? null : r.id)}
                     onReplay={() => setReplayId(r.id)}
+                    canReplay={isManager}
                   />
                 ))}
               </tbody>
@@ -519,12 +520,14 @@ function FailedRow({
   open,
   onToggle,
   onReplay,
+  canReplay,
 }: {
   r: LogRow;
   nodeId: string;
   open: boolean;
   onToggle: () => void;
   onReplay: () => void;
+  canReplay: boolean;
 }) {
   const { t } = useTranslation();
   return (
@@ -546,11 +549,16 @@ function FailedRow({
           {r.reason}
         </td>
         <td className="px-2 py-2">
+          {/* §7.4.1/§58: replay — manager+. viewer видит кнопку disabled. */}
           <button
             type="button"
+            disabled={!canReplay}
             onClick={onReplay}
-            className="text-fg-muted hover:text-accent"
-            title={t("queue.failed.replay")}
+            className={cn(
+              "text-fg-muted",
+              canReplay ? "hover:text-accent" : "cursor-not-allowed opacity-40",
+            )}
+            title={canReplay ? t("queue.failed.replay") : t("common.no_permission")}
           >
             <RotateCcw className="h-3.5 w-3.5" />
           </button>
