@@ -736,6 +736,11 @@ definitions:
     required:
     - node_id
     type: object
+  internal_web_adapter_in_http.RotateTokenResponse:
+    properties:
+      token:
+        type: string
+    type: object
   internal_web_adapter_in_http.SwitchTeamResponse:
     properties:
       current_team_id:
@@ -4824,6 +4829,34 @@ paths:
       security:
       - CookieAuth: []
       summary: Отозвать API-токен.
+      tags:
+      - tokens
+  /api/tokens/{id}/rotate:
+    post:
+      description: Генерирует новое значение токена, сохраняя имя, scopes, команду
+        и срок; старое значение сразу теряет силу. Новая plain-строка возвращается
+        ровно один раз. Ротировать можно только активный токен (не отозванный и не
+        истёкший) — иначе 404, для него нужно создать новый.
+      parameters:
+      - description: token id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: token (plain, один раз)
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.RotateTokenResponse'
+        "404":
+          description: токен не найден или не активен
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Перевыпустить API-токен (rotate).
       tags:
       - tokens
   /api/users:

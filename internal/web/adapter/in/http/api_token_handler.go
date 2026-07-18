@@ -147,6 +147,31 @@ func (h *APITokenHandler) Revoke(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// Rotate godoc
+// @Summary  Перевыпустить API-токен (rotate).
+// @Description  Генерирует новое значение токена, сохраняя имя, scopes, команду и срок; старое значение сразу теряет силу. Новая plain-строка возвращается ровно один раз. Ротировать можно только активный токен (не отозванный и не истёкший) — иначе 404, для него нужно создать новый.
+// @Tags     tokens
+// @Produce  json
+// @Param    id   path  string  true  "token id"
+// @Success  200  {object}  RotateTokenResponse  "token (plain, один раз)"
+// @Failure  404  {object}  ErrorResponse  "токен не найден или не активен"
+// @Security CookieAuth
+// @Router   /api/tokens/{id}/rotate [post]
+func (h *APITokenHandler) Rotate(c *gin.Context) {
+	s, _ := sessionFromCtx(c)
+	plain, err := h.uc.Rotate(c.Request.Context(), userActor(c), c.Param("id"), s.UserID)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "token not found or not active"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	// §7.14: новое значение показываем ровно один раз.
+	c.JSON(http.StatusOK, gin.H{"token": plain})
+}
+
 // Delete godoc
 // @Summary  Удалить API-токен.
 // @Description  Удаление допустимо, только если токен уже revoked. Иначе — 404 «not deletable yet».

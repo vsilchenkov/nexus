@@ -771,6 +771,8 @@
       "status_revoked": "revoked",
       "confirm_delete": "Delete this token?",
       "revoke": "Revoke",
+      "rotate": "Rotate",
+      "confirm_rotate": "Rotate this token? The current value stops working immediately and the new one is shown only once — update it in all integrations.",
       "delete": "Delete",
       "empty": "No tokens yet"
     },

@@ -81,6 +81,7 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		authed.GET("/tokens", h.Token.List)
 		authed.POST("/tokens", h.Token.Create)
 		authed.POST("/tokens/:id/revoke", h.Token.Revoke)
+		authed.POST("/tokens/:id/rotate", h.Token.Rotate)
 		authed.DELETE("/tokens/:id", h.Token.Delete)
 
 		// Чтение узлов: scope nodes:read для API tokens.

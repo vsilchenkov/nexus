@@ -43,7 +43,9 @@ export function ApiTokensPanel() {
     teams.data?.items.find((x) => x.id === id)?.name ?? id.slice(0, 8);
 
   const [showNew, setShowNew] = useState(false);
-  const [created, setCreated] = useState<CreateResp | null>(null);
+  // Значение токена показывается ровно один раз — и при создании, и при
+  // перевыпуске (rotate). Храним только строку: баннеру больше ничего не нужно.
+  const [createdToken, setCreatedToken] = useState<string | null>(null);
 
   const [name, setName] = useState("");
   const [scopes, setScopes] = useState<string[]>(["logs:read"]);
@@ -70,7 +72,7 @@ export function ApiTokensPanel() {
         expires_in_days: days === "" ? null : days,
       }),
     onSuccess: (r) => {
-      setCreated(r);
+      setCreatedToken(r.token);
       qc.invalidateQueries({ queryKey: ["tokens"] });
       setShowNew(false);
       setName("");
@@ -80,6 +82,16 @@ export function ApiTokensPanel() {
   const revoke = useMutation({
     mutationFn: (id: string) => api.post(`/api/tokens/${id}/revoke`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["tokens"] }),
+  });
+
+  // Rotate — перевыпуск значения токена: старое сразу теряет силу, новое
+  // показывается один раз в том же баннере, что и при создании (copy_now).
+  const rotate = useMutation({
+    mutationFn: (id: string) => api.post<{ token: string }>(`/api/tokens/${id}/rotate`),
+    onSuccess: (r) => {
+      setCreatedToken(r.token);
+      qc.invalidateQueries({ queryKey: ["tokens"] });
+    },
   });
 
   const del = useMutation({
@@ -99,13 +111,13 @@ export function ApiTokensPanel() {
         </button>
       </header>
 
-      {created && (
+      {createdToken && (
         <div className="bg-warn/10 border border-warn/40 text-warn p-3 rounded-md text-sm space-y-2">
           <div className="font-medium">{t("settings.tokens.copy_now")}</div>
           <code className="block bg-bg-muted px-2 py-1 rounded font-mono select-all">
-            {created.token}
+            {createdToken}
           </code>
-          <button onClick={() => setCreated(null)} className="underline text-xs">
+          <button onClick={() => setCreatedToken(null)} className="underline text-xs">
             {t("settings.tokens.close")}
           </button>
         </div>
@@ -223,6 +235,28 @@ export function ApiTokensPanel() {
                   )}
                 </td>
                 <td className="px-3 py-2 text-right space-x-2">
+                  {/* Rotate — только для активного токена (не отозван и не
+                      просрочен): перевыпуск мёртвого токена бессмыслен, для него
+                      создают новый. Значение показывается один раз (баннер выше). */}
+                  {!tk.revoked_at &&
+                    !(tk.expires_at && new Date(tk.expires_at) < new Date()) && (
+                      <button
+                        onClick={async () => {
+                          if (
+                            await confirm({
+                              title: t("settings.tokens.rotate"),
+                              message: t("settings.tokens.confirm_rotate"),
+                              confirmLabel: t("settings.tokens.rotate"),
+                              danger: true,
+                            })
+                          )
+                            rotate.mutate(tk.id);
+                        }}
+                        className="text-accent hover:underline text-xs"
+                      >
+                        {t("settings.tokens.rotate")}
+                      </button>
+                    )}
                   {!tk.revoked_at && (
                     <button
                       onClick={() => revoke.mutate(tk.id)}
