@@ -18,6 +18,7 @@ import { msToDatetimeLocal } from "../lib/format";
 import { validateNodePath } from "../lib/nodeValidation";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { useEnsureNodeTeam } from "../lib/nodeShare";
+import { ShareNodeButton } from "../components/node/ShareNodeButton";
 import { DryRunDialog } from "../components/DryRunDialog";
 import { LogsTab, type LogsInitialFilter } from "../components/node/LogsTab";
 import { OverviewTab } from "../components/node/OverviewTab";
@@ -142,6 +143,8 @@ export default function NodeDetail() {
             <RefreshCw className={cn("h-3.5 w-3.5", fetching > 0 && "animate-spin")} />{" "}
             {t("node.actions.refresh")}
           </Button>
+          {/* §58, п.1/п.4: «Поделиться» доступна всем ролям (viewer тоже). */}
+          <ShareNodeButton nodeId={node.id} sm />
           {canEdit && (
             <>
               <Button sm variant="ghost" onClick={() => setDryRunOpen(true)}>

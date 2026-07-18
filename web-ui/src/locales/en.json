@@ -297,7 +297,8 @@
       "delete": "Delete",
       "dry_run": "Dry-run",
       "replay": "Replay",
-      "refresh": "Refresh"
+      "refresh": "Refresh",
+      "share": "Share"
     },
     "copy": {
       "title": "Copy node",

@@ -30,6 +30,7 @@ import { AllowedHostsField } from "../components/node/AllowedHostsField";
 import { HeadersField } from "../components/node/HeadersField";
 import { RequestFieldField } from "../components/node/RequestFieldField";
 import { RabbitMQSection, type RMQSetter } from "../components/node/RabbitMQSection";
+import { ShareNodeButton } from "../components/node/ShareNodeButton";
 import {
   Button,
   Card,
@@ -310,6 +311,8 @@ export default function NodeSettings() {
           <Link to={isNew ? "/" : `/nodes/${id}`}>
             <Button variant="ghost">{t("common.cancel")}</Button>
           </Link>
+          {/* §58, п.4: «Поделиться» выводится и в форме правки (у нового узла нет id). */}
+          {!isNew && id && <ShareNodeButton nodeId={id} />}
           <Button onClick={() => setShowDryRun(true)}>
             <FlaskConical className="h-4 w-4" /> {t("node.actions.dry_run")}
           </Button>
