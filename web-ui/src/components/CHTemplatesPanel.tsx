@@ -218,6 +218,13 @@ function TemplateEditor(props: {
   return (
     <div className="border border-bg-muted rounded-md p-4 space-y-3 bg-bg-elev">
       {bannerErr && <p className="text-sm text-err">{bannerErr}</p>}
+      {/* C.1: правка шаблона НЕ меняет ретроспективно таблицы уже существующих
+          узлов — схема применяется только при создании таблицы (нет ALTER). */}
+      {e.id && (
+        <p className="rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn">
+          {t("settings.clickhouse.templates.edit_no_retro_warning")}
+        </p>
+      )}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <label className="space-y-1">
           <span className="text-xs text-fg-muted">{t("settings.clickhouse.templates.name")}</span>
