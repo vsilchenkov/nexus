@@ -49,6 +49,27 @@ func New(redis *goredis.Client, pg *pgxpool.Pool, cipher *crypto.Cipher, ttl tim
 // потому что после Phase 10.1 path не глобально уникален.
 func nodeKey(teamSlug, path string) string { return "node:" + teamSlug + ":" + path }
 
+// Invalidator — выселение узла из кеша по событию инвалидации (§57). Реализуют
+// и Reader (Redis DEL), и L2Reader (LRU + делегирование внутрь).
+type Invalidator interface {
+	Invalidate(ctx context.Context, teamSlug, path string) error
+}
+
+var _ Invalidator = (*Reader)(nil)
+
+// Invalidate удаляет ключ узла из Redis, чтобы следующий Get перечитал свежий
+// конфиг из PG (авторитетный источник) и сделал write-back (§57). Пустой Redis
+// или пустой teamSlug обрабатываются без падения.
+func (r *Reader) Invalidate(ctx context.Context, teamSlug, path string) error {
+	if r.redis == nil {
+		return nil
+	}
+	if teamSlug == "" {
+		teamSlug = domain.DefaultTeamSlug
+	}
+	return r.redis.Del(ctx, nodeKey(teamSlug, path)).Err()
+}
+
 // Get: сначала Redis, при miss — Postgres. Записывает обратно в Redis
 // после fallback. При недоступности Redis — сразу в Postgres, без падения.
 func (r *Reader) Get(ctx context.Context, teamSlug, path string) (*domain.Node, error) {
