@@ -22,6 +22,7 @@ import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { parseNumInput } from "../lib/numField";
 import { validateNodeForm } from "../lib/nodeValidation";
 import { DryRunDialog } from "../components/DryRunDialog";
+import { CHSchemaSyncDialog } from "../components/CHSchemaSyncDialog";
 import { DeleteNodeDialog } from "../components/node/DeleteNodeDialog";
 import { AllowedHostsField } from "../components/node/AllowedHostsField";
 import { HeadersField } from "../components/node/HeadersField";
@@ -166,6 +167,7 @@ export default function NodeSettings() {
   // создания (allowlist — производный снимок каталога, управляется link/unlink).
   const [pendingHosts, setPendingHosts] = useState<HostAllowlistEntry[]>([]);
   const [showDryRun, setShowDryRun] = useState(false);
+  const [showChSync, setShowChSync] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // §28 Пункт 5: имя поля с ошибкой валидации (для inline-подсветки) из
@@ -729,6 +731,18 @@ export default function NodeSettings() {
                   }
                 />
               </Field>
+              {/* §56: применить настройки схемы CH к УЖЕ существующей таблице
+                  через ALTER (предпросмотр + явное применение). Только у
+                  сохранённого узла с таблицей. */}
+              {!isNew && form.clickhouse_table && (
+                <button
+                  type="button"
+                  onClick={() => setShowChSync(true)}
+                  className="mt-3 flex items-center gap-1.5 text-xs text-accent hover:underline"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" /> {t("ch_sync.button")}
+                </button>
+              )}
               <Field label={t("node.form.log_what")} help={t("node.help.log_what")} className="mt-3">
                 <div className="flex flex-col gap-1.5 text-xs">
                   <label className="flex items-center gap-2">
@@ -889,6 +903,9 @@ export default function NodeSettings() {
           авторизации. При создании (isNew) сохранённого конфига нет. */}
       {showDryRun && (
         <DryRunDialog node={form} nodeId={id} onClose={() => setShowDryRun(false)} />
+      )}
+      {showChSync && id && (
+        <CHSchemaSyncDialog nodeId={id} onClose={() => setShowChSync(false)} />
       )}
       {showDelete && existing.data && (
         <DeleteNodeDialog node={existing.data} onClose={() => setShowDelete(false)} />
