@@ -555,6 +555,7 @@
     "hint": {
       "header": "The node expects the {{field}} header.",
       "query": "The node expects the {{field}} query parameter.",
+      "autofill": "The node's credentials are inserted automatically — no need to fill {{field}} manually. To override, enter your own value.",
       "scheme": {
         "basic": "Format: Basic base64(login:password).",
         "token": "Format: Bearer <token>.",

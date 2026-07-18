@@ -2940,6 +2940,24 @@ vitest во фронте (было 3 теста без CI-запуска → +2 
   никогда (только `*_credentials_set: bool`). Тест такого узла без подмешивания уходит с пустым
   `Bearer ` → target отвечает 401 → оператор чинит несуществующую поломку авторизации. Конвенция уже
   была в проекте (§5.5, `PUT /api/nodes/{id}`) — переиспользована, а не изобретена заново.
+- **Подмешать креды в конфиг мало — надо подставить ПРЕДЪЯВЛЯЕМУЮ входящую креду (§55.6).** Грабли,
+  вскрытые на стенде: узел с `incoming_auth_type=basic` и заведёнными кредами всё равно падал на
+  `auth.incoming: authorization header missing`. `mergeStoredCreds` кладёт `incoming_auth_credentials`
+  лишь в **эталон** сравнения (`CheckIncomingAuth` сверяет с ним то, что клиент **предъявил**), а
+  предъявляемую сторону берёт из синтетического запроса оператора — которую тот собрать не может
+  (`Basic base64(...)`/HMAC из скрытых кредов). Фикс симметричен `auth.outgoing`: новый
+  `BuildIncomingAuthValue` в [receiver/usecase/auth.go](../internal/receiver/usecase/auth.go) —
+  **обратная операция** к `checkIncomingBasic`/`checkIncomingToken`/`VerifyWebhookSignature` (та же
+  схема/кодирование, поэтому тест не разойдётся с боем; покрыто round-trip тестом
+  [incoming_auth_build_test.go](../internal/receiver/usecase/incoming_auth_build_test.go)), а
+  [dry_run.go](../internal/web/usecase/dry_run.go) `autofillIncomingAuth` кладёт значение в
+  header/query по `incoming_auth_dynamic_source`/`field`. **Ручной ввод побеждает** (`IncomingAuthPresented`
+  ≠ "" → не трогаем) — негатив §55.8 остаётся проверяемым. Секрет **маскируется в отчёте**
+  (`headers.forwarded` — отдельная копия для отчёта, реальный `fwd` уходит в Sender; `url.resolve`/
+  `clickhouse.would_log` — `displayURL` с замаскированным query-параметром), чтобы сохранённая креда
+  не утекла в браузер. Метод формы теперь по умолчанию = `incoming_method` узла (`defaultDryRunMethod`
+  в [dryRunHint.ts](../web-ui/src/lib/dryRunHint.ts)) — узел с `incoming_method=GET` иначе падал на
+  `method.incoming` при дефолтном POST.
 - **Mock живёт в Web, а не в Sender** — сознательное отступление от буквы §7.5.1 («Sender вызывает
   встроенный mock»): ради синтетики gRPC-хоп не нужен, и зависимость Web→Sender остаётся
   **опциональной** (`web.sender_grpc.addr` пуст → mock работает как прежде). Не «упрощение» —

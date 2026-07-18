@@ -116,7 +116,12 @@ func (u *DryRunUsecase) Run(ctx context.Context, actor Actor, req DryRunRequest)
 		},
 	})
 
-	// 1. Incoming auth.
+	// 1. Incoming auth. Для узла с заведёнными кредами сервер сам подставляет
+	// ожидаемую входящую креду в синтетический запрос (наружу креды не отдаются,
+	// собрать `Basic base64(...)`/HMAC руками оператор не может, §55.6). Ручной
+	// ввод оператора побеждает — тогда autofill не срабатывает и негативный
+	// сценарий §55.8 (клиент шлёт креду не туда) остаётся проверяемым.
+	authPres, authFilled := u.autofillIncomingAuth(req.Node, req.Headers, req.Query, req.Body)
 	if err := rcv.CheckIncomingAuth(req.Node, req.Headers, req.Query, req.Body); err != nil {
 		rep.Steps = append(rep.Steps, DryRunStep{
 			Name: "auth.incoming", Status: "failed", Message: err.Error(),
@@ -125,9 +130,18 @@ func (u *DryRunUsecase) Run(ctx context.Context, actor Actor, req DryRunRequest)
 		u.writeAudit(ctx, actor, req.Node, rep, "failed:auth.incoming")
 		return rep, nil //nolint:nilerr // dry-run: ошибка узла — это результат, а не сбой операции
 	}
+	incomingDetail := map[string]any{
+		"type":       string(req.Node.IncomingAuthType),
+		"autofilled": authFilled, // подставил ли сервер креду из узла (§55.6)
+	}
+	if authFilled {
+		incomingDetail["source"] = string(authPres.Source)
+		incomingDetail["field"] = authPres.Field // только имя поля, без значения
+	}
 	rep.Steps = append(rep.Steps, DryRunStep{
 		Name: "auth.incoming", Status: "ok",
 		Message: fmt.Sprintf("type=%s", req.Node.IncomingAuthType),
+		Detail:  incomingDetail,
 	})
 
 	// 2. Outgoing auth + cleanup query/headers/body.
@@ -188,8 +202,14 @@ func (u *DryRunUsecase) Run(ctx context.Context, actor Actor, req DryRunRequest)
 	}
 	target = rcv.AppendPathSuffix(target, tail)
 	finalURL := appendQueryToURL(target, cleanQuery)
+	// displayURL — URL для отчёта: если входящая креда автоподставлена в query
+	// (§55.6), её значение в URL маскируется. В реальный вызов уходит finalURL.
+	displayURL := finalURL
+	if authFilled && authPres.Source == domain.IncomingAuthSourceQuery {
+		displayURL = maskQueryParam(finalURL, authPres.Field)
+	}
 	rep.Steps = append(rep.Steps, DryRunStep{
-		Name: "url.resolve", Status: "ok", Message: finalURL,
+		Name: "url.resolve", Status: "ok", Message: displayURL,
 		Detail: map[string]any{
 			"mode":              string(req.Node.URLMode),
 			"allowlist_passed":  true,
@@ -199,15 +219,28 @@ func (u *DryRunUsecase) Run(ctx context.Context, actor Actor, req DryRunRequest)
 		},
 	})
 
-	// 4. Headers forwarded.
+	// 4. Headers forwarded. fwd — реальные заголовки для Sender'а; reportFwd —
+	// копия для отчёта, где автоподставленная входящая креда (если узел форвардит
+	// своё auth-поле) маскируется, чтобы сохранённый секрет не утёк в браузер.
 	fwd := map[string]string{}
 	for _, name := range req.Node.ForwardHeaders {
 		if v := effHeaders.Get(name); v != "" {
 			fwd[http.CanonicalHeaderKey(name)] = v
 		}
 	}
+	reportFwd := fwd
+	if authFilled && authPres.Source == domain.IncomingAuthSourceHeader {
+		reportFwd = make(map[string]string, len(fwd))
+		for k, v := range fwd {
+			if strings.EqualFold(k, authPres.Field) {
+				reportFwd[k] = maskAuthHeader(v)
+				continue
+			}
+			reportFwd[k] = v
+		}
+	}
 	rep.Steps = append(rep.Steps, DryRunStep{
-		Name: "headers.forwarded", Status: "ok", Detail: fwd,
+		Name: "headers.forwarded", Status: "ok", Detail: reportFwd,
 	})
 
 	// 5. Body sent.
@@ -250,7 +283,7 @@ func (u *DryRunUsecase) Run(ctx context.Context, actor Actor, req DryRunRequest)
 		Detail: map[string]any{
 			"table": req.Node.ClickHouseTable,
 			"id":    rep.ID,
-			"url":   finalURL,
+			"url":   displayURL,
 			// Метод исходящего вызова (§40), а не метод формы: в логах узла
 			// пишется именно он.
 			"method": outMethod,
@@ -366,6 +399,48 @@ func (u *DryRunUsecase) realCall(
 		}
 	}
 	return DryRunStep{Name: "response", Status: "ok", Detail: detail}
+}
+
+// autofillIncomingAuth подставляет в синтетический запрос (h/q) ожидаемую входящую
+// креду, построенную сервером из сохранённых кредов узла (§55.6). Возвращает
+// (презентация, true), если подстановка выполнена. Ручной ввод оператора
+// побеждает: если предъявленное значение уже непусто — не трогаем (false), и
+// негативный сценарий §55.8 остаётся проверяемым. Значение креды в лог не пишем.
+func (u *DryRunUsecase) autofillIncomingAuth(node *domain.Node, h http.Header, q url.Values, body []byte) (rcv.IncomingAuthPresentation, bool) {
+	if rcv.IncomingAuthPresented(node, h, q) != "" {
+		return rcv.IncomingAuthPresentation{}, false
+	}
+	pres, ok, err := rcv.BuildIncomingAuthValue(node, body)
+	if err != nil || !ok {
+		return rcv.IncomingAuthPresentation{}, false
+	}
+	if pres.Source == domain.IncomingAuthSourceQuery {
+		q.Set(pres.Field, pres.Value)
+	} else {
+		h.Set(pres.Field, pres.Value)
+	}
+	u.logger.Debug("dry-run: incoming auth autofilled from node",
+		u.logger.Str("type", string(node.IncomingAuthType)),
+		u.logger.Str("source", string(pres.Source)),
+		u.logger.Str("field", pres.Field))
+	return pres, true
+}
+
+// maskQueryParam возвращает URL с замаскированным значением параметра param
+// (`***`). Нужен, чтобы автоподставленная входящая креда из query-источника не
+// утекла открытым текстом в отчёт (в реальный вызов уходит настоящий URL).
+func maskQueryParam(raw, param string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	q := parsed.Query()
+	if !q.Has(param) {
+		return raw
+	}
+	q.Set(param, "***")
+	parsed.RawQuery = q.Encode()
+	return parsed.String()
 }
 
 // maskAuthMap — копия заголовков ответа с маскированной авторизацией: эхо

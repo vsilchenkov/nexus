@@ -107,6 +107,94 @@ func checkIncomingBasic(node *domain.Node, h http.Header, q url.Values) error {
 	return nil
 }
 
+// IncomingAuthPresentation описывает, что клиент ДОЛЖЕН предъявить, чтобы пройти
+// CheckIncomingAuth: значение Value в источнике Source под именем поля Field.
+type IncomingAuthPresentation struct {
+	Source domain.IncomingAuthSource // header | query
+	Field  string
+	Value  string
+}
+
+// BuildIncomingAuthValue строит значение входящей креды из сохранённых кредов
+// узла — обратная операция к валидаторам checkIncomingBasic/checkIncomingToken/
+// buildWebhookSignatureValue (та же схема и кодирование, чтобы автоподстановка в
+// dry-run не разошлась с боевой проверкой). Наружу креды не отдаются, собрать
+// `Basic base64(login:password)` / HMAC-подпись руками оператор не может, поэтому
+// сервер делает это сам (§55.6).
+//
+// body нужен только для webhook_signature (HMAC по телу). Возвращает ok=false,
+// если тип none или креды/имя поля пусты (подставлять нечего). ok=true — Value
+// готов к инъекции в http.Header/url.Values по Source/Field.
+func BuildIncomingAuthValue(node *domain.Node, body []byte) (IncomingAuthPresentation, bool, error) {
+	switch node.IncomingAuthType {
+	case domain.IncomingAuthTypeNone:
+		return IncomingAuthPresentation{}, false, nil
+
+	case domain.IncomingAuthTypeWebhookSignature:
+		if node.IncomingAuthCredentials == "" || node.WebhookSignatureHeader == "" {
+			return IncomingAuthPresentation{}, false, nil
+		}
+		return IncomingAuthPresentation{
+			Source: domain.IncomingAuthSourceHeader,
+			Field:  node.WebhookSignatureHeader,
+			Value:  buildWebhookSignatureValue(node, body),
+		}, true, nil
+
+	case domain.IncomingAuthTypeBasic, domain.IncomingAuthTypeToken:
+		if node.IncomingAuthCredentials == "" {
+			return IncomingAuthPresentation{}, false, nil
+		}
+		source := node.IncomingAuthDynamicSource
+		if source == "" {
+			source = domain.IncomingAuthSourceHeader
+		}
+		field := node.IncomingAuthDynamicField
+		if field == "" {
+			field = "Authorization"
+		}
+		query := source == domain.IncomingAuthSourceQuery
+		var value string
+		if node.IncomingAuthType == domain.IncomingAuthTypeBasic {
+			// node.IncomingAuthCredentials хранит "login:password".
+			b64 := base64.StdEncoding.EncodeToString([]byte(node.IncomingAuthCredentials))
+			if query {
+				value = b64 // в query схемы нет — сам base64 (симметрия checkIncomingBasic).
+			} else {
+				value = "Basic " + b64
+			}
+		} else {
+			if query {
+				value = node.IncomingAuthCredentials // в query значение параметра и есть токен.
+			} else {
+				value = "Bearer " + node.IncomingAuthCredentials
+			}
+		}
+		return IncomingAuthPresentation{Source: source, Field: field, Value: value}, true, nil
+
+	default:
+		return IncomingAuthPresentation{}, false,
+			fmt.Errorf("%w: %q", domain.ErrNodeInvalidIncomingAuthType, node.IncomingAuthType)
+	}
+}
+
+// IncomingAuthPresented возвращает значение входящей креды, УЖЕ предъявленное в
+// запросе (h/q) с учётом типа авторизации узла. Пусто — клиент ничего не прислал.
+// Нужен dry-run, чтобы автоподстановка (BuildIncomingAuthValue) не перезатирала
+// ручной ввод оператора: непустой ввод всегда побеждает.
+func IncomingAuthPresented(node *domain.Node, h http.Header, q url.Values) string {
+	switch node.IncomingAuthType {
+	case domain.IncomingAuthTypeNone:
+		return ""
+	case domain.IncomingAuthTypeWebhookSignature:
+		if node.WebhookSignatureHeader == "" {
+			return ""
+		}
+		return h.Get(node.WebhookSignatureHeader)
+	default:
+		return incomingAuthValue(node, h, q)
+	}
+}
+
 // BuildOutgoingAuth формирует значение Authorization-заголовка для outbound-запроса
 // в соответствии с node.AuthType (§3.5 ТЗ). Возвращает пустую строку, если
 // заголовок ставить не нужно (auth_type=none).

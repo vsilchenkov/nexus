@@ -59,3 +59,14 @@ func VerifyWebhookSignature(node *domain.Node, h http.Header, body []byte) error
 	}
 	return nil
 }
+
+// buildWebhookSignatureValue строит значение, которое клиент ДОЛЖЕН предъявить в
+// заголовке node.WebhookSignatureHeader: node.WebhookSignaturePrefix + hex(HMAC-
+// SHA256(body, secret)). Обратная операция к VerifyWebhookSignature — та же
+// hmac.New(sha256.New, secret), поэтому подписи гарантированно совпадают.
+// Используется dry-run для автоподстановки ожидаемой входящей подписи (§55.6).
+func buildWebhookSignatureValue(node *domain.Node, body []byte) string {
+	mac := hmac.New(sha256.New, []byte(node.IncomingAuthCredentials))
+	_, _ = mac.Write(body)
+	return node.WebhookSignaturePrefix + hex.EncodeToString(mac.Sum(nil))
+}

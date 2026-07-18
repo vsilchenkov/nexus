@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { incomingAuthHint } from "./dryRunHint";
+import { defaultDryRunMethod, incomingAuthHint } from "./dryRunHint";
 
 describe("incomingAuthHint", () => {
   it.each([
@@ -61,5 +61,27 @@ describe("incomingAuthHint", () => {
 
   it("неизвестный тип не роняет диалог", () => {
     expect(incomingAuthHint({ incoming_auth_type: "future_mode" })).toBeNull();
+  });
+});
+
+describe("defaultDryRunMethod", () => {
+  it.each([
+    ["GET", "GET"],
+    ["get", "GET"],
+    ["PUT", "PUT"],
+    ["DELETE", "DELETE"],
+    ["PATCH", "PATCH"],
+    ["POST", "POST"],
+  ])("берёт поддерживаемый входящий метод узла: %s", (incoming, want) => {
+    expect(defaultDryRunMethod({ incoming_method: incoming })).toBe(want);
+  });
+
+  it.each([
+    ["ANY", { incoming_method: "ANY" }],
+    ["пусто", { incoming_method: "" }],
+    ["поле отсутствует", {}],
+    ["узла нет", null],
+  ])("сводит к POST, если метод не выбираемый: %s", (_name, node) => {
+    expect(defaultDryRunMethod(node)).toBe("POST");
   });
 });
