@@ -21,6 +21,7 @@ import { useNodeUrlBuilder } from "../lib/nodeUrl";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { parseNumInput } from "../lib/numField";
 import { validateNodeForm } from "../lib/nodeValidation";
+import { chSchemaChangeWontApply } from "../lib/chSchema";
 import { DryRunDialog } from "../components/DryRunDialog";
 import { DeleteNodeDialog } from "../components/node/DeleteNodeDialog";
 import { AllowedHostsField } from "../components/node/AllowedHostsField";
@@ -258,6 +259,19 @@ export default function NodeSettings() {
 
   const isPull = form.root_method === "RabbitMQAsync";
   const verb = form.root_method === "request" ? "request" : "requestAsync";
+  // C.1: смена CH-шаблона у существующего узла БЕЗ смены имени таблицы молча
+  // не применяется — таблица создаётся один раз (CREATE TABLE IF NOT EXISTS), и
+  // новые кодеки/индексы/движок к ней не приезжают (нет ALTER). Предупреждаем
+  // честно: чтобы применить схему, нужно новое имя таблицы или ALTER вручную.
+  // Retention (дни) — исключение: применяется housekeeping'ом автоматически.
+  const savedNode = existing.data as unknown as Form | undefined;
+  const chSchemaWontApply = chSchemaChangeWontApply({
+    isNew,
+    loggingEnabled: form.logging_enabled,
+    currentTemplateId: form.clickhouse_template_id,
+    currentTable: form.clickhouse_table,
+    saved: savedNode,
+  });
   // §28 Пункт 1: полный адрес собирается из публичного адреса приложения
   // (если задан в настройках) или origin браузера + slug текущей команды.
   const buildUrl = useNodeUrlBuilder();
@@ -708,6 +722,11 @@ export default function NodeSettings() {
                     </option>
                   ))}
                 </Select>
+                {chSchemaWontApply && (
+                  <div className="mt-2 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn">
+                    {t("node.help.ch_schema_change_warning")}
+                  </div>
+                )}
               </Field>
               <Field label={t("node.fields.ch_table")} help={t("node.help.ch_table")} className="mt-3">
                 <Input

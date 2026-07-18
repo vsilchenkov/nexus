@@ -373,6 +373,7 @@
       "forward_headers": "Which inbound request headers to forward to the receiver. Others are not passed (Content-Type is always forwarded).",
       "logging_enabled": "Whether to write the node's call log to ClickHouse. Off — the node is not logged at all (no metrics or history for it).",
       "ch_table": "Log table name in db.table form. Multiple nodes may write to one table (distinguished by node_id).",
+      "ch_schema_change_warning": "Switching the template does not apply to an already existing table: schema settings (compression, indexes, engine, native TTL) are set only when the table is created. To apply the new schema, use a new table name (a fresh table is created, old data stays in the previous one) or run an ALTER in ClickHouse manually. Retention days apply to the current table automatically.",
       "retention_days": "How many days to keep the node's logs (older partitions are dropped by housekeeping). 0 — unlimited.",
       "log_what": "What to store in the log beyond metadata: request body, response body, headers. Affects log volume.",
       "max_body": "Cap the size of stored request/response bodies in the log (in characters). Bodies are truncated to the limit; the checksum is computed over the full body.",
@@ -1015,6 +1016,7 @@
       "templates": {
         "title": "Table templates",
         "hint": "DDL templates for node log tables. Configure compression (CODEC), indexes, partitioning and retention. Nodes pick a template and a table name — the table is created automatically.",
+        "edit_no_retro_warning": "Changes apply only to tables created AFTER saving. Existing tables of nodes using this template are not rebuilt automatically (there is no ALTER) — they need a new table name or a manual ALTER in ClickHouse.",
         "new": "New template",
         "empty": "No templates yet",
         "name": "Name",
