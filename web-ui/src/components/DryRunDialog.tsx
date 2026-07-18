@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { AlertTriangle, Play } from "lucide-react";
 
 import { api } from "../api/client";
-import { incomingAuthHint } from "../lib/dryRunHint";
+import { defaultDryRunMethod, incomingAuthHint } from "../lib/dryRunHint";
 import { Button, Field, Hint, Input, Modal, Pill, Select, Textarea, Toggle } from "./ui";
 import { KeyValueChips, type KeyValuePair } from "./dryrun/KeyValueChips";
 
@@ -39,7 +39,11 @@ export function DryRunDialog({
   onClose: () => void;
 }) {
   const { t } = useTranslation();
-  const [method, setMethod] = useState("POST");
+  // Метод по умолчанию — входящий метод узла (§40): узел с incoming_method=GET
+  // иначе падал бы на шаге method.incoming при дефолтном POST.
+  const [method, setMethod] = useState(() =>
+    defaultDryRunMethod(node as { incoming_method?: string } | null),
+  );
   const [pathTail, setPathTail] = useState("");
   const [body, setBody] = useState('{"test": true}');
   const [headers, setHeaders] = useState<KeyValuePair[]>([]);
@@ -52,8 +56,22 @@ export function DryRunDialog({
   const [error, setError] = useState<string | null>(null);
 
   const hint = useMemo(() => incomingAuthHint(node as never), [node]);
-  const cfg = node as { target_url?: string; path_passthrough?: boolean; path?: string } | null;
+  const cfg = node as {
+    target_url?: string;
+    path_passthrough?: boolean;
+    path?: string;
+    incoming_auth_credentials_set?: boolean;
+    incoming_auth_credentials?: string;
+  } | null;
   const targetURL = cfg?.target_url ?? "";
+  // §55.6: сервер подставит входящую креду сам, если она заведена в узле —
+  // сохранённый узел (nodeId) с признаком *_set или введённая в форме крела.
+  // Тогда подсказка сообщает, что заполнять поле руками не нужно.
+  const willAutofill =
+    Boolean(hint) &&
+    (cfg?.incoming_auth_credentials_set === true ||
+      Boolean(cfg?.incoming_auth_credentials) ||
+      Boolean(nodeId));
   // §39: хвост входящего пути имеет смысл только у passthrough-узлов — у
   // остальных Receiver его отбрасывает, и поле лишь путало бы.
   const passthrough = cfg?.path_passthrough === true;
@@ -136,14 +154,18 @@ export function DryRunDialog({
         )}
       </div>
 
-      {/* §55.2: подсказка — какое поле ожидает узел. Без неё тест узла с
-          авторизацией упирался в «authorization header missing». */}
-      {hint && (
-        <Hint className="mt-3">
-          {t(`dryrun.hint.${hint.source}`, { field: hint.field })}{" "}
-          {t(`dryrun.hint.scheme.${hint.scheme}`)}
-        </Hint>
-      )}
+      {/* §55.2/§55.6: подсказка — какое поле ожидает узел. Если креды заведены,
+          сервер подставит их сам (willAutofill) — сообщаем, что заполнять руками
+          не нужно; иначе показываем ожидаемый формат. */}
+      {hint &&
+        (willAutofill ? (
+          <Hint className="mt-3">{t("dryrun.hint.autofill", { field: hint.field })}</Hint>
+        ) : (
+          <Hint className="mt-3">
+            {t(`dryrun.hint.${hint.source}`, { field: hint.field })}{" "}
+            {t(`dryrun.hint.scheme.${hint.scheme}`)}
+          </Hint>
+        ))}
 
       <Field label={t("dryrun.headers")} className="mt-3">
         <KeyValueChips
