@@ -316,6 +316,43 @@ func (h *NodeHandler) Copy(c *gin.Context) {
 	c.JSON(http.StatusCreated, nodeToResponse(n))
 }
 
+// ResolveTeamResponse — тело GET /api/nodes/{id}/team (§58): команда, которой
+// принадлежит узел. Фронт использует её, чтобы авто-переключить сессию на
+// команду узла при открытии шаренной ссылки на страницу узла.
+type ResolveTeamResponse struct {
+	TeamID   string `json:"team_id"`
+	TeamSlug string `json:"team_slug"`
+	TeamName string `json:"team_name"`
+}
+
+// ResolveTeam godoc
+// @Summary  Команда узла для авто-переключения (§58).
+// @Description  Возвращает команду, которой принадлежит узел, если вызывающий пользователь состоит в ней. Нужен для шаринга ссылки на страницу узла: фронт узнаёт команду ДО загрузки узла (team-scoped GET вернул бы 404 при несовпадении текущей команды) и переключает сессию. Если узла нет или пользователь не член его команды — 404 (без утечки существования).
+// @Tags     nodes
+// @Produce  json
+// @Param    id   path  string  true  "node id"
+// @Success  200  {object}  ResolveTeamResponse
+// @Failure  404  {object}  ErrorResponse
+// @Security CookieAuth
+// @Router   /api/nodes/{id}/team [get]
+func (h *NodeHandler) ResolveTeam(c *gin.Context) {
+	s, ok := sessionFromCtx(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	team, err := h.uc.ResolveTeam(c.Request.Context(), s.UserID, c.Param("id"))
+	if err != nil {
+		h.replyDomainError(c, err, "node.resolve_team")
+		return
+	}
+	c.JSON(http.StatusOK, ResolveTeamResponse{
+		TeamID:   team.ID,
+		TeamSlug: team.Slug,
+		TeamName: team.Name,
+	})
+}
+
 func (h *NodeHandler) replyDomainError(c *gin.Context, err error, op string) {
 	switch {
 	case errors.Is(err, domain.ErrNodeNotFound),

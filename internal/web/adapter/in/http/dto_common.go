@@ -48,6 +48,12 @@ type CreateTokenResponse struct {
 	Info  tokenResponse `json:"info"`
 }
 
+// RotateTokenResponse — POST /api/tokens/{id}/rotate (новое значение показывается
+// один раз; данные токена UI перечитывает списком).
+type RotateTokenResponse struct {
+	Token string `json:"token"`
+}
+
 // ListAuditResponse — GET /api/audit.
 type ListAuditResponse struct {
 	Items []auditEntryResponse `json:"items"`

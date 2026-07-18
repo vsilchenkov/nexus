@@ -5,6 +5,7 @@ import { RefreshCw, Settings, RotateCcw, ChevronRight, ChevronDown, Download } f
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, type Node } from "../../api/client";
+import { useRoleAtLeast } from "../../lib/useCurrentRole";
 import { fmtLogTs, fmtSize } from "../../lib/format";
 import { FETCH_CHUNK, LARGE_WARN_RUNES, formatRunes, prettyMaybe } from "../../lib/logBody";
 import { LabelHint } from "../ui";
@@ -342,6 +343,10 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   }, [live, visibleLogs.length, logsQ.hasNextPage, logsQ.isFetchingNextPage]);
 
   const [replayId, setReplayId] = useState<string | null>(null);
+  // §7.4.1/§58: replay пере-отправляет запрос на внешнюю цель (сайд-эффект) —
+  // manager+. viewer видит кнопку disabled с tooltip «Нет прав» (бэкенд тоже
+  // отдаёт 403). Скрывать не будем — так понятно, что действие существует.
+  const canReplay = useRoleAtLeast("manager");
   // Раскрытая строка: тела request/response грузятся лениво только для неё
   // (GET /api/nodes/:id/log/:logId). Список этих данных не содержит — иначе
   // сотни строк с большими JSON-телами вешают фронт (§7.4.1).
@@ -638,12 +643,16 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                       </td>
                       <td className="px-2 py-2 text-right">
                         <button
-                          title={t("node.actions.replay")}
+                          type="button"
+                          disabled={!canReplay}
+                          title={canReplay ? t("node.actions.replay") : t("common.no_permission")}
                           onClick={(e) => {
                             e.stopPropagation();
                             setReplayId(r.id);
                           }}
-                          className="text-fg-muted hover:text-accent"
+                          className={`text-fg-muted ${
+                            canReplay ? "hover:text-accent" : "cursor-not-allowed opacity-40"
+                          }`}
                         >
                           <RotateCcw className="h-4 w-4" />
                         </button>

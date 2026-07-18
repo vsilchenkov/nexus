@@ -14,6 +14,10 @@ type APITokenRepo interface {
 	ListByUser(ctx context.Context, userID string) ([]*domain.APIToken, error)
 	Create(ctx context.Context, t *domain.APIToken) error
 	Revoke(ctx context.Context, id, userID string) error
+	// Rotate перевыпускает значение токена (новые hash/prefix), сохраняя остальные
+	// поля; last_used_at сбрасывается. Затрагивает только АКТИВНЫЙ токен (не
+	// отозванный и не просроченный) — иначе ErrNotFound.
+	Rotate(ctx context.Context, id, userID, newHash, newPrefix string) error
 	Delete(ctx context.Context, id, userID string) error
 	TouchLastUsed(ctx context.Context, id string) error
 }

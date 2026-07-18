@@ -3,6 +3,7 @@ import { Check, Copy } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "../../lib/cn";
+import { copyToClipboard } from "../../lib/clipboard";
 
 type Props = {
   /** Текст, который копируется в буфер обмена. */
@@ -20,23 +21,10 @@ export function CopyButton({ value, className, label }: Props) {
   const [copied, setCopied] = useState(false);
 
   async function copy() {
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(value);
-      } else {
-        const ta = document.createElement("textarea");
-        ta.value = value;
-        ta.style.position = "fixed";
-        ta.style.opacity = "0";
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand("copy");
-        document.body.removeChild(ta);
-      }
+    // Буфер недоступен (false) — молча игнорируем, пользователь скопирует вручную.
+    if (await copyToClipboard(value)) {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* буфер недоступен — молча игнорируем, пользователь скопирует вручную */
     }
   }
 

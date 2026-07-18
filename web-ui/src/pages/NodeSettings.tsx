@@ -18,15 +18,19 @@ import {
 
 import { api, isNotFound, type Node, type CHTemplate, type HostAllowlistEntry } from "../api/client";
 import { useNodeUrlBuilder } from "../lib/nodeUrl";
+import { useEnsureNodeTeam } from "../lib/nodeShare";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { parseNumInput } from "../lib/numField";
 import { validateNodeForm } from "../lib/nodeValidation";
+import { chSchemaChangeWontApply } from "../lib/chSchema";
 import { DryRunDialog } from "../components/DryRunDialog";
+import { CHSchemaSyncDialog } from "../components/CHSchemaSyncDialog";
 import { DeleteNodeDialog } from "../components/node/DeleteNodeDialog";
 import { AllowedHostsField } from "../components/node/AllowedHostsField";
 import { HeadersField } from "../components/node/HeadersField";
 import { RequestFieldField } from "../components/node/RequestFieldField";
 import { RabbitMQSection, type RMQSetter } from "../components/node/RabbitMQSection";
+import { ShareNodeButton } from "../components/node/ShareNodeButton";
 import {
   Button,
   Card,
@@ -155,10 +159,14 @@ export default function NodeSettings() {
   const qc = useQueryClient();
   const isNew = !id;
 
+  // §58: шаренная ссылка на правку узла из другой команды тоже авто-переключает
+  // сессию на команду узла. Пока не ready — узел не грузим (иначе 404).
+  const ensure = useEnsureNodeTeam(id);
+
   const existing = useQuery({
     queryKey: ["node", id],
     queryFn: () => api.get<Node>(`/api/nodes/${id}`),
-    enabled: !isNew,
+    enabled: !isNew && ensure.status === "ready",
   });
 
   const [form, setForm] = useState<Form>(emptyForm);
@@ -166,6 +174,7 @@ export default function NodeSettings() {
   // создания (allowlist — производный снимок каталога, управляется link/unlink).
   const [pendingHosts, setPendingHosts] = useState<HostAllowlistEntry[]>([]);
   const [showDryRun, setShowDryRun] = useState(false);
+  const [showChSync, setShowChSync] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // §28 Пункт 5: имя поля с ошибкой валидации (для inline-подсветки) из
@@ -258,6 +267,19 @@ export default function NodeSettings() {
 
   const isPull = form.root_method === "RabbitMQAsync";
   const verb = form.root_method === "request" ? "request" : "requestAsync";
+  // C.1: смена CH-шаблона у существующего узла БЕЗ смены имени таблицы молча
+  // не применяется — таблица создаётся один раз (CREATE TABLE IF NOT EXISTS), и
+  // новые кодеки/индексы/движок к ней не приезжают (нет ALTER). Предупреждаем
+  // честно: чтобы применить схему, нужно новое имя таблицы или ALTER вручную.
+  // Retention (дни) — исключение: применяется housekeeping'ом автоматически.
+  const savedNode = existing.data as unknown as Form | undefined;
+  const chSchemaWontApply = chSchemaChangeWontApply({
+    isNew,
+    loggingEnabled: form.logging_enabled,
+    currentTemplateId: form.clickhouse_template_id,
+    currentTable: form.clickhouse_table,
+    saved: savedNode,
+  });
   // §28 Пункт 1: полный адрес собирается из публичного адреса приложения
   // (если задан в настройках) или origin браузера + slug текущей команды.
   const buildUrl = useNodeUrlBuilder();
@@ -270,16 +292,32 @@ export default function NodeSettings() {
     return <Navigate to={isNew ? "/" : `/nodes/${id}`} replace />;
   }
 
+  // §58, п.3: правка узла, чья команда пользователю недоступна.
+  if (!isNew && ensure.status === "unavailable") {
+    return <div className="mx-auto max-w-6xl text-fg-muted">{t("node.unavailable")}</div>;
+  }
+  // §58, п.2: пока резолвим/переключаем команду узла — грузимся (форма не мигает).
+  if (!isNew && ensure.status !== "ready") {
+    return <div className="mx-auto max-w-6xl text-fg-muted">{t("common.loading")}</div>;
+  }
+
   return (
     <div className="mx-auto max-w-6xl space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-lg font-semibold">
+      <div className="flex items-center justify-between gap-3">
+        {/* Заголовок усекается, группа действий закреплена справа (shrink-0) —
+            кнопки всегда в один ряд даже при длинном пути узла. */}
+        <h1
+          className="min-w-0 truncate text-lg font-semibold"
+          title={isNew ? undefined : `${t("node.actions.edit")}: ${form.path}`}
+        >
           {isNew ? t("overview.new_node") : `${t("node.actions.edit")}: ${form.path}`}
         </h1>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <Link to={isNew ? "/" : `/nodes/${id}`}>
             <Button variant="ghost">{t("common.cancel")}</Button>
           </Link>
+          {/* §58, п.4: «Поделиться» выводится и в форме правки (у нового узла нет id). */}
+          {!isNew && id && <ShareNodeButton nodeId={id} />}
           <Button onClick={() => setShowDryRun(true)}>
             <FlaskConical className="h-4 w-4" /> {t("node.actions.dry_run")}
           </Button>
@@ -708,6 +746,11 @@ export default function NodeSettings() {
                     </option>
                   ))}
                 </Select>
+                {chSchemaWontApply && (
+                  <div className="mt-2 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn">
+                    {t("node.help.ch_schema_change_warning")}
+                  </div>
+                )}
               </Field>
               <Field label={t("node.fields.ch_table")} help={t("node.help.ch_table")} className="mt-3">
                 <Input
@@ -729,6 +772,18 @@ export default function NodeSettings() {
                   }
                 />
               </Field>
+              {/* §56: применить настройки схемы CH к УЖЕ существующей таблице
+                  через ALTER (предпросмотр + явное применение). Только у
+                  сохранённого узла с таблицей. */}
+              {!isNew && form.clickhouse_table && (
+                <button
+                  type="button"
+                  onClick={() => setShowChSync(true)}
+                  className="mt-3 flex items-center gap-1.5 text-xs text-accent hover:underline"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" /> {t("ch_sync.button")}
+                </button>
+              )}
               <Field label={t("node.form.log_what")} help={t("node.help.log_what")} className="mt-3">
                 <div className="flex flex-col gap-1.5 text-xs">
                   <label className="flex items-center gap-2">
@@ -889,6 +944,9 @@ export default function NodeSettings() {
           авторизации. При создании (isNew) сохранённого конфига нет. */}
       {showDryRun && (
         <DryRunDialog node={form} nodeId={id} onClose={() => setShowDryRun(false)} />
+      )}
+      {showChSync && id && (
+        <CHSchemaSyncDialog nodeId={id} onClose={() => setShowChSync(false)} />
       )}
       {showDelete && existing.data && (
         <DeleteNodeDialog node={existing.data} onClose={() => setShowDelete(false)} />

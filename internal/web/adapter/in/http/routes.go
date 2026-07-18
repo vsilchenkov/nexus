@@ -19,6 +19,7 @@ type Handlers struct {
 	AppSettings   *AppSettingsHandler
 	Orphan        *OrphanHandler
 	CHTemplate    *CHTemplateHandler
+	CHSchema      *CHSchemaHandler
 	HostAllowlist *HostAllowlistHandler
 	HeaderCatalog *HeaderCatalogHandler
 	RequestField  *RequestFieldCatalogHandler
@@ -81,11 +82,16 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		authed.GET("/tokens", h.Token.List)
 		authed.POST("/tokens", h.Token.Create)
 		authed.POST("/tokens/:id/revoke", h.Token.Revoke)
+		authed.POST("/tokens/:id/rotate", h.Token.Rotate)
 		authed.DELETE("/tokens/:id", h.Token.Delete)
 
 		// Чтение узлов: scope nodes:read для API tokens.
 		authed.GET("/nodes", RequireScope("nodes:read"), h.Node.List)
 		authed.GET("/nodes/:id", RequireScope("nodes:read"), h.Node.Get)
+		// §58: команда узла для авто-переключения при открытии шаренной ссылки.
+		// Только session-cookie: API-токены однокомандные и команду не меняют.
+		// Проверяет членство пользователя — узел чужой команды скрыт (404, no-leak).
+		authed.GET("/nodes/:id/team", RequireSessionOnly(), h.Node.ResolveTeam)
 
 		// Шаблоны CH-таблиц (§19). GET доступен любой сессии (селектор
 		// при настройке узла); мутации/verify — admin-only ниже.
@@ -138,11 +144,6 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			authed.GET("/nodes/:id/logs/stream", RequireSessionOnly(), h.Logs.Stream)
 		}
 
-		// Replay одного запроса (§7.4.1): только session-cookie (mutating).
-		if h.Replay != nil {
-			authed.POST("/logs/:id/replay", h.Replay.Replay)
-		}
-
 		// Метрики панели (§21): KPI/throughput/график. Read-only, scope
 		// metrics:read для API-токенов. Эндпоинты деградируют, если нет
 		// Prometheus/ClickHouse (см. MetricsUsecase), поэтому регистрируются
@@ -176,6 +177,18 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		authedManager.DELETE("/nodes/:id", h.Node.Delete)
 		// §7.5.1: dry-run без сохранения конфига.
 		authedManager.POST("/nodes/dry-run", h.DryRun.Run)
+		// §7.4.1/§58: replay записи лога пере-отправляет запрос на внешнюю цель
+		// (сайд-эффект) — manager+, только session-cookie. viewer видит кнопку
+		// disabled (нет прав), API-токены реплеить не могут (логи — только snapshot).
+		if h.Replay != nil {
+			authedManager.POST("/logs/:id/replay", RequireSessionOnly(), h.Replay.Replay)
+		}
+		// §56: синхронизация схемы CH-таблицы узла (ALTER). Plan — предпросмотр
+		// (read-only), Apply — исполнение. manager+ (как и правка узла).
+		if h.CHSchema != nil {
+			authedManager.POST("/nodes/:id/ch-schema/plan", RequireSessionOnly(), h.CHSchema.Plan)
+			authedManager.POST("/nodes/:id/ch-schema/apply", RequireSessionOnly(), h.CHSchema.Apply)
+		}
 		// §27.8: проверка подключения к RabbitMQ (только session, manager+,
 		// rate-limit внутри handler'а). Регистрируется только если включён.
 		if h.RMQTest != nil {

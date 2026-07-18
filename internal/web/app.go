@@ -34,6 +34,7 @@ import (
 	"nexus/internal/platform/i18n"
 	"nexus/internal/platform/logging"
 	"nexus/internal/platform/metrics"
+	"nexus/internal/platform/nodeevents"
 	otelpf "nexus/internal/platform/otel"
 	pgpf "nexus/internal/platform/pg"
 	"nexus/internal/platform/queuecancel"
@@ -216,6 +217,9 @@ func (a *App) Start(ctx context.Context) error {
 		selfIngressHosts,
 		a.logger,
 	)
+	// §57: гарантированная инвалидация конфига узла в Receiver — Web публикует
+	// событие при изменении узла, Receiver выселяет его из кешей.
+	nodeUC.SetInvalidationPublisher(nodeevents.NewPublisher(a.redis))
 	// §27.8: health-ридер Puller-воркеров из общего Redis-стора (rmq:health).
 	rmqHealthReader := rediscache.NewRMQHealthReaderRedis(a.redis)
 	nodeHandler := httpadapter.NewNodeHandler(nodeUC, rmqHealthReader, a.logger)
@@ -313,6 +317,16 @@ func (a *App) Start(ctx context.Context) error {
 	// может быть nil — Verify тогда вернёт 503.
 	chTemplateUC := usecase.NewCHTemplateUsecase(chTemplateRepo, teamProvisioner, teamRepo, auditUC, a.logger)
 	chTemplateHandler := httpadapter.NewCHTemplateHandler(chTemplateUC, a.logger)
+
+	// §56: синхронизация схемы CH-таблицы узла через ALTER. Инспектор nil при
+	// отсутствии ClickHouse → usecase вернёт ErrCHUnavailable (503). Handler
+	// создаём всегда: endpoint деградирует, а не исчезает.
+	var chSchemaInspector webport.CHSchemaInspector
+	if a.chMgr != nil {
+		chSchemaInspector = chreader.NewSchemaInspector(a.chMgr, a.logger)
+	}
+	chSchemaUC := usecase.NewCHSchemaSyncUsecase(nodeUC, chTemplateRepo, chSchemaInspector, auditUC, a.logger)
+	chSchemaHandler := httpadapter.NewCHSchemaHandler(chSchemaUC, a.logger)
 
 	// Каталог разрешённых хостов (§23). Не зависит от ClickHouse — создаётся
 	// всегда. Привязка к узлу пересобирает снимок nodes.url_allowed_hosts и
@@ -524,6 +538,7 @@ func (a *App) Start(ctx context.Context) error {
 		AppSettings:   appSettingsHandler,
 		Orphan:        orphanHandler,
 		CHTemplate:    chTemplateHandler,
+		CHSchema:      chSchemaHandler,
 		HostAllowlist: hostAllowlistHandler,
 		HeaderCatalog: headerCatalogHandler,
 		RequestField:  requestFieldHandler,

@@ -736,6 +736,20 @@ definitions:
     required:
     - node_id
     type: object
+  internal_web_adapter_in_http.ResolveTeamResponse:
+    properties:
+      team_id:
+        type: string
+      team_name:
+        type: string
+      team_slug:
+        type: string
+    type: object
+  internal_web_adapter_in_http.RotateTokenResponse:
+    properties:
+      token:
+        type: string
+    type: object
   internal_web_adapter_in_http.SwitchTeamResponse:
     properties:
       current_team_id:
@@ -1944,6 +1958,29 @@ definitions:
       telegram:
         $ref: '#/definitions/nexus_internal_domain.TelegramSettings'
     type: object
+  nexus_internal_domain.SchemaSyncPlan:
+    properties:
+      rejections:
+        items:
+          $ref: '#/definitions/nexus_internal_domain.SchemaSyncRejection'
+        type: array
+      statements:
+        items:
+          type: string
+        type: array
+    type: object
+  nexus_internal_domain.SchemaSyncRejection:
+    properties:
+      current:
+        type: string
+      desired:
+        type: string
+      kind:
+        description: engine | order_by | partition_by
+        type: string
+      reason:
+        type: string
+    type: object
   nexus_internal_domain.SecuritySettings:
     properties:
       session_ttl_seconds:
@@ -2074,6 +2111,18 @@ definitions:
         type: string
       status_code:
         type: integer
+    type: object
+  nexus_internal_web_usecase.SchemaSyncResult:
+    properties:
+      applied:
+        description: Applied — сколько ALTER'ов реально исполнено (только для Apply).
+        type: integer
+      plan:
+        $ref: '#/definitions/nexus_internal_domain.SchemaSyncPlan'
+      table:
+        type: string
+      table_missing:
+        type: boolean
     type: object
   nexus_internal_web_usecase.TestResult:
     properties:
@@ -3684,6 +3733,69 @@ paths:
       summary: Повторить все неудачные доставки узла сейчас (§36.11).
       tags:
       - async-queue
+  /api/nodes/{id}/ch-schema/apply:
+    post:
+      description: Исполняет применимые ALTER'ы по порядку (CODEC / ADD·DROP INDEX
+        / MODIFY·REMOVE TTL). Неприменимое возвращается, но не блокирует остальное.
+        Пишет аудит node.ch_schema_sync. Операции ClickHouse могут быть тяжёлыми/частично
+        необратимыми.
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/nexus_internal_web_usecase.SchemaSyncResult'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "503":
+          description: ClickHouse недоступен
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Применить синхронизацию схемы CH-таблицы узла (§56).
+      tags:
+      - nodes
+  /api/nodes/{id}/ch-schema/plan:
+    post:
+      description: 'Read-only: читает схему существующей таблицы из ClickHouse, диффит
+        против шаблона узла и возвращает ALTER-операторы + список неприменимого (движок/ORDER
+        BY/PARTITION BY — нужна пересоздача). ClickHouse не меняет.'
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/nexus_internal_web_usecase.SchemaSyncResult'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "503":
+          description: ClickHouse недоступен
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Предпросмотр синхронизации схемы CH-таблицы узла (§56).
+      tags:
+      - nodes
   /api/nodes/{id}/copy:
     post:
       consumes:
@@ -4159,6 +4271,35 @@ paths:
       security:
       - CookieAuth: []
       summary: Сменить только статус узла (§35).
+      tags:
+      - nodes
+  /api/nodes/{id}/team:
+    get:
+      description: 'Возвращает команду, которой принадлежит узел, если вызывающий
+        пользователь состоит в ней. Нужен для шаринга ссылки на страницу узла: фронт
+        узнаёт команду ДО загрузки узла (team-scoped GET вернул бы 404 при несовпадении
+        текущей команды) и переключает сессию. Если узла нет или пользователь не член
+        его команды — 404 (без утечки существования).'
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ResolveTeamResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Команда узла для авто-переключения (§58).
       tags:
       - nodes
   /api/nodes/dry-run:
@@ -4824,6 +4965,34 @@ paths:
       security:
       - CookieAuth: []
       summary: Отозвать API-токен.
+      tags:
+      - tokens
+  /api/tokens/{id}/rotate:
+    post:
+      description: Генерирует новое значение токена, сохраняя имя, scopes, команду
+        и срок; старое значение сразу теряет силу. Новая plain-строка возвращается
+        ровно один раз. Ротировать можно только активный токен (не отозванный и не
+        истёкший) — иначе 404, для него нужно создать новый.
+      parameters:
+      - description: token id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: token (plain, один раз)
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.RotateTokenResponse'
+        "404":
+          description: токен не найден или не активен
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Перевыпустить API-токен (rotate).
       tags:
       - tokens
   /api/users:

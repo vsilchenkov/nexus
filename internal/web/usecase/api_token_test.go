@@ -70,6 +70,32 @@ func (r *inMemAPITokenRepo) Create(_ context.Context, t *domain.APIToken) error 
 	return nil
 }
 func (r *inMemAPITokenRepo) Revoke(_ context.Context, _, _ string) error { return nil }
+
+// Rotate — эмуляция `UPDATE ... WHERE id AND user_id AND активен`: находит токен
+// владельца, только активный (не отозван/не просрочен), перевыпускает hash/prefix
+// (перекладывает под новый ключ), сбрасывает last_used_at.
+func (r *inMemAPITokenRepo) Rotate(_ context.Context, id, userID, newHash, newPrefix string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for oldHash, t := range r.byHash {
+		if t.ID != id || t.UserID != userID {
+			continue
+		}
+		if t.RevokedAt != nil {
+			return domain.ErrNotFound
+		}
+		if t.ExpiresAt != nil && t.ExpiresAt.Before(time.Now()) {
+			return domain.ErrNotFound
+		}
+		delete(r.byHash, oldHash)
+		t.TokenHash = newHash
+		t.Prefix = newPrefix
+		t.LastUsedAt = nil
+		r.byHash[newHash] = t
+		return nil
+	}
+	return domain.ErrNotFound
+}
 func (r *inMemAPITokenRepo) Delete(_ context.Context, _, _ string) error { return nil }
 func (r *inMemAPITokenRepo) TouchLastUsed(_ context.Context, id string) error {
 	r.mu.Lock()

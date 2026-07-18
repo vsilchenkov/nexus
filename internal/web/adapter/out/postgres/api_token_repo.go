@@ -107,6 +107,26 @@ func (r *APITokenRepoPg) Revoke(ctx context.Context, id, userID string) error {
 	return nil
 }
 
+// Rotate перевыпускает значение активного токена: новые token_hash/prefix,
+// last_used_at сброшен. Остальные поля (name/scopes/team/expires) не трогаются.
+// Только активный токен: отозванный или просроченный не ротируем (для него —
+// создать новый), иначе получился бы «перевыпущенный, но всё равно мёртвый» токен.
+func (r *APITokenRepoPg) Rotate(ctx context.Context, id, userID, newHash, newPrefix string) error {
+	tag, err := r.pool.Exec(ctx, `
+UPDATE api_tokens SET token_hash=$3, prefix=$4, last_used_at=NULL
+WHERE id=$1::uuid AND user_id=$2::uuid
+  AND revoked_at IS NULL
+  AND (expires_at IS NULL OR expires_at > now())`,
+		id, userID, newHash, newPrefix)
+	if err != nil {
+		return fmt.Errorf("rotate api_token: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
 func (r *APITokenRepoPg) Delete(ctx context.Context, id, userID string) error {
 	// §7.14: удалять можно только отозванные или истёкшие — для аудита.
 	tag, err := r.pool.Exec(ctx, `
