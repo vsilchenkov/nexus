@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
 
+	"nexus/internal/domain"
 	"nexus/internal/platform/bootstrap"
 	"nexus/internal/platform/config"
 	"nexus/internal/platform/crypto"
@@ -23,6 +24,7 @@ import (
 	kafkapf "nexus/internal/platform/kafka"
 	"nexus/internal/platform/logging"
 	"nexus/internal/platform/metrics"
+	"nexus/internal/platform/nodeevents"
 	otelpf "nexus/internal/platform/otel"
 	pgpf "nexus/internal/platform/pg"
 	"nexus/internal/platform/ratelimit"
@@ -58,8 +60,9 @@ type App struct {
 	// done-каналы фоновых горутин — Stop дожидается их завершения
 	// (Phase AUD.3: reload-callbacks не должны бежать параллельно
 	// с закрытием соединений).
-	reloadDone  <-chan struct{}
-	shipperDone <-chan struct{}
+	reloadDone         <-chan struct{}
+	shipperDone        <-chan struct{}
+	nodeInvalidateDone <-chan struct{} // §57: подписчик инвалидации конфига узла
 
 	// §51: ручка runtime-уровня логов + кольцо для Redis-шиппера.
 	logCtl *bootstrap.LogController
@@ -173,6 +176,16 @@ func (a *App) Start(ctx context.Context) error {
 		reloadSub.Run(ctx)
 	})
 
+	// §57: гарантированная инвалидация конфига узла. Web публикует событие при
+	// изменении узла (в т.ч. авторизации); выселяем его из L1+Redis, следующий
+	// запрос перечитает свежий конфиг из PG, не дожидаясь TTL.
+	if inv, ok := reader.(nodecache.Invalidator); ok {
+		nodeSub := nodeevents.NewSubscriber(a.redis, a.logger, a.nodeInvalidateHandler(inv))
+		a.nodeInvalidateDone = safego.Go(a.logger, "receiver.nodeInvalidateSubscriber", func() {
+			nodeSub.Run(ctx)
+		})
+	}
+
 	a.srv = &http.Server{
 		Addr:              a.cfg.Receiver.HTTPAddr,
 		Handler:           r,
@@ -227,6 +240,7 @@ func (a *App) Stop(ctx context.Context) error {
 	// Дожидаемся фоновых горутин до закрытия соединений: reload-callback
 	// не должен дёргать pg/redis, которые main уже закрывает.
 	safego.Await(shutdownCtx, a.reloadDone, a.logger, "receiver.reloadSubscriber")
+	safego.Await(shutdownCtx, a.nodeInvalidateDone, a.logger, "receiver.nodeInvalidateSubscriber")
 	safego.Await(shutdownCtx, a.shipperDone, a.logger, "receiver.logShipper")
 	if a.senderCl != nil {
 		_ = a.senderCl.Close()
@@ -240,4 +254,44 @@ func (a *App) Stop(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// nodeInvalidateHandler строит обработчик события инвалидации конфига узла (§57):
+// резолвит team_id→slug и выселяет узел из кешей Receiver'а (L1 in-memory +
+// Redis). Публикуется по team_id, поэтому slug резолвит Receiver — провал резолва
+// slug на стороне Web не блокирует инвалидацию (§57.3).
+func (a *App) nodeInvalidateHandler(inv nodecache.Invalidator) nodeevents.Handler {
+	return func(ctx context.Context, ev nodeevents.Event) {
+		slug, err := a.teamSlugByID(ctx, ev.TeamID)
+		if err != nil {
+			a.logger.Warn("node invalidation: resolve team slug failed",
+				a.logger.Str("team_id", ev.TeamID), a.logger.Err(err))
+			return
+		}
+		if err := inv.Invalidate(ctx, slug, ev.Path); err != nil {
+			a.logger.Debug("node invalidation: evict failed",
+				a.logger.Str("team", slug), a.logger.Str("path", ev.Path), a.logger.Err(err))
+		}
+		if ev.OldPath != "" {
+			if err := inv.Invalidate(ctx, slug, ev.OldPath); err != nil {
+				a.logger.Debug("node invalidation: evict old path failed",
+					a.logger.Str("team", slug), a.logger.Str("path", ev.OldPath), a.logger.Err(err))
+			}
+		}
+		a.logger.Debug("node invalidation applied",
+			a.logger.Str("team", slug), a.logger.Str("path", ev.Path), a.logger.Str("old_path", ev.OldPath))
+	}
+}
+
+// teamSlugByID резолвит slug команды по её id из PostgreSQL. Пустой id → default
+// (событие без team_id трактуем как default-команда).
+func (a *App) teamSlugByID(ctx context.Context, teamID string) (string, error) {
+	if teamID == "" {
+		return domain.DefaultTeamSlug, nil
+	}
+	var slug string
+	if err := a.pg.QueryRow(ctx, "SELECT slug FROM teams WHERE id = $1", teamID).Scan(&slug); err != nil {
+		return "", err
+	}
+	return slug, nil
 }

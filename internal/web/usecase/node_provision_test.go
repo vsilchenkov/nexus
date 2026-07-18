@@ -120,6 +120,37 @@ func TestNodeUC_SetStatus(t *testing.T) {
 	assert.Len(t, auditRepo.entries, 1)
 }
 
+// stubInvPublisher фиксирует опубликованные события инвалидации (§57).
+type stubInvPublisher struct{ calls []string }
+
+func (s *stubInvPublisher) PublishNodeChange(_ context.Context, teamID, path, oldPath string) error {
+	s.calls = append(s.calls, teamID+"|"+path+"|"+oldPath)
+	return nil
+}
+
+// §57: изменение узла публикует событие инвалидации; no-op изменение — нет.
+func TestNodeUC_SetStatus_PublishesInvalidation(t *testing.T) {
+	t.Parallel()
+	repo := newMemNodeRepo()
+	repo.items["n1"] = &domain.Node{
+		ID: "n1", Path: "svc/x", TeamID: "team1", TargetURL: "https://x",
+		Status: domain.NodeStatusEnabled, RootMethod: domain.RootMethodRequestAsync,
+	}
+	uc := NewNodeUsecase(repo, nopNodeCache{}, NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()),
+		nil, nil, nil, nil, time.Minute, 0, "default-team", nil, logging.NewNoop())
+	pub := &stubInvPublisher{}
+	uc.SetInvalidationPublisher(pub)
+	ctx := context.Background()
+
+	require.NoError(t, uc.SetStatus(ctx, SystemActor(), "n1", "team1", domain.NodeStatusPaused))
+	require.Len(t, pub.calls, 1)
+	assert.Equal(t, "team1|svc/x|", pub.calls[0], "событие несёт team_id+path, old_path пуст")
+
+	// no-op (тот же статус) не должен публиковать событие.
+	require.NoError(t, uc.SetStatus(ctx, SystemActor(), "n1", "team1", domain.NodeStatusPaused))
+	assert.Len(t, pub.calls, 1, "no-op изменение не публикует инвалидацию")
+}
+
 func nodeWithTemplate(templateID, table string) *domain.Node {
 	return &domain.Node{
 		Path: "svc/hook", RootMethod: domain.RootMethodRequest, TargetURL: "https://x",
