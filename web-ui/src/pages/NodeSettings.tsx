@@ -18,6 +18,7 @@ import {
 
 import { api, isNotFound, type Node, type CHTemplate, type HostAllowlistEntry } from "../api/client";
 import { useNodeUrlBuilder } from "../lib/nodeUrl";
+import { useEnsureNodeTeam } from "../lib/nodeShare";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { parseNumInput } from "../lib/numField";
 import { validateNodeForm } from "../lib/nodeValidation";
@@ -157,10 +158,14 @@ export default function NodeSettings() {
   const qc = useQueryClient();
   const isNew = !id;
 
+  // §58: шаренная ссылка на правку узла из другой команды тоже авто-переключает
+  // сессию на команду узла. Пока не ready — узел не грузим (иначе 404).
+  const ensure = useEnsureNodeTeam(id);
+
   const existing = useQuery({
     queryKey: ["node", id],
     queryFn: () => api.get<Node>(`/api/nodes/${id}`),
-    enabled: !isNew,
+    enabled: !isNew && ensure.status === "ready",
   });
 
   const [form, setForm] = useState<Form>(emptyForm);
@@ -284,6 +289,15 @@ export default function NodeSettings() {
   const canEdit = useRoleAtLeast("manager");
   if (!canEdit) {
     return <Navigate to={isNew ? "/" : `/nodes/${id}`} replace />;
+  }
+
+  // §58, п.3: правка узла, чья команда пользователю недоступна.
+  if (!isNew && ensure.status === "unavailable") {
+    return <div className="mx-auto max-w-6xl text-fg-muted">{t("node.unavailable")}</div>;
+  }
+  // §58, п.2: пока резолвим/переключаем команду узла — грузимся (форма не мигает).
+  if (!isNew && ensure.status !== "ready") {
+    return <div className="mx-auto max-w-6xl text-fg-muted">{t("common.loading")}</div>;
   }
 
   return (

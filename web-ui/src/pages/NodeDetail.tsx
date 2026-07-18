@@ -17,6 +17,7 @@ import { cn } from "../lib/cn";
 import { msToDatetimeLocal } from "../lib/format";
 import { validateNodePath } from "../lib/nodeValidation";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
+import { useEnsureNodeTeam } from "../lib/nodeShare";
 import { DryRunDialog } from "../components/DryRunDialog";
 import { LogsTab, type LogsInitialFilter } from "../components/node/LogsTab";
 import { OverviewTab } from "../components/node/OverviewTab";
@@ -67,6 +68,10 @@ export default function NodeDetail() {
   );
   const fetching = useIsFetching(nodeQueries);
 
+  // §58: гарантируем, что текущая команда сессии = команде узла (авто-переключение
+  // при открытии шаренной ссылки). Пока не ready — сам узел не грузим.
+  const ensure = useEnsureNodeTeam(id);
+
   // openLogsAt — переход на вкладку логов с временным окном бакета (§33.4).
   const openLogsAt = (r: LogsRange) => {
     setLogsFilter({
@@ -80,7 +85,9 @@ export default function NodeDetail() {
   const nodeQ = useQuery({
     queryKey: ["node", id],
     queryFn: () => api.get<Node>(`/api/nodes/${id}`),
-    enabled: !!id,
+    // §58: узел грузим только когда его команда стала активной — иначе
+    // team-scoped GET отдал бы 404 ещё до авто-переключения.
+    enabled: !!id && ensure.status === "ready",
     // §27: для RabbitMQAsync live-обновляем health-снимок (queue depth/degraded).
     // Пока узел недоступен (напр. 404 после смены команды) — не поллим: иначе
     // цикл «поллинг → 404» крутится вечно.
@@ -101,6 +108,11 @@ export default function NodeDetail() {
     if (notFound) navigate("/", { replace: true });
   }, [notFound, navigate]);
 
+  // §58, п.3: узла нет или его команда пользователю недоступна.
+  if (ensure.status === "unavailable")
+    return <div className="text-fg-muted">{t("node.unavailable")}</div>;
+  // §58, п.2: пока резолвим команду узла и переключаемся на неё — грузимся.
+  if (ensure.status !== "ready") return <div className="text-fg-muted">{t("common.loading")}</div>;
   if (nodeQ.isLoading) return <div className="text-fg-muted">{t("common.loading")}</div>;
   if (notFound) return <div className="text-fg-muted">{t("common.loading")}</div>;
   if (!node) return <div className="text-err">{t("node.not_found")}</div>;
