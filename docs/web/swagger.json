@@ -3385,6 +3385,46 @@
                 }
             }
         },
+        "/api/nodes/{id}/team": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Возвращает команду, которой принадлежит узел, если вызывающий пользователь состоит в ней. Нужен для шаринга ссылки на страницу узла: фронт узнаёт команду ДО загрузки узла (team-scoped GET вернул бы 404 при несовпадении текущей команды) и переключает сессию. Если узла нет или пользователь не член его команды — 404 (без утечки существования).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "nodes"
+                ],
+                "summary": "Команда узла для авто-переключения (§58).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ResolveTeamResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/request-fields": {
             "get": {
                 "security": [
@@ -5725,6 +5765,20 @@
                 },
                 "use_node_auth": {
                     "type": "boolean"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.ResolveTeamResponse": {
+            "type": "object",
+            "properties": {
+                "team_id": {
+                    "type": "string"
+                },
+                "team_name": {
+                    "type": "string"
+                },
+                "team_slug": {
+                    "type": "string"
                 }
             }
         },

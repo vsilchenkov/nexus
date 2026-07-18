@@ -297,7 +297,8 @@
       "delete": "Delete",
       "dry_run": "Dry-run",
       "replay": "Replay",
-      "refresh": "Refresh"
+      "refresh": "Refresh",
+      "share": "Share"
     },
     "copy": {
       "title": "Copy node",
@@ -307,6 +308,7 @@
     },
     "not_found": "Node not found",
     "foreign_team": "This node belongs to another team — switch to it in the header to save your changes. Your edits are not lost.",
+    "unavailable": "Node unavailable",
     "validation": {
       "root_method": "Invalid node type",
       "incoming_method": "Invalid incoming method (allowed: GET, POST, PUT, DELETE)",
@@ -1087,7 +1089,8 @@
     "delete": "Delete",
     "copy": "Copy",
     "copied": "Copied",
-    "apply": "Apply"
+    "apply": "Apply",
+    "no_permission": "No permission"
   },
   "error_boundary": {
     "title": "Something went wrong",

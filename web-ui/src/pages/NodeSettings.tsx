@@ -18,6 +18,7 @@ import {
 
 import { api, isNotFound, type Node, type CHTemplate, type HostAllowlistEntry } from "../api/client";
 import { useNodeUrlBuilder } from "../lib/nodeUrl";
+import { useEnsureNodeTeam } from "../lib/nodeShare";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { parseNumInput } from "../lib/numField";
 import { validateNodeForm } from "../lib/nodeValidation";
@@ -29,6 +30,7 @@ import { AllowedHostsField } from "../components/node/AllowedHostsField";
 import { HeadersField } from "../components/node/HeadersField";
 import { RequestFieldField } from "../components/node/RequestFieldField";
 import { RabbitMQSection, type RMQSetter } from "../components/node/RabbitMQSection";
+import { ShareNodeButton } from "../components/node/ShareNodeButton";
 import {
   Button,
   Card,
@@ -157,10 +159,14 @@ export default function NodeSettings() {
   const qc = useQueryClient();
   const isNew = !id;
 
+  // §58: шаренная ссылка на правку узла из другой команды тоже авто-переключает
+  // сессию на команду узла. Пока не ready — узел не грузим (иначе 404).
+  const ensure = useEnsureNodeTeam(id);
+
   const existing = useQuery({
     queryKey: ["node", id],
     queryFn: () => api.get<Node>(`/api/nodes/${id}`),
-    enabled: !isNew,
+    enabled: !isNew && ensure.status === "ready",
   });
 
   const [form, setForm] = useState<Form>(emptyForm);
@@ -286,16 +292,32 @@ export default function NodeSettings() {
     return <Navigate to={isNew ? "/" : `/nodes/${id}`} replace />;
   }
 
+  // §58, п.3: правка узла, чья команда пользователю недоступна.
+  if (!isNew && ensure.status === "unavailable") {
+    return <div className="mx-auto max-w-6xl text-fg-muted">{t("node.unavailable")}</div>;
+  }
+  // §58, п.2: пока резолвим/переключаем команду узла — грузимся (форма не мигает).
+  if (!isNew && ensure.status !== "ready") {
+    return <div className="mx-auto max-w-6xl text-fg-muted">{t("common.loading")}</div>;
+  }
+
   return (
     <div className="mx-auto max-w-6xl space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-lg font-semibold">
+      <div className="flex items-center justify-between gap-3">
+        {/* Заголовок усекается, группа действий закреплена справа (shrink-0) —
+            кнопки всегда в один ряд даже при длинном пути узла. */}
+        <h1
+          className="min-w-0 truncate text-lg font-semibold"
+          title={isNew ? undefined : `${t("node.actions.edit")}: ${form.path}`}
+        >
           {isNew ? t("overview.new_node") : `${t("node.actions.edit")}: ${form.path}`}
         </h1>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <Link to={isNew ? "/" : `/nodes/${id}`}>
             <Button variant="ghost">{t("common.cancel")}</Button>
           </Link>
+          {/* §58, п.4: «Поделиться» выводится и в форме правки (у нового узла нет id). */}
+          {!isNew && id && <ShareNodeButton nodeId={id} />}
           <Button onClick={() => setShowDryRun(true)}>
             <FlaskConical className="h-4 w-4" /> {t("node.actions.dry_run")}
           </Button>
