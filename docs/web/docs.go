@@ -4215,6 +4215,46 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/tokens/{id}/rotate": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Генерирует новое значение токена, сохраняя имя, scopes, команду и срок; старое значение сразу теряет силу. Новая plain-строка возвращается ровно один раз. Ротировать можно только активный токен (не отозванный и не истёкший) — иначе 404, для него нужно создать новый.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tokens"
+                ],
+                "summary": "Перевыпустить API-токен (rotate).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "token id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "token (plain, один раз)",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.RotateTokenResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "токен не найден или не активен",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/users": {
             "get": {
                 "security": [
@@ -5596,6 +5636,14 @@ const docTemplate = `{
                 },
                 "use_node_auth": {
                     "type": "boolean"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.RotateTokenResponse": {
+            "type": "object",
+            "properties": {
+                "token": {
+                    "type": "string"
                 }
             }
         },

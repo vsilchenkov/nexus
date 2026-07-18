@@ -148,6 +148,23 @@ func (u *APITokenUsecase) Revoke(ctx context.Context, actor Actor, id, userID st
 	return nil
 }
 
+// Rotate перевыпускает ЗНАЧЕНИЕ существующего токена: генерирует новый секрет,
+// обновляет hash/prefix, сохраняя id/name/scopes/team/expires. Старое значение
+// сразу перестаёт авторизовывать (hash изменился). Отозванный/просроченный токен
+// не ротируется (repo вернёт ErrNotFound) — для него нужно создать новый. Как и
+// Create, plaintext возвращается ровно один раз (§7.14).
+func (u *APITokenUsecase) Rotate(ctx context.Context, actor Actor, id, userID string) (string, error) {
+	plain, err := generateToken()
+	if err != nil {
+		return "", err
+	}
+	if err := u.repo.Rotate(ctx, id, userID, hashToken(plain), plain[:min(8, len(plain))]); err != nil {
+		return "", err
+	}
+	u.audit.Log(ctx, actor, domain.ActionAPITokenRotate, "api_token", id, nil)
+	return plain, nil
+}
+
 func (u *APITokenUsecase) Delete(ctx context.Context, actor Actor, id, userID string) error {
 	if err := u.repo.Delete(ctx, id, userID); err != nil {
 		return err

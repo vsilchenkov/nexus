@@ -39,6 +39,7 @@ const (
 	ActionAPITokenCreate = "api_token.create"
 	ActionAPITokenRevoke = "api_token.revoke"
 	ActionAPITokenDelete = "api_token.delete"
+	ActionAPITokenRotate = "api_token.rotate"
 
 	ActionNodeReplay = "node.replay"
 	ActionNodeDryRun = "node.dry_run"
