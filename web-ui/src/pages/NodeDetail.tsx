@@ -132,7 +132,7 @@ export default function NodeDetail() {
         <Chip>{node.root_method}</Chip>
         <Pill tone={statusTone}>{t(`node.status.${node.status}`)}</Pill>
         {isPull && rmq?.degraded && <Pill tone="err">{t("node.rmq.degraded")}</Pill>}
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           <Button
             sm
             variant="ghost"
