@@ -22,7 +22,8 @@ import { useEnsureNodeTeam } from "../lib/nodeShare";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { parseNumInput } from "../lib/numField";
 import { validateNodeForm } from "../lib/nodeValidation";
-import { chSchemaChangeWontApply } from "../lib/chSchema";
+import { chSchemaChangeWontApply, chSyncFormDirty } from "../lib/chSchema";
+import { useConfirm } from "../lib/confirm";
 import { DryRunDialog } from "../components/DryRunDialog";
 import { CHSchemaSyncDialog } from "../components/CHSchemaSyncDialog";
 import { DeleteNodeDialog } from "../components/node/DeleteNodeDialog";
@@ -176,6 +177,11 @@ export default function NodeSettings() {
   const [showDryRun, setShowDryRun] = useState(false);
   const [showChSync, setShowChSync] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
+  const confirm = useConfirm();
+  // §56: «Синхронизировать схему» по грязной форме → предложить сохранить и,
+  // при согласии, открыть диалог по уже сохранённым настройкам. Флаг переживает
+  // async-сохранение и читается в save.onSuccess (там иначе идёт navigate).
+  const syncAfterSaveRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   // §28 Пункт 5: имя поля с ошибкой валидации (для inline-подсветки) из
   // ответа { error, code, field } бэкенда.
@@ -220,6 +226,14 @@ export default function NodeSettings() {
       // только что изменённое поле «отъезжает» к старому значению, пока не
       // истечёт staleTime. Точечная инвалидация даёт мгновенный refetch.
       if (nodeId) qc.invalidateQueries({ queryKey: ["node", nodeId] });
+      // §56: «Сохранить и синхронизировать» — остаёмся на форме и открываем
+      // диалог синхронизации по уже сохранённым настройкам (без сброса формы и
+      // без navigate). filledRef не даёт рефетчу затереть форму.
+      if (syncAfterSaveRef.current && nodeId && !isNew) {
+        syncAfterSaveRef.current = false;
+        setShowChSync(true);
+        return;
+      }
       // Сброс формы: иначе при следующем заходе на /nodes/new остаются
       // значения только что созданного узла (Phase AUD.7).
       setForm(emptyForm);
@@ -251,18 +265,43 @@ export default function NodeSettings() {
   // errCls — класс красной рамки для поля с ошибкой.
   const errCls = (name: string) => (errField === name ? "border-err" : "");
 
-  // submit — клиентская валидация лимитов (зеркало domain.Node.Validate) до
-  // запроса: те же i18n-коды node.validation.*, что возвращает backend.
-  function submit() {
+  // runSave — клиентская валидация лимитов (зеркало domain.Node.Validate) до
+  // запроса: те же i18n-коды node.validation.*, что возвращает backend. Куда
+  // перейти после успеха (navigate или открыть синхронизацию) решает
+  // save.onSuccess по syncAfterSaveRef. Возвращает false, если валидация не прошла.
+  function runSave(): boolean {
     const v = validateNodeForm(form);
     if (v) {
       setErrField(v.field);
       setError(t(v.code));
-      return;
+      return false;
     }
     setError(null);
     setErrField(null);
     save.mutate();
+    return true;
+  }
+
+  function submit() {
+    runSave();
+  }
+
+  // onSyncClick — §56: план синхронизации строится по СОХРАНЁННОМУ узлу (эндпоинт
+  // берёт только id, значения формы туда не уходят). При несохранённых CH-правках
+  // предлагаем сохранить и продолжить; отказ — диалог не открываем.
+  async function onSyncClick() {
+    if (chSyncDirty) {
+      const ok = await confirm({
+        title: t("ch_sync.save_first_title"),
+        message: t("ch_sync.save_first_message"),
+        confirmLabel: t("ch_sync.save_and_sync"),
+      });
+      if (!ok) return;
+      syncAfterSaveRef.current = true;
+      if (!runSave()) syncAfterSaveRef.current = false; // валидация не прошла — откат
+      return;
+    }
+    setShowChSync(true);
   }
 
   const isPull = form.root_method === "RabbitMQAsync";
@@ -278,6 +317,15 @@ export default function NodeSettings() {
     loggingEnabled: form.logging_enabled,
     currentTemplateId: form.clickhouse_template_id,
     currentTable: form.clickhouse_table,
+    saved: savedNode,
+  });
+  // §56: есть ли несохранённые CH-правки (шаблон/таблица/retention) — от этого
+  // зависит, предложит ли onSyncClick сохранить перед синхронизацией.
+  const chSyncDirty = chSyncFormDirty({
+    isNew,
+    currentTemplateId: form.clickhouse_template_id,
+    currentTable: form.clickhouse_table,
+    currentRetentionDays: form.clickhouse_retention_days,
     saved: savedNode,
   });
   // §28 Пункт 1: полный адрес собирается из публичного адреса приложения
@@ -778,7 +826,7 @@ export default function NodeSettings() {
               {!isNew && form.clickhouse_table && (
                 <button
                   type="button"
-                  onClick={() => setShowChSync(true)}
+                  onClick={() => void onSyncClick()}
                   className="mt-3 flex items-center gap-1.5 text-xs text-accent hover:underline"
                 >
                   <RefreshCw className="h-3.5 w-3.5" /> {t("ch_sync.button")}
