@@ -38,6 +38,24 @@ COPY --from=builder /out/sender /usr/local/bin/sender
 COPY config/config.example.yml /app/config/config.yml
 COPY migrations /app/migrations
 
+# Корпоративный CA «Vozovoz Issuing CA» — иначе узлы на внутренних доменах
+# (*.vz78.vozovoz.ru) падают с `x509: certificate signed by unknown authority`.
+#
+# ВАЖНО: кладём именно ПРОМЕЖУТОЧНЫЙ (issuing) CA, а не корневой. У «Vozovoz
+# Root CA» отсутствует расширение basicConstraints (нет CA:TRUE) — по RFC 5280
+# он не может подписывать сертификаты, и Go его отвергает независимо от того,
+# добавлен он в хранилище или нет («parent certificate cannot sign this kind of
+# certificate»; openssl verify даёт `error 24: invalid CA certificate`).
+# Issuing CA оформлен корректно (CA:TRUE critical + Certificate Sign), а Go
+# принимает любой сертификат из пула как якорь доверия — цепочка замыкается на
+# нём и до сломанного корня не доходит. Проверено Go-клиентом против geo2.
+#
+# Ставим ДО `USER nexus`: update-ca-certificates пишет в /etc/ssl/certs.
+# Не использовать SSL_CERT_FILE — он ЗАМЕНЯЕТ системный бандл целиком, и узлы
+# с публичными сертификатами перестанут проверяться.
+COPY deploy/certs/vozovoz-issuing-ca.crt /usr/local/share/ca-certificates/
+RUN update-ca-certificates
+
 # Директория для CH-fallback (NDJSON .tmp + rename). Sender пишет сюда при
 # недоступности ClickHouse — иначе `chlog.flushTable.fallback` фейлится с
 # "no such file or directory". Права на нашего непривилегированного user'а.
