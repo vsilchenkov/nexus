@@ -27,9 +27,12 @@ func NewSchemaInspector(conn ConnProvider, logger logging.Logger) *SchemaInspect
 	return &SchemaInspectorCH{conn: conn, logger: logger}
 }
 
-// ttlDaysRe вытаскивает срок native-TTL из SHOW CREATE TABLE:
-// `TTL date_create + INTERVAL <n> DAY DELETE`.
-var ttlDaysRe = regexp.MustCompile(`INTERVAL\s+(\d+)\s+DAY`)
+// ttlDaysRe вытаскивает срок native-TTL из SHOW CREATE TABLE. Наш ALTER/CREATE
+// пишет `TTL date_create + INTERVAL <n> DAY DELETE`, но ClickHouse НОРМАЛИЗУЕТ
+// эту запись в `toIntervalDay(<n>)` при выводе SHOW CREATE — поэтому распознаём
+// обе формы. Иначе применённый MODIFY TTL интроспекция «не видит» (HasTTL=false),
+// и планировщик §56 предлагает тот же ALTER по кругу (retention «не применяется»).
+var ttlDaysRe = regexp.MustCompile(`(?i)INTERVAL\s+(\d+)\s+DAY|toIntervalDay\(\s*(\d+)\s*\)`)
 
 // ReadTableSchema собирает снимок схемы таблицы из системных таблиц ClickHouse.
 func (s *SchemaInspectorCH) ReadTableSchema(ctx context.Context, table string) (domain.CurrentTableSchema, bool, error) {
@@ -84,11 +87,27 @@ func (s *SchemaInspectorCH) ReadTableSchema(ctx context.Context, table string) (
 			s.logger.Str("table", table), s.logger.Err(err))
 		return out, true, nil
 	}
-	if m := ttlDaysRe.FindStringSubmatch(createStmt); m != nil {
+	if days, ok := ttlDaysFromCreate(createStmt); ok {
 		out.HasTTL = true
-		out.TTLDays = atoi32(m[1])
+		out.TTLDays = days
 	}
 	return out, true, nil
+}
+
+// ttlDaysFromCreate достаёт срок native-TTL (в днях) из текста SHOW CREATE TABLE,
+// принимая обе формы записи интервала — `INTERVAL <n> DAY` и нормализованную
+// ClickHouse `toIntervalDay(<n>)`. ok=false, если native-TTL по дням в DDL нет.
+func ttlDaysFromCreate(createStmt string) (int32, bool) {
+	m := ttlDaysRe.FindStringSubmatch(createStmt)
+	if m == nil {
+		return 0, false
+	}
+	// Группа 1 — форма INTERVAL, группа 2 — toIntervalDay; заполнена одна из них.
+	day := m[1]
+	if day == "" {
+		day = m[2]
+	}
+	return atoi32(day), true
 }
 
 func (s *SchemaInspectorCH) readCodecs(ctx context.Context, db, tbl string, dst map[string]string) error {

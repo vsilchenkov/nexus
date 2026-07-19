@@ -80,6 +80,14 @@ ClickHouse:
   после `MATERIALIZE INDEX` (тяжёлая операция) или естественного мерджа. §56 (v1)
   делает `ADD INDEX` без авто-`MATERIALIZE`; материализацию исторических партов
   оператор при необходимости запускает вручную.
+- **Интроспекция TTL распознаёт обе формы записи интервала.** ALTER/CREATE
+  пишет `TTL date_create + INTERVAL <n> DAY DELETE`, но ClickHouse нормализует
+  это в `toIntervalDay(<n>)` и именно так отдаёт в `SHOW CREATE TABLE`. Если
+  интроспектор ищет только `INTERVAL <n> DAY`, применённый `MODIFY TTL` он «не
+  видит» (`HasTTL=false`), и планировщик предлагает тот же ALTER по кругу —
+  retention как будто «не применяется» (apply срабатывает, но следующий Plan
+  снова непустой). Поэтому `ttlDaysRe` матчит обе формы. Баг найден на стенде
+  (узел cdsac, `nexus_rtt.cdsac`), регресс закрыт `TestTTLDaysFromCreate`.
 - **Retention остаётся двухконтурным.** native-TTL (`ttl_mode=ttl_days`) и
   partition-drop housekeeping'а (`clickhouse_retention_days`, §4.3) — разные
   механизмы; §56 синхронизирует только native-TTL шаблона, housekeeping работает
