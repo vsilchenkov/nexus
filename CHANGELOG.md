@@ -5,7 +5,10 @@
 Формат основан на [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/),
 проект следует [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-> Версионирование ведётся по git-тегам `v*` (job `release` в [.gitlab-ci.yml](.gitlab-ci.yml)).
+> Версионирование ведётся по git-тегам `v*`: версия вшивается в бинарь при сборке через
+> `git describe` (см. DEPLOYMENT.md §9). Тег `v*` прогоняет в CI обычные test/lint/build и
+> security-сканеры; job `release` был удалён в 1.0.3, GitLab-релиз создаётся вручную
+> из раздела CHANGELOG соответствующей версии.
 > Первый релиз — `1.0.0`; его записи сгруппированы по фазам разработки до тега.
 
 ---
