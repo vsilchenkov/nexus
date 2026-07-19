@@ -15,6 +15,31 @@
 
 ## [Unreleased]
 
+## [1.15.2] - 2026-07-19
+
+### Fixed
+
+- **Узлы на внутренних доменах перестали падать с ошибкой TLS.** Запросы к адресам вида
+  `*.vz78.vozovoz.ru` завершались с `x509: certificate signed by unknown authority` — в образе
+  Sender'а не было корпоративного центра сертификации. Теперь в него встроен **промежуточный**
+  «Vozovoz Issuing CA». Важная деталь: добавить **корневой** «Vozovoz Root CA» недостаточно — у него
+  отсутствует расширение `basicConstraints` (`CA:TRUE`), поэтому по RFC 5280 он не вправе подписывать
+  сертификаты и Go отвергает его независимо от наличия в хранилище. Подробности, порядок обновления
+  сертификата и сверка отпечатка — в [deploy/certs/README.md](deploy/certs/README.md).
+  **Требует пересборки образа Sender'а** (`docker compose up -d --build sender`).
+
+### Changed
+
+- **CI больше не запускает дублирующий пайплайн на `master`.** Раннер один и обрабатывает задачи
+  последовательно, а релиз пушит `master` и тег на один и тот же коммит — из-за чего пайплайн ветки
+  занимал раннер, а релизный пайплайн тега простаивал в очереди по 30–90 минут. Теперь push-пайплайн
+  `master` не создаётся: выпускается всегда коммит с тегом, и его пайплайн проверяет тот же код
+  плюс security-сканеры и loadtest. Ручной запуск через «Run pipeline» на `master` сохранён.
+- **Шапка этого файла больше не ссылается на несуществующий job `release`** — он был удалён ещё
+  в 1.0.3 вместе со стадией `release`; описание приведено в соответствие с фактическим поведением.
+- **DEPLOYMENT.md §13** пополнен двумя типовыми симптомами: ошибка TLS на внутренних доменах и
+  `real call is not available: web.sender_grpc.addr is not configured` у тестового запроса.
+
 ## [1.15.1] - 2026-07-19
 
 ### Fixed
@@ -1056,7 +1081,8 @@ ClickHouse (§21), идентификатор узла в логах для об
 
 ---
 
-[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.15.1...HEAD
+[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.15.2...HEAD
+[1.15.2]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.15.1...v1.15.2
 [1.15.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.15.0...v1.15.1
 [1.15.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.14.0...v1.15.0
 [1.14.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.13.0...v1.14.0
