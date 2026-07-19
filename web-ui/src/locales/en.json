@@ -33,7 +33,10 @@
     "rejections_head": "Cannot apply via ALTER (table recreation required)",
     "apply": "Apply",
     "apply_warning": "ClickHouse ALTERs may be heavy and partially irreversible",
-    "applied": "Applied statements: {{n}}"
+    "applied": "Applied statements: {{n}}",
+    "save_first_title": "Unsaved changes",
+    "save_first_message": "Sync runs against the node's saved settings, not the form. Save changes and continue syncing?",
+    "save_and_sync": "Save and sync"
   },
   "auth": {
     "login": "Sign in to the panel",
