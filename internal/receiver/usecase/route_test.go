@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/url"
 	"strings"
@@ -242,6 +243,138 @@ func TestRoute_DynamicAuth_TokenForwarded(t *testing.T) {
 	}
 	if strings.Contains(sender.last.GetTargetUrl(), "Bearer") {
 		t.Fatalf("служебный параметр Bearer не должен попасть в target URL: %s", sender.last.GetTargetUrl())
+	}
+}
+
+// fromRequestNode — узел url_mode=from_request с заданным allowlist (§3.4/§23).
+func fromRequestNode(hosts []string) *domain.Node {
+	return &domain.Node{
+		Path:             "demo/dyn-url",
+		RootMethod:       domain.RootMethodRequest,
+		IncomingMethod:   domain.HTTPMethodPOST,
+		OutgoingMethod:   domain.HTTPMethodPOST,
+		URLMode:          domain.URLModeFromRequest,
+		URLParamName:     "url_base",
+		URLAllowedHosts:  hosts,
+		AuthType:         domain.AuthTypeNone,
+		IncomingAuthType: domain.IncomingAuthTypeNone,
+		Status:           domain.NodeStatusEnabled,
+	}
+}
+
+// TestRoute_FromRequest_AllowedHost (§3.4): разрешённый хост — Sender получает
+// URL из query-параметра, сам url_base вырезан, остальная query сохранена.
+func TestRoute_FromRequest_AllowedHost(t *testing.T) {
+	t.Parallel()
+	sender := &capturingSender{}
+	u := NewRouteUsecase(stubNodeReader{node: fromRequestNode([]string{"api.partner.com"})}, sender, 5, logging.NewNoop())
+	q := url.Values{
+		"url_base": {"https://api.partner.com/hook"},
+		"extra":    {"1"},
+	}
+	out, err := u.Route(context.Background(), RouteInput{NodePath: "demo/dyn-url", Method: "POST", Query: q})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if out.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200", out.StatusCode)
+	}
+	got := sender.last.GetTargetUrl()
+	if !strings.HasPrefix(got, "https://api.partner.com/hook") {
+		t.Fatalf("target = %q, want URL из запроса", got)
+	}
+	if strings.Contains(got, "url_base") {
+		t.Fatalf("служебный url_base должен быть вырезан из target: %q", got)
+	}
+	if !strings.Contains(got, "extra=1") {
+		t.Fatalf("остальная query должна сохраниться: %q", got)
+	}
+}
+
+// TestRoute_FromRequest_BlockedHost (§3.4): хост вне allowlist —
+// ErrURLNotAllowed (handler → 403), Sender НЕ вызывается.
+func TestRoute_FromRequest_BlockedHost(t *testing.T) {
+	t.Parallel()
+	sender := &capturingSender{}
+	u := NewRouteUsecase(stubNodeReader{node: fromRequestNode([]string{"api.partner.com"})}, sender, 5, logging.NewNoop())
+	q := url.Values{"url_base": {"https://evil.example.com/hook"}}
+	_, err := u.Route(context.Background(), RouteInput{NodePath: "demo/dyn-url", Method: "POST", Query: q})
+	if !errors.Is(err, domain.ErrURLNotAllowed) {
+		t.Fatalf("want ErrURLNotAllowed, got %v", err)
+	}
+	if sender.last != nil {
+		t.Fatal("запрос на запрещённый хост не должен дойти до Sender")
+	}
+}
+
+// TestRoute_FromRequest_MissingParam (§3.4): без url_base — ErrURLParamRequired
+// (handler → 400), Sender НЕ вызывается; fallback на target_url отсутствует.
+func TestRoute_FromRequest_MissingParam(t *testing.T) {
+	t.Parallel()
+	sender := &capturingSender{}
+	node := fromRequestNode(nil)
+	node.TargetURL = "https://static.example.com/hook" // не должен использоваться
+	u := NewRouteUsecase(stubNodeReader{node: node}, sender, 5, logging.NewNoop())
+	_, err := u.Route(context.Background(), RouteInput{NodePath: "demo/dyn-url", Method: "POST", Query: url.Values{}})
+	if !errors.Is(err, domain.ErrURLParamRequired) {
+		t.Fatalf("want ErrURLParamRequired, got %v", err)
+	}
+	if sender.last != nil {
+		t.Fatal("без url_base запрос не должен дойти до Sender (нет fallback на target_url)")
+	}
+}
+
+// TestRouteAsync_FromRequest_AllowedHost (§3.4 async-путь): разрешённый хост —
+// envelope уходит в Kafka с резолвнутым URL из запроса, url_base вырезан.
+func TestRouteAsync_FromRequest_AllowedHost(t *testing.T) {
+	t.Parallel()
+	node := fromRequestNode([]string{"*.partner.com"})
+	producer := &capturingProducer{}
+	u := NewRouteAsyncUsecase(stubNodeReader{node: node}, producer, "nexus.async", 5, logging.NewNoop())
+	q := url.Values{
+		"url_base": {"https://api.partner.com/hook"},
+		"extra":    {"1"},
+	}
+	res, err := u.RouteAsync(context.Background(), RouteInput{NodePath: "demo/dyn-url", Method: "POST", Query: q})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if res.ID == "" {
+		t.Fatal("empty envelope id")
+	}
+	if producer.last == nil {
+		t.Fatal("envelope must be produced for allowed host")
+	}
+	var env Envelope
+	if err := json.Unmarshal(producer.last, &env); err != nil {
+		t.Fatalf("unmarshal envelope: %v", err)
+	}
+	if !strings.HasPrefix(env.TargetURL, "https://api.partner.com/hook") {
+		t.Fatalf("envelope target = %q, want URL из запроса", env.TargetURL)
+	}
+	if strings.Contains(env.TargetURL, "url_base") {
+		t.Fatalf("служебный url_base должен быть вырезан из envelope target: %q", env.TargetURL)
+	}
+	if !strings.Contains(env.TargetURL, "extra=1") {
+		t.Fatalf("остальная query должна сохраниться в envelope: %q", env.TargetURL)
+	}
+}
+
+// TestRouteAsync_FromRequest_BlockedHost (§3.4 async-путь): хост вне allowlist —
+// ErrURLNotAllowed, в Kafka НИЧЕГО не ставится (сообщение не теряется в очереди,
+// клиент сразу получает 403).
+func TestRouteAsync_FromRequest_BlockedHost(t *testing.T) {
+	t.Parallel()
+	node := fromRequestNode([]string{"api.partner.com"})
+	producer := &capturingProducer{}
+	u := NewRouteAsyncUsecase(stubNodeReader{node: node}, producer, "nexus.async", 5, logging.NewNoop())
+	q := url.Values{"url_base": {"https://evil.example.com/hook"}}
+	_, err := u.RouteAsync(context.Background(), RouteInput{NodePath: "demo/dyn-url", Method: "POST", Query: q})
+	if !errors.Is(err, domain.ErrURLNotAllowed) {
+		t.Fatalf("want ErrURLNotAllowed, got %v", err)
+	}
+	if producer.last != nil {
+		t.Fatal("запрос на запрещённый хост не должен попасть в Kafka")
 	}
 }
 

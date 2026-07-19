@@ -75,6 +75,8 @@ func TestClassifyDomainError(t *testing.T) {
 		{"not found", domain.ErrNodeNotFound, http.StatusNotFound, false},
 		{"disabled", domain.ErrNodeDisabled, http.StatusServiceUnavailable, false},
 		{"method not allowed", domain.ErrNodeMethodNotAllowed, http.StatusMethodNotAllowed, false},
+		{"url param required", domain.ErrURLParamRequired, http.StatusBadRequest, false},
+		{"url invalid", domain.ErrURLInvalid, http.StatusBadRequest, false},
 		{"url not allowed", domain.ErrURLNotAllowed, http.StatusForbidden, false},
 		{"loop detected", domain.ErrLoopDetected, http.StatusLoopDetected, false},
 		{"unauthorized", domain.ErrUnauthorized, http.StatusUnauthorized, false},
