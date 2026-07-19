@@ -118,6 +118,23 @@ func TestResolveURL_FromRequest_Regex(t *testing.T) {
 	}
 }
 
+// Хост с портом матчит exact-паттерн без порта: HostAllowed срезает порт
+// (§23.2), и нестандартный порт не обходит allowlist.
+func TestResolveURL_FromRequest_HostWithPort(t *testing.T) {
+	n := &domain.Node{
+		URLMode:         domain.URLModeFromRequest,
+		URLParamName:    "url_base",
+		URLAllowedHosts: []string{"api.partner.com"},
+	}
+	target, _, err := ResolveURL(n, url.Values{"url_base": {"https://api.partner.com:8443/hook"}})
+	if err != nil {
+		t.Fatalf("хост с портом должен матчить exact-паттерн без порта: %v", err)
+	}
+	if target != "https://api.partner.com:8443/hook" {
+		t.Errorf("target=%q", target)
+	}
+}
+
 func TestResolveURL_FromRequest_EmptyAllowlist(t *testing.T) {
 	n := &domain.Node{
 		URLMode:      domain.URLModeFromRequest,
