@@ -8,7 +8,7 @@ import { api, type Node } from "../../api/client";
 import { useRoleAtLeast } from "../../lib/useCurrentRole";
 import { fmtLogTs, fmtSize } from "../../lib/format";
 import { FETCH_CHUNK, LARGE_WARN_RUNES, formatRunes, prettyMaybe } from "../../lib/logBody";
-import { LabelHint } from "../ui";
+import { LabelHint, Tooltip } from "../ui";
 import { CopyButton } from "../ui/CopyButton";
 import { ReplayDialog } from "../ReplayDialog";
 import { LogDateField } from "./LogDateField";
@@ -630,8 +630,13 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                       >
                         {r.method}
                       </td>
-                      <td className="truncate px-3 py-2 font-mono text-xs text-fg-muted" title={r.url}>
-                        {r.url}
+                      {/* URL обрезается по ширине колонки, поэтому полное значение
+                          живёт в подсказке — вместе с кнопкой «Скопировать»
+                          (нативный title скопировать не давал). */}
+                      <td className="truncate px-3 py-2 font-mono text-xs text-fg-muted">
+                        <Tooltip side="top" content={<LogUrlTooltip url={r.url} />}>
+                          <span className="block truncate">{r.url}</span>
+                        </Tooltip>
                       </td>
                       <td className={`px-2 py-2 text-right ${isErr ? "text-err" : "text-ok"}`}>
                         {r.status}
@@ -745,6 +750,23 @@ function SegmentedControl<T extends string>({ value, onChange, options }: Segmen
           {o.label}
         </button>
       ))}
+    </div>
+  );
+}
+
+// LogUrlTooltip — содержимое подсказки колонки «URL»: полный адрес запроса и
+// кнопка копирования. stopPropagation обязателен: Radix рендерит подсказку в
+// портал, но React-события всплывают по React-дереву — без него клик по кнопке
+// дошёл бы до onClick строки и свернул/раскрыл запись.
+function LogUrlTooltip({ url }: { url: string }) {
+  const { t } = useTranslation();
+  return (
+    <div
+      className="flex max-w-[420px] items-start gap-2"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <span className="min-w-0 break-all font-mono text-[11px]">{url}</span>
+      <CopyButton value={url} label={t("common.copy")} />
     </div>
   );
 }

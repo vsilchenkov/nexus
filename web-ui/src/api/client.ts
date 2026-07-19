@@ -69,6 +69,9 @@ export type RMQStatus = {
 
 export type Node = {
   id: string;
+  // §18: команда-владелец узла (UUID). Имя резолвится по членствам
+  // (GET /api/me/teams) — эндпоинт узла отдаёт только идентификатор.
+  team_id: string;
   path: string;
   root_method: RootMethod;
   incoming_method?: HTTPMethod;

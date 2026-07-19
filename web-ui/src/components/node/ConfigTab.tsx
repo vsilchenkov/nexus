@@ -3,6 +3,7 @@ import { type ReactNode } from "react";
 
 import { type Node } from "../../api/client";
 import { useNodeUrlBuilder } from "../../lib/nodeUrl";
+import { useMyTeams } from "../../lib/teams";
 import { Card, Chip, CopyButton } from "../ui";
 
 // ConfigTab — вкладка «Конфигурация» узла (§21): read-only сводка настроек.
@@ -13,6 +14,11 @@ export function ConfigTab({ node }: { node: Node }) {
   // §28 Пункт 1: адрес из публичного base URL приложения + slug команды.
   const buildUrl = useNodeUrlBuilder();
   const fullAddress = buildUrl(verb, node.path);
+  // Команда узла: эндпоинт отдаёт только team_id, имя резолвим по членствам
+  // (запрос общий с шапкой — react-query дедуплицирует ключ). Членства ещё не
+  // пришли или команда не наша (у админа) → показываем сам идентификатор.
+  const myTeams = useMyTeams();
+  const team = myTeams.data?.items.find((tm) => tm.id === node.team_id);
   return (
     <Card>
       <dl className="divide-y divide-line">
@@ -21,6 +27,15 @@ export function ConfigTab({ node }: { node: Node }) {
             <span className="min-w-0 break-all font-mono text-[12px]">{node.id}</span>
             <CopyButton value={node.id} />
           </div>
+        </Row>
+        <Row label={t("node.fields.team")}>
+          {team ? (
+            <span>
+              {team.name} <span className="font-mono text-fg-muted">({team.slug})</span>
+            </span>
+          ) : (
+            <span className="font-mono text-[12px] break-all">{node.team_id || "—"}</span>
+          )}
         </Row>
         <Row label={t("node.fields.method")}>
           <Chip>{node.root_method}</Chip>
@@ -52,6 +67,21 @@ export function ConfigTab({ node }: { node: Node }) {
           </Row>
         )}
         <Row label={t("node.fields.auth")}>{node.auth_type || "—"}</Row>
+        {/* Проброс заголовков — чипами, как в редакторе (HeadersField). Пустой
+            список = наружу уходит только Content-Type (он пробрасывается всегда). */}
+        <Row label={t("node.form.forward_headers")}>
+          {node.forward_headers?.length ? (
+            <div className="flex flex-wrap gap-1.5">
+              {node.forward_headers.map((h) => (
+                <Chip key={h}>
+                  <span className="font-mono">{h}</span>
+                </Chip>
+              ))}
+            </div>
+          ) : (
+            "—"
+          )}
+        </Row>
         <Row label={t("node.fields.ch_table")}>
           <span className="font-mono">{node.clickhouse_table || "—"}</span>
         </Row>

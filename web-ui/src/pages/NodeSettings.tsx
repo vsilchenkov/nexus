@@ -14,6 +14,7 @@ import {
   ShieldAlert,
   MessageSquare,
   RefreshCw,
+  ArrowRightLeft,
 } from "lucide-react";
 
 import { api, isNotFound, type Node, type CHTemplate, type HostAllowlistEntry } from "../api/client";
@@ -32,6 +33,7 @@ import { HeadersField } from "../components/node/HeadersField";
 import { RequestFieldField } from "../components/node/RequestFieldField";
 import { RabbitMQSection, type RMQSetter } from "../components/node/RabbitMQSection";
 import { ShareNodeButton } from "../components/node/ShareNodeButton";
+import { MoveNodeDialog } from "../components/node/MoveNodeDialog";
 import {
   Button,
   Card,
@@ -177,6 +179,10 @@ export default function NodeSettings() {
   const [showDryRun, setShowDryRun] = useState(false);
   const [showChSync, setShowChSync] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
+  const [showMove, setShowMove] = useState(false);
+  // Перенос узла между командами — admin-only (как и сам /move-эндпоинт):
+  // viewer/manager кнопку не видят, иначе клик упрётся в 403.
+  const canMove = useRoleAtLeast("admin");
   const confirm = useConfirm();
   // §56: «Синхронизировать схему» по грязной форме → предложить сохранить и,
   // при согласии, открыть диалог по уже сохранённым настройкам. Флаг переживает
@@ -364,6 +370,13 @@ export default function NodeSettings() {
           <Link to={isNew ? "/" : `/nodes/${id}`}>
             <Button variant="ghost">{t("common.cancel")}</Button>
           </Link>
+          {/* Перенос узла в другую команду — из формы правки (раньше жил кнопкой
+              в списке узлов, где его место занял мини-график трафика). */}
+          {!isNew && canMove && existing.data && (
+            <Button variant="ghost" onClick={() => setShowMove(true)}>
+              <ArrowRightLeft className="h-4 w-4" /> {t("overview.move.action")}
+            </Button>
+          )}
           {/* §58, п.4: «Поделиться» выводится и в форме правки (у нового узла нет id). */}
           {!isNew && id && <ShareNodeButton nodeId={id} />}
           <Button onClick={() => setShowDryRun(true)}>
@@ -998,6 +1011,15 @@ export default function NodeSettings() {
       )}
       {showDelete && existing.data && (
         <DeleteNodeDialog node={existing.data} onClose={() => setShowDelete(false)} />
+      )}
+      {/* После переноса узел уходит в другую команду и текущая форма правки
+          становится чужой (сервер вернёт 404) — уводим на список узлов. */}
+      {showMove && existing.data && (
+        <MoveNodeDialog
+          node={existing.data}
+          onClose={() => setShowMove(false)}
+          onMoved={() => navigate("/")}
+        />
       )}
     </div>
   );

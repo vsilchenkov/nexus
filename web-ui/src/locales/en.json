@@ -102,7 +102,8 @@
       "auth": "Auth",
       "in": "In",
       "out": "Out",
-      "errors": "Errors"
+      "errors": "Errors",
+      "traffic": "Traffic"
     },
     "empty": "No nodes yet",
     "move": {
@@ -358,6 +359,7 @@
       "ch_template_manual": "(none / manual table)",
       "ch_template_hint": "Pick a template — the log table is created automatically on save. Leave empty to manage the table manually.",
       "id": "Node ID",
+      "team": "Team",
       "method": "Method type",
       "path": "Node path",
       "url_mode": "URL mode",
