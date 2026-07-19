@@ -1,4 +1,5 @@
 import { useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Star } from "lucide-react";
 import {
@@ -22,12 +23,14 @@ import { cn } from "../lib/cn";
 import { useMyTeams, useSetFavoriteTeams, useSwitchTeam, type TeamMembership } from "../lib/teams";
 
 // SidebarFavorites — секция «Избранное» в сайдбаре (§49.2): избранные команды
-// в пользовательском порядке, клик переключает текущую команду, drag-and-drop
-// меняет порядок (PUT полного списка, optimistic). Без избранных секция
-// скрыта целиком. id, чьих команд уже нет в членствах (гонка с исключением),
-// молча отфильтровываются — сервер уже удалил их каскадом.
+// в пользовательском порядке, клик переключает текущую команду И открывает её
+// «Узлы» (маршрут "/"), drag-and-drop меняет порядок (PUT полного списка,
+// optimistic). Без избранных секция скрыта целиком. id, чьих команд уже нет в
+// членствах (гонка с исключением), молча отфильтровываются — сервер уже удалил
+// их каскадом.
 export function SidebarFavorites() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const myTeams = useMyTeams();
   const switchTeam = useSwitchTeam();
   const setFavorites = useSetFavoriteTeams();
@@ -46,11 +49,17 @@ export function SidebarFavorites() {
 
   if (teams.length === 0) return null;
 
+  // Клик по избранной команде — это переход в её рабочее пространство, а не
+  // просто смена контекста: всегда ведём на «Узлы» ("/"), даже если открыт
+  // другой раздел (Аудит/Логи/Настройки) или команда уже текущая — иначе на
+  // не-Узлах клик выглядел «не реагирующим». Команду переключаем лишь когда она
+  // отличается (switch-team дёргает инвалидацию team-scoped кеша зря при той же).
   const pick = (id: string) => {
     if (draggedRef.current) return;
     if (id !== data?.current_team_id && !switchTeam.isPending) {
       switchTeam.mutate(id);
     }
+    navigate("/");
   };
 
   const resetDragged = () => {
