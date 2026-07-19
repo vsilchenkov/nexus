@@ -35,7 +35,9 @@ export function MoveNodeDialog({
     mutationFn: () => api.post(`/api/nodes/${node.id}/move`, { target_team_slug: slug }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["nodes"] });
-      qc.invalidateQueries({ queryKey: ["node", node.id] });
+      // Именно remove, а не invalidate: узел уехал в чужую команду, и рефетч
+      // по team-scoped GET заведомо вернёт 404 (лишний запрос + ошибка в консоли).
+      qc.removeQueries({ queryKey: ["node", node.id] });
       onClose();
       onMoved?.();
     },
