@@ -61,6 +61,16 @@ workflow:
       when: never
     - if: $CI_COMMIT_BRANCH
 
+# DAG вместо последовательных стадий: у всех независимых jobs — `needs: []`,
+# поэтому они стартуют сразу, не дожидаясь завершения предыдущей стадии.
+# Параллельность даёт runner: config.toml `concurrent = 4` (один хост,
+# docker-executor гонит до 4 jobs одновременно). До этого пайплайн шёл строго
+# последовательно (сумма ~46 мин на теге); с DAG критический путь ≈
+# integration (~14 мин) + короткая очередь на старте.
+# NB: cross-job `needs: [job]` НЕ используем — при RUN_PROFILE-фильтрах
+# зависимость может отсутствовать в пайплайне, и GitLab падает с
+# «job needs ... but it was not added». Пустой `needs: []` этой проблемы не имеет.
+# stages оставлены для группировки в UI; порядок исполнения задаёт needs.
 stages:
   - test
   - lint
@@ -154,6 +164,7 @@ go-test:
 
 go-lint:
   stage: lint
+  needs: []
   image:
     name: golangci/golangci-lint:v2.12-alpine
     pull_policy: [always, if-not-present]
@@ -170,6 +181,7 @@ go-lint:
 
 swagger-drift:
   stage: lint
+  needs: []
   extends: .go-base
   rules:
     - *skip-if-profiled-rule
@@ -196,6 +208,7 @@ swagger-drift:
 
 go-build:
   stage: build
+  needs: []
   extends: .go-base
   rules:
     - *skip-if-profiled-rule
@@ -210,6 +223,7 @@ go-build:
 
 ui-build:
   stage: build
+  needs: []
   image:
     name: node:${NODE_VERSION}
     pull_policy: [always, if-not-present]
@@ -258,6 +272,9 @@ ui-build:
 
 integration:
   stage: integration
+  # Самый долгий job (~14 мин) — стартует сразу, не ждёт остальных: код он
+  # компилирует сам (go test), красный build уронит и его.
+  needs: []
   image:
     name: golang:${GO_VERSION}
     pull_policy: [always, if-not-present]
@@ -346,6 +363,10 @@ integration:
 
 loadtest:
   stage: integration
+  # needs: [] — идёт параллельно остальным (в т.ч. integration). Это smoke с
+  # allow_failure: соседние jobs на том же хосте могут просадить RPS — цифры
+  # этого прогона индикативные; полноценный bench гонять RUN_PROFILE=loadtest-only.
+  needs: []
   # docker:27-cli: client API v1.45 для docker daemon v25+. На v24-cli
   # `docker cp/rm` падали с «client version 1.43 is too old, minimum
   # supported API is 1.44» — отчёт report.json не копировался из контейнера.
@@ -761,6 +782,7 @@ loadtest:
 # просто проверяет версии модулей. Падает на vuln — гейтит pipeline.
 govulncheck:
   stage: security
+  needs: []
   extends: .go-base
   <<: *security-rules
   script:
@@ -780,6 +802,7 @@ govulncheck:
 # через `go list` → «Files: 0, Lines: 0» и артефакты не создаются.
 gosec:
   stage: security
+  needs: []
   image:
     name: golang:${GO_VERSION}-alpine
     pull_policy: [always, if-not-present]
@@ -818,6 +841,7 @@ gosec:
 # misconfigs (Dockerfile, YAML). Дополняет govulncheck по non-Go-частям.
 trivy-fs:
   stage: security
+  needs: []
   image:
     name: aquasec/trivy:0.55.0
     entrypoint: [""]
