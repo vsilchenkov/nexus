@@ -40,8 +40,14 @@ func RegisterReceiverProxy(r *gin.Engine, receiverURL string, logger logging.Log
 	// receiverURL без пути исходный /api/v1/... уходит в Receiver без изменений.
 	// X-Forwarded-For добавляется стандартным Director'ом — Receiver увидит
 	// реальный IP клиента (важно для аудита/логов, §3.5).
-	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, perr error) {
-		logger.ErrorWithOp("receiver proxy upstream error", perr, "web.proxy")
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, perr error) {
+		// Метод и путь (без query — там могут быть токены) обязательны для
+		// триажа: голый "EOF" в Sentry не привязать к узлу/запросу
+		// (NEXUS-8: EOF'ы оказались таймаутами конкретного узла, вычислять
+		// пришлось по совпадению секунд с CH-логом).
+		logger.ErrorWithOp("receiver proxy upstream error", perr, "web.proxy",
+			logger.Str("method", r.Method),
+			logger.Str("path", r.URL.Path))
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
 		_, _ = w.Write([]byte(`{"error":"receiver unavailable"}`))

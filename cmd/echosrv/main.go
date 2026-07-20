@@ -15,7 +15,10 @@
 //	/token/*         — требует Authorization: Bearer <любой непустой токен>;
 //	/echo/*          — алиас /noauth (просто эхо);
 //	/status/<code>/* — всегда отвечает указанным HTTP-кодом (для проверки
-//	                   ретраев/incomplete-метрик), напр. /status/500/x.
+//	                   ретраев/incomplete-метрик), напр. /status/500/x;
+//	/delay/<sec>/*   — ответить эхом после паузы <sec> секунд (кап 600) —
+//	                   проверка длинных per-node таймаутов (запрос длиннее
+//	                   30/60с не должен рваться таймаутами шины).
 //
 // Эхо-ответ включает заголовок Content-Type: application/json и заголовок
 // X-Echo: 1 — чтобы проверить проброс заголовков получателя обратно клиенту (#6).
@@ -140,6 +143,20 @@ func handler(logger *slog.Logger) http.HandlerFunc {
 			w.Header().Set("X-Echo", "1")
 			w.WriteHeader(http.StatusOK)
 			return
+		case "delay":
+			// Пауза перед эхом — стенд-проверка длинных per-node таймаутов.
+			// Кап 600с = максимум timeout_ms узла; отмена по уходу клиента.
+			sec := 0
+			if len(seg) > 1 {
+				if s, err := strconv.Atoi(seg[1]); err == nil {
+					sec = min(max(s, 0), 600)
+				}
+			}
+			select {
+			case <-time.After(time.Duration(sec) * time.Second):
+			case <-r.Context().Done():
+				return
+			}
 		}
 
 		resp := echoResponse{

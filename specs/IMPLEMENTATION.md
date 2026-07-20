@@ -69,7 +69,7 @@
 | **Методы узла: входящий (enforcement, иначе 405) + исходящий (диктует вызов получателя), деф. POST (#5)** | ✅ | [domain/enums.go](../internal/domain/enums.go) `HTTPMethod`, [domain/node.go](../internal/domain/node.go), миграция [0015](../migrations/0015_node_methods.up.sql), [route.go](../internal/receiver/usecase/route.go) `methodMatches` + `OutgoingMethod`, [route_async.go](../internal/receiver/usecase/route_async.go), [puller.go](../internal/receiver/usecase/puller.go) |
 | Статусы узла: `enabled` / `disabled` / `paused` | ✅ | `RouteUsecase.Route` (§3.6) |
 | **paused в sync** → 202 + `queued:true` + `node_status:paused` | ✅ Phase 5 | `Route()` возвращает `ErrNodePaused` → `handleSync` переключается на `handleAsyncFromInput` |
-| Лимиты полей (path 1-255, timeout 100-300000 ms, ...) | ✅ | [domain/node.go](../internal/domain/node.go) `Validate()` + DB-constraints в [migrations/0002](../migrations/0002_nodes_methods_users.up.sql) |
+| Лимиты полей (path 1-255, timeout 100-600000 ms, ...) | ✅ | [domain/node.go](../internal/domain/node.go) `Validate()` + DB-constraints в [migrations/0002](../migrations/0002_nodes_methods_users.up.sql), CHECK таймаута поднят в [0024](../migrations/0024_nodes_timeout_600s.up.sql) |
 | Soft/hard лимит узлов | ✅ | `NodeUsecase.Create` — `nodesHardLimit` → `ErrLimitReached` |
 
 ### §4 Sender Service
@@ -133,6 +133,8 @@
 | **Скролл результата dry-run + адаптивность форм (#3, #9)** | ✅ | [ui/Modal.tsx](../web-ui/src/components/ui/Modal.tsx) (flex-col, тело overflow-y-auto, footer фиксирован), `grid-cols-1 sm:grid-cols-2`/`flex-wrap`/`overflow-x-auto` в формах и таблицах |
 | **POST /api/nodes/dry-run** (§7.5.1) с пошаговым отчётом | ✅ Phase 5 | [web/usecase/dry_run.go](../internal/web/usecase/dry_run.go), [http/dry_run_handler.go](../internal/web/adapter/in/http/dry_run_handler.go), UI: [components/DryRunDialog.tsx](../web-ui/src/components/DryRunDialog.tsx) |
 | **POST /api/logs/{id}/replay** (§7.4.1) + маркер `__replay_of` + rate-limit 10/мин | ✅ Phase 5 | [usecase/replay.go](../internal/web/usecase/replay.go), [http/replay_handler.go](../internal/web/adapter/in/http/replay_handler.go), [adapter/out/receiver/dispatcher.go](../internal/web/adapter/out/receiver/dispatcher.go), UI: [components/ReplayDialog.tsx](../web-ui/src/components/ReplayDialog.tsx) |
+| **Replay GET без тела + поле «Параметры» (`params_override`)** (§7.4.1) | ✅ | [replay.go](../internal/web/usecase/replay.go) (GET не требует `orig.Request`; `ParamsOverride`: nil=из лога, ""=без параметров, кривая строка→`ErrReplayBadParams`→400 `replay.bad_params`; `__replay_of` всегда поверх), [ReplayDialog.tsx](../web-ui/src/components/ReplayDialog.tsx) (prefill из детали лога, `__replay_of` вычищается; эффективный метод зеркалит бэкенд: incoming, ANY→глагол лога). Бонус: массовый ReplayFailed GET-узлов без тел не падает построчно |
+| **Basic-креды: Логин/Пароль в UI + `auth_login`/`incoming_auth_login` в API** (§41.7) | ✅ | [dto.go](../internal/web/adapter/in/http/dto.go) `basicLogin` (до первого `:`, только basic; логин — не секрет, пароль наружу не отдаётся; `sensitiveKeys` намеренно не трогали), [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx) `buildPayload` (склейка `login:password`; пустой пароль = не менять), [nodeValidation.ts](../web-ui/src/lib/nodeValidation.ts) (`:` в логине запрещён; смена логина требует пароль заново — решение пользователя), [ConfigTab.tsx](../web-ui/src/components/node/ConfigTab.tsx) (входящая/исходящая auth отдельными строками + логин; там же строка «Таймаут / повторы») |
 | **SSE live-tail `/api/nodes/{id}/logs/stream`** (§7.4) с heartbeat | ✅ Phase 5 | [usecase/logs.go](../internal/web/usecase/logs.go) `Subscribe`, [http/logs_handler.go](../internal/web/adapter/in/http/logs_handler.go) `Stream` |
 | **Ленивые тела логов (§7.4.2): list/stream без `request`/`response`, тела по клику** | ✅ Phase QA.2026-06 | `GET /api/nodes/{id}/log/{logId}` ([logs_handler.go](../internal/web/adapter/in/http/logs_handler.go) `Get`, [logs.go](../internal/web/usecase/logs.go) `GetByID`, route в [routes.go](../internal/web/adapter/in/http/routes.go)); `toLogDTO(r, includeBodies)` режет тела для списков/SSE. UI: раскрытие строки в [LogsTab.tsx](../web-ui/src/components/node/LogsTab.tsx) (`LogBodies` грузит тело лениво); аудит — ленивый `<pre>` по `onToggle` в [AuditDetailsCell.tsx](../web-ui/src/components/AuditDetailsCell.tsx) |
 | Settings → API Tokens | ✅ Phase 5.1 | [pages/settings/ApiTokens.tsx](../web-ui/src/pages/settings/ApiTokens.tsx) |
@@ -3127,3 +3129,33 @@ vitest во фронте (было 3 теста без CI-запуска → +2 
 - **Грабли тестов sweeper'а.** `Run()` завершается по отмене контекста, а `Stop()` лишь закрывает
   reader (так же устроен DLQ-репроцессор; в проде ctx отменяет runner при shutdown). Тестовый хелпер,
   ждавший `done` после одного `Stop()`, вешал прогон до таймаута — нужен собственный производный ctx.
+
+### 4.39 Сквозные таймауты sync-запроса: кто реально может оборвать 600-секундный вызов
+
+Разобрано при фиксе боевого бага «узел с timeout_ms=300000 рвётся на 30с» (Sentry NEXUS-8).
+Полный путь: клиент → Web-прокси → Receiver → gRPC → Sender → внешний узел. Обрывать могут:
+
+- **`http.Client` Sender'а** — БЫЛ главный виновник: `http.Client.Timeout` из
+  `sender.http_client.timeout_ms` (30000) молча капал per-node `timeout_ms` (срабатывает меньший из
+  Timeout и context-дедлайна). Исправлено: у клиента больше нет глобального `Timeout`, конфиг стал
+  fallback'ом для запросов без per-node значения
+  ([httpclient/client.go](../internal/sender/adapter/out/httpclient/client.go), регресс-тест
+  `TestClient_Do_PerRequestTimeoutExceedsConfig`).
+- **`receiver.write_timeout_ms`** — второй виновник (боевое значение было 10000): net/http
+  WriteTimeout отсчитывается от чтения заголовков и включает всё время handler'а; дедлайн истекал
+  на 10-й секунде, handler дописывал ответ на 30-й → write fail → conn closed → ReverseProxy Web
+  ловил `EOF` → клиент получал 502 (это и есть Sentry NEXUS-8: события совпадали с CH-логом узла
+  секунда в секунду со сдвигом +30с). Дефолт поднят до 610000 (600с макс. узла + 10с шина).
+- **Web replay-dispatcher** — был хардкод 30с, теперь константа `replayDispatchTimeout = 610s`
+  ([web/app.go](../internal/web/app.go)).
+- **gRPC Receiver→Sender НЕ обрывает**: `receiver.sender_grpc.timeout_ms` и
+  `web.sender_grpc.timeout_ms` — **мёртвые параметры**, `grpcsender.New/Send`
+  ([platform/grpcsender/client.go](../internal/platform/grpcsender/client.go)) их не читает и
+  deadline не ставит — вызов наследует контекст входящего HTTP-запроса. Не удалены, чтобы не менять
+  формат конфига; знай, что менять их значения бесполезно.
+- **Kafka-ребаланс при async 600с НЕ грозит**: `kafka.consumer.max_poll_interval_ms` — декларативный,
+  segmentio/kafka-go его не применяет (heartbeat consumer-group идёт в фоновой горутине
+  generation-loop независимо от обработки сообщения; ребаланс — только по `session_timeout_ms` при
+  смерти процесса).
+- **Прод-чек-лист** при поднятии таймаутов узлов: `receiver.write_timeout_ms` ≥ 610000 в боевом
+  config.yml (см. DEPLOYMENT.md), гистограмма `nexus_request_duration_seconds` имеет бакет 600.

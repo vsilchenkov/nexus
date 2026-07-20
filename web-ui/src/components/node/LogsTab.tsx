@@ -342,7 +342,9 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live, visibleLogs.length, logsQ.hasNextPage, logsQ.isFetchingNextPage]);
 
-  const [replayId, setReplayId] = useState<string | null>(null);
+  // id + HTTP-глагол строки: ReplayDialog по глаголу решает, требуется ли тело
+  // (GET — без тела), и зеркалит выбор метода реинъекции бэкенда (ANY-узлы).
+  const [replay, setReplay] = useState<{ id: string; httpMethod?: string } | null>(null);
   // §7.4.1/§58: replay пере-отправляет запрос на внешнюю цель (сайд-эффект) —
   // manager+. viewer видит кнопку disabled с tooltip «Нет прав» (бэкенд тоже
   // отдаёт 403). Скрывать не будем — так понятно, что действие существует.
@@ -651,7 +653,7 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                           title={canReplay ? t("node.actions.replay") : t("common.no_permission")}
                           onClick={(e) => {
                             e.stopPropagation();
-                            setReplayId(r.id);
+                            setReplay({ id: r.id, httpMethod: r.http_method });
                           }}
                           className={`text-fg-muted ${
                             canReplay ? "hover:text-accent" : "cursor-not-allowed opacity-40"
@@ -721,8 +723,14 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
         </button>
       )}
 
-      {replayId && (
-        <ReplayDialog logId={replayId} nodeId={node.id} onClose={() => setReplayId(null)} />
+      {replay && (
+        <ReplayDialog
+          logId={replay.id}
+          nodeId={node.id}
+          httpMethod={replay.httpMethod}
+          incomingMethod={node.incoming_method}
+          onClose={() => setReplay(null)}
+        />
       )}
     </div>
   );

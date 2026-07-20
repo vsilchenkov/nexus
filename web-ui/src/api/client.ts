@@ -93,8 +93,16 @@ export type Node = {
   incoming_auth_type?: string;
   auth_credentials_set?: boolean;
   incoming_auth_credentials_set?: boolean;
+  // Логин basic-кредов (часть до первого «:») — не секрет, в отличие от
+  // пароля; отдаётся только при типе basic (prefill формы + просмотр узла).
+  auth_login?: string;
+  incoming_auth_login?: string;
   // §16: имя заголовка с HMAC-подписью (incoming_auth_type=webhook_signature).
   webhook_signature_header?: string;
+  // Таймаут вызова target и ретраи — показываются в просмотре узла (ConfigTab).
+  timeout_ms?: number;
+  retry_count?: number;
+  retry_backoff_ms?: number;
   clickhouse_table: string;
   clickhouse_template_id: string;
   forward_headers: string[];

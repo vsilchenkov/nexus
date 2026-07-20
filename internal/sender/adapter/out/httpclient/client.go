@@ -3,6 +3,12 @@
 // Реализует port.HTTPCaller. Один общий http.Client с пулом соединений
 // (keep-alive) на весь Sender — это критично для производительности
 // при работе с одним и тем же внешним узлом (§9.3 ТЗ).
+//
+// Таймаут запроса — ТОЛЬКО per-request (context.WithTimeout в Do из
+// req.TimeoutMs узла); http.Client.Timeout намеренно не задаётся, иначе
+// глобальный конфиг молча капал бы per-node timeout_ms (боевой баг:
+// узел с timeout_ms=300000 рвался на 30с дефолтом sender.http_client).
+// cfg.TimeoutMs теперь играет роль fallback'а для запросов без таймаута.
 package httpclient
 
 import (
@@ -31,6 +37,9 @@ type Client struct {
 	hc      *http.Client
 	logger  logging.Logger
 	maxResp int // транспортный лимит тела ответа (байт); 0 = без лимита.
+	// defaultTimeout — fallback, когда у запроса не задан TimeoutMs (<=0).
+	// Из cfg.TimeoutMs; НЕ ограничивает запросы с явным per-node таймаутом.
+	defaultTimeout time.Duration
 }
 
 var _ port.HTTPCaller = (*Client)(nil)
@@ -52,20 +61,26 @@ func New(cfg *config.SenderHTTPClientConfig, logger logging.Logger, maxResponseB
 		TLSClientConfig:   &tls.Config{MinVersion: tls.VersionTLS12},
 		ForceAttemptHTTP2: true,
 	}
+	// Страховка на случай нулевого конфига (defaults.go ставит 30000, но
+	// конструктор не должен зависеть от того, прогнали ли SetDefaults).
+	defTimeout := time.Duration(cfg.TimeoutMs) * time.Millisecond
+	if defTimeout <= 0 {
+		defTimeout = 30 * time.Second
+	}
 	return &Client{
-		hc: &http.Client{
-			Transport: transport,
-			Timeout:   time.Duration(cfg.TimeoutMs) * time.Millisecond,
-		},
-		logger:  logger,
-		maxResp: maxResponseBytes,
+		// Без http.Client.Timeout: он бы глобально капал per-node таймаут
+		// (см. комментарий пакета). Дедлайн — только через контекст в Do.
+		hc:             &http.Client{Transport: transport},
+		logger:         logger,
+		maxResp:        maxResponseBytes,
+		defaultTimeout: defTimeout,
 	}
 }
 
 func (c *Client) Do(ctx context.Context, req *port.HTTPRequest) (*port.HTTPResponse, error) {
 	timeout := time.Duration(req.TimeoutMs) * time.Millisecond
 	if timeout <= 0 {
-		timeout = 30 * time.Second
+		timeout = c.defaultTimeout
 	}
 	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

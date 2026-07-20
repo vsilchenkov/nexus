@@ -118,14 +118,14 @@ kafka:
     session_timeout_ms: 30000
     heartbeat_interval_ms: 10000
     max_poll_records: 500              # сколько сообщений за один poll
-    max_poll_interval_ms: 300000       # 5 минут на обработку батча
+    max_poll_interval_ms: 300000       # декларативный: kafka-go его не применяет (heartbeat в фоне; долгая обработка ребаланс не вызывает)
     isolation_level: read_committed
     instances: 4                       # = partitions для максимального параллелизма
 
 receiver:
   http_addr: :8080
   read_timeout_ms: 10000
-  write_timeout_ms: 10000
+  write_timeout_ms: 610000             # > max timeout_ms узла (600с), иначе долгий sync рвётся Receiver'ом
   idle_timeout_sec: 120                # keep-alive
   max_body_bytes: 5242880              # 5 MB
   max_header_bytes: 1048576            # 1 MB

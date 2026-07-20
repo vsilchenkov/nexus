@@ -29,6 +29,10 @@ type ReplayOptions struct {
 	SyncOverride bool   // true → переключить async на sync
 	UseNodeAuth  bool   // true (по умолчанию) — берём текущий конфиг узла; false — без авторизации в replay
 	CustomAuth   string // если непусто — override на конкретный Authorization-заголовок
+	// ParamsOverride — query-параметры вместо orig.Parameters (строка вида
+	// "a=1&b=2"). nil — взять из лога; пустая непустышка ("" не nil) — replay
+	// без параметров. __replay_of добавляется поверх в любом случае.
+	ParamsOverride *string
 }
 
 // ReplayResult — что вернётся клиенту в ответ на POST /api/logs/{id}/replay.
@@ -109,7 +113,13 @@ var ErrReplayTooOldFailure = errors.New("cannot replay failed request older than
 // логирует тело, LogRequestBody=false), а пользователь не задал тело вручную.
 // Replay с пустым телом ушёл бы во внешний target и вернул бы невнятную 400
 // «empty body» (QA-2026-02 / П1). Возвращаем явную ошибку → handler отдаёт 422.
+// Для GET-реинъекции не применяется: у GET тела нет by design.
 var ErrReplayBodyUnavailable = errors.New("original request body was not logged; provide body manually")
+
+// ErrReplayBadParams — params_override не парсится как query-строка. В отличие
+// от orig.Parameters (ошибку парсинга которого глотаем — лог мог быть записан
+// с мусором), явный override пользователя обязан быть валидным → handler 400.
+var ErrReplayBadParams = errors.New("params_override is not a valid query string")
 
 // Replay выполняет повторную отправку запроса через шину.
 //
@@ -207,17 +217,34 @@ func (u *ReplayUsecase) replayOne(ctx context.Context, node *domain.Node, logID 
 	// тело (orig.Request пуст) и пользователь его не задал — отказываем явно,
 	// иначе во внешний target ушёл бы пустой body → 400 «empty body» (П1).
 	// Явно переданное пустое тело (BodyOverride = []byte{}) считаем намеренным.
+	// Исключение — GET: у него тела нет by design, пустой orig.Request — норма,
+	// а не «не сохранилось» (боевой кейс legat_by: GET-логи блокировались 422).
 	body := opts.BodyOverride
 	if body == nil {
-		if orig.Request == "" {
+		if orig.Request == "" && method != "GET" {
 			return nil, ErrReplayBodyUnavailable
 		}
 		body = []byte(orig.Request)
 	}
 
-	q, err := url.ParseQuery(orig.Parameters)
-	if err != nil {
-		q = url.Values{}
+	// Query: явный override из диалога приоритетнее сохранённых параметров
+	// лога. Ошибку парсинга оригинала глотаем (мусор в старом логе не должен
+	// блокировать replay), ошибку override'а — нет (это ввод пользователя).
+	var q url.Values
+	if opts.ParamsOverride != nil {
+		q, err = url.ParseQuery(strings.TrimPrefix(*opts.ParamsOverride, "?"))
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrReplayBadParams, err)
+		}
+		u.logger.Debug("replay: params override applied",
+			u.logger.Str("log_id", logID), u.logger.Int("params", len(q)))
+	} else {
+		q, err = url.ParseQuery(orig.Parameters)
+		if err != nil {
+			u.logger.Debug("replay: original parameters unparsable, dropped",
+				u.logger.Str("log_id", logID), u.logger.Err(err))
+			q = url.Values{}
+		}
 	}
 	// Маркер § «В поле parameters добавляется __replay_of=<original_id>».
 	q.Set("__replay_of", logID)

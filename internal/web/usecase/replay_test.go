@@ -275,6 +275,135 @@ func TestReplay_ExplicitEmptyBody(t *testing.T) {
 	}
 }
 
+// newReplayUC — общий конструктор для компактных тестов GET/params.
+func newReplayUC(node *domain.Node, log *domain.LogRecord, disp *stubDispatcher) *ReplayUsecase {
+	return NewReplayUsecase(
+		&stubLogReader{log: log},
+		&stubNodeRepo{nodes: map[string]*domain.Node{node.ID: node}},
+		disp, nil,
+		NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10, logging.NewNoop(),
+	)
+}
+
+// TestReplay_GETWithoutBody_Allowed: у GET тела нет by design — пустой
+// orig.Request не должен блокировать replay 422 (боевой кейс legat_by).
+func TestReplay_GETWithoutBody_Allowed(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{
+		ID: "n1", Path: "demo/get", Status: domain.NodeStatusEnabled,
+		ClickHouseTable: "t.t", IncomingMethod: domain.HTTPMethodGET,
+	}
+	log := &domain.LogRecord{ID: "log1", Request: "", DateRequest: time.Now(), Done: false, Parameters: "key=abc"}
+	disp := &stubDispatcher{}
+	uc := newReplayUC(node, log, disp)
+
+	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{UseNodeAuth: true})
+	if err != nil {
+		t.Fatalf("GET replay without body must pass: %v", err)
+	}
+	if disp.gotReq.Method != "GET" {
+		t.Fatalf("method: %q", disp.gotReq.Method)
+	}
+	if len(disp.gotReq.Body) != 0 {
+		t.Fatalf("GET replay must dispatch empty body, got %q", disp.gotReq.Body)
+	}
+	if disp.gotReq.Query.Get("key") != "abc" {
+		t.Fatalf("original params must be preserved, got %v", disp.gotReq.Query)
+	}
+}
+
+// TestReplay_AnyIncoming_LoggedGET_NoBody: ANY-узел + залогированный GET —
+// тело тоже не требуется (метод реинъекции берётся из orig.HTTPMethod).
+func TestReplay_AnyIncoming_LoggedGET_NoBody(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{
+		ID: "n1", Path: "demo/any", Status: domain.NodeStatusEnabled,
+		ClickHouseTable: "t.t", IncomingMethod: domain.HTTPMethodAny,
+	}
+	log := &domain.LogRecord{ID: "log1", HTTPMethod: "GET", Request: "", DateRequest: time.Now(), Done: true}
+	disp := &stubDispatcher{}
+	uc := newReplayUC(node, log, disp)
+
+	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{UseNodeAuth: true})
+	if err != nil {
+		t.Fatalf("ANY+GET replay without body must pass: %v", err)
+	}
+	if disp.gotReq.Method != "GET" {
+		t.Fatalf("method: %q", disp.gotReq.Method)
+	}
+}
+
+// TestReplay_ParamsOverride: явный override вытесняет параметры оригинала,
+// __replay_of добавляется поверх.
+func TestReplay_ParamsOverride(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{ID: "n1", Path: "demo/x", Status: domain.NodeStatusEnabled, ClickHouseTable: "t.t"}
+	log := &domain.LogRecord{ID: "log1", Request: `{"a":1}`, DateRequest: time.Now(), Done: true, Parameters: "old=1"}
+	disp := &stubDispatcher{}
+	uc := newReplayUC(node, log, disp)
+
+	override := "a=1&b=two"
+	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{
+		UseNodeAuth: true, ParamsOverride: &override,
+	})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	q := disp.gotReq.Query
+	if q.Get("a") != "1" || q.Get("b") != "two" {
+		t.Fatalf("override params lost: %v", q)
+	}
+	if q.Get("old") != "" {
+		t.Fatalf("original params must be replaced by override: %v", q)
+	}
+	if q.Get("__replay_of") != "log1" {
+		t.Fatalf("__replay_of must survive override: %v", q)
+	}
+}
+
+// TestReplay_ParamsOverride_Empty: пустая строка (не nil) — намеренный replay
+// без параметров; остаётся только служебный маркер.
+func TestReplay_ParamsOverride_Empty(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{ID: "n1", Path: "demo/x", Status: domain.NodeStatusEnabled, ClickHouseTable: "t.t"}
+	log := &domain.LogRecord{ID: "log1", Request: `{"a":1}`, DateRequest: time.Now(), Done: true, Parameters: "old=1"}
+	disp := &stubDispatcher{}
+	uc := newReplayUC(node, log, disp)
+
+	empty := ""
+	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{
+		UseNodeAuth: true, ParamsOverride: &empty,
+	})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	q := disp.gotReq.Query
+	if len(q) != 1 || q.Get("__replay_of") != "log1" {
+		t.Fatalf("empty override must leave only __replay_of, got %v", q)
+	}
+}
+
+// TestReplay_ParamsOverride_Invalid: кривой query-override — явная 400-ошибка,
+// dispatch не вызывается (в отличие от мусора в логе, который глотается).
+func TestReplay_ParamsOverride_Invalid(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{ID: "n1", Path: "demo/x", Status: domain.NodeStatusEnabled, ClickHouseTable: "t.t"}
+	log := &domain.LogRecord{ID: "log1", Request: `{"a":1}`, DateRequest: time.Now(), Done: true}
+	disp := &stubDispatcher{}
+	uc := newReplayUC(node, log, disp)
+
+	bad := "%zz=1"
+	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{
+		UseNodeAuth: true, ParamsOverride: &bad,
+	})
+	if !errors.Is(err, ErrReplayBadParams) {
+		t.Fatalf("want ErrReplayBadParams, got %v", err)
+	}
+	if disp.gotReq.NodePath != "" {
+		t.Fatalf("dispatch must not be called on bad override")
+	}
+}
+
 // TestReplay_UsesIncomingMethod (§34.5): replay должен слать ВХОДЯЩИЙ метод
 // узла, а не залогированный исходящий (orig.Method == OutgoingMethod). Узел
 // POST-in / GET-out (внешний GET без тела) логировал method=GET; раньше replay

@@ -109,6 +109,8 @@ func TestNode_Validate_Errors(t *testing.T) {
 		{"bad path format", func(n *Node) { n.Path = "/leading-slash" }, ErrNodePathFormat},
 		{"static without url", func(n *Node) { n.TargetURL = "" }, ErrNodeStaticNeedsTargetURL},
 		{"bad timeout", func(n *Node) { n.TimeoutMs = 1 }, ErrNodeTimeoutRange},
+		{"timeout at max 600000 ok", func(n *Node) { n.TimeoutMs = 600_000 }, nil},
+		{"timeout above max", func(n *Node) { n.TimeoutMs = 600_001 }, ErrNodeTimeoutRange},
 		{"bad retry", func(n *Node) { n.RetryCount = 999 }, ErrNodeRetryCountRange},
 		{"bad dlq_ttl low", func(n *Node) { n.DLQTTLSeconds = 10 }, ErrNodeDLQTTLRange},
 		{"bad dlq_ttl high", func(n *Node) { n.DLQTTLSeconds = 9_999_999 }, ErrNodeDLQTTLRange},

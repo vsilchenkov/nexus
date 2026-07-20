@@ -59,6 +59,13 @@ import (
 	webport "nexus/internal/web/usecase/port"
 )
 
+// replayDispatchTimeout — таймаут HTTP-диспетчера replay (Web → Receiver):
+// 600с максимального timeout_ms узла + 10с запас на шину. Раньше стоял хардкод
+// 30с, и sync-replay долгого узла обрывался. Ретраи узла
+// (timeout*(retry_count+1)+backoff) всё ещё могут не уложиться — осознанное
+// ограничение, replay вернёт ошибку сети, а Sender дошлёт и залогирует.
+const replayDispatchTimeout = 610 * time.Second
+
 type App struct {
 	cfg     *config.Config
 	logger  logging.Logger
@@ -431,7 +438,7 @@ func (a *App) Start(ctx context.Context) error {
 		logReader.SetTableUsage(nodeRepo)
 		nodeLogMetrics = logReader // точные per-node метрики узла из CH-логов
 		failedPurger = logReader   // очистка «Неудачных доставок» из CH-логов
-		dispatcher := rcvdispatcher.NewHTTPDispatcher(a.cfg.Web.ReceiverURL, 30*time.Second, a.logger)
+		dispatcher := rcvdispatcher.NewHTTPDispatcher(a.cfg.Web.ReceiverURL, replayDispatchTimeout, a.logger)
 		replayUC := usecase.NewReplayUsecaseWithCancel(
 			logReader, nodeRepo, dispatcher, rl, auditUC,
 			a.cfg.Web.ReplayRateLimitPerUserPerMin, queueCancel, dlqRetention, a.logger,

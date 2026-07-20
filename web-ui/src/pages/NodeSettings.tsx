@@ -67,6 +67,14 @@ type Form = {
   auth_credentials: string;
   incoming_auth_type: string;
   incoming_auth_credentials: string;
+  // Для типа basic креды вводятся раздельно: Логин (открытый) + Пароль
+  // (скрытый); перед отправкой склеиваются в auth_credentials
+  // "login:password" (формат хранения не меняется). Логин prefill'ится из
+  // API (auth_login), пароль никогда не приходит с сервера.
+  auth_login: string;
+  auth_password: string;
+  incoming_auth_login: string;
+  incoming_auth_password: string;
   // §41: динамическая авторизация — источник (header/query) и имя поля.
   auth_dynamic_source: string;
   auth_dynamic_field: string;
@@ -119,6 +127,10 @@ const emptyForm: Form = {
   auth_credentials: "",
   incoming_auth_type: "none",
   incoming_auth_credentials: "",
+  auth_login: "",
+  auth_password: "",
+  incoming_auth_login: "",
+  incoming_auth_password: "",
   auth_dynamic_source: "query",
   auth_dynamic_field: "",
   auth_dynamic_strip_prefix: "",
@@ -214,11 +226,31 @@ export default function NodeSettings() {
   // блокируем сохранение (оно всё равно вернёт 404 — team-scope в handler'е).
   const foreignTeam = isNotFound(existing.error);
 
+  // buildPayload — форма → тело запроса API. Для basic склеивает Логин+Пароль
+  // в auth_credentials "login:password" (формат хранения); пустой пароль →
+  // пустые креды = «оставить старые» (контракт Update). Вспомогательные поля
+  // *_login/*_password в API не уходят (бэкенд их не знает).
+  function buildPayload(): Record<string, unknown> {
+    const { auth_login, auth_password, incoming_auth_login, incoming_auth_password, ...rest } =
+      form;
+    const p: Record<string, unknown> = { ...rest };
+    if (form.auth_type === "basic") {
+      p.auth_credentials = auth_password ? `${auth_login}:${auth_password}` : "";
+    }
+    if (form.incoming_auth_type === "basic") {
+      p.incoming_auth_credentials = incoming_auth_password
+        ? `${incoming_auth_login}:${incoming_auth_password}`
+        : "";
+    }
+    return p;
+  }
+
   const save = useMutation({
     mutationFn: async () => {
-      if (!isNew) return api.put(`/api/nodes/${id}`, form);
+      const payload = buildPayload();
+      if (!isNew) return api.put(`/api/nodes/${id}`, payload);
       // §23: создаём узел, затем привязываем выбранные паттерны к нему.
-      const node = await api.post<Node>("/api/nodes", form);
+      const node = await api.post<Node>("/api/nodes", payload);
       for (const h of pendingHosts) {
         await api.post(`/api/nodes/${node.id}/allowed-hosts`, { host_id: h.id });
       }
@@ -276,7 +308,13 @@ export default function NodeSettings() {
   // перейти после успеха (navigate или открыть синхронизацию) решает
   // save.onSuccess по syncAfterSaveRef. Возвращает false, если валидация не прошла.
   function runSave(): boolean {
-    const v = validateNodeForm(form);
+    const v = validateNodeForm(form, {
+      // Оригинальные логины для правила «сменил логин — введи пароль заново»:
+      // сервер не может пересобрать строку "login:password", не зная пароля.
+      // Для нового узла оригинал пуст: логин без пароля тоже ошибка.
+      orig_auth_login: existing.data?.auth_login ?? "",
+      orig_incoming_auth_login: existing.data?.incoming_auth_login ?? "",
+    });
     if (v) {
       setErrField(v.field);
       setError(t(v.code));
@@ -578,7 +616,7 @@ export default function NodeSettings() {
                 <Input
                   type="number"
                   min={100}
-                  max={300000}
+                  max={600000}
                   className={errCls("timeout_ms")}
                   value={form.timeout_ms}
                   onChange={(e) => set("timeout_ms", parseNumInput(e.target.value, form.timeout_ms))}
@@ -616,7 +654,32 @@ export default function NodeSettings() {
                 <option value="webhook_signature">webhook_signature</option>
               </Select>
             </Field>
-            {form.incoming_auth_type !== "none" && (
+            {/* basic — раздельные Логин (открытый) + Пароль (скрытый);
+                перед отправкой склеиваются в "login:password" (buildPayload).
+                Пустой пароль при неизменном логине = оставить старые креды. */}
+            {form.incoming_auth_type === "basic" && (
+              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Field label={t("auth.login_field")} help={t("node.help.basic_login")}>
+                  <Input
+                    mono
+                    className={errCls("incoming_auth_login")}
+                    value={form.incoming_auth_login}
+                    onChange={(e) => set("incoming_auth_login", e.target.value)}
+                  />
+                  {fieldErr("incoming_auth_login")}
+                </Field>
+                <Field label={t("auth.password_field")} help={t("node.help.basic_password")}>
+                  <SecretInput
+                    className={errCls("incoming_auth_password")}
+                    value={form.incoming_auth_password}
+                    onChange={(e) => set("incoming_auth_password", e.target.value)}
+                    placeholder={isNew ? "" : t("node.form.keep_secret")}
+                  />
+                  {fieldErr("incoming_auth_password")}
+                </Field>
+              </div>
+            )}
+            {form.incoming_auth_type !== "none" && form.incoming_auth_type !== "basic" && (
               <Field
                 label={
                   form.incoming_auth_type === "webhook_signature"
@@ -709,7 +772,29 @@ export default function NodeSettings() {
                 {!isPull && <option value="basic_from_request">basic_from_request</option>}
               </Select>
             </Field>
-            {(form.auth_type === "basic" || form.auth_type === "token") && (
+            {form.auth_type === "basic" && (
+              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Field label={t("auth.login_field")} help={t("node.help.basic_login")}>
+                  <Input
+                    mono
+                    className={errCls("auth_login")}
+                    value={form.auth_login}
+                    onChange={(e) => set("auth_login", e.target.value)}
+                  />
+                  {fieldErr("auth_login")}
+                </Field>
+                <Field label={t("auth.password_field")} help={t("node.help.basic_password")}>
+                  <SecretInput
+                    className={errCls("auth_password")}
+                    value={form.auth_password}
+                    onChange={(e) => set("auth_password", e.target.value)}
+                    placeholder={isNew ? "" : t("node.form.keep_secret")}
+                  />
+                  {fieldErr("auth_password")}
+                </Field>
+              </div>
+            )}
+            {form.auth_type === "token" && (
               <Field label={t("node.form.credentials")} help={t("node.help.outgoing_credentials")} className="mt-3">
                 <SecretInput
                   value={form.auth_credentials}

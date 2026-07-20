@@ -59,6 +59,18 @@ export function ConfigTab({ node }: { node: Node }) {
         <Row label={t("node.form.outgoing_method")}>
           <Chip>{node.outgoing_method || "POST"}</Chip>
         </Row>
+        {/* Таймаут и ретраи одной строкой: «30000 ms · 2 × 1000 ms». Backoff в
+            форме редактирования не выводится, но в API/домене есть — тут виден. */}
+        <Row label={t("node.fields.timeout_retry")}>
+          <span className="font-mono text-[12px]">
+            {node.timeout_ms ?? "—"} ms
+            {" · "}
+            {t("node.fields.retries_fmt", {
+              n: node.retry_count ?? 0,
+              backoff: node.retry_backoff_ms ?? 0,
+            })}
+          </span>
+        </Row>
         <Row label={t("overview.table.status")}>{t(`node.status.${node.status}`)}</Row>
         <Row label={t("node.fields.url_mode")}>{node.url_mode}</Row>
         {node.url_mode === "static" && (
@@ -66,7 +78,36 @@ export function ConfigTab({ node }: { node: Node }) {
             <span className="font-mono break-all">{node.target_url || "—"}</span>
           </Row>
         )}
-        <Row label={t("node.fields.auth")}>{node.auth_type || "—"}</Row>
+        {/* Авторизация раздельно: входящая (клиент → Receiver; скрыта для pull —
+            входящих HTTP-запросов нет) и исходящая (Sender → target). Тип none/
+            пусто = строка не показывается. Для basic рядом логин (auth_login из
+            API — не секрет; пароль наружу не отдаётся никогда). */}
+        {!isPull && node.incoming_auth_type && node.incoming_auth_type !== "none" && (
+          <Row label={t("node.fields.incoming_auth")}>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Chip>{node.incoming_auth_type}</Chip>
+              {node.incoming_auth_login && (
+                <span className="text-[12px]">
+                  <span className="text-fg-muted">{t("node.fields.login_label")} </span>
+                  <span className="font-mono">{node.incoming_auth_login}</span>
+                </span>
+              )}
+            </div>
+          </Row>
+        )}
+        {node.auth_type && node.auth_type !== "none" && (
+          <Row label={t("node.fields.outgoing_auth")}>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Chip>{node.auth_type}</Chip>
+              {node.auth_login && (
+                <span className="text-[12px]">
+                  <span className="text-fg-muted">{t("node.fields.login_label")} </span>
+                  <span className="font-mono">{node.auth_login}</span>
+                </span>
+              )}
+            </div>
+          </Row>
+        )}
         {/* Проброс заголовков — чипами, как в редакторе (HeadersField). Пустой
             список = наружу уходит только Content-Type (он пробрасывается всегда). */}
         <Row label={t("node.form.forward_headers")}>
