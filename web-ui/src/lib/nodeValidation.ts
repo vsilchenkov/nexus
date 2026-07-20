@@ -15,6 +15,11 @@ export type NodeFormLimits = {
   incoming_auth_type: string;
   incoming_auth_dynamic_source: string;
   incoming_auth_dynamic_field: string;
+  // Раздельные Логин/Пароль basic-кредов (склеиваются в "login:password").
+  auth_login: string;
+  auth_password: string;
+  incoming_auth_login: string;
+  incoming_auth_password: string;
   timeout_ms: number;
   retry_count: number;
   retry_backoff_ms: number;
@@ -33,6 +38,14 @@ export type NodeFormLimits = {
 
 export type NodeFieldError = { field: string; code: string };
 
+// BasicAuthContext — оригинальные логины сохранённого узла (пустые для нового):
+// правило «сменил логин — введи пароль заново». Сервер пароль не отдаёт и не
+// может пересобрать "login:password" из одного нового логина.
+export type BasicAuthContext = {
+  orig_auth_login: string;
+  orig_incoming_auth_login: string;
+};
+
 const PATH_RE = /^[a-zA-Z0-9][a-zA-Z0-9/_-]*$/;
 const PARAM_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 // §42: db.table из [A-Za-z0-9_], ровно одна точка (зеркало isValidCHTableName).
@@ -50,10 +63,35 @@ export function validateNodePath(path: string): string | null {
   return null;
 }
 
-export function validateNodeForm(f: NodeFormLimits): NodeFieldError | null {
+export function validateNodeForm(f: NodeFormLimits, ctx?: BasicAuthContext): NodeFieldError | null {
   const pathCode = validateNodePath(f.path);
   if (pathCode) {
     return { field: "path", code: pathCode };
+  }
+  // Basic-креды: логин без «:» (разделитель формата "login:password" — пароль
+  // двоеточия содержать может, логин нет); смена логина требует пароля заново.
+  if (f.auth_type === "basic") {
+    if (f.auth_login.includes(":")) {
+      return { field: "auth_login", code: "node.validation.login_colon" };
+    }
+    if (ctx && f.auth_password === "" && f.auth_login !== ctx.orig_auth_login) {
+      return { field: "auth_password", code: "node.validation.password_required_on_login_change" };
+    }
+  }
+  if (f.incoming_auth_type === "basic") {
+    if (f.incoming_auth_login.includes(":")) {
+      return { field: "incoming_auth_login", code: "node.validation.login_colon" };
+    }
+    if (
+      ctx &&
+      f.incoming_auth_password === "" &&
+      f.incoming_auth_login !== ctx.orig_incoming_auth_login
+    ) {
+      return {
+        field: "incoming_auth_password",
+        code: "node.validation.password_required_on_login_change",
+      };
+    }
   }
   const isPull = f.root_method === "RabbitMQAsync";
   if ((f.url_mode === "static" || isPull) && f.target_url.trim() === "") {

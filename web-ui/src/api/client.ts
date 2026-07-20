@@ -93,6 +93,10 @@ export type Node = {
   incoming_auth_type?: string;
   auth_credentials_set?: boolean;
   incoming_auth_credentials_set?: boolean;
+  // Логин basic-кредов (часть до первого «:») — не секрет, в отличие от
+  // пароля; отдаётся только при типе basic (prefill формы + просмотр узла).
+  auth_login?: string;
+  incoming_auth_login?: string;
   // §16: имя заголовка с HMAC-подписью (incoming_auth_type=webhook_signature).
   webhook_signature_header?: string;
   clickhouse_table: string;

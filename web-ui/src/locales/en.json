@@ -346,6 +346,8 @@
       "webhook_sig_prefix_length": "Signature prefix must be at most 64 characters",
       "webhook_sig_header_required": "Signature header is required for webhook_signature auth",
       "webhook_sig_secret_required": "Secret is required for webhook_signature auth",
+      "login_colon": "Login must not contain a colon",
+      "password_required_on_login_change": "Enter the password again when changing the login",
       "template_id": "ClickHouse template id must be a valid UUID",
       "logs_not_configured": "Logging is enabled but no ClickHouse table name is set — pick a template or set the table name",
       "clickhouse_table_format": "ClickHouse table name must be db.table using only letters, digits and underscore (e.g. nexus_default.my_table)",
@@ -395,6 +397,8 @@
       "auth_field_in": "Name of the header or query parameter that carries the client credential.",
       "auth_source_out": "Where to take the credential from the inbound request to forward to the receiver: Header or Query parameter.",
       "auth_field_out": "Name of the header or query parameter that carries the credential. Required.",
+      "basic_login": "Basic-auth login. Not a secret — shown on the node view page. Colons are not allowed.",
+      "basic_password": "Basic-auth password. Stored encrypted and never returned by the API; leave empty on edit to keep the current one (changing the login requires re-entering the password).",
       "forward_headers": "Which inbound request headers to forward to the receiver. Others are not passed (Content-Type is always forwarded).",
       "logging_enabled": "Whether to write the node's call log to ClickHouse. Off — the node is not logged at all (no metrics or history for it).",
       "ch_table": "Log table name in db.table form. Multiple nodes may write to one table (distinguished by node_id).",
@@ -410,8 +414,8 @@
       "hint": "Receive webhooks at POST /v1/callback/{path}. The signature is HMAC-SHA256 of the raw request body using the secret above, hex-encoded, optionally prefixed (e.g. \"sha256=\") and placed in the header."
     },
     "auth": {
-      "basic_in_hint": "Format: login:password separated by a colon (e.g. admin:s3cret). The client sends Authorization: Basic base64(login:password) — no need to base64-encode here.",
-      "basic_out_hint": "Format: login:password separated by a colon (e.g. admin:s3cret). Nexus base64-encodes it and sets Authorization: Basic … on the request to the node.",
+      "basic_in_hint": "The client sends Authorization: Basic base64(login:password) — no need to base64-encode here, enter the login and password in the fields above.",
+      "basic_out_hint": "Nexus joins the login and password, base64-encodes them and sets Authorization: Basic … on the request to the node.",
       "token_in_hint": "Token value only, without the \"Bearer \" prefix. The client sends Authorization: Bearer <token>.",
       "token_out_hint": "Token value only, without the \"Bearer \" prefix. Nexus sets Authorization: Bearer <token> on the request to the node.",
       "token_from_request_hint": "The token is taken from the incoming request (header or query parameter, by the field name below) and placed into Authorization: Bearer on the request to the node; the original value is stripped from the proxied request. If the value already starts with \"Bearer \", it is forwarded as-is (no double prefix). If the field is missing/empty, the request is sent without Authorization.",
