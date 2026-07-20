@@ -30,7 +30,10 @@ type NodeRepoPg struct {
 }
 
 // Compile-time check, что интерфейс реализован полностью.
-var _ port.NodeRepo = (*NodeRepoPg)(nil)
+var (
+	_ port.NodeRepo       = (*NodeRepoPg)(nil)
+	_ port.NodeTableUsage = (*NodeRepoPg)(nil)
+)
 
 func NewNodeRepoPg(db DBTX, cipher *crypto.Cipher, logger logging.Logger) *NodeRepoPg {
 	return &NodeRepoPg{db: db, cipher: cipher, logger: logger}
@@ -136,6 +139,23 @@ func (r *NodeRepoPg) Count(ctx context.Context, teamID string) (int, error) {
 	err := r.db.QueryRow(ctx, `SELECT count(*) FROM nodes WHERE team_id = $1`, teamID).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("count nodes: %w", err)
+	}
+	return n, nil
+}
+
+// CountByCHTable — реализация port.NodeTableUsage: сколько ДРУГИХ узлов
+// ссылаются на ту же таблицу логов. Без фильтра по команде: общая таблица
+// как раз и опасна тем, что её делят узлы разных команд.
+func (r *NodeRepoPg) CountByCHTable(ctx context.Context, table, excludeNodeID string) (int, error) {
+	if table == "" {
+		return 0, nil
+	}
+	var n int
+	err := r.db.QueryRow(ctx,
+		`SELECT count(*) FROM nodes WHERE clickhouse_table = $1 AND ($2 = '' OR id <> $2::uuid)`,
+		table, excludeNodeID).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count nodes by ch table: %w", err)
 	}
 	return n, nil
 }

@@ -220,6 +220,9 @@ func (a *App) Start(ctx context.Context) error {
 	// §57: гарантированная инвалидация конфига узла в Receiver — Web публикует
 	// событие при изменении узла, Receiver выселяет его из кешей.
 	nodeUC.SetInvalidationPublisher(nodeevents.NewPublisher(a.redis))
+	// Перенос узла между командами не должен утаскивать таблицу логов, если её
+	// делят другие узлы (тот же nodeRepo реализует port.NodeTableUsage).
+	nodeUC.SetTableUsage(nodeRepo)
 	// §27.8: health-ридер Puller-воркеров из общего Redis-стора (rmq:health).
 	rmqHealthReader := rediscache.NewRMQHealthReaderRedis(a.redis)
 	nodeHandler := httpadapter.NewNodeHandler(nodeUC, rmqHealthReader, a.logger)

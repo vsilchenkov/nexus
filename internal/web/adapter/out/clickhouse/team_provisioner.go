@@ -97,6 +97,20 @@ func (p *TeamProvisionerCH) RenameTable(ctx context.Context, from, to string) er
 		return port.ErrSourceTableAbsent
 	}
 
+	// Симметрично — цель: RENAME на занятое имя падает («Table already
+	// exists»). Для переноса узла это тоже не ошибка: в целевой команде уже
+	// есть таблица с этим именем, узел просто начнёт писать в неё.
+	toDB, toTbl, _ := splitDBDotTable(to)
+	var targetCnt uint64
+	if err := conn.QueryRow(ctx,
+		"SELECT count() FROM system.tables WHERE database = ? AND name = ?",
+		toDB, toTbl).Scan(&targetCnt); err != nil {
+		return fmt.Errorf("check target table %s: %w", to, err)
+	}
+	if targetCnt > 0 {
+		return port.ErrTargetTableExists
+	}
+
 	if err := conn.Exec(ctx, fmt.Sprintf("RENAME TABLE %s TO %s", from, to)); err != nil {
 		return fmt.Errorf("rename table %s to %s: %w", from, to, err)
 	}

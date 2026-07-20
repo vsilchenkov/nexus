@@ -111,7 +111,7 @@
       "title": "Move node to team",
       "target_team": "Target team",
       "pick_team": "— pick team —",
-      "hint": "The node and its ClickHouse log table move to the selected team.",
+      "hint": "The node moves to the selected team. Its ClickHouse log table follows only if the node owns it alone; a shared table stays with the current team along with its history, and the node gets a new one.",
       "submit": "Move"
     }
   },
