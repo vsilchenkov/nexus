@@ -168,7 +168,7 @@ func (g *ConsumerGroup) handleMessage(ctx context.Context, c messageCommitter, m
 }
 
 // processWithRetry переобрабатывает ОДНО И ТО ЖЕ сообщение, пока Handle не
-// вернёт не-Retry (Ack/DLQed). Возвращает false, если прерван ctx.
+// вернёт не-Retry (Ack/DLQed/Requeued). Возвращает false, если прерван ctx.
 //
 // Почему не «пропустить и вернуться к сообщению позже» (как было до §3.6-fix):
 // kafka-go FetchMessage без commit'а двигает внутренний курсор и НЕ

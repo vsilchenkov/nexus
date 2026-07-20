@@ -53,6 +53,9 @@ type AsyncProcessor struct {
 	metrics    *metrics.Metrics
 
 	pausedRetryAfter time.Duration
+	// pausedTopic — delay-топик отложенных сообщений paused-узлов (§3.6).
+	// Пусто → старое поведение (удерживать сообщение на месте до снятия паузы).
+	pausedTopic string
 }
 
 // AsyncOption — функциональная опция конструктора AsyncProcessor.
@@ -68,6 +71,17 @@ func WithPausedRetryAfter(d time.Duration) AsyncOption {
 			p.pausedRetryAfter = d
 		}
 	}
+}
+
+// WithPausedRequeue включает перенос сообщений paused-узлов в delay-топик
+// (§3.6): вместо удержания сообщения на месте (что блокирует всю партицию, а
+// в ней по хешу node_path лежат и ДРУГИЕ узлы) processor переиздаёт его в
+// topic и разрешает коммит основного offset'а.
+//
+// Ту же опцию получает sweeper delay-топика: для него republish в тот же топик
+// означает «узел всё ещё на паузе, вернуть в хвост очереди».
+func WithPausedRequeue(topic string) AsyncOption {
+	return func(p *AsyncProcessor) { p.pausedTopic = topic }
 }
 
 func NewAsyncProcessor(
@@ -103,8 +117,12 @@ type HandleResult int
 
 const (
 	HandleAck   HandleResult = iota // commit offset
-	HandleRetry                     // не коммитить — обработать снова (для paused-узлов)
+	HandleRetry                     // не коммитить — переобработать это же сообщение на месте
 	HandleDLQed                     // отправлено в DLQ, commit offset
+	// HandleRequeued — сообщение перенесено в delay-топик paused-узлов (§3.6):
+	// commit offset, как у DLQ. Отдельный от HandleAck код нужен, чтобы «ушло
+	// в отложенные» не выглядело в логах и метриках как «доставлено».
+	HandleRequeued
 )
 
 // Handle обрабатывает одно сообщение. Возвращает решение по offset.
@@ -113,8 +131,8 @@ const (
 //   - десериализация envelope;
 //   - перечитываем актуальный узел; если disabled — ack (нет смысла
 //     ретраить узел, который явно отключён);
-//   - если paused — retry без commit, sleep pausedRetryAfter (§3.6:
-//     «не коммитит offset и ждёт до следующего polling-цикла»);
+//   - если paused — перенос в delay-топик (§3.6, при заданном pausedTopic),
+//     иначе устаревшее поведение: sleep pausedRetryAfter + retry без commit;
 //   - иначе — HTTP-вызов через SendUsecase. Если done=true → ack.
 //     Иначе при первой обработке → DLQ с метаданными причины.
 //
@@ -178,15 +196,7 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 	}
 
 	if node.Status == domain.NodeStatusPaused {
-		// §3.6: «Sender-consumer пропускает сообщения для paused-узлов,
-		// переоткладывает обработку через delayed-redelivery либо
-		// не коммитит offset». Ожидание прерываемо ctx: при shutdown
-		// воркер не должен висеть до pausedRetryAfter на каждом сообщении.
-		select {
-		case <-ctx.Done():
-		case <-time.After(p.pausedRetryAfter):
-		}
-		return HandleRetry
+		return p.handlePaused(ctx, raw, env, msgHeaders)
 	}
 
 	// §51.9: старт обработки async-сообщения — привязка id↔узел на debug.
@@ -245,6 +255,67 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 		p.logger.Int("status", int(out.StatusCode)),
 		p.logger.Int("attempts", int(out.Attempts)))
 	return HandleDLQed
+}
+
+// handlePaused решает судьбу сообщения узла на паузе (§3.6).
+//
+// При заданном pausedTopic сообщение переезжает в delay-топик, а offset
+// основного топика коммитится: партиция освобождается, и соседние узлы (по
+// хешу node_path в неё попадают ДРУГИЕ узлы) не ждут снятия паузы. Для самого
+// sweeper'а delay-топика это же означает «вернуть в хвост очереди».
+//
+// Без pausedTopic — устаревшее поведение: подождать и переобработать на месте.
+// Коммитить сообщение в этом режиме нельзя (иначе оно потеряется), поэтому вся
+// партиция стоит до снятия паузы.
+func (p *AsyncProcessor) handlePaused(ctx context.Context, raw []byte, env Envelope, msgHeaders map[string]string) HandleResult {
+	if p.pausedTopic == "" {
+		// Ожидание прерываемо ctx: при shutdown воркер не должен висеть до
+		// pausedRetryAfter на каждом сообщении.
+		select {
+		case <-ctx.Done():
+		case <-time.After(p.pausedRetryAfter):
+		}
+		return HandleRetry
+	}
+
+	hdrs := p.pausedHeaders(env, msgHeaders)
+	if err := p.dlq.Produce(ctx, p.pausedTopic, env.NodePath, raw, hdrs); err != nil {
+		// Не смогли переложить — НЕ коммитим: сообщение обработается снова
+		// (retry-in-place в адаптере), потеря исключена.
+		p.logger.ErrorWithOp("paused requeue failed", err, "async.handlePaused",
+			p.logger.Str("id", env.ID),
+			p.logger.Str("node_path", env.NodePath))
+		return HandleRetry
+	}
+	// §51.9: перенос в отложенные — единственный след того, что сообщение
+	// покинуло основной топик, не будучи доставленным.
+	p.logger.Debug("async: message requeued to paused topic",
+		p.logger.Str("id", env.ID),
+		p.logger.Str("node_path", env.NodePath),
+		p.logger.Str("paused_topic", p.pausedTopic),
+		p.logger.Str("paused_since", hdrs["paused_since"]))
+	if p.metrics != nil {
+		p.metrics.RequestsTotal.WithLabelValues("requestAsync", env.NodePath, "paused").Inc()
+	}
+	return HandleRequeued
+}
+
+// pausedHeaders собирает заголовки копии в delay-топике. paused_since — время
+// ПЕРВОГО откладывания: сообщение циркулирует в топике, пока узел на паузе, и
+// затирать метку на каждом круге нельзя (по ней видно возраст бэклога).
+func (p *AsyncProcessor) pausedHeaders(env Envelope, in map[string]string) map[string]string {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	since := in["paused_since"]
+	if since == "" {
+		since = now
+	}
+	return map[string]string{
+		"id":              env.ID,
+		"node_path":       env.NodePath,
+		"orig_topic":      headerOr(in, "orig_topic", "nexus.async"),
+		"paused_since":    since,
+		"last_requeue_at": now,
+	}
 }
 
 func (p *AsyncProcessor) publishDLQ(ctx context.Context, raw []byte, env Envelope, out SendOutput) error {

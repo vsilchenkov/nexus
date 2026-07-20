@@ -57,7 +57,10 @@ func main() {
 
 	cipher := bootstrap.MustCipher(logger)
 
-	bootstrap.MustEnsureKafkaTopics(ctx, cfg, logger, cfg.Kafka.AsyncTopic, cfg.Kafka.DLQTopic)
+	// PausedTopic (§3.6) создаём и здесь: Receiver может стартовать раньше
+	// Sender'а, а Web читает delay-топик для вкладки «Очередь» (§35).
+	bootstrap.MustEnsureKafkaTopics(ctx, cfg, logger,
+		cfg.Kafka.AsyncTopic, cfg.Kafka.DLQTopic, cfg.Kafka.PausedTopic)
 
 	otelShutdown := bootstrap.MustOtel(ctx, cfg, "receiver", logger)
 
