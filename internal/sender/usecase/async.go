@@ -55,6 +55,21 @@ type AsyncProcessor struct {
 	pausedRetryAfter time.Duration
 }
 
+// AsyncOption — функциональная опция конструктора AsyncProcessor.
+type AsyncOption func(*AsyncProcessor)
+
+// WithPausedRetryAfter переопределяет паузу перед повторной обработкой
+// сообщения paused-узла (дефолт 30s, §3.6). Нужна тестам: иначе каждое
+// сообщение paused-узла держит партицию полминуты. Прод-конфигурацию не
+// меняем — дефолт остаётся прежним.
+func WithPausedRetryAfter(d time.Duration) AsyncOption {
+	return func(p *AsyncProcessor) {
+		if d > 0 {
+			p.pausedRetryAfter = d
+		}
+	}
+}
+
 func NewAsyncProcessor(
 	nodes NodeReader,
 	send *SendUsecase,
@@ -64,8 +79,9 @@ func NewAsyncProcessor(
 	dlqTopic string,
 	m *metrics.Metrics,
 	logger logging.Logger,
+	opts ...AsyncOption,
 ) *AsyncProcessor {
-	return &AsyncProcessor{
+	p := &AsyncProcessor{
 		nodes:            nodes,
 		send:             send,
 		dlq:              dlq,
@@ -76,6 +92,10 @@ func NewAsyncProcessor(
 		metrics:          m,
 		pausedRetryAfter: 30 * time.Second,
 	}
+	for _, o := range opts {
+		o(p)
+	}
+	return p
 }
 
 // HandleResult — что делать с сообщением.

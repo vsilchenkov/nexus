@@ -79,7 +79,8 @@
 | gRPC `SenderService.Send` | ✅ | [proto/sender/v1/sender.proto](../proto/sender/v1/sender.proto), [adapter/in/grpc/sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go) |
 | HTTP-клиент с keep-alive + retry/backoff | ✅ | [adapter/out/httpclient/client.go](../internal/sender/adapter/out/httpclient/client.go) |
 | Kafka-consumer + DLQ + paused-pacing | ✅ | [adapter/in/kafka/consumer.go](../internal/sender/adapter/in/kafka/consumer.go), [usecase/async.go](../internal/sender/usecase/async.go) |
-| Offset коммитится только после успешной доставки | ✅ | `enable_auto_commit: false` + `MarkMessage` after deliver |
+| Offset коммитится только после успешной доставки | ✅ | `enable_auto_commit: false` + ручной `Commit` после терминального исхода |
+| **Retry-in-place для HandleRetry (paused/PG-сбой): сообщение не теряется** | ✅ Phase 2 (fix) | [consumer.go](../internal/sender/adapter/in/kafka/consumer.go) `processWithRetry`; см. 4.30 |
 | ClickHouse batch writer | ✅ | [adapter/out/chlog/writer.go](../internal/sender/adapter/out/chlog/writer.go) |
 | **Durable-retry проваленных батчей через Kafka (§38, заменил NDJSON)** | ✅ §38 | [chlogretry/retrier.go](../internal/sender/adapter/out/chlogretry/retrier.go), [clogwire](../internal/sender/clogwire/clogwire.go), retry-consumer [clog_retry_consumer.go](../internal/sender/adapter/in/kafka/clog_retry_consumer.go) |
 | **CH partition-drop housekeeping (§4.3)** | ✅ Phase 5 | [sender/usecase/ch_housekeeping.go](../internal/sender/usecase/ch_housekeeping.go), миграция [0005](../migrations/0005_node_retention.up.sql) |
@@ -3046,3 +3047,38 @@ vitest во фронте (было 3 теста без CI-запуска → +2 
   `RequireSessionOnly` закрыл и роль (viewer→403), и канал (API-токены реплеить не могут). Кнопки на
   фронте (LogsTab и таблица неудач QueueTab) для viewer теперь disabled, а не скрыты — чтобы было
   видно, что действие существует, но требует прав.
+
+### 4.37 Async-consumer: почему HandleRetry обрабатывается на месте (потеря paused-сообщений)
+
+- **kafka-go НЕ передоставляет незакоммиченное сообщение в живой сессии.** `Reader.FetchMessage`
+  двигает внутренний курсор; отсутствие commit'а влияет только на *committed offset* в Kafka, но не
+  возвращает сообщение этому же reader'у — оно вернётся лишь при rebalance/рестарте. Это уже было
+  известно в репозитории (см. комментарий в [clog_retry_consumer.go](../internal/sender/adapter/in/kafka/clog_retry_consumer.go)
+  — именно поэтому CH-retry сделан retry-in-place), но основной async-consumer жил по неверному
+  комментарию «сообщение будет прочитано снова при следующем FetchMessage».
+- **Последствие — не задержка, а ПОТЕРЯ.** Старый код на `HandleRetry` (paused-узел, сбой чтения узла
+  из PG, не записавшийся DLQ) шёл к следующему сообщению. Если следующее сообщение той же партиции
+  получало Ack, `CommitMessages` коммитил offset «включительно» — committed offset прокатывался мимо
+  незакоммиченного сообщения, и после ребаланса оно исчезало навсегда. Партиционирование по
+  `kafka.Hash(node.Path)` не спасает: разные узлы регулярно попадают в одну партицию.
+- **Фикс — `processWithRetry`:** то же сообщение переобрабатывается до терминального исхода
+  (Ack/DLQed), только после этого commit; при отмене ctx (shutdown) — выход без commit'а, сообщение
+  передоставится после рестарта. Цена — head-of-line blocking: paused-узел в голове партиции держит
+  соседние сообщения. Это сознательный размен: гарантия доставки и порядка важнее пропускной
+  способности заблокированной партиции (альтернатива — delayed-redelivery через отдельный топик,
+  ломает порядок).
+- **Паузы двухуровневые.** Выдержку для paused даёт usecase (`pausedRetryAfter`, дефолт 30s);
+  `asyncRetryPause` (1s) в адаптере — только защита от busy-loop для прочих Retry-веток. Тестам
+  30s не подходят → функциональная опция `WithPausedRetryAfter` у `NewAsyncProcessor`.
+- **Попутно найден второй баг: `ConsumerGroup.Stop()` не завершал горутины.** У него, в отличие от
+  `ChLogRetryConsumer`, не было собственного производного контекста. После `Close()` reader'а
+  `FetchMessage` возвращает не `context.Canceled`, а «reader closed» → цикл уходил в `continue` и
+  крутил busy-loop до отмены ВНЕШНЕГО ctx. В проде маскировалось тем, что при shutdown внешний ctx
+  обычно уже отменён; в тестах проявилось как ровно-240-секундные прогоны. Исправлено по образцу
+  `ChLogRetryConsumer`: `cancel` в структуре, `Start` создаёт производный ctx, `Stop` его отменяет.
+- **Грабли тестирования этого места.** Первая версия integration-тестов ЗЕЛЕНЕЛА на сломанном коде:
+  между `Start` и первым `FetchMessage` проходит join+sync group (секунды), поэтому «сообщение не
+  доставлено» означало не блокировку очереди, а то, что consumer ещё не читал. Лечится warmup-фазой
+  (`warmupConsumer`): сначала доставляем сообщение enabled-узла и ждём его хита — это доказывает, что
+  consumer активен, и только потом проверяем отсутствие доставки. Любой новый тест этого контура
+  обязан начинаться с warmup.

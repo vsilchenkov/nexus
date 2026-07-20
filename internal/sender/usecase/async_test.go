@@ -223,6 +223,29 @@ func TestAsync_NodePaused_Retry(t *testing.T) {
 	assert.Equal(t, HandleRetry, got, "paused-узел → не коммитим offset, sleep+retry (§3.6)")
 }
 
+// TestAsync_WithPausedRetryAfter: опция переопределяет паузу перед Retry для
+// paused-узлов. Нужна integration-тестам — иначе каждое сообщение paused-узла
+// держит партицию дефолтные 30s. Некорректное значение игнорируется.
+func TestAsync_WithPausedRetryAfter(t *testing.T) {
+	t.Parallel()
+
+	node := &domain.Node{Path: "partner/echo", Status: domain.NodeStatusPaused}
+	httpc := &stubHTTPCaller{}
+	send := NewSendUsecase(httpc, &stubLogWriter{}, nil, logging.NewNoop(), 64<<20)
+	p := NewAsyncProcessor(&stubAsyncNodeReader{node: node}, send, &stubDLQProducer{},
+		nil, nil, "nexus.async.dlq", nil, logging.NewNoop(),
+		WithPausedRetryAfter(5*time.Millisecond),
+		WithPausedRetryAfter(0), // некорректное — не затирает предыдущее
+	)
+
+	start := time.Now()
+	got := p.Handle(context.Background(), makeEnvelope(t, "partner/echo"), nil)
+
+	assert.Equal(t, HandleRetry, got)
+	assert.Less(t, time.Since(start), time.Second,
+		"опция должна была сократить ожидание с дефолтных 30s")
+}
+
 func TestAsync_NodePaused_CtxCancelInterruptsWait(t *testing.T) {
 	t.Parallel()
 

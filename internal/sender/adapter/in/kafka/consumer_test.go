@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	kafka "github.com/segmentio/kafka-go"
@@ -16,14 +17,20 @@ import (
 	"nexus/internal/sender/usecase"
 )
 
-// stubProcessor — управляемый messageProcessor. onHandle (если задан)
-// вызывается внутри Handle: позволяет проверить состояние в момент обработки.
+// stubProcessor — управляемый messageProcessor. results задаёт исход каждого
+// последующего вызова (последний повторяется, когда список исчерпан).
+// onHandle (если задан) вызывается внутри Handle: позволяет проверить
+// состояние в момент обработки.
 type stubProcessor struct {
-	result   usecase.HandleResult
+	results  []usecase.HandleResult
 	calls    int
 	gotValue []byte
 	gotHdrs  map[string]string
-	onHandle func()
+	onHandle func(call int)
+}
+
+func newStubProcessor(results ...usecase.HandleResult) *stubProcessor {
+	return &stubProcessor{results: results}
 }
 
 func (s *stubProcessor) Handle(_ context.Context, value []byte, headers map[string]string) usecase.HandleResult {
@@ -31,9 +38,10 @@ func (s *stubProcessor) Handle(_ context.Context, value []byte, headers map[stri
 	s.gotValue = value
 	s.gotHdrs = headers
 	if s.onHandle != nil {
-		s.onHandle()
+		s.onHandle(s.calls)
 	}
-	return s.result
+	idx := min(s.calls-1, len(s.results)-1)
+	return s.results[idx]
 }
 
 var _ messageProcessor = (*stubProcessor)(nil)
@@ -62,37 +70,60 @@ func newTestGroup(p messageProcessor, opts ...ConsumerOption) *ConsumerGroup {
 }
 
 // TestConsumerGroup_HandleMessage — маппинг результата обработки на судьбу
-// offset'а: Ack/DLQed коммитим, Retry — нет (сообщение остаётся незакоммиченным).
+// offset'а. Терминальные исходы (Ack/DLQed) коммитятся сразу; Retry
+// переобрабатывает ТО ЖЕ сообщение на месте и коммитит лишь после того, как
+// исход стал терминальным.
 func TestConsumerGroup_HandleMessage(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name       string
-		result     usecase.HandleResult
-		wantCommit int
+		name      string
+		results   []usecase.HandleResult
+		wantCalls int
 	}{
-		{"Ack → commit", usecase.HandleAck, 1},
-		{"DLQed → commit", usecase.HandleDLQed, 1},
-		{"Retry → без commit'а", usecase.HandleRetry, 0},
+		{"Ack → commit", []usecase.HandleResult{usecase.HandleAck}, 1},
+		{"DLQed → commit", []usecase.HandleResult{usecase.HandleDLQed}, 1},
+		{
+			"Retry → повтор на месте, commit после терминального исхода",
+			[]usecase.HandleResult{usecase.HandleRetry, usecase.HandleRetry, usecase.HandleAck},
+			3,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			proc := &stubProcessor{result: tc.result}
+			proc := newStubProcessor(tc.results...)
 			com := &stubCommitter{}
 			msg := kafka.Message{Partition: 3, Offset: 42, Value: []byte(`{"id":"x"}`)}
 
 			newTestGroup(proc).handleMessage(context.Background(), com, msg)
 
-			assert.Equal(t, 1, proc.calls, "Handle вызывается ровно один раз на сообщение")
-			assert.Equal(t, tc.wantCommit, com.calls)
-			if tc.wantCommit > 0 {
-				assert.Equal(t, msg.Offset, com.gotMsg.Offset, "коммитим именно обработанное сообщение")
-				assert.Equal(t, msg.Partition, com.gotMsg.Partition)
-			}
+			assert.Equal(t, tc.wantCalls, proc.calls, "Handle повторяется до не-Retry")
+			require.Equal(t, 1, com.calls, "commit ровно один — по завершении обработки")
+			assert.Equal(t, msg.Offset, com.gotMsg.Offset, "коммитим именно обработанное сообщение")
+			assert.Equal(t, msg.Partition, com.gotMsg.Partition)
 		})
 	}
+}
+
+// TestConsumerGroup_HandleMessage_RetryInterruptedByShutdown: если Retry застал
+// shutdown, offset НЕ коммитится — сообщение передоставится после рестарта.
+// Это защита от потери: закоммитить необработанное сообщение нельзя.
+func TestConsumerGroup_HandleMessage_RetryInterruptedByShutdown(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	proc := newStubProcessor(usecase.HandleRetry)
+	proc.onHandle = func(int) { cancel() } // shutdown посреди обработки
+	com := &stubCommitter{}
+
+	start := time.Now()
+	newTestGroup(proc).handleMessage(ctx, com, kafka.Message{Offset: 5})
+
+	assert.Zero(t, com.calls, "необработанное сообщение не коммитим")
+	assert.Less(t, time.Since(start), asyncRetryPause,
+		"отмена ctx прерывает паузу немедленно, а не ждёт asyncRetryPause")
 }
 
 // TestConsumerGroup_HandleMessage_CommitError: сбой commit'а логируется, но не
@@ -101,7 +132,7 @@ func TestConsumerGroup_HandleMessage_CommitError(t *testing.T) {
 	t.Parallel()
 
 	com := &stubCommitter{err: errors.New("kafka unavailable")}
-	g := newTestGroup(&stubProcessor{result: usecase.HandleAck})
+	g := newTestGroup(newStubProcessor(usecase.HandleAck))
 
 	assert.NotPanics(t, func() {
 		g.handleMessage(context.Background(), com, kafka.Message{Offset: 1})
@@ -119,8 +150,8 @@ func TestConsumerGroup_HandleMessage_InFlightGauge(t *testing.T) {
 	gauge := m.KafkaInFlight.WithLabelValues("sender")
 
 	var duringHandle, duringCommit float64
-	proc := &stubProcessor{result: usecase.HandleAck}
-	proc.onHandle = func() { duringHandle = testutil.ToFloat64(gauge) }
+	proc := newStubProcessor(usecase.HandleAck)
+	proc.onHandle = func(int) { duringHandle = testutil.ToFloat64(gauge) }
 	com := &stubCommitter{}
 	com.onCommit = func() { duringCommit = testutil.ToFloat64(gauge) }
 
@@ -137,7 +168,7 @@ func TestConsumerGroup_HandleMessage_InFlightGauge(t *testing.T) {
 func TestConsumerGroup_HandleMessage_HeadersPropagated(t *testing.T) {
 	t.Parallel()
 
-	proc := &stubProcessor{result: usecase.HandleAck}
+	proc := newStubProcessor(usecase.HandleAck)
 	msg := kafka.Message{
 		Value: []byte(`{"id":"x"}`),
 		Headers: []kafka.Header{
