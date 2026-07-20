@@ -73,9 +73,15 @@ func (s *asyncStack) startConsumer(ctx context.Context, opts ...senderuc.AsyncOp
 // startConsumerWith — то же, но с произвольным обработчиком: тесты подменяют
 // его декоратором, чтобы смоделировать сбой между доставкой и commit'ом.
 func (s *asyncStack) startConsumerWith(ctx context.Context, proc asyncHandler) func() {
+	return s.startConsumerGroup(ctx, proc).Stop
+}
+
+// startConsumerGroup возвращает саму группу — нужно тестам, которым интересен
+// не только запуск/остановка, но и её состояние (например Snapshot с lag).
+func (s *asyncStack) startConsumerGroup(ctx context.Context, proc asyncHandler) *kafkaadapter.ConsumerGroup {
 	cg := kafkaadapter.NewConsumerGroup(s.cfg, s.cfg.Kafka.AsyncTopic, proc, s.logger)
 	cg.Start(ctx)
-	return cg.Stop
+	return cg
 }
 
 // asyncHandler — контракт обработчика сообщения, который принимает
