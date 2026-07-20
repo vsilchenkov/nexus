@@ -54,18 +54,34 @@ func newAsyncStack(t *testing.T, pool *pgxpool.Pool, cfg *config.Config) *asyncS
 	}
 }
 
+// newProcessor собирает реальный AsyncProcessor (PG-reader + HTTP-клиент).
+func (s *asyncStack) newProcessor(opts ...senderuc.AsyncOption) *senderuc.AsyncProcessor {
+	nodeReader := nodepg.New(s.pool, s.cipher, s.logger)
+	httpc := httpclient.New(&s.cfg.Sender.HTTPClient, s.logger, 64<<20)
+	sendUC := senderuc.NewSendUsecase(httpc, s.logw, nil, s.logger, 64<<20)
+	return senderuc.NewAsyncProcessor(nodeReader, sendUC, s.producer, nil, nil,
+		s.cfg.Kafka.DLQTopic, nil, s.logger, opts...)
+}
+
 // startConsumer поднимает ConsumerGroup поверх реального AsyncProcessor.
 // Возвращает функцию остановки — повторный вызов startConsumer = рестарт
 // сервиса с той же consumer-group.
 func (s *asyncStack) startConsumer(ctx context.Context, opts ...senderuc.AsyncOption) func() {
-	nodeReader := nodepg.New(s.pool, s.cipher, s.logger)
-	httpc := httpclient.New(&s.cfg.Sender.HTTPClient, s.logger, 64<<20)
-	sendUC := senderuc.NewSendUsecase(httpc, s.logw, nil, s.logger, 64<<20)
-	proc := senderuc.NewAsyncProcessor(nodeReader, sendUC, s.producer, nil, nil,
-		s.cfg.Kafka.DLQTopic, nil, s.logger, opts...)
+	return s.startConsumerWith(ctx, s.newProcessor(opts...))
+}
+
+// startConsumerWith — то же, но с произвольным обработчиком: тесты подменяют
+// его декоратором, чтобы смоделировать сбой между доставкой и commit'ом.
+func (s *asyncStack) startConsumerWith(ctx context.Context, proc asyncHandler) func() {
 	cg := kafkaadapter.NewConsumerGroup(s.cfg, s.cfg.Kafka.AsyncTopic, proc, s.logger)
 	cg.Start(ctx)
 	return cg.Stop
+}
+
+// asyncHandler — контракт обработчика сообщения, который принимает
+// ConsumerGroup (интерфейс на его стороне unexported, поэтому дублируем здесь).
+type asyncHandler interface {
+	Handle(ctx context.Context, value []byte, headers map[string]string) senderuc.HandleResult
 }
 
 func (s *asyncStack) close() { _ = s.producer.Close() }
