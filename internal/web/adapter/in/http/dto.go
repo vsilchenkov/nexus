@@ -2,10 +2,24 @@
 package http
 
 import (
+	"strings"
 	"time"
 
 	"nexus/internal/domain"
 )
+
+// basicLogin — логин из basic-кредов формата "login:password" (часть до
+// ПЕРВОГО «:» — пароль может содержать двоеточия, логин по UI-валидации нет).
+// Возвращается наружу только для basic (isBasic=false → пусто): у token это
+// сам токен-секрет, у webhook_signature — HMAC-секрет, их светить нельзя.
+// Легаси-креды без «:» трактуем как «логин без пароля» — отдаём целиком.
+func basicLogin(isBasic bool, creds string) string {
+	if !isBasic || creds == "" {
+		return ""
+	}
+	login, _, _ := strings.Cut(creds, ":")
+	return login
+}
 
 // CredentialsMask — что возвращаем вместо реального значения кредов.
 // §5.5 ТЗ: «В UI значения никогда не возвращаются в API-ответах в открытом виде».
@@ -77,22 +91,29 @@ type UpdateNodeRequest = CreateNodeRequest
 
 // NodeResponse — DTO ответа. Креды НЕ возвращаются.
 type NodeResponse struct {
-	ID                        string   `json:"id"`
-	Path                      string   `json:"path"`
-	RootMethod                string   `json:"root_method"`
-	IncomingMethod            string   `json:"incoming_method"`
-	OutgoingMethod            string   `json:"outgoing_method"`
-	URLMode                   string   `json:"url_mode"`
-	TargetURL                 string   `json:"target_url"`
-	URLParamName              string   `json:"url_param_name"`
-	URLAllowedHosts           []string `json:"url_allowed_hosts"`
-	AuthType                  string   `json:"auth_type"`
-	AuthCredentialsSet        bool     `json:"auth_credentials_set"`
-	AuthDynamicSource         string   `json:"auth_dynamic_source"`
-	AuthDynamicField          string   `json:"auth_dynamic_field"`
-	AuthDynamicStripPrefix    string   `json:"auth_dynamic_strip_prefix"`
-	IncomingAuthType          string   `json:"incoming_auth_type"`
-	IncomingAuthCredsSet      bool     `json:"incoming_auth_credentials_set"`
+	ID                 string   `json:"id"`
+	Path               string   `json:"path"`
+	RootMethod         string   `json:"root_method"`
+	IncomingMethod     string   `json:"incoming_method"`
+	OutgoingMethod     string   `json:"outgoing_method"`
+	URLMode            string   `json:"url_mode"`
+	TargetURL          string   `json:"target_url"`
+	URLParamName       string   `json:"url_param_name"`
+	URLAllowedHosts    []string `json:"url_allowed_hosts"`
+	AuthType           string   `json:"auth_type"`
+	AuthCredentialsSet bool     `json:"auth_credentials_set"`
+	// AuthLogin — логин basic-кредов исходящей авторизации (часть до первого
+	// «:»). Логин — не секрет (в отличие от пароля, который наружу не отдаётся
+	// никогда); нужен UI: prefill формы редактирования + вывод в просмотре
+	// узла. Пусто для не-basic типов.
+	AuthLogin              string `json:"auth_login,omitempty"`
+	AuthDynamicSource      string `json:"auth_dynamic_source"`
+	AuthDynamicField       string `json:"auth_dynamic_field"`
+	AuthDynamicStripPrefix string `json:"auth_dynamic_strip_prefix"`
+	IncomingAuthType       string `json:"incoming_auth_type"`
+	IncomingAuthCredsSet   bool   `json:"incoming_auth_credentials_set"`
+	// IncomingAuthLogin — логин basic-кредов входящей авторизации (см. AuthLogin).
+	IncomingAuthLogin         string   `json:"incoming_auth_login,omitempty"`
 	IncomingAuthDynamicSource string   `json:"incoming_auth_dynamic_source"`
 	IncomingAuthDynamicField  string   `json:"incoming_auth_dynamic_field"`
 	WebhookSignatureHeader    string   `json:"webhook_signature_header"`
@@ -245,11 +266,13 @@ func nodeToResponse(n *domain.Node) NodeResponse {
 		URLAllowedHosts:           n.URLAllowedHosts,
 		AuthType:                  string(n.AuthType),
 		AuthCredentialsSet:        n.AuthCredentials != "",
+		AuthLogin:                 basicLogin(n.AuthType == domain.AuthTypeBasic, n.AuthCredentials),
 		AuthDynamicSource:         string(n.AuthDynamicSource),
 		AuthDynamicField:          n.AuthDynamicField,
 		AuthDynamicStripPrefix:    n.AuthDynamicStripPrefix,
 		IncomingAuthType:          string(n.IncomingAuthType),
 		IncomingAuthCredsSet:      n.IncomingAuthCredentials != "",
+		IncomingAuthLogin:         basicLogin(n.IncomingAuthType == domain.IncomingAuthTypeBasic, n.IncomingAuthCredentials),
 		IncomingAuthDynamicSource: string(n.IncomingAuthDynamicSource),
 		IncomingAuthDynamicField:  n.IncomingAuthDynamicField,
 		WebhookSignatureHeader:    n.WebhookSignatureHeader,
