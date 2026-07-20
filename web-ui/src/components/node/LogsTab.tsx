@@ -767,7 +767,6 @@ const URL_POPOVER_CLOSE_DELAY_MS = 250;
 // раскрывалась, буфер оставался пустым). Popover живёт своей жизнью: соседи его
 // не закрывают, а уход курсора гасит его с задержкой — успеть перевести мышь.
 function LogUrlCell({ url }: { url: string }) {
-  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const closeTimer = useRef<number | null>(null);
 
@@ -816,7 +815,7 @@ function LogUrlCell({ url }: { url: string }) {
         className="flex max-w-[420px] items-start gap-2 px-2.5 py-2"
       >
         <span className="min-w-0 break-all font-mono text-[11px]">{url}</span>
-        <CopyButton value={url} label={t("common.copy")} />
+        <CopyButton value={url} />
       </PopoverContent>
     </Popover>
   );
