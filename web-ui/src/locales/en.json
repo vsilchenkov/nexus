@@ -372,6 +372,8 @@
       "url_mode": "URL mode",
       "target_url": "Target URL",
       "auth": "Auth",
+      "incoming_auth": "Incoming auth",
+      "outgoing_auth": "Outgoing auth",
       "ch_table": "Log table"
     },
     "help": {

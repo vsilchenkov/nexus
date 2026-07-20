@@ -3427,6 +3427,13 @@ manager+, идемпотентно), `usage_count` on-read по `auth_dynamic_fi
 `basic_from_request` → `header`/`Authorization`) и `0022_request_fields_catalog`. DTO узла
 `incoming_auth_dynamic_source`/`field` (plaintext — имена полей, не секреты), `nodeThroughputDTO.last_error`.
 
+**Basic-креды: Логин/Пароль в UI + `auth_login` в API.** Хранение не меняется (`"login:password"`,
+AES-256-GCM в БД). API отдаёт логин (не секрет): `auth_login`/`incoming_auth_login` — часть до
+первого `:`, только при типе `basic`. Форма редактирования при `basic` — два поля: Логин (открытый,
+prefill из API) + Пароль (скрытый, пусто = не менять); склейка перед отправкой; `:` в логине
+запрещён; смена логина требует ввода пароля заново. Просмотр узла (ConfigTab) показывает входящую и
+исходящую авторизацию отдельными строками: тип + логин при `basic`.
+
 Подробности — [sections/41-universal-request-auth.md](sections/41-universal-request-auth.md).
 
 ## 42. Динамическая подгрузка тел логов — превью, «показать весь», скачивание

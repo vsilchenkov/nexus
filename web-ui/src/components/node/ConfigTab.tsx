@@ -66,7 +66,30 @@ export function ConfigTab({ node }: { node: Node }) {
             <span className="font-mono break-all">{node.target_url || "—"}</span>
           </Row>
         )}
-        <Row label={t("node.fields.auth")}>{node.auth_type || "—"}</Row>
+        {/* Авторизация раздельно: входящая (клиент → Receiver; скрыта для pull —
+            входящих HTTP-запросов нет) и исходящая (Sender → target). Тип none/
+            пусто = строка не показывается. Для basic рядом логин (auth_login из
+            API — не секрет; пароль наружу не отдаётся никогда). */}
+        {!isPull && node.incoming_auth_type && node.incoming_auth_type !== "none" && (
+          <Row label={t("node.fields.incoming_auth")}>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Chip>{node.incoming_auth_type}</Chip>
+              {node.incoming_auth_login && (
+                <span className="font-mono text-[12px]">{node.incoming_auth_login}</span>
+              )}
+            </div>
+          </Row>
+        )}
+        {node.auth_type && node.auth_type !== "none" && (
+          <Row label={t("node.fields.outgoing_auth")}>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Chip>{node.auth_type}</Chip>
+              {node.auth_login && (
+                <span className="font-mono text-[12px]">{node.auth_login}</span>
+              )}
+            </div>
+          </Row>
+        )}
         {/* Проброс заголовков — чипами, как в редакторе (HeadersField). Пустой
             список = наружу уходит только Content-Type (он пробрасывается всегда). */}
         <Row label={t("node.form.forward_headers")}>

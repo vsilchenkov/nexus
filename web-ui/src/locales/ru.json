@@ -372,6 +372,8 @@
       "url_mode": "Режим URL",
       "target_url": "Target URL",
       "auth": "Авторизация",
+      "incoming_auth": "Входящая авторизация",
+      "outgoing_auth": "Исходящая авторизация",
       "ch_table": "Таблица логов"
     },
     "help": {
