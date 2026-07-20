@@ -441,7 +441,7 @@ func (a *App) Start(ctx context.Context) error {
 		dispatcher := rcvdispatcher.NewHTTPDispatcher(a.cfg.Web.ReceiverURL, replayDispatchTimeout, a.logger)
 		replayUC := usecase.NewReplayUsecaseWithCancel(
 			logReader, nodeRepo, dispatcher, rl, auditUC,
-			a.cfg.Web.ReplayRateLimitPerUserPerMin, queueCancel, dlqRetention, a.logger,
+			a.cfg.Web.ReplayRateLimitPerUserPerMin, queueCancel, teamRepo, dlqRetention, a.logger,
 		)
 		logsUC := usecase.NewLogsUsecase(logReader, nodeRepo, a.logger)
 		replayHandler = httpadapter.NewReplayHandler(replayUC, a.logger)

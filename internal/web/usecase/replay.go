@@ -23,6 +23,15 @@ type RateLimiter interface {
 	Allow(ctx context.Context, key string, limit int) (bool, error)
 }
 
+// ReplayTeamResolver — минимальный интерфейс резолва команды узла (§18):
+// узел не-default команды доступен на Receiver только по пути со слагом
+// (/api/v1/request/<team_slug>/<path>), поэтому replay обязан его подставить.
+// Реализуется port.TeamRepo; nil допустим (single-team инсталляции/тесты) —
+// тогда путь уходит без слага, как до multi-tenancy.
+type ReplayTeamResolver interface {
+	GetByID(ctx context.Context, id string) (*domain.Team, error)
+}
+
 // ReplayOptions — переопределения, которые UI может прислать в диалоге §7.4.1.
 type ReplayOptions struct {
 	BodyOverride []byte // если nil — используем оригинальное тело лога
@@ -52,6 +61,7 @@ type ReplayUsecase struct {
 	rl         RateLimiter
 	audit      *AuditUsecase
 	cancel     port.QueueCancelWriter // §36.11: отмена оригиналов при «Повторить все» (nil без Redis)
+	teams      ReplayTeamResolver     // §18: слаг команды узла для пути реинъекции (nil = без слага)
 	retention  time.Duration          // TTL tombstone'а отмены (= retention топика)
 	rateLimit  int                    // запросов/мин на пользователя (§7.4.1: 10)
 	logger     logging.Logger
@@ -66,7 +76,7 @@ func NewReplayUsecase(
 	rateLimit int,
 	logger logging.Logger,
 ) *ReplayUsecase {
-	return NewReplayUsecaseWithCancel(logs, nodes, dispatcher, rl, audit, rateLimit, nil, 0, logger)
+	return NewReplayUsecaseWithCancel(logs, nodes, dispatcher, rl, audit, rateLimit, nil, nil, 0, logger)
 }
 
 // NewReplayUsecaseWithCancel — конструктор с cancel-writer'ом для «Повторить все»
@@ -81,6 +91,7 @@ func NewReplayUsecaseWithCancel(
 	audit *AuditUsecase,
 	rateLimit int,
 	cancel port.QueueCancelWriter,
+	teams ReplayTeamResolver,
 	retention time.Duration,
 	logger logging.Logger,
 ) *ReplayUsecase {
@@ -97,6 +108,7 @@ func NewReplayUsecaseWithCancel(
 		rl:         rl,
 		audit:      audit,
 		cancel:     cancel,
+		teams:      teams,
 		retention:  retention,
 		rateLimit:  rateLimit,
 		logger:     logger,
@@ -273,6 +285,21 @@ func (u *ReplayUsecase) replayOne(ctx context.Context, node *domain.Node, logID 
 	nodePath := node.Path
 	if node.PathPassthrough && orig.Method != "" {
 		nodePath = node.Path + "/" + orig.Method
+	}
+	// §18: узел не-default команды доступен на Receiver только по пути со
+	// слагом (/api/v1/request/<team_slug>/<path>) — без него Receiver ищет
+	// путь в default-команде и отвечает 404 "node not found" (боевой баг:
+	// replay узла команды vika). Ошибка резолва — идём без слага (для
+	// default-узлов это корректно, для остальных 404 честно всплывёт).
+	if u.teams != nil && node.TeamID != "" {
+		t, terr := u.teams.GetByID(ctx, node.TeamID)
+		switch {
+		case terr != nil:
+			u.logger.Debug("replay: team slug resolve failed, path without slug",
+				u.logger.Str("team_id", node.TeamID), u.logger.Err(terr))
+		case t.Slug != domain.DefaultTeamSlug && t.Slug != "":
+			nodePath = t.Slug + "/" + nodePath
+		}
 	}
 
 	resp, err := u.dispatcher.Dispatch(ctx, port.DispatchRequest{

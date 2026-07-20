@@ -383,6 +383,102 @@ func TestReplay_ParamsOverride_Empty(t *testing.T) {
 	}
 }
 
+// stubTeamResolver — ReplayTeamResolver для тестов слага команды (§18).
+type stubTeamResolver struct {
+	teams map[string]*domain.Team
+}
+
+func (s *stubTeamResolver) GetByID(_ context.Context, id string) (*domain.Team, error) {
+	if t, ok := s.teams[id]; ok {
+		return t, nil
+	}
+	return nil, errors.New("team not found")
+}
+
+// TestReplay_NonDefaultTeam_PrefixesSlug (§18): узел не-default команды
+// реинъектится по пути со слагом — без него Receiver ищет путь в default и
+// отвечает 404 "node not found" (боевой баг: replay узла команды vika).
+func TestReplay_NonDefaultTeam_PrefixesSlug(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{
+		ID: "n1", Path: "legat_by", Status: domain.NodeStatusEnabled,
+		ClickHouseTable: "t.t", TeamID: "team-vika",
+		IncomingMethod: domain.HTTPMethodGET, PathPassthrough: true,
+	}
+	log := &domain.LogRecord{ID: "log1", Method: "api2/by/data", Request: "", DateRequest: time.Now(), Done: false}
+	disp := &stubDispatcher{}
+	uc := NewReplayUsecaseWithCancel(
+		&stubLogReader{log: log},
+		&stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
+		disp, nil, NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10,
+		nil,
+		&stubTeamResolver{teams: map[string]*domain.Team{"team-vika": {ID: "team-vika", Slug: "vika"}}},
+		0, logging.NewNoop(),
+	)
+
+	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{UseNodeAuth: true})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	// Слаг команды + путь узла + passthrough-подпуть.
+	if disp.gotReq.NodePath != "vika/legat_by/api2/by/data" {
+		t.Fatalf("node path must carry team slug, got %q", disp.gotReq.NodePath)
+	}
+}
+
+// TestReplay_DefaultTeam_NoSlugPrefix: default-команда — legacy-путь без слага.
+func TestReplay_DefaultTeam_NoSlugPrefix(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{
+		ID: "n1", Path: "demo/x", Status: domain.NodeStatusEnabled,
+		ClickHouseTable: "t.t", TeamID: "team-default",
+	}
+	log := &domain.LogRecord{ID: "log1", Request: `{"a":1}`, DateRequest: time.Now(), Done: true}
+	disp := &stubDispatcher{}
+	uc := NewReplayUsecaseWithCancel(
+		&stubLogReader{log: log},
+		&stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
+		disp, nil, NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10,
+		nil,
+		&stubTeamResolver{teams: map[string]*domain.Team{"team-default": {ID: "team-default", Slug: domain.DefaultTeamSlug}}},
+		0, logging.NewNoop(),
+	)
+
+	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{UseNodeAuth: true})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if disp.gotReq.NodePath != "demo/x" {
+		t.Fatalf("default team must use legacy path without slug, got %q", disp.gotReq.NodePath)
+	}
+}
+
+// TestReplay_TeamResolveError_FallsBackNoSlug: ошибка резолва команды не
+// блокирует replay — путь уходит без слага (для default это корректно).
+func TestReplay_TeamResolveError_FallsBackNoSlug(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{
+		ID: "n1", Path: "demo/x", Status: domain.NodeStatusEnabled,
+		ClickHouseTable: "t.t", TeamID: "unknown-team",
+	}
+	log := &domain.LogRecord{ID: "log1", Request: `{"a":1}`, DateRequest: time.Now(), Done: true}
+	disp := &stubDispatcher{}
+	uc := NewReplayUsecaseWithCancel(
+		&stubLogReader{log: log},
+		&stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
+		disp, nil, NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10,
+		nil, &stubTeamResolver{teams: map[string]*domain.Team{}}, 0, logging.NewNoop(),
+	)
+
+	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{UseNodeAuth: true})
+	if err != nil {
+		t.Fatalf("replay must not fail on team resolve error: %v", err)
+	}
+	if disp.gotReq.NodePath != "demo/x" {
+		t.Fatalf("resolve error must fall back to path without slug, got %q", disp.gotReq.NodePath)
+	}
+}
+
 // TestReplay_ParamsOverride_Invalid: кривой query-override — явная 400-ошибка,
 // dispatch не вызывается (в отличие от мусора в логе, который глотается).
 func TestReplay_ParamsOverride_Invalid(t *testing.T) {
@@ -532,7 +628,7 @@ func TestReplay_ReplayFailed_AllAndCancelsOriginals(t *testing.T) {
 	uc := NewReplayUsecaseWithCancel(
 		logs, &stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
 		disp, nil, NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10,
-		cancelW, time.Hour, logging.NewNoop(),
+		cancelW, nil, time.Hour, logging.NewNoop(),
 	)
 
 	res, err := uc.ReplayFailed(context.Background(), SystemActor(), "n1", "", time.Time{}, time.Time{})
@@ -558,7 +654,7 @@ func TestReplay_ReplayFailed_DispatchError_KeepsOriginals(t *testing.T) {
 	uc := NewReplayUsecaseWithCancel(
 		logs, &stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
 		disp, nil, NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10,
-		cancelW, time.Hour, logging.NewNoop(),
+		cancelW, nil, time.Hour, logging.NewNoop(),
 	)
 
 	res, err := uc.ReplayFailed(context.Background(), SystemActor(), "n1", "", time.Time{}, time.Time{})
@@ -580,7 +676,7 @@ func TestReplay_ReplayFailed_DisabledNode(t *testing.T) {
 	uc := NewReplayUsecaseWithCancel(
 		&stubLogReader{failedIDs: []string{"f1"}}, &stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
 		&stubDispatcher{}, nil, NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10,
-		&stubCancelWriter{}, time.Hour, logging.NewNoop(),
+		&stubCancelWriter{}, nil, time.Hour, logging.NewNoop(),
 	)
 	_, err := uc.ReplayFailed(context.Background(), SystemActor(), "n1", "", time.Time{}, time.Time{})
 	if !errors.Is(err, domain.ErrNodeDisabled) {
