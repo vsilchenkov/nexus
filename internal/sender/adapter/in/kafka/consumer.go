@@ -32,10 +32,17 @@ func headersToMap(hs []kafka.Header) map[string]string {
 	return m
 }
 
+// messageCommitter — минимальный порт commit'а offset'а одного сообщения.
+// Реализуется *kafkapf.Consumer. Выделен, чтобы per-message логика
+// (handleMessage) тестировалась юнитами без реальной Kafka.
+type messageCommitter interface {
+	Commit(ctx context.Context, msg kafka.Message) error
+}
+
 // ConsumerGroup — пул из cfg.Kafka.Consumer.Instances consumer-горутин.
 type ConsumerGroup struct {
 	cfg       *config.Config
-	processor *usecase.AsyncProcessor
+	processor messageProcessor
 	logger    logging.Logger
 	topic     string
 	metrics   *metrics.Metrics // §31: nil-safe; nil → in-flight не пишется
@@ -55,7 +62,7 @@ func WithMetrics(m *metrics.Metrics) ConsumerOption {
 func NewConsumerGroup(
 	cfg *config.Config,
 	topic string,
-	processor *usecase.AsyncProcessor,
+	processor messageProcessor,
 	logger logging.Logger,
 	opts ...ConsumerOption,
 ) *ConsumerGroup {
@@ -108,35 +115,42 @@ func (g *ConsumerGroup) runOne(ctx context.Context, c *kafkapf.Consumer, idx int
 			continue
 		}
 
-		// §31: сообщение прочитано, но ещё не закоммичено — «в полёте».
-		g.incInFlight()
+		g.handleMessage(ctx, c, msg)
+	}
+}
 
-		// Извлекаем Kafka headers в map[string]string для OTel-propagator'а
-		// (Phase 8.4). Несколько значений на ключ Kafka в принципе допускает,
-		// но для propagator-keys это исключено — берём первое.
-		hdrs := headersToMap(msg.Headers)
-		// §51.9: partition/offset доступны только здесь (usecase их не видит) —
-		// на debug видна привязка сообщения к позиции в топике.
-		g.logger.Debug("kafka: message fetched",
-			g.logger.Str("topic", g.topic),
-			g.logger.Int("partition", msg.Partition),
-			g.logger.Any("offset", msg.Offset),
-			g.logger.Str("key", string(msg.Key)),
-			g.logger.Int("size", len(msg.Value)))
-		res := g.processor.Handle(ctx, msg.Value, hdrs)
-		g.decInFlight() // обработка завершена (committed/retry-left)
-		switch res {
-		case usecase.HandleAck, usecase.HandleDLQed:
-			if err := c.Commit(ctx, msg); err != nil {
-				g.logger.ErrorWithOp("commit offset failed", err, "kafka.consumer.commit",
-					g.logger.Str("topic", g.topic),
-					g.logger.Int("partition", msg.Partition))
-			}
-		case usecase.HandleRetry:
-			// Не коммитим — сообщение будет прочитано снова при следующем
-			// FetchMessage в этом инстансе либо при rebalance. Для paused
-			// это нормальное поведение (§3.6).
+// handleMessage обрабатывает одно сообщение и решает судьбу offset'а.
+// Выделен из runOne, чтобы маппинг HandleResult → Commit покрывался юнитами
+// без реальной Kafka (fetch-цикл остаётся на integration-тестах).
+func (g *ConsumerGroup) handleMessage(ctx context.Context, c messageCommitter, msg kafka.Message) {
+	// §31: сообщение прочитано, но ещё не закоммичено — «в полёте».
+	g.incInFlight()
+
+	// Извлекаем Kafka headers в map[string]string для OTel-propagator'а
+	// (Phase 8.4). Несколько значений на ключ Kafka в принципе допускает,
+	// но для propagator-keys это исключено — берём первое.
+	hdrs := headersToMap(msg.Headers)
+	// §51.9: partition/offset доступны только здесь (usecase их не видит) —
+	// на debug видна привязка сообщения к позиции в топике.
+	g.logger.Debug("kafka: message fetched",
+		g.logger.Str("topic", g.topic),
+		g.logger.Int("partition", msg.Partition),
+		g.logger.Any("offset", msg.Offset),
+		g.logger.Str("key", string(msg.Key)),
+		g.logger.Int("size", len(msg.Value)))
+	res := g.processor.Handle(ctx, msg.Value, hdrs)
+	g.decInFlight() // обработка завершена (committed/retry-left)
+	switch res {
+	case usecase.HandleAck, usecase.HandleDLQed:
+		if err := c.Commit(ctx, msg); err != nil {
+			g.logger.ErrorWithOp("commit offset failed", err, "kafka.consumer.commit",
+				g.logger.Str("topic", g.topic),
+				g.logger.Int("partition", msg.Partition))
 		}
+	case usecase.HandleRetry:
+		// Не коммитим — сообщение будет прочитано снова при следующем
+		// FetchMessage в этом инстансе либо при rebalance. Для paused
+		// это нормальное поведение (§3.6).
 	}
 }
 

@@ -13,9 +13,10 @@ import (
 	"nexus/internal/sender/usecase"
 )
 
-// retryProcessor — обработка одного сообщения nexus.logs.retry.
-// Реализуется *ChLogRetryHandler. Определён на стороне consumer'а.
-type retryProcessor interface {
+// messageProcessor — обработка одного Kafka-сообщения. Реализуется
+// *usecase.AsyncProcessor (основной async-поток) и *ChLogRetryHandler
+// (retry-топик CH). Определён на стороне consumer'а (CLAUDE.md §3).
+type messageProcessor interface {
 	Handle(ctx context.Context, value []byte, headers map[string]string) usecase.HandleResult
 }
 
@@ -38,7 +39,7 @@ type ChLogRetryConsumer struct {
 	cfg       *config.Config
 	topic     string
 	groupID   string
-	handler   retryProcessor
+	handler   messageProcessor
 	logger    logging.Logger
 	consumers []*kafkapf.Consumer
 	cancel    context.CancelFunc
@@ -46,7 +47,7 @@ type ChLogRetryConsumer struct {
 }
 
 // NewChLogRetryConsumer создаёт consumer для retry-топика.
-func NewChLogRetryConsumer(cfg *config.Config, topic, groupID string, handler retryProcessor, logger logging.Logger) *ChLogRetryConsumer {
+func NewChLogRetryConsumer(cfg *config.Config, topic, groupID string, handler messageProcessor, logger logging.Logger) *ChLogRetryConsumer {
 	return &ChLogRetryConsumer{cfg: cfg, topic: topic, groupID: groupID, handler: handler, logger: logger}
 }
 
