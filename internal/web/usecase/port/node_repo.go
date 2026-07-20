@@ -35,6 +35,25 @@ type NodeRepo interface {
 	UpdateAllowedHostsSnapshot(ctx context.Context, nodeID string, patterns []string) error
 }
 
+// NodeTableUsage — сколько узлов делят одну ClickHouse-таблицу логов.
+//
+// Отдельный малый порт, а не метод NodeRepo (ISP): нужен единственному
+// сценарию — переносу узла между командами, — и расширение NodeRepo сломало бы
+// все стабы в unit-тестах.
+//
+// Подсчёт идёт по ВСЕМ командам без team-scope: таблицу могут делить узлы,
+// уже разъехавшиеся по разным командам, и именно этот случай проверяется.
+type NodeTableUsage interface {
+	// CountByCHTable возвращает число узлов с clickhouse_table = table,
+	// исключая excludeNodeID (сам переносимый узел). Пустое имя таблицы → 0.
+	CountByCHTable(ctx context.Context, table, excludeNodeID string) (int, error)
+
+	// CountsByCHTable — карта «полное имя таблицы → число узлов на ней» по всем
+	// командам. Один запрос вместо N: read-path логов спрашивает про таблицу на
+	// каждый запрос метрик/журнала, а таблиц в инсталляции — десятки.
+	CountsByCHTable(ctx context.Context) (map[string]int, error)
+}
+
 // NodeCache — кеш для node-конфигов в Redis (§9.2: write-through, cache-aside).
 //
 // teamSlug обязателен во всех методах (§50): ключ кеша — "node:<team_slug>:<path>",

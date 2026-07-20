@@ -102,7 +102,8 @@
       "auth": "Auth",
       "in": "In",
       "out": "Out",
-      "errors": "Errors"
+      "errors": "Errors",
+      "traffic": "Traffic"
     },
     "empty": "No nodes yet",
     "move": {
@@ -110,8 +111,13 @@
       "title": "Move node to team",
       "target_team": "Target team",
       "pick_team": "— pick team —",
-      "hint": "The node and its ClickHouse log table move to the selected team.",
-      "submit": "Move"
+      "hint": "The node moves to the selected team. Its ClickHouse log table follows only if the node owns it alone; a shared table stays with the current team along with its history, and the node gets a new one.",
+      "submit": "Move",
+      "preview": {
+        "title": "What happens to the logs",
+        "shared": "The log table is shared with {{count}} more node(s) — it stays with the current team along with all its history, and this node gets a separate table.",
+        "target_exists": "The target team already has a table {{table}} — the node will attach to it and read and write its data instead of starting empty."
+      }
     }
   },
   "metrics": {
@@ -358,6 +364,7 @@
       "ch_template_manual": "(none / manual table)",
       "ch_template_hint": "Pick a template — the log table is created automatically on save. Leave empty to manage the table manually.",
       "id": "Node ID",
+      "team": "Team",
       "method": "Method type",
       "path": "Node path",
       "url_mode": "URL mode",

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -332,9 +333,7 @@ func (u *DryRunUsecase) realCall(
 	}
 
 	headers := make(map[string]string, len(fwd))
-	for k, v := range fwd {
-		headers[k] = v
-	}
+	maps.Copy(headers, fwd)
 	grpcReq := &senderv1.SendRequest{
 		Id: uuid.NewString(),
 		// Изолированное имя вместо реального пути — см. dryRunPathPrefix.
@@ -459,8 +458,8 @@ func maskAuthMap(h map[string]string) map[string]string {
 
 // redactQuery — URL без query для логов: там живут токены (§50 redactURL).
 func redactQuery(raw string) string {
-	if i := strings.IndexByte(raw, '?'); i >= 0 {
-		return raw[:i]
+	if before, _, ok := strings.Cut(raw, "?"); ok {
+		return before
 	}
 	return raw
 }

@@ -220,6 +220,9 @@ func (a *App) Start(ctx context.Context) error {
 	// §57: гарантированная инвалидация конфига узла в Receiver — Web публикует
 	// событие при изменении узла, Receiver выселяет его из кешей.
 	nodeUC.SetInvalidationPublisher(nodeevents.NewPublisher(a.redis))
+	// Перенос узла между командами не должен утаскивать таблицу логов, если её
+	// делят другие узлы (тот же nodeRepo реализует port.NodeTableUsage).
+	nodeUC.SetTableUsage(nodeRepo)
 	// §27.8: health-ридер Puller-воркеров из общего Redis-стора (rmq:health).
 	rmqHealthReader := rediscache.NewRMQHealthReaderRedis(a.redis)
 	nodeHandler := httpadapter.NewNodeHandler(nodeUC, rmqHealthReader, a.logger)
@@ -422,6 +425,10 @@ func (a *App) Start(ctx context.Context) error {
 	if a.ch != nil {
 		// a.chMgr уже создан выше (вместе с teamProvisioner).
 		logReader := chreader.NewLogReader(a.chMgr, a.logger)
+		// На ОБЩЕЙ таблице логов записи без node_id не должны засчитываться
+		// каждому её узлу (иначе после переноса узел видит чужое, в т.ч. из
+		// другой команды). Карта «таблица → число узлов» кешируется внутри.
+		logReader.SetTableUsage(nodeRepo)
 		nodeLogMetrics = logReader // точные per-node метрики узла из CH-логов
 		failedPurger = logReader   // очистка «Неудачных доставок» из CH-логов
 		dispatcher := rcvdispatcher.NewHTTPDispatcher(a.cfg.Web.ReceiverURL, 30*time.Second, a.logger)

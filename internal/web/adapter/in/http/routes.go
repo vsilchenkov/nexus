@@ -226,6 +226,7 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		authedAdmin := authed.Group("/", mw.RequireAdmin)
 		// Перенос узла в другую команду (multi-tenancy v2, Phase 11.B). Admin-only.
 		authedAdmin.POST("/nodes/:id/move", h.Node.Move)
+		authedAdmin.GET("/nodes/:id/move-preview", h.Node.MovePreview)
 
 		authedAdmin.GET("/users", h.User.List)
 		authedAdmin.GET("/users/:id", h.User.Get)

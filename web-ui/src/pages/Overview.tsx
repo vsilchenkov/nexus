@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Search, Plus, Star, Play, Pause } from "lucide-react";
 
@@ -15,7 +15,6 @@ import {
   Button,
   Card,
   Chip,
-  Field,
   Input,
   Kpi,
   KpiRow,
@@ -33,7 +32,6 @@ import {
   periodWindow,
   type Period,
 } from "../components/ui";
-import { Modal } from "../components/ui/Modal";
 import {
   applyFilters,
   hasFilterParams,
@@ -74,9 +72,6 @@ export default function Overview() {
   const { t } = useTranslation();
   // §26/§28 Пункт 3: создание/редактирование узлов — только manager+.
   const canEdit = useRoleAtLeast("manager");
-  // Перенос узла между командами — admin-only (как и сам /move-эндпоинт):
-  // не показываем кнопку «Перенести» viewer/manager, иначе клик упрётся в 403.
-  const canMove = useRoleAtLeast("admin");
   // §54: фильтры (поиск/метод/статус/живой период) — производные от URL, не
   // useState: иначе они умирают при уходе на страницу узла (Overview — дочерний
   // Outlet, размонтируется) и «Назад» возвращает пустой экран. Зеркало в
@@ -114,7 +109,6 @@ export default function Overview() {
   const [view, setView] = useState<View>(
     () => (localStorage.getItem(VIEW_KEY) as View) || "table",
   );
-  const [moveTarget, setMoveTarget] = useState<Node | null>(null);
   // §44.C: автообновление рабочего стола — тоггл паузы (по умолчанию вкл),
   // персист в localStorage; интервал берётся из настроек (useMetricsRefetchMs).
   const [autoRefresh, setAutoRefresh] = useState(
@@ -342,14 +336,10 @@ export default function Overview() {
 
       {nodes.length > 0 &&
         (view === "table" ? (
-          <NodeTable nodes={nodes} throughput={throughput} onMove={canMove ? setMoveTarget : undefined} period={period} ready={metricsReady} />
+          <NodeTable nodes={nodes} throughput={throughput} period={period} ready={metricsReady} />
         ) : (
-          <NodeCards nodes={nodes} throughput={throughput} onMove={canMove ? setMoveTarget : undefined} period={period} ready={metricsReady} />
+          <NodeCards nodes={nodes} throughput={throughput} period={period} ready={metricsReady} />
         ))}
-
-      {moveTarget && (
-        <MoveNodeDialog node={moveTarget} onClose={() => setMoveTarget(null)} />
-      )}
     </div>
   );
 }
@@ -417,19 +407,18 @@ function useStatus() {
 function NodeTable({
   nodes,
   throughput,
-  onMove,
   period,
   ready,
 }: {
   nodes: Node[];
   throughput: Map<string, Throughput>;
-  onMove?: (n: Node) => void;
   period: Period;
   ready: boolean;
 }) {
   const { t } = useTranslation();
   const status = useStatus();
   const plabel = periodLabel(period, t);
+  const navigate = useNavigate();
   return (
     <Card className="overflow-hidden p-0">
       <div className="overflow-x-auto">
@@ -442,7 +431,10 @@ function NodeTable({
             <th className="px-3 py-2 font-medium">{t("overview.table.out")} {plabel}</th>
             <th className="px-3 py-2 font-medium">{t("overview.table.errors")}</th>
             <th className="px-3 py-2 font-medium">{t("overview.table.status")}</th>
-            <th className="px-3 py-2" />
+            {/* Мини-график трафика — тот же Sparkline, что в карточках. Ширина
+                фиксирована: бары растягиваются по ячейке (flex-1), без неё
+                колонка съедала бы остаток строки. */}
+            <th className="w-[140px] px-3 py-2 font-medium">{t("overview.table.traffic")}</th>
           </tr>
         </thead>
         <tbody>
@@ -465,16 +457,20 @@ function NodeTable({
                 <td className="px-3 py-2.5">
                   <Pill tone={s.tone}>{s.label}</Pill>
                 </td>
-                <td className="px-3 py-2.5 text-right">
-                  {onMove && (
-                    <button
-                      type="button"
-                      onClick={() => onMove(n)}
-                      className="text-xs text-fg-subtle hover:text-accent"
-                    >
-                      {t("overview.move.action")}
-                    </button>
-                  )}
+                <td className="w-[140px] px-3 py-2.5">
+                  <Sparkline
+                    data={m?.spark ?? []}
+                    variant={s.variant}
+                    period={period}
+                    onOpenLogs={
+                      n.clickhouse_table
+                        ? (r) =>
+                            navigate(
+                              `/nodes/${n.id}?tab=logs&from=${Math.round(r.from)}&to=${Math.round(r.to)}`,
+                            )
+                        : undefined
+                    }
+                  />
                 </td>
               </tr>
             );
@@ -496,13 +492,11 @@ function fmtMs(ms: number): string {
 function NodeCards({
   nodes,
   throughput,
-  onMove,
   period,
   ready,
 }: {
   nodes: Node[];
   throughput: Map<string, Throughput>;
-  onMove?: (n: Node) => void;
   period: Period;
   ready: boolean;
 }) {
@@ -565,19 +559,10 @@ function NodeCards({
                   : undefined
               }
             />
-            <div className="flex items-center justify-between gap-2 text-[11px] text-fg-subtle">
+            <div className="flex items-center gap-2 text-[11px] text-fg-subtle">
               <span className="truncate font-mono" title={target}>
                 {target}
               </span>
-              {onMove && (
-                <button
-                  type="button"
-                  onClick={() => onMove(n)}
-                  className="shrink-0 hover:text-accent"
-                >
-                  {t("overview.move.action")}
-                </button>
-              )}
             </div>
           </Card>
         );
@@ -677,59 +662,3 @@ function Sparkline({
   );
 }
 
-type Team = { id: string; slug: string; name: string };
-
-function MoveNodeDialog({ node, onClose }: { node: Node; onClose: () => void }) {
-  const { t } = useTranslation();
-  const qc = useQueryClient();
-  const [slug, setSlug] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
-  const teams = useQuery({
-    queryKey: ["teams"],
-    queryFn: () => api.get<{ items: Team[] }>("/api/teams"),
-  });
-
-  const move = useMutation({
-    mutationFn: () => api.post(`/api/nodes/${node.id}/move`, { target_team_slug: slug }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["nodes"] });
-      onClose();
-    },
-    onError: (err: { response?: { data?: { error?: string } } }) => {
-      setError(err?.response?.data?.error ?? t("common.error"));
-    },
-  });
-
-  return (
-    <Modal
-      title={t("overview.move.title")}
-      subtitle={node.path}
-      onClose={onClose}
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>
-            {t("common.cancel")}
-          </Button>
-          <Button variant="primary" disabled={!slug || move.isPending} onClick={() => move.mutate()}>
-            {t("overview.move.submit")}
-          </Button>
-        </>
-      }
-    >
-      {error && (
-        <div className="mb-3 rounded-md bg-err/10 px-3 py-2 text-sm text-err">{error}</div>
-      )}
-      <Field label={t("overview.move.target_team")} hint={t("overview.move.hint")}>
-        <Select value={slug} onChange={(e) => setSlug(e.target.value)}>
-          <option value="">{t("overview.move.pick_team")}</option>
-          {(teams.data?.items ?? []).map((tm) => (
-            <option key={tm.id} value={tm.slug}>
-              {tm.name} ({tm.slug})
-            </option>
-          ))}
-        </Select>
-      </Field>
-    </Modal>
-  );
-}

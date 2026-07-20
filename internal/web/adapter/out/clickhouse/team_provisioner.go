@@ -74,6 +74,25 @@ var fullTableNamePattern = regexp.MustCompile(`^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$`)
 
 var errInvalidTableName = errors.New("clickhouse: invalid table name (expected db.table)")
 
+// TableExists — есть ли таблица "<db>.<table>" в ClickHouse (system.tables).
+func (p *TeamProvisionerCH) TableExists(ctx context.Context, table string) (bool, error) {
+	if !fullTableNamePattern.MatchString(table) {
+		return false, errInvalidTableName
+	}
+	conn := p.conn.Conn()
+	if conn == nil {
+		return false, errors.New("clickhouse conn is nil")
+	}
+	db, name, _ := splitDBDotTable(table)
+	var cnt uint64
+	if err := conn.QueryRow(ctx,
+		"SELECT count() FROM system.tables WHERE database = ? AND name = ?",
+		db, name).Scan(&cnt); err != nil {
+		return false, fmt.Errorf("check table %s: %w", table, err)
+	}
+	return cnt > 0, nil
+}
+
 func (p *TeamProvisionerCH) RenameTable(ctx context.Context, from, to string) error {
 	if !fullTableNamePattern.MatchString(from) || !fullTableNamePattern.MatchString(to) {
 		return errInvalidTableName
@@ -86,15 +105,23 @@ func (p *TeamProvisionerCH) RenameTable(ctx context.Context, from, to string) er
 	// Проверяем существование источника — RENAME несуществующей таблицы
 	// падает, но для переноса узла это не ошибка (таблица могла ещё не
 	// создаться, если в узел не приходили логи).
-	fromDB, fromTbl, _ := splitDBDotTable(from)
-	var cnt uint64
-	if err := conn.QueryRow(ctx,
-		"SELECT count() FROM system.tables WHERE database = ? AND name = ?",
-		fromDB, fromTbl).Scan(&cnt); err != nil {
-		return fmt.Errorf("check source table %s: %w", from, err)
+	srcExists, err := p.TableExists(ctx, from)
+	if err != nil {
+		return err
 	}
-	if cnt == 0 {
+	if !srcExists {
 		return port.ErrSourceTableAbsent
+	}
+
+	// Симметрично — цель: RENAME на занятое имя падает («Table already
+	// exists»). Для переноса узла это тоже не ошибка: в целевой команде уже
+	// есть таблица с этим именем, узел просто начнёт писать в неё.
+	dstExists, err := p.TableExists(ctx, to)
+	if err != nil {
+		return err
+	}
+	if dstExists {
+		return port.ErrTargetTableExists
 	}
 
 	if err := conn.Exec(ctx, fmt.Sprintf("RENAME TABLE %s TO %s", from, to)); err != nil {
