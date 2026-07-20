@@ -556,6 +556,7 @@
   "replay": {
     "title": "Replay request",
     "body_label": "Request body (leave empty to reuse original)",
+    "body_label_get": "Request body (optional for GET; empty = no body)",
     "sync": "Sync instead of async (wait for the response here)",
     "use_node_auth": "Use the node's auth config",
     "custom_auth": "Custom Authorization header",

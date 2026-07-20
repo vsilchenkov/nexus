@@ -68,8 +68,9 @@ export function ReplayDialog({
     try {
       const r = await api.post<ReplayResult>(`/api/logs/${logId}/replay`, {
         node_id: nodeId,
-        // GET — без тела: поле скрыто, оригинальное тело не требуется.
-        body_override: isGet ? undefined : bodyOverride || undefined,
+        // Пустое поле → undefined: бэкенд возьмёт оригинал из лога (для GET
+        // оригинал обычно пуст → уйдёт без тела). Непустое — уходит и для GET.
+        body_override: bodyOverride || undefined,
         // null (деталь не успела загрузиться, поле нетронуто) → не слать:
         // бэкенд возьмёт параметры оригинала сам.
         params_override: params ?? undefined,
@@ -102,13 +103,13 @@ export function ReplayDialog({
         </>
       }
     >
-      {!isGet && (
-        <Field label={t("replay.body_label")}>
-          <Textarea rows={4} value={bodyOverride} onChange={(e) => setBodyOverride(e.target.value)} />
-        </Field>
-      )}
+      {/* Для GET тело необязательно (обычно его нет), но задать можно —
+          некоторые API принимают GET с телом (напр. поисковые запросы). */}
+      <Field label={isGet ? t("replay.body_label_get") : t("replay.body_label")}>
+        <Textarea rows={4} value={bodyOverride} onChange={(e) => setBodyOverride(e.target.value)} />
+      </Field>
 
-      <Field label={t("replay.params_label")} className={isGet ? "" : "mt-3"}>
+      <Field label={t("replay.params_label")} className="mt-3">
         <Input
           mono
           value={params ?? ""}
