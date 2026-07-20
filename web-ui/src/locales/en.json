@@ -374,6 +374,7 @@
       "auth": "Auth",
       "incoming_auth": "Incoming auth",
       "outgoing_auth": "Outgoing auth",
+      "login_label": "login:",
       "timeout_retry": "Timeout / retries",
       "retries_fmt": "retries: {{n}} × {{backoff}} ms",
       "ch_table": "Log table"

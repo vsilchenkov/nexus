@@ -374,6 +374,7 @@
       "auth": "Авторизация",
       "incoming_auth": "Входящая авторизация",
       "outgoing_auth": "Исходящая авторизация",
+      "login_label": "логин:",
       "timeout_retry": "Таймаут / повторы",
       "retries_fmt": "повторы: {{n}} × {{backoff}} мс",
       "ch_table": "Таблица логов"

@@ -87,7 +87,10 @@ export function ConfigTab({ node }: { node: Node }) {
             <div className="flex flex-wrap items-center gap-1.5">
               <Chip>{node.incoming_auth_type}</Chip>
               {node.incoming_auth_login && (
-                <span className="font-mono text-[12px]">{node.incoming_auth_login}</span>
+                <span className="text-[12px]">
+                  <span className="text-fg-muted">{t("node.fields.login_label")} </span>
+                  <span className="font-mono">{node.incoming_auth_login}</span>
+                </span>
               )}
             </div>
           </Row>
@@ -97,7 +100,10 @@ export function ConfigTab({ node }: { node: Node }) {
             <div className="flex flex-wrap items-center gap-1.5">
               <Chip>{node.auth_type}</Chip>
               {node.auth_login && (
-                <span className="font-mono text-[12px]">{node.auth_login}</span>
+                <span className="text-[12px]">
+                  <span className="text-fg-muted">{t("node.fields.login_label")} </span>
+                  <span className="font-mono">{node.auth_login}</span>
+                </span>
               )}
             </div>
           </Row>
