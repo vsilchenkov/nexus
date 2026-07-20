@@ -15,6 +15,17 @@
 
 ## [Unreleased]
 
+## [1.16.1] - 2026-07-20
+
+### Fixed
+
+- **Replay узла не-default команды падал с 404 «node not found» (§18).** Путь реинъекции строился
+  без слага команды — Receiver искал путь в default-команде. Баг существовал с multi-tenancy, но на
+  GET-узлах маскировался прежней ошибкой «тело не сохранялось» и всплыл сразу после 1.16.0 (replay
+  узла `legat_by` команды vika). Теперь replay резолвит команду узла и реинъектит по
+  `/api/v1/request/<team_slug>/<path>`; default-команда — legacy-путь без слага, как раньше.
+  Проверено на стенде сквозным прогоном (узел в команде vika, passthrough GET, replay → 200).
+
 ## [1.16.0] - 2026-07-20
 
 ### Fixed
@@ -1136,7 +1147,8 @@ ClickHouse (§21), идентификатор узла в логах для об
 
 ---
 
-[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.16.0...HEAD
+[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.16.1...HEAD
+[1.16.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.16.0...v1.16.1
 [1.16.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.15.2...v1.16.0
 [1.15.2]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.15.1...v1.15.2
 [1.15.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.15.0...v1.15.1
