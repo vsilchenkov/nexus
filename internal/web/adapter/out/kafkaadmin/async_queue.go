@@ -46,7 +46,7 @@ type queueEnvelope struct {
 // decodeQueueMeta декодирует одно сообщение и фильтрует по nodePath (key
 // сообщения = node.Path, ставит продюсер). Возвращает (meta, true), если
 // сообщение принадлежит узлу и распарсилось; иначе (zero, false).
-func decodeQueueMeta(msg kafka.Message, nodePath string) (port.QueueMessageMeta, bool) {
+func decodeQueueMeta(msg kafka.Message, nodePath, topic string) (port.QueueMessageMeta, bool) {
 	if string(msg.Key) != nodePath {
 		return port.QueueMessageMeta{}, false
 	}
@@ -58,6 +58,7 @@ func decodeQueueMeta(msg kafka.Message, nodePath string) (port.QueueMessageMeta,
 		ID:         env.ID,
 		Partition:  msg.Partition,
 		Offset:     msg.Offset,
+		Topic:      topic,
 		Method:     env.Method,
 		TargetURL:  env.TargetURL,
 		ReceivedAt: env.ReceivedAt,
@@ -203,7 +204,7 @@ func (c *Client) scanPartition(ctx context.Context, topic string, pid int, start
 			return false, false
 		}
 		*read++
-		if meta, ok := decodeQueueMeta(msg, nodePath); ok {
+		if meta, ok := decodeQueueMeta(msg, nodePath, topic); ok {
 			if !visit(meta) {
 				return false, true
 			}

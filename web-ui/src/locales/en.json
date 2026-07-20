@@ -727,7 +727,7 @@
     },
     "kpi": {
       "pending": "Pending delivery",
-      "pending_hint": "Messages still sitting in the Kafka queue (not yet consumed). Normally 0; grows when the node is paused or the Sender is down. Admin only.",
+      "pending_hint": "Messages still sitting in the Kafka queue (not yet consumed). Normally 0; grows when the node is paused or the Sender is down. For a paused node this also includes deferred messages: they are moved to a separate topic so they do not hold up other nodes. Admin only.",
       "failed": "Failed deliveries",
       "failed_hint": "Requests that were delivered to the target and failed (from the logs) over the selected period."
     },

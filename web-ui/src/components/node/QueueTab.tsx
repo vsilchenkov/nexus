@@ -17,6 +17,9 @@ type QueueMessage = {
   id: string;
   partition: number;
   offset: number;
+  // §3.6: сообщения узла на паузе лежат в отдельном delay-топике, поэтому
+  // координата (partition, offset) осмысленна только вместе с топиком.
+  topic?: string;
   method: string;
   target_url: string;
   received_at: string;
@@ -489,7 +492,7 @@ function PendingRow({
       {open && (
         <tr className="border-t border-line bg-bg-muted/30">
           <td colSpan={6} className="px-4 py-3">
-            <PendingBody nodeId={nodeId} partition={m.partition} offset={m.offset} />
+            <PendingBody nodeId={nodeId} topic={m.topic} partition={m.partition} offset={m.offset} />
           </td>
         </tr>
       )}
@@ -497,12 +500,26 @@ function PendingRow({
   );
 }
 
-function PendingBody({ nodeId, partition, offset }: { nodeId: string; partition: number; offset: number }) {
+function PendingBody({
+  nodeId,
+  topic,
+  partition,
+  offset,
+}: {
+  nodeId: string;
+  topic?: string;
+  partition: number;
+  offset: number;
+}) {
   const { t } = useTranslation();
   const q = useQuery({
-    queryKey: ["aq-body", nodeId, partition, offset],
+    queryKey: ["aq-body", nodeId, topic ?? "", partition, offset],
     queryFn: () =>
-      api.get<BodyResp>(`/api/nodes/${nodeId}/async-queue/messages/body`, { partition, offset }),
+      api.get<BodyResp>(`/api/nodes/${nodeId}/async-queue/messages/body`, {
+        partition,
+        offset,
+        ...(topic ? { topic } : {}),
+      }),
     staleTime: 60_000,
   });
   if (q.isLoading) return <div className="text-fg-muted">{t("common.loading")}</div>;

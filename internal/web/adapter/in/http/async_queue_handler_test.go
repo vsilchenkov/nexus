@@ -55,7 +55,9 @@ func aqEngine(node *domain.Node, nodeErr error) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	uc := usecase.NewAsyncQueueUsecase(nil, nil, nil, &aqNodeRepo{node: node, err: nodeErr},
 		usecase.NewAuditUsecase(aqAuditRepo{}, logging.NewNoop()),
-		"nexus-sender", "nexus.async", time.Hour, 0, logging.NewNoop())
+		"nexus-sender", "nexus.async",
+		"nexus-sender-paused", "nexus.async.paused",
+		time.Hour, 0, logging.NewNoop())
 	h := NewAsyncQueueHandler(uc, logging.NewNoop())
 
 	r := gin.New()

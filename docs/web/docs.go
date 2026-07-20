@@ -2293,7 +2293,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Ленивая подгрузка тела по физической координате (partition, offset) из списка. Admin-only.",
+                "description": "Ленивая подгрузка тела по физической координате (topic, partition, offset) из списка. Admin-only.",
                 "produces": [
                     "application/json"
                 ],
@@ -2322,6 +2322,12 @@ const docTemplate = `{
                         "name": "offset",
                         "in": "query",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "топик из списка (по умолчанию основной)",
+                        "name": "topic",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -7015,6 +7021,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "target_url": {
+                    "type": "string"
+                },
+                "topic": {
+                    "description": "Topic — основной топик или delay-топик paused-узлов (§3.6). Возвращается\nклиенту, чтобы запрос тела шёл в тот же топик: (partition, offset)\nуникальны только внутри топика.",
                     "type": "string"
                 }
             }

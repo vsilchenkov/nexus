@@ -1567,6 +1567,12 @@ definitions:
         type: string
       target_url:
         type: string
+      topic:
+        description: |-
+          Topic — основной топик или delay-топик paused-узлов (§3.6). Возвращается
+          клиенту, чтобы запрос тела шёл в тот же топик: (partition, offset)
+          уникальны только внутри топика.
+        type: string
     type: object
   internal_web_adapter_in_http.queuePurgeDTO:
     properties:
@@ -3590,8 +3596,8 @@ paths:
       - async-queue
   /api/nodes/{id}/async-queue/messages/body:
     get:
-      description: Ленивая подгрузка тела по физической координате (partition, offset)
-        из списка. Admin-only.
+      description: Ленивая подгрузка тела по физической координате (topic, partition,
+        offset) из списка. Admin-only.
       parameters:
       - description: node id
         in: path
@@ -3608,6 +3614,10 @@ paths:
         name: offset
         required: true
         type: integer
+      - description: топик из списка (по умолчанию основной)
+        in: query
+        name: topic
+        type: string
       produces:
       - application/json
       responses:

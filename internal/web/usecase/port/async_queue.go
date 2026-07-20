@@ -26,9 +26,13 @@ type AsyncQueuePeeker interface {
 
 // QueueMessageMeta — метаданные одного сообщения очереди (без тела).
 type QueueMessageMeta struct {
-	ID         string
-	Partition  int
-	Offset     int64
+	ID        string
+	Partition int
+	Offset    int64
+	// Topic — где физически лежит сообщение: основной топик или delay-топик
+	// paused-узлов (§3.6). Нужен, чтобы последующий PeekBody читал из того же
+	// топика: (partition, offset) уникальны только внутри топика.
+	Topic      string
 	Method     string
 	TargetURL  string
 	ReceivedAt time.Time

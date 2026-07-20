@@ -516,9 +516,13 @@ func (a *App) Start(ctx context.Context) error {
 
 	// §34.4: управление async-очередью узла (peek + cancel-set tombstones).
 	// queueCancel создан выше (общий с replay «Повторить все»).
+	// §3.6: очередь узла расщеплена на два топика — основной и delay-топик
+	// отложенных сообщений paused-узлов. Вкладка «Очередь» показывает оба,
+	// иначе бэклог паузы исчезает из UI, а «Очистить все ожидающие» его не находит.
 	asyncQueueUC := usecase.NewAsyncQueueUsecase(
 		asyncPeeker, queueCancel, failedPurger, nodeRepo, auditUC,
 		a.cfg.Kafka.ConsumerGroup, a.cfg.Kafka.AsyncTopic,
+		a.cfg.Kafka.PausedGroup(), a.cfg.Kafka.PausedTopic,
 		dlqRetention, 0, a.logger,
 	)
 	asyncQueueHandler := httpadapter.NewAsyncQueueHandler(asyncQueueUC, a.logger)
