@@ -99,6 +99,10 @@ export type Node = {
   incoming_auth_login?: string;
   // §16: имя заголовка с HMAC-подписью (incoming_auth_type=webhook_signature).
   webhook_signature_header?: string;
+  // Таймаут вызова target и ретраи — показываются в просмотре узла (ConfigTab).
+  timeout_ms?: number;
+  retry_count?: number;
+  retry_backoff_ms?: number;
   clickhouse_table: string;
   clickhouse_template_id: string;
   forward_headers: string[];
