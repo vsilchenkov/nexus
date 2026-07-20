@@ -69,7 +69,7 @@
 | **Методы узла: входящий (enforcement, иначе 405) + исходящий (диктует вызов получателя), деф. POST (#5)** | ✅ | [domain/enums.go](../internal/domain/enums.go) `HTTPMethod`, [domain/node.go](../internal/domain/node.go), миграция [0015](../migrations/0015_node_methods.up.sql), [route.go](../internal/receiver/usecase/route.go) `methodMatches` + `OutgoingMethod`, [route_async.go](../internal/receiver/usecase/route_async.go), [puller.go](../internal/receiver/usecase/puller.go) |
 | Статусы узла: `enabled` / `disabled` / `paused` | ✅ | `RouteUsecase.Route` (§3.6) |
 | **paused в sync** → 202 + `queued:true` + `node_status:paused` | ✅ Phase 5 | `Route()` возвращает `ErrNodePaused` → `handleSync` переключается на `handleAsyncFromInput` |
-| Лимиты полей (path 1-255, timeout 100-300000 ms, ...) | ✅ | [domain/node.go](../internal/domain/node.go) `Validate()` + DB-constraints в [migrations/0002](../migrations/0002_nodes_methods_users.up.sql) |
+| Лимиты полей (path 1-255, timeout 100-600000 ms, ...) | ✅ | [domain/node.go](../internal/domain/node.go) `Validate()` + DB-constraints в [migrations/0002](../migrations/0002_nodes_methods_users.up.sql), CHECK таймаута поднят в [0024](../migrations/0024_nodes_timeout_600s.up.sql) |
 | Soft/hard лимит узлов | ✅ | `NodeUsecase.Create` — `nodesHardLimit` → `ErrLimitReached` |
 
 ### §4 Sender Service
@@ -3127,3 +3127,33 @@ vitest во фронте (было 3 теста без CI-запуска → +2 
 - **Грабли тестов sweeper'а.** `Run()` завершается по отмене контекста, а `Stop()` лишь закрывает
   reader (так же устроен DLQ-репроцессор; в проде ctx отменяет runner при shutdown). Тестовый хелпер,
   ждавший `done` после одного `Stop()`, вешал прогон до таймаута — нужен собственный производный ctx.
+
+### 4.39 Сквозные таймауты sync-запроса: кто реально может оборвать 600-секундный вызов
+
+Разобрано при фиксе боевого бага «узел с timeout_ms=300000 рвётся на 30с» (Sentry NEXUS-8).
+Полный путь: клиент → Web-прокси → Receiver → gRPC → Sender → внешний узел. Обрывать могут:
+
+- **`http.Client` Sender'а** — БЫЛ главный виновник: `http.Client.Timeout` из
+  `sender.http_client.timeout_ms` (30000) молча капал per-node `timeout_ms` (срабатывает меньший из
+  Timeout и context-дедлайна). Исправлено: у клиента больше нет глобального `Timeout`, конфиг стал
+  fallback'ом для запросов без per-node значения
+  ([httpclient/client.go](../internal/sender/adapter/out/httpclient/client.go), регресс-тест
+  `TestClient_Do_PerRequestTimeoutExceedsConfig`).
+- **`receiver.write_timeout_ms`** — второй виновник (боевое значение было 10000): net/http
+  WriteTimeout отсчитывается от чтения заголовков и включает всё время handler'а; дедлайн истекал
+  на 10-й секунде, handler дописывал ответ на 30-й → write fail → conn closed → ReverseProxy Web
+  ловил `EOF` → клиент получал 502 (это и есть Sentry NEXUS-8: события совпадали с CH-логом узла
+  секунда в секунду со сдвигом +30с). Дефолт поднят до 610000 (600с макс. узла + 10с шина).
+- **Web replay-dispatcher** — был хардкод 30с, теперь константа `replayDispatchTimeout = 610s`
+  ([web/app.go](../internal/web/app.go)).
+- **gRPC Receiver→Sender НЕ обрывает**: `receiver.sender_grpc.timeout_ms` и
+  `web.sender_grpc.timeout_ms` — **мёртвые параметры**, `grpcsender.New/Send`
+  ([platform/grpcsender/client.go](../internal/platform/grpcsender/client.go)) их не читает и
+  deadline не ставит — вызов наследует контекст входящего HTTP-запроса. Не удалены, чтобы не менять
+  формат конфига; знай, что менять их значения бесполезно.
+- **Kafka-ребаланс при async 600с НЕ грозит**: `kafka.consumer.max_poll_interval_ms` — декларативный,
+  segmentio/kafka-go его не применяет (heartbeat consumer-group идёт в фоновой горутине
+  generation-loop независимо от обработки сообщения; ребаланс — только по `session_timeout_ms` при
+  смерти процесса).
+- **Прод-чек-лист** при поднятии таймаутов узлов: `receiver.write_timeout_ms` ≥ 610000 в боевом
+  config.yml (см. DEPLOYMENT.md), гистограмма `nexus_request_duration_seconds` имеет бакет 600.

@@ -578,7 +578,7 @@ export default function NodeSettings() {
                 <Input
                   type="number"
                   min={100}
-                  max={300000}
+                  max={600000}
                   className={errCls("timeout_ms")}
                   value={form.timeout_ms}
                   onChange={(e) => set("timeout_ms", parseNumInput(e.target.value, form.timeout_ms))}

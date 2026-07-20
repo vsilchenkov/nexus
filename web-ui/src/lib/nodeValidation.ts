@@ -86,7 +86,7 @@ export function validateNodeForm(f: NodeFormLimits): NodeFieldError | null {
   ) {
     return { field: "incoming_auth_dynamic_field", code: "node.validation.auth_field_required" };
   }
-  if (f.timeout_ms < 100 || f.timeout_ms > 300000) {
+  if (f.timeout_ms < 100 || f.timeout_ms > 600000) {
     return { field: "timeout_ms", code: "node.validation.timeout_ms" };
   }
   if (f.retry_count < 0 || f.retry_count > 10) {

@@ -96,9 +96,17 @@ Web Service API (см. §11) — внутренний контракт адми�
 | `url_allowed_hosts` | до 50 элементов, каждый до 253 символов (лимит DNS) | Не больше — лучше использовать wildcard-паттерн |
 | `forward_headers` | до 30 элементов, каждый — валидное имя HTTP-заголовка до 100 символов | Защита от bloat |
 | `clickhouse_table` | формат `db.table`, каждая часть 1–64 символа, regex ClickHouse-имени | Соответствует ограничениям ClickHouse |
-| `timeout_ms` | 100 – 300000 (5 минут) | Нижняя граница — на случай быстрых API; верхняя — чтобы не залипали воркеры |
+| `timeout_ms` | 100 – 600000 (10 минут) | Нижняя граница — на случай быстрых API; верхняя — чтобы не залипали воркеры |
 | `retry_count` | 0–10 | Больше — это патологический случай, ставится `0` и реализуется на стороне клиента |
 | `retry_backoff_ms` | 0–60000 | Backoff между попытками |
+
+> **Таймаут узла и таймауты шины.** Per-node `timeout_ms` — единственный кап внешнего HTTP-вызова
+> (`sender.http_client.timeout_ms` — лишь fallback для запросов без него и per-node значение не
+> режет). Сквозной путь sync-запроса должен укладываться в `receiver.write_timeout_ms`
+> (рекомендация: 610000 > максимума узла), иначе Receiver рвёт соединение до записи ответа.
+> Осознанное ограничение: при ретраях худший случай `timeout_ms × (retry_count+1) + backoff` может
+> превысить и это значение — тогда клиент получит обрыв, а Sender дошлёт запрос и залогирует
+> результат в ClickHouse.
 
 **Общий лимит узлов на инсталляцию.** Мягкий лимит — **10 000 узлов**, UI показывает баннер при ≥80% («рассмотрите архитектурный пересмотр»). Хард-лимит — **50 000 узлов**, попытка создать ещё один отвергается с сообщением `{"error": "node limit reached, contact administrator"}`. Оба значения настраиваются в `web.nodes_soft_limit` и `web.nodes_hard_limit` в конфиге (см. §8.3).
 
@@ -1165,14 +1173,14 @@ kafka:
     session_timeout_ms: 30000
     heartbeat_interval_ms: 10000
     max_poll_records: 500              # сколько сообщений за один poll
-    max_poll_interval_ms: 300000       # 5 минут на обработку батча
+    max_poll_interval_ms: 300000       # декларативный: kafka-go его не применяет (heartbeat в фоне; долгая обработка ребаланс не вызывает)
     isolation_level: read_committed
     instances: 4                       # = partitions для максимального параллелизма
 
 receiver:
   http_addr: :8080
   read_timeout_ms: 10000
-  write_timeout_ms: 10000
+  write_timeout_ms: 610000             # > max timeout_ms узла (600с), иначе долгий sync рвётся Receiver'ом
   idle_timeout_sec: 120                # keep-alive
   max_body_bytes: 5242880              # 5 MB
   max_header_bytes: 1048576            # 1 MB
