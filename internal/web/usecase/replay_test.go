@@ -479,6 +479,99 @@ func TestReplay_TeamResolveError_FallsBackNoSlug(t *testing.T) {
 	}
 }
 
+// TestReplay_UseNodeAuth_IncomingBasic_AutofillsHeader: «Использовать
+// авторизацию узла» обязан подставить ВХОДЯЩУЮ креду в запрос — replay идёт
+// через реальный endpoint Receiver'а, и без неё узел с входящей basic отвечает
+// 401 «authorization header missing» (боевой баг). Механизм §55.6 (как dry-run).
+func TestReplay_UseNodeAuth_IncomingBasic_AutofillsHeader(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{
+		ID: "n1", Path: "demo/x", Status: domain.NodeStatusEnabled, ClickHouseTable: "t.t",
+		IncomingAuthType: domain.IncomingAuthTypeBasic, IncomingAuthCredentials: "u:p",
+	}
+	log := &domain.LogRecord{ID: "log1", Request: `{"a":1}`, DateRequest: time.Now(), Done: true}
+	disp := &stubDispatcher{}
+	uc := newReplayUC(node, log, disp)
+
+	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{UseNodeAuth: true})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	// base64("u:p") = dTpw — та же схема, что проверяет checkIncomingBasic.
+	if got := disp.gotReq.Headers["Authorization"]; got != "Basic dTpw" {
+		t.Fatalf("incoming basic cred must be autofilled, got %q", got)
+	}
+}
+
+// TestReplay_UseNodeAuth_IncomingTokenQuery_AutofillsParam: входящий token из
+// query-параметра — креда подставляется в query, не в заголовок.
+func TestReplay_UseNodeAuth_IncomingTokenQuery_AutofillsParam(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{
+		ID: "n1", Path: "demo/x", Status: domain.NodeStatusEnabled, ClickHouseTable: "t.t",
+		IncomingAuthType: domain.IncomingAuthTypeToken, IncomingAuthCredentials: "sec-token",
+		IncomingAuthDynamicSource: domain.IncomingAuthSourceQuery, IncomingAuthDynamicField: "token",
+	}
+	log := &domain.LogRecord{ID: "log1", Request: `{"a":1}`, DateRequest: time.Now(), Done: true}
+	disp := &stubDispatcher{}
+	uc := newReplayUC(node, log, disp)
+
+	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{UseNodeAuth: true})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if got := disp.gotReq.Query.Get("token"); got != "sec-token" {
+		t.Fatalf("incoming query token must be autofilled, got %q", got)
+	}
+	if _, ok := disp.gotReq.Headers["Authorization"]; ok {
+		t.Fatalf("query-source cred must not leak into Authorization header")
+	}
+}
+
+// TestReplay_NoNodeAuth_SkipsAutofill: «Без авторизации» — креда НЕ
+// подставляется (сценарий отладки 401 из §7.4.1 остаётся рабочим).
+func TestReplay_NoNodeAuth_SkipsAutofill(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{
+		ID: "n1", Path: "demo/x", Status: domain.NodeStatusEnabled, ClickHouseTable: "t.t",
+		IncomingAuthType: domain.IncomingAuthTypeBasic, IncomingAuthCredentials: "u:p",
+	}
+	log := &domain.LogRecord{ID: "log1", Request: `{"a":1}`, DateRequest: time.Now(), Done: true}
+	disp := &stubDispatcher{}
+	uc := newReplayUC(node, log, disp)
+
+	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{UseNodeAuth: false})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if _, ok := disp.gotReq.Headers["Authorization"]; ok {
+		t.Fatalf("UseNodeAuth=false must not autofill Authorization")
+	}
+}
+
+// TestReplay_CustomAuth_WinsOverAutofill: явный Authorization оператора
+// приоритетнее автоподстановки.
+func TestReplay_CustomAuth_WinsOverAutofill(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{
+		ID: "n1", Path: "demo/x", Status: domain.NodeStatusEnabled, ClickHouseTable: "t.t",
+		IncomingAuthType: domain.IncomingAuthTypeBasic, IncomingAuthCredentials: "u:p",
+	}
+	log := &domain.LogRecord{ID: "log1", Request: `{"a":1}`, DateRequest: time.Now(), Done: true}
+	disp := &stubDispatcher{}
+	uc := newReplayUC(node, log, disp)
+
+	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{
+		UseNodeAuth: true, CustomAuth: "Bearer manual",
+	})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if got := disp.gotReq.Headers["Authorization"]; got != "Bearer manual" {
+		t.Fatalf("custom auth must win, got %q", got)
+	}
+}
+
 // TestReplay_ParamsOverride_Invalid: кривой query-override — явная 400-ошибка,
 // dispatch не вызывается (в отличие от мусора в логе, который глотается).
 func TestReplay_ParamsOverride_Invalid(t *testing.T) {
