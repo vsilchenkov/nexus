@@ -15,6 +15,25 @@
 
 ## [Unreleased]
 
+## [1.16.2] - 2026-07-20
+
+### Fixed
+
+- **Replay узла с входящей авторизацией падал с 401 «authorization header missing».** Чекбокс
+  «Использовать авторизацию узла» не подставлял входящую креду — replay идёт через реальный входной
+  endpoint Receiver'а, и узел с входящей basic/token требует её в самом запросе (собрать
+  `Basic base64(login:password)` руками оператор не может — креды наружу не отдаются). Теперь сервер
+  строит креду из сохранённых кредов узла тем же механизмом, что автоподстановка dry-run (§55.6):
+  basic/token — в заголовок или query-параметр по настройкам узла, webhook_signature — HMAC-подпись
+  тела. Свой заголовок Authorization приоритетнее; «Без авторизации» по-прежнему шлёт без креды
+  (сценарий отладки 401). Проверено на стенде: replay узла с входящей basic → 200.
+
+### Changed
+
+- **CI: пайплайн распараллелен** — DAG через `needs: []` у независимых jobs + `concurrent = 4` на
+  раннере (один хост, без новых раннеров). Раньше 10 jobs шли строго последовательно (~46 мин на
+  теге); теперь критический путь ≈ integration (~14 мин).
+
 ## [1.16.1] - 2026-07-20
 
 ### Fixed
@@ -1147,7 +1166,8 @@ ClickHouse (§21), идентификатор узла в логах для об
 
 ---
 
-[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.16.1...HEAD
+[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.16.2...HEAD
+[1.16.2]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.16.1...v1.16.2
 [1.16.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.16.0...v1.16.1
 [1.16.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.15.2...v1.16.0
 [1.15.2]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.15.1...v1.15.2
