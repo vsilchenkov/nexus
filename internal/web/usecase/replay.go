@@ -12,6 +12,7 @@ import (
 
 	"nexus/internal/domain"
 	"nexus/internal/platform/logging"
+	rcv "nexus/internal/receiver/usecase"
 	"nexus/internal/web/usecase/port"
 )
 
@@ -272,10 +273,24 @@ func (u *ReplayUsecase) replayOne(ctx context.Context, node *domain.Node, logID 
 		// Если узел требует Basic/Token — replay упадёт с 401, как и
 		// должен (это сценарий отладки 401-ошибок из §7.4.1).
 	default:
-		// По умолчанию — replay идёт без явных кредов в запросе. Receiver
-		// при auth_type=basic/token подставит из конфига узла. Для
-		// динамических auth (token_from_request) UI должен прислать
-		// CustomAuth вручную (см. §7.4.1).
+		// «Использовать авторизацию узла»: replay идёт через реальный входной
+		// endpoint Receiver'а, и узел с ВХОДЯЩЕЙ авторизацией требует креду в
+		// самом запросе — без неё Receiver отвечает 401 «authorization header
+		// missing» (боевой баг: узел с входящей basic). Оператор собрать
+		// `Basic base64(login:password)`/HMAC руками не может (креды наружу
+		// не отдаются), поэтому сервер строит креду сам из сохранённых кредов
+		// узла — тот же механизм, что автоподстановка в dry-run (§55.6).
+		// ИСХОДЯЩУЮ авторизацию Receiver подставит из конфига узла как обычно.
+		pres, ok, aerr := rcv.BuildIncomingAuthValue(node, body)
+		switch {
+		case aerr != nil:
+			u.logger.Debug("replay: build incoming auth failed, sending without cred",
+				u.logger.Str("node_id", node.ID), u.logger.Err(aerr))
+		case ok && pres.Source == domain.IncomingAuthSourceQuery:
+			q.Set(pres.Field, pres.Value)
+		case ok:
+			headers[pres.Field] = pres.Value
+		}
 	}
 
 	// §39: для passthrough-узла исходный запрос бил в подпуть (сохранён в
