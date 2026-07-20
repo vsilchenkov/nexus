@@ -17,6 +17,9 @@ type QueueMessage = {
   id: string;
   partition: number;
   offset: number;
+  // §3.6: сообщения узла на паузе лежат в отдельном delay-топике, поэтому
+  // координата (partition, offset) осмысленна только вместе с топиком.
+  topic?: string;
   method: string;
   target_url: string;
   received_at: string;
@@ -63,7 +66,9 @@ export function QueueTab({
 
   const [pendingExpanded, setPendingExpanded] = useState<string | null>(null);
   const [failedExpanded, setFailedExpanded] = useState<string | null>(null);
-  const [replayId, setReplayId] = useState<string | null>(null);
+  // id + HTTP-глагол строки — ReplayDialog по нему решает, требуется ли тело
+  // (GET — без тела) и какой метод реинъекции покажет поведение бэкенда.
+  const [replay, setReplay] = useState<{ id: string; httpMethod?: string } | null>(null);
 
   // Живая очередь (pending) — только admin. На паузе опрашиваем часто (очередь
   // наполняется, нужна живая обратная связь); если есть pending — реже; на
@@ -383,7 +388,7 @@ export function QueueTab({
                     nodeId={id}
                     open={failedExpanded === r.id}
                     onToggle={() => setFailedExpanded(failedExpanded === r.id ? null : r.id)}
-                    onReplay={() => setReplayId(r.id)}
+                    onReplay={() => setReplay({ id: r.id, httpMethod: r.http_method })}
                     canReplay={isManager}
                   />
                 ))}
@@ -393,7 +398,15 @@ export function QueueTab({
         )}
       </section>
 
-      {replayId && <ReplayDialog logId={replayId} nodeId={id} onClose={() => setReplayId(null)} />}
+      {replay && (
+        <ReplayDialog
+          logId={replay.id}
+          nodeId={id}
+          httpMethod={replay.httpMethod}
+          incomingMethod={node.incoming_method}
+          onClose={() => setReplay(null)}
+        />
+      )}
     </div>
   );
 }
@@ -489,7 +502,7 @@ function PendingRow({
       {open && (
         <tr className="border-t border-line bg-bg-muted/30">
           <td colSpan={6} className="px-4 py-3">
-            <PendingBody nodeId={nodeId} partition={m.partition} offset={m.offset} />
+            <PendingBody nodeId={nodeId} topic={m.topic} partition={m.partition} offset={m.offset} />
           </td>
         </tr>
       )}
@@ -497,12 +510,26 @@ function PendingRow({
   );
 }
 
-function PendingBody({ nodeId, partition, offset }: { nodeId: string; partition: number; offset: number }) {
+function PendingBody({
+  nodeId,
+  topic,
+  partition,
+  offset,
+}: {
+  nodeId: string;
+  topic?: string;
+  partition: number;
+  offset: number;
+}) {
   const { t } = useTranslation();
   const q = useQuery({
-    queryKey: ["aq-body", nodeId, partition, offset],
+    queryKey: ["aq-body", nodeId, topic ?? "", partition, offset],
     queryFn: () =>
-      api.get<BodyResp>(`/api/nodes/${nodeId}/async-queue/messages/body`, { partition, offset }),
+      api.get<BodyResp>(`/api/nodes/${nodeId}/async-queue/messages/body`, {
+        partition,
+        offset,
+        ...(topic ? { topic } : {}),
+      }),
     staleTime: 60_000,
   });
   if (q.isLoading) return <div className="text-fg-muted">{t("common.loading")}</div>;

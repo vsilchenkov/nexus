@@ -123,6 +123,7 @@ var translations = map[Lang]map[string]string{
 		// replay
 		"replay.too_old":          "cannot replay failed request older than 7 days",
 		"replay.body_unavailable": "original request body was not logged for this node — enter the body manually to replay",
+		"replay.bad_params":       "parameters must be a valid query string (a=1&b=2)",
 		// url
 		"url.required":    "url parameter is required",
 		"url.invalid":     "target url is invalid",
@@ -188,7 +189,7 @@ var translations = map[Lang]map[string]string{
 		"node.validation.auth_dynamic_field_length":   "dynamic auth field name length must be between 1 and 64 characters",
 		"node.validation.auth_dynamic_field_format":   "dynamic auth field name must start with a letter and contain only letters, digits, hyphen and underscore",
 		"node.validation.auth_dynamic_source":         "dynamic auth source must be header or query",
-		"node.validation.timeout_ms":                  "timeout must be between 100 and 300000 ms",
+		"node.validation.timeout_ms":                  "timeout must be between 100 and 600000 ms",
 		"node.validation.retry_count":                 "retry count must be between 0 and 10",
 		"node.validation.retry_backoff_ms":            "retry backoff must be between 0 and 60000 ms",
 		"node.validation.allowed_hosts_size":          "allowed hosts list must have at most 50 entries",
@@ -232,6 +233,7 @@ var translations = map[Lang]map[string]string{
 		"kafka.period_too_long":    "произвольный период не может превышать 90 дней",
 		"replay.too_old":           "нельзя повторить запрос с ошибкой старше 7 дней",
 		"replay.body_unavailable":  "тело исходного запроса не сохранялось для этого узла — введите тело вручную, чтобы повторить",
+		"replay.bad_params":        "параметры должны быть валидной query-строкой (a=1&b=2)",
 		"url.required":             "параметр URL обязателен",
 		"url.invalid":              "целевой URL невалиден",
 		"url.not_allowed":          "целевой URL не входит в allowlist",
@@ -296,7 +298,7 @@ var translations = map[Lang]map[string]string{
 		"node.validation.auth_dynamic_field_length":   "имя поля динамической авторизации должно быть от 1 до 64 символов",
 		"node.validation.auth_dynamic_field_format":   "имя поля динамической авторизации должно начинаться с буквы и содержать только буквы, цифры, дефис и подчёркивание",
 		"node.validation.auth_dynamic_source":         "источник динамической авторизации — header или query",
-		"node.validation.timeout_ms":                  "таймаут должен быть от 100 до 300000 мс",
+		"node.validation.timeout_ms":                  "таймаут должен быть от 100 до 600000 мс",
 		"node.validation.retry_count":                 "число повторов должно быть от 0 до 10",
 		"node.validation.retry_backoff_ms":            "пауза между повторами должна быть от 0 до 60000 мс",
 		"node.validation.allowed_hosts_size":          "список разрешённых хостов — не более 50 элементов",

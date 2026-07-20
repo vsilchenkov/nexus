@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"nexus/internal/domain"
@@ -15,6 +16,11 @@ import (
 // peeker / cancel-set, т.е. кластер/Redis не сконфигурированы). Handler → 503.
 var ErrAsyncQueueUnavailable = errors.New("async queue management unavailable")
 
+// ErrAsyncQueueUnknownTopic — запрошен топик вне очереди узла. Handler → 400.
+// Allow-list нужен, чтобы через эндпоинт тела сообщения нельзя было прочитать
+// произвольный топик кластера.
+var ErrAsyncQueueUnknownTopic = errors.New("async queue: unknown topic")
+
 const asyncQueueListLimit = 50 // «первые 50, как в логах» (§34.4)
 
 // AsyncQueueUsecase — управление async-очередью Kafka на узле requestAsync (§34.4).
@@ -23,16 +29,22 @@ const asyncQueueListLimit = 50 // «первые 50, как в логах» (§3
 // деградирует (KafkaAvailable=false), мутации возвращают ErrAsyncQueueUnavailable.
 // Узел резолвится по id с проверкой team-scope (чужой узел → 404), как в replay.
 type AsyncQueueUsecase struct {
-	peeker    port.AsyncQueuePeeker
-	cancel    port.QueueCancelWriter
-	failed    port.FailedLogsPurger // ClickHouse-логи (очистка неудачных), nil без CH
-	nodes     port.NodeRepo
-	audit     *AuditUsecase
-	group     string
-	topic     string
-	retention time.Duration
-	peekCap   int
-	logger    logging.Logger
+	peeker port.AsyncQueuePeeker
+	cancel port.QueueCancelWriter
+	failed port.FailedLogsPurger // ClickHouse-логи (очистка неудачных), nil без CH
+	nodes  port.NodeRepo
+	audit  *AuditUsecase
+	group  string
+	topic  string
+	// pausedGroup/pausedTopic — delay-топик отложенных сообщений paused-узлов
+	// (§3.6). Очередь узла физически расщеплена на два топика, и вкладка
+	// «Очередь» обязана показывать оба: иначе бэклог паузы «исчезает» из UI, а
+	// «Очистить все ожидающие» перестаёт его находить.
+	pausedGroup string
+	pausedTopic string
+	retention   time.Duration
+	peekCap     int
+	logger      logging.Logger
 }
 
 func NewAsyncQueueUsecase(
@@ -42,6 +54,7 @@ func NewAsyncQueueUsecase(
 	nodes port.NodeRepo,
 	audit *AuditUsecase,
 	group, topic string,
+	pausedGroup, pausedTopic string,
 	retention time.Duration,
 	peekCap int,
 	logger logging.Logger,
@@ -53,17 +66,35 @@ func NewAsyncQueueUsecase(
 		retention = 7 * 24 * time.Hour
 	}
 	return &AsyncQueueUsecase{
-		peeker:    peeker,
-		cancel:    cancel,
-		failed:    failed,
-		nodes:     nodes,
-		audit:     audit,
-		group:     group,
-		topic:     topic,
-		retention: retention,
-		peekCap:   peekCap,
-		logger:    logger,
+		peeker:      peeker,
+		cancel:      cancel,
+		failed:      failed,
+		nodes:       nodes,
+		audit:       audit,
+		group:       group,
+		topic:       topic,
+		pausedGroup: pausedGroup,
+		pausedTopic: pausedTopic,
+		retention:   retention,
+		peekCap:     peekCap,
+		logger:      logger,
 	}
+}
+
+// queueSource — пара (группа, топик), из которых складывается очередь узла.
+type queueSource struct {
+	group string
+	topic string
+}
+
+// sources — все источники очереди: основной топик и delay-топик paused-узлов.
+// Второй может быть не сконфигурирован (пустой) — тогда работаем как раньше.
+func (u *AsyncQueueUsecase) sources() []queueSource {
+	out := []queueSource{{group: u.group, topic: u.topic}}
+	if u.pausedTopic != "" {
+		out = append(out, queueSource{group: u.pausedGroup, topic: u.pausedTopic})
+	}
+	return out
 }
 
 // QueueListResult — первые N сообщений очереди узла.
@@ -92,7 +123,12 @@ func (u *AsyncQueueUsecase) resolveNode(ctx context.Context, nodeID, teamID stri
 	return node, nil
 }
 
-// List — первые 50 метаданных сообщений узла (без тела).
+// List — первые 50 метаданных сообщений узла (без тела) из ОБОИХ топиков.
+//
+// Дедуп по id обязателен: сообщение в delay-топике циркулирует (перенос в хвост
+// на каждом проходе sweeper'а), поэтому одна и та же запись может встретиться
+// под разными offset'ами. Без дедупа список и счётчик «Ожидают отправки»
+// раздувались бы кратно числу кругов.
 func (u *AsyncQueueUsecase) List(ctx context.Context, nodeID, teamID string) (QueueListResult, error) {
 	node, err := u.resolveNode(ctx, nodeID, teamID)
 	if err != nil {
@@ -101,30 +137,79 @@ func (u *AsyncQueueUsecase) List(ctx context.Context, nodeID, teamID string) (Qu
 	if u.peeker == nil {
 		return QueueListResult{Items: []port.QueueMessageMeta{}}, nil
 	}
-	r, err := u.peeker.PeekList(ctx, u.group, u.topic, node.Path, asyncQueueListLimit, u.peekCap)
-	if err != nil {
-		u.logger.Warn("async queue list failed", u.logger.Str("node_path", node.Path), u.logger.Err(err))
-		return QueueListResult{Items: []port.QueueMessageMeta{}}, nil
+
+	items := make([]port.QueueMessageMeta, 0, asyncQueueListLimit)
+	seen := make(map[string]bool, asyncQueueListLimit)
+	capped := false
+	for _, src := range u.sources() {
+		r, err := u.peeker.PeekList(ctx, src.group, src.topic, node.Path, asyncQueueListLimit, u.peekCap)
+		if err != nil {
+			// Деградация, а не ошибка: один недоступный топик не должен ронять
+			// всю вкладку (Kafka-пик — вспомогательная функция, §34.4).
+			u.logger.Warn("async queue list failed",
+				u.logger.Str("node_path", node.Path),
+				u.logger.Str("topic", src.topic),
+				u.logger.Err(err))
+			continue
+		}
+		capped = capped || r.Capped
+		for _, it := range r.Items {
+			if it.ID != "" && seen[it.ID] {
+				continue
+			}
+			if it.ID != "" {
+				seen[it.ID] = true
+			}
+			items = append(items, it)
+		}
 	}
-	if r.Items == nil {
-		r.Items = []port.QueueMessageMeta{}
+	// Приоритет отдаём более старым сообщениям — они уедут первыми.
+	slices.SortStableFunc(items, func(a, b port.QueueMessageMeta) int {
+		return a.ReceivedAt.Compare(b.ReceivedAt)
+	})
+	if len(items) > asyncQueueListLimit {
+		items = items[:asyncQueueListLimit]
+		capped = true
 	}
-	return QueueListResult{Items: r.Items, Capped: r.Capped, KafkaAvailable: true}, nil
+	return QueueListResult{Items: items, Capped: capped, KafkaAvailable: true}, nil
 }
 
-// Body — тело одного сообщения по (partition, offset) для ленивой подгрузки.
-func (u *AsyncQueueUsecase) Body(ctx context.Context, nodeID, teamID string, partition int, offset int64) (port.QueueMessageBody, error) {
+// Body — тело одного сообщения по (topic, partition, offset) для ленивой
+// подгрузки. Пустой topic → основной (обратная совместимость со старым UI).
+//
+// Для delay-топика координата нестабильна: сообщение переносится в хвост на
+// каждом проходе sweeper'а, поэтому захваченный в List offset может устареть.
+// Это best-effort — ошибку отдаём наружу, UI просит обновить список.
+func (u *AsyncQueueUsecase) Body(ctx context.Context, nodeID, teamID, topic string, partition int, offset int64) (port.QueueMessageBody, error) {
 	if _, err := u.resolveNode(ctx, nodeID, teamID); err != nil {
 		return port.QueueMessageBody{}, err
 	}
 	if u.peeker == nil {
 		return port.QueueMessageBody{}, ErrAsyncQueueUnavailable
 	}
-	body, err := u.peeker.PeekBody(ctx, u.topic, partition, offset)
+	topic, err := u.resolveTopic(topic)
+	if err != nil {
+		return port.QueueMessageBody{}, err
+	}
+	body, err := u.peeker.PeekBody(ctx, topic, partition, offset)
 	if err != nil {
 		return port.QueueMessageBody{}, fmt.Errorf("async queue body: %w", err)
 	}
 	return body, nil
+}
+
+// resolveTopic валидирует запрошенный топик по allow-list'у: читать произвольный
+// топик кластера через этот эндпоинт нельзя.
+func (u *AsyncQueueUsecase) resolveTopic(topic string) (string, error) {
+	if topic == "" {
+		return u.topic, nil
+	}
+	for _, src := range u.sources() {
+		if src.topic == topic {
+			return topic, nil
+		}
+	}
+	return "", fmt.Errorf("%w: %q", ErrAsyncQueueUnknownTopic, topic)
 }
 
 // DeleteOne — отменить одно сообщение очереди (логическое удаление, §34.4).
@@ -172,21 +257,37 @@ func (u *AsyncQueueUsecase) purge(ctx context.Context, actor Actor, nodeID, team
 	if u.peeker == nil || u.cancel == nil {
 		return QueuePurgeResult{}, nil
 	}
-	scan, err := u.peeker.ScanIDs(ctx, u.group, u.topic, node.Path, from, to, u.peekCap)
-	if err != nil {
-		return QueuePurgeResult{}, fmt.Errorf("async queue scan ids: %w", err)
+	// Оба топика: бэклог paused-узла (главный юзкейс «очистить очередь мёртвого
+	// узла») лежит в delay-топике, а не в основном.
+	var ids []string
+	seen := make(map[string]bool)
+	capped := false
+	for _, src := range u.sources() {
+		scan, err := u.peeker.ScanIDs(ctx, src.group, src.topic, node.Path, from, to, u.peekCap)
+		if err != nil {
+			return QueuePurgeResult{}, fmt.Errorf("async queue scan ids (%s): %w", src.topic, err)
+		}
+		capped = capped || scan.Capped
+		for _, id := range scan.IDs {
+			if id == "" || seen[id] {
+				continue // циркуляция в delay-топике даёт повторы одного id
+			}
+			seen[id] = true
+			ids = append(ids, id)
+		}
 	}
 	cancelled := 0
-	if len(scan.IDs) > 0 {
-		cancelled, err = u.cancel.Cancel(ctx, scan.IDs, u.retention)
+	if len(ids) > 0 {
+		var err error
+		cancelled, err = u.cancel.Cancel(ctx, ids, u.retention)
 		if err != nil {
 			return QueuePurgeResult{}, fmt.Errorf("async queue cancel: %w", err)
 		}
 	}
 	u.audit.Log(ctx, actor, domain.ActionAsyncQueuePurge, "node", node.ID, map[string]any{
-		"op": op, "cancelled": cancelled, "capped": scan.Capped,
+		"op": op, "cancelled": cancelled, "capped": capped,
 	})
-	return QueuePurgeResult{Cancelled: cancelled, Capped: scan.Capped, KafkaAvailable: true}, nil
+	return QueuePurgeResult{Cancelled: cancelled, Capped: capped, KafkaAvailable: true}, nil
 }
 
 // toMs переводит время в UnixMilli; нулевое время → 0 (без границы окна).

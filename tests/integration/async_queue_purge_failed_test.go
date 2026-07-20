@@ -98,7 +98,9 @@ func TestAsyncQueue_PurgeFailed_E2E(t *testing.T) {
 	auditRepo := &pfAuditRepo{}
 	aqUC := webuc.NewAsyncQueueUsecase(nil, cancelSet, logReader, &pfNodeRepo{node: node},
 		webuc.NewAuditUsecase(auditRepo, logger),
-		"nexus-sender", "nexus.async", time.Hour, 1000, logger)
+		"nexus-sender", "nexus.async",
+		"nexus-sender-paused", "nexus.async.paused",
+		time.Hour, 1000, logger)
 
 	// PurgeFailed всё (нулевое окно): чистит 3 done=0, отменяет их ID.
 	r, err := aqUC.PurgeFailed(ctx, webuc.SystemActor(), "n1", "t1", time.Time{}, time.Time{})

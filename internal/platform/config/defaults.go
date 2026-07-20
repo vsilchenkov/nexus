@@ -101,6 +101,9 @@ func applyDefaults(c *Config) {
 	if c.Kafka.RetryTopic == "" {
 		c.Kafka.RetryTopic = "nexus.logs.retry"
 	}
+	if c.Kafka.PausedTopic == "" {
+		c.Kafka.PausedTopic = "nexus.async.paused"
+	}
 	if c.Kafka.ConsumerGroup == "" {
 		c.Kafka.ConsumerGroup = "nexus-sender"
 	}
@@ -112,7 +115,11 @@ func applyDefaults(c *Config) {
 		c.Receiver.ReadTimeoutMs = 10000
 	}
 	if c.Receiver.WriteTimeoutMs == 0 {
-		c.Receiver.WriteTimeoutMs = 10000
+		// Должен покрывать максимальный timeout_ms узла (600с) + запас: net/http
+		// WriteTimeout отсчитывается от чтения заголовков запроса и включает всё
+		// время работы handler'а. Меньше — и долгий sync-запрос рвётся самим
+		// Receiver'ом до записи ответа (Web-прокси видит EOF, клиент — 502).
+		c.Receiver.WriteTimeoutMs = 610000
 	}
 	if c.Receiver.IdleTimeoutSec == 0 {
 		c.Receiver.IdleTimeoutSec = 120
@@ -191,6 +198,15 @@ func applyDefaults(c *Config) {
 	}
 	if c.Sender.Reprocessor.MaxScan == 0 {
 		c.Sender.Reprocessor.MaxScan = 1000
+	}
+	// §3.6: sweeper delay-топика paused-узлов включён по умолчанию.
+	if c.Sender.PausedSweep.IntervalSec == 0 {
+		// 30с — прежняя выдержка pausedRetryAfter: столько же ждёт сообщение
+		// после снятия паузы, прежде чем sweeper перечитает статус узла.
+		c.Sender.PausedSweep.IntervalSec = 30
+	}
+	if c.Sender.PausedSweep.MaxScan == 0 {
+		c.Sender.PausedSweep.MaxScan = 1000
 	}
 
 	if c.Web.HTTPAddr == "" {

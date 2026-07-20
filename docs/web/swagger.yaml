@@ -575,6 +575,13 @@ definitions:
         type: string
       auth_dynamic_strip_prefix:
         type: string
+      auth_login:
+        description: |-
+          AuthLogin — логин basic-кредов исходящей авторизации (часть до первого
+          «:»). Логин — не секрет (в отличие от пароля, который наружу не отдаётся
+          никогда); нужен UI: prefill формы редактирования + вывод в просмотре
+          узла. Пусто для не-basic типов.
+        type: string
       auth_type:
         type: string
       clickhouse_retention_days:
@@ -602,6 +609,10 @@ definitions:
       incoming_auth_dynamic_field:
         type: string
       incoming_auth_dynamic_source:
+        type: string
+      incoming_auth_login:
+        description: IncomingAuthLogin — логин basic-кредов входящей авторизации (см.
+          AuthLogin).
         type: string
       incoming_auth_type:
         type: string
@@ -728,6 +739,11 @@ definitions:
       custom_auth:
         type: string
       node_id:
+        type: string
+      params_override:
+        description: |-
+          ParamsOverride — query-строка ("a=1&b=2") вместо параметров оригинала;
+          null = взять из лога, "" = replay без параметров.
         type: string
       sync_override:
         type: boolean
@@ -1567,6 +1583,12 @@ definitions:
         type: string
       target_url:
         type: string
+      topic:
+        description: |-
+          Topic — основной топик или delay-топик paused-узлов (§3.6). Возвращается
+          клиенту, чтобы запрос тела шёл в тот же топик: (partition, offset)
+          уникальны только внутри топика.
+        type: string
     type: object
   internal_web_adapter_in_http.queuePurgeDTO:
     properties:
@@ -2053,6 +2075,26 @@ definitions:
       status:
         description: ok | failed | skipped
         type: string
+    type: object
+  nexus_internal_web_usecase.MovePreview:
+    properties:
+      shared_with:
+        description: SharedWith — сколько ДРУГИХ узлов на исходной таблице (0, если
+          личная).
+        type: integer
+      table_shared:
+        description: |-
+          TableShared — исходную таблицу делят другие узлы: она останется у текущей
+          команды вместе с историей, а узлу достанется отдельная таблица.
+        type: boolean
+      target_table:
+        description: TargetTable — имя таблицы узла после переноса ("<db>.<table>").
+        type: string
+      target_table_exists:
+        description: |-
+          TargetTableExists — в целевой команде уже есть таблица с этим именем:
+          узел подключится к ней и увидит записи, которые писал не он.
+        type: boolean
     type: object
   nexus_internal_web_usecase.RMQCheck:
     properties:
@@ -2974,7 +3016,7 @@ paths:
           schema:
             $ref: '#/definitions/nexus_internal_web_usecase.ReplayResult'
         "400":
-          description: Bad Request
+          description: bad params_override / too old failure
           schema:
             $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "404":
@@ -2986,7 +3028,8 @@ paths:
           schema:
             $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "422":
-          description: original body not logged — provide manually
+          description: original body not logged — provide manually (не применяется
+            к GET)
           schema:
             $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "429":
@@ -3570,8 +3613,8 @@ paths:
       - async-queue
   /api/nodes/{id}/async-queue/messages/body:
     get:
-      description: Ленивая подгрузка тела по физической координате (partition, offset)
-        из списка. Admin-only.
+      description: Ленивая подгрузка тела по физической координате (topic, partition,
+        offset) из списка. Admin-only.
       parameters:
       - description: node id
         in: path
@@ -3588,6 +3631,10 @@ paths:
         name: offset
         required: true
         type: integer
+      - description: топик из списка (по умолчанию основной)
+        in: query
+        name: topic
+        type: string
       produces:
       - application/json
       responses:
@@ -4235,6 +4282,47 @@ paths:
       security:
       - CookieAuth: []
       summary: Перенести узел в другую команду (admin only, multi-tenancy v2).
+      tags:
+      - nodes
+  /api/nodes/{id}/move-preview:
+    get:
+      description: Считается ДО переноса, для предупреждения в диалоге. table_shared
+        — исходную таблицу делят другие узлы (она останется у текущей команды, узлу
+        создадут свою). target_table_exists — в целевой команде уже есть таблица с
+        этим именем, и узел подключится к ней, увидев чужие записи.
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: target team slug
+        in: query
+        name: target_team_slug
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/nexus_internal_web_usecase.MovePreview'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "403":
+          description: same team / not allowed
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "404":
+          description: node or target team not found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: 'Предпросмотр переноса узла: что будет с таблицей логов (admin only).'
       tags:
       - nodes
   /api/nodes/{id}/status:

@@ -30,7 +30,10 @@ type NodeRepoPg struct {
 }
 
 // Compile-time check, что интерфейс реализован полностью.
-var _ port.NodeRepo = (*NodeRepoPg)(nil)
+var (
+	_ port.NodeRepo       = (*NodeRepoPg)(nil)
+	_ port.NodeTableUsage = (*NodeRepoPg)(nil)
+)
 
 func NewNodeRepoPg(db DBTX, cipher *crypto.Cipher, logger logging.Logger) *NodeRepoPg {
 	return &NodeRepoPg{db: db, cipher: cipher, logger: logger}
@@ -138,6 +141,48 @@ func (r *NodeRepoPg) Count(ctx context.Context, teamID string) (int, error) {
 		return 0, fmt.Errorf("count nodes: %w", err)
 	}
 	return n, nil
+}
+
+// CountByCHTable — реализация port.NodeTableUsage: сколько ДРУГИХ узлов
+// ссылаются на ту же таблицу логов. Без фильтра по команде: общая таблица
+// как раз и опасна тем, что её делят узлы разных команд.
+func (r *NodeRepoPg) CountByCHTable(ctx context.Context, table, excludeNodeID string) (int, error) {
+	if table == "" {
+		return 0, nil
+	}
+	var n int
+	err := r.db.QueryRow(ctx,
+		`SELECT count(*) FROM nodes WHERE clickhouse_table = $1 AND ($2 = '' OR id <> $2::uuid)`,
+		table, excludeNodeID).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count nodes by ch table: %w", err)
+	}
+	return n, nil
+}
+
+// CountsByCHTable — реализация port.NodeTableUsage: сколько узлов приходится
+// на каждую таблицу логов. Один запрос на всю инсталляцию (см. интерфейс).
+func (r *NodeRepoPg) CountsByCHTable(ctx context.Context) (map[string]int, error) {
+	rows, err := r.db.Query(ctx,
+		`SELECT clickhouse_table, count(*) FROM nodes WHERE clickhouse_table <> '' GROUP BY 1`)
+	if err != nil {
+		return nil, fmt.Errorf("counts by ch table: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]int)
+	for rows.Next() {
+		var table string
+		var n int
+		if err := rows.Scan(&table, &n); err != nil {
+			return nil, fmt.Errorf("scan counts by ch table: %w", err)
+		}
+		out[table] = n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate counts by ch table: %w", err)
+	}
+	return out, nil
 }
 
 func (r *NodeRepoPg) Create(ctx context.Context, n *domain.Node) error {

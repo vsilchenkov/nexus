@@ -102,7 +102,8 @@
       "auth": "Auth",
       "in": "In",
       "out": "Out",
-      "errors": "Errors"
+      "errors": "Errors",
+      "traffic": "Traffic"
     },
     "empty": "No nodes yet",
     "move": {
@@ -110,8 +111,13 @@
       "title": "Move node to team",
       "target_team": "Target team",
       "pick_team": "— pick team —",
-      "hint": "The node and its ClickHouse log table move to the selected team.",
-      "submit": "Move"
+      "hint": "The node moves to the selected team. Its ClickHouse log table follows only if the node owns it alone; a shared table stays with the current team along with its history, and the node gets a new one.",
+      "submit": "Move",
+      "preview": {
+        "title": "What happens to the logs",
+        "shared": "The log table is shared with {{count}} more node(s) — it stays with the current team along with all its history, and this node gets a separate table.",
+        "target_exists": "The target team already has a table {{table}} — the node will attach to it and read and write its data instead of starting empty."
+      }
     }
   },
   "metrics": {
@@ -331,7 +337,7 @@
       "auth_dynamic_field_length": "Dynamic auth field name length must be between 1 and 64 characters",
       "auth_dynamic_field_format": "Dynamic auth field name must start with a letter and contain only letters, digits, hyphen and underscore",
       "auth_dynamic_source": "Dynamic auth source must be header or query",
-      "timeout_ms": "Timeout must be between 100 and 300000 ms",
+      "timeout_ms": "Timeout must be between 100 and 600000 ms",
       "retry_count": "Retry count must be between 0 and 10",
       "retry_backoff_ms": "Retry backoff must be between 0 and 60000 ms",
       "allowed_hosts_size": "Allowed hosts list must have at most 50 entries",
@@ -340,6 +346,8 @@
       "webhook_sig_prefix_length": "Signature prefix must be at most 64 characters",
       "webhook_sig_header_required": "Signature header is required for webhook_signature auth",
       "webhook_sig_secret_required": "Secret is required for webhook_signature auth",
+      "login_colon": "Login must not contain a colon",
+      "password_required_on_login_change": "Enter the password again when changing the login",
       "template_id": "ClickHouse template id must be a valid UUID",
       "logs_not_configured": "Logging is enabled but no ClickHouse table name is set — pick a template or set the table name",
       "clickhouse_table_format": "ClickHouse table name must be db.table using only letters, digits and underscore (e.g. nexus_default.my_table)",
@@ -358,11 +366,17 @@
       "ch_template_manual": "(none / manual table)",
       "ch_template_hint": "Pick a template — the log table is created automatically on save. Leave empty to manage the table manually.",
       "id": "Node ID",
+      "team": "Team",
       "method": "Method type",
       "path": "Node path",
       "url_mode": "URL mode",
       "target_url": "Target URL",
       "auth": "Auth",
+      "incoming_auth": "Incoming auth",
+      "outgoing_auth": "Outgoing auth",
+      "login_label": "login:",
+      "timeout_retry": "Timeout / retries",
+      "retries_fmt": "retries: {{n}} × {{backoff}} ms",
       "ch_table": "Log table"
     },
     "help": {
@@ -376,7 +390,7 @@
       "url_param_name": "Name of the query parameter that carries the target URL in From-request mode. The parameter itself is stripped from the proxied request.",
       "allowed_hosts": "Allowlist of receiver hosts (SSRF protection). A URL outside the list → 403. Exact hosts and wildcards (*.partner.com) are supported.",
       "outgoing_method": "HTTP method the Sender uses to call the receiver. May differ from the inbound one (e.g. POST in → GET out). «ANY» — call the receiver with the same method the client sent (mirror).",
-      "timeout_ms": "Max time to wait for the receiver's response, ms (100–300000). On expiry — timeout (504/502).",
+      "timeout_ms": "Max time to wait for the receiver's response, ms (100–600000). On expiry — timeout (504/502).",
       "retry_count": "How many times to retry the receiver call on error/5xx (0–10), with exponential backoff. 4xx responses are not retried.",
       "incoming_auth": "How Nexus authorizes the inbound request from the client: none — no check; basic/token — by the credentials below; webhook_signature — HMAC body signature.",
       "incoming_credentials": "Secret for inbound auth (login:password for basic, token for token, signature secret for webhook). Never returned by the API; leave empty on edit to keep the current one.",
@@ -388,6 +402,8 @@
       "auth_field_in": "Name of the header or query parameter that carries the client credential.",
       "auth_source_out": "Where to take the credential from the inbound request to forward to the receiver: Header or Query parameter.",
       "auth_field_out": "Name of the header or query parameter that carries the credential. Required.",
+      "basic_login": "Basic-auth login. Not a secret — shown on the node view page. Colons are not allowed.",
+      "basic_password": "Basic-auth password. Stored encrypted and never returned by the API; leave empty on edit to keep the current one (changing the login requires re-entering the password).",
       "forward_headers": "Which inbound request headers to forward to the receiver. Others are not passed (Content-Type is always forwarded).",
       "logging_enabled": "Whether to write the node's call log to ClickHouse. Off — the node is not logged at all (no metrics or history for it).",
       "ch_table": "Log table name in db.table form. Multiple nodes may write to one table (distinguished by node_id).",
@@ -403,8 +419,8 @@
       "hint": "Receive webhooks at POST /v1/callback/{path}. The signature is HMAC-SHA256 of the raw request body using the secret above, hex-encoded, optionally prefixed (e.g. \"sha256=\") and placed in the header."
     },
     "auth": {
-      "basic_in_hint": "Format: login:password separated by a colon (e.g. admin:s3cret). The client sends Authorization: Basic base64(login:password) — no need to base64-encode here.",
-      "basic_out_hint": "Format: login:password separated by a colon (e.g. admin:s3cret). Nexus base64-encodes it and sets Authorization: Basic … on the request to the node.",
+      "basic_in_hint": "The client sends Authorization: Basic base64(login:password) — no need to base64-encode here, enter the login and password in the fields above.",
+      "basic_out_hint": "Nexus joins the login and password, base64-encodes them and sets Authorization: Basic … on the request to the node.",
       "token_in_hint": "Token value only, without the \"Bearer \" prefix. The client sends Authorization: Bearer <token>.",
       "token_out_hint": "Token value only, without the \"Bearer \" prefix. Nexus sets Authorization: Bearer <token> on the request to the node.",
       "token_from_request_hint": "The token is taken from the incoming request (header or query parameter, by the field name below) and placed into Authorization: Bearer on the request to the node; the original value is stripped from the proxied request. If the value already starts with \"Bearer \", it is forwarded as-is (no double prefix). If the field is missing/empty, the request is sent without Authorization.",
@@ -541,12 +557,15 @@
   "replay": {
     "title": "Replay request",
     "body_label": "Request body (leave empty to reuse original)",
+    "body_label_get": "Request body (optional for GET; empty = no body)",
     "sync": "Sync instead of async (wait for the response here)",
     "use_node_auth": "Use the node's auth config",
     "custom_auth": "Custom Authorization header",
     "send": "Send replay",
     "security": "Tokens and Basic creds from the original are not restored (already *** in the log). Enter them manually if needed.",
-    "result_status": "status"
+    "result_status": "status",
+    "params_label": "Parameters (query)",
+    "params_hint": "String like a=1&b=2 — prefilled from the log, editable. Empty = send without parameters."
   },
   "dryrun": {
     "title": "Test request (dry-run)",
@@ -720,7 +739,7 @@
     },
     "kpi": {
       "pending": "Pending delivery",
-      "pending_hint": "Messages still sitting in the Kafka queue (not yet consumed). Normally 0; grows when the node is paused or the Sender is down. Admin only.",
+      "pending_hint": "Messages still sitting in the Kafka queue (not yet consumed). Normally 0; grows when the node is paused or the Sender is down. For a paused node this also includes deferred messages: they are moved to a separate topic so they do not hold up other nodes. Admin only.",
       "failed": "Failed deliveries",
       "failed_hint": "Requests that were delivered to the target and failed (from the logs) over the selected period."
     },

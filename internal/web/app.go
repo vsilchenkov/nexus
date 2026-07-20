@@ -59,6 +59,13 @@ import (
 	webport "nexus/internal/web/usecase/port"
 )
 
+// replayDispatchTimeout — таймаут HTTP-диспетчера replay (Web → Receiver):
+// 600с максимального timeout_ms узла + 10с запас на шину. Раньше стоял хардкод
+// 30с, и sync-replay долгого узла обрывался. Ретраи узла
+// (timeout*(retry_count+1)+backoff) всё ещё могут не уложиться — осознанное
+// ограничение, replay вернёт ошибку сети, а Sender дошлёт и залогирует.
+const replayDispatchTimeout = 610 * time.Second
+
 type App struct {
 	cfg     *config.Config
 	logger  logging.Logger
@@ -220,6 +227,9 @@ func (a *App) Start(ctx context.Context) error {
 	// §57: гарантированная инвалидация конфига узла в Receiver — Web публикует
 	// событие при изменении узла, Receiver выселяет его из кешей.
 	nodeUC.SetInvalidationPublisher(nodeevents.NewPublisher(a.redis))
+	// Перенос узла между командами не должен утаскивать таблицу логов, если её
+	// делят другие узлы (тот же nodeRepo реализует port.NodeTableUsage).
+	nodeUC.SetTableUsage(nodeRepo)
 	// §27.8: health-ридер Puller-воркеров из общего Redis-стора (rmq:health).
 	rmqHealthReader := rediscache.NewRMQHealthReaderRedis(a.redis)
 	nodeHandler := httpadapter.NewNodeHandler(nodeUC, rmqHealthReader, a.logger)
@@ -422,9 +432,13 @@ func (a *App) Start(ctx context.Context) error {
 	if a.ch != nil {
 		// a.chMgr уже создан выше (вместе с teamProvisioner).
 		logReader := chreader.NewLogReader(a.chMgr, a.logger)
+		// На ОБЩЕЙ таблице логов записи без node_id не должны засчитываться
+		// каждому её узлу (иначе после переноса узел видит чужое, в т.ч. из
+		// другой команды). Карта «таблица → число узлов» кешируется внутри.
+		logReader.SetTableUsage(nodeRepo)
 		nodeLogMetrics = logReader // точные per-node метрики узла из CH-логов
 		failedPurger = logReader   // очистка «Неудачных доставок» из CH-логов
-		dispatcher := rcvdispatcher.NewHTTPDispatcher(a.cfg.Web.ReceiverURL, 30*time.Second, a.logger)
+		dispatcher := rcvdispatcher.NewHTTPDispatcher(a.cfg.Web.ReceiverURL, replayDispatchTimeout, a.logger)
 		replayUC := usecase.NewReplayUsecaseWithCancel(
 			logReader, nodeRepo, dispatcher, rl, auditUC,
 			a.cfg.Web.ReplayRateLimitPerUserPerMin, queueCancel, dlqRetention, a.logger,
@@ -509,9 +523,13 @@ func (a *App) Start(ctx context.Context) error {
 
 	// §34.4: управление async-очередью узла (peek + cancel-set tombstones).
 	// queueCancel создан выше (общий с replay «Повторить все»).
+	// §3.6: очередь узла расщеплена на два топика — основной и delay-топик
+	// отложенных сообщений paused-узлов. Вкладка «Очередь» показывает оба,
+	// иначе бэклог паузы исчезает из UI, а «Очистить все ожидающие» его не находит.
 	asyncQueueUC := usecase.NewAsyncQueueUsecase(
 		asyncPeeker, queueCancel, failedPurger, nodeRepo, auditUC,
 		a.cfg.Kafka.ConsumerGroup, a.cfg.Kafka.AsyncTopic,
+		a.cfg.Kafka.PausedGroup(), a.cfg.Kafka.PausedTopic,
 		dlqRetention, 0, a.logger,
 	)
 	asyncQueueHandler := httpadapter.NewAsyncQueueHandler(asyncQueueUC, a.logger)

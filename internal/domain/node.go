@@ -240,7 +240,7 @@ func (n *Node) Validate() error {
 			return ErrNodeIncomingAuthDynFieldFormat
 		}
 	}
-	if n.TimeoutMs < 100 || n.TimeoutMs > 300_000 {
+	if n.TimeoutMs < 100 || n.TimeoutMs > 600_000 {
 		return ErrNodeTimeoutRange
 	}
 	if n.RetryCount < 0 || n.RetryCount > 10 {

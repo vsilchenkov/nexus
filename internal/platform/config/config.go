@@ -131,12 +131,27 @@ type KafkaSection struct {
 	// продьюсит сюда батч, который не удалось вставить в ClickHouse (CH лежит),
 	// а отдельный consumer-group дренит его обратно в CH после восстановления.
 	// Заменяет локальный NDJSON-fallback. Пусто → retry-через-Kafka выключен.
-	RetryTopic    string               `yaml:"retry_topic"`
+	RetryTopic string `yaml:"retry_topic"`
+	// PausedTopic — delay-топик отложенных сообщений paused-узлов (§3.6).
+	// Основной consumer переиздаёт сюда сообщение узла на паузе и коммитит
+	// offset основного топика: партиция не блокируется бэклогом одного узла
+	// (в одну партицию по хешу node_path попадают РАЗНЫЕ узлы). Отдельный
+	// sweeper циркулирует топик и доставляет сообщения после снятия паузы.
+	PausedTopic   string               `yaml:"paused_topic"`
 	ConsumerGroup string               `yaml:"consumer_group"`
 	Topic         KafkaTopicSection    `yaml:"topic"`
 	Producer      KafkaProducerSection `yaml:"producer"`
 	Consumer      KafkaConsumerSection `yaml:"consumer"`
 }
+
+// PausedGroupSuffix — суффикс consumer-group sweeper'а delay-топика (§3.6).
+// Живёт здесь, потому что группу должны одинаково вычислять ДВА сервиса:
+// Sender (читает топик) и Web (§35 peek считает от committed offset этой
+// группы). Разъедутся — вкладка «Очередь» покажет неверный бэклог.
+const PausedGroupSuffix = "-paused"
+
+// PausedGroup возвращает имя consumer-group sweeper'а delay-топика.
+func (k KafkaSection) PausedGroup() string { return k.ConsumerGroup + PausedGroupSuffix }
 
 type KafkaTopicSection struct {
 	Partitions        int    `yaml:"partitions"`
@@ -245,6 +260,23 @@ type SenderSection struct {
 	HTTPClient          SenderHTTPClientConfig  `yaml:"http_client"`
 	Workers             int                     `yaml:"workers"`
 	Reprocessor         SenderReprocessorConfig `yaml:"reprocessor"`
+	// PausedSweep — consumer delay-топика paused-узлов (§3.6).
+	PausedSweep SenderPausedSweepConfig `yaml:"paused_sweep"`
+}
+
+// SenderPausedSweepConfig — параметры sweeper'а delay-топика nexus.async.paused
+// (§3.6). Sweeper делает периодические проходы: сообщение узла, всё ещё стоящего
+// на паузе, переносится в ХВОСТ топика и коммитится, поэтому партиция никогда не
+// блокируется бэклогом одного узла.
+//
+// Пауза именно МЕЖДУ проходами, а не после каждого сообщения: усыпив горутину
+// партиции, мы вернули бы head-of-line blocking внутрь delay-топика (узел,
+// снявший паузу, ждал бы бэклог долго-paused соседа). IntervalSec задаёт и
+// максимальную задержку доставки после снятия паузы, и темп циркуляции.
+type SenderPausedSweepConfig struct {
+	Disabled    bool `yaml:"disabled"`     // выключатель (default false → включён)
+	IntervalSec int  `yaml:"interval_sec"` // период прохода (default 30с)
+	MaxScan     int  `yaml:"max_scan"`     // cap сообщений за проход (default 1000)
 }
 
 // SenderReprocessorConfig — глобальные параметры авто-репроцессора DLQ (§36).

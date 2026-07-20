@@ -9,6 +9,7 @@ import (
 	"math"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -60,12 +61,44 @@ type ConnProvider interface {
 type LogReaderCH struct {
 	conn   ConnProvider
 	logger logging.Logger
+
+	// tableUsage + кеш — политика видимости записей без node_id (см.
+	// nodeFilter). Опционален: nil → прежнее поведение (послабление всегда).
+	tableUsage    port.NodeTableUsage
+	usageMu       sync.Mutex
+	usageCounts   map[string]int
+	usageAt       time.Time
+	usageTriedAt  time.Time
+	usageInflight bool
 }
+
+const (
+	// usageCacheTTL — как долго живёт карта «таблица → число узлов». Read-path
+	// логов спрашивает её на каждый запрос, а меняется она только при
+	// создании/переносе/удалении узла, поэтому минуты хватает: цена задержки —
+	// временно прежнее (более мягкое) правило видимости.
+	usageCacheTTL = time.Minute
+	// usageRetryInterval — пауза после НЕудачной попытки: не даёт лежащему
+	// PostgreSQL получать по запросу на каждое обращение к логам.
+	usageRetryInterval = 15 * time.Second
+	// usageQueryTimeout — потолок на сам запрос (одна лёгкая агрегация).
+	usageQueryTimeout = 3 * time.Second
+)
 
 var _ port.LogReader = (*LogReaderCH)(nil)
 
 func NewLogReader(conn ConnProvider, logger logging.Logger) *LogReaderCH {
 	return &LogReaderCH{conn: conn, logger: logger}
+}
+
+// SetTableUsage включает строгую атрибуцию записей на ОБЩИХ таблицах логов
+// (см. nodeFilter). Вызывается один раз в main-wiring; nil сохраняет прежнее
+// поведение.
+func (r *LogReaderCH) SetTableUsage(u port.NodeTableUsage) {
+	r.usageMu.Lock()
+	defer r.usageMu.Unlock()
+	r.tableUsage = u
+	r.usageCounts, r.usageAt = nil, time.Time{}
 }
 
 // liveConn возвращает текущее соединение из ConnProvider или ошибку, если
@@ -133,15 +166,90 @@ func bodyColumn(which string) (string, bool) {
 	}
 }
 
-// nodeFilterCond — условие per-node атрибуции «(node_id = ? OR node_id = ”)» и
-// его аргумент (§37). Пустой node_id у legacy-записей (до миграции) трактуем как
-// принадлежащий любому co-table узлу — старые данные неразличимы, истекают по TTL;
-// НОВЫЙ трафик строго per-node. nodeID == "" → фильтр не добавляется (нет узла).
-func nodeFilterCond(nodeID string) (string, []any) {
+// nodeFilter — условие per-node атрибуции (§37) и его аргументы. nodeID == ""
+// → фильтр не добавляется (нет узла).
+//
+// Записи с пустым node_id (legacy — писались до появления колонки либо не через
+// Sender) неразличимы по владельцу, поэтому засчитываются узлу — но только на
+// ЛИЧНОЙ таблице, где других владельцев и быть не может. На ОБЩЕЙ таблице такое
+// послабление показывало узлу чужие записи, а после переноса узла в другую
+// команду — ещё и через границу команд (поймано на стенде: у переехавшего узла
+// «появились» 590 201 чужая строка). Там фильтр строгий: только свой node_id.
+//
+// Неизвестно, общая ли таблица (порт не подключён или запрос упал) → прежнее,
+// более мягкое правило: скрыть свои логи хуже, чем показать лишние.
+func (r *LogReaderCH) nodeFilter(ctx context.Context, table, nodeID string) (string, []any) {
 	if nodeID == "" {
 		return "", nil
 	}
+	if r.tableIsShared(ctx, table) {
+		return "node_id = ?", []any{nodeID}
+	}
 	return "(node_id = ? OR node_id = '')", []any{nodeID}
+}
+
+// tableIsShared — на таблицу ссылается больше одного узла. Карта считается
+// одним запросом и кешируется (usageCacheTTL): read-path зовёт это на каждый
+// запрос логов/метрик.
+func (r *LogReaderCH) tableIsShared(ctx context.Context, table string) bool {
+	if table == "" {
+		return false
+	}
+	counts, ok := r.tableCounts(ctx)
+	if !ok {
+		return false
+	}
+	return counts[table] > 1
+}
+
+// tableCounts — карта «таблица → число узлов» из кеша, при протухании —
+// одно фоновое обновление.
+//
+// Горячий путь (кеш свеж) — только чтение map под мьютексом, без I/O: этот
+// метод зовётся на КАЖДЫЙ запрос логов/метрик, а дашборд считает KPI по всем
+// узлам разом. Обновление идёт ВНЕ блокировки и только в одной горутине
+// (usageInflight) — иначе 12 параллельных NodeKPI выстроились бы в очередь на
+// время запроса к PostgreSQL, а при протухшем кеше ещё и ушли бы в него все
+// сразу. Остальные в этот момент работают по прежней карте.
+//
+// Неудачная попытка тоже отмечается временем (usageTriedAt): без этого лежащий
+// PostgreSQL превратил бы КАЖДЫЙ запрос логов в новый запрос к нему плюс строку
+// в лог — то есть сбой БД усиливался бы кратно трафику UI.
+func (r *LogReaderCH) tableCounts(ctx context.Context) (map[string]int, bool) {
+	r.usageMu.Lock()
+	usage := r.tableUsage
+	cached, at, tried, inflight := r.usageCounts, r.usageAt, r.usageTriedAt, r.usageInflight
+	fresh := cached != nil && time.Since(at) < usageCacheTTL
+	switch {
+	case usage == nil:
+		r.usageMu.Unlock()
+		return nil, false
+	case fresh || inflight || time.Since(tried) < usageRetryInterval:
+		r.usageMu.Unlock()
+		return cached, cached != nil
+	}
+	r.usageInflight = true
+	r.usageTriedAt = time.Now()
+	r.usageMu.Unlock()
+
+	// Запрос переживает отмену пользовательского запроса (ушёл со страницы —
+	// карта всё равно обновится), но со своим потолком по времени.
+	qctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), usageQueryTimeout)
+	defer cancel()
+	counts, err := usage.CountsByCHTable(qctx)
+
+	r.usageMu.Lock()
+	defer r.usageMu.Unlock()
+	r.usageInflight = false
+	if err != nil {
+		r.logger.Warn("log reader: ch table usage lookup failed, keeping previous node attribution",
+			r.logger.Err(err))
+		// Протухшая карта лучше отсутствующей: правило останется прежним до
+		// следующей успешной попытки, а не дёргается туда-сюда на каждом сбое.
+		return r.usageCounts, r.usageCounts != nil
+	}
+	r.usageCounts, r.usageAt = counts, time.Now()
+	return counts, true
 }
 
 // GetByID — одна запись по ID (UUID v4) из указанной таблицы.
@@ -258,7 +366,7 @@ func (r *LogReaderCH) ListSince(ctx context.Context, table, nodeID string, curso
 	// includeBodies=false), тянутся лениво при разворачивании строки.
 	conds := []string{"toUnixTimestamp64Milli(toDateTime64(date_request, 3)) > ?"}
 	args := []any{cursor}
-	if c, a := nodeFilterCond(nodeID); c != "" {
+	if c, a := r.nodeFilter(ctx, table, nodeID); c != "" {
 		conds = append([]string{c}, conds...)
 		args = append(a, args...)
 	}
@@ -301,7 +409,7 @@ func (r *LogReaderCH) Search(ctx context.Context, q port.LogQuery) ([]*domain.Lo
 		conds []string
 		args  []any
 	)
-	if c, a := nodeFilterCond(q.NodeID); c != "" {
+	if c, a := r.nodeFilter(ctx, q.Table, q.NodeID); c != "" {
 		conds = append(conds, c)
 		args = append(args, a...)
 	}
@@ -395,7 +503,7 @@ func (r *LogReaderCH) CountErrors(ctx context.Context, table, nodeID string, sin
 	}
 	var conds []string
 	var args []any
-	if c, a := nodeFilterCond(nodeID); c != "" {
+	if c, a := r.nodeFilter(ctx, table, nodeID); c != "" {
 		conds = append(conds, c)
 		args = append(args, a...)
 	}
@@ -427,7 +535,7 @@ func (r *LogReaderCH) CountFailed(ctx context.Context, table, nodeID string, sin
 	if !isSafeTableName(table) {
 		return 0, fmt.Errorf("invalid table name: %q", table)
 	}
-	conds, args := failedConds(nodeID, sinceMs, untilMs)
+	conds, args := r.failedConds(ctx, table, nodeID, sinceMs, untilMs)
 	conn, err := r.liveConn()
 	if err != nil {
 		return 0, err
@@ -442,10 +550,12 @@ func (r *LogReaderCH) CountFailed(ctx context.Context, table, nodeID string, sin
 
 // failedConds — условия «done=0 в окне (sinceMs, untilMs] для узла nodeID» +
 // позиционные args (§35/§37). nodeID == "" → без per-node фильтра.
-func failedConds(nodeID string, sinceMs, untilMs int64) ([]string, []any) {
+// Метод, а не свободная функция: атрибуция записей зависит от того, общая ли
+// таблица (см. nodeFilter).
+func (r *LogReaderCH) failedConds(ctx context.Context, table, nodeID string, sinceMs, untilMs int64) ([]string, []any) {
 	var conds []string
 	var args []any
-	if c, a := nodeFilterCond(nodeID); c != "" {
+	if c, a := r.nodeFilter(ctx, table, nodeID); c != "" {
 		conds = append(conds, c)
 		args = append(args, a...)
 	}
@@ -471,7 +581,7 @@ func (r *LogReaderCH) FailedIDs(ctx context.Context, table, nodeID string, since
 	if cap <= 0 {
 		cap = 10000
 	}
-	conds, args := failedConds(nodeID, sinceMs, untilMs)
+	conds, args := r.failedConds(ctx, table, nodeID, sinceMs, untilMs)
 	conn, err := r.liveConn()
 	if err != nil {
 		return nil, false, err
@@ -516,7 +626,7 @@ func (r *LogReaderCH) DistinctMethods(ctx context.Context, table, nodeID string,
 	}
 	conds := []string{"method != ''"}
 	var args []any
-	if c, a := nodeFilterCond(nodeID); c != "" {
+	if c, a := r.nodeFilter(ctx, table, nodeID); c != "" {
 		conds = append(conds, c)
 		args = append(args, a...)
 	}
@@ -554,7 +664,7 @@ func (r *LogReaderCH) DateRange(ctx context.Context, table, nodeID string) (int6
 	}
 	where := ""
 	var args []any
-	if c, a := nodeFilterCond(nodeID); c != "" {
+	if c, a := r.nodeFilter(ctx, table, nodeID); c != "" {
 		where = " WHERE " + c
 		args = a
 	}
@@ -589,7 +699,7 @@ func (r *LogReaderCH) DeleteFailed(ctx context.Context, table, nodeID string, si
 	if err != nil || n == 0 {
 		return 0, err
 	}
-	conds, args := failedConds(nodeID, sinceMs, untilMs)
+	conds, args := r.failedConds(ctx, table, nodeID, sinceMs, untilMs)
 	conn, err := r.liveConn()
 	if err != nil {
 		return 0, err
@@ -627,7 +737,7 @@ func (r *LogReaderCH) NodeKPI(ctx context.Context, table, nodeID string, sinceMs
 	}
 	conds := []string{"1"}
 	var args []any
-	if c, a := nodeFilterCond(nodeID); c != "" {
+	if c, a := r.nodeFilter(ctx, table, nodeID); c != "" {
 		conds = append(conds, c)
 		args = append(args, a...)
 	}
@@ -695,7 +805,7 @@ func (r *LogReaderCH) NodeChart(ctx context.Context, table, nodeID string, since
 		"toUnixTimestamp64Milli(toDateTime64(date_request, 3)) <= ?",
 	}
 	args := []any{sinceMs, untilMs}
-	if c, a := nodeFilterCond(nodeID); c != "" {
+	if c, a := r.nodeFilter(ctx, table, nodeID); c != "" {
 		conds = append([]string{c}, conds...)
 		args = append(a, args...)
 	}

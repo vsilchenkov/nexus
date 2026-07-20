@@ -223,6 +223,122 @@ func TestAsync_NodePaused_Retry(t *testing.T) {
 	assert.Equal(t, HandleRetry, got, "paused-узел → не коммитим offset, sleep+retry (§3.6)")
 }
 
+// TestAsync_WithPausedRetryAfter: опция переопределяет паузу перед Retry для
+// paused-узлов. Нужна integration-тестам — иначе каждое сообщение paused-узла
+// держит партицию дефолтные 30s. Некорректное значение игнорируется.
+func TestAsync_WithPausedRetryAfter(t *testing.T) {
+	t.Parallel()
+
+	node := &domain.Node{Path: "partner/echo", Status: domain.NodeStatusPaused}
+	httpc := &stubHTTPCaller{}
+	send := NewSendUsecase(httpc, &stubLogWriter{}, nil, logging.NewNoop(), 64<<20)
+	p := NewAsyncProcessor(&stubAsyncNodeReader{node: node}, send, &stubDLQProducer{},
+		nil, nil, "nexus.async.dlq", nil, logging.NewNoop(),
+		WithPausedRetryAfter(5*time.Millisecond),
+		WithPausedRetryAfter(0), // некорректное — не затирает предыдущее
+	)
+
+	start := time.Now()
+	got := p.Handle(context.Background(), makeEnvelope(t, "partner/echo"), nil)
+
+	assert.Equal(t, HandleRetry, got)
+	assert.Less(t, time.Since(start), time.Second,
+		"опция должна была сократить ожидание с дефолтных 30s")
+}
+
+// newPausedRequeueProcessor — processor с включённым delay-топиком (§3.6).
+func newPausedRequeueProcessor(t *testing.T, node *domain.Node, dlq DLQProducer) (*AsyncProcessor, *stubHTTPCaller) {
+	t.Helper()
+	httpc := &stubHTTPCaller{}
+	send := NewSendUsecase(httpc, &stubLogWriter{}, nil, logging.NewNoop(), 64<<20)
+	p := NewAsyncProcessor(&stubAsyncNodeReader{node: node}, send, dlq, nil, nil,
+		"nexus.async.dlq", nil, logging.NewNoop(),
+		WithPausedRequeue("nexus.async.paused"))
+	return p, httpc
+}
+
+// TestAsync_Paused_RequeuedToDelayTopic (§3.6): сообщение paused-узла уезжает в
+// delay-топик и offset основного топика коммитится — партиция освобождается для
+// соседних узлов (в неё по хешу node_path попадают и другие узлы).
+func TestAsync_Paused_RequeuedToDelayTopic(t *testing.T) {
+	t.Parallel()
+
+	node := &domain.Node{Path: "partner/echo", Status: domain.NodeStatusPaused}
+	dlq := &stubDLQProducer{}
+	p, httpc := newPausedRequeueProcessor(t, node, dlq)
+	p.pausedRetryAfter = time.Hour // если бы ждали на месте — тест бы завис
+
+	start := time.Now()
+	got := p.Handle(context.Background(), makeEnvelope(t, "partner/echo"), nil)
+
+	assert.Equal(t, HandleRequeued, got, "перенос в delay-топик → commit основного offset'а")
+	assert.Less(t, time.Since(start), time.Second, "с delay-топиком ожидания на месте нет")
+	assert.Zero(t, httpc.calls, "paused-узел не получает трафик")
+
+	require.Len(t, dlq.produced, 1)
+	msg := dlq.produced[0]
+	assert.Equal(t, "nexus.async.paused", msg.topic)
+	assert.Equal(t, "partner/echo", msg.key, "ключ = путь узла: порядок бэклога узла сохраняется")
+	assert.Equal(t, "id-1", msg.headers["id"])
+	assert.Equal(t, "nexus.async", msg.headers["orig_topic"])
+	assert.NotEmpty(t, msg.headers["paused_since"])
+	assert.NotEmpty(t, msg.headers["last_requeue_at"])
+}
+
+// TestAsync_Paused_KeepsFirstPausedSince: сообщение циркулирует в delay-топике,
+// пока узел на паузе. paused_since — метка ПЕРВОГО откладывания, её нельзя
+// затирать на каждом круге, иначе возраст бэклога не отследить.
+func TestAsync_Paused_KeepsFirstPausedSince(t *testing.T) {
+	t.Parallel()
+
+	node := &domain.Node{Path: "partner/echo", Status: domain.NodeStatusPaused}
+	dlq := &stubDLQProducer{}
+	p, _ := newPausedRequeueProcessor(t, node, dlq)
+
+	const firstSeen = "2026-07-01T10:00:00Z"
+	in := map[string]string{"paused_since": firstSeen, "orig_topic": "nexus.async"}
+	got := p.Handle(context.Background(), makeEnvelope(t, "partner/echo"), in)
+
+	require.Equal(t, HandleRequeued, got)
+	require.Len(t, dlq.produced, 1)
+	assert.Equal(t, firstSeen, dlq.produced[0].headers["paused_since"],
+		"метка первого откладывания переносится как есть")
+	assert.NotEqual(t, firstSeen, dlq.produced[0].headers["last_requeue_at"],
+		"last_requeue_at обновляется на каждом круге")
+}
+
+// TestAsync_Paused_RequeueFails_Retry: если delay-топик недоступен, offset НЕ
+// коммитим — сообщение переобработается на месте (потеря исключена).
+func TestAsync_Paused_RequeueFails_Retry(t *testing.T) {
+	t.Parallel()
+
+	node := &domain.Node{Path: "partner/echo", Status: domain.NodeStatusPaused}
+	p, _ := newPausedRequeueProcessor(t, node, &stubDLQProducer{err: assertSomeError()})
+
+	got := p.Handle(context.Background(), makeEnvelope(t, "partner/echo"), nil)
+	assert.Equal(t, HandleRetry, got, "не переложили — не коммитим")
+}
+
+// TestAsync_Paused_CancelledBeforeRequeue (§34.4): отменённое оператором
+// сообщение paused-узла дропается, а не копится в delay-топике.
+func TestAsync_Paused_CancelledBeforeRequeue(t *testing.T) {
+	t.Parallel()
+
+	node := &domain.Node{Path: "partner/echo", Status: domain.NodeStatusPaused}
+	dlq := &stubDLQProducer{}
+	httpc := &stubHTTPCaller{}
+	send := NewSendUsecase(httpc, &stubLogWriter{}, nil, logging.NewNoop(), 64<<20)
+	p := NewAsyncProcessor(&stubAsyncNodeReader{node: node}, send, dlq,
+		&stubCancelSet{cancelled: map[string]bool{"id-1": true}}, nil,
+		"nexus.async.dlq", nil, logging.NewNoop(),
+		WithPausedRequeue("nexus.async.paused"))
+
+	got := p.Handle(context.Background(), makeEnvelope(t, "partner/echo"), nil)
+
+	assert.Equal(t, HandleAck, got, "отменённое → drop (проверка отмены идёт до paused)")
+	assert.Empty(t, dlq.produced, "в delay-топик отменённое не попадает")
+}
+
 func TestAsync_NodePaused_CtxCancelInterruptsWait(t *testing.T) {
 	t.Parallel()
 

@@ -27,11 +27,12 @@ func TestDecodeQueueMeta(t *testing.T) {
 
 	t.Run("matching key", func(t *testing.T) {
 		t.Parallel()
-		meta, ok := decodeQueueMeta(mkMsg(t, "partner/echo", env, 2, 42), "partner/echo")
+		meta, ok := decodeQueueMeta(mkMsg(t, "partner/echo", env, 2, 42), "partner/echo", "nexus.async")
 		require.True(t, ok)
 		assert.Equal(t, "id-1", meta.ID)
 		assert.Equal(t, 2, meta.Partition)
 		assert.Equal(t, int64(42), meta.Offset)
+		assert.Equal(t, "nexus.async", meta.Topic, "координата тела осмысленна только вместе с топиком")
 		assert.Equal(t, "POST", meta.Method)
 		assert.Equal(t, "https://api.example.com/x", meta.TargetURL)
 		assert.Equal(t, len(`{"k":"v"}`), meta.BodySize)
@@ -40,14 +41,14 @@ func TestDecodeQueueMeta(t *testing.T) {
 
 	t.Run("non-matching key skipped", func(t *testing.T) {
 		t.Parallel()
-		_, ok := decodeQueueMeta(mkMsg(t, "other/node", env, 0, 1), "partner/echo")
+		_, ok := decodeQueueMeta(mkMsg(t, "other/node", env, 0, 1), "partner/echo", "nexus.async")
 		assert.False(t, ok, "сообщение другого узла не подходит")
 	})
 
 	t.Run("broken json skipped", func(t *testing.T) {
 		t.Parallel()
 		msg := kafka.Message{Key: []byte("partner/echo"), Value: []byte("not-json")}
-		_, ok := decodeQueueMeta(msg, "partner/echo")
+		_, ok := decodeQueueMeta(msg, "partner/echo", "nexus.async")
 		assert.False(t, ok, "битый JSON пропускается, не валит скан")
 	})
 }

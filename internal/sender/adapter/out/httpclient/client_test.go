@@ -126,20 +126,66 @@ func TestClient_Do_TimeoutFromRequest(t *testing.T) {
 func TestClient_Do_DefaultsTimeoutWhenZero(t *testing.T) {
 	t.Parallel()
 
-	// При TimeoutMs <= 0 Do использует default 30s (см. client.go:55). Здесь
-	// важно убедиться, что вызов не падает мгновенно и проходит успешно.
+	// При TimeoutMs <= 0 Do использует fallback из cfg.TimeoutMs
+	// (Client.defaultTimeout). Быстрый ответ проходит, медленный — рвётся
+	// именно по конфиговому значению.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
+		select {
+		case <-time.After(500 * time.Millisecond):
+			w.WriteHeader(200)
+		case <-r.Context().Done():
+		}
 	}))
 	defer srv.Close()
 
-	c := New(testCfg(), logging.NewNoop(), 0)
-	resp, err := c.Do(context.Background(), &port.HTTPRequest{
+	cfg := testCfg()
+	cfg.TimeoutMs = 200 // fallback короче задержки сервера
+	c := New(cfg, logging.NewNoop(), 0)
+	_, err := c.Do(context.Background(), &port.HTTPRequest{
 		Method:    "GET",
 		URL:       srv.URL,
 		TimeoutMs: 0,
 	})
+	require.Error(t, err, "без per-request таймаута должен сработать fallback cfg.TimeoutMs")
+	assert.Contains(t, err.Error(), "deadline")
+
+	fast := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer fast.Close()
+	resp, err := c.Do(context.Background(), &port.HTTPRequest{
+		Method:    "GET",
+		URL:       fast.URL,
+		TimeoutMs: 0,
+	})
 	require.NoError(t, err)
+	assert.Equal(t, int32(200), resp.StatusCode)
+}
+
+// TestClient_Do_PerRequestTimeoutExceedsConfig — регресс боевого бага: per-node
+// таймаут больше конфигового НЕ должен капаться глобальным http.Client.Timeout
+// (узел с timeout_ms=300000 рвался на 30с дефолтом sender.http_client).
+func TestClient_Do_PerRequestTimeoutExceedsConfig(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(400 * time.Millisecond):
+			w.WriteHeader(200)
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+
+	cfg := testCfg()
+	cfg.TimeoutMs = 100 // конфиг короче задержки сервера — раньше он бы капнул
+	c := New(cfg, logging.NewNoop(), 0)
+	resp, err := c.Do(context.Background(), &port.HTTPRequest{
+		Method:    "GET",
+		URL:       srv.URL,
+		TimeoutMs: 1500, // per-node таймаут покрывает задержку
+	})
+	require.NoError(t, err, "per-request таймаут > cfg.TimeoutMs не должен обрезаться конфигом")
 	assert.Equal(t, int32(200), resp.StatusCode)
 }
 
@@ -188,8 +234,10 @@ func TestClient_Do_ContextCancel(t *testing.T) {
 
 	c := New(testCfg(), logging.NewNoop(), 0)
 	_, err := c.Do(ctx, &port.HTTPRequest{
-		Method:    "GET",
-		URL:       srv.URL,
+		Method: "GET",
+		URL:    srv.URL,
+		// 5000 > cfg 2000 — с фиксом глобального Timeout это честные 5с
+		// (раньше молча капалось конфигом); тест завершает cancel на 30ms.
 		TimeoutMs: 5000,
 	})
 	require.Error(t, err, "при cancel'е родительского контекста Do должен вернуть error")

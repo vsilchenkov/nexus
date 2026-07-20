@@ -119,7 +119,9 @@ kafka:
 receiver:
   http_addr: :8080
   read_timeout_ms: 60000
-  write_timeout_ms: 60000
+  # Должен превышать максимальный timeout_ms узла (600000) — иначе долгий
+  # sync-запрос рвётся Receiver'ом до записи ответа (Web-прокси видит EOF).
+  write_timeout_ms: 610000
   idle_timeout_sec: 120
   max_body_bytes: 5242880
   max_header_bytes: 1048576

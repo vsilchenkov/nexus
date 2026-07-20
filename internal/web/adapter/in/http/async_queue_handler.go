@@ -26,9 +26,13 @@ func NewAsyncQueueHandler(uc *usecase.AsyncQueueUsecase, logger logging.Logger) 
 }
 
 type queueMessageDTO struct {
-	ID         string    `json:"id"`
-	Partition  int       `json:"partition"`
-	Offset     int64     `json:"offset"`
+	ID        string `json:"id"`
+	Partition int    `json:"partition"`
+	Offset    int64  `json:"offset"`
+	// Topic — основной топик или delay-топик paused-узлов (§3.6). Возвращается
+	// клиенту, чтобы запрос тела шёл в тот же топик: (partition, offset)
+	// уникальны только внутри топика.
+	Topic      string    `json:"topic"`
 	Method     string    `json:"method"`
 	TargetURL  string    `json:"target_url"`
 	ReceivedAt time.Time `json:"received_at"`
@@ -62,7 +66,7 @@ type queuePurgeRequest struct {
 
 func toQueueMessageDTO(m port.QueueMessageMeta) queueMessageDTO {
 	return queueMessageDTO{
-		ID: m.ID, Partition: m.Partition, Offset: m.Offset, Method: m.Method,
+		ID: m.ID, Partition: m.Partition, Offset: m.Offset, Topic: m.Topic, Method: m.Method,
 		TargetURL: m.TargetURL, ReceivedAt: m.ReceivedAt, BodySize: m.BodySize,
 	}
 }
@@ -92,12 +96,13 @@ func (h *AsyncQueueHandler) List(c *gin.Context) {
 
 // Body godoc
 // @Summary  Тело одного сообщения async-очереди (§34.4).
-// @Description  Ленивая подгрузка тела по физической координате (partition, offset) из списка. Admin-only.
+// @Description  Ленивая подгрузка тела по физической координате (topic, partition, offset) из списка. Admin-only.
 // @Tags     async-queue
 // @Produce  json
 // @Param    id         path   string  true   "node id"
 // @Param    partition  query  int     true   "partition"
 // @Param    offset     query  int     true   "offset"
+// @Param    topic      query  string  false  "топик из списка (по умолчанию основной)"
 // @Success  200  {object}  queueBodyDTO
 // @Failure  400  {object}  ErrorResponse
 // @Failure  404  {object}  ErrorResponse
@@ -115,7 +120,7 @@ func (h *AsyncQueueHandler) Body(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "partition required (int)"})
 		return
 	}
-	body, err := h.uc.Body(c.Request.Context(), c.Param("id"), currentTeamID(c), partition, offset)
+	body, err := h.uc.Body(c.Request.Context(), c.Param("id"), currentTeamID(c), c.Query("topic"), partition, offset)
 	if err != nil {
 		h.queueError(c, err, "async_queue.body")
 		return
@@ -219,6 +224,9 @@ func (h *AsyncQueueHandler) queueError(c *gin.Context, err error, op string) {
 	switch {
 	case errors.Is(err, usecase.ErrAsyncQueueUnavailable):
 		localizedError(c, http.StatusServiceUnavailable, "error.internal")
+	case errors.Is(err, usecase.ErrAsyncQueueUnknownTopic):
+		// Клиент прислал топик не из списка очереди узла — не наша ошибка.
+		localizedError(c, http.StatusBadRequest, "error.bad_request")
 	case errors.Is(err, domain.ErrNodeNotFound):
 		localizedError(c, http.StatusNotFound, "node.not_found")
 	case errors.Is(err, domain.ErrNotFound):

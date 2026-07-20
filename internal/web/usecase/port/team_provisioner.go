@@ -28,8 +28,16 @@ type TeamProvisioner interface {
 	// командами (Phase 11.B): логи следуют за узлом. Оба имени в формате
 	// "<db>.<table>". Если исходной таблицы нет — возвращает
 	// ErrSourceTableAbsent (узел переносится, но CH-операция пропускается:
-	// таблица будет создана внешне при первом логе в новой БД).
+	// таблица будет создана внешне при первом логе в новой БД). Если таблица с
+	// таким именем уже есть в целевой БД — ErrTargetTableExists (RENAME на
+	// занятое имя падает; узел просто начнёт писать в существующую таблицу).
 	RenameTable(ctx context.Context, from, to string) error
+
+	// TableExists — есть ли таблица (имя в формате "<db>.<table>") в ClickHouse.
+	// Нужен предпросмотру переноса узла: имя таблицы, уже занятое в целевой
+	// команде, означает, что узел подключится к чужим данным, а не получит
+	// пустую таблицу.
+	TableExists(ctx context.Context, table string) (bool, error)
 
 	// CreateTable выполняет готовый `CREATE TABLE IF NOT EXISTS` DDL (§19).
 	// ddl рендерится доменным CHTemplate.RenderCreateTable; здесь имя таблицы
@@ -45,3 +53,7 @@ type TeamProvisioner interface {
 // ErrSourceTableAbsent — исходной таблицы для RenameTable нет в ClickHouse.
 // Не фатально для переноса узла (PG-метаданные авторитетны).
 var ErrSourceTableAbsent = errors.New("clickhouse: source table absent")
+
+// ErrTargetTableExists — в целевой БД уже есть таблица с этим именем.
+// Не фатально для переноса узла: RENAME пропускается, узел пишет в неё.
+var ErrTargetTableExists = errors.New("clickhouse: target table already exists")

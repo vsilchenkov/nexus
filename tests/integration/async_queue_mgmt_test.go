@@ -110,7 +110,9 @@ func TestAsyncQueueMgmt_E2E(t *testing.T) {
 	peeker := kafkaadmin.New(brokers, 5*time.Second, 0, logger)
 	cancelSet := queuecancel.New(redisClient)
 	aqUC := webuc.NewAsyncQueueUsecase(peeker, cancelSet, nil, nodeRepo, auditUC,
-		cfg.Kafka.ConsumerGroup, cfg.Kafka.AsyncTopic, time.Hour, 1000, logger)
+		cfg.Kafka.ConsumerGroup, cfg.Kafka.AsyncTopic,
+		cfg.Kafka.PausedGroup(), cfg.Kafka.PausedTopic,
+		time.Hour, 1000, logger)
 
 	// 1. List показывает 3 ожидающих (Kafka eventual — poll).
 	var list webuc.QueueListResult
@@ -121,7 +123,7 @@ func TestAsyncQueueMgmt_E2E(t *testing.T) {
 	require.True(t, list.KafkaAvailable)
 
 	// 2. Body одного сообщения — совпадает по id и содержит payload.
-	body, err := aqUC.Body(ctx, nodeID, teamID, list.Items[0].Partition, list.Items[0].Offset)
+	body, err := aqUC.Body(ctx, nodeID, teamID, list.Items[0].Topic, list.Items[0].Partition, list.Items[0].Offset)
 	require.NoError(t, err)
 	require.Equal(t, list.Items[0].ID, body.ID)
 	require.Contains(t, string(body.Body), `"n":`)

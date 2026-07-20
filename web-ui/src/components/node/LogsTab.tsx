@@ -8,7 +8,7 @@ import { api, type Node } from "../../api/client";
 import { useRoleAtLeast } from "../../lib/useCurrentRole";
 import { fmtLogTs, fmtSize } from "../../lib/format";
 import { FETCH_CHUNK, LARGE_WARN_RUNES, formatRunes, prettyMaybe } from "../../lib/logBody";
-import { LabelHint } from "../ui";
+import { LabelHint, Popover, PopoverAnchor, PopoverContent } from "../ui";
 import { CopyButton } from "../ui/CopyButton";
 import { ReplayDialog } from "../ReplayDialog";
 import { LogDateField } from "./LogDateField";
@@ -342,7 +342,9 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live, visibleLogs.length, logsQ.hasNextPage, logsQ.isFetchingNextPage]);
 
-  const [replayId, setReplayId] = useState<string | null>(null);
+  // id + HTTP-глагол строки: ReplayDialog по глаголу решает, требуется ли тело
+  // (GET — без тела), и зеркалит выбор метода реинъекции бэкенда (ANY-узлы).
+  const [replay, setReplay] = useState<{ id: string; httpMethod?: string } | null>(null);
   // §7.4.1/§58: replay пере-отправляет запрос на внешнюю цель (сайд-эффект) —
   // manager+. viewer видит кнопку disabled с tooltip «Нет прав» (бэкенд тоже
   // отдаёт 403). Скрывать не будем — так понятно, что действие существует.
@@ -630,8 +632,11 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                       >
                         {r.method}
                       </td>
-                      <td className="truncate px-3 py-2 font-mono text-xs text-fg-muted" title={r.url}>
-                        {r.url}
+                      {/* URL обрезается по ширине колонки, поэтому полное значение
+                          живёт в подсказке — вместе с кнопкой «Скопировать»
+                          (нативный title скопировать не давал). */}
+                      <td className="truncate px-3 py-2 font-mono text-xs text-fg-muted">
+                        <LogUrlCell url={r.url} />
                       </td>
                       <td className={`px-2 py-2 text-right ${isErr ? "text-err" : "text-ok"}`}>
                         {r.status}
@@ -648,7 +653,7 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                           title={canReplay ? t("node.actions.replay") : t("common.no_permission")}
                           onClick={(e) => {
                             e.stopPropagation();
-                            setReplayId(r.id);
+                            setReplay({ id: r.id, httpMethod: r.http_method });
                           }}
                           className={`text-fg-muted ${
                             canReplay ? "hover:text-accent" : "cursor-not-allowed opacity-40"
@@ -718,8 +723,14 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
         </button>
       )}
 
-      {replayId && (
-        <ReplayDialog logId={replayId} nodeId={node.id} onClose={() => setReplayId(null)} />
+      {replay && (
+        <ReplayDialog
+          logId={replay.id}
+          nodeId={node.id}
+          httpMethod={replay.httpMethod}
+          incomingMethod={node.incoming_method}
+          onClose={() => setReplay(null)}
+        />
       )}
     </div>
   );
@@ -746,6 +757,75 @@ function SegmentedControl<T extends string>({ value, onChange, options }: Segmen
         </button>
       ))}
     </div>
+  );
+}
+
+// Задержка закрытия подсказки URL: столько миллисекунд курсор может находиться
+// в зазоре между ячейкой и всплывающим блоком, не закрывая его.
+const URL_POPOVER_CLOSE_DELAY_MS = 250;
+
+// LogUrlCell — ячейка колонки «URL». Значение обрезается по ширине колонки, а
+// полный адрес показывается во всплывающем блоке с кнопкой «Скопировать»
+// (нативный title копировать не давал).
+//
+// Почему Popover, а не Tooltip: строки таблицы плотные, и у КАЖДОЙ своя ячейка
+// URL. Radix Tooltip закрывается, едва курсор покидает триггер, а по дороге к
+// кнопке он проходит над соседней строкой — та перехватывает hover, подсказка
+// закрывается, и клик приходится уже по строке (проверено на стенде: запись
+// раскрывалась, буфер оставался пустым). Popover живёт своей жизнью: соседи его
+// не закрывают, а уход курсора гасит его с задержкой — успеть перевести мышь.
+function LogUrlCell({ url }: { url: string }) {
+  const [open, setOpen] = useState(false);
+  const closeTimer = useRef<number | null>(null);
+
+  const cancelClose = () => {
+    if (closeTimer.current !== null) {
+      window.clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  };
+  const scheduleClose = () => {
+    cancelClose();
+    closeTimer.current = window.setTimeout(() => setOpen(false), URL_POPOVER_CLOSE_DELAY_MS);
+  };
+  // Размонтирование по ходу подгрузки/фильтрации не должно оставлять таймер.
+  useEffect(() => cancelClose, []);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      {/* Anchor, а не Trigger: у Trigger свой onClick, который перехватил бы
+          клик по строке (раскрытие записи). Открываем только по наведению. */}
+      <PopoverAnchor asChild>
+        <span
+          className="block truncate"
+          onMouseEnter={() => {
+            cancelClose();
+            setOpen(true);
+          }}
+          onMouseLeave={scheduleClose}
+        >
+          {url}
+        </span>
+      </PopoverAnchor>
+      <PopoverContent
+        side="top"
+        align="start"
+        sideOffset={4}
+        // Открытие по hover не должно уводить фокус с таблицы, а закрытие —
+        // возвращать его на ячейку (иначе прыгает скролл длинного списка).
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        onCloseAutoFocus={(e) => e.preventDefault()}
+        onMouseEnter={cancelClose}
+        onMouseLeave={scheduleClose}
+        // Radix рендерит контент в портал, но React-события всплывают по
+        // React-дереву — без этого клик по кнопке дошёл бы до onClick строки.
+        onClick={(e) => e.stopPropagation()}
+        className="flex max-w-[420px] items-start gap-2 px-2.5 py-2"
+      >
+        <span className="min-w-0 break-all font-mono text-[11px]">{url}</span>
+        <CopyButton value={url} />
+      </PopoverContent>
+    </Popover>
   );
 }
 

@@ -55,7 +55,11 @@ type NodeUsecase struct {
 	// no-op): инъекция сеттером, т.к. позиционный параметр затронул бы ~16
 	// вызовов NewNodeUsecase (интеграционные тесты).
 	events nodeInvalidationPublisher
-	logger logging.Logger
+	// tableUsage — счётчик узлов на одной CH-таблице. Нужен только Move, чтобы
+	// не утащить общую таблицу за одним узлом. Опционален по той же причине,
+	// что и events (nil → таблица считается personal, прежнее поведение).
+	tableUsage port.NodeTableUsage
+	logger     logging.Logger
 }
 
 // nodeInvalidationPublisher публикует событие «конфиг узла изменился», чтобы
@@ -68,6 +72,12 @@ type nodeInvalidationPublisher interface {
 // Вызывается один раз в main-wiring; nil оставляет публикацию no-op.
 func (u *NodeUsecase) SetInvalidationPublisher(p nodeInvalidationPublisher) {
 	u.events = p
+}
+
+// SetTableUsage инъектирует счётчик узлов на одной CH-таблице (см. Move).
+// Вызывается один раз в main-wiring; nil сохраняет прежнее поведение переноса.
+func (u *NodeUsecase) SetTableUsage(t port.NodeTableUsage) {
+	u.tableUsage = t
 }
 
 // publishInvalidate — best-effort уведомление Receiver'а об изменении узла (§57).
@@ -563,6 +573,68 @@ func (u *NodeUsecase) Delete(ctx context.Context, actor Actor, id, teamID string
 	return nil
 }
 
+// MovePreview — что случится с таблицей логов при переносе узла в команду
+// targetTeamSlug. Считается ДО переноса, чтобы предупредить в UI: у операции
+// два неочевидных исхода, и оба меняют то, какие логи узел покажет дальше.
+type MovePreview struct {
+	// TargetTable — имя таблицы узла после переноса ("<db>.<table>").
+	TargetTable string `json:"target_table"`
+	// TableShared — исходную таблицу делят другие узлы: она останется у текущей
+	// команды вместе с историей, а узлу достанется отдельная таблица.
+	TableShared bool `json:"table_shared"`
+	// SharedWith — сколько ДРУГИХ узлов на исходной таблице (0, если личная).
+	SharedWith int `json:"shared_with"`
+	// TargetTableExists — в целевой команде уже есть таблица с этим именем:
+	// узел подключится к ней и увидит записи, которые писал не он.
+	TargetTableExists bool `json:"target_table_exists"`
+}
+
+// MovePreview собирает предпросмотр переноса (см. MovePreview).
+// Проверки best-effort: недоступность ClickHouse не должна блокировать
+// открытие диалога — в этом случае поле TargetTableExists остаётся false.
+func (u *NodeUsecase) MovePreview(ctx context.Context, nodeID, currentTeamID, targetTeamSlug string) (*MovePreview, error) {
+	n, err := u.repo.Get(ctx, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	if currentTeamID != "" && n.TeamID != currentTeamID {
+		return nil, domain.ErrNodeNotFound
+	}
+	if u.teams == nil {
+		return nil, fmt.Errorf("move preview requires TeamRepo")
+	}
+	target, err := u.teams.GetBySlug(ctx, targetTeamSlug)
+	if err != nil {
+		return nil, err
+	}
+	if target.ID == n.TeamID {
+		return nil, domain.ErrPermissionDenied
+	}
+
+	newTable := rebaseCHTable(n.ClickHouseTable, target.CHDatabase)
+	res := &MovePreview{TargetTable: newTable}
+	if n.ClickHouseTable == "" {
+		return res, nil
+	}
+
+	res.SharedWith = u.countCHTableSiblings(ctx, n.ClickHouseTable, n.ID)
+	res.TableShared = res.SharedWith > 0
+
+	if u.provisioner != nil && newTable != "" && newTable != n.ClickHouseTable {
+		exists, err := u.provisioner.TableExists(ctx, newTable)
+		if err != nil {
+			u.logger.Warn("move preview: target table check failed",
+				u.logger.Str("table", newTable), u.logger.Err(err))
+		} else {
+			res.TargetTableExists = exists
+		}
+	}
+	u.logger.Debug("move preview built",
+		u.logger.Str("path", n.Path), u.logger.Str("target_table", newTable),
+		u.logger.Int("shared_with", res.SharedWith))
+	return res, nil
+}
+
 // Move переносит узел в другую команду (multi-tenancy v2, Phase 11.B).
 //
 // PG-запись авторитетна: в одной UoW-транзакции меняются team_id и
@@ -624,18 +696,9 @@ func (u *NodeUsecase) Move(ctx context.Context, actor Actor, nodeID, currentTeam
 		u.audit.Log(ctx, actor, domain.ActionNodeMove, "node", n.ID, details)
 	}
 
-	// CH RENAME — best-effort: PG уже авторитетно указывает на новую БД.
+	// CH-таблица — best-effort: PG уже авторитетно указывает на новую БД.
 	if u.provisioner != nil && oldTable != "" && newTable != "" && oldTable != newTable {
-		if err := u.provisioner.RenameTable(ctx, oldTable, newTable); err != nil {
-			if errors.Is(err, port.ErrSourceTableAbsent) {
-				u.logger.Info("node move: source CH table absent, skip rename",
-					u.logger.Str("from", oldTable))
-			} else {
-				u.logger.Warn("node move: CH rename failed (PG already moved)",
-					u.logger.Str("from", oldTable), u.logger.Str("to", newTable),
-					u.logger.Err(err))
-			}
-		}
+		u.relocateCHTable(ctx, &moved, oldTable, newTable)
 	}
 
 	// Чистим ключ ИСХОДНОЙ команды (n.TeamID — до переноса): иначе трафик по
@@ -647,6 +710,95 @@ func (u *NodeUsecase) Move(ctx context.Context, actor Actor, nodeID, currentTeam
 	u.publishInvalidate(ctx, n.TeamID, n.Path, "")
 	u.publishInvalidate(ctx, moved.TeamID, n.Path, "")
 	return nil
+}
+
+// relocateCHTable переносит таблицу логов вслед за узлом — best-effort, узел
+// в PG уже перенесён.
+//
+// Таблицу логов могут делить НЕСКОЛЬКО узлов (типовой случай — семейство узлов
+// одного сервиса с общим clickhouse_table). Безусловный RENAME утаскивал такую
+// таблицу за одним переехавшим узлом, и все остальные оставались со ссылкой на
+// несуществующую таблицу: логирование у них тихо ломалось, а CH отвечал «code
+// 60, Unknown table» (поймано на стенде: перенос одного узла из 176 обезглавил
+// остальные 175). Поэтому общая таблица остаётся у прежней команды вместе с
+// историей, а переехавшему узлу создаётся собственная таблица в её БД.
+func (u *NodeUsecase) relocateCHTable(ctx context.Context, moved *domain.Node, oldTable, newTable string) {
+	if shared := u.countCHTableSiblings(ctx, oldTable, moved.ID); shared > 0 {
+		u.logger.Info("node move: CH table is shared, keeping it in place",
+			u.logger.Str("table", oldTable), u.logger.Str("path", moved.Path),
+			u.logger.Int("other_nodes", shared))
+		// Провижининг идёт через CREATE TABLE IF NOT EXISTS, поэтому «создать
+		// свою таблицу» превращается в «подключиться к чужой», если имя в
+		// целевой БД уже занято. Молчать об этом нельзя: узел сразу покажет
+		// записи, которых он не писал (ровно так «появились» счётчики у
+		// переехавшего узла на стенде).
+		u.warnIfTargetTableExists(ctx, moved, newTable)
+		// Новая таблица по шаблону узла. Мягкая деградация: узел уже перенесён,
+		// а таблицу дотянет provisionTable при следующем сохранении узла.
+		if err := u.provisionTable(ctx, moved); err != nil {
+			u.logger.Warn("node move: new CH table provisioning failed",
+				u.logger.Str("table", newTable), u.logger.Str("path", moved.Path),
+				u.logger.Err(err))
+		}
+		return
+	}
+
+	err := u.provisioner.RenameTable(ctx, oldTable, newTable)
+	switch {
+	case err == nil:
+	case errors.Is(err, port.ErrSourceTableAbsent):
+		u.logger.Info("node move: source CH table absent, skip rename",
+			u.logger.Str("from", oldTable))
+	case errors.Is(err, port.ErrTargetTableExists):
+		// В целевой команде уже есть таблица с таким именем — узел будет
+		// писать в неё; исходная остаётся с прежней историей.
+		u.logger.Info("node move: target CH table exists, skip rename",
+			u.logger.Str("from", oldTable), u.logger.Str("to", newTable))
+	default:
+		u.logger.Warn("node move: CH rename failed (PG already moved)",
+			u.logger.Str("from", oldTable), u.logger.Str("to", newTable),
+			u.logger.Err(err))
+	}
+}
+
+// warnIfTargetTableExists предупреждает, что узел подключается к УЖЕ
+// существующей таблице целевой команды, а не получает пустую. Best-effort:
+// недоступный ClickHouse не должен мешать переносу, который уже произошёл.
+func (u *NodeUsecase) warnIfTargetTableExists(ctx context.Context, moved *domain.Node, newTable string) {
+	if u.provisioner == nil || newTable == "" {
+		return
+	}
+	exists, err := u.provisioner.TableExists(ctx, newTable)
+	if err != nil {
+		u.logger.Debug("node move: target CH table check failed",
+			u.logger.Str("table", newTable), u.logger.Err(err))
+		return
+	}
+	if exists {
+		u.logger.Warn("node move: target CH table already exists, node will read and write its data",
+			u.logger.Str("table", newTable), u.logger.Str("path", moved.Path))
+	}
+}
+
+// countCHTableSiblings — сколько ДРУГИХ узлов ссылаются на ту же таблицу.
+// Порт опционален (legacy-wiring/unit-тесты) и запрос может упасть — в обоих
+// случаях возвращаем 0, т.е. прежнее поведение (RENAME): молча оставлять узел
+// без таблицы хуже, чем перенести её.
+func (u *NodeUsecase) countCHTableSiblings(ctx context.Context, table, nodeID string) int {
+	if u.tableUsage == nil {
+		u.logger.Debug("node move: table usage port unavailable, assuming exclusive table",
+			u.logger.Str("table", table))
+		return 0
+	}
+	n, err := u.tableUsage.CountByCHTable(ctx, table, nodeID)
+	if err != nil {
+		u.logger.Warn("node move: count nodes by CH table failed, assuming exclusive table",
+			u.logger.Str("table", table), u.logger.Err(err))
+		return 0
+	}
+	u.logger.Debug("node move: CH table usage counted",
+		u.logger.Str("table", table), u.logger.Int("other_nodes", n))
+	return n
 }
 
 // rebaseCHTable меняет БД-префикс полного имени "<db>.<table>" на newDB.

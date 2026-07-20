@@ -93,6 +93,9 @@ func (p *verifyProvisioner) DropDatabase(context.Context, string) error   { retu
 func (p *verifyProvisioner) RenameTable(context.Context, string, string) error {
 	return nil
 }
+func (p *verifyProvisioner) TableExists(context.Context, string) (bool, error) {
+	return false, nil
+}
 func (p *verifyProvisioner) CreateTable(_ context.Context, table, ddl string) error {
 	p.createdTable = table
 	p.createdDDL = ddl

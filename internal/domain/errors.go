@@ -36,7 +36,7 @@ var (
 	ErrNodeInvalidIncomingAuthDynSource = errors.New("domain: invalid incoming_auth_dynamic_source (allowed: header, query)")
 	ErrNodeIncomingAuthDynFieldLength   = errors.New("domain: incoming_auth_dynamic_field length must be 1..64")
 	ErrNodeIncomingAuthDynFieldFormat   = errors.New("domain: incoming_auth_dynamic_field must match ^[a-zA-Z][a-zA-Z0-9_-]*$")
-	ErrNodeTimeoutRange                 = errors.New("domain: timeout_ms must be 100..300000")
+	ErrNodeTimeoutRange                 = errors.New("domain: timeout_ms must be 100..600000")
 	ErrNodeRetryCountRange              = errors.New("domain: retry_count must be 0..10")
 	ErrNodeRetryBackoffRange            = errors.New("domain: retry_backoff_ms must be 0..60000")
 	ErrNodeDLQTTLRange                  = errors.New("domain: dlq_ttl_seconds must be 60..2592000")

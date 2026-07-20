@@ -49,12 +49,13 @@ func main() {
 
 	cipher := bootstrap.MustCipher(logger)
 
+	// §3.6: nexus.async.paused — delay-топик отложенных сообщений paused-узлов.
 	// §38: nexus.logs.retry — durable-буфер проваленных CH-батчей (если задан).
-	retryTopics := []string{cfg.Kafka.AsyncTopic, cfg.Kafka.DLQTopic}
+	topics := []string{cfg.Kafka.AsyncTopic, cfg.Kafka.DLQTopic, cfg.Kafka.PausedTopic}
 	if cfg.Kafka.RetryTopic != "" {
-		retryTopics = append(retryTopics, cfg.Kafka.RetryTopic)
+		topics = append(topics, cfg.Kafka.RetryTopic)
 	}
-	bootstrap.MustEnsureKafkaTopics(ctx, cfg, logger, retryTopics...)
+	bootstrap.MustEnsureKafkaTopics(ctx, cfg, logger, topics...)
 
 	otelShutdown := bootstrap.MustOtel(ctx, cfg, "sender", logger)
 
