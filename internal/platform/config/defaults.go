@@ -115,7 +115,11 @@ func applyDefaults(c *Config) {
 		c.Receiver.ReadTimeoutMs = 10000
 	}
 	if c.Receiver.WriteTimeoutMs == 0 {
-		c.Receiver.WriteTimeoutMs = 10000
+		// Должен покрывать максимальный timeout_ms узла (600с) + запас: net/http
+		// WriteTimeout отсчитывается от чтения заголовков запроса и включает всё
+		// время работы handler'а. Меньше — и долгий sync-запрос рвётся самим
+		// Receiver'ом до записи ответа (Web-прокси видит EOF, клиент — 502).
+		c.Receiver.WriteTimeoutMs = 610000
 	}
 	if c.Receiver.IdleTimeoutSec == 0 {
 		c.Receiver.IdleTimeoutSec = 120
