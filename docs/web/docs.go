@@ -1371,7 +1371,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Bad Request",
+                        "description": "bad params_override / too old failure",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
@@ -1389,7 +1389,7 @@ const docTemplate = `{
                         }
                     },
                     "422": {
-                        "description": "original body not logged — provide manually",
+                        "description": "original body not logged — provide manually (не применяется к GET)",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
@@ -5599,6 +5599,10 @@ const docTemplate = `{
                 "auth_dynamic_strip_prefix": {
                     "type": "string"
                 },
+                "auth_login": {
+                    "description": "AuthLogin — логин basic-кредов исходящей авторизации (часть до первого\n«:»). Логин — не секрет (в отличие от пароля, который наружу не отдаётся\nникогда); нужен UI: prefill формы редактирования + вывод в просмотре\nузла. Пусто для не-basic типов.",
+                    "type": "string"
+                },
                 "auth_type": {
                     "type": "string"
                 },
@@ -5639,6 +5643,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "incoming_auth_dynamic_source": {
+                    "type": "string"
+                },
+                "incoming_auth_login": {
+                    "description": "IncomingAuthLogin — логин basic-кредов входящей авторизации (см. AuthLogin).",
                     "type": "string"
                 },
                 "incoming_auth_type": {
@@ -5826,6 +5834,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "node_id": {
+                    "type": "string"
+                },
+                "params_override": {
+                    "description": "ParamsOverride — query-строка (\"a=1\u0026b=2\") вместо параметров оригинала;\nnull = взять из лога, \"\" = replay без параметров.",
                     "type": "string"
                 },
                 "sync_override": {

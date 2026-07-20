@@ -575,6 +575,13 @@ definitions:
         type: string
       auth_dynamic_strip_prefix:
         type: string
+      auth_login:
+        description: |-
+          AuthLogin — логин basic-кредов исходящей авторизации (часть до первого
+          «:»). Логин — не секрет (в отличие от пароля, который наружу не отдаётся
+          никогда); нужен UI: prefill формы редактирования + вывод в просмотре
+          узла. Пусто для не-basic типов.
+        type: string
       auth_type:
         type: string
       clickhouse_retention_days:
@@ -602,6 +609,10 @@ definitions:
       incoming_auth_dynamic_field:
         type: string
       incoming_auth_dynamic_source:
+        type: string
+      incoming_auth_login:
+        description: IncomingAuthLogin — логин basic-кредов входящей авторизации (см.
+          AuthLogin).
         type: string
       incoming_auth_type:
         type: string
@@ -728,6 +739,11 @@ definitions:
       custom_auth:
         type: string
       node_id:
+        type: string
+      params_override:
+        description: |-
+          ParamsOverride — query-строка ("a=1&b=2") вместо параметров оригинала;
+          null = взять из лога, "" = replay без параметров.
         type: string
       sync_override:
         type: boolean
@@ -3000,7 +3016,7 @@ paths:
           schema:
             $ref: '#/definitions/nexus_internal_web_usecase.ReplayResult'
         "400":
-          description: Bad Request
+          description: bad params_override / too old failure
           schema:
             $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "404":
@@ -3012,7 +3028,8 @@ paths:
           schema:
             $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "422":
-          description: original body not logged — provide manually
+          description: original body not logged — provide manually (не применяется
+            к GET)
           schema:
             $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "429":

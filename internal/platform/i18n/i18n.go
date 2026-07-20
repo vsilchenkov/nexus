@@ -123,6 +123,7 @@ var translations = map[Lang]map[string]string{
 		// replay
 		"replay.too_old":          "cannot replay failed request older than 7 days",
 		"replay.body_unavailable": "original request body was not logged for this node — enter the body manually to replay",
+		"replay.bad_params":       "parameters must be a valid query string (a=1&b=2)",
 		// url
 		"url.required":    "url parameter is required",
 		"url.invalid":     "target url is invalid",
@@ -232,6 +233,7 @@ var translations = map[Lang]map[string]string{
 		"kafka.period_too_long":    "произвольный период не может превышать 90 дней",
 		"replay.too_old":           "нельзя повторить запрос с ошибкой старше 7 дней",
 		"replay.body_unavailable":  "тело исходного запроса не сохранялось для этого узла — введите тело вручную, чтобы повторить",
+		"replay.bad_params":        "параметры должны быть валидной query-строкой (a=1&b=2)",
 		"url.required":             "параметр URL обязателен",
 		"url.invalid":              "целевой URL невалиден",
 		"url.not_allowed":          "целевой URL не входит в allowlist",

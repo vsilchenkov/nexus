@@ -28,6 +28,9 @@ type ReplayRequest struct {
 	SyncOverride bool    `json:"sync_override"`
 	UseNodeAuth  *bool   `json:"use_node_auth"`
 	CustomAuth   string  `json:"custom_auth"`
+	// ParamsOverride — query-строка ("a=1&b=2") вместо параметров оригинала;
+	// null = взять из лога, "" = replay без параметров.
+	ParamsOverride *string `json:"params_override"`
 }
 
 // Replay godoc
@@ -39,10 +42,10 @@ type ReplayRequest struct {
 // @Param    id    path  string         true  "log id (UUID v4)"
 // @Param    body  body  ReplayRequest  true  "опции"
 // @Success  200   {object}  usecase.ReplayResult
-// @Failure  400   {object}  ErrorResponse
+// @Failure  400   {object}  ErrorResponse  "bad params_override / too old failure"
 // @Failure  404   {object}  ErrorResponse
 // @Failure  409   {object}  ErrorResponse  "node disabled"
-// @Failure  422   {object}  ErrorResponse  "original body not logged — provide manually"
+// @Failure  422   {object}  ErrorResponse  "original body not logged — provide manually (не применяется к GET)"
 // @Failure  429   {object}  ErrorResponse  "rate limit exceeded"
 // @Security CookieAuth
 // @Router   /api/logs/{id}/replay [post]
@@ -58,9 +61,10 @@ func (h *ReplayHandler) Replay(c *gin.Context) {
 		return
 	}
 	opts := usecase.ReplayOptions{
-		SyncOverride: req.SyncOverride,
-		UseNodeAuth:  req.UseNodeAuth == nil || *req.UseNodeAuth,
-		CustomAuth:   req.CustomAuth,
+		SyncOverride:   req.SyncOverride,
+		UseNodeAuth:    req.UseNodeAuth == nil || *req.UseNodeAuth,
+		CustomAuth:     req.CustomAuth,
+		ParamsOverride: req.ParamsOverride,
 	}
 	if req.BodyOverride != nil {
 		opts.BodyOverride = []byte(*req.BodyOverride)
@@ -75,6 +79,8 @@ func (h *ReplayHandler) Replay(c *gin.Context) {
 		localizedError(c, http.StatusTooManyRequests, "error.rate_limited")
 	case errors.Is(err, usecase.ErrReplayTooOldFailure):
 		localizedError(c, http.StatusBadRequest, "replay.too_old")
+	case errors.Is(err, usecase.ErrReplayBadParams):
+		localizedError(c, http.StatusBadRequest, "replay.bad_params")
 	case errors.Is(err, usecase.ErrReplayBodyUnavailable):
 		localizedError(c, http.StatusUnprocessableEntity, "replay.body_unavailable")
 	case errors.Is(err, domain.ErrNotFound):
