@@ -95,6 +95,7 @@ kafka:
   async_topic: nexus.async               # Топик основной очереди async-запросов.
   dlq_topic: nexus.async.dlq             # Dead-letter топик для неуспешно обработанных сообщений.
   retry_topic: nexus.logs.retry          # §38: durable-буфер проваленных CH-батчей (дренится обратно в CH). Пусто = retry off, батчи теряются при сбое CH.
+  paused_topic: nexus.async.paused       # §3.6: delay-топик сообщений paused-узлов (см. sender.paused_sweep).
   consumer_group: nexus-sender           # Consumer-group, под которой Sender читает топик.
   # Параметры авто-создания топика (EnsureTopics при старте).
   topic:
@@ -210,6 +211,13 @@ sender:
     interval_sec: 60             # Период прохода (сек, раз в минуту). Эффективная пауза
                                  # повтора = max(interval_sec, dlq_retry_delay_seconds узла);
                                  # держите ≤ минимального per-node delay, который хотите задавать.
+    max_scan: 1000               # Максимум сообщений за один проход (защита брокеров).
+  # §3.6: sweeper delay-топика paused-узлов — циркулирует nexus.async.paused и
+  # доставляет отложенные сообщения, как только узел выходит из паузы.
+  paused_sweep:
+    disabled: false              # Рубильник sweeper'а (false → включён). ВНИМАНИЕ: выключение
+                                 # означает, что бэклог paused-узлов не будет доставлен вообще.
+    interval_sec: 30             # Период прохода (сек) = задержка доставки после снятия паузы.
     max_scan: 1000               # Максимум сообщений за один проход (защита брокеров).
 
 # Web Service — REST API под /api/* и встроенный SPA (embed.FS).

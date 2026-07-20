@@ -15,24 +15,40 @@ import (
 )
 
 // stubPeeker — управляемый AsyncQueuePeeker; фиксирует аргументы ScanIDs.
+// list/scan отдаются для ЛЮБОГО топика; listByTopic/scanByTopic (если заданы)
+// позволяют развести основной топик и delay-топик paused-узлов (§3.6).
 type stubPeeker struct {
-	list     port.PeekListResult
-	body     port.QueueMessageBody
-	scan     port.ScanIDsResult
-	err      error
-	scanFrom time.Time
-	scanTo   time.Time
-	scanPath string
+	list        port.PeekListResult
+	listByTopic map[string]port.PeekListResult
+	body        port.QueueMessageBody
+	scan        port.ScanIDsResult
+	scanByTopic map[string]port.ScanIDsResult
+	err         error
+	scanFrom    time.Time
+	scanTo      time.Time
+	scanPath    string
+	listTopics  []string
+	scanTopics  []string
+	bodyTopic   string
 }
 
-func (s *stubPeeker) PeekList(_ context.Context, _, _, _ string, _, _ int) (port.PeekListResult, error) {
+func (s *stubPeeker) PeekList(_ context.Context, _, topic, _ string, _, _ int) (port.PeekListResult, error) {
+	s.listTopics = append(s.listTopics, topic)
+	if s.listByTopic != nil {
+		return s.listByTopic[topic], s.err
+	}
 	return s.list, s.err
 }
-func (s *stubPeeker) PeekBody(_ context.Context, _ string, _ int, _ int64) (port.QueueMessageBody, error) {
+func (s *stubPeeker) PeekBody(_ context.Context, topic string, _ int, _ int64) (port.QueueMessageBody, error) {
+	s.bodyTopic = topic
 	return s.body, s.err
 }
-func (s *stubPeeker) ScanIDs(_ context.Context, _, _, nodePath string, from, to time.Time, _ int) (port.ScanIDsResult, error) {
+func (s *stubPeeker) ScanIDs(_ context.Context, _, topic, nodePath string, from, to time.Time, _ int) (port.ScanIDsResult, error) {
 	s.scanPath, s.scanFrom, s.scanTo = nodePath, from, to
+	s.scanTopics = append(s.scanTopics, topic)
+	if s.scanByTopic != nil {
+		return s.scanByTopic[topic], s.err
+	}
 	return s.scan, s.err
 }
 
@@ -64,7 +80,9 @@ func newQueueUCFull(peeker port.AsyncQueuePeeker, cancel port.QueueCancelWriter,
 	}
 	uc := NewAsyncQueueUsecase(peeker, cancel, failed, nodes,
 		NewAuditUsecase(repo, logging.NewNoop()),
-		"nexus-sender", "nexus.async", time.Hour, 5000, logging.NewNoop())
+		"nexus-sender", "nexus.async",
+		"nexus-sender-paused", "nexus.async.paused",
+		time.Hour, 5000, logging.NewNoop())
 	return uc, repo
 }
 
@@ -116,6 +134,125 @@ func TestAsyncQueue_List_Happy(t *testing.T) {
 	assert.True(t, r.KafkaAvailable)
 	require.Len(t, r.Items, 1)
 	assert.Equal(t, "id-1", r.Items[0].ID)
+}
+
+// TestAsyncQueue_List_MergesBothTopics (§3.6): очередь узла физически
+// расщеплена на основной топик и delay-топик отложенных paused-сообщений —
+// список показывает оба, отсортированные по времени поступления.
+func TestAsyncQueue_List_MergesBothTopics(t *testing.T) {
+	t.Parallel()
+
+	older := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
+	newer := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	peeker := &stubPeeker{listByTopic: map[string]port.PeekListResult{
+		"nexus.async": {Items: []port.QueueMessageMeta{
+			{ID: "fresh", Topic: "nexus.async", ReceivedAt: newer},
+		}},
+		"nexus.async.paused": {Items: []port.QueueMessageMeta{
+			{ID: "backlog", Topic: "nexus.async.paused", ReceivedAt: older},
+		}},
+	}}
+	uc, _ := newQueueUC(peeker, &stubCancelWriter{}, asyncNode())
+
+	r, err := uc.List(context.Background(), "n1", "t1")
+	require.NoError(t, err)
+	require.Len(t, r.Items, 2, "видны сообщения обоих топиков")
+	assert.Equal(t, "backlog", r.Items[0].ID, "старое (отложенное) — первым: оно уедет раньше")
+	assert.Equal(t, "nexus.async.paused", r.Items[0].Topic, "топик проброшен для запроса тела")
+	assert.Equal(t, "fresh", r.Items[1].ID)
+	assert.ElementsMatch(t, []string{"nexus.async", "nexus.async.paused"}, peeker.listTopics)
+}
+
+// TestAsyncQueue_List_DeduplicatesCirculatingMessage: сообщение в delay-топике
+// переносится в хвост на каждом проходе sweeper'а, поэтому один и тот же id
+// встречается под разными offset'ами. Без дедупа список и счётчик «Ожидают
+// отправки» раздувались бы кратно числу кругов.
+func TestAsyncQueue_List_DeduplicatesCirculatingMessage(t *testing.T) {
+	t.Parallel()
+
+	peeker := &stubPeeker{listByTopic: map[string]port.PeekListResult{
+		"nexus.async": {},
+		"nexus.async.paused": {Items: []port.QueueMessageMeta{
+			{ID: "dup", Topic: "nexus.async.paused", Offset: 10},
+			{ID: "dup", Topic: "nexus.async.paused", Offset: 42}, // копия следующего круга
+			{ID: "other", Topic: "nexus.async.paused", Offset: 43},
+		}},
+	}}
+	uc, _ := newQueueUC(peeker, &stubCancelWriter{}, asyncNode())
+
+	r, err := uc.List(context.Background(), "n1", "t1")
+	require.NoError(t, err)
+	require.Len(t, r.Items, 2, "циркулирующая копия не должна удваивать запись")
+	assert.Equal(t, int64(10), r.Items[0].Offset, "остаётся первая встреченная координата")
+}
+
+// TestAsyncQueue_List_TopicFailureDegrades: недоступность одного топика не
+// должна ронять всю вкладку — показываем то, что удалось прочитать.
+func TestAsyncQueue_List_TopicFailureDegrades(t *testing.T) {
+	t.Parallel()
+
+	peeker := &stubPeeker{list: port.PeekListResult{}, err: errors.New("kafka down")}
+	uc, _ := newQueueUC(peeker, &stubCancelWriter{}, asyncNode())
+
+	r, err := uc.List(context.Background(), "n1", "t1")
+	require.NoError(t, err)
+	assert.Empty(t, r.Items)
+	assert.True(t, r.KafkaAvailable)
+}
+
+// TestAsyncQueue_Purge_ScansBothTopics: бэклог paused-узла лежит в delay-топике,
+// поэтому «Очистить все ожидающие» обязана сканировать оба (иначе главный
+// юзкейс §34.4 «очистить очередь мёртвого узла» перестаёт работать). Повторы id
+// из циркуляции схлопываются.
+func TestAsyncQueue_Purge_ScansBothTopics(t *testing.T) {
+	t.Parallel()
+
+	peeker := &stubPeeker{scanByTopic: map[string]port.ScanIDsResult{
+		"nexus.async":        {IDs: []string{"a"}},
+		"nexus.async.paused": {IDs: []string{"b", "a"}}, // "a" уже видели
+	}}
+	cancelW := &stubCancelWriter{}
+	uc, _ := newQueueUC(peeker, cancelW, asyncNode())
+
+	r, err := uc.PurgeAll(context.Background(), Actor{UserID: "u"}, "n1", "t1")
+	require.NoError(t, err)
+	assert.Equal(t, 2, r.Cancelled)
+	assert.Equal(t, []string{"a", "b"}, cancelW.gotIDs, "дубли id не отправляются повторно")
+	assert.ElementsMatch(t, []string{"nexus.async", "nexus.async.paused"}, peeker.scanTopics)
+}
+
+// TestAsyncQueue_Body_TopicAllowList: читать через этот эндпоинт можно только
+// топики очереди узла — иначе он превратился бы в универсальный ридер Kafka.
+func TestAsyncQueue_Body_TopicAllowList(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		topic     string
+		wantTopic string
+		wantErr   error
+	}{
+		{"пусто → основной (совместимость)", "", "nexus.async", nil},
+		{"основной", "nexus.async", "nexus.async", nil},
+		{"delay-топик", "nexus.async.paused", "nexus.async.paused", nil},
+		{"чужой топик → отказ", "nexus.logs.retry", "", ErrAsyncQueueUnknownTopic},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			peeker := &stubPeeker{body: port.QueueMessageBody{ID: "id-1"}}
+			uc, _ := newQueueUC(peeker, &stubCancelWriter{}, asyncNode())
+
+			_, err := uc.Body(context.Background(), "n1", "t1", tc.topic, 0, 1)
+			if tc.wantErr != nil {
+				assert.ErrorIs(t, err, tc.wantErr)
+				assert.Empty(t, peeker.bodyTopic, "к Kafka не ходим при неизвестном топике")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantTopic, peeker.bodyTopic)
+		})
+	}
 }
 
 func TestAsyncQueue_TeamScope_NotFound(t *testing.T) {
@@ -185,7 +322,7 @@ func TestAsyncQueue_Mutations_Unavailable(t *testing.T) {
 
 	// peeker == nil → Body недоступен.
 	uc2, _ := newQueueUC(nil, &stubCancelWriter{}, asyncNode())
-	_, err = uc2.Body(context.Background(), "n1", "t1", 0, 0)
+	_, err = uc2.Body(context.Background(), "n1", "t1", "", 0, 0)
 	assert.ErrorIs(t, err, ErrAsyncQueueUnavailable)
 }
 

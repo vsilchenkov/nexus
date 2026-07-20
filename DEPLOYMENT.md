@@ -24,7 +24,7 @@ Nexus — три stateless Go-сервиса плюс набор хранили�
 | PostgreSQL  | 16     | `5432`         | Конфиг узлов, пользователи, audit, настройки  |
 | Redis       | 7      | `6379`         | Кеш узлов, сессии, rate-limit, circuit breaker |
 | ClickHouse  | 24     | `8123`/`9000`  | Логи всех вызовов                             |
-| Kafka       | 3.9 (KRaft) | `9092`     | Очередь async-запросов (`nexus.async`/`.dlq`) + durable-буфер проваленных CH-батчей (`nexus.logs.retry`, §38) |
+| Kafka       | 3.9 (KRaft) | `9092`     | Очередь async-запросов (`nexus.async`/`.dlq`/`.paused`) + durable-буфер проваленных CH-батчей (`nexus.logs.retry`, §38) |
 | Prometheus  | 2.55   | `9091→9090`    | Scrape метрик сервисов **и источник дашбордов панели** (KPI/очередь/графики, §21) |
 
 Сервисы — stateless: всё состояние в хранилищах. Поэтому обновление и откат сводятся
@@ -371,13 +371,22 @@ docker compose -f deploy/docker-compose.app.yml logs -f web receiver sender
 - **ClickHouse**: пользователь должен иметь право создавать БД и таблицы — Nexus заводит
   по БД на команду (`nexus_<slug>`, для default — `nexus_default`) и создаёт таблицы логов.
 - **Kafka**: автосоздание топиков на брокере должно быть **разрешено**, либо заранее
-  создайте `nexus.async`, `nexus.async.dlq` и `nexus.logs.retry` (Nexus сам пытается их завести с
+  создайте `nexus.async`, `nexus.async.dlq`, `nexus.async.paused` и `nexus.logs.retry` (Nexus сам пытается их завести с
   `retention.ms=7 дней` + `retention.bytes=40 ГиБ` **на партицию**; на single-broker не забудьте
   RF=1/ISR=1 — см. §2). Топик `nexus.logs.retry`
   (§38) — durable-буфер проваленных CH-батчей при недоступности ClickHouse; его retention должен
   покрывать максимально ожидаемый простой CH × объём логов (иначе при очень долгом простое старые
   батчи истекут по retention и не доедут в CH). Имя настраивается `kafka.retry_topic`; пустое
   значение полностью выключает retry (батчи теряются при сбое CH).
+
+  Топик `nexus.async.paused` (§3.6, имя — `kafka.paused_topic`) — delay-очередь сообщений узлов,
+  стоящих на паузе: они переносятся туда, чтобы не задерживать другие узлы в той же партиции
+  основного топика. Обслуживается sweeper'ом Sender'а (`sender.paused_sweep`: `disabled`,
+  `interval_sec` — период прохода и максимальная задержка доставки после снятия паузы,
+  `max_scan`). **Выключение sweeper'а означает, что накопленный за паузу бэклог не будет доставлен
+  вообще**, а его retention должен покрывать максимально ожидаемую длительность паузы. Контроль —
+  метрика `nexus_kafka_lag` по consumer-group `<kafka.consumer_group>-paused`: не убывающий после
+  снятия пауз lag означает, что sweeper не работает.
 
   > **Смена retention/размера на УЖЕ существующем топике.** Nexus применяет `kafka.topic.*` из
   > `config.yml` **только при создании топика** (`CreateTopics`); `AlterConfigs` в коде нет, поэтому

@@ -70,6 +70,7 @@ type App struct {
 	consumer      *kafkaadapter.ConsumerGroup
 	retryConsumer *kafkaadapter.ChLogRetryConsumer // §38: дренаж nexus.logs.retry в CH (nil если retry выключен)
 	dlqReproc     *kafkaadapter.DLQReprocessor     // §36: авто-репроцессор DLQ (nil если выключен)
+	pausedSweep   *kafkaadapter.PausedSweeper      // §3.6: sweeper delay-топика paused-узлов (nil если выключен)
 	otelShutdown  otelpf.ShutdownFunc
 
 	// done-каналы фоновых горутин — Stop дожидается их завершения
@@ -79,6 +80,7 @@ type App struct {
 	kafkaLagDone     <-chan struct{}
 	reloadDone       <-chan struct{}
 	dlqReprocDone    <-chan struct{} // §36: done-канал sweeper'а DLQ
+	pausedSweepDone  <-chan struct{} // §3.6: done-канал sweeper'а delay-топика
 	shipperDone      <-chan struct{} // §51: done-канал шиппера служебных логов
 
 	// §51: ручка runtime-уровня логов + кольцо для Redis-шиппера.
@@ -172,7 +174,10 @@ func (a *App) Start(ctx context.Context) error {
 	if a.redis != nil {
 		cancelSet = queuecancel.New(a.redis)
 	}
-	asyncProc := usecase.NewAsyncProcessor(nodeReader, sendUC, a.producer, cancelSet, nodeStatus, a.cfg.Kafka.DLQTopic, a.metrics, a.logger)
+	// §3.6: сообщения paused-узлов уезжают в delay-топик, а не удерживают
+	// партицию основного топика (в ней по хешу node_path лежат ДРУГИЕ узлы).
+	pausedRequeue := usecase.WithPausedRequeue(a.cfg.Kafka.PausedTopic)
+	asyncProc := usecase.NewAsyncProcessor(nodeReader, sendUC, a.producer, cancelSet, nodeStatus, a.cfg.Kafka.DLQTopic, a.metrics, a.logger, pausedRequeue)
 	a.consumer = kafkaadapter.NewConsumerGroup(a.cfg, a.cfg.Kafka.AsyncTopic, asyncProc, a.logger, kafkaadapter.WithMetrics(a.metrics))
 	a.consumer.Start(ctx)
 
@@ -201,6 +206,21 @@ func (a *App) Start(ctx context.Context) error {
 			a.cfg.Sender.Reprocessor.MaxScan, a.metrics, a.logger)
 		a.dlqReprocDone = safego.Go(a.logger, "sender.dlqReprocessor", func() {
 			a.dlqReproc.Run(ctx)
+		})
+	}
+
+	// §3.6: sweeper delay-топика — обслуживает бэклог paused-узлов отдельно от
+	// основного потока. Тот же AsyncProcessor: узел всё ещё на паузе → перенос в
+	// хвост delay-топика, ожил → доставка, отменён/disabled → drop.
+	// ВНИМАНИЕ: выключение sweeper'а означает, что накопленный за паузу бэклог не
+	// будет доставлен вообще (и протухнет по retention топика).
+	if !a.cfg.Sender.PausedSweep.Disabled {
+		a.pausedSweep = kafkaadapter.NewPausedSweeper(
+			a.cfg, asyncProc,
+			time.Duration(a.cfg.Sender.PausedSweep.IntervalSec)*time.Second,
+			a.cfg.Sender.PausedSweep.MaxScan, a.metrics, a.logger)
+		a.pausedSweepDone = safego.Go(a.logger, "sender.pausedSweep", func() {
+			a.pausedSweep.Run(ctx)
 		})
 	}
 
@@ -342,33 +362,34 @@ func (a *App) reportKafkaLag(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			for _, snap := range a.consumer.Snapshot() {
-				topic := snap.Topic
-				if topic == "" {
-					topic = a.cfg.Kafka.AsyncTopic
-				}
-				part := snap.Partition
-				if part == "" {
-					part = "all"
-				}
-				a.metrics.KafkaLag.WithLabelValues(topic, part, group).Set(float64(snap.Lag))
-			}
+			a.publishLag(a.consumer.Snapshot(), group, a.cfg.Kafka.AsyncTopic)
 			// §38: lag retry-топика = объём проваленных батчей, ждущих CH.
 			if a.retryConsumer != nil {
-				rgroup := a.retryConsumer.Group()
-				for _, snap := range a.retryConsumer.Snapshot() {
-					topic := snap.Topic
-					if topic == "" {
-						topic = a.cfg.Kafka.RetryTopic
-					}
-					part := snap.Partition
-					if part == "" {
-						part = "all"
-					}
-					a.metrics.KafkaLag.WithLabelValues(topic, part, rgroup).Set(float64(snap.Lag))
-				}
+				a.publishLag(a.retryConsumer.Snapshot(), a.retryConsumer.Group(), a.cfg.Kafka.RetryTopic)
+			}
+			// §3.6: lag delay-топика = объём бэклога paused-узлов. Растёт, пока
+			// узлы на паузе; НЕ убывающий после снятия пауз lag означает, что
+			// sweeper не работает и бэклог протухнет по retention — повод для алерта.
+			if a.pausedSweep != nil {
+				a.publishLag(a.pausedSweep.Snapshot(), a.pausedSweep.Group(), a.cfg.Kafka.PausedTopic)
 			}
 		}
+	}
+}
+
+// publishLag пушит снимки lag в Prometheus. Пустые topic/partition в
+// kafka-go ReaderStats заменяются на конфигурационный топик и "all".
+func (a *App) publishLag(snaps []kafkaadapter.LagSnapshot, group, defaultTopic string) {
+	for _, snap := range snaps {
+		topic := snap.Topic
+		if topic == "" {
+			topic = defaultTopic
+		}
+		part := snap.Partition
+		if part == "" {
+			part = "all"
+		}
+		a.metrics.KafkaLag.WithLabelValues(topic, part, group).Set(float64(snap.Lag))
 	}
 }
 
@@ -387,6 +408,10 @@ func (a *App) Stop(ctx context.Context) error {
 	// завершит горутину (дожидаемся ниже через dlqReprocDone).
 	if a.dlqReproc != nil {
 		a.dlqReproc.Stop()
+	}
+	// §3.6: аналогично для sweeper'а delay-топика paused-узлов.
+	if a.pausedSweep != nil {
+		a.pausedSweep.Stop()
 	}
 
 	if a.grpcSrv != nil {
@@ -412,6 +437,7 @@ func (a *App) Stop(ctx context.Context) error {
 	safego.Await(awaitCtx, a.kafkaLagDone, a.logger, "sender.reportKafkaLag")
 	safego.Await(awaitCtx, a.reloadDone, a.logger, "sender.reloadSubscriber")
 	safego.Await(awaitCtx, a.dlqReprocDone, a.logger, "sender.dlqReprocessor")
+	safego.Await(awaitCtx, a.pausedSweepDone, a.logger, "sender.pausedSweep")
 	safego.Await(awaitCtx, a.shipperDone, a.logger, "sender.logShipper")
 	awaitCancel()
 

@@ -83,6 +83,7 @@ kafka:
   brokers: ${KAFKA_BROKERS:localhost:9092}  # comma-separated, в проде 3+ broker'а
   async_topic: nexus.async
   dlq_topic: nexus.async.dlq
+  paused_topic: nexus.async.paused   # §3.6: delay-очередь узлов на паузе
   consumer_group: nexus-sender
   # === Параметры топиков (применяются при автосоздании на старте) ===
   topic:

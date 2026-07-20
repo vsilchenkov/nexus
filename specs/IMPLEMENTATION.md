@@ -79,7 +79,9 @@
 | gRPC `SenderService.Send` | ✅ | [proto/sender/v1/sender.proto](../proto/sender/v1/sender.proto), [adapter/in/grpc/sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go) |
 | HTTP-клиент с keep-alive + retry/backoff | ✅ | [adapter/out/httpclient/client.go](../internal/sender/adapter/out/httpclient/client.go) |
 | Kafka-consumer + DLQ + paused-pacing | ✅ | [adapter/in/kafka/consumer.go](../internal/sender/adapter/in/kafka/consumer.go), [usecase/async.go](../internal/sender/usecase/async.go) |
-| Offset коммитится только после успешной доставки | ✅ | `enable_auto_commit: false` + `MarkMessage` after deliver |
+| Offset коммитится только после успешной доставки | ✅ | `enable_auto_commit: false` + ручной `Commit` после терминального исхода |
+| **Retry-in-place для HandleRetry (PG-сбой/DLQ недоступен): сообщение не теряется** | ✅ Phase 2 (fix) | [consumer.go](../internal/sender/adapter/in/kafka/consumer.go) `processWithRetry`; см. 4.37 |
+| **Delay-топик paused-узлов (§3.6): пауза не тормозит соседей по партиции** | ✅ Phase 6 | [paused_sweeper.go](../internal/sender/adapter/in/kafka/paused_sweeper.go), [async.go](../internal/sender/usecase/async.go) `handlePaused`; конфиг `kafka.paused_topic` + `sender.paused_sweep`; см. 4.38 |
 | ClickHouse batch writer | ✅ | [adapter/out/chlog/writer.go](../internal/sender/adapter/out/chlog/writer.go) |
 | **Durable-retry проваленных батчей через Kafka (§38, заменил NDJSON)** | ✅ §38 | [chlogretry/retrier.go](../internal/sender/adapter/out/chlogretry/retrier.go), [clogwire](../internal/sender/clogwire/clogwire.go), retry-consumer [clog_retry_consumer.go](../internal/sender/adapter/in/kafka/clog_retry_consumer.go) |
 | **CH partition-drop housekeeping (§4.3)** | ✅ Phase 5 | [sender/usecase/ch_housekeeping.go](../internal/sender/usecase/ch_housekeeping.go), миграция [0005](../migrations/0005_node_retention.up.sql) |
@@ -192,6 +194,7 @@
 | **Полный testcontainers-сетап (PG + Redis + CH + Kafka)** | ✅ Phase 7.3 | PG ([node_repo_test.go](../tests/integration/node_repo_test.go)), Kafka ([receiver_async_test.go](../tests/integration/receiver_async_test.go)), Redis ([redis_test.go](../tests/integration/redis_test.go) — SessionRepo + NodeCache + TTL-expire), CH ([clickhouse_test.go](../tests/integration/clickhouse_test.go) — chlog.Writer batch insert + LogReaderCH `GetByID`/`Search` + table-name SQL-injection guard) |
 | **Async end-to-end интеграция через Kafka** | ✅ Phase 6.2 | [tests/integration/receiver_async_test.go](../tests/integration/receiver_async_test.go) — реальный pipeline `RouteAsyncUsecase → Kafka → ConsumerGroup → AsyncProcessor → SendUsecase → mock HTTP` |
 | **DLQ-сценарий после retry-exhaustion** | ✅ Phase 9.3 | [tests/integration/sender_dlq_test.go](../tests/integration/sender_dlq_test.go) — mock=500 + узел с `retry_count=2`; отдельный kafka-reader на `nexus.async.dlq` проверяет headers `id` / `node_path` / `orig_topic` / `reason=status=500 attempts=3` / `last_attempt_at` |
+| **Семантика offset'ов async-consumer'а: изоляция paused, at-least-once, FIFO, multi-instance** | ✅ (Phases 2–6, см. 4.37/4.38) | [sender_async_redelivery_test.go](../tests/integration/sender_async_redelivery_test.go) (перенос в delay-топик; сосед-enabled НЕ ждёт paused; бэклог уезжает после unpause; переживает рестарт sweeper'а), [sender_async_atleastonce_test.go](../tests/integration/sender_async_atleastonce_test.go) (падение до commit'а → ровно один дубль), [sender_async_fifo_test.go](../tests/integration/sender_async_fifo_test.go) (порядок [1..5]; ретраи головы → [1,1,2,3,4,5] + DLQ), [sender_async_multiinstance_test.go](../tests/integration/sender_async_multiinstance_test.go) (partitions=2/instances=2). Юниты — [consumer_test.go](../internal/sender/adapter/in/kafka/consumer_test.go) (маппинг HandleResult→Commit) и [paused_sweeper_test.go](../internal/sender/adapter/in/kafka/paused_sweeper_test.go) (проход, wrap-detect, commit-before-break) |
 | **Replay-сценарий через ClickHouse** | ✅ Phase 9.3 | [tests/integration/replay_test.go](../tests/integration/replay_test.go) — PG+CH; `ReplayUsecase` поверх реального `LogReaderCH` проверяет маркер `__replay_of=<orig_id>` в query, сохранение исходных query-параметров, тело из CH-записи и audit-запись `node.replay` |
 | **Auth E2E (login + session + role)** | ✅ Phase 9.3 | [tests/integration/auth_test.go](../tests/integration/auth_test.go) — PG `UserRepoPg` + Redis `SessionRepoRedis`; happy/bad-password/inactive, `Check` продлевает TTL, `ChangePassword` инвалидирует все сессии, audit `user.login.*` / `user.password.change` |
 | **Receiver incoming auth через реальный HTTP** | ✅ Phase 9.3 | [tests/integration/receiver_incoming_auth_test.go](../tests/integration/receiver_incoming_auth_test.go) — Gin + `httptest.NewServer`; узлы none/basic/token, проверка 401/200 для отсутствующего/малформенного/неверного/верного `Authorization`, гарантия что 401 не достигает upstream |
@@ -3046,3 +3049,81 @@ vitest во фронте (было 3 теста без CI-запуска → +2 
   `RequireSessionOnly` закрыл и роль (viewer→403), и канал (API-токены реплеить не могут). Кнопки на
   фронте (LogsTab и таблица неудач QueueTab) для viewer теперь disabled, а не скрыты — чтобы было
   видно, что действие существует, но требует прав.
+
+### 4.37 Async-consumer: почему HandleRetry обрабатывается на месте (потеря paused-сообщений)
+
+- **kafka-go НЕ передоставляет незакоммиченное сообщение в живой сессии.** `Reader.FetchMessage`
+  двигает внутренний курсор; отсутствие commit'а влияет только на *committed offset* в Kafka, но не
+  возвращает сообщение этому же reader'у — оно вернётся лишь при rebalance/рестарте. Это уже было
+  известно в репозитории (см. комментарий в [clog_retry_consumer.go](../internal/sender/adapter/in/kafka/clog_retry_consumer.go)
+  — именно поэтому CH-retry сделан retry-in-place), но основной async-consumer жил по неверному
+  комментарию «сообщение будет прочитано снова при следующем FetchMessage».
+- **Последствие — не задержка, а ПОТЕРЯ.** Старый код на `HandleRetry` (paused-узел, сбой чтения узла
+  из PG, не записавшийся DLQ) шёл к следующему сообщению. Если следующее сообщение той же партиции
+  получало Ack, `CommitMessages` коммитил offset «включительно» — committed offset прокатывался мимо
+  незакоммиченного сообщения, и после ребаланса оно исчезало навсегда. Партиционирование по
+  `kafka.Hash(node.Path)` не спасает: разные узлы регулярно попадают в одну партицию.
+- **Первый фикс — `processWithRetry`:** то же сообщение переобрабатывается до терминального исхода
+  (Ack/DLQed/Requeued), только после этого commit; при отмене ctx (shutdown) — выход без commit'а.
+  Это закрыло потерю, но ценой head-of-line blocking. Механизм остался в коде и работает для
+  транзиентных Retry (недоступен PostgreSQL при чтении узла, не записался DLQ).
+- **Второй фикс (§3.6, delay-топик) — изоляция узлов.** Head-of-line оказался неприемлем: партиций
+  4, узлов десятки, значит каждая партиция обслуживает примерно четверть всех узлов, и пауза одного
+  узла тормозила бы соседей. Теперь paused-сообщение переносится в `nexus.async.paused` и offset
+  основного топика коммитится — партиция свободна. См. 4.38.
+- **Паузы двухуровневые.** Выдержку для paused даёт usecase (`pausedRetryAfter`, дефолт 30s);
+  `asyncRetryPause` (1s) в адаптере — только защита от busy-loop для прочих Retry-веток. Тестам
+  30s не подходят → функциональная опция `WithPausedRetryAfter` у `NewAsyncProcessor`.
+- **Попутно найден второй баг: `ConsumerGroup.Stop()` не завершал горутины.** У него, в отличие от
+  `ChLogRetryConsumer`, не было собственного производного контекста. После `Close()` reader'а
+  `FetchMessage` возвращает не `context.Canceled`, а «reader closed» → цикл уходил в `continue` и
+  крутил busy-loop до отмены ВНЕШНЕГО ctx. В проде маскировалось тем, что при shutdown внешний ctx
+  обычно уже отменён; в тестах проявилось как ровно-240-секундные прогоны. Исправлено по образцу
+  `ChLogRetryConsumer`: `cancel` в структуре, `Start` создаёт производный ctx, `Stop` его отменяет.
+- **Грабли тестирования этого места.** Первая версия integration-тестов ЗЕЛЕНЕЛА на сломанном коде:
+  между `Start` и первым `FetchMessage` проходит join+sync group (секунды), поэтому «сообщение не
+  доставлено» означало не блокировку очереди, а то, что consumer ещё не читал. Лечится warmup-фазой
+  (`warmupConsumer`): сначала доставляем сообщение enabled-узла и ждём его хита — это доказывает, что
+  consumer активен, и только потом проверяем отсутствие доставки. Любой новый тест этого контура
+  обязан начинаться с warmup.
+
+### 4.38 §3.6 delay-топик `nexus.async.paused`: изоляция paused-узлов
+
+- **Зачем.** После 4.37 сообщение paused-узла держало голову партиции. Партиций 4, узлов десятки —
+  значит каждая партиция обслуживает ~четверть всех узлов, и пауза одного узла тормозила соседей.
+  Это не «редкая коллизия хешей», а арифметика: ключ партиционирования — `node_path`, число партиций
+  конечно. Теперь основной consumer переносит такое сообщение в `nexus.async.paused` и коммитит
+  offset основного топика ([async.go](../internal/sender/usecase/async.go) `handlePaused`,
+  результат `HandleRequeued`), а бэклог обслуживает
+  [paused_sweeper.go](../internal/sender/adapter/in/kafka/paused_sweeper.go).
+- **Почему sweeper проходами, а не обычный ConsumerGroup с паузой после сообщения.** Разобрано и
+  отвергнуто на этапе плана: пауза после каждого переноса усыпляет горутину партиции, и узел,
+  снявший паузу, ждёт за бэклогом долго-paused соседа (10k сообщений × 1 с ≈ 3 часа) — тот же
+  head-of-line, просто переехавший в delay-топик. Пауза должна быть МЕЖДУ проходами: внутри прохода
+  работаем на полной скорости, `interval_sec` (30 с) ограничивает темп циркуляции и задаёт
+  максимальную задержку доставки после `unpause`.
+- **Инварианты прохода скопированы из DLQ-репроцессора (§36):** wrap-detect `seen[id]` (иначе бэклог
+  крутится внутри одного прохода бесконечно) и **commit строго ДО break** (иначе коммит последующих
+  прокатывает offset мимо незакоммиченного — та же потеря, что в 4.37).
+- **`paused_since` — метка первого откладывания**, не затирается на кругах циркуляции: по ней виден
+  возраст бэклога (нужно для баннера §3.6 «узел в паузе X дней»). `last_requeue_at` обновляется.
+- **Известные ограничения (приняты осознанно):**
+  - *Дубли.* Копия в delay-топик публикуется ДО коммита исходного сообщения; падение между шагами
+    даёт вторую копию. Контракт остаётся at-least-once (тот же класс, что у DLQ-репроцессора);
+    устранимо только Kafka-транзакциями — вне scope.
+  - *Порядок.* На границе `unpause` строгий FIFO рвётся: прочитанное до снятия паузы уезжает в хвост
+    и доставляется позже прочитанного после. Обещание «порядок сохраняется» из §3.6 п.4 снято.
+  - *Выключенный sweeper* = бэклог не доставится вообще и протухнет по retention. Наблюдаемость —
+    `nexus_kafka_lag` по группе `<group>-paused` (публикуется из `reportKafkaLag`).
+- **§35 обязан знать оба топика.** Иначе у paused-узла KPI «Ожидают отправки» показывает 0, а
+  «Очистить все ожидающие» не находит сообщений — отваливается главный юзкейс §34.4. `List`/`ScanIDs`
+  ходят по обоим источникам ([async_queue.go](../internal/web/usecase/async_queue.go) `sources()`),
+  **с дедупом по id**: циркулирующая копия встречается под разными offset'ами. `Body` принимает
+  topic с allow-list-проверкой (эндпоинт не должен стать универсальным ридером Kafka) — и по
+  delay-топику это best-effort: координата устаревает при переносе в хвост.
+- **Имя группы sweeper'а — общая константа** `config.PausedGroupSuffix` + `KafkaSection.PausedGroup()`:
+  её одинаково вычисляют Sender (читает топик) и Web (§35 считает peek от committed offset этой
+  группы). Разъедутся — вкладка «Очередь» покажет неверный бэклог.
+- **Грабли тестов sweeper'а.** `Run()` завершается по отмене контекста, а `Stop()` лишь закрывает
+  reader (так же устроен DLQ-репроцессор; в проде ctx отменяет runner при shutdown). Тестовый хелпер,
+  ждавший `done` после одного `Stop()`, вешал прогон до таймаута — нужен собственный производный ctx.
