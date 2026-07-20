@@ -573,6 +573,68 @@ func (u *NodeUsecase) Delete(ctx context.Context, actor Actor, id, teamID string
 	return nil
 }
 
+// MovePreview — что случится с таблицей логов при переносе узла в команду
+// targetTeamSlug. Считается ДО переноса, чтобы предупредить в UI: у операции
+// два неочевидных исхода, и оба меняют то, какие логи узел покажет дальше.
+type MovePreview struct {
+	// TargetTable — имя таблицы узла после переноса ("<db>.<table>").
+	TargetTable string `json:"target_table"`
+	// TableShared — исходную таблицу делят другие узлы: она останется у текущей
+	// команды вместе с историей, а узлу достанется отдельная таблица.
+	TableShared bool `json:"table_shared"`
+	// SharedWith — сколько ДРУГИХ узлов на исходной таблице (0, если личная).
+	SharedWith int `json:"shared_with"`
+	// TargetTableExists — в целевой команде уже есть таблица с этим именем:
+	// узел подключится к ней и увидит записи, которые писал не он.
+	TargetTableExists bool `json:"target_table_exists"`
+}
+
+// MovePreview собирает предпросмотр переноса (см. MovePreview).
+// Проверки best-effort: недоступность ClickHouse не должна блокировать
+// открытие диалога — в этом случае поле TargetTableExists остаётся false.
+func (u *NodeUsecase) MovePreview(ctx context.Context, nodeID, currentTeamID, targetTeamSlug string) (*MovePreview, error) {
+	n, err := u.repo.Get(ctx, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	if currentTeamID != "" && n.TeamID != currentTeamID {
+		return nil, domain.ErrNodeNotFound
+	}
+	if u.teams == nil {
+		return nil, fmt.Errorf("move preview requires TeamRepo")
+	}
+	target, err := u.teams.GetBySlug(ctx, targetTeamSlug)
+	if err != nil {
+		return nil, err
+	}
+	if target.ID == n.TeamID {
+		return nil, domain.ErrPermissionDenied
+	}
+
+	newTable := rebaseCHTable(n.ClickHouseTable, target.CHDatabase)
+	res := &MovePreview{TargetTable: newTable}
+	if n.ClickHouseTable == "" {
+		return res, nil
+	}
+
+	res.SharedWith = u.countCHTableSiblings(ctx, n.ClickHouseTable, n.ID)
+	res.TableShared = res.SharedWith > 0
+
+	if u.provisioner != nil && newTable != "" && newTable != n.ClickHouseTable {
+		exists, err := u.provisioner.TableExists(ctx, newTable)
+		if err != nil {
+			u.logger.Warn("move preview: target table check failed",
+				u.logger.Str("table", newTable), u.logger.Err(err))
+		} else {
+			res.TargetTableExists = exists
+		}
+	}
+	u.logger.Debug("move preview built",
+		u.logger.Str("path", n.Path), u.logger.Str("target_table", newTable),
+		u.logger.Int("shared_with", res.SharedWith))
+	return res, nil
+}
+
 // Move переносит узел в другую команду (multi-tenancy v2, Phase 11.B).
 //
 // PG-запись авторитетна: в одной UoW-транзакции меняются team_id и
@@ -665,6 +727,12 @@ func (u *NodeUsecase) relocateCHTable(ctx context.Context, moved *domain.Node, o
 		u.logger.Info("node move: CH table is shared, keeping it in place",
 			u.logger.Str("table", oldTable), u.logger.Str("path", moved.Path),
 			u.logger.Int("other_nodes", shared))
+		// Провижининг идёт через CREATE TABLE IF NOT EXISTS, поэтому «создать
+		// свою таблицу» превращается в «подключиться к чужой», если имя в
+		// целевой БД уже занято. Молчать об этом нельзя: узел сразу покажет
+		// записи, которых он не писал (ровно так «появились» счётчики у
+		// переехавшего узла на стенде).
+		u.warnIfTargetTableExists(ctx, moved, newTable)
 		// Новая таблица по шаблону узла. Мягкая деградация: узел уже перенесён,
 		// а таблицу дотянет provisionTable при следующем сохранении узла.
 		if err := u.provisionTable(ctx, moved); err != nil {
@@ -690,6 +758,25 @@ func (u *NodeUsecase) relocateCHTable(ctx context.Context, moved *domain.Node, o
 		u.logger.Warn("node move: CH rename failed (PG already moved)",
 			u.logger.Str("from", oldTable), u.logger.Str("to", newTable),
 			u.logger.Err(err))
+	}
+}
+
+// warnIfTargetTableExists предупреждает, что узел подключается к УЖЕ
+// существующей таблице целевой команды, а не получает пустую. Best-effort:
+// недоступный ClickHouse не должен мешать переносу, который уже произошёл.
+func (u *NodeUsecase) warnIfTargetTableExists(ctx context.Context, moved *domain.Node, newTable string) {
+	if u.provisioner == nil || newTable == "" {
+		return
+	}
+	exists, err := u.provisioner.TableExists(ctx, newTable)
+	if err != nil {
+		u.logger.Debug("node move: target CH table check failed",
+			u.logger.Str("table", newTable), u.logger.Err(err))
+		return
+	}
+	if exists {
+		u.logger.Warn("node move: target CH table already exists, node will read and write its data",
+			u.logger.Str("table", newTable), u.logger.Str("path", moved.Path))
 	}
 }
 

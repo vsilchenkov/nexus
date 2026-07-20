@@ -33,6 +33,12 @@ type TeamProvisioner interface {
 	// занятое имя падает; узел просто начнёт писать в существующую таблицу).
 	RenameTable(ctx context.Context, from, to string) error
 
+	// TableExists — есть ли таблица (имя в формате "<db>.<table>") в ClickHouse.
+	// Нужен предпросмотру переноса узла: имя таблицы, уже занятое в целевой
+	// команде, означает, что узел подключится к чужим данным, а не получит
+	// пустую таблицу.
+	TableExists(ctx context.Context, table string) (bool, error)
+
 	// CreateTable выполняет готовый `CREATE TABLE IF NOT EXISTS` DDL (§19).
 	// ddl рендерится доменным CHTemplate.RenderCreateTable; здесь имя таблицы
 	// (формат "<db>.<table>") валидируется и DDL выполняется. Идемпотентно.

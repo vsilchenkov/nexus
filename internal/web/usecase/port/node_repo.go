@@ -47,6 +47,11 @@ type NodeTableUsage interface {
 	// CountByCHTable возвращает число узлов с clickhouse_table = table,
 	// исключая excludeNodeID (сам переносимый узел). Пустое имя таблицы → 0.
 	CountByCHTable(ctx context.Context, table, excludeNodeID string) (int, error)
+
+	// CountsByCHTable — карта «полное имя таблицы → число узлов на ней» по всем
+	// командам. Один запрос вместо N: read-path логов спрашивает про таблицу на
+	// каждый запрос метрик/журнала, а таблиц в инсталляции — десятки.
+	CountsByCHTable(ctx context.Context) (map[string]int, error)
 }
 
 // NodeCache — кеш для node-конфигов в Redis (§9.2: write-through, cache-aside).

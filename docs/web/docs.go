@@ -3333,6 +3333,65 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/nodes/{id}/move-preview": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Считается ДО переноса, для предупреждения в диалоге. table_shared — исходную таблицу делят другие узлы (она останется у текущей команды, узлу создадут свою). target_table_exists — в целевой команде уже есть таблица с этим именем, и узел подключится к ней, увидев чужие записи.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "nodes"
+                ],
+                "summary": "Предпросмотр переноса узла: что будет с таблицей логов (admin only).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "target team slug",
+                        "name": "target_team_slug",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nexus_internal_web_usecase.MovePreview"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "same team / not allowed",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "node or target team not found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/{id}/status": {
             "patch": {
                 "security": [
@@ -7651,6 +7710,27 @@ const docTemplate = `{
                 "status": {
                     "description": "ok | failed | skipped",
                     "type": "string"
+                }
+            }
+        },
+        "nexus_internal_web_usecase.MovePreview": {
+            "type": "object",
+            "properties": {
+                "shared_with": {
+                    "description": "SharedWith — сколько ДРУГИХ узлов на исходной таблице (0, если личная).",
+                    "type": "integer"
+                },
+                "table_shared": {
+                    "description": "TableShared — исходную таблицу делят другие узлы: она останется у текущей\nкоманды вместе с историей, а узлу достанется отдельная таблица.",
+                    "type": "boolean"
+                },
+                "target_table": {
+                    "description": "TargetTable — имя таблицы узла после переноса (\"\u003cdb\u003e.\u003ctable\u003e\").",
+                    "type": "string"
+                },
+                "target_table_exists": {
+                    "description": "TargetTableExists — в целевой команде уже есть таблица с этим именем:\nузел подключится к ней и увидит записи, которые писал не он.",
+                    "type": "boolean"
                 }
             }
         },

@@ -8,6 +8,14 @@ import { Modal } from "../ui/Modal";
 
 type Team = { id: string; slug: string; name: string };
 
+// MovePreview — что случится с таблицей логов (GET /api/nodes/:id/move-preview).
+type MovePreview = {
+  target_table: string;
+  table_shared: boolean;
+  shared_with: number;
+  target_table_exists: boolean;
+};
+
 // MoveNodeDialog — перенос узла в другую команду (admin-only эндпоинт
 // POST /api/nodes/:id/move). Вызывается из формы правки узла (NodeSettings);
 // onMoved даёт вызывающему довести навигацию — после переноса узел уходит в
@@ -29,6 +37,16 @@ export function MoveNodeDialog({
   const teams = useQuery({
     queryKey: ["teams"],
     queryFn: () => api.get<{ items: Team[] }>("/api/teams"),
+  });
+
+  // Предпросмотр судьбы таблицы логов — запрашивается только когда команда
+  // выбрана: у переноса два неочевидных исхода, и оба меняют то, какие логи
+  // узел покажет после переезда.
+  const preview = useQuery({
+    queryKey: ["node-move-preview", node.id, slug],
+    queryFn: () =>
+      api.get<MovePreview>(`/api/nodes/${node.id}/move-preview`, { target_team_slug: slug }),
+    enabled: slug !== "",
   });
 
   const move = useMutation({
@@ -75,6 +93,34 @@ export function MoveNodeDialog({
           ))}
         </Select>
       </Field>
+      {preview.data && <MoveTablePreview preview={preview.data} />}
     </Modal>
+  );
+}
+
+// MoveTablePreview — что станет с таблицей логов после переноса. Показываем
+// только неочевидные исходы: обычный переезд таблицы вместе с узлом и так
+// описан подсказкой над полем.
+function MoveTablePreview({ preview }: { preview: MovePreview }) {
+  const { t } = useTranslation();
+  const notes: string[] = [];
+  if (preview.table_shared) {
+    notes.push(t("overview.move.preview.shared", { count: preview.shared_with }));
+  }
+  if (preview.target_table_exists) {
+    notes.push(t("overview.move.preview.target_exists", { table: preview.target_table }));
+  }
+  if (notes.length === 0) {
+    return null;
+  }
+  return (
+    <div className="mt-3 rounded-md border border-warn/30 bg-warn/10 px-3 py-2 text-[12px] text-warn">
+      <div className="mb-1 font-medium">{t("overview.move.preview.title")}</div>
+      <ul className="list-disc space-y-1 pl-4">
+        {notes.map((n) => (
+          <li key={n}>{n}</li>
+        ))}
+      </ul>
+    </div>
   );
 }

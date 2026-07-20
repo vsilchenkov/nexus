@@ -22,6 +22,10 @@ type movePlan struct {
 	renameErr    error
 	createdTable string
 	createErr    error
+	// existingTables — таблицы, уже присутствующие в ClickHouse (кейс «имя в
+	// целевой команде занято»).
+	existingTables map[string]bool
+	checkedExists  []string
 }
 
 func (p *movePlan) CreateDatabase(context.Context, string) error { return nil }
@@ -37,6 +41,11 @@ func (p *movePlan) CreateTable(_ context.Context, table, _ string) error {
 	return p.createErr
 }
 
+func (p *movePlan) TableExists(_ context.Context, table string) (bool, error) {
+	p.checkedExists = append(p.checkedExists, table)
+	return p.existingTables[table], nil
+}
+
 func (p *movePlan) VerifyTemplate(context.Context, string, *domain.CHTemplate) error { return nil }
 
 // tableUsageStub — port.NodeTableUsage: сколько ДРУГИХ узлов на той же таблице.
@@ -50,6 +59,12 @@ type tableUsageStub struct {
 func (s *tableUsageStub) CountByCHTable(_ context.Context, table, excludeNodeID string) (int, error) {
 	s.gotTbl, s.gotSkip = table, excludeNodeID
 	return s.others, s.err
+}
+
+// CountsByCHTable — Move им не пользуется (это read-path атрибуции логов),
+// реализован только чтобы стаб удовлетворял порту.
+func (s *tableUsageStub) CountsByCHTable(context.Context) (map[string]int, error) {
+	return nil, nil
 }
 
 // moveTeamRepo — целевая команда переноса (slug → CH-база).
@@ -187,6 +202,93 @@ func usageOrNil(s *tableUsageStub) port.NodeTableUsage {
 		return nil
 	}
 	return s
+}
+
+// TestNodeUC_MovePreview: предпросмотр обязан назвать оба неочевидных исхода
+// ДО переноса — общую таблицу (останется на месте) и занятое имя в целевой
+// команде (узел подключится к чужим данным, а не получит пустую таблицу).
+func TestNodeUC_MovePreview(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name           string
+		others         int
+		existing       map[string]bool
+		wantShared     bool
+		wantSharedWith int
+		wantExists     bool
+	}{
+		{
+			name:       "личная таблица, имя свободно",
+			others:     0,
+			wantShared: false,
+			wantExists: false,
+		},
+		{
+			name:           "общая таблица",
+			others:         2,
+			wantShared:     true,
+			wantSharedWith: 2,
+		},
+		{
+			name:       "имя занято в целевой команде",
+			others:     0,
+			existing:   map[string]bool{"nexus_target.orders": true},
+			wantExists: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			repo := newMemNodeRepo()
+			n := movableNode()
+			repo.items[n.ID] = n
+			prov := &movePlan{existingTables: tc.existing}
+			uc := newMoveUC(repo, prov, &tableUsageStub{others: tc.others})
+
+			got, err := uc.MovePreview(context.Background(), n.ID, "team1", "target")
+			require.NoError(t, err)
+
+			assert.Equal(t, "nexus_target.orders", got.TargetTable)
+			assert.Equal(t, tc.wantShared, got.TableShared)
+			assert.Equal(t, tc.wantSharedWith, got.SharedWith)
+			assert.Equal(t, tc.wantExists, got.TargetTableExists)
+			// Предпросмотр ничего не меняет.
+			assert.Equal(t, "team1", repo.items[n.ID].TeamID)
+			assert.Empty(t, prov.renameFrom)
+			assert.Empty(t, prov.createdTable)
+		})
+	}
+}
+
+// TestNodeUC_MovePreview_SameTeam: перенос в ту же команду — не операция.
+func TestNodeUC_MovePreview_SameTeam(t *testing.T) {
+	t.Parallel()
+	repo := newMemNodeRepo()
+	n := movableNode()
+	n.TeamID = "team2" // moveTeamRepo резолвит любой slug в team2
+	repo.items[n.ID] = n
+	uc := newMoveUC(repo, &movePlan{}, &tableUsageStub{})
+
+	_, err := uc.MovePreview(context.Background(), n.ID, "team2", "target")
+	assert.ErrorIs(t, err, domain.ErrPermissionDenied)
+}
+
+// TestNodeUC_Move_SharedTable_TargetExists: перенос на занятое имя должен
+// оставить след в логах — узел молча подключается к чужим данным.
+func TestNodeUC_Move_SharedTable_TargetExists(t *testing.T) {
+	t.Parallel()
+	repo := newMemNodeRepo()
+	n := movableNode()
+	repo.items[n.ID] = n
+	prov := &movePlan{existingTables: map[string]bool{"nexus_target.orders": true}}
+	uc := newMoveUC(repo, prov, &tableUsageStub{others: 2})
+
+	require.NoError(t, uc.Move(context.Background(), SystemActor(), n.ID, "team1", "target"))
+
+	assert.Contains(t, prov.checkedExists, "nexus_target.orders",
+		"перед провижинингом проверяем, не занято ли имя в целевой БД")
+	assert.Empty(t, prov.renameFrom, "общая таблица остаётся на месте")
 }
 
 // TestNodeUC_Move_SharedTable_ProvisionFails: создание новой таблицы для

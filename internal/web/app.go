@@ -425,6 +425,10 @@ func (a *App) Start(ctx context.Context) error {
 	if a.ch != nil {
 		// a.chMgr уже создан выше (вместе с teamProvisioner).
 		logReader := chreader.NewLogReader(a.chMgr, a.logger)
+		// На ОБЩЕЙ таблице логов записи без node_id не должны засчитываться
+		// каждому её узлу (иначе после переноса узел видит чужое, в т.ч. из
+		// другой команды). Карта «таблица → число узлов» кешируется внутри.
+		logReader.SetTableUsage(nodeRepo)
 		nodeLogMetrics = logReader // точные per-node метрики узла из CH-логов
 		failedPurger = logReader   // очистка «Неудачных доставок» из CH-логов
 		dispatcher := rcvdispatcher.NewHTTPDispatcher(a.cfg.Web.ReceiverURL, 30*time.Second, a.logger)

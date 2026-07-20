@@ -2054,6 +2054,26 @@ definitions:
         description: ok | failed | skipped
         type: string
     type: object
+  nexus_internal_web_usecase.MovePreview:
+    properties:
+      shared_with:
+        description: SharedWith — сколько ДРУГИХ узлов на исходной таблице (0, если
+          личная).
+        type: integer
+      table_shared:
+        description: |-
+          TableShared — исходную таблицу делят другие узлы: она останется у текущей
+          команды вместе с историей, а узлу достанется отдельная таблица.
+        type: boolean
+      target_table:
+        description: TargetTable — имя таблицы узла после переноса ("<db>.<table>").
+        type: string
+      target_table_exists:
+        description: |-
+          TargetTableExists — в целевой команде уже есть таблица с этим именем:
+          узел подключится к ней и увидит записи, которые писал не он.
+        type: boolean
+    type: object
   nexus_internal_web_usecase.RMQCheck:
     properties:
       consumer_count:
@@ -4235,6 +4255,47 @@ paths:
       security:
       - CookieAuth: []
       summary: Перенести узел в другую команду (admin only, multi-tenancy v2).
+      tags:
+      - nodes
+  /api/nodes/{id}/move-preview:
+    get:
+      description: Считается ДО переноса, для предупреждения в диалоге. table_shared
+        — исходную таблицу делят другие узлы (она останется у текущей команды, узлу
+        создадут свою). target_table_exists — в целевой команде уже есть таблица с
+        этим именем, и узел подключится к ней, увидев чужие записи.
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: target team slug
+        in: query
+        name: target_team_slug
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/nexus_internal_web_usecase.MovePreview'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "403":
+          description: same team / not allowed
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "404":
+          description: node or target team not found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: 'Предпросмотр переноса узла: что будет с таблицей логов (admin only).'
       tags:
       - nodes
   /api/nodes/{id}/status:

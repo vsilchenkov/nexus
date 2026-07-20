@@ -283,6 +283,33 @@ func (h *NodeHandler) Move(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// MovePreview godoc
+// @Summary  Предпросмотр переноса узла: что будет с таблицей логов (admin only).
+// @Description  Считается ДО переноса, для предупреждения в диалоге. table_shared — исходную таблицу делят другие узлы (она останется у текущей команды, узлу создадут свою). target_table_exists — в целевой команде уже есть таблица с этим именем, и узел подключится к ней, увидев чужие записи.
+// @Tags     nodes
+// @Produce  json
+// @Param    id                path   string  true  "node id"
+// @Param    target_team_slug  query  string  true  "target team slug"
+// @Success  200   {object}  usecase.MovePreview
+// @Failure  400   {object}  ErrorResponse
+// @Failure  403   {object}  ErrorResponse  "same team / not allowed"
+// @Failure  404   {object}  ErrorResponse  "node or target team not found"
+// @Security CookieAuth
+// @Router   /api/nodes/{id}/move-preview [get]
+func (h *NodeHandler) MovePreview(c *gin.Context) {
+	slug := c.Query("target_team_slug")
+	if slug == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "target_team_slug is required"})
+		return
+	}
+	res, err := h.uc.MovePreview(c.Request.Context(), c.Param("id"), currentTeamID(c), slug)
+	if err != nil {
+		h.replyDomainError(c, err, "node.move_preview")
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
 // CopyNodeRequest — тело POST /api/nodes/{id}/copy (§53).
 type CopyNodeRequest struct {
 	Path string `json:"path" binding:"required,max=255"`

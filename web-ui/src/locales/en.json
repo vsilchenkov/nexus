@@ -112,7 +112,12 @@
       "target_team": "Target team",
       "pick_team": "— pick team —",
       "hint": "The node moves to the selected team. Its ClickHouse log table follows only if the node owns it alone; a shared table stays with the current team along with its history, and the node gets a new one.",
-      "submit": "Move"
+      "submit": "Move",
+      "preview": {
+        "title": "What happens to the logs",
+        "shared": "The log table is shared with {{count}} more node(s) — it stays with the current team along with all its history, and this node gets a separate table.",
+        "target_exists": "The target team already has a table {{table}} — the node will attach to it and read and write its data instead of starting empty."
+      }
     }
   },
   "metrics": {

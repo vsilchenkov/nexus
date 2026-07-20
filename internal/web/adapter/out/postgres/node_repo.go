@@ -160,6 +160,31 @@ func (r *NodeRepoPg) CountByCHTable(ctx context.Context, table, excludeNodeID st
 	return n, nil
 }
 
+// CountsByCHTable — реализация port.NodeTableUsage: сколько узлов приходится
+// на каждую таблицу логов. Один запрос на всю инсталляцию (см. интерфейс).
+func (r *NodeRepoPg) CountsByCHTable(ctx context.Context) (map[string]int, error) {
+	rows, err := r.db.Query(ctx,
+		`SELECT clickhouse_table, count(*) FROM nodes WHERE clickhouse_table <> '' GROUP BY 1`)
+	if err != nil {
+		return nil, fmt.Errorf("counts by ch table: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]int)
+	for rows.Next() {
+		var table string
+		var n int
+		if err := rows.Scan(&table, &n); err != nil {
+			return nil, fmt.Errorf("scan counts by ch table: %w", err)
+		}
+		out[table] = n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate counts by ch table: %w", err)
+	}
+	return out, nil
+}
+
 func (r *NodeRepoPg) Create(ctx context.Context, n *domain.Node) error {
 	encAuth, err := r.cipher.Encrypt(n.AuthCredentials)
 	if err != nil {
