@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	kafka "github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/require"
 
 	"nexus/internal/domain"
@@ -90,6 +92,34 @@ type asyncHandler interface {
 	Handle(ctx context.Context, value []byte, headers map[string]string) senderuc.HandleResult
 }
 
+// startPausedSweeper поднимает sweeper delay-топика (§3.6) с коротким
+// интервалом. Возвращает функцию остановки; повторный вызов = рестарт sweeper'а.
+//
+// Run завершается по отмене контекста (Stop лишь закрывает reader — так же
+// устроен DLQ-репроцессор, и в проде ctx отменяет runner при shutdown), поэтому
+// здесь заводим собственный производный ctx.
+func (s *asyncStack) startPausedSweeper(ctx context.Context, interval time.Duration) func() {
+	proc := s.newProcessor(senderuc.WithPausedRequeue(s.cfg.Kafka.PausedTopic))
+	sw := kafkaadapter.NewPausedSweeper(s.cfg, proc, interval, 100, nil, s.logger)
+	sctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		sw.Run(sctx)
+	}()
+	return func() {
+		cancel()
+		sw.Stop()
+		<-done
+	}
+}
+
+// pausedRequeueOpt — опция основного consumer'а: переносить сообщения
+// paused-узлов в delay-топик (как в проде, см. sender/app.go).
+func (s *asyncStack) pausedRequeueOpt() senderuc.AsyncOption {
+	return senderuc.WithPausedRequeue(s.cfg.Kafka.PausedTopic)
+}
+
 func (s *asyncStack) close() { _ = s.producer.Close() }
 
 // produceEnvelope кладёт сообщение в nexus.async с ключом = path узла
@@ -158,17 +188,6 @@ func (h *hitRecorder) count(p string) int {
 	return n
 }
 
-// excluding — порядок попаданий без служебных (warmup) путей.
-func (h *hitRecorder) excluding(skip string) []string {
-	out := make([]string, 0, len(h.snapshot()))
-	for _, got := range h.snapshot() {
-		if got != skip {
-			out = append(out, got)
-		}
-	}
-	return out
-}
-
 // warmupConsumer доказывает, что consumer уже присоединился к группе и активно
 // читает партицию: кладёт сообщение enabled-узла и ждёт его доставки.
 //
@@ -215,98 +234,98 @@ func createAsyncNode(t *testing.T, ctx context.Context, nodeUC *webuc.NodeUsecas
 	return n
 }
 
-// TestSender_Async_PausedDeliveredAfterUnpause (§3.6): сообщение paused-узла
-// должно доставиться ПОСЛЕ снятия паузы — без рестарта Sender'а.
-//
-// Это репро бага: kafka-go FetchMessage без commit'а двигает внутренний курсор и
-// сам по себе НЕ передоставляет сообщение на том же reader'е (см. комментарий в
-// clog_retry_consumer.go). Старый код на HandleRetry просто шёл к следующему
-// fetch — сообщение зависало до рестарта/ребаланса, и этот тест падал с hits==0.
-// Фикс — retry-in-place: то же сообщение переобрабатывается до не-Retry.
-func TestSender_Async_PausedDeliveredAfterUnpause(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
-	defer cancel()
+// setupPausedStack — общий сетап тестов delay-топика: PG + Kafka + mock-узел +
+// stack с созданными топиками (включая PausedTopic).
+func setupPausedStack(t *testing.T, ctx context.Context, group string) (*asyncStack, *hitRecorder, *httptest.Server, *pgxpool.Pool) {
+	t.Helper()
 
 	pool, pgCleanup := startPostgres(t, ctx)
-	defer pgCleanup()
+	t.Cleanup(pgCleanup)
 	brokers, kafkaCleanup := startKafka(t, ctx)
-	defer kafkaCleanup()
+	t.Cleanup(kafkaCleanup)
 
 	rec := &hitRecorder{}
 	mock := newHitServer(rec)
-	defer mock.Close()
+	t.Cleanup(mock.Close)
 
-	cfg := newKafkaTestConfig(brokers)
-	cfg.Kafka.ConsumerGroup = "nexus-sender-paused-it"
-	require.NoError(t, kafkapf.EnsureTopics(ctx, cfg, logging.NewNoop(), cfg.Kafka.AsyncTopic, cfg.Kafka.DLQTopic))
+	cfg := newKafkaTestConfig(brokers) // partitions=1 → все узлы в одной партиции
+	cfg.Kafka.ConsumerGroup = group
+	cfg.Kafka.PausedTopic = "nexus.async.paused"
+	require.NoError(t, kafkapf.EnsureTopics(ctx, cfg, logging.NewNoop(),
+		cfg.Kafka.AsyncTopic, cfg.Kafka.DLQTopic, cfg.Kafka.PausedTopic))
 
 	stack := newAsyncStack(t, pool, cfg)
-	defer stack.close()
+	t.Cleanup(stack.close)
+	return stack, rec, mock, pool
+}
+
+// TestSender_Async_PausedRequeuedToDelayTopic (§3.6): сообщение paused-узла
+// переезжает в delay-топик, и offset основного топика коммитится. Именно это
+// освобождает партицию — проверяем через отдельный reader delay-топика.
+func TestSender_Async_PausedRequeuedToDelayTopic(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
+	defer cancel()
+
+	stack, rec, mock, pool := setupPausedStack(t, ctx, "nexus-sender-requeue-it")
 
 	nodeUC := newAsyncNodeUsecase(t, ctx, pool, stack.cipher)
 	createAsyncNode(t, ctx, nodeUC, "demo/paused", mock.URL+"/paused", "test.demo_paused", domain.NodeStatusPaused)
 	createAsyncNode(t, ctx, nodeUC, "demo/warmup", mock.URL+"/warmup", "test.demo_warmup", domain.NodeStatusEnabled)
 
-	stop := stack.startConsumer(ctx, senderuc.WithPausedRetryAfter(200*time.Millisecond))
+	// Только основной consumer, БЕЗ sweeper'а: проверяем сам факт переноса.
+	stop := stack.startConsumer(ctx, stack.pausedRequeueOpt())
 	defer stop()
-
-	// Сначала убеждаемся, что consumer реально читает партицию, — иначе
-	// «нет доставки» ниже ничего не доказывает.
 	stack.warmupConsumer(t, ctx, rec, "demo/warmup", mock.URL+"/warmup", "/warmup")
+
+	delayReader := kafka.NewReader(kafka.ReaderConfig{
+		Brokers:  []string{stack.cfg.Kafka.Brokers},
+		Topic:    stack.cfg.Kafka.PausedTopic,
+		GroupID:  "nexus-delay-watcher-it",
+		MaxWait:  500 * time.Millisecond,
+		MinBytes: 1,
+		MaxBytes: 1 << 20,
+	})
+	defer delayReader.Close()
 
 	stack.produceEnvelope(t, ctx, "paused-1", "demo/paused", mock.URL+"/paused", `{"hello":"paused"}`)
 
-	// Пока узел на паузе — доставки нет (несколько retry-циклов подряд).
-	time.Sleep(3 * time.Second)
-	require.Zero(t, rec.count("/paused"), "paused-узел не должен получать трафик")
+	fetchCtx, fetchCancel := context.WithTimeout(ctx, 90*time.Second)
+	defer fetchCancel()
+	msg, err := delayReader.FetchMessage(fetchCtx)
+	require.NoError(t, err, "сообщение paused-узла обязано оказаться в delay-топике")
 
-	setNodeStatus(t, ctx, pool, "demo/paused", domain.NodeStatusEnabled)
+	hdrs := kafkaHeadersToMap(msg.Headers)
+	require.Equal(t, "paused-1", hdrs["id"])
+	require.Equal(t, "demo/paused", hdrs["node_path"])
+	require.Equal(t, "nexus.async", hdrs["orig_topic"])
+	require.NotEmpty(t, hdrs["paused_since"], "метка возраста бэклога проставлена")
+	require.Equal(t, "demo/paused", string(msg.Key), "ключ = путь узла (порядок бэклога узла)")
 
-	require.Eventually(t, func() bool { return rec.count("/paused") == 1 },
-		60*time.Second, 200*time.Millisecond,
-		"после снятия паузы сообщение должно доставиться БЕЗ рестарта consumer'а")
-
-	// Ровно один раз: retry-in-place не должен продублировать доставку.
-	time.Sleep(3 * time.Second)
-	require.Equal(t, 1, rec.count("/paused"), "доставка ровно одна, дублей нет")
+	require.Zero(t, rec.count("/paused"), "на паузе внешний узел трафика не получает")
 }
 
-// TestSender_Async_PausedNotLostAcrossNeighborCommit — критический сценарий
-// ПОТЕРИ сообщения. В одной партиции: msg1 узла A (paused) и msg2 узла B
-// (enabled). Старый код пропускал msg1 (Retry без commit'а), доставлял msg2 и
-// коммитил его offset — committed offset прокатывался МИМО msg1, и после
-// ребаланса/рестарта msg1 терялся навсегда.
+// TestSender_Async_PausedDoesNotBlockNeighbor — ГЛАВНАЯ цель фичи: сообщение
+// узла на паузе не задерживает соседей по партиции.
 //
-// Ожидаемое (исправленное) поведение: msg1 держит партицию до снятия паузы
-// (head-of-line blocking — цена гарантии порядка), затем доставляются оба
-// сообщения по порядку. Ничего не теряется.
-func TestSender_Async_PausedNotLostAcrossNeighborCommit(t *testing.T) {
+// В одной партиции: msg1 узла A (paused) идёт ПЕРВЫМ, msg2 узла B (enabled) —
+// вторым. Раньше (retry-in-place) msg1 держал партицию, и B молчал до снятия
+// паузы; ещё раньше (до Phase 2) msg1 вообще терялся при коммите msg2.
+// Теперь msg1 уезжает в delay-топик, а B доставляется немедленно.
+func TestSender_Async_PausedDoesNotBlockNeighbor(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
 	defer cancel()
 
-	pool, pgCleanup := startPostgres(t, ctx)
-	defer pgCleanup()
-	brokers, kafkaCleanup := startKafka(t, ctx)
-	defer kafkaCleanup()
-
-	rec := &hitRecorder{}
-	mock := newHitServer(rec)
-	defer mock.Close()
-
-	cfg := newKafkaTestConfig(brokers) // partitions=1 → оба сообщения в одной партиции
-	cfg.Kafka.ConsumerGroup = "nexus-sender-noloss-it"
-	require.NoError(t, kafkapf.EnsureTopics(ctx, cfg, logging.NewNoop(), cfg.Kafka.AsyncTopic, cfg.Kafka.DLQTopic))
-
-	stack := newAsyncStack(t, pool, cfg)
-	defer stack.close()
+	stack, rec, mock, pool := setupPausedStack(t, ctx, "nexus-sender-isolation-it")
 
 	nodeUC := newAsyncNodeUsecase(t, ctx, pool, stack.cipher)
 	createAsyncNode(t, ctx, nodeUC, "demo/blocked", mock.URL+"/blocked", "test.demo_blocked", domain.NodeStatusPaused)
 	createAsyncNode(t, ctx, nodeUC, "demo/healthy", mock.URL+"/healthy", "test.demo_healthy", domain.NodeStatusEnabled)
 	createAsyncNode(t, ctx, nodeUC, "demo/warmup", mock.URL+"/warmup", "test.demo_warmup", domain.NodeStatusEnabled)
 
-	stop := stack.startConsumer(ctx, senderuc.WithPausedRetryAfter(200*time.Millisecond))
+	stop := stack.startConsumer(ctx, stack.pausedRequeueOpt())
 	defer stop()
+	stopSweep := stack.startPausedSweeper(ctx, time.Second)
+	defer stopSweep()
 
 	stack.warmupConsumer(t, ctx, rec, "demo/warmup", mock.URL+"/warmup", "/warmup")
 
@@ -314,19 +333,97 @@ func TestSender_Async_PausedNotLostAcrossNeighborCommit(t *testing.T) {
 	stack.produceEnvelope(t, ctx, "blocked-1", "demo/blocked", mock.URL+"/blocked", `{"n":1}`)
 	stack.produceEnvelope(t, ctx, "healthy-1", "demo/healthy", mock.URL+"/healthy", `{"n":2}`)
 
-	// Пока голова партиции на паузе — НИЧЕГО не доставляется, включая
-	// сообщение здорового узла. Именно здесь падал старый код: он доставлял
-	// и коммитил /healthy, теряя /blocked.
-	time.Sleep(5 * time.Second)
-	require.Empty(t, rec.excluding("/warmup"),
-		"paused-сообщение в голове партиции блокирует очередь; commit соседа = потеря")
+	// Сосед доставляется, НЕ дожидаясь снятия паузы, — это и есть изоляция.
+	require.Eventually(t, func() bool { return rec.count("/healthy") == 1 },
+		60*time.Second, 200*time.Millisecond,
+		"сообщение здорового узла не должно ждать paused-соседа по партиции")
+	require.Zero(t, rec.count("/blocked"), "узел на паузе трафик не получает")
 
 	setNodeStatus(t, ctx, pool, "demo/blocked", domain.NodeStatusEnabled)
 
-	require.Eventually(t, func() bool { return len(rec.excluding("/warmup")) == 2 },
+	require.Eventually(t, func() bool { return rec.count("/blocked") == 1 },
 		60*time.Second, 200*time.Millisecond,
-		"после снятия паузы должны доставиться ОБА сообщения — ни одно не потеряно")
+		"после снятия паузы sweeper доставляет отложенное сообщение")
 
-	require.Equal(t, []string{"/blocked", "/healthy"}, rec.excluding("/warmup"),
-		"порядок партиции сохранён: разблокированная голова уходит первой")
+	time.Sleep(5 * time.Second)
+	require.Equal(t, 1, rec.count("/blocked"), "ровно одна доставка, циркуляция не дублирует")
+	require.Equal(t, 1, rec.count("/healthy"))
+}
+
+// TestSender_Async_PausedBacklogDeliveredAfterUnpause: накопленный за паузу
+// бэклог уезжает после снятия паузы — целиком и без рестарта Sender'а.
+func TestSender_Async_PausedBacklogDeliveredAfterUnpause(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+	defer cancel()
+
+	stack, rec, mock, pool := setupPausedStack(t, ctx, "nexus-sender-backlog-it")
+
+	nodeUC := newAsyncNodeUsecase(t, ctx, pool, stack.cipher)
+	createAsyncNode(t, ctx, nodeUC, "demo/paused", mock.URL+"/paused", "test.demo_paused", domain.NodeStatusPaused)
+	createAsyncNode(t, ctx, nodeUC, "demo/warmup", mock.URL+"/warmup", "test.demo_warmup", domain.NodeStatusEnabled)
+
+	stop := stack.startConsumer(ctx, stack.pausedRequeueOpt())
+	defer stop()
+	stopSweep := stack.startPausedSweeper(ctx, time.Second)
+	defer stopSweep()
+
+	stack.warmupConsumer(t, ctx, rec, "demo/warmup", mock.URL+"/warmup", "/warmup")
+
+	const backlog = 5
+	for i := 1; i <= backlog; i++ {
+		stack.produceEnvelope(t, ctx, fmt.Sprintf("backlog-%d", i), "demo/paused",
+			mock.URL+"/paused", fmt.Sprintf(`{"n":%d}`, i))
+	}
+
+	// Бэклог циркулирует в delay-топике, внешний узел молчит.
+	time.Sleep(5 * time.Second)
+	require.Zero(t, rec.count("/paused"), "пока пауза — доставки нет")
+
+	setNodeStatus(t, ctx, pool, "demo/paused", domain.NodeStatusEnabled)
+
+	require.Eventually(t, func() bool { return rec.count("/paused") == backlog },
+		90*time.Second, 200*time.Millisecond,
+		"после снятия паузы должен уехать ВЕСЬ бэклог")
+
+	time.Sleep(5 * time.Second)
+	require.Equal(t, backlog, rec.count("/paused"), "без дублей: каждое сообщение доставлено один раз")
+}
+
+// TestSender_Async_PausedBacklogSurvivesSweeperRestart: рестарт Sender'а посреди
+// циркуляции не теряет бэклог. Дубли допустимы (at-least-once), потеря — нет.
+func TestSender_Async_PausedBacklogSurvivesSweeperRestart(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+	defer cancel()
+
+	stack, rec, mock, pool := setupPausedStack(t, ctx, "nexus-sender-sweeprestart-it")
+
+	nodeUC := newAsyncNodeUsecase(t, ctx, pool, stack.cipher)
+	createAsyncNode(t, ctx, nodeUC, "demo/paused", mock.URL+"/paused", "test.demo_paused", domain.NodeStatusPaused)
+	createAsyncNode(t, ctx, nodeUC, "demo/warmup", mock.URL+"/warmup", "test.demo_warmup", domain.NodeStatusEnabled)
+
+	stop := stack.startConsumer(ctx, stack.pausedRequeueOpt())
+	defer stop()
+	stack.warmupConsumer(t, ctx, rec, "demo/warmup", mock.URL+"/warmup", "/warmup")
+
+	const backlog = 3
+	for i := 1; i <= backlog; i++ {
+		stack.produceEnvelope(t, ctx, fmt.Sprintf("restart-%d", i), "demo/paused",
+			mock.URL+"/paused", fmt.Sprintf(`{"n":%d}`, i))
+	}
+
+	// Первый sweeper покрутил бэклог и остановился (рестарт сервиса).
+	stopSweep := stack.startPausedSweeper(ctx, time.Second)
+	time.Sleep(5 * time.Second)
+	stopSweep()
+	require.Zero(t, rec.count("/paused"), "на паузе доставки не было")
+
+	setNodeStatus(t, ctx, pool, "demo/paused", domain.NodeStatusEnabled)
+
+	// Новый sweeper той же группы обязан найти весь бэклог.
+	stopSweep2 := stack.startPausedSweeper(ctx, time.Second)
+	defer stopSweep2()
+
+	require.Eventually(t, func() bool { return rec.count("/paused") >= backlog },
+		90*time.Second, 200*time.Millisecond,
+		"после рестарта sweeper'а бэклог не потерян")
 }
