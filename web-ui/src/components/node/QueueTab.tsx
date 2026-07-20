@@ -66,7 +66,9 @@ export function QueueTab({
 
   const [pendingExpanded, setPendingExpanded] = useState<string | null>(null);
   const [failedExpanded, setFailedExpanded] = useState<string | null>(null);
-  const [replayId, setReplayId] = useState<string | null>(null);
+  // id + HTTP-глагол строки — ReplayDialog по нему решает, требуется ли тело
+  // (GET — без тела) и какой метод реинъекции покажет поведение бэкенда.
+  const [replay, setReplay] = useState<{ id: string; httpMethod?: string } | null>(null);
 
   // Живая очередь (pending) — только admin. На паузе опрашиваем часто (очередь
   // наполняется, нужна живая обратная связь); если есть pending — реже; на
@@ -386,7 +388,7 @@ export function QueueTab({
                     nodeId={id}
                     open={failedExpanded === r.id}
                     onToggle={() => setFailedExpanded(failedExpanded === r.id ? null : r.id)}
-                    onReplay={() => setReplayId(r.id)}
+                    onReplay={() => setReplay({ id: r.id, httpMethod: r.http_method })}
                     canReplay={isManager}
                   />
                 ))}
@@ -396,7 +398,15 @@ export function QueueTab({
         )}
       </section>
 
-      {replayId && <ReplayDialog logId={replayId} nodeId={id} onClose={() => setReplayId(null)} />}
+      {replay && (
+        <ReplayDialog
+          logId={replay.id}
+          nodeId={id}
+          httpMethod={replay.httpMethod}
+          incomingMethod={node.incoming_method}
+          onClose={() => setReplay(null)}
+        />
+      )}
     </div>
   );
 }

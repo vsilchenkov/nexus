@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { RefreshCw, ShieldQuestion } from "lucide-react";
 
 import { api } from "../api/client";
 import { Button, Field, Hint, Input, Modal, Textarea } from "./ui";
+import type { LogDetail } from "./node/types";
 
 type ReplayResult = {
   new_log_id: string;
@@ -14,10 +16,16 @@ type ReplayResult = {
 export function ReplayDialog({
   logId,
   nodeId,
+  httpMethod,
+  incomingMethod,
   onClose,
 }: {
   logId: string;
   nodeId: string;
+  /** HTTP-глагол исходного запроса из строки лога (колонка http_method, §39). */
+  httpMethod?: string;
+  /** Входящий метод узла — replay реинъектит именно его (ANY → глагол лога). */
+  incomingMethod?: string;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -25,9 +33,33 @@ export function ReplayDialog({
   const [syncOverride, setSyncOverride] = useState(false);
   const [useNodeAuth, setUseNodeAuth] = useState(true);
   const [customAuth, setCustomAuth] = useState("");
+  // null = prefill из детали лога ещё не применён (после — всегда строка).
+  const [params, setParams] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ReplayResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Эффективный метод реинъекции — зеркалит выбор бэкенда (replay.go):
+  // node.IncomingMethod; для ANY — глагол исходного запроса; fallback POST.
+  // По нему решаем, нужно ли тело: у GET его нет by design.
+  const effectiveMethod = (incomingMethod === "ANY" ? httpMethod : incomingMethod) || "POST";
+  const isGet = effectiveMethod === "GET";
+
+  // Prefill поля «Параметры» из детали лога (список параметры не отдаёт).
+  // Тот же queryKey, что у раскрытой строки (LogBodies) — кеш общий.
+  const detail = useQuery({
+    queryKey: ["log", nodeId, logId],
+    queryFn: () => api.get<LogDetail>(`/api/nodes/${nodeId}/log/${logId}`),
+    staleTime: 60_000,
+  });
+  useEffect(() => {
+    if (params !== null || !detail.data) return;
+    const qp = new URLSearchParams(detail.data.parameters ?? "");
+    // Служебный маркер прошлого replay не должен утекать в новый запрос —
+    // бэкенд поставит свежий __replay_of сам.
+    qp.delete("__replay_of");
+    setParams(qp.toString());
+  }, [detail.data, params]);
 
   async function run() {
     setBusy(true);
@@ -36,7 +68,11 @@ export function ReplayDialog({
     try {
       const r = await api.post<ReplayResult>(`/api/logs/${logId}/replay`, {
         node_id: nodeId,
-        body_override: bodyOverride || undefined,
+        // GET — без тела: поле скрыто, оригинальное тело не требуется.
+        body_override: isGet ? undefined : bodyOverride || undefined,
+        // null (деталь не успела загрузиться, поле нетронуто) → не слать:
+        // бэкенд возьмёт параметры оригинала сам.
+        params_override: params ?? undefined,
         sync_override: syncOverride,
         use_node_auth: useNodeAuth,
         custom_auth: customAuth || undefined,
@@ -66,8 +102,22 @@ export function ReplayDialog({
         </>
       }
     >
-      <Field label={t("replay.body_label")}>
-        <Textarea rows={4} value={bodyOverride} onChange={(e) => setBodyOverride(e.target.value)} />
+      {!isGet && (
+        <Field label={t("replay.body_label")}>
+          <Textarea rows={4} value={bodyOverride} onChange={(e) => setBodyOverride(e.target.value)} />
+        </Field>
+      )}
+
+      <Field label={t("replay.params_label")} className={isGet ? "" : "mt-3"}>
+        <Input
+          mono
+          value={params ?? ""}
+          onChange={(e) => setParams(e.target.value)}
+          placeholder="a=1&b=2"
+        />
+        <Hint tone="muted" className="mt-1">
+          {t("replay.params_hint")}
+        </Hint>
       </Field>
 
       <label className="mt-3 flex items-center gap-2 text-[13px]">

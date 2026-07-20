@@ -553,7 +553,9 @@
     "custom_auth": "Custom Authorization header",
     "send": "Send replay",
     "security": "Tokens and Basic creds from the original are not restored (already *** in the log). Enter them manually if needed.",
-    "result_status": "status"
+    "result_status": "status",
+    "params_label": "Parameters (query)",
+    "params_hint": "String like a=1&b=2 — prefilled from the log, editable. Empty = send without parameters."
   },
   "dryrun": {
     "title": "Test request (dry-run)",
