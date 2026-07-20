@@ -415,6 +415,7 @@ UI умеет:
 |---|---|---|
 | `nexus.async` | Основная очередь async-сообщений | 30 дней |
 | `nexus.async.dlq` | Dead letter queue (исчерпан retry) | 30 дней |
+| `nexus.async.paused` | Delay-очередь сообщений узлов на паузе (§3.6): их переносят сюда, чтобы бэклог одного узла не задерживал соседей по партиции основного топика | 30 дней |
 | `nexus.config.events` | Pub/sub для оповещения инстансов о смене настроек (см. §8.4) | 1 час |
 
 **Retention 30 дней** означает, что сообщения хранятся в Kafka месяц с момента записи независимо от того, обработаны они или нет. Это даёт:
@@ -1129,6 +1130,7 @@ kafka:
   brokers: ${KAFKA_BROKERS:localhost:9092}  # comma-separated, в проде 3+ broker'а
   async_topic: nexus.async
   dlq_topic: nexus.async.dlq
+  paused_topic: nexus.async.paused   # §3.6: delay-очередь узлов на паузе
   consumer_group: nexus-sender
   # === Параметры топиков (применяются при автосоздании на старте) ===
   topic:

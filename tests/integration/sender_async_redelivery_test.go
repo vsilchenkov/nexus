@@ -39,6 +39,10 @@ type asyncStack struct {
 	producer *kafkapf.Producer
 	logw     *capturingLogWriter
 	logger   logging.Logger
+	// cancel — набор отменённых оператором сообщений (§34.4). nil, если тесту
+	// Redis не нужен; иначе processor обязан его учитывать, иначе отменённый
+	// бэклог всё равно уедет во внешний узел.
+	cancel senderuc.CancelSet
 }
 
 func newAsyncStack(t *testing.T, pool *pgxpool.Pool, cfg *config.Config) *asyncStack {
@@ -61,7 +65,7 @@ func (s *asyncStack) newProcessor(opts ...senderuc.AsyncOption) *senderuc.AsyncP
 	nodeReader := nodepg.New(s.pool, s.cipher, s.logger)
 	httpc := httpclient.New(&s.cfg.Sender.HTTPClient, s.logger, 64<<20)
 	sendUC := senderuc.NewSendUsecase(httpc, s.logw, nil, s.logger, 64<<20)
-	return senderuc.NewAsyncProcessor(nodeReader, sendUC, s.producer, nil, nil,
+	return senderuc.NewAsyncProcessor(nodeReader, sendUC, s.producer, s.cancel, nil,
 		s.cfg.Kafka.DLQTopic, nil, s.logger, opts...)
 }
 
