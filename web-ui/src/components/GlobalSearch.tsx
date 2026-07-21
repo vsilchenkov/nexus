@@ -105,7 +105,12 @@ export function GlobalSearch() {
     <Popover open={open} onOpenChange={setOpen}>
       <Command shouldFilter={false} className="w-full max-w-md">
         <PopoverAnchor asChild>
+          {/* onFocus/onClick на обёртке, а не на CommandPrimitive.Input: cmdk
+              управляет фокусом инпута сам и не пробрасывает наш onFocus, а
+              React-события focus всплывают — обёртка их ловит и открывает попап. */}
           <div
+            onFocus={() => setOpen(true)}
+            onClick={() => setOpen(true)}
             className={cn(
               "flex h-8 items-center gap-2 rounded-md border border-line bg-app px-2.5",
               "transition-colors focus-within:border-accent",
@@ -115,8 +120,10 @@ export function GlobalSearch() {
             <CommandPrimitive.Input
               ref={inputRef}
               value={q}
-              onValueChange={setQ}
-              onFocus={() => setOpen(true)}
+              onValueChange={(v) => {
+                setQ(v);
+                setOpen(true);
+              }}
               placeholder={t("search.placeholder")}
               className="h-full w-full bg-transparent text-[13px] text-fg outline-none placeholder:text-fg-subtle"
             />

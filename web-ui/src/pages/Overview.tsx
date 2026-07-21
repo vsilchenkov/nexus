@@ -260,14 +260,20 @@ export default function Overview() {
       <div className="flex flex-wrap items-center gap-2">
         <Popover open={historyOpen && hasHistory} onOpenChange={setHistoryOpen}>
           <PopoverAnchor asChild>
-            <div className="relative min-w-[200px] flex-1">
+            {/* onFocus/onClick на обёртке (React focus всплывает с инпута):
+                onClick переоткрывает попап после pointerdown-дисмисса Radix —
+                тот же приём, что в GlobalSearch. */}
+            <div
+              className="relative min-w-[200px] flex-1"
+              onFocus={() => setHistoryOpen(true)}
+              onClick={() => setHistoryOpen(true)}
+            >
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-subtle" />
               <Input
                 className="pl-9"
                 placeholder={t("overview.search_placeholder")}
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
-                onFocus={() => setHistoryOpen(true)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     recordIfValid(searchInput);
