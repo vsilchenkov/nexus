@@ -54,7 +54,6 @@ export function QueueTab({
   const qc = useQueryClient();
   const confirm = useConfirm();
   const id = node.id;
-  const isAdmin = useRoleAtLeast("admin");
   const isManager = useRoleAtLeast("manager");
   const hasLogsTable = !!node.clickhouse_table;
 
@@ -70,13 +69,13 @@ export function QueueTab({
   // (GET — без тела) и какой метод реинъекции покажет поведение бэкенда.
   const [replay, setReplay] = useState<{ id: string; httpMethod?: string } | null>(null);
 
-  // Живая очередь (pending) — только admin. На паузе опрашиваем часто (очередь
-  // наполняется, нужна живая обратная связь); если есть pending — реже; на
-  // enabled с пустой очередью — не молотим Kafka впустую.
+  // Живая очередь (pending) — manager+ («Управление узлами»). На паузе опрашиваем
+  // часто (очередь наполняется, нужна живая обратная связь); если есть pending —
+  // реже; на enabled с пустой очередью — не молотим Kafka впустую.
   const pendingQ = useQuery({
     queryKey: ["aq-list", id],
     queryFn: () => api.get<ListResp>(`/api/nodes/${id}/async-queue/messages`),
-    enabled: isAdmin,
+    enabled: isManager,
     refetchInterval: (q) => {
       if (node.status === "paused") return 4_000;
       const data = q.state.data as ListResp | undefined;
@@ -86,9 +85,9 @@ export function QueueTab({
   const pending = pendingQ.data?.items ?? [];
   const pendingCount = pending.length;
   const pendingCapped = pendingQ.data?.capped ?? false;
-  // Секцию показываем всегда (для admin) — пустое состояние объясняет, почему
+  // Секцию показываем всегда (для manager+) — пустое состояние объясняет, почему
   // на активном узле в очереди пусто (см. §35: неудачи уходят в логи/DLQ).
-  const showPending = isAdmin;
+  const showPending = isManager;
 
   // Неудачные доставки — ClickHouse (done=0) за период.
   // ВАЖНО: в queryKey — стабильный periodKey(period), НЕ periodWindow(period).
@@ -169,7 +168,7 @@ export function QueueTab({
       <KpiRow cols={2}>
         <Kpi
           label={t("queue.kpi.pending")}
-          value={isAdmin ? `${pendingCount}${pendingCapped ? "+" : ""}` : "—"}
+          value={isManager ? `${pendingCount}${pendingCapped ? "+" : ""}` : "—"}
           hint={t("queue.kpi.pending_hint")}
         />
         <Kpi
@@ -297,9 +296,9 @@ export function QueueTab({
         <div className="flex items-center justify-between gap-3">
           <h3 className="text-sm font-semibold text-fg">{t("queue.section.failed")}</h3>
           <div className="flex flex-wrap items-center justify-end gap-2">
-            {/* §36.11/§36.10: повтор всех сейчас + очистка неудачных. Admin-only
-                (маршруты async-queue под authedAdmin). */}
-            {isAdmin && hasLogsTable && (
+            {/* §36.11/§36.10: повтор всех сейчас + очистка неудачных. Manager+
+                («Управление узлами»; маршруты async-queue под authedManager). */}
+            {isManager && hasLogsTable && (
               <>
                 <Button
                   sm

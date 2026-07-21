@@ -3218,14 +3218,16 @@ Prometheus `NodeThroughput` для top-узлов. Все источники д�
   быстро. Дорогой DLQ-peek (`PeekDLQDepth/PeekDLQList`, до 5000×4 каждые 5с при 248k) — **удаляется**.
   Добавляется дешёвый `LogReader.CountFailed` + `GET /api/nodes/{id}/logs/failed-count` (для KPI); список/
   тело/replay — существующие `?done=no` + `/log/{id}` + `/logs/{id}/replay`.
-- **Честная семантика очистки.** Живая очередь — tombstone-purge (admin, кнопки только когда pending>0).
+- **Честная семантика очистки.** Живая очередь — tombstone-purge (manager+, кнопки только когда pending>0).
   Неудачи — **без удаления** (Kafka-DLQ физически не чистится — нет `DeleteRecords`, общая партиция; CH —
   история): фильтр по периоду + «Пауза»/«Отключить» узла (остановить рост) + replay. DLQ истекает по
   retention (30д).
 - **`PATCH /api/nodes/{id}/status`** (manager+) — лёгкая смена статуса для кнопок «Пауза»/«Отключить»
   (вместо полного PUT).
-- **RBAC-фикс §34.4:** failed-view — `logs:read` (viewer+); управление живой очередью — admin; вкладка
-  видна viewer+, admin-секция скрыта для не-admin (раньше все роли упирались в 403).
+- **RBAC-фикс §34.4:** failed-view — `logs:read` (viewer+); управление очередью (purge/purge-failed/
+  replay-failed) — **manager+** («Управление узлами»; изначально admin, открыто по запросу — вся группа
+  `/nodes/:id/async-queue/*` под `authedManager`); вкладка видна viewer+, секции управления скрыты для
+  не-manager.
 - **Интерфейс:** KPI-шапка («Ожидают отправки» | «Неудачные доставки») + две секции + hint-баннер,
   вместо «В очереди 0 / Очистить всё». Переиспользуются компоненты логов (`LogBodies`, `ReplayDialog`,
   `LogsInitialFilter`+`done`).
@@ -3268,12 +3270,12 @@ Prometheus `NodeThroughput` для top-узлов. Все источники д�
 (вкладка «Очередь»): (1) отменяет (tombstone, как §34.4) ID `done=0`-сообщений за окно → DLQ-репроцессор
 дропает их (`result=dropped`, перестаёт повторять); (2) lightweight-`DELETE` записей `done=0` из CH-таблицы
 узла → счётчик/список обнуляются сразу. Эндпоинт `POST /api/nodes/{id}/async-queue/purge-failed`
-(admin-only, `{from?,to?}`). Очистка pending (`.../purge`) теперь доступна всегда (не только на паузе).
+(manager+, `{from?,to?}`). Очистка pending (`.../purge`) теперь доступна всегда (не только на паузе).
 
 **«Повторить все сейчас» (§36.11):** форс-повтор всех неудачных узла за период — каждое `done=0`-сообщение
 пере-инжектируется через Receiver (как построчный replay) и при успехе его оригинал в DLQ отменяется
 (qcancel), чтобы не задвоить доставку (replay-копия + авто-повтор). Эндпоинт `POST
-/api/nodes/{id}/async-queue/replay-failed` (admin-only), cap 500/вызов. Реализация —
+/api/nodes/{id}/async-queue/replay-failed` (manager+), cap 500/вызов. Реализация —
 `ReplayUsecase.ReplayFailed` (общий `LogReader.FailedIDs` с §36.10 + `QueueCancelWriter`).
 
 **Out of scope (v2):** экспоненциальный per-message backoff; delay-топик; UI-дашборд репроцессинга.

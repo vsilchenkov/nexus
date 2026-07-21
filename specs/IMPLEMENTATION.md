@@ -628,7 +628,7 @@ DLQ) тормозила, «Очистить» был no-op, шапка плох�
 | §35.B2 Счётчик неудач из ClickHouse (`done=0`) | ✅ | `CountFailed` в [port/log_reader.go](../internal/web/usecase/port/log_reader.go) + [clickhouse/log_reader.go](../internal/web/adapter/out/clickhouse/log_reader.go); usecase [logs.go](../internal/web/usecase/logs.go); `GET /api/nodes/:id/logs/failed-count` ([logs_handler.go](../internal/web/adapter/in/http/logs_handler.go), scope `logs:read`); integration [log_count_errors_test.go](../tests/integration/log_count_errors_test.go) |
 | §35.B3 Лёгкая смена статуса `PATCH /nodes/:id/status` | ✅ | `NodeUsecase.SetStatus` ([node.go](../internal/web/usecase/node.go)) — только Status, без перепровижина; handler `UpdateStatus` ([node_handler.go](../internal/web/adapter/in/http/node_handler.go), `oneof=enabled paused disabled`); роут `authedManager.PATCH` ([routes.go](../internal/web/adapter/in/http/routes.go)); тест `TestNodeUC_SetStatus` |
 | §35.B1+B5 Удалить дорогой DLQ-peek, удешевить живую очередь | ✅ | Удалены `PeekDLQDepth/PeekDLQList/decodeDLQMeta/scanRecent/scanPartitionRaw` + порт/типы/usecase `DLQ*`/`/dlq/*` роуты/`dlqTopic`; живая очередь (`PeekList/Body/ScanIDs`) оставлена; `peekCapDefault` 5000→1000; мёртвый `/depth` (`PeekDepth/Depth`) убран по ISP — счётчик «ожидают» берётся из длины `PeekList` |
-| §35.B4 RBAC-фикс вкладки | ✅ | Failed-view = `logs:read` (viewer+); живая очередь = admin (секция «Ожидают» скрыта для не-admin через `useRoleAtLeast("admin")`); пауза/отключение = manager+ |
+| §35.B4 RBAC-фикс вкладки | ✅ | Failed-view = `logs:read` (viewer+); управление очередью = **manager+** (изначально admin; открыто роли «Управление узлами» по запросу — вся группа `/nodes/:id/async-queue/*` под `authedManager`; секции «Ожидают»/управление неудачами показаны через `useRoleAtLeast("manager")`); пауза/отключение = manager+ |
 | §35.F Переписать вкладку «Очередь» | ✅ | [QueueTab.tsx](../web-ui/src/components/node/QueueTab.tsx): KPI-шапка (ожидают/неудачи) + баннер (пауза/отключить) + 2 секции; failed из CH (`?done=no`), ленивое тело (`/log/:id`), replay (`ReplayDialog`), дип-линк «Открыть в логах» (`LogsInitialFilter.done`); i18n en/ru; бандл пересобран |
 
 **Неочевидности / решения.**
@@ -638,7 +638,7 @@ DLQ) тормозила, «Очистить» был no-op, шапка плох�
   убирает peek и берёт из CH (`CountFailed` + существующий `GET /logs?done=no`).
 - **§35/§36.10 — очистка неудачных доставок (обновлено).** Раньше: «удалить неудачи нельзя» (DLQ без
   DeleteRecords, CH-логи — история). Теперь оператор может принудительно очистить «Неудачные доставки»
-  узла (`POST /api/nodes/:id/async-queue/purge-failed`, admin-only): (1) ID `done=0`-сообщений за окно
+  узла (`POST /api/nodes/:id/async-queue/purge-failed`, **manager+**): (1) ID `done=0`-сообщений за окно
   отменяются tombstone'ом (как §34.4) → DLQ-репроцессор дропает их (`result=dropped`, перестаёт повторять);
   (2) записи `done=0` удаляются из CH-таблицы узла **lightweight DELETE** → счётчик/список обнуляются сразу.
   Физически DLQ по-прежнему не чистится (tombstone + commit). Реализация: `AsyncQueueUsecase.PurgeFailed`
@@ -646,7 +646,7 @@ DLQ) тормозила, «Очистить» был no-op, шапка плох�
   no-op. Тесты: unit `TestAsyncQueue_PurgeFailed_*`, integration `TestAsyncQueue_PurgeFailed_E2E`
   (qcancel в Redis + DELETE в CH). Replay и пауза/отключение остаются как раньше.
 - **§36.11 — «Повторить все сейчас».** Форс-повтор всех неудачных узла (`POST
-  /api/nodes/:id/async-queue/replay-failed`, admin-only): каждое `done=0`-сообщение за окно
+  /api/nodes/:id/async-queue/replay-failed`, **manager+**): каждое `done=0`-сообщение за окно
   пере-инжектируется через Receiver (`replayOne`, вынесен из `Replay`) и при успехе его оригинал в DLQ
   отменяется (qcancel) — иначе при восстановлении адреса доставилось бы дважды (replay-копия + авто-повтор;
   выбор пользователя — «Re-send + отменить оригиналы»). `ReplayUsecase` получил опц. `cancel`+`retention`

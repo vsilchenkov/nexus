@@ -37,7 +37,9 @@ Kafka-DLQ-peek удаляется** (§34.6 `PeekDLQDepth/PeekDLQList` скан�
 ### 35.3. Семантика очистки (честно)
 
 - **Живая очередь** (`nexus.async`, paused-узлы) — управляется tombstone'ами (§34.4): delete одного /
-  purge за период / всё. Остаётся, **admin-only**. В UI кнопки видны только когда есть pending (не no-op).
+  purge за период / всё. Роль **manager+** («Управление узлами»; изначально было admin-only, открыто
+  manager — управление очередью узла относится к управлению узлом, как пауза/отключение §35.4 и replay
+  §58). В UI кнопки видны только когда есть pending (не no-op).
 - **Неудачные доставки** (DLQ-сценарий) — **не удаляются** из вкладки. Причины: Kafka-DLQ физически не
   чистится (нет `DeleteRecords` в `segmentio/kafka-go`, партиция общая для узлов), а CH-логи — это история
   (истекает по log-retention/housekeeping). Вместо фейковой кнопки: фильтр по периоду (видны свежие),
@@ -57,9 +59,13 @@ Update): валидирует `status ∈ {enabled,paused,disabled}`, меняе
 viewer получали 403. После §35:
 
 - **Failed-view** (счётчик/список/тело/replay из логов) — `logs:read` (viewer+).
-- **Управление живой очередью** (peek live + tombstone delete/purge) — **admin**.
-- Фронт: вкладка видна viewer+ (failed-view работает); секция «Ожидают отправки» (admin-операции)
-  скрыта для не-admin (`useRoleAtLeast("admin")`); кнопки «Пауза/Отключить» — manager+.
+- **Управление очередью** (peek live + tombstone delete/purge + очистка неудач + «Повторить все
+  сейчас») — **manager+**. Изначально admin-only; открыто роли «Управление узлами» по запросу (та же
+  логика, что у паузы/отключения §35.4 и одиночного replay §58 — это управление узлом). Вся группа
+  маршрутов `/api/nodes/:id/async-queue/*` (`messages`/`purge`/`purge-failed`/`replay-failed`) — под
+  `authedManager`.
+- Фронт: вкладка видна viewer+ (failed-view работает); секции «Ожидают отправки» и кнопки управления
+  неудачами показаны для manager+ (`useRoleAtLeast("manager")`); кнопки «Пауза/Отключить» — manager+.
 
 ### 35.6. Интерфейс
 
