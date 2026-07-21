@@ -5764,6 +5764,10 @@ const docTemplate = `{
                 "created_at": {
                     "type": "string"
                 },
+                "created_by": {
+                    "description": "§63: логин автора создания и последнего изменения узла (для показа рядом\nс «Создано»/«Обновлено»). Пусто у узлов до миграции 0026.",
+                    "type": "string"
+                },
                 "dlq_retry_delay_seconds": {
                     "type": "integer"
                 },
@@ -5881,6 +5885,9 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "updated_at": {
+                    "type": "string"
+                },
+                "updated_by": {
                     "type": "string"
                 },
                 "url_allowed_hosts": {

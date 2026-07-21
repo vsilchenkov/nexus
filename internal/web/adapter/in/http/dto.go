@@ -155,6 +155,10 @@ type NodeResponse struct {
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// §63: логин автора создания и последнего изменения узла (для показа рядом
+	// с «Создано»/«Обновлено»). Пусто у узлов до миграции 0026.
+	CreatedBy string `json:"created_by"`
+	UpdatedBy string `json:"updated_by"`
 }
 
 // RMQStatus — runtime-снимок Puller-воркера узла RabbitMQAsync (§27.4, §27.8).
@@ -308,5 +312,7 @@ func nodeToResponse(n *domain.Node) NodeResponse {
 		PullPrefetch:              n.PullPrefetch,
 		CreatedAt:                 n.CreatedAt,
 		UpdatedAt:                 n.UpdatedAt,
+		CreatedBy:                 n.CreatedBy,
+		UpdatedBy:                 n.UpdatedBy,
 	}
 }
