@@ -19,13 +19,16 @@ import (
 type AppSettingsHandler struct {
 	uc     *usecase.AppSettingsUsecase
 	tester *usecase.SettingsTester
-	logger logging.Logger
+	// nodeDefaultMaxBodySize — §64: значение из конфига (web.node_default_max_body_size),
+	// которое форма создания узла подставляет в «Макс. размер тела».
+	nodeDefaultMaxBodySize int
+	logger                 logging.Logger
 }
 
 // NewAppSettingsHandler — tester опционален: nil отключает test-эндпоинты
 // (например в тестах, где не нужны live-коннекты к CH/Sentry).
-func NewAppSettingsHandler(uc *usecase.AppSettingsUsecase, tester *usecase.SettingsTester, logger logging.Logger) *AppSettingsHandler {
-	return &AppSettingsHandler{uc: uc, tester: tester, logger: logger}
+func NewAppSettingsHandler(uc *usecase.AppSettingsUsecase, tester *usecase.SettingsTester, nodeDefaultMaxBodySize int, logger logging.Logger) *AppSettingsHandler {
+	return &AppSettingsHandler{uc: uc, tester: tester, nodeDefaultMaxBodySize: nodeDefaultMaxBodySize, logger: logger}
 }
 
 // Get godoc
@@ -73,7 +76,13 @@ func (h *AppSettingsHandler) GetPublic(c *gin.Context) {
 	if s.General.MetricsRefetchMs != nil {
 		refetch = *s.General.MetricsRefetchMs
 	}
-	c.JSON(http.StatusOK, gin.H{"public_base_url": url, "metrics_refetch_ms": refetch})
+	c.JSON(http.StatusOK, gin.H{
+		"public_base_url":    url,
+		"metrics_refetch_ms": refetch,
+		// §64: дефолт формы создания узла. Из конфига, а не из app_settings —
+		// это параметр развёртывания, а не переключатель в UI.
+		"node_default_max_body_size": h.nodeDefaultMaxBodySize,
+	})
 }
 
 // Update godoc

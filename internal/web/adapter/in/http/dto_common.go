@@ -154,6 +154,9 @@ type PublicSettingsResponse struct {
 	PublicBaseURL string `json:"public_base_url"`
 	// §44.C: интервал автообновления метрик (мс) для дашборда/страниц узлов.
 	MetricsRefetchMs int `json:"metrics_refetch_ms"`
+	// §64: значение «Макс. размер тела», подставляемое формой при СОЗДАНИИ узла
+	// (web.node_default_max_body_size). Существующие узлы не затрагивает.
+	NodeDefaultMaxBodySize int `json:"node_default_max_body_size"`
 }
 
 // UserEnvelope — обёртка {"user": ...} для login/me.

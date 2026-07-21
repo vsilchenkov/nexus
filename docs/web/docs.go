@@ -5032,6 +5032,9 @@ const docTemplate = `{
                     "maximum": 2592000,
                     "minimum": 60
                 },
+                "external_table": {
+                    "type": "boolean"
+                },
                 "forward_headers": {
                     "type": "array",
                     "items": {
@@ -5774,6 +5777,9 @@ const docTemplate = `{
                 "dlq_ttl_seconds": {
                     "type": "integer"
                 },
+                "external_table": {
+                    "type": "boolean"
+                },
                 "forward_headers": {
                     "type": "array",
                     "items": {
@@ -5968,6 +5974,10 @@ const docTemplate = `{
                     "description": "§44.C: интервал автообновления метрик (мс) для дашборда/страниц узлов.",
                     "type": "integer"
                 },
+                "node_default_max_body_size": {
+                    "description": "§64: значение «Макс. размер тела», подставляемое формой при СОЗДАНИИ узла\n(web.node_default_max_body_size). Существующие узлы не затрагивает.",
+                    "type": "integer"
+                },
                 "public_base_url": {
                     "type": "string"
                 }
@@ -6141,6 +6151,9 @@ const docTemplate = `{
                     "type": "integer",
                     "maximum": 2592000,
                     "minimum": 60
+                },
+                "external_table": {
+                    "type": "boolean"
                 },
                 "forward_headers": {
                     "type": "array",

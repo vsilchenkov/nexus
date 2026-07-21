@@ -316,7 +316,7 @@ func (a *App) Start(ctx context.Context) error {
 	userHandler := httpadapter.NewUserHandler(userUC, authUC, a.logger)
 	tokenHandler := httpadapter.NewAPITokenHandler(tokenUC, a.logger)
 	auditHandler := httpadapter.NewAuditHandler(auditUC, a.logger)
-	appSettingsHandler := httpadapter.NewAppSettingsHandler(appSettingsUC, settingsTester, a.logger)
+	appSettingsHandler := httpadapter.NewAppSettingsHandler(appSettingsUC, settingsTester, a.cfg.Web.NodeDefaultMaxBodySize, a.logger)
 
 	// §51: консоль служебных логов — хвост Redis-колец nexus:logs:* трёх
 	// сервисов (admin-only, маршруты /api/logs*).
