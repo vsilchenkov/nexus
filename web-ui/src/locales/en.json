@@ -72,6 +72,13 @@
     "favorite_remove": "Remove from favorites",
     "drag_hint": "Drag to reorder"
   },
+  "search": {
+    "placeholder": "Search nodes across all teams…",
+    "no_results": "Nothing found",
+    "hint_min_chars": "Type at least 2 characters",
+    "history": "Recent searches",
+    "clear_history": "Clear history"
+  },
   "role": {
     "admin": "full access",
     "manager": "manage nodes",

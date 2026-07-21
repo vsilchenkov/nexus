@@ -71,6 +71,11 @@ export const TEAM_INDEPENDENT_KEYS = new Set([
   "allowed-hosts",
   "host-preview",
   "orphan-tables",
+  // §62: глобальный поиск и история — привязаны к пользователю/членствам, а не
+  // к текущей команде (эндпоинты /api/search/nodes и /api/me/search-history
+  // фильтруют по членствам и user_id), смена команды их не сбрасывает.
+  "node-search",
+  "search-history",
 ]);
 
 export const MY_TEAMS_KEY = ["me-teams"] as const;
