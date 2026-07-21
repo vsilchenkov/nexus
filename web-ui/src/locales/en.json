@@ -1107,6 +1107,8 @@
   },
   "common": {
     "updated_at": "Updated",
+    "created_at": "Created",
+    "author": "Author",
     "loading": "Loading…",
     "error": "Error",
     "ok": "OK",

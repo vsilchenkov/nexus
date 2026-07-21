@@ -126,11 +126,40 @@ export function ConfigTab({ node }: { node: Node }) {
         <Row label={t("node.fields.ch_table")}>
           <span className="font-mono">{node.clickhouse_table || "—"}</span>
         </Row>
-        <Row label={t("common.updated_at")}>
-          {new Date(node.updated_at).toLocaleString()}
+        {/* §63: «Создано» — всегда, с автором создателя. «Обновлено» — только
+            если узел меняли после создания (updated_at ≠ created_at; при
+            создании оба таймстемпа равны одному now() транзакции). */}
+        <Row label={t("common.created_at")}>
+          <DateWithAuthor at={node.created_at} by={node.created_by} t={t} />
         </Row>
+        {node.updated_at !== node.created_at && (
+          <Row label={t("common.updated_at")}>
+            <DateWithAuthor at={node.updated_at} by={node.updated_by} t={t} />
+          </Row>
+        )}
       </dl>
     </Card>
+  );
+}
+
+// DateWithAuthor — дата + «Автор: <логин>» (§63). Логин моноширинный; пусто → «—».
+function DateWithAuthor({
+  at,
+  by,
+  t,
+}: {
+  at: string;
+  by?: string;
+  t: (k: string) => string;
+}) {
+  return (
+    <span>
+      {new Date(at).toLocaleString()}
+      <span className="text-fg-subtle">
+        {" · "}
+        {t("common.author")}: <span className="font-mono">{by || "—"}</span>
+      </span>
+    </span>
   );
 }
 
