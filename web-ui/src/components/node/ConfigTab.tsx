@@ -75,7 +75,10 @@ export function ConfigTab({ node }: { node: Node }) {
         <Row label={t("node.fields.url_mode")}>{node.url_mode}</Row>
         {node.url_mode === "static" && (
           <Row label={t("node.fields.target_url")}>
-            <span className="font-mono break-all">{node.target_url || "—"}</span>
+            <div className="flex items-center gap-1.5">
+              <span className="min-w-0 font-mono break-all">{node.target_url || "—"}</span>
+              {node.target_url && <CopyButton value={node.target_url} />}
+            </div>
           </Row>
         )}
         {/* Авторизация раздельно: входящая (клиент → Receiver; скрыта для pull —
@@ -126,11 +129,44 @@ export function ConfigTab({ node }: { node: Node }) {
         <Row label={t("node.fields.ch_table")}>
           <span className="font-mono">{node.clickhouse_table || "—"}</span>
         </Row>
-        <Row label={t("common.updated_at")}>
-          {new Date(node.updated_at).toLocaleString()}
+        {/* §63: «Создано» — всегда, с автором создателя. «Обновлено» — только
+            если узел меняли после создания (updated_at ≠ created_at; при
+            создании оба таймстемпа равны одному now() транзакции). */}
+        <Row label={t("common.created_at")}>
+          <DateWithAuthor at={node.created_at} by={node.created_by} t={t} />
         </Row>
+        {node.updated_at !== node.created_at && (
+          <Row label={t("common.updated_at")}>
+            <DateWithAuthor at={node.updated_at} by={node.updated_by} t={t} />
+          </Row>
+        )}
       </dl>
     </Card>
+  );
+}
+
+// DateWithAuthor — дата + «Автор: <логин>» (§63). Логин моноширинный. Если автор
+// не заполнен (узлы до миграции 0026) — показываем только дату, без «Автор: —»:
+// пустая подпись не несёт информации и зашумляет строку.
+function DateWithAuthor({
+  at,
+  by,
+  t,
+}: {
+  at: string;
+  by?: string;
+  t: (k: string) => string;
+}) {
+  return (
+    <span>
+      {new Date(at).toLocaleString()}
+      {by && (
+        <span className="text-fg-subtle">
+          {" · "}
+          {t("common.author")}: <span className="font-mono">{by}</span>
+        </span>
+      )}
+    </span>
   );
 }
 

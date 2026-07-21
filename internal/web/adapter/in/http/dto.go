@@ -54,6 +54,7 @@ type CreateNodeRequest struct {
 	ClickHouseTable           string   `json:"clickhouse_table" binding:"omitempty,max=129"`
 	ClickHouseTemplateID      string   `json:"clickhouse_template_id" binding:"omitempty,uuid"`
 	ClickHouseRetentionDays   int32    `json:"clickhouse_retention_days" binding:"omitempty,min=0,max=3650"`
+	ExternalTable             bool     `json:"external_table"`
 	DLQTTLSeconds             int32    `json:"dlq_ttl_seconds" binding:"omitempty,min=60,max=2592000"`
 	DLQRetryDelaySeconds      int32    `json:"dlq_retry_delay_seconds" binding:"omitempty,min=1,max=86400"`
 	Comment                   string   `json:"comment" binding:"omitempty,max=2000"`
@@ -125,6 +126,7 @@ type NodeResponse struct {
 	ClickHouseTable           string   `json:"clickhouse_table"`
 	ClickHouseTemplateID      string   `json:"clickhouse_template_id"`
 	ClickHouseRetentionDays   int32    `json:"clickhouse_retention_days"`
+	ExternalTable             bool     `json:"external_table"`
 	DLQTTLSeconds             int32    `json:"dlq_ttl_seconds"`
 	DLQRetryDelaySeconds      int32    `json:"dlq_retry_delay_seconds"`
 	Comment                   string   `json:"comment"`
@@ -155,6 +157,10 @@ type NodeResponse struct {
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// §63: логин автора создания и последнего изменения узла (для показа рядом
+	// с «Создано»/«Обновлено»). Пусто у узлов до миграции 0026.
+	CreatedBy string `json:"created_by"`
+	UpdatedBy string `json:"updated_by"`
 }
 
 // RMQStatus — runtime-снимок Puller-воркера узла RabbitMQAsync (§27.4, §27.8).
@@ -229,6 +235,7 @@ func reqToDomain(r CreateNodeRequest) *domain.Node {
 		ClickHouseTable:           r.ClickHouseTable,
 		ClickHouseTemplateID:      r.ClickHouseTemplateID,
 		ClickHouseRetentionDays:   r.ClickHouseRetentionDays,
+		ExternalTable:             r.ExternalTable,
 		DLQTTLSeconds:             r.DLQTTLSeconds,
 		DLQRetryDelaySeconds:      r.DLQRetryDelaySeconds,
 		Comment:                   r.Comment,
@@ -284,6 +291,7 @@ func nodeToResponse(n *domain.Node) NodeResponse {
 		ClickHouseTable:           n.ClickHouseTable,
 		ClickHouseTemplateID:      n.ClickHouseTemplateID,
 		ClickHouseRetentionDays:   n.ClickHouseRetentionDays,
+		ExternalTable:             n.ExternalTable,
 		DLQTTLSeconds:             n.DLQTTLSeconds,
 		DLQRetryDelaySeconds:      n.DLQRetryDelaySeconds,
 		Comment:                   n.Comment,
@@ -308,5 +316,7 @@ func nodeToResponse(n *domain.Node) NodeResponse {
 		PullPrefetch:              n.PullPrefetch,
 		CreatedAt:                 n.CreatedAt,
 		UpdatedAt:                 n.UpdatedAt,
+		CreatedBy:                 n.CreatedBy,
+		UpdatedBy:                 n.UpdatedBy,
 	}
 }

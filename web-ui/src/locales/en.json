@@ -26,6 +26,7 @@
     "title": "ClickHouse schema sync",
     "subtitle": "apply template settings to the existing table via ALTER",
     "button": "Sync schema",
+    "external_table_forbidden": "Schema sync is not available: the node uses an external table managed outside Nexus",
     "loading": "Reading table schema…",
     "up_to_date": "The table schema already matches the template.",
     "table_missing": "The table does not exist yet (no logs written) — nothing to sync. It will be created on first write from the current template.",
@@ -71,6 +72,13 @@
     "favorite_add": "Add to favorites",
     "favorite_remove": "Remove from favorites",
     "drag_hint": "Drag to reorder"
+  },
+  "search": {
+    "placeholder": "Search nodes across all teams…",
+    "no_results": "Nothing found",
+    "hint_min_chars": "Type at least 2 characters",
+    "history": "Recent searches",
+    "clear_history": "Clear history"
   },
   "role": {
     "admin": "full access",
@@ -351,6 +359,7 @@
       "template_id": "ClickHouse template id must be a valid UUID",
       "logs_not_configured": "Logging is enabled but no ClickHouse table name is set — pick a template or set the table name",
       "clickhouse_table_format": "ClickHouse table name must be db.table using only letters, digits and underscore (e.g. nexus_default.my_table)",
+      "external_table_conflict": "An external table cannot be combined with a ClickHouse table template — the template means Nexus manages the table",
       "max_body_size_range": "Max body size must be between 0 and 10000000 bytes",
       "max_body_size_required": "Max body size must be greater than 0 when the limit is enabled",
       "rmq_host": "RabbitMQ host is required (1..253 characters)",
@@ -361,10 +370,18 @@
       "dlq_ttl_seconds": "DLQ TTL must be between 60 and 2592000 seconds",
       "dlq_retry_delay_seconds": "Retry delay must be between 1 and 86400 seconds"
     },
+    "verify": {
+      "button": "Check",
+      "ok": "The table structure matches the Nexus log schema",
+      "table_missing": "Table not found in ClickHouse",
+      "missing_columns": "Missing columns: {{cols}}",
+      "type_mismatch": "Type mismatch: {{list}}"
+    },
     "fields": {
       "ch_template": "Table template",
       "ch_template_manual": "(none / manual table)",
       "ch_template_hint": "Pick a template — the log table is created automatically on save. Leave empty to manage the table manually.",
+      "external_table": "External table",
       "id": "Node ID",
       "team": "Team",
       "method": "Method type",
@@ -409,6 +426,7 @@
       "ch_table": "Log table name in db.table form. Multiple nodes may write to one table (distinguished by node_id).",
       "ch_schema_change_warning": "Switching the template does not apply automatically to an already existing table: schema settings (compression, indexes, engine, native TTL) are set only when the table is created. To apply the new schema to the current table, click “Sync schema” below: compression, indexes, and native TTL are applied via ALTER. Engine, ORDER BY, and PARTITION BY cannot be changed this way — for those, use a new table name (a fresh table is created, old data stays in the previous one). Retention days apply to the current table automatically.",
       "retention_days": "How many days to keep the node's logs (older partitions are dropped by housekeeping). 0 — unlimited.",
+      "external_table": "Nexus does not manage this table: it neither creates nor renames it, never changes its structure and never drops its partitions (retention does not apply). Use it when another service writes into the table and Nexus only reads logs and metrics. Keeping the structure in line with the Nexus schema is the table owner's job — use «Check» to verify it.",
       "log_what": "What to store in the log beyond metadata: request body, response body, headers. Affects log volume.",
       "max_body": "Cap the size of stored request/response bodies in the log (in characters). Bodies are truncated to the limit; the checksum is computed over the full body.",
       "dlq_ttl": "How long to keep retrying failed async messages from the DLQ before giving up (terminal failure). Counted from receipt.",
@@ -1100,6 +1118,8 @@
   },
   "common": {
     "updated_at": "Updated",
+    "created_at": "Created",
+    "author": "Author",
     "loading": "Loading…",
     "error": "Error",
     "ok": "OK",

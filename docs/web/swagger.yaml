@@ -1,5 +1,13 @@
 basePath: /
 definitions:
+  internal_web_adapter_in_http.CHTableVerifyRequest:
+    properties:
+      table:
+        maxLength: 129
+        type: string
+    required:
+    - table
+    type: object
   internal_web_adapter_in_http.CHTemplateVerifyResponse:
     properties:
       code:
@@ -62,6 +70,8 @@ definitions:
         maximum: 2592000
         minimum: 60
         type: integer
+      external_table:
+        type: boolean
       forward_headers:
         items:
           type: string
@@ -594,10 +604,17 @@ definitions:
         type: string
       created_at:
         type: string
+      created_by:
+        description: |-
+          §63: логин автора создания и последнего изменения узла (для показа рядом
+          с «Создано»/«Обновлено»). Пусто у узлов до миграции 0026.
+        type: string
       dlq_retry_delay_seconds:
         type: integer
       dlq_ttl_seconds:
         type: integer
+      external_table:
+        type: boolean
       forward_headers:
         items:
           type: string
@@ -678,6 +695,8 @@ definitions:
         type: integer
       updated_at:
         type: string
+      updated_by:
+        type: string
       url_allowed_hosts:
         items:
           type: string
@@ -689,6 +708,25 @@ definitions:
       webhook_signature_header:
         type: string
       webhook_signature_prefix:
+        type: string
+    type: object
+  internal_web_adapter_in_http.NodeSearchItem:
+    properties:
+      id:
+        type: string
+      path:
+        type: string
+      root_method:
+        type: string
+      status:
+        type: string
+      target_url:
+        type: string
+      team_id:
+        type: string
+      team_name:
+        type: string
+      team_slug:
         type: string
     type: object
   internal_web_adapter_in_http.NodesMetricsResponse:
@@ -710,6 +748,11 @@ definitions:
       metrics_refetch_ms:
         description: '§44.C: интервал автообновления метрик (мс) для дашборда/страниц
           узлов.'
+        type: integer
+      node_default_max_body_size:
+        description: |-
+          §64: значение «Макс. размер тела», подставляемое формой при СОЗДАНИИ узла
+          (web.node_default_max_body_size). Существующие узлы не затрагивает.
         type: integer
       public_base_url:
         type: string
@@ -766,6 +809,20 @@ definitions:
       token:
         type: string
     type: object
+  internal_web_adapter_in_http.SearchHistoryResponse:
+    properties:
+      items:
+        items:
+          type: string
+        type: array
+    type: object
+  internal_web_adapter_in_http.SearchNodesResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.NodeSearchItem'
+        type: array
+    type: object
   internal_web_adapter_in_http.SwitchTeamResponse:
     properties:
       current_team_id:
@@ -816,6 +873,8 @@ definitions:
         maximum: 2592000
         minimum: 60
         type: integer
+      external_table:
+        type: boolean
       forward_headers:
         items:
           type: string
@@ -1606,6 +1665,14 @@ definitions:
       to:
         type: string
     type: object
+  internal_web_adapter_in_http.recordSearchRequest:
+    properties:
+      q:
+        maxLength: 1000
+        type: string
+    required:
+    - q
+    type: object
   internal_web_adapter_in_http.requestFieldRequest:
     properties:
       description:
@@ -1966,6 +2033,15 @@ definitions:
           отклоняется (ErrVersionOverrideForbidden). nil/"" = версия из git (ldflags).
         type: string
     type: object
+  nexus_internal_domain.LogColumnMismatch:
+    properties:
+      got:
+        type: string
+      name:
+        type: string
+      want:
+        type: string
+    type: object
   nexus_internal_domain.LoggingSettings:
     properties:
       level:
@@ -2052,6 +2128,23 @@ definitions:
       cron:
         type: string
       enabled:
+        type: boolean
+    type: object
+  nexus_internal_web_usecase.CHTableVerifyResult:
+    properties:
+      mismatched:
+        items:
+          $ref: '#/definitions/nexus_internal_domain.LogColumnMismatch'
+        type: array
+      missing:
+        items:
+          type: string
+        type: array
+      ok:
+        type: boolean
+      table:
+        type: string
+      table_missing:
         type: boolean
     type: object
   nexus_internal_web_usecase.DryRunReport:
@@ -2522,6 +2615,40 @@ paths:
       summary: Профиль текущей сессии.
       tags:
       - auth
+  /api/ch-tables/verify:
+    post:
+      consumes:
+      - application/json
+      description: 'Read-only: сверяет колонки и типы указанной ClickHouse-таблицы
+        с обязательной схемой логов. Лишние колонки допускаются. Расхождения возвращаются
+        в теле с ok=false (200), а не как ошибка запроса. ClickHouse не меняет.'
+      parameters:
+      - description: имя таблицы db.table
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.CHTableVerifyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/nexus_internal_web_usecase.CHTableVerifyResult'
+        "400":
+          description: некорректное имя таблицы
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "503":
+          description: ClickHouse недоступен
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Проверить структуру внешней таблицы логов (§64).
+      tags:
+      - nodes
   /api/ch-templates:
     get:
       produces:
@@ -3141,6 +3268,70 @@ paths:
       security:
       - CookieAuth: []
       summary: Сменить собственный пароль (self-service).
+      tags:
+      - auth
+  /api/me/search-history:
+    delete:
+      description: '§62: удалить все сохранённые строки поиска. Строго per-user.'
+      responses:
+        "204":
+          description: очищено
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Очистить историю поиска текущего пользователя.
+      tags:
+      - auth
+    get:
+      description: '§62: последние сохранённые строки поиска (не более 10), от свежих
+        к старым. Общая для глобального поиска в шапке и поля «Поиск» на странице
+        узлов. Строго per-user.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.SearchHistoryResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: История поиска узлов текущего пользователя.
+      tags:
+      - auth
+    post:
+      consumes:
+      - application/json
+      description: '§62: upsert строки в персональную историю (повтор всплывает наверх),
+        обрезка до 10 свежих. Мусор (пустая/короткая/слишком длинная строка) молча
+        игнорируется — тоже 204. Строго per-user.'
+      parameters:
+      - description: поисковая строка
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.recordSearchRequest'
+      responses:
+        "204":
+          description: записано (или проигнорировано как мусор)
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Сохранить строку поиска в историю текущего пользователя.
       tags:
       - auth
   /api/me/switch-team:
@@ -4512,6 +4703,38 @@ paths:
       summary: Создать поле запроса в справочнике (manager, §41).
       tags:
       - request-fields
+  /api/search/nodes:
+    get:
+      description: '§62: ILIKE по path/target_url в пределах членств пользователя.
+        Каждый узел — с командой-владельцем (для бейджа и авто-переключения при выборе).
+        Только session-cookie: API-токены однокомандные. q короче 2 рун → пустой список
+        (не ошибка).'
+      parameters:
+      - description: поисковая строка (≥ 2 рун)
+        in: query
+        name: q
+        required: true
+        type: string
+      - description: лимит, дефолт 20, max 50
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.SearchNodesResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Глобальный поиск узлов по всем командам пользователя.
+      tags:
+      - nodes
   /api/settings/app:
     get:
       description: Возвращает merge'нутые значения из БД. Секреты (DSN, password)

@@ -241,7 +241,8 @@ func (a *App) Start(ctx context.Context) error {
 	// после создания appSettingsUC.
 	sessionTTLProvider := usecase.NewSessionTTLProvider(a.cfg.Redis.SessionTTLSec)
 	authUC := usecase.NewAuthUsecase(userRepo, sessionRepo, teamRepo, auditUC, sessionTTLProvider.Get, a.logger).
-		WithFavoriteTeams(teamRepo) // §49: избранные команды (TeamRepoPg реализует и FavoriteTeamRepo)
+		WithFavoriteTeams(teamRepo). // §49: избранные команды (TeamRepoPg реализует и FavoriteTeamRepo)
+		WithSearchHistory(userRepo)  // §62: история поиска узлов (UserRepoPg реализует SearchHistoryRepo)
 	userUC := usecase.NewUserUsecase(userRepo, sessionRepo, teamRepo, auditUC, defaultTeamID, a.logger)
 
 	tokenRepo := pgrepo.NewAPITokenRepoPg(a.pg, a.logger)
@@ -315,7 +316,7 @@ func (a *App) Start(ctx context.Context) error {
 	userHandler := httpadapter.NewUserHandler(userUC, authUC, a.logger)
 	tokenHandler := httpadapter.NewAPITokenHandler(tokenUC, a.logger)
 	auditHandler := httpadapter.NewAuditHandler(auditUC, a.logger)
-	appSettingsHandler := httpadapter.NewAppSettingsHandler(appSettingsUC, settingsTester, a.logger)
+	appSettingsHandler := httpadapter.NewAppSettingsHandler(appSettingsUC, settingsTester, a.cfg.Web.NodeDefaultMaxBodySize, a.logger)
 
 	// §51: консоль служебных логов — хвост Redis-колец nexus:logs:* трёх
 	// сервисов (admin-only, маршруты /api/logs*).
@@ -332,11 +333,21 @@ func (a *App) Start(ctx context.Context) error {
 	// отсутствии ClickHouse → usecase вернёт ErrCHUnavailable (503). Handler
 	// создаём всегда: endpoint деградирует, а не исчезает.
 	var chSchemaInspector webport.CHSchemaInspector
+	// §64: тот же инспектор проверяет структуру внешней таблицы. Держим отдельную
+	// переменную конкретного типа: присвоение nil-указателя в интерфейсную
+	// переменную дало бы typed-nil, и проверка `columns == nil` в usecase не
+	// сработала бы (вместо 503 был бы паник-nil при вызове).
+	var chTableVerifyUC *usecase.CHTableVerifyUsecase
 	if a.chMgr != nil {
-		chSchemaInspector = chreader.NewSchemaInspector(a.chMgr, a.logger)
+		insp := chreader.NewSchemaInspector(a.chMgr, a.logger)
+		chSchemaInspector = insp
+		chTableVerifyUC = usecase.NewCHTableVerifyUsecase(insp, a.logger)
+	} else {
+		chTableVerifyUC = usecase.NewCHTableVerifyUsecase(nil, a.logger)
 	}
 	chSchemaUC := usecase.NewCHSchemaSyncUsecase(nodeUC, chTemplateRepo, chSchemaInspector, auditUC, a.logger)
 	chSchemaHandler := httpadapter.NewCHSchemaHandler(chSchemaUC, a.logger)
+	chTableVerifyHandler := httpadapter.NewCHTableVerifyHandler(chTableVerifyUC, a.logger)
 
 	// Каталог разрешённых хостов (§23). Не зависит от ClickHouse — создаётся
 	// всегда. Привязка к узлу пересобирает снимок nodes.url_allowed_hosts и
@@ -557,6 +568,7 @@ func (a *App) Start(ctx context.Context) error {
 		Orphan:        orphanHandler,
 		CHTemplate:    chTemplateHandler,
 		CHSchema:      chSchemaHandler,
+		CHTableVerify: chTableVerifyHandler,
 		HostAllowlist: hostAllowlistHandler,
 		HeaderCatalog: headerCatalogHandler,
 		RequestField:  requestFieldHandler,

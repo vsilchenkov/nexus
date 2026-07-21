@@ -154,6 +154,9 @@ type PublicSettingsResponse struct {
 	PublicBaseURL string `json:"public_base_url"`
 	// §44.C: интервал автообновления метрик (мс) для дашборда/страниц узлов.
 	MetricsRefetchMs int `json:"metrics_refetch_ms"`
+	// §64: значение «Макс. размер тела», подставляемое формой при СОЗДАНИИ узла
+	// (web.node_default_max_body_size). Существующие узлы не затрагивает.
+	NodeDefaultMaxBodySize int `json:"node_default_max_body_size"`
 }
 
 // UserEnvelope — обёртка {"user": ...} для login/me.
@@ -181,6 +184,12 @@ type FavoriteTeamsResponse struct {
 // SwitchTeamResponse — POST /api/me/switch-team.
 type SwitchTeamResponse struct {
 	CurrentTeamID string `json:"current_team_id"`
+}
+
+// SearchHistoryResponse — GET /api/me/search-history (§62): последние строки
+// поиска пользователя от свежих к старым (не более 10).
+type SearchHistoryResponse struct {
+	Items []string `json:"items"`
 }
 
 // NodesMetricsResponse — GET /api/metrics/nodes.

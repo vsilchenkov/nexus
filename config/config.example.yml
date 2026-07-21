@@ -230,6 +230,7 @@ web:
   replay_rate_limit_per_user_per_min: 10        # Лимит replay-запросов на пользователя в минуту.
   nodes_soft_limit: 10000                       # Мягкий лимит числа узлов (предупреждение в UI).
   nodes_hard_limit: 50000                       # Жёсткий лимит числа узлов (запрет создания сверх).
+  node_default_max_body_size: 50000             # §64: «Макс. размер тела» по умолчанию в форме СОЗДАНИЯ узла (лимит сразу включён). Существующие узлы не меняет.
   api_token_rate_limit_per_min: 100             # Лимит запросов по API-токену в минуту.
   rmq_test_rate_limit_per_min: 10               # Лимит POST /api/nodes/test-rmq на пользователя в минуту (§27.8).
   login_rate_limit_per_min: 10                  # Анти-брутфорс /api/auth/login: попыток/мин на IP и на login (Phase AUD.4). -1 = выключить.

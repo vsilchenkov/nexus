@@ -105,6 +105,8 @@ export type Node = {
   retry_backoff_ms?: number;
   clickhouse_table: string;
   clickhouse_template_id: string;
+  // §64: таблицей логов управляет не Nexus (оператор или посторонний писатель).
+  external_table: boolean;
   forward_headers: string[];
   log_request_body: boolean;
   log_response_body: boolean;
@@ -131,6 +133,10 @@ export type Node = {
   rmq_status?: RMQStatus;
   created_at: string;
   updated_at: string;
+  // §63: логин автора создания и последнего изменения узла. Пусто у узлов до
+  // миграции 0026 (в UI показывается «—»).
+  created_by?: string;
+  updated_by?: string;
 };
 
 // §27: ответ POST /api/nodes/test-rmq.
@@ -249,6 +255,18 @@ export type CHTemplate = {
   is_default: boolean;
   created_at: string;
   updated_at: string;
+};
+
+// §64: результат POST /api/ch-tables/verify — сверка структуры внешней таблицы
+// логов с обязательной схемой. Лишние колонки допускаются, поэтому ok=false
+// означает отсутствие таблицы либо непустые missing/mismatched.
+export type CHColumnMismatch = { name: string; want: string; got: string };
+export type CHTableVerifyResult = {
+  ok: boolean;
+  table: string;
+  table_missing: boolean;
+  missing: string[] | null;
+  mismatched: CHColumnMismatch[] | null;
 };
 
 // Kafka monitoring (§4 spec, /api/kafka/*). Admin-only.

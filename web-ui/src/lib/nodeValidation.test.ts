@@ -26,6 +26,8 @@ function base(): NodeFormLimits {
     max_body_size_enabled: false,
     max_body_size: 0,
     clickhouse_table: "",
+    clickhouse_template_id: "",
+    external_table: false,
     rmq_host: "",
     rmq_queue: "",
     pull_interval_sec: 5,
@@ -33,6 +35,22 @@ function base(): NodeFormLimits {
     pull_prefetch: 100,
   };
 }
+
+describe("validateNodeForm — §64 внешняя таблица", () => {
+  it("внешняя таблица несовместима с шаблоном", () => {
+    const v = validateNodeForm({ ...base(), external_table: true, clickhouse_template_id: "tpl-1" });
+    expect(v?.field).toBe("clickhouse_template_id");
+    expect(v?.code).toBe("node.validation.external_table_conflict");
+  });
+
+  it("внешняя таблица без шаблона — ok", () => {
+    expect(validateNodeForm({ ...base(), external_table: true })).toBeNull();
+  });
+
+  it("шаблон без внешней таблицы — ok", () => {
+    expect(validateNodeForm({ ...base(), clickhouse_template_id: "tpl-1" })).toBeNull();
+  });
+});
 
 describe("validateNodeForm — §41 обязательность поля динамической авторизации", () => {
   it("ok по умолчанию (без динамической авторизации)", () => {

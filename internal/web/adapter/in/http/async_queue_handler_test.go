@@ -37,7 +37,7 @@ func (r *aqNodeRepo) Count(_ context.Context, _ string) (int, error) { return 0,
 func (r *aqNodeRepo) Create(_ context.Context, _ *domain.Node) error { return nil }
 func (r *aqNodeRepo) Update(_ context.Context, _ *domain.Node) error { return nil }
 func (r *aqNodeRepo) Delete(_ context.Context, _ string) error       { return nil }
-func (r *aqNodeRepo) UpdateAllowedHostsSnapshot(_ context.Context, _ string, _ []string) error {
+func (r *aqNodeRepo) UpdateAllowedHostsSnapshot(_ context.Context, _ string, _ []string, _ string) error {
 	return nil
 }
 

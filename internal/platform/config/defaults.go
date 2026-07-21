@@ -244,6 +244,9 @@ func applyDefaults(c *Config) {
 	if c.Web.NodesHardLimit == 0 {
 		c.Web.NodesHardLimit = 50000
 	}
+	if c.Web.NodeDefaultMaxBodySize == 0 {
+		c.Web.NodeDefaultMaxBodySize = 50000 // §64
+	}
 	if c.Web.APITokenRateLimitPerMin == 0 {
 		c.Web.APITokenRateLimitPerMin = 100
 	}

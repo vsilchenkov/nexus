@@ -70,6 +70,13 @@ type setFavoriteTeamsRequest struct {
 	TeamIDs []string `json:"team_ids" binding:"omitempty,dive,uuid"`
 }
 
+// recordSearchRequest — POST /api/me/search-history (§62). Нормализацию (trim,
+// границы длины) и отсев мусора делает usecase; здесь только формальный лимит,
+// чтобы не принимать гигантские тела.
+type recordSearchRequest struct {
+	Q string `json:"q" binding:"required,max=1000"`
+}
+
 type changeOwnPasswordRequest struct {
 	CurrentPassword string `json:"current_password" binding:"required,min=1,max=128"`
 	NewPassword     string `json:"new_password" binding:"required,min=8,max=128"`
@@ -349,4 +356,76 @@ func (h *AuthHandler) SwitchTeam(c *gin.Context) {
 	}
 	c.Set(ctxSessionKey, updated)
 	c.JSON(http.StatusOK, gin.H{"current_team_id": updated.CurrentTeamID})
+}
+
+// SearchHistory godoc
+// @Summary  История поиска узлов текущего пользователя.
+// @Description  §62: последние сохранённые строки поиска (не более 10), от свежих к старым. Общая для глобального поиска в шапке и поля «Поиск» на странице узлов. Строго per-user.
+// @Tags     auth
+// @Produce  json
+// @Success  200  {object}  SearchHistoryResponse
+// @Failure  401  {object}  ErrorResponse
+// @Security CookieAuth
+// @Router   /api/me/search-history [get]
+func (h *AuthHandler) SearchHistory(c *gin.Context) {
+	s, ok := sessionFromCtx(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	// Никогда не ошибка (см. usecase): при сбое — пустой список.
+	items := h.uc.SearchHistory(c.Request.Context(), s.UserID)
+	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+// RecordSearch godoc
+// @Summary  Сохранить строку поиска в историю текущего пользователя.
+// @Description  §62: upsert строки в персональную историю (повтор всплывает наверх), обрезка до 10 свежих. Мусор (пустая/короткая/слишком длинная строка) молча игнорируется — тоже 204. Строго per-user.
+// @Tags     auth
+// @Accept   json
+// @Param    body  body  recordSearchRequest  true  "поисковая строка"
+// @Success  204   "записано (или проигнорировано как мусор)"
+// @Failure  400   {object}  ErrorResponse
+// @Failure  401   {object}  ErrorResponse
+// @Security CookieAuth
+// @Router   /api/me/search-history [post]
+func (h *AuthHandler) RecordSearch(c *gin.Context) {
+	s, ok := sessionFromCtx(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	var req recordSearchRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.uc.RecordSearch(c.Request.Context(), s.UserID, req.Q); err != nil {
+		h.logger.ErrorWithOp("record search", err, "auth.record_search")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// ClearSearchHistory godoc
+// @Summary  Очистить историю поиска текущего пользователя.
+// @Description  §62: удалить все сохранённые строки поиска. Строго per-user.
+// @Tags     auth
+// @Success  204  "очищено"
+// @Failure  401  {object}  ErrorResponse
+// @Security CookieAuth
+// @Router   /api/me/search-history [delete]
+func (h *AuthHandler) ClearSearchHistory(c *gin.Context) {
+	s, ok := sessionFromCtx(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	if err := h.uc.ClearSearchHistory(c.Request.Context(), s.UserID); err != nil {
+		h.logger.ErrorWithOp("clear search history", err, "auth.clear_search_history")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	c.Status(http.StatusNoContent)
 }

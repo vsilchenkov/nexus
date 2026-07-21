@@ -20,6 +20,7 @@ type Handlers struct {
 	Orphan        *OrphanHandler
 	CHTemplate    *CHTemplateHandler
 	CHSchema      *CHSchemaHandler
+	CHTableVerify *CHTableVerifyHandler
 	HostAllowlist *HostAllowlistHandler
 	HeaderCatalog *HeaderCatalogHandler
 	RequestField  *RequestFieldCatalogHandler
@@ -74,6 +75,11 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		// §49: избранные команды — self-service, только session-cookie
 		// (API-токен ограничен одной командой, избранное ему ни к чему).
 		authed.PUT("/me/favorite-teams", RequireSessionOnly(), h.Auth.SetFavoriteTeams)
+		// §62: история поиска узлов — self-service, только session-cookie
+		// (кросс-командный поиск для однокомандных API-токенов бессмыслен).
+		authed.GET("/me/search-history", RequireSessionOnly(), h.Auth.SearchHistory)
+		authed.POST("/me/search-history", RequireSessionOnly(), h.Auth.RecordSearch)
+		authed.DELETE("/me/search-history", RequireSessionOnly(), h.Auth.ClearSearchHistory)
 		// Self-service смена собственного пароля (§26): любая роль, только
 		// session-cookie (API-токенам пароль менять незачем).
 		authed.POST("/me/password", RequireSessionOnly(), h.Auth.ChangeOwnPassword)
@@ -92,6 +98,14 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		// Только session-cookie: API-токены однокомандные и команду не меняют.
 		// Проверяет членство пользователя — узел чужой команды скрыт (404, no-leak).
 		authed.GET("/nodes/:id/team", RequireSessionOnly(), h.Node.ResolveTeam)
+
+		// §62: глобальный поиск узлов по всем командам пользователя. Только
+		// session-cookie: кросс-командная выдача однокомандным API-токенам
+		// бессмысленна (как и /nodes/:id/team, /me/switch-team). Отдельный
+		// префикс /search/*, а не /nodes/search: static-сегмент "search"
+		// конфликтовал бы с wildcard ":id" из "/nodes/:id" в gin-роутере (ср.
+		// приём с "log" vs "logs" ниже).
+		authed.GET("/search/nodes", RequireSessionOnly(), h.Node.SearchAcrossTeams)
 
 		// Шаблоны CH-таблиц (§19). GET доступен любой сессии (селектор
 		// при настройке узла); мутации/verify — admin-only ниже.
@@ -188,6 +202,11 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		if h.CHSchema != nil {
 			authedManager.POST("/nodes/:id/ch-schema/plan", RequireSessionOnly(), h.CHSchema.Plan)
 			authedManager.POST("/nodes/:id/ch-schema/apply", RequireSessionOnly(), h.CHSchema.Apply)
+		}
+		// §64: проверка структуры внешней таблицы логов. По ИМЕНИ таблицы, не по
+		// id узла, — кнопка работает и в форме ещё не сохранённого узла.
+		if h.CHTableVerify != nil {
+			authedManager.POST("/ch-tables/verify", RequireSessionOnly(), h.CHTableVerify.Verify)
 		}
 		// §27.8: проверка подключения к RabbitMQ (только session, manager+,
 		// rate-limit внутри handler'а). Регистрируется только если включён.
@@ -305,11 +324,14 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			kafka.POST("/test", h.Kafka.Test)
 		}
 
-		// Управление async-очередью узла (§34.4): admin-only, node-scoped.
-		// Чтение деградирует (kafka_available), мутации под глобальным CSRF
-		// и тем же rate-limit, что Kafka-экран (защита от peek-флуда брокеров).
+		// Управление async-очередью узла (§34.4): manager+ (роль «Управление
+		// узлами»), node-scoped. Раньше было admin-only; открыто manager по
+		// запросу — управление очередью узла относится к управлению узлом (как
+		// пауза/отключение §35.4 и replay §58). Чтение деградирует
+		// (kafka_available), мутации под глобальным CSRF и тем же rate-limit,
+		// что Kafka-экран (защита от peek-флуда брокеров).
 		if h.AsyncQueue != nil {
-			aq := authedAdmin.Group("/nodes/:id/async-queue")
+			aq := authedManager.Group("/nodes/:id/async-queue")
 			if mw.KafkaRateLimit != nil {
 				aq.Use(mw.KafkaRateLimit)
 			}
@@ -319,7 +341,7 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			aq.POST("/purge", h.AsyncQueue.Purge)
 			aq.POST("/purge-failed", h.AsyncQueue.PurgeFailed)
 			// §36.11: «Повторить все сейчас» — handler в ReplayHandler (нужен
-			// dispatcher), но маршрут admin-only под async-queue, как purge-failed.
+			// dispatcher), маршрут manager+ под async-queue, как purge-failed.
 			if h.Replay != nil {
 				aq.POST("/replay-failed", h.Replay.ReplayFailed)
 			}

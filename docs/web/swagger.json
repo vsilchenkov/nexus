@@ -539,6 +539,57 @@
                 }
             }
         },
+        "/api/ch-tables/verify": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Read-only: сверяет колонки и типы указанной ClickHouse-таблицы с обязательной схемой логов. Лишние колонки допускаются. Расхождения возвращаются в теле с ok=false (200), а не как ошибка запроса. ClickHouse не меняет.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "nodes"
+                ],
+                "summary": "Проверить структуру внешней таблицы логов (§64).",
+                "parameters": [
+                    {
+                        "description": "имя таблицы db.table",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.CHTableVerifyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nexus_internal_web_usecase.CHTableVerifyResult"
+                        }
+                    },
+                    "400": {
+                        "description": "некорректное имя таблицы",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "ClickHouse недоступен",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/ch-templates": {
             "get": {
                 "security": [
@@ -1492,6 +1543,103 @@
                     },
                     "401": {
                         "description": "current password incorrect",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/me/search-history": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "§62: последние сохранённые строки поиска (не более 10), от свежих к старым. Общая для глобального поиска в шапке и поля «Поиск» на странице узлов. Строго per-user.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "История поиска узлов текущего пользователя.",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.SearchHistoryResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "§62: upsert строки в персональную историю (повтор всплывает наверх), обрезка до 10 свежих. Мусор (пустая/короткая/слишком длинная строка) молча игнорируется — тоже 204. Строго per-user.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Сохранить строку поиска в историю текущего пользователя.",
+                "parameters": [
+                    {
+                        "description": "поисковая строка",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.recordSearchRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "записано (или проигнорировано как мусор)"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "§62: удалить все сохранённые строки поиска. Строго per-user.",
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Очистить историю поиска текущего пользователя.",
+                "responses": {
+                    "204": {
+                        "description": "очищено"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
@@ -3571,6 +3719,52 @@
                 }
             }
         },
+        "/api/search/nodes": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "§62: ILIKE по path/target_url в пределах членств пользователя. Каждый узел — с командой-владельцем (для бейджа и авто-переключения при выборе). Только session-cookie: API-токены однокомандные. q короче 2 рун → пустой список (не ошибка).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "nodes"
+                ],
+                "summary": "Глобальный поиск узлов по всем командам пользователя.",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "поисковая строка (≥ 2 рун)",
+                        "name": "q",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "лимит, дефолт 20, max 50",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.SearchNodesResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/settings/app": {
             "get": {
                 "security": [
@@ -4797,6 +4991,18 @@
         }
     },
     "definitions": {
+        "internal_web_adapter_in_http.CHTableVerifyRequest": {
+            "type": "object",
+            "required": [
+                "table"
+            ],
+            "properties": {
+                "table": {
+                    "type": "string",
+                    "maxLength": 129
+                }
+            }
+        },
         "internal_web_adapter_in_http.CHTemplateVerifyResponse": {
             "type": "object",
             "properties": {
@@ -4885,6 +5091,9 @@
                     "type": "integer",
                     "maximum": 2592000,
                     "minimum": 60
+                },
+                "external_table": {
+                    "type": "boolean"
                 },
                 "forward_headers": {
                     "type": "array",
@@ -5618,11 +5827,18 @@
                 "created_at": {
                     "type": "string"
                 },
+                "created_by": {
+                    "description": "§63: логин автора создания и последнего изменения узла (для показа рядом\nс «Создано»/«Обновлено»). Пусто у узлов до миграции 0026.",
+                    "type": "string"
+                },
                 "dlq_retry_delay_seconds": {
                     "type": "integer"
                 },
                 "dlq_ttl_seconds": {
                     "type": "integer"
+                },
+                "external_table": {
+                    "type": "boolean"
                 },
                 "forward_headers": {
                     "type": "array",
@@ -5737,6 +5953,9 @@
                 "updated_at": {
                     "type": "string"
                 },
+                "updated_by": {
+                    "type": "string"
+                },
                 "url_allowed_hosts": {
                     "type": "array",
                     "items": {
@@ -5753,6 +5972,35 @@
                     "type": "string"
                 },
                 "webhook_signature_prefix": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.NodeSearchItem": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "root_method": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "target_url": {
+                    "type": "string"
+                },
+                "team_id": {
+                    "type": "string"
+                },
+                "team_name": {
+                    "type": "string"
+                },
+                "team_slug": {
                     "type": "string"
                 }
             }
@@ -5784,6 +6032,10 @@
             "properties": {
                 "metrics_refetch_ms": {
                     "description": "§44.C: интервал автообновления метрик (мс) для дашборда/страниц узлов.",
+                    "type": "integer"
+                },
+                "node_default_max_body_size": {
+                    "description": "§64: значение «Макс. размер тела», подставляемое формой при СОЗДАНИИ узла\n(web.node_default_max_body_size). Существующие узлы не затрагивает.",
                     "type": "integer"
                 },
                 "public_base_url": {
@@ -5867,6 +6119,28 @@
                 }
             }
         },
+        "internal_web_adapter_in_http.SearchHistoryResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "internal_web_adapter_in_http.SearchNodesResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.NodeSearchItem"
+                    }
+                }
+            }
+        },
         "internal_web_adapter_in_http.SwitchTeamResponse": {
             "type": "object",
             "properties": {
@@ -5937,6 +6211,9 @@
                     "type": "integer",
                     "maximum": 2592000,
                     "minimum": 60
+                },
+                "external_table": {
+                    "type": "boolean"
                 },
                 "forward_headers": {
                     "type": "array",
@@ -7063,6 +7340,18 @@
                 }
             }
         },
+        "internal_web_adapter_in_http.recordSearchRequest": {
+            "type": "object",
+            "required": [
+                "q"
+            ],
+            "properties": {
+                "q": {
+                    "type": "string",
+                    "maxLength": 1000
+                }
+            }
+        },
         "internal_web_adapter_in_http.requestFieldRequest": {
             "type": "object",
             "properties": {
@@ -7574,6 +7863,20 @@
                 }
             }
         },
+        "nexus_internal_domain.LogColumnMismatch": {
+            "type": "object",
+            "properties": {
+                "got": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "want": {
+                    "type": "string"
+                }
+            }
+        },
         "nexus_internal_domain.LoggingSettings": {
             "type": "object",
             "properties": {
@@ -7695,6 +7998,32 @@
                     "type": "string"
                 },
                 "enabled": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "nexus_internal_web_usecase.CHTableVerifyResult": {
+            "type": "object",
+            "properties": {
+                "mismatched": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/nexus_internal_domain.LogColumnMismatch"
+                    }
+                },
+                "missing": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "ok": {
+                    "type": "boolean"
+                },
+                "table": {
+                    "type": "string"
+                },
+                "table_missing": {
                     "type": "boolean"
                 }
             }

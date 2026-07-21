@@ -194,6 +194,31 @@ func TestNodeUC_Move_CHTable(t *testing.T) {
 	}
 }
 
+// TestNodeUC_Move_ExternalTable (§64): перенос узла с внешней таблицей не
+// трогает CH вообще и НЕ ребейзит имя на БД целевой команды — таблица живёт вне
+// Nexus и не обязана лежать в БД команды; ребейз увёл бы узел на несуществующее
+// имя, а сама таблица осталась бы без читателя.
+func TestNodeUC_Move_ExternalTable(t *testing.T) {
+	t.Parallel()
+	repo := newMemNodeRepo()
+	n := movableNode()
+	n.ClickHouseTemplateID = "" // внешняя таблица несовместима с шаблоном
+	n.ExternalTable = true
+	n.ClickHouseTable = "external_db.audit_log"
+	repo.items[n.ID] = n
+	prov := &movePlan{}
+	usage := &tableUsageStub{}
+	uc := newMoveUC(repo, prov, usage)
+
+	require.NoError(t, uc.Move(context.Background(), SystemActor(), n.ID, "team1", "target"))
+
+	moved := repo.items[n.ID]
+	assert.Equal(t, "team2", moved.TeamID, "узел переносится в целевую команду")
+	assert.Equal(t, "external_db.audit_log", moved.ClickHouseTable, "имя внешней таблицы не меняется")
+	assert.Empty(t, prov.renameFrom, "внешняя таблица не переименовывается")
+	assert.Empty(t, prov.createdTable, "новая таблица не создаётся")
+}
+
 // usageOrNil — типизированный nil ломает проверку `u.tableUsage == nil`
 // (интерфейс с nil-значением внутри не равен nil), поэтому отсутствие стаба
 // передаём настоящим nil'ом интерфейса.

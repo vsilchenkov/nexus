@@ -35,7 +35,7 @@ func (s *stubNodeRepo) Count(_ context.Context, _ string) (int, error) { return 
 func (s *stubNodeRepo) Create(_ context.Context, _ *domain.Node) error { return nil }
 func (s *stubNodeRepo) Update(_ context.Context, _ *domain.Node) error { return nil }
 func (s *stubNodeRepo) Delete(_ context.Context, _ string) error       { return nil }
-func (s *stubNodeRepo) UpdateAllowedHostsSnapshot(_ context.Context, _ string, _ []string) error {
+func (s *stubNodeRepo) UpdateAllowedHostsSnapshot(_ context.Context, _ string, _ []string, _ string) error {
 	return nil
 }
 

@@ -8,6 +8,7 @@ import { api } from "../api/client";
 import { cn } from "../lib/cn";
 import { invalidateTeamScoped, useMyTeams } from "../lib/teams";
 import { getTheme, setTheme, type Theme } from "../lib/theme";
+import { GlobalSearch } from "./GlobalSearch";
 import { TeamSwitcher } from "./TeamSwitcher";
 import { Popover, PopoverTrigger, PopoverContent, Tooltip } from "./ui";
 
@@ -84,7 +85,9 @@ export function Topbar() {
         ))}
       </div>
 
-      <div className="flex-1" />
+      <div className="flex flex-1 justify-center px-4">
+        <GlobalSearch />
+      </div>
 
       <TeamSwitcher />
 
