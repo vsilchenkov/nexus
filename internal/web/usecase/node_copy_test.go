@@ -179,6 +179,28 @@ func TestNodeUC_Copy_ClonesAllowedHostLinks(t *testing.T) {
 	assert.Equal(t, 1, auditRepo.entries[0].Details["allowed_hosts_cloned"])
 }
 
+// TestNodeUC_Copy_KeepsExternalTable (§64): копия узла с внешней таблицей
+// остаётся внешней — она ссылается на ту же таблицу, которой Nexus не управляет,
+// и провижининг для неё не запускается.
+func TestNodeUC_Copy_KeepsExternalTable(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	prov := &verifyProvisioner{}
+	repo := newMemNodeRepo()
+	src := sourceNode()
+	src.ExternalTable = true
+	repo.items[src.ID] = src
+
+	uc := NewNodeUsecase(repo, nopNodeCache{}, NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()),
+		nil, nil, prov, newMemCHTemplateRepo(), time.Minute, 0, "default-team", nil, logging.NewNoop())
+
+	clone, err := uc.Copy(ctx, SystemActor(), src.ID, "svc/orders-copy", "team1")
+	require.NoError(t, err)
+	assert.True(t, clone.ExternalTable, "признак внешней таблицы копируется")
+	assert.Equal(t, "nexus_default.orders", clone.ClickHouseTable)
+	assert.Empty(t, prov.createdTable, "внешняя таблица не провижинится")
+}
+
 // TestNodeUC_Copy_ProvisionsKeptCHTable (§19.5): у копии с template_id
 // вызывается идемпотентный CreateTable на ту же (сохранённую) таблицу.
 func TestNodeUC_Copy_ProvisionsKeptCHTable(t *testing.T) {

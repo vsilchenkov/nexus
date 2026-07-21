@@ -913,6 +913,9 @@ func diffNodes(old, n *domain.Node) map[string]any {
 	add("retry_count", old.RetryCount, n.RetryCount)
 	add("webhook_signature_header", old.WebhookSignatureHeader, n.WebhookSignatureHeader)
 	add("webhook_signature_prefix", old.WebhookSignaturePrefix, n.WebhookSignaturePrefix)
+	// §64: переключение внешней таблицы меняет, управляет ли Nexus схемой и
+	// retention этой таблицы, — такое решение должно быть видно в аудите.
+	add("external_table", old.ExternalTable, n.ExternalTable)
 	if old.AuthCredentials != n.AuthCredentials {
 		d["auth_credentials"] = "changed"
 	}

@@ -66,8 +66,17 @@ type Node struct {
 	ClickHouseTable         string
 	ClickHouseTemplateID    string // §19: FK на ch_templates; пусто = ручная таблица (legacy)
 	ClickHouseRetentionDays int32  // §4.3: TTL по партициям (housekeeping)
-	DLQTTLSeconds           int32  // §36: TTL повторной доставки неудачных async-сообщений из DLQ (секунды)
-	DLQRetryDelaySeconds    int32  // §36: минимальная задержка перед повторной доставкой ошибочной отправки (секунды)
+
+	// §64: внешняя (ручная) таблица логов. true — Nexus не управляет таблицей
+	// совсем: не создаёт и не переименовывает её, не применяет стартовые ALTER
+	// миграции схемы, не дропает партиции по retention и не даёт запустить
+	// §56 schema-sync. Нужно, когда в таблицу пишет посторонний сервис, а Nexus
+	// работает только как фронт чтения логов. Несовместимо с ClickHouseTemplateID:
+	// шаблон означает «таблицей управляет Nexus».
+	ExternalTable bool
+
+	DLQTTLSeconds        int32 // §36: TTL повторной доставки неудачных async-сообщений из DLQ (секунды)
+	DLQRetryDelaySeconds int32 // §36: минимальная задержка перед повторной доставкой ошибочной отправки (секунды)
 
 	Status NodeStatus
 	TeamID string
@@ -283,6 +292,12 @@ func (n *Node) Validate() error {
 	}
 	if n.ClickHouseTemplateID != "" && !uuidPattern.MatchString(n.ClickHouseTemplateID) {
 		return ErrNodeInvalidTemplateID
+	}
+	// §64: шаблон = «таблицей управляет Nexus», external_table = «таблицу не
+	// трогаем». Вместе бессмысленны: провижининг по шаблону всё равно не
+	// выполнится, а оператор считал бы, что схема поддерживается.
+	if n.ExternalTable && n.ClickHouseTemplateID != "" {
+		return ErrNodeExternalTableTemplateConflict
 	}
 	if n.MaxBodySize < 0 || n.MaxBodySize > 10_000_000 {
 		return ErrNodeMaxBodySizeRange

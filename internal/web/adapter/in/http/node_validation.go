@@ -44,6 +44,7 @@ var nodeValidationErrors = []nodeFieldError{
 	{domain.ErrNodeWebhookSigHeaderRequired, "node.validation.webhook_sig_header_required", "webhook_signature_header"},
 	{domain.ErrNodeWebhookSigSecretRequired, "node.validation.webhook_sig_secret_required", "incoming_auth_credentials"},
 	{domain.ErrNodeInvalidTemplateID, "node.validation.template_id", "clickhouse_template_id"},
+	{domain.ErrNodeExternalTableTemplateConflict, "node.validation.external_table_conflict", "clickhouse_template_id"},
 	{domain.ErrNodeLogsNotConfigured, "node.validation.logs_not_configured", "clickhouse_table"},
 	{domain.ErrNodeClickHouseTableInvalid, "node.validation.clickhouse_table_format", "clickhouse_table"},
 	// §43.1: рендер шаблона CH-таблицы при провижене узла тоже отвергает кривое
