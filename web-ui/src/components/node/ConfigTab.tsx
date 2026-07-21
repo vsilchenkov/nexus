@@ -145,7 +145,9 @@ export function ConfigTab({ node }: { node: Node }) {
   );
 }
 
-// DateWithAuthor — дата + «Автор: <логин>» (§63). Логин моноширинный; пусто → «—».
+// DateWithAuthor — дата + «Автор: <логин>» (§63). Логин моноширинный. Если автор
+// не заполнен (узлы до миграции 0026) — показываем только дату, без «Автор: —»:
+// пустая подпись не несёт информации и зашумляет строку.
 function DateWithAuthor({
   at,
   by,
@@ -158,10 +160,12 @@ function DateWithAuthor({
   return (
     <span>
       {new Date(at).toLocaleString()}
-      <span className="text-fg-subtle">
-        {" · "}
-        {t("common.author")}: <span className="font-mono">{by || "—"}</span>
-      </span>
+      {by && (
+        <span className="text-fg-subtle">
+          {" · "}
+          {t("common.author")}: <span className="font-mono">{by}</span>
+        </span>
+      )}
     </span>
   );
 }

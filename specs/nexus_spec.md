@@ -4188,11 +4188,12 @@ Overview. Хранение в PostgreSQL (`user_search_history`, миграци�
 что бампают `updated_at`: `Update`/`SetStatus`/`Move`/снимок allowlist). Автор — из `Actor.UserLogin`.
 Не аудит-лог: retention его чистит, `/api/audit` только manager+, потребовался бы доп. запрос на `Get`;
 колонка пишется в лад с датой, видна всем ролям (`NodeResponse`, логин — не секрет). Без бэкфилла — у
-узлов до 0026 «Автор: —».
+узлов до 0026 подпись «Автор» не выводится (только дата).
 
 UI ([ConfigTab.tsx](web-ui/src/components/node/ConfigTab.tsx)): строка «Создано» (дата + `Автор:
 <создатель>`) — всегда; «Обновлено» (дата + `Автор: <редактор>`) — только если `updated_at ≠
 created_at` (при создании оба таймстемпа = одному `now()` транзакции, поэтому «Обновлено» скрыто, пока
-узел реально не изменят). Пустой автор → «—». i18n `common.created_at`/`common.author`.
+узел реально не изменят). Пустой автор → подпись «Автор» не выводится (только дата).
+i18n `common.created_at`/`common.author`.
 
 Подробности — [sections/63-node-author.md](sections/63-node-author.md).
