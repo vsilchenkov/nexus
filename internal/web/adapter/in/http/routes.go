@@ -74,6 +74,11 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		// §49: избранные команды — self-service, только session-cookie
 		// (API-токен ограничен одной командой, избранное ему ни к чему).
 		authed.PUT("/me/favorite-teams", RequireSessionOnly(), h.Auth.SetFavoriteTeams)
+		// §62: история поиска узлов — self-service, только session-cookie
+		// (кросс-командный поиск для однокомандных API-токенов бессмыслен).
+		authed.GET("/me/search-history", RequireSessionOnly(), h.Auth.SearchHistory)
+		authed.POST("/me/search-history", RequireSessionOnly(), h.Auth.RecordSearch)
+		authed.DELETE("/me/search-history", RequireSessionOnly(), h.Auth.ClearSearchHistory)
 		// Self-service смена собственного пароля (§26): любая роль, только
 		// session-cookie (API-токенам пароль менять незачем).
 		authed.POST("/me/password", RequireSessionOnly(), h.Auth.ChangeOwnPassword)

@@ -1502,6 +1502,103 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/me/search-history": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "§62: последние сохранённые строки поиска (не более 10), от свежих к старым. Общая для глобального поиска в шапке и поля «Поиск» на странице узлов. Строго per-user.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "История поиска узлов текущего пользователя.",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.SearchHistoryResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "§62: upsert строки в персональную историю (повтор всплывает наверх), обрезка до 10 свежих. Мусор (пустая/короткая/слишком длинная строка) молча игнорируется — тоже 204. Строго per-user.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Сохранить строку поиска в историю текущего пользователя.",
+                "parameters": [
+                    {
+                        "description": "поисковая строка",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.recordSearchRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "записано (или проигнорировано как мусор)"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "§62: удалить все сохранённые строки поиска. Строго per-user.",
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Очистить историю поиска текущего пользователя.",
+                "responses": {
+                    "204": {
+                        "description": "очищено"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/me/switch-team": {
             "post": {
                 "security": [
@@ -5870,6 +5967,17 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_web_adapter_in_http.SearchHistoryResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "internal_web_adapter_in_http.SwitchTeamResponse": {
             "type": "object",
             "properties": {
@@ -7063,6 +7171,18 @@ const docTemplate = `{
                 },
                 "to": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.recordSearchRequest": {
+            "type": "object",
+            "required": [
+                "q"
+            ],
+            "properties": {
+                "q": {
+                    "type": "string",
+                    "maxLength": 1000
                 }
             }
         },

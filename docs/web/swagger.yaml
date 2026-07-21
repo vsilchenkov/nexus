@@ -766,6 +766,13 @@ definitions:
       token:
         type: string
     type: object
+  internal_web_adapter_in_http.SearchHistoryResponse:
+    properties:
+      items:
+        items:
+          type: string
+        type: array
+    type: object
   internal_web_adapter_in_http.SwitchTeamResponse:
     properties:
       current_team_id:
@@ -1605,6 +1612,14 @@ definitions:
         type: string
       to:
         type: string
+    type: object
+  internal_web_adapter_in_http.recordSearchRequest:
+    properties:
+      q:
+        maxLength: 1000
+        type: string
+    required:
+    - q
     type: object
   internal_web_adapter_in_http.requestFieldRequest:
     properties:
@@ -3141,6 +3156,70 @@ paths:
       security:
       - CookieAuth: []
       summary: Сменить собственный пароль (self-service).
+      tags:
+      - auth
+  /api/me/search-history:
+    delete:
+      description: '§62: удалить все сохранённые строки поиска. Строго per-user.'
+      responses:
+        "204":
+          description: очищено
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Очистить историю поиска текущего пользователя.
+      tags:
+      - auth
+    get:
+      description: '§62: последние сохранённые строки поиска (не более 10), от свежих
+        к старым. Общая для глобального поиска в шапке и поля «Поиск» на странице
+        узлов. Строго per-user.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.SearchHistoryResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: История поиска узлов текущего пользователя.
+      tags:
+      - auth
+    post:
+      consumes:
+      - application/json
+      description: '§62: upsert строки в персональную историю (повтор всплывает наверх),
+        обрезка до 10 свежих. Мусор (пустая/короткая/слишком длинная строка) молча
+        игнорируется — тоже 204. Строго per-user.'
+      parameters:
+      - description: поисковая строка
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.recordSearchRequest'
+      responses:
+        "204":
+          description: записано (или проигнорировано как мусор)
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Сохранить строку поиска в историю текущего пользователя.
       tags:
       - auth
   /api/me/switch-team:
