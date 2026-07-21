@@ -4231,7 +4231,8 @@ i18n `common.created_at`/`common.author`.
 **Проверка структуры.** `POST /api/ch-tables/verify` (manager+, session-only) с телом `{"table"}` —
 по имени, а не по id узла, чтобы работать в форме несохранённого узла. Сверка с
 `domain.RequiredLogColumns`: **лишние колонки допускаются** (писатель вправе держать свои поля, а
-INSERT/SELECT перечисляют колонки явно), `DateTime('<tz>')` эквивалентен `DateTime`,
+INSERT/SELECT перечисляют колонки явно), `DateTime('<tz>')` эквивалентен `DateTime`, `Bool`
+эквивалентен `UInt8` (алиас в CH, а `LogRecord.Done` в Go — `bool`, драйвер принимает обе формы),
 `Nullable`/`LowCardinality`/`DateTime64` — расхождение с показом `want`/`got`. Отсутствие таблицы и
 любые расхождения — 200 с `ok=false` (результат проверки, не ошибка вызова); 400 — кривое имя,
 503 — ClickHouse не настроен.

@@ -53,6 +53,12 @@ func VerifyLogTableColumns(actual []CHLogColumn) LogTableVerifyResult {
 // `DateTime('UTC')` бинарно совместим с `DateTime` — это лишь атрибут
 // отображения, менять его владельцу таблицы незачем.
 //
+// `Bool` считается равным `UInt8`: в ClickHouse Bool — алиас UInt8 с тем же
+// физическим представлением, а поле `LogRecord.Done` объявлено в Go как `bool`,
+// поэтому драйвер одинаково принимает обе формы и на запись (Append), и на
+// чтение (Scan). Без этого таблицы с `done Bool` (так объявляли схему до §19)
+// помечались непригодными, хотя Nexus читает и пишет их без ошибок.
+//
 // Nullable(...)/LowCardinality(...) НЕ разворачиваем: это честное расхождение
 // контракта (Nullable-колонка меняет представление и поведение вставки), и
 // оператор должен увидеть его в отчёте, а не получить молчаливое «ок».
@@ -64,6 +70,9 @@ func normalizeCHType(t string) string {
 	t = strings.ReplaceAll(t, " ", "")
 	if strings.HasPrefix(t, "DateTime(") && !strings.HasPrefix(t, "DateTime64(") {
 		return "DateTime"
+	}
+	if t == "Bool" {
+		return "UInt8"
 	}
 	return t
 }

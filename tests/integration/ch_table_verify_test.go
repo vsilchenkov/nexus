@@ -78,6 +78,20 @@ func TestCHTableVerify_E2E(t *testing.T) {
 		assert.Equal(t, domain.LogColumnMismatch{Name: "status", Want: "Int32", Got: "String"}, res.Mismatched[0])
 	})
 
+	t.Run("done Bool вместо UInt8 — таблица пригодна", func(t *testing.T) {
+		// Bool — алиас UInt8 в ClickHouse, а LogRecord.Done в Go объявлен как
+		// bool: драйвер одинаково принимает обе формы и на Append, и на Scan.
+		// Такие таблицы есть на стендах (схему объявляли до §19) — помечать их
+		// непригодными нельзя.
+		const table = "nexus_default.verify_bool_done"
+		createNodeLogTable(t, ctx, conn, table)
+		require.NoError(t, conn.Exec(ctx, "ALTER TABLE "+table+" MODIFY COLUMN done Bool"))
+
+		res, err := uc.Verify(ctx, table)
+		require.NoError(t, err)
+		assert.True(t, res.OK, "mismatched=%+v", res.Mismatched)
+	})
+
 	t.Run("таблицы нет", func(t *testing.T) {
 		res, err := uc.Verify(ctx, "nexus_default.verify_absent")
 		require.NoError(t, err, "отсутствие таблицы — результат проверки, а не ошибка")

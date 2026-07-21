@@ -78,6 +78,13 @@ func TestVerifyLogTableColumns(t *testing.T) {
 			actual: retype("checksum_request", "FixedString( 32 )"),
 		},
 		{
+			// Bool — алиас UInt8 (то же физическое представление), а LogRecord.Done
+			// в Go объявлен как bool: драйвер принимает обе формы и на запись, и на
+			// чтение. Проверено на живом ClickHouse.
+			name:   "done Bool эквивалентен UInt8",
+			actual: retype("done", "Bool"),
+		},
+		{
 			name:           "Nullable — честное расхождение",
 			actual:         retype("reason", "Nullable(String)"),
 			wantMismatched: []LogColumnMismatch{{Name: "reason", Want: "String", Got: "Nullable(String)"}},
