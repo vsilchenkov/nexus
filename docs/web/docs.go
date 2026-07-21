@@ -542,6 +542,57 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/ch-tables/verify": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Read-only: сверяет колонки и типы указанной ClickHouse-таблицы с обязательной схемой логов. Лишние колонки допускаются. Расхождения возвращаются в теле с ok=false (200), а не как ошибка запроса. ClickHouse не меняет.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "nodes"
+                ],
+                "summary": "Проверить структуру внешней таблицы логов (§64).",
+                "parameters": [
+                    {
+                        "description": "имя таблицы db.table",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.CHTableVerifyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nexus_internal_web_usecase.CHTableVerifyResult"
+                        }
+                    },
+                    "400": {
+                        "description": "некорректное имя таблицы",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "ClickHouse недоступен",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/ch-templates": {
             "get": {
                 "security": [
@@ -4943,6 +4994,18 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "internal_web_adapter_in_http.CHTableVerifyRequest": {
+            "type": "object",
+            "required": [
+                "table"
+            ],
+            "properties": {
+                "table": {
+                    "type": "string",
+                    "maxLength": 129
+                }
+            }
+        },
         "internal_web_adapter_in_http.CHTemplateVerifyResponse": {
             "type": "object",
             "properties": {
@@ -5031,6 +5094,9 @@ const docTemplate = `{
                     "type": "integer",
                     "maximum": 2592000,
                     "minimum": 60
+                },
+                "external_table": {
+                    "type": "boolean"
                 },
                 "forward_headers": {
                     "type": "array",
@@ -5774,6 +5840,9 @@ const docTemplate = `{
                 "dlq_ttl_seconds": {
                     "type": "integer"
                 },
+                "external_table": {
+                    "type": "boolean"
+                },
                 "forward_headers": {
                     "type": "array",
                     "items": {
@@ -5968,6 +6037,10 @@ const docTemplate = `{
                     "description": "§44.C: интервал автообновления метрик (мс) для дашборда/страниц узлов.",
                     "type": "integer"
                 },
+                "node_default_max_body_size": {
+                    "description": "§64: значение «Макс. размер тела», подставляемое формой при СОЗДАНИИ узла\n(web.node_default_max_body_size). Существующие узлы не затрагивает.",
+                    "type": "integer"
+                },
                 "public_base_url": {
                     "type": "string"
                 }
@@ -6141,6 +6214,9 @@ const docTemplate = `{
                     "type": "integer",
                     "maximum": 2592000,
                     "minimum": 60
+                },
+                "external_table": {
+                    "type": "boolean"
                 },
                 "forward_headers": {
                     "type": "array",
@@ -7790,6 +7866,20 @@ const docTemplate = `{
                 }
             }
         },
+        "nexus_internal_domain.LogColumnMismatch": {
+            "type": "object",
+            "properties": {
+                "got": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "want": {
+                    "type": "string"
+                }
+            }
+        },
         "nexus_internal_domain.LoggingSettings": {
             "type": "object",
             "properties": {
@@ -7911,6 +8001,32 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "enabled": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "nexus_internal_web_usecase.CHTableVerifyResult": {
+            "type": "object",
+            "properties": {
+                "mismatched": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/nexus_internal_domain.LogColumnMismatch"
+                    }
+                },
+                "missing": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "ok": {
+                    "type": "boolean"
+                },
+                "table": {
+                    "type": "string"
+                },
+                "table_missing": {
                     "type": "boolean"
                 }
             }

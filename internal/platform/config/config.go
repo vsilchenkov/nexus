@@ -307,8 +307,12 @@ type WebSection struct {
 	ReplayRateLimitPerUserPerMin int    `yaml:"replay_rate_limit_per_user_per_min"`
 	NodesSoftLimit               int    `yaml:"nodes_soft_limit"`
 	NodesHardLimit               int    `yaml:"nodes_hard_limit"`
-	APITokenRateLimitPerMin      int    `yaml:"api_token_rate_limit_per_min"`
-	RMQTestRateLimitPerMin       int    `yaml:"rmq_test_rate_limit_per_min"` // §27.8: лимит POST /api/nodes/test-rmq на пользователя
+	// NodeDefaultMaxBodySize — §64: значение «Макс. размер тела», которое форма
+	// подставляет при СОЗДАНИИ узла (лимит там сразу включён). Влияет только на
+	// новые узлы через UI; уже сохранённые и созданные по API не трогает.
+	NodeDefaultMaxBodySize  int `yaml:"node_default_max_body_size"`
+	APITokenRateLimitPerMin int `yaml:"api_token_rate_limit_per_min"`
+	RMQTestRateLimitPerMin  int `yaml:"rmq_test_rate_limit_per_min"` // §27.8: лимит POST /api/nodes/test-rmq на пользователя
 	// LoginRateLimitPerMin — анти-брутфорс /api/auth/login (Phase AUD.4):
 	// столько попыток в минуту на IP и отдельно на login. -1 = выключить.
 	LoginRateLimitPerMin int `yaml:"login_rate_limit_per_min"`

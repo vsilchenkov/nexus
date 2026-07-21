@@ -10,6 +10,9 @@ type SavedNodeCH = {
   clickhouse_template_id: string;
   clickhouse_table: string;
   clickhouse_retention_days: number;
+  // §64: снятая/поставленная галка «Внешняя таблица» — тоже несохранённая
+  // CH-правка: она решает, управляет ли Nexus схемой этой таблицы.
+  external_table: boolean;
 };
 
 // chSchemaChangeWontApply — true, когда предупреждение нужно показать: узел
@@ -41,12 +44,14 @@ export function chSyncFormDirty(p: {
   currentTemplateId: string;
   currentTable: string;
   currentRetentionDays: number;
+  currentExternalTable: boolean;
   saved: SavedNodeCH | null | undefined;
 }): boolean {
   if (p.isNew || !p.saved) return false;
   return (
     p.currentTemplateId !== p.saved.clickhouse_template_id ||
     p.currentTable !== p.saved.clickhouse_table ||
-    p.currentRetentionDays !== p.saved.clickhouse_retention_days
+    p.currentRetentionDays !== p.saved.clickhouse_retention_days ||
+    p.currentExternalTable !== p.saved.external_table
   );
 }

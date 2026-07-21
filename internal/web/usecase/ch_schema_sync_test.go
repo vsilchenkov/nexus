@@ -84,6 +84,30 @@ func newSyncUC(node *domain.Node, tmpl *domain.CHTemplate, insp *inspectorStub) 
 	return uc, auditRepo
 }
 
+// §64: узел с внешней таблицей отвергается и на Plan, и на Apply — Nexus не
+// диффит и не альтерит таблицу, которой не управляет. До инспектора не доходим.
+func TestCHSchemaSync_ExternalTable_Rejected(t *testing.T) {
+	t.Parallel()
+	n := syncNode()
+	n.ClickHouseTemplateID = "" // внешняя таблица несовместима с шаблоном
+	n.ExternalTable = true
+	insp := &inspectorStub{schema: matchingSnapshot(), found: true}
+	uc, auditRepo := newSyncUC(n, codecTemplate(), insp)
+
+	if _, err := uc.Plan(context.Background(), "n-1", ""); !errors.Is(err, domain.ErrNodeExternalTable) {
+		t.Fatalf("Plan: want ErrNodeExternalTable, got %v", err)
+	}
+	if _, err := uc.Apply(context.Background(), SystemActor(), "n-1", ""); !errors.Is(err, domain.ErrNodeExternalTable) {
+		t.Fatalf("Apply: want ErrNodeExternalTable, got %v", err)
+	}
+	if len(insp.applied) != 0 {
+		t.Fatalf("no ALTER must be executed, got %v", insp.applied)
+	}
+	if len(auditRepo.entries) != 0 {
+		t.Fatalf("no audit entry expected, got %d", len(auditRepo.entries))
+	}
+}
+
 func TestCHSchemaSync_Plan_ProducesAlter(t *testing.T) {
 	t.Parallel()
 	insp := &inspectorStub{schema: matchingSnapshot(), found: true}

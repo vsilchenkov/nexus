@@ -113,8 +113,13 @@ func (r *Reader) GetByPath(ctx context.Context, path string) (*domain.Node, erro
 // ListClickHouseTables (§37) — уникальные имена CH-таблиц логов всех узлов с
 // логированием (без фильтра по retention, в отличие от ListForHousekeeping).
 // Для стартовой миграции схемы (добавление колонки node_id во все таблицы).
+//
+// §64: внешние таблицы исключены — их схему ведёт оператор, ALTER'ы Nexus'а по
+// ним недопустимы. Фильтр на уровне узла, а не таблицы: имя остаётся в выборке,
+// если на него ссылается хотя бы один НЕ-внешний узел (тогда таблицей всё равно
+// управляет Nexus и мигрировать её нужно).
 func (r *Reader) ListClickHouseTables(ctx context.Context) ([]string, error) {
-	rows, err := r.pg.Query(ctx, `SELECT DISTINCT clickhouse_table FROM nodes WHERE clickhouse_table <> ''`)
+	rows, err := r.pg.Query(ctx, `SELECT DISTINCT clickhouse_table FROM nodes WHERE clickhouse_table <> '' AND NOT external_table`)
 	if err != nil {
 		return nil, fmt.Errorf("list ch tables: %w", err)
 	}
@@ -133,11 +138,15 @@ func (r *Reader) ListClickHouseTables(ctx context.Context) ([]string, error) {
 // ListForHousekeeping — все узлы с заданной CH-таблицей и retention > 0.
 // Используется CHHousekeeping (§4.3 ТЗ). Чувствительные поля не нужны,
 // поэтому скан без crypto.Decrypt.
+//
+// §64: внешние таблицы исключены. Housekeeping дропает партицию ЦЕЛИКОМ, а не
+// строки узла, — на таблице постороннего писателя это снесло бы чужие данные.
+// Retention такой таблицы обеспечивает её владелец.
 func (r *Reader) ListForHousekeeping(ctx context.Context) ([]*domain.Node, error) {
 	rows, err := r.pg.Query(ctx, `
 SELECT id, path, clickhouse_table, clickhouse_retention_days
 FROM nodes
-WHERE clickhouse_table <> '' AND clickhouse_retention_days > 0`)
+WHERE clickhouse_table <> '' AND clickhouse_retention_days > 0 AND NOT external_table`)
 	if err != nil {
 		return nil, fmt.Errorf("list housekeeping: %w", err)
 	}

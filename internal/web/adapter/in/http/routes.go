@@ -20,6 +20,7 @@ type Handlers struct {
 	Orphan        *OrphanHandler
 	CHTemplate    *CHTemplateHandler
 	CHSchema      *CHSchemaHandler
+	CHTableVerify *CHTableVerifyHandler
 	HostAllowlist *HostAllowlistHandler
 	HeaderCatalog *HeaderCatalogHandler
 	RequestField  *RequestFieldCatalogHandler
@@ -201,6 +202,11 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		if h.CHSchema != nil {
 			authedManager.POST("/nodes/:id/ch-schema/plan", RequireSessionOnly(), h.CHSchema.Plan)
 			authedManager.POST("/nodes/:id/ch-schema/apply", RequireSessionOnly(), h.CHSchema.Apply)
+		}
+		// §64: проверка структуры внешней таблицы логов. По ИМЕНИ таблицы, не по
+		// id узла, — кнопка работает и в форме ещё не сохранённого узла.
+		if h.CHTableVerify != nil {
+			authedManager.POST("/ch-tables/verify", RequireSessionOnly(), h.CHTableVerify.Verify)
 		}
 		// §27.8: проверка подключения к RabbitMQ (только session, manager+,
 		// rate-limit внутри handler'а). Регистрируется только если включён.

@@ -110,6 +110,53 @@ func ttlDaysFromCreate(createStmt string) (int32, bool) {
 	return atoi32(day), true
 }
 
+// ReadTableColumns возвращает фактические колонки таблицы с их типами в порядке
+// объявления (§64). found=false — таблицы нет; это не ошибка, а ответ проверки.
+//
+// Отдельно от ReadTableSchema: тому нужны CODEC/индексы/TTL для диффа §56, а
+// здесь важен только состав колонок и типы — их сверяет domain.VerifyLogTableColumns.
+func (s *SchemaInspectorCH) ReadTableColumns(ctx context.Context, table string) ([]domain.CHLogColumn, bool, error) {
+	if !fullTableNamePattern.MatchString(table) {
+		return nil, false, errInvalidTableName
+	}
+	conn := s.conn.Conn()
+	if conn == nil {
+		return nil, false, errors.New("clickhouse conn is nil")
+	}
+	db, tbl, _ := splitDBDotTable(table)
+
+	var cnt uint64
+	if err := conn.QueryRow(ctx,
+		"SELECT count() FROM system.tables WHERE database = ? AND name = ?", db, tbl).Scan(&cnt); err != nil {
+		return nil, false, fmt.Errorf("check table %s: %w", table, err)
+	}
+	if cnt == 0 {
+		s.logger.Debug("ch verify: table not found",
+			s.logger.Str("table", table))
+		return nil, false, nil
+	}
+
+	rows, err := conn.Query(ctx,
+		"SELECT name, type FROM system.columns WHERE database = ? AND table = ? ORDER BY position", db, tbl)
+	if err != nil {
+		return nil, false, fmt.Errorf("read system.columns %s: %w", table, err)
+	}
+	defer rows.Close()
+
+	var out []domain.CHLogColumn
+	for rows.Next() {
+		var c domain.CHLogColumn
+		if err := rows.Scan(&c.Name, &c.Type); err != nil {
+			return nil, false, fmt.Errorf("scan column: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("iterate columns %s: %w", table, err)
+	}
+	return out, true, nil
+}
+
 func (s *SchemaInspectorCH) readCodecs(ctx context.Context, db, tbl string, dst map[string]string) error {
 	rows, err := s.conn.Conn().Query(ctx,
 		"SELECT name, compression_codec FROM system.columns WHERE database = ? AND table = ?", db, tbl)

@@ -65,6 +65,14 @@ func (u *CHSchemaSyncUsecase) plan(ctx context.Context, id, teamID string) (*Sch
 	if err != nil {
 		return nil, nil, err
 	}
+	// §64: внешней таблицей Nexus не управляет — ни планировать, ни применять
+	// ALTER'ы по ней нельзя. Это ошибка, а не пустой план: запрос сюда означает,
+	// что UI показал кнопку, которой быть не должно.
+	if n.ExternalTable {
+		u.logger.Debug("ch schema sync rejected: external table",
+			u.logger.Str("path", n.Path), u.logger.Str("table", n.ClickHouseTable))
+		return nil, nil, domain.ErrNodeExternalTable
+	}
 	// Нет таблицы/логирования — синхронизировать нечего (не ошибка).
 	if n.ClickHouseTable == "" {
 		return &SchemaSyncResult{Table: n.ClickHouseTable, TableMissing: true}, n, nil

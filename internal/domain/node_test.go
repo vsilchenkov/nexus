@@ -226,6 +226,30 @@ func TestNode_Validate_ClickHouseTableFormat(t *testing.T) {
 	}
 }
 
+func TestNode_Validate_ExternalTableTemplateConflict(t *testing.T) {
+	// §64: шаблон означает «таблицей управляет Nexus», external_table — «таблицу
+	// не трогаем». Вместе они противоречивы.
+	base := func(external bool, tmplID string) *Node {
+		n := &Node{
+			Path: "x", RootMethod: RootMethodRequest, TargetURL: "https://example.com",
+			ClickHouseTable: "nexus_default.x", ExternalTable: external, ClickHouseTemplateID: tmplID,
+		}
+		n.SetDefaults()
+		return n
+	}
+	const tmplID = "11111111-2222-3333-4444-555555555555"
+
+	if err := base(true, tmplID).Validate(); !errors.Is(err, ErrNodeExternalTableTemplateConflict) {
+		t.Fatalf("external+template: want ErrNodeExternalTableTemplateConflict, got %v", err)
+	}
+	if err := base(true, "").Validate(); err != nil {
+		t.Fatalf("external without template: want nil, got %v", err)
+	}
+	if err := base(false, tmplID).Validate(); err != nil {
+		t.Fatalf("template without external: want nil, got %v", err)
+	}
+}
+
 func TestNode_Validate_RabbitMQAsync(t *testing.T) {
 	base := func() *Node {
 		n := &Node{

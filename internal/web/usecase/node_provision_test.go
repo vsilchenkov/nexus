@@ -241,6 +241,42 @@ func TestNodeUC_Create_LoggingDisabled_SkipsDefault(t *testing.T) {
 	assert.Empty(t, prov.createdTable, "logging disabled → no provisioning even with default template")
 }
 
+// §64: внешняя таблица не создаётся даже при включённом логировании и наличии
+// дефолтного шаблона — ею владеет оператор или посторонний сервис-писатель.
+func TestNodeUC_Create_ExternalTable_SkipsProvision(t *testing.T) {
+	t.Parallel()
+	templates := newMemCHTemplateRepo()
+	require.NoError(t, templates.Create(context.Background(), validTemplate("Standard", true)))
+	prov := &verifyProvisioner{}
+	uc := newNodeUC(newMemNodeRepo(), prov, templates)
+
+	n := nodeWithTable("nexus_default.hook", true)
+	n.ExternalTable = true
+	require.NoError(t, uc.Create(context.Background(), SystemActor(), n))
+	assert.Empty(t, prov.createdTable, "external table → no CreateTable")
+}
+
+// §64: смена имени внешней таблицы тоже не провижинит — иначе Nexus создал бы
+// пустую таблицу с новым именем вместо той, куда пишет посторонний сервис.
+func TestNodeUC_Update_ExternalTable_SkipsProvision(t *testing.T) {
+	t.Parallel()
+	templates := newMemCHTemplateRepo()
+	require.NoError(t, templates.Create(context.Background(), validTemplate("Standard", true)))
+	prov := &verifyProvisioner{}
+	repo := newMemNodeRepo()
+	uc := newNodeUC(repo, prov, templates)
+	ctx := context.Background()
+
+	n := nodeWithTable("nexus_default.hook", true)
+	n.ExternalTable = true
+	require.NoError(t, uc.Create(ctx, SystemActor(), n))
+
+	upd := *n
+	upd.ClickHouseTable = "external_db.audit_log"
+	require.NoError(t, uc.Update(ctx, SystemActor(), &upd, ""))
+	assert.Empty(t, prov.createdTable, "external table renamed → still no CreateTable")
+}
+
 func TestNodeUC_Update_ProvisionsOnlyOnChange(t *testing.T) {
 	t.Parallel()
 	templates := newMemCHTemplateRepo()

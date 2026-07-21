@@ -75,11 +75,39 @@ func newSettingsRouter(t *testing.T, repo *fakeSettingsRepo, pub *capturePublish
 	uc := usecase.NewAppSettingsUsecase(
 		repo, usecase.NewAuditUsecase(nopAuditRepo{}, logging.NewNoop()), pub,
 		allowVersionOverride, logging.NewNoop())
-	h := NewAppSettingsHandler(uc, nil, logging.NewNoop())
+	h := NewAppSettingsHandler(uc, nil, testNodeDefaultMaxBodySize, logging.NewNoop())
 	r := gin.New()
 	r.GET("/api/settings/app", h.Get)
+	r.GET("/api/settings/public", h.GetPublic)
 	r.PUT("/api/settings/app", h.Update)
 	return r
+}
+
+// testNodeDefaultMaxBodySize — значение web.node_default_max_body_size в тестах
+// (§64); отличается от боевого дефолта 50000, чтобы поймать захардкоженное.
+const testNodeDefaultMaxBodySize = 12345
+
+// §64: форма создания узла берёт дефолт «Макс. размер тела» из публичных
+// настроек — значение приходит из конфига, а не из app_settings.
+func TestAppSettingsHandler_GetPublic_NodeDefaultMaxBodySize(t *testing.T) {
+	t.Parallel()
+	r := newSettingsRouter(t, &fakeSettingsRepo{current: &domain.AppSettings{}}, &capturePublisher{}, false)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/settings/public", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: want 200, got %d", w.Code)
+	}
+	var got struct {
+		NodeDefaultMaxBodySize int `json:"node_default_max_body_size"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.NodeDefaultMaxBodySize != testNodeDefaultMaxBodySize {
+		t.Fatalf("node_default_max_body_size: want %d, got %d", testNodeDefaultMaxBodySize, got.NodeDefaultMaxBodySize)
+	}
 }
 
 func doSettings(t *testing.T, r *gin.Engine, method, body string) *httptest.ResponseRecorder {

@@ -45,5 +45,11 @@ func Validate(c *Config) error {
 		return errors.New("sentry.use=true but sentry.dsn is empty")
 	}
 
+	// §64: границы те же, что у domain.Node.MaxBodySize — иначе форма подставит
+	// значение, которое не пройдёт валидацию при сохранении узла.
+	if c.Web.NodeDefaultMaxBodySize < 1 || c.Web.NodeDefaultMaxBodySize > 10_000_000 {
+		return fmt.Errorf("web.node_default_max_body_size=%d: must be 1..10000000", c.Web.NodeDefaultMaxBodySize)
+	}
+
 	return nil
 }

@@ -17,13 +17,23 @@ import {
   ArrowRightLeft,
 } from "lucide-react";
 
-import { api, isNotFound, type Node, type CHTemplate, type HostAllowlistEntry } from "../api/client";
+import {
+  api,
+  isNotFound,
+  type Node,
+  type CHTemplate,
+  type CHTableVerifyResult,
+  type HostAllowlistEntry,
+} from "../api/client";
 import { useNodeUrlBuilder } from "../lib/nodeUrl";
+import { useCurrentTeamCHDatabase } from "../lib/teams";
+import { useNodeFormDefaults } from "../lib/nodeDefaults";
 import { useEnsureNodeTeam } from "../lib/nodeShare";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { parseNumInput } from "../lib/numField";
 import { validateNodeForm } from "../lib/nodeValidation";
 import { chSchemaChangeWontApply, chSyncFormDirty } from "../lib/chSchema";
+import { buildVerifyMessage } from "../lib/chTableVerify";
 import { useConfirm } from "../lib/confirm";
 import { DryRunDialog } from "../components/DryRunDialog";
 import { CHSchemaSyncDialog } from "../components/CHSchemaSyncDialog";
@@ -89,6 +99,7 @@ type Form = {
   clickhouse_table: string;
   clickhouse_template_id: string;
   clickhouse_retention_days: number;
+  external_table: boolean;
   dlq_ttl_seconds: number;
   dlq_retry_delay_seconds: number;
   status: "enabled" | "disabled" | "paused";
@@ -144,6 +155,7 @@ const emptyForm: Form = {
   clickhouse_table: "",
   clickhouse_template_id: "",
   clickhouse_retention_days: 90,
+  external_table: false,
   dlq_ttl_seconds: 86400,
   dlq_retry_delay_seconds: 300,
   status: "enabled",
@@ -204,6 +216,9 @@ export default function NodeSettings() {
   // §28 Пункт 5: имя поля с ошибкой валидации (для inline-подсветки) из
   // ответа { error, code, field } бэкенда.
   const [errField, setErrField] = useState<string | null>(null);
+  // §64: ошибка САМОГО вызова проверки таблицы (400/503) — в отличие от
+  // расхождений структуры, которые приходят с 200 в теле ответа.
+  const [verifyError, setVerifyError] = useState<string | null>(null);
 
   const templates = useQuery({
     queryKey: ["ch-templates"],
@@ -220,6 +235,44 @@ export default function NodeSettings() {
       setForm({ ...emptyForm, ...(existing.data as unknown as Form) });
     }
   }, [existing.data]);
+
+  // §64: дефолты формы СОЗДАНИЯ узла приходят асинхронно (список шаблонов,
+  // членства команд, публичные настройки). Каждый подставляется ровно один раз
+  // и только пока поле в исходном значении — иначе медленный ответ затёр бы то,
+  // что оператор уже успел ввести.
+  const chDatabase = useCurrentTeamCHDatabase();
+  const nodeDefaults = useNodeFormDefaults();
+  const defaultTemplateId = templates.data?.items.find((tpl) => tpl.is_default)?.id ?? "";
+  const templateSeededRef = useRef(false);
+  const tableSeededRef = useRef(false);
+  const bodySizeSeededRef = useRef(false);
+
+  useEffect(() => {
+    if (!isNew || templateSeededRef.current || !defaultTemplateId) return;
+    templateSeededRef.current = true;
+    // Шаблон по умолчанию, а не «(нет / ручная таблица)»: типовой узел должен
+    // получать таблицу, которой Nexus управляет.
+    setForm((p) => (p.clickhouse_template_id === "" && !p.external_table
+      ? { ...p, clickhouse_template_id: defaultTemplateId }
+      : p));
+  }, [isNew, defaultTemplateId]);
+
+  useEffect(() => {
+    if (!isNew || tableSeededRef.current || !chDatabase) return;
+    tableSeededRef.current = true;
+    // Префикс БД команды подставляется РЕДАКТИРУЕМЫМ: оператору остаётся дописать
+    // имя таблицы, но для внешней таблицы префикс можно стереть — она вправе
+    // жить в чужой БД.
+    setForm((p) => (p.clickhouse_table === "" ? { ...p, clickhouse_table: `${chDatabase}.` } : p));
+  }, [isNew, chDatabase]);
+
+  useEffect(() => {
+    if (!isNew || bodySizeSeededRef.current || !nodeDefaults.maxBodySize) return;
+    bodySizeSeededRef.current = true;
+    setForm((p) => (!p.max_body_size_enabled && p.max_body_size === 0
+      ? { ...p, max_body_size_enabled: true, max_body_size: nodeDefaults.maxBodySize }
+      : p));
+  }, [isNew, nodeDefaults.maxBodySize]);
 
   // Узел чужой команды (§18): переключили команду, не выходя из формы. Редирект
   // здесь НЕ делаем — он уничтожил бы несохранённые правки; показываем баннер и
@@ -242,8 +295,36 @@ export default function NodeSettings() {
         ? `${incoming_auth_login}:${incoming_auth_password}`
         : "";
     }
+    // §64: шаблон и внешняя таблица взаимоисключающи (бэкенд отвергает пару).
+    // Страховка на случай, если галка осталась от прежнего выбора «ручная».
+    if (form.clickhouse_template_id) p.external_table = false;
     return p;
   }
+
+  // §64: «ручная таблица» = шаблон не выбран. Только в этом состоянии осмысленны
+  // галка «Внешняя таблица» и проверка её структуры.
+  const isManualTable = form.clickhouse_template_id === "";
+
+  // onTemplateChange — выбор шаблона означает «таблицей управляет Nexus», поэтому
+  // снимает признак внешней; возврат к «ручной» ставит его обратно (типовой
+  // сценарий ручной таблицы — посторонний писатель).
+  function onTemplateChange(templateId: string) {
+    setForm((p) => ({ ...p, clickhouse_template_id: templateId, external_table: templateId === "" }));
+    setErrField((f) => (f === "clickhouse_template_id" ? null : f));
+    verify.reset();
+  }
+
+  // §64: проверка структуры таблицы. Расхождения приходят с HTTP 200 и ok=false —
+  // это результат проверки, а не ошибка запроса; ошибкой считается только отказ
+  // самого вызова (кривое имя → 400, ClickHouse недоступен → 503).
+  const verify = useMutation({
+    mutationFn: (table: string) => api.post<CHTableVerifyResult>("/api/ch-tables/verify", { table }),
+    onError: (e: { response?: { data?: { code?: string; error?: string } } }) => {
+      const d = e?.response?.data;
+      setVerifyError(d?.code ? t(d.code) : (d?.error ?? t("common.error")));
+    },
+    onMutate: () => setVerifyError(null),
+  });
 
   const save = useMutation({
     mutationFn: async () => {
@@ -370,8 +451,12 @@ export default function NodeSettings() {
     currentTemplateId: form.clickhouse_template_id,
     currentTable: form.clickhouse_table,
     currentRetentionDays: form.clickhouse_retention_days,
+    currentExternalTable: form.external_table,
     saved: savedNode,
   });
+  // §64: текст под кнопкой «Проверить». Ошибка вызова важнее результата: она
+  // означает, что проверка не состоялась вовсе.
+  const verifyMessage = buildVerifyMessage(verifyError, verify.data, t);
   // §28 Пункт 1: полный адрес собирается из публичного адреса приложения
   // (если задан в настройках) или origin браузера + slug текущей команды.
   const buildUrl = useNodeUrlBuilder();
@@ -882,7 +967,7 @@ export default function NodeSettings() {
               <Field label={t("node.fields.ch_template")} hint={t("node.fields.ch_template_hint")} help={t("node.fields.ch_template_hint")}>
                 <Select
                   value={form.clickhouse_template_id}
-                  onChange={(e) => set("clickhouse_template_id", e.target.value)}
+                  onChange={(e) => onTemplateChange(e.target.value)}
                 >
                   <option value="">{t("node.fields.ch_template_manual")}</option>
                   {templates.data?.items.map((tpl) => (
@@ -892,6 +977,20 @@ export default function NodeSettings() {
                     </option>
                   ))}
                 </Select>
+                {fieldErr("clickhouse_template_id")}
+                {/* §64: ручная таблица → выбор, ведёт её Nexus или сам оператор.
+                    По умолчанию внешняя: ручную таблицу обычно и заводят под
+                    постороннего писателя. */}
+                {isManualTable && (
+                  <div className="mt-2 flex items-center gap-1">
+                    <Toggle
+                      checked={form.external_table}
+                      onChange={(v) => set("external_table", v)}
+                      label={t("node.fields.external_table")}
+                    />
+                    <LabelHint content={t("node.help.external_table")} />
+                  </div>
+                )}
                 {chSchemaWontApply && (
                   <div className="mt-2 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn">
                     {t("node.help.ch_schema_change_warning")}
@@ -903,25 +1002,55 @@ export default function NodeSettings() {
                   mono
                   className={errCls("clickhouse_table")}
                   value={form.clickhouse_table}
-                  onChange={(e) => set("clickhouse_table", e.target.value)}
+                  onChange={(e) => {
+                    set("clickhouse_table", e.target.value);
+                    verify.reset(); // результат относится к прежнему имени
+                  }}
                   placeholder="webhook_send"
                 />
                 {fieldErr("clickhouse_table")}
+                {/* §64: структуру внешней таблицы Nexus не правит, поэтому её
+                    пригодность оператор проверяет явно — до сохранения узла
+                    (работает и для несохранённого: проверяем имя, не id). */}
+                {isManualTable && form.clickhouse_table.trim() !== "" && (
+                  <div className="mt-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => verify.mutate(form.clickhouse_table.trim())}
+                      disabled={verify.isPending}
+                    >
+                      <ListChecks className="h-3.5 w-3.5" />
+                      {verify.isPending ? t("common.loading") : t("node.verify.button")}
+                    </Button>
+                    {verifyMessage && (
+                      <p className={`mt-1 text-xs ${verifyMessage.ok ? "text-ok" : "text-err"}`}>
+                        {verifyMessage.text}
+                      </p>
+                    )}
+                  </div>
+                )}
               </Field>
-              <Field label={t("node.form.retention_days")} help={t("node.help.retention_days")} className="mt-3">
-                <Input
-                  type="number"
-                  min={0}
-                  value={form.clickhouse_retention_days}
-                  onChange={(e) =>
-                    set("clickhouse_retention_days", parseNumInput(e.target.value, form.clickhouse_retention_days))
-                  }
-                />
-              </Field>
+              {/* §64: у внешней таблицы retention не применяется — партиции
+                  дропает владелец таблицы, не Nexus. Поле скрываем, чтобы не
+                  обещать несуществующего поведения. */}
+              {!form.external_table && (
+                <Field label={t("node.form.retention_days")} help={t("node.help.retention_days")} className="mt-3">
+                  <Input
+                    type="number"
+                    min={0}
+                    value={form.clickhouse_retention_days}
+                    onChange={(e) =>
+                      set("clickhouse_retention_days", parseNumInput(e.target.value, form.clickhouse_retention_days))
+                    }
+                  />
+                </Field>
+              )}
               {/* §56: применить настройки схемы CH к УЖЕ существующей таблице
                   через ALTER (предпросмотр + явное применение). Только у
-                  сохранённого узла с таблицей. */}
-              {!isNew && form.clickhouse_table && (
+                  сохранённого узла с таблицей; внешнюю таблицу Nexus не альтерит
+                  (бэкенд вернул бы 409). */}
+              {!isNew && form.clickhouse_table && !form.external_table && (
                 <button
                   type="button"
                   onClick={() => void onSyncClick()}

@@ -62,6 +62,14 @@ var (
 	// §42: формат имени ClickHouse-таблицы — строго db.table из [A-Za-z0-9_].
 	ErrNodeClickHouseTableInvalid = errors.New("domain: clickhouse_table must be db.table of [A-Za-z0-9_]")
 
+	// §64: внешняя (ручная) таблица логов.
+	// ErrNodeExternalTableTemplateConflict — валидация узла: external_table
+	// несовместим с выбранным CH-шаблоном.
+	// ErrNodeExternalTable — операция управления таблицей (schema-sync) запрошена
+	// для узла с внешней таблицей; такие таблицы Nexus не изменяет.
+	ErrNodeExternalTableTemplateConflict = errors.New("domain: external_table is incompatible with clickhouse_template_id")
+	ErrNodeExternalTable                 = errors.New("domain: node uses an external clickhouse table")
+
 	// §29: комментарий узла.
 	ErrNodeCommentLength = errors.New("domain: comment length must be <= 2000")
 

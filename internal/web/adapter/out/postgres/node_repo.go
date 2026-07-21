@@ -56,7 +56,7 @@ const nodeColumns = `
 	incoming_method, outgoing_method, comment, dlq_ttl_seconds, dlq_retry_delay_seconds,
 	path_passthrough,
 	incoming_auth_dynamic_source, incoming_auth_dynamic_field,
-	created_by, updated_by`
+	created_by, updated_by, external_table`
 
 func (r *NodeRepoPg) Get(ctx context.Context, id string) (*domain.Node, error) {
 	row := r.db.QueryRow(ctx, `SELECT `+nodeColumns+` FROM nodes WHERE id = $1`, id)
@@ -79,8 +79,12 @@ func (r *NodeRepoPg) GetByPath(ctx context.Context, path string) (*domain.Node, 
 // мультикомандном бою SELECT новых колонок падал с CH code 47 (Sentry 158619),
 // пока таблицу не доальтерит рестарт Sender'а. Два сервиса — один источник
 // списка, дрейф исключён.
+//
+// §64: внешние таблицы исключены (симметрично Sender'у) — их схему ведёт
+// оператор. Фильтр на уровне узла: имя остаётся в выборке, если на него
+// ссылается хотя бы один НЕ-внешний узел.
 func (r *NodeRepoPg) ListClickHouseTables(ctx context.Context) ([]string, error) {
-	rows, err := r.db.Query(ctx, `SELECT DISTINCT clickhouse_table FROM nodes WHERE clickhouse_table <> ''`)
+	rows, err := r.db.Query(ctx, `SELECT DISTINCT clickhouse_table FROM nodes WHERE clickhouse_table <> '' AND NOT external_table`)
 	if err != nil {
 		return nil, fmt.Errorf("list ch tables: %w", err)
 	}
@@ -228,7 +232,7 @@ INSERT INTO nodes (
 	incoming_method, outgoing_method, comment, dlq_ttl_seconds, dlq_retry_delay_seconds,
 	path_passthrough,
 	incoming_auth_dynamic_source, incoming_auth_dynamic_field,
-	created_by, updated_by
+	created_by, updated_by, external_table
 ) VALUES (
 	$1, $2,
 	$3, $4, $5, $6,
@@ -246,7 +250,7 @@ INSERT INTO nodes (
 	$41, $42, $43, $44, $45,
 	$46,
 	$47, $48,
-	$49, $50
+	$49, $50, $51
 ) RETURNING id, created_at, updated_at`
 
 	err = r.db.QueryRow(ctx, q,
@@ -267,7 +271,7 @@ INSERT INTO nodes (
 		n.DLQTTLSeconds, n.DLQRetryDelaySeconds,
 		n.PathPassthrough,
 		incomingAuthDynSrc(n), incomingAuthDynField(n),
-		n.CreatedBy, n.UpdatedBy,
+		n.CreatedBy, n.UpdatedBy, n.ExternalTable,
 	).Scan(&n.ID, &n.CreatedAt, &n.UpdatedAt)
 
 	if err != nil {
@@ -314,7 +318,7 @@ UPDATE nodes SET
 	incoming_method = $42, outgoing_method = $43, comment = $44, dlq_ttl_seconds = $45,
 	dlq_retry_delay_seconds = $46, path_passthrough = $47,
 	incoming_auth_dynamic_source = $48, incoming_auth_dynamic_field = $49,
-	updated_by = $50,
+	updated_by = $50, external_table = $51,
 	updated_at = now()
 WHERE id = $1
 RETURNING updated_at`
@@ -338,7 +342,7 @@ RETURNING updated_at`
 		n.DLQTTLSeconds, n.DLQRetryDelaySeconds,
 		n.PathPassthrough,
 		incomingAuthDynSrc(n), incomingAuthDynField(n),
-		n.UpdatedBy,
+		n.UpdatedBy, n.ExternalTable,
 	).Scan(&n.UpdatedAt)
 
 	if err != nil {
@@ -467,7 +471,7 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 		&incomingMethod, &outgoingMethod, &n.Comment, &n.DLQTTLSeconds, &n.DLQRetryDelaySeconds,
 		&n.PathPassthrough,
 		&incAuthDynSrc, &n.IncomingAuthDynamicField,
-		&n.CreatedBy, &n.UpdatedBy,
+		&n.CreatedBy, &n.UpdatedBy, &n.ExternalTable,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) || isInvalidUUID(err) {
