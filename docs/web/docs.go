@@ -1502,6 +1502,103 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/me/search-history": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "§62: последние сохранённые строки поиска (не более 10), от свежих к старым. Общая для глобального поиска в шапке и поля «Поиск» на странице узлов. Строго per-user.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "История поиска узлов текущего пользователя.",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.SearchHistoryResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "§62: upsert строки в персональную историю (повтор всплывает наверх), обрезка до 10 свежих. Мусор (пустая/короткая/слишком длинная строка) молча игнорируется — тоже 204. Строго per-user.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Сохранить строку поиска в историю текущего пользователя.",
+                "parameters": [
+                    {
+                        "description": "поисковая строка",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.recordSearchRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "записано (или проигнорировано как мусор)"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "§62: удалить все сохранённые строки поиска. Строго per-user.",
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Очистить историю поиска текущего пользователя.",
+                "responses": {
+                    "204": {
+                        "description": "очищено"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/me/switch-team": {
             "post": {
                 "security": [
@@ -3574,6 +3671,52 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/search/nodes": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "§62: ILIKE по path/target_url в пределах членств пользователя. Каждый узел — с командой-владельцем (для бейджа и авто-переключения при выборе). Только session-cookie: API-токены однокомандные. q короче 2 рун → пустой список (не ошибка).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "nodes"
+                ],
+                "summary": "Глобальный поиск узлов по всем командам пользователя.",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "поисковая строка (≥ 2 рун)",
+                        "name": "q",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "лимит, дефолт 20, max 50",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.SearchNodesResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/settings/app": {
             "get": {
                 "security": [
@@ -5621,6 +5764,10 @@ const docTemplate = `{
                 "created_at": {
                     "type": "string"
                 },
+                "created_by": {
+                    "description": "§63: логин автора создания и последнего изменения узла (для показа рядом\nс «Создано»/«Обновлено»). Пусто у узлов до миграции 0026.",
+                    "type": "string"
+                },
                 "dlq_retry_delay_seconds": {
                     "type": "integer"
                 },
@@ -5740,6 +5887,9 @@ const docTemplate = `{
                 "updated_at": {
                     "type": "string"
                 },
+                "updated_by": {
+                    "type": "string"
+                },
                 "url_allowed_hosts": {
                     "type": "array",
                     "items": {
@@ -5756,6 +5906,35 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "webhook_signature_prefix": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.NodeSearchItem": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "root_method": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "target_url": {
+                    "type": "string"
+                },
+                "team_id": {
+                    "type": "string"
+                },
+                "team_name": {
+                    "type": "string"
+                },
+                "team_slug": {
                     "type": "string"
                 }
             }
@@ -5867,6 +6046,28 @@ const docTemplate = `{
             "properties": {
                 "token": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.SearchHistoryResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "internal_web_adapter_in_http.SearchNodesResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.NodeSearchItem"
+                    }
                 }
             }
         },
@@ -7063,6 +7264,18 @@ const docTemplate = `{
                 },
                 "to": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.recordSearchRequest": {
+            "type": "object",
+            "required": [
+                "q"
+            ],
+            "properties": {
+                "q": {
+                    "type": "string",
+                    "maxLength": 1000
                 }
             }
         },

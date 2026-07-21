@@ -3218,14 +3218,16 @@ Prometheus `NodeThroughput` для top-узлов. Все источники д�
   быстро. Дорогой DLQ-peek (`PeekDLQDepth/PeekDLQList`, до 5000×4 каждые 5с при 248k) — **удаляется**.
   Добавляется дешёвый `LogReader.CountFailed` + `GET /api/nodes/{id}/logs/failed-count` (для KPI); список/
   тело/replay — существующие `?done=no` + `/log/{id}` + `/logs/{id}/replay`.
-- **Честная семантика очистки.** Живая очередь — tombstone-purge (admin, кнопки только когда pending>0).
+- **Честная семантика очистки.** Живая очередь — tombstone-purge (manager+, кнопки только когда pending>0).
   Неудачи — **без удаления** (Kafka-DLQ физически не чистится — нет `DeleteRecords`, общая партиция; CH —
   история): фильтр по периоду + «Пауза»/«Отключить» узла (остановить рост) + replay. DLQ истекает по
   retention (30д).
 - **`PATCH /api/nodes/{id}/status`** (manager+) — лёгкая смена статуса для кнопок «Пауза»/«Отключить»
   (вместо полного PUT).
-- **RBAC-фикс §34.4:** failed-view — `logs:read` (viewer+); управление живой очередью — admin; вкладка
-  видна viewer+, admin-секция скрыта для не-admin (раньше все роли упирались в 403).
+- **RBAC-фикс §34.4:** failed-view — `logs:read` (viewer+); управление очередью (purge/purge-failed/
+  replay-failed) — **manager+** («Управление узлами»; изначально admin, открыто по запросу — вся группа
+  `/nodes/:id/async-queue/*` под `authedManager`); вкладка видна viewer+, секции управления скрыты для
+  не-manager.
 - **Интерфейс:** KPI-шапка («Ожидают отправки» | «Неудачные доставки») + две секции + hint-баннер,
   вместо «В очереди 0 / Очистить всё». Переиспользуются компоненты логов (`LogBodies`, `ReplayDialog`,
   `LogsInitialFilter`+`done`).
@@ -3268,12 +3270,12 @@ Prometheus `NodeThroughput` для top-узлов. Все источники д�
 (вкладка «Очередь»): (1) отменяет (tombstone, как §34.4) ID `done=0`-сообщений за окно → DLQ-репроцессор
 дропает их (`result=dropped`, перестаёт повторять); (2) lightweight-`DELETE` записей `done=0` из CH-таблицы
 узла → счётчик/список обнуляются сразу. Эндпоинт `POST /api/nodes/{id}/async-queue/purge-failed`
-(admin-only, `{from?,to?}`). Очистка pending (`.../purge`) теперь доступна всегда (не только на паузе).
+(manager+, `{from?,to?}`). Очистка pending (`.../purge`) теперь доступна всегда (не только на паузе).
 
 **«Повторить все сейчас» (§36.11):** форс-повтор всех неудачных узла за период — каждое `done=0`-сообщение
 пере-инжектируется через Receiver (как построчный replay) и при успехе его оригинал в DLQ отменяется
 (qcancel), чтобы не задвоить доставку (replay-копия + авто-повтор). Эндпоинт `POST
-/api/nodes/{id}/async-queue/replay-failed` (admin-only), cap 500/вызов. Реализация —
+/api/nodes/{id}/async-queue/replay-failed` (manager+), cap 500/вызов. Реализация —
 `ReplayUsecase.ReplayFailed` (общий `LogReader.FailedIDs` с §36.10 + `QueueCancelWriter`).
 
 **Out of scope (v2):** экспоненциальный per-message backoff; delay-топик; UI-дашборд репроцессинга.
@@ -4142,3 +4144,56 @@ ClickHouse не мешает открыть диалог.
 узлом описан подсказкой над полем. Сам перенос дополнительно пишет предупреждение в лог.
 
 Подробности — [sections/61-log-attribution-and-move-preview.md](sections/61-log-attribution-and-move-preview.md).
+
+## 62. Глобальный поиск узлов + история поиска
+
+Поиск узлов на странице узлов скоупится текущей командой сессии (§18), поэтому найти узел в другой
+команде без ручного переключения нельзя. Раздел вводит глобальный поиск во всех командах пользователя
+из шапки и персональную историю поиска (развивает §18/§26/§49/§54/§58).
+
+### 62.1 Глобальный поиск в шапке
+
+Поле по центру шапки ищет узлы во ВСЕХ командах пользователя: `GET /api/search/nodes?q=&limit=`
+(session-only — API-токены однокомандные). Usecase `NodeUsecase.SearchAcrossTeams` обходит членства
+(`ListUserTeams`, как §58), передаёт их набор в репозиторий (`ListNodesFilter.TeamIDs` → SQL
+`team_id = ANY($1)`, ILIKE по `path`/`target_url`), обогащает имена команд из уже полученных членств.
+`q` короче 2 рун → пустой список. Выдача — узлы с бейджем команды; выбор результата ведёт
+`navigate('/nodes/{id}')`, а команду сессии переключает существующий `useEnsureNodeTeam` (§58).
+Введённая строка не очищается и переживает «Назад» через `sessionStorage` (`nexus.globalsearch.q`, не
+URL — топбар глобален). Префикс `/api/search/*`, а не `/nodes/search`: static-сегмент конфликтовал бы
+с wildcard `:id` в gin-роутере.
+
+### 62.2 История поиска
+
+Последние 10 поисковых строк на пользователя, ОДНА общая для глобального поиска и поля «Поиск»
+Overview. Хранение в PostgreSQL (`user_search_history`, миграция 0025, образец §49): строго per-user,
+переживает смену браузера. FK на `users(id)` ON DELETE CASCADE; дедуп `PK (user_id, query)` +
+`ON CONFLICT DO UPDATE SET searched_at = now()` (повтор всплывает наверх); cap 10 и trim/границы длины
+(2..200 рун) — в usecase/транзакции; без audit (высокочастотно). API `GET/POST/DELETE
+/api/me/search-history` (session-only, `user_id` из сессии; чтение никогда не ошибка — деградирует в
+пустой список). Триггеры записи: выбор результата (глобальный поиск), Enter и blur непустого поля
+(Overview) — не префиксы недобранной строки.
+
+Подробности — [sections/62-global-node-search.md](sections/62-global-node-search.md).
+
+## 63. Автор создания и последнего изменения узла
+
+Во вкладке «Конфиг» узла показывалась только дата «Обновлено», но не было видно, кто менял узел.
+Раздел добавляет автора создания и последней правки (развивает §21/§26/§59).
+
+### 63.1 Модель и UI
+
+Две колонки-логина в `nodes` (миграция 0026, `VARCHAR`, образец `node_allowed_hosts.created_by`):
+`created_by` (пишется в `Create`/`Copy`, дальше не меняется) и `updated_by` (пишется в тех же UPDATE,
+что бампают `updated_at`: `Update`/`SetStatus`/`Move`/снимок allowlist). Автор — из `Actor.UserLogin`.
+Не аудит-лог: retention его чистит, `/api/audit` только manager+, потребовался бы доп. запрос на `Get`;
+колонка пишется в лад с датой, видна всем ролям (`NodeResponse`, логин — не секрет). Без бэкфилла — у
+узлов до 0026 подпись «Автор» не выводится (только дата).
+
+UI ([ConfigTab.tsx](web-ui/src/components/node/ConfigTab.tsx)): строка «Создано» (дата + `Автор:
+<создатель>`) — всегда; «Обновлено» (дата + `Автор: <редактор>`) — только если `updated_at ≠
+created_at` (при создании оба таймстемпа = одному `now()` транзакции, поэтому «Обновлено» скрыто, пока
+узел реально не изменят). Пустой автор → подпись «Автор» не выводится (только дата).
+i18n `common.created_at`/`common.author`.
+
+Подробности — [sections/63-node-author.md](sections/63-node-author.md).

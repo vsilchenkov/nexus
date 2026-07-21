@@ -241,7 +241,8 @@ func (a *App) Start(ctx context.Context) error {
 	// после создания appSettingsUC.
 	sessionTTLProvider := usecase.NewSessionTTLProvider(a.cfg.Redis.SessionTTLSec)
 	authUC := usecase.NewAuthUsecase(userRepo, sessionRepo, teamRepo, auditUC, sessionTTLProvider.Get, a.logger).
-		WithFavoriteTeams(teamRepo) // §49: избранные команды (TeamRepoPg реализует и FavoriteTeamRepo)
+		WithFavoriteTeams(teamRepo). // §49: избранные команды (TeamRepoPg реализует и FavoriteTeamRepo)
+		WithSearchHistory(userRepo)  // §62: история поиска узлов (UserRepoPg реализует SearchHistoryRepo)
 	userUC := usecase.NewUserUsecase(userRepo, sessionRepo, teamRepo, auditUC, defaultTeamID, a.logger)
 
 	tokenRepo := pgrepo.NewAPITokenRepoPg(a.pg, a.logger)

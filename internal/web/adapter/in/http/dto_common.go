@@ -183,6 +183,12 @@ type SwitchTeamResponse struct {
 	CurrentTeamID string `json:"current_team_id"`
 }
 
+// SearchHistoryResponse — GET /api/me/search-history (§62): последние строки
+// поиска пользователя от свежих к старым (не более 10).
+type SearchHistoryResponse struct {
+	Items []string `json:"items"`
+}
+
 // NodesMetricsResponse — GET /api/metrics/nodes.
 type NodesMetricsResponse struct {
 	Items []nodeThroughputDTO `json:"items"`

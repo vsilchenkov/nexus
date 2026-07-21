@@ -237,7 +237,7 @@ func (u *HostAllowlistUsecase) mutateLink(ctx context.Context, actor Actor, node
 		if err != nil {
 			return err
 		}
-		return nodes.UpdateAllowedHostsSnapshot(ctx, nodeID, encodeHostPatterns(entries))
+		return nodes.UpdateAllowedHostsSnapshot(ctx, nodeID, encodeHostPatterns(entries), actor.UserLogin)
 	}
 
 	if u.uow != nil {

@@ -6,7 +6,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -41,6 +43,11 @@ type AuthUsecase struct {
 	// favorites — избранные команды пользователя (§49). nil — фича выключена
 	// (unit-тесты без WithFavoriteTeams): чтение отдаёт пустой список.
 	favorites port.FavoriteTeamRepo
+
+	// searchHistory — история поиска узлов пользователя (§62). nil — фича
+	// выключена (unit-тесты без WithSearchHistory): чтение отдаёт пустой
+	// список, запись — no-op.
+	searchHistory port.SearchHistoryRepo
 }
 
 func NewAuthUsecase(
@@ -81,6 +88,78 @@ func (u *AuthUsecase) WithFavoriteTeams(repo port.FavoriteTeamRepo) *AuthUsecase
 // maxFavoriteTeams — верхняя граница списка избранного (§49): защита от
 // раздувания payload'а и позиций; членств столько на практике не бывает.
 const maxFavoriteTeams = 100
+
+// WithSearchHistory включает историю поиска узлов (§62). Builder-паттерн (как
+// WithFavoriteTeams): существующие вызовы NewAuthUsecase не меняются.
+func (u *AuthUsecase) WithSearchHistory(repo port.SearchHistoryRepo) *AuthUsecase {
+	u.searchHistory = repo
+	return u
+}
+
+// maxSearchHistory — сколько последних запросов хранить на пользователя (§62).
+const maxSearchHistory = 10
+
+// searchHistoryQueryBounds — границы длины сохраняемого запроса (§62, руны):
+// короче нижней границы истории не даёт (кросс-командный поиск требует ≥ 2
+// рун — см. NodeUsecase.SearchAcrossTeams), длиннее верхней — не сохраняем
+// (обрезанная строка дала бы другой набор результатов; совпадает с CHECK
+// миграции 0025).
+const (
+	minSearchQueryRunes = 2
+	maxSearchQueryRunes = 200
+)
+
+// SearchHistory — последние сохранённые запросы пользователя от свежих к старым
+// (§62). Никогда не возвращает ошибку: история — декорация к UI, при сбое (или
+// невключённом репозитории) деградирует в пустой список.
+func (u *AuthUsecase) SearchHistory(ctx context.Context, userID string) []string {
+	if u.searchHistory == nil {
+		return []string{}
+	}
+	items, err := u.searchHistory.ListSearchHistory(ctx, userID, maxSearchHistory)
+	if err != nil {
+		u.logger.Warn("list search history failed; returning empty",
+			u.logger.Str("user_id", userID), u.logger.Err(err))
+		return []string{}
+	}
+	if items == nil {
+		items = []string{}
+	}
+	return items
+}
+
+// RecordSearch — сохранить строку поиска в историю пользователя (§62): trim,
+// затем upsert с обрезкой до maxSearchHistory свежих. Мусор (пустая строка,
+// короче minSearchQueryRunes, длиннее maxSearchQueryRunes) молча игнорируется —
+// no-op, а не ошибка: вызывается из высокочастотных UI-триггеров, лишний шум
+// клиенту не нужен. Репозиторий не включён → no-op.
+func (u *AuthUsecase) RecordSearch(ctx context.Context, userID, query string) error {
+	if u.searchHistory == nil {
+		return nil
+	}
+	q := strings.TrimSpace(query)
+	if n := utf8.RuneCountInString(q); n < minSearchQueryRunes || n > maxSearchQueryRunes {
+		u.logger.Debug("record search: skip (length out of bounds)",
+			u.logger.Str("user_id", userID), u.logger.Int("runes", utf8.RuneCountInString(q)))
+		return nil
+	}
+	if err := u.searchHistory.SaveSearchQuery(ctx, userID, q, maxSearchHistory); err != nil {
+		return fmt.Errorf("save search query: %w", err)
+	}
+	return nil
+}
+
+// ClearSearchHistory — удалить всю историю поиска пользователя (§62).
+// Репозиторий не включён → no-op.
+func (u *AuthUsecase) ClearSearchHistory(ctx context.Context, userID string) error {
+	if u.searchHistory == nil {
+		return nil
+	}
+	if err := u.searchHistory.ClearSearchHistory(ctx, userID); err != nil {
+		return fmt.Errorf("clear search history: %w", err)
+	}
+	return nil
+}
 
 // FavoriteTeamIDs — id избранных команд пользователя в сохранённом порядке
 // (§49). Никогда не возвращает ошибку: избранное — декорация к MyTeams, при

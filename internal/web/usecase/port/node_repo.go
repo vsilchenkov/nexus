@@ -13,7 +13,12 @@ import (
 
 // ListNodesFilter — параметры фильтрации в NodeRepo.List.
 type ListNodesFilter struct {
-	TeamID     string // обязательное поле; в v1 всегда "default"
+	TeamID string // одна команда (обычный листинг); в v1 всегда "default"
+	// TeamIDs — набор команд для кросс-командного поиска (§62): при непустом
+	// значении фильтр идёт по team_id = ANY(TeamIDs), а TeamID игнорируется.
+	// Используется NodeUsecase.SearchAcrossTeams (поиск по всем командам
+	// пользователя); обычный List передаёт только TeamID.
+	TeamIDs    []string
 	Search     string // подстрока для path / target_url
 	RootMethod string // "" / "request" / "requestAsync"
 	Limit      int
@@ -32,7 +37,9 @@ type NodeRepo interface {
 	// UpdateAllowedHostsSnapshot обновляет только денормализованный снимок
 	// nodes.url_allowed_hosts (§23). Используется host-allowlist usecase при
 	// привязке/отвязке паттернов — не трогает остальные поля узла и креды.
-	UpdateAllowedHostsSnapshot(ctx context.Context, nodeID string, patterns []string) error
+	// updatedBy (§63): логин актора — снимок бампает updated_at, поэтому и автора
+	// последнего изменения обновляем в лад со временем.
+	UpdateAllowedHostsSnapshot(ctx context.Context, nodeID string, patterns []string, updatedBy string) error
 }
 
 // NodeTableUsage — сколько узлов делят одну ClickHouse-таблицу логов.

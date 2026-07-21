@@ -131,6 +131,10 @@ export type Node = {
   rmq_status?: RMQStatus;
   created_at: string;
   updated_at: string;
+  // §63: логин автора создания и последнего изменения узла. Пусто у узлов до
+  // миграции 0026 (в UI показывается «—»).
+  created_by?: string;
+  updated_by?: string;
 };
 
 // §27: ответ POST /api/nodes/test-rmq.

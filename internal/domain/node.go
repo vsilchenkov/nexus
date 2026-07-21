@@ -105,6 +105,12 @@ type Node struct {
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
+
+	// §63: логин автора создания и последнего изменения узла (для показа рядом
+	// с «Создано»/«Обновлено»). CreatedBy пишется при создании и не меняется;
+	// UpdatedBy — при каждом изменении узла. Пусто у узлов до миграции 0026.
+	CreatedBy string
+	UpdatedBy string
 }
 
 // UnmarshalJSON задаёт дефолт LoggingEnabled=true для JSON без этого поля (§22).
