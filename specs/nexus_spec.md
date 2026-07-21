@@ -4173,3 +4173,24 @@ Overview. Хранение в PostgreSQL (`user_search_history`, миграци�
 (Overview) — не префиксы недобранной строки.
 
 Подробности — [sections/62-global-node-search.md](sections/62-global-node-search.md).
+
+## 63. Автор создания и последнего изменения узла
+
+Во вкладке «Конфиг» узла показывалась только дата «Обновлено», но не было видно, кто менял узел.
+Раздел добавляет автора создания и последней правки (развивает §21/§26/§59).
+
+### 63.1 Модель и UI
+
+Две колонки-логина в `nodes` (миграция 0026, `VARCHAR`, образец `node_allowed_hosts.created_by`):
+`created_by` (пишется в `Create`/`Copy`, дальше не меняется) и `updated_by` (пишется в тех же UPDATE,
+что бампают `updated_at`: `Update`/`SetStatus`/`Move`/снимок allowlist). Автор — из `Actor.UserLogin`.
+Не аудит-лог: retention его чистит, `/api/audit` только manager+, потребовался бы доп. запрос на `Get`;
+колонка пишется в лад с датой, видна всем ролям (`NodeResponse`, логин — не секрет). Без бэкфилла — у
+узлов до 0026 «Автор: —».
+
+UI ([ConfigTab.tsx](web-ui/src/components/node/ConfigTab.tsx)): строка «Создано» (дата + `Автор:
+<создатель>`) — всегда; «Обновлено» (дата + `Автор: <редактор>`) — только если `updated_at ≠
+created_at` (при создании оба таймстемпа = одному `now()` транзакции, поэтому «Обновлено» скрыто, пока
+узел реально не изменят). Пустой автор → «—». i18n `common.created_at`/`common.author`.
+
+Подробности — [sections/63-node-author.md](sections/63-node-author.md).
