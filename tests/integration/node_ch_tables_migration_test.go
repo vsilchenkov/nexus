@@ -44,8 +44,9 @@ func TestNodeRepo_ListClickHouseTables_AllTeams_E2E(t *testing.T) {
 	acme := &domain.Team{Slug: "acme", Name: "Acme", CHDatabase: domain.CHDatabaseForSlug("acme")}
 	require.NoError(t, teamRepo.Create(ctx, acme))
 
-	mkNode := func(teamID, path, table string) *domain.Node {
+	mkNode := func(teamID, path, table string, external bool) *domain.Node {
 		n := &domain.Node{
+			ExternalTable:   external,
 			Path:            path,
 			RootMethod:      domain.RootMethodRequest,
 			URLMode:         domain.URLModeStatic,
@@ -65,9 +66,15 @@ func TestNodeRepo_ListClickHouseTables_AllTeams_E2E(t *testing.T) {
 		return n
 	}
 
-	mkNode(defaultTeamID, "svc/in-default", "nexus_default.in_default")
-	mkNode(acme.ID, "svc/in-acme", "nexus_acme.in_acme")
-	mkNode(acme.ID, "svc/in-acme-2", "nexus_acme.in_acme") // та же таблица → дедуп DISTINCT
+	mkNode(defaultTeamID, "svc/in-default", "nexus_default.in_default", false)
+	mkNode(acme.ID, "svc/in-acme", "nexus_acme.in_acme", false)
+	mkNode(acme.ID, "svc/in-acme-2", "nexus_acme.in_acme", false) // та же таблица → дедуп DISTINCT
+	// §64: внешняя таблица не мигрируется — её схему ведёт оператор.
+	mkNode(defaultTeamID, "svc/external", "external_db.audit_log", true)
+	// §64: таблицу делят внешний и обычный узел — она остаётся в списке, потому
+	// что вторым узлом всё равно управляет Nexus.
+	mkNode(defaultTeamID, "svc/mixed-ext", "nexus_default.mixed", true)
+	mkNode(defaultTeamID, "svc/mixed-own", "nexus_default.mixed", false)
 
 	tables, err := nodeRepo.ListClickHouseTables(ctx)
 	require.NoError(t, err)
@@ -75,12 +82,19 @@ func TestNodeRepo_ListClickHouseTables_AllTeams_E2E(t *testing.T) {
 	require.Contains(t, tables, "nexus_default.in_default")
 	require.Contains(t, tables, "nexus_acme.in_acme",
 		"таблица не-default команды обязана попасть в стартовую миграцию — иначе SELECT новых колонок упадёт с CH code 47")
-	require.Len(t, tables, 2, "DISTINCT: одна таблица на два узла не дублируется")
+	require.NotContains(t, tables, "external_db.audit_log",
+		"§64: внешняя таблица не должна получать ALTER'ы Nexus'а")
+	require.Contains(t, tables, "nexus_default.mixed",
+		"§64: общая таблица остаётся в списке, если на неё ссылается хотя бы один не-внешний узел")
+	require.Len(t, tables, 3, "DISTINCT: одна таблица на два узла не дублируется")
 
 	// Контроль: старый путь (фильтр по команде) действительно видит только default —
 	// именно поэтому список таблиц для миграции нельзя брать через List(TeamID).
 	def, err := nodeRepo.List(ctx, port.ListNodesFilter{TeamID: defaultTeamID})
 	require.NoError(t, err)
-	require.Len(t, def, 1)
-	require.Equal(t, "nexus_default.in_default", def[0].ClickHouseTable)
+	for _, n := range def {
+		require.NotEqual(t, "nexus_acme.in_acme", n.ClickHouseTable,
+			"листинг по команде не видит таблиц чужой команды — поэтому он не годится как источник для миграции")
+	}
+	require.Len(t, def, 4, "все узлы default-команды, включая внешние")
 }

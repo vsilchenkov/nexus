@@ -68,6 +68,10 @@ func (h *CHSchemaHandler) replyErr(c *gin.Context, err error) {
 		localizedError(c, http.StatusNotFound, "node.not_found")
 	case errors.Is(err, usecase.ErrCHUnavailable):
 		localizedError(c, http.StatusServiceUnavailable, "ch_template.unavailable")
+	case errors.Is(err, domain.ErrNodeExternalTable):
+		// §64: не 400 — запрос корректен, но состояние узла делает операцию
+		// недопустимой (внешней таблицей Nexus не управляет).
+		localizedError(c, http.StatusConflict, "ch_sync.external_table_forbidden")
 	default:
 		h.logger.ErrorWithOp("ch schema sync failed", err, "node.ch_schema_sync")
 		localizedError(c, http.StatusInternalServerError, "error.internal")

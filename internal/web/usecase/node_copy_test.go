@@ -189,10 +189,15 @@ func TestNodeUC_Copy_KeepsExternalTable(t *testing.T) {
 	repo := newMemNodeRepo()
 	src := sourceNode()
 	src.ExternalTable = true
+	src.LoggingEnabled = true
 	repo.items[src.ID] = src
+	// Дефолтный шаблон в каталоге есть — без гейта §64 копия была бы
+	// провижинена по нему (ветка «пустой template_id + логирование»).
+	templates := newMemCHTemplateRepo()
+	require.NoError(t, templates.Create(ctx, validTemplate("Standard", true)))
 
 	uc := NewNodeUsecase(repo, nopNodeCache{}, NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()),
-		nil, nil, prov, newMemCHTemplateRepo(), time.Minute, 0, "default-team", nil, logging.NewNoop())
+		nil, nil, prov, templates, time.Minute, 0, "default-team", nil, logging.NewNoop())
 
 	clone, err := uc.Copy(ctx, SystemActor(), src.ID, "svc/orders-copy", "team1")
 	require.NoError(t, err)

@@ -79,8 +79,12 @@ func (r *NodeRepoPg) GetByPath(ctx context.Context, path string) (*domain.Node, 
 // мультикомандном бою SELECT новых колонок падал с CH code 47 (Sentry 158619),
 // пока таблицу не доальтерит рестарт Sender'а. Два сервиса — один источник
 // списка, дрейф исключён.
+//
+// §64: внешние таблицы исключены (симметрично Sender'у) — их схему ведёт
+// оператор. Фильтр на уровне узла: имя остаётся в выборке, если на него
+// ссылается хотя бы один НЕ-внешний узел.
 func (r *NodeRepoPg) ListClickHouseTables(ctx context.Context) ([]string, error) {
-	rows, err := r.db.Query(ctx, `SELECT DISTINCT clickhouse_table FROM nodes WHERE clickhouse_table <> ''`)
+	rows, err := r.db.Query(ctx, `SELECT DISTINCT clickhouse_table FROM nodes WHERE clickhouse_table <> '' AND NOT external_table`)
 	if err != nil {
 		return nil, fmt.Errorf("list ch tables: %w", err)
 	}

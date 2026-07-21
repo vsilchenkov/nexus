@@ -137,8 +137,19 @@ func NewNodeUsecase(
 //     таблицу — баг тестового стенда). Деградация здесь мягкая: при
 //     недоступности CH/каталога узел всё равно создаётся, с предупреждением.
 //   - Логирование выключено и шаблон не выбран — no-op (legacy/ручная таблица).
+//   - external_table — no-op при любых остальных условиях (§64): таблицей
+//     владеет оператор или посторонний сервис-писатель, создавать её (и тем
+//     более по чужому шаблону) Nexus не вправе.
 func (u *NodeUsecase) provisionTable(ctx context.Context, n *domain.Node) error {
 	if n.ClickHouseTable == "" {
+		return nil
+	}
+
+	if n.ExternalTable {
+		// §51.9: тихий пропуск управления таблицей должен быть виден на debug —
+		// иначе «почему не создалась таблица» выясняется только чтением кода.
+		u.logger.Debug("provision skipped: external table",
+			u.logger.Str("path", n.Path), u.logger.Str("table", n.ClickHouseTable))
 		return nil
 	}
 
@@ -690,7 +701,7 @@ func (u *NodeUsecase) MovePreview(ctx context.Context, nodeID, currentTeamID, ta
 		return nil, domain.ErrPermissionDenied
 	}
 
-	newTable := rebaseCHTable(n.ClickHouseTable, target.CHDatabase)
+	newTable := targetCHTable(n, target.CHDatabase)
 	res := &MovePreview{TargetTable: newTable}
 	if n.ClickHouseTable == "" {
 		return res, nil
@@ -744,7 +755,7 @@ func (u *NodeUsecase) Move(ctx context.Context, actor Actor, nodeID, currentTeam
 	}
 
 	oldTable := n.ClickHouseTable
-	newTable := rebaseCHTable(oldTable, target.CHDatabase)
+	newTable := targetCHTable(n, target.CHDatabase)
 
 	moved := *n
 	moved.TeamID = target.ID
@@ -884,6 +895,17 @@ func (u *NodeUsecase) countCHTableSiblings(ctx context.Context, table, nodeID st
 // rebaseCHTable меняет БД-префикс полного имени "<db>.<table>" на newDB.
 // Если имя без точки (legacy) — префиксует newDB. Пустое имя остаётся
 // пустым.
+// targetCHTable — имя таблицы логов узла после переноса в команду с БД newDB.
+// Внешняя таблица (§64) имя НЕ меняет: ею владеет оператор или посторонний
+// сервис-писатель, и она не обязана лежать в БД команды. Ребейз увёл бы узел на
+// несуществующее имя в чужой БД, а сама таблица осталась бы без читателя.
+func targetCHTable(n *domain.Node, newDB string) string {
+	if n.ExternalTable {
+		return n.ClickHouseTable
+	}
+	return rebaseCHTable(n.ClickHouseTable, newDB)
+}
+
 func rebaseCHTable(full, newDB string) string {
 	if full == "" {
 		return ""
