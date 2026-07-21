@@ -13,7 +13,12 @@ import (
 
 // ListNodesFilter — параметры фильтрации в NodeRepo.List.
 type ListNodesFilter struct {
-	TeamID     string // обязательное поле; в v1 всегда "default"
+	TeamID string // одна команда (обычный листинг); в v1 всегда "default"
+	// TeamIDs — набор команд для кросс-командного поиска (§62): при непустом
+	// значении фильтр идёт по team_id = ANY(TeamIDs), а TeamID игнорируется.
+	// Используется NodeUsecase.SearchAcrossTeams (поиск по всем командам
+	// пользователя); обычный List передаёт только TeamID.
+	TeamIDs    []string
 	Search     string // подстрока для path / target_url
 	RootMethod string // "" / "request" / "requestAsync"
 	Limit      int

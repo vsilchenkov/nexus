@@ -96,8 +96,17 @@ func (r *NodeRepoPg) ListClickHouseTables(ctx context.Context) ([]string, error)
 }
 
 func (r *NodeRepoPg) List(ctx context.Context, f port.ListNodesFilter) ([]*domain.Node, error) {
-	q := `SELECT ` + nodeColumns + ` FROM nodes WHERE team_id = $1`
-	args := []any{f.TeamID}
+	// §62: непустой TeamIDs → кросс-командный поиск (team_id = ANY),
+	// иначе обычный однокомандный листинг (team_id = $1).
+	var q string
+	var args []any
+	if len(f.TeamIDs) > 0 {
+		q = `SELECT ` + nodeColumns + ` FROM nodes WHERE team_id = ANY($1)`
+		args = []any{f.TeamIDs}
+	} else {
+		q = `SELECT ` + nodeColumns + ` FROM nodes WHERE team_id = $1`
+		args = []any{f.TeamID}
+	}
 	if f.RootMethod != "" {
 		q += fmt.Sprintf(" AND root_method = $%d", len(args)+1)
 		args = append(args, f.RootMethod)

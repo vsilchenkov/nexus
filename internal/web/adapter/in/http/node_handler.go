@@ -380,6 +380,68 @@ func (h *NodeHandler) ResolveTeam(c *gin.Context) {
 	})
 }
 
+// NodeSearchItem — один узел в выдаче глобального поиска (§62): минимум для
+// строки выпадающего списка + команда-владелец для бейджа и авто-переключения.
+type NodeSearchItem struct {
+	ID         string `json:"id"`
+	Path       string `json:"path"`
+	TargetURL  string `json:"target_url"`
+	RootMethod string `json:"root_method"`
+	Status     string `json:"status"`
+	TeamID     string `json:"team_id"`
+	TeamSlug   string `json:"team_slug"`
+	TeamName   string `json:"team_name"`
+}
+
+// SearchNodesResponse — GET /api/search/nodes (§62).
+type SearchNodesResponse struct {
+	Items []NodeSearchItem `json:"items"`
+}
+
+// SearchAcrossTeams godoc
+// @Summary  Глобальный поиск узлов по всем командам пользователя.
+// @Description  §62: ILIKE по path/target_url в пределах членств пользователя. Каждый узел — с командой-владельцем (для бейджа и авто-переключения при выборе). Только session-cookie: API-токены однокомандные. q короче 2 рун → пустой список (не ошибка).
+// @Tags     nodes
+// @Produce  json
+// @Param    q      query  string  true   "поисковая строка (≥ 2 рун)"
+// @Param    limit  query  int     false  "лимит, дефолт 20, max 50"
+// @Success  200    {object}  SearchNodesResponse
+// @Failure  401    {object}  ErrorResponse
+// @Security CookieAuth
+// @Router   /api/search/nodes [get]
+func (h *NodeHandler) SearchAcrossTeams(c *gin.Context) {
+	s, ok := sessionFromCtx(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	limit := 0
+	if v := c.Query("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			limit = n
+		}
+	}
+	hits, err := h.uc.SearchAcrossTeams(c.Request.Context(), s.UserID, c.Query("q"), limit)
+	if err != nil {
+		h.replyServerError(c, err, "node.search")
+		return
+	}
+	items := make([]NodeSearchItem, 0, len(hits))
+	for _, hit := range hits {
+		items = append(items, NodeSearchItem{
+			ID:         hit.Node.ID,
+			Path:       hit.Node.Path,
+			TargetURL:  hit.Node.TargetURL,
+			RootMethod: string(hit.Node.RootMethod),
+			Status:     string(hit.Node.Status),
+			TeamID:     hit.Node.TeamID,
+			TeamSlug:   hit.TeamSlug,
+			TeamName:   hit.TeamName,
+		})
+	}
+	c.JSON(http.StatusOK, SearchNodesResponse{Items: items})
+}
+
 func (h *NodeHandler) replyDomainError(c *gin.Context, err error, op string) {
 	switch {
 	case errors.Is(err, domain.ErrNodeNotFound),

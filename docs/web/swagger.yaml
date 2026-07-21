@@ -691,6 +691,25 @@ definitions:
       webhook_signature_prefix:
         type: string
     type: object
+  internal_web_adapter_in_http.NodeSearchItem:
+    properties:
+      id:
+        type: string
+      path:
+        type: string
+      root_method:
+        type: string
+      status:
+        type: string
+      target_url:
+        type: string
+      team_id:
+        type: string
+      team_name:
+        type: string
+      team_slug:
+        type: string
+    type: object
   internal_web_adapter_in_http.NodesMetricsResponse:
     properties:
       items:
@@ -771,6 +790,13 @@ definitions:
       items:
         items:
           type: string
+        type: array
+    type: object
+  internal_web_adapter_in_http.SearchNodesResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.NodeSearchItem'
         type: array
     type: object
   internal_web_adapter_in_http.SwitchTeamResponse:
@@ -4591,6 +4617,38 @@ paths:
       summary: Создать поле запроса в справочнике (manager, §41).
       tags:
       - request-fields
+  /api/search/nodes:
+    get:
+      description: '§62: ILIKE по path/target_url в пределах членств пользователя.
+        Каждый узел — с командой-владельцем (для бейджа и авто-переключения при выборе).
+        Только session-cookie: API-токены однокомандные. q короче 2 рун → пустой список
+        (не ошибка).'
+      parameters:
+      - description: поисковая строка (≥ 2 рун)
+        in: query
+        name: q
+        required: true
+        type: string
+      - description: лимит, дефолт 20, max 50
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.SearchNodesResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Глобальный поиск узлов по всем командам пользователя.
+      tags:
+      - nodes
   /api/settings/app:
     get:
       description: Возвращает merge'нутые значения из БД. Секреты (DSN, password)

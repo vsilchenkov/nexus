@@ -3671,6 +3671,52 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/search/nodes": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "§62: ILIKE по path/target_url в пределах членств пользователя. Каждый узел — с командой-владельцем (для бейджа и авто-переключения при выборе). Только session-cookie: API-токены однокомандные. q короче 2 рун → пустой список (не ошибка).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "nodes"
+                ],
+                "summary": "Глобальный поиск узлов по всем командам пользователя.",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "поисковая строка (≥ 2 рун)",
+                        "name": "q",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "лимит, дефолт 20, max 50",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.SearchNodesResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/settings/app": {
             "get": {
                 "security": [
@@ -5857,6 +5903,35 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_web_adapter_in_http.NodeSearchItem": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "root_method": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "target_url": {
+                    "type": "string"
+                },
+                "team_id": {
+                    "type": "string"
+                },
+                "team_name": {
+                    "type": "string"
+                },
+                "team_slug": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_web_adapter_in_http.NodesMetricsResponse": {
             "type": "object",
             "properties": {
@@ -5974,6 +6049,17 @@ const docTemplate = `{
                     "type": "array",
                     "items": {
                         "type": "string"
+                    }
+                }
+            }
+        },
+        "internal_web_adapter_in_http.SearchNodesResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.NodeSearchItem"
                     }
                 }
             }

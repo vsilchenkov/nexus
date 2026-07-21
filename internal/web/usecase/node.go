@@ -267,6 +267,77 @@ func (u *NodeUsecase) List(ctx context.Context, f port.ListNodesFilter) ([]*doma
 	return u.repo.List(ctx, f)
 }
 
+// NodeSearchHit — узел, найденный кросс-командным поиском (§62), с командой-
+// владельцем (для бейджа в выпадающем списке и авто-переключения).
+type NodeSearchHit struct {
+	Node     *domain.Node
+	TeamSlug string
+	TeamName string
+}
+
+// minSearchQueryRunesNode — нижняя граница длины запроса кросс-командного поиска
+// (§62): короче — сразу пусто (не грузим все команды ILIKE'ом по одной-двум
+// буквам). Совпадает с minSearchQueryRunes истории (auth.go).
+const minSearchQueryRunesNode = 2
+
+const (
+	defaultNodeSearchLimit = 20
+	maxNodeSearchLimit     = 50
+)
+
+// SearchAcrossTeams — поиск узлов по всем командам пользователя (§62): ILIKE по
+// path/target_url в пределах его членств. Возвращает узлы с командой-владельцем.
+//
+// Обход членств — как в ResolveTeam: TeamRepo обязателен; репозиторий узлов
+// фильтрует по team_id = ANY(<членства>) (port.ListNodesFilter.TeamIDs), имена
+// команд обогащаются из уже полученного ListUserTeams (без лишних запросов).
+// Пустой результат (короткий запрос, нет членств) — не ошибка.
+func (u *NodeUsecase) SearchAcrossTeams(ctx context.Context, userID, query string, limit int) ([]NodeSearchHit, error) {
+	if u.teams == nil {
+		return nil, fmt.Errorf("search nodes: team repo unavailable")
+	}
+	q := strings.TrimSpace(query)
+	if len([]rune(q)) < minSearchQueryRunesNode {
+		return nil, nil
+	}
+	switch {
+	case limit <= 0:
+		limit = defaultNodeSearchLimit
+	case limit > maxNodeSearchLimit:
+		limit = maxNodeSearchLimit
+	}
+	memberships, err := u.teams.ListUserTeams(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("search nodes: list memberships: %w", err)
+	}
+	if len(memberships) == 0 {
+		return nil, nil
+	}
+	teamIDs := make([]string, 0, len(memberships))
+	teamByID := make(map[string]domain.Team, len(memberships))
+	for _, m := range memberships {
+		teamIDs = append(teamIDs, m.Team.ID)
+		teamByID[m.Team.ID] = m.Team
+	}
+	nodes, err := u.repo.List(ctx, port.ListNodesFilter{
+		TeamIDs: teamIDs,
+		Search:  q,
+		Limit:   limit,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("search nodes: list: %w", err)
+	}
+	hits := make([]NodeSearchHit, 0, len(nodes))
+	for _, n := range nodes {
+		tm := teamByID[n.TeamID] // всегда есть: узел отфильтрован по членствам
+		hits = append(hits, NodeSearchHit{Node: n, TeamSlug: tm.Slug, TeamName: tm.Name})
+	}
+	u.logger.Debug("search nodes across teams",
+		u.logger.Str("user_id", userID), u.logger.Int("teams", len(teamIDs)),
+		u.logger.Int("hits", len(hits)), u.logger.Int("limit", limit))
+	return hits, nil
+}
+
 // prepareNewNode — общий пайплайн подготовки узла перед вставкой как нового
 // (Create и Copy, §53): дефолты, сброс снимка allowlist, нормализация под
 // RootMethod и CH-таблицу, валидация, self-reference, hard-limit и

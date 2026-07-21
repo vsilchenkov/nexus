@@ -98,6 +98,14 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		// Проверяет членство пользователя — узел чужой команды скрыт (404, no-leak).
 		authed.GET("/nodes/:id/team", RequireSessionOnly(), h.Node.ResolveTeam)
 
+		// §62: глобальный поиск узлов по всем командам пользователя. Только
+		// session-cookie: кросс-командная выдача однокомандным API-токенам
+		// бессмысленна (как и /nodes/:id/team, /me/switch-team). Отдельный
+		// префикс /search/*, а не /nodes/search: static-сегмент "search"
+		// конфликтовал бы с wildcard ":id" из "/nodes/:id" в gin-роутере (ср.
+		// приём с "log" vs "logs" ниже).
+		authed.GET("/search/nodes", RequireSessionOnly(), h.Node.SearchAcrossTeams)
+
 		// Шаблоны CH-таблиц (§19). GET доступен любой сессии (селектор
 		// при настройке узла); мутации/verify — admin-only ниже.
 		if h.CHTemplate != nil {
