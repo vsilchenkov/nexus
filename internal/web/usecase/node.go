@@ -386,6 +386,8 @@ func (u *NodeUsecase) prepareNewNode(ctx context.Context, n *domain.Node) ([]str
 }
 
 func (u *NodeUsecase) Create(ctx context.Context, actor Actor, n *domain.Node) error {
+	// §63: автор создания узла.
+	n.CreatedBy = actor.UserLogin
 	cleared, err := u.prepareNewNode(ctx, n)
 	if err != nil {
 		return err
@@ -521,6 +523,11 @@ func (u *NodeUsecase) Update(ctx context.Context, actor Actor, n *domain.Node, t
 	// §23: снимок allowlist хостов управляется только каталогом (link/unlink) —
 	// сохраняем существующий, чтобы PUT узла его не затирал.
 	n.URLAllowedHosts = old.URLAllowedHosts
+	// §63: автор последнего изменения; created_by приходит из БД (scan old не
+	// используем — Update по SET не трогает created_by), поэтому переносим его с
+	// исходного узла, чтобы ответ содержал верного создателя.
+	n.CreatedBy = old.CreatedBy
+	n.UpdatedBy = actor.UserLogin
 	// §19.5: (пере)создаём таблицу при смене имени/шаблона либо при включении
 	// логирования на узле, у которого таблицы ещё не было.
 	if old.ClickHouseTable != n.ClickHouseTable ||
@@ -586,6 +593,7 @@ func (u *NodeUsecase) SetStatus(ctx context.Context, actor Actor, id, teamID str
 	}
 	updated := *old
 	updated.Status = status
+	updated.UpdatedBy = actor.UserLogin // §63
 	diff := map[string]any{"status": map[string]string{"before": string(old.Status), "after": string(status)}}
 	if u.uow != nil {
 		if err := u.uow.Execute(ctx, func(ctx context.Context, r port.Repos) error {
@@ -741,6 +749,7 @@ func (u *NodeUsecase) Move(ctx context.Context, actor Actor, nodeID, currentTeam
 	moved := *n
 	moved.TeamID = target.ID
 	moved.ClickHouseTable = newTable
+	moved.UpdatedBy = actor.UserLogin // §63
 
 	details := map[string]any{
 		"path":          n.Path,

@@ -39,6 +39,8 @@ func (u *NodeUsecase) Copy(ctx context.Context, actor Actor, sourceID, newPath, 
 	}
 
 	clone := cloneNodeForCopy(src, newPath)
+	// §63: автор копии — тот, кто копирует (не автор источника).
+	clone.CreatedBy = actor.UserLogin
 	if _, err := u.prepareNewNode(ctx, clone); err != nil {
 		return nil, err
 	}
@@ -89,6 +91,9 @@ func cloneNodeForCopy(src *domain.Node, newPath string) *domain.Node {
 	clone.Status = domain.NodeStatusPaused
 	clone.CreatedAt = time.Time{}
 	clone.UpdatedAt = time.Time{}
+	// §63: автор проставляется заново в Copy (клон копирует поля источника).
+	clone.CreatedBy = ""
+	clone.UpdatedBy = ""
 	clone.ForwardHeaders = slices.Clone(src.ForwardHeaders)
 	// Снимок allowlist сбрасывает prepareNewNode; пересборка — copyHostLinks.
 	clone.URLAllowedHosts = nil
@@ -117,7 +122,10 @@ func (u *NodeUsecase) copyHostLinks(ctx context.Context, r port.Repos, sourceID 
 		}
 	}
 	patterns := encodeHostPatterns(entries)
-	if err := r.Nodes.UpdateAllowedHostsSnapshot(ctx, clone.ID, patterns); err != nil {
+	// §63: снимок бампает updated_at; в одной UoW-транзакции now() совпадает с
+	// INSERT'ом, поэтому created_at==updated_at сохранится (у копии «Обновлено»
+	// скрыто). updatedBy = автор копии для консистентности.
+	if err := r.Nodes.UpdateAllowedHostsSnapshot(ctx, clone.ID, patterns, clone.CreatedBy); err != nil {
 		return 0, fmt.Errorf("update allowed hosts snapshot: %w", err)
 	}
 	clone.URLAllowedHosts = patterns

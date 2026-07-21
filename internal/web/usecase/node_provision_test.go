@@ -60,7 +60,7 @@ func (r *memNodeRepo) Delete(_ context.Context, id string) error {
 	delete(r.items, id)
 	return nil
 }
-func (r *memNodeRepo) UpdateAllowedHostsSnapshot(_ context.Context, nodeID string, patterns []string) error {
+func (r *memNodeRepo) UpdateAllowedHostsSnapshot(_ context.Context, nodeID string, patterns []string, _ string) error {
 	n, ok := r.items[nodeID]
 	if !ok {
 		return domain.ErrNodeNotFound

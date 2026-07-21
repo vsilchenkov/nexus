@@ -37,7 +37,9 @@ type NodeRepo interface {
 	// UpdateAllowedHostsSnapshot обновляет только денормализованный снимок
 	// nodes.url_allowed_hosts (§23). Используется host-allowlist usecase при
 	// привязке/отвязке паттернов — не трогает остальные поля узла и креды.
-	UpdateAllowedHostsSnapshot(ctx context.Context, nodeID string, patterns []string) error
+	// updatedBy (§63): логин актора — снимок бампает updated_at, поэтому и автора
+	// последнего изменения обновляем в лад со временем.
+	UpdateAllowedHostsSnapshot(ctx context.Context, nodeID string, patterns []string, updatedBy string) error
 }
 
 // NodeTableUsage — сколько узлов делят одну ClickHouse-таблицу логов.

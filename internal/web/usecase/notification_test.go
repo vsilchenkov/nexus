@@ -44,7 +44,7 @@ func (r notifNodeRepo) Count(context.Context, string) (int, error) { return 0, n
 func (r notifNodeRepo) Create(context.Context, *domain.Node) error { return nil }
 func (r notifNodeRepo) Update(context.Context, *domain.Node) error { return nil }
 func (r notifNodeRepo) Delete(context.Context, string) error       { return nil }
-func (r notifNodeRepo) UpdateAllowedHostsSnapshot(context.Context, string, []string) error {
+func (r notifNodeRepo) UpdateAllowedHostsSnapshot(context.Context, string, []string, string) error {
 	return nil
 }
 
