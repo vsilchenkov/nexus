@@ -1,5 +1,13 @@
 basePath: /
 definitions:
+  internal_web_adapter_in_http.CHTableVerifyRequest:
+    properties:
+      table:
+        maxLength: 129
+        type: string
+    required:
+    - table
+    type: object
   internal_web_adapter_in_http.CHTemplateVerifyResponse:
     properties:
       code:
@@ -2025,6 +2033,15 @@ definitions:
           отклоняется (ErrVersionOverrideForbidden). nil/"" = версия из git (ldflags).
         type: string
     type: object
+  nexus_internal_domain.LogColumnMismatch:
+    properties:
+      got:
+        type: string
+      name:
+        type: string
+      want:
+        type: string
+    type: object
   nexus_internal_domain.LoggingSettings:
     properties:
       level:
@@ -2111,6 +2128,23 @@ definitions:
       cron:
         type: string
       enabled:
+        type: boolean
+    type: object
+  nexus_internal_web_usecase.CHTableVerifyResult:
+    properties:
+      mismatched:
+        items:
+          $ref: '#/definitions/nexus_internal_domain.LogColumnMismatch'
+        type: array
+      missing:
+        items:
+          type: string
+        type: array
+      ok:
+        type: boolean
+      table:
+        type: string
+      table_missing:
         type: boolean
     type: object
   nexus_internal_web_usecase.DryRunReport:
@@ -2581,6 +2615,40 @@ paths:
       summary: Профиль текущей сессии.
       tags:
       - auth
+  /api/ch-tables/verify:
+    post:
+      consumes:
+      - application/json
+      description: 'Read-only: сверяет колонки и типы указанной ClickHouse-таблицы
+        с обязательной схемой логов. Лишние колонки допускаются. Расхождения возвращаются
+        в теле с ok=false (200), а не как ошибка запроса. ClickHouse не меняет.'
+      parameters:
+      - description: имя таблицы db.table
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.CHTableVerifyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/nexus_internal_web_usecase.CHTableVerifyResult'
+        "400":
+          description: некорректное имя таблицы
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "503":
+          description: ClickHouse недоступен
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Проверить структуру внешней таблицы логов (§64).
+      tags:
+      - nodes
   /api/ch-templates:
     get:
       produces:

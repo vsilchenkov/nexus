@@ -333,11 +333,21 @@ func (a *App) Start(ctx context.Context) error {
 	// отсутствии ClickHouse → usecase вернёт ErrCHUnavailable (503). Handler
 	// создаём всегда: endpoint деградирует, а не исчезает.
 	var chSchemaInspector webport.CHSchemaInspector
+	// §64: тот же инспектор проверяет структуру внешней таблицы. Держим отдельную
+	// переменную конкретного типа: присвоение nil-указателя в интерфейсную
+	// переменную дало бы typed-nil, и проверка `columns == nil` в usecase не
+	// сработала бы (вместо 503 был бы паник-nil при вызове).
+	var chTableVerifyUC *usecase.CHTableVerifyUsecase
 	if a.chMgr != nil {
-		chSchemaInspector = chreader.NewSchemaInspector(a.chMgr, a.logger)
+		insp := chreader.NewSchemaInspector(a.chMgr, a.logger)
+		chSchemaInspector = insp
+		chTableVerifyUC = usecase.NewCHTableVerifyUsecase(insp, a.logger)
+	} else {
+		chTableVerifyUC = usecase.NewCHTableVerifyUsecase(nil, a.logger)
 	}
 	chSchemaUC := usecase.NewCHSchemaSyncUsecase(nodeUC, chTemplateRepo, chSchemaInspector, auditUC, a.logger)
 	chSchemaHandler := httpadapter.NewCHSchemaHandler(chSchemaUC, a.logger)
+	chTableVerifyHandler := httpadapter.NewCHTableVerifyHandler(chTableVerifyUC, a.logger)
 
 	// Каталог разрешённых хостов (§23). Не зависит от ClickHouse — создаётся
 	// всегда. Привязка к узлу пересобирает снимок nodes.url_allowed_hosts и
@@ -558,6 +568,7 @@ func (a *App) Start(ctx context.Context) error {
 		Orphan:        orphanHandler,
 		CHTemplate:    chTemplateHandler,
 		CHSchema:      chSchemaHandler,
+		CHTableVerify: chTableVerifyHandler,
 		HostAllowlist: hostAllowlistHandler,
 		HeaderCatalog: headerCatalogHandler,
 		RequestField:  requestFieldHandler,
