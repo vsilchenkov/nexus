@@ -29,6 +29,9 @@ export type NodeFormLimits = {
   max_body_size: number;
   // §42: имя CH-таблицы (опционально) — формат db.table из [A-Za-z0-9_].
   clickhouse_table: string;
+  // §64: внешняя таблица несовместима с шаблоном (шаблон = «управляет Nexus»).
+  clickhouse_template_id: string;
+  external_table: boolean;
   rmq_host: string;
   rmq_queue: string;
   pull_interval_sec: number;
@@ -148,6 +151,10 @@ export function validateNodeForm(f: NodeFormLimits, ctx?: BasicAuthContext): Nod
   // §42: имя CH-таблицы опционально, но если задано — строго db.table.
   if (f.clickhouse_table.trim() !== "" && !CH_TABLE_RE.test(f.clickhouse_table.trim())) {
     return { field: "clickhouse_table", code: "node.validation.clickhouse_table_format" };
+  }
+  // §64: шаблон означает «таблицей управляет Nexus», external_table — обратное.
+  if (f.external_table && f.clickhouse_template_id !== "") {
+    return { field: "clickhouse_template_id", code: "node.validation.external_table_conflict" };
   }
   if (isPull) {
     if (f.rmq_host.trim() === "" || f.rmq_host.length > 253) {

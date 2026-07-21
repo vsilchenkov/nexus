@@ -98,6 +98,16 @@ export function useMyTeams() {
   });
 }
 
+// useCurrentTeamCHDatabase — имя БД ClickHouse текущей команды (`nexus_<slug>`),
+// §64. Нужно форме создания узла: подставить редактируемый префикс в поле
+// «Таблица логов», чтобы оператор дописывал только имя таблицы. Пусто, пока
+// членства не загрузились.
+export function useCurrentTeamCHDatabase(): string {
+  const { data } = useMyTeams();
+  if (!data) return "";
+  return data.items.find((m) => m.id === data.current_team_id)?.ch_database ?? "";
+}
+
 // useSwitchTeam — смена текущей команды сессии. 403 (членство сняли, а UI ещё
 // показывает команду/избранную) → перечитываем членства: протухший пункт
 // исчезнет сам (на бэке избранное каскадно удалено вместе с членством).

@@ -6,6 +6,7 @@ const saved = {
   clickhouse_template_id: "tpl-1",
   clickhouse_table: "db.logs",
   clickhouse_retention_days: 30,
+  external_table: false,
 };
 
 describe("chSchemaChangeWontApply", () => {
@@ -76,6 +77,7 @@ describe("chSyncFormDirty", () => {
     currentTemplateId: "tpl-1",
     currentTable: "db.logs",
     currentRetentionDays: 30,
+    currentExternalTable: false,
     saved,
   };
 
@@ -89,6 +91,10 @@ describe("chSyncFormDirty", () => {
 
   it("грязно: изменено имя таблицы", () => {
     expect(chSyncFormDirty({ ...base, currentTable: "db.logs_v2" })).toBe(true);
+  });
+
+  it("грязно: переключили «внешняя таблица» (§64 — решает, ведёт ли схему Nexus)", () => {
+    expect(chSyncFormDirty({ ...base, currentExternalTable: true })).toBe(true);
   });
 
   it("чисто: CH-поля совпадают с сохранёнными", () => {
