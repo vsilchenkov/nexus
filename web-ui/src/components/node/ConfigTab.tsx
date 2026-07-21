@@ -75,7 +75,10 @@ export function ConfigTab({ node }: { node: Node }) {
         <Row label={t("node.fields.url_mode")}>{node.url_mode}</Row>
         {node.url_mode === "static" && (
           <Row label={t("node.fields.target_url")}>
-            <span className="font-mono break-all">{node.target_url || "—"}</span>
+            <div className="flex items-center gap-1.5">
+              <span className="min-w-0 font-mono break-all">{node.target_url || "—"}</span>
+              {node.target_url && <CopyButton value={node.target_url} />}
+            </div>
           </Row>
         )}
         {/* Авторизация раздельно: входящая (клиент → Receiver; скрыта для pull —
