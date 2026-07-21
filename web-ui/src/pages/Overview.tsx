@@ -21,6 +21,9 @@ import {
   ChartTooltip,
   PeriodPicker,
   Pill,
+  Popover,
+  PopoverAnchor,
+  PopoverContent,
   Seg,
   Select,
   Tooltip,
@@ -45,6 +48,8 @@ import {
 import { cn } from "../lib/cn";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { useMetricsRefetchMs } from "../components/node/useNodeMetrics";
+import { SearchHistoryList } from "../components/SearchHistoryList";
+import { MIN_SEARCH_QUERY_LEN, useRecordSearch, useSearchHistory } from "../lib/searchHistory";
 
 type ListResp = { items: Node[] };
 type View = "table" | "cards";
@@ -141,6 +146,30 @@ export default function Overview() {
     return () => clearTimeout(id);
   }, [searchInput, updateFilters]);
 
+  // §62: история поиска в поле «Поиск» (общая с глобальным поиском в шапке).
+  // Дропдаун открывается по фокусу, если история непуста; запись строки — по
+  // Enter и по blur непустого поля (сервер дедупит). pickingHistory гасит
+  // запись «на blur» при клике по пункту истории (чтобы не сохранять начатую,
+  // но не завершённую строку вместо выбранной).
+  const recordSearch = useRecordSearch();
+  const searchHistoryQ = useSearchHistory();
+  const hasHistory = (searchHistoryQ.data?.items.length ?? 0) > 0;
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const pickingHistory = useRef(false);
+
+  const recordIfValid = useCallback(
+    (value: string) => {
+      if (value.trim().length >= MIN_SEARCH_QUERY_LEN) recordSearch.mutate(value);
+    },
+    [recordSearch],
+  );
+
+  const pickHistory = useCallback((entry: string) => {
+    pickingHistory.current = true;
+    setSearchInput(entry);
+    setHistoryOpen(false);
+  }, []);
+
   useEffect(() => localStorage.setItem(VIEW_KEY, view), [view]);
   useEffect(() => localStorage.setItem(AUTOREFRESH_KEY, autoRefresh ? "1" : "0"), [autoRefresh]);
 
@@ -229,15 +258,41 @@ export default function Overview() {
       )}
 
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-[200px] flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-subtle" />
-          <Input
-            className="pl-9"
-            placeholder={t("overview.search_placeholder")}
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-          />
-        </div>
+        <Popover open={historyOpen && hasHistory} onOpenChange={setHistoryOpen}>
+          <PopoverAnchor asChild>
+            <div className="relative min-w-[200px] flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-subtle" />
+              <Input
+                className="pl-9"
+                placeholder={t("overview.search_placeholder")}
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                onFocus={() => setHistoryOpen(true)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    recordIfValid(searchInput);
+                    setHistoryOpen(false);
+                  }
+                }}
+                onBlur={() => {
+                  if (pickingHistory.current) {
+                    pickingHistory.current = false;
+                    return;
+                  }
+                  recordIfValid(searchInput);
+                }}
+              />
+            </div>
+          </PopoverAnchor>
+          <PopoverContent
+            align="start"
+            sideOffset={4}
+            onOpenAutoFocus={(e) => e.preventDefault()}
+            className="w-[--radix-popover-trigger-width] min-w-[260px] p-0"
+          >
+            <SearchHistoryList onPick={pickHistory} />
+          </PopoverContent>
+        </Popover>
         <Select
           className="w-40"
           value={method}
