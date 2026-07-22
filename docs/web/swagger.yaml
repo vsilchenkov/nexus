@@ -1206,6 +1206,11 @@ definitions:
         type: string
       must_change_password:
         type: boolean
+      name:
+        description: Name — отображаемое имя (§66), обязательно.
+        maxLength: 255
+        minLength: 1
+        type: string
       password:
         maxLength: 128
         minLength: 8
@@ -1218,6 +1223,7 @@ definitions:
         type: string
     required:
     - login
+    - name
     - role
     type: object
   internal_web_adapter_in_http.diagNodeDTO:
@@ -1507,6 +1513,9 @@ definitions:
         type: string
       must_change_password:
         type: boolean
+      name:
+        description: 'Name — отображаемое имя (§66): UI показывает его вместо логина.'
+        type: string
       role:
         type: string
       user_id:
@@ -1735,6 +1744,9 @@ definitions:
         type: string
       login:
         type: string
+      name:
+        description: 'Name — отображаемое имя (§66): UI показывает его вместо логина.'
+        type: string
       role:
         type: string
       team_id:
@@ -1854,6 +1866,11 @@ definitions:
         type: string
       must_change_password:
         type: boolean
+      name:
+        description: Name — отображаемое имя (§66), обязательно и при обновлении.
+        maxLength: 255
+        minLength: 1
+        type: string
       role:
         enum:
         - admin
@@ -1861,6 +1878,7 @@ definitions:
         - manager
         type: string
     required:
+    - name
     - role
     type: object
   internal_web_adapter_in_http.userResponse:
@@ -1883,6 +1901,8 @@ definitions:
         type: string
       must_change_password:
         type: boolean
+      name:
+        type: string
       role:
         type: string
       teams:

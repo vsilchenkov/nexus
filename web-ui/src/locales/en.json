@@ -920,7 +920,7 @@
     "users": {
       "title": "Users",
       "add": "Add user",
-      "search_placeholder": "Search by login or email…",
+      "search_placeholder": "Search by name, login or email…",
       "empty": "No users",
       "counter_total": "Total: {{n}}",
       "counter_active": "active: {{n}}",
@@ -967,6 +967,9 @@
       "pw_strong": "Strong.",
       "pw_very_strong": "Very strong.",
       "field": {
+        "name": "Name",
+        "name_placeholder": "John Doe",
+        "name_hint": "Shown in the interface instead of the login.",
         "login": "Login",
         "login_hint": "Cannot be changed later.",
         "email": "Email",

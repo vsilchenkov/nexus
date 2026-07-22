@@ -22,6 +22,8 @@ type TeamMember = {
   user_id: string;
   team_id: string;
   login: string;
+  // §66: отображаемое имя — показывается вместо логина.
+  name?: string;
   email?: string;
   role: "owner" | "admin" | "member";
   created_at: string;
@@ -30,6 +32,7 @@ type TeamMember = {
 type User = {
   id: string;
   login: string;
+  name?: string;
   email: string;
 };
 
@@ -370,9 +373,10 @@ function MembersDialog({ team, onClose }: MembersDialogProps) {
               className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none"
             >
               <option value="">{t("settings.teams.members.pick_user")}</option>
+              {/* §66: имя — основное; логин в скобках, чтобы различать тёзок. */}
               {candidates.map((u) => (
                 <option key={u.id} value={u.id}>
-                  {u.login}
+                  {u.name ? `${u.name} (${u.login})` : u.login}
                 </option>
               ))}
             </select>
@@ -421,10 +425,12 @@ function MembersDialog({ team, onClose }: MembersDialogProps) {
               {members.data.items.map((m) => (
                 <tr key={m.user_id} className="border-t border-bg-muted">
                   <td className="px-3 py-2">
-                    <div className="font-mono text-xs">{m.login || m.user_id}</div>
-                    {m.email && (
-                      <div className="text-fg-muted text-[11px]">{m.email}</div>
-                    )}
+                    {/* §66: имя — основное, логин — вторичной строкой. */}
+                    <div className="text-sm">{m.name || m.login || m.user_id}</div>
+                    <div className="text-fg-muted text-[11px] font-mono">
+                      {m.login}
+                      {m.email && <span className="font-sans"> · {m.email}</span>}
+                    </div>
                   </td>
                   <td className="px-3 py-2">
                     <select

@@ -124,7 +124,7 @@ func (u *UserUsecase) Create(ctx context.Context, actor Actor, teamID string, in
 		}
 	}
 	u.audit.Log(ctx, actor, domain.ActionUserCreate, "user", in.ID, map[string]any{
-		"login": in.Login, "role": string(in.Role), "team_id": teamID,
+		"login": in.Login, "name": in.Name, "role": string(in.Role), "team_id": teamID,
 	})
 	return nil
 }
@@ -154,7 +154,14 @@ func (u *UserUsecase) Update(ctx context.Context, actor Actor, in *domain.User) 
 	if old.Role != in.Role || old.Active != in.Active {
 		_, _ = u.sessions.DeleteByUser(ctx, in.ID)
 	}
-	u.audit.Log(ctx, actor, domain.ActionUserUpdate, "user", in.ID, nil)
+	// §66: след переименования в аудите. Активные сессии пользователя несут
+	// старое имя до следующего входа (осознанно: рестартовать сессии из-за
+	// смены подписи не стоит).
+	details := map[string]any{"name": in.Name}
+	if old.Name != in.Name {
+		details["prev_name"] = old.Name
+	}
+	u.audit.Log(ctx, actor, domain.ActionUserUpdate, "user", in.ID, details)
 	return nil
 }
 

@@ -7,8 +7,12 @@ import "time"
 // устанавливается только при создании/смене пароля и никогда не
 // возвращается в API-ответах.
 type User struct {
-	ID                 string
-	Login              string
+	ID    string
+	Login string
+	// Name — отображаемое имя (§66): обязательно при создании/изменении,
+	// в интерфейсе везде выводится вместо логина. Миграция 0028 разово
+	// проставила name = login существующим пользователям.
+	Name               string
 	Email              string
 	PasswordHash       string
 	Role               UserRole
@@ -24,6 +28,15 @@ type User struct {
 	LastLoginAt   *time.Time
 }
 
+// DisplayName — имя для подписи действий и UI (§66); фолбэк на Login —
+// страховка от пустого имени (до миграции 0028 / внутренние записи).
+func (u User) DisplayName() string {
+	if u.Name != "" {
+		return u.Name
+	}
+	return u.Login
+}
+
 // Session — серверная сессия в Redis (§7.1).
 //
 // CurrentTeamID — UUID команды, в контексте которой работает сессия
@@ -31,9 +44,14 @@ type User struct {
 // и меняется через POST /api/me/switch-team. Для API-токенов (которые
 // привязаны к одной команде) равен api_tokens.team_id.
 type Session struct {
-	Token         string
-	UserID        string
-	Login         string
+	Token  string
+	UserID string
+	Login  string
+	// Name — отображаемое имя пользователя на момент входа (§66): им
+	// подписываются снапшоты автора (nodes.created_by/updated_by, аудит).
+	// Пустое у сессий, созданных до деплоя §66, — потребители обязаны
+	// фолбэчить на Login (DisplayName).
+	Name          string
 	Role          UserRole
 	Lang          UserLang
 	CurrentTeamID string
@@ -44,4 +62,13 @@ type Session struct {
 	MustChangePassword bool
 	CreatedAt          time.Time
 	LastSeenAt         time.Time
+}
+
+// DisplayName — имя для подписи действий и UI (§66): Name, а для сессий,
+// созданных до ввода имени (Redis переживает деплой), — фолбэк на Login.
+func (s Session) DisplayName() string {
+	if s.Name != "" {
+		return s.Name
+	}
+	return s.Login
 }

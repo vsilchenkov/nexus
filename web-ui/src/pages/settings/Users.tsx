@@ -12,6 +12,8 @@ type TeamBrief = { id: string; slug: string; name: string; role: string };
 type User = {
   id: string;
   login: string;
+  // §66: отображаемое имя — в интерфейсе показывается вместо логина.
+  name: string;
   email: string;
   role: Role;
   active: boolean;
@@ -143,6 +145,7 @@ export function UsersPanel() {
   const toggleActive = useMutation({
     mutationFn: (u: User) =>
       api.put(`/api/users/${u.id}`, {
+        name: u.name || u.login, // §66: name обязателен в PUT
         email: u.email,
         role: u.role,
         active: !u.active,
@@ -235,22 +238,25 @@ export function UsersPanel() {
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-3">
                       <div
-                        className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium ${avatarColor(u.login)}`}
+                        className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium ${avatarColor(u.name || u.login)}`}
                       >
-                        {initials(u.login)}
+                        {initials(u.name || u.login)}
                       </div>
                       <div>
                         <div className="flex items-center gap-2">
-                          <span className="font-medium">{u.login}</span>
+                          {/* §66: имя — основное; логин остаётся вторичной
+                              строкой (это кредентиал, админ должен его видеть). */}
+                          <span className="font-medium">{u.name || u.login}</span>
                           {isSelf && (
                             <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-accent/15 text-accent">
                               {t("settings.users.you")}
                             </span>
                           )}
                         </div>
-                        {u.email && (
-                          <div className="text-xs text-fg-muted">{u.email}</div>
-                        )}
+                        <div className="text-xs text-fg-muted">
+                          <span className="font-mono">{u.login}</span>
+                          {u.email && <span> · {u.email}</span>}
+                        </div>
                       </div>
                     </div>
                   </td>
@@ -357,7 +363,7 @@ export function UsersPanel() {
                           if (
                             await confirm({
                               title: t("settings.users.action.delete"),
-                              message: t("settings.users.confirm_delete", { login: u.login }),
+                              message: t("settings.users.confirm_delete", { login: u.name || u.login }),
                               confirmLabel: t("settings.users.action.delete"),
                               danger: true,
                             })
@@ -420,6 +426,8 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
   const { t } = useTranslation();
 
   const [login, setLogin] = useState(initial?.login ?? "");
+  // §66: отображаемое имя — обязательно при создании и изменении.
+  const [name, setName] = useState(initial?.name ?? "");
   const [email, setEmail] = useState(initial?.email ?? "");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<Role>(initial?.role ?? "viewer");
@@ -438,6 +446,7 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
       if (mode === "create") {
         return api.post("/api/users", {
           login,
+          name: name.trim(),
           email,
           password,
           role,
@@ -447,6 +456,7 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
         });
       }
       return api.put(`/api/users/${initial!.id}`, {
+        name: name.trim(),
         email,
         role,
         active,
@@ -463,7 +473,7 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
   const pw = passwordStrength(password);
 
   const canSubmit =
-    save.isPending
+    save.isPending || name.trim() === ""
       ? false
       : mode === "create"
       ? !!login && password.length >= 8
@@ -476,7 +486,7 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
           <h3 className="text-lg font-semibold">
             {mode === "create"
               ? t("settings.users.dialog.new_title")
-              : t("settings.users.dialog.edit_title", { login: initial?.login })}
+              : t("settings.users.dialog.edit_title", { login: initial?.name || initial?.login })}
           </h3>
           <p className="text-xs text-fg-muted mt-1">
             {mode === "create"
@@ -492,6 +502,22 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
         )}
 
         <div className="space-y-3">
+          {/* §66: имя — первым (основное представление пользователя в UI). */}
+          <div className="space-y-1">
+            <label className="text-xs uppercase tracking-wider text-fg-muted">
+              {t("settings.users.field.name")}
+            </label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={t("settings.users.field.name_placeholder")}
+              className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none"
+            />
+            <p className="text-xs text-fg-muted">
+              {t("settings.users.field.name_hint")}
+            </p>
+          </div>
+
           <div className="space-y-1">
             <label className="text-xs uppercase tracking-wider text-fg-muted">
               {t("settings.users.field.login")}
@@ -669,7 +695,7 @@ function PasswordDialog({ user, onClose, onSaved }: PasswordDialogProps) {
       <div className="space-y-4 w-[400px] max-w-full">
         <header>
           <h3 className="text-lg font-semibold">
-            {t("settings.users.password_dialog.title", { login: user.login })}
+            {t("settings.users.password_dialog.title", { login: user.name || user.login })}
           </h3>
         </header>
 

@@ -921,7 +921,7 @@
     "users": {
       "title": "Пользователи",
       "add": "Добавить",
-      "search_placeholder": "Поиск по логину или email…",
+      "search_placeholder": "Поиск по имени, логину или email…",
       "empty": "Пользователей нет",
       "counter_total": "Всего: {{n}}",
       "counter_active": "активных: {{n}}",
@@ -968,6 +968,9 @@
       "pw_strong": "Сильный.",
       "pw_very_strong": "Очень сильный.",
       "field": {
+        "name": "Имя",
+        "name_placeholder": "Иван Иванов",
+        "name_hint": "Отображается в интерфейсе вместо логина.",
         "login": "Логин",
         "login_hint": "Нельзя изменить позже.",
         "email": "Email",
