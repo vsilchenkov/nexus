@@ -1197,11 +1197,6 @@ export default function NodeSettings() {
         <div className="space-y-3">
           <Card>
             <div className="mb-2.5 text-sm font-semibold">{t("node.form.preview")}</div>
-            {/* §65: команда узла — read-only, только представление (имя);
-                внутри карточки, чтобы не опускать предпросмотр отдельным блоком. */}
-            <div className="mb-2 text-[12px] text-fg-muted">
-              {t("node.fields.team")}: <span className="font-medium text-fg">{teamName ?? "—"}</span>
-            </div>
             <div className="space-y-1 text-[12px] leading-7 text-fg-muted">
               {isPull ? (
                 <>
@@ -1234,6 +1229,48 @@ export default function NodeSettings() {
                 </span>{" "}
                 → <span className="break-all font-mono text-fg">{form.target_url || "{target_url}"}</span>
               </div>
+            </div>
+            {/* §65: команда узла — read-only, только представление (имя);
+                блоком ПОД схемой маршрута, отделена разделителем. Тут же даты
+                §63 как на вкладке «Конфиг»: только у сохранённого узла;
+                «Обновлено» — только если узел реально меняли (updated_at ≠
+                created_at); автор при пустом значении не выводится. */}
+            <div className="mt-3 space-y-1 border-t border-line pt-2.5 text-[12px] text-fg-muted">
+              <div>
+                {t("node.fields.team")}: <span className="font-medium text-fg">{teamName ?? "—"}</span>
+              </div>
+              {!isNew && existing.data && (
+                <>
+                  <div>
+                    {t("common.created_at")}:{" "}
+                    <span className="text-fg">
+                      {new Date(existing.data.created_at).toLocaleString()}
+                    </span>
+                    {existing.data.created_by && (
+                      <span className="text-fg-subtle">
+                        {" · "}
+                        {t("common.author")}:{" "}
+                        <span className="font-mono">{existing.data.created_by}</span>
+                      </span>
+                    )}
+                  </div>
+                  {existing.data.updated_at !== existing.data.created_at && (
+                    <div>
+                      {t("common.updated_at")}:{" "}
+                      <span className="text-fg">
+                        {new Date(existing.data.updated_at).toLocaleString()}
+                      </span>
+                      {existing.data.updated_by && (
+                        <span className="text-fg-subtle">
+                          {" · "}
+                          {t("common.author")}:{" "}
+                          <span className="font-mono">{existing.data.updated_by}</span>
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </Card>
           {form.url_mode === "from_request" && allowlistEmpty && (
