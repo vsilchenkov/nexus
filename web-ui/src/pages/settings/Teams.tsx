@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { api } from "../../api/client";
 import { useConfirm } from "../../lib/confirm";
+import { MY_TEAMS_KEY } from "../../lib/teams";
 
 // Multi-tenancy v2 (§16 ТЗ, Phase 10.F.2): admin создаёт команды, добавляет
 // в них пользователей. Каждой команде соответствует своя CH-БД nexus_<slug>.
@@ -53,6 +54,9 @@ export function TeamsPanel() {
     onSuccess: () => {
       setDelError(null);
       qc.invalidateQueries({ queryKey: ["teams"] });
+      // Дропдаун в шапке читает ["me-teams"] (/api/me/teams) — без этой
+      // инвалидации удалённая команда «висит» в переключателе до F5.
+      qc.invalidateQueries({ queryKey: MY_TEAMS_KEY });
     },
     // П17: команду с узлами удалить нельзя (409) — показываем понятную ошибку.
     onError: (err: { response?: { data?: { error?: string } } }) =>
@@ -161,6 +165,10 @@ export function TeamsPanel() {
           onSaved={() => {
             setEditing(null);
             qc.invalidateQueries({ queryKey: ["teams"] });
+            // Создатель команды добавляется в неё owner'ом на бэкенде — новая
+            // команда обязана сразу появиться в переключателе шапки, который
+            // читает ["me-teams"]; без инвалидации она видна только после F5.
+            qc.invalidateQueries({ queryKey: MY_TEAMS_KEY });
           }}
         />
       )}
@@ -306,25 +314,33 @@ function MembersDialog({ team, onClose }: MembersDialogProps) {
   const [newUserID, setNewUserID] = useState<string>("");
   const [newRole, setNewRole] = useState<"owner" | "admin" | "member">("member");
 
+  // После правки состава/ролей перечитываем и собственные членства ["me-teams"]:
+  // админ мог добавить/убрать/переролить СЕБЯ — переключатель шапки обязан
+  // отразить это без F5 (тот же класс бага, что и создание команды).
+  const invalidateMembers = () => {
+    qc.invalidateQueries({ queryKey: ["team-members", team.id] });
+    qc.invalidateQueries({ queryKey: MY_TEAMS_KEY });
+  };
+
   const add = useMutation({
     mutationFn: () =>
       api.post(`/api/teams/${team.id}/members`, { user_id: newUserID, role: newRole }),
     onSuccess: () => {
       setNewUserID("");
-      qc.invalidateQueries({ queryKey: ["team-members", team.id] });
+      invalidateMembers();
     },
   });
 
   const remove = useMutation({
     mutationFn: (userID: string) =>
       api.del(`/api/teams/${team.id}/members/${userID}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["team-members", team.id] }),
+    onSuccess: invalidateMembers,
   });
 
   const updateRole = useMutation({
     mutationFn: ({ userID, role }: { userID: string; role: TeamMember["role"] }) =>
       api.put(`/api/teams/${team.id}/members/${userID}`, { role }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["team-members", team.id] }),
+    onSuccess: invalidateMembers,
   });
 
   // Список пользователей, которые ЕЩЁ не члены команды (для select).
