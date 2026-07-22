@@ -4,6 +4,7 @@ import { useSearchParams } from "react-router-dom";
 import { Download } from "lucide-react";
 
 import { api } from "../api/client";
+import { useCurrentTeamID } from "../lib/teams";
 import { AuditDetailsCell } from "../components/AuditDetailsCell";
 import { Button, Card, Chip, ErrorAlert, Select } from "../components/ui";
 
@@ -47,10 +48,14 @@ export default function AuditLog() {
       { replace: true },
     );
 
+  // teamId в ключе: /api/audit фильтруется по команде сессии — без него записи
+  // разных команд алиасятся в один слот кеша (см. useCurrentTeamID в lib/teams).
+  const teamId = useCurrentTeamID();
   const q = useQuery({
-    queryKey: ["audit", filter],
+    queryKey: ["audit", teamId, filter],
     queryFn: () =>
       api.get<Resp>("/api/audit", filter ? { action: filter, limit: 200 } : { limit: 200 }),
+    enabled: teamId !== "",
   });
 
   const csvHref = filter

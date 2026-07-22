@@ -98,6 +98,17 @@ export function useMyTeams() {
   });
 }
 
+// useCurrentTeamID — id текущей команды сессии ("" пока членства не загрузились).
+// Нужен team-scoped ключам кеша (Overview): без teamId в queryKey записи разных
+// команд алиасятся в один слот, и после смены команды react-query мгновенно
+// отдаёт закешированный список ПРЕЖНЕЙ команды (stale-while-revalidate) —
+// «стёр поиск → узлы не той команды». invalidateTeamScoped помечает stale, но
+// от алиасинга ключей не спасает.
+export function useCurrentTeamID(): string {
+  const { data } = useMyTeams();
+  return data?.current_team_id ?? "";
+}
+
 // useCurrentTeamCHDatabase — имя БД ClickHouse текущей команды (`nexus_<slug>`),
 // §64. Нужно форме создания узла: подставить редактируемый префикс в поле
 // «Таблица логов», чтобы оператор дописывал только имя таблицы. Пусто, пока
