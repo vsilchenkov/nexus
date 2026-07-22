@@ -116,11 +116,16 @@ func (r *UserRepoPg) Create(ctx context.Context, u *domain.User) error {
 	// default_team_id: если caller не передал — берём UUID 'default'-team
 	// из сидинга миграции 0008. NULLIF превращает пустую строку в NULL,
 	// COALESCE подставляет lookup.
-	// §66: name обязателен на API-уровне; COALESCE(name, login) — страховка
-	// для внутренних вызовов без имени (например, bootstrap admin).
+	// §66: name обязателен на API-уровне; фолбэк на login — страховка для
+	// внутренних вызовов без имени (например, bootstrap admin). Фолбэк в Go,
+	// а не COALESCE($1) в SQL: повторное использование $1 в двух контекстах
+	// даёт «inconsistent types deduced for parameter» (42P08).
+	if u.Name == "" {
+		u.Name = u.Login
+	}
 	const q = `
 INSERT INTO users (login, name, email, password_hash, role, active, must_change_password, lang, default_team_id)
-VALUES ($1, COALESCE(NULLIF($2,''), $1), NULLIF($3,''), NULLIF($4,''), $5, $6, $7, $8,
+VALUES ($1, $2, NULLIF($3,''), NULLIF($4,''), $5, $6, $7, $8,
 	COALESCE(NULLIF($9,'')::uuid, (SELECT id FROM teams WHERE slug = '` + domain.DefaultTeamSlug + `')))
 RETURNING id, created_at`
 	err := r.pool.QueryRow(ctx, q,
