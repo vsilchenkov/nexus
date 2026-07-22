@@ -1230,48 +1230,49 @@ export default function NodeSettings() {
                 → <span className="break-all font-mono text-fg">{form.target_url || "{target_url}"}</span>
               </div>
             </div>
-            {/* §65: команда узла — read-only, только представление (имя);
-                блоком ПОД схемой маршрута, отделена разделителем. Тут же даты
-                §63 как на вкладке «Конфиг»: только у сохранённого узла;
-                «Обновлено» — только если узел реально меняли (updated_at ≠
-                created_at); автор при пустом значении не выводится. */}
-            <div className="mt-3 space-y-1 border-t border-line pt-2.5 text-[12px] text-fg-muted">
-              <div>
-                {t("node.fields.team")}: <span className="font-medium text-fg">{teamName ?? "—"}</span>
+            {/* §65: команда узла и даты §63 — read-only блок ПОД схемой
+                маршрута, в формате строк вкладки «Конфиг» (лейбл слева,
+                разделители между строками, 13px). Даты — только у
+                сохранённого узла; «Обновлено» — только если узел реально
+                меняли (updated_at ≠ created_at); пустой автор не выводится. */}
+            <dl className="mt-3 divide-y divide-line border-t border-line text-[13px]">
+              <div className="grid grid-cols-[96px_1fr] gap-3 py-2.5">
+                <dt className="text-fg-muted">{t("node.fields.team")}</dt>
+                <dd className="font-medium">{teamName ?? "—"}</dd>
               </div>
               {!isNew && existing.data && (
                 <>
-                  <div>
-                    {t("common.created_at")}:{" "}
-                    <span className="text-fg">
+                  <div className="grid grid-cols-[96px_1fr] gap-3 py-2.5">
+                    <dt className="text-fg-muted">{t("common.created_at")}</dt>
+                    <dd>
                       {new Date(existing.data.created_at).toLocaleString()}
-                    </span>
-                    {existing.data.created_by && (
-                      <span className="text-fg-subtle">
-                        {" · "}
-                        {t("common.author")}:{" "}
-                        <span className="font-mono">{existing.data.created_by}</span>
-                      </span>
-                    )}
-                  </div>
-                  {existing.data.updated_at !== existing.data.created_at && (
-                    <div>
-                      {t("common.updated_at")}:{" "}
-                      <span className="text-fg">
-                        {new Date(existing.data.updated_at).toLocaleString()}
-                      </span>
-                      {existing.data.updated_by && (
+                      {existing.data.created_by && (
                         <span className="text-fg-subtle">
                           {" · "}
                           {t("common.author")}:{" "}
-                          <span className="font-mono">{existing.data.updated_by}</span>
+                          <span className="font-mono">{existing.data.created_by}</span>
                         </span>
                       )}
+                    </dd>
+                  </div>
+                  {existing.data.updated_at !== existing.data.created_at && (
+                    <div className="grid grid-cols-[96px_1fr] gap-3 py-2.5">
+                      <dt className="text-fg-muted">{t("common.updated_at")}</dt>
+                      <dd>
+                        {new Date(existing.data.updated_at).toLocaleString()}
+                        {existing.data.updated_by && (
+                          <span className="text-fg-subtle">
+                            {" · "}
+                            {t("common.author")}:{" "}
+                            <span className="font-mono">{existing.data.updated_by}</span>
+                          </span>
+                        )}
+                      </dd>
                     </div>
                   )}
                 </>
               )}
-            </div>
+            </dl>
           </Card>
           {form.url_mode === "from_request" && allowlistEmpty && (
             <Hint tone="danger" icon={<ShieldAlert className="h-4 w-4" />}>
