@@ -26,9 +26,9 @@ import {
   type HostAllowlistEntry,
 } from "../api/client";
 import { useNodeUrlBuilder } from "../lib/nodeUrl";
-import { useCurrentTeamCHDatabase } from "../lib/teams";
+import { useCurrentTeamCHDatabase, useMyTeams } from "../lib/teams";
 import { useNodeFormDefaults } from "../lib/nodeDefaults";
-import { useEnsureNodeTeam } from "../lib/nodeShare";
+import { useEnsureNodeTeam, useNodeTeam } from "../lib/nodeShare";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { parseNumInput } from "../lib/numField";
 import { validateNodeForm } from "../lib/nodeValidation";
@@ -189,6 +189,15 @@ export default function NodeSettings() {
   // §58: шаренная ссылка на правку узла из другой команды тоже авто-переключает
   // сессию на команду узла. Пока не ready — узел не грузим (иначе 404).
   const ensure = useEnsureNodeTeam(id);
+
+  // §65: строка «Команда» в сайдбаре — только имя. Для правки — резолвер §58
+  // (ключ уже закеширован useEnsureNodeTeam, второго запроса нет), для
+  // создания — текущая команда сессии из членств (узел будет создан в ней).
+  const myTeams = useMyTeams();
+  const nodeTeamQ = useNodeTeam(isNew ? undefined : id);
+  const teamName = isNew
+    ? myTeams.data?.items.find((m) => m.id === myTeams.data?.current_team_id)?.name
+    : nodeTeamQ.data?.team_name;
 
   const existing = useQuery({
     queryKey: ["node", id],
@@ -1186,6 +1195,11 @@ export default function NodeSettings() {
         </div>
 
         <div className="space-y-3">
+          {/* §65: команда узла — read-only, только представление (имя). */}
+          <div className="text-sm">
+            <span className="text-fg-muted">{t("node.fields.team")}: </span>
+            <span className="font-medium">{teamName ?? "—"}</span>
+          </div>
           <Card>
             <div className="mb-2.5 text-sm font-semibold">{t("node.form.preview")}</div>
             <div className="space-y-1 text-[12px] leading-7 text-fg-muted">
