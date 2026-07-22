@@ -66,6 +66,39 @@ export function validateNodePath(path: string): string | null {
   return null;
 }
 
+// basicCredsError — общие проверки пары Логин/Пароль basic-авторизации
+// (исходящей и входящей): формат логина, пробелы по краям, «пароль без
+// логина», «сменил логин — введи пароль заново» (origLogin передаётся только
+// для сохранённого узла).
+function basicCredsError(
+  authType: string,
+  login: string,
+  password: string,
+  loginField: string,
+  passwordField: string,
+  origLogin?: string,
+): NodeFieldError | null {
+  if (authType !== "basic") {
+    return null;
+  }
+  if (login.includes(":")) {
+    return { field: loginField, code: "node.validation.login_colon" };
+  }
+  if (login !== login.trim()) {
+    return { field: loginField, code: "node.validation.login_whitespace" };
+  }
+  if (password !== "" && password !== password.trim()) {
+    return { field: passwordField, code: "node.validation.password_whitespace" };
+  }
+  if (password !== "" && login === "") {
+    return { field: loginField, code: "node.validation.login_required_with_password" };
+  }
+  if (origLogin !== undefined && password === "" && login !== origLogin) {
+    return { field: passwordField, code: "node.validation.password_required_on_login_change" };
+  }
+  return null;
+}
+
 export function validateNodeForm(f: NodeFormLimits, ctx?: BasicAuthContext): NodeFieldError | null {
   const pathCode = validateNodePath(f.path);
   if (pathCode) {
@@ -73,28 +106,31 @@ export function validateNodeForm(f: NodeFormLimits, ctx?: BasicAuthContext): Nod
   }
   // Basic-креды: логин без «:» (разделитель формата "login:password" — пароль
   // двоеточия содержать может, логин нет); смена логина требует пароля заново.
-  if (f.auth_type === "basic") {
-    if (f.auth_login.includes(":")) {
-      return { field: "auth_login", code: "node.validation.login_colon" };
-    }
-    if (ctx && f.auth_password === "" && f.auth_login !== ctx.orig_auth_login) {
-      return { field: "auth_password", code: "node.validation.password_required_on_login_change" };
-    }
+  // Пробелы по краям логина/пароля — блокируем: сервер хранит байт-в-байт и
+  // сравнивает без нормализации, невидимый хвостовой пробел из copy-paste =
+  // «правильный пароль не подходит». Пароль, введённый без логина, тоже
+  // блокируем: креды склеились бы в ":password" и логин молча терялся.
+  const basicErr = basicCredsError(
+    f.auth_type,
+    f.auth_login,
+    f.auth_password,
+    "auth_login",
+    "auth_password",
+    ctx?.orig_auth_login,
+  );
+  if (basicErr) {
+    return basicErr;
   }
-  if (f.incoming_auth_type === "basic") {
-    if (f.incoming_auth_login.includes(":")) {
-      return { field: "incoming_auth_login", code: "node.validation.login_colon" };
-    }
-    if (
-      ctx &&
-      f.incoming_auth_password === "" &&
-      f.incoming_auth_login !== ctx.orig_incoming_auth_login
-    ) {
-      return {
-        field: "incoming_auth_password",
-        code: "node.validation.password_required_on_login_change",
-      };
-    }
+  const inBasicErr = basicCredsError(
+    f.incoming_auth_type,
+    f.incoming_auth_login,
+    f.incoming_auth_password,
+    "incoming_auth_login",
+    "incoming_auth_password",
+    ctx?.orig_incoming_auth_login,
+  );
+  if (inBasicErr) {
+    return inBasicErr;
   }
   const isPull = f.root_method === "RabbitMQAsync";
   if ((f.url_mode === "static" || isPull) && f.target_url.trim() === "") {

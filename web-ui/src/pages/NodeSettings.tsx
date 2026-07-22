@@ -761,6 +761,7 @@ export default function NodeSettings() {
                 <Field label={t("auth.login_field")} help={t("node.help.basic_login")}>
                   <Input
                     mono
+                    autoComplete="off"
                     className={errCls("incoming_auth_login")}
                     value={form.incoming_auth_login}
                     onChange={(e) => set("incoming_auth_login", e.target.value)}
@@ -876,6 +877,7 @@ export default function NodeSettings() {
                 <Field label={t("auth.login_field")} help={t("node.help.basic_login")}>
                   <Input
                     mono
+                    autoComplete="off"
                     className={errCls("auth_login")}
                     value={form.auth_login}
                     onChange={(e) => set("auth_login", e.target.value)}
