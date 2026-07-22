@@ -197,9 +197,23 @@ export default function NodeSettings() {
   });
 
   const [form, setForm] = useState<Form>(emptyForm);
+  // §23: SSRF-плашка в сайдбаре нужна только при ПУСТОМ allowlist. Список
+  // существующего узла берём тем же queryKey, что AllowedHostsField, — кеш
+  // общий, запрос не дублируется, а attach/detach в поле инвалидируют ключ,
+  // и плашка исчезает/появляется реактивно.
+  const nodeHosts = useQuery({
+    queryKey: ["node-hosts", id],
+    queryFn: () => api.get<{ items: HostAllowlistEntry[] }>(`/api/nodes/${id}/allowed-hosts`),
+    enabled: !isNew && form.url_mode === "from_request",
+  });
   // §23: для нового узла выбранные хосты копятся локально и привязываются после
   // создания (allowlist — производный снимок каталога, управляется link/unlink).
   const [pendingHosts, setPendingHosts] = useState<HostAllowlistEntry[]>([]);
+  // Для существующего узла — строго isSuccess (не «?? []»), чтобы плашка не
+  // мигала, пока список ещё грузится.
+  const allowlistEmpty = isNew
+    ? pendingHosts.length === 0
+    : nodeHosts.isSuccess && (nodeHosts.data.items ?? []).length === 0;
   const [showDryRun, setShowDryRun] = useState(false);
   const [showChSync, setShowChSync] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
@@ -1014,15 +1028,15 @@ export default function NodeSettings() {
                     (работает и для несохранённого: проверяем имя, не id). */}
                 {isManualTable && form.clickhouse_table.trim() !== "" && (
                   <div className="mt-2">
-                    <Button
+                    <button
                       type="button"
-                      variant="ghost"
                       onClick={() => verify.mutate(form.clickhouse_table.trim())}
                       disabled={verify.isPending}
+                      className="flex items-center gap-1.5 text-xs text-accent hover:underline disabled:opacity-60 disabled:hover:no-underline"
                     >
                       <ListChecks className="h-3.5 w-3.5" />
                       {verify.isPending ? t("common.loading") : t("node.verify.button")}
-                    </Button>
+                    </button>
                     {verifyMessage && (
                       <p className={`mt-1 text-xs ${verifyMessage.ok ? "text-ok" : "text-err"}`}>
                         {verifyMessage.text}
@@ -1206,7 +1220,7 @@ export default function NodeSettings() {
               </div>
             </div>
           </Card>
-          {form.url_mode === "from_request" && (
+          {form.url_mode === "from_request" && allowlistEmpty && (
             <Hint tone="danger" icon={<ShieldAlert className="h-4 w-4" />}>
               {t("node.form.ssrf_warn")}
             </Hint>
