@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
@@ -44,15 +44,17 @@ function DropDialog({
   const [typed, setTyped] = useState("");
   const match = typed === table;
 
+  // Закрытие ТОЛЬКО явным действием (Esc / «Отмена», §21): клик по подложке
+  // не закрывает — случайный клик мимо окна сбрасывал набранное имя таблицы.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="bg-bg-elev rounded-xl border border-bg-muted max-w-md w-full p-5 space-y-3"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="bg-bg-elev rounded-xl border border-bg-muted max-w-md w-full p-5 space-y-3">
         <h3 className="text-base font-semibold text-err">
           {t("settings.clickhouse.orphans.drop_confirm_1", { table })}
         </h3>

@@ -473,6 +473,8 @@ function MembersDialog({ team, onClose }: MembersDialogProps) {
   );
 }
 
+// Закрытие ТОЛЬКО явным действием (Esc / «Отмена», §21): клик по подложке не
+// закрывает — случайный клик мимо окна терял введённые данные формы.
 function Modal({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -483,14 +485,8 @@ function Modal({ onClose, children }: { onClose: () => void; children: React.Rea
   }, [onClose]);
 
   return (
-    <div
-      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="bg-bg-elev rounded-xl border border-bg-muted p-5 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-bg-elev rounded-xl border border-bg-muted p-5 shadow-xl">
         {children}
       </div>
     </div>

@@ -1195,13 +1195,13 @@ export default function NodeSettings() {
         </div>
 
         <div className="space-y-3">
-          {/* §65: команда узла — read-only, только представление (имя). */}
-          <div className="text-sm">
-            <span className="text-fg-muted">{t("node.fields.team")}: </span>
-            <span className="font-medium">{teamName ?? "—"}</span>
-          </div>
           <Card>
             <div className="mb-2.5 text-sm font-semibold">{t("node.form.preview")}</div>
+            {/* §65: команда узла — read-only, только представление (имя);
+                внутри карточки, чтобы не опускать предпросмотр отдельным блоком. */}
+            <div className="mb-2 text-[12px] text-fg-muted">
+              {t("node.fields.team")}: <span className="font-medium text-fg">{teamName ?? "—"}</span>
+            </div>
             <div className="space-y-1 text-[12px] leading-7 text-fg-muted">
               {isPull ? (
                 <>
