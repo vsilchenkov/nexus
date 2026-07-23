@@ -127,6 +127,14 @@ type LogClientHostsResponse struct {
 	LogsAvailable  bool     `json:"logs_available"`
 }
 
+// LogCountResponse — GET /api/nodes/{id}/logs/count (§67): точное число
+// записей под теми же фильтрами, что и список логов («Показано N из M»).
+type LogCountResponse struct {
+	Total          uint64 `json:"total"`
+	LogsConfigured bool   `json:"logs_configured"`
+	LogsAvailable  bool   `json:"logs_available"`
+}
+
 // LogDateRangeResponse — GET /api/nodes/{id}/logs/date-range (§48.3): min/max
 // date_request узла (UnixMilli) для ограничения полей дат фильтра. 0/0 —
 // записей нет, ограничения не ставятся.

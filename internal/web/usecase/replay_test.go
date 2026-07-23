@@ -55,6 +55,9 @@ func (s *stubLogReader) ListSince(_ context.Context, _, _ string, _ int64, _ int
 func (s *stubLogReader) Search(_ context.Context, _ port.LogQuery) ([]*domain.LogRecord, error) {
 	return nil, nil
 }
+func (s *stubLogReader) Count(_ context.Context, _ port.LogQuery) (uint64, error) {
+	return 0, nil
+}
 func (s *stubLogReader) CountErrors(_ context.Context, _, _ string, _, _ int64) (uint64, error) {
 	return 0, nil
 }

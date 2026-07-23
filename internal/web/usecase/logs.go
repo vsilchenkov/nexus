@@ -64,6 +64,22 @@ func (u *LogsUsecase) Search(ctx context.Context, nodeID, teamID string, q port.
 	return u.logs.Search(ctx, q)
 }
 
+// CountLogs — точное число записей под теми же фильтрами, что и Search (§67,
+// счётчик «Показано N из M»). Тот же разбор Q и резолв узла — счётчик обязан
+// считать ровно то, что показывает список.
+func (u *LogsUsecase) CountLogs(ctx context.Context, nodeID, teamID string, q port.LogQuery) (uint64, error) {
+	if err := parseSearch(&q); err != nil {
+		return 0, err
+	}
+	n, err := u.resolveNode(ctx, nodeID, teamID)
+	if err != nil {
+		return 0, err
+	}
+	q.Table = n.ClickHouseTable
+	q.NodeID = n.ID
+	return u.logs.Count(ctx, q)
+}
+
 // parseSearch — разбор сырого Q (мини-язык §48.1 либо RE2 в regex-режиме
 // §48.2) в QExpr по флагам QCase/QWord/QRegex. Ошибка синтаксиса/regex —
 // logsearch.ErrBadQuery (handler мапит на HTTP 400). Пустое Q → фильтр

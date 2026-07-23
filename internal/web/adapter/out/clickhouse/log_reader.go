@@ -418,18 +418,10 @@ func (r *LogReaderCH) ListSince(ctx context.Context, table, nodeID string, curso
 	return out, nil
 }
 
-// Search — snapshot с расширенными фильтрами (§7.4 Phase 6.8). Сортировка
-// по date_request DESC, LIMIT (1..500, default 100). Все фильтры опциональны;
-// пустые поля q не попадают в WHERE.
-func (r *LogReaderCH) Search(ctx context.Context, q port.LogQuery) ([]*domain.LogRecord, error) {
-	if !isSafeTableName(q.Table) {
-		return nil, fmt.Errorf("invalid table name: %q", q.Table)
-	}
-	limit := q.Limit
-	if limit <= 0 || limit > 500 {
-		limit = 100
-	}
-
+// searchConds строит WHERE-условия расширенных фильтров (§48) — ЕДИНСТВЕННЫЙ
+// источник для Search и Count (§67 «Всего»): один и тот же набор условий
+// гарантирует, что счётчик считает ровно то, что показывает список.
+func (r *LogReaderCH) searchConds(ctx context.Context, q port.LogQuery) ([]string, []any) {
 	var (
 		conds []string
 		args  []any
@@ -495,7 +487,22 @@ func (r *LogReaderCH) Search(ctx context.Context, q port.LogQuery) ([]*domain.Lo
 		conds = append(conds, c)
 		args = append(args, a...)
 	}
+	return conds, args
+}
 
+// Search — snapshot с расширенными фильтрами (§7.4 Phase 6.8). Сортировка
+// по date_request DESC, LIMIT (1..500, default 100). Все фильтры опциональны;
+// пустые поля q не попадают в WHERE.
+func (r *LogReaderCH) Search(ctx context.Context, q port.LogQuery) ([]*domain.LogRecord, error) {
+	if !isSafeTableName(q.Table) {
+		return nil, fmt.Errorf("invalid table name: %q", q.Table)
+	}
+	limit := q.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+
+	conds, args := r.searchConds(ctx, q)
 	where := ""
 	if len(conds) > 0 {
 		where = " WHERE " + strings.Join(conds, " AND ")
@@ -522,6 +529,41 @@ func (r *LogReaderCH) Search(ctx context.Context, q port.LogQuery) ([]*domain.Lo
 		out = append(out, rec)
 	}
 	return out, nil
+}
+
+// countTimeout — серверный потолок count()-запроса (§67 «Всего»): дорогой
+// полнотекстовый count по огромной таблице отваливается по таймауту, UI
+// мягко деградирует до «Показано N» без «из M».
+const countTimeout = 10 * time.Second
+
+// Count — точное число записей под теми же фильтрами, что и Search (§67,
+// счётчик «Показано N из M»). BeforeID (keyset-курсор пагинации) сознательно
+// игнорируется: «Всего» считается по фильтрам, а не по странице. Таймаут —
+// countTimeout; его превышение классифицируется как unavailable (деградация,
+// не 500).
+func (r *LogReaderCH) Count(ctx context.Context, q port.LogQuery) (uint64, error) {
+	if !isSafeTableName(q.Table) {
+		return 0, fmt.Errorf("invalid table name: %q", q.Table)
+	}
+	q.BeforeID = "" // курсор страницы не влияет на total
+	cctx, cancel := context.WithTimeout(ctx, countTimeout)
+	defer cancel()
+
+	conds, args := r.searchConds(cctx, q)
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + strings.Join(conds, " AND ")
+	}
+	conn, err := r.liveConn()
+	if err != nil {
+		return 0, err
+	}
+	var total uint64
+	if err := conn.QueryRow(cctx, fmt.Sprintf("SELECT count() FROM %s%s", q.Table, where), args...).
+		Scan(&total); err != nil {
+		return 0, classifyCHErr("clickhouse count logs", err)
+	}
+	return total, nil
 }
 
 // CountErrors считает записи-ошибки в таблице за окно (sinceMs, untilMs]

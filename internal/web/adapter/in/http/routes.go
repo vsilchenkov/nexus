@@ -153,6 +153,7 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			// открытии списка / фокусе поля — данные всегда свежие.
 			authed.GET("/nodes/:id/logs/methods", RequireScope("logs:read"), h.Logs.Methods)
 			authed.GET("/nodes/:id/logs/client-hosts", RequireScope("logs:read"), h.Logs.ClientHosts) // §67
+			authed.GET("/nodes/:id/logs/count", RequireScope("logs:read"), h.Logs.Count)              // §67
 			authed.GET("/nodes/:id/logs/date-range", RequireScope("logs:read"), h.Logs.DateRange)
 			// SSE доступен только UI-сессиям (§7.14: для API-токенов — только
 			// snapshot).

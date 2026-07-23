@@ -340,6 +340,38 @@ func (h *LogsHandler) ClientHosts(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": items, "logs_configured": true, "logs_available": true})
 }
 
+// Count godoc
+// @Summary  Точное число записей логов узла под текущими фильтрами (§67).
+// @Description  count() из ClickHouse под ТЕМИ ЖЕ фильтрами, что и GET /logs (status, done, method, client_host, даты, полнотекст q) — счётчик «Показано N из M» шапки. before_id игнорируется (total по фильтрам, не по странице). Серверный таймаут 10с; его превышение/недоступность CH → 200 + logs_available=false (UI прячет «из M»). Плохой q → 400.
+// @Tags     logs
+// @Produce  json
+// @Param    id    path   string  true   "node id"
+// @Param    from         query  string  false  "начало диапазона (RFC3339 или UnixMilli)"
+// @Param    to           query  string  false  "конец диапазона"
+// @Param    status       query  string  false  "ok | err"
+// @Param    done         query  string  false  "yes | no"
+// @Param    method       query  string  false  "exact match по подпути запроса (§48)"
+// @Param    client_host  query  string  false  "exact match по PTR-имени клиента (§67)"
+// @Param    q            query  string  false  "полнотекстовый фильтр (§48.1)"
+// @Success  200  {object}  LogCountResponse
+// @Failure  400  {object}  ErrorResponse  "некорректный поисковый запрос"
+// @Failure  404  {object}  ErrorResponse
+// @Security CookieAuth
+// @Security ApiTokenAuth
+// @Router   /api/nodes/{id}/logs/count [get]
+func (h *LogsHandler) Count(c *gin.Context) {
+	nodeID := c.Param("id")
+	total, err := h.uc.CountLogs(c.Request.Context(), nodeID, currentTeamID(c), logQueryFromContext(c))
+	if err != nil && errors.Is(err, logsearch.ErrBadQuery) {
+		localizedError(c, http.StatusBadRequest, "error.bad_search_query")
+		return
+	}
+	if h.writeFacetError(c, nodeID, "logs.count", err, gin.H{"total": 0}) {
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"total": total, "logs_configured": true, "logs_available": true})
+}
+
 // DateRange godoc
 // @Summary  Диапазон дат логов узла (min/max date_request, UnixMilli) (§48.3).
 // @Description  Фасет для ограничения полей дат фильтра (атрибуты min/max). Дёргается лениво при фокусе поля даты — всегда свежие данные (логи прибывают, пока страница открыта). Нет записей → min_ms=0, max_ms=0 (ограничения не ставятся). Деградация как у /logs/methods.

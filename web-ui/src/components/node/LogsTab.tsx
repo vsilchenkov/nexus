@@ -168,6 +168,31 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   const badQuery =
     (logsQ.error as { response?: { status?: number } } | null)?.response?.status === 400;
 
+  // §67: точный count() под ТЕМИ ЖЕ фильтрами, что и список, включая быстрые
+  // ok/err и done/pending — счётчик «Показано N из M» в шапке. Отдельный
+  // запрос: таблица рендерится сразу, «из M» дорисовывается. Пересчёт — только
+  // со снапшотом (queryKey = параметры списка + быстрые фильтры), НЕ на каждое
+  // SSE-событие; в Live выключен (total мгновенно устаревает — счётчик скрыт).
+  // Ошибка/таймаут/CH недоступен → logs_available=false → «из M» просто нет.
+  const countQ = useQuery({
+    queryKey: ["logs-count", id, advQueryParams, statusFilter, doneFilter],
+    enabled: !!id && hasLogsTable && !live,
+    queryFn: () => {
+      const params: Record<string, string | number> = { ...advQueryParams };
+      delete params.limit; // count не постраничный
+      if (statusFilter !== "all") params.status = statusFilter;
+      if (doneFilter !== "all") params.done = doneFilter === "done" ? "yes" : "no";
+      return api.get<{ total: number; logs_available?: boolean }>(
+        `/api/nodes/${id}/logs/count`,
+        params,
+      );
+    },
+    refetchInterval: !live && atTop ? 5_000 : false,
+    retry: false, // деградация штатная — не долбим CH повторами
+  });
+  const totalCount =
+    countQ.data && countQ.data.logs_available !== false ? countQ.data.total : null;
+
   const [liveLogs, setLiveLogs] = useState<LogRow[]>([]);
   const [highlighted, setHighlighted] = useState<Set<string>>(new Set());
   // Поток умер окончательно (LIVE_MAX_CONSECUTIVE_ERRORS ошибок подряд) —
@@ -373,7 +398,13 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
         <div className="flex items-center gap-3">
           <div className="font-medium">{t("node.tabs.logs")}</div>
           <span className="text-xs text-fg-muted">
-            {t("logs.shown_count", { n: visibleLogs.length })}
+            {/* §67: «Показано N из M» — M только вне Live и когда count доступен. */}
+            {!live && totalCount !== null
+              ? t("logs.shown_of_total", {
+                  n: visibleLogs.length,
+                  total: totalCount.toLocaleString(),
+                })
+              : t("logs.shown_count", { n: visibleLogs.length })}
           </span>
         </div>
 

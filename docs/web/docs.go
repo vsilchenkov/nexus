@@ -3258,6 +3258,97 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/nodes/{id}/logs/count": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    },
+                    {
+                        "ApiTokenAuth": []
+                    }
+                ],
+                "description": "count() из ClickHouse под ТЕМИ ЖЕ фильтрами, что и GET /logs (status, done, method, client_host, даты, полнотекст q) — счётчик «Показано N из M» шапки. before_id игнорируется (total по фильтрам, не по странице). Серверный таймаут 10с; его превышение/недоступность CH → 200 + logs_available=false (UI прячет «из M»). Плохой q → 400.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logs"
+                ],
+                "summary": "Точное число записей логов узла под текущими фильтрами (§67).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "начало диапазона (RFC3339 или UnixMilli)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "конец диапазона",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "ok | err",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "yes | no",
+                        "name": "done",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "exact match по подпути запроса (§48)",
+                        "name": "method",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "exact match по PTR-имени клиента (§67)",
+                        "name": "client_host",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "полнотекстовый фильтр (§48.1)",
+                        "name": "q",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.LogCountResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "некорректный поисковый запрос",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/{id}/logs/date-range": {
             "get": {
                 "security": [
@@ -5691,6 +5782,20 @@ const docTemplate = `{
                 },
                 "logs_configured": {
                     "type": "boolean"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.LogCountResponse": {
+            "type": "object",
+            "properties": {
+                "logs_available": {
+                    "type": "boolean"
+                },
+                "logs_configured": {
+                    "type": "boolean"
+                },
+                "total": {
+                    "type": "integer"
                 }
             }
         },

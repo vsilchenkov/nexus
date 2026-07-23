@@ -463,6 +463,15 @@ definitions:
       logs_configured:
         type: boolean
     type: object
+  internal_web_adapter_in_http.LogCountResponse:
+    properties:
+      logs_available:
+        type: boolean
+      logs_configured:
+        type: boolean
+      total:
+        type: integer
+    type: object
   internal_web_adapter_in_http.LogDateRangeResponse:
     properties:
       logs_available:
@@ -4351,6 +4360,68 @@ paths:
       - CookieAuth: []
       - ApiTokenAuth: []
       summary: Уникальные значения client_host узла для фасета фильтра (§67).
+      tags:
+      - logs
+  /api/nodes/{id}/logs/count:
+    get:
+      description: count() из ClickHouse под ТЕМИ ЖЕ фильтрами, что и GET /logs (status,
+        done, method, client_host, даты, полнотекст q) — счётчик «Показано N из M»
+        шапки. before_id игнорируется (total по фильтрам, не по странице). Серверный
+        таймаут 10с; его превышение/недоступность CH → 200 + logs_available=false
+        (UI прячет «из M»). Плохой q → 400.
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: начало диапазона (RFC3339 или UnixMilli)
+        in: query
+        name: from
+        type: string
+      - description: конец диапазона
+        in: query
+        name: to
+        type: string
+      - description: ok | err
+        in: query
+        name: status
+        type: string
+      - description: yes | no
+        in: query
+        name: done
+        type: string
+      - description: exact match по подпути запроса (§48)
+        in: query
+        name: method
+        type: string
+      - description: exact match по PTR-имени клиента (§67)
+        in: query
+        name: client_host
+        type: string
+      - description: полнотекстовый фильтр (§48.1)
+        in: query
+        name: q
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.LogCountResponse'
+        "400":
+          description: некорректный поисковый запрос
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      - ApiTokenAuth: []
+      summary: Точное число записей логов узла под текущими фильтрами (§67).
       tags:
       - logs
   /api/nodes/{id}/logs/date-range:
