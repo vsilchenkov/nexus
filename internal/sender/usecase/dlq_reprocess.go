@@ -273,7 +273,9 @@ func (r *DLQReprocessor) logTTLExpired(ctx context.Context, node *domain.Node, e
 		Reason:       "ttl_expired",
 		Host:         r.host,
 		IP:           env.ClientIP,
-		NodeID:       node.ID,
+		// §67: тот же резолвер, что у обычной доставки (send всегда non-nil).
+		ClientHost: r.send.hosts.Lookup(env.ClientIP),
+		NodeID:     node.ID,
 	}
 	r.logw.Write(ctx, node.ClickHouseTable, rec)
 }

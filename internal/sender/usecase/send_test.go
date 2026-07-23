@@ -212,6 +212,54 @@ func TestSend_Success_RecordsLogAndUpdatesBreaker(t *testing.T) {
 	assert.Equal(t, 0, cb.failureCount)
 }
 
+// stubHostResolver — фейковый HostResolver (§67): отдаёт фиксированное имя,
+// считает вызовы.
+type stubHostResolver struct {
+	host  string
+	calls int
+	ips   []string
+}
+
+func (s *stubHostResolver) Lookup(ip string) string {
+	s.calls++
+	s.ips = append(s.ips, ip)
+	return s.host
+}
+
+func TestSend_ClientHost_FilledFromResolver(t *testing.T) {
+	t.Parallel()
+
+	httpc := &stubHTTPCaller{responses: []*port.HTTPResponse{{StatusCode: 200}}}
+	logw := &stubLogWriter{}
+	hr := &stubHostResolver{host: "srv-1c.vz78.vozovoz.ru"}
+
+	uc := NewSendUsecase(httpc, logw, nil, logging.NewNoop(), 64<<20, WithHostResolver(hr))
+	in := baseInput()
+	in.ClientIP = "192.168.86.246"
+	out := uc.Send(context.Background(), in)
+
+	assert.Equal(t, int32(200), out.StatusCode)
+	require.Len(t, logw.written, 1)
+	assert.Equal(t, "srv-1c.vz78.vozovoz.ru", logw.written[0].rec.ClientHost,
+		"§67: client_host заполняется из резолвера")
+	require.Len(t, hr.ips, 1)
+	assert.Equal(t, "192.168.86.246", hr.ips[0], "резолвится именно ClientIP")
+}
+
+func TestSend_ClientHost_NoopWithoutResolver(t *testing.T) {
+	t.Parallel()
+
+	httpc := &stubHTTPCaller{responses: []*port.HTTPResponse{{StatusCode: 200}}}
+	logw := &stubLogWriter{}
+
+	// Без WithHostResolver (и с nil) — noop: пустой client_host, без паник.
+	uc := NewSendUsecase(httpc, logw, nil, logging.NewNoop(), 64<<20, WithHostResolver(nil))
+	uc.Send(context.Background(), baseInput())
+
+	require.Len(t, logw.written, 1)
+	assert.Empty(t, logw.written[0].rec.ClientHost)
+}
+
 func TestSend_CircuitBreakerOpen_Returns503WithoutHTTPCall(t *testing.T) {
 	t.Parallel()
 
