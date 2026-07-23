@@ -554,7 +554,6 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                 min={dateRange && dateRange.min > 0 ? new Date(dateRange.min) : undefined}
                 max={dateRange && dateRange.max > 0 ? new Date(dateRange.max) : undefined}
                 defaultTime="00:00"
-                placeholder={t("logs.advanced.from")}
                 onOpen={fetchDateRange}
               />
             </div>
@@ -568,7 +567,6 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                 min={dateRange && dateRange.min > 0 ? new Date(dateRange.min) : undefined}
                 max={dateRange && dateRange.max > 0 ? new Date(dateRange.max) : undefined}
                 defaultTime="23:59"
-                placeholder={t("logs.advanced.to")}
                 onOpen={fetchDateRange}
               />
             </div>

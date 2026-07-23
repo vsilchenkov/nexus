@@ -18,7 +18,9 @@ hostname самого Sender'а (docker container ID). Развивает §4.3 
   `ALTER TABLE <t> ADD COLUMN IF NOT EXISTS client_host String DEFAULT '' AFTER IP`
   (`EnsureClientHostColumn`). Внешние таблицы (§64) в списки ensure не попадают.
 - Пустое значение: имя ещё не отрезолвлено (холодный кеш), PTR-записи нет, `ClientIP` — не IP
-  (`rabbitmq://…` у pull-узлов §27.10) или legacy-строка до §67.
+  (`rabbitmq://…` у pull-узлов §27.10), loopback/unspecified (127.0.0.1 — это сам хост Нексуса,
+  не отправитель; к тому же hosts-файл дев-машин отвечает мусором вроде
+  `kubernetes.docker.internal` от Docker Desktop) или legacy-строка до §67.
 - `domain.LogRecord.ClientHost`; заполняется в Sender: `SendUsecase.Send` (sync + async) и
   `DLQReprocessor.logTTLExpired`. Kafka-retry логов (§38) прокидывает поле через clogwire
   автоматически; сообщения старого Sender'а дают `""`.

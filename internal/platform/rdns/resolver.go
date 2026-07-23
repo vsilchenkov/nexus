@@ -111,8 +111,14 @@ func New(ctx context.Context, redis *goredis.Client, cfg Config, logger logging.
 // Lookup возвращает PTR-имя IP из L1-кеша или "" немедленно; ни DNS, ни Redis
 // на этом пути не вызываются. Промах планирует фоновый резолв. Не-IP значения
 // (rabbitmq://… у pull-узлов §27.10, пустые строки) сразу дают "".
+//
+// Loopback/unspecified тоже не резолвятся: «имя клиента» для 127.0.0.1 — это
+// сам хост Нексуса, а не отправитель; на дев-машинах системный резолвер к тому
+// же отвечает из hosts-файла мусором (Docker Desktop пишет туда
+// «127.0.0.1 kubernetes.docker.internal» — поймано на стенде).
 func (r *Resolver) Lookup(ip string) string {
-	if ip == "" || net.ParseIP(ip) == nil {
+	parsed := net.ParseIP(ip)
+	if parsed == nil || parsed.IsLoopback() || parsed.IsUnspecified() {
 		return ""
 	}
 	r.mu.Lock()

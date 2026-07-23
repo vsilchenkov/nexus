@@ -1,4 +1,4 @@
-import { type CSSProperties, useState } from "react";
+﻿import { type CSSProperties, useState } from "react";
 import { DayPicker } from "react-day-picker";
 import { enUS, ru } from "react-day-picker/locale";
 import { useTranslation } from "react-i18next";
@@ -49,7 +49,9 @@ export function LogDateField({
   min?: Date;
   max?: Date;
   defaultTime?: string;
-  placeholder: string;
+  // placeholder опционален (§67): метка поля живёт НАД полем (label в LogsTab),
+  // дублировать её внутри не нужно. Пустое поле держит высоту nbsp-заглушкой.
+  placeholder?: string;
   onOpen?: () => void;
 }) {
   const { t, i18n } = useTranslation();
@@ -106,7 +108,7 @@ export function LogDateField({
           {shown ? (
             <span className="truncate">{shown}</span>
           ) : (
-            <span className="truncate text-fg-muted">{placeholder}</span>
+            <span className="truncate text-fg-muted">{placeholder || "\u00A0"}</span>
           )}
           {value && (
             <X

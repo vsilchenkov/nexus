@@ -30,11 +30,16 @@ func TestResolver_Lookup_NonIP(t *testing.T) {
 		return []string{"x."}, nil
 	})
 
-	// Не-IP значения (rabbitmq://… §27.10, пустые, мусор) → "" и НОЛЬ DNS-вызовов.
-	for _, ip := range []string{"", "rabbitmq://host:5672/vhost", "not-an-ip", "10.0.0"} {
+	// Не-IP значения (rabbitmq://… §27.10, пустые, мусор) и loopback/unspecified
+	// (127.0.0.1 = сам хост Нексуса; hosts-файл дев-машин отвечает мусором вроде
+	// kubernetes.docker.internal) → "" и НОЛЬ DNS-вызовов.
+	for _, ip := range []string{
+		"", "rabbitmq://host:5672/vhost", "not-an-ip", "10.0.0",
+		"127.0.0.1", "127.0.0.53", "::1", "0.0.0.0",
+	} {
 		assert.Empty(t, r.Lookup(ip), "ip=%q", ip)
 	}
-	assert.Zero(t, calls.Load(), "lookupAddr не должен вызываться для не-IP")
+	assert.Zero(t, calls.Load(), "lookupAddr не должен вызываться для не-IP/loopback")
 }
 
 func TestResolver_Lookup_ResolvesInBackground(t *testing.T) {
