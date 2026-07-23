@@ -281,6 +281,50 @@ func TestReplay_ExplicitEmptyBody(t *testing.T) {
 	}
 }
 
+// TestReplay_MultipartBlocked (§68): у оригинала было multipart/form-data тело,
+// в логе — плейсхолдер, не тело. Без ручного override replay отклоняется 422 и
+// во внешний target ничего не уходит.
+func TestReplay_MultipartBlocked(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{ID: "n1", Status: domain.NodeStatusEnabled, ClickHouseTable: "t.t"}
+	placeholder := domain.MultipartLogPlaceholder(
+		"multipart/form-data; boundary=abc",
+		[]byte("--abc\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.pdf\"\r\n\r\ndata\r\n--abc--\r\n"),
+	)
+	log := &domain.LogRecord{ID: "log1", Method: "POST", Request: placeholder, DateRequest: time.Now(), Done: true}
+	disp := &stubDispatcher{}
+	uc := newReplayUC(node, log, disp)
+
+	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{UseNodeAuth: true})
+	if !errors.Is(err, ErrReplayBodyMultipart) {
+		t.Fatalf("want ErrReplayBodyMultipart, got %v", err)
+	}
+	if disp.gotReq.NodePath != "" {
+		t.Fatalf("dispatch must not be called for multipart original")
+	}
+}
+
+// TestReplay_MultipartWithOverride (§68): плейсхолдер в логе, но пользователь
+// задал тело вручную → replay проходит с этим телом.
+func TestReplay_MultipartWithOverride(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{ID: "n1", Status: domain.NodeStatusEnabled, ClickHouseTable: "t.t"}
+	placeholder := domain.MultipartLogPlaceholder("multipart/form-data; boundary=abc", []byte("--abc--\r\n"))
+	log := &domain.LogRecord{ID: "log1", Method: "POST", Request: placeholder, DateRequest: time.Now(), Done: true}
+	disp := &stubDispatcher{}
+	uc := newReplayUC(node, log, disp)
+
+	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{
+		BodyOverride: []byte(`{"manual":1}`), UseNodeAuth: true,
+	})
+	if err != nil {
+		t.Fatalf("override must replay: %v", err)
+	}
+	if string(disp.gotReq.Body) != `{"manual":1}` {
+		t.Fatalf("override body ignored: %q", string(disp.gotReq.Body))
+	}
+}
+
 // newReplayUC — общий конструктор для компактных тестов GET/params.
 func newReplayUC(node *domain.Node, log *domain.LogRecord, disp *stubDispatcher) *ReplayUsecase {
 	return NewReplayUsecase(
