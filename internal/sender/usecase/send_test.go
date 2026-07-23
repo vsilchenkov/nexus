@@ -1,8 +1,10 @@
 package usecase
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"mime/multipart"
 	"strings"
 	"sync"
 	"testing"
@@ -20,15 +22,19 @@ import (
 // stubHTTPCaller — программируемый ответ. Если Body/Status — функция,
 // дёрнем её на каждой попытке (для retry-сценариев).
 type stubHTTPCaller struct {
-	mu        sync.Mutex
-	calls     int
-	responses []*port.HTTPResponse // последовательность по попыткам
-	errs      []error
+	mu          sync.Mutex
+	calls       int
+	responses   []*port.HTTPResponse // последовательность по попыткам
+	errs        []error
+	lastReqBody []byte // §68: тело последнего запроса — проверяем проброску байтов
 }
 
-func (s *stubHTTPCaller) Do(_ context.Context, _ *port.HTTPRequest) (*port.HTTPResponse, error) {
+func (s *stubHTTPCaller) Do(_ context.Context, req *port.HTTPRequest) (*port.HTTPResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if req != nil {
+		s.lastReqBody = req.Body
+	}
 	i := s.calls
 	s.calls++
 	var (
@@ -835,4 +841,168 @@ func TestSend_NormalCall_KeepsSideEffects(t *testing.T) {
 		assert.Equal(t, 1, cb.failureCount, "боевой сбой по-прежнему влияет на breaker")
 		require.Len(t, logw.written, 1)
 	})
+}
+
+// buildMultipartBody собирает валидное multipart/form-data тело (файл + поле).
+func buildMultipartBody(t *testing.T) (contentType string, body []byte) {
+	t.Helper()
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	fw, err := w.CreateFormFile("file", "invoice.pdf")
+	require.NoError(t, err)
+	_, err = fw.Write([]byte("BINARY-FILE-CONTENT-SECRET"))
+	require.NoError(t, err)
+	require.NoError(t, w.WriteField("comment", "please process"))
+	require.NoError(t, w.Close())
+	return w.FormDataContentType(), buf.Bytes()
+}
+
+// §68: multipart-запрос. Тело/вложение НЕ пишется в ClickHouse — вместо него
+// плейсхолдер со сводкой частей; при этом checksum и размер считаются по полному
+// телу, а сам байтовый поток уходит к внешнему узлу нетронутым.
+func TestSend_MultipartRequest_PlaceholderInLogFullBodyProxied(t *testing.T) {
+	t.Parallel()
+
+	ct, mpBody := buildMultipartBody(t)
+	respBody := []byte("ok")
+	httpc := &stubHTTPCaller{responses: []*port.HTTPResponse{{StatusCode: 200, Body: respBody}}}
+	logw := &stubLogWriter{}
+	uc := NewSendUsecase(httpc, logw, &stubBreaker{allow: true}, logging.NewNoop(), 64<<20)
+
+	in := baseInput()
+	in.Body = mpBody
+	in.Headers = map[string]string{"Content-Type": ct}
+	in.LogRequestBody = true
+
+	out := uc.Send(context.Background(), in)
+
+	assert.Equal(t, int32(200), out.StatusCode)
+	assert.Equal(t, respBody, out.Body, "клиент получает полный ответ")
+	assert.Equal(t, mpBody, httpc.lastReqBody, "к внешнему узлу multipart-тело уходит байт-в-байт")
+
+	require.Len(t, logw.written, 1)
+	rec := logw.written[0].rec
+	assert.True(t, domain.IsMultipartLogPlaceholder(rec.Request), "в лог — плейсхолдер, а не тело")
+	assert.True(t, strings.HasPrefix(rec.Request, "multipart/form-data"))
+	assert.NotContains(t, rec.Request, "BINARY-FILE-CONTENT-SECRET", "содержимое вложения в лог не попадает")
+	assert.EqualValues(t, len(mpBody), rec.RequestSize, "истинный размер — по полному телу с вложением")
+	assert.Equal(t, md5hex(mpBody), rec.ChecksumRequest, "checksum по полному телу")
+}
+
+// §68: max_body_size на multipart не действует — плейсхолдер сохраняется целиком,
+// без маркера усечения (он и так короткий).
+func TestSend_MultipartRequest_ExemptFromMaxBodySize(t *testing.T) {
+	t.Parallel()
+
+	ct, mpBody := buildMultipartBody(t)
+	httpc := &stubHTTPCaller{responses: []*port.HTTPResponse{{StatusCode: 200}}}
+	logw := &stubLogWriter{}
+	uc := NewSendUsecase(httpc, logw, &stubBreaker{allow: true}, logging.NewNoop(), 64<<20)
+
+	in := baseInput()
+	in.Body = mpBody
+	in.Headers = map[string]string{"Content-Type": ct}
+	in.LogRequestBody = true
+	in.MaxBodySizeEnabled = true
+	in.MaxBodySize = 10 // маленький лимит — обычное тело был бы усечено
+
+	uc.Send(context.Background(), in)
+
+	require.Len(t, logw.written, 1)
+	rec := logw.written[0].rec
+	assert.True(t, domain.IsMultipartLogPlaceholder(rec.Request))
+	assert.NotContains(t, rec.Request, truncationMarker, "плейсхолдер не режется по max_body_size")
+}
+
+// §68: логирование тела выключено — плейсхолдер тоже не пишется (гейт сохранён).
+func TestSend_MultipartRequest_NoLogWhenBodyLoggingOff(t *testing.T) {
+	t.Parallel()
+
+	ct, mpBody := buildMultipartBody(t)
+	httpc := &stubHTTPCaller{responses: []*port.HTTPResponse{{StatusCode: 200}}}
+	logw := &stubLogWriter{}
+	uc := NewSendUsecase(httpc, logw, &stubBreaker{allow: true}, logging.NewNoop(), 64<<20)
+
+	in := baseInput()
+	in.Body = mpBody
+	in.Headers = map[string]string{"Content-Type": ct}
+	in.LogRequestBody = false
+
+	uc.Send(context.Background(), in)
+
+	require.Len(t, logw.written, 1)
+	rec := logw.written[0].rec
+	assert.Empty(t, rec.Request, "тело не логируется → пусто, но размер сохранён")
+	assert.EqualValues(t, len(mpBody), rec.RequestSize)
+}
+
+// §68: детект нечувствителен к регистру ключа заголовка (envelope/gRPC могут
+// прислать "content-type").
+func TestSend_MultipartRequest_LowercaseHeaderKey(t *testing.T) {
+	t.Parallel()
+
+	ct, mpBody := buildMultipartBody(t)
+	httpc := &stubHTTPCaller{responses: []*port.HTTPResponse{{StatusCode: 200}}}
+	logw := &stubLogWriter{}
+	uc := NewSendUsecase(httpc, logw, &stubBreaker{allow: true}, logging.NewNoop(), 64<<20)
+
+	in := baseInput()
+	in.Body = mpBody
+	in.Headers = map[string]string{"content-type": ct} // нижний регистр
+	in.LogRequestBody = true
+
+	uc.Send(context.Background(), in)
+
+	require.Len(t, logw.written, 1)
+	assert.True(t, domain.IsMultipartLogPlaceholder(logw.written[0].rec.Request))
+}
+
+// §68: симметрия для ответа с multipart Content-Type (multipart/mixed при
+// скачивании и пр.) — в лог плейсхолдер, размер честный.
+func TestSend_MultipartResponse_PlaceholderInLog(t *testing.T) {
+	t.Parallel()
+
+	ct, mpBody := buildMultipartBody(t)
+	httpc := &stubHTTPCaller{responses: []*port.HTTPResponse{{
+		StatusCode: 200,
+		Headers:    map[string]string{"Content-Type": ct},
+		Body:       mpBody,
+	}}}
+	logw := &stubLogWriter{}
+	uc := NewSendUsecase(httpc, logw, &stubBreaker{allow: true}, logging.NewNoop(), 64<<20)
+
+	in := baseInput()
+	in.LogResponseBody = true
+
+	out := uc.Send(context.Background(), in)
+
+	assert.Equal(t, mpBody, out.Body, "клиент получает полный multipart-ответ")
+	require.Len(t, logw.written, 1)
+	rec := logw.written[0].rec
+	assert.True(t, domain.IsMultipartLogPlaceholder(rec.Response), "ответ в логе — плейсхолдер")
+	assert.NotContains(t, rec.Response, "BINARY-FILE-CONTENT-SECRET")
+	assert.EqualValues(t, len(mpBody), rec.ResponseSize)
+	assert.Equal(t, md5hex(mpBody), rec.ChecksumResponse)
+}
+
+// §68 РЕГРЕССИЯ: обычный (не-multipart) запрос логируется как раньше — плейсхолдер
+// его не подменяет.
+func TestSend_NonMultipartRequest_Unchanged(t *testing.T) {
+	t.Parallel()
+
+	httpc := &stubHTTPCaller{responses: []*port.HTTPResponse{{StatusCode: 200}}}
+	logw := &stubLogWriter{}
+	uc := NewSendUsecase(httpc, logw, &stubBreaker{allow: true}, logging.NewNoop(), 64<<20)
+
+	in := baseInput()
+	in.Body = []byte(`{"k":"v"}`)
+	in.Headers = map[string]string{"Content-Type": "application/json"}
+	in.LogRequestBody = true
+
+	uc.Send(context.Background(), in)
+
+	require.Len(t, logw.written, 1)
+	rec := logw.written[0].rec
+	assert.Equal(t, `{"k":"v"}`, rec.Request, "обычное тело в логе как есть")
+	assert.False(t, domain.IsMultipartLogPlaceholder(rec.Request))
 }
