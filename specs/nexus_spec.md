@@ -4316,3 +4316,42 @@ admin-only, пользователь удаляем. Старые записи �
 **Вне scope:** self-service смена имени, бэкфилл имён в исторические снапшоты, уникальность имени.
 
 Подробности — [sections/66-user-display-name.md](sections/66-user-display-name.md).
+
+## 67. Хост клиента в логах (reverse-DNS) + фильтр + счётчик «Всего»
+
+Колонка **`client_host`** в CH-логах узлов — PTR-имя (reverse DNS) IP клиента-отправителя,
+фильтр «Хост клиента» в расширенных фильтрах логов и счётчик «Показано N из M» в шапке
+(развивает §4.3/§42.10/§48/§64). Отвечает «кто ходил»: `IP` — только адрес, `Host` — hostname
+самого Sender'а.
+
+**Колонка.** `client_host String DEFAULT ''` **сразу после `IP`** в `RequiredLogColumns`:
+новые таблицы — из шаблона, существующие управляемые — стартовый ensure §42.10
+(`ALTER … ADD COLUMN IF NOT EXISTS … AFTER IP`) в Web и Sender. Внешние таблицы (§64) Nexus
+не трогает — ALTER выполняет владелец (SQL обязан попасть в описание релиза, правило в
+DEPLOYMENT.md §9.5); до этого запись буферизуется в Kafka-retry (§38), чтение деградирует
+мягко (баннер «логи временно недоступны»: `classifyCHErr` трактует отсутствие именно
+`client_host` как `ErrLogsBackendUnavailable` — иначе поллинг флудил бы 500/Sentry), facet —
+пустым списком, verify показывает `Missing: ["client_host"]`. Пусто = не отрезолвлено / нет
+PTR / не-IP (`rabbitmq://…` §27.10) / legacy.
+
+**Резолвер** (`internal/platform/rdns`, порт `HostResolver` в sender/usecase). `Lookup` — ноль
+I/O на пути доставки (только L1-кеш в памяти); промах → `""` немедленно + фоновый резолв:
+Redis `nexus:rdns:<ip>` (общий для реплик; TTL позитив `cache_ttl_sec`=3600 / негатив
+`negative_ttl_sec`=600) → PTR-lookup с таймаутом (`timeout_ms`=2000) → SET EX + L1
+(TTL ≤ 5 мин). Дедуп pending+singleflight; fail-open при сбоях Redis/DNS; Debug-логи §51.9.
+Кросс-репличный дедуп и Prometheus-метрики — сознательно нет. Конфиг `sender.rdns`
+(`disabled` default false). Требуются PTR-записи в корпоративном DNS.
+
+**Фильтр.** Facet `GET /api/nodes/{id}/logs/client-hosts` (DISTINCT, кап 200, деградации как
+у `/logs/methods`); `LogQuery.ClientHost` — exact match в Search/Count/live-tail; query-параметр
+`client_host`. UI — cmdk-комбобокс «Хост клиента» во втором ряду расширенных фильтров («Дата с»,
+«Дата по», «Хост клиента», кнопки в том же ряду). Колонки в таблице логов и поля в DTO записи
+НЕТ (сознательно).
+
+**Счётчик «Всего».** `GET /api/nodes/{id}/logs/count` — точный `count()` под теми же фильтрами,
+что и список (общий построитель условий с Search; `before_id` игнорируется; быстрые фильтры
+ok/err и done/pending учитываются). Дорогой полнотекст-count ограничен серверным таймаутом 10с →
+мягкая деградация `logs_available=false` (UI показывает прежнее «Показано N»). Отдельный
+запрос UI (список не ждёт count), пересчёт только со снапшотом; в Live счётчик скрыт.
+
+Подробности — [sections/67-client-host-rdns.md](sections/67-client-host-rdns.md).

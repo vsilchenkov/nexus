@@ -33,6 +33,7 @@ import (
 	otelpf "nexus/internal/platform/otel"
 	pgpf "nexus/internal/platform/pg"
 	"nexus/internal/platform/queuecancel"
+	"nexus/internal/platform/rdns"
 	recoverypf "nexus/internal/platform/recovery"
 	"nexus/internal/platform/reloader"
 	"nexus/internal/platform/requestid"
@@ -140,7 +141,18 @@ func (a *App) Start(ctx context.Context) error {
 		b := circuitbreaker.New(a.redis, 5, 30*time.Second)
 		cb, breaker = b, b
 	}
-	sendUC := usecase.NewSendUsecase(httpc, a.chWriter, cb, a.logger, respLimit)
+	// §67: reverse-DNS резолв client_host — асинхронный, кеш Redis + L1,
+	// fail-open (a.redis может быть nil → режим «только L1»).
+	var sendOpts []usecase.SendOption
+	if !a.cfg.Sender.RDNS.Disabled {
+		hr := rdns.New(ctx, a.redis, rdns.Config{
+			Timeout:     time.Duration(a.cfg.Sender.RDNS.TimeoutMs) * time.Millisecond,
+			CacheTTL:    time.Duration(a.cfg.Sender.RDNS.CacheTTLSec) * time.Second,
+			NegativeTTL: time.Duration(a.cfg.Sender.RDNS.NegativeTTLSec) * time.Second,
+		}, a.logger)
+		sendOpts = append(sendOpts, usecase.WithHostResolver(hr))
+	}
+	sendUC := usecase.NewSendUsecase(httpc, a.chWriter, cb, a.logger, respLimit, sendOpts...)
 
 	// §46: персист исхода последнего вызова узла в Redis (переживает рестарт →
 	// статус «Down» корректен после деплоя). Noop без Redis — поведение как §41.
@@ -164,6 +176,7 @@ func (a *App) Start(ctx context.Context) error {
 		} else {
 			chpf.EnsureNodeIDColumn(ctx, a.chMgr.Conn(), tables, a.logger)
 			chpf.EnsureHTTPMethodColumn(ctx, a.chMgr.Conn(), tables, a.logger) // §39
+			chpf.EnsureClientHostColumn(ctx, a.chMgr.Conn(), tables, a.logger) // §67
 			chpf.EnsureBodySizeColumns(ctx, a.chMgr.Conn(), tables, a.logger)  // §42-доп
 			chpf.BackfillBodySizes(ctx, a.chMgr.Conn(), tables, a.logger)      // §42-доп
 		}

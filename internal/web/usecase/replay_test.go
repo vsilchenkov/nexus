@@ -55,6 +55,9 @@ func (s *stubLogReader) ListSince(_ context.Context, _, _ string, _ int64, _ int
 func (s *stubLogReader) Search(_ context.Context, _ port.LogQuery) ([]*domain.LogRecord, error) {
 	return nil, nil
 }
+func (s *stubLogReader) Count(_ context.Context, _ port.LogQuery) (uint64, error) {
+	return 0, nil
+}
 func (s *stubLogReader) CountErrors(_ context.Context, _, _ string, _, _ int64) (uint64, error) {
 	return 0, nil
 }
@@ -71,6 +74,9 @@ func (s *stubLogReader) GetBodyChunk(_ context.Context, _, _, _ string, _, _ int
 	return "", 0, s.err
 }
 func (s *stubLogReader) DistinctMethods(_ context.Context, _, _ string, _ int) ([]string, error) {
+	return nil, s.err
+}
+func (s *stubLogReader) DistinctClientHosts(_ context.Context, _, _ string, _ int) ([]string, error) {
 	return nil, s.err
 }
 func (s *stubLogReader) DateRange(_ context.Context, _, _ string) (int64, int64, error) {

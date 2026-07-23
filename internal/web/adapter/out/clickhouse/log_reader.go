@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	chgo "github.com/ClickHouse/clickhouse-go/v2"
 	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
 	"nexus/internal/domain"
@@ -39,12 +40,43 @@ func chUnavailable(err error) bool {
 // доступности — дополнительно помечает её domain.ErrLogsBackendUnavailable
 // (через errors.Join, чтобы errors.Is ловил и sentinel, и исходную ошибку, а
 // текст лога сохранял детали).
+//
+// §67: отсутствие колонки client_host (внешняя таблица §64, владелец ещё не
+// выполнил ручной ALTER из release notes) — ТОЖЕ мягкая деградация «логи
+// временно недоступны», а не 500: SELECT'ы читают колонку списком, и до ALTER
+// каждый поллинг вкладки «Логи» флудил бы 500/Sentry раз в несколько секунд
+// (поймано на стенде). Привязано строго к client_host — прочие missing-column
+// (чужие поломки DDL) остаются серверными ошибками и не маскируются.
 func classifyCHErr(op string, err error) error {
 	wrapped := fmt.Errorf("%s: %w", op, err)
-	if chUnavailable(err) {
+	if chUnavailable(err) || isMissingColumnErr(err, "client_host") {
 		return errors.Join(wrapped, domain.ErrLogsBackendUnavailable)
 	}
 	return wrapped
+}
+
+// Коды серверных ошибок ClickHouse «нет такой колонки» (§67 деградация
+// внешних таблиц §64, у которых владелец ещё не выполнил ручной ALTER).
+const (
+	chCodeNotFoundColumnInBlock = 10 // NOT_FOUND_COLUMN_IN_BLOCK
+	chCodeNoSuchColumnInTable   = 16 // NO_SUCH_COLUMN_IN_TABLE
+	chCodeUnknownIdentifier     = 47 // UNKNOWN_IDENTIFIER
+)
+
+// isMissingColumnErr сообщает, что err — серверная ошибка CH «колонка col не
+// существует». Используется для мягкой деградации facet-запросов по внешним
+// таблицам (§64), где новая обязательная колонка ещё не добавлена вручную:
+// такие ошибки — транзитное состояние деплой-окна, а не баг (см. §67).
+func isMissingColumnErr(err error, col string) bool {
+	var ex *chgo.Exception
+	if !errors.As(err, &ex) {
+		return false
+	}
+	switch ex.Code {
+	case chCodeNotFoundColumnInBlock, chCodeNoSuchColumnInTable, chCodeUnknownIdentifier:
+		return strings.Contains(ex.Message, col)
+	}
+	return false
 }
 
 // ConnProvider — узкий read-only доступ к ClickHouse-соединению.
@@ -114,7 +146,7 @@ func (r *LogReaderCH) liveConn() (chdriver.Conn, error) {
 const selectCols = `ID, type, http_method, url, method, parameters, request, response,
 	status, reason, date_create, date_request, date_response,
 	duration, done, checksum_request, checksum_response,
-	Host, IP, attempts, attempts_details, node_id, request_size, response_size`
+	Host, IP, client_host, attempts, attempts_details, node_id, request_size, response_size`
 
 // listCols — как selectCols, но тела (request/response) НЕ читаются с диска:
 // возвращаются пустыми (”). Список логов их не показывает (§42 — тела ленивые,
@@ -131,7 +163,7 @@ const selectCols = `ID, type, http_method, url, method, parameters, request, res
 const listCols = `ID, type, http_method, url, method, parameters, '' AS list_req, '' AS list_resp,
 	status, reason, date_create, date_request, date_response,
 	duration, done, checksum_request, checksum_response,
-	Host, IP, attempts, attempts_details, node_id, request_size, response_size`
+	Host, IP, client_host, attempts, attempts_details, node_id, request_size, response_size`
 
 // previewCols — как selectCols, но тела заменены префиксом substringUTF8(col,1,?)
 // (превью), а в конец добавлены полные длины lengthUTF8(col). Не тянет тела
@@ -141,7 +173,7 @@ const previewCols = `ID, type, http_method, url, method, parameters,
 	substringUTF8(request, 1, ?), substringUTF8(response, 1, ?),
 	status, reason, date_create, date_request, date_response,
 	duration, done, checksum_request, checksum_response,
-	Host, IP, attempts, attempts_details, node_id, request_size, response_size,
+	Host, IP, client_host, attempts, attempts_details, node_id, request_size, response_size,
 	lengthUTF8(request), lengthUTF8(response)`
 
 const (
@@ -393,18 +425,10 @@ func (r *LogReaderCH) ListSince(ctx context.Context, table, nodeID string, curso
 	return out, nil
 }
 
-// Search — snapshot с расширенными фильтрами (§7.4 Phase 6.8). Сортировка
-// по date_request DESC, LIMIT (1..500, default 100). Все фильтры опциональны;
-// пустые поля q не попадают в WHERE.
-func (r *LogReaderCH) Search(ctx context.Context, q port.LogQuery) ([]*domain.LogRecord, error) {
-	if !isSafeTableName(q.Table) {
-		return nil, fmt.Errorf("invalid table name: %q", q.Table)
-	}
-	limit := q.Limit
-	if limit <= 0 || limit > 500 {
-		limit = 100
-	}
-
+// searchConds строит WHERE-условия расширенных фильтров (§48) — ЕДИНСТВЕННЫЙ
+// источник для Search и Count (§67 «Всего»): один и тот же набор условий
+// гарантирует, что счётчик считает ровно то, что показывает список.
+func (r *LogReaderCH) searchConds(ctx context.Context, q port.LogQuery) ([]string, []any) {
 	var (
 		conds []string
 		args  []any
@@ -440,6 +464,10 @@ func (r *LogReaderCH) Search(ctx context.Context, q port.LogQuery) ([]*domain.Lo
 		conds = append(conds, "Host = ?")
 		args = append(args, q.Host)
 	}
+	if q.ClientHost != "" { // §67
+		conds = append(conds, "client_host = ?")
+		args = append(args, q.ClientHost)
+	}
 	switch q.Status {
 	case "ok":
 		conds = append(conds, "status BETWEEN 200 AND 299")
@@ -466,7 +494,22 @@ func (r *LogReaderCH) Search(ctx context.Context, q port.LogQuery) ([]*domain.Lo
 		conds = append(conds, c)
 		args = append(args, a...)
 	}
+	return conds, args
+}
 
+// Search — snapshot с расширенными фильтрами (§7.4 Phase 6.8). Сортировка
+// по date_request DESC, LIMIT (1..500, default 100). Все фильтры опциональны;
+// пустые поля q не попадают в WHERE.
+func (r *LogReaderCH) Search(ctx context.Context, q port.LogQuery) ([]*domain.LogRecord, error) {
+	if !isSafeTableName(q.Table) {
+		return nil, fmt.Errorf("invalid table name: %q", q.Table)
+	}
+	limit := q.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+
+	conds, args := r.searchConds(ctx, q)
 	where := ""
 	if len(conds) > 0 {
 		where = " WHERE " + strings.Join(conds, " AND ")
@@ -493,6 +536,41 @@ func (r *LogReaderCH) Search(ctx context.Context, q port.LogQuery) ([]*domain.Lo
 		out = append(out, rec)
 	}
 	return out, nil
+}
+
+// countTimeout — серверный потолок count()-запроса (§67 «Всего»): дорогой
+// полнотекстовый count по огромной таблице отваливается по таймауту, UI
+// мягко деградирует до «Показано N» без «из M».
+const countTimeout = 10 * time.Second
+
+// Count — точное число записей под теми же фильтрами, что и Search (§67,
+// счётчик «Показано N из M»). BeforeID (keyset-курсор пагинации) сознательно
+// игнорируется: «Всего» считается по фильтрам, а не по странице. Таймаут —
+// countTimeout; его превышение классифицируется как unavailable (деградация,
+// не 500).
+func (r *LogReaderCH) Count(ctx context.Context, q port.LogQuery) (uint64, error) {
+	if !isSafeTableName(q.Table) {
+		return 0, fmt.Errorf("invalid table name: %q", q.Table)
+	}
+	q.BeforeID = "" // курсор страницы не влияет на total
+	cctx, cancel := context.WithTimeout(ctx, countTimeout)
+	defer cancel()
+
+	conds, args := r.searchConds(cctx, q)
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + strings.Join(conds, " AND ")
+	}
+	conn, err := r.liveConn()
+	if err != nil {
+		return 0, err
+	}
+	var total uint64
+	if err := conn.QueryRow(cctx, fmt.Sprintf("SELECT count() FROM %s%s", q.Table, where), args...).
+		Scan(&total); err != nil {
+		return 0, classifyCHErr("clickhouse count logs", err)
+	}
+	return total, nil
 }
 
 // CountErrors считает записи-ошибки в таблице за окно (sinceMs, untilMs]
@@ -648,6 +726,59 @@ func (r *LogReaderCH) DistinctMethods(ctx context.Context, table, nodeID string,
 			return nil, fmt.Errorf("scan method: %w", err)
 		}
 		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// maxDistinctClientHosts — кап значений фасета «Хост клиента» (§67), как
+// maxDistinctMethods: дальше дропдаун с клиентской фильтрацией не имеет смысла.
+const maxDistinctClientHosts = 200
+
+// DistinctClientHosts — уникальные непустые значения колонки client_host узла
+// (§67, фасет дропдауна «Хост клиента»), отсортированные, до limit. Таблица
+// без колонки (внешняя §64 до ручного ALTER владельцем) — НЕ ошибка: пустой
+// список + Debug (иначе каждое открытие дропдауна флудило бы 500/Sentry в
+// деплой-окне).
+func (r *LogReaderCH) DistinctClientHosts(ctx context.Context, table, nodeID string, limit int) ([]string, error) {
+	if !isSafeTableName(table) {
+		return nil, fmt.Errorf("invalid table name: %q", table)
+	}
+	if limit <= 0 || limit > maxDistinctClientHosts {
+		limit = maxDistinctClientHosts
+	}
+	conds := []string{"client_host != ''"}
+	var args []any
+	if c, a := r.nodeFilter(ctx, table, nodeID); c != "" {
+		conds = append(conds, c)
+		args = append(args, a...)
+	}
+	conn, err := r.liveConn()
+	if err != nil {
+		return nil, err
+	}
+	q := fmt.Sprintf("SELECT DISTINCT client_host FROM %s WHERE %s ORDER BY client_host LIMIT ?",
+		table, strings.Join(conds, " AND "))
+	rows, err := conn.Query(ctx, q, append(args, limit)...)
+	if err != nil {
+		if isMissingColumnErr(err, "client_host") {
+			// §51.9: тихая деградация — фиксируем причину на debug-уровне.
+			r.logger.Debug("distinct client hosts: column missing (external table §64, manual ALTER pending)",
+				r.logger.Str("table", table))
+			return []string{}, nil
+		}
+		return nil, classifyCHErr("clickhouse distinct client hosts", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			return nil, fmt.Errorf("scan client host: %w", err)
+		}
+		out = append(out, h)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -856,7 +987,7 @@ func scanLogRow(rows chdriver.Rows) (*domain.LogRecord, error) {
 		&r.ID, &typ, &r.HTTPMethod, &r.URL, &r.Method, &r.Parameters, &r.Request, &r.Response,
 		&r.Status, &r.Reason, &dateCreate, &dateReq, &dateResp,
 		&r.Duration, &r.Done, &r.ChecksumRequest, &r.ChecksumResponse,
-		&r.Host, &r.IP, &r.Attempts, &r.AttemptsDetails, &r.NodeID,
+		&r.Host, &r.IP, &r.ClientHost, &r.Attempts, &r.AttemptsDetails, &r.NodeID,
 		&r.RequestSize, &r.ResponseSize,
 	); err != nil {
 		return nil, fmt.Errorf("scan log row: %w", err)
@@ -884,7 +1015,7 @@ func scanLogRowPreview(rows chdriver.Rows) (*domain.LogRecord, int64, int64, err
 		&r.ID, &typ, &r.HTTPMethod, &r.URL, &r.Method, &r.Parameters, &r.Request, &r.Response,
 		&r.Status, &r.Reason, &dateCreate, &dateReq, &dateResp,
 		&r.Duration, &r.Done, &r.ChecksumRequest, &r.ChecksumResponse,
-		&r.Host, &r.IP, &r.Attempts, &r.AttemptsDetails, &r.NodeID,
+		&r.Host, &r.IP, &r.ClientHost, &r.Attempts, &r.AttemptsDetails, &r.NodeID,
 		&r.RequestSize, &r.ResponseSize,
 		&reqLen, &respLen,
 	); err != nil {

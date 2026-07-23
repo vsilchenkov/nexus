@@ -11,6 +11,7 @@ import { FETCH_CHUNK, LARGE_WARN_RUNES, formatRunes, prettyMaybe } from "../../l
 import { LabelHint, Popover, PopoverAnchor, PopoverContent } from "../ui";
 import { CopyButton } from "../ui/CopyButton";
 import { ReplayDialog } from "../ReplayDialog";
+import { LogClientHostFilter } from "./LogClientHostFilter";
 import { LogDateField } from "./LogDateField";
 import { LogMethodFilter } from "./LogMethodFilter";
 import { type LogRow, type LogsResp, type LogDetail, type LogBodyChunk } from "./types";
@@ -70,9 +71,11 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   // заново при переключении на вкладку, поэтому инициализация через useState ок.
   // §48: поля ip/host убраны из UI (API их по-прежнему принимает); добавлены
   // method и режимы поиска qCase/qWord/qRegex (кнопки Aa / ab| / .*).
+  // §67: clientHost — фильтр по PTR-имени клиента (колонка client_host).
   const initFormEmpty = {
     q: "",
     method: "",
+    clientHost: "",
     from: "",
     to: "",
     qCase: false,
@@ -114,6 +117,7 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
       if (appliedFilters.qRegex) p.q_regex = "1";
     }
     if (appliedFilters.method) p.method = appliedFilters.method;
+    if (appliedFilters.clientHost) p.client_host = appliedFilters.clientHost; // §67
     if (appliedFilters.from) p.from = new Date(appliedFilters.from).toISOString();
     if (appliedFilters.to) p.to = new Date(appliedFilters.to).toISOString();
     return p;
@@ -164,6 +168,31 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   const badQuery =
     (logsQ.error as { response?: { status?: number } } | null)?.response?.status === 400;
 
+  // §67: точный count() под ТЕМИ ЖЕ фильтрами, что и список, включая быстрые
+  // ok/err и done/pending — счётчик «Показано N из M» в шапке. Отдельный
+  // запрос: таблица рендерится сразу, «из M» дорисовывается. Пересчёт — только
+  // со снапшотом (queryKey = параметры списка + быстрые фильтры), НЕ на каждое
+  // SSE-событие; в Live выключен (total мгновенно устаревает — счётчик скрыт).
+  // Ошибка/таймаут/CH недоступен → logs_available=false → «из M» просто нет.
+  const countQ = useQuery({
+    queryKey: ["logs-count", id, advQueryParams, statusFilter, doneFilter],
+    enabled: !!id && hasLogsTable && !live,
+    queryFn: () => {
+      const params: Record<string, string | number> = { ...advQueryParams };
+      delete params.limit; // count не постраничный
+      if (statusFilter !== "all") params.status = statusFilter;
+      if (doneFilter !== "all") params.done = doneFilter === "done" ? "yes" : "no";
+      return api.get<{ total: number; logs_available?: boolean }>(
+        `/api/nodes/${id}/logs/count`,
+        params,
+      );
+    },
+    refetchInterval: !live && atTop ? 5_000 : false,
+    retry: false, // деградация штатная — не долбим CH повторами
+  });
+  const totalCount =
+    countQ.data && countQ.data.logs_available !== false ? countQ.data.total : null;
+
   const [liveLogs, setLiveLogs] = useState<LogRow[]>([]);
   const [highlighted, setHighlighted] = useState<Set<string>>(new Set());
   // Поток умер окончательно (LIVE_MAX_CONSECUTIVE_ERRORS ошибок подряд) —
@@ -205,6 +234,7 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
       if (appliedFilters.qRegex) qs.set("q_regex", "1");
     }
     if (appliedFilters.method) qs.set("method", appliedFilters.method);
+    if (appliedFilters.clientHost) qs.set("client_host", appliedFilters.clientHost); // §67
     const suffix = qs.toString() ? `?${qs.toString()}` : "";
     const es = new EventSource(`/api/nodes/${id}/logs/stream${suffix}`);
     const timers = highlightTimersRef.current;
@@ -368,7 +398,13 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
         <div className="flex items-center gap-3">
           <div className="font-medium">{t("node.tabs.logs")}</div>
           <span className="text-xs text-fg-muted">
-            {t("logs.shown_count", { n: visibleLogs.length })}
+            {/* §67: «Показано N из M» — M только вне Live и когда count доступен. */}
+            {!live && totalCount !== null
+              ? t("logs.shown_of_total", {
+                  n: visibleLogs.length,
+                  total: totalCount.toLocaleString(),
+                })
+              : t("logs.shown_count", { n: visibleLogs.length })}
           </span>
         </div>
 
@@ -502,47 +538,65 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
               onChange={(m) => setAdvForm({ ...advForm, method: m })}
             />
           </div>
-          {/* Ряд 2: даты С/По (календарь react-day-picker; min/max — лениво из
-              /logs/date-range при открытии) + кнопки. §48.8. Подпись «С»/«По» —
-              в самом плейсхолдере поля, отдельный label над ним не дублируем. */}
-          <div className="md:col-span-3">
-            <LogDateField
-              value={advForm.from}
-              onChange={(v) => setAdvForm({ ...advForm, from: v })}
-              min={dateRange && dateRange.min > 0 ? new Date(dateRange.min) : undefined}
-              max={dateRange && dateRange.max > 0 ? new Date(dateRange.max) : undefined}
-              defaultTime="00:00"
-              placeholder={t("logs.advanced.from")}
-              onOpen={fetchDateRange}
-            />
-          </div>
-          <div className="md:col-span-3">
-            <LogDateField
-              value={advForm.to}
-              onChange={(v) => setAdvForm({ ...advForm, to: v })}
-              min={dateRange && dateRange.min > 0 ? new Date(dateRange.min) : undefined}
-              max={dateRange && dateRange.max > 0 ? new Date(dateRange.max) : undefined}
-              defaultTime="23:59"
-              placeholder={t("logs.advanced.to")}
-              onOpen={fetchDateRange}
-            />
-          </div>
-          <div className="flex items-center justify-end gap-2 md:col-span-6">
-            <button
-              onClick={() => {
-                setAdvForm(initFormEmpty);
-                setAppliedFilters(initFormEmpty);
-              }}
-              className="rounded-md bg-bg-muted px-3 py-1.5 text-sm hover:bg-bg-3"
-            >
-              {t("logs.advanced.reset")}
-            </button>
-            <button
-              onClick={() => setAppliedFilters(advForm)}
-              className="rounded-md bg-accent px-3 py-1.5 text-sm text-white hover:bg-accent-hover"
-            >
-              {t("logs.advanced.apply")}
-            </button>
+          {/* Ряд 2 (§48.8 + §67, эскиз утверждён): «Дата с» / «Дата по» с
+              метками сверху и шириной по контенту (dd.MM.yyyy HH:mm + ×, без
+              пустого пространства), затем «Хост клиента», кнопки — в том же
+              ряду справа, без переноса. flex вместо grid-колонок — иначе поля
+              дат растягивались на всю колонку. */}
+          <div className="flex flex-wrap items-end gap-3 md:col-span-12">
+            <div className="w-[200px] space-y-1">
+              <label className="text-[10px] uppercase tracking-wider text-fg-muted">
+                {t("logs.advanced.from")}
+              </label>
+              <LogDateField
+                value={advForm.from}
+                onChange={(v) => setAdvForm({ ...advForm, from: v })}
+                min={dateRange && dateRange.min > 0 ? new Date(dateRange.min) : undefined}
+                max={dateRange && dateRange.max > 0 ? new Date(dateRange.max) : undefined}
+                defaultTime="00:00"
+                onOpen={fetchDateRange}
+              />
+            </div>
+            <div className="w-[200px] space-y-1">
+              <label className="text-[10px] uppercase tracking-wider text-fg-muted">
+                {t("logs.advanced.to")}
+              </label>
+              <LogDateField
+                value={advForm.to}
+                onChange={(v) => setAdvForm({ ...advForm, to: v })}
+                min={dateRange && dateRange.min > 0 ? new Date(dateRange.min) : undefined}
+                max={dateRange && dateRange.max > 0 ? new Date(dateRange.max) : undefined}
+                defaultTime="23:59"
+                onOpen={fetchDateRange}
+              />
+            </div>
+            <div className="w-[240px] space-y-1">
+              <label className="text-[10px] uppercase tracking-wider text-fg-muted">
+                {t("logs.advanced.client_host")}
+              </label>
+              <LogClientHostFilter
+                nodeId={id}
+                value={advForm.clientHost}
+                onChange={(h) => setAdvForm({ ...advForm, clientHost: h })}
+              />
+            </div>
+            <div className="ml-auto flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setAdvForm(initFormEmpty);
+                  setAppliedFilters(initFormEmpty);
+                }}
+                className="rounded-md bg-bg-muted px-3 py-1.5 text-sm hover:bg-bg-3"
+              >
+                {t("logs.advanced.reset")}
+              </button>
+              <button
+                onClick={() => setAppliedFilters(advForm)}
+                className="rounded-md bg-accent px-3 py-1.5 text-sm text-white hover:bg-accent-hover"
+              >
+                {t("logs.advanced.apply")}
+              </button>
+            </div>
           </div>
         </div>
       )}

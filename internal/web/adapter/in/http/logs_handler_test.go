@@ -38,11 +38,19 @@ func (stubLogReaderUnavailable) Search(_ context.Context, _ port.LogQuery) ([]*d
 	return nil, domain.ErrLogsBackendUnavailable
 }
 
+func (stubLogReaderUnavailable) Count(_ context.Context, _ port.LogQuery) (uint64, error) {
+	return 0, domain.ErrLogsBackendUnavailable
+}
+
 func (stubLogReaderUnavailable) CountFailed(_ context.Context, _, _ string, _, _ int64) (uint64, error) {
 	return 0, domain.ErrLogsBackendUnavailable
 }
 
 func (stubLogReaderUnavailable) DistinctMethods(_ context.Context, _, _ string, _ int) ([]string, error) {
+	return nil, domain.ErrLogsBackendUnavailable
+}
+
+func (stubLogReaderUnavailable) DistinctClientHosts(_ context.Context, _, _ string, _ int) ([]string, error) {
 	return nil, domain.ErrLogsBackendUnavailable
 }
 
@@ -57,12 +65,20 @@ func (stubLogReaderOK) Search(_ context.Context, _ port.LogQuery) ([]*domain.Log
 	return nil, nil
 }
 
+func (stubLogReaderOK) Count(_ context.Context, _ port.LogQuery) (uint64, error) {
+	return 1234, nil
+}
+
 func (stubLogReaderOK) CountFailed(_ context.Context, _, _ string, _, _ int64) (uint64, error) {
 	return 0, nil
 }
 
 func (stubLogReaderOK) DistinctMethods(_ context.Context, _, _ string, _ int) ([]string, error) {
 	return []string{"v1/a", "v1/b"}, nil
+}
+
+func (stubLogReaderOK) DistinctClientHosts(_ context.Context, _, _ string, _ int) ([]string, error) {
+	return []string{"srv-1c.vz78.vozovoz.ru"}, nil
 }
 
 func (stubLogReaderOK) DateRange(_ context.Context, _, _ string) (int64, int64, error) {
@@ -78,8 +94,49 @@ func newLogsRouter(reader port.LogReader) *gin.Engine {
 	r.GET("/nodes/:id/logs", h.List)
 	r.GET("/nodes/:id/logs/failed-count", h.CountFailed)
 	r.GET("/nodes/:id/logs/methods", h.Methods)
+	r.GET("/nodes/:id/logs/client-hosts", h.ClientHosts)
+	r.GET("/nodes/:id/logs/count", h.Count)
 	r.GET("/nodes/:id/logs/date-range", h.DateRange)
 	return r
+}
+
+// TestLogsCount — §67 счётчик «Всего»: happy path (total под фильтрами),
+// деградация CH-unavailable (200 + logs_available=false, total=0, не 500),
+// плохой поисковый запрос → 400.
+func TestLogsCount(t *testing.T) {
+	t.Parallel()
+
+	t.Run("ok", func(t *testing.T) {
+		t.Parallel()
+		r := newLogsRouter(stubLogReaderOK{})
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/nodes/n1/logs/count?status=err&client_host=srv-1c", nil))
+		require.Equal(t, http.StatusOK, w.Code)
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+		assert.EqualValues(t, 1234, body["total"])
+		assert.Equal(t, true, body["logs_available"])
+	})
+
+	t.Run("ch unavailable → degrade", func(t *testing.T) {
+		t.Parallel()
+		r := newLogsRouter(stubLogReaderUnavailable{})
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/nodes/n1/logs/count", nil))
+		require.Equal(t, http.StatusOK, w.Code)
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+		assert.Equal(t, false, body["logs_available"])
+		assert.EqualValues(t, 0, body["total"])
+	})
+
+	t.Run("bad search query → 400", func(t *testing.T) {
+		t.Parallel()
+		r := newLogsRouter(stubLogReaderOK{})
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/nodes/n1/logs/count?q=%28&q_regex=1", nil))
+		require.Equal(t, http.StatusBadRequest, w.Code)
+	})
 }
 
 // TestLogsList_CHUnavailable_Degrades — при недоступном CH List отдаёт
@@ -187,6 +244,15 @@ func TestLogsFacets_OK(t *testing.T) {
 	assert.Equal(t, []any{"v1/a", "v1/b"}, mBody["items"])
 	assert.Equal(t, true, mBody["logs_available"])
 
+	// §67: фасет «Хост клиента» — тот же контракт, что у Methods.
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/nodes/n1/logs/client-hosts", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+	var chBody map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &chBody))
+	assert.Equal(t, []any{"srv-1c.vz78.vozovoz.ru"}, chBody["items"])
+	assert.Equal(t, true, chBody["logs_available"])
+
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/nodes/n1/logs/date-range", nil))
 	require.Equal(t, http.StatusOK, w.Code)
@@ -211,6 +277,16 @@ func TestLogsFacets_CHUnavailable_Degrades(t *testing.T) {
 	assert.Equal(t, false, mBody["logs_available"])
 	items, _ := mBody["items"].([]any)
 	assert.Empty(t, items)
+
+	// §67: фасет «Хост клиента» деградирует так же.
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/nodes/n1/logs/client-hosts", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+	var chBody map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &chBody))
+	assert.Equal(t, false, chBody["logs_available"])
+	chItems, _ := chBody["items"].([]any)
+	assert.Empty(t, chItems)
 
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/nodes/n1/logs/date-range", nil))

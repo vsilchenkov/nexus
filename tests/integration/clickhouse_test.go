@@ -134,6 +134,7 @@ func createNodeLogTable(t *testing.T, ctx context.Context, conn chdriver.Conn, t
 		checksum_response FixedString(32),
 		Host String,
 		IP String,
+		client_host String,
 		attempts Int32,
 		attempts_details String,
 		node_id String,
