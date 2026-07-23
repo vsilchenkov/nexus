@@ -73,6 +73,9 @@ func (s *stubLogReader) GetBodyChunk(_ context.Context, _, _, _ string, _, _ int
 func (s *stubLogReader) DistinctMethods(_ context.Context, _, _ string, _ int) ([]string, error) {
 	return nil, s.err
 }
+func (s *stubLogReader) DistinctClientHosts(_ context.Context, _, _ string, _ int) ([]string, error) {
+	return nil, s.err
+}
 func (s *stubLogReader) DateRange(_ context.Context, _, _ string) (int64, int64, error) {
 	return 0, 0, s.err
 }

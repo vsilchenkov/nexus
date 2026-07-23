@@ -25,6 +25,7 @@ type logReaderMock struct {
 	bodyTotal   int64
 	lastQuery   port.LogQuery // последний Search-запрос (для проверки QExpr, §48)
 	methods     []string      // ответ DistinctMethods (§48)
+	clientHosts []string      // ответ DistinctClientHosts (§67)
 	rangeMin    int64         // ответ DateRange (§48)
 	rangeMax    int64
 }
@@ -73,6 +74,10 @@ func (m *logReaderMock) GetBodyChunk(_ context.Context, _, _, _ string, _, _ int
 
 func (m *logReaderMock) DistinctMethods(_ context.Context, _, _ string, _ int) ([]string, error) {
 	return m.methods, m.err
+}
+
+func (m *logReaderMock) DistinctClientHosts(_ context.Context, _, _ string, _ int) ([]string, error) {
+	return m.clientHosts, m.err
 }
 
 func (m *logReaderMock) DateRange(_ context.Context, _, _ string) (int64, int64, error) {
@@ -309,6 +314,7 @@ func TestMatchLogFilter_Extended(t *testing.T) {
 		Parameters: "id=42&debug=1",
 		Status:     200,
 		Done:       true,
+		ClientHost: "srv-1c.vz78.vozovoz.ru", // §67
 	}
 	mustExpr := func(q string, opts logsearch.Options) *logsearch.Expr {
 		t.Helper()
@@ -334,6 +340,8 @@ func TestMatchLogFilter_Extended(t *testing.T) {
 		{name: "скоуп params: найден", q: port.LogQuery{QExpr: mustExpr("params:debug", logsearch.Options{})}, want: true},
 		{name: "скоуп url: не найден (текст в params)", q: port.LogQuery{QExpr: mustExpr("url:debug", logsearch.Options{})}, want: false},
 		{name: "method + q вместе", q: port.LogQuery{Method: "v1/orders", QExpr: mustExpr("debug", logsearch.Options{})}, want: true},
+		{name: "client_host совпал (§67)", q: port.LogQuery{ClientHost: "srv-1c.vz78.vozovoz.ru"}, want: true},
+		{name: "client_host не совпал (§67)", q: port.LogQuery{ClientHost: "other.vz78.vozovoz.ru"}, want: false},
 	}
 	for _, tt := range tests {
 		if got := matchLogFilter(rec, tt.q); got != tt.want {
@@ -342,11 +350,11 @@ func TestMatchLogFilter_Extended(t *testing.T) {
 	}
 }
 
-// §48.3: фасеты Methods/DateRange — форвардинг к reader'у, team scope и
-// деградация «логи не настроены» как у остальных читающих методов.
+// §48.3: фасеты Methods/ClientHosts/DateRange — форвардинг к reader'у, team
+// scope и деградация «логи не настроены» как у остальных читающих методов.
 func TestLogs_Facets_ForwardAndScope(t *testing.T) {
 	t.Parallel()
-	r := &logReaderMock{methods: []string{"a", "b"}, rangeMin: 100, rangeMax: 200}
+	r := &logReaderMock{methods: []string{"a", "b"}, clientHosts: []string{"h1", "h2", "h3"}, rangeMin: 100, rangeMax: 200}
 	nodes := &stubNodeRepo{nodes: map[string]*domain.Node{
 		"n1":    {ID: "n1", ClickHouseTable: "t.t", TeamID: "team1", Status: domain.NodeStatusEnabled},
 		"notab": {ID: "notab", ClickHouseTable: "", TeamID: "team1", Status: domain.NodeStatusEnabled},
@@ -356,6 +364,17 @@ func TestLogs_Facets_ForwardAndScope(t *testing.T) {
 	ms, err := uc.Methods(context.Background(), "n1", "team1")
 	if err != nil || len(ms) != 2 {
 		t.Fatalf("methods: want 2, got %v / %v", ms, err)
+	}
+	// §67: фасет «Хост клиента».
+	hs, err := uc.ClientHosts(context.Background(), "n1", "team1")
+	if err != nil || len(hs) != 3 {
+		t.Fatalf("client hosts: want 3, got %v / %v", hs, err)
+	}
+	if _, err := uc.ClientHosts(context.Background(), "n1", "other"); !errors.Is(err, domain.ErrNodeNotFound) {
+		t.Fatalf("client hosts team scope: want ErrNodeNotFound, got %v", err)
+	}
+	if _, err := uc.ClientHosts(context.Background(), "notab", "team1"); !errors.Is(err, domain.ErrNodeLogsNotConfigured) {
+		t.Fatalf("client hosts no table: want ErrNodeLogsNotConfigured, got %v", err)
 	}
 	lo, hi, err := uc.DateRange(context.Background(), "n1", "team1")
 	if err != nil || lo != 100 || hi != 200 {

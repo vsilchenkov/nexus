@@ -114,20 +114,22 @@ func toLogDTO(r *domain.LogRecord, includeBodies bool) LogRecordDTO {
 }
 
 // logQueryFromContext извлекает расширенные фильтры (§7.4, Phase 6.8; §48) из
-// query-параметров: from/to (RFC3339 или UnixMilli), ip, host, status, done,
-// q + режимы q_case/q_word/q_regex и method. Используется и List, и Stream.
-// ip/host из UI убраны (§48.4), но параметры API сохранены для токен-клиентов.
+// query-параметров: from/to (RFC3339 или UnixMilli), ip, host, client_host,
+// status, done, q + режимы q_case/q_word/q_regex и method. Используется и
+// List, и Stream. ip/host из UI убраны (§48.4), но параметры API сохранены
+// для токен-клиентов.
 func logQueryFromContext(c *gin.Context) port.LogQuery {
 	q := port.LogQuery{
-		IP:     c.Query("ip"),
-		Host:   c.Query("host"),
-		Status: c.Query("status"), // "ok" / "err" / ""
-		Done:   c.Query("done"),   // "yes" / "no" / ""
-		Method: c.Query("method"), // §48: exact match по колонке method (§39)
-		Q:      c.Query("q"),
-		QCase:  boolFlag(c.Query("q_case")),
-		QWord:  boolFlag(c.Query("q_word")),
-		QRegex: boolFlag(c.Query("q_regex")),
+		IP:         c.Query("ip"),
+		Host:       c.Query("host"),
+		ClientHost: c.Query("client_host"), // §67: exact match по PTR-имени клиента
+		Status:     c.Query("status"),      // "ok" / "err" / ""
+		Done:       c.Query("done"),        // "yes" / "no" / ""
+		Method:     c.Query("method"),      // §48: exact match по колонке method (§39)
+		Q:          c.Query("q"),
+		QCase:      boolFlag(c.Query("q_case")),
+		QWord:      boolFlag(c.Query("q_word")),
+		QRegex:     boolFlag(c.Query("q_regex")),
 	}
 	if v := c.Query("from"); v != "" {
 		q.SinceMs = parseTimeMs(v)
@@ -170,6 +172,7 @@ func parseTimeMs(v string) int64 {
 // @Param    before_id query  string  false  "тай-брейкер keyset-пагинации: id самой старой загруженной строки (вместе с to — строгий курсор по плотным секундам)"
 // @Param    ip        query  string  false  "exact match по IP клиента (с §48 недоступно из UI, параметр API сохранён)"
 // @Param    host      query  string  false  "exact match по Host (с §48 недоступно из UI, параметр API сохранён)"
+// @Param    client_host  query  string  false  "exact match по PTR-имени клиента (колонка client_host, §67)"
 // @Param    status    query  string  false  "ok | err | (пусто)"
 // @Param    done      query  string  false  "yes | no | (пусто)"
 // @Param    method    query  string  false  "exact match по подпути запроса (колонка method, §39/§48)"
@@ -306,6 +309,29 @@ func (h *LogsHandler) Methods(c *gin.Context) {
 	nodeID := c.Param("id")
 	items, err := h.uc.Methods(c.Request.Context(), nodeID, currentTeamID(c))
 	if h.writeFacetError(c, nodeID, "logs.methods", err, gin.H{"items": []string{}}) {
+		return
+	}
+	if items == nil {
+		items = []string{}
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items, "logs_configured": true, "logs_available": true})
+}
+
+// ClientHosts godoc
+// @Summary  Уникальные значения client_host узла для фасета фильтра (§67).
+// @Description  DISTINCT по колонке client_host (PTR-имя клиента) для дропдауна «Хост клиента». Дёргается лениво при открытии списка. До 200 значений, отсортированы. Узел без clickhouse_table → 200 + logs_configured=false; CH недоступен → 200 + logs_available=false; внешняя таблица (§64) без колонки → 200 + пустой список.
+// @Tags     logs
+// @Produce  json
+// @Param    id  path  string  true  "node id"
+// @Success  200  {object}  LogClientHostsResponse
+// @Failure  404  {object}  ErrorResponse
+// @Security CookieAuth
+// @Security ApiTokenAuth
+// @Router   /api/nodes/{id}/logs/client-hosts [get]
+func (h *LogsHandler) ClientHosts(c *gin.Context) {
+	nodeID := c.Param("id")
+	items, err := h.uc.ClientHosts(c.Request.Context(), nodeID, currentTeamID(c))
+	if h.writeFacetError(c, nodeID, "logs.client_hosts", err, gin.H{"items": []string{}}) {
 		return
 	}
 	if items == nil {
@@ -551,6 +577,7 @@ func safeFilePart(s string) string {
 // @Produce  text/event-stream
 // @Param    id       path   string  true   "node id"
 // @Param    method   query  string  false  "exact match по подпути запроса (§48)"
+// @Param    client_host  query  string  false  "exact match по PTR-имени клиента (§67)"
 // @Param    q        query  string  false  "поисковое выражение (§48.1); в live ищет по url+parameters"
 // @Param    q_case   query  bool    false  "1/true — с учётом регистра"
 // @Param    q_word   query  bool    false  "1/true — только целое слово"

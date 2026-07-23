@@ -3152,6 +3152,12 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
+                        "description": "exact match по PTR-имени клиента (колонка client_host, §67)",
+                        "name": "client_host",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "description": "ok | err | (пусто)",
                         "name": "status",
                         "in": "query"
@@ -3202,6 +3208,49 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "невалидный поисковый запрос (синтаксис/regex)",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{id}/logs/client-hosts": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    },
+                    {
+                        "ApiTokenAuth": []
+                    }
+                ],
+                "description": "DISTINCT по колонке client_host (PTR-имя клиента) для дропдауна «Хост клиента». Дёргается лениво при открытии списка. До 200 значений, отсортированы. Узел без clickhouse_table → 200 + logs_configured=false; CH недоступен → 200 + logs_available=false; внешняя таблица (§64) без колонки → 200 + пустой список.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logs"
+                ],
+                "summary": "Уникальные значения client_host узла для фасета фильтра (§67).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.LogClientHostsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
@@ -3371,6 +3420,12 @@ const docTemplate = `{
                         "type": "string",
                         "description": "exact match по подпути запроса (§48)",
                         "name": "method",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "exact match по PTR-имени клиента (§67)",
+                        "name": "client_host",
                         "in": "query"
                     },
                     {
@@ -5619,6 +5674,23 @@ const docTemplate = `{
                 "which": {
                     "description": "request | response",
                     "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.LogClientHostsResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "logs_available": {
+                    "type": "boolean"
+                },
+                "logs_configured": {
+                    "type": "boolean"
                 }
             }
         },

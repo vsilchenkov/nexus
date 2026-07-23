@@ -46,6 +46,10 @@ func (stubLogReaderUnavailable) DistinctMethods(_ context.Context, _, _ string, 
 	return nil, domain.ErrLogsBackendUnavailable
 }
 
+func (stubLogReaderUnavailable) DistinctClientHosts(_ context.Context, _, _ string, _ int) ([]string, error) {
+	return nil, domain.ErrLogsBackendUnavailable
+}
+
 func (stubLogReaderUnavailable) DateRange(_ context.Context, _, _ string) (int64, int64, error) {
 	return 0, 0, domain.ErrLogsBackendUnavailable
 }
@@ -65,6 +69,10 @@ func (stubLogReaderOK) DistinctMethods(_ context.Context, _, _ string, _ int) ([
 	return []string{"v1/a", "v1/b"}, nil
 }
 
+func (stubLogReaderOK) DistinctClientHosts(_ context.Context, _, _ string, _ int) ([]string, error) {
+	return []string{"srv-1c.vz78.vozovoz.ru"}, nil
+}
+
 func (stubLogReaderOK) DateRange(_ context.Context, _, _ string) (int64, int64, error) {
 	return 1_700_000_000_000, 1_800_000_000_000, nil
 }
@@ -78,6 +86,7 @@ func newLogsRouter(reader port.LogReader) *gin.Engine {
 	r.GET("/nodes/:id/logs", h.List)
 	r.GET("/nodes/:id/logs/failed-count", h.CountFailed)
 	r.GET("/nodes/:id/logs/methods", h.Methods)
+	r.GET("/nodes/:id/logs/client-hosts", h.ClientHosts)
 	r.GET("/nodes/:id/logs/date-range", h.DateRange)
 	return r
 }
@@ -187,6 +196,15 @@ func TestLogsFacets_OK(t *testing.T) {
 	assert.Equal(t, []any{"v1/a", "v1/b"}, mBody["items"])
 	assert.Equal(t, true, mBody["logs_available"])
 
+	// §67: фасет «Хост клиента» — тот же контракт, что у Methods.
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/nodes/n1/logs/client-hosts", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+	var chBody map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &chBody))
+	assert.Equal(t, []any{"srv-1c.vz78.vozovoz.ru"}, chBody["items"])
+	assert.Equal(t, true, chBody["logs_available"])
+
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/nodes/n1/logs/date-range", nil))
 	require.Equal(t, http.StatusOK, w.Code)
@@ -211,6 +229,16 @@ func TestLogsFacets_CHUnavailable_Degrades(t *testing.T) {
 	assert.Equal(t, false, mBody["logs_available"])
 	items, _ := mBody["items"].([]any)
 	assert.Empty(t, items)
+
+	// §67: фасет «Хост клиента» деградирует так же.
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/nodes/n1/logs/client-hosts", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+	var chBody map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &chBody))
+	assert.Equal(t, false, chBody["logs_available"])
+	chItems, _ := chBody["items"].([]any)
+	assert.Empty(t, chItems)
 
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/nodes/n1/logs/date-range", nil))

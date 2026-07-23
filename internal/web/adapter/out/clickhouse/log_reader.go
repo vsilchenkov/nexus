@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	chgo "github.com/ClickHouse/clickhouse-go/v2"
 	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
 	"nexus/internal/domain"
@@ -45,6 +46,30 @@ func classifyCHErr(op string, err error) error {
 		return errors.Join(wrapped, domain.ErrLogsBackendUnavailable)
 	}
 	return wrapped
+}
+
+// Коды серверных ошибок ClickHouse «нет такой колонки» (§67 деградация
+// внешних таблиц §64, у которых владелец ещё не выполнил ручной ALTER).
+const (
+	chCodeNotFoundColumnInBlock = 10 // NOT_FOUND_COLUMN_IN_BLOCK
+	chCodeNoSuchColumnInTable   = 16 // NO_SUCH_COLUMN_IN_TABLE
+	chCodeUnknownIdentifier     = 47 // UNKNOWN_IDENTIFIER
+)
+
+// isMissingColumnErr сообщает, что err — серверная ошибка CH «колонка col не
+// существует». Используется для мягкой деградации facet-запросов по внешним
+// таблицам (§64), где новая обязательная колонка ещё не добавлена вручную:
+// такие ошибки — транзитное состояние деплой-окна, а не баг (см. §67).
+func isMissingColumnErr(err error, col string) bool {
+	var ex *chgo.Exception
+	if !errors.As(err, &ex) {
+		return false
+	}
+	switch ex.Code {
+	case chCodeNotFoundColumnInBlock, chCodeNoSuchColumnInTable, chCodeUnknownIdentifier:
+		return strings.Contains(ex.Message, col)
+	}
+	return false
 }
 
 // ConnProvider — узкий read-only доступ к ClickHouse-соединению.
@@ -440,6 +465,10 @@ func (r *LogReaderCH) Search(ctx context.Context, q port.LogQuery) ([]*domain.Lo
 		conds = append(conds, "Host = ?")
 		args = append(args, q.Host)
 	}
+	if q.ClientHost != "" { // §67
+		conds = append(conds, "client_host = ?")
+		args = append(args, q.ClientHost)
+	}
 	switch q.Status {
 	case "ok":
 		conds = append(conds, "status BETWEEN 200 AND 299")
@@ -648,6 +677,59 @@ func (r *LogReaderCH) DistinctMethods(ctx context.Context, table, nodeID string,
 			return nil, fmt.Errorf("scan method: %w", err)
 		}
 		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// maxDistinctClientHosts — кап значений фасета «Хост клиента» (§67), как
+// maxDistinctMethods: дальше дропдаун с клиентской фильтрацией не имеет смысла.
+const maxDistinctClientHosts = 200
+
+// DistinctClientHosts — уникальные непустые значения колонки client_host узла
+// (§67, фасет дропдауна «Хост клиента»), отсортированные, до limit. Таблица
+// без колонки (внешняя §64 до ручного ALTER владельцем) — НЕ ошибка: пустой
+// список + Debug (иначе каждое открытие дропдауна флудило бы 500/Sentry в
+// деплой-окне).
+func (r *LogReaderCH) DistinctClientHosts(ctx context.Context, table, nodeID string, limit int) ([]string, error) {
+	if !isSafeTableName(table) {
+		return nil, fmt.Errorf("invalid table name: %q", table)
+	}
+	if limit <= 0 || limit > maxDistinctClientHosts {
+		limit = maxDistinctClientHosts
+	}
+	conds := []string{"client_host != ''"}
+	var args []any
+	if c, a := r.nodeFilter(ctx, table, nodeID); c != "" {
+		conds = append(conds, c)
+		args = append(args, a...)
+	}
+	conn, err := r.liveConn()
+	if err != nil {
+		return nil, err
+	}
+	q := fmt.Sprintf("SELECT DISTINCT client_host FROM %s WHERE %s ORDER BY client_host LIMIT ?",
+		table, strings.Join(conds, " AND "))
+	rows, err := conn.Query(ctx, q, append(args, limit)...)
+	if err != nil {
+		if isMissingColumnErr(err, "client_host") {
+			// §51.9: тихая деградация — фиксируем причину на debug-уровне.
+			r.logger.Debug("distinct client hosts: column missing (external table §64, manual ALTER pending)",
+				r.logger.Str("table", table))
+			return []string{}, nil
+		}
+		return nil, classifyCHErr("clickhouse distinct client hosts", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			return nil, fmt.Errorf("scan client host: %w", err)
+		}
+		out = append(out, h)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

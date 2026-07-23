@@ -143,6 +143,17 @@ func (u *LogsUsecase) Methods(ctx context.Context, nodeID, teamID string) ([]str
 	return u.logs.DistinctMethods(ctx, n.ClickHouseTable, n.ID, 0)
 }
 
+// ClientHosts — уникальные значения колонки client_host узла (§67, фасет
+// дропдауна «Хост клиента»). Как Methods: лениво дёргается UI при открытии
+// списка. Таблица без колонки (§64) — пустой список (деградация в адаптере).
+func (u *LogsUsecase) ClientHosts(ctx context.Context, nodeID, teamID string) ([]string, error) {
+	n, err := u.resolveNode(ctx, nodeID, teamID)
+	if err != nil {
+		return nil, err
+	}
+	return u.logs.DistinctClientHosts(ctx, n.ClickHouseTable, n.ID, 0)
+}
+
 // DateRange — min/max date_request узла в UnixMilli (§48.3, ограничение полей
 // дат фильтра). (0, 0) — записей нет, ограничения не ставятся. teamID — scope.
 func (u *LogsUsecase) DateRange(ctx context.Context, nodeID, teamID string) (int64, int64, error) {
@@ -190,6 +201,9 @@ func matchLogFilter(r *domain.LogRecord, q port.LogQuery) bool {
 		return false
 	}
 	if q.Host != "" && r.Host != q.Host {
+		return false
+	}
+	if q.ClientHost != "" && r.ClientHost != q.ClientHost { // §67
 		return false
 	}
 	if q.Method != "" && r.Method != q.Method {

@@ -452,6 +452,17 @@ definitions:
         description: request | response
         type: string
     type: object
+  internal_web_adapter_in_http.LogClientHostsResponse:
+    properties:
+      items:
+        items:
+          type: string
+        type: array
+      logs_available:
+        type: boolean
+      logs_configured:
+        type: boolean
+    type: object
   internal_web_adapter_in_http.LogDateRangeResponse:
     properties:
       logs_available:
@@ -4262,6 +4273,10 @@ paths:
         in: query
         name: host
         type: string
+      - description: exact match по PTR-имени клиента (колонка client_host, §67)
+        in: query
+        name: client_host
+        type: string
       - description: ok | err | (пусто)
         in: query
         name: status
@@ -4307,6 +4322,35 @@ paths:
       - CookieAuth: []
       - ApiTokenAuth: []
       summary: Snapshot логов узла из ClickHouse с фильтрами.
+      tags:
+      - logs
+  /api/nodes/{id}/logs/client-hosts:
+    get:
+      description: DISTINCT по колонке client_host (PTR-имя клиента) для дропдауна
+        «Хост клиента». Дёргается лениво при открытии списка. До 200 значений, отсортированы.
+        Узел без clickhouse_table → 200 + logs_configured=false; CH недоступен → 200
+        + logs_available=false; внешняя таблица (§64) без колонки → 200 + пустой список.
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.LogClientHostsResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      - ApiTokenAuth: []
+      summary: Уникальные значения client_host узла для фасета фильтра (§67).
       tags:
       - logs
   /api/nodes/{id}/logs/date-range:
@@ -4414,6 +4458,10 @@ paths:
       - description: exact match по подпути запроса (§48)
         in: query
         name: method
+        type: string
+      - description: exact match по PTR-имени клиента (§67)
+        in: query
+        name: client_host
         type: string
       - description: поисковое выражение (§48.1); в live ищет по url+parameters
         in: query

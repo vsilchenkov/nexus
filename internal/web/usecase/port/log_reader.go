@@ -36,6 +36,9 @@ type LogQuery struct {
 	IP   string
 	Host string
 
+	// ClientHost — exact match по колонке client_host (§67, PTR-имя клиента).
+	ClientHost string
+
 	// Status — "ok" (200..299), "err" (>=400 или 0), "" (любой).
 	Status string
 
@@ -111,6 +114,12 @@ type LogReader interface {
 	// (§48.3, фасет дропдауна Method), отсортированные, до limit (кап адаптера).
 	// §37: nodeID фильтрует per-node на общей таблице.
 	DistinctMethods(ctx context.Context, table, nodeID string, limit int) ([]string, error)
+
+	// DistinctClientHosts — уникальные непустые значения колонки client_host
+	// узла (§67, фасет дропдауна «Хост клиента»), отсортированные, до limit
+	// (кап адаптера). Таблица без колонки (§64, внешняя до ручного ALTER) →
+	// пустой список без ошибки (мягкая деградация).
+	DistinctClientHosts(ctx context.Context, table, nodeID string, limit int) ([]string, error)
 
 	// DateRange — min/max date_request узла в UnixMilli (§48.3, фасет
 	// ограничения полей дат). Пустая таблица/нет записей узла → (0, 0).
