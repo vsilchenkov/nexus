@@ -153,4 +153,4 @@ runner с тегом `srv-d-android-l-docker` (docker-executor). Stages:
 
 ## Лицензия
 
-Внутренний проект Vozovoz.
+ООО "АПЕКС ТЕХНОЛОДЖИС"
