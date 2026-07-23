@@ -46,6 +46,7 @@ import {
   type StatusFilter,
 } from "../lib/overviewFilters";
 import { cn } from "../lib/cn";
+import { useCurrentTeamID } from "../lib/teams";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { useMetricsRefetchMs } from "../components/node/useNodeMetrics";
 import { SearchHistoryList } from "../components/SearchHistoryList";
@@ -173,23 +174,34 @@ export default function Overview() {
   useEffect(() => localStorage.setItem(VIEW_KEY, view), [view]);
   useEffect(() => localStorage.setItem(AUTOREFRESH_KEY, autoRefresh ? "1" : "0"), [autoRefresh]);
 
+  // teamId в ключах team-scoped запросов обязателен: сервер фильтрует ответ по
+  // команде СЕССИИ, и без teamId записи разных команд алиасятся в один слот
+  // кеша — после смены команды (например, через глобальный поиск §62) стирание
+  // поля поиска мгновенно показывало закешированный список ПРЕЖНЕЙ команды.
+  // enabled: пока членства не загрузились (teamId=""), запрос не шлём — иначе
+  // ответ лёг бы под ключ с пустым teamId и алиасился между командами.
+  const teamId = useCurrentTeamID();
+
   const nodesQ = useQuery({
-    queryKey: ["nodes", search],
+    queryKey: ["nodes", teamId, search],
     queryFn: () => api.get<ListResp>("/api/nodes", { search }),
+    enabled: teamId !== "",
   });
 
   const kpiQ = useQuery({
-    queryKey: ["metrics-overview"],
+    queryKey: ["metrics-overview", teamId],
     queryFn: () => api.get<OverviewKPI>("/api/metrics/overview"),
     refetchInterval: autoRefresh ? refetchMs : false,
+    enabled: teamId !== "",
   });
 
   // §28 Пункт 4: период per-node throughput выбирается (по умолчанию 24ч),
   // §28 Пункт 2 / §44.C: обновляется онлайн, если автообновление включено.
   const thrQ = useQuery({
-    queryKey: ["metrics-nodes", periodKey(period)],
+    queryKey: ["metrics-nodes", teamId, periodKey(period)],
     queryFn: () => api.get<NodesThroughputResp>("/api/metrics/nodes", periodParams(period)),
     refetchInterval: autoRefresh ? refetchMs : false,
+    enabled: teamId !== "",
   });
 
   // Анти-мерцание: держим последний ответ с prometheus_available=true (§ useStableData).

@@ -130,6 +130,11 @@ func (r *Reader) ListClickHouseTables(ctx context.Context) ([]string, error) {
 		if err := rows.Scan(&t); err != nil {
 			return nil, fmt.Errorf("scan ch table: %w", err)
 		}
+		// Черновики узлов с выключенным логированием (Validate гейтит формат
+		// по LoggingEnabled) — не таблицы, стартовым ALTER'ам не подлежат.
+		if !domain.IsValidCHTableName(t) {
+			continue
+		}
 		out = append(out, t)
 	}
 	return out, rows.Err()
@@ -157,6 +162,11 @@ WHERE clickhouse_table <> '' AND clickhouse_retention_days > 0 AND NOT external_
 		var n domain.Node
 		if err := rows.Scan(&n.ID, &n.Path, &n.ClickHouseTable, &n.ClickHouseRetentionDays); err != nil {
 			return nil, fmt.Errorf("scan housekeeping row: %w", err)
+		}
+		// Черновик кривого имени (узел с выключенным логированием) — дропать
+		// нечего, DROP PARTITION по нему только шумел бы ошибками.
+		if !domain.IsValidCHTableName(n.ClickHouseTable) {
+			continue
 		}
 		out = append(out, &n)
 	}

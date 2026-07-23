@@ -26,9 +26,9 @@ import {
   type HostAllowlistEntry,
 } from "../api/client";
 import { useNodeUrlBuilder } from "../lib/nodeUrl";
-import { useCurrentTeamCHDatabase } from "../lib/teams";
+import { useCurrentTeamCHDatabase, useMyTeams } from "../lib/teams";
 import { useNodeFormDefaults } from "../lib/nodeDefaults";
-import { useEnsureNodeTeam } from "../lib/nodeShare";
+import { useEnsureNodeTeam, useNodeTeam } from "../lib/nodeShare";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { parseNumInput } from "../lib/numField";
 import { validateNodeForm } from "../lib/nodeValidation";
@@ -189,6 +189,15 @@ export default function NodeSettings() {
   // §58: шаренная ссылка на правку узла из другой команды тоже авто-переключает
   // сессию на команду узла. Пока не ready — узел не грузим (иначе 404).
   const ensure = useEnsureNodeTeam(id);
+
+  // §65: строка «Команда» в сайдбаре — только имя. Для правки — резолвер §58
+  // (ключ уже закеширован useEnsureNodeTeam, второго запроса нет), для
+  // создания — текущая команда сессии из членств (узел будет создан в ней).
+  const myTeams = useMyTeams();
+  const nodeTeamQ = useNodeTeam(isNew ? undefined : id);
+  const teamName = isNew
+    ? myTeams.data?.items.find((m) => m.id === myTeams.data?.current_team_id)?.name
+    : nodeTeamQ.data?.team_name;
 
   const existing = useQuery({
     queryKey: ["node", id],
@@ -761,6 +770,7 @@ export default function NodeSettings() {
                 <Field label={t("auth.login_field")} help={t("node.help.basic_login")}>
                   <Input
                     mono
+                    autoComplete="off"
                     className={errCls("incoming_auth_login")}
                     value={form.incoming_auth_login}
                     onChange={(e) => set("incoming_auth_login", e.target.value)}
@@ -876,6 +886,7 @@ export default function NodeSettings() {
                 <Field label={t("auth.login_field")} help={t("node.help.basic_login")}>
                   <Input
                     mono
+                    autoComplete="off"
                     className={errCls("auth_login")}
                     value={form.auth_login}
                     onChange={(e) => set("auth_login", e.target.value)}
@@ -1219,6 +1230,51 @@ export default function NodeSettings() {
                 → <span className="break-all font-mono text-fg">{form.target_url || "{target_url}"}</span>
               </div>
             </div>
+          </Card>
+          {/* §65: команда узла и даты §63 — ОТДЕЛЬНАЯ карточка под
+              «Предпросмотром», строки в формате вкладки «Конфиг» (лейбл слева,
+              разделители, 13px). Даты — только у сохранённого узла;
+              «Обновлено» — только если узел реально меняли (updated_at ≠
+              created_at); пустой автор не выводится. */}
+          <Card>
+            <dl className="divide-y divide-line text-[13px]">
+              <div className="grid grid-cols-[96px_1fr] gap-3 py-2.5 first:pt-0 last:pb-0">
+                <dt className="text-fg-muted">{t("node.fields.team")}</dt>
+                <dd className="font-medium">{teamName ?? "—"}</dd>
+              </div>
+              {!isNew && existing.data && (
+                <>
+                  <div className="grid grid-cols-[96px_1fr] gap-3 py-2.5 first:pt-0 last:pb-0">
+                    <dt className="text-fg-muted">{t("common.created_at")}</dt>
+                    <dd>
+                      {new Date(existing.data.created_at).toLocaleString()}
+                      {existing.data.created_by && (
+                        <span className="text-fg-subtle">
+                          {" · "}
+                          {t("common.author")}:{" "}
+                          <span className="font-mono">{existing.data.created_by}</span>
+                        </span>
+                      )}
+                    </dd>
+                  </div>
+                  {existing.data.updated_at !== existing.data.created_at && (
+                    <div className="grid grid-cols-[96px_1fr] gap-3 py-2.5 first:pt-0 last:pb-0">
+                      <dt className="text-fg-muted">{t("common.updated_at")}</dt>
+                      <dd>
+                        {new Date(existing.data.updated_at).toLocaleString()}
+                        {existing.data.updated_by && (
+                          <span className="text-fg-subtle">
+                            {" · "}
+                            {t("common.author")}:{" "}
+                            <span className="font-mono">{existing.data.updated_by}</span>
+                          </span>
+                        )}
+                      </dd>
+                    </div>
+                  )}
+                </>
+              )}
+            </dl>
           </Card>
           {form.url_mode === "from_request" && allowlistEmpty && (
             <Hint tone="danger" icon={<ShieldAlert className="h-4 w-4" />}>

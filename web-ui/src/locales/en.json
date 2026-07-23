@@ -355,6 +355,9 @@
       "webhook_sig_header_required": "Signature header is required for webhook_signature auth",
       "webhook_sig_secret_required": "Secret is required for webhook_signature auth",
       "login_colon": "Login must not contain a colon",
+      "login_whitespace": "Login has a leading or trailing space — remove it",
+      "password_whitespace": "Password has a leading or trailing space (a common copy-paste mistake) — remove it",
+      "login_required_with_password": "Enter the login: a password cannot be saved without one",
       "password_required_on_login_change": "Enter the password again when changing the login",
       "template_id": "ClickHouse template id must be a valid UUID",
       "logs_not_configured": "Logging is enabled but no ClickHouse table name is set — pick a template or set the table name",
@@ -917,7 +920,7 @@
     "users": {
       "title": "Users",
       "add": "Add user",
-      "search_placeholder": "Search by login or email…",
+      "search_placeholder": "Search by name, login or email…",
       "empty": "No users",
       "counter_total": "Total: {{n}}",
       "counter_active": "active: {{n}}",
@@ -964,6 +967,9 @@
       "pw_strong": "Strong.",
       "pw_very_strong": "Very strong.",
       "field": {
+        "name": "Name",
+        "name_placeholder": "John Doe",
+        "name_hint": "Shown in the interface instead of the login.",
         "login": "Login",
         "login_hint": "Cannot be changed later.",
         "email": "Email",

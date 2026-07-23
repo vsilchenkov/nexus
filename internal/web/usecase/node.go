@@ -145,6 +145,16 @@ func (u *NodeUsecase) provisionTable(ctx context.Context, n *domain.Node) error 
 		return nil
 	}
 
+	// Невалидное имя возможно только у узла с выключенным логированием
+	// (Validate гейтит формат по LoggingEnabled — черновик «nexus_x.» из
+	// дефолта формы). Провижинить такое нельзя: CREATE упал бы и завалил
+	// сохранение узла, ради которого логи и выключали.
+	if !domain.IsValidCHTableName(n.ClickHouseTable) {
+		u.logger.Debug("provision skipped: invalid table name (logging disabled draft)",
+			u.logger.Str("path", n.Path), u.logger.Str("table", n.ClickHouseTable))
+		return nil
+	}
+
 	if n.ExternalTable {
 		// §51.9: тихий пропуск управления таблицей должен быть виден на debug —
 		// иначе «почему не создалась таблица» выясняется только чтением кода.

@@ -23,6 +23,7 @@ function base(): NodeFormLimits {
     retry_backoff_ms: 1000,
     dlq_ttl_seconds: 86400,
     dlq_retry_delay_seconds: 300,
+    logging_enabled: true,
     max_body_size_enabled: false,
     max_body_size: 0,
     clickhouse_table: "",
@@ -170,5 +171,36 @@ describe("validateNodeForm — §42 формат имени CH-таблицы", 
     const v = validateNodeForm({ ...base(), clickhouse_table: table });
     expect(v?.field).toBe("clickhouse_table");
     expect(v?.code).toBe("node.validation.clickhouse_table_format");
+  });
+
+  // Симптом со стенда: логирование выключено, поле осталось с дефолтным
+  // префиксом «nexus_x.» — сохранение не должно блокироваться (поля карточки
+  // задизейблены, исправить их нельзя, не включив логи).
+  it("логирование выключено → черновик имени не проверяется", () => {
+    expect(
+      validateNodeForm({ ...base(), logging_enabled: false, clickhouse_table: "nexussend." }),
+    ).toBeNull();
+  });
+
+  it("логирование выключено → нулевой лимит тела при включённом чекбоксе ок", () => {
+    expect(
+      validateNodeForm({
+        ...base(),
+        logging_enabled: false,
+        clickhouse_table: "nexus_default.x",
+        max_body_size_enabled: true,
+        max_body_size: 0,
+      }),
+    ).toBeNull();
+  });
+
+  it("логирование включено → нулевой лимит тела при включённом чекбоксе — ошибка", () => {
+    const v = validateNodeForm({
+      ...base(),
+      clickhouse_table: "nexus_default.x",
+      max_body_size_enabled: true,
+      max_body_size: 0,
+    });
+    expect(v?.code).toBe("node.validation.max_body_size_required");
   });
 });

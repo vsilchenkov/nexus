@@ -13,11 +13,18 @@ type SecretInputProps = Omit<InputHTMLAttributes<HTMLInputElement>, "type"> & {
 // раскрывает введённое в форме значение. Сохранённые секреты бэкенд наружу не
 // отдаёт (приходят только флаги *_set), поэтому раскрывается только то, что
 // пользователь сейчас вводит.
+//
+// autoComplete="new-password" по умолчанию: браузерный менеджер паролей не
+// должен молча подставлять сохранённые креды пользователя в поле секрета узла —
+// на правке пустое поле означает «оставить старый», и незамеченный автофилл
+// затирал рабочий пароль (жалоба «не мог ввести правильный пароль»).
+// Переопределяется через props при необходимости.
 export function SecretInput({ className, mono, ...rest }: SecretInputProps) {
   const [show, setShow] = useState(false);
   return (
     <div className="relative">
       <Input
+        autoComplete="new-password"
         {...rest}
         type={show ? "text" : "password"}
         mono={mono}

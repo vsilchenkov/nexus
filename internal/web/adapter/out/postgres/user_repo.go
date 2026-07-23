@@ -28,7 +28,7 @@ func NewUserRepoPg(pool *pgxpool.Pool, logger logging.Logger) *UserRepoPg {
 
 // userCols квалифицированы алиасом u — в List есть JOIN с user_teams,
 // где тоже есть created_at (иначе ambiguous column).
-const userCols = `u.id, u.login, COALESCE(u.email,''), COALESCE(u.password_hash,''),
+const userCols = `u.id, u.login, u.name, COALESCE(u.email,''), COALESCE(u.password_hash,''),
 	u.role, u.active, u.must_change_password, u.lang, u.default_team_id, u.created_at, u.last_login_at`
 
 func (r *UserRepoPg) scanRow(row pgx.Row) (*domain.User, error) {
@@ -36,7 +36,7 @@ func (r *UserRepoPg) scanRow(row pgx.Row) (*domain.User, error) {
 	var role, lang string
 	var lastLogin *time.Time
 	if err := row.Scan(
-		&u.ID, &u.Login, &u.Email, &u.PasswordHash,
+		&u.ID, &u.Login, &u.Name, &u.Email, &u.PasswordHash,
 		&role, &u.Active, &u.MustChangePassword, &lang, &u.DefaultTeamID,
 		&u.CreatedAt, &lastLogin,
 	); err != nil {
@@ -71,9 +71,11 @@ func (r *UserRepoPg) List(ctx context.Context, f port.ListUsersFilter) ([]*domai
 	}
 	q += " WHERE 1=1"
 	if f.Search != "" {
-		q += fmt.Sprintf(" AND (u.login ILIKE $%d OR u.email ILIKE $%d)", len(args)+1, len(args)+2)
+		// §66: поиск и по отображаемому имени.
+		q += fmt.Sprintf(" AND (u.login ILIKE $%d OR u.email ILIKE $%d OR u.name ILIKE $%d)",
+			len(args)+1, len(args)+2, len(args)+3)
 		like := "%" + f.Search + "%"
-		args = append(args, like, like)
+		args = append(args, like, like, like)
 	}
 	q += " ORDER BY u.login"
 	if f.Limit > 0 {
@@ -114,13 +116,20 @@ func (r *UserRepoPg) Create(ctx context.Context, u *domain.User) error {
 	// default_team_id: если caller не передал — берём UUID 'default'-team
 	// из сидинга миграции 0008. NULLIF превращает пустую строку в NULL,
 	// COALESCE подставляет lookup.
+	// §66: name обязателен на API-уровне; фолбэк на login — страховка для
+	// внутренних вызовов без имени (например, bootstrap admin). Фолбэк в Go,
+	// а не COALESCE($1) в SQL: повторное использование $1 в двух контекстах
+	// даёт «inconsistent types deduced for parameter» (42P08).
+	if u.Name == "" {
+		u.Name = u.Login
+	}
 	const q = `
-INSERT INTO users (login, email, password_hash, role, active, must_change_password, lang, default_team_id)
-VALUES ($1, NULLIF($2,''), NULLIF($3,''), $4, $5, $6, $7,
-	COALESCE(NULLIF($8,'')::uuid, (SELECT id FROM teams WHERE slug = '` + domain.DefaultTeamSlug + `')))
+INSERT INTO users (login, name, email, password_hash, role, active, must_change_password, lang, default_team_id)
+VALUES ($1, $2, NULLIF($3,''), NULLIF($4,''), $5, $6, $7, $8,
+	COALESCE(NULLIF($9,'')::uuid, (SELECT id FROM teams WHERE slug = '` + domain.DefaultTeamSlug + `')))
 RETURNING id, created_at`
 	err := r.pool.QueryRow(ctx, q,
-		u.Login, u.Email, u.PasswordHash, string(u.Role), u.Active,
+		u.Login, u.Name, u.Email, u.PasswordHash, string(u.Role), u.Active,
 		u.MustChangePassword, string(u.Lang), u.DefaultTeamID,
 	).Scan(&u.ID, &u.CreatedAt)
 	if err != nil {
@@ -134,16 +143,19 @@ RETURNING id, created_at`
 }
 
 func (r *UserRepoPg) Update(ctx context.Context, u *domain.User) error {
+	// §66: COALESCE(NULLIF(name,''), login) — пустое имя не затирает существующее
+	// осмысленное значение (страховка уровня хранения; API требует name).
 	const q = `
 UPDATE users SET
-	email = NULLIF($2,''),
-	role = $3,
-	active = $4,
-	lang = $5,
-	must_change_password = $6
+	name = COALESCE(NULLIF($2,''), login),
+	email = NULLIF($3,''),
+	role = $4,
+	active = $5,
+	lang = $6,
+	must_change_password = $7
 WHERE id = $1::uuid`
 	tag, err := r.pool.Exec(ctx, q,
-		u.ID, u.Email, string(u.Role), u.Active, string(u.Lang), u.MustChangePassword,
+		u.ID, u.Name, u.Email, string(u.Role), u.Active, string(u.Lang), u.MustChangePassword,
 	)
 	if err != nil {
 		return fmt.Errorf("update user: %w", err)

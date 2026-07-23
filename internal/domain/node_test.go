@@ -199,9 +199,15 @@ func TestNode_Validate_LoggingRequiresTable(t *testing.T) {
 }
 
 func TestNode_Validate_ClickHouseTableFormat(t *testing.T) {
-	// §42: имя таблицы (если задано) должно быть строго db.table из [A-Za-z0-9_].
-	base := func(table string) *Node {
-		n := &Node{Path: "x", RootMethod: RootMethodRequest, TargetURL: "https://example.com", ClickHouseTable: table}
+	// §42: имя таблицы должно быть строго db.table из [A-Za-z0-9_]. Проверка
+	// действует только при включённом логировании: при выключенном поля
+	// карточки задизейблены, и недозаполненное имя (дефолтный префикс
+	// «nexus_x.» формы создания) — черновик, а не блокирующая ошибка.
+	base := func(table string, loggingOn bool) *Node {
+		n := &Node{
+			Path: "x", RootMethod: RootMethodRequest, TargetURL: "https://example.com",
+			ClickHouseTable: table, LoggingEnabled: loggingOn,
+		}
 		n.SetDefaults()
 		return n
 	}
@@ -215,14 +221,40 @@ func TestNode_Validate_ClickHouseTableFormat(t *testing.T) {
 		"nexus.x; DROP TABLE y--", // SQL-инъекция
 	}
 	for _, table := range bad {
-		if err := base(table).Validate(); !errors.Is(err, ErrNodeClickHouseTableInvalid) {
+		if err := base(table, true).Validate(); !errors.Is(err, ErrNodeClickHouseTableInvalid) {
 			t.Errorf("table %q: want ErrNodeClickHouseTableInvalid, got %v", table, err)
+		}
+		// Логирование выключено → черновик допустим (симптом «ругается на имя
+		// таблицы при отключённых логах»).
+		if err := base(table, false).Validate(); err != nil {
+			t.Errorf("logging off, table %q: want nil, got %v", table, err)
 		}
 	}
 	for _, table := range []string{"nexus_default.my_table", "db1.t2", "A_b.C_d"} {
-		if err := base(table).Validate(); err != nil {
+		if err := base(table, true).Validate(); err != nil {
 			t.Errorf("valid table %q: want nil, got %v", table, err)
 		}
+	}
+}
+
+func TestNode_Validate_MaxBodySizeRequired_GatedByLogging(t *testing.T) {
+	// Лимит тела применяется только при записи лога — включённый чекбокс с
+	// нулём при выключенном логировании не должен блокировать сохранение
+	// (поле задизейблено, исправить нельзя).
+	base := func(loggingOn bool) *Node {
+		n := &Node{
+			Path: "x", RootMethod: RootMethodRequest, TargetURL: "https://example.com",
+			LoggingEnabled: loggingOn, ClickHouseTable: "nexus_default.x",
+			MaxBodySizeEnabled: true, MaxBodySize: 0,
+		}
+		n.SetDefaults()
+		return n
+	}
+	if err := base(true).Validate(); !errors.Is(err, ErrNodeMaxBodySizeRequired) {
+		t.Fatalf("logging on: want ErrNodeMaxBodySizeRequired, got %v", err)
+	}
+	if err := base(false).Validate(); err != nil {
+		t.Fatalf("logging off: want nil, got %v", err)
 	}
 }
 

@@ -95,6 +95,11 @@ func (r *NodeRepoPg) ListClickHouseTables(ctx context.Context) ([]string, error)
 		if err := rows.Scan(&t); err != nil {
 			return nil, fmt.Errorf("scan ch table: %w", err)
 		}
+		// Черновики узлов с выключенным логированием (Validate гейтит формат
+		// по LoggingEnabled) — не таблицы, стартовым ALTER'ам не подлежат.
+		if !domain.IsValidCHTableName(t) {
+			continue
+		}
 		out = append(out, t)
 	}
 	return out, rows.Err()

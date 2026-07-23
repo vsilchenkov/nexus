@@ -6636,6 +6636,7 @@ const docTemplate = `{
             "type": "object",
             "required": [
                 "login",
+                "name",
                 "role"
             ],
             "properties": {
@@ -6660,6 +6661,12 @@ const docTemplate = `{
                 },
                 "must_change_password": {
                     "type": "boolean"
+                },
+                "name": {
+                    "description": "Name — отображаемое имя (§66), обязательно.",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
                 },
                 "password": {
                     "type": "string",
@@ -7115,6 +7122,10 @@ const docTemplate = `{
                 "must_change_password": {
                     "type": "boolean"
                 },
+                "name": {
+                    "description": "Name — отображаемое имя (§66): UI показывает его вместо логина.",
+                    "type": "string"
+                },
                 "role": {
                     "type": "string"
                 },
@@ -7451,6 +7462,10 @@ const docTemplate = `{
                 "login": {
                     "type": "string"
                 },
+                "name": {
+                    "description": "Name — отображаемое имя (§66): UI показывает его вместо логина.",
+                    "type": "string"
+                },
                 "role": {
                     "type": "string"
                 },
@@ -7609,6 +7624,7 @@ const docTemplate = `{
         "internal_web_adapter_in_http.updateUserRequest": {
             "type": "object",
             "required": [
+                "name",
                 "role"
             ],
             "properties": {
@@ -7628,6 +7644,12 @@ const docTemplate = `{
                 },
                 "must_change_password": {
                     "type": "boolean"
+                },
+                "name": {
+                    "description": "Name — отображаемое имя (§66), обязательно и при обновлении.",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
                 },
                 "role": {
                     "type": "string",
@@ -7668,6 +7690,9 @@ const docTemplate = `{
                 },
                 "must_change_password": {
                     "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
                 },
                 "role": {
                     "type": "string"
