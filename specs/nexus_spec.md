@@ -4328,7 +4328,9 @@ admin-only, пользователь удаляем. Старые записи �
 новые таблицы — из шаблона, существующие управляемые — стартовый ensure §42.10
 (`ALTER … ADD COLUMN IF NOT EXISTS … AFTER IP`) в Web и Sender. Внешние таблицы (§64) Nexus
 не трогает — ALTER выполняет владелец (SQL обязан попасть в описание релиза, правило в
-DEPLOYMENT.md §9.5); до этого запись буферизуется в Kafka-retry (§38), facet деградирует
+DEPLOYMENT.md §9.5); до этого запись буферизуется в Kafka-retry (§38), чтение деградирует
+мягко (баннер «логи временно недоступны»: `classifyCHErr` трактует отсутствие именно
+`client_host` как `ErrLogsBackendUnavailable` — иначе поллинг флудил бы 500/Sentry), facet —
 пустым списком, verify показывает `Missing: ["client_host"]`. Пусто = не отрезолвлено / нет
 PTR / не-IP (`rabbitmq://…` §27.10) / legacy.
 

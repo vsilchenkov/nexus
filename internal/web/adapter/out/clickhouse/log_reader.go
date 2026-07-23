@@ -40,9 +40,16 @@ func chUnavailable(err error) bool {
 // доступности — дополнительно помечает её domain.ErrLogsBackendUnavailable
 // (через errors.Join, чтобы errors.Is ловил и sentinel, и исходную ошибку, а
 // текст лога сохранял детали).
+//
+// §67: отсутствие колонки client_host (внешняя таблица §64, владелец ещё не
+// выполнил ручной ALTER из release notes) — ТОЖЕ мягкая деградация «логи
+// временно недоступны», а не 500: SELECT'ы читают колонку списком, и до ALTER
+// каждый поллинг вкладки «Логи» флудил бы 500/Sentry раз в несколько секунд
+// (поймано на стенде). Привязано строго к client_host — прочие missing-column
+// (чужие поломки DDL) остаются серверными ошибками и не маскируются.
 func classifyCHErr(op string, err error) error {
 	wrapped := fmt.Errorf("%s: %w", op, err)
-	if chUnavailable(err) {
+	if chUnavailable(err) || isMissingColumnErr(err, "client_host") {
 		return errors.Join(wrapped, domain.ErrLogsBackendUnavailable)
 	}
 	return wrapped

@@ -70,6 +70,12 @@ func TestClassifyCHErr(t *testing.T) {
 		{"wrapped deadline", fmt.Errorf("query: %w", context.DeadlineExceeded), true},
 		{"server-side exception (unknown table)", errors.New("code: 60, message: Unknown table"), false},
 		{"generic error", errors.New("scan failed"), false},
+		// §67: нет колонки client_host (внешняя таблица §64 до ручного ALTER) —
+		// деградация, а не 500 (иначе поллинг «Логов» флудит Sentry до ALTER).
+		{"missing client_host column (§67 deploy window)",
+			&chgo.Exception{Code: 47, Message: "Unknown expression identifier `client_host` in scope"}, true},
+		{"missing OTHER column stays server error",
+			&chgo.Exception{Code: 47, Message: "Unknown expression identifier `foo`"}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
