@@ -4355,3 +4355,37 @@ ok/err и done/pending учитываются). Дорогой полнотек�
 запрос UI (список не ждёт count), пересчёт только со снапшотом; в Live счётчик скрыт.
 
 Подробности — [sections/67-client-host-rdns.md](sections/67-client-host-rdns.md).
+
+## 68. Поддержка multipart/form-data
+
+Полная проброска тела с вложениями от отправителя к получателю во всех видах отправки, честный
+учёт размера с вложениями и отказ от хранения вложения в ClickHouse (развивает
+§4.3/§22.2/§42.10/§7.4.1/§43).
+
+**Проброска (кода не потребовалось).** Тело шина везде переносит как непрозрачные байты, а
+`Content-Type` с `boundary` пробрасывается дословно — sync (gRPC `bytes body`), async (JSON-конверт,
+тело base64), pull RabbitMQAsync (§27), dry-run (§55). Клиент/получатель получают полное тело;
+плейсхолдер живёт только в лог-копии.
+
+**Размер.** `request_size`/`response_size` (§42.10) уже считаются по полному телу в байтах до
+усечения — вложения учтены. Без изменений.
+
+**Плейсхолдер вместо тела в CH.** Домен-хелперы [domain/multipart.go](../internal/domain/multipart.go):
+`IsMultipartMediaType`, `MultipartLogPlaceholder(ct, body)` (первая строка — media type, далее
+сводка частей: имя/`filename`/тип/размер БЕЗ содержимого; потолки 50 частей / скан 1000; безопасный
+fallback при неразобранном теле), `IsMultipartLogPlaceholder` (структурный детект для replay).
+Точка подстановки — `SendUsecase.Send` (`logBodyCopy`, симметрично для запроса по `in.Headers` и
+multipart-ответа по `resp.Headers`). `checksum`/размеры/тело к узлу/ответ клиенту не меняются.
+Гейты логирования сохранены; Kafka-retry §38 получает плейсхолдер автоматически. **Схема CH и
+миграции не трогаются.**
+
+**Решения.** Multipart освобождён от `max_body_size` §22.2/§43 (тело в CH и так не пишется);
+действуют только транспортные капы (`receiver.max_body_bytes` 5 МиБ → 413; Kafka ~10 МиБ, base64
++33%). Правило симметрично для ответов `multipart/*` (`multipart/mixed` при скачивании).
+
+**Replay.** Multipart-запись отклоняется 422 (`ErrReplayBodyMultipart`, ключ
+`replay.multipart_unavailable`); ручной override тела разрешён. UI (`ReplayDialog`) показывает
+warn-подсказку и дизейблит кнопку, пока тело не введено. Ограничение: записи до §68 (сырое тело)
+детект не ловит.
+
+Подробности — [sections/68-multipart-form-data.md](sections/68-multipart-form-data.md).
