@@ -3441,3 +3441,15 @@ DryRun/Replay/CopyNode/AllowedHosts/Headers/DeleteNode/MoveNode/CHSchemaSync/Con
 ок), `TestNode_Validate_MaxBodySizeRequired_GatedByLogging`,
 `TestNodeUC_Create_InvalidTableDraft_SkipsProvision` (шаблон + черновик → CreateTable не зовётся),
 vitest-кейсы nodeValidation.
+
+**Follow-up (метрики не были под §43.1-гейтом).** Утверждение «read-слой отсеивает черновики
+мягко» было неполным: `IsValidCHTableName` стоял только в `resolveNode` логов
+([logs.go](../internal/web/usecase/logs.go)), а метрики дашборда шли мимо. Симптом на стенде:
+узел с выключенными логами и черновичным именем (`nexus_default.`) давал
+`WRN nodes overview: node kpi failed ... invalid table name` на **каждом** поллинге
+`/api/metrics/nodes`. Фикс: тот же гейт в `nodesOverviewCH` и `NodeMetrics`
+([metrics.go](../internal/web/usecase/metrics.go)) — деградация до нулей с Debug-строкой
+(§51.9) вместо WRN-флуда. `PurgeFailed`/replay не трогали: это разовые действия по кнопке,
+явная ошибка там уместна. Тесты: `TestMetricsUsecase_NodesOverview` «draft table name → нули
+без CH-запроса», `TestMetricsUsecase_NodeMetrics` «draft table name → chart unavailable»
+(фейк возвращает ненулевой KPI — на старом коде тесты красные).
