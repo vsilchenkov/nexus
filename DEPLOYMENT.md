@@ -625,6 +625,28 @@ Compose автоматически подхватывает `docker-compose.over
   > берёт таблицы через беcфильтровый `ListClickHouseTables` — симметрично Sender'у, порядок
   > деплоя действительно не важен. Если разворачиваете 1.12.0–1.13.1 на несколько команд —
   > убедитесь, что Sender рестартовал после Web.
+- **§67 — client_host (reverse-DNS имя клиента) в логах.** Postgres-миграций нет. **ClickHouse:**
+  в лог-таблицы узлов добавляется колонка `client_host String DEFAULT ''` **AFTER IP** — на старте
+  `web` и `sender` автоматически выполняется идемпотентный `ALTER … ADD COLUMN IF NOT EXISTS`
+  (`EnsureClientHostColumn`, по образцу §39 `http_method`); новые таблицы получают колонку из
+  шаблона. **Порядок деплоя не важен** (Ensure в обоих сервисах). Новая секция конфига
+  `sender.rdns` (`disabled`/`timeout_ms`/`cache_ttl_sec`/`negative_ttl_sec`, включена по
+  умолчанию, см. [config/config.example.yml](config/config.example.yml)); кеш живёт в
+  существующем Redis (`nexus:rdns:*`), новой инфраструктуры нет. Резолв требует **PTR-записей в
+  корпоративном DNS** для клиентских подсетей и работающего DNS из контейнера Sender'а
+  (проверка: `docker exec <sender> getent hosts 192.168.86.246`) — иначе колонка молча остаётся
+  пустой (fail-open, это штатно).
+
+  > **⚠ Внешние (ручные) таблицы §64 Nexus НЕ альтерит** — их владельцы выполняют вручную
+  > (SQL включается в описание релиза, см. правило в §9.5-A):
+  >
+  > ```sql
+  > ALTER TABLE <db>.<table> ADD COLUMN IF NOT EXISTS client_host String DEFAULT '' AFTER IP
+  > ```
+  >
+  > До ALTER: чтение логов такого узла падает, новые записи буферизуются в `nexus.logs.retry`
+  > (§38) и доигрываются после ALTER (потери нет); `POST /api/ch-tables/verify` показывает
+  > `Missing: client_host`.
 - **§55 — dry-run с реальным вызовом target.** Миграций (PG и CH) нет. Появляется **новая
   зависимость `Web → Sender` по gRPC** и новая секция конфига `web.sender_grpc` (по образцу
   `receiver.sender_grpc`, см. [config/config.example.yml](config/config.example.yml)):
@@ -878,6 +900,10 @@ curl -s http://<host>:8000/api/version       # → {"version":"1.0.0"}
 - [ ] Код проходит CI на `dev` (`make test`, `golangci-lint run`, `cd web-ui && npm run lint && npm run build`).
 - [ ] Встроенный SPA пересобран и закоммичен (`make build-ui` → `internal/web/static/`), если менялся `web-ui/`.
 - [ ] Обновлён [CHANGELOG.md](./CHANGELOG.md) (фичи/фиксы/breaking-changes, список миграций).
+- [ ] **Релиз меняет структуру CH-таблиц логов (новая/изменённая колонка в `RequiredLogColumns`)?**
+      В описание релиза (секция CHANGELOG) ОБЯЗАТЕЛЬНО включён SQL для ручного запуска владельцами
+      **внешних таблиц §64** (Nexus их не альтерит; имя `<db>.<table>` владелец подставляет сам) +
+      примечание о поведении в деплой-окне. Образец — запись §67 (`client_host`).
 - [ ] Код слит в `master`: `git switch master && git merge --no-ff dev && git push origin master`.
 - [ ] Поставлен и запушен тег `vX.Y.Z`: `git tag -a v1.0.0 -m "Release 1.0.0" && git push origin v1.0.0`.
       Версию в файлах поднимать НЕ нужно — её даёт git-тег при сборке (§9.0/§9.4).
