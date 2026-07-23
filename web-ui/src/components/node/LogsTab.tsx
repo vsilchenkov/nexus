@@ -11,6 +11,7 @@ import { FETCH_CHUNK, LARGE_WARN_RUNES, formatRunes, prettyMaybe } from "../../l
 import { LabelHint, Popover, PopoverAnchor, PopoverContent } from "../ui";
 import { CopyButton } from "../ui/CopyButton";
 import { ReplayDialog } from "../ReplayDialog";
+import { LogClientHostFilter } from "./LogClientHostFilter";
 import { LogDateField } from "./LogDateField";
 import { LogMethodFilter } from "./LogMethodFilter";
 import { type LogRow, type LogsResp, type LogDetail, type LogBodyChunk } from "./types";
@@ -70,9 +71,11 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   // заново при переключении на вкладку, поэтому инициализация через useState ок.
   // §48: поля ip/host убраны из UI (API их по-прежнему принимает); добавлены
   // method и режимы поиска qCase/qWord/qRegex (кнопки Aa / ab| / .*).
+  // §67: clientHost — фильтр по PTR-имени клиента (колонка client_host).
   const initFormEmpty = {
     q: "",
     method: "",
+    clientHost: "",
     from: "",
     to: "",
     qCase: false,
@@ -114,6 +117,7 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
       if (appliedFilters.qRegex) p.q_regex = "1";
     }
     if (appliedFilters.method) p.method = appliedFilters.method;
+    if (appliedFilters.clientHost) p.client_host = appliedFilters.clientHost; // §67
     if (appliedFilters.from) p.from = new Date(appliedFilters.from).toISOString();
     if (appliedFilters.to) p.to = new Date(appliedFilters.to).toISOString();
     return p;
@@ -205,6 +209,7 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
       if (appliedFilters.qRegex) qs.set("q_regex", "1");
     }
     if (appliedFilters.method) qs.set("method", appliedFilters.method);
+    if (appliedFilters.clientHost) qs.set("client_host", appliedFilters.clientHost); // §67
     const suffix = qs.toString() ? `?${qs.toString()}` : "";
     const es = new EventSource(`/api/nodes/${id}/logs/stream${suffix}`);
     const timers = highlightTimersRef.current;
@@ -502,47 +507,67 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
               onChange={(m) => setAdvForm({ ...advForm, method: m })}
             />
           </div>
-          {/* Ряд 2: даты С/По (календарь react-day-picker; min/max — лениво из
-              /logs/date-range при открытии) + кнопки. §48.8. Подпись «С»/«По» —
-              в самом плейсхолдере поля, отдельный label над ним не дублируем. */}
-          <div className="md:col-span-3">
-            <LogDateField
-              value={advForm.from}
-              onChange={(v) => setAdvForm({ ...advForm, from: v })}
-              min={dateRange && dateRange.min > 0 ? new Date(dateRange.min) : undefined}
-              max={dateRange && dateRange.max > 0 ? new Date(dateRange.max) : undefined}
-              defaultTime="00:00"
-              placeholder={t("logs.advanced.from")}
-              onOpen={fetchDateRange}
-            />
-          </div>
-          <div className="md:col-span-3">
-            <LogDateField
-              value={advForm.to}
-              onChange={(v) => setAdvForm({ ...advForm, to: v })}
-              min={dateRange && dateRange.min > 0 ? new Date(dateRange.min) : undefined}
-              max={dateRange && dateRange.max > 0 ? new Date(dateRange.max) : undefined}
-              defaultTime="23:59"
-              placeholder={t("logs.advanced.to")}
-              onOpen={fetchDateRange}
-            />
-          </div>
-          <div className="flex items-center justify-end gap-2 md:col-span-6">
-            <button
-              onClick={() => {
-                setAdvForm(initFormEmpty);
-                setAppliedFilters(initFormEmpty);
-              }}
-              className="rounded-md bg-bg-muted px-3 py-1.5 text-sm hover:bg-bg-3"
-            >
-              {t("logs.advanced.reset")}
-            </button>
-            <button
-              onClick={() => setAppliedFilters(advForm)}
-              className="rounded-md bg-accent px-3 py-1.5 text-sm text-white hover:bg-accent-hover"
-            >
-              {t("logs.advanced.apply")}
-            </button>
+          {/* Ряд 2 (§48.8 + §67, эскиз утверждён): «Дата с» / «Дата по» с
+              метками сверху и шириной по контенту (dd.MM.yyyy HH:mm + ×, без
+              пустого пространства), затем «Хост клиента», кнопки — в том же
+              ряду справа, без переноса. flex вместо grid-колонок — иначе поля
+              дат растягивались на всю колонку. */}
+          <div className="flex flex-wrap items-end gap-3 md:col-span-12">
+            <div className="w-[200px] space-y-1">
+              <label className="text-[10px] uppercase tracking-wider text-fg-muted">
+                {t("logs.advanced.from")}
+              </label>
+              <LogDateField
+                value={advForm.from}
+                onChange={(v) => setAdvForm({ ...advForm, from: v })}
+                min={dateRange && dateRange.min > 0 ? new Date(dateRange.min) : undefined}
+                max={dateRange && dateRange.max > 0 ? new Date(dateRange.max) : undefined}
+                defaultTime="00:00"
+                placeholder={t("logs.advanced.from")}
+                onOpen={fetchDateRange}
+              />
+            </div>
+            <div className="w-[200px] space-y-1">
+              <label className="text-[10px] uppercase tracking-wider text-fg-muted">
+                {t("logs.advanced.to")}
+              </label>
+              <LogDateField
+                value={advForm.to}
+                onChange={(v) => setAdvForm({ ...advForm, to: v })}
+                min={dateRange && dateRange.min > 0 ? new Date(dateRange.min) : undefined}
+                max={dateRange && dateRange.max > 0 ? new Date(dateRange.max) : undefined}
+                defaultTime="23:59"
+                placeholder={t("logs.advanced.to")}
+                onOpen={fetchDateRange}
+              />
+            </div>
+            <div className="w-[240px] space-y-1">
+              <label className="text-[10px] uppercase tracking-wider text-fg-muted">
+                {t("logs.advanced.client_host")}
+              </label>
+              <LogClientHostFilter
+                nodeId={id}
+                value={advForm.clientHost}
+                onChange={(h) => setAdvForm({ ...advForm, clientHost: h })}
+              />
+            </div>
+            <div className="ml-auto flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setAdvForm(initFormEmpty);
+                  setAppliedFilters(initFormEmpty);
+                }}
+                className="rounded-md bg-bg-muted px-3 py-1.5 text-sm hover:bg-bg-3"
+              >
+                {t("logs.advanced.reset")}
+              </button>
+              <button
+                onClick={() => setAppliedFilters(advForm)}
+                className="rounded-md bg-accent px-3 py-1.5 text-sm text-white hover:bg-accent-hover"
+              >
+                {t("logs.advanced.apply")}
+              </button>
+            </div>
           </div>
         </div>
       )}
