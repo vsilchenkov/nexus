@@ -256,6 +256,24 @@ func TestNodeUC_Create_ExternalTable_SkipsProvision(t *testing.T) {
 	assert.Empty(t, prov.createdTable, "external table → no CreateTable")
 }
 
+// Черновик кривого имени таблицы (возможен только у узла с выключенным
+// логированием — Validate гейтит формат по LoggingEnabled; типовой случай —
+// дефолтный префикс «nexus_x.» формы создания): провижининг пропускается даже
+// при выбранном шаблоне — CREATE с таким именем упал бы и завалил сохранение.
+func TestNodeUC_Create_InvalidTableDraft_SkipsProvision(t *testing.T) {
+	t.Parallel()
+	templates := newMemCHTemplateRepo()
+	tpl := validTemplate("Standard", true)
+	require.NoError(t, templates.Create(context.Background(), tpl))
+	prov := &verifyProvisioner{}
+	uc := newNodeUC(newMemNodeRepo(), prov, templates)
+
+	n := nodeWithTable("nexussend.", false) // logging off, голый префикс БД
+	n.ClickHouseTemplateID = tpl.ID
+	require.NoError(t, uc.Create(context.Background(), SystemActor(), n))
+	assert.Empty(t, prov.createdTable, "invalid draft name → no CreateTable")
+}
+
 // §64: смена имени внешней таблицы тоже не провижинит — иначе Nexus создал бы
 // пустую таблицу с новым именем вместо той, куда пишет посторонний сервис.
 func TestNodeUC_Update_ExternalTable_SkipsProvision(t *testing.T) {

@@ -27,6 +27,9 @@ export type NodeFormLimits = {
   dlq_retry_delay_seconds: number;
   max_body_size_enabled: boolean;
   max_body_size: number;
+  // Гейт проверок карточки «Логирование»: при выключенном тумблере её поля
+  // задизейблены — блокирующая ошибка по ним была бы ловушкой (см. Validate).
+  logging_enabled: boolean;
   // §42: имя CH-таблицы (опционально) — формат db.table из [A-Za-z0-9_].
   clickhouse_table: string;
   // §64: внешняя таблица несовместима с шаблоном (шаблон = «управляет Nexus»).
@@ -178,14 +181,22 @@ export function validateNodeForm(f: NodeFormLimits, ctx?: BasicAuthContext): Nod
   if (f.dlq_retry_delay_seconds < 1 || f.dlq_retry_delay_seconds > 86400) {
     return { field: "dlq_retry_delay_seconds", code: "node.validation.dlq_retry_delay_seconds" };
   }
-  if (f.max_body_size_enabled && f.max_body_size <= 0) {
+  // Поля карточки «Логирование» проверяются только при включённом тумблере
+  // (зеркало domain.Node.Validate): при выключенном они задизейблены, и
+  // недозаполненное имя таблицы (дефолтный префикс «nexus_x.») — черновик,
+  // а не ошибка.
+  if (f.logging_enabled && f.max_body_size_enabled && f.max_body_size <= 0) {
     return { field: "max_body_size", code: "node.validation.max_body_size_required" };
   }
   if (f.max_body_size < 0 || f.max_body_size > 10_000_000) {
     return { field: "max_body_size", code: "node.validation.max_body_size_range" };
   }
   // §42: имя CH-таблицы опционально, но если задано — строго db.table.
-  if (f.clickhouse_table.trim() !== "" && !CH_TABLE_RE.test(f.clickhouse_table.trim())) {
+  if (
+    f.logging_enabled &&
+    f.clickhouse_table.trim() !== "" &&
+    !CH_TABLE_RE.test(f.clickhouse_table.trim())
+  ) {
     return { field: "clickhouse_table", code: "node.validation.clickhouse_table_format" };
   }
   // §64: шаблон означает «таблицей управляет Nexus», external_table — обратное.

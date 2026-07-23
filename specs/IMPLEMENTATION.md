@@ -3412,3 +3412,32 @@ DryRun/Replay/CopyNode/AllowedHosts/Headers/DeleteNode/MoveNode/CHSchemaSync/Con
 подложки и ставшие ненужными `stopPropagation`. Radix Popover (дропдауны/меню/поиск) не трогали —
 там закрытие по клику мимо ожидаемо. При добавлении нового диалога подложке `onClick` не давать
 (ТЗ §21.5.1).
+
+### 4.48 Валидация полей «Логирования» гейтится по LoggingEnabled (черновик имени таблицы)
+
+Жалоба: при ВЫКЛЮЧЕННОМ тумблере «Логирование включено» форма отвергала сохранение из-за
+недозаполненного имени таблицы (дефолтный префикс `nexus_x.` формы создания §64) — а поля карточки
+при выключенном тумблере задизейблены (`<fieldset disabled>`), исправить их нельзя, не включив
+логи. Любая блокирующая ошибка по задизейбленному полю — ловушка.
+
+Фикс — согласованно на трёх уровнях:
+
+- **domain.Node.Validate**: формат `ClickHouseTable` (§42) и `MaxBodySizeEnabled && MaxBodySize<=0`
+  теперь проверяются только при `LoggingEnabled` ([node.go](../internal/domain/node.go)).
+  Недозаполненное имя у узла с выключенными логами — **черновик**: хранится, но не используется;
+  при включении логов валидация снова потребует корректное имя. Диапазон MaxBodySize (0..10M) и
+  конфликт §64 external+template проверяются по-прежнему всегда.
+- **Черновик не должен дойти до CH**: `provisionTable` рано выходит на невалидном имени (иначе
+  CREATE по шаблону — он выполняется и при выключенном логировании — упал бы и завалил сохранение,
+  [node.go](../internal/web/usecase/node.go)); `ListClickHouseTables` обоих сервисов и
+  `ListForHousekeeping` фильтруют невалидные имена через `domain.IsValidCHTableName`
+  ([node_repo.go](../internal/web/adapter/out/postgres/node_repo.go),
+  [nodepg/reader.go](../internal/sender/adapter/out/nodepg/reader.go)) — стартовые ALTER'ы и
+  housekeeping черновики не трогают. Read-слой и так отсеивает их мягко (§43.1).
+- **Клиент** ([nodeValidation.ts](../web-ui/src/lib/nodeValidation.ts)): те же две проверки под
+  гейтом `logging_enabled` (новое поле `NodeFormLimits`).
+
+Тесты: `TestNode_Validate_ClickHouseTableFormat` (кривые имена при logging on → ошибка, при off →
+ок), `TestNode_Validate_MaxBodySizeRequired_GatedByLogging`,
+`TestNodeUC_Create_InvalidTableDraft_SkipsProvision` (шаблон + черновик → CreateTable не зовётся),
+vitest-кейсы nodeValidation.
