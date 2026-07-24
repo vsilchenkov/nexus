@@ -443,6 +443,7 @@ type TeamListItem = { id: string; slug: string; name: string };
 function UserTeamsDialog({ user, onClose }: { user: User; onClose: () => void }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
+  const confirm = useConfirm();
 
   const teams = useQuery({
     queryKey: ["teams"],
@@ -473,6 +474,37 @@ function UserTeamsDialog({ user, onClose }: { user: User; onClose: () => void })
       setError(err?.response?.data?.error ?? t("common.error"));
     },
   });
+
+  const remove = useMutation({
+    mutationFn: (teamID: string) => api.del(`/api/teams/${teamID}/members/${user.id}`),
+    // Тот же набор инвалидаций, что и у add: чипы строки + свежий user.teams
+    // в диалоге, кэш участников команды, членства самого админа для шапки.
+    onSuccess: (_data, teamID) => {
+      setError(null);
+      qc.invalidateQueries({ queryKey: ["users"] });
+      qc.invalidateQueries({ queryKey: ["team-members", teamID] });
+      qc.invalidateQueries({ queryKey: MY_TEAMS_KEY });
+    },
+    onError: (err: { response?: { data?: { error?: string } } }) => {
+      setError(err?.response?.data?.error ?? t("common.error"));
+    },
+  });
+
+  const askRemove = async (tm: TeamBrief) => {
+    if (
+      await confirm({
+        title: t("settings.users.teams_dialog.remove"),
+        message: t("settings.users.teams_dialog.confirm_remove", {
+          name: user.name || user.login,
+          team: tm.slug,
+        }),
+        confirmLabel: t("settings.users.teams_dialog.remove"),
+        danger: true,
+      })
+    ) {
+      remove.mutate(tm.id);
+    }
+  };
 
   return (
     <Modal onClose={onClose}>
@@ -507,6 +539,15 @@ function UserTeamsDialog({ user, onClose }: { user: User; onClose: () => void })
                   )}
                   {tm.slug}
                   <span className="text-fg-muted">· {t(`settings.teams.role.${tm.role}`)}</span>
+                  <button
+                    type="button"
+                    disabled={remove.isPending}
+                    onClick={() => askRemove(tm)}
+                    title={t("settings.users.teams_dialog.remove")}
+                    className="ml-0.5 text-fg-muted hover:text-err disabled:opacity-50"
+                  >
+                    ×
+                  </button>
                 </span>
               ))}
             </div>

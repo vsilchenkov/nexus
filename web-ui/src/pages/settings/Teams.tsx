@@ -62,6 +62,14 @@ export function TeamsPanel() {
   const [membersOf, setMembersOf] = useState<Team | null>(null);
   const [delError, setDelError] = useState<string | null>(null);
 
+  // Client-side поиск по командам (slug/название/БД) — команд немного,
+  // серверный ?search= не нужен (в отличие от /api/users).
+  const [search, setSearch] = useState("");
+  const q = search.trim().toLowerCase();
+  const visibleTeams = (list.data?.items ?? []).filter(
+    (tm) => !q || [tm.slug, tm.name, tm.ch_database].some((f) => f.toLowerCase().includes(q)),
+  );
+
   const del = useMutation({
     mutationFn: (id: string) => api.del(`/api/teams/${id}`),
     onSuccess: () => {
@@ -85,12 +93,20 @@ export function TeamsPanel() {
             {t("settings.teams.subtitle")}
           </p>
         </div>
-        <button
-          onClick={() => setEditing("new")}
-          className="bg-accent hover:bg-accent-hover px-3 py-2 rounded-md text-sm"
-        >
-          {t("settings.teams.add")}
-        </button>
+        <div className="flex items-center gap-2">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={t("settings.teams.search_placeholder")}
+            className="px-3 py-2 bg-bg-muted rounded-md outline-none text-sm w-60"
+          />
+          <button
+            onClick={() => setEditing("new")}
+            className="bg-accent hover:bg-accent-hover px-3 py-2 rounded-md text-sm"
+          >
+            {t("settings.teams.add")}
+          </button>
+        </div>
       </header>
 
       {list.isLoading && (
@@ -107,9 +123,14 @@ export function TeamsPanel() {
         <div className="text-fg-muted text-sm">{t("settings.teams.empty")}</div>
       )}
 
-      {list.data && list.data.items.length > 0 && (
+      {list.data && list.data.items.length > 0 && visibleTeams.length === 0 && (
+        <div className="text-fg-muted text-sm">{t("settings.teams.search_empty")}</div>
+      )}
+
+      {visibleTeams.length > 0 && (
+        <div className="max-h-[65vh] overflow-y-auto">
         <table className="w-full text-sm">
-          <thead className="text-fg-muted">
+          <thead className="sticky top-0 z-10 bg-bg text-fg-muted">
             <tr>
               <th className="text-left px-3 py-2">{t("settings.teams.col.slug")}</th>
               <th className="text-left px-3 py-2">{t("settings.teams.col.name")}</th>
@@ -118,7 +139,7 @@ export function TeamsPanel() {
             </tr>
           </thead>
           <tbody>
-            {list.data.items.map((team) => {
+            {visibleTeams.map((team) => {
               const isDefault = team.slug === "default";
               return (
                 <tr key={team.id} className="border-t border-bg-muted">
@@ -168,6 +189,7 @@ export function TeamsPanel() {
             })}
           </tbody>
         </table>
+        </div>
       )}
 
       {editing && (
