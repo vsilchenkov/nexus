@@ -98,7 +98,7 @@ export function TeamsPanel() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t("settings.teams.search_placeholder")}
-            className="px-3 py-2 bg-bg-muted rounded-md outline-none text-sm w-60"
+            className="px-3 py-2 bg-bg-muted rounded-md outline-none text-sm w-72"
           />
           <button
             onClick={() => setEditing("new")}
