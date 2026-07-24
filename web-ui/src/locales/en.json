@@ -961,8 +961,21 @@
       "action": {
         "change_password": "Change password",
         "edit": "Edit",
+        "teams": "User teams",
         "enable": "Enable",
         "delete": "Delete"
+      },
+      "teams_dialog": {
+        "title": "Teams of `{{name}}`",
+        "current": "Current teams",
+        "none": "Not a member of any team",
+        "add_team": "Add to team",
+        "pick_team": "— pick a team —",
+        "role": "Role",
+        "add": "Add",
+        "all_teams": "User is already a member of every team",
+        "remove": "Remove from team",
+        "confirm_remove": "Remove user `{{name}}` from team `{{team}}`?"
       },
       "confirm_delete": "Delete user `{{login}}` permanently?",
       "last_admin_warning": "At least one admin must remain.",
@@ -1004,6 +1017,8 @@
       "subtitle": "Multi-tenancy: each team has its own ClickHouse database (nexus_<slug>). Nodes, logs and API tokens are isolated by team.",
       "add": "New team",
       "empty": "No teams yet",
+      "search_placeholder": "Search by slug, name or database…",
+      "search_empty": "No matches",
       "col": {
         "slug": "Slug",
         "name": "Name",
@@ -1039,6 +1054,10 @@
         "title": "Members of `{{name}}`",
         "add_user": "Add user",
         "pick_user": "— pick user —",
+        "search_user": "Search by name, login or email…",
+        "not_found": "No users found",
+        "filter_placeholder": "Filter members by name, login or email…",
+        "filter_empty": "No matches",
         "role": "Role",
         "add": "Add",
         "remove": "Remove",

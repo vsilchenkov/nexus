@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { api } from "../../api/client";
 import { useConfirm } from "../../lib/confirm";
 import type { Role } from "../../lib/roles";
+import { MY_TEAMS_KEY } from "../../lib/teams";
 
 // TeamBrief — команда пользователя для колонки «Команды» (§44.G).
 type TeamBrief = { id: string; slug: string; name: string; role: string };
@@ -116,6 +117,12 @@ export function UsersPanel() {
 
   const [editing, setEditing] = useState<User | "new" | null>(null);
   const [pwTarget, setPwTarget] = useState<User | null>(null);
+  // Диалог «Команды пользователя»: храним id, а не снапшот User — после
+  // добавления в команду инвалидация ["users"] перечитывает список, и открытый
+  // диалог получает СВЕЖИЙ user.teams (снапшот показывал бы протухший состав).
+  const [teamsTargetId, setTeamsTargetId] = useState<string | null>(null);
+  const teamsTarget =
+    (teamsTargetId && list.data?.items.find((u) => u.id === teamsTargetId)) || null;
 
   const activeAdmins = useMemo(
     () => (list.data?.items ?? []).filter((u) => u.role === "admin" && u.active).length,
@@ -347,6 +354,13 @@ export function UsersPanel() {
                     >
                       ✏️
                     </button>
+                    <button
+                      title={t("settings.users.action.teams")}
+                      onClick={() => setTeamsTargetId(u.id)}
+                      className="px-1.5 py-1 hover:bg-bg-muted rounded text-fg-muted hover:text-fg text-sm"
+                    >
+                      👥
+                    </button>
                     {!u.active && (
                       <button
                         title={t("settings.users.action.enable")}
@@ -409,7 +423,229 @@ export function UsersPanel() {
           }}
         />
       )}
+
+      {teamsTarget && (
+        <UserTeamsDialog user={teamsTarget} onClose={() => setTeamsTargetId(null)} />
+      )}
     </div>
+  );
+}
+
+// Команда из GET /api/teams — для диалога «Команды пользователя» достаточно
+// идентификатора и подписей (полный тип живёт в settings/Teams.tsx).
+type TeamListItem = { id: string; slug: string; name: string };
+
+// UserTeamsDialog — членства пользователя со стороны страницы пользователей:
+// текущие команды read-only + добавление в команду. Использует командо-центричный
+// POST /api/teams/{id}/members — отдельного user-центричного эндпоинта нет.
+// Удаление из команды — намеренно вне scope (краевые случаи «последний owner»,
+// default-команда) — оно остаётся в диалоге участников команды.
+function UserTeamsDialog({ user, onClose }: { user: User; onClose: () => void }) {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+  const confirm = useConfirm();
+
+  const teams = useQuery({
+    queryKey: ["teams"],
+    queryFn: () => api.get<{ items: TeamListItem[] }>("/api/teams"),
+  });
+
+  const [teamId, setTeamId] = useState("");
+  const [role, setRole] = useState<"owner" | "admin" | "member">("member");
+  const [error, setError] = useState<string | null>(null);
+
+  const memberOf = new Set((user.teams ?? []).map((tm) => tm.id));
+  const candidates = (teams.data?.items ?? []).filter((tm) => !memberOf.has(tm.id));
+
+  const add = useMutation({
+    mutationFn: () => api.post(`/api/teams/${teamId}/members`, { user_id: user.id, role }),
+    onSuccess: () => {
+      setTeamId("");
+      setError(null);
+      // ["users"] — чипы в строке и свежий user.teams в этом же диалоге;
+      // ["team-members", teamId] — кэш диалога участников этой команды;
+      // MY_TEAMS_KEY — админ мог добавить СЕБЯ: переключатель шапки обязан
+      // отразить это без F5 (тот же класс бага, что в Teams.tsx).
+      qc.invalidateQueries({ queryKey: ["users"] });
+      qc.invalidateQueries({ queryKey: ["team-members", teamId] });
+      qc.invalidateQueries({ queryKey: MY_TEAMS_KEY });
+    },
+    onError: (err: { response?: { data?: { error?: string } } }) => {
+      setError(err?.response?.data?.error ?? t("common.error"));
+    },
+  });
+
+  const remove = useMutation({
+    mutationFn: (teamID: string) => api.del(`/api/teams/${teamID}/members/${user.id}`),
+    // Тот же набор инвалидаций, что и у add: чипы строки + свежий user.teams
+    // в диалоге, кэш участников команды, членства самого админа для шапки.
+    onSuccess: (_data, teamID) => {
+      setError(null);
+      qc.invalidateQueries({ queryKey: ["users"] });
+      qc.invalidateQueries({ queryKey: ["team-members", teamID] });
+      qc.invalidateQueries({ queryKey: MY_TEAMS_KEY });
+    },
+    onError: (err: { response?: { data?: { error?: string } } }) => {
+      setError(err?.response?.data?.error ?? t("common.error"));
+    },
+  });
+
+  // §45: смена команды по умолчанию — тот же PUT, что у чипов в колонке
+  // «Команды»; после успеха ["users"] перечитывается, и ★ в диалоге и в
+  // строке списка переезжает без F5.
+  const setDefault = useMutation({
+    mutationFn: (teamID: string) =>
+      api.put(`/api/users/${user.id}/default-team`, { team_id: teamID }),
+    onSuccess: () => {
+      setError(null);
+      qc.invalidateQueries({ queryKey: ["users"] });
+    },
+    onError: (err: { response?: { data?: { error?: string } } }) => {
+      setError(err?.response?.data?.error ?? t("common.error"));
+    },
+  });
+
+  const askRemove = async (tm: TeamBrief) => {
+    if (
+      await confirm({
+        title: t("settings.users.teams_dialog.remove"),
+        message: t("settings.users.teams_dialog.confirm_remove", {
+          name: user.name || user.login,
+          team: tm.slug,
+        }),
+        confirmLabel: t("settings.users.teams_dialog.remove"),
+        danger: true,
+      })
+    ) {
+      remove.mutate(tm.id);
+    }
+  };
+
+  return (
+    <Modal onClose={onClose}>
+      <div className="space-y-4 w-[460px] max-w-full">
+        <header>
+          <h3 className="text-lg font-semibold">
+            {t("settings.users.teams_dialog.title", { name: user.name || user.login })}
+          </h3>
+        </header>
+
+        {error && (
+          <div className="bg-err/10 border border-err/40 text-err px-3 py-2 rounded text-sm">
+            {error}
+          </div>
+        )}
+
+        <div className="space-y-1">
+          <div className="text-xs uppercase tracking-wider text-fg-muted">
+            {t("settings.users.teams_dialog.current")}
+          </div>
+          {(user.teams ?? []).length === 0 ? (
+            <div className="text-sm text-fg-muted">{t("settings.users.teams_dialog.none")}</div>
+          ) : (
+            <div className="flex flex-wrap gap-1 pt-1">
+              {(user.teams ?? []).map((tm) => {
+                const isDefault = tm.id === user.default_team_id;
+                return (
+                <span
+                  key={tm.id}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-fg-muted/15 text-fg"
+                >
+                  <button
+                    type="button"
+                    disabled={isDefault || setDefault.isPending}
+                    onClick={() => setDefault.mutate(tm.id)}
+                    title={
+                      isDefault
+                        ? t("settings.users.teams.default")
+                        : t("settings.users.teams.set_as_default", { name: tm.name })
+                    }
+                    className={`text-[10px] ${
+                      isDefault
+                        ? "text-accent cursor-default"
+                        : "text-fg-muted hover:text-accent disabled:opacity-50"
+                    }`}
+                  >
+                    {isDefault ? "★" : "☆"}
+                  </button>
+                  {tm.slug}
+                  <span className="text-fg-muted">· {t(`settings.teams.role.${tm.role}`)}</span>
+                  <button
+                    type="button"
+                    disabled={remove.isPending}
+                    onClick={() => askRemove(tm)}
+                    title={t("settings.users.teams_dialog.remove")}
+                    className="ml-0.5 text-fg-muted hover:text-err disabled:opacity-50"
+                  >
+                    ×
+                  </button>
+                </span>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {teams.isLoading && (
+          <div className="text-fg-muted text-sm">{t("common.loading")}</div>
+        )}
+
+        {teams.data && candidates.length === 0 && (
+          <div className="text-fg-muted text-sm">
+            {t("settings.users.teams_dialog.all_teams")}
+          </div>
+        )}
+
+        {teams.data && candidates.length > 0 && (
+          <div className="flex items-end gap-2">
+            <div className="flex-1 space-y-1">
+              <label className="text-xs uppercase tracking-wider text-fg-muted">
+                {t("settings.users.teams_dialog.add_team")}
+              </label>
+              <select
+                value={teamId}
+                onChange={(e) => setTeamId(e.target.value)}
+                className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none"
+              >
+                <option value="">{t("settings.users.teams_dialog.pick_team")}</option>
+                {candidates.map((tm) => (
+                  <option key={tm.id} value={tm.id}>
+                    {tm.name} ({tm.slug})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="w-32 space-y-1">
+              <label className="text-xs uppercase tracking-wider text-fg-muted">
+                {t("settings.users.teams_dialog.role")}
+              </label>
+              <select
+                value={role}
+                onChange={(e) => setRole(e.target.value as typeof role)}
+                className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none"
+              >
+                <option value="owner">{t("settings.teams.role.owner")}</option>
+                <option value="admin">{t("settings.teams.role.admin")}</option>
+                <option value="member">{t("settings.teams.role.member")}</option>
+              </select>
+            </div>
+            <button
+              onClick={() => add.mutate()}
+              disabled={!teamId || add.isPending}
+              className="bg-accent hover:bg-accent-hover px-4 py-2 rounded-md text-sm disabled:opacity-50"
+            >
+              {t("settings.users.teams_dialog.add")}
+            </button>
+          </div>
+        )}
+
+        <footer className="flex items-center justify-end pt-2 border-t border-bg-muted">
+          <button onClick={onClose} className="px-3 py-2 text-sm text-fg-muted hover:text-fg">
+            {t("common.close")}
+          </button>
+        </footer>
+      </div>
+    </Modal>
   );
 }
 

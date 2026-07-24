@@ -82,6 +82,13 @@ services:
       KAFKA_NUM_PARTITIONS: "4"
       KAFKA_DEFAULT_REPLICATION_FACTOR: "1"
       KAFKA_MIN_INSYNC_REPLICAS: "1"
+      # Брокерский потолок размера сообщения — запасной, per-topic max.message.bytes
+      # (CreateTopics из config.yml) его перекрывает для топиков nexus.*. Держим ≥
+      # kafka.topic.max_message_bytes: 16 МиБ = receiver.max_body_bytes (10 МиБ, §68
+      # multipart) × 1.33 (base64 async-envelope) + запас. replica.fetch.max.bytes —
+      # для репликации при RF>1 (для single-broker не вредит).
+      KAFKA_MESSAGE_MAX_BYTES: "16777216"
+      KAFKA_REPLICA_FETCH_MAX_BYTES: "16777216"
       # Брокерный дефолт retention. Топики nexus.* создаются приложением с ЯВНЫМ
       # конфигом (config.yml kafka.topic → CreateTopics), поэтому эти значения —
       # запасной потолок для любых прочих/авто-топиков и держат брокер согласованным
