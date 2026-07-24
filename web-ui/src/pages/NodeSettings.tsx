@@ -1249,8 +1249,7 @@ export default function NodeSettings() {
                     <dd>
                       {new Date(existing.data.created_at).toLocaleString()}
                       {existing.data.created_by && (
-                        <span className="text-fg-subtle">
-                          {" · "}
+                        <span className="block text-fg-subtle">
                           {t("common.author")}:{" "}
                           <span className="font-mono">{existing.data.created_by}</span>
                         </span>
@@ -1263,8 +1262,7 @@ export default function NodeSettings() {
                       <dd>
                         {new Date(existing.data.updated_at).toLocaleString()}
                         {existing.data.updated_by && (
-                          <span className="text-fg-subtle">
-                            {" · "}
+                          <span className="block text-fg-subtle">
                             {t("common.author")}:{" "}
                             <span className="font-mono">{existing.data.updated_by}</span>
                           </span>
