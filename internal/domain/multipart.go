@@ -88,9 +88,10 @@ func MultipartLogPlaceholder(contentType string, body []byte) string {
 		}
 		if perr != nil {
 			// Оборванное/битое тело: возвращаем уже собранное + примечание,
-			// чтобы оператор видел, что запись неполна.
-			fmt.Fprintf(&b, "\n[truncated after %d parts: %v; body %d bytes]", total, perr, len(body))
-			_ = p // p == nil при ошибке
+			// чтобы оператор видел, что запись неполна. Текст perr сюда НЕ
+			// интерполируем: textproto вклеивает в «malformed MIME header line: …»
+			// сырую строку из тела — это утечка содержимого в ClickHouse.
+			fmt.Fprintf(&b, "\n[truncated after %d parts: malformed multipart body; body %d bytes]", total, len(body))
 			return b.String()
 		}
 		total++

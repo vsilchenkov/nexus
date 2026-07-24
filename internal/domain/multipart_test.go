@@ -152,6 +152,23 @@ func TestMultipartLogPlaceholder(t *testing.T) {
 		assert.Contains(t, got, "body 0 bytes")
 	})
 
+	t.Run("malformed part header does not leak into placeholder", func(t *testing.T) {
+		t.Parallel()
+		// Строка заголовка части без двоеточия: textproto кладёт её в текст
+		// ошибки («malformed MIME header line: …») — она НЕ должна попасть в
+		// плейсхолдер (утечка содержимого тела в ClickHouse).
+		body := []byte("--b\r\n" +
+			"Content-Disposition: form-data; name=\"a\"\r\n\r\none\r\n" +
+			"--b\r\n" +
+			"BROKEN SECRET-IN-HEADER LINE\r\n\r\ntwo\r\n" +
+			"--b--\r\n")
+		got := MultipartLogPlaceholder("multipart/form-data; boundary=b", body)
+		assert.Contains(t, got, `name="a"`, "валидная часть до обрыва распознана")
+		assert.Contains(t, got, "malformed multipart body")
+		assert.NotContains(t, got, "SECRET-IN-HEADER", "текст ошибки парсера не должен нести содержимое тела")
+		assert.True(t, IsMultipartLogPlaceholder(got))
+	})
+
 	t.Run("many parts capped", func(t *testing.T) {
 		t.Parallel()
 		parts := make([]struct{ field, filename, contentType, content string }, 60)
@@ -203,17 +220,10 @@ func FuzzMultipartLogPlaceholder(f *testing.F) {
 	f.Add("multipart/mixed; boundary=", []byte("MARKER"))
 
 	f.Fuzz(func(t *testing.T, ct string, body []byte) {
-		got := MultipartLogPlaceholder(ct, body) // не паникует
+		// Инвариант: не паникует и всегда отдаёт непустой плейсхолдер. Отсутствие
+		// содержимого частей в выводе проверяют table-тесты выше (fuzz не отличит
+		// содержимое от легально печатаемых метаданных name/filename/type).
+		got := MultipartLogPlaceholder(ct, body)
 		assert.NotEmpty(t, got)
-		// Плейсхолдер не должен раскрывать сырое содержимое частей. Проверяем на
-		// нашем маркере из seed'ов — в fuzzed данных совпадение маловероятно, но
-		// главное — отсутствие паники и стабильность.
-		if bytes.Contains(body, []byte("MARKER")) && strings.Contains(got, "MARKER") {
-			// Допустимо только если MARKER оказался в имени поля/файла/типе —
-			// эти метаданные плейсхолдер печатает намеренно. Содержимое части —
-			// нет. Тонкую грань fuzz не различает, поэтому лишь фиксируем, что
-			// функция завершилась; строгую проверку делает table-тест выше.
-			_ = got
-		}
 	})
 }
