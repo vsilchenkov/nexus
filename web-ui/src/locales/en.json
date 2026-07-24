@@ -579,6 +579,7 @@
     "title": "Replay request",
     "body_label": "Request body (leave empty to reuse original)",
     "body_label_get": "Request body (optional for GET; empty = no body)",
+    "multipart_warning": "The original request was multipart/form-data — its body (with attachments) was not stored. Enter the body manually to replay.",
     "sync": "Sync instead of async (wait for the response here)",
     "use_node_auth": "Use the node's auth config",
     "custom_auth": "Custom Authorization header",

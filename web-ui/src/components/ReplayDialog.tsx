@@ -13,6 +13,20 @@ type ReplayResult = {
   body_preview?: string;
 };
 
+// isMultipartPlaceholder — зеркало domain.IsMultipartLogPlaceholder (Go,
+// internal/domain/multipart.go): §68 у multipart-запроса в теле лога хранится
+// плейсхолдер, а не исходное тело. Replay без ручного тела бэкенд отклонит (422),
+// поэтому предупреждаем и не даём отправить с пустым телом. Держать в синхроне с
+// Go-детектом.
+function isMultipartPlaceholder(body?: string): boolean {
+  if (!body) return false;
+  const nl = body.indexOf("\n");
+  if (nl < 0) return false;
+  const first = body.slice(0, nl).trim().toLowerCase();
+  const rest = body.slice(nl + 1);
+  return first.startsWith("multipart/") && (rest.startsWith("- part ") || rest.startsWith("["));
+}
+
 export function ReplayDialog({
   logId,
   nodeId,
@@ -61,6 +75,10 @@ export function ReplayDialog({
     setParams(qp.toString());
   }, [detail.data, params]);
 
+  // §68: оригинал был multipart — тело не сохранено, нужно ввести вручную.
+  const multipartOriginal = isMultipartPlaceholder(detail.data?.request);
+  const needsManualBody = multipartOriginal && !bodyOverride.trim();
+
   async function run() {
     setBusy(true);
     setError(null);
@@ -97,7 +115,7 @@ export function ReplayDialog({
           <Button variant="ghost" onClick={onClose}>
             {t("common.cancel")}
           </Button>
-          <Button variant="primary" disabled={busy} onClick={run}>
+          <Button variant="primary" disabled={busy || needsManualBody} onClick={run}>
             <RefreshCw className="h-4 w-4" /> {t("replay.send")}
           </Button>
         </>
@@ -107,6 +125,11 @@ export function ReplayDialog({
           некоторые API принимают GET с телом (напр. поисковые запросы). */}
       <Field label={isGet ? t("replay.body_label_get") : t("replay.body_label")}>
         <Textarea rows={4} value={bodyOverride} onChange={(e) => setBodyOverride(e.target.value)} />
+        {multipartOriginal && (
+          <Hint tone="warn" className="mt-1">
+            {t("replay.multipart_warning")}
+          </Hint>
+        )}
       </Field>
 
       <Field label={t("replay.params_label")} className="mt-3">

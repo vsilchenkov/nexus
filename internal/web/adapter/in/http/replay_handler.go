@@ -83,6 +83,8 @@ func (h *ReplayHandler) Replay(c *gin.Context) {
 		localizedError(c, http.StatusBadRequest, "replay.bad_params")
 	case errors.Is(err, usecase.ErrReplayBodyUnavailable):
 		localizedError(c, http.StatusUnprocessableEntity, "replay.body_unavailable")
+	case errors.Is(err, usecase.ErrReplayBodyMultipart):
+		localizedError(c, http.StatusUnprocessableEntity, "replay.multipart_unavailable")
 	case errors.Is(err, domain.ErrNotFound):
 		localizedError(c, http.StatusNotFound, "error.not_found")
 	case errors.Is(err, domain.ErrNodeNotFound):

@@ -134,6 +134,12 @@ var ErrReplayBodyUnavailable = errors.New("original request body was not logged;
 // с мусором), явный override пользователя обязан быть валидным → handler 400.
 var ErrReplayBadParams = errors.New("params_override is not a valid query string")
 
+// ErrReplayBodyMultipart — §68: у оригинала было multipart/form-data тело, в
+// ClickHouse вместо него сохранён плейсхолдер (вложения не хранятся). Отправить
+// плейсхолдер во внешний target нельзя — это не исходное тело. Пользователь
+// может задать тело вручную (BodyOverride) → handler отдаёт 422.
+var ErrReplayBodyMultipart = errors.New("original request body was multipart/form-data and is not stored; provide body manually")
+
 // Replay выполняет повторную отправку запроса через шину.
 //
 // teamID — multi-tenancy scope (Phase 10.D). Узел чужой команды → 404.
@@ -234,6 +240,13 @@ func (u *ReplayUsecase) replayOne(ctx context.Context, node *domain.Node, logID 
 	// а не «не сохранилось» (боевой кейс legat_by: GET-логи блокировались 422).
 	body := opts.BodyOverride
 	if body == nil {
+		// §68: multipart-запись хранит в orig.Request плейсхолдер, а не тело —
+		// отправить его как body нельзя. Разрешаем только явный BodyOverride.
+		if domain.IsMultipartLogPlaceholder(orig.Request) {
+			u.logger.Debug("replay: multipart original, body not stored — reject",
+				u.logger.Str("log_id", logID))
+			return nil, ErrReplayBodyMultipart
+		}
 		if orig.Request == "" && method != "GET" {
 			return nil, ErrReplayBodyUnavailable
 		}

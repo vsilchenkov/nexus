@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"nexus/internal/domain"
@@ -166,11 +167,12 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		ClientHost: u.hosts.Lookup(in.ClientIP),
 		NodeID:     in.NodeID,
 	}
-	// §22.2: сохраняемая в лог копия тела запроса режется по per-node max_body_size
-	// (в рунах) — checksum считается по ПОЛНОМУ телу (выше). На сам запрос к
-	// внешнему узлу и на ответ клиенту лимит НЕ влияет.
+	// §22.2/§68: сохраняемая в лог копия тела запроса режется по per-node
+	// max_body_size (в рунах); для multipart вместо тела пишется §68-плейсхолдер.
+	// checksum и размер считаются по ПОЛНОМУ телу (выше). На сам запрос к внешнему
+	// узлу и на ответ клиенту это НЕ влияет.
 	if in.LogRequestBody {
-		rec.Request = truncateRunes(string(in.Body), in.MaxBodySizeEnabled, in.MaxBodySize)
+		rec.Request = u.logBodyCopy("request", headerGet(in.Headers, "Content-Type"), in.Body, in)
 	}
 
 	req := &port.HTTPRequest{
@@ -306,10 +308,11 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		// §42-доп: истинный размер тела ответа в байтах — по полному телу до
 		// truncateRunes ниже и независимо от LogResponseBody.
 		rec.ResponseSize = int64(len(resp.Body))
-		// §22.2: лог-копия ответа режется по per-node max_body_size; checksum по
-		// полному телу. Клиент получает полный resp.Body (выше).
+		// §22.2/§68: лог-копия ответа режется по per-node max_body_size; для
+		// multipart-ответа (multipart/mixed и пр.) вместо тела — §68-плейсхолдер.
+		// checksum/размер по полному телу. Клиент получает полный resp.Body (выше).
 		if in.LogResponseBody {
-			rec.Response = truncateRunes(string(resp.Body), in.MaxBodySizeEnabled, in.MaxBodySize)
+			rec.Response = u.logBodyCopy("response", headerGet(resp.Headers, "Content-Type"), resp.Body, in)
 		}
 		if !rec.Done {
 			rec.Reason = fmt.Sprintf("HTTP %d", resp.StatusCode)
@@ -370,6 +373,39 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 func md5hex(b []byte) string {
 	sum := md5.Sum(b)
 	return hex.EncodeToString(sum[:])
+}
+
+// headerGet возвращает значение заголовка без учёта регистра ключа. Заголовки в
+// map обычно уже каноничны (route.go/envelope.go/puller.go кладут "Content-Type"),
+// но полагаться на это хрупко — поэтому fallback по EqualFold.
+func headerGet(h map[string]string, name string) string {
+	if v, ok := h[name]; ok {
+		return v
+	}
+	for k, v := range h {
+		if strings.EqualFold(k, name) {
+			return v
+		}
+	}
+	return ""
+}
+
+// logBodyCopy готовит копию тела для сохранения в лог (§22.2/§68): для
+// multipart-тела (Content-Type multipart/*) вложения в ClickHouse НЕ пишутся —
+// вместо тела кладётся §68-плейсхолдер со сводкой частей, и per-node
+// max_body_size на него не действует (он короткий); для обычного тела —
+// усечённая по max_body_size копия. kind ("request"/"response") — только для
+// debug-следа (§51.9). Не меняет checksum/размер — их считает вызывающая сторона
+// по полному телу.
+func (u *SendUsecase) logBodyCopy(kind, contentType string, body []byte, in SendInput) string {
+	if domain.IsMultipartMediaType(contentType) {
+		u.logger.Debug("send: multipart "+kind+", log body replaced with placeholder",
+			u.logger.Str("id", in.ID),
+			u.logger.Str("node", in.NodePath),
+			u.logger.Int("body_bytes", len(body)))
+		return domain.MultipartLogPlaceholder(contentType, body)
+	}
+	return truncateRunes(string(body), in.MaxBodySizeEnabled, in.MaxBodySize)
 }
 
 // truncationMarker дописывается к сохраняемому телу, если оно было обрезано по
