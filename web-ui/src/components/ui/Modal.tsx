@@ -12,8 +12,10 @@ type Props = {
   className?: string;
 };
 
-// Modal — диалог эталона (.modal-demo): overlay + head/body/foot,
-// закрытие по Esc и клику вне окна.
+// Modal — диалог эталона (.modal-demo): overlay + head/body/foot.
+// Закрывается ТОЛЬКО явным действием — Esc, крестик X или кнопки футера
+// (§21): клик по подложке НЕ закрывает, иначе случайный клик мимо окна
+// молча терял введённые в форму данные (жалоба на диалоги команд/пользователей).
 export function Modal({ title, subtitle, onClose, children, footer, className }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -22,10 +24,7 @@ export function Modal({ title, subtitle, onClose, children, footer, className }:
   }, [onClose]);
 
   return (
-    <div
-      className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4"
-      onClick={onClose}
-    >
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4">
       <div
         className={cn(
           // flex-колонка с ограничением высоты: заголовок/футер фиксированы,
@@ -33,7 +32,6 @@ export function Modal({ title, subtitle, onClose, children, footer, className }:
           "flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-lg border border-line-strong bg-app shadow-2xl",
           className,
         )}
-        onClick={(e) => e.stopPropagation()}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-line px-5 py-4">
           <div>

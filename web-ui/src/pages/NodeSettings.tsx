@@ -26,9 +26,9 @@ import {
   type HostAllowlistEntry,
 } from "../api/client";
 import { useNodeUrlBuilder } from "../lib/nodeUrl";
-import { useCurrentTeamCHDatabase } from "../lib/teams";
+import { useCurrentTeamCHDatabase, useMyTeams } from "../lib/teams";
 import { useNodeFormDefaults } from "../lib/nodeDefaults";
-import { useEnsureNodeTeam } from "../lib/nodeShare";
+import { useEnsureNodeTeam, useNodeTeam } from "../lib/nodeShare";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { parseNumInput } from "../lib/numField";
 import { validateNodeForm } from "../lib/nodeValidation";
@@ -190,6 +190,15 @@ export default function NodeSettings() {
   // сессию на команду узла. Пока не ready — узел не грузим (иначе 404).
   const ensure = useEnsureNodeTeam(id);
 
+  // §65: строка «Команда» в сайдбаре — только имя. Для правки — резолвер §58
+  // (ключ уже закеширован useEnsureNodeTeam, второго запроса нет), для
+  // создания — текущая команда сессии из членств (узел будет создан в ней).
+  const myTeams = useMyTeams();
+  const nodeTeamQ = useNodeTeam(isNew ? undefined : id);
+  const teamName = isNew
+    ? myTeams.data?.items.find((m) => m.id === myTeams.data?.current_team_id)?.name
+    : nodeTeamQ.data?.team_name;
+
   const existing = useQuery({
     queryKey: ["node", id],
     queryFn: () => api.get<Node>(`/api/nodes/${id}`),
@@ -197,9 +206,23 @@ export default function NodeSettings() {
   });
 
   const [form, setForm] = useState<Form>(emptyForm);
+  // §23: SSRF-плашка в сайдбаре нужна только при ПУСТОМ allowlist. Список
+  // существующего узла берём тем же queryKey, что AllowedHostsField, — кеш
+  // общий, запрос не дублируется, а attach/detach в поле инвалидируют ключ,
+  // и плашка исчезает/появляется реактивно.
+  const nodeHosts = useQuery({
+    queryKey: ["node-hosts", id],
+    queryFn: () => api.get<{ items: HostAllowlistEntry[] }>(`/api/nodes/${id}/allowed-hosts`),
+    enabled: !isNew && form.url_mode === "from_request",
+  });
   // §23: для нового узла выбранные хосты копятся локально и привязываются после
   // создания (allowlist — производный снимок каталога, управляется link/unlink).
   const [pendingHosts, setPendingHosts] = useState<HostAllowlistEntry[]>([]);
+  // Для существующего узла — строго isSuccess (не «?? []»), чтобы плашка не
+  // мигала, пока список ещё грузится.
+  const allowlistEmpty = isNew
+    ? pendingHosts.length === 0
+    : nodeHosts.isSuccess && (nodeHosts.data.items ?? []).length === 0;
   const [showDryRun, setShowDryRun] = useState(false);
   const [showChSync, setShowChSync] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
@@ -747,6 +770,7 @@ export default function NodeSettings() {
                 <Field label={t("auth.login_field")} help={t("node.help.basic_login")}>
                   <Input
                     mono
+                    autoComplete="off"
                     className={errCls("incoming_auth_login")}
                     value={form.incoming_auth_login}
                     onChange={(e) => set("incoming_auth_login", e.target.value)}
@@ -862,6 +886,7 @@ export default function NodeSettings() {
                 <Field label={t("auth.login_field")} help={t("node.help.basic_login")}>
                   <Input
                     mono
+                    autoComplete="off"
                     className={errCls("auth_login")}
                     value={form.auth_login}
                     onChange={(e) => set("auth_login", e.target.value)}
@@ -1014,15 +1039,15 @@ export default function NodeSettings() {
                     (работает и для несохранённого: проверяем имя, не id). */}
                 {isManualTable && form.clickhouse_table.trim() !== "" && (
                   <div className="mt-2">
-                    <Button
+                    <button
                       type="button"
-                      variant="ghost"
                       onClick={() => verify.mutate(form.clickhouse_table.trim())}
                       disabled={verify.isPending}
+                      className="flex items-center gap-1.5 text-xs text-accent hover:underline disabled:opacity-60 disabled:hover:no-underline"
                     >
                       <ListChecks className="h-3.5 w-3.5" />
                       {verify.isPending ? t("common.loading") : t("node.verify.button")}
-                    </Button>
+                    </button>
                     {verifyMessage && (
                       <p className={`mt-1 text-xs ${verifyMessage.ok ? "text-ok" : "text-err"}`}>
                         {verifyMessage.text}
@@ -1206,7 +1231,52 @@ export default function NodeSettings() {
               </div>
             </div>
           </Card>
-          {form.url_mode === "from_request" && (
+          {/* §65: команда узла и даты §63 — ОТДЕЛЬНАЯ карточка под
+              «Предпросмотром», строки в формате вкладки «Конфиг» (лейбл слева,
+              разделители, 13px). Даты — только у сохранённого узла;
+              «Обновлено» — только если узел реально меняли (updated_at ≠
+              created_at); пустой автор не выводится. */}
+          <Card>
+            <dl className="divide-y divide-line text-[13px]">
+              <div className="grid grid-cols-[96px_1fr] gap-3 py-2.5 first:pt-0 last:pb-0">
+                <dt className="text-fg-muted">{t("node.fields.team")}</dt>
+                <dd className="font-medium">{teamName ?? "—"}</dd>
+              </div>
+              {!isNew && existing.data && (
+                <>
+                  <div className="grid grid-cols-[96px_1fr] gap-3 py-2.5 first:pt-0 last:pb-0">
+                    <dt className="text-fg-muted">{t("common.created_at")}</dt>
+                    <dd>
+                      {new Date(existing.data.created_at).toLocaleString()}
+                      {existing.data.created_by && (
+                        <span className="text-fg-subtle">
+                          {" · "}
+                          {t("common.author")}:{" "}
+                          <span className="font-mono">{existing.data.created_by}</span>
+                        </span>
+                      )}
+                    </dd>
+                  </div>
+                  {existing.data.updated_at !== existing.data.created_at && (
+                    <div className="grid grid-cols-[96px_1fr] gap-3 py-2.5 first:pt-0 last:pb-0">
+                      <dt className="text-fg-muted">{t("common.updated_at")}</dt>
+                      <dd>
+                        {new Date(existing.data.updated_at).toLocaleString()}
+                        {existing.data.updated_by && (
+                          <span className="text-fg-subtle">
+                            {" · "}
+                            {t("common.author")}:{" "}
+                            <span className="font-mono">{existing.data.updated_by}</span>
+                          </span>
+                        )}
+                      </dd>
+                    </div>
+                  )}
+                </>
+              )}
+            </dl>
+          </Card>
+          {form.url_mode === "from_request" && allowlistEmpty && (
             <Hint tone="danger" icon={<ShieldAlert className="h-4 w-4" />}>
               {t("node.form.ssrf_warn")}
             </Hint>

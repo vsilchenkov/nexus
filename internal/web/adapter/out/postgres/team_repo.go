@@ -197,7 +197,7 @@ func (r *TeamRepoPg) UpdateMemberRole(ctx context.Context, userID, teamID string
 // INNER JOIN: висячих membership без users быть не может (FK на user_teams).
 func (r *TeamRepoPg) ListMembers(ctx context.Context, teamID string) ([]*domain.TeamMember, error) {
 	rows, err := r.pool.Query(ctx, `
-SELECT ut.user_id, ut.team_id, u.login, COALESCE(u.email, ''), ut.role, ut.created_at
+SELECT ut.user_id, ut.team_id, u.login, u.name, COALESCE(u.email, ''), ut.role, ut.created_at
 FROM user_teams ut
 JOIN users u ON u.id = ut.user_id
 WHERE ut.team_id = $1::uuid
@@ -210,7 +210,7 @@ ORDER BY ut.created_at`, teamID)
 	for rows.Next() {
 		var m domain.TeamMember
 		var role string
-		if err := rows.Scan(&m.UserID, &m.TeamID, &m.Login, &m.Email, &role, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.UserID, &m.TeamID, &m.Login, &m.Name, &m.Email, &role, &m.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan team member: %w", err)
 		}
 		m.Role = domain.TeamRole(role)

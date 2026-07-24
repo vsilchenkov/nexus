@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { api } from "../../api/client";
 import { useConfirm } from "../../lib/confirm";
+import { MY_TEAMS_KEY } from "../../lib/teams";
 
 // Multi-tenancy v2 (§16 ТЗ, Phase 10.F.2): admin создаёт команды, добавляет
 // в них пользователей. Каждой команде соответствует своя CH-БД nexus_<slug>.
@@ -21,6 +22,8 @@ type TeamMember = {
   user_id: string;
   team_id: string;
   login: string;
+  // §66: отображаемое имя — показывается вместо логина.
+  name?: string;
   email?: string;
   role: "owner" | "admin" | "member";
   created_at: string;
@@ -29,6 +32,7 @@ type TeamMember = {
 type User = {
   id: string;
   login: string;
+  name?: string;
   email: string;
 };
 
@@ -53,6 +57,9 @@ export function TeamsPanel() {
     onSuccess: () => {
       setDelError(null);
       qc.invalidateQueries({ queryKey: ["teams"] });
+      // Дропдаун в шапке читает ["me-teams"] (/api/me/teams) — без этой
+      // инвалидации удалённая команда «висит» в переключателе до F5.
+      qc.invalidateQueries({ queryKey: MY_TEAMS_KEY });
     },
     // П17: команду с узлами удалить нельзя (409) — показываем понятную ошибку.
     onError: (err: { response?: { data?: { error?: string } } }) =>
@@ -161,6 +168,10 @@ export function TeamsPanel() {
           onSaved={() => {
             setEditing(null);
             qc.invalidateQueries({ queryKey: ["teams"] });
+            // Создатель команды добавляется в неё owner'ом на бэкенде — новая
+            // команда обязана сразу появиться в переключателе шапки, который
+            // читает ["me-teams"]; без инвалидации она видна только после F5.
+            qc.invalidateQueries({ queryKey: MY_TEAMS_KEY });
           }}
         />
       )}
@@ -306,25 +317,33 @@ function MembersDialog({ team, onClose }: MembersDialogProps) {
   const [newUserID, setNewUserID] = useState<string>("");
   const [newRole, setNewRole] = useState<"owner" | "admin" | "member">("member");
 
+  // После правки состава/ролей перечитываем и собственные членства ["me-teams"]:
+  // админ мог добавить/убрать/переролить СЕБЯ — переключатель шапки обязан
+  // отразить это без F5 (тот же класс бага, что и создание команды).
+  const invalidateMembers = () => {
+    qc.invalidateQueries({ queryKey: ["team-members", team.id] });
+    qc.invalidateQueries({ queryKey: MY_TEAMS_KEY });
+  };
+
   const add = useMutation({
     mutationFn: () =>
       api.post(`/api/teams/${team.id}/members`, { user_id: newUserID, role: newRole }),
     onSuccess: () => {
       setNewUserID("");
-      qc.invalidateQueries({ queryKey: ["team-members", team.id] });
+      invalidateMembers();
     },
   });
 
   const remove = useMutation({
     mutationFn: (userID: string) =>
       api.del(`/api/teams/${team.id}/members/${userID}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["team-members", team.id] }),
+    onSuccess: invalidateMembers,
   });
 
   const updateRole = useMutation({
     mutationFn: ({ userID, role }: { userID: string; role: TeamMember["role"] }) =>
       api.put(`/api/teams/${team.id}/members/${userID}`, { role }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["team-members", team.id] }),
+    onSuccess: invalidateMembers,
   });
 
   // Список пользователей, которые ЕЩЁ не члены команды (для select).
@@ -354,9 +373,10 @@ function MembersDialog({ team, onClose }: MembersDialogProps) {
               className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none"
             >
               <option value="">{t("settings.teams.members.pick_user")}</option>
+              {/* §66: имя — основное; логин в скобках, чтобы различать тёзок. */}
               {candidates.map((u) => (
                 <option key={u.id} value={u.id}>
-                  {u.login}
+                  {u.name ? `${u.name} (${u.login})` : u.login}
                 </option>
               ))}
             </select>
@@ -405,10 +425,12 @@ function MembersDialog({ team, onClose }: MembersDialogProps) {
               {members.data.items.map((m) => (
                 <tr key={m.user_id} className="border-t border-bg-muted">
                   <td className="px-3 py-2">
-                    <div className="font-mono text-xs">{m.login || m.user_id}</div>
-                    {m.email && (
-                      <div className="text-fg-muted text-[11px]">{m.email}</div>
-                    )}
+                    {/* §66: имя — основное, логин — вторичной строкой. */}
+                    <div className="text-sm">{m.name || m.login || m.user_id}</div>
+                    <div className="text-fg-muted text-[11px] font-mono">
+                      {m.login}
+                      {m.email && <span className="font-sans"> · {m.email}</span>}
+                    </div>
                   </td>
                   <td className="px-3 py-2">
                     <select
@@ -451,6 +473,8 @@ function MembersDialog({ team, onClose }: MembersDialogProps) {
   );
 }
 
+// Закрытие ТОЛЬКО явным действием (Esc / «Отмена», §21): клик по подложке не
+// закрывает — случайный клик мимо окна терял введённые данные формы.
 function Modal({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -461,14 +485,8 @@ function Modal({ onClose, children }: { onClose: () => void; children: React.Rea
   }, [onClose]);
 
   return (
-    <div
-      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="bg-bg-elev rounded-xl border border-bg-muted p-5 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-bg-elev rounded-xl border border-bg-muted p-5 shadow-xl">
         {children}
       </div>
     </div>

@@ -364,6 +364,10 @@
 | **§62: глобальный поиск узлов + история поиска** | ✅ §62 | ТЗ [62-global-node-search.md](sections/62-global-node-search.md), ветка `feature/global-node-search`. **62.1 (история, PG):** миграция [0025_user_search_history](../migrations/0025_user_search_history.up.sql) (per-user, `PK (user_id, query)`, FK на `users` ON DELETE CASCADE, `CHECK` длины 1..200); порт [search_history_repo.go](../internal/web/usecase/port/search_history_repo.go) (малый ISP, образец §49 `FavoriteTeamRepo`), импл на `UserRepoPg` ([user_search_history.go](../internal/web/adapter/out/postgres/user_search_history.go)) — `SaveSearchQuery` = upsert (`ON CONFLICT DO UPDATE searched_at`) + обрезка до keep свежих в одной транзакции; integration [search_history_repo_test.go](../tests/integration/search_history_repo_test.go) (upsert/cap 10/изоляция per-user/clear/каскад). **62.2 (usecase+API истории):** `AuthUsecase.WithSearchHistory` + `SearchHistory`/`RecordSearch`/`ClearSearchHistory` ([auth.go](../internal/web/usecase/auth.go)) — чтение никогда не ошибка (деградация в `[]`, как `FavoriteTeamIDs`), запись нормализует (trim, границы 2..200 рун) и молча отсеивает мусор (no-op, не ошибка); handlers ([auth_handler.go](../internal/web/adapter/in/http/auth_handler.go)) + маршруты `GET/POST/DELETE /api/me/search-history` (`RequireSessionOnly`, `user_id` из сессии, [routes.go](../internal/web/adapter/in/http/routes.go)); wiring [app.go](../internal/web/app.go); unit [auth_search_history_test.go](../internal/web/usecase/auth_search_history_test.go). **62.3 (кросс-командный поиск):** `ListNodesFilter.TeamIDs` → `NodeRepo.List` фильтрует `team_id = ANY($1)` при непустом наборе (интерфейс `NodeRepo` не меняется — стабы целы), [port/node_repo.go](../internal/web/usecase/port/node_repo.go)/[node_repo.go](../internal/web/adapter/out/postgres/node_repo.go); `NodeUsecase.SearchAcrossTeams` ([node.go](../internal/web/usecase/node.go)) — обход членств (как §58 `ResolveTeam`), ILIKE по `path`/`target_url`, обогащение имён команд из `ListUserTeams` (без лишних запросов), лимит 20/max 50, `q < 2` рун → пусто; handler + DTO `NodeSearchItem` ([node_handler.go](../internal/web/adapter/in/http/node_handler.go)), маршрут `GET /api/search/nodes` (`RequireSessionOnly`; отдельный префикс из-за конфликта static-сегмента с wildcard `:id` в gin); unit [node_search_test.go](../internal/web/usecase/node_search_test.go) + integration [node_search_test.go](../tests/integration/node_search_test.go) (A/B/C, член A+B → только A+B, ILIKE по path и target_url, лимит). **62.4 (GlobalSearch):** [lib/searchHistory.ts](../web-ui/src/lib/searchHistory.ts) (хуки истории/поиска + persistence `q` в `sessionStorage` `nexus.globalsearch.q`); [GlobalSearch.tsx](../web-ui/src/components/GlobalSearch.tsx) (поле в шапке — cmdk-в-popover через `PopoverAnchor`, debounce 300мс, история при пустом вводе / результаты с бейджем команды; выбор → `navigate(/nodes/:id)`, команду переключает `useEnsureNodeTeam` §58; `q` не очищается; хоткей `/` или `Ctrl/⌘+K`); врезка в [Topbar.tsx](../web-ui/src/components/Topbar.tsx); `node-search`/`search-history` в `TEAM_INDEPENDENT_KEYS` ([teams.ts](../web-ui/src/lib/teams.ts)); i18n namespace `search` (en/ru). **62.5 (история в поле Overview):** [SearchHistoryList.tsx](../web-ui/src/components/SearchHistoryList.tsx) (простые кнопки, общий источник с шапкой), поле «Поиск» обёрнуто в `Popover`/`PopoverAnchor` ([Overview.tsx](../web-ui/src/pages/Overview.tsx)) — открытие по фокусу при непустой истории, выбор → `setSearchInput` (debounce §54 коммитит в URL, `saveFilters`→`setParams` не тронут); запись по Enter и blur непустого (`pickingHistory` гасит запись на blur при клике по пункту). Неочевидности — §4.40. Swagger перегенерирован; бандл пересобран → `internal/web/static/`. Гейты `-race`/`make test-integration`/браузерный стенд — финальный прогон |
 | **§63: автор создания и последнего изменения узла** | ✅ §63 | ТЗ [63-node-author.md](sections/63-node-author.md), ветка `feature/global-node-search`. **63.1 (модель+repo):** миграция [0026_node_author](../migrations/0026_node_author.up.sql) — колонки `nodes.created_by`/`updated_by` (`VARCHAR(255) NOT NULL DEFAULT ''`, образец `node_allowed_hosts.created_by`, без FK/джойна); поля `domain.Node.CreatedBy`/`UpdatedBy`; [node_repo.go](../internal/web/adapter/out/postgres/node_repo.go) — `nodeColumns`/`scan`/`Create` INSERT/`Update` SET (+ `updated_by = $50`), сигнатура `UpdateAllowedHostsSnapshot` расширена `updatedBy` (**интерфейсная правка** `port.NodeRepo` → 5 тестовых стабов). Проброс `Actor.UserLogin` во всех путях: `Create`→`created_by`, `Update`/`SetStatus`/`Move`→`updated_by`, `Copy`→клон.`created_by`=копировщик ([node.go](../internal/web/usecase/node.go), [node_copy.go](../internal/web/usecase/node_copy.go): `cloneNodeForCopy` сбрасывает автора источника), allowlist-snapshot ([host_allowlist.go](../internal/web/usecase/host_allowlist.go) `mutateLink`). Integration [node_author_test.go](../tests/integration/node_author_test.go) (create/update/status/copy) + unit [node_author_test.go](../internal/web/usecase/node_author_test.go). **63.2 (API):** `created_by`/`updated_by` в `NodeResponse` + `nodeToResponse` ([dto.go](../internal/web/adapter/in/http/dto.go)); swagger. **63.3 (UI):** тип `Node.created_by`/`updated_by` ([client.ts](../web-ui/src/api/client.ts)); [ConfigTab.tsx](../web-ui/src/components/node/ConfigTab.tsx) — строка «Создано» (всегда) + «Обновлено» (только `updated_at !== created_at`), хелпер `DateWithAuthor`, автор моно, пустой автор → подпись «Автор» не выводится (только дата); i18n `common.created_at`/`common.author` (ru/en). Неочевидности — §4.41. Бандл пересобран → `internal/web/static/`. Гейты `-race`/`make test-integration`/браузерный стенд — финальный прогон |
 | **§64: ручная (внешняя) таблица логов ClickHouse** | ✅ §64 | ТЗ [64-manual-external-table.md](sections/64-manual-external-table.md), ветка `feature/manual-external-table`. Сценарий «Nexus как фронт логирования»: в CH-таблицу пишет посторонний сервис, Nexus только читает. **64.1 (модель):** миграция [0027_node_external_table](../migrations/0027_node_external_table.up.sql) — колонка `nodes.external_table` (`BOOLEAN NOT NULL DEFAULT false`) + разовый UPDATE, проставляющий дефолтный шаблон legacy-узлам с пустым `clickhouse_template_id` (иначе смена семантики молча выключила бы им retention; down не реверсит — до-миграционное состояние невосстановимо); поле `domain.Node.ExternalTable` + валидация несовместимости с `ClickHouseTemplateID` (`ErrNodeExternalTableTemplateConflict` → i18n `node.validation.external_table_conflict`), `ErrNodeExternalTable` для операций управления таблицей; [node_repo.go](../internal/web/adapter/out/postgres/node_repo.go) (`nodeColumns`/`scan`/INSERT/UPDATE), `external_table` в `CreateNodeRequest`/`NodeResponse` ([dto.go](../internal/web/adapter/in/http/dto.go)) и в `diffNodes` (аудит). Копия узла наследует флаг (`clone := *src`) — тест `TestNodeUC_Copy_KeepsExternalTable`. **64.2 (гейты, 4 точки):** `provisionTable` ([node.go](../internal/web/usecase/node.go)) — ранний no-op + Debug (кроет Create/Update/Copy/Move); **перенос узла НЕ ребейзит имя внешней таблицы** — новый хелпер `targetCHTable` вместо `rebaseCHTable` в `Move` и `MovePreview` (ребейз увёл бы узел на несуществующее имя в БД целевой команды, а таблица осталась бы без читателя; red-green проверен); `AND NOT external_table` в трёх SQL — `ListClickHouseTables` Sender'а и Web'а (стартовые ALTER'ы/backfill) и `ListForHousekeeping` ([nodepg/reader.go](../internal/sender/adapter/out/nodepg/reader.go), [node_repo.go](../internal/web/adapter/out/postgres/node_repo.go)); фильтр на уровне УЗЛА, а не таблицы — общая таблица остаётся под управлением, если на неё ссылается хотя бы один не-внешний узел; §56 `plan()` ([ch_schema_sync.go](../internal/web/usecase/ch_schema_sync.go)) → `ErrNodeExternalTable` → 409 `ch_sync.external_table_forbidden` ([ch_schema_handler.go](../internal/web/adapter/in/http/ch_schema_handler.go)). Тесты: `TestNodeUC_{Create,Update}_ExternalTable_SkipsProvision`, `TestNodeUC_Move_ExternalTable`, `TestCHSchemaSync_ExternalTable_Rejected` (все красные с отключённым гейтом), integration `TestNodeRepo_ListClickHouseTables_AllTeams_E2E` дополнен внешним узлом и смешанной таблицей. **64.3 (дефолт лимита тела):** конфиг-ключ `web.node_default_max_body_size` (дефолт 50000, валидация 1..10⁷ — те же границы, что у `domain.Node.MaxBodySize`, иначе форма подставила бы непроходящее значение) — [config.go](../internal/platform/config/config.go)/[defaults.go](../internal/platform/config/defaults.go)/[validate.go](../internal/platform/config/validate.go) + `config.example.yml`/`config_debug.yml`. Фронту отдаётся через УЖЕ существующий `GET /api/settings/public` (`node_default_max_body_size` в `PublicSettingsResponse`, [app_settings_handler.go](../internal/web/adapter/in/http/app_settings_handler.go)): эндпоинт авторизованный, фронт кэширует его под team-независимым ключом `public-settings` — новый роут не понадобился. Значение из конфига, а не из `app_settings`: это параметр развёртывания, а не переключатель UI. Тест `TestAppSettingsHandler_GetPublic_NodeDefaultMaxBodySize` (значение 12345 ≠ дефолта — ловит захардкоженное). **64.4 (кнопка «Проверить»):** `POST /api/ch-tables/verify` `{table}` (manager+, `RequireSessionOnly`) — по ИМЕНИ таблицы, а не по id узла, чтобы кнопка работала в форме ещё не сохранённого узла. Чистое ядро — [domain/ch_log_verify.go](../internal/domain/ch_log_verify.go) `VerifyLogTableColumns` против `RequiredLogColumns`: **лишние колонки допускаются** (INSERT/SELECT перечисляют колонки явно, чужие поля писателя не мешают), нормализация типов убирает пробелы и параметр таймзоны `DateTime('UTC')`→`DateTime` (бинарно совместимы), а `Nullable(...)`/`LowCardinality(...)`/`DateTime64` — честное расхождение с показом want/got. Новый метод адаптера `ReadTableColumns` (`system.columns` + `type`, отдельно от `ReadTableSchema` §56, которому нужны CODEC/индексы/TTL) — [ch_schema_inspector.go](../internal/web/adapter/out/clickhouse/ch_schema_inspector.go); usecase [ch_table_verify.go](../internal/web/usecase/ch_table_verify.go) с узким consumer-side интерфейсом `tableColumnsReader` (порт §56 не расширяли — ISP). Отсутствие таблицы и расхождения — **200 с `ok=false`**, а не ошибка запроса; 400 на кривое имя (до ClickHouse не доходит), 503 без CH. Wiring: инспектор создаётся один раз и отдаётся обоим usecase; ветка `else` передаёт явный nil — **typed-nil дал бы панику вместо 503**. Тесты: 10 табличных кейсов домена, 5 unit'ов usecase, integration `TestCHTableVerify_E2E` (6 сценариев на реальном CH, включая таблицу в чужой БД). **64.5 (UI):** [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx) — три дефолта формы СОЗДАНИЯ подставляются асинхронно (шаблон `is_default`, редактируемый префикс `<ch_database>.` из [useCurrentTeamCHDatabase](../web-ui/src/lib/teams.ts), включённый лимит тела из [useNodeFormDefaults](../web-ui/src/lib/nodeDefaults.ts)), каждый через guard-ref «один раз и только пока поле в исходном значении» — **медленный ответ иначе затёр бы ввод оператора**; выбор шаблона снимает `external_table`, возврат к «(нет / ручная таблица)» ставит его обратно (типовой сценарий ручной таблицы — посторонний писатель); чекбокс «Внешняя таблица» виден только при пустом шаблоне; Retention скрывается при `external_table` (housekeeping для неё отключён — поле обещало бы несуществующее поведение); кнопка §56 дополнительно гейтится `!external_table`; кнопка «Проверить» у поля таблицы (mutation → `/api/ch-tables/verify`, результат сбрасывается при правке имени/шаблона). Текст результата — чистая [buildVerifyMessage](../web-ui/src/lib/chTableVerify.ts) (ошибка вызова важнее результата; missing и mismatched показываются вместе, тип как `got → want`). `external_table` добавлен в `chSyncFormDirty` (переключение галки — несохранённая CH-правка) и в клиентскую валидацию конфликта с шаблоном. i18n ru+en: `node.verify.*`, `node.fields.external_table`, `node.help.external_table`, `node.validation.external_table_conflict`, `ch_sync.external_table_forbidden`. Тесты: 7 кейсов `buildVerifyMessage`, +3 `nodeValidation`, +1 `chSyncFormDirty`; vitest 168 ✅, lint `--max-warnings=0` ✅. Бандл пересобран → `internal/web/static/` (старые хешированные ассеты удалены) |
+| **§65: команда узла на форме + представление «только имя»** | ✅ §65 | ТЗ [65-node-form-team-display.md](sections/65-node-form-team-display.md), ветка `feature/ui-team-display-and-fixes`. Форма узла ([NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx)) — read-only строка `Команда: <имя>` вверху правой колонки: правка — `useNodeTeam(id).team_name` (резолвер §58, ключ уже закеширован `useEnsureNodeTeam` — второго запроса нет), создание — имя текущей команды из `useMyTeams()`. Вкладка «Конфиг» ([ConfigTab.tsx](../web-ui/src/components/node/ConfigTab.tsx)) — только имя (убраны `(slug)` и UUID-фолбэк; недоступно → «—», фолбэк членства → резолвер §58). Ключ i18n `node.fields.team` существовал. Неочевидности — §4.45. Бандл пересобран |
+| **§66: отображаемое имя пользователя** | ✅ §66 | ТЗ [66-user-display-name.md](sections/66-user-display-name.md), ветка `feature/ui-team-display-and-fixes`. Миграция [0028_user_name](../migrations/0028_user_name.up.sql) (`users.name` + backfill `name = login`); `domain.User.Name`/`Session.Name` + `DisplayName()` (фолбэк логин); [user_repo.go](../internal/web/adapter/out/postgres/user_repo.go) (cols/scan/insert/update + ILIKE по name, страховка `COALESCE(NULLIF(name,''), login)`); `name` обязателен в create/update DTO ([user_handler.go](../internal/web/adapter/in/http/user_handler.go)), отдаётся в `userResponse`/`meResponse` ([auth_handler.go](../internal/web/adapter/in/http/auth_handler.go))/`teamMemberResponse` ([team_handler.go](../internal/web/adapter/in/http/team_handler.go), JOIN в [team_repo.go](../internal/web/adapter/out/postgres/team_repo.go)); `Actor.UserLogin = Session.DisplayName()` в `actorFromCtx`/`userActor` — снапшоты §63 и аудит пишутся именем (старые записи = логин = имени на момент миграции); след переименования в аудите (`name`+`prev_name`). UI: [Sidebar.tsx](../web-ui/src/components/Sidebar.tsx) (чип), [Users.tsx](../web-ui/src/pages/settings/Users.tsx) (имя основное + логин вторично, поле «Имя», toggleActive шлёт name — PUT без него 400), [Teams.tsx](../web-ui/src/pages/settings/Teams.tsx) (участники/кандидаты). Тесты: `TestSession_DisplayName`/`TestUser_DisplayName` (domain), `TestUserUC_Update_Rename_AuditTrail`. Неочевидности — §4.46. Swagger перегенерирован, бандл пересобран |
+| **§67: хост клиента в логах (reverse-DNS) + фильтр + счётчик «Всего»** | ✅ §67 | ТЗ [67-client-host-rdns.md](sections/67-client-host-rdns.md), ветка `feature/client-host-rdns`. **Колонка** `client_host String` **AFTER IP** в [RequiredLogColumns](../internal/domain/ch_log_schema.go) → CREATE новых таблиц/verify §64 автоматически; существующие — `EnsureClientHostColumn` §42.10 ([ensure_schema.go](../internal/platform/clickhouse/ensure_schema.go), вызовы в обоих app.go); insertSQL+Append писателя ([chlog/writer.go](../internal/sender/adapter/out/chlog/writer.go)), selectCols/listCols/previewCols+сканы читателя ([log_reader.go](../internal/web/adapter/out/clickhouse/log_reader.go)); clogwire прокидывает поле без правок (JSON по именам). **Резолвер** [platform/rdns](../internal/platform/rdns/resolver.go): порт `HostResolver` в sender/usecase (консьюмер-сайд, как CircuitBreaker) через functional option `WithHostResolver` — **45 колл-сайтов NewSendUsecase не тронуты**; `Lookup` = ноль I/O (L1 map+mutex, TTL ≤ 5 мин), промах → фон (safego + pending-дедуп + singleflight): Redis `nexus:rdns:<ip>` (`""` = негативный маркер, отличим от промаха по redis.Nil) → PTR-lookup с таймаутом → SET EX; fail-open всюду; `net.ParseIP` отсекает `rabbitmq://…` §27.10; `WithLookupFunc` — инъекция DNS для тестов. Сознательно НЕТ кросс-репличного дедупа и Prometheus-метрик (только Debug §51.9). Конфиг `sender.rdns` (Disabled-конвенция). DLQ `logTTLExpired` переиспользует резолвер через `r.send.hosts`. **Фильтр**: facet `GET /nodes/:id/logs/client-hosts` (копия Methods; кап 200), `LogQuery.ClientHost` в Search/Count/`matchLogFilter`; **`isMissingColumnErr`** (CH-коды 10/16/47 + имя колонки) — внешняя таблица §64 без колонки даёт пустой facet + Debug вместо 500/Sentry; **деплой-окно (грабля, поймана стендом):** первоначальное решение «List/Search не обрабатываем» давало ПОЛЛИНГ-флуд 500/Sentry раз в ~5с до ручного ALTER — исправлено в `classifyCHErr`: отсутствие ИМЕННО `client_host` трактуется как `ErrLogsBackendUnavailable` → штатный баннер «Логи временно недоступны» на всех read-путях (другие missing-column остаются 500 — DDL-поломки не маскируются); INSERT буферизуется в `nexus.logs.retry` §38; verify → Missing — integration-тест с проверкой позиции AFTER IP по `system.columns`; полный цикл владельца (баннер → ALTER → чтение восстановилось без рестартов) проверен на стенде. UI [LogClientHostFilter.tsx](../web-ui/src/components/node/LogClientHostFilter.tsx) + ряд 2 фильтров на flex («Дата с»/«Дата по» с метками, ширина по контенту, кнопки в том же ряду — эскиз утверждён). **Счётчик «Показано N из M»**: `searchConds` вынесен из Search — единственный источник WHERE для Search и нового `Count` (BeforeID игнорируется, `countTimeout=10s` → ErrLogsBackendUnavailable); `GET /nodes/:id/logs/count` (400 на плохой q, writeFacetError-деградации); UI — отдельный useQuery (queryKey списка + быстрые ok/err/done-фильтры), пересчёт со снапшотом, в Live скрыт, недоступен → прежнее «Показано N». DTO записи лога и колонка таблицы UI — сознательно НЕ добавлены. Swagger перегенерирован, бандл пересобран |
+| **§68: поддержка multipart/form-data** | ✅ §68 | ТЗ [68-multipart-form-data.md](sections/68-multipart-form-data.md), ветка `feature/multipart-form-data`. **Проброска (кода нет)** — тело шина везде несёт как непрозрачные `[]byte`, `Content-Type` c `boundary` пробрасывается дословно (sync gRPC, async JSON-конверт с base64-телом, RabbitMQAsync-puller, dry-run); зафиксировано матрицей §68.4 и тестами. **Размер (кода нет)** — `request_size`/`response_size` §42.10 уже по полному телу до усечения (вложения учтены). **68.1 (домен)** — [domain/multipart.go](../internal/domain/multipart.go): `IsMultipartMediaType` (`mime.ParseMediaType`+prefix), `MultipartLogPlaceholder(ct, body)` (первая строка media type, сводка частей потоково `io.Copy(io.Discard)` — имя/`filename`/тип/размер БЕЗ содержимого; потолки `multipartMaxListedParts=50`/`multipartScanCap=1000`; fallback при неразобранном теле, первой строкой ВСЕГДА валидный multipart media type — на него опирается детект), `IsMultipartLogPlaceholder` (структурный детект: 1-я строка multipart/*, 2-я начинается с `- part` или `[`); table-тесты + `FuzzMultipartLogPlaceholder`. **68.2 (Sender)** — [send.go](../internal/sender/usecase/send.go): приватный `logBodyCopy(kind, contentType, body, in)` — multipart → плейсхолдер (без `truncateRunes`, debug §51.9), иначе truncate как раньше; подключён к запросу (по `in.Headers`) и ответу (по `resp.Headers`, симметрия §68); `headerGet` — регистронезависимый lookup; checksum/размеры/тело к узлу/ответ клиенту не тронуты; гейты логирования сохранены; §38 Kafka-retry получает плейсхолдер автоматически (запечён в LogRecord). **Схема CH и миграции НЕ трогаются.** Тесты `send_test.go` (плейсхолдер+полный размер/checksum+проброска байт-в-байт; освобождение от `max_body_size`; `LogRequestBody=false`→пусто; lowercase заголовок; multipart-ответ; регресс не-multipart; `stubHTTPCaller` дополнен захватом тела). **68.3 (replay)** — [replay.go](../internal/web/usecase/replay.go) `ErrReplayBodyMultipart` + проверка в `replayOne` (nil-override + `IsMultipartLogPlaceholder` → отказ до диспатча); [replay_handler.go](../internal/web/adapter/in/http/replay_handler.go) → 422 `replay.multipart_unavailable`; [i18n.go](../internal/platform/i18n/i18n.go) en+ru; ручной `BodyOverride` разрешён; тесты блокировка/override. **68.4 (UI)** — [ReplayDialog.tsx](../web-ui/src/components/ReplayDialog.tsx): TS-зеркало детекта → warn-подсказка `replay.multipart_warning` (en+ru) + дизейбл кнопки пока тело пусто; бандл пересобран → `internal/web/static/`. **Решения:** multipart освобождён от `max_body_size` (тело в CH не хранится; действуют транспортные капы `receiver.max_body_bytes` 5 МиБ / Kafka ~10 МиБ base64 +33%); правило симметрично для ответов `multipart/*`. **Ограничение:** записи до §68 (сырое тело) детект не ловит. Неочевидности — §4.49. Гейты `-race`/`make test-integration`/браузерный стенд — финальный прогон |
 | UI формы: Toggle, карточки «Заголовки» / «Логирование» | ✅ Phase 22.3 | [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx) (две карточки, мастер-тумблер гасит `<fieldset disabled>`), компонент [Toggle](../web-ui/src/components/ui/pickers.tsx), i18n ru/en |
 | Telegram-алерты через Prometheus + метрика `nexus_request_incomplete_total` | ✅ Phase 22.4 | [notification.go](../internal/web/usecase/notification.go) (`PromMetrics.NodeErrors` вместо `LogReader.CountErrors`), [metrics.go](../internal/platform/metrics/metrics.go), инкремент в [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go)/[async.go](../internal/sender/usecase/async.go), wiring [app.go](../internal/web/app.go) (требует Prometheus) |
 | Карточки Overview под `ui_cards.html` (спарклайн, p95, фильтр) | ✅ Phase 22.5 | [Overview.tsx](../web-ui/src/pages/Overview.tsx) (полоса-акцент, chip+pill, 3 метрики, спарклайн, target, фильтр статусов, сортировка); backend [prometheus/client.go](../internal/web/adapter/out/prometheus/client.go) (`NodeSeries` range-запрос + p95 в `NodeThroughput`), [metrics.go](../internal/web/usecase/metrics.go), DTO [metrics_handler.go](../internal/web/adapter/in/http/metrics_handler.go) |
@@ -3300,3 +3304,190 @@ vitest во фронте (было 3 теста без CI-запуска → +2 
   лимит тела приходят из трёх асинхронных источников (список шаблонов, членства, публичные настройки).
   Без «применить один раз и только пока поле в исходном значении» медленный ответ затирал бы то, что
   оператор уже успел ввести.
+
+### 4.43 Basic-auth узла: расследование «правильный пароль не подходит»
+
+Жалоба пользователя «не мог ввести правильный пароль» разобрана по всей цепочке + прогнана матрица
+из 13 сценариев на живом стенде (скрипт-матрица: создание узлов с incoming/outgoing basic через API,
+вызовы через единый вход с разными Authorization). **Бэкенд корректен байт-в-байт**: спецсимволы,
+двоеточия в пароле, literal `***`, «пустой пароль при правке = оставить старый», исходящий заголовок
+дословно — всё работает (`CredentialsMask` в dto.go — мёртвая константа, для узлов маскирования
+`***` НЕТ, контракт «оставить старые» = пустая строка).
+
+Реальные причины — на уровне браузера/формы, все закрыты в UI:
+
+- **Автозаполнение браузера (главный подозреваемый).** `SecretInput` и логин-инпуты basic-блоков не
+  имели `autoComplete` — менеджер паролей мог молча подставить креды пользователя в пустое поле
+  «пароль» (= «оставить старый» при правке), и сохранение затирало рабочий пароль узла. Фикс:
+  `SecretInput` теперь по умолчанию `autoComplete="new-password"` (переопределяемо), логин-инпуты —
+  `autoComplete="off"` ([SecretInput.tsx](../web-ui/src/components/ui/SecretInput.tsx),
+  [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx)).
+- **Пробел по краям из copy-paste.** Сервер НЕ триммит и сравнивает байты
+  (`subtle.ConstantTimeCompare`, [auth.go](../internal/receiver/usecase/auth.go)) — это осознанный
+  контракт (пароль с пробелом внутри легален). Стенд подтвердил: пароль с хвостовым пробелом
+  сохраняется и «тот же» пароль без пробела получает 401. Фикс: клиентская валидация блокирует
+  ведущие/хвостовые пробелы в логине и пароле basic
+  ([nodeValidation.ts](../web-ui/src/lib/nodeValidation.ts) `basicCredsError`, коды
+  `login_whitespace`/`password_whitespace`).
+- **Пароль без логина** склеивался в `":password"` (логин молча терялся — актуально для
+  legacy-кред без `:`, где `auth_login` префиллится пустым). Фикс: код
+  `login_required_with_password` в той же валидации.
+
+### 4.44 Team-scoped ключи react-query ОБЯЗАНЫ содержать teamId (алиасинг кеша)
+
+Жалоба «стёр поле поиска — узлы открылись не той команды». Корень: `Overview` держал
+`queryKey: ["nodes", search]` **без id команды**, а сервер фильтрует `/api/nodes` по команде
+СЕССИИ — один и тот же ключ (`["nodes",""]`) хранил список «какой команды он был при последнем
+запросе». Сценарий: глобальный поиск §62 → выбор узла чужой команды → `useEnsureNodeTeam`
+переключает сессию → возврат на Overview (фильтр `?q=` жив по §54) → очистка поиска → ключ меняется
+на `["nodes",""]` → react-query **мгновенно отдаёт закешированный список прежней команды**
+(stale-while-revalidate). `invalidateTeamScoped` тут не спасает: он лишь помечает stale, а от
+алиасинга записей разных команд в один слот не защищает.
+
+Фикс: хук `useCurrentTeamID()` ([lib/teams.ts](../web-ui/src/lib/teams.ts)) + teamId в ключах
+`["nodes", teamId, search]`, `["metrics-overview", teamId]`, `["metrics-nodes", teamId, period]`
+([Overview.tsx](../web-ui/src/pages/Overview.tsx)) и `["audit", teamId, filter]`
+([AuditLog.tsx](../web-ui/src/pages/AuditLog.tsx)) — единственные team-scoped ключи без
+node-id-компонента. `enabled: teamId !== ""` — пока членства не загрузились, запрос не шлётся
+(иначе ответ лёг бы под пустой teamId и алиасился). Префиксные инвалидации `["nodes"]` работают
+как раньше. **Правило на будущее: ключ эндпоинта, фильтруемого по команде сессии, обязан включать
+teamId** (node-scoped ключи вида `["logs", id, ...]` не алиасятся — узел живёт в одной команде).
+
+Смежный фикс из той же сессии: админ-страница «Команды» инвалидировала после create/delete только
+`["teams"]`, а переключатель шапки читает `["me-teams"]` (`MY_TEAMS_KEY`) — новая команда (создатель
+добавляется owner'ом на бэке, `team.go`) не появлялась в дропдауне до F5. Теперь create/delete и
+операции с участниками (админ мог добавить/убрать/переролить себя) инвалидируют оба ключа
+([settings/Teams.tsx](../web-ui/src/pages/settings/Teams.tsx)).
+
+### 4.45 §65 — команда узла на форме и вкладке «Конфиг»: только имя
+
+Форма узла ([NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx)) показывает **отдельную
+карточку** в правой колонке под «Предпросмотром маршрута» (итог трёх итераций фидбэка: блок над
+карточкой опускал предпросмотр, строка/низ внутри карточки — сливались с ней) со строками в
+формате «Конфига» (лейбл слева, разделители, 13px): «Команда» + для сохранённого узла даты §63
+(«Создано» всегда, «Обновлено» только при `updated_at ≠ created_at`, пустой автор не выводится;
+на форме создания дат нет — узла ещё нет). Источники разные по режиму: правка —
+`useNodeTeam(id).team_name` (резолвер §58; ключ `["node-team", id]` уже закеширован
+`useEnsureNodeTeam`, второго запроса нет), создание — имя текущей команды сессии из `useMyTeams()`
+(узел будет создан именно в ней). Вкладка «Конфиг»
+([ConfigTab.tsx](../web-ui/src/components/node/ConfigTab.tsx)) приведена к тому же формату: **только
+имя** — убраны `(slug)` и фолбэк на UUID (сырой идентификатор в UI не показываем; имя недоступно →
+«—», с фолбэком членства → резолвер §58). ТЗ — [sections/65-*.md](sections/).
+
+### 4.46 §66 — отображаемое имя пользователя: снапшоты и фолбэки
+
+Миграция `0028_user_name`: колонка `users.name` + разовый backfill `name = login`. Обязательность —
+на API (`binding:"required"` в create/update DTO), в хранилище — страховочный
+`COALESCE(NULLIF(name,''), login)` (внутренние вызовы вроде bootstrap admin имени не передают).
+
+Неочевидности:
+
+- **Снапшоты автора пишутся именем, а не резолвятся на чтении.** `nodes.created_by/updated_by` и
+  `user_audit.user_login` — снапшоты строки; динамический резолв логин→имя невозможен для
+  не-админов (список пользователей admin-only) и ломается при удалении пользователя. Поэтому
+  `Actor.UserLogin` теперь заполняется `Session.DisplayName()` (имя, фолбэк логин) в `actorFromCtx`
+  и `userActor` — все существующие потребители (аудит, §63) получают имя без правок. Старые записи
+  остаются с логином — он равен имени на момент миграции, расхождения нет.
+- **Redis-сессии переживают деплой без поля Name.** JSON-десериализация даст `Name==""` →
+  `DisplayName()` фолбэчит на `Login` до следующего входа. Аналогично активная сессия
+  переименованного пользователя несёт старое имя до перелогина (осознанно — сессии из-за смены
+  подписи не рестартуем; след переименования есть в аудите: `name` + `prev_name`).
+- **`userActor` раньше вообще не заполнял `UserLogin`** — записи user-CRUD в аудите подписывались
+  "system". Попутно исправлено (теперь имя актёра).
+- **UI: имя — основное, логин — вторичное на админ-страницах.** Sidebar-чип и участники команд —
+  имя; таблица Settings → Users и select кандидатов — имя + логин рядом (логин = кредентиал, админ
+  обязан его видеть; тёзки различимы). `PUT /api/users` теперь требует `name` — не забыть его в
+  любом новом вызове (грабля: toggleActive слал PUT без name и получал бы 400).
+- Поиск пользователей ILIKE расширен на `name`. ТЗ — [sections/66-*.md](sections/).
+
+### 4.47 §21.5.1 — модалки не закрываются кликом по подложке
+
+Жалоба: диалоги создания команды/пользователя закрывались кликом в любое пустое место — введённые
+данные молча терялись. Radix Dialog в проекте нет; закрытие по оверлею жило ровно в **4 местах**
+(один общий атом + две локальные копии + один inline), исправлены все:
+[components/ui/Modal.tsx](../web-ui/src/components/ui/Modal.tsx) (накрывает 9 диалогов:
+DryRun/Replay/CopyNode/AllowedHosts/Headers/DeleteNode/MoveNode/CHSchemaSync/Confirm),
+локальные `Modal` в [settings/Users.tsx](../web-ui/src/pages/settings/Users.tsx) и
+[settings/Teams.tsx](../web-ui/src/pages/settings/Teams.tsx), inline-оверлей
+[OrphanTablesPanel.tsx](../web-ui/src/components/OrphanTablesPanel.tsx) (у него не было и Esc —
+добавлен). Правило: закрытие ТОЛЬКО явным действием (Отмена/X/Esc), убраны `onClick={onClose}` с
+подложки и ставшие ненужными `stopPropagation`. Radix Popover (дропдауны/меню/поиск) не трогали —
+там закрытие по клику мимо ожидаемо. При добавлении нового диалога подложке `onClick` не давать
+(ТЗ §21.5.1).
+
+### 4.48 Валидация полей «Логирования» гейтится по LoggingEnabled (черновик имени таблицы)
+
+Жалоба: при ВЫКЛЮЧЕННОМ тумблере «Логирование включено» форма отвергала сохранение из-за
+недозаполненного имени таблицы (дефолтный префикс `nexus_x.` формы создания §64) — а поля карточки
+при выключенном тумблере задизейблены (`<fieldset disabled>`), исправить их нельзя, не включив
+логи. Любая блокирующая ошибка по задизейбленному полю — ловушка.
+
+Фикс — согласованно на трёх уровнях:
+
+- **domain.Node.Validate**: формат `ClickHouseTable` (§42) и `MaxBodySizeEnabled && MaxBodySize<=0`
+  теперь проверяются только при `LoggingEnabled` ([node.go](../internal/domain/node.go)).
+  Недозаполненное имя у узла с выключенными логами — **черновик**: хранится, но не используется;
+  при включении логов валидация снова потребует корректное имя. Диапазон MaxBodySize (0..10M) и
+  конфликт §64 external+template проверяются по-прежнему всегда.
+- **Черновик не должен дойти до CH**: `provisionTable` рано выходит на невалидном имени (иначе
+  CREATE по шаблону — он выполняется и при выключенном логировании — упал бы и завалил сохранение,
+  [node.go](../internal/web/usecase/node.go)); `ListClickHouseTables` обоих сервисов и
+  `ListForHousekeeping` фильтруют невалидные имена через `domain.IsValidCHTableName`
+  ([node_repo.go](../internal/web/adapter/out/postgres/node_repo.go),
+  [nodepg/reader.go](../internal/sender/adapter/out/nodepg/reader.go)) — стартовые ALTER'ы и
+  housekeeping черновики не трогают. Read-слой и так отсеивает их мягко (§43.1).
+- **Клиент** ([nodeValidation.ts](../web-ui/src/lib/nodeValidation.ts)): те же две проверки под
+  гейтом `logging_enabled` (новое поле `NodeFormLimits`).
+
+Тесты: `TestNode_Validate_ClickHouseTableFormat` (кривые имена при logging on → ошибка, при off →
+ок), `TestNode_Validate_MaxBodySizeRequired_GatedByLogging`,
+`TestNodeUC_Create_InvalidTableDraft_SkipsProvision` (шаблон + черновик → CreateTable не зовётся),
+vitest-кейсы nodeValidation.
+
+**Follow-up (метрики не были под §43.1-гейтом).** Утверждение «read-слой отсеивает черновики
+мягко» было неполным: `IsValidCHTableName` стоял только в `resolveNode` логов
+([logs.go](../internal/web/usecase/logs.go)), а метрики дашборда шли мимо. Симптом на стенде:
+узел с выключенными логами и черновичным именем (`nexus_default.`) давал
+`WRN nodes overview: node kpi failed ... invalid table name` на **каждом** поллинге
+`/api/metrics/nodes`. Фикс: тот же гейт в `nodesOverviewCH` и `NodeMetrics`
+([metrics.go](../internal/web/usecase/metrics.go)) — деградация до нулей с Debug-строкой
+(§51.9) вместо WRN-флуда. `PurgeFailed`/replay не трогали: это разовые действия по кнопке,
+явная ошибка там уместна. Тесты: `TestMetricsUsecase_NodesOverview` «draft table name → нули
+без CH-запроса», `TestMetricsUsecase_NodeMetrics` «draft table name → chart unavailable»
+(фейк возвращает ненулевой KPI — на старом коде тесты красные).
+
+### 4.49 §68 — multipart/form-data: плейсхолдер вместо тела, детект для replay
+
+Три пункта ТЗ решаются очень асимметрично по объёму кода, и это стоит помнить будущему агенту:
+
+- **Проброска (п.1) и учёт размера (п.2) уже работали.** Тело везде — непрозрачный `[]byte`,
+  `Content-Type` c `boundary` копируется дословно (sync/async/RMQ/dry-run), а `request_size`/
+  `response_size` (§42.10) считаются по полному телу в байтах ДО усечения лог-копии. Так что «сделать
+  проброску» и «учитывать вложение в размере» — это не написать код, а зафиксировать инвариант
+  тестами и матрицей §68.4. Не ищите то, что менять, — там нечего.
+- **Единственная содержательная правка (п.3) — подмена лог-копии в `SendUsecase.Send`.** Это точка,
+  где строится `LogRecord`, поэтому подмена автоматически покрывает и CH INSERT, и Kafka-retry §38
+  (он сериализует уже готовый `LogRecord`). Делать подмену в ресивере/адаптере было бы неверно —
+  тело там ещё нужно для внешнего вызова.
+- **«Освобождение от `max_body_size`» — это ОТСУТСТВИЕ вызова `truncateRunes`, а не новый флаг.**
+  Жёсткого reject'а по `max_body_size` в коде нет (§43 первую редакцию с 413/502 откатили — см.
+  историю в 43-body-size-hard-limit.md), лимит лишь режет лог-копию. Для multipart лог-копия — это
+  короткий плейсхолдер, его резать незачем. Транспортные капы (5 МиБ receiver, ~10 МиБ Kafka)
+  остаются и действуют на multipart тоже — по решению заказчика.
+- **Детект placeholder'а для replay — структурный, а не по флагу-колонке.** `IsMultipartLogPlaceholder`
+  проверяет, что 1-я строка — валидный multipart media type, а 2-я начинается с `- part`/`[`. Выбор
+  сделан ради «без миграций»: колонка-флаг «это плейсхолдер» была бы надёжнее, но требовала бы ALTER
+  всех таблиц. Цена — два известных зазора: (а) экзотическое `text/plain`-тело, имитирующее формат,
+  даст ложную 422 (последствие мягкое, ручной override разрешён); (б) **multipart-записи, сделанные
+  ДО §68 (сырое тело в CH), детект не ловит** — replay отправит сохранённые байты как раньше.
+- **Первая строка fallback'а обязана быть валидным multipart media type.** При неразобранном теле
+  (нет boundary / битый Content-Type) `MultipartLogPlaceholder` НЕ печатает сырой Content-Type первой
+  строкой — иначе `IsMultipartLogPlaceholder` не распознал бы собственный вывод, и replay такой
+  записи не заблокировался бы. Подставляется дефолт `multipart/form-data`. Есть отдельный тест.
+- **`headerGet` регистронезависим намеренно.** Все текущие пути кладут канонический `Content-Type`,
+  но полагаться на это хрупко (envelope/gRPC/RMQ могут прислать иначе) — детект не должен зависеть
+  от регистра ключа. `resp.Headers` из httpclient тоже проходит через `headerGet` для симметрии.
+- **TS-зеркало детекта в `ReplayDialog` — предупреждение, не защита.** Оно лишь показывает warn и
+  дизейблит кнопку заранее; авторитетно решает бэкенд (422). При расхождении зеркала с Go-детектом
+  максимум пропадёт подсказка — сервер всё равно отклонит. Держать в синхроне (комментарий-ссылка на
+  `domain/multipart.go` есть с обеих сторон).

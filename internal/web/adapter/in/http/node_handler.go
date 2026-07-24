@@ -138,10 +138,11 @@ func actorFromCtx(c *gin.Context) usecase.Actor {
 	if s, ok := sessionFromCtx(c); ok {
 		a.UserID = s.UserID
 		a.TeamID = s.CurrentTeamID
-		// Логин берём из сессии; на сессиях, созданных до добавления поля
-		// Login, он пуст — тогда оставляем "system" из SystemActor (graceful).
-		if s.Login != "" {
-			a.UserLogin = s.Login
+		// §66: подпись автора — отображаемое имя (DisplayName фолбэчит на
+		// Login для сессий, созданных до ввода имени). На сессиях без обоих
+		// полей оставляем "system" из SystemActor (graceful).
+		if dn := s.DisplayName(); dn != "" {
+			a.UserLogin = dn
 		}
 	}
 	return a

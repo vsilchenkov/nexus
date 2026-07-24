@@ -32,8 +32,8 @@ func TestDefaultCHTemplateSpec_SeedJSON(t *testing.T) {
 }
 
 // TestRequiredLogColumns_MatchSpec фиксирует обязательную схему
-// §4.3/§37/§39/§42-доп: 24 колонки в точном порядке и с точными типами. Если
-// кто-то поменяет RequiredLogColumns, разойдясь с
+// §4.3/§37/§39/§42-доп/§67: 25 колонок в точном порядке и с точными типами.
+// Если кто-то поменяет RequiredLogColumns, разойдясь с
 // insertSQL/selectCols/createNodeLogTable — тест упадёт.
 func TestRequiredLogColumns_MatchSpec(t *testing.T) {
 	want := []CHLogColumn{
@@ -44,6 +44,7 @@ func TestRequiredLogColumns_MatchSpec(t *testing.T) {
 		{"date_request", "DateTime"}, {"date_response", "DateTime"}, {"duration", "Int32"},
 		{"done", "UInt8"}, {"checksum_request", "FixedString(32)"},
 		{"checksum_response", "FixedString(32)"}, {"Host", "String"}, {"IP", "String"},
+		{"client_host", "String"},
 		{"attempts", "Int32"}, {"attempts_details", "String"}, {"node_id", "String"},
 		{"request_size", "Int64"}, {"response_size", "Int64"},
 	}
@@ -144,6 +145,7 @@ func TestCHTemplate_RenderCreateTable_Default(t *testing.T) {
     checksum_response FixedString(32),
     Host String,
     IP String,
+    client_host String,
     attempts Int32,
     attempts_details String,
     node_id String,

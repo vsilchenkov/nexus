@@ -64,6 +64,22 @@ func (u *LogsUsecase) Search(ctx context.Context, nodeID, teamID string, q port.
 	return u.logs.Search(ctx, q)
 }
 
+// CountLogs — точное число записей под теми же фильтрами, что и Search (§67,
+// счётчик «Показано N из M»). Тот же разбор Q и резолв узла — счётчик обязан
+// считать ровно то, что показывает список.
+func (u *LogsUsecase) CountLogs(ctx context.Context, nodeID, teamID string, q port.LogQuery) (uint64, error) {
+	if err := parseSearch(&q); err != nil {
+		return 0, err
+	}
+	n, err := u.resolveNode(ctx, nodeID, teamID)
+	if err != nil {
+		return 0, err
+	}
+	q.Table = n.ClickHouseTable
+	q.NodeID = n.ID
+	return u.logs.Count(ctx, q)
+}
+
 // parseSearch — разбор сырого Q (мини-язык §48.1 либо RE2 в regex-режиме
 // §48.2) в QExpr по флагам QCase/QWord/QRegex. Ошибка синтаксиса/regex —
 // logsearch.ErrBadQuery (handler мапит на HTTP 400). Пустое Q → фильтр
@@ -143,6 +159,17 @@ func (u *LogsUsecase) Methods(ctx context.Context, nodeID, teamID string) ([]str
 	return u.logs.DistinctMethods(ctx, n.ClickHouseTable, n.ID, 0)
 }
 
+// ClientHosts — уникальные значения колонки client_host узла (§67, фасет
+// дропдауна «Хост клиента»). Как Methods: лениво дёргается UI при открытии
+// списка. Таблица без колонки (§64) — пустой список (деградация в адаптере).
+func (u *LogsUsecase) ClientHosts(ctx context.Context, nodeID, teamID string) ([]string, error) {
+	n, err := u.resolveNode(ctx, nodeID, teamID)
+	if err != nil {
+		return nil, err
+	}
+	return u.logs.DistinctClientHosts(ctx, n.ClickHouseTable, n.ID, 0)
+}
+
 // DateRange — min/max date_request узла в UnixMilli (§48.3, ограничение полей
 // дат фильтра). (0, 0) — записей нет, ограничения не ставятся. teamID — scope.
 func (u *LogsUsecase) DateRange(ctx context.Context, nodeID, teamID string) (int64, int64, error) {
@@ -190,6 +217,9 @@ func matchLogFilter(r *domain.LogRecord, q port.LogQuery) bool {
 		return false
 	}
 	if q.Host != "" && r.Host != q.Host {
+		return false
+	}
+	if q.ClientHost != "" && r.ClientHost != q.ClientHost { // §67
 		return false
 	}
 	if q.Method != "" && r.Method != q.Method {

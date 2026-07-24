@@ -26,7 +26,9 @@ func NewUserHandler(uc *usecase.UserUsecase, auth *usecase.AuthUsecase, logger l
 }
 
 type createUserRequest struct {
-	Login              string `json:"login" binding:"required,min=1,max=255"`
+	Login string `json:"login" binding:"required,min=1,max=255"`
+	// Name — отображаемое имя (§66), обязательно.
+	Name               string `json:"name" binding:"required,min=1,max=255"`
 	Email              string `json:"email" binding:"omitempty,email,max=255"`
 	Password           string `json:"password" binding:"omitempty,min=8,max=128"`
 	Role               string `json:"role" binding:"required,oneof=admin viewer manager"`
@@ -36,6 +38,8 @@ type createUserRequest struct {
 }
 
 type updateUserRequest struct {
+	// Name — отображаемое имя (§66), обязательно и при обновлении.
+	Name               string `json:"name" binding:"required,min=1,max=255"`
 	Email              string `json:"email" binding:"omitempty,email,max=255"`
 	Role               string `json:"role" binding:"required,oneof=admin viewer manager"`
 	Active             bool   `json:"active"`
@@ -64,6 +68,7 @@ type userTeamBrief struct {
 type userResponse struct {
 	ID                 string          `json:"id"`
 	Login              string          `json:"login"`
+	Name               string          `json:"name"`
 	Email              string          `json:"email"`
 	Role               string          `json:"role"`
 	Active             bool            `json:"active"`
@@ -77,7 +82,7 @@ type userResponse struct {
 
 func toUserResp(u *domain.User) userResponse {
 	return userResponse{
-		ID: u.ID, Login: u.Login, Email: u.Email,
+		ID: u.ID, Login: u.Login, Name: u.Name, Email: u.Email,
 		Role: string(u.Role), Active: u.Active, Lang: string(u.Lang),
 		MustChangePassword: u.MustChangePassword, DefaultTeamID: u.DefaultTeamID,
 		CreatedAt: u.CreatedAt, LastLoginAt: u.LastLoginAt,
@@ -160,7 +165,7 @@ func (h *UserHandler) Create(c *gin.Context) {
 		return
 	}
 	u := &domain.User{
-		Login: req.Login, Email: req.Email,
+		Login: req.Login, Name: req.Name, Email: req.Email,
 		Role: domain.UserRole(req.Role), Active: req.Active,
 		Lang: domain.UserLang(req.Lang), MustChangePassword: req.MustChangePassword,
 	}
@@ -214,6 +219,7 @@ func (h *UserHandler) Update(c *gin.Context) {
 		return
 	}
 	updated := *old
+	updated.Name = req.Name
 	updated.Email = req.Email
 	updated.Role = domain.UserRole(req.Role)
 	updated.Active = req.Active
@@ -321,6 +327,11 @@ func userActor(c *gin.Context) usecase.Actor {
 	if s, ok := sessionFromCtx(c); ok {
 		a.UserID = s.UserID
 		a.TeamID = s.CurrentTeamID
+		// §66: подпись актёра в аудите — отображаемое имя (раньше поле не
+		// заполнялось вовсе и записи user-CRUD подписывались "system").
+		if dn := s.DisplayName(); dn != "" {
+			a.UserLogin = dn
+		}
 	}
 	return a
 }

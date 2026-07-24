@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"nexus/internal/domain"
@@ -81,11 +82,26 @@ func (noopBreaker) Allow(context.Context, string) (bool, error) { return true, n
 func (noopBreaker) RecordSuccess(context.Context, string) error { return nil }
 func (noopBreaker) RecordFailure(context.Context, string) error { return nil }
 
+// HostResolver — неблокирующий lookup PTR-имени клиента (§67, колонка
+// client_host). Контракт: значение возвращается МГНОВЕННО из кеша или "";
+// промах планирует фоновый резолв — имя получат следующие записи этого IP.
+// Объявлен здесь (консьюмер-сайд, как CircuitBreaker), чтобы usecase не
+// зависел от Redis/DNS-реализации. Реализация — internal/platform/rdns.
+type HostResolver interface {
+	Lookup(ip string) string
+}
+
+// noopHostResolver — резолв выключен (sender.rdns.disabled) или не настроен.
+type noopHostResolver struct{}
+
+func (noopHostResolver) Lookup(string) string { return "" }
+
 // SendUsecase — оркестрация: HTTP-вызов с retry + асинхронная запись лога в ClickHouse.
 type SendUsecase struct {
 	httpc  port.HTTPCaller
 	logw   port.LogWriter
 	cb     CircuitBreaker
+	hosts  HostResolver
 	logger logging.Logger
 	host   string
 	// maxResponseBytes — транспортный лимит тела ответа (config
@@ -94,12 +110,29 @@ type SendUsecase struct {
 	maxResponseBytes int
 }
 
-func NewSendUsecase(httpc port.HTTPCaller, logw port.LogWriter, cb CircuitBreaker, logger logging.Logger, maxResponseBytes int) *SendUsecase {
+// SendOption — функциональная опция конструктора SendUsecase.
+type SendOption func(*SendUsecase)
+
+// WithHostResolver задаёт резолвер PTR-имени клиента (§67). nil игнорируется
+// (остаётся noop).
+func WithHostResolver(hr HostResolver) SendOption {
+	return func(u *SendUsecase) {
+		if hr != nil {
+			u.hosts = hr
+		}
+	}
+}
+
+func NewSendUsecase(httpc port.HTTPCaller, logw port.LogWriter, cb CircuitBreaker, logger logging.Logger, maxResponseBytes int, opts ...SendOption) *SendUsecase {
 	if cb == nil {
 		cb = noopBreaker{}
 	}
 	host, _ := os.Hostname()
-	return &SendUsecase{httpc: httpc, logw: logw, cb: cb, logger: logger, host: host, maxResponseBytes: maxResponseBytes}
+	u := &SendUsecase{httpc: httpc, logw: logw, cb: cb, hosts: noopHostResolver{}, logger: logger, host: host, maxResponseBytes: maxResponseBytes}
+	for _, o := range opts {
+		o(u)
+	}
+	return u
 }
 
 type attempt struct {
@@ -130,13 +163,16 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		DateRequest: t0,
 		Host:        u.host,
 		IP:          in.ClientIP,
-		NodeID:      in.NodeID,
+		// §67: PTR-имя клиента из кеша (0 мс; промах → "" + фоновый резолв).
+		ClientHost: u.hosts.Lookup(in.ClientIP),
+		NodeID:     in.NodeID,
 	}
-	// §22.2: сохраняемая в лог копия тела запроса режется по per-node max_body_size
-	// (в рунах) — checksum считается по ПОЛНОМУ телу (выше). На сам запрос к
-	// внешнему узлу и на ответ клиенту лимит НЕ влияет.
+	// §22.2/§68: сохраняемая в лог копия тела запроса режется по per-node
+	// max_body_size (в рунах); для multipart вместо тела пишется §68-плейсхолдер.
+	// checksum и размер считаются по ПОЛНОМУ телу (выше). На сам запрос к внешнему
+	// узлу и на ответ клиенту это НЕ влияет.
 	if in.LogRequestBody {
-		rec.Request = truncateRunes(string(in.Body), in.MaxBodySizeEnabled, in.MaxBodySize)
+		rec.Request = u.logBodyCopy("request", headerGet(in.Headers, "Content-Type"), in.Body, in)
 	}
 
 	req := &port.HTTPRequest{
@@ -272,10 +308,11 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		// §42-доп: истинный размер тела ответа в байтах — по полному телу до
 		// truncateRunes ниже и независимо от LogResponseBody.
 		rec.ResponseSize = int64(len(resp.Body))
-		// §22.2: лог-копия ответа режется по per-node max_body_size; checksum по
-		// полному телу. Клиент получает полный resp.Body (выше).
+		// §22.2/§68: лог-копия ответа режется по per-node max_body_size; для
+		// multipart-ответа (multipart/mixed и пр.) вместо тела — §68-плейсхолдер.
+		// checksum/размер по полному телу. Клиент получает полный resp.Body (выше).
 		if in.LogResponseBody {
-			rec.Response = truncateRunes(string(resp.Body), in.MaxBodySizeEnabled, in.MaxBodySize)
+			rec.Response = u.logBodyCopy("response", headerGet(resp.Headers, "Content-Type"), resp.Body, in)
 		}
 		if !rec.Done {
 			rec.Reason = fmt.Sprintf("HTTP %d", resp.StatusCode)
@@ -336,6 +373,39 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 func md5hex(b []byte) string {
 	sum := md5.Sum(b)
 	return hex.EncodeToString(sum[:])
+}
+
+// headerGet возвращает значение заголовка без учёта регистра ключа. Заголовки в
+// map обычно уже каноничны (route.go/envelope.go/puller.go кладут "Content-Type"),
+// но полагаться на это хрупко — поэтому fallback по EqualFold.
+func headerGet(h map[string]string, name string) string {
+	if v, ok := h[name]; ok {
+		return v
+	}
+	for k, v := range h {
+		if strings.EqualFold(k, name) {
+			return v
+		}
+	}
+	return ""
+}
+
+// logBodyCopy готовит копию тела для сохранения в лог (§22.2/§68): для
+// multipart-тела (Content-Type multipart/*) вложения в ClickHouse НЕ пишутся —
+// вместо тела кладётся §68-плейсхолдер со сводкой частей, и per-node
+// max_body_size на него не действует (он короткий); для обычного тела —
+// усечённая по max_body_size копия. kind ("request"/"response") — только для
+// debug-следа (§51.9). Не меняет checksum/размер — их считает вызывающая сторона
+// по полному телу.
+func (u *SendUsecase) logBodyCopy(kind, contentType string, body []byte, in SendInput) string {
+	if domain.IsMultipartMediaType(contentType) {
+		u.logger.Debug("send: multipart "+kind+", log body replaced with placeholder",
+			u.logger.Str("id", in.ID),
+			u.logger.Str("node", in.NodePath),
+			u.logger.Int("body_bytes", len(body)))
+		return domain.MultipartLogPlaceholder(contentType, body)
+	}
+	return truncateRunes(string(body), in.MaxBodySizeEnabled, in.MaxBodySize)
 }
 
 // truncationMarker дописывается к сохраняемому телу, если оно было обрезано по

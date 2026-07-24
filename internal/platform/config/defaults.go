@@ -208,6 +208,16 @@ func applyDefaults(c *Config) {
 	if c.Sender.PausedSweep.MaxScan == 0 {
 		c.Sender.PausedSweep.MaxScan = 1000
 	}
+	// §67: reverse-DNS резолв client_host включён по умолчанию (Disabled=false).
+	if c.Sender.RDNS.TimeoutMs == 0 {
+		c.Sender.RDNS.TimeoutMs = 2000
+	}
+	if c.Sender.RDNS.CacheTTLSec == 0 {
+		c.Sender.RDNS.CacheTTLSec = 3600
+	}
+	if c.Sender.RDNS.NegativeTTLSec == 0 {
+		c.Sender.RDNS.NegativeTTLSec = 600
+	}
 
 	if c.Web.HTTPAddr == "" {
 		c.Web.HTTPAddr = ":8000"

@@ -38,6 +38,10 @@ var RequiredLogColumns = []CHLogColumn{
 	{"checksum_response", "FixedString(32)"},
 	{"Host", "String"},
 	{"IP", "String"},
+	// §67: PTR-имя (reverse DNS) IP клиента, напр. "srv-1c.vz78.vozovoz.ru".
+	// Пусто: имя ещё не отрезолвлено (кеш холодный), PTR-записи нет,
+	// ClientIP — не IP (rabbitmq://… у pull-узлов §27.10) или legacy-строка.
+	{"client_host", "String"},
 	{"attempts", "Int32"},
 	{"attempts_details", "String"},
 	// §37: UUID узла-владельца записи. Различает узлы, делящие одну таблицу

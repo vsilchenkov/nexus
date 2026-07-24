@@ -66,6 +66,34 @@ func TestCHTableVerify_E2E(t *testing.T) {
 		assert.Equal(t, []string{"node_id"}, res.Missing)
 	})
 
+	t.Run("§67: без client_host — Missing; EnsureClientHostColumn чинит AFTER IP", func(t *testing.T) {
+		// Модель внешней таблицы (§64), созданной до §67: колонки client_host нет.
+		const table = "nexus_default.verify_no_client_host"
+		createNodeLogTable(t, ctx, conn, table)
+		require.NoError(t, conn.Exec(ctx, "ALTER TABLE "+table+" DROP COLUMN client_host"))
+
+		res, err := uc.Verify(ctx, table)
+		require.NoError(t, err)
+		assert.False(t, res.OK)
+		assert.Equal(t, []string{"client_host"}, res.Missing)
+
+		// Тот же ALTER, что выполняет владелец внешней таблицы вручную (release
+		// notes) и стартовый ensure для управляемых таблиц: колонка встаёт AFTER IP.
+		clickhouse.EnsureClientHostColumn(ctx, conn, []string{table}, logger)
+		res, err = uc.Verify(ctx, table)
+		require.NoError(t, err)
+		assert.True(t, res.OK, "missing=%v mismatched=%+v", res.Missing, res.Mismatched)
+
+		var pos, ipPos uint64
+		require.NoError(t, conn.QueryRow(ctx,
+			`SELECT position FROM system.columns
+			 WHERE database = 'nexus_default' AND table = 'verify_no_client_host' AND name = 'client_host'`).Scan(&pos))
+		require.NoError(t, conn.QueryRow(ctx,
+			`SELECT position FROM system.columns
+			 WHERE database = 'nexus_default' AND table = 'verify_no_client_host' AND name = 'IP'`).Scan(&ipPos))
+		assert.Equal(t, ipPos+1, pos, "client_host должен стоять сразу после IP")
+	})
+
 	t.Run("неверный тип колонки", func(t *testing.T) {
 		const table = "nexus_default.verify_bad_type"
 		createNodeLogTable(t, ctx, conn, table)

@@ -55,6 +55,9 @@ func (s *stubLogReader) ListSince(_ context.Context, _, _ string, _ int64, _ int
 func (s *stubLogReader) Search(_ context.Context, _ port.LogQuery) ([]*domain.LogRecord, error) {
 	return nil, nil
 }
+func (s *stubLogReader) Count(_ context.Context, _ port.LogQuery) (uint64, error) {
+	return 0, nil
+}
 func (s *stubLogReader) CountErrors(_ context.Context, _, _ string, _, _ int64) (uint64, error) {
 	return 0, nil
 }
@@ -71,6 +74,9 @@ func (s *stubLogReader) GetBodyChunk(_ context.Context, _, _, _ string, _, _ int
 	return "", 0, s.err
 }
 func (s *stubLogReader) DistinctMethods(_ context.Context, _, _ string, _ int) ([]string, error) {
+	return nil, s.err
+}
+func (s *stubLogReader) DistinctClientHosts(_ context.Context, _, _ string, _ int) ([]string, error) {
 	return nil, s.err
 }
 func (s *stubLogReader) DateRange(_ context.Context, _, _ string) (int64, int64, error) {
@@ -272,6 +278,50 @@ func TestReplay_ExplicitEmptyBody(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("explicit empty body must replay: %v", err)
+	}
+}
+
+// TestReplay_MultipartBlocked (§68): у оригинала было multipart/form-data тело,
+// в логе — плейсхолдер, не тело. Без ручного override replay отклоняется 422 и
+// во внешний target ничего не уходит.
+func TestReplay_MultipartBlocked(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{ID: "n1", Status: domain.NodeStatusEnabled, ClickHouseTable: "t.t"}
+	placeholder := domain.MultipartLogPlaceholder(
+		"multipart/form-data; boundary=abc",
+		[]byte("--abc\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.pdf\"\r\n\r\ndata\r\n--abc--\r\n"),
+	)
+	log := &domain.LogRecord{ID: "log1", Method: "POST", Request: placeholder, DateRequest: time.Now(), Done: true}
+	disp := &stubDispatcher{}
+	uc := newReplayUC(node, log, disp)
+
+	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{UseNodeAuth: true})
+	if !errors.Is(err, ErrReplayBodyMultipart) {
+		t.Fatalf("want ErrReplayBodyMultipart, got %v", err)
+	}
+	if disp.gotReq.NodePath != "" {
+		t.Fatalf("dispatch must not be called for multipart original")
+	}
+}
+
+// TestReplay_MultipartWithOverride (§68): плейсхолдер в логе, но пользователь
+// задал тело вручную → replay проходит с этим телом.
+func TestReplay_MultipartWithOverride(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{ID: "n1", Status: domain.NodeStatusEnabled, ClickHouseTable: "t.t"}
+	placeholder := domain.MultipartLogPlaceholder("multipart/form-data; boundary=abc", []byte("--abc--\r\n"))
+	log := &domain.LogRecord{ID: "log1", Method: "POST", Request: placeholder, DateRequest: time.Now(), Done: true}
+	disp := &stubDispatcher{}
+	uc := newReplayUC(node, log, disp)
+
+	_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{
+		BodyOverride: []byte(`{"manual":1}`), UseNodeAuth: true,
+	})
+	if err != nil {
+		t.Fatalf("override must replay: %v", err)
+	}
+	if string(disp.gotReq.Body) != `{"manual":1}` {
+		t.Fatalf("override body ignored: %q", string(disp.gotReq.Body))
 	}
 }
 

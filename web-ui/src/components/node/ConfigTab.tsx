@@ -3,6 +3,7 @@ import { type ReactNode } from "react";
 
 import { type Node } from "../../api/client";
 import { useNodeUrlBuilder } from "../../lib/nodeUrl";
+import { useNodeTeam } from "../../lib/nodeShare";
 import { useMyTeams } from "../../lib/teams";
 import { Card, Chip, CopyButton } from "../ui";
 
@@ -14,11 +15,15 @@ export function ConfigTab({ node }: { node: Node }) {
   // §28 Пункт 1: адрес из публичного base URL приложения + slug команды.
   const buildUrl = useNodeUrlBuilder();
   const fullAddress = buildUrl(verb, node.path);
-  // Команда узла: эндпоинт отдаёт только team_id, имя резолвим по членствам
-  // (запрос общий с шапкой — react-query дедуплицирует ключ). Членства ещё не
-  // пришли или команда не наша (у админа) → показываем сам идентификатор.
+  // Команда узла — только человекочитаемое имя (без slug/UUID, §65): эндпоинт
+  // узла отдаёт лишь team_id, имя резолвим по членствам (запрос общий с шапкой,
+  // react-query дедуплицирует ключ) с фолбэком на резолвер §58 (тот уже
+  // закеширован страницей узла через useEnsureNodeTeam). Имя недоступно → «—».
   const myTeams = useMyTeams();
-  const team = myTeams.data?.items.find((tm) => tm.id === node.team_id);
+  const nodeTeamQ = useNodeTeam(node.id);
+  const teamName =
+    myTeams.data?.items.find((tm) => tm.id === node.team_id)?.name ??
+    nodeTeamQ.data?.team_name;
   return (
     <Card>
       <dl className="divide-y divide-line">
@@ -29,13 +34,7 @@ export function ConfigTab({ node }: { node: Node }) {
           </div>
         </Row>
         <Row label={t("node.fields.team")}>
-          {team ? (
-            <span>
-              {team.name} <span className="font-mono text-fg-muted">({team.slug})</span>
-            </span>
-          ) : (
-            <span className="font-mono text-[12px] break-all">{node.team_id || "—"}</span>
-          )}
+          <span>{teamName ?? "—"}</span>
         </Row>
         <Row label={t("node.fields.method")}>
           <Chip>{node.root_method}</Chip>

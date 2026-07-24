@@ -44,9 +44,12 @@ func (r TeamRole) Valid() bool {
 // списка пользователей и для не-членов текущей команды показывал сырой UUID.
 // Membership-операции (AddMember/UpdateMemberRole) эти поля не используют.
 type TeamMember struct {
-	UserID    string
-	TeamID    string
-	Login     string
+	UserID string
+	TeamID string
+	Login  string
+	// Name — отображаемое имя пользователя (§66), обогащение из users как и
+	// Login: UI «Участники команды» показывает имя вместо логина.
+	Name      string
 	Email     string
 	Role      TeamRole
 	CreatedAt time.Time

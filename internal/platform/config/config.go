@@ -262,6 +262,20 @@ type SenderSection struct {
 	Reprocessor         SenderReprocessorConfig `yaml:"reprocessor"`
 	// PausedSweep — consumer delay-топика paused-узлов (§3.6).
 	PausedSweep SenderPausedSweepConfig `yaml:"paused_sweep"`
+	// RDNS — reverse-DNS резолв client_host для логов (§67).
+	RDNS SenderRDNSConfig `yaml:"rdns"`
+}
+
+// SenderRDNSConfig — параметры reverse-DNS резолва PTR-имени клиента (§67):
+// колонка client_host в CH-логах. Резолв полностью асинхронный (путь запроса
+// никогда не ждёт DNS), кеш IP→hostname — Redis (общий для реплик, переживает
+// рестарты) + L1 в памяти. По умолчанию включён (Disabled=false): фича
+// fail-open и не влияет на латентность доставки.
+type SenderRDNSConfig struct {
+	Disabled       bool `yaml:"disabled"`         // §67: выключатель (default false → включён)
+	TimeoutMs      int  `yaml:"timeout_ms"`       // §67: таймаут одного PTR-lookup (default 2000)
+	CacheTTLSec    int  `yaml:"cache_ttl_sec"`    // §67: TTL позитивного кеша (default 3600)
+	NegativeTTLSec int  `yaml:"negative_ttl_sec"` // §67: TTL негативного кеша — IP без PTR (default 600)
 }
 
 // SenderPausedSweepConfig — параметры sweeper'а delay-топика nexus.async.paused

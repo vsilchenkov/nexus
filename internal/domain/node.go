@@ -307,7 +307,13 @@ func (n *Node) Validate() error {
 	if utf8.RuneCountInString(n.Comment) > 2000 {
 		return ErrNodeCommentLength
 	}
-	if n.MaxBodySizeEnabled && n.MaxBodySize <= 0 {
+	// Гейт по LoggingEnabled: при выключенном логировании поля карточки
+	// «Логирование» задизейблены в UI — блокирующая ошибка по ним была бы
+	// ловушкой (исправить нельзя, не включив логи). Недозаполненное имя
+	// таблицы (например, дефолтный префикс «nexus_x.» формы создания)
+	// хранится как черновик: узел с выключенными логами таблицу не пишет и
+	// не читает, а при включении логов валидация потребует поправить.
+	if n.LoggingEnabled && n.MaxBodySizeEnabled && n.MaxBodySize <= 0 {
 		return ErrNodeMaxBodySizeRequired
 	}
 	// §28 Пункт 5: логирование включено, но не настроено имя таблицы. Без него
@@ -315,10 +321,10 @@ func (n *Node) Validate() error {
 	if n.LoggingEnabled && n.ClickHouseTable == "" {
 		return ErrNodeLogsNotConfigured
 	}
-	// §42: имя таблицы (если задано) должно быть строго db.table из [A-Za-z0-9_].
-	// Иначе Sender пишет, а UI-чтение падает позже на «invalid table name» —
+	// §42: имя таблицы должно быть строго db.table из [A-Za-z0-9_]. Иначе
+	// Sender пишет, а UI-чтение падает позже на «invalid table name» —
 	// ловим на сохранении и показываем понятную ошибку у поля.
-	if n.ClickHouseTable != "" && !IsValidCHTableName(n.ClickHouseTable) {
+	if n.LoggingEnabled && n.ClickHouseTable != "" && !IsValidCHTableName(n.ClickHouseTable) {
 		return ErrNodeClickHouseTableInvalid
 	}
 	if n.RootMethod.IsPull() {

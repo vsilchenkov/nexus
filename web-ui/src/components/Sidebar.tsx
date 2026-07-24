@@ -19,7 +19,9 @@ export function Sidebar() {
   const me = useQuery({
     queryKey: ["me"],
     queryFn: () =>
-      api.get<{ user: { user_id: string; login?: string; role: string } }>("/api/auth/me"),
+      api.get<{ user: { user_id: string; login?: string; name?: string; role: string } }>(
+        "/api/auth/me",
+      ),
   });
 
   // §30/§34.3: версия приложения (публичный эндпоинт). commit/build_date —
@@ -108,7 +110,9 @@ export function Sidebar() {
     );
   };
 
-  const login = me.data?.user.login ?? "admin";
+  // §66: в чипе показываем отображаемое имя (фолбэк на логин для старых
+  // ответов /api/auth/me без name).
+  const displayName = me.data?.user.name || me.data?.user.login || "admin";
   // role.{admin,manager,viewer} — §26.
   const role = t(`role.${me.data?.user.role ?? "viewer"}`);
 
@@ -134,10 +138,10 @@ export function Sidebar() {
       <div className="mt-2.5 border-t border-line pt-2.5">
         <div className="flex items-center gap-2.5 px-1 text-xs text-fg-muted">
           <span className="grid h-[26px] w-[26px] place-items-center rounded-full bg-accent/15 text-[11px] font-semibold text-accent">
-            {login.slice(0, 1).toUpperCase()}
+            {displayName.slice(0, 1).toUpperCase()}
           </span>
           <span className="truncate">
-            {login} · {role}
+            {displayName} · {role}
           </span>
         </div>
         {version.data?.version && (

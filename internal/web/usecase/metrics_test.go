@@ -274,6 +274,27 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 		require.InDelta(t, 3.0/50.0, got.Totals.ErrorRate, 1e-9)
 	})
 
+	// §43.1: узел с выключенными логами хранит черновичное имя таблицы
+	// («nexus_default.») — CH-запрос по нему не делается, строка нулевая.
+	// На старом коде NodeKPI вызывался и строка получила бы Total фейка.
+	t.Run("draft table name → нули без CH-запроса", func(t *testing.T) {
+		t.Parallel()
+		repo := &fakeNodeRepo{list: []*domain.Node{
+			{Path: "ok/x", ClickHouseTable: "db.a"},
+			{Path: "nolog/draft", ClickHouseTable: "nexus_default."}, // черновик
+		}}
+		logs := &fakeNodeLogs{kpi: port.NodeKPI{Total: 50, Delivered: 47, Errors: 3}}
+		uc := NewMetricsUsecase(nil, logs, repo, nil, nil, log)
+		got := uc.NodesOverview(context.Background(), "default", time.Now().Add(-time.Hour), time.Now())
+		byNode := map[string]NodeThroughputRow{}
+		for _, it := range got.Items {
+			byNode[it.Node] = it
+		}
+		require.EqualValues(t, 50, byNode["ok/x"].In, "валидная таблица считается")
+		require.Zero(t, byNode["nolog/draft"].In, "черновичное имя таблицы → нули, без CH-запроса")
+		require.Zero(t, byNode["nolog/draft"].Errors)
+	})
+
 	t.Run("totals: пустой список → нулевой агрегат без паники", func(t *testing.T) {
 		t.Parallel()
 		uc := NewMetricsUsecase(nil, &fakeNodeLogs{}, &fakeNodeRepo{list: nil}, nil, nil, log)
@@ -366,6 +387,19 @@ func TestMetricsUsecase_NodeMetrics(t *testing.T) {
 		got, err := uc.NodeMetrics(context.Background(), "n1", "default", time.Now().Add(-time.Hour), time.Now(), 10)
 		require.NoError(t, err)
 		require.False(t, got.ChartAvailable)
+		require.Zero(t, got.KPI.Total)
+	})
+
+	// §43.1: черновичное имя таблицы → та же деградация, что и без таблицы.
+	// На старом коде NodeKPI вызывался и вернул бы Total фейка.
+	t.Run("draft table name → chart unavailable", func(t *testing.T) {
+		t.Parallel()
+		repo := &fakeNodeRepo{node: &domain.Node{ID: "n1", Path: "nolog/draft", TeamID: "default", ClickHouseTable: "nexus_default."}}
+		logs := &fakeNodeLogs{kpi: port.NodeKPI{Total: 100}}
+		uc := NewMetricsUsecase(nil, logs, repo, nil, nil, log)
+		got, err := uc.NodeMetrics(context.Background(), "n1", "default", time.Now().Add(-time.Hour), time.Now(), 10)
+		require.NoError(t, err)
+		require.False(t, got.ChartAvailable, "черновичное имя таблицы → метрики недоступны")
 		require.Zero(t, got.KPI.Total)
 	})
 

@@ -42,6 +42,20 @@ func EnsureHTTPMethodColumn(ctx context.Context, conn driver.Conn, tables []stri
 		"ensure http_method column failed", logger)
 }
 
+// EnsureClientHostColumn (§67) идемпотентно добавляет колонку client_host
+// (PTR-имя IP клиента) в существующие лог-таблицы. Та же логика и обоснование,
+// что у EnsureHTTPMethodColumn: запускается на старте Web и Sender (порядок
+// деплоя не гарантирован), без колонки INSERT/SELECT по новой схеме упадут.
+// AFTER IP держит физический порядок одинаковым с новыми таблицами
+// (RenderCreateTable из RequiredLogColumns). Внешние таблицы (§64) сюда не
+// попадают — списки таблиц исключают их на уровне SQL (NOT external_table);
+// их владельцы выполняют этот же ALTER вручную (SQL — в описании релиза).
+func EnsureClientHostColumn(ctx context.Context, conn driver.Conn, tables []string, logger logging.Logger) {
+	ensureLogColumn(ctx, conn, tables,
+		"ALTER TABLE %s ADD COLUMN IF NOT EXISTS client_host String DEFAULT '' AFTER IP",
+		"ensure client_host column failed", logger)
+}
+
 // EnsureBodySizeColumns (§42-доп) идемпотентно добавляет колонки request_size
 // и response_size (истинные размеры тел в байтах, до усечения лог-копии по
 // max_body_size) в существующие per-node лог-таблицы. Та же логика и

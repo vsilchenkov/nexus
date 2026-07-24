@@ -40,8 +40,10 @@ type loginRequest struct {
 }
 
 type meResponse struct {
-	UserID             string `json:"user_id"`
-	Login              string `json:"login"`
+	UserID string `json:"user_id"`
+	Login  string `json:"login"`
+	// Name — отображаемое имя (§66): UI показывает его вместо логина.
+	Name               string `json:"name"`
 	Email              string `json:"email,omitempty"`
 	Role               string `json:"role"`
 	Lang               string `json:"lang"`
@@ -131,7 +133,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"user": meResponse{
-			UserID: user.ID, Login: user.Login, Role: string(user.Role),
+			UserID: user.ID, Login: user.Login, Name: user.Name, Role: string(user.Role),
 			Lang: string(user.Lang), MustChangePassword: user.MustChangePassword,
 			DefaultTeamID: user.DefaultTeamID,
 			// CurrentTeamID на момент логина = DefaultTeamID.
@@ -184,6 +186,7 @@ func (h *AuthHandler) Me(c *gin.Context) {
 		"user": meResponse{
 			UserID:             user.ID,
 			Login:              user.Login,
+			Name:               user.Name,
 			Email:              user.Email,
 			Role:               string(user.Role),
 			Lang:               string(user.Lang),

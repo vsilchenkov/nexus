@@ -240,6 +240,15 @@ func (u *MetricsUsecase) nodesOverviewCH(ctx context.Context, teamID string, sin
 		if n.ClickHouseTable == "" {
 			continue // нет логирования → нет per-node CH-метрик
 		}
+		// §43.1: черновичное/кривое имя таблицы (узел с выключенными логами
+		// хранит недозаполненное «nexus_x.») — CH-запрос упал бы на «invalid
+		// table name» и WRN-флудил на каждом поллинге дашборда. Деградируем
+		// до нулей молча, как resolveNode в logs.go.
+		if !domain.IsValidCHTableName(n.ClickHouseTable) {
+			u.logger.Debug("nodes overview: skip node with invalid table name",
+				u.logger.Str("node", n.Path), u.logger.Str("table", n.ClickHouseTable))
+			continue
+		}
 		g.Go(func() error {
 			kpi, kerr := u.nodeLogs.NodeKPI(gctx, n.ClickHouseTable, n.ID, sinceMs, untilMs, approx)
 			if kerr != nil {
@@ -331,6 +340,13 @@ func (u *MetricsUsecase) NodeMetrics(ctx context.Context, nodeID, teamID string,
 
 	// Нет CH-таблицы (логирование выключено) → метрики недоступны (как «не настроено»).
 	if u.nodeLogs == nil || n.ClickHouseTable == "" {
+		return res, nil
+	}
+	// §43.1: черновичное имя таблицы («nexus_x.» у узла с выключенными логами) —
+	// та же деградация, иначе WRN «invalid table name» на каждом поллинге страницы узла.
+	if !domain.IsValidCHTableName(n.ClickHouseTable) {
+		u.logger.Debug("node metrics: skip invalid table name",
+			u.logger.Str("node", n.Path), u.logger.Str("table", n.ClickHouseTable))
 		return res, nil
 	}
 	sinceMs, untilMs := since.UnixMilli(), until.UnixMilli()

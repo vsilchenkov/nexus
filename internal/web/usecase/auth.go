@@ -256,7 +256,7 @@ func (u *AuthUsecase) Login(ctx context.Context, login, password, ip string) (st
 		return "", nil, fmt.Errorf("get user: %w", err)
 	}
 	if !user.Active {
-		u.audit.Log(ctx, Actor{UserID: user.ID, UserLogin: user.Login, IPAddress: ip},
+		u.audit.Log(ctx, Actor{UserID: user.ID, UserLogin: user.DisplayName(), IPAddress: ip},
 			domain.ActionUserLoginFailed, "user", user.ID, map[string]any{"reason": "inactive"})
 		return "", nil, domain.ErrUserInactive
 	}
@@ -265,7 +265,7 @@ func (u *AuthUsecase) Login(ctx context.Context, login, password, ip string) (st
 		return "", nil, domain.ErrUnauthorized
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
-		u.audit.Log(ctx, Actor{UserID: user.ID, UserLogin: user.Login, IPAddress: ip},
+		u.audit.Log(ctx, Actor{UserID: user.ID, UserLogin: user.DisplayName(), IPAddress: ip},
 			domain.ActionUserLoginFailed, "user", user.ID, map[string]any{"reason": "bad_password"})
 		return "", nil, domain.ErrUnauthorized
 	}
@@ -276,9 +276,12 @@ func (u *AuthUsecase) Login(ctx context.Context, login, password, ip string) (st
 	}
 	now := time.Now().UTC()
 	s := &domain.Session{
-		Token:              token,
-		UserID:             user.ID,
-		Login:              user.Login,
+		Token:  token,
+		UserID: user.ID,
+		Login:  user.Login,
+		// §66: имя в сессии — им подписываются снапшоты автора (created_by/
+		// updated_by, аудит) через Actor без похода в БД на каждый запрос.
+		Name:               user.Name,
 		Role:               user.Role,
 		Lang:               user.Lang,
 		CurrentTeamID:      u.resolveLoginTeam(ctx, user),
@@ -290,7 +293,7 @@ func (u *AuthUsecase) Login(ctx context.Context, login, password, ip string) (st
 		return "", nil, fmt.Errorf("create session: %w", err)
 	}
 	_ = u.users.UpdateLastLogin(ctx, user.ID, now)
-	u.audit.Log(ctx, Actor{UserID: user.ID, UserLogin: user.Login, IPAddress: ip},
+	u.audit.Log(ctx, Actor{UserID: user.ID, UserLogin: user.DisplayName(), IPAddress: ip},
 		domain.ActionUserLogin, "user", user.ID, nil)
 	return token, user, nil
 }

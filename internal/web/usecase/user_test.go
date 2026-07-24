@@ -221,6 +221,23 @@ func TestUserUC_Update_RoleOrActiveChange_PurgesSessions(t *testing.T) {
 	assert.Equal(t, domain.ActionUserUpdate, audit.entries[0].Action)
 }
 
+// §66: переименование пользователя оставляет след в аудите (name + prev_name).
+func TestUserUC_Update_Rename_AuditTrail(t *testing.T) {
+	t.Parallel()
+	users := newAuthUserRepo()
+	users.put(&domain.User{ID: "u1", Login: "alice", Name: "Alice",
+		Role: domain.UserRoleViewer, Active: true})
+	uc, audit := newUserUC(users, newMemSessionRepo())
+
+	upd := &domain.User{ID: "u1", Login: "alice", Name: "Alice Cooper",
+		Role: domain.UserRoleViewer, Active: true}
+	require.NoError(t, uc.Update(context.Background(), SystemActor(), upd))
+
+	require.Len(t, audit.entries, 1)
+	assert.Equal(t, "Alice Cooper", audit.entries[0].Details["name"])
+	assert.Equal(t, "Alice", audit.entries[0].Details["prev_name"])
+}
+
 func TestUserUC_Update_NoRoleNoActiveChange_NoSessionPurge(t *testing.T) {
 	t.Parallel()
 	users := newAuthUserRepo()
