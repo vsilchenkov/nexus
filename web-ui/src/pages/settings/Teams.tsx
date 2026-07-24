@@ -3,6 +3,16 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
 import { api } from "../../api/client";
+import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "../../components/ui";
 import { useConfirm } from "../../lib/confirm";
 import { MY_TEAMS_KEY } from "../../lib/teams";
 
@@ -346,9 +356,16 @@ function MembersDialog({ team, onClose }: MembersDialogProps) {
     onSuccess: invalidateMembers,
   });
 
-  // Список пользователей, которые ЕЩЁ не члены команды (для select).
+  // Список пользователей, которые ЕЩЁ не члены команды (для combobox добавления).
   const memberIDs = new Set((members.data?.items ?? []).map((m) => m.user_id));
   const candidates = (users.data?.items ?? []).filter((u) => !memberIDs.has(u.id));
+
+  // Фильтр по УЖЕ добавленным участникам — отвечает на «есть ли он в команде».
+  const [memberQuery, setMemberQuery] = useState("");
+  const q = memberQuery.trim().toLowerCase();
+  const visibleMembers = (members.data?.items ?? []).filter(
+    (m) => !q || [m.name, m.login, m.email].some((f) => f?.toLowerCase().includes(q)),
+  );
 
   return (
     <Modal onClose={onClose}>
@@ -367,19 +384,7 @@ function MembersDialog({ team, onClose }: MembersDialogProps) {
             <label className="text-xs uppercase tracking-wider text-fg-muted">
               {t("settings.teams.members.add_user")}
             </label>
-            <select
-              value={newUserID}
-              onChange={(e) => setNewUserID(e.target.value)}
-              className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none"
-            >
-              <option value="">{t("settings.teams.members.pick_user")}</option>
-              {/* §66: имя — основное; логин в скобках, чтобы различать тёзок. */}
-              {candidates.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name ? `${u.name} (${u.login})` : u.login}
-                </option>
-              ))}
-            </select>
+            <UserCombobox candidates={candidates} value={newUserID} onChange={setNewUserID} />
           </div>
           <div className="w-32 space-y-1">
             <label className="text-xs uppercase tracking-wider text-fg-muted">
@@ -413,54 +418,74 @@ function MembersDialog({ team, onClose }: MembersDialogProps) {
         )}
 
         {members.data && members.data.items.length > 0 && (
-          <table className="w-full text-sm">
-            <thead className="text-fg-muted">
-              <tr>
-                <th className="text-left px-3 py-2">{t("settings.teams.members.col.user")}</th>
-                <th className="text-left px-3 py-2">{t("settings.teams.members.col.role")}</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {members.data.items.map((m) => (
-                <tr key={m.user_id} className="border-t border-bg-muted">
-                  <td className="px-3 py-2">
-                    {/* §66: имя — основное, логин — вторичной строкой. */}
-                    <div className="text-sm">{m.name || m.login || m.user_id}</div>
-                    <div className="text-fg-muted text-[11px] font-mono">
-                      {m.login}
-                      {m.email && <span className="font-sans"> · {m.email}</span>}
-                    </div>
-                  </td>
-                  <td className="px-3 py-2">
-                    <select
-                      value={m.role}
-                      onChange={(e) =>
-                        updateRole.mutate({
-                          userID: m.user_id,
-                          role: e.target.value as TeamMember["role"],
-                        })
-                      }
-                      className="px-2 py-1 bg-bg-muted rounded text-xs"
-                    >
-                      <option value="owner">{t("settings.teams.role.owner")}</option>
-                      <option value="admin">{t("settings.teams.role.admin")}</option>
-                      <option value="member">{t("settings.teams.role.member")}</option>
-                    </select>
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    <button
-                      onClick={() => remove.mutate(m.user_id)}
-                      className="px-1.5 py-1 hover:bg-bg-muted rounded text-err text-sm"
-                      title={t("settings.teams.members.remove")}
-                    >
-                      🗑
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="space-y-2">
+            <input
+              value={memberQuery}
+              onChange={(e) => setMemberQuery(e.target.value)}
+              placeholder={t("settings.teams.members.filter_placeholder")}
+              className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none text-sm"
+            />
+            {visibleMembers.length === 0 ? (
+              <div className="text-fg-muted text-sm px-1">
+                {t("settings.teams.members.filter_empty")}
+              </div>
+            ) : (
+              <div className="max-h-[50vh] overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-fg-muted sticky top-0 bg-bg-elev">
+                    <tr>
+                      <th className="text-left px-3 py-2">
+                        {t("settings.teams.members.col.user")}
+                      </th>
+                      <th className="text-left px-3 py-2">
+                        {t("settings.teams.members.col.role")}
+                      </th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleMembers.map((m) => (
+                      <tr key={m.user_id} className="border-t border-bg-muted">
+                        <td className="px-3 py-2">
+                          {/* §66: имя — основное, логин — вторичной строкой. */}
+                          <div className="text-sm">{m.name || m.login || m.user_id}</div>
+                          <div className="text-fg-muted text-[11px] font-mono">
+                            {m.login}
+                            {m.email && <span className="font-sans"> · {m.email}</span>}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2">
+                          <select
+                            value={m.role}
+                            onChange={(e) =>
+                              updateRole.mutate({
+                                userID: m.user_id,
+                                role: e.target.value as TeamMember["role"],
+                              })
+                            }
+                            className="px-2 py-1 bg-bg-muted rounded text-xs"
+                          >
+                            <option value="owner">{t("settings.teams.role.owner")}</option>
+                            <option value="admin">{t("settings.teams.role.admin")}</option>
+                            <option value="member">{t("settings.teams.role.member")}</option>
+                          </select>
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <button
+                            onClick={() => remove.mutate(m.user_id)}
+                            className="px-1.5 py-1 hover:bg-bg-muted rounded text-err text-sm"
+                            title={t("settings.teams.members.remove")}
+                          >
+                            🗑
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         )}
 
         <footer className="flex items-center justify-end pt-2 border-t border-bg-muted">
@@ -470,6 +495,79 @@ function MembersDialog({ team, onClose }: MembersDialogProps) {
         </footer>
       </div>
     </Modal>
+  );
+}
+
+// Combobox выбора пользователя (Popover + cmdk): поиск по имени/логину/email
+// вместо нативного select — на боевых списках из десятков пользователей
+// прокрутка option'ов неюзабельна. Показывает только НЕ-участников команды.
+function UserCombobox({
+  candidates,
+  value,
+  onChange,
+}: {
+  candidates: User[];
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const selected = candidates.find((u) => u.id === value);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none text-left text-sm"
+        >
+          {/* §66: имя — основное; логин в скобках, чтобы различать тёзок. */}
+          {selected ? (
+            selected.name ? (
+              `${selected.name} (${selected.login})`
+            ) : (
+              selected.login
+            )
+          ) : (
+            <span className="text-fg-muted">{t("settings.teams.members.pick_user")}</span>
+          )}
+        </button>
+      </PopoverTrigger>
+      {/* z-[60]: локальный Modal — fixed z-50, контент попапа обязан быть выше.
+          Esc гасим до window — иначе слушатель Modal закроет весь диалог. */}
+      <PopoverContent
+        align="start"
+        className="w-[360px] p-0 z-[60]"
+        onEscapeKeyDown={(e) => e.stopPropagation()}
+      >
+        <Command>
+          <CommandInput placeholder={t("settings.teams.members.search_user")} />
+          <CommandList>
+            <CommandEmpty>{t("settings.teams.members.not_found")}</CommandEmpty>
+            {candidates.map((u) => (
+              <CommandItem
+                key={u.id}
+                // value — предмет встроенного фильтра cmdk; login уникален,
+                // поэтому тёзки не схлопываются в один айтем.
+                value={`${u.name ?? ""} ${u.login} ${u.email ?? ""}`}
+                onSelect={() => {
+                  onChange(u.id);
+                  setOpen(false);
+                }}
+              >
+                <div>
+                  <div>{u.name || u.login}</div>
+                  <div className="text-fg-muted text-[11px] font-mono">
+                    {u.login}
+                    {u.email && <span className="font-sans"> · {u.email}</span>}
+                  </div>
+                </div>
+              </CommandItem>
+            ))}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -486,7 +584,7 @@ function Modal({ onClose, children }: { onClose: () => void; children: React.Rea
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-bg-elev rounded-xl border border-bg-muted p-5 shadow-xl">
+      <div className="bg-bg-elev rounded-xl border border-bg-muted p-5 shadow-xl max-h-[calc(100vh-4rem)] overflow-y-auto">
         {children}
       </div>
     </div>
