@@ -1737,7 +1737,9 @@ filter, Create без TeamID). До блока B (team-switcher в сессии)
 Это **прод-баг**, не только CI: тот же брокер-compose в проде, тот же дефолт.
 Фикс — две части:
 1. **Брокер.** `KAFKA_MESSAGE_MAX_BYTES`/`KAFKA_REPLICA_FETCH_MAX_BYTES = 10485760`
-   в compose — брокерский потолок не ниже per-topic лимита.
+   в compose — брокерский потолок не ниже per-topic лимита. (После §68 значения в
+   обоих compose и в example подняты до `16777216`: `receiver.max_body_bytes` 10 МиБ
+   × 1.33 base64 async-envelope + запас.)
 2. **Запас на фрейминг.** `chunkLimit` ([chlogretry/retrier.go](../internal/sender/adapter/out/chlogretry/retrier.go))
    режет под-батчи на `max.message.bytes − 128 КиБ`: `clogwire.Split` меряет
    только JSON-конверт, а Kafka добавляет обвязку record-batch/ключ/заголовки —

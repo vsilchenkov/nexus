@@ -86,10 +86,11 @@ Nexus — три stateless Go-сервиса плюс набор хранили�
 > **Внешний Kafka — лимит размера сообщения.** §38 durable-retry при недоступности
 > ClickHouse шлёт проваленные батчи логов (с телами request/response, до неск. МБ) в
 > топик `nexus.logs.retry`. Топики создаются с `max.message.bytes` из
-> `kafka.topic.max_message_bytes` (по умолчанию **10 МиБ**), но **брокерский** дефолт
-> `message.max.bytes`/`replica.fetch.max.bytes` (~1 МиБ) перебивает per-topic-конфиг.
-> В bundled-compose это уже выставлено (`KAFKA_MESSAGE_MAX_BYTES`/
-> `KAFKA_REPLICA_FETCH_MAX_BYTES = 10485760`). При **внешнем** Kafka-кластере выставьте
+> `kafka.topic.max_message_bytes` (по умолчанию **16 МиБ** — запас под
+> `receiver.max_body_bytes` 10 МиБ × 1.33 base64 async-envelope, §68), но **брокерский**
+> дефолт `message.max.bytes`/`replica.fetch.max.bytes` (~1 МиБ) перебивает
+> per-topic-конфиг. В bundled-compose это уже выставлено (`KAFKA_MESSAGE_MAX_BYTES`/
+> `KAFKA_REPLICA_FETCH_MAX_BYTES = 16777216`). При **внешнем** Kafka-кластере выставьте
 > на брокерах `message.max.bytes` и `replica.fetch.max.bytes` **не ниже**
 > `kafka.topic.max_message_bytes`, иначе крупные retry-батчи отвергаются
 > (`Message Size Too Large`) и логи теряются.
@@ -390,23 +391,27 @@ docker compose -f deploy/docker-compose.app.yml logs -f web receiver sender
 
   > **Смена retention/размера на УЖЕ существующем топике.** Nexus применяет `kafka.topic.*` из
   > `config.yml` **только при создании топика** (`CreateTopics`); `AlterConfigs` в коде нет, поэтому
-  > правка `config.yml` **не меняет живой топик**. Чтобы изменить retention на работающем брокере
-  > **без пересоздания и без простоя** — примените конфиг напрямую (изменение мгновенное, данные
-  > и оффсеты сохраняются):
+  > правка `config.yml` **не меняет живой топик**. Чтобы изменить retention или лимит размера
+  > сообщения на работающем брокере **без пересоздания и без простоя** — примените конфиг напрямую
+  > (изменение мгновенное, данные и оффсеты сохраняются):
   >
   > ```bash
   > # retention.bytes — ПЕР-ПАРТИЦИЯ (суммарно по топику = значение × partitions)
   > kafka-configs.sh --bootstrap-server <broker>:9092 --entity-type topics \
   >   --entity-name nexus.async --alter \
   >   --add-config retention.ms=604800000,retention.bytes=42949672960
+  > # лимит размера сообщения (например, после поднятия receiver.max_body_bytes):
+  > kafka-configs.sh --bootstrap-server <broker>:9092 --entity-type topics \
+  >   --entity-name nexus.async --alter --add-config max.message.bytes=16777216
   > # проверить: --describe вместо --alter/--add-config
   > ```
   >
   > В Docker: `docker exec <kafka-контейнер> /opt/kafka/bin/kafka-configs.sh ...` (образ
-  > `apache/kafka` — путь `/opt/kafka/bin`). Повторите для `nexus.async.dlq` и `nexus.logs.retry`,
-  > чтобы все топики совпадали с `config.yml`. Альтернатива (с кратким простоем) — обновить
-  > `KAFKA_LOG_RETENTION_*` в compose и `docker compose up -d kafka`, но брокерный дефолт бьёт
-  > **только по новым** топикам; существующие всё равно правятся `kafka-configs --alter`.
+  > `apache/kafka` — путь `/opt/kafka/bin`). Повторите для `nexus.async.dlq`, `nexus.async.paused`
+  > и `nexus.logs.retry`, чтобы все топики совпадали с `config.yml`. Альтернатива (с кратким
+  > простоем) — обновить `KAFKA_LOG_RETENTION_*` в compose и `docker compose up -d kafka`, но
+  > брокерный дефолт бьёт **только по новым** топикам; существующие всё равно правятся
+  > `kafka-configs --alter`.
 - **Redis**: при включённом ACL задайте `REDIS_USER` и `REDIS_PASSWORD`.
 
 ---
