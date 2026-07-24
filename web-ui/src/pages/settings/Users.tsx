@@ -490,6 +490,21 @@ function UserTeamsDialog({ user, onClose }: { user: User; onClose: () => void })
     },
   });
 
+  // §45: смена команды по умолчанию — тот же PUT, что у чипов в колонке
+  // «Команды»; после успеха ["users"] перечитывается, и ★ в диалоге и в
+  // строке списка переезжает без F5.
+  const setDefault = useMutation({
+    mutationFn: (teamID: string) =>
+      api.put(`/api/users/${user.id}/default-team`, { team_id: teamID }),
+    onSuccess: () => {
+      setError(null);
+      qc.invalidateQueries({ queryKey: ["users"] });
+    },
+    onError: (err: { response?: { data?: { error?: string } } }) => {
+      setError(err?.response?.data?.error ?? t("common.error"));
+    },
+  });
+
   const askRemove = async (tm: TeamBrief) => {
     if (
       await confirm({
@@ -529,14 +544,30 @@ function UserTeamsDialog({ user, onClose }: { user: User; onClose: () => void })
             <div className="text-sm text-fg-muted">{t("settings.users.teams_dialog.none")}</div>
           ) : (
             <div className="flex flex-wrap gap-1 pt-1">
-              {(user.teams ?? []).map((tm) => (
+              {(user.teams ?? []).map((tm) => {
+                const isDefault = tm.id === user.default_team_id;
+                return (
                 <span
                   key={tm.id}
                   className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-fg-muted/15 text-fg"
                 >
-                  {tm.id === user.default_team_id && (
-                    <span className="text-[10px] text-accent">★</span>
-                  )}
+                  <button
+                    type="button"
+                    disabled={isDefault || setDefault.isPending}
+                    onClick={() => setDefault.mutate(tm.id)}
+                    title={
+                      isDefault
+                        ? t("settings.users.teams.default")
+                        : t("settings.users.teams.set_as_default", { name: tm.name })
+                    }
+                    className={`text-[10px] ${
+                      isDefault
+                        ? "text-accent cursor-default"
+                        : "text-fg-muted hover:text-accent disabled:opacity-50"
+                    }`}
+                  >
+                    {isDefault ? "★" : "☆"}
+                  </button>
                   {tm.slug}
                   <span className="text-fg-muted">· {t(`settings.teams.role.${tm.role}`)}</span>
                   <button
@@ -549,7 +580,8 @@ function UserTeamsDialog({ user, onClose }: { user: User; onClose: () => void })
                     ×
                   </button>
                 </span>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
