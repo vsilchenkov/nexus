@@ -205,7 +205,9 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 		p.logger.Str("node_path", env.NodePath),
 		p.logger.Int("body_len", len(env.Body)))
 
-	out := p.send.Send(ctx, buildSendInput(node, env))
+	in := buildSendInput(node, env)
+	logRebuiltTarget(p.logger, "async", env, in.TargetURL)
+	out := p.send.Send(ctx, in)
 
 	// §52: outcome (ok/degraded/down) — для бейджа узла; isErr («любой
 	// не-2xx») — прежняя семантика для incomplete_total и решения ack/dlq.
