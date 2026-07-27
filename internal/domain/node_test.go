@@ -278,6 +278,12 @@ func TestNode_Validate_TargetURLScheme(t *testing.T) {
 	if err := n.Validate(); err != nil {
 		t.Errorf("from_request with empty target_url: want nil, got %v", err)
 	}
+	// from_request с остаточным значением от переключения режима: поле не
+	// используется и на форме скрыто — сохранение блокировать нельзя.
+	n = base(func(n *Node) { n.URLMode = URLModeFromRequest; n.TargetURL = "example.com" })
+	if err := n.Validate(); err != nil {
+		t.Errorf("from_request with residual target_url: want nil, got %v", err)
+	}
 }
 
 func TestNode_SetDefaults_TrimsTargetURL(t *testing.T) {

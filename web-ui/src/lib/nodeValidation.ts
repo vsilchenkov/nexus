@@ -56,6 +56,9 @@ const PATH_RE = /^[a-zA-Z0-9][a-zA-Z0-9/_-]*$/;
 const PARAM_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 // §42: db.table из [A-Za-z0-9_], ровно одна точка (зеркало isValidCHTableName).
 const CH_TABLE_RE = /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/;
+// §69.2: абсолютный http(s)-адрес с непустым хостом (зеркало
+// domain.AbsoluteHTTPURL: схема + host обязательны, «example.com/hook» — нет).
+const TARGET_URL_RE = /^https?:\/\/[^/?#\s]+/i;
 
 // validateNodePath — отдельная проверка path (§53: диалог «Скопировать узел»,
 // где валидируется только новый путь). Возвращает i18n-код или null.
@@ -141,6 +144,17 @@ export function validateNodeForm(f: NodeFormLimits, ctx?: BasicAuthContext): Nod
   }
   if (f.target_url.length > 2048) {
     return { field: "target_url", code: "node.validation.target_url_length" };
+  }
+  // §69.2: в static/pull адрес доставки обязан быть абсолютным http(s). Без
+  // схемы узел сохранялся, а падал уже на доставке («unsupported protocol
+  // scheme»). При from_request поле скрыто и не используется — остаточное
+  // значение не блокирует сохранение (зеркало domain.Node.Validate).
+  if (
+    (f.url_mode === "static" || isPull) &&
+    f.target_url.trim() !== "" &&
+    !TARGET_URL_RE.test(f.target_url.trim())
+  ) {
+    return { field: "target_url", code: "node.validation.target_url_scheme" };
   }
   if (f.url_mode === "from_request" && !isPull) {
     if (f.url_param_name.length < 1 || f.url_param_name.length > 64) {

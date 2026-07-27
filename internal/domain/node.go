@@ -222,11 +222,13 @@ func (n *Node) Validate() error {
 	if l := len(n.TargetURL); l > 2048 {
 		return ErrNodeTargetURLLength
 	}
-	// §69.2: непустой target_url обязан быть абсолютным http(s)-адресом.
-	// Проверяем только непустое значение: у url_mode=from_request поле
-	// легитимно пустое (адрес приходит в запросе), а обязательность для
-	// static закрыта ErrNodeStaticNeedsTargetURL выше.
-	if n.TargetURL != "" {
+	// §69.2: в режиме static (в него же нормализуются pull-узлы) target_url —
+	// фактический адрес доставки, поэтому обязан быть абсолютным http(s).
+	// У from_request поле не используется (адрес приходит в запросе) и на форме
+	// скрыто: остаточное значение от переключения режима не должно блокировать
+	// сохранение ошибкой на невидимом поле. Пустое значение здесь не трогаем —
+	// обязательность закрыта ErrNodeStaticNeedsTargetURL выше.
+	if n.URLMode == URLModeStatic && n.TargetURL != "" {
 		if _, ok := AbsoluteHTTPURL(n.TargetURL); !ok {
 			return ErrNodeTargetURLScheme
 		}
