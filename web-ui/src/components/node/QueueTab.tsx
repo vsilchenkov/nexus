@@ -66,6 +66,11 @@ export function QueueTab({
   // §69.1: очередь в Kafka есть у requestAsync и pull-узлов (RabbitMQAsync) —
   // они идут через один топик nexus.async. У sync-узла её нет.
   const isAsync = node.root_method !== "request";
+  // Pull-узел на паузе исключается из поллинга RabbitMQ (NodeLister), поэтому
+  // новые сообщения ждут в БРОКЕРЕ, а не в очереди Nexus: тексты про «копятся
+  // в очереди ниже» и «очистите очередь» для него ввели бы в заблуждение —
+  // очистка тронет только уже принятое шиной.
+  const isPull = node.root_method === "RabbitMQAsync";
 
   const [period, setPeriod] = useState<Period>(defaultPeriod);
   const periodIso = () => {
@@ -200,7 +205,13 @@ export function QueueTab({
               отклоняются на входе — тексты про «накопится в очереди» врали бы. */}
           <p>
             {node.status === "paused"
-              ? t(isAsync ? "queue.banner.state_paused" : "queue.banner.state_paused_sync")
+              ? t(
+                  isPull
+                    ? "queue.banner.state_paused_pull"
+                    : isAsync
+                      ? "queue.banner.state_paused"
+                      : "queue.banner.state_paused_sync",
+                )
               : node.status === "disabled"
                 ? t("queue.banner.state_disabled")
                 : t(isAsync ? "queue.banner.explain" : "queue.banner.explain_sync")}
@@ -275,7 +286,9 @@ export function QueueTab({
           </div>
           {pending.length === 0 ? (
             <div className="text-fg-muted">
-              {node.status === "paused" ? t("queue.empty_paused") : t("queue.empty_enabled")}
+              {node.status === "paused"
+                ? t(isPull ? "queue.empty_paused_pull" : "queue.empty_paused")
+                : t("queue.empty_enabled")}
             </div>
           ) : (
             <div className="overflow-hidden rounded-md border border-line">

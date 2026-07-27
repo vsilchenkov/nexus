@@ -787,6 +787,7 @@
       "enable": "Enable node",
       "state_paused": "The node is paused — new requests pile up in the queue below and are not delivered. Resume to drain it, or purge it.",
       "state_paused_sync": "The node is paused — incoming requests are rejected right away (a synchronous node has no queue, so nothing piles up). Resume to accept requests again.",
+      "state_paused_pull": "The node is paused — Nexus stops pulling new messages from RabbitMQ, so they stay in the broker queue. Below are only the messages the bus accepted before the pause (purging affects exactly those). Resume to keep draining the queue.",
       "state_disabled": "The node is disabled — incoming requests are rejected (nothing is queued)."
     },
     "failed": {
@@ -801,7 +802,8 @@
       }
     },
     "empty_enabled": "Empty — an active node delivers right away, so nothing waits here. Undelivered requests are under “Failed deliveries” below.",
-    "empty_paused": "Nothing queued yet — while the node is paused, new requests pile up here."
+    "empty_paused": "Nothing queued yet — while the node is paused, new requests pile up here.",
+    "empty_paused_pull": "Empty — everything accepted before the pause has been processed. New messages wait in the RabbitMQ queue while the node is paused."
   },
   "settings": {
     "title": "Settings",
