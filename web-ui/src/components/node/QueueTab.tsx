@@ -37,12 +37,19 @@ function prettyJson(raw: string): string {
   }
 }
 
-// QueueTab — вкладка «Очередь» узла requestAsync (§35). Две части:
+// QueueTab — вкладка «Очередь» узла (§35, §69.1). Две части:
 //  • «Ожидают отправки» — живая очередь nexus.async (peek, только admin; непуста
 //    лишь для paused-узлов/лежащего Sender) с удалением/очисткой через tombstones;
 //  • «Неудачные доставки» — из ClickHouse-логов (done=0, быстро), с reason/телом/
 //    replay. Очистка неудач не через Kafka (нельзя), а пауза/отключение узла +
 //    replay; фильтр по периоду показывает свежие.
+//
+// §69.1: вкладка открыта для ВСЕХ типов узлов. У sync-узла (root_method=request)
+// очереди в Kafka нет, поэтому первая секция скрыта (и peek не запрашивается —
+// иначе на каждое открытие уходил бы бесполезный скан топиков), а вторая
+// работает как и раньше: записи done=0 появляются и у sync (circuit breaker,
+// сетевые ошибки, превышение лимита тела). До §69.1 очистить их из UI было
+// нельзя вообще — вкладку приходилось «открывать» временной сменой типа узла.
 export function QueueTab({
   node,
   onOpenFailedLogs,
@@ -56,6 +63,9 @@ export function QueueTab({
   const id = node.id;
   const isManager = useRoleAtLeast("manager");
   const hasLogsTable = !!node.clickhouse_table;
+  // §69.1: очередь в Kafka есть у requestAsync и pull-узлов (RabbitMQAsync) —
+  // они идут через один топик nexus.async. У sync-узла её нет.
+  const isAsync = node.root_method !== "request";
 
   const [period, setPeriod] = useState<Period>(defaultPeriod);
   const periodIso = () => {
@@ -75,7 +85,7 @@ export function QueueTab({
   const pendingQ = useQuery({
     queryKey: ["aq-list", id],
     queryFn: () => api.get<ListResp>(`/api/nodes/${id}/async-queue/messages`),
-    enabled: isManager,
+    enabled: isManager && isAsync,
     refetchInterval: (q) => {
       if (node.status === "paused") return 4_000;
       const data = q.state.data as ListResp | undefined;
@@ -87,7 +97,8 @@ export function QueueTab({
   const pendingCapped = pendingQ.data?.capped ?? false;
   // Секцию показываем всегда (для manager+) — пустое состояние объясняет, почему
   // на активном узле в очереди пусто (см. §35: неудачи уходят в логи/DLQ).
-  const showPending = isManager;
+  // У sync-узла очереди не существует — секции нет вовсе (§69.1).
+  const showPending = isManager && isAsync;
 
   // Неудачные доставки — ClickHouse (done=0) за период.
   // ВАЖНО: в queryKey — стабильный periodKey(period), НЕ periodWindow(period).
@@ -165,12 +176,17 @@ export function QueueTab({
         <PeriodPicker value={period} onChange={setPeriod} />
       </div>
 
+      {/* У sync-узла плитки «Ожидают отправки» нет: очереди не существует.
+          Сетка остаётся двухколоночной — одинокая плитка занимает первую
+          колонку и не растягивается на всю ширину. */}
       <KpiRow cols={2}>
-        <Kpi
-          label={t("queue.kpi.pending")}
-          value={isManager ? `${pendingCount}${pendingCapped ? "+" : ""}` : "—"}
-          hint={t("queue.kpi.pending_hint")}
-        />
+        {isAsync && (
+          <Kpi
+            label={t("queue.kpi.pending")}
+            value={isManager ? `${pendingCount}${pendingCapped ? "+" : ""}` : "—"}
+            hint={t("queue.kpi.pending_hint")}
+          />
+        )}
         <Kpi
           label={t("queue.kpi.failed")}
           value={hasLogsTable && !failedUnavailable ? String(failedCountQ.data?.count ?? "—") : "—"}
@@ -180,12 +196,14 @@ export function QueueTab({
 
       <Hint tone={node.status === "enabled" ? "muted" : "warn"}>
         <div className="space-y-2">
+          {/* §69.1: у sync-узла на паузе запросы не копятся в очереди, а
+              отклоняются на входе — тексты про «накопится в очереди» врали бы. */}
           <p>
             {node.status === "paused"
-              ? t("queue.banner.state_paused")
+              ? t(isAsync ? "queue.banner.state_paused" : "queue.banner.state_paused_sync")
               : node.status === "disabled"
                 ? t("queue.banner.state_disabled")
-                : t("queue.banner.explain")}
+                : t(isAsync ? "queue.banner.explain" : "queue.banner.explain_sync")}
           </p>
           {isManager && (
             <div className="flex flex-wrap gap-2">
@@ -327,9 +345,19 @@ export function QueueTab({
                   onPurge={(b) => purgeFailed.mutate(b)}
                   labels={{
                     period: t("queue.purge_failed_period"),
-                    periodConfirm: t("queue.purge_failed_period_confirm"),
+                    // §69.1: у sync-узла нет авто-повтора — обещать его отмену
+                    // в подтверждении нельзя, чистится только вид логов.
+                    periodConfirm: t(
+                      isAsync
+                        ? "queue.purge_failed_period_confirm"
+                        : "queue.purge_failed_period_confirm_sync",
+                    ),
                     all: t("queue.purge_failed_all"),
-                    allConfirm: t("queue.purge_failed_all_confirm"),
+                    allConfirm: t(
+                      isAsync
+                        ? "queue.purge_failed_all_confirm"
+                        : "queue.purge_failed_all_confirm_sync",
+                    ),
                   }}
                 />
               </>
@@ -352,11 +380,14 @@ export function QueueTab({
             )}
           </div>
         </div>
-        {/* §36: подсказка про авто-репроцессор DLQ — повтор до TTL узла. */}
+        {/* §36: подсказка про авто-репроцессор DLQ — повтор до TTL узла.
+            §69.1: у sync-узла DLQ нет, повторять некому — своя подсказка. */}
         <p className="text-xs text-fg-muted">
-          {t("queue.failed.reprocess_hint", {
-            hours: Math.round(((node.dlq_ttl_seconds ?? 86400) / 3600) * 10) / 10,
-          })}
+          {isAsync
+            ? t("queue.failed.reprocess_hint", {
+                hours: Math.round(((node.dlq_ttl_seconds ?? 86400) / 3600) * 10) / 10,
+              })
+            : t("queue.failed.no_reprocess_hint")}
         </p>
         {!hasLogsTable ? (
           <div className="text-fg-muted">{t("queue.failed.no_logging")}</div>

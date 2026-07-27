@@ -121,9 +121,11 @@ export default function NodeDetail() {
   const statusTone = node.status === "enabled" ? "ok" : node.status === "paused" ? "warn" : "err";
   const isPull = node.root_method === "RabbitMQAsync";
   const rmq = node.rmq_status;
-  // §34.4: вкладка управления async-очередью — только для requestAsync.
-  const tabs: Tab[] =
-    node.root_method === "requestAsync" ? [...BASE_TABS, "queue"] : BASE_TABS;
+  // §34.4 + §69.1: вкладка доступна для всех типов узлов. У async-узлов это
+  // управление очередью Kafka + неудачные доставки, у sync — только неудачные
+  // доставки (ClickHouse done=0): без вкладки их нельзя было ни повторить, ни
+  // очистить из UI, приходилось временно менять тип узла на requestAsync.
+  const tabs: Tab[] = [...BASE_TABS, "queue"];
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">

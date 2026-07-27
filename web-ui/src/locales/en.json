@@ -754,8 +754,10 @@
     "purge_period_confirm": "Delete waiting messages received in the selected period? They will not be sent.",
     "purge_failed_all": "Clear all failed",
     "purge_failed_all_confirm": "Clear all failed deliveries? Their automatic retry stops and the records are removed from the logs. This cannot be undone.",
+    "purge_failed_all_confirm_sync": "Clear all failed deliveries? The records are removed from the node logs. This cannot be undone.",
     "purge_failed_period": "Clear failed (period)",
     "purge_failed_period_confirm": "Clear failed deliveries in the selected period? Their automatic retry stops and the records are removed from the logs. This cannot be undone.",
+    "purge_failed_period_confirm_sync": "Clear failed deliveries in the selected period? The records are removed from the node logs. This cannot be undone.",
     "replay_failed_all": "Retry all now",
     "replay_failed_all_confirm": "Re-send all failed deliveries in the selected period now? They are re-injected as new requests and their DLQ originals are cancelled (so the auto-reprocessor won't deliver them twice).",
     "open_in_logs": "Open in logs →",
@@ -777,18 +779,21 @@
     },
     "banner": {
       "explain": "Failed deliveries stay in the logs (with reason and body) and can be replayed. To stop the growth, pause or disable the node; to remove them and stop the automatic retry, use “Clear failed”. The dead-letter backlog expires by retention.",
+      "explain_sync": "A synchronous node answers the caller immediately and has no queue. Failed deliveries stay in the logs (with reason and body) and can be replayed, but are never retried automatically. To stop the growth, pause or disable the node; to remove the records from view, use “Clear failed”.",
       "pause": "Pause node",
       "disable": "Disable node",
       "disable_confirm": "Disable the node? It will stop accepting and delivering requests until re-enabled.",
       "resume": "Resume node",
       "enable": "Enable node",
       "state_paused": "The node is paused — new requests pile up in the queue below and are not delivered. Resume to drain it, or purge it.",
+      "state_paused_sync": "The node is paused — incoming requests are rejected right away (a synchronous node has no queue, so nothing piles up). Resume to accept requests again.",
       "state_disabled": "The node is disabled — incoming requests are rejected (nothing is queued)."
     },
     "failed": {
       "empty": "No failed deliveries in this period.",
       "no_logging": "Logging is not configured for this node — failed deliveries can't be shown.",
       "reprocess_hint": "Retried automatically until TTL ({{hours}} h) — once the target recovers, they are delivered. “Replay” forces an immediate retry.",
+      "no_reprocess_hint": "Synchronous requests are never retried automatically: the caller already got its response. “Replay” re-sends them manually.",
       "replay": "Replay",
       "col": {
         "status": "Status",
