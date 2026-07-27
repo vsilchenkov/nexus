@@ -3,6 +3,7 @@ package domain
 import (
 	"encoding/json"
 	"regexp"
+	"strings"
 	"time"
 	"unicode/utf8"
 )
@@ -221,6 +222,17 @@ func (n *Node) Validate() error {
 	if l := len(n.TargetURL); l > 2048 {
 		return ErrNodeTargetURLLength
 	}
+	// §69.2: в режиме static (в него же нормализуются pull-узлы) target_url —
+	// фактический адрес доставки, поэтому обязан быть абсолютным http(s).
+	// У from_request поле не используется (адрес приходит в запросе) и на форме
+	// скрыто: остаточное значение от переключения режима не должно блокировать
+	// сохранение ошибкой на невидимом поле. Пустое значение здесь не трогаем —
+	// обязательность закрыта ErrNodeStaticNeedsTargetURL выше.
+	if n.URLMode == URLModeStatic && n.TargetURL != "" {
+		if _, ok := AbsoluteHTTPURL(n.TargetURL); !ok {
+			return ErrNodeTargetURLScheme
+		}
+	}
 	if l := len(n.URLParamName); l < 1 || l > 64 {
 		return ErrNodeParamNameLength
 	}
@@ -383,6 +395,9 @@ func (n *Node) validateRMQ() error {
 // Вызывается до Validate в usecase.Create — чтобы пользователь мог
 // прислать минимальный JSON и получить рабочий узел.
 func (n *Node) SetDefaults() {
+	// §69.2: пробелы по краям адреса — частая опечатка копипаста; режем до
+	// валидации, иначе " https://host" уедет в конверт и упадёт в Sender'е.
+	n.TargetURL = strings.TrimSpace(n.TargetURL)
 	if n.IncomingMethod == "" {
 		n.IncomingMethod = HTTPMethodPOST
 	}

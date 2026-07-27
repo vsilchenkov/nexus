@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"net/url"
 	"strings"
 	"time"
 )
@@ -16,11 +15,8 @@ func ValidatePublicBaseURL(raw string) error {
 	if strings.HasSuffix(raw, "/") {
 		return ErrPublicBaseURLInvalid
 	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return ErrPublicBaseURLInvalid
-	}
-	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+	u, ok := AbsoluteHTTPURL(raw)
+	if !ok {
 		return ErrPublicBaseURLInvalid
 	}
 	if u.Path != "" || u.RawQuery != "" || u.Fragment != "" {

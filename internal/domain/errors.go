@@ -26,6 +26,10 @@ var (
 	ErrNodePathFormat              = errors.New("domain: path must match ^[a-zA-Z0-9][a-zA-Z0-9/_-]*$")
 	ErrNodeTargetURLLength         = errors.New("domain: target_url length must be <= 2048")
 	ErrNodeStaticNeedsTargetURL    = errors.New("domain: url_mode=static requires non-empty target_url")
+	// §69.2: target_url без схемы (http/https) валиден на всех уровнях, но падает
+	// в Sender'е как `unsupported protocol scheme ""` — уже на доставке, а не на
+	// сохранении узла.
+	ErrNodeTargetURLScheme = errors.New("domain: target_url must be an absolute http(s) URL")
 	// §32: target_url указывает на собственный ingress Nexus (петля).
 	ErrNodeTargetURLSelfReference = errors.New("domain: target_url must not point at the Nexus ingress itself (loop)")
 	ErrNodeParamNameLength        = errors.New("domain: url_param_name length must be 1..64")

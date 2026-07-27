@@ -37,6 +37,51 @@ function base(): NodeFormLimits {
   };
 }
 
+describe("validateNodeForm — §69.2 схема target_url", () => {
+  // Боевой инцидент: «vozovoz.lenobl.com» без схемы сохранялся, а падал уже
+  // на доставке как «unsupported protocol scheme».
+  it.each([
+    "vozovoz.lenobl.com/vozovoz/getstat",
+    "example.com",
+    "//example.com",
+    "/relative",
+    "ftp://host/file",
+    "https://",
+  ])("отвергает %s", (target_url) => {
+    const v = validateNodeForm({ ...base(), target_url });
+    expect(v?.field).toBe("target_url");
+    expect(v?.code).toBe("node.validation.target_url_scheme");
+  });
+
+  it.each(["http://x.io", "https://api.partner.com/hook?a=1", "https://host:8443/path"])(
+    "принимает %s",
+    (target_url) => {
+      expect(validateNodeForm({ ...base(), target_url })).toBeNull();
+    },
+  );
+
+  it("пустой target_url при from_request — ok", () => {
+    expect(validateNodeForm({ ...base(), url_mode: "from_request", target_url: "" })).toBeNull();
+  });
+
+  it("остаточный target_url при from_request не блокирует сохранение", () => {
+    // Поле скрыто на форме — ошибка на невидимом поле была бы тупиком.
+    expect(
+      validateNodeForm({ ...base(), url_mode: "from_request", target_url: "example.com" }),
+    ).toBeNull();
+  });
+
+  it("pull-узел проверяется как static", () => {
+    const v = validateNodeForm({
+      ...base(),
+      root_method: "RabbitMQAsync",
+      url_mode: "from_request",
+      target_url: "example.com",
+    });
+    expect(v?.code).toBe("node.validation.target_url_scheme");
+  });
+});
+
 describe("validateNodeForm — §64 внешняя таблица", () => {
   it("внешняя таблица несовместима с шаблоном", () => {
     const v = validateNodeForm({ ...base(), external_table: true, clickhouse_template_id: "tpl-1" });
