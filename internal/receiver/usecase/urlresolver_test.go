@@ -61,7 +61,11 @@ func TestResolveURL_FromRequest_Missing(t *testing.T) {
 
 func TestResolveURL_FromRequest_Invalid(t *testing.T) {
 	n := &domain.Node{URLMode: domain.URLModeFromRequest, URLParamName: "url_base"}
-	for _, bad := range []string{"not-a-url", "ftp://example.com", "https://"} {
+	// §69.2: адрес с пробелом по краям тоже невалиден — резолвер возвращает
+	// ИСХОДНУЮ строку (не разобранный URL), поэтому «молча почищенный» пробел
+	// означал бы проверку одного адреса и отправку другого: ошибка всплыла бы
+	// не здесь (400 клиенту), а на доставке в Sender'е.
+	for _, bad := range []string{"not-a-url", "ftp://example.com", "https://", " https://example.com", "https://exa mple.com"} {
 		_, _, err := ResolveURL(n, url.Values{"url_base": {bad}})
 		if !errors.Is(err, domain.ErrURLInvalid) {
 			t.Errorf("%q: want ErrURLInvalid, got %v", bad, err)

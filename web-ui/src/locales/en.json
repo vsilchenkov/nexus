@@ -338,6 +338,7 @@
       "path_format": "Path may contain only latin letters, digits, slash, hyphen and underscore, and must start with a letter or digit",
       "target_url_required": "Target URL is required when URL mode is «static»",
       "target_url_length": "Target URL must be at most 2048 characters",
+      "target_url_scheme": "Target URL must start with http:// or https:// and contain a host",
       "target_url_self": "Target URL must not point at the Nexus ingress itself (would cause a request loop)",
       "url_param_name_length": "URL parameter name length must be between 1 and 64 characters",
       "url_param_name_format": "URL parameter name must start with a letter and contain only letters, digits, hyphen and underscore",
@@ -405,7 +406,7 @@
       "incoming_method": "HTTP method the node accepts inbound. Other methods get 405. Defaults to POST. «ANY» — accept a request with any method (no 405).",
       "status": "Active — handles requests. Paused — sync requests are queued (202) and accumulate until unpaused. Disabled — node rejects requests (404).",
       "url_mode": "Where the target address comes from. Static — always the Target URL below. From request — the URL arrives in a query parameter on each request (validated against the allowlist).",
-      "target_url": "Where Nexus forwards the request (external receiver). Full address with scheme and, if needed, port/path. Used in Static mode.",
+      "target_url": "Where Nexus forwards the request (external receiver). Must include the http:// or https:// scheme — an address without one will not be saved. Port/path if needed. Used in Static mode.",
       "path_passthrough": "When on, the incoming path tail after the node path is appended to the Target URL: one node serves many receiver methods. Off — exact path match (extra tail → 404).",
       "url_param_name": "Name of the query parameter that carries the target URL in From-request mode. The parameter itself is stripped from the proxied request.",
       "allowed_hosts": "Allowlist of receiver hosts (SSRF protection). A URL outside the list → 403. Exact hosts and wildcards (*.partner.com) are supported.",
@@ -753,8 +754,10 @@
     "purge_period_confirm": "Delete waiting messages received in the selected period? They will not be sent.",
     "purge_failed_all": "Clear all failed",
     "purge_failed_all_confirm": "Clear all failed deliveries? Their automatic retry stops and the records are removed from the logs. This cannot be undone.",
+    "purge_failed_all_confirm_sync": "Clear all failed deliveries? The records are removed from the node logs. This cannot be undone.",
     "purge_failed_period": "Clear failed (period)",
     "purge_failed_period_confirm": "Clear failed deliveries in the selected period? Their automatic retry stops and the records are removed from the logs. This cannot be undone.",
+    "purge_failed_period_confirm_sync": "Clear failed deliveries in the selected period? The records are removed from the node logs. This cannot be undone.",
     "replay_failed_all": "Retry all now",
     "replay_failed_all_confirm": "Re-send all failed deliveries in the selected period now? They are re-injected as new requests and their DLQ originals are cancelled (so the auto-reprocessor won't deliver them twice).",
     "open_in_logs": "Open in logs →",
@@ -776,18 +779,22 @@
     },
     "banner": {
       "explain": "Failed deliveries stay in the logs (with reason and body) and can be replayed. To stop the growth, pause or disable the node; to remove them and stop the automatic retry, use “Clear failed”. The dead-letter backlog expires by retention.",
+      "explain_sync": "A synchronous node answers the caller immediately and has no queue. Failed deliveries stay in the logs (with reason and body) and can be replayed, but are never retried automatically. To stop the growth, pause or disable the node; to remove the records from view, use “Clear failed”.",
       "pause": "Pause node",
       "disable": "Disable node",
       "disable_confirm": "Disable the node? It will stop accepting and delivering requests until re-enabled.",
       "resume": "Resume node",
       "enable": "Enable node",
       "state_paused": "The node is paused — new requests pile up in the queue below and are not delivered. Resume to drain it, or purge it.",
+      "state_paused_sync": "The node is paused — incoming requests are rejected right away (a synchronous node has no queue, so nothing piles up). Resume to accept requests again.",
+      "state_paused_pull": "The node is paused — Nexus stops pulling new messages from RabbitMQ, so they stay in the broker queue. Below are only the messages the bus accepted before the pause (purging affects exactly those). Resume to keep draining the queue.",
       "state_disabled": "The node is disabled — incoming requests are rejected (nothing is queued)."
     },
     "failed": {
       "empty": "No failed deliveries in this period.",
       "no_logging": "Logging is not configured for this node — failed deliveries can't be shown.",
       "reprocess_hint": "Retried automatically until TTL ({{hours}} h) — once the target recovers, they are delivered. “Replay” forces an immediate retry.",
+      "no_reprocess_hint": "Synchronous requests are never retried automatically: the caller already got its response. “Replay” re-sends them manually.",
       "replay": "Replay",
       "col": {
         "status": "Status",
@@ -795,7 +802,8 @@
       }
     },
     "empty_enabled": "Empty — an active node delivers right away, so nothing waits here. Undelivered requests are under “Failed deliveries” below.",
-    "empty_paused": "Nothing queued yet — while the node is paused, new requests pile up here."
+    "empty_paused": "Nothing queued yet — while the node is paused, new requests pile up here.",
+    "empty_paused_pull": "Empty — everything accepted before the pause has been processed. New messages wait in the RabbitMQ queue while the node is paused."
   },
   "settings": {
     "title": "Settings",

@@ -392,6 +392,56 @@ func TestAsyncQueue_PurgeFailed_NoCH_Noop(t *testing.T) {
 	assert.Empty(t, audit.entries)
 }
 
+// syncNode — узел без очереди (root_method=request). §69.1: вкладка «Очередь»
+// открыта и для таких узлов ради секции «Неудачные доставки», поэтому
+// Kafka-операции обязаны сами отсекать их, не трогая брокеры.
+func syncNodeCH() *domain.Node {
+	n := asyncNodeCH()
+	n.RootMethod = domain.RootMethodRequest
+	return n
+}
+
+func TestAsyncQueue_List_SyncNode_SkipsKafka(t *testing.T) {
+	t.Parallel()
+	peeker := &stubPeeker{list: port.PeekListResult{Items: []port.QueueMessageMeta{{ID: "id-1"}}}}
+	uc, _ := newQueueUC(peeker, &stubCancelWriter{}, syncNodeCH())
+
+	r, err := uc.List(context.Background(), "n1", "t1")
+	require.NoError(t, err)
+	assert.Empty(t, r.Items, "у sync-узла очереди нет")
+	assert.Empty(t, peeker.listTopics, "топики не сканируются: peek стоит запроса к брокеру")
+}
+
+func TestAsyncQueue_Purge_SyncNode_SkipsKafka(t *testing.T) {
+	t.Parallel()
+	peeker := &stubPeeker{scan: port.ScanIDsResult{IDs: []string{"a"}}}
+	cancelW := &stubCancelWriter{}
+	uc, audit := newQueueUC(peeker, cancelW, syncNodeCH())
+
+	r, err := uc.PurgeAll(context.Background(), Actor{UserID: "u"}, "n1", "t1")
+	require.NoError(t, err)
+	assert.Zero(t, r.Cancelled)
+	assert.Empty(t, cancelW.gotIDs)
+	assert.Empty(t, audit.entries, "нечего чистить — нечего и аудировать")
+}
+
+// §69.1: очистка «Неудачных доставок» — единственная операция вкладки, которая
+// осмысленна и для sync-узла: она читает/чистит ClickHouse, а не Kafka.
+// Tombstone'ы при этом не пишутся: DLQ-репроцессора, который бы их читал, нет.
+func TestAsyncQueue_PurgeFailed_SyncNode_DeletesWithoutTombstones(t *testing.T) {
+	t.Parallel()
+	cancelW := &stubCancelWriter{}
+	failed := &stubFailedPurger{ids: []string{"f1"}, deleted: 3}
+	uc, audit := newQueueUCFull(&stubPeeker{}, cancelW, failed, syncNodeCH())
+
+	r, err := uc.PurgeFailed(context.Background(), Actor{UserID: "u"}, "n1", "t1", time.Time{}, time.Time{})
+	require.NoError(t, err)
+	assert.Equal(t, 3, r.Cancelled, "удалённые записи done=0 считаются как обычно")
+	assert.True(t, failed.delCalled)
+	assert.Empty(t, cancelW.gotIDs, "tombstone'ы для sync-узла не пишутся")
+	require.Len(t, audit.entries, 1)
+}
+
 func TestAsyncQueue_PurgeFailed_DeleteError(t *testing.T) {
 	t.Parallel()
 	failed := &stubFailedPurger{ids: []string{"x"}, delErr: errors.New("ch down")}

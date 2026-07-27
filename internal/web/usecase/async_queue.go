@@ -111,6 +111,16 @@ type QueuePurgeResult struct {
 	KafkaAvailable bool
 }
 
+// usesAsyncQueue — есть ли у узла очередь в Kafka. §69.1: вкладка «Очередь»
+// открыта для всех типов узлов (у sync там живёт секция «Неудачные доставки»
+// из ClickHouse), поэтому Kafka-операции обязаны сами отсекать sync-узлы:
+// иначе на каждое открытие вкладки уходил бы бесполезный скан обоих топиков до
+// peekCap сообщений. requestAsync и pull-узлы (RabbitMQAsync) идут через один и
+// тот же топик nexus.async — очередь есть у обоих.
+func usesAsyncQueue(node *domain.Node) bool {
+	return node.RootMethod != domain.RootMethodRequest
+}
+
 // resolveNode возвращает узел по id с проверкой team-scope (§34.4 / Phase 10).
 func (u *AsyncQueueUsecase) resolveNode(ctx context.Context, nodeID, teamID string) (*domain.Node, error) {
 	node, err := u.nodes.Get(ctx, nodeID)
@@ -133,6 +143,12 @@ func (u *AsyncQueueUsecase) List(ctx context.Context, nodeID, teamID string) (Qu
 	node, err := u.resolveNode(ctx, nodeID, teamID)
 	if err != nil {
 		return QueueListResult{}, err
+	}
+	if !usesAsyncQueue(node) {
+		u.logger.Debug("async queue list skipped: sync node",
+			u.logger.Str("node_path", node.Path),
+			u.logger.Str("root_method", string(node.RootMethod)))
+		return QueueListResult{Items: []port.QueueMessageMeta{}, KafkaAvailable: u.peeker != nil}, nil
 	}
 	if u.peeker == nil {
 		return QueueListResult{Items: []port.QueueMessageMeta{}}, nil
@@ -254,6 +270,12 @@ func (u *AsyncQueueUsecase) purge(ctx context.Context, actor Actor, nodeID, team
 	if err != nil {
 		return QueuePurgeResult{}, err
 	}
+	if !usesAsyncQueue(node) {
+		// §69.1: у sync-узла очереди нет — чистить нечего, скан топиков не нужен.
+		u.logger.Debug("async queue purge skipped: sync node",
+			u.logger.Str("node_path", node.Path), u.logger.Str("op", op))
+		return QueuePurgeResult{}, nil
+	}
 	if u.peeker == nil || u.cancel == nil {
 		return QueuePurgeResult{}, nil
 	}
@@ -319,8 +341,10 @@ func (u *AsyncQueueUsecase) PurgeFailed(ctx context.Context, actor Actor, nodeID
 	sinceMs, untilMs := toMs(from), toMs(to)
 
 	// 1) Снимаем повторную доставку: репроцессор дропнет эти ID по tombstone.
+	// Для sync-узла шаг пропускаем: DLQ-репроцессора у него нет, tombstone'ы
+	// были бы записью в Redis впустую (§69.1).
 	cancelled, capped := 0, false
-	if u.cancel != nil {
+	if u.cancel != nil && usesAsyncQueue(node) {
 		ids, c, err := u.failed.FailedIDs(ctx, node.ClickHouseTable, node.ID, sinceMs, untilMs, u.peekCap)
 		if err != nil {
 			return QueuePurgeResult{}, fmt.Errorf("async queue failed ids: %w", err)

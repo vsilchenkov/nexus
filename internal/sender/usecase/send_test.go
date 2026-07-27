@@ -27,6 +27,7 @@ type stubHTTPCaller struct {
 	responses   []*port.HTTPResponse // последовательность по попыткам
 	errs        []error
 	lastReqBody []byte // §68: тело последнего запроса — проверяем проброску байтов
+	lastReqURL  string // §69.3: адрес последнего запроса — проверяем пересборку URL
 }
 
 func (s *stubHTTPCaller) Do(_ context.Context, req *port.HTTPRequest) (*port.HTTPResponse, error) {
@@ -34,6 +35,7 @@ func (s *stubHTTPCaller) Do(_ context.Context, req *port.HTTPRequest) (*port.HTT
 	defer s.mu.Unlock()
 	if req != nil {
 		s.lastReqBody = req.Body
+		s.lastReqURL = req.URL
 	}
 	i := s.calls
 	s.calls++
