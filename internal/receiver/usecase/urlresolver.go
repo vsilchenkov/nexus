@@ -24,8 +24,8 @@ func ResolveURL(node *domain.Node, incomingQuery url.Values) (target string, cle
 		if raw == "" {
 			return "", nil, fmt.Errorf("%w: %s", domain.ErrURLParamRequired, param)
 		}
-		parsed, perr := url.Parse(raw)
-		if perr != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		parsed, ok := domain.AbsoluteHTTPURL(raw)
+		if !ok {
 			return "", nil, fmt.Errorf("%w: %s", domain.ErrURLInvalid, raw)
 		}
 		if !domain.HostAllowed(parsed.Host, node.URLAllowedHosts) {

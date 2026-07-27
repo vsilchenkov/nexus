@@ -237,6 +237,57 @@ func TestNode_Validate_ClickHouseTableFormat(t *testing.T) {
 	}
 }
 
+func TestNode_Validate_TargetURLScheme(t *testing.T) {
+	// §69.2: непустой target_url обязан быть абсолютным http(s)-адресом. Боевой
+	// инцидент: «vozovoz.lenobl.com» без схемы сохранялся, а падал уже в Sender'е
+	// как `unsupported protocol scheme ""` — и на каждой доставке узла.
+	base := func(mut func(*Node)) *Node {
+		n := &Node{Path: "x", RootMethod: RootMethodRequest, TargetURL: "https://example.com"}
+		n.SetDefaults()
+		mut(n)
+		return n
+	}
+	bad := []string{
+		"vozovoz.lenobl.com/vozovoz/getstat", // боевой случай: хост без схемы
+		"example.com",
+		"//example.com",   // протокол-относительный
+		"/relative/path",  // относительный
+		"ftp://host/file", // не http(s)
+		"https://",        // пустой хост
+		"http://",
+		"://example.com",
+		"javascript:alert(1)",
+	}
+	for _, raw := range bad {
+		if err := base(func(n *Node) { n.TargetURL = raw }).Validate(); !errors.Is(err, ErrNodeTargetURLScheme) {
+			t.Errorf("target_url %q: want ErrNodeTargetURLScheme, got %v", raw, err)
+		}
+	}
+	for _, raw := range []string{
+		"http://x.io",
+		"https://api.partner.com/hook?a=1",
+		"https://host:8443/path",
+		"  https://example.com/hook  ", // пробелы срезает SetDefaults
+	} {
+		if err := base(func(n *Node) { n.TargetURL = raw; n.SetDefaults() }).Validate(); err != nil {
+			t.Errorf("valid target_url %q: want nil, got %v", raw, err)
+		}
+	}
+	// url_mode=from_request: адрес приходит в запросе, пустой target_url легитимен.
+	n := base(func(n *Node) { n.URLMode = URLModeFromRequest; n.TargetURL = "" })
+	if err := n.Validate(); err != nil {
+		t.Errorf("from_request with empty target_url: want nil, got %v", err)
+	}
+}
+
+func TestNode_SetDefaults_TrimsTargetURL(t *testing.T) {
+	n := &Node{Path: "x", RootMethod: RootMethodRequest, TargetURL: "  https://example.com/hook\n"}
+	n.SetDefaults()
+	if n.TargetURL != "https://example.com/hook" {
+		t.Fatalf("target_url = %q, want trimmed", n.TargetURL)
+	}
+}
+
 func TestNode_Validate_MaxBodySizeRequired_GatedByLogging(t *testing.T) {
 	// Лимит тела применяется только при записи лога — включённый чекбокс с
 	// нулём при выключенном логировании не должен блокировать сохранение
