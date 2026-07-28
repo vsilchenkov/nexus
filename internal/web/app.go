@@ -466,7 +466,8 @@ func (a *App) Start(ctx context.Context) error {
 		orphanHandler = httpadapter.NewOrphanHandler(orphanScanner, a.logger)
 
 		// Team provisioning (Phase 10.C): teamProvisioner создан выше.
-		teamUC := usecase.NewTeamUsecase(teamRepo, teamProvisioner, auditUC, a.logger)
+		teamUC := usecase.NewTeamUsecase(teamRepo, teamProvisioner, auditUC,
+			domain.InstanceID(a.cfg.Instance.ID), a.logger)
 		teamHandler = httpadapter.NewTeamHandler(teamUC, a.logger)
 
 		// ClickHouse hot-reload: Web не держит chlog.Writer, поэтому writers пуст.

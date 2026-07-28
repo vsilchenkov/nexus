@@ -67,18 +67,20 @@ type UserTeam struct {
 // на team-switcher в сессии.
 const DefaultTeamSlug = "default"
 
-// CHDatabaseForSlug возвращает каноническое имя ClickHouse-БД для команды.
-// Формат "nexus_<slug>" (см. teamCHDatabasePattern). Используется
-// TeamUsecase при создании команды и Sender'ом при резолве маршрута.
-func CHDatabaseForSlug(slug string) string {
-	return "nexus_" + slug
-}
+// Имя БД команды собирает InstanceID.CHDatabase (§70.2, instance.go): на ноде
+// без идентификатора — "nexus_<slug>", с идентификатором — "nexus_<id>_<slug>".
+// Обёртка для первого случая — CHDatabaseForSlug там же.
 
 // teamSlugPattern и teamCHDatabasePattern совпадают с CHECK-constraint'ами
-// в миграции 0008 (teams_slug_format / teams_ch_database_format).
+// в миграциях 0008 (teams_slug_format) и 0029 (teams_ch_database_format).
+//
+// §70.2: хвост ch_database — 40 символов, а не 31, как было до §70. Иначе
+// суффикс ноды ("nexus_kz_" вместо "nexus_") не оставлял бы места длинному
+// слагу: слаг сам допускает 32 символа. Бюджет слага под конкретную ноду
+// считает InstanceID.MaxTeamSlugLen.
 var (
 	teamSlugPattern       = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
-	teamCHDatabasePattern = regexp.MustCompile(`^nexus_[a-z][a-z0-9_]{0,31}$`)
+	teamCHDatabasePattern = regexp.MustCompile(`^nexus_[a-z][a-z0-9_]{0,40}$`)
 )
 
 // Validate проверяет инварианты команды.

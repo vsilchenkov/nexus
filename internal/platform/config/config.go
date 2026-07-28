@@ -7,6 +7,7 @@ package config
 
 // Config — корневая структура конфига.
 type Config struct {
+	Instance   InstanceSection   `yaml:"instance"`
 	Build      BuildSection      `yaml:"build"`
 	Logging    LoggingSection    `yaml:"logging"`
 	Sentry     SentrySection     `yaml:"sentry"`
@@ -19,6 +20,25 @@ type Config struct {
 	Receiver   ReceiverSection   `yaml:"receiver"`
 	Sender     SenderSection     `yaml:"sender"`
 	Web        WebSection        `yaml:"web"`
+}
+
+// InstanceSection — идентификация ноды (инстанса) Nexus, §70.1.
+//
+// Нода — самостоятельное развёртывание со своими PostgreSQL/Redis/Kafka,
+// которое пишет логи в ОБЩИЙ с другими нодами ClickHouse. ID разводит имена
+// БД (`nexus_<id>_<slug>` вместо `nexus_<slug>`) и служит тегом Sentry, меткой
+// метрик и атрибутом логов.
+//
+// Пустой ID = нода, существовавшая до §70: имена БД и все сигналы прежние.
+// Значение неизменяемо после первого запуска — сверяется с instance_identity
+// в PostgreSQL (§70.5), потому что смена ID не переименовывает уже созданные БД.
+//
+// AdoptUnowned — аварийный обход гейта первого запуска: разрешает присвоить
+// существующую в ClickHouse БД без маркера владения (например, если PostgreSQL
+// пересоздали, а ClickHouse остался). Чужой маркер он не перебивает никогда.
+type InstanceSection struct {
+	ID           string `yaml:"id"`
+	AdoptUnowned bool   `yaml:"adopt_unowned"`
 }
 
 // PrometheusSection — адрес Prometheus-сервера, который Web-сервис опрашивает
