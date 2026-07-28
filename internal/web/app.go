@@ -302,6 +302,7 @@ func (a *App) Start(ctx context.Context) error {
 	r.GET("/api/version", httpadapter.NewVersionHandler(
 		a.cfg.Build.Version, a.cfg.Build.Commit, a.cfg.Build.BuildDate,
 		a.cfg.Web.AllowVersionOverride, versionOverride,
+		a.identity.ID.String(), // §70.8: бейдж ноды в шапке
 	).Get)
 	// Telegram-клиент (§20): для тестовой отправки и планировщика уведомлений.
 	telegramClient := telegram.New(a.logger)
@@ -351,7 +352,10 @@ func (a *App) Start(ctx context.Context) error {
 	userHandler := httpadapter.NewUserHandler(userUC, authUC, a.logger)
 	tokenHandler := httpadapter.NewAPITokenHandler(tokenUC, a.logger)
 	auditHandler := httpadapter.NewAuditHandler(auditUC, a.logger)
-	appSettingsHandler := httpadapter.NewAppSettingsHandler(appSettingsUC, settingsTester, a.cfg.Web.NodeDefaultMaxBodySize, a.logger)
+	appSettingsHandler := httpadapter.NewAppSettingsHandler(
+		appSettingsUC, settingsTester, a.cfg.Web.NodeDefaultMaxBodySize,
+		a.identity.ID.CHDatabasePrefix(), // §70.8: предпросмотр имени БД команды
+		a.logger)
 
 	// §51: консоль служебных логов — хвост Redis-колец nexus:logs:* трёх
 	// сервисов (admin-only, маршруты /api/logs*).

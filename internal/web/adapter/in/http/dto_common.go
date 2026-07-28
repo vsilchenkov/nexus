@@ -164,6 +164,9 @@ type VersionResponse struct {
 	// OverrideAllowed — true в dev (web.allow_version_override): UI показывает
 	// поле ручного override версии; в проде false (версия всегда из git).
 	OverrideAllowed bool `json:"override_allowed"`
+	// Instance — идентификатор ноды (§70.8). Пустой у ноды без идентификатора,
+	// поэтому omitempty: интерфейс действующей ноды не меняется.
+	Instance string `json:"instance,omitempty"`
 }
 
 // PublicSettingsResponse — GET /api/settings/public.
@@ -174,6 +177,11 @@ type PublicSettingsResponse struct {
 	// §64: значение «Макс. размер тела», подставляемое формой при СОЗДАНИИ узла
 	// (web.node_default_max_body_size). Существующие узлы не затрагивает.
 	NodeDefaultMaxBodySize int `json:"node_default_max_body_size"`
+	// §70.8: префикс имён БД ClickHouse этой ноды ("nexus_" либо "nexus_<id>_").
+	// Диалог создания команды показывает предпросмотр имени БД из него, а не
+	// склеивает литерал на клиенте — иначе на ноде с идентификатором предпросмотр
+	// показывал бы чужое имя.
+	CHDatabasePrefix string `json:"ch_database_prefix"`
 }
 
 // UserEnvelope — обёртка {"user": ...} для login/me.

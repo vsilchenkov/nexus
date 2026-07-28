@@ -29,7 +29,7 @@ func doVersion(t *testing.T, h *VersionHandler) VersionResponse {
 
 func TestVersionHandler_ReturnsAllFields(t *testing.T) {
 	t.Parallel()
-	h := NewVersionHandler("1.2.3", "abc1234", "2026-06-18T10:00:00Z", false, nil)
+	h := NewVersionHandler("1.2.3", "abc1234", "2026-06-18T10:00:00Z", false, nil, "")
 	resp := doVersion(t, h)
 	assert.Equal(t, "1.2.3", resp.Version)
 	assert.Equal(t, "abc1234", resp.Commit)
@@ -37,10 +37,21 @@ func TestVersionHandler_ReturnsAllFields(t *testing.T) {
 	assert.False(t, resp.OverrideAllowed)
 }
 
+// §70.8: бейдж ноды. Пустой идентификатор поле не отдаёт (omitempty) — SPA
+// действующей ноды не показывает чип.
+func TestVersionHandler_Instance(t *testing.T) {
+	t.Parallel()
+	withID := doVersion(t, NewVersionHandler("1.2.3", "", "", false, nil, "kz"))
+	assert.Equal(t, "kz", withID.Instance)
+
+	plain := doVersion(t, NewVersionHandler("1.2.3", "", "", false, nil, ""))
+	assert.Empty(t, plain.Instance)
+}
+
 func TestVersionHandler_OverrideAppliedWhenAllowed(t *testing.T) {
 	t.Parallel()
 	override := func(context.Context) string { return "dev-local" }
-	h := NewVersionHandler("1.2.3", "abc1234", "2026-06-18", true, override)
+	h := NewVersionHandler("1.2.3", "abc1234", "2026-06-18", true, override, "")
 	resp := doVersion(t, h)
 	assert.Equal(t, "dev-local", resp.Version, "override must replace version in dev")
 	assert.Equal(t, "abc1234", resp.Commit, "commit stays ground truth")
@@ -51,7 +62,7 @@ func TestVersionHandler_OverrideAppliedWhenAllowed(t *testing.T) {
 func TestVersionHandler_OverrideIgnoredWhenNotAllowed(t *testing.T) {
 	t.Parallel()
 	override := func(context.Context) string { return "dev-local" }
-	h := NewVersionHandler("1.2.3", "abc1234", "2026-06-18", false, override)
+	h := NewVersionHandler("1.2.3", "abc1234", "2026-06-18", false, override, "")
 	resp := doVersion(t, h)
 	assert.Equal(t, "1.2.3", resp.Version, "override ignored when gate off (prod)")
 	assert.False(t, resp.OverrideAllowed)
@@ -60,7 +71,7 @@ func TestVersionHandler_OverrideIgnoredWhenNotAllowed(t *testing.T) {
 func TestVersionHandler_EmptyOverrideFallsBackToLdflags(t *testing.T) {
 	t.Parallel()
 	override := func(context.Context) string { return "" }
-	h := NewVersionHandler("1.2.3", "abc1234", "2026-06-18", true, override)
+	h := NewVersionHandler("1.2.3", "abc1234", "2026-06-18", true, override, "")
 	resp := doVersion(t, h)
 	assert.Equal(t, "1.2.3", resp.Version, "empty override → git version")
 }
