@@ -36,6 +36,10 @@ func main() {
 	pgPool := bootstrap.MustPG(ctx, cfg, logger)
 	defer pgPool.Close()
 
+	// §70.5: сверяем идентификатор ноды. Sender миграции не накатывает, поэтому
+	// отсутствие instance_identity здесь не фатально — он стартовал раньше Web.
+	identity := bootstrap.MustInstanceIdentity(ctx, pgPool, cfg, flags, projectName, logger)
+
 	// §8.4 / §14.5: накладываем CH-настройки из app_settings ДО подключения.
 	bootstrap.ApplyAppSettings(ctx, pgPool, cfg, logger)
 
@@ -59,7 +63,7 @@ func main() {
 
 	otelShutdown := bootstrap.MustOtel(ctx, cfg, "sender", logger)
 
-	app := sender.New(cfg, pgPool, chConn, redisClient, cipher, otelShutdown, logger, logCtl)
+	app := sender.New(cfg, pgPool, chConn, redisClient, cipher, otelShutdown, identity, logger, logCtl)
 
 	if err := runner.Run(serviceName, displayName, description, app, logger); err != nil {
 		logger.ErrorWithOp("service stopped", err, "main")

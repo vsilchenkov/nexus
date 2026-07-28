@@ -55,6 +55,9 @@ func main() {
 	defer pgPool.Close()
 
 	bootstrap.AutoMigrate(cfg, logger)
+	// §70.5: заявляем/сверяем идентификатор ноды сразу после миграций — до
+	// подключения ClickHouse, потому что от него зависят имена БД команд.
+	identity := bootstrap.MustInstanceIdentity(ctx, pgPool, cfg, flags, projectName, logger)
 	// §8.4 / §14.5: накладываем dynamic-настройки из app_settings поверх
 	// env-конфига до подключения зависимостей (CH-клиент возьмёт overlay'нутый адрес).
 	bootstrap.ApplyAppSettings(ctx, pgPool, cfg, logger)
@@ -72,7 +75,7 @@ func main() {
 
 	otelShutdown := bootstrap.MustOtel(ctx, cfg, "web", logger)
 
-	app := web.New(cfg, pgPool, redisClient, chConn, cipher, otelShutdown, logger, logCtl)
+	app := web.New(cfg, pgPool, redisClient, chConn, cipher, otelShutdown, identity, logger, logCtl)
 
 	if err := runner.Run(serviceName, displayName, description, app, logger); err != nil {
 		logger.ErrorWithOp("service stopped", err, "main")

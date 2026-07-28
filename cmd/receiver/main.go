@@ -49,6 +49,11 @@ func main() {
 	pgPool := bootstrap.MustPG(ctx, cfg, logger)
 	defer pgPool.Close()
 
+	// §70.5: Receiver в ClickHouse не ходит, но сверяет идентификатор ноды —
+	// подменённый конфиг (чужой instance.id при своей PostgreSQL) обязан валить
+	// старт здесь, а не всплывать позже расхождением имён БД у Web и Sender.
+	bootstrap.MustInstanceIdentity(ctx, pgPool, cfg, flags, projectName, logger)
+
 	// §8.4 / §14.5: динамическая часть Sentry/CH из app_settings поверх env.
 	bootstrap.ApplyAppSettings(ctx, pgPool, cfg, logger)
 

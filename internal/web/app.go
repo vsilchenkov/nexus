@@ -92,9 +92,13 @@ type App struct {
 
 	// §51: ручка runtime-уровня логов + кольцо для Redis-шиппера.
 	logCtl *bootstrap.LogController
+
+	// identity — §70: идентификатор ноды и признаки первого запуска. Определяет
+	// имена БД ClickHouse новых команд и поведение гейта владения при старте.
+	identity bootstrap.Identity
 }
 
-func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, ch chdriver.Conn, cipher *crypto.Cipher, otelShutdown otelpf.ShutdownFunc, logger logging.Logger, logCtl *bootstrap.LogController) *App {
+func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, ch chdriver.Conn, cipher *crypto.Cipher, otelShutdown otelpf.ShutdownFunc, identity bootstrap.Identity, logger logging.Logger, logCtl *bootstrap.LogController) *App {
 	return &App{
 		cfg:          cfg,
 		logger:       logger,
@@ -105,6 +109,7 @@ func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, ch chdrive
 		metrics:      metrics.New("web"),
 		otelShutdown: otelShutdown,
 		logCtl:       logCtl,
+		identity:     identity,
 	}
 }
 
@@ -466,8 +471,7 @@ func (a *App) Start(ctx context.Context) error {
 		orphanHandler = httpadapter.NewOrphanHandler(orphanScanner, a.logger)
 
 		// Team provisioning (Phase 10.C): teamProvisioner создан выше.
-		teamUC := usecase.NewTeamUsecase(teamRepo, teamProvisioner, auditUC,
-			domain.InstanceID(a.cfg.Instance.ID), a.logger)
+		teamUC := usecase.NewTeamUsecase(teamRepo, teamProvisioner, auditUC, a.identity.ID, a.logger)
 		teamHandler = httpadapter.NewTeamHandler(teamUC, a.logger)
 
 		// ClickHouse hot-reload: Web не держит chlog.Writer, поэтому writers пуст.

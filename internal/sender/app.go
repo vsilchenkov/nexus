@@ -86,6 +86,10 @@ type App struct {
 
 	// §51: ручка runtime-уровня логов + кольцо для Redis-шиппера.
 	logCtl *bootstrap.LogController
+
+	// identity — §70: идентификатор ноды. Sender ничего не захватывает и не
+	// усыновляет, но обязан отличать свои ClickHouse-таблицы от чужих.
+	identity bootstrap.Identity
 }
 
 func New(
@@ -95,6 +99,7 @@ func New(
 	redis *goredis.Client,
 	cipher *crypto.Cipher,
 	otelShutdown otelpf.ShutdownFunc,
+	identity bootstrap.Identity,
 	logger logging.Logger,
 	logCtl *bootstrap.LogController,
 ) *App {
@@ -108,6 +113,7 @@ func New(
 		metrics:      metrics.New("sender"),
 		otelShutdown: otelShutdown,
 		logCtl:       logCtl,
+		identity:     identity,
 	}
 }
 
