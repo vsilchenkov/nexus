@@ -413,3 +413,15 @@ go run ./cmd/web --debug --set-admin-password admin
   [Makefile](./Makefile): mingw64 добавляется в PATH автоматически при наличии).
 - **delve: «could not load source» для `embed.FS`** — не критично, на отладку не влияет
   (см. [.vscode/settings.json](./.vscode/settings.json)).
+- **Web не стартует: «database already exists on first run of this instance» (§70).** Сработал гейт
+  первого запуска: `instance.id` пуст, PostgreSQL свежая, а база `nexus_default` в ClickHouse уже
+  есть — то есть в этот ClickHouse уже пишет другая нода. Варианты: задать свой `instance.id`
+  (тогда базы будут `nexus_<id>_<slug>`) либо, если база действительно ваша (пересоздали
+  PostgreSQL), запустить один раз с `--ch-adopt`.
+- **Web не стартует: «instance.id mismatch» (§70).** Сохранённый в PostgreSQL идентификатор не
+  совпадает с конфигом. Смена идентификатора не переименовывает уже созданные базы ClickHouse,
+  поэтому старт прекращается: верните прежнее значение либо переименуйте базы вручную и запустите
+  с `--instance-id-force`.
+- **Локальная отладка второй ноды** (§70): в `config_debug.yml` задайте `instance.id: kz` (или
+  `NEXUS_INSTANCE_ID=kz`) — базы станут `nexus_kz_*`, а в шапке интерфейса появится чип `KZ`.
+  PostgreSQL/Redis/Kafka при этом должны быть отдельными от первой ноды.

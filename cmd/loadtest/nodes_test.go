@@ -117,10 +117,12 @@ func TestNodeCreateBody(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			b := nodeCreateBody(tt.mode, "loadtest/node-1", target)
+			b := nodeCreateBody(tt.mode, "loadtest/node-1", target, "nexus_kz_default.loadtest")
 			assert.Equal(t, "loadtest/node-1", b["path"])
 			assert.Equal(t, target, b["target_url"])
-			assert.Equal(t, "nexus_default.loadtest", b["clickhouse_table"])
+			// §70.2: имя таблицы приходит из --ch-table, а не зашито — на ноде
+			// с идентификатором БД называется иначе.
+			assert.Equal(t, "nexus_kz_default.loadtest", b["clickhouse_table"])
 			tt.assert(t, b)
 		})
 	}
