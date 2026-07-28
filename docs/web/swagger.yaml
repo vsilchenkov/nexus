@@ -765,6 +765,13 @@ definitions:
     type: object
   internal_web_adapter_in_http.PublicSettingsResponse:
     properties:
+      ch_database_prefix:
+        description: |-
+          §70.8: префикс имён БД ClickHouse этой ноды ("nexus_" либо "nexus_<id>_").
+          Диалог создания команды показывает предпросмотр имени БД из него, а не
+          склеивает литерал на клиенте — иначе на ноде с идентификатором предпросмотр
+          показывал бы чужое имя.
+        type: string
       metrics_refetch_ms:
         description: '§44.C: интервал автообновления метрик (мс) для дашборда/страниц
           узлов.'
@@ -1059,6 +1066,11 @@ definitions:
       build_date:
         type: string
       commit:
+        type: string
+      instance:
+        description: |-
+          Instance — идентификатор ноды (§70.8). Пустой у ноды без идентификатора,
+          поэтому omitempty: интерфейс действующей ноды не меняется.
         type: string
       override_allowed:
         description: |-

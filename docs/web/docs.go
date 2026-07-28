@@ -6210,6 +6210,10 @@ const docTemplate = `{
         "internal_web_adapter_in_http.PublicSettingsResponse": {
             "type": "object",
             "properties": {
+                "ch_database_prefix": {
+                    "description": "§70.8: префикс имён БД ClickHouse этой ноды (\"nexus_\" либо \"nexus_\u003cid\u003e_\").\nДиалог создания команды показывает предпросмотр имени БД из него, а не\nсклеивает литерал на клиенте — иначе на ноде с идентификатором предпросмотр\nпоказывал бы чужое имя.",
+                    "type": "string"
+                },
                 "metrics_refetch_ms": {
                     "description": "§44.C: интервал автообновления метрик (мс) для дашборда/страниц узлов.",
                     "type": "integer"
@@ -6606,6 +6610,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "commit": {
+                    "type": "string"
+                },
+                "instance": {
+                    "description": "Instance — идентификатор ноды (§70.8). Пустой у ноды без идентификатора,\nпоэтому omitempty: интерфейс действующей ноды не меняется.",
                     "type": "string"
                 },
                 "override_allowed": {
