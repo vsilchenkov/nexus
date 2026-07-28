@@ -47,6 +47,14 @@ type Manager struct {
 
 	stopMu  sync.Mutex
 	stopped bool
+
+	// onReload — коллбэки, вызываемые ПОСЛЕ успешного swap соединения (§70.3).
+	// Нужны кешам, чьи данные привязаны к конкретному серверу: маркеры владения
+	// живут в самом ClickHouse, и после перевода ноды на другой сервер (смена
+	// адреса через UI, §8.4) прежние вердикты относились бы к старому серверу.
+	// При неудачном Reload не вызываются — соединение осталось прежним.
+	cbMu     sync.Mutex
+	onReload []func()
 }
 
 // ManagerOption — функциональная опция конструктора NewManager.
@@ -113,8 +121,34 @@ func (m *Manager) Reload(ctx context.Context) error {
 		m.logger.Str("addr", addr),
 		m.logger.Str("db", m.cfg.Database))
 
+	m.notifyReloaded()
 	m.closeWithDelay(old)
 	return nil
+}
+
+// OnReload регистрирует коллбэк, вызываемый после успешной подмены соединения.
+// Коллбэк обязан быть быстрым и неблокирующим: он выполняется в горутине,
+// делающей Reload (обработчик pub/sub-события конфигурации).
+func (m *Manager) OnReload(fn func()) {
+	if fn == nil {
+		return
+	}
+	m.cbMu.Lock()
+	defer m.cbMu.Unlock()
+	m.onReload = append(m.onReload, fn)
+}
+
+// notifyReloaded вызывает зарегистрированные коллбэки вне блокировки списка —
+// иначе коллбэк, который сам зовёт OnReload, встал бы в дедлок.
+func (m *Manager) notifyReloaded() {
+	m.cbMu.Lock()
+	cbs := make([]func(), len(m.onReload))
+	copy(cbs, m.onReload)
+	m.cbMu.Unlock()
+
+	for _, fn := range cbs {
+		fn()
+	}
 }
 
 // Close закрывает текущее соединение и помечает Manager как закрытый —
