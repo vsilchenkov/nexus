@@ -71,6 +71,11 @@ func main() {
 	// чтобы при hot-reload (Phase 6.3.2.5) закрылся текущий conn, а не исходный.
 	chConn, _ := bootstrap.TryClickHouse(ctx, cfg, logger)
 
+	// §70.5: гейт владения ClickHouse-БД — до старта сервиса и именно здесь, а не
+	// внутри App.Start: ошибку старта сервис-обёртка гасит логом, и в
+	// неинтерактивном режиме процесс остался бы жить с невыполненным гейтом.
+	bootstrap.MustCHOwnership(ctx, pgPool, chConn, cfg, identity, logger)
+
 	cipher := bootstrap.MustCipher(logger)
 
 	otelShutdown := bootstrap.MustOtel(ctx, cfg, "web", logger)

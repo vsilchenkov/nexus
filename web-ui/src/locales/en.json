@@ -1024,7 +1024,7 @@
     },
     "teams": {
       "title": "Teams",
-      "subtitle": "Multi-tenancy: each team has its own ClickHouse database (nexus_<slug>). Nodes, logs and API tokens are isolated by team.",
+      "subtitle": "Multi-tenancy: each team has its own ClickHouse database. Nodes, logs and API tokens are isolated by team.",
       "add": "New team",
       "empty": "No teams yet",
       "search_placeholder": "Search by slug, name or database…",

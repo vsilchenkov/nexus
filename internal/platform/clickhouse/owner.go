@@ -408,9 +408,18 @@ CREATE TABLE %s.%s (
 
 // EnsureOptions — параметры стартового гейта EnsureAll.
 type EnsureOptions struct {
-	// FreshPG — PostgreSQL этой ноды свежая (нет узлов, команд не больше
-	// сидированной). При этом существующая в ClickHouse БД означает, что там уже
-	// работает другая нода (§70.5).
+	// NeverClaimed — эта нода ещё ни разу не захватывала свои БД
+	// (instance_identity.ch_claimed = false).
+	NeverClaimed bool
+	// FreshPG — в PostgreSQL ноды нет узлов и нет команд, кроме сидированной.
+	//
+	// Гейт первого запуска требует ОБОИХ признаков: «нода ничего не захватывала»
+	// и «нода ещё ничего не накопила». Каждого по отдельности мало —
+	// оба варианта проверены на стенде:
+	//   - только FreshPG: у только что развёрнутой ноды узлов нет и на втором
+	//     старте, и гейт срабатывал бы на её собственную БД;
+	//   - только NeverClaimed: при обновлении действующей ноды до §70 флага
+	//     захвата ещё нет, и она отказывалась подниматься на своих же данных.
 	FreshPG bool
 	// Adopt — аварийный обход гейта первого запуска (--ch-adopt /
 	// instance.adopt_unowned): PostgreSQL пересоздали, а ClickHouse остался.
@@ -448,15 +457,6 @@ func (g *Guard) ensureOne(ctx context.Context, conn driver.Conn, db string, opts
 		return err
 	}
 
-	// Гейт первого запуска (§70.5). Проверяется ДО вердикта намеренно: у ноды с
-	// пустым instance.id маркер соседа тоже выглядит «своим» (instance_id=''),
-	// поэтому единственный надёжный признак — свежая PostgreSQL.
-	if exists && opts.FreshPG && !opts.Adopt {
-		return fmt.Errorf("%w: %s; set a unique instance.id in the config of this node "+
-			"(or start with --ch-adopt if this database really belongs to it)",
-			ErrFirstRunDatabaseExists, db)
-	}
-
 	if !exists {
 		return g.Claim(ctx, db)
 	}
@@ -465,6 +465,22 @@ func (g *Guard) ensureOne(ctx context.Context, conn driver.Conn, db string, opts
 	if err != nil {
 		return err
 	}
+
+	// Гейт первого запуска (§70.5): БД существует, а нода только что развёрнута
+	// (ничего не захватывала и ничего не накопила) — значит, в эту БД пишет
+	// кто-то другой.
+	//
+	// Свой маркер снимает подозрение ТОЛЬКО у ноды с непустым instance.id: там
+	// идентификатор уникален по договорённости, и «маркер наш» означает «БД
+	// наша». У ноды без идентификатора маркер соседа выглядит своим
+	// (instance_id='' у обеих), поэтому там гейт срабатывает даже на Owned.
+	provenOurs := v == VerdictOwned && !g.instanceID.IsZero()
+	if opts.NeverClaimed && opts.FreshPG && !opts.Adopt && !provenOurs {
+		return fmt.Errorf("%w: %s (verdict=%s); set a unique instance.id in the config of this node "+
+			"(or start with --ch-adopt if this database really belongs to it)",
+			ErrFirstRunDatabaseExists, db, v)
+	}
+
 	switch v {
 	case VerdictOwned:
 		return nil

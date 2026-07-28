@@ -33,6 +33,11 @@ type Identity struct {
 	ID      domain.InstanceID
 	FreshPG bool
 	Claimed bool
+	// CHClaimed — нода уже успешно захватывала свои БД в ClickHouse (флаг
+	// instance_identity.ch_claimed). Именно он, а не FreshPG, отличает первый
+	// запуск от последующих для гейта владения: у только что развёрнутой ноды
+	// узлов нет и на втором старте, и гейт срабатывал бы на её собственную БД.
+	CHClaimed bool
 }
 
 // MustInstanceIdentity заявляет идентификатор ноды в её PostgreSQL и сверяет
@@ -114,13 +119,14 @@ func MustInstanceIdentity(
 		logger.Any("claimed", id.claimed),
 		logger.Any("fresh_pg", fresh))
 
-	return Identity{ID: want, FreshPG: fresh, Claimed: id.claimed}
+	return Identity{ID: want, FreshPG: fresh, Claimed: id.claimed, CHClaimed: id.chClaimed}
 }
 
 // claimResult — что лежало в instance_identity и создали ли строку мы.
 type claimResult struct {
-	stored  domain.InstanceID
-	claimed bool
+	stored    domain.InstanceID
+	claimed   bool
+	chClaimed bool
 }
 
 // claimInstanceID вставляет идентификатор, если его ещё не заявляли, и
@@ -135,12 +141,19 @@ ON CONFLICT (id) DO NOTHING`, want.String(), claimedBy(service))
 		return claimResult{}, fmt.Errorf("insert instance identity: %w", err)
 	}
 
-	var stored string
+	var (
+		stored    string
+		chClaimed bool
+	)
 	if err := pool.QueryRow(ctx,
-		`SELECT instance_id FROM instance_identity WHERE id = 1`).Scan(&stored); err != nil {
+		`SELECT instance_id, ch_claimed FROM instance_identity WHERE id = 1`).Scan(&stored, &chClaimed); err != nil {
 		return claimResult{}, fmt.Errorf("read instance identity: %w", err)
 	}
-	return claimResult{stored: domain.InstanceID(stored), claimed: tag.RowsAffected() > 0}, nil
+	return claimResult{
+		stored:    domain.InstanceID(stored),
+		claimed:   tag.RowsAffected() > 0,
+		chClaimed: chClaimed,
+	}, nil
 }
 
 func forceInstanceID(ctx context.Context, pool *pgxpool.Pool, want domain.InstanceID, service string) error {
@@ -179,4 +192,18 @@ func claimedBy(service string) string {
 		return s[:maxLen]
 	}
 	return s
+}
+
+// MarkCHClaimed отмечает, что нода успешно захватила свои ClickHouse-БД.
+// После этого гейт первого запуска (§70.5) на неё больше не действует —
+// иначе повторный старт до создания первого узла упирался бы в собственную БД.
+//
+// Ошибка не фатальна: гейт лишь сработает ещё раз на следующем старте, а
+// маркер владения к тому времени уже наш — операция пройдёт как обычная
+// проверка.
+func MarkCHClaimed(ctx context.Context, pool *pgxpool.Pool, logger logging.Logger) {
+	if _, err := pool.Exec(ctx,
+		`UPDATE instance_identity SET ch_claimed = true WHERE id = 1`); err != nil {
+		logger.Warn("mark clickhouse ownership claimed failed", logger.Err(err))
+	}
 }

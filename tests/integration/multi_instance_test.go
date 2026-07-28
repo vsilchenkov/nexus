@@ -112,18 +112,37 @@ func TestMultiInstance_FirstRunGuard(t *testing.T) {
 	require.NoError(t, first.Claim(ctx, "nexus_default"))
 
 	second := newGuard(conn, instanceLegacy)
-	err := second.EnsureAll(ctx, []string{"nexus_default"}, chpf.EnsureOptions{FreshPG: true})
+	err := second.EnsureAll(ctx, []string{"nexus_default"}, chpf.EnsureOptions{NeverClaimed: true, FreshPG: true})
 	require.ErrorIs(t, err, chpf.ErrFirstRunDatabaseExists)
 
 	// Аварийный обход (--ch-adopt): PostgreSQL пересоздали, ClickHouse остался.
 	require.NoError(t, second.EnsureAll(ctx, []string{"nexus_default"},
-		chpf.EnsureOptions{FreshPG: true, Adopt: true}))
+		chpf.EnsureOptions{NeverClaimed: true, FreshPG: true, Adopt: true}))
 
 	// Чужой маркер не перебивается даже с Adopt.
 	kz := newGuard(conn, instanceKZ)
 	require.ErrorIs(t,
-		kz.EnsureAll(ctx, []string{"nexus_default"}, chpf.EnsureOptions{FreshPG: false, Adopt: true}),
+		kz.EnsureAll(ctx, []string{"nexus_default"}, chpf.EnsureOptions{NeverClaimed: false, FreshPG: false, Adopt: true}),
 		chpf.ErrForeignDatabase)
+}
+
+// Перезапуск ноды: после успешного захвата гейт первого запуска больше не
+// действует, даже если в PostgreSQL всё ещё нет ни одного узла. Иначе нода
+// становилась бы незапускаемой сразу после развёртывания (поймано на стенде).
+func TestMultiInstance_RestartAfterClaimPasses(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	conn, _, cleanup := startClickHouse(t, ctx)
+	defer cleanup()
+
+	kz := newGuard(conn, instanceKZ)
+	require.NoError(t, kz.EnsureAll(ctx, []string{"nexus_kz_default"},
+		chpf.EnsureOptions{NeverClaimed: true, FreshPG: true}), "первый запуск: БД ещё нет, захват проходит")
+
+	restarted := newGuard(conn, instanceKZ)
+	require.NoError(t, restarted.EnsureAll(ctx, []string{"nexus_kz_default"},
+		chpf.EnsureOptions{NeverClaimed: false, FreshPG: false}), "перезапуск: БД наша, гейт не мешает")
 }
 
 // TestMultiInstance_AdoptLegacyDatabase — обновление действующей ноды до §70:
@@ -142,11 +161,34 @@ func TestMultiInstance_AdoptLegacyDatabase(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, chpf.VerdictUnclaimed, v)
 
-	require.NoError(t, g.EnsureAll(ctx, []string{"nexus_legacy"}, chpf.EnsureOptions{FreshPG: false}))
+	require.NoError(t, g.EnsureAll(ctx, []string{"nexus_legacy"}, chpf.EnsureOptions{NeverClaimed: false, FreshPG: false}))
 
 	v, _, err = g.Check(ctx, "nexus_legacy")
 	require.NoError(t, err)
 	assert.Equal(t, chpf.VerdictOwned, v, "после усыновления БД считается своей")
+}
+
+// Обновление действующей ноды до §70: флага захвата ещё нет (NeverClaimed), но
+// нода уже работала (FreshPG=false) — её БД обязаны усыновиться, а не упереться
+// в гейт первого запуска. Без этого боевая нода не поднялась бы после
+// обновления (поймано на стенде).
+func TestMultiInstance_UpgradeOfRunningNodePasses(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	conn, _, cleanup := startClickHouse(t, ctx)
+	defer cleanup()
+
+	// Состояние «до §70»: БД есть, маркера нет.
+	require.NoError(t, conn.Exec(ctx, "CREATE DATABASE IF NOT EXISTS nexus_default"))
+
+	g := newGuard(conn, instanceLegacy)
+	require.NoError(t, g.EnsureAll(ctx, []string{"nexus_default"},
+		chpf.EnsureOptions{NeverClaimed: true, FreshPG: false}))
+
+	v, _, err := g.Check(ctx, "nexus_default")
+	require.NoError(t, err)
+	assert.Equal(t, chpf.VerdictOwned, v)
 }
 
 // TestMultiInstance_ConcurrentClaim — гонка захвата одной БД восемью нодами:

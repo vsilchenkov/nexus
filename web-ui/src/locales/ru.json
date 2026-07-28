@@ -1025,7 +1025,7 @@
     },
     "teams": {
       "title": "Команды",
-      "subtitle": "Multi-tenancy: каждая команда работает в своей БД ClickHouse (nexus_<slug>). Узлы, логи и API-токены изолированы по команде.",
+      "subtitle": "Multi-tenancy: каждая команда работает в своей БД ClickHouse. Узлы, логи и API-токены изолированы по команде.",
       "add": "Новая команда",
       "empty": "Команд пока нет",
       "search_placeholder": "Поиск по slug, названию или БД…",

@@ -194,17 +194,6 @@ func (a *App) Start(ctx context.Context) error {
 
 	nodeRepo := pgrepo.NewNodeRepoPg(a.pg, a.cipher, a.logger)
 
-	// §70.5: имя БД сидированной команды и захват своих БД — до любых операций
-	// с ClickHouse, включая стартовые ALTER'ы ниже.
-	if chGuard != nil {
-		if err := a.rebaseSeededTeamDB(ctx, teamRepo, defaultTeam); err != nil {
-			return err
-		}
-		if err := a.ensureCHOwnership(ctx, chGuard, teamRepo); err != nil {
-			return err
-		}
-	}
-
 	// §37: миграция существующих CH-таблиц — добавить колонку node_id, иначе
 	// SELECT по новой схеме упадёт. Идемпотентно (ALTER … IF NOT EXISTS), до
 	// старта HTTP-сервера. Новые таблицы получают колонку из шаблона.
@@ -666,75 +655,6 @@ func (a *App) Start(ctx context.Context) error {
 	case err := <-errCh:
 		return err
 	}
-}
-
-// rebaseSeededTeamDB — §70.5: один раз переименовывает БД сидированной команды
-// под идентификатор ноды. Миграция 0008 создаёт команду `default` с жёстко
-// зашитым `nexus_default`, а нода с идентификатором обязана писать в
-// `nexus_<id>_default`.
-//
-// Условия намеренно узкие: только первый запуск этой ноды (заявка идентификатора
-// сделана нами, PostgreSQL свежая) и только пока имя равно сидированному. Если
-// идентификатор задан, а условия не сошлись — старт прекращается: молчаливое
-// продолжение оставило бы новую ноду писать в БД соседа.
-func (a *App) rebaseSeededTeamDB(ctx context.Context, teamRepo webport.TeamRepo, team *domain.Team) error {
-	id := a.identity.ID
-	if id.IsZero() {
-		return nil
-	}
-	want := id.CHDatabase(team.Slug)
-	if team.CHDatabase == want {
-		return nil
-	}
-	seeded := domain.CHDatabaseForSlug(team.Slug)
-	if team.CHDatabase != seeded {
-		return fmt.Errorf("team %q points at clickhouse database %q, expected %q for instance %q: "+
-			"rename the database and update teams.ch_database manually",
-			team.Slug, team.CHDatabase, want, id)
-	}
-	if !a.identity.Claimed || !a.identity.FreshPG {
-		return fmt.Errorf("instance %q is configured, but team %q is already bound to %q on a used database: "+
-			"migrate the data manually before switching instance.id", id, team.Slug, team.CHDatabase)
-	}
-
-	updated := *team
-	updated.CHDatabase = want
-	if err := teamRepo.Update(ctx, &updated); err != nil {
-		return fmt.Errorf("rebase seeded team database to %s: %w", want, err)
-	}
-	team.CHDatabase = want
-	a.logger.Info("seeded team database rebased for instance",
-		a.logger.Str("team", team.Slug),
-		a.logger.Str("from", seeded),
-		a.logger.Str("to", want))
-	return nil
-}
-
-// ensureCHOwnership — §70.5: захват/подтверждение владения всеми БД этой ноды.
-// Чужая БД, конфликт владения и срабатывание гейта первого запуска прекращают
-// старт: работать «наполовину» здесь нельзя — housekeeping и обслуживание схемы
-// начали бы трогать чужие данные.
-func (a *App) ensureCHOwnership(ctx context.Context, guard *chpf.Guard, teamRepo webport.TeamRepo) error {
-	teams, err := teamRepo.List(ctx)
-	if err != nil {
-		return fmt.Errorf("list teams for clickhouse ownership: %w", err)
-	}
-	dbs := make([]string, 0, len(teams))
-	for _, t := range teams {
-		if t.CHDatabase != "" {
-			dbs = append(dbs, t.CHDatabase)
-		}
-	}
-	if err := guard.EnsureAll(ctx, dbs, chpf.EnsureOptions{
-		FreshPG: a.identity.FreshPG,
-		Adopt:   a.cfg.Instance.AdoptUnowned,
-	}); err != nil {
-		return fmt.Errorf("clickhouse ownership: %w", err)
-	}
-	a.logger.Info("clickhouse ownership confirmed",
-		a.logger.Str("instance", a.identity.ID.String()),
-		a.logger.Int("databases", len(dbs)))
-	return nil
 }
 
 func (a *App) Stop(ctx context.Context) error {
