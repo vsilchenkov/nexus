@@ -90,7 +90,7 @@ func (h *CHHousekeeping) Run(ctx context.Context) {
 	tick := time.NewTicker(h.period)
 	defer tick.Stop()
 
-	if err := h.runOnce(ctx); err != nil {
+	if err := h.RunOnce(ctx); err != nil {
 		h.logger.ErrorWithOp("ch housekeeping iteration failed", err, "ch.housekeeping")
 	}
 	for {
@@ -98,14 +98,17 @@ func (h *CHHousekeeping) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			if err := h.runOnce(ctx); err != nil {
+			if err := h.RunOnce(ctx); err != nil {
 				h.logger.ErrorWithOp("ch housekeeping iteration failed", err, "ch.housekeeping")
 			}
 		}
 	}
 }
 
-func (h *CHHousekeeping) runOnce(ctx context.Context) error {
+// RunOnce — один проход уборки: по каждому узлу с retention удаляются партиции
+// старше срока. Экспортирован, чтобы integration-тесты могли выполнить проход
+// детерминированно, не гоняя суточный цикл Run.
+func (h *CHHousekeeping) RunOnce(ctx context.Context) error {
 	nodes, err := h.nodes.ListForHousekeeping(ctx)
 	if err != nil {
 		return fmt.Errorf("list nodes: %w", err)

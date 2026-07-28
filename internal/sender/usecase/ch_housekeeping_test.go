@@ -107,7 +107,7 @@ func TestCHHousekeeping_RunOnce_ListError(t *testing.T) {
 	nodes := &stubNodeLister{err: errors.New("db down")}
 	h := NewCHHousekeeping(nilConnProvider{}, nodes, logging.NewNoop())
 
-	err := h.runOnce(context.Background())
+	err := h.RunOnce(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "list nodes")
 	assert.Equal(t, 1, nodes.calls)
@@ -118,7 +118,7 @@ func TestCHHousekeeping_RunOnce_NoNodes(t *testing.T) {
 	nodes := &stubNodeLister{nodes: nil}
 	h := NewCHHousekeeping(nilConnProvider{}, nodes, logging.NewNoop())
 
-	require.NoError(t, h.runOnce(context.Background()))
+	require.NoError(t, h.RunOnce(context.Background()))
 }
 
 func TestCHHousekeeping_RunOnce_SkipsNodesWithoutTableOrRetention(t *testing.T) {
@@ -136,7 +136,7 @@ func TestCHHousekeeping_RunOnce_SkipsNodesWithoutTableOrRetention(t *testing.T) 
 	h := NewCHHousekeeping(nilConnProvider{}, nodes, logging.NewNoop())
 
 	// Не должно паниковать (conn == nil не достигается).
-	require.NoError(t, h.runOnce(context.Background()))
+	require.NoError(t, h.RunOnce(context.Background()))
 }
 
 // stubOwnership — гейт владения (§70.4) с заранее известными ответами.
@@ -174,7 +174,7 @@ func TestCHHousekeeping_RunOnce_SkipsForeignTables(t *testing.T) {
 	}}
 	h := NewCHHousekeeping(nilConnProvider{}, nodes, logging.NewNoop()).WithOwnership(own)
 
-	require.NoError(t, h.runOnce(context.Background()))
+	require.NoError(t, h.RunOnce(context.Background()))
 	assert.ElementsMatch(t,
 		[]string{"nexus_default.orders", "nexus_kz_default.orders"},
 		own.asked, "владение проверяется у каждой таблицы с retention")
@@ -191,7 +191,7 @@ func TestCHHousekeeping_RunOnce_OwnershipErrorBlocksDrop(t *testing.T) {
 	own := &stubOwnership{err: errors.New("clickhouse down")}
 	h := NewCHHousekeeping(nilConnProvider{}, nodes, logging.NewNoop()).WithOwnership(own)
 
-	require.NoError(t, h.runOnce(context.Background()))
+	require.NoError(t, h.RunOnce(context.Background()))
 	assert.Equal(t, []string{"nexus_kz_default.orders"}, own.asked)
 }
 
@@ -205,7 +205,7 @@ func TestCHHousekeeping_RunOnce_NoOwnership_KeepsLegacyBehaviour(t *testing.T) {
 	}}
 	h := NewCHHousekeeping(nilConnProvider{}, nodes, logging.NewNoop())
 
-	require.NoError(t, h.runOnce(context.Background()))
+	require.NoError(t, h.RunOnce(context.Background()))
 }
 
 func TestCHHousekeeping_DropPartitions_InvalidTableName(t *testing.T) {
@@ -237,7 +237,7 @@ func TestCHHousekeeping_RunOnce_NodeWithBadTableLogsAndContinues(t *testing.T) {
 	h := NewCHHousekeeping(nilConnProvider{}, nodes, logging.NewNoop())
 
 	// Ошибка drop'а одного узла не должна валить весь цикл — runOnce nil.
-	require.NoError(t, h.runOnce(context.Background()))
+	require.NoError(t, h.RunOnce(context.Background()))
 }
 
 func TestCHHousekeeping_New_DefaultPeriod(t *testing.T) {
