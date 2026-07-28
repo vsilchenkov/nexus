@@ -179,12 +179,31 @@ func (a *App) Start(ctx context.Context) error {
 	// ErrCHUnavailable. Тип переменной — интерфейс, чтобы nil-проверки в
 	// usecase работали корректно (не nil-обёртка над nil-указателем).
 	var teamProvisioner webport.TeamProvisioner
+	var chGuard *chpf.Guard
 	if a.ch != nil {
 		a.chMgr = chpf.NewManager(a.ch, chpf.New, &a.cfg.ClickHouse, a.logger)
-		teamProvisioner = chreader.NewTeamProvisioner(a.chMgr, a.logger)
+		// §70.3: гейт владения БД. Кеш вердиктов привязан к серверу, поэтому
+		// сбрасывается после hot-reload соединения (адрес CH меняется из UI).
+		chGuard = chpf.NewGuard(a.chMgr, a.identity.ID, a.logger)
+		a.chMgr.OnReload(chGuard.Invalidate)
+
+		prov := chreader.NewTeamProvisioner(a.chMgr, a.logger)
+		prov.SetOwnership(chGuard)
+		teamProvisioner = prov
 	}
 
 	nodeRepo := pgrepo.NewNodeRepoPg(a.pg, a.cipher, a.logger)
+
+	// §70.5: имя БД сидированной команды и захват своих БД — до любых операций
+	// с ClickHouse, включая стартовые ALTER'ы ниже.
+	if chGuard != nil {
+		if err := a.rebaseSeededTeamDB(ctx, teamRepo, defaultTeam); err != nil {
+			return err
+		}
+		if err := a.ensureCHOwnership(ctx, chGuard, teamRepo); err != nil {
+			return err
+		}
+	}
 
 	// §37: миграция существующих CH-таблиц — добавить колонку node_id, иначе
 	// SELECT по новой схеме упадёт. Идемпотентно (ALTER … IF NOT EXISTS), до
@@ -199,6 +218,11 @@ func (a *App) Start(ctx context.Context) error {
 		if tables, err := nodeRepo.ListClickHouseTables(ctx); err != nil {
 			a.logger.Warn("§37 ensure ch columns: list ch tables failed", a.logger.Err(err))
 		} else {
+			// §70.4: чужие таблицы из обслуживания исключаются — ADD COLUMN
+			// фиксирует порядок колонок, а backfill вообще мутирует все строки.
+			if chGuard != nil {
+				tables = chGuard.FilterManagedTables(ctx, tables)
+			}
 			a.logger.Debug("ensure ch columns: tables collected", a.logger.Int("count", len(tables)))
 			chpf.EnsureNodeIDColumn(ctx, a.chMgr.Conn(), tables, a.logger)
 			chpf.EnsureHTTPMethodColumn(ctx, a.chMgr.Conn(), tables, a.logger) // §39
@@ -236,6 +260,11 @@ func (a *App) Start(ctx context.Context) error {
 	// Перенос узла между командами не должен утаскивать таблицу логов, если её
 	// делят другие узлы (тот же nodeRepo реализует port.NodeTableUsage).
 	nodeUC.SetTableUsage(nodeRepo)
+	// §70.6: узел не может ссылаться на таблицу в БД другой ноды (кроме режима
+	// внешней таблицы §64).
+	if chGuard != nil {
+		nodeUC.SetOwnership(chGuard)
+	}
 	// §27.8: health-ридер Puller-воркеров из общего Redis-стора (rmq:health).
 	rmqHealthReader := rediscache.NewRMQHealthReaderRedis(a.redis)
 	nodeHandler := httpadapter.NewNodeHandler(nodeUC, rmqHealthReader, a.logger)
@@ -346,6 +375,8 @@ func (a *App) Start(ctx context.Context) error {
 	var chTableVerifyUC *usecase.CHTableVerifyUsecase
 	if a.chMgr != nil {
 		insp := chreader.NewSchemaInspector(a.chMgr, a.logger)
+		// §70.4: ALTER'ы §56 действуют на таблицу целиком — на чужой запрещены.
+		insp.SetOwnership(chGuard)
 		chSchemaInspector = insp
 		chTableVerifyUC = usecase.NewCHTableVerifyUsecase(insp, a.logger)
 	} else {
@@ -453,6 +484,10 @@ func (a *App) Start(ctx context.Context) error {
 		// каждому её узлу (иначе после переноса узел видит чужое, в т.ч. из
 		// другой команды). Карта «таблица → число узлов» кешируется внутри.
 		logReader.SetTableUsage(nodeRepo)
+		// §70.4: запрет удаления записей в чужой таблице + строгая атрибуция на
+		// ней (карта «таблица → число узлов» считается по своей PostgreSQL и для
+		// межнодовой таблицы врёт).
+		logReader.SetOwnership(chGuard)
 		nodeLogMetrics = logReader // точные per-node метрики узла из CH-логов
 		failedPurger = logReader   // очистка «Неудачных доставок» из CH-логов
 		dispatcher := rcvdispatcher.NewHTTPDispatcher(a.cfg.Web.ReceiverURL, replayDispatchTimeout, a.logger)
@@ -468,6 +503,8 @@ func (a *App) Start(ctx context.Context) error {
 		// без узла в Postgres. Сканирует и дропает только в БД allow-list'а
 		// (teams.ch_database). chCfg остаётся для метаданных.
 		orphanScanner := usecase.NewOrphanScanner(a.chMgr, nodeRepo, teamRepo, &a.cfg.ClickHouse, auditUC, a.logger)
+		// §70.4: таблицы соседней ноды не показываются «бесхозными» и не дропаются.
+		orphanScanner.SetOwnership(chGuard)
 		orphanHandler = httpadapter.NewOrphanHandler(orphanScanner, a.logger)
 
 		// Team provisioning (Phase 10.C): teamProvisioner создан выше.
@@ -624,6 +661,75 @@ func (a *App) Start(ctx context.Context) error {
 	case err := <-errCh:
 		return err
 	}
+}
+
+// rebaseSeededTeamDB — §70.5: один раз переименовывает БД сидированной команды
+// под идентификатор ноды. Миграция 0008 создаёт команду `default` с жёстко
+// зашитым `nexus_default`, а нода с идентификатором обязана писать в
+// `nexus_<id>_default`.
+//
+// Условия намеренно узкие: только первый запуск этой ноды (заявка идентификатора
+// сделана нами, PostgreSQL свежая) и только пока имя равно сидированному. Если
+// идентификатор задан, а условия не сошлись — старт прекращается: молчаливое
+// продолжение оставило бы новую ноду писать в БД соседа.
+func (a *App) rebaseSeededTeamDB(ctx context.Context, teamRepo webport.TeamRepo, team *domain.Team) error {
+	id := a.identity.ID
+	if id.IsZero() {
+		return nil
+	}
+	want := id.CHDatabase(team.Slug)
+	if team.CHDatabase == want {
+		return nil
+	}
+	seeded := domain.CHDatabaseForSlug(team.Slug)
+	if team.CHDatabase != seeded {
+		return fmt.Errorf("team %q points at clickhouse database %q, expected %q for instance %q: "+
+			"rename the database and update teams.ch_database manually",
+			team.Slug, team.CHDatabase, want, id)
+	}
+	if !a.identity.Claimed || !a.identity.FreshPG {
+		return fmt.Errorf("instance %q is configured, but team %q is already bound to %q on a used database: "+
+			"migrate the data manually before switching instance.id", id, team.Slug, team.CHDatabase)
+	}
+
+	updated := *team
+	updated.CHDatabase = want
+	if err := teamRepo.Update(ctx, &updated); err != nil {
+		return fmt.Errorf("rebase seeded team database to %s: %w", want, err)
+	}
+	team.CHDatabase = want
+	a.logger.Info("seeded team database rebased for instance",
+		a.logger.Str("team", team.Slug),
+		a.logger.Str("from", seeded),
+		a.logger.Str("to", want))
+	return nil
+}
+
+// ensureCHOwnership — §70.5: захват/подтверждение владения всеми БД этой ноды.
+// Чужая БД, конфликт владения и срабатывание гейта первого запуска прекращают
+// старт: работать «наполовину» здесь нельзя — housekeeping и обслуживание схемы
+// начали бы трогать чужие данные.
+func (a *App) ensureCHOwnership(ctx context.Context, guard *chpf.Guard, teamRepo webport.TeamRepo) error {
+	teams, err := teamRepo.List(ctx)
+	if err != nil {
+		return fmt.Errorf("list teams for clickhouse ownership: %w", err)
+	}
+	dbs := make([]string, 0, len(teams))
+	for _, t := range teams {
+		if t.CHDatabase != "" {
+			dbs = append(dbs, t.CHDatabase)
+		}
+	}
+	if err := guard.EnsureAll(ctx, dbs, chpf.EnsureOptions{
+		FreshPG: a.identity.FreshPG,
+		Adopt:   a.cfg.Instance.AdoptUnowned,
+	}); err != nil {
+		return fmt.Errorf("clickhouse ownership: %w", err)
+	}
+	a.logger.Info("clickhouse ownership confirmed",
+		a.logger.Str("instance", a.identity.ID.String()),
+		a.logger.Int("databases", len(dbs)))
+	return nil
 }
 
 func (a *App) Stop(ctx context.Context) error {

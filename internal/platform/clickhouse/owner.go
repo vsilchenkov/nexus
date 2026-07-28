@@ -231,6 +231,32 @@ func (g *Guard) OwnsTable(ctx context.Context, table string) (bool, error) {
 	return g.OwnsDatabase(ctx, db)
 }
 
+// IsForeignDatabase — БД ЯВНО принадлежит другой ноде (чужой маркер либо
+// конфликт владения). Отличается от !OwnsDatabase тем, что «маркера нет» и
+// «неизвестно» не считаются чужим.
+//
+// Нужен там, где отказ адресован оператору, а не защищает данные: сохранение
+// узла с таблицей в чужой БД (§70.6). Строгая проверка запрещала бы сохранение
+// узла на ноде, где маркеры ещё не проставлены (обновление до §70) или где
+// ClickHouse временно недоступен, — то есть ломала бы работу из-за состояния
+// стороннего сервиса.
+func (g *Guard) IsForeignDatabase(ctx context.Context, db string) (bool, error) {
+	v, _, err := g.Check(ctx, db)
+	if err != nil {
+		return false, err
+	}
+	return v == VerdictForeign || v == VerdictConflict, nil
+}
+
+// IsForeignTable — то же по полному имени "db.table".
+func (g *Guard) IsForeignTable(ctx context.Context, table string) (bool, error) {
+	db, ok := databaseOf(table)
+	if !ok {
+		return false, fmt.Errorf("clickhouse: invalid table name %q", table)
+	}
+	return g.IsForeignDatabase(ctx, db)
+}
+
 // MayManageTable — мягкая проверка для идемпотентных операций обслуживания
 // схемы (стартовые ALTER … ADD COLUMN IF NOT EXISTS и backfill): разрешает
 // работу и с БД без маркера.

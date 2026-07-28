@@ -24,6 +24,18 @@ type OrphanScannerConnProvider interface {
 	Conn() chdriver.Conn
 }
 
+// OrphanOwnership — гейт владения БД (§70.4). Определён на стороне консьюмера;
+// реализуется clickhouse.Guard. nil = поведение до §70.
+//
+// Зачем сканеру владение, если allow-list и так строится из своих
+// teams.ch_database: имя БД не доказывает владения (§70.2), а «бесхозной» для
+// нас выглядит любая таблица соседней ноды, попавшей в БД с тем же именем.
+// Удаление такой таблицы — потеря чужих данных по кнопке в UI.
+type OrphanOwnership interface {
+	OwnsDatabase(ctx context.Context, db string) (bool, error)
+	AssertOwnsDatabase(ctx context.Context, db string) error
+}
+
 // OrphanTable — описывает «бесхозную» таблицу в ClickHouse.
 type OrphanTable struct {
 	Database   string    `json:"database"`
@@ -54,12 +66,13 @@ type OrphanTable struct {
 // действие пишется в audit log
 // (action="ch_table.drop", target_type="clickhouse_table").
 type OrphanScanner struct {
-	ch       OrphanScannerConnProvider
-	nodeRepo port.NodeRepo
-	teamRepo port.TeamRepo
-	chCfg    *config.ClickHouseSection
-	audit    *AuditUsecase
-	logger   logging.Logger
+	ch        OrphanScannerConnProvider
+	nodeRepo  port.NodeRepo
+	teamRepo  port.TeamRepo
+	chCfg     *config.ClickHouseSection
+	audit     *AuditUsecase
+	ownership OrphanOwnership
+	logger    logging.Logger
 }
 
 func NewOrphanScanner(
@@ -79,6 +92,9 @@ func NewOrphanScanner(
 		logger:   logger,
 	}
 }
+
+// SetOwnership подключает гейт владения (§70.4). Вызывается в wiring Web.
+func (s *OrphanScanner) SetOwnership(o OrphanOwnership) { s.ownership = o }
 
 // Scan возвращает список orphan-таблиц по всем БД allow-list'а
 // (teams.ch_database). Чужие БД (system, default и т.п.) не сканируются —
@@ -122,6 +138,11 @@ func (s *OrphanScanner) scanDatabase(
 	queryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
+	// §70.3: служебные таблицы Nexus (маркер владения __nexus_owner, временная
+	// __nexus_tmpl_check_* от проверки шаблона §19.4) не являются логами узлов и
+	// не должны предлагаться к удалению. Маркер и так вне выборки по движку
+	// (TinyLog), фильтр по имени — вторая линия защиты и заодно уборка шума от
+	// брошенных временных таблиц.
 	rows, err := conn.Query(queryCtx, `
 SELECT name, engine, total_rows, total_bytes, metadata_modification_time
 FROM system.tables
@@ -129,6 +150,7 @@ WHERE database = ?
   AND engine LIKE '%MergeTree%'
   AND name NOT LIKE '.inner%'
   AND name NOT LIKE '.tmp%'
+  AND name NOT LIKE '\_\_nexus\_%'
 ORDER BY name`, db)
 	if err != nil {
 		return nil, fmt.Errorf("query system.tables for %s: %w", db, err)
@@ -177,6 +199,15 @@ func (s *OrphanScanner) Drop(ctx context.Context, actor Actor, fullName string) 
 		return fmt.Errorf("expected db.table, got %q", fullName)
 	}
 	db, tbl := parts[0], parts[1]
+
+	// §70.4: владение проверяется ПЕРВЫМ. allowedDatabases уже отсеивает чужие
+	// БД, но его отказ звучит как «БД не относится к командам» — для чужой ноды
+	// это вводит в заблуждение (БД в teams есть, просто она не наша).
+	if s.ownership != nil {
+		if err := s.ownership.AssertOwnsDatabase(ctx, db); err != nil {
+			return err
+		}
+	}
 
 	allowedDBs, err := s.allowedDatabases(ctx)
 	if err != nil {
@@ -270,9 +301,26 @@ func (s *OrphanScanner) allowedDatabases(ctx context.Context) ([]string, error) 
 	}
 	out := make([]string, 0, len(teams))
 	for _, t := range teams {
-		if t.CHDatabase != "" {
-			out = append(out, t.CHDatabase)
+		if t.CHDatabase == "" {
+			continue
 		}
+		// §70.4: имя БД из своей же PostgreSQL ещё не означает, что БД наша —
+		// на общем ClickHouse имена нод могут совпасть (§70.2). Не владеем →
+		// не сканируем и не показываем как «бесхозное».
+		if s.ownership != nil {
+			owns, err := s.ownership.OwnsDatabase(ctx, t.CHDatabase)
+			if err != nil {
+				s.logger.Warn("orphan scan: ownership check failed, skipping database",
+					s.logger.Str("database", t.CHDatabase), s.logger.Err(err))
+				continue
+			}
+			if !owns {
+				s.logger.Debug("orphan scan: database belongs to another instance, skipped",
+					s.logger.Str("database", t.CHDatabase))
+				continue
+			}
+		}
+		out = append(out, t.CHDatabase)
 	}
 	return out, nil
 }

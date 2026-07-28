@@ -56,6 +56,12 @@ func MustInstanceIdentity(
 	service string,
 	logger logging.Logger,
 ) Identity {
+	// Флаг запуска — разовая форма настройки конфига: дальше по коду читается
+	// только cfg.Instance.AdoptUnowned, чтобы не тащить Flags в App'ы сервисов.
+	if flags.CHAdopt {
+		cfg.Instance.AdoptUnowned = true
+	}
+
 	want := domain.InstanceID(cfg.Instance.ID)
 	if err := want.Validate(); err != nil {
 		logger.ErrorWithOp("invalid instance.id", err, "bootstrap.MustInstanceIdentity",

@@ -123,6 +123,11 @@ func (a *App) Start(ctx context.Context) error {
 	// Все consumers (chWriter, CHHousekeeping, HealthChecker) идут через него,
 	// а не через raw a.ch, чтобы при reload swap conn'а был для них прозрачным.
 	a.chMgr = chpf.NewManager(a.ch, chpf.New, &a.cfg.ClickHouse, a.logger)
+	// §70.3: гейт владения ClickHouse-БД. Sender ничего не захватывает и не
+	// усыновляет (он может стартовать раньше Web и «застолбить» БД, которую Web
+	// ещё не связал с командой) — только отличает свои таблицы от чужих.
+	chGuard := chpf.NewGuard(a.chMgr, a.identity.ID, a.logger)
+	a.chMgr.OnReload(chGuard.Invalidate)
 	// §38: Kafka-продьюсер нужен и async/DLQ, и retrier'у проваленных CH-батчей —
 	// создаём ДО chWriter (раньше создавался ниже, в секции async-consumer).
 	a.producer = kafkapf.NewProducer(a.cfg, kafkapf.WithMetrics(a.metrics))
@@ -180,6 +185,9 @@ func (a *App) Start(ctx context.Context) error {
 		if tables, err := nodeReader.ListClickHouseTables(ctx); err != nil {
 			a.logger.Warn("§37 ensure node_id: list tables failed", a.logger.Err(err))
 		} else {
+			// §70.4: чужие таблицы из обслуживания схемы исключаются (ADD COLUMN
+			// фиксирует порядок колонок, backfill мутирует все строки).
+			tables = chGuard.FilterManagedTables(ctx, tables)
 			chpf.EnsureNodeIDColumn(ctx, a.chMgr.Conn(), tables, a.logger)
 			chpf.EnsureHTTPMethodColumn(ctx, a.chMgr.Conn(), tables, a.logger) // §39
 			chpf.EnsureClientHostColumn(ctx, a.chMgr.Conn(), tables, a.logger) // §67
@@ -244,7 +252,7 @@ func (a *App) Start(ctx context.Context) error {
 	}
 
 	// CH partition-drop housekeeping (§4.3 ТЗ): фоновый цикл раз в сутки.
-	hk := usecase.NewCHHousekeeping(a.chMgr, nodeReader, a.logger)
+	hk := usecase.NewCHHousekeeping(a.chMgr, nodeReader, a.logger).WithOwnership(chGuard)
 	a.housekeepingDone = safego.Go(a.logger, "sender.chHousekeeping", func() {
 		hk.Run(ctx)
 	})

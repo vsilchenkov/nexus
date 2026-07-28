@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -141,6 +142,83 @@ func TestOrphanScanner_Drop_RefusesIfStillUsedByNode(t *testing.T) {
 	err := sc.Drop(context.Background(), SystemActor(), "nexus.log_node1")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "in use by a node")
+}
+
+// stubOrphanOwnership — гейт владения БД (§70.4).
+type stubOrphanOwnership struct {
+	owned map[string]bool
+	err   error
+}
+
+func (s *stubOrphanOwnership) OwnsDatabase(_ context.Context, db string) (bool, error) {
+	if s.err != nil {
+		return false, s.err
+	}
+	return s.owned[db], nil
+}
+
+func (s *stubOrphanOwnership) AssertOwnsDatabase(ctx context.Context, db string) error {
+	owns, err := s.OwnsDatabase(ctx, db)
+	if err != nil {
+		return err
+	}
+	if !owns {
+		return domain.ErrCHForeignDatabase
+	}
+	return nil
+}
+
+// §70.4: таблицы соседней ноды не числятся в НАШЕЙ PostgreSQL, поэтому выглядят
+// «бесхозными». Удаление такой таблицы по кнопке — потеря чужих данных.
+func TestOrphanScanner_Drop_ForeignDatabaseRejected(t *testing.T) {
+	t.Parallel()
+
+	sc := newOrphanScanner(t, "nexus_default", nil)
+	sc.SetOwnership(&stubOrphanOwnership{owned: map[string]bool{"nexus_default": false}})
+
+	err := sc.Drop(context.Background(), SystemActor(), "nexus_default.orphan_42")
+	require.ErrorIs(t, err, domain.ErrCHForeignDatabase)
+}
+
+// Своя БД удаляется как раньше — гейт доходит до проверки соединения.
+func TestOrphanScanner_Drop_OwnDatabasePassesGate(t *testing.T) {
+	t.Parallel()
+
+	sc := newOrphanScanner(t, "nexus_kz_default", nil)
+	sc.SetOwnership(&stubOrphanOwnership{owned: map[string]bool{"nexus_kz_default": true}})
+
+	err := sc.Drop(context.Background(), SystemActor(), "nexus_kz_default.orphan_42")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "clickhouse conn is nil")
+}
+
+// Скан не должен даже показывать чужие БД: их таблицы не наши, и предлагать их
+// к удалению нельзя. Проверяем allow-list напрямую — Scan упирается в отсутствие
+// соединения раньше (conn проверяется первым).
+func TestOrphanScanner_AllowedDatabases_SkipsForeign(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	foreign := newOrphanScanner(t, "nexus_default", nil)
+	foreign.SetOwnership(&stubOrphanOwnership{owned: map[string]bool{"nexus_default": false}})
+	dbs, err := foreign.allowedDatabases(ctx)
+	require.NoError(t, err, "чужая БД — не ошибка сканирования, просто нечего показывать")
+	assert.Empty(t, dbs)
+
+	own := newOrphanScanner(t, "nexus_kz_default", nil)
+	own.SetOwnership(&stubOrphanOwnership{owned: map[string]bool{"nexus_kz_default": true}})
+	dbs, err = own.allowedDatabases(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"nexus_kz_default"}, dbs)
+
+	// Сбой проверки владения тоже исключает БД из скана: показать чужую таблицу
+	// как «бесхозную» опаснее, чем не показать свою.
+	broken := newOrphanScanner(t, "nexus_kz_default", nil)
+	broken.SetOwnership(&stubOrphanOwnership{err: errors.New("clickhouse down")})
+	dbs, err = broken.allowedDatabases(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, dbs)
 }
 
 func TestOrphanScanner_Drop_NilConn_AfterChecks(t *testing.T) {

@@ -139,6 +139,75 @@ func TestCHHousekeeping_RunOnce_SkipsNodesWithoutTableOrRetention(t *testing.T) 
 	require.NoError(t, h.runOnce(context.Background()))
 }
 
+// stubOwnership — гейт владения (§70.4) с заранее известными ответами.
+type stubOwnership struct {
+	owned map[string]bool
+	err   error
+	asked []string
+	mu    sync.Mutex
+}
+
+func (s *stubOwnership) OwnsTable(_ context.Context, table string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.asked = append(s.asked, table)
+	if s.err != nil {
+		return false, s.err
+	}
+	return s.owned[table], nil
+}
+
+// §70.4: DROP PARTITION сносит партицию целиком, поэтому на чужой таблице
+// housekeeping обязан остановиться ДО обращения к ClickHouse. Провайдер здесь
+// отдаёт nil-соединение: доход до Conn() означал бы, что гейт не сработал (и
+// dropPartitionsOlderThan вернул бы ошибку «conn is nil» с Warn-логом).
+func TestCHHousekeeping_RunOnce_SkipsForeignTables(t *testing.T) {
+	t.Parallel()
+
+	nodes := &stubNodeLister{nodes: []*domain.Node{
+		{ID: "1", ClickHouseTable: "nexus_default.orders", ClickHouseRetentionDays: 30},
+		{ID: "2", ClickHouseTable: "nexus_kz_default.orders", ClickHouseRetentionDays: 30},
+	}}
+	own := &stubOwnership{owned: map[string]bool{
+		"nexus_default.orders":    false, // соседняя нода
+		"nexus_kz_default.orders": false, // наша, но маркера ещё нет — строгий режим
+	}}
+	h := NewCHHousekeeping(nilConnProvider{}, nodes, logging.NewNoop()).WithOwnership(own)
+
+	require.NoError(t, h.runOnce(context.Background()))
+	assert.ElementsMatch(t,
+		[]string{"nexus_default.orders", "nexus_kz_default.orders"},
+		own.asked, "владение проверяется у каждой таблицы с retention")
+}
+
+// Сбой проверки владения тоже запрещает уборку: пропущенная уборка стоит места
+// на диске, ошибочная — суток чужих логов.
+func TestCHHousekeeping_RunOnce_OwnershipErrorBlocksDrop(t *testing.T) {
+	t.Parallel()
+
+	nodes := &stubNodeLister{nodes: []*domain.Node{
+		{ID: "1", ClickHouseTable: "nexus_kz_default.orders", ClickHouseRetentionDays: 30},
+	}}
+	own := &stubOwnership{err: errors.New("clickhouse down")}
+	h := NewCHHousekeeping(nilConnProvider{}, nodes, logging.NewNoop()).WithOwnership(own)
+
+	require.NoError(t, h.runOnce(context.Background()))
+	assert.Equal(t, []string{"nexus_kz_default.orders"}, own.asked)
+}
+
+// Без подключённого гейта поведение прежнее (нода до §70): уборка доходит до
+// ClickHouse, и на nil-соединении получает ошибку, которая лишь логируется.
+func TestCHHousekeeping_RunOnce_NoOwnership_KeepsLegacyBehaviour(t *testing.T) {
+	t.Parallel()
+
+	nodes := &stubNodeLister{nodes: []*domain.Node{
+		{ID: "1", ClickHouseTable: "nexus_default.orders", ClickHouseRetentionDays: 30},
+	}}
+	h := NewCHHousekeeping(nilConnProvider{}, nodes, logging.NewNoop())
+
+	require.NoError(t, h.runOnce(context.Background()))
+}
+
 func TestCHHousekeeping_DropPartitions_InvalidTableName(t *testing.T) {
 	t.Parallel()
 	h := NewCHHousekeeping(nilConnProvider{}, &stubNodeLister{}, logging.NewNoop())
