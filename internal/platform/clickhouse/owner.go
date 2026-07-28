@@ -154,6 +154,13 @@ type cachedVerdict struct {
 	verdict Verdict
 	owner   *Owner
 	at      time.Time
+	// err — сбой проверки. Кешируется вместе с вердиктом, чтобы лежащий
+	// ClickHouse не получал запрос на каждое обращение к логам, и при этом
+	// вызывающие продолжали видеть НАСТОЯЩУЮ причину: без этого поля повторные
+	// вызовы получали бы «вердикт unknown» без ошибки, и уборка схемы
+	// рапортовала бы «таблица принадлежит другой ноде» вместо «ClickHouse не
+	// ответил».
+	err error
 }
 
 // NewGuard создаёт гейт владения для ноды instanceID.
@@ -192,15 +199,16 @@ func (g *Guard) Check(ctx context.Context, db string) (Verdict, *Owner, error) {
 	if !dbNameRe.MatchString(db) {
 		return VerdictUnknown, nil, fmt.Errorf("clickhouse: invalid database name %q", db)
 	}
-	if v, o, ok := g.cached(db); ok {
-		return v, o, nil
+	if e, ok := g.cached(db); ok {
+		return e.verdict, e.owner, e.err
 	}
 
 	v, o, err := g.probe(ctx, db)
 	if err != nil {
-		// Ошибку не кешируем как вердикт: следующий вызов попробует снова, но не
-		// чаще negativeTTL (VerdictUnknown кладём именно с ним).
-		g.store(db, VerdictUnknown, nil)
+		// Сбой кешируется вместе с ошибкой на negativeTTL: лежащий ClickHouse не
+		// должен получать запрос на каждое обращение к логам, но и «молчаливый
+		// unknown» отдавать нельзя — вызывающие обязаны видеть причину.
+		g.storeErr(db, err)
 		return VerdictUnknown, nil, err
 	}
 	g.store(db, v, o)
@@ -614,27 +622,36 @@ func (g *Guard) writeMarker(ctx context.Context, conn driver.Conn, db string) er
 	return nil
 }
 
-func (g *Guard) cached(db string) (Verdict, *Owner, bool) {
+// cached возвращает закешированную запись (вердикт + ошибку проверки).
+// ok=false — кеша нет либо он протух.
+func (g *Guard) cached(db string) (cachedVerdict, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	e, ok := g.cache[db]
 	if !ok {
-		return VerdictUnknown, nil, false
+		return cachedVerdict{}, false
 	}
 	ttl := g.negativeTTL
 	if e.verdict == VerdictOwned {
 		ttl = g.positiveTTL
 	}
 	if g.now().Sub(e.at) >= ttl {
-		return VerdictUnknown, nil, false
+		return cachedVerdict{}, false
 	}
-	return e.verdict, e.owner, true
+	return e, true
 }
 
 func (g *Guard) store(db string, v Verdict, o *Owner) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.cache[db] = cachedVerdict{verdict: v, owner: o, at: g.now()}
+}
+
+// storeErr запоминает сбой проверки на negativeTTL — см. cachedVerdict.err.
+func (g *Guard) storeErr(db string, err error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.cache[db] = cachedVerdict{verdict: VerdictUnknown, at: g.now(), err: err}
 }
 
 func (g *Guard) forget(db string) {

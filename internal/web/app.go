@@ -185,7 +185,16 @@ func (a *App) Start(ctx context.Context) error {
 		// §70.3: гейт владения БД. Кеш вердиктов привязан к серверу, поэтому
 		// сбрасывается после hot-reload соединения (адрес CH меняется из UI).
 		chGuard = chpf.NewGuard(a.chMgr, a.identity.ID, a.logger)
-		a.chMgr.OnReload(chGuard.Invalidate)
+		a.chMgr.OnReload(func() {
+			chGuard.Invalidate()
+			// Смена адреса ClickHouse из UI — единственный способ увести ноду на
+			// сервер, где её маркеров нет. Тогда разрушающие операции начнут
+			// отклоняться штатным гейтом, и без этой строки причина искалась бы
+			// по косвенным признакам («housekeeping перестал чистить»).
+			a.logger.Warn("clickhouse connection reloaded: ownership verdicts dropped, "+
+				"they will be re-checked on the next operation",
+				a.logger.Str("instance", a.identity.ID.String()))
+		})
 
 		prov := chreader.NewTeamProvisioner(a.chMgr, a.logger)
 		prov.SetOwnership(chGuard)

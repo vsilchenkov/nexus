@@ -127,7 +127,16 @@ func (a *App) Start(ctx context.Context) error {
 	// усыновляет (он может стартовать раньше Web и «застолбить» БД, которую Web
 	// ещё не связал с командой) — только отличает свои таблицы от чужих.
 	chGuard := chpf.NewGuard(a.chMgr, a.identity.ID, a.logger)
-	a.chMgr.OnReload(chGuard.Invalidate)
+	a.chMgr.OnReload(func() {
+		chGuard.Invalidate()
+		// Симметрично Web: смена адреса ClickHouse из UI может увести ноду на
+		// сервер без её маркеров, и тогда уборка по retention начнёт молча
+		// пропускать таблицы. Без этой строки причину пришлось бы искать по
+		// косвенным признакам.
+		a.logger.Warn("clickhouse connection reloaded: ownership verdicts dropped, "+
+			"they will be re-checked on the next operation",
+			a.logger.Str("instance", a.identity.ID.String()))
+	})
 	// §38: Kafka-продьюсер нужен и async/DLQ, и retrier'у проваленных CH-батчей —
 	// создаём ДО chWriter (раньше создавался ниже, в секции async-consumer).
 	a.producer = kafkapf.NewProducer(a.cfg, kafkapf.WithMetrics(a.metrics))

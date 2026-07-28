@@ -102,22 +102,22 @@ func TestGuard_CacheTTL(t *testing.T) {
 	g.store("nexus_kz_default", VerdictOwned, nil)
 	g.store("nexus_default", VerdictForeign, &Owner{InstanceID: ""})
 
-	v, _, ok := g.cached("nexus_kz_default")
+	e, ok := g.cached("nexus_kz_default")
 	require.True(t, ok)
-	assert.Equal(t, VerdictOwned, v)
+	assert.Equal(t, VerdictOwned, e.verdict)
 
 	// Отрицательный вердикт живёт меньше: исправление конфигурации должно
 	// подхватываться быстро.
 	now = now.Add(31 * time.Second)
-	if _, _, ok := g.cached("nexus_default"); ok {
+	if _, ok := g.cached("nexus_default"); ok {
 		t.Error("отрицательный вердикт обязан протухнуть через negativeTTL")
 	}
-	if _, _, ok := g.cached("nexus_kz_default"); !ok {
+	if _, ok := g.cached("nexus_kz_default"); !ok {
 		t.Error("положительный вердикт ещё свеж")
 	}
 
 	now = now.Add(5 * time.Minute)
-	if _, _, ok := g.cached("nexus_kz_default"); ok {
+	if _, ok := g.cached("nexus_kz_default"); ok {
 		t.Error("положительный вердикт обязан протухнуть через positiveTTL")
 	}
 }
@@ -128,7 +128,7 @@ func TestGuard_Invalidate(t *testing.T) {
 	g := newTestGuard(t, "kz")
 	g.store("nexus_kz_default", VerdictOwned, nil)
 	g.Invalidate()
-	if _, _, ok := g.cached("nexus_kz_default"); ok {
+	if _, ok := g.cached("nexus_kz_default"); ok {
 		t.Error("после Invalidate кеш обязан быть пуст")
 	}
 }
@@ -195,6 +195,32 @@ func TestGuard_MayManageTable_AllowsUnclaimed(t *testing.T) {
 		"garbage", // невалидное имя — отсеивается
 	})
 	assert.Equal(t, []string{"nexus_kz_default.orders", "nexus_kz_legacy.orders"}, kept)
+}
+
+// Сбой проверки кешируется ВМЕСТЕ с ошибкой: без этого повторный вызов в
+// пределах negativeTTL отдавал бы «вердикт unknown» без ошибки, и обслуживание
+// схемы рапортовало бы «таблица принадлежит другой ноде» вместо «ClickHouse не
+// ответил» — диагностика уводила бы в другую сторону.
+func TestGuard_CachedErrorIsReturned(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	g := newTestGuard(t, "kz")
+	probeErr := errors.New("clickhouse: dial refused")
+	g.storeErr("nexus_kz_default", probeErr)
+
+	v, _, err := g.Check(ctx, "nexus_kz_default")
+	require.ErrorIs(t, err, probeErr, "причина сбоя обязана дойти до вызывающего")
+	assert.Equal(t, VerdictUnknown, v)
+
+	// Предикаты возвращают ту же ошибку, а не «не наша таблица».
+	_, err = g.MayManageTable(ctx, "nexus_kz_default.orders")
+	require.ErrorIs(t, err, probeErr)
+	_, err = g.OwnsTable(ctx, "nexus_kz_default.orders")
+	require.ErrorIs(t, err, probeErr)
+
+	// Разрушающие операции всё равно запрещены (fail-closed).
+	require.Error(t, g.AssertOwnsTable(ctx, "nexus_kz_default.orders"))
 }
 
 func TestDatabaseOf(t *testing.T) {

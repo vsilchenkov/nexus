@@ -570,6 +570,31 @@ clickhouse-client -q "SELECT * FROM nexus_kz_default.__nexus_owner"
 Чужой маркер не перебивается ни одним флагом: базу с идентификатором другой ноды нода не тронет
 никогда.
 
+**Смена `instance.id` на работающей ноде — полная процедура.** Одного `--instance-id-force`
+недостаточно: маркер внутри уже созданных баз хранит ПРЕЖНИЙ идентификатор, и после смены нода
+увидит собственные базы как чужие и не поднимется. Порядок такой:
+
+```sql
+-- 1. Остановить сервисы ноды. Переименовать базы в ClickHouse:
+RENAME DATABASE nexus_default TO nexus_kz_default;   -- и так для каждой команды
+
+-- 2. Удалить маркеры владения — их перезапишет нода при следующем старте:
+DROP TABLE nexus_kz_default.__nexus_owner;
+```
+
+```sql
+-- 3. В PostgreSQL ноды поправить имена баз команд:
+UPDATE teams SET ch_database = 'nexus_kz_' || slug WHERE ch_database = 'nexus_' || slug;
+UPDATE nodes SET clickhouse_table = 'nexus_kz_' || substring(clickhouse_table from 'nexus_(.*)')
+WHERE clickhouse_table LIKE 'nexus_%' AND NOT external_table;
+```
+
+4. Запустить Web один раз с `--instance-id-force` (и с `--ch-adopt`, если в PostgreSQL ещё нет
+   узлов) — нода перезапишет маркеры под новый идентификатор.
+
+Проверьте результат до запуска остальных сервисов: `SELECT * FROM <db>.__nexus_owner` должен
+показать новый идентификатор.
+
 > **Важно.** Гейт защищает начиная с версии, в которой появился §70. Вторая нода, поднятая на более
 > старой сборке с пустым `instance.id`, по-прежнему затрёт данные первой.
 
