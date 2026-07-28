@@ -22,13 +22,22 @@ type AppSettingsHandler struct {
 	// nodeDefaultMaxBodySize — §64: значение из конфига (web.node_default_max_body_size),
 	// которое форма создания узла подставляет в «Макс. размер тела».
 	nodeDefaultMaxBodySize int
-	logger                 logging.Logger
+	// chDatabasePrefix — §70.8: "nexus_" либо "nexus_<instance>_". Диалог
+	// создания команды показывает по нему предпросмотр имени БД.
+	chDatabasePrefix string
+	logger           logging.Logger
 }
 
 // NewAppSettingsHandler — tester опционален: nil отключает test-эндпоинты
 // (например в тестах, где не нужны live-коннекты к CH/Sentry).
-func NewAppSettingsHandler(uc *usecase.AppSettingsUsecase, tester *usecase.SettingsTester, nodeDefaultMaxBodySize int, logger logging.Logger) *AppSettingsHandler {
-	return &AppSettingsHandler{uc: uc, tester: tester, nodeDefaultMaxBodySize: nodeDefaultMaxBodySize, logger: logger}
+func NewAppSettingsHandler(uc *usecase.AppSettingsUsecase, tester *usecase.SettingsTester, nodeDefaultMaxBodySize int, chDatabasePrefix string, logger logging.Logger) *AppSettingsHandler {
+	return &AppSettingsHandler{
+		uc:                     uc,
+		tester:                 tester,
+		nodeDefaultMaxBodySize: nodeDefaultMaxBodySize,
+		chDatabasePrefix:       chDatabasePrefix,
+		logger:                 logger,
+	}
 }
 
 // Get godoc
@@ -82,6 +91,9 @@ func (h *AppSettingsHandler) GetPublic(c *gin.Context) {
 		// §64: дефолт формы создания узла. Из конфига, а не из app_settings —
 		// это параметр развёртывания, а не переключатель в UI.
 		"node_default_max_body_size": h.nodeDefaultMaxBodySize,
+		// §70.8: префикс имён БД ClickHouse этой ноды — по нему диалог создания
+		// команды строит предпросмотр вместо литерала "nexus_" на клиенте.
+		"ch_database_prefix": h.chDatabasePrefix,
 	})
 }
 

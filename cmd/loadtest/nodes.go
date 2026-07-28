@@ -74,7 +74,7 @@ func modeCounts(modes []nodeMode) map[nodeMode]int {
 //     (не завязываемся на каталог хостов §23);
 //   - auth-token: token_from_request из заголовка Authorization (strip "Bearer ");
 //   - auth-basic: basic_from_request читает Authorization: Basic <base64>.
-func nodeCreateBody(mode nodeMode, path, targetURL string) map[string]any {
+func nodeCreateBody(mode nodeMode, path, targetURL, chTable string) map[string]any {
 	body := map[string]any{
 		"path":               path,
 		"root_method":        "request",
@@ -82,7 +82,7 @@ func nodeCreateBody(mode nodeMode, path, targetURL string) map[string]any {
 		"auth_type":          "none",
 		"incoming_auth_type": "none",
 		"timeout_ms":         30000,
-		"clickhouse_table":   "nexus_default.loadtest",
+		"clickhouse_table":   chTable,
 	}
 	switch mode {
 	case modeAsync:
@@ -105,7 +105,7 @@ func (c *client) createNodes(ctx context.Context, modes []nodeMode, targetURL st
 	nodes := make([]node, 0, len(modes))
 	for i, mode := range modes {
 		path := fmt.Sprintf("loadtest/node-%d-%d", time.Now().UnixNano(), i)
-		raw, _ := json.Marshal(nodeCreateBody(mode, path, targetURL))
+		raw, _ := json.Marshal(nodeCreateBody(mode, path, targetURL, c.chTable))
 		req, _ := http.NewRequestWithContext(ctx, "POST", c.baseWeb+"/api/nodes", bytes.NewReader(raw))
 		req.Header.Set("Content-Type", "application/json")
 		req.AddCookie(&http.Cookie{Name: "nexus_session", Value: c.cookie})

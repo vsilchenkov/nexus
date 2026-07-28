@@ -19,6 +19,11 @@ import (
 type SchemaInspectorCH struct {
 	conn   ConnProvider
 	logger logging.Logger
+
+	// ownership — гейт владения (§70.4). nil = поведение до §70. Читающая часть
+	// (ReadTableSchema) гейтом не закрыта намеренно: план §56 полезно построить
+	// и по чужой таблице — он покажет расхождение, но применить его нельзя.
+	ownership Ownership
 }
 
 var _ port.CHSchemaInspector = (*SchemaInspectorCH)(nil)
@@ -26,6 +31,9 @@ var _ port.CHSchemaInspector = (*SchemaInspectorCH)(nil)
 func NewSchemaInspector(conn ConnProvider, logger logging.Logger) *SchemaInspectorCH {
 	return &SchemaInspectorCH{conn: conn, logger: logger}
 }
+
+// SetOwnership подключает гейт владения (§70.4).
+func (s *SchemaInspectorCH) SetOwnership(o Ownership) { s.ownership = o }
 
 // ttlDaysRe вытаскивает срок native-TTL из SHOW CREATE TABLE. Наш ALTER/CREATE
 // пишет `TTL date_create + INTERVAL <n> DAY DELETE`, но ClickHouse НОРМАЛИЗУЕТ
@@ -203,6 +211,14 @@ func (s *SchemaInspectorCH) readIndexes(ctx context.Context, db, tbl string) ([]
 func (s *SchemaInspectorCH) ApplyAlter(ctx context.Context, table string, statements []string) error {
 	if !fullTableNamePattern.MatchString(table) {
 		return errInvalidTableName
+	}
+	// §70.4: MODIFY TTL / MODIFY COLUMN / DROP INDEX действуют на таблицу
+	// целиком. На чужой таблице это переписало бы ретеншен и кодеки соседней
+	// ноды под наш шаблон.
+	if s.ownership != nil {
+		if err := s.ownership.AssertOwnsTable(ctx, table); err != nil {
+			return err
+		}
 	}
 	conn := s.conn.Conn()
 	if conn == nil {

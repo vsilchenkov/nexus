@@ -192,8 +192,22 @@ var (
 	ErrTeamAlreadyExists    = errors.New("domain: team with this slug or ch_database already exists")
 	ErrTeamSlugFormat       = errors.New("domain: team slug must match ^[a-z][a-z0-9_]{0,31}$")
 	ErrTeamNameLength       = errors.New("domain: team name length must be 1..255")
-	ErrTeamCHDatabaseFormat = errors.New("domain: team ch_database must match ^nexus_[a-z][a-z0-9_]{0,31}$")
-	ErrTeamInvalidRole      = errors.New("domain: invalid team role")
-	ErrTeamMemberNotFound   = errors.New("domain: team membership not found")
-	ErrTeamHasNodes         = errors.New("domain: team has attached nodes and cannot be deleted")
+	ErrTeamCHDatabaseFormat = errors.New("domain: team ch_database must match ^nexus_[a-z][a-z0-9_]{0,40}$")
+	// ErrTeamSlugTooLongForInstance — §70.2: слаг не помещается в имя БД этой
+	// ноды. Отдельная ошибка вместо ErrTeamCHDatabaseFormat: из «ch_database must
+	// match …» оператору непонятно, что чинить слаг, а не имя БД (его он не задаёт).
+	ErrTeamSlugTooLongForInstance = errors.New("domain: team slug is too long for this instance id")
+	ErrTeamInvalidRole            = errors.New("domain: invalid team role")
+	ErrTeamMemberNotFound         = errors.New("domain: team membership not found")
+	ErrTeamHasNodes               = errors.New("domain: team has attached nodes and cannot be deleted")
+
+	// Instance (§70: несколько нод на одном ClickHouse)
+	ErrInstanceIDFormat = errors.New("domain: instance id must be empty or match ^[a-z][a-z0-9]{0,7}$")
+	// ErrCHForeignDatabase — операция затрагивает ClickHouse-БД, владельцем
+	// которой является другая нода (§70.3/§70.4). Разрушающие операции по такой
+	// БД не выполняются никогда, даже с аварийными флагами.
+	ErrCHForeignDatabase = errors.New("domain: clickhouse database belongs to another nexus instance")
+	// ErrNodeCHTableForeignDatabase — узел ссылается на таблицу в чужой БД
+	// (§70.6). Допустимо только в режиме внешней таблицы (external_table, §64).
+	ErrNodeCHTableForeignDatabase = errors.New("domain: clickhouse_table points at a database owned by another nexus instance")
 )

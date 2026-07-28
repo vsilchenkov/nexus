@@ -48,7 +48,10 @@ type NotificationScheduler struct {
 	lock     DistLock
 	state    Checkpoint
 	lockTTL  time.Duration
-	logger   logging.Logger
+	// instanceID — §70.7: подпись ноды в тексте уведомления. Ноды пишут в один
+	// чат, и без подписи непонятно, чьи ошибки пришли.
+	instanceID string
+	logger     logging.Logger
 
 	mu      sync.Mutex
 	cron    *cron.Cron
@@ -63,12 +66,13 @@ func NewNotificationScheduler(
 	telegram TelegramSender,
 	lock DistLock,
 	state Checkpoint,
+	instanceID string,
 	logger logging.Logger,
 ) *NotificationScheduler {
 	return &NotificationScheduler{
 		settings: settings, teams: teams, nodes: nodes, prom: prom,
 		telegram: telegram, lock: lock, state: state,
-		lockTTL: 3 * time.Minute, logger: logger,
+		lockTTL: 3 * time.Minute, instanceID: instanceID, logger: logger,
 	}
 }
 
@@ -171,7 +175,7 @@ func (s *NotificationScheduler) cycle(ctx context.Context) {
 		s.advance(ctx, untilMs)
 		return
 	}
-	for _, msg := range formatErrorMessages(stats, since, untilMs) {
+	for _, msg := range formatErrorMessages(stats, since, untilMs, s.instanceID) {
 		if err := s.telegram.Send(ctx, *tg.BotToken, *tg.ChatID, msg); err != nil {
 			// Не двигаем checkpoint — ошибки попадут в следующий тик.
 			s.logger.ErrorWithOp("notif cycle: telegram send", err, "notif.cycle")
@@ -256,8 +260,17 @@ var htmlEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
 const telegramMessageLimit = 4000 // запас под 4096
 
 // formatErrorMessages формирует HTML-сообщения, режа по telegramMessageLimit.
-func formatErrorMessages(stats errStats, sinceMs, untilMs int64) []string {
-	header := fmt.Sprintf("\U0001F6A8 <b>Nexus: errors detected</b>\nwindow: %s — %s (UTC)\ntotal errors: %d\n",
+//
+// instanceID (§70.7) подписывает заголовок: ноды с общим ClickHouse обычно
+// шлют алерты в один чат, и без подписи непонятно, чьи узлы сыпят ошибками.
+// Пустой идентификатор (нода до §70) заголовок не меняет.
+func formatErrorMessages(stats errStats, sinceMs, untilMs int64, instanceID string) []string {
+	title := "Nexus: errors detected"
+	if instanceID != "" {
+		title = fmt.Sprintf("Nexus [%s]: errors detected", htmlEscaper.Replace(instanceID))
+	}
+	header := fmt.Sprintf("\U0001F6A8 <b>%s</b>\nwindow: %s — %s (UTC)\ntotal errors: %d\n",
+		title,
 		time.UnixMilli(sinceMs).UTC().Format("2006-01-02 15:04"),
 		time.UnixMilli(untilMs).UTC().Format("2006-01-02 15:04"),
 		stats.total)

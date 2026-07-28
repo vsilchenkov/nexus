@@ -107,7 +107,7 @@ func TestCHHousekeeping_RunOnce_ListError(t *testing.T) {
 	nodes := &stubNodeLister{err: errors.New("db down")}
 	h := NewCHHousekeeping(nilConnProvider{}, nodes, logging.NewNoop())
 
-	err := h.runOnce(context.Background())
+	err := h.RunOnce(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "list nodes")
 	assert.Equal(t, 1, nodes.calls)
@@ -118,7 +118,7 @@ func TestCHHousekeeping_RunOnce_NoNodes(t *testing.T) {
 	nodes := &stubNodeLister{nodes: nil}
 	h := NewCHHousekeeping(nilConnProvider{}, nodes, logging.NewNoop())
 
-	require.NoError(t, h.runOnce(context.Background()))
+	require.NoError(t, h.RunOnce(context.Background()))
 }
 
 func TestCHHousekeeping_RunOnce_SkipsNodesWithoutTableOrRetention(t *testing.T) {
@@ -136,7 +136,76 @@ func TestCHHousekeeping_RunOnce_SkipsNodesWithoutTableOrRetention(t *testing.T) 
 	h := NewCHHousekeeping(nilConnProvider{}, nodes, logging.NewNoop())
 
 	// Не должно паниковать (conn == nil не достигается).
-	require.NoError(t, h.runOnce(context.Background()))
+	require.NoError(t, h.RunOnce(context.Background()))
+}
+
+// stubOwnership — гейт владения (§70.4) с заранее известными ответами.
+type stubOwnership struct {
+	owned map[string]bool
+	err   error
+	asked []string
+	mu    sync.Mutex
+}
+
+func (s *stubOwnership) OwnsTable(_ context.Context, table string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.asked = append(s.asked, table)
+	if s.err != nil {
+		return false, s.err
+	}
+	return s.owned[table], nil
+}
+
+// §70.4: DROP PARTITION сносит партицию целиком, поэтому на чужой таблице
+// housekeeping обязан остановиться ДО обращения к ClickHouse. Провайдер здесь
+// отдаёт nil-соединение: доход до Conn() означал бы, что гейт не сработал (и
+// dropPartitionsOlderThan вернул бы ошибку «conn is nil» с Warn-логом).
+func TestCHHousekeeping_RunOnce_SkipsForeignTables(t *testing.T) {
+	t.Parallel()
+
+	nodes := &stubNodeLister{nodes: []*domain.Node{
+		{ID: "1", ClickHouseTable: "nexus_default.orders", ClickHouseRetentionDays: 30},
+		{ID: "2", ClickHouseTable: "nexus_kz_default.orders", ClickHouseRetentionDays: 30},
+	}}
+	own := &stubOwnership{owned: map[string]bool{
+		"nexus_default.orders":    false, // соседняя нода
+		"nexus_kz_default.orders": false, // наша, но маркера ещё нет — строгий режим
+	}}
+	h := NewCHHousekeeping(nilConnProvider{}, nodes, logging.NewNoop()).WithOwnership(own)
+
+	require.NoError(t, h.RunOnce(context.Background()))
+	assert.ElementsMatch(t,
+		[]string{"nexus_default.orders", "nexus_kz_default.orders"},
+		own.asked, "владение проверяется у каждой таблицы с retention")
+}
+
+// Сбой проверки владения тоже запрещает уборку: пропущенная уборка стоит места
+// на диске, ошибочная — суток чужих логов.
+func TestCHHousekeeping_RunOnce_OwnershipErrorBlocksDrop(t *testing.T) {
+	t.Parallel()
+
+	nodes := &stubNodeLister{nodes: []*domain.Node{
+		{ID: "1", ClickHouseTable: "nexus_kz_default.orders", ClickHouseRetentionDays: 30},
+	}}
+	own := &stubOwnership{err: errors.New("clickhouse down")}
+	h := NewCHHousekeeping(nilConnProvider{}, nodes, logging.NewNoop()).WithOwnership(own)
+
+	require.NoError(t, h.RunOnce(context.Background()))
+	assert.Equal(t, []string{"nexus_kz_default.orders"}, own.asked)
+}
+
+// Без подключённого гейта поведение прежнее (нода до §70): уборка доходит до
+// ClickHouse, и на nil-соединении получает ошибку, которая лишь логируется.
+func TestCHHousekeeping_RunOnce_NoOwnership_KeepsLegacyBehaviour(t *testing.T) {
+	t.Parallel()
+
+	nodes := &stubNodeLister{nodes: []*domain.Node{
+		{ID: "1", ClickHouseTable: "nexus_default.orders", ClickHouseRetentionDays: 30},
+	}}
+	h := NewCHHousekeeping(nilConnProvider{}, nodes, logging.NewNoop())
+
+	require.NoError(t, h.RunOnce(context.Background()))
 }
 
 func TestCHHousekeeping_DropPartitions_InvalidTableName(t *testing.T) {
@@ -168,7 +237,7 @@ func TestCHHousekeeping_RunOnce_NodeWithBadTableLogsAndContinues(t *testing.T) {
 	h := NewCHHousekeeping(nilConnProvider{}, nodes, logging.NewNoop())
 
 	// Ошибка drop'а одного узла не должна валить весь цикл — runOnce nil.
-	require.NoError(t, h.runOnce(context.Background()))
+	require.NoError(t, h.RunOnce(context.Background()))
 }
 
 func TestCHHousekeeping_New_DefaultPeriod(t *testing.T) {

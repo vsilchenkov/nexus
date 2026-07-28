@@ -14,10 +14,12 @@ import {
   PopoverTrigger,
 } from "../../components/ui";
 import { useConfirm } from "../../lib/confirm";
+import { useCHDatabasePrefix } from "../../lib/instance";
 import { MY_TEAMS_KEY } from "../../lib/teams";
 
 // Multi-tenancy v2 (§16 ТЗ, Phase 10.F.2): admin создаёт команды, добавляет
-// в них пользователей. Каждой команде соответствует своя CH-БД nexus_<slug>.
+// в них пользователей. Каждой команде соответствует своя CH-БД: nexus_<slug> на
+// ноде без идентификатора, nexus_<instance>_<slug> — с ним (§70.2).
 
 type Team = {
   id: string;
@@ -224,6 +226,9 @@ type TeamDialogProps = {
 
 function TeamDialog({ mode, initial, onClose, onSaved }: TeamDialogProps) {
   const { t } = useTranslation();
+  // §70.8: префикс имени БД приходит с сервера ("nexus_" либо "nexus_<id>_") —
+  // на ноде с идентификатором склеенный на клиенте литерал показывал бы чужое имя.
+  const chPrefix = useCHDatabasePrefix();
   const [slug, setSlug] = useState(initial?.slug ?? "");
   const [name, setName] = useState(initial?.name ?? "");
   const [error, setError] = useState<string | null>(null);
@@ -302,7 +307,7 @@ function TeamDialog({ mode, initial, onClose, onSaved }: TeamDialogProps) {
           {mode === "create" && slug && (
             <div className="text-xs text-fg-muted">
               {t("settings.teams.field.ch_database_preview", {
-                db: "nexus_" + slug,
+                db: chPrefix + slug,
               })}
             </div>
           )}

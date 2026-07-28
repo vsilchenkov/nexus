@@ -3,6 +3,8 @@ package config
 import (
 	"errors"
 	"fmt"
+
+	"nexus/internal/domain"
 )
 
 // Validate проверяет обязательные поля и допустимые значения.
@@ -11,6 +13,13 @@ import (
 func Validate(c *Config) error {
 	if c == nil {
 		return errors.New("nil config")
+	}
+
+	// §70.1: идентификатор ноды. Пустой валиден (нода до §70); непустой обязан
+	// пройти доменный формат — иначе имя БД ClickHouse не соберётся, а падение
+	// случилось бы уже при создании команды, а не на старте.
+	if err := domain.InstanceID(c.Instance.ID).Validate(); err != nil {
+		return fmt.Errorf("instance.id=%q: %w", c.Instance.ID, err)
 	}
 
 	if c.Postgres.Host == "" {

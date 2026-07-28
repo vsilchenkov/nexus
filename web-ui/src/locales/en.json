@@ -27,6 +27,7 @@
     "subtitle": "apply template settings to the existing table via ALTER",
     "button": "Sync schema",
     "external_table_forbidden": "Schema sync is not available: the node uses an external table managed outside Nexus",
+    "foreign_database": "Schema sync is not available: the ClickHouse database belongs to another Nexus instance",
     "loading": "Reading table schema…",
     "up_to_date": "The table schema already matches the template.",
     "table_missing": "The table does not exist yet (no logs written) — nothing to sync. It will be created on first write from the current template.",
@@ -363,6 +364,7 @@
       "template_id": "ClickHouse template id must be a valid UUID",
       "logs_not_configured": "Logging is enabled but no ClickHouse table name is set — pick a template or set the table name",
       "clickhouse_table_format": "ClickHouse table name must be db.table using only letters, digits and underscore (e.g. nexus_default.my_table)",
+      "clickhouse_table_foreign": "This ClickHouse database belongs to another Nexus instance: use a table of this instance or enable the external table mode",
       "external_table_conflict": "An external table cannot be combined with a ClickHouse table template — the template means Nexus manages the table",
       "max_body_size_range": "Max body size must be between 0 and 10000000 bytes",
       "max_body_size_required": "Max body size must be greater than 0 when the limit is enabled",
@@ -1022,7 +1024,7 @@
     },
     "teams": {
       "title": "Teams",
-      "subtitle": "Multi-tenancy: each team has its own ClickHouse database (nexus_<slug>). Nodes, logs and API tokens are isolated by team.",
+      "subtitle": "Multi-tenancy: each team has its own ClickHouse database. Nodes, logs and API tokens are isolated by team.",
       "add": "New team",
       "empty": "No teams yet",
       "search_placeholder": "Search by slug, name or database…",
@@ -1179,5 +1181,8 @@
     "reload": "Reload page",
     "home": "Go home",
     "details": "Details"
+  },
+  "topbar": {
+    "instance_hint": "Instance: {{id}} · ClickHouse databases prefixed nexus_{{id}}_"
   }
 }

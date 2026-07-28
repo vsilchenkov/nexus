@@ -59,7 +59,53 @@ type NodeUsecase struct {
 	// не утащить общую таблицу за одним узлом. Опционален по той же причине,
 	// что и events (nil → таблица считается personal, прежнее поведение).
 	tableUsage port.NodeTableUsage
-	logger     logging.Logger
+	// ownership — гейт владения ClickHouse-БД (§70.6). Опционален (nil = как до
+	// §70), инъекция сеттером по той же причине, что и events.
+	ownership chDatabaseOwnership
+	logger    logging.Logger
+}
+
+// chDatabaseOwnership — «принадлежит ли БД другой ноде» (§70.6). Определён на
+// стороне консьюмера (ISP); реализуется clickhouse.Guard.
+//
+// Спрашиваем именно «чужая ли», а не «наша ли»: узел должен сохраняться и когда
+// маркеров ещё нет (обновление ноды до §70), и когда ClickHouse недоступен —
+// иначе сбой стороннего сервиса блокировал бы правку конфигурации.
+type chDatabaseOwnership interface {
+	IsForeignTable(ctx context.Context, table string) (bool, error)
+}
+
+// SetOwnership инъектирует гейт владения (§70.6). Вызывается в main-wiring.
+func (u *NodeUsecase) SetOwnership(o chDatabaseOwnership) { u.ownership = o }
+
+// assertTableNotForeign запрещает узлу ссылаться на таблицу в БД другой ноды.
+//
+// Исключение — режим внешней таблицы (§64): он для того и существует, чтобы
+// читать и дополнять таблицу, которой Nexus не управляет, в том числе таблицу
+// соседней ноды (§70.6). Черновик имени (узел с выключенными логами) и ошибка
+// проверки пропускаются: первый ещё не имя таблицы, вторая — состояние
+// ClickHouse, а не намерение оператора.
+func (u *NodeUsecase) assertTableNotForeign(ctx context.Context, n *domain.Node) error {
+	if u.ownership == nil || n.ExternalTable || n.ClickHouseTable == "" {
+		return nil
+	}
+	if !domain.IsValidCHTableName(n.ClickHouseTable) {
+		return nil
+	}
+	foreign, err := u.ownership.IsForeignTable(ctx, n.ClickHouseTable)
+	if err != nil {
+		u.logger.Warn("node save: clickhouse ownership check failed, allowing",
+			u.logger.Str("path", n.Path),
+			u.logger.Str("table", n.ClickHouseTable),
+			u.logger.Err(err))
+		return nil
+	}
+	if foreign {
+		u.logger.Debug("node save rejected: table belongs to another instance",
+			u.logger.Str("path", n.Path), u.logger.Str("table", n.ClickHouseTable))
+		return domain.ErrNodeCHTableForeignDatabase
+	}
+	return nil
 }
 
 // nodeInvalidationPublisher публикует событие «конфиг узла изменился», чтобы
@@ -382,6 +428,11 @@ func (u *NodeUsecase) prepareNewNode(ctx context.Context, n *domain.Node) ([]str
 	if err := n.Validate(); err != nil {
 		return nil, err
 	}
+	// §70.6: после нормализации имя таблицы полное — можно проверить, не ведёт
+	// ли оно в БД другой ноды. Покрывает и Copy (он идёт через prepareNewNode).
+	if err := u.assertTableNotForeign(ctx, n); err != nil {
+		return nil, err
+	}
 	// §32.2: target_url не должен указывать на собственный ingress шины.
 	if err := u.checkSelfReference(n); err != nil {
 		return nil, err
@@ -525,6 +576,10 @@ func (u *NodeUsecase) Update(ctx context.Context, actor Actor, n *domain.Node, t
 		return err
 	}
 	if err := n.Validate(); err != nil {
+		return err
+	}
+	// §70.6: имя таблицы не должно вести в БД другой ноды.
+	if err := u.assertTableNotForeign(ctx, n); err != nil {
 		return err
 	}
 	// §32.2: target_url не должен указывать на собственный ingress шины.

@@ -15,6 +15,13 @@ type Flags struct {
 	MigrateDownN     int
 	MigrateStatus    bool
 	SetAdminPassword string // если задано — задаёт пароль admin'у и выходит
+	// §70.5, аварийные обходы гейта владения ClickHouse.
+	// CHAdopt — разрешить присвоить существующую БД без маркера владения
+	// (PostgreSQL пересоздали, а ClickHouse остался). Чужой маркер не перебивает.
+	// InstanceIDForce — однократно переписать сохранённый instance.id. БД в
+	// ClickHouse при этом НЕ переименовываются — только руками.
+	CHAdopt         bool
+	InstanceIDForce bool
 }
 
 // ParseFlags парсит argv. Неизвестные флаги — error.
@@ -31,6 +38,8 @@ func ParseFlags(version string) Flags {
 	fs.IntVar(&f.MigrateDownN, "migrate-down", 0, "откатить N последних миграций и выйти")
 	fs.BoolVar(&f.MigrateStatus, "migrate-status", false, "показать текущую версию схемы и выйти")
 	fs.StringVar(&f.SetAdminPassword, "set-admin-password", "", "задать пароль admin'у (bootstrap) и выйти")
+	fs.BoolVar(&f.CHAdopt, "ch-adopt", false, "§70.5: присвоить существующие ClickHouse-БД без маркера владения (аварийный обход)")
+	fs.BoolVar(&f.InstanceIDForce, "instance-id-force", false, "§70.5: однократно переписать сохранённый instance.id (БД в ClickHouse НЕ переименовываются)")
 
 	_ = fs.Parse(os.Args[1:])
 

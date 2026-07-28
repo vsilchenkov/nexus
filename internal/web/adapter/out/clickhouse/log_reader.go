@@ -102,6 +102,10 @@ type LogReaderCH struct {
 	usageAt       time.Time
 	usageTriedAt  time.Time
 	usageInflight bool
+
+	// ownership — гейт владения таблицей (§70.4). nil = поведение до §70.
+	// Собственного кеша здесь нет: Guard кеширует вердикты сам.
+	ownership Ownership
 }
 
 const (
@@ -131,6 +135,28 @@ func (r *LogReaderCH) SetTableUsage(u port.NodeTableUsage) {
 	defer r.usageMu.Unlock()
 	r.tableUsage = u
 	r.usageCounts, r.usageAt = nil, time.Time{}
+}
+
+// SetOwnership подключает гейт владения (§70.4): запрещает удаление записей в
+// чужой таблице и включает строгую атрибуцию там же (см. nodeFilter).
+// nil сохраняет прежнее поведение.
+func (r *LogReaderCH) SetOwnership(o Ownership) { r.ownership = o }
+
+// ownsTable — таблица принадлежит этой ноде. Без подключённого гейта отвечает
+// true (поведение до §70). Ошибку проверки трактуем как «не наша»: у
+// вызывающих это либо отказ в удалении, либо строгий фильтр — обе деградации
+// безопасны.
+func (r *LogReaderCH) ownsTable(ctx context.Context, table string) bool {
+	if r.ownership == nil {
+		return true
+	}
+	owns, err := r.ownership.OwnsTable(ctx, table)
+	if err != nil {
+		r.logger.Warn("log reader: ownership check failed, treating table as foreign",
+			r.logger.Str("table", table), r.logger.Err(err))
+		return false
+	}
+	return owns
 }
 
 // liveConn возвращает текущее соединение из ConnProvider или ошибку, если
@@ -210,11 +236,15 @@ func bodyColumn(which string) (string, bool) {
 //
 // Неизвестно, общая ли таблица (порт не подключён или запрос упал) → прежнее,
 // более мягкое правило: скрыть свои логи хуже, чем показать лишние.
+// §70.4: на таблице, принадлежащей другой ноде (внешняя таблица §64 в чужой
+// БД), карта «таблица → число узлов» тоже бесполезна — она считается по СВОЕЙ
+// PostgreSQL и покажет «личная», хотя записи туда пишет и сосед. Поэтому чужая
+// таблица всегда даёт строгий фильтр.
 func (r *LogReaderCH) nodeFilter(ctx context.Context, table, nodeID string) (string, []any) {
 	if nodeID == "" {
 		return "", nil
 	}
-	if r.tableIsShared(ctx, table) {
+	if r.tableIsShared(ctx, table) || !r.ownsTable(ctx, table) {
 		return "node_id = ?", []any{nodeID}
 	}
 	return "(node_id = ? OR node_id = '')", []any{nodeID}
@@ -825,6 +855,14 @@ func (r *LogReaderCH) DateRange(ctx context.Context, table, nodeID string) (int6
 func (r *LogReaderCH) DeleteFailed(ctx context.Context, table, nodeID string, sinceMs, untilMs int64) (uint64, error) {
 	if !isSafeTableName(table) {
 		return 0, fmt.Errorf("invalid table name: %q", table)
+	}
+	// §70.4: единственный DML read-адаптера. На таблице другой ноды удаление
+	// запрещено: фильтр по node_id защищает от чужих строк, но записи без
+	// идентификатора (legacy) он не различает.
+	if r.ownership != nil {
+		if err := r.ownership.AssertOwnsTable(ctx, table); err != nil {
+			return 0, err
+		}
 	}
 	n, err := r.CountFailed(ctx, table, nodeID, sinceMs, untilMs)
 	if err != nil || n == 0 {

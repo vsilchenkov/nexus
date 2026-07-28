@@ -72,6 +72,10 @@ func (h *CHSchemaHandler) replyErr(c *gin.Context, err error) {
 		// §64: не 400 — запрос корректен, но состояние узла делает операцию
 		// недопустимой (внешней таблицей Nexus не управляет).
 		localizedError(c, http.StatusConflict, "ch_sync.external_table_forbidden")
+	case errors.Is(err, domain.ErrCHForeignDatabase):
+		// §70.4: таблица принадлежит другой ноде — ALTER'ы по ней запрещены.
+		// Тоже 409: запрос корректен, недопустимо состояние.
+		localizedError(c, http.StatusConflict, "ch_sync.foreign_database")
 	default:
 		h.logger.ErrorWithOp("ch schema sync failed", err, "node.ch_schema_sync")
 		localizedError(c, http.StatusInternalServerError, "error.internal")

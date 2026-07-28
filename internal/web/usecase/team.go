@@ -21,7 +21,10 @@ type TeamUsecase struct {
 	repo        port.TeamRepo
 	provisioner port.TeamProvisioner
 	audit       *AuditUsecase
-	logger      logging.Logger
+	// instanceID — идентификатор ноды (§70.1). Определяет имя БД команды:
+	// "nexus_<slug>" на ноде без идентификатора, "nexus_<id>_<slug>" с ним.
+	instanceID domain.InstanceID
+	logger     logging.Logger
 }
 
 // ErrCHUnavailable — попытка создать команду без подключённого ClickHouse.
@@ -31,9 +34,16 @@ func NewTeamUsecase(
 	repo port.TeamRepo,
 	provisioner port.TeamProvisioner,
 	audit *AuditUsecase,
+	instanceID domain.InstanceID,
 	logger logging.Logger,
 ) *TeamUsecase {
-	return &TeamUsecase{repo: repo, provisioner: provisioner, audit: audit, logger: logger}
+	return &TeamUsecase{
+		repo:        repo,
+		provisioner: provisioner,
+		audit:       audit,
+		instanceID:  instanceID,
+		logger:      logger,
+	}
 }
 
 func (u *TeamUsecase) Get(ctx context.Context, id string) (*domain.Team, error) {
@@ -54,10 +64,15 @@ func (u *TeamUsecase) Create(ctx context.Context, actor Actor, slug, name, creat
 	if u.provisioner == nil {
 		return nil, ErrCHUnavailable
 	}
+	// §70.2: слаг проверяется на бюджет длины ДО Validate — иначе слишком длинный
+	// слаг упрётся в ErrTeamCHDatabaseFormat, из которого непонятно, что чинить.
+	if err := u.instanceID.ValidateTeamSlug(slug); err != nil {
+		return nil, err
+	}
 	t := &domain.Team{
 		Slug:       slug,
 		Name:       name,
-		CHDatabase: domain.CHDatabaseForSlug(slug),
+		CHDatabase: u.instanceID.CHDatabase(slug),
 	}
 	if err := t.Validate(); err != nil {
 		return nil, err

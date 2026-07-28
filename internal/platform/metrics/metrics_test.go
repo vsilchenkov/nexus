@@ -204,3 +204,29 @@ func requireSample(t *testing.T, dump, want string) {
 	}
 	t.Fatalf("expected sample not found:\nwant: %s\n\nactual /metrics:\n%s", want, dump)
 }
+
+// §70.7: метка идентификатора ноды называется nexus_instance, а НЕ instance —
+// последнюю занимает scrape Prometheus (адрес цели), и одноимённая метка
+// приложения была бы переименована в exported_instance.
+//
+// Пустой идентификатор метку не добавляет: она входит в идентичность ряда, и её
+// появление на действующей ноде разорвало бы историю графиков.
+func TestNew_InstanceLabel(t *testing.T) {
+	t.Parallel()
+
+	withID := metrics.New("web", metrics.WithInstance("kz"))
+	withID.RequestsTotal.WithLabelValues("request", "svc/hook", "200").Inc()
+	dump := dumpMetrics(t, withID.Handler())
+	if !strings.Contains(dump, `nexus_instance="kz"`) {
+		t.Errorf("метка nexus_instance не выставлена:\n%s", dump)
+	}
+	if strings.Contains(dump, `,instance="`) || strings.Contains(dump, `{instance="`) {
+		t.Errorf("метка instance зарезервирована scrape'ом и не должна использоваться:\n%s", dump)
+	}
+
+	plain := metrics.New("web", metrics.WithInstance(""))
+	plain.RequestsTotal.WithLabelValues("request", "svc/hook", "200").Inc()
+	if dump := dumpMetrics(t, plain.Handler()); strings.Contains(dump, "nexus_instance") {
+		t.Errorf("пустой идентификатор не должен добавлять метку:\n%s", dump)
+	}
+}

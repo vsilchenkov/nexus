@@ -75,7 +75,7 @@ func newSettingsRouter(t *testing.T, repo *fakeSettingsRepo, pub *capturePublish
 	uc := usecase.NewAppSettingsUsecase(
 		repo, usecase.NewAuditUsecase(nopAuditRepo{}, logging.NewNoop()), pub,
 		allowVersionOverride, logging.NewNoop())
-	h := NewAppSettingsHandler(uc, nil, testNodeDefaultMaxBodySize, logging.NewNoop())
+	h := NewAppSettingsHandler(uc, nil, testNodeDefaultMaxBodySize, "nexus_kz_", logging.NewNoop())
 	r := gin.New()
 	r.GET("/api/settings/app", h.Get)
 	r.GET("/api/settings/public", h.GetPublic)

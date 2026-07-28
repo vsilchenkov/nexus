@@ -139,7 +139,7 @@ func (c *client) createRMQNode(ctx context.Context, uri amqp.URI, queue, targetU
 		"root_method":       "RabbitMQAsync",
 		"target_url":        targetURL,
 		"auth_type":         "none",
-		"clickhouse_table":  "nexus_default.loadtest",
+		"clickhouse_table":  c.chTable,
 		"rmq_host":          uri.Host,
 		"rmq_port":          uri.Port,
 		"rmq_vhost":         uri.Vhost,

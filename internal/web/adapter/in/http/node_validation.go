@@ -48,6 +48,10 @@ var nodeValidationErrors = []nodeFieldError{
 	{domain.ErrNodeExternalTableTemplateConflict, "node.validation.external_table_conflict", "clickhouse_template_id"},
 	{domain.ErrNodeLogsNotConfigured, "node.validation.logs_not_configured", "clickhouse_table"},
 	{domain.ErrNodeClickHouseTableInvalid, "node.validation.clickhouse_table_format", "clickhouse_table"},
+	// §70.6: таблица в БД другой ноды. Не 500 и не 409 — это именно ошибка
+	// значения поля: оператор указал чужое имя, и чинится оно правкой поля
+	// (либо включением режима внешней таблицы §64).
+	{domain.ErrNodeCHTableForeignDatabase, "node.validation.clickhouse_table_foreign", "clickhouse_table"},
 	// §43.1: рендер шаблона CH-таблицы при провижене узла тоже отвергает кривое
 	// имя — мапим в то же поле/сообщение (400), а не в 500/Sentry.
 	{domain.ErrCHTemplateInvalidTableName, "node.validation.clickhouse_table_format", "clickhouse_table"},

@@ -119,7 +119,8 @@ func parseFlags() flags {
 	flag.StringVar(&f.CHUser, "ch-user", "default", "ClickHouse user for no-loss check")
 	flag.StringVar(&f.CHPassword, "ch-password", "", "ClickHouse password for no-loss check")
 	flag.StringVar(&f.CHTable, "ch-table", "nexus_default.loadtest",
-		"ClickHouse log table to count async/rmq rows for no-loss check")
+		"ClickHouse log table for created nodes and the no-loss check; "+
+			"on an instance with instance.id use nexus_<id>_default.loadtest (§70.2)")
 	flag.DurationVar(&f.CHFlushGrace, "ch-flush-grace", 10*time.Second,
 		"Poll interval between CH row counts (also the initial settle before the first count; sender batch flush window)")
 	flag.DurationVar(&f.CHNoLossMaxWait, "ch-noloss-max-wait", 120*time.Second,
@@ -161,7 +162,8 @@ func main() {
 	tr.MaxIdleConnsPerHost = 1024
 	tr.IdleConnTimeout = 90 * time.Second
 	client := &client{baseWeb: f.WebURL, baseRecv: f.ReceiverURL,
-		hc: &http.Client{Timeout: 30 * time.Second, Transport: tr}}
+		hc:      &http.Client{Timeout: 30 * time.Second, Transport: tr},
+		chTable: f.CHTable}
 
 	if err := client.login(ctx, f.AdminLogin, f.AdminPass); err != nil {
 		fail("login: %v", err)
@@ -261,6 +263,11 @@ type client struct {
 	baseRecv string
 	hc       *http.Client
 	cookie   string
+	// chTable — имя лог-таблицы создаваемых узлов. Берётся из --ch-table
+	// (§70.2: на ноде с идентификатором БД называется nexus_<id>_default, и
+	// прежний хардкод "nexus_default.loadtest" вёл бы в чужую или несуществующую
+	// базу). Тот же флаг использует проверка no-loss и ensureCHTable.
+	chTable string
 }
 
 func (c *client) login(ctx context.Context, login, password string) error {
