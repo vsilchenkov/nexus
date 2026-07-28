@@ -175,8 +175,15 @@ go-lint:
   script:
     - 'echo "===== golangci-lint version ====="'
     - golangci-lint version
-    - 'echo "===== golangci-lint run --timeout=5m ====="'
-    - golangci-lint run --timeout=5m
+    # --timeout=15m, а не 5m: линтерам нужно СОБРАТЬ пакеты, и на холодном
+    # прогоне (в логе выше по job'у — «Failed to extract cache») сборка с нуля
+    # съедает почти весь бюджет. Симптом характерный: job печатает «0 issues»
+    # и тут же падает с «Timeout exceeded» + exit 4 — то есть анализ прошёл, не
+    # хватило только времени. Ловилось дважды (v1.20.0 и 2026-07-28), оба раза
+    # лечилось ретраем — запас дешевле ручных ретраев, на тёплом кеше job всё
+    # равно укладывается в ~3 минуты.
+    - 'echo "===== golangci-lint run --timeout=15m ====="'
+    - golangci-lint run --timeout=15m
     - 'echo "===== go-lint done ====="'
 
 swagger-drift:
