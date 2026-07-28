@@ -27,7 +27,7 @@ const TEAMS = [
 
 // server — изменяемое состояние «бэкенда»: команда узла и текущая команда
 // сессии. POST /api/me/switch-team меняет вторую, как настоящий эндпоинт.
-type Server = { nodeTeamID: string; currentTeamID: string; notFound?: boolean };
+type Server = { nodeTeamID: string; currentTeamID: string; notFound?: boolean; down?: boolean };
 
 function mockServer(s: Server) {
   apiGet.mockImplementation((url: string) => {
@@ -41,6 +41,7 @@ function mockServer(s: Server) {
     }
     if (url === "/api/nodes/n1/team") {
       if (s.notFound) return Promise.reject({ response: { status: 404 } });
+      if (s.down) return Promise.reject({ response: { status: 503 } });
       const team = TEAMS.find((t) => t.id === s.nodeTeamID)!;
       return Promise.resolve({ team_id: team.id, team_slug: team.slug, team_name: team.name });
     }
@@ -148,6 +149,25 @@ describe("useEnsureNodeTeam", () => {
     );
     await waitFor(() => expect(result.current.status).toBe("ready"));
     expect(server.currentTeamID).toBe("team-b");
+  });
+
+  it("резолвер недоступен (5xx) → деградируем в кеш, а не висим в loading", async () => {
+    // Оговорка контракта useEnsureNodeTeam: isFetchedAfterMount поднимается и на
+    // ошибке, data остаётся закешированной. Страница обязана открыться (как до
+    // фикса), а не залипнуть в «loading» из-за недоступного резолвера.
+    const server: Server = { nodeTeamID: "team-b", currentTeamID: "team-a", down: true };
+    mockServer(server);
+    const qc = newClient();
+    qc.setQueryData(["node-team", "n1"], {
+      team_id: "team-b",
+      team_slug: "beta",
+      team_name: "Beta",
+    });
+
+    const { result } = renderHook(() => useEnsureNodeTeam("n1"), { wrapper: wrapperFor(qc) });
+
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(apiPost).toHaveBeenCalledWith("/api/me/switch-team", { team_id: "team-b" });
   });
 
   it("404 (узла нет или команда недоступна) → unavailable", async () => {

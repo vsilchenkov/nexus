@@ -62,13 +62,19 @@ export function useEnsureNodeTeam(id: string | undefined): { status: EnsureStatu
   const { data: myTeams } = useMyTeams();
   const { mutate: switchTeam } = useSwitchTeam();
 
-  // Решение принимаем ТОЛЬКО по ответу, полученному после открытия страницы
+  // Решение принимаем по ответу, полученному после открытия страницы
   // (isFetchedAfterMount). react-query первым рендером отдаёт закешированное
   // значение, а оно могло быть снято ДО переноса узла в другую команду —
   // одноразовый guard срабатывал на устаревшей команде и переключал сессию
   // назад в неё («перенёс узел, открываю — снова старая команда»). Ждать
   // свежего ответа безопасно: страница и так показывает «loading», пока
   // команда узла не резолвится.
+  //
+  // Оговорка: isFetchedAfterMount поднимается и на ОШИБКЕ запроса, а data при
+  // этом остаётся закешированной — то есть при недоступном резолвере (5xx,
+  // сеть) решение сознательно деградирует в кеш. Это лучше, чем вечный
+  // «loading»: страница открывается как до фикса. 404 сюда не попадает — он
+  // разбирается ниже как unavailable (§58 п.3).
   const target = teamQ.isFetchedAfterMount ? teamQ.data?.team_id : undefined;
   const current = myTeams?.current_team_id;
   const key = id && target ? `${id}:${target}` : null;
