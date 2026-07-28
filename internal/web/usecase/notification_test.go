@@ -121,7 +121,7 @@ func notifSettings(enabled bool, cronExpr string) *domain.AppSettings {
 
 func newScheduler(s *domain.AppSettings, nodes port.NodeRepo, prom port.PromMetrics, sender *notifSender, lock fakeLock, cp *memCheckpoint) *NotificationScheduler {
 	teams := notifTeamRepo{teams: []*domain.Team{{ID: "t1", Slug: "default", Name: "Default", CHDatabase: "nexus_default"}}}
-	return NewNotificationScheduler(fakeSettingsReader{s}, teams, nodes, prom, sender, lock, cp, logging.NewNoop())
+	return NewNotificationScheduler(fakeSettingsReader{s}, teams, nodes, prom, sender, lock, cp, "", logging.NewNoop())
 }
 
 func oneNode() notifNodeRepo {
@@ -216,11 +216,32 @@ func TestFormatErrorMessages_Chunks(t *testing.T) {
 		nodes = append(nodes, nodeErrStat{path: strings.Repeat("p", 20), table: "nexus_default.t", count: 1})
 	}
 	stats := errStats{total: 300, teams: []teamErrStat{{name: "T", slug: "t", total: 300, nodes: nodes}}}
-	msgs := formatErrorMessages(stats, 0, time.Now().UnixMilli())
+	msgs := formatErrorMessages(stats, 0, time.Now().UnixMilli(), "")
 	require.Greater(t, len(msgs), 1, "long report must be split into multiple messages")
 	for _, m := range msgs {
 		assert.LessOrEqual(t, len(m), telegramMessageLimit+200)
 	}
+}
+
+// §70.7: ноды пишут алерты в один чат, поэтому заголовок подписывается
+// идентификатором. Пустой идентификатор (нода до §70) заголовок не меняет —
+// это условие обратной совместимости, а не косметика.
+func TestFormatErrorMessages_InstanceInHeader(t *testing.T) {
+	t.Parallel()
+
+	stats := errStats{total: 1, teams: []teamErrStat{{
+		name: "T", slug: "t", total: 1,
+		nodes: []nodeErrStat{{path: "svc/hook", table: "nexus_kz_default.logs", count: 1}},
+	}}}
+
+	withID := formatErrorMessages(stats, 0, time.Now().UnixMilli(), "kz")
+	require.NotEmpty(t, withID)
+	assert.Contains(t, withID[0], "Nexus [kz]: errors detected")
+
+	plain := formatErrorMessages(stats, 0, time.Now().UnixMilli(), "")
+	require.NotEmpty(t, plain)
+	assert.Contains(t, plain[0], "Nexus: errors detected")
+	assert.NotContains(t, plain[0], "[]")
 }
 
 var assertErr = &stubError{"send failed"}

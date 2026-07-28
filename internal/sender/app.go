@@ -110,7 +110,7 @@ func New(
 		ch:           ch,
 		redis:        redis,
 		cipher:       cipher,
-		metrics:      metrics.New("sender"),
+		metrics:      metrics.New("sender", metrics.WithInstance(identity.ID.String())),
 		otelShutdown: otelShutdown,
 		logCtl:       logCtl,
 		identity:     identity,

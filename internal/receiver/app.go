@@ -70,12 +70,13 @@ type App struct {
 
 func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, cipher *crypto.Cipher, otelShutdown otelpf.ShutdownFunc, logger logging.Logger, logCtl *bootstrap.LogController) *App {
 	return &App{
-		cfg:          cfg,
-		logger:       logger,
-		pg:           pg,
-		redis:        redis,
-		cipher:       cipher,
-		metrics:      metrics.New("receiver"),
+		cfg:    cfg,
+		logger: logger,
+		pg:     pg,
+		redis:  redis,
+		cipher: cipher,
+		// §70.7: instance.id уже сверен с PostgreSQL в main (MustInstanceIdentity).
+		metrics:      metrics.New("receiver", metrics.WithInstance(cfg.Instance.ID)),
 		otelShutdown: otelShutdown,
 		logCtl:       logCtl,
 	}

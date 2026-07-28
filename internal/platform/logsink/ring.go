@@ -28,6 +28,12 @@ func WithRingCapacity(n int) RingOption {
 	}
 }
 
+// WithInstance проставляет идентификатор ноды в каждую запись (§70.7). Пустое
+// значение поле не добавляет.
+func WithInstance(id string) RingOption {
+	return func(c *ringCore) { c.instance = id }
+}
+
 // WithChannelCapacity задаёт ёмкость буферизованного канала к шипперу.
 func WithChannelCapacity(n int) RingOption {
 	return func(c *ringCore) {
@@ -42,6 +48,8 @@ func WithChannelCapacity(n int) RingOption {
 type ringCore struct {
 	lv      *slog.LevelVar
 	service string
+	// instance — идентификатор ноды (§70.7); пустой у ноды до §70.
+	instance string
 
 	mu   sync.Mutex
 	buf  []Entry // кольцо: buf[next] — место следующей записи
@@ -106,11 +114,12 @@ func (h *RingHandler) Handle(_ context.Context, r slog.Record) error {
 		attrs = nil
 	}
 	e := Entry{
-		TS:      r.Time,
-		Level:   strings.ToLower(r.Level.String()),
-		Service: h.core.service,
-		Msg:     r.Message,
-		Attrs:   attrs,
+		TS:       r.Time,
+		Level:    strings.ToLower(r.Level.String()),
+		Service:  h.core.service,
+		Instance: h.core.instance,
+		Msg:      r.Message,
+		Attrs:    attrs,
 	}
 
 	c := h.core

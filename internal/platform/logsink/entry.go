@@ -26,11 +26,15 @@ func Key(service string) string { return KeyPrefix + service }
 // Entry — одна запись служебного лога, как она хранится в Redis (JSON-строка)
 // и отдаётся в UI (§51.5).
 type Entry struct {
-	TS      time.Time      `json:"ts"`
-	Level   string         `json:"level"`
-	Service string         `json:"service"`
-	Msg     string         `json:"msg"`
-	Attrs   map[string]any `json:"attrs,omitempty"`
+	TS      time.Time `json:"ts"`
+	Level   string    `json:"level"`
+	Service string    `json:"service"`
+	// Instance — идентификатор ноды (§70.7). omitempty: у ноды без
+	// идентификатора поле отсутствует, и записи, записанные до §70, читаются
+	// без изменений.
+	Instance string         `json:"instance,omitempty"`
+	Msg      string         `json:"msg"`
+	Attrs    map[string]any `json:"attrs,omitempty"`
 }
 
 // MarshalLine сериализует запись в одну JSON-строку для LPUSH.

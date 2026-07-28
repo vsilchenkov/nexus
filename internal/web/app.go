@@ -106,7 +106,7 @@ func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, ch chdrive
 		redis:        redis,
 		ch:           ch,
 		cipher:       cipher,
-		metrics:      metrics.New("web"),
+		metrics:      metrics.New("web", metrics.WithInstance(identity.ID.String())),
 		otelShutdown: otelShutdown,
 		logCtl:       logCtl,
 		identity:     identity,
@@ -528,7 +528,8 @@ func (a *App) Start(ctx context.Context) error {
 	if promMetrics != nil {
 		notifScheduler := usecase.NewNotificationScheduler(
 			appSettingsUC, teamRepo, nodeRepo, promMetrics, telegramClient,
-			rediscache.NewNotifLock(a.redis), rediscache.NewNotifCheckpoint(a.redis), a.logger,
+			rediscache.NewNotifLock(a.redis), rediscache.NewNotifCheckpoint(a.redis),
+			a.identity.ID.String(), a.logger,
 		)
 		reloadSub.Register(reloader.SectionNotifications, func(ctx context.Context) error {
 			notifScheduler.Reschedule(ctx)

@@ -68,7 +68,10 @@ func Init(versionInfoData []byte, projectName string) (*build.Option, config.Fla
 		cfg.Build.BuildDate = buildOpt.BuildDate
 	}
 
-	if err := sentrypf.Init(&cfg.Sentry, projectName, buildOpt.Version); err != nil {
+	// §70.7: тег instance в событиях. Значение берётся из конфига — сверка с
+	// PostgreSQL идёт позже (MustInstanceIdentity), а Sentry нужен уже здесь,
+	// чтобы ошибки самого старта не потерялись.
+	if err := sentrypf.Init(&cfg.Sentry, projectName, buildOpt.Version, cfg.Instance.ID); err != nil {
 		fmt.Fprintf(os.Stderr, "sentry init: %v\n", err)
 		os.Exit(1)
 	}
@@ -100,7 +103,7 @@ func Init(versionInfoData []byte, projectName string) (*build.Option, config.Fla
 
 	// §51: собственная сборка цепочки хендлеров вместо вендорного Initlogger —
 	// уровень базового вывода и кольца логов управляется LevelVar в runtime.
-	logger, logCtl := buildLogger(&logCfg, &sentryCfg, strings.ToLower(projectName))
+	logger, logCtl := buildLogger(&logCfg, &sentryCfg, strings.ToLower(projectName), cfg.Instance.ID)
 	fields := []slog.Attr{
 		logger.Str("service", projectName),
 		logger.Str("version", buildOpt.Version),
@@ -111,6 +114,12 @@ func Init(versionInfoData []byte, projectName string) (*build.Option, config.Fla
 	}
 	if buildOpt.BuildDate != "" {
 		fields = append(fields, logger.Str("build_date", buildOpt.BuildDate))
+	}
+	// §70.7: на общем ClickHouse (и в общей консоли логов) нужно понимать, чей
+	// это процесс. У ноды без идентификатора атрибут не добавляется — вывод
+	// действующей ноды не меняется.
+	if cfg.Instance.ID != "" {
+		fields = append(fields, logger.Str("instance", cfg.Instance.ID))
 	}
 	logger.Info("starting service", fields...)
 

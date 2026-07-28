@@ -61,7 +61,7 @@ func TestDecodeAppSettings_KeepsExistingOverlayFields(t *testing.T) {
 func TestApplyLogLevelFromOverlay(t *testing.T) {
 	t.Parallel()
 	newCtl := func(fallback int) *LogController {
-		_, ctl := buildLogger(&logging.Config{Level: fallback}, &logging.SentryConfig{}, "web")
+		_, ctl := buildLogger(&logging.Config{Level: fallback}, &logging.SentryConfig{}, "web", "")
 		return ctl
 	}
 	overlayWith := func(level *int) *appSettingsOverlay {
@@ -95,7 +95,7 @@ func TestApplyLogLevelFromOverlay(t *testing.T) {
 
 func TestApplyLogLevelFromOverlay_IdempotentAndNilSafe(t *testing.T) {
 	t.Parallel()
-	_, ctl := buildLogger(&logging.Config{Level: 4}, &logging.SentryConfig{}, "web")
+	_, ctl := buildLogger(&logging.Config{Level: 4}, &logging.SentryConfig{}, "web", "")
 
 	o := &appSettingsOverlay{}
 	o.Logging.Level = new(2)
