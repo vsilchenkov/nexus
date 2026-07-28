@@ -56,6 +56,10 @@ export function MoveNodeDialog({
       // Именно remove, а не invalidate: узел уехал в чужую команду, и рефетч
       // по team-scoped GET заведомо вернёт 404 (лишний запрос + ошибка в консоли).
       qc.removeQueries({ queryKey: ["node", node.id] });
+      // Резолвер команды узла (§58) отдал бы из кеша команду ДО переноса: имя в
+      // строке «Команда» — старое, а useEnsureNodeTeam на открытии узла увёл бы
+      // сессию обратно в исходную команду. Ключ выбрасываем целиком.
+      qc.removeQueries({ queryKey: ["node-team", node.id] });
       onClose();
       onMoved?.();
     },
