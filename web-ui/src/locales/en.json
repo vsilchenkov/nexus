@@ -895,6 +895,44 @@
         "create": "Create"
       }
     },
+    "instances": {
+      "title": "Instances",
+      "subtitle": "Other Nexus deployments. The list is for quick navigation; instances do not exchange data. Checks run from the server, not from the browser.",
+      "add": "Connect",
+      "check_all": "Check",
+      "check_one": "Check instance",
+      "delete": "Disconnect instance",
+      "empty": "No instances connected",
+      "ms": "ms",
+      "confirm_delete": "Disconnect instance {{title}}? The instance keeps running — only its entry in this list is removed.",
+      "col": {
+        "title": "Name",
+        "address": "Address",
+        "code": "Code",
+        "version": "Version",
+        "status": "Status"
+      },
+      "status": {
+        "unknown": "Not checked",
+        "active": "Active",
+        "degraded": "Degraded",
+        "unreachable": "No response",
+        "error": "Error"
+      },
+      "field": {
+        "address": "Instance address",
+        "address_hint": "http/https, no path — e.g. https://nexus-kz.example.ru",
+        "title": "Name",
+        "comment": "Comment"
+      },
+      "dialog": {
+        "new": "Connect instance",
+        "edit": "Edit instance",
+        "subtitle": "Version and availability are requested from the server via the instance's public endpoints",
+        "check": "Check",
+        "create": "Connect"
+      }
+    },
     "language": {
       "title": "UI language",
       "subtitle": "Applies to the current user only. Takes effect immediately.",
