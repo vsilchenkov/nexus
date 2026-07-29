@@ -472,6 +472,44 @@ func TestLogs_CountLogs(t *testing.T) {
 	}
 }
 
+// §72.4: разрешение сузить чтение по date_create выдаётся только для таблиц,
+// которыми управляет Nexus. Для внешней таблицы §64 (пишет посторонний сервис)
+// инвариант «date_create == UTC-день date_request» не гарантирован, и сужение
+// молча теряло бы записи — гейт обязан быть выключен и в Search, и в Count.
+func TestLogs_DateCreateAligned_GatedByExternalTable(t *testing.T) {
+	t.Parallel()
+	r := &logReaderMock{}
+	nodes := &stubNodeRepo{nodes: map[string]*domain.Node{
+		"own": {ID: "own", ClickHouseTable: "t.own", TeamID: "team1", Status: domain.NodeStatusEnabled},
+		"ext": {
+			ID: "ext", ClickHouseTable: "t.ext", TeamID: "team1",
+			Status: domain.NodeStatusEnabled, ExternalTable: true,
+		},
+	}}
+	uc := NewLogsUsecase(r, nodes, logging.NewNoop())
+
+	tests := []struct {
+		node string
+		want bool
+	}{{"own", true}, {"ext", false}}
+	for _, tt := range tests {
+		if _, err := uc.Search(context.Background(), tt.node, "team1", port.LogQuery{}); err != nil {
+			t.Fatalf("search %s: %v", tt.node, err)
+		}
+		if r.lastQuery.DateCreateAligned != tt.want {
+			t.Errorf("search %s: DateCreateAligned = %v, want %v",
+				tt.node, r.lastQuery.DateCreateAligned, tt.want)
+		}
+		if _, err := uc.CountLogs(context.Background(), tt.node, "team1", port.LogQuery{}); err != nil {
+			t.Fatalf("count %s: %v", tt.node, err)
+		}
+		if r.lastQuery.DateCreateAligned != tt.want {
+			t.Errorf("count %s: DateCreateAligned = %v, want %v",
+				tt.node, r.lastQuery.DateCreateAligned, tt.want)
+		}
+	}
+}
+
 func TestLogs_Subscribe_ClosesOnCtxCancel(t *testing.T) {
 	t.Parallel()
 	r := &logReaderMock{}

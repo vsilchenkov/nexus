@@ -474,6 +474,53 @@ const (
 	condLogErr = "NOT " + condLogOK
 )
 
+// partitionMarginDays — запас к границам по date_create, выведенным из окна по
+// date_request (§72.4). Партиции месячные, поэтому лишний день ничего не стоит,
+// а закрывает расхождение часовых поясов, перекос часов между инстансами
+// Sender'а и записи, дошедшие до ClickHouse позже своего date_request
+// (durable-retry §38).
+const partitionMarginDays = 1
+
+// dayUTC — граница по date_create (тип Date) как литерал YYYY-MM-DD.
+// Считается в UTC: date_create пишется как UTC-день момента date_request, а
+// DateTime рендерится в часовом поясе сервера — брать toDate(date_request) в
+// SQL было бы неверно.
+func dayUTC(ms int64, deltaDays int) string {
+	return time.UnixMilli(ms).UTC().AddDate(0, 0, deltaDays).Format(time.DateOnly)
+}
+
+// dateCreateConds — то же временное окно, но по колонке PARTITION BY (§72.4).
+//
+// Без него ClickHouse читает таблицу ЦЕЛИКОМ: условие по date_request партиции
+// не отсекает, хотя date_request и стоит вторым полем ключа сортировки. Замер
+// на 200 000 строк (окно в сутки): 200 000 прочитанных строк и 3 части против
+// 12 672 строк и 2 частей — разница в 16 раз, и растёт с объёмом таблицы.
+//
+// Работает только когда usecase подтвердил инвариант write-path (см.
+// LogQuery.DateCreateAligned): для внешних таблиц §64 сужение отключено, иначе
+// оно молча теряло бы строки.
+//
+// Литерал через toDate(?) — константа сворачивается на анализе запроса, и
+// KeyCondition использует её для отсечения партиций.
+func dateCreateConds(q port.LogQuery) ([]string, []any) {
+	if !q.DateCreateAligned {
+		return nil, nil
+	}
+	var (
+		conds []string
+		args  []any
+	)
+	if q.SinceMs > 0 {
+		conds = append(conds, "date_create >= toDate(?)")
+		args = append(args, dayUTC(q.SinceMs, -partitionMarginDays))
+	}
+	if q.UntilMs > 0 {
+		conds = append(conds, "date_create <= toDate(?)")
+		args = append(args, dayUTC(q.UntilMs, partitionMarginDays))
+	}
+	return conds, args
+}
+
 // searchConds строит WHERE-условия расширенных фильтров (§48) — ЕДИНСТВЕННЫЙ
 // источник для Search и Count (§67 «Всего»): один и тот же набор условий
 // гарантирует, что счётчик считает ровно то, что показывает список.
@@ -484,6 +531,12 @@ func (r *LogReaderCH) searchConds(ctx context.Context, q port.LogQuery) ([]strin
 	)
 	if c, a := r.nodeFilter(ctx, q.Table, q.NodeID); c != "" {
 		conds = append(conds, c)
+		args = append(args, a...)
+	}
+	// §72.4: то же окно по колонке PARTITION BY — ставится ПЕРЕД условиями по
+	// date_request, порядок conds и args обязан совпадать.
+	if c, a := dateCreateConds(q); len(c) > 0 {
+		conds = append(conds, c...)
 		args = append(args, a...)
 	}
 	if q.SinceMs > 0 {

@@ -61,6 +61,7 @@ func (u *LogsUsecase) Search(ctx context.Context, nodeID, teamID string, q port.
 	}
 	q.Table = n.ClickHouseTable
 	q.NodeID = n.ID
+	u.applyDateCreateAligned(&q, n)
 	return u.logs.Search(ctx, q)
 }
 
@@ -77,7 +78,22 @@ func (u *LogsUsecase) CountLogs(ctx context.Context, nodeID, teamID string, q po
 	}
 	q.Table = n.ClickHouseTable
 	q.NodeID = n.ID
+	u.applyDateCreateAligned(&q, n)
 	return u.logs.Count(ctx, q)
+}
+
+// applyDateCreateAligned разрешает адаптеру продублировать временное окно по
+// date_create — колонке PARTITION BY таблицы логов (§72.4). Разрешение
+// опирается на инвариант write-path Nexus (date_create == UTC-день
+// date_request) и потому не действует для внешних таблиц §64: туда пишет
+// посторонний сервис, а сужение по несогласованной колонке молча теряло бы
+// записи.
+func (u *LogsUsecase) applyDateCreateAligned(q *port.LogQuery, n *domain.Node) {
+	q.DateCreateAligned = !n.ExternalTable
+	if n.ExternalTable {
+		u.logger.Debug("logs: date_create narrowing disabled for external table",
+			u.logger.Str("node_id", n.ID), u.logger.Str("table", n.ClickHouseTable))
+	}
 }
 
 // parseSearch — разбор сырого Q (мини-язык §48.1 либо RE2 в regex-режиме

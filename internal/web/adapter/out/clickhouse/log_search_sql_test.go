@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -156,6 +157,89 @@ func TestSearchConds_StatusDone(t *testing.T) {
 			conds, args := r.searchConds(context.Background(), tt.q)
 			assert.Equal(t, tt.wantConds, conds)
 			assert.Empty(t, args, "status/done — константные предикаты, без позиционных аргументов")
+		})
+	}
+}
+
+// TestSearchConds_TimeWindow — окно по date_request, keyset-курсор (§44/45-fix)
+// и его дубль по колонке PARTITION BY (§72.4).
+//
+// Проверяются две вещи. Первая: при DateCreateAligned окно дублируется по
+// date_create с запасом ±1 день — без этого ClickHouse читает таблицу целиком
+// (замер: 200 000 строк против 12 672). Вторая, более важная: без флага
+// (внешняя таблица §64) условий по date_create нет вообще — там инвариант
+// «date_create == UTC-день date_request» не гарантирован, и сужение потеряло бы
+// записи. Порядок args обязан совпадать с порядком conds, иначе значения уйдут
+// не в те плейсхолдеры.
+func TestSearchConds_TimeWindow(t *testing.T) {
+	t.Parallel()
+
+	var (
+		sinceMs = time.Date(2026, 7, 21, 10, 20, 29, 0, time.UTC).UnixMilli()
+		untilMs = time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC).UnixMilli()
+	)
+	const (
+		condSince  = "toUnixTimestamp64Milli(toDateTime64(date_request, 3)) > ?"
+		condUntil  = "toUnixTimestamp64Milli(toDateTime64(date_request, 3)) <= ?"
+		condKeyset = "(toUnixTimestamp64Milli(toDateTime64(date_request, 3)) < ? " +
+			"OR (toUnixTimestamp64Milli(toDateTime64(date_request, 3)) = ? AND ID < ?))"
+		condDayFrom = "date_create >= toDate(?)"
+		condDayTo   = "date_create <= toDate(?)"
+	)
+
+	tests := []struct {
+		name      string
+		q         port.LogQuery
+		wantConds []string
+		wantArgs  []any
+	}{
+		{name: "без границ — условий нет", q: port.LogQuery{}},
+		{
+			name:      "внешняя таблица §64 — только date_request",
+			q:         port.LogQuery{SinceMs: sinceMs, UntilMs: untilMs},
+			wantConds: []string{condSince, condUntil},
+			wantArgs:  []any{sinceMs, untilMs},
+		},
+		{
+			name:      "обе границы — дубль по date_create с запасом ±1 день",
+			q:         port.LogQuery{SinceMs: sinceMs, UntilMs: untilMs, DateCreateAligned: true},
+			wantConds: []string{condDayFrom, condDayTo, condSince, condUntil},
+			wantArgs:  []any{"2026-07-20", "2026-07-30", sinceMs, untilMs},
+		},
+		{
+			name:      "только нижняя граница",
+			q:         port.LogQuery{SinceMs: sinceMs, DateCreateAligned: true},
+			wantConds: []string{condDayFrom, condSince},
+			wantArgs:  []any{"2026-07-20", sinceMs},
+		},
+		{
+			name:      "без временных границ сужать нечем",
+			q:         port.LogQuery{DateCreateAligned: true},
+			wantConds: nil,
+			wantArgs:  nil,
+		},
+		{
+			name:      "keyset-курсор перешагивает плотную секунду",
+			q:         port.LogQuery{UntilMs: untilMs, BeforeID: "id-42", DateCreateAligned: true},
+			wantConds: []string{condDayTo, condKeyset},
+			wantArgs:  []any{"2026-07-30", untilMs, untilMs, "id-42"},
+		},
+		{
+			name: "курсор вместе с нижней границей — порядок args сохранён",
+			q: port.LogQuery{
+				SinceMs: sinceMs, UntilMs: untilMs, BeforeID: "id-42", DateCreateAligned: true,
+			},
+			wantConds: []string{condDayFrom, condDayTo, condSince, condKeyset},
+			wantArgs:  []any{"2026-07-20", "2026-07-30", sinceMs, untilMs, untilMs, "id-42"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			r := NewLogReader(nil, logging.NewNoop())
+			conds, args := r.searchConds(context.Background(), tt.q)
+			assert.Equal(t, tt.wantConds, conds)
+			assert.Equal(t, tt.wantArgs, args)
 		})
 	}
 }
