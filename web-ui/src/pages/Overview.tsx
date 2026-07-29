@@ -27,8 +27,6 @@ import {
   Seg,
   Select,
   Tooltip,
-  loadDefaultPeriod,
-  saveDefaultPeriod,
   periodKey,
   periodParams,
   periodLabel,
@@ -46,7 +44,13 @@ import {
   type StatusFilter,
 } from "../lib/overviewFilters";
 import { cn } from "../lib/cn";
-import { useCurrentTeamID } from "../lib/teams";
+import {
+  PREF_KEY_OVERVIEW_PERIOD,
+  useMigrateLegacyPeriodPref,
+  useSetPref,
+  useTeamDefaultPeriod,
+} from "../lib/prefs";
+import { useCurrentTeamID, useMyTeams } from "../lib/teams";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { useMetricsRefetchMs } from "../components/node/useNodeMetrics";
 import { SearchHistoryList } from "../components/SearchHistoryList";
@@ -78,12 +82,36 @@ export default function Overview() {
   const { t } = useTranslation();
   // §26/§28 Пункт 3: создание/редактирование узлов — только manager+.
   const canEdit = useRoleAtLeast("manager");
+  // teamId в ключах team-scoped запросов обязателен: сервер фильтрует ответ по
+  // команде СЕССИИ, и без teamId записи разных команд алиасятся в один слот
+  // кеша — после смены команды (например, через глобальный поиск §62) стирание
+  // поля поиска мгновенно показывало закешированный список ПРЕЖНЕЙ команды.
+  // enabled: пока членства не загрузились (teamId=""), запрос не шлём — иначе
+  // ответ лёг бы под ключ с пустым teamId и алиасился между командами.
+  const teamId = useCurrentTeamID();
+
+  // §71: дефолтный период — персональный и СВОЙ У КАЖДОЙ КОМАНДЫ, хранится на
+  // сервере (преф команды → глобальный преф → системные 24ч). При переключении
+  // команды период всегда сбрасывается на её дефолт (эффект ниже).
+  const { value: teamDefault, settled: prefsSettled } = useTeamDefaultPeriod(teamId);
+  // periodReady — и членства, и префы разрешились. До этого момента дефолтный
+  // период неизвестен, и любая запись в URL/зеркало была бы записью НЕ ТОГО
+  // периода (у пользователя с дефолтом 7д в зеркале осел бы 24ч).
+  const periodReady = teamId !== "" && prefsSettled;
+  // §71.5: разовый перенос прежнего localStorage-значения на сервер.
+  useMigrateLegacyPeriodPref();
+  // serializeDefault — дефолт для решения «писать ли период в URL/зеркало».
+  // Пока префы не пришли — null («дефолт неизвестен», период пишется всегда):
+  // иначе правка любого другого фильтра в это окно посчитала бы период
+  // дефолтным по системным 24ч и стёрла бы из URL явно выбранный range=24h.
+  const serializeDefault = periodReady ? teamDefault : null;
+
   // §54: фильтры (поиск/метод/статус/живой период) — производные от URL, не
   // useState: иначе они умирают при уходе на страницу узла (Overview — дочерний
   // Outlet, размонтируется) и «Назад» возвращает пустой экран. Зеркало в
   // sessionStorage добавляет кейс, где query теряется (кнопка «Узлы» = to="/").
   const [params, setParams] = useSearchParams();
-  const filters = useMemo(() => parseFilters(params), [params]);
+  const filters = useMemo(() => parseFilters(params, teamDefault), [params, teamDefault]);
   const { search, method, status: statusFilter, period } = filters;
 
   // updateFilters — единая точка записи. saveFilters строго ДО setParams (§54.4):
@@ -92,26 +120,54 @@ export default function Overview() {
   const updateFilters = useCallback(
     (patch: Partial<OverviewFilters>) => {
       const next = { ...filters, ...patch };
-      saveFilters(next);
-      setParams((prev) => applyFilters(prev, next), { replace: true });
+      saveFilters(next, serializeDefault);
+      setParams((prev) => applyFilters(prev, next, serializeDefault), { replace: true });
     },
-    [filters, setParams],
+    [filters, setParams, serializeDefault],
   );
 
   // Восстановление и зеркалирование. Пустой URL + непустое зеркало → вернуть
   // фильтры (replace, чтобы не ломать Back). Иначе URL — истина, зеркалим его.
+  // Гейт по periodReady обязателен (§71): до прихода префов «дефолтным» считался
+  // бы системный 24ч, и период пользователя уехал бы в URL как «не дефолтный».
   useEffect(() => {
+    if (!periodReady) return;
     if (hasFilterParams(params)) {
-      saveFilters(parseFilters(params));
+      saveFilters(parseFilters(params, teamDefault), teamDefault);
       return;
     }
-    const stored = loadFilters();
+    const stored = loadFilters(teamDefault);
     if (!stored) return;
-    setParams((prev) => applyFilters(prev, stored), { replace: true });
-  }, [params, setParams]);
+    setParams((prev) => applyFilters(prev, stored, teamDefault), { replace: true });
+  }, [params, setParams, periodReady, teamDefault]);
 
-  // §44.B: savedDefault — для подсветки активного «по умолчанию» (звёздочки).
-  const [savedDefault, setSavedDefault] = useState<Period>(() => loadDefaultPeriod());
+  // §71: при ФАКТИЧЕСКОМ переключении команды период сбрасывается на её дефолт —
+  // даже если до этого был выбран вручную или пришёл ссылкой. Иначе, работая в
+  // двух командах с разными горизонтами наблюдения, приходится каждый раз
+  // переставлять период руками.
+  //
+  // Первое появление teamId сбросом НЕ считается: useCurrentTeamID отдаёт ""
+  // до загрузки членств, и наивная проверка «id изменился» затёрла бы дип-линк
+  // /?range=30d при обычном открытии страницы. Приём одноразового guard'а — как
+  // handledKey в lib/nodeShare.ts (§58).
+  const seenTeam = useRef("");
+  useEffect(() => {
+    if (!periodReady) return;
+    if (seenTeam.current === teamId) return;
+    const firstResolve = seenTeam.current === "";
+    seenTeam.current = teamId;
+    if (firstResolve) return;
+    updateFilters({ period: teamDefault });
+  }, [teamId, periodReady, teamDefault, updateFilters]);
+
+  // §44.B/§71: дефолт для подсветки звёздочки — производный от команды, не
+  // локальный state. Раньше это был useState с ленивой инициализацией, из-за
+  // чего после смены команды подсветка показывала дефолт прежней команды.
+  const savedDefault = teamDefault;
+  const setDefaultPeriod = useSetPref();
+  const teamsQ = useMyTeams();
+  const currentTeamName =
+    teamsQ.data?.items.find((m) => m.id === teamsQ.data?.current_team_id)?.name ?? "";
   const [view, setView] = useState<View>(
     () => (localStorage.getItem(VIEW_KEY) as View) || "table",
   );
@@ -174,14 +230,6 @@ export default function Overview() {
   useEffect(() => localStorage.setItem(VIEW_KEY, view), [view]);
   useEffect(() => localStorage.setItem(AUTOREFRESH_KEY, autoRefresh ? "1" : "0"), [autoRefresh]);
 
-  // teamId в ключах team-scoped запросов обязателен: сервер фильтрует ответ по
-  // команде СЕССИИ, и без teamId записи разных команд алиасятся в один слот
-  // кеша — после смены команды (например, через глобальный поиск §62) стирание
-  // поля поиска мгновенно показывало закешированный список ПРЕЖНЕЙ команды.
-  // enabled: пока членства не загрузились (teamId=""), запрос не шлём — иначе
-  // ответ лёг бы под ключ с пустым teamId и алиасился между командами.
-  const teamId = useCurrentTeamID();
-
   const nodesQ = useQuery({
     queryKey: ["nodes", teamId, search],
     queryFn: () => api.get<ListResp>("/api/nodes", { search }),
@@ -195,13 +243,18 @@ export default function Overview() {
     enabled: teamId !== "",
   });
 
-  // §28 Пункт 4: период per-node throughput выбирается (по умолчанию 24ч),
-  // §28 Пункт 2 / §44.C: обновляется онлайн, если автообновление включено.
+  // §28 Пункт 4: период per-node throughput выбирается (дефолт — персональный
+  // для команды, §71), §28 Пункт 2 / §44.C: обновляется онлайн, если
+  // автообновление включено.
+  //
+  // enabled ждёт periodReady, а не только teamId (§71): иначе первый запрос
+  // ушёл бы с системными 24ч, а следом второй — с настоящим дефолтом команды.
+  // Это двойная нагрузка на ClickHouse на КАЖДЫЙ заход на рабочий стол.
   const thrQ = useQuery({
     queryKey: ["metrics-nodes", teamId, periodKey(period)],
     queryFn: () => api.get<NodesThroughputResp>("/api/metrics/nodes", periodParams(period)),
     refetchInterval: autoRefresh ? refetchMs : false,
-    enabled: teamId !== "",
+    enabled: periodReady,
   });
 
   // Анти-мерцание: держим последний ответ с prometheus_available=true (§ useStableData).
@@ -248,7 +301,10 @@ export default function Overview() {
   // выбранный период, ClickHouse) → шапка сходится с таблицей. Очередь Kafka —
   // из kpiQ (мгновенный lag, только в Prometheus). Ярлык несёт выбранный период.
   const tot = thrData?.totals;
-  const kpiPeriod = periodLabel(period, t);
+  // Пока дефолт команды не пришёл (§71), период в подписи ещё не тот — метку не
+  // показываем: значения всё равно «—» (thrQ выключен), а мигание «24ч → 7д»
+  // в заголовке KPI выглядело бы как смена данных.
+  const kpiPeriod = periodReady ? periodLabel(period, t) : "";
   const errPct = tot && tot.error_rate > 0 ? (tot.error_rate * 100).toFixed(2) + "%" : "0%";
 
   return (
@@ -354,19 +410,34 @@ export default function Overview() {
       {/* §28 Пункт 4: период метрик — отдельной строкой под фильтрами. */}
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs text-fg-muted">{t("metrics.period")}</span>
-        <PeriodPicker value={period} onChange={(p) => updateFilters({ period: p })} />
-        {/* §44.B: «под себя» — сохранить текущий период как дефолт (только пресет). */}
-        {period.kind === "preset" && (
+        {/* §71: пока дефолт команды не пришёл, вместо переключателя — плейсхолдер
+            той же высоты. Показать 24ч и переключить на настоящий дефолт нельзя:
+            это и мигание, и лишний запрос метрик на каждый заход. */}
+        {periodReady ? (
+          <PeriodPicker value={period} onChange={(p) => updateFilters({ period: p })} />
+        ) : (
+          <div className="h-[30px] w-[320px] animate-pulse rounded-md bg-line/40" aria-hidden />
+        )}
+        {/* §44.B/§71: «под себя» — сохранить текущий период как дефолт ЭТОЙ
+            команды (только пресет; произвольный диапазон дефолтом не имеет смысла). */}
+        {periodReady && period.kind === "preset" && (
           <button
             type="button"
-            onClick={() => {
-              saveDefaultPeriod(period);
-              setSavedDefault(period);
-            }}
+            onClick={() =>
+              setDefaultPeriod.mutate({
+                teamId,
+                key: PREF_KEY_OVERVIEW_PERIOD,
+                value: period,
+              })
+            }
             disabled={
               savedDefault.kind === "preset" && savedDefault.range === period.range
             }
-            title={t("overview.set_default_period")}
+            title={
+              currentTeamName
+                ? t("overview.set_default_period_hint", { team: currentTeamName })
+                : t("overview.set_default_period")
+            }
             className="inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-fg-muted hover:text-accent disabled:cursor-default disabled:opacity-50"
           >
             <Star

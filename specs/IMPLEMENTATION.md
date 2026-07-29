@@ -371,6 +371,7 @@
 | **§68: поддержка multipart/form-data** | ✅ §68 | ТЗ [68-multipart-form-data.md](sections/68-multipart-form-data.md), ветка `feature/multipart-form-data`. **Проброска (кода нет)** — тело шина везде несёт как непрозрачные `[]byte`, `Content-Type` c `boundary` пробрасывается дословно (sync gRPC, async JSON-конверт с base64-телом, RabbitMQAsync-puller, dry-run); зафиксировано матрицей §68.4 и тестами. **Размер (кода нет)** — `request_size`/`response_size` §42.10 уже по полному телу до усечения (вложения учтены). **68.1 (домен)** — [domain/multipart.go](../internal/domain/multipart.go): `IsMultipartMediaType` (`mime.ParseMediaType`+prefix), `MultipartLogPlaceholder(ct, body)` (первая строка media type, сводка частей потоково `io.Copy(io.Discard)` — имя/`filename`/тип/размер БЕЗ содержимого; потолки `multipartMaxListedParts=50`/`multipartScanCap=1000`; fallback при неразобранном теле, первой строкой ВСЕГДА валидный multipart media type — на него опирается детект), `IsMultipartLogPlaceholder` (структурный детект: 1-я строка multipart/*, 2-я начинается с `- part` или `[`); table-тесты + `FuzzMultipartLogPlaceholder`. **68.2 (Sender)** — [send.go](../internal/sender/usecase/send.go): приватный `logBodyCopy(kind, contentType, body, in)` — multipart → плейсхолдер (без `truncateRunes`, debug §51.9), иначе truncate как раньше; подключён к запросу (по `in.Headers`) и ответу (по `resp.Headers`, симметрия §68); `headerGet` — регистронезависимый lookup; checksum/размеры/тело к узлу/ответ клиенту не тронуты; гейты логирования сохранены; §38 Kafka-retry получает плейсхолдер автоматически (запечён в LogRecord). **Схема CH и миграции НЕ трогаются.** Тесты `send_test.go` (плейсхолдер+полный размер/checksum+проброска байт-в-байт; освобождение от `max_body_size`; `LogRequestBody=false`→пусто; lowercase заголовок; multipart-ответ; регресс не-multipart; `stubHTTPCaller` дополнен захватом тела). **68.3 (replay)** — [replay.go](../internal/web/usecase/replay.go) `ErrReplayBodyMultipart` + проверка в `replayOne` (nil-override + `IsMultipartLogPlaceholder` → отказ до диспатча); [replay_handler.go](../internal/web/adapter/in/http/replay_handler.go) → 422 `replay.multipart_unavailable`; [i18n.go](../internal/platform/i18n/i18n.go) en+ru; ручной `BodyOverride` разрешён; тесты блокировка/override. **68.4 (UI)** — [ReplayDialog.tsx](../web-ui/src/components/ReplayDialog.tsx): TS-зеркало детекта → warn-подсказка `replay.multipart_warning` (en+ru) + дизейбл кнопки пока тело пусто; бандл пересобран → `internal/web/static/`. **Решения:** multipart освобождён от `max_body_size` (тело в CH не хранится; действуют транспортные капы `receiver.max_body_bytes` 5 МиБ / Kafka ~10 МиБ base64 +33%); правило симметрично для ответов `multipart/*`. **Ограничение:** записи до §68 (сырое тело) детект не ловит. Неочевидности — §4.49. Гейты `-race`/`make test-integration`/браузерный стенд — финальный прогон |
 | **§69: вкладка «Очередь» для всех узлов, схема target_url, пересборка адреса доставки** | ✅ §69 | ТЗ [69-queue-tab-and-target-url.md](sections/69-queue-tab-and-target-url.md), ветка `feature/queue-tab-all-nodes`. Разбор боевого инцидента 2026-07-27 (узел `telephony/lenobl/stat`, команда vika: `url_mode=static` + `target_url` без схемы). **69.1/69.2 (валидация, бэкенд+фронт):** новый хелпер [domain/url.go](../internal/domain/url.go) `AbsoluteHTTPURL` — единая проверка «схема http(s) + непустой host» (`url.Parse` БЕЗ схемы ошибки не возвращает, кладёт всю строку в `Path` — проверять `Scheme`/`Host` обязательно); `Validate()` ([node.go](../internal/domain/node.go)) отвергает битый `target_url` **только при `url_mode=static`** (при `from_request` поле скрыто на форме — ошибка на невидимом поле стала бы тупиком; pull-узлы нормализуются в static, покрыты), `SetDefaults()` делает `TrimSpace`; `ErrNodeTargetURLScheme` → таблица [node_validation.go](../internal/web/adapter/in/http/node_validation.go) → 400 + `code`/`field` (страж `TestNodeValidationCode_AllMapped` требует i18n на обоих языках); дедупликация — `ValidatePublicBaseURL` ([app_settings.go](../internal/domain/app_settings.go)) и ветка `from_request` резолвера ([urlresolver.go](../internal/receiver/usecase/urlresolver.go), где требование http(s) действовало и раньше — асимметрия со static закрыта) переведены на хелпер. Фронт — зеркало в [nodeValidation.ts](../web-ui/src/lib/nodeValidation.ts) (`TARGET_URL_RE`, та же привязка к режиму) + усиленная подсказка `node.help.target_url` («адрес без схемы не сохранится»). **69.3 (адрес доставки):** `resolveTargetURL` в [async_envelope.go](../internal/sender/usecase/async_envelope.go) — для static собирает адрес заново по свежему конфигу (база без своей query + хвост `RequestPath` + query конверта) и вызывается из `buildSendInput`, поэтому чинит **все три пути разом**: основной consumer, redelivery delay-топика §3.6 и DLQ-репроцессор §36. Query берётся из конверта (там она уже слита с query запроса) → **ограничение: правка query внутри `target_url` на застрявшие сообщения не действует**, правка схемы/хоста/пути — действует; `from_request` не пересобирается (исходный url-параметр вырезан на приёме, `urlresolver.go`); любой сбой разбора → адрес из конверта (паттерн обратной совместимости `ReceivedAt`). Debug `logRebuiltTarget` при расхождении (URL без query). **69.4 (ранние выходы):** `usesAsyncQueue` в [async_queue.go](../internal/web/usecase/async_queue.go) — `List`/`purge` для sync-узла возвращают пустой результат без скана обоих топиков до `peekCap`, `PurgeFailed` пропускает tombstone'ы (DLQ-репроцессора у sync нет), `DeleteFailed` в CH не меняется. **69.1 (UI):** гейт вкладки снят ([NodeDetail.tsx](../web-ui/src/pages/NodeDetail.tsx) — вкладка у всех типов), [QueueTab.tsx](../web-ui/src/components/node/QueueTab.tsx) — `isAsync = root_method !== "request"`: секция «Ожидают отправки» и peek-запрос скрыты для sync (иначе скан Kafka на каждое открытие), KPI-плитка pending не рендерится (сетка остаётся `cols=2`, чтобы одинокая плитка не растягивалась), sync-тексты баннера/подсказки/подтверждений (`banner.explain_sync`, `banner.state_paused_sync`, `failed.no_reprocess_hint`, `purge_failed_{all,period}_confirm_sync`). Секция «Неудачные доставки» (список, replay, «Повторить все сейчас», «Очистить») работает у всех типов — она про ClickHouse `done=0`, не про Kafka. Тесты: `TestNode_Validate_TargetURLScheme` (боевой случай + `//host`/`ftp`/относительный/пустой хост, остаточный target при from_request), `TestNode_SetDefaults_TrimsTargetURL`, `TestResolveTargetURL` (10 кейсов, включая «`../` не выводит за пределы базы» и отсутствие дублей query), `TestReprocess_RebuiltURL_DeliversAfterNodeFix` (регрессия инцидента целиком), `TestAsyncQueue_{List,Purge}_SyncNode_SkipsKafka`, `TestAsyncQueue_PurgeFailed_SyncNode_DeletesWithoutTombstones`, vitest §69.2. Без миграций и новых конфиг-ключей. Неочевидности — §4.50. Бандл пересобран → `internal/web/static/` |
 | **§70: несколько нод Nexus на одном ClickHouse** | ✅ §70 | ТЗ — [70-multi-instance-clickhouse.md](sections/70-multi-instance-clickhouse.md), ветка `feature/multi-instance-clickhouse`. **Именование:** [domain/instance.go](../internal/domain/instance.go) (`InstanceID.CHDatabase` — единственная точка сборки имени БД; `CHDatabaseForSlug` оставлен обёрткой для пустого идентификатора), секция конфига `instance` ([config.go](../internal/platform/config/config.go)), `teamCHDatabasePattern` и CHECK `teams_ch_database_format` расширены до `{0,40}` (миграция [0029](../migrations/0029_instance_identity.up.sql)) — суффикс ноды съедает бюджет длины слага. **Идентичность:** [bootstrap/instance.go](../internal/platform/bootstrap/instance.go) — заявка `INSERT … ON CONFLICT DO NOTHING` (гонка трёх сервисов безопасна), расхождение с конфигом валит старт; признак первого запуска — `FreshPG` (нет узлов, команд не больше сидированной) **И** `ch_claimed=false` (миграция [0030](../migrations/0030_instance_ch_claimed.up.sql)). **Гейт живёт в [bootstrap/ch_ownership.go](../internal/platform/bootstrap/ch_ownership.go) и вызывается из [cmd/web/main.go](../cmd/web/main.go), а не из `App.Start`** — ошибку старта сервис-обёртка гасит логом, и в неинтерактивном режиме процесс остался бы жить. **Владение:** [platform/clickhouse/owner.go](../internal/platform/clickhouse/owner.go) — маркер `__nexus_owner` (`TinyLog`), атомарный захват `CREATE TABLE` без `IF NOT EXISTS` (код 57 у проигравшего), кеш вердиктов 5 мин / 30 с, сброс через `Manager.OnReload`. **Гейты:** провижинер, `ApplyAlter` §56, `DeleteFailed` и `nodeFilter` ([log_reader.go](../internal/web/adapter/out/clickhouse/log_reader.go)), orphan-сканер, housekeeping Sender'а, стартовые ALTER'ы обоих сервисов, сохранение узла с чужой таблицей (400, кроме `external_table`). **Старт Web:** ребейз БД сидированной команды + `EnsureAll` ([web/app.go](../internal/web/app.go)). **Наблюдаемость:** тег Sentry `instance`, метка `nexus_instance`, атрибут логов, подпись Telegram. **UI:** `instance` в `/api/version`, `ch_database_prefix` в `/api/settings/public`, чип в шапке ([Topbar.tsx](../web-ui/src/components/Topbar.tsx)), хук [instance.ts](../web-ui/src/lib/instance.ts). Совместимость: при пустом `instance.id` не меняется ничего, кроме появления маркера в своих БД. Развёртывание — DEPLOYMENT.md §5А, неочевидности — §4.51 |
+| **§71: персональные предпочтения — дефолтный период рабочего стола per-team** | ✅ §71 | ТЗ — [71-user-preferences.md](sections/71-user-preferences.md), ветка `feature/user-preferences`. **Схема:** миграция [0031](../migrations/0031_user_preferences.up.sql) — `user_preferences(user_id, team_id NULL, key, value JSONB, updated_at)`, уникальный индекс по выражению `COALESCE(team_id, …)` (НЕ `UNIQUE NULLS NOT DISTINCT` — он требует PostgreSQL 15, а бой на 12) + два FK (составной на `user_teams` для инварианта «преф ⊆ членство», прямой на `users` для глобальных строк, которые составной FK по MATCH SIMPLE не трогает). **Домен:** [domain/user_preference.go](../internal/domain/user_preference.go) — `Validate()` проверяет только формат ключа и валидность/размер значения; семантику значения домен не знает намеренно (generic-хранилище). **Порт/репозиторий:** [port/user_preference_repo.go](../internal/web/usecase/port/user_preference_repo.go), [postgres/user_preferences.go](../internal/web/adapter/out/postgres/user_preferences.go) — upsert одним запросом с атомарной проверкой потолка (200/пользователь), `IS NOT DISTINCT FROM` для глобальных строк, `ON CONFLICT` по тому же выражению, что и индекс. **Usecase:** [usecase/preferences.go](../internal/web/usecase/preferences.go) — отдельный `PreferenceUsecase` с конструкторной инъекцией (не builder на `AuthUsecase`), чтение НИКОГДА не возвращает ошибку. **HTTP:** [preference_handler.go](../internal/web/adapter/in/http/preference_handler.go), `GET/PUT /api/me/prefs` с `RequireSessionOnly`. **Фронт:** [lib/prefs.ts](../web-ui/src/lib/prefs.ts) (`useTeamDefaultPeriod`, `useSetPref`, миграция старого ключа), [lib/period.ts](../web-ui/src/lib/period.ts) (`parsePeriodPref` вместо `load/saveDefaultPeriod`), [lib/overviewFilters.ts](../web-ui/src/lib/overviewFilters.ts) (дефолт параметром во всех функциях), [Overview.tsx](../web-ui/src/pages/Overview.tsx) (`periodReady` в трёх местах). Тесты: [prefs.test.tsx](../web-ui/src/lib/prefs.test.tsx), [Overview.period.test.tsx](../web-ui/src/pages/Overview.period.test.tsx) (регресс «после переключения команды — дефолт новой»), [user_prefs_repo_test.go](../tests/integration/user_prefs_repo_test.go). Развёртывание — DEPLOYMENT.md §8, неочевидности — §4.52 |
 | UI формы: Toggle, карточки «Заголовки» / «Логирование» | ✅ Phase 22.3 | [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx) (две карточки, мастер-тумблер гасит `<fieldset disabled>`), компонент [Toggle](../web-ui/src/components/ui/pickers.tsx), i18n ru/en |
 | Telegram-алерты через Prometheus + метрика `nexus_request_incomplete_total` | ✅ Phase 22.4 | [notification.go](../internal/web/usecase/notification.go) (`PromMetrics.NodeErrors` вместо `LogReader.CountErrors`), [metrics.go](../internal/platform/metrics/metrics.go), инкремент в [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go)/[async.go](../internal/sender/usecase/async.go), wiring [app.go](../internal/web/app.go) (требует Prometheus) |
 | Карточки Overview под `ui_cards.html` (спарклайн, p95, фильтр) | ✅ Phase 22.5 | [Overview.tsx](../web-ui/src/pages/Overview.tsx) (полоса-акцент, chip+pill, 3 метрики, спарклайн, target, фильтр статусов, сортировка); backend [prometheus/client.go](../internal/web/adapter/out/prometheus/client.go) (`NodeSeries` range-запрос + p95 в `NodeThroughput`), [metrics.go](../internal/web/usecase/metrics.go), DTO [metrics_handler.go](../internal/web/adapter/in/http/metrics_handler.go) |
@@ -1919,21 +1920,25 @@ filter, Create без TeamID). До блока B (team-switcher в сессии)
   и фильтр слетает, даже если он был в URL. Поэтому URL (истина, шаринг, «Назад», F5) дополнен
   зеркалом в web-storage, которое отрабатывает ровно этот переход. `AuditLog` (фикс П12) обходится
   чистым URL только потому, что на `/audit` из сайдбара ведёт ссылка без параметров и терять нечего.
-- **`sessionStorage`, а не `localStorage` — из-за звёздочки §44.B.** Прецеденты в проекте
-  расходятся (§44.B выбрал localStorage, §49 явно отверг его в пользу PG), и это не вкусовщина:
-  живой период в localStorage **всегда перекрывал бы** пользовательский дефолт, и звёздочка
-  «По умолчанию» перестала бы наблюдаться вообще. С sessionStorage новая вкладка стартует с
-  дефолта — механизмы не конфликтуют. Второй довод: фильтр — состояние сиюминутной задачи;
-  «прилипший» на неделю фильтр даёт непонятно пустой список при следующем заходе.
+- **`sessionStorage`, а не `localStorage` — из-за звёздочки §44.B.** Живой период в localStorage
+  **всегда перекрывал бы** пользовательский дефолт, и звёздочка «По умолчанию» перестала бы
+  наблюдаться вообще. С sessionStorage новая вкладка стартует с дефолта — механизмы не
+  конфликтуют. Второй довод: фильтр — состояние сиюминутной задачи; «прилипший» на неделю фильтр
+  даёт непонятно пустой список при следующем заходе. (Прецеденты хранения расходились — §44.B
+  выбирал localStorage, §49 отверг его в пользу PG; с §71 дефолтный период тоже уехал в PG, но
+  аргумент про перекрытие остаётся в силе.)
+  Ключ зеркала намеренно **общий для всех команд** и после §71: раз явно выбранный период переживает
+  переключение команды, он переживает его единообразно — и через URL, и через зеркало.
 - **`saveFilters` строго ДО `setParams`** ([Overview.tsx](../web-ui/src/pages/Overview.tsx),
   `updateFilters`). Если зеркалить фильтры эффектом на `[params]`, то при ручной очистке
   restore-эффект в том же коммите увидит «URL уже пуст, зеркало ещё непусто» и воскресит только что
   очищенный фильтр. Замыкает логику то, что при всё-дефолт `saveFilters` делает `removeItem`:
   «очистил» ⇒ «восстанавливать нечего» ⇒ restore no-op. Проверено на стенде.
-- **Дефолтный период не сериализуется** (`serializeFilters` сравнивает с `defaultFilters()`, где
-  период = `loadDefaultPeriod()`). Отсюда следствие, которое выглядит как баг, но является ценой
-  живой звёздочки: ссылка, отправленная с дефолтным периодом отправителя, откроется у получателя с
-  **его** дефолтом. Чтобы зафиксировать период в ссылке, нужен не-дефолтный пресет.
+- **Дефолтный период не сериализуется** (`serializeFilters` сравнивает с `defaultFilters()`, куда
+  дефолт с §71 приходит параметром — дефолт команды из серверных префов). Отсюда следствие, которое
+  выглядит как баг, но является ценой живой звёздочки: ссылка, отправленная с дефолтным периодом
+  отправителя, откроется у получателя с **его** дефолтом; с §71 расхождение возможно даже у одного
+  человека в разных командах. Чтобы зафиксировать период в ссылке, нужен пресет, отличный от дефолта.
 - **Debounce поиска — не косметика.** Safari троттлит `history.replaceState` (~100 вызовов/30с,
   дальше `SecurityError`); запись на каждый keystroke в лимит упирается при быстром наборе. Ref
   `committed` нужен, чтобы sync-эффект (внешнее изменение `q` при restore/«Назад») не затирал ввод,
@@ -2001,6 +2006,66 @@ filter, Create без TeamID). До блока B (team-switcher в сессии)
      отказывалась подниматься на собственных данных. Итог: гейт требует ОБОИХ признаков, а свой
      маркер при непустом `instance.id` снимает подозрение сразу — идентификатор уникален, значит
      база наша (у ноды без идентификатора маркеры неразличимы, там гейт остаётся строгим).
+
+### 4.52 §71 — персональные предпочтения: что неочевидно
+
+- **Уникальность через индекс по `COALESCE`, и это не украшение, а условие работоспособности.**
+  Глобальный преф хранится строкой с `team_id IS NULL`. С обычным `UNIQUE` по колонкам две такие
+  строки считаются различными (`NULL <> NULL`), `ON CONFLICT` для них не срабатывает, и upsert молча
+  превращается в append: таблица растёт, а чтение отдаёт произвольную из копий. Держит инвариант
+  integration-тест «двойной upsert глобального префа даёт ОДНУ строку».
+  **Грабля, которую едва не пропустили:** просится `UNIQUE NULLS NOT DISTINCT`, и первая редакция
+  миграции была именно такой — но это PostgreSQL 15+, а боевые инсталляции работают на **12**.
+  Тесты (testcontainers) и docker-compose поднимают 16, поэтому все гейты были зелёными, а на бою
+  миграция не применилась бы и Web/Receiver не поднялись бы вообще. Отсюда два следствия: выражение
+  `ON CONFLICT` в репозитории обязано совпадать с выражением индекса, и **дефолтный образ в
+  integration-тестах — минимальная поддерживаемая версия** (`postgres:12-alpine`,
+  `defaultPostgresImage` в `tests/integration/node_repo_test.go`, переопределяется
+  `NEXUS_TEST_PG_IMAGE`). Тестировать на версии свежее боевой — значит не тестировать совместимость.
+- **Два FK, а не один.** Составной FK на `user_teams` даёт инвариант «преф ⊆ членство» и каскад на
+  исключение из команды, но по правилу MATCH SIMPLE строки с `team_id IS NULL` он не проверяет — их
+  каскад закрывает отдельный FK на `users(id)`. Тест «удаление пользователя сносит и глобальные
+  префы» держит это поведение.
+- **Гейт готовности фронта — `!isPending`, а не `isSuccess`.** Рабочий стол ждёт префы, прежде чем
+  запросить метрики (иначе первый запрос ушёл бы с 24ч, а следом второй — с настоящим дефолтом;
+  двойная нагрузка на ClickHouse на каждый заход). Если бы флаг готовности требовал успеха, то при
+  недоступном `/api/me/prefs` (5xx, сеть, старый бэкенд без эндпоинта) он не наступил бы **никогда**
+  и страница навсегда осталась бы без метрик — настройка интерфейса уронила бы основную функцию.
+  Второй рубеж на бэке: `PreferenceUsecase.Preferences` не возвращает ошибку вообще.
+- **Префы читаются одним запросом на всего пользователя** (`GET /api/me/prefs` отдаёт и глобальные,
+  и по всем командам). Иначе при переключении команды её дефолт приходил бы позже смены `teamId`:
+  период мигал бы, а `serializeFilters` успел бы записать в URL значение, посчитанное против чужого
+  дефолта. По той же причине `me-prefs` внесён в `TEAM_INDEPENDENT_KEYS` — это не «фича вне команд»,
+  а ровно наоборот.
+- **Дефолт передаётся в `overviewFilters` параметром, а не читается внутри.** Раньше модуль сам
+  ходил в `localStorage`; теперь значение асинхронное, и чистые функции остаются чистыми. Параметр
+  обязательный намеренно: опциональный со значением 24ч тихо сохранил бы старое поведение в забытом
+  call-site, а так его отсутствие ловит `tsc`.
+- **Сброс периода при смене команды и ref-guard первого появления `teamId`.** Сброс безусловный:
+  переключился на другую команду — видишь её период, даже если до этого выбрал период руками. Так
+  решено по обратной связи после первой редакции §71, где ручной выбор сохранялся: работая в двух
+  командах с разными горизонтами наблюдения, период приходилось переставлять после каждого
+  переключения.
+  Ловушка в реализации: `useCurrentTeamID()` отдаёт `""` до загрузки членств, поэтому наивная
+  проверка «идентификатор изменился» срабатывает на переходе `"" → team-a` и затирает период из
+  прямой ссылки при обычном открытии страницы. Отсюда одноразовый ref-guard (`seenTeam`), где
+  первое разрешение `teamId` сбросом не считается. Оба свойства закреплены тестами: «переключение
+  команды сбрасывает даже период, выбранный вручную» и «прямая ссылка `?range=30d` уважается при
+  первой загрузке» (второй проверяет ещё и что запрос метрик ушёл ровно один раз).
+- **Период не зеркалится в `sessionStorage` (§54), в отличие от остальных фильтров.** Уход на
+  страницу узла и возврат по кнопке «Узлы» дают дефолт команды, а не период, выбранный когда-то
+  раньше и, возможно, в другой команде. Реализовано как `serializeMirror` — обёртка над
+  `serializeFilters`, вычищающая `range`/`from`/`to`; на чтении те же ключи отбрасываются, чтобы
+  зеркала, сохранённые прежними версиями SPA, не воскрешали период. Побочный эффект: сценарий §58
+  (авто-переключение команды при открытии шаренного узла) закрывается сам собой — Overview в этот
+  момент размонтирован, и reset-эффект там не работает.
+- **Лимит записей проверяется раньше FK.** У пользователя с достигнутым потолком запись в чужую
+  команду вернёт `ErrPreferencesLimit`, а не `ErrUserNotTeamMember`: условие `WHERE` отсекает
+  вставку до того, как сработает внешний ключ. Это учтено в integration-тесте (чужая команда
+  проверяется на пользователе без префов).
+- **`42P08` на upsert'е.** Ключ встречается в запросе дважды (в `INSERT` и в `EXISTS`), и без
+  явного `$3::text` в обоих местах PostgreSQL выводит для параметра разные типы и падает с
+  «inconsistent types deduced for parameter». Та же грабля, что с повторным `$1` в §65.
 
 ---
 

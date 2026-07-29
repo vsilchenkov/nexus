@@ -90,6 +90,7 @@
     "title": "Nodes",
     "new_node": "New node",
     "set_default_period": "Set as default",
+    "set_default_period_hint": "Set as the default period for team “{{team}}”",
     "autorefresh_on": "Auto",
     "autorefresh_off": "Paused",
     "search_placeholder": "Search by path or URL…",

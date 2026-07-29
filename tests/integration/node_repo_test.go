@@ -10,6 +10,7 @@ package integration
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -30,11 +31,26 @@ import (
 
 const testEncryptionKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=" // 32 bytes base64
 
+// defaultPostgresImage — МИНИМАЛЬНАЯ поддерживаемая версия PostgreSQL, а не
+// самая свежая: боевые инсталляции работают на 12, и тест на 16 пропускает
+// синтаксис, которого там нет. Так §71 едва не уехал с `UNIQUE NULLS NOT
+// DISTINCT` (PostgreSQL 15+) — миграция не применилась бы, и сервис не поднялся.
+// Переопределяется переменной NEXUS_TEST_PG_IMAGE, если нужно проверить работу
+// на более новой версии.
+const defaultPostgresImage = "postgres:12-alpine"
+
+func postgresImage() string {
+	if img := os.Getenv("NEXUS_TEST_PG_IMAGE"); img != "" {
+		return img
+	}
+	return defaultPostgresImage
+}
+
 func startPostgres(t *testing.T, ctx context.Context) (*pgxpool.Pool, func()) {
 	t.Helper()
 
 	c, err := tcpg.Run(ctx,
-		"postgres:16-alpine",
+		postgresImage(),
 		tcpg.WithDatabase("nexus"),
 		tcpg.WithUsername("test"),
 		tcpg.WithPassword("test"),

@@ -277,6 +277,10 @@ func (a *App) Start(ctx context.Context) error {
 		WithFavoriteTeams(teamRepo). // §49: избранные команды (TeamRepoPg реализует и FavoriteTeamRepo)
 		WithSearchHistory(userRepo)  // §62: история поиска узлов (UserRepoPg реализует SearchHistoryRepo)
 	userUC := usecase.NewUserUsecase(userRepo, sessionRepo, teamRepo, auditUC, defaultTeamID, a.logger)
+	// §71: персональные предпочтения (UserRepoPg реализует UserPreferenceRepo,
+	// TeamRepoPg — TeamMembershipLister).
+	prefUC := usecase.NewPreferenceUsecase(userRepo, teamRepo, a.logger)
+	prefHandler := httpadapter.NewPreferenceHandler(prefUC, a.logger)
 
 	tokenRepo := pgrepo.NewAPITokenRepoPg(a.pg, a.logger)
 	// teamRepo — для проверки членства при выборе команды токена (§18.3).
@@ -622,6 +626,7 @@ func (a *App) Start(ctx context.Context) error {
 		Kafka:         kafkaHandler,
 		AsyncQueue:    asyncQueueHandler,
 		ServiceLogs:   serviceLogsHandler,
+		Prefs:         prefHandler,
 	}, mw)
 
 	// Реверс-прокси боевых эндпоинтов Receiver (§17.1, единый вход): Web
