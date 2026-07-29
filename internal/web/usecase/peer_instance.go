@@ -55,11 +55,6 @@ func (u *PeerInstanceUsecase) List(ctx context.Context) ([]*domain.PeerInstance,
 	return u.repo.ListPeerInstances(ctx)
 }
 
-// Get возвращает запись по id.
-func (u *PeerInstanceUsecase) Get(ctx context.Context, id string) (*domain.PeerInstance, error) {
-	return u.repo.GetPeerInstance(ctx, id)
-}
-
 // Create добавляет инстанс в реестр. Адрес нормализуется в Validate, поэтому
 // «https://Host/» и «https://host» считаются одним и тем же и второй раз не
 // заводятся (ErrPeerInstanceAlreadyExists).
@@ -191,6 +186,18 @@ func (u *PeerInstanceUsecase) applyProbe(ctx context.Context, p *domain.PeerInst
 	p.LastLatencyMS = res.LatencyMS
 	p.LastError = res.Error
 	p.LastCheckedAt = &checkedAt
+
+	// Отменённый контекст (оператор закрыл страницу, браузер оборвал соединение)
+	// НЕ должен оставлять в кеше ложное «нет ответа»: проба не состоялась, а не
+	// провалилась. Без этого гейта уход со вкладки посреди опроса записывал бы
+	// всем соседям статус unreachable, и при следующем открытии таблица врала бы
+	// до конца нового опроса. Ответ всё равно уже некому получить.
+	if ctx.Err() != nil {
+		u.logger.Debug("instance probe result dropped: request context is done",
+			u.logger.Str("instance_id", p.ID),
+			u.logger.Str("status", string(res.Status)))
+		return
+	}
 
 	if err := u.repo.SavePeerInstanceProbe(ctx, p.ID, port.PeerInstanceProbe{
 		Status:     res.Status,

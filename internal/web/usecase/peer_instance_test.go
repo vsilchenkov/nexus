@@ -319,6 +319,30 @@ func TestPeerInstanceCheckOneKeepsResultWhenSaveFails(t *testing.T) {
 	assert.Equal(t, "9.9.9", got.LastVersion)
 }
 
+// Отменённый контекст (оператор ушёл со вкладки, браузер оборвал соединение) не
+// должен оставлять в кеше ложное «нет ответа»: проба не состоялась, а не
+// провалилась. Без гейта по ctx.Err() при следующем открытии таблица показывала
+// бы unreachable для живых соседей. Тест красный на коде без гейта.
+func TestPeerInstanceCheckDoesNotPersistOnCanceledContext(t *testing.T) {
+	t.Parallel()
+
+	repo := &stubPeerInstanceRepo{items: []*domain.PeerInstance{
+		{ID: "id-1", Title: "A", BaseURL: "https://a.example.ru"},
+	}}
+	prober := &stubProber{fallback: port.InstanceProbeResult{
+		Status: domain.PeerInstanceUnreachable, Error: "canceled",
+	}}
+	uc, _ := newPeerInstanceUC(repo, prober)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	got, err := uc.CheckAll(ctx)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Empty(t, repo.saved, "результат отменённой пробы не должен попадать в БД")
+}
+
 func TestPeerInstanceCheckOneMissing(t *testing.T) {
 	t.Parallel()
 

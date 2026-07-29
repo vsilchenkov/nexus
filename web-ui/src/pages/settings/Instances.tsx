@@ -64,6 +64,10 @@ export function InstancesPanel() {
   const checkAll = useMutation({
     mutationFn: () => api.post<ListResp>("/api/instances/check"),
     onSuccess: (data) => qc.setQueryData(INSTANCES_KEY, data),
+    // Если проверка не прошла (например, упёрлись в лимит), список всё равно
+    // нужно перечитать: этой же мутацией обновляется таблица после подключения
+    // инстанса, и без fallback новая запись не появилась бы вовсе.
+    onError: () => qc.invalidateQueries({ queryKey: INSTANCES_KEY }),
   });
 
   const checkOne = useMutation({
@@ -165,7 +169,13 @@ export function InstancesPanel() {
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
-            qc.invalidateQueries({ queryKey: INSTANCES_KEY });
+            // Именно checkAll, а не invalidateQueries: он возвращает свежий
+            // список УЖЕ со статусами. Иначе только что подключённый инстанс
+            // висел бы «Не проверялся» с пустыми версией и кодом — сразу после
+            // того, как диалог показал его живым. Два запроса параллельно
+            // (invalidate + check) гонялись бы за право записать кеш, и
+            // припоздавший GET затирал бы свежие статусы прежними.
+            checkAll.mutate();
           }}
         />
       )}
