@@ -38,9 +38,9 @@ export const FILTER_PARAM_KEYS = ["q", "method", "status", "range", "from", "to"
 // «под себя» (§44.B/§71), а фильтр «прилипал» бы на недели (непонятно пустой
 // список при заходе).
 //
-// Ключ намеренно общий для всех команд (§71): раз явно выбранный период
-// переживает переключение команды, он переживает его единообразно — и через
-// URL, и через зеркало. Дефолт команды применяется там, где выбора не было.
+// Период в зеркало НЕ попадает вовсе (§71): он живёт ровно на текущем экране —
+// уход со страницы и возврат по кнопке «Узлы» показывают дефолт команды, а не
+// период, выбранный когда-то раньше. Поиск/метод/статус зеркалятся как прежде.
 const FILTERS_STORAGE: "session" | "local" = "session";
 const FILTERS_KEY = "nexus.overview.filters";
 
@@ -133,27 +133,45 @@ export function applyFilters(
   return next;
 }
 
+// PERIOD_PARAM_KEYS — параметры, описывающие период. Выделены из
+// FILTER_PARAM_KEYS, потому что в зеркало они не пишутся (§71).
+const PERIOD_PARAM_KEYS = ["range", "from", "to"] as const;
+
+// serializeMirror — то же, что serializeFilters, но БЕЗ периода: зеркало хранит
+// только поиск/метод/статус. Период — состояние текущего экрана, а не фильтр,
+// который стоит воскрешать при возврате: после ухода со страницы «Узлы» и
+// возврата пользователь ждёт период своей команды, а не выбранный когда-то
+// раньше (и, возможно, в другой команде).
+function serializeMirror(f: OverviewFilters, defaultPeriod: Period | null): URLSearchParams {
+  const p = serializeFilters(f, defaultPeriod);
+  for (const k of PERIOD_PARAM_KEYS) p.delete(k);
+  return p;
+}
+
 // saveFilters — записать зеркало. Всё-дефолт → ключ удаляется: «очистил фильтры»
 // должно означать «восстанавливать нечего», иначе restore воскресит очищенное.
 export function saveFilters(f: OverviewFilters, defaultPeriod: Period | null): void {
   try {
-    const s = serializeFilters(f, defaultPeriod).toString();
+    const s = serializeMirror(f, defaultPeriod).toString();
     if (s) storage().setItem(FILTERS_KEY, s);
     else storage().removeItem(FILTERS_KEY);
   } catch {
-    // приватный режим / переполнение — игнорируем (как saveDefaultPeriod)
+    // приватный режим / переполнение — игнорируем
   }
 }
 
 // loadFilters — фильтры из зеркала; null, если восстанавливать нечего (пусто,
-// мусор или хранилище недоступно).
+// мусор или хранилище недоступно). Период всегда дефолтный: в зеркале его нет,
+// а зеркала старых версий (где он был) намеренно игнорируются.
 export function loadFilters(defaultPeriod: Period): OverviewFilters | null {
   try {
     const raw = storage().getItem(FILTERS_KEY);
     if (!raw) return null;
-    const f = parseFilters(new URLSearchParams(raw), defaultPeriod);
+    const params = new URLSearchParams(raw);
+    for (const k of PERIOD_PARAM_KEYS) params.delete(k);
+    const f = parseFilters(params, defaultPeriod);
     // Мусор распарсился во всё-дефолт → нечего восстанавливать.
-    return serializeFilters(f, defaultPeriod).toString() ? f : null;
+    return serializeMirror(f, defaultPeriod).toString() ? f : null;
   } catch {
     return null;
   }

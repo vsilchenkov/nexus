@@ -218,7 +218,7 @@ describe("applyFilters", () => {
 });
 
 describe("saveFilters / loadFilters", () => {
-  it("round-trips through the mirror", () => {
+  it("round-trips everything except the period", () => {
     const f: OverviewFilters = {
       search: "da",
       method: "request",
@@ -226,7 +226,22 @@ describe("saveFilters / loadFilters", () => {
       period: { kind: "preset", range: "1h" },
     };
     saveFilters(f, defaultPeriod);
-    expect(loadFilters(defaultPeriod)).toEqual(f);
+    // Период — состояние текущего экрана (§71): в зеркало не пишется, при
+    // восстановлении берётся дефолт команды.
+    expect(loadFilters(defaultPeriod)).toEqual({ ...f, period: defaultPeriod });
+    expect(sessionStorage.getItem("nexus.overview.filters")).toBe("q=da&method=request&status=err");
+  });
+
+  it("does not mirror the period even when it is the only non-default filter", () => {
+    saveFilters({ ...def(), period: { kind: "preset", range: "1h" } }, defaultPeriod);
+    expect(sessionStorage.getItem("nexus.overview.filters")).toBeNull();
+    expect(loadFilters(defaultPeriod)).toBeNull();
+  });
+
+  // Зеркало могло остаться от прежней версии SPA, где период туда писался.
+  it("ignores a period left in the mirror by an older build", () => {
+    sessionStorage.setItem("nexus.overview.filters", "q=foo&range=1h");
+    expect(loadFilters(defaultPeriod)).toEqual({ ...def(), search: "foo" });
   });
 
   it("removes the key when everything is default (§54.4: cleared means nothing to restore)", () => {

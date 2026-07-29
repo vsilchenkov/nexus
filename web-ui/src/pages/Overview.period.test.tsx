@@ -158,8 +158,9 @@ describe("Overview: дефолтный период per-team (§71)", () => {
     await waitFor(() => expect(lastMetricsRange()).toBe("7d"));
   });
 
-  // Решение 2: принудительного сброса нет — явный выбор липкий.
-  it("явно выбранный период переживает переключение команды", async () => {
+  // Переключение команды сбрасывает даже выбранный вручную период: работая в
+  // двух командах с разными горизонтами, иначе приходится переставлять руками.
+  it("переключение команды сбрасывает даже период, выбранный вручную", async () => {
     const server: Server = {
       currentTeamID: TEAM_A,
       prefs: [
@@ -176,18 +177,35 @@ describe("Overview: дефолтный период per-team (§71)", () => {
     server.currentTeamID = TEAM_B;
     await qc.invalidateQueries({ queryKey: MY_TEAMS_KEY });
 
-    // Дефолт команды B (7д) НЕ применяется: период выбран руками.
-    await waitFor(() =>
-      expect(qc.getQueryData(MY_TEAMS_KEY)).toMatchObject({ current_team_id: TEAM_B }),
-    );
-    expect(lastMetricsRange()).toBe("1h");
+    await waitFor(() => expect(lastMetricsRange()).toBe("7d"));
   });
 
+  // Guard одноразового сброса: teamId приходит как "" → team-a, и наивная
+  // проверка «id изменился» затёрла бы период из ссылки при обычном открытии.
   it("прямая ссылка ?range=30d уважается при первой загрузке", async () => {
     mockServer({ currentTeamID: TEAM_A, prefs: [{ team_id: TEAM_A, range: "7d" }] });
     renderOverview(newClient(), "/?range=30d");
 
     await waitFor(() => expect(lastMetricsRange()).toBe("30d"));
+    // Сброса не было: запрос ушёл ровно один раз и с периодом из ссылки.
+    expect(metricsCalls).toHaveLength(1);
+  });
+
+  // «Не сохраняй в сеансе»: период не зеркалится в sessionStorage, поэтому
+  // возврат на «Узлы» (URL без параметров) показывает дефолт команды.
+  it("период не восстанавливается из сессионного зеркала", async () => {
+    mockServer({ currentTeamID: TEAM_A, prefs: [{ team_id: TEAM_A, range: "7d" }] });
+    // Зеркало, как его мог оставить прошлый визит (в т.ч. старая версия SPA).
+    sessionStorage.setItem("nexus.overview.filters", "q=foo&range=1h");
+
+    renderOverview(newClient(), "/");
+
+    await waitFor(() => expect(lastMetricsRange()).toBe("7d"));
+    // Поиск из зеркала при этом восстановился — период исключение, а не правило.
+    // Проверяем по полю ввода: URL живёт в MemoryRouter, а не в window.location.
+    await waitFor(() =>
+      expect((screen.getAllByRole("textbox")[0] as HTMLInputElement).value).toBe("foo"),
+    );
   });
 
   // Анти-мигание: запрос метрик не должен уходить дважды (сначала с 24ч,

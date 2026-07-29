@@ -91,10 +91,8 @@ export default function Overview() {
   const teamId = useCurrentTeamID();
 
   // §71: дефолтный период — персональный и СВОЙ У КАЖДОЙ КОМАНДЫ, хранится на
-  // сервере (преф команды → глобальный преф → системные 24ч). Смена команды
-  // меняет teamDefault, и при чистом URL период сам становится дефолтом новой
-  // команды — принудительного сброса нет: явно выбранный период (?range=…)
-  // переживает переключение.
+  // сервере (преф команды → глобальный преф → системные 24ч). При переключении
+  // команды период всегда сбрасывается на её дефолт (эффект ниже).
   const { value: teamDefault, settled: prefsSettled } = useTeamDefaultPeriod(teamId);
   // periodReady — и членства, и префы разрешились. До этого момента дефолтный
   // период неизвестен, и любая запись в URL/зеркало была бы записью НЕ ТОГО
@@ -142,6 +140,25 @@ export default function Overview() {
     if (!stored) return;
     setParams((prev) => applyFilters(prev, stored, teamDefault), { replace: true });
   }, [params, setParams, periodReady, teamDefault]);
+
+  // §71: при ФАКТИЧЕСКОМ переключении команды период сбрасывается на её дефолт —
+  // даже если до этого был выбран вручную или пришёл ссылкой. Иначе, работая в
+  // двух командах с разными горизонтами наблюдения, приходится каждый раз
+  // переставлять период руками.
+  //
+  // Первое появление teamId сбросом НЕ считается: useCurrentTeamID отдаёт ""
+  // до загрузки членств, и наивная проверка «id изменился» затёрла бы дип-линк
+  // /?range=30d при обычном открытии страницы. Приём одноразового guard'а — как
+  // handledKey в lib/nodeShare.ts (§58).
+  const seenTeam = useRef("");
+  useEffect(() => {
+    if (!periodReady) return;
+    if (seenTeam.current === teamId) return;
+    const firstResolve = seenTeam.current === "";
+    seenTeam.current = teamId;
+    if (firstResolve) return;
+    updateFilters({ period: teamDefault });
+  }, [teamId, periodReady, teamDefault, updateFilters]);
 
   // §44.B/§71: дефолт для подсветки звёздочки — производный от команды, не
   // локальный state. Раньше это был useState с ленивой инициализацией, из-за
