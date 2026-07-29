@@ -8,6 +8,13 @@ import { api, type Node } from "../../api/client";
 import { useRoleAtLeast } from "../../lib/useCurrentRole";
 import { fmtLogTs, fmtSize } from "../../lib/format";
 import { FETCH_CHUNK, LARGE_WARN_RUNES, formatRunes, prettyMaybe } from "../../lib/logBody";
+import {
+  isLogOK,
+  logsFilterParams,
+  logsFilterSearch,
+  type LogsDoneFilter,
+  type LogsFilterState,
+} from "../../lib/logsQuery";
 import { LabelHint, Popover, PopoverAnchor, PopoverContent } from "../ui";
 import { CopyButton } from "../ui/CopyButton";
 import { ReplayDialog } from "../ReplayDialog";
@@ -63,7 +70,7 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
 
   const [pageSize, setPageSize] = useState<PageSize>(50);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(initialFilter?.status ?? "all");
-  const [doneFilter, setDoneFilter] = useState<"all" | "done" | "pending">(
+  const [doneFilter, setDoneFilter] = useState<LogsDoneFilter>(
     initialFilter?.done === "no" ? "pending" : initialFilter?.done === "yes" ? "done" : "all",
   );
 
@@ -108,20 +115,20 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
       });
   };
 
-  const advQueryParams = useMemo(() => {
-    const p: Record<string, string | number> = { limit: pageSize };
-    if (appliedFilters.q) {
-      p.q = appliedFilters.q;
-      if (appliedFilters.qCase) p.q_case = "1";
-      if (appliedFilters.qWord) p.q_word = "1";
-      if (appliedFilters.qRegex) p.q_regex = "1";
-    }
-    if (appliedFilters.method) p.method = appliedFilters.method;
-    if (appliedFilters.clientHost) p.client_host = appliedFilters.clientHost; // §67
-    if (appliedFilters.from) p.from = new Date(appliedFilters.from).toISOString();
-    if (appliedFilters.to) p.to = new Date(appliedFilters.to).toISOString();
-    return p;
-  }, [pageSize, appliedFilters]);
+  // §72.2: ОДИН набор параметров фильтра на список, счётчик и SSE-стрим —
+  // включая быстрые status/done, которые раньше применялись в браузере к уже
+  // загруженной странице (отсюда «Показано 3 из 33» и мёртвый скролл).
+  const filterState: LogsFilterState = useMemo(
+    () => ({ ...appliedFilters, status: statusFilter, done: doneFilter }),
+    [appliedFilters, statusFilter, doneFilter],
+  );
+  const filterParams = useMemo(() => logsFilterParams(filterState), [filterState]);
+  // Параметры списка = фильтр + размер страницы. Курсор пагинации добавляется
+  // в queryFn и в ключ не входит (иначе каждая страница — новый запрос).
+  const listParams = useMemo(
+    () => ({ ...filterParams, limit: pageSize }) as Record<string, string | number>,
+    [filterParams, pageSize],
+  );
 
   const [live, setLive] = useState(false);
   // «У верха» скролл-контейнера. Управляет авто-рефетчем (см. logsQ ниже):
@@ -133,11 +140,14 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   // (ORDER BY date_request DESC), скролл вниз подгружает следующие pageSize
   // более старых через курсор `to` = date_request самой старой загруженной.
   const logsQ = useInfiniteQuery({
-    queryKey: ["logs", id, advQueryParams],
+    // §72.2: status/done входят в ключ — смена быстрого фильтра перезапрашивает
+    // список с первой страницы. Раньше ключ их не содержал, список оставался
+    // прежним, и фильтр лишь прятал строки уже загруженной страницы.
+    queryKey: ["logs", id, listParams],
     enabled: !!id && hasLogsTable && !live, // в Live snapshot не нужен — читаем SSE-буфер
     initialPageParam: null as LogsCursor | null,
     queryFn: ({ pageParam }) => {
-      const params: Record<string, string | number> = { ...advQueryParams };
+      const params: Record<string, string | number> = { ...listParams };
       // §44/45-fix: keyset-курсор (date_request, id) — строгая граница
       // (date_request < to) ИЛИ (= to И id < before_id). Перешагивает «плотные»
       // секунды (сотни записей с одинаковым date_request), где простой `to <=`
@@ -150,7 +160,9 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
     },
     getNextPageParam: (lastPage) => {
       const items = lastPage.items ?? [];
-      if (items.length < Number(advQueryParams.limit)) return undefined; // конец истории
+      // LIMIT в ClickHouse применяется ПОСЛЕ WHERE, поэтому недобор страницы —
+      // это конец отфильтрованной истории, а не «фильтр выел строки».
+      if (items.length < Number(listParams.limit)) return undefined;
       const oldest = items[items.length - 1]; // DESC → последний самый старый
       return oldest ? { to: new Date(oldest.date_request).getTime(), beforeId: oldest.id } : undefined;
     },
@@ -168,25 +180,23 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   const badQuery =
     (logsQ.error as { response?: { status?: number } } | null)?.response?.status === 400;
 
-  // §67: точный count() под ТЕМИ ЖЕ фильтрами, что и список, включая быстрые
-  // ok/err и done/pending — счётчик «Показано N из M» в шапке. Отдельный
-  // запрос: таблица рендерится сразу, «из M» дорисовывается. Пересчёт — только
-  // со снапшотом (queryKey = параметры списка + быстрые фильтры), НЕ на каждое
-  // SSE-событие; в Live выключен (total мгновенно устаревает — счётчик скрыт).
+  // §67: точный count() под ТЕМИ ЖЕ фильтрами, что и список — счётчик
+  // «Показано N из M» в шапке. Отдельный запрос: таблица рендерится сразу, «из
+  // M» дорисовывается. Пересчёт — только со снапшотом, НЕ на каждое SSE-событие;
+  // в Live выключен (total мгновенно устаревает — счётчик скрыт).
   // Ошибка/таймаут/CH недоступен → logs_available=false → «из M» просто нет.
+  //
+  // §72.2: параметры — тот же filterParams, что у списка (без limit: count не
+  // постраничный). Раньше счётчик собирал их сам и добавлял status/done, а
+  // список нет — два запроса считали разные множества.
   const countQ = useQuery({
-    queryKey: ["logs-count", id, advQueryParams, statusFilter, doneFilter],
+    queryKey: ["logs-count", id, filterParams],
     enabled: !!id && hasLogsTable && !live,
-    queryFn: () => {
-      const params: Record<string, string | number> = { ...advQueryParams };
-      delete params.limit; // count не постраничный
-      if (statusFilter !== "all") params.status = statusFilter;
-      if (doneFilter !== "all") params.done = doneFilter === "done" ? "yes" : "no";
-      return api.get<{ total: number; logs_available?: boolean }>(
+    queryFn: () =>
+      api.get<{ total: number; logs_available?: boolean }>(
         `/api/nodes/${id}/logs/count`,
-        params,
-      );
-    },
+        filterParams,
+      ),
     refetchInterval: !live && atTop ? 5_000 : false,
     retry: false, // деградация штатная — не долбим CH повторами
   });
@@ -195,6 +205,11 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
 
   const [liveLogs, setLiveLogs] = useState<LogRow[]>([]);
   const [highlighted, setHighlighted] = useState<Set<string>>(new Set());
+  // Сколько live-записей пришло, пока пользователь смотрел не на верх списка
+  // (пилюля «показать новые»), и длина буфера на прошлом тике — объявлены здесь,
+  // выше SSE-эффекта: он сбрасывает и то, и другое при (пере)подключении.
+  const [pendingCount, setPendingCount] = useState(0);
+  const lastLiveLenRef = useRef(0);
   // Поток умер окончательно (LIVE_MAX_CONSECUTIVE_ERRORS ошибок подряд) —
   // live выключен, показываем предупреждение вместо вечного спиннера.
   const [liveLost, setLiveLost] = useState(false);
@@ -224,19 +239,21 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   // setState стреляет по размонтированному компоненту.
   const highlightTimersRef = useRef<Set<number>>(new Set());
 
+  // §72.2: URL стрима строится из общего filterState — быстрые status/done
+  // фильтрует сервер (matchLogFilter), как и snapshot. Строка стабильна между
+  // рендерами, поэтому годится в deps эффекта.
+  const streamSearch = useMemo(() => logsFilterSearch(filterState), [filterState]);
+
   useEffect(() => {
     if (!live || !id || !hasLogsTable) return;
-    const qs = new URLSearchParams();
-    if (appliedFilters.q) {
-      qs.set("q", appliedFilters.q);
-      if (appliedFilters.qCase) qs.set("q_case", "1");
-      if (appliedFilters.qWord) qs.set("q_word", "1");
-      if (appliedFilters.qRegex) qs.set("q_regex", "1");
-    }
-    if (appliedFilters.method) qs.set("method", appliedFilters.method);
-    if (appliedFilters.clientHost) qs.set("client_host", appliedFilters.clientHost); // §67
-    const suffix = qs.toString() ? `?${qs.toString()}` : "";
-    const es = new EventSource(`/api/nodes/${id}/logs/stream${suffix}`);
+    // Буфер прошлого фильтра больше не дочищается на клиенте (клиентского
+    // фильтра нет) — очищаем его сами, иначе после смены фильтра в Live висели
+    // бы записи, ему не соответствующие.
+    setLiveLogs([]);
+    setHighlighted(new Set());
+    setPendingCount(0);
+    lastLiveLenRef.current = 0;
+    const es = new EventSource(`/api/nodes/${id}/logs/stream${streamSearch}`);
     const timers = highlightTimersRef.current;
     let consecutiveErrors = 0;
     es.addEventListener("log", (e) => {
@@ -286,14 +303,12 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
       for (const tid of timers) window.clearTimeout(tid);
       timers.clear();
     };
-    // appliedFilters заменяется атомарно по Apply — объект в deps перезапускает
-    // поток при любой смене применённого фильтра (§48).
-  }, [live, id, hasLogsTable, appliedFilters]);
+    // streamSearch — строка со всеми применёнными фильтрами (§48/§67/§72.2):
+    // её смена пересоздаёт поток, одинаковое значение — нет.
+  }, [live, id, hasLogsTable, streamSearch]);
 
   const tableWrapRef = useRef<HTMLDivElement | null>(null);
   const autoScrollRef = useRef(true);
-  const [pendingCount, setPendingCount] = useState(0);
-  const lastLiveLenRef = useRef(0);
 
   const atTopRef = useRef(true);
 
@@ -343,20 +358,15 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
     lastLiveLenRef.current = liveLogs.length;
   }, [live, liveLogs]);
 
-  const visibleLogs = useMemo(() => {
-    const src = live ? liveLogs : infiniteItems;
-    return src.filter((r) => {
-      if (statusFilter === "ok" && !(r.done && r.status >= 200 && r.status < 400)) return false;
-      if (statusFilter === "err" && r.done && r.status >= 200 && r.status < 400) return false;
-      if (doneFilter === "done" && !r.done) return false;
-      if (doneFilter === "pending" && r.done) return false;
-      return true;
-    });
-  }, [live, liveLogs, infiniteItems, statusFilter, doneFilter]);
+  // §72.2: строки таблицы — ровно то, что вернул сервер под текущими фильтрами.
+  // Клиентского пост-фильтра больше нет: он резал уже загруженную страницу, из-за
+  // чего «Показано N» считалось по горстке видимых строк, а «из M» — по всей
+  // таблице, и скролл дальше не шёл.
+  const visibleLogs = live ? liveLogs : infiniteItems;
 
   // Догрузка при недоборе высоты: если контента меньше высоты контейнера (нет
-  // скроллбара) или клиентский фильтр выел строки — доскроллить нельзя, тянем
-  // следующую страницу сами, пока есть что и пока влезает.
+  // скроллбара) — доскроллить нельзя, тянем следующую страницу сами, пока есть
+  // что и пока влезает.
   useEffect(() => {
     if (live) return;
     const el = tableWrapRef.current;
@@ -657,7 +667,7 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
             <tbody>
               {visibleLogs.map((r) => {
                 const isHl = highlighted.has(r.id);
-                const isErr = !r.done || r.status >= 400 || r.status === 0;
+                const isErr = !isLogOK(r);
                 const isOpen = expandedId === r.id;
                 return (
                   <Fragment key={r.id}>
