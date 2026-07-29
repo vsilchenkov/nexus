@@ -3235,13 +3235,13 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "ok | err | (пусто)",
+                        "description": "ok — доставлено (done=1 и 200\u003c=status\u003c400) | err — полное дополнение ok | (пусто) — любой (§72.1)",
                         "name": "status",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "yes | no | (пусто)",
+                        "description": "yes (done=1) | no (done=0) | (пусто)",
                         "name": "done",
                         "in": "query"
                     },
@@ -3375,13 +3375,13 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "ok | err",
+                        "description": "ok — доставлено (done=1 и 200\u003c=status\u003c400) | err — полное дополнение ok (§72.1)",
                         "name": "status",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "yes | no",
+                        "description": "yes (done=1) | no (done=0)",
                         "name": "done",
                         "in": "query"
                     },

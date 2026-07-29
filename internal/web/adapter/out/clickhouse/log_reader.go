@@ -455,6 +455,73 @@ func (r *LogReaderCH) ListSince(ctx context.Context, table, nodeID string, curso
 	return out, nil
 }
 
+// condLogOK / condLogErr — SQL-предикаты быстрых фильтров «ОК» и «Ошибки»
+// вкладки логов (§72.1). Успех = запись закрыта И внешний узел ответил 2xx/3xx;
+// «Ошибки» — ПОЛНОЕ ДОПОЛНЕНИЕ успеха, поэтому ok ∪ err = все записи, а
+// ok ∩ err = ∅.
+//
+// До §72.1 предикаты были `status BETWEEN 200 AND 299` и `(status >= 400 OR
+// status = 0)`: запись с 3xx не попадала НИ В ОДИН из фильтров (пропадала из
+// UI), а незавершённая запись с кодом 2xx числилась успехом. Дополнительный
+// мотив — ровно этот предикат применял клиентский фильтр списка логов и
+// применяет красная подсветка строки, так что серверный фильтр показывает то
+// же, что видел пользователь.
+//
+// Семантика `done` (yes/no) намеренно не тронута: на ней держатся KPI
+// «неудачных доставок» §35 (CountFailed — строго done=0).
+const (
+	condLogOK  = "(done = 1 AND status >= 200 AND status < 400)"
+	condLogErr = "NOT " + condLogOK
+)
+
+// partitionMarginDays — запас к границам по date_create, выведенным из окна по
+// date_request (§72.4). Партиции месячные, поэтому лишний день ничего не стоит,
+// а закрывает расхождение часовых поясов, перекос часов между инстансами
+// Sender'а и записи, дошедшие до ClickHouse позже своего date_request
+// (durable-retry §38).
+const partitionMarginDays = 1
+
+// dayUTC — граница по date_create (тип Date) как литерал YYYY-MM-DD.
+// Считается в UTC: date_create пишется как UTC-день момента date_request, а
+// DateTime рендерится в часовом поясе сервера — брать toDate(date_request) в
+// SQL было бы неверно.
+func dayUTC(ms int64, deltaDays int) string {
+	return time.UnixMilli(ms).UTC().AddDate(0, 0, deltaDays).Format(time.DateOnly)
+}
+
+// dateCreateConds — то же временное окно, но по колонке PARTITION BY (§72.4).
+//
+// Без него ClickHouse читает таблицу ЦЕЛИКОМ: условие по date_request партиции
+// не отсекает, хотя date_request и стоит вторым полем ключа сортировки. Замер
+// на 200 000 строк (окно в сутки, TestClickHouse_DateCreatePruning_E2E): 200 000
+// прочитанных строк и 3 части против 8 192 строк и 1 части; разрыв растёт с
+// объёмом таблицы.
+//
+// Работает только когда usecase подтвердил инвариант write-path (см.
+// LogQuery.DateCreateAligned): для внешних таблиц §64 сужение отключено, иначе
+// оно молча теряло бы строки.
+//
+// Литерал через toDate(?) — константа сворачивается на анализе запроса, и
+// KeyCondition использует её для отсечения партиций.
+func dateCreateConds(q port.LogQuery) ([]string, []any) {
+	if !q.DateCreateAligned {
+		return nil, nil
+	}
+	var (
+		conds []string
+		args  []any
+	)
+	if q.SinceMs > 0 {
+		conds = append(conds, "date_create >= toDate(?)")
+		args = append(args, dayUTC(q.SinceMs, -partitionMarginDays))
+	}
+	if q.UntilMs > 0 {
+		conds = append(conds, "date_create <= toDate(?)")
+		args = append(args, dayUTC(q.UntilMs, partitionMarginDays))
+	}
+	return conds, args
+}
+
 // searchConds строит WHERE-условия расширенных фильтров (§48) — ЕДИНСТВЕННЫЙ
 // источник для Search и Count (§67 «Всего»): один и тот же набор условий
 // гарантирует, что счётчик считает ровно то, что показывает список.
@@ -465,6 +532,12 @@ func (r *LogReaderCH) searchConds(ctx context.Context, q port.LogQuery) ([]strin
 	)
 	if c, a := r.nodeFilter(ctx, q.Table, q.NodeID); c != "" {
 		conds = append(conds, c)
+		args = append(args, a...)
+	}
+	// §72.4: то же окно по колонке PARTITION BY — ставится ПЕРЕД условиями по
+	// date_request, порядок conds и args обязан совпадать.
+	if c, a := dateCreateConds(q); len(c) > 0 {
+		conds = append(conds, c...)
 		args = append(args, a...)
 	}
 	if q.SinceMs > 0 {
@@ -500,9 +573,9 @@ func (r *LogReaderCH) searchConds(ctx context.Context, q port.LogQuery) ([]strin
 	}
 	switch q.Status {
 	case "ok":
-		conds = append(conds, "status BETWEEN 200 AND 299")
+		conds = append(conds, condLogOK)
 	case "err":
-		conds = append(conds, "(status >= 400 OR status = 0)")
+		conds = append(conds, condLogErr)
 	}
 	switch q.Done {
 	case "yes":

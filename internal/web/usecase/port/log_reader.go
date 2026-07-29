@@ -22,6 +22,17 @@ type LogQuery struct {
 	SinceMs int64
 	UntilMs int64
 
+	// DateCreateAligned — гарантия write-path Nexus: date_create записи равен
+	// UTC-дню её date_request (§72.4). Разрешает адаптеру продублировать
+	// временное окно ещё и по date_create — колонке PARTITION BY. Без этого
+	// условия ClickHouse читает таблицу целиком: фильтр по date_request
+	// партиции не отсекает (замер — 200 000 прочитанных строк против 8 192).
+	//
+	// Для ВНЕШНИХ таблиц (§64, nodes.external_table) всегда false: туда пишет
+	// посторонний сервис, инвариант не гарантирован, а сужение молча потеряло
+	// бы строки. Нулевое значение безопасно — сужения нет.
+	DateCreateAligned bool
+
 	// BeforeID — тай-брейкер keyset-пагинации (§44/45-fix): ID самой старой строки
 	// предыдущей страницы. Вместе с UntilMs даёт строгий составной курсор
 	// (date_request, ID), чтобы пагинация перешагивала «плотные» секунды (сотни
@@ -39,10 +50,18 @@ type LogQuery struct {
 	// ClientHost — exact match по колонке client_host (§67, PTR-имя клиента).
 	ClientHost string
 
-	// Status — "ok" (200..299), "err" (>=400 или 0), "" (любой).
+	// Status — быстрый фильтр вкладки логов (§72.1):
+	//   "ok"  — доставлено успешно: done=1 И 200 <= status < 400;
+	//   "err" — ПОЛНОЕ ДОПОЛНЕНИЕ "ok" (незавершённые, таймауты status=0,
+	//           4xx/5xx). ok ∪ err = все записи, ok ∩ err = ∅;
+	//   ""    — любой.
+	// Реализаций две — SQL (condLogOK/condLogErr адаптера) и in-memory зеркало
+	// live-tail (logRecordOK); менять их можно только вместе.
 	Status string
 
-	// Done — "yes" / "no" / "" (любой).
+	// Done — "yes" (done=1) / "no" (done=0) / "" (любой). Не пересекается по
+	// смыслу со Status: "no" — «ещё/уже не доставлено», на нём держится KPI
+	// неудачных доставок §35.
 	Done string
 
 	// Method — exact match по колонке method (§39 подпуть запроса; §48).
