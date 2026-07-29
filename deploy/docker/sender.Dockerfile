@@ -53,7 +53,16 @@ COPY migrations /app/migrations
 # Ставим ДО `USER nexus`: update-ca-certificates пишет в /etc/ssl/certs.
 # Не использовать SSL_CERT_FILE — он ЗАМЕНЯЕТ системный бандл целиком, и узлы
 # с публичными сертификатами перестанут проверяться.
+#
+# «Russian Trusted Root CA» (НУЦ Минцифры) — им подписан боевой эквайринг Альфа-
+# Банка (`pay.alfabank.ru`), переехавший на этот УЦ 29.07.2026 ≈16:05 MSK; в
+# alpine-бандле российского НУЦ нет, и узел `qr` встал с `unknown authority`.
+# Здесь кладём именно КОРНЕВОЙ (в отличие от Vozovoz — там корень сломан): он
+# оформлен корректно (CA:TRUE critical, pathlen:4 + Certificate Sign), живёт до
+# 27.02.2032 и переживает перевыпуск промежуточного Sub CA, который приходит в
+# рукопожатии. Подробности и сверка отпечатка — в deploy/certs/README.md.
 COPY deploy/certs/vozovoz-issuing-ca.crt /usr/local/share/ca-certificates/
+COPY deploy/certs/russian-trusted-root-ca.crt /usr/local/share/ca-certificates/
 RUN update-ca-certificates
 
 # Директория для CH-fallback (NDJSON .tmp + rename). Sender пишет сюда при
