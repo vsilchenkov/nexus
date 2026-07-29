@@ -252,6 +252,8 @@ web:
   node_default_max_body_size: 50000             # §64: «Макс. размер тела» по умолчанию в форме СОЗДАНИЯ узла (лимит сразу включён). Существующие узлы не меняет.
   api_token_rate_limit_per_min: 100             # Лимит запросов по API-токену в минуту.
   rmq_test_rate_limit_per_min: 10               # Лимит POST /api/nodes/test-rmq на пользователя в минуту (§27.8).
+  instance_probe_timeout_ms: 3000               # §73: таймаут КАЖДОГО из двух запросов пробы соседнего инстанса (GET /api/version и GET /ready).
+  instance_probe_rate_limit_per_min: 30         # §73: лимит проверок инстансов на пользователя в минуту (POST /api/instances/*).
   login_rate_limit_per_min: 10                  # Анти-брутфорс /api/auth/login: попыток/мин на IP и на login (Phase AUD.4). -1 = выключить.
   # trusted_proxies: ["10.0.0.0/8"]                # Phase AUD.5: чьим X-Forwarded-For верить; дефолт — loopback + приватные сети.
   swagger_enabled: false                        # Отдавать ли Swagger UI Web'а (выключай в prod).

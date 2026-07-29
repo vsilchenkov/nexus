@@ -146,6 +146,14 @@ var translations = map[Lang]map[string]string{
 		"header.name_length":        "header name length must be between 1 and 100 characters",
 		"header.name_format":        "header name must be a valid RFC 7230 token (no spaces)",
 		"header.description_length": "description must be at most 500 characters",
+		// peer instances registry (§73)
+		"instance.not_found":          "instance not found",
+		"instance.already_exists":     "an instance with this address is already connected",
+		"instance.url_invalid":        "address must be an http(s) origin like https://host[:port] — without path, query or credentials",
+		"instance.title_length":       "instance name length must be between 1 and 64 characters",
+		"instance.comment_length":     "comment must be at most 255 characters",
+		"instance.status_invalid":     "invalid instance status",
+		"instance.probe_rate_limited": "too many instance checks, try again in a minute",
 		// request fields catalog (§41)
 		"request_field.not_found":          "request field not found",
 		"request_field.already_exists":     "a request field with this name already exists",
@@ -261,6 +269,14 @@ var translations = map[Lang]map[string]string{
 		"header.name_length":        "длина имени заголовка должна быть от 1 до 100 символов",
 		"header.name_format":        "имя заголовка должно быть валидным RFC 7230 token (без пробелов)",
 		"header.description_length": "описание должно быть не длиннее 500 символов",
+		// peer instances registry (§73)
+		"instance.not_found":          "инстанс не найден",
+		"instance.already_exists":     "инстанс с таким адресом уже подключён",
+		"instance.url_invalid":        "адрес должен быть вида https://host[:port] — без пути, параметров и учётных данных",
+		"instance.title_length":       "длина названия инстанса должна быть от 1 до 64 символов",
+		"instance.comment_length":     "комментарий должен быть не длиннее 255 символов",
+		"instance.status_invalid":     "недопустимый статус инстанса",
+		"instance.probe_rate_limited": "слишком много проверок инстансов, повторите через минуту",
 		// request fields catalog (§41)
 		"request_field.not_found":          "поле запроса не найдено",
 		"request_field.already_exists":     "поле запроса с таким именем уже существует",
