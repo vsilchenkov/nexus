@@ -29,9 +29,14 @@ export type OverviewFilters = {
   period: Period;
 };
 
+// PERIOD_PARAM_KEYS — параметры, описывающие период. Выделены отдельно, потому
+// что в зеркало они не пишутся (§71, см. serializeMirror).
+const PERIOD_PARAM_KEYS = ["range", "from", "to"] as const;
+
 // FILTER_PARAM_KEYS — query-параметры, которыми владеет Overview. Чужие ключи
-// (напр. utm-метки) при обновлении фильтров не трогаются.
-export const FILTER_PARAM_KEYS = ["q", "method", "status", "range", "from", "to"] as const;
+// (напр. utm-метки) при обновлении фильтров не трогаются. Собирается из
+// PERIOD_PARAM_KEYS, чтобы списки не разъехались при добавлении параметра.
+export const FILTER_PARAM_KEYS = ["q", "method", "status", ...PERIOD_PARAM_KEYS] as const;
 
 // FILTERS_STORAGE — тип хранилища зеркала (§54.3). sessionStorage, а не
 // localStorage: иначе сохранённый живой период всегда перекрывал бы дефолт
@@ -132,10 +137,6 @@ export function applyFilters(
   for (const [k, v] of serializeFilters(f, defaultPeriod)) next.set(k, v);
   return next;
 }
-
-// PERIOD_PARAM_KEYS — параметры, описывающие период. Выделены из
-// FILTER_PARAM_KEYS, потому что в зеркало они не пишутся (§71).
-const PERIOD_PARAM_KEYS = ["range", "from", "to"] as const;
 
 // serializeMirror — то же, что serializeFilters, но БЕЗ периода: зеркало хранит
 // только поиск/метод/статус. Период — состояние текущего экрана, а не фильтр,
