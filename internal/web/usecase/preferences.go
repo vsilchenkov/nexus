@@ -76,8 +76,11 @@ func (u *PreferenceUsecase) Preferences(ctx context.Context, userID string) []*d
 func (u *PreferenceUsecase) SetPreference(ctx context.Context, userID, teamID, key string, value json.RawMessage) error {
 	p := &domain.UserPreference{UserID: userID, TeamID: teamID, Key: key, Value: value}
 	if err := p.Validate(); err != nil {
+		// Ключ усечён: сюда он приходит ещё не проверенным, и мусорный запрос с
+		// километровым ключом иначе целиком осел бы в журнале.
 		u.logger.Debug("set preference: rejected by validation",
-			u.logger.Str("user_id", userID), u.logger.Str("key", key),
+			u.logger.Str("user_id", userID), u.logger.Str("key", keyForLog(key)),
+			u.logger.Int("key_len", len(key)),
 			u.logger.Int("value_bytes", len(value)), u.logger.Err(err))
 		return err
 	}
@@ -103,4 +106,15 @@ func (u *PreferenceUsecase) SetPreference(ctx context.Context, userID, teamID, k
 	// высокочастотное личное действие без ценности для расследования, оно бы
 	// только зашумило журнал. То же правило, что для истории поиска (§62).
 	return nil
+}
+
+// keyForLog — ключ, пригодный для журнала: обрезан по доменной границе. Нужен
+// только на ветке отказа валидации — там ключ ещё произвольный (клиент мог
+// прислать что угодно), а логировать его целиком нельзя.
+func keyForLog(key string) string {
+	const maxLogged = 64
+	if len(key) <= maxLogged {
+		return key
+	}
+	return key[:maxLogged] + "…"
 }

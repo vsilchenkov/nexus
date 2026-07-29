@@ -88,14 +88,22 @@ export function parseFilters(params: URLSearchParams, defaultPeriod: Period): Ov
 // serializeFilters — query-параметры фильтров. Пишутся только отличия от дефолта:
 // всё дефолтное → пустая строка → чистый URL «/» и пустое зеркало (на этом же
 // свойстве держится замкнутость restore-эффекта, §54.4).
-export function serializeFilters(f: OverviewFilters, defaultPeriod: Period): URLSearchParams {
+//
+// defaultPeriod = null означает «дефолт команды ещё не загружен» (§71). Тогда
+// период пишется ВСЕГДА: иначе правка любого другого фильтра в это окно решала
+// бы «период дефолтный» по системным 24ч и стирала бы из URL явно выбранный
+// пользователем `range=24h` — после прихода префов он молча сменился бы на
+// дефолт команды.
+export function serializeFilters(
+  f: OverviewFilters,
+  defaultPeriod: Period | null,
+): URLSearchParams {
   const p = new URLSearchParams();
-  const def = defaultFilters(defaultPeriod);
 
   if (f.search) p.set("q", f.search);
   if (f.method) p.set("method", f.method);
   if (f.status !== "all") p.set("status", f.status);
-  if (periodKey(f.period) !== periodKey(def.period)) {
+  if (defaultPeriod === null || periodKey(f.period) !== periodKey(defaultPeriod)) {
     if (f.period.kind === "preset") {
       p.set("range", f.period.range);
     } else {
@@ -117,7 +125,7 @@ export function hasFilterParams(params: URLSearchParams): boolean {
 export function applyFilters(
   prev: URLSearchParams,
   f: OverviewFilters,
-  defaultPeriod: Period,
+  defaultPeriod: Period | null,
 ): URLSearchParams {
   const next = new URLSearchParams(prev);
   for (const k of FILTER_PARAM_KEYS) next.delete(k);
@@ -127,7 +135,7 @@ export function applyFilters(
 
 // saveFilters — записать зеркало. Всё-дефолт → ключ удаляется: «очистил фильтры»
 // должно означать «восстанавливать нечего», иначе restore воскресит очищенное.
-export function saveFilters(f: OverviewFilters, defaultPeriod: Period): void {
+export function saveFilters(f: OverviewFilters, defaultPeriod: Period | null): void {
   try {
     const s = serializeFilters(f, defaultPeriod).toString();
     if (s) storage().setItem(FILTERS_KEY, s);

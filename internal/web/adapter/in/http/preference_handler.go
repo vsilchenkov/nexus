@@ -26,9 +26,14 @@ func NewPreferenceHandler(uc *usecase.PreferenceUsecase, logger logging.Logger) 
 
 // setPreferenceRequest — PUT /api/me/prefs (§71). team_id опционален (пусто =
 // глобальный преф). value — произвольный JSON, сервер его не интерпретирует.
+//
+// max=64 на ключе дублирует доменную проверку намеренно: без него ключ
+// произвольной длины доезжал бы до usecase и попадал в Debug-лог отказа целиком
+// (раздувание журнала на мусорном запросе). Граница совпадает с VARCHAR(64) и
+// domain.maxPreferenceKeyLen.
 type setPreferenceRequest struct {
 	TeamID string          `json:"team_id"`
-	Key    string          `json:"key" binding:"required"`
+	Key    string          `json:"key" binding:"required,max=64"`
 	Value  json.RawMessage `json:"value" binding:"required" swaggertype:"object"`
 }
 

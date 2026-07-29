@@ -41,6 +41,16 @@ type Server = {
   prefsFail?: boolean;
 };
 
+// prefItem — запись в ответе GET /api/me/prefs.
+function prefItem(teamID: string, range: string) {
+  return {
+    team_id: teamID,
+    key: PREF_KEY_OVERVIEW_PERIOD,
+    value: { kind: "preset", range },
+    updated_at: "",
+  };
+}
+
 // metricsCalls — параметры каждого запроса /api/metrics/nodes: по ним видно и
 // сколько раз он ушёл, и с каким периодом (анти-мигание §71).
 let metricsCalls: Record<string, unknown>[] = [];
@@ -229,6 +239,35 @@ describe("Overview: дефолтный период per-team (§71)", () => {
         value: { kind: "preset", range: "1h" },
       }),
     );
+  });
+
+  // Регресс: правка другого фильтра, пока префы едут, не должна стирать из URL
+  // явно выбранный период, совпавший с системными 24ч (§71, ревизия).
+  it("правка фильтра до загрузки префов не стирает явный range=24h", async () => {
+    let releasePrefs: (v: unknown) => void = () => {};
+    mockServer({ currentTeamID: TEAM_A, prefs: [{ team_id: TEAM_A, range: "7d" }] });
+    const realGet = apiGet.getMockImplementation()!;
+    apiGet.mockImplementation((url: string, params?: Record<string, unknown>) => {
+      if (url === "/api/me/prefs") {
+        return new Promise((res) => {
+          releasePrefs = () => res({ items: [prefItem(TEAM_A, "7d")] });
+        });
+      }
+      return realGet(url, params);
+    });
+
+    renderOverview(newClient(), "/?range=24h");
+
+    // Префы ещё едут: PeriodPicker скрыт, но фильтры доступны. Ищем именно
+    // селект статуса (на странице их два — метод и статус).
+    const statusSelect = screen
+      .getAllByRole("combobox")
+      .find((s) => s.querySelector('option[value="err"]'));
+    fireEvent.change(statusSelect!, { target: { value: "err" } });
+
+    releasePrefs(null);
+    // Период остался выбранным пользователем (24ч), а не сменился на дефолт 7д.
+    await waitFor(() => expect(lastMetricsRange()).toBe("24h"));
   });
 
   it("пустой набор префов не подменяется локальным значением", async () => {

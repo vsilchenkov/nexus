@@ -7720,7 +7720,8 @@ const docTemplate = `{
             ],
             "properties": {
                 "key": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 64
                 },
                 "team_id": {
                     "type": "string"

@@ -1771,6 +1771,7 @@ definitions:
   internal_web_adapter_in_http.setPreferenceRequest:
     properties:
       key:
+        maxLength: 64
         type: string
       team_id:
         type: string

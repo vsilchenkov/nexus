@@ -135,6 +135,27 @@ describe("serializeFilters", () => {
   ])("writes only the non-default field %o", (patch, want) => {
     expect(ser({ ...def(), ...patch }).toString()).toBe(want);
   });
+
+  // Регресс (§71): пока дефолт команды не загружен, «дефолтность» периода
+  // определять нечем. Если считать дефолтом системные 24ч, то правка любого
+  // другого фильтра в это окно стёрла бы из URL явно выбранный range=24h, и
+  // после прихода префов период молча сменился бы на дефолт команды.
+  it("writes the period always when the team default is unknown (null)", () => {
+    const f: OverviewFilters = { ...def(), status: "err" };
+    const out = serializeFilters(f, null);
+    expect(out.get("range")).toBe("24h");
+    expect(out.get("status")).toBe("err");
+  });
+
+  it("writes a custom period when the team default is unknown (null)", () => {
+    const f: OverviewFilters = {
+      ...def(),
+      period: custom("2026-07-01T00:00:00Z", "2026-07-02T00:00:00Z"),
+    };
+    const out = serializeFilters(f, null);
+    expect(out.get("from")).toBe("2026-07-01T00:00:00Z");
+    expect(out.has("range")).toBe(false);
+  });
 });
 
 describe("round-trip", () => {

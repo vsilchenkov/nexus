@@ -82,10 +82,6 @@ export default function Overview() {
   const { t } = useTranslation();
   // §26/§28 Пункт 3: создание/редактирование узлов — только manager+.
   const canEdit = useRoleAtLeast("manager");
-  // §54: фильтры (поиск/метод/статус/живой период) — производные от URL, не
-  // useState: иначе они умирают при уходе на страницу узла (Overview — дочерний
-  // Outlet, размонтируется) и «Назад» возвращает пустой экран. Зеркало в
-  // sessionStorage добавляет кейс, где query теряется (кнопка «Узлы» = to="/").
   // teamId в ключах team-scoped запросов обязателен: сервер фильтрует ответ по
   // команде СЕССИИ, и без teamId записи разных команд алиасятся в один слот
   // кеша — после смены команды (например, через глобальный поиск §62) стирание
@@ -106,7 +102,16 @@ export default function Overview() {
   const periodReady = teamId !== "" && prefsSettled;
   // §71.5: разовый перенос прежнего localStorage-значения на сервер.
   useMigrateLegacyPeriodPref();
+  // serializeDefault — дефолт для решения «писать ли период в URL/зеркало».
+  // Пока префы не пришли — null («дефолт неизвестен», период пишется всегда):
+  // иначе правка любого другого фильтра в это окно посчитала бы период
+  // дефолтным по системным 24ч и стёрла бы из URL явно выбранный range=24h.
+  const serializeDefault = periodReady ? teamDefault : null;
 
+  // §54: фильтры (поиск/метод/статус/живой период) — производные от URL, не
+  // useState: иначе они умирают при уходе на страницу узла (Overview — дочерний
+  // Outlet, размонтируется) и «Назад» возвращает пустой экран. Зеркало в
+  // sessionStorage добавляет кейс, где query теряется (кнопка «Узлы» = to="/").
   const [params, setParams] = useSearchParams();
   const filters = useMemo(() => parseFilters(params, teamDefault), [params, teamDefault]);
   const { search, method, status: statusFilter, period } = filters;
@@ -117,10 +122,10 @@ export default function Overview() {
   const updateFilters = useCallback(
     (patch: Partial<OverviewFilters>) => {
       const next = { ...filters, ...patch };
-      saveFilters(next, teamDefault);
-      setParams((prev) => applyFilters(prev, next, teamDefault), { replace: true });
+      saveFilters(next, serializeDefault);
+      setParams((prev) => applyFilters(prev, next, serializeDefault), { replace: true });
     },
-    [filters, setParams, teamDefault],
+    [filters, setParams, serializeDefault],
   );
 
   // Восстановление и зеркалирование. Пустой URL + непустое зеркало → вернуть

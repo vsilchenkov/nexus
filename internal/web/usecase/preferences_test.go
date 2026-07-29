@@ -147,6 +147,15 @@ func TestPreferenceUsecase_SetPreference_Rejects(t *testing.T) {
 	}
 }
 
+func TestPreferenceUsecase_KeyForLog(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "overview.period", keyForLog("overview.period"))
+	assert.Equal(t, strings.Repeat("a", 64), keyForLog(strings.Repeat("a", 64)))
+	// Мусорный ключ не должен осесть в журнале целиком (ревизия §71).
+	assert.Equal(t, strings.Repeat("a", 64)+"…", keyForLog(strings.Repeat("a", 5000)))
+}
+
 func TestPreferenceUsecase_SetPreference_LimitPropagates(t *testing.T) {
 	t.Parallel()
 

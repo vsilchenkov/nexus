@@ -114,7 +114,7 @@ const LEGACY_PERIOD_KEY = "nexus.overview.period";
 
 // loadLegacyPeriod — прежний дефолтный период из localStorage, если он там
 // есть и валиден. Толерантно к недоступному хранилищу (приватный режим).
-export function loadLegacyPeriod(): Period | null {
+function loadLegacyPeriod(): Period | null {
   try {
     const raw = localStorage.getItem(LEGACY_PERIOD_KEY);
     if (!raw) return null;
@@ -124,7 +124,7 @@ export function loadLegacyPeriod(): Period | null {
   }
 }
 
-export function clearLegacyPeriod(): void {
+function clearLegacyPeriod(): void {
   try {
     localStorage.removeItem(LEGACY_PERIOD_KEY);
   } catch {
