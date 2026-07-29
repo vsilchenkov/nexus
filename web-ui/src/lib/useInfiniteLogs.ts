@@ -1,9 +1,10 @@
 import {
   useInfiniteQuery,
+  useQueryClient,
   type InfiniteData,
   type UseInfiniteQueryResult,
 } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, type RefObject } from "react";
 
 import { api } from "../api/client";
 import { type LogRow, type LogsResp } from "../components/node/types";
@@ -26,6 +27,10 @@ export const MAX_INFINITE_ROWS = 1000;
 // SCROLL_BOTTOM_THRESHOLD_PX — насколько близко к низу надо прокрутить, чтобы
 // пошла подгрузка следующей страницы.
 export const SCROLL_BOTTOM_THRESHOLD_PX = 200;
+
+// SCROLL_TOP_THRESHOLD_PX — «пользователь у верха списка»: смотрит свежие
+// записи, а не листает историю.
+const SCROLL_TOP_THRESHOLD_PX = 8;
 
 // LogsCursor — keyset-курсор: время самой старой загруженной строки (мс) и её
 // id как тай-брейкер.
@@ -65,6 +70,10 @@ export function useInfiniteLogs(o: {
   const { nodeId, queryKey, params, enabled, refetchInterval = false, containerRef } = o;
   const maxRows = o.maxRows ?? MAX_INFINITE_ROWS;
   const limit = Number(params.limit);
+  const qc = useQueryClient();
+  // Ключ в ref: массив пересоздаётся каждый рендер и в deps коллбэков не годится.
+  const keyRef = useRef(queryKey);
+  keyRef.current = queryKey;
 
   const query = useInfiniteQuery({
     queryKey,
@@ -117,14 +126,37 @@ export function useInfiniteLogs(o: {
   const atCap = items.length >= maxRows;
   const canFetchMore = query.hasNextPage && !query.isFetchingNextPage && !atCap;
 
+  // Вернулись к верху — схлопываем кеш до первой страницы (§72.5).
+  //
+  // useInfiniteQuery при авто-рефетче перезапрашивает ВСЕ накопленные страницы.
+  // Пользователь, пролиставший список до потолка (20 страниц) и вернувшийся
+  // наверх, получал бы 20 запросов к ClickHouse каждые несколько секунд — на
+  // одну открытую вкладку. Наверху нужны только свежие записи; вниз страницы
+  // догрузятся обычным путём.
+  //
+  // Штатный maxPages здесь не подходит: он выбрасывает ПЕРВЫЕ страницы при
+  // fetchNextPage и ломает накопительный список (§44.K).
+  const collapseToFirstPage = useCallback(() => {
+    qc.setQueryData(keyRef.current, (d: InfiniteData<LogsResp, unknown> | undefined) =>
+      d && d.pages.length > 1
+        ? { pages: d.pages.slice(0, 1), pageParams: d.pageParams.slice(0, 1) }
+        : d,
+    );
+  }, [qc]);
+
   const onScroll = useCallback(() => {
     const el = containerRef.current;
-    if (!el || !canFetchMore) return;
+    if (!el) return;
+    if (el.scrollTop <= SCROLL_TOP_THRESHOLD_PX) {
+      collapseToFirstPage();
+      return;
+    }
+    if (!canFetchMore) return;
     if (el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_BOTTOM_THRESHOLD_PX) {
       query.fetchNextPage();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [containerRef, canFetchMore, query.fetchNextPage]);
+  }, [containerRef, canFetchMore, collapseToFirstPage, query.fetchNextPage]);
 
   // Догрузка при недоборе высоты: контента меньше высоты контейнера (скроллбара
   // нет) — доскроллить нельзя, тянем следующую страницу сами.

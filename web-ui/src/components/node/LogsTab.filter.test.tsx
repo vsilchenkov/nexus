@@ -132,6 +132,31 @@ describe("LogsTab — серверная фильтрация (§72.2)", () => {
     });
   });
 
+  it("возврат к верху схлопывает накопленные страницы", async () => {
+    renderTab();
+
+    const wrap = document.querySelector<HTMLDivElement>(".overflow-y-auto");
+    expect(wrap).not.toBeNull();
+    Object.defineProperty(wrap!, "scrollHeight", { value: 5000, configurable: true });
+    Object.defineProperty(wrap!, "clientHeight", { value: 500, configurable: true });
+    Object.defineProperty(wrap!, "scrollTop", { value: 0, writable: true, configurable: true });
+
+    await waitFor(() => expect(screen.getAllByText("task.getFiles")).toHaveLength(PAGE_SIZE));
+
+    // Листаем историю: две дополнительные страницы.
+    for (const want of [2, 3]) {
+      wrap!.scrollTop = 4400;
+      fireEvent.scroll(wrap!);
+      await waitFor(() => expect(screen.getAllByText("task.getFiles")).toHaveLength(PAGE_SIZE * want));
+    }
+
+    // Возврат наверх: авто-рефетч (каждые 5 с) иначе перезапрашивал бы ВСЕ три
+    // страницы разом — а наверху нужны только свежие записи.
+    wrap!.scrollTop = 0;
+    fireEvent.scroll(wrap!);
+    await waitFor(() => expect(screen.getAllByText("task.getFiles")).toHaveLength(PAGE_SIZE));
+  });
+
   it("подгрузка следующей страницы сохраняет фильтр и несёт keyset-курсор", async () => {
     renderTab({ status: "err" });
 
