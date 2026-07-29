@@ -1,5 +1,10 @@
 package http
 
+import (
+	"encoding/json"
+	"time"
+)
+
 // Общие DTO для Swagger-моделей (§11, §25 ТЗ; QA-2026-02 / П10).
 //
 // До этого все handler'ы декларировали ответы как `map[string]any` /
@@ -215,6 +220,25 @@ type SwitchTeamResponse struct {
 // поиска пользователя от свежих к старым (не более 10).
 type SearchHistoryResponse struct {
 	Items []string `json:"items"`
+}
+
+// UserPrefsResponse — GET /api/me/prefs (§71): все персональные предпочтения
+// пользователя одним ответом — и глобальные, и по всем его командам. Клиент
+// резолвит «преф команды → глобальный → системный дефолт» сам, поэтому набор
+// отдаётся целиком, а не по текущей команде.
+type UserPrefsResponse struct {
+	Items []userPrefDTO `json:"items"`
+}
+
+// userPrefDTO — одна запись предпочтений. TeamID пустой = глобальный преф.
+// Value — произвольный JSON: сервер значение не интерпретирует (§71.3).
+// swaggertype:"object" обязателен — иначе swag описывает json.RawMessage
+// как []integer (это []byte).
+type userPrefDTO struct {
+	TeamID    string          `json:"team_id"`
+	Key       string          `json:"key"`
+	Value     json.RawMessage `json:"value" swaggertype:"object"`
+	UpdatedAt time.Time       `json:"updated_at"`
 }
 
 // NodesMetricsResponse — GET /api/metrics/nodes.

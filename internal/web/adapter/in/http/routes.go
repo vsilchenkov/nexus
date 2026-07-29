@@ -28,6 +28,7 @@ type Handlers struct {
 	Kafka         *KafkaHandler
 	AsyncQueue    *AsyncQueueHandler
 	ServiceLogs   *ServiceLogsHandler
+	Prefs         *PreferenceHandler
 }
 
 // Middlewares — общие middleware (auth-check, role-check, API token-check).
@@ -80,6 +81,13 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		authed.GET("/me/search-history", RequireSessionOnly(), h.Auth.SearchHistory)
 		authed.POST("/me/search-history", RequireSessionOnly(), h.Auth.RecordSearch)
 		authed.DELETE("/me/search-history", RequireSessionOnly(), h.Auth.ClearSearchHistory)
+		// §71: персональные предпочтения (первый ключ — дефолтный период
+		// рабочего стола) — self-service, только session-cookie: у API-токена
+		// нет ни пользователя в привычном смысле, ни настроек интерфейса.
+		if h.Prefs != nil {
+			authed.GET("/me/prefs", RequireSessionOnly(), h.Prefs.Prefs)
+			authed.PUT("/me/prefs", RequireSessionOnly(), h.Prefs.SetPref)
+		}
 		// Self-service смена собственного пароля (§26): любая роль, только
 		// session-cookie (API-токенам пароль менять незачем).
 		authed.POST("/me/password", RequireSessionOnly(), h.Auth.ChangeOwnPassword)

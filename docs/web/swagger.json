@@ -1550,6 +1550,83 @@
                 }
             }
         },
+        "/api/me/prefs": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "§71: все префы пользователя одним ответом — и глобальные (team_id пустой), и привязанные к командам. Строго per-user. При сбое хранилища деградирует в пустой список (200, не 500): преф — настройка UI, и её недоступность не должна валить страницу, которая её читает.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Персональные предпочтения текущего пользователя.",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.UserPrefsResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "§71: upsert по (user_id, team_id, key). team_id пустой — глобальный преф; непустой обязан входить в членства пользователя (иначе 400, одинаково для чужой и несуществующей команды). value — произвольный валидный JSON (не null) до 4096 байт, сервер его не интерпретирует. Ключ — ^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)*$, до 64 символов.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Сохранить (upsert) один преф текущего пользователя.",
+                "parameters": [
+                    {
+                        "description": "преф",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.setPreferenceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "сохранено"
+                    },
+                    "400": {
+                        "description": "invalid key/value, not a member, limit exceeded",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/me/search-history": {
             "get": {
                 "security": [
@@ -6600,6 +6677,17 @@
                 }
             }
         },
+        "internal_web_adapter_in_http.UserPrefsResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.userPrefDTO"
+                    }
+                }
+            }
+        },
         "internal_web_adapter_in_http.VersionResponse": {
             "type": "object",
             "properties": {
@@ -7621,6 +7709,24 @@
                 }
             }
         },
+        "internal_web_adapter_in_http.setPreferenceRequest": {
+            "type": "object",
+            "required": [
+                "key",
+                "value"
+            ],
+            "properties": {
+                "key": {
+                    "type": "string"
+                },
+                "team_id": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "object"
+                }
+            }
+        },
         "internal_web_adapter_in_http.switchTeamRequest": {
             "type": "object",
             "required": [
@@ -7840,6 +7946,23 @@
                         "viewer",
                         "manager"
                     ]
+                }
+            }
+        },
+        "internal_web_adapter_in_http.userPrefDTO": {
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "string"
+                },
+                "team_id": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "object"
                 }
             }
         },
