@@ -11,7 +11,7 @@ export type { SegOption } from "./data";
 export { ErrorAlert } from "./ErrorAlert";
 export { LabelHint } from "./LabelHint";
 export { PeriodPicker } from "./PeriodPicker";
-export { periodParams, periodKey, periodLabel, periodWindow, defaultPeriod, loadDefaultPeriod, saveDefaultPeriod, PRESET_RANGES } from "../../lib/period";
+export { periodParams, periodKey, periodLabel, periodWindow, defaultPeriod, parsePeriodPref, PRESET_RANGES } from "../../lib/period";
 export type { Period, PresetRange } from "../../lib/period";
 export { PickGroup, Toggle, Toggle3 } from "./pickers";
 export type { PickOption } from "./pickers";

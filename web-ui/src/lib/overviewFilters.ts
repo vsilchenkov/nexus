@@ -5,13 +5,7 @@
 // NavLink to="/" без параметров). Канонический формат в обоих местах один и тот же —
 // сериализованная query-строка, поэтому восстановление сводится к
 // parse → serialize → setParams и заодно санитизирует мусор из хранилища.
-import {
-  PRESET_RANGES,
-  loadDefaultPeriod,
-  periodKey,
-  type Period,
-  type PresetRange,
-} from "./period";
+import { PRESET_RANGES, periodKey, type Period, type PresetRange } from "./period";
 
 export const METHOD_FILTERS = ["request", "requestAsync", "RabbitMQAsync"] as const;
 export type MethodFilter = "" | (typeof METHOD_FILTERS)[number];
@@ -40,8 +34,13 @@ export type OverviewFilters = {
 export const FILTER_PARAM_KEYS = ["q", "method", "status", "range", "from", "to"] as const;
 
 // FILTERS_STORAGE — тип хранилища зеркала (§54.3). sessionStorage, а не
-// localStorage: иначе сохранённый живой период всегда перекрывал бы звёздочку
-// §44.B, а фильтр «прилипал» бы на недели (непонятно пустой список при заходе).
+// localStorage: иначе сохранённый живой период всегда перекрывал бы дефолт
+// «под себя» (§44.B/§71), а фильтр «прилипал» бы на недели (непонятно пустой
+// список при заходе).
+//
+// Ключ намеренно общий для всех команд (§71): раз явно выбранный период
+// переживает переключение команды, он переживает его единообразно — и через
+// URL, и через зеркало. Дефолт команды применяется там, где выбора не было.
 const FILTERS_STORAGE: "session" | "local" = "session";
 const FILTERS_KEY = "nexus.overview.filters";
 
@@ -49,18 +48,22 @@ function storage(): Storage {
   return FILTERS_STORAGE === "session" ? window.sessionStorage : window.localStorage;
 }
 
-// defaultFilters — дефолтное состояние фильтров. Период по умолчанию берётся из
-// пользовательской «звёздочки» (§44.B), поэтому дефолтный период не попадает ни в
-// URL, ни в зеркало — см. serializeFilters.
-export function defaultFilters(): OverviewFilters {
-  return { search: "", method: "", status: "all", period: loadDefaultPeriod() };
+// defaultFilters — дефолтное состояние фильтров.
+//
+// Дефолтный период приходит ПАРАМЕТРОМ, а не читается здесь (§71): он живёт на
+// сервере и свой у каждой команды, то есть загружается асинхронно. Модуль
+// остаётся набором чистых функций, а вся асинхронность — в Overview. Параметр
+// обязательный намеренно: опциональный со значением 24ч тихо сохранил бы старое
+// поведение в забытом call-site, а так его отсутствие ловит tsc.
+export function defaultFilters(defaultPeriod: Period): OverviewFilters {
+  return { search: "", method: "", status: "all", period: defaultPeriod };
 }
 
 // parseFilters — фильтры из query-параметров. Толерантно к мусору: невалидное
 // значение каждого параметра независимо откатывается к дефолту (?status=banana&q=foo
 // → статус all, поиск foo). range приоритетнее from/to, если пришло и то, и другое.
-export function parseFilters(params: URLSearchParams): OverviewFilters {
-  const f = defaultFilters();
+export function parseFilters(params: URLSearchParams, defaultPeriod: Period): OverviewFilters {
+  const f = defaultFilters(defaultPeriod);
 
   f.search = params.get("q") ?? "";
 
@@ -85,9 +88,9 @@ export function parseFilters(params: URLSearchParams): OverviewFilters {
 // serializeFilters — query-параметры фильтров. Пишутся только отличия от дефолта:
 // всё дефолтное → пустая строка → чистый URL «/» и пустое зеркало (на этом же
 // свойстве держится замкнутость restore-эффекта, §54.4).
-export function serializeFilters(f: OverviewFilters): URLSearchParams {
+export function serializeFilters(f: OverviewFilters, defaultPeriod: Period): URLSearchParams {
   const p = new URLSearchParams();
-  const def = defaultFilters();
+  const def = defaultFilters(defaultPeriod);
 
   if (f.search) p.set("q", f.search);
   if (f.method) p.set("method", f.method);
@@ -111,18 +114,22 @@ export function hasFilterParams(params: URLSearchParams): boolean {
 }
 
 // applyFilters — влить фильтры в существующие параметры, сохранив чужие ключи.
-export function applyFilters(prev: URLSearchParams, f: OverviewFilters): URLSearchParams {
+export function applyFilters(
+  prev: URLSearchParams,
+  f: OverviewFilters,
+  defaultPeriod: Period,
+): URLSearchParams {
   const next = new URLSearchParams(prev);
   for (const k of FILTER_PARAM_KEYS) next.delete(k);
-  for (const [k, v] of serializeFilters(f)) next.set(k, v);
+  for (const [k, v] of serializeFilters(f, defaultPeriod)) next.set(k, v);
   return next;
 }
 
 // saveFilters — записать зеркало. Всё-дефолт → ключ удаляется: «очистил фильтры»
 // должно означать «восстанавливать нечего», иначе restore воскресит очищенное.
-export function saveFilters(f: OverviewFilters): void {
+export function saveFilters(f: OverviewFilters, defaultPeriod: Period): void {
   try {
-    const s = serializeFilters(f).toString();
+    const s = serializeFilters(f, defaultPeriod).toString();
     if (s) storage().setItem(FILTERS_KEY, s);
     else storage().removeItem(FILTERS_KEY);
   } catch {
@@ -132,13 +139,13 @@ export function saveFilters(f: OverviewFilters): void {
 
 // loadFilters — фильтры из зеркала; null, если восстанавливать нечего (пусто,
 // мусор или хранилище недоступно).
-export function loadFilters(): OverviewFilters | null {
+export function loadFilters(defaultPeriod: Period): OverviewFilters | null {
   try {
     const raw = storage().getItem(FILTERS_KEY);
     if (!raw) return null;
-    const f = parseFilters(new URLSearchParams(raw));
+    const f = parseFilters(new URLSearchParams(raw), defaultPeriod);
     // Мусор распарсился во всё-дефолт → нечего восстанавливать.
-    return serializeFilters(f).toString() ? f : null;
+    return serializeFilters(f, defaultPeriod).toString() ? f : null;
   } catch {
     return null;
   }
