@@ -15,7 +15,11 @@ import {
   type LogsDoneFilter,
   type LogsFilterState,
 } from "../../lib/logsQuery";
-import { MAX_INFINITE_ROWS, useInfiniteLogs } from "../../lib/useInfiniteLogs";
+import {
+  MAX_INFINITE_ROWS,
+  SCROLL_TOP_THRESHOLD_PX,
+  useInfiniteLogs,
+} from "../../lib/useInfiniteLogs";
 import { LabelHint, Popover, PopoverAnchor, PopoverContent } from "../ui";
 import { CopyButton } from "../ui/CopyButton";
 import { ReplayDialog } from "../ReplayDialog";
@@ -38,7 +42,6 @@ export type LogsInitialFilter = {
 
 const LIVE_BUFFER_LIMIT = 500;
 const HIGHLIGHT_DURATION_MS = 1000;
-const SCROLL_TOP_THRESHOLD_PX = 8;
 // Сколько ошибок SSE подряд терпим, прежде чем признать поток мёртвым.
 // Между ними браузер сам переподключается (нативный retry EventSource).
 const LIVE_MAX_CONSECUTIVE_ERRORS = 5;
@@ -113,12 +116,6 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
     [appliedFilters, statusFilter, doneFilter],
   );
   const filterParams = useMemo(() => logsFilterParams(filterState), [filterState]);
-  // Параметры списка = фильтр + размер страницы. Курсор пагинации добавляется
-  // в queryFn и в ключ не входит (иначе каждая страница — новый запрос).
-  const listParams = useMemo(
-    () => ({ ...filterParams, limit: pageSize }) as Record<string, string | number>,
-    [filterParams, pageSize],
-  );
 
   const [live, setLive] = useState(false);
   // «У верха» скролл-контейнера. Управляет авто-рефетчем (см. logsQ ниже):
@@ -136,8 +133,9 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
     // §72.2: status/done входят в ключ — смена быстрого фильтра перезапрашивает
     // список с первой страницы. Раньше ключ их не содержал, список оставался
     // прежним, и фильтр лишь прятал строки уже загруженной страницы.
-    queryKey: ["logs", id, listParams],
-    params: listParams,
+    queryKey: ["logs", id, filterParams, pageSize],
+    params: filterParams,
+    pageSize,
     enabled: !!id && hasLogsTable && !live, // в Live snapshot не нужен — читаем SSE-буфер
     // Авто-рефетч только пока пользователь у верха (см. atTop). При Live выключен.
     refetchInterval: !live && atTop ? 5_000 : false,

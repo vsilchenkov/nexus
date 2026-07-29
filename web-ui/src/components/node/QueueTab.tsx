@@ -131,7 +131,7 @@ export function QueueTab({
   // ключ идёт стабильный periodKey — periodWindow содержит until=Date.now(),
   // и с ним ключ менялся бы каждый рендер (вечный перезапрос, пустой список).
   const failedParams = useMemo(
-    () => ({ done: "no", ...periodIso(), limit: FAILED_PAGE_SIZE }),
+    () => ({ done: "no", ...periodIso() }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [periodKey(period)],
   );
@@ -140,6 +140,7 @@ export function QueueTab({
     nodeId: id,
     queryKey: ["aq-failed-list", id, periodKey(period)],
     params: failedParams,
+    pageSize: FAILED_PAGE_SIZE,
     enabled: hasLogsTable,
     refetchInterval: 15_000,
     containerRef: failedWrapRef,

@@ -30,7 +30,7 @@ export const SCROLL_BOTTOM_THRESHOLD_PX = 200;
 
 // SCROLL_TOP_THRESHOLD_PX — «пользователь у верха списка»: смотрит свежие
 // записи, а не листает историю.
-const SCROLL_TOP_THRESHOLD_PX = 8;
+export const SCROLL_TOP_THRESHOLD_PX = 8;
 
 // LogsCursor — keyset-курсор: время самой старой загруженной строки (мс) и её
 // id как тай-брейкер.
@@ -57,8 +57,12 @@ export function useInfiniteLogs(o: {
   // queryKey — ПОЛНЫЙ ключ кеша. Все параметры фильтра обязаны в него входить,
   // иначе смена фильтра отдаст прежние страницы из кеша (§72.2).
   queryKey: readonly unknown[];
-  // params — query-параметры запроса, включая limit (размер страницы).
+  // params — query-параметры фильтра БЕЗ limit: размер страницы приходит
+  // отдельным pageSize и добавляется здесь. Так его нельзя забыть — а без него
+  // признак конца истории (items.length < limit) сравнивался бы с NaN, всегда
+  // давал бы false, и список догружался бы до потолка на пустом месте.
   params: Record<string, string | number>;
+  pageSize: number;
   enabled: boolean;
   refetchInterval?: number | false;
   // containerRef — скролл-контейнер списка: по нему считается близость к низу и
@@ -67,9 +71,8 @@ export function useInfiniteLogs(o: {
   containerRef: RefObject<HTMLElement | null>;
   maxRows?: number;
 }): UseInfiniteLogsResult {
-  const { nodeId, queryKey, params, enabled, refetchInterval = false, containerRef } = o;
+  const { nodeId, queryKey, params, pageSize, enabled, refetchInterval = false, containerRef } = o;
   const maxRows = o.maxRows ?? MAX_INFINITE_ROWS;
-  const limit = Number(params.limit);
   const qc = useQueryClient();
   // Ключ в ref: массив пересоздаётся каждый рендер и в deps коллбэков не годится.
   const keyRef = useRef(queryKey);
@@ -80,7 +83,7 @@ export function useInfiniteLogs(o: {
     enabled,
     initialPageParam: null as LogsCursor | null,
     queryFn: ({ pageParam }) => {
-      const p: Record<string, string | number> = { ...params };
+      const p: Record<string, string | number> = { ...params, limit: pageSize };
       if (pageParam) {
         p.to = pageParam.to;
         p.before_id = pageParam.beforeId;
@@ -91,7 +94,7 @@ export function useInfiniteLogs(o: {
       const items = lastPage.items ?? [];
       // LIMIT в ClickHouse применяется ПОСЛЕ WHERE, поэтому недобор страницы —
       // это конец отфильтрованной истории, а не «фильтр выел строки».
-      if (items.length < limit) return undefined;
+      if (items.length < pageSize) return undefined;
       const oldest = items[items.length - 1]; // DESC → последний самый старый
       return oldest
         ? { to: new Date(oldest.date_request).getTime(), beforeId: oldest.id }
@@ -125,6 +128,7 @@ export function useInfiniteLogs(o: {
 
   const atCap = items.length >= maxRows;
   const canFetchMore = query.hasNextPage && !query.isFetchingNextPage && !atCap;
+  const pageCount = query.data?.pages.length ?? 0;
 
   // Вернулись к верху — схлопываем кеш до первой страницы (§72.5).
   //
@@ -148,7 +152,10 @@ export function useInfiniteLogs(o: {
     const el = containerRef.current;
     if (!el) return;
     if (el.scrollTop <= SCROLL_TOP_THRESHOLD_PX) {
-      collapseToFirstPage();
+      // Гейт по числу страниц обязателен: событий скролла десятки в секунду, а
+      // setQueryData уведомляет подписчиков даже когда данные не изменились —
+      // без него каждое движение у верха перерисовывало бы весь список.
+      if (pageCount > 1) collapseToFirstPage();
       return;
     }
     if (!canFetchMore) return;
@@ -156,7 +163,7 @@ export function useInfiniteLogs(o: {
       query.fetchNextPage();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [containerRef, canFetchMore, collapseToFirstPage, query.fetchNextPage]);
+  }, [containerRef, canFetchMore, pageCount, collapseToFirstPage, query.fetchNextPage]);
 
   // Догрузка при недоборе высоты: контента меньше высоты контейнера (скроллбара
   // нет) — доскроллить нельзя, тянем следующую страницу сами.

@@ -218,6 +218,15 @@ func (u *LogsUsecase) resolveNode(ctx context.Context, nodeID, teamID string) (*
 	return n, nil
 }
 
+// logRecordOK — «доставлено успешно»: запись закрыта и внешний узел ответил
+// 2xx/3xx (§72.1). Зеркало SQL-предиката condLogOK адаптера; фильтр «Ошибки» —
+// его отрицание, поэтому ok и err вместе покрывают все записи без пересечения.
+// Держать оба определения в одном виде обязательно: live-tail и snapshot иначе
+// показывают разные наборы под одним и тем же фильтром.
+func logRecordOK(r *domain.LogRecord) bool {
+	return r.Done && r.Status >= 200 && r.Status < 400
+}
+
 // matchLogFilter — клиентский фильтр для live-tail. Совпадает по семантике
 // с SQL-фильтром в LogReaderCH.Search, но применяется in-memory ко всем
 // событиям перед отправкой клиенту (избегаем динамической перестройки
@@ -228,15 +237,6 @@ func (u *LogsUsecase) resolveNode(ctx context.Context, nodeID, teamID string) (*
 // request/response — в live термы по телам не матчатся (безпрефиксный терм
 // фактически ищет по url+parameters; req:/resp:-термы не совпадают никогда).
 // Pre-existing ограничение §42; snapshot ищет по полным телам всегда.
-// logRecordOK — «доставлено успешно»: запись закрыта и внешний узел ответил
-// 2xx/3xx (§72.1). Зеркало SQL-предиката condLogOK адаптера; фильтр «Ошибки» —
-// его отрицание, поэтому ok и err вместе покрывают все записи без пересечения.
-// Держать оба определения в одном виде обязательно: live-tail и snapshot иначе
-// показывают разные наборы под одним и тем же фильтром.
-func logRecordOK(r *domain.LogRecord) bool {
-	return r.Done && r.Status >= 200 && r.Status < 400
-}
-
 func matchLogFilter(r *domain.LogRecord, q port.LogQuery) bool {
 	if q.IP != "" && r.IP != q.IP {
 		return false

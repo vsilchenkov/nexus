@@ -29,8 +29,10 @@ export type LogsFilterState = {
 };
 
 // isoOrNull — datetime-local → ISO. Незаполненное или неразбираемое значение
-// даёт null, и параметр не отправляется: `new Date("").toISOString()` бросает
-// RangeError и уронил бы рендер вкладки на полу-введённой дате.
+// даёт null, и параметр не отправляется. Это страховка, а не наблюдавшийся
+// сбой: поле даты (LogDateField) собирает значение само и битого не отдаёт, но
+// `new Date("…").toISOString()` на невалидном входе бросает RangeError и уронил
+// бы всю вкладку — цена проверки несопоставима с ценой падения.
 function isoOrNull(v: string): string | null {
   if (!v) return null;
   const ms = new Date(v).getTime();
