@@ -455,6 +455,25 @@ func (r *LogReaderCH) ListSince(ctx context.Context, table, nodeID string, curso
 	return out, nil
 }
 
+// condLogOK / condLogErr — SQL-предикаты быстрых фильтров «ОК» и «Ошибки»
+// вкладки логов (§72.1). Успех = запись закрыта И внешний узел ответил 2xx/3xx;
+// «Ошибки» — ПОЛНОЕ ДОПОЛНЕНИЕ успеха, поэтому ok ∪ err = все записи, а
+// ok ∩ err = ∅.
+//
+// До §72.1 предикаты были `status BETWEEN 200 AND 299` и `(status >= 400 OR
+// status = 0)`: запись с 3xx не попадала НИ В ОДИН из фильтров (пропадала из
+// UI), а незавершённая запись с кодом 2xx числилась успехом. Дополнительный
+// мотив — ровно этот предикат применял клиентский фильтр списка логов и
+// применяет красная подсветка строки, так что серверный фильтр показывает то
+// же, что видел пользователь.
+//
+// Семантика `done` (yes/no) намеренно не тронута: на ней держатся KPI
+// «неудачных доставок» §35 (CountFailed — строго done=0).
+const (
+	condLogOK  = "(done = 1 AND status >= 200 AND status < 400)"
+	condLogErr = "NOT " + condLogOK
+)
+
 // searchConds строит WHERE-условия расширенных фильтров (§48) — ЕДИНСТВЕННЫЙ
 // источник для Search и Count (§67 «Всего»): один и тот же набор условий
 // гарантирует, что счётчик считает ровно то, что показывает список.
@@ -500,9 +519,9 @@ func (r *LogReaderCH) searchConds(ctx context.Context, q port.LogQuery) ([]strin
 	}
 	switch q.Status {
 	case "ok":
-		conds = append(conds, "status BETWEEN 200 AND 299")
+		conds = append(conds, condLogOK)
 	case "err":
-		conds = append(conds, "(status >= 400 OR status = 0)")
+		conds = append(conds, condLogErr)
 	}
 	switch q.Done {
 	case "yes":

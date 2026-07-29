@@ -356,6 +356,43 @@ func TestMatchLogFilter_Extended(t *testing.T) {
 	}
 }
 
+// §72.1: быстрые фильтры «ОК»/«Ошибки» live-tail'а. «Ошибки» — полное
+// дополнение «ОК»: любая запись попадает ровно в один из двух фильтров, иначе
+// она исчезает из UI (до §72.1 так пропадали 3xx) либо считается успехом, не
+// будучи доставленной (2xx с done=0).
+func TestMatchLogFilter_StatusComplement(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		rec    *domain.LogRecord
+		wantOK bool
+	}{
+		{name: "200 завершено — успех", rec: &domain.LogRecord{Status: 200, Done: true}, wantOK: true},
+		{name: "299 завершено — успех", rec: &domain.LogRecord{Status: 299, Done: true}, wantOK: true},
+		{name: "302 завершено — успех (редирект §50)", rec: &domain.LogRecord{Status: 302, Done: true}, wantOK: true},
+		{name: "400 завершено — ошибка", rec: &domain.LogRecord{Status: 400, Done: true}, wantOK: false},
+		{name: "500 завершено — ошибка", rec: &domain.LogRecord{Status: 500, Done: true}, wantOK: false},
+		{name: "200 не завершено — ошибка", rec: &domain.LogRecord{Status: 200, Done: false}, wantOK: false},
+		{name: "302 не завершено — ошибка", rec: &domain.LogRecord{Status: 302, Done: false}, wantOK: false},
+		{name: "таймаут status=0 — ошибка", rec: &domain.LogRecord{Status: 0, Done: false}, wantOK: false},
+	}
+	for _, tt := range tests {
+		gotOK := matchLogFilter(tt.rec, port.LogQuery{Status: "ok"})
+		gotErr := matchLogFilter(tt.rec, port.LogQuery{Status: "err"})
+		if gotOK != tt.wantOK {
+			t.Errorf("%s: status=ok → want %v, got %v", tt.name, tt.wantOK, gotOK)
+		}
+		if gotOK == gotErr {
+			t.Errorf("%s: запись обязана попасть ровно в один фильтр, а попала в ok=%v err=%v",
+				tt.name, gotOK, gotErr)
+		}
+		// Оба фильтра выключены — запись видна всегда.
+		if !matchLogFilter(tt.rec, port.LogQuery{}) {
+			t.Errorf("%s: без фильтра запись должна проходить", tt.name)
+		}
+	}
+}
+
 // §48.3: фасеты Methods/ClientHosts/DateRange — форвардинг к reader'у, team
 // scope и деградация «логи не настроены» как у остальных читающих методов.
 func TestLogs_Facets_ForwardAndScope(t *testing.T) {

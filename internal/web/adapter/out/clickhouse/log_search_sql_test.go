@@ -1,12 +1,15 @@
 package clickhouse
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"nexus/internal/domain/logsearch"
+	"nexus/internal/platform/logging"
+	"nexus/internal/web/usecase/port"
 )
 
 // TestExprConds — генерация WHERE из AST мини-языка (§48): И/ИЛИ/НЕ,
@@ -113,4 +116,62 @@ func TestExprConds(t *testing.T) {
 			assert.Equal(t, tt.wantArgs, args)
 		})
 	}
+}
+
+// TestSearchConds_StatusDone — SQL быстрых фильтров «ОК»/«Ошибки»/«Завершено»/
+// «В работе» (§72.1). До §72.1 это покрывалось только E2E-тестами, чьи фикстуры
+// не содержали ни 3xx, ни «2xx + done=0», — то есть прежняя (неполная)
+// семантика вообще ничем не была запинена.
+//
+// Главное, что проверяется: «Ошибки» — ПОЛНОЕ ДОПОЛНЕНИЕ «ОК». Иначе запись с
+// 3xx не попадает ни в один фильтр и исчезает из UI.
+func TestSearchConds_StatusDone(t *testing.T) {
+	t.Parallel()
+
+	const okCond = "(done = 1 AND status >= 200 AND status < 400)"
+
+	tests := []struct {
+		name      string
+		q         port.LogQuery
+		wantConds []string
+	}{
+		{name: "без фильтров — условий нет", q: port.LogQuery{}},
+		{name: "ok = доставлено (done=1 и 2xx/3xx)", q: port.LogQuery{Status: "ok"}, wantConds: []string{okCond}},
+		{name: "err = полное дополнение ok", q: port.LogQuery{Status: "err"}, wantConds: []string{"NOT " + okCond}},
+		{name: "неизвестный status игнорируется", q: port.LogQuery{Status: "bogus"}},
+		{name: "done=yes", q: port.LogQuery{Done: "yes"}, wantConds: []string{"done = 1"}},
+		{name: "done=no", q: port.LogQuery{Done: "no"}, wantConds: []string{"done = 0"}},
+		{
+			name:      "status и done комбинируются",
+			q:         port.LogQuery{Status: "err", Done: "no"},
+			wantConds: []string{"NOT " + okCond, "done = 0"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			// NodeID пуст → nodeFilter не обращается ни к CH, ни к PostgreSQL:
+			// строится чистый SQL без единого запроса.
+			r := NewLogReader(nil, logging.NewNoop())
+			conds, args := r.searchConds(context.Background(), tt.q)
+			assert.Equal(t, tt.wantConds, conds)
+			assert.Empty(t, args, "status/done — константные предикаты, без позиционных аргументов")
+		})
+	}
+}
+
+// TestSearchConds_StatusComplement — инвариант дизъюнктности на уровне SQL:
+// условие «Ошибки» обязано быть текстовым отрицанием условия «ОК». Ловит
+// правку одной ветки switch без второй (тогда часть записей выпала бы из обоих
+// фильтров либо попала в оба).
+func TestSearchConds_StatusComplement(t *testing.T) {
+	t.Parallel()
+
+	r := NewLogReader(nil, logging.NewNoop())
+	okConds, _ := r.searchConds(context.Background(), port.LogQuery{Status: "ok"})
+	errConds, _ := r.searchConds(context.Background(), port.LogQuery{Status: "err"})
+
+	require.Len(t, okConds, 1)
+	require.Len(t, errConds, 1)
+	assert.Equal(t, "NOT "+okConds[0], errConds[0])
 }
