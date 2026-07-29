@@ -52,9 +52,10 @@ ORDER BY key, team_id NULLS FIRST`, userID)
 // IS NOT DISTINCT FROM обязателен: обычное `=` с NULL даёт NULL, и глобальный
 // преф (team_id IS NULL) всегда считался бы новой записью.
 //
-// ON CONFLICT ON CONSTRAINT (а не по списку колонок): констрейнт объявлен как
-// UNIQUE NULLS NOT DISTINCT, и явная ссылка на него не зависит от того, умеет
-// ли версия PostgreSQL выводить такой индекс из списка колонок.
+// Выражение в ON CONFLICT обязано совпадать с индексом user_preferences_uniq
+// (миграция 0031) — по нему PostgreSQL и находит нужный индекс. Индекс сделан
+// по COALESCE, а не UNIQUE NULLS NOT DISTINCT: последнее требует PostgreSQL 15,
+// а поддерживаемый минимум — 12 (версия боевого сервера).
 //
 // Значение передаётся строкой, а не []byte: pgx кодирует []byte как bytea, из
 // которого приведения к jsonb нет.
@@ -73,7 +74,7 @@ WHERE (SELECT count(*) FROM user_preferences WHERE user_id = $1::uuid) < $5
         WHERE user_id = $1::uuid
           AND team_id IS NOT DISTINCT FROM NULLIF($2::text, '')::uuid
           AND key = $3::text)
-ON CONFLICT ON CONSTRAINT user_preferences_uniq
+ON CONFLICT (user_id, COALESCE(team_id, '00000000-0000-0000-0000-000000000000'::uuid), key)
 DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
 		p.UserID, p.TeamID, p.Key, string(p.Value), maxPerUser)
 	if err != nil {

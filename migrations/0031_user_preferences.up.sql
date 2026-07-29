@@ -12,10 +12,18 @@
 -- Двухуровневый резолв (команда → глобальный → системный дефолт) делает клиент:
 -- сервер значение не интерпретирует вовсе (см. domain.UserPreference.Validate).
 --
--- UNIQUE NULLS NOT DISTINCT (PG 15+) обязателен: с обычным UNIQUE две строки
--- (user, NULL, 'overview.period') считались бы различными (NULL <> NULL), в
--- таблице копились бы дубли глобальных префов, а ON CONFLICT для них не
--- срабатывал бы вовсе — upsert превратился бы в append.
+-- Уникальность — индекс по ВЫРАЖЕНИЮ с COALESCE, а не UNIQUE-констрейнт по
+-- колонкам: с обычным UNIQUE две строки (user, NULL, 'overview.period')
+-- считались бы различными (NULL <> NULL), в таблице копились бы дубли
+-- глобальных префов, а ON CONFLICT для них не срабатывал бы вовсе — upsert
+-- превратился бы в append.
+--
+-- Просится UNIQUE NULLS NOT DISTINCT, но это PostgreSQL 15+, а боевой сервер
+-- работает на 12 — там такая миграция не применится и сервис не поднимется.
+-- COALESCE-индекс даёт ту же семантику на любой поддерживаемой версии; колонка
+-- при этом остаётся nullable, поэтому составной FK на user_teams продолжает
+-- работать (см. ниже). Нулевой UUID выбран как значение-заглушка: в teams его
+-- быть не может, потому что id генерируется случайным.
 --
 -- Два FK намеренно, они закрывают разные строки:
 --   * (user_id, team_id) -> user_teams — приём §49 (user_team_favorites): один
@@ -26,9 +34,9 @@
 --     составной FK по правилу MATCH SIMPLE не проверяет и, соответственно, не
 --     удаляет.
 --
--- Отдельный индекс не нужен: UNIQUE-констрейнт создаёт индекс с ведущей
--- колонкой user_id — он обслуживает и единственный SELECT (WHERE user_id = $1),
--- и обе ветки upsert'а.
+-- Отдельный индекс под чтение не нужен: уникальный индекс ниже начинается с
+-- user_id — он обслуживает и единственный SELECT (WHERE user_id = $1), и обе
+-- ветки upsert'а.
 CREATE TABLE user_preferences (
     user_id    UUID        NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     team_id    UUID,
@@ -39,9 +47,6 @@ CREATE TABLE user_preferences (
     CONSTRAINT user_preferences_membership_fkey
         FOREIGN KEY (user_id, team_id)
         REFERENCES user_teams (user_id, team_id) ON DELETE CASCADE,
-
-    CONSTRAINT user_preferences_uniq
-        UNIQUE NULLS NOT DISTINCT (user_id, team_id, key),
 
     -- Формат ключа — namespace'ы через точку ('overview.period', 'logs.filters').
     -- Зеркалит domain.UserPreference.Validate(): БД — последний рубеж.
@@ -58,3 +63,14 @@ CREATE TABLE user_preferences (
     CONSTRAINT user_preferences_value_size
         CHECK (octet_length(value::text) <= 4096)
 );
+
+-- Ровно один преф на (пользователь, команда, ключ); строки без команды
+-- (team_id IS NULL) сравниваются между собой как равные — на этом держится
+-- upsert глобального префа (ON CONFLICT в user_preferences.go указывает то же
+-- самое выражение).
+CREATE UNIQUE INDEX user_preferences_uniq
+    ON user_preferences (
+        user_id,
+        COALESCE(team_id, '00000000-0000-0000-0000-000000000000'::uuid),
+        key
+    );

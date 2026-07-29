@@ -41,8 +41,6 @@ CREATE TABLE user_preferences (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT user_preferences_membership_fkey
         FOREIGN KEY (user_id, team_id) REFERENCES user_teams (user_id, team_id) ON DELETE CASCADE,
-    CONSTRAINT user_preferences_uniq
-        UNIQUE NULLS NOT DISTINCT (user_id, team_id, key),
     CONSTRAINT user_preferences_key_format
         CHECK (key ~ '^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$'),
     CONSTRAINT user_preferences_value_not_null
@@ -50,13 +48,24 @@ CREATE TABLE user_preferences (
     CONSTRAINT user_preferences_value_size
         CHECK (octet_length(value::text) <= 4096)
 );
+
+CREATE UNIQUE INDEX user_preferences_uniq
+    ON user_preferences (
+        user_id,
+        COALESCE(team_id, '00000000-0000-0000-0000-000000000000'::uuid),
+        key
+    );
 ```
 
 Решения схемы:
 
-- **`UNIQUE NULLS NOT DISTINCT` (PostgreSQL 15+) обязателен.** С обычным `UNIQUE` две строки
-  `(user, NULL, 'overview.period')` считались бы различными (`NULL <> NULL`): копились бы дубли
-  глобальных префов, а `ON CONFLICT` для них не срабатывал бы — upsert превратился бы в append.
+- **Уникальность — индекс по выражению `COALESCE`, а не `UNIQUE` по колонкам.** С обычным `UNIQUE`
+  две строки `(user, NULL, 'overview.period')` считались бы различными (`NULL <> NULL`): копились
+  бы дубли глобальных префов, а `ON CONFLICT` для них не срабатывал бы — upsert превратился бы в
+  append. Просится `UNIQUE NULLS NOT DISTINCT`, но это PostgreSQL 15+, а **минимальная
+  поддерживаемая версия — 12** (на ней работают боевые инсталляции): такая миграция там не
+  применится и сервис не поднимется. Выражение в `ON CONFLICT` репозитория обязано совпадать с
+  выражением индекса — по нему PostgreSQL и находит индекс.
 - **Два внешних ключа намеренно.** Составной FK на `user_teams` (приём §49) даёт БД-инвариант
   «преф ⊆ членство» и один каскад сразу на три события (удаление пользователя, удаление команды,
   исключение из членства). Но по правилу MATCH SIMPLE он не проверяет строки с `team_id IS NULL` —
@@ -167,4 +176,9 @@ CREATE TABLE user_preferences (
 - **Ошибка сохранения дефолта пользователю не показывается.** При неуспешном `PUT` оптимистичное
   обновление кеша откатывается (звёздочка гаснет), тоста нет — отдельного i18n-ключа под это не
   заводилось. Практически единственная достижимая ошибка — потолок в 200 записей.
-- **PostgreSQL ≥ 15** обязателен из-за `UNIQUE NULLS NOT DISTINCT` (в поставке — 16).
+- **Минимальная поддерживаемая версия PostgreSQL — 12** (на ней работают боевые инсталляции;
+  docker-поставка и testcontainers используют более свежие). Схема §71 намеренно обходится без
+  `UNIQUE NULLS NOT DISTINCT` (15+) — первая редакция миграции его использовала, тесты на
+  PostgreSQL 16 этого не заметили, и на боевом сервере сервис просто не поднялся бы. После этого
+  дефолтный образ в integration-тестах переведён на минимальную версию
+  (`postgres:12-alpine`, переопределяется `NEXUS_TEST_PG_IMAGE`).
