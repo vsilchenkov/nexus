@@ -15,6 +15,19 @@
 
 ## [Unreleased]
 
+## [1.20.2] - 2026-07-29
+
+### Security
+
+- **`google.golang.org/grpc` v1.80.0 → v1.82.1 (GO-2026-6061).** Уязвимость достижима из нашего
+  кода: трассы ведут в gRPC-сервер Sender'а (`startGRPC` → `transport.NewServerTransport`,
+  `http2Server.HandleStreams`, `Stop` → `http2Server.Drain`) и в клиент Web→Sender
+  (`Send` → `ClientConn.Invoke` → `http2Client.NewStream`, `Client.Close`). Затрагивает реализацию
+  HTTP/2-транспорта; xDS RBAC engine из того же бюллетеня мы не используем. Заодно
+  `github.com/klauspost/compress` v1.18.5 → v1.18.7 (GO-2026-5841). Правок кода не потребовалось;
+  `govulncheck` после бампа — чисто. Выпущено отдельным тегом от 1.20.1, чтобы хотфикс CA
+  (боевой инцидент с эквайрингом) ушёл в бой не дожидаясь прогона тестов на смене зависимостей.
+
 ## [1.20.1] - 2026-07-29
 
 ### Fixed
