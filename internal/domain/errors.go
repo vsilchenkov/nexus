@@ -106,6 +106,13 @@ var (
 	ErrSessionNotFound      = errors.New("domain: session not found")
 	ErrSessionExpired       = errors.New("domain: session expired")
 
+	// Персональные предпочтения (§71)
+	ErrPreferenceKeyInvalid   = errors.New("domain: preference key must match ^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)*$ and be at most 64 chars")
+	ErrPreferenceValueInvalid = errors.New("domain: preference value must be valid non-null json of at most 4096 bytes")
+	// ErrPreferencesLimit — у пользователя уже максимум записей предпочтений, и
+	// запрос добавляет ЕЩЁ ОДИН ключ. Обновление существующего проходит всегда.
+	ErrPreferencesLimit = errors.New("domain: preferences limit for this user exceeded")
+
 	// Auth (входящий запрос)
 	ErrUnauthorized        = errors.New("domain: unauthorized")
 	ErrAuthHeaderMissing   = errors.New("domain: authorization header missing")
