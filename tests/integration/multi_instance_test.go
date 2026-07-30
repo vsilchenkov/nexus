@@ -126,6 +126,60 @@ func TestMultiInstance_FirstRunGuard(t *testing.T) {
 		chpf.ErrForeignDatabase)
 }
 
+// TestMultiInstance_FirstRunAdoptsEmptyDatabase — чистое развёртывание, где БД
+// в ClickHouse уже создана ПУСТОЙ: так делает образ ClickHouse из
+// deploy/docker-compose.yml (`CLICKHOUSE_DB: nexus_default`) и оператор,
+// создавший базу руками. Гейт первого запуска не должен на это срабатывать:
+// в v1.21.0 Web уходил в цикл перезапуска (verdict=unclaimed), причём навсегда —
+// захватить БД может только Web, а PostgreSQL остаётся свежей, пока он не
+// поднялся.
+func TestMultiInstance_FirstRunAdoptsEmptyDatabase(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	conn, _, cleanup := startClickHouse(t, ctx)
+	defer cleanup()
+
+	// Ровно то, что делает образ ClickHouse на первом старте контейнера.
+	require.NoError(t, conn.Exec(ctx, "CREATE DATABASE IF NOT EXISTS nexus_default"))
+
+	g := newGuard(conn, instanceLegacy)
+	v, _, err := g.Check(ctx, "nexus_default")
+	require.NoError(t, err)
+	require.Equal(t, chpf.VerdictUnclaimed, v, "предпосылка теста: БД есть, маркера нет")
+
+	require.NoError(t, g.EnsureAll(ctx, []string{"nexus_default"},
+		chpf.EnsureOptions{NeverClaimed: true, FreshPG: true}),
+		"пустая БД без маркера — не признак соседа, нода обязана подняться")
+
+	v, _, err = g.Check(ctx, "nexus_default")
+	require.NoError(t, err)
+	assert.Equal(t, chpf.VerdictOwned, v, "БД захвачена этой нодой")
+}
+
+// Граница послабления: БД без маркера, но С ТАБЛИЦАМИ — это чужие данные (нода
+// до §70, которая ещё работает). Гейт первого запуска обязан продолжать
+// отказывать, иначе две ноды молча делят один сторедж.
+func TestMultiInstance_FirstRunRefusesNonEmptyUnmarkedDatabase(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	conn, _, cleanup := startClickHouse(t, ctx)
+	defer cleanup()
+
+	require.NoError(t, conn.Exec(ctx, "CREATE DATABASE IF NOT EXISTS nexus_default"))
+	createLogTable(t, ctx, conn, "nexus_default.logs")
+
+	g := newGuard(conn, instanceLegacy)
+	err := g.EnsureAll(ctx, []string{"nexus_default"},
+		chpf.EnsureOptions{NeverClaimed: true, FreshPG: true})
+	require.ErrorIs(t, err, chpf.ErrFirstRunDatabaseExists)
+
+	// Аварийный обход по-прежнему открывает старт (PostgreSQL пересоздали).
+	require.NoError(t, g.EnsureAll(ctx, []string{"nexus_default"},
+		chpf.EnsureOptions{NeverClaimed: true, FreshPG: true, Adopt: true}))
+}
+
 // Перезапуск ноды: после успешного захвата гейт первого запуска больше не
 // действует, даже если в PostgreSQL всё ещё нет ни одного узла. Иначе нода
 // становилась бы незапускаемой сразу после развёртывания (поймано на стенде).

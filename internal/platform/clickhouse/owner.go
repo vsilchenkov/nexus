@@ -474,19 +474,19 @@ func (g *Guard) ensureOne(ctx context.Context, conn driver.Conn, db string, opts
 		return err
 	}
 
-	// Гейт первого запуска (§70.5): БД существует, а нода только что развёрнута
-	// (ничего не захватывала и ничего не накопила) — значит, в эту БД пишет
-	// кто-то другой.
-	//
-	// Свой маркер снимает подозрение ТОЛЬКО у ноды с непустым instance.id: там
-	// идентификатор уникален по договорённости, и «маркер наш» означает «БД
-	// наша». У ноды без идентификатора маркер соседа выглядит своим
-	// (instance_id='' у обеих), поэтому там гейт срабатывает даже на Owned.
-	provenOurs := v == VerdictOwned && !g.instanceID.IsZero()
-	if opts.NeverClaimed && opts.FreshPG && !opts.Adopt && !provenOurs {
-		return fmt.Errorf("%w: %s (verdict=%s); set a unique instance.id in the config of this node "+
-			"(or start with --ch-adopt if this database really belongs to it)",
-			ErrFirstRunDatabaseExists, db, v)
+	// ПУСТАЯ БД без маркера — не признак соседа (см. claimIfEmpty).
+	if v == VerdictUnclaimed {
+		adopted, err := g.claimIfEmpty(ctx, conn, db)
+		if err != nil {
+			return err
+		}
+		if adopted {
+			return nil
+		}
+	}
+
+	if err := g.firstRunGate(db, v, opts); err != nil {
+		return err
 	}
 
 	switch v {
@@ -506,6 +506,63 @@ func (g *Guard) ensureOne(ctx context.Context, conn driver.Conn, db string, opts
 	default:
 		return fmt.Errorf("clickhouse: cannot determine ownership of %s", db)
 	}
+}
+
+// firstRunGate — гейт первого запуска (§70.5): БД существует, а нода только что
+// развёрнута (ничего не захватывала и ничего не накопила) — значит, в эту БД
+// пишет кто-то другой.
+//
+// Свой маркер снимает подозрение ТОЛЬКО у ноды с непустым instance.id: там
+// идентификатор уникален по договорённости, и «маркер наш» означает «БД наша».
+// У ноды без идентификатора маркер соседа выглядит своим (instance_id=” у
+// обеих), поэтому там гейт срабатывает даже на Owned.
+func (g *Guard) firstRunGate(db string, v Verdict, opts EnsureOptions) error {
+	provenOurs := v == VerdictOwned && !g.instanceID.IsZero()
+	if opts.NeverClaimed && opts.FreshPG && !opts.Adopt && !provenOurs {
+		return fmt.Errorf("%w: %s (verdict=%s); set a unique instance.id in the config of this node "+
+			"(or start with --ch-adopt if this database really belongs to it)",
+			ErrFirstRunDatabaseExists, db, v)
+	}
+	return nil
+}
+
+// claimIfEmpty захватывает БД без маркера, если в ней НЕТ НИ ОДНОЙ таблицы.
+// Возвращает false, если БД непустая — тогда решает гейт первого запуска.
+//
+// Зачем: гейт первого запуска считает «БД уже есть» признаком соседа, но пустую
+// БД создаёт не сосед, а образ ClickHouse (`CLICKHOUSE_DB: nexus_default` в
+// deploy/docker-compose.yml) или оператор руками. На чистом развёртывании это
+// делало Web незапускаемым НАВСЕГДА: захватить БД может только Web, а
+// PostgreSQL остаётся свежей, пока Web не поднялся (v1.21.0, поймано job'ом
+// loadtest на релизном пайплайне).
+//
+// Чего проверка НЕ закрывает — осознанно:
+//   - БД с таблицами, но без маркера (нода до §70, которая ещё работает) —
+//     гейт по-прежнему отказывает: там есть чужие данные;
+//   - пустая БД, которую только что создала себе нода до §70 (маркеров не
+//     ставит и не читает) — мы её пометим и будем писать в неё вдвоём. Это
+//     ровно поведение до §70 (записи различимы по node_id, §61), и оно лучше,
+//     чем не поднимающийся Web на каждом чистом развёртывании.
+func (g *Guard) claimIfEmpty(ctx context.Context, conn driver.Conn, db string) (bool, error) {
+	var cnt uint64
+	if err := conn.QueryRow(ctx,
+		"SELECT count() FROM system.tables WHERE database = ?", db).Scan(&cnt); err != nil {
+		return false, fmt.Errorf("count tables in %s: %w", db, err)
+	}
+	if cnt > 0 {
+		g.logger.Debug("unmarked clickhouse database is not empty; first-run gate decides",
+			g.logger.Str("database", db),
+			g.logger.Int("tables", int(cnt)),
+			g.logger.Str("instance", g.instanceID.String()))
+		return false, nil
+	}
+	g.logger.Info("adopting empty unmarked clickhouse database",
+		g.logger.Str("database", db),
+		g.logger.Str("instance", g.instanceID.String()))
+	if err := g.Claim(ctx, db); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // probe выполняет фактические запросы владения (без кеша).
