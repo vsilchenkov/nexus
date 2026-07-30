@@ -15,6 +15,24 @@
 
 ## [Unreleased]
 
+## [1.21.1] - 2026-07-30
+
+### Fixed
+
+- **Чистая установка через docker-compose не поднималась: Web циклично падал с
+  `clickhouse ownership check failed` (§70).** Гейт первого запуска считал существующую в ClickHouse
+  базу признаком того, что в неё пишет другая нода, и прекращал старт. Но на чистом развёртывании
+  базу создаёт не сосед, а сам образ ClickHouse: в `deploy/docker-compose.yml` сервису задан
+  `CLICKHOUSE_DB: nexus_default`, то есть база появляется ещё до старта Web. Выйти из этого
+  состояния было нельзя: пометить базу своей может только Web, а PostgreSQL остаётся свежей, пока
+  он не поднялся. Теперь база **без единой таблицы** усыновляется как ничья, и гейт до неё не
+  доходит; база **с таблицами** без маркера по-прежнему прекращает старт — там лежат чужие данные.
+  Обновление действующей установки дефект не затрагивал (гейт требует ещё и «в PostgreSQL нет узлов
+  и команд»), поэтому боевые ноды поднимались штатно. Обход на 1.21.0 — разовый запуск с
+  `instance.adopt_unowned: true`. Миграций, новых настроек и ключей интерфейса нет.
+  Заодно: `TestMultiInstance*` (все тесты §70) не попадали ни в один `-run`-фильтр локальных целей
+  `make test-int-*` и потому не гонялись локально — добавлены в `test-int-ch`.
+
 ## [1.21.0] - 2026-07-30
 
 ### Fixed
@@ -1506,7 +1524,8 @@ ClickHouse (§21), идентификатор узла в логах для об
 
 ---
 
-[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.21.0...HEAD
+[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.21.1...HEAD
+[1.21.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.21.0...v1.21.1
 [1.21.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.20.2...v1.21.0
 [1.20.2]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.20.1...v1.20.2
 [1.20.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.20.0...v1.20.1
