@@ -48,6 +48,7 @@ import (
 	"nexus/internal/platform/telegram"
 	httpadapter "nexus/internal/web/adapter/in/http"
 	chreader "nexus/internal/web/adapter/out/clickhouse"
+	"nexus/internal/web/adapter/out/instanceprobe"
 	kafkaadmin "nexus/internal/web/adapter/out/kafkaadmin"
 	pgrepo "nexus/internal/web/adapter/out/postgres"
 	prometheusreader "nexus/internal/web/adapter/out/prometheus"
@@ -447,6 +448,16 @@ func (a *App) Start(ctx context.Context) error {
 		usecase.NewRMQTester(rabbitmqadapter.NewProber(), a.logger),
 		rl, a.cfg.Web.RMQTestRateLimitPerMin, a.logger)
 
+	// §73: реестр соседних инстансов Nexus. Проба ходит на публичные
+	// /api/version и /ready соседа, поэтому токен не нужен и зависимостей,
+	// кроме PostgreSQL, у раздела нет — регистрируется всегда.
+	peerInstanceHandler := httpadapter.NewPeerInstanceHandler(
+		usecase.NewPeerInstanceUsecase(
+			pgrepo.NewPeerInstanceRepoPg(a.pg, a.logger),
+			instanceprobe.New(time.Duration(a.cfg.Web.InstanceProbeTimeoutMs)*time.Millisecond, a.logger),
+			auditUC, a.logger),
+		rl, a.cfg.Web.InstanceProbeRateLimitPerMin, a.logger)
+
 	// Prometheus query-клиент для метрик панели (§21). Опционален: при пустом
 	// prometheus.url остаётся nil — MetricsUsecase деградирует
 	// (prometheus_available=false), не падает.
@@ -623,6 +634,7 @@ func (a *App) Start(ctx context.Context) error {
 		HeaderCatalog: headerCatalogHandler,
 		RequestField:  requestFieldHandler,
 		RMQTest:       rmqTestHandler,
+		Instances:     peerInstanceHandler,
 		Kafka:         kafkaHandler,
 		AsyncQueue:    asyncQueueHandler,
 		ServiceLogs:   serviceLogsHandler,

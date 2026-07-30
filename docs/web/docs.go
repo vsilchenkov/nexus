@@ -1040,6 +1040,312 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/instances": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Список подключённых развёртываний Nexus с кешем последней проверки. Сетевых запросов не делает — отдаёт сохранённые значения, чтобы таблица рисовалась мгновенно. Свой инстанс в список не входит. Admin-only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "instances"
+                ],
+                "summary": "Реестр соседних инстансов (§73).",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ListPeerInstancesResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Адрес нормализуется (обрезаются пробелы и хвостовой слеш, хост — в нижний регистр) и обязан быть origin'ом http(s) без пути, query и учётных данных. Admin-only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "instances"
+                ],
+                "summary": "Подключить инстанс (§73).",
+                "parameters": [
+                    {
+                        "description": "Instance",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.peerInstanceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.PeerInstanceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "адрес уже в реестре",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/instances/check": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Опрашивает публичные GET /api/version и GET /ready каждого соседа с сервера (не из браузера: CORS не настроен, CSP задаёт connect-src 'self'). Недоступность соседа — не ошибка запроса, а его статус. Admin-only, rate-limit на пользователя.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "instances"
+                ],
+                "summary": "Проверить все инстансы реестра (§73).",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ListPeerInstancesResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "rate limit exceeded",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/instances/probe": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Диалог подключения показывает версию и код инстанса ещё до создания записи. Ничего не сохраняет. Admin-only, rate-limit на пользователя.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "instances"
+                ],
+                "summary": "Проверить адрес до сохранения (§73).",
+                "parameters": [
+                    {
+                        "description": "Address",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.probeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ProbeInstanceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "rate limit exceeded",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/instances/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Удаляет запись реестра. На соседний инстанс не влияет — реестр хранит только ссылку. Admin-only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "instances"
+                ],
+                "summary": "Отключить инстанс (§73).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "no content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Меняет название, адрес и комментарий. Кеш последней проверки не сбрасывается: пустой статус читался бы как «не отвечает», хотя проверки просто ещё не было. Admin-only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "instances"
+                ],
+                "summary": "Изменить инстанс реестра (§73).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Instance",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.peerInstanceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.PeerInstanceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/instances/{id}/check": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "instances"
+                ],
+                "summary": "Проверить один инстанс реестра (§73).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.PeerInstanceResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "rate limit exceeded",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/kafka/by-node": {
             "get": {
                 "security": [
@@ -5761,6 +6067,17 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_web_adapter_in_http.ListPeerInstancesResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.PeerInstanceResponse"
+                    }
+                }
+            }
+        },
         "internal_web_adapter_in_http.ListRequestFieldsResponse": {
             "type": "object",
             "properties": {
@@ -6281,6 +6598,75 @@ const docTemplate = `{
                             "$ref": "#/definitions/internal_web_adapter_in_http.overviewTotalsDTO"
                         }
                     ]
+                }
+            }
+        },
+        "internal_web_adapter_in_http.PeerInstanceResponse": {
+            "type": "object",
+            "properties": {
+                "base_url": {
+                    "type": "string"
+                },
+                "comment": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "last_checked_at": {
+                    "type": "string"
+                },
+                "last_error": {
+                    "type": "string"
+                },
+                "last_instance_id": {
+                    "type": "string"
+                },
+                "last_latency_ms": {
+                    "type": "integer"
+                },
+                "last_status": {
+                    "type": "string"
+                },
+                "last_version": {
+                    "description": "LastVersion — версия Web Service соседа: Receiver и Sender версию наружу\nне отдают, поэтому «версия инстанса» — это всегда версия его Web.",
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "updated_by": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.ProbeInstanceResponse": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "description": "Error — короткая нормализованная причина (\"timeout\", \"http 502\"), без\nсырого тела ответа соседа.",
+                    "type": "string"
+                },
+                "instance_id": {
+                    "type": "string"
+                },
+                "latency_ms": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
                 }
             }
         },
@@ -7529,6 +7915,39 @@ const docTemplate = `{
                 },
                 "outgoing": {
                     "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.peerInstanceRequest": {
+            "type": "object",
+            "required": [
+                "base_url",
+                "title"
+            ],
+            "properties": {
+                "base_url": {
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "comment": {
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "title": {
+                    "type": "string",
+                    "maxLength": 64
+                }
+            }
+        },
+        "internal_web_adapter_in_http.probeRequest": {
+            "type": "object",
+            "required": [
+                "base_url"
+            ],
+            "properties": {
+                "base_url": {
+                    "type": "string",
+                    "maxLength": 255
                 }
             }
         },

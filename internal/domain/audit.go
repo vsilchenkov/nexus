@@ -85,4 +85,11 @@ const (
 	ActionHostDelete = "host.delete"
 	ActionHostAttach = "host.attach"
 	ActionHostDetach = "host.detach"
+
+	// Реестр соседних инстансов (§73). Пробы (проверки доступности) в журнал не
+	// пишутся — это read-only операция, которую интерфейс выполняет при каждом
+	// открытии вкладки; аудит забился бы шумом.
+	ActionPeerInstanceCreate = "instance.create"
+	ActionPeerInstanceUpdate = "instance.update"
+	ActionPeerInstanceDelete = "instance.delete"
 )

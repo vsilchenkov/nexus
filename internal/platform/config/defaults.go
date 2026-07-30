@@ -263,6 +263,12 @@ func applyDefaults(c *Config) {
 	if c.Web.RMQTestRateLimitPerMin == 0 {
 		c.Web.RMQTestRateLimitPerMin = 10 // §27.8: POST /api/nodes/test-rmq
 	}
+	if c.Web.InstanceProbeTimeoutMs == 0 {
+		c.Web.InstanceProbeTimeoutMs = 3000 // §73: проба соседнего инстанса
+	}
+	if c.Web.InstanceProbeRateLimitPerMin == 0 {
+		c.Web.InstanceProbeRateLimitPerMin = 30 // §73: POST /api/instances/*
+	}
 	if c.Web.LoginRateLimitPerMin == 0 {
 		c.Web.LoginRateLimitPerMin = 10 // Phase AUD.4: анти-брутфорс /api/auth/login
 	}

@@ -347,6 +347,14 @@ type WebSection struct {
 	NodeDefaultMaxBodySize  int `yaml:"node_default_max_body_size"`
 	APITokenRateLimitPerMin int `yaml:"api_token_rate_limit_per_min"`
 	RMQTestRateLimitPerMin  int `yaml:"rmq_test_rate_limit_per_min"` // §27.8: лимит POST /api/nodes/test-rmq на пользователя
+	// InstanceProbeTimeoutMs — §73: таймаут КАЖДОГО из двух запросов пробы
+	// соседнего инстанса (GET /api/version и GET /ready). Держать небольшим:
+	// вкладка «Инстансы» опрашивает весь реестр при открытии, и мёртвый сосед
+	// не должен задерживать отрисовку.
+	InstanceProbeTimeoutMs int `yaml:"instance_probe_timeout_ms"`
+	// InstanceProbeRateLimitPerMin — §73: лимит проверок инстансов на
+	// пользователя в минуту (POST /api/instances/{check,probe,:id/check}).
+	InstanceProbeRateLimitPerMin int `yaml:"instance_probe_rate_limit_per_min"`
 	// LoginRateLimitPerMin — анти-брутфорс /api/auth/login (Phase AUD.4):
 	// столько попыток в минуту на IP и отдельно на login. -1 = выключить.
 	LoginRateLimitPerMin int `yaml:"login_rate_limit_per_min"`

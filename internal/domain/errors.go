@@ -217,4 +217,15 @@ var (
 	// ErrNodeCHTableForeignDatabase — узел ссылается на таблицу в чужой БД
 	// (§70.6). Допустимо только в режиме внешней таблицы (external_table, §64).
 	ErrNodeCHTableForeignDatabase = errors.New("domain: clickhouse_table points at a database owned by another nexus instance")
+
+	// Реестр соседних инстансов (§73)
+	ErrPeerInstanceNotFound      = errors.New("domain: peer instance not found")
+	ErrPeerInstanceAlreadyExists = errors.New("domain: peer instance with this address already exists")
+	ErrPeerInstanceTitleLength   = errors.New("domain: peer instance title length must be 1..64")
+	ErrPeerInstanceCommentLength = errors.New("domain: peer instance comment length must be <= 255")
+	// ErrPeerInstanceURLInvalid — адрес должен быть origin'ом вида
+	// scheme://host[:port]: без пути (проба достраивает /api/version сама) и без
+	// userinfo (креды в URL утекли бы в интерфейс и в журнал аудита).
+	ErrPeerInstanceURLInvalid    = errors.New("domain: peer instance address must be an http(s) origin without path, query or credentials")
+	ErrPeerInstanceStatusInvalid = errors.New("domain: invalid peer instance status")
 )

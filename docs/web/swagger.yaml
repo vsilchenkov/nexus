@@ -396,6 +396,13 @@ definitions:
           $ref: '#/definitions/internal_web_adapter_in_http.orphanItemResp'
         type: array
     type: object
+  internal_web_adapter_in_http.ListPeerInstancesResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.PeerInstanceResponse'
+        type: array
+    type: object
   internal_web_adapter_in_http.ListRequestFieldsResponse:
     properties:
       items:
@@ -762,6 +769,56 @@ definitions:
         - $ref: '#/definitions/internal_web_adapter_in_http.overviewTotalsDTO'
         description: 'Totals — агрегат KPI шапки (§44.A): сумма строк items за тот
           же период.'
+    type: object
+  internal_web_adapter_in_http.PeerInstanceResponse:
+    properties:
+      base_url:
+        type: string
+      comment:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      id:
+        type: string
+      last_checked_at:
+        type: string
+      last_error:
+        type: string
+      last_instance_id:
+        type: string
+      last_latency_ms:
+        type: integer
+      last_status:
+        type: string
+      last_version:
+        description: |-
+          LastVersion — версия Web Service соседа: Receiver и Sender версию наружу
+          не отдают, поэтому «версия инстанса» — это всегда версия его Web.
+        type: string
+      title:
+        type: string
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+    type: object
+  internal_web_adapter_in_http.ProbeInstanceResponse:
+    properties:
+      error:
+        description: |-
+          Error — короткая нормализованная причина ("timeout", "http 502"), без
+          сырого тела ответа соседа.
+        type: string
+      instance_id:
+        type: string
+      latency_ms:
+        type: integer
+      status:
+        type: string
+      version:
+        type: string
     type: object
   internal_web_adapter_in_http.PublicSettingsResponse:
     properties:
@@ -1647,6 +1704,29 @@ definitions:
         type: integer
       outgoing:
         type: integer
+    type: object
+  internal_web_adapter_in_http.peerInstanceRequest:
+    properties:
+      base_url:
+        maxLength: 255
+        type: string
+      comment:
+        maxLength: 255
+        type: string
+      title:
+        maxLength: 64
+        type: string
+    required:
+    - base_url
+    - title
+    type: object
+  internal_web_adapter_in_http.probeRequest:
+    properties:
+      base_url:
+        maxLength: 255
+        type: string
+    required:
+    - base_url
     type: object
   internal_web_adapter_in_http.queueBodyDTO:
     properties:
@@ -3015,6 +3095,209 @@ paths:
       summary: Изменить заголовок справочника (admin, §24).
       tags:
       - headers
+  /api/instances:
+    get:
+      description: Список подключённых развёртываний Nexus с кешем последней проверки.
+        Сетевых запросов не делает — отдаёт сохранённые значения, чтобы таблица рисовалась
+        мгновенно. Свой инстанс в список не входит. Admin-only.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ListPeerInstancesResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Реестр соседних инстансов (§73).
+      tags:
+      - instances
+    post:
+      consumes:
+      - application/json
+      description: Адрес нормализуется (обрезаются пробелы и хвостовой слеш, хост
+        — в нижний регистр) и обязан быть origin'ом http(s) без пути, query и учётных
+        данных. Admin-only.
+      parameters:
+      - description: Instance
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.peerInstanceRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.PeerInstanceResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "409":
+          description: адрес уже в реестре
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Подключить инстанс (§73).
+      tags:
+      - instances
+  /api/instances/{id}:
+    delete:
+      description: Удаляет запись реестра. На соседний инстанс не влияет — реестр
+        хранит только ссылку. Admin-only.
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: no content
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Отключить инстанс (§73).
+      tags:
+      - instances
+    patch:
+      consumes:
+      - application/json
+      description: 'Меняет название, адрес и комментарий. Кеш последней проверки не
+        сбрасывается: пустой статус читался бы как «не отвечает», хотя проверки просто
+        ещё не было. Admin-only.'
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Instance
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.peerInstanceRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.PeerInstanceResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Изменить инстанс реестра (§73).
+      tags:
+      - instances
+  /api/instances/{id}/check:
+    post:
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.PeerInstanceResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "429":
+          description: rate limit exceeded
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Проверить один инстанс реестра (§73).
+      tags:
+      - instances
+  /api/instances/check:
+    post:
+      description: 'Опрашивает публичные GET /api/version и GET /ready каждого соседа
+        с сервера (не из браузера: CORS не настроен, CSP задаёт connect-src ''self'').
+        Недоступность соседа — не ошибка запроса, а его статус. Admin-only, rate-limit
+        на пользователя.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ListPeerInstancesResponse'
+        "429":
+          description: rate limit exceeded
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Проверить все инстансы реестра (§73).
+      tags:
+      - instances
+  /api/instances/probe:
+    post:
+      consumes:
+      - application/json
+      description: Диалог подключения показывает версию и код инстанса ещё до создания
+        записи. Ничего не сохраняет. Admin-only, rate-limit на пользователя.
+      parameters:
+      - description: Address
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.probeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ProbeInstanceResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "429":
+          description: rate limit exceeded
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Проверить адрес до сохранения (§73).
+      tags:
+      - instances
   /api/kafka/by-node:
     get:
       description: top_producers (по числу async-сообщений) и top_failures (по ошибкам)
