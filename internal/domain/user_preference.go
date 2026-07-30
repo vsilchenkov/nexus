@@ -1,0 +1,65 @@
+package domain
+
+import (
+	"bytes"
+	"encoding/json"
+	"regexp"
+	"time"
+)
+
+// UserPreference — одна запись персональных предпочтений пользователя (§71):
+// настройка UI, привязанная к пользователю и, опционально, к команде.
+//
+// TeamID пустой означает глобальный преф (в БД team_id IS NULL) — он действует
+// во всех командах; непустой перекрывает глобальный в рамках своей команды.
+// Двухуровневый резолв «команда → глобальный → системный дефолт» делает клиент.
+//
+// Value хранится и отдаётся как есть: сервер семантику значения не знает
+// намеренно (см. Validate) — таблица generic, и добавление нового префа не
+// должно требовать правки бэкенда.
+type UserPreference struct {
+	UserID    string
+	TeamID    string
+	Key       string
+	Value     json.RawMessage
+	UpdatedAt time.Time
+}
+
+// PreferenceKeyOverviewPeriod — дефолтный период рабочего стола (§44.B/§71).
+// Значение — сериализованный Period фронта: {"kind":"preset","range":"7d"}.
+// Контракт значения держит клиент (web-ui/src/lib/period.ts), не сервер.
+const PreferenceKeyOverviewPeriod = "overview.period"
+
+const (
+	// maxPreferenceKeyLen — совпадает с VARCHAR(64) в миграции 0031.
+	maxPreferenceKeyLen = 64
+	// maxPreferenceValueBytes — совпадает с CHECK user_preferences_value_size.
+	maxPreferenceValueBytes = 4096
+)
+
+// preferenceKeyPattern — namespace'ы через точку: "overview.period",
+// "logs.filters". Нижний регистр и подчёркивания, без ведущей цифры, без
+// пустых сегментов. Зеркалит CHECK user_preferences_key_format (миграция 0031).
+var preferenceKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$`)
+
+// Validate проверяет инварианты префа: формат и длину ключа, валидность и
+// размер значения. Семантику значения домен не проверяет намеренно (§71.3):
+// это generic-хранилище, и знание про конкретные ключи здесь превратило бы
+// каждый новый преф в правку доменного слоя.
+func (p *UserPreference) Validate() error {
+	if p.Key == "" || len(p.Key) > maxPreferenceKeyLen || !preferenceKeyPattern.MatchString(p.Key) {
+		return ErrPreferenceKeyInvalid
+	}
+	if len(p.Value) == 0 || len(p.Value) > maxPreferenceValueBytes || !json.Valid(p.Value) {
+		return ErrPreferenceValueInvalid
+	}
+	// JSON null — «преф есть, но значения нет»: отсутствие префа выражается
+	// отсутствием строки, а не null'ом (зеркало CHECK value_not_null).
+	if bytes.Equal(bytes.TrimSpace(p.Value), []byte("null")) {
+		return ErrPreferenceValueInvalid
+	}
+	return nil
+}
+
+// IsGlobal — преф без привязки к команде (действует во всех её командах).
+func (p *UserPreference) IsGlobal() bool { return p.TeamID == "" }

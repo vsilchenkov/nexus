@@ -337,7 +337,7 @@ func TestBeforeSendTransaction_ScrubsSpans(t *testing.T) {
 func TestInit_Disabled(t *testing.T) {
 	// Не parallel: Init трогает глобальный sentry hub.
 	s := &config.SentrySection{Use: false}
-	if err := Init(s, "project", "v0.0.0"); err != nil {
+	if err := Init(s, "project", "v0.0.0", "kz"); err != nil {
 		t.Errorf("Init(use=false) error: %v", err)
 	}
 }
@@ -345,7 +345,7 @@ func TestInit_Disabled(t *testing.T) {
 func TestReload_Disabled(t *testing.T) {
 	// Не parallel: Reload вызывает Init с глобальным hub.
 	s := &config.SentrySection{Use: false}
-	if err := Reload(s, "project", "v0.0.0"); err != nil {
+	if err := Reload(s, "project", "v0.0.0", "kz"); err != nil {
 		t.Errorf("Reload(use=false) error: %v", err)
 	}
 }

@@ -24,17 +24,21 @@ type VersionHandler struct {
 	// override возвращает текущий ручной override версии ("" = не задан).
 	// Читается из app_settings; вызывается только при overrideAllowed.
 	override func(ctx context.Context) string
+	// instance — §70.8: идентификатор ноды для бейджа в шапке. Пустой у ноды
+	// без идентификатора: бейдж тогда не рендерится вовсе.
+	instance string
 }
 
 // NewVersionHandler — version/commit/buildDate обычно из cfg.Build; overrideAllowed
 // = cfg.Web.AllowVersionOverride; override — провайдер из app_settings (может быть nil).
-func NewVersionHandler(version, commit, buildDate string, overrideAllowed bool, override func(ctx context.Context) string) *VersionHandler {
+func NewVersionHandler(version, commit, buildDate string, overrideAllowed bool, override func(ctx context.Context) string, instance string) *VersionHandler {
 	return &VersionHandler{
 		version:         version,
 		commit:          commit,
 		buildDate:       buildDate,
 		overrideAllowed: overrideAllowed,
 		override:        override,
+		instance:        instance,
 	}
 }
 
@@ -57,5 +61,6 @@ func (h *VersionHandler) Get(c *gin.Context) {
 		Commit:          h.commit,
 		BuildDate:       h.buildDate,
 		OverrideAllowed: h.overrideAllowed,
+		Instance:        h.instance,
 	})
 }

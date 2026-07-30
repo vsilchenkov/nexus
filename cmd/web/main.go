@@ -55,6 +55,9 @@ func main() {
 	defer pgPool.Close()
 
 	bootstrap.AutoMigrate(cfg, logger)
+	// §70.5: заявляем/сверяем идентификатор ноды сразу после миграций — до
+	// подключения ClickHouse, потому что от него зависят имена БД команд.
+	identity := bootstrap.MustInstanceIdentity(ctx, pgPool, cfg, flags, projectName, logger)
 	// §8.4 / §14.5: накладываем dynamic-настройки из app_settings поверх
 	// env-конфига до подключения зависимостей (CH-клиент возьмёт overlay'нутый адрес).
 	bootstrap.ApplyAppSettings(ctx, pgPool, cfg, logger)
@@ -68,11 +71,16 @@ func main() {
 	// чтобы при hot-reload (Phase 6.3.2.5) закрылся текущий conn, а не исходный.
 	chConn, _ := bootstrap.TryClickHouse(ctx, cfg, logger)
 
+	// §70.5: гейт владения ClickHouse-БД — до старта сервиса и именно здесь, а не
+	// внутри App.Start: ошибку старта сервис-обёртка гасит логом, и в
+	// неинтерактивном режиме процесс остался бы жить с невыполненным гейтом.
+	bootstrap.MustCHOwnership(ctx, pgPool, chConn, cfg, identity, logger)
+
 	cipher := bootstrap.MustCipher(logger)
 
 	otelShutdown := bootstrap.MustOtel(ctx, cfg, "web", logger)
 
-	app := web.New(cfg, pgPool, redisClient, chConn, cipher, otelShutdown, logger, logCtl)
+	app := web.New(cfg, pgPool, redisClient, chConn, cipher, otelShutdown, identity, logger, logCtl)
 
 	if err := runner.Run(serviceName, displayName, description, app, logger); err != nil {
 		logger.ErrorWithOp("service stopped", err, "main")

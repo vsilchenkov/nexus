@@ -169,6 +169,21 @@ func TestValidate(t *testing.T) {
 		{"sentry_use_no_dsn",
 			func(c *Config) { c.Sentry.Use = true; c.Sentry.Dsn = "" },
 			"sentry.dsn"},
+		// §70.1: идентификатор ноды. Пустой — штатное состояние ноды до §70,
+		// поэтому валиден; кривой обязан валить старт, а не всплывать позже при
+		// создании команды с несобираемым именем БД.
+		{"instance_id_empty_ok",
+			func(c *Config) { c.Instance.ID = "" },
+			""},
+		{"instance_id_valid",
+			func(c *Config) { c.Instance.ID = "kz" },
+			""},
+		{"instance_id_bad_format",
+			func(c *Config) { c.Instance.ID = "KZ_1" },
+			"instance.id"},
+		{"instance_id_too_long",
+			func(c *Config) { c.Instance.ID = "abcdefghi" },
+			"instance.id"},
 	}
 
 	for _, tc := range tests {

@@ -78,13 +78,36 @@ type Metrics struct {
 	DLQReprocessDuration prometheus.Histogram   // длительность одного прохода sweeper'а (секунды)
 }
 
+// Option — функциональная опция конструктора New.
+type Option func(prometheus.Labels)
+
+// WithInstance добавляет постоянную метку идентификатора ноды (§70.7).
+//
+// Имя метки — `nexus_instance`, а НЕ `instance`: последнюю проставляет сам
+// Prometheus при скрейпе (адрес цели), и одноимённая метка приложения была бы
+// переименована в `exported_instance` — то есть фильтры по ней молча не
+// работали бы.
+//
+// Пустой идентификатор метку не добавляет: она входит в идентичность ряда, и её
+// появление на действующей ноде разорвало бы историю всех графиков.
+func WithInstance(id string) Option {
+	return func(l prometheus.Labels) {
+		if id != "" {
+			l["nexus_instance"] = id
+		}
+	}
+}
+
 // New создаёт новый экземпляр Metrics для указанного сервиса.
 //
 // В собственный реестр регистрируются Go-runtime и Process collectors,
 // чтобы /metrics показывал стандартные `go_*` и `process_*` ряды.
-func New(service string) *Metrics {
+func New(service string, opts ...Option) *Metrics {
 	reg := prometheus.NewRegistry()
 	constLabels := prometheus.Labels{"service": service}
+	for _, o := range opts {
+		o(constLabels)
+	}
 
 	m := &Metrics{
 		registry: reg,

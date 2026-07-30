@@ -205,7 +205,7 @@ func TestBuildLogger_ReturnsController(t *testing.T) {
 	logCfg := &logging.Config{Level: 3, OutputInFile: false}
 	sentryCfg := &logging.SentryConfig{Use: false}
 
-	logger, ctl := buildLogger(logCfg, sentryCfg, "web")
+	logger, ctl := buildLogger(logCfg, sentryCfg, "web", "")
 
 	require.NotNil(t, logger)
 	require.NotNil(t, ctl)
@@ -229,7 +229,7 @@ func TestLogController_StartRedisShipper_NilSafeAndOnce(t *testing.T) {
 		t.Fatal("nil controller must return a closed channel")
 	}
 
-	_, ctl := buildLogger(&logging.Config{Level: 4}, &logging.SentryConfig{}, "web")
+	_, ctl := buildLogger(&logging.Config{Level: 4}, &logging.SentryConfig{}, "web", "")
 	done = ctl.StartRedisShipper(context.Background(), nil, logger)
 	select {
 	case <-done:

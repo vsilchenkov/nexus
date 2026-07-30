@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { api, type Node } from "../../api/client";
 import { Card, Kpi, KpiRow, LabelHint, Pill, PeriodPicker, TrafficChart, defaultPeriod, type LogsRange, type Period } from "../ui";
 import { fmtLogTs, fmtNum } from "../../lib/format";
+import { isLogOK } from "../../lib/logsQuery";
 import { useNodeMetrics, METRICS_REFETCH_MS } from "./useNodeMetrics";
 import { type LogsResp } from "./types";
 
@@ -103,7 +104,9 @@ export function OverviewTab({
           </thead>
           <tbody>
             {(recentQ.data?.items ?? []).map((r) => {
-              const isErr = !r.done || r.status >= 400 || r.status === 0;
+              // §72.1: тот же предикат, что у фильтра «Ошибки» и подсветки в
+              // журнале логов — «красная» строка везде означает одно и то же.
+              const isErr = !isLogOK(r);
               return (
                 <tr key={r.id} className={`border-b border-line last:border-0 ${isErr ? "bg-err/5" : ""}`}>
                   <td className="whitespace-nowrap px-4 py-2 font-mono text-xs">

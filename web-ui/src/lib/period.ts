@@ -8,37 +8,24 @@ export type Period =
 
 export const PRESET_RANGES: PresetRange[] = ["1h", "3h", "24h", "7d", "14d", "30d"];
 
-// defaultPeriod — дефолт периода метрик (§44.B): 24ч (раньше 1ч). На рабочем
-// столе перекрывается пользовательским дефолтом из localStorage (loadDefaultPeriod).
+// defaultPeriod — системный дефолт периода метрик (§44.B): 24ч (раньше 1ч).
+// На рабочем столе перекрывается персональным дефолтом команды (§71,
+// lib/prefs.ts: преф команды → глобальный преф → это значение). Вкладки узла и
+// Kafka-монитор используют его как есть — они вне scope §71.
 export const defaultPeriod: Period = { kind: "preset", range: "24h" };
 
-// PERIOD_DEFAULT_KEY — localStorage-ключ пользовательского дефолтного периода
-// рабочего стола («под себя», §44.B). Хранится только пресет.
-const PERIOD_DEFAULT_KEY = "nexus.overview.period";
-
-// loadDefaultPeriod — пользовательский дефолтный период из localStorage, иначе
-// defaultPeriod (24ч). Толерантно к мусору/недоступному хранилищу.
-export function loadDefaultPeriod(): Period {
-  try {
-    const raw = localStorage.getItem(PERIOD_DEFAULT_KEY);
-    if (!raw) return defaultPeriod;
-    const p = JSON.parse(raw) as Period;
-    if (p && p.kind === "preset" && PRESET_RANGES.includes(p.range)) return p;
-    return defaultPeriod;
-  } catch {
-    return defaultPeriod;
-  }
-}
-
-// saveDefaultPeriod — сохранить выбранный период как дефолтный рабочего стола.
-// Только пресет: произвольный календарный диапазон дефолтом не имеет смысла.
-export function saveDefaultPeriod(p: Period): void {
-  if (p.kind !== "preset") return;
-  try {
-    localStorage.setItem(PERIOD_DEFAULT_KEY, JSON.stringify(p));
-  } catch {
-    // приватный режим / переполнение — игнорируем
-  }
+// parsePeriodPref — Period из произвольного значения: приходит с сервера
+// (преф §71) или из прежнего localStorage-ключа (миграция §71.5). Не пресет —
+// null: дефолтом сохраняется только пресет, произвольный календарный диапазон
+// в этой роли смысла не имеет. Значение сервер не валидирует (§71.3), контракт
+// держит эта функция.
+export function parsePeriodPref(raw: unknown): Period | null {
+  if (!raw || typeof raw !== "object") return null;
+  const p = raw as Partial<Period>;
+  if (p.kind !== "preset") return null;
+  const range = (p as { range?: unknown }).range;
+  if (typeof range !== "string" || !(PRESET_RANGES as string[]).includes(range)) return null;
+  return { kind: "preset", range: range as PresetRange };
 }
 
 // periodParams — query-параметры для /api/metrics/* по выбранному периоду.

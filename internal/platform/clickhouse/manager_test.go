@@ -93,6 +93,37 @@ func TestManager_Reload_FactoryFailure_KeepsOldConn(t *testing.T) {
 	assert.False(t, initial.closed.Load())
 }
 
+// §70.3: кеш вердиктов владения привязан к конкретному ClickHouse-серверу,
+// поэтому сбрасывается коллбэком после успешного swap. Неудачный Reload
+// соединение не меняет — сбрасывать нечего, и коллбэк звать нельзя.
+func TestManager_OnReload_FiresOnlyAfterSuccessfulSwap(t *testing.T) {
+	t.Parallel()
+
+	initial := &fakeConn{id: 1}
+	fresh := &fakeConn{id: 2}
+	var fails atomic.Bool
+	factory := func(context.Context, *config.ClickHouseSection) (chdriver.Conn, error) {
+		if fails.Load() {
+			return nil, errors.New("dial refused")
+		}
+		return fresh, nil
+	}
+
+	cfg := &config.ClickHouseSection{Host: "h", Port: 9000, Database: "d"}
+	m := chpf.NewManager(initial, factory, cfg, logging.NewNoop(), chpf.WithCloseDelay(0))
+
+	var calls atomic.Int32
+	m.OnReload(func() { calls.Add(1) })
+	m.OnReload(nil) // nil игнорируется, не паникует
+
+	require.NoError(t, m.Reload(context.Background()))
+	assert.Equal(t, int32(1), calls.Load(), "коллбэк вызывается после успешного swap")
+
+	fails.Store(true)
+	require.Error(t, m.Reload(context.Background()))
+	assert.Equal(t, int32(1), calls.Load(), "после неудачного reload коллбэк не зовётся")
+}
+
 func TestManager_Close_IsIdempotent(t *testing.T) {
 	t.Parallel()
 

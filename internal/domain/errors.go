@@ -106,6 +106,13 @@ var (
 	ErrSessionNotFound      = errors.New("domain: session not found")
 	ErrSessionExpired       = errors.New("domain: session expired")
 
+	// Персональные предпочтения (§71)
+	ErrPreferenceKeyInvalid   = errors.New("domain: preference key must match ^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)*$ and be at most 64 chars")
+	ErrPreferenceValueInvalid = errors.New("domain: preference value must be valid non-null json of at most 4096 bytes")
+	// ErrPreferencesLimit — у пользователя уже максимум записей предпочтений, и
+	// запрос добавляет ЕЩЁ ОДИН ключ. Обновление существующего проходит всегда.
+	ErrPreferencesLimit = errors.New("domain: preferences limit for this user exceeded")
+
 	// Auth (входящий запрос)
 	ErrUnauthorized        = errors.New("domain: unauthorized")
 	ErrAuthHeaderMissing   = errors.New("domain: authorization header missing")
@@ -192,8 +199,33 @@ var (
 	ErrTeamAlreadyExists    = errors.New("domain: team with this slug or ch_database already exists")
 	ErrTeamSlugFormat       = errors.New("domain: team slug must match ^[a-z][a-z0-9_]{0,31}$")
 	ErrTeamNameLength       = errors.New("domain: team name length must be 1..255")
-	ErrTeamCHDatabaseFormat = errors.New("domain: team ch_database must match ^nexus_[a-z][a-z0-9_]{0,31}$")
-	ErrTeamInvalidRole      = errors.New("domain: invalid team role")
-	ErrTeamMemberNotFound   = errors.New("domain: team membership not found")
-	ErrTeamHasNodes         = errors.New("domain: team has attached nodes and cannot be deleted")
+	ErrTeamCHDatabaseFormat = errors.New("domain: team ch_database must match ^nexus_[a-z][a-z0-9_]{0,40}$")
+	// ErrTeamSlugTooLongForInstance — §70.2: слаг не помещается в имя БД этой
+	// ноды. Отдельная ошибка вместо ErrTeamCHDatabaseFormat: из «ch_database must
+	// match …» оператору непонятно, что чинить слаг, а не имя БД (его он не задаёт).
+	ErrTeamSlugTooLongForInstance = errors.New("domain: team slug is too long for this instance id")
+	ErrTeamInvalidRole            = errors.New("domain: invalid team role")
+	ErrTeamMemberNotFound         = errors.New("domain: team membership not found")
+	ErrTeamHasNodes               = errors.New("domain: team has attached nodes and cannot be deleted")
+
+	// Instance (§70: несколько нод на одном ClickHouse)
+	ErrInstanceIDFormat = errors.New("domain: instance id must be empty or match ^[a-z][a-z0-9]{0,7}$")
+	// ErrCHForeignDatabase — операция затрагивает ClickHouse-БД, владельцем
+	// которой является другая нода (§70.3/§70.4). Разрушающие операции по такой
+	// БД не выполняются никогда, даже с аварийными флагами.
+	ErrCHForeignDatabase = errors.New("domain: clickhouse database belongs to another nexus instance")
+	// ErrNodeCHTableForeignDatabase — узел ссылается на таблицу в чужой БД
+	// (§70.6). Допустимо только в режиме внешней таблицы (external_table, §64).
+	ErrNodeCHTableForeignDatabase = errors.New("domain: clickhouse_table points at a database owned by another nexus instance")
+
+	// Реестр соседних инстансов (§73)
+	ErrPeerInstanceNotFound      = errors.New("domain: peer instance not found")
+	ErrPeerInstanceAlreadyExists = errors.New("domain: peer instance with this address already exists")
+	ErrPeerInstanceTitleLength   = errors.New("domain: peer instance title length must be 1..64")
+	ErrPeerInstanceCommentLength = errors.New("domain: peer instance comment length must be <= 255")
+	// ErrPeerInstanceURLInvalid — адрес должен быть origin'ом вида
+	// scheme://host[:port]: без пути (проба достраивает /api/version сама) и без
+	// userinfo (креды в URL утекли бы в интерфейс и в журнал аудита).
+	ErrPeerInstanceURLInvalid    = errors.New("domain: peer instance address must be an http(s) origin without path, query or credentials")
+	ErrPeerInstanceStatusInvalid = errors.New("domain: invalid peer instance status")
 )

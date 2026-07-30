@@ -28,9 +28,18 @@ var sensitiveKeys = sensitive.Keys()
 
 // Init инициализирует Sentry SDK. Если Use=false — no-op, возвращает nil.
 // Имя проекта (`server_name`) и release заполняются из buildVersion/projectName.
-func Init(s *config.SentrySection, projectName, version string) error {
+//
+// instanceID (§70.7) — идентификатор ноды. Ноды пишут в ОДИН проект Sentry, и
+// без тега их события неразличимы: server_name у всех "Receiver"/"Sender"/"Web",
+// release — одна и та же версия сборки. Пустой идентификатор (нода до §70) тег
+// НЕ добавляет: пустое значение изменило бы группировку существующих событий.
+func Init(s *config.SentrySection, projectName, version, instanceID string) error {
 	if !s.Use {
 		return nil
+	}
+	var tags map[string]string
+	if instanceID != "" {
+		tags = map[string]string{"instance": instanceID}
 	}
 	opts := sentry.ClientOptions{
 		Dsn:              s.Dsn,
@@ -41,6 +50,7 @@ func Init(s *config.SentrySection, projectName, version string) error {
 		Debug:            s.Debug,
 		Release:          version,
 		ServerName:       projectName,
+		Tags:             tags,
 		BeforeSend:       beforeSend,
 		// §42: транзакции производительности (performance/tracing) идут ОТДЕЛЬНЫМ
 		// хуком, не через BeforeSend. Без него спаны/контексты транзакции не
@@ -65,8 +75,8 @@ func Flush(timeout time.Duration) {
 // так что middleware и логгер продолжают работать без переподписки.
 //
 // Если новый Use=false — старый hub остаётся, но клиент станет no-op.
-func Reload(s *config.SentrySection, projectName, version string) error {
-	return Init(s, projectName, version)
+func Reload(s *config.SentrySection, projectName, version, instanceID string) error {
+	return Init(s, projectName, version, instanceID)
 }
 
 func beforeSend(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {

@@ -1040,6 +1040,312 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/instances": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Список подключённых развёртываний Nexus с кешем последней проверки. Сетевых запросов не делает — отдаёт сохранённые значения, чтобы таблица рисовалась мгновенно. Свой инстанс в список не входит. Admin-only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "instances"
+                ],
+                "summary": "Реестр соседних инстансов (§73).",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ListPeerInstancesResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Адрес нормализуется (обрезаются пробелы и хвостовой слеш, хост — в нижний регистр) и обязан быть origin'ом http(s) без пути, query и учётных данных. Admin-only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "instances"
+                ],
+                "summary": "Подключить инстанс (§73).",
+                "parameters": [
+                    {
+                        "description": "Instance",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.peerInstanceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.PeerInstanceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "адрес уже в реестре",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/instances/check": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Опрашивает публичные GET /api/version и GET /ready каждого соседа с сервера (не из браузера: CORS не настроен, CSP задаёт connect-src 'self'). Недоступность соседа — не ошибка запроса, а его статус. Admin-only, rate-limit на пользователя.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "instances"
+                ],
+                "summary": "Проверить все инстансы реестра (§73).",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ListPeerInstancesResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "rate limit exceeded",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/instances/probe": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Диалог подключения показывает версию и код инстанса ещё до создания записи. Ничего не сохраняет. Admin-only, rate-limit на пользователя.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "instances"
+                ],
+                "summary": "Проверить адрес до сохранения (§73).",
+                "parameters": [
+                    {
+                        "description": "Address",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.probeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ProbeInstanceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "rate limit exceeded",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/instances/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Удаляет запись реестра. На соседний инстанс не влияет — реестр хранит только ссылку. Admin-only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "instances"
+                ],
+                "summary": "Отключить инстанс (§73).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "no content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Меняет название, адрес и комментарий. Кеш последней проверки не сбрасывается: пустой статус читался бы как «не отвечает», хотя проверки просто ещё не было. Admin-only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "instances"
+                ],
+                "summary": "Изменить инстанс реестра (§73).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Instance",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.peerInstanceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.PeerInstanceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/instances/{id}/check": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "instances"
+                ],
+                "summary": "Проверить один инстанс реестра (§73).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.PeerInstanceResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "rate limit exceeded",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/kafka/by-node": {
             "get": {
                 "security": [
@@ -1546,6 +1852,83 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "current password incorrect",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/me/prefs": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "§71: все префы пользователя одним ответом — и глобальные (team_id пустой), и привязанные к командам. Строго per-user. При сбое хранилища деградирует в пустой список (200, не 500): преф — настройка UI, и её недоступность не должна валить страницу, которая её читает.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Персональные предпочтения текущего пользователя.",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.UserPrefsResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "§71: upsert по (user_id, team_id, key). team_id пустой — глобальный преф; непустой обязан входить в членства пользователя (иначе 400, одинаково для чужой и несуществующей команды). value — произвольный валидный JSON (не null) до 4096 байт, сервер его не интерпретирует. Ключ — ^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)*$, до 64 символов.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Сохранить (upsert) один преф текущего пользователя.",
+                "parameters": [
+                    {
+                        "description": "преф",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.setPreferenceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "сохранено"
+                    },
+                    "400": {
+                        "description": "invalid key/value, not a member, limit exceeded",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
@@ -3158,13 +3541,13 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "ok | err | (пусто)",
+                        "description": "ok — доставлено (done=1 и 200\u003c=status\u003c400) | err — полное дополнение ok | (пусто) — любой (§72.1)",
                         "name": "status",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "yes | no | (пусто)",
+                        "description": "yes (done=1) | no (done=0) | (пусто)",
                         "name": "done",
                         "in": "query"
                     },
@@ -3298,13 +3681,13 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "ok | err",
+                        "description": "ok — доставлено (done=1 и 200\u003c=status\u003c400) | err — полное дополнение ok (§72.1)",
                         "name": "status",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "yes | no",
+                        "description": "yes (done=1) | no (done=0)",
                         "name": "done",
                         "in": "query"
                     },
@@ -5684,6 +6067,17 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_web_adapter_in_http.ListPeerInstancesResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.PeerInstanceResponse"
+                    }
+                }
+            }
+        },
         "internal_web_adapter_in_http.ListRequestFieldsResponse": {
             "type": "object",
             "properties": {
@@ -6207,9 +6601,82 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_web_adapter_in_http.PeerInstanceResponse": {
+            "type": "object",
+            "properties": {
+                "base_url": {
+                    "type": "string"
+                },
+                "comment": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "last_checked_at": {
+                    "type": "string"
+                },
+                "last_error": {
+                    "type": "string"
+                },
+                "last_instance_id": {
+                    "type": "string"
+                },
+                "last_latency_ms": {
+                    "type": "integer"
+                },
+                "last_status": {
+                    "type": "string"
+                },
+                "last_version": {
+                    "description": "LastVersion — версия Web Service соседа: Receiver и Sender версию наружу\nне отдают, поэтому «версия инстанса» — это всегда версия его Web.",
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "updated_by": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.ProbeInstanceResponse": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "description": "Error — короткая нормализованная причина (\"timeout\", \"http 502\"), без\nсырого тела ответа соседа.",
+                    "type": "string"
+                },
+                "instance_id": {
+                    "type": "string"
+                },
+                "latency_ms": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_web_adapter_in_http.PublicSettingsResponse": {
             "type": "object",
             "properties": {
+                "ch_database_prefix": {
+                    "description": "§70.8: префикс имён БД ClickHouse этой ноды (\"nexus_\" либо \"nexus_\u003cid\u003e_\").\nДиалог создания команды показывает предпросмотр имени БД из него, а не\nсклеивает литерал на клиенте — иначе на ноде с идентификатором предпросмотр\nпоказывал бы чужое имя.",
+                    "type": "string"
+                },
                 "metrics_refetch_ms": {
                     "description": "§44.C: интервал автообновления метрик (мс) для дашборда/страниц узлов.",
                     "type": "integer"
@@ -6599,6 +7066,17 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_web_adapter_in_http.UserPrefsResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.userPrefDTO"
+                    }
+                }
+            }
+        },
         "internal_web_adapter_in_http.VersionResponse": {
             "type": "object",
             "properties": {
@@ -6606,6 +7084,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "commit": {
+                    "type": "string"
+                },
+                "instance": {
+                    "description": "Instance — идентификатор ноды (§70.8). Пустой у ноды без идентификатора,\nпоэтому omitempty: интерфейс действующей ноды не меняется.",
                     "type": "string"
                 },
                 "override_allowed": {
@@ -7436,6 +7918,39 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_web_adapter_in_http.peerInstanceRequest": {
+            "type": "object",
+            "required": [
+                "base_url",
+                "title"
+            ],
+            "properties": {
+                "base_url": {
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "comment": {
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "title": {
+                    "type": "string",
+                    "maxLength": 64
+                }
+            }
+        },
+        "internal_web_adapter_in_http.probeRequest": {
+            "type": "object",
+            "required": [
+                "base_url"
+            ],
+            "properties": {
+                "base_url": {
+                    "type": "string",
+                    "maxLength": 255
+                }
+            }
+        },
         "internal_web_adapter_in_http.queueBodyDTO": {
             "type": "object",
             "properties": {
@@ -7613,6 +8128,25 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "internal_web_adapter_in_http.setPreferenceRequest": {
+            "type": "object",
+            "required": [
+                "key",
+                "value"
+            ],
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "maxLength": 64
+                },
+                "team_id": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "object"
                 }
             }
         },
@@ -7835,6 +8369,23 @@ const docTemplate = `{
                         "viewer",
                         "manager"
                     ]
+                }
+            }
+        },
+        "internal_web_adapter_in_http.userPrefDTO": {
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "string"
+                },
+                "team_id": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "object"
                 }
             }
         },

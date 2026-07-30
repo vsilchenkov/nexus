@@ -6,6 +6,7 @@ import { ChevronRight, Languages, Moon, Sun, LogOut, FileText, ExternalLink, Rou
 
 import { api } from "../api/client";
 import { cn } from "../lib/cn";
+import { useInstanceID } from "../lib/instance";
 import { invalidateTeamScoped, useMyTeams } from "../lib/teams";
 import { getTheme, setTheme, type Theme } from "../lib/theme";
 import { GlobalSearch } from "./GlobalSearch";
@@ -38,6 +39,9 @@ export function Topbar() {
   const [theme, setThemeState] = useState<Theme>(getTheme());
 
   const myTeams = useMyTeams();
+  // §70.8: код ноды. Пусто у ноды без идентификатора — бейдж не рендерится,
+  // и шапка выглядит ровно как до §70.
+  const instance = useInstanceID();
 
   // §44.H: сервер самозалечил current_team (был вне членств) — обновляем
   // team-scoped кеш, чтобы дашборд сразу показал ноды верной команды, а не
@@ -88,6 +92,14 @@ export function Topbar() {
       <div className="flex flex-1 justify-center px-4">
         <GlobalSearch />
       </div>
+
+      {instance && (
+        <Tooltip content={t("topbar.instance_hint", { id: instance })}>
+          <span className="rounded border border-line px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-wide text-fg-muted">
+            {instance}
+          </span>
+        </Tooltip>
+      )}
 
       <TeamSwitcher />
 

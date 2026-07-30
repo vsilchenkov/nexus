@@ -1,5 +1,10 @@
 package http
 
+import (
+	"encoding/json"
+	"time"
+)
+
 // Общие DTO для Swagger-моделей (§11, §25 ТЗ; QA-2026-02 / П10).
 //
 // До этого все handler'ы декларировали ответы как `map[string]any` /
@@ -164,6 +169,9 @@ type VersionResponse struct {
 	// OverrideAllowed — true в dev (web.allow_version_override): UI показывает
 	// поле ручного override версии; в проде false (версия всегда из git).
 	OverrideAllowed bool `json:"override_allowed"`
+	// Instance — идентификатор ноды (§70.8). Пустой у ноды без идентификатора,
+	// поэтому omitempty: интерфейс действующей ноды не меняется.
+	Instance string `json:"instance,omitempty"`
 }
 
 // PublicSettingsResponse — GET /api/settings/public.
@@ -174,6 +182,11 @@ type PublicSettingsResponse struct {
 	// §64: значение «Макс. размер тела», подставляемое формой при СОЗДАНИИ узла
 	// (web.node_default_max_body_size). Существующие узлы не затрагивает.
 	NodeDefaultMaxBodySize int `json:"node_default_max_body_size"`
+	// §70.8: префикс имён БД ClickHouse этой ноды ("nexus_" либо "nexus_<id>_").
+	// Диалог создания команды показывает предпросмотр имени БД из него, а не
+	// склеивает литерал на клиенте — иначе на ноде с идентификатором предпросмотр
+	// показывал бы чужое имя.
+	CHDatabasePrefix string `json:"ch_database_prefix"`
 }
 
 // UserEnvelope — обёртка {"user": ...} для login/me.
@@ -207,6 +220,25 @@ type SwitchTeamResponse struct {
 // поиска пользователя от свежих к старым (не более 10).
 type SearchHistoryResponse struct {
 	Items []string `json:"items"`
+}
+
+// UserPrefsResponse — GET /api/me/prefs (§71): все персональные предпочтения
+// пользователя одним ответом — и глобальные, и по всем его командам. Клиент
+// резолвит «преф команды → глобальный → системный дефолт» сам, поэтому набор
+// отдаётся целиком, а не по текущей команде.
+type UserPrefsResponse struct {
+	Items []userPrefDTO `json:"items"`
+}
+
+// userPrefDTO — одна запись предпочтений. TeamID пустой = глобальный преф.
+// Value — произвольный JSON: сервер значение не интерпретирует (§71.3).
+// swaggertype:"object" обязателен — иначе swag описывает json.RawMessage
+// как []integer (это []byte).
+type userPrefDTO struct {
+	TeamID    string          `json:"team_id"`
+	Key       string          `json:"key"`
+	Value     json.RawMessage `json:"value" swaggertype:"object"`
+	UpdatedAt time.Time       `json:"updated_at"`
 }
 
 // NodesMetricsResponse — GET /api/metrics/nodes.

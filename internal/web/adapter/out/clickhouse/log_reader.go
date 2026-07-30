@@ -102,6 +102,10 @@ type LogReaderCH struct {
 	usageAt       time.Time
 	usageTriedAt  time.Time
 	usageInflight bool
+
+	// ownership — гейт владения таблицей (§70.4). nil = поведение до §70.
+	// Собственного кеша здесь нет: Guard кеширует вердикты сам.
+	ownership Ownership
 }
 
 const (
@@ -131,6 +135,28 @@ func (r *LogReaderCH) SetTableUsage(u port.NodeTableUsage) {
 	defer r.usageMu.Unlock()
 	r.tableUsage = u
 	r.usageCounts, r.usageAt = nil, time.Time{}
+}
+
+// SetOwnership подключает гейт владения (§70.4): запрещает удаление записей в
+// чужой таблице и включает строгую атрибуцию там же (см. nodeFilter).
+// nil сохраняет прежнее поведение.
+func (r *LogReaderCH) SetOwnership(o Ownership) { r.ownership = o }
+
+// ownsTable — таблица принадлежит этой ноде. Без подключённого гейта отвечает
+// true (поведение до §70). Ошибку проверки трактуем как «не наша»: у
+// вызывающих это либо отказ в удалении, либо строгий фильтр — обе деградации
+// безопасны.
+func (r *LogReaderCH) ownsTable(ctx context.Context, table string) bool {
+	if r.ownership == nil {
+		return true
+	}
+	owns, err := r.ownership.OwnsTable(ctx, table)
+	if err != nil {
+		r.logger.Warn("log reader: ownership check failed, treating table as foreign",
+			r.logger.Str("table", table), r.logger.Err(err))
+		return false
+	}
+	return owns
 }
 
 // liveConn возвращает текущее соединение из ConnProvider или ошибку, если
@@ -210,11 +236,15 @@ func bodyColumn(which string) (string, bool) {
 //
 // Неизвестно, общая ли таблица (порт не подключён или запрос упал) → прежнее,
 // более мягкое правило: скрыть свои логи хуже, чем показать лишние.
+// §70.4: на таблице, принадлежащей другой ноде (внешняя таблица §64 в чужой
+// БД), карта «таблица → число узлов» тоже бесполезна — она считается по СВОЕЙ
+// PostgreSQL и покажет «личная», хотя записи туда пишет и сосед. Поэтому чужая
+// таблица всегда даёт строгий фильтр.
 func (r *LogReaderCH) nodeFilter(ctx context.Context, table, nodeID string) (string, []any) {
 	if nodeID == "" {
 		return "", nil
 	}
-	if r.tableIsShared(ctx, table) {
+	if r.tableIsShared(ctx, table) || !r.ownsTable(ctx, table) {
 		return "node_id = ?", []any{nodeID}
 	}
 	return "(node_id = ? OR node_id = '')", []any{nodeID}
@@ -425,6 +455,73 @@ func (r *LogReaderCH) ListSince(ctx context.Context, table, nodeID string, curso
 	return out, nil
 }
 
+// condLogOK / condLogErr — SQL-предикаты быстрых фильтров «ОК» и «Ошибки»
+// вкладки логов (§72.1). Успех = запись закрыта И внешний узел ответил 2xx/3xx;
+// «Ошибки» — ПОЛНОЕ ДОПОЛНЕНИЕ успеха, поэтому ok ∪ err = все записи, а
+// ok ∩ err = ∅.
+//
+// До §72.1 предикаты были `status BETWEEN 200 AND 299` и `(status >= 400 OR
+// status = 0)`: запись с 3xx не попадала НИ В ОДИН из фильтров (пропадала из
+// UI), а незавершённая запись с кодом 2xx числилась успехом. Дополнительный
+// мотив — ровно этот предикат применял клиентский фильтр списка логов и
+// применяет красная подсветка строки, так что серверный фильтр показывает то
+// же, что видел пользователь.
+//
+// Семантика `done` (yes/no) намеренно не тронута: на ней держатся KPI
+// «неудачных доставок» §35 (CountFailed — строго done=0).
+const (
+	condLogOK  = "(done = 1 AND status >= 200 AND status < 400)"
+	condLogErr = "NOT " + condLogOK
+)
+
+// partitionMarginDays — запас к границам по date_create, выведенным из окна по
+// date_request (§72.4). Партиции месячные, поэтому лишний день ничего не стоит,
+// а закрывает расхождение часовых поясов, перекос часов между инстансами
+// Sender'а и записи, дошедшие до ClickHouse позже своего date_request
+// (durable-retry §38).
+const partitionMarginDays = 1
+
+// dayUTC — граница по date_create (тип Date) как литерал YYYY-MM-DD.
+// Считается в UTC: date_create пишется как UTC-день момента date_request, а
+// DateTime рендерится в часовом поясе сервера — брать toDate(date_request) в
+// SQL было бы неверно.
+func dayUTC(ms int64, deltaDays int) string {
+	return time.UnixMilli(ms).UTC().AddDate(0, 0, deltaDays).Format(time.DateOnly)
+}
+
+// dateCreateConds — то же временное окно, но по колонке PARTITION BY (§72.4).
+//
+// Без него ClickHouse читает таблицу ЦЕЛИКОМ: условие по date_request партиции
+// не отсекает, хотя date_request и стоит вторым полем ключа сортировки. Замер
+// на 200 000 строк (окно в сутки, TestClickHouse_DateCreatePruning_E2E): 200 000
+// прочитанных строк и 3 части против 8 192 строк и 1 части; разрыв растёт с
+// объёмом таблицы.
+//
+// Работает только когда usecase подтвердил инвариант write-path (см.
+// LogQuery.DateCreateAligned): для внешних таблиц §64 сужение отключено, иначе
+// оно молча теряло бы строки.
+//
+// Литерал через toDate(?) — константа сворачивается на анализе запроса, и
+// KeyCondition использует её для отсечения партиций.
+func dateCreateConds(q port.LogQuery) ([]string, []any) {
+	if !q.DateCreateAligned {
+		return nil, nil
+	}
+	var (
+		conds []string
+		args  []any
+	)
+	if q.SinceMs > 0 {
+		conds = append(conds, "date_create >= toDate(?)")
+		args = append(args, dayUTC(q.SinceMs, -partitionMarginDays))
+	}
+	if q.UntilMs > 0 {
+		conds = append(conds, "date_create <= toDate(?)")
+		args = append(args, dayUTC(q.UntilMs, partitionMarginDays))
+	}
+	return conds, args
+}
+
 // searchConds строит WHERE-условия расширенных фильтров (§48) — ЕДИНСТВЕННЫЙ
 // источник для Search и Count (§67 «Всего»): один и тот же набор условий
 // гарантирует, что счётчик считает ровно то, что показывает список.
@@ -435,6 +532,12 @@ func (r *LogReaderCH) searchConds(ctx context.Context, q port.LogQuery) ([]strin
 	)
 	if c, a := r.nodeFilter(ctx, q.Table, q.NodeID); c != "" {
 		conds = append(conds, c)
+		args = append(args, a...)
+	}
+	// §72.4: то же окно по колонке PARTITION BY — ставится ПЕРЕД условиями по
+	// date_request, порядок conds и args обязан совпадать.
+	if c, a := dateCreateConds(q); len(c) > 0 {
+		conds = append(conds, c...)
 		args = append(args, a...)
 	}
 	if q.SinceMs > 0 {
@@ -470,9 +573,9 @@ func (r *LogReaderCH) searchConds(ctx context.Context, q port.LogQuery) ([]strin
 	}
 	switch q.Status {
 	case "ok":
-		conds = append(conds, "status BETWEEN 200 AND 299")
+		conds = append(conds, condLogOK)
 	case "err":
-		conds = append(conds, "(status >= 400 OR status = 0)")
+		conds = append(conds, condLogErr)
 	}
 	switch q.Done {
 	case "yes":
@@ -825,6 +928,14 @@ func (r *LogReaderCH) DateRange(ctx context.Context, table, nodeID string) (int6
 func (r *LogReaderCH) DeleteFailed(ctx context.Context, table, nodeID string, sinceMs, untilMs int64) (uint64, error) {
 	if !isSafeTableName(table) {
 		return 0, fmt.Errorf("invalid table name: %q", table)
+	}
+	// §70.4: единственный DML read-адаптера. На таблице другой ноды удаление
+	// запрещено: фильтр по node_id защищает от чужих строк, но записи без
+	// идентификатора (legacy) он не различает.
+	if r.ownership != nil {
+		if err := r.ownership.AssertOwnsTable(ctx, table); err != nil {
+			return 0, err
+		}
 	}
 	n, err := r.CountFailed(ctx, table, nodeID, sinceMs, untilMs)
 	if err != nil || n == 0 {

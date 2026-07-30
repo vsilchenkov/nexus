@@ -148,8 +148,13 @@ func TestHandlerReady(t *testing.T) {
 func TestHandlerReady_TimeoutPropagatesToCheckers(t *testing.T) {
 	t.Parallel()
 
-	// Checker, который «висит» дольше, чем handler ему даёт.
-	slow := stubChecker{name: "stuck", slow: 200 * time.Millisecond}
+	// Checker, который «висит» дольше, чем handler ему даёт. Разрыв масштабов
+	// намеренно большой (5с против Timeout 20мс): проверяемый симптом — «handler
+	// дождался чекера вместо дедлайна», и отличать его надо с запасом. С прежними
+	// 200мс порог 150мс отделял норму от симптома всего на 50мс, и на
+	// перегруженном CI-раннере (4 параллельных job'а) тест падал на 181мс — как
+	// флак, а не как регрессия.
+	slow := stubChecker{name: "stuck", slow: 5 * time.Second}
 
 	h := &Handler{
 		Required: []Checker{slow},
@@ -163,9 +168,10 @@ func TestHandlerReady_TimeoutPropagatesToCheckers(t *testing.T) {
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ready", nil))
 	elapsed := time.Since(start)
 
-	// Handler должен вернуть 503 за время, близкое к Timeout (≪ slow=200ms).
+	// Handler должен вернуть 503 за время, близкое к Timeout (≪ slow=5s). Порог
+	// 2с ловит регрессию (там было бы ~5с) и переживает джиттер планировщика.
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-	assert.Less(t, elapsed, 150*time.Millisecond, "ready висит дольше Timeout")
+	assert.Less(t, elapsed, 2*time.Second, "ready висит дольше Timeout")
 	assert.Contains(t, w.Body.String(), "down:")
 	assert.Contains(t, w.Body.String(), "context deadline exceeded")
 }

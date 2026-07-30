@@ -24,7 +24,8 @@ func SentryReloader(pool *pgxpool.Pool, cfg *config.Config, projectName, version
 			return err
 		}
 		overlaySentry(cfg, o)
-		if err := sentrypf.Reload(&cfg.Sentry, projectName, version); err != nil {
+		// §70.7: instance.id неизменяем после старта — берём из cfg.
+		if err := sentrypf.Reload(&cfg.Sentry, projectName, version, cfg.Instance.ID); err != nil {
 			return err
 		}
 		logger.Info("sentry reloaded from app_settings",

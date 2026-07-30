@@ -26,6 +26,16 @@ type ConnProvider interface {
 	Conn() chdriver.Conn
 }
 
+// TableOwnership — гейт владения таблицей (§70.4). Определён на стороне
+// консьюмера; реализуется clickhouse.Guard. nil = поведение до §70.
+//
+// DROP PARTITION удаляет партицию ЦЕЛИКОМ, без разбора по node_id, поэтому
+// здесь используется строгая проверка: чужая таблица, таблица без маркера и
+// неопределённый ответ ClickHouse одинаково означают «не трогаем».
+type TableOwnership interface {
+	OwnsTable(ctx context.Context, table string) (bool, error)
+}
+
 // CHHousekeeping — раз в сутки удаляет старые ClickHouse-партиции по
 // retention каждого узла (§4.3 ТЗ).
 //
@@ -36,14 +46,42 @@ type ConnProvider interface {
 //
 // для всех партиций со столбца system.parts, чья дата старше cutoff.
 type CHHousekeeping struct {
-	ch     ConnProvider
-	nodes  NodeLister
-	period time.Duration
-	logger logging.Logger
+	ch        ConnProvider
+	nodes     NodeLister
+	period    time.Duration
+	ownership TableOwnership
+	logger    logging.Logger
 }
 
 func NewCHHousekeeping(ch ConnProvider, nodes NodeLister, logger logging.Logger) *CHHousekeeping {
 	return &CHHousekeeping{ch: ch, nodes: nodes, period: 24 * time.Hour, logger: logger}
+}
+
+// WithOwnership подключает гейт владения (§70.4) и возвращает тот же экземпляр
+// для цепочки в wiring. nil сохраняет прежнее поведение.
+func (h *CHHousekeeping) WithOwnership(o TableOwnership) *CHHousekeeping {
+	h.ownership = o
+	return h
+}
+
+// mayDrop — разрешено ли удалять партиции этой таблицы. Ошибку проверки
+// трактуем как запрет: пропущенная уборка стоит места на диске, ошибочная —
+// суток чужих логов.
+func (h *CHHousekeeping) mayDrop(ctx context.Context, table string) bool {
+	if h.ownership == nil {
+		return true
+	}
+	owns, err := h.ownership.OwnsTable(ctx, table)
+	if err != nil {
+		h.logger.Warn("housekeeping: ownership check failed, skipping table",
+			h.logger.Str("table", table), h.logger.Err(err))
+		return false
+	}
+	if !owns {
+		h.logger.Warn("housekeeping: table belongs to another nexus instance, skipped",
+			h.logger.Str("table", table))
+	}
+	return owns
 }
 
 // Run — блокирующий цикл. Первый прогон делается сразу, далее раз в period.
@@ -52,7 +90,7 @@ func (h *CHHousekeeping) Run(ctx context.Context) {
 	tick := time.NewTicker(h.period)
 	defer tick.Stop()
 
-	if err := h.runOnce(ctx); err != nil {
+	if err := h.RunOnce(ctx); err != nil {
 		h.logger.ErrorWithOp("ch housekeeping iteration failed", err, "ch.housekeeping")
 	}
 	for {
@@ -60,20 +98,28 @@ func (h *CHHousekeeping) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			if err := h.runOnce(ctx); err != nil {
+			if err := h.RunOnce(ctx); err != nil {
 				h.logger.ErrorWithOp("ch housekeeping iteration failed", err, "ch.housekeeping")
 			}
 		}
 	}
 }
 
-func (h *CHHousekeeping) runOnce(ctx context.Context) error {
+// RunOnce — один проход уборки: по каждому узлу с retention удаляются партиции
+// старше срока. Экспортирован, чтобы integration-тесты могли выполнить проход
+// детерминированно, не гоняя суточный цикл Run.
+func (h *CHHousekeeping) RunOnce(ctx context.Context) error {
 	nodes, err := h.nodes.ListForHousekeeping(ctx)
 	if err != nil {
 		return fmt.Errorf("list nodes: %w", err)
 	}
 	for _, n := range nodes {
 		if n.ClickHouseTable == "" || n.ClickHouseRetentionDays <= 0 {
+			continue
+		}
+		// §70.4: DROP PARTITION сносит партицию целиком — на чужой таблице это
+		// удалило бы логи соседней ноды по НАШЕМУ retention.
+		if !h.mayDrop(ctx, n.ClickHouseTable) {
 			continue
 		}
 		dropped, err := h.dropPartitionsOlderThan(ctx, n.ClickHouseTable, int(n.ClickHouseRetentionDays))

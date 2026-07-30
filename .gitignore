@@ -31,6 +31,9 @@ docker-compose.override.yml
 # Web UI build output
 /web-ui/dist/
 /web-ui/node_modules/
+# Корневой node_modules появляется, если vitest/npx запустили из корня репозитория
+# (в нём оседает кеш .vite) — в дереве проекта ему места нет.
+/node_modules/
 /web-ui/tsconfig.tsbuildinfo
 
 # protoc WKT — копируется локально при необходимости, в репо не нужно

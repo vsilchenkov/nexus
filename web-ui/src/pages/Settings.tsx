@@ -14,6 +14,7 @@ import { TeamsPanel } from "./settings/Teams";
 import { NotificationsPanel } from "./settings/Notifications";
 import { AllowedHostsPanel } from "./settings/AllowedHosts";
 import { HeadersPanel } from "./settings/Headers";
+import { InstancesPanel } from "./settings/Instances";
 import { PasswordPanel } from "./settings/Password";
 import { roleAtLeast, type Role } from "../lib/roles";
 
@@ -27,6 +28,8 @@ const tabs: Tab[] = [
   { to: "tokens", labelKey: "settings.tokens.title" },
   { to: "allowed-hosts", labelKey: "settings.allowed_hosts.title", minRole: "manager" },
   { to: "headers", labelKey: "settings.headers.title", minRole: "admin" },
+  // §73: реестр соседних инстансов Nexus (не «узлов» — это маршруты шины).
+  { to: "instances", labelKey: "settings.instances.title", minRole: "admin" },
   { to: "password", labelKey: "settings.password.title" },
   { to: "language", labelKey: "settings.language.title" },
   { to: "sentry", labelKey: "settings.sentry.title", minRole: "admin" },
@@ -82,6 +85,7 @@ export default function Settings() {
           <Route path="tokens" element={<ApiTokensPanel />} />
           {isManager && <Route path="allowed-hosts" element={<AllowedHostsPanel />} />}
           {isAdmin && <Route path="headers" element={<HeadersPanel />} />}
+          {isAdmin && <Route path="instances" element={<InstancesPanel />} />}
           <Route path="password" element={<PasswordPanel />} />
           <Route path="language" element={<LanguagePanel />} />
           {isAdmin && <Route path="sentry" element={<SentryPanel />} />}

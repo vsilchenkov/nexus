@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Trash2, ChevronRight, Pause, Power, Play, RotateCcw } from "lucide-react";
@@ -7,9 +7,10 @@ import { api, type Node } from "../../api/client";
 import { Button, Kpi, KpiRow, Hint, Pill, PeriodPicker, periodWindow, periodKey, defaultPeriod, type Period } from "../ui";
 import { ReplayDialog } from "../ReplayDialog";
 import { type LogsInitialFilter } from "./LogsTab";
-import { type LogRow, type LogsResp, type LogDetail } from "./types";
+import { type LogRow, type LogDetail } from "./types";
 import { cn } from "../../lib/cn";
 import { msToDatetimeLocal } from "../../lib/format";
+import { MAX_INFINITE_ROWS, useInfiniteLogs } from "../../lib/useInfiniteLogs";
 import { useConfirm } from "../../lib/confirm";
 import { useRoleAtLeast } from "../../lib/useCurrentRole";
 
@@ -28,6 +29,11 @@ type QueueMessage = {
 type ListResp = { items: QueueMessage[]; capped: boolean; kafka_available: boolean };
 type BodyResp = { id: string; method: string; target_url: string; headers?: Record<string, string>; body: string };
 type FailedCountResp = { count: number; logs_configured: boolean; logs_available?: boolean };
+
+// FAILED_PAGE_SIZE — размер страницы списка неудачных доставок (§72.3).
+// Переключателя размера, как в журнале логов, здесь нет: секция вспомогательная,
+// а общее число неудач и так показывает KPI над ней.
+const FAILED_PAGE_SIZE = 50;
 
 function prettyJson(raw: string): string {
   try {
@@ -117,18 +123,33 @@ export function QueueTab({
     enabled: hasLogsTable,
     refetchInterval: 15_000,
   });
-  const failedListQ = useQuery({
+  // §72.3: список неудач читается тем же keyset-механизмом, что журнал логов, —
+  // со скроллом и подгрузкой. До §72.3 здесь стоял жёсткий limit=50 без
+  // пагинации: KPI показывал 340 неудач, а посмотреть можно было 50.
+  //
+  // Окно периода (from/to) считается в queryFn заново на каждый запрос, но в
+  // ключ идёт стабильный periodKey — periodWindow содержит until=Date.now(),
+  // и с ним ключ менялся бы каждый рендер (вечный перезапрос, пустой список).
+  const failedParams = useMemo(
+    () => ({ done: "no", ...periodIso() }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [periodKey(period)],
+  );
+  const failedWrapRef = useRef<HTMLDivElement | null>(null);
+  const failedLogs = useInfiniteLogs({
+    nodeId: id,
     queryKey: ["aq-failed-list", id, periodKey(period)],
-    queryFn: () => api.get<LogsResp>(`/api/nodes/${id}/logs`, { done: "no", ...periodIso(), limit: 50 }),
+    params: failedParams,
+    pageSize: FAILED_PAGE_SIZE,
     enabled: hasLogsTable,
     refetchInterval: 15_000,
+    containerRef: failedWrapRef,
   });
-  const failed = failedListQ.data?.items ?? [];
+  const failed = failedLogs.items;
   // CH временно недоступен: бэкенд отдаёт logs_available=false (а не 500).
   // KPI «неудачные доставки» показываем «—» (не «0», чтобы не вводить в
   // заблуждение), а список — индикатор недоступности.
-  const failedUnavailable =
-    failedCountQ.data?.logs_available === false || failedListQ.data?.logs_available === false;
+  const failedUnavailable = failedCountQ.data?.logs_available === false || !failedLogs.logsAvailable;
 
   const invalidatePending = () => qc.invalidateQueries({ queryKey: ["aq-list", id] });
   const del = useMutation({
@@ -411,7 +432,13 @@ export function QueueTab({
         ) : failed.length === 0 ? (
           <div className="text-fg-muted">{t("queue.failed.empty")}</div>
         ) : (
-          <div className="overflow-hidden rounded-md border border-line">
+          // §72.3: свой скролл-контейнер — по нему хук считает близость к низу и
+          // подгружает следующую страницу неудач.
+          <div
+            ref={failedWrapRef}
+            onScroll={failedLogs.onScroll}
+            className="max-h-[60vh] overflow-y-auto rounded-md border border-line"
+          >
             <table className="w-full text-[13px]">
               <thead className="bg-bg-soft text-left text-[11px] uppercase tracking-wide text-fg-subtle">
                 <tr>
@@ -435,6 +462,22 @@ export function QueueTab({
                     canReplay={isManager}
                   />
                 ))}
+                {failedLogs.query.isFetchingNextPage && (
+                  <tr>
+                    <td colSpan={6} className="px-2 py-3 text-center text-[11px] text-fg-muted">
+                      {t("common.loading")}
+                    </td>
+                  </tr>
+                )}
+                {/* Потолок накопленных строк (§44.K) — дальше не подгружаем,
+                    просим сузить период. */}
+                {failedLogs.atCap && failedLogs.query.hasNextPage && (
+                  <tr>
+                    <td colSpan={6} className="px-2 py-3 text-center text-[11px] text-warn">
+                      {t("logs.cap_reached", { n: MAX_INFINITE_ROWS })}
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>

@@ -48,6 +48,7 @@ import (
 	"nexus/internal/platform/telegram"
 	httpadapter "nexus/internal/web/adapter/in/http"
 	chreader "nexus/internal/web/adapter/out/clickhouse"
+	"nexus/internal/web/adapter/out/instanceprobe"
 	kafkaadmin "nexus/internal/web/adapter/out/kafkaadmin"
 	pgrepo "nexus/internal/web/adapter/out/postgres"
 	prometheusreader "nexus/internal/web/adapter/out/prometheus"
@@ -92,9 +93,13 @@ type App struct {
 
 	// §51: ручка runtime-уровня логов + кольцо для Redis-шиппера.
 	logCtl *bootstrap.LogController
+
+	// identity — §70: идентификатор ноды и признаки первого запуска. Определяет
+	// имена БД ClickHouse новых команд и поведение гейта владения при старте.
+	identity bootstrap.Identity
 }
 
-func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, ch chdriver.Conn, cipher *crypto.Cipher, otelShutdown otelpf.ShutdownFunc, logger logging.Logger, logCtl *bootstrap.LogController) *App {
+func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, ch chdriver.Conn, cipher *crypto.Cipher, otelShutdown otelpf.ShutdownFunc, identity bootstrap.Identity, logger logging.Logger, logCtl *bootstrap.LogController) *App {
 	return &App{
 		cfg:          cfg,
 		logger:       logger,
@@ -102,9 +107,10 @@ func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, ch chdrive
 		redis:        redis,
 		ch:           ch,
 		cipher:       cipher,
-		metrics:      metrics.New("web"),
+		metrics:      metrics.New("web", metrics.WithInstance(identity.ID.String())),
 		otelShutdown: otelShutdown,
 		logCtl:       logCtl,
+		identity:     identity,
 	}
 }
 
@@ -174,9 +180,26 @@ func (a *App) Start(ctx context.Context) error {
 	// ErrCHUnavailable. Тип переменной — интерфейс, чтобы nil-проверки в
 	// usecase работали корректно (не nil-обёртка над nil-указателем).
 	var teamProvisioner webport.TeamProvisioner
+	var chGuard *chpf.Guard
 	if a.ch != nil {
 		a.chMgr = chpf.NewManager(a.ch, chpf.New, &a.cfg.ClickHouse, a.logger)
-		teamProvisioner = chreader.NewTeamProvisioner(a.chMgr, a.logger)
+		// §70.3: гейт владения БД. Кеш вердиктов привязан к серверу, поэтому
+		// сбрасывается после hot-reload соединения (адрес CH меняется из UI).
+		chGuard = chpf.NewGuard(a.chMgr, a.identity.ID, a.logger)
+		a.chMgr.OnReload(func() {
+			chGuard.Invalidate()
+			// Смена адреса ClickHouse из UI — единственный способ увести ноду на
+			// сервер, где её маркеров нет. Тогда разрушающие операции начнут
+			// отклоняться штатным гейтом, и без этой строки причина искалась бы
+			// по косвенным признакам («housekeeping перестал чистить»).
+			a.logger.Warn("clickhouse connection reloaded: ownership verdicts dropped, "+
+				"they will be re-checked on the next operation",
+				a.logger.Str("instance", a.identity.ID.String()))
+		})
+
+		prov := chreader.NewTeamProvisioner(a.chMgr, a.logger)
+		prov.SetOwnership(chGuard)
+		teamProvisioner = prov
 	}
 
 	nodeRepo := pgrepo.NewNodeRepoPg(a.pg, a.cipher, a.logger)
@@ -194,6 +217,11 @@ func (a *App) Start(ctx context.Context) error {
 		if tables, err := nodeRepo.ListClickHouseTables(ctx); err != nil {
 			a.logger.Warn("§37 ensure ch columns: list ch tables failed", a.logger.Err(err))
 		} else {
+			// §70.4: чужие таблицы из обслуживания исключаются — ADD COLUMN
+			// фиксирует порядок колонок, а backfill вообще мутирует все строки.
+			if chGuard != nil {
+				tables = chGuard.FilterManagedTables(ctx, tables)
+			}
 			a.logger.Debug("ensure ch columns: tables collected", a.logger.Int("count", len(tables)))
 			chpf.EnsureNodeIDColumn(ctx, a.chMgr.Conn(), tables, a.logger)
 			chpf.EnsureHTTPMethodColumn(ctx, a.chMgr.Conn(), tables, a.logger) // §39
@@ -231,6 +259,11 @@ func (a *App) Start(ctx context.Context) error {
 	// Перенос узла между командами не должен утаскивать таблицу логов, если её
 	// делят другие узлы (тот же nodeRepo реализует port.NodeTableUsage).
 	nodeUC.SetTableUsage(nodeRepo)
+	// §70.6: узел не может ссылаться на таблицу в БД другой ноды (кроме режима
+	// внешней таблицы §64).
+	if chGuard != nil {
+		nodeUC.SetOwnership(chGuard)
+	}
 	// §27.8: health-ридер Puller-воркеров из общего Redis-стора (rmq:health).
 	rmqHealthReader := rediscache.NewRMQHealthReaderRedis(a.redis)
 	nodeHandler := httpadapter.NewNodeHandler(nodeUC, rmqHealthReader, a.logger)
@@ -245,6 +278,10 @@ func (a *App) Start(ctx context.Context) error {
 		WithFavoriteTeams(teamRepo). // §49: избранные команды (TeamRepoPg реализует и FavoriteTeamRepo)
 		WithSearchHistory(userRepo)  // §62: история поиска узлов (UserRepoPg реализует SearchHistoryRepo)
 	userUC := usecase.NewUserUsecase(userRepo, sessionRepo, teamRepo, auditUC, defaultTeamID, a.logger)
+	// §71: персональные предпочтения (UserRepoPg реализует UserPreferenceRepo,
+	// TeamRepoPg — TeamMembershipLister).
+	prefUC := usecase.NewPreferenceUsecase(userRepo, teamRepo, a.logger)
+	prefHandler := httpadapter.NewPreferenceHandler(prefUC, a.logger)
 
 	tokenRepo := pgrepo.NewAPITokenRepoPg(a.pg, a.logger)
 	// teamRepo — для проверки членства при выборе команды токена (§18.3).
@@ -268,6 +305,7 @@ func (a *App) Start(ctx context.Context) error {
 	r.GET("/api/version", httpadapter.NewVersionHandler(
 		a.cfg.Build.Version, a.cfg.Build.Commit, a.cfg.Build.BuildDate,
 		a.cfg.Web.AllowVersionOverride, versionOverride,
+		a.identity.ID.String(), // §70.8: бейдж ноды в шапке
 	).Get)
 	// Telegram-клиент (§20): для тестовой отправки и планировщика уведомлений.
 	telegramClient := telegram.New(a.logger)
@@ -317,7 +355,10 @@ func (a *App) Start(ctx context.Context) error {
 	userHandler := httpadapter.NewUserHandler(userUC, authUC, a.logger)
 	tokenHandler := httpadapter.NewAPITokenHandler(tokenUC, a.logger)
 	auditHandler := httpadapter.NewAuditHandler(auditUC, a.logger)
-	appSettingsHandler := httpadapter.NewAppSettingsHandler(appSettingsUC, settingsTester, a.cfg.Web.NodeDefaultMaxBodySize, a.logger)
+	appSettingsHandler := httpadapter.NewAppSettingsHandler(
+		appSettingsUC, settingsTester, a.cfg.Web.NodeDefaultMaxBodySize,
+		a.identity.ID.CHDatabasePrefix(), // §70.8: предпросмотр имени БД команды
+		a.logger)
 
 	// §51: консоль служебных логов — хвост Redis-колец nexus:logs:* трёх
 	// сервисов (admin-only, маршруты /api/logs*).
@@ -341,6 +382,8 @@ func (a *App) Start(ctx context.Context) error {
 	var chTableVerifyUC *usecase.CHTableVerifyUsecase
 	if a.chMgr != nil {
 		insp := chreader.NewSchemaInspector(a.chMgr, a.logger)
+		// §70.4: ALTER'ы §56 действуют на таблицу целиком — на чужой запрещены.
+		insp.SetOwnership(chGuard)
 		chSchemaInspector = insp
 		chTableVerifyUC = usecase.NewCHTableVerifyUsecase(insp, a.logger)
 	} else {
@@ -405,6 +448,16 @@ func (a *App) Start(ctx context.Context) error {
 		usecase.NewRMQTester(rabbitmqadapter.NewProber(), a.logger),
 		rl, a.cfg.Web.RMQTestRateLimitPerMin, a.logger)
 
+	// §73: реестр соседних инстансов Nexus. Проба ходит на публичные
+	// /api/version и /ready соседа, поэтому токен не нужен и зависимостей,
+	// кроме PostgreSQL, у раздела нет — регистрируется всегда.
+	peerInstanceHandler := httpadapter.NewPeerInstanceHandler(
+		usecase.NewPeerInstanceUsecase(
+			pgrepo.NewPeerInstanceRepoPg(a.pg, a.logger),
+			instanceprobe.New(time.Duration(a.cfg.Web.InstanceProbeTimeoutMs)*time.Millisecond, a.logger),
+			auditUC, a.logger),
+		rl, a.cfg.Web.InstanceProbeRateLimitPerMin, a.logger)
+
 	// Prometheus query-клиент для метрик панели (§21). Опционален: при пустом
 	// prometheus.url остаётся nil — MetricsUsecase деградирует
 	// (prometheus_available=false), не падает.
@@ -448,6 +501,10 @@ func (a *App) Start(ctx context.Context) error {
 		// каждому её узлу (иначе после переноса узел видит чужое, в т.ч. из
 		// другой команды). Карта «таблица → число узлов» кешируется внутри.
 		logReader.SetTableUsage(nodeRepo)
+		// §70.4: запрет удаления записей в чужой таблице + строгая атрибуция на
+		// ней (карта «таблица → число узлов» считается по своей PostgreSQL и для
+		// межнодовой таблицы врёт).
+		logReader.SetOwnership(chGuard)
 		nodeLogMetrics = logReader // точные per-node метрики узла из CH-логов
 		failedPurger = logReader   // очистка «Неудачных доставок» из CH-логов
 		dispatcher := rcvdispatcher.NewHTTPDispatcher(a.cfg.Web.ReceiverURL, replayDispatchTimeout, a.logger)
@@ -463,10 +520,12 @@ func (a *App) Start(ctx context.Context) error {
 		// без узла в Postgres. Сканирует и дропает только в БД allow-list'а
 		// (teams.ch_database). chCfg остаётся для метаданных.
 		orphanScanner := usecase.NewOrphanScanner(a.chMgr, nodeRepo, teamRepo, &a.cfg.ClickHouse, auditUC, a.logger)
+		// §70.4: таблицы соседней ноды не показываются «бесхозными» и не дропаются.
+		orphanScanner.SetOwnership(chGuard)
 		orphanHandler = httpadapter.NewOrphanHandler(orphanScanner, a.logger)
 
 		// Team provisioning (Phase 10.C): teamProvisioner создан выше.
-		teamUC := usecase.NewTeamUsecase(teamRepo, teamProvisioner, auditUC, a.logger)
+		teamUC := usecase.NewTeamUsecase(teamRepo, teamProvisioner, auditUC, a.identity.ID, a.logger)
 		teamHandler = httpadapter.NewTeamHandler(teamUC, a.logger)
 
 		// ClickHouse hot-reload: Web не держит chlog.Writer, поэтому writers пуст.
@@ -486,7 +545,8 @@ func (a *App) Start(ctx context.Context) error {
 	if promMetrics != nil {
 		notifScheduler := usecase.NewNotificationScheduler(
 			appSettingsUC, teamRepo, nodeRepo, promMetrics, telegramClient,
-			rediscache.NewNotifLock(a.redis), rediscache.NewNotifCheckpoint(a.redis), a.logger,
+			rediscache.NewNotifLock(a.redis), rediscache.NewNotifCheckpoint(a.redis),
+			a.identity.ID.String(), a.logger,
 		)
 		reloadSub.Register(reloader.SectionNotifications, func(ctx context.Context) error {
 			notifScheduler.Reschedule(ctx)
@@ -574,9 +634,11 @@ func (a *App) Start(ctx context.Context) error {
 		HeaderCatalog: headerCatalogHandler,
 		RequestField:  requestFieldHandler,
 		RMQTest:       rmqTestHandler,
+		Instances:     peerInstanceHandler,
 		Kafka:         kafkaHandler,
 		AsyncQueue:    asyncQueueHandler,
 		ServiceLogs:   serviceLogsHandler,
+		Prefs:         prefHandler,
 	}, mw)
 
 	// Реверс-прокси боевых эндпоинтов Receiver (§17.1, единый вход): Web

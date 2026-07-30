@@ -155,14 +155,16 @@ func (c *LogController) StartRedisShipper(ctx context.Context, rdb *goredis.Clie
 // buildLogger собирает логгер сервиса с runtime-уровнем: LevelVar из
 // cfg.Logging.Level, базовый вывод (parity с вендором), кольцо логов и
 // Sentry fan-out при sentryCfg.Use (порог — sentry.level, fallback — базовый).
-func buildLogger(logCfg *logging.Config, sentryCfg *logging.SentryConfig, service string) (logging.Logger, *LogController) {
+func buildLogger(logCfg *logging.Config, sentryCfg *logging.SentryConfig, service, instanceID string) (logging.Logger, *LogController) {
 	lv := new(slog.LevelVar)
 	baseLevel := slogLevelFromInt(logCfg.Level)
 	lv.Set(baseLevel)
 
 	// Файл логов (если включён) живёт до конца процесса — closer не нужен.
 	base, _ := buildBaseHandler(logCfg, lv, os.Stderr)
-	ring := logsink.NewRingHandler(lv, service)
+	// §70.7: каждая запись кольца несёт идентификатор ноды — иначе в консоли
+	// логов записи двух нод неотличимы.
+	ring := logsink.NewRingHandler(lv, service, logsink.WithInstance(instanceID))
 
 	var sentryH slog.Handler
 	if sentryCfg.Use {

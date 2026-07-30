@@ -28,6 +28,8 @@ type Handlers struct {
 	Kafka         *KafkaHandler
 	AsyncQueue    *AsyncQueueHandler
 	ServiceLogs   *ServiceLogsHandler
+	Prefs         *PreferenceHandler
+	Instances     *PeerInstanceHandler
 }
 
 // Middlewares — общие middleware (auth-check, role-check, API token-check).
@@ -80,6 +82,13 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		authed.GET("/me/search-history", RequireSessionOnly(), h.Auth.SearchHistory)
 		authed.POST("/me/search-history", RequireSessionOnly(), h.Auth.RecordSearch)
 		authed.DELETE("/me/search-history", RequireSessionOnly(), h.Auth.ClearSearchHistory)
+		// §71: персональные предпочтения (первый ключ — дефолтный период
+		// рабочего стола) — self-service, только session-cookie: у API-токена
+		// нет ни пользователя в привычном смысле, ни настроек интерфейса.
+		if h.Prefs != nil {
+			authed.GET("/me/prefs", RequireSessionOnly(), h.Prefs.Prefs)
+			authed.PUT("/me/prefs", RequireSessionOnly(), h.Prefs.SetPref)
+		}
 		// Self-service смена собственного пароля (§26): любая роль, только
 		// session-cookie (API-токенам пароль менять незачем).
 		authed.POST("/me/password", RequireSessionOnly(), h.Auth.ChangeOwnPassword)
@@ -305,6 +314,25 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		if h.HeaderCatalog != nil {
 			authedAdmin.PATCH("/headers/:id", h.HeaderCatalog.Update)
 			authedAdmin.DELETE("/headers/:id", h.HeaderCatalog.Delete)
+		}
+
+		// Реестр соседних инстансов Nexus (§73). Admin-only целиком: адрес,
+		// по которому сервер делает исходящий запрос, задаёт администратор.
+		//
+		// Статические сегменты (check, probe) соседствуют с параметрическим
+		// :id — в проекте такое смешивание уже работает (/nodes/dry-run рядом
+		// с /nodes/:id).
+		//
+		// Только session-cookie: API-токены дают read-only доступ по scope'ам
+		// (§7.14), а здесь есть мутации и исходящие запросы с сервера.
+		if h.Instances != nil {
+			authedAdmin.GET("/instances", RequireSessionOnly(), h.Instances.List)
+			authedAdmin.POST("/instances", RequireSessionOnly(), h.Instances.Create)
+			authedAdmin.PATCH("/instances/:id", RequireSessionOnly(), h.Instances.Update)
+			authedAdmin.DELETE("/instances/:id", RequireSessionOnly(), h.Instances.Delete)
+			authedAdmin.POST("/instances/check", RequireSessionOnly(), h.Instances.CheckAll)
+			authedAdmin.POST("/instances/:id/check", RequireSessionOnly(), h.Instances.CheckOne)
+			authedAdmin.POST("/instances/probe", RequireSessionOnly(), h.Instances.Probe)
 		}
 
 		// Orphan-таблицы ClickHouse (§7.10 / Phase 6.7). Admin-only.
