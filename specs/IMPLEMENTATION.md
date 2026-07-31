@@ -374,6 +374,7 @@
 | **§71: персональные предпочтения — дефолтный период рабочего стола per-team** | ✅ §71 | ТЗ — [71-user-preferences.md](sections/71-user-preferences.md), ветка `feature/user-preferences`. **Схема:** миграция [0031](../migrations/0031_user_preferences.up.sql) — `user_preferences(user_id, team_id NULL, key, value JSONB, updated_at)`, уникальный индекс по выражению `COALESCE(team_id, …)` (НЕ `UNIQUE NULLS NOT DISTINCT` — он требует PostgreSQL 15, а бой на 12) + два FK (составной на `user_teams` для инварианта «преф ⊆ членство», прямой на `users` для глобальных строк, которые составной FK по MATCH SIMPLE не трогает). **Домен:** [domain/user_preference.go](../internal/domain/user_preference.go) — `Validate()` проверяет только формат ключа и валидность/размер значения; семантику значения домен не знает намеренно (generic-хранилище). **Порт/репозиторий:** [port/user_preference_repo.go](../internal/web/usecase/port/user_preference_repo.go), [postgres/user_preferences.go](../internal/web/adapter/out/postgres/user_preferences.go) — upsert одним запросом с атомарной проверкой потолка (200/пользователь), `IS NOT DISTINCT FROM` для глобальных строк, `ON CONFLICT` по тому же выражению, что и индекс. **Usecase:** [usecase/preferences.go](../internal/web/usecase/preferences.go) — отдельный `PreferenceUsecase` с конструкторной инъекцией (не builder на `AuthUsecase`), чтение НИКОГДА не возвращает ошибку. **HTTP:** [preference_handler.go](../internal/web/adapter/in/http/preference_handler.go), `GET/PUT /api/me/prefs` с `RequireSessionOnly`. **Фронт:** [lib/prefs.ts](../web-ui/src/lib/prefs.ts) (`useTeamDefaultPeriod`, `useSetPref`, миграция старого ключа), [lib/period.ts](../web-ui/src/lib/period.ts) (`parsePeriodPref` вместо `load/saveDefaultPeriod`), [lib/overviewFilters.ts](../web-ui/src/lib/overviewFilters.ts) (дефолт параметром во всех функциях), [Overview.tsx](../web-ui/src/pages/Overview.tsx) (`periodReady` в трёх местах). Тесты: [prefs.test.tsx](../web-ui/src/lib/prefs.test.tsx), [Overview.period.test.tsx](../web-ui/src/pages/Overview.period.test.tsx) (регресс «после переключения команды — дефолт новой»), [user_prefs_repo_test.go](../tests/integration/user_prefs_repo_test.go). Развёртывание — DEPLOYMENT.md §8, неочевидности — §4.52 |
 | **§72: серверная фильтрация логов узла** | ✅ §72 | ТЗ — [72-logs-server-side-filter.md](sections/72-logs-server-side-filter.md), ветка `feature/logs-server-side-filter`. Боевой инцидент 2026-07-29 (узел `task/task_vika`): фильтр «Ошибки» показывал «Показано 3 из 33», скролл не шёл — быстрые фильтры применялись в браузере к уже загруженной странице, счётчик «из M» считался сервером по всей таблице. **72.1 (семантика):** `condLogOK`/`condLogErr` в [log_reader.go](../internal/web/adapter/out/clickhouse/log_reader.go) (`ok = done=1 AND 200<=status<400`, `err = NOT ok` — полное дополнение), зеркало `logRecordOK` в [usecase/logs.go](../internal/web/usecase/logs.go), контракт `LogQuery.Status` в [port/log_reader.go](../internal/web/usecase/port/log_reader.go), `@Param status` + `make swagger`; до §72.1 запись с 3xx не проходила НИ ОДИН фильтр, а незавершённая с 2xx числилась успехом. **72.2 (фронт):** [lib/logsQuery.ts](../web-ui/src/lib/logsQuery.ts) — единственный сборщик параметров для `/logs`, `/logs/count` и SSE-стрима (+`isLogOK` для подсветки строк в [LogsTab.tsx](../web-ui/src/components/node/LogsTab.tsx) и [OverviewTab.tsx](../web-ui/src/components/node/OverviewTab.tsx)); `status`/`done` в `queryKey`, клиентский пост-фильтр удалён, live-буфер чистится при смене фильтра. **72.3 (очередь):** общий хук [lib/useInfiniteLogs.ts](../web-ui/src/lib/useInfiniteLogs.ts) (курсор `to`+`before_id`, дедуп, потолок §44.K, догрузка по скроллу и при недоборе высоты) — им же питается секция «Неудачные доставки» [QueueTab.tsx](../web-ui/src/components/node/QueueTab.tsx), где стоял жёсткий `limit=50` без пагинации. **72.4 (ClickHouse):** `dateCreateConds`/`dayUTC` — то же окно по колонке PARTITION BY с запасом ±1 день, гейт `LogQuery.DateCreateAligned` (выключен для внешних таблиц §64), выдаётся в `applyDateCreateAligned`; замер 200 000 строк — 200 000 прочитанных строк и 3 части против 8 192 и 1 части. **72.5:** возврат к верху схлопывает накопленные страницы. Тесты: `TestSearchConds_{StatusDone,StatusComplement,TimeWindow}`, `TestMatchLogFilter_StatusComplement`, `TestLogs_DateCreateAligned_GatedByExternalTable`, [log_status_filter_test.go](../tests/integration/log_status_filter_test.go), [log_partition_pruning_test.go](../tests/integration/log_partition_pruning_test.go), [logsQuery.test.ts](../web-ui/src/lib/logsQuery.test.ts), [LogsTab.filter.test.tsx](../web-ui/src/components/node/LogsTab.filter.test.tsx), [QueueTab.failed.test.tsx](../web-ui/src/components/node/QueueTab.failed.test.tsx). Без миграций, ENV-ключей и i18n-ключей. Неочевидности — §4.53. Бандл пересобран → `internal/web/static/` |
 | **§73: реестр инстансов в интерфейсе** | ✅ §73 | ТЗ — [73-instances-registry.md](sections/73-instances-registry.md), ветка `feature/instances-registry`. §70 ввёл понятие инстанса, но оставил его невидимым: нода знает только себя (`instance_identity` — синглтон). Вкладка **Настройки → Инстансы** (`/settings/instances`, admin-only) показывает соседние развёртывания: название, адрес-гиперссылка (`target=_blank` + `rel=noopener noreferrer`), код инстанса, версия, статус. **Токен не нужен и на удалённой стороне менять нечего** — версия и активность снимаются с уже публичных `GET /api/version` и `GET /ready`, опрашиваемых параллельно; опрашивает сервер, а не браузер (CORS не настроен, CSP `connect-src 'self'`, плюс снимается mixed-content). Таблица `peer_instances` (миграция 0032) — отдельно от `instance_identity`, без `team_id`, уникальность по `lower(base_url)`, кеш последней пробы для мгновенной отрисовки. Семь admin-only маршрутов под session-cookie; недоступность соседа — его статус, а не ошибка запроса (200). Файлы: [domain/peer_instance.go](../internal/domain/peer_instance.go), [usecase/peer_instance.go](../internal/web/usecase/peer_instance.go), [adapter/out/instanceprobe/prober.go](../internal/web/adapter/out/instanceprobe/prober.go), [adapter/out/postgres/peer_instance_repo.go](../internal/web/adapter/out/postgres/peer_instance_repo.go), [adapter/in/http/peer_instance_handler.go](../internal/web/adapter/in/http/peer_instance_handler.go), [web-ui/src/pages/settings/Instances.tsx](../web-ui/src/pages/settings/Instances.tsx). Два конфиг-ключа: `web.instance_probe_timeout_ms` (3000), `web.instance_probe_rate_limit_per_min` (30) |
+| **§74: безопасный откат на предыдущую версию** | ✅ §74 | ТЗ — [74-safe-rollback.md](sections/74-safe-rollback.md), ветка `feature/safe-rollback`. Откат кода упирался в стартовый гейт `golang-migrate`: `Up()` требует, чтобы версия из `schema_migrations` существовала в каталоге миграций образа, поэтому откаченный Web/Receiver падал с `no migration found for version N` и уходил в crash-loop (эмпирически проверено на PostgreSQL 12: схема 32 + каталог до 0028), а `--migrate-down` старым образом блокировался тем же гейтом — оператор, успевший пересобрать старый тег, оставался без инструмента отката. Теперь [pg.Migrator.EnsureUp](../internal/platform/pg/migrate.go) сравнивает версию в БД с `MaxLocalVersion()` **до** `Up()`: схема новее → `State.Ahead`, миграции не применяются, старт продолжается; `dirty` → `ErrDirtySchema` и `exit 1`, как раньше. [bootstrap.AutoMigrate](../internal/platform/bootstrap/bootstrap.go) возвращает `SchemaState`, при `Ahead` пишет запись уровня **error** (уровень выбран ради Sentry: порог `sentry.level` = error, `warn` туда не доедет) и отдаёт состояние в `web.New`/`receiver.New` → метрики `nexus_pg_schema_version` / `nexus_pg_schema_ahead` ([metrics.go](../internal/platform/metrics/metrics.go)) + алерт `NexusSchemaAheadOfBinary` ([prometheus.alerts.yml](../deploy/prometheus.alerts.yml)). Плюс `--migrate-force <N>` (выход из `dirty` без psql; SQL не выполняет, номер сверяется с каталогом), [scripts/deploy/images.sh](../scripts/deploy/images.sh) (`tag`/`list`/`rollback` — `up --build` перетирает `nexus-*:latest`, и без сохранённого тега откат означал пересборку трёх образов) и [scripts/release/rollback_info.py](../scripts/release/rollback_info.py) (строка «Откат» для CHANGELOG). Процедуры оператора — [DEPLOYMENT.md §10](../DEPLOYMENT.md). Без миграций и новых конфиг-ключей |
 | UI формы: Toggle, карточки «Заголовки» / «Логирование» | ✅ Phase 22.3 | [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx) (две карточки, мастер-тумблер гасит `<fieldset disabled>`), компонент [Toggle](../web-ui/src/components/ui/pickers.tsx), i18n ru/en |
 | Telegram-алерты через Prometheus + метрика `nexus_request_incomplete_total` | ✅ Phase 22.4 | [notification.go](../internal/web/usecase/notification.go) (`PromMetrics.NodeErrors` вместо `LogReader.CountErrors`), [metrics.go](../internal/platform/metrics/metrics.go), инкремент в [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go)/[async.go](../internal/sender/usecase/async.go), wiring [app.go](../internal/web/app.go) (требует Prometheus) |
 | Карточки Overview под `ui_cards.html` (спарклайн, p95, фильтр) | ✅ Phase 22.5 | [Overview.tsx](../web-ui/src/pages/Overview.tsx) (полоса-акцент, chip+pill, 3 метрики, спарклайн, target, фильтр статусов, сортировка); backend [prometheus/client.go](../internal/web/adapter/out/prometheus/client.go) (`NodeSeries` range-запрос + p95 в `NodeThroughput`), [metrics.go](../internal/web/usecase/metrics.go), DTO [metrics_handler.go](../internal/web/adapter/in/http/metrics_handler.go) |
@@ -2225,6 +2226,42 @@ filter, Create без TeamID). До блока B (team-switcher в сессии)
 - **`created_by`/`updated_by` получают отдельные плейсхолдеры при одном значении.** Повторная
   подстановка одного `$N` в `INSERT` роняет pgx с 42P08 — те же грабли, что в §66 и §71.
 
+### 4.55 §74 — безопасный откат: что неочевидно
+
+- **Откат кода ломался не из-за схемы, а из-за гейта библиотеки.** `golang-migrate` в `readUp`
+  первым делом зовёт `versionExists(curVersion)` и, не найдя версию в источнике, возвращает
+  `no migration found for version N`. Для `AutoMigrate` это была обычная ошибка → `os.Exit(1)` →
+  crash-loop под `restart: unless-stopped`. Сама схема при этом совместима: все `ADD COLUMN` в
+  репозитории nullable либо `NOT NULL DEFAULT`, `SELECT *` в коде нет. Проверено эмпирически
+  (PostgreSQL 12, схема 32, каталог до 0028) — и именно поэтому послабление безопасно.
+- **Решение принимается сравнением версий, а не разбором текста ошибки.** `EnsureUp` считает
+  `MaxLocalVersion()` по источнику миграций и сравнивает с `schema_migrations` ДО `Up()`. Ловить
+  подстроку «no migration found» нельзя: это не контракт библиотеки.
+- **`Migrator` держит `source.Driver` сам** (`source.Open` + `migrate.NewWithSourceInstance`
+  вместо `migrate.New`): у `*migrate.Migrate` нет способа спросить максимальную версию каталога.
+  `NewWithSourceInstance` при ошибке переданный источник **не закрывает** — закрываем сами,
+  иначе каждая неудачная попытка оставляла бы открытый драйвер.
+- **Уровень записи про «схему новее» — `error`, а не `warn`, и это осознанно.** Sentry-хендлер
+  в цепочке логгера имеет собственный порог `sentry.level` (по умолчанию `2` = error), от
+  runtime-уровня §51 не зависящий: `warn` в Sentry не попал бы вовсе.
+- **Признак `nexus_pg_schema_ahead` держится до конца жизни процесса.** Он снимается только
+  следующим стартом на согласованной схеме — потому и алерт `for: 15m`, а не мгновенный: за это
+  время штатный откат успевает завершиться.
+- **`--migrate-force` сверяет номер с каталогом.** `migrate.Force` сам примет любое число, и
+  опечатка объявила бы базу в состоянии, которого не существует; `versionExistsLocally`
+  обрабатывает `os.ErrExist` от file-драйвера как «версия есть, но без up-файла» (только down).
+- **`docker compose` не даёт образам приложения имён с версией**: без `image:` в compose имя
+  собирается как `<project>-<service>` (`nexus-web`), тег всегда `latest`, а прежний образ после
+  `up --build` остаётся `<none>`. Отсюда `scripts/deploy/images.sh` — он лишь расставляет теги,
+  чтобы `up --no-build` поднял прежний образ за секунды.
+- **`images.sh rollback` проверяет ВСЕ образы до первой перестановки тега.** Половина сервисов на
+  старой версии, половина на новой — худший из возможных исходов аварийного отката.
+- **`rollback_info.py` печатает в UTF-8 принудительно.** Консоль Windows по умолчанию cp1251, и
+  вывод со стрелкой/длинным тире (они же идут в CHANGELOG) падал с `UnicodeEncodeError`.
+- **Новые integration-тесты пришлось внести в `-run` цели `test-int-pg`.** Фильтр перечисляет
+  префиксы имён (`^TestMigrations` → расширен до `^TestMigrate`); иначе тест существует, но
+  локально не гоняется ни одной целью — ровно то, что случилось с `TestMultiInstance*` в §70.
+
 ---
 
 ## 5. Команды для типовых задач
@@ -2245,6 +2282,13 @@ make loadtest TARGET_RPS=500 DURATION=10m NODES=50 ADMIN_PASSWORD=…
 make migrate-up
 make migrate-down N=1
 make migrate-status
+make migrate-force V=28                        # §74.4: объявить версию и снять dirty (SQL НЕ выполняет)
+
+# Образы приложения и откат (§74.5) — на сервере скрипт зовут напрямую
+make images-tag V=1.21.1                       # сохранить текущие nexus-*:latest под версией
+make images-list                               # какие версии сохранены на хосте
+make images-rollback V=1.21.1                  # вернуть :latest без пересборки
+python scripts/release/rollback_info.py v1.20.2 v1.21.0   # §74.6: строка «Откат» для CHANGELOG
 # Bootstrap admin (после первой миграции password_hash NULL):
 make set-admin-password PASSWORD=mySecret
 
@@ -2452,6 +2496,14 @@ vitest во фронте (было 3 теста без CI-запуска → +2 
 
 Если будете расширять — вот логичные следующие шаги, в порядке полезности:
 
+0. **Горизонтальное масштабирование Receiver/Web (нулевой простой при обновлении)** — вынесено
+   из §74 отдельным ТЗ. Сейчас у каждого сервиса один экземпляр, и `docker compose up` даёт
+   короткий перерыв даже на плановом обновлении, а падение экземпляра — полный простой. Что уже
+   готово: сервисы stateless, миграции под advisory-lock (одновременный старт безопасен), сессии
+   в Redis. Что нужно продумать: балансировщик и health-gate перед переключением трафика,
+   поведение singleflight/L2-кеша Receiver'а на нескольких экземплярах, одиночные фоновые
+   процессы (sweeper'ы DLQ/paused, housekeeping ClickHouse, нотификатор — сейчас их лидерство
+   держится Redis-локом только у части), метрики с меткой экземпляра.
 1. **OpenTelemetry distributed tracing** (§16: явно out-of-scope v1, но даст
    корреляцию logs↔traces↔metrics при росте числа сервисов).
 2. **Webhook signature verification** (`/v1/callback/`) — §16, для приёма
