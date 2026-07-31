@@ -179,7 +179,7 @@ receiver:
   sender_grpc:
     addr: sender:9190            # Адрес gRPC-сервера Sender (host:port).
     pool_size: 8                 # Размер пула gRPC-соединений к Sender.
-    timeout_ms: 30000            # Таймаут одного gRPC-вызова (мс).
+    timeout_ms: 30000            # НЕ ПРИМЕНЯЕТСЯ — мёртвый параметр, оставлен ради совместимости формата. Дедлайн gRPC-вызову не ставится: RPC живёт под контекстом входящего HTTP-запроса, а потолок задаёт per-node timeout_ms узла. Менять значение бесполезно — sync-запрос им не оборвать и не продлить.
     keepalive_time_sec: 30       # Период keepalive-ping'ов по соединению (сек).
     keepalive_timeout_sec: 10    # Ожидание ответа на keepalive-ping до разрыва (сек).
     max_message_bytes: 67108864  # Лимит размера gRPC-сообщения клиента (оба напр.) = 64 МиБ. Дефолт gRPC 4 МиБ мал для больших тел (ответ апстрима → ResourceExhausted). Должен быть ≥ receiver.max_body_bytes и совпадать с sender.grpc_max_message_bytes.
@@ -268,7 +268,7 @@ web:
   sender_grpc:
     addr: sender:9190            # Адрес gRPC-сервера Sender (host:port). Пусто = реальный режим выключен.
     pool_size: 2                 # Пул соединений: dry-run — ручная операция, большой пул не нужен.
-    timeout_ms: 30000            # Таймаут gRPC-вызова (мс). Должен покрывать timeout_ms узла + ретраи, иначе тест «висящего» узла оборвётся раньше срока.
+    timeout_ms: 30000            # НЕ ПРИМЕНЯЕТСЯ — мёртвый параметр (тот же grpcsender без дедлайна, что у receiver.sender_grpc). Дедлайн dry-run-вызова задаёт контекст HTTP-запроса Web + per-node timeout_ms узла.
     keepalive_time_sec: 30       # Период keepalive-ping'ов по соединению (сек).
     keepalive_timeout_sec: 10    # Ожидание ответа на keepalive-ping до разрыва (сек).
     max_message_bytes: 67108864  # Лимит размера gRPC-сообщения = 64 МиБ (как у receiver.sender_grpc).

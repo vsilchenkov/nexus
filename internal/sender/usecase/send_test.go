@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"mime/multipart"
 	"strings"
 	"sync"
@@ -1007,4 +1008,63 @@ func TestSend_NonMultipartRequest_Unchanged(t *testing.T) {
 	rec := logw.written[0].rec
 	assert.Equal(t, `{"k":"v"}`, rec.Request, "обычное тело в логе как есть")
 	assert.False(t, domain.IsMultipartLogPlaceholder(rec.Request))
+}
+
+// stubCancelingCaller — HTTP-стаб, имитирующий обрыв клиента: на первой попытке
+// отменяет контекст (как gin при закрытом соединении) и возвращает ошибку в том
+// же виде, в каком её отдаёт net/http.
+type stubCancelingCaller struct {
+	mu     sync.Mutex
+	calls  int
+	cancel context.CancelFunc
+}
+
+func (s *stubCancelingCaller) Do(ctx context.Context, req *port.HTTPRequest) (*port.HTTPResponse, error) {
+	s.mu.Lock()
+	s.calls++
+	first := s.calls == 1
+	s.mu.Unlock()
+	if first && s.cancel != nil {
+		s.cancel()
+	}
+	url := ""
+	if req != nil {
+		url = req.URL
+	}
+	return nil, fmt.Errorf("Post %q: %w", url, ctx.Err())
+}
+
+// TestSend_ContextCanceled_StopsRetrying — боевой сценарий 30.07.2026 (узел
+// task_vika): вызывающая система разорвала соединение по СВОЕМУ таймауту, ctx
+// умер. Ретраи в этот момент бессмысленны — каждая попытка падает мгновенно тем
+// же `context canceled`. Ждём ровно одну попытку и первую ошибку в логе.
+//
+// Красный на коде до фикса: там цикл добивал все RetryCount+1 попыток.
+func TestSend_ContextCanceled_StopsRetrying(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	httpc := &stubCancelingCaller{cancel: cancel}
+	logw := &stubLogWriter{}
+	uc := NewSendUsecase(httpc, logw, &stubBreaker{allow: true}, logging.NewNoop(), 64<<20)
+
+	in := baseInput()
+	in.RetryCount = 3       // 4 попытки, если бы контекст был жив
+	in.RetryBackoffMs = 200 // на старом коде дало бы ещё и сон между ними
+
+	start := time.Now()
+	out := uc.Send(ctx, in)
+
+	assert.Equal(t, 1, httpc.calls, "после отмены контекста повторных вызовов быть не должно")
+	assert.Equal(t, int32(1), out.Attempts)
+	assert.Contains(t, out.Error, "context canceled")
+	assert.Less(t, time.Since(start), time.Second, "backoff-сон пропущен")
+
+	require.Len(t, logw.written, 1)
+	rec := logw.written[0].rec
+	assert.Equal(t, int32(1), rec.Attempts)
+	assert.False(t, rec.Done)
+	assert.Contains(t, rec.Reason, "context canceled")
 }

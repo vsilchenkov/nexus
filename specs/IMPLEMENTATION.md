@@ -3433,7 +3433,30 @@ vitest во фронте (было 3 теста без CI-запуска → +2 
   `web.sender_grpc.timeout_ms` — **мёртвые параметры**, `grpcsender.New/Send`
   ([platform/grpcsender/client.go](../internal/platform/grpcsender/client.go)) их не читает и
   deadline не ставит — вызов наследует контекст входящего HTTP-запроса. Не удалены, чтобы не менять
-  формат конфига; знай, что менять их значения бесполезно.
+  формат конфига; знай, что менять их значения бесполезно. Это **написано прямо в конфигах**
+  (`config.example.yml`, §8 ТЗ) и в godoc `ReceiverSenderGRPCConfig.TimeoutMs` — раньше комментарий
+  обещал «Таймаут одного gRPC-вызова» и провоцировал «чинить» им боевые обрывы. Страховка от
+  наивной «починки» — `TestGRPCSender_ConfigTimeoutDoesNotCapCall`
+  ([client_timeout_test.go](../internal/platform/grpcsender/client_timeout_test.go)): применить
+  параметр как дедлайн = обрезать узлы с `timeout_ms=600000` на 30-й секунде, т.е. вернуть NEXUS-8.
+- **`context canceled` в логе ≠ таймаут узла — это ЧУЖОЙ дедлайн.** Разобрано на боевом инциденте
+  30.07.2026 (узел `task_vika`, `timeout_ms=600000`, обрыв на 49999 мс). Различай по тексту reason:
+  - `context deadline exceeded (Client.Timeout exceeded ...)` — сработал НАШ таймаут (per-node
+    `timeout_ms`, а до фикса NEXUS-8 — `http.Client.Timeout`);
+  - `context canceled` — родительский контекст отменён СНАРУЖИ: вызывающая система закрыла
+    HTTP-соединение → gin отменил `c.Request.Context()` → gRPC-вызов CANCELED → `httpclient.Do`
+    бросил исходящий запрос. Ни один таймаут Nexus здесь не участвует.
+
+    Диагностический признак: **одинаковая длительность** у серии обрывов (в инциденте 18 записей
+    уложились в 49993–50000 мс) — это дедлайн клиента или прокси перед Receiver, искать надо вне
+    Nexus. Разброс длительностей означал бы обратное. Тестами контракт закреплён в
+    `TestGRPCSender_CallerContextCancelsRPC`.
+- **Ретраи не продолжаются после смерти контекста** ([send.go](../internal/sender/usecase/send.go),
+  цикл попыток): при отменённом `ctx` цикл выходит с первой — настоящей — ошибкой. Иначе узел с
+  `retry_count>0` домалывал все попытки, каждая падала мгновенно тем же `context canceled`,
+  раздувая `attempts` в CH и маскируя первопричину; backoff-сон между ними тоже отрабатывал впустую.
+  Регресс-тест `TestSend_ContextCanceled_StopsRetrying`. Для узлов с `retry_count=0` (как
+  `task_vika`) поведение не менялось.
 - **Kafka-ребаланс при async 600с НЕ грозит**: `kafka.consumer.max_poll_interval_ms` — декларативный,
   segmentio/kafka-go его не применяет (heartbeat consumer-group идёт в фоновой горутине
   generation-loop независимо от обработки сообщения; ребаланс — только по `session_timeout_ms` при

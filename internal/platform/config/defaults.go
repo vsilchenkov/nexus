@@ -140,6 +140,9 @@ func applyDefaults(c *Config) {
 	if c.Receiver.SenderGRPC.PoolSize == 0 {
 		c.Receiver.SenderGRPC.PoolSize = 8
 	}
+	// Мёртвый параметр (см. godoc ReceiverSenderGRPCConfig.TimeoutMs): дедлайн
+	// gRPC-вызову никто не ставит. Дефолт сохранён, чтобы значение в конфиге и в
+	// прогретой структуре не расходилось; на поведение не влияет.
 	if c.Receiver.SenderGRPC.TimeoutMs == 0 {
 		c.Receiver.SenderGRPC.TimeoutMs = 30000
 	}
@@ -230,6 +233,7 @@ func applyDefaults(c *Config) {
 	if c.Web.SenderGRPC.PoolSize == 0 {
 		c.Web.SenderGRPC.PoolSize = 2
 	}
+	// Тоже мёртвый (тот же тип и тот же grpcsender без дедлайна).
 	if c.Web.SenderGRPC.TimeoutMs == 0 {
 		c.Web.SenderGRPC.TimeoutMs = 30000
 	}

@@ -255,11 +255,16 @@ type ReceiverL2CacheConfig struct {
 }
 
 type ReceiverSenderGRPCConfig struct {
-	Addr                string `yaml:"addr"`
-	PoolSize            int    `yaml:"pool_size"`
-	TimeoutMs           int    `yaml:"timeout_ms"`
-	KeepaliveTimeSec    int    `yaml:"keepalive_time_sec"`
-	KeepaliveTimeoutSec int    `yaml:"keepalive_timeout_sec"`
+	Addr     string `yaml:"addr"`
+	PoolSize int    `yaml:"pool_size"`
+	// TimeoutMs — НЕ ПРИМЕНЯЕТСЯ (мёртвый параметр, оставлен ради совместимости
+	// формата конфига). `grpcsender.New/Send` дедлайн вызову не ставит: RPC
+	// наследует контекст входящего HTTP-запроса, а реальный потолок задаёт
+	// per-node `timeout_ms` внутри Sender'а. Менять значение бесполезно —
+	// боевые обрывы им не лечатся и не вызываются (§4.39 IMPLEMENTATION.md).
+	TimeoutMs           int `yaml:"timeout_ms"`
+	KeepaliveTimeSec    int `yaml:"keepalive_time_sec"`
+	KeepaliveTimeoutSec int `yaml:"keepalive_timeout_sec"`
 	// MaxMessageBytes — лимит размера одного gRPC-сообщения для КЛИЕНТА Receiver→
 	// Sender, оба направления (запрос с телом запроса и ответ с телом ответа).
 	// Дефолт gRPC — 4 МиБ, чего мало для больших тел (ответ апстрима на десятки

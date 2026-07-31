@@ -266,6 +266,20 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		if lastErr == nil && resp != nil && resp.StatusCode < 500 {
 			break // успех или 4xx — retry не помогает
 		}
+		// Контекст мёртв (клиент разорвал соединение — боевой сценарий «1С сдалась
+		// по своему таймауту», либо shutdown сервиса) — ретраить некуда: каждая
+		// следующая попытка падает мгновенно тем же `context canceled`, раздувая
+		// attempts в логе и подменяя первую — настоящую — причину. Спать в backoff
+		// тем более нельзя. Выходим с последней ошибкой.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			u.logger.Debug("send: context done, retries stopped",
+				u.logger.Str("id", in.ID),
+				u.logger.Str("node", in.NodePath),
+				u.logger.Int("attempt", int(n)),
+				u.logger.Int("max_attempts", int(maxAttempts)),
+				u.logger.Err(ctxErr))
+			break
+		}
 		// exponential backoff with full jitter
 		base := in.RetryBackoffMs
 		if base <= 0 {

@@ -134,7 +134,7 @@ receiver:
   sender_grpc:
     addr: sender:9190
     pool_size: 8                       # пул gRPC-соединений
-    timeout_ms: 30000
+    timeout_ms: 30000                  # НЕ применяется: дедлайн gRPC-вызову не ставится (мёртвый параметр)
     keepalive_time_sec: 30
     keepalive_timeout_sec: 10
 
