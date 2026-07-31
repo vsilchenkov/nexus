@@ -94,6 +94,10 @@ export function useTeamUrlParam(): TeamUrlState {
   const { mutate: switchTeam } = useSwitchTeam();
 
   const [unavailableSlug, setUnavailableSlug] = useState<string | null>(null);
+  // pendingSlug — намеченная к записи в URL команда (см. writeParam): держится в
+  // state, а не в ref, именно ради гарантированного рендера между решением и
+  // записью.
+  const [pendingSlug, setPendingSlug] = useState<string | null>(null);
 
   // handled — последнее разобранное значение параметра: переключаем РОВНО ОДИН
   // РАЗ на значение, пока оно не сменилось (приём handledKey из lib/nodeShare.ts,
@@ -128,8 +132,28 @@ export function useTeamUrlParam(): TeamUrlState {
     // writeParam — привести параметр к переданному slug'у. Функциональная форма
     // обязательна: чужие ключи (фильтры рабочего стола §54) обязаны выжить.
     // replace, а не push — переключение команды не должно засорять историю.
+    //
+    // Запись идёт в ДВА прохода, и это не перестраховка, а лечение гонки, которую
+    // поймал стенд (§76.7). `setSearchParams(prev => …)` из react-router отдаёт в
+    // `prev` НЕ актуальную query-строку, а снимок своего рендера. Смена команды
+    // будит сразу двух писателей в одном коммите: нас и рабочий стол (§71 сбрасывает
+    // период). Тот пишет вторым и своим устаревшим снимком возвращает прежний
+    // `?team=`, причём итоговая строка совпадает с исходной — location не меняется,
+    // повторного рендера нет, и ссылка молча остаётся врать («переключил команду в
+    // шапке — параметр от прежней»).
+    //
+    // Поэтому сначала запоминаем намерение в state: он гарантирует новый рендер
+    // ПОСЛЕ всех записей коммита, и уже на нём `params`/`prev` актуальны. Ждать
+    // изменения location для этого нельзя — его как раз может и не быть.
     const writeParam = (slug: string) => {
-      if (params.get(TEAM_PARAM) === slug) return; // идемпотентность: иначе цикл эффектов
+      if (params.get(TEAM_PARAM) === slug) {
+        if (pendingSlug !== null) setPendingSlug(null);
+        return; // идемпотентность: иначе цикл эффектов
+      }
+      if (pendingSlug !== slug) {
+        setPendingSlug(slug); // проход 1: намерение, запись — следующим рендером
+        return;
+      }
       setParams(
         (prev) => {
           const next = new URLSearchParams(prev);
@@ -188,7 +212,17 @@ export function useTeamUrlParam(): TeamUrlState {
     // при этом остаются той же ссылкой (structural sharing react-query), и без
     // этой зависимости зеркало залипло бы на недостижимой команде до следующей
     // навигации.
-  }, [allowed, data, currentSlug, desired, params, setParams, switchTeam, unavailableSlug]);
+  }, [
+    allowed,
+    data,
+    currentSlug,
+    desired,
+    params,
+    setParams,
+    switchTeam,
+    unavailableSlug,
+    pendingSlug,
+  ]);
 
   return { unavailableSlug, dismiss: () => setUnavailableSlug(null) };
 }

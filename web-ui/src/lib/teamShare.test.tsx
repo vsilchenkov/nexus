@@ -1,17 +1,18 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import {
   MemoryRouter,
   useLocation,
   useNavigate,
   useNavigationType,
+  useSearchParams,
   type NavigateFunction,
 } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { teamPageUrl, useTeamUrlParam } from "./teamShare";
-import { MY_TEAMS_KEY, type MyTeamsResp, type TeamMembership } from "./teams";
+import { MY_TEAMS_KEY, useMyTeams, type MyTeamsResp, type TeamMembership } from "./teams";
 
 // §76: параметр `?team=<slug>` — зеркало текущей команды сессии в адресной
 // строке плюс одноразовое применение входящей ссылки. Тесты фиксируют оба
@@ -93,21 +94,54 @@ function RouterProbe() {
   return null;
 }
 
-function wrapperFor(qc: QueryClient, entry: string) {
+function wrapperFor(qc: QueryClient, entry: string, rival = false) {
   return ({ children }: { children: ReactNode }) => (
     <MemoryRouter initialEntries={[entry]}>
       <QueryClientProvider client={qc}>
         {children}
+        {rival && <RivalWriter />}
         <RouterProbe />
       </QueryClientProvider>
     </MemoryRouter>
   );
 }
 
-function render(server: Server, entry: string) {
+// RivalWriter — модель рабочего стола (§71): на смену команды переписывает
+// query-строку, сбрасывая период. Пишет ВТОРЫМ (объявлен после хука) и, как
+// настоящий setSearchParams, видит в `prev` снимок своего рендера, а не
+// актуальный URL — на этом и ломалось зеркало, пока запись шла в один проход.
+//
+// Важная деталь модели: период в тесте УЖЕ дефолтный, поэтому запись соседа
+// ничего не меняет и итоговая строка совпадает с исходной. Именно так дефект и
+// выглядел на стенде: location не меняется → рендера нет → починить некому.
+// Если бы сосед реально что-то удалял, строка бы изменилась, рендер бы случился
+// и зеркало исправилось само — тест был бы зелёным и на сломанном коде.
+function RivalWriter() {
+  const [, setParams] = useSearchParams();
+  const { data } = useMyTeams();
+  const teamID = data?.current_team_id ?? "";
+  const seen = useRef("");
+  useEffect(() => {
+    if (!teamID || seen.current === teamID) return;
+    const first = seen.current === "";
+    seen.current = teamID;
+    if (first) return; // первое появление команды сбросом не считается (§71.5)
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("range");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [teamID, setParams]);
+  return null;
+}
+
+function render(server: Server, entry: string, rival = false) {
   mockServer(server);
   const qc = newClient();
-  const hook = renderHook(() => useTeamUrlParam(), { wrapper: wrapperFor(qc, entry) });
+  const hook = renderHook(() => useTeamUrlParam(), { wrapper: wrapperFor(qc, entry, rival) });
   return { qc, ...hook };
 }
 
@@ -297,6 +331,47 @@ describe("useTeamUrlParam", () => {
     const { result } = render(empty, "/?team=");
     await waitFor(() => expect(probe.search).toBe("?team=beta"));
     expect(result.current.unavailableSlug).toBeNull(); // баннера с пустым именем быть не должно
+  });
+
+  it("второй писатель URL не откатывает параметр (гонка §71, нашёл стенд)", async () => {
+    // Регресс на дефект, который не увидел ни один юнит-тест и поймал только
+    // живой стенд: пользователь переключает команду в шапке, рабочий стол в том
+    // же коммите переписывает query (сброс периода §71) своим устаревшим
+    // снимком — и возвращает прежний `?team=`. Итоговая строка совпадала с
+    // исходной, location не менялся, повторного рендера не было, и ссылка молча
+    // оставалась врать.
+    const server: Server = { items: [ALPHA, BETA], currentTeamID: "team-a" };
+    const { qc } = render(server, "/?team=alpha", true);
+    await waitFor(() => expect(qc.getQueryData(MY_TEAMS_KEY)).toBeTruthy());
+
+    act(() => {
+      server.currentTeamID = "team-b";
+      qc.setQueryData<MyTeamsResp>(MY_TEAMS_KEY, (prev) =>
+        prev ? { ...prev, current_team_id: "team-b" } : prev,
+      );
+    });
+
+    await waitFor(() => expect(new URLSearchParams(probe.search).get("team")).toBe("beta"));
+    expect(apiPost).not.toHaveBeenCalled();
+  });
+
+  it("сброс периода соседом не отменяется зеркалом", async () => {
+    // Обратная сторона той же гонки: догоняя команду, мы не должны воскресить
+    // ключи, которые сосед только что убрал (§71 сбрасывает период при смене
+    // команды) — иначе лечение одного дефекта вводило бы другой.
+    const server: Server = { items: [ALPHA, BETA], currentTeamID: "team-a" };
+    const { qc } = render(server, "/?team=alpha&range=1h", true);
+    await waitFor(() => expect(qc.getQueryData(MY_TEAMS_KEY)).toBeTruthy());
+
+    act(() => {
+      server.currentTeamID = "team-b";
+      qc.setQueryData<MyTeamsResp>(MY_TEAMS_KEY, (prev) =>
+        prev ? { ...prev, current_team_id: "team-b" } : prev,
+      );
+    });
+
+    await waitFor(() => expect(new URLSearchParams(probe.search).get("team")).toBe("beta"));
+    expect(new URLSearchParams(probe.search).has("range")).toBe(false);
   });
 
   it("завершающий слэш в адресе не отменяет параметр", async () => {
