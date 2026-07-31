@@ -90,6 +90,13 @@ Web Service отдаёт REST API под `/api/*` и SPA (`embed.FS`) на вс�
      (не `./...` из корня — он спотыкается о стороннюю `.go`-заглушку в `web-ui/node_modules/`),
      затем `gofmt -w` на затронутые файлы (или `gofmt -l .` для проверки). Это держит код в
      актуальных идиомах Go и не даёт упасть CI job `lint` (`golangci-lint` проверяет `gofmt`).
+     **Осторожно: на Go 1.26 `go fix` правит и ЧУЖИЕ файлы** — переписывает `strings.Cut`,
+     `wg.Add(1)`+`defer wg.Done()` → `wg.Go`, инлайнит хелперы с `//go:fix inline` в `new(expr)`.
+     Поэтому после него всегда смотри `git status --short` и добавляй в коммит **точечно**
+     (никогда `git commit -a`): автоправки — либо откат, либо ОТДЕЛЬНЫЙ коммит. Инлайн может
+     оставить хелпер без вызовов → `golangci-lint` покраснеет `func … is unused`, чего `go vet`,
+     `gofmt` и `make test` не видят; дочищай осиротевшее и выверяй комментарии, ставшие ложью
+     (см. правило про `wg.Go` и `safego` в §1).
    - `make test` — unit-тесты зелёные.
    - **`golangci-lint run --timeout=5m` — обязательно перед коммитом, не только `go vet`.**
      `go vet`/`gofmt` НЕ ловят `nilerr` (проверил `err != nil` → вернул `nil`),
@@ -208,7 +215,12 @@ Web Service отдаёт REST API под `/api/*` и SPA (`embed.FS`) на вс�
   ТЗ §30.2): паника гасится, логируется как `error` (с капчуром в Sentry и stacktrace), процесс не
   падает. Для горутин с request-scoped контекстом (несущим Sentry-hub) — `safego.RecoverCtx(ctx, <logger>, "<op>")`.
   В пулах с `defer wg.Done()` recover ставится в коде **после** `wg.Done()` (LIFO — выполнится первым,
-  гасит панику до отработки `wg.Done`). Не пиши свой `recover()` — используй `safego`. `recover()` ловит
+  гасит панику до отработки `wg.Done`). **С `wg.Go(func(){…})` (Go 1.25+) этот порядок неприменим и
+  ничего изобретать не надо:** `Done` вызывается defer'ом ЗА пределами переданной функции, поэтому
+  `defer safego.Recover(...)` ставится просто первой строкой ВНУТРИ неё — паника гасится до того, как
+  счётчик группы уменьшится. Не «возвращай» туда LIFO-рецепт и не пиши комментарии про порядок
+  defer'ов, которых там нет (пример — [instanceprobe/prober.go](internal/web/adapter/out/instanceprobe/prober.go)).
+  Не пиши свой `recover()` — используй `safego`. `recover()` ловит
   панику только в своей горутине, поэтому middleware-recovery родительской горутины дочернюю НЕ спасает.
 - **Small, focused units.** One file, one purpose. One function ≤ 40–50 lines. One type, one responsibility.
 - **Debug-логирование неочевидных мест (ТЗ §51.9).** Уровень логов меняется в runtime через
@@ -341,7 +353,7 @@ Run through this list every time. If any item fails, fix it before declaring suc
 - [ ] No function exceeds ~50 lines; no type carries more than one responsibility.
 - [ ] Errors are wrapped with `%w` and handled exactly once.
 - [ ] No `panic` outside `main`. No `init()` with side effects.
-- [ ] Every new goroutine starts with `defer safego.Recover(<logger>, "<op>")` (or `RecoverCtx` for request-scoped ctx; after `wg.Done()` in pools). See §1 and ТЗ §30.2.
+- [ ] Every new goroutine starts with `defer safego.Recover(<logger>, "<op>")` (or `RecoverCtx` for request-scoped ctx; after `wg.Done()` in manual pools, first line inside the closure with `wg.Go`). See §1 and ТЗ §30.2.
 - [ ] Non-obvious/dangerous/silent spots in new code carry `logger.Debug` instrumentation (structured attrs, no secrets/bodies; URLs without query). See §1 and ТЗ §51.9.
 - [ ] Tests added or updated for every changed behavior; mocks are interface-based.
 - [ ] `go vet ./...`, `golangci-lint run`, `go test -race ./...` all pass.
