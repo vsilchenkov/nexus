@@ -13,8 +13,11 @@ import (
 // в internal/receiver/usecase/envelope.go; продублирован, чтобы
 // Sender не импортировал Receiver — это нарушение Clean).
 //
-// Структуры идентичны по JSON-полям; при изменении любой из них
-// обновлять обе. Phase 4 — выделить в shared envelope-пакет.
+// Структуры обязаны совпадать по JSON-полям: при изменении любой из них
+// обновлять обе. Совпадение держит контрактный тест tests/contract — до него
+// копии молча разошлись (у Sender не было блока RMQ), и происхождение
+// RabbitMQAsync-сообщений терялось при доставке. Phase 4 — выделить в shared
+// envelope-пакет.
 type Envelope struct {
 	ID         string            `json:"id"`
 	NodePath   string            `json:"node_path"`
@@ -29,6 +32,22 @@ type Envelope struct {
 	// `method` лог-таблицы. Держать синхронным с Receiver-копией Envelope
 	// (internal/receiver/usecase/envelope.go).
 	RequestPath string `json:"request_path,omitempty"`
+
+	// RMQ — происхождение сообщения, вычитанного Puller'ом из RabbitMQ (§27.3).
+	// nil для request/requestAsync. На доставку не влияет (узел перечитывается
+	// из PostgreSQL), но это единственный след, по которому сообщение в очереди
+	// сопоставляется с сообщением в исходном брокере.
+	RMQ *RMQMeta `json:"rmq,omitempty"`
+}
+
+// RMQMeta — происхождение сообщения из RabbitMQ (§27.3). Копия
+// receiver/usecase.RMQMeta, см. комментарий к Envelope.
+type RMQMeta struct {
+	Exchange    string    `json:"exchange,omitempty"`
+	RoutingKey  string    `json:"routing_key,omitempty"`
+	DeliveryTag uint64    `json:"delivery_tag,omitempty"`
+	MessageID   string    `json:"message_id,omitempty"`
+	Timestamp   time.Time `json:"timestamp"`
 }
 
 // resolveTargetURL — адрес доставки async-сообщения: для static-узла собирается
@@ -80,6 +99,25 @@ func logRebuiltTarget(logger logging.Logger, op string, env Envelope, resolved s
 		logger.Str("node_path", env.NodePath),
 		logger.Str("was", urlWithoutQuery(env.TargetURL)),
 		logger.Str("now", urlWithoutQuery(resolved)))
+}
+
+// logRMQOrigin — Debug о происхождении сообщения, пришедшего из RabbitMQ
+// (§27.3, §51.9). В логе узла такое сообщение неотличимо от обычного
+// requestAsync, поэтому связать доставку с сообщением в брокере можно только
+// по этим полям. Молчит для request/requestAsync (блока нет).
+//
+// Тело и заголовки сюда не попадают: печатаются только координаты сообщения
+// в брокере.
+func logRMQOrigin(logger logging.Logger, op string, env Envelope) {
+	if env.RMQ == nil {
+		return
+	}
+	logger.Debug(op+": message originates from rabbitmq",
+		logger.Str("id", env.ID),
+		logger.Str("node_path", env.NodePath),
+		logger.Str("exchange", env.RMQ.Exchange),
+		logger.Str("routing_key", env.RMQ.RoutingKey),
+		logger.Str("message_id", env.RMQ.MessageID))
 }
 
 // urlWithoutQuery отрезает query и fragment: адрес без чувствительных значений.

@@ -196,6 +196,7 @@ func (r *DLQReprocessor) ProcessMessage(ctx context.Context, raw []byte, headers
 	// (retry/breaker/логирование в CH живут внутри SendUsecase.Send).
 	in := buildSendInput(node, env)
 	logRebuiltTarget(r.logger, "dlq", env, in.TargetURL)
+	logRMQOrigin(r.logger, "dlq", env)
 	out := r.send.Send(ctx, in)
 	if out.StatusCode >= 200 && out.StatusCode < 300 {
 		// Успех: «восстановлено». В CH — запись done=true (см. SendUsecase).
