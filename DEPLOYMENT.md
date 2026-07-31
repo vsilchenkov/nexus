@@ -1309,6 +1309,7 @@ git fetch --tags && git checkout v1.20.2
 
 ```bash
 # 0. Дамп (если не снят перед обновлением) — down-миграции удаляют данные.
+#    Вариант B (внешний PostgreSQL): pg_dump с хоста, см. §12.
 docker compose exec -T postgres pg_dump -U nexus nexus > nexus_$(date +%F_%H%M).sql
 
 # 1. Остановить ВСЕ три сервиса: работающий новый код обращается к колонкам,
