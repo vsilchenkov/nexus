@@ -6,6 +6,7 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net/url"
@@ -62,6 +63,10 @@ type SendOutput struct {
 	Headers    map[string]string
 	Body       []byte
 	Error      string
+	// Timeout — внешний узел не ответил именно по таймауту (истёк per-node
+	// timeout_ms), а не по отказу соединения/DNS. Receiver превращает это в 504
+	// вместо 502 (см. proto SendResponse.timeout).
+	Timeout    bool
 	Attempts   int32
 	DurationMs int32
 }
@@ -338,6 +343,9 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 	switch {
 	case lastErr != nil:
 		out.Error = lastErr.Error()
+		// errors.Is, а не разбор текста: http.Client оборачивает дедлайн
+		// контекста в *url.Error, цепочка Unwrap сохраняется.
+		out.Timeout = errors.Is(lastErr, context.DeadlineExceeded)
 		rec.Status = 0
 		rec.Done = false
 		rec.Reason = lastErr.Error()

@@ -303,10 +303,16 @@ type SendResponse struct {
 	Body       []byte                 `protobuf:"bytes,2,opt,name=body,proto3" json:"body,omitempty"`
 	Headers    map[string]string      `protobuf:"bytes,3,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// Заполняется, если внешний узел не ответил (timeout, dns, и т.п.).
-	// Receiver проксирует это как 502/504/503.
-	Error         string `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`
-	Attempts      int32  `protobuf:"varint,5,opt,name=attempts,proto3" json:"attempts,omitempty"`
-	DurationMs    int32  `protobuf:"varint,6,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	// Receiver проксирует это как 502 (или 504, см. timeout).
+	Error      string `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`
+	Attempts   int32  `protobuf:"varint,5,opt,name=attempts,proto3" json:"attempts,omitempty"`
+	DurationMs int32  `protobuf:"varint,6,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	// true — внешний узел не ответил именно по таймауту (истёк per-node
+	// timeout_ms), а не по отказу соединения/DNS. Receiver отдаёт клиенту 504
+	// вместо 502: для вызывающей стороны это разные ситуации (таймаут имеет
+	// смысл повторить). Поле аддитивное — Sender старой версии его не заполняет,
+	// и Receiver ведёт себя как раньше (502).
+	Timeout       bool `protobuf:"varint,7,opt,name=timeout,proto3" json:"timeout,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -383,6 +389,13 @@ func (x *SendResponse) GetDurationMs() int32 {
 	return 0
 }
 
+func (x *SendResponse) GetTimeout() bool {
+	if x != nil {
+		return x.Timeout
+	}
+	return false
+}
+
 var File_proto_sender_v1_sender_proto protoreflect.FileDescriptor
 
 const file_proto_sender_v1_sender_proto_rawDesc = "" +
@@ -420,7 +433,7 @@ const file_proto_sender_v1_sender_proto_rawDesc = "" +
 	"\adry_run\x18\x1e \x01(\bR\x06dryRun\x1a:\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x98\x02\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb2\x02\n" +
 	"\fSendResponse\x12\x1f\n" +
 	"\vstatus_code\x18\x01 \x01(\x05R\n" +
 	"statusCode\x12\x12\n" +
@@ -429,7 +442,8 @@ const file_proto_sender_v1_sender_proto_rawDesc = "" +
 	"\x05error\x18\x04 \x01(\tR\x05error\x12\x1a\n" +
 	"\battempts\x18\x05 \x01(\x05R\battempts\x12\x1f\n" +
 	"\vduration_ms\x18\x06 \x01(\x05R\n" +
-	"durationMs\x1a:\n" +
+	"durationMs\x12\x18\n" +
+	"\atimeout\x18\a \x01(\bR\atimeout\x1a:\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x012T\n" +

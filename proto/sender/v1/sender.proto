@@ -75,8 +75,14 @@ message SendResponse {
   bytes body           = 2;
   map<string,string> headers = 3;
   // Заполняется, если внешний узел не ответил (timeout, dns, и т.п.).
-  // Receiver проксирует это как 502/504/503.
+  // Receiver проксирует это как 502 (или 504, см. timeout).
   string error         = 4;
   int32 attempts       = 5;
   int32 duration_ms    = 6;
+  // true — внешний узел не ответил именно по таймауту (истёк per-node
+  // timeout_ms), а не по отказу соединения/DNS. Receiver отдаёт клиенту 504
+  // вместо 502: для вызывающей стороны это разные ситуации (таймаут имеет
+  // смысл повторить). Поле аддитивное — Sender старой версии его не заполняет,
+  // и Receiver ведёт себя как раньше (502).
+  bool timeout         = 7;
 }

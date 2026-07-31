@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"mime/multipart"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -1125,4 +1126,45 @@ func TestSend_BackoffUsesInjectedJitter(t *testing.T) {
 	// Пауза, попавшая в лог попыток, — та самая, что вернул jitter.
 	rec := logw.written[0].rec
 	assert.Contains(t, rec.AttemptsDetails, `"backoff_before_ms":0`)
+}
+
+// Признак таймаута для Receiver (proto SendResponse.timeout): определяется
+// через errors.Is по цепочке ошибки, а не разбором её текста — http.Client
+// оборачивает дедлайн контекста в *url.Error, Unwrap сохраняется.
+func TestSend_TimeoutFlagSetOnDeadline(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "дедлайн внешнего вызова",
+			err:  &url.Error{Op: "Post", URL: "https://example.com", Err: context.DeadlineExceeded},
+			want: true,
+		},
+		{
+			name: "отказ соединения",
+			err:  &url.Error{Op: "Post", URL: "https://example.com", Err: errors.New("connection refused")},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			httpc := &stubHTTPCaller{errs: []error{tt.err}}
+			logw := &stubLogWriter{}
+			uc := NewSendUsecase(httpc, logw, nil, logging.NewNoop(), 64<<20)
+
+			in := baseInput()
+			in.RetryCount = 0
+
+			out := uc.Send(context.Background(), in)
+			assert.Equal(t, int32(0), out.StatusCode, "внешний узел не ответил")
+			assert.Equal(t, tt.want, out.Timeout)
+		})
+	}
 }

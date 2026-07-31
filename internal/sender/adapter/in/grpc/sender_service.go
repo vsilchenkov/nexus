@@ -71,6 +71,7 @@ func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 			Body:       out.Body,
 			Headers:    out.Headers,
 			Error:      out.Error,
+			Timeout:    out.Timeout,
 			Attempts:   out.Attempts,
 			DurationMs: out.DurationMs,
 		}, nil
@@ -100,6 +101,7 @@ func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 		Body:       out.Body,
 		Headers:    out.Headers,
 		Error:      out.Error,
+		Timeout:    out.Timeout,
 		Attempts:   out.Attempts,
 		DurationMs: out.DurationMs,
 	}, nil
