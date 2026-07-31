@@ -230,3 +230,23 @@ func TestNew_InstanceLabel(t *testing.T) {
 		t.Errorf("пустой идентификатор не должен добавлять метку:\n%s", dump)
 	}
 }
+
+// §74.3: состояние схемы PostgreSQL публикуется двумя рядами. Ряд
+// nexus_pg_schema_ahead=1 — признак незавершённого отката (код старее схемы),
+// на нём висит алерт NexusSchemaAheadOfBinary.
+func TestSetSchemaState(t *testing.T) {
+	t.Parallel()
+
+	ahead := metrics.New("web")
+	ahead.SetSchemaState(32, true)
+	dump := dumpMetrics(t, ahead.Handler())
+	requireSample(t, dump, `nexus_pg_schema_version{service="web"} 32`)
+	requireSample(t, dump, `nexus_pg_schema_ahead{service="web"} 1`)
+
+	// Штатное состояние: схема согласована с кодом.
+	normal := metrics.New("receiver")
+	normal.SetSchemaState(32, false)
+	dump = dumpMetrics(t, normal.Handler())
+	requireSample(t, dump, `nexus_pg_schema_version{service="receiver"} 32`)
+	requireSample(t, dump, `nexus_pg_schema_ahead{service="receiver"} 0`)
+}
