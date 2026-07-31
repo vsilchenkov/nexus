@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"nexus/internal/domain"
+	"nexus/internal/platform/clock"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase/port"
 )
@@ -359,7 +360,7 @@ func TestPeerInstanceCheckUsesInjectedClock(t *testing.T) {
 		{ID: "id-1", Title: "A", BaseURL: "https://a.example.ru"},
 	}}
 	uc, _ := newPeerInstanceUC(repo, &stubProber{fallback: port.InstanceProbeResult{Status: domain.PeerInstanceActive, Version: "1"}})
-	uc.now = func() time.Time { return fixed }
+	uc.clock = clock.Fixed(fixed)
 
 	got, err := uc.CheckOne(context.Background(), "id-1")
 	require.NoError(t, err)

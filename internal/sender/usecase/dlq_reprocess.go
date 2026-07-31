@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"nexus/internal/domain"
+	"nexus/internal/platform/clock"
 	"nexus/internal/platform/logging"
 	"nexus/internal/platform/metrics"
 	"nexus/internal/sender/usecase/port"
@@ -62,7 +63,9 @@ type DLQReprocessor struct {
 	logger   logging.Logger
 	host     string
 
-	now func() time.Time // инъекция времени для TTL-тестов; в проде time.Now
+	// clock — источник времени (§4 CLAUDE.md): от него зависят TTL сообщения
+	// и момент следующей попытки. Подменяется в тестах.
+	clock clock.Clock
 }
 
 // NewDLQReprocessor создаёт обработчик DLQ-сообщений. cancel/breaker/m могут
@@ -90,7 +93,7 @@ func NewDLQReprocessor(
 		metrics:  m,
 		logger:   logger,
 		host:     host,
-		now:      time.Now,
+		clock:    clock.System(),
 	}
 }
 
@@ -142,7 +145,7 @@ func (r *DLQReprocessor) ProcessMessage(ctx context.Context, raw []byte, headers
 	// срок жизни независимо от числа проходов (§36.9). ReceivedAt отсутствует
 	// (старое сообщение без поля) → TTL не применяем, обрабатываем дальше.
 	ttl := time.Duration(node.DLQTTLSeconds) * time.Second
-	if !env.ReceivedAt.IsZero() && r.now().Sub(env.ReceivedAt) > ttl {
+	if !env.ReceivedAt.IsZero() && r.clock.Now().Sub(env.ReceivedAt) > ttl {
 		r.logTTLExpired(ctx, node, env)
 		r.logger.Info("dlq drop: ttl expired",
 			r.logger.Str("node_path", env.NodePath),
@@ -171,7 +174,7 @@ func (r *DLQReprocessor) ProcessMessage(ctx context.Context, raw []byte, headers
 	// next_attempt_at = now + dlq_retry_delay_seconds; до наступления этого
 	// момента доставку не пытаемся — republish, сохраняя next_attempt_at и не
 	// инкрементируя attempts (реальной попытки не было).
-	if next := parseNextAttemptAt(headers); !next.IsZero() && r.now().Before(next) {
+	if next := parseNextAttemptAt(headers); !next.IsZero() && r.clock.Now().Before(next) {
 		return r.republish(ctx, raw, env, headers, republishParams{
 			reason: "retry_backoff", result: reprocessSkipped, nextAttemptAt: next,
 		})
@@ -196,6 +199,7 @@ func (r *DLQReprocessor) ProcessMessage(ctx context.Context, raw []byte, headers
 	// (retry/breaker/логирование в CH живут внутри SendUsecase.Send).
 	in := buildSendInput(node, env)
 	logRebuiltTarget(r.logger, "dlq", env, in.TargetURL)
+	logRMQOrigin(r.logger, "dlq", env)
 	out := r.send.Send(ctx, in)
 	if out.StatusCode >= 200 && out.StatusCode < 300 {
 		// Успех: «восстановлено». В CH — запись done=true (см. SendUsecase).
@@ -212,7 +216,7 @@ func (r *DLQReprocessor) ProcessMessage(ctx context.Context, raw []byte, headers
 	delay := time.Duration(node.DLQRetryDelaySeconds) * time.Second
 	return r.republish(ctx, raw, env, headers, republishParams{
 		reason: reason, result: reprocessFailed, incAttempts: true,
-		nextAttemptAt: r.now().Add(delay),
+		nextAttemptAt: r.clock.Now().Add(delay),
 	})
 }
 
@@ -237,7 +241,7 @@ func (r *DLQReprocessor) republish(ctx context.Context, raw []byte, env Envelope
 		"node_path":       env.NodePath,
 		"orig_topic":      headerOr(inHeaders, "orig_topic", "nexus.async"),
 		"reason":          p.reason,
-		"last_attempt_at": r.now().UTC().Format(time.RFC3339Nano),
+		"last_attempt_at": r.clock.Now().UTC().Format(time.RFC3339Nano),
 		"attempts":        strconv.Itoa(attempts),
 	}
 	if !p.nextAttemptAt.IsZero() {
@@ -269,7 +273,7 @@ func (r *DLQReprocessor) logTTLExpired(ctx context.Context, node *domain.Node, e
 		Parameters:   extractQuery(env.TargetURL),
 		DateCreate:   env.ReceivedAt,
 		DateRequest:  env.ReceivedAt,
-		DateResponse: r.now(),
+		DateResponse: r.clock.Now(),
 		Status:       0,
 		Done:         false,
 		Reason:       "ttl_expired",

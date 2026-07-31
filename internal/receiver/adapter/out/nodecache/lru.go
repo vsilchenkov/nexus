@@ -18,16 +18,9 @@ import (
 	"container/list"
 	"sync"
 	"time"
+
+	"nexus/internal/platform/clock"
 )
-
-// Clock — крошечная инъекция для тестов (чтобы не ждать реального TTL).
-type Clock interface {
-	Now() time.Time
-}
-
-type realClock struct{}
-
-func (realClock) Now() time.Time { return time.Now() }
 
 // LRU — потокобезопасный LRU-кеш с TTL. Параметризован значением V.
 //
@@ -40,7 +33,7 @@ type LRU[V any] struct {
 	order   *list.List
 	size    int
 	ttl     time.Duration
-	clock   Clock
+	clock   clock.Clock
 	onEvict func() // best-effort callback для метрик; nil допустим
 }
 
@@ -64,13 +57,13 @@ func NewLRU[V any](size int, ttl time.Duration) *LRU[V] {
 		order: list.New(),
 		size:  size,
 		ttl:   ttl,
-		clock: realClock{},
+		clock: clock.System(),
 	}
 }
 
 // WithClock подменяет источник времени (для тестов).
-func (c *LRU[V]) WithClock(clock Clock) *LRU[V] {
-	c.clock = clock
+func (c *LRU[V]) WithClock(cl clock.Clock) *LRU[V] {
+	c.clock = cl
 	return c
 }
 

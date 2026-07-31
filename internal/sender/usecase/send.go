@@ -6,6 +6,7 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net/url"
@@ -62,6 +63,10 @@ type SendOutput struct {
 	Headers    map[string]string
 	Body       []byte
 	Error      string
+	// Timeout — внешний узел не ответил именно по таймауту (истёк per-node
+	// timeout_ms), а не по отказу соединения/DNS. Receiver превращает это в 504
+	// вместо 502 (см. proto SendResponse.timeout).
+	Timeout    bool
 	Attempts   int32
 	DurationMs int32
 }
@@ -108,6 +113,10 @@ type SendUsecase struct {
 	// grpc_max_message_bytes) для текста reason при 502. Само ограничение чтения
 	// делает httpclient (§43-rev).
 	maxResponseBytes int
+	// jitter возвращает случайную величину в [0,n) для full-jitter backoff.
+	// Зависимость, а не прямой rand.Intn (§4 CLAUDE.md): иначе тест ретраев
+	// не может предсказать паузу и вынужден либо спать, либо не проверять её.
+	jitter func(n int) int
 }
 
 // SendOption — функциональная опция конструктора SendUsecase.
@@ -123,12 +132,25 @@ func WithHostResolver(hr HostResolver) SendOption {
 	}
 }
 
+// WithJitter подменяет источник случайности backoff'а (§4 CLAUDE.md). В проде
+// не используется — только тесты, которым нужна предсказуемая пауза.
+func WithJitter(f func(n int) int) SendOption {
+	return func(u *SendUsecase) {
+		if f != nil {
+			u.jitter = f
+		}
+	}
+}
+
 func NewSendUsecase(httpc port.HTTPCaller, logw port.LogWriter, cb CircuitBreaker, logger logging.Logger, maxResponseBytes int, opts ...SendOption) *SendUsecase {
 	if cb == nil {
 		cb = noopBreaker{}
 	}
 	host, _ := os.Hostname()
-	u := &SendUsecase{httpc: httpc, logw: logw, cb: cb, hosts: noopHostResolver{}, logger: logger, host: host, maxResponseBytes: maxResponseBytes}
+	u := &SendUsecase{
+		httpc: httpc, logw: logw, cb: cb, hosts: noopHostResolver{}, logger: logger,
+		host: host, maxResponseBytes: maxResponseBytes, jitter: rand.Intn,
+	}
 	for _, o := range opts {
 		o(u)
 	}
@@ -307,7 +329,7 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		if base <= 0 {
 			base = 100
 		}
-		backoffMs = int32(rand.Intn(int(base * (1 << min(int(n-1), 5)))))
+		backoffMs = int32(u.jitter(int(base * (1 << min(int(n-1), 5)))))
 	}
 
 	out := SendOutput{
@@ -321,6 +343,9 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 	switch {
 	case lastErr != nil:
 		out.Error = lastErr.Error()
+		// errors.Is, а не разбор текста: http.Client оборачивает дедлайн
+		// контекста в *url.Error, цепочка Unwrap сохраняется.
+		out.Timeout = errors.Is(lastErr, context.DeadlineExceeded)
 		rec.Status = 0
 		rec.Done = false
 		rec.Reason = lastErr.Error()

@@ -4,6 +4,7 @@ go 1.26.5
 
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.46.0
+	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/getsentry/sentry-go v0.46.1
 	github.com/gin-gonic/gin v1.12.0
 	github.com/golang-migrate/migrate/v4 v4.19.1
@@ -134,6 +135,7 @@ require (
 	github.com/tklauser/numcpus v0.11.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.3.1 // indirect
+	github.com/yuin/gopher-lua v1.1.1 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.6.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect

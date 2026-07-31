@@ -3,9 +3,9 @@ package usecase
 import (
 	"context"
 	"sync"
-	"time"
 
 	"nexus/internal/domain"
+	"nexus/internal/platform/clock"
 	"nexus/internal/platform/logging"
 	"nexus/internal/platform/safego"
 	"nexus/internal/web/usecase/port"
@@ -27,9 +27,9 @@ type PeerInstanceUsecase struct {
 	repo   port.PeerInstanceRepo
 	prober port.InstanceProber
 	audit  *AuditUsecase
-	// now — источник времени; поле, а не time.Now в коде, чтобы отметка
-	// last_checked_at была проверяемой в тестах.
-	now    func() time.Time
+	// clock — источник времени (§4 CLAUDE.md): поле, а не time.Now в коде,
+	// чтобы отметка last_checked_at была проверяемой в тестах.
+	clock  clock.Clock
 	logger logging.Logger
 }
 
@@ -43,7 +43,7 @@ func NewPeerInstanceUsecase(
 		repo:   repo,
 		prober: prober,
 		audit:  audit,
-		now:    func() time.Time { return time.Now().UTC() },
+		clock:  clock.System(),
 		logger: logger,
 	}
 }
@@ -178,7 +178,7 @@ func (u *PeerInstanceUsecase) CheckAll(ctx context.Context) ([]*domain.PeerInsta
 // перезапишется. Ошибка при этом не проглатывается молча, а уходит в журнал.
 func (u *PeerInstanceUsecase) applyProbe(ctx context.Context, p *domain.PeerInstance) {
 	res := u.prober.Probe(ctx, p.BaseURL)
-	checkedAt := u.now()
+	checkedAt := u.clock.Now().UTC()
 
 	p.LastStatus = res.Status
 	p.LastVersion = res.Version

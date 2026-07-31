@@ -202,7 +202,7 @@ receiver:
 # Sender Service — gRPC-сервер, внешние HTTP-вызовы, лог в ClickHouse.
 sender:
   grpc_addr: :9190               # Адрес/порт gRPC-сервера Sender.
-  admin_http_addr: :9091         # Адрес/порт admin-HTTP (health, метрики, housekeeping).
+  admin_http_addr: :9091         # Адрес/порт admin-HTTP: /health, /ready, /metrics (housekeeping — фоновый цикл, не ручка).
   grpc_max_concurrent_streams: 1000 # Лимит одновременных gRPC-стримов на соединение.
   grpc_max_message_bytes: 67108864  # Лимит размера gRPC-сообщения сервера (recv тела запроса + send тела ответа) = 64 МиБ. Должен совпадать с receiver.sender_grpc.max_message_bytes.
   # HTTP-клиент для исходящих запросов к внешним системам.
@@ -242,6 +242,9 @@ sender:
 # Web Service — REST API под /api/* и встроенный SPA (embed.FS).
 web:
   http_addr: :8000                              # Адрес/порт HTTP-сервера Web.
+  idle_timeout_sec: 120                         # Таймаут ПРОСТАИВАЮЩЕГО keep-alive соединения (сек). Единственный таймаут HTTP-сервера Web:
+                                                #   read/write не задаются намеренно — через Web идут SSE-стримы (live-tail)
+                                                #   и sync-прокси к Receiver с таймаутом узла до 600 с.
   session_cookie_name: nexus_session            # Имя cookie серверной сессии.
   session_cookie_secure: true                   # Secure-флаг cookie (только по HTTPS); в проде true.
   session_cookie_samesite: strict               # SameSite-политика cookie: strict/lax/none.

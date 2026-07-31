@@ -20,6 +20,11 @@ func defaultTrustedProxies() []string {
 
 // applyDefaults заполняет нулевые значения дефолтами из §8.3 ТЗ.
 // Применяется после yaml.Unmarshal — пустые поля в YAML получают эти значения.
+//
+// Длина функции осознанна: это линейный список «поле → значение по умолчанию»
+// без единого ветвления по данным. Разбиение по секциям добавило бы уровней
+// косвенности, а забытый дефолт стало бы искать труднее — сейчас весь набор
+// виден одним поиском по файлу.
 func applyDefaults(c *Config) {
 	if c.Logging.Level == 0 {
 		c.Logging.Level = 4 // info
@@ -239,6 +244,9 @@ func applyDefaults(c *Config) {
 	}
 	if c.Web.SenderGRPC.MaxMessageBytes == 0 {
 		c.Web.SenderGRPC.MaxMessageBytes = defaultGRPCMaxMessageBytes
+	}
+	if c.Web.IdleTimeoutSec == 0 {
+		c.Web.IdleTimeoutSec = 120
 	}
 	if c.Web.SessionCookieName == "" {
 		c.Web.SessionCookieName = "nexus_session"

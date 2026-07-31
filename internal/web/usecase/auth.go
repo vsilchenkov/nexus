@@ -13,6 +13,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"nexus/internal/domain"
+	"nexus/internal/platform/clock"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase/port"
 )
@@ -44,6 +45,10 @@ type AuthUsecase struct {
 	// (unit-тесты без WithFavoriteTeams): чтение отдаёт пустой список.
 	favorites port.FavoriteTeamRepo
 
+	// clock — источник времени (§4 CLAUDE.md): от него зависят срок жизни
+	// сессии и отметка last_seen. Дефолт — системные часы.
+	clock clock.Clock
+
 	// searchHistory — история поиска узлов пользователя (§62). nil — фича
 	// выключена (unit-тесты без WithSearchHistory): чтение отдаёт пустой
 	// список, запись — no-op.
@@ -64,6 +69,7 @@ func NewAuthUsecase(
 		teams:      teams,
 		audit:      audit,
 		sessionTTL: sessionTTL,
+		clock:      clock.System(),
 		logger:     logger,
 	}
 }
@@ -274,7 +280,7 @@ func (u *AuthUsecase) Login(ctx context.Context, login, password, ip string) (st
 	if err != nil {
 		return "", nil, err
 	}
-	now := time.Now().UTC()
+	now := u.clock.Now().UTC()
 	s := &domain.Session{
 		Token:  token,
 		UserID: user.ID,
@@ -347,7 +353,7 @@ func (u *AuthUsecase) Check(ctx context.Context, token string) (*domain.Session,
 	if err != nil {
 		return nil, err
 	}
-	s.LastSeenAt = time.Now().UTC()
+	s.LastSeenAt = u.clock.Now().UTC()
 	_ = u.sessions.Touch(ctx, s, u.sessionTTL())
 	return s, nil
 }
