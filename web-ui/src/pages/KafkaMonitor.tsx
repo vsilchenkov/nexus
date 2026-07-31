@@ -162,7 +162,10 @@ export default function KafkaMonitor() {
       </Card>
 
       {/* Топики (§5.6) */}
-      <TopicsTable topics={topicsQ.data?.topics ?? []} />
+      <TopicsTable
+        topics={topicsQ.data?.topics ?? []}
+        sizesAvailable={topicsQ.data?.sizes_available ?? false}
+      />
 
       {/* Топ-узлы (§5.7) */}
       {byNode && <TopNodes data={byNode} />}

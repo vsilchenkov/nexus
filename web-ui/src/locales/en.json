@@ -213,7 +213,7 @@
       "partitions": "Partitions",
       "replication": "Replication",
       "size": "Size",
-      "size_unavailable": "Size unavailable: no JMX exporter on the broker (metric kafka_log_log_size)",
+      "size_unavailable": "Sizes unavailable: no kafka_log_log_size metric — the broker has no JMX exporter or Prometheus does not scrape it",
       "messages": "Messages ~",
       "groups": "Consumer groups",
       "health": "State",

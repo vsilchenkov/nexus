@@ -1549,7 +1549,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Партиции, RF, оценка числа сообщений, consumer-группы с lag, состояние реплик. Размер на диске недоступен (best-effort, 0). Кеш Redis 30с. Admin-only.",
+                "description": "Партиции, RF, оценка числа сообщений, consumer-группы с lag, состояние реплик. Размер на диске (§75) — из метрики kafka_log_log_size JMX-агента брокера, сумма по всем репликам; при недоступном источнике size_bytes=0 и sizes_available=false. Метаданные кешируются в Redis 30с, размеры запрашиваются каждый раз. Admin-only.",
                 "produces": [
                     "application/json"
                 ],
@@ -5977,6 +5977,9 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "kafka_available": {
+                    "type": "boolean"
+                },
+                "sizes_available": {
                     "type": "boolean"
                 },
                 "topics": {

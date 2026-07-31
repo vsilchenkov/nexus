@@ -160,9 +160,15 @@ func (u *KafkaMonitorUsecase) Timeseries(ctx context.Context, since, until time.
 }
 
 // KafkaTopicsResult — ответ §4.3: топики + флаг доступности Kafka.
+//
+// SizesAvailable (§75) отвечает на вопрос «источник размеров вообще жив»:
+// Prometheus вернул хотя бы одну серию kafka_log_log_size. Он нужен, чтобы UI
+// не выдавал пустой топик за сломанный мониторинг — нулевой размер при
+// SizesAvailable=true означает «топик пуст», а не «JMX-агент не настроен».
 type KafkaTopicsResult struct {
 	Topics         []port.TopicInfo
 	KafkaAvailable bool
+	SizesAvailable bool
 }
 
 // Topics — список топиков (§4.3). Кешируется в Redis (TTL адаптера) для
@@ -172,45 +178,60 @@ func (u *KafkaMonitorUsecase) Topics(ctx context.Context) KafkaTopicsResult {
 	if u.admin == nil {
 		return res
 	}
+	var topics []port.TopicInfo
 	if u.cache != nil {
 		var cached []port.TopicInfo
 		if ok, _ := u.cache.Get(ctx, "topics", &cached); ok {
-			return KafkaTopicsResult{Topics: cached, KafkaAvailable: true}
+			topics = cached
 		}
 	}
-	topics, err := u.admin.Topics(ctx)
-	if err != nil {
-		u.logger.Warn("kafka topics failed", u.logger.Err(err))
-		return res
+	if topics == nil {
+		fresh, err := u.admin.Topics(ctx)
+		if err != nil {
+			u.logger.Warn("kafka topics failed", u.logger.Err(err))
+			return res
+		}
+		topics = fresh
+		if u.cache != nil {
+			// В кеш кладём метаданные БЕЗ размеров (§75): размер живёт в другом
+			// источнике и подмешивается ниже на каждый запрос. Иначе при пропаже
+			// метрики UI до конца TTL показывал бы размеры из кеша, противореча
+			// флагу SizesAvailable=false.
+			_ = u.cache.Set(ctx, "topics", topics)
+		}
 	}
-	u.fillTopicSizes(ctx, topics)
-	if u.cache != nil {
-		_ = u.cache.Set(ctx, "topics", topics)
+	return KafkaTopicsResult{
+		Topics:         topics,
+		KafkaAvailable: true,
+		SizesAvailable: u.fillTopicSizes(ctx, topics),
 	}
-	return KafkaTopicsResult{Topics: topics, KafkaAvailable: true}
 }
 
 // fillTopicSizes проставляет топикам размер на диске из Prometheus (§75):
 // админ-протокол Kafka его не отдаёт, единственный источник — JMX-агент
-// брокера. Вызывается ДО записи в кеш, поэтому запрос идёт раз в TTL (30с) и
-// кеш хранит целостный снимок; размер меняется медленно, «свежесть» тут не
-// важна.
+// брокера. Возвращает признак «источник ответил хотя бы одной серией» — он
+// уезжает в KafkaTopicsResult.SizesAvailable и позволяет UI отличить пустой
+// топик (размер 0, источник жив) от ненастроенного экспортёра.
+//
+// Запрос идёт на каждый вызов, а не раз в TTL кеша метаданных: instant-запрос
+// дешевле, чем разбирательство «почему размеры отстали», а экран и без того
+// делает несколько запросов в Prometheus на каждое обновление.
 //
 // Best-effort: без Prometheus, при его ошибке или при ненастроенном JMX
-// размеры остаются нулями, и UI показывает «—» — как до §75. Ни на
-// KafkaAvailable, ни на остальные поля топиков это не влияет.
-func (u *KafkaMonitorUsecase) fillTopicSizes(ctx context.Context, topics []port.TopicInfo) {
+// размеры остаются нулями, а флаг — false; UI показывает «—» с подсказкой, как
+// до §75. Ни на KafkaAvailable, ни на остальные поля топиков это не влияет.
+func (u *KafkaMonitorUsecase) fillTopicSizes(ctx context.Context, topics []port.TopicInfo) bool {
 	if u.prom == nil || len(topics) == 0 {
 		u.logger.Debug("kafka topic sizes skipped",
 			u.logger.Str("op", "web.kafkaMonitor.topicSizes"),
 			u.logger.Str("reason", "no prometheus or no topics"),
 			u.logger.Int("topics", len(topics)))
-		return
+		return false
 	}
 	sizes, err := u.prom.KafkaTopicSizes(ctx)
 	if err != nil {
 		u.logger.Warn("kafka topic sizes failed", u.logger.Err(err))
-		return
+		return false
 	}
 	var filled int
 	for i := range topics {
@@ -225,7 +246,9 @@ func (u *KafkaMonitorUsecase) fillTopicSizes(ctx context.Context, topics []port.
 	u.logger.Debug("kafka topic sizes merged",
 		u.logger.Str("op", "web.kafkaMonitor.topicSizes"),
 		u.logger.Int("topics", len(topics)),
-		u.logger.Int("with_size", filled))
+		u.logger.Int("with_size", filled),
+		u.logger.Int("series", len(sizes)))
+	return len(sizes) > 0
 }
 
 // brokerHealth — состояние брокеров с кешированием (Redis TTL адаптера).
