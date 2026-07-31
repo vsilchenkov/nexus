@@ -104,6 +104,49 @@ func TestKafkaTopics_NoAdmin(t *testing.T) {
 	assert.Empty(t, r.Topics)
 }
 
+// §75: размер топика приходит из Prometheus (JMX-агент брокера) — админ-API
+// Kafka его не отдаёт. Топики без метрики остаются с нулём (UI рисует «—»).
+func TestKafkaTopics_SizesFromPrometheus(t *testing.T) {
+	t.Parallel()
+	admin := &fakeKafkaAdmin{topics: []port.TopicInfo{
+		{Name: "nexus.async", Partitions: 4},
+		{Name: "nexus.async.dlq", Partitions: 4},
+		{Name: "nexus.logs.retry", Partitions: 4},
+	}}
+	prom := &fakeProm{topicSizes: map[string]int64{
+		"nexus.async":     1503238553,
+		"nexus.async.dlq": 12907,
+		// nexus.logs.retry в метриках отсутствует (пустой топик — JMX отдаёт 0,
+		// адаптер такие значения отбрасывает).
+		"__consumer_offsets": 4096, // internal-топика в списке нет — ключ игнорируется
+	}}
+	uc := NewKafkaMonitorUsecase(prom, admin, nil, defaultTh(), logging.NewNoop())
+
+	r := uc.Topics(context.Background())
+
+	require.True(t, r.KafkaAvailable)
+	require.Len(t, r.Topics, 3)
+	assert.Equal(t, int64(1503238553), r.Topics[0].SizeBytes)
+	assert.Equal(t, int64(12907), r.Topics[1].SizeBytes)
+	assert.Zero(t, r.Topics[2].SizeBytes)
+}
+
+// §75: недоступный Prometheus не должен ломать список топиков — размеры просто
+// остаются нулевыми (деградация до поведения, которое было до §75).
+func TestKafkaTopics_SizesDegradeOnPromError(t *testing.T) {
+	t.Parallel()
+	admin := &fakeKafkaAdmin{topics: []port.TopicInfo{{Name: "nexus.async", Partitions: 4, MessagesEstimate: 42}}}
+	prom := &fakeProm{topicSizeErr: errors.New("prometheus down")}
+	uc := NewKafkaMonitorUsecase(prom, admin, nil, defaultTh(), logging.NewNoop())
+
+	r := uc.Topics(context.Background())
+
+	require.True(t, r.KafkaAvailable)
+	require.Len(t, r.Topics, 1)
+	assert.Zero(t, r.Topics[0].SizeBytes)
+	assert.Equal(t, int64(42), r.Topics[0].MessagesEstimate)
+}
+
 func TestKafkaByNode_TopProducersAndFailures(t *testing.T) {
 	t.Parallel()
 	prom := &fakeProm{throughput: map[string]port.NodeThroughput{

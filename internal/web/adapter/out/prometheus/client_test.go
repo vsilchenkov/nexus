@@ -34,6 +34,16 @@ func newTestServer(t *testing.T) *httptest.Server {
 		q := r.FormValue("query")
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case strings.Contains(q, "kafka_log_log_size"):
+			// §75: размер топиков из JMX-агента. Две серии одного топика
+			// (несколько брокеров/партиций в ответе без агрегации) должны
+			// сложиться; сэмпл без метки topic и нулевой — отброситься.
+			_, _ = w.Write([]byte(vectorResp(
+				sample(`{"topic":"nexus.async"}`, "1000000000"),
+				sample(`{"topic":"nexus.async"}`, "503238553"),
+				sample(`{"topic":"nexus.async.dlq"}`, "12907"),
+				sample(`{"topic":"nexus.logs.retry"}`, "0"),
+				sample("{}", "999"))))
 		case strings.Contains(q, "nexus_kafka_lag"):
 			_, _ = w.Write([]byte(vectorResp(sample("{}", "312"))))
 		case strings.Contains(q, "nexus_node_last_request_error"):
@@ -91,6 +101,43 @@ func TestClient_KafkaQueue(t *testing.T) {
 	q, err := c.KafkaQueue(context.Background())
 	require.NoError(t, err)
 	require.EqualValues(t, 312, q)
+}
+
+// TestClient_KafkaTopicSizes (§75): размер топиков собирается по метке topic;
+// сэмплы без метки и с нулевым значением в карту не попадают (нуль в UI —
+// «—», отдельного ключа для него не нужно).
+func TestClient_KafkaTopicSizes(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	defer srv.Close()
+
+	c, err := New(srv.URL, time.Second, logging.NewNoop())
+	require.NoError(t, err)
+
+	sizes, err := c.KafkaTopicSizes(context.Background())
+	require.NoError(t, err)
+	require.EqualValues(t, 1_503_238_553, sizes["nexus.async"])
+	require.EqualValues(t, 12_907, sizes["nexus.async.dlq"])
+	require.NotContains(t, sizes, "nexus.logs.retry")
+	require.Len(t, sizes, 2)
+}
+
+// TestClient_KafkaTopicSizes_NoMetric (§75): пока JMX-агент не поднят, запрос
+// возвращает пустой вектор — это штатная деградация, а не ошибка.
+func TestClient_KafkaTopicSizes_NoMetric(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(vectorResp()))
+	}))
+	defer srv.Close()
+
+	c, err := New(srv.URL, time.Second, logging.NewNoop())
+	require.NoError(t, err)
+
+	sizes, err := c.KafkaTopicSizes(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, sizes)
 }
 
 func TestClient_NodeThroughput(t *testing.T) {

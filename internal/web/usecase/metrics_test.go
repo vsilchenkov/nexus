@@ -36,6 +36,8 @@ type fakeProm struct {
 	kafkaOvErr   error
 	kafkaSeries  map[string][]port.KafkaPoint
 	kafkaSerErr  error
+	topicSizes   map[string]int64
+	topicSizeErr error
 }
 
 func (f *fakeProm) GlobalTotals(_ context.Context, _ time.Duration) (port.GlobalTotals, error) {
@@ -65,6 +67,9 @@ func (f *fakeProm) KafkaOverview(_ context.Context, _, _ time.Time) (port.KafkaS
 }
 func (f *fakeProm) KafkaTimeseries(_ context.Context, _, _ time.Time, _ time.Duration, _ []string) (map[string][]port.KafkaPoint, error) {
 	return f.kafkaSeries, f.kafkaSerErr
+}
+func (f *fakeProm) KafkaTopicSizes(_ context.Context) (map[string]int64, error) {
+	return f.topicSizes, f.topicSizeErr
 }
 
 // fakeNodeLogs — ClickHouse-источник per-node метрик (port.NodeLogMetrics).

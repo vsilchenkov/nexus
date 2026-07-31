@@ -183,10 +183,49 @@ func (u *KafkaMonitorUsecase) Topics(ctx context.Context) KafkaTopicsResult {
 		u.logger.Warn("kafka topics failed", u.logger.Err(err))
 		return res
 	}
+	u.fillTopicSizes(ctx, topics)
 	if u.cache != nil {
 		_ = u.cache.Set(ctx, "topics", topics)
 	}
 	return KafkaTopicsResult{Topics: topics, KafkaAvailable: true}
+}
+
+// fillTopicSizes проставляет топикам размер на диске из Prometheus (§75):
+// админ-протокол Kafka его не отдаёт, единственный источник — JMX-агент
+// брокера. Вызывается ДО записи в кеш, поэтому запрос идёт раз в TTL (30с) и
+// кеш хранит целостный снимок; размер меняется медленно, «свежесть» тут не
+// важна.
+//
+// Best-effort: без Prometheus, при его ошибке или при ненастроенном JMX
+// размеры остаются нулями, и UI показывает «—» — как до §75. Ни на
+// KafkaAvailable, ни на остальные поля топиков это не влияет.
+func (u *KafkaMonitorUsecase) fillTopicSizes(ctx context.Context, topics []port.TopicInfo) {
+	if u.prom == nil || len(topics) == 0 {
+		u.logger.Debug("kafka topic sizes skipped",
+			u.logger.Str("op", "web.kafkaMonitor.topicSizes"),
+			u.logger.Str("reason", "no prometheus or no topics"),
+			u.logger.Int("topics", len(topics)))
+		return
+	}
+	sizes, err := u.prom.KafkaTopicSizes(ctx)
+	if err != nil {
+		u.logger.Warn("kafka topic sizes failed", u.logger.Err(err))
+		return
+	}
+	var filled int
+	for i := range topics {
+		if v, ok := sizes[topics[i].Name]; ok {
+			topics[i].SizeBytes = v
+			filled++
+		}
+	}
+	// Расхождение «топики есть, размеров нет» — самый вероятный симптом
+	// незаведённого scrape-job'а kafka-jmx; без этой строки он выглядит как
+	// «UI почему-то рисует прочерк».
+	u.logger.Debug("kafka topic sizes merged",
+		u.logger.Str("op", "web.kafkaMonitor.topicSizes"),
+		u.logger.Int("topics", len(topics)),
+		u.logger.Int("with_size", filled))
 }
 
 // brokerHealth — состояние брокеров с кешированием (Redis TTL адаптера).
