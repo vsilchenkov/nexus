@@ -118,7 +118,7 @@ lint: ## golangci-lint run
 
 # ----- migrations -----------------------------------------------------------
 
-.PHONY: migrate-up migrate-down migrate-status
+.PHONY: migrate-up migrate-down migrate-status migrate-force
 
 migrate-up: ## Применить все миграции
 	$(GO) run ./cmd/web --debug --migrate-up
@@ -128,6 +128,9 @@ migrate-down: ## Откатить N последних миграций: make mi
 
 migrate-status: ## Текущая версия схемы
 	$(GO) run ./cmd/web --debug --migrate-status
+
+migrate-force: ## §74.4 Объявить версию схемы и снять dirty БЕЗ выполнения SQL: make migrate-force V=28
+	$(GO) run ./cmd/web --debug --migrate-force $(V)
 
 set-admin-password: ## Задать пароль admin: make set-admin-password PASSWORD=mypass
 	$(GO) run ./cmd/web --debug --set-admin-password $(PASSWORD)

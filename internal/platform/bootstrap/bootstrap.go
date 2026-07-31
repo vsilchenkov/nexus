@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -207,10 +208,11 @@ func MustCipher(logger logging.Logger) *crypto.Cipher {
 	return c
 }
 
-// HandleMigrateFlags обрабатывает --migrate-up/--migrate-down/--migrate-status.
+// HandleMigrateFlags обрабатывает --migrate-up/--migrate-down/--migrate-force/
+// --migrate-status.
 // Возвращает true, если флаг был задействован — main должен после этого завершиться.
 func HandleMigrateFlags(flags config.Flags, cfg *config.Config, logger logging.Logger) bool {
-	if !flags.MigrateUp && flags.MigrateDownN == 0 && !flags.MigrateStatus {
+	if !flags.MigrateUp && flags.MigrateDownN == 0 && !flags.MigrateStatus && flags.MigrateForce == "" {
 		return false
 	}
 
@@ -237,6 +239,8 @@ func HandleMigrateFlags(flags config.Flags, cfg *config.Config, logger logging.L
 			os.Exit(1)
 		}
 		logger.Info("migrations rolled back", logger.Int("n", flags.MigrateDownN))
+	case flags.MigrateForce != "":
+		forceSchemaVersion(mg, flags.MigrateForce, logger)
 	case flags.MigrateStatus:
 		v, dirty, err := mg.Status()
 		if err != nil {
@@ -246,6 +250,30 @@ func HandleMigrateFlags(flags config.Flags, cfg *config.Config, logger logging.L
 		fmt.Printf("schema version: %d dirty: %v\n", v, dirty)
 	}
 	return true
+}
+
+// forceSchemaVersion — реализация --migrate-force (§74.4): объявляет версию
+// схемы и снимает dirty. Вынесена из HandleMigrateFlags, чтобы та не разрослась.
+//
+// Предупреждение печатается ДО операции и намеренно громкое: SQL не выполняется,
+// поэтому схема считается приведённой в соответствие оператором — если это не
+// так, сервис поднимется на схеме, которой нет.
+func forceSchemaVersion(mg *pgpf.Migrator, raw string, logger logging.Logger) {
+	version, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		logger.ErrorWithOp("migrate force: version must be an integer >= -1", err,
+			"bootstrap.forceSchemaVersion", logger.Str("value", raw))
+		os.Exit(1)
+	}
+	logger.Warn("forcing schema version WITHOUT running any SQL: make sure the schema really matches it",
+		logger.Int("version", version))
+
+	if err := mg.Force(version); err != nil {
+		logger.ErrorWithOp("migrate force failed", err, "bootstrap.forceSchemaVersion",
+			logger.Int("version", version))
+		os.Exit(1)
+	}
+	logger.Info("schema version forced; dirty flag cleared", logger.Int("version", version))
 }
 
 // HandleSetAdminPassword — bootstrap-команда задать пароль admin'у.
