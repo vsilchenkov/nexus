@@ -142,8 +142,8 @@ func TestKafkaTopics_SizesFromPrometheus(t *testing.T) {
 	prom := &fakeProm{topicSizes: map[string]int64{
 		"nexus.async":     1503238553,
 		"nexus.async.dlq": 12907,
-		// nexus.logs.retry в метриках отсутствует (пустой топик — JMX отдаёт 0,
-		// адаптер такие значения отбрасывает).
+		// nexus.logs.retry в ответе метрик отсутствует вовсе (например, партиций
+		// топика нет на опрошенном брокере) — размер остаётся нулевым.
 		"__consumer_offsets": 4096, // internal-топика в списке нет — ключ игнорируется
 	}}
 	uc := NewKafkaMonitorUsecase(prom, admin, nil, defaultTh(), logging.NewNoop())

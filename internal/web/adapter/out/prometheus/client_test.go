@@ -103,9 +103,9 @@ func TestClient_KafkaQueue(t *testing.T) {
 	require.EqualValues(t, 312, q)
 }
 
-// TestClient_KafkaTopicSizes (§75): размер топиков собирается по метке topic;
-// сэмплы без метки и с нулевым значением в карту не попадают (нуль в UI —
-// «—», отдельного ключа для него не нужно).
+// TestClient_KafkaTopicSizes (§75): размер собирается по метке topic. Нулевая
+// серия остаётся в карте — «топик пуст» не должно превращаться в «источника
+// нет» (на этом различии стоит sizes_available). Сэмпл без метки отбрасывается.
 func TestClient_KafkaTopicSizes(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t)
@@ -118,8 +118,9 @@ func TestClient_KafkaTopicSizes(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 1_503_238_553, sizes["nexus.async"])
 	require.EqualValues(t, 12_907, sizes["nexus.async.dlq"])
-	require.NotContains(t, sizes, "nexus.logs.retry")
-	require.Len(t, sizes, 2)
+	require.Contains(t, sizes, "nexus.logs.retry")
+	require.EqualValues(t, 0, sizes["nexus.logs.retry"])
+	require.Len(t, sizes, 3)
 }
 
 // TestClient_KafkaTopicSizes_NoMetric (§75): пока JMX-агент не поднят, запрос

@@ -405,11 +405,16 @@ func (c *Client) KafkaOverview(ctx context.Context, since, until time.Time) (por
 
 // KafkaTopicSizes — размер топиков на дисках кластера, байт (§75). Источник —
 // JMX-агент на брокере (kafka_log_log_size на партицию); суммирование по метке
-// topic складывает партиции И их реплики. Отрицательных значений у gauge быть
-// не может, но на всякий случай отбрасываем их вместе с NaN — иначе int64 ушёл
-// бы в UI отрицательным размером.
+// topic складывает партиции И их реплики.
 //
-// Метрика отсутствует, пока на брокере не поднят JMX-агент (или Kafka чужая):
+// Нулевые значения СОХРАНЯЮТСЯ: у пустого топика размер честно равен нулю, и
+// выбросить такую серию значило бы приравнять «топик пуст» к «источника нет» —
+// на свежем кластере, где пусты все топики, это выдало бы работающий экспортёр
+// за ненастроенный (наличие ключа = серия пришла, см. SizesAvailable в usecase).
+// Отбрасываются только NaN и отрицательные: у gauge их быть не может, но int64
+// ушёл бы в UI отрицательным размером.
+//
+// Метрики нет вовсе, пока на брокере не поднят JMX-агент (или Kafka чужая):
 // это не ошибка, а пустая карта — «—» в колонке «Размер».
 func (c *Client) KafkaTopicSizes(ctx context.Context) (map[string]int64, error) {
 	raw, err := c.instantByLabel(ctx, `sum by (topic)(kafka_log_log_size)`, "topic", time.Now())
@@ -418,7 +423,7 @@ func (c *Client) KafkaTopicSizes(ctx context.Context) (map[string]int64, error) 
 	}
 	out := make(map[string]int64, len(raw))
 	for topic, v := range raw {
-		if math.IsNaN(v) || v <= 0 {
+		if math.IsNaN(v) || v < 0 {
 			continue
 		}
 		out[topic] = int64(v + 0.5)
