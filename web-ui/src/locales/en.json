@@ -213,6 +213,7 @@
       "partitions": "Partitions",
       "replication": "Replication",
       "size": "Size",
+      "size_unavailable": "Size unavailable: no JMX exporter on the broker (metric kafka_log_log_size)",
       "messages": "Messages ~",
       "groups": "Consumer groups",
       "health": "State",

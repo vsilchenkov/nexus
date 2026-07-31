@@ -213,6 +213,7 @@
       "partitions": "Партиций",
       "replication": "Replication",
       "size": "Размер",
+      "size_unavailable": "Размер недоступен: на брокере не настроен JMX-экспортёр (метрика kafka_log_log_size)",
       "messages": "Сообщений ~",
       "groups": "Consumer groups",
       "health": "Состояние",

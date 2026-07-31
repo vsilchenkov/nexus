@@ -43,7 +43,18 @@ export function TopicsTable({ topics }: { topics: KafkaTopic[] }) {
                   <td className="px-3 py-2 font-mono text-xs">{tp.name}</td>
                   <td className="px-3 py-2">{tp.partitions}</td>
                   <td className="px-3 py-2">{tp.replication_factor}</td>
-                  <td className="px-3 py-2">{fmtBytes(tp.size_bytes)}</td>
+                  {/* §75: размер приходит из Prometheus (JMX-агент брокера). Ноль =
+                      источника нет — поясняем это подсказкой, иначе прочерк читается
+                      как «топик пуст». */}
+                  <td className="px-3 py-2">
+                    {tp.size_bytes > 0 ? (
+                      fmtBytes(tp.size_bytes)
+                    ) : (
+                      <span className="text-fg-subtle" title={t("kafka.topics.size_unavailable")}>
+                        —
+                      </span>
+                    )}
+                  </td>
                   <td className="px-3 py-2">{fmtNum(tp.messages_estimate)}</td>
                   <td className="px-3 py-2">
                     {tp.consumer_groups.length === 0 ? (
