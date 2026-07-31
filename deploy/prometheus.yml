@@ -20,3 +20,13 @@ scrape_configs:
     static_configs:
       - targets: ["web:8000"]
     metrics_path: /metrics
+
+  # §75: JMX-агент на брокере — единственный источник размера топиков на диске
+  # (kafka_log_log_size{topic,partition}); Web агрегирует его для колонки «Размер»
+  # на экране /kafka. Таргет поднимается вместе с брокером (KAFKA_OPTS в compose);
+  # если Kafka внешняя — замени адрес на экспортёр её кластера, иначе колонка
+  # деградирует в прочерк, а остальной экран работает как прежде.
+  - job_name: kafka-jmx
+    static_configs:
+      - targets: ["kafka:7071"]
+    metrics_path: /metrics

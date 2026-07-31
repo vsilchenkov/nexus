@@ -311,7 +311,14 @@ export type KafkaTopic = {
   under_replicated: number;
   offline_partitions: number;
 };
-export type KafkaTopicsResp = { topics: KafkaTopic[]; kafka_available: boolean };
+// sizes_available (§75): источник размеров (метрика kafka_log_log_size JMX-агента
+// брокера) ответил. При false нули в size_bytes означают «источника нет», при
+// true — «топик пуст».
+export type KafkaTopicsResp = {
+  topics: KafkaTopic[];
+  kafka_available: boolean;
+  sizes_available: boolean;
+};
 export type KafkaByNode = {
   top_producers: { node_path: string; produced: number; share: number }[];
   top_failures: { node_path: string; failed: number; rate: number }[];

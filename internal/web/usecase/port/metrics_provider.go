@@ -139,6 +139,20 @@ type PromMetrics interface {
 	// запрошенную метрику (ключ — имя метрики, ASC по времени). produced/
 	// consumed/errors — rate (сообщений/сек), lag — абсолютное значение gauge.
 	KafkaTimeseries(ctx context.Context, since, until time.Time, step time.Duration, metrics []string) (map[string][]KafkaPoint, error)
+
+	// KafkaTopicSizes — размер топиков на дисках кластера в байтах (ключ — имя
+	// топика, §75). Instant-агрегат `sum by(topic)(kafka_log_log_size)` — метрики
+	// JMX-агента на брокере: админ-протокол Kafka размер не отдаёт (см.
+	// TopicInfo.SizeBytes), поэтому это единственный источник.
+	//
+	// Значение суммирует ВСЕ реплики партиций топика, то есть отвечает на вопрос
+	// «сколько занято на дисках кластера», а не «каков логический объём данных»:
+	// при RF=3 оно втрое больше объёма сообщений. При RF=1 (наша инсталляция)
+	// разницы нет.
+	//
+	// Отсутствие метрики (JMX-агент не настроен, внешняя чужая Kafka) — штатная
+	// деградация, а не ошибка: пустая карта без error, UI показывает «—».
+	KafkaTopicSizes(ctx context.Context) (map[string]int64, error)
 }
 
 // NodeStatusReader — персистентный исход последнего исходящего вызова узла из

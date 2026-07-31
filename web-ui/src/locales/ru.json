@@ -213,6 +213,7 @@
       "partitions": "Партиций",
       "replication": "Replication",
       "size": "Размер",
+      "size_unavailable": "Размеры недоступны: метрика kafka_log_log_size не пришла — на брокере не поднят JMX-экспортёр или Prometheus его не опрашивает",
       "messages": "Сообщений ~",
       "groups": "Consumer groups",
       "health": "Состояние",

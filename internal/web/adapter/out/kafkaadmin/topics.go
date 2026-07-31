@@ -11,7 +11,8 @@ import (
 
 // Topics возвращает метаданные всех (не internal) топиков кластера (§4.3 spec):
 // партиции, RF, оценку числа сообщений (Σ high-low), consumer-группы с lag,
-// состояние реплик. SizeBytes недоступен (см. doc пакета) — 0.
+// состояние реплик. SizeBytes остаётся 0 — размер на диске в админ-протоколе
+// недоступен и подмешивается usecase'ом из Prometheus (§75, см. port.TopicInfo).
 func (c *Client) Topics(ctx context.Context) ([]port.TopicInfo, error) {
 	meta, err := c.kc.Metadata(ctx, &kafka.MetadataRequest{})
 	if err != nil {

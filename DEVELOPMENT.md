@@ -64,8 +64,16 @@ docker compose -f deploy/docker-compose.deps.yml up -d
 или Command Palette → **Tasks: Run Task → deps: up**.
 
 Файл [deploy/docker-compose.deps.yml](./deploy/docker-compose.deps.yml) самодостаточный:
-поднимает только зависимости с портами `5432/6379/8123/9000/9092` на хосте. Kafka
+поднимает только зависимости с портами `5432/6379/8123/9000/9092/7071` на хосте. Kafka
 анонсирует себя как `localhost:9092` (именно для процессов с хоста).
+
+> **Первый запуск собирает образ брокера** (§75): `kafka` — это `apache/kafka` плюс
+> `jmx_prometheus_javaagent`, который отдаёт размер топиков на `localhost:7071/metrics`
+> (`kafka_log_log_size`) — без него колонка «Размер» на экране `/kafka` показывает «—».
+> Нужен доступ к Maven Central; при его отсутствии —
+> `docker compose -f deploy/docker-compose.deps.yml build --build-arg JMX_AGENT_URL=<url> kafka`.
+> Правка [deploy/kafka-jmx.yml](./deploy/kafka-jmx.yml) с ошибкой не даст брокеру стартовать
+> (JVM не запускается с невалидным javaagent) — смотрите тогда `deps: logs (kafka)`.
 
 Проверка состояния — **deps: status**; логи Kafka — **deps: logs (kafka)**; полный сброс
 данных — **deps: down + reset volumes**.

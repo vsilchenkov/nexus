@@ -14,8 +14,29 @@ function topicHealth(tp: KafkaTopic): { tone: "ok" | "warn" | "err"; key: string
   return { tone: "ok", key: "ok" };
 }
 
+// topicSize — ячейка «Размер» (§75). Источник размеров отдельный от Kafka Admin
+// (метрика JMX-агента брокера в Prometheus), поэтому ноль означает разное:
+// источник не отвечает — «—» с подсказкой; источник жив — топик действительно
+// пуст, показываем «0 B». Без этого различия исправный экспортёр на пустом
+// топике выглядел бы сломанным.
+function topicSize(tp: KafkaTopic, sizesAvailable: boolean, hint: string) {
+  if (tp.size_bytes > 0) return fmtBytes(tp.size_bytes);
+  if (sizesAvailable) return "0 B";
+  return (
+    <span className="text-fg-subtle" title={hint}>
+      —
+    </span>
+  );
+}
+
 // TopicsTable — таблица всех топиков кластера (§5.6 spec).
-export function TopicsTable({ topics }: { topics: KafkaTopic[] }) {
+export function TopicsTable({
+  topics,
+  sizesAvailable,
+}: {
+  topics: KafkaTopic[];
+  sizesAvailable: boolean;
+}) {
   const { t } = useTranslation();
   return (
     <Card className="overflow-hidden p-0">
@@ -43,7 +64,9 @@ export function TopicsTable({ topics }: { topics: KafkaTopic[] }) {
                   <td className="px-3 py-2 font-mono text-xs">{tp.name}</td>
                   <td className="px-3 py-2">{tp.partitions}</td>
                   <td className="px-3 py-2">{tp.replication_factor}</td>
-                  <td className="px-3 py-2">{fmtBytes(tp.size_bytes)}</td>
+                  <td className="px-3 py-2">
+                    {topicSize(tp, sizesAvailable, t("kafka.topics.size_unavailable"))}
+                  </td>
                   <td className="px-3 py-2">{fmtNum(tp.messages_estimate)}</td>
                   <td className="px-3 py-2">
                     {tp.consumer_groups.length === 0 ? (

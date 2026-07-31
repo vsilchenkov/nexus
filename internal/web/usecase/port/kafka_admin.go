@@ -29,10 +29,14 @@ type TopicConsumerGroup struct {
 	Members  int
 }
 
-// TopicInfo — метаданные одного топика (§4.3 spec). SizeBytes — best-effort:
-// высокоуровневый segmentio/kafka-go не отдаёт DescribeLogDirs, поэтому размер
-// на диске недоступен и приходит 0 (UI показывает «—»). MessagesEstimate —
+// TopicInfo — метаданные одного топика (§4.3 spec). MessagesEstimate —
 // Σ(high-low watermark) по партициям (точное число Kafka не возвращает).
+//
+// SizeBytes KafkaAdmin НЕ заполняет: высокоуровневый segmentio/kafka-go не
+// отдаёт DescribeLogDirs. Размер приходит отдельным источником — PromMetrics.
+// KafkaTopicSizes (JMX-агент брокера, §75), и usecase домешивает его в
+// структуру уже после admin-запроса. Без этого источника поле остаётся 0, и UI
+// показывает «—».
 type TopicInfo struct {
 	Name              string
 	Partitions        int

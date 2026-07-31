@@ -105,9 +105,10 @@ func quantileMs(v float64) float64 {
 	return v * 1000
 }
 
-// instantByNode выполняет instant-query вида `sum by (node)(...)` на момент at
-// и собирает результат в map по метке node.
-func (c *Client) instantByNode(ctx context.Context, query string, at time.Time) (map[string]float64, error) {
+// instantByLabel выполняет instant-query вида `sum by (<label>)(...)` на момент
+// at и собирает результат в map по значению метки label. Сэмплы без метки
+// пропускаются (агрегат без группировки не имеет отношения к ключу).
+func (c *Client) instantByLabel(ctx context.Context, query, label string, at time.Time) (map[string]float64, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	val, _, err := c.api.Query(ctx, query, at)
@@ -120,13 +121,18 @@ func (c *Client) instantByNode(ctx context.Context, query string, at time.Time) 
 	}
 	out := make(map[string]float64, len(vec))
 	for _, s := range vec {
-		node := string(s.Metric["node"])
-		if node == "" {
+		key := string(s.Metric[model.LabelName(label)])
+		if key == "" {
 			continue
 		}
-		out[node] += float64(s.Value)
+		out[key] += float64(s.Value)
 	}
 	return out, nil
+}
+
+// instantByNode — instantByLabel по метке node (path узла).
+func (c *Client) instantByNode(ctx context.Context, query string, at time.Time) (map[string]float64, error) {
+	return c.instantByLabel(ctx, query, "node", at)
 }
 
 // GlobalTotals — incoming (receiver) / outgoing (sender) / errors (sender 0|4xx|5xx).
@@ -395,6 +401,34 @@ func (c *Client) KafkaOverview(ctx context.Context, since, until time.Time) (por
 	}
 	s.ProduceP95ms = quantileMs(p95)
 	return s, nil
+}
+
+// KafkaTopicSizes — размер топиков на дисках кластера, байт (§75). Источник —
+// JMX-агент на брокере (kafka_log_log_size на партицию); суммирование по метке
+// topic складывает партиции И их реплики.
+//
+// Нулевые значения СОХРАНЯЮТСЯ: у пустого топика размер честно равен нулю, и
+// выбросить такую серию значило бы приравнять «топик пуст» к «источника нет» —
+// на свежем кластере, где пусты все топики, это выдало бы работающий экспортёр
+// за ненастроенный (наличие ключа = серия пришла, см. SizesAvailable в usecase).
+// Отбрасываются только NaN и отрицательные: у gauge их быть не может, но int64
+// ушёл бы в UI отрицательным размером.
+//
+// Метрики нет вовсе, пока на брокере не поднят JMX-агент (или Kafka чужая):
+// это не ошибка, а пустая карта — «—» в колонке «Размер».
+func (c *Client) KafkaTopicSizes(ctx context.Context) (map[string]int64, error) {
+	raw, err := c.instantByLabel(ctx, `sum by (topic)(kafka_log_log_size)`, "topic", time.Now())
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]int64, len(raw))
+	for topic, v := range raw {
+		if math.IsNaN(v) || v < 0 {
+			continue
+		}
+		out[topic] = int64(v + 0.5)
+	}
+	return out, nil
 }
 
 // kafkaSeriesQuery — PromQL для одной метрики Kafka-ряда (§4.2 spec) с шагом
