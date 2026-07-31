@@ -2336,6 +2336,8 @@ make images-tag V=1.21.1                       # сохранить текущи
 make images-list                               # какие версии сохранены на хосте
 make images-rollback V=1.21.1                  # вернуть :latest без пересборки
 python scripts/release/rollback_info.py v1.20.2 v1.21.0   # §74.6: строка «Откат» для CHANGELOG
+cp scripts/release/release_notes_template.md desc_1.0.0.md # §9.5-E: заготовка описания GitLab-релиза
+python scripts/release/create_release.py v1.0.0 v1.0.0 desc_1.0.0.md
 # Bootstrap admin (после первой миграции password_hash NULL):
 make set-admin-password PASSWORD=mySecret
 
