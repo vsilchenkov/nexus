@@ -112,14 +112,13 @@ func (p *Prober) Probe(ctx context.Context, baseURL string) port.InstanceProbeRe
 		wg    sync.WaitGroup
 		ready readyOutcome
 	)
-	wg.Add(1)
-	go func() {
-		// Порядок defer'ов: Recover объявлен ПОСЛЕ wg.Done, значит по LIFO
-		// сработает первым и погасит панику до того, как отработает wg.Done.
-		defer wg.Done()
+	wg.Go(func() {
+		// Recover внутри функции, а не снаружи: wg.Go делает Done своим defer'ом
+		// уже ЗА её пределами, поэтому паника гасится здесь — до того, как
+		// счётчик группы будет уменьшен, и не роняет процесс (§30.2).
 		defer safego.Recover(p.logger, "web.instanceprobe.ready")
 		ready = p.fetchReady(ctx, baseURL)
-	}()
+	})
 
 	start := time.Now()
 	ver, err := p.fetchVersion(ctx, baseURL)

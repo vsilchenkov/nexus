@@ -116,8 +116,6 @@ func newPeerInstanceUC(repo port.PeerInstanceRepo, prober port.InstanceProber) (
 	return uc, auditRepo
 }
 
-func intPtr(v int) *int { return &v }
-
 func TestPeerInstanceCreate(t *testing.T) {
 	t.Parallel()
 
@@ -237,7 +235,7 @@ func TestPeerInstanceCheckAll(t *testing.T) {
 		{ID: "id-2", Title: "B", BaseURL: "https://b.example.ru"},
 	}}
 	prober := &stubProber{byURL: map[string]port.InstanceProbeResult{
-		"https://a.example.ru": {Status: domain.PeerInstanceActive, Version: "1.20.2", InstanceID: "kz", LatencyMS: intPtr(42)},
+		"https://a.example.ru": {Status: domain.PeerInstanceActive, Version: "1.20.2", InstanceID: "kz", LatencyMS: new(42)},
 		"https://b.example.ru": {Status: domain.PeerInstanceUnreachable, Error: "timeout"},
 	}}
 	uc, _ := newPeerInstanceUC(repo, prober)

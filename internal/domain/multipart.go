@@ -144,11 +144,10 @@ func multipartFallback(mediaType string, bodyLen int, reason string) string {
 // сводка ("["). Настоящее multipart-тело начинается с "--<boundary>", JSON — с
 // "{"/"[" в первой строке, поэтому под критерий они не подпадают.
 func IsMultipartLogPlaceholder(stored string) bool {
-	nl := strings.IndexByte(stored, '\n')
-	if nl < 0 {
+	first, rest, ok := strings.Cut(stored, "\n")
+	if !ok {
 		return false
 	}
-	first, rest := stored[:nl], stored[nl+1:]
 	if !IsMultipartMediaType(first) {
 		return false
 	}

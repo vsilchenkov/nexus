@@ -92,11 +92,9 @@ func TestResolver_Lookup_ConcurrentSingleResolve(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 32 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			assert.Empty(t, r.Lookup("172.16.0.1"))
-		}()
+		})
 	}
 	wg.Wait()
 	close(block)
