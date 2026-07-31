@@ -1,0 +1,181 @@
+import { useEffect, useRef, useState } from "react";
+import { useLocation, useSearchParams } from "react-router-dom";
+
+import { useMyTeams, useSwitchTeam } from "./teams";
+
+// Слой «Ссылка на команду» (§76). Активная команда живёт только в серверной
+// сессии (§4.15), поэтому адрес страницы не описывал, в какой команде она
+// открыта: переслать коллеге «рабочий стол команды X» было нечем. Здесь:
+// (1) параметр `?team=<slug>` — зеркало текущей команды сессии в адресной
+// строке, (2) одноразовое применение параметра из входящей ссылки.
+//
+// Резолв slug → team_id целиком клиентский, по членствам из GET /api/me/teams:
+// нового эндпоинта не нужно, а «нет такой команды» и «я не член» неотличимы
+// by design (no-leak, как единый 404 резолвера узла в §58).
+
+// TEAM_PARAM — имя query-параметра со slug'ом команды.
+export const TEAM_PARAM = "team";
+
+// teamPageUrl — абсолютная ссылка на рабочее пространство команды (§76.2) для
+// кнопки «Поделиться». Путь всегда «/» (рабочий стол), а не текущая страница:
+// кнопка шарит ЛЮБУЮ строку списка команд, а «текущая страница чужой команды»
+// смысла не имеет (на /nodes/:id команду задаёт сам узел — §58, /audit закрыт
+// для viewer). Фильтры и период рабочего стола (§54/§71) — личное состояние
+// экрана и в шаренную ссылку не попадают. Приём тот же, что nodePageUrl (§58).
+//
+// Slug валидируется бэкендом как ^[a-z][a-z0-9_]{0,31}$ (domain/team.go) и
+// неизменяем (PUT /api/teams принимает только name) — ссылка не протухает;
+// encodeURIComponent тут страховка на случай ослабления паттерна.
+export function teamPageUrl(slug: string): string {
+  return `${window.location.origin}/?${TEAM_PARAM}=${encodeURIComponent(slug)}`;
+}
+
+// TEAM_PARAM_ROUTES — маршруты, на которых параметр имеет смысл. Белый список,
+// а не чёрный: новый маршрут не должен молча получить параметр.
+//
+// Исключены осознанно:
+//   /nodes/*    — командой страницы владеет сам узел (§58, useEnsureNodeTeam);
+//                 два механизма переключения на одном экране подрались бы;
+//   /settings/* — раздел вне скоупа команды (§7.14.1, TEAM_INDEPENDENT_KEYS);
+//   /logs       — консоль служебных логов инстанса, к команде отношения не имеет.
+// /kafka сам по себе team-нейтрален (кластерные метрики), но параметр там
+// зеркалит команду шапки — скопированный адрес любой страницы открывается в той
+// же команде.
+const TEAM_PARAM_ROUTES = new Set(["/", "/kafka", "/audit"]);
+
+// teamParamAllowed — живёт ли параметр `?team=` на этом маршруте (§76.3).
+export function teamParamAllowed(pathname: string): boolean {
+  return TEAM_PARAM_ROUTES.has(pathname);
+}
+
+// normalizeSlug — значение параметра к каноническому виду: пусто/пробелы → null
+// (`?team=` из недоделанной ссылки не должен показывать баннер с пустым именем),
+// регистр вниз (slug'и всегда строчные, но `?team=Alpha` набирают руками).
+function normalizeSlug(raw: string | null): string | null {
+  return (raw ?? "").trim().toLowerCase() || null;
+}
+
+// TeamUrlState — состояние баннера «команда недоступна» (§76.5).
+export type TeamUrlState = {
+  // unavailableSlug — slug из ссылки, который не удалось применить (нет такой
+  // команды, пользователь не её член, либо членство сняли — 403 на switch).
+  unavailableSlug: string | null;
+  dismiss: () => void;
+};
+
+// useTeamUrlParam — единственный писатель параметра `?team=` и применяющий его
+// хук (§76.4). Инвариант на разрешённых маршрутах: значение параметра равно
+// slug'у текущей команды сессии; расхождение живёт только внутри окна
+// применения входящей ссылки.
+//
+// Почему зеркало, а не «применил и удалил»: параметр обязан быть постоянным —
+// именно он и есть ссылка на команду. Мигающий параметр периодически врёт и не
+// проверяется одним утверждением.
+//
+// Монтируется РОВНО ОДИН раз на приложение (components/TeamUrlSync.tsx в
+// AppShell): ref-guard'ы обязаны переживать переходы между страницами, а два
+// экземпляра дрались бы за адресную строку.
+export function useTeamUrlParam(): TeamUrlState {
+  const { pathname } = useLocation();
+  const [params, setParams] = useSearchParams();
+  const { data } = useMyTeams();
+  const { mutate: switchTeam } = useSwitchTeam();
+
+  const [unavailableSlug, setUnavailableSlug] = useState<string | null>(null);
+
+  // handled — последнее разобранное значение параметра: переключаем РОВНО ОДИН
+  // РАЗ на значение, пока оно не сменилось (приём handledKey из lib/nodeShare.ts,
+  // §58). Страхует от повторного switch-team в окне между неудачей (403,
+  // недоступная команда) и приведением параметра к текущей команде.
+  //
+  // Это одноразовость на значение, а не «навсегда»: явный переход по той же
+  // ссылке (клик в мессенджере, ввод адреса) переключит команду снова —
+  // осознанное действие пользователя. Драки с ручным переключением в шапке при
+  // этом нет: зеркало сразу переписывает параметр на выбранную команду, и
+  // применять становится нечего.
+  const handled = useRef<string | null>(null);
+  // awaiting — наш switch-team в полёте. Пока членства не перечитаны, зеркало
+  // заморожено: иначе оно записало бы в URL прежнюю команду и затёрло саму
+  // ссылку, которую сейчас применяет.
+  const awaiting = useRef<string | null>(null);
+
+  const allowed = teamParamAllowed(pathname);
+  const desired = allowed ? normalizeSlug(params.get(TEAM_PARAM)) : null;
+  const currentSlug = data?.items.find((m) => m.id === data.current_team_id)?.slug ?? "";
+
+  useEffect(() => {
+    // Членства ещё не разрешились — решать не по чему. Аналог isFetchedAfterMount
+    // из §58 здесь НЕ применим: у ["me-teams"] нет refetchOnMount:"always", и при
+    // тёплом кеше (staleTime 30с) флаг остался бы false навсегда — хук не сработал
+    // бы вообще. Цена: при протухшем current_team_id (команду сменили в другой
+    // вкладке) решение принимается по кешу; refetch по фокусу окна приводит
+    // зеркало к правде сам.
+    if (!allowed || !data || currentSlug === "") return;
+
+    // writeParam — привести параметр к переданному slug'у. Функциональная форма
+    // обязательна: чужие ключи (фильтры рабочего стола §54) обязаны выжить.
+    // replace, а не push — переключение команды не должно засорять историю.
+    const writeParam = (slug: string) => {
+      if (params.get(TEAM_PARAM) === slug) return; // идемпотентность: иначе цикл эффектов
+      setParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set(TEAM_PARAM, slug);
+          return next;
+        },
+        { replace: true },
+      );
+    };
+
+    if (awaiting.current !== null) {
+      if (awaiting.current === currentSlug) {
+        awaiting.current = null; // сессия догнала ссылку — размораживаем зеркало
+      } else if (awaiting.current === desired) {
+        return; // переезд ещё в полёте
+      } else {
+        awaiting.current = null; // параметр сменился под нами — ожидание неактуально
+      }
+    }
+
+    if (desired === null) {
+      writeParam(currentSlug);
+      return;
+    }
+    if (desired === currentSlug) {
+      handled.current = desired;
+      writeParam(currentSlug); // нормализация регистра (?team=Alpha → alpha)
+      return;
+    }
+    if (handled.current === desired) {
+      writeParam(currentSlug); // значение уже разбирали — держим в URL правду
+      return;
+    }
+    handled.current = desired;
+
+    const target = data.items.find((m) => m.slug.toLowerCase() === desired);
+    if (!target) {
+      setUnavailableSlug(desired);
+      writeParam(currentSlug);
+      return;
+    }
+
+    setUnavailableSlug(null);
+    awaiting.current = target.slug;
+    switchTeam(target.id, {
+      // 403: членство сняли между копированием ссылки и её открытием. Членства
+      // перечитает сам useSwitchTeam — нам остаётся разморозить зеркало (иначе
+      // параметр залипнет на недостижимой команде) и показать баннер.
+      onError: () => {
+        awaiting.current = null;
+        setUnavailableSlug(target.slug);
+      },
+    });
+    // unavailableSlug в зависимостях не для чтения, а ради перезапуска эффекта
+    // после неудачи: на 403 внутри onError меняется только он. Данные членств
+    // при этом остаются той же ссылкой (structural sharing react-query), и без
+    // этой зависимости зеркало залипло бы на недостижимой команде до следующей
+    // навигации.
+  }, [allowed, data, currentSlug, desired, params, setParams, switchTeam, unavailableSlug]);
+
+  return { unavailableSlug, dismiss: () => setUnavailableSlug(null) };
+}
