@@ -7,6 +7,7 @@ import (
 
 	"nexus/internal/domain"
 	"nexus/internal/domain/logsearch"
+	"nexus/internal/platform/clock"
 	"nexus/internal/platform/logging"
 	"nexus/internal/platform/safego"
 	"nexus/internal/web/usecase/port"
@@ -16,20 +17,35 @@ import (
 type LogsUsecase struct {
 	logs   port.LogReader
 	nodes  port.NodeRepo
+	clock  clock.Clock
 	logger logging.Logger
 
 	pollInterval time.Duration
 	streamLimit  int
 }
 
-func NewLogsUsecase(logs port.LogReader, nodes port.NodeRepo, logger logging.Logger) *LogsUsecase {
-	return &LogsUsecase{
+// LogsOption — функциональная опция конструктора.
+type LogsOption func(*LogsUsecase)
+
+// WithLogsClock подменяет источник времени (§4 CLAUDE.md): от него зависит
+// стартовый курсор live-tail — с какого момента стрим начинает отдавать записи.
+func WithLogsClock(c clock.Clock) LogsOption {
+	return func(u *LogsUsecase) { u.clock = c }
+}
+
+func NewLogsUsecase(logs port.LogReader, nodes port.NodeRepo, logger logging.Logger, opts ...LogsOption) *LogsUsecase {
+	u := &LogsUsecase{
 		logs:         logs,
 		nodes:        nodes,
+		clock:        clock.System(),
 		logger:       logger,
 		pollInterval: 1 * time.Second,
 		streamLimit:  200,
 	}
+	for _, o := range opts {
+		o(u)
+	}
+	return u
 }
 
 // ListSince — snapshot последних записей.
@@ -299,7 +315,7 @@ func (u *LogsUsecase) Subscribe(ctx context.Context, nodeID, teamID string, filt
 
 	ch := make(chan *domain.LogRecord, 64)
 	errCh := make(chan error, 1)
-	cursor := time.Now().UnixMilli()
+	cursor := u.clock.Now().UnixMilli()
 
 	go func() {
 		defer close(ch)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"nexus/internal/platform/clock"
 	"nexus/internal/platform/logging"
 )
 
@@ -17,16 +18,31 @@ type Housekeeping struct {
 	audit         *AuditUsecase
 	retentionDays int
 	interval      time.Duration
+	clock         clock.Clock
 	logger        logging.Logger
 }
 
-func NewHousekeeping(audit *AuditUsecase, retentionDays int, logger logging.Logger) *Housekeeping {
-	return &Housekeeping{
+// HousekeepingOption — функциональная опция конструктора.
+type HousekeepingOption func(*Housekeeping)
+
+// WithHousekeepingClock подменяет источник времени (§4 CLAUDE.md): от него
+// зависит граница retention — какие записи аудита считать устаревшими.
+func WithHousekeepingClock(c clock.Clock) HousekeepingOption {
+	return func(h *Housekeeping) { h.clock = c }
+}
+
+func NewHousekeeping(audit *AuditUsecase, retentionDays int, logger logging.Logger, opts ...HousekeepingOption) *Housekeeping {
+	h := &Housekeeping{
 		audit:         audit,
 		retentionDays: retentionDays,
 		interval:      24 * time.Hour,
+		clock:         clock.System(),
 		logger:        logger,
 	}
+	for _, o := range opts {
+		o(h)
+	}
+	return h
 }
 
 // Run блокируется до ctx.Done. Запускается из app.Start в горутине.
@@ -52,7 +68,7 @@ func (h *Housekeeping) Run(ctx context.Context) {
 }
 
 func (h *Housekeeping) cycle(ctx context.Context) {
-	cutoff := time.Now().AddDate(0, 0, -h.retentionDays)
+	cutoff := h.clock.Now().AddDate(0, 0, -h.retentionDays)
 	n, err := h.audit.repo.DeleteOlderThan(ctx, cutoff)
 	if err != nil {
 		h.logger.ErrorWithOp("housekeeping audit delete failed", err, "housekeeping.cycle")

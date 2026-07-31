@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"nexus/internal/domain"
+	"nexus/internal/platform/clock"
 	"nexus/internal/platform/logging"
 	"nexus/internal/sender/usecase/port"
 )
@@ -277,7 +278,7 @@ func TestReprocess_NowInjection(t *testing.T) {
 	h := newReprocessorForTest(t, node, nil, &port.HTTPResponse{StatusCode: 200, Body: []byte("ok")}, nil, nil)
 	received := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
 	// now = received + 30 мин < TTL 1ч → не истёк, доставляем.
-	h.proc.now = func() time.Time { return received.Add(30 * time.Minute) }
+	h.proc.clock = clock.Fixed(received.Add(30 * time.Minute))
 	got := h.proc.ProcessMessage(context.Background(), makeDLQEnvelope(t, "partner/echo", received), nil)
 	assert.Equal(t, ReprocessCommit, got)
 	assert.Equal(t, 1, h.httpc.calls, "в пределах TTL → попытка доставки")

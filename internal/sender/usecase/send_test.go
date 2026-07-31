@@ -1089,3 +1089,40 @@ func TestSleepCtx(t *testing.T) {
 		assert.Less(t, time.Since(start), time.Second, "вернулись сразу, а не через 30 с")
 	})
 }
+
+// §4 CLAUDE.md: jitter — зависимость, а не прямой rand.Intn. Тест ровно об этом:
+// с подменённым источником случайности пауза между попытками предсказуема, и
+// формулу full-jitter (base * 2^(n-1), верхняя граница) можно проверить, а не
+// принимать на веру. С rand.Intn такой проверки не написать вовсе.
+func TestSend_BackoffUsesInjectedJitter(t *testing.T) {
+	httpc := &stubHTTPCaller{
+		responses: []*port.HTTPResponse{
+			{StatusCode: 503, Body: []byte("unavailable")},
+			{StatusCode: 503, Body: []byte("unavailable")},
+			{StatusCode: 200, Body: []byte("ok")},
+		},
+	}
+	logw := &stubLogWriter{}
+
+	var bounds []int
+	uc := NewSendUsecase(httpc, logw, nil, logging.NewNoop(), 64<<20,
+		WithJitter(func(n int) int {
+			bounds = append(bounds, n)
+			return 0 // нулевая пауза: тест не должен спать
+		}))
+
+	in := baseInput()
+	in.RetryCount = 2
+	in.RetryBackoffMs = 100
+
+	out := uc.Send(context.Background(), in)
+	require.Equal(t, int32(200), out.StatusCode)
+	require.Equal(t, int32(3), out.Attempts)
+
+	// Верхняя граница удваивается с каждой попыткой: 100, 200.
+	assert.Equal(t, []int{100, 200}, bounds)
+
+	// Пауза, попавшая в лог попыток, — та самая, что вернул jitter.
+	rec := logw.written[0].rec
+	assert.Contains(t, rec.AttemptsDetails, `"backoff_before_ms":0`)
+}

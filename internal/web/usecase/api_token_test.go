@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"nexus/internal/domain"
+	"nexus/internal/platform/clock"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase/port"
 )
@@ -487,4 +488,41 @@ func TestAPITokenUsecase_Verify_InactiveUser_ErrUserInactive(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, domain.ErrUserInactive,
 		"inactive user → ErrUserInactive (отличается от ErrUnauthorized, чтобы middleware вернул понятный 403)")
+}
+
+// §4 CLAUDE.md: время — зависимость. Проверяем ровно то, ради чего она введена:
+// протухший токен перестаёт авторизовывать, а срок жизни считается от «сейчас»
+// сервера. С прямым time.Now() такой тест требовал бы либо ожидания реального
+// срока, либо ручной подделки ExpiresAt мимо бизнес-логики.
+func TestAPITokenUsecase_ExpiryUsesInjectedClock(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	fake := clock.NewFake(now)
+
+	repo := newInMemAPITokenRepo()
+	users := &userRepoStub{byID: map[string]*domain.User{
+		"u-1": {ID: "u-1", Login: "alice", Active: true},
+	}}
+	audit := NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop())
+	uc := NewAPITokenUsecase(repo, users, nil, audit, logging.NewNoop(),
+		WithAPITokenClock(fake))
+
+	days := 2
+	created, err := uc.Create(context.Background(), Actor{UserLogin: "alice"},
+		"u-1", "team-1", "short-lived", []string{domain.ScopeLogsRead}, &days)
+	require.NoError(t, err)
+	require.NotNil(t, created.Token.ExpiresAt)
+	assert.True(t, now.Add(48*time.Hour).Equal(*created.Token.ExpiresAt),
+		"срок считается от часов сервера, а не от часов клиента")
+
+	// Пока не истёк — токен валиден.
+	_, _, err = uc.Verify(context.Background(), created.Plain)
+	require.NoError(t, err)
+
+	// Через двое суток и минуту — уже нет.
+	fake.Advance(48*time.Hour + time.Minute)
+	_, _, err = uc.Verify(context.Background(), created.Plain)
+	assert.ErrorIs(t, err, domain.ErrUnauthorized,
+		"истёкший токен обязан перестать авторизовывать")
 }

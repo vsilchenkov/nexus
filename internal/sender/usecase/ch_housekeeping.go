@@ -9,6 +9,7 @@ import (
 	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
 	"nexus/internal/domain"
+	"nexus/internal/platform/clock"
 	"nexus/internal/platform/logging"
 )
 
@@ -50,11 +51,20 @@ type CHHousekeeping struct {
 	nodes     NodeLister
 	period    time.Duration
 	ownership TableOwnership
+	clock     clock.Clock
 	logger    logging.Logger
 }
 
 func NewCHHousekeeping(ch ConnProvider, nodes NodeLister, logger logging.Logger) *CHHousekeeping {
-	return &CHHousekeeping{ch: ch, nodes: nodes, period: 24 * time.Hour, logger: logger}
+	return &CHHousekeeping{ch: ch, nodes: nodes, period: 24 * time.Hour, clock: clock.System(), logger: logger}
+}
+
+// WithClock подменяет источник времени (§4 CLAUDE.md) и возвращает тот же
+// экземпляр для цепочки в wiring. От него зависит граница retention: какие
+// партиции логов считать устаревшими и удалить.
+func (h *CHHousekeeping) WithClock(c clock.Clock) *CHHousekeeping {
+	h.clock = c
+	return h
 }
 
 // WithOwnership подключает гейт владения (§70.4) и возвращает тот же экземпляр
@@ -146,7 +156,7 @@ func (h *CHHousekeeping) dropPartitionsOlderThan(ctx context.Context, table stri
 	if !ok {
 		return 0, fmt.Errorf("invalid table name %q", table)
 	}
-	cutoff := time.Now().AddDate(0, 0, -retentionDays)
+	cutoff := h.clock.Now().AddDate(0, 0, -retentionDays)
 
 	conn := h.ch.Conn()
 	if conn == nil {
