@@ -227,9 +227,19 @@ func HandleMigrateFlags(flags config.Flags, cfg *config.Config, logger logging.L
 
 	switch {
 	case flags.MigrateUp:
-		if err := mg.Up(); err != nil {
+		// EnsureUp, а не Up: на схеме новее этого бинаря (§74.3) ручная команда
+		// должна сказать, что применять нечего, а не падать с «no migration
+		// found for version N» — оператор в аварии читает именно этот вывод.
+		st, err := mg.EnsureUp()
+		if err != nil {
 			logger.ErrorWithOp("migrate up failed", err, "bootstrap.HandleMigrateFlags")
 			os.Exit(1)
+		}
+		if st.Ahead {
+			logger.Warn("postgres schema is newer than this build; nothing to apply",
+				logger.Int("db_version", int(st.DBVersion)),
+				logger.Int("binary_max_version", int(st.MaxLocal)))
+			break
 		}
 		logger.Info("migrations applied")
 	case flags.MigrateDownN > 0:

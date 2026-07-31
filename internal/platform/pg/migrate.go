@@ -23,8 +23,12 @@ var (
 	ErrDirtySchema = errors.New("pg: schema is dirty")
 
 	// ErrSchemaAhead — версия схемы в БД больше максимальной версии в каталоге
-	// миграций этого бинаря. Штатное временное состояние незавершённого отката
-	// кода (§74.3): сервис стартует, но признак объявляется логом и метрикой.
+	// миграций этого бинаря: незавершённый откат кода (§74.3).
+	//
+	// [Migrator.EnsureUp] её НЕ возвращает — для старта это не ошибка, а
+	// состояние (State.Ahead), и сервис поднимается. Ошибкой оно становится там,
+	// где действие выполнить нельзя: [Migrator.Down] на такой схеме (откат
+	// обязан идти образом новой версии, §74.7) и в сигнальной записи лога.
 	ErrSchemaAhead = errors.New("pg: schema is newer than this build")
 
 	// ErrUnknownMigration — в каталоге нет миграции с такой версией.
@@ -103,11 +107,20 @@ func (mg *Migrator) Up() error {
 }
 
 // Down — откатить N последних миграций.
+//
+// На схеме новее этого бинаря возвращает ErrSchemaAhead: библиотека в этом
+// случае отвечает невнятным «no migration found for version N», а настоящая
+// причина другая — откат схемы запущен образом, который новых миграций не знает.
+// Выполнять его нужно образом НОВОЙ версии и до пересборки (§74.7).
 func (mg *Migrator) Down(n int) error {
 	if n <= 0 {
 		return errors.New("migrate down: n must be > 0")
 	}
 	if err := mg.m.Steps(-n); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		if st, sErr := mg.state(); sErr == nil && st.Ahead {
+			return fmt.Errorf("%w: db=%d binary=%d; roll the schema back with the NEW version image (see DEPLOYMENT.md §10.3): %w",
+				ErrSchemaAhead, st.DBVersion, st.MaxLocal, err)
+		}
 		return fmt.Errorf("migrate down %d: %w", n, err)
 	}
 	return nil
@@ -133,22 +146,16 @@ func (mg *Migrator) Status() (version uint, dirty bool, err error) {
 // Сравнение версий выполняется ДО Up: так решение принимается по числам, а не по
 // тексту ошибки golang-migrate («no migration found for version N»).
 func (mg *Migrator) EnsureUp() (State, error) {
-	dbVer, dirty, err := mg.Status()
+	st, err := mg.state()
 	if err != nil {
 		return State{}, err
 	}
-	maxLocal, err := mg.MaxLocalVersion()
-	if err != nil {
-		return State{}, err
-	}
-	st := State{DBVersion: dbVer, MaxLocal: maxLocal, Dirty: dirty}
 
-	if dirty {
+	if st.Dirty {
 		return st, fmt.Errorf("%w: version %d (fix the schema manually, then --migrate-force <version>)",
-			ErrDirtySchema, dbVer)
+			ErrDirtySchema, st.DBVersion)
 	}
-	if dbVer > maxLocal {
-		st.Ahead = true
+	if st.Ahead {
 		return st, nil
 	}
 
@@ -160,6 +167,20 @@ func (mg *Migrator) EnsureUp() (State, error) {
 		st.DBVersion = v
 	}
 	return st, nil
+}
+
+// state снимает текущее состояние схемы: версию и dirty из БД, максимальную
+// версию каталога и производный признак Ahead.
+func (mg *Migrator) state() (State, error) {
+	dbVer, dirty, err := mg.Status()
+	if err != nil {
+		return State{}, err
+	}
+	maxLocal, err := mg.MaxLocalVersion()
+	if err != nil {
+		return State{}, err
+	}
+	return State{DBVersion: dbVer, MaxLocal: maxLocal, Dirty: dirty, Ahead: dbVer > maxLocal}, nil
 }
 
 // MaxLocalVersion — максимальная версия миграции в каталоге этого бинаря.

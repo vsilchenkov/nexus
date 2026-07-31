@@ -98,6 +98,14 @@ func TestMigrateSchemaAheadOfBinary(t *testing.T) {
 	// от него и падал откаченный сервис.
 	assert.Error(t, mgOld.Up(), "Up на схеме новее каталога обязан возвращать ошибку гейта")
 
+	// Откат схемы старым образом невозможен, и причина названа явно (§74.7):
+	// библиотека отвечает невнятным «no migration found for version N».
+	assert.ErrorIs(t, mgOld.Down(1), pgpf.ErrSchemaAhead)
+	v, dirty, err = mgOld.Status()
+	require.NoError(t, err)
+	assert.Equal(t, latest, v, "неудавшийся Down не должен менять версию")
+	assert.False(t, dirty)
+
 	// Откат доведён до конца: схема опущена образом НОВОЙ версии (§74.7),
 	// после чего старый бинарь стартует уже в штатном состоянии.
 	require.NoError(t, mgFull.Down(rolledBack))
