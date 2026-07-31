@@ -135,6 +135,20 @@ migrate-force: ## §74.4 Объявить версию схемы и снять 
 set-admin-password: ## Задать пароль admin: make set-admin-password PASSWORD=mypass
 	$(GO) run ./cmd/web --debug --set-admin-password $(PASSWORD)
 
+# ----- образы приложения (§74.5) --------------------------------------------
+# Обёртки над scripts/deploy/images.sh — на сервере скрипт обычно зовут напрямую.
+
+.PHONY: images-tag images-list images-rollback
+
+images-tag: ## §74.5 Сохранить текущие образы под версионным тегом ПЕРЕД обновлением: make images-tag V=1.21.1
+	sh scripts/deploy/images.sh tag $(V)
+
+images-list: ## §74.5 Какие версии образов сохранены на хосте
+	sh scripts/deploy/images.sh list
+
+images-rollback: ## §74.5 Вернуть :latest на сохранённую версию (без сборки): make images-rollback V=1.21.1
+	sh scripts/deploy/images.sh rollback $(V)
+
 # ----- docker ---------------------------------------------------------------
 
 .PHONY: docker-build docker-up docker-up-dev docker-down docker-logs
