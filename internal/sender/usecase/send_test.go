@@ -1068,3 +1068,24 @@ func TestSend_ContextCanceled_StopsRetrying(t *testing.T) {
 	assert.False(t, rec.Done)
 	assert.Contains(t, rec.Reason, "context canceled")
 }
+
+// TestSleepCtx — пауза между попытками обязана прерываться смертью контекста:
+// отмена во время backoff'а не должна стоить полного сна (у долгих узлов это
+// десятки секунд) и лишней заведомо провальной попытки.
+func TestSleepCtx(t *testing.T) {
+	t.Parallel()
+
+	t.Run("таймер дотикал", func(t *testing.T) {
+		t.Parallel()
+		assert.True(t, sleepCtx(context.Background(), 10*time.Millisecond))
+	})
+
+	t.Run("контекст умер раньше таймера", func(t *testing.T) {
+		t.Parallel()
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		start := time.Now()
+		assert.False(t, sleepCtx(ctx, 30*time.Second))
+		assert.Less(t, time.Since(start), time.Second, "вернулись сразу, а не через 30 с")
+	})
+}

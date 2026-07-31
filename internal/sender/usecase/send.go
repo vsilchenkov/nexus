@@ -144,6 +144,19 @@ type attempt struct {
 	BackoffBeforeMs int32     `json:"backoff_before_ms"`
 }
 
+// sleepCtx выжидает d, но досрочно возвращает false, если контекст умер раньше.
+// true — пауза выдержана полностью.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
 func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 	t0 := time.Now()
 	rec := &domain.LogRecord{
@@ -231,8 +244,17 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 	)
 	maxAttempts := max(in.RetryCount+1, 1)
 	for n := int32(1); n <= maxAttempts; n++ {
-		if backoffMs > 0 {
-			time.Sleep(time.Duration(backoffMs) * time.Millisecond)
+		// Пауза перед повтором прерывается смертью контекста. Иначе отмена,
+		// случившаяся ВО ВРЕМЯ сна, всё равно оплачивалась бы полным backoff'ом
+		// (у долгих узлов — десятки секунд) и лишней заведомо провальной попыткой.
+		if backoffMs > 0 && !sleepCtx(ctx, time.Duration(backoffMs)*time.Millisecond) {
+			u.logger.Debug("send: context done during backoff, retries stopped",
+				u.logger.Str("id", in.ID),
+				u.logger.Str("node", in.NodePath),
+				u.logger.Int("attempt", int(n)),
+				u.logger.Int("backoff_ms", int(backoffMs)),
+				u.logger.Err(ctx.Err()))
+			break
 		}
 		started := time.Now()
 		resp, lastErr = u.httpc.Do(ctx, req)
