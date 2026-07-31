@@ -38,6 +38,7 @@ import (
 	"nexus/internal/receiver/adapter/out/nodecache"
 	rabbitmqadapter "nexus/internal/receiver/adapter/out/rabbitmq"
 	"nexus/internal/receiver/usecase"
+	"nexus/internal/receiver/usecase/port"
 )
 
 type App struct {
@@ -92,44 +93,72 @@ func (a *App) Start(ctx context.Context) error {
 	}
 	a.senderCl = senderCl
 
-	baseReader := nodecache.New(a.redis, a.pg, a.cipher, time.Duration(a.cfg.Redis.NodeTTLSec)*time.Second, a.logger)
-	reader := nodecache.NewL2(baseReader, nodecache.L2Config{
-		Enabled:  a.cfg.Receiver.L2Cache.Enabled,
-		Size:     a.cfg.Receiver.L2Cache.Size,
-		TTL:      time.Duration(a.cfg.Receiver.L2Cache.TTLMs) * time.Millisecond,
-		StaleTTL: time.Duration(a.cfg.Receiver.L2Cache.StaleTTLMs) * time.Millisecond,
-	}, a.logger, a.metrics)
+	reader := a.buildNodeReader()
 	routeUC := usecase.NewRouteUsecase(reader, a.senderCl, a.cfg.Receiver.MaxHops, a.logger)
 
 	a.producer = kafkapf.NewProducer(a.cfg, kafkapf.WithMetrics(a.metrics))
 	routeAsyncUC := usecase.NewRouteAsyncUsecase(reader, a.producer, a.cfg.Kafka.AsyncTopic, a.cfg.Receiver.MaxHops, a.logger)
 
-	// §27: Puller-менеджер RabbitMQAsync. Один воркer на узел; reconcile из PG.
-	// Запускается, если не выключен явно; при отсутствии узлов RabbitMQAsync —
-	// no-op. ClientIP/IP лога формируется как rabbitmq://host:port/vhost.
-	if !a.cfg.Receiver.Puller.Disabled {
-		pullerMgr := usecase.NewPullerManager(
-			rabbitmqadapter.NewNodeLister(a.pg, a.cipher, a.logger),
-			rabbitmqadapter.NewConnector(),
-			a.producer,
-			a.cfg.Kafka.AsyncTopic,
-			a.cfg.Kafka.Topic.MaxMessageBytes,
-			time.Duration(a.cfg.Receiver.Puller.ReconcileSec)*time.Second,
-			a.metrics,
-			rabbitmqadapter.NewHealthSink(a.redis),
-			a.logger,
-		)
-		pctx, pcancel := context.WithCancel(context.WithoutCancel(ctx))
-		a.pullerCancel = pcancel
-		a.pullerDone = make(chan struct{})
-		go func() {
-			defer close(a.pullerDone)
-			defer safego.Recover(a.logger, "receiver.pullerManager")
-			pullerMgr.Run(pctx)
-		}()
-		a.logger.Info("rabbitmq puller manager started")
+	a.startPullerManager(ctx)
+
+	r, err := a.buildHTTPRouter(routeUC, routeAsyncUC)
+	if err != nil {
+		return err
 	}
 
+	a.startBackgroundSubscribers(ctx, reader)
+
+	return a.serve(ctx, r)
+}
+
+// buildNodeReader собирает трёхуровневое чтение конфига узла (§9.2):
+// L2 in-memory поверх Redis+PostgreSQL.
+func (a *App) buildNodeReader() port.NodeReader {
+	baseReader := nodecache.New(a.redis, a.pg, a.cipher, time.Duration(a.cfg.Redis.NodeTTLSec)*time.Second, a.logger)
+	return nodecache.NewL2(baseReader, nodecache.L2Config{
+		Enabled:  a.cfg.Receiver.L2Cache.Enabled,
+		Size:     a.cfg.Receiver.L2Cache.Size,
+		TTL:      time.Duration(a.cfg.Receiver.L2Cache.TTLMs) * time.Millisecond,
+		StaleTTL: time.Duration(a.cfg.Receiver.L2Cache.StaleTTLMs) * time.Millisecond,
+	}, a.logger, a.metrics)
+}
+
+// startPullerManager поднимает Puller-менеджер RabbitMQAsync (§27): один воркер
+// на узел, reconcile из PG. Выключен флагом или отсутствием таких узлов — no-op.
+// ClientIP/IP лога формируется как rabbitmq://host:port/vhost.
+//
+// Контекст менеджера отвязан от ctx приложения (WithoutCancel + свой cancel):
+// Stop гасит воркеров отдельно и дожидается их, чтобы незакоммиченные сообщения
+// вернулись в очередь брокера, а не потерялись на общем ctx.Done.
+func (a *App) startPullerManager(ctx context.Context) {
+	if a.cfg.Receiver.Puller.Disabled {
+		return
+	}
+	pullerMgr := usecase.NewPullerManager(
+		rabbitmqadapter.NewNodeLister(a.pg, a.cipher, a.logger),
+		rabbitmqadapter.NewConnector(),
+		a.producer,
+		a.cfg.Kafka.AsyncTopic,
+		a.cfg.Kafka.Topic.MaxMessageBytes,
+		time.Duration(a.cfg.Receiver.Puller.ReconcileSec)*time.Second,
+		a.metrics,
+		rabbitmqadapter.NewHealthSink(a.redis),
+		a.logger,
+	)
+	pctx, pcancel := context.WithCancel(context.WithoutCancel(ctx))
+	a.pullerCancel = pcancel
+	a.pullerDone = make(chan struct{})
+	go func() {
+		defer close(a.pullerDone)
+		defer safego.Recover(a.logger, "receiver.pullerManager")
+		pullerMgr.Run(pctx)
+	}()
+	a.logger.Info("rabbitmq puller manager started")
+}
+
+// buildHTTPRouter собирает gin-роутер: middleware, health/metrics и маршруты
+// шины под rate-limit.
+func (a *App) buildHTTPRouter(routeUC *usecase.RouteUsecase, routeAsyncUC *usecase.RouteAsyncUsecase) (*gin.Engine, error) {
 	handler := httpadapter.New(routeUC, routeAsyncUC, a.cfg.Receiver.MaxBodyBytes, a.metrics, a.logger)
 
 	rl := ratelimit.New(a.redis, ratelimit.WithErrorSink(a.metrics))
@@ -141,7 +170,7 @@ func (a *App) Start(ctx context.Context) error {
 	// (дефолт — loopback + приватные сети), иначе клиент подделывает IP
 	// в логах ClickHouse и аудите.
 	if err := r.SetTrustedProxies(a.cfg.Receiver.TrustedProxies); err != nil {
-		return fmt.Errorf("receiver trusted_proxies: %w", err)
+		return nil, fmt.Errorf("receiver trusted_proxies: %w", err)
 	}
 	r.Use(
 		requestid.GinMiddleware(),
@@ -159,7 +188,13 @@ func (a *App) Start(ctx context.Context) error {
 	r.GET("/metrics", gin.WrapH(a.metrics.Handler()))
 
 	handler.Register(r, rlMw)
+	return r, nil
+}
 
+// startBackgroundSubscribers запускает фоновых слушателей Redis: шиппер
+// служебных логов (§51), hot-reload Sentry и уровня логов (§14.5/§51),
+// инвалидацию конфига узла (§57).
+func (a *App) startBackgroundSubscribers(ctx context.Context, reader port.NodeReader) {
 	// §51: шиппер служебных логов в Redis (nexus:logs:receiver) — консоль
 	// «Логи» в Web показывает записи всех трёх сервисов.
 	a.shipperDone = a.logCtl.StartRedisShipper(ctx, a.redis, a.logger)
@@ -189,7 +224,11 @@ func (a *App) Start(ctx context.Context) error {
 			nodeSub.Run(ctx)
 		})
 	}
+}
 
+// serve поднимает HTTP-сервер и блокируется до остановки приложения или
+// фатальной ошибки слушателя.
+func (a *App) serve(ctx context.Context, r *gin.Engine) error {
 	a.srv = &http.Server{
 		Addr:              a.cfg.Receiver.HTTPAddr,
 		Handler:           r,

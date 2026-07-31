@@ -106,6 +106,11 @@ func WithInstance(id string) Option {
 //
 // В собственный реестр регистрируются Go-runtime и Process collectors,
 // чтобы /metrics показывал стандартные `go_*` и `process_*` ряды.
+//
+// Длина функции осознанна: это объявление всех рядов подряд, без логики.
+// Дробление по подсистемам развело бы объявление метрики и её регистрацию в
+// reg.MustRegister по разным функциям — а именно рассинхрон этих двух списков
+// и есть типичная ошибка здесь (ряд объявлен, но не зарегистрирован).
 func New(service string, opts ...Option) *Metrics {
 	reg := prometheus.NewRegistry()
 	constLabels := prometheus.Labels{"service": service}
