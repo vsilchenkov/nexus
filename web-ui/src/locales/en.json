@@ -72,7 +72,8 @@
     "switcher_label": "Current team",
     "favorite_add": "Add to favorites",
     "favorite_remove": "Remove from favorites",
-    "drag_hint": "Drag to reorder"
+    "drag_hint": "Drag to reorder",
+    "unavailable": "Team “{{slug}}” is unavailable: it does not exist or you are not a member. Staying in the current team."
   },
   "search": {
     "placeholder": "Search nodes across all teams…",
