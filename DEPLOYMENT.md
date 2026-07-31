@@ -154,8 +154,30 @@ Admin-only экран `/kafka` (раздел «Аудит») питается и
   (read-only metadata: Metadata/ListOffsets/ListGroups/OffsetFetch) по адресам `kafka.brokers`
   (`KAFKA_BROKERS`). Если доступа нет или `kafka.brokers` пуст — admin-клиент не создаётся, блоки
   «Топики»/«Брокеры»/«Проверить кластер» помечаются недоступными (`kafka_available=false`), остальной
-  экран (KPI/графики из Prometheus) работает. Размер топика на диске не показывается (high-level
-  клиент не отдаёт `DescribeLogDirs`).
+  экран (KPI/графики из Prometheus) работает.
+- **Размер топиков — только через JMX-агент на брокере (§75).** Админ-протокол Kafka размера не
+  отдаёт (`DescribeLogDirs` в клиенте не реализован), `kafka_exporter` его не экспортирует вовсе,
+  поэтому колонка «Размер» питается метрикой `kafka_log_log_size{topic,partition}` из Prometheus.
+  В compose-стеке это уже настроено: сервис `kafka` собирается из
+  [deploy/docker/kafka.Dockerfile](deploy/docker/kafka.Dockerfile) (`apache/kafka` +
+  `jmx_prometheus_javaagent`), агент включается `KAFKA_OPTS` и отдаёт `/metrics` на `7071`
+  (наружу порт не публикуется), а Prometheus снимает его job'ом `kafka-jmx`. Следствия для
+  эксплуатации:
+  - образ брокера **собирается на сервере** — нужен доступ к `repo1.maven.org`; если его нет,
+    укажите зеркало: `docker compose build --build-arg JMX_AGENT_URL=<url> kafka`;
+  - применение требует **пересоздания контейнера**: `docker compose up -d --build kafka`. Штатная
+    команда обновления (`up -d --build web receiver sender`, §9.5) брокера не касается, поэтому
+    после раскатки релиза это отдельный шаг. Javaagent грузится при старте JVM, значит брокер
+    недоступен 30–60 с и `POST /v1/requestAsync/*` на это время отвечает ошибкой — ставьте в окно
+    обновления;
+  - **ошибка в [deploy/kafka-jmx.yml](deploy/kafka-jmx.yml) не даст брокеру стартовать** (JVM не
+    запускается с невалидным javaagent) — правки конфига агента проверяйте на стенде;
+  - в версионировании образов §74.5 (`scripts/deploy/images.sh`, `NEXUS_SERVICES = web receiver
+    sender`) брокер не участвует: откат кода Nexus его не затрагивает.
+  - **внешний Kafka (вариант B)** свой агент не получает: попросите администраторов кластера
+    поднять `jmx_exporter` на брокерах и добавить scrape job. Nexus не требует ничего, кроме
+    метрики `kafka_log_log_size{topic}` в том же Prometheus. Без неё колонка показывает «—» с
+    подсказкой — это штатное состояние, остальной экран работает.
 - **Prometheus** тот же (`prometheus.url`). Async-трафик берётся из существующих
   `nexus_requests_total`/`nexus_request_incomplete_total` по `method="requestAsync"`. Дополнительно
   Receiver/Sender теперь экспонируют две новые серии на тех же `/metrics` (отдельный scrape не нужен):
@@ -414,8 +436,11 @@ docker compose -f deploy/docker-compose.app.yml logs -f web receiver sender
   > # проверить: --describe вместо --alter/--add-config
   > ```
   >
-  > В Docker: `docker exec <kafka-контейнер> /opt/kafka/bin/kafka-configs.sh ...` (образ
-  > `apache/kafka` — путь `/opt/kafka/bin`). Повторите для `nexus.async.dlq`, `nexus.async.paused`
+  > В Docker: `docker exec -e KAFKA_OPTS= <kafka-контейнер> /opt/kafka/bin/kafka-configs.sh ...`
+  > (образ `apache/kafka` — путь `/opt/kafka/bin`). **Сброс `KAFKA_OPTS` обязателен** (§75): в
+  > переменной лежит `-javaagent` JMX-экспортёра, она действует и на CLI-утилиты, а порт 7071 уже
+  > занят брокером — без сброса команда падает с «Prometheus JMX Exporter exiting», а не выполняет
+  > работу. Повторите для `nexus.async.dlq`, `nexus.async.paused`
   > и `nexus.logs.retry`, чтобы все топики совпадали с `config.yml`. Альтернатива (с кратким
   > простоем) — обновить `KAFKA_LOG_RETENTION_*` в compose и `docker compose up -d kafka`, но
   > брокерный дефолт бьёт **только по новым** топикам; существующие всё равно правятся
@@ -1241,6 +1266,10 @@ curl -s http://<host>:8000/api/version       # → {"version":"1.0.0"}
       (§74.5) — без этого сборка перетрёт `nexus-*:latest` и откат займёт время сборки.
 - [ ] `git fetch --tags && git checkout v1.0.0`.
 - [ ] `docker compose up -d --build web receiver sender` (Вариант C; для A/B — со своим `-f`).
+- [ ] **Если релиз меняет образ брокера** (например, §75 — JMX-агент для размера топиков; в
+      описании релиза это указано явно) — отдельным шагом `docker compose up -d --build kafka` в
+      окне обновления: команда выше брокера не касается, а пересоздание контейнера означает
+      простой Kafka 30–60 с (`requestAsync` в это время отвечает ошибкой).
 - [ ] Миграции применились на старте `web`/`receiver` (в логах нет ошибок миграций, §8).
 
 **D. Проверка:**
