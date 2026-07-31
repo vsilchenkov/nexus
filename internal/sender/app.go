@@ -371,10 +371,16 @@ func (a *App) startAdminHTTP() error {
 	hc.Register(r)
 	r.GET("/metrics", gin.WrapH(a.metrics.Handler()))
 
+	// Админ-порт отдаёт только /health, /ready и /metrics — ни длинных ответов,
+	// ни стримов здесь нет, поэтому таймауты фиксированные (в отличие от Web,
+	// где WriteTimeout невозможен). IdleTimeout закрывает простаивающие
+	// keep-alive соединения scrape'а Prometheus.
 	a.adminSrv = &http.Server{
 		Addr:              a.cfg.Sender.AdminHTTPAddr,
 		Handler:           r,
 		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	a.logger.Info("sender admin http listening",

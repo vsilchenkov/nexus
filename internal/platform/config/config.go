@@ -338,7 +338,13 @@ type SenderHTTPClientConfig struct {
 }
 
 type WebSection struct {
-	HTTPAddr                     string `yaml:"http_addr"`
+	HTTPAddr string `yaml:"http_addr"`
+	// IdleTimeoutSec — сколько держать простаивающее keep-alive соединение.
+	// ЕДИНСТВЕННЫЙ таймаут HTTP-сервера Web: ReadTimeout/WriteTimeout здесь
+	// намеренно не задаются (см. комментарий в web/app.go — SSE live-tail и
+	// проксирование sync-запросов с таймаутом узла до 600 с). Без него
+	// брошенные клиентами соединения жили бы до перезапуска процесса.
+	IdleTimeoutSec               int    `yaml:"idle_timeout_sec"`
 	SessionCookieName            string `yaml:"session_cookie_name"`
 	SessionCookieSecure          bool   `yaml:"session_cookie_secure"`
 	SessionCookieSamesite        string `yaml:"session_cookie_samesite"`

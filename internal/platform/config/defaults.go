@@ -240,6 +240,9 @@ func applyDefaults(c *Config) {
 	if c.Web.SenderGRPC.MaxMessageBytes == 0 {
 		c.Web.SenderGRPC.MaxMessageBytes = defaultGRPCMaxMessageBytes
 	}
+	if c.Web.IdleTimeoutSec == 0 {
+		c.Web.IdleTimeoutSec = 120
+	}
 	if c.Web.SessionCookieName == "" {
 		c.Web.SessionCookieName = "nexus_session"
 	}

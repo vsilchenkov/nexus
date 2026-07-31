@@ -9,7 +9,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -533,6 +532,5 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 	if n.ForwardHeaders == nil {
 		n.ForwardHeaders = []string{}
 	}
-	_ = strings.TrimSpace // зарезервировано под валидацию строк (TODO Phase 1.5)
 	return &n, nil
 }

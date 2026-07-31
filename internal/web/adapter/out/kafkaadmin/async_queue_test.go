@@ -110,9 +110,8 @@ func TestQueueEnvelopeTagsMatchCanon(t *testing.T) {
 		"rmq":          "*usecase.RMQMeta",
 	}
 
-	rt := reflect.TypeOf(queueEnvelope{})
-	for i := range rt.NumField() {
-		f := rt.Field(i)
+	rt := reflect.TypeFor[queueEnvelope]()
+	for f := range rt.Fields() {
 		tag, _, _ := strings.Cut(f.Tag.Get("json"), ",")
 		require.NotEmpty(t, tag, "поле %s без json-тега", f.Name)
 

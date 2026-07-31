@@ -198,10 +198,13 @@ func (u *APITokenUsecase) Verify(ctx context.Context, value string) (*domain.API
 	if !user.Active {
 		return nil, nil, domain.ErrUserInactive
 	}
-	// Best-effort last_used_at; не блокирует ответ.
+	// Best-effort last_used_at; не блокирует ответ. WithoutCancel, а не
+	// Background: запись переживает завершение запроса, но сохраняет его
+	// значения — request-id в логах и Sentry-hub (§6 CLAUDE.md).
+	touchCtx := context.WithoutCancel(ctx)
 	go func() {
 		defer safego.Recover(u.logger, "web.tokenTouchLastUsed")
-		_ = u.repo.TouchLastUsed(context.Background(), t.ID)
+		_ = u.repo.TouchLastUsed(touchCtx, t.ID)
 	}()
 	return t, user, nil
 }

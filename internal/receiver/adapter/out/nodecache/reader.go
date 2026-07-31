@@ -105,10 +105,14 @@ func (r *Reader) Get(ctx context.Context, teamSlug, path string) (*domain.Node, 
 	// того же узла не плодят горутины (§30.2: recover обязателен).
 	key := nodeKey(teamSlug, path)
 	if _, busy := r.inflight.LoadOrStore(key, struct{}{}); !busy {
+		// WithoutCancel, а не Background: write-back переживает завершение
+		// запроса (иначе отменялся бы вместе с ним), но не теряет его значения —
+		// request-id в логах и Sentry-hub (§6 CLAUDE.md).
+		wbCtx := context.WithoutCancel(ctx)
 		go func() {
 			defer r.inflight.Delete(key)
 			defer safego.Recover(r.logger, "nodecache.writeBack")
-			r.setToRedis(context.Background(), teamSlug, n)
+			r.setToRedis(wbCtx, teamSlug, n)
 		}()
 	}
 	return n, nil

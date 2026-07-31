@@ -33,8 +33,7 @@ func jsonFields(t *testing.T, v any) map[string]string {
 	require.Equal(t, reflect.Struct, rt.Kind(), "ожидалась структура, получено %s", rt.Kind())
 
 	out := make(map[string]string, rt.NumField())
-	for i := range rt.NumField() {
-		f := rt.Field(i)
+	for f := range rt.Fields() {
 		tag := f.Tag.Get("json")
 		if tag == "-" {
 			continue
