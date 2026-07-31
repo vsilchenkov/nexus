@@ -299,6 +299,24 @@ describe("useTeamUrlParam", () => {
     expect(result.current.unavailableSlug).toBeNull(); // баннера с пустым именем быть не должно
   });
 
+  it("завершающий слэш в адресе не отменяет параметр", async () => {
+    // Адрес правят руками, а «/audit/» — тот же экран, что «/audit»: остаться
+    // без ссылки он не должен.
+    const server: Server = { items: [ALPHA, BETA], currentTeamID: "team-a" };
+    render(server, "/audit/");
+
+    await waitFor(() => expect(probe.search).toBe("?team=alpha"));
+  });
+
+  it("километровое значение параметра обрезается (баннер не распирает страницу)", async () => {
+    const server: Server = { items: [ALPHA, BETA], currentTeamID: "team-a" };
+    const { result } = render(server, `/?team=${"z".repeat(500)}`);
+
+    await waitFor(() => expect(result.current.unavailableSlug).not.toBeNull());
+    expect(result.current.unavailableSlug).toHaveLength(64);
+    expect(apiPost).not.toHaveBeenCalled();
+  });
+
   it("членства ещё грузятся → ни записи в URL, ни переключения", async () => {
     const server: Server = { items: [ALPHA, BETA], currentTeamID: "team-a", teamsPending: true };
     render(server, "/?team=beta");

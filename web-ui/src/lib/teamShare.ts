@@ -44,15 +44,27 @@ export function teamPageUrl(slug: string): string {
 const TEAM_PARAM_ROUTES = new Set(["/", "/kafka", "/audit"]);
 
 // teamParamAllowed — живёт ли параметр `?team=` на этом маршруте (§76.3).
+// Завершающие слэши срезаются: адрес правят руками, а `/audit/` — тот же экран,
+// что `/audit` (react-router сюда его и приводит), и молча оставаться без
+// ссылки он не должен.
 export function teamParamAllowed(pathname: string): boolean {
-  return TEAM_PARAM_ROUTES.has(pathname);
+  const normalized = pathname.replace(/\/+$/, "") || "/";
+  return TEAM_PARAM_ROUTES.has(normalized);
 }
+
+// MAX_SLUG_LEN — потолок длины значения параметра. Домен ограничивает slug 32
+// символами (`^[a-z][a-z0-9_]{0,31}$`), в query же может прийти что угодно, и
+// это значение попадает в текст баннера: без потолка чужая ссылка с километровой
+// строкой распирала бы страницу. Запас сверх домена — чтобы «слишком длинный, но
+// похожий на slug» ввод всё же дошёл до баннера как ненайденная команда.
+const MAX_SLUG_LEN = 64;
 
 // normalizeSlug — значение параметра к каноническому виду: пусто/пробелы → null
 // (`?team=` из недоделанной ссылки не должен показывать баннер с пустым именем),
-// регистр вниз (slug'и всегда строчные, но `?team=Alpha` набирают руками).
+// регистр вниз (slug'и всегда строчные, но `?team=Alpha` набирают руками),
+// длина — под потолок.
 function normalizeSlug(raw: string | null): string | null {
-  return (raw ?? "").trim().toLowerCase() || null;
+  return (raw ?? "").trim().toLowerCase().slice(0, MAX_SLUG_LEN) || null;
 }
 
 // TeamUrlState — состояние баннера «команда недоступна» (§76.5).
@@ -104,7 +116,8 @@ export function useTeamUrlParam(): TeamUrlState {
   const currentSlug = data?.items.find((m) => m.id === data.current_team_id)?.slug ?? "";
 
   useEffect(() => {
-    // Членства ещё не разрешились — решать не по чему. Аналог isFetchedAfterMount
+    // Членства ещё не разрешились (или текущая команда сессии в них не найдена —
+    // окно самолечения §44.H) — решать не по чему. Аналог isFetchedAfterMount
     // из §58 здесь НЕ применим: у ["me-teams"] нет refetchOnMount:"always", и при
     // тёплом кеше (staleTime 30с) флаг остался бы false навсегда — хук не сработал
     // бы вообще. Цена: при протухшем current_team_id (команду сменили в другой
