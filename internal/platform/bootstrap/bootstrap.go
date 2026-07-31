@@ -299,17 +299,45 @@ func MustOtel(ctx context.Context, cfg *config.Config, projectName string, logge
 	return shutdown
 }
 
+// SchemaState — состояние схемы PostgreSQL относительно этого бинаря (§74.3).
+// Возвращается [AutoMigrate] и доезжает до метрик сервиса.
+type SchemaState struct {
+	// Version — версия схемы в БД после старта (0 = миграций не было).
+	Version uint
+	// Ahead — схема новее каталога миграций этого бинаря: миграции не
+	// применялись, сервис работает на схеме, которую его код не создавал.
+	Ahead bool
+}
+
 // AutoMigrate накатывает все непримененные миграции при старте.
 // Падение → exit 1 (см. §5.1 ТЗ — лучше пустой ответ, чем работа на старой схеме).
-func AutoMigrate(cfg *config.Config, logger logging.Logger) {
+//
+// §74.3: схема новее бинаря (версия в БД больше максимальной в каталоге образа)
+// фатальной НЕ считается — это незавершённый откат кода, а схема обратно
+// совместима по контракту §74.2. Сервис стартует, а состояние объявляется
+// записью уровня error: уровень выбран ради Sentry (порог sentry.level по
+// умолчанию error, warn туда не доедет) — плюс метрики nexus_pg_schema_*
+// выставляются сервисом из возвращённого SchemaState.
+// Оборванная миграция (dirty) по-прежнему прекращает старт.
+func AutoMigrate(cfg *config.Config, logger logging.Logger) SchemaState {
 	mg, err := pgpf.NewMigrator(&cfg.Postgres, "migrations", logger)
 	if err != nil {
 		logger.ErrorWithOp("migrator init failed", err, "bootstrap.AutoMigrate")
 		os.Exit(1)
 	}
 	defer mg.Close()
-	if err := mg.Up(); err != nil {
+
+	st, err := mg.EnsureUp()
+	if err != nil {
 		logger.ErrorWithOp("auto-migrate failed", err, "bootstrap.AutoMigrate")
 		os.Exit(1)
 	}
+	if st.Ahead {
+		logger.ErrorWithOp("postgres schema is newer than this build; starting anyway (rollback in progress?)",
+			fmt.Errorf("%w: db=%d binary=%d", pgpf.ErrSchemaAhead, st.DBVersion, st.MaxLocal),
+			"bootstrap.AutoMigrate",
+			logger.Int("db_version", int(st.DBVersion)),
+			logger.Int("binary_max_version", int(st.MaxLocal)))
+	}
+	return SchemaState{Version: st.DBVersion, Ahead: st.Ahead}
 }

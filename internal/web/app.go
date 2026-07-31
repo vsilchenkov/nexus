@@ -99,7 +99,11 @@ type App struct {
 	identity bootstrap.Identity
 }
 
-func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, ch chdriver.Conn, cipher *crypto.Cipher, otelShutdown otelpf.ShutdownFunc, identity bootstrap.Identity, logger logging.Logger, logCtl *bootstrap.LogController) *App {
+func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, ch chdriver.Conn, cipher *crypto.Cipher, otelShutdown otelpf.ShutdownFunc, identity bootstrap.Identity, schema bootstrap.SchemaState, logger logging.Logger, logCtl *bootstrap.LogController) *App {
+	m := metrics.New("web", metrics.WithInstance(identity.ID.String()))
+	// §74.3: состояние схемы — в мониторинг. Стартовый лог виден только в момент
+	// запуска, а незавершённый откат нужно замечать и через сутки после него.
+	m.SetSchemaState(schema.Version, schema.Ahead)
 	return &App{
 		cfg:          cfg,
 		logger:       logger,
@@ -107,7 +111,7 @@ func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, ch chdrive
 		redis:        redis,
 		ch:           ch,
 		cipher:       cipher,
-		metrics:      metrics.New("web", metrics.WithInstance(identity.ID.String())),
+		metrics:      m,
 		otelShutdown: otelShutdown,
 		logCtl:       logCtl,
 		identity:     identity,

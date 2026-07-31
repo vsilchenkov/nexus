@@ -44,7 +44,9 @@ func main() {
 		return
 	}
 
-	bootstrap.AutoMigrate(cfg, logger)
+	// §74.3: схема новее этого бинаря старт не прекращает (незавершённый откат
+	// кода) — состояние доезжает до метрик через App.
+	schema := bootstrap.AutoMigrate(cfg, logger)
 
 	pgPool := bootstrap.MustPG(ctx, cfg, logger)
 	defer pgPool.Close()
@@ -69,7 +71,7 @@ func main() {
 
 	otelShutdown := bootstrap.MustOtel(ctx, cfg, "receiver", logger)
 
-	app := receiver.New(cfg, pgPool, redisClient, cipher, otelShutdown, logger, logCtl)
+	app := receiver.New(cfg, pgPool, redisClient, cipher, otelShutdown, schema, logger, logCtl)
 
 	if err := runner.Run(serviceName, displayName, description, app, logger); err != nil {
 		logger.ErrorWithOp("service stopped", err, "main")

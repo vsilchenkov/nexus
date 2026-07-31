@@ -225,3 +225,18 @@ groups:
         annotations:
           summary: "DLQ messages dropped for node {{ $labels.node }} ({{ $labels.result }})"
           description: "Async messages were permanently dropped from the DLQ; data loss for this node."
+
+      # ----- Состояние схемы PostgreSQL (§74.3) -----
+
+      - alert: NexusSchemaAheadOfBinary
+        # Схема в БД новее каталога миграций сервиса = откат кода выполнен, а
+        # схема осталась от новой версии. Само по себе рабочее состояние (схема
+        # обратно совместима по §74.2), но временное: держится дольше 15 минут —
+        # значит про откат забыли. Порядок действий — DEPLOYMENT.md §10.
+        expr: max by (service, nexus_instance) (nexus_pg_schema_ahead) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }} runs on a schema newer than its build"
+          description: "The PostgreSQL schema version is ahead of this build's migrations. Finish the rollback (roll the schema back with the NEW image) or move the service forward again — see DEPLOYMENT.md §10."
