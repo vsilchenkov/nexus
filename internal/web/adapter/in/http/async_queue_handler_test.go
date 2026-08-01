@@ -3,6 +3,8 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -76,6 +78,41 @@ func aqEngine(node *domain.Node, nodeErr error) *gin.Engine {
 
 func aqNode() *domain.Node {
 	return &domain.Node{ID: "n1", Path: "partner/echo", TeamID: "t1", Status: domain.NodeStatusEnabled}
+}
+
+// TestAQHandler_QueueErrorMapping: §70.4 обещает на чужой таблице «отказ (409)»,
+// но ветки для этой ошибки не было — гейт отдавал 500 «внутренняя ошибка».
+// Поймано на стенде при очистке неудачных на внешней таблице §64: причина
+// пряталась от оператора, а каждый штатный отказ уходил в Sentry как ERR.
+func TestAQHandler_QueueErrorMapping(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"чужая база — 409, а не 500", domain.ErrCHForeignDatabase, http.StatusConflict},
+		{
+			"обёрнутая ошибка тоже 409",
+			fmt.Errorf("async queue delete failed: %w", domain.ErrCHForeignDatabase),
+			http.StatusConflict,
+		},
+		{"узел не найден", domain.ErrNodeNotFound, http.StatusNotFound},
+		{"очередь недоступна", usecase.ErrAsyncQueueUnavailable, http.StatusServiceUnavailable},
+		{"прочее остаётся 500", errors.New("boom"), http.StatusInternalServerError},
+	}
+	h := NewAsyncQueueHandler(nil, logging.NewNoop())
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			gin.SetMode(gin.TestMode)
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodPost, "/api/nodes/n1/async-queue/purge-failed", nil)
+			h.queueError(c, tc.err, "async_queue.purge_failed")
+			assert.Equal(t, tc.want, w.Code)
+		})
+	}
 }
 
 func TestAQHandler_List_DegradedWhenNoKafka(t *testing.T) {
