@@ -1470,16 +1470,26 @@ git fetch --tags && git checkout v1.20.2
 #    ЕСЛИ PostgreSQL В DOCKER (варианты A/C — контейнер postgres в этом же стеке):
 docker compose exec -T postgres pg_dump -U nexus nexus > deploy/arc/nexus_$(date +%F_%H%M).sql
 #
-#    ЕСЛИ PostgreSQL НЕ В DOCKER (нативный сервис — так развёрнут бой),
-#    пароль — из ~/.pgpass (§12):
-#    Реквизиты читаются из .env: оболочка файл сама НЕ подхватывает, а pg_dump
-#    при пустых значениях берёт дефолты (роль и базу по имени ОС-пользователя)
-#    и падает с `role "<логин>" does not exist`.
-#    PG_HOST из .env НЕ берём: там адрес для КОНТЕЙНЕРОВ (host.docker.internal),
-#    с самого сервера он не резолвится. pg_dump работает на хосте → 127.0.0.1.
-#    Пароль подставляется из переменной, в историю оболочки он не попадает.
-eval "$(grep -E '^PG_(PORT|USER|DATABASE|PASSWORD)=' .env)"
-PGPASSWORD="$PG_PASSWORD" pg_dump -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" > deploy/arc/nexus_$(date +%F_%H%M).sql
+#    ЕСЛИ PostgreSQL НЕ В DOCKER (нативный сервис — так развёрнут бой).
+#    Реквизиты читаем из .env ПОСТРОЧНО. Почему так, а не короче:
+#      - оболочка .env сама не подхватывает: при пустых значениях pg_dump берёт
+#        дефолты (роль и базу по имени ОС-пользователя) → role ... does not exist;
+#      - `source .env` ломается на значениях с пробелами без кавычек
+#        (KAFKA_HEAP_OPTS=-Xmx1G -Xms1G), `eval` портит пароль со спецсимволами;
+#      - `tr -d '\r'` убирает CR, если .env правился в Windows: иначе он уедет
+#        в пароль и получится password authentication failed;
+#      - PG_HOST из .env НЕ берём — там адрес для КОНТЕЙНЕРОВ
+#        (host.docker.internal), с сервера он не резолвится.
+#    PGPASSWORD экспортируется ОТДЕЛЬНОЙ строкой, а не префиксом перед pg_dump:
+#    префикс легко обрезать при копировании, и сбой выходит тихим — вместо
+#    ошибки просто запрос пароля.
+export PGPASSWORD=$(grep -m1 '^PG_PASSWORD=' .env | cut -d= -f2- | tr -d '\r')
+PG_PORT=$(grep -m1 '^PG_PORT=' .env | cut -d= -f2- | tr -d '\r')
+PG_USER=$(grep -m1 '^PG_USER=' .env | cut -d= -f2- | tr -d '\r')
+PG_DATABASE=$(grep -m1 '^PG_DATABASE=' .env | cut -d= -f2- | tr -d '\r')
+echo "user=$PG_USER db=$PG_DATABASE port=$PG_PORT passlen=${#PGPASSWORD}"   # всё непусто?
+pg_dump -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" > deploy/arc/nexus_$(date +%F_%H%M).sql
+unset PGPASSWORD
 
 # 1. Остановить ВСЕ три сервиса: работающий новый код обращается к колонкам,
 #    которые down удалит.
@@ -1605,18 +1615,26 @@ docker compose -f deploy/docker-compose.app.yml run --rm web --set-admin-passwor
 
   ```bash
   cd /opt/nexus                     # каталог проекта, рядом с ним .env
-  eval "$(grep -E '^PG_(PORT|USER|DATABASE|PASSWORD)=' .env)"
-  echo "$PG_USER@127.0.0.1:$PG_PORT/$PG_DATABASE"   # проверка: значения должны быть непустыми
-  PGPASSWORD="$PG_PASSWORD" pg_dump -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" > deploy/arc/nexus_pg.sql
+  export PGPASSWORD=$(grep -m1 '^PG_PASSWORD=' .env | cut -d= -f2- | tr -d '\r')
+  PG_PORT=$(grep -m1 '^PG_PORT=' .env | cut -d= -f2- | tr -d '\r')
+  PG_USER=$(grep -m1 '^PG_USER=' .env | cut -d= -f2- | tr -d '\r')
+  PG_DATABASE=$(grep -m1 '^PG_DATABASE=' .env | cut -d= -f2- | tr -d '\r')
+  echo "user=$PG_USER db=$PG_DATABASE port=$PG_PORT passlen=${#PGPASSWORD}"   # всё непусто?
+  pg_dump -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" > deploy/arc/nexus_pg.sql
+  unset PGPASSWORD
   ```
 
   Две ловушки, каждая из которых уже срабатывала на бою:
 
-  1. **Строка с `eval` обязательна.** Оболочка не подхватывает `.env` сама, а `pg_dump` при пустых
-     значениях молча берёт дефолты — роль и базу по имени ОС-пользователя — и падает с
+  1. **Реквизиты надо прочитать из `.env` явно.** Оболочка файл не подхватывает, а `pg_dump` при
+     пустых значениях молча берёт дефолты — роль и базу по имени ОС-пользователя — и падает с
      `FATAL: role "<логин>" does not exist`. `source .env` не подходит: в файле есть значения с
-     пробелами без кавычек (`KAFKA_HEAP_OPTS=-Xmx1G -Xms1G`), и оболочка выполнит их хвост как
-     команду.
+     пробелами без кавычек (`KAFKA_HEAP_OPTS=-Xmx1G -Xms1G`), оболочка выполнит их хвост как
+     команду. Голый `eval` тоже плох: он интерпретирует `$`, кавычки и обратные кавычки внутри
+     значения, поэтому пароль со спецсимволами приедет искажённым. Отсюда чтение через `cut`
+     плюс `tr -d '\r'` — на случай `.env`, правленного Windows-редактором: невидимый CR в конце
+     значения даёт `FATAL: password authentication failed`, и причину видно только через
+     `printf '%s' "$PG_PASSWORD" | od -c`.
   2. **`PG_HOST` из `.env` брать нельзя.** Там записан адрес, по которому к базе обращаются
      КОНТЕЙНЕРЫ (`host.docker.internal`); с самого сервера это имя не резолвится —
      `could not translate host name "host.docker.internal" to address`. `pg_dump` запускается на

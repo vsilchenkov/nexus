@@ -32,16 +32,21 @@ cd nexus
 #    ЕСЛИ PostgreSQL В DOCKER (варианты A/C — контейнер postgres в этом же стеке):
 docker compose exec -T postgres pg_dump -U nexus nexus > deploy/arc/nexus_$(date +%F_%H%M).sql
 #
-#    ЕСЛИ PostgreSQL НЕ В DOCKER (нативный сервис — так развёрнут бой):
-#    пароль — из ~/.pgpass, а не в командной строке (DEPLOYMENT §12).
-#    Реквизиты читаются из .env: оболочка файл сама НЕ подхватывает, а pg_dump
-#    при пустых значениях берёт дефолты (роль и базу по имени ОС-пользователя)
-#    и падает с `role "<логин>" does not exist`.
-#    PG_HOST из .env НЕ берём: там адрес для КОНТЕЙНЕРОВ (host.docker.internal),
-#    с самого сервера он не резолвится. pg_dump работает на хосте → 127.0.0.1.
-#    Пароль подставляется из переменной, в историю оболочки он не попадает.
-eval "$(grep -E '^PG_(PORT|USER|DATABASE|PASSWORD)=' .env)"
-PGPASSWORD="$PG_PASSWORD" pg_dump -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" > deploy/arc/nexus_$(date +%F_%H%M).sql
+#    ЕСЛИ PostgreSQL НЕ В DOCKER (нативный сервис — так развёрнут бой).
+#    Реквизиты читаем из .env ПОСТРОЧНО: оболочка файл не подхватывает,
+#    `source` ломается на значениях с пробелами без кавычек, `eval` портит
+#    пароль со спецсимволами, а `tr -d '\r'` убирает CR от Windows-редактора
+#    (иначе — password authentication failed). PG_HOST из .env НЕ берём: там
+#    адрес для КОНТЕЙНЕРОВ (host.docker.internal), с сервера он не резолвится.
+#    PGPASSWORD — отдельной строкой: префикс перед pg_dump легко обрезать при
+#    копировании, и сбой выходит тихим (просто запрос пароля).
+export PGPASSWORD=$(grep -m1 '^PG_PASSWORD=' .env | cut -d= -f2- | tr -d '\r')
+PG_PORT=$(grep -m1 '^PG_PORT=' .env | cut -d= -f2- | tr -d '\r')
+PG_USER=$(grep -m1 '^PG_USER=' .env | cut -d= -f2- | tr -d '\r')
+PG_DATABASE=$(grep -m1 '^PG_DATABASE=' .env | cut -d= -f2- | tr -d '\r')
+echo "user=$PG_USER db=$PG_DATABASE port=$PG_PORT passlen=${#PGPASSWORD}"   # всё непусто?
+pg_dump -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" > deploy/arc/nexus_$(date +%F_%H%M).sql
+unset PGPASSWORD
 
 # 3. Забрать тег и пересобрать сервисы.
 git fetch --tags
