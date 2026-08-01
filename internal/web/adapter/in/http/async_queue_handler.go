@@ -197,6 +197,7 @@ func (h *AsyncQueueHandler) Purge(c *gin.Context) {
 // @Success  200  {object}  queuePurgeDTO
 // @Failure  400  {object}  ErrorResponse
 // @Failure  404  {object}  ErrorResponse
+// @Failure  409  {object}  ErrorResponse  "таблица логов принадлежит другой ноде Nexus или постороннему писателю (§64/§70.4) — удаление запрещено"
 // @Security CookieAuth
 // @Router   /api/nodes/{id}/async-queue/purge-failed [post]
 func (h *AsyncQueueHandler) PurgeFailed(c *gin.Context) {
