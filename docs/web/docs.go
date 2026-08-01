@@ -3049,6 +3049,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
+                    },
+                    "409": {
+                        "description": "таблица логов принадлежит другой ноде Nexus или постороннему писателю (§64/§70.4) — удаление запрещено",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
                     }
                 }
             }
