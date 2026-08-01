@@ -178,7 +178,11 @@ Admin-only экран `/kafka` (раздел «Аудит») питается и
     scrape job (§75 — первый такой), нужен отдельный шаг:
 
     ```bash
-    docker compose up -d prometheus     # пересоздаст контейнер с новым конфигом
+    docker compose restart prometheus   # перечитает конфиг: процесс стартует заново
+    # ВНИМАНИЕ: `up -d prometheus` здесь НЕ работает. Спецификация сервиса не
+    # менялась (образ, порты, монтирования те же), поэтому compose оставляет
+    # контейнер как есть — «Container … Running», и в памяти остаётся старый
+    # конфиг. Проверено на стенде: up -d новый job не подхватил, restart подхватил.
     # проверка: цель должна быть в состоянии up
     curl -s 'http://localhost:9091/api/v1/targets?state=active' | jq '.data.activeTargets[] | select(.labels.job=="kafka-jmx") | .health'
     ```
