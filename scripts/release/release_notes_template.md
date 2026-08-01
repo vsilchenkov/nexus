@@ -26,10 +26,9 @@ cd nexus
 ./scripts/deploy/images.sh tag
 
 # 2. (только если релиз добавляет миграции) дамп PostgreSQL — страховка отката.
-#    ВНЕ рабочего дерева: дамп в каталоге проекта уедет в контекст сборки
-#    (builder-стейдж копирует дерево целиком) и будет висеть в git status.
-mkdir -p ../nexus-backups
-docker compose exec -T postgres pg_dump -U nexus nexus > ../nexus-backups/nexus_$(date +%F_%H%M).sql
+#    Каталог deploy/arc исключён из git и из контекста сборки образов, поэтому
+#    дамп не портит git status и не оседает в слое образа.
+docker compose exec -T postgres pg_dump -U nexus nexus > deploy/arc/nexus_$(date +%F_%H%M).sql
 
 # 3. Забрать тег и пересобрать сервисы.
 git fetch --tags

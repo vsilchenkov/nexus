@@ -1280,7 +1280,7 @@ curl -s http://<host>:8000/api/version       # → {"version":"1.0.0"}
 **C. Раскатка:**
 
 - [ ] **Перед обновлением с новыми миграциями** снят дамп PostgreSQL (`pg_dump`, §12) — страховка отката,
-      в каталог **вне рабочего дерева** (`../nexus-backups/`): дамп внутри проекта уедет в контекст сборки.
+      в каталог `deploy/arc/` (исключён из git и из контекста сборки, см. `deploy/arc/README.md`).
 - [ ] **Текущие образы сохранены под версионным тегом**: `./scripts/deploy/images.sh tag`
       (§74.5) — без этого сборка перетрёт `nexus-*:latest` и откат займёт время сборки.
 - [ ] `git fetch --tags && git checkout v1.0.0`.
@@ -1403,9 +1403,9 @@ git fetch --tags && git checkout v1.20.2
 ```bash
 # 0. Дамп (если не снят перед обновлением) — down-миграции удаляют данные.
 #    Вариант B (внешний PostgreSQL): pg_dump с хоста, см. §12.
-#    Каталог ВНЕ рабочего дерева: иначе дамп попадёт в контекст сборки образов.
-mkdir -p ../nexus-backups
-docker compose exec -T postgres pg_dump -U nexus nexus > ../nexus-backups/nexus_$(date +%F_%H%M).sql
+#    Каталог deploy/arc — рабочее место оператора: содержимое исключено и из git,
+#    и из контекста сборки образов (см. deploy/arc/README.md).
+docker compose exec -T postgres pg_dump -U nexus nexus > deploy/arc/nexus_$(date +%F_%H%M).sql
 
 # 1. Остановить ВСЕ три сервиса: работающий новый код обращается к колонкам,
 #    которые down удалит.
@@ -1525,7 +1525,7 @@ docker compose -f deploy/docker-compose.app.yml run --rm web --set-admin-passwor
 
 - **PostgreSQL** (критично — конфиг узлов, пользователи, секреты):
   ```bash
-  docker compose -f deploy/docker-compose.yml exec postgres pg_dump -U nexus nexus > ../nexus-backups/nexus_pg.sql
+  docker compose -f deploy/docker-compose.yml exec postgres pg_dump -U nexus nexus > deploy/arc/nexus_pg.sql
   ```
 - **`ENCRYPTION_KEY`** — храните в защищённом месте. Без него зашифрованные креды узлов в
   PostgreSQL не расшифруются. Ротация ключа — `make rotate-encryption-key OLD_KEY=... NEW_KEY=...`.
