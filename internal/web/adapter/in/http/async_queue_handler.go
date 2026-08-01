@@ -231,6 +231,16 @@ func (h *AsyncQueueHandler) queueError(c *gin.Context, err error, op string) {
 		localizedError(c, http.StatusNotFound, "node.not_found")
 	case errors.Is(err, domain.ErrNotFound):
 		localizedError(c, http.StatusNotFound, "error.not_found")
+	case errors.Is(err, domain.ErrCHForeignDatabase):
+		// §70.4 обещает на чужой таблице «отказ (409)», но эта ветка отсутствовала,
+		// и гейт отдавал 500: оператор видел «внутренняя ошибка» вместо причины, а
+		// каждый штатный отказ уходил в Sentry как ERR. Типовой случай — очистка
+		// неудачных на внешней таблице §64, которую Nexus только читает.
+		// Debug вместо Error — отказ штатный, но след нужен: иначе «кнопка не
+		// работает» не отличить от сбоя (ТЗ §51.9).
+		h.logger.Debug("async queue op refused: table belongs to another instance",
+			h.logger.Str("op", op), h.logger.Err(err))
+		localizedError(c, http.StatusConflict, "queue.foreign_database")
 	default:
 		h.logger.ErrorWithOp("async queue op failed", err, op)
 		localizedError(c, http.StatusInternalServerError, "error.internal")

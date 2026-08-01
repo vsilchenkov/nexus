@@ -203,6 +203,37 @@ func (r *NodeRepoPg) CountsByCHTable(ctx context.Context) (map[string]int, error
 	return out, nil
 }
 
+// ExternalCHTables — реализация port.NodeTableUsage: таблицы, помеченные
+// внешними хотя бы одним узлом (§64). Зеркало ListClickHouseTables, где условие
+// обратное (`AND NOT external_table`): там имена нужны для стартовых ALTER'ов,
+// здесь — чтобы read-path не применял к чужой по определению таблице гейт
+// владения §70.4.
+//
+// Таблица со СМЕШАННЫМИ узлами (внешний + обычный) попадёт в оба списка, и это
+// верно: её делят ≥2 узла, а такая по §61 в любом случае читается строго —
+// признак внешности до сравнения не доходит.
+func (r *NodeRepoPg) ExternalCHTables(ctx context.Context) (map[string]struct{}, error) {
+	rows, err := r.db.Query(ctx,
+		`SELECT DISTINCT clickhouse_table FROM nodes WHERE clickhouse_table <> '' AND external_table`)
+	if err != nil {
+		return nil, fmt.Errorf("external ch tables: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]struct{})
+	for rows.Next() {
+		var table string
+		if err := rows.Scan(&table); err != nil {
+			return nil, fmt.Errorf("scan external ch table: %w", err)
+		}
+		out[table] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate external ch tables: %w", err)
+	}
+	return out, nil
+}
+
 func (r *NodeRepoPg) Create(ctx context.Context, n *domain.Node) error {
 	encAuth, err := r.cipher.Encrypt(n.AuthCredentials)
 	if err != nil {

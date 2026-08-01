@@ -42,7 +42,9 @@ type NodeRepo interface {
 	UpdateAllowedHostsSnapshot(ctx context.Context, nodeID string, patterns []string, updatedBy string) error
 }
 
-// NodeTableUsage — сколько узлов делят одну ClickHouse-таблицу логов.
+// NodeTableUsage — факты о ClickHouse-таблицах логов, известные PostgreSQL:
+// сколько узлов делят таблицу и какие таблицы помечены внешними (§64). На них
+// стоит правило видимости записей без node_id (§61).
 //
 // Отдельный малый порт, а не метод NodeRepo (ISP): нужен единственному
 // сценарию — переносу узла между командами, — и расширение NodeRepo сломало бы
@@ -59,6 +61,13 @@ type NodeTableUsage interface {
 	// командам. Один запрос вместо N: read-path логов спрашивает про таблицу на
 	// каждый запрос метрик/журнала, а таблиц в инсталляции — десятки.
 	CountsByCHTable(ctx context.Context) (map[string]int, error)
+
+	// ExternalCHTables — множество таблиц, на которые ссылается хотя бы один узел
+	// с external_table (§64). Их наполняет посторонний сервис: пустой node_id там
+	// штатен, а гейт владения §70.4 неприменим — маркера `__nexus_owner` у чужой
+	// БД нет и быть не может. Read-path логов различает по этому множеству
+	// «чужая, потому что соседняя нода» и «чужая, потому что так задумано».
+	ExternalCHTables(ctx context.Context) (map[string]struct{}, error)
 }
 
 // NodeCache — кеш для node-конфигов в Redis (§9.2: write-through, cache-aside).
