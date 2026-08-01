@@ -26,12 +26,15 @@ cd nexus
 ./scripts/deploy/images.sh tag
 
 # 2. (только если релиз добавляет миграции) дамп PostgreSQL — страховка отката.
-docker compose exec -T postgres pg_dump -U nexus nexus > nexus_$(date +%F_%H%M).sql
+#    Каталог deploy/arc исключён из git и из контекста сборки образов, поэтому
+#    дамп не портит git status и не оседает в слое образа.
+docker compose exec -T postgres pg_dump -U nexus nexus > deploy/arc/nexus_$(date +%F_%H%M).sql
 
 # 3. Забрать тег и пересобрать сервисы.
 git fetch --tags
 git checkout v<новая>
-git status --porcelain          # ДОЛЖНО быть пусто, иначе версия уедет как "-dirty"
+git status --porcelain --untracked-files=no   # ДОЛЖНО быть пусто. Считаются только правки
+                                            # отслеживаемых файлов: untracked версию не портят (§9.4)
 docker compose up -d --build web receiver sender
 
 # 3a. ТОЛЬКО если в разделе «Особое» сказано, что релиз меняет образ брокера
@@ -78,7 +81,12 @@ git fetch --tags && git checkout v<прежняя>     # привести дер
   ЗАРАНЕЕ, до окна обновления:
   - сборка образа берёт агент из файла в репозитории (§75 — `deploy/vendor/`), внешняя сеть для
     неё не нужна; другая версия или зеркало — `--build-arg JMX_AGENT_SRC=<путь-или-url>`;
-  - предупредить о простое брокера 30–60 с: приём `POST /v1/requestAsync/*` на это время падает.
+  - предупредить о простое брокера 30–60 с: приём `POST /v1/requestAsync/*` на это время падает;
+  - **если релиз менял `deploy/prometheus.yml`** (новый scrape job, изменённая цель) — отдельным
+    шагом `docker compose up -d prometheus`: конфиг читается только при старте процесса,
+    `--web.enable-lifecycle` не включён, а штатная команда обновления Prometheus не трогает.
+    Без этого шага метрика собирается брокером, но никем не снимается — выглядит как
+    «фичу не завезли».
 
   После выката проверить, что фича действительно поднялась, а не деградировала молча — для §75:
   `curl -s -b <cookie> http://<host>:8000/api/kafka/topics | jq '.sizes_available, .topics[].size_bytes'`

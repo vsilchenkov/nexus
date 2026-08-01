@@ -171,6 +171,22 @@ Admin-only экран `/kafka` (раздел «Аудит») питается и
     после раскатки релиза это отдельный шаг. Javaagent грузится при старте JVM, значит брокер
     недоступен 30–60 с и `POST /v1/requestAsync/*` на это время отвечает ошибкой — ставьте в окно
     обновления;
+  - **Prometheus обязан перечитать конфиг — иначе job `kafka-jmx` не появится.** Файл
+    `deploy/prometheus.yml` монтируется bind'ом и читается только при старте процесса, а
+    `--web.enable-lifecycle` в compose не включён, то есть `POST /-/reload` недоступен. Штатная
+    команда обновления Prometheus не трогает, поэтому после релиза, добавившего или изменившего
+    scrape job (§75 — первый такой), нужен отдельный шаг:
+
+    ```bash
+    docker compose up -d prometheus     # пересоздаст контейнер с новым конфигом
+    # проверка: цель должна быть в состоянии up
+    curl -s http://<host>:9091/api/v1/targets?state=active | jq '.data.activeTargets[] | select(.labels.job=="kafka-jmx") | .health'
+    ```
+
+    Перезапуск безопасен: TSDB лежит в volume `prometheus_data`, история не теряется, простой —
+    секунды (на это время не снимаются метрики и не считаются алерты). Пропуск шага выглядит
+    ровно как «фича не завезли»: брокер отдаёт метрику, но её никто не собирает, и колонка
+    «Размер» показывает «—» с подсказкой про ненастроенный экспортёр;
   - **ошибка в [deploy/kafka-jmx.yml](deploy/kafka-jmx.yml) не даст брокеру стартовать** (JVM не
     запускается с невалидным javaagent) — правки конфига агента проверяйте на стенде;
   - в версионировании образов §74.5 (`scripts/deploy/images.sh`, `NEXUS_SERVICES = web receiver
@@ -1210,7 +1226,8 @@ cd nexus
 ./scripts/deploy/images.sh tag              # §74.5: nexus-*:latest → nexus-*:<текущая версия>
 git fetch --tags
 git checkout v1.0.0                         # checkout С .git — нужен для git describe
-git status --porcelain                      # ДОЛЖНО быть пусто — иначе версия уедет как "-dirty" (§9.4)
+git status --porcelain --untracked-files=no # ДОЛЖНО быть пусто — иначе версия уедет как "-dirty" (§9.4).
+                                           # Untracked (дамп БД, логи) версию не портят — их не проверяем
 docker compose up -d --build web receiver sender         # Вариант C (корневой compose)
 #   A: docker compose -f deploy/docker-compose.yml up -d --build web receiver sender
 #   B: docker compose -f deploy/docker-compose.app.yml up -d --build
@@ -1262,7 +1279,8 @@ curl -s http://<host>:8000/api/version       # → {"version":"1.0.0"}
 
 **C. Раскатка:**
 
-- [ ] **Перед обновлением с новыми миграциями** снят дамп PostgreSQL (`pg_dump`, §12) — страховка отката.
+- [ ] **Перед обновлением с новыми миграциями** снят дамп PostgreSQL (`pg_dump`, §12) — страховка отката,
+      в каталог `deploy/arc/` (исключён из git и из контекста сборки, см. `deploy/arc/README.md`).
 - [ ] **Текущие образы сохранены под версионным тегом**: `./scripts/deploy/images.sh tag`
       (§74.5) — без этого сборка перетрёт `nexus-*:latest` и откат займёт время сборки.
 - [ ] `git fetch --tags && git checkout v1.0.0`.
@@ -1385,7 +1403,9 @@ git fetch --tags && git checkout v1.20.2
 ```bash
 # 0. Дамп (если не снят перед обновлением) — down-миграции удаляют данные.
 #    Вариант B (внешний PostgreSQL): pg_dump с хоста, см. §12.
-docker compose exec -T postgres pg_dump -U nexus nexus > nexus_$(date +%F_%H%M).sql
+#    Каталог deploy/arc — рабочее место оператора: содержимое исключено и из git,
+#    и из контекста сборки образов (см. deploy/arc/README.md).
+docker compose exec -T postgres pg_dump -U nexus nexus > deploy/arc/nexus_$(date +%F_%H%M).sql
 
 # 1. Остановить ВСЕ три сервиса: работающий новый код обращается к колонкам,
 #    которые down удалит.
@@ -1505,7 +1525,7 @@ docker compose -f deploy/docker-compose.app.yml run --rm web --set-admin-passwor
 
 - **PostgreSQL** (критично — конфиг узлов, пользователи, секреты):
   ```bash
-  docker compose -f deploy/docker-compose.yml exec postgres pg_dump -U nexus nexus > nexus_pg.sql
+  docker compose -f deploy/docker-compose.yml exec postgres pg_dump -U nexus nexus > deploy/arc/nexus_pg.sql
   ```
 - **`ENCRYPTION_KEY`** — храните в защищённом месте. Без него зашифрованные креды узлов в
   PostgreSQL не расшифруются. Ротация ключа — `make rotate-encryption-key OLD_KEY=... NEW_KEY=...`.
