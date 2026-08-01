@@ -553,10 +553,19 @@ PostgreSQL/Redis/Kafka — bundled, как в Варианте A.
 Первое число для Go-сервисов — то, что показывает `docker stats` (без page cache), второе —
 `process_resident_memory_bytes` вместе со страницами самого бинаря. У PostgreSQL в ~145 МиБ
 входят `shared_buffers` (128 МБ по умолчанию). По Kafka замерено два состояния: свежий брокер
-с дефолтным heap занимает 325 МиБ и растёт (`kafka-server-start.sh` подставляет `-Xmx1G -Xms1G`,
-если `KAFKA_HEAP_OPTS` не задан — в наших compose-файлах он не задан), а брокер с
-`-Xmx512m -Xms256m` на аптайме в две недели — 515 МиБ. Отсюда ~1.2 ГБ для дефолта: heap
-дорастает до потолка 1 ГБ плюс служебная память JVM.
+с дефолтным heap занимает 325 МиБ и растёт (`-Xmx1G -Xms1G` — это и дефолт
+`kafka-server-start.sh`, и значение `KAFKA_HEAP_OPTS` в наших compose-файлах, переопределяемое
+из `.env`), а брокер с `-Xmx512m -Xms256m` на аптайме в две недели — 515 МиБ. Отсюда ~1.2 ГБ для
+дефолта: heap дорастает до потолка 1 ГБ плюс служебная память JVM.
+
+**Healthcheck брокера тоже стоит денег, но немного.** Проверка `kafka-topics.sh --list` каждые
+10 секунд поднимает отдельную JVM, и без сброса `KAFKA_HEAP_OPTS=` она наследует бюджет брокера.
+Замер на стенде: пик 122 МиБ RSS с `-Xmx1G -Xms1G` против 91 МиБ с дефолтом для утилит
+(`-Xmx256M`), длительность 1.27 с против 1.21 с. Гигабайт виден только в виртуальной памяти
+(VSZ 2.6 против 2.1 ГБ): `-Xms` коммитит адресное пространство, но за секунду жизни процесса
+физические страницы не трогаются. На сервере 2 ГБ эти ~30 МиБ идут поверх брокера каждые
+10 секунд, а при `vm.overcommit_memory=2` (строгий учёт коммита, а не RSS) гигабайтный `-Xms`
+может вообще не дать утилите стартовать — поэтому переменная в healthcheck сбрасывается.
 
 **Kafka обязательна даже при чисто синхронном трафике.** `receiver` и `sender` на старте
 вызывают `bootstrap.MustEnsureKafkaTopics` и завершаются с кодом 1, если брокер недоступен —
@@ -585,7 +594,7 @@ Prometheus 1–2 ГБ, остальное — логи Docker и запас.
 
 | Где                  | Параметр                      | Дефолт                      | Минимум             |
 |----------------------|-------------------------------|-----------------------------|---------------------|
-| `docker-compose.yml` | `KAFKA_HEAP_OPTS`             | не задан → `-Xmx1G -Xms1G`  | `-Xmx512m -Xms256m` |
+| `.env`               | `KAFKA_HEAP_OPTS`             | `-Xmx1G -Xms1G`             | `-Xmx512m -Xms256m` |
 | `.env`               | `PROMETHEUS_RETENTION`        | `90d`                       | `15d`               |
 | `config.yml`         | `postgres.max_open_conns`     | 25                          | 10                  |
 | `config.yml`         | `redis.pool_size`             | 50                          | 10                  |
@@ -598,8 +607,9 @@ Prometheus 1–2 ГБ, остальное — логи Docker и запас.
 | `config.yml`         | `kafka.topic.retention_ms`    | 7 дней                      | 3 дня               |
 | `config.yml`         | `kafka.topic.retention_bytes` | 40 ГиБ/партиция             | 2 ГиБ               |
 
-- `KAFKA_HEAP_OPTS` — самая крупная экономия, ~600 МБ; переменной в `docker-compose.yml` сейчас
-  нет, добавьте её в `environment` сервиса `kafka`.
+- `KAFKA_HEAP_OPTS` — самая крупная экономия, ~600 МБ. Переменная объявлена в compose-файлах
+  со значением по умолчанию `-Xmx1G -Xms1G` (столько же подставляет сам `kafka-server-start.sh`),
+  поэтому меняется через `.env` или `docker-compose.override.yml` — править compose не нужно.
 - `PROMETHEUS_RETENTION`: панели смотрят максимум 7 дней (§21). Каждый сервис отдаёт ~60 серий
   в простое плюс серии на узел, так что при ~500 сериях и scrape-интервале 15 с 90 дней хранения
   дают оценочно ~0.4 ГБ TSDB против ~0.07 ГБ на 15 днях.
@@ -607,6 +617,58 @@ Prometheus 1–2 ГБ, остальное — логи Docker и запас.
   ClickHouse; со 100 000 строк и телами это гигабайты.
 - `kafka.topic.partitions` меняйте **только до первого старта**: число партиций потом
   увеличивается через `kafka-topics --alter`, а уменьшить его нельзя.
+
+**Готовый профиль — [deploy/docker-compose.override.yml](./deploy/docker-compose.override.yml).**
+Шаблон лежит в репозитории и приезжает на сервер вместе с кодом. Применить — скопировать его
+в корень, где Compose подхватывает такой файл автоматически поверх `docker-compose.yml`
+(команда запуска при этом не меняется):
+
+```bash
+cp deploy/docker-compose.override.yml docker-compose.override.yml
+docker compose up -d --build
+```
+
+Корневой `docker-compose.override.yml` — в `.gitignore`: правки конкретного сервера (свои
+лимиты, внешний PostgreSQL вместо bundled и т.п.) остаются локальными и не мешают `git pull`
+при обновлении. Второй способ — не копировать, а подключать шаблон вторым `-f`
+(`docker compose -f docker-compose.yml -f deploy/docker-compose.override.yml up -d --build`),
+но тогда этот `-f` придётся повторять в каждой команде compose: `ps`, `logs`, `build`, `run`.
+
+Содержимое профиля под 2 ГБ / 2 ядра:
+
+```yaml
+services:
+  postgres:
+    command: [postgres, -c, shared_buffers=64MB]
+    mem_limit: 256m
+  redis:
+    mem_limit: 96m
+  kafka:
+    environment:
+      KAFKA_HEAP_OPTS: "-Xmx512m -Xms256m"
+    mem_limit: 768m
+  prometheus:
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}
+    mem_limit: 192m
+  receiver:
+    environment: { GOMEMLIMIT: 150MiB }
+    mem_limit: 192m
+  sender:
+    environment: { GOMEMLIMIT: 200MiB }
+    mem_limit: 256m
+  web:
+    environment: { GOMEMLIMIT: 150MiB }
+    mem_limit: 192m
+```
+
+`mem_limit` — потолки, а не резервирование: в простое весь стек занимает ~1 ГБ, а лимиты нужны,
+чтобы при всплеске ядро убило один контейнер, а не выбирало жертву само. Если через шину ходят
+крупные тела (`receiver.max_body_bytes` — 10 МиБ, §68 multipart), поднимите лимиты `receiver`
+и `sender`. `GOMEMLIMIT` — мягкий потолок для сборщика мусора Go: он начинает собирать активнее,
+не дожидаясь удвоения heap. Проверить, что получилось после наложения: `docker compose config`.
 
 **Пиковый потребитель — не работа, а сборка.** Деплой идёт `docker compose up -d --build`, то есть
 на сервере компилируется Go (образ `golang:1.26-alpine`, три бинаря, самый крупный — `web`

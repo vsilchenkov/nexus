@@ -1,0 +1,117 @@
+# Профиль небольшого сервера: 2 ГБ памяти, 2 ядра. Шаблон, лежит в репозитории.
+#
+# Как применить на сервере — два способа:
+#
+#   1. Скопировать в корень проекта, где Compose подхватит его АВТОМАТИЧЕСКИ
+#      поверх docker-compose.yml, и запуск не изменится:
+#         cp deploy/docker-compose.override.yml docker-compose.override.yml
+#         docker compose up -d --build
+#      Корневой docker-compose.override.yml в .gitignore — правки конкретного
+#      сервера (свои лимиты, внешний PostgreSQL и т.п.) остаются локальными и
+#      не конфликтуют при обновлении кода.
+#
+#   2. Либо подключать вторым -f, ничего не копируя:
+#         docker compose -f docker-compose.yml -f deploy/docker-compose.override.yml up -d --build
+#      Тогда этот -f нужно повторять в КАЖДОЙ команде compose (up, ps, logs,
+#      build, run) — забыли в одной, и она отработает без профиля.
+#
+# Проверить, что получилось после наложения: `docker compose config`.
+#
+# Что здесь задано:
+#   1. Kafka ужата с дефолтного heap 1 ГБ до 512 МБ — это главный рычаг: с
+#      -Xmx1G -Xms1G брокер дорастает до ~1.2 ГБ RSS и в 2 ГБ стек не влезает.
+#   2. Потолки памяти (mem_limit) на все контейнеры — чтобы при всплеске
+#      падал один контейнер, а не ядро выбирало жертву само.
+#   3. Prometheus хранит метрики 15 дней вместо 90 (панели смотрят максимум
+#      7 дней) — TSDB ~0.07 ГБ вместо ~0.4 ГБ.
+#
+# PostgreSQL, Redis и Kafka остаются bundled-контейнерами этого же стека;
+# внешним остаётся только ClickHouse (вариант C, DEPLOYMENT.md §5).
+# Замеры компонентов и полный минимальный профиль — DEPLOYMENT.md §5.4.
+#
+# ВАЖНО про mem_limit: это потолки, а не резервирование. В простое весь стек
+# занимает ~1 ГБ; сумма потолков намеренно оставлена близкой к 2 ГБ. Если
+# гоняете крупные тела (receiver.max_body_bytes 10 МиБ, §68 multipart) —
+# поднимите лимиты receiver/sender, иначе контейнер словит OOM на пике.
+
+services:
+
+  # PostgreSQL — в Docker, как в базовом compose. Уменьшен shared_buffers:
+  # дефолтные 128 МБ избыточны для конфига узлов и аудита при низкой нагрузке.
+  # max_connections НЕ трогаем: дефолтные 100 должны покрывать суммарный
+  # postgres.max_open_conns трёх сервисов (по умолчанию 25 × 3 = 75).
+  postgres:
+    command:
+      - postgres
+      - -c
+      - shared_buffers=64MB
+    mem_limit: 256m
+
+  redis:
+    mem_limit: 96m
+
+  # Главная экономия: heap 512 МБ вместо дефолтного 1 ГБ → ~515 МиБ RSS
+  # вместо ~1.2 ГБ (замеры в DEPLOYMENT.md §5.4). Ниже 512 МБ опускать не
+  # стоит: брокер держит page cache сегментов и буферы fetch'ей (топики
+  # nexus.* созданы с max.message.bytes 16 МиБ).
+  # Значение задано жёстко и перебивает KAFKA_HEAP_OPTS из .env — менять heap
+  # на этом сервере нужно здесь.
+  kafka:
+    environment:
+      KAFKA_HEAP_OPTS: "-Xmx512m -Xms256m"
+    mem_limit: 768m
+
+  # 15 дней вместо 90: панели §21 показывают максимум 7 дней.
+  prometheus:
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}
+    mem_limit: 192m
+
+  # Go-сервисы: GOMEMLIMIT — мягкий потолок для GC, он начинает собирать
+  # активнее, не дожидаясь удвоения heap. Ставится ниже mem_limit, чтобы
+  # оставить запас на стеки горутин и буферы сетевых соединений.
+  receiver:
+    environment:
+      GOMEMLIMIT: 150MiB
+    mem_limit: 192m
+
+  # Sender держит самые крупные буферы: тело ответа внешнего узла едет обратно
+  # одним gRPC-сообщением (sender.grpc_max_message_bytes — 64 МиБ) и копится
+  # батч логов ClickHouse. Если через шину ходят тела в единицы мегабайт —
+  # поднимайте лимит здесь в первую очередь.
+  sender:
+    environment:
+      GOMEMLIMIT: 200MiB
+    mem_limit: 256m
+
+  web:
+    environment:
+      GOMEMLIMIT: 150MiB
+    mem_limit: 192m
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Если на этом сервере PostgreSQL СВОЙ (не bundled-контейнер) — раскомментируйте
+# блок ниже и задайте PG_HOST/PG_PORT/PG_USER/PG_PASSWORD в .env. Профиль
+# "disabled" нигде не активируется, поэтому контейнер не стартует и не воюет
+# за порт 5432 с хостовым PostgreSQL. depends_on переопределяется через
+# !override (замена списка целиком, а не дополнение) — иначе сервисы будут
+# вечно ждать healthcheck выключенного контейнера.
+#
+#  postgres:
+#    profiles: ["disabled"]
+#  receiver:
+#    depends_on: !override
+#      redis:
+#        condition: service_healthy
+#      sender:
+#        condition: service_started
+#  sender:
+#    depends_on: !override
+#      kafka:
+#        condition: service_healthy
+#  web:
+#    depends_on: !override
+#      redis:
+#        condition: service_healthy

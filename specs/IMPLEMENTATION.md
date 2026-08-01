@@ -2337,6 +2337,14 @@ filter, Create без TeamID). До блока B (team-switcher в сессии)
   `depends_on: kafka: condition: service_healthy` не поднялся бы вообще. Лечится префиксом
   `KAFKA_OPTS= ` в healthcheck и `docker exec -e KAFKA_OPTS= …` для ручных вызовов (в DEPLOYMENT
   §5 примеры `kafka-configs.sh` поправлены). Ни один go-тест и ни один линтер этого не видят.
+- **То же правило распространилось на `KAFKA_HEAP_OPTS`.** Когда heap брокера стал явным
+  (`KAFKA_HEAP_OPTS: ${KAFKA_HEAP_OPTS:--Xmx1G -Xms1G}` в трёх compose — раньше значение молча
+  подставлял `kafka-server-start.sh`, и бюджет памяти не был виден нигде), переменная точно так же
+  досталась бы CLI-утилите healthcheck: `kafka-run-class.sh` использует её как есть и лишь при
+  ПУСТОМ значении подставляет свой дефолт `-Xmx256M` (строки 279–281 скрипта). Без сброса
+  проверка каждые 10 секунд поднимала бы JVM с `-Xms1G` поверх работающего брокера — на сервере
+  2 ГБ (DEPLOYMENT §5.4) это гарантированный OOM. Отсюда префикс
+  `KAFKA_OPTS= KAFKA_HEAP_OPTS=` в healthcheck всех трёх compose-файлов.
 - **Ноль означает ДВЕ разные вещи — отсюда флаг `sizes_available` (нашла ревизия).** Пустой топик
   даёт `kafka_log_log_size = 0` (это норма для `nexus.async.dlq`/`nexus.logs.retry`), и первая
   версия рисовала ему тот же прочерк с подсказкой «JMX-экспортёр не настроен», что и полностью

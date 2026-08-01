@@ -79,6 +79,12 @@ docker compose -f deploy/docker-compose.deps.yml up -d
 Проверка состояния — **deps: status**; логи Kafka — **deps: logs (kafka)**; полный сброс
 данных — **deps: down + reset volumes**.
 
+> **Kafka занимает ~1.2 ГБ памяти** — брокер стартует с `KAFKA_HEAP_OPTS=-Xmx1G -Xms1G`
+> (значение по умолчанию в compose совпадает с дефолтом `kafka-server-start.sh`). На машине,
+> где памяти в обрез, положите в `.env` строку `KAFKA_HEAP_OPTS=-Xmx512m -Xms256m` и пересоздайте
+> контейнер (`docker compose -f deploy/docker-compose.deps.yml up -d --force-recreate kafka`) —
+> брокер займёт ~515 МиБ. Замеры остальных компонентов — [DEPLOYMENT.md](./DEPLOYMENT.md) §5.4.
+
 > Prometheus спрятан за профилем `metrics` и по умолчанию выключен (его scrape-таргеты
 > рассчитаны на контейнерные имена). Для метрик: `docker compose -f deploy/docker-compose.deps.yml --profile metrics up -d`.
 

@@ -26,7 +26,11 @@ coverage.txt
 
 # Docker Compose — локальные per-server оверрайды (напр. внешний PG вместо
 # bundled-контейнера на прод-сервере). Окружение-специфичны, в git не коммитятся.
-docker-compose.override.yml
+# Путь якорный (ведущий "/"), поэтому игнорируется ТОЛЬКО файл в корне — тот,
+# что Compose подхватывает автоматически. Готовые шаблоны в deploy/ (например
+# deploy/docker-compose.override.yml — профиль сервера 2 ГБ / 2 ядра) под это
+# правило не попадают и коммитятся.
+/docker-compose.override.yml
 
 # Web UI build output
 /web-ui/dist/
