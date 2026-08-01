@@ -207,6 +207,7 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 
 	in := buildSendInput(node, env)
 	logRebuiltTarget(p.logger, "async", env, in.TargetURL)
+	logRMQOrigin(p.logger, "async", env)
 	out := p.send.Send(ctx, in)
 
 	// §52: outcome (ok/degraded/down) — для бейджа узла; isErr («любой

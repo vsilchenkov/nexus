@@ -99,7 +99,11 @@ type App struct {
 	identity bootstrap.Identity
 }
 
-func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, ch chdriver.Conn, cipher *crypto.Cipher, otelShutdown otelpf.ShutdownFunc, identity bootstrap.Identity, logger logging.Logger, logCtl *bootstrap.LogController) *App {
+func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, ch chdriver.Conn, cipher *crypto.Cipher, otelShutdown otelpf.ShutdownFunc, identity bootstrap.Identity, schema bootstrap.SchemaState, logger logging.Logger, logCtl *bootstrap.LogController) *App {
+	m := metrics.New("web", metrics.WithInstance(identity.ID.String()))
+	// §74.3: состояние схемы — в мониторинг. Стартовый лог виден только в момент
+	// запуска, а незавершённый откат нужно замечать и через сутки после него.
+	m.SetSchemaState(schema.Version, schema.Ahead)
 	return &App{
 		cfg:          cfg,
 		logger:       logger,
@@ -107,7 +111,7 @@ func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, ch chdrive
 		redis:        redis,
 		ch:           ch,
 		cipher:       cipher,
-		metrics:      metrics.New("web", metrics.WithInstance(identity.ID.String())),
+		metrics:      m,
 		otelShutdown: otelShutdown,
 		logCtl:       logCtl,
 		identity:     identity,
@@ -657,10 +661,19 @@ func (a *App) Start(ctx context.Context) error {
 		hk.Run(ctx)
 	})
 
+	// ReadTimeout/WriteTimeout здесь НЕ задаются намеренно, и это не упущение:
+	// через Web идут SSE-стримы (live-tail логов, §7.4) и проксирование
+	// sync-запросов к Receiver, где таймаут узла доходит до 600 с (§таймауты).
+	// Общий WriteTimeout рвал бы и то, и другое — ровно так боевой
+	// receiver.write_timeout_ms=10000 обрывал долгие вызовы. Дедлайны живут
+	// per-request: в контексте запроса и в таймауте узла.
+	// IdleTimeout ограничивает только ПРОСТАИВАЮЩИЕ keep-alive соединения —
+	// без него брошенный клиентом сокет висел бы до перезапуска процесса.
 	a.srv = &http.Server{
 		Addr:              a.cfg.Web.HTTPAddr,
 		Handler:           r,
 		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       time.Duration(a.cfg.Web.IdleTimeoutSec) * time.Second,
 	}
 
 	a.logger.Info("web listening",

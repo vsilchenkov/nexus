@@ -7,6 +7,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"nexus/internal/domain"
+	"nexus/internal/platform/clock"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase/port"
 )
@@ -28,11 +29,25 @@ type MetricsUsecase struct {
 	nodes      port.NodeRepo
 	settings   port.AppSettingsRepo  // §44-perf: режим подсчёта уникальных (может быть nil)
 	nodeStatus port.NodeStatusReader // §46: персистентный «Down» из Redis (может быть nil)
+	clock      clock.Clock           // §4: «сейчас» для окон по умолчанию
 	logger     logging.Logger
 }
 
-func NewMetricsUsecase(prom port.PromMetrics, nodeLogs port.NodeLogMetrics, nodes port.NodeRepo, settings port.AppSettingsRepo, nodeStatus port.NodeStatusReader, logger logging.Logger) *MetricsUsecase {
-	return &MetricsUsecase{prom: prom, nodeLogs: nodeLogs, nodes: nodes, settings: settings, nodeStatus: nodeStatus, logger: logger}
+// MetricsOption — функциональная опция конструктора.
+type MetricsOption func(*MetricsUsecase)
+
+// WithMetricsClock подменяет источник времени (§4 CLAUDE.md): от него зависит
+// правая граница окна, когда запрос её не задал.
+func WithMetricsClock(c clock.Clock) MetricsOption {
+	return func(u *MetricsUsecase) { u.clock = c }
+}
+
+func NewMetricsUsecase(prom port.PromMetrics, nodeLogs port.NodeLogMetrics, nodes port.NodeRepo, settings port.AppSettingsRepo, nodeStatus port.NodeStatusReader, logger logging.Logger, opts ...MetricsOption) *MetricsUsecase {
+	u := &MetricsUsecase{prom: prom, nodeLogs: nodeLogs, nodes: nodes, settings: settings, nodeStatus: nodeStatus, clock: clock.System(), logger: logger}
+	for _, o := range opts {
+		o(u)
+	}
+	return u
 }
 
 // approxCounts читает режим подсчёта уникальных из app_settings (§44-perf):
@@ -155,7 +170,7 @@ const nodesSparkBuckets = 12
 // Пустой период нормализуется в последний час.
 func (u *MetricsUsecase) NodesOverview(ctx context.Context, teamID string, since, until time.Time) NodesOverview {
 	if until.IsZero() {
-		until = time.Now()
+		until = u.clock.Now()
 	}
 	if since.IsZero() || !since.Before(until) {
 		since = until.Add(-time.Hour)
@@ -328,7 +343,7 @@ func (u *MetricsUsecase) NodeMetrics(ctx context.Context, nodeID, teamID string,
 		return NodeMetrics{}, domain.ErrNodeNotFound
 	}
 	if until.IsZero() {
-		until = time.Now()
+		until = u.clock.Now()
 	}
 	if since.IsZero() || !since.Before(until) {
 		since = until.Add(-time.Hour)
@@ -402,7 +417,7 @@ type Diagnostics struct {
 // мягко: недоступный источник → нули + Available=false.
 func (u *MetricsUsecase) Diagnostics(ctx context.Context, teamID string, since, until time.Time) Diagnostics {
 	if until.IsZero() {
-		until = time.Now()
+		until = u.clock.Now()
 	}
 	if since.IsZero() || !since.Before(until) {
 		since = until.Add(-time.Hour)

@@ -66,9 +66,22 @@ services:
     networks: [nexus_net]
 
   kafka:
-    image: apache/kafka:3.9.0
+    # §75: собственный образ = apache/kafka + Prometheus JMX-агент (deploy/docker/
+    # kafka.Dockerfile). Размер топика на диске есть ТОЛЬКО в JMX брокера, поэтому
+    # без агента колонка «Размер» на экране /kafka остаётся прочерком. jar лежит
+    # в репозитории (deploy/vendor/), сеть при сборке не нужна; другая версия или
+    # зеркало — через JMX_AGENT_SRC (см. комментарий в Dockerfile). Применение
+    # требует ПЕРЕСОЗДАНИЯ контейнера
+    # (javaagent грузится только при старте JVM) → брокер недоступен 30–60 с.
+    build:
+      context: .
+      dockerfile: deploy/docker/kafka.Dockerfile
+    image: nexus-kafka:latest
     restart: unless-stopped
     environment:
+      # §75: JMX-агент отдаёт /metrics на 7071 внутри сети (наружу не публикуем —
+      # ходит только Prometheus, job `kafka-jmx` в deploy/prometheus.yml).
+      KAFKA_OPTS: "-javaagent:/opt/jmx/agent.jar=7071:/opt/jmx/kafka.yml"
       CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
       KAFKA_NODE_ID: "1"
       KAFKA_PROCESS_ROLES: "broker,controller"
@@ -104,7 +117,13 @@ services:
     ports:
       - "9092:9092"
     healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      # §75: `KAFKA_OPTS=` обязателен. Переменная окружения контейнера действует
+      # и на CLI-утилиты (они запускаются тем же kafka-run-class.sh), поэтому
+      # утилита пыталась бы поднять СВОЙ JMX-агент на уже занятом брокером порту
+      # 7071, падала бы с «Prometheus JMX Exporter exiting» и exit 1. Итог без
+      # сброса: брокер вечно unhealthy → sender (depends_on service_healthy)
+      # не стартует вообще.
+      test: ["CMD-SHELL", "KAFKA_OPTS= /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10

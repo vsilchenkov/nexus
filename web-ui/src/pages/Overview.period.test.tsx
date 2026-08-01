@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { type ReactNode } from "react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import Overview from "./Overview";
@@ -104,10 +104,23 @@ function newClient() {
   return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000 } } });
 }
 
+// urlProbe — наблюдаемая адресная строка MemoryRouter (window.location в тестах
+// не используется). Нужна кейсу §76: правка фильтров не должна выбрасывать из
+// URL чужие ключи, в том числе ссылку на команду.
+const urlProbe = { search: "" };
+
+function UrlProbe() {
+  urlProbe.search = useLocation().search;
+  return null;
+}
+
 function renderOverview(qc: QueryClient, entry = "/") {
   const wrapper = ({ children }: { children: ReactNode }) => (
     <MemoryRouter initialEntries={[entry]}>
-      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+      <QueryClientProvider client={qc}>
+        {children}
+        <UrlProbe />
+      </QueryClientProvider>
     </MemoryRouter>
   );
   return render(<Overview />, { wrapper });
@@ -178,6 +191,32 @@ describe("Overview: дефолтный период per-team (§71)", () => {
     await qc.invalidateQueries({ queryKey: MY_TEAMS_KEY });
 
     await waitFor(() => expect(lastMetricsRange()).toBe("7d"));
+  });
+
+  // §76: сброс периода при смене команды переписывает query-строку. Ссылка на
+  // команду живёт в ней же, и вылететь при этом не должна — иначе адрес
+  // страницы переставал бы быть ссылкой ровно в момент переключения.
+  it("сброс периода при смене команды не выбрасывает из URL параметр ?team=", async () => {
+    const server: Server = {
+      currentTeamID: TEAM_A,
+      prefs: [
+        { team_id: TEAM_A, range: "30d" },
+        { team_id: TEAM_B, range: "7d" },
+      ],
+    };
+    mockServer(server);
+    const qc = newClient();
+    renderOverview(qc, "/?team=alpha&range=1h");
+
+    await waitFor(() => expect(lastMetricsRange()).toBe("1h"));
+
+    server.currentTeamID = TEAM_B;
+    await qc.invalidateQueries({ queryKey: MY_TEAMS_KEY });
+
+    await waitFor(() => expect(lastMetricsRange()).toBe("7d"));
+    // Период сброшен (range ушёл как совпавший с дефолтом), team на месте.
+    // Обновляет его само зеркало §76 — здесь важно лишь, что Overview его не съел.
+    expect(new URLSearchParams(urlProbe.search).get("team")).toBe("alpha");
   });
 
   // Guard одноразового сброса: teamId приходит как "" → team-a, и наивная

@@ -6,6 +6,7 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net/url"
@@ -62,6 +63,10 @@ type SendOutput struct {
 	Headers    map[string]string
 	Body       []byte
 	Error      string
+	// Timeout — внешний узел не ответил именно по таймауту (истёк per-node
+	// timeout_ms), а не по отказу соединения/DNS. Receiver превращает это в 504
+	// вместо 502 (см. proto SendResponse.timeout).
+	Timeout    bool
 	Attempts   int32
 	DurationMs int32
 }
@@ -108,6 +113,10 @@ type SendUsecase struct {
 	// grpc_max_message_bytes) для текста reason при 502. Само ограничение чтения
 	// делает httpclient (§43-rev).
 	maxResponseBytes int
+	// jitter возвращает случайную величину в [0,n) для full-jitter backoff.
+	// Зависимость, а не прямой rand.Intn (§4 CLAUDE.md): иначе тест ретраев
+	// не может предсказать паузу и вынужден либо спать, либо не проверять её.
+	jitter func(n int) int
 }
 
 // SendOption — функциональная опция конструктора SendUsecase.
@@ -123,12 +132,25 @@ func WithHostResolver(hr HostResolver) SendOption {
 	}
 }
 
+// WithJitter подменяет источник случайности backoff'а (§4 CLAUDE.md). В проде
+// не используется — только тесты, которым нужна предсказуемая пауза.
+func WithJitter(f func(n int) int) SendOption {
+	return func(u *SendUsecase) {
+		if f != nil {
+			u.jitter = f
+		}
+	}
+}
+
 func NewSendUsecase(httpc port.HTTPCaller, logw port.LogWriter, cb CircuitBreaker, logger logging.Logger, maxResponseBytes int, opts ...SendOption) *SendUsecase {
 	if cb == nil {
 		cb = noopBreaker{}
 	}
 	host, _ := os.Hostname()
-	u := &SendUsecase{httpc: httpc, logw: logw, cb: cb, hosts: noopHostResolver{}, logger: logger, host: host, maxResponseBytes: maxResponseBytes}
+	u := &SendUsecase{
+		httpc: httpc, logw: logw, cb: cb, hosts: noopHostResolver{}, logger: logger,
+		host: host, maxResponseBytes: maxResponseBytes, jitter: rand.Intn,
+	}
 	for _, o := range opts {
 		o(u)
 	}
@@ -142,6 +164,19 @@ type attempt struct {
 	Status          int32     `json:"status"`
 	Reason          string    `json:"reason"`
 	BackoffBeforeMs int32     `json:"backoff_before_ms"`
+}
+
+// sleepCtx выжидает d, но досрочно возвращает false, если контекст умер раньше.
+// true — пауза выдержана полностью.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
@@ -231,8 +266,17 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 	)
 	maxAttempts := max(in.RetryCount+1, 1)
 	for n := int32(1); n <= maxAttempts; n++ {
-		if backoffMs > 0 {
-			time.Sleep(time.Duration(backoffMs) * time.Millisecond)
+		// Пауза перед повтором прерывается смертью контекста. Иначе отмена,
+		// случившаяся ВО ВРЕМЯ сна, всё равно оплачивалась бы полным backoff'ом
+		// (у долгих узлов — десятки секунд) и лишней заведомо провальной попыткой.
+		if backoffMs > 0 && !sleepCtx(ctx, time.Duration(backoffMs)*time.Millisecond) {
+			u.logger.Debug("send: context done during backoff, retries stopped",
+				u.logger.Str("id", in.ID),
+				u.logger.Str("node", in.NodePath),
+				u.logger.Int("attempt", int(n)),
+				u.logger.Int("backoff_ms", int(backoffMs)),
+				u.logger.Err(ctx.Err()))
+			break
 		}
 		started := time.Now()
 		resp, lastErr = u.httpc.Do(ctx, req)
@@ -266,12 +310,26 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		if lastErr == nil && resp != nil && resp.StatusCode < 500 {
 			break // успех или 4xx — retry не помогает
 		}
+		// Контекст мёртв (клиент разорвал соединение — боевой сценарий «1С сдалась
+		// по своему таймауту», либо shutdown сервиса) — ретраить некуда: каждая
+		// следующая попытка падает мгновенно тем же `context canceled`, раздувая
+		// attempts в логе и подменяя первую — настоящую — причину. Спать в backoff
+		// тем более нельзя. Выходим с последней ошибкой.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			u.logger.Debug("send: context done, retries stopped",
+				u.logger.Str("id", in.ID),
+				u.logger.Str("node", in.NodePath),
+				u.logger.Int("attempt", int(n)),
+				u.logger.Int("max_attempts", int(maxAttempts)),
+				u.logger.Err(ctxErr))
+			break
+		}
 		// exponential backoff with full jitter
 		base := in.RetryBackoffMs
 		if base <= 0 {
 			base = 100
 		}
-		backoffMs = int32(rand.Intn(int(base * (1 << min(int(n-1), 5)))))
+		backoffMs = int32(u.jitter(int(base * (1 << min(int(n-1), 5)))))
 	}
 
 	out := SendOutput{
@@ -285,6 +343,9 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 	switch {
 	case lastErr != nil:
 		out.Error = lastErr.Error()
+		// errors.Is, а не разбор текста: http.Client оборачивает дедлайн
+		// контекста в *url.Error, цепочка Unwrap сохраняется.
+		out.Timeout = errors.Is(lastErr, context.DeadlineExceeded)
 		rec.Status = 0
 		rec.Done = false
 		rec.Reason = lastErr.Error()

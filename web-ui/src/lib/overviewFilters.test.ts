@@ -187,6 +187,10 @@ describe("hasFilterParams", () => {
   it.each([
     ["", false],
     ["utm=1", false],
+    // §76: ссылка на команду — не фильтр. URL «/?team=beta» обязан считаться
+    // пустым, иначе переход по ней перестал бы восстанавливать фильтры из
+    // сессионного зеркала (§54.3).
+    ["team=beta", false],
     ["q=foo", true],
     ["status=err", true],
     ["from=2026-07-01T00:00:00Z", true],
@@ -207,6 +211,19 @@ describe("applyFilters", () => {
   it("clears its own params when filters are default", () => {
     const out = applyFilters(qs("utm=1&q=old&range=1h"), def(), defaultPeriod);
     expect(out.toString()).toBe("utm=1");
+  });
+
+  // §76: ссылка на команду живёт в том же URL, что и фильтры. Контракт «чужие
+  // ключи не трогаем» здесь не абстрактный — он и есть гарантия того, что
+  // любая правка фильтра (в т.ч. сброс периода при смене команды, §71) не
+  // выбросит из адресной строки саму ссылку.
+  it("keeps the team link param (§76) when filters change or reset", () => {
+    const changed = applyFilters(qs("team=beta&q=old"), { ...def(), search: "new" }, defaultPeriod);
+    expect(changed.get("team")).toBe("beta");
+    expect(changed.get("q")).toBe("new");
+
+    const reset = applyFilters(qs("team=beta&q=old&range=1h"), def(), defaultPeriod);
+    expect(reset.toString()).toBe("team=beta");
   });
 
   // Выбор периода, равного дефолту команды, убирает range из URL: ровно так

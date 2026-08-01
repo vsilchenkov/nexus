@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"nexus/internal/domain"
+	clockpf "nexus/internal/platform/clock"
 	"nexus/internal/platform/logging"
 )
 
@@ -97,7 +98,7 @@ func TestGuard_CacheTTL(t *testing.T) {
 	clock := func() time.Time { return now }
 	g := newTestGuard(t, "kz",
 		WithOwnerTTL(5*time.Minute, 30*time.Second),
-		WithOwnerClock(func() time.Time { return clock() }))
+		WithOwnerClock(clockpf.Func(func() time.Time { return clock() })))
 
 	g.store("nexus_kz_default", VerdictOwned, nil)
 	g.store("nexus_default", VerdictForeign, &Owner{InstanceID: ""})

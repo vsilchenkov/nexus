@@ -118,7 +118,7 @@ lint: ## golangci-lint run
 
 # ----- migrations -----------------------------------------------------------
 
-.PHONY: migrate-up migrate-down migrate-status
+.PHONY: migrate-up migrate-down migrate-status migrate-force
 
 migrate-up: ## Применить все миграции
 	$(GO) run ./cmd/web --debug --migrate-up
@@ -129,8 +129,25 @@ migrate-down: ## Откатить N последних миграций: make mi
 migrate-status: ## Текущая версия схемы
 	$(GO) run ./cmd/web --debug --migrate-status
 
+migrate-force: ## §74.4 Объявить версию схемы и снять dirty БЕЗ выполнения SQL: make migrate-force V=28
+	$(GO) run ./cmd/web --debug --migrate-force $(V)
+
 set-admin-password: ## Задать пароль admin: make set-admin-password PASSWORD=mypass
 	$(GO) run ./cmd/web --debug --set-admin-password $(PASSWORD)
+
+# ----- образы приложения (§74.5) --------------------------------------------
+# Обёртки над scripts/deploy/images.sh — на сервере скрипт обычно зовут напрямую.
+
+.PHONY: images-tag images-list images-rollback
+
+images-tag: ## §74.5 Сохранить текущие образы под версионным тегом ПЕРЕД обновлением: make images-tag V=1.21.1
+	sh scripts/deploy/images.sh tag $(V)
+
+images-list: ## §74.5 Какие версии образов сохранены на хосте
+	sh scripts/deploy/images.sh list
+
+images-rollback: ## §74.5 Вернуть :latest на сохранённую версию (без сборки): make images-rollback V=1.21.1
+	sh scripts/deploy/images.sh rollback $(V)
 
 # ----- docker ---------------------------------------------------------------
 
@@ -201,7 +218,7 @@ INTEGRATION_TIMEOUT ?= 20m
 test-integration: test-int-pg test-int-ch test-int-catalog test-int-logs test-int-receiver test-int-rmq test-int-sender test-int-queue ## Integration-тесты под-прогонами (требует Docker; 20m на группу)
 
 test-int-pg: ## integration: Postgres-узлы/миграции/multi-tenancy
-	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestNodeRepo|^TestNodeUC|^TestNodeCache|^TestNodeSearch|^TestNodeAuthor|^TestMigrations|^TestMultiTenancy" ./tests/integration/...
+	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestNodeRepo|^TestNodeUC|^TestNodeCache|^TestNodeSearch|^TestNodeAuthor|^TestMigrate|^TestMultiTenancy" ./tests/integration/...
 
 test-int-ch: ## integration: ClickHouse/шаблоны/метрики/replay/владение БД (§70)
 	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestClickHouse|^TestCHTemplateRepo|^TestCHProvisioner|^TestLogReader|^TestMetricsReader|^TestReplay|^TestMultiInstance" ./tests/integration/...

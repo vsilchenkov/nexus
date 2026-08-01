@@ -1,0 +1,30 @@
+# Конфигурация Prometheus JMX-агента на брокере Kafka (§75).
+#
+# Намеренно минимальная: Nexus берёт отсюда РОВНО ОДНУ метрику — размер лога
+# партиции, которого нет в админ-протоколе Kafka. Всё остальное (число
+# сообщений, lag, состояние реплик, брокеры) Web считает сам через Admin API,
+# поэтому расширять правила «на всякий случай» не нужно: каждый лишний паттерн
+# — это лишние серии в Prometheus без единого потребителя.
+#
+# includeObjectNames сужает обход MBean-сервера до нужного домена (в
+# jmx_exporter 1.x whitelistObjectNames переименован и оставлен deprecated).
+# Итог: kafka_log_log_size{topic="…",partition="N"} — имя совпадает с
+# официальным examples/kafka-2_0_0.yml, поэтому готовые Grafana-дашборды Kafka
+# понимают его без переделки. Web агрегирует его как
+# `sum by(topic)(kafka_log_log_size)` (см. adapter/out/prometheus).
+#
+# Кардинальность: топиков nexus.* — 4, партиций у каждого — 4 → ~16 серий.
+
+lowercaseOutputName: true
+
+includeObjectNames:
+  - "kafka.log:type=Log,name=Size,*"
+
+rules:
+  - pattern: 'kafka.log<type=Log, name=Size, topic=(.+), partition=(.+)><>Value'
+    name: kafka_log_log_size
+    type: GAUGE
+    help: "Размер лога партиции на диске брокера, байт (JMX kafka.log:type=Log,name=Size)"
+    labels:
+      topic: "$1"
+      partition: "$2"

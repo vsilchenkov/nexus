@@ -4,9 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"nexus/internal/domain"
 	"nexus/internal/platform/logging"
@@ -390,5 +394,43 @@ func TestRoute_DynamicAuth_MissingToken_NoAuth(t *testing.T) {
 	}
 	if got := sender.last.GetAuth().GetAuthorizationHeader(); got != "" {
 		t.Fatalf("ожидался пустой Authorization, got %q", got)
+	}
+}
+
+// Внешний узел не ответил: Sender возвращает status_code=0. Клиент получает
+// 502, а на ТАЙМАУТ — 504: для вызывающей стороны это разные ситуации (таймаут
+// имеет смысл повторить, отказ соединения — нет).
+//
+// Красный на коде до ревью: там 504 стоял под `errors.Is(err, ...)`, где err в
+// этой точке всегда nil (ошибку вернули строкой выше), поэтому ветка была
+// недостижима и таймаут всегда отдавался как 502 — вопреки контракту proto.
+func TestRoute_UpstreamNoResponse_StatusMapping(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		timeout bool
+		want    int
+	}{
+		{name: "таймаут внешнего узла", timeout: true, want: http.StatusGatewayTimeout},
+		{name: "отказ соединения/DNS", timeout: false, want: http.StatusBadGateway},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			sender := stubSenderClient{resp: &senderv1.SendResponse{
+				StatusCode: 0,
+				Error:      "upstream did not respond",
+				Timeout:    tt.timeout,
+			}}
+			u := NewRouteUsecase(stubNodeReader{node: methodTestNode()}, sender, 5, logging.NewNoop())
+
+			out, err := u.Route(context.Background(), RouteInput{NodePath: "demo/path", Method: "POST"})
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, out.StatusCode)
+			assert.JSONEq(t, `{"error":"upstream unavailable"}`, string(out.Body))
+		})
 	}
 }

@@ -7,7 +7,6 @@ package usecase
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -94,28 +93,50 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 		u.logger.Str("status", string(node.Status)),
 		u.logger.Int("hop", hop))
 
+	if err := checkNodeAcceptsSync(node, in); err != nil {
+		return nil, err
+	}
+
+	req, err := u.buildSendRequest(node, in, remainder, hop)
+	if err != nil {
+		return nil, err
+	}
+	return u.callSender(ctx, node, req)
+}
+
+// checkNodeAcceptsSync — допуск запроса к узлу: статус, тип узла, входящий
+// метод и входящая авторизация. Отдельно от сборки запроса: здесь только
+// «пускать или нет», без единого побочного эффекта.
+func checkNodeAcceptsSync(node *domain.Node, in RouteInput) error {
 	switch node.Status {
 	case domain.NodeStatusDisabled:
-		return nil, domain.ErrNodeNotFound
+		return domain.ErrNodeNotFound
 	case domain.NodeStatusPaused:
 		// §3.6: sync на paused-узел превращается в async — handler
 		// переключается на RouteAsync и отвечает 202 + queued:true.
-		return nil, domain.ErrNodePaused
+		return domain.ErrNodePaused
 	}
 
 	if node.RootMethod != domain.RootMethodRequest {
-		return nil, fmt.Errorf("%w: node is %s, not request", domain.ErrNodeNotFound, node.RootMethod)
+		return fmt.Errorf("%w: node is %s, not request", domain.ErrNodeNotFound, node.RootMethod)
 	}
 
 	// §3.2 (#5): узел принимает только сконфигурированный входящий метод.
 	if !MethodMatches(in.Method, node.IncomingMethod) {
-		return nil, domain.ErrNodeMethodNotAllowed
+		return domain.ErrNodeMethodNotAllowed
 	}
 
-	if err := CheckIncomingAuth(node, in.Header, in.Query, in.Body); err != nil {
-		return nil, err
-	}
+	return CheckIncomingAuth(node, in.Header, in.Query, in.Body)
+}
 
+// buildSendRequest собирает gRPC-запрос к Sender: исходящая авторизация,
+// целевой URL с хвостом path-passthrough и query, forward-заголовки.
+func (u *RouteUsecase) buildSendRequest(
+	node *domain.Node,
+	in RouteInput,
+	remainder string,
+	hop int,
+) (*senderv1.SendRequest, error) {
 	// Динамическая авторизация: извлекаем и удаляем служебные значения
 	// из query/headers/body ДО ResolveURL и pickForwardHeaders, чтобы
 	// очищенные данные ушли внешнему узлу (§3.5 «Исключение»).
@@ -125,15 +146,16 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 	var authHeader string
 
 	if node.AuthType.IsDynamic() {
-		dyn, derr := BuildDynamicOutgoingAuth(node, in.Header, in.Query, in.Body)
-		if derr != nil {
-			return nil, derr
+		dyn, err := BuildDynamicOutgoingAuth(node, in.Header, in.Query, in.Body)
+		if err != nil {
+			return nil, err
 		}
 		authHeader = dyn.Header
 		effHeader = dyn.Headers
 		effQuery = dyn.Query
 		effBody = dyn.Body
 	} else {
+		var err error
 		authHeader, err = BuildOutgoingAuth(node)
 		if err != nil {
 			return nil, err
@@ -157,20 +179,8 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 		headers[HeaderHops] = strconv.Itoa(hop)
 	}
 
-	id := uuid.NewString()
-	// §51.9: параметры исходящего вызова (URL без query — там могут быть
-	// токены; тело/заголовки не логируем).
-	u.logger.Debug("route: forwarding to sender",
-		u.logger.Str("id", id),
-		u.logger.Str("node", node.Path),
-		u.logger.Str("method", EffectiveOutgoingMethod(node, in.Method)),
-		u.logger.Str("target", redactURLString(finalURL)),
-		u.logger.Int("body_len", len(effBody)),
-		u.logger.Int("timeout_ms", int(node.TimeoutMs)),
-		u.logger.Int("retry_count", int(node.RetryCount)))
-	start := time.Now()
-	resp, err := u.sender.Send(ctx, &senderv1.SendRequest{
-		Id:                 id,
+	return &senderv1.SendRequest{
+		Id:                 uuid.NewString(),
 		NodePath:           node.Path,
 		NodeId:             node.ID,
 		TargetUrl:          finalURL,
@@ -190,13 +200,34 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 		LoggingEnabled:     node.LoggingEnabled,
 		MaxBodySizeEnabled: node.MaxBodySizeEnabled,
 		MaxBodySize:        node.MaxBodySize,
-	})
+	}, nil
+}
+
+// callSender выполняет вызов и превращает ответ Sender'а в ответ клиенту.
+func (u *RouteUsecase) callSender(
+	ctx context.Context,
+	node *domain.Node,
+	req *senderv1.SendRequest,
+) (*RouteOutput, error) {
+	// §51.9: параметры исходящего вызова (URL без query — там могут быть
+	// токены; тело/заголовки не логируем).
+	u.logger.Debug("route: forwarding to sender",
+		u.logger.Str("id", req.GetId()),
+		u.logger.Str("node", node.Path),
+		u.logger.Str("method", req.GetMethod()),
+		u.logger.Str("target", redactURLString(req.GetTargetUrl())),
+		u.logger.Int("body_len", len(req.GetBody())),
+		u.logger.Int("timeout_ms", int(node.TimeoutMs)),
+		u.logger.Int("retry_count", int(node.RetryCount)))
+
+	start := time.Now()
+	resp, err := u.sender.Send(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("sender.Send: %w", err)
 	}
 	// §51.9: итог вызова — статус, попытки и длительности (внешняя + полная).
 	u.logger.Debug("route: sender responded",
-		u.logger.Str("id", id),
+		u.logger.Str("id", req.GetId()),
 		u.logger.Str("node", node.Path),
 		u.logger.Int("status", int(resp.GetStatusCode())),
 		u.logger.Int("attempts", int(resp.GetAttempts())),
@@ -210,8 +241,11 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 	}
 	if out.StatusCode == 0 {
 		// Sender не получил ответ от внешнего узла (timeout, dns, conn refused).
+		// 504 отдаём именно на таймаут: для клиента это повод повторить, а отказ
+		// соединения — нет. Признак приходит от Sender'а полем timeout, а не
+		// разбором текста ошибки (proto SendResponse.timeout).
 		out.StatusCode = http.StatusBadGateway
-		if errors.Is(err, context.DeadlineExceeded) {
+		if resp.GetTimeout() {
 			out.StatusCode = http.StatusGatewayTimeout
 		}
 		if out.Body == nil {

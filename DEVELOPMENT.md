@@ -64,8 +64,17 @@ docker compose -f deploy/docker-compose.deps.yml up -d
 или Command Palette → **Tasks: Run Task → deps: up**.
 
 Файл [deploy/docker-compose.deps.yml](./deploy/docker-compose.deps.yml) самодостаточный:
-поднимает только зависимости с портами `5432/6379/8123/9000/9092` на хосте. Kafka
+поднимает только зависимости с портами `5432/6379/8123/9000/9092/7071` на хосте. Kafka
 анонсирует себя как `localhost:9092` (именно для процессов с хоста).
+
+> **Первый запуск собирает образ брокера** (§75): `kafka` — это `apache/kafka` плюс
+> `jmx_prometheus_javaagent`, который отдаёт размер топиков на `localhost:7071/metrics`
+> (`kafka_log_log_size`) — без него колонка «Размер» на экране `/kafka` показывает «—».
+> jar агента лежит в репозитории (`deploy/vendor/`), поэтому сборка идёт без сети; другая версия
+> или зеркало —
+> `docker compose -f deploy/docker-compose.deps.yml build --build-arg JMX_AGENT_SRC=<путь-или-url> kafka`.
+> Правка [deploy/kafka-jmx.yml](./deploy/kafka-jmx.yml) с ошибкой не даст брокеру стартовать
+> (JVM не запускается с невалидным javaagent) — смотрите тогда `deps: logs (kafka)`.
 
 Проверка состояния — **deps: status**; логи Kafka — **deps: logs (kafka)**; полный сброс
 данных — **deps: down + reset volumes**.
@@ -96,11 +105,19 @@ docker compose -f deploy/docker-compose.deps.yml up -d
   ```
 - Проверить версию схемы: `go run ./cmd/web --debug --migrate-status`
 - Откатить последнюю: `go run ./cmd/web --debug --migrate-down 1`
+- Выйти из `dirty` после оборванной миграции (§74.4): сначала привести схему руками, затем
+  `make migrate-force V=28` (или `go run ./cmd/web --debug --migrate-force 28`) — **SQL команда
+  не выполняет**, только объявляет версию и снимает флаг.
 
 Либо через Run and Debug — конфиг **Web: migrate-up** (миграция под отладчиком).
 
 > При обычном `--debug`-запуске `web` и `receiver` и так применяют миграции автоматически.
 > Отдельный шаг нужен, когда хотите накатить схему до старта сервисов или явно проверить статус.
+>
+> **Переключились на ветку со старым набором миграций?** Сервис стартует и пишет в лог запись
+> уровня `error` «postgres schema is newer than this build» (§74.3): схема в БД новее вашего
+> каталога `migrations/`. Это ожидаемо и мешать работе не будет, но если нужна чистая схема —
+> откатите лишние миграции с ветки, где они есть (`--migrate-down N`), или пересоздайте БД.
 
 ### Шаг 3. Задать пароль администратора (один раз)
 

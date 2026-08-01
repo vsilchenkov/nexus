@@ -10,6 +10,7 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"nexus/internal/domain"
+	"nexus/internal/platform/clock"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase/port"
 )
@@ -51,6 +52,7 @@ type NotificationScheduler struct {
 	// instanceID — §70.7: подпись ноды в тексте уведомления. Ноды пишут в один
 	// чат, и без подписи непонятно, чьи ошибки пришли.
 	instanceID string
+	clock      clock.Clock // §4: «сейчас» для окна выборки ошибок
 	logger     logging.Logger
 
 	mu      sync.Mutex
@@ -68,12 +70,27 @@ func NewNotificationScheduler(
 	state Checkpoint,
 	instanceID string,
 	logger logging.Logger,
+	opts ...NotificationOption,
 ) *NotificationScheduler {
-	return &NotificationScheduler{
+	s := &NotificationScheduler{
 		settings: settings, teams: teams, nodes: nodes, prom: prom,
 		telegram: telegram, lock: lock, state: state,
-		lockTTL: 3 * time.Minute, instanceID: instanceID, logger: logger,
+		lockTTL: 3 * time.Minute, instanceID: instanceID,
+		clock: clock.System(), logger: logger,
 	}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
+}
+
+// NotificationOption — функциональная опция конструктора.
+type NotificationOption func(*NotificationScheduler)
+
+// WithNotificationClock подменяет источник времени (§4 CLAUDE.md): от него
+// зависит верхняя граница окна, за которое собираются ошибки узлов.
+func WithNotificationClock(c clock.Clock) NotificationOption {
+	return func(s *NotificationScheduler) { s.clock = c }
 }
 
 // Run запускает планировщик и блокируется до ctx.Done. Cron-задачи исполняются
@@ -159,7 +176,7 @@ func (s *NotificationScheduler) cycle(ctx context.Context) {
 		return // другая реплика обрабатывает этот тик
 	}
 
-	now := time.Now()
+	now := s.clock.Now()
 	untilMs := now.UnixMilli()
 	since, err := s.state.Get(ctx)
 	if err != nil {

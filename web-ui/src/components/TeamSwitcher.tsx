@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, ChevronDown, Star } from "lucide-react";
+import { Check, ChevronDown, Share2, Star } from "lucide-react";
 
 import { cn } from "../lib/cn";
+import { copyToClipboard } from "../lib/clipboard";
+import { teamPageUrl } from "../lib/teamShare";
 import { useMyTeams, useSetFavoriteTeams, useSwitchTeam, type TeamMembership } from "../lib/teams";
 import { Popover, PopoverTrigger, PopoverContent, Tooltip } from "./ui";
 
@@ -70,9 +72,11 @@ export function TeamSwitcher() {
   );
 }
 
-// TeamRow — строка команды: кнопка выбора (имя + галка текущей) и отдельная
-// кнопка-звезда. Две соседние кнопки, а не вложенные (невалидный HTML) — и
-// звезда не переключает команду без всяких stopPropagation.
+// TeamRow — строка команды: кнопка выбора (имя + галка текущей), кнопка-звезда
+// и кнопка «Поделиться» (§76). Соседние кнопки, а не вложенные (невалидный
+// HTML) — и звезда со «Поделиться» не переключают команду без всяких
+// stopPropagation. Попап при копировании остаётся открытым по той же причине:
+// onPick не срабатывает, а Radix закрывает Popover только по outside-pointerdown.
 function TeamRow({
   team,
   isCurrent,
@@ -115,6 +119,43 @@ function TeamRow({
           <Star className={cn("h-3.5 w-3.5", isFavorite && "fill-current")} />
         </button>
       </Tooltip>
+      <ShareTeamButton slug={team.slug} />
     </div>
+  );
+}
+
+// ShareTeamButton — копирует ссылку на рабочее пространство команды (§76.2).
+// Подтверждение inline (иконка на 1.5 с меняется на галочку), как у кнопки
+// «Поделиться» узла: тостов в панели нет. Доступна всем ролям — шаринг ссылки
+// ничего не мутирует, а получатель всё равно увидит только свои команды.
+function ShareTeamButton({ slug }: { slug: string }) {
+  const { t } = useTranslation();
+  const [copied, setCopied] = useState(false);
+  // Попап часто закрывают раньше, чем истечёт таймер — размонтированной строке
+  // setState уже не нужен.
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+
+  const share = async () => {
+    if (!(await copyToClipboard(teamPageUrl(slug)))) return;
+    setCopied(true);
+    timer.current = window.setTimeout(() => setCopied(false), 1500);
+  };
+
+  const label = copied ? t("common.copied") : t("teams.share");
+  return (
+    <Tooltip content={label}>
+      <button
+        type="button"
+        aria-label={label}
+        onClick={share}
+        className={cn(
+          "grid h-7 w-7 shrink-0 place-items-center rounded transition-colors hover:bg-bg-muted",
+          copied ? "text-ok" : "text-fg-subtle hover:text-fg",
+        )}
+      >
+        {copied ? <Check className="h-3.5 w-3.5" /> : <Share2 className="h-3.5 w-3.5" />}
+      </button>
+    </Tooltip>
   );
 }

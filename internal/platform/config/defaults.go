@@ -20,6 +20,11 @@ func defaultTrustedProxies() []string {
 
 // applyDefaults заполняет нулевые значения дефолтами из §8.3 ТЗ.
 // Применяется после yaml.Unmarshal — пустые поля в YAML получают эти значения.
+//
+// Длина функции осознанна: это линейный список «поле → значение по умолчанию»
+// без единого ветвления по данным. Разбиение по секциям добавило бы уровней
+// косвенности, а забытый дефолт стало бы искать труднее — сейчас весь набор
+// виден одним поиском по файлу.
 func applyDefaults(c *Config) {
 	if c.Logging.Level == 0 {
 		c.Logging.Level = 4 // info
@@ -140,6 +145,9 @@ func applyDefaults(c *Config) {
 	if c.Receiver.SenderGRPC.PoolSize == 0 {
 		c.Receiver.SenderGRPC.PoolSize = 8
 	}
+	// Мёртвый параметр (см. godoc ReceiverSenderGRPCConfig.TimeoutMs): дедлайн
+	// gRPC-вызову никто не ставит. Дефолт сохранён, чтобы значение в конфиге и в
+	// прогретой структуре не расходилось; на поведение не влияет.
 	if c.Receiver.SenderGRPC.TimeoutMs == 0 {
 		c.Receiver.SenderGRPC.TimeoutMs = 30000
 	}
@@ -230,11 +238,15 @@ func applyDefaults(c *Config) {
 	if c.Web.SenderGRPC.PoolSize == 0 {
 		c.Web.SenderGRPC.PoolSize = 2
 	}
+	// Тоже мёртвый (тот же тип и тот же grpcsender без дедлайна).
 	if c.Web.SenderGRPC.TimeoutMs == 0 {
 		c.Web.SenderGRPC.TimeoutMs = 30000
 	}
 	if c.Web.SenderGRPC.MaxMessageBytes == 0 {
 		c.Web.SenderGRPC.MaxMessageBytes = defaultGRPCMaxMessageBytes
+	}
+	if c.Web.IdleTimeoutSec == 0 {
+		c.Web.IdleTimeoutSec = 120
 	}
 	if c.Web.SessionCookieName == "" {
 		c.Web.SessionCookieName = "nexus_session"

@@ -76,6 +76,10 @@ type Metrics struct {
 	// §36: авто-репроцессор DLQ (повторная доставка неудачных async-сообщений).
 	DLQReprocessTotal    *prometheus.CounterVec // {node, result=succeeded|failed|ttl_dropped|skipped|dropped}
 	DLQReprocessDuration prometheus.Histogram   // длительность одного прохода sweeper'а (секунды)
+
+	// §74.3: состояние схемы PostgreSQL относительно кода сервиса.
+	PGSchemaVersion prometheus.Gauge // версия схемы в БД (0 = миграций не было)
+	PGSchemaAhead   prometheus.Gauge // 1 = схема новее каталога миграций бинаря
 }
 
 // Option — функциональная опция конструктора New.
@@ -102,6 +106,11 @@ func WithInstance(id string) Option {
 //
 // В собственный реестр регистрируются Go-runtime и Process collectors,
 // чтобы /metrics показывал стандартные `go_*` и `process_*` ряды.
+//
+// Длина функции осознанна: это объявление всех рядов подряд, без логики.
+// Дробление по подсистемам развело бы объявление метрики и её регистрацию в
+// reg.MustRegister по разным функциям — а именно рассинхрон этих двух списков
+// и есть типичная ошибка здесь (ряд объявлен, но не зарегистрирован).
 func New(service string, opts ...Option) *Metrics {
 	reg := prometheus.NewRegistry()
 	constLabels := prometheus.Labels{"service": service}
@@ -287,6 +296,20 @@ func New(service string, opts ...Option) *Metrics {
 			ConstLabels: constLabels,
 			Buckets:     []float64{.01, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60},
 		}),
+
+		// §74.3: версия схемы PostgreSQL, на которой работает сервис.
+		PGSchemaVersion: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name:        "nexus_pg_schema_version",
+			Help:        "Applied PostgreSQL schema version (0 = no migrations applied).",
+			ConstLabels: constLabels,
+		}),
+
+		// §74.3: признак незавершённого отката — схема новее кода сервиса.
+		PGSchemaAhead: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name:        "nexus_pg_schema_ahead",
+			Help:        "1 when the database schema is newer than this build's migrations directory (rollback in progress).",
+			ConstLabels: constLabels,
+		}),
 	}
 
 	reg.MustRegister(
@@ -317,8 +340,26 @@ func New(service string, opts ...Option) *Metrics {
 		m.NodeDegraded,
 		m.DLQReprocessTotal,
 		m.DLQReprocessDuration,
+		m.PGSchemaVersion,
+		m.PGSchemaAhead,
 	)
 	return m
+}
+
+// SetSchemaState публикует состояние схемы PostgreSQL (§74.3): версию, на
+// которой сервис работает, и признак «схема новее моего кода» — то есть откат
+// кода выполнен, а схема осталась от новой версии. Признак держится до конца
+// жизни процесса: он снимается только следующим стартом на согласованной схеме.
+//
+// Вызывается сервисами, которые накатывают миграции (Web и Receiver). Sender их
+// не накатывает и метрику не публикует — у него нет источника значения.
+func (m *Metrics) SetSchemaState(version uint, ahead bool) {
+	m.PGSchemaVersion.Set(float64(version))
+	if ahead {
+		m.PGSchemaAhead.Set(1)
+		return
+	}
+	m.PGSchemaAhead.Set(0)
 }
 
 // IncRateLimitCheckError реализует ratelimit.ErrorSink: учёт fail-open

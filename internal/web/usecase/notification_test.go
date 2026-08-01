@@ -82,6 +82,7 @@ func (p notifProm) KafkaOverview(context.Context, time.Time, time.Time) (port.Ka
 func (p notifProm) KafkaTimeseries(context.Context, time.Time, time.Time, time.Duration, []string) (map[string][]port.KafkaPoint, error) {
 	return nil, nil
 }
+func (p notifProm) KafkaTopicSizes(context.Context) (map[string]int64, error) { return nil, nil }
 
 type notifSender struct {
 	msgs []string

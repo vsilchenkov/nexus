@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"nexus/internal/domain"
+	"nexus/internal/platform/clock"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase/port"
 )
@@ -115,8 +116,6 @@ func newPeerInstanceUC(repo port.PeerInstanceRepo, prober port.InstanceProber) (
 	uc := NewPeerInstanceUsecase(repo, prober, NewAuditUsecase(auditRepo, logging.NewNoop()), logging.NewNoop())
 	return uc, auditRepo
 }
-
-func intPtr(v int) *int { return &v }
 
 func TestPeerInstanceCreate(t *testing.T) {
 	t.Parallel()
@@ -237,7 +236,7 @@ func TestPeerInstanceCheckAll(t *testing.T) {
 		{ID: "id-2", Title: "B", BaseURL: "https://b.example.ru"},
 	}}
 	prober := &stubProber{byURL: map[string]port.InstanceProbeResult{
-		"https://a.example.ru": {Status: domain.PeerInstanceActive, Version: "1.20.2", InstanceID: "kz", LatencyMS: intPtr(42)},
+		"https://a.example.ru": {Status: domain.PeerInstanceActive, Version: "1.20.2", InstanceID: "kz", LatencyMS: new(42)},
 		"https://b.example.ru": {Status: domain.PeerInstanceUnreachable, Error: "timeout"},
 	}}
 	uc, _ := newPeerInstanceUC(repo, prober)
@@ -361,7 +360,7 @@ func TestPeerInstanceCheckUsesInjectedClock(t *testing.T) {
 		{ID: "id-1", Title: "A", BaseURL: "https://a.example.ru"},
 	}}
 	uc, _ := newPeerInstanceUC(repo, &stubProber{fallback: port.InstanceProbeResult{Status: domain.PeerInstanceActive, Version: "1"}})
-	uc.now = func() time.Time { return fixed }
+	uc.clock = clock.Fixed(fixed)
 
 	got, err := uc.CheckOne(context.Background(), "id-1")
 	require.NoError(t, err)

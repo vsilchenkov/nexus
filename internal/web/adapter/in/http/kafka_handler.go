@@ -231,7 +231,7 @@ type kafkaTopicDTO struct {
 
 // Topics godoc
 // @Summary  Список топиков кластера (§4.3 spec).
-// @Description  Партиции, RF, оценка числа сообщений, consumer-группы с lag, состояние реплик. Размер на диске недоступен (best-effort, 0). Кеш Redis 30с. Admin-only.
+// @Description  Партиции, RF, оценка числа сообщений, consumer-группы с lag, состояние реплик. Размер на диске (§75) — из метрики kafka_log_log_size JMX-агента брокера, сумма по всем репликам; при недоступном источнике size_bytes=0 и sizes_available=false. Метаданные кешируются в Redis 30с, размеры запрашиваются каждый раз. Admin-only.
 // @Tags     kafka
 // @Produce  json
 // @Success  200  {object}  KafkaTopicsResponse
@@ -251,7 +251,9 @@ func (h *KafkaHandler) Topics(c *gin.Context) {
 			ConsumerGroups: groups, UnderReplicated: t.UnderReplicated, OfflinePartitions: t.OfflinePartitions,
 		})
 	}
-	c.JSON(http.StatusOK, gin.H{"topics": topics, "kafka_available": r.KafkaAvailable})
+	c.JSON(http.StatusOK, gin.H{
+		"topics": topics, "kafka_available": r.KafkaAvailable, "sizes_available": r.SizesAvailable,
+	})
 }
 
 type kafkaProducerDTO struct {

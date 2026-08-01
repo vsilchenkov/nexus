@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"nexus/internal/domain"
+	"nexus/internal/platform/clock"
 	"nexus/internal/platform/logging"
 	"nexus/internal/platform/safego"
 	"nexus/internal/web/usecase/port"
@@ -36,7 +37,17 @@ type APITokenUsecase struct {
 	audit  *AuditUsecase
 	users  port.UserRepo
 	teams  teamMembershipLister
+	clock  clock.Clock
 	logger logging.Logger
+}
+
+// APITokenOption — функциональная опция конструктора.
+type APITokenOption func(*APITokenUsecase)
+
+// WithAPITokenClock подменяет источник времени (§4 CLAUDE.md). Нужен тестам:
+// от времени зависят срок жизни токена и проверка «не протух ли он».
+func WithAPITokenClock(c clock.Clock) APITokenOption {
+	return func(u *APITokenUsecase) { u.clock = c }
 }
 
 func NewAPITokenUsecase(
@@ -45,8 +56,16 @@ func NewAPITokenUsecase(
 	teams teamMembershipLister,
 	audit *AuditUsecase,
 	logger logging.Logger,
+	opts ...APITokenOption,
 ) *APITokenUsecase {
-	return &APITokenUsecase{repo: repo, users: users, teams: teams, audit: audit, logger: logger}
+	u := &APITokenUsecase{
+		repo: repo, users: users, teams: teams, audit: audit,
+		clock: clock.System(), logger: logger,
+	}
+	for _, o := range opts {
+		o(u)
+	}
+	return u
 }
 
 // CreatedToken — то, что возвращается при создании. Поле PlainToken
@@ -88,7 +107,7 @@ func (u *APITokenUsecase) Create(
 		if *expiresInDays <= 0 {
 			return nil, errors.New("expires_in_days must be positive")
 		}
-		exp := time.Now().Add(time.Duration(*expiresInDays) * 24 * time.Hour)
+		exp := u.clock.Now().Add(time.Duration(*expiresInDays) * 24 * time.Hour)
 		expiresAt = &exp
 	}
 	plain, err := generateToken()
@@ -188,7 +207,7 @@ func (u *APITokenUsecase) Verify(ctx context.Context, value string) (*domain.API
 		}
 		return nil, nil, fmt.Errorf("lookup token: %w", err)
 	}
-	if !t.IsActive(time.Now()) {
+	if !t.IsActive(u.clock.Now()) {
 		return nil, nil, domain.ErrUnauthorized
 	}
 	user, err := u.users.Get(ctx, t.UserID)
@@ -198,10 +217,13 @@ func (u *APITokenUsecase) Verify(ctx context.Context, value string) (*domain.API
 	if !user.Active {
 		return nil, nil, domain.ErrUserInactive
 	}
-	// Best-effort last_used_at; не блокирует ответ.
+	// Best-effort last_used_at; не блокирует ответ. WithoutCancel, а не
+	// Background: запись переживает завершение запроса, но сохраняет его
+	// значения — request-id в логах и Sentry-hub (§6 CLAUDE.md).
+	touchCtx := context.WithoutCancel(ctx)
 	go func() {
 		defer safego.Recover(u.logger, "web.tokenTouchLastUsed")
-		_ = u.repo.TouchLastUsed(context.Background(), t.ID)
+		_ = u.repo.TouchLastUsed(touchCtx, t.ID)
 	}()
 	return t, user, nil
 }

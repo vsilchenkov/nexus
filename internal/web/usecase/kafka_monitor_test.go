@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -31,6 +32,31 @@ func (f *fakeKafkaAdmin) BrokerHealth(context.Context) (port.BrokerHealth, error
 }
 func (f *fakeKafkaAdmin) Ping(context.Context) ([]port.BrokerPing, error) {
 	return f.pings, f.pingErr
+}
+
+// memKafkaCache — in-memory port.KafkaCache без TTL: для тестов важно лишь то,
+// что второй вызов попадает в кеш. Значения гоняются через JSON, как в
+// Redis-адаптере, — иначе тест хранил бы указатель на тот же слайс и не заметил
+// бы, что в кеш уехали размеры.
+type memKafkaCache struct{ data map[string][]byte }
+
+func newMemKafkaCache() *memKafkaCache { return &memKafkaCache{data: map[string][]byte{}} }
+
+func (c *memKafkaCache) Get(_ context.Context, key string, dst any) (bool, error) {
+	raw, ok := c.data[key]
+	if !ok {
+		return false, nil
+	}
+	return true, json.Unmarshal(raw, dst)
+}
+
+func (c *memKafkaCache) Set(_ context.Context, key string, val any) error {
+	raw, err := json.Marshal(val)
+	if err != nil {
+		return err
+	}
+	c.data[key] = raw
+	return nil
 }
 
 func kafkaWindow() (time.Time, time.Time) {
@@ -102,6 +128,97 @@ func TestKafkaTopics_NoAdmin(t *testing.T) {
 	r := uc.Topics(context.Background())
 	assert.False(t, r.KafkaAvailable)
 	assert.Empty(t, r.Topics)
+}
+
+// §75: размер топика приходит из Prometheus (JMX-агент брокера) — админ-API
+// Kafka его не отдаёт. Топики без метрики остаются с нулём (UI рисует «—»).
+func TestKafkaTopics_SizesFromPrometheus(t *testing.T) {
+	t.Parallel()
+	admin := &fakeKafkaAdmin{topics: []port.TopicInfo{
+		{Name: "nexus.async", Partitions: 4},
+		{Name: "nexus.async.dlq", Partitions: 4},
+		{Name: "nexus.logs.retry", Partitions: 4},
+	}}
+	prom := &fakeProm{topicSizes: map[string]int64{
+		"nexus.async":     1503238553,
+		"nexus.async.dlq": 12907,
+		// nexus.logs.retry в ответе метрик отсутствует вовсе (например, партиций
+		// топика нет на опрошенном брокере) — размер остаётся нулевым.
+		"__consumer_offsets": 4096, // internal-топика в списке нет — ключ игнорируется
+	}}
+	uc := NewKafkaMonitorUsecase(prom, admin, nil, defaultTh(), logging.NewNoop())
+
+	r := uc.Topics(context.Background())
+
+	require.True(t, r.KafkaAvailable)
+	require.Len(t, r.Topics, 3)
+	assert.Equal(t, int64(1503238553), r.Topics[0].SizeBytes)
+	assert.Equal(t, int64(12907), r.Topics[1].SizeBytes)
+	assert.Zero(t, r.Topics[2].SizeBytes)
+	// Источник ответил — нулевой размер третьего топика означает «топик пуст»,
+	// и UI обязан показать «0 B», а не подсказку про ненастроенный экспортёр.
+	assert.True(t, r.SizesAvailable)
+}
+
+// §75 (ревизия): SizesAvailable отличает «источника нет» от «топик пуст».
+// Без флага UI выдавал бы пустой топик за сломанный JMX-экспортёр и посылал
+// оператора чинить исправный мониторинг.
+func TestKafkaTopics_SizesUnavailableWhenNoSeries(t *testing.T) {
+	t.Parallel()
+	admin := &fakeKafkaAdmin{topics: []port.TopicInfo{{Name: "nexus.async", Partitions: 4}}}
+
+	// Prometheus жив, но серий kafka_log_log_size нет (агент не поднят).
+	uc := NewKafkaMonitorUsecase(&fakeProm{topicSizes: map[string]int64{}}, admin, nil, defaultTh(), logging.NewNoop())
+	r := uc.Topics(context.Background())
+	require.True(t, r.KafkaAvailable)
+	assert.False(t, r.SizesAvailable)
+
+	// Prometheus вовсе не сконфигурирован — тот же исход.
+	uc = NewKafkaMonitorUsecase(nil, admin, nil, defaultTh(), logging.NewNoop())
+	r = uc.Topics(context.Background())
+	require.True(t, r.KafkaAvailable)
+	assert.False(t, r.SizesAvailable)
+}
+
+// §75 (ревизия): кеш метаданных Kafka не должен консервировать размеры —
+// они запрашиваются на каждый вызов, иначе после пропажи метрики UI до конца
+// TTL показывал бы размеры, противореча собственному флагу.
+func TestKafkaTopics_SizesNotFrozenByCache(t *testing.T) {
+	t.Parallel()
+	admin := &fakeKafkaAdmin{topics: []port.TopicInfo{{Name: "nexus.async", Partitions: 4}}}
+	prom := &fakeProm{topicSizes: map[string]int64{"nexus.async": 4096}}
+	cache := newMemKafkaCache()
+	uc := NewKafkaMonitorUsecase(prom, admin, cache, defaultTh(), logging.NewNoop())
+
+	first := uc.Topics(context.Background())
+	require.Len(t, first.Topics, 1)
+	require.Equal(t, int64(4096), first.Topics[0].SizeBytes)
+	require.True(t, first.SizesAvailable)
+
+	// Метрика пропала (агент упал). Метаданные всё ещё берутся из кеша, но
+	// размер обязан обнулиться вместе с флагом.
+	prom.topicSizes = map[string]int64{}
+	second := uc.Topics(context.Background())
+	require.Len(t, second.Topics, 1)
+	assert.Zero(t, second.Topics[0].SizeBytes)
+	assert.False(t, second.SizesAvailable)
+	assert.True(t, second.KafkaAvailable)
+}
+
+// §75: недоступный Prometheus не должен ломать список топиков — размеры просто
+// остаются нулевыми (деградация до поведения, которое было до §75).
+func TestKafkaTopics_SizesDegradeOnPromError(t *testing.T) {
+	t.Parallel()
+	admin := &fakeKafkaAdmin{topics: []port.TopicInfo{{Name: "nexus.async", Partitions: 4, MessagesEstimate: 42}}}
+	prom := &fakeProm{topicSizeErr: errors.New("prometheus down")}
+	uc := NewKafkaMonitorUsecase(prom, admin, nil, defaultTh(), logging.NewNoop())
+
+	r := uc.Topics(context.Background())
+
+	require.True(t, r.KafkaAvailable)
+	require.Len(t, r.Topics, 1)
+	assert.Zero(t, r.Topics[0].SizeBytes)
+	assert.Equal(t, int64(42), r.Topics[0].MessagesEstimate)
 }
 
 func TestKafkaByNode_TopProducersAndFailures(t *testing.T) {

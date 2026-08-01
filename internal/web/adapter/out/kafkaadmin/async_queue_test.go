@@ -2,6 +2,8 @@ package kafkaadmin
 
 import (
 	"encoding/json"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -81,5 +83,40 @@ func TestInPeriod(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, inPeriod(tc.t, tc.from, tc.to))
 		})
+	}
+}
+
+// §27.3/§35: queueEnvelope — намеренно МИНИМАЛЬНАЯ проекция конверта
+// (internal/receiver/usecase/envelope.go), а не его копия: вкладке «Очередь»
+// нужны только идентификатор, узел, адрес и время. Требование к ней одно —
+// JSON-имена не должны разъезжаться с каноном, иначе peek молча покажет пустые
+// поля. Полноту копии Sender'а держит tests/contract; здесь — подмножество.
+func TestQueueEnvelopeTagsMatchCanon(t *testing.T) {
+	t.Parallel()
+
+	// Имена и типы из канона (receiver/usecase.Envelope). Импортировать сам
+	// пакет нельзя: web-адаптер не должен зависеть от receiver.
+	canon := map[string]string{
+		"id":           "string",
+		"node_path":    "string",
+		"method":       "string",
+		"target_url":   "string",
+		"headers":      "map[string]string",
+		"body":         "[]uint8",
+		"received_at":  "time.Time",
+		"auth_header":  "string",
+		"client_ip":    "string",
+		"request_path": "string",
+		"rmq":          "*usecase.RMQMeta",
+	}
+
+	rt := reflect.TypeFor[queueEnvelope]()
+	for f := range rt.Fields() {
+		tag, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		require.NotEmpty(t, tag, "поле %s без json-тега", f.Name)
+
+		want, ok := canon[tag]
+		require.True(t, ok, "поле %q отсутствует в каноне конверта — проекция разъехалась", tag)
+		assert.Equal(t, want, f.Type.String(), "тип поля %q разошёлся с каноном", tag)
 	}
 }

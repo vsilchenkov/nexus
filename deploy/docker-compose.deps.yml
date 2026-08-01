@@ -92,10 +92,18 @@ services:
     # стартует только kafka, никаких других контейнеров, которые ходили бы
     # внутрь сети, нет — поэтому single-listener "PLAINTEXT://localhost:9092"
     # покрывает всё.
-    image: apache/kafka:3.9.0
+    # §75: собственный образ = apache/kafka + Prometheus JMX-агент (размер топика
+    # на диске есть только в JMX брокера). Порт 7071 проброшен на хост — на стенде
+    # метрики удобно смотреть напрямую (`curl localhost:7071/metrics`), а сервисы
+    # Nexus здесь запускаются вне docker'а.
+    build:
+      context: ..
+      dockerfile: deploy/docker/kafka.Dockerfile
+    image: nexus-kafka:latest
     container_name: nexus_kafka
     restart: unless-stopped
     environment:
+      KAFKA_OPTS: "-javaagent:/opt/jmx/agent.jar=7071:/opt/jmx/kafka.yml"
       CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
       KAFKA_NODE_ID: "1"
       KAFKA_PROCESS_ROLES: "broker,controller"
@@ -123,8 +131,11 @@ services:
       - kafka_data:/var/lib/kafka/data
     ports:
       - "9092:9092"
+      - "7071:7071"   # §75: /metrics JMX-агента брокера
     healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      # §75: `KAFKA_OPTS=` обязателен — иначе CLI-утилита поднимает свой
+      # JMX-агент на занятом брокером порту 7071 и падает (см. корневой compose).
+      test: ["CMD-SHELL", "KAFKA_OPTS= /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10

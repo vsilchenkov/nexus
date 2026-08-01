@@ -118,7 +118,26 @@ func New(
 }
 
 func (a *App) Start(ctx context.Context) error {
-	// Общие сервисы.
+	chGuard := a.initClickHouseAndProducer()
+
+	sendUC, breaker, nodeStatus := a.buildSendUsecase(ctx)
+
+	// gRPC adapter для sync.
+	grpcSvc := grpcadapter.NewServer(sendUC, a.metrics, nodeStatus, a.logger)
+
+	nodeReader := nodepg.New(a.pg, a.cipher, a.logger)
+	a.ensureCHSchema(ctx, nodeReader, chGuard)
+	a.startAsyncPipeline(ctx, nodeReader, sendUC, breaker, nodeStatus)
+	a.startBackgroundJobs(ctx, nodeReader, chGuard)
+
+	return a.serveEndpoints(ctx, grpcSvc)
+}
+
+// initClickHouseAndProducer поднимает общие для всех потребителей ресурсы:
+// менеджер соединения ClickHouse (владелец conn при hot-reload), гейт владения
+// таблицами и Kafka-продьюсер. Возвращает гейт — он нужен и обслуживанию схемы,
+// и housekeeping'у.
+func (a *App) initClickHouseAndProducer() *chpf.Guard {
 	// ClickHouse Manager — владелец соединения для hot-reload (§8.4 / Phase 6.3.2.5).
 	// Все consumers (chWriter, CHHousekeeping, HealthChecker) идут через него,
 	// а не через raw a.ch, чтобы при reload swap conn'а был для них прозрачным.
@@ -145,6 +164,14 @@ func (a *App) Start(ctx context.Context) error {
 		chRetrier = chlogretry.New(a.producer, a.cfg.Kafka.RetryTopic, a.cfg.Kafka.Topic.MaxMessageBytes, a.logger)
 	}
 	a.chWriter = chlog.NewManagerWithRetrier(a.chMgr, &a.cfg.ClickHouse, chRetrier, a.metrics, a.logger)
+	return chGuard
+}
+
+// buildSendUsecase собирает доставку: HTTP-клиент с транспортным лимитом,
+// circuit breaker, reverse-DNS резолвер клиента и писатель статуса узла.
+// Возвращает usecase, read-only инспектор breaker'а (нужен репроцессору DLQ)
+// и writer статуса (нужен gRPC-адаптеру).
+func (a *App) buildSendUsecase(ctx context.Context) (*usecase.SendUsecase, usecase.BreakerInspector, usecase.NodeStatusWriter) {
 	// §43-rev: транспортный лимит тела ОТВЕТА = gRPC-потолок минус запас под
 	// envelope SendResponse (заголовки/статус). httpclient оборвёт чтение на нём
 	// (memory-safe), Send отдаст клиенту 502. Один источник — config.
@@ -181,29 +208,44 @@ func (a *App) Start(ctx context.Context) error {
 		nodeStatus = nodestatus.NewRedisWriter(a.redis, a.logger)
 	}
 
-	// gRPC adapter для sync.
-	grpcSvc := grpcadapter.NewServer(sendUC, a.metrics, nodeStatus, a.logger)
+	return sendUC, breaker, nodeStatus
+}
 
-	// Async consumer. (Продьюсер уже создан выше — §38.)
-	nodeReader := nodepg.New(a.pg, a.cipher, a.logger)
-
+// ensureCHSchema приводит существующие лог-таблицы к текущей схеме ДО старта
+// consumer'ов: иначе первый же INSERT по новой схеме упадёт на старой таблице.
+// Все операции идемпотентны (ADD COLUMN IF NOT EXISTS).
+func (a *App) ensureCHSchema(ctx context.Context, nodeReader *nodepg.Reader, chGuard *chpf.Guard) {
+	if a.chMgr == nil {
+		return
+	}
 	// §37: миграция CH-таблиц — добавить колонку node_id ДО старта consumer'а и
 	// репроцессора (иначе INSERT по новой схеме упадёт на старых таблицах).
 	// Идемпотентно (ALTER … IF NOT EXISTS); новые таблицы — из шаблона.
-	if a.chMgr != nil {
-		if tables, err := nodeReader.ListClickHouseTables(ctx); err != nil {
-			a.logger.Warn("§37 ensure node_id: list tables failed", a.logger.Err(err))
-		} else {
-			// §70.4: чужие таблицы из обслуживания схемы исключаются (ADD COLUMN
-			// фиксирует порядок колонок, backfill мутирует все строки).
-			tables = chGuard.FilterManagedTables(ctx, tables)
-			chpf.EnsureNodeIDColumn(ctx, a.chMgr.Conn(), tables, a.logger)
-			chpf.EnsureHTTPMethodColumn(ctx, a.chMgr.Conn(), tables, a.logger) // §39
-			chpf.EnsureClientHostColumn(ctx, a.chMgr.Conn(), tables, a.logger) // §67
-			chpf.EnsureBodySizeColumns(ctx, a.chMgr.Conn(), tables, a.logger)  // §42-доп
-			chpf.BackfillBodySizes(ctx, a.chMgr.Conn(), tables, a.logger)      // §42-доп
-		}
+	tables, err := nodeReader.ListClickHouseTables(ctx)
+	if err != nil {
+		a.logger.Warn("§37 ensure node_id: list tables failed", a.logger.Err(err))
+		return
 	}
+	// §70.4: чужие таблицы из обслуживания схемы исключаются (ADD COLUMN
+	// фиксирует порядок колонок, backfill мутирует все строки).
+	tables = chGuard.FilterManagedTables(ctx, tables)
+	chpf.EnsureNodeIDColumn(ctx, a.chMgr.Conn(), tables, a.logger)
+	chpf.EnsureHTTPMethodColumn(ctx, a.chMgr.Conn(), tables, a.logger) // §39
+	chpf.EnsureClientHostColumn(ctx, a.chMgr.Conn(), tables, a.logger) // §67
+	chpf.EnsureBodySizeColumns(ctx, a.chMgr.Conn(), tables, a.logger)  // §42-доп
+	chpf.BackfillBodySizes(ctx, a.chMgr.Conn(), tables, a.logger)      // §42-доп
+}
+
+// startAsyncPipeline поднимает всё, что обрабатывает очереди: основной
+// async-consumer, retry-консьюмер проваленных CH-батчей (§38), авто-репроцессор
+// DLQ (§36) и sweeper delay-топика paused-узлов (§3.6).
+func (a *App) startAsyncPipeline(
+	ctx context.Context,
+	nodeReader *nodepg.Reader,
+	sendUC *usecase.SendUsecase,
+	breaker usecase.BreakerInspector,
+	nodeStatus usecase.NodeStatusWriter,
+) {
 	// §34.4: cancel-set отменённых через UI сообщений (Redis). nil при отсутствии
 	// Redis — проверка в AsyncProcessor тогда выключена.
 	var cancelSet usecase.CancelSet
@@ -260,6 +302,12 @@ func (a *App) Start(ctx context.Context) error {
 		})
 	}
 
+}
+
+// startBackgroundJobs запускает периодические задачи, не связанные с очередями:
+// уборку партиций ClickHouse по retention (§4.3), репортер лага Kafka (§6) и
+// подписчиков hot-reload вместе с шиппером служебных логов (§14.5/§8.4/§51).
+func (a *App) startBackgroundJobs(ctx context.Context, nodeReader *nodepg.Reader, chGuard *chpf.Guard) {
 	// CH partition-drop housekeeping (§4.3 ТЗ): фоновый цикл раз в сутки.
 	hk := usecase.NewCHHousekeeping(a.chMgr, nodeReader, a.logger).WithOwnership(chGuard)
 	a.housekeepingDone = safego.Go(a.logger, "sender.chHousekeeping", func() {
@@ -296,7 +344,11 @@ func (a *App) Start(ctx context.Context) error {
 			reloadSub.Run(ctx)
 		})
 	}
+}
 
+// serveEndpoints поднимает gRPC и админ-HTTP и блокируется до остановки
+// приложения или фатальной ошибки любого из слушателей.
+func (a *App) serveEndpoints(ctx context.Context, grpcSvc *grpcadapter.Server) error {
 	errCh := make(chan error, 2)
 	go func() {
 		defer safego.Recover(a.logger, "sender.grpc")
@@ -371,10 +423,16 @@ func (a *App) startAdminHTTP() error {
 	hc.Register(r)
 	r.GET("/metrics", gin.WrapH(a.metrics.Handler()))
 
+	// Админ-порт отдаёт только /health, /ready и /metrics — ни длинных ответов,
+	// ни стримов здесь нет, поэтому таймауты фиксированные (в отличие от Web,
+	// где WriteTimeout невозможен). IdleTimeout закрывает простаивающие
+	// keep-alive соединения scrape'а Prometheus.
 	a.adminSrv = &http.Server{
 		Addr:              a.cfg.Sender.AdminHTTPAddr,
 		Handler:           r,
 		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	a.logger.Info("sender admin http listening",
@@ -429,9 +487,29 @@ func (a *App) publishLag(snaps []kafkaadapter.LagSnapshot, group, defaultTopic s
 	}
 }
 
+// Stop — порядок остановки существенен и зафиксирован в шагах ниже: сперва
+// перестаём читать очереди, потом гасим приём gRPC, потом дожидаемся фоновых
+// горутин и только затем закрываем ресурсы, которыми они пользуются.
 func (a *App) Stop(ctx context.Context) error {
 	a.logger.Info("sender shutting down")
 
+	a.stopQueueConsumers()
+	a.stopGRPC(ctx)
+	a.awaitBackgroundJobs(ctx)
+	a.closeStorageResources(ctx)
+
+	if a.adminSrv != nil {
+		shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		if err := a.adminSrv.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("sender admin shutdown: %w", err)
+		}
+	}
+	return a.shutdownTelemetry(ctx)
+}
+
+// stopQueueConsumers прекращает чтение всех Kafka-очередей.
+func (a *App) stopQueueConsumers() {
 	if a.consumer != nil {
 		a.consumer.Stop()
 	}
@@ -449,34 +527,47 @@ func (a *App) Stop(ctx context.Context) error {
 	if a.pausedSweep != nil {
 		a.pausedSweep.Stop()
 	}
+}
 
-	if a.grpcSrv != nil {
-		done := make(chan struct{})
-		go func() {
-			defer safego.Recover(a.logger, "sender.grpcGracefulStop")
-			a.grpcSrv.GracefulStop()
-			close(done)
-		}()
-		select {
-		case <-done:
-		case <-ctx.Done():
-			a.grpcSrv.Stop()
-		case <-time.After(30 * time.Second):
-			a.grpcSrv.Stop()
-		}
+// stopGRPC гасит gRPC-сервер graceful, но не дольше 30 с (или до отмены ctx):
+// зависший клиентский стрим не должен удерживать остановку сервиса.
+func (a *App) stopGRPC(ctx context.Context) {
+	if a.grpcSrv == nil {
+		return
 	}
+	done := make(chan struct{})
+	go func() {
+		defer safego.Recover(a.logger, "sender.grpcGracefulStop")
+		a.grpcSrv.GracefulStop()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		a.grpcSrv.Stop()
+	case <-time.After(30 * time.Second):
+		a.grpcSrv.Stop()
+	}
+}
 
-	// Фоновые горутины должны завершиться до закрытия CH/Kafka-ресурсов:
-	// runner уже отменил их ctx, здесь только дожидаемся выхода.
+// awaitBackgroundJobs дожидается фоновых горутин: они должны завершиться до
+// закрытия CH/Kafka-ресурсов, которыми пользуются. Контекст им уже отменён
+// runner'ом — здесь только ожидание выхода.
+func (a *App) awaitBackgroundJobs(ctx context.Context) {
 	awaitCtx, awaitCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer awaitCancel()
+
 	safego.Await(awaitCtx, a.housekeepingDone, a.logger, "sender.chHousekeeping")
 	safego.Await(awaitCtx, a.kafkaLagDone, a.logger, "sender.reportKafkaLag")
 	safego.Await(awaitCtx, a.reloadDone, a.logger, "sender.reloadSubscriber")
 	safego.Await(awaitCtx, a.dlqReprocDone, a.logger, "sender.dlqReprocessor")
 	safego.Await(awaitCtx, a.pausedSweepDone, a.logger, "sender.pausedSweep")
 	safego.Await(awaitCtx, a.shipperDone, a.logger, "sender.logShipper")
-	awaitCancel()
+}
 
+// closeStorageResources сбрасывает буфер логов в ClickHouse и закрывает
+// соединения. Порядок важен: сначала flush накопленных батчей, потом закрытие.
+func (a *App) closeStorageResources(ctx context.Context) {
 	if a.chWriter != nil {
 		flushCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		a.chWriter.Stop(flushCtx)
@@ -490,20 +581,18 @@ func (a *App) Stop(ctx context.Context) error {
 	if a.producer != nil {
 		_ = a.producer.Close()
 	}
+}
 
-	if a.adminSrv != nil {
-		shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-		if err := a.adminSrv.Shutdown(shutdownCtx); err != nil {
-			return fmt.Errorf("sender admin shutdown: %w", err)
-		}
+// shutdownTelemetry гасит экспортёр трассировки: последний шаг остановки,
+// ошибка не фатальна (сервис уже завершается, терять из-за неё код выхода незачем).
+func (a *App) shutdownTelemetry(ctx context.Context) error {
+	if a.otelShutdown == nil {
+		return nil
 	}
-	if a.otelShutdown != nil {
-		shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-		if err := a.otelShutdown(shutdownCtx); err != nil {
-			a.logger.Warn("otel tracer shutdown returned error", a.logger.Err(err))
-		}
+	shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := a.otelShutdown(shutdownCtx); err != nil {
+		a.logger.Warn("otel tracer shutdown returned error", a.logger.Err(err))
 	}
 	return nil
 }

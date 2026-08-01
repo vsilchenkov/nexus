@@ -258,9 +258,15 @@ type NodeMetricsResponse struct {
 }
 
 // KafkaTopicsResponse — GET /api/kafka/topics.
+//
+// SizesAvailable (§75): источник размеров (JMX-метрика kafka_log_log_size в
+// Prometheus) ответил хотя бы одной серией. При false size_bytes у всех топиков
+// нулевые «потому что источника нет»; при true нулевой size_bytes означает, что
+// топик действительно пуст.
 type KafkaTopicsResponse struct {
 	Topics         []kafkaTopicDTO `json:"topics"`
 	KafkaAvailable bool            `json:"kafka_available"`
+	SizesAvailable bool            `json:"sizes_available"`
 }
 
 // KafkaByNodeResponse — GET /api/kafka/by-node.

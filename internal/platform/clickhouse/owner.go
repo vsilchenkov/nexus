@@ -15,6 +15,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
 	"nexus/internal/domain"
+	"nexus/internal/platform/clock"
 	"nexus/internal/platform/logging"
 )
 
@@ -128,9 +129,9 @@ func WithOwnerQueryTimeout(d time.Duration) GuardOption {
 	return func(g *Guard) { g.queryTimeout = d }
 }
 
-// WithOwnerClock подменяет источник времени (тесты кеша).
-func WithOwnerClock(now func() time.Time) GuardOption {
-	return func(g *Guard) { g.now = now }
+// WithOwnerClock подменяет источник времени (тесты кеша вердиктов, §4 CLAUDE.md).
+func WithOwnerClock(c clock.Clock) GuardOption {
+	return func(g *Guard) { g.clock = c }
 }
 
 // Guard — владелец политики «наша БД / чужая БД» для одной ноды.
@@ -144,7 +145,7 @@ type Guard struct {
 	positiveTTL  time.Duration
 	negativeTTL  time.Duration
 	queryTimeout time.Duration
-	now          func() time.Time
+	clock        clock.Clock
 
 	mu    sync.Mutex
 	cache map[string]cachedVerdict
@@ -172,7 +173,7 @@ func NewGuard(conn ConnProvider, instanceID domain.InstanceID, logger logging.Lo
 		positiveTTL:  defaultOwnerPositiveTTL,
 		negativeTTL:  defaultOwnerNegativeTTL,
 		queryTimeout: defaultOwnerQueryTO,
-		now:          time.Now,
+		clock:        clock.System(),
 		cache:        make(map[string]cachedVerdict, 8),
 	}
 	for _, o := range opts {
@@ -698,7 +699,7 @@ func (g *Guard) cached(db string) (cachedVerdict, bool) {
 	if e.verdict == VerdictOwned {
 		ttl = g.positiveTTL
 	}
-	if g.now().Sub(e.at) >= ttl {
+	if g.clock.Now().Sub(e.at) >= ttl {
 		return cachedVerdict{}, false
 	}
 	return e, true
@@ -707,14 +708,14 @@ func (g *Guard) cached(db string) (cachedVerdict, bool) {
 func (g *Guard) store(db string, v Verdict, o *Owner) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.cache[db] = cachedVerdict{verdict: v, owner: o, at: g.now()}
+	g.cache[db] = cachedVerdict{verdict: v, owner: o, at: g.clock.Now()}
 }
 
 // storeErr запоминает сбой проверки на negativeTTL — см. cachedVerdict.err.
 func (g *Guard) storeErr(db string, err error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.cache[db] = cachedVerdict{verdict: VerdictUnknown, at: g.now(), err: err}
+	g.cache[db] = cachedVerdict{verdict: VerdictUnknown, at: g.clock.Now(), err: err}
 }
 
 func (g *Guard) forget(db string) {
