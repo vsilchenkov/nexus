@@ -178,9 +178,13 @@ Admin-only экран `/kafka` (раздел «Аудит») питается и
     scrape job (§75 — первый такой), нужен отдельный шаг:
 
     ```bash
-    docker compose up -d prometheus     # пересоздаст контейнер с новым конфигом
+    docker compose restart prometheus   # перечитает конфиг: процесс стартует заново
+    # ВНИМАНИЕ: `up -d prometheus` здесь НЕ работает. Спецификация сервиса не
+    # менялась (образ, порты, монтирования те же), поэтому compose оставляет
+    # контейнер как есть — «Container … Running», и в памяти остаётся старый
+    # конфиг. Проверено на стенде: up -d новый job не подхватил, restart подхватил.
     # проверка: цель должна быть в состоянии up
-    curl -s http://<host>:9091/api/v1/targets?state=active | jq '.data.activeTargets[] | select(.labels.job=="kafka-jmx") | .health'
+    curl -s 'http://localhost:9091/api/v1/targets?state=active' | jq '.data.activeTargets[] | select(.labels.job=="kafka-jmx") | .health'
     ```
 
     Перезапуск безопасен: TSDB лежит в volume `prometheus_data`, история не теряется, простой —
@@ -1295,7 +1299,7 @@ docker compose up -d --build web receiver sender         # Вариант C (к�
 #   B: docker compose -f deploy/docker-compose.app.yml up -d --build
 
 # 3. Проверка.
-curl -s http://<host>:8000/api/version       # → {"version":"1.0.0"}
+curl -s http://localhost:8000/api/version    # → {"version":"1.0.0"}
 ```
 
 > Тег `v*` запускает в CI обычные test/lint/build (валидация кода), но **не** собирает
@@ -1464,10 +1468,27 @@ git fetch --tags && git checkout v1.20.2
 
 ```bash
 # 0. Дамп (если не снят перед обновлением) — down-миграции удаляют данные.
-#    Вариант B (внешний PostgreSQL): pg_dump с хоста, см. §12.
 #    Каталог deploy/arc — рабочее место оператора: содержимое исключено и из git,
 #    и из контекста сборки образов (см. deploy/arc/README.md).
+#
+#    ЕСЛИ PostgreSQL В DOCKER (варианты A/C — контейнер postgres в этом же стеке):
 docker compose exec -T postgres pg_dump -U nexus nexus > deploy/arc/nexus_$(date +%F_%H%M).sql
+#
+#    ЕСЛИ PostgreSQL НЕ В DOCKER (нативный сервис — так развёрнут бой).
+#    Одной командой: копируется и вставляется целиком.
+#      - реквизиты подтягиваются из .env одной строкой (`source` не годится:
+#        в файле есть KAFKA_HEAP_OPTS=-Xmx1G -Xms1G — пробел без кавычек);
+#      - хост 127.0.0.1, а НЕ $PG_HOST: в .env записан адрес для КОНТЕЙНЕРОВ
+#        (host.docker.internal), с самого сервера он не резолвится;
+#      - PGPASSWORD передаётся через `env`, а не префиксом `PGPASSWORD=... pg_dump`:
+#        префикс легко обрезать при копировании, и сбой выходит тихим — вместо
+#        ошибки просто запрос пароля (а с `env` будет `nv: command not found`).
+#    Если пароль содержит $, кавычки или обратные кавычки — eval их съест;
+#    тогда читайте пароль отдельно: см. §12.
+eval "$(grep -E '^PG_(PORT|USER|DATABASE|PASSWORD)=' .env)" && \
+env PGPASSWORD="$PG_PASSWORD" \
+  pg_dump -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" \
+  > "deploy/arc/nexus_$(date +%F_%H%M).sql"
 
 # 1. Остановить ВСЕ три сервиса: работающий новый код обращается к колонкам,
 #    которые down удалит.
@@ -1481,8 +1502,8 @@ docker compose run --rm web --migrate-down 4          # N из строки «О
 ./scripts/deploy/images.sh rollback 1.20.2 --apply
 
 # 4. Проверить.
-curl -s http://<host>:8000/api/version
-curl -s http://<host>:8000/health
+curl -s http://localhost:8000/api/version
+curl -s http://localhost:8000/health
 ```
 
 Альтернатива шагу 2 — восстановить дамп, снятый **перед** обновлением: это надёжнее по данным,
@@ -1585,9 +1606,79 @@ docker compose -f deploy/docker-compose.app.yml run --rm web --set-admin-passwor
 
 ## 12. Бэкап и восстановление (кратко)
 
-- **PostgreSQL** (критично — конфиг узлов, пользователи, секреты):
+- **PostgreSQL** (критично — конфиг узлов, пользователи, секреты).
+
+  **Если PostgreSQL НЕ в Docker** (нативный сервис — так развёрнут бой): `pg_dump` запускается
+  с хоста, реквизиты берутся из `.env` (`PG_PORT` / `PG_USER` / `PG_DATABASE` / `PG_PASSWORD`;
+  `PG_HOST` — намеренно нет, см. ловушку 2 ниже):
+
   ```bash
-  docker compose -f deploy/docker-compose.yml exec postgres pg_dump -U nexus nexus > deploy/arc/nexus_pg.sql
+  cd /opt/nexus                     # каталог проекта, рядом с ним .env
+  eval "$(grep -E '^PG_(PORT|USER|DATABASE|PASSWORD)=' .env)" && \
+  env PGPASSWORD="$PG_PASSWORD" \
+    pg_dump -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" \
+    > deploy/arc/nexus_pg.sql
+  ```
+
+  Три ловушки, каждая из которых уже срабатывала на бою:
+
+  1. **Реквизиты надо подтянуть из `.env` явно.** Оболочка файл не подхватывает, а `pg_dump` при
+     пустых значениях молча берёт дефолты — роль и базу по имени ОС-пользователя — и падает с
+     `FATAL: role "<логин>" does not exist`. `source .env` не подходит: в файле есть значения с
+     пробелами без кавычек (`KAFKA_HEAP_OPTS=-Xmx1G -Xms1G`), оболочка выполнит их хвост как
+     команду.
+  2. **`PG_HOST` из `.env` брать нельзя.** Там записан адрес, по которому к базе обращаются
+     КОНТЕЙНЕРЫ (`host.docker.internal`); с самого сервера это имя не резолвится —
+     `could not translate host name "host.docker.internal" to address`. `pg_dump` запускается на
+     хосте, поэтому хост локальный: `127.0.0.1` либо `-h /var/run/postgresql` (unix-сокет, если
+     заходите под системным пользователем БД — тогда и пароль обычно не нужен).
+  3. **Пароль передаётся через `env`, а не префиксом `PGPASSWORD=… pg_dump`.** Префикс стоит в
+     начале длинной строки, его легко обрезать при копировании — и сбой выходит тихим: вместо
+     ошибки просто запрос пароля (`Password:`), который выглядит как «он всегда спрашивает».
+     С `env` та же потеря даёт `nv: command not found`, то есть видна сразу.
+
+     Если пароль содержит `$`, кавычки или обратные кавычки, `eval` их съест — тогда прочитайте
+     его отдельно, без интерпретации, и проверьте на невидимый CR (остаётся от Windows-редактора
+     и даёт `FATAL: password authentication failed`):
+
+     ```bash
+     PGPASSWORD=$(grep -m1 '^PG_PASSWORD=' .env | cut -d= -f2- | tr -d '\r')
+     printf '%s' "$PGPASSWORD" | od -c | tail -2     # хвост \r или неверная длина?
+     ```
+
+  **Пароль.** В команде выше он берётся из `.env` и передаётся `pg_dump` через `env` только на
+  время вызова — вводить руками ничего не нужно, а в историю оболочки попадает имя переменной, а
+  не значение. Это рабочий вариант по умолчанию. Альтернативы, если дампы снимаются регулярно или
+  скриптом:
+
+  1. **`~/.pgpass`** — пароль не нужно подставлять вообще. Формат строки
+     `host:port:db:user:password`, значение берётся из `.env`, в историю не попадает:
+
+     ```bash
+     eval "$(grep -E '^PG_(PORT|USER|DATABASE|PASSWORD)=' .env)"
+     umask 077
+     echo "127.0.0.1:$PG_PORT:$PG_DATABASE:$PG_USER:$PG_PASSWORD" >> ~/.pgpass
+     chmod 600 ~/.pgpass
+     ```
+
+     Права строго `600`: при более широких PostgreSQL **молча игнорирует файл**, и запрос пароля
+     вернётся — это самая частая причина «`.pgpass` не работает».
+
+  2. **Через системного пользователя `postgres`** — пароль не нужен вовсе (локальный сокет,
+     `peer`-аутентификация в `pg_hba.conf`):
+
+     ```bash
+     sudo -u postgres pg_dump nexus > deploy/arc/nexus_pg.sql
+     ```
+
+  **Версия клиента должна быть не ниже версии сервера** (на бою PostgreSQL 12): `pg_dump` более
+  старой мажорной версии откажется работать с новой базой, обратное — допустимо.
+
+  **Если PostgreSQL в Docker** (варианты A/C — контейнер `postgres` в этом же стеке: dev-стенд,
+  тестовые установки):
+
+  ```bash
+  docker compose exec -T postgres pg_dump -U nexus nexus > deploy/arc/nexus_pg.sql
   ```
 - **`ENCRYPTION_KEY`** — храните в защищённом месте. Без него зашифрованные креды узлов в
   PostgreSQL не расшифруются. Ротация ключа — `make rotate-encryption-key OLD_KEY=... NEW_KEY=...`.

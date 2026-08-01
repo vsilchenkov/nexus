@@ -28,7 +28,24 @@ cd nexus
 # 2. (только если релиз добавляет миграции) дамп PostgreSQL — страховка отката.
 #    Каталог deploy/arc исключён из git и из контекста сборки образов, поэтому
 #    дамп не портит git status и не оседает в слое образа.
+#
+#    ЕСЛИ PostgreSQL В DOCKER (варианты A/C — контейнер postgres в этом же стеке):
 docker compose exec -T postgres pg_dump -U nexus nexus > deploy/arc/nexus_$(date +%F_%H%M).sql
+#
+#    ЕСЛИ PostgreSQL НЕ В DOCKER (нативный сервис — так развёрнут бой).
+#    Одной командой: копируется и вставляется целиком.
+#      - реквизиты подтягиваются из .env одной строкой (`source` не годится:
+#        в файле есть KAFKA_HEAP_OPTS=-Xmx1G -Xms1G — пробел без кавычек);
+#      - хост 127.0.0.1, а НЕ $PG_HOST: в .env адрес для КОНТЕЙНЕРОВ
+#        (host.docker.internal), с самого сервера он не резолвится;
+#      - PGPASSWORD передаётся через `env`, а не префиксом `PGPASSWORD=... pg_dump`:
+#        префикс легко обрезать при копировании, и сбой выходит тихим — вместо
+#        ошибки просто запрос пароля (с `env` будет `nv: command not found`).
+#    Пароль со спецсимволами ($, кавычки) eval съест — тогда см. DEPLOYMENT §12.
+eval "$(grep -E '^PG_(PORT|USER|DATABASE|PASSWORD)=' .env)" && \
+env PGPASSWORD="$PG_PASSWORD" \
+  pg_dump -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" \
+  > "deploy/arc/nexus_$(date +%F_%H%M).sql"
 
 # 3. Забрать тег и пересобрать сервисы.
 git fetch --tags
@@ -45,8 +62,8 @@ docker compose up -d --build kafka
 docker compose ps kafka          # ДОЛЖНО быть healthy
 
 # 4. Проверить.
-curl -s http://<host>:8000/api/version     # → {"version":"<новая>"}
-curl -s http://<host>:8000/health
+curl -s http://localhost:8000/api/version  # → {"version":"<новая>"}
+curl -s http://localhost:8000/health
 ```
 
 Миграции применяются автоматически на старте `web`/`receiver`; отдельный шаг не нужен.
@@ -83,13 +100,15 @@ git fetch --tags && git checkout v<прежняя>     # привести дер
     неё не нужна; другая версия или зеркало — `--build-arg JMX_AGENT_SRC=<путь-или-url>`;
   - предупредить о простое брокера 30–60 с: приём `POST /v1/requestAsync/*` на это время падает;
   - **если релиз менял `deploy/prometheus.yml`** (новый scrape job, изменённая цель) — отдельным
-    шагом `docker compose up -d prometheus`: конфиг читается только при старте процесса,
+    шагом `docker compose restart prometheus`: конфиг читается только при старте процесса,
     `--web.enable-lifecycle` не включён, а штатная команда обновления Prometheus не трогает.
+    Именно `restart`, а не `up -d`: последний видит неизменную спецификацию сервиса и
+    оставляет контейнер работать со старым конфигом.
     Без этого шага метрика собирается брокером, но никем не снимается — выглядит как
     «фичу не завезли».
 
   После выката проверить, что фича действительно поднялась, а не деградировала молча — для §75:
-  `curl -s -b <cookie> http://<host>:8000/api/kafka/topics | jq '.sizes_available, .topics[].size_bytes'`
+  `curl -s -b cookie.txt http://localhost:8000/api/kafka/topics | jq '.sizes_available, .topics[].size_bytes'`
   (`sizes_available: true`, у непустых топиков ненулевой размер) либо глазами на `/kafka`:
   колонка «Размер» показывает байты, а не «—».
 -->
