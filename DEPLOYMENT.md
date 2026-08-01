@@ -1471,7 +1471,11 @@ git fetch --tags && git checkout v1.20.2
 docker compose exec -T postgres pg_dump -U nexus nexus > deploy/arc/nexus_$(date +%F_%H%M).sql
 #
 #    ЕСЛИ PostgreSQL НЕ В DOCKER (нативный сервис — так развёрнут бой),
-#    реквизиты из .env, пароль — из ~/.pgpass (§12):
+#    пароль — из ~/.pgpass (§12):
+#    Значения берутся из .env — оболочка их сама НЕ экспортирует, поэтому
+#    сначала читаем (иначе pg_dump подставит дефолты: имя ОС-пользователя как
+#    роль и базу, и упадёт с `role "<логин>" does not exist`):
+eval "$(grep -E '^PG_(HOST|PORT|USER|DATABASE)=' .env)"
 pg_dump -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" > deploy/arc/nexus_$(date +%F_%H%M).sql
 
 # 1. Остановить ВСЕ три сервиса: работающий новый код обращается к колонкам,
@@ -1596,8 +1600,17 @@ docker compose -f deploy/docker-compose.app.yml run --rm web --set-admin-passwor
   с хоста, реквизиты берутся из `.env` (`PG_HOST` / `PG_PORT` / `PG_USER` / `PG_DATABASE`):
 
   ```bash
+  cd /opt/nexus                     # каталог проекта, рядом с ним .env
+  eval "$(grep -E '^PG_(HOST|PORT|USER|DATABASE)=' .env)"
+  echo "$PG_USER@$PG_HOST:$PG_PORT/$PG_DATABASE"    # проверка: значения должны быть непустыми
   pg_dump -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" > deploy/arc/nexus_pg.sql
   ```
+
+  **Строка с `eval` обязательна.** Оболочка не подхватывает `.env` сама, а `pg_dump` при пустых
+  значениях молча берёт дефолты — роль и базу по имени ОС-пользователя — и падает с
+  `FATAL: role "<логин>" does not exist`. `source .env` для этого не подходит: в файле есть
+  значения с пробелами без кавычек (`KAFKA_HEAP_OPTS=-Xmx1G -Xms1G`), и оболочка попытается
+  выполнить их хвост как команду.
 
   Пароль не передавайте через `PGPASSWORD` в командной строке — он осядет в истории оболочки.
   Положите его в `~/.pgpass` (формат `host:port:db:user:password`, права `chmod 600`), тогда

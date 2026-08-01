@@ -33,7 +33,11 @@ cd nexus
 docker compose exec -T postgres pg_dump -U nexus nexus > deploy/arc/nexus_$(date +%F_%H%M).sql
 #
 #    ЕСЛИ PostgreSQL НЕ В DOCKER (нативный сервис — так развёрнут бой):
-#    реквизиты из .env, пароль — из ~/.pgpass, а не в командной строке (DEPLOYMENT §12).
+#    пароль — из ~/.pgpass, а не в командной строке (DEPLOYMENT §12).
+#    Значения берутся из .env — оболочка их сама НЕ экспортирует, поэтому
+#    сначала читаем (иначе pg_dump подставит дефолты: имя ОС-пользователя как
+#    роль и базу, и упадёт с `role "<логин>" does not exist`):
+eval "$(grep -E '^PG_(HOST|PORT|USER|DATABASE)=' .env)"
 pg_dump -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" > deploy/arc/nexus_$(date +%F_%H%M).sql
 
 # 3. Забрать тег и пересобрать сервисы.
