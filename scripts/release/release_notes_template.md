@@ -28,7 +28,13 @@ cd nexus
 # 2. (только если релиз добавляет миграции) дамп PostgreSQL — страховка отката.
 #    Каталог deploy/arc исключён из git и из контекста сборки образов, поэтому
 #    дамп не портит git status и не оседает в слое образа.
+#
+#    ЕСЛИ PostgreSQL В DOCKER (варианты A/C — контейнер postgres в этом же стеке):
 docker compose exec -T postgres pg_dump -U nexus nexus > deploy/arc/nexus_$(date +%F_%H%M).sql
+#
+#    ЕСЛИ PostgreSQL НЕ В DOCKER (нативный сервис — так развёрнут бой):
+#    реквизиты из .env, пароль — из ~/.pgpass, а не в командной строке (DEPLOYMENT §12).
+pg_dump -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" > deploy/arc/nexus_$(date +%F_%H%M).sql
 
 # 3. Забрать тег и пересобрать сервисы.
 git fetch --tags

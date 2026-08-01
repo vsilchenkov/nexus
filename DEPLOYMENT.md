@@ -1464,10 +1464,15 @@ git fetch --tags && git checkout v1.20.2
 
 ```bash
 # 0. Дамп (если не снят перед обновлением) — down-миграции удаляют данные.
-#    Вариант B (внешний PostgreSQL): pg_dump с хоста, см. §12.
 #    Каталог deploy/arc — рабочее место оператора: содержимое исключено и из git,
 #    и из контекста сборки образов (см. deploy/arc/README.md).
+#
+#    ЕСЛИ PostgreSQL В DOCKER (варианты A/C — контейнер postgres в этом же стеке):
 docker compose exec -T postgres pg_dump -U nexus nexus > deploy/arc/nexus_$(date +%F_%H%M).sql
+#
+#    ЕСЛИ PostgreSQL НЕ В DOCKER (нативный сервис — так развёрнут бой),
+#    реквизиты из .env, пароль — из ~/.pgpass (§12):
+pg_dump -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" > deploy/arc/nexus_$(date +%F_%H%M).sql
 
 # 1. Остановить ВСЕ три сервиса: работающий новый код обращается к колонкам,
 #    которые down удалит.
@@ -1585,9 +1590,31 @@ docker compose -f deploy/docker-compose.app.yml run --rm web --set-admin-passwor
 
 ## 12. Бэкап и восстановление (кратко)
 
-- **PostgreSQL** (критично — конфиг узлов, пользователи, секреты):
+- **PostgreSQL** (критично — конфиг узлов, пользователи, секреты).
+
+  **Если PostgreSQL НЕ в Docker** (нативный сервис — так развёрнут бой): `pg_dump` запускается
+  с хоста, реквизиты берутся из `.env` (`PG_HOST` / `PG_PORT` / `PG_USER` / `PG_DATABASE`):
+
   ```bash
-  docker compose -f deploy/docker-compose.yml exec postgres pg_dump -U nexus nexus > deploy/arc/nexus_pg.sql
+  pg_dump -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" > deploy/arc/nexus_pg.sql
+  ```
+
+  Пароль не передавайте через `PGPASSWORD` в командной строке — он осядет в истории оболочки.
+  Положите его в `~/.pgpass` (формат `host:port:db:user:password`, права `chmod 600`), тогда
+  `pg_dump` возьмёт пароль сам:
+
+  ```bash
+  echo "$PG_HOST:$PG_PORT:$PG_DATABASE:$PG_USER:<пароль>" >> ~/.pgpass && chmod 600 ~/.pgpass
+  ```
+
+  **Версия клиента должна быть не ниже версии сервера** (на бою PostgreSQL 12): `pg_dump` более
+  старой мажорной версии откажется работать с новой базой, обратное — допустимо.
+
+  **Если PostgreSQL в Docker** (варианты A/C — контейнер `postgres` в этом же стеке: dev-стенд,
+  тестовые установки):
+
+  ```bash
+  docker compose exec -T postgres pg_dump -U nexus nexus > deploy/arc/nexus_pg.sql
   ```
 - **`ENCRYPTION_KEY`** — храните в защищённом месте. Без него зашифрованные креды узлов в
   PostgreSQL не расшифруются. Ротация ключа — `make rotate-encryption-key OLD_KEY=... NEW_KEY=...`.
