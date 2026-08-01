@@ -26,12 +26,16 @@ cd nexus
 ./scripts/deploy/images.sh tag
 
 # 2. (только если релиз добавляет миграции) дамп PostgreSQL — страховка отката.
-docker compose exec -T postgres pg_dump -U nexus nexus > nexus_$(date +%F_%H%M).sql
+#    ВНЕ рабочего дерева: дамп в каталоге проекта уедет в контекст сборки
+#    (builder-стейдж копирует дерево целиком) и будет висеть в git status.
+mkdir -p ../nexus-backups
+docker compose exec -T postgres pg_dump -U nexus nexus > ../nexus-backups/nexus_$(date +%F_%H%M).sql
 
 # 3. Забрать тег и пересобрать сервисы.
 git fetch --tags
 git checkout v<новая>
-git status --porcelain          # ДОЛЖНО быть пусто, иначе версия уедет как "-dirty"
+git status --porcelain --untracked-files=no   # ДОЛЖНО быть пусто. Считаются только правки
+                                            # отслеживаемых файлов: untracked версию не портят (§9.4)
 docker compose up -d --build web receiver sender
 
 # 3a. ТОЛЬКО если в разделе «Особое» сказано, что релиз меняет образ брокера
