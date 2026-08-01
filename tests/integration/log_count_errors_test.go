@@ -166,10 +166,13 @@ func TestLogReader_NodeKPI_Chart_E2E(t *testing.T) {
 	require.Zero(t, past.Total)
 }
 
-// TestLogReader_NodeIDFilter_E2E (§37): несколько узлов в ОДНОЙ таблице
-// различаются по node_id. Все per-node чтения/удаления фильтруют
-// (node_id = ? OR node_id = ”); legacy-записи (node_id=”) видны любому узлу.
-// Критично: DeleteFailed одного узла НЕ трогает записи другого.
+// TestLogReader_NodeIDFilter_E2E (§37/§61): несколько узлов в ОДНОЙ таблице
+// различаются по node_id. Все per-node чтения/удаления фильтруют СТРОГО
+// (node_id = ?): записи с пустым node_id узлу не принадлежат — на обычной
+// таблице послабление убрано (осталось только для внешних таблиц §64).
+//
+// Критично: DeleteFailed одного узла не трогает ни записи другого, ни записи
+// без идентификатора — раньше очистка узла A сносила и их.
 func TestLogReader_NodeIDFilter_E2E(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
 	defer cancel()
@@ -216,42 +219,57 @@ func TestLogReader_NodeIDFilter_E2E(t *testing.T) {
 	}
 	require.EqualValues(t, 6, total)
 
+	// Обычная (не внешняя) таблица: факты подключены, поэтому действует строгое
+	// правило. Без подключённого порта читатель ушёл бы в деградацию — она
+	// проверяется отдельным блоком в конце.
 	reader := webch.NewLogReader(provider, logger)
+	reader.SetTableUsage(attrUsage{counts: map[string]int{table: 2}})
 
-	// CountFailed: nodeA = 2 свои + 1 legacy = 3; nodeB = 3 свои + 1 legacy = 4.
+	// CountFailed: каждый узел видит ТОЛЬКО свои записи, запись без node_id — ничью.
 	na, err := reader.CountFailed(ctx, table, nodeA, 0, 0)
 	require.NoError(t, err)
-	require.EqualValues(t, 3, na, "nodeA: свои 2 + legacy 1")
+	require.EqualValues(t, 2, na, "nodeA: только свои 2, запись без node_id ему не принадлежит")
 	nb, err := reader.CountFailed(ctx, table, nodeB, 0, 0)
 	require.NoError(t, err)
-	require.EqualValues(t, 4, nb, "nodeB: свои 3 + legacy 1")
+	require.EqualValues(t, 3, nb, "nodeB: только свои 3")
 
-	// FailedIDs nodeA — только a1,a2 + legacy c (НЕ b*).
+	// FailedIDs nodeA — только a1,a2 (ни b*, ни записи без node_id).
 	ids, _, err := reader.FailedIDs(ctx, table, nodeA, 0, 0, 1000)
 	require.NoError(t, err)
-	require.Len(t, ids, 3)
+	require.Len(t, ids, 2)
 	require.NotContains(t, ids, "00000000-0000-0000-0000-0000000000b1")
+	require.NotContains(t, ids, "00000000-0000-0000-0000-00000000000c")
 
-	// NodeKPI nodeA — 3 уникальных (2 свои + legacy), все ошибки.
+	// NodeKPI nodeA — 2 уникальных, все ошибки.
 	kpi, err := reader.NodeKPI(ctx, table, nodeA, 0, 0, false)
 	require.NoError(t, err)
-	require.EqualValues(t, 3, kpi.Total)
-	require.EqualValues(t, 3, kpi.Errors)
+	require.EqualValues(t, 2, kpi.Total)
+	require.EqualValues(t, 2, kpi.Errors)
 
-	// DeleteFailed nodeA — удаляет 3 (свои + legacy); записи nodeB НЕ трогает.
+	// DeleteFailed nodeA — удаляет 2 свои; записи nodeB и запись без node_id целы.
 	deleted, err := reader.DeleteFailed(ctx, table, nodeA, 0, 0)
 	require.NoError(t, err)
-	require.EqualValues(t, 3, deleted)
+	require.EqualValues(t, 2, deleted)
 	require.Eventually(t, func() bool {
 		var remain uint64
 		_ = conn.QueryRow(ctx, "SELECT count() FROM "+table).Scan(&remain)
-		return remain == 3 // выжили только 3 записи nodeB
-	}, 20*time.Second, 500*time.Millisecond, "только записи nodeB должны выжить")
+		return remain == 4 // 3 записи nodeB + 1 без node_id
+	}, 20*time.Second, 500*time.Millisecond, "выживают записи nodeB и запись без node_id")
 
-	// nodeB по-прежнему видит свои 3 (legacy уже удалён вместе с nodeA).
+	var orphan uint64
+	require.NoError(t, conn.QueryRow(ctx, "SELECT count() FROM "+table+" WHERE node_id = ''").Scan(&orphan))
+	require.EqualValues(t, 1, orphan, "очистка узла A не должна сносить записи без идентификатора")
+
 	nb2, err := reader.CountFailed(ctx, table, nodeB, 0, 0)
 	require.NoError(t, err)
 	require.EqualValues(t, 3, nb2, "nodeB не задет очисткой nodeA")
+
+	// Деградация (§61.1): фактов о таблице нет — правило мягкое, иначе сбой
+	// PostgreSQL спрятал бы содержимое внешних таблиц.
+	degraded := webch.NewLogReader(provider, logger)
+	nd, err := degraded.CountFailed(ctx, table, nodeB, 0, 0)
+	require.NoError(t, err)
+	require.EqualValues(t, 4, nd, "без фактов о таблице действует послабление: 3 свои + 1 без node_id")
 }
 
 // attrUsage — port.NodeTableUsage с фиксированным снимком фактов о таблицах.
@@ -278,20 +296,21 @@ func (foreignOwnership) AssertOwnsDatabase(context.Context, string) error { retu
 func (foreignOwnership) AssertOwnsTable(context.Context, string) error {
 	return errNotOwned
 }
-func (foreignOwnership) OwnsTable(context.Context, string) (bool, error) { return false, nil }
 
 var errNotOwned = errors.New("table is owned by another node")
 
-// TestLogReader_ExternalTableAttribution_E2E (§64 × §70.4) — боевой инцидент
-// v1.22.3: узел на внешней таблице перестал показывать логи. Писатель —
-// посторонний сервис, все его записи идут с node_id = ”, владения таблицей у
-// Nexus нет, и гейт §70.4 включал строгий фильтр `node_id = ?`, который прятал
-// ЕДИНСТВЕННОЕ содержимое таблицы (на бою — 10 222 523 записи).
+// TestLogReader_ExternalTableAttribution_E2E (§64) — внешняя таблица осталась
+// ЕДИНСТВЕННЫМ местом, где записи с пустым node_id засчитываются узлу.
+//
+// Боевой инцидент: писатель посторонний, node_id проставляет только Sender,
+// поэтому строгий фильтр прятал единственное содержимое таблицы (на бою —
+// 10 222 523 записи).
 //
 // Проверяется настоящим ClickHouse-SQL, а не только сборкой условия: узел на
-// внешней одиночной таблице записи видит, а два ограничения остаются в силе —
-// не помеченная внешней чужая таблица строга (гейт §70.4 цел), общая внешняя
-// строга тоже (§61 сильнее §64, иначе видны чужие записи).
+// одиночной внешней таблице записи видит, а два ограничения остаются в силе —
+// таблица без пометки external_table строга, общая внешняя строга тоже
+// (§61 сильнее §64, иначе видны записи соседа). Владение таблицей на выбор
+// фильтра больше не влияет — гейт §70.4 остался только на удалении.
 func TestLogReader_ExternalTableAttribution_E2E(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
 	defer cancel()
@@ -350,7 +369,7 @@ func TestLogReader_ExternalTableAttribution_E2E(t *testing.T) {
 	got, err = newReader(self, nil).CountFailed(ctx, table, nodeA, 0, 0)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, got,
-		"§70.4: чужая таблица БЕЗ пометки external_table остаётся строгой — послабление не должно расползаться на соседнюю ноду")
+		"таблица без пометки external_table строга даже будучи личной: послабление не должно расползаться за пределы §64")
 
 	got, err = newReader(shared, marked).CountFailed(ctx, table, nodeA, 0, 0)
 	require.NoError(t, err)

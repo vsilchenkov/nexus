@@ -63,17 +63,16 @@ func (u *countingUsage) ExternalCHTables(ctx context.Context) (map[string]struct
 	return u.externals, nil
 }
 
-// ownershipStub — Ownership (§70.4). Для nodeFilter значим только OwnsTable;
-// остальные методы существуют, чтобы стаб удовлетворял интерфейсу.
+// ownershipStub — гейт владения (§70.4). На выбор фильтра он больше не влияет
+// (правило строит только признак external_table), поэтому кейсы с подключённым
+// гейтом доказывают именно независимость: вердикт «чужая» ничего не меняет.
 type ownershipStub struct {
-	owns bool
-	err  error
+	err error
 }
 
-func (ownershipStub) Claim(context.Context, string) error               { return nil }
-func (ownershipStub) AssertOwnsDatabase(context.Context, string) error  { return nil }
-func (ownershipStub) AssertOwnsTable(context.Context, string) error     { return nil }
-func (o ownershipStub) OwnsTable(context.Context, string) (bool, error) { return o.owns, o.err }
+func (ownershipStub) Claim(context.Context, string) error              { return nil }
+func (ownershipStub) AssertOwnsDatabase(context.Context, string) error { return nil }
+func (o ownershipStub) AssertOwnsTable(context.Context, string) error  { return o.err }
 
 func newReaderWithUsage(u *countingUsage) *LogReaderCH {
 	return newReader(u, nil)
@@ -94,9 +93,9 @@ func newReader(u *countingUsage, o Ownership) *LogReaderCH {
 	return r
 }
 
-// TestNodeFilter_Attribution: на ЛИЧНОЙ таблице записи без node_id
-// засчитываются узлу (legacy-совместимость), на ОБЩЕЙ — нет (иначе узел видит
-// чужие строки, а после переноса — из другой команды).
+// TestNodeFilter_Attribution: фильтр строгий везде, кроме ОДИНОЧНОЙ внешней
+// таблицы §64 — только там пустой node_id штатен для каждой строки, потому что
+// её наполняет посторонний сервис.
 func TestNodeFilter_Attribution(t *testing.T) {
 	t.Parallel()
 	const (
@@ -116,8 +115,9 @@ func TestNodeFilter_Attribution(t *testing.T) {
 			"gate_logs.ext_shared": {},
 		},
 	}
-	foreign := ownershipStub{owns: false}
-	own := ownershipStub{owns: true}
+	// Гейт, отвечающий «таблица не наша» на любую проверку, и обычный.
+	foreign := ownershipStub{err: errors.New("table belongs to another node")}
+	own := ownershipStub{}
 
 	tests := []struct {
 		name     string
@@ -126,29 +126,28 @@ func TestNodeFilter_Attribution(t *testing.T) {
 		nodeID   string
 		wantCond string
 	}{
-		{name: "личная таблица — послабление", reader: newReaderWithUsage(usage), table: "nexus_default.solo", nodeID: "n1", wantCond: lenient},
+		// Обычная таблица — строго, даже личная: послабление вводилось под
+		// legacy-записи (§37), а своей истории они узлу не добавляют.
+		{name: "личная таблица — строго свой node_id", reader: newReaderWithUsage(usage), table: "nexus_default.solo", nodeID: "n1", wantCond: strict},
 		{name: "общая таблица — строго свой node_id", reader: newReaderWithUsage(usage), table: "nexus_default.shared", nodeID: "n1", wantCond: strict},
-		{name: "таблица не известна — послабление", reader: newReaderWithUsage(usage), table: "nexus_default.unknown", nodeID: "n1", wantCond: lenient},
-		{name: "порт не подключён — послабление", reader: newReaderWithUsage(nil), table: "nexus_default.shared", nodeID: "n1", wantCond: lenient},
+		{name: "таблица не известна — строго", reader: newReaderWithUsage(usage), table: "nexus_default.unknown", nodeID: "n1", wantCond: strict},
 		{name: "без узла — фильтра нет", reader: newReaderWithUsage(usage), table: "nexus_default.shared", nodeID: "", wantCond: ""},
 
-		// §64: внешняя таблица чужая по определению (маркера владения у неё нет и
-		// быть не может), а все её записи приходит с пустым node_id — строгий
-		// фильтр спрятал бы единственное содержимое таблицы. Боевой инцидент:
-		// 10 222 523 записи в gate_logs.PDT_PDTExchange не показывались вовсе.
-		{name: "§64: внешняя чужая таблица — послабление", reader: newReader(usage, foreign), table: "gate_logs.ext_solo", nodeID: "n1", wantCond: lenient},
-		// §70.4 остаётся в силе там, ради чего вводился.
-		{name: "§70.4: чужая НЕ внешняя — строго", reader: newReader(usage, foreign), table: "other_logs.foreign", nodeID: "n1", wantCond: strict},
-		// Общая побеждает внешность: на такой таблице логи узла есть и без
-		// послабления, а чужие строки видеть нельзя.
+		// §64 — единственное основание для послабления: таблицу наполняет
+		// посторонний сервис, node_id проставляет только Sender, поэтому пустой
+		// node_id там не аномалия, а КАЖДАЯ строка. Боевой инцидент: 10 222 523
+		// записи в gate_logs.PDT_PDTExchange не показывались вовсе.
+		{name: "§64: одиночная внешняя — послабление", reader: newReader(usage, foreign), table: "gate_logs.ext_solo", nodeID: "n1", wantCond: lenient},
+		// Общая побеждает внешность: там послабление показало бы записи соседа.
 		{name: "общая внешняя — строго", reader: newReader(usage, foreign), table: "gate_logs.ext_shared", nodeID: "n1", wantCond: strict},
-		{name: "своя таблица с флагом внешней — послабление", reader: newReader(usage, own), table: "gate_logs.ext_solo", nodeID: "n1", wantCond: lenient},
-		// Фактов из PostgreSQL нет → правило деградирует в поведение до §61/§70,
-		// иначе сбой базы прячет логи узла.
-		{name: "снимка нет + чужая таблица — послабление", reader: newReader(nil, foreign), table: "other_logs.foreign", nodeID: "n1", wantCond: lenient},
-		// Отказ гейта трактуется как «чужая» (fail-closed) и на не внешней
-		// таблице обязан оставаться строгим.
-		{name: "ошибка OwnsTable на не внешней — строго", reader: newReader(usage, ownershipStub{err: errors.New("ch down")}), table: "other_logs.foreign", nodeID: "n1", wantCond: strict},
+		// Владение на выбор фильтра не влияет — важен только флаг external_table.
+		{name: "внешняя в своей БД — послабление", reader: newReader(usage, own), table: "gate_logs.ext_solo", nodeID: "n1", wantCond: lenient},
+		{name: "чужая НЕ внешняя — строго", reader: newReader(usage, foreign), table: "other_logs.foreign", nodeID: "n1", wantCond: strict},
+		{name: "гейт владения на личной таблице ничего не меняет", reader: newReader(usage, foreign), table: "nexus_default.solo", nodeID: "n1", wantCond: strict},
+		// Фактов из PostgreSQL нет → послабление: иначе сбой базы прячет ВСЁ
+		// содержимое внешних таблиц (тот самый боевой инцидент).
+		{name: "снимка нет — послабление", reader: newReader(nil, foreign), table: "gate_logs.ext_solo", nodeID: "n1", wantCond: lenient},
+		{name: "порт не подключён — послабление", reader: newReaderWithUsage(nil), table: "nexus_default.shared", nodeID: "n1", wantCond: lenient},
 	}
 
 	for _, tc := range tests {

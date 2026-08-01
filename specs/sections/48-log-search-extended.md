@@ -75,7 +75,8 @@ prefix = url | params | req | resp     // регистр префикса не �
 
 - `GET /api/nodes/:id/logs/methods` → `{"items": ["v1/GetParcelsInfo", …], "logs_configured":
   true, "logs_available": true}` — `SELECT DISTINCT method … AND method != '' ORDER BY method
-  LIMIT 200`, скоуп узла (`node_id = ? OR node_id = ''`).
+  LIMIT 200`, скоуп узла — тот же фильтр атрибуции, что и у остальных чтений (`node_id = ?`;
+  послабление на пустой `node_id` осталось только для внешних таблиц §64, см. §61.1).
 - `GET /api/nodes/:id/logs/date-range` → `{"min_ms": …, "max_ms": …, "logs_configured": true,
   "logs_available": true}` — min/max `date_request` (UnixMilli). Пустая таблица → `0/0` (guard от
   epoch-1970 у `min()` по пустому набору).

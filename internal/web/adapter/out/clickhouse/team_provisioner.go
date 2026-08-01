@@ -37,9 +37,6 @@ type Ownership interface {
 	AssertOwnsDatabase(ctx context.Context, db string) error
 	// AssertOwnsTable — то же для полного имени "db.table".
 	AssertOwnsTable(ctx context.Context, table string) error
-	// OwnsTable — предикатная форма для мест, где чужая таблица не ошибка, а
-	// повод ужесточить поведение (строгая атрибуция записей, §70.4).
-	OwnsTable(ctx context.Context, table string) (bool, error)
 }
 
 var _ port.TeamProvisioner = (*TeamProvisionerCH)(nil)
