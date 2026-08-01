@@ -180,7 +180,7 @@ Admin-only экран `/kafka` (раздел «Аудит») питается и
     ```bash
     docker compose up -d prometheus     # пересоздаст контейнер с новым конфигом
     # проверка: цель должна быть в состоянии up
-    curl -s http://<host>:9091/api/v1/targets?state=active | jq '.data.activeTargets[] | select(.labels.job=="kafka-jmx") | .health'
+    curl -s 'http://localhost:9091/api/v1/targets?state=active' | jq '.data.activeTargets[] | select(.labels.job=="kafka-jmx") | .health'
     ```
 
     Перезапуск безопасен: TSDB лежит в volume `prometheus_data`, история не теряется, простой —
@@ -1295,7 +1295,7 @@ docker compose up -d --build web receiver sender         # Вариант C (к�
 #   B: docker compose -f deploy/docker-compose.app.yml up -d --build
 
 # 3. Проверка.
-curl -s http://<host>:8000/api/version       # → {"version":"1.0.0"}
+curl -s http://localhost:8000/api/version    # → {"version":"1.0.0"}
 ```
 
 > Тег `v*` запускает в CI обычные test/lint/build (валидация кода), но **не** собирает
@@ -1498,8 +1498,8 @@ docker compose run --rm web --migrate-down 4          # N из строки «О
 ./scripts/deploy/images.sh rollback 1.20.2 --apply
 
 # 4. Проверить.
-curl -s http://<host>:8000/api/version
-curl -s http://<host>:8000/health
+curl -s http://localhost:8000/api/version
+curl -s http://localhost:8000/health
 ```
 
 Альтернатива шагу 2 — восстановить дамп, снятый **перед** обновлением: это надёжнее по данным,

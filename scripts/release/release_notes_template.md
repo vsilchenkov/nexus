@@ -62,8 +62,8 @@ docker compose up -d --build kafka
 docker compose ps kafka          # ДОЛЖНО быть healthy
 
 # 4. Проверить.
-curl -s http://<host>:8000/api/version     # → {"version":"<новая>"}
-curl -s http://<host>:8000/health
+curl -s http://localhost:8000/api/version  # → {"version":"<новая>"}
+curl -s http://localhost:8000/health
 ```
 
 Миграции применяются автоматически на старте `web`/`receiver`; отдельный шаг не нужен.
@@ -106,7 +106,7 @@ git fetch --tags && git checkout v<прежняя>     # привести дер
     «фичу не завезли».
 
   После выката проверить, что фича действительно поднялась, а не деградировала молча — для §75:
-  `curl -s -b <cookie> http://<host>:8000/api/kafka/topics | jq '.sizes_available, .topics[].size_bytes'`
+  `curl -s -b cookie.txt http://localhost:8000/api/kafka/topics | jq '.sizes_available, .topics[].size_bytes'`
   (`sizes_available: true`, у непустых топиков ненулевой размер) либо глазами на `/kafka`:
   колонка «Размер» показывает байты, а не «—».
 -->
