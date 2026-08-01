@@ -70,8 +70,9 @@ docker compose -f deploy/docker-compose.deps.yml up -d
 > **Первый запуск собирает образ брокера** (§75): `kafka` — это `apache/kafka` плюс
 > `jmx_prometheus_javaagent`, который отдаёт размер топиков на `localhost:7071/metrics`
 > (`kafka_log_log_size`) — без него колонка «Размер» на экране `/kafka` показывает «—».
-> Нужен доступ к Maven Central; при его отсутствии —
-> `docker compose -f deploy/docker-compose.deps.yml build --build-arg JMX_AGENT_URL=<url> kafka`.
+> jar агента лежит в репозитории (`deploy/vendor/`), поэтому сборка идёт без сети; другая версия
+> или зеркало —
+> `docker compose -f deploy/docker-compose.deps.yml build --build-arg JMX_AGENT_SRC=<путь-или-url> kafka`.
 > Правка [deploy/kafka-jmx.yml](./deploy/kafka-jmx.yml) с ошибкой не даст брокеру стартовать
 > (JVM не запускается с невалидным javaagent) — смотрите тогда `deps: logs (kafka)`.
 

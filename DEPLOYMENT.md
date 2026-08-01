@@ -163,8 +163,9 @@ Admin-only экран `/kafka` (раздел «Аудит») питается и
   `jmx_prometheus_javaagent`), агент включается `KAFKA_OPTS` и отдаёт `/metrics` на `7071`
   (наружу порт не публикуется), а Prometheus снимает его job'ом `kafka-jmx`. Следствия для
   эксплуатации:
-  - образ брокера **собирается на сервере** — нужен доступ к `repo1.maven.org`; если его нет,
-    укажите зеркало: `docker compose build --build-arg JMX_AGENT_URL=<url> kafka`;
+  - образ брокера **собирается на сервере**, но сеть для этого не нужна: jar агента лежит в
+    репозитории ([deploy/vendor/](deploy/vendor/), Apache-2.0). Другая версия или внутреннее
+    зеркало — `docker compose build --build-arg JMX_AGENT_SRC=<путь-или-url> kafka`;
   - применение требует **пересоздания контейнера**: `docker compose up -d --build kafka`. Штатная
     команда обновления (`up -d --build web receiver sender`, §9.5) брокера не касается, поэтому
     после раскатки релиза это отдельный шаг. Javaagent грузится при старте JVM, значит брокер

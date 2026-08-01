@@ -52,7 +52,8 @@
 
 | Артефакт | Назначение |
 |---|---|
-| `deploy/docker/kafka.Dockerfile` | `apache/kafka:3.9.0` + jar агента (`ARG JMX_AGENT_URL`, по умолчанию Maven Central) + конфиг |
+| `deploy/docker/kafka.Dockerfile` | `apache/kafka:3.9.0` + jar агента (`ARG JMX_AGENT_SRC`, по умолчанию файл из репозитория) + конфиг |
+| `deploy/vendor/jmx_prometheus_javaagent-1.0.1.jar` | сам агент (Apache-2.0, 2.8 МБ) — лежит в репозитории, чтобы сборка образа не зависела от сети |
 | `deploy/kafka-jmx.yml` | правила агента: **только** `kafka.log:type=Log,name=Size` → `kafka_log_log_size` |
 | `docker-compose.yml`, `deploy/docker-compose.yml`, `deploy/docker-compose.deps.yml` | сервис `kafka` собирается из этого Dockerfile, `KAFKA_OPTS: -javaagent:/opt/jmx/agent.jar=7071:/opt/jmx/kafka.yml` |
 | `deploy/prometheus.yml` | scrape job `kafka-jmx` → `kafka:7071` |
@@ -82,18 +83,19 @@
   стоила бы неподнимающейся шины.
 - **Релиз с этой фичей обязан сказать оператору три вещи** (DEPLOYMENT §9.5-E, заготовка
   `scripts/release/release_notes_template.md`): отдельный шаг `docker compose up -d --build kafka`
-  (штатная команда обновления брокера не трогает), проверку доступности Maven Central с
-  прод-сервера ДО окна обновления и проверку результата ПОСЛЕ выката — `sizes_available: true`
+  (штатная команда обновления брокера не трогает), окно простоя брокера 30–60 с
+  и проверку результата ПОСЛЕ выката — `sizes_available: true`
   в `GET /api/kafka/topics` либо байты вместо «—» на `/kafka`. Без последнего пункта незаехавший
   агент неотличим от «в релизе ничего не завезли»: сервисы обновлены, экран работает, колонка
   пустая.
 - **CI-job `loadtest` тоже собирает брокер.** Он поднимает полный стек
-  (`deploy/docker-compose.yml` + `…loadtest.yml`, `up -d --build --wait`), поэтому раннеру
-  нужен тот же доступ к Maven Central; недоступность внешнего репозитория выглядит как падение
-  job'а на сборке, а не как проблема кода.
-- **Образ Kafka становится собираемым на сервере.** Нужен доступ к Maven Central; при его
-  отсутствии `JMX_AGENT_URL` переопределяется на внутреннее зеркало
-  (`docker compose build --build-arg JMX_AGENT_URL=… kafka`). В версионировании образов
+  (`deploy/docker-compose.yml` + `…loadtest.yml`, `up -d --build --wait`) — с jar в репозитории
+  это обычная сборка без внешних загрузок.
+- **Образ Kafka становится собираемым на сервере, и сеть для этого не нужна.** jar агента лежит
+  в репозитории (`deploy/vendor/`, Apache-2.0): боевой сервер собирает образы сам (DEPLOYMENT
+  §9.5), и «нет доступа к Maven Central» превращало бы обновление брокера в аварию. Другая
+  версия или внутреннее зеркало — `--build-arg JMX_AGENT_SRC=<путь-или-url>` (`ADD` понимает
+  оба вида источника). В версионировании образов
   [§74.5](74-safe-rollback.md) (`scripts/deploy/images.sh`, `NEXUS_SERVICES = web receiver sender`)
   брокер не участвует: откат кода Nexus его не касается.
 
