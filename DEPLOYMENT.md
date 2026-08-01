@@ -1472,15 +1472,14 @@ docker compose exec -T postgres pg_dump -U nexus nexus > deploy/arc/nexus_$(date
 #
 #    ЕСЛИ PostgreSQL НЕ В DOCKER (нативный сервис — так развёрнут бой),
 #    пароль — из ~/.pgpass (§12):
-#    Значения берутся из .env — оболочка их сама НЕ экспортирует, поэтому
-#    сначала читаем (иначе pg_dump подставит дефолты: имя ОС-пользователя как
-#    роль и базу, и упадёт с `role "<логин>" does not exist`).
-#    ВАЖНО: PG_HOST из .env брать НЕЛЬЗЯ — это адрес для контейнеров
-#    (host.docker.internal), с самого хоста он не резолвится. pg_dump работает
-#    на сервере, значит хост локальный: 127.0.0.1 (или /var/run/postgresql —
-#    unix-сокет, если заходите под системным пользователем БД).
-eval "$(grep -E '^PG_(PORT|USER|DATABASE)=' .env)"
-pg_dump -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" > deploy/arc/nexus_$(date +%F_%H%M).sql
+#    Реквизиты читаются из .env: оболочка файл сама НЕ подхватывает, а pg_dump
+#    при пустых значениях берёт дефолты (роль и базу по имени ОС-пользователя)
+#    и падает с `role "<логин>" does not exist`.
+#    PG_HOST из .env НЕ берём: там адрес для КОНТЕЙНЕРОВ (host.docker.internal),
+#    с самого сервера он не резолвится. pg_dump работает на хосте → 127.0.0.1.
+#    Пароль подставляется из переменной, в историю оболочки он не попадает.
+eval "$(grep -E '^PG_(PORT|USER|DATABASE|PASSWORD)=' .env)"
+PGPASSWORD="$PG_PASSWORD" pg_dump -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" > deploy/arc/nexus_$(date +%F_%H%M).sql
 
 # 1. Остановить ВСЕ три сервиса: работающий новый код обращается к колонкам,
 #    которые down удалит.
@@ -1601,13 +1600,14 @@ docker compose -f deploy/docker-compose.app.yml run --rm web --set-admin-passwor
 - **PostgreSQL** (критично — конфиг узлов, пользователи, секреты).
 
   **Если PostgreSQL НЕ в Docker** (нативный сервис — так развёрнут бой): `pg_dump` запускается
-  с хоста, реквизиты берутся из `.env` (`PG_HOST` / `PG_PORT` / `PG_USER` / `PG_DATABASE`):
+  с хоста, реквизиты берутся из `.env` (`PG_PORT` / `PG_USER` / `PG_DATABASE` / `PG_PASSWORD`;
+  `PG_HOST` — намеренно нет, см. ловушку 2 ниже):
 
   ```bash
   cd /opt/nexus                     # каталог проекта, рядом с ним .env
-  eval "$(grep -E '^PG_(PORT|USER|DATABASE)=' .env)"
+  eval "$(grep -E '^PG_(PORT|USER|DATABASE|PASSWORD)=' .env)"
   echo "$PG_USER@127.0.0.1:$PG_PORT/$PG_DATABASE"   # проверка: значения должны быть непустыми
-  pg_dump -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" > deploy/arc/nexus_pg.sql
+  PGPASSWORD="$PG_PASSWORD" pg_dump -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" > deploy/arc/nexus_pg.sql
   ```
 
   Две ловушки, каждая из которых уже срабатывала на бою:
@@ -1623,13 +1623,30 @@ docker compose -f deploy/docker-compose.app.yml run --rm web --set-admin-passwor
      хосте, поэтому хост локальный: `127.0.0.1` либо `-h /var/run/postgresql` (unix-сокет, если
      заходите под системным пользователем БД — тогда и пароль обычно не нужен).
 
-  Пароль не передавайте через `PGPASSWORD` в командной строке — он осядет в истории оболочки.
-  Положите его в `~/.pgpass` (формат `host:port:db:user:password`, права `chmod 600`), тогда
-  `pg_dump` возьмёт пароль сам:
+  **Пароль.** В команде выше он берётся из `.env` в переменную `PGPASSWORD` только на время
+  вызова — так его не приходится вводить руками, и в историю оболочки попадает имя переменной, а
+  не значение (в отличие от `PGPASSWORD='<пароль>' pg_dump …`, который писать не нужно). Это
+  рабочий вариант по умолчанию. Альтернативы, если дампы снимаются регулярно или скриптом:
 
-  ```bash
-  echo "$PG_HOST:$PG_PORT:$PG_DATABASE:$PG_USER:<пароль>" >> ~/.pgpass && chmod 600 ~/.pgpass
-  ```
+  1. **`~/.pgpass`** — пароль не нужно подставлять вообще. Формат строки
+     `host:port:db:user:password`, значение берётся из `.env`, в историю не попадает:
+
+     ```bash
+     eval "$(grep -E '^PG_(PORT|USER|DATABASE|PASSWORD)=' .env)"
+     umask 077
+     echo "127.0.0.1:$PG_PORT:$PG_DATABASE:$PG_USER:$PG_PASSWORD" >> ~/.pgpass
+     chmod 600 ~/.pgpass
+     ```
+
+     Права строго `600`: при более широких PostgreSQL **молча игнорирует файл**, и запрос пароля
+     вернётся — это самая частая причина «`.pgpass` не работает».
+
+  2. **Через системного пользователя `postgres`** — пароль не нужен вовсе (локальный сокет,
+     `peer`-аутентификация в `pg_hba.conf`):
+
+     ```bash
+     sudo -u postgres pg_dump nexus > deploy/arc/nexus_pg.sql
+     ```
 
   **Версия клиента должна быть не ниже версии сервера** (на бою PostgreSQL 12): `pg_dump` более
   старой мажорной версии откажется работать с новой базой, обратное — допустимо.
