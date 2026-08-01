@@ -61,9 +61,13 @@ func (s *tableUsageStub) CountByCHTable(_ context.Context, table, excludeNodeID 
 	return s.others, s.err
 }
 
-// CountsByCHTable — Move им не пользуется (это read-path атрибуции логов),
-// реализован только чтобы стаб удовлетворял порту.
+// CountsByCHTable и ExternalCHTables — Move ими не пользуется (это read-path
+// атрибуции логов), реализованы только чтобы стаб удовлетворял порту.
 func (s *tableUsageStub) CountsByCHTable(context.Context) (map[string]int, error) {
+	return nil, nil
+}
+
+func (s *tableUsageStub) ExternalCHTables(context.Context) (map[string]struct{}, error) {
 	return nil, nil
 }
 

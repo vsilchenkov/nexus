@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -251,4 +252,113 @@ func TestLogReader_NodeIDFilter_E2E(t *testing.T) {
 	nb2, err := reader.CountFailed(ctx, table, nodeB, 0, 0)
 	require.NoError(t, err)
 	require.EqualValues(t, 3, nb2, "nodeB не задет очисткой nodeA")
+}
+
+// attrUsage — port.NodeTableUsage с фиксированным снимком фактов о таблицах.
+type attrUsage struct {
+	counts   map[string]int
+	external map[string]struct{}
+}
+
+func (u attrUsage) CountByCHTable(context.Context, string, string) (int, error) { return 0, nil }
+
+func (u attrUsage) CountsByCHTable(context.Context) (map[string]int, error) { return u.counts, nil }
+
+func (u attrUsage) ExternalCHTables(context.Context) (map[string]struct{}, error) {
+	return u.external, nil
+}
+
+// foreignOwnership — гейт владения, отвечающий «таблица не наша»: так выглядит
+// ЛЮБАЯ внешняя таблица §64 (маркера `__nexus_owner` у чужой БД нет) и таблица
+// соседней ноды §70.
+type foreignOwnership struct{}
+
+func (foreignOwnership) Claim(context.Context, string) error              { return nil }
+func (foreignOwnership) AssertOwnsDatabase(context.Context, string) error { return nil }
+func (foreignOwnership) AssertOwnsTable(context.Context, string) error {
+	return errNotOwned
+}
+func (foreignOwnership) OwnsTable(context.Context, string) (bool, error) { return false, nil }
+
+var errNotOwned = errors.New("table is owned by another node")
+
+// TestLogReader_ExternalTableAttribution_E2E (§64 × §70.4) — боевой инцидент
+// v1.22.3: узел на внешней таблице перестал показывать логи. Писатель —
+// посторонний сервис, все его записи идут с node_id = ”, владения таблицей у
+// Nexus нет, и гейт §70.4 включал строгий фильтр `node_id = ?`, который прятал
+// ЕДИНСТВЕННОЕ содержимое таблицы (на бою — 10 222 523 записи).
+//
+// Проверяется настоящим ClickHouse-SQL, а не только сборкой условия: узел на
+// внешней одиночной таблице записи видит, а два ограничения остаются в силе —
+// не помеченная внешней чужая таблица строга (гейт §70.4 цел), общая внешняя
+// строга тоже (§61 сильнее §64, иначе видны чужие записи).
+func TestLogReader_ExternalTableAttribution_E2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
+	defer cancel()
+
+	conn, cfg, cleanup := startClickHouse(t, ctx)
+	defer cleanup()
+
+	const table = "nexus_default.external_attr"
+	createNodeLogTable(t, ctx, conn, table)
+
+	logger := logging.NewNoop()
+	provider := clickhouse.StaticProvider(conn)
+	writer := chlog.New(provider, cfg, logger)
+	defer writer.Stop(ctx)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	mk := func(id, nodeID string) *domain.LogRecord {
+		return &domain.LogRecord{
+			ID: id, Type: domain.RootMethodRequest, URL: "https://x", Method: "POST",
+			Request: "{}", Response: "{}", Status: 0, DateCreate: now,
+			DateRequest: now, DateResponse: now, Duration: 1, Done: false,
+			ChecksumRequest: strings.Repeat("a", 32), ChecksumResponse: strings.Repeat("b", 32),
+			Host: "h", IP: "127.0.0.1", Attempts: 1, AttemptsDetails: "[]", NodeID: nodeID,
+		}
+	}
+	const nodeA = "33333333-3333-3333-3333-333333333333"
+	// Слепок боя: три записи постороннего писателя (node_id = '') и одна своя.
+	writer.Write(ctx, table, mk("00000000-0000-0000-0000-0000000000e1", ""))
+	writer.Write(ctx, table, mk("00000000-0000-0000-0000-0000000000e2", ""))
+	writer.Write(ctx, table, mk("00000000-0000-0000-0000-0000000000e3", ""))
+	writer.Write(ctx, table, mk("00000000-0000-0000-0000-0000000000e4", nodeA))
+	require.NoError(t, writer.Flush(ctx))
+
+	require.Eventually(t, func() bool {
+		var total uint64
+		_ = conn.QueryRow(ctx, "SELECT count() FROM "+table).Scan(&total)
+		return total == 4
+	}, 20*time.Second, 200*time.Millisecond)
+
+	// Читатель на каждый случай новый: снимок фактов кешируется на минуту.
+	newReader := func(counts map[string]int, external map[string]struct{}) *webch.LogReaderCH {
+		r := webch.NewLogReader(provider, logger)
+		r.SetTableUsage(attrUsage{counts: counts, external: external})
+		r.SetOwnership(foreignOwnership{})
+		return r
+	}
+	self := map[string]int{table: 1}
+	shared := map[string]int{table: 2}
+	marked := map[string]struct{}{table: {}}
+
+	got, err := newReader(self, marked).CountFailed(ctx, table, nodeA, 0, 0)
+	require.NoError(t, err)
+	require.EqualValues(t, 4, got,
+		"§64: на внешней одиночной таблице узел видит и записи постороннего писателя — ради этого узел и заведён")
+
+	got, err = newReader(self, nil).CountFailed(ctx, table, nodeA, 0, 0)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, got,
+		"§70.4: чужая таблица БЕЗ пометки external_table остаётся строгой — послабление не должно расползаться на соседнюю ноду")
+
+	got, err = newReader(shared, marked).CountFailed(ctx, table, nodeA, 0, 0)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, got,
+		"§61 сильнее §64: общую таблицу узел читает строго, даже если она помечена внешней")
+
+	// Гейт разрушающих операций фиксом не затронут: читать чужую таблицу можно,
+	// удалять из неё — нет.
+	_, err = newReader(self, marked).DeleteFailed(ctx, table, nodeA, 0, 0)
+	require.Error(t, err, "§70.4: очистка в чужой таблице по-прежнему запрещена")
 }

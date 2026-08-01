@@ -17,11 +17,14 @@ import (
 // countingUsage — port.NodeTableUsage со счётчиком обращений: тесты проверяют
 // не только результат, но и ЦЕНУ (сколько раз сходили в PostgreSQL).
 type countingUsage struct {
-	counts  map[string]int
-	err     error
-	calls   atomic.Int32
-	delay   time.Duration
-	release chan struct{}
+	counts    map[string]int
+	externals map[string]struct{}
+	err       error
+	extErr    error
+	calls     atomic.Int32
+	extCalls  atomic.Int32
+	delay     time.Duration
+	release   chan struct{}
 }
 
 func (u *countingUsage) CountByCHTable(context.Context, string, string) (int, error) {
@@ -46,10 +49,47 @@ func (u *countingUsage) CountsByCHTable(ctx context.Context) (map[string]int, er
 	return u.counts, nil
 }
 
+func (u *countingUsage) ExternalCHTables(ctx context.Context) (map[string]struct{}, error) {
+	u.extCalls.Add(1)
+	if u.delay > 0 {
+		time.Sleep(u.delay)
+	}
+	if u.extErr != nil {
+		return nil, u.extErr
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return u.externals, nil
+}
+
+// ownershipStub — Ownership (§70.4). Для nodeFilter значим только OwnsTable;
+// остальные методы существуют, чтобы стаб удовлетворял интерфейсу.
+type ownershipStub struct {
+	owns bool
+	err  error
+}
+
+func (ownershipStub) Claim(context.Context, string) error               { return nil }
+func (ownershipStub) AssertOwnsDatabase(context.Context, string) error  { return nil }
+func (ownershipStub) AssertOwnsTable(context.Context, string) error     { return nil }
+func (o ownershipStub) OwnsTable(context.Context, string) (bool, error) { return o.owns, o.err }
+
 func newReaderWithUsage(u *countingUsage) *LogReaderCH {
+	return newReader(u, nil)
+}
+
+// newReader — читатель с подключёнными (или нет) фактами о таблицах и гейтом
+// владения. Гейт нужен кейсам §70.4/§64: без него ownsTable отвечает true и
+// ветка «чужая таблица» не проверяется вовсе — именно поэтому регресс §70,
+// спрятавший логи внешней таблицы, не был пойман unit-тестами.
+func newReader(u *countingUsage, o Ownership) *LogReaderCH {
 	r := NewLogReader(nil, logging.NewNoop())
 	if u != nil {
 		r.SetTableUsage(u)
+	}
+	if o != nil {
+		r.SetOwnership(o)
 	}
 	return r
 }
@@ -63,10 +103,21 @@ func TestNodeFilter_Attribution(t *testing.T) {
 		lenient = "(node_id = ? OR node_id = '')"
 		strict  = "node_id = ?"
 	)
-	usage := &countingUsage{counts: map[string]int{
-		"nexus_default.shared": 3,
-		"nexus_default.solo":   1,
-	}}
+	usage := &countingUsage{
+		counts: map[string]int{
+			"nexus_default.shared": 3,
+			"nexus_default.solo":   1,
+			"gate_logs.ext_solo":   1,
+			"gate_logs.ext_shared": 2,
+			"other_logs.foreign":   1,
+		},
+		externals: map[string]struct{}{
+			"gate_logs.ext_solo":   {},
+			"gate_logs.ext_shared": {},
+		},
+	}
+	foreign := ownershipStub{owns: false}
+	own := ownershipStub{owns: true}
 
 	tests := []struct {
 		name     string
@@ -80,6 +131,24 @@ func TestNodeFilter_Attribution(t *testing.T) {
 		{name: "таблица не известна — послабление", reader: newReaderWithUsage(usage), table: "nexus_default.unknown", nodeID: "n1", wantCond: lenient},
 		{name: "порт не подключён — послабление", reader: newReaderWithUsage(nil), table: "nexus_default.shared", nodeID: "n1", wantCond: lenient},
 		{name: "без узла — фильтра нет", reader: newReaderWithUsage(usage), table: "nexus_default.shared", nodeID: "", wantCond: ""},
+
+		// §64: внешняя таблица чужая по определению (маркера владения у неё нет и
+		// быть не может), а все её записи приходит с пустым node_id — строгий
+		// фильтр спрятал бы единственное содержимое таблицы. Боевой инцидент:
+		// 10 222 523 записи в gate_logs.PDT_PDTExchange не показывались вовсе.
+		{name: "§64: внешняя чужая таблица — послабление", reader: newReader(usage, foreign), table: "gate_logs.ext_solo", nodeID: "n1", wantCond: lenient},
+		// §70.4 остаётся в силе там, ради чего вводился.
+		{name: "§70.4: чужая НЕ внешняя — строго", reader: newReader(usage, foreign), table: "other_logs.foreign", nodeID: "n1", wantCond: strict},
+		// Общая побеждает внешность: на такой таблице логи узла есть и без
+		// послабления, а чужие строки видеть нельзя.
+		{name: "общая внешняя — строго", reader: newReader(usage, foreign), table: "gate_logs.ext_shared", nodeID: "n1", wantCond: strict},
+		{name: "своя таблица с флагом внешней — послабление", reader: newReader(usage, own), table: "gate_logs.ext_solo", nodeID: "n1", wantCond: lenient},
+		// Фактов из PostgreSQL нет → правило деградирует в поведение до §61/§70,
+		// иначе сбой базы прячет логи узла.
+		{name: "снимка нет + чужая таблица — послабление", reader: newReader(nil, foreign), table: "other_logs.foreign", nodeID: "n1", wantCond: lenient},
+		// Отказ гейта трактуется как «чужая» (fail-closed) и на не внешней
+		// таблице обязан оставаться строгим.
+		{name: "ошибка OwnsTable на не внешней — строго", reader: newReader(usage, ownershipStub{err: errors.New("ch down")}), table: "other_logs.foreign", nodeID: "n1", wantCond: strict},
 	}
 
 	for _, tc := range tests {
@@ -117,6 +186,29 @@ func TestNodeFilter_CacheHitCost(t *testing.T) {
 	wg.Wait()
 
 	assert.Equal(t, int32(1), usage.calls.Load(), "200 запросов логов → один запрос к PostgreSQL")
+	assert.Equal(t, int32(1), usage.extCalls.Load(), "второй факт снимка тоже берётся один раз")
+}
+
+// TestNodeFilter_ExternalLookupFailureDoesNotStorm: снимок фактов собирается
+// двумя запросами, и падение ВТОРОГО обязано вести себя как падение первого —
+// снимок не применяется целиком (полуснимок прятал бы логи), повторы отсекаются
+// паузой.
+func TestNodeFilter_ExternalLookupFailureDoesNotStorm(t *testing.T) {
+	t.Parallel()
+	usage := &countingUsage{
+		counts: map[string]int{"nexus_default.shared": 2},
+		extErr: errors.New("pg is down"),
+	}
+	r := newReaderWithUsage(usage)
+
+	for range 50 {
+		cond, _ := r.nodeFilter(context.Background(), "nexus_default.shared", "n1")
+		require.Equal(t, "(node_id = ? OR node_id = '')", cond,
+			"счётчики загрузились, но признак внешности — нет: снимок неполон, правило остаётся мягким")
+	}
+
+	assert.Equal(t, int32(1), usage.calls.Load(), "после неудачи следующая попытка — не раньше паузы")
+	assert.Equal(t, int32(1), usage.extCalls.Load())
 }
 
 // TestNodeFilter_FailureDoesNotStorm: при лежащем PostgreSQL сбой не должен
@@ -183,6 +275,7 @@ func TestNodeFilter_SurvivesCallerCancel(t *testing.T) {
 	cancel()
 
 	cond, _ := r.nodeFilter(ctx, "nexus_default.shared", "n1")
-	assert.Equal(t, "node_id = ?", cond, "карта загружена несмотря на отменённый ctx вызывающего")
+	assert.Equal(t, "node_id = ?", cond, "снимок загружен несмотря на отменённый ctx вызывающего")
 	assert.Equal(t, int32(1), usage.calls.Load())
+	assert.Equal(t, int32(1), usage.extCalls.Load(), "второй запрос снимка тоже переживает отмену")
 }

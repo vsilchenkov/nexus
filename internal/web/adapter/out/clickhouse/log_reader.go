@@ -98,7 +98,7 @@ type LogReaderCH struct {
 	// nodeFilter). Опционален: nil → прежнее поведение (послабление всегда).
 	tableUsage    port.NodeTableUsage
 	usageMu       sync.Mutex
-	usageCounts   map[string]int
+	usageFacts    *tableFacts
 	usageAt       time.Time
 	usageTriedAt  time.Time
 	usageInflight bool
@@ -108,11 +108,26 @@ type LogReaderCH struct {
 	ownership Ownership
 }
 
+// tableFacts — снимок фактов о таблицах логов из PostgreSQL, на которых стоит
+// правило видимости записей без node_id (nodeFilter).
+//
+// Оба факта живут в ОДНОМ снимке и обновляются одним циклом намеренно: правило
+// читает их вместе, и полуснимок (свежие счётчики + протухшее множество внешних
+// таблиц) означал бы молча спрятанные логи. Ошибка любого из двух запросов
+// отменяет обновление целиком — лучше согласованные старые факты, чем
+// несогласованные свежие.
+type tableFacts struct {
+	// counts — «полное имя таблицы → сколько узлов на неё ссылается» (§61).
+	counts map[string]int
+	// external — таблицы, помеченные external_table хотя бы одним узлом (§64).
+	external map[string]struct{}
+}
+
 const (
-	// usageCacheTTL — как долго живёт карта «таблица → число узлов». Read-path
-	// логов спрашивает её на каждый запрос, а меняется она только при
-	// создании/переносе/удалении узла, поэтому минуты хватает: цена задержки —
-	// временно прежнее (более мягкое) правило видимости.
+	// usageCacheTTL — как долго живёт снимок фактов о таблицах (tableFacts).
+	// Read-path логов спрашивает его на каждый запрос, а меняется он только при
+	// создании/переносе/удалении узла и смене флага external_table, поэтому
+	// минуты хватает: цена задержки — временно прежнее правило видимости.
 	usageCacheTTL = time.Minute
 	// usageRetryInterval — пауза после НЕудачной попытки: не даёт лежащему
 	// PostgreSQL получать по запросу на каждое обращение к логам.
@@ -134,7 +149,7 @@ func (r *LogReaderCH) SetTableUsage(u port.NodeTableUsage) {
 	r.usageMu.Lock()
 	defer r.usageMu.Unlock()
 	r.tableUsage = u
-	r.usageCounts, r.usageAt = nil, time.Time{}
+	r.usageFacts, r.usageAt = nil, time.Time{}
 }
 
 // SetOwnership подключает гейт владения (§70.4): запрещает удаление записей в
@@ -234,17 +249,30 @@ func bodyColumn(which string) (string, bool) {
 // команду — ещё и через границу команд (поймано на стенде: у переехавшего узла
 // «появились» 590 201 чужая строка). Там фильтр строгий: только свой node_id.
 //
+// §70.4: на таблице, принадлежащей ДРУГОЙ ноде Nexus, карта «таблица → число
+// узлов» бесполезна — она считается по СВОЕЙ PostgreSQL и покажет «личная»,
+// хотя записи туда пишет и сосед. Поэтому чужая таблица тоже даёт строгий
+// фильтр.
+//
+// Исключение — внешняя таблица §64: её ведёт посторонний сервис, маркера
+// владения `__nexus_owner` у неё нет и быть не может, то есть «чужая» здесь не
+// признак соседней ноды, а нормальное состояние. Все записи такого писателя
+// идут с пустым node_id, и строгий фильтр прятал бы ЕДИНСТВЕННОЕ содержимое
+// таблицы — ровно то, ради чего узел заведён (бой: 10 222 523 записи в
+// gate_logs.PDT_PDTExchange стали невидимы после §70). Порядок проверок при
+// этом сохранён: ОБЩАЯ таблица остаётся строгой, даже будучи внешней, — там
+// послабление показало бы чужие записи, в том числе из другой команды.
+//
 // Неизвестно, общая ли таблица (порт не подключён или запрос упал) → прежнее,
-// более мягкое правило: скрыть свои логи хуже, чем показать лишние.
-// §70.4: на таблице, принадлежащей другой ноде (внешняя таблица §64 в чужой
-// БД), карта «таблица → число узлов» тоже бесполезна — она считается по СВОЕЙ
-// PostgreSQL и покажет «личная», хотя записи туда пишет и сосед. Поэтому чужая
-// таблица всегда даёт строгий фильтр.
+// более мягкое правило: скрыть свои логи хуже, чем показать лишние. Тот же
+// принцип для внешности. Инвариант: СТРОГОСТЬ ВКЛЮЧАЮТ ТОЛЬКО ДОКАЗАННЫЕ ФАКТЫ
+// (счётчик > 1, либо чужая таблица, про которую точно известно, что она не
+// помечена внешней) — иначе сбой PostgreSQL превращается в пропажу логов.
 func (r *LogReaderCH) nodeFilter(ctx context.Context, table, nodeID string) (string, []any) {
 	if nodeID == "" {
 		return "", nil
 	}
-	if r.tableIsShared(ctx, table) || !r.ownsTable(ctx, table) {
+	if r.tableIsShared(ctx, table) || (!r.ownsTable(ctx, table) && !r.tableIsExternal(ctx, table)) {
 		return "node_id = ?", []any{nodeID}
 	}
 	return "(node_id = ? OR node_id = '')", []any{nodeID}
@@ -257,30 +285,63 @@ func (r *LogReaderCH) tableIsShared(ctx context.Context, table string) bool {
 	if table == "" {
 		return false
 	}
-	counts, ok := r.tableCounts(ctx)
+	facts, ok := r.facts(ctx)
 	if !ok {
 		return false
 	}
-	return counts[table] > 1
+	return facts.counts[table] > 1
 }
 
-// tableCounts — карта «таблица → число узлов» из кеша, при протухании —
-// одно фоновое обновление.
+// tableIsExternal — таблицу ведёт посторонний сервис (§64), значит гейт
+// владения §70.4 к ней неприменим (см. nodeFilter).
 //
-// Горячий путь (кеш свеж) — только чтение map под мьютексом, без I/O: этот
-// метод зовётся на КАЖДЫЙ запрос логов/метрик, а дашборд считает KPI по всем
-// узлам разом. Обновление идёт ВНЕ блокировки и только в одной горутине
+// Снимка фактов нет (порт не подключён или запрос упал) → true: правило
+// деградирует в поведение до §70, иначе недоступность PostgreSQL прячет логи
+// узла. Симметрично tableIsShared, которая в той же ситуации уходит в мягкую
+// ветку; оба факта обязаны деградировать в одну сторону, иначе получается
+// правило, строгое наполовину.
+func (r *LogReaderCH) tableIsExternal(ctx context.Context, table string) bool {
+	if table == "" {
+		return false
+	}
+	facts, ok := r.facts(ctx)
+	if !ok {
+		r.logger.Debug("log reader: no table facts, treating table as external (lenient node attribution)",
+			r.logger.Str("table", table))
+		return true
+	}
+	_, external := facts.external[table]
+	if external {
+		// Тихое решение: на такой таблице узлу видны записи с пустым node_id,
+		// хотя Nexus ею не владеет. Без строки в логе это неотличимо от «гейт
+		// §70.4 не сработал» (ТЗ §51.9). Сообщение говорит про ФАКТ, а не про
+		// решение вызывающего: смягчает атрибуцию nodeFilter, и только он.
+		r.logger.Debug("log reader: table is marked external (§64), ownership does not force strict attribution",
+			r.logger.Str("table", table))
+	}
+	return external
+}
+
+// facts — снимок фактов о таблицах из кеша, при протухании — одно фоновое
+// обновление.
+//
+// Горячий путь (кеш свеж) — только чтение указателя под мьютексом, без I/O:
+// этот метод зовётся на КАЖДЫЙ запрос логов/метрик, а дашборд считает KPI по
+// всем узлам разом. Обновление идёт ВНЕ блокировки и только в одной горутине
 // (usageInflight) — иначе 12 параллельных NodeKPI выстроились бы в очередь на
 // время запроса к PostgreSQL, а при протухшем кеше ещё и ушли бы в него все
-// сразу. Остальные в этот момент работают по прежней карте.
+// сразу. Остальные в этот момент работают по прежнему снимку.
 //
 // Неудачная попытка тоже отмечается временем (usageTriedAt): без этого лежащий
 // PostgreSQL превратил бы КАЖДЫЙ запрос логов в новый запрос к нему плюс строку
 // в лог — то есть сбой БД усиливался бы кратно трафику UI.
-func (r *LogReaderCH) tableCounts(ctx context.Context) (map[string]int, bool) {
+//
+// Возвращённый снимок неизменяем: обновление кладёт НОВЫЙ *tableFacts, а не
+// правит карты на месте — читатели работают со своей копией без блокировки.
+func (r *LogReaderCH) facts(ctx context.Context) (*tableFacts, bool) {
 	r.usageMu.Lock()
 	usage := r.tableUsage
-	cached, at, tried, inflight := r.usageCounts, r.usageAt, r.usageTriedAt, r.usageInflight
+	cached, at, tried, inflight := r.usageFacts, r.usageAt, r.usageTriedAt, r.usageInflight
 	fresh := cached != nil && time.Since(at) < usageCacheTTL
 	switch {
 	case usage == nil:
@@ -295,23 +356,41 @@ func (r *LogReaderCH) tableCounts(ctx context.Context) (map[string]int, bool) {
 	r.usageMu.Unlock()
 
 	// Запрос переживает отмену пользовательского запроса (ушёл со страницы —
-	// карта всё равно обновится), но со своим потолком по времени.
+	// снимок всё равно обновится), но со своим потолком по времени. Потолок один
+	// на оба запроса: это верхняя граница ЗАДЕРЖКИ обновления, а не бюджет на
+	// каждый — иначе при медленной БД цикл растягивался бы вдвое.
 	qctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), usageQueryTimeout)
 	defer cancel()
-	counts, err := usage.CountsByCHTable(qctx)
+	next, err := loadTableFacts(qctx, usage)
 
 	r.usageMu.Lock()
 	defer r.usageMu.Unlock()
 	r.usageInflight = false
 	if err != nil {
-		r.logger.Warn("log reader: ch table usage lookup failed, keeping previous node attribution",
+		r.logger.Warn("log reader: ch table facts lookup failed, keeping previous node attribution",
 			r.logger.Err(err))
-		// Протухшая карта лучше отсутствующей: правило останется прежним до
+		// Протухший снимок лучше отсутствующего: правило останется прежним до
 		// следующей успешной попытки, а не дёргается туда-сюда на каждом сбое.
-		return r.usageCounts, r.usageCounts != nil
+		return r.usageFacts, r.usageFacts != nil
 	}
-	r.usageCounts, r.usageAt = counts, time.Now()
-	return counts, true
+	r.usageFacts, r.usageAt = next, time.Now()
+	return next, true
+}
+
+// loadTableFacts — оба факта одним циклом. Ошибка любого запроса отменяет
+// обновление целиком: правило видимости читает счётчики и признак внешности
+// вместе, и снимок, собранный наполовину из свежих, наполовину из старых
+// данных, может спрятать логи узла (см. tableFacts).
+func loadTableFacts(ctx context.Context, usage port.NodeTableUsage) (*tableFacts, error) {
+	counts, err := usage.CountsByCHTable(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("counts by ch table: %w", err)
+	}
+	external, err := usage.ExternalCHTables(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("external ch tables: %w", err)
+	}
+	return &tableFacts{counts: counts, external: external}, nil
 }
 
 // GetByID — одна запись по ID (UUID v4) из указанной таблицы.
