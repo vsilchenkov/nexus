@@ -112,6 +112,12 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
       KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+      # JVM heap брокера. Значение по умолчанию совпадает с тем, что подставляет
+      # сам kafka-server-start.sh, если переменная не задана, — фиксируем его
+      # явно, чтобы бюджет памяти был виден в конфиге и переопределялся из .env.
+      # На сервере 2 ГБ ставьте -Xmx512m -Xms256m (см. DEPLOYMENT.md §5.4):
+      # с дефолтным 1 ГБ heap контейнер дорастает до ~1.2 ГБ RSS.
+      KAFKA_HEAP_OPTS: ${KAFKA_HEAP_OPTS:--Xmx1G -Xms1G}
     volumes:
       - kafka_data:/var/lib/kafka/data
     ports:
@@ -123,7 +129,11 @@ services:
       # 7071, падала бы с «Prometheus JMX Exporter exiting» и exit 1. Итог без
       # сброса: брокер вечно unhealthy → sender (depends_on service_healthy)
       # не стартует вообще.
-      test: ["CMD-SHELL", "KAFKA_OPTS= /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      # `KAFKA_HEAP_OPTS=` — по той же причине: иначе разовая CLI-утилита
+      # стартовала бы с брокерским heap (`-Xms1G` коммитит гигабайт сразу),
+      # каждые 10 секунд, поверх работающего брокера. Пустое значение возвращает
+      # kafka-run-class.sh к его собственному дефолту для утилит (-Xmx256M).
+      test: ["CMD-SHELL", "KAFKA_OPTS= KAFKA_HEAP_OPTS= /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
