@@ -36,9 +36,13 @@ docker compose exec -T postgres pg_dump -U nexus nexus > deploy/arc/nexus_$(date
 #    пароль — из ~/.pgpass, а не в командной строке (DEPLOYMENT §12).
 #    Значения берутся из .env — оболочка их сама НЕ экспортирует, поэтому
 #    сначала читаем (иначе pg_dump подставит дефолты: имя ОС-пользователя как
-#    роль и базу, и упадёт с `role "<логин>" does not exist`):
-eval "$(grep -E '^PG_(HOST|PORT|USER|DATABASE)=' .env)"
-pg_dump -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" > deploy/arc/nexus_$(date +%F_%H%M).sql
+#    роль и базу, и упадёт с `role "<логин>" does not exist`).
+#    ВАЖНО: PG_HOST из .env брать НЕЛЬЗЯ — это адрес для контейнеров
+#    (host.docker.internal), с самого хоста он не резолвится. pg_dump работает
+#    на сервере, значит хост локальный: 127.0.0.1 (или /var/run/postgresql —
+#    unix-сокет, если заходите под системным пользователем БД).
+eval "$(grep -E '^PG_(PORT|USER|DATABASE)=' .env)"
+pg_dump -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" > deploy/arc/nexus_$(date +%F_%H%M).sql
 
 # 3. Забрать тег и пересобрать сервисы.
 git fetch --tags

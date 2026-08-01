@@ -1474,9 +1474,13 @@ docker compose exec -T postgres pg_dump -U nexus nexus > deploy/arc/nexus_$(date
 #    пароль — из ~/.pgpass (§12):
 #    Значения берутся из .env — оболочка их сама НЕ экспортирует, поэтому
 #    сначала читаем (иначе pg_dump подставит дефолты: имя ОС-пользователя как
-#    роль и базу, и упадёт с `role "<логин>" does not exist`):
-eval "$(grep -E '^PG_(HOST|PORT|USER|DATABASE)=' .env)"
-pg_dump -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" > deploy/arc/nexus_$(date +%F_%H%M).sql
+#    роль и базу, и упадёт с `role "<логин>" does not exist`).
+#    ВАЖНО: PG_HOST из .env брать НЕЛЬЗЯ — это адрес для контейнеров
+#    (host.docker.internal), с самого хоста он не резолвится. pg_dump работает
+#    на сервере, значит хост локальный: 127.0.0.1 (или /var/run/postgresql —
+#    unix-сокет, если заходите под системным пользователем БД).
+eval "$(grep -E '^PG_(PORT|USER|DATABASE)=' .env)"
+pg_dump -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" > deploy/arc/nexus_$(date +%F_%H%M).sql
 
 # 1. Остановить ВСЕ три сервиса: работающий новый код обращается к колонкам,
 #    которые down удалит.
@@ -1601,16 +1605,23 @@ docker compose -f deploy/docker-compose.app.yml run --rm web --set-admin-passwor
 
   ```bash
   cd /opt/nexus                     # каталог проекта, рядом с ним .env
-  eval "$(grep -E '^PG_(HOST|PORT|USER|DATABASE)=' .env)"
-  echo "$PG_USER@$PG_HOST:$PG_PORT/$PG_DATABASE"    # проверка: значения должны быть непустыми
-  pg_dump -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" > deploy/arc/nexus_pg.sql
+  eval "$(grep -E '^PG_(PORT|USER|DATABASE)=' .env)"
+  echo "$PG_USER@127.0.0.1:$PG_PORT/$PG_DATABASE"   # проверка: значения должны быть непустыми
+  pg_dump -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" > deploy/arc/nexus_pg.sql
   ```
 
-  **Строка с `eval` обязательна.** Оболочка не подхватывает `.env` сама, а `pg_dump` при пустых
-  значениях молча берёт дефолты — роль и базу по имени ОС-пользователя — и падает с
-  `FATAL: role "<логин>" does not exist`. `source .env` для этого не подходит: в файле есть
-  значения с пробелами без кавычек (`KAFKA_HEAP_OPTS=-Xmx1G -Xms1G`), и оболочка попытается
-  выполнить их хвост как команду.
+  Две ловушки, каждая из которых уже срабатывала на бою:
+
+  1. **Строка с `eval` обязательна.** Оболочка не подхватывает `.env` сама, а `pg_dump` при пустых
+     значениях молча берёт дефолты — роль и базу по имени ОС-пользователя — и падает с
+     `FATAL: role "<логин>" does not exist`. `source .env` не подходит: в файле есть значения с
+     пробелами без кавычек (`KAFKA_HEAP_OPTS=-Xmx1G -Xms1G`), и оболочка выполнит их хвост как
+     команду.
+  2. **`PG_HOST` из `.env` брать нельзя.** Там записан адрес, по которому к базе обращаются
+     КОНТЕЙНЕРЫ (`host.docker.internal`); с самого сервера это имя не резолвится —
+     `could not translate host name "host.docker.internal" to address`. `pg_dump` запускается на
+     хосте, поэтому хост локальный: `127.0.0.1` либо `-h /var/run/postgresql` (unix-сокет, если
+     заходите под системным пользователем БД — тогда и пароль обычно не нужен).
 
   Пароль не передавайте через `PGPASSWORD` в командной строке — он осядет в истории оболочки.
   Положите его в `~/.pgpass` (формат `host:port:db:user:password`, права `chmod 600`), тогда
