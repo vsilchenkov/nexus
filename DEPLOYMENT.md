@@ -1471,25 +1471,20 @@ git fetch --tags && git checkout v1.20.2
 docker compose exec -T postgres pg_dump -U nexus nexus > deploy/arc/nexus_$(date +%F_%H%M).sql
 #
 #    ЕСЛИ PostgreSQL НЕ В DOCKER (нативный сервис — так развёрнут бой).
-#    Реквизиты читаем из .env ПОСТРОЧНО. Почему так, а не короче:
-#      - оболочка .env сама не подхватывает: при пустых значениях pg_dump берёт
-#        дефолты (роль и базу по имени ОС-пользователя) → role ... does not exist;
-#      - `source .env` ломается на значениях с пробелами без кавычек
-#        (KAFKA_HEAP_OPTS=-Xmx1G -Xms1G), `eval` портит пароль со спецсимволами;
-#      - `tr -d '\r'` убирает CR, если .env правился в Windows: иначе он уедет
-#        в пароль и получится password authentication failed;
-#      - PG_HOST из .env НЕ берём — там адрес для КОНТЕЙНЕРОВ
-#        (host.docker.internal), с сервера он не резолвится.
-#    PGPASSWORD экспортируется ОТДЕЛЬНОЙ строкой, а не префиксом перед pg_dump:
-#    префикс легко обрезать при копировании, и сбой выходит тихим — вместо
-#    ошибки просто запрос пароля.
-export PGPASSWORD=$(grep -m1 '^PG_PASSWORD=' .env | cut -d= -f2- | tr -d '\r')
-PG_PORT=$(grep -m1 '^PG_PORT=' .env | cut -d= -f2- | tr -d '\r')
-PG_USER=$(grep -m1 '^PG_USER=' .env | cut -d= -f2- | tr -d '\r')
-PG_DATABASE=$(grep -m1 '^PG_DATABASE=' .env | cut -d= -f2- | tr -d '\r')
-echo "user=$PG_USER db=$PG_DATABASE port=$PG_PORT passlen=${#PGPASSWORD}"   # всё непусто?
-pg_dump -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" > deploy/arc/nexus_$(date +%F_%H%M).sql
-unset PGPASSWORD
+#    Одной командой: копируется и вставляется целиком.
+#      - реквизиты подтягиваются из .env одной строкой (`source` не годится:
+#        в файле есть KAFKA_HEAP_OPTS=-Xmx1G -Xms1G — пробел без кавычек);
+#      - хост 127.0.0.1, а НЕ $PG_HOST: в .env записан адрес для КОНТЕЙНЕРОВ
+#        (host.docker.internal), с самого сервера он не резолвится;
+#      - PGPASSWORD передаётся через `env`, а не префиксом `PGPASSWORD=... pg_dump`:
+#        префикс легко обрезать при копировании, и сбой выходит тихим — вместо
+#        ошибки просто запрос пароля (а с `env` будет `nv: command not found`).
+#    Если пароль содержит $, кавычки или обратные кавычки — eval их съест;
+#    тогда читайте пароль отдельно: см. §12.
+eval "$(grep -E '^PG_(PORT|USER|DATABASE|PASSWORD)=' .env)" && \
+env PGPASSWORD="$PG_PASSWORD" \
+  pg_dump -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" \
+  > "deploy/arc/nexus_$(date +%F_%H%M).sql"
 
 # 1. Остановить ВСЕ три сервиса: работающий новый код обращается к колонкам,
 #    которые down удалит.
@@ -1615,36 +1610,42 @@ docker compose -f deploy/docker-compose.app.yml run --rm web --set-admin-passwor
 
   ```bash
   cd /opt/nexus                     # каталог проекта, рядом с ним .env
-  export PGPASSWORD=$(grep -m1 '^PG_PASSWORD=' .env | cut -d= -f2- | tr -d '\r')
-  PG_PORT=$(grep -m1 '^PG_PORT=' .env | cut -d= -f2- | tr -d '\r')
-  PG_USER=$(grep -m1 '^PG_USER=' .env | cut -d= -f2- | tr -d '\r')
-  PG_DATABASE=$(grep -m1 '^PG_DATABASE=' .env | cut -d= -f2- | tr -d '\r')
-  echo "user=$PG_USER db=$PG_DATABASE port=$PG_PORT passlen=${#PGPASSWORD}"   # всё непусто?
-  pg_dump -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" > deploy/arc/nexus_pg.sql
-  unset PGPASSWORD
+  eval "$(grep -E '^PG_(PORT|USER|DATABASE|PASSWORD)=' .env)" && \
+  env PGPASSWORD="$PG_PASSWORD" \
+    pg_dump -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" \
+    > deploy/arc/nexus_pg.sql
   ```
 
-  Две ловушки, каждая из которых уже срабатывала на бою:
+  Три ловушки, каждая из которых уже срабатывала на бою:
 
-  1. **Реквизиты надо прочитать из `.env` явно.** Оболочка файл не подхватывает, а `pg_dump` при
+  1. **Реквизиты надо подтянуть из `.env` явно.** Оболочка файл не подхватывает, а `pg_dump` при
      пустых значениях молча берёт дефолты — роль и базу по имени ОС-пользователя — и падает с
      `FATAL: role "<логин>" does not exist`. `source .env` не подходит: в файле есть значения с
      пробелами без кавычек (`KAFKA_HEAP_OPTS=-Xmx1G -Xms1G`), оболочка выполнит их хвост как
-     команду. Голый `eval` тоже плох: он интерпретирует `$`, кавычки и обратные кавычки внутри
-     значения, поэтому пароль со спецсимволами приедет искажённым. Отсюда чтение через `cut`
-     плюс `tr -d '\r'` — на случай `.env`, правленного Windows-редактором: невидимый CR в конце
-     значения даёт `FATAL: password authentication failed`, и причину видно только через
-     `printf '%s' "$PG_PASSWORD" | od -c`.
+     команду.
   2. **`PG_HOST` из `.env` брать нельзя.** Там записан адрес, по которому к базе обращаются
      КОНТЕЙНЕРЫ (`host.docker.internal`); с самого сервера это имя не резолвится —
      `could not translate host name "host.docker.internal" to address`. `pg_dump` запускается на
      хосте, поэтому хост локальный: `127.0.0.1` либо `-h /var/run/postgresql` (unix-сокет, если
      заходите под системным пользователем БД — тогда и пароль обычно не нужен).
+  3. **Пароль передаётся через `env`, а не префиксом `PGPASSWORD=… pg_dump`.** Префикс стоит в
+     начале длинной строки, его легко обрезать при копировании — и сбой выходит тихим: вместо
+     ошибки просто запрос пароля (`Password:`), который выглядит как «он всегда спрашивает».
+     С `env` та же потеря даёт `nv: command not found`, то есть видна сразу.
 
-  **Пароль.** В команде выше он берётся из `.env` в переменную `PGPASSWORD` только на время
-  вызова — так его не приходится вводить руками, и в историю оболочки попадает имя переменной, а
-  не значение (в отличие от `PGPASSWORD='<пароль>' pg_dump …`, который писать не нужно). Это
-  рабочий вариант по умолчанию. Альтернативы, если дампы снимаются регулярно или скриптом:
+     Если пароль содержит `$`, кавычки или обратные кавычки, `eval` их съест — тогда прочитайте
+     его отдельно, без интерпретации, и проверьте на невидимый CR (остаётся от Windows-редактора
+     и даёт `FATAL: password authentication failed`):
+
+     ```bash
+     PGPASSWORD=$(grep -m1 '^PG_PASSWORD=' .env | cut -d= -f2- | tr -d '\r')
+     printf '%s' "$PGPASSWORD" | od -c | tail -2     # хвост \r или неверная длина?
+     ```
+
+  **Пароль.** В команде выше он берётся из `.env` и передаётся `pg_dump` через `env` только на
+  время вызова — вводить руками ничего не нужно, а в историю оболочки попадает имя переменной, а
+  не значение. Это рабочий вариант по умолчанию. Альтернативы, если дампы снимаются регулярно или
+  скриптом:
 
   1. **`~/.pgpass`** — пароль не нужно подставлять вообще. Формат строки
      `host:port:db:user:password`, значение берётся из `.env`, в историю не попадает:

@@ -33,20 +33,19 @@ cd nexus
 docker compose exec -T postgres pg_dump -U nexus nexus > deploy/arc/nexus_$(date +%F_%H%M).sql
 #
 #    ЕСЛИ PostgreSQL НЕ В DOCKER (нативный сервис — так развёрнут бой).
-#    Реквизиты читаем из .env ПОСТРОЧНО: оболочка файл не подхватывает,
-#    `source` ломается на значениях с пробелами без кавычек, `eval` портит
-#    пароль со спецсимволами, а `tr -d '\r'` убирает CR от Windows-редактора
-#    (иначе — password authentication failed). PG_HOST из .env НЕ берём: там
-#    адрес для КОНТЕЙНЕРОВ (host.docker.internal), с сервера он не резолвится.
-#    PGPASSWORD — отдельной строкой: префикс перед pg_dump легко обрезать при
-#    копировании, и сбой выходит тихим (просто запрос пароля).
-export PGPASSWORD=$(grep -m1 '^PG_PASSWORD=' .env | cut -d= -f2- | tr -d '\r')
-PG_PORT=$(grep -m1 '^PG_PORT=' .env | cut -d= -f2- | tr -d '\r')
-PG_USER=$(grep -m1 '^PG_USER=' .env | cut -d= -f2- | tr -d '\r')
-PG_DATABASE=$(grep -m1 '^PG_DATABASE=' .env | cut -d= -f2- | tr -d '\r')
-echo "user=$PG_USER db=$PG_DATABASE port=$PG_PORT passlen=${#PGPASSWORD}"   # всё непусто?
-pg_dump -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" > deploy/arc/nexus_$(date +%F_%H%M).sql
-unset PGPASSWORD
+#    Одной командой: копируется и вставляется целиком.
+#      - реквизиты подтягиваются из .env одной строкой (`source` не годится:
+#        в файле есть KAFKA_HEAP_OPTS=-Xmx1G -Xms1G — пробел без кавычек);
+#      - хост 127.0.0.1, а НЕ $PG_HOST: в .env адрес для КОНТЕЙНЕРОВ
+#        (host.docker.internal), с самого сервера он не резолвится;
+#      - PGPASSWORD передаётся через `env`, а не префиксом `PGPASSWORD=... pg_dump`:
+#        префикс легко обрезать при копировании, и сбой выходит тихим — вместо
+#        ошибки просто запрос пароля (с `env` будет `nv: command not found`).
+#    Пароль со спецсимволами ($, кавычки) eval съест — тогда см. DEPLOYMENT §12.
+eval "$(grep -E '^PG_(PORT|USER|DATABASE|PASSWORD)=' .env)" && \
+env PGPASSWORD="$PG_PASSWORD" \
+  pg_dump -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" \
+  > "deploy/arc/nexus_$(date +%F_%H%M).sql"
 
 # 3. Забрать тег и пересобрать сервисы.
 git fetch --tags
