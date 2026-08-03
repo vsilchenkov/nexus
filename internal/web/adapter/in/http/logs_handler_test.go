@@ -183,6 +183,13 @@ func (s *stubLogReaderCapture) Search(_ context.Context, q port.LogQuery) ([]*do
 	return nil, nil
 }
 
+// DateRange — (0,0) = «записей нет»: автоокно §77.2 уходит в единственный
+// прямой Search без нижней границы, и проверка прокинутых параметров остаётся
+// прежней (embedded nil port.LogReader паниковал бы на промотированном вызове).
+func (s *stubLogReaderCapture) DateRange(context.Context, string, string) (int64, int64, error) {
+	return 0, 0, nil
+}
+
 // TestLogsList_SearchParams_Parsed — параметры §48 (q/q_case/q_word/method и
 // сохранённые ip/host) доходят до адаптера; QExpr распарсен usecase'ом.
 func TestLogsList_SearchParams_Parsed(t *testing.T) {
@@ -388,6 +395,12 @@ func TestLogsGet_BodySizes(t *testing.T) {
 
 // stubLogReaderList — Search отдаёт одну запись с размерами тел (§42-доп).
 type stubLogReaderList struct{ port.LogReader }
+
+// DateRange — как у stubLogReaderCapture: (0,0) уводит автоокно §77.2 в один
+// прямой Search.
+func (stubLogReaderList) DateRange(context.Context, string, string) (int64, int64, error) {
+	return 0, 0, nil
+}
 
 func (stubLogReaderList) Search(_ context.Context, _ port.LogQuery) ([]*domain.LogRecord, error) {
 	return []*domain.LogRecord{{ID: "l1", ResponseSize: 2048}}, nil
