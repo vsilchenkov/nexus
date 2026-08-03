@@ -23,8 +23,8 @@ func TestSubscriber_DispatchesBySection(t *testing.T) {
 	// поведение через JSON-формат + ручной вызов из теста.
 
 	var (
-		sentryHits     int32
-		clickhouseHits int32
+		sentryHits     atomic.Int32
+		clickhouseHits atomic.Int32
 	)
 
 	// Имитируем обработку через тестовую обёртку: создаём fakeRedis с
@@ -50,10 +50,10 @@ func TestSubscriber_DispatchesBySection(t *testing.T) {
 	// функции. Имитируем через ручной dispatch.
 	cbs := map[reloader.Section][]reloader.Reloader{
 		reloader.SectionSentry: {
-			func(context.Context) error { atomic.AddInt32(&sentryHits, 1); return nil },
+			func(context.Context) error { sentryHits.Add(1); return nil },
 		},
 		reloader.SectionClickHouse: {
-			func(context.Context) error { atomic.AddInt32(&clickhouseHits, 1); return nil },
+			func(context.Context) error { clickhouseHits.Add(1); return nil },
 		},
 	}
 	dispatch := func(m reloader.Message) {
@@ -70,8 +70,8 @@ func TestSubscriber_DispatchesBySection(t *testing.T) {
 	dispatch(reloader.Message{Section: reloader.SectionSentry})
 	dispatch(reloader.Message{Section: reloader.SectionAll})
 
-	assert.Equal(t, int32(2), atomic.LoadInt32(&sentryHits))
-	assert.Equal(t, int32(1), atomic.LoadInt32(&clickhouseHits))
+	assert.Equal(t, int32(2), sentryHits.Load())
+	assert.Equal(t, int32(1), clickhouseHits.Load())
 }
 
 func TestPublisher_NilSafe(t *testing.T) {

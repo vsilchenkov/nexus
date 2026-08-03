@@ -3521,9 +3521,22 @@ vitest во фронте (было 3 теста без CI-запуска → +2 
   (`golangci-lint v2.12`), `swagger-drift` (regen `swag init` → `git diff`),
   `ui-build` (Node 20 + `npm ci` + `npm run lint --if-present` + `vite build`),
   `integration` (testcontainers, по MR-label `run-integration` или master/dev/tag).
-  `.golangci.yml` с набором bodyclose/rowserrcheck/errcheck/govet/revive/staticcheck.
-  Авто-апдейты зависимостей — [renovate.json](../renovate.json) (weekly
+  `.golangci.yml` с набором bodyclose/rowserrcheck/errcheck/govet/revive/staticcheck/
+  **modernize**. Авто-апдейты зависимостей — [renovate.json](../renovate.json) (weekly
   schedule), группировка minor/patch в один MR.
+  · **`modernize`** (анализаторы x/tools gopls) включён как гейт: `slices.Backward/
+  Contains/Sort`, `maps.Collect`, `min/max`, `atomic.Int32` вместо
+  `atomic.AddInt32(&int32)`, range-over-int, `fmt.Appendf`, `strings.CutPrefix`,
+  `testing.Context`, `wg.Go`. Настройками поддерживается **только**
+  `settings.modernize.disable` — ключа `enable` в JSON-схеме нет, по умолчанию
+  включены все анализаторы. Исключён на `docs/` и `proto/` (генерируемый код) и на
+  `web-ui/node_modules` (сторонняя заглушка `flatted.go` — единственная находка вне
+  нашего кода). Job `go-lint` дополнительно гоняет `golangci-lint config verify`
+  (валидация конфига по схеме именно того образа, что в CI) и явную проверку, что
+  `modernize` присутствует в разделе «Enabled» вывода `golangci-lint linters`.
+  Проверка нужна потому, что `run` с выпавшим линтером всё равно печатает
+  «0 issues» — тихую деградацию иначе не заметить; грепать надо строго по разделу
+  Enabled (в выводе есть и раздел Disabled с тем же именем).
 - 7.3 Integration suite: Redis + ClickHouse через testcontainers.
   Generic-контейнер (`testcontainers.GenericContainer`) — без отдельных
   модулей `modules/redis`/`modules/clickhouse`. CH: native-handshake
@@ -4194,3 +4207,43 @@ vitest-кейсы nodeValidation.
   бандл, то есть НУЦ становится валидным якорем для **любого** исходящего запроса, а не только к
   Альфе. Точечного «CA только для этого узла» в Nexus нет; если такое понадобится — это отдельное
   ТЗ (поле у узла + свой `tls.Config` в [httpclient](../internal/sender/adapter/out/httpclient/client.go)).
+
+### 4.63 Линтер `modernize` включён; кеш golangci-lint даёт ПРИЗРАЧНЫЕ находки
+
+Включение `modernize` в [.golangci.yml](../.golangci.yml) — гейт на устаревшие идиомы Go
+(подробности набора и настроек см. в пункте 7.4 выше). Что здесь стоит знать следующему агенту:
+
+- **На всей кодовой базе нашлось всего 4 места** — `slicesbackward` в
+  [service_logs_handler.go](../internal/web/adapter/in/http/service_logs_handler.go) (выгрузка
+  лог-файла шла обратным индексным циклом → `slices.Backward`) и три `atomictypes` в тестах
+  (`int32` + `atomic.AddInt32(&x, 1)` → `atomic.Int32` + `x.Add(1)`) в
+  [reloader_test.go](../internal/platform/reloader/reloader_test.go) и
+  [loop_e2e_test.go](../internal/receiver/adapter/in/http/loop_e2e_test.go). Мало — потому что по
+  репозиторию регулярно гоняется `go fix` (Go 1.26). Ценность гейта именно в том, что он ловит
+  регресс в CI, а не полагается на то, что кто-то вспомнит про `go fix`.
+- **`settings.modernize` принимает ТОЛЬКО `disable`.** Ключа `enable`/`checks` в JSON-схеме нет
+  (`golangci-lint config verify` отвергает их как `additional properties … not allowed`), по
+  умолчанию включены все анализаторы. Список имён анализаторов — enum `modernize-analyzers` в
+  `https://golangci-lint.run/jsonschema/golangci.v2.jsonschema.json`; он **отстаёт** от бинаря
+  (`atomictypes`/`slicesbackward` в онлайн-схеме отсутствуют, а v2.12.2 их выдаёт). Отсюда правило:
+  не вписывать в `disable` имена по онлайн-справочнику вслепую — CI-образ rolling, и падение будет
+  на `config verify`.
+- **ГЛАВНАЯ ГРАБЛЯ: кеш анализа golangci-lint выдаёт находки, которых нет.** При отладке этой
+  задачи прогон стабильно (воспроизводилось) показывал 8 issues `SA5011: possible nil pointer
+  dereference` в [sentry_test.go](../internal/platform/sentry/sentry_test.go) и
+  [logs_test.go](../internal/web/usecase/logs_test.go) — на коде вида
+  `out := f(); if out == nil { t.Fatal(…) }; out.Field…`, где разыменование заведомо безопасно.
+  Находки появлялись/исчезали от смены НАБОРА линтеров (полный конфиг → 8; те же 13 линтеров через
+  `--enable-only` → 0; `staticcheck`+`modernize` → 0), что выглядело как взаимодействие линтеров, а
+  это чистый артефакт кеша: после `golangci-lint cache clean` полный конфиг даёт `0 issues` два
+  прогона подряд. **Вывод для отладки:** прежде чем править код под неожиданную находку
+  staticcheck — сперва `golangci-lint cache clean` и повторный прогон. Иначе легко «починить»
+  правильный код под фантом. В CI это не стреляет (кеш golangci-lint между jobs не переносится —
+  `.go-cache` тянет только `.cache/go-build` и `.cache/go-mod`).
+- **Проверка «линтер жив» в job `go-lint`.** `golangci-lint run` с выпавшим линтером печатает
+  «0 issues» и завершается успешно, то есть тихая деградация (переименовали линтер, откатили
+  конфиг, образ v2.12-alpine уехал вперёд) выглядит как зелёный CI. Поэтому job грепает вывод
+  `golangci-lint linters` на `^modernize:` **строго в разделе Enabled** — вывод содержит и раздел
+  «Disabled by your configuration» с теми же именами, грep по всему выводу дал бы ложный успех.
+  Рядом добавлен `golangci-lint config verify` — валидация конфига по схеме именно того образа,
+  что стоит в CI.

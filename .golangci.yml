@@ -10,6 +10,16 @@ linters:
     - govet
     - ineffassign
     - misspell
+    # modernize (x/tools gopls) — набор анализаторов «перепиши на современный Go»:
+    # slices.Backward/Contains/Sort, maps.Collect, min/max, atomic.Int32 вместо
+    # atomic.AddInt32(&int32), range-over-int, fmt.Appendf, strings.CutPrefix,
+    # testing.Context, wg.Go и т.п. Пересекается с `go fix` (Go 1.26), но, в
+    # отличие от него, работает как гейт CI и не правит чужие файлы (грабля из
+    # CLAUDE.md «Процесс работы»). Настройками поддерживается ТОЛЬКО
+    # `settings.modernize.disable` — списка `enable` в схеме нет, по умолчанию
+    # включены все анализаторы. Ничего не глушим: на текущей кодовой базе набор
+    # даёт 0 ложных срабатываний.
+    - modernize
     - nilerr
     - prealloc
     - revive
@@ -47,11 +57,13 @@ linters:
           - revive
         path: _test\.go
       - linters:
+          - modernize
           - revive
           - staticcheck
           - unused
         path: docs/
       - linters:
+          - modernize
           - revive
           - staticcheck
           - unused
