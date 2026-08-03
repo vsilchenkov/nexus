@@ -96,10 +96,25 @@ func (u *LogsUsecase) Search(ctx context.Context, nodeID, teamID string, q port.
 	q.Table = n.ClickHouseTable
 	q.NodeID = n.ID
 	u.applyDateCreateAligned(&q, n)
-	if q.SinceMs > 0 {
+	if !autoWindowApplicable(q) {
 		return u.logs.Search(ctx, q)
 	}
 	return u.searchAutoWindow(ctx, q)
+}
+
+// autoWindowApplicable — можно ли подбирать окно самим (§77.2).
+//
+// Нельзя в двух случаях:
+//   - пользователь задал нижнюю границу сам — период обязан соблюдаться дословно;
+//   - включён полнотекстовый фильтр. Автоокно выигрывает, когда страница
+//     набирается из свежего окна; полнотекстовое совпадение может лежать где
+//     угодно в истории, и тогда узкие окна лишь УМНОЖАЮТ число дорогих проб.
+//     Расчёт по боевым замерам §77.5 (`q=photo`, 11 млн строк): шесть проб
+//     1ч→90д стоят ~76 с, плюс финальная попытка без границы ~28 с — вместо
+//     одних только 28 с сегодня. От долгого полнотекста пользователя защищает
+//     не окно, а индикатор с отменой (§77.3).
+func autoWindowApplicable(q port.LogQuery) bool {
+	return q.SinceMs == 0 && q.QExpr == nil
 }
 
 // autoWindows — ширины окон автоокна §77.2, от узкого к широкому. Первое окно,
@@ -213,6 +228,13 @@ func (u *LogsUsecase) dateRangeCached(ctx context.Context, table, nodeID string)
 		return 0, 0, false
 	}
 	u.rangeMu.Lock()
+	// Заодно выметаем протухшее: узлы удаляются и переезжают на другие таблицы,
+	// а Web живёт неделями — без этого карта росла бы неограниченно.
+	for k, e := range u.rangeCache {
+		if now.Sub(e.at) >= dateRangeCacheTTL {
+			delete(u.rangeCache, k)
+		}
+	}
 	u.rangeCache[key] = dateRangeEntry{minMs: minMs, maxMs: maxMs, at: now}
 	u.rangeMu.Unlock()
 	return minMs, maxMs, true

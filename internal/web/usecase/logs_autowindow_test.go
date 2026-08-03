@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"nexus/internal/domain"
+	"nexus/internal/platform/clock"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase/port"
 )
@@ -68,6 +69,71 @@ func TestLogs_AutoWindow_UserFromDisables(t *testing.T) {
 	}
 	if r.rangeCalls != 0 {
 		t.Fatalf("DateRange must not be called, got %d", r.rangeCalls)
+	}
+}
+
+// Полнотекстовый фильтр отключает автоокно (§77.2): совпадение может лежать где
+// угодно в истории, и перебор окон умножал бы дорогие пробы. Расчёт по боевым
+// замерам §77.5: шесть проб 1ч→90д ~76 с плюс финальная ~28 с — вместо одних
+// только 28 с. Регресс, найденный ревизией перед сдачей: ТЗ это запрещало, а
+// гейта в коде не было.
+func TestLogs_AutoWindow_FullTextSearchDisables(t *testing.T) {
+	t.Parallel()
+	maxMs := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC).UnixMilli()
+	r := &autoWindowReaderMock{
+		// Совпадений нет — именно этот случай и порождал перебор всех окон.
+		respond: func(port.LogQuery) []*domain.LogRecord { return nil },
+	}
+	r.rangeMin, r.rangeMax = maxMs-90*24*time.Hour.Milliseconds(), maxMs
+	uc := NewLogsUsecase(r, autoWindowNodes(), logging.NewNoop())
+
+	_, err := uc.Search(context.Background(), "n1", "", port.LogQuery{Q: "photo", Limit: 50})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(r.searches) != 1 {
+		t.Fatalf("полнотекст обязан идти ОДНИМ запросом, got %d: %+v", len(r.searches), r.searches)
+	}
+	if r.searches[0].SinceMs != 0 {
+		t.Fatalf("полнотекст не должен получать подобранную границу, got SinceMs=%d",
+			r.searches[0].SinceMs)
+	}
+	if r.searches[0].QExpr == nil {
+		t.Fatal("QExpr обязан быть распарсен и передан адаптеру")
+	}
+}
+
+// Кеш DateRange не растёт неограниченно: протухшие ключи выметаются (узлы
+// удаляются и переезжают на другие таблицы, а Web живёт неделями).
+func TestLogs_AutoWindow_DateRangeCacheEvictsStale(t *testing.T) {
+	t.Parallel()
+	maxMs := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC).UnixMilli()
+	r := &autoWindowReaderMock{
+		respond: func(port.LogQuery) []*domain.LogRecord { return rowsN(50) },
+	}
+	r.rangeMin, r.rangeMax = maxMs-90*24*time.Hour.Milliseconds(), maxMs
+
+	now := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	nodes := &stubNodeRepo{nodes: map[string]*domain.Node{
+		"n1": {ID: "n1", ClickHouseTable: "db.t1", Status: domain.NodeStatusEnabled},
+		"n2": {ID: "n2", ClickHouseTable: "db.t2", Status: domain.NodeStatusEnabled},
+	}}
+	uc := NewLogsUsecase(r, nodes, logging.NewNoop(),
+		WithLogsClock(clock.Func(func() time.Time { return now })))
+
+	if _, err := uc.Search(context.Background(), "n1", "", port.LogQuery{Limit: 50}); err != nil {
+		t.Fatalf("search n1: %v", err)
+	}
+	// Время ушло за TTL — запись n1 протухла; обращение к n2 обязано её вымести.
+	now = now.Add(2 * dateRangeCacheTTL)
+	if _, err := uc.Search(context.Background(), "n2", "", port.LogQuery{Limit: 50}); err != nil {
+		t.Fatalf("search n2: %v", err)
+	}
+	uc.rangeMu.Lock()
+	got := len(uc.rangeCache)
+	uc.rangeMu.Unlock()
+	if got != 1 {
+		t.Fatalf("протухшая запись должна выметаться: в кеше %d ключей", got)
 	}
 }
 
