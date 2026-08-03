@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { RefreshCw, Settings, RotateCcw, ChevronRight, ChevronDown, Download } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
@@ -26,7 +26,7 @@ import { ReplayDialog } from "../ReplayDialog";
 import { LogClientHostFilter } from "./LogClientHostFilter";
 import { LogDateField } from "./LogDateField";
 import { LogMethodFilter } from "./LogMethodFilter";
-import { type LogRow, type LogDetail, type LogBodyChunk } from "./types";
+import { type LogRow, type LogsResp, type LogDetail, type LogBodyChunk } from "./types";
 
 type StatusFilter = "all" | "ok" | "err";
 type PageSize = 50 | 100 | 200;
@@ -42,6 +42,18 @@ export type LogsInitialFilter = {
 
 const LIVE_BUFFER_LIMIT = 500;
 const HIGHLIGHT_DURATION_MS = 1000;
+// §77.3: через сколько идущий запрос списка признаётся долгим и показывается
+// строка «Поиск… [Отменить]». Порог заметно больше обычной страницы (десятки-
+// сотни мс с автоокном §77.2), чтобы индикатор не мигал на каждом фильтре.
+const SLOW_SEARCH_HINT_MS = 700;
+// §77.3: длительность УСПЕШНОГО запроса, после которой автообновление для этого
+// набора фильтров выключается (полнотекст по всей истории — до десятков секунд).
+const SLOW_FILTER_MS = 2000;
+// §77.1: период tail-poll — «что появилось после самой свежей загруженной строки».
+const TAIL_POLL_MS = 5000;
+// §77.1: запас к нижней границе tail-poll. date_request секундной точности,
+// поэтому граница берётся на секунду раньше, а повторы отсекает дедуп по id.
+const TAIL_POLL_OVERLAP_MS = 1000;
 // Сколько ошибок SSE подряд терпим, прежде чем признать поток мёртвым.
 // Между ними браузер сам переподключается (нативный retry EventSource).
 const LIVE_MAX_CONSECUTIVE_ERRORS = 5;
@@ -91,6 +103,26 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   const [advForm, setAdvForm] = useState(initForm);
   const [appliedFilters, setAppliedFilters] = useState(initForm);
 
+  // §77.3: кнопки «Применить» нет — фильтры применяются по завершении ввода
+  // (Enter/blur у поиска; сразу — у комбобоксов, дат и тумблеров режимов).
+  // Коммит идемпотентен: одинаковый черновик не перезапускает поиск — иначе
+  // Enter+blur давали бы двойной запуск, а blur о кнопку «Сбросить» — лишний
+  // запрос перед сбросом.
+  type AdvForm = typeof initFormEmpty;
+  const advEqual = (a: AdvForm, b: AdvForm) =>
+    a.q === b.q &&
+    a.method === b.method &&
+    a.clientHost === b.clientHost &&
+    a.from === b.from &&
+    a.to === b.to &&
+    a.qCase === b.qCase &&
+    a.qWord === b.qWord &&
+    a.qRegex === b.qRegex;
+  const commitAdv = (next: AdvForm) => {
+    setAdvForm(next);
+    setAppliedFilters((prev) => (advEqual(prev, next) ? prev : next));
+  };
+
   // §48.4: min/max дат из логов узла — лениво при фокусе поля даты, каждый раз
   // заново (страница может жить долго, логи прибывают). Ошибку фетча глотаем —
   // атрибуты просто не выставляются.
@@ -124,22 +156,57 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   const [atTop, setAtTop] = useState(true);
 
   const tableWrapRef = useRef<HTMLDivElement | null>(null);
+  // «Пользователь у самого верха» без ре-рендера — им пользуются и Live-эффект,
+  // и tail-poll (§77.1), поэтому ref объявлен выше обоих.
+  const autoScrollRef = useRef(true);
+
+  // Раскрытая строка: тела request/response грузятся лениво только для неё
+  // (GET /api/nodes/:id/log/:logId). Список этих данных не содержит — иначе
+  // сотни строк с большими JSON-телами вешают фронт (§7.4.1). Объявлена ДО
+  // useInfiniteLogs: пока строка раскрыта, хук не схлопывает страницы (§77.1).
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // §77.3: отмена долгого поиска и автопауза обновления на дорогих фильтрах.
+  const qc = useQueryClient();
+  // Пользователь нажал «Отменить»: запросы списка/счётчика оборваны (настоящий
+  // AbortSignal — см. api.get) и не перезапускаются, пока не нажат «Повторить»
+  // или не сменился фильтр.
+  const [searchCancelled, setSearchCancelled] = useState(false);
+  // Текущий запрос списка идёт дольше порога — показать «Поиск… [Отменить]».
+  const [slowSearch, setSlowSearch] = useState(false);
+  // Последний успешный запрос списка шёл дольше SLOW_FILTER_MS: автообновление
+  // для этого фильтра выключено (тик каждые 5 с накладывал бы дорогие запросы
+  // друг на друга).
+  const [slowFilter, setSlowFilter] = useState(false);
 
   // Бесконечный скролл (§7.4): первая страница — последние pageSize записей
   // (ORDER BY date_request DESC), скролл вниз подгружает следующие pageSize
   // более старых через keyset-курсор (§72.3: общий хук с вкладкой «Очередь»).
-  const logs = useInfiniteLogs({
-    nodeId: id,
+  const logsKey = useMemo(
     // §72.2: status/done входят в ключ — смена быстрого фильтра перезапрашивает
     // список с первой страницы. Раньше ключ их не содержал, список оставался
     // прежним, и фильтр лишь прятал строки уже загруженной страницы.
-    queryKey: ["logs", id, filterParams, pageSize],
+    () => ["logs", id, filterParams, pageSize] as const,
+    [id, filterParams, pageSize],
+  );
+  const countKey = useMemo(() => ["logs-count", id, filterParams] as const, [id, filterParams]);
+
+  const logs = useInfiniteLogs({
+    nodeId: id,
+    queryKey: logsKey,
     params: filterParams,
     pageSize,
-    enabled: !!id && hasLogsTable && !live, // в Live snapshot не нужен — читаем SSE-буфер
-    // Авто-рефетч только пока пользователь у верха (см. atTop). При Live выключен.
-    refetchInterval: !live && atTop ? 5_000 : false,
+    // §77.3: после «Отменить» запрос не перезапускается сам — только по
+    // «Повторить» или смене фильтра.
+    enabled: !!id && hasLogsTable && !live && !searchCancelled, // в Live snapshot не нужен — читаем SSE-буфер
+    // §77.1: авто-рефетча всего списка больше нет — свежие записи приезжают
+    // tail-poll'ом и вставляются сверху, поэтому раскрытая строка не исчезает.
+    refetchInterval: false,
     containerRef: tableWrapRef,
+    // §77.1: пока строка раскрыта, «возврат к верху» не выбрасывает страницы 2+
+    // (вместе с ними исчезала бы и раскрытая строка).
+    collapseEnabled: expandedId === null,
+    onPageLoaded: (ms) => setSlowFilter(ms > SLOW_FILTER_MS),
   });
   const logsQ = logs.query;
   const infiniteItems = logs.items;
@@ -157,18 +224,57 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   // постраничный). Раньше счётчик собирал их сам и добавлял status/done, а
   // список нет — два запроса считали разные множества.
   const countQ = useQuery({
-    queryKey: ["logs-count", id, filterParams],
-    enabled: !!id && hasLogsTable && !live,
-    queryFn: () =>
+    queryKey: countKey,
+    enabled: !!id && hasLogsTable && !live && !searchCancelled,
+    queryFn: ({ signal }) =>
       api.get<{ total: number; logs_available?: boolean }>(
         `/api/nodes/${id}/logs/count`,
         filterParams,
+        { signal },
       ),
-    refetchInterval: !live && atTop ? 5_000 : false,
+    // §77.3: на дорогом фильтре автообновление счётчика выключается вместе с
+    // tail-poll'ом — иначе тик каждые 5 с накладывает тяжёлые count() друг на друга.
+    refetchInterval: !live && atTop && !slowFilter ? 5_000 : false,
     retry: false, // деградация штатная — не долбим CH повторами
   });
   const totalCount =
     countQ.data && countQ.data.logs_available !== false ? countQ.data.total : null;
+
+  // §77.3: индикатор «Поиск…» появляется только у ЗАТЯНУВШЕГОСЯ запроса —
+  // обычная страница (десятки-сотни мс с автоокном §77.2) его не показывает,
+  // иначе он мигал бы на каждом изменении фильтра.
+  const searchPending = logsQ.isFetching && !logsQ.isFetchingNextPage;
+  useEffect(() => {
+    if (!searchPending) {
+      setSlowSearch(false);
+      return;
+    }
+    const t = window.setTimeout(() => setSlowSearch(true), SLOW_SEARCH_HINT_MS);
+    return () => window.clearTimeout(t);
+  }, [searchPending]);
+
+  // §77.3: смена фильтра снимает «отменён» и оценку дороговизны — новый набор
+  // фильтров судится заново (и заодно это тот самый «сброс текущего поиска»:
+  // react-query отменит запрос прежнего ключа через AbortSignal).
+  useEffect(() => {
+    setSearchCancelled(false);
+    setSlowFilter(false);
+  }, [filterParams, pageSize]);
+
+  // §77.3: отмена поиска. cancelQueries рвёт HTTP-запросы обоих ключей — а с
+  // ними, через разрыв соединения и отмену ctx хендлера, и сами запросы в
+  // ClickHouse (иначе дорогой полнотекст продолжал бы выполняться там ещё
+  // десятки секунд).
+  const cancelSearch = () => {
+    setSearchCancelled(true);
+    setSlowSearch(false);
+    void qc.cancelQueries({ queryKey: logsKey });
+    void qc.cancelQueries({ queryKey: countKey });
+  };
+  const retrySearch = () => {
+    setSearchCancelled(false);
+    setSlowFilter(false);
+  };
 
   const [liveLogs, setLiveLogs] = useState<LogRow[]>([]);
   const [highlighted, setHighlighted] = useState<Set<string>>(new Set());
@@ -185,6 +291,82 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   // Snapshot-запрос вернул logs_available=false (CH недоступен): показываем
   // мягкий индикатор «логи временно недоступны», а не пустой список/спиннер.
   const logsUnavailable = !logs.logsAvailable;
+
+  // §77.1: tail-poll — инкрементальное обновление списка вместо авто-рефетча.
+  //
+  // Раньше список обновлялся `refetchInterval` у useInfiniteQuery: каждые 5 с
+  // перезапрашивались ВСЕ накопленные страницы, react-query подменял данные,
+  // граница первой страницы уезжала приехавшими записями — и строка, чьё тело
+  // читал пользователь, выпадала из склейки. Теперь раз в 5 с тянутся только
+  // записи НОВЕЕ самой свежей загруженной и вставляются сверху первой страницы,
+  // а существующие элементы не пересоздаются: раскрытое тело остаётся открытым.
+  //
+  // Верхняя граница «Дата по» в прошлом означает историческое окно — новых
+  // записей в нём не появится, поллить нечего.
+  const newestTs = infiniteItems.length ? infiniteItems[0].date_request : null;
+  const historicalWindow = !!appliedFilters.to;
+  const tailEnabled =
+    !!id &&
+    hasLogsTable &&
+    !live &&
+    !searchCancelled &&
+    !slowFilter &&
+    atTop &&
+    !historicalWindow &&
+    newestTs !== null &&
+    logsQ.isSuccess;
+  const tailQ = useQuery({
+    // newestTs в ключе нет намеренно: он меняется на каждую новую запись, а
+    // ключ обязан быть стабильным — иначе react-query на каждом тике заводил бы
+    // новый кеш-энтри и интервал сбрасывался бы.
+    queryKey: ["logs-tail", id, filterParams, pageSize],
+    enabled: tailEnabled,
+    refetchInterval: TAIL_POLL_MS,
+    retry: false,
+    queryFn: ({ signal }) => {
+      const since = new Date(newestTs as string).getTime() - TAIL_POLL_OVERLAP_MS;
+      return api.get<LogsResp>(
+        `/api/nodes/${id}/logs`,
+        { ...filterParams, from: new Date(since).toISOString(), limit: pageSize },
+        { signal },
+      );
+    },
+  });
+
+  // Вливание хвоста в первую страницу инфинит-кеша (§77.1). Дедуп по id:
+  // граница окна взята с запасом в секунду, поэтому пересечение с уже
+  // загруженным ожидаемо.
+  const tailData = tailQ.data;
+  useEffect(() => {
+    const fresh = tailData?.items;
+    if (!fresh?.length) return;
+    // Хвост пришёл полной страницей — между ним и первой страницей возможна
+    // дыра (за тик появилось больше записей, чем limit). Склеивать нельзя:
+    // список молча потерял бы записи. Честно перечитываем с первой страницы.
+    if (fresh.length >= pageSize) {
+      void qc.invalidateQueries({ queryKey: logsKey });
+      return;
+    }
+    let addedCount = 0;
+    qc.setQueryData<InfiniteData<LogsResp, unknown>>(logsKey, (d) => {
+      if (!d?.pages.length) return d;
+      const known = new Set(d.pages.flatMap((p) => (p.items ?? []).map((r) => r.id)));
+      const added = fresh.filter((r) => !known.has(r.id));
+      if (!added.length) return d;
+      addedCount = added.length;
+      const [first, ...rest] = d.pages;
+      return {
+        ...d,
+        pages: [{ ...first, items: [...added, ...(first.items ?? [])] }, ...rest],
+      };
+    });
+    if (!addedCount) return;
+    // Пользователь у верха — новые записи и так перед глазами; иначе копим
+    // счётчик для пилюли «N новых записей ↑» (та же, что в Live).
+    if (!autoScrollRef.current) setPendingCount((p) => p + addedCount);
+    // logsKey/pageSize стабильны между тиками; реагируем именно на новые данные.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tailData]);
 
   // Таймеры снятия подсветки: чистим при unmount/перезапуске потока, иначе
   // setState стреляет по размонтированному компоненту.
@@ -258,8 +440,6 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
     // её смена пересоздаёт поток, одинаковое значение — нет.
   }, [live, id, hasLogsTable, streamSearch]);
 
-  const autoScrollRef = useRef(true);
-
   const atTopRef = useRef(true);
 
   const onScroll = () => {
@@ -282,7 +462,9 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   useEffect(() => {
     if (!live) {
       lastLiveLenRef.current = 0;
-      setPendingCount(0);
+      // pendingCount здесь НЕ сбрасывается: вне Live им владеет tail-poll
+      // (§77.1). Обнуление живёт в onScroll/scrollToTop — «пользователь
+      // добрался до верха и увидел новые записи».
       return;
     }
     const delta = liveLogs.length - lastLiveLenRef.current;
@@ -299,7 +481,7 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
     lastLiveLenRef.current = liveLogs.length;
   }, [live, liveLogs]);
 
-  // §72.2: строки таблицы — ровно то, что вернул сервер под текущими фильтрами.
+  // §72.2: строки таблицы — ровно то, что вернул сервер под текущими фильтрами (см. ниже).
   // Клиентского пост-фильтра больше нет: он резал уже загруженную страницу, из-за
   // чего «Показано N» считалось по горстке видимых строк, а «из M» — по всей
   // таблице, и скролл дальше не шёл.
@@ -312,10 +494,6 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   // manager+. viewer видит кнопку disabled с tooltip «Нет прав» (бэкенд тоже
   // отдаёт 403). Скрывать не будем — так понятно, что действие существует.
   const canReplay = useRoleAtLeast("manager");
-  // Раскрытая строка: тела request/response грузятся лениво только для неё
-  // (GET /api/nodes/:id/log/:logId). Список этих данных не содержит — иначе
-  // сотни строк с большими JSON-телами вешают фронт (§7.4.1).
-  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const scrollToTop = () => {
     if (tableWrapRef.current) {
@@ -339,6 +517,20 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                 })
               : t("logs.shown_count", { n: visibleLogs.length })}
           </span>
+          {/* §77.4: дип-линк из «Очереди» приходит с done=no. Своего
+              переключателя у этого фильтра больше нет, поэтому он обязан быть
+              виден и сниматься — иначе список молча показывает подмножество. */}
+          {doneFilter !== "all" && (
+            <button
+              type="button"
+              onClick={() => setDoneFilter("all")}
+              title={t("logs.advanced.reset")}
+              className="inline-flex items-center gap-1 rounded-full bg-accent/15 px-2 py-0.5 text-xs text-accent hover:bg-accent/25"
+            >
+              {doneFilter === "done" ? t("logs.filter.done_yes") : t("logs.filter.done_no")}
+              <span aria-hidden>✕</span>
+            </button>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
@@ -351,15 +543,12 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
               { v: "err", label: t("logs.filter.err") },
             ]}
           />
-          <SegmentedControl
-            value={doneFilter}
-            onChange={setDoneFilter}
-            options={[
-              { v: "all", label: t("logs.filter.done_all") },
-              { v: "done", label: t("logs.filter.done_yes") },
-              { v: "pending", label: t("logs.filter.done_no") },
-            ]}
-          />
+          {/* §77.4: сегмента «Все|Завершено|В работе» здесь больше нет — он был
+              доказанным дублем «OK|Ошибки» (write-path пишет done = 2xx, поэтому
+              ok ≡ done=yes; замер на 17 боевых узлах — пересечения нулевые), а
+              комбинация «В работе»+«OK» была заведомо пустой. Параметр done в API
+              сохранён: на нём дип-линк вкладки «Очередь» — он показывается чипом
+              рядом со счётчиком (см. шапку выше). */}
           <label className="flex items-center gap-2 text-xs text-fg-muted">
             {t("logs.page_size")}
             <select
@@ -426,10 +615,18 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
               />
             </label>
             <div className="relative">
+              {/* §77.3: поиск запускается по завершении ввода — Enter или уход
+                  фокуса, НЕ на каждую букву (полнотекст по всей истории стоит
+                  секунды, см. §77.5). Esc возвращает применённое значение. */}
               <input
                 type="text"
                 value={advForm.q}
                 onChange={(e) => setAdvForm({ ...advForm, q: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") commitAdv(advForm);
+                  if (e.key === "Escape") setAdvForm(appliedFilters);
+                }}
+                onBlur={() => commitAdv(advForm)}
                 placeholder={t("logs.advanced.q_placeholder")}
                 className="w-full rounded-md bg-bg-muted py-1.5 pl-3 pr-24 text-sm outline-none"
               />
@@ -447,7 +644,9 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                     type="button"
                     title={b.title}
                     aria-pressed={advForm[b.key]}
-                    onClick={() => setAdvForm({ ...advForm, [b.key]: !advForm[b.key] })}
+                    // §77.3: тумблер режима — выбор, а не ввод: применяется сразу.
+                    onMouseDown={(e) => e.preventDefault()} // не отбирать фокус у поля (иначе blur даст лишний коммит)
+                    onClick={() => commitAdv({ ...advForm, [b.key]: !advForm[b.key] })}
                     className={`rounded px-1 py-0.5 font-mono text-[11px] leading-none transition-colors ${
                       advForm[b.key]
                         ? "bg-accent/20 text-accent"
@@ -468,7 +667,7 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
             <LogMethodFilter
               nodeId={id}
               value={advForm.method}
-              onChange={(m) => setAdvForm({ ...advForm, method: m })}
+              onChange={(m) => commitAdv({ ...advForm, method: m })}
             />
           </div>
           {/* Ряд 2 (§48.8 + §67, эскиз утверждён): «Дата с» / «Дата по» с
@@ -483,7 +682,7 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
               </label>
               <LogDateField
                 value={advForm.from}
-                onChange={(v) => setAdvForm({ ...advForm, from: v })}
+                onChange={(v) => commitAdv({ ...advForm, from: v })}
                 min={dateRange && dateRange.min > 0 ? new Date(dateRange.min) : undefined}
                 max={dateRange && dateRange.max > 0 ? new Date(dateRange.max) : undefined}
                 defaultTime="00:00"
@@ -496,7 +695,7 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
               </label>
               <LogDateField
                 value={advForm.to}
-                onChange={(v) => setAdvForm({ ...advForm, to: v })}
+                onChange={(v) => commitAdv({ ...advForm, to: v })}
                 min={dateRange && dateRange.min > 0 ? new Date(dateRange.min) : undefined}
                 max={dateRange && dateRange.max > 0 ? new Date(dateRange.max) : undefined}
                 defaultTime="23:59"
@@ -510,27 +709,69 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
               <LogClientHostFilter
                 nodeId={id}
                 value={advForm.clientHost}
-                onChange={(h) => setAdvForm({ ...advForm, clientHost: h })}
+                onChange={(h) => commitAdv({ ...advForm, clientHost: h })}
               />
             </div>
+            {/* §77.3: кнопки «Применить» больше нет — фильтры применяются по
+                завершении ввода. «Сбросить» гасит mousedown, иначе blur поля
+                «Поиск» успел бы запустить лишний запрос ПЕРЕД сбросом. */}
             <div className="ml-auto flex items-center gap-2">
               <button
-                onClick={() => {
-                  setAdvForm(initFormEmpty);
-                  setAppliedFilters(initFormEmpty);
-                }}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => commitAdv(initFormEmpty)}
                 className="rounded-md bg-bg-muted px-3 py-1.5 text-sm hover:bg-bg-3"
               >
                 {t("logs.advanced.reset")}
               </button>
-              <button
-                onClick={() => setAppliedFilters(advForm)}
-                className="rounded-md bg-accent px-3 py-1.5 text-sm text-white hover:bg-accent-hover"
-              >
-                {t("logs.advanced.apply")}
-              </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* §77.3: затянувшийся поиск — с возможностью прервать его. Отмена рвёт
+          запрос и в браузере, и в ClickHouse (AbortSignal → разрыв соединения →
+          отмена ctx хендлера), поэтому пользователь не заперт на десятки секунд
+          и может уточнить фильтры. */}
+      {slowSearch && !searchCancelled && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-line bg-bg-muted/40 px-4 py-2 text-xs text-fg-muted">
+          <RefreshCw className="h-3 w-3 animate-spin text-accent" />
+          <span>{t("logs.search.running")}</span>
+          {appliedFilters.q && !appliedFilters.from && !appliedFilters.to && (
+            <span className="text-warn">{t("logs.search.full_history_hint")}</span>
+          )}
+          <button
+            onClick={cancelSearch}
+            className="ml-auto rounded-md bg-bg-muted px-2.5 py-1 hover:bg-bg-3 hover:text-fg"
+          >
+            {t("logs.search.cancel")}
+          </button>
+        </div>
+      )}
+      {searchCancelled && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-warn/30 bg-warn/10 px-4 py-2 text-xs text-warn">
+          <span>{t("logs.search.cancelled")}</span>
+          <button
+            onClick={retrySearch}
+            className="ml-auto rounded-md bg-bg-muted px-2.5 py-1 text-fg-muted hover:bg-bg-3 hover:text-fg"
+          >
+            {t("logs.search.retry")}
+          </button>
+        </div>
+      )}
+      {/* §77.3: автообновление выключено, потому что запрос дорогой — иначе тик
+          каждые 5 с накладывал бы такие запросы друг на друга. */}
+      {slowFilter && !live && !searchCancelled && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-line bg-bg-muted/40 px-4 py-2 text-xs text-fg-muted">
+          <span>{t("logs.autorefresh.paused_slow")}</span>
+          <button
+            onClick={() => {
+              void logsQ.refetch();
+              void countQ.refetch();
+            }}
+            className="ml-auto rounded-md bg-bg-muted px-2.5 py-1 hover:bg-bg-3 hover:text-fg"
+          >
+            {t("logs.viewer.refresh")}
+          </button>
         </div>
       )}
 
@@ -699,7 +940,9 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
         </div>
       )}
 
-      {live && pendingCount > 0 && (
+      {/* §77.1: пилюля работает и в snapshot — tail-poll добавляет записи
+          сверху, пока пользователь читает историю или раскрытое тело. */}
+      {pendingCount > 0 && (
         <button
           onClick={scrollToTop}
           className="absolute bottom-6 left-1/2 z-20 -translate-x-1/2 rounded-full bg-accent px-3 py-1.5 text-xs text-white shadow-lg hover:bg-accent-hover"
