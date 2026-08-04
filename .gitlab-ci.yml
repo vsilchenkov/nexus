@@ -192,13 +192,28 @@ go-lint:
     # NB: вывод содержит ДВА раздела (Enabled/Disabled) — грепать по всему
     # выводу нельзя, имя нашлось бы и в «Disabled». Отсюда sed-диапазон,
     # ограничивающий поиск разделом Enabled.
+    #
+    # Вывод сохраняется в файл, а не гоняется по pipe вторым прогоном. Прежняя
+    # версия (`golangci-lint linters | sed … | grep -q`) падала ВСЕГДА, причём
+    # именно когда линтер найден: `grep -q` выходит на первом совпадении и
+    # закрывает pipe, `golangci-lint` получает SIGPIPE, а GitLab Runner
+    # выполняет script с `set -o pipefail` — код цепочки становится 141, и
+    # `if !` читает это как «линтера нет». Локально (bash без pipefail) гейт
+    # проходил, поэтому дефект доехал до CI; воспроизводится одной строкой:
+    #   docker run --rm golangci/golangci-lint:v2.12-alpine sh -c \
+    #     'set -o pipefail; golangci-lint linters | grep -q "^modernize:"; echo $?'
+    # Файл — в /tmp, а не в рабочем дереве: при падении следующего шага он бы
+    # там и остался (script прерывается, до `rm` дело не доходит) и попал бы в
+    # кеш/артефакты либо сбил проверку чистоты дерева.
     - 'echo "===== enabled linters (проверяем наличие modernize) ====="'
-    - golangci-lint linters | sed -n '/^Enabled by your configuration/,/^Disabled by your configuration/p'
+    - golangci-lint linters > /tmp/linters.txt
+    - sed -n '/^Enabled by your configuration/,/^Disabled by your configuration/p' /tmp/linters.txt
     - |
-      if ! golangci-lint linters \
-        | sed -n '/^Enabled by your configuration/,/^Disabled by your configuration/p' \
-        | grep -q '^modernize:'; then
+      if ! sed -n '/^Enabled by your configuration/,/^Disabled by your configuration/p' /tmp/linters.txt \
+        | grep -c '^modernize:' > /dev/null; then
         echo "modernize отсутствует в наборе включённых линтеров — проверь .golangci.yml и версию образа" >&2
+        echo "--- фактический вывод golangci-lint linters ---" >&2
+        cat /tmp/linters.txt >&2
         exit 1
       fi
     # --timeout=15m, а не 5m: линтерам нужно СОБРАТЬ пакеты, и на холодном
