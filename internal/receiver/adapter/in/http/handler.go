@@ -125,6 +125,16 @@ func (h *Handler) handleIngress(c *gin.Context) {
 	}
 }
 
+// handleAuto godoc
+// @Summary  Запрос через узел без указания метода (§78.1).
+// @Description  Короткая форма адреса: /api/v1/<team_slug>/<node_path> (для команды default слог можно опустить). Синхронный это узел или асинхронный, определяет его root_method, поэтому в адресе метод не указывается. Формы /api/v1/request/... и /api/v1/requestAsync/... продолжают работать.
+// @Tags     routing
+// @Param    path  path  string  true  "[<team_slug>/]<node_path>"
+// @Success  200  {object}  map[string]interface{}  "ответ внешнего узла (sync) либо {result:true,id} (async)"
+// @Success  202  {object}  map[string]interface{}  "queued (paused node, §3.6)"
+// @Failure  404  {object}  map[string]string  "node not found (в т.ч. узел RabbitMQAsync — входящего HTTP у него нет)"
+// @Router   /api/v1/{path} [post]
+//
 // handleAuto — короткая форма адреса §78.1: /api/v1/<team_slug>/<node_path> без
 // сегмента метода. Синхронность — свойство узла, поэтому она резолвится из
 // конфигурации, а дальше запрос идёт по тому же коду, что и legacy-URL.
