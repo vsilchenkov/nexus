@@ -44,11 +44,11 @@ func (e2eNodeReader) Get(_ context.Context, _, path string) (*domain.Node, error
 // настоящая рекурсия запросов через шину.
 type loopbackSender struct {
 	baseURL string
-	calls   int32
+	calls   atomic.Int32
 }
 
 func (s *loopbackSender) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1.SendResponse, error) {
-	atomic.AddInt32(&s.calls, 1)
+	s.calls.Add(1)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		s.baseURL+"/api/v1/request/"+req.GetNodePath(), bytes.NewReader(req.GetBody()))
 	if err != nil {
@@ -95,7 +95,7 @@ func TestLoopProtection_E2E_TerminatesAt508(t *testing.T) {
 	assert.Equal(t, http.StatusLoopDetected, resp.StatusCode)
 	// Рекурсия ограничена: Sender вызван ровно maxHops раз (на (maxHops+1)-м
 	// входе запрос отклоняется ДО обращения к Sender).
-	assert.Equal(t, int32(maxHops), atomic.LoadInt32(&sender.calls))
+	assert.Equal(t, int32(maxHops), sender.calls.Load())
 	// Метрика петли инкрементирована (хотя бы один раз — на самом глубоком витке).
 	assert.GreaterOrEqual(t, testutil.ToFloat64(m.LoopDetectedTotal.WithLabelValues("sync")), float64(1))
 }

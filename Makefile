@@ -172,7 +172,7 @@ docker-logs: ## Логи сервисов (Ctrl+C для выхода)
 # ----- placeholders для следующих фаз ---------------------------------------
 
 .PHONY: swagger proto loadtest test-integration sqlc-gen rotate-encryption-key
-.PHONY: test-int-pg test-int-ch test-int-catalog test-int-receiver test-int-rmq test-int-sender
+.PHONY: test-int-pg test-int-ch test-int-catalog test-int-receiver test-int-rmq test-int-sender test-int-logs-scale
 
 SWAG ?= swag
 swagger: ## Сгенерировать swagger в docs/web и docs/receiver (см. §11, §25)
@@ -240,6 +240,13 @@ test-int-sender: ## integration: Sender async + DLQ + DLQ-репроцессор
 
 test-int-queue: ## integration: управление async-очередью §35 + tombstones (Kafka+Redis)
 	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestAsyncQueue|^TestQueueCancel" ./tests/integration/...
+
+# Масштабный замер скролла логов (§77.5). В test-integration НЕ входит: сид на
+# десятки млн строк и прогон занимают минуты, а результат — не pass/fail, а
+# цифры в логе теста. Объём: LOG_SCALE_ROWS (по умолчанию 1 млн).
+LOG_SCALE_ROWS ?= 1000000
+test-int-logs-scale: ## integration: замер скролла логов на большом объёме (LOG_SCALE_ROWS=50000000)
+	LOG_SCALE_RUN=1 LOG_SCALE_ROWS=$(LOG_SCALE_ROWS) $(GO) test -tags=integration -count=1 -v -timeout 60m -run "^TestClickHouse_ScrollScale" ./tests/integration/...
 
 sqlc-gen: ## Phase 1: генерация Go-кода из SQL через sqlc
 	@echo "TODO Phase 1: sqlc generate"

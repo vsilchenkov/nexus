@@ -377,6 +377,7 @@
 | **§74: безопасный откат на предыдущую версию** | ✅ §74 | ТЗ — [74-safe-rollback.md](sections/74-safe-rollback.md), ветка `feature/safe-rollback`. Откат кода упирался в стартовый гейт `golang-migrate`: `Up()` требует, чтобы версия из `schema_migrations` существовала в каталоге миграций образа, поэтому откаченный Web/Receiver падал с `no migration found for version N` и уходил в crash-loop (эмпирически проверено на PostgreSQL 12: схема 32 + каталог до 0028), а `--migrate-down` старым образом блокировался тем же гейтом — оператор, успевший пересобрать старый тег, оставался без инструмента отката. Теперь [pg.Migrator.EnsureUp](../internal/platform/pg/migrate.go) сравнивает версию в БД с `MaxLocalVersion()` **до** `Up()`: схема новее → `State.Ahead`, миграции не применяются, старт продолжается; `dirty` → `ErrDirtySchema` и `exit 1`, как раньше. [bootstrap.AutoMigrate](../internal/platform/bootstrap/bootstrap.go) возвращает `SchemaState`, при `Ahead` пишет запись уровня **error** (уровень выбран ради Sentry: порог `sentry.level` = error, `warn` туда не доедет) и отдаёт состояние в `web.New`/`receiver.New` → метрики `nexus_pg_schema_version` / `nexus_pg_schema_ahead` ([metrics.go](../internal/platform/metrics/metrics.go)) + алерт `NexusSchemaAheadOfBinary` ([prometheus.alerts.yml](../deploy/prometheus.alerts.yml)). Плюс `--migrate-force <N>` (выход из `dirty` без psql; SQL не выполняет, номер сверяется с каталогом), [scripts/deploy/images.sh](../scripts/deploy/images.sh) (`tag`/`list`/`rollback` — `up --build` перетирает `nexus-*:latest`, и без сохранённого тега откат означал пересборку трёх образов) и [scripts/release/rollback_info.py](../scripts/release/rollback_info.py) (строка «Откат» для CHANGELOG). Процедуры оператора — [DEPLOYMENT.md §10](../DEPLOYMENT.md). Без миграций и новых конфиг-ключей |
 | **§75: размер топиков Kafka на экране мониторинга** | ✅ §75 | ТЗ — [75-topic-size-jmx.md](sections/75-topic-size-jmx.md), ветка `feature/topic-size-jmx`. Колонка «Размер» в таблице «Топики» §31 показывала прочерк с самого появления раздела: `SizeBytes` не заполнялся никогда — `segmentio/kafka-go` не реализует `DescribeLogDirs` (в v0.4.51 нет ни метода, ни сообщения в `protocol/`). `kafka_exporter` тут не помогает вовсе — размера среди его метрик нет. Источник — JMX брокера (`kafka.log:type=Log,name=Size`): [deploy/docker/kafka.Dockerfile](../deploy/docker/kafka.Dockerfile) (`apache/kafka` + `jmx_prometheus_javaagent`; jar лежит в [deploy/vendor/](../deploy/vendor/), сборка не ходит в сеть, подмена версии/зеркала — `ARG JMX_AGENT_SRC`, который `ADD` принимает и путём, и URL) + [deploy/kafka-jmx.yml](../deploy/kafka-jmx.yml) (одно правило → `kafka_log_log_size{topic,partition}`) + `KAFKA_OPTS` в трёх compose + job `kafka-jmx` в [prometheus.yml](../deploy/prometheus.yml). Читает [PromMetrics.KafkaTopicSizes](../internal/web/adapter/out/prometheus/client.go) (instant `sum by(topic)(kafka_log_log_size)`), домешивает `fillTopicSizes` в [kafka_monitor.go](../internal/web/usecase/kafka_monitor.go) ДО записи в Redis-кеш (1 запрос на TTL 30 с). Величина = занято на дисках кластера (все реплики). Ответ получил флаг `sizes_available` (Prometheus отдал хотя бы одну серию): без него пустой топик с честным нулём выглядел бы так же, как отсутствующий источник. Деградация прежняя: нет Prometheus/агента или чужая Kafka → нули и «—» с `title`-подсказкой в [TopicsTable.tsx](../web-ui/src/components/kafka/TopicsTable.tsx). Эксплуатация: применение = пересоздание контейнера брокера (простой 30–60 с), битый конфиг агента не даёт JVM стартовать. Без миграций и новых конфиг-ключей |
 | **§76: ссылка на команду — параметр `?team=<slug>` и кнопка «Поделиться»** | ✅ §76 | ТЗ — [76-team-share.md](sections/76-team-share.md), ветка `feature/team-share`. Активная команда жила только в серверной сессии (`Session.CurrentTeamID` в Redis, §4.15): переслать коллеге «рабочий стол команды X» было нечем, а два таба на `/` могли смотреть на разные команды неразличимо по URL. **Бэкенд не менялся вовсе** — `GET /api/me/teams` уже отдаёт `slug` каждого членства ([auth_handler.go](../internal/web/adapter/in/http/auth_handler.go)), переключение делает существующий `POST /api/me/switch-team`, а резолв `slug → team_id` клиентский, по членствам: нового эндпоинта не нужно, и «нет такой команды» / «я не член» неотличимы by design (no-leak, как единый 404 §58.3). **Фронт:** [lib/teamShare.ts](../web-ui/src/lib/teamShare.ts) — `TEAM_PARAM`, `teamPageUrl(slug)` (`${origin}/?team=<slug>`, всегда рабочий стол), `teamParamAllowed()` (белый список `/`, `/kafka`, `/audit`; `/nodes/*` исключены — командой страницы владеет §58, `/settings/*` — вне скоупа команды §7.14.1), хук `useTeamUrlParam()` — единственный писатель параметра; [components/TeamUrlSync.tsx](../web-ui/src/components/TeamUrlSync.tsx) — монтаж хука и баннер «Команда недоступна», включён в [AppShell.tsx](../web-ui/src/components/AppShell.tsx) над `<Outlet/>` ровно один раз; [TeamSwitcher.tsx](../web-ui/src/components/TeamSwitcher.tsx) — `ShareTeamButton` (Share2 → Check на 1.5 с) третьей кнопкой в строке команды, доступна всем ролям. Ссылка по **slug**, а не по id как у узла (§58): slug глобально уникален и неизменяем (`PUT /api/teams/{id}` принимает только `name`) → адрес читается человеком и не протухает. Семантика — **зеркало**: значение параметра всегда равно slug'у текущей команды сессии, входящее значение применяется один раз, запись всегда `replace` и функциональной формой (чужие ключи фильтров §54 обязаны выжить). Логики в местах переключения нет: параметр — производная от `current_team_id`, поэтому TeamSwitcher, «Избранное» сайдбара и §58 попадают в URL одним эффектом. Тесты: [teamShare.test.tsx](../web-ui/src/lib/teamShare.test.tsx) (16 сценариев), регресс сосуществования с §54/§71 — [overviewFilters.test.ts](../web-ui/src/lib/overviewFilters.test.ts), [Overview.period.test.tsx](../web-ui/src/pages/Overview.period.test.tsx). i18n: `teams.share`, `teams.unavailable`. Без миграций, эндпоинтов и конфиг-ключей. Неочевидности — §4.58. Бандл пересобран → `internal/web/static/` |
+| **§77: логи узла — живое раскрытое тело, автопоиск, скорость на десятках млн записей** | ✅ §77 | ТЗ — [77-logs-ux-and-scale.md](sections/77-logs-ux-and-scale.md), ветка `feature/logs-ux-perf`. Четыре жалобы, три из которых упирались в одно: список перезапрашивался целиком и без временно́го окна. **77.1 (tail-poll):** `refetchInterval` у `useInfiniteQuery` убран; раз в 5 с тянется только «что появилось после самой свежей строки» (`from = ts − 1 с`) и вливается в начало первой страницы через `setQueryData` с дедупом по `id` — существующие строки не пересоздаются, раскрытое тело живёт; полный ответ хвоста = сигнал дыры → честный `invalidate`, а не склейка с потерей записей; `collapseToFirstPage` §72.5 не срабатывает, пока строка раскрыта (`collapseEnabled` в [useInfiniteLogs.ts](../web-ui/src/lib/useInfiniteLogs.ts)); пилюля «N новых записей ↑» работает и в snapshot. **77.2 (автоокно):** `searchAutoWindow` в [usecase/logs.go](../internal/web/usecase/logs.go) — окна `1ч→6ч→24ч→7д→30д→90д→без границы` от якоря (курсор пагинации либо `max(date_request)` из кешированного `DateRange`, TTL 30 с), первое окно с полной страницей — ответ; **последняя попытка всегда без нижней границы**, иначе фронт принял бы недобор за конец истории (§72.2); `Count` и пользовательский `from` автоокном не трогаются; замер: 50 млн строк — 7 мс на страницу против 1153 мс, 1 млн — 7 мс против 86 мс (время не зависит от объёма). **77.3 (автопоиск):** кнопка «Применить» удалена — Enter/blur у поля «Поиск» (Esc — откат), сразу у комбобоксов/дат/тумблеров; коммит идемпотентен (иначе Enter+blur дают дубль, а blur о «Сбросить» — лишний запрос); `api.get` принимает `AbortSignal` ([client.ts](../web-ui/src/api/client.ts)) → «Отменить» рвёт запрос и в ClickHouse (разрыв соединения → отмена `c.Request.Context()`), запрос дольше 0.7 с показывает «Поиск… [Отменить]», дольше 2 с — выключает автообновление. **77.4:** сегмент «Все\|Завершено\|В работе» убран как доказанный дубль «OK\|Ошибок» (`count` по 7 комбинациям на 17 боевых узлах: `err ≡ done=no`, пересечения 0; корень — `send.go` пишет `Done = 2xx`), параметр API и предикаты §72.1 сохранены, дип-линк §47 показывается снимаемым чипом. Тесты: [logs_autowindow_test.go](../internal/web/usecase/logs_autowindow_test.go) (7 unit), [log_autowindow_test.go](../tests/integration/log_autowindow_test.go) (E2E честности выдачи + масштабный замер `make test-int-logs-scale`), [LogsTab.autorefresh.test.tsx](../web-ui/src/components/node/LogsTab.autorefresh.test.tsx) (8, проверены красными на старом коде). Без миграций и конфиг-ключей. Неочевидности — §4.63. Бандл пересобран → `internal/web/static/` |
 | UI формы: Toggle, карточки «Заголовки» / «Логирование» | ✅ Phase 22.3 | [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx) (две карточки, мастер-тумблер гасит `<fieldset disabled>`), компонент [Toggle](../web-ui/src/components/ui/pickers.tsx), i18n ru/en |
 | Telegram-алерты через Prometheus + метрика `nexus_request_incomplete_total` | ✅ Phase 22.4 | [notification.go](../internal/web/usecase/notification.go) (`PromMetrics.NodeErrors` вместо `LogReader.CountErrors`), [metrics.go](../internal/platform/metrics/metrics.go), инкремент в [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go)/[async.go](../internal/sender/usecase/async.go), wiring [app.go](../internal/web/app.go) (требует Prometheus) |
 | Карточки Overview под `ui_cards.html` (спарклайн, p95, фильтр) | ✅ Phase 22.5 | [Overview.tsx](../web-ui/src/pages/Overview.tsx) (полоса-акцент, chip+pill, 3 метрики, спарклайн, target, фильтр статусов, сортировка); backend [prometheus/client.go](../internal/web/adapter/out/prometheus/client.go) (`NodeSeries` range-запрос + p95 в `NodeThroughput`), [metrics.go](../internal/web/usecase/metrics.go), DTO [metrics_handler.go](../internal/web/adapter/in/http/metrics_handler.go) |
@@ -2497,6 +2498,88 @@ single-flight, таймаутом и анти-штормовой паузой; �
 1.30 млн строк), но это стоимость самих дополнительных записей, а не оператора. Вывод: **убирать
 `OR` ради скорости смысла не было**, решение принято ради корректности атрибуции.
 
+### 4.63 §77 — логи: автоокно, tail-poll, автопоиск. Что неочевидно
+
+**Задержка прокрутки не зависела от глубины скролла — и это ключ.** Замер на боевом узле
+`gate/PDT_PDTExchange` (11.1 млн записей, внешняя таблица §64) дал одинаковые 870–980 мс на всех 12
+страницах подряд. Значит дело не в курсоре и не в накоплении страниц, а в стоимости одного запроса:
+без временно́го окна `ORDER BY date_request DESC LIMIT 50` заставляет ClickHouse прочитать широкие
+колонки (`url`, `parameters`, `reason`) практически по всей таблице. Любое сужение — окно по дате
+(75–185 мс) или **селективный** фильтр, включающий PREWHERE (113–141 мс на «Ошибках»), — даёт
+6–12×. Неселективный фильтр не помогает: `method=` на половине таблицы — те же 938 мс.
+
+**Почему автоокно живёт в usecase, а не в адаптере.** Это бизнес-правило «как читать историю», а не
+деталь SQL: адаптер по-прежнему выполняет ровно один запрос с переданными границами, а решение
+«окно узкое → расширить» принимает usecase. Плюс так оно тестируется без ClickHouse
+(`logs_autowindow_test.go`, 7 unit-тестов на моке порта).
+
+**Самая опасная часть — не скорость, а честность конца истории.** Фронт считает историю
+исчерпанной по недобору страницы (`items.length < pageSize`, §72.2). Наивный цикл «сузил окно —
+вернул что нашлось» врал бы «записей больше нет» каждому узлу, у которого свежих записей нет.
+Отсюда два инварианта, закреплённых тестами: **последняя попытка всегда без нижней границы**, а
+окно, ушедшее ниже `min(date_request)`, — последнее (перебор не продолжается). Integration-тест
+`TestClickHouse_AutoWindow_E2E` специально сидит узел, чья история закончилась полгода назад: ни
+одно окно 1ч..90д от «сейчас» его записей не видит, и первая страница обязана всё равно прийти
+полной.
+
+**`DateRange` кешируется, потому что дёргается на каждую страницу.** TTL 30 с; протухший `max`
+лишь сдвигает якорь первой страницы на секунды назад, что автоокно само и покрывает. Пустая
+таблица (`0,0`) и ошибка `DateRange` — сразу прямой запрос без перебора окон: на пустой таблице он
+дёшев, а классификацией недоступности CH занимается обычный путь `Search`.
+
+**Прунинг `date_create` §72.4 на внешние таблицы расширять не стали.** Гипотеза «внешней таблице
+поможет измеренный запас вместо `partitionMarginDays`» проверена замером и отклонена: у `gate`
+окно в сутки уже даёт 75 мс, потому что `date_request` вторым полем ключа сортировки отсекает
+гранулы через minmax первичного ключа. Выигрыша нет, а риск потерять строки постороннего писателя
+с `date_create ≠ день(date_request)` — реальный (ровно это показывает третий подтест
+`TestClickHouse_DateCreatePruning_E2E`).
+
+**Тела логов закрывались по двум независимым причинам, и чинить надо было обе.** Первая —
+`refetchInterval` у `useInfiniteQuery` перезапрашивал ВСЕ страницы и пересоздавал список; заменён
+на tail-poll («что новее самой свежей строки» → вставка сверху первой страницы с дедупом по `id`).
+Вторая — `collapseToFirstPage` (§72.5) при возврате к верху выбрасывал страницы 2+ вместе с
+раскрытой строкой; теперь схлопывание отложено, пока строка раскрыта (`collapseEnabled`). Починка
+только первой оставила бы симптом живым для строк со второй страницы.
+
+**Полный ответ tail-poll — не «много новых записей», а сигнал дыры.** Если за тик появилось больше
+`limit` записей, между хвостом и первой страницей образуется провал; склейка молча потеряла бы
+записи, поэтому такой случай честно инвалидирует первую страницу.
+
+**Отмена поиска обязана доходить до ClickHouse.** `api.get` до §77.3 не принимал `AbortSignal`, и
+react-query отменял запрос только логически — CH продолжал выполнять 28-секундный полнотекст.
+Теперь signal доезжает до axios; разрыв соединения отменяет `c.Request.Context()` хендлера, и
+clickhouse-go снимает запрос на сервере. Это же делает «сброс текущего поиска» при смене фильтра
+настоящим, а не косметическим.
+
+**Идемпотентный коммит фильтра — не микрооптимизация.** Без сравнения «черновик ≠ применённое»
+Enter+blur давали два одинаковых запроса, а клик по «Сбросить» сначала запускал поиск по
+черновику (blur), и только потом сбрасывал. Второе лечится ещё и `onMouseDown preventDefault` на
+кнопках панели.
+
+**«Завершено/В работе» — доказанный дубль, а не подозрение.** `count` по 7 комбинациям на 17
+боевых узлах трёх команд: `err ≡ done=no`, `ok ≡ done=yes`, пересечения нулевые везде. Корень в
+write-path: `send.go` пишет `Done = (2xx)`, поэтому предикат §72.1 `done=1 AND 200≤status<400`
+вырождается в `done=1`, а «В работе»+«OK» была заведомо пустой комбинацией. Параметр API оставлен
+(дип-линк §47 из «Очереди»), но активный фильтр теперь виден чипом — невидимый фильтр хуже лишнего
+переключателя.
+
+**Пресеты периода в UI рассматривались и отклонены.** При непрерывной прокрутке (автоокно едет за
+скроллом) видимый пресет не менял бы ни содержимое списка, ни счётчик — только скорость страницы,
+которую и так обеспечивает сервер. Переключатель без наблюдаемого эффекта путает; период как
+фильтр остался в полях «Дата с/по».
+
+Замер масштаба (`make test-int-logs-scale`): 50 млн строк — 7 мс средняя страница против 1153 мс
+без автоокна; 1 млн — 7 мс против 86 мс. Смотреть надо на форму зависимости: с автоокном время
+страницы от объёма таблицы не зависит, без него растёт линейно.
+
+Файлы: [usecase/logs.go](../internal/web/usecase/logs.go) (`searchAutoWindow`, `dateRangeCached`),
+[usecase/logs_autowindow_test.go](../internal/web/usecase/logs_autowindow_test.go),
+[web-ui/src/components/node/LogsTab.tsx](../web-ui/src/components/node/LogsTab.tsx),
+[web-ui/src/lib/useInfiniteLogs.ts](../web-ui/src/lib/useInfiniteLogs.ts),
+[web-ui/src/api/client.ts](../web-ui/src/api/client.ts),
+[LogsTab.autorefresh.test.tsx](../web-ui/src/components/node/LogsTab.autorefresh.test.tsx),
+[tests/integration/log_autowindow_test.go](../tests/integration/log_autowindow_test.go).
+
 ---
 
 ## 5. Команды для типовых задач
@@ -2511,6 +2594,7 @@ make build-ui                                  # SPA → internal/web/static/
 make test                                      # unit (-race -short)
 make test-coverage                             # покрытие в coverage.html
 make test-integration                          # testcontainers (нужен Docker)
+make test-int-logs-scale LOG_SCALE_ROWS=50000000  # §77.5: замер прокрутки логов (вручную)
 make loadtest TARGET_RPS=500 DURATION=10m NODES=50 ADMIN_PASSWORD=…
 
 # Миграции
@@ -3521,9 +3605,22 @@ vitest во фронте (было 3 теста без CI-запуска → +2 
   (`golangci-lint v2.12`), `swagger-drift` (regen `swag init` → `git diff`),
   `ui-build` (Node 20 + `npm ci` + `npm run lint --if-present` + `vite build`),
   `integration` (testcontainers, по MR-label `run-integration` или master/dev/tag).
-  `.golangci.yml` с набором bodyclose/rowserrcheck/errcheck/govet/revive/staticcheck.
-  Авто-апдейты зависимостей — [renovate.json](../renovate.json) (weekly
+  `.golangci.yml` с набором bodyclose/rowserrcheck/errcheck/govet/revive/staticcheck/
+  **modernize**. Авто-апдейты зависимостей — [renovate.json](../renovate.json) (weekly
   schedule), группировка minor/patch в один MR.
+  · **`modernize`** (анализаторы x/tools gopls) включён как гейт: `slices.Backward/
+  Contains/Sort`, `maps.Collect`, `min/max`, `atomic.Int32` вместо
+  `atomic.AddInt32(&int32)`, range-over-int, `fmt.Appendf`, `strings.CutPrefix`,
+  `testing.Context`, `wg.Go`. Настройками поддерживается **только**
+  `settings.modernize.disable` — ключа `enable` в JSON-схеме нет, по умолчанию
+  включены все анализаторы. Исключён на `docs/` и `proto/` (генерируемый код) и на
+  `web-ui/node_modules` (сторонняя заглушка `flatted.go` — единственная находка вне
+  нашего кода). Job `go-lint` дополнительно гоняет `golangci-lint config verify`
+  (валидация конфига по схеме именно того образа, что в CI) и явную проверку, что
+  `modernize` присутствует в разделе «Enabled» вывода `golangci-lint linters`.
+  Проверка нужна потому, что `run` с выпавшим линтером всё равно печатает
+  «0 issues» — тихую деградацию иначе не заметить; грепать надо строго по разделу
+  Enabled (в выводе есть и раздел Disabled с тем же именем).
 - 7.3 Integration suite: Redis + ClickHouse через testcontainers.
   Generic-контейнер (`testcontainers.GenericContainer`) — без отдельных
   модулей `modules/redis`/`modules/clickhouse`. CH: native-handshake
@@ -4194,3 +4291,43 @@ vitest-кейсы nodeValidation.
   бандл, то есть НУЦ становится валидным якорем для **любого** исходящего запроса, а не только к
   Альфе. Точечного «CA только для этого узла» в Nexus нет; если такое понадобится — это отдельное
   ТЗ (поле у узла + свой `tls.Config` в [httpclient](../internal/sender/adapter/out/httpclient/client.go)).
+
+### 4.63 Линтер `modernize` включён; кеш golangci-lint даёт ПРИЗРАЧНЫЕ находки
+
+Включение `modernize` в [.golangci.yml](../.golangci.yml) — гейт на устаревшие идиомы Go
+(подробности набора и настроек см. в пункте 7.4 выше). Что здесь стоит знать следующему агенту:
+
+- **На всей кодовой базе нашлось всего 4 места** — `slicesbackward` в
+  [service_logs_handler.go](../internal/web/adapter/in/http/service_logs_handler.go) (выгрузка
+  лог-файла шла обратным индексным циклом → `slices.Backward`) и три `atomictypes` в тестах
+  (`int32` + `atomic.AddInt32(&x, 1)` → `atomic.Int32` + `x.Add(1)`) в
+  [reloader_test.go](../internal/platform/reloader/reloader_test.go) и
+  [loop_e2e_test.go](../internal/receiver/adapter/in/http/loop_e2e_test.go). Мало — потому что по
+  репозиторию регулярно гоняется `go fix` (Go 1.26). Ценность гейта именно в том, что он ловит
+  регресс в CI, а не полагается на то, что кто-то вспомнит про `go fix`.
+- **`settings.modernize` принимает ТОЛЬКО `disable`.** Ключа `enable`/`checks` в JSON-схеме нет
+  (`golangci-lint config verify` отвергает их как `additional properties … not allowed`), по
+  умолчанию включены все анализаторы. Список имён анализаторов — enum `modernize-analyzers` в
+  `https://golangci-lint.run/jsonschema/golangci.v2.jsonschema.json`; он **отстаёт** от бинаря
+  (`atomictypes`/`slicesbackward` в онлайн-схеме отсутствуют, а v2.12.2 их выдаёт). Отсюда правило:
+  не вписывать в `disable` имена по онлайн-справочнику вслепую — CI-образ rolling, и падение будет
+  на `config verify`.
+- **ГЛАВНАЯ ГРАБЛЯ: кеш анализа golangci-lint выдаёт находки, которых нет.** При отладке этой
+  задачи прогон стабильно (воспроизводилось) показывал 8 issues `SA5011: possible nil pointer
+  dereference` в [sentry_test.go](../internal/platform/sentry/sentry_test.go) и
+  [logs_test.go](../internal/web/usecase/logs_test.go) — на коде вида
+  `out := f(); if out == nil { t.Fatal(…) }; out.Field…`, где разыменование заведомо безопасно.
+  Находки появлялись/исчезали от смены НАБОРА линтеров (полный конфиг → 8; те же 13 линтеров через
+  `--enable-only` → 0; `staticcheck`+`modernize` → 0), что выглядело как взаимодействие линтеров, а
+  это чистый артефакт кеша: после `golangci-lint cache clean` полный конфиг даёт `0 issues` два
+  прогона подряд. **Вывод для отладки:** прежде чем править код под неожиданную находку
+  staticcheck — сперва `golangci-lint cache clean` и повторный прогон. Иначе легко «починить»
+  правильный код под фантом. В CI это не стреляет (кеш golangci-lint между jobs не переносится —
+  `.go-cache` тянет только `.cache/go-build` и `.cache/go-mod`).
+- **Проверка «линтер жив» в job `go-lint`.** `golangci-lint run` с выпавшим линтером печатает
+  «0 issues» и завершается успешно, то есть тихая деградация (переименовали линтер, откатили
+  конфиг, образ v2.12-alpine уехал вперёд) выглядит как зелёный CI. Поэтому job грепает вывод
+  `golangci-lint linters` на `^modernize:` **строго в разделе Enabled** — вывод содержит и раздел
+  «Disabled by your configuration» с теми же именами, грep по всему выводу дал бы ложный успех.
+  Рядом добавлен `golangci-lint config verify` — валидация конфига по схеме именно того образа,
+  что стоит в CI.

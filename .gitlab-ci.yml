@@ -178,6 +178,29 @@ go-lint:
   script:
     - 'echo "===== golangci-lint version ====="'
     - golangci-lint version
+    # Валидация .golangci.yml по JSON-схеме ИМЕННО той версии, что в образе.
+    # Образ `v2.12-alpine` — rolling (v2.12.x), и набор допустимых ключей/линтеров
+    # в нём может обгонять локальный бинарь. Без этого шага опечатка в конфиге или
+    # исчезнувший линтер (напр. `modernize`, добавленный в v2.12) диагностируются
+    # только по невнятному падению `run`. `config verify` даёт точную строку.
+    - 'echo "===== golangci-lint config verify ====="'
+    - golangci-lint config verify
+    # Явная проверка, что modernize реально включён в ЭТОМ прогоне: `run` с
+    # выключенным линтером всё равно печатает «0 issues», поэтому деградация
+    # «линтер тихо отвалился» прошла бы незамеченной. `linters` печатает
+    # фактический набор с учётом конфига.
+    # NB: вывод содержит ДВА раздела (Enabled/Disabled) — грепать по всему
+    # выводу нельзя, имя нашлось бы и в «Disabled». Отсюда sed-диапазон,
+    # ограничивающий поиск разделом Enabled.
+    - 'echo "===== enabled linters (проверяем наличие modernize) ====="'
+    - golangci-lint linters | sed -n '/^Enabled by your configuration/,/^Disabled by your configuration/p'
+    - |
+      if ! golangci-lint linters \
+        | sed -n '/^Enabled by your configuration/,/^Disabled by your configuration/p' \
+        | grep -q '^modernize:'; then
+        echo "modernize отсутствует в наборе включённых линтеров — проверь .golangci.yml и версию образа" >&2
+        exit 1
+      fi
     # --timeout=15m, а не 5m: линтерам нужно СОБРАТЬ пакеты, и на холодном
     # прогоне (в логе выше по job'у — «Failed to extract cache») сборка с нуля
     # съедает почти весь бюджет. Симптом характерный: job печатает «0 issues»

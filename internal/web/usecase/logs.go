@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"nexus/internal/domain"
@@ -22,6 +23,19 @@ type LogsUsecase struct {
 
 	pollInterval time.Duration
 	streamLimit  int
+
+	// rangeMu/rangeCache — кеш DateRange per (table, nodeID) для автоокна
+	// §77.2: min/max нужны на КАЖДУЮ страницу скролла, а меняются медленно.
+	// TTL короткий (dateRangeCacheTTL) — протухший max лишь сдвигает якорь
+	// первой страницы на несколько секунд назад, что автоокно само и покрывает.
+	rangeMu    sync.Mutex
+	rangeCache map[string]dateRangeEntry
+}
+
+// dateRangeEntry — снимок DateRange с моментом получения.
+type dateRangeEntry struct {
+	minMs, maxMs int64
+	at           time.Time
 }
 
 // LogsOption — функциональная опция конструктора.
@@ -41,6 +55,7 @@ func NewLogsUsecase(logs port.LogReader, nodes port.NodeRepo, logger logging.Log
 		logger:       logger,
 		pollInterval: 1 * time.Second,
 		streamLimit:  200,
+		rangeCache:   map[string]dateRangeEntry{},
 	}
 	for _, o := range opts {
 		o(u)
@@ -65,6 +80,9 @@ func (u *LogsUsecase) ListSince(ctx context.Context, nodeID, teamID string, sinc
 
 // Search — snapshot с расширенными фильтрами (Phase 6.8, §48).
 // Подставляет n.ClickHouseTable в q.Table.
+//
+// §77.2: запрос без пользовательской нижней границы (SinceMs == 0) сужается
+// автоокном — см. searchAutoWindow. Пользовательский from автоокно отключает.
 func (u *LogsUsecase) Search(ctx context.Context, nodeID, teamID string, q port.LogQuery) ([]*domain.LogRecord, error) {
 	// §48: разбор q ДО резолва узла — синтаксическая ошибка (→400) приоритетнее
 	// деградации «логи не настроены».
@@ -78,7 +96,148 @@ func (u *LogsUsecase) Search(ctx context.Context, nodeID, teamID string, q port.
 	q.Table = n.ClickHouseTable
 	q.NodeID = n.ID
 	u.applyDateCreateAligned(&q, n)
+	if !autoWindowApplicable(q) {
+		return u.logs.Search(ctx, q)
+	}
+	return u.searchAutoWindow(ctx, q)
+}
+
+// autoWindowApplicable — можно ли подбирать окно самим (§77.2).
+//
+// Нельзя в двух случаях:
+//   - пользователь задал нижнюю границу сам — период обязан соблюдаться дословно;
+//   - включён полнотекстовый фильтр. Автоокно выигрывает, когда страница
+//     набирается из свежего окна; полнотекстовое совпадение может лежать где
+//     угодно в истории, и тогда узкие окна лишь УМНОЖАЮТ число дорогих проб.
+//     Расчёт по боевым замерам §77.5 (`q=photo`, 11 млн строк): шесть проб
+//     1ч→90д стоят ~76 с, плюс финальная попытка без границы ~28 с — вместо
+//     одних только 28 с сегодня. От долгого полнотекста пользователя защищает
+//     не окно, а индикатор с отменой (§77.3).
+func autoWindowApplicable(q port.LogQuery) bool {
+	return q.SinceMs == 0 && q.QExpr == nil
+}
+
+// autoWindows — ширины окон автоокна §77.2, от узкого к широкому. Первое окно,
+// набравшее полную страницу, — ответ; после самого широкого идёт финальная
+// попытка вообще без нижней границы.
+var autoWindows = []time.Duration{
+	time.Hour,
+	6 * time.Hour,
+	24 * time.Hour,
+	7 * 24 * time.Hour,
+	30 * 24 * time.Hour,
+	90 * 24 * time.Hour,
+}
+
+// dateRangeCacheTTL — время жизни кеша DateRange для автоокна (§77.2).
+const dateRangeCacheTTL = 30 * time.Second
+
+// searchAutoWindow — чтение страницы окнами нарастающей ширины (§77.2).
+//
+// Без пользовательского from запрос `ORDER BY date_request DESC LIMIT n`
+// читает широкие колонки практически по всей таблице (замер §77.5: ~900 мс
+// на страницу при 11 млн строк против 75–185 мс с окном в сутки). Поэтому
+// нижняя граница подбирается здесь: якорь — курсор пагинации (UntilMs) либо
+// max(date_request) узла; окна autoWindows расширяются, пока не набрана полная
+// страница.
+//
+// Инвариант конца истории (§72.2): фронт считает историю исчерпанной, когда
+// строк пришло меньше limit. Поэтому недобор в окне НИКОГДА не возвращается
+// как ответ: окно, ушедшее ниже min(date_request), заменяется финальной
+// попыткой без нижней границы — недобор после неё означает настоящий конец.
+func (u *LogsUsecase) searchAutoWindow(ctx context.Context, q port.LogQuery) ([]*domain.LogRecord, error) {
+	limit := effectiveLogLimit(q.Limit)
+	minMs, maxMs, ok := u.dateRangeCached(ctx, q.Table, q.NodeID)
+	if !ok || maxMs == 0 {
+		// Диапазон неизвестен (ошибка DateRange) либо записей нет — одна
+		// честная попытка без окна: на пустой таблице она дешёвая, а ошибку
+		// классифицирует обычный путь Search.
+		u.logger.Debug("logs auto-window: no date range, direct search",
+			u.logger.Str("table", q.Table), u.logger.Any("range_known", ok))
+		return u.logs.Search(ctx, q)
+	}
+
+	anchor := q.UntilMs
+	if anchor == 0 {
+		anchor = maxMs
+	}
+	for attempt, w := range autoWindows {
+		since := anchor - w.Milliseconds()
+		if since <= minMs {
+			// Окно покрыло всю историю узла — расширяться дальше некуда,
+			// сразу финальная попытка без нижней границы.
+			break
+		}
+		wq := q
+		wq.SinceMs = since
+		t0 := time.Now() // замер длительности — не через Clock (см. platform/clock)
+		recs, err := u.logs.Search(ctx, wq)
+		if err != nil {
+			return nil, err
+		}
+		if len(recs) >= limit {
+			u.logger.Debug("logs auto-window: page filled",
+				u.logger.Str("table", q.Table),
+				u.logger.Int("attempt", attempt+1),
+				u.logger.Int("window_ms", int(w.Milliseconds())),
+				u.logger.Int("rows", len(recs)),
+				u.logger.Int("duration_ms", int(time.Since(t0).Milliseconds())))
+			return recs, nil
+		}
+		u.logger.Debug("logs auto-window: widening",
+			u.logger.Str("table", q.Table),
+			u.logger.Int("attempt", attempt+1),
+			u.logger.Int("window_ms", int(w.Milliseconds())),
+			u.logger.Int("rows", len(recs)),
+			u.logger.Int("want", limit),
+			u.logger.Int("duration_ms", int(time.Since(t0).Milliseconds())))
+	}
+	u.logger.Debug("logs auto-window: final unbounded attempt",
+		u.logger.Str("table", q.Table))
 	return u.logs.Search(ctx, q)
+}
+
+// effectiveLogLimit — та же нормализация limit, что в адаптере ClickHouse
+// (1..500, дефолт 100): автоокну нужно знать реальный размер страницы, чтобы
+// отличать «окно узкое» от «страница полная».
+func effectiveLogLimit(limit int) int {
+	if limit <= 0 || limit > 500 {
+		return 100
+	}
+	return limit
+}
+
+// dateRangeCached — DateRange узла с кешем на dateRangeCacheTTL (§77.2).
+// ok=false — свежего значения нет и получить не удалось (ошибка не
+// пробрасывается: автоокно деградирует в прямой Search, который сам
+// классифицирует недоступность CH).
+func (u *LogsUsecase) dateRangeCached(ctx context.Context, table, nodeID string) (minMs, maxMs int64, ok bool) {
+	key := table + "|" + nodeID
+	now := u.clock.Now()
+	u.rangeMu.Lock()
+	if e, hit := u.rangeCache[key]; hit && now.Sub(e.at) < dateRangeCacheTTL {
+		u.rangeMu.Unlock()
+		return e.minMs, e.maxMs, true
+	}
+	u.rangeMu.Unlock()
+
+	minMs, maxMs, err := u.logs.DateRange(ctx, table, nodeID)
+	if err != nil {
+		u.logger.Debug("logs auto-window: date range failed",
+			u.logger.Str("table", table), u.logger.Err(err))
+		return 0, 0, false
+	}
+	u.rangeMu.Lock()
+	// Заодно выметаем протухшее: узлы удаляются и переезжают на другие таблицы,
+	// а Web живёт неделями — без этого карта росла бы неограниченно.
+	for k, e := range u.rangeCache {
+		if now.Sub(e.at) >= dateRangeCacheTTL {
+			delete(u.rangeCache, k)
+		}
+	}
+	u.rangeCache[key] = dateRangeEntry{minMs: minMs, maxMs: maxMs, at: now}
+	u.rangeMu.Unlock()
+	return minMs, maxMs, true
 }
 
 // CountLogs — точное число записей под теми же фильтрами, что и Search (§67,

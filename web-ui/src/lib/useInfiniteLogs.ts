@@ -70,8 +70,20 @@ export function useInfiniteLogs(o: {
   // следующую страницу тянем сами).
   containerRef: RefObject<HTMLElement | null>;
   maxRows?: number;
+  // collapseEnabled — разрешение «возврату к верху» схлопывать кеш до первой
+  // страницы (§72.5). Журнал логов выключает его, пока раскрыта строка (§77.1):
+  // схлопывание выбрасывало страницы 2+ вместе с раскрытой строкой, и тело
+  // закрывалось. По умолчанию включено (вкладка «Очередь» строк не раскрывает).
+  collapseEnabled?: boolean;
+  // onPageLoaded — длительность успешно загруженной страницы, мс (§77.3):
+  // журнал логов по ней выключает автообновление на дорогих фильтрах (>2 с).
+  onPageLoaded?: (ms: number) => void;
 }): UseInfiniteLogsResult {
   const { nodeId, queryKey, params, pageSize, enabled, refetchInterval = false, containerRef } = o;
+  const collapseEnabled = o.collapseEnabled ?? true;
+  // Коллбэк в ref: он пересоздаётся каждый рендер и в deps queryFn не годится.
+  const onPageLoadedRef = useRef(o.onPageLoaded);
+  onPageLoadedRef.current = o.onPageLoaded;
   const maxRows = o.maxRows ?? MAX_INFINITE_ROWS;
   const qc = useQueryClient();
   // Ключ в ref: массив пересоздаётся каждый рендер и в deps коллбэков не годится.
@@ -82,13 +94,18 @@ export function useInfiniteLogs(o: {
     queryKey,
     enabled,
     initialPageParam: null as LogsCursor | null,
-    queryFn: ({ pageParam }) => {
+    // signal — настоящая отмена запроса (§77.3): без него «Отменить» рвало бы
+    // запрос только в react-query, а ClickHouse продолжал бы его выполнять.
+    queryFn: async ({ pageParam, signal }) => {
       const p: Record<string, string | number> = { ...params, limit: pageSize };
       if (pageParam) {
         p.to = pageParam.to;
         p.before_id = pageParam.beforeId;
       }
-      return api.get<LogsResp>(`/api/nodes/${nodeId}/logs`, p);
+      const t0 = performance.now();
+      const resp = await api.get<LogsResp>(`/api/nodes/${nodeId}/logs`, p, { signal });
+      onPageLoadedRef.current?.(performance.now() - t0);
+      return resp;
     },
     getNextPageParam: (lastPage) => {
       const items = lastPage.items ?? [];
@@ -155,7 +172,8 @@ export function useInfiniteLogs(o: {
       // Гейт по числу страниц обязателен: событий скролла десятки в секунду, а
       // setQueryData уведомляет подписчиков даже когда данные не изменились —
       // без него каждое движение у верха перерисовывало бы весь список.
-      if (pageCount > 1) collapseToFirstPage();
+      // §77.1: при раскрытой строке схлопывание отложено (collapseEnabled).
+      if (pageCount > 1 && collapseEnabled) collapseToFirstPage();
       return;
     }
     if (!canFetchMore) return;
@@ -163,7 +181,7 @@ export function useInfiniteLogs(o: {
       query.fetchNextPage();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [containerRef, canFetchMore, pageCount, collapseToFirstPage, query.fetchNextPage]);
+  }, [containerRef, canFetchMore, pageCount, collapseEnabled, collapseToFirstPage, query.fetchNextPage]);
 
   // Догрузка при недоборе высоты: контента меньше высоты контейнера (скроллбара
   // нет) — доскроллить нельзя, тянем следующую страницу сами.

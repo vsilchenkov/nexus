@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -126,9 +127,9 @@ func (h *ServiceLogsHandler) Download(c *gin.Context) {
 
 	w := bufio.NewWriter(c.Writer)
 	// Tail отдаёт свежие первыми; файл пишем в хронологическом порядке.
-	for i := len(entries) - 1; i >= 0; i-- {
-		w.WriteString(FormatServiceLogLine(entries[i])) //nolint:errcheck // ошибка всплывёт на Flush
-		w.WriteByte('\n')                               //nolint:errcheck
+	for _, e := range slices.Backward(entries) {
+		w.WriteString(FormatServiceLogLine(e)) //nolint:errcheck // ошибка всплывёт на Flush
+		w.WriteByte('\n')                      //nolint:errcheck
 	}
 	if err := w.Flush(); err != nil {
 		h.logger.Warn("service logs download flush failed", h.logger.Err(err))
