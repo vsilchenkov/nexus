@@ -483,6 +483,10 @@ func (r *LogReaderCH) GetBodyChunk(ctx context.Context, table, id, which string,
 }
 
 // ListSince — записи узла nodeID с date_request_unix_ms > cursor; ASC, LIMIT.
+//
+// §78.6: дедупа по ID здесь намеренно НЕТ (в отличие от Search). Это поток
+// событий live-tail: повтор ID означает новый прогон доставки уже показанной
+// записи — событие, которое оператор и должен увидеть, а не дубль страницы.
 func (r *LogReaderCH) ListSince(ctx context.Context, table, nodeID string, cursor int64, limit int) ([]*domain.LogRecord, error) {
 	if !isSafeTableName(table) {
 		return nil, fmt.Errorf("invalid table name: %q", table)
@@ -669,6 +673,21 @@ func (r *LogReaderCH) searchConds(ctx context.Context, q port.LogQuery) ([]strin
 // Search — snapshot с расширенными фильтрами (§7.4 Phase 6.8). Сортировка
 // по date_request DESC, LIMIT (1..500, default 100). Все фильтры опциональны;
 // пустые поля q не попадают в WHERE.
+//
+// §78.6: единица выдачи — ЗАПИСЬ, а не строка таблицы. На один ID приходится
+// столько строк, сколько раз запускался прогон доставки (redelivery Kafka,
+// DLQ-репроцессор §36, ttl_expired, replay, дренаж retry-топика §38);
+// внутренние ретраи одного прогона схлопнуты в attempts/attempts_details.
+// `LIMIT 1 BY ID` оставляет свежайшую попытку каждой записи — ту же строку,
+// что отдаёт GetByID при разворачивании. Без него страница из limit строк
+// схлопывалась дедупом фронта в горстку записей, а Count считал другую
+// единицу — боевое «Показано 17 из 40».
+//
+// Keyset-курсор (UntilMs+BeforeID) строится по свежайшей попытке последней
+// записи страницы, поэтому СТАРЫЕ попытки уже показанной записи лежат ниже
+// курсора и могут прийти повторно на следующей странице — их отсеивает дедуп
+// фронта (useInfiniteLogs). Контракт конца истории (len < limit, §72.2) это не
+// нарушает: пока остаются непрочитанные строки, страница набирается полностью.
 func (r *LogReaderCH) Search(ctx context.Context, q port.LogQuery) ([]*domain.LogRecord, error) {
 	if !isSafeTableName(q.Table) {
 		return nil, fmt.Errorf("invalid table name: %q", q.Table)
@@ -689,7 +708,7 @@ func (r *LogReaderCH) Search(ctx context.Context, q port.LogQuery) ([]*domain.Lo
 		return nil, err
 	}
 	rows, err := conn.Query(ctx, fmt.Sprintf(
-		`SELECT %s FROM %s%s ORDER BY date_request DESC, ID DESC LIMIT ?`,
+		`SELECT %s FROM %s%s ORDER BY date_request DESC, ID DESC LIMIT 1 BY ID LIMIT ?`,
 		listCols, q.Table, where), append(args, limit)...)
 	if err != nil {
 		return nil, classifyCHErr("clickhouse search", err)
@@ -717,6 +736,11 @@ const countTimeout = 10 * time.Second
 // игнорируется: «Всего» считается по фильтрам, а не по странице. Таймаут —
 // countTimeout; его превышение классифицируется как unavailable (деградация,
 // не 500).
+//
+// §78.6: считаются ЗАПИСИ (uniqExact по ID), а не строки таблицы — та же
+// единица, что у Search и NodeKPI §44. `count()` считал прогоны доставки, и
+// счётчик расходился со списком («Показано 17 из 40»). uniqExact дороже
+// count(): страховка — countTimeout выше (мягкая деградация до «Показано N»).
 func (r *LogReaderCH) Count(ctx context.Context, q port.LogQuery) (uint64, error) {
 	if !isSafeTableName(q.Table) {
 		return 0, fmt.Errorf("invalid table name: %q", q.Table)
@@ -735,15 +759,20 @@ func (r *LogReaderCH) Count(ctx context.Context, q port.LogQuery) (uint64, error
 		return 0, err
 	}
 	var total uint64
-	if err := conn.QueryRow(cctx, fmt.Sprintf("SELECT count() FROM %s%s", q.Table, where), args...).
+	if err := conn.QueryRow(cctx, fmt.Sprintf("SELECT uniqExact(ID) FROM %s%s", q.Table, where), args...).
 		Scan(&total); err != nil {
 		return 0, classifyCHErr("clickhouse count logs", err)
 	}
 	return total, nil
 }
 
-// CountErrors считает записи-ошибки в таблице за окно (sinceMs, untilMs]
-// (§20.3). Ошибка = status>=400 OR status=0 (сетевой сбой) OR done=0.
+// CountErrors считает ошибки в таблице за окно (sinceMs, untilMs] (§20.3,
+// Telegram-уведомления). Ошибка = status>=400 OR status=0 (сетевой сбой) OR done=0.
+//
+// §78.6: единица здесь намеренно оставлена СТРОКОЙ — это счётчик неудачных
+// прогонов доставки для порога уведомления, а не «сколько записей показать».
+// Ни к какому списку в UI он не стоит парой, поэтому переводить его на записи
+// незачем (это изменило бы смысл порога у всех настроенных уведомлений).
 func (r *LogReaderCH) CountErrors(ctx context.Context, table, nodeID string, sinceMs, untilMs int64) (uint64, error) {
 	if !isSafeTableName(table) {
 		return 0, fmt.Errorf("invalid table name: %q", table)
@@ -778,6 +807,12 @@ func (r *LogReaderCH) CountErrors(ctx context.Context, table, nodeID string, sin
 // CountFailed считает НЕдоставленные записи (строго done=0) за окно
 // (sinceMs, untilMs] (§35 — KPI «неудачные доставки»). Каждая такая запись —
 // сообщение, ушедшее в DLQ.
+//
+// §78.6: единица — ЗАПИСЬ (uniqExact по ID), а не строка: неудачная запись это
+// та, у которой в окне есть хотя бы один прогон done=0. Ровно это множество
+// отменяет и удаляет очистка «Неудачных доставок» (FailedIDs — уже DISTINCT ID,
+// DeleteFailed), поэтому KPI, список под ним и видимое «очищено N» сходятся
+// (боевой аудит расхождения: cancelled=5 при deleted=10).
 func (r *LogReaderCH) CountFailed(ctx context.Context, table, nodeID string, sinceMs, untilMs int64) (uint64, error) {
 	if !isSafeTableName(table) {
 		return 0, fmt.Errorf("invalid table name: %q", table)
@@ -788,7 +823,7 @@ func (r *LogReaderCH) CountFailed(ctx context.Context, table, nodeID string, sin
 		return 0, err
 	}
 	var n uint64
-	q := fmt.Sprintf("SELECT count() FROM %s WHERE %s", table, strings.Join(conds, " AND "))
+	q := fmt.Sprintf("SELECT uniqExact(ID) FROM %s WHERE %s", table, strings.Join(conds, " AND "))
 	if err := conn.QueryRow(ctx, q, args...).Scan(&n); err != nil {
 		return 0, classifyCHErr("clickhouse count failed", err)
 	}
@@ -990,7 +1025,10 @@ func (r *LogReaderCH) DateRange(ctx context.Context, table, nodeID string) (int6
 
 // DeleteFailed — lightweight DELETE записей done=0 за окно (sinceMs, untilMs] из
 // CH-таблицы узла (очистка вида «Неудачные доставки»). Возвращает число удалённых
-// (посчитано до DELETE — CH lightweight delete счётчик не отдаёт).
+// ЗАПИСЕЙ (§78.6; посчитано до DELETE — CH lightweight delete счётчик не отдаёт).
+// Строк из таблицы уходит больше: у записи с несколькими прогонами доставки
+// удаляются все её строки done=0. Видимое пользователю «очищено N» — про записи,
+// как и число отменённых сообщений рядом.
 func (r *LogReaderCH) DeleteFailed(ctx context.Context, table, nodeID string, sinceMs, untilMs int64) (uint64, error) {
 	if !isSafeTableName(table) {
 		return 0, fmt.Errorf("invalid table name: %q", table)

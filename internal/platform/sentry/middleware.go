@@ -4,6 +4,7 @@ import (
 	"github.com/getsentry/sentry-go"
 	"github.com/gin-gonic/gin"
 
+	"nexus/internal/platform/metrics"
 	"nexus/internal/platform/requestid"
 )
 
@@ -60,15 +61,21 @@ func GinMiddleware(service string) gin.HandlerFunc {
 		if reqID != "" {
 			span.SetTag("request_id", reqID)
 		}
+
+		c.Request = c.Request.WithContext(span.Context())
+		c.Next()
+
+		// §78.2: теги node/root_method ставятся ПОСЛЕ обработчика. У боевого
+		// трафика Receiver'а теперь один общий маршрут /api/v1/*path, поэтому
+		// вывести их из имени маршрута нельзя — обработчик кладёт значения в
+		// контекст, а он заполнен только после c.Next(). Span финиширует в defer
+		// выше, так что теги в него попадают.
 		if v1 := nodePathFromGin(c); v1 != "" {
 			span.SetTag("node", v1)
 		}
 		if root := rootMethod(c); root != "" {
 			span.SetTag("root_method", root)
 		}
-
-		c.Request = c.Request.WithContext(span.Context())
-		c.Next()
 
 		span.Status = httpStatusToSpanStatus(c.Writer.Status())
 	}
@@ -91,9 +98,17 @@ func routeName(c *gin.Context) string {
 	return c.Request.URL.Path
 }
 
-// nodePathFromGin — для /api/v1/request/*path и /api/v1/requestAsync/*path
-// возвращает значение path-параметра без ведущего слеша.
+// nodePathFromGin — путь узла для тега `node`: канонический путь, положенный
+// обработчиком (metrics.NodeLabelKey), иначе сырой path-параметр без ведущего
+// слеша.
+//
+// §78.2: сырой параметр у боевых маршрутов теперь содержит и сегмент метода
+// (`request/webhook/sbp-qr`), поэтому предпочтение — значению из контекста: с
+// ним тег совпадает с меткой `node` в Prometheus и не меняется от формы адреса.
 func nodePathFromGin(c *gin.Context) string {
+	if v := c.GetString(metrics.NodeLabelKey); v != "" {
+		return v
+	}
 	p := c.Param("path")
 	if p == "" {
 		return ""
@@ -104,15 +119,11 @@ func nodePathFromGin(c *gin.Context) string {
 	return p
 }
 
+// rootMethod — корневой метод узла для тега `root_method`. Источник тот же, что
+// у метки method в Prometheus (§78.2): у боевого трафика имя маршрута одно на
+// все формы адреса, выводить из него нечего.
 func rootMethod(c *gin.Context) string {
-	full := c.FullPath()
-	switch full {
-	case "/api/v1/request/*path":
-		return "request"
-	case "/api/v1/requestAsync/*path":
-		return "requestAsync"
-	}
-	return ""
+	return c.GetString(metrics.RootMethodLabelKey)
 }
 
 func httpStatusToSpanStatus(code int) sentry.SpanStatus {

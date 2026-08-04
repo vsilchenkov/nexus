@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"nexus/internal/domain"
+	"nexus/internal/platform/i18n"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase"
 )
@@ -281,6 +282,15 @@ func (h *TeamHandler) replyTeamError(c *gin.Context, err error) {
 	case errors.Is(err, domain.ErrTeamHasNodes):
 		// П17: команду с привязанными узлами удалить нельзя (FK RESTRICT).
 		c.JSON(http.StatusConflict, gin.H{"error": "team has attached nodes — move or delete them first"})
+	case errors.Is(err, domain.ErrTeamSlugReserved):
+		// §78.3: единственная ошибка команды с локализованным текстом — её
+		// показывают обычному пользователю формы, и «reserved by the bus ingress
+		// path» без перевода читается как внутренняя деталь. Код отдаём рядом
+		// с текстом, как у валидации узла (§28).
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": i18n.Translate(i18n.FromGin(c), "team.slug_reserved"),
+			"code":  "team.slug_reserved",
+		})
 	case errors.Is(err, domain.ErrTeamSlugFormat),
 		errors.Is(err, domain.ErrTeamNameLength),
 		errors.Is(err, domain.ErrTeamCHDatabaseFormat),

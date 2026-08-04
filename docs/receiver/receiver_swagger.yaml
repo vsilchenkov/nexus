@@ -11,6 +11,39 @@ info:
   title: Nexus Receiver API
   version: "1.0"
 paths:
+  /api/v1/{path}:
+    post:
+      description: 'Короткая форма адреса: /api/v1/<team_slug>/<node_path> (для команды
+        default слог можно опустить). Синхронный это узел или асинхронный, определяет
+        его root_method, поэтому в адресе метод не указывается. Формы /api/v1/request/...
+        и /api/v1/requestAsync/... продолжают работать.'
+      parameters:
+      - description: '[<team_slug>/]<node_path>'
+        in: path
+        name: path
+        required: true
+        type: string
+      responses:
+        "200":
+          description: ответ внешнего узла (sync) либо {result:true,id} (async)
+          schema:
+            additionalProperties: true
+            type: object
+        "202":
+          description: queued (paused node, §3.6)
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: node not found (в т.ч. узел RabbitMQAsync — входящего HTTP
+            у него нет)
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Запрос через узел без указания метода (§78.1).
+      tags:
+      - routing
   /api/v1/callback/{path}:
     post:
       description: Приём входящего webhook'а от внешнего провайдера. Alias асинхронного

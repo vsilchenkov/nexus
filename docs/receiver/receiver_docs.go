@@ -143,6 +143,49 @@ const docTemplatereceiver = `{
                     }
                 }
             }
+        },
+        "/api/v1/{path}": {
+            "post": {
+                "description": "Короткая форма адреса: /api/v1/\u003cteam_slug\u003e/\u003cnode_path\u003e (для команды default слог можно опустить). Синхронный это узел или асинхронный, определяет его root_method, поэтому в адресе метод не указывается. Формы /api/v1/request/... и /api/v1/requestAsync/... продолжают работать.",
+                "tags": [
+                    "routing"
+                ],
+                "summary": "Запрос через узел без указания метода (§78.1).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "[\u003cteam_slug\u003e/]\u003cnode_path\u003e",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "ответ внешнего узла (sync) либо {result:true,id} (async)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "202": {
+                        "description": "queued (paused node, §3.6)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "node not found (в т.ч. узел RabbitMQAsync — входящего HTTP у него нет)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }`
