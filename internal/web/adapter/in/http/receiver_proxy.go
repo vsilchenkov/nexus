@@ -12,13 +12,22 @@ import (
 )
 
 // RegisterReceiverProxy вешает на Web-роутер реверс-прокси боевых эндпоинтов
-// Receiver: /api/v1/request/*, /api/v1/requestAsync/*, /api/v1/callback/*.
+// Receiver — ВСЁ, что приходит на /api/v1/*.
 //
 // Web Service — единый вход (§17.1): клиенты бьют в его хост и для UI, и для
 // боевого трафика. Без этого прокси путь /api/v1/request/... не матчился бы ни
 // одним handler'ом Web и проваливался в NoRoute. Запросы проксируются «как
 // есть» (метод, заголовки, тело, query), а ответ Receiver (тело+код+заголовки)
 // возвращается клиенту без изменений.
+//
+// §78.2: маршрут один и без разбора формы адреса. Три отдельных
+// (request/requestAsync/callback) не дали бы добавить короткую форму §78.1 —
+// catch-all рядом с ними роняет gin при старте, — а разбирать первый сегмент
+// Web незачем: диспетчеризация целиком на Receiver. Собственных маршрутов под
+// /api/v1/ у Web нет (весь REST админки живёт на /api/… без v1), так что
+// catch-all тут ничего не перехватывает. Следствие: неизвестный /api/v1/…
+// теперь получает 404 от Receiver ({"error":"node not found"}), а не от
+// SPA-фолбэка Web ({"error":"not found"}).
 //
 // receiverURL — базовый адрес Receiver (например, http://receiver:8080).
 // При пустом receiverURL прокси не регистрируется (single-process dev без
@@ -55,8 +64,7 @@ func RegisterReceiverProxy(r *gin.Engine, receiverURL string, logger logging.Log
 	// FlushInterval>0 — корректная потоковая передача ответов получателя.
 	proxy.FlushInterval = 100 * time.Millisecond
 
-	h := gin.WrapH(proxy)
-	r.Any("/api/v1/request/*path", h)
-	r.Any("/api/v1/requestAsync/*path", h)
-	r.Any("/api/v1/callback/*path", h)
+	// Регистрируется на движке, а не в группе /api: боевой трафик, как и
+	// раньше, не проходит CSRF-проверку Origin (см. routes.go).
+	r.Any("/api/v1/*path", gin.WrapH(proxy))
 }
