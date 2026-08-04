@@ -108,13 +108,20 @@ describe("LogsTab — серверная фильтрация (§72.2)", () => {
     );
   });
 
-  it("клик по «В работе» отправляет done=no", async () => {
-    renderTab();
+  // §77.4: своего переключателя у done больше нет (доказанный дубль «OK/Ошибок»),
+  // но параметр живёт: дип-линк из «Очереди» обязан фильтровать ПЕРВЫМ запросом
+  // и быть видимым — иначе список молча показывает подмножество.
+  it("дип-линк done=no фильтрует на сервере и показывается снимаемым чипом", async () => {
+    renderTab({ done: "no" });
     await waitFor(() => expect(logsCalls.length).toBeGreaterThan(0));
+    expect(logsCalls[0].done).toBe("no");
 
+    // Сегмента «Все|Завершено|В работе» в шапке нет.
+    expect(screen.queryByText("logs.filter.done_all")).toBeNull();
+
+    // Чип виден и снимается — после снятия параметр не уходит.
     fireEvent.click(screen.getByText("logs.filter.done_no"));
-
-    await waitFor(() => expect(lastLogsCall().done).toBe("no"));
+    await waitFor(() => expect(lastLogsCall().done).toBeUndefined());
   });
 
   it("список и счётчик спрашивают ОДИН набор фильтров", async () => {

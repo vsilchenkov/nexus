@@ -716,6 +716,16 @@
       "done_yes": "Done",
       "done_no": "Pending"
     },
+    "search": {
+      "running": "Searching…",
+      "cancel": "Cancel",
+      "cancelled": "Search cancelled. Narrow the period or filters and try again.",
+      "retry": "Retry",
+      "full_history_hint": "No period set — the whole history is scanned."
+    },
+    "autorefresh": {
+      "paused_slow": "Auto-refresh paused: the query under current filters is slow."
+    },
     "col": {
       "time": "Time",
       "http_method": "HTTP",

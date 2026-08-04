@@ -32,8 +32,17 @@ export function isNotFound(error: unknown): boolean {
 }
 
 export const api = {
-  async get<T>(url: string, params?: Record<string, unknown>): Promise<T> {
-    const r = await axiosInstance.get<T>(url, { params });
+  // opts.signal — настоящая отмена HTTP-запроса (§77.3): react-query передаёт
+  // AbortSignal в queryFn, и без проброса в axios отмена оставалась бы чисто
+  // клиентской — ClickHouse продолжал бы молотить дорогой полнотекстовый
+  // запрос. Разрыв соединения отменяет c.Request.Context() хендлера, и
+  // clickhouse-go снимает запрос на сервере.
+  async get<T>(
+    url: string,
+    params?: Record<string, unknown>,
+    opts?: { signal?: AbortSignal },
+  ): Promise<T> {
+    const r = await axiosInstance.get<T>(url, { params, signal: opts?.signal });
     return r.data;
   },
   async post<T>(url: string, body?: unknown): Promise<T> {
