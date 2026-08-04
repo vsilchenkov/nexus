@@ -104,6 +104,36 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 	return u.callSender(ctx, node, req)
 }
 
+// NodeRootMethod сообщает корневой метод узла, адресованного коротким URL
+// §78.1 (`/api/v1/<team_slug>/<node_path>` — без сегмента request/requestAsync).
+// Синхронность узла — свойство конфигурации, а не запроса, поэтому handler
+// сначала спрашивает её здесь, а затем ведёт запрос в ту же ветку, что и
+// legacy-URL.
+//
+// Отключённый узел неотличим от несуществующего (ErrNodeNotFound): факт
+// существования наружу не раскрываем. Статус paused здесь НЕ обрабатывается —
+// его разбирает выбранная ветка (§3.6: sync на paused → async).
+//
+// Резолв тот же и с тем же порядком интерпретаций, что у Route/RouteAsync,
+// поэтому повторный вызов внутри выбранной ветки бьёт в L1/Redis-кеш узла.
+func (u *RouteUsecase) NodeRootMethod(ctx context.Context, teamSlug, nodePath string) (domain.RootMethod, error) {
+	node, _, err := resolveNode(ctx, u.nodes, teamSlug, nodePath)
+	if err != nil {
+		return "", err
+	}
+	if node.Status == domain.NodeStatusDisabled {
+		return "", domain.ErrNodeNotFound
+	}
+	u.logger.Debug("route: root method resolved for short url",
+		u.logger.Str("team", teamSlug),
+		u.logger.Str("path", nodePath),
+		u.logger.Str("node", node.Path),
+		u.logger.Str("node_id", node.ID),
+		u.logger.Str("root_method", string(node.RootMethod)),
+		u.logger.Str("status", string(node.Status)))
+	return node.RootMethod, nil
+}
+
 // checkNodeAcceptsSync — допуск запроса к узлу: статус, тип узла, входящий
 // метод и входящая авторизация. Отдельно от сборки запроса: здесь только
 // «пускать или нет», без единого побочного эффекта.

@@ -490,6 +490,7 @@
       "path_passthrough": "Проксировать хвост пути",
       "path_passthrough_hint": "Хвост входящего пути после пути узла приклеивается к Target URL. Напр. узел ozon + запрос /ozon/GetAuthToken → <target>/GetAuthToken. Выключено — точный матч пути (лишний хвост → 404).",
       "full_address": "Полный адрес",
+      "legacy_address": "классический",
       "state": "Состояние",
       "url_static": "Статичный",
       "url_static_desc": "адрес из Target URL",

@@ -7,6 +7,8 @@ import (
 
 	"github.com/getsentry/sentry-go"
 	"github.com/gin-gonic/gin"
+
+	"nexus/internal/platform/metrics"
 )
 
 // TestHttpStatusToSpanStatus — мэппинг HTTP-кодов на SpanStatus (§14.3).
@@ -104,20 +106,34 @@ func TestGinMiddleware_SkipsInfraPaths(t *testing.T) {
 	}
 }
 
+// TestRootMethod — §78.2: теги node/root_method берутся из того, что положил
+// обработчик. Выводить их из имени маршрута больше нельзя: у боевого трафика
+// Receiver'а он один на все формы адреса (/api/v1/*path), а сырой path-параметр
+// содержит ещё и сегмент метода.
 func TestRootMethod(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
 
 	r := gin.New()
 	r.GET("/api/v1/request/*path", func(c *gin.Context) {
+		c.Set(metrics.RootMethodLabelKey, "request")
+		c.Set(metrics.NodeLabelKey, "demo")
 		if got := rootMethod(c); got != "request" {
 			t.Errorf("/api/v1/request: got %q", got)
+		}
+		if got := nodePathFromGin(c); got != "demo" {
+			t.Errorf("/api/v1/request node: got %q, want путь узла без сегмента метода", got)
 		}
 		c.Status(200)
 	})
 	r.GET("/api/v1/requestAsync/*path", func(c *gin.Context) {
+		c.Set(metrics.RootMethodLabelKey, "requestAsync")
 		if got := rootMethod(c); got != "requestAsync" {
 			t.Errorf("/api/v1/requestAsync: got %q", got)
+		}
+		// Без метки в контексте — фолбэк на сырой параметр (прежнее поведение).
+		if got := nodePathFromGin(c); got != "x" {
+			t.Errorf("/api/v1/requestAsync node fallback: got %q", got)
 		}
 		c.Status(200)
 	})

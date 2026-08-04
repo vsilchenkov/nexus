@@ -22,6 +22,13 @@ func TestIsSelfReferenceTarget(t *testing.T) {
 		{"host without port, self has no port, target has port", "https://nexus.example.com:443/v1/request/x", true},
 		{"self host:port but target different port", "http://receiver:9090/v1/request/demo", false},
 		{"matching host but non-ingress path", "http://receiver:8080/health", false},
+		// §78.4: короткий адрес узла — тоже вход шины. Без этого узел с
+		// target_url на собственный /api/v1/<команда>/<путь> проходил бы
+		// проверку, и защита §32.2 молча ослабла бы.
+		{"short url ingress path", "http://receiver:8080/api/v1/webhook/sbp-qr", true},
+		{"short url without team slug", "https://nexus.example.com/api/v1/sbp-qr", true},
+		{"legacy v1 short url", "http://receiver:8080/v1/webhook/sbp-qr", true},
+		{"api path outside v1 is not ingress", "http://receiver:8080/api/nodes", false},
 		{"different host", "https://external.example.org/v1/request/x", false},
 		{"empty target", "", false},
 		{"not a url", "://bad", false},

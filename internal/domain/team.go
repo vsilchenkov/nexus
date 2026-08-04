@@ -2,6 +2,7 @@ package domain
 
 import (
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -82,6 +83,35 @@ var (
 	teamSlugPattern       = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
 	teamCHDatabasePattern = regexp.MustCompile(`^nexus_[a-z][a-z0-9_]{0,40}$`)
 )
+
+// reservedTeamSlugs — слаги, занятые сегментами-методами боевого адреса шины
+// (§78.3). Команда с таким слагом сделала бы короткую форму адреса
+// /api/v1/<slug>/<path> неоднозначной: первый сегмент прочитался бы как метод.
+//
+// «requestasync» в списке ради читаемости адресов: каноническое `requestAsync`
+// формату слага и так не удовлетворяет (верхний регистр), а нижний регистр
+// технически безопасен — сравнение сегмента-метода регистрозависимо.
+//
+// Миграции и CHECK-constraint'а под этот список НЕТ намеренно: уже созданные
+// команды ломать нельзя. Их узлы остаются доступны по legacy-форме адреса, а
+// наличие таких команд проверяется при выкате (см. DEPLOYMENT §9.5).
+var reservedTeamSlugs = map[string]struct{}{
+	"request":      {},
+	"requestasync": {},
+	"callback":     {},
+}
+
+// TeamSlugReserved сообщает, что слаг занят сегментом-методом боевого адреса
+// (§78.3).
+//
+// Намеренно НЕ часть Team.Validate: правило применяется только к НОВЫМ слагам
+// (проверка в TeamUsecase.Create). Validate вызывается и при переименовании
+// команды, поэтому запрет внутри него сломал бы правку уже существующей
+// команды с таким слагом — а ТЗ обещает их не ломать.
+func TeamSlugReserved(slug string) bool {
+	_, ok := reservedTeamSlugs[strings.ToLower(strings.TrimSpace(slug))]
+	return ok
+}
 
 // Validate проверяет инварианты команды.
 func (t *Team) Validate() error {

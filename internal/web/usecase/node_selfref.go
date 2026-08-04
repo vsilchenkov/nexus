@@ -40,10 +40,15 @@ func isSelfReferenceTarget(targetURL string, selfHosts []string) bool {
 	return hostMatchesSelf(parsed, selfHosts)
 }
 
-// isIngressPath — путь указывает на входной endpoint Receiver-а. Префикс
-// /v1/request покрывает и /v1/requestAsync; аналогично для /api/v1/.
+// isIngressPath — путь указывает на входной endpoint Receiver-а.
+//
+// §78.4: сверяется ВЕСЬ префикс /api/v1/ (и legacy /v1/), а не только
+// .../request*. С появлением короткого адреса §78.1 узел, чей target_url ведёт
+// на собственный /api/v1/<команда>/<путь>, перестал бы попадать под проверку —
+// защита молча ослабла бы ровно в момент появления новой формы. Под /api/v1/ у
+// шины нет ничего, кроме боевого входа, поэтому огрубление безопасно.
 func isIngressPath(path string) bool {
-	return strings.HasPrefix(path, "/v1/request") || strings.HasPrefix(path, "/api/v1/request")
+	return strings.HasPrefix(path, "/v1/") || strings.HasPrefix(path, "/api/v1/")
 }
 
 // hostMatchesSelf сравнивает authority цели со списком своих. Элемент с портом

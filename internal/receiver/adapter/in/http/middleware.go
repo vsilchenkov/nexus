@@ -18,7 +18,13 @@ type rateAllower interface {
 }
 
 // RateLimitMiddleware применяет глобальный rate-limit per node:
-// ключ — первый сегмент path после /api/v1/request/ или /api/v1/requestAsync/.
+// ключ — путь узла после сегмента метода (/api/v1/request/, /api/v1/requestAsync/,
+// /api/v1/callback/) либо весь путь при короткой форме адреса §78.1.
+//
+// §78.2: сегмент метода срезается тем же SplitVerb, что и в handler'е. Иначе
+// legacy- и короткая форма адреса одного узла попали бы в РАЗНЫЕ корзины, и
+// клиент удваивал бы квоту простой сменой формы (а у всех узлов разом сменились
+// бы ключи Redis).
 //
 // Если limit=0, middleware no-op. При недоступности Redis — fail-open
 // (§9.4 ТЗ).
@@ -27,7 +33,8 @@ func RateLimitMiddleware(rl rateAllower, limitPerMin int, logger logging.Logger)
 		return func(c *gin.Context) { c.Next() }
 	}
 	return func(c *gin.Context) {
-		nodePath := strings.TrimPrefix(c.Param("path"), "/")
+		_, rest := SplitVerb(c.Param("path"))
+		nodePath := strings.TrimPrefix(rest, "/")
 		if nodePath == "" {
 			c.Next()
 			return

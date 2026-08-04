@@ -14,7 +14,7 @@ export function ConfigTab({ node }: { node: Node }) {
   const verb = node.root_method === "request" ? "request" : "requestAsync";
   // §28 Пункт 1: адрес из публичного base URL приложения + slug команды.
   const buildUrl = useNodeUrlBuilder();
-  const fullAddress = buildUrl(verb, node.path);
+  const address = buildUrl(verb, node.path);
   // Команда узла — только человекочитаемое имя (без slug/UUID, §65): эндпоинт
   // узла отдаёт лишь team_id, имя резолвим по членствам (запрос общий с шапкой,
   // react-query дедуплицирует ключ) с фолбэком на резолвер §58 (тот уже
@@ -44,9 +44,19 @@ export function ConfigTab({ node }: { node: Node }) {
         </Row>
         {!isPull && (
           <Row label={t("node.form.full_address")}>
-            <div className="flex items-center gap-1.5">
-              <span className="min-w-0 break-all font-mono text-[12px]">{fullAddress}</span>
-              <CopyButton value={fullAddress} />
+            {/* §78.5: основной — короткий адрес (без request/requestAsync);
+                классический показан ниже, он работает без ограничения срока. */}
+            <div className="space-y-1">
+              <div className="flex items-center gap-1.5">
+                <span className="min-w-0 break-all font-mono text-[12px]">{address.short}</span>
+                <CopyButton value={address.short} />
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="min-w-0 break-all font-mono text-[11px] text-fg-subtle">
+                  {t("node.form.legacy_address")}: {address.legacy}
+                </span>
+                <CopyButton value={address.legacy} />
+              </div>
             </div>
           </Row>
         )}

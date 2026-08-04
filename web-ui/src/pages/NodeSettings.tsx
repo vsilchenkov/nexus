@@ -483,7 +483,7 @@ export default function NodeSettings() {
   // §28 Пункт 1: полный адрес собирается из публичного адреса приложения
   // (если задан в настройках) или origin браузера + slug текущей команды.
   const buildUrl = useNodeUrlBuilder();
-  const fullAddress = buildUrl(verb, form.path);
+  const address = buildUrl(verb, form.path);
 
   // §26/§28 Пункт 3: форму узла (с полями авторизации) открывает только
   // manager+. viewer перенаправляется на просмотр/список.
@@ -578,9 +578,9 @@ export default function NodeSettings() {
               {!isPull && (
                 <div className="mt-1 flex items-center gap-1.5">
                   <span className="min-w-0 break-all font-mono text-[11px] text-fg-subtle">
-                    {fullAddress}
+                    {address.short}
                   </span>
-                  <CopyButton value={fullAddress} />
+                  <CopyButton value={address.short} />
                 </div>
               )}
             </Field>
@@ -1213,8 +1213,8 @@ export default function NodeSettings() {
                     <span className="rounded bg-accent/10 px-2 py-0.5 text-[11px] text-accent">
                       {form.incoming_method}
                     </span>
-                    <span className="min-w-0 break-all font-mono">{fullAddress}</span>
-                    <CopyButton value={fullAddress} />
+                    <span className="min-w-0 break-all font-mono">{address.short}</span>
+                    <CopyButton value={address.short} />
                   </div>
                   <div className="pl-2">↓ Receiver</div>
                   <div className="pl-2">

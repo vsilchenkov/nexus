@@ -378,6 +378,9 @@
 | **§75: размер топиков Kafka на экране мониторинга** | ✅ §75 | ТЗ — [75-topic-size-jmx.md](sections/75-topic-size-jmx.md), ветка `feature/topic-size-jmx`. Колонка «Размер» в таблице «Топики» §31 показывала прочерк с самого появления раздела: `SizeBytes` не заполнялся никогда — `segmentio/kafka-go` не реализует `DescribeLogDirs` (в v0.4.51 нет ни метода, ни сообщения в `protocol/`). `kafka_exporter` тут не помогает вовсе — размера среди его метрик нет. Источник — JMX брокера (`kafka.log:type=Log,name=Size`): [deploy/docker/kafka.Dockerfile](../deploy/docker/kafka.Dockerfile) (`apache/kafka` + `jmx_prometheus_javaagent`; jar лежит в [deploy/vendor/](../deploy/vendor/), сборка не ходит в сеть, подмена версии/зеркала — `ARG JMX_AGENT_SRC`, который `ADD` принимает и путём, и URL) + [deploy/kafka-jmx.yml](../deploy/kafka-jmx.yml) (одно правило → `kafka_log_log_size{topic,partition}`) + `KAFKA_OPTS` в трёх compose + job `kafka-jmx` в [prometheus.yml](../deploy/prometheus.yml). Читает [PromMetrics.KafkaTopicSizes](../internal/web/adapter/out/prometheus/client.go) (instant `sum by(topic)(kafka_log_log_size)`), домешивает `fillTopicSizes` в [kafka_monitor.go](../internal/web/usecase/kafka_monitor.go) ДО записи в Redis-кеш (1 запрос на TTL 30 с). Величина = занято на дисках кластера (все реплики). Ответ получил флаг `sizes_available` (Prometheus отдал хотя бы одну серию): без него пустой топик с честным нулём выглядел бы так же, как отсутствующий источник. Деградация прежняя: нет Prometheus/агента или чужая Kafka → нули и «—» с `title`-подсказкой в [TopicsTable.tsx](../web-ui/src/components/kafka/TopicsTable.tsx). Эксплуатация: применение = пересоздание контейнера брокера (простой 30–60 с), битый конфиг агента не даёт JVM стартовать. Без миграций и новых конфиг-ключей |
 | **§76: ссылка на команду — параметр `?team=<slug>` и кнопка «Поделиться»** | ✅ §76 | ТЗ — [76-team-share.md](sections/76-team-share.md), ветка `feature/team-share`. Активная команда жила только в серверной сессии (`Session.CurrentTeamID` в Redis, §4.15): переслать коллеге «рабочий стол команды X» было нечем, а два таба на `/` могли смотреть на разные команды неразличимо по URL. **Бэкенд не менялся вовсе** — `GET /api/me/teams` уже отдаёт `slug` каждого членства ([auth_handler.go](../internal/web/adapter/in/http/auth_handler.go)), переключение делает существующий `POST /api/me/switch-team`, а резолв `slug → team_id` клиентский, по членствам: нового эндпоинта не нужно, и «нет такой команды» / «я не член» неотличимы by design (no-leak, как единый 404 §58.3). **Фронт:** [lib/teamShare.ts](../web-ui/src/lib/teamShare.ts) — `TEAM_PARAM`, `teamPageUrl(slug)` (`${origin}/?team=<slug>`, всегда рабочий стол), `teamParamAllowed()` (белый список `/`, `/kafka`, `/audit`; `/nodes/*` исключены — командой страницы владеет §58, `/settings/*` — вне скоупа команды §7.14.1), хук `useTeamUrlParam()` — единственный писатель параметра; [components/TeamUrlSync.tsx](../web-ui/src/components/TeamUrlSync.tsx) — монтаж хука и баннер «Команда недоступна», включён в [AppShell.tsx](../web-ui/src/components/AppShell.tsx) над `<Outlet/>` ровно один раз; [TeamSwitcher.tsx](../web-ui/src/components/TeamSwitcher.tsx) — `ShareTeamButton` (Share2 → Check на 1.5 с) третьей кнопкой в строке команды, доступна всем ролям. Ссылка по **slug**, а не по id как у узла (§58): slug глобально уникален и неизменяем (`PUT /api/teams/{id}` принимает только `name`) → адрес читается человеком и не протухает. Семантика — **зеркало**: значение параметра всегда равно slug'у текущей команды сессии, входящее значение применяется один раз, запись всегда `replace` и функциональной формой (чужие ключи фильтров §54 обязаны выжить). Логики в местах переключения нет: параметр — производная от `current_team_id`, поэтому TeamSwitcher, «Избранное» сайдбара и §58 попадают в URL одним эффектом. Тесты: [teamShare.test.tsx](../web-ui/src/lib/teamShare.test.tsx) (16 сценариев), регресс сосуществования с §54/§71 — [overviewFilters.test.ts](../web-ui/src/lib/overviewFilters.test.ts), [Overview.period.test.tsx](../web-ui/src/pages/Overview.period.test.tsx). i18n: `teams.share`, `teams.unavailable`. Без миграций, эндпоинтов и конфиг-ключей. Неочевидности — §4.58. Бандл пересобран → `internal/web/static/` |
 | **§77: логи узла — живое раскрытое тело, автопоиск, скорость на десятках млн записей** | ✅ §77 | ТЗ — [77-logs-ux-and-scale.md](sections/77-logs-ux-and-scale.md), ветка `feature/logs-ux-perf`. Четыре жалобы, три из которых упирались в одно: список перезапрашивался целиком и без временно́го окна. **77.1 (tail-poll):** `refetchInterval` у `useInfiniteQuery` убран; раз в 5 с тянется только «что появилось после самой свежей строки» (`from = ts − 1 с`) и вливается в начало первой страницы через `setQueryData` с дедупом по `id` — существующие строки не пересоздаются, раскрытое тело живёт; полный ответ хвоста = сигнал дыры → честный `invalidate`, а не склейка с потерей записей; `collapseToFirstPage` §72.5 не срабатывает, пока строка раскрыта (`collapseEnabled` в [useInfiniteLogs.ts](../web-ui/src/lib/useInfiniteLogs.ts)); пилюля «N новых записей ↑» работает и в snapshot. **77.2 (автоокно):** `searchAutoWindow` в [usecase/logs.go](../internal/web/usecase/logs.go) — окна `1ч→6ч→24ч→7д→30д→90д→без границы` от якоря (курсор пагинации либо `max(date_request)` из кешированного `DateRange`, TTL 30 с), первое окно с полной страницей — ответ; **последняя попытка всегда без нижней границы**, иначе фронт принял бы недобор за конец истории (§72.2); `Count` и пользовательский `from` автоокном не трогаются; замер: 50 млн строк — 7 мс на страницу против 1153 мс, 1 млн — 7 мс против 86 мс (время не зависит от объёма). **77.3 (автопоиск):** кнопка «Применить» удалена — Enter/blur у поля «Поиск» (Esc — откат), сразу у комбобоксов/дат/тумблеров; коммит идемпотентен (иначе Enter+blur дают дубль, а blur о «Сбросить» — лишний запрос); `api.get` принимает `AbortSignal` ([client.ts](../web-ui/src/api/client.ts)) → «Отменить» рвёт запрос и в ClickHouse (разрыв соединения → отмена `c.Request.Context()`), запрос дольше 0.7 с показывает «Поиск… [Отменить]», дольше 2 с — выключает автообновление. **77.4:** сегмент «Все\|Завершено\|В работе» убран как доказанный дубль «OK\|Ошибок» (`count` по 7 комбинациям на 17 боевых узлах: `err ≡ done=no`, пересечения 0; корень — `send.go` пишет `Done = 2xx`), параметр API и предикаты §72.1 сохранены, дип-линк §47 показывается снимаемым чипом. Тесты: [logs_autowindow_test.go](../internal/web/usecase/logs_autowindow_test.go) (7 unit), [log_autowindow_test.go](../tests/integration/log_autowindow_test.go) (E2E честности выдачи + масштабный замер `make test-int-logs-scale`), [LogsTab.autorefresh.test.tsx](../web-ui/src/components/node/LogsTab.autorefresh.test.tsx) (8, проверены красными на старом коде). Без миграций и конфиг-ключей. Неочевидности — §4.63. Бандл пересобран → `internal/web/static/` |
+| **§78.6: единица счёта в логах — запись, а не строка** | ✅ §78.6 | ТЗ — [78-node-url-and-log-counters.md](sections/78-node-url-and-log-counters.md), ветка `feature/node-url-log-counters`. Боевой симптом: «Показано 17 из 40», остальные 23 записи недостижимы (скролл сообщал конец истории). Причина — разные единицы: `Count` считал `count()` (СТРОКИ таблицы), список после дедупа по `id` показывал ЗАПИСИ. Строка = прогон доставки: redelivery Kafka, DLQ-репроцессор §36, `ttl_expired`, replay и дренаж retry-топика §38 пишут свою строку с тем же `ID`; внутренние ретраи одного прогона схлопнуты в `attempts`/`attempts_details`. В [log_reader.go](../internal/web/adapter/out/clickhouse/log_reader.go): `Count`/`CountFailed` → `uniqExact(ID)`, `Search` → `... ORDER BY date_request DESC, ID DESC LIMIT 1 BY ID LIMIT ?` (свежайшая попытка — та же строка, что раскроет `GetByID`). `CountFailed` теперь сходится с `FailedIDs` (уже был `DISTINCT ID`) и `DeleteFailed`, т.е. видимое «очищено N» перестало расходиться с числом отменённых сообщений (боевой аудит расхождения: `cancelled=5` при `deleted=10`). Намеренно НЕ тронуты: `ListSince` (live-tail — повтор `ID` там новое событие, а не дубль) и `CountErrors` §20.3 (порог Telegram-уведомлений считает прогоны доставки; перевод на записи сменил бы смысл порога у всех настроенных уведомлений). Автоокно §77.2 кода не потребовало — `len(recs) >= limit` само стало мерить записи. Тест: [log_dedup_count_test.go](../tests/integration/log_dedup_count_test.go) — первый тест логов, сеющий дубли `ID` (через эту дыру дефект и прошёл: ни один прежний тест их не сеял), проверен красным на старом коде (`Count` 120 вместо 40, страница двоила записи, `CountFailed` 80 вместо 30). Без миграций и конфиг-ключей. Неочевидности — §4.64 |
+| **§78.1–78.5: короткий адрес узла `/api/v1/<команда>/<путь>`** | ✅ §78 | ТЗ — [78-node-url-and-log-counters.md](sections/78-node-url-and-log-counters.md), ветка `feature/node-url-log-counters`. Адрес без сегмента `request`/`requestAsync`: синхронность берётся из `node.root_method` при том же резолве узла (ни полей, ни миграций, ни лишних запросов — резолв кеширован L1/Redis). `RabbitMQAsync` → 404 (входящего HTTP у pull-узла нет, существование не раскрываем), sync на паузе → 202 `queued` (§3.6). **Legacy-формы работают без ограничения срока**, включая их прежнюю семантику: `/request/<async-узел>` по-прежнему 404, `/requestAsync/<sync-узел>` по-прежнему принимается. **Механика (§78.2):** три маршрута Receiver заменены ОДНИМ catch-all `/api/v1/*path` + разбор первого сегмента в [handler.go](../internal/receiver/adapter/in/http/handler.go) (`SplitVerb` → `handleIngress` → `handleAuto`), потому что `/api/v1/*path` рядом с `/api/v1/request/*path` роняет gin при старте (проверено на v1.12.0: `catch-all wildcard … conflicts with existing path segment 'request'`); разбор в `NoRoute` отвергнут — туда не доходят middleware группы (rate-limit не применился бы, а `metrics.GinMiddleware` выходит при пустом `FullPath`, и боевой трафик исчез бы из метрик). Инварианты, которые молча сломались бы: ключ rate-limit срезает сегмент метода тем же `SplitVerb` (иначе смена формы адреса удваивает квоту и меняет все ключи Redis); метка `method` переехала из `FullPath` в контекст (`metrics.RootMethodLabelKey`) со **значениями прежними** — на `method="requestAsync"` стоит дашборд Kafka, на `"request"` — алерт латентности; метку ставит вызывающий, поэтому paused sync остаётся `request`, уходя в async-ветку; новые значения только `callback` (раньше метился именем маршрута) и `route` (404 по короткому адресу). Web проксирует `/api/v1/*path` одним маршрутом вне группы `/api` — CSRF на боевой трафик по-прежнему не вешается; неизвестный `/api/v1/…` теперь отвечает 404 от Receiver, а не от SPA-фолбэка. **Смена контракта:** не-POST на `/api/v1/callback/…` → 405 (раньше 404 из `NoRoute`). **§78.3:** слоги `request`/`requestasync`/`callback` запрещены на СОЗДАНИИ команды ([team.go](../internal/web/usecase/team.go)), а не в `Team.Validate()` — та же функция зовётся при переименовании, и запрет в ней сломал бы правку legacy-команды; без миграции, ошибка локализована (`team.slug_reserved`). **§78.4:** признак «входной путь шины» в защите от самоссылки §32.2 расширен до всего `/api/v1/` — узел с `target_url` на собственный короткий адрес иначе прошёл бы проверку. **§78.5 (UI):** карточка «Конфиг» показывает короткий адрес основным, классический — строкой ниже; у команды `default` слог опускается, кроме путей с зарезервированным первым сегментом ([nodeUrl.ts](../web-ui/src/lib/nodeUrl.ts)). Тесты: [handler_shorturl_test.go](../internal/receiver/adapter/in/http/handler_shorturl_test.go), [receiver_proxy_test.go](../internal/web/adapter/in/http/receiver_proxy_test.go), [receiver_short_url_test.go](../tests/integration/receiver_short_url_test.go) (E2E на реальном PG), [nodeUrl.test.ts](../web-ui/src/lib/nodeUrl.test.ts). Swagger перегенерирован, бандл пересобран. Неочевидности — §4.65 |
+| **§78.7: проброс параметров при смене метода (GET→POST)** | ✅ §78.7 | Кода не потребовалось — поведение проверено на боевом узле `sbp-qr` (GET с query → `POST <target>?<query>`, 200) и зафиксировано контрактом ТЗ, потому что вопрос возникает повторно. Query входящего запроса всегда переносится в URL исходящего (`ResolveURL` → `appendQuery` в [route.go](../internal/receiver/usecase/route.go)), параметры узла и клиента складываются (`Add`, не `Set`), вырезаются только служебные — `url_param_name` при `from_request` §3.4 и поле динамической авторизации при `auth_dynamic_source=query` §41. Тело исходящего = тело входящего: у GET оно пустое, конверсии «query → тело» нет и не вводится (формат тела — контракт принимающей системы). Пробел был в ПОКРЫТИИ: тесты подмены метода §40 шли с пустой query, тесты query — с методом POST, то есть именно эта связка не проверялась ничем. Закрыт [receiver_get_to_post_test.go](../tests/integration/receiver_get_to_post_test.go) (метод, все параметры включая повторяющийся ключ и параметр узла из `target_url`, пустое тело); тест проверен мутацией прод-кода — при отключённом `appendQuery` краснеет. Известное ограничение, зафиксированное тестом намеренно: `Content-Type` берётся из входящего запроса, поэтому «голый» GET даёт исходящий POST без него (задать на узле нечем — `forward_headers` только пробрасывает пришедшее); строгий приёмник ответит 400/415. Статические заголовки узла — вне рамок §78 |
 | UI формы: Toggle, карточки «Заголовки» / «Логирование» | ✅ Phase 22.3 | [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx) (две карточки, мастер-тумблер гасит `<fieldset disabled>`), компонент [Toggle](../web-ui/src/components/ui/pickers.tsx), i18n ru/en |
 | Telegram-алерты через Prometheus + метрика `nexus_request_incomplete_total` | ✅ Phase 22.4 | [notification.go](../internal/web/usecase/notification.go) (`PromMetrics.NodeErrors` вместо `LogReader.CountErrors`), [metrics.go](../internal/platform/metrics/metrics.go), инкремент в [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go)/[async.go](../internal/sender/usecase/async.go), wiring [app.go](../internal/web/app.go) (требует Prometheus) |
 | Карточки Overview под `ui_cards.html` (спарклайн, p95, фильтр) | ✅ Phase 22.5 | [Overview.tsx](../web-ui/src/pages/Overview.tsx) (полоса-акцент, chip+pill, 3 метрики, спарклайн, target, фильтр статусов, сортировка); backend [prometheus/client.go](../internal/web/adapter/out/prometheus/client.go) (`NodeSeries` range-запрос + p95 в `NodeThroughput`), [metrics.go](../internal/web/usecase/metrics.go), DTO [metrics_handler.go](../internal/web/adapter/in/http/metrics_handler.go) |
@@ -2579,6 +2582,110 @@ write-path: `send.go` пишет `Done = (2xx)`, поэтому предикат
 [web-ui/src/api/client.ts](../web-ui/src/api/client.ts),
 [LogsTab.autorefresh.test.tsx](../web-ui/src/components/node/LogsTab.autorefresh.test.tsx),
 [tests/integration/log_autowindow_test.go](../tests/integration/log_autowindow_test.go).
+
+### 4.64 §78.6 — «Показано 17 из 40». Единица счёта в логах
+
+**Строка таблицы ≠ запись.** Одна запись лога живёт столькими строками, сколько раз запускался
+ПРОГОН доставки: async-redelivery, DLQ-репроцессор §36, финальный `ttl_expired`, replay, дренаж
+retry-топика §38 — каждый вызывает `SendUsecase.Send`, а тот пишет ровно одну строку с тем же `ID`.
+Внутренние ретраи одного прогона (`retry_count` узла) строк не плодят — они схлопнуты в
+`attempts`/`attempts_details`. Модель уже была зафиксирована в коде (`NodeKPI` — `countDistinct(ID)`,
+`FailedIDs` — `DISTINCT ID`, `GetByID` — свежайшая строка), из ряда выпадали только `Count` и
+`CountFailed`, и именно они стоят рядом со списком в UI.
+
+**Почему баг пережил все гейты.** Ни один тест логов не сеял дубли `ID`: синтетический сид
+интеграционных тестов — `concat('s-', toString(number))`, то есть строго уникальные. Фронтовый тест
+«список и счётчик спрашивают один набор фильтров» сверяет query-параметры, а не числа. Поэтому
+регрессионный тест §78.6 начинается с сеятеля дублей, а не с ассертов.
+
+**Автоокно §77.2 к дефекту отношения не имело** — проверялось первым: недобор строк в окне никогда
+не отдаётся наружу, последняя попытка всегда без нижней границы. Симптом «17 из 40 и скролл
+кончился» объясняется целиком единицами: 40 строк < `pageSize` 50, значит сервер честно отдал всё,
+что есть, а 17 — это те же записи после дедупа.
+
+**`LIMIT 1 BY ID` + keyset дают повтор записи на стыке страниц — и это нормально.** Курсор строится
+по свежайшей попытке последней записи страницы, поэтому её же старые попытки лежат НИЖЕ курсора и
+попадут в следующую страницу. Клиентский дедуп по `id` в `useInfiniteLogs` их снимает — поэтому он
+и оставлен (его исходный повод — включительная граница курсора — исчез ещё в §44/45-fix, когда
+курсор стал строгим). Контракт конца истории §72.2 не нарушается: пока непрочитанные строки есть,
+страница набирается полностью.
+
+**Что осталось на строках сознательно:** `ListSince` (live-tail — повтор `ID` там означает новый
+прогон доставки уже показанной записи, оператор должен его видеть) и `CountErrors` §20.3 (порог
+Telegram-уведомлений; он ни к какому списку не приставлен, а перевод на записи молча изменил бы
+смысл всех настроенных порогов).
+
+**Стоимость.** `uniqExact(ID)` дороже `count()` — страховкой остаётся действующий `countTimeout`
+10 с (§67) с мягкой деградацией до «Показано N» без «из M». План «Б», если на боевых объёмах пойдут
+систематические таймауты, — переиспользовать существующий флаг `metrics_approx_counts` §44
+(`uniq` вместо `uniqExact`, HLL, ошибка ~0.3 %), как это уже сделано в `NodeKPI`. В §78 флаг
+намеренно НЕ вводится.
+
+Файлы: [log_reader.go](../internal/web/adapter/out/clickhouse/log_reader.go) (`Search`, `Count`,
+`CountFailed`, комментарии `ListSince`/`CountErrors`/`DeleteFailed`),
+[usecase/logs.go](../internal/web/usecase/logs.go) (комментарий автоокна),
+[tests/integration/log_dedup_count_test.go](../tests/integration/log_dedup_count_test.go).
+
+### 4.65 §78.1–78.5 — короткий адрес узла. Что неочевидно
+
+**Почему один catch-all, а не отдельный маршрут.** `/api/v1/*path` рядом с существующим
+`/api/v1/request/*path` — паника gin ПРИ СТАРТЕ, а не 404 в рантайме:
+`catch-all wildcard '*path' in new path '/api/v1/*path' conflicts with existing path segment
+'request' in existing prefix '/api/v1/request'` (проверено на v1.12.0). Отсюда всё остальное
+устройство: три маршрута схлопнуты в один, первый сегмент разбирает `SplitVerb`.
+
+**Почему не `NoRoute`.** Туда не доходят middleware группы `/api/v1`. Два последствия, каждое
+тихое: rate-limit (`receiver.rate_limit_per_node`) не применялся бы к короткой форме вовсе, а
+`metrics.GinMiddleware` выходит досрочно при пустом `c.FullPath()` — боевой трафик по новым
+адресам просто не появился бы в `nexus_requests_total`, и это заметили бы не сразу.
+
+**Метка `method` — самое хрупкое место.** Она выводилась из имени маршрута, а маршрут теперь один
+на все формы адреса. Значения обязаны остаться прежними: на `method="requestAsync"` стоит
+переменная и два графика дашборда Kafka (`deploy/grafana/nexus-kafka.json`), на `method="request"` —
+алерт латентности (`deploy/prometheus.alerts.yml`). Поэтому метку кладёт handler в контекст
+(`metrics.RootMethodLabelKey`), и кладёт её ВЫЗЫВАЮЩИЙ, а не общий `handleAsyncFromInput`: иначе
+sync-узел на паузе, уходя в async-ветку (§3.6), сменил бы ряд с `request` на `requestAsync`.
+
+**Ключ rate-limit.** С catch-all в `c.Param("path")` приходит путь ВМЕСТЕ с сегментом метода.
+Не срезав его тем же `SplitVerb`, получили бы две корзины на один узел (`request/webhook/sbp-qr` и
+`webhook/sbp-qr`) — клиент удваивает квоту сменой формы адреса, — и разом сменившиеся ключи Redis
+у всех узлов при выкате.
+
+**Первый сегмент неоднозначен by design.** Резолвер §18 сначала читает его как слог команды, потом
+как часть пути в `default` — короткая форма ничего тут не меняет, но означает, что узел
+`default`-команды с путём `webhook/sbp-qr` и узел `sbp-qr` команды `webhook` по короткому адресу
+неразличимы. Однозначность даёт полная форма со слогом; в UI это учтено обратной стороной: у
+`default` слог опускается, КРОМЕ путей, чей первый сегмент — `request`/`requestAsync`/`callback`
+(иначе показанный адрес прочитался бы как legacy-форма).
+
+**Резерв слогов — только на создании.** `Team.Validate()` вызывается и при переименовании, поэтому
+запрет внутри него сломал бы правку уже существующей команды с таким слагом. Проверка живёт в
+`TeamUsecase.Create`; регрессия закреплена тестом `TestTeamValidate_AllowsReservedSlug`.
+
+**Защита от самоссылки §32.2 могла ослабнуть молча.** Признак «путь ведёт во вход шины» проверял
+префикс `/api/v1/request`; узел с `target_url` на собственный короткий адрес под него не подпадал.
+Расширено до всего `/api/v1/` (и legacy `/v1/`) — под этим префиксом у шины нет ничего, кроме
+боевого входа.
+
+**Sentry-middleware ловится тем же ножом, что и метрики** — и его легко пропустить. Он тоже
+выводил теги `node`/`root_method` из `c.FullPath()`, а сырой `c.Param("path")` теперь содержит
+сегмент метода. Без правки теги транзакций разъехались бы: `root_method` исчез бы вовсе, а `node`
+у legacy-трафика стал бы `request/webhook/sbp-qr` вместо `webhook/sbp-qr`. Теги переехали на тот же
+источник, что и метки Prometheus, и ставятся **после** `c.Next()` — до него контекст ещё пуст
+(span финиширует в `defer`, так что поздние теги в него попадают).
+
+**Тестовая грабля:** прокси-маршруты Web нельзя проверять через `httptest.ResponseRecorder` —
+`httputil.ReverseProxy` с `FlushInterval > 0` требует `CloseNotifier`, которого у рекордера нет
+(паника `interface conversion`). Тест поднимает настоящий `httptest.NewServer` поверх gin-движка.
+
+Файлы: [handler.go](../internal/receiver/adapter/in/http/handler.go) (`Register`, `SplitVerb`,
+`handleIngress`, `handleAuto`), [middleware.go](../internal/receiver/adapter/in/http/middleware.go),
+[route.go](../internal/receiver/usecase/route.go) (`NodeRootMethod`),
+[metrics/gin.go](../internal/platform/metrics/gin.go),
+[receiver_proxy.go](../internal/web/adapter/in/http/receiver_proxy.go),
+[team.go](../internal/web/usecase/team.go), [domain/team.go](../internal/domain/team.go),
+[node_selfref.go](../internal/web/usecase/node_selfref.go),
+[nodeUrl.ts](../web-ui/src/lib/nodeUrl.ts), [ConfigTab.tsx](../web-ui/src/components/node/ConfigTab.tsx).
 
 ---
 

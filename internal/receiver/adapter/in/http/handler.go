@@ -36,13 +36,23 @@ func New(
 	return &Handler{route: route, routeAsync: routeAsync, metrics: m, logger: logger, maxBodyBytes: maxBodyBytes}
 }
 
-// Register вешает /api/v1/request/*path и /api/v1/requestAsync/*path на роутер.
+// Register вешает боевые маршруты шины на роутер — ОДНИМ catch-all
+// /api/v1/*path, внутри которого первый сегмент разбирает handleIngress.
 //
 // Phase 10.E.1: маршруты включают team_slug. Полный путь —
 // /api/v1/request/<team_slug>/<node_path>. Legacy без слога
 // (/api/v1/request/<node_path>) сохраняется как convenience для default-team:
 // запросы без префикса слога продолжают работать, NodeReader подставляет
 // domain.DefaultTeamSlug.
+//
+// §78.2: адрес узла может идти и БЕЗ сегмента метода
+// (/api/v1/<team_slug>/<node_path>) — тогда синхронность берётся из
+// node.root_method. Отдельным маршрутом это не сделать: gin роняет роутер при
+// старте, если catch-all соседствует с уже занятым сегментом
+// («catch-all wildcard '*path' … conflicts with existing path segment
+// 'request'»). Разбор в NoRoute тоже не годится — туда не доходят middleware
+// группы: rate-limit не применился бы вовсе, а metrics.GinMiddleware выходит
+// досрочно при пустом c.FullPath(), и боевой трафик исчез бы из метрик.
 //
 // Префикс /api/v1/ обязателен; запрос без него — 404 с подсказкой (§3.1).
 // mws — дополнительные middleware (rate-limit, audit, ...), применяются
@@ -62,14 +72,101 @@ func (h *Handler) Register(r *gin.Engine, mws ...gin.HandlerFunc) {
 	})
 
 	v1 := r.Group("/api/v1", mws...)
-	{
-		v1.Any("/request/*path", h.handleSync)
-		v1.Any("/requestAsync/*path", h.handleAsync)
-		// §16 ТЗ: webhook callback. Alias /v1/requestAsync с обязательной
-		// проверкой того, что у узла IncomingAuthType=webhook_signature.
-		// Сама проверка подписи происходит в RouteAsync через
-		// CheckIncomingAuth (общий путь, без дублирования логики).
-		v1.POST("/callback/*path", h.handleCallback)
+	v1.Any("/*path", h.handleIngress)
+}
+
+// Сегменты-методы в начале пути (legacy-форма адреса узла). Регистр значим —
+// ровно так они писались в маршрутах до §78.
+const (
+	verbRequest      = "request"
+	verbRequestAsync = "requestAsync"
+	verbCallback     = "callback"
+)
+
+// SplitVerb отделяет ведущий сегмент-метод от остатка пути. Остаток всегда
+// начинается с '/' — в том же виде, в каком его отдавал catch-all каждого из
+// трёх прежних маршрутов, поэтому дальше по коду ничего не меняется.
+//
+// Путь без известного сегмента-метода — короткая форма §78.1: verb пуст, весь
+// путь идёт в остаток.
+//
+// Экспортирована ради RateLimitMiddleware: ключ лимита обязан считаться от
+// одного и того же остатка для обеих форм адреса, иначе клиент удваивал бы
+// квоту простой сменой формы (и все ключи Redis сменились бы при выкате).
+func SplitVerb(raw string) (verb, rest string) {
+	trimmed := strings.TrimPrefix(raw, "/")
+	head, tail, _ := strings.Cut(trimmed, "/")
+	switch head {
+	case verbRequest, verbRequestAsync, verbCallback:
+		return head, "/" + tail
+	}
+	return "", raw
+}
+
+// handleIngress — единая точка входа боевого трафика: разбирает ведущий
+// сегмент-метод и ведёт запрос в ту же ветку, что и до §78.
+func (h *Handler) handleIngress(c *gin.Context) {
+	verb, rest := SplitVerb(c.Param("path"))
+	switch verb {
+	case verbRequest:
+		h.handleSync(c, rest)
+	case verbRequestAsync:
+		h.handleAsync(c, rest)
+	case verbCallback:
+		// До §78 маршрут был POST-only, и другой метод падал в NoRoute (404).
+		// Теперь сюда доходит любой — отвечаем честным 405.
+		if c.Request.Method != http.MethodPost {
+			c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "callback accepts POST only"})
+			return
+		}
+		h.handleCallback(c, rest)
+	default:
+		h.handleAuto(c, rest)
+	}
+}
+
+// handleAuto godoc
+// @Summary  Запрос через узел без указания метода (§78.1).
+// @Description  Короткая форма адреса: /api/v1/<team_slug>/<node_path> (для команды default слог можно опустить). Синхронный это узел или асинхронный, определяет его root_method, поэтому в адресе метод не указывается. Формы /api/v1/request/... и /api/v1/requestAsync/... продолжают работать.
+// @Tags     routing
+// @Param    path  path  string  true  "[<team_slug>/]<node_path>"
+// @Success  200  {object}  map[string]interface{}  "ответ внешнего узла (sync) либо {result:true,id} (async)"
+// @Success  202  {object}  map[string]interface{}  "queued (paused node, §3.6)"
+// @Failure  404  {object}  map[string]string  "node not found (в т.ч. узел RabbitMQAsync — входящего HTTP у него нет)"
+// @Router   /api/v1/{path} [post]
+//
+// handleAuto — короткая форма адреса §78.1: /api/v1/<team_slug>/<node_path> без
+// сегмента метода. Синхронность — свойство узла, поэтому она резолвится из
+// конфигурации, а дальше запрос идёт по тому же коду, что и legacy-URL.
+func (h *Handler) handleAuto(c *gin.Context, rest string) {
+	teamSlug, nodePath := splitTeamSlugAndPath(rest)
+	if nodePath == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "empty node path"})
+		return
+	}
+	// Метка node — как в handleSync/handleAsync: путь узла без слога команды.
+	// Ставится до резолва, чтобы 404 по короткому адресу метился так же, как
+	// 404 по legacy-адресу того же пути.
+	c.Set(metrics.NodeLabelKey, nodePath)
+	root, err := h.route.NodeRootMethod(c.Request.Context(), teamSlug, nodePath)
+	if err != nil {
+		c.Set(metrics.RootMethodLabelKey, metrics.RootMethodShortURL)
+		h.replyDomainError(c, err, nodePath, "receiver.auto")
+		return
+	}
+	switch root {
+	case domain.RootMethodRequest:
+		h.handleSync(c, rest)
+	case domain.RootMethodRequestAsync:
+		h.handleAsync(c, rest)
+	default:
+		// Pull-узел (RabbitMQAsync §27) входящего HTTP не имеет. Отвечаем как на
+		// несуществующий узел: факт существования наружу не раскрываем.
+		c.Set(metrics.RootMethodLabelKey, metrics.RootMethodShortURL)
+		h.logger.Debug("receiver.auto: node has no http ingress",
+			h.logger.Str("path", nodePath),
+			h.logger.Str("root_method", string(root)))
+		h.replyDomainError(c, domain.ErrNodeNotFound, nodePath, "receiver.auto")
 	}
 }
 
@@ -103,8 +200,11 @@ func splitTeamSlugAndPath(raw string) (teamSlug, nodePath string) {
 // @Failure  403  {object}  map[string]string  "url not in allowlist"
 // @Failure  404  {object}  map[string]string  "node not found"
 // @Router   /api/v1/request/{path} [post]
-func (h *Handler) handleSync(c *gin.Context) {
-	teamSlug, nodePath := splitTeamSlugAndPath(c.Param("path"))
+//
+// rest — путь после сегмента метода (или весь путь при короткой форме §78.1),
+// всегда с ведущим '/'.
+func (h *Handler) handleSync(c *gin.Context, rest string) {
+	teamSlug, nodePath := splitTeamSlugAndPath(rest)
 	if nodePath == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "empty node path"})
 		return
@@ -112,6 +212,10 @@ func (h *Handler) handleSync(c *gin.Context) {
 	// Метка node для метрик — чистый путь узла (без слога команды), чтобы
 	// совпадать с меткой Sender и корректно мёрджить in/out на дашборде (§21).
 	c.Set(metrics.NodeLabelKey, nodePath)
+	// §78.2: метка method больше не выводится из c.FullPath() — он один на все
+	// формы адреса. Значение прежнее, поэтому ряды Prometheus не разъезжаются и
+	// трафик по короткому адресу виден в существующих панелях.
+	c.Set(metrics.RootMethodLabelKey, string(domain.RootMethodRequest))
 
 	body, err := readBody(c, h.maxBodyBytes)
 	if err != nil {
@@ -165,12 +269,17 @@ func (h *Handler) handleSync(c *gin.Context) {
 // @Success  200  {object}  map[string]interface{}
 // @Failure  400  {object}  map[string]string  "callback not allowed for this node"
 // @Router   /api/v1/callback/{path} [post]
-func (h *Handler) handleCallback(c *gin.Context) {
-	teamSlug, nodePath := splitTeamSlugAndPath(c.Param("path"))
+//
+// rest — путь после сегмента callback, с ведущим '/'.
+func (h *Handler) handleCallback(c *gin.Context, rest string) {
+	teamSlug, nodePath := splitTeamSlugAndPath(rest)
 	if nodePath == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "empty node path"})
 		return
 	}
+	// §78.2: собственная метка method вместо прежнего fallback'а по имени
+	// маршрута — c.FullPath() теперь один на все формы адреса.
+	c.Set(metrics.RootMethodLabelKey, metrics.RootMethodCallback)
 	body, err := readBody(c, h.maxBodyBytes)
 	if err != nil {
 		replyReadBodyError(c, err) // §43-rev: превышение max_body_bytes → 413
@@ -198,12 +307,19 @@ func (h *Handler) handleCallback(c *gin.Context) {
 // @Failure  404  {object}  map[string]interface{}  "{result:false,message} — node not found"
 // @Failure  405  {object}  map[string]interface{}  "{result:false,message} — method not allowed"
 // @Router   /api/v1/requestAsync/{path} [post]
-func (h *Handler) handleAsync(c *gin.Context) {
-	teamSlug, nodePath := splitTeamSlugAndPath(c.Param("path"))
+//
+// rest — путь после сегмента метода (или весь путь при короткой форме §78.1),
+// всегда с ведущим '/'.
+func (h *Handler) handleAsync(c *gin.Context, rest string) {
+	teamSlug, nodePath := splitTeamSlugAndPath(rest)
 	if nodePath == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "empty node path"})
 		return
 	}
+	// §78.2: см. handleSync. Метку ставит вызывающий, а не handleAsyncFromInput:
+	// sync-узел на паузе уходит в async-ветку (§3.6), но остаётся "request" —
+	// ровно как метился по имени маршрута до §78.
+	c.Set(metrics.RootMethodLabelKey, string(domain.RootMethodRequestAsync))
 	body, err := readBody(c, h.maxBodyBytes)
 	if err != nil {
 		replyReadBodyError(c, err) // §43-rev: превышение max_body_bytes → 413

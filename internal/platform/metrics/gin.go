@@ -15,6 +15,13 @@ import (
 // сразу группирует /api/nodes/:id и подобные в один ряд, а не плодит
 // кардинальность по id.
 //
+// §78.2: у боевого трафика Receiver один общий маршрут /api/v1/*path (короткая
+// форма адреса узла несовместима с отдельными маршрутами — см. Handler.Register),
+// поэтому обработчик кладёт метку в контекст под RootMethodLabelKey, и она
+// имеет приоритет над выводом из FullPath. Значения прежние: смена формы адреса
+// не должна разводить один и тот же трафик по разным рядам Prometheus (на
+// method="requestAsync" стоит дашборд Kafka, на "request" — алерт латентности).
+//
 // node = резолвнутый путь узла. Receiver кладёт его в контекст под ключом
 // NodeLabelKey (без слога команды — совпадает с меткой node у Sender, иначе
 // per-node merge in/out на дашборде разъезжается); fallback — path-параметр
@@ -32,7 +39,10 @@ func GinMiddleware(m *Metrics) gin.HandlerFunc {
 			return
 		}
 
-		method := rootMethodFromPath(path)
+		method := c.GetString(RootMethodLabelKey)
+		if method == "" {
+			method = rootMethodFromPath(path)
+		}
 		if method == "" {
 			method = c.Request.Method + " " + path
 		}
@@ -60,6 +70,23 @@ func rootMethodFromPath(fullPath string) string {
 // канонический путь узла (node.Path, без слога команды). Если задан —
 // GinMiddleware пишет его в метку node вместо сырого path-параметра.
 const NodeLabelKey = "nexus_node"
+
+// RootMethodLabelKey — ключ gin-контекста для метки method (§78.2). Обработчик
+// боевого маршрута кладёт туда "request" | "requestAsync" | "callback" |
+// RootMethodShortURL; выводить метку из имени маршрута нельзя — он один на все
+// формы адреса узла.
+const RootMethodLabelKey = "nexus_root_method"
+
+const (
+	// RootMethodCallback — метка webhook-callback'ов (§16). До §78 они метились
+	// именем маршрута ("POST /api/v1/callback/*path"); в дашбордах и алертах эта
+	// строка не используется.
+	RootMethodCallback = "callback"
+	// RootMethodShortURL — метка обращений по короткому адресу §78.1, у которых
+	// узел не разрезолвился (404). Отдельный ряд: мусорные обращения не должны
+	// подмешиваться в боевые request/requestAsync.
+	RootMethodShortURL = "route"
+)
 
 // nodeLabel — канонический путь узла из контекста (если обработчик его положил),
 // иначе fallback на сырой path-параметр URL.

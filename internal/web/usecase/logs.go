@@ -145,6 +145,11 @@ const dateRangeCacheTTL = 30 * time.Second
 // строк пришло меньше limit. Поэтому недобор в окне НИКОГДА не возвращается
 // как ответ: окно, ушедшее ниже min(date_request), заменяется финальной
 // попыткой без нижней границы — недобор после неё означает настоящий конец.
+//
+// §78.6: «полная страница» ниже считается в ЗАПИСЯХ, а не в строках таблицы —
+// адаптер сам оставляет по одной строке на ID (`LIMIT 1 BY ID`). Отдельного
+// кода это не потребовало, но менять условие на «строки» нельзя: окно тогда
+// «наполнялось» бы повторными прогонами доставки одной записи.
 func (u *LogsUsecase) searchAutoWindow(ctx context.Context, q port.LogQuery) ([]*domain.LogRecord, error) {
 	limit := effectiveLogLimit(q.Limit)
 	minMs, maxMs, ok := u.dateRangeCached(ctx, q.Table, q.NodeID)
