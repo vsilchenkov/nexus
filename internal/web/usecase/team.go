@@ -69,6 +69,14 @@ func (u *TeamUsecase) Create(ctx context.Context, actor Actor, slug, name, creat
 	if err := u.instanceID.ValidateTeamSlug(slug); err != nil {
 		return nil, err
 	}
+	// §78.3: слаг — первый сегмент короткого адреса узла
+	// (/api/v1/<slug>/<path>), поэтому совпадение с сегментом-методом сделало бы
+	// адрес неоднозначным. Проверка только здесь, при СОЗДАНИИ: уже существующие
+	// команды с таким слагом остаются рабочими (их узлы доступны по legacy-форме),
+	// и переименование им не ломается.
+	if domain.TeamSlugReserved(slug) {
+		return nil, domain.ErrTeamSlugReserved
+	}
 	t := &domain.Team{
 		Slug:       slug,
 		Name:       name,

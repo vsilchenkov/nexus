@@ -204,9 +204,13 @@ var (
 	// ноды. Отдельная ошибка вместо ErrTeamCHDatabaseFormat: из «ch_database must
 	// match …» оператору непонятно, что чинить слаг, а не имя БД (его он не задаёт).
 	ErrTeamSlugTooLongForInstance = errors.New("domain: team slug is too long for this instance id")
-	ErrTeamInvalidRole            = errors.New("domain: invalid team role")
-	ErrTeamMemberNotFound         = errors.New("domain: team membership not found")
-	ErrTeamHasNodes               = errors.New("domain: team has attached nodes and cannot be deleted")
+	// ErrTeamSlugReserved — §78.3: слаг совпадает с сегментом-методом боевого
+	// адреса, из-за чего короткая форма /api/v1/<slug>/<path> стала бы
+	// неоднозначной (первый сегмент прочитался бы как метод, а не как команда).
+	ErrTeamSlugReserved   = errors.New("domain: team slug is reserved by the bus ingress path")
+	ErrTeamInvalidRole    = errors.New("domain: invalid team role")
+	ErrTeamMemberNotFound = errors.New("domain: team membership not found")
+	ErrTeamHasNodes       = errors.New("domain: team has attached nodes and cannot be deleted")
 
 	// Instance (§70: несколько нод на одном ClickHouse)
 	ErrInstanceIDFormat = errors.New("domain: instance id must be empty or match ^[a-z][a-z0-9]{0,7}$")
