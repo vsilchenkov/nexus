@@ -202,18 +202,20 @@ go-lint:
     # проходил, поэтому дефект доехал до CI; воспроизводится одной строкой:
     #   docker run --rm golangci/golangci-lint:v2.12-alpine sh -c \
     #     'set -o pipefail; golangci-lint linters | grep -q "^modernize:"; echo $?'
+    # Файл — в /tmp, а не в рабочем дереве: при падении следующего шага он бы
+    # там и остался (script прерывается, до `rm` дело не доходит) и попал бы в
+    # кеш/артефакты либо сбил проверку чистоты дерева.
     - 'echo "===== enabled linters (проверяем наличие modernize) ====="'
-    - golangci-lint linters > linters.txt
-    - sed -n '/^Enabled by your configuration/,/^Disabled by your configuration/p' linters.txt
+    - golangci-lint linters > /tmp/linters.txt
+    - sed -n '/^Enabled by your configuration/,/^Disabled by your configuration/p' /tmp/linters.txt
     - |
-      if ! sed -n '/^Enabled by your configuration/,/^Disabled by your configuration/p' linters.txt \
+      if ! sed -n '/^Enabled by your configuration/,/^Disabled by your configuration/p' /tmp/linters.txt \
         | grep -c '^modernize:' > /dev/null; then
         echo "modernize отсутствует в наборе включённых линтеров — проверь .golangci.yml и версию образа" >&2
         echo "--- фактический вывод golangci-lint linters ---" >&2
-        cat linters.txt >&2
+        cat /tmp/linters.txt >&2
         exit 1
       fi
-    - rm -f linters.txt
     # --timeout=15m, а не 5m: линтерам нужно СОБРАТЬ пакеты, и на холодном
     # прогоне (в логе выше по job'у — «Failed to extract cache») сборка с нуля
     # съедает почти весь бюджет. Симптом характерный: job печатает «0 issues»
