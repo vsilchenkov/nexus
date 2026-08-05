@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
 import { api, isNotFound } from "../api/client";
+import { type NodeTab } from "./nodeTabUrl";
 import { useMyTeams, useSwitchTeam } from "./teams";
 
 // Слой данных «Поделиться узлом» (§58). Узел жёстко привязан к команде
@@ -104,6 +105,11 @@ export function useEnsureNodeTeam(id: string | undefined): { status: EnsureStatu
 // nodePageUrl — абсолютная ссылка на страницу узла в UI для кнопки «Поделиться»
 // (§58, п.1). Берём origin текущего окна (адрес UI), путь — стабильный
 // id-роут /nodes/:id (team-независимый: команду резолвит useEnsureNodeTeam).
-export function nodePageUrl(id: string): string {
-  return `${window.location.origin}/nodes/${id}`;
+//
+// §79.3: с tab ссылка ведёт сразу на нужную вкладку. Окно и фильтры журнала в
+// неё НЕ попадают — это сиюминутное состояние клика по графику, а не то, чем
+// делятся; «Обзор» (вкладка по умолчанию) параметром не отмечается.
+export function nodePageUrl(id: string, tab?: NodeTab): string {
+  const base = `${window.location.origin}/nodes/${id}`;
+  return tab && tab !== "overview" ? `${base}?tab=${tab}` : base;
 }
