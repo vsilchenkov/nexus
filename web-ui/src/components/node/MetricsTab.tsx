@@ -21,7 +21,6 @@ import {
   emptyAdvForm,
   logsFilterParams,
   type LogsAdvForm,
-  type LogsDoneFilter,
   type LogsStatusFilter,
 } from "../../lib/logsQuery";
 import { useNodeMetrics } from "./useNodeMetrics";
@@ -33,7 +32,8 @@ import { LogsAdvancedFilters } from "./LogsAdvancedFilters";
 //
 // §79.4: те же расширенные фильтры, что в журнале логов — KPI и график считаются
 // под ними. Полей дат в панели нет: окно задаёт выбор периода, два контрола,
-// пишущих в одни границы, затирали бы друг друга.
+// пишущих в одни границы, затирали бы друг друга. Сегмента «Завершено/В работе»
+// тоже нет — §77.4 убрал его из журнала как доказанный дубль «ОК/Ошибок».
 // §79.5: «Шаг графика» — ширина одного столбца (период 14д + шаг 24ч = 14
 // столбцов по суткам).
 export function MetricsTab({
@@ -50,7 +50,6 @@ export function MetricsTab({
   const [advForm, setAdvForm] = useState<LogsAdvForm>(emptyAdvForm);
   const [applied, setApplied] = useState<LogsAdvForm>(emptyAdvForm);
   const [status, setStatus] = useState<LogsStatusFilter>("all");
-  const [done, setDone] = useState<LogsDoneFilter>("all");
 
   // Коммит идемпотентен — как в журнале (§77.3): Enter + последующий blur не
   // должны порождать два одинаковых запроса метрик.
@@ -60,9 +59,12 @@ export function MetricsTab({
   };
 
   // Даты в параметры не идут: окно метрик — это период (§79.4).
+  // done тоже не выводится в UI: §77.4 доказал, что «Завершено/В работе» —
+  // дубль «ОК/Ошибок» (на боевых узлах err ≡ done=no), и сегмент убрали из
+  // журнала; повторять его здесь незачем. Параметр остаётся выключенным.
   const filterParams = useMemo(
-    () => logsFilterParams({ ...applied, from: "", to: "", status, done }),
-    [applied, status, done],
+    () => logsFilterParams({ ...applied, from: "", to: "", status, done: "all" }),
+    [applied, status],
   );
 
   const m = useNodeMetrics(node.id, period, step, filterParams);
@@ -70,7 +72,7 @@ export function MetricsTab({
   const chartUnavailable = m.data && !m.data.chart_available;
   const byAttempts = m.data?.chart_unit === "attempts";
   const filtersActive =
-    !advFormEqual(applied, emptyAdvForm) || status !== "all" || done !== "all";
+    !advFormEqual(applied, emptyAdvForm) || status !== "all";
 
   return (
     <div className="space-y-4">
@@ -86,9 +88,9 @@ export function MetricsTab({
             aria-label={t("metrics.step.label")}
             className="flex items-center gap-1.5"
           >
-            <span className="text-[10px] uppercase tracking-wider text-fg-muted">
-              {t("metrics.step.label")}
-            </span>
+            {/* Без uppercase: рядом стоит выбор периода с обычными подписями,
+                и капс тут читался как отдельный «заголовок секции». */}
+            <span className="text-xs text-fg-muted">{t("metrics.step.label")}</span>
             <Seg<ChartStep>
               value={step}
               onChange={setStep}
@@ -130,15 +132,6 @@ export function MetricsTab({
                 { value: "all", label: t("logs.filter.all") },
                 { value: "ok", label: t("logs.filter.ok") },
                 { value: "err", label: t("logs.filter.err") },
-              ]}
-            />
-            <Seg<LogsDoneFilter>
-              value={done}
-              onChange={setDone}
-              options={[
-                { value: "all", label: t("logs.filter.done_all") },
-                { value: "done", label: t("logs.filter.done_yes") },
-                { value: "pending", label: t("logs.filter.done_no") },
               ]}
             />
           </div>
