@@ -2387,6 +2387,9 @@ definitions:
     properties:
       capped:
         type: boolean
+      cleaned:
+        description: '§79.2: записей убрано из «Неудачных доставок»'
+        type: integer
       failed:
         description: ошибок replay (оригинал НЕ отменён — остаётся авто-репроцессору)
         type: integer
@@ -4359,9 +4362,11 @@ paths:
     post:
       consumes:
       - application/json
-      description: Пере-инжектирует через Receiver все неудачные (done=0) запросы
-        узла за период и отменяет их оригиналы в DLQ (без двойной доставки). Пустые
-        from/to = всё. Admin-only.
+      description: 'Пере-инжектирует через Receiver недоставленные запросы узла за
+        период (§79.1: записи без единого успешного прогона — уже доставленные не
+        переотправляются), отменяет их оригиналы в DLQ (без двойной доставки) и убирает
+        их строки done=0 из «Неудачных доставок» (§79.2, поле cleaned; на внешней
+        §64 и чужой §70.4 таблице очистка пропускается). Пустые from/to = всё. Admin-only.'
       parameters:
       - description: node id
         in: path

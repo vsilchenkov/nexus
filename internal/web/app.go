@@ -515,6 +515,10 @@ func (a *App) Start(ctx context.Context) error {
 		replayUC := usecase.NewReplayUsecaseWithCancel(
 			logReader, nodeRepo, dispatcher, rl, auditUC,
 			a.cfg.Web.ReplayRateLimitPerUserPerMin, queueCancel, teamRepo, dlqRetention, a.logger,
+			// §79.2: после успешного массового повтора убираем строки done=0
+			// оригиналов — иначе записи остаются в «Неудачных доставках» до
+			// ручной очистки, хотя сообщения уже доставлены.
+			usecase.WithFailedCleaner(logReader),
 		)
 		logsUC := usecase.NewLogsUsecase(logReader, nodeRepo, a.logger)
 		replayHandler = httpadapter.NewReplayHandler(replayUC, a.logger)

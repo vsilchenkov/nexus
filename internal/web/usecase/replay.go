@@ -62,10 +62,22 @@ type ReplayUsecase struct {
 	rl         RateLimiter
 	audit      *AuditUsecase
 	cancel     port.QueueCancelWriter // §36.11: отмена оригиналов при «Повторить все» (nil без Redis)
+	cleaner    port.FailedLogsCleaner // §79.2: уборка строк done=0 после успешного повтора (nil без CH)
 	teams      ReplayTeamResolver     // §18: слаг команды узла для пути реинъекции (nil = без слага)
 	retention  time.Duration          // TTL tombstone'а отмены (= retention топика)
 	rateLimit  int                    // запросов/мин на пользователя (§7.4.1: 10)
 	logger     logging.Logger
+}
+
+// ReplayOption — необязательная зависимость ReplayUsecase. Вариадическая форма
+// вместо очередного позиционного аргумента: у конструктора их уже десять.
+type ReplayOption func(*ReplayUsecase)
+
+// WithFailedCleaner подключает уборку истории неудачных прогонов после
+// массового повтора (§79.2). Без неё «Повторить все» работает как раньше:
+// сообщения уходят, но записи остаются в «Неудачных доставках» до очистки.
+func WithFailedCleaner(c port.FailedLogsCleaner) ReplayOption {
+	return func(u *ReplayUsecase) { u.cleaner = c }
 }
 
 func NewReplayUsecase(
@@ -95,6 +107,7 @@ func NewReplayUsecaseWithCancel(
 	teams ReplayTeamResolver,
 	retention time.Duration,
 	logger logging.Logger,
+	opts ...ReplayOption,
 ) *ReplayUsecase {
 	if rateLimit <= 0 {
 		rateLimit = 10
@@ -102,7 +115,7 @@ func NewReplayUsecaseWithCancel(
 	if retention <= 0 {
 		retention = 7 * 24 * time.Hour
 	}
-	return &ReplayUsecase{
+	u := &ReplayUsecase{
 		logs:       logs,
 		nodes:      nodes,
 		dispatcher: dispatcher,
@@ -114,6 +127,10 @@ func NewReplayUsecaseWithCancel(
 		rateLimit:  rateLimit,
 		logger:     logger,
 	}
+	for _, opt := range opts {
+		opt(u)
+	}
+	return u
 }
 
 // ErrReplayRateLimit — пользователь превысил квоту replay-запросов.
@@ -355,6 +372,7 @@ type ReplayBulkResult struct {
 	Total    int  `json:"total"`    // уникальных неудачных найдено (в пределах cap)
 	Replayed int  `json:"replayed"` // пере-инжектировано (оригинал отменён в DLQ)
 	Failed   int  `json:"failed"`   // ошибок replay (оригинал НЕ отменён — остаётся авто-репроцессору)
+	Cleaned  int  `json:"cleaned"`  // §79.2: записей убрано из «Неудачных доставок»
 	Capped   bool `json:"capped"`
 }
 
@@ -363,10 +381,19 @@ type ReplayBulkResult struct {
 const replayAllCap = 500
 
 // ReplayFailed — «Повторить все сейчас» (§36.11): пере-инжектирует через Receiver
-// все неудачные (done=0) запросы узла за окно [from,to] (нулевые = всё) и при
-// успехе отменяет (qcancel) оригинал в DLQ, чтобы авто-репроцессор не доставил
-// их повторно (без двойной доставки). Узел резолвится с team-scope; disabled →
+// НЕДОСТАВЛЕННЫЕ запросы узла за окно [from,to] (нулевые = всё) и при успехе
+// отменяет (qcancel) оригинал в DLQ, чтобы авто-репроцессор не доставил их
+// повторно (без двойной доставки). Узел резолвится с team-scope; disabled →
 // 409; нет CH-таблицы → no-op. Один rate-limit на всю операцию.
+//
+// §79.1: набор берётся по записям без единого успешного прогона, поэтому уже
+// доставленные сообщения не переотправляются. До этого набор строился по
+// строкам done=0, и массовый повтор слал дубли получателю — боевой случай
+// 2026-08-05: из 16 повторённых сообщений 15 уже были доставлены.
+//
+// §79.2: после успешной реинъекции строки done=0 оригиналов удаляются одним
+// batch-вызовом — записи исчезают из «Неудачных доставок» сразу, без ручной
+// очистки. Шаг best-effort (см. cleanupReplayed).
 func (u *ReplayUsecase) ReplayFailed(ctx context.Context, actor Actor, nodeID, teamID string, from, to time.Time) (ReplayBulkResult, error) {
 	if err := u.checkReplayRate(ctx, actor); err != nil {
 		return ReplayBulkResult{}, err
@@ -384,6 +411,7 @@ func (u *ReplayUsecase) ReplayFailed(ctx context.Context, actor Actor, nodeID, t
 		return ReplayBulkResult{}, fmt.Errorf("replay-all failed ids: %w", err)
 	}
 	res := ReplayBulkResult{Total: len(ids), Capped: capped}
+	replayed := make([]string, 0, len(ids))
 	for _, id := range ids {
 		if err := ctx.Err(); err != nil {
 			return res, err // контекст отменён (клиент отвалился) — прерываем
@@ -403,13 +431,42 @@ func (u *ReplayUsecase) ReplayFailed(ctx context.Context, actor Actor, nodeID, t
 					u.logger.Str("log_id", id), u.logger.Err(cerr))
 			}
 		}
+		replayed = append(replayed, id)
 		res.Replayed++
 	}
+	res.Cleaned = u.cleanupReplayed(ctx, q, replayed)
 	u.audit.Log(ctx, actor, domain.ActionNodeReplay, "node", node.ID, map[string]any{
 		"op": "replay_all", "total": res.Total, "replayed": res.Replayed,
-		"failed": res.Failed, "capped": res.Capped,
+		"failed": res.Failed, "cleaned": res.Cleaned, "capped": res.Capped,
 	})
 	return res, nil
+}
+
+// cleanupReplayed — убрать строки done=0 успешно пере-инжектированных записей
+// (§79.2), чтобы они исчезли из «Неудачных доставок» сразу. Возвращает число
+// убранных записей.
+//
+// Шаг BEST-EFFORT и никогда не роняет операцию: сообщения к этому моменту уже
+// отправлены во внешнюю систему, и превращать успешную доставку в 500 из-за
+// невозможности прибрать логи нельзя.
+//
+// Границы защиты (что НЕ закрыто): на внешней таблице §64 и на таблице чужой
+// ноды §70.4 гейт владения запрещает DML, поэтому история оригиналов остаётся —
+// записи продолжат числиться неудачными до истечения периода или ручной
+// очистки. Это осознанная цена, а не пропуск.
+func (u *ReplayUsecase) cleanupReplayed(ctx context.Context, q port.LogQuery, ids []string) int {
+	if u.cleaner == nil || len(ids) == 0 {
+		return 0
+	}
+	n, err := u.cleaner.DeleteFailedRows(ctx, q, ids)
+	if err != nil {
+		u.logger.Warn("replay-all: cleanup of original failed rows skipped",
+			u.logger.Str("table", q.Table), u.logger.Int("records", len(ids)), u.logger.Err(err))
+		return 0
+	}
+	u.logger.Debug("replay-all: originals cleaned",
+		u.logger.Str("table", q.Table), u.logger.Int("records", int(n)))
+	return int(n)
 }
 
 func previewBody(b []byte, max int) string {

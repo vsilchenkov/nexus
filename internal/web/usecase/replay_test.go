@@ -769,6 +769,157 @@ func TestReplay_ReplayFailed_AllAndCancelsOriginals(t *testing.T) {
 	}
 }
 
+// stubFailedCleaner — управляемый port.FailedLogsCleaner (§79.2).
+type stubFailedCleaner struct {
+	calls   int
+	gotQ    port.LogQuery
+	gotIDs  []string
+	deleted uint64
+	err     error
+}
+
+func (s *stubFailedCleaner) DeleteFailedRows(_ context.Context, q port.LogQuery, ids []string) (uint64, error) {
+	s.calls++
+	s.gotQ, s.gotIDs = q, ids
+	return s.deleted, s.err
+}
+
+// §79.1: набор для повтора — записи БЕЗ успешного прогона. По строкам done=0
+// «Повторить все» захватывало уже доставленные и слало дубли получателю
+// (бой 2026-08-05: 15 дублей в 1С из 16 повторённых сообщений).
+func TestReplay_ReplayFailed_AsksUnresolvedRecords(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{ID: "n1", Path: "demo/async", Status: domain.NodeStatusEnabled, ClickHouseTable: "test.async"}
+	logs := &stubLogReader{log: &domain.LogRecord{ID: "x", Request: `{"a":1}`, DateRequest: time.Now()}}
+	uc := NewReplayUsecaseWithCancel(
+		logs, &stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
+		&stubDispatcher{}, nil, NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10,
+		&stubCancelWriter{}, nil, time.Hour, logging.NewNoop(),
+	)
+
+	if _, err := uc.ReplayFailed(context.Background(), SystemActor(), "n1", "", time.Time{}, time.Time{}); err != nil {
+		t.Fatalf("replay-all: %v", err)
+	}
+	if !logs.gotFailed.Unresolved {
+		t.Fatal("want Unresolved=true: уже доставленные записи повторять нельзя")
+	}
+	if logs.gotFailed.Done != "" {
+		t.Fatalf("Done — фильтр СТРОК журнала, здесь он неуместен: %q", logs.gotFailed.Done)
+	}
+	if !logs.gotFailed.DateCreateAligned {
+		t.Fatal("§72.4: сужение по партициям обязано доехать до набора ID")
+	}
+}
+
+// §79.2: после успешного повтора строки done=0 оригиналов убираются ОДНИМ
+// вызовом и только для тех записей, что реально уехали.
+func TestReplay_ReplayFailed_CleansOriginalsAfterSuccess(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{ID: "n1", Path: "demo/async", Status: domain.NodeStatusEnabled, ClickHouseTable: "test.async"}
+	log := &domain.LogRecord{ID: "x", Method: "POST", Type: domain.RootMethodRequestAsync, Request: `{"a":1}`, DateRequest: time.Now()}
+	cleaner := &stubFailedCleaner{deleted: 2}
+	logs := &stubLogReader{log: log, failedIDs: []string{"f1", "f2"}}
+	uc := NewReplayUsecaseWithCancel(
+		logs, &stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
+		&stubDispatcher{}, nil, NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10,
+		&stubCancelWriter{}, nil, time.Hour, logging.NewNoop(),
+		WithFailedCleaner(cleaner),
+	)
+
+	res, err := uc.ReplayFailed(context.Background(), SystemActor(), "n1", "", time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("replay-all: %v", err)
+	}
+	if cleaner.calls != 1 {
+		t.Fatalf("want ровно один batch-вызов очистки, got %d", cleaner.calls)
+	}
+	if len(cleaner.gotIDs) != 2 {
+		t.Fatalf("want очистку обеих записей, got %v", cleaner.gotIDs)
+	}
+	if res.Cleaned != 2 {
+		t.Fatalf("want Cleaned=2, got %+v", res)
+	}
+}
+
+// §79.2: запись, которую не удалось пере-инжектировать, из «Неудачных доставок»
+// не убирается — она остаётся авто-репроцессору.
+func TestReplay_ReplayFailed_CleansOnlyReplayed(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{ID: "n1", Path: "demo/async", Status: domain.NodeStatusEnabled, ClickHouseTable: "test.async"}
+	cleaner := &stubFailedCleaner{deleted: 1}
+	// Тело не сохранено (Request пуст) → replayOne отказывает на КАЖДОЙ записи.
+	logs := &stubLogReader{log: &domain.LogRecord{ID: "x", DateRequest: time.Now()}, failedIDs: []string{"f1"}}
+	uc := NewReplayUsecaseWithCancel(
+		logs, &stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
+		&stubDispatcher{}, nil, NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10,
+		&stubCancelWriter{}, nil, time.Hour, logging.NewNoop(),
+		WithFailedCleaner(cleaner),
+	)
+
+	res, err := uc.ReplayFailed(context.Background(), SystemActor(), "n1", "", time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("replay-all: %v", err)
+	}
+	if res.Failed != 1 || res.Replayed != 0 {
+		t.Fatalf("предпосылка кейса не выполнена: %+v", res)
+	}
+	if cleaner.calls != 0 {
+		t.Fatalf("нечего убирать — очистка не должна вызываться, got %d", cleaner.calls)
+	}
+	if res.Cleaned != 0 {
+		t.Fatalf("want Cleaned=0, got %+v", res)
+	}
+}
+
+// §79.2: отказ очистки (гейт владения §70.4 на чужой/внешней таблице) НЕ роняет
+// операцию — сообщения к этому моменту уже отправлены во внешнюю систему.
+func TestReplay_ReplayFailed_CleanupFailureDoesNotFailOperation(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{ID: "n1", Path: "demo/async", Status: domain.NodeStatusEnabled, ClickHouseTable: "test.async"}
+	log := &domain.LogRecord{ID: "x", Method: "POST", Type: domain.RootMethodRequestAsync, Request: `{"a":1}`, DateRequest: time.Now()}
+	cleaner := &stubFailedCleaner{err: domain.ErrCHForeignDatabase}
+	logs := &stubLogReader{log: log, failedIDs: []string{"f1"}}
+	uc := NewReplayUsecaseWithCancel(
+		logs, &stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
+		&stubDispatcher{}, nil, NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10,
+		&stubCancelWriter{}, nil, time.Hour, logging.NewNoop(),
+		WithFailedCleaner(cleaner),
+	)
+
+	res, err := uc.ReplayFailed(context.Background(), SystemActor(), "n1", "", time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("отказ очистки не имеет права ронять операцию: %v", err)
+	}
+	if res.Replayed != 1 {
+		t.Fatalf("сообщение обязано числиться отправленным: %+v", res)
+	}
+	if res.Cleaned != 0 {
+		t.Fatalf("want Cleaned=0 при отказе очистки, got %+v", res)
+	}
+}
+
+// Без cleaner'а (инсталляция без ClickHouse) поведение прежнее: повтор
+// работает, очистки нет.
+func TestReplay_ReplayFailed_NoCleaner_Works(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{ID: "n1", Path: "demo/async", Status: domain.NodeStatusEnabled, ClickHouseTable: "test.async"}
+	log := &domain.LogRecord{ID: "x", Method: "POST", Type: domain.RootMethodRequestAsync, Request: `{"a":1}`, DateRequest: time.Now()}
+	uc := NewReplayUsecaseWithCancel(
+		&stubLogReader{log: log, failedIDs: []string{"f1"}},
+		&stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
+		&stubDispatcher{}, nil, NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10,
+		&stubCancelWriter{}, nil, time.Hour, logging.NewNoop(),
+	)
+
+	res, err := uc.ReplayFailed(context.Background(), SystemActor(), "n1", "", time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("replay-all: %v", err)
+	}
+	if res.Replayed != 1 || res.Cleaned != 0 {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+}
+
 // При ошибке dispatch — оригинал НЕ отменяется (остаётся авто-репроцессору).
 func TestReplay_ReplayFailed_DispatchError_KeepsOriginals(t *testing.T) {
 	t.Parallel()
