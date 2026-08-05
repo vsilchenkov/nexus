@@ -54,7 +54,7 @@ func KafkaRateLimitMiddleware(limiter rateLimiter, limitPerMin int) gin.HandlerF
 
 // resolveKafkaWindow — окно периода с проверкой лимита 90 дней (§4.1 spec).
 func resolveKafkaWindow(c *gin.Context) (since, until time.Time, ok bool) {
-	since, until, _ = resolveWindow(c)
+	since, until = resolveWindow(c)
 	if until.Sub(since) > maxKafkaCustomWindow {
 		localizedError(c, http.StatusBadRequest, "kafka.period_too_long")
 		return since, until, false

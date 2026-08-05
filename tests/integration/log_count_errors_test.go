@@ -181,7 +181,7 @@ func TestLogReader_NodeKPI_Chart_E2E(t *testing.T) {
 // (node_id = ?): записи с пустым node_id узлу не принадлежат — на обычной
 // таблице послабление убрано (осталось только для внешних таблиц §64).
 //
-// Критично: DeleteFailed одного узла не трогает ни записи другого, ни записи
+// Критично: очистка одного узла не трогает ни записи другого, ни записи
 // без идентификатора — раньше очистка узла A сносила и их.
 func TestLogReader_NodeIDFilter_E2E(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
