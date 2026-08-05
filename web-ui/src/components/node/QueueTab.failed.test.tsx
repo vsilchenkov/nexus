@@ -104,7 +104,12 @@ describe("QueueTab — неудачные доставки (§72.3)", () => {
 
     // Прежний код останавливался на 50 строках: обычный useQuery с жёстким
     // limit=50, никакой пагинации.
-    await waitFor(() => expect(screen.getAllByText("task.getFiles")).toHaveLength(TOTAL_ROWS));
+    // Таймаут больше дефолтной секунды: страницы догружаются последовательно
+    // (три запроса + перерисовка списка), и на медленном раннере CI дефолта не
+    // хватает — падало «получено 100 из 110», хотя логика верна.
+    await waitFor(() => expect(screen.getAllByText("task.getFiles")).toHaveLength(TOTAL_ROWS), {
+      timeout: 10_000,
+    });
 
     // Каждая следующая страница несёт keyset-курсор и тот же серверный фильтр.
     expect(logsCalls.length).toBe(3);
@@ -117,7 +122,12 @@ describe("QueueTab — неудачные доставки (§72.3)", () => {
 
   it("подгрузка останавливается на неполной странице", async () => {
     renderTab();
-    await waitFor(() => expect(screen.getAllByText("task.getFiles")).toHaveLength(TOTAL_ROWS));
+    // Таймаут больше дефолтной секунды: страницы догружаются последовательно
+    // (три запроса + перерисовка списка), и на медленном раннере CI дефолта не
+    // хватает — падало «получено 100 из 110», хотя логика верна.
+    await waitFor(() => expect(screen.getAllByText("task.getFiles")).toHaveLength(TOTAL_ROWS), {
+      timeout: 10_000,
+    });
     // Ещё немного времени: если признак конца истории не работает, хук уйдёт за
     // четвёртой страницей и счётчик запросов вырастет.
     await new Promise((r) => setTimeout(r, 100));
