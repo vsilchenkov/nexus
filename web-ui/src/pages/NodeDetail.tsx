@@ -214,15 +214,19 @@ export default function NodeDetail() {
         </div>
       )}
 
+      {/* §79.3: вкладки — НАСТОЯЩИЕ ссылки (<a href>), а не кнопки. С кнопкой
+          браузеру нечего открывать: контекстное меню «Открыть в новой вкладке»,
+          Ctrl/Cmd+клик и клик средней кнопкой не работают вовсе, хотя адрес у
+          вкладки теперь есть. Link рисует href и при обычном клике остаётся
+          SPA-навигацией (push — «Назад» возвращает предыдущую вкладку). */}
       <div className="flex gap-1 border-b border-line">
         {tabs.map((tb) => (
-          <button
+          <Link
             key={tb}
-            type="button"
-            // push (а не replace, как у фильтров §54/§76): вкладка — навигация,
-            // и «Назад» обязано возвращать предыдущую вкладку. Уход с «Логов»
-            // чистит окно журнала внутри withNodeTab.
-            onClick={() => setSearchParams((prev) => withNodeTab(prev, tb))}
+            // Только search: pathname у вкладок общий, а чужие параметры адреса
+            // обязаны выживать (правило §54). Уход с «Логов» чистит окно
+            // журнала внутри withNodeTab.
+            to={{ search: `?${withNodeTab(searchParams, tb)}` }}
             className={cn(
               "px-3.5 py-2.5 text-[13px]",
               tab === tb
@@ -231,7 +235,7 @@ export default function NodeDetail() {
             )}
           >
             {t(`node.tabs.${tb}`)}
-          </button>
+          </Link>
         ))}
       </div>
 

@@ -105,11 +105,25 @@ describe("NodeDetail: вкладка в адресе (§79.3)", () => {
     await waitFor(() => expect(screen.getByTestId("search").textContent).toContain("tab=overview"));
   });
 
+  // Регресс: вкладки были <button>, и контекстное меню браузера «Открыть в
+  // новой вкладке» (а также Ctrl+клик и клик средней кнопкой) не работало —
+  // открывать нечего, href отсутствует. Адрес у вкладки есть, значит она
+  // обязана быть ссылкой.
+  it("вкладка — ссылка с href: работает «Открыть в новой вкладке»", async () => {
+    renderAt("/nodes/n1?tab=overview&team=vika");
+    expect(await screen.findByText("TAB-OVERVIEW")).toBeInTheDocument();
+
+    const link = screen.getByRole("link", { name: "node.tabs.metrics" });
+    const href = link.getAttribute("href") ?? "";
+    expect(href).toContain("tab=metrics");
+    expect(href).toContain("team=vika");
+  });
+
   it("клик по вкладке пишет её в адрес", async () => {
     renderAt("/nodes/n1");
     expect(await screen.findByText("TAB-OVERVIEW")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "node.tabs.metrics" }));
+    fireEvent.click(screen.getByRole("link", { name: "node.tabs.metrics" }));
     expect(await screen.findByText("TAB-METRICS")).toBeInTheDocument();
     expect(screen.getByTestId("search").textContent).toContain("tab=metrics");
   });
@@ -127,7 +141,7 @@ describe("NodeDetail: вкладка в адресе (§79.3)", () => {
     renderAt(`/nodes/n1?tab=logs&from=${from}&to=${from + 3600_000}&status=err`);
     expect(await screen.findByText("TAB-LOGS")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "node.tabs.overview" }));
+    fireEvent.click(screen.getByRole("link", { name: "node.tabs.overview" }));
     expect(await screen.findByText("TAB-OVERVIEW")).toBeInTheDocument();
     const search = screen.getByTestId("search").textContent ?? "";
     expect(search).toContain("tab=overview");
@@ -139,7 +153,7 @@ describe("NodeDetail: вкладка в адресе (§79.3)", () => {
     renderAt("/nodes/n1?tab=overview&team=vika");
     expect(await screen.findByText("TAB-OVERVIEW")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "node.tabs.config" }));
+    fireEvent.click(screen.getByRole("link", { name: "node.tabs.config" }));
     expect(await screen.findByText("TAB-CONFIG")).toBeInTheDocument();
     expect(screen.getByTestId("search").textContent).toContain("team=vika");
   });
