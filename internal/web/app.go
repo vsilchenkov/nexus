@@ -581,7 +581,9 @@ func (a *App) Start(ctx context.Context) error {
 	if a.redis != nil {
 		nodeStatusReader = rediscache.NewNodeStatusReaderRedis(a.redis, a.logger)
 	}
-	metricsUC := usecase.NewMetricsUsecase(promMetrics, nodeLogMetrics, nodeRepo, appSettingsRepo, nodeStatusReader, a.logger)
+	metricsUC := usecase.NewMetricsUsecase(promMetrics, nodeLogMetrics, nodeRepo, appSettingsRepo, nodeStatusReader, a.logger,
+		// §79.5.1: порог точной формы графика — рычаг оператора на больших таблицах.
+		usecase.WithExactChartMaxRecords(a.cfg.Web.MetricsExactChartMaxRecords))
 	metricsHandler := httpadapter.NewMetricsHandler(metricsUC, a.logger)
 
 	// Мониторинг Kafka (§4 spec): Prometheus (throughput/lag/KPI/top-узлы) +
