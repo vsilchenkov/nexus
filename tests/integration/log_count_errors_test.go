@@ -16,6 +16,7 @@ import (
 	"nexus/internal/platform/logging"
 	"nexus/internal/sender/adapter/out/chlog"
 	webch "nexus/internal/web/adapter/out/clickhouse"
+	webport "nexus/internal/web/usecase/port"
 )
 
 // TestLogReader_CountErrors_E2E (§20.3, Phase F2.3): CountErrors считает только
@@ -75,13 +76,14 @@ func TestLogReader_CountErrors_E2E(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 0, n)
 
-	// §35: CountFailed считает СТРОГО done=0 (исключает 500/done=1, которого для
-	// этих данных нет, но семантика уже): из 4 строк done=0 у трёх (id 2,3,4).
-	nf, err := reader.CountFailed(ctx, table, "", sinceMs, untilMs)
+	// §35/§79.1: CountFailed считает ЗАПИСИ без единого прогона done=1. Здесь у
+	// всех трёх неудачных записей (id 2,3,4) успешного прогона нет вовсе, так
+	// что результат тот же, что и у прежнего счёта по строкам.
+	nf, err := reader.CountFailed(ctx, failedQ(table, "", sinceMs, untilMs), false)
 	require.NoError(t, err)
-	require.EqualValues(t, 3, nf, "3 done=0 rows expected")
+	require.EqualValues(t, 3, nf, "3 undelivered records expected")
 
-	nf, err = reader.CountFailed(ctx, table, "", now.Add(-2*time.Hour).UnixMilli(), now.Add(-time.Hour).UnixMilli())
+	nf, err = reader.CountFailed(ctx, failedQ(table, "", now.Add(-2*time.Hour).UnixMilli(), now.Add(-time.Hour).UnixMilli()), false)
 	require.NoError(t, err)
 	require.EqualValues(t, 0, nf)
 }
@@ -139,17 +141,20 @@ func TestLogReader_NodeKPI_Chart_E2E(t *testing.T) {
 	sinceMs := now.Add(-time.Hour).UnixMilli()
 	untilMs := now.Add(time.Hour).UnixMilli()
 
+	q := webport.LogQuery{Table: table, SinceMs: sinceMs, UntilMs: untilMs, DateCreateAligned: true}
+
 	// KPI — по уникальным запросам (ID): Total=3 (A,B,C), Delivered=2 (A,C), Errors=1 (B).
-	kpi, err := reader.NodeKPI(ctx, table, "", sinceMs, untilMs, false)
+	kpi, err := reader.NodeKPI(ctx, q, false)
 	require.NoError(t, err)
 	require.EqualValues(t, 3, kpi.Total, "3 уникальных запроса (A,B,C)")
 	require.EqualValues(t, 2, kpi.Delivered, "A и C хотя бы раз доставлены")
 	require.EqualValues(t, 1, kpi.Errors, "B так и не доставлен")
 	require.Greater(t, kpi.P95ms, 0.0, "p95 длительности > 0")
 
-	// Ряд — по сырым строкам: всего 4, ошибок (done=0) 2 (A-fail + B). Плотный ряд
-	// (нули в пустых бакетах), сумма по бакетам = сырые счётчики.
-	series, err := reader.NodeChart(ctx, table, "", sinceMs, untilMs, 48)
+	// §79.5: ряд считает ЗАПИСИ, а не строки-прогоны, и сходится с KPI. До §79.5
+	// здесь было 4 и 2 (сырые строки): A, спасённая повтором, красила свой столбец
+	// и завышала «Всего» относительно числа над графиком.
+	series, err := reader.NodeChart(ctx, q, webport.ChartQuery{StepSec: 150, ByRecord: true})
 	require.NoError(t, err)
 	require.NotEmpty(t, series)
 	var sumCnt, sumErr uint64
@@ -157,11 +162,16 @@ func TestLogReader_NodeKPI_Chart_E2E(t *testing.T) {
 		sumCnt += p.Count
 		sumErr += p.Errors
 	}
-	require.EqualValues(t, 4, sumCnt, "4 строки всего")
-	require.EqualValues(t, 2, sumErr, "2 строки done=0 (A-fail, B)")
+	require.EqualValues(t, kpi.Total, sumCnt, "Σ столбцов == «Всего» (3 записи, а не 4 строки)")
+	require.EqualValues(t, kpi.Errors, sumErr, "красным помечена только B")
 
 	// Окно в прошлом — пусто.
-	past, err := reader.NodeKPI(ctx, table, "", now.Add(-2*time.Hour).UnixMilli(), now.Add(-time.Hour).UnixMilli(), false)
+	past, err := reader.NodeKPI(ctx, webport.LogQuery{
+		Table:             table,
+		SinceMs:           now.Add(-2 * time.Hour).UnixMilli(),
+		UntilMs:           now.Add(-time.Hour).UnixMilli(),
+		DateCreateAligned: true,
+	}, false)
 	require.NoError(t, err)
 	require.Zero(t, past.Total)
 }
@@ -226,28 +236,30 @@ func TestLogReader_NodeIDFilter_E2E(t *testing.T) {
 	reader.SetTableUsage(attrUsage{counts: map[string]int{table: 2}})
 
 	// CountFailed: каждый узел видит ТОЛЬКО свои записи, запись без node_id — ничью.
-	na, err := reader.CountFailed(ctx, table, nodeA, 0, 0)
+	na, err := reader.CountFailed(ctx, failedQ(table, nodeA, 0, 0), false)
 	require.NoError(t, err)
 	require.EqualValues(t, 2, na, "nodeA: только свои 2, запись без node_id ему не принадлежит")
-	nb, err := reader.CountFailed(ctx, table, nodeB, 0, 0)
+	nb, err := reader.CountFailed(ctx, failedQ(table, nodeB, 0, 0), false)
 	require.NoError(t, err)
 	require.EqualValues(t, 3, nb, "nodeB: только свои 3")
 
 	// FailedIDs nodeA — только a1,a2 (ни b*, ни записи без node_id).
-	ids, _, err := reader.FailedIDs(ctx, table, nodeA, 0, 0, 1000)
+	ids, _, err := reader.FailedIDs(ctx, failedQ(table, nodeA, 0, 0), 1000)
 	require.NoError(t, err)
 	require.Len(t, ids, 2)
 	require.NotContains(t, ids, "00000000-0000-0000-0000-0000000000b1")
 	require.NotContains(t, ids, "00000000-0000-0000-0000-00000000000c")
 
 	// NodeKPI nodeA — 2 уникальных, все ошибки.
-	kpi, err := reader.NodeKPI(ctx, table, nodeA, 0, 0, false)
+	kpi, err := reader.NodeKPI(ctx, webport.LogQuery{Table: table, NodeID: nodeA}, false)
 	require.NoError(t, err)
 	require.EqualValues(t, 2, kpi.Total)
 	require.EqualValues(t, 2, kpi.Errors)
 
-	// DeleteFailed nodeA — удаляет 2 свои; записи nodeB и запись без node_id целы.
-	deleted, err := reader.DeleteFailed(ctx, table, nodeA, 0, 0)
+	// §79.2: удаляем строки СВОИХ неудачных записей; записи nodeB и запись без
+	// node_id целы. Набор ID тот же, что отдал FailedIDs, — это и есть контракт
+	// «отменяем и удаляем одно множество».
+	deleted, err := reader.DeleteFailedRows(ctx, failedQ(table, nodeA, 0, 0), ids)
 	require.NoError(t, err)
 	require.EqualValues(t, 2, deleted)
 	require.Eventually(t, func() bool {
@@ -260,14 +272,14 @@ func TestLogReader_NodeIDFilter_E2E(t *testing.T) {
 	require.NoError(t, conn.QueryRow(ctx, "SELECT count() FROM "+table+" WHERE node_id = ''").Scan(&orphan))
 	require.EqualValues(t, 1, orphan, "очистка узла A не должна сносить записи без идентификатора")
 
-	nb2, err := reader.CountFailed(ctx, table, nodeB, 0, 0)
+	nb2, err := reader.CountFailed(ctx, failedQ(table, nodeB, 0, 0), false)
 	require.NoError(t, err)
 	require.EqualValues(t, 3, nb2, "nodeB не задет очисткой nodeA")
 
 	// Деградация (§61.1): фактов о таблице нет — правило мягкое, иначе сбой
 	// PostgreSQL спрятал бы содержимое внешних таблиц.
 	degraded := webch.NewLogReader(provider, logger)
-	nd, err := degraded.CountFailed(ctx, table, nodeB, 0, 0)
+	nd, err := degraded.CountFailed(ctx, failedQ(table, nodeB, 0, 0), false)
 	require.NoError(t, err)
 	require.EqualValues(t, 4, nd, "без фактов о таблице действует послабление: 3 свои + 1 без node_id")
 }
@@ -361,23 +373,24 @@ func TestLogReader_ExternalTableAttribution_E2E(t *testing.T) {
 	shared := map[string]int{table: 2}
 	marked := map[string]struct{}{table: {}}
 
-	got, err := newReader(self, marked).CountFailed(ctx, table, nodeA, 0, 0)
+	got, err := newReader(self, marked).CountFailed(ctx, failedQ(table, nodeA, 0, 0), false)
 	require.NoError(t, err)
 	require.EqualValues(t, 4, got,
 		"§64: на внешней одиночной таблице узел видит и записи постороннего писателя — ради этого узел и заведён")
 
-	got, err = newReader(self, nil).CountFailed(ctx, table, nodeA, 0, 0)
+	got, err = newReader(self, nil).CountFailed(ctx, failedQ(table, nodeA, 0, 0), false)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, got,
 		"таблица без пометки external_table строга даже будучи личной: послабление не должно расползаться за пределы §64")
 
-	got, err = newReader(shared, marked).CountFailed(ctx, table, nodeA, 0, 0)
+	got, err = newReader(shared, marked).CountFailed(ctx, failedQ(table, nodeA, 0, 0), false)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, got,
 		"§61 сильнее §64: общую таблицу узел читает строго, даже если она помечена внешней")
 
 	// Гейт разрушающих операций фиксом не затронут: читать чужую таблицу можно,
 	// удалять из неё — нет.
-	_, err = newReader(self, marked).DeleteFailed(ctx, table, nodeA, 0, 0)
+	_, err = newReader(self, marked).DeleteFailedRows(ctx, failedQ(table, nodeA, 0, 0),
+		[]string{"00000000-0000-0000-0000-0000000000e4"})
 	require.Error(t, err, "§70.4: очистка в чужой таблице по-прежнему запрещена")
 }

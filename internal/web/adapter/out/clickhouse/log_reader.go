@@ -1224,7 +1224,7 @@ func (r *LogReaderCH) DeleteFailedRows(ctx context.Context, q port.LogQuery, ids
 			return 0, err
 		}
 	}
-	conds, args := r.deleteFailedConds(q, ids)
+	conds, args := r.deleteFailedConds(ctx, q, ids)
 	conn, err := r.liveConn()
 	if err != nil {
 		return 0, err
@@ -1241,19 +1241,25 @@ func (r *LogReaderCH) DeleteFailedRows(ctx context.Context, q port.LogQuery, ids
 // deleteFailedConds — условия разрушающей операции: строки done=0 указанных
 // записей в окне.
 //
-// Node-фильтр здесь СТРОГИЙ (`node_id = ?`), а не через nodeFilter: тот на
-// одиночной внешней таблице §64 послабляет условие до `OR node_id = ”`, что для
-// чтения осознанно, а в DELETE означало бы удаление строк постороннего писателя
-// (§79.1). Пустой NodeID — legacy «таблица-на-узел», фильтра нет как и раньше.
+// Node-фильтр здесь ТОТ ЖЕ, что при чтении (nodeFilter): очистка обязана убирать
+// ровно то, что узел ВИДИТ в «Неудачных доставках». Строгий `node_id = ?` в
+// разрушающей операции выглядит безопаснее, но ломает два штатных случая —
+// записи без идентификатора (legacy до §37) и внешнюю таблицу §64, где пустой
+// node_id нормален для каждой строки: пользователь видел бы записи в списке, а
+// «Очистить» молча оставляла бы их на месте (поймано integration-тестом
+// TestAsyncQueue_PurgeFailed_E2E).
+//
+// Данные постороннего писателя защищает не фильтр, а гейт §70.4 (на чужой БД DML
+// запрещён целиком) и точный список ids — он получен тем же чтением.
 //
 // Окно избыточно при заданных ids, но оставлено намеренно: date_create-условия
 // §72.4 отсекают партиции, а без них DELETE сканирует таблицу целиком.
-func (r *LogReaderCH) deleteFailedConds(q port.LogQuery, ids []string) ([]string, []any) {
+func (r *LogReaderCH) deleteFailedConds(ctx context.Context, q port.LogQuery, ids []string) ([]string, []any) {
 	var conds []string
 	var args []any
-	if q.NodeID != "" {
-		conds = append(conds, "node_id = ?")
-		args = append(args, q.NodeID)
+	if c, a := r.nodeFilter(ctx, q.Table, q.NodeID); c != "" {
+		conds = append(conds, c)
+		args = append(args, a...)
 	}
 	if c, a := dateCreateConds(q); len(c) > 0 {
 		conds = append(conds, c...)
@@ -1292,39 +1298,38 @@ func (r *LogReaderCH) deleteFailedConds(q port.LogQuery, ids []string) ([]string
 //     Delivered = uniqExactIf|uniqIf(ID, done = 1)  — из них хотя бы раз доставлены (2xx);
 //     Errors    = Total - Delivered                 — так и не доставлены (guard delivered≤total);
 //     P95/P99   = перцентили длительности (мс) по всем попыткам.
-func (r *LogReaderCH) NodeKPI(ctx context.Context, table, nodeID string, sinceMs, untilMs int64, approx bool) (port.NodeKPI, error) {
-	if !isSafeTableName(table) {
-		return port.NodeKPI{}, fmt.Errorf("invalid table name: %q", table)
+//
+// §79.4: фильтры журнала (полнотекст, метод, хост клиента, статус) приходят в
+// том же LogQuery и применяются тем же searchConds — KPI обязан описывать ровно
+// то множество, что показывает список логов под теми же фильтрами.
+//
+// §79.5: перцентили считаются по ПОПЫТКАМ (строкам), а не по записям, — это
+// характеристика внешнего вызова. Единица у них другая осознанно.
+func (r *LogReaderCH) NodeKPI(ctx context.Context, q port.LogQuery, approx bool) (port.NodeKPI, error) {
+	if !isSafeTableName(q.Table) {
+		return port.NodeKPI{}, fmt.Errorf("invalid table name: %q", q.Table)
 	}
-	conds := []string{"1"}
-	var args []any
-	if c, a := r.nodeFilter(ctx, table, nodeID); c != "" {
-		conds = append(conds, c)
-		args = append(args, a...)
-	}
-	if sinceMs > 0 {
-		conds = append(conds, "toUnixTimestamp64Milli(toDateTime64(date_request, 3)) > ?")
-		args = append(args, sinceMs)
-	}
-	if untilMs > 0 {
-		conds = append(conds, "toUnixTimestamp64Milli(toDateTime64(date_request, 3)) <= ?")
-		args = append(args, untilMs)
+	q.BeforeID, q.Limit = "", 0
+	conds, args := r.searchConds(ctx, q)
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + strings.Join(conds, " AND ")
 	}
 	conn, err := r.liveConn()
 	if err != nil {
 		return port.NodeKPI{}, err
 	}
 	totalExpr, deliveredExpr := uniqueExprs(approx)
-	q := fmt.Sprintf(`SELECT
+	sql := fmt.Sprintf(`SELECT
 		%s AS total,
 		%s AS delivered,
 		quantile(0.95)(duration) AS p95,
 		quantile(0.99)(duration) AS p99
-	FROM %s WHERE %s`, totalExpr, deliveredExpr, table, strings.Join(conds, " AND "))
+	FROM %s%s`, totalExpr, deliveredExpr, q.Table, where)
 	var total, delivered uint64
 	var p95, p99 float64
-	if err := conn.QueryRow(ctx, q, args...).Scan(&total, &delivered, &p95, &p99); err != nil {
-		return port.NodeKPI{}, fmt.Errorf("clickhouse node kpi: %w", err)
+	if err := conn.QueryRow(ctx, sql, args...).Scan(&total, &delivered, &p95, &p99); err != nil {
+		return port.NodeKPI{}, classifyCHErr("clickhouse node kpi", err)
 	}
 	if delivered > total {
 		delivered = total
@@ -1338,68 +1343,107 @@ func (r *LogReaderCH) NodeKPI(ctx context.Context, table, nodeID string, sinceMs
 	return port.NodeKPI{Total: total, Delivered: delivered, Errors: subUnsigned(total, delivered), P95ms: p95, P99ms: p99}, nil
 }
 
-// NodeChart — временной ряд трафика узла за окно (sinceMs, untilMs], разбитый на
-// buckets равных бакетов (count() и countIf(done=0) на бакет). Плотный ряд:
-// отсутствующие бакеты — нули, ASC по времени, выравнивание бакетов как у
-// toStartOfInterval (по эпохе). Источник графика «Трафик» вкладки «Обзор».
-func (r *LogReaderCH) NodeChart(ctx context.Context, table, nodeID string, sinceMs, untilMs int64, buckets int) ([]port.SeriesPoint, error) {
-	if !isSafeTableName(table) {
-		return nil, fmt.Errorf("invalid table name: %q", table)
+// defaultChartStepSec — шаг по умолчанию, если вызывающий его не задал (час).
+// В норме шаг всегда приходит из usecase, согласованный с окном.
+const defaultChartStepSec = 3600
+
+// NodeChart — временной ряд трафика узла под фильтрами q, столбцами шириной
+// c.StepSec. Плотный ряд: интервалы без данных — нули, ASC по времени,
+// выравнивание как у toStartOfInterval (по эпохе).
+//
+// §79.5, две формы столбца (см. port.ChartQuery):
+//
+//   - ByRecord=true — запись относится к интервалу своего ПЕРВОГО прогона, а
+//     «ошибка» определяется итоговым статусом записи в окне. Требует свёртки
+//     строк в записи по всему окну, зато график ведёт себя как KPI и список:
+//     доставленная повтором запись перестаёт быть красной в своём столбце;
+//   - ByRecord=false — запись считается в том интервале, куда попал её прогон,
+//     статус берётся по прогонам интервала. Одна стадия, дешевле.
+//
+// Обе формы считают ЗАПИСИ, а не строки: до §79.5 столбец был count() строк и
+// на узле с недоступным приёмником завышался кратно числу повторов.
+func (r *LogReaderCH) NodeChart(ctx context.Context, q port.LogQuery, c port.ChartQuery) ([]port.SeriesPoint, error) {
+	if !isSafeTableName(q.Table) {
+		return nil, fmt.Errorf("invalid table name: %q", q.Table)
 	}
-	if buckets <= 0 {
-		buckets = 48
-	}
-	if untilMs <= sinceMs {
+	if q.UntilMs <= q.SinceMs {
 		return []port.SeriesPoint{}, nil
 	}
-	stepSec := max((untilMs-sinceMs)/int64(buckets)/1000, 1)
+	stepSec := c.StepSec
+	if stepSec <= 0 {
+		stepSec = defaultChartStepSec
+	}
 	stepMs := stepSec * 1000
+	q.BeforeID, q.Limit = "", 0
+
+	conds, args := r.searchConds(ctx, q)
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + strings.Join(conds, " AND ")
+	}
 	conn, err := r.liveConn()
 	if err != nil {
 		return nil, err
 	}
-	conds := []string{
-		"toUnixTimestamp64Milli(toDateTime64(date_request, 3)) > ?",
-		"toUnixTimestamp64Milli(toDateTime64(date_request, 3)) <= ?",
-	}
-	args := []any{sinceMs, untilMs}
-	if c, a := r.nodeFilter(ctx, table, nodeID); c != "" {
-		conds = append([]string{c}, conds...)
-		args = append(a, args...)
-	}
-	q := fmt.Sprintf(`SELECT
-		toInt64(toUnixTimestamp(toStartOfInterval(date_request, INTERVAL %d SECOND))) AS bucket_s,
-		count() AS cnt,
-		countIf(done = 0) AS errs
-	FROM %s
-	WHERE %s
-	GROUP BY bucket_s ORDER BY bucket_s`, stepSec, table, strings.Join(conds, " AND "))
-	rows, err := conn.Query(ctx, q, args...)
+	sql := chartSQL(q.Table, where, stepSec, c)
+	rows, err := conn.Query(ctx, sql, args...)
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse node chart: %w", err)
+		return nil, classifyCHErr("clickhouse node chart", err)
 	}
 	defer rows.Close()
-	type bkt struct{ cnt, errs uint64 }
+	type bkt struct{ total, delivered uint64 }
 	got := make(map[int64]bkt)
 	for rows.Next() {
 		var bsec int64
-		var cnt, errs uint64
-		if err := rows.Scan(&bsec, &cnt, &errs); err != nil {
+		var total, delivered uint64
+		if err := rows.Scan(&bsec, &total, &delivered); err != nil {
 			return nil, fmt.Errorf("scan node chart: %w", err)
 		}
-		got[bsec*1000] = bkt{cnt: cnt, errs: errs}
+		got[bsec*1000] = bkt{total: total, delivered: delivered}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, classifyCHErr("clickhouse node chart", err)
 	}
 	// Плотный ряд от выровненного начала окна (как toStartOfInterval по эпохе).
-	startMs := (sinceMs / stepMs) * stepMs
-	out := make([]port.SeriesPoint, 0, buckets+2)
-	for ts := startMs; ts <= untilMs; ts += stepMs {
+	startMs := (q.SinceMs / stepMs) * stepMs
+	out := make([]port.SeriesPoint, 0, (q.UntilMs-startMs)/stepMs+2)
+	for ts := startMs; ts <= q.UntilMs; ts += stepMs {
 		b := got[ts]
-		out = append(out, port.SeriesPoint{TsMs: ts, Count: b.cnt, Errors: b.errs})
+		out = append(out, port.SeriesPoint{
+			TsMs:   ts,
+			Count:  b.total,
+			Errors: subUnsigned(b.total, b.delivered),
+		})
 	}
 	return out, nil
+}
+
+// chartSQL — запрос ряда под выбранную форму столбца.
+//
+// Точный режим двухстадийный: сначала строки сворачиваются в записи
+// (min(date_request) — когда запрос пришёл, max(done) — доставлен ли он в итоге),
+// и только потом раскладываются по интервалам. Дешёвый режим раскладывает сразу
+// и считает уникальные ID внутри интервала.
+func chartSQL(table, where string, stepSec int64, c port.ChartQuery) string {
+	if c.ByRecord {
+		return fmt.Sprintf(`SELECT
+			toInt64(toUnixTimestamp(toStartOfInterval(first_req, INTERVAL %d SECOND))) AS bucket_s,
+			count() AS total,
+			countIf(ok) AS delivered
+		FROM (
+			SELECT ID, min(date_request) AS first_req, max(done) AS ok
+			FROM %s%s
+			GROUP BY ID
+		)
+		GROUP BY bucket_s ORDER BY bucket_s`, stepSec, table, where)
+	}
+	totalExpr, deliveredExpr := uniqueExprs(c.Approx)
+	return fmt.Sprintf(`SELECT
+		toInt64(toUnixTimestamp(toStartOfInterval(date_request, INTERVAL %d SECOND))) AS bucket_s,
+		%s AS total,
+		%s AS delivered
+	FROM %s%s
+	GROUP BY bucket_s ORDER BY bucket_s`, stepSec, totalExpr, deliveredExpr, table, where)
 }
 
 func scanLogRow(rows chdriver.Rows) (*domain.LogRecord, error) {

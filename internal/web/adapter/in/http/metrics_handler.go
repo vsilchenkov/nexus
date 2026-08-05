@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"nexus/internal/domain"
+	"nexus/internal/domain/logsearch"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase"
 )
@@ -270,23 +271,47 @@ type seriesPointDTO struct {
 
 // Node godoc
 // @Summary  KPI + временной ряд графика узла (§21).
-// @Description  Источник — Prometheus (per-node счётчики Sender'а; перцентили через histogram_quantile). Без Prometheus → нули с chart_available=false.
+// @Description  Источник — ClickHouse-логи узла: точные счётчики по УНИКАЛЬНЫМ запросам. §79.4: принимает те же фильтры, что журнал логов (q/method/client_host/status/done) — KPI и график считаются под ними. §79.5: step задаёт ширину столбца, фактическая возвращается в step_seconds; столбец — записи по интервалу прихода с итоговым статусом (chart_unit=records), на больших окнах деградирует до счёта по прогонам (chart_unit=attempts). Без ClickHouse или при таймауте → нули с chart_available=false.
 // @Tags     metrics
 // @Produce  json
-// @Param    id     path   string  true   "node id"
-// @Param    range  query  string  false  "1h | 3h | 24h | 7d | 14d | 30d (default 1h)"
-// @Param    from   query  string  false  "период с (RFC3339 или UnixMilli); вместе с to задаёт произвольный период"
-// @Param    to     query  string  false  "период по (RFC3339 или UnixMilli)"
+// @Param    id           path   string  true   "node id"
+// @Param    range        query  string  false  "1h | 3h | 24h | 7d | 14d | 30d (default 1h)"
+// @Param    from         query  string  false  "период с (RFC3339 или UnixMilli); вместе с to задаёт произвольный период"
+// @Param    to           query  string  false  "период по (RFC3339 или UnixMilli)"
+// @Param    step         query  string  false  "шаг графика: auto (default) | 1h | 3h | 24h | 7d | 14d | 30d"
+// @Param    q            query  string  false  "полнотекстовый фильтр (§48)"
+// @Param    q_case       query  string  false  "1 — учитывать регистр"
+// @Param    q_word       query  string  false  "1 — слово целиком"
+// @Param    q_regex      query  string  false  "1 — режим регулярного выражения"
+// @Param    method       query  string  false  "фильтр по колонке method"
+// @Param    client_host  query  string  false  "фильтр по хосту клиента (§67)"
+// @Param    status       query  string  false  "ok | err (§72.1)"
+// @Param    done         query  string  false  "yes | no"
 // @Success  200  {object}  NodeMetricsResponse
+// @Failure  400  {object}  ErrorResponse  "некорректный поисковый запрос"
 // @Failure  404  {object}  ErrorResponse
 // @Security CookieAuth
 // @Security ApiTokenAuth
 // @Router   /api/metrics/nodes/{id} [get]
 func (h *MetricsHandler) Node(c *gin.Context) {
 	nodeID := c.Param("id")
-	since, until, buckets := resolveWindow(c)
-	res, err := h.uc.NodeMetrics(c.Request.Context(), nodeID, currentTeamID(c), since, until, buckets)
+	since, until, _ := resolveWindow(c)
+	// §79.4: фильтры читаются тем же кодом, что у списка логов (мини-язык §48
+	// разбирает usecase) — иначе метрики и журнал под одинаковыми фильтрами
+	// показывали бы разное.
+	res, err := h.uc.NodeMetrics(c.Request.Context(), usecase.NodeMetricsQuery{
+		NodeID: nodeID,
+		TeamID: currentTeamID(c),
+		Since:  since,
+		Until:  until,
+		Step:   c.Query("step"),
+		Filter: logQueryFromContext(c),
+	})
 	if err != nil {
+		if errors.Is(err, logsearch.ErrBadQuery) {
+			localizedError(c, http.StatusBadRequest, "error.bad_search_query")
+			return
+		}
 		if errors.Is(err, domain.ErrNodeNotFound) {
 			localizedError(c, http.StatusNotFound, "node.not_found")
 			return
@@ -311,5 +336,7 @@ func (h *MetricsHandler) Node(c *gin.Context) {
 		"series":          series,
 		"chart_available": res.ChartAvailable,
 		"range_ms":        res.RangeMs,
+		"step_seconds":    res.StepSec,
+		"chart_unit":      res.ChartUnit,
 	})
 }

@@ -62,26 +62,41 @@ func TestUniqueExprs(t *testing.T) {
 	assert.Equal(t, "uniqIf(ID, done = 1)", delivered)
 }
 
-// TestDeleteFailedConds_StrictNodeFilter — в DML фильтр по узлу СТРОГИЙ даже
-// там, где чтение послабляет его до `OR node_id = ”` (одиночная внешняя
-// таблица §64). Послабление в DELETE означало бы удаление строк постороннего
-// писателя.
-func TestDeleteFailedConds_StrictNodeFilter(t *testing.T) {
+// TestDeleteFailedConds_MirrorsReadFilter — очистка убирает ровно то, что узел
+// видит: node-фильтр DML совпадает с читающим. Строгий `node_id = ?` в DELETE
+// выглядит безопаснее, но оставлял бы на месте записи без идентификатора
+// (legacy до §37) и все строки внешней таблицы §64 — пользователь видел бы их в
+// списке, а «Очистить» ничего бы не делала.
+func TestDeleteFailedConds_MirrorsReadFilter(t *testing.T) {
 	t.Parallel()
 	usage := &countingUsage{counts: map[string]int{"db.t": 1}, externals: map[string]struct{}{"db.t": {}}}
 	r := newReader(usage, nil)
+	q := port.LogQuery{Table: "db.t", NodeID: "node-a"}
 
-	// Предпосылка кейса: на этой таблице ЧТЕНИЕ действительно послабляет фильтр.
 	readCond, _ := r.nodeFilter(t.Context(), "db.t", "node-a")
-	require.Equal(t, "(node_id = ? OR node_id = '')", readCond)
+	require.Equal(t, "(node_id = ? OR node_id = '')", readCond,
+		"предпосылка кейса: на одиночной внешней таблице чтение послабляет фильтр")
 
-	conds, args := r.deleteFailedConds(port.LogQuery{Table: "db.t", NodeID: "node-a"}, []string{"id1"})
+	conds, args := r.deleteFailedConds(t.Context(), q, []string{"id1"})
+	where := strings.Join(conds, " AND ")
+	assert.Contains(t, where, readCond, "удаляем ровно то, что видим")
+	assert.Contains(t, where, "done = 0", "строки done=1 остаются: история успешной доставки не теряется")
+	assert.Contains(t, where, "ID IN ?", "удаляются только перечисленные записи, а не весь фильтр")
+	assert.Equal(t, []any{"node-a", []string{"id1"}}, args)
+}
+
+// TestDeleteFailedConds_SharedTableStaysStrict — на ОБЩЕЙ таблице (§61) чтение
+// строгое, значит и очистка строгая: чужие строки узел не видит и не удаляет.
+func TestDeleteFailedConds_SharedTableStaysStrict(t *testing.T) {
+	t.Parallel()
+	usage := &countingUsage{counts: map[string]int{"db.t": 2}, externals: map[string]struct{}{"db.t": {}}}
+	r := newReader(usage, nil)
+
+	conds, _ := r.deleteFailedConds(t.Context(), port.LogQuery{Table: "db.t", NodeID: "node-a"}, []string{"id1"})
 	where := strings.Join(conds, " AND ")
 	assert.Contains(t, where, "node_id = ?")
-	assert.NotContains(t, where, "node_id = ''", "разрушающая операция не имеет права трогать чужие строки")
-	assert.Contains(t, where, "done = 0", "строки done=1 остаются: история успешной доставки не теряется")
-	assert.Contains(t, where, "ID IN ?")
-	assert.Equal(t, []any{"node-a", []string{"id1"}}, args)
+	assert.NotContains(t, where, "node_id = ''",
+		"§61 сильнее §64: на общей таблице послабления нет ни при чтении, ни при очистке")
 }
 
 // TestDeleteFailedConds_WindowPrunesPartitions — окно остаётся в условиях, хотя
@@ -97,7 +112,7 @@ func TestDeleteFailedConds_WindowPrunesPartitions(t *testing.T) {
 		UntilMs:           1_700_086_400_000,
 		DateCreateAligned: true,
 	}
-	where := strings.Join(mustConds(r.deleteFailedConds(q, []string{"id1"})), " AND ")
+	where := strings.Join(mustConds(r.deleteFailedConds(t.Context(), q, []string{"id1"})), " AND ")
 	assert.Contains(t, where, "date_create >= toDate(?)")
 	assert.Contains(t, where, "date_create <= toDate(?)")
 	assert.Contains(t, where, "toUnixTimestamp64Milli(toDateTime64(date_request, 3)) > ?")

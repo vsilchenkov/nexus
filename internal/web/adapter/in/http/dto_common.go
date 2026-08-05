@@ -255,6 +255,20 @@ type NodeMetricsResponse struct {
 	Series         []seriesPointDTO `json:"series"`
 	ChartAvailable bool             `json:"chart_available"`
 	RangeMs        int64            `json:"range_ms"`
+
+	// StepSeconds — фактическая ширина столбца (§79.5). Может отличаться от
+	// запрошенного step: шаг больше окна сжимается до окна, слишком мелкий —
+	// поднимается до потолка столбцов. Клиенту брать ширину больше неоткуда:
+	// на ряде из одной точки её не вывести из данных.
+	StepSeconds int64 `json:"step_seconds"`
+
+	// ChartUnit — как посчитаны столбцы (§79.5):
+	//   records  — запись относится к интервалу своего прихода, «ошибка» по
+	//              ИТОГОВОМУ статусу: после успешного повтора красный сегмент
+	//              исчезает из столбца сам;
+	//   attempts — деградация на больших окнах: запись считается в интервале
+	//              своего прогона, статус — по прогонам интервала.
+	ChartUnit string `json:"chart_unit"`
 }
 
 // KafkaTopicsResponse — GET /api/kafka/topics.

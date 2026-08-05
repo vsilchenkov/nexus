@@ -64,19 +64,52 @@ type KafkaPoint struct {
 	V    float64
 }
 
+// ChartQuery — как строить столбцы графика узла (§79.5).
+type ChartQuery struct {
+	// StepSec — ширина одного столбца в секундах. Задаётся вызывающим (usecase
+	// согласует его с окном), адаптер ничего не домысливает.
+	StepSec int64
+
+	// ByRecord — единица и привязка столбца:
+	//
+	//   true  (§79.5, основной режим): столбец — ЗАПИСИ, попавшие в интервал по
+	//         своему ПЕРВОМУ прогону, а «ошибка» определяется ИТОГОВЫМ статусом
+	//         записи в окне. Поэтому после успешного авто-повтора красный
+	//         сегмент исчезает из столбца прихода сам — как и запись из
+	//         «Неудачных доставок» (§79.1). Требует свёртки строк в записи
+	//         (GROUP BY ID) по всему окну.
+	//
+	//   false (деградация): столбец — записи, у которых прогон ПОПАЛ в этот
+	//         интервал, статус — по прогонам интервала. Дешевле (одна стадия),
+	//         но запись с прогонами в разных интервалах видна в каждом, и
+	//         повтор не «лечит» прошлый столбец. Включается только когда записей
+	//         в окне больше порога; наружу об этом сообщается явно.
+	ByRecord bool
+
+	// Approx — приблизительный счёт уникальных (HLL). Действует только при
+	// ByRecord=false: точный режим уже свёл строки в записи, и считать там
+	// нечего, кроме готовых групп.
+	Approx bool
+}
+
 // NodeLogMetrics — ТОЧНЫЕ per-node KPI и временной ряд графика узла ИЗ
 // ClickHouse-логов (§21, вкладки «Обзор»/«Метрики»). Реализуется LogReaderCH.
 // В отличие от Prometheus increase(): точные счётчики по уникальным запросам, без
 // rate-экстраполяции и без зависимости от доступности Prometheus (нет мерцания).
-// table — CH-таблица узла (db.table); пустая → у узла нет логирования.
-// §37: nodeID — UUID узла для per-node атрибуции в общей CH-таблице (пусто —
-// без фильтра).
+//
+// §79.4: окно, таблица, узел и фильтры журнала приходят одним LogQuery — тем же
+// типом, что у списка логов. Отдельный набор условий для метрик гарантированно
+// разошёлся бы со списком (эту болезнь §67 уже лечил, сделав searchConds общим).
 type NodeLogMetrics interface {
-	// NodeKPI — KPI узла за окно. approx (§44-perf): false = точный счёт уникальных
-	// (countDistinct/uniqExact), true = приблизительный HyperLogLog (uniq/uniqIf,
-	// ~3× дешевле, ошибка ~0.3%). Управляется app_settings.general.metrics_approx_counts.
-	NodeKPI(ctx context.Context, table, nodeID string, sinceMs, untilMs int64, approx bool) (NodeKPI, error)
-	NodeChart(ctx context.Context, table, nodeID string, sinceMs, untilMs int64, buckets int) ([]SeriesPoint, error)
+	// NodeKPI — KPI узла под фильтрами q. approx (§44-perf): false = точный счёт
+	// уникальных (countDistinct/uniqExact), true = приблизительный HyperLogLog
+	// (uniq/uniqIf, ~3× дешевле, ошибка ~0.3%). Управляется настройкой
+	// app_settings.general.metrics_approx_counts.
+	NodeKPI(ctx context.Context, q LogQuery, approx bool) (NodeKPI, error)
+
+	// NodeChart — временной ряд под теми же фильтрами. Ряд плотный: интервалы без
+	// данных отдаются нулями, чтобы график не «сжимался» по времени.
+	NodeChart(ctx context.Context, q LogQuery, c ChartQuery) ([]SeriesPoint, error)
 }
 
 // PromMetrics — глобальные и кросс-сервисные метрики из Prometheus
