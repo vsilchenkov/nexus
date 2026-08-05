@@ -33,6 +33,23 @@ export function periodParams(p: Period): Record<string, string> {
   return p.kind === "preset" ? { range: p.range } : { from: p.from, to: p.to };
 }
 
+// §79.5 «Шаг графика» — ширина ОДНОГО столбца. Не путать с периодом: период —
+// сколько показываем, шаг — насколько крупными столбцами. Пара «период 14д +
+// шаг 24ч» даёт 14 столбцов, по одному на сутки.
+export type ChartStep = "auto" | PresetRange;
+
+export const CHART_STEPS: ChartStep[] = ["auto", ...PRESET_RANGES];
+
+/** stepParams — query-параметр шага; auto не отправляем (сервер выберет сам). */
+export function stepParams(s: ChartStep): Record<string, string> {
+  return s === "auto" ? {} : { step: s };
+}
+
+/** stepKey — стабильная часть ключа react-query. */
+export function stepKey(s: ChartStep): string {
+  return `s:${s}`;
+}
+
 // PRESET_MS — длительность пресета в миллисекундах.
 const PRESET_MS: Record<PresetRange, number> = {
   "1h": 3_600_000,

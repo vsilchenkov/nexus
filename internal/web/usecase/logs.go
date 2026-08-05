@@ -334,14 +334,39 @@ func (u *LogsUsecase) GetBodyChunk(ctx context.Context, nodeID, teamID, logID, w
 	return u.logs.GetBodyChunk(ctx, n.ClickHouseTable, logID, which, offset, limit)
 }
 
-// CountFailed — число недоставленных записей узла (done=0) за окно (§35).
-// Для KPI «неудачные доставки» на вкладке «Очередь». teamID — scope.
+// CountFailed — число недоставленных записей узла за окно (§35, KPI «неудачные
+// доставки» вкладки «Очередь»). teamID — scope.
+//
+// §79.1: единица — ЗАПИСЬ без единого прогона done=1, поэтому счётчик падает
+// сам, когда авто-репроцессор §36 доставляет сообщение. Точный режим (approx =
+// false): счётчик стоит парой к списку под ним, приблизительное значение здесь
+// читалось бы как расхождение.
 func (u *LogsUsecase) CountFailed(ctx context.Context, nodeID, teamID string, sinceMs, untilMs int64) (uint64, error) {
 	n, err := u.resolveNode(ctx, nodeID, teamID)
 	if err != nil {
 		return 0, err
 	}
-	return u.logs.CountFailed(ctx, n.ClickHouseTable, n.ID, sinceMs, untilMs)
+	return u.logs.CountFailed(ctx, failedQuery(n, sinceMs, untilMs), false)
+}
+
+// failedQuery — запрос «Неудачных доставок» узла за окно (§79.1).
+//
+// Единственная точка сборки на весь пакет: счётчик (LogsUsecase), очистка
+// (AsyncQueueUsecase) и массовый повтор (ReplayUsecase) обязаны описывать ОДНО
+// множество — иначе KPI, «очищено N» и «повторено N» разъезжаются, а это ровно
+// та болезнь, которую лечит §79.
+//
+// DateCreateAligned выставляется здесь же (§72.4): без сужения по колонке
+// PARTITION BY очистка и счётчик читают таблицу целиком.
+func failedQuery(n *domain.Node, sinceMs, untilMs int64) port.LogQuery {
+	return port.LogQuery{
+		Table:             n.ClickHouseTable,
+		NodeID:            n.ID,
+		SinceMs:           sinceMs,
+		UntilMs:           untilMs,
+		Unresolved:        true,
+		DateCreateAligned: !n.ExternalTable,
+	}
 }
 
 // Methods — уникальные значения колонки method узла (§48.3, фасет дропдауна

@@ -260,6 +260,7 @@ done
 | Логи/метрики узла: `clickhouse search: code 60 ... Unknown table` | таблица логов не создана — убедитесь, что есть дефолтный CH-шаблон (узел без `clickhouse_template_id` берёт его); фикс #7 §28 |
 | `node not found` на адресе с путём-со-слешем | бейте по адресу как в UI; фикс #8 §28 резолвит legacy-путь в default-команде |
 | `web listen: ... :8000: bind: Only one usage of each socket address` (или `address already in use`) | На порту уже висит **старый** экземпляр сервиса с прошлого прогона — стенд не был выключен. Завершите его (см. §5) и запускайте заново |
+| Контейнер `clickhouse` стека `services` в рестарт-лупе, в `docker logs` только `get_mempolicy: Operation not permitted` | Настоящая ошибка в `clickhouse-server.err.log` **внутри** контейнера (`docker cp clickhouse:/var/log/clickhouse-server/clickhouse-server.err.log .`). Известный случай: `Code: 36 … If 'engine' is specified for system table, TTL parameters should be specified directly inside 'engine'` — конфиг `logs_ttl.xml` задавал `<ttl>` для `query_log`/`opentelemetry_span_log`, у которых в `config.xml` образа уже есть `<engine>`. Лечится правкой `services/clickhouse/logs_ttl.xml` (2026-08-04 он вынесен из контейнера в репозиторий стека и монтируется через compose — правки больше не теряются при пересоздании) |
 
 ---
 

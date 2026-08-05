@@ -120,7 +120,7 @@ func TestAsyncQueue_PurgeFailed_E2E(t *testing.T) {
 
 	// CH: записи done=0 удалены (вид «Неудачные» чист), done=1 осталась.
 	require.Eventually(t, func() bool {
-		n, qe := logReader.CountFailed(ctx, table, "", 0, 0)
+		n, qe := logReader.CountFailed(ctx, failedQ(table, "", 0, 0), false)
 		return qe == nil && n == 0
 	}, 20*time.Second, 500*time.Millisecond, "failed records must be deleted from CH")
 

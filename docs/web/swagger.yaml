@@ -595,6 +595,15 @@ definitions:
     properties:
       chart_available:
         type: boolean
+      chart_unit:
+        description: |-
+          ChartUnit — как посчитаны столбцы (§79.5):
+            records  — запись относится к интервалу своего прихода, «ошибка» по
+                       ИТОГОВОМУ статусу: после успешного повтора красный сегмент
+                       исчезает из столбца сам;
+            attempts — деградация на больших окнах: запись считается в интервале
+                       своего прогона, статус — по прогонам интервала.
+        type: string
       kpi:
         $ref: '#/definitions/internal_web_adapter_in_http.nodeKPIDTO'
       range_ms:
@@ -603,6 +612,13 @@ definitions:
         items:
           $ref: '#/definitions/internal_web_adapter_in_http.seriesPointDTO'
         type: array
+      step_seconds:
+        description: |-
+          StepSeconds — фактическая ширина столбца (§79.5). Может отличаться от
+          запрошенного step: шаг больше окна сжимается до окна, слишком мелкий —
+          поднимается до потолка столбцов. Клиенту брать ширину больше неоткуда:
+          на ряде из одной точки её не вывести из данных.
+        type: integer
     type: object
   internal_web_adapter_in_http.NodeResponse:
     properties:
@@ -2387,6 +2403,9 @@ definitions:
     properties:
       capped:
         type: boolean
+      cleaned:
+        description: '§79.2: записей убрано из «Неудачных доставок»'
+        type: integer
       failed:
         description: ошибок replay (оригинал НЕ отменён — остаётся авто-репроцессору)
         type: integer
@@ -3880,8 +3899,12 @@ paths:
       - metrics
   /api/metrics/nodes/{id}:
     get:
-      description: Источник — Prometheus (per-node счётчики Sender'а; перцентили через
-        histogram_quantile). Без Prometheus → нули с chart_available=false.
+      description: 'Источник — ClickHouse-логи узла: точные счётчики по УНИКАЛЬНЫМ
+        запросам. §79.4: принимает те же фильтры, что журнал логов (q/method/client_host/status/done)
+        — KPI и график считаются под ними. §79.5: step задаёт ширину столбца, фактическая
+        возвращается в step_seconds; столбец — записи по интервалу прихода с итоговым
+        статусом (chart_unit=records), на больших окнах деградирует до счёта по прогонам
+        (chart_unit=attempts). Без ClickHouse или при таймауте → нули с chart_available=false.'
       parameters:
       - description: node id
         in: path
@@ -3901,6 +3924,42 @@ paths:
         in: query
         name: to
         type: string
+      - description: 'шаг графика: auto (default) | 1h | 3h | 24h | 7d | 14d | 30d'
+        in: query
+        name: step
+        type: string
+      - description: полнотекстовый фильтр (§48)
+        in: query
+        name: q
+        type: string
+      - description: 1 — учитывать регистр
+        in: query
+        name: q_case
+        type: string
+      - description: 1 — слово целиком
+        in: query
+        name: q_word
+        type: string
+      - description: 1 — режим регулярного выражения
+        in: query
+        name: q_regex
+        type: string
+      - description: фильтр по колонке method
+        in: query
+        name: method
+        type: string
+      - description: фильтр по хосту клиента (§67)
+        in: query
+        name: client_host
+        type: string
+      - description: ok | err (§72.1)
+        in: query
+        name: status
+        type: string
+      - description: yes | no
+        in: query
+        name: done
+        type: string
       produces:
       - application/json
       responses:
@@ -3908,6 +3967,10 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/internal_web_adapter_in_http.NodeMetricsResponse'
+        "400":
+          description: некорректный поисковый запрос
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "404":
           description: Not Found
           schema:
@@ -4359,9 +4422,11 @@ paths:
     post:
       consumes:
       - application/json
-      description: Пере-инжектирует через Receiver все неудачные (done=0) запросы
-        узла за период и отменяет их оригиналы в DLQ (без двойной доставки). Пустые
-        from/to = всё. Admin-only.
+      description: 'Пере-инжектирует через Receiver недоставленные запросы узла за
+        период (§79.1: записи без единого успешного прогона — уже доставленные не
+        переотправляются), отменяет их оригиналы в DLQ (без двойной доставки) и убирает
+        их строки done=0 из «Неудачных доставок» (§79.2, поле cleaned; на внешней
+        §64 и чужой §70.4 таблице очистка пропускается). Пустые from/to = всё. Admin-only.'
       parameters:
       - description: node id
         in: path
@@ -4685,6 +4750,11 @@ paths:
         in: query
         name: done
         type: string
+      - description: '1 — только НЕДОСТАВЛЕННЫЕ записи (§79.1: нет ни одного прогона
+          done=1). Не путать с done=no — тот про строку-прогон'
+        in: query
+        name: unresolved
+        type: string
       - description: exact match по подпути запроса (колонка method, §39/§48)
         in: query
         name: method
@@ -4782,6 +4852,10 @@ paths:
       - description: yes (done=1) | no (done=0)
         in: query
         name: done
+        type: string
+      - description: 1 — только НЕДОСТАВЛЕННЫЕ записи (§79.1)
+        in: query
+        name: unresolved
         type: string
       - description: exact match по подпути запроса (§48)
         in: query

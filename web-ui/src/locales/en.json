@@ -157,10 +157,19 @@
       "errors": "Requests that failed (4xx/5xx or delivery failure).",
       "p95": "95th percentile of response time: 95% of requests were within this time.",
       "p99": "99th percentile of response time: 99% of requests were within this time.",
+      "bucket_unit": "A bar counts requests that ARRIVED in this interval; colour reflects the final state — a later successful retry removes the red segment from the bar. Past bars may therefore change retroactively.",
+      "attempts_mode": "Window too large for exact mode: bars count delivery attempts, so retries appear in their own intervals. Narrow the period or increase the step.",
       "tooltip": {
         "requests": "{{n}} requests",
         "errors": "{{n}} errors ({{pct}}%)"
       }
+    },
+    "step": {
+      "label": "Chart step",
+      "auto": "Auto"
+    },
+    "filters": {
+      "autorefresh_paused": "Auto-refresh paused: this filter takes over 2s. Refresh manually or simplify the filter."
     },
     "period": "Period",
     "range": {
