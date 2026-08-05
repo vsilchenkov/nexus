@@ -40,11 +40,16 @@ export function TrafficChart({
   height = 120,
   className,
   onOpenLogs,
+  bucketMs,
 }: {
   data: SeriesPoint[];
   height?: number;
   className?: string;
   onOpenLogs?: (range: LogsRange) => void;
+  /** §79.5: фактическая ширина столбца с сервера (step_seconds). Без неё ширина
+   * угадывается по разнице первых двух меток, а на ряде из одной точки берётся
+   * минута «с потолка» — тултип и переход в логи показывали неверные границы. */
+  bucketMs?: number;
 }) {
   const { t } = useTranslation();
   const max = Math.max(1, ...data.map((d) => d.count));
@@ -61,9 +66,9 @@ export function TrafficChart({
   }
 
   const avg = data.reduce((s, d) => s + d.count, 0) / data.length;
-  // Ширина бакета — шаг между метками времени (равномерный); для последнего
-  // экстраполируем тем же шагом.
-  const bucketW = data.length > 1 ? data[1].ts - data[0].ts : 60_000;
+  // Ширина бакета: сервер знает её точно (§79.5), поэтому она приоритетна.
+  // Фолбэк для мест, где шаг не прокинут, — прежняя догадка по разнице меток.
+  const bucketW = bucketMs && bucketMs > 0 ? bucketMs : data.length > 1 ? data[1].ts - data[0].ts : 60_000;
 
   return (
     <div className={cn("flex w-full items-end gap-[3px]", className)} style={{ height }}>

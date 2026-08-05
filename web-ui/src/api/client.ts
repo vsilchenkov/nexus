@@ -232,6 +232,12 @@ export type NodesThroughputResp = {
   totals: OverviewTotals;
   prometheus_available: boolean;
 };
+// §79.5: chart_unit — как посчитаны столбцы.
+//   records  — запись в интервале своего прихода, «ошибка» по ИТОГОВОМУ статусу
+//              (после успешного повтора красный сегмент исчезает сам);
+//   attempts — деградация на больших окнах: запись в интервале своего прогона.
+export type ChartUnit = "records" | "attempts";
+
 export type NodeMetricsResp = {
   kpi: {
     total: number;
@@ -243,6 +249,10 @@ export type NodeMetricsResp = {
   series: { ts: number; count: number; errors: number }[];
   chart_available: boolean;
   range_ms: number;
+  // §79.5: фактическая ширина столбца (может отличаться от запрошенного шага —
+  // он согласуется с окном) и единица счёта столбцов.
+  step_seconds?: number;
+  chart_unit?: ChartUnit;
 };
 
 // §19: шаблоны DDL для таблиц логов ClickHouse.

@@ -9,9 +9,12 @@ import { useRoleAtLeast } from "../../lib/useCurrentRole";
 import { fmtLogTs, fmtSize } from "../../lib/format";
 import { FETCH_CHUNK, LARGE_WARN_RUNES, formatRunes, prettyMaybe } from "../../lib/logBody";
 import {
+  advFormEqual,
+  emptyAdvForm,
   isLogOK,
   logsFilterParams,
   logsFilterSearch,
+  type LogsAdvForm,
   type LogsDoneFilter,
   type LogsFilterState,
 } from "../../lib/logsQuery";
@@ -20,12 +23,10 @@ import {
   SCROLL_TOP_THRESHOLD_PX,
   useInfiniteLogs,
 } from "../../lib/useInfiniteLogs";
-import { LabelHint, Popover, PopoverAnchor, PopoverContent } from "../ui";
+import { Popover, PopoverAnchor, PopoverContent } from "../ui";
 import { CopyButton } from "../ui/CopyButton";
 import { ReplayDialog } from "../ReplayDialog";
-import { LogClientHostFilter } from "./LogClientHostFilter";
-import { LogDateField } from "./LogDateField";
-import { LogMethodFilter } from "./LogMethodFilter";
+import { LogsAdvancedFilters } from "./LogsAdvancedFilters";
 import { type LogRow, type LogsResp, type LogDetail, type LogBodyChunk } from "./types";
 
 type StatusFilter = "all" | "ok" | "err";
@@ -84,18 +85,11 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   // §48: поля ip/host убраны из UI (API их по-прежнему принимает); добавлены
   // method и режимы поиска qCase/qWord/qRegex (кнопки Aa / ab| / .*).
   // §67: clientHost — фильтр по PTR-имени клиента (колонка client_host).
-  const initFormEmpty = {
-    q: "",
-    method: "",
-    clientHost: "",
-    from: "",
-    to: "",
-    qCase: false,
-    qWord: false,
-    qRegex: false,
-  };
-  const initForm = {
-    ...initFormEmpty,
+  // §79.4: форма панели и её сравнение переехали в LogsAdvancedFilters — панель
+  // теперь общая с вкладкой «Метрики», а два экземпляра одной разметки неминуемо
+  // разъехались бы.
+  const initForm: LogsAdvForm = {
+    ...emptyAdvForm,
     from: initialFilter?.from ?? "",
     to: initialFilter?.to ?? "",
   };
@@ -108,19 +102,9 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   // Коммит идемпотентен: одинаковый черновик не перезапускает поиск — иначе
   // Enter+blur давали бы двойной запуск, а blur о кнопку «Сбросить» — лишний
   // запрос перед сбросом.
-  type AdvForm = typeof initFormEmpty;
-  const advEqual = (a: AdvForm, b: AdvForm) =>
-    a.q === b.q &&
-    a.method === b.method &&
-    a.clientHost === b.clientHost &&
-    a.from === b.from &&
-    a.to === b.to &&
-    a.qCase === b.qCase &&
-    a.qWord === b.qWord &&
-    a.qRegex === b.qRegex;
-  const commitAdv = (next: AdvForm) => {
+  const commitAdv = (next: LogsAdvForm) => {
     setAdvForm(next);
-    setAppliedFilters((prev) => (advEqual(prev, next) ? prev : next));
+    setAppliedFilters((prev) => (advFormEqual(prev, next) ? prev : next));
   };
 
   // §48.4: min/max дат из логов узла — лениво при фокусе поля даты, каждый раз
@@ -595,137 +579,16 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
       </header>
 
       {showAdv && (
-        <div className="grid grid-cols-1 items-end gap-3 border-b border-line px-4 py-3 md:grid-cols-12">
-          {/* Ряд 1: Поиск (тумблеры Aa/ab|/.* внутри поля + подсказка) и Method (§48.4) */}
-          <div className="space-y-1 md:col-span-8">
-            <label className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-fg-muted">
-              {t("logs.advanced.q")}
-              <LabelHint
-                side="right"
-                content={
-                  <div className="max-w-xs space-y-1 text-left">
-                    <div>{t("logs.advanced.hint_fields")}</div>
-                    <div>{t("logs.advanced.hint_syntax")}</div>
-                    <div>{t("logs.advanced.hint_prefix")}</div>
-                    <div>{t("logs.advanced.hint_escape")}</div>
-                    <div>{t("logs.advanced.hint_modes")}</div>
-                    <div>{t("logs.advanced.hint_regex_note")}</div>
-                  </div>
-                }
-              />
-            </label>
-            <div className="relative">
-              {/* §77.3: поиск запускается по завершении ввода — Enter или уход
-                  фокуса, НЕ на каждую букву (полнотекст по всей истории стоит
-                  секунды, см. §77.5). Esc возвращает применённое значение. */}
-              <input
-                type="text"
-                value={advForm.q}
-                onChange={(e) => setAdvForm({ ...advForm, q: e.target.value })}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") commitAdv(advForm);
-                  if (e.key === "Escape") setAdvForm(appliedFilters);
-                }}
-                onBlur={() => commitAdv(advForm)}
-                placeholder={t("logs.advanced.q_placeholder")}
-                className="w-full rounded-md bg-bg-muted py-1.5 pl-3 pr-24 text-sm outline-none"
-              />
-              {/* Кнопки-тумблеры режимов как в VS Code (§48.2) */}
-              <div className="absolute inset-y-0 right-1.5 flex items-center gap-0.5">
-                {(
-                  [
-                    { key: "qCase", label: "Aa", title: t("logs.advanced.case_tooltip") },
-                    { key: "qWord", label: "ab|", title: t("logs.advanced.word_tooltip") },
-                    { key: "qRegex", label: ".*", title: t("logs.advanced.regex_tooltip") },
-                  ] as const
-                ).map((b) => (
-                  <button
-                    key={b.key}
-                    type="button"
-                    title={b.title}
-                    aria-pressed={advForm[b.key]}
-                    // §77.3: тумблер режима — выбор, а не ввод: применяется сразу.
-                    onMouseDown={(e) => e.preventDefault()} // не отбирать фокус у поля (иначе blur даст лишний коммит)
-                    onClick={() => commitAdv({ ...advForm, [b.key]: !advForm[b.key] })}
-                    className={`rounded px-1 py-0.5 font-mono text-[11px] leading-none transition-colors ${
-                      advForm[b.key]
-                        ? "bg-accent/20 text-accent"
-                        : "text-fg-subtle hover:text-fg-muted"
-                    }`}
-                  >
-                    {b.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            {badQuery && <div className="text-xs text-err">{t("logs.advanced.bad_query")}</div>}
-          </div>
-          <div className="space-y-1 md:col-span-4">
-            <label className="text-[10px] uppercase tracking-wider text-fg-muted">
-              {t("logs.advanced.method")}
-            </label>
-            <LogMethodFilter
-              nodeId={id}
-              value={advForm.method}
-              onChange={(m) => commitAdv({ ...advForm, method: m })}
-            />
-          </div>
-          {/* Ряд 2 (§48.8 + §67, эскиз утверждён): «Дата с» / «Дата по» с
-              метками сверху и шириной по контенту (dd.MM.yyyy HH:mm + ×, без
-              пустого пространства), затем «Хост клиента», кнопки — в том же
-              ряду справа, без переноса. flex вместо grid-колонок — иначе поля
-              дат растягивались на всю колонку. */}
-          <div className="flex flex-wrap items-end gap-3 md:col-span-12">
-            <div className="w-[200px] space-y-1">
-              <label className="text-[10px] uppercase tracking-wider text-fg-muted">
-                {t("logs.advanced.from")}
-              </label>
-              <LogDateField
-                value={advForm.from}
-                onChange={(v) => commitAdv({ ...advForm, from: v })}
-                min={dateRange && dateRange.min > 0 ? new Date(dateRange.min) : undefined}
-                max={dateRange && dateRange.max > 0 ? new Date(dateRange.max) : undefined}
-                defaultTime="00:00"
-                onOpen={fetchDateRange}
-              />
-            </div>
-            <div className="w-[200px] space-y-1">
-              <label className="text-[10px] uppercase tracking-wider text-fg-muted">
-                {t("logs.advanced.to")}
-              </label>
-              <LogDateField
-                value={advForm.to}
-                onChange={(v) => commitAdv({ ...advForm, to: v })}
-                min={dateRange && dateRange.min > 0 ? new Date(dateRange.min) : undefined}
-                max={dateRange && dateRange.max > 0 ? new Date(dateRange.max) : undefined}
-                defaultTime="23:59"
-                onOpen={fetchDateRange}
-              />
-            </div>
-            <div className="w-[240px] space-y-1">
-              <label className="text-[10px] uppercase tracking-wider text-fg-muted">
-                {t("logs.advanced.client_host")}
-              </label>
-              <LogClientHostFilter
-                nodeId={id}
-                value={advForm.clientHost}
-                onChange={(h) => commitAdv({ ...advForm, clientHost: h })}
-              />
-            </div>
-            {/* §77.3: кнопки «Применить» больше нет — фильтры применяются по
-                завершении ввода. «Сбросить» гасит mousedown, иначе blur поля
-                «Поиск» успел бы запустить лишний запрос ПЕРЕД сбросом. */}
-            <div className="ml-auto flex items-center gap-2">
-              <button
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => commitAdv(initFormEmpty)}
-                className="rounded-md bg-bg-muted px-3 py-1.5 text-sm hover:bg-bg-3"
-              >
-                {t("logs.advanced.reset")}
-              </button>
-            </div>
-          </div>
-        </div>
+        <LogsAdvancedFilters
+          nodeId={id}
+          draft={advForm}
+          applied={appliedFilters}
+          onDraft={setAdvForm}
+          onCommit={commitAdv}
+          badQuery={badQuery}
+          dateRange={dateRange}
+          onOpenDate={fetchDateRange}
+        />
       )}
 
       {/* §77.3: затянувшийся поиск — с возможностью прервать его. Отмена рвёт
