@@ -39,32 +39,24 @@ func (s *stubNodeRepo) UpdateAllowedHostsSnapshot(_ context.Context, _ string, _
 	return nil
 }
 
-// stubLogReader — реализует port.LogReader для одной запись.
+// stubLogReader — управляемый port.LogReader. Интерфейс встроен, а не
+// перечислен методами: расширение порта (§79.1 переводил CountFailed/FailedIDs
+// на LogQuery) иначе ломает стаб на ровном месте. Непереопределённый метод в
+// тестах replay не вызывается — вызов дал бы nil-панику, и это правильный
+// сигнал «тест трогает то, что не собирался».
 type stubLogReader struct {
+	port.LogReader
 	log       *domain.LogRecord
 	err       error
-	failedIDs []string // §36.11: для ReplayFailed
+	failedIDs []string      // §36.11: для ReplayFailed
+	gotFailed port.LogQuery // §79.1: с каким запросом спросили неудачные
 }
 
 func (s *stubLogReader) GetByID(_ context.Context, _, _ string) (*domain.LogRecord, error) {
 	return s.log, s.err
 }
-func (s *stubLogReader) ListSince(_ context.Context, _, _ string, _ int64, _ int) ([]*domain.LogRecord, error) {
-	return nil, nil
-}
-func (s *stubLogReader) Search(_ context.Context, _ port.LogQuery) ([]*domain.LogRecord, error) {
-	return nil, nil
-}
-func (s *stubLogReader) Count(_ context.Context, _ port.LogQuery) (uint64, error) {
-	return 0, nil
-}
-func (s *stubLogReader) CountErrors(_ context.Context, _, _ string, _, _ int64) (uint64, error) {
-	return 0, nil
-}
-func (s *stubLogReader) CountFailed(_ context.Context, _, _ string, _, _ int64) (uint64, error) {
-	return 0, nil
-}
-func (s *stubLogReader) FailedIDs(_ context.Context, _, _ string, _, _ int64, _ int) ([]string, bool, error) {
+func (s *stubLogReader) FailedIDs(_ context.Context, q port.LogQuery, _ int) ([]string, bool, error) {
+	s.gotFailed = q
 	return s.failedIDs, false, s.err
 }
 func (s *stubLogReader) GetByIDPreview(_ context.Context, _, _ string, _ int) (*domain.LogRecord, int64, int64, error) {
@@ -72,15 +64,6 @@ func (s *stubLogReader) GetByIDPreview(_ context.Context, _, _ string, _ int) (*
 }
 func (s *stubLogReader) GetBodyChunk(_ context.Context, _, _, _ string, _, _ int) (string, int64, error) {
 	return "", 0, s.err
-}
-func (s *stubLogReader) DistinctMethods(_ context.Context, _, _ string, _ int) ([]string, error) {
-	return nil, s.err
-}
-func (s *stubLogReader) DistinctClientHosts(_ context.Context, _, _ string, _ int) ([]string, error) {
-	return nil, s.err
-}
-func (s *stubLogReader) DateRange(_ context.Context, _, _ string) (int64, int64, error) {
-	return 0, 0, s.err
 }
 
 // stubDispatcher — реализует port.ReceiverDispatcher; сохраняет последний
@@ -783,6 +766,157 @@ func TestReplay_ReplayFailed_AllAndCancelsOriginals(t *testing.T) {
 	}
 	if len(cancelW.gotIDs) != 3 {
 		t.Fatalf("expected 3 originals cancelled, got %v", cancelW.gotIDs)
+	}
+}
+
+// stubFailedCleaner — управляемый port.FailedLogsCleaner (§79.2).
+type stubFailedCleaner struct {
+	calls   int
+	gotQ    port.LogQuery
+	gotIDs  []string
+	deleted uint64
+	err     error
+}
+
+func (s *stubFailedCleaner) DeleteFailedRows(_ context.Context, q port.LogQuery, ids []string) (uint64, error) {
+	s.calls++
+	s.gotQ, s.gotIDs = q, ids
+	return s.deleted, s.err
+}
+
+// §79.1: набор для повтора — записи БЕЗ успешного прогона. По строкам done=0
+// «Повторить все» захватывало уже доставленные и слало дубли получателю
+// (бой 2026-08-05: 15 дублей в 1С из 16 повторённых сообщений).
+func TestReplay_ReplayFailed_AsksUnresolvedRecords(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{ID: "n1", Path: "demo/async", Status: domain.NodeStatusEnabled, ClickHouseTable: "test.async"}
+	logs := &stubLogReader{log: &domain.LogRecord{ID: "x", Request: `{"a":1}`, DateRequest: time.Now()}}
+	uc := NewReplayUsecaseWithCancel(
+		logs, &stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
+		&stubDispatcher{}, nil, NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10,
+		&stubCancelWriter{}, nil, time.Hour, logging.NewNoop(),
+	)
+
+	if _, err := uc.ReplayFailed(context.Background(), SystemActor(), "n1", "", time.Time{}, time.Time{}); err != nil {
+		t.Fatalf("replay-all: %v", err)
+	}
+	if !logs.gotFailed.Unresolved {
+		t.Fatal("want Unresolved=true: уже доставленные записи повторять нельзя")
+	}
+	if logs.gotFailed.Done != "" {
+		t.Fatalf("Done — фильтр СТРОК журнала, здесь он неуместен: %q", logs.gotFailed.Done)
+	}
+	if !logs.gotFailed.DateCreateAligned {
+		t.Fatal("§72.4: сужение по партициям обязано доехать до набора ID")
+	}
+}
+
+// §79.2: после успешного повтора строки done=0 оригиналов убираются ОДНИМ
+// вызовом и только для тех записей, что реально уехали.
+func TestReplay_ReplayFailed_CleansOriginalsAfterSuccess(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{ID: "n1", Path: "demo/async", Status: domain.NodeStatusEnabled, ClickHouseTable: "test.async"}
+	log := &domain.LogRecord{ID: "x", Method: "POST", Type: domain.RootMethodRequestAsync, Request: `{"a":1}`, DateRequest: time.Now()}
+	cleaner := &stubFailedCleaner{deleted: 2}
+	logs := &stubLogReader{log: log, failedIDs: []string{"f1", "f2"}}
+	uc := NewReplayUsecaseWithCancel(
+		logs, &stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
+		&stubDispatcher{}, nil, NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10,
+		&stubCancelWriter{}, nil, time.Hour, logging.NewNoop(),
+		WithFailedCleaner(cleaner),
+	)
+
+	res, err := uc.ReplayFailed(context.Background(), SystemActor(), "n1", "", time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("replay-all: %v", err)
+	}
+	if cleaner.calls != 1 {
+		t.Fatalf("want ровно один batch-вызов очистки, got %d", cleaner.calls)
+	}
+	if len(cleaner.gotIDs) != 2 {
+		t.Fatalf("want очистку обеих записей, got %v", cleaner.gotIDs)
+	}
+	if res.Cleaned != 2 {
+		t.Fatalf("want Cleaned=2, got %+v", res)
+	}
+}
+
+// §79.2: запись, которую не удалось пере-инжектировать, из «Неудачных доставок»
+// не убирается — она остаётся авто-репроцессору.
+func TestReplay_ReplayFailed_CleansOnlyReplayed(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{ID: "n1", Path: "demo/async", Status: domain.NodeStatusEnabled, ClickHouseTable: "test.async"}
+	cleaner := &stubFailedCleaner{deleted: 1}
+	// Тело не сохранено (Request пуст) → replayOne отказывает на КАЖДОЙ записи.
+	logs := &stubLogReader{log: &domain.LogRecord{ID: "x", DateRequest: time.Now()}, failedIDs: []string{"f1"}}
+	uc := NewReplayUsecaseWithCancel(
+		logs, &stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
+		&stubDispatcher{}, nil, NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10,
+		&stubCancelWriter{}, nil, time.Hour, logging.NewNoop(),
+		WithFailedCleaner(cleaner),
+	)
+
+	res, err := uc.ReplayFailed(context.Background(), SystemActor(), "n1", "", time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("replay-all: %v", err)
+	}
+	if res.Failed != 1 || res.Replayed != 0 {
+		t.Fatalf("предпосылка кейса не выполнена: %+v", res)
+	}
+	if cleaner.calls != 0 {
+		t.Fatalf("нечего убирать — очистка не должна вызываться, got %d", cleaner.calls)
+	}
+	if res.Cleaned != 0 {
+		t.Fatalf("want Cleaned=0, got %+v", res)
+	}
+}
+
+// §79.2: отказ очистки (гейт владения §70.4 на чужой/внешней таблице) НЕ роняет
+// операцию — сообщения к этому моменту уже отправлены во внешнюю систему.
+func TestReplay_ReplayFailed_CleanupFailureDoesNotFailOperation(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{ID: "n1", Path: "demo/async", Status: domain.NodeStatusEnabled, ClickHouseTable: "test.async"}
+	log := &domain.LogRecord{ID: "x", Method: "POST", Type: domain.RootMethodRequestAsync, Request: `{"a":1}`, DateRequest: time.Now()}
+	cleaner := &stubFailedCleaner{err: domain.ErrCHForeignDatabase}
+	logs := &stubLogReader{log: log, failedIDs: []string{"f1"}}
+	uc := NewReplayUsecaseWithCancel(
+		logs, &stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
+		&stubDispatcher{}, nil, NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10,
+		&stubCancelWriter{}, nil, time.Hour, logging.NewNoop(),
+		WithFailedCleaner(cleaner),
+	)
+
+	res, err := uc.ReplayFailed(context.Background(), SystemActor(), "n1", "", time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("отказ очистки не имеет права ронять операцию: %v", err)
+	}
+	if res.Replayed != 1 {
+		t.Fatalf("сообщение обязано числиться отправленным: %+v", res)
+	}
+	if res.Cleaned != 0 {
+		t.Fatalf("want Cleaned=0 при отказе очистки, got %+v", res)
+	}
+}
+
+// Без cleaner'а (инсталляция без ClickHouse) поведение прежнее: повтор
+// работает, очистки нет.
+func TestReplay_ReplayFailed_NoCleaner_Works(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{ID: "n1", Path: "demo/async", Status: domain.NodeStatusEnabled, ClickHouseTable: "test.async"}
+	log := &domain.LogRecord{ID: "x", Method: "POST", Type: domain.RootMethodRequestAsync, Request: `{"a":1}`, DateRequest: time.Now()}
+	uc := NewReplayUsecaseWithCancel(
+		&stubLogReader{log: log, failedIDs: []string{"f1"}},
+		&stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
+		&stubDispatcher{}, nil, NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10,
+		&stubCancelWriter{}, nil, time.Hour, logging.NewNoop(),
+	)
+
+	res, err := uc.ReplayFailed(context.Background(), SystemActor(), "n1", "", time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("replay-all: %v", err)
+	}
+	if res.Replayed != 1 || res.Cleaned != 0 {
+		t.Fatalf("unexpected result: %+v", res)
 	}
 }
 

@@ -2227,7 +2227,7 @@ const docTemplate = `{
                         "ApiTokenAuth": []
                     }
                 ],
-                "description": "Источник — Prometheus (per-node счётчики Sender'а; перцентили через histogram_quantile). Без Prometheus → нули с chart_available=false.",
+                "description": "Источник — ClickHouse-логи узла: точные счётчики по УНИКАЛЬНЫМ запросам. §79.4: принимает те же фильтры, что журнал логов (q/method/client_host/status/done) — KPI и график считаются под ними. §79.5: step задаёт ширину столбца, фактическая возвращается в step_seconds; столбец — записи по интервалу прихода с итоговым статусом (chart_unit=records), на больших окнах деградирует до счёта по прогонам (chart_unit=attempts). Без ClickHouse или при таймауте → нули с chart_available=false.",
                 "produces": [
                     "application/json"
                 ],
@@ -2260,6 +2260,60 @@ const docTemplate = `{
                         "description": "период по (RFC3339 или UnixMilli)",
                         "name": "to",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "шаг графика: auto (default) | 1h | 3h | 24h | 7d | 14d | 30d",
+                        "name": "step",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "полнотекстовый фильтр (§48)",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "1 — учитывать регистр",
+                        "name": "q_case",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "1 — слово целиком",
+                        "name": "q_word",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "1 — режим регулярного выражения",
+                        "name": "q_regex",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "фильтр по колонке method",
+                        "name": "method",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "фильтр по хосту клиента (§67)",
+                        "name": "client_host",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "ok | err (§72.1)",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "yes | no",
+                        "name": "done",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -2267,6 +2321,12 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.NodeMetricsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "некорректный поисковый запрос",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
                     },
                     "404": {
@@ -3066,7 +3126,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Пере-инжектирует через Receiver все неудачные (done=0) запросы узла за период и отменяет их оригиналы в DLQ (без двойной доставки). Пустые from/to = всё. Admin-only.",
+                "description": "Пере-инжектирует через Receiver недоставленные запросы узла за период (§79.1: записи без единого успешного прогона — уже доставленные не переотправляются), отменяет их оригиналы в DLQ (без двойной доставки) и убирает их строки done=0 из «Неудачных доставок» (§79.2, поле cleaned; на внешней §64 и чужой §70.4 таблице очистка пропускается). Пустые from/to = всё. Admin-only.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3559,6 +3619,12 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
+                        "description": "1 — только НЕДОСТАВЛЕННЫЕ записи (§79.1: нет ни одного прогона done=1). Не путать с done=no — тот про строку-прогон",
+                        "name": "unresolved",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "description": "exact match по подпути запроса (колонка method, §39/§48)",
                         "name": "method",
                         "in": "query"
@@ -3695,6 +3761,12 @@ const docTemplate = `{
                         "type": "string",
                         "description": "yes (done=1) | no (done=0)",
                         "name": "done",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "1 — только НЕДОСТАВЛЕННЫЕ записи (§79.1)",
+                        "name": "unresolved",
                         "in": "query"
                     },
                     {
@@ -6359,6 +6431,10 @@ const docTemplate = `{
                 "chart_available": {
                     "type": "boolean"
                 },
+                "chart_unit": {
+                    "description": "ChartUnit — как посчитаны столбцы (§79.5):\n  records  — запись относится к интервалу своего прихода, «ошибка» по\n             ИТОГОВОМУ статусу: после успешного повтора красный сегмент\n             исчезает из столбца сам;\n  attempts — деградация на больших окнах: запись считается в интервале\n             своего прогона, статус — по прогонам интервала.",
+                    "type": "string"
+                },
                 "kpi": {
                     "$ref": "#/definitions/internal_web_adapter_in_http.nodeKPIDTO"
                 },
@@ -6370,6 +6446,10 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/internal_web_adapter_in_http.seriesPointDTO"
                     }
+                },
+                "step_seconds": {
+                    "description": "StepSeconds — фактическая ширина столбца (§79.5). Может отличаться от\nзапрошенного step: шаг больше окна сжимается до окна, слишком мелкий —\nподнимается до потолка столбцов. Клиенту брать ширину больше неоткуда:\nна ряде из одной точки её не вывести из данных.",
+                    "type": "integer"
                 }
             }
         },
@@ -8897,6 +8977,10 @@ const docTemplate = `{
             "properties": {
                 "capped": {
                     "type": "boolean"
+                },
+                "cleaned": {
+                    "description": "§79.2: записей убрано из «Неудачных доставок»",
+                    "type": "integer"
                 },
                 "failed": {
                     "description": "ошибок replay (оригинал НЕ отменён — остаётся авто-репроцессору)",

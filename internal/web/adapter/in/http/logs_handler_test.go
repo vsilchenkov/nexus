@@ -42,7 +42,7 @@ func (stubLogReaderUnavailable) Count(_ context.Context, _ port.LogQuery) (uint6
 	return 0, domain.ErrLogsBackendUnavailable
 }
 
-func (stubLogReaderUnavailable) CountFailed(_ context.Context, _, _ string, _, _ int64) (uint64, error) {
+func (stubLogReaderUnavailable) CountFailed(_ context.Context, _ port.LogQuery, _ bool) (uint64, error) {
 	return 0, domain.ErrLogsBackendUnavailable
 }
 
@@ -69,7 +69,7 @@ func (stubLogReaderOK) Count(_ context.Context, _ port.LogQuery) (uint64, error)
 	return 1234, nil
 }
 
-func (stubLogReaderOK) CountFailed(_ context.Context, _, _ string, _, _ int64) (uint64, error) {
+func (stubLogReaderOK) CountFailed(_ context.Context, _ port.LogQuery, _ bool) (uint64, error) {
 	return 0, nil
 }
 
@@ -218,6 +218,26 @@ func TestLogsList_SearchParams_Parsed(t *testing.T) {
 
 // TestLogsList_BadSearchQuery_400 — невалидный поисковый запрос (regex или
 // мини-язык) → 400 с локализованной ошибкой, а не 500 (§48).
+// §79.1: параметр unresolved обязан доезжать до LogQuery. Без него список
+// «Неудачных доставок» жил на старом предикате done=no, и на одном экране KPI
+// показывал 0, а список — уже доставленную запись (найдено на стенде).
+func TestLogsList_UnresolvedParsed(t *testing.T) {
+	t.Parallel()
+	stub := &stubLogReaderCapture{}
+	r := newLogsRouter(stub)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/nodes/n1/logs?unresolved=1", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, stub.last.Unresolved, "unresolved=1 обязан доехать до запроса")
+	assert.Empty(t, stub.last.Done, "done — другой фильтр, подмешивать его нельзя")
+
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/nodes/n1/logs", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.False(t, stub.last.Unresolved, "без параметра фильтр выключен")
+}
+
 func TestLogsList_BadSearchQuery_400(t *testing.T) {
 	t.Parallel()
 	r := newLogsRouter(stubLogReaderOK{})

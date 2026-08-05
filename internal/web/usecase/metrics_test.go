@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"nexus/internal/domain"
+	"nexus/internal/domain/logsearch"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase/port"
 )
@@ -73,17 +74,27 @@ func (f *fakeProm) KafkaTopicSizes(_ context.Context) (map[string]int64, error) 
 }
 
 // fakeNodeLogs — ClickHouse-источник per-node метрик (port.NodeLogMetrics).
+// Поля got* фиксируют, ЧТО именно доехало до адаптера: §79.4 (фильтры и сужение
+// по партициям) и §79.5 (шаг столбца и форма счёта) проверяются именно так.
 type fakeNodeLogs struct {
 	kpi      port.NodeKPI
 	kpiErr   error
 	chart    []port.SeriesPoint
 	chartErr error
+
+	gotKPIQuery   port.LogQuery
+	gotChartQuery port.LogQuery
+	gotChart      port.ChartQuery
+	chartCalls    int
 }
 
-func (f *fakeNodeLogs) NodeKPI(_ context.Context, _, _ string, _, _ int64, _ bool) (port.NodeKPI, error) {
+func (f *fakeNodeLogs) NodeKPI(_ context.Context, q port.LogQuery, _ bool) (port.NodeKPI, error) {
+	f.gotKPIQuery = q
 	return f.kpi, f.kpiErr
 }
-func (f *fakeNodeLogs) NodeChart(_ context.Context, _, _ string, _, _ int64, _ int) ([]port.SeriesPoint, error) {
+func (f *fakeNodeLogs) NodeChart(_ context.Context, q port.LogQuery, c port.ChartQuery) ([]port.SeriesPoint, error) {
+	f.gotChartQuery, f.gotChart = q, c
+	f.chartCalls++
 	return f.chart, f.chartErr
 }
 
@@ -372,7 +383,7 @@ func TestMetricsUsecase_NodeMetrics(t *testing.T) {
 		t.Parallel()
 		repo := &fakeNodeRepo{err: domain.ErrNodeNotFound}
 		uc := NewMetricsUsecase(nil, nil, repo, nil, nil, log)
-		_, err := uc.NodeMetrics(context.Background(), "x", "default", time.Now().Add(-time.Hour), time.Now(), 10)
+		_, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "x", TeamID: "default", Since: time.Now().Add(-time.Hour), Until: time.Now()})
 		require.ErrorIs(t, err, domain.ErrNodeNotFound)
 	})
 
@@ -380,7 +391,7 @@ func TestMetricsUsecase_NodeMetrics(t *testing.T) {
 		t.Parallel()
 		repo := &fakeNodeRepo{node: &domain.Node{ID: "n1", Path: "p", TeamID: "other"}}
 		uc := NewMetricsUsecase(nil, nil, repo, nil, nil, log)
-		_, err := uc.NodeMetrics(context.Background(), "n1", "default", time.Now().Add(-time.Hour), time.Now(), 10)
+		_, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "default", Since: time.Now().Add(-time.Hour), Until: time.Now()})
 		require.ErrorIs(t, err, domain.ErrNodeNotFound)
 	})
 
@@ -389,7 +400,7 @@ func TestMetricsUsecase_NodeMetrics(t *testing.T) {
 		// Узел без ClickHouseTable (логирование выключено) → метрики недоступны.
 		repo := &fakeNodeRepo{node: &domain.Node{ID: "n1", Path: "p", TeamID: "default"}}
 		uc := NewMetricsUsecase(nil, &fakeNodeLogs{}, repo, nil, nil, log)
-		got, err := uc.NodeMetrics(context.Background(), "n1", "default", time.Now().Add(-time.Hour), time.Now(), 10)
+		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "default", Since: time.Now().Add(-time.Hour), Until: time.Now()})
 		require.NoError(t, err)
 		require.False(t, got.ChartAvailable)
 		require.Zero(t, got.KPI.Total)
@@ -402,7 +413,7 @@ func TestMetricsUsecase_NodeMetrics(t *testing.T) {
 		repo := &fakeNodeRepo{node: &domain.Node{ID: "n1", Path: "nolog/draft", TeamID: "default", ClickHouseTable: "nexus_default."}}
 		logs := &fakeNodeLogs{kpi: port.NodeKPI{Total: 100}}
 		uc := NewMetricsUsecase(nil, logs, repo, nil, nil, log)
-		got, err := uc.NodeMetrics(context.Background(), "n1", "default", time.Now().Add(-time.Hour), time.Now(), 10)
+		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "default", Since: time.Now().Add(-time.Hour), Until: time.Now()})
 		require.NoError(t, err)
 		require.False(t, got.ChartAvailable, "черновичное имя таблицы → метрики недоступны")
 		require.Zero(t, got.KPI.Total)
@@ -413,7 +424,7 @@ func TestMetricsUsecase_NodeMetrics(t *testing.T) {
 		repo := &fakeNodeRepo{node: &domain.Node{ID: "n1", Path: "p", TeamID: "default", ClickHouseTable: "db.t"}}
 		logs := &fakeNodeLogs{kpiErr: errors.New("boom")}
 		uc := NewMetricsUsecase(nil, logs, repo, nil, nil, log)
-		got, err := uc.NodeMetrics(context.Background(), "n1", "default", time.Now().Add(-time.Hour), time.Now(), 10)
+		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "default", Since: time.Now().Add(-time.Hour), Until: time.Now()})
 		require.NoError(t, err)
 		require.False(t, got.ChartAvailable)
 	})
@@ -426,7 +437,7 @@ func TestMetricsUsecase_NodeMetrics(t *testing.T) {
 			chart: []port.SeriesPoint{{TsMs: 1, Count: 10}, {TsMs: 2, Count: 20}},
 		}
 		uc := NewMetricsUsecase(nil, logs, repo, nil, nil, log)
-		got, err := uc.NodeMetrics(context.Background(), "n1", "default", time.Now().Add(-time.Hour), time.Now(), 10)
+		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "default", Since: time.Now().Add(-time.Hour), Until: time.Now()})
 		require.NoError(t, err)
 		require.True(t, got.ChartAvailable)
 		require.EqualValues(t, 100, got.KPI.Total)
@@ -435,11 +446,101 @@ func TestMetricsUsecase_NodeMetrics(t *testing.T) {
 		require.EqualValues(t, time.Hour.Milliseconds(), got.RangeMs)
 	})
 
+	// §79.4: фильтры журнала обязаны доехать до ClickHouse — иначе метрики и
+	// список логов под одинаковыми фильтрами показывают разное.
+	t.Run("§79.4 фильтры и сужение по партициям доезжают до адаптера", func(t *testing.T) {
+		t.Parallel()
+		repo := &fakeNodeRepo{node: &domain.Node{ID: "n1", Path: "p", TeamID: "default", ClickHouseTable: "db.t"}}
+		logs := &fakeNodeLogs{kpi: port.NodeKPI{Total: 10}}
+		uc := NewMetricsUsecase(nil, logs, repo, nil, nil, log)
+
+		_, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{
+			NodeID: "n1", TeamID: "default",
+			Since: time.Now().Add(-time.Hour), Until: time.Now(),
+			Filter: port.LogQuery{Method: "POST", ClientHost: "h1", Status: "err", Q: "order"},
+		})
+		require.NoError(t, err)
+		require.Equal(t, "POST", logs.gotKPIQuery.Method)
+		require.Equal(t, "h1", logs.gotKPIQuery.ClientHost)
+		require.Equal(t, "err", logs.gotKPIQuery.Status)
+		require.NotNil(t, logs.gotKPIQuery.QExpr, "мини-язык §48 обязан быть разобран usecase'ом")
+		require.True(t, logs.gotKPIQuery.DateCreateAligned, "§72.4: сужение по партициям")
+		require.Equal(t, logs.gotKPIQuery.Method, logs.gotChartQuery.Method,
+			"график считается под теми же фильтрами, что KPI")
+	})
+
+	t.Run("§79.4 битый поисковый запрос → ошибка (400 у handler'а)", func(t *testing.T) {
+		t.Parallel()
+		repo := &fakeNodeRepo{node: &domain.Node{ID: "n1", Path: "p", TeamID: "default", ClickHouseTable: "db.t"}}
+		uc := NewMetricsUsecase(nil, &fakeNodeLogs{}, repo, nil, nil, log)
+
+		_, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{
+			NodeID: "n1", TeamID: "default",
+			Filter: port.LogQuery{Q: "(", QRegex: true},
+		})
+		require.ErrorIs(t, err, logsearch.ErrBadQuery)
+	})
+
+	t.Run("§72.4 внешняя таблица выключает сужение по партициям", func(t *testing.T) {
+		t.Parallel()
+		repo := &fakeNodeRepo{node: &domain.Node{
+			ID: "n1", Path: "p", TeamID: "default", ClickHouseTable: "db.t", ExternalTable: true,
+		}}
+		logs := &fakeNodeLogs{kpi: port.NodeKPI{Total: 1}}
+		uc := NewMetricsUsecase(nil, logs, repo, nil, nil, log)
+
+		_, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "default"})
+		require.NoError(t, err)
+		require.False(t, logs.gotKPIQuery.DateCreateAligned)
+	})
+
+	// §79.5: 14 дней с шагом 24 ч = столбцы по суткам; фактический шаг уезжает
+	// наружу, потому что клиенту его больше неоткуда взять.
+	t.Run("§79.5 шаг графика доезжает до адаптера и возвращается наружу", func(t *testing.T) {
+		t.Parallel()
+		repo := &fakeNodeRepo{node: &domain.Node{ID: "n1", Path: "p", TeamID: "default", ClickHouseTable: "db.t"}}
+		logs := &fakeNodeLogs{kpi: port.NodeKPI{Total: 5}}
+		uc := NewMetricsUsecase(nil, logs, repo, nil, nil, log)
+
+		until := time.Now()
+		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{
+			NodeID: "n1", TeamID: "default",
+			Since: until.Add(-14 * 24 * time.Hour), Until: until, Step: "24h",
+		})
+		require.NoError(t, err)
+		require.EqualValues(t, 86400, logs.gotChart.StepSec)
+		require.EqualValues(t, 86400, got.StepSec)
+	})
+
+	// §79.5: столбец считается «по итогу записи», поэтому после успешного
+	// повтора красный сегмент уходит сам. На больших окнах форма деградирует —
+	// и об этом обязано быть сказано наружу, а не молча.
+	t.Run("§79.5 форма столбца: по итогу записи, с деградацией по порогу", func(t *testing.T) {
+		t.Parallel()
+		node := &domain.Node{ID: "n1", Path: "p", TeamID: "default", ClickHouseTable: "db.t"}
+
+		small := &fakeNodeLogs{kpi: port.NodeKPI{Total: 100}}
+		uc := NewMetricsUsecase(nil, small, &fakeNodeRepo{node: node}, nil, nil, log,
+			WithExactChartMaxRecords(1000))
+		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "default"})
+		require.NoError(t, err)
+		require.True(t, small.gotChart.ByRecord)
+		require.Equal(t, ChartUnitRecords, got.ChartUnit)
+
+		big := &fakeNodeLogs{kpi: port.NodeKPI{Total: 5000}}
+		uc = NewMetricsUsecase(nil, big, &fakeNodeRepo{node: node}, nil, nil, log,
+			WithExactChartMaxRecords(1000))
+		got, err = uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "default"})
+		require.NoError(t, err)
+		require.False(t, big.gotChart.ByRecord, "окно больше порога → дешёвая форма")
+		require.Equal(t, ChartUnitAttempts, got.ChartUnit, "подмена семантики обязана быть видна клиенту")
+	})
+
 	t.Run("empty teamID skips scope check", func(t *testing.T) {
 		t.Parallel()
 		repo := &fakeNodeRepo{node: &domain.Node{ID: "n1", Path: "p", TeamID: "whatever"}}
 		uc := NewMetricsUsecase(nil, nil, repo, nil, nil, log)
-		_, err := uc.NodeMetrics(context.Background(), "n1", "", time.Now().Add(-time.Hour), time.Now(), 10)
+		_, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "", Since: time.Now().Add(-time.Hour), Until: time.Now()})
 		require.NoError(t, err)
 	})
 }

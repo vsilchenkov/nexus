@@ -515,6 +515,10 @@ func (a *App) Start(ctx context.Context) error {
 		replayUC := usecase.NewReplayUsecaseWithCancel(
 			logReader, nodeRepo, dispatcher, rl, auditUC,
 			a.cfg.Web.ReplayRateLimitPerUserPerMin, queueCancel, teamRepo, dlqRetention, a.logger,
+			// §79.2: после успешного массового повтора убираем строки done=0
+			// оригиналов — иначе записи остаются в «Неудачных доставках» до
+			// ручной очистки, хотя сообщения уже доставлены.
+			usecase.WithFailedCleaner(logReader),
 		)
 		logsUC := usecase.NewLogsUsecase(logReader, nodeRepo, a.logger)
 		replayHandler = httpadapter.NewReplayHandler(replayUC, a.logger)
@@ -577,7 +581,9 @@ func (a *App) Start(ctx context.Context) error {
 	if a.redis != nil {
 		nodeStatusReader = rediscache.NewNodeStatusReaderRedis(a.redis, a.logger)
 	}
-	metricsUC := usecase.NewMetricsUsecase(promMetrics, nodeLogMetrics, nodeRepo, appSettingsRepo, nodeStatusReader, a.logger)
+	metricsUC := usecase.NewMetricsUsecase(promMetrics, nodeLogMetrics, nodeRepo, appSettingsRepo, nodeStatusReader, a.logger,
+		// §79.5.1: порог точной формы графика — рычаг оператора на больших таблицах.
+		usecase.WithExactChartMaxRecords(a.cfg.Web.MetricsExactChartMaxRecords))
 	metricsHandler := httpadapter.NewMetricsHandler(metricsUC, a.logger)
 
 	// Мониторинг Kafka (§4 spec): Prometheus (throughput/lag/KPI/top-узлы) +

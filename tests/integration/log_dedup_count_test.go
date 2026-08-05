@@ -97,18 +97,27 @@ func TestClickHouse_LogDedup_CountAndPage_E2E(t *testing.T) {
 		require.Len(t, seen, dedupRecords, "скролл обязан дойти до конца истории")
 	})
 
-	t.Run("счётчик неудачных считает записи", func(t *testing.T) {
-		// Неудачная = запись, у которой в окне есть хотя бы одна попытка done=0:
-		// ровно те ID, что отменяет и удаляет очистка «Неудачных доставок»
-		// (FailedIDs/DeleteFailed). Сид: доставлены все попытки только у каждой
-		// четвёртой записи.
-		want := dedupRecords - dedupRecords/4
-		n, err := reader.CountFailed(ctx, table, "", 0, 0)
+	t.Run("счётчик неудачных считает записи без успешного прогона", func(t *testing.T) {
+		// §79.1: неудачная = запись, у которой в окне НЕТ НИ ОДНОГО прогона
+		// done=1. Сид даёт три ситуации: каждая 4-я доставлена всеми попытками,
+		// следующая за ней — только свежайшей (остальные её попытки done=0),
+		// остальные не доставлены вовсе. Значит неудачны ровно половина.
+		//
+		// На прежнем предикате («есть хотя бы одна попытка done=0») здесь было
+		// dedupRecords-dedupRecords/4 = 30: записи, спасённые повтором, вечно
+		// числились неудачными. Это и есть боевой дефект узла kz.
+		want := dedupRecords / 2
+		n, err := reader.CountFailed(ctx, failedQ(table, "", 0, 0), false)
 		require.NoError(t, err)
 		require.EqualValues(t, want, n,
 			"KPI «неудачные доставки» обязан совпадать со списком неудачных и с числом отменяемых ID")
 
-		ids, capped, err := reader.FailedIDs(ctx, table, "", 0, 0, 1000)
+		// Тождество с KPI узла — то, ради чего единица приведена к записи.
+		kpi, err := reader.NodeKPI(ctx, port.LogQuery{Table: table}, false)
+		require.NoError(t, err)
+		require.EqualValues(t, kpi.Errors, n, "KPI узла и KPI вкладки «Очередь» обязаны совпадать")
+
+		ids, capped, err := reader.FailedIDs(ctx, failedQ(table, "", 0, 0), 1000)
 		require.NoError(t, err)
 		require.False(t, capped)
 		require.EqualValues(t, n, len(ids), "счётчик и список отменяемых ID обязаны сойтись")

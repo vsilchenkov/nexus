@@ -77,3 +77,36 @@ export function logsFilterSearch(f: LogsFilterState): string {
 export function isLogOK(r: { done: boolean; status: number }): boolean {
   return r.done && r.status >= 200 && r.status < 400;
 }
+
+// §79.4: LogsAdvForm — черновик панели расширенных фильтров (те же поля, что у
+// фильтра логов, без быстрых переключателей status/done — они живут в шапке
+// своего экрана). Панель общая у журнала и вкладки «Метрики», поэтому форма,
+// пустое значение и сравнение лежат здесь, а не в файле компонента: правило
+// react-refresh требует, чтобы компонентный файл экспортировал только компоненты.
+export type LogsAdvForm = Omit<LogsFilterState, "status" | "done">;
+
+export const emptyAdvForm: LogsAdvForm = {
+  q: "",
+  method: "",
+  clientHost: "",
+  from: "",
+  to: "",
+  qCase: false,
+  qWord: false,
+  qRegex: false,
+};
+
+/** advFormEqual — идемпотентность коммита (§77.3): Enter + последующий blur не
+ * должны порождать два одинаковых запроса. */
+export function advFormEqual(a: LogsAdvForm, b: LogsAdvForm): boolean {
+  return (
+    a.q === b.q &&
+    a.method === b.method &&
+    a.clientHost === b.clientHost &&
+    a.from === b.from &&
+    a.to === b.to &&
+    a.qCase === b.qCase &&
+    a.qWord === b.qWord &&
+    a.qRegex === b.qRegex
+  );
+}

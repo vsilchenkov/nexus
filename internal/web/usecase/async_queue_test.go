@@ -88,26 +88,34 @@ func newQueueUCFull(peeker port.AsyncQueuePeeker, cancel port.QueueCancelWriter,
 
 // stubFailedPurger — управляемый FailedLogsPurger; фиксирует аргументы.
 type stubFailedPurger struct {
-	ids       []string
-	capped    bool
-	deleted   uint64
-	idsErr    error
-	delErr    error
-	gotTable  string
-	gotNodeID string
-	gotSince  int64
-	gotUntil  int64
-	delCalled bool
-	delNodeID string
+	ids           []string
+	capped        bool
+	deleted       uint64
+	idsErr        error
+	delErr        error
+	gotTable      string
+	gotNodeID     string
+	gotSince      int64
+	gotUntil      int64
+	gotUnresolved bool   // §79.1: спрошены записи без успешного прогона
+	gotDone       string // §79.1: фильтр СТРОК не должен подмешиваться
+	gotAligned    bool   // §72.4: сужение по партициям доехало
+	idsCalls      int    // §79.2: набор ID обязан считаться ОДИН раз на операцию
+	delCalled     bool
+	delNodeID     string
+	delIDs        []string // §79.2: удаляем ровно то, что отменили
 }
 
-func (s *stubFailedPurger) FailedIDs(_ context.Context, table, nodeID string, sinceMs, untilMs int64, _ int) ([]string, bool, error) {
-	s.gotTable, s.gotNodeID, s.gotSince, s.gotUntil = table, nodeID, sinceMs, untilMs
+func (s *stubFailedPurger) FailedIDs(_ context.Context, q port.LogQuery, _ int) ([]string, bool, error) {
+	s.idsCalls++
+	s.gotTable, s.gotNodeID, s.gotSince, s.gotUntil = q.Table, q.NodeID, q.SinceMs, q.UntilMs
+	s.gotUnresolved, s.gotDone, s.gotAligned = q.Unresolved, q.Done, q.DateCreateAligned
 	return s.ids, s.capped, s.idsErr
 }
-func (s *stubFailedPurger) DeleteFailed(_ context.Context, _, nodeID string, _, _ int64) (uint64, error) {
+func (s *stubFailedPurger) DeleteFailedRows(_ context.Context, q port.LogQuery, ids []string) (uint64, error) {
 	s.delCalled = true
-	s.delNodeID = nodeID
+	s.delNodeID = q.NodeID
+	s.delIDs = ids
 	return s.deleted, s.delErr
 }
 
@@ -366,6 +374,54 @@ func TestAsyncQueue_PurgeFailed_CancelsAndDeletes(t *testing.T) {
 	// Audit.
 	require.Len(t, audit.entries, 1)
 	assert.Equal(t, domain.ActionAsyncQueuePurge, audit.entries[0].Action)
+}
+
+// §79.2: набор ID считается ОДИН раз и обслуживает оба шага — tombstone'ы и
+// удаление. Раньше это были два независимых прохода (FailedIDs + сплошной
+// DELETE по done=0), и аудит показывал расхождение: боевое cancelled=5 при
+// deleted=10. Плюс §79.1: спрашиваются записи без успешного прогона.
+func TestAsyncQueue_PurgeFailed_SingleIDSetForCancelAndDelete(t *testing.T) {
+	t.Parallel()
+	cancelW := &stubCancelWriter{}
+	failed := &stubFailedPurger{ids: []string{"f1", "f2"}, deleted: 2}
+	uc, _ := newQueueUCFull(&stubPeeker{}, cancelW, failed, asyncNodeCH())
+
+	_, err := uc.PurgeFailed(context.Background(), Actor{UserID: "u"}, "n1", "t1", time.Time{}, time.Time{})
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, failed.idsCalls, "набор ID обязан считаться один раз на операцию")
+	assert.Equal(t, []string{"f1", "f2"}, cancelW.gotIDs)
+	assert.Equal(t, []string{"f1", "f2"}, failed.delIDs, "удаляем ровно то, что отменили")
+}
+
+// §79.2: пустой набор — ни tombstone'ов, ни DELETE, ни записи в аудит.
+// Раньше сплошной DELETE выполнялся всегда, даже когда чистить было нечего.
+func TestAsyncQueue_PurgeFailed_EmptySet_NoDelete(t *testing.T) {
+	t.Parallel()
+	cancelW := &stubCancelWriter{}
+	failed := &stubFailedPurger{}
+	uc, audit := newQueueUCFull(&stubPeeker{}, cancelW, failed, asyncNodeCH())
+
+	r, err := uc.PurgeFailed(context.Background(), Actor{UserID: "u"}, "n1", "t1", time.Time{}, time.Time{})
+	require.NoError(t, err)
+	assert.Zero(t, r.Cancelled)
+	assert.False(t, failed.delCalled, "нечего удалять — DELETE не отправляется")
+	assert.Empty(t, cancelW.gotIDs)
+	assert.Empty(t, audit.entries)
+}
+
+// §79.1: очистка спрашивает записи без успешного прогона (Unresolved), а не
+// строки done=0, — иначе она отменяла бы доставку уже доставленных сообщений.
+func TestAsyncQueue_PurgeFailed_AsksUnresolved(t *testing.T) {
+	t.Parallel()
+	failed := &stubFailedPurger{ids: []string{"f1"}, deleted: 1}
+	uc, _ := newQueueUCFull(&stubPeeker{}, &stubCancelWriter{}, failed, asyncNodeCH())
+
+	_, err := uc.PurgeFailed(context.Background(), Actor{UserID: "u"}, "n1", "t1", time.Time{}, time.Time{})
+	require.NoError(t, err)
+	assert.True(t, failed.gotUnresolved, "want Unresolved=true")
+	assert.Empty(t, failed.gotDone, "Done — фильтр СТРОК журнала, здесь он неуместен")
+	assert.True(t, failed.gotAligned, "§72.4: сужение по партициям обязано доехать")
 }
 
 func TestAsyncQueue_PurgeFailed_AllZeroWindow(t *testing.T) {

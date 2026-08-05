@@ -14,39 +14,49 @@ import { api, isNotFound, type Node } from "../api/client";
 import { Button, Chip, Field, Input, Pill, type LogsRange } from "../components/ui";
 import { Modal } from "../components/ui/Modal";
 import { cn } from "../lib/cn";
-import { msToDatetimeLocal } from "../lib/format";
 import { validateNodePath } from "../lib/nodeValidation";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { useEnsureNodeTeam } from "../lib/nodeShare";
+import {
+  isKnownNodeTab,
+  parseLogsInitialFilter,
+  parseNodeTab,
+  withFailedLogs,
+  withLogsWindow,
+  withNodeTab,
+  type NodeTab,
+} from "../lib/nodeTabUrl";
 import { ShareNodeButton } from "../components/node/ShareNodeButton";
 import { DryRunDialog } from "../components/DryRunDialog";
-import { LogsTab, type LogsInitialFilter } from "../components/node/LogsTab";
+import { LogsTab } from "../components/node/LogsTab";
 import { OverviewTab } from "../components/node/OverviewTab";
 import { ConfigTab } from "../components/node/ConfigTab";
 import { MetricsTab } from "../components/node/MetricsTab";
 import { QueueTab } from "../components/node/QueueTab";
 
-type Tab = "overview" | "logs" | "config" | "metrics" | "queue";
+type Tab = NodeTab;
 
 const BASE_TABS: Tab[] = ["overview", "logs", "config", "metrics"];
 
 export default function NodeDetail() {
   const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
-  // §47.4: дип-линк со спарклайна дашборда — /nodes/:id?tab=logs&from&to (ms).
-  // Стартуем на вкладке логов с окном бакета (как клик по графику узла, §33.4).
-  const [searchParams] = useSearchParams();
-  const qsFrom = Number(searchParams.get("from"));
-  const qsTo = Number(searchParams.get("to"));
-  const hasQsWindow =
-    !!searchParams.get("from") && !!searchParams.get("to") && Number.isFinite(qsFrom) && Number.isFinite(qsTo);
-  const [tab, setTab] = useState<Tab>(searchParams.get("tab") === "logs" ? "logs" : "overview");
-  // §33.4: фильтр логов, прокинутый кликом по столбцу графика (момент времени).
-  const [logsFilter, setLogsFilter] = useState<LogsInitialFilter | null>(
-    hasQsWindow
-      ? { from: msToDatetimeLocal(qsFrom), to: msToDatetimeLocal(qsTo), status: "all" }
-      : null,
-  );
+  // §79.3: активная вкладка и окно журнала — производные АДРЕСА, а не состояния.
+  // Так ссылка на вкладку пересылается и открывается в новом окне, а «Назад»
+  // возвращает предыдущую вкладку, ничего не рассинхронизировав.
+  // §47.4/§33.4: дип-линк со спарклайна дашборда — ?tab=logs&from&to (ms).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = parseNodeTab(searchParams.get("tab"));
+  const logsFilter = parseLogsInitialFilter(searchParams);
+
+  // Нормализация мусорного ?tab=zzz — replace: чинить адрес в истории незачем,
+  // а вот переключения вкладок пользователем в историю идут (push ниже).
+  const rawTab = searchParams.get("tab");
+  useEffect(() => {
+    if (rawTab !== null && !isKnownNodeTab(rawTab)) {
+      setSearchParams((prev) => withNodeTab(prev, "overview"), { replace: true });
+    }
+  }, [rawTab, setSearchParams]);
   // §26/§28 Пункт 3: редактирование узла — только manager+ (viewer не видит креды).
   const canEdit = useRoleAtLeast("manager");
   // §53: диалог «Скопировать узел» (manager+, как создание).
@@ -74,14 +84,9 @@ export default function NodeDetail() {
   const ensure = useEnsureNodeTeam(id);
 
   // openLogsAt — переход на вкладку логов с временным окном бакета (§33.4).
-  const openLogsAt = (r: LogsRange) => {
-    setLogsFilter({
-      from: msToDatetimeLocal(r.from),
-      to: msToDatetimeLocal(r.to),
-      status: r.onlyErrors ? "err" : "all",
-    });
-    setTab("logs");
-  };
+  // Одна запись в адрес: вкладка и окно уезжают вместе, промежуточного рендера
+  // «уже логи, но ещё без фильтра» не возникает.
+  const openLogsAt = (r: LogsRange) => setSearchParams((prev) => withLogsWindow(prev, r));
 
   const nodeQ = useQuery({
     queryKey: ["node", id],
@@ -153,7 +158,7 @@ export default function NodeDetail() {
             {t("node.actions.refresh")}
           </Button>
           {/* §58, п.1/п.4: «Поделиться» доступна всем ролям (viewer тоже). */}
-          <ShareNodeButton nodeId={node.id} sm />
+          <ShareNodeButton nodeId={node.id} tab={tab} sm />
           {canEdit && (
             <>
               <Button sm variant="ghost" onClick={() => setDryRunOpen(true)}>
@@ -209,16 +214,19 @@ export default function NodeDetail() {
         </div>
       )}
 
+      {/* §79.3: вкладки — НАСТОЯЩИЕ ссылки (<a href>), а не кнопки. С кнопкой
+          браузеру нечего открывать: контекстное меню «Открыть в новой вкладке»,
+          Ctrl/Cmd+клик и клик средней кнопкой не работают вовсе, хотя адрес у
+          вкладки теперь есть. Link рисует href и при обычном клике остаётся
+          SPA-навигацией (push — «Назад» возвращает предыдущую вкладку). */}
       <div className="flex gap-1 border-b border-line">
         {tabs.map((tb) => (
-          <button
+          <Link
             key={tb}
-            type="button"
-            onClick={() => {
-              setTab(tb);
-              // Ручной переход на логи — без унаследованного фильтра клика по графику.
-              if (tb !== "logs") setLogsFilter(null);
-            }}
+            // Только search: pathname у вкладок общий, а чужие параметры адреса
+            // обязаны выживать (правило §54). Уход с «Логов» чистит окно
+            // журнала внутри withNodeTab.
+            to={{ search: `?${withNodeTab(searchParams, tb)}` }}
             className={cn(
               "px-3.5 py-2.5 text-[13px]",
               tab === tb
@@ -227,12 +235,19 @@ export default function NodeDetail() {
             )}
           >
             {t(`node.tabs.${tb}`)}
-          </button>
+          </Link>
         ))}
       </div>
 
+      {/* Рендер вкладок остаётся УСЛОВНЫМ: LogsTab читает initialFilter только
+          при монтировании (§48), поэтому скрытие через CSS молча сломало бы
+          переходы «Обзор/Очередь → Логи». */}
       {tab === "overview" && (
-        <OverviewTab node={node} onAllLogs={() => setTab("logs")} onOpenLogs={openLogsAt} />
+        <OverviewTab
+          node={node}
+          onAllLogs={() => setSearchParams((prev) => withNodeTab(prev, "logs"))}
+          onOpenLogs={openLogsAt}
+        />
       )}
       {tab === "logs" && <LogsTab node={node} initialFilter={logsFilter ?? undefined} />}
       {tab === "config" && <ConfigTab node={node} />}
@@ -240,10 +255,7 @@ export default function NodeDetail() {
       {tab === "queue" && (
         <QueueTab
           node={node}
-          onOpenFailedLogs={(f) => {
-            setLogsFilter(f);
-            setTab("logs");
-          }}
+          onOpenFailedLogs={(f) => setSearchParams((prev) => withFailedLogs(prev, f))}
         />
       )}
     </div>

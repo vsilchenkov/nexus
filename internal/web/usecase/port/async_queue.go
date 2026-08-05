@@ -68,21 +68,40 @@ type QueueCancelWriter interface {
 	Cancel(ctx context.Context, ids []string, ttl time.Duration) (int, error)
 }
 
+// FailedLogsCleaner — удаление истории неудачных прогонов конкретных записей из
+// CH-таблицы узла (§79.2). Отдельный узкий интерфейс, потому что его потребитель
+// — не только очистка очереди, но и «Повторить все сейчас» (replay): после
+// успешной реинъекции строки done=0 оригинала убираются, чтобы запись исчезла из
+// «Неудачных доставок» сразу.
+type FailedLogsCleaner interface {
+	// DeleteFailedRows — удалить строки done=0 записей ids в окне q. Возвращает
+	// число ЗАПИСЕЙ, чьи строки удалены (строк уходит больше: у записи столько
+	// строк, сколько было прогонов доставки). Пустой ids → (0, nil).
+	//
+	// Строки done=1 тех же записей НЕ трогаются: история успешной доставки
+	// остаётся в журнале логов.
+	//
+	// Границы: гейт владения таблицей §70.4 (чужая/внешняя таблица →
+	// domain.ErrCHForeignDatabase) и СТРОГИЙ фильтр по node_id — послабление
+	// §61 (`OR node_id=''`) в разрушающей операции означало бы удаление строк
+	// постороннего писателя.
+	DeleteFailedRows(ctx context.Context, q LogQuery, ids []string) (uint64, error)
+}
+
 // FailedLogsPurger — очистка «Неудачных доставок» узла из ClickHouse-логов
-// (§35/§36). Реализуется adapter/out/clickhouse.LogReaderCH. Опционален: nil при
-// отсутствии ClickHouse. table — CH-таблица узла (db.table).
+// (§35/§36.10). Реализуется adapter/out/clickhouse.LogReaderCH. Опционален: nil
+// при отсутствии ClickHouse.
 //
-// Очистка неудачных = отмена (qcancel) их ID, чтобы DLQ-репроцессор перестал их
-// повторять (FailedIDs → QueueCancelWriter.Cancel), + lightweight DELETE записей
-// done=0 за окно (чтобы они исчезли из вида). Окно — (sinceMs, untilMs]; нулевые
-// границы = всё.
-// §37: nodeID — UUID узла для per-node атрибуции в общей CH-таблице (пусто —
-// без фильтра). Важно для DeleteFailed: иначе очистка одного узла удалит записи
-// другого, делящего таблицу.
+// Очистка неудачных = отмена (qcancel) ID этих записей, чтобы DLQ-репроцессор
+// перестал их повторять (FailedIDs → QueueCancelWriter.Cancel), + удаление их
+// строк done=0 (чтобы записи исчезли из вида).
+//
+// §79.2: оба шага работают с ОДНИМ набором ID, поэтому «отменено N» и
+// «очищено N» сходятся конструктивно (раньше это были два независимых прохода —
+// боевой аудит показывал cancelled=5 при deleted=10).
 type FailedLogsPurger interface {
-	// FailedIDs — уникальные ID записей done=0 за окно (до cap; capped=true, если
-	// есть ещё). Для отмены повторной доставки этих сообщений в DLQ.
-	FailedIDs(ctx context.Context, table, nodeID string, sinceMs, untilMs int64, cap int) ([]string, bool, error)
-	// DeleteFailed — удалить записи done=0 за окно; возвращает число удалённых.
-	DeleteFailed(ctx context.Context, table, nodeID string, sinceMs, untilMs int64) (uint64, error)
+	// FailedIDs — ID недоставленных записей под фильтрами q (§79.1: у записи нет
+	// ни одного прогона done=1), до cap; capped=true, если кандидатов было больше.
+	FailedIDs(ctx context.Context, q LogQuery, cap int) (ids []string, capped bool, err error)
+	FailedLogsCleaner
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"nexus/internal/domain"
+	"nexus/internal/domain/logsearch"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase"
 )
@@ -28,27 +29,28 @@ func NewMetricsHandler(uc *usecase.MetricsUsecase, logger logging.Logger) *Metri
 	return &MetricsHandler{uc: uc, logger: logger}
 }
 
-// rangeBuckets — допустимые окна-пресеты и число бакетов для графика (§28
-// Пункт 4): 1h/3h/24h/7d/14d/30d. 15m оставлен для обратной совместимости.
-var rangeBuckets = map[string]struct {
-	d       time.Duration
-	buckets int
-}{
-	"15m": {15 * time.Minute, 30},
-	"1h":  {time.Hour, 60},
-	"3h":  {3 * time.Hour, 60},
-	"24h": {24 * time.Hour, 48},
-	"7d":  {7 * 24 * time.Hour, 84},
-	"14d": {14 * 24 * time.Hour, 84},
-	"30d": {30 * 24 * time.Hour, 90},
+// rangePresets — допустимые окна-пресеты (§28 Пункт 4): 1h/3h/24h/7d/14d/30d.
+// 15m оставлен для обратной совместимости.
+//
+// §79.5: плотность графика больше не свойство пресета — её задаёт «Шаг
+// графика», а расчёт по умолчанию живёт в usecase (autoChartBuckets), рядом с
+// согласованием пары (окно, шаг). Здесь остались только длительности.
+var rangePresets = map[string]time.Duration{
+	"15m": 15 * time.Minute,
+	"1h":  time.Hour,
+	"3h":  3 * time.Hour,
+	"24h": 24 * time.Hour,
+	"7d":  7 * 24 * time.Hour,
+	"14d": 14 * 24 * time.Hour,
+	"30d": 30 * 24 * time.Hour,
 }
 
 // parseRange — окно-пресет из query-параметра range; дефолт 1h.
-func parseRange(s string) (time.Duration, int) {
-	if rb, ok := rangeBuckets[s]; ok {
-		return rb.d, rb.buckets
+func parseRange(s string) time.Duration {
+	if d, ok := rangePresets[s]; ok {
+		return d
 	}
-	return time.Hour, 60
+	return time.Hour
 }
 
 // parseTimeParam парсит метку времени из query: RFC3339 или UnixMilli (число).
@@ -70,31 +72,16 @@ func parseTimeParam(s string) (time.Time, bool) {
 //   - произвольный календарный период: from+to (RFC3339 или UnixMilli);
 //   - иначе пресет range (1h/3h/24h/7d/14d/30d), окно = [now-d, now].
 //
-// Возвращает (since, until, buckets). Для произвольного периода buckets берётся
-// от ближайшего пресета по длительности (для разумной плотности графика).
-func resolveWindow(c *gin.Context) (since, until time.Time, buckets int) {
+// §79.5: число столбцов графика отсюда ушло — его считает usecase из пары
+// (окно, «Шаг графика»). Handler больше не решает, как рисовать.
+func resolveWindow(c *gin.Context) (since, until time.Time) {
 	from, okF := parseTimeParam(c.Query("from"))
 	to, okT := parseTimeParam(c.Query("to"))
 	if okF && okT && from.Before(to) {
-		return from, to, bucketsForDuration(to.Sub(from))
+		return from, to
 	}
-	d, b := parseRange(c.Query("range"))
 	now := time.Now()
-	return now.Add(-d), now, b
-}
-
-// bucketsForDuration подбирает число бакетов графика по длительности окна.
-func bucketsForDuration(d time.Duration) int {
-	switch {
-	case d <= time.Hour:
-		return 60
-	case d <= 24*time.Hour:
-		return 48
-	case d <= 7*24*time.Hour:
-		return 84
-	default:
-		return 90
-	}
+	return now.Add(-parseRange(c.Query("range"))), now
 }
 
 type overviewKPIDTO struct {
@@ -165,7 +152,7 @@ type overviewTotalsDTO struct {
 // @Security ApiTokenAuth
 // @Router   /api/metrics/nodes [get]
 func (h *MetricsHandler) NodesOverview(c *gin.Context) {
-	since, until, _ := resolveWindow(c)
+	since, until := resolveWindow(c)
 	res := h.uc.NodesOverview(c.Request.Context(), currentTeamID(c), since, until)
 	items := make([]nodeThroughputDTO, 0, len(res.Items))
 	for _, it := range res.Items {
@@ -233,7 +220,7 @@ type diagnosticsDTO struct {
 // @Security ApiTokenAuth
 // @Router   /api/metrics/diagnostics [get]
 func (h *MetricsHandler) Diagnostics(c *gin.Context) {
-	since, until, _ := resolveWindow(c)
+	since, until := resolveWindow(c)
 	res := h.uc.Diagnostics(c.Request.Context(), currentTeamID(c), since, until)
 	nodes := make([]diagNodeDTO, 0, len(res.Nodes))
 	for _, n := range res.Nodes {
@@ -270,23 +257,47 @@ type seriesPointDTO struct {
 
 // Node godoc
 // @Summary  KPI + временной ряд графика узла (§21).
-// @Description  Источник — Prometheus (per-node счётчики Sender'а; перцентили через histogram_quantile). Без Prometheus → нули с chart_available=false.
+// @Description  Источник — ClickHouse-логи узла: точные счётчики по УНИКАЛЬНЫМ запросам. §79.4: принимает те же фильтры, что журнал логов (q/method/client_host/status/done) — KPI и график считаются под ними. §79.5: step задаёт ширину столбца, фактическая возвращается в step_seconds; столбец — записи по интервалу прихода с итоговым статусом (chart_unit=records), на больших окнах деградирует до счёта по прогонам (chart_unit=attempts). Без ClickHouse или при таймауте → нули с chart_available=false.
 // @Tags     metrics
 // @Produce  json
-// @Param    id     path   string  true   "node id"
-// @Param    range  query  string  false  "1h | 3h | 24h | 7d | 14d | 30d (default 1h)"
-// @Param    from   query  string  false  "период с (RFC3339 или UnixMilli); вместе с to задаёт произвольный период"
-// @Param    to     query  string  false  "период по (RFC3339 или UnixMilli)"
+// @Param    id           path   string  true   "node id"
+// @Param    range        query  string  false  "1h | 3h | 24h | 7d | 14d | 30d (default 1h)"
+// @Param    from         query  string  false  "период с (RFC3339 или UnixMilli); вместе с to задаёт произвольный период"
+// @Param    to           query  string  false  "период по (RFC3339 или UnixMilli)"
+// @Param    step         query  string  false  "шаг графика: auto (default) | 1h | 3h | 24h | 7d | 14d | 30d"
+// @Param    q            query  string  false  "полнотекстовый фильтр (§48)"
+// @Param    q_case       query  string  false  "1 — учитывать регистр"
+// @Param    q_word       query  string  false  "1 — слово целиком"
+// @Param    q_regex      query  string  false  "1 — режим регулярного выражения"
+// @Param    method       query  string  false  "фильтр по колонке method"
+// @Param    client_host  query  string  false  "фильтр по хосту клиента (§67)"
+// @Param    status       query  string  false  "ok | err (§72.1)"
+// @Param    done         query  string  false  "yes | no"
 // @Success  200  {object}  NodeMetricsResponse
+// @Failure  400  {object}  ErrorResponse  "некорректный поисковый запрос"
 // @Failure  404  {object}  ErrorResponse
 // @Security CookieAuth
 // @Security ApiTokenAuth
 // @Router   /api/metrics/nodes/{id} [get]
 func (h *MetricsHandler) Node(c *gin.Context) {
 	nodeID := c.Param("id")
-	since, until, buckets := resolveWindow(c)
-	res, err := h.uc.NodeMetrics(c.Request.Context(), nodeID, currentTeamID(c), since, until, buckets)
+	since, until := resolveWindow(c)
+	// §79.4: фильтры читаются тем же кодом, что у списка логов (мини-язык §48
+	// разбирает usecase) — иначе метрики и журнал под одинаковыми фильтрами
+	// показывали бы разное.
+	res, err := h.uc.NodeMetrics(c.Request.Context(), usecase.NodeMetricsQuery{
+		NodeID: nodeID,
+		TeamID: currentTeamID(c),
+		Since:  since,
+		Until:  until,
+		Step:   c.Query("step"),
+		Filter: logQueryFromContext(c),
+	})
 	if err != nil {
+		if errors.Is(err, logsearch.ErrBadQuery) {
+			localizedError(c, http.StatusBadRequest, "error.bad_search_query")
+			return
+		}
 		if errors.Is(err, domain.ErrNodeNotFound) {
 			localizedError(c, http.StatusNotFound, "node.not_found")
 			return
@@ -311,5 +322,7 @@ func (h *MetricsHandler) Node(c *gin.Context) {
 		"series":          series,
 		"chart_available": res.ChartAvailable,
 		"range_ms":        res.RangeMs,
+		"step_seconds":    res.StepSec,
+		"chart_unit":      res.ChartUnit,
 	})
 }

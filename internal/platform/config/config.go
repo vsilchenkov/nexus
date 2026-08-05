@@ -350,8 +350,15 @@ type WebSection struct {
 	SessionCookieSamesite        string `yaml:"session_cookie_samesite"`
 	AuditRetentionDays           int    `yaml:"audit_retention_days"`
 	ReplayRateLimitPerUserPerMin int    `yaml:"replay_rate_limit_per_user_per_min"`
-	NodesSoftLimit               int    `yaml:"nodes_soft_limit"`
-	NodesHardLimit               int    `yaml:"nodes_hard_limit"`
+	// MetricsExactChartMaxRecords — §79.5.1: до скольких записей в окне график
+	// узла строится точной формой («столбец = записи по интервалу прихода,
+	// статус итоговый»). Точная форма сворачивает строки в записи по всему окну
+	// и держит строку на каждую запись, а приблизительный режим уникальных тут
+	// не помогает. Сверх порога график считается по прогонам и помечается
+	// chart_unit=attempts. 0 → значение по умолчанию (2 000 000).
+	MetricsExactChartMaxRecords uint64 `yaml:"metrics_exact_chart_max_records"`
+	NodesSoftLimit              int    `yaml:"nodes_soft_limit"`
+	NodesHardLimit              int    `yaml:"nodes_hard_limit"`
 	// NodeDefaultMaxBodySize — §64: значение «Макс. размер тела», которое форма
 	// подставляет при СОЗДАНИИ узла (лимит там сразу включён). Влияет только на
 	// новые узлы через UI; уже сохранённые и созданные по API не трогает.

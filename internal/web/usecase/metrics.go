@@ -30,8 +30,23 @@ type MetricsUsecase struct {
 	settings   port.AppSettingsRepo  // §44-perf: режим подсчёта уникальных (может быть nil)
 	nodeStatus port.NodeStatusReader // §46: персистентный «Down» из Redis (может быть nil)
 	clock      clock.Clock           // §4: «сейчас» для окон по умолчанию
-	logger     logging.Logger
+	// exactChartMax — §79.5.1: потолок записей окна, до которого график строится
+	// точной формой («по итогу записи»). 0 → defaultExactChartMaxRecords.
+	exactChartMax uint64
+	logger        logging.Logger
 }
+
+// metricsTimeout — серверный потолок пары CH-запросов метрик узла (§79.4).
+// Полнотекстовый фильтр читает тела с диска, а вкладка поллится каждые ~12 с:
+// без потолка медленные запросы накладывались бы друг на друга. Превышение —
+// штатная деградация ChartAvailable=false, как и любая другая ошибка CH.
+const metricsTimeout = 10 * time.Second
+
+// defaultExactChartMaxRecords — порог точной формы графика (§79.5.1). Точная
+// форма держит строку на каждую запись окна (~60–80 байт): на 2 млн это ~150 МБ,
+// на 10 млн — уже под гигабайт, а приблизительный режим здесь не помогает (HLL
+// сжимает счётчики, но группировка по ID обязана хранить ключи).
+const defaultExactChartMaxRecords uint64 = 2_000_000
 
 // MetricsOption — функциональная опция конструктора.
 type MetricsOption func(*MetricsUsecase)
@@ -40,6 +55,19 @@ type MetricsOption func(*MetricsUsecase)
 // правая граница окна, когда запрос её не задал.
 func WithMetricsClock(c clock.Clock) MetricsOption {
 	return func(u *MetricsUsecase) { u.clock = c }
+}
+
+// WithExactChartMaxRecords задаёт порог §79.5.1 (0 = значение по умолчанию).
+func WithExactChartMaxRecords(n uint64) MetricsOption {
+	return func(u *MetricsUsecase) { u.exactChartMax = n }
+}
+
+// exactChartMaxRecords — действующий порог точной формы графика.
+func (u *MetricsUsecase) exactChartMaxRecords() uint64 {
+	if u.exactChartMax == 0 {
+		return defaultExactChartMaxRecords
+	}
+	return u.exactChartMax
 }
 
 func NewMetricsUsecase(prom port.PromMetrics, nodeLogs port.NodeLogMetrics, nodes port.NodeRepo, settings port.AppSettingsRepo, nodeStatus port.NodeStatusReader, logger logging.Logger, opts ...MetricsOption) *MetricsUsecase {
@@ -127,8 +155,39 @@ func sumTotals(items []NodeThroughputRow) OverviewTotals {
 type NodeMetrics struct {
 	KPI            port.NodeKPI
 	Series         []port.SeriesPoint
-	ChartAvailable bool // доступен ли источник (Prometheus сконфигурирован и ответил)
+	ChartAvailable bool // доступен ли источник (ClickHouse сконфигурирован и ответил)
 	RangeMs        int64
+
+	// StepSec — фактическая ширина столбца (§79.5). Отдаётся наружу, потому что
+	// она могла быть скорректирована согласованием с окном, а клиенту нечем её
+	// вывести из ряда, если в нём одна точка.
+	StepSec int64
+
+	// ChartUnit — как считаны столбцы: ChartUnitRecords (по итогу записи) или
+	// ChartUnitAttempts (по прогонам в интервале, деградация на больших окнах,
+	// §79.5.1). Молча подменять семантику нельзя — UI обязан сказать об этом.
+	ChartUnit string
+}
+
+// Единицы столбца графика (§79.5).
+const (
+	ChartUnitRecords  = "records"  // запись в интервале своего прихода, статус итоговый
+	ChartUnitAttempts = "attempts" // запись в интервале прогона, статус по прогонам интервала
+)
+
+// NodeMetricsQuery — параметры запроса метрик узла (§79.4/§79.5).
+type NodeMetricsQuery struct {
+	NodeID string
+	TeamID string // scope multi-tenancy: чужой узел → ErrNodeNotFound
+	Since  time.Time
+	Until  time.Time
+
+	// Step — «Шаг графика»: "", "auto" или пресет 1h..30d (см. ParseChartStep).
+	Step string
+
+	// Filter — фильтры журнала логов (полнотекст, метод, хост клиента, статус).
+	// Table/NodeID/окно/DateCreateAligned проставляет usecase.
+	Filter port.LogQuery
 }
 
 // f2u безопасно округляет неотрицательное float-значение Prometheus в uint64.
@@ -265,7 +324,14 @@ func (u *MetricsUsecase) nodesOverviewCH(ctx context.Context, teamID string, sin
 			continue
 		}
 		g.Go(func() error {
-			kpi, kerr := u.nodeLogs.NodeKPI(gctx, n.ClickHouseTable, n.ID, sinceMs, untilMs, approx)
+			q := port.LogQuery{
+				Table:             n.ClickHouseTable,
+				NodeID:            n.ID,
+				SinceMs:           sinceMs,
+				UntilMs:           untilMs,
+				DateCreateAligned: !n.ExternalTable, // §72.4
+			}
+			kpi, kerr := u.nodeLogs.NodeKPI(gctx, q, approx)
 			if kerr != nil {
 				u.logger.Warn("nodes overview: node kpi failed",
 					u.logger.Str("node", n.Path), u.logger.Err(kerr))
@@ -273,9 +339,20 @@ func (u *MetricsUsecase) nodesOverviewCH(ctx context.Context, teamID string, sin
 			}
 			// Спарклайн — отдельный запрос; для узлов без трафика (Total=0) он всё
 			// равно плоский, поэтому второй запрос делаем только при наличии трафика.
+			//
+			// §79.5: ширина столбца выводится из окна ровно так, как раньше это
+			// делал адаптер (окно/12), — картинка стола не меняется. Единица
+			// столбца переходит на записи вместе с графиком узла: спарклайн
+			// перестаёт расходиться с числами In/Out в своей же строке.
 			spark := []float64{}
 			if kpi.Total > 0 {
-				if series, serr := u.nodeLogs.NodeChart(gctx, n.ClickHouseTable, n.ID, sinceMs, untilMs, nodesSparkBuckets); serr == nil {
+				sparkStep := max((untilMs-sinceMs)/nodesSparkBuckets/1000, 1)
+				series, serr := u.nodeLogs.NodeChart(gctx, q, port.ChartQuery{
+					StepSec:  sparkStep,
+					ByRecord: kpi.Total <= u.exactChartMaxRecords(),
+					Approx:   approx,
+				})
+				if serr == nil {
 					spark = make([]float64, len(series))
 					for j, p := range series {
 						spark[j] = float64(p.Count)
@@ -334,24 +411,32 @@ func (u *MetricsUsecase) nodesOverviewProm(ctx context.Context, since, until tim
 // rate-экстраполяции и без мерцания. Если у узла нет ClickHouse-таблицы (нет
 // логирования) или CH-запрос упал → нулевые значения с ChartAvailable=false
 // (штатная деградация, не 500), чтобы поллинг UI не спамил ошибками.
-func (u *MetricsUsecase) NodeMetrics(ctx context.Context, nodeID, teamID string, since, until time.Time, buckets int) (NodeMetrics, error) {
-	n, err := u.nodes.Get(ctx, nodeID)
+// §79.4/§79.5: запрос несёт фильтры журнала и «Шаг графика». Оба CH-вызова
+// ограничены metricsTimeout — дорогой полнотекстовый фильтр обязан деградировать
+// в ChartAvailable=false, а не копиться на 12-секундном поллинге вкладки.
+func (u *MetricsUsecase) NodeMetrics(ctx context.Context, in NodeMetricsQuery) (NodeMetrics, error) {
+	n, err := u.nodes.Get(ctx, in.NodeID)
 	if err != nil {
 		return NodeMetrics{}, err
 	}
-	if teamID != "" && n.TeamID != teamID {
+	if in.TeamID != "" && n.TeamID != in.TeamID {
 		return NodeMetrics{}, domain.ErrNodeNotFound
 	}
+	until, since := in.Until, in.Since
 	if until.IsZero() {
 		until = u.clock.Now()
 	}
 	if since.IsZero() || !since.Before(until) {
 		since = until.Add(-time.Hour)
 	}
-	if buckets <= 0 {
-		buckets = 48
+	window := until.Sub(since)
+	stepSec, _ := resolveChartStep(window, ParseChartStep(in.Step))
+	res := NodeMetrics{
+		RangeMs:   window.Milliseconds(),
+		Series:    []port.SeriesPoint{},
+		StepSec:   stepSec,
+		ChartUnit: ChartUnitRecords,
 	}
-	res := NodeMetrics{RangeMs: until.Sub(since).Milliseconds(), Series: []port.SeriesPoint{}}
 
 	// Нет CH-таблицы (логирование выключено) → метрики недоступны (как «не настроено»).
 	if u.nodeLogs == nil || n.ClickHouseTable == "" {
@@ -364,13 +449,42 @@ func (u *MetricsUsecase) NodeMetrics(ctx context.Context, nodeID, teamID string,
 			u.logger.Str("node", n.Path), u.logger.Str("table", n.ClickHouseTable))
 		return res, nil
 	}
-	sinceMs, untilMs := since.UnixMilli(), until.UnixMilli()
-	kpi, err := u.nodeLogs.NodeKPI(ctx, n.ClickHouseTable, n.ID, sinceMs, untilMs, u.approxCounts(ctx))
+
+	q := in.Filter
+	// Мини-язык §48 разбирается здесь, как и у списка логов (CountLogs): один
+	// разбор — один смысл фильтра на обоих экранах. Ошибка синтаксиса уезжает
+	// наружу как logsearch.ErrBadQuery → 400.
+	if err := parseSearch(&q); err != nil {
+		return NodeMetrics{}, err
+	}
+	q.Table = n.ClickHouseTable
+	q.NodeID = n.ID
+	q.SinceMs, q.UntilMs = since.UnixMilli(), until.UnixMilli()
+	q.BeforeID, q.Limit = "", 0
+	q.DateCreateAligned = !n.ExternalTable // §72.4: сужение по колонке PARTITION BY
+
+	mctx, cancel := context.WithTimeout(ctx, metricsTimeout)
+	defer cancel()
+
+	kpi, err := u.nodeLogs.NodeKPI(mctx, q, u.approxCounts(ctx))
 	if err != nil {
 		u.logger.Warn("clickhouse node kpi failed", u.logger.Err(err))
 		return res, nil
 	}
-	series, err := u.nodeLogs.NodeChart(ctx, n.ClickHouseTable, n.ID, sinceMs, untilMs, buckets)
+	// §79.5.1: точная форма столбца сворачивает строки в записи по всему окну и
+	// держит хэш-таблицу на каждую запись. Размер окна уже известен из KPI —
+	// решение бесплатно.
+	byRecord := kpi.Total <= u.exactChartMaxRecords()
+	if !byRecord {
+		res.ChartUnit = ChartUnitAttempts
+		u.logger.Debug("node metrics: chart degraded to attempts unit",
+			u.logger.Str("node", n.Path), u.logger.Int("records", int(kpi.Total)))
+	}
+	series, err := u.nodeLogs.NodeChart(mctx, q, port.ChartQuery{
+		StepSec:  stepSec,
+		ByRecord: byRecord,
+		Approx:   u.approxCounts(ctx),
+	})
 	if err != nil {
 		u.logger.Warn("clickhouse node chart failed", u.logger.Err(err))
 		return res, nil

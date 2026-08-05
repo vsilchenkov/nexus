@@ -250,6 +250,7 @@ web:
   session_cookie_samesite: strict               # SameSite-политика cookie: strict/lax/none.
   audit_retention_days: 365                     # Срок хранения записей аудита (дней).
   replay_rate_limit_per_user_per_min: 10        # Лимит replay-запросов на пользователя в минуту.
+  metrics_exact_chart_max_records: 2000000     # §79.5: до скольких записей окна график узла строится точной формой (столбец = записи по интервалу прихода). Сверх — счёт по прогонам с пометкой chart_unit=attempts.
   nodes_soft_limit: 10000                       # Мягкий лимит числа узлов (предупреждение в UI).
   nodes_hard_limit: 50000                       # Жёсткий лимит числа узлов (запрет создания сверх).
   node_default_max_body_size: 50000             # §64: «Макс. размер тела» по умолчанию в форме СОЗДАНИЯ узла (лимит сразу включён). Существующие узлы не меняет.
