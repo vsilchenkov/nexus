@@ -3616,6 +3616,12 @@
                     },
                     {
                         "type": "string",
+                        "description": "1 — только НЕДОСТАВЛЕННЫЕ записи (§79.1: нет ни одного прогона done=1). Не путать с done=no — тот про строку-прогон",
+                        "name": "unresolved",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "description": "exact match по подпути запроса (колонка method, §39/§48)",
                         "name": "method",
                         "in": "query"
@@ -3752,6 +3758,12 @@
                         "type": "string",
                         "description": "yes (done=1) | no (done=0)",
                         "name": "done",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "1 — только НЕДОСТАВЛЕННЫЕ записи (§79.1)",
+                        "name": "unresolved",
                         "in": "query"
                     },
                     {

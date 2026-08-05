@@ -4750,6 +4750,11 @@ paths:
         in: query
         name: done
         type: string
+      - description: '1 — только НЕДОСТАВЛЕННЫЕ записи (§79.1: нет ни одного прогона
+          done=1). Не путать с done=no — тот про строку-прогон'
+        in: query
+        name: unresolved
+        type: string
       - description: exact match по подпути запроса (колонка method, §39/§48)
         in: query
         name: method
@@ -4847,6 +4852,10 @@ paths:
       - description: yes (done=1) | no (done=0)
         in: query
         name: done
+        type: string
+      - description: 1 — только НЕДОСТАВЛЕННЫЕ записи (§79.1)
+        in: query
+        name: unresolved
         type: string
       - description: exact match по подпути запроса (§48)
         in: query

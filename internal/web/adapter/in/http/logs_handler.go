@@ -130,6 +130,12 @@ func logQueryFromContext(c *gin.Context) port.LogQuery {
 		QCase:      boolFlag(c.Query("q_case")),
 		QWord:      boolFlag(c.Query("q_word")),
 		QRegex:     boolFlag(c.Query("q_regex")),
+		// §79.1: вид «Неудачные доставки» — ЗАПИСИ без единого успешного прогона.
+		// Не путать с done=no: тот про СТРОКУ («прогон не завершён»). Без этого
+		// параметра список вкладки «Очередь» жил на старом предикате, и на одном
+		// экране KPI показывал 0, а список — доставленную запись (найдено на
+		// стенде 2026-08-05).
+		Unresolved: boolFlag(c.Query("unresolved")),
 	}
 	if v := c.Query("from"); v != "" {
 		q.SinceMs = parseTimeMs(v)
@@ -175,6 +181,7 @@ func parseTimeMs(v string) int64 {
 // @Param    client_host  query  string  false  "exact match по PTR-имени клиента (колонка client_host, §67)"
 // @Param    status    query  string  false  "ok — доставлено (done=1 и 200<=status<400) | err — полное дополнение ok | (пусто) — любой (§72.1)"
 // @Param    done      query  string  false  "yes (done=1) | no (done=0) | (пусто)"
+// @Param    unresolved query string  false  "1 — только НЕДОСТАВЛЕННЫЕ записи (§79.1: нет ни одного прогона done=1). Не путать с done=no — тот про строку-прогон"
 // @Param    method    query  string  false  "exact match по подпути запроса (колонка method, §39/§48)"
 // @Param    q         query  string  false  "поиск по url/parameters/request/response (§48.1): & — И, | — ИЛИ, -терм — НЕ, префиксы url:/params:/req:/resp: скоупят на колонку, \\ экранирует спецсимволы; в regex-режиме весь q — одно RE2"
 // @Param    q_case    query  bool    false  "1/true — с учётом регистра (§48.2)"
@@ -350,6 +357,7 @@ func (h *LogsHandler) ClientHosts(c *gin.Context) {
 // @Param    to           query  string  false  "конец диапазона"
 // @Param    status       query  string  false  "ok — доставлено (done=1 и 200<=status<400) | err — полное дополнение ok (§72.1)"
 // @Param    done         query  string  false  "yes (done=1) | no (done=0)"
+// @Param    unresolved   query  string  false  "1 — только НЕДОСТАВЛЕННЫЕ записи (§79.1)"
 // @Param    method       query  string  false  "exact match по подпути запроса (§48)"
 // @Param    client_host  query  string  false  "exact match по PTR-имени клиента (§67)"
 // @Param    q            query  string  false  "полнотекстовый фильтр (§48.1)"

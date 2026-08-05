@@ -130,8 +130,12 @@ export function QueueTab({
   // Окно периода (from/to) считается в queryFn заново на каждый запрос, но в
   // ключ идёт стабильный periodKey — periodWindow содержит until=Date.now(),
   // и с ним ключ менялся бы каждый рендер (вечный перезапрос, пустой список).
+  //
+  // §79.1: список спрашивает НЕДОСТАВЛЕННЫЕ ЗАПИСИ (unresolved), а не строки
+  // done=0. Иначе на одном экране KPI (он уже считает записи) показывает 0, а
+  // список — запись, доставленную повтором: ровно это нашёл стенд 2026-08-05.
   const failedParams = useMemo(
-    () => ({ done: "no", ...periodIso() }),
+    () => ({ unresolved: "1", ...periodIso() }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [periodKey(period)],
   );

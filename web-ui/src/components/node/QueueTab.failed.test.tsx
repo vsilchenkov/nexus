@@ -88,11 +88,16 @@ describe("QueueTab — неудачные доставки (§72.3)", () => {
     mockServer();
   });
 
-  it("список фильтруется сервером по done=no и догружает страницы до конца истории", async () => {
+  // §79.1: список спрашивает НЕДОСТАВЛЕННЫЕ ЗАПИСИ (unresolved), а не строки
+  // done=0. На старом параметре KPI (он уже считал записи) показывал 0, а список
+  // — запись, доставленную повтором: расхождение внутри одного экрана, найденное
+  // на стенде 2026-08-05.
+  it("список фильтруется сервером по unresolved и догружает страницы до конца истории", async () => {
     renderTab();
 
     await waitFor(() => expect(logsCalls.length).toBeGreaterThan(0));
-    expect(logsCalls[0].done).toBe("no");
+    expect(logsCalls[0].unresolved).toBe("1");
+    expect(logsCalls[0].done).toBeUndefined();
     expect(logsCalls[0].limit).toBe(PAGE_SIZE);
     // Первый запрос — без курсора (первая страница).
     expect(logsCalls[0].before_id).toBeUndefined();
@@ -104,7 +109,7 @@ describe("QueueTab — неудачные доставки (§72.3)", () => {
     // Каждая следующая страница несёт keyset-курсор и тот же серверный фильтр.
     expect(logsCalls.length).toBe(3);
     for (const call of logsCalls.slice(1)) {
-      expect(call.done).toBe("no");
+      expect(call.unresolved).toBe("1");
       expect(call.before_id).toBeDefined();
       expect(call.to).toBeDefined();
     }
