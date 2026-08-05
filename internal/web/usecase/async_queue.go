@@ -322,10 +322,18 @@ func toMs(t time.Time) int64 {
 
 // PurgeFailed — очистка «Неудачных доставок» узла за окно [from,to] (нулевые
 // границы = всё): (1) отменяет (qcancel) ID этих сообщений, чтобы DLQ-репроцессор
-// перестал их повторять (§34.4 tombstone), и (2) lightweight-DELETE'ит записи
-// done=0 из CH-таблицы узла — чтобы они исчезли из вида. Без CH (failed==nil) или
-// у узла нет таблицы → no-op (нечего чистить). Cancelled в результате — число
-// удалённых записей (видимый «очищено N»).
+// перестал их повторять (§34.4 tombstone), и (2) удаляет их строки done=0 из
+// CH-таблицы узла — чтобы записи исчезли из вида. Без CH (failed==nil) или у узла
+// нет таблицы → no-op (нечего чистить). Cancelled в результате — число удалённых
+// записей (видимый «очищено N»).
+//
+// §79.2: оба шага работают с ОДНИМ набором ID, полученным один раз. Раньше это
+// были два независимых прохода (FailedIDs для tombstone'ов и сплошной DELETE по
+// done=0), из-за чего аудит показывал расхождение — боевое cancelled=5 при
+// deleted=10. Теперь равенство конструктивно.
+//
+// Цена единого набора: очистка ограничена peekCap записей за вызов (сплошной
+// DELETE был безлимитным). Превышение отдаётся как Capped — UI просит повторить.
 func (u *AsyncQueueUsecase) PurgeFailed(ctx context.Context, actor Actor, nodeID, teamID string, from, to time.Time) (QueuePurgeResult, error) {
 	node, err := u.resolveNode(ctx, nodeID, teamID)
 	if err != nil {
@@ -338,27 +346,30 @@ func (u *AsyncQueueUsecase) PurgeFailed(ctx context.Context, actor Actor, nodeID
 	if u.failed == nil || node.ClickHouseTable == "" {
 		return QueuePurgeResult{}, nil
 	}
-	sinceMs, untilMs := toMs(from), toMs(to)
+	q := failedQuery(node, toMs(from), toMs(to))
+
+	ids, capped, err := u.failed.FailedIDs(ctx, q, u.peekCap)
+	if err != nil {
+		return QueuePurgeResult{}, fmt.Errorf("async queue failed ids: %w", err)
+	}
+	if len(ids) == 0 {
+		u.logger.Debug("async queue purge failed: nothing to clean",
+			u.logger.Str("node_path", node.Path), u.logger.Str("op", op))
+		return QueuePurgeResult{Capped: capped, KafkaAvailable: u.cancel != nil}, nil
+	}
 
 	// 1) Снимаем повторную доставку: репроцессор дропнет эти ID по tombstone.
 	// Для sync-узла шаг пропускаем: DLQ-репроцессора у него нет, tombstone'ы
 	// были бы записью в Redis впустую (§69.1).
-	cancelled, capped := 0, false
+	cancelled := 0
 	if u.cancel != nil && usesAsyncQueue(node) {
-		ids, c, err := u.failed.FailedIDs(ctx, node.ClickHouseTable, node.ID, sinceMs, untilMs, u.peekCap)
-		if err != nil {
-			return QueuePurgeResult{}, fmt.Errorf("async queue failed ids: %w", err)
-		}
-		capped = c
-		if len(ids) > 0 {
-			if cancelled, err = u.cancel.Cancel(ctx, ids, u.retention); err != nil {
-				return QueuePurgeResult{}, fmt.Errorf("async queue cancel failed: %w", err)
-			}
+		if cancelled, err = u.cancel.Cancel(ctx, ids, u.retention); err != nil {
+			return QueuePurgeResult{}, fmt.Errorf("async queue cancel failed: %w", err)
 		}
 	}
 
-	// 2) Удаляем записи done=0 из вида «Неудачные доставки».
-	deleted, err := u.failed.DeleteFailed(ctx, node.ClickHouseTable, node.ID, sinceMs, untilMs)
+	// 2) Удаляем строки done=0 этих записей из вида «Неудачные доставки».
+	deleted, err := u.failed.DeleteFailedRows(ctx, q, ids)
 	if err != nil {
 		return QueuePurgeResult{}, fmt.Errorf("async queue delete failed: %w", err)
 	}

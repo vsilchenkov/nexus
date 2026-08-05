@@ -39,32 +39,24 @@ func (s *stubNodeRepo) UpdateAllowedHostsSnapshot(_ context.Context, _ string, _
 	return nil
 }
 
-// stubLogReader — реализует port.LogReader для одной запись.
+// stubLogReader — управляемый port.LogReader. Интерфейс встроен, а не
+// перечислен методами: расширение порта (§79.1 переводил CountFailed/FailedIDs
+// на LogQuery) иначе ломает стаб на ровном месте. Непереопределённый метод в
+// тестах replay не вызывается — вызов дал бы nil-панику, и это правильный
+// сигнал «тест трогает то, что не собирался».
 type stubLogReader struct {
+	port.LogReader
 	log       *domain.LogRecord
 	err       error
-	failedIDs []string // §36.11: для ReplayFailed
+	failedIDs []string      // §36.11: для ReplayFailed
+	gotFailed port.LogQuery // §79.1: с каким запросом спросили неудачные
 }
 
 func (s *stubLogReader) GetByID(_ context.Context, _, _ string) (*domain.LogRecord, error) {
 	return s.log, s.err
 }
-func (s *stubLogReader) ListSince(_ context.Context, _, _ string, _ int64, _ int) ([]*domain.LogRecord, error) {
-	return nil, nil
-}
-func (s *stubLogReader) Search(_ context.Context, _ port.LogQuery) ([]*domain.LogRecord, error) {
-	return nil, nil
-}
-func (s *stubLogReader) Count(_ context.Context, _ port.LogQuery) (uint64, error) {
-	return 0, nil
-}
-func (s *stubLogReader) CountErrors(_ context.Context, _, _ string, _, _ int64) (uint64, error) {
-	return 0, nil
-}
-func (s *stubLogReader) CountFailed(_ context.Context, _, _ string, _, _ int64) (uint64, error) {
-	return 0, nil
-}
-func (s *stubLogReader) FailedIDs(_ context.Context, _, _ string, _, _ int64, _ int) ([]string, bool, error) {
+func (s *stubLogReader) FailedIDs(_ context.Context, q port.LogQuery, _ int) ([]string, bool, error) {
+	s.gotFailed = q
 	return s.failedIDs, false, s.err
 }
 func (s *stubLogReader) GetByIDPreview(_ context.Context, _, _ string, _ int) (*domain.LogRecord, int64, int64, error) {
@@ -72,15 +64,6 @@ func (s *stubLogReader) GetByIDPreview(_ context.Context, _, _ string, _ int) (*
 }
 func (s *stubLogReader) GetBodyChunk(_ context.Context, _, _, _ string, _, _ int) (string, int64, error) {
 	return "", 0, s.err
-}
-func (s *stubLogReader) DistinctMethods(_ context.Context, _, _ string, _ int) ([]string, error) {
-	return nil, s.err
-}
-func (s *stubLogReader) DistinctClientHosts(_ context.Context, _, _ string, _ int) ([]string, error) {
-	return nil, s.err
-}
-func (s *stubLogReader) DateRange(_ context.Context, _, _ string) (int64, int64, error) {
-	return 0, 0, s.err
 }
 
 // stubDispatcher — реализует port.ReceiverDispatcher; сохраняет последний

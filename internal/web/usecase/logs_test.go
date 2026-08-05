@@ -14,21 +14,22 @@ import (
 
 // logReaderMock — отдаёт фиксированные записи на каждый Subscribe-tick.
 type logReaderMock struct {
-	calls       int
-	rows        []*domain.LogRecord
-	err         error
-	getRow      *domain.LogRecord
-	getErr      error
-	failedCount uint64
-	countErr    error
-	bodyChunk   string
-	bodyTotal   int64
-	lastQuery   port.LogQuery // последний Search-запрос (для проверки QExpr, §48)
-	methods     []string      // ответ DistinctMethods (§48)
-	clientHosts []string      // ответ DistinctClientHosts (§67)
-	total       uint64        // ответ Count (§67)
-	rangeMin    int64         // ответ DateRange (§48)
-	rangeMax    int64
+	calls           int
+	rows            []*domain.LogRecord
+	err             error
+	getRow          *domain.LogRecord
+	getErr          error
+	failedCount     uint64
+	countErr        error
+	bodyChunk       string
+	bodyTotal       int64
+	lastQuery       port.LogQuery // последний Search-запрос (для проверки QExpr, §48)
+	lastFailedQuery port.LogQuery // последний CountFailed-запрос (§79.1)
+	methods         []string      // ответ DistinctMethods (§48)
+	clientHosts     []string      // ответ DistinctClientHosts (§67)
+	total           uint64        // ответ Count (§67)
+	rangeMin        int64         // ответ DateRange (§48)
+	rangeMax        int64
 }
 
 func (m *logReaderMock) GetByID(_ context.Context, _, _ string) (*domain.LogRecord, error) {
@@ -57,10 +58,11 @@ func (m *logReaderMock) CountErrors(_ context.Context, _, _ string, _, _ int64) 
 	return 0, nil
 }
 
-func (m *logReaderMock) CountFailed(_ context.Context, _, _ string, _, _ int64) (uint64, error) {
+func (m *logReaderMock) CountFailed(_ context.Context, q port.LogQuery, _ bool) (uint64, error) {
+	m.lastFailedQuery = q
 	return m.failedCount, m.countErr
 }
-func (m *logReaderMock) FailedIDs(_ context.Context, _, _ string, _, _ int64, _ int) ([]string, bool, error) {
+func (m *logReaderMock) FailedIDs(_ context.Context, _ port.LogQuery, _ int) ([]string, bool, error) {
 	return nil, false, nil
 }
 
@@ -144,6 +146,55 @@ func TestLogs_CountFailed_ForwardsToReader(t *testing.T) {
 	}
 	if n != 42 {
 		t.Fatalf("want 42, got %d", n)
+	}
+}
+
+// §79.1: KPI «неудачных доставок» спрашивает ЗАПИСИ без единого успешного
+// прогона (Unresolved), а не строки done=0 — иначе доставленная повтором запись
+// остаётся в счётчике навсегда (боевое: 17 «неудачных», из них 16 доставлены).
+// Заодно фиксируется сужение по партициям §72.4, которого у этого пути не было.
+func TestLogs_CountFailed_UsesUnresolvedQuery(t *testing.T) {
+	t.Parallel()
+	r := &logReaderMock{failedCount: 7}
+	nodes := &stubNodeRepo{nodes: map[string]*domain.Node{
+		"n1": {ID: "n1", ClickHouseTable: "t.t", TeamID: "team1", Status: domain.NodeStatusEnabled},
+	}}
+	uc := NewLogsUsecase(r, nodes, logging.NewNoop())
+
+	if _, err := uc.CountFailed(context.Background(), "n1", "team1", 100, 200); err != nil {
+		t.Fatalf("count failed: %v", err)
+	}
+	got := r.lastFailedQuery
+	if !got.Unresolved {
+		t.Fatal("want Unresolved=true (запись без успешного прогона), got false")
+	}
+	if got.Done != "" {
+		t.Fatalf("Done обязан остаться пустым (это фильтр СТРОК журнала), got %q", got.Done)
+	}
+	if !got.DateCreateAligned {
+		t.Fatal("want DateCreateAligned=true для обычной таблицы (§72.4)")
+	}
+	if got.Table != "t.t" || got.NodeID != "n1" || got.SinceMs != 100 || got.UntilMs != 200 {
+		t.Fatalf("окно/таблица/узел не проброшены: %+v", got)
+	}
+}
+
+// §72.4/§64: для внешней таблицы сужение по date_create выключено — туда пишет
+// посторонний сервис, и инвариант date_create == UTC-день date_request не
+// гарантирован.
+func TestLogs_CountFailed_ExternalTableDisablesPruning(t *testing.T) {
+	t.Parallel()
+	r := &logReaderMock{}
+	nodes := &stubNodeRepo{nodes: map[string]*domain.Node{
+		"n1": {ID: "n1", ClickHouseTable: "t.t", TeamID: "team1", Status: domain.NodeStatusEnabled, ExternalTable: true},
+	}}
+	uc := NewLogsUsecase(r, nodes, logging.NewNoop())
+
+	if _, err := uc.CountFailed(context.Background(), "n1", "team1", 0, 0); err != nil {
+		t.Fatalf("count failed: %v", err)
+	}
+	if r.lastFailedQuery.DateCreateAligned {
+		t.Fatal("для внешней таблицы сужение по date_create обязано быть выключено")
 	}
 }
 

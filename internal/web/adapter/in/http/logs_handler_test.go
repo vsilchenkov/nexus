@@ -42,7 +42,7 @@ func (stubLogReaderUnavailable) Count(_ context.Context, _ port.LogQuery) (uint6
 	return 0, domain.ErrLogsBackendUnavailable
 }
 
-func (stubLogReaderUnavailable) CountFailed(_ context.Context, _, _ string, _, _ int64) (uint64, error) {
+func (stubLogReaderUnavailable) CountFailed(_ context.Context, _ port.LogQuery, _ bool) (uint64, error) {
 	return 0, domain.ErrLogsBackendUnavailable
 }
 
@@ -69,7 +69,7 @@ func (stubLogReaderOK) Count(_ context.Context, _ port.LogQuery) (uint64, error)
 	return 1234, nil
 }
 
-func (stubLogReaderOK) CountFailed(_ context.Context, _, _ string, _, _ int64) (uint64, error) {
+func (stubLogReaderOK) CountFailed(_ context.Context, _ port.LogQuery, _ bool) (uint64, error) {
 	return 0, nil
 }
 

@@ -653,6 +653,14 @@ func (r *LogReaderCH) searchConds(ctx context.Context, q port.LogQuery) ([]strin
 	case "no":
 		conds = append(conds, "done = 0")
 	}
+	// §79.1: Unresolved даёт здесь только КАНДИДАТОВ (строки done=0). Отсев
+	// записей, у которых в окне есть прогон done=1, невыразим одним WHERE и
+	// делается вторым запросом (см. deliveredAmong) — в FailedIDs и
+	// searchUnresolved. Счётчики (CountFailed/Count) идут другим путём —
+	// разностью агрегатов, и флаг перед вызовом снимают.
+	if q.Unresolved {
+		conds = append(conds, "done = 0")
+	}
 	if q.Method != "" {
 		conds = append(conds, "method = ?")
 		args = append(args, q.Method)
@@ -692,6 +700,82 @@ func (r *LogReaderCH) Search(ctx context.Context, q port.LogQuery) ([]*domain.Lo
 	if !isSafeTableName(q.Table) {
 		return nil, fmt.Errorf("invalid table name: %q", q.Table)
 	}
+	if q.Unresolved {
+		return r.searchUnresolved(ctx, q)
+	}
+	return r.searchPage(ctx, q)
+}
+
+// unresolvedSearchRounds — сколько страниц кандидатов адаптер готов прочитать,
+// добирая страницу до limit после отсева доставленных (§79.1). Отсев редок
+// (доставленная запись выпадает из вида навсегда после первой же очистки),
+// поэтому трёх раундов хватает с запасом; предел нужен, чтобы патологический
+// случай не превратил один запрос списка в неограниченный обход таблицы.
+const unresolvedSearchRounds = 3
+
+// searchUnresolved — страница списка «Неудачных доставок» (§79.1).
+//
+// Кандидаты (строки done=0) читаются обычной keyset-страницей, затем одним
+// запросом отсеиваются записи, у которых в окне есть успешный прогон. Отсев
+// уменьшает страницу, а фронт считает неполную страницу концом истории (§72.2),
+// поэтому страница добирается следующими раундами по тому же курсору.
+func (r *LogReaderCH) searchUnresolved(ctx context.Context, q port.LogQuery) ([]*domain.LogRecord, error) {
+	limit := q.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	out := make([]*domain.LogRecord, 0, limit)
+	cur := q
+	for round := 0; round < unresolvedSearchRounds && len(out) < limit; round++ {
+		page, err := r.searchPage(ctx, cur)
+		if err != nil {
+			return nil, err
+		}
+		if len(page) == 0 {
+			break
+		}
+		ids := make([]string, 0, len(page))
+		for _, rec := range page {
+			ids = append(ids, rec.ID)
+		}
+		delivered, err := r.deliveredAmong(ctx, cur, ids)
+		if err != nil {
+			return nil, err
+		}
+		skip := make(map[string]struct{}, len(delivered))
+		for _, id := range delivered {
+			skip[id] = struct{}{}
+		}
+		for _, rec := range page {
+			if _, ok := skip[rec.ID]; ok {
+				continue
+			}
+			if len(out) == limit {
+				break
+			}
+			out = append(out, rec)
+		}
+		if len(page) < limit {
+			break // кандидаты кончились — честный конец истории
+		}
+		// Курсор следующего раунда — свежайшая попытка последней записи страницы
+		// (та же логика, что у обычной keyset-пагинации выше).
+		last := page[len(page)-1]
+		cur.UntilMs = last.DateRequest.UnixMilli()
+		cur.BeforeID = last.ID
+		cur.Limit = limit
+	}
+	if len(out) < limit {
+		r.logger.Debug("unresolved page short after filtering",
+			r.logger.Str("table", q.Table),
+			r.logger.Int("returned", len(out)),
+			r.logger.Int("limit", limit))
+	}
+	return out, nil
+}
+
+// searchPage — одна keyset-страница под фильтрами q (без §79.1-отсева).
+func (r *LogReaderCH) searchPage(ctx context.Context, q port.LogQuery) ([]*domain.LogRecord, error) {
 	limit := q.Limit
 	if limit <= 0 || limit > 500 {
 		limit = 100
@@ -749,6 +833,12 @@ func (r *LogReaderCH) Count(ctx context.Context, q port.LogQuery) (uint64, error
 	cctx, cancel := context.WithTimeout(ctx, countTimeout)
 	defer cancel()
 
+	// §79.1: «Всего» под фильтром «Неудачные доставки» обязано считать ту же
+	// единицу, что список и KPI, — записи без единого успешного прогона.
+	if q.Unresolved {
+		return r.countUnresolved(cctx, q, false)
+	}
+
 	conds, args := r.searchConds(cctx, q)
 	where := ""
 	if len(conds) > 0 {
@@ -804,92 +894,179 @@ func (r *LogReaderCH) CountErrors(ctx context.Context, table, nodeID string, sin
 	return n, nil
 }
 
-// CountFailed считает НЕдоставленные записи (строго done=0) за окно
-// (sinceMs, untilMs] (§35 — KPI «неудачные доставки»). Каждая такая запись —
-// сообщение, ушедшее в DLQ.
+// uniqueExprs — выражения «уникальных записей» и «из них доставленных».
+// ЕДИНСТВЕННЫЙ источник этой пары: на ней держатся NodeKPI (§44), CountFailed и
+// Count при Unresolved (§79.1). Разъехавшись, они дали бы ровно тот дефект,
+// который чинит §79.1, — разные ответы на один вопрос на одном экране.
 //
-// §78.6: единица — ЗАПИСЬ (uniqExact по ID), а не строка: неудачная запись это
-// та, у которой в окне есть хотя бы один прогон done=0. Ровно это множество
-// отменяет и удаляет очистка «Неудачных доставок» (FailedIDs — уже DISTINCT ID,
-// DeleteFailed), поэтому KPI, список под ним и видимое «очищено N» сходятся
-// (боевой аудит расхождения: cancelled=5 при deleted=10).
-func (r *LogReaderCH) CountFailed(ctx context.Context, table, nodeID string, sinceMs, untilMs int64) (uint64, error) {
-	if !isSafeTableName(table) {
-		return 0, fmt.Errorf("invalid table name: %q", table)
+// approx=true — приблизительный режим (HLL, app_settings.general.
+// metrics_approx_counts): в ~3× дешевле по CPU, ошибка ~0.3%.
+func uniqueExprs(approx bool) (total, delivered string) {
+	if approx {
+		return "uniq(ID)", "uniqIf(ID, done = 1)"
 	}
-	conds, args := r.failedConds(ctx, table, nodeID, sinceMs, untilMs)
+	return "countDistinct(ID)", "uniqExactIf(ID, done = 1)"
+}
+
+// subUnsigned — вычитание с клампом. В приблизительном режиме delivered
+// считается по HLL независимо от total и может оказаться БОЛЬШЕ него; голое
+// total-delivered на uint64 дало бы 1.8e19 на экране.
+func subUnsigned(total, delivered uint64) uint64 {
+	if delivered >= total {
+		return 0
+	}
+	return total - delivered
+}
+
+// countUnresolved — число записей без единого прогона done=1 под фильтрами q
+// (§79.1). Ровно выражение Errors из NodeKPI, поэтому KPI узла и KPI вкладки
+// «Очередь» тождественны по построению, а не по совпадению.
+//
+// Предикат выражается АГРЕГАТАМИ, а не WHERE: строки done=0 и done=1 одной
+// записи обязаны попасть в один и тот же запрос, иначе успешный прогон не
+// вычтет неудачный. Поэтому Unresolved/Done снимаются с копии q.
+func (r *LogReaderCH) countUnresolved(ctx context.Context, q port.LogQuery, approx bool) (uint64, error) {
+	q.BeforeID, q.Limit = "", 0
+	q.Unresolved, q.Done = false, ""
+	conds, args := r.searchConds(ctx, q)
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + strings.Join(conds, " AND ")
+	}
 	conn, err := r.liveConn()
 	if err != nil {
 		return 0, err
 	}
-	var n uint64
-	q := fmt.Sprintf("SELECT uniqExact(ID) FROM %s WHERE %s", table, strings.Join(conds, " AND "))
-	if err := conn.QueryRow(ctx, q, args...).Scan(&n); err != nil {
+	totalExpr, deliveredExpr := uniqueExprs(approx)
+	var total, delivered uint64
+	sql := fmt.Sprintf("SELECT %s AS total, %s AS delivered FROM %s%s",
+		totalExpr, deliveredExpr, q.Table, where)
+	if err := conn.QueryRow(ctx, sql, args...).Scan(&total, &delivered); err != nil {
 		return 0, classifyCHErr("clickhouse count failed", err)
 	}
-	return n, nil
+	return subUnsigned(total, delivered), nil
 }
 
-// failedConds — условия «done=0 в окне (sinceMs, untilMs] для узла nodeID» +
-// позиционные args (§35/§37). nodeID == "" → без per-node фильтра.
-// Метод, а не свободная функция: атрибуция записей зависит от того, общая ли
-// таблица (см. nodeFilter).
-func (r *LogReaderCH) failedConds(ctx context.Context, table, nodeID string, sinceMs, untilMs int64) ([]string, []any) {
-	var conds []string
-	var args []any
-	if c, a := r.nodeFilter(ctx, table, nodeID); c != "" {
-		conds = append(conds, c)
-		args = append(args, a...)
+// CountFailed — KPI «неудачные доставки» вкладки «Очередь» (§35).
+// Единица — ЗАПИСЬ без единого успешного прогона (§79.1).
+func (r *LogReaderCH) CountFailed(ctx context.Context, q port.LogQuery, approx bool) (uint64, error) {
+	if !isSafeTableName(q.Table) {
+		return 0, fmt.Errorf("invalid table name: %q", q.Table)
 	}
-	conds = append(conds, "done = 0")
-	if sinceMs > 0 {
-		conds = append(conds, "toUnixTimestamp64Milli(toDateTime64(date_request, 3)) > ?")
-		args = append(args, sinceMs)
-	}
-	if untilMs > 0 {
-		conds = append(conds, "toUnixTimestamp64Milli(toDateTime64(date_request, 3)) <= ?")
-		args = append(args, untilMs)
-	}
-	return conds, args
+	return r.countUnresolved(ctx, q, approx)
 }
 
-// FailedIDs — уникальные ID записей done=0 за окно (sinceMs, untilMs], до cap
-// (capped=true, если есть ещё). Для очистки «Неудачных доставок»: эти ID
-// отменяются (qcancel), чтобы DLQ-репроцессор перестал их повторять (§34.4).
-func (r *LogReaderCH) FailedIDs(ctx context.Context, table, nodeID string, sinceMs, untilMs int64, cap int) ([]string, bool, error) {
-	if !isSafeTableName(table) {
-		return nil, false, fmt.Errorf("invalid table name: %q", table)
+// failedIDsCap — потолок набора ID по умолчанию (когда вызывающий не задал свой).
+const failedIDsCap = 10000
+
+// FailedIDs — ID недоставленных записей под фильтрами q (§79.1), до cap.
+//
+// Два шага вместо одного запроса — вопрос стоимости, а не удобства. Кандидатов
+// (строк done=0) мало, доставленных записей на порядки больше, поэтому
+// множество строится по МАЛОЙ стороне: сначала кандидаты, затем проба
+// «кто из них уже доставлен». Вариант `ID NOT IN (SELECT … done=1)` строил бы
+// хэш-сет по всем доставленным записям окна на каждый вызов (список поллится
+// раз в 15 с), `GROUP BY ID HAVING max(done)=0` — по всем различным ID окна.
+func (r *LogReaderCH) FailedIDs(ctx context.Context, q port.LogQuery, cap int) ([]string, bool, error) {
+	if !isSafeTableName(q.Table) {
+		return nil, false, fmt.Errorf("invalid table name: %q", q.Table)
 	}
 	if cap <= 0 {
-		cap = 10000
+		cap = failedIDsCap
 	}
-	conds, args := r.failedConds(ctx, table, nodeID, sinceMs, untilMs)
+	q.BeforeID, q.Limit = "", 0
+	q.Unresolved, q.Done = false, "no" // кандидаты: строки с неудачным прогоном
+
+	conds, args := r.searchConds(ctx, q)
 	conn, err := r.liveConn()
 	if err != nil {
 		return nil, false, err
 	}
-	q := fmt.Sprintf("SELECT DISTINCT ID FROM %s WHERE %s LIMIT %d", table, strings.Join(conds, " AND "), cap+1)
-	rows, err := conn.Query(ctx, q, args...)
+	sql := fmt.Sprintf("SELECT DISTINCT ID FROM %s WHERE %s LIMIT %d",
+		q.Table, strings.Join(conds, " AND "), cap+1)
+	candidates, err := scanIDs(ctx, conn, sql, args, "clickhouse failed ids")
 	if err != nil {
-		return nil, false, fmt.Errorf("clickhouse failed ids: %w", err)
+		return nil, false, err
+	}
+	capped := len(candidates) > cap
+	if capped {
+		candidates = candidates[:cap]
+	}
+	if len(candidates) == 0 {
+		return nil, false, nil
+	}
+
+	delivered, err := r.deliveredAmong(ctx, q, candidates)
+	if err != nil {
+		return nil, false, err
+	}
+	ids := diffIDs(candidates, delivered)
+	r.logger.Debug("failed ids resolved",
+		r.logger.Str("table", q.Table),
+		r.logger.Int("candidates", len(candidates)),
+		r.logger.Int("delivered", len(delivered)),
+		r.logger.Int("unresolved", len(ids)))
+	return ids, capped, nil
+}
+
+// deliveredAmong — какие из ids имеют в окне хотя бы один прогон done=1.
+// Список ID передаётся параметром: clickhouse-go рендерит []string как массив
+// (`ID IN ['a','b']`), поэтому конкатенации в SQL не требуется.
+func (r *LogReaderCH) deliveredAmong(ctx context.Context, q port.LogQuery, ids []string) ([]string, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	q.BeforeID, q.Limit = "", 0
+	q.Unresolved, q.Done = false, "yes"
+	conds, args := r.searchConds(ctx, q)
+	conds = append(conds, "ID IN ?")
+	args = append(args, ids)
+	conn, err := r.liveConn()
+	if err != nil {
+		return nil, err
+	}
+	sql := fmt.Sprintf("SELECT DISTINCT ID FROM %s WHERE %s", q.Table, strings.Join(conds, " AND "))
+	return scanIDs(ctx, conn, sql, args, "clickhouse delivered ids")
+}
+
+// scanIDs — общий сбор колонки ID.
+func scanIDs(ctx context.Context, conn chgo.Conn, sql string, args []any, op string) ([]string, error) {
+	rows, err := conn.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, classifyCHErr(op, err)
 	}
 	defer rows.Close()
-	var ids []string
+	var out []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			return nil, false, fmt.Errorf("scan failed id: %w", err)
+			return nil, fmt.Errorf("%s: scan: %w", op, err)
 		}
-		ids = append(ids, id)
+		out = append(out, id)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, false, err
+		return nil, classifyCHErr(op, err)
 	}
-	capped := len(ids) > cap
-	if capped {
-		ids = ids[:cap]
+	return out, nil
+}
+
+// diffIDs — candidates минус delivered, порядок candidates сохраняется.
+func diffIDs(candidates, delivered []string) []string {
+	if len(delivered) == 0 {
+		return candidates
 	}
-	return ids, capped, nil
+	skip := make(map[string]struct{}, len(delivered))
+	for _, id := range delivered {
+		skip[id] = struct{}{}
+	}
+	out := make([]string, 0, len(candidates))
+	for _, id := range candidates {
+		if _, ok := skip[id]; ok {
+			continue
+		}
+		out = append(out, id)
+	}
+	return out
 }
 
 // maxDistinctMethods — кап числа значений фасета Method (§48.3): дропдауну UI
@@ -1023,38 +1200,76 @@ func (r *LogReaderCH) DateRange(ctx context.Context, table, nodeID string) (int6
 	return minMs, maxMs, nil
 }
 
-// DeleteFailed — lightweight DELETE записей done=0 за окно (sinceMs, untilMs] из
-// CH-таблицы узла (очистка вида «Неудачные доставки»). Возвращает число удалённых
-// ЗАПИСЕЙ (§78.6; посчитано до DELETE — CH lightweight delete счётчик не отдаёт).
-// Строк из таблицы уходит больше: у записи с несколькими прогонами доставки
-// удаляются все её строки done=0. Видимое пользователю «очищено N» — про записи,
-// как и число отменённых сообщений рядом.
-func (r *LogReaderCH) DeleteFailed(ctx context.Context, table, nodeID string, sinceMs, untilMs int64) (uint64, error) {
-	if !isSafeTableName(table) {
-		return 0, fmt.Errorf("invalid table name: %q", table)
+// DeleteFailedRows — lightweight DELETE строк done=0 записей ids (§79.2, очистка
+// вида «Неудачные доставки» и уборка оригиналов после массового повтора).
+// Возвращает число ЗАПИСЕЙ; строк уходит больше — у записи столько строк, сколько
+// было прогонов доставки. Строки done=1 тех же записей остаются: история
+// успешной доставки из журнала не пропадает.
+//
+// Один стейтмент на весь набор: lightweight delete в ClickHouse порождает
+// мутацию, и 500 удалений по одному ID подряд создали бы мутационную нагрузку на
+// ровном месте.
+func (r *LogReaderCH) DeleteFailedRows(ctx context.Context, q port.LogQuery, ids []string) (uint64, error) {
+	if !isSafeTableName(q.Table) {
+		return 0, fmt.Errorf("invalid table name: %q", q.Table)
+	}
+	if len(ids) == 0 {
+		return 0, nil
 	}
 	// §70.4: единственный DML read-адаптера. На таблице другой ноды удаление
 	// запрещено: фильтр по node_id защищает от чужих строк, но записи без
 	// идентификатора (legacy) он не различает.
 	if r.ownership != nil {
-		if err := r.ownership.AssertOwnsTable(ctx, table); err != nil {
+		if err := r.ownership.AssertOwnsTable(ctx, q.Table); err != nil {
 			return 0, err
 		}
 	}
-	n, err := r.CountFailed(ctx, table, nodeID, sinceMs, untilMs)
-	if err != nil || n == 0 {
-		return 0, err
-	}
-	conds, args := r.failedConds(ctx, table, nodeID, sinceMs, untilMs)
+	conds, args := r.deleteFailedConds(q, ids)
 	conn, err := r.liveConn()
 	if err != nil {
 		return 0, err
 	}
-	stmt := fmt.Sprintf("DELETE FROM %s WHERE %s", table, strings.Join(conds, " AND "))
+	stmt := fmt.Sprintf("DELETE FROM %s WHERE %s", q.Table, strings.Join(conds, " AND "))
 	if err := conn.Exec(ctx, stmt, args...); err != nil {
-		return 0, fmt.Errorf("clickhouse delete failed: %w", err)
+		return 0, fmt.Errorf("clickhouse delete failed rows: %w", err)
 	}
-	return n, nil
+	r.logger.Debug("failed rows deleted",
+		r.logger.Str("table", q.Table), r.logger.Int("records", len(ids)))
+	return uint64(len(ids)), nil
+}
+
+// deleteFailedConds — условия разрушающей операции: строки done=0 указанных
+// записей в окне.
+//
+// Node-фильтр здесь СТРОГИЙ (`node_id = ?`), а не через nodeFilter: тот на
+// одиночной внешней таблице §64 послабляет условие до `OR node_id = ”`, что для
+// чтения осознанно, а в DELETE означало бы удаление строк постороннего писателя
+// (§79.1). Пустой NodeID — legacy «таблица-на-узел», фильтра нет как и раньше.
+//
+// Окно избыточно при заданных ids, но оставлено намеренно: date_create-условия
+// §72.4 отсекают партиции, а без них DELETE сканирует таблицу целиком.
+func (r *LogReaderCH) deleteFailedConds(q port.LogQuery, ids []string) ([]string, []any) {
+	var conds []string
+	var args []any
+	if q.NodeID != "" {
+		conds = append(conds, "node_id = ?")
+		args = append(args, q.NodeID)
+	}
+	if c, a := dateCreateConds(q); len(c) > 0 {
+		conds = append(conds, c...)
+		args = append(args, a...)
+	}
+	if q.SinceMs > 0 {
+		conds = append(conds, "toUnixTimestamp64Milli(toDateTime64(date_request, 3)) > ?")
+		args = append(args, q.SinceMs)
+	}
+	if q.UntilMs > 0 {
+		conds = append(conds, "toUnixTimestamp64Milli(toDateTime64(date_request, 3)) <= ?")
+		args = append(args, q.UntilMs)
+	}
+	conds = append(conds, "done = 0", "ID IN ?")
+	args = append(args, ids)
+	return conds, args
 }
 
 // NodeKPI — per-node KPI из ClickHouse-логов за окно (sinceMs, untilMs] (§21,
@@ -1099,10 +1314,7 @@ func (r *LogReaderCH) NodeKPI(ctx context.Context, table, nodeID string, sinceMs
 	if err != nil {
 		return port.NodeKPI{}, err
 	}
-	totalExpr, deliveredExpr := "countDistinct(ID)", "uniqExactIf(ID, done = 1)"
-	if approx {
-		totalExpr, deliveredExpr = "uniq(ID)", "uniqIf(ID, done = 1)"
-	}
+	totalExpr, deliveredExpr := uniqueExprs(approx)
 	q := fmt.Sprintf(`SELECT
 		%s AS total,
 		%s AS delivered,
@@ -1123,7 +1335,7 @@ func (r *LogReaderCH) NodeKPI(ctx context.Context, table, nodeID string, sinceMs
 	if math.IsNaN(p99) {
 		p99 = 0
 	}
-	return port.NodeKPI{Total: total, Delivered: delivered, Errors: total - delivered, P95ms: p95, P99ms: p99}, nil
+	return port.NodeKPI{Total: total, Delivered: delivered, Errors: subUnsigned(total, delivered), P95ms: p95, P99ms: p99}, nil
 }
 
 // NodeChart — временной ряд трафика узла за окно (sinceMs, untilMs], разбитый на
