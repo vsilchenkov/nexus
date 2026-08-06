@@ -29,7 +29,7 @@ const ackBatchMax = 8
 func ackRequestBody(size int) (body []byte, wantMaxLogID int64) {
 	n := 1 + rand.Intn(ackBatchMax)
 	logs := make([]map[string]any, 0, n)
-	for i := 0; i < n; i++ {
+	for range n {
 		id := int64(79000 + rand.Intn(100000))
 		if id > wantMaxLogID {
 			wantMaxLogID = id
