@@ -816,6 +816,17 @@
       "state_paused_pull": "The node is paused — Nexus stops pulling new messages from RabbitMQ, so they stay in the broker queue. Below are only the messages the bus accepted before the pause (purging affects exactly those). Resume to keep draining the queue.",
       "state_disabled": "The node is disabled — incoming requests are rejected (nothing is queued)."
     },
+    "breaker": {
+      "state_closed": "Node protection is inactive — delivery is running normally",
+      "state_open": "Delivery is paused by node protection",
+      "state_half_open": "Probe request in flight — checking whether the receiver recovered",
+      "failures": "{{value}} consecutive failures",
+      "retry_after": "probe in {{value}}",
+      "explain_open": "Requests are rejected without contacting the receiver (reason circuit_breaker_open in the logs). Protection closes itself as soon as a probe request succeeds.",
+      "badge_hint": "The node badge updates after the next actual call.",
+      "reset": "Clear protection",
+      "reset_confirm": "Clear node protection and resume delivery immediately? If the receiver is still unavailable, protection will engage again after a series of failures."
+    },
     "failed": {
       "empty": "No failed deliveries in this period.",
       "no_logging": "Logging is not configured for this node — failed deliveries can't be shown.",
