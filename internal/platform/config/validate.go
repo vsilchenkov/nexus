@@ -54,6 +54,43 @@ func Validate(c *Config) error {
 		return errors.New("sentry.use=true but sentry.dsn is empty")
 	}
 
+	// §81.3: границы те же, что у per-node переопределения (domain.Node), иначе
+	// глобальная политика могла бы оказаться недостижимой для формы узла.
+	// Ноль сюда не доходит — дефолты подставляют 5/30 (см. defaults.go).
+	if c.Sender.CircuitBreaker.Threshold < 1 || c.Sender.CircuitBreaker.Threshold > 100 {
+		return fmt.Errorf("sender.circuit_breaker.threshold=%d: must be 1..100", c.Sender.CircuitBreaker.Threshold)
+	}
+	if c.Sender.CircuitBreaker.CooldownSec < 1 || c.Sender.CircuitBreaker.CooldownSec > 3_600 {
+		return fmt.Errorf("sender.circuit_breaker.cooldown_sec=%d: must be 1..3600", c.Sender.CircuitBreaker.CooldownSec)
+	}
+
+	// §82.1: enforcement-политика keepalive обязана быть НЕ СТРОЖЕ темпа, с
+	// которым штатно пингуют клиенты. Иначе gRPC-сервер засчитает их ping'и
+	// нарушением и на третьем оборвёт соединение (GOAWAY «too_many_pings»)
+	// вместе с идущим по нему sync-вызовом. Симптом — обрыв на 4×keepalive_time
+	// с текстом `client_canceled`, то есть выглядит как уход клиента; вычислить
+	// его по логам почти невозможно, поэтому ловим на старте.
+	//
+	// Ноль у клиента означает «не пинговать вообще» (grpc-go подставляет
+	// бесконечность), такой клиент нарушителем стать не может — пропускаем.
+	if c.Sender.GRPCKeepalive.EnforcementMinTimeSec < 1 || c.Sender.GRPCKeepalive.EnforcementMinTimeSec > 3_600 {
+		return fmt.Errorf("sender.grpc_keepalive.enforcement_min_time_sec=%d: must be 1..3600",
+			c.Sender.GRPCKeepalive.EnforcementMinTimeSec)
+	}
+	for _, client := range []struct {
+		key  string
+		time int
+	}{
+		{"receiver.sender_grpc.keepalive_time_sec", c.Receiver.SenderGRPC.KeepaliveTimeSec},
+		{"web.sender_grpc.keepalive_time_sec", c.Web.SenderGRPC.KeepaliveTimeSec},
+	} {
+		if client.time > 0 && c.Sender.GRPCKeepalive.EnforcementMinTimeSec > client.time {
+			return fmt.Errorf(
+				"sender.grpc_keepalive.enforcement_min_time_sec=%d: must not exceed %s=%d",
+				c.Sender.GRPCKeepalive.EnforcementMinTimeSec, client.key, client.time)
+		}
+	}
+
 	// §64: границы те же, что у domain.Node.MaxBodySize — иначе форма подставит
 	// значение, которое не пройдёт валидацию при сохранении узла.
 	if c.Web.NodeDefaultMaxBodySize < 1 || c.Web.NodeDefaultMaxBodySize > 10_000_000 {

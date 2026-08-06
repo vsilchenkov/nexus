@@ -104,12 +104,14 @@ type stubFailedPurger struct {
 	delCalled     bool
 	delNodeID     string
 	delIDs        []string // §79.2: удаляем ровно то, что отменили
+	gotExcludes   []string // §81.5: исключения по маркеру причины (очистка их не применяет)
 }
 
 func (s *stubFailedPurger) FailedIDs(_ context.Context, q port.LogQuery, _ int) ([]string, bool, error) {
 	s.idsCalls++
 	s.gotTable, s.gotNodeID, s.gotSince, s.gotUntil = q.Table, q.NodeID, q.SinceMs, q.UntilMs
 	s.gotUnresolved, s.gotDone, s.gotAligned = q.Unresolved, q.Done, q.DateCreateAligned
+	s.gotExcludes = q.ExcludeReasonPrefixes
 	return s.ids, s.capped, s.idsErr
 }
 func (s *stubFailedPurger) DeleteFailedRows(_ context.Context, q port.LogQuery, ids []string) (uint64, error) {
@@ -506,4 +508,17 @@ func TestAsyncQueue_PurgeFailed_DeleteError(t *testing.T) {
 	_, err := uc.PurgeFailed(context.Background(), Actor{UserID: "u"}, "n1", "t1", time.Time{}, time.Time{})
 	require.Error(t, err)
 	assert.Empty(t, audit.entries, "при ошибке delete audit не пишется")
+}
+
+// §81.5: очистка «Неудачных доставок» отменённые клиентом записи НЕ щадит —
+// убрать их с глаз это ровно то, что от кнопки ждут. Исключение действует
+// только в массовом повторе (там повтор дал бы дубли).
+func TestAsyncQueue_PurgeFailed_DoesNotExcludeClientCanceled(t *testing.T) {
+	t.Parallel()
+	failed := &stubFailedPurger{ids: []string{"f1"}, deleted: 1}
+	uc, _ := newQueueUCFull(&stubPeeker{}, &stubCancelWriter{}, failed, asyncNodeCH())
+
+	_, err := uc.PurgeFailed(context.Background(), Actor{UserID: "u"}, "n1", "t1", time.Time{}, time.Time{})
+	require.NoError(t, err)
+	assert.Empty(t, failed.gotExcludes, "очистка видит всё множество недоставленных")
 }

@@ -32,6 +32,15 @@ type Envelope struct {
 	// Sender-копией Envelope (internal/sender/usecase/async_envelope.go).
 	RequestPath string `json:"request_path,omitempty"`
 
+	// IngressMethod — §83.7: root_method узла В МОМЕНТ ПРИЁМА. По нему consumer
+	// отличает сообщение, принятое как async, от сообщения sync-узла, которое
+	// попало в очередь по §3.6 (узел был на паузе). Первое после перевода узла
+	// в sync доставлять нельзя, второе — обязательно нужно, и без этого поля
+	// они неразличимы. Пусто у сообщений, принятых до §83, и у pull-узлов §27
+	// (Puller строит Envelope сам): и те и другие доставляются как раньше —
+	// fail-open, выкат ничего не теряет.
+	IngressMethod string `json:"ingress_method,omitempty"`
+
 	// RMQ — служебный блок для узлов RabbitMQAsync (§27.3). nil для
 	// request/requestAsync. Sender обрабатывает envelope одинаково; блок несёт
 	// происхождение сообщения для трассировки/диагностики.
@@ -63,15 +72,16 @@ func BuildEnvelope(
 		picked["Content-Type"] = ct
 	}
 	return &Envelope{
-		ID:          id,
-		NodePath:    node.Path,
-		Method:      method,
-		TargetURL:   finalURL,
-		AuthHeader:  authHeader,
-		Headers:     picked,
-		Body:        body,
-		ClientIP:    clientIP,
-		ReceivedAt:  time.Now().UTC(),
-		RequestPath: requestPath,
+		ID:            id,
+		NodePath:      node.Path,
+		Method:        method,
+		TargetURL:     finalURL,
+		AuthHeader:    authHeader,
+		Headers:       picked,
+		Body:          body,
+		ClientIP:      clientIP,
+		ReceivedAt:    time.Now().UTC(),
+		RequestPath:   requestPath,
+		IngressMethod: string(node.RootMethod),
 	}
 }

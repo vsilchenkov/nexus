@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"nexus/internal/domain"
 	"nexus/internal/platform/circuitbreaker"
 )
 
@@ -46,14 +47,14 @@ func TestCircuitBreaker_OpensOnThreshold(t *testing.T) {
 	key := "node-open"
 
 	// 2 failures — пока ниже threshold → state остаётся closed.
-	require.NoError(t, cb.RecordFailure(ctx, key))
-	require.NoError(t, cb.RecordFailure(ctx, key))
+	require.NoError(t, cb.RecordFailure(ctx, key, domain.BreakerPolicy{}))
+	require.NoError(t, cb.RecordFailure(ctx, key, domain.BreakerPolicy{}))
 	st, err := cb.State(ctx, key)
 	require.NoError(t, err)
 	assert.Equal(t, circuitbreaker.StateClosed, st, "2 < threshold=3 → closed")
 
 	// 3-я failure → open.
-	require.NoError(t, cb.RecordFailure(ctx, key))
+	require.NoError(t, cb.RecordFailure(ctx, key, domain.BreakerPolicy{}))
 	st, err = cb.State(ctx, key)
 	require.NoError(t, err)
 	assert.Equal(t, circuitbreaker.StateOpen, st)
@@ -80,8 +81,8 @@ func TestCircuitBreaker_HalfOpenAfterCooldown(t *testing.T) {
 	key := "node-half"
 
 	// Открываем breaker.
-	require.NoError(t, cb.RecordFailure(ctx, key))
-	require.NoError(t, cb.RecordFailure(ctx, key))
+	require.NoError(t, cb.RecordFailure(ctx, key, domain.BreakerPolicy{}))
+	require.NoError(t, cb.RecordFailure(ctx, key, domain.BreakerPolicy{}))
 
 	// Ждём cooldown + чуть-чуть.
 	time.Sleep(300 * time.Millisecond)
@@ -111,8 +112,8 @@ func TestCircuitBreaker_HalfOpen_SingleProbe(t *testing.T) {
 	cb := circuitbreaker.New(client, 2, 200*time.Millisecond)
 	key := "node-single-probe"
 
-	require.NoError(t, cb.RecordFailure(ctx, key))
-	require.NoError(t, cb.RecordFailure(ctx, key))
+	require.NoError(t, cb.RecordFailure(ctx, key, domain.BreakerPolicy{}))
+	require.NoError(t, cb.RecordFailure(ctx, key, domain.BreakerPolicy{}))
 	time.Sleep(300 * time.Millisecond) // cooldown истёк
 
 	// 20 конкурентных Allow: ровно один должен получить true.
@@ -170,8 +171,8 @@ func TestCircuitBreaker_HalfOpen_ProbeFailureReopens(t *testing.T) {
 	cb := circuitbreaker.New(client, 2, 200*time.Millisecond)
 	key := "node-probe-fail"
 
-	require.NoError(t, cb.RecordFailure(ctx, key))
-	require.NoError(t, cb.RecordFailure(ctx, key))
+	require.NoError(t, cb.RecordFailure(ctx, key, domain.BreakerPolicy{}))
+	require.NoError(t, cb.RecordFailure(ctx, key, domain.BreakerPolicy{}))
 	time.Sleep(300 * time.Millisecond)
 
 	ok, err := cb.Allow(ctx, key)
@@ -179,7 +180,7 @@ func TestCircuitBreaker_HalfOpen_ProbeFailureReopens(t *testing.T) {
 	require.True(t, ok, "пробный должен пройти")
 
 	// Пробный провалился → снова open, cooldown заводится заново.
-	require.NoError(t, cb.RecordFailure(ctx, key))
+	require.NoError(t, cb.RecordFailure(ctx, key, domain.BreakerPolicy{}))
 	st, err := cb.State(ctx, key)
 	require.NoError(t, err)
 	assert.Equal(t, circuitbreaker.StateOpen, st)
@@ -207,8 +208,8 @@ func TestCircuitBreaker_RecordSuccessClosesBreaker(t *testing.T) {
 	cb := circuitbreaker.New(client, 2, time.Second)
 	key := "node-success"
 
-	require.NoError(t, cb.RecordFailure(ctx, key))
-	require.NoError(t, cb.RecordFailure(ctx, key))
+	require.NoError(t, cb.RecordFailure(ctx, key, domain.BreakerPolicy{}))
+	require.NoError(t, cb.RecordFailure(ctx, key, domain.BreakerPolicy{}))
 
 	st, err := cb.State(ctx, key)
 	require.NoError(t, err)
@@ -235,8 +236,8 @@ func TestCircuitBreaker_KeysIsolated(t *testing.T) {
 
 	cb := circuitbreaker.New(client, 2, time.Second)
 
-	require.NoError(t, cb.RecordFailure(ctx, "node-A"))
-	require.NoError(t, cb.RecordFailure(ctx, "node-A"))
+	require.NoError(t, cb.RecordFailure(ctx, "node-A", domain.BreakerPolicy{}))
+	require.NoError(t, cb.RecordFailure(ctx, "node-A", domain.BreakerPolicy{}))
 
 	// node-B должен оставаться closed.
 	st, err := cb.State(ctx, "node-B")
@@ -267,4 +268,53 @@ func TestCircuitBreaker_StateOnUnknownKey(t *testing.T) {
 	st, err := cb.State(ctx, "never-seen-before")
 	require.NoError(t, err)
 	assert.Equal(t, circuitbreaker.StateClosed, st)
+}
+
+// TestCircuitBreaker_AdminResetE2E — §81.4: оператор снимает блокировку вручную.
+// На реальном Redis, потому что здесь важны настоящие pipeline/PTTL, а не их
+// эмуляция: Snapshot и Reset выполняются одной транзакцией.
+func TestCircuitBreaker_AdminResetE2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	client, cleanup := startRedis(t, ctx)
+	defer cleanup()
+
+	const (
+		threshold = 3
+		cooldown  = 30 * time.Second // заведомо не истечёт за время теста
+	)
+	cb := circuitbreaker.New(client, threshold, cooldown)
+	adm := circuitbreaker.NewAdmin(client)
+
+	for range threshold {
+		require.NoError(t, cb.RecordFailure(ctx, "node-admin", domain.BreakerPolicy{}))
+	}
+	ok, err := cb.Allow(ctx, "node-admin")
+	require.NoError(t, err)
+	require.False(t, ok, "предусловие: breaker открыт")
+
+	// Web читает состояние, записанное Sender'ом: тот же ключ, та же политика.
+	snap, err := adm.Snapshot(ctx, "node-admin")
+	require.NoError(t, err)
+	assert.True(t, snap.Exists)
+	assert.Equal(t, circuitbreaker.StateOpen, snap.State)
+	assert.Equal(t, threshold, snap.Failures)
+	assert.Equal(t, threshold, snap.Threshold)
+	assert.Equal(t, cooldown, snap.Cooldown)
+	assert.Greater(t, snap.RetryAfter, time.Duration(0))
+	assert.Greater(t, snap.TTL, time.Duration(0), "ключ живёт под TTL")
+
+	before, err := adm.Reset(ctx, "node-admin")
+	require.NoError(t, err)
+	assert.Equal(t, circuitbreaker.StateOpen, before.State, "возвращается состояние ДО сброса")
+
+	ok, err = cb.Allow(ctx, "node-admin")
+	require.NoError(t, err)
+	assert.True(t, ok, "доставка возобновляется немедленно, не дожидаясь cooldown")
+
+	after, err := adm.Snapshot(ctx, "node-admin")
+	require.NoError(t, err)
+	assert.False(t, after.Exists)
+	assert.Equal(t, circuitbreaker.StateClosed, after.State)
 }

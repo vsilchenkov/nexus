@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"nexus/internal/domain/ackspec"
 )
 
 // Node — узел перенаправления (§3.3 ТЗ).
@@ -79,6 +81,14 @@ type Node struct {
 	DLQTTLSeconds        int32 // §36: TTL повторной доставки неудачных async-сообщений из DLQ (секунды)
 	DLQRetryDelaySeconds int32 // §36: минимальная задержка перед повторной доставкой ошибочной отправки (секунды)
 
+	// §81.3: политика circuit breaker'а этого узла. Ноль = «брать глобальное
+	// значение из конфигурации» (в БД — NULL): у узла с 200-миллисекундным
+	// приёмником и у узла со штатным ответом в 20 секунд разная норма отказов.
+	// Применяется обеими сторонами: async читает узел из БД на каждое сообщение,
+	// sync получает политику в составе запроса к отправителю.
+	CircuitBreakerThreshold   int32
+	CircuitBreakerCooldownSec int32
+
 	Status NodeStatus
 	TeamID string
 
@@ -112,6 +122,21 @@ type Node struct {
 	// §29: произвольный комментарий-описание узла (UI-метаданные, не участвует
 	// в маршрутизации). Необязательное, максимум 2000 символов.
 	Comment string
+
+	// §83: чем Receiver отвечает клиенту на успешный приём запроса в очередь.
+	// nil — прежний ответ {"result":true,"id":…}, поэтому zero value безопасно:
+	// запись Redis-кеша, сохранённая бинарём без этого поля, даёт ровно старое
+	// поведение (тот же приём, что у LoggingEnabled в UnmarshalJSON, но здесь
+	// без спец-обработки — «нет поля» и «как раньше» совпадают у указателя).
+	//
+	// Применяется ко всем ответам приёма: async 200, 202 у paused-узла (§3.6) и
+	// callback §16. К ОШИБКАМ приёма не применяется никогда — иначе клиент
+	// сочтёт запрос принятым и сотрёт свой журнал.
+	//
+	// У sync-узла (root_method=request) спека сохраняется, но в работе не
+	// участвует: там отвечает получатель. Единственное исключение — узел на
+	// паузе, где sync-запрос уходит в очередь по §3.6.
+	AsyncAck *ackspec.Spec
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -170,6 +195,14 @@ func (n *Node) NormalizeForRootMethod() []string {
 		// §39: у pull-узла нет входящего HTTP-пути, приклеивать нечего.
 		n.PathPassthrough = false
 		cleared = append(cleared, "path_passthrough")
+	}
+	if n.AsyncAck != nil {
+		// §83: pull-узел не отвечает никакому клиенту — отвечать нечем и некому.
+		// Сбрасывается ТОЛЬКО здесь: при request <-> requestAsync спека обязана
+		// сохраняться (оператор временно переводит узел в sync и не должен
+		// заполнять шаблон заново), поэтому ветка живёт под гейтом IsPull.
+		n.AsyncAck = nil
+		cleared = append(cleared, "async_ack_spec")
 	}
 	return cleared
 }
@@ -287,6 +320,15 @@ func (n *Node) Validate() error {
 	if n.DLQRetryDelaySeconds < 1 || n.DLQRetryDelaySeconds > 86_400 {
 		return ErrNodeDLQRetryDelayRange
 	}
+	// §81.3: ноль = «как в конфигурации», поэтому проверяются только заданные
+	// значения. Верхние границы — здравый смысл оператора: порог выше сотни уже
+	// не защита, пауза больше часа делает узел неотличимым от отключённого.
+	if n.CircuitBreakerThreshold < 0 || n.CircuitBreakerThreshold > 100 {
+		return ErrNodeCircuitBreakerThresholdRange
+	}
+	if n.CircuitBreakerCooldownSec < 0 || n.CircuitBreakerCooldownSec > 3_600 {
+		return ErrNodeCircuitBreakerCooldownRange
+	}
 	if len(n.URLAllowedHosts) > 50 {
 		return ErrNodeAllowedHostsSize
 	}
@@ -343,6 +385,13 @@ func (n *Node) Validate() error {
 	// ловим на сохранении и показываем понятную ошибку у поля.
 	if n.LoggingEnabled && n.ClickHouseTable != "" && !IsValidCHTableName(n.ClickHouseTable) {
 		return ErrNodeClickHouseTableInvalid
+	}
+	// §83: шаблон ответа приёма. Валидируется всегда, когда задан, — в том числе
+	// у sync-узла: спека переживает перевод узла в sync (см.
+	// NormalizeForRootMethod), и сохранить туда заведомо битый шаблон нельзя,
+	// иначе он «оживёт» при возврате в async уже сломанным.
+	if err := n.AsyncAck.Validate(); err != nil {
+		return err
 	}
 	if n.RootMethod.IsPull() {
 		if err := n.validateRMQ(); err != nil {
@@ -403,6 +452,9 @@ func (n *Node) SetDefaults() {
 	// §69.2: пробелы по краям адреса — частая опечатка копипаста; режем до
 	// валидации, иначе " https://host" уедет в конверт и упадёт в Sender'е.
 	n.TargetURL = strings.TrimSpace(n.TargetURL)
+	// §83: форма присылает только осмысленную часть спеки (шаблон и, иногда,
+	// формат) — версию, content_type и политику проставляем здесь, до Validate.
+	n.AsyncAck.SetDefaults()
 	if n.IncomingMethod == "" {
 		n.IncomingMethod = HTTPMethodPOST
 	}
@@ -493,5 +545,25 @@ func (n *Node) SetDefaults() {
 		if n.PullPrefetch == 0 {
 			n.PullPrefetch = n.PullBatchSize
 		}
+	}
+}
+
+// BreakerPolicy — политика circuit breaker'а узла (§81.3): сколько отказов
+// подряд открывают защиту и сколько ждать до половинчато-открытой пробы.
+//
+// Живёт в domain, потому что нужна обеим сторонам границы: usecase Sender'а
+// объявляет через неё свой порт, а реализация (platform/circuitbreaker) её
+// применяет. Нулевые поля означают «взять глобальное значение из конфигурации»
+// — разрешение делает реализация, чтобы правило не дублировалось в вызовах.
+type BreakerPolicy struct {
+	Threshold int
+	Cooldown  time.Duration
+}
+
+// BreakerPolicy собирает политику узла из его полей (0 = глобальная).
+func (n *Node) BreakerPolicy() BreakerPolicy {
+	return BreakerPolicy{
+		Threshold: int(n.CircuitBreakerThreshold),
+		Cooldown:  time.Duration(n.CircuitBreakerCooldownSec) * time.Second,
 	}
 }

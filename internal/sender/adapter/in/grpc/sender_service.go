@@ -6,6 +6,7 @@ import (
 	"context"
 	"maps"
 	"strconv"
+	"time"
 
 	"nexus/internal/domain"
 	"nexus/internal/platform/logging"
@@ -13,6 +14,11 @@ import (
 	"nexus/internal/sender/usecase"
 	senderv1 "nexus/proto/sender/v1"
 )
+
+// nodeStatusWriteTimeout — предел на запись персистентного исхода узла (§52),
+// выполняемую на отвязанном контексте после ответа (§81.2). Best-effort:
+// задерживать возврат RPC ради неё нельзя.
+const nodeStatusWriteTimeout = 2 * time.Second
 
 // Server реализует senderv1.SenderServiceServer.
 type Server struct {
@@ -56,6 +62,10 @@ func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 		MaxBodySizeEnabled: req.GetMaxBodySizeEnabled(),
 		MaxBodySize:        req.GetMaxBodySize(),
 		DryRun:             req.GetDryRun(), // §55
+		// §81.3: политику несёт запрос — sync-путь узел из БД не читает.
+		// Старый Receiver поля не пришлёт: нули = глобальная политика.
+		BreakerThreshold:   req.GetCircuitBreakerThreshold(),
+		BreakerCooldownSec: req.GetCircuitBreakerCooldownSec(),
 	})
 
 	// §55: тестовый вызов (dry-run из UI) не оставляет следов на узле — ни в
@@ -89,11 +99,25 @@ func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 			s.metrics.RequestsIncompleteTotal.WithLabelValues("request", req.GetNodePath()).Inc()
 		}
 		// §41/§52: исход последнего вызова узла (in-memory гаудж).
-		s.metrics.SetNodeLastRequestOutcome(req.GetNodePath(), outcome)
+		// §81.2: обрыв вызывающей стороной исходом узла НЕ считается — он о
+		// здоровье приёмника не говорит ничего.
+		if !out.ParentGone {
+			s.metrics.SetNodeLastRequestOutcome(req.GetNodePath(), outcome)
+		}
 	}
 	// §46: персистентный исход в Redis (переживает рестарт; Noop без Redis).
-	if s.nodeStatus != nil {
-		s.nodeStatus.SetLastOutcome(ctx, req.GetNodePath(), outcome)
+	// §81.2: контекст отвязан — на sync-пути он умирает вместе с ушедшим
+	// клиентом, а go-redis отбрасывает команду с отменённым контекстом ещё в
+	// пуле: бейдж узла молча не обновлялся именно тогда, когда это важнее всего.
+	if s.nodeStatus != nil && !out.ParentGone {
+		statusCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), nodeStatusWriteTimeout)
+		s.nodeStatus.SetLastOutcome(statusCtx, req.GetNodePath(), outcome)
+		cancel()
+	} else if out.ParentGone {
+		// §51.9: тихий пропуск — иначе «почему узел не покраснел» не разобрать.
+		s.logger.Debug("send: caller gone, node outcome not updated",
+			s.logger.Str("id", req.GetId()),
+			s.logger.Str("node", req.GetNodePath()))
 	}
 
 	return &senderv1.SendResponse{

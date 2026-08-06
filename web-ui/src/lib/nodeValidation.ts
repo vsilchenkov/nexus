@@ -25,6 +25,8 @@ export type NodeFormLimits = {
   retry_backoff_ms: number;
   dlq_ttl_seconds: number;
   dlq_retry_delay_seconds: number;
+  circuit_breaker_threshold: number;
+  circuit_breaker_cooldown_sec: number;
   max_body_size_enabled: boolean;
   max_body_size: number;
   // Гейт проверок карточки «Логирование»: при выключенном тумблере её поля
@@ -194,6 +196,14 @@ export function validateNodeForm(f: NodeFormLimits, ctx?: BasicAuthContext): Nod
   }
   if (f.dlq_retry_delay_seconds < 1 || f.dlq_retry_delay_seconds > 86400) {
     return { field: "dlq_retry_delay_seconds", code: "node.validation.dlq_retry_delay_seconds" };
+  }
+  // §81.3: 0 = «как в конфигурации», поэтому проверяются только заданные
+  // значения. Границы — зеркало domain.Node.Validate.
+  if (f.circuit_breaker_threshold < 0 || f.circuit_breaker_threshold > 100) {
+    return { field: "circuit_breaker_threshold", code: "node.validation.circuit_breaker_threshold" };
+  }
+  if (f.circuit_breaker_cooldown_sec < 0 || f.circuit_breaker_cooldown_sec > 3600) {
+    return { field: "circuit_breaker_cooldown_sec", code: "node.validation.circuit_breaker_cooldown_sec" };
   }
   // Поля карточки «Логирование» проверяются только при включённом тумблере
   // (зеркало domain.Node.Validate): при выключенном они задизейблены, и

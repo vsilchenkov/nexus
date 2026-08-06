@@ -13,6 +13,7 @@ import { msToDatetimeLocal } from "../../lib/format";
 import { MAX_INFINITE_ROWS, useInfiniteLogs } from "../../lib/useInfiniteLogs";
 import { useConfirm } from "../../lib/confirm";
 import { useRoleAtLeast } from "../../lib/useCurrentRole";
+import { BreakerCard } from "./BreakerCard";
 
 type QueueMessage = {
   id: string;
@@ -288,6 +289,11 @@ export function QueueTab({
           )}
         </div>
       </Hint>
+
+      {/* §81.4: защита узла (circuit breaker). Не зависит от типа узла: у sync
+          секции «Ожидают отправки» нет, а карточка есть — именно там и болит
+          (боевой acs_sigur). Прячется сама, если Redis не сконфигурирован. */}
+      <BreakerCard nodeId={id} />
 
       {/* Секция «Ожидают отправки» — живая очередь (admin) */}
       {showPending && (

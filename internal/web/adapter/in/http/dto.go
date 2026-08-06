@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"nexus/internal/domain"
+	"nexus/internal/domain/ackspec"
 )
 
 // basicLogin — логин из basic-кредов формата "login:password" (часть до
@@ -57,11 +58,14 @@ type CreateNodeRequest struct {
 	ExternalTable             bool     `json:"external_table"`
 	DLQTTLSeconds             int32    `json:"dlq_ttl_seconds" binding:"omitempty,min=60,max=2592000"`
 	DLQRetryDelaySeconds      int32    `json:"dlq_retry_delay_seconds" binding:"omitempty,min=1,max=86400"`
-	Comment                   string   `json:"comment" binding:"omitempty,max=2000"`
-	Status                    string   `json:"status" binding:"omitempty,oneof=enabled disabled paused"`
-	LogRequestBody            bool     `json:"log_request_body"`
-	LogResponseBody           bool     `json:"log_response_body"`
-	LogHeaders                bool     `json:"log_headers"`
+	// §81.3: политика circuit breaker'а узла. 0/отсутствие = «как в конфигурации».
+	CircuitBreakerThreshold   int32  `json:"circuit_breaker_threshold" binding:"omitempty,min=0,max=100"`
+	CircuitBreakerCooldownSec int32  `json:"circuit_breaker_cooldown_sec" binding:"omitempty,min=0,max=3600"`
+	Comment                   string `json:"comment" binding:"omitempty,max=2000"`
+	Status                    string `json:"status" binding:"omitempty,oneof=enabled disabled paused"`
+	LogRequestBody            bool   `json:"log_request_body"`
+	LogResponseBody           bool   `json:"log_response_body"`
+	LogHeaders                bool   `json:"log_headers"`
 	// LoggingEnabled — указатель, чтобы отличить «не прислано» (дефолт true,
 	// сохраняет текущее поведение) от явного false (§22).
 	LoggingEnabled     *bool `json:"logging_enabled"`
@@ -70,6 +74,13 @@ type CreateNodeRequest struct {
 
 	// §39: path-passthrough — приклеивать хвост входящего пути к target URL.
 	PathPassthrough bool `json:"path_passthrough"`
+
+	// §83: шаблон ответа приёма. Указатель: отсутствие поля и явный null
+	// означают «узел отвечает как раньше», и это же значение приходит от формы,
+	// когда переключатель карточки выключен. Содержимое проверяет
+	// ackspec.Spec.Validate через domain.Node.Validate — binding-тегами такой
+	// шаблон не описать.
+	AsyncAckSpec *ackspec.Spec `json:"async_ack_spec"`
 
 	// §27: RabbitMQAsync. RMQPassword пустой в PUT = «оставить старый» (как
 	// auth_credentials, разбирается в handler.Update). Диапазоны pull_* также
@@ -129,6 +140,8 @@ type NodeResponse struct {
 	ExternalTable             bool     `json:"external_table"`
 	DLQTTLSeconds             int32    `json:"dlq_ttl_seconds"`
 	DLQRetryDelaySeconds      int32    `json:"dlq_retry_delay_seconds"`
+	CircuitBreakerThreshold   int32    `json:"circuit_breaker_threshold"`
+	CircuitBreakerCooldownSec int32    `json:"circuit_breaker_cooldown_sec"`
 	Comment                   string   `json:"comment"`
 	Status                    string   `json:"status"`
 	TeamID                    string   `json:"team_id"`
@@ -139,6 +152,11 @@ type NodeResponse struct {
 	MaxBodySizeEnabled        bool     `json:"max_body_size_enabled"`
 	MaxBodySize               int32    `json:"max_body_size"`
 	PathPassthrough           bool     `json:"path_passthrough"`
+
+	// §83: шаблон ответа приёма; null — узел отвечает как раньше. Секретом не
+	// является (его пишет оператор и он же уходит клиенту), поэтому отдаётся
+	// наружу целиком, а не флагом «настроено».
+	AsyncAckSpec *ackspec.Spec `json:"async_ack_spec"`
 
 	// §27: RabbitMQAsync. Пароль не возвращается — только флаг RMQPasswordSet.
 	// RMQStatus — runtime-health воркера (degraded/queue_depth/…), заполняется
@@ -238,6 +256,8 @@ func reqToDomain(r CreateNodeRequest) *domain.Node {
 		ExternalTable:             r.ExternalTable,
 		DLQTTLSeconds:             r.DLQTTLSeconds,
 		DLQRetryDelaySeconds:      r.DLQRetryDelaySeconds,
+		CircuitBreakerThreshold:   r.CircuitBreakerThreshold,
+		CircuitBreakerCooldownSec: r.CircuitBreakerCooldownSec,
 		Comment:                   r.Comment,
 		Status:                    domain.NodeStatus(r.Status),
 		LogRequestBody:            r.LogRequestBody,
@@ -247,6 +267,7 @@ func reqToDomain(r CreateNodeRequest) *domain.Node {
 		MaxBodySizeEnabled:        r.MaxBodySizeEnabled,
 		MaxBodySize:               r.MaxBodySize,
 		PathPassthrough:           r.PathPassthrough,
+		AsyncAck:                  r.AsyncAckSpec,
 		RMQHost:                   r.RMQHost,
 		RMQPort:                   r.RMQPort,
 		RMQVHost:                  r.RMQVHost,
@@ -294,6 +315,8 @@ func nodeToResponse(n *domain.Node) NodeResponse {
 		ExternalTable:             n.ExternalTable,
 		DLQTTLSeconds:             n.DLQTTLSeconds,
 		DLQRetryDelaySeconds:      n.DLQRetryDelaySeconds,
+		CircuitBreakerThreshold:   n.CircuitBreakerThreshold,
+		CircuitBreakerCooldownSec: n.CircuitBreakerCooldownSec,
 		Comment:                   n.Comment,
 		Status:                    string(n.Status),
 		TeamID:                    n.TeamID,
@@ -304,6 +327,7 @@ func nodeToResponse(n *domain.Node) NodeResponse {
 		MaxBodySizeEnabled:        n.MaxBodySizeEnabled,
 		MaxBodySize:               n.MaxBodySize,
 		PathPassthrough:           n.PathPassthrough,
+		AsyncAckSpec:              n.AsyncAck,
 		RMQHost:                   n.RMQHost,
 		RMQPort:                   n.RMQPort,
 		RMQVHost:                  n.RMQVHost,

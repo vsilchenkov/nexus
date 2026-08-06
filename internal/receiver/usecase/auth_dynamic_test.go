@@ -133,6 +133,64 @@ func TestBuildDynamicOutgoingAuth_TokenFromBody(t *testing.T) {
 	}
 }
 
+// §83.2: вырезание креды из тела не смеет искажать остальные значения — тело
+// с вырезанным полем уходит ПОЛУЧАТЕЛЮ, а через json.Unmarshal в map[string]any
+// целые больше 2^53 округлялись, и HTML-символы уезжали \u-последовательностями.
+func TestBuildDynamicOutgoingAuth_TokenFromBody_PreservesValues(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want map[string]string // фрагменты, которые обязаны быть в теле дословно
+	}{
+		{
+			name: "big int64 keeps precision",
+			body: `{"token":"abc","logId":9007199254740993}`,
+			want: map[string]string{"logId": `"logId":9007199254740993`},
+		},
+		{
+			name: "html characters are not escaped",
+			body: `{"token":"abc","note":"<a>&b"}`,
+			want: map[string]string{"note": `"note":"<a>&b"`},
+		},
+		{
+			name: "float keeps its literal form",
+			body: `{"token":"abc","ratio":1.50}`,
+			want: map[string]string{"ratio": `"ratio":1.50`},
+		},
+		{
+			name: "exponent notation survives",
+			body: `{"token":"abc","big":1e21}`,
+			want: map[string]string{"big": `"big":1e21`},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			n := &domain.Node{
+				AuthType:          domain.AuthTypeTokenFromRequest,
+				AuthDynamicSource: domain.AuthDynSourceBody,
+				AuthDynamicField:  "token",
+			}
+			res, err := BuildDynamicOutgoingAuth(n, http.Header{}, url.Values{}, []byte(tc.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.Header != "Bearer abc" {
+				t.Errorf("header=%q", res.Header)
+			}
+			got := string(res.Body)
+			if strings.Contains(got, `"token"`) {
+				t.Errorf("token must be stripped, got %s", got)
+			}
+			for field, want := range tc.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("field %s distorted: want %s in body, got %s", field, want, got)
+				}
+			}
+		})
+	}
+}
+
 // §41: поле не пришло/пустое → Header=="" (запрос уходит без Authorization),
 // ошибки нет, остальные query-параметры пробрасываются.
 func TestBuildDynamicOutgoingAuth_TokenMissing_NoAuthForwarded(t *testing.T) {

@@ -28,6 +28,8 @@ import (
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
+
+	"nexus/internal/domain"
 )
 
 type State string
@@ -38,17 +40,48 @@ const (
 	StateHalfOpen State = "half_open"
 )
 
+// keyPrefix/keyTTL — формат ключа и его время жизни.
+const (
+	keyPrefix = "circuit:"
+	keyTTL    = 10 * time.Minute
+)
+
+// Поля hash'а. Неэкспортные: кодировка — внутреннее дело пакета, наружу она
+// выходит только типизированным Snapshot (см. admin.go).
+const (
+	fState     = "state"
+	fFailures  = "failures"
+	fOpenedAt  = "opened_at" // unix nanoseconds
+	fProbe     = "probe"     // счётчик пробных запросов в half_open
+	fThreshold = "threshold" // §81.3: политика, применённая при открытии
+	fCooldown  = "cooldown_ns"
+)
+
+// Key возвращает Redis-ключ состояния breaker'а узла (§81.1).
+//
+// Экспортно по той же причине, что и nodestatus.Key: состояние читает и
+// сбрасывает ДРУГОЙ процесс (Web), и формат ключа обязан быть один на всех, а
+// не продублирован литералом в каждом пакете.
+func Key(nodeKey string) string { return keyPrefix + nodeKey }
+
 // allowProbeScript — атомарная часть Allow для состояний open/half_open.
 // KEYS[1] — hash ключа; ARGV[1] — now (unix ns); ARGV[2] — cooldown (ns).
 // Возвращает 1 (пропустить запрос) или 0 (отбросить).
 //
 // goredis.Script неизменяем после создания (хранит только текст и SHA) —
 // package-level var здесь эквивалентен константе.
+// §81.3: cooldown берётся из самого состояния — его записал RecordFailure по
+// политике узла. ARGV[2] (глобальная политика) остаётся запасным значением для
+// ключей, созданных версией до §81.3.
 var allowProbeScript = goredis.NewScript(`
 local state = redis.call("HGET", KEYS[1], "state")
 if state == "open" then
 	local opened = tonumber(redis.call("HGET", KEYS[1], "opened_at") or "0")
-	if tonumber(ARGV[1]) - opened >= tonumber(ARGV[2]) then
+	local cooldown = tonumber(redis.call("HGET", KEYS[1], "cooldown_ns") or "0")
+	if cooldown <= 0 then
+		cooldown = tonumber(ARGV[2])
+	end
+	if tonumber(ARGV[1]) - opened >= cooldown then
 		redis.call("HSET", KEYS[1], "state", "half_open", "probe", 1)
 		return 1
 	end
@@ -63,21 +96,33 @@ return 1
 `)
 
 type Breaker struct {
-	client    *goredis.Client
-	threshold int
-	cooldown  time.Duration
+	client *goredis.Client
+	// Глобальная политика из конфигурации (sender.circuit_breaker).
+	// Применяется к узлам без переопределения.
+	global domain.BreakerPolicy
 }
 
 func New(client *goredis.Client, threshold int, cooldown time.Duration) *Breaker {
-	return &Breaker{client: client, threshold: threshold, cooldown: cooldown}
+	return &Breaker{client: client, global: domain.BreakerPolicy{Threshold: threshold, Cooldown: cooldown}}
+}
+
+// resolve сводит политику узла с глобальной: нули означают «как в конфигурации».
+func (b *Breaker) resolve(p domain.BreakerPolicy) domain.BreakerPolicy {
+	if p.Threshold <= 0 {
+		p.Threshold = b.global.Threshold
+	}
+	if p.Cooldown <= 0 {
+		p.Cooldown = b.global.Cooldown
+	}
+	return p
 }
 
 // Allow возвращает true, если breaker разрешает запрос.
 // open + cooldown ещё не истёк → false; cooldown истёк → ровно один
 // запрос проходит пробным (half_open), остальные ждут его результата.
 func (b *Breaker) Allow(ctx context.Context, key string) (bool, error) {
-	k := "circuit:" + key
-	state, err := b.client.HGet(ctx, k, "state").Result()
+	k := Key(key)
+	state, err := b.client.HGet(ctx, k, fState).Result()
 	if err != nil {
 		if err == goredis.Nil {
 			return true, nil
@@ -89,7 +134,7 @@ func (b *Breaker) Allow(ctx context.Context, key string) (bool, error) {
 		return true, nil
 	}
 	res, err := allowProbeScript.Run(ctx, b.client, []string{k},
-		time.Now().UnixNano(), b.cooldown.Nanoseconds()).Int()
+		time.Now().UnixNano(), b.global.Cooldown.Nanoseconds()).Int()
 	if err != nil {
 		// fail-open: считаем closed (§9.4 ТЗ)
 		return true, err
@@ -99,32 +144,46 @@ func (b *Breaker) Allow(ctx context.Context, key string) (bool, error) {
 
 // RecordSuccess сбрасывает счётчик ошибок и устанавливает closed.
 func (b *Breaker) RecordSuccess(ctx context.Context, key string) error {
-	k := "circuit:" + key
+	k := Key(key)
 	pipe := b.client.TxPipeline()
-	pipe.HSet(ctx, k, "state", string(StateClosed), "failures", 0)
-	pipe.HDel(ctx, k, "opened_at", "probe")
-	pipe.Expire(ctx, k, 10*time.Minute) // авто-чистка
+	pipe.HSet(ctx, k, fState, string(StateClosed), fFailures, 0)
+	pipe.HDel(ctx, k, fOpenedAt, fProbe)
+	pipe.Expire(ctx, k, keyTTL) // авто-чистка
 	_, err := pipe.Exec(ctx)
 	return err
 }
 
 // RecordFailure инкрементирует счётчик, при достижении порога — open.
-func (b *Breaker) RecordFailure(ctx context.Context, key string) error {
-	k := "circuit:" + key
-	failures, err := b.client.HIncrBy(ctx, k, "failures", 1).Result()
+//
+// Вместе со счётчиком в hash пишется применённая политика (threshold,
+// cooldown) — §81.3. Иначе UI не сможет показать «3 из 5» и обратный отсчёт до
+// пробы: поля Breaker'а неэкспортны, читающая сторона живёт в другом процессе,
+// а после переопределения политики на узле глобальная конфигурация перестаёт
+// быть источником истины. Цена нулевая: путь редкий, поля дописываются в уже
+// существующий pipeline.
+func (b *Breaker) RecordFailure(ctx context.Context, key string, p domain.BreakerPolicy) error {
+	pol := b.resolve(p)
+	k := Key(key)
+	failures, err := b.client.HIncrBy(ctx, k, fFailures, 1).Result()
 	if err != nil {
 		return err
 	}
-	_ = b.client.Expire(ctx, k, 10*time.Minute).Err()
-	if int(failures) >= b.threshold {
-		ts := strconv.FormatInt(time.Now().UnixNano(), 10)
-		pipe := b.client.TxPipeline()
-		pipe.HSet(ctx, k, "state", string(StateOpen), "opened_at", ts)
-		pipe.HDel(ctx, k, "probe")
-		_, err := pipe.Exec(ctx)
-		return err
+	pipe := b.client.TxPipeline()
+	pipe.HSet(ctx, k, fThreshold, pol.Threshold, fCooldown, pol.Cooldown.Nanoseconds())
+	// state пишется ВСЕГДА, а не только при достижении порога: без него ключ с
+	// накопленными отказами выглядит для читающей стороны как несуществующий
+	// (Snapshot определяет Exists по state), и оператор не видит «3 из 5» —
+	// ровно то, ради чего политика и легла в hash (§81.3.1).
+	if int(failures) < pol.Threshold {
+		pipe.HSet(ctx, k, fState, string(StateClosed))
+	} else {
+		pipe.HSet(ctx, k, fState, string(StateOpen),
+			fOpenedAt, strconv.FormatInt(time.Now().UnixNano(), 10))
+		pipe.HDel(ctx, k, fProbe)
 	}
-	return nil
+	pipe.Expire(ctx, k, keyTTL)
+	_, err = pipe.Exec(ctx)
+	return err
 }
 
 // IsOpen — read-only проверка: breaker открыт И cooldown ещё НЕ истёк
@@ -134,8 +193,8 @@ func (b *Breaker) RecordFailure(ctx context.Context, key string) error {
 // и не меняет состояние. Используется DLQ-репроцессором (§36.3 шаг5), чтобы не
 // плодить fast-fail-churn, пока адрес мёртв.
 func (b *Breaker) IsOpen(ctx context.Context, key string) (bool, error) {
-	k := "circuit:" + key
-	vals, err := b.client.HMGet(ctx, k, "state", "opened_at").Result()
+	k := Key(key)
+	vals, err := b.client.HMGet(ctx, k, fState, fOpenedAt, fCooldown).Result()
 	if err != nil {
 		// fail-open: при ошибке Redis не считаем breaker открытым (§9.4).
 		return false, fmt.Errorf("hmget: %w", err)
@@ -146,12 +205,19 @@ func (b *Breaker) IsOpen(ctx context.Context, key string) (bool, error) {
 	}
 	openedStr, _ := vals[1].(string)
 	opened, _ := strconv.ParseInt(openedStr, 10, 64)
-	return time.Now().UnixNano()-opened < b.cooldown.Nanoseconds(), nil
+	// §81.3: cooldown узла записан вместе с состоянием; глобальный — запасной
+	// для ключей, созданных до §81.3.
+	cooldownStr, _ := vals[2].(string)
+	cooldown, _ := strconv.ParseInt(cooldownStr, 10, 64)
+	if cooldown <= 0 {
+		cooldown = b.global.Cooldown.Nanoseconds()
+	}
+	return time.Now().UnixNano()-opened < cooldown, nil
 }
 
 // State возвращает текущее состояние (для диагностики/UI).
 func (b *Breaker) State(ctx context.Context, key string) (State, error) {
-	v, err := b.client.HGet(ctx, "circuit:"+key, "state").Result()
+	v, err := b.client.HGet(ctx, Key(key), fState).Result()
 	if err != nil {
 		if err == goredis.Nil {
 			return StateClosed, nil

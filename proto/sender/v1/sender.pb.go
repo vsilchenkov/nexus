@@ -115,9 +115,17 @@ type SendRequest struct {
 	// Иначе тест конфига по мёртвому адресу покрасил бы живой узел в Down и открыл
 	// его breaker, начав отдавать 503 боевому трафику. Порядок деплоя: Sender → Web
 	// (старый Sender поле проигнорирует и побочку не погасит).
-	DryRun        bool `protobuf:"varint,30,opt,name=dry_run,json=dryRun,proto3" json:"dry_run,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	DryRun bool `protobuf:"varint,30,opt,name=dry_run,json=dryRun,proto3" json:"dry_run,omitempty"`
+	// §81.3: политика circuit breaker'а этого узла. 0 = «брать глобальное
+	// значение из конфигурации Sender'а». Передаётся Receiver'ом, потому что
+	// sync-путь узел из БД не читает (в отличие от async, где Sender берёт его
+	// сам на каждое сообщение). Порядок выката: Sender → Receiver → Web —
+	// старый Sender поля проигнорирует и продолжит работать по глобальной
+	// политике, как до §81.
+	CircuitBreakerThreshold   int32 `protobuf:"varint,31,opt,name=circuit_breaker_threshold,json=circuitBreakerThreshold,proto3" json:"circuit_breaker_threshold,omitempty"`
+	CircuitBreakerCooldownSec int32 `protobuf:"varint,32,opt,name=circuit_breaker_cooldown_sec,json=circuitBreakerCooldownSec,proto3" json:"circuit_breaker_cooldown_sec,omitempty"`
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
 }
 
 func (x *SendRequest) Reset() {
@@ -297,6 +305,20 @@ func (x *SendRequest) GetDryRun() bool {
 	return false
 }
 
+func (x *SendRequest) GetCircuitBreakerThreshold() int32 {
+	if x != nil {
+		return x.CircuitBreakerThreshold
+	}
+	return 0
+}
+
+func (x *SendRequest) GetCircuitBreakerCooldownSec() int32 {
+	if x != nil {
+		return x.CircuitBreakerCooldownSec
+	}
+	return 0
+}
+
 type SendResponse struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
 	StatusCode int32                  `protobuf:"varint,1,opt,name=status_code,json=statusCode,proto3" json:"status_code,omitempty"`
@@ -403,7 +425,7 @@ const file_proto_sender_v1_sender_proto_rawDesc = "" +
 	"\x1cproto/sender/v1/sender.proto\x12\x0fnexus.sender.v1\"?\n" +
 	"\n" +
 	"AuthConfig\x121\n" +
-	"\x14authorization_header\x18\x01 \x01(\tR\x13authorizationHeader\"\xb5\x06\n" +
+	"\x14authorization_header\x18\x01 \x01(\tR\x13authorizationHeader\"\xb2\a\n" +
 	"\vSendRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\tnode_path\x18\x02 \x01(\tR\bnodePath\x12\x1d\n" +
@@ -430,7 +452,9 @@ const file_proto_sender_v1_sender_proto_rawDesc = "" +
 	"\rmax_body_size\x18\x1b \x01(\x05R\vmaxBodySize\x12\x17\n" +
 	"\anode_id\x18\x1c \x01(\tR\x06nodeId\x12!\n" +
 	"\frequest_path\x18\x1d \x01(\tR\vrequestPath\x12\x17\n" +
-	"\adry_run\x18\x1e \x01(\bR\x06dryRun\x1a:\n" +
+	"\adry_run\x18\x1e \x01(\bR\x06dryRun\x12:\n" +
+	"\x19circuit_breaker_threshold\x18\x1f \x01(\x05R\x17circuitBreakerThreshold\x12?\n" +
+	"\x1ccircuit_breaker_cooldown_sec\x18  \x01(\x05R\x19circuitBreakerCooldownSec\x1a:\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb2\x02\n" +

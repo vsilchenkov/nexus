@@ -25,6 +25,7 @@ import (
 	chpf "nexus/internal/platform/clickhouse"
 	"nexus/internal/platform/config"
 	"nexus/internal/platform/crypto"
+	"nexus/internal/platform/grpcsender"
 	"nexus/internal/platform/healthcheck"
 	kafkapf "nexus/internal/platform/kafka"
 	"nexus/internal/platform/logging"
@@ -178,14 +179,17 @@ func (a *App) buildSendUsecase(ctx context.Context) (*usecase.SendUsecase, useca
 	respLimit := a.cfg.Sender.GRPCMaxMessageBytes - grpcResponseEnvelopeReserve
 	httpc := httpclient.New(&a.cfg.Sender.HTTPClient, a.logger, respLimit)
 
-	// Circuit breaker per node — порог 5 ошибок подряд, cooldown 30s.
-	// Параметры можно вынести в конфиг в Phase 4.
+	// Circuit breaker per node. §81.3: политика больше не литерал — глобальные
+	// значения приходят из конфигурации, узел может их переопределить (тогда
+	// они приезжают в самом вызове, см. SendInput.Breaker*).
 	var (
 		cb      usecase.CircuitBreaker
 		breaker usecase.BreakerInspector // §36: read-only IsOpen для репроцессора DLQ
 	)
 	if a.redis != nil {
-		b := circuitbreaker.New(a.redis, 5, 30*time.Second)
+		b := circuitbreaker.New(a.redis,
+			a.cfg.Sender.CircuitBreaker.Threshold,
+			time.Duration(a.cfg.Sender.CircuitBreaker.CooldownSec)*time.Second)
 		cb, breaker = b, b
 	}
 	// §67: reverse-DNS резолв client_host — асинхронный, кеш Redis + L1,
@@ -367,23 +371,38 @@ func (a *App) serveEndpoints(ctx context.Context, grpcSvc *grpcadapter.Server) e
 	}
 }
 
+// GRPCServerOptions — полный набор опций gRPC-сервера Sender'а.
+//
+// Вынесен из startGRPC и экспортирован, чтобы тест поднимал сервер ровно теми
+// же опциями, что боевой процесс. Иначе регресс §82.1 не ловился бы: тест со
+// «своим» grpc.NewServer остался бы зелёным даже после удаления политики
+// keepalive из боевой сборки — а именно её отсутствие и рвало sync-вызовы.
+func GRPCServerOptions(cfg *config.SenderSection) []grpc.ServerOption {
+	return []grpc.ServerOption{
+		grpc.MaxConcurrentStreams(cfg.GRPCMaxConcurrentStreams),
+		// §82.1: без объявленной политики grpc-go считает штатные keepalive-ping'и
+		// клиентов (каждые 30 с) нарушением и на третьем рвёт соединение вместе с
+		// идущим по нему sync-вызовом — потолок запроса 4×keepalive_time_sec.
+		// Обе половины контракта живут в grpcsender, см. ServerKeepalivePolicy.
+		grpcsender.ServerKeepalivePolicy(&cfg.GRPCKeepalive),
+		// §42: лимит размера сообщения (оба направления). Дефолт gRPC recv 4 МиБ
+		// мал — тело запроса (до receiver.max_body_bytes) и тело ответа апстрима
+		// (десятки МБ) иначе режутся ResourceExhausted.
+		grpc.MaxRecvMsgSize(cfg.GRPCMaxMessageBytes),
+		grpc.MaxSendMsgSize(cfg.GRPCMaxMessageBytes),
+		// OTel: extract traceparent из incoming metadata + server-span
+		// вокруг каждого unary-вызова (§16 ТЗ, Phase 8.3).
+		grpc.UnaryInterceptor(otelpf.UnaryServerInterceptor()),
+	}
+}
+
 func (a *App) startGRPC(svc *grpcadapter.Server) error {
 	lis, err := net.Listen("tcp", a.cfg.Sender.GRPCAddr)
 	if err != nil {
 		return fmt.Errorf("sender grpc listen %s: %w", a.cfg.Sender.GRPCAddr, err)
 	}
 
-	a.grpcSrv = grpc.NewServer(
-		grpc.MaxConcurrentStreams(a.cfg.Sender.GRPCMaxConcurrentStreams),
-		// §42: лимит размера сообщения (оба направления). Дефолт gRPC recv 4 МиБ
-		// мал — тело запроса (до receiver.max_body_bytes) и тело ответа апстрима
-		// (десятки МБ) иначе режутся ResourceExhausted.
-		grpc.MaxRecvMsgSize(a.cfg.Sender.GRPCMaxMessageBytes),
-		grpc.MaxSendMsgSize(a.cfg.Sender.GRPCMaxMessageBytes),
-		// OTel: extract traceparent из incoming metadata + server-span
-		// вокруг каждого unary-вызова (§16 ТЗ, Phase 8.3).
-		grpc.UnaryInterceptor(otelpf.UnaryServerInterceptor()),
-	)
+	a.grpcSrv = grpc.NewServer(GRPCServerOptions(&a.cfg.Sender)...)
 
 	senderv1.RegisterSenderServiceServer(a.grpcSrv, svc)
 

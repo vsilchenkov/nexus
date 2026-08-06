@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"nexus/internal/domain"
 	"nexus/internal/platform/circuitbreaker"
 )
 
@@ -44,14 +45,14 @@ func TestOpensAtThreshold(t *testing.T) {
 	ctx := context.Background()
 
 	// Две ошибки порога не достигают.
-	require.NoError(t, b.RecordFailure(ctx, "node/a"))
-	require.NoError(t, b.RecordFailure(ctx, "node/a"))
+	require.NoError(t, b.RecordFailure(ctx, "node/a", domain.BreakerPolicy{}))
+	require.NoError(t, b.RecordFailure(ctx, "node/a", domain.BreakerPolicy{}))
 	ok, err := b.Allow(ctx, "node/a")
 	require.NoError(t, err)
 	assert.True(t, ok, "ниже порога breaker закрыт")
 
 	// Третья открывает.
-	require.NoError(t, b.RecordFailure(ctx, "node/a"))
+	require.NoError(t, b.RecordFailure(ctx, "node/a", domain.BreakerPolicy{}))
 	ok, err = b.Allow(ctx, "node/a")
 	require.NoError(t, err)
 	assert.False(t, ok, "на пороге breaker открывается и режет запросы")
@@ -67,8 +68,8 @@ func TestRecordSuccessCloses(t *testing.T) {
 	b, _ := newBreaker(t, 2, time.Minute)
 	ctx := context.Background()
 
-	require.NoError(t, b.RecordFailure(ctx, "node/a"))
-	require.NoError(t, b.RecordFailure(ctx, "node/a"))
+	require.NoError(t, b.RecordFailure(ctx, "node/a", domain.BreakerPolicy{}))
+	require.NoError(t, b.RecordFailure(ctx, "node/a", domain.BreakerPolicy{}))
 	require.NoError(t, b.RecordSuccess(ctx, "node/a"))
 
 	ok, err := b.Allow(ctx, "node/a")
@@ -89,7 +90,7 @@ func TestHalfOpenLetsExactlyOneProbe(t *testing.T) {
 	b, srv := newBreaker(t, 1, cooldown)
 	ctx := context.Background()
 
-	require.NoError(t, b.RecordFailure(ctx, "node/a"))
+	require.NoError(t, b.RecordFailure(ctx, "node/a", domain.BreakerPolicy{}))
 	ok, err := b.Allow(ctx, "node/a")
 	require.NoError(t, err)
 	require.False(t, ok)
@@ -127,7 +128,7 @@ func TestFailOpenOnRedisDown(t *testing.T) {
 
 	b, srv := newBreaker(t, 1, time.Minute)
 	ctx := context.Background()
-	require.NoError(t, b.RecordFailure(ctx, "node/a"))
+	require.NoError(t, b.RecordFailure(ctx, "node/a", domain.BreakerPolicy{}))
 	srv.Close()
 
 	ok, err := b.Allow(ctx, "node/a")

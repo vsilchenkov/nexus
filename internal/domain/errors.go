@@ -45,13 +45,27 @@ var (
 	ErrNodeRetryBackoffRange            = errors.New("domain: retry_backoff_ms must be 0..60000")
 	ErrNodeDLQTTLRange                  = errors.New("domain: dlq_ttl_seconds must be 60..2592000")
 	ErrNodeDLQRetryDelayRange           = errors.New("domain: dlq_retry_delay_seconds must be 1..86400")
+	ErrNodeCircuitBreakerThresholdRange = errors.New("domain: circuit_breaker_threshold must be 0..100 (0 = use global)")
+	ErrNodeCircuitBreakerCooldownRange  = errors.New("domain: circuit_breaker_cooldown_sec must be 0..3600 (0 = use global)")
 	ErrNodeAllowedHostsSize             = errors.New("domain: url_allowed_hosts must have at most 50 elements")
 	ErrNodeForwardHeadersSize           = errors.New("domain: forward_headers must have at most 30 elements")
 	ErrNodeDisabled                     = errors.New("domain: node disabled")
 	ErrNodePaused                       = errors.New("domain: node paused")
 	ErrNodeMethodNotAllowed             = errors.New("domain: http method not allowed for this node")
-	ErrNodeInvalidTemplateID            = errors.New("domain: clickhouse_template_id must be a valid UUID")
-	ErrNodeLogsNotConfigured            = errors.New("domain: node has no clickhouse_table configured")
+	// ErrNodeNotAsyncIngress — во внешний async-эндпоинт (/api/v1/requestAsync/…)
+	// пришёл запрос к узлу, чей root_method не requestAsync (§82.3). Наружу
+	// отдаётся как ErrNodeNotFound: факт существования узла не раскрываем, как и
+	// в зеркальной sync-проверке. Отдельный sentinel нужен, чтобы handler отличил
+	// этот отказ от настоящего «узла нет» и сходил за warn'ом и метрикой.
+	ErrNodeNotAsyncIngress = errors.New("domain: node does not accept async ingress")
+	// ErrAckRenderFailed — шаблон ответа приёма (§83) не отработал, и политика
+	// узла — on_error=error. Запрос при этом НЕ принят: рендер идёт до
+	// публикации в Kafka, поэтому 400 честно означает «в очередь не попало».
+	// При политике default этой ошибки не возникает — узел отвечает как раньше,
+	// а факт деградации уходит в warn и метрику.
+	ErrAckRenderFailed       = errors.New("domain: async ack template render failed")
+	ErrNodeInvalidTemplateID = errors.New("domain: clickhouse_template_id must be a valid UUID")
+	ErrNodeLogsNotConfigured = errors.New("domain: node has no clickhouse_table configured")
 	// Webhook signature (§16 ТЗ, IncomingAuthTypeWebhookSignature).
 	ErrNodeWebhookSigHeaderLength   = errors.New("domain: webhook_signature_header length must be <= 128")
 	ErrNodeWebhookSigPrefixLength   = errors.New("domain: webhook_signature_prefix length must be <= 64")

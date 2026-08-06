@@ -289,6 +289,61 @@ type SenderSection struct {
 	PausedSweep SenderPausedSweepConfig `yaml:"paused_sweep"`
 	// RDNS — reverse-DNS резолв client_host для логов (§67).
 	RDNS SenderRDNSConfig `yaml:"rdns"`
+	// CircuitBreaker — политика защиты узла (§81.3). Раньше порог и пауза были
+	// литералами в коде.
+	CircuitBreaker SenderCircuitBreakerConfig `yaml:"circuit_breaker"`
+	// GRPCKeepalive — что gRPC-сервер Sender'а считает допустимым темпом
+	// keepalive-ping'ов от клиентов (§82.1).
+	GRPCKeepalive SenderGRPCKeepaliveConfig `yaml:"grpc_keepalive"`
+}
+
+// SenderGRPCKeepaliveConfig — enforcement-политика keepalive на gRPC-сервере
+// Sender'а (§82.1).
+//
+// Зачем это вообще есть. Без объявленной политики grpc-go применяет дефолт
+// `EnforcementPolicy.MinTime = 5 минут`, а клиенты Receiver'а и Web пингуют
+// каждые `keepalive_time_sec` (30 с). Каждый такой ping сервер засчитывает
+// нарушением, и на третьем шлёт `GOAWAY ENHANCE_YOUR_CALM / "too_many_pings"`,
+// **закрывая всё соединение целиком** — вместе с идущими по нему вызовами.
+// В unary-RPC сервер до самого ответа ничего не пишет, поэтому счётчик
+// нарушений во время долгого вызова растёт беспрепятственно: замеренный потолок
+// sync-запроса — от ~30 до 121 секунды (плавает, потому что ping-таймер
+// привязан к соединению пула, а не к запросу), и `timeout_ms` узла на него не
+// влияет никак.
+//
+// Поднимать вместо этого `keepalive_time_sec` бесполезно: потолок равен
+// `4 × keepalive_time_sec`, то есть просто отодвинется, а обнаружение мёртвых
+// соединений станет медленнее.
+type SenderGRPCKeepaliveConfig struct {
+	// EnforcementMinTimeSec — минимальный интервал между ping'ами клиента,
+	// который сервер считает допустимым (default 5). Обязан быть НЕ БОЛЬШЕ
+	// `receiver.sender_grpc.keepalive_time_sec` и `web.sender_grpc.keepalive_time_sec`,
+	// иначе штатные ping'и клиентов снова станут нарушением; проверяется в
+	// Validate.
+	EnforcementMinTimeSec int `yaml:"enforcement_min_time_sec"`
+	// DenyPingWithoutStream — запрещать ping по соединению без активных стримов
+	// (default false → разрешено).
+	//
+	// Флаг инвертирован намеренно: нужное значение — «разрешать», а yaml не
+	// отличает «не задано» от `false`, поэтому дефолт `true` было бы не выразить
+	// без указателя (тот же приём, что у `Disabled` в RDNS и PausedSweep).
+	// Запрет здесь опасен: простаивающее соединение начнёт копить нарушения
+	// «в кредит» (порог для беспоточных ping'ов — 2 часа), и первый же долгий
+	// запрос получит GOAWAY почти сразу. Включать только осознанно.
+	DenyPingWithoutStream bool `yaml:"deny_ping_without_stream"`
+}
+
+// SenderCircuitBreakerConfig — глобальная политика circuit breaker'а (§81.3).
+//
+// Действует на все узлы, у которых не задано собственное значение
+// (nodes.circuit_breaker_threshold / circuit_breaker_cooldown_sec). Отказом
+// считается 5xx, истёкший timeout_ms узла или отказ транспорта; уход
+// вызывающей стороны не считается ничем (§81.2).
+type SenderCircuitBreakerConfig struct {
+	// Threshold — сколько отказов подряд открывают breaker (default 5).
+	Threshold int `yaml:"threshold"`
+	// CooldownSec — пауза до половинчато-открытой пробы (default 30).
+	CooldownSec int `yaml:"cooldown_sec"`
 }
 
 // SenderRDNSConfig — параметры reverse-DNS резолва PTR-имени клиента (§67):

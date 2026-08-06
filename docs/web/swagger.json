@@ -2465,6 +2465,54 @@
                 }
             }
         },
+        "/api/nodes/ack-preview": {
+            "post": {
+                "description": "Прогоняет шаблон на образце запроса и возвращает тело, которое получил бы клиент. Ничего не сохраняет и никуда не ходит: работает по присланной спеке, поэтому доступен в форме ещё не сохранённого узла. Провал подстановки — не ошибка запроса: приходит 200 с ok=false, reason и проблемной подстановкой. 400 отдаётся только на невалидной спеке (её правит оператор в форме).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "nodes"
+                ],
+                "summary": "Предпросмотр ответа приёма по шаблону узла (§83).",
+                "parameters": [
+                    {
+                        "description": "спека и образец запроса",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.AckPreviewRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nexus_internal_web_usecase.AckPreviewReport"
+                        }
+                    },
+                    "400": {
+                        "description": "{error, code, field} — спека или шаблон невалидны",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "нужна роль manager или admin",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/dry-run": {
             "post": {
                 "security": [
@@ -3178,6 +3226,98 @@
                     },
                     "429": {
                         "description": "rate limit exceeded",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{id}/breaker": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Открыта ли защита узла, сколько отказов подряд насчитано, когда она открылась и сколько осталось до пробного запроса. Доступно всем ролям: понимать, почему узел молчит, нужно и наблюдателю. available=false — Redis не сконфигурирован, защиты в инсталляции нет.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "nodes"
+                ],
+                "summary": "Состояние circuit breaker'а узла (§81.4).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.breakerStateDTO"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{id}/breaker/reset": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Возвращает узлу полный бюджет попыток немедленно, не дожидаясь паузы, и снимает персистентный бейдж «Down» (§52). Идемпотентно: сброс закрытой защиты — не ошибка. Действие пишется в аудит (node.breaker_reset). Требует роль manager+.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "nodes"
+                ],
+                "summary": "Снять блокировку circuit breaker'а узла вручную (§81.4.2).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.breakerResetDTO"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
@@ -5598,6 +5738,38 @@
         }
     },
     "definitions": {
+        "internal_web_adapter_in_http.AckPreviewRequest": {
+            "type": "object",
+            "required": [
+                "spec"
+            ],
+            "properties": {
+                "content_type": {
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "sample_body": {
+                    "type": "string",
+                    "maxLength": 262144
+                },
+                "sample_path": {
+                    "type": "string",
+                    "maxLength": 1024
+                },
+                "sample_query": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "spec": {
+                    "$ref": "#/definitions/nexus_internal_domain_ackspec.Spec"
+                }
+            }
+        },
         "internal_web_adapter_in_http.CHTableVerifyRequest": {
             "type": "object",
             "required": [
@@ -5643,6 +5815,14 @@
                 "root_method"
             ],
             "properties": {
+                "async_ack_spec": {
+                    "description": "§83: шаблон ответа приёма. Указатель: отсутствие поля и явный null\nозначают «узел отвечает как раньше», и это же значение приходит от формы,\nкогда переключатель карточки выключен. Содержимое проверяет\nackspec.Spec.Validate через domain.Node.Validate — binding-тегами такой\nшаблон не описать.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/nexus_internal_domain_ackspec.Spec"
+                        }
+                    ]
+                },
                 "auth_credentials": {
                     "type": "string",
                     "maxLength": 1024
@@ -5672,6 +5852,17 @@
                         "token_from_request",
                         "basic_from_request"
                     ]
+                },
+                "circuit_breaker_cooldown_sec": {
+                    "type": "integer",
+                    "maximum": 3600,
+                    "minimum": 0
+                },
+                "circuit_breaker_threshold": {
+                    "description": "§81.3: политика circuit breaker'а узла. 0/отсутствие = «как в конфигурации».",
+                    "type": "integer",
+                    "maximum": 100,
+                    "minimum": 0
                 },
                 "clickhouse_retention_days": {
                     "type": "integer",
@@ -6453,6 +6644,14 @@
         "internal_web_adapter_in_http.NodeResponse": {
             "type": "object",
             "properties": {
+                "async_ack_spec": {
+                    "description": "§83: шаблон ответа приёма; null — узел отвечает как раньше. Секретом не\nявляется (его пишет оператор и он же уходит клиенту), поэтому отдаётся\nнаружу целиком, а не флагом «настроено».",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/nexus_internal_domain_ackspec.Spec"
+                        }
+                    ]
+                },
                 "auth_credentials_set": {
                     "type": "boolean"
                 },
@@ -6471,6 +6670,12 @@
                 },
                 "auth_type": {
                     "type": "string"
+                },
+                "circuit_breaker_cooldown_sec": {
+                    "type": "integer"
+                },
+                "circuit_breaker_threshold": {
+                    "type": "integer"
                 },
                 "clickhouse_retention_days": {
                     "type": "integer"
@@ -6889,6 +7094,14 @@
                 "root_method"
             ],
             "properties": {
+                "async_ack_spec": {
+                    "description": "§83: шаблон ответа приёма. Указатель: отсутствие поля и явный null\nозначают «узел отвечает как раньше», и это же значение приходит от формы,\nкогда переключатель карточки выключен. Содержимое проверяет\nackspec.Spec.Validate через domain.Node.Validate — binding-тегами такой\nшаблон не описать.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/nexus_internal_domain_ackspec.Spec"
+                        }
+                    ]
+                },
                 "auth_credentials": {
                     "type": "string",
                     "maxLength": 1024
@@ -6918,6 +7131,17 @@
                         "token_from_request",
                         "basic_from_request"
                     ]
+                },
+                "circuit_breaker_cooldown_sec": {
+                    "type": "integer",
+                    "maximum": 3600,
+                    "minimum": 0
+                },
+                "circuit_breaker_threshold": {
+                    "description": "§81.3: политика circuit breaker'а узла. 0/отсутствие = «как в конфигурации».",
+                    "type": "integer",
+                    "maximum": 100,
+                    "minimum": 0
                 },
                 "clickhouse_retention_days": {
                     "type": "integer",
@@ -7246,6 +7470,50 @@
                 },
                 "user_login": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.breakerResetDTO": {
+            "type": "object",
+            "properties": {
+                "node_status_cleared": {
+                    "type": "boolean"
+                },
+                "previous_failures": {
+                    "type": "integer"
+                },
+                "previous_state": {
+                    "type": "string"
+                },
+                "was_open": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.breakerStateDTO": {
+            "type": "object",
+            "properties": {
+                "available": {
+                    "type": "boolean"
+                },
+                "exists": {
+                    "type": "boolean"
+                },
+                "failures": {
+                    "type": "integer"
+                },
+                "opened_at": {
+                    "type": "string"
+                },
+                "retry_after_ms": {
+                    "type": "integer"
+                },
+                "state": {
+                    "description": "closed | open | half_open",
+                    "type": "string"
+                },
+                "threshold": {
+                    "type": "integer"
                 }
             }
         },
@@ -8844,6 +9112,76 @@
                 }
             }
         },
+        "nexus_internal_domain_ackspec.ContentType": {
+            "type": "string",
+            "enum": [
+                "application/json",
+                "text/plain"
+            ],
+            "x-enum-varnames": [
+                "ContentTypeJSON",
+                "ContentTypeText"
+            ]
+        },
+        "nexus_internal_domain_ackspec.OnError": {
+            "type": "string",
+            "enum": [
+                "default",
+                "error"
+            ],
+            "x-enum-varnames": [
+                "OnErrorDefault",
+                "OnErrorError"
+            ]
+        },
+        "nexus_internal_domain_ackspec.Spec": {
+            "type": "object",
+            "properties": {
+                "body": {
+                    "type": "string"
+                },
+                "content_type": {
+                    "$ref": "#/definitions/nexus_internal_domain_ackspec.ContentType"
+                },
+                "on_error": {
+                    "$ref": "#/definitions/nexus_internal_domain_ackspec.OnError"
+                },
+                "status": {
+                    "type": "integer"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "nexus_internal_web_usecase.AckPreviewReport": {
+            "type": "object",
+            "properties": {
+                "body": {
+                    "type": "string"
+                },
+                "content_type": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "ok": {
+                    "type": "boolean"
+                },
+                "placeholder": {
+                    "description": "подстановка, на которой сорвалось",
+                    "type": "string"
+                },
+                "reason": {
+                    "description": "ackspec.Reason",
+                    "type": "string"
+                },
+                "status": {
+                    "type": "integer"
+                }
+            }
+        },
         "nexus_internal_web_usecase.CHTableVerifyResult": {
             "type": "object",
             "properties": {
@@ -8985,6 +9323,10 @@
                 },
                 "replayed": {
                     "description": "пере-инжектировано (оригинал отменён в DLQ)",
+                    "type": "integer"
+                },
+                "skipped_client_canceled": {
+                    "description": "§81.5: пропущено записей, где ушла ВЫЗЫВАЮЩАЯ сторона. Их приёмник, скорее\nвсего, обработал (тело принял целиком), и повтор дал бы дубли. Показывается\nоператору отдельной строкой — молча терять их из счёта нельзя.",
                     "type": "integer"
                 },
                 "total": {

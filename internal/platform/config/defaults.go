@@ -226,6 +226,22 @@ func applyDefaults(c *Config) {
 	if c.Sender.RDNS.NegativeTTLSec == 0 {
 		c.Sender.RDNS.NegativeTTLSec = 600
 	}
+	// §81.3: политика circuit breaker'а. Значения те же, что были литералами в
+	// коде до §81 — обновление конфигурацию не меняет.
+	if c.Sender.CircuitBreaker.Threshold == 0 {
+		c.Sender.CircuitBreaker.Threshold = 5
+	}
+	if c.Sender.CircuitBreaker.CooldownSec == 0 {
+		c.Sender.CircuitBreaker.CooldownSec = 30
+	}
+	// §82.1: enforcement-политика keepalive gRPC-сервера. 5 секунд с запасом
+	// меньше клиентских 30 (и меньше минимума grpc-go в 10 с, ниже которого
+	// клиент пинговать не станет), так что штатные ping'и нарушением не считаются.
+	// DenyPingWithoutStream дефолта не имеет намеренно: нужное значение —
+	// «разрешать» = zero value (см. godoc SenderGRPCKeepaliveConfig).
+	if c.Sender.GRPCKeepalive.EnforcementMinTimeSec == 0 {
+		c.Sender.GRPCKeepalive.EnforcementMinTimeSec = 5
+	}
 
 	if c.Web.HTTPAddr == "" {
 		c.Web.HTTPAddr = ":8000"

@@ -121,6 +121,12 @@ func TestApplyDefaults_NotOverwritingNonZero(t *testing.T) {
 	assert.Equal(t, 50, c.Redis.PoolSize)
 	assert.Equal(t, ":8080", c.Receiver.HTTPAddr)
 	assert.Equal(t, "strict", c.Web.SessionCookieSamesite)
+	// §82.1: пустая секция grpc_keepalive обязана дать рабочую политику, а не
+	// нули — иначе MinTime=0 отключил бы проверку темпа и вернул дефолт grpc-go
+	// (5 минут) со всеми последствиями.
+	assert.Equal(t, 5, c.Sender.GRPCKeepalive.EnforcementMinTimeSec)
+	assert.False(t, c.Sender.GRPCKeepalive.DenyPingWithoutStream,
+		"ping без активных стримов должен быть разрешён по умолчанию (флаг инвертирован намеренно)")
 }
 
 func TestValidate(t *testing.T) {
@@ -184,6 +190,41 @@ func TestValidate(t *testing.T) {
 		{"instance_id_too_long",
 			func(c *Config) { c.Instance.ID = "abcdefghi" },
 			"instance.id"},
+		// §82.1: enforcement-политика keepalive не должна быть строже темпа
+		// клиентских ping'ов — иначе gRPC-сервер оборвёт соединение вместе с
+		// идущим по нему sync-вызовом, а в логе это будет выглядеть уходом
+		// клиента. Ловим на старте, потому что по симптому не вычисляется.
+		{"grpc_keepalive_min_time_out_of_range",
+			func(c *Config) { c.Sender.GRPCKeepalive.EnforcementMinTimeSec = 3_601 },
+			"sender.grpc_keepalive.enforcement_min_time_sec"},
+		{"grpc_keepalive_stricter_than_receiver_client",
+			func(c *Config) {
+				c.Receiver.SenderGRPC.KeepaliveTimeSec = 30
+				c.Sender.GRPCKeepalive.EnforcementMinTimeSec = 60
+			},
+			"receiver.sender_grpc.keepalive_time_sec"},
+		{"grpc_keepalive_stricter_than_web_client",
+			func(c *Config) {
+				c.Web.SenderGRPC.KeepaliveTimeSec = 10
+				c.Sender.GRPCKeepalive.EnforcementMinTimeSec = 30
+			},
+			"web.sender_grpc.keepalive_time_sec"},
+		{"grpc_keepalive_equal_to_client_ok",
+			func(c *Config) {
+				c.Receiver.SenderGRPC.KeepaliveTimeSec = 30
+				c.Sender.GRPCKeepalive.EnforcementMinTimeSec = 30
+			},
+			""},
+		// Клиент с keepalive_time_sec=0 не пингует вообще (grpc-go подставляет
+		// бесконечность) и нарушителем стать не может — политика любой строгости
+		// для него безопасна.
+		{"grpc_keepalive_client_disabled_ok",
+			func(c *Config) {
+				c.Receiver.SenderGRPC.KeepaliveTimeSec = 0
+				c.Web.SenderGRPC.KeepaliveTimeSec = 0
+				c.Sender.GRPCKeepalive.EnforcementMinTimeSec = 3_600
+			},
+			""},
 	}
 
 	for _, tc := range tests {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"nexus/internal/domain"
+	"nexus/internal/domain/ackspec"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase/port"
 )
@@ -1003,6 +1004,10 @@ func diffNodes(old, n *domain.Node) map[string]any {
 	// §64: переключение внешней таблицы меняет, управляет ли Nexus схемой и
 	// retention этой таблицы, — такое решение должно быть видно в аудите.
 	add("external_table", old.ExternalTable, n.ExternalTable)
+	// §81.3: ослабление защиты узла (порог выше, пауза короче) должно быть видно
+	// в аудите — иначе «почему он опять долбит мёртвый приёмник» не разобрать.
+	add("circuit_breaker_threshold", old.CircuitBreakerThreshold, n.CircuitBreakerThreshold)
+	add("circuit_breaker_cooldown_sec", old.CircuitBreakerCooldownSec, n.CircuitBreakerCooldownSec)
 	if old.AuthCredentials != n.AuthCredentials {
 		d["auth_credentials"] = "changed"
 	}
@@ -1022,5 +1027,28 @@ func diffNodes(old, n *domain.Node) map[string]any {
 	if old.RMQPassword != n.RMQPassword {
 		d["rmq_password"] = "changed"
 	}
+	// §83: шаблон ответа приёма меняет то, что видит КЛИЕНТ узла, — включение,
+	// выключение и правка шаблона обязаны быть в аудите. Секретом не является,
+	// поэтому пишем значение, а не «changed»; шаблон при этом обрезаем — в
+	// журнале нужен факт и узнаваемый фрагмент, а не 8 КиБ текста.
+	add("async_ack_spec", ackSpecAudit(old.AsyncAck), ackSpecAudit(n.AsyncAck))
 	return d
+}
+
+// ackSpecAuditMaxBody — сколько символов шаблона попадает в запись аудита.
+const ackSpecAuditMaxBody = 500
+
+// ackSpecAudit — сравнимое и читаемое представление спеки для аудита.
+// Пустая строка означает «не настроено», поэтому включение и выключение
+// шаблона видны как обычное изменение значения.
+func ackSpecAudit(s *ackspec.Spec) string {
+	if s == nil {
+		return ""
+	}
+	body := s.Body
+	if len(body) > ackSpecAuditMaxBody {
+		body = body[:ackSpecAuditMaxBody] + "…"
+	}
+	return fmt.Sprintf("status=%d content_type=%s on_error=%s body=%s",
+		s.Status, s.ContentType, s.OnError, body)
 }

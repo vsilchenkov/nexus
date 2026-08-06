@@ -155,6 +155,22 @@ func (r *DLQReprocessor) ProcessMessage(ctx context.Context, raw []byte, headers
 		return ReprocessCommit
 	}
 
+	// §83.7: узел больше не async — доставлять принятое ранее нельзя. Проверка
+	// нужна и здесь: иначе репроцессор обошёл бы гейт consumer'а с другой
+	// стороны и доставил то, что тот отбил. Сообщение остаётся в DLQ до TTL —
+	// вернут узел в async, и оно уйдёт получателю само.
+	if reason, stop := asyncIngressRevoked(node, env); stop {
+		r.logger.Warn("dlq skip: node is no longer async",
+			r.logger.Str("op", "dlq.reprocess"),
+			r.logger.Str("node_path", env.NodePath),
+			r.logger.Str("id", env.ID),
+			r.logger.Str("reason", reason))
+		return r.republish(ctx, raw, env, headers, republishParams{
+			// skipped, а не failed: приёмник не виноват и не вызывался.
+			reason: reason, result: reprocessSkipped, incAttempts: true,
+		})
+	}
+
 	// §36.3 шаг4: статус узла.
 	switch node.Status {
 	case domain.NodeStatusDisabled:
@@ -190,7 +206,7 @@ func (r *DLQReprocessor) ProcessMessage(ctx context.Context, raw []byte, headers
 				r.logger.Str("node_path", env.NodePath), r.logger.Err(err))
 		} else if open {
 			return r.republish(ctx, raw, env, headers, republishParams{
-				reason: "circuit_breaker_open", result: reprocessSkipped, incAttempts: true,
+				reason: domain.ReasonCircuitBreakerOpen, result: reprocessSkipped, incAttempts: true,
 			})
 		}
 	}
