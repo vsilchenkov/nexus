@@ -141,6 +141,34 @@ func TestLogReader_UnresolvedFailed_E2E(t *testing.T) {
 		require.NoError(t, err)
 		require.EqualValues(t, 2, n, "«Показано N из M» не имеет права расходиться со списком")
 	})
+
+	t.Run("§81.5: отсев по маркеру причины убирает отменённые клиентом", func(t *testing.T) {
+		// Ещё одна недоставленная запись, но с маркером «ушла вызывающая
+		// сторона»: массовый повтор обязан её пропустить, а обычная выборка —
+		// показывать (шина доставку не подтвердила, сигнал честный).
+		const idE = "00000000-0000-0000-0000-0000000000e0"
+		rec := mk(idE, now.Add(-3*time.Minute), 0, false)
+		rec.Reason = domain.ReasonClientCanceled + ": waited 50000 ms, no response"
+		writer.Write(ctx, table, rec)
+		require.NoError(t, writer.Flush(ctx))
+		require.Eventually(t, func() bool {
+			var total uint64
+			_ = conn.QueryRow(ctx, "SELECT count() FROM "+table).Scan(&total)
+			return total == 8
+		}, 20*time.Second, 200*time.Millisecond, "ожидаем 8 строк-прогонов")
+
+		all, _, err := reader.FailedIDs(ctx, q, 1000)
+		require.NoError(t, err)
+		require.ElementsMatch(t, []string{idB, idD, idE}, all,
+			"без отсева видны все недоставленные, включая отменённые клиентом")
+
+		filtered := q
+		filtered.ExcludeReasonPrefixes = []string{domain.ReasonClientCanceled}
+		got, _, err := reader.FailedIDs(ctx, filtered, 1000)
+		require.NoError(t, err)
+		require.ElementsMatch(t, []string{idB, idD}, got,
+			"массовый повтор не берёт запись, которую приёмник, вероятно, уже обработал")
+	})
 }
 
 // TestMetricsReader_ChartByRecord_E2E — §79.5 на реальном ClickHouse: столбец

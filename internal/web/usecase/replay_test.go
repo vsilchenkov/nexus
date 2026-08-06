@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"nexus/internal/domain"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase/port"
@@ -50,6 +53,10 @@ type stubLogReader struct {
 	err       error
 	failedIDs []string      // §36.11: для ReplayFailed
 	gotFailed port.LogQuery // §79.1: с каким запросом спросили неудачные
+	// §81.5: набор, который стаб отдаёт, КОГДА попросили отсев по маркеру
+	// причины. Пустой — отсев не эмулируется (старое поведение).
+	failedIDsFiltered []string
+	gotExcludes       [][]string
 }
 
 func (s *stubLogReader) GetByID(_ context.Context, _, _ string) (*domain.LogRecord, error) {
@@ -57,6 +64,10 @@ func (s *stubLogReader) GetByID(_ context.Context, _, _ string) (*domain.LogReco
 }
 func (s *stubLogReader) FailedIDs(_ context.Context, q port.LogQuery, _ int) ([]string, bool, error) {
 	s.gotFailed = q
+	s.gotExcludes = append(s.gotExcludes, q.ExcludeReasonPrefixes)
+	if len(q.ExcludeReasonPrefixes) > 0 && s.failedIDsFiltered != nil {
+		return s.failedIDsFiltered, false, s.err
+	}
 	return s.failedIDs, false, s.err
 }
 func (s *stubLogReader) GetByIDPreview(_ context.Context, _, _ string, _ int) (*domain.LogRecord, int64, int64, error) {
@@ -959,4 +970,39 @@ func TestReplay_ReplayFailed_DisabledNode(t *testing.T) {
 	if !errors.Is(err, domain.ErrNodeDisabled) {
 		t.Fatalf("expected ErrNodeDisabled, got %v", err)
 	}
+}
+
+// §81.5: массовый повтор пропускает записи, где ушла ВЫЗЫВАЮЩАЯ сторона —
+// приёмник их, скорее всего, уже обработал (тело принял целиком), и повтор дал
+// бы дубли (урок §79: 15 дублей в 1С на узле kz). Очистка «неудачных» такие
+// записи, наоборот, не щадит — убрать их с глаз это ровно то, что от неё ждут.
+func TestReplayFailed_SkipsClientCanceled(t *testing.T) {
+	t.Parallel()
+
+	node := &domain.Node{ID: "n1", Path: "demo/async", Status: domain.NodeStatusEnabled, ClickHouseTable: "test.async"}
+	log := &domain.LogRecord{ID: "x", Method: "POST", Type: domain.RootMethodRequestAsync, Request: `{"a":1}`, DateRequest: time.Now(), Done: false}
+	disp := &stubDispatcher{}
+	logs := &stubLogReader{
+		log:               log,
+		failedIDs:         []string{"f1", "f2", "f3"}, // всего недоставленных в окне
+		failedIDsFiltered: []string{"f1"},             // из них безопасны для повтора
+	}
+	uc := NewReplayUsecaseWithCancel(
+		logs, &stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
+		disp, nil, NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()), 10,
+		&stubCancelWriter{}, nil, time.Hour, logging.NewNoop(),
+	)
+
+	res, err := uc.ReplayFailed(context.Background(), SystemActor(), "n1", "", time.Time{}, time.Time{})
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, res.Total, "в работу берём только то, что повторять безопасно")
+	assert.Equal(t, 1, res.Replayed)
+	assert.Equal(t, 2, res.SkippedClientCanceled, "пропущенные показываем, а не теряем молча")
+
+	// Отсев запрошен именно маркером §81.2.1, и только во втором вызове:
+	// первый считает полное множество для счётчика пропущенных.
+	require.Len(t, logs.gotExcludes, 2)
+	assert.Empty(t, logs.gotExcludes[0])
+	assert.Equal(t, []string{domain.ReasonClientCanceled}, logs.gotExcludes[1])
 }

@@ -665,6 +665,17 @@ func (r *LogReaderCH) searchConds(ctx context.Context, q port.LogQuery) ([]strin
 		conds = append(conds, "method = ?")
 		args = append(args, q.Method)
 	}
+	// §81.5: отсев по маркеру причины. startsWith, а не LIKE: маркер стоит в
+	// начале reason по построению, и так не нужно экранировать спецсимволы
+	// шаблона. Историю это не покрывает — записи до §81.2 несут сырой текст
+	// ошибки, и под маркер они не подпадают (переписывать лог нельзя).
+	for _, pfx := range q.ExcludeReasonPrefixes {
+		if pfx == "" {
+			continue
+		}
+		conds = append(conds, "NOT startsWith(reason, ?)")
+		args = append(args, pfx)
+	}
 	// §48: полнотекстовый фильтр строится из распарсенного AST (usecase кладёт
 	// QExpr через logsearch.Parse; сырое q.Q адаптер не использует). Работает
 	// поверх listCols: алиасы list_req/list_resp не затеняют реальные колонки

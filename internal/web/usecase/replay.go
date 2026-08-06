@@ -374,6 +374,10 @@ type ReplayBulkResult struct {
 	Failed   int  `json:"failed"`   // ошибок replay (оригинал НЕ отменён — остаётся авто-репроцессору)
 	Cleaned  int  `json:"cleaned"`  // §79.2: записей убрано из «Неудачных доставок»
 	Capped   bool `json:"capped"`
+	// §81.5: пропущено записей, где ушла ВЫЗЫВАЮЩАЯ сторона. Их приёмник, скорее
+	// всего, обработал (тело принял целиком), и повтор дал бы дубли. Показывается
+	// оператору отдельной строкой — молча терять их из счёта нельзя.
+	SkippedClientCanceled int `json:"skipped_client_canceled"`
 }
 
 // replayAllCap — верхняя граница числа сообщений за один «Повторить все»
@@ -406,11 +410,32 @@ func (u *ReplayUsecase) ReplayFailed(ctx context.Context, actor Actor, nodeID, t
 		return ReplayBulkResult{}, nil
 	}
 	q := failedQuery(node, toMs(from), toMs(to))
+	// §81.5: сколько всего недоставленных в окне — чтобы показать, сколько из них
+	// пропущено. Второй лёгкий запрос по тем же условиям: считать разницу иначе
+	// (например, вычитать после выборки) нельзя — cap обрезал бы её произвольно.
+	allIDs, _, err := u.logs.FailedIDs(ctx, q, replayAllCap)
+	if err != nil {
+		return ReplayBulkResult{}, fmt.Errorf("replay-all failed ids: %w", err)
+	}
+	// Записи, где ушла вызывающая сторона, из массового повтора исключаются:
+	// приёмник тело принял и, вероятно, обработал — повтор дал бы дубли (урок
+	// §79: 15 дублей в 1С на узле kz). Точечный повтор из строки журнала
+	// остаётся — там решение принимает оператор по конкретной записи.
+	q.ExcludeReasonPrefixes = []string{domain.ReasonClientCanceled}
 	ids, capped, err := u.logs.FailedIDs(ctx, q, replayAllCap)
 	if err != nil {
 		return ReplayBulkResult{}, fmt.Errorf("replay-all failed ids: %w", err)
 	}
-	res := ReplayBulkResult{Total: len(ids), Capped: capped}
+	res := ReplayBulkResult{
+		Total:                 len(ids),
+		Capped:                capped,
+		SkippedClientCanceled: max(len(allIDs)-len(ids), 0),
+	}
+	if res.SkippedClientCanceled > 0 {
+		u.logger.Debug("replay-all: client-canceled records skipped",
+			u.logger.Str("node", node.Path),
+			u.logger.Int("skipped", res.SkippedClientCanceled))
+	}
 	replayed := make([]string, 0, len(ids))
 	for _, id := range ids {
 		if err := ctx.Err(); err != nil {
@@ -438,6 +463,7 @@ func (u *ReplayUsecase) ReplayFailed(ctx context.Context, actor Actor, nodeID, t
 	u.audit.Log(ctx, actor, domain.ActionNodeReplay, "node", node.ID, map[string]any{
 		"op": "replay_all", "total": res.Total, "replayed": res.Replayed,
 		"failed": res.Failed, "cleaned": res.Cleaned, "capped": res.Capped,
+		"skipped_client_canceled": res.SkippedClientCanceled,
 	})
 	return res, nil
 }
