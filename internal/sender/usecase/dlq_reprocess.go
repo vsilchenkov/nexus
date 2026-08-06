@@ -190,7 +190,7 @@ func (r *DLQReprocessor) ProcessMessage(ctx context.Context, raw []byte, headers
 				r.logger.Str("node_path", env.NodePath), r.logger.Err(err))
 		} else if open {
 			return r.republish(ctx, raw, env, headers, republishParams{
-				reason: "circuit_breaker_open", result: reprocessSkipped, incAttempts: true,
+				reason: domain.ReasonCircuitBreakerOpen, result: reprocessSkipped, incAttempts: true,
 			})
 		}
 	}

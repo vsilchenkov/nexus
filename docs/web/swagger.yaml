@@ -50,6 +50,16 @@ definitions:
         - token_from_request
         - basic_from_request
         type: string
+      circuit_breaker_cooldown_sec:
+        maximum: 3600
+        minimum: 0
+        type: integer
+      circuit_breaker_threshold:
+        description: '§81.3: политика circuit breaker''а узла. 0/отсутствие = «как
+          в конфигурации».'
+        maximum: 100
+        minimum: 0
+        type: integer
       clickhouse_retention_days:
         maximum: 3650
         minimum: 0
@@ -639,6 +649,10 @@ definitions:
         type: string
       auth_type:
         type: string
+      circuit_breaker_cooldown_sec:
+        type: integer
+      circuit_breaker_threshold:
+        type: integer
       clickhouse_retention_days:
         type: integer
       clickhouse_table:
@@ -955,6 +969,16 @@ definitions:
         - token_from_request
         - basic_from_request
         type: string
+      circuit_breaker_cooldown_sec:
+        maximum: 3600
+        minimum: 0
+        type: integer
+      circuit_breaker_threshold:
+        description: '§81.3: политика circuit breaker''а узла. 0/отсутствие = «как
+          в конфигурации».'
+        maximum: 100
+        minimum: 0
+        type: integer
       clickhouse_retention_days:
         maximum: 3650
         minimum: 0
@@ -1204,6 +1228,35 @@ definitions:
         type: string
       user_login:
         type: string
+    type: object
+  internal_web_adapter_in_http.breakerResetDTO:
+    properties:
+      node_status_cleared:
+        type: boolean
+      previous_failures:
+        type: integer
+      previous_state:
+        type: string
+      was_open:
+        type: boolean
+    type: object
+  internal_web_adapter_in_http.breakerStateDTO:
+    properties:
+      available:
+        type: boolean
+      exists:
+        type: boolean
+      failures:
+        type: integer
+      opened_at:
+        type: string
+      retry_after_ms:
+        type: integer
+      state:
+        description: closed | open | half_open
+        type: string
+      threshold:
+        type: integer
     type: object
   internal_web_adapter_in_http.chTemplateRequest:
     properties:
@@ -2411,6 +2464,12 @@ definitions:
         type: integer
       replayed:
         description: пере-инжектировано (оригинал отменён в DLQ)
+        type: integer
+      skipped_client_canceled:
+        description: |-
+          §81.5: пропущено записей, где ушла ВЫЗЫВАЮЩАЯ сторона. Их приёмник, скорее
+          всего, обработал (тело принял целиком), и повтор дал бы дубли. Показывается
+          оператору отдельной строкой — молча терять их из счёта нельзя.
         type: integer
       total:
         description: уникальных неудачных найдено (в пределах cap)
@@ -4466,6 +4525,70 @@ paths:
       summary: Повторить все неудачные доставки узла сейчас (§36.11).
       tags:
       - async-queue
+  /api/nodes/{id}/breaker:
+    get:
+      description: 'Открыта ли защита узла, сколько отказов подряд насчитано, когда
+        она открылась и сколько осталось до пробного запроса. Доступно всем ролям:
+        понимать, почему узел молчит, нужно и наблюдателю. available=false — Redis
+        не сконфигурирован, защиты в инсталляции нет.'
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.breakerStateDTO'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Состояние circuit breaker'а узла (§81.4).
+      tags:
+      - nodes
+  /api/nodes/{id}/breaker/reset:
+    post:
+      description: 'Возвращает узлу полный бюджет попыток немедленно, не дожидаясь
+        паузы, и снимает персистентный бейдж «Down» (§52). Идемпотентно: сброс закрытой
+        защиты — не ошибка. Действие пишется в аудит (node.breaker_reset). Требует
+        роль manager+.'
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.breakerResetDTO'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Снять блокировку circuit breaker'а узла вручную (§81.4.2).
+      tags:
+      - nodes
   /api/nodes/{id}/ch-schema/apply:
     post:
       description: Исполняет применимые ALTER'ы по порядку (CODEC / ADD·DROP INDEX

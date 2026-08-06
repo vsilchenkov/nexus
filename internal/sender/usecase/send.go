@@ -49,6 +49,11 @@ type SendInput struct {
 	MaxBodySizeEnabled bool  // включает обрезку сохраняемых тел
 	MaxBodySize        int32 // макс. число символов (рун) в request/response
 
+	// §81.3: политика circuit breaker'а узла (0 = глобальная из конфигурации
+	// Sender'а). Async берёт её из БД вместе с узлом, sync получает по gRPC.
+	BreakerThreshold   int32
+	BreakerCooldownSec int32
+
 	// §55: вызов тестовый (dry-run из UI). HTTP-запрос выполняется по-настоящему
 	// и тем же клиентом, но следов на узле не остаётся: ни лога в ClickHouse, ни
 	// метрик/статуса (гасятся в gRPC-адаптере), ни участия в circuit breaker.
@@ -66,7 +71,13 @@ type SendOutput struct {
 	// Timeout — внешний узел не ответил именно по таймауту (истёк per-node
 	// timeout_ms), а не по отказу соединения/DNS. Receiver превращает это в 504
 	// вместо 502 (см. proto SendResponse.timeout).
-	Timeout    bool
+	Timeout bool
+	// CallerGone — вызов оборвала ВЫЗЫВАЮЩАЯ сторона (§81.2), а не приёмник.
+	// О здоровье узла это не говорит ничего, поэтому исход последнего вызова
+	// (§41/§52: гаудж и персистентный бейдж) по такому вызову НЕ обновляется:
+	// иначе узел, чьи клиенты не дожидаются ответа, вечно горел бы «Down» —
+	// ровно та картина, из-за которой §81 и появился.
+	CallerGone bool
 	Attempts   int32
 	DurationMs int32
 }
@@ -77,7 +88,10 @@ type SendOutput struct {
 type CircuitBreaker interface {
 	Allow(ctx context.Context, key string) (bool, error)
 	RecordSuccess(ctx context.Context, key string) error
-	RecordFailure(ctx context.Context, key string) error
+	// §81.3: политика узла (0 = глобальная из конфигурации). Порог применяется
+	// в момент учёта, а не при создании breaker'а, потому что у каждого узла он
+	// свой, а breaker в процессе один.
+	RecordFailure(ctx context.Context, key string, p domain.BreakerPolicy) error
 }
 
 // noopBreaker используется, если CB отключён (cfg-зависимость не настроена).
@@ -85,7 +99,9 @@ type noopBreaker struct{}
 
 func (noopBreaker) Allow(context.Context, string) (bool, error) { return true, nil }
 func (noopBreaker) RecordSuccess(context.Context, string) error { return nil }
-func (noopBreaker) RecordFailure(context.Context, string) error { return nil }
+func (noopBreaker) RecordFailure(context.Context, string, domain.BreakerPolicy) error {
+	return nil
+}
 
 // HostResolver — неблокирующий lookup PTR-имени клиента (§67, колонка
 // client_host). Контракт: значение возвращается МГНОВЕННО из кеша или "";
@@ -246,7 +262,7 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		rec.Duration = int32(time.Since(t0).Milliseconds())
 		rec.Status = 0
 		rec.Done = false
-		rec.Reason = "circuit_breaker_open"
+		rec.Reason = domain.ReasonCircuitBreakerOpen
 		rec.Attempts = 0
 		if in.LoggingEnabled && !in.DryRun {
 			u.logw.Write(ctx, in.ClickHouseTable, rec)
@@ -285,7 +301,9 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		a := attempt{N: n, StartedAt: started, DurationMs: dur, BackoffBeforeMs: backoffMs}
 		if lastErr != nil {
 			a.Status = 0
-			a.Reason = lastErr.Error()
+			// §81.2.1: тот же маркер, что и в reason записи — иначе сырой текст с
+			// адресом утёк бы в колонку attempts_details мимо нормализации.
+			a.Reason = failureReason(ctx, lastErr, in.TimeoutMs, dur)
 		} else {
 			a.Status = resp.StatusCode
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
@@ -342,13 +360,17 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 
 	switch {
 	case lastErr != nil:
-		out.Error = lastErr.Error()
+		// §81.2.1: стабильный маркер вместо сырого текста stdlib — тот нестабилен
+		// и тащит в журнал полный адрес (у динамического URL — собранный из
+		// входящего запроса, см. §68).
+		out.Error = failureReason(ctx, lastErr, in.TimeoutMs, out.DurationMs)
+		out.CallerGone = ctx.Err() != nil
 		// errors.Is, а не разбор текста: http.Client оборачивает дедлайн
 		// контекста в *url.Error, цепочка Unwrap сохраняется.
 		out.Timeout = errors.Is(lastErr, context.DeadlineExceeded)
 		rec.Status = 0
 		rec.Done = false
-		rec.Reason = lastErr.Error()
+		rec.Reason = out.Error
 	case resp != nil && resp.TooLarge:
 		// §43-rev: тело ответа превысило ТРАНСПОРТНЫЙ лимит (config
 		// grpc_max_message_bytes) — httpclient оборвал чтение, тело не в памяти.
@@ -390,32 +412,7 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		rec.Reason = appendRedirectNote(rec.Reason, resp.Redirects)
 	}
 
-	// Circuit breaker отражает здоровье ВНЕШНЕГО узла. Нездоровье — транспортная
-	// ошибка (timeout/refused) или 5xx. ЛЮБОЙ ответ < 500 — узел жив и отвечает:
-	// 4xx — ошибка данных/клиента (напр. 422 NotRegistered протухшего FCM-токена),
-	// по ней breaker НЕ открывается — иначе серия 4xx от «плохих» адресатов
-	// блокировала бы доставку валидных запросов 503-ми (боевой инцидент
-	// site/push, §50.4). Oversize-политика (§43-rev) на здоровье тоже не влияет.
-	upstreamHealthy := lastErr == nil && resp != nil && resp.StatusCode < 500
-	switch {
-	case in.DryRun:
-		// §55: тестовый вызов на здоровье узла не влияет — иначе серия dry-run по
-		// мёртвому адресу открыла бы breaker и живой узел начал бы отдавать 503.
-		u.logger.Debug("send: dry-run, breaker not touched",
-			u.logger.Str("id", in.ID),
-			u.logger.Int("status", int(rec.Status)))
-	case upstreamHealthy:
-		_ = u.cb.RecordSuccess(ctx, in.NodePath)
-	default:
-		_ = u.cb.RecordFailure(ctx, in.NodePath)
-		// §51.9: незасчитанное здоровье узла (открытие breaker'а после серии) —
-		// след решения на debug; сами Record-ошибки некритичны (best-effort).
-		u.logger.Debug("send: recorded upstream failure for breaker",
-			u.logger.Str("id", in.ID),
-			u.logger.Str("node", in.NodePath),
-			u.logger.Int("status", int(rec.Status)),
-			u.logger.Str("reason", rec.Reason))
-	}
+	u.voteBreaker(ctx, in, resp, lastErr, rec)
 
 	if len(attempts) > 1 || !rec.Done {
 		if data, err := json.Marshal(attempts); err == nil {

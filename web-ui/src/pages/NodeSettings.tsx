@@ -102,6 +102,8 @@ type Form = {
   external_table: boolean;
   dlq_ttl_seconds: number;
   dlq_retry_delay_seconds: number;
+  circuit_breaker_threshold: number;
+  circuit_breaker_cooldown_sec: number;
   status: "enabled" | "disabled" | "paused";
   forward_headers: string[];
   log_request_body: boolean;
@@ -158,6 +160,9 @@ const emptyForm: Form = {
   external_table: false,
   dlq_ttl_seconds: 86400,
   dlq_retry_delay_seconds: 300,
+  // §81.3: 0 = «как в конфигурации» — узел не переопределяет политику.
+  circuit_breaker_threshold: 0,
+  circuit_breaker_cooldown_sec: 0,
   status: "enabled",
   forward_headers: [],
   log_request_body: false,
@@ -741,6 +746,46 @@ export default function NodeSettings() {
                   onChange={(e) => set("retry_count", parseNumInput(e.target.value, form.retry_count))}
                 />
                 {fieldErr("retry_count")}
+              </Field>
+            </div>
+            {/* §81.3: политика защиты узла. Пусто (0) = «как в конфигурации» —
+                у узла со штатным ответом в 20 секунд и у узла с ответом в 200 мс
+                разная норма отказов. Поля есть у всех типов узлов: защита общая
+                для sync и async. */}
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field
+                label={t("node.form.circuit_breaker_threshold")}
+                help={t("node.help.circuit_breaker_threshold")}
+              >
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  placeholder={t("node.form.breaker_default_placeholder")}
+                  className={errCls("circuit_breaker_threshold")}
+                  value={form.circuit_breaker_threshold || ""}
+                  onChange={(e) =>
+                    set("circuit_breaker_threshold", parseNumInput(e.target.value, 0))
+                  }
+                />
+                {fieldErr("circuit_breaker_threshold")}
+              </Field>
+              <Field
+                label={t("node.form.circuit_breaker_cooldown_sec")}
+                help={t("node.help.circuit_breaker_cooldown")}
+              >
+                <Input
+                  type="number"
+                  min={0}
+                  max={3600}
+                  placeholder={t("node.form.breaker_default_placeholder")}
+                  className={errCls("circuit_breaker_cooldown_sec")}
+                  value={form.circuit_breaker_cooldown_sec || ""}
+                  onChange={(e) =>
+                    set("circuit_breaker_cooldown_sec", parseNumInput(e.target.value, 0))
+                  }
+                />
+                {fieldErr("circuit_breaker_cooldown_sec")}
               </Field>
             </div>
           </Card>

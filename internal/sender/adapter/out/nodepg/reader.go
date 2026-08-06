@@ -45,7 +45,8 @@ SELECT
 	logging_enabled, max_body_size_enabled, max_body_size,
 	created_at, updated_at,
 	incoming_method, outgoing_method,
-	dlq_ttl_seconds, dlq_retry_delay_seconds
+	dlq_ttl_seconds, dlq_retry_delay_seconds,
+	circuit_breaker_threshold, circuit_breaker_cooldown_sec
 FROM nodes WHERE path = $1`
 
 // GetByPath возвращает актуальный конфиг узла. Использует sender'ом
@@ -58,6 +59,8 @@ func (r *Reader) GetByPath(ctx context.Context, path string) (*domain.Node, erro
 	var incomingMethod, outgoingMethod string
 	var encAuth, encInc string
 	var created, updated time.Time
+	// §81.3: NULL = «политика из конфигурации», поэтому указатели, а не int32.
+	var cbThreshold, cbCooldown *int32
 
 	err := row.Scan(
 		&n.ID, &n.Path, &rootMethod,
@@ -73,12 +76,22 @@ func (r *Reader) GetByPath(ctx context.Context, path string) (*domain.Node, erro
 		&created, &updated,
 		&incomingMethod, &outgoingMethod,
 		&n.DLQTTLSeconds, &n.DLQRetryDelaySeconds,
+		// §81.3: NULL = «глобальная политика», поэтому через указатели.
+		&cbThreshold, &cbCooldown,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrNodeNotFound
 		}
 		return nil, fmt.Errorf("scan node %s: %w", path, err)
+	}
+
+	// §81.3: NULL в БД → 0 в домене → «использовать глобальную политику».
+	if cbThreshold != nil {
+		n.CircuitBreakerThreshold = *cbThreshold
+	}
+	if cbCooldown != nil {
+		n.CircuitBreakerCooldownSec = *cbCooldown
 	}
 
 	n.RootMethod = domain.RootMethod(rootMethod)

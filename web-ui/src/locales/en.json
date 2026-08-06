@@ -387,7 +387,9 @@
       "pull_batch_size": "Pull batch size must be between 1 and 1000",
       "pull_prefetch": "Pull prefetch must be between 1 and 1000",
       "dlq_ttl_seconds": "DLQ TTL must be between 60 and 2592000 seconds",
-      "dlq_retry_delay_seconds": "Retry delay must be between 1 and 86400 seconds"
+      "dlq_retry_delay_seconds": "Retry delay must be between 1 and 86400 seconds",
+      "circuit_breaker_threshold": "Protection failure threshold: 1 to 100 (empty — as in configuration)",
+      "circuit_breaker_cooldown_sec": "Pause before probe request: 1 to 3600 seconds (empty — as in configuration)"
     },
     "verify": {
       "button": "Check",
@@ -450,6 +452,8 @@
       "max_body": "Cap the size of stored request/response bodies in the log (in characters). Bodies are truncated to the limit; the checksum is computed over the full body.",
       "dlq_ttl": "How long to keep retrying failed async messages from the DLQ before giving up (terminal failure). Counted from receipt.",
       "dlq_retry_delay": "Minimum delay before re-attempting a failed async delivery (per-message backoff on top of the reprocessor's sweep interval).",
+      "circuit_breaker_threshold": "How many consecutive failures pause delivery to this node. Empty — the value from the service configuration. A failure is a 5xx response, an expired node timeout or an unreachable address; a connection dropped by the caller does not count.",
+      "circuit_breaker_cooldown": "How long to wait before the probe request after delivery is paused. Empty — the value from the service configuration. A successful probe resumes delivery.",
       "comment": "Free-form node description for your team. Does not affect routing and is not visible to external clients."
     },
     "webhook": {
@@ -532,6 +536,9 @@
       "dlq_section": "DLQ auto-retry",
       "dlq_ttl_seconds": "Failed-delivery TTL (sec)",
       "dlq_retry_delay_seconds": "Retry delay for failed deliveries (sec)",
+      "circuit_breaker_threshold": "Protection failure threshold",
+      "circuit_breaker_cooldown_sec": "Pause before probe, sec",
+      "breaker_default_placeholder": "as in configuration",
       "dlq_retry_delay_hint": "minimum wait before re-attempting a failed delivery; default 5 min",
       "hours": "h"
     },
@@ -815,6 +822,17 @@
       "state_paused_sync": "The node is paused — incoming requests are rejected right away (a synchronous node has no queue, so nothing piles up). Resume to accept requests again.",
       "state_paused_pull": "The node is paused — Nexus stops pulling new messages from RabbitMQ, so they stay in the broker queue. Below are only the messages the bus accepted before the pause (purging affects exactly those). Resume to keep draining the queue.",
       "state_disabled": "The node is disabled — incoming requests are rejected (nothing is queued)."
+    },
+    "breaker": {
+      "state_closed": "Node protection is inactive — delivery is running normally",
+      "state_open": "Delivery is paused by node protection",
+      "state_half_open": "Probe request in flight — checking whether the receiver recovered",
+      "failures": "{{value}} consecutive failures",
+      "retry_after": "probe in {{value}}",
+      "explain_open": "Requests are rejected without contacting the receiver (reason circuit_breaker_open in the logs). Protection closes itself as soon as a probe request succeeds.",
+      "badge_hint": "The node badge updates after the next actual call.",
+      "reset": "Clear protection",
+      "reset_confirm": "Clear node protection and resume delivery immediately? If the receiver is still unavailable, protection will engage again after a series of failures."
     },
     "failed": {
       "empty": "No failed deliveries in this period.",

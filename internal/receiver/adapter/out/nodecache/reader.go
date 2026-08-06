@@ -191,7 +191,8 @@ SELECT
 	n.logging_enabled, n.max_body_size_enabled, n.max_body_size,
 	n.path_passthrough,
 	n.created_at, n.updated_at,
-	n.incoming_method, n.outgoing_method
+	n.incoming_method, n.outgoing_method,
+	n.circuit_breaker_threshold, n.circuit_breaker_cooldown_sec
 FROM nodes n
 JOIN teams t ON t.id = n.team_id
 WHERE t.slug = $1 AND n.path = $2`
@@ -204,6 +205,8 @@ func (r *Reader) getFromPg(ctx context.Context, teamSlug, path string) (*domain.
 	var incomingMethod, outgoingMethod string
 	var encAuth, encInc string
 	var created, updated time.Time
+	// §81.3: NULL = «политика из конфигурации», поэтому указатели.
+	var cbThreshold, cbCooldown *int32
 
 	err := row.Scan(
 		&n.ID, &n.Path, &rootMethod,
@@ -219,12 +222,21 @@ func (r *Reader) getFromPg(ctx context.Context, teamSlug, path string) (*domain.
 		&n.PathPassthrough,
 		&created, &updated,
 		&incomingMethod, &outgoingMethod,
+		&cbThreshold, &cbCooldown,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrNodeNotFound
 		}
 		return nil, fmt.Errorf("scan node: %w", err)
+	}
+
+	// §81.3: NULL в БД → 0 в домене → «использовать глобальную политику».
+	if cbThreshold != nil {
+		n.CircuitBreakerThreshold = *cbThreshold
+	}
+	if cbCooldown != nil {
+		n.CircuitBreakerCooldownSec = *cbCooldown
 	}
 
 	n.RootMethod = domain.RootMethod(rootMethod)

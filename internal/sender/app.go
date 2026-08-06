@@ -178,14 +178,17 @@ func (a *App) buildSendUsecase(ctx context.Context) (*usecase.SendUsecase, useca
 	respLimit := a.cfg.Sender.GRPCMaxMessageBytes - grpcResponseEnvelopeReserve
 	httpc := httpclient.New(&a.cfg.Sender.HTTPClient, a.logger, respLimit)
 
-	// Circuit breaker per node — порог 5 ошибок подряд, cooldown 30s.
-	// Параметры можно вынести в конфиг в Phase 4.
+	// Circuit breaker per node. §81.3: политика больше не литерал — глобальные
+	// значения приходят из конфигурации, узел может их переопределить (тогда
+	// они приезжают в самом вызове, см. SendInput.Breaker*).
 	var (
 		cb      usecase.CircuitBreaker
 		breaker usecase.BreakerInspector // §36: read-only IsOpen для репроцессора DLQ
 	)
 	if a.redis != nil {
-		b := circuitbreaker.New(a.redis, 5, 30*time.Second)
+		b := circuitbreaker.New(a.redis,
+			a.cfg.Sender.CircuitBreaker.Threshold,
+			time.Duration(a.cfg.Sender.CircuitBreaker.CooldownSec)*time.Second)
 		cb, breaker = b, b
 	}
 	// §67: reverse-DNS резолв client_host — асинхронный, кеш Redis + L1,

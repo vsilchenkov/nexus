@@ -45,6 +45,16 @@ func nullUUID(s string) any {
 	return s
 }
 
+// nullInt32 возвращает nil для нуля (→ SQL NULL) или само значение. Нужен там,
+// где ноль в домене означает «не задано» и обязан отличаться в БД от заданного
+// нуля — §81.3 (политика circuit breaker'а узла).
+func nullInt32(v int32) any {
+	if v == 0 {
+		return nil
+	}
+	return v
+}
+
 // nullSafe возвращает s, либо пустой не-nil слайс, если s == nil.
 // pgx/v5 кодирует nil-слайс как NULL, что ломает NOT NULL колонки с
 // дефолтом '{}' — DEFAULT не срабатывает, потому что значение явно

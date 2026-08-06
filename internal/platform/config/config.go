@@ -289,6 +289,22 @@ type SenderSection struct {
 	PausedSweep SenderPausedSweepConfig `yaml:"paused_sweep"`
 	// RDNS — reverse-DNS резолв client_host для логов (§67).
 	RDNS SenderRDNSConfig `yaml:"rdns"`
+	// CircuitBreaker — политика защиты узла (§81.3). Раньше порог и пауза были
+	// литералами в коде.
+	CircuitBreaker SenderCircuitBreakerConfig `yaml:"circuit_breaker"`
+}
+
+// SenderCircuitBreakerConfig — глобальная политика circuit breaker'а (§81.3).
+//
+// Действует на все узлы, у которых не задано собственное значение
+// (nodes.circuit_breaker_threshold / circuit_breaker_cooldown_sec). Отказом
+// считается 5xx, истёкший timeout_ms узла или отказ транспорта; уход
+// вызывающей стороны не считается ничем (§81.2).
+type SenderCircuitBreakerConfig struct {
+	// Threshold — сколько отказов подряд открывают breaker (default 5).
+	Threshold int `yaml:"threshold"`
+	// CooldownSec — пауза до половинчато-открытой пробы (default 30).
+	CooldownSec int `yaml:"cooldown_sec"`
 }
 
 // SenderRDNSConfig — параметры reverse-DNS резолва PTR-имени клиента (§67):

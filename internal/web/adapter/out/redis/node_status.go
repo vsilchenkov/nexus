@@ -61,3 +61,22 @@ func (r *NodeStatusReaderRedis) GetLastOutcomes(ctx context.Context, nodePaths [
 	}
 	return out, nil
 }
+
+var _ port.NodeStatusResetter = (*NodeStatusReaderRedis)(nil)
+
+// ClearLastOutcome удаляет ключ исхода последнего вызова узла (§81.4.2).
+//
+// Именно удаление, а не запись «ok»: после ручного сброса breaker'а исход
+// последнего вызова НЕИЗВЕСТЕН, и записать успех было бы неправдой. Отсутствие
+// ключа читатель уже обрабатывает штатно — GetLastOutcomes пропускает такие
+// узлы, и бейдж добирается из Prometheus-fallback'а.
+//
+// Без этого сброс выглядел бы безрезультатным: breaker закрыт, а узел на
+// дашборде остаётся «Down» до следующего фактического вызова — у sync-узла без
+// трафика это может не случиться никогда (TTL ключа 30 суток).
+func (r *NodeStatusReaderRedis) ClearLastOutcome(ctx context.Context, nodePath string) error {
+	if err := r.client.Del(ctx, nodestatus.Key(nodePath)).Err(); err != nil {
+		return fmt.Errorf("nodestatus del: %w", err)
+	}
+	return nil
+}

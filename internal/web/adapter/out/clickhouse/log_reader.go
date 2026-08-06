@@ -996,6 +996,22 @@ func (r *LogReaderCH) FailedIDs(ctx context.Context, q port.LogQuery, cap int) (
 		return nil, false, nil
 	}
 
+	// §81.5: отсев по маркеру причины — на уровне ЗАПИСИ, а не строки. Условие в
+	// WHERE убрало бы только строки с маркером, и запись с двумя прогонами
+	// («connection refused», затем «client_canceled») осталась бы кандидатом через
+	// первую строку — то есть попала бы в массовый повтор, ради предотвращения
+	// которого отсев и вводился.
+	if len(q.ExcludeReasonPrefixes) > 0 {
+		marked, mErr := r.markedAmong(ctx, q, candidates, q.ExcludeReasonPrefixes)
+		if mErr != nil {
+			return nil, false, mErr
+		}
+		candidates = diffIDs(candidates, marked)
+		if len(candidates) == 0 {
+			return nil, capped, nil
+		}
+	}
+
 	delivered, err := r.deliveredAmong(ctx, q, candidates)
 	if err != nil {
 		return nil, false, err
@@ -1027,6 +1043,45 @@ func (r *LogReaderCH) deliveredAmong(ctx context.Context, q port.LogQuery, ids [
 	}
 	sql := fmt.Sprintf("SELECT DISTINCT ID FROM %s WHERE %s", q.Table, strings.Join(conds, " AND "))
 	return scanIDs(ctx, conn, sql, args, "clickhouse delivered ids")
+}
+
+// markedAmong возвращает те из ids, у которых есть ХОТЯ БЫ ОДИН прогон с
+// причиной из prefixes (§81.5). Зеркало deliveredAmong: единица «неудачной
+// доставки» — запись, поэтому и признак ищется по всем её прогонам.
+//
+// startsWith, а не LIKE: маркер стоит в начале reason по построению, и так не
+// нужно экранировать спецсимволы шаблона. Историю условие не покрывает — записи
+// до §81.2 несут сырой текст ошибки (переписывать журнал нельзя).
+func (r *LogReaderCH) markedAmong(ctx context.Context, q port.LogQuery, ids, prefixes []string) ([]string, error) {
+	if len(ids) == 0 || len(prefixes) == 0 {
+		return nil, nil
+	}
+	q.BeforeID, q.Limit = "", 0
+	q.Unresolved, q.Done = false, ""
+	q.ExcludeReasonPrefixes = nil
+	conds, args := r.searchConds(ctx, q)
+
+	var marks []string
+	for _, pfx := range prefixes {
+		if pfx == "" {
+			continue
+		}
+		marks = append(marks, "startsWith(reason, ?)")
+		args = append(args, pfx)
+	}
+	if len(marks) == 0 {
+		return nil, nil
+	}
+	conds = append(conds, "("+strings.Join(marks, " OR ")+")")
+	conds = append(conds, "ID IN ?")
+	args = append(args, ids)
+
+	conn, err := r.liveConn()
+	if err != nil {
+		return nil, err
+	}
+	sql := fmt.Sprintf("SELECT DISTINCT ID FROM %s WHERE %s", q.Table, strings.Join(conds, " AND "))
+	return scanIDs(ctx, conn, sql, args, "clickhouse marked ids")
 }
 
 // scanIDs — общий сбор колонки ID.
