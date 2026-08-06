@@ -21,6 +21,7 @@ type Handlers struct {
 	CHTemplate    *CHTemplateHandler
 	CHSchema      *CHSchemaHandler
 	CHTableVerify *CHTableVerifyHandler
+	AckPreview    *AckPreviewHandler
 	HostAllowlist *HostAllowlistHandler
 	HeaderCatalog *HeaderCatalogHandler
 	RequestField  *RequestFieldCatalogHandler
@@ -217,6 +218,11 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		}
 		// §64: проверка структуры внешней таблицы логов. По ИМЕНИ таблицы, не по
 		// id узла, — кнопка работает и в форме ещё не сохранённого узла.
+		// §83: предпросмотр ответа приёма — по спеке, а не по id узла, чтобы
+		// работал в форме ещё не сохранённого узла (как и проверка выше).
+		if h.AckPreview != nil {
+			authedManager.POST("/nodes/ack-preview", RequireSessionOnly(), h.AckPreview.Preview)
+		}
 		if h.CHTableVerify != nil {
 			authedManager.POST("/ch-tables/verify", RequireSessionOnly(), h.CHTableVerify.Verify)
 		}

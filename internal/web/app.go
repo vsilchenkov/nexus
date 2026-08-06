@@ -396,6 +396,10 @@ func (a *App) Start(ctx context.Context) error {
 	chSchemaUC := usecase.NewCHSchemaSyncUsecase(nodeUC, chTemplateRepo, chSchemaInspector, auditUC, a.logger)
 	chSchemaHandler := httpadapter.NewCHSchemaHandler(chSchemaUC, a.logger)
 	chTableVerifyHandler := httpadapter.NewCHTableVerifyHandler(chTableVerifyUC, a.logger)
+	// §83: предпросмотр ответа приёма — чистый рендер по присланной спеке,
+	// внешних зависимостей у него нет.
+	ackPreviewHandler := httpadapter.NewAckPreviewHandler(
+		usecase.NewAckPreviewUsecase(a.logger), a.logger)
 
 	// Каталог разрешённых хостов (§23). Не зависит от ClickHouse — создаётся
 	// всегда. Привязка к узлу пересобирает снимок nodes.url_allowed_hosts и
@@ -655,6 +659,7 @@ func (a *App) Start(ctx context.Context) error {
 		CHTemplate:    chTemplateHandler,
 		CHSchema:      chSchemaHandler,
 		CHTableVerify: chTableVerifyHandler,
+		AckPreview:    ackPreviewHandler,
 		HostAllowlist: hostAllowlistHandler,
 		HeaderCatalog: headerCatalogHandler,
 		RequestField:  requestFieldHandler,

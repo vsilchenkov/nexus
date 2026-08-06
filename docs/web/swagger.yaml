@@ -1,5 +1,27 @@
 basePath: /
 definitions:
+  internal_web_adapter_in_http.AckPreviewRequest:
+    properties:
+      content_type:
+        maxLength: 255
+        type: string
+      sample_body:
+        maxLength: 262144
+        type: string
+      sample_path:
+        maxLength: 1024
+        type: string
+      sample_query:
+        additionalProperties:
+          items:
+            type: string
+          type: array
+        type: object
+      spec:
+        $ref: '#/definitions/nexus_internal_domain_ackspec.Spec'
+    required:
+    - spec
+    type: object
   internal_web_adapter_in_http.CHTableVerifyRequest:
     properties:
       table:
@@ -2416,6 +2438,25 @@ definitions:
       status:
         type: integer
       version:
+        type: integer
+    type: object
+  nexus_internal_web_usecase.AckPreviewReport:
+    properties:
+      body:
+        type: string
+      content_type:
+        type: string
+      message:
+        type: string
+      ok:
+        type: boolean
+      placeholder:
+        description: подстановка, на которой сорвалось
+        type: string
+      reason:
+        description: ackspec.Reason
+        type: string
+      status:
         type: integer
     type: object
   nexus_internal_web_usecase.CHTableVerifyResult:
@@ -5361,6 +5402,42 @@ paths:
       security:
       - CookieAuth: []
       summary: Команда узла для авто-переключения (§58).
+      tags:
+      - nodes
+  /api/nodes/ack-preview:
+    post:
+      consumes:
+      - application/json
+      description: 'Прогоняет шаблон на образце запроса и возвращает тело, которое
+        получил бы клиент. Ничего не сохраняет и никуда не ходит: работает по присланной
+        спеке, поэтому доступен в форме ещё не сохранённого узла. Провал подстановки
+        — не ошибка запроса: приходит 200 с ok=false, reason и проблемной подстановкой.
+        400 отдаётся только на невалидной спеке (её правит оператор в форме).'
+      parameters:
+      - description: спека и образец запроса
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.AckPreviewRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/nexus_internal_web_usecase.AckPreviewReport'
+        "400":
+          description: '{error, code, field} — спека или шаблон невалидны'
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: нужна роль manager или admin
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Предпросмотр ответа приёма по шаблону узла (§83).
       tags:
       - nodes
   /api/nodes/dry-run:

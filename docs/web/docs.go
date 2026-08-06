@@ -2468,6 +2468,54 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/nodes/ack-preview": {
+            "post": {
+                "description": "Прогоняет шаблон на образце запроса и возвращает тело, которое получил бы клиент. Ничего не сохраняет и никуда не ходит: работает по присланной спеке, поэтому доступен в форме ещё не сохранённого узла. Провал подстановки — не ошибка запроса: приходит 200 с ok=false, reason и проблемной подстановкой. 400 отдаётся только на невалидной спеке (её правит оператор в форме).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "nodes"
+                ],
+                "summary": "Предпросмотр ответа приёма по шаблону узла (§83).",
+                "parameters": [
+                    {
+                        "description": "спека и образец запроса",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.AckPreviewRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nexus_internal_web_usecase.AckPreviewReport"
+                        }
+                    },
+                    "400": {
+                        "description": "{error, code, field} — спека или шаблон невалидны",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "нужна роль manager или admin",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/dry-run": {
             "post": {
                 "security": [
@@ -5693,6 +5741,38 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "internal_web_adapter_in_http.AckPreviewRequest": {
+            "type": "object",
+            "required": [
+                "spec"
+            ],
+            "properties": {
+                "content_type": {
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "sample_body": {
+                    "type": "string",
+                    "maxLength": 262144
+                },
+                "sample_path": {
+                    "type": "string",
+                    "maxLength": 1024
+                },
+                "sample_query": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "spec": {
+                    "$ref": "#/definitions/nexus_internal_domain_ackspec.Spec"
+                }
+            }
+        },
         "internal_web_adapter_in_http.CHTableVerifyRequest": {
             "type": "object",
             "required": [
@@ -9073,6 +9153,34 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "nexus_internal_web_usecase.AckPreviewReport": {
+            "type": "object",
+            "properties": {
+                "body": {
+                    "type": "string"
+                },
+                "content_type": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "ok": {
+                    "type": "boolean"
+                },
+                "placeholder": {
+                    "description": "подстановка, на которой сорвалось",
+                    "type": "string"
+                },
+                "reason": {
+                    "description": "ackspec.Reason",
+                    "type": "string"
+                },
+                "status": {
                     "type": "integer"
                 }
             }
