@@ -57,7 +57,13 @@ var (
 	// отдаётся как ErrNodeNotFound: факт существования узла не раскрываем, как и
 	// в зеркальной sync-проверке. Отдельный sentinel нужен, чтобы handler отличил
 	// этот отказ от настоящего «узла нет» и сходил за warn'ом и метрикой.
-	ErrNodeNotAsyncIngress   = errors.New("domain: node does not accept async ingress")
+	ErrNodeNotAsyncIngress = errors.New("domain: node does not accept async ingress")
+	// ErrAckRenderFailed — шаблон ответа приёма (§83) не отработал, и политика
+	// узла — on_error=error. Запрос при этом НЕ принят: рендер идёт до
+	// публикации в Kafka, поэтому 400 честно означает «в очередь не попало».
+	// При политике default этой ошибки не возникает — узел отвечает как раньше,
+	// а факт деградации уходит в warn и метрику.
+	ErrAckRenderFailed       = errors.New("domain: async ack template render failed")
 	ErrNodeInvalidTemplateID = errors.New("domain: clickhouse_template_id must be a valid UUID")
 	ErrNodeLogsNotConfigured = errors.New("domain: node has no clickhouse_table configured")
 	// Webhook signature (§16 ТЗ, IncomingAuthTypeWebhookSignature).

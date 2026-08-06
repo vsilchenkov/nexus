@@ -60,6 +60,13 @@ type Metrics struct {
 	// новым классом риска не является; точный узел ищи в warn'е receiver.async —
 	// там резолвнутый path и node_id.
 	AsyncIngressRejectedTotal *prometheus.CounterVec
+	// AckRenderFailedTotal — §83: шаблон ответа приёма не отработал. Метка
+	// reason — замкнутое множество ackspec.Reason (body_not_json, path_not_found,
+	// ambiguous, …) плюс "compile"/"unknown", то есть кардинальность ограничена
+	// по построению. Единственный внешний признак деградации при
+	// on_error=default: клиент получает штатный 200, и по коду ответа отличить
+	// «шаблон применился» от «шаблон не смог» нельзя.
+	AckRenderFailedTotal *prometheus.CounterVec
 	// Phase AUD.8: сбои проверки rate-limit'а (fail-open, §9.4) по scope ключа.
 	RateLimitCheckErrorsTotal *prometheus.CounterVec
 	RequestDuration           *prometheus.HistogramVec
@@ -172,6 +179,15 @@ func New(service string, opts ...Option) *Metrics {
 			Help:        "Requests to /api/v1/requestAsync rejected because the node is not configured as requestAsync (§82.3).",
 			ConstLabels: constLabels,
 		}, []string{"node"}),
+
+		// §83: отказ рендера шаблона ответа приёма. При on_error=default клиент
+		// видит прежний 200 — счётчик единственный показывает, что интеграция
+		// получает не тот ответ, которого ждёт.
+		AckRenderFailedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "nexus_async_ack_render_failed_total",
+			Help:        "Async acknowledgement template renders that failed, by reason (§83).",
+			ConstLabels: constLabels,
+		}, []string{"node", "reason"}),
 
 		// Phase AUD.8 (D.4): сбои проверки rate-limit'а (Redis недоступен и
 		// т.п.). Лимиты по §9.4 fail-open — этот счётчик единственный сигнал,
@@ -341,6 +357,7 @@ func New(service string, opts ...Option) *Metrics {
 		m.NodeLastRequestError,
 		m.LoopDetectedTotal,
 		m.AsyncIngressRejectedTotal,
+		m.AckRenderFailedTotal,
 		m.RateLimitCheckErrorsTotal,
 		m.RequestDuration,
 		m.KafkaLag,
@@ -413,6 +430,13 @@ func (m *Metrics) IncLoopDetected(mode string) { m.LoopDetectedTotal.WithLabelVa
 // который не настроен асинхронным.
 func (m *Metrics) IncAsyncIngressRejected(node string) {
 	m.AsyncIngressRejectedTotal.WithLabelValues(node).Inc()
+}
+
+// IncAckRenderFailed — §83: шаблон ответа приёма не отработал. reason берётся
+// из замкнутого множества ackspec.Reason (плюс "compile"/"unknown"), свободные
+// строки сюда попадать не должны — иначе кардинальность метрики не ограничена.
+func (m *Metrics) IncAckRenderFailed(node, reason string) {
+	m.AckRenderFailedTotal.WithLabelValues(node, reason).Inc()
 }
 
 // SetNodeLastRequestOutcome фиксирует исход последнего исходящего вызова узла

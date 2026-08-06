@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"nexus/internal/domain"
+	"nexus/internal/domain/ackspec"
 	"nexus/internal/platform/logging"
 	otelpf "nexus/internal/platform/otel"
 	"nexus/internal/receiver/usecase/port"
@@ -27,6 +28,14 @@ type RouteAsyncResult struct {
 	ID         string
 	NodeStatus domain.NodeStatus
 	Queued     bool // true для paused-узлов (§3.6)
+
+	// §83: готовый ответ по шаблону узла. nil — отвечаем как раньше
+	// ({"result":true,"id":…} либо 202 queued).
+	Ack *AckResponse
+	// §83: рендер шаблона не удался, но политика узла — «ответить как раньше».
+	// Строка — ackspec.Reason; handler инкрементит по ней метрику (warn уже
+	// написан в usecase). Пусто — деградации не было.
+	AckDegraded string
 }
 
 // RouteAsyncUsecase — обработка /v1/requestAsync/*.
@@ -36,6 +45,11 @@ type RouteAsyncUsecase struct {
 	asyncTopic string
 	maxHops    int
 	logger     logging.Logger
+
+	// §83: скомпилированные шаблоны ответа. Узел приезжает из кеша строкой, а
+	// компиляция на каждый принятый запрос — лишняя работа на горячем пути
+	// (937 нс против 70 нс на попадание в кеш).
+	ackCache *ackspec.Cache
 }
 
 // NewRouteAsyncUsecase создаёт async-роутер. maxHops — лимит переходов запроса
@@ -53,6 +67,9 @@ func NewRouteAsyncUsecase(
 		asyncTopic: asyncTopic,
 		maxHops:    maxHops,
 		logger:     logger,
+		// §83: размер по умолчанию — порядка числа активных async-узлов
+		// инсталляции; наружу не выносится, настраивать нечего.
+		ackCache: ackspec.NewCache(0),
 	}
 }
 
@@ -145,6 +162,17 @@ func (u *RouteAsyncUsecase) RouteAsync(ctx context.Context, in RouteInput) (*Rou
 	targetURL = AppendPathSuffix(targetURL, remainder)
 
 	id := uuid.NewString()
+
+	// §83: ответ собирается ДО публикации. При on_error=error отказ обязан
+	// означать «не принято»: 400 на уже лежащее в Kafka сообщение заставил бы
+	// клиента повторить пакет, то есть шина сама порождала бы дубли.
+	// Источники — effBody и cleanQuery, то есть тело и query БЕЗ вырезанных
+	// кред: шаблон не должен возвращать вызывающей стороне её секрет.
+	ack, ackDegraded, err := u.renderAck(node, in, id, remainder, effBody, cleanQuery)
+	if err != nil {
+		return nil, err
+	}
+
 	env := BuildEnvelope(id, node, EffectiveOutgoingMethod(node, in.Method), targetURL, authHeader, in.ClientIP, remainder,
 		effHeader, cleanQuery, effBody)
 	// §32: служебный hop-счётчик в обход allowlist узла. На стороне Sender
@@ -187,8 +215,10 @@ func (u *RouteAsyncUsecase) RouteAsync(ctx context.Context, in RouteInput) (*Rou
 		u.logger.Any("queued", node.Status == domain.NodeStatusPaused))
 
 	return &RouteAsyncResult{
-		ID:         id,
-		NodeStatus: node.Status,
-		Queued:     node.Status == domain.NodeStatusPaused,
+		ID:          id,
+		NodeStatus:  node.Status,
+		Queued:      node.Status == domain.NodeStatusPaused,
+		Ack:         ack,
+		AckDegraded: ackDegraded,
 	}, nil
 }

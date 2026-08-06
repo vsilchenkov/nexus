@@ -353,6 +353,24 @@ func (h *Handler) handleAsyncFromInput(c *gin.Context, in usecase.RouteInput) {
 		return
 	}
 
+	// §83: шаблон не отработал, но узел настроен «отвечать как раньше». Warn
+	// уже написан в usecase; метрика — единственный внешний признак, по которому
+	// видно, что интеграция получает НЕ тот ответ, которого ждёт.
+	if res.AckDegraded != "" && h.metrics != nil {
+		h.metrics.IncAckRenderFailed(in.NodePath, res.AckDegraded)
+	}
+
+	// §83: собственный ответ узла — вместо обеих штатных форм ниже.
+	if res.Ack != nil {
+		// nosniff: тело собирает оператор, и браузер не должен додумывать тип
+		// за объявленным. X-Nexus-Id сохраняет связь ответа с записью журнала —
+		// в кастомном теле идентификатора шины может не быть вовсе.
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("X-Nexus-Id", res.ID)
+		c.Data(res.Ack.Status, res.Ack.ContentType, res.Ack.Body)
+		return
+	}
+
 	// §3.6 ТЗ: paused-узел отвечает 202 + queued:true + node_status:paused.
 	if res.Queued {
 		c.JSON(http.StatusAccepted, gin.H{
@@ -469,6 +487,12 @@ func classifyDomainError(err error) (status int, message string, internal bool) 
 		return http.StatusBadRequest, err.Error(), false
 	case errors.Is(err, domain.ErrURLInvalid):
 		return http.StatusBadRequest, "target url is invalid", false
+	case errors.Is(err, domain.ErrAckRenderFailed):
+		// §83: узел настроен on_error=error. Запрос НЕ принят (рендер идёт до
+		// публикации в Kafka), поэтому 400 честен: клиенту следует повторить.
+		// Не 502: это ошибка настройки узла, а не сбой шины, и в Sentry ей
+		// делать нечего — диагностика в warn receiver.async_ack и метрике.
+		return http.StatusBadRequest, "ack template render failed", false
 	case errors.Is(err, domain.ErrURLNotAllowed):
 		return http.StatusForbidden, "target url not in allowlist", false
 	case errors.Is(err, domain.ErrLoopDetected):
