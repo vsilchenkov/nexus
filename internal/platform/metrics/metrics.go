@@ -52,6 +52,13 @@ type Metrics struct {
 	// AsyncIngressRejectedTotal — §82.3: запросы во внешний /requestAsync к узлу,
 	// который настроен не как requestAsync. Клиент видит только 404, поэтому без
 	// счётчика рассинхронизация настроек остаётся невидимой.
+	//
+	// Метка node — путь ИЗ АДРЕСА, как у RequestsTotal (та же конвенция). Счётчик
+	// растёт только после успешного резолва узла, поэтому кардинальность
+	// ограничена числом узлов — кроме узлов с path_passthrough, где в путь входит
+	// произвольный хвост запроса. Экспозиция та же, что у RequestsTotal{node}, и
+	// новым классом риска не является; точный узел ищи в warn'е receiver.async —
+	// там резолвнутый path и node_id.
 	AsyncIngressRejectedTotal *prometheus.CounterVec
 	// Phase AUD.8: сбои проверки rate-limit'а (fail-open, §9.4) по scope ключа.
 	RateLimitCheckErrorsTotal *prometheus.CounterVec
