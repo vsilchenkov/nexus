@@ -46,6 +46,15 @@ type RouteInput struct {
 	// webhook_signature — чтобы случайный клиент не пробрасывал произвольное
 	// тело через callback-маршрут на узел с обычной авторизацией.
 	RequireCallback bool
+	// ExternalAsync — запрос пришёл во ВНЕШНИЙ async-эндпоинт
+	// /api/v1/requestAsync/{path} (§82.3). Только по этому признаку RouteAsync
+	// требует, чтобы root_method узла был requestAsync.
+	//
+	// Флаг существует, потому что RouteAsync зовут ещё двумя путями, и обоим
+	// требование противопоказано: §3.6 (sync-запрос к paused-узлу уходит в
+	// очередь — там root_method как раз request) и §16 (callback, у которого
+	// свой гейт — обязательная HMAC-подпись).
+	ExternalAsync bool
 }
 
 // RouteOutput — что Receiver вернёт клиенту.

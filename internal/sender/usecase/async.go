@@ -234,7 +234,7 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 		// §41/§52: исход последнего вызова узла (in-memory гаудж).
 		// §81.2: обрыв вызывающей стороной (здесь — остановка сервиса) исходом
 		// узла не считается.
-		if !out.CallerGone {
+		if !out.ParentGone {
 			p.metrics.SetNodeLastRequestOutcome(env.NodePath, outcome)
 		}
 	}
@@ -243,7 +243,7 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 	// смерть родителя (клиент шины ушёл, сервис останавливается). go-redis
 	// отбрасывает команду с отменённым контекстом ещё в пуле, поэтому раньше на
 	// обрыве бейдж узла молча не обновлялся, а в лог сыпался ложный warn.
-	if p.nodeStatus != nil && !out.CallerGone {
+	if p.nodeStatus != nil && !out.ParentGone {
 		statusCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), nodeStatusWriteTimeout)
 		p.nodeStatus.SetLastOutcome(statusCtx, env.NodePath, outcome)
 		cancel()

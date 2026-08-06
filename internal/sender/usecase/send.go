@@ -72,12 +72,16 @@ type SendOutput struct {
 	// timeout_ms), а не по отказу соединения/DNS. Receiver превращает это в 504
 	// вместо 502 (см. proto SendResponse.timeout).
 	Timeout bool
-	// CallerGone — вызов оборвала ВЫЗЫВАЮЩАЯ сторона (§81.2), а не приёмник.
+	// ParentGone — родительский контекст вызова умер до ответа (§81.2), то есть
+	// оборвал вызов НЕ приёмник. Причин несколько — ушёл клиент шины, встал сам
+	// сервис, порвался транспорт Receiver→Sender; полный список и почему они не
+	// различаются — в godoc domain.ReasonClientCanceled.
+	//
 	// О здоровье узла это не говорит ничего, поэтому исход последнего вызова
 	// (§41/§52: гаудж и персистентный бейдж) по такому вызову НЕ обновляется:
-	// иначе узел, чьи клиенты не дожидаются ответа, вечно горел бы «Down» —
-	// ровно та картина, из-за которой §81 и появился.
-	CallerGone bool
+	// иначе узел, чьих ответов не дожидаются, вечно горел бы «Down» — ровно та
+	// картина, из-за которой §81 и появился.
+	ParentGone bool
 	Attempts   int32
 	DurationMs int32
 }
@@ -364,7 +368,7 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		// и тащит в журнал полный адрес (у динамического URL — собранный из
 		// входящего запроса, см. §68).
 		out.Error = failureReason(ctx, lastErr, in.TimeoutMs, out.DurationMs)
-		out.CallerGone = ctx.Err() != nil
+		out.ParentGone = ctx.Err() != nil
 		// errors.Is, а не разбор текста: http.Client оборачивает дедлайн
 		// контекста в *url.Error, цепочка Unwrap сохраняется.
 		out.Timeout = errors.Is(lastErr, context.DeadlineExceeded)

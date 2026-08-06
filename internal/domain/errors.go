@@ -52,8 +52,14 @@ var (
 	ErrNodeDisabled                     = errors.New("domain: node disabled")
 	ErrNodePaused                       = errors.New("domain: node paused")
 	ErrNodeMethodNotAllowed             = errors.New("domain: http method not allowed for this node")
-	ErrNodeInvalidTemplateID            = errors.New("domain: clickhouse_template_id must be a valid UUID")
-	ErrNodeLogsNotConfigured            = errors.New("domain: node has no clickhouse_table configured")
+	// ErrNodeNotAsyncIngress — во внешний async-эндпоинт (/api/v1/requestAsync/…)
+	// пришёл запрос к узлу, чей root_method не requestAsync (§82.3). Наружу
+	// отдаётся как ErrNodeNotFound: факт существования узла не раскрываем, как и
+	// в зеркальной sync-проверке. Отдельный sentinel нужен, чтобы handler отличил
+	// этот отказ от настоящего «узла нет» и сходил за warn'ом и метрикой.
+	ErrNodeNotAsyncIngress   = errors.New("domain: node does not accept async ingress")
+	ErrNodeInvalidTemplateID = errors.New("domain: clickhouse_template_id must be a valid UUID")
+	ErrNodeLogsNotConfigured = errors.New("domain: node has no clickhouse_table configured")
 	// Webhook signature (§16 ТЗ, IncomingAuthTypeWebhookSignature).
 	ErrNodeWebhookSigHeaderLength   = errors.New("domain: webhook_signature_header length must be <= 128")
 	ErrNodeWebhookSigPrefixLength   = errors.New("domain: webhook_signature_prefix length must be <= 64")

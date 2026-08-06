@@ -86,9 +86,31 @@ func (u *RouteAsyncUsecase) RouteAsync(ctx context.Context, in RouteInput) (*Rou
 		return nil, domain.ErrNodeMethodNotAllowed
 	}
 
-	// Любой root_method можно отправить через async — §3.6 «При paused
-	// все запросы превращаются в async». Поэтому RouteAsync доступен
-	// и для request-узлов, если они в paused.
+	// §82.3: во внешний async-эндпоинт пускаем только узлы, которые и настроены
+	// асинхронными. Послабление «любой root_method можно отправить через async»
+	// делалось ради §3.6 (paused-узел копит запросы в очереди) — но выдано было
+	// безусловно, то есть наружу, и настройка узла «request» ничего не значила.
+	//
+	// Чем это обернулось: боевой узел acs_sigur с root_method=request принимал
+	// ~11 запросов в минуту в async-форме от клиента, застрявшего на одной
+	// записи журнала более суток. В async шина отвечает своим
+	// {"result":true,"id":…} мгновенно, а клиент ждал ответ приёмника — и не
+	// сдвигался никогда. Отбить его настройкой узла было нечем.
+	//
+	// Внутренние вызовы RouteAsync (§3.6 из sync-ветки и §16 callback) флага не
+	// ставят и проверку не проходят — см. godoc RouteInput.ExternalAsync.
+	if in.ExternalAsync && node.RootMethod != domain.RootMethodRequestAsync {
+		// §51.9: без этой строки отбитый интегратор ломается молча, а по 404
+		// «node not found» причину не восстановить. Warn, а не debug: это
+		// рассинхронизация настроек, её надо чинить, а не наблюдать.
+		u.logger.Warn("async ingress rejected: node is not async",
+			u.logger.Str("op", "receiver.async"),
+			u.logger.Str("node", node.Path),
+			u.logger.Str("node_id", node.ID),
+			u.logger.Str("root_method", string(node.RootMethod)),
+			u.logger.Str("client_ip", in.ClientIP))
+		return nil, domain.ErrNodeNotAsyncIngress
+	}
 
 	if err := CheckIncomingAuth(node, in.Header, in.Query, in.Body); err != nil {
 		return nil, err

@@ -25,6 +25,7 @@ import (
 	chpf "nexus/internal/platform/clickhouse"
 	"nexus/internal/platform/config"
 	"nexus/internal/platform/crypto"
+	"nexus/internal/platform/grpcsender"
 	"nexus/internal/platform/healthcheck"
 	kafkapf "nexus/internal/platform/kafka"
 	"nexus/internal/platform/logging"
@@ -370,23 +371,38 @@ func (a *App) serveEndpoints(ctx context.Context, grpcSvc *grpcadapter.Server) e
 	}
 }
 
+// GRPCServerOptions — полный набор опций gRPC-сервера Sender'а.
+//
+// Вынесен из startGRPC и экспортирован, чтобы тест поднимал сервер ровно теми
+// же опциями, что боевой процесс. Иначе регресс §82.1 не ловился бы: тест со
+// «своим» grpc.NewServer остался бы зелёным даже после удаления политики
+// keepalive из боевой сборки — а именно её отсутствие и рвало sync-вызовы.
+func GRPCServerOptions(cfg *config.SenderSection) []grpc.ServerOption {
+	return []grpc.ServerOption{
+		grpc.MaxConcurrentStreams(cfg.GRPCMaxConcurrentStreams),
+		// §82.1: без объявленной политики grpc-go считает штатные keepalive-ping'и
+		// клиентов (каждые 30 с) нарушением и на третьем рвёт соединение вместе с
+		// идущим по нему sync-вызовом — потолок запроса 4×keepalive_time_sec.
+		// Обе половины контракта живут в grpcsender, см. ServerKeepalivePolicy.
+		grpcsender.ServerKeepalivePolicy(&cfg.GRPCKeepalive),
+		// §42: лимит размера сообщения (оба направления). Дефолт gRPC recv 4 МиБ
+		// мал — тело запроса (до receiver.max_body_bytes) и тело ответа апстрима
+		// (десятки МБ) иначе режутся ResourceExhausted.
+		grpc.MaxRecvMsgSize(cfg.GRPCMaxMessageBytes),
+		grpc.MaxSendMsgSize(cfg.GRPCMaxMessageBytes),
+		// OTel: extract traceparent из incoming metadata + server-span
+		// вокруг каждого unary-вызова (§16 ТЗ, Phase 8.3).
+		grpc.UnaryInterceptor(otelpf.UnaryServerInterceptor()),
+	}
+}
+
 func (a *App) startGRPC(svc *grpcadapter.Server) error {
 	lis, err := net.Listen("tcp", a.cfg.Sender.GRPCAddr)
 	if err != nil {
 		return fmt.Errorf("sender grpc listen %s: %w", a.cfg.Sender.GRPCAddr, err)
 	}
 
-	a.grpcSrv = grpc.NewServer(
-		grpc.MaxConcurrentStreams(a.cfg.Sender.GRPCMaxConcurrentStreams),
-		// §42: лимит размера сообщения (оба направления). Дефолт gRPC recv 4 МиБ
-		// мал — тело запроса (до receiver.max_body_bytes) и тело ответа апстрима
-		// (десятки МБ) иначе режутся ResourceExhausted.
-		grpc.MaxRecvMsgSize(a.cfg.Sender.GRPCMaxMessageBytes),
-		grpc.MaxSendMsgSize(a.cfg.Sender.GRPCMaxMessageBytes),
-		// OTel: extract traceparent из incoming metadata + server-span
-		// вокруг каждого unary-вызова (§16 ТЗ, Phase 8.3).
-		grpc.UnaryInterceptor(otelpf.UnaryServerInterceptor()),
-	)
+	a.grpcSrv = grpc.NewServer(GRPCServerOptions(&a.cfg.Sender)...)
 
 	senderv1.RegisterSenderServiceServer(a.grpcSrv, svc)
 
