@@ -30,6 +30,7 @@ type Handlers struct {
 	ServiceLogs   *ServiceLogsHandler
 	Prefs         *PreferenceHandler
 	Instances     *PeerInstanceHandler
+	Breaker       *BreakerHandler
 }
 
 // Middlewares — общие middleware (auth-check, role-check, API token-check).
@@ -360,6 +361,18 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		// пауза/отключение §35.4 и replay §58). Чтение деградирует
 		// (kafka_available), мутации под глобальным CSRF и тем же rate-limit,
 		// что Kafka-экран (защита от peek-флуда брокеров).
+		// §81.4: circuit breaker узла — состояние и ручной сброс. Отдельная от
+		// async-queue группа намеренно: та висит под KafkaRateLimit и семантически
+		// про очередь, а breaker есть и у sync-узла, где очереди нет вовсе.
+		// Чтение открыто всем ролям (наблюдателю тоже нужно понимать, почему узел
+		// молчит), сброс — manager+, как пауза и очистка очереди. Отдельный
+		// rate-limit не вводится: чтение — один HMGET, а от злоупотребления сбросом
+		// защищают роль и запись в аудит. POST покрыт глобальным CSRF-check'ом.
+		if h.Breaker != nil {
+			authed.GET("/nodes/:id/breaker", h.Breaker.State)
+			authedManager.POST("/nodes/:id/breaker/reset", h.Breaker.Reset)
+		}
+
 		if h.AsyncQueue != nil {
 			aq := authedManager.Group("/nodes/:id/async-queue")
 			if mw.KafkaRateLimit != nil {

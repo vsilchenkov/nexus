@@ -616,6 +616,21 @@ func (a *App) Start(ctx context.Context) error {
 	)
 	asyncQueueHandler := httpadapter.NewAsyncQueueHandler(asyncQueueUC, a.logger)
 
+	// §81.4: состояние и ручной сброс circuit breaker'а узла. Оба порта живут в
+	// Redis, поэтому без него usecase отвечает «недоступно», а карточка в UI
+	// прячется. Типы переменных — интерфейсы: typed-nil в non-nil интерфейсе дал
+	// бы панику вместо честной деградации (та же грабля, что в §64.4).
+	var (
+		nodeBreaker    webport.NodeBreaker
+		statusResetter webport.NodeStatusResetter
+	)
+	if a.redis != nil {
+		nodeBreaker = rediscache.NewNodeBreakerRedis(a.redis, a.logger)
+		statusResetter = rediscache.NewNodeStatusReaderRedis(a.redis, a.logger)
+	}
+	breakerHandler := httpadapter.NewBreakerHandler(
+		usecase.NewNodeBreakerUsecase(nodeBreaker, statusResetter, nodeRepo, auditUC, a.logger), a.logger)
+
 	mw := httpadapter.Middlewares{
 		APITokenAuth:   httpadapter.APITokenAuthMiddleware(tokenUC, rl, a.cfg.Web.APITokenRateLimitPerMin, a.logger),
 		SessionAuth:    httpadapter.AuthMiddleware(authUC, &a.cfg.Web),
@@ -645,6 +660,7 @@ func (a *App) Start(ctx context.Context) error {
 		RequestField:  requestFieldHandler,
 		RMQTest:       rmqTestHandler,
 		Instances:     peerInstanceHandler,
+		Breaker:       breakerHandler,
 		Kafka:         kafkaHandler,
 		AsyncQueue:    asyncQueueHandler,
 		ServiceLogs:   serviceLogsHandler,

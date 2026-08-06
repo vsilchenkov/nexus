@@ -34,3 +34,12 @@ const (
 	// В отличие от предыдущего это счёт к приёмнику: он не уложился в срок.
 	ReasonUpstreamTimeout = "upstream_timeout"
 )
+
+// Состояния circuit breaker'а узла для представления наружу (§81.4).
+// Кодировка совпадает с той, что хранит platform/circuitbreaker: одна строка на
+// весь путь «Sender записал → Web показал», без перевода в промежуточных слоях.
+const (
+	BreakerStateClosed   = "closed"
+	BreakerStateOpen     = "open"
+	BreakerStateHalfOpen = "half_open"
+)

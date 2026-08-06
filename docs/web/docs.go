@@ -3188,6 +3188,98 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/nodes/{id}/breaker": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Открыта ли защита узла, сколько отказов подряд насчитано, когда она открылась и сколько осталось до пробного запроса. Доступно всем ролям: понимать, почему узел молчит, нужно и наблюдателю. available=false — Redis не сконфигурирован, защиты в инсталляции нет.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "nodes"
+                ],
+                "summary": "Состояние circuit breaker'а узла (§81.4).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.breakerStateDTO"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{id}/breaker/reset": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Возвращает узлу полный бюджет попыток немедленно, не дожидаясь паузы, и снимает персистентный бейдж «Down» (§52). Идемпотентно: сброс закрытой защиты — не ошибка. Действие пишется в аудит (node.breaker_reset). Требует роль manager+.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "nodes"
+                ],
+                "summary": "Снять блокировку circuit breaker'а узла вручную (§81.4.2).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.breakerResetDTO"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/{id}/ch-schema/apply": {
             "post": {
                 "security": [
@@ -5676,6 +5768,17 @@ const docTemplate = `{
                         "basic_from_request"
                     ]
                 },
+                "circuit_breaker_cooldown_sec": {
+                    "type": "integer",
+                    "maximum": 3600,
+                    "minimum": 0
+                },
+                "circuit_breaker_threshold": {
+                    "description": "§81.3: политика circuit breaker'а узла. 0/отсутствие = «как в конфигурации».",
+                    "type": "integer",
+                    "maximum": 100,
+                    "minimum": 0
+                },
                 "clickhouse_retention_days": {
                     "type": "integer",
                     "maximum": 3650,
@@ -6475,6 +6578,12 @@ const docTemplate = `{
                 "auth_type": {
                     "type": "string"
                 },
+                "circuit_breaker_cooldown_sec": {
+                    "type": "integer"
+                },
+                "circuit_breaker_threshold": {
+                    "type": "integer"
+                },
                 "clickhouse_retention_days": {
                     "type": "integer"
                 },
@@ -6922,6 +7031,17 @@ const docTemplate = `{
                         "basic_from_request"
                     ]
                 },
+                "circuit_breaker_cooldown_sec": {
+                    "type": "integer",
+                    "maximum": 3600,
+                    "minimum": 0
+                },
+                "circuit_breaker_threshold": {
+                    "description": "§81.3: политика circuit breaker'а узла. 0/отсутствие = «как в конфигурации».",
+                    "type": "integer",
+                    "maximum": 100,
+                    "minimum": 0
+                },
                 "clickhouse_retention_days": {
                     "type": "integer",
                     "maximum": 3650,
@@ -7249,6 +7369,50 @@ const docTemplate = `{
                 },
                 "user_login": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.breakerResetDTO": {
+            "type": "object",
+            "properties": {
+                "node_status_cleared": {
+                    "type": "boolean"
+                },
+                "previous_failures": {
+                    "type": "integer"
+                },
+                "previous_state": {
+                    "type": "string"
+                },
+                "was_open": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.breakerStateDTO": {
+            "type": "object",
+            "properties": {
+                "available": {
+                    "type": "boolean"
+                },
+                "exists": {
+                    "type": "boolean"
+                },
+                "failures": {
+                    "type": "integer"
+                },
+                "opened_at": {
+                    "type": "string"
+                },
+                "retry_after_ms": {
+                    "type": "integer"
+                },
+                "state": {
+                    "description": "closed | open | half_open",
+                    "type": "string"
+                },
+                "threshold": {
+                    "type": "integer"
                 }
             }
         },

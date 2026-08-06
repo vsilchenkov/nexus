@@ -53,6 +53,13 @@ const (
 	// §34.4: очистка/удаление сообщений async-очереди Kafka.
 	ActionAsyncQueuePurge = "async_queue.purge"
 
+	// §81.4.2: ручной сброс circuit breaker'а узла (снимает и персистентный
+	// бейдж «Down» §52). Отдельное действие, а не разновидность purge: фильтр и
+	// CSV-экспорт журнала аудита работают по action, и по вложенному полю «кто
+	// снимал защиту» было бы не найти. К тому же breaker есть и у sync-узла,
+	// где очереди нет вовсе.
+	ActionNodeBreakerReset = "node.breaker_reset"
+
 	ActionAppSettingsUpdate = "app_settings.update"
 
 	ActionCHTemplateCreate = "ch_template.create"
