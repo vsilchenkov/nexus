@@ -38,6 +38,30 @@ const (
 	StateHalfOpen State = "half_open"
 )
 
+// keyPrefix/keyTTL — формат ключа и его время жизни.
+const (
+	keyPrefix = "circuit:"
+	keyTTL    = 10 * time.Minute
+)
+
+// Поля hash'а. Неэкспортные: кодировка — внутреннее дело пакета, наружу она
+// выходит только типизированным Snapshot (см. admin.go).
+const (
+	fState     = "state"
+	fFailures  = "failures"
+	fOpenedAt  = "opened_at" // unix nanoseconds
+	fProbe     = "probe"     // счётчик пробных запросов в half_open
+	fThreshold = "threshold" // §81.3: политика, применённая при открытии
+	fCooldown  = "cooldown_ns"
+)
+
+// Key возвращает Redis-ключ состояния breaker'а узла (§81.1).
+//
+// Экспортно по той же причине, что и nodestatus.Key: состояние читает и
+// сбрасывает ДРУГОЙ процесс (Web), и формат ключа обязан быть один на всех, а
+// не продублирован литералом в каждом пакете.
+func Key(nodeKey string) string { return keyPrefix + nodeKey }
+
 // allowProbeScript — атомарная часть Allow для состояний open/half_open.
 // KEYS[1] — hash ключа; ARGV[1] — now (unix ns); ARGV[2] — cooldown (ns).
 // Возвращает 1 (пропустить запрос) или 0 (отбросить).
@@ -76,8 +100,8 @@ func New(client *goredis.Client, threshold int, cooldown time.Duration) *Breaker
 // open + cooldown ещё не истёк → false; cooldown истёк → ровно один
 // запрос проходит пробным (half_open), остальные ждут его результата.
 func (b *Breaker) Allow(ctx context.Context, key string) (bool, error) {
-	k := "circuit:" + key
-	state, err := b.client.HGet(ctx, k, "state").Result()
+	k := Key(key)
+	state, err := b.client.HGet(ctx, k, fState).Result()
 	if err != nil {
 		if err == goredis.Nil {
 			return true, nil
@@ -99,32 +123,39 @@ func (b *Breaker) Allow(ctx context.Context, key string) (bool, error) {
 
 // RecordSuccess сбрасывает счётчик ошибок и устанавливает closed.
 func (b *Breaker) RecordSuccess(ctx context.Context, key string) error {
-	k := "circuit:" + key
+	k := Key(key)
 	pipe := b.client.TxPipeline()
-	pipe.HSet(ctx, k, "state", string(StateClosed), "failures", 0)
-	pipe.HDel(ctx, k, "opened_at", "probe")
-	pipe.Expire(ctx, k, 10*time.Minute) // авто-чистка
+	pipe.HSet(ctx, k, fState, string(StateClosed), fFailures, 0)
+	pipe.HDel(ctx, k, fOpenedAt, fProbe)
+	pipe.Expire(ctx, k, keyTTL) // авто-чистка
 	_, err := pipe.Exec(ctx)
 	return err
 }
 
 // RecordFailure инкрементирует счётчик, при достижении порога — open.
+//
+// Вместе со счётчиком в hash пишется применённая политика (threshold,
+// cooldown) — §81.3. Иначе UI не сможет показать «3 из 5» и обратный отсчёт до
+// пробы: поля Breaker'а неэкспортны, читающая сторона живёт в другом процессе,
+// а после переопределения политики на узле глобальная конфигурация перестаёт
+// быть источником истины. Цена нулевая: путь редкий, поля дописываются в уже
+// существующий pipeline.
 func (b *Breaker) RecordFailure(ctx context.Context, key string) error {
-	k := "circuit:" + key
-	failures, err := b.client.HIncrBy(ctx, k, "failures", 1).Result()
+	k := Key(key)
+	failures, err := b.client.HIncrBy(ctx, k, fFailures, 1).Result()
 	if err != nil {
 		return err
 	}
-	_ = b.client.Expire(ctx, k, 10*time.Minute).Err()
+	pipe := b.client.TxPipeline()
+	pipe.HSet(ctx, k, fThreshold, b.threshold, fCooldown, b.cooldown.Nanoseconds())
 	if int(failures) >= b.threshold {
-		ts := strconv.FormatInt(time.Now().UnixNano(), 10)
-		pipe := b.client.TxPipeline()
-		pipe.HSet(ctx, k, "state", string(StateOpen), "opened_at", ts)
-		pipe.HDel(ctx, k, "probe")
-		_, err := pipe.Exec(ctx)
-		return err
+		pipe.HSet(ctx, k, fState, string(StateOpen),
+			fOpenedAt, strconv.FormatInt(time.Now().UnixNano(), 10))
+		pipe.HDel(ctx, k, fProbe)
 	}
-	return nil
+	pipe.Expire(ctx, k, keyTTL)
+	_, err = pipe.Exec(ctx)
+	return err
 }
 
 // IsOpen — read-only проверка: breaker открыт И cooldown ещё НЕ истёк
@@ -134,8 +165,8 @@ func (b *Breaker) RecordFailure(ctx context.Context, key string) error {
 // и не меняет состояние. Используется DLQ-репроцессором (§36.3 шаг5), чтобы не
 // плодить fast-fail-churn, пока адрес мёртв.
 func (b *Breaker) IsOpen(ctx context.Context, key string) (bool, error) {
-	k := "circuit:" + key
-	vals, err := b.client.HMGet(ctx, k, "state", "opened_at").Result()
+	k := Key(key)
+	vals, err := b.client.HMGet(ctx, k, fState, fOpenedAt).Result()
 	if err != nil {
 		// fail-open: при ошибке Redis не считаем breaker открытым (§9.4).
 		return false, fmt.Errorf("hmget: %w", err)
@@ -151,7 +182,7 @@ func (b *Breaker) IsOpen(ctx context.Context, key string) (bool, error) {
 
 // State возвращает текущее состояние (для диагностики/UI).
 func (b *Breaker) State(ctx context.Context, key string) (State, error) {
-	v, err := b.client.HGet(ctx, "circuit:"+key, "state").Result()
+	v, err := b.client.HGet(ctx, Key(key), fState).Result()
 	if err != nil {
 		if err == goredis.Nil {
 			return StateClosed, nil

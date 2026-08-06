@@ -268,3 +268,52 @@ func TestCircuitBreaker_StateOnUnknownKey(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, circuitbreaker.StateClosed, st)
 }
+
+// TestCircuitBreaker_AdminResetE2E — §81.4: оператор снимает блокировку вручную.
+// На реальном Redis, потому что здесь важны настоящие pipeline/PTTL, а не их
+// эмуляция: Snapshot и Reset выполняются одной транзакцией.
+func TestCircuitBreaker_AdminResetE2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	client, cleanup := startRedis(t, ctx)
+	defer cleanup()
+
+	const (
+		threshold = 3
+		cooldown  = 30 * time.Second // заведомо не истечёт за время теста
+	)
+	cb := circuitbreaker.New(client, threshold, cooldown)
+	adm := circuitbreaker.NewAdmin(client)
+
+	for range threshold {
+		require.NoError(t, cb.RecordFailure(ctx, "node-admin"))
+	}
+	ok, err := cb.Allow(ctx, "node-admin")
+	require.NoError(t, err)
+	require.False(t, ok, "предусловие: breaker открыт")
+
+	// Web читает состояние, записанное Sender'ом: тот же ключ, та же политика.
+	snap, err := adm.Snapshot(ctx, "node-admin")
+	require.NoError(t, err)
+	assert.True(t, snap.Exists)
+	assert.Equal(t, circuitbreaker.StateOpen, snap.State)
+	assert.Equal(t, threshold, snap.Failures)
+	assert.Equal(t, threshold, snap.Threshold)
+	assert.Equal(t, cooldown, snap.Cooldown)
+	assert.Greater(t, snap.RetryAfter, time.Duration(0))
+	assert.Greater(t, snap.TTL, time.Duration(0), "ключ живёт под TTL")
+
+	before, err := adm.Reset(ctx, "node-admin")
+	require.NoError(t, err)
+	assert.Equal(t, circuitbreaker.StateOpen, before.State, "возвращается состояние ДО сброса")
+
+	ok, err = cb.Allow(ctx, "node-admin")
+	require.NoError(t, err)
+	assert.True(t, ok, "доставка возобновляется немедленно, не дожидаясь cooldown")
+
+	after, err := adm.Snapshot(ctx, "node-admin")
+	require.NoError(t, err)
+	assert.False(t, after.Exists)
+	assert.Equal(t, circuitbreaker.StateClosed, after.State)
+}
