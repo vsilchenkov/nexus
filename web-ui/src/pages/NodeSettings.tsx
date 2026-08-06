@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, Link, Navigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -15,6 +15,9 @@ import {
   MessageSquare,
   RefreshCw,
   ArrowRightLeft,
+  Reply,
+  HelpCircle,
+  Download,
 } from "lucide-react";
 
 import {
@@ -23,6 +26,7 @@ import {
   type Node,
   type CHTemplate,
   type CHTableVerifyResult,
+  type AckPreviewResult,
   type HostAllowlistEntry,
 } from "../api/client";
 import { useNodeUrlBuilder } from "../lib/nodeUrl";
@@ -43,6 +47,7 @@ import { HeadersField } from "../components/node/HeadersField";
 import { RequestFieldField } from "../components/node/RequestFieldField";
 import { RabbitMQSection, type RMQSetter } from "../components/node/RabbitMQSection";
 import { ShareNodeButton } from "../components/node/ShareNodeButton";
+import { AckHelpDialog } from "../components/node/AckHelpDialog";
 import { MoveNodeDialog } from "../components/node/MoveNodeDialog";
 import {
   Button,
@@ -125,7 +130,19 @@ type Form = {
   pull_prefetch: number;
   // §29: произвольный комментарий-описание узла.
   comment: string;
+  // §83: шаблон ответа приёма. В форме поля лежат плоско (спека собирается в
+  // buildPayload): так работают контролы и подсветка ошибок, как у остальных.
+  ack_enabled: boolean;
+  ack_content_type: "application/json" | "text/plain";
+  ack_status: number; // 0 — «как сейчас»
+  ack_on_error: "default" | "error";
+  ack_body: string;
 };
+
+// §83: примеры в полях карточки «Ответ при постановке в очередь». Вынесены в
+// константы: внутри JSX литерал с ${...} превратился бы в шаблонную строку.
+const ACK_PLACEHOLDER = '{"confirmedLogId": "${ body.logs[*].logId | max }"}';
+const ACK_SAMPLE_PLACEHOLDER = '{"logs":[{"logId":79154}]}';
 
 const emptyForm: Form = {
   path: "",
@@ -182,6 +199,12 @@ const emptyForm: Form = {
   pull_batch_size: 100,
   pull_prefetch: 100,
   comment: "",
+  // §83: по умолчанию шаблон выключен — узел отвечает как раньше.
+  ack_enabled: false,
+  ack_content_type: "application/json",
+  ack_status: 0,
+  ack_on_error: "default",
+  ack_body: "",
 };
 
 export default function NodeSettings() {
@@ -256,11 +279,27 @@ export default function NodeSettings() {
   // Форма заполняется серверными данными ОДИН раз — при первой загрузке узла.
   // Иначе любой фоновый рефетч (refetchOnWindowFocus: ушёл в другое окно и
   // вернулся; invalidate при смене команды) затирал несохранённые правки.
+  // §83: локальное состояние карточки ответа приёма.
+  const [showAckHelp, setShowAckHelp] = useState(false);
+  const [ackSample, setAckSample] = useState("");
+  const [lastLogBodyError, setLastLogBodyError] = useState<string | null>(null);
+  const [ackPreviewError, setAckPreviewError] = useState<string | null>(null);
+
   const filledRef = useRef(false);
   useEffect(() => {
     if (existing.data && !filledRef.current) {
       filledRef.current = true;
-      setForm({ ...emptyForm, ...(existing.data as unknown as Form) });
+      // §83: спека приходит вложенным объектом, а в форме поля плоские.
+      const spec = existing.data.async_ack_spec;
+      setForm({
+        ...emptyForm,
+        ...(existing.data as unknown as Form),
+        ack_enabled: !!spec,
+        ack_content_type: spec?.content_type ?? emptyForm.ack_content_type,
+        ack_status: spec?.status ?? 0,
+        ack_on_error: spec?.on_error ?? emptyForm.ack_on_error,
+        ack_body: spec?.body ?? "",
+      });
     }
   }, [existing.data]);
 
@@ -326,6 +365,23 @@ export default function NodeSettings() {
     // §64: шаблон и внешняя таблица взаимоисключающи (бэкенд отвергает пару).
     // Страховка на случай, если галка осталась от прежнего выбора «ручная».
     if (form.clickhouse_template_id) p.external_table = false;
+    // §83: плоские поля формы → спека; выключенный переключатель шлёт null,
+    // то есть «отвечать как раньше». Черновик шаблона при этом не сохраняется:
+    // на сервере хранится либо рабочая спека, либо ничего.
+    delete p.ack_enabled;
+    delete p.ack_content_type;
+    delete p.ack_status;
+    delete p.ack_on_error;
+    delete p.ack_body;
+    p.async_ack_spec = form.ack_enabled
+      ? {
+          version: 1,
+          status: form.ack_status,
+          content_type: form.ack_content_type,
+          body: form.ack_body,
+          on_error: form.ack_on_error,
+        }
+      : null;
     return p;
   }
 
@@ -353,6 +409,72 @@ export default function NodeSettings() {
     },
     onMutate: () => setVerifyError(null),
   });
+
+  // §83: предпросмотр ответа. Провал подстановки приходит с HTTP 200 и
+  // ok=false — это результат проверки; ошибкой считается только отказ вызова
+  // (невалидная спека → 400 с кодом i18n у поля).
+  const ackPreview = useMutation({
+    mutationFn: () =>
+      api.post<AckPreviewResult>("/api/nodes/ack-preview", {
+        spec: {
+          version: 1,
+          status: form.ack_status,
+          content_type: form.ack_content_type,
+          body: form.ack_body,
+          on_error: form.ack_on_error,
+        },
+        sample_body: ackSample,
+      }),
+    onMutate: () => setAckPreviewError(null),
+    onError: (e: { response?: { data?: { code?: string; error?: string } } }) => {
+      const d = e?.response?.data;
+      setAckPreviewError(d?.code ? t(d.code) : (d?.error ?? t("common.error")));
+    },
+  });
+
+  // §83: подставить последнее реальное тело запроса узла из логов. Чисто
+  // фронтовая операция поверх существующих эндпоинтов логов — нового API не
+  // требуется. Тело в логе ЗАМАСКИРОВАНО, о чём предупреждает подсказка поля.
+  const lastLogBody = useMutation({
+    mutationFn: async () => {
+      const list = await api.get<{ items?: Array<{ id?: string; ID?: string }> }>(
+        `/api/nodes/${id}/logs`,
+        { params: { limit: 1 } },
+      );
+      const first = list.items?.[0];
+      const logId = first?.id ?? first?.ID;
+      if (!logId) throw new Error("empty");
+      const body = await api.get<{ body?: string }>(`/api/nodes/${id}/log/${logId}/body`, {
+        params: { part: "request" },
+      });
+      return body.body ?? "";
+    },
+    onMutate: () => setLastLogBodyError(null),
+    onSuccess: (body) => {
+      if (body.trim() === "") {
+        setLastLogBodyError(t("node.ack.take_from_logs_empty"));
+        return;
+      }
+      setAckSample(body);
+      ackPreview.reset();
+    },
+    onError: () => setLastLogBodyError(t("node.ack.take_from_logs_empty")),
+  });
+
+  // §83: что показать под кнопкой «Проверить». Причина отказа переводится по
+  // замкнутому списку reason'ов; неизвестный код показываем как есть, чтобы
+  // новая причина на бэкенде не превращалась в пустое сообщение.
+  const ackPreviewMessage = useMemo(() => {
+    if (ackPreviewError) return { ok: false, head: ackPreviewError, body: "" };
+    const r = ackPreview.data;
+    if (!r) return null;
+    if (!r.ok) {
+      const reason = r.reason ? t(`node.ack.reason.${r.reason}`, { defaultValue: r.reason }) : "";
+      const where = r.placeholder ? ` — ${r.placeholder}` : "";
+      return { ok: false, head: `${reason}${where}`, body: "" };
+    }
+    return { ok: true, head: `${r.status} · ${r.content_type}`, body: r.body ?? "" };
+  }, [ackPreview.data, ackPreviewError, t]);
 
   const save = useMutation({
     mutationFn: async () => {
@@ -1004,6 +1126,163 @@ export default function NodeSettings() {
               )}
           </Card>
 
+          {/* §83: чем шина отвечает клиенту на приём запроса в очередь.
+              Скрыто у pull-узлов: у них входящего HTTP нет, отвечать некому. */}
+          {form.root_method !== "RabbitMQAsync" && (
+            <Card>
+              <div className="mb-3 flex items-center justify-between">
+                <SectionHead icon={<Reply className="h-4 w-4" />} className="mb-0">
+                  {t("node.form.ack")}
+                  <button
+                    type="button"
+                    onClick={() => setShowAckHelp(true)}
+                    className="ml-1.5 inline-flex text-fg-subtle hover:text-accent"
+                    aria-label={t("node.ack.help_open")}
+                    title={t("node.ack.help_open")}
+                  >
+                    <HelpCircle className="h-3.5 w-3.5" />
+                  </button>
+                </SectionHead>
+                <Toggle
+                  checked={form.ack_enabled}
+                  onChange={(v) => set("ack_enabled", v)}
+                  label={t("node.ack.enable")}
+                />
+              </div>
+
+              {!form.ack_enabled ? (
+                <p className="text-xs text-fg-subtle">{t("node.ack.disabled_hint")}</p>
+              ) : (
+                <>
+                  <p className="mb-3 text-xs text-warn">{t("node.ack.enable_warning")}</p>
+                  {form.root_method === "request" && (
+                    <p className="mb-3 text-xs text-fg-subtle">{t("node.ack.sync_note")}</p>
+                  )}
+
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <Field label={t("node.fields.ack_content_type")} help={t("node.help.ack_content_type")}>
+                      <Select
+                        value={form.ack_content_type}
+                        onChange={(e) =>
+                          set("ack_content_type", e.target.value as Form["ack_content_type"])
+                        }
+                      >
+                        <option value="application/json">application/json</option>
+                        <option value="text/plain">text/plain</option>
+                      </Select>
+                    </Field>
+                    <Field label={t("node.fields.ack_status")} help={t("node.help.ack_status")}>
+                      <Select
+                        value={String(form.ack_status)}
+                        onChange={(e) => set("ack_status", Number(e.target.value))}
+                      >
+                        <option value="0">{t("node.ack.status_as_is")}</option>
+                        <option value="200">200</option>
+                        <option value="201">201</option>
+                        <option value="202">202</option>
+                      </Select>
+                    </Field>
+                  </div>
+
+                  <Field
+                    label={t("node.fields.ack_on_error")}
+                    help={t("node.help.ack_on_error")}
+                    className="mt-3"
+                  >
+                    <Select
+                      value={form.ack_on_error}
+                      onChange={(e) => set("ack_on_error", e.target.value as Form["ack_on_error"])}
+                    >
+                      <option value="default">{t("node.ack.on_error_default")}</option>
+                      <option value="error">{t("node.ack.on_error_error")}</option>
+                    </Select>
+                  </Field>
+
+                  <Field
+                    label={t("node.fields.ack_body")}
+                    hint={t("node.ack.body_hint")}
+                    help={t("node.help.ack_body")}
+                    className="mt-3"
+                  >
+                    <Textarea
+                      rows={4}
+                      maxLength={8192}
+                      className={errCls("async_ack_spec")}
+                      value={form.ack_body}
+                      onChange={(e) => {
+                        set("ack_body", e.target.value);
+                        ackPreview.reset();
+                      }}
+                      placeholder={ACK_PLACEHOLDER}
+                    />
+                    {fieldErr("async_ack_spec")}
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-fg-subtle">
+                      <span className="font-mono">body.* query.* path.suffix nexus.id nexus.node</span>
+                      <span className="font-mono">max min first last count default(x)</span>
+                      <button
+                        type="button"
+                        onClick={() => setShowAckHelp(true)}
+                        className="text-accent hover:underline"
+                      >
+                        {t("node.ack.help_link")}
+                      </button>
+                    </div>
+                  </Field>
+
+                  {/* Предпросмотр: оператор видит точный ответ ДО сохранения.
+                      Провал подстановки приходит с HTTP 200 и ok=false — это
+                      результат проверки, а не ошибка запроса. */}
+                  <div className="mt-4 border-t border-line pt-3">
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <span className="text-xs text-fg-muted">{t("node.ack.sample_label")}</span>
+                      {!isNew && (
+                        <button
+                          type="button"
+                          onClick={() => lastLogBody.mutate()}
+                          disabled={lastLogBody.isPending}
+                          className="flex items-center gap-1.5 text-xs text-accent hover:underline disabled:opacity-60"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                          {lastLogBody.isPending ? t("common.loading") : t("node.ack.take_from_logs")}
+                        </button>
+                      )}
+                    </div>
+                    <Textarea
+                      rows={3}
+                      value={ackSample}
+                      onChange={(e) => {
+                        setAckSample(e.target.value);
+                        ackPreview.reset();
+                      }}
+                      placeholder={ACK_SAMPLE_PLACEHOLDER}
+                    />
+                    {lastLogBodyError && <p className="mt-1 text-xs text-err">{lastLogBodyError}</p>}
+                    <div className="mt-2 flex items-center gap-3">
+                      <Button
+                        type="button"
+                        variant="default"
+                        onClick={() => ackPreview.mutate()}
+                        disabled={ackPreview.isPending || form.ack_body.trim() === ""}
+                      >
+                        {ackPreview.isPending ? t("common.loading") : t("node.ack.preview_button")}
+                      </Button>
+                      {ackPreviewMessage && (
+                        <span className={ackPreviewMessage.ok ? "text-xs text-ok" : "text-xs text-err"}>
+                          {ackPreviewMessage.head}
+                        </span>
+                      )}
+                    </div>
+                    {ackPreviewMessage?.body && (
+                      <pre className="mt-2 overflow-x-auto rounded-md border border-line bg-app px-3 py-2 font-mono text-xs">
+                        {ackPreviewMessage.body}
+                      </pre>
+                    )}
+                  </div>
+                </>
+              )}
+            </Card>
+          )}
+
           <Card>
             <SectionHead icon={<List className="h-4 w-4" />}>
               {t("node.form.headers")}
@@ -1330,6 +1609,18 @@ export default function NodeSettings() {
       {/* §55.6: при редактировании поле кредов пустое по смыслу («оставить
           старое»), поэтому id обязателен — иначе реальный тест ушёл бы без
           авторизации. При создании (isNew) сохранённого конфига нет. */}
+      {/* §83: подробная справка по шаблону ответа. «Использовать» кладёт
+          рабочий пример прямо в поле — набирать синтаксис руками не нужно. */}
+      {showAckHelp && (
+        <AckHelpDialog
+          onClose={() => setShowAckHelp(false)}
+          onUse={(tmpl) => {
+            set("ack_body", tmpl);
+            ackPreview.reset();
+            setShowAckHelp(false);
+          }}
+        />
+      )}
       {showDryRun && (
         <DryRunDialog node={form} nodeId={id} onClose={() => setShowDryRun(false)} />
       )}

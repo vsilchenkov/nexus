@@ -131,6 +131,8 @@ export type Node = {
   circuit_breaker_cooldown_sec?: number;
   // §29: произвольный комментарий-описание узла.
   comment?: string;
+  // §83: шаблон ответа приёма. null/отсутствие — шина отвечает как раньше.
+  async_ack_spec?: AckSpec | null;
   // §27: RabbitMQAsync (пустые/нулевые для request/requestAsync).
   rmq_host?: string;
   rmq_port?: number;
@@ -149,6 +151,29 @@ export type Node = {
   // миграции 0026 (в UI показывается «—»).
   created_by?: string;
   updated_by?: string;
+};
+
+// §83: спека ответа приёма. status=0 — «как сейчас» (200, либо 202 у узла на
+// паузе); допустимы только 2xx. Пустой content_type/on_error бэкенд заполняет
+// дефолтами.
+export type AckSpec = {
+  version: number;
+  status?: number;
+  content_type: "application/json" | "text/plain";
+  body: string;
+  on_error: "default" | "error";
+};
+
+// §83: ответ POST /api/nodes/ack-preview. Провал подстановки приходит с
+// HTTP 200 и ok=false — это результат проверки, а не ошибка запроса.
+export type AckPreviewResult = {
+  ok: boolean;
+  status?: number;
+  content_type?: string;
+  body?: string;
+  reason?: string;
+  placeholder?: string;
+  message?: string;
 };
 
 // §27: ответ POST /api/nodes/test-rmq.
