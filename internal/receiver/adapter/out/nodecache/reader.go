@@ -19,6 +19,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 
 	"nexus/internal/domain"
+	"nexus/internal/domain/ackspec"
 	"nexus/internal/platform/crypto"
 	"nexus/internal/platform/logging"
 	"nexus/internal/platform/safego"
@@ -192,7 +193,8 @@ SELECT
 	n.path_passthrough,
 	n.created_at, n.updated_at,
 	n.incoming_method, n.outgoing_method,
-	n.circuit_breaker_threshold, n.circuit_breaker_cooldown_sec
+	n.circuit_breaker_threshold, n.circuit_breaker_cooldown_sec,
+	n.async_ack_spec
 FROM nodes n
 JOIN teams t ON t.id = n.team_id
 WHERE t.slug = $1 AND n.path = $2`
@@ -207,6 +209,8 @@ func (r *Reader) getFromPg(ctx context.Context, teamSlug, path string) (*domain.
 	var created, updated time.Time
 	// §81.3: NULL = «политика из конфигурации», поэтому указатели.
 	var cbThreshold, cbCooldown *int32
+	// §83: NULL = «отвечать как раньше».
+	var ackRaw []byte
 
 	err := row.Scan(
 		&n.ID, &n.Path, &rootMethod,
@@ -223,12 +227,31 @@ func (r *Reader) getFromPg(ctx context.Context, teamSlug, path string) (*domain.
 		&created, &updated,
 		&incomingMethod, &outgoingMethod,
 		&cbThreshold, &cbCooldown,
+		&ackRaw,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrNodeNotFound
 		}
 		return nil, fmt.Errorf("scan node: %w", err)
+	}
+
+	// §83: битая спека в колонке НЕ роняет резолв узла — иначе один узел с
+	// кривым JSON (ручная правка SQL на бою) остановил бы весь свой трафик.
+	// Деградируем до прежнего ответа {"result":true,"id":…} и пишем warn: это
+	// повод чинить настройку, а не наблюдать. В Web та же ситуация — ошибка
+	// чтения: там её видит оператор в интерфейсе.
+	if len(ackRaw) > 0 {
+		var spec ackspec.Spec
+		if uerr := json.Unmarshal(ackRaw, &spec); uerr != nil {
+			r.logger.Warn("node async_ack_spec is not valid json, ignoring",
+				r.logger.Str("op", "nodecache.getFromPg"),
+				r.logger.Str("team", teamSlug),
+				r.logger.Str("path", path),
+				r.logger.Err(uerr))
+		} else {
+			n.AsyncAck = &spec
+		}
 	}
 
 	// §81.3: NULL в БД → 0 в домене → «использовать глобальную политику».
