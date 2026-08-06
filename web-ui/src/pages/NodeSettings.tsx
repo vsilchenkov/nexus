@@ -38,6 +38,7 @@ import { parseNumInput } from "../lib/numField";
 import { validateNodeForm } from "../lib/nodeValidation";
 import { chSchemaChangeWontApply, chSyncFormDirty } from "../lib/chSchema";
 import { buildVerifyMessage } from "../lib/chTableVerify";
+import { ackFormDefaults, ackFormFromSpec, ackSpecFromForm } from "../lib/ackSpec";
 import { useConfirm } from "../lib/confirm";
 import { DryRunDialog } from "../components/DryRunDialog";
 import { CHSchemaSyncDialog } from "../components/CHSchemaSyncDialog";
@@ -200,11 +201,7 @@ const emptyForm: Form = {
   pull_prefetch: 100,
   comment: "",
   // §83: по умолчанию шаблон выключен — узел отвечает как раньше.
-  ack_enabled: false,
-  ack_content_type: "application/json",
-  ack_status: 0,
-  ack_on_error: "default",
-  ack_body: "",
+  ...ackFormDefaults,
 };
 
 export default function NodeSettings() {
@@ -290,15 +287,10 @@ export default function NodeSettings() {
     if (existing.data && !filledRef.current) {
       filledRef.current = true;
       // §83: спека приходит вложенным объектом, а в форме поля плоские.
-      const spec = existing.data.async_ack_spec;
       setForm({
         ...emptyForm,
         ...(existing.data as unknown as Form),
-        ack_enabled: !!spec,
-        ack_content_type: spec?.content_type ?? emptyForm.ack_content_type,
-        ack_status: spec?.status ?? 0,
-        ack_on_error: spec?.on_error ?? emptyForm.ack_on_error,
-        ack_body: spec?.body ?? "",
+        ...ackFormFromSpec(existing.data.async_ack_spec),
       });
     }
   }, [existing.data]);
@@ -373,15 +365,7 @@ export default function NodeSettings() {
     delete p.ack_status;
     delete p.ack_on_error;
     delete p.ack_body;
-    p.async_ack_spec = form.ack_enabled
-      ? {
-          version: 1,
-          status: form.ack_status,
-          content_type: form.ack_content_type,
-          body: form.ack_body,
-          on_error: form.ack_on_error,
-        }
-      : null;
+    p.async_ack_spec = ackSpecFromForm(form);
     return p;
   }
 
