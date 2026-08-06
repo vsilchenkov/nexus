@@ -101,7 +101,7 @@ func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 		// §41/§52: исход последнего вызова узла (in-memory гаудж).
 		// §81.2: обрыв вызывающей стороной исходом узла НЕ считается — он о
 		// здоровье приёмника не говорит ничего.
-		if !out.CallerGone {
+		if !out.ParentGone {
 			s.metrics.SetNodeLastRequestOutcome(req.GetNodePath(), outcome)
 		}
 	}
@@ -109,11 +109,11 @@ func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 	// §81.2: контекст отвязан — на sync-пути он умирает вместе с ушедшим
 	// клиентом, а go-redis отбрасывает команду с отменённым контекстом ещё в
 	// пуле: бейдж узла молча не обновлялся именно тогда, когда это важнее всего.
-	if s.nodeStatus != nil && !out.CallerGone {
+	if s.nodeStatus != nil && !out.ParentGone {
 		statusCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), nodeStatusWriteTimeout)
 		s.nodeStatus.SetLastOutcome(statusCtx, req.GetNodePath(), outcome)
 		cancel()
-	} else if out.CallerGone {
+	} else if out.ParentGone {
 		// §51.9: тихий пропуск — иначе «почему узел не покраснел» не разобрать.
 		s.logger.Debug("send: caller gone, node outcome not updated",
 			s.logger.Str("id", req.GetId()),

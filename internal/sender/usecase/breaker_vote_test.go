@@ -54,7 +54,7 @@ func (s *stubDeadlineCaller) Do(_ context.Context, req *port.HTTPRequest) (*port
 	return nil, fmt.Errorf("Post %q: %w", url, context.DeadlineExceeded)
 }
 
-func TestSend_CallerGone_BreakerNotTouched(t *testing.T) {
+func TestSend_ParentGone_BreakerNotTouched(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -72,7 +72,7 @@ func TestSend_CallerGone_BreakerNotTouched(t *testing.T) {
 
 // Прямой регресс на боевой инцидент: пять обрывов подряд не должны открывать
 // breaker живого приёмника.
-func TestSend_CallerGoneRepeatedly_NeverOpensBreaker(t *testing.T) {
+func TestSend_ParentGoneRepeatedly_NeverOpensBreaker(t *testing.T) {
 	t.Parallel()
 
 	cb := &stubBreaker{allow: true}
@@ -165,7 +165,7 @@ func TestSend_Bookkeeping_SuccessAlsoOnLiveContext(t *testing.T) {
 
 // §68/§81.2.1: в журнал не должен попадать адрес узла — у динамического URL его
 // хвост собран из входящего запроса.
-func TestSend_CallerGone_ReasonCarriesNoURL(t *testing.T) {
+func TestSend_ParentGone_ReasonCarriesNoURL(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -263,7 +263,7 @@ func TestSend_NoNodePolicy_PassesZeroes(t *testing.T) {
 // а бейдж §52 живёт 30 суток и снимается только следующим фактическим вызовом —
 // узел, чьи клиенты не дожидаются ответа, горел бы красным вечно. До §81.2 эта
 // запись просто не доезжала до Redis (мёртвый контекст), и дефект был не виден.
-func TestSend_CallerGone_MarksOutputSoNodeIsNotPaintedDown(t *testing.T) {
+func TestSend_ParentGone_MarksOutputSoNodeIsNotPaintedDown(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -274,13 +274,13 @@ func TestSend_CallerGone_MarksOutputSoNodeIsNotPaintedDown(t *testing.T) {
 
 	out := uc.Send(ctx, baseInput())
 
-	assert.True(t, out.CallerGone, "адаптеры по этому признаку пропускают запись исхода узла")
+	assert.True(t, out.ParentGone, "адаптеры по этому признаку пропускают запись исхода узла")
 	assert.EqualValues(t, 0, out.StatusCode, "статуса нет — приёмник не ответил")
 }
 
 // А вот настоящий отказ обязан признак НЕ ставить, иначе мы перестанем красить
 // действительно мёртвые узлы.
-func TestSend_RealFailure_DoesNotMarkCallerGone(t *testing.T) {
+func TestSend_RealFailure_DoesNotMarkParentGone(t *testing.T) {
 	t.Parallel()
 
 	uc := NewSendUsecase(&stubDeadlineCaller{}, &stubLogWriter{},
@@ -288,5 +288,5 @@ func TestSend_RealFailure_DoesNotMarkCallerGone(t *testing.T) {
 
 	out := uc.Send(context.Background(), baseInput())
 
-	assert.False(t, out.CallerGone, "наш таймаут — счёт приёмнику, узел красим")
+	assert.False(t, out.ParentGone, "наш таймаут — счёт приёмнику, узел красим")
 }
