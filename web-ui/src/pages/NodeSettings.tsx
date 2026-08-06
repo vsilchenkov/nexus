@@ -421,17 +421,18 @@ export default function NodeSettings() {
   // требуется. Тело в логе ЗАМАСКИРОВАНО, о чём предупреждает подсказка поля.
   const lastLogBody = useMutation({
     mutationFn: async () => {
-      const list = await api.get<{ items?: Array<{ id?: string; ID?: string }> }>(
+      // Контракт эндпоинтов логов: список отдаёт items[].id, а тело приходит
+      // полем chunk при which=request (не part/body — на этом легко ошибиться).
+      const list = await api.get<{ items?: Array<{ id: string; request?: string }> }>(
         `/api/nodes/${id}/logs`,
         { params: { limit: 1 } },
       );
-      const first = list.items?.[0];
-      const logId = first?.id ?? first?.ID;
+      const logId = list.items?.[0]?.id;
       if (!logId) throw new Error("empty");
-      const body = await api.get<{ body?: string }>(`/api/nodes/${id}/log/${logId}/body`, {
-        params: { part: "request" },
+      const body = await api.get<{ chunk?: string }>(`/api/nodes/${id}/log/${logId}/body`, {
+        params: { which: "request", limit: 8192 },
       });
-      return body.body ?? "";
+      return body.chunk ?? "";
     },
     onMutate: () => setLastLogBodyError(null),
     onSuccess: (body) => {
