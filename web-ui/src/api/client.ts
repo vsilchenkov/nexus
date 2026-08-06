@@ -126,6 +126,9 @@ export type Node = {
   // §36: авто-репроцессор DLQ — TTL повтора и минимальная задержка между повторами (сек).
   dlq_ttl_seconds?: number;
   dlq_retry_delay_seconds?: number;
+  // §81.3: политика защиты узла. 0/отсутствие = «как в конфигурации сервиса».
+  circuit_breaker_threshold?: number;
+  circuit_breaker_cooldown_sec?: number;
   // §29: произвольный комментарий-описание узла.
   comment?: string;
   // §27: RabbitMQAsync (пустые/нулевые для request/requestAsync).

@@ -23,6 +23,9 @@ function base(): NodeFormLimits {
     retry_backoff_ms: 1000,
     dlq_ttl_seconds: 86400,
     dlq_retry_delay_seconds: 300,
+    // §81.3: 0 = «как в конфигурации» (узел политику не переопределяет).
+    circuit_breaker_threshold: 0,
+    circuit_breaker_cooldown_sec: 0,
     logging_enabled: true,
     max_body_size_enabled: false,
     max_body_size: 0,
@@ -247,5 +250,35 @@ describe("validateNodeForm — §42 формат имени CH-таблицы", 
       max_body_size: 0,
     });
     expect(v?.code).toBe("node.validation.max_body_size_required");
+  });
+});
+
+// §81.3: политика защиты узла. Ноль означает «как в конфигурации», поэтому
+// проверяются только заданные значения — границы зеркалят domain.Node.Validate.
+describe("политика circuit breaker", () => {
+  it("пустая политика (0) валидна — узел не переопределяет конфигурацию", () => {
+    const f = base();
+    f.circuit_breaker_threshold = 0;
+    f.circuit_breaker_cooldown_sec = 0;
+    expect(validateNodeForm(f)).toBeNull();
+  });
+
+  it("заданные значения в границах проходят", () => {
+    const f = base();
+    f.circuit_breaker_threshold = 2;
+    f.circuit_breaker_cooldown_sec = 5;
+    expect(validateNodeForm(f)).toBeNull();
+  });
+
+  it("порог выше 100 отклоняется", () => {
+    const f = base();
+    f.circuit_breaker_threshold = 101;
+    expect(validateNodeForm(f)?.field).toBe("circuit_breaker_threshold");
+  });
+
+  it("пауза дольше часа отклоняется", () => {
+    const f = base();
+    f.circuit_breaker_cooldown_sec = 3601;
+    expect(validateNodeForm(f)?.field).toBe("circuit_breaker_cooldown_sec");
   });
 });
