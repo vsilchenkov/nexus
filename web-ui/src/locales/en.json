@@ -353,6 +353,7 @@
       "body_hint": "${ ... } substitutions",
       "sample_label": "Sample request body",
       "take_from_logs": "Take the latest request from logs",
+      "take_from_logs_masked": "The body comes from the node journal, where sensitive values are already masked (***). That rarely matters for checking a template, but a substitution from a masked field will differ from the production response.",
       "take_from_logs_empty": "Could not take a body from logs: no records, or request body logging is off.",
       "preview_button": "Check",
       "reason": {

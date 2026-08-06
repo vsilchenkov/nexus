@@ -35,7 +35,8 @@ type Envelope struct {
 
 	// IngressMethod — §83.7: root_method узла в момент приёма. Отличает
 	// сообщение async-приёма от сообщения sync-узла, попавшего в очередь по
-	// §3.6 (пауза). Держать синхронным с Receiver-копией Envelope.
+	// §3.6 (пауза). Пусто у конвертов до §83 и у pull-узлов §27 — они
+	// доставляются как раньше. Держать синхронным с Receiver-копией Envelope.
 	IngressMethod string `json:"ingress_method,omitempty"`
 
 	// RMQ — происхождение сообщения, вычитанного Puller'ом из RabbitMQ (§27.3).

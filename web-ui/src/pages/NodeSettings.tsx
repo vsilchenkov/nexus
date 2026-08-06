@@ -1242,6 +1242,11 @@ export default function NodeSettings() {
                       placeholder={ACK_SAMPLE_PLACEHOLDER}
                     />
                     {lastLogBodyError && <p className="mt-1 text-xs text-err">{lastLogBodyError}</p>}
+                    {!isNew && (
+                      <p className="mt-1 text-[11px] text-fg-subtle">
+                        {t("node.ack.take_from_logs_masked")}
+                      </p>
+                    )}
                     <div className="mt-2 flex items-center gap-3">
                       <Button
                         type="button"
