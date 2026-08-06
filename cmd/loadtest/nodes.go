@@ -23,6 +23,10 @@ const (
 	modeAuthToken nodeMode = "auth-token"
 	modeAuthBasic nodeMode = "auth-basic"
 	modeRMQ       nodeMode = "rmq"
+	// §83: async-узел с шаблоном ответа приёма. Отдельный режим, а не флаг у
+	// modeAsync: per-mode статистика показывает цену шаблона прямо в отчёте,
+	// рядом с обычным async на той же нагрузке.
+	modeAck nodeMode = "ack"
 )
 
 // node — созданный через Web API узел нагрузки.
@@ -48,6 +52,7 @@ func planNodes(httpNodes, totalNodes int, f flags) []nodeMode {
 		}
 	}
 	add(modeAsync, f.RatioAsync)
+	add(modeAck, f.RatioAck)
 	add(modeDynURL, f.RatioDynamicURL)
 	add(modeAuthToken, f.RatioAuthToken)
 	add(modeAuthBasic, f.RatioAuthBasic)
@@ -87,6 +92,16 @@ func nodeCreateBody(mode nodeMode, path, targetURL, chTable string) map[string]a
 	switch mode {
 	case modeAsync:
 		body["root_method"] = "requestAsync"
+	case modeAck:
+		// §83: боевая форма шаблона (эхо максимального logId пакета). Тело
+		// запроса под неё готовит ackRequestBody в main.go.
+		body["root_method"] = "requestAsync"
+		body["async_ack_spec"] = map[string]any{
+			"version":      1,
+			"content_type": "application/json",
+			"body":         ackTemplate,
+			"on_error":     "default",
+		}
 	case modeDynURL:
 		body["url_mode"] = "from_request"
 		body["url_param_name"] = "url_base"
@@ -139,7 +154,7 @@ func nodePaths(nodes []node) []string {
 // team-slug и (для dyn-url) служебный query-параметр url_base.
 func requestURL(baseRecv, teamSlug string, n node) string {
 	endpoint := "request"
-	if n.mode == modeAsync {
+	if n.mode == modeAsync || n.mode == modeAck {
 		endpoint = "requestAsync"
 	}
 	u := baseRecv + "/api/v1/" + endpoint + "/"
