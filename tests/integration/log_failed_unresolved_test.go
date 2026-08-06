@@ -157,9 +157,27 @@ func TestLogReader_UnresolvedFailed_E2E(t *testing.T) {
 			return total == 8
 		}, 20*time.Second, 200*time.Millisecond, "ожидаем 8 строк-прогонов")
 
+		// Ревизия §81.9: запись с ДВУМЯ прогонами — сначала отказ сети, затем
+		// обрыв клиента. Построчный отсев её пропускал (кандидат проходил через
+		// первую строку), и она уходила в массовый повтор — ровно то, ради чего
+		// отсев вводился. Единица «неудачной доставки» — запись (§79.1).
+		const idF = "00000000-0000-0000-0000-0000000000f0"
+		mixed := mk(idF, now.Add(-2*time.Minute), 0, false)
+		mixed.Reason = "dial tcp 10.0.0.1:443: connect: connection refused"
+		writer.Write(ctx, table, mixed)
+		mixed2 := mk(idF, now.Add(-1*time.Minute), 0, false)
+		mixed2.Reason = domain.ReasonClientCanceled + ": waited 50000 ms, no response"
+		writer.Write(ctx, table, mixed2)
+		require.NoError(t, writer.Flush(ctx))
+		require.Eventually(t, func() bool {
+			var total uint64
+			_ = conn.QueryRow(ctx, "SELECT count() FROM "+table).Scan(&total)
+			return total == 10
+		}, 20*time.Second, 200*time.Millisecond, "ожидаем 10 строк-прогонов")
+
 		all, _, err := reader.FailedIDs(ctx, q, 1000)
 		require.NoError(t, err)
-		require.ElementsMatch(t, []string{idB, idD, idE}, all,
+		require.ElementsMatch(t, []string{idB, idD, idE, idF}, all,
 			"без отсева видны все недоставленные, включая отменённые клиентом")
 
 		filtered := q
@@ -167,7 +185,8 @@ func TestLogReader_UnresolvedFailed_E2E(t *testing.T) {
 		got, _, err := reader.FailedIDs(ctx, filtered, 1000)
 		require.NoError(t, err)
 		require.ElementsMatch(t, []string{idB, idD}, got,
-			"массовый повтор не берёт запись, которую приёмник, вероятно, уже обработал")
+			"массовый повтор не берёт ни чисто отменённую запись, ни ту, где обрыв "+
+				"клиента был лишь одним из прогонов")
 	})
 }
 

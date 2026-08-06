@@ -413,7 +413,7 @@ func (u *ReplayUsecase) ReplayFailed(ctx context.Context, actor Actor, nodeID, t
 	// §81.5: сколько всего недоставленных в окне — чтобы показать, сколько из них
 	// пропущено. Второй лёгкий запрос по тем же условиям: считать разницу иначе
 	// (например, вычитать после выборки) нельзя — cap обрезал бы её произвольно.
-	allIDs, _, err := u.logs.FailedIDs(ctx, q, replayAllCap)
+	allIDs, allCapped, err := u.logs.FailedIDs(ctx, q, replayAllCap)
 	if err != nil {
 		return ReplayBulkResult{}, fmt.Errorf("replay-all failed ids: %w", err)
 	}
@@ -426,10 +426,13 @@ func (u *ReplayUsecase) ReplayFailed(ctx context.Context, actor Actor, nodeID, t
 	if err != nil {
 		return ReplayBulkResult{}, fmt.Errorf("replay-all failed ids: %w", err)
 	}
-	res := ReplayBulkResult{
-		Total:                 len(ids),
-		Capped:                capped,
-		SkippedClientCanceled: max(len(allIDs)-len(ids), 0),
+	res := ReplayBulkResult{Total: len(ids), Capped: capped}
+	// Разница достоверна, только когда ОБА множества уместились в cap: иначе оба
+	// обрезаны по одной границе и их разность произвольна (обычно 0). Молчаливое
+	// «пропущено 0» на большом окне хуже отсутствия числа, поэтому под cap его не
+	// показываем — оператор видит флаг «показано не всё».
+	if !capped && !allCapped {
+		res.SkippedClientCanceled = max(len(allIDs)-len(ids), 0)
 	}
 	if res.SkippedClientCanceled > 0 {
 		u.logger.Debug("replay-all: client-canceled records skipped",

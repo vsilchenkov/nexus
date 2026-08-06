@@ -55,9 +55,13 @@ export function BreakerCard({ nodeId }: { nodeId: string }) {
     mutationFn: () => api.post<ResetResult>(`/api/nodes/${nodeId}/breaker/reset`, {}),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["node-breaker", nodeId] });
-      // Бейдж узла снимается тем же действием — карточка узла обязана его
-      // перечитать, иначе «Down» останется висеть до следующего рефетча.
-      qc.invalidateQueries({ queryKey: ["node", nodeId] });
+      // Сброс снимает и персистентный бейдж «Down» (§52). Он приходит НЕ с
+      // конфигурацией узла (["node", id]), а с метриками: last_outcome живёт в
+      // ответе /api/metrics/nodes (список — ["nodes", …]) и в KPI узла
+      // (["node-metrics", …]). Инвалидируем их, иначе бейдж останется красным
+      // до ближайшего планового рефетча.
+      qc.invalidateQueries({ queryKey: ["nodes"] });
+      qc.invalidateQueries({ queryKey: ["node-metrics"] });
     },
   });
 
@@ -87,17 +91,24 @@ export function BreakerCard({ nodeId }: { nodeId: string }) {
       <div className="flex w-full flex-wrap items-start justify-between gap-2">
         <div className="space-y-1">
           <p className="font-semibold">
-            {open ? t("queue.breaker.state_open") : st.state === "half_open" ? t("queue.breaker.state_half_open") : t("queue.breaker.state_closed")}
-            {open && (
+            {open
+              ? t("queue.breaker.state_open")
+              : st.state === "half_open"
+                ? t("queue.breaker.state_half_open")
+                : t("queue.breaker.state_closed")}
+            {/* Счётчик показывается и при закрытой защите: «3 из 5» — это
+                предупреждение «узел на грани», ради него политика и лежит в
+                состоянии (§81.3.1). При открытой он всегда равен порогу. */}
+            {st.failures > 0 && (
               <>
                 {" · "}
                 {t("queue.breaker.failures", { value: failures })}
-                {leftMs > 0 && (
-                  <>
-                    {" · "}
-                    {t("queue.breaker.retry_after", { value: mmss(leftMs) })}
-                  </>
-                )}
+              </>
+            )}
+            {open && leftMs > 0 && (
+              <>
+                {" · "}
+                {t("queue.breaker.retry_after", { value: mmss(leftMs) })}
               </>
             )}
           </p>

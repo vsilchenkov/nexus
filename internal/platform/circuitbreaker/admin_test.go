@@ -275,3 +275,25 @@ func TestIsOpen_UsesNodeCooldownFromState(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, open, "cooldown узла истёк — репроцессор снова пробует")
 }
+
+// Ревизия §81.9: до достижения порога состояние тоже обязано быть видно.
+// Прежде RecordFailure писал `state` только при открытии, и ключ с 4 отказами
+// из 5 выглядел для читающей стороны как несуществующий — оператор не видел
+// «сколько осталось», хотя политика в hash легла именно ради этого (§81.3.1).
+func TestSnapshot_PartialFailures_AreVisible(t *testing.T) {
+	t.Parallel()
+
+	b, adm, _ := newAdmin(t, 5, time.Minute)
+	ctx := context.Background()
+	for range 3 {
+		require.NoError(t, b.RecordFailure(ctx, "node/partial", domain.BreakerPolicy{}))
+	}
+
+	snap, err := adm.Snapshot(ctx, "node/partial")
+	require.NoError(t, err)
+	assert.True(t, snap.Exists, "счёт идёт — состояние существует")
+	assert.Equal(t, circuitbreaker.StateClosed, snap.State, "но защита ещё не сработала")
+	assert.Equal(t, 3, snap.Failures)
+	assert.Equal(t, 5, snap.Threshold, "знаменатель для «3 из 5»")
+	assert.Zero(t, snap.RetryAfter, "закрытому breaker'у обратный отсчёт не нужен")
+}

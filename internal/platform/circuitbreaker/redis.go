@@ -170,7 +170,13 @@ func (b *Breaker) RecordFailure(ctx context.Context, key string, p domain.Breake
 	}
 	pipe := b.client.TxPipeline()
 	pipe.HSet(ctx, k, fThreshold, pol.Threshold, fCooldown, pol.Cooldown.Nanoseconds())
-	if int(failures) >= pol.Threshold {
+	// state пишется ВСЕГДА, а не только при достижении порога: без него ключ с
+	// накопленными отказами выглядит для читающей стороны как несуществующий
+	// (Snapshot определяет Exists по state), и оператор не видит «3 из 5» —
+	// ровно то, ради чего политика и легла в hash (§81.3.1).
+	if int(failures) < pol.Threshold {
+		pipe.HSet(ctx, k, fState, string(StateClosed))
+	} else {
 		pipe.HSet(ctx, k, fState, string(StateOpen),
 			fOpenedAt, strconv.FormatInt(time.Now().UnixNano(), 10))
 		pipe.HDel(ctx, k, fProbe)

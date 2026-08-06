@@ -110,6 +110,23 @@ describe("BreakerCard", () => {
     expect(screen.queryByRole("button", { name: /queue\.breaker\.reset/ })).not.toBeInTheDocument();
   });
 
+  // Ревизия §81.9: «3 из 5» — предупреждение «узел на грани». Раньше счётчик
+  // рисовался только при открытой защите, где он всегда равен порогу, то есть
+  // хранение политики в состоянии не давало ничего.
+  it("показывает частичный счёт отказов при ещё закрытой защите", async () => {
+    mockServer({
+      ...OPEN_STATE,
+      state: "closed",
+      failures: 3,
+      threshold: 5,
+      retry_after_ms: 0,
+    });
+    renderCard();
+
+    expect(await screen.findByText(/queue\.breaker\.state_closed/)).toBeInTheDocument();
+    expect(screen.getByText(/queue\.breaker\.failures:3\/5/)).toBeInTheDocument();
+  });
+
   it("закрытая защита показывается одной строкой без объяснений", async () => {
     mockServer({ ...OPEN_STATE, state: "closed", exists: false, failures: 0, retry_after_ms: 0 });
     renderCard();

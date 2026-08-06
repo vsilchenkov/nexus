@@ -257,3 +257,36 @@ func TestSend_NoNodePolicy_PassesZeroes(t *testing.T) {
 	assert.Zero(t, cb.failurePolicies[0].Threshold)
 	assert.Zero(t, cb.failurePolicies[0].Cooldown)
 }
+
+// Ревизия §81.9: уход вызывающей стороны не должен красить узел в «Down».
+// Исход последнего вызова о здоровье приёмника в этом случае не говорит ничего,
+// а бейдж §52 живёт 30 суток и снимается только следующим фактическим вызовом —
+// узел, чьи клиенты не дожидаются ответа, горел бы красным вечно. До §81.2 эта
+// запись просто не доезжала до Redis (мёртвый контекст), и дефект был не виден.
+func TestSend_CallerGone_MarksOutputSoNodeIsNotPaintedDown(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	uc := NewSendUsecase(&stubCanceledCaller{cancel: cancel}, &stubLogWriter{},
+		&stubBreaker{allow: true}, logging.NewNoop(), 64<<20)
+
+	out := uc.Send(ctx, baseInput())
+
+	assert.True(t, out.CallerGone, "адаптеры по этому признаку пропускают запись исхода узла")
+	assert.EqualValues(t, 0, out.StatusCode, "статуса нет — приёмник не ответил")
+}
+
+// А вот настоящий отказ обязан признак НЕ ставить, иначе мы перестанем красить
+// действительно мёртвые узлы.
+func TestSend_RealFailure_DoesNotMarkCallerGone(t *testing.T) {
+	t.Parallel()
+
+	uc := NewSendUsecase(&stubDeadlineCaller{}, &stubLogWriter{},
+		&stubBreaker{allow: true}, logging.NewNoop(), 64<<20)
+
+	out := uc.Send(context.Background(), baseInput())
+
+	assert.False(t, out.CallerGone, "наш таймаут — счёт приёмнику, узел красим")
+}
