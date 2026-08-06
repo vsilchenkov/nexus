@@ -95,6 +95,13 @@ func cloneNodeForCopy(src *domain.Node, newPath string) *domain.Node {
 	clone.CreatedBy = ""
 	clone.UpdatedBy = ""
 	clone.ForwardHeaders = slices.Clone(src.ForwardHeaders)
+	// §83: спека — указатель, и поверхностная копия оставила бы два узла на
+	// одной структуре (в том числе в кеше, куда Copy кладёт клон сразу). Правка
+	// шаблона у одного меняла бы ответ второго.
+	if src.AsyncAck != nil {
+		spec := *src.AsyncAck
+		clone.AsyncAck = &spec
+	}
 	// Снимок allowlist сбрасывает prepareNewNode; пересборка — copyHostLinks.
 	clone.URLAllowedHosts = nil
 	return &clone

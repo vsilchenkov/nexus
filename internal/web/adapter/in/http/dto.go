@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"nexus/internal/domain"
+	"nexus/internal/domain/ackspec"
 )
 
 // basicLogin — логин из basic-кредов формата "login:password" (часть до
@@ -73,6 +74,13 @@ type CreateNodeRequest struct {
 
 	// §39: path-passthrough — приклеивать хвост входящего пути к target URL.
 	PathPassthrough bool `json:"path_passthrough"`
+
+	// §83: шаблон ответа приёма. Указатель: отсутствие поля и явный null
+	// означают «узел отвечает как раньше», и это же значение приходит от формы,
+	// когда переключатель карточки выключен. Содержимое проверяет
+	// ackspec.Spec.Validate через domain.Node.Validate — binding-тегами такой
+	// шаблон не описать.
+	AsyncAckSpec *ackspec.Spec `json:"async_ack_spec"`
 
 	// §27: RabbitMQAsync. RMQPassword пустой в PUT = «оставить старый» (как
 	// auth_credentials, разбирается в handler.Update). Диапазоны pull_* также
@@ -144,6 +152,11 @@ type NodeResponse struct {
 	MaxBodySizeEnabled        bool     `json:"max_body_size_enabled"`
 	MaxBodySize               int32    `json:"max_body_size"`
 	PathPassthrough           bool     `json:"path_passthrough"`
+
+	// §83: шаблон ответа приёма; null — узел отвечает как раньше. Секретом не
+	// является (его пишет оператор и он же уходит клиенту), поэтому отдаётся
+	// наружу целиком, а не флагом «настроено».
+	AsyncAckSpec *ackspec.Spec `json:"async_ack_spec"`
 
 	// §27: RabbitMQAsync. Пароль не возвращается — только флаг RMQPasswordSet.
 	// RMQStatus — runtime-health воркера (degraded/queue_depth/…), заполняется
@@ -254,6 +267,7 @@ func reqToDomain(r CreateNodeRequest) *domain.Node {
 		MaxBodySizeEnabled:        r.MaxBodySizeEnabled,
 		MaxBodySize:               r.MaxBodySize,
 		PathPassthrough:           r.PathPassthrough,
+		AsyncAck:                  r.AsyncAckSpec,
 		RMQHost:                   r.RMQHost,
 		RMQPort:                   r.RMQPort,
 		RMQVHost:                  r.RMQVHost,
@@ -313,6 +327,7 @@ func nodeToResponse(n *domain.Node) NodeResponse {
 		MaxBodySizeEnabled:        n.MaxBodySizeEnabled,
 		MaxBodySize:               n.MaxBodySize,
 		PathPassthrough:           n.PathPassthrough,
+		AsyncAckSpec:              n.AsyncAck,
 		RMQHost:                   n.RMQHost,
 		RMQPort:                   n.RMQPort,
 		RMQVHost:                  n.RMQVHost,

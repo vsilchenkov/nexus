@@ -27,6 +27,15 @@ definitions:
     type: object
   internal_web_adapter_in_http.CreateNodeRequest:
     properties:
+      async_ack_spec:
+        allOf:
+        - $ref: '#/definitions/nexus_internal_domain_ackspec.Spec'
+        description: |-
+          §83: шаблон ответа приёма. Указатель: отсутствие поля и явный null
+          означают «узел отвечает как раньше», и это же значение приходит от формы,
+          когда переключатель карточки выключен. Содержимое проверяет
+          ackspec.Spec.Validate через domain.Node.Validate — binding-тегами такой
+          шаблон не описать.
       auth_credentials:
         maxLength: 1024
         type: string
@@ -632,6 +641,13 @@ definitions:
     type: object
   internal_web_adapter_in_http.NodeResponse:
     properties:
+      async_ack_spec:
+        allOf:
+        - $ref: '#/definitions/nexus_internal_domain_ackspec.Spec'
+        description: |-
+          §83: шаблон ответа приёма; null — узел отвечает как раньше. Секретом не
+          является (его пишет оператор и он же уходит клиенту), поэтому отдаётся
+          наружу целиком, а не флагом «настроено».
       auth_credentials_set:
         type: boolean
       auth_dynamic_field:
@@ -946,6 +962,15 @@ definitions:
     type: object
   internal_web_adapter_in_http.UpdateNodeRequest:
     properties:
+      async_ack_spec:
+        allOf:
+        - $ref: '#/definitions/nexus_internal_domain_ackspec.Spec'
+        description: |-
+          §83: шаблон ответа приёма. Указатель: отсутствие поля и явный null
+          означают «узел отвечает как раньше», и это же значение приходит от формы,
+          когда переключатель карточки выключен. Содержимое проверяет
+          ackspec.Spec.Validate через domain.Node.Validate — binding-тегами такой
+          шаблон не описать.
       auth_credentials:
         maxLength: 1024
         type: string
@@ -2363,6 +2388,35 @@ definitions:
         type: string
       enabled:
         type: boolean
+    type: object
+  nexus_internal_domain_ackspec.ContentType:
+    enum:
+    - application/json
+    - text/plain
+    type: string
+    x-enum-varnames:
+    - ContentTypeJSON
+    - ContentTypeText
+  nexus_internal_domain_ackspec.OnError:
+    enum:
+    - default
+    - error
+    type: string
+    x-enum-varnames:
+    - OnErrorDefault
+    - OnErrorError
+  nexus_internal_domain_ackspec.Spec:
+    properties:
+      body:
+        type: string
+      content_type:
+        $ref: '#/definitions/nexus_internal_domain_ackspec.ContentType'
+      on_error:
+        $ref: '#/definitions/nexus_internal_domain_ackspec.OnError'
+      status:
+        type: integer
+      version:
+        type: integer
     type: object
   nexus_internal_web_usecase.CHTableVerifyResult:
     properties:

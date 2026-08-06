@@ -2,10 +2,14 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"nexus/internal/domain/ackspec"
 )
 
 // isForeignKeyViolation сообщает, что ошибка — нарушение FK-ограничения
@@ -81,4 +85,31 @@ func derefInt32(p *int32) int32 {
 		return 0
 	}
 	return *p
+}
+
+// ackSpecArg готовит спеку ответа приёма (§83) к записи в JSONB-колонку:
+// nil-спека → SQL NULL, то есть «узел отвечает как раньше». Плейсхолдер в
+// запросе обязан иметь каст ::jsonb (как у ch_templates.spec), иначе pgx
+// отправит []byte как bytea.
+func ackSpecArg(s *ackspec.Spec) (any, error) {
+	if s == nil {
+		return nil, nil
+	}
+	raw, err := json.Marshal(s)
+	if err != nil {
+		return nil, fmt.Errorf("marshal async_ack_spec: %w", err)
+	}
+	return raw, nil
+}
+
+// scanAckSpec разбирает JSONB-колонку в спеку. NULL/пусто → nil (прежний ответ).
+func scanAckSpec(raw []byte) (*ackspec.Spec, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var s ackspec.Spec
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return nil, fmt.Errorf("unmarshal async_ack_spec: %w", err)
+	}
+	return &s, nil
 }

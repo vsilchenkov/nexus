@@ -56,7 +56,8 @@ const nodeColumns = `
 	path_passthrough,
 	incoming_auth_dynamic_source, incoming_auth_dynamic_field,
 	created_by, updated_by, external_table,
-	circuit_breaker_threshold, circuit_breaker_cooldown_sec`
+	circuit_breaker_threshold, circuit_breaker_cooldown_sec,
+	async_ack_spec`
 
 func (r *NodeRepoPg) Get(ctx context.Context, id string) (*domain.Node, error) {
 	row := r.db.QueryRow(ctx, `SELECT `+nodeColumns+` FROM nodes WHERE id = $1`, id)
@@ -249,6 +250,10 @@ func (r *NodeRepoPg) Create(ctx context.Context, n *domain.Node) error {
 		return fmt.Errorf("encrypt rmq: %w", err)
 	}
 	rmq := rmqArgs(n)
+	ack, err := ackSpecArg(n.AsyncAck)
+	if err != nil {
+		return err
+	}
 
 	const q = `
 INSERT INTO nodes (
@@ -269,7 +274,8 @@ INSERT INTO nodes (
 	path_passthrough,
 	incoming_auth_dynamic_source, incoming_auth_dynamic_field,
 	created_by, updated_by, external_table,
-	circuit_breaker_threshold, circuit_breaker_cooldown_sec
+	circuit_breaker_threshold, circuit_breaker_cooldown_sec,
+	async_ack_spec
 ) VALUES (
 	$1, $2,
 	$3, $4, $5, $6,
@@ -288,7 +294,8 @@ INSERT INTO nodes (
 	$46,
 	$47, $48,
 	$49, $50, $51,
-	$52, $53
+	$52, $53,
+	$54::jsonb
 ) RETURNING id, created_at, updated_at`
 
 	err = r.db.QueryRow(ctx, q,
@@ -312,6 +319,8 @@ INSERT INTO nodes (
 		n.CreatedBy, n.UpdatedBy, n.ExternalTable,
 		// §81.3: 0 → NULL, «политика из конфигурации».
 		nullInt32(n.CircuitBreakerThreshold), nullInt32(n.CircuitBreakerCooldownSec),
+		// §83: nil → NULL, «отвечать как раньше».
+		ack,
 	).Scan(&n.ID, &n.CreatedAt, &n.UpdatedAt)
 
 	if err != nil {
@@ -338,6 +347,10 @@ func (r *NodeRepoPg) Update(ctx context.Context, n *domain.Node) error {
 		return fmt.Errorf("encrypt rmq: %w", err)
 	}
 	rmq := rmqArgs(n)
+	ack, err := ackSpecArg(n.AsyncAck)
+	if err != nil {
+		return err
+	}
 
 	const q = `
 UPDATE nodes SET
@@ -360,6 +373,7 @@ UPDATE nodes SET
 	incoming_auth_dynamic_source = $48, incoming_auth_dynamic_field = $49,
 	updated_by = $50, external_table = $51,
 	circuit_breaker_threshold = $52, circuit_breaker_cooldown_sec = $53,
+	async_ack_spec = $54::jsonb,
 	updated_at = now()
 WHERE id = $1
 RETURNING updated_at`
@@ -386,6 +400,8 @@ RETURNING updated_at`
 		n.UpdatedBy, n.ExternalTable,
 		// §81.3: 0 → NULL, «политика из конфигурации».
 		nullInt32(n.CircuitBreakerThreshold), nullInt32(n.CircuitBreakerCooldownSec),
+		// §83: nil → NULL, «отвечать как раньше».
+		ack,
 	).Scan(&n.UpdatedAt)
 
 	if err != nil {
@@ -498,6 +514,8 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 	var rmqPort, pullInterval, pullBatch, pullPrefetch *int32
 	// §81.3: NULL = «политика из конфигурации».
 	var cbThreshold, cbCooldown *int32
+	// §83: NULL = «отвечать как раньше».
+	var ackRaw []byte
 
 	err := row.Scan(
 		&n.ID, &n.Path, &rootMethod,
@@ -518,12 +536,20 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 		&incAuthDynSrc, &n.IncomingAuthDynamicField,
 		&n.CreatedBy, &n.UpdatedBy, &n.ExternalTable,
 		&cbThreshold, &cbCooldown,
+		&ackRaw,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) || isInvalidUUID(err) {
 			return nil, domain.ErrNodeNotFound
 		}
 		return nil, fmt.Errorf("scan node: %w", err)
+	}
+
+	// §83: битый JSON в колонке — ошибка чтения узла именно здесь, в Web:
+	// оператор должен увидеть её в интерфейсе. В Receiver'е та же ситуация
+	// трактуется мягче (спека игнорируется), чтобы не ронять приём трафика.
+	if n.AsyncAck, err = scanAckSpec(ackRaw); err != nil {
+		return nil, err
 	}
 
 	// §81.3: NULL в БД → 0 в домене → «использовать глобальную политику».

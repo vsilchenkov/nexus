@@ -5738,6 +5738,14 @@ const docTemplate = `{
                 "root_method"
             ],
             "properties": {
+                "async_ack_spec": {
+                    "description": "§83: шаблон ответа приёма. Указатель: отсутствие поля и явный null\nозначают «узел отвечает как раньше», и это же значение приходит от формы,\nкогда переключатель карточки выключен. Содержимое проверяет\nackspec.Spec.Validate через domain.Node.Validate — binding-тегами такой\nшаблон не описать.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/nexus_internal_domain_ackspec.Spec"
+                        }
+                    ]
+                },
                 "auth_credentials": {
                     "type": "string",
                     "maxLength": 1024
@@ -6559,6 +6567,14 @@ const docTemplate = `{
         "internal_web_adapter_in_http.NodeResponse": {
             "type": "object",
             "properties": {
+                "async_ack_spec": {
+                    "description": "§83: шаблон ответа приёма; null — узел отвечает как раньше. Секретом не\nявляется (его пишет оператор и он же уходит клиенту), поэтому отдаётся\nнаружу целиком, а не флагом «настроено».",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/nexus_internal_domain_ackspec.Spec"
+                        }
+                    ]
+                },
                 "auth_credentials_set": {
                     "type": "boolean"
                 },
@@ -7001,6 +7017,14 @@ const docTemplate = `{
                 "root_method"
             ],
             "properties": {
+                "async_ack_spec": {
+                    "description": "§83: шаблон ответа приёма. Указатель: отсутствие поля и явный null\nозначают «узел отвечает как раньше», и это же значение приходит от формы,\nкогда переключатель карточки выключен. Содержимое проверяет\nackspec.Spec.Validate через domain.Node.Validate — binding-тегами такой\nшаблон не описать.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/nexus_internal_domain_ackspec.Spec"
+                        }
+                    ]
+                },
                 "auth_credentials": {
                     "type": "string",
                     "maxLength": 1024
@@ -9008,6 +9032,48 @@ const docTemplate = `{
                 },
                 "enabled": {
                     "type": "boolean"
+                }
+            }
+        },
+        "nexus_internal_domain_ackspec.ContentType": {
+            "type": "string",
+            "enum": [
+                "application/json",
+                "text/plain"
+            ],
+            "x-enum-varnames": [
+                "ContentTypeJSON",
+                "ContentTypeText"
+            ]
+        },
+        "nexus_internal_domain_ackspec.OnError": {
+            "type": "string",
+            "enum": [
+                "default",
+                "error"
+            ],
+            "x-enum-varnames": [
+                "OnErrorDefault",
+                "OnErrorError"
+            ]
+        },
+        "nexus_internal_domain_ackspec.Spec": {
+            "type": "object",
+            "properties": {
+                "body": {
+                    "type": "string"
+                },
+                "content_type": {
+                    "$ref": "#/definitions/nexus_internal_domain_ackspec.ContentType"
+                },
+                "on_error": {
+                    "$ref": "#/definitions/nexus_internal_domain_ackspec.OnError"
+                },
+                "status": {
+                    "type": "integer"
+                },
+                "version": {
+                    "type": "integer"
                 }
             }
         },
