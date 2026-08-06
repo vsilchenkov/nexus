@@ -2465,6 +2465,54 @@
                 }
             }
         },
+        "/api/nodes/ack-preview": {
+            "post": {
+                "description": "Прогоняет шаблон на образце запроса и возвращает тело, которое получил бы клиент. Ничего не сохраняет и никуда не ходит: работает по присланной спеке, поэтому доступен в форме ещё не сохранённого узла. Провал подстановки — не ошибка запроса: приходит 200 с ok=false, reason и проблемной подстановкой. 400 отдаётся только на невалидной спеке (её правит оператор в форме).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "nodes"
+                ],
+                "summary": "Предпросмотр ответа приёма по шаблону узла (§83).",
+                "parameters": [
+                    {
+                        "description": "спека и образец запроса",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.AckPreviewRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nexus_internal_web_usecase.AckPreviewReport"
+                        }
+                    },
+                    "400": {
+                        "description": "{error, code, field} — спека или шаблон невалидны",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "нужна роль manager или admin",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/dry-run": {
             "post": {
                 "security": [
@@ -5690,6 +5738,38 @@
         }
     },
     "definitions": {
+        "internal_web_adapter_in_http.AckPreviewRequest": {
+            "type": "object",
+            "required": [
+                "spec"
+            ],
+            "properties": {
+                "content_type": {
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "sample_body": {
+                    "type": "string",
+                    "maxLength": 262144
+                },
+                "sample_path": {
+                    "type": "string",
+                    "maxLength": 1024
+                },
+                "sample_query": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "spec": {
+                    "$ref": "#/definitions/nexus_internal_domain_ackspec.Spec"
+                }
+            }
+        },
         "internal_web_adapter_in_http.CHTableVerifyRequest": {
             "type": "object",
             "required": [
@@ -5735,6 +5815,14 @@
                 "root_method"
             ],
             "properties": {
+                "async_ack_spec": {
+                    "description": "§83: шаблон ответа приёма. Указатель: отсутствие поля и явный null\nозначают «узел отвечает как раньше», и это же значение приходит от формы,\nкогда переключатель карточки выключен. Содержимое проверяет\nackspec.Spec.Validate через domain.Node.Validate — binding-тегами такой\nшаблон не описать.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/nexus_internal_domain_ackspec.Spec"
+                        }
+                    ]
+                },
                 "auth_credentials": {
                     "type": "string",
                     "maxLength": 1024
@@ -6556,6 +6644,14 @@
         "internal_web_adapter_in_http.NodeResponse": {
             "type": "object",
             "properties": {
+                "async_ack_spec": {
+                    "description": "§83: шаблон ответа приёма; null — узел отвечает как раньше. Секретом не\nявляется (его пишет оператор и он же уходит клиенту), поэтому отдаётся\nнаружу целиком, а не флагом «настроено».",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/nexus_internal_domain_ackspec.Spec"
+                        }
+                    ]
+                },
                 "auth_credentials_set": {
                     "type": "boolean"
                 },
@@ -6998,6 +7094,14 @@
                 "root_method"
             ],
             "properties": {
+                "async_ack_spec": {
+                    "description": "§83: шаблон ответа приёма. Указатель: отсутствие поля и явный null\nозначают «узел отвечает как раньше», и это же значение приходит от формы,\nкогда переключатель карточки выключен. Содержимое проверяет\nackspec.Spec.Validate через domain.Node.Validate — binding-тегами такой\nшаблон не описать.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/nexus_internal_domain_ackspec.Spec"
+                        }
+                    ]
+                },
                 "auth_credentials": {
                     "type": "string",
                     "maxLength": 1024
@@ -9005,6 +9109,76 @@
                 },
                 "enabled": {
                     "type": "boolean"
+                }
+            }
+        },
+        "nexus_internal_domain_ackspec.ContentType": {
+            "type": "string",
+            "enum": [
+                "application/json",
+                "text/plain"
+            ],
+            "x-enum-varnames": [
+                "ContentTypeJSON",
+                "ContentTypeText"
+            ]
+        },
+        "nexus_internal_domain_ackspec.OnError": {
+            "type": "string",
+            "enum": [
+                "default",
+                "error"
+            ],
+            "x-enum-varnames": [
+                "OnErrorDefault",
+                "OnErrorError"
+            ]
+        },
+        "nexus_internal_domain_ackspec.Spec": {
+            "type": "object",
+            "properties": {
+                "body": {
+                    "type": "string"
+                },
+                "content_type": {
+                    "$ref": "#/definitions/nexus_internal_domain_ackspec.ContentType"
+                },
+                "on_error": {
+                    "$ref": "#/definitions/nexus_internal_domain_ackspec.OnError"
+                },
+                "status": {
+                    "type": "integer"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "nexus_internal_web_usecase.AckPreviewReport": {
+            "type": "object",
+            "properties": {
+                "body": {
+                    "type": "string"
+                },
+                "content_type": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "ok": {
+                    "type": "boolean"
+                },
+                "placeholder": {
+                    "description": "подстановка, на которой сорвалось",
+                    "type": "string"
+                },
+                "reason": {
+                    "description": "ackspec.Reason",
+                    "type": "string"
+                },
+                "status": {
+                    "type": "integer"
                 }
             }
         },

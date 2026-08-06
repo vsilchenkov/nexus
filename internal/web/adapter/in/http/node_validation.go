@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"nexus/internal/domain"
+	"nexus/internal/domain/ackspec"
 )
 
 // nodeFieldError связывает доменную ошибку валидации узла с i18n-кодом и
@@ -55,6 +56,11 @@ var nodeValidationErrors = []nodeFieldError{
 	// §43.1: рендер шаблона CH-таблицы при провижене узла тоже отвергает кривое
 	// имя — мапим в то же поле/сообщение (400), а не в 500/Sentry.
 	{domain.ErrCHTemplateInvalidTableName, "node.validation.clickhouse_table_format", "clickhouse_table"},
+	// §83: обе ошибки ведут в одно поле формы (редактор шаблона), но коды
+	// разные: синтаксис шаблона правится в текстовом поле, а неверный
+	// content_type/status/version — в соседних селектах карточки.
+	{ackspec.ErrTemplateSyntax, "node.validation.async_ack_template", "async_ack_spec"},
+	{ackspec.ErrSpecInvalid, "node.validation.async_ack_spec", "async_ack_spec"},
 	{domain.ErrNodeMaxBodySizeRange, "node.validation.max_body_size_range", "max_body_size"},
 	{domain.ErrNodeMaxBodySizeRequired, "node.validation.max_body_size_required", "max_body_size"},
 	{domain.ErrNodeRMQHostRequired, "node.validation.rmq_host", "rmq_host"},

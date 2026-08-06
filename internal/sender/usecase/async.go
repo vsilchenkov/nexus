@@ -195,6 +195,12 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 		}
 	}
 
+	// §83.7: узел больше не async — принятое ранее в очередь не доставляем.
+	// Проверка ДО paused-ветки: решение терминальное, откладывать нечего.
+	if reason, stop := asyncIngressRevoked(node, env); stop {
+		return p.dropNotAsync(ctx, raw, env, reason)
+	}
+
 	if node.Status == domain.NodeStatusPaused {
 		return p.handlePaused(ctx, raw, env, msgHeaders)
 	}

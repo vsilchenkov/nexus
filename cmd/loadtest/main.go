@@ -59,6 +59,7 @@ type flags struct {
 	// сумма ≤ 1, остаток — plain-sync. Дефолт 0 сохраняет старое поведение
 	// (`make loadtest` без флагов = чистый sync-smoke); микс задаётся профилем.
 	RatioAsync      float64
+	RatioAck        float64
 	RatioDynamicURL float64
 	RatioAuthToken  float64
 	RatioAuthBasic  float64
@@ -104,6 +105,9 @@ func parseFlags() flags {
 		"AMQP URL for RabbitMQAsync load (amqp://user:pass@host:port/vhost). Queues are declared and published to during the run.")
 	flag.Float64Var(&f.RatioAsync, "ratio-async", 0,
 		"§10.2: fraction of nodes created as requestAsync (Kafka path). 0..1.")
+	flag.Float64Var(&f.RatioAck, "ratio-ack", 0,
+		"§83: fraction of nodes created as requestAsync WITH an acknowledgement template. 0..1. "+
+			"Such nodes get a JSON body with a logs[] batch and their response is verified against the template.")
 	flag.Float64Var(&f.RatioDynamicURL, "ratio-dynamic-url", 0,
 		"§10.2: fraction of nodes with url_mode=from_request (target passed via ?url_base=). 0..1.")
 	flag.Float64Var(&f.RatioAuthToken, "ratio-auth-token", 0,
@@ -530,9 +534,19 @@ func doRequest(c *client, nodes []node, f flags, res *result) {
 		body[i] = 'a'
 	}
 
+	// §83: ack-узлу нужен JSON-пакет под шаблон, а не случайные байты; размер
+	// подгоняется под тот же профиль, иначе сравнение p95 с обычным async было
+	// бы нечестным.
+	var wantMaxLogID int64
+	contentType := "application/octet-stream"
+	if n.mode == modeAck {
+		body, wantMaxLogID = ackRequestBody(size)
+		contentType = "application/json"
+	}
+
 	t0 := time.Now()
 	req, _ := http.NewRequest("POST", requestURL(c.baseRecv, f.TeamSlug, n), bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("Content-Type", contentType)
 	switch n.mode {
 	case modeAuthToken:
 		req.Header.Set("Authorization", "Bearer "+randomHex(32))
@@ -548,6 +562,15 @@ func doRequest(c *client, nodes []node, f flags, res *result) {
 	if resp != nil {
 		// Дочитываем тело до EOF перед Close — обязательное условие
 		// возврата соединения в keep-alive-пул (иначе churn соединений).
+		if n.mode == modeAck && !errored {
+			// §83: под нагрузкой важен не только код, но и КОРРЕКТНОСТЬ ответа —
+			// перепутанный из общего кеша шаблон или деградация до штатного
+			// {result,id} дали бы те же 200. Тело ack-ответа мало (десятки байт).
+			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+			if !ackResponseValid(respBody, wantMaxLogID) {
+				errored = true
+			}
+		}
 		_, _ = io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 	}

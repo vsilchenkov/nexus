@@ -33,6 +33,12 @@ type Envelope struct {
 	// (internal/receiver/usecase/envelope.go).
 	RequestPath string `json:"request_path,omitempty"`
 
+	// IngressMethod — §83.7: root_method узла в момент приёма. Отличает
+	// сообщение async-приёма от сообщения sync-узла, попавшего в очередь по
+	// §3.6 (пауза). Пусто у конвертов до §83 и у pull-узлов §27 — они
+	// доставляются как раньше. Держать синхронным с Receiver-копией Envelope.
+	IngressMethod string `json:"ingress_method,omitempty"`
+
 	// RMQ — происхождение сообщения, вычитанного Puller'ом из RabbitMQ (§27.3).
 	// nil для request/requestAsync. На доставку не влияет (узел перечитывается
 	// из PostgreSQL), но это единственный след, по которому сообщение в очереди

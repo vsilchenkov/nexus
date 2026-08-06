@@ -1,6 +1,7 @@
 package usecase
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -134,12 +135,25 @@ func withScheme(scheme, value string) string {
 // верхнего уровня (строка), удаляет его и возвращает сериализованный
 // результат обратно. Если тело не JSON-объект или поля нет — возвращает
 // исходное тело без изменений и ошибку (вызывающий трактует как «нет значения»).
+//
+// Тело после вырезания креды уходит ПОЛУЧАТЕЛЮ, поэтому пересборка обязана
+// сохранять значения дословно (§83.2):
+//   - UseNumber: json.Unmarshal в map[string]any укладывает числа в float64,
+//     и logId 9007199254740993 превращался в …92 — ровно те значения, которые
+//     несут курсоры журналов;
+//   - SetEscapeHTML(false): иначе "<a>&b" уезжало получателю как
+//     "<a>&b".
+//
+// Порядок ключей при пересборке не сохраняется (map) — это прежнее поведение
+// и на семантику JSON не влияет.
 func extractAndStripJSONField(body []byte, field string) (token string, stripped []byte, err error) {
 	if len(body) == 0 {
 		return "", body, fmt.Errorf("body is empty")
 	}
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
 	var obj map[string]any
-	if err := json.Unmarshal(body, &obj); err != nil {
+	if err := dec.Decode(&obj); err != nil {
 		return "", body, fmt.Errorf("body is not JSON object")
 	}
 	raw, ok := obj[field]
@@ -151,11 +165,14 @@ func extractAndStripJSONField(body []byte, field string) (token string, stripped
 		return "", body, fmt.Errorf("field %s is not a string", field)
 	}
 	delete(obj, field)
-	out, err := json.Marshal(obj)
-	if err != nil {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(obj); err != nil {
 		return "", body, fmt.Errorf("re-marshal body: %w", err)
 	}
-	return s, out, nil
+	// Encoder дописывает перевод строки — в теле запроса он лишний.
+	return s, bytes.TrimRight(buf.Bytes(), "\n"), nil
 }
 
 func cloneHeader(h http.Header) http.Header {
