@@ -6,6 +6,7 @@ import (
 	"context"
 	"maps"
 	"strconv"
+	"time"
 
 	"nexus/internal/domain"
 	"nexus/internal/platform/logging"
@@ -13,6 +14,11 @@ import (
 	"nexus/internal/sender/usecase"
 	senderv1 "nexus/proto/sender/v1"
 )
+
+// nodeStatusWriteTimeout — предел на запись персистентного исхода узла (§52),
+// выполняемую на отвязанном контексте после ответа (§81.2). Best-effort:
+// задерживать возврат RPC ради неё нельзя.
+const nodeStatusWriteTimeout = 2 * time.Second
 
 // Server реализует senderv1.SenderServiceServer.
 type Server struct {
@@ -92,8 +98,13 @@ func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 		s.metrics.SetNodeLastRequestOutcome(req.GetNodePath(), outcome)
 	}
 	// §46: персистентный исход в Redis (переживает рестарт; Noop без Redis).
+	// §81.2: контекст отвязан — на sync-пути он умирает вместе с ушедшим
+	// клиентом, а go-redis отбрасывает команду с отменённым контекстом ещё в
+	// пуле: бейдж узла молча не обновлялся именно тогда, когда это важнее всего.
 	if s.nodeStatus != nil {
-		s.nodeStatus.SetLastOutcome(ctx, req.GetNodePath(), outcome)
+		statusCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), nodeStatusWriteTimeout)
+		s.nodeStatus.SetLastOutcome(statusCtx, req.GetNodePath(), outcome)
+		cancel()
 	}
 
 	return &senderv1.SendResponse{

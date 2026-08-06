@@ -246,7 +246,7 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		rec.Duration = int32(time.Since(t0).Milliseconds())
 		rec.Status = 0
 		rec.Done = false
-		rec.Reason = "circuit_breaker_open"
+		rec.Reason = domain.ReasonCircuitBreakerOpen
 		rec.Attempts = 0
 		if in.LoggingEnabled && !in.DryRun {
 			u.logw.Write(ctx, in.ClickHouseTable, rec)
@@ -285,7 +285,9 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		a := attempt{N: n, StartedAt: started, DurationMs: dur, BackoffBeforeMs: backoffMs}
 		if lastErr != nil {
 			a.Status = 0
-			a.Reason = lastErr.Error()
+			// §81.2.1: тот же маркер, что и в reason записи — иначе сырой текст с
+			// адресом утёк бы в колонку attempts_details мимо нормализации.
+			a.Reason = failureReason(ctx, lastErr, in.TimeoutMs, dur)
 		} else {
 			a.Status = resp.StatusCode
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
@@ -342,13 +344,16 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 
 	switch {
 	case lastErr != nil:
-		out.Error = lastErr.Error()
+		// §81.2.1: стабильный маркер вместо сырого текста stdlib — тот нестабилен
+		// и тащит в журнал полный адрес (у динамического URL — собранный из
+		// входящего запроса, см. §68).
+		out.Error = failureReason(ctx, lastErr, in.TimeoutMs, out.DurationMs)
 		// errors.Is, а не разбор текста: http.Client оборачивает дедлайн
 		// контекста в *url.Error, цепочка Unwrap сохраняется.
 		out.Timeout = errors.Is(lastErr, context.DeadlineExceeded)
 		rec.Status = 0
 		rec.Done = false
-		rec.Reason = lastErr.Error()
+		rec.Reason = out.Error
 	case resp != nil && resp.TooLarge:
 		// §43-rev: тело ответа превысило ТРАНСПОРТНЫЙ лимит (config
 		// grpc_max_message_bytes) — httpclient оборвал чтение, тело не в памяти.
@@ -390,32 +395,7 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 		rec.Reason = appendRedirectNote(rec.Reason, resp.Redirects)
 	}
 
-	// Circuit breaker отражает здоровье ВНЕШНЕГО узла. Нездоровье — транспортная
-	// ошибка (timeout/refused) или 5xx. ЛЮБОЙ ответ < 500 — узел жив и отвечает:
-	// 4xx — ошибка данных/клиента (напр. 422 NotRegistered протухшего FCM-токена),
-	// по ней breaker НЕ открывается — иначе серия 4xx от «плохих» адресатов
-	// блокировала бы доставку валидных запросов 503-ми (боевой инцидент
-	// site/push, §50.4). Oversize-политика (§43-rev) на здоровье тоже не влияет.
-	upstreamHealthy := lastErr == nil && resp != nil && resp.StatusCode < 500
-	switch {
-	case in.DryRun:
-		// §55: тестовый вызов на здоровье узла не влияет — иначе серия dry-run по
-		// мёртвому адресу открыла бы breaker и живой узел начал бы отдавать 503.
-		u.logger.Debug("send: dry-run, breaker not touched",
-			u.logger.Str("id", in.ID),
-			u.logger.Int("status", int(rec.Status)))
-	case upstreamHealthy:
-		_ = u.cb.RecordSuccess(ctx, in.NodePath)
-	default:
-		_ = u.cb.RecordFailure(ctx, in.NodePath)
-		// §51.9: незасчитанное здоровье узла (открытие breaker'а после серии) —
-		// след решения на debug; сами Record-ошибки некритичны (best-effort).
-		u.logger.Debug("send: recorded upstream failure for breaker",
-			u.logger.Str("id", in.ID),
-			u.logger.Str("node", in.NodePath),
-			u.logger.Int("status", int(rec.Status)),
-			u.logger.Str("reason", rec.Reason))
-	}
+	u.voteBreaker(ctx, in, resp, lastErr, rec)
 
 	if len(attempts) > 1 || !rec.Done {
 		if data, err := json.Marshal(attempts); err == nil {

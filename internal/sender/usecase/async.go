@@ -235,8 +235,14 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 		p.metrics.SetNodeLastRequestOutcome(env.NodePath, outcome)
 	}
 	// §46: персистентный исход в Redis (переживает рестарт; Noop без Redis).
+	// §81.2: контекст отвязан — запись делается ПОСЛЕ вызова и обязана пережить
+	// смерть родителя (клиент шины ушёл, сервис останавливается). go-redis
+	// отбрасывает команду с отменённым контекстом ещё в пуле, поэтому раньше на
+	// обрыве бейдж узла молча не обновлялся, а в лог сыпался ложный warn.
 	if p.nodeStatus != nil {
-		p.nodeStatus.SetLastOutcome(ctx, env.NodePath, outcome)
+		statusCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), nodeStatusWriteTimeout)
+		p.nodeStatus.SetLastOutcome(statusCtx, env.NodePath, outcome)
+		cancel()
 	}
 
 	if out.StatusCode >= 200 && out.StatusCode < 300 {

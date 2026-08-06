@@ -80,24 +80,33 @@ func (s *stubLogWriter) Flush(_ context.Context) error {
 }
 
 // stubBreaker — программируемый CircuitBreaker.
+//
+// §81.2: Record* фиксируют состояние контекста, с которым их позвали. Учёт
+// исхода обязан выполняться на ЖИВОМ контексте даже когда родительский уже
+// мёртв — иначе go-redis отбросит команду в пуле соединений и запись молча не
+// произойдёт. Без этой фиксации тест на отвязку контекста был бы no-op.
 type stubBreaker struct {
-	allow        bool
-	allowCount   int // §55: dry-run не должен спрашивать breaker вообще
-	successCount int
-	failureCount int
-	allowErr     error
+	allow          bool
+	allowCount     int // §55: dry-run не должен спрашивать breaker вообще
+	successCount   int
+	failureCount   int
+	allowErr       error
+	successCtxErrs []error
+	failureCtxErrs []error
 }
 
 func (b *stubBreaker) Allow(_ context.Context, _ string) (bool, error) {
 	b.allowCount++
 	return b.allow, b.allowErr
 }
-func (b *stubBreaker) RecordSuccess(_ context.Context, _ string) error {
+func (b *stubBreaker) RecordSuccess(ctx context.Context, _ string) error {
 	b.successCount++
+	b.successCtxErrs = append(b.successCtxErrs, ctx.Err())
 	return nil
 }
-func (b *stubBreaker) RecordFailure(_ context.Context, _ string) error {
+func (b *stubBreaker) RecordFailure(ctx context.Context, _ string) error {
 	b.failureCount++
+	b.failureCtxErrs = append(b.failureCtxErrs, ctx.Err())
 	return nil
 }
 
@@ -1060,14 +1069,15 @@ func TestSend_ContextCanceled_StopsRetrying(t *testing.T) {
 
 	assert.Equal(t, 1, httpc.calls, "после отмены контекста повторных вызовов быть не должно")
 	assert.Equal(t, int32(1), out.Attempts)
-	assert.Contains(t, out.Error, "context canceled")
+	// §81.2.1: маркер вместо сырого текста stdlib.
+	assert.Contains(t, out.Error, domain.ReasonClientCanceled)
 	assert.Less(t, time.Since(start), time.Second, "backoff-сон пропущен")
 
 	require.Len(t, logw.written, 1)
 	rec := logw.written[0].rec
 	assert.Equal(t, int32(1), rec.Attempts)
 	assert.False(t, rec.Done)
-	assert.Contains(t, rec.Reason, "context canceled")
+	assert.Contains(t, rec.Reason, domain.ReasonClientCanceled)
 }
 
 // TestSleepCtx — пауза между попытками обязана прерываться смертью контекста:
