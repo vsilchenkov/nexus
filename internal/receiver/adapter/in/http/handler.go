@@ -299,12 +299,12 @@ func (h *Handler) handleCallback(c *gin.Context, rest string) {
 
 // handleAsync godoc
 // @Summary  Асинхронный запрос через узел (§3.1).
-// @Description  Ставит запрос в очередь Kafka и сразу отвечает {result:true,id}. Доставку выполняет Sender-consumer. Путь — /api/v1/requestAsync/<team_slug>/<node_path>.
+// @Description  Ставит запрос в очередь Kafka и сразу отвечает {result:true,id}. Доставку выполняет Sender-consumer. Путь — /api/v1/requestAsync/<team_slug>/<node_path>. §82.3: узел обязан быть настроен как requestAsync — иначе 404 (как и несуществующий узел).
 // @Tags     routing
 // @Param    path  path  string  true  "[<team_slug>/]<node_path>"
 // @Success  200  {object}  map[string]interface{}  "{result:true,id}"
 // @Success  202  {object}  map[string]interface{}  "queued (paused node, §3.6)"
-// @Failure  404  {object}  map[string]interface{}  "{result:false,message} — node not found"
+// @Failure  404  {object}  map[string]interface{}  "{result:false,message} — node not found (в т.ч. узел с root_method != requestAsync, §82.3)"
 // @Failure  405  {object}  map[string]interface{}  "{result:false,message} — method not allowed"
 // @Router   /api/v1/requestAsync/{path} [post]
 //
@@ -333,6 +333,10 @@ func (h *Handler) handleAsync(c *gin.Context, rest string) {
 		Query:    c.Request.URL.Query(),
 		Body:     body,
 		ClientIP: clientIP(c.Request),
+		// §82.3: единственная точка, где флаг ставится — внешний async-эндпоинт.
+		// Короткая форма §78.1 сюда приходит только для узлов requestAsync
+		// (handleAuto разводит по root_method), так что проверка ей безразлична.
+		ExternalAsync: true,
 	})
 }
 
@@ -449,7 +453,12 @@ func isHopByHopHeader(name string) bool {
 // и async (replyAsyncError), чтобы коды и тексты не расходились.
 func classifyDomainError(err error) (status int, message string, internal bool) {
 	switch {
-	case errors.Is(err, domain.ErrNodeNotFound):
+	case errors.Is(err, domain.ErrNodeNotFound),
+		// §82.3: async-эндпоинт на не-async узле. Наружу неотличимо от «узла
+		// нет» — та же линия, что у зеркальной sync-проверки и у pull-узла в
+		// handleAuto: факт существования узла не раскрываем. Диагностику даёт
+		// warn в RouteAsync и метрика nexus_async_ingress_rejected_total.
+		errors.Is(err, domain.ErrNodeNotAsyncIngress):
 		return http.StatusNotFound, "node not found", false
 	case errors.Is(err, domain.ErrNodeDisabled):
 		return http.StatusServiceUnavailable, "node not available", false
@@ -531,6 +540,12 @@ func (h *Handler) replyAsyncError(c *gin.Context, err error, nodePath, op string
 	}
 	if errors.Is(err, domain.ErrLoopDetected) {
 		h.onLoopDetected(c, "async", nodePath)
+	}
+	if errors.Is(err, domain.ErrNodeNotAsyncIngress) && h.metrics != nil {
+		// §82.3: клиент видит только 404 «node not found», поэтому счётчик —
+		// единственный внешний признак рассинхронизации настроек. Warn с
+		// root_method и IP пишет RouteAsync: там известен сам узел.
+		h.metrics.IncAsyncIngressRejected(nodePath)
 	}
 	c.JSON(status, gin.H{"result": false, "message": msg})
 }

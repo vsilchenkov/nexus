@@ -178,13 +178,51 @@ func TestShortURL_DispatchesByRootMethod(t *testing.T) {
 		require.Equal(t, http.StatusNotFound, w.Code)
 	})
 
-	t.Run("legacy async-адрес sync-узла по-прежнему принимается", func(t *testing.T) {
-		// На этом стоит §3.6 (paused sync → async), поведение не меняем.
+	t.Run("legacy async-адрес sync-узла — 404 (§82.3)", func(t *testing.T) {
+		// Раньше принимался: послабление ради §3.6 было выдано безусловно, то
+		// есть наружу, и настройка узла «request» ничего не значила. Прежний
+		// комментарий здесь утверждал, что «на этом стоит §3.6» — это неверно:
+		// §3.6 ведёт запрос через sync-ветку (handleSync → ErrNodePaused →
+		// handleAsyncFromInput), внешний async-эндпоинт ему не нужен. Кейс ниже
+		// это доказывает.
 		r, queue := newShortURLHandler(t, nodes, nil)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/requestAsync/webhook/sbp-qr", strings.NewReader(`{}`)))
-		require.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, 1, queue.published)
+		require.Equal(t, http.StatusNotFound, w.Code)
+		assert.Contains(t, w.Body.String(), "node not found",
+			"факт существования узла наружу не раскрываем")
+		assert.Zero(t, queue.published, "в очередь ничего уйти не должно")
+	})
+
+	t.Run("§3.6 не сломан: paused sync-узел копит запросы в очереди", func(t *testing.T) {
+		paused := shortURLNode("sbp-qr-paused", domain.RootMethodRequest)
+		paused.Status = domain.NodeStatusPaused
+		withPaused := map[string]*domain.Node{"webhook|sbp-qr-paused": paused}
+
+		r, queue := newShortURLHandler(t, withPaused, nil)
+		for _, url := range []string{
+			"/api/v1/webhook/sbp-qr-paused",         // короткая форма §78.1
+			"/api/v1/request/webhook/sbp-qr-paused", // legacy sync-форма
+		} {
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, url, strings.NewReader(`{}`)))
+			require.Equal(t, http.StatusAccepted, w.Code, url)
+			var body map[string]any
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+			assert.Equal(t, true, body["queued"], url)
+		}
+		assert.Equal(t, 2, queue.published, "оба запроса обязаны лечь в очередь")
+	})
+
+	t.Run("pull-узел через внешний async-эндпоинт — 404 (§82.3)", func(t *testing.T) {
+		// Побочный, но нужный эффект гейта: у RabbitMQAsync входящего HTTP нет
+		// вовсе, короткий адрес его честно отдавал 404, а async-эндпоинт
+		// принимал — из-за того же отсутствия проверки root_method.
+		r, queue := newShortURLHandler(t, nodes, nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/requestAsync/webhook/pull", strings.NewReader(`{}`)))
+		require.Equal(t, http.StatusNotFound, w.Code)
+		assert.Zero(t, queue.published)
 	})
 
 	t.Run("пустой путь — 400", func(t *testing.T) {

@@ -103,8 +103,10 @@ paths:
       - routing
   /api/v1/requestAsync/{path}:
     post:
-      description: Ставит запрос в очередь Kafka и сразу отвечает {result:true,id}.
+      description: 'Ставит запрос в очередь Kafka и сразу отвечает {result:true,id}.
         Доставку выполняет Sender-consumer. Путь — /api/v1/requestAsync/<team_slug>/<node_path>.
+        §82.3: узел обязан быть настроен как requestAsync — иначе 404 (как и несуществующий
+        узел).'
       parameters:
       - description: '[<team_slug>/]<node_path>'
         in: path
@@ -123,7 +125,8 @@ paths:
             additionalProperties: true
             type: object
         "404":
-          description: '{result:false,message} — node not found'
+          description: '{result:false,message} — node not found (в т.ч. узел с root_method
+            != requestAsync, §82.3)'
           schema:
             additionalProperties: true
             type: object

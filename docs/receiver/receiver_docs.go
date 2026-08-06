@@ -98,7 +98,7 @@ const docTemplatereceiver = `{
         },
         "/api/v1/requestAsync/{path}": {
             "post": {
-                "description": "Ставит запрос в очередь Kafka и сразу отвечает {result:true,id}. Доставку выполняет Sender-consumer. Путь — /api/v1/requestAsync/\u003cteam_slug\u003e/\u003cnode_path\u003e.",
+                "description": "Ставит запрос в очередь Kafka и сразу отвечает {result:true,id}. Доставку выполняет Sender-consumer. Путь — /api/v1/requestAsync/\u003cteam_slug\u003e/\u003cnode_path\u003e. §82.3: узел обязан быть настроен как requestAsync — иначе 404 (как и несуществующий узел).",
                 "tags": [
                     "routing"
                 ],
@@ -128,7 +128,7 @@ const docTemplatereceiver = `{
                         }
                     },
                     "404": {
-                        "description": "{result:false,message} — node not found",
+                        "description": "{result:false,message} — node not found (в т.ч. узел с root_method != requestAsync, §82.3)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true

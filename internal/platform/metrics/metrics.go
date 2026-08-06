@@ -49,6 +49,10 @@ type Metrics struct {
 	// max by(node).
 	NodeLastRequestError *prometheus.GaugeVec
 	LoopDetectedTotal    *prometheus.CounterVec // §32: запросы, отклонённые по hop-лимиту
+	// AsyncIngressRejectedTotal — §82.3: запросы во внешний /requestAsync к узлу,
+	// который настроен не как requestAsync. Клиент видит только 404, поэтому без
+	// счётчика рассинхронизация настроек остаётся невидимой.
+	AsyncIngressRejectedTotal *prometheus.CounterVec
 	// Phase AUD.8: сбои проверки rate-limit'а (fail-open, §9.4) по scope ключа.
 	RateLimitCheckErrorsTotal *prometheus.CounterVec
 	RequestDuration           *prometheus.HistogramVec
@@ -151,6 +155,16 @@ func New(service string, opts ...Option) *Metrics {
 			Help:        "Requests rejected by the loop-protection hop limit (X-Nexus-Hops), by mode (sync, async).",
 			ConstLabels: constLabels,
 		}, []string{"mode"}),
+
+		// §82.3: обращения во внешний /api/v1/requestAsync/ к узлу, чей
+		// root_method не requestAsync. Наружу такой отказ неотличим от 404
+		// «узла нет» (существование узла не раскрываем), поэтому счётчик —
+		// единственный способ увидеть, что интеграция настроена не туда.
+		AsyncIngressRejectedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "nexus_async_ingress_rejected_total",
+			Help:        "Requests to /api/v1/requestAsync rejected because the node is not configured as requestAsync (§82.3).",
+			ConstLabels: constLabels,
+		}, []string{"node"}),
 
 		// Phase AUD.8 (D.4): сбои проверки rate-limit'а (Redis недоступен и
 		// т.п.). Лимиты по §9.4 fail-open — этот счётчик единственный сигнал,
@@ -319,6 +333,7 @@ func New(service string, opts ...Option) *Metrics {
 		m.RequestsIncompleteTotal,
 		m.NodeLastRequestError,
 		m.LoopDetectedTotal,
+		m.AsyncIngressRejectedTotal,
 		m.RateLimitCheckErrorsTotal,
 		m.RequestDuration,
 		m.KafkaLag,
@@ -386,6 +401,12 @@ func (m *Metrics) SetL2Size(n int) { m.L2CacheSize.Set(float64(n)) }
 // IncLoopDetected инкрементит счётчик запросов, отклонённых защитой от
 // зацикливания (§32). mode — "sync" либо "async".
 func (m *Metrics) IncLoopDetected(mode string) { m.LoopDetectedTotal.WithLabelValues(mode).Inc() }
+
+// IncAsyncIngressRejected — §82.3: обращение во внешний /requestAsync к узлу,
+// который не настроен асинхронным.
+func (m *Metrics) IncAsyncIngressRejected(node string) {
+	m.AsyncIngressRejectedTotal.WithLabelValues(node).Inc()
+}
 
 // SetNodeLastRequestOutcome фиксирует исход последнего исходящего вызова узла
 // (§41/§52): 0=ok (2xx), 1=degraded (ответил не-2xx <500), 2=down (транспортная
