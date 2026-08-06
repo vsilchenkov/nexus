@@ -68,6 +68,15 @@ message SendRequest {
   // его breaker, начав отдавать 503 боевому трафику. Порядок деплоя: Sender → Web
   // (старый Sender поле проигнорирует и побочку не погасит).
   bool dry_run = 30;
+
+  // §81.3: политика circuit breaker'а этого узла. 0 = «брать глобальное
+  // значение из конфигурации Sender'а». Передаётся Receiver'ом, потому что
+  // sync-путь узел из БД не читает (в отличие от async, где Sender берёт его
+  // сам на каждое сообщение). Порядок выката: Sender → Receiver → Web —
+  // старый Sender поля проигнорирует и продолжит работать по глобальной
+  // политике, как до §81.
+  int32 circuit_breaker_threshold    = 31;
+  int32 circuit_breaker_cooldown_sec = 32;
 }
 
 message SendResponse {

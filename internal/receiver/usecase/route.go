@@ -230,6 +230,10 @@ func (u *RouteUsecase) buildSendRequest(
 		LoggingEnabled:     node.LoggingEnabled,
 		MaxBodySizeEnabled: node.MaxBodySizeEnabled,
 		MaxBodySize:        node.MaxBodySize,
+		// §81.3: политика breaker'а узла (0 = глобальная из конфига Sender'а).
+		// Sync-путь узел из БД не читает — политику несёт запрос.
+		CircuitBreakerThreshold:   node.CircuitBreakerThreshold,
+		CircuitBreakerCooldownSec: node.CircuitBreakerCooldownSec,
 	}, nil
 }
 

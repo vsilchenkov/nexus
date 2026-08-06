@@ -112,7 +112,11 @@ func (u *SendUsecase) voteBreaker(ctx context.Context, in SendInput, resp *port.
 		return
 	}
 
-	if err := u.cb.RecordFailure(bookCtx, in.NodePath); err != nil {
+	policy := domain.BreakerPolicy{
+		Threshold: int(in.BreakerThreshold),
+		Cooldown:  time.Duration(in.BreakerCooldownSec) * time.Second,
+	}
+	if err := u.cb.RecordFailure(bookCtx, in.NodePath, policy); err != nil {
 		u.logger.Debug("send: breaker failure not recorded",
 			u.logger.Str("id", in.ID),
 			u.logger.Str("node", in.NodePath),

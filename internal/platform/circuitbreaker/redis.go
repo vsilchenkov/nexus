@@ -28,6 +28,8 @@ import (
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
+
+	"nexus/internal/domain"
 )
 
 type State string
@@ -68,11 +70,18 @@ func Key(nodeKey string) string { return keyPrefix + nodeKey }
 //
 // goredis.Script неизменяем после создания (хранит только текст и SHA) —
 // package-level var здесь эквивалентен константе.
+// §81.3: cooldown берётся из самого состояния — его записал RecordFailure по
+// политике узла. ARGV[2] (глобальная политика) остаётся запасным значением для
+// ключей, созданных версией до §81.3.
 var allowProbeScript = goredis.NewScript(`
 local state = redis.call("HGET", KEYS[1], "state")
 if state == "open" then
 	local opened = tonumber(redis.call("HGET", KEYS[1], "opened_at") or "0")
-	if tonumber(ARGV[1]) - opened >= tonumber(ARGV[2]) then
+	local cooldown = tonumber(redis.call("HGET", KEYS[1], "cooldown_ns") or "0")
+	if cooldown <= 0 then
+		cooldown = tonumber(ARGV[2])
+	end
+	if tonumber(ARGV[1]) - opened >= cooldown then
 		redis.call("HSET", KEYS[1], "state", "half_open", "probe", 1)
 		return 1
 	end
@@ -87,13 +96,25 @@ return 1
 `)
 
 type Breaker struct {
-	client    *goredis.Client
-	threshold int
-	cooldown  time.Duration
+	client *goredis.Client
+	// Глобальная политика из конфигурации (sender.circuit_breaker).
+	// Применяется к узлам без переопределения.
+	global domain.BreakerPolicy
 }
 
 func New(client *goredis.Client, threshold int, cooldown time.Duration) *Breaker {
-	return &Breaker{client: client, threshold: threshold, cooldown: cooldown}
+	return &Breaker{client: client, global: domain.BreakerPolicy{Threshold: threshold, Cooldown: cooldown}}
+}
+
+// resolve сводит политику узла с глобальной: нули означают «как в конфигурации».
+func (b *Breaker) resolve(p domain.BreakerPolicy) domain.BreakerPolicy {
+	if p.Threshold <= 0 {
+		p.Threshold = b.global.Threshold
+	}
+	if p.Cooldown <= 0 {
+		p.Cooldown = b.global.Cooldown
+	}
+	return p
 }
 
 // Allow возвращает true, если breaker разрешает запрос.
@@ -113,7 +134,7 @@ func (b *Breaker) Allow(ctx context.Context, key string) (bool, error) {
 		return true, nil
 	}
 	res, err := allowProbeScript.Run(ctx, b.client, []string{k},
-		time.Now().UnixNano(), b.cooldown.Nanoseconds()).Int()
+		time.Now().UnixNano(), b.global.Cooldown.Nanoseconds()).Int()
 	if err != nil {
 		// fail-open: считаем closed (§9.4 ТЗ)
 		return true, err
@@ -140,15 +161,16 @@ func (b *Breaker) RecordSuccess(ctx context.Context, key string) error {
 // а после переопределения политики на узле глобальная конфигурация перестаёт
 // быть источником истины. Цена нулевая: путь редкий, поля дописываются в уже
 // существующий pipeline.
-func (b *Breaker) RecordFailure(ctx context.Context, key string) error {
+func (b *Breaker) RecordFailure(ctx context.Context, key string, p domain.BreakerPolicy) error {
+	pol := b.resolve(p)
 	k := Key(key)
 	failures, err := b.client.HIncrBy(ctx, k, fFailures, 1).Result()
 	if err != nil {
 		return err
 	}
 	pipe := b.client.TxPipeline()
-	pipe.HSet(ctx, k, fThreshold, b.threshold, fCooldown, b.cooldown.Nanoseconds())
-	if int(failures) >= b.threshold {
+	pipe.HSet(ctx, k, fThreshold, pol.Threshold, fCooldown, pol.Cooldown.Nanoseconds())
+	if int(failures) >= pol.Threshold {
 		pipe.HSet(ctx, k, fState, string(StateOpen),
 			fOpenedAt, strconv.FormatInt(time.Now().UnixNano(), 10))
 		pipe.HDel(ctx, k, fProbe)
@@ -166,7 +188,7 @@ func (b *Breaker) RecordFailure(ctx context.Context, key string) error {
 // плодить fast-fail-churn, пока адрес мёртв.
 func (b *Breaker) IsOpen(ctx context.Context, key string) (bool, error) {
 	k := Key(key)
-	vals, err := b.client.HMGet(ctx, k, fState, fOpenedAt).Result()
+	vals, err := b.client.HMGet(ctx, k, fState, fOpenedAt, fCooldown).Result()
 	if err != nil {
 		// fail-open: при ошибке Redis не считаем breaker открытым (§9.4).
 		return false, fmt.Errorf("hmget: %w", err)
@@ -177,7 +199,14 @@ func (b *Breaker) IsOpen(ctx context.Context, key string) (bool, error) {
 	}
 	openedStr, _ := vals[1].(string)
 	opened, _ := strconv.ParseInt(openedStr, 10, 64)
-	return time.Now().UnixNano()-opened < b.cooldown.Nanoseconds(), nil
+	// §81.3: cooldown узла записан вместе с состоянием; глобальный — запасной
+	// для ключей, созданных до §81.3.
+	cooldownStr, _ := vals[2].(string)
+	cooldown, _ := strconv.ParseInt(cooldownStr, 10, 64)
+	if cooldown <= 0 {
+		cooldown = b.global.Cooldown.Nanoseconds()
+	}
+	return time.Now().UnixNano()-opened < cooldown, nil
 }
 
 // State возвращает текущее состояние (для диагностики/UI).

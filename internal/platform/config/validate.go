@@ -54,6 +54,16 @@ func Validate(c *Config) error {
 		return errors.New("sentry.use=true but sentry.dsn is empty")
 	}
 
+	// §81.3: границы те же, что у per-node переопределения (domain.Node), иначе
+	// глобальная политика могла бы оказаться недостижимой для формы узла.
+	// Ноль сюда не доходит — дефолты подставляют 5/30 (см. defaults.go).
+	if c.Sender.CircuitBreaker.Threshold < 1 || c.Sender.CircuitBreaker.Threshold > 100 {
+		return fmt.Errorf("sender.circuit_breaker.threshold=%d: must be 1..100", c.Sender.CircuitBreaker.Threshold)
+	}
+	if c.Sender.CircuitBreaker.CooldownSec < 1 || c.Sender.CircuitBreaker.CooldownSec > 3_600 {
+		return fmt.Errorf("sender.circuit_breaker.cooldown_sec=%d: must be 1..3600", c.Sender.CircuitBreaker.CooldownSec)
+	}
+
 	// §64: границы те же, что у domain.Node.MaxBodySize — иначе форма подставит
 	// значение, которое не пройдёт валидацию при сохранении узла.
 	if c.Web.NodeDefaultMaxBodySize < 1 || c.Web.NodeDefaultMaxBodySize > 10_000_000 {

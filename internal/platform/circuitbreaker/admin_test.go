@@ -2,6 +2,7 @@ package circuitbreaker_test
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"nexus/internal/domain"
 	"nexus/internal/platform/circuitbreaker"
 )
 
@@ -33,7 +35,7 @@ func TestKey_MatchesWhatBreakerWrites(t *testing.T) {
 	t.Parallel()
 
 	b, _, srv := newAdmin(t, 2, time.Minute)
-	require.NoError(t, b.RecordFailure(context.Background(), "node/a"))
+	require.NoError(t, b.RecordFailure(context.Background(), "node/a", domain.BreakerPolicy{}))
 
 	assert.Equal(t, "circuit:node/a", circuitbreaker.Key("node/a"))
 	assert.True(t, srv.Exists(circuitbreaker.Key("node/a")), "Breaker пишет ровно в Key()")
@@ -62,7 +64,7 @@ func TestSnapshot_OpenCarriesPolicyAndCountdown(t *testing.T) {
 	b, adm, _ := newAdmin(t, threshold, cooldown)
 	ctx := context.Background()
 	for range threshold {
-		require.NoError(t, b.RecordFailure(ctx, "node/a"))
+		require.NoError(t, b.RecordFailure(ctx, "node/a", domain.BreakerPolicy{}))
 	}
 
 	snap, err := adm.Snapshot(ctx, "node/a")
@@ -103,7 +105,7 @@ func TestReset_ReturnsPreviousStateAndClears(t *testing.T) {
 	b, adm, srv := newAdmin(t, 2, time.Minute)
 	ctx := context.Background()
 	for range 2 {
-		require.NoError(t, b.RecordFailure(ctx, "node/a"))
+		require.NoError(t, b.RecordFailure(ctx, "node/a", domain.BreakerPolicy{}))
 	}
 
 	before, err := adm.Reset(ctx, "node/a")
@@ -133,7 +135,7 @@ func TestReset_AllowsTrafficImmediately(t *testing.T) {
 	b, adm, _ := newAdmin(t, 2, time.Hour) // cooldown заведомо не истечёт сам
 	ctx := context.Background()
 	for range 2 {
-		require.NoError(t, b.RecordFailure(ctx, "node/a"))
+		require.NoError(t, b.RecordFailure(ctx, "node/a", domain.BreakerPolicy{}))
 	}
 	ok, err := b.Allow(ctx, "node/a")
 	require.NoError(t, err)
@@ -155,12 +157,12 @@ func TestReset_FailureAfterResetStartsFromScratch(t *testing.T) {
 	b, adm, _ := newAdmin(t, 3, time.Minute)
 	ctx := context.Background()
 	for range 3 {
-		require.NoError(t, b.RecordFailure(ctx, "node/a"))
+		require.NoError(t, b.RecordFailure(ctx, "node/a", domain.BreakerPolicy{}))
 	}
 	_, err := adm.Reset(ctx, "node/a")
 	require.NoError(t, err)
 
-	require.NoError(t, b.RecordFailure(ctx, "node/a"))
+	require.NoError(t, b.RecordFailure(ctx, "node/a", domain.BreakerPolicy{}))
 
 	snap, err := adm.Snapshot(ctx, "node/a")
 	require.NoError(t, err)
@@ -176,7 +178,7 @@ func TestSnapshot_DoesNotConsumeProbe(t *testing.T) {
 	b, adm, srv := newAdmin(t, 2, time.Minute)
 	ctx := context.Background()
 	for range 2 {
-		require.NoError(t, b.RecordFailure(ctx, "node/a"))
+		require.NoError(t, b.RecordFailure(ctx, "node/a", domain.BreakerPolicy{}))
 	}
 	// cooldown истёк — следующий Allow обязан выдать ровно одну пробу.
 	srv.HSet(circuitbreaker.Key("node/a"), "opened_at", "0")
@@ -189,4 +191,87 @@ func TestSnapshot_DoesNotConsumeProbe(t *testing.T) {
 	ok, err := b.Allow(ctx, "node/a")
 	require.NoError(t, err)
 	assert.True(t, ok, "проба не израсходована снимками")
+}
+
+// §81.3: политика узла перекрывает глобальную. Узел с порогом 2 обязан
+// открыться на второй ошибке, хотя в конфигурации стоит 10.
+func TestRecordFailure_NodePolicyOverridesGlobal(t *testing.T) {
+	t.Parallel()
+
+	b, adm, _ := newAdmin(t, 10, time.Hour) // глобальная политика — «терпеливая»
+	ctx := context.Background()
+	nodePolicy := domain.BreakerPolicy{Threshold: 2, Cooldown: 5 * time.Second}
+
+	require.NoError(t, b.RecordFailure(ctx, "node/strict", nodePolicy))
+	snap, err := adm.Snapshot(ctx, "node/strict")
+	require.NoError(t, err)
+	require.NotEqual(t, circuitbreaker.StateOpen, snap.State, "одной ошибки мало")
+
+	require.NoError(t, b.RecordFailure(ctx, "node/strict", nodePolicy))
+	snap, err = adm.Snapshot(ctx, "node/strict")
+	require.NoError(t, err)
+	assert.Equal(t, circuitbreaker.StateOpen, snap.State, "порог узла — 2, а не глобальные 10")
+	assert.Equal(t, 2, snap.Threshold, "в снимок уходит применённая политика")
+	assert.Equal(t, 5*time.Second, snap.Cooldown)
+}
+
+// Нулевые поля политики означают «как в конфигурации» — узел без собственных
+// настроек ведёт себя ровно как до §81.3.
+func TestRecordFailure_ZeroPolicyFallsBackToGlobal(t *testing.T) {
+	t.Parallel()
+
+	b, adm, _ := newAdmin(t, 3, 42*time.Second)
+	ctx := context.Background()
+	for range 3 {
+		require.NoError(t, b.RecordFailure(ctx, "node/default", domain.BreakerPolicy{}))
+	}
+
+	snap, err := adm.Snapshot(ctx, "node/default")
+	require.NoError(t, err)
+	assert.Equal(t, circuitbreaker.StateOpen, snap.State)
+	assert.Equal(t, 3, snap.Threshold)
+	assert.Equal(t, 42*time.Second, snap.Cooldown)
+}
+
+// Cooldown узла обязан управлять и выдачей половинчато-открытой пробы: иначе
+// настройка была бы косметической — состояние показывает одно, Allow ждёт другое.
+func TestAllow_UsesNodeCooldownFromState(t *testing.T) {
+	t.Parallel()
+
+	// Глобальный cooldown — час; у узла 50 мс.
+	b, _, srv := newAdmin(t, 1, time.Hour)
+	ctx := context.Background()
+	require.NoError(t, b.RecordFailure(ctx, "node/fast", domain.BreakerPolicy{Threshold: 1, Cooldown: 50 * time.Millisecond}))
+
+	ok, err := b.Allow(ctx, "node/fast")
+	require.NoError(t, err)
+	require.False(t, ok, "предусловие: breaker открыт")
+
+	// Сдвигаем момент открытия на 100 мс назад — cooldown узла истёк, глобальный нет.
+	srv.HSet(circuitbreaker.Key("node/fast"), "opened_at",
+		strconv.FormatInt(time.Now().Add(-100*time.Millisecond).UnixNano(), 10))
+
+	ok, err = b.Allow(ctx, "node/fast")
+	require.NoError(t, err)
+	assert.True(t, ok, "проба выдаётся по cooldown узла, а не по глобальному")
+}
+
+// IsOpen (им пользуется репроцессор DLQ) обязан считать по тому же cooldown.
+func TestIsOpen_UsesNodeCooldownFromState(t *testing.T) {
+	t.Parallel()
+
+	b, _, srv := newAdmin(t, 1, time.Hour)
+	ctx := context.Background()
+	require.NoError(t, b.RecordFailure(ctx, "node/fast", domain.BreakerPolicy{Threshold: 1, Cooldown: 50 * time.Millisecond}))
+
+	open, err := b.IsOpen(ctx, "node/fast")
+	require.NoError(t, err)
+	require.True(t, open)
+
+	srv.HSet(circuitbreaker.Key("node/fast"), "opened_at",
+		strconv.FormatInt(time.Now().Add(-100*time.Millisecond).UnixNano(), 10))
+
+	open, err = b.IsOpen(ctx, "node/fast")
+	require.NoError(t, err)
+	assert.False(t, open, "cooldown узла истёк — репроцессор снова пробует")
 }

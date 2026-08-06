@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -220,4 +221,39 @@ func TestClassifyUpstream(t *testing.T) {
 			assert.Equal(t, tt.want, classifyUpstream(tt.ctx, tt.resp, tt.lastErr))
 		})
 	}
+}
+
+// §81.3: политика узла обязана доехать до учёта отказа. Без этого настройка в
+// карточке узла была бы косметической — breaker считал бы по глобальной.
+func TestSend_NodeBreakerPolicy_ReachesRecordFailure(t *testing.T) {
+	t.Parallel()
+
+	cb := &stubBreaker{allow: true}
+	httpc := &stubHTTPCaller{responses: []*port.HTTPResponse{{StatusCode: 503}}}
+	uc := NewSendUsecase(httpc, &stubLogWriter{}, cb, logging.NewNoop(), 64<<20)
+
+	in := baseInput()
+	in.BreakerThreshold = 2
+	in.BreakerCooldownSec = 7
+	uc.Send(context.Background(), in)
+
+	require.Len(t, cb.failurePolicies, 1)
+	assert.Equal(t, 2, cb.failurePolicies[0].Threshold)
+	assert.Equal(t, 7*time.Second, cb.failurePolicies[0].Cooldown)
+}
+
+// Узел без собственной политики отдаёт нули — реализация трактует их как
+// «глобальная из конфигурации» (проверено в circuitbreaker/admin_test.go).
+func TestSend_NoNodePolicy_PassesZeroes(t *testing.T) {
+	t.Parallel()
+
+	cb := &stubBreaker{allow: true}
+	httpc := &stubHTTPCaller{responses: []*port.HTTPResponse{{StatusCode: 500}}}
+	uc := NewSendUsecase(httpc, &stubLogWriter{}, cb, logging.NewNoop(), 64<<20)
+
+	uc.Send(context.Background(), baseInput())
+
+	require.Len(t, cb.failurePolicies, 1)
+	assert.Zero(t, cb.failurePolicies[0].Threshold)
+	assert.Zero(t, cb.failurePolicies[0].Cooldown)
 }

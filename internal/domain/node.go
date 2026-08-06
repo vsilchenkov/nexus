@@ -79,6 +79,14 @@ type Node struct {
 	DLQTTLSeconds        int32 // §36: TTL повторной доставки неудачных async-сообщений из DLQ (секунды)
 	DLQRetryDelaySeconds int32 // §36: минимальная задержка перед повторной доставкой ошибочной отправки (секунды)
 
+	// §81.3: политика circuit breaker'а этого узла. Ноль = «брать глобальное
+	// значение из конфигурации» (в БД — NULL): у узла с 200-миллисекундным
+	// приёмником и у узла со штатным ответом в 20 секунд разная норма отказов.
+	// Применяется обеими сторонами: async читает узел из БД на каждое сообщение,
+	// sync получает политику в составе запроса к отправителю.
+	CircuitBreakerThreshold   int32
+	CircuitBreakerCooldownSec int32
+
 	Status NodeStatus
 	TeamID string
 
@@ -287,6 +295,15 @@ func (n *Node) Validate() error {
 	if n.DLQRetryDelaySeconds < 1 || n.DLQRetryDelaySeconds > 86_400 {
 		return ErrNodeDLQRetryDelayRange
 	}
+	// §81.3: ноль = «как в конфигурации», поэтому проверяются только заданные
+	// значения. Верхние границы — здравый смысл оператора: порог выше сотни уже
+	// не защита, пауза больше часа делает узел неотличимым от отключённого.
+	if n.CircuitBreakerThreshold < 0 || n.CircuitBreakerThreshold > 100 {
+		return ErrNodeCircuitBreakerThresholdRange
+	}
+	if n.CircuitBreakerCooldownSec < 0 || n.CircuitBreakerCooldownSec > 3_600 {
+		return ErrNodeCircuitBreakerCooldownRange
+	}
 	if len(n.URLAllowedHosts) > 50 {
 		return ErrNodeAllowedHostsSize
 	}
@@ -493,5 +510,25 @@ func (n *Node) SetDefaults() {
 		if n.PullPrefetch == 0 {
 			n.PullPrefetch = n.PullBatchSize
 		}
+	}
+}
+
+// BreakerPolicy — политика circuit breaker'а узла (§81.3): сколько отказов
+// подряд открывают защиту и сколько ждать до половинчато-открытой пробы.
+//
+// Живёт в domain, потому что нужна обеим сторонам границы: usecase Sender'а
+// объявляет через неё свой порт, а реализация (platform/circuitbreaker) её
+// применяет. Нулевые поля означают «взять глобальное значение из конфигурации»
+// — разрешение делает реализация, чтобы правило не дублировалось в вызовах.
+type BreakerPolicy struct {
+	Threshold int
+	Cooldown  time.Duration
+}
+
+// BreakerPolicy собирает политику узла из его полей (0 = глобальная).
+func (n *Node) BreakerPolicy() BreakerPolicy {
+	return BreakerPolicy{
+		Threshold: int(n.CircuitBreakerThreshold),
+		Cooldown:  time.Duration(n.CircuitBreakerCooldownSec) * time.Second,
 	}
 }

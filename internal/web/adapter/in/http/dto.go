@@ -57,11 +57,14 @@ type CreateNodeRequest struct {
 	ExternalTable             bool     `json:"external_table"`
 	DLQTTLSeconds             int32    `json:"dlq_ttl_seconds" binding:"omitempty,min=60,max=2592000"`
 	DLQRetryDelaySeconds      int32    `json:"dlq_retry_delay_seconds" binding:"omitempty,min=1,max=86400"`
-	Comment                   string   `json:"comment" binding:"omitempty,max=2000"`
-	Status                    string   `json:"status" binding:"omitempty,oneof=enabled disabled paused"`
-	LogRequestBody            bool     `json:"log_request_body"`
-	LogResponseBody           bool     `json:"log_response_body"`
-	LogHeaders                bool     `json:"log_headers"`
+	// §81.3: политика circuit breaker'а узла. 0/отсутствие = «как в конфигурации».
+	CircuitBreakerThreshold   int32  `json:"circuit_breaker_threshold" binding:"omitempty,min=0,max=100"`
+	CircuitBreakerCooldownSec int32  `json:"circuit_breaker_cooldown_sec" binding:"omitempty,min=0,max=3600"`
+	Comment                   string `json:"comment" binding:"omitempty,max=2000"`
+	Status                    string `json:"status" binding:"omitempty,oneof=enabled disabled paused"`
+	LogRequestBody            bool   `json:"log_request_body"`
+	LogResponseBody           bool   `json:"log_response_body"`
+	LogHeaders                bool   `json:"log_headers"`
 	// LoggingEnabled — указатель, чтобы отличить «не прислано» (дефолт true,
 	// сохраняет текущее поведение) от явного false (§22).
 	LoggingEnabled     *bool `json:"logging_enabled"`
@@ -129,6 +132,8 @@ type NodeResponse struct {
 	ExternalTable             bool     `json:"external_table"`
 	DLQTTLSeconds             int32    `json:"dlq_ttl_seconds"`
 	DLQRetryDelaySeconds      int32    `json:"dlq_retry_delay_seconds"`
+	CircuitBreakerThreshold   int32    `json:"circuit_breaker_threshold"`
+	CircuitBreakerCooldownSec int32    `json:"circuit_breaker_cooldown_sec"`
 	Comment                   string   `json:"comment"`
 	Status                    string   `json:"status"`
 	TeamID                    string   `json:"team_id"`
@@ -238,6 +243,8 @@ func reqToDomain(r CreateNodeRequest) *domain.Node {
 		ExternalTable:             r.ExternalTable,
 		DLQTTLSeconds:             r.DLQTTLSeconds,
 		DLQRetryDelaySeconds:      r.DLQRetryDelaySeconds,
+		CircuitBreakerThreshold:   r.CircuitBreakerThreshold,
+		CircuitBreakerCooldownSec: r.CircuitBreakerCooldownSec,
 		Comment:                   r.Comment,
 		Status:                    domain.NodeStatus(r.Status),
 		LogRequestBody:            r.LogRequestBody,
@@ -294,6 +301,8 @@ func nodeToResponse(n *domain.Node) NodeResponse {
 		ExternalTable:             n.ExternalTable,
 		DLQTTLSeconds:             n.DLQTTLSeconds,
 		DLQRetryDelaySeconds:      n.DLQRetryDelaySeconds,
+		CircuitBreakerThreshold:   n.CircuitBreakerThreshold,
+		CircuitBreakerCooldownSec: n.CircuitBreakerCooldownSec,
 		Comment:                   n.Comment,
 		Status:                    string(n.Status),
 		TeamID:                    n.TeamID,

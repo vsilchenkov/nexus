@@ -49,6 +49,11 @@ type SendInput struct {
 	MaxBodySizeEnabled bool  // включает обрезку сохраняемых тел
 	MaxBodySize        int32 // макс. число символов (рун) в request/response
 
+	// §81.3: политика circuit breaker'а узла (0 = глобальная из конфигурации
+	// Sender'а). Async берёт её из БД вместе с узлом, sync получает по gRPC.
+	BreakerThreshold   int32
+	BreakerCooldownSec int32
+
 	// §55: вызов тестовый (dry-run из UI). HTTP-запрос выполняется по-настоящему
 	// и тем же клиентом, но следов на узле не остаётся: ни лога в ClickHouse, ни
 	// метрик/статуса (гасятся в gRPC-адаптере), ни участия в circuit breaker.
@@ -77,7 +82,10 @@ type SendOutput struct {
 type CircuitBreaker interface {
 	Allow(ctx context.Context, key string) (bool, error)
 	RecordSuccess(ctx context.Context, key string) error
-	RecordFailure(ctx context.Context, key string) error
+	// §81.3: политика узла (0 = глобальная из конфигурации). Порог применяется
+	// в момент учёта, а не при создании breaker'а, потому что у каждого узла он
+	// свой, а breaker в процессе один.
+	RecordFailure(ctx context.Context, key string, p domain.BreakerPolicy) error
 }
 
 // noopBreaker используется, если CB отключён (cfg-зависимость не настроена).
@@ -85,7 +93,9 @@ type noopBreaker struct{}
 
 func (noopBreaker) Allow(context.Context, string) (bool, error) { return true, nil }
 func (noopBreaker) RecordSuccess(context.Context, string) error { return nil }
-func (noopBreaker) RecordFailure(context.Context, string) error { return nil }
+func (noopBreaker) RecordFailure(context.Context, string, domain.BreakerPolicy) error {
+	return nil
+}
 
 // HostResolver — неблокирующий lookup PTR-имени клиента (§67, колонка
 // client_host). Контракт: значение возвращается МГНОВЕННО из кеша или "";

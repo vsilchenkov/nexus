@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"nexus/internal/domain"
 	"nexus/internal/platform/circuitbreaker"
 )
 
@@ -46,14 +47,14 @@ func TestCircuitBreaker_OpensOnThreshold(t *testing.T) {
 	key := "node-open"
 
 	// 2 failures — пока ниже threshold → state остаётся closed.
-	require.NoError(t, cb.RecordFailure(ctx, key))
-	require.NoError(t, cb.RecordFailure(ctx, key))
+	require.NoError(t, cb.RecordFailure(ctx, key, domain.BreakerPolicy{}))
+	require.NoError(t, cb.RecordFailure(ctx, key, domain.BreakerPolicy{}))
 	st, err := cb.State(ctx, key)
 	require.NoError(t, err)
 	assert.Equal(t, circuitbreaker.StateClosed, st, "2 < threshold=3 → closed")
 
 	// 3-я failure → open.
-	require.NoError(t, cb.RecordFailure(ctx, key))
+	require.NoError(t, cb.RecordFailure(ctx, key, domain.BreakerPolicy{}))
 	st, err = cb.State(ctx, key)
 	require.NoError(t, err)
 	assert.Equal(t, circuitbreaker.StateOpen, st)
@@ -80,8 +81,8 @@ func TestCircuitBreaker_HalfOpenAfterCooldown(t *testing.T) {
 	key := "node-half"
 
 	// Открываем breaker.
-	require.NoError(t, cb.RecordFailure(ctx, key))
-	require.NoError(t, cb.RecordFailure(ctx, key))
+	require.NoError(t, cb.RecordFailure(ctx, key, domain.BreakerPolicy{}))
+	require.NoError(t, cb.RecordFailure(ctx, key, domain.BreakerPolicy{}))
 
 	// Ждём cooldown + чуть-чуть.
 	time.Sleep(300 * time.Millisecond)
@@ -111,8 +112,8 @@ func TestCircuitBreaker_HalfOpen_SingleProbe(t *testing.T) {
 	cb := circuitbreaker.New(client, 2, 200*time.Millisecond)
 	key := "node-single-probe"
 
-	require.NoError(t, cb.RecordFailure(ctx, key))
-	require.NoError(t, cb.RecordFailure(ctx, key))
+	require.NoError(t, cb.RecordFailure(ctx, key, domain.BreakerPolicy{}))
+	require.NoError(t, cb.RecordFailure(ctx, key, domain.BreakerPolicy{}))
 	time.Sleep(300 * time.Millisecond) // cooldown истёк
 
 	// 20 конкурентных Allow: ровно один должен получить true.
@@ -170,8 +171,8 @@ func TestCircuitBreaker_HalfOpen_ProbeFailureReopens(t *testing.T) {
 	cb := circuitbreaker.New(client, 2, 200*time.Millisecond)
 	key := "node-probe-fail"
 
-	require.NoError(t, cb.RecordFailure(ctx, key))
-	require.NoError(t, cb.RecordFailure(ctx, key))
+	require.NoError(t, cb.RecordFailure(ctx, key, domain.BreakerPolicy{}))
+	require.NoError(t, cb.RecordFailure(ctx, key, domain.BreakerPolicy{}))
 	time.Sleep(300 * time.Millisecond)
 
 	ok, err := cb.Allow(ctx, key)
@@ -179,7 +180,7 @@ func TestCircuitBreaker_HalfOpen_ProbeFailureReopens(t *testing.T) {
 	require.True(t, ok, "пробный должен пройти")
 
 	// Пробный провалился → снова open, cooldown заводится заново.
-	require.NoError(t, cb.RecordFailure(ctx, key))
+	require.NoError(t, cb.RecordFailure(ctx, key, domain.BreakerPolicy{}))
 	st, err := cb.State(ctx, key)
 	require.NoError(t, err)
 	assert.Equal(t, circuitbreaker.StateOpen, st)
@@ -207,8 +208,8 @@ func TestCircuitBreaker_RecordSuccessClosesBreaker(t *testing.T) {
 	cb := circuitbreaker.New(client, 2, time.Second)
 	key := "node-success"
 
-	require.NoError(t, cb.RecordFailure(ctx, key))
-	require.NoError(t, cb.RecordFailure(ctx, key))
+	require.NoError(t, cb.RecordFailure(ctx, key, domain.BreakerPolicy{}))
+	require.NoError(t, cb.RecordFailure(ctx, key, domain.BreakerPolicy{}))
 
 	st, err := cb.State(ctx, key)
 	require.NoError(t, err)
@@ -235,8 +236,8 @@ func TestCircuitBreaker_KeysIsolated(t *testing.T) {
 
 	cb := circuitbreaker.New(client, 2, time.Second)
 
-	require.NoError(t, cb.RecordFailure(ctx, "node-A"))
-	require.NoError(t, cb.RecordFailure(ctx, "node-A"))
+	require.NoError(t, cb.RecordFailure(ctx, "node-A", domain.BreakerPolicy{}))
+	require.NoError(t, cb.RecordFailure(ctx, "node-A", domain.BreakerPolicy{}))
 
 	// node-B должен оставаться closed.
 	st, err := cb.State(ctx, "node-B")
@@ -287,7 +288,7 @@ func TestCircuitBreaker_AdminResetE2E(t *testing.T) {
 	adm := circuitbreaker.NewAdmin(client)
 
 	for range threshold {
-		require.NoError(t, cb.RecordFailure(ctx, "node-admin"))
+		require.NoError(t, cb.RecordFailure(ctx, "node-admin", domain.BreakerPolicy{}))
 	}
 	ok, err := cb.Allow(ctx, "node-admin")
 	require.NoError(t, err)

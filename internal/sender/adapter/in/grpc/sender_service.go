@@ -62,6 +62,10 @@ func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 		MaxBodySizeEnabled: req.GetMaxBodySizeEnabled(),
 		MaxBodySize:        req.GetMaxBodySize(),
 		DryRun:             req.GetDryRun(), // §55
+		// §81.3: политику несёт запрос — sync-путь узел из БД не читает.
+		// Старый Receiver поля не пришлёт: нули = глобальная политика.
+		BreakerThreshold:   req.GetCircuitBreakerThreshold(),
+		BreakerCooldownSec: req.GetCircuitBreakerCooldownSec(),
 	})
 
 	// §55: тестовый вызов (dry-run из UI) не оставляет следов на узле — ни в

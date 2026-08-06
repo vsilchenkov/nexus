@@ -226,6 +226,14 @@ func applyDefaults(c *Config) {
 	if c.Sender.RDNS.NegativeTTLSec == 0 {
 		c.Sender.RDNS.NegativeTTLSec = 600
 	}
+	// §81.3: политика circuit breaker'а. Значения те же, что были литералами в
+	// коде до §81 — обновление конфигурацию не меняет.
+	if c.Sender.CircuitBreaker.Threshold == 0 {
+		c.Sender.CircuitBreaker.Threshold = 5
+	}
+	if c.Sender.CircuitBreaker.CooldownSec == 0 {
+		c.Sender.CircuitBreaker.CooldownSec = 30
+	}
 
 	if c.Web.HTTPAddr == "" {
 		c.Web.HTTPAddr = ":8000"

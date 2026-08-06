@@ -1003,6 +1003,10 @@ func diffNodes(old, n *domain.Node) map[string]any {
 	// §64: переключение внешней таблицы меняет, управляет ли Nexus схемой и
 	// retention этой таблицы, — такое решение должно быть видно в аудите.
 	add("external_table", old.ExternalTable, n.ExternalTable)
+	// §81.3: ослабление защиты узла (порог выше, пауза короче) должно быть видно
+	// в аудите — иначе «почему он опять долбит мёртвый приёмник» не разобрать.
+	add("circuit_breaker_threshold", old.CircuitBreakerThreshold, n.CircuitBreakerThreshold)
+	add("circuit_breaker_cooldown_sec", old.CircuitBreakerCooldownSec, n.CircuitBreakerCooldownSec)
 	if old.AuthCredentials != n.AuthCredentials {
 		d["auth_credentials"] = "changed"
 	}

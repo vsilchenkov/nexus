@@ -162,5 +162,9 @@ func buildSendInput(node *domain.Node, env Envelope) SendInput {
 		LoggingEnabled:     node.LoggingEnabled,
 		MaxBodySizeEnabled: node.MaxBodySizeEnabled,
 		MaxBodySize:        node.MaxBodySize,
+		// §81.3: политика breaker'а узла — async читает узел из БД на каждое
+		// сообщение, так что она всегда свежая.
+		BreakerThreshold:   node.CircuitBreakerThreshold,
+		BreakerCooldownSec: node.CircuitBreakerCooldownSec,
 	}
 }

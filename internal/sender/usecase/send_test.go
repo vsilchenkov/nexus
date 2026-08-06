@@ -93,6 +93,9 @@ type stubBreaker struct {
 	allowErr       error
 	successCtxErrs []error
 	failureCtxErrs []error
+	// §81.3: политика, с которой пришёл учёт отказа — проверяем, что доехала
+	// именно настройка узла, а не глобальная.
+	failurePolicies []domain.BreakerPolicy
 }
 
 func (b *stubBreaker) Allow(_ context.Context, _ string) (bool, error) {
@@ -104,9 +107,10 @@ func (b *stubBreaker) RecordSuccess(ctx context.Context, _ string) error {
 	b.successCtxErrs = append(b.successCtxErrs, ctx.Err())
 	return nil
 }
-func (b *stubBreaker) RecordFailure(ctx context.Context, _ string) error {
+func (b *stubBreaker) RecordFailure(ctx context.Context, _ string, p domain.BreakerPolicy) error {
 	b.failureCount++
 	b.failureCtxErrs = append(b.failureCtxErrs, ctx.Err())
+	b.failurePolicies = append(b.failurePolicies, p)
 	return nil
 }
 

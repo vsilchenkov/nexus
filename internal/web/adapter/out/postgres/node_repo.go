@@ -55,7 +55,8 @@ const nodeColumns = `
 	incoming_method, outgoing_method, comment, dlq_ttl_seconds, dlq_retry_delay_seconds,
 	path_passthrough,
 	incoming_auth_dynamic_source, incoming_auth_dynamic_field,
-	created_by, updated_by, external_table`
+	created_by, updated_by, external_table,
+	circuit_breaker_threshold, circuit_breaker_cooldown_sec`
 
 func (r *NodeRepoPg) Get(ctx context.Context, id string) (*domain.Node, error) {
 	row := r.db.QueryRow(ctx, `SELECT `+nodeColumns+` FROM nodes WHERE id = $1`, id)
@@ -267,7 +268,8 @@ INSERT INTO nodes (
 	incoming_method, outgoing_method, comment, dlq_ttl_seconds, dlq_retry_delay_seconds,
 	path_passthrough,
 	incoming_auth_dynamic_source, incoming_auth_dynamic_field,
-	created_by, updated_by, external_table
+	created_by, updated_by, external_table,
+	circuit_breaker_threshold, circuit_breaker_cooldown_sec
 ) VALUES (
 	$1, $2,
 	$3, $4, $5, $6,
@@ -285,7 +287,8 @@ INSERT INTO nodes (
 	$41, $42, $43, $44, $45,
 	$46,
 	$47, $48,
-	$49, $50, $51
+	$49, $50, $51,
+	$52, $53
 ) RETURNING id, created_at, updated_at`
 
 	err = r.db.QueryRow(ctx, q,
@@ -307,6 +310,8 @@ INSERT INTO nodes (
 		n.PathPassthrough,
 		incomingAuthDynSrc(n), incomingAuthDynField(n),
 		n.CreatedBy, n.UpdatedBy, n.ExternalTable,
+		// §81.3: 0 → NULL, «политика из конфигурации».
+		nullInt32(n.CircuitBreakerThreshold), nullInt32(n.CircuitBreakerCooldownSec),
 	).Scan(&n.ID, &n.CreatedAt, &n.UpdatedAt)
 
 	if err != nil {
@@ -354,6 +359,7 @@ UPDATE nodes SET
 	dlq_retry_delay_seconds = $46, path_passthrough = $47,
 	incoming_auth_dynamic_source = $48, incoming_auth_dynamic_field = $49,
 	updated_by = $50, external_table = $51,
+	circuit_breaker_threshold = $52, circuit_breaker_cooldown_sec = $53,
 	updated_at = now()
 WHERE id = $1
 RETURNING updated_at`
@@ -378,6 +384,8 @@ RETURNING updated_at`
 		n.PathPassthrough,
 		incomingAuthDynSrc(n), incomingAuthDynField(n),
 		n.UpdatedBy, n.ExternalTable,
+		// §81.3: 0 → NULL, «политика из конфигурации».
+		nullInt32(n.CircuitBreakerThreshold), nullInt32(n.CircuitBreakerCooldownSec),
 	).Scan(&n.UpdatedAt)
 
 	if err != nil {
@@ -488,6 +496,8 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 	var templateID *string
 	var rmqHost, rmqVHost, rmqUser, encRMQ, rmqQueue *string
 	var rmqPort, pullInterval, pullBatch, pullPrefetch *int32
+	// §81.3: NULL = «политика из конфигурации».
+	var cbThreshold, cbCooldown *int32
 
 	err := row.Scan(
 		&n.ID, &n.Path, &rootMethod,
@@ -507,12 +517,21 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 		&n.PathPassthrough,
 		&incAuthDynSrc, &n.IncomingAuthDynamicField,
 		&n.CreatedBy, &n.UpdatedBy, &n.ExternalTable,
+		&cbThreshold, &cbCooldown,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) || isInvalidUUID(err) {
 			return nil, domain.ErrNodeNotFound
 		}
 		return nil, fmt.Errorf("scan node: %w", err)
+	}
+
+	// §81.3: NULL в БД → 0 в домене → «использовать глобальную политику».
+	if cbThreshold != nil {
+		n.CircuitBreakerThreshold = *cbThreshold
+	}
+	if cbCooldown != nil {
+		n.CircuitBreakerCooldownSec = *cbCooldown
 	}
 
 	n.RootMethod = domain.RootMethod(rootMethod)
