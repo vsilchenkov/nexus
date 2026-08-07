@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 
 import { type Node } from "../../api/client";
@@ -15,7 +16,14 @@ import {
   type Period,
 } from "../ui";
 import { fmtNum } from "../../lib/format";
-import { CHART_STEPS, type ChartStep } from "../../lib/period";
+import {
+  defaultPeriod,
+  defaultStepFor,
+  normalizeStepForPeriod,
+  stepsForPeriod,
+  type ChartStep,
+} from "../../lib/period";
+import { parseMetricsView, withMetricsView } from "../../lib/nodeTabUrl";
 import {
   advFormEqual,
   emptyAdvForm,
@@ -44,8 +52,46 @@ export function MetricsTab({
   onOpenLogs?: (range: LogsRange) => void;
 }) {
   const { t } = useTranslation();
-  const [period, setPeriod] = useState<Period>({ kind: "preset", range: "24h" });
-  const [step, setStep] = useState<ChartStep>("auto");
+
+  // §84.2: период и шаг живут в АДРЕСЕ, а не в useState — иначе ссылку на
+  // конкретный масштаб не передать, а «Назад» после смены периода уводит не
+  // туда. Недостающее в адресе добирается дефолтом (§84.3: сначала преф узла).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlView = useMemo(() => parseMetricsView(searchParams), [searchParams]);
+  const period = urlView.period ?? defaultPeriod;
+
+  // explicitStep — шаг, ВЫБРАННЫЙ пользователем (есть в адресе). undefined
+  // означает «шаг неявный, берётся дефолтом периода», и различать эти два
+  // состояния обязательно: иначе дефолт одного периода при переключении на
+  // другой переезжает туда уже как выбор и закрепляется в адресе.
+  const explicitStep = urlView.step;
+  // Шаг из адреса нормализуется: ссылка «range=30d&step=1m» приходит извне и
+  // обещает плотность, которой сервер не даст.
+  const step = normalizeStepForPeriod(explicitStep ?? defaultStepFor(period), period);
+  const stepOptions = useMemo(() => stepsForPeriod(period), [period]);
+
+  const applyView = useCallback(
+    (p: Period, s: ChartStep | undefined) => {
+      // Шаг согласуется с НОВЫМ периодом здесь, а не в рендере: в адрес обязано
+      // попасть то же значение, которое подсвечено сегментом.
+      const norm = s === undefined ? undefined : normalizeStepForPeriod(s, p);
+      // Совпал с дефолтом периода — не пишем: ссылка на дефолтный вид обязана
+      // быть короткой, а поведение от этого не меняется (шаг снова становится
+      // неявным и следует за периодом).
+      const write = norm === undefined || norm === defaultStepFor(p) ? undefined : norm;
+      setSearchParams((prev) => withMetricsView(prev, p, write, { period: defaultPeriod }), {
+        replace: true,
+      });
+    },
+    [setSearchParams],
+  );
+
+  const setPeriod = useCallback(
+    (p: Period) => applyView(p, explicitStep),
+    [applyView, explicitStep],
+  );
+  const setStep = useCallback((s: ChartStep) => applyView(period, s), [applyView, period]);
+
   const [showFilters, setShowFilters] = useState(false);
   const [advForm, setAdvForm] = useState<LogsAdvForm>(emptyAdvForm);
   const [applied, setApplied] = useState<LogsAdvForm>(emptyAdvForm);
@@ -91,12 +137,15 @@ export function MetricsTab({
             {/* Без uppercase: рядом стоит выбор периода с обычными подписями,
                 и капс тут читался как отдельный «заголовок секции». */}
             <span className="text-xs text-fg-muted">{t("metrics.step.label")}</span>
+            {/* §84.1: словарь сужен по периоду — шаг крупнее окна сервер
+                сожмёт до окна, мельче окна/400 поднимет до потолка, и сегмент
+                показывал бы не ту плотность, что получится. */}
             <Seg<ChartStep>
               value={step}
               onChange={setStep}
-              options={CHART_STEPS.map((s) => ({
+              options={stepOptions.map((s) => ({
                 value: s,
-                label: s === "auto" ? t("metrics.step.auto") : t(`metrics.range.${s}`),
+                label: s === "auto" ? t("metrics.step.auto") : t(`metrics.step.opt.${s}`),
               }))}
             />
           </div>

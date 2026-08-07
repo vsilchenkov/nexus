@@ -36,9 +36,119 @@ export function periodParams(p: Period): Record<string, string> {
 // §79.5 «Шаг графика» — ширина ОДНОГО столбца. Не путать с периодом: период —
 // сколько показываем, шаг — насколько крупными столбцами. Пара «период 14д +
 // шаг 24ч» даёт 14 столбцов, по одному на сутки.
-export type ChartStep = "auto" | PresetRange;
+//
+// §84.1: словарь шага — та же лестница, что снапит авто-шаг на сервере
+// (usecase/metrics_window.go, chartStepLadder). До §84 он совпадал с пресетами
+// периода, то есть минимальным доступным шагом был ЧАС, и на окне 1 ч выбрать
+// было нечего вовсе. Все значения делят сутки нацело — на этом держится
+// выравнивание столбцов по круглым отметкам.
+//
+// Бэкенд менять не потребовалось: ParseChartStep принимает Go-длительности
+// (`5m`, `6h`, `12h`) помимо пресетов, а `1h`/`3h`/`24h` есть в его словаре.
+export const CHART_STEP_LADDER = [
+  "1m",
+  "5m",
+  "10m",
+  "15m",
+  "30m",
+  "1h",
+  "2h",
+  "3h",
+  "6h",
+  "12h",
+  "24h",
+] as const;
 
-export const CHART_STEPS: ChartStep[] = ["auto", ...PRESET_RANGES];
+export type ChartStepValue = (typeof CHART_STEP_LADDER)[number];
+export type ChartStep = "auto" | ChartStepValue;
+
+export const CHART_STEPS: ChartStep[] = ["auto", ...CHART_STEP_LADDER];
+
+const CHART_STEP_MS: Record<ChartStepValue, number> = {
+  "1m": 60_000,
+  "5m": 300_000,
+  "10m": 600_000,
+  "15m": 900_000,
+  "30m": 1_800_000,
+  "1h": 3_600_000,
+  "2h": 7_200_000,
+  "3h": 10_800_000,
+  "6h": 21_600_000,
+  "12h": 43_200_000,
+  "24h": 86_400_000,
+};
+
+// MAX_CHART_BUCKETS — зеркало maxChartBuckets сервера. Шаг мельче, чем
+// окно/400, сервер всё равно поднимет до потолка, поэтому предлагать его в
+// интерфейсе значит обещать плотность, которой не будет.
+const MAX_CHART_BUCKETS = 400;
+
+// MIN_DEFAULT_BUCKETS — сколько столбцов должен давать шаг по умолчанию
+// (§84.3). Ниже графику нечего показывать, выше — дефолт становится мельче
+// прежнего «Авто» и дороже для ClickHouse.
+const MIN_DEFAULT_BUCKETS = 24;
+
+/** isChartStep — распознавание значения шага (адрес, преф — источники внешние). */
+export function isChartStep(raw: unknown): raw is ChartStep {
+  return raw === "auto" || (CHART_STEP_LADDER as readonly string[]).includes(raw as string);
+}
+
+// periodMs — длительность окна периода в миллисекундах.
+export function periodMs(p: Period): number {
+  if (p.kind === "preset") return PRESET_MS[p.range];
+  const w = periodWindow(p);
+  return Number.isFinite(w.since) && Number.isFinite(w.until) ? Math.max(w.until - w.since, 0) : 0;
+}
+
+/**
+ * stepsForPeriod — какие шаги вообще осмысленны при этом периоде (§84.1).
+ *
+ * Показывать весь словарь нельзя: шаг крупнее окна сервер сожмёт до окна (один
+ * столбец), мельче окна/400 — поднимет до потолка. И то и другое означало бы
+ * сегмент, который выглядит рабочим, а действует иначе, чем написано.
+ *
+ * «Авто» есть всегда. Если не подходит ни одна ступень (окно короче минуты),
+ * останется только он — честнее, чем предлагать заведомо сжимаемый шаг.
+ */
+export function stepsForPeriod(p: Period): ChartStep[] {
+  const window = periodMs(p);
+  if (window <= 0) return ["auto"];
+  const min = window / MAX_CHART_BUCKETS;
+  return [
+    "auto",
+    ...CHART_STEP_LADDER.filter((s) => CHART_STEP_MS[s] >= min && CHART_STEP_MS[s] <= window),
+  ];
+}
+
+/**
+ * defaultStepFor — шаг по умолчанию для периода (§84.3).
+ *
+ * Правило: НАИБОЛЬШАЯ ступень, дающая не меньше MIN_DEFAULT_BUCKETS столбцов.
+ * Даёт 1ч→1м, 3ч→5м, 24ч→1ч, 7д→6ч, 14д→12ч, 30д→1сут — везде 24–36 столбцов.
+ *
+ * Дефолт — конкретное значение, а не «Авто»: подсвеченный сегмент сразу
+ * сообщает масштаб, в котором пользователь смотрит, и его видно куда сдвинуть.
+ * «Авто» остаётся в словаре как отдельный выбор.
+ */
+export function defaultStepFor(p: Period): ChartStep {
+  const window = periodMs(p);
+  if (window <= 0) return "auto";
+  const fits = CHART_STEP_LADDER.filter((s) => window / CHART_STEP_MS[s] >= MIN_DEFAULT_BUCKETS);
+  if (fits.length === 0) return CHART_STEP_LADDER[0];
+  return fits[fits.length - 1];
+}
+
+/**
+ * normalizeStepForPeriod — шаг, применимый к ЭТОМУ периоду.
+ *
+ * Нужен при смене периода: сохранённый «30м» на окне 30 суток дал бы 1440
+ * столбцов, сервер поднял бы шаг до потолка, и подсвеченный сегмент врал бы о
+ * фактической ширине столбца. Неподходящий шаг заменяется дефолтом НОВОГО
+ * периода, а не молча оставляется.
+ */
+export function normalizeStepForPeriod(s: ChartStep, p: Period): ChartStep {
+  return stepsForPeriod(p).includes(s) ? s : defaultStepFor(p);
+}
 
 /** stepParams — query-параметр шага; auto не отправляем (сервер выберет сам). */
 export function stepParams(s: ChartStep): Record<string, string> {

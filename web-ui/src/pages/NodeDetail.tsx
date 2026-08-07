@@ -158,7 +158,7 @@ export default function NodeDetail() {
             {t("node.actions.refresh")}
           </Button>
           {/* §58, п.1/п.4: «Поделиться» доступна всем ролям (viewer тоже). */}
-          <ShareNodeButton nodeId={node.id} tab={tab} sm />
+          <ShareNodeButton nodeId={node.id} tab={tab} search={searchParams} sm />
           {canEdit && (
             <>
               <Button sm variant="ghost" onClick={() => setDryRunOpen(true)}>
