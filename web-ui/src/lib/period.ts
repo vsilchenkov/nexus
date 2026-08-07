@@ -192,3 +192,31 @@ export function periodKey(p: Period): string {
 export function periodLabel(p: Period, t: (k: string) => string): string {
   return p.kind === "preset" ? t(`metrics.range.${p.range}`) : t("metrics.range.custom");
 }
+
+/**
+ * resolveCustomPeriod — фактическое окно из полей «от»/«по» (§84.4).
+ *
+ * Открытые границы разрешаются ЗДЕСЬ, в момент выбора, а не размазываются по
+ * контракту `Period`: наружу уходит всегда конкретный диапазон. Благодаря
+ * этому не меняется ни один потребитель периода, а нижняя граница всегда
+ * материализована — сужение по колонке партиционирования (§72.4) остаётся
+ * единственным, что держит стоимость запроса на боевых таблицах.
+ *
+ *   пустое «по» → сейчас;
+ *   пустое «от» → «по» минус глубина хранения (старше данных нет физически);
+ *   обе пустые  → null: один клик по «Произвольный» не имеет права запускать
+ *                 полный скан таблицы.
+ */
+export function resolveCustomPeriod(
+  fromLocal: string,
+  toLocal: string,
+  maxLookbackMs: number,
+  now: number = Date.now(),
+): { from: string; to: string } | null {
+  if (!fromLocal && !toLocal) return null;
+  const toMs = toLocal ? Date.parse(toLocal) : now;
+  if (!Number.isFinite(toMs)) return null;
+  const fromMs = fromLocal ? Date.parse(fromLocal) : toMs - maxLookbackMs;
+  if (!Number.isFinite(fromMs) || fromMs >= toMs) return null;
+  return { from: new Date(fromMs).toISOString(), to: new Date(toMs).toISOString() };
+}

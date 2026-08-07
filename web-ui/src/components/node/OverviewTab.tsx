@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { api, type Node } from "../../api/client";
 import { Card, Kpi, KpiRow, LabelHint, Pill, PeriodPicker, TrafficChart, defaultPeriod, type LogsRange, type Period } from "../ui";
+import { nodeLookbackMs } from "../../lib/nodeLookback";
 import { fmtLogTs, fmtNum } from "../../lib/format";
 import { isLogOK } from "../../lib/logsQuery";
 import { useNodeMetrics, METRICS_REFETCH_MS } from "./useNodeMetrics";
@@ -76,7 +77,7 @@ export function OverviewTab({
             {t("metrics.traffic")}
             <LabelHint content={t("metrics.hints.traffic")} />
           </span>
-          <PeriodPicker value={period} onChange={setPeriod} />
+          <PeriodPicker value={period} onChange={setPeriod} maxLookbackMs={nodeLookbackMs(node)} />
         </div>
         <TrafficChart data={m.data?.series ?? []} onOpenLogs={hasLogsTable ? onOpenLogs : undefined} />
       </Card>

@@ -5,6 +5,7 @@ import { Trash2, ChevronRight, Pause, Power, Play, RotateCcw } from "lucide-reac
 
 import { api, type Node } from "../../api/client";
 import { Button, Kpi, KpiRow, Hint, Pill, PeriodPicker, periodWindow, periodKey, defaultPeriod, type Period } from "../ui";
+import { nodeLookbackMs } from "../../lib/nodeLookback";
 import { ReplayDialog } from "../ReplayDialog";
 import { type LogsInitialFilter } from "./LogsTab";
 import { type LogRow, type LogDetail } from "./types";
@@ -204,7 +205,7 @@ export function QueueTab({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-end gap-3">
-        <PeriodPicker value={period} onChange={setPeriod} />
+        <PeriodPicker value={period} onChange={setPeriod} maxLookbackMs={nodeLookbackMs(node)} />
       </div>
 
       {/* У sync-узла плитки «Ожидают отправки» нет: очереди не существует.

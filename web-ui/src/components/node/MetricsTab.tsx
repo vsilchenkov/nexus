@@ -24,6 +24,7 @@ import {
   type ChartStep,
 } from "../../lib/period";
 import { parseMetricsView, withMetricsView } from "../../lib/nodeTabUrl";
+import { nodeLookbackMs } from "../../lib/nodeLookback";
 import { prefKeyNodeMetricsView, useNodeMetricsViewPref, useSetPref } from "../../lib/prefs";
 import {
   advFormEqual,
@@ -155,7 +156,7 @@ export function MetricsTab({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-sm font-semibold">{t("node.tabs.metrics")}</span>
         <div className="flex flex-wrap items-center gap-2">
-          <PeriodPicker value={period} onChange={setPeriod} />
+          <PeriodPicker value={period} onChange={setPeriod} maxLookbackMs={nodeLookbackMs(node)} />
           {/* Группа с aria-label: подписи шага совпадают с подписями периода
               («24ч» и там, и там), и без имени группы их не различить ни
               программе чтения с экрана, ни тесту. */}

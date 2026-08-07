@@ -116,6 +116,9 @@ export type Node = {
   clickhouse_template_id: string;
   // §64: таблицей логов управляет не Nexus (оператор или посторонний писатель).
   external_table: boolean;
+  // §84.4: чем считается пустое «от» в произвольном периоде — старше этой
+  // глубины записей физически нет, их удалил TTL.
+  clickhouse_retention_days?: number;
   forward_headers: string[];
   log_request_body: boolean;
   log_response_body: boolean;
