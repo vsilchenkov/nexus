@@ -22,16 +22,16 @@ const preset = (range: Preset): Period => ({ kind: "preset", range });
 // кодом, а не переиспользовать внутреннюю таблицу проверяемого модуля.
 const STEP_MS: Record<string, number> = {
   "1m": 60_000,
-  "5m": 300_000,
-  "10m": 600_000,
   "15m": 900_000,
   "30m": 1_800_000,
   "1h": 3_600_000,
-  "2h": 7_200_000,
   "3h": 10_800_000,
   "6h": 21_600_000,
   "12h": 43_200_000,
   "24h": 86_400_000,
+  "7d": 604_800_000,
+  "14d": 1_209_600_000,
+  "30d": 2_592_000_000,
 };
 
 describe("stepsForPeriod (§84.1)", () => {
@@ -48,6 +48,21 @@ describe("stepsForPeriod (§84.1)", () => {
   it("шаг крупнее окна не предлагается: сервер сжал бы его до окна (один столбец)", () => {
     expect(stepsForPeriod(preset("1h"))).not.toContain("24h");
     expect(stepsForPeriod(preset("3h"))).not.toContain("6h");
+    expect(stepsForPeriod(preset("7d"))).not.toContain("14d");
+  });
+
+  // Крупные ступени вернулись в словарь по требованию: на месячном окне
+  // «7д/14д/30д» — единственный осмысленный масштаб.
+  it("на 30 сутках доступны недельные ступени", () => {
+    const steps = stepsForPeriod(preset("30d"));
+    expect(steps).toContain("7d");
+    expect(steps).toContain("14d");
+    expect(steps).toContain("30d");
+  });
+
+  it("убранные из пикера ступени в словаре не значатся", () => {
+    const all = stepsForPeriod(preset("30d")).concat(stepsForPeriod(preset("1h")));
+    for (const gone of ["5m", "10m", "2h"]) expect(all).not.toContain(gone);
   });
 
   it("шаг мельче окна/400 не предлагается: сервер поднял бы его до потолка", () => {
@@ -75,7 +90,10 @@ describe("defaultStepFor (§84.3)", () => {
   // сегмент, и он даёт 24–36 столбцов на любом пресете.
   it.each([
     ["1h", "1m", 60],
-    ["3h", "5m", 36],
+    // На трёх часах промежуточной ступени не осталось: 15м дают всего 12
+    // столбцов (меньше порога), поэтому дефолт — минута. Пятнадцать минут
+    // по-прежнему доступны выбором.
+    ["3h", "1m", 180],
     ["24h", "1h", 24],
     ["7d", "6h", 28],
     ["14d", "12h", 28],
@@ -142,8 +160,9 @@ describe("isChartStep", () => {
     for (const s of CHART_STEP_LADDER) expect(isChartStep(s)).toBe(true);
   });
 
-  it("мусор и старые значения не проходят", () => {
-    expect(isChartStep("7d")).toBe(false); // был в словаре до §84.1
+  it("мусор и убранные из пикера значения не проходят", () => {
+    expect(isChartStep("5m")).toBe(false); // убран по требованию (слишком много кнопок)
+    expect(isChartStep("2h")).toBe(false);
     expect(isChartStep("zzz")).toBe(false);
     expect(isChartStep(null)).toBe(false);
     expect(isChartStep(undefined)).toBe(false);

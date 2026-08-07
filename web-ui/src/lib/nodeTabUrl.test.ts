@@ -126,8 +126,12 @@ describe("parseMetricsView (§84.2)", () => {
     expect(v.step).toBeUndefined();
   });
 
-  it("шаг из старого словаря (7d) больше не распознаётся", () => {
-    expect(parseMetricsView(new URLSearchParams("step=7d")).step).toBeUndefined();
+  // 7d/14d/30d в словаре ЕСТЬ (вернули по требованию), а 5m/10m/2h убраны как
+  // лишние кнопки — адрес с ними не должен молча применяться.
+  it("убранные из пикера шаги в адресе не распознаются", () => {
+    expect(parseMetricsView(new URLSearchParams("step=5m")).step).toBeUndefined();
+    expect(parseMetricsView(new URLSearchParams("step=2h")).step).toBeUndefined();
+    expect(parseMetricsView(new URLSearchParams("step=7d")).step).toBe("7d");
   });
 });
 
