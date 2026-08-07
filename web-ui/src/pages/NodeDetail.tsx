@@ -256,7 +256,13 @@ export default function NodeDetail() {
       )}
       {tab === "logs" && <LogsTab node={node} initialFilter={logsFilter ?? undefined} />}
       {tab === "config" && <ConfigTab node={node} />}
-      {tab === "metrics" && <MetricsTab node={node} onOpenLogs={openLogsAt} />}
+      {tab === "metrics" && (
+        <MetricsTab
+          node={node}
+          onOpenLogs={openLogsAt}
+          onOpenQueue={() => setSearchParams((prev) => withNodeTab(prev, "queue"))}
+        />
+      )}
       {tab === "queue" && (
         <QueueTab
           node={node}

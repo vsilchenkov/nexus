@@ -316,6 +316,17 @@ export function QueueTab({
               }}
             />
           </div>
+          {/* §84.8: голова очереди из УЖЕ загруженного списка — он отсортирован
+              по времени приёма, значит items[0] и есть самое старое сообщение.
+              Ни нового эндпоинта, ни лишнего давления на KafkaRateLimit. */}
+          {pendingCount > 0 && (
+            <QueueHeadSummary
+              count={pendingCount}
+              capped={pendingCapped}
+              partition={pending[0].partition}
+              headReceivedAt={pending[0].received_at}
+            />
+          )}
           {pending.length === 0 ? (
             <div className="text-fg-muted">
               {node.status === "paused"
@@ -727,5 +738,45 @@ function FailedBody({ nodeId, logId }: { nodeId: string; logId: string }) {
         </pre>
       </div>
     </div>
+  );
+}
+
+/**
+ * QueueHeadSummary — голова очереди узла (§84.8, узловой срез §80.2).
+ *
+ * Возраст головы отвечает на вопрос, который число «ждут N» не закрывает:
+ * «доставка встала или просто много трафика». Считается из УЖЕ загруженного
+ * списка — он отсортирован по времени приёма, поэтому items[0] и есть самое
+ * старое сообщение; нового запроса к Kafka не появляется.
+ *
+ * capped означает, что выборка упёрлась в предел: показываем «50+», а не «50»,
+ * иначе число читается как точное.
+ */
+function QueueHeadSummary({
+  count,
+  capped,
+  partition,
+  headReceivedAt,
+}: {
+  count: number;
+  capped: boolean;
+  partition: number;
+  headReceivedAt: string;
+}) {
+  const { t } = useTranslation();
+  const ageMs = Math.max(Date.now() - Date.parse(headReceivedAt), 0);
+  const ageMin = Math.round(ageMs / 60_000);
+  // Пять минут — уже не «просто много трафика»: при штатной доставке голова
+  // очереди живёт секунды.
+  const stale = ageMin >= 5;
+  return (
+    <p className={cn("text-xs", stale ? "text-warn" : "text-fg-muted")}>
+      {t("queue.head.summary", {
+        waiting: `${count}${capped ? "+" : ""}`,
+        partition,
+        age: ageMin < 1 ? t("queue.head.age_lt_min") : t("queue.head.age_min", { m: ageMin }),
+      })}
+      {stale && " ⚠"}
+    </p>
   );
 }

@@ -164,6 +164,15 @@
         "errors": "{{n}} errors ({{pct}}%)"
       }
     },
+    "capacity": {
+      "title": "Partition capacity",
+      "hint": "All of a node's messages land in ONE Kafka partition (the publish key is the node path, to keep FIFO per node), and within a partition they are processed strictly sequentially. So the node's ceiling is one call per outbound-call duration, regardless of how many partitions and instances there are.",
+      "hint_formula": "The share is computed as «requests over the period × p95 / period length». Above 100 % means the node physically does not fit into one partition: lag will grow linearly and will not clear on its own.",
+      "formula": "{{total}} requests × p95 {{p95}} s / {{range}} h",
+      "over": "The node needs more capacity than a single Kafka partition provides — lag will grow. It also delays any node hashed onto the same partition.",
+      "see_queue": "What is physically waiting right now —",
+      "queue_link": "the «Queue» tab →"
+    },
     "latency": {
       "title": "Latency",
       "hint": "p50 and p95 call duration over the same intervals as the requests chart. The unit is a delivery attempt (a journal row), not a request: duration describes the outbound call.",
@@ -936,6 +945,11 @@
     }
   },
   "queue": {
+    "head": {
+      "summary": "Waiting: {{waiting}} · partition {{partition}} · head age {{age}}",
+      "age_min": "{{m}} min",
+      "age_lt_min": "under a minute"
+    },
     "unavailable": "Kafka queue is unavailable (cluster not configured).",
     "capped_mark": "(may be more)",
     "capped_hint": "Showing the first of a limited scan — the queue may be larger.",

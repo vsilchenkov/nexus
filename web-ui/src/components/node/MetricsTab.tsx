@@ -37,6 +37,7 @@ import {
 import { useNodeMetrics } from "./useNodeMetrics";
 import { LogsAdvancedFilters } from "./LogsAdvancedFilters";
 import { NodePulse } from "./NodePulse";
+import { CapacityCard } from "./CapacityCard";
 
 // MetricsTab — вкладка «Метрики» узла (§21): перцентили + счётчики + график
 // за выбранный период. Источник — ClickHouse (точные quantile). По умолчанию 24h.
@@ -51,9 +52,13 @@ import { NodePulse } from "./NodePulse";
 export function MetricsTab({
   node,
   onOpenLogs,
+  onOpenQueue,
 }: {
   node: Node;
   onOpenLogs?: (range: LogsRange) => void;
+  // §84.8: переход на вкладку «Очередь» — ёмкость отвечает «помещается ли
+  // узел», а «сколько ждёт прямо сейчас» живёт там.
+  onOpenQueue?: () => void;
 }) {
   const { t } = useTranslation();
 
@@ -278,6 +283,16 @@ export function MetricsTab({
           столбцах. Два числа в KPI (p95/p99) не отвечают на вопрос «когда было
           плохо»: на боевом узле они описывали получасовой пик, а выглядели как
           характеристика суток. */}
+      {/* §84.8: узловой срез §80.2 — ни одного нового запроса, всё считается из
+          уже полученных метрик. */}
+      <CapacityCard
+        node={node}
+        total={kpi?.total ?? 0}
+        p95Ms={kpi?.p95_ms ?? 0}
+        rangeMs={m.data?.range_ms ?? 0}
+        onOpenQueue={onOpenQueue}
+      />
+
       {m.data?.latency_available && (
         <Card>
           <div className="mb-3 flex items-center gap-1.5 text-sm font-semibold">
