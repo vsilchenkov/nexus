@@ -109,7 +109,7 @@ kafka:
   consumer_group: nexus-sender           # Consumer-group, под которой Sender читает топик.
   # Параметры авто-создания топика (EnsureTopics при старте).
   topic:
-    partitions: 4                        # Число партиций топика = потолок параллелизма обработки (min с consumer.instances). Увеличивается без пересоздания (kafka-topics --alter), уменьшить нельзя.
+    partitions: 4                        # Число партиций топика = потолок параллелизма обработки (min с consumer.instances). Увеличивается без пересоздания (kafka-topics --alter; процедура и её цена — DEPLOYMENT.md, блок «Увеличение числа ПАРТИЦИЙ»), уменьшить нельзя.
     # Дефолты — для multi-broker prod-кластера. На single-broker (локальный
     # docker-compose, CI loadtest) переопределяй через env: RF=1, ISR=1 —
     # иначе EnsureTopics зависнет/упадёт на InvalidReplicationFactor.
