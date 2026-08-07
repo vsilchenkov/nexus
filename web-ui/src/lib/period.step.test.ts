@@ -45,19 +45,17 @@ describe("stepsForPeriod (§84.1)", () => {
     expect(stepsForPeriod(preset("1h"))).toContain("1m");
   });
 
-  it("шаг крупнее окна не предлагается: сервер сжал бы его до окна (один столбец)", () => {
-    expect(stepsForPeriod(preset("1h"))).not.toContain("24h");
-    expect(stepsForPeriod(preset("3h"))).not.toContain("6h");
-    expect(stepsForPeriod(preset("7d"))).not.toContain("14d");
-  });
-
-  // Крупные ступени вернулись в словарь по требованию: на месячном окне
-  // «7д/14д/30д» — единственный осмысленный масштаб.
-  it("на 30 сутках доступны недельные ступени", () => {
-    const steps = stepsForPeriod(preset("30d"));
-    expect(steps).toContain("7d");
-    expect(steps).toContain("14d");
-    expect(steps).toContain("30d");
+  // Сверху НЕ отсекаем: шаг крупнее окна — определённое поведение §79.5
+  // (сервер сжимает его до окна и отдаёт один столбец), а не ошибка. Раньше
+  // такие ступени прятались, и 7д/14д/30д пропадали из списка на коротких
+  // периодах — выглядело как будто их нет вовсе.
+  it("крупные ступени доступны на ЛЮБОМ периоде — красный на прежнем правиле", () => {
+    for (const r of PRESETS) {
+      const steps = stepsForPeriod(preset(r));
+      expect(steps).toContain("7d");
+      expect(steps).toContain("14d");
+      expect(steps).toContain("30d");
+    }
   });
 
   it("убранные из пикера ступени в словаре не значатся", () => {
@@ -73,9 +71,11 @@ describe("stepsForPeriod (§84.1)", () => {
     expect(steps).toContain("24h");
   });
 
-  it("вырожденное окно оставляет только «Авто», а не заведомо сжимаемый шаг", () => {
+  it("на вырожденном окне отсекается только слишком мелкое", () => {
+    // 20 с / 400 = 0,05 с — снизу не отсекается ничего, весь словарь доступен.
     const tiny: Period = { kind: "custom", from: "2026-08-07T10:00:00.000Z", to: "2026-08-07T10:00:20.000Z" };
-    expect(stepsForPeriod(tiny)).toEqual(["auto"]);
+    expect(stepsForPeriod(tiny)[0]).toBe("auto");
+    expect(stepsForPeriod(tiny)).toContain("1m");
   });
 
   it("битый произвольный период не роняет расчёт", () => {

@@ -209,13 +209,15 @@ export function QueueTab({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-end gap-3">
+      {/* Пикер слева, а не прижат вправо: на этой вкладке он единственный
+          элемент строки, и justify-end оставлял слева пустую половину экрана. */}
+      <div className="flex flex-wrap items-center justify-start gap-3">
         <PeriodPicker value={period} onChange={setPeriod} maxLookbackMs={nodeLookbackMs(node)} />
       </div>
 
       {/* У sync-узла плитки «Ожидают отправки» нет: очереди не существует.
-          Сетка остаётся двухколоночной — одинокая плитка занимает первую
-          колонку и не растягивается на всю ширину. */}
+          Оставшаяся одна плитка выкладывается НЕ сеткой (см. KpiRow): половина
+          строки под неё и пустая половина рядом читались как поломка вёрстки. */}
       <KpiRow cols={2}>
         {isAsync && (
           <Kpi

@@ -187,21 +187,24 @@ describe("MetricsTab: период и шаг в адресе (§84.2)", () => {
     expect(locSearch()).not.toContain("step=30m");
   });
 
-  it("словарь шага сужен по периоду: на часе нет суток, на 30 днях нет минуты", async () => {
+  // Сужение ТОЛЬКО снизу: слишком мелкий шаг сервер молча поднял бы до потолка,
+  // и кнопка врала бы о плотности. Крупные ступени остаются на любом периоде —
+  // шаг больше окна это определённое поведение §79.5 (один столбец), а не
+  // ошибка, и прятать их значило бы «их нет вовсе».
+  it("на 30 днях нет минуты, но недельные ступени есть", async () => {
+    renderTab("/nodes/n1?tab=metrics&range=30d");
+    await waitFor(() => expect(metricsCalls().length).toBeGreaterThan(0));
+    const g = within(screen.getByRole("group", { name: "metrics.step.label" }));
+    expect(g.queryByRole("button", { name: "metrics.step.opt.1m" })).not.toBeInTheDocument();
+    expect(g.getByRole("button", { name: "metrics.step.opt.7d" })).toBeInTheDocument();
+  });
+
+  it("на часе доступны и минута, и крупные ступени", async () => {
     renderTab("/nodes/n1?tab=metrics&range=1h");
     await waitFor(() => expect(metricsCalls().length).toBeGreaterThan(0));
-    const hourGroup = within(screen.getByRole("group", { name: "metrics.step.label" }));
-    expect(hourGroup.getByRole("button", { name: "metrics.step.opt.1m" })).toBeInTheDocument();
-    expect(hourGroup.queryByRole("button", { name: "metrics.step.opt.24h" })).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "metrics.range.30d" }));
-    await waitFor(() =>
-      expect(
-        within(screen.getByRole("group", { name: "metrics.step.label" })).queryByRole("button", {
-          name: "metrics.step.opt.1m",
-        }),
-      ).not.toBeInTheDocument(),
-    );
+    const g = within(screen.getByRole("group", { name: "metrics.step.label" }));
+    expect(g.getByRole("button", { name: "metrics.step.opt.1m" })).toBeInTheDocument();
+    expect(g.getByRole("button", { name: "metrics.step.opt.30d" })).toBeInTheDocument();
   });
 
   it("мусор в адресе не ломает вкладку — берётся дефолт", async () => {

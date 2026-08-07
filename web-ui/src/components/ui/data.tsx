@@ -1,4 +1,4 @@
-import { type ReactNode } from "react";
+import { Children, type ReactNode } from "react";
 
 import { cn } from "../../lib/cn";
 import { LabelHint } from "./LabelHint";
@@ -102,6 +102,13 @@ export function Kpi({
 }
 
 // KpiRow — сетка из KPI-карточек (по умолчанию 4 колонки).
+//
+// Одинокая плитка НЕ выкладывается сеткой. Часть плиток условна (у sync-узла
+// нет «Ожидают отправки» — очереди не существует, §69.1), и когда остаётся
+// одна, двухколоночная сетка отдаёт ей ровно половину ширины, а вторую половину
+// оставляет пустой. Читается это как поломка вёрстки, а не как замысел.
+// Поэтому единственная плитка получает собственную умеренную ширину: и на всю
+// строку не растягивается (прежнее требование §69.1), и дыры рядом не делает.
 export function KpiRow({
   children,
   cols = 4,
@@ -111,6 +118,12 @@ export function KpiRow({
   cols?: 2 | 3 | 4;
   className?: string;
 }) {
+  // Считаем ТОЛЬКО отрисованные плитки: условная `{flag && <Kpi/>}` даёт в
+  // children значение false, и Children.count посчитал бы его тоже.
+  const shown = Children.toArray(children).filter(Boolean).length;
+  if (shown === 1) {
+    return <div className={cn("max-w-xs", className)}>{children}</div>;
+  }
   const colsCls = cols === 2 ? "sm:grid-cols-2" : cols === 3 ? "sm:grid-cols-3" : "sm:grid-cols-4";
   return (
     <div className={cn("grid grid-cols-1 gap-3", colsCls, className)}>{children}</div>
