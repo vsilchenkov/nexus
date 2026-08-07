@@ -75,13 +75,71 @@ func EnsureTopics(ctx context.Context, cfg *config.Config, logger logging.Logger
 			return fmt.Errorf("create topics: %w", err)
 		}
 	}
+	logTopicState(ctrlConn, cfg, logger, topics)
+	return nil
+}
+
+// partitionReader — то, что нужно logTopicState от соединения с брокером.
+// Интерфейс на стороне потребителя: тесты подставляют свой источник,
+// не поднимая Kafka.
+type partitionReader interface {
+	ReadPartitions(topics ...string) ([]kafka.Partition, error)
+}
+
+// countPartitions сворачивает ответ брокера в «топик → число партиций».
+func countPartitions(parts []kafka.Partition) map[string]int {
+	counts := make(map[string]int, len(parts))
+	for _, p := range parts {
+		counts[p.Topic]++
+	}
+	return counts
+}
+
+// logTopicState печатает ФАКТИЧЕСКОЕ состояние топиков после EnsureTopics.
+//
+// Раньше в лог уходило значение из конфига, а не из брокера, и строка
+// «kafka topic ready … partitions=4» читалась как факт. На бою 07.08.2026 это
+// был прямой ложный след: партиции уже увеличили до 8 брокерной командой
+// (`kafka-topics --alter`), а Sender при каждом старте писал 4 — потому что
+// `kafka.topic.partitions` на существующий топик не действует и остался
+// прежним в конфиге.
+//
+// Расхождение факта с конфигом — не ошибка (топик мог быть изменён намеренно),
+// но оператор обязан его видеть: от числа партиций зависит, сколько
+// consumer-горутин работает (активны min(instances, partitions)).
+//
+// Ошибку чтения метаданных не эскалируем: топики уже созданы, а старт сервиса
+// не должен падать из-за диагностики.
+func logTopicState(conn partitionReader, cfg *config.Config, logger logging.Logger, topics []string) {
+	parts, err := conn.ReadPartitions(topics...)
+	if err != nil {
+		logger.Warn("kafka: read partitions failed, reporting configured values",
+			logger.Str("op", "kafka.EnsureTopics"), logger.Err(err))
+		for _, t := range topics {
+			logger.Info("kafka topic ready",
+				logger.Str("topic", t),
+				logger.Int("partitions_configured", cfg.Kafka.Topic.Partitions),
+				logger.Int("replication", cfg.Kafka.Topic.ReplicationFactor))
+		}
+		return
+	}
+
+	counts := countPartitions(parts)
 	for _, t := range topics {
+		actual := counts[t]
 		logger.Info("kafka topic ready",
 			logger.Str("topic", t),
-			logger.Int("partitions", cfg.Kafka.Topic.Partitions),
+			logger.Int("partitions", actual),
 			logger.Int("replication", cfg.Kafka.Topic.ReplicationFactor))
+		if actual != 0 && actual != cfg.Kafka.Topic.Partitions {
+			logger.Warn("kafka topic partitions differ from config",
+				logger.Str("op", "kafka.EnsureTopics"),
+				logger.Str("topic", t),
+				logger.Int("partitions_actual", actual),
+				logger.Int("partitions_configured", cfg.Kafka.Topic.Partitions),
+				logger.Int("consumer_instances", cfg.Kafka.Consumer.Instances))
+		}
 	}
-	return nil
 }
 
 func splitBrokers(s string) []string {
