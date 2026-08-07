@@ -670,8 +670,8 @@ Prometheus 1–2 ГБ, остальное — логи Docker и запас.
 | `config.yml`         | `clickhouse.workers`          | 2                           | 1                   |
 | `config.yml`         | `clickhouse.buffer_max_size`  | 100000                      | 10000               |
 | `config.yml`         | `sender.workers`              | 50                          | 10                  |
-| `config.yml`         | `kafka.consumer.instances`    | 4                           | 1–2                 |
-| `config.yml`         | `kafka.topic.partitions`      | 4                           | 1–2                 |
+| `config.yml`         | `kafka.consumer.instances`    | 8                           | 1–2                 |
+| `config.yml`         | `kafka.topic.partitions`      | 8                           | 1–2                 |
 | `config.yml`         | `kafka.topic.retention_ms`    | 7 дней                      | 3 дня               |
 | `config.yml`         | `kafka.topic.retention_bytes` | 40 ГиБ/партиция             | 2 ГиБ               |
 
@@ -683,8 +683,11 @@ Prometheus 1–2 ГБ, остальное — логи Docker и запас.
   дают оценочно ~0.4 ГБ TSDB против ~0.07 ГБ на 15 днях.
 - `clickhouse.buffer_max_size` — потолок строк, которые Sender копит в памяти при недоступном
   ClickHouse; со 100 000 строк и телами это гигабайты.
-- `kafka.topic.partitions` меняйте **только до первого старта**: число партиций потом
-  увеличивается через `kafka-topics --alter`, а уменьшить его нельзя.
+- `kafka.topic.partitions` на живой топик не влияет (применяется при `CreateTopics`): число
+  партиций потом увеличивается через `kafka-topics --alter`, а уменьшить его нельзя.
+  **`kafka.consumer.instances` держите равным числу партиций** при одной реплике Sender: активны
+  `min(instances, partitions)`, поэтому 8 партиций при `instances: 4` дают половину простаивающих
+  партиций (боевой случай 2026-08-07).
 
 **Готовый профиль — [deploy/docker-compose.override.yml](./deploy/docker-compose.override.yml).**
 Шаблон лежит в репозитории и приезжает на сервер вместе с кодом. Применить — скопировать его
