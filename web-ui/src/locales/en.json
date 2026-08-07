@@ -846,6 +846,17 @@
     "detail": {
       "parameters": "Parameters",
       "request": "Request",
+      "ack": {
+        "title": "Bus response — recomputed with the current template",
+        "failed": "Substitution failed: {{reason}}",
+        "on_error_error": "Node policy on_error = error: such a request would NOT be accepted, and no journal record would appear at all.",
+        "on_error_default": "Node policy on_error = default: the client would get the regular {\"result\":true,\"id\":…} response.",
+        "warn_now_not_then": "This is «what the bus WOULD answer now», not what actually went to the client back then: the acceptance response is stored nowhere.",
+        "warn_spec_changed": "The node was changed at {{changed}} — AFTER this request ({{request}}).",
+        "warn_truncated": "The body in the journal is truncated (max_body_size) — the substitution may have missed a value present in the original body.",
+        "warn_query_not_stored": "The inbound request query is not stored in the journal: ${ query.… } substitutions are unavailable here.",
+        "note_on_error_error": "The node has on_error = error: on a failed substitution the request is not accepted and no journal record appears — such cases are fundamentally invisible here."
+      },
       "response": "Response",
       "reason": "Reason",
       "empty": "(empty)",

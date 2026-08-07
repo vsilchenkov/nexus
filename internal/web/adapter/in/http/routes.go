@@ -157,6 +157,11 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			// §42: срез тела по рунам (постраничная подгрузка «показать весь») и
 			// потоковое скачивание тела файлом — большой ответ не вешает фронт.
 			authed.GET("/nodes/:id/log/:logId/body", RequireScope("logs:read"), h.Logs.GetBody)
+			// §84.9: пересчёт ответа шины по записи. Все роли со scope logs:read,
+			// а не manager+: исполняется шаблон УЖЕ СОХРАНЁННОГО узла на теле,
+			// которое запрашивающий и так видит в журнале, — новой информации не
+			// раскрывается (в отличие от ack-preview, где спека присылается).
+			authed.GET("/nodes/:id/log/:logId/ack", RequireScope("logs:read"), h.Logs.GetAck)
 			authed.GET("/nodes/:id/log/:logId/body/download", RequireScope("logs:read"), h.Logs.GetBodyDownload)
 			// §35: дешёвый счётчик неудач (done=0) для KPI вкладки «Очередь».
 			authed.GET("/nodes/:id/logs/failed-count", RequireScope("logs:read"), h.Logs.CountFailed)

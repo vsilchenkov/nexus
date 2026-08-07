@@ -3531,6 +3531,59 @@
                 }
             }
         },
+        "/api/nodes/{id}/log/{logId}/ack": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Прогоняет сохранённое тело запроса через ТЕКУЩИЙ шаблон ответа приёма узла (§83) и показывает, чем шина ответила бы сейчас. Это расчёт, а не факт: отрендеренный ответ приёма нигде не сохраняется. applicable=false с причиной — у узла выключено изменение ответа, запись прошла синхронным путём или тело запроса не логируется. Провал подстановки приходит с HTTP 200 и ok=false. Доступно всем ролям со scope logs:read: исполняется шаблон уже сохранённого узла на теле, которое запрашивающий и так видит в журнале.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logs"
+                ],
+                "summary": "Пересчёт ответа шины по записи журнала (§84.9).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "log record id",
+                        "name": "logId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ackFromLogDTO"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/{id}/log/{logId}/body": {
             "get": {
                 "security": [
@@ -7452,6 +7505,60 @@
                 },
                 "version": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.ackFromLogDTO": {
+            "type": "object",
+            "properties": {
+                "applicable": {
+                    "type": "boolean"
+                },
+                "body": {
+                    "type": "string"
+                },
+                "body_source": {
+                    "type": "string"
+                },
+                "content_type": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "not_applicable_reason": {
+                    "type": "string"
+                },
+                "ok": {
+                    "description": "ok=false — НЕ ошибка запроса: подстановка не удалась, причина в reason.",
+                    "type": "boolean"
+                },
+                "on_error": {
+                    "type": "string"
+                },
+                "placeholder": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "request_at_ms": {
+                    "type": "integer"
+                },
+                "spec_changed_after_request": {
+                    "type": "boolean"
+                },
+                "spec_updated_at_ms": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "integer"
+                },
+                "warnings": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
