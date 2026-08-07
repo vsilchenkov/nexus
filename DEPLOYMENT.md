@@ -448,16 +448,17 @@ docker compose -f deploy/docker-compose.app.yml logs -f web receiver sender
   >
   > ```bash
   > # retention.bytes — ПЕР-ПАРТИЦИЯ (суммарно по топику = значение × partitions)
-  > kafka-configs.sh --bootstrap-server <broker>:9092 --entity-type topics \
-  >   --entity-name nexus.async --alter \
+  > docker compose exec -e KAFKA_OPTS= kafka /opt/kafka/bin/kafka-configs.sh \
+  >   --bootstrap-server localhost:9092 --entity-type topics --entity-name nexus.async --alter \
   >   --add-config retention.ms=604800000,retention.bytes=42949672960
   > # лимит размера сообщения (например, после поднятия receiver.max_body_bytes):
-  > kafka-configs.sh --bootstrap-server <broker>:9092 --entity-type topics \
-  >   --entity-name nexus.async --alter --add-config max.message.bytes=16777216
+  > docker compose exec -e KAFKA_OPTS= kafka /opt/kafka/bin/kafka-configs.sh \
+  >   --bootstrap-server localhost:9092 --entity-type topics --entity-name nexus.async --alter --add-config max.message.bytes=16777216
   > # проверить: --describe вместо --alter/--add-config
   > ```
   >
-  > В Docker: `docker exec -e KAFKA_OPTS= <kafka-контейнер> /opt/kafka/bin/kafka-configs.sh ...`
+  > Команда идёт в контейнер брокера по имени СЕРВИСА (`kafka`), а не контейнера
+  > (`container_name` в compose не задан).
   > (образ `apache/kafka` — путь `/opt/kafka/bin`). **Сброс `KAFKA_OPTS` обязателен** (§75): в
   > переменной лежит `-javaagent` JMX-экспортёра, она действует и на CLI-утилиты, а порт 7071 уже
   > занят брокером — без сброса команда падает с «Prometheus JMX Exporter exiting», а не выполняет
@@ -475,21 +476,28 @@ docker compose -f deploy/docker-compose.app.yml logs -f web receiver sender
   >
   > ```bash
   > # 1. Посмотреть текущее состояние (партиции, лидеры, ISR)
-  > kafka-topics.sh --bootstrap-server <broker>:9092 --describe --topic nexus.async
+  > docker compose exec -e KAFKA_OPTS= kafka /opt/kafka/bin/kafka-topics.sh \
+  >   --bootstrap-server localhost:9092 --describe --topic nexus.async
   >
   > # 2. Увеличить до 8 (ТОЛЬКО увеличение; уменьшить нельзя — см. ниже)
-  > kafka-topics.sh --bootstrap-server <broker>:9092 --alter \
-  >   --topic nexus.async --partitions 8
+  > docker compose exec -e KAFKA_OPTS= kafka /opt/kafka/bin/kafka-topics.sh \
+  >   --bootstrap-server localhost:9092 --alter --topic nexus.async --partitions 8
   >
   > # 3. Те же топики очереди — чтобы поведение не разъезжалось
-  > kafka-topics.sh --bootstrap-server <broker>:9092 --alter --topic nexus.async.dlq --partitions 8
-  > kafka-topics.sh --bootstrap-server <broker>:9092 --alter --topic nexus.async.paused --partitions 8
+  > docker compose exec -e KAFKA_OPTS= kafka /opt/kafka/bin/kafka-topics.sh \
+  >   --bootstrap-server localhost:9092 --alter --topic nexus.async.dlq --partitions 8
+  > docker compose exec -e KAFKA_OPTS= kafka /opt/kafka/bin/kafka-topics.sh \
+  >   --bootstrap-server localhost:9092 --alter --topic nexus.async.paused --partitions 8
   >
   > # 4. Проверить
-  > kafka-topics.sh --bootstrap-server <broker>:9092 --describe --topic nexus.async
+  > docker compose exec -e KAFKA_OPTS= kafka /opt/kafka/bin/kafka-topics.sh \
+  >   --bootstrap-server localhost:9092 --describe --topic nexus.async
   > ```
   >
-  > В Docker: `docker exec -e KAFKA_OPTS= <kafka-контейнер> /opt/kafka/bin/kafka-topics.sh ...`
+  > Имя СЕРВИСА (`kafka`), а не контейнера: `container_name` в compose намеренно не задан, и
+  > реальное имя зависит от имени проекта (`<project>-kafka-1`). Для вариантов A/B добавьте
+  > свой `-f` (§9.1). **Плейсхолдеры в угловых скобках в bash не подставляйте:** такую строку
+  > shell разберёт как перенаправление ввода и упадёт с `No such file or directory`.
   > — **сброс `KAFKA_OPTS` обязателен** (§75), иначе команда падает на занятом порту JMX-агента.
   >
   > Что обязательно знать ДО выполнения:
