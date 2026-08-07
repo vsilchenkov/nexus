@@ -109,7 +109,7 @@ kafka:
   consumer_group: nexus-sender           # Consumer-group, под которой Sender читает топик.
   # Параметры авто-создания топика (EnsureTopics при старте).
   topic:
-    partitions: 4                        # Число партиций топика = потолок параллелизма обработки (min с consumer.instances). Увеличивается без пересоздания (kafka-topics --alter; процедура и её цена — DEPLOYMENT.md, блок «Увеличение числа ПАРТИЦИЙ»), уменьшить нельзя.
+    partitions: 8                        # Число партиций топика = потолок параллелизма обработки (min с consumer.instances). Боевое значение с 2026-08-07 (§80.1: узлы конкурировали за партицию, лаг рос до 3.3k). Увеличивается без пересоздания (kafka-topics --alter; процедура и её цена — DEPLOYMENT.md, «Увеличение числа ПАРТИЦИЙ»), уменьшить нельзя.
     # Дефолты — для multi-broker prod-кластера. На single-broker (локальный
     # docker-compose, CI loadtest) переопределяй через env: RF=1, ISR=1 —
     # иначе EnsureTopics зависнет/упадёт на InvalidReplicationFactor.
@@ -147,7 +147,7 @@ kafka:
     max_poll_records: 500       # Максимум сообщений за один poll.
     max_poll_interval_ms: 300000 # Декларативный: kafka-go параметр НЕ применяет (heartbeat идёт в фоне независимо от обработки; долгая обработка ребаланс не вызывает, ребаланс — только по session_timeout при смерти процесса).
     isolation_level: read_committed # Читать только закоммиченные сообщения (для транзакционного producer'а).
-    instances: 4                # Число consumer-инстансов (горутин-readers) в этом процессе. Активны min(instances, partitions); держи = topic.partitions при одной реплике Sender, либо дели партиции между репликами.
+    instances: 8                # Число consumer-инстансов (горутин-readers) в этом процессе. Активны min(instances, partitions) — при instances < partitions часть партиций простаивает. Держи = topic.partitions при одной реплике Sender, либо дели партиции между репликами. Параметр общий для ВСЕХ групп Sender'а (async, dlq-reprocess, clog-retry).
 
 # ─────────────────────────────────────────────────────────────────────────────
 # СВЯЗИ ЛИМИТОВ РАЗМЕРА ТЕЛА (§43-rev). Держите инварианты, иначе большое тело
