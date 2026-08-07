@@ -61,9 +61,14 @@ function prettyJson(raw: string): string {
 export function QueueTab({
   node,
   onOpenFailedLogs,
+  onOpenMetrics,
 }: {
   node: Node;
   onOpenFailedLogs?: (f: LogsInitialFilter) => void;
+  // §84.8: обратная ссылка на «Метрики». Ёмкость партиции считается там (из
+  // метрик), «сколько ждёт прямо сейчас» — здесь; без взаимных ссылок разбор
+  // упирается в тупик на любой из двух вкладок.
+  onOpenMetrics?: () => void;
 }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
@@ -325,6 +330,7 @@ export function QueueTab({
               capped={pendingCapped}
               partition={pending[0].partition}
               headReceivedAt={pending[0].received_at}
+              onOpenMetrics={onOpenMetrics}
             />
           )}
           {pending.length === 0 ? (
@@ -757,11 +763,13 @@ function QueueHeadSummary({
   capped,
   partition,
   headReceivedAt,
+  onOpenMetrics,
 }: {
   count: number;
   capped: boolean;
   partition: number;
   headReceivedAt: string;
+  onOpenMetrics?: () => void;
 }) {
   const { t } = useTranslation();
   const ageMs = Math.max(Date.now() - Date.parse(headReceivedAt), 0);
@@ -777,6 +785,18 @@ function QueueHeadSummary({
         age: ageMin < 1 ? t("queue.head.age_lt_min") : t("queue.head.age_min", { m: ageMin }),
       })}
       {stale && " ⚠"}
+      {onOpenMetrics && (
+        <>
+          {" · "}
+          <button
+            type="button"
+            onClick={onOpenMetrics}
+            className="text-accent underline-offset-2 hover:underline"
+          >
+            {t("queue.head.capacity_link")}
+          </button>
+        </>
+      )}
     </p>
   );
 }

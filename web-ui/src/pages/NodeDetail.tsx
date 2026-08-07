@@ -267,6 +267,7 @@ export default function NodeDetail() {
         <QueueTab
           node={node}
           onOpenFailedLogs={(f) => setSearchParams((prev) => withFailedLogs(prev, f))}
+          onOpenMetrics={() => setSearchParams((prev) => withNodeTab(prev, "metrics"))}
         />
       )}
     </div>

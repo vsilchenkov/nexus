@@ -41,6 +41,7 @@ export function NodePulse({
   stepSeconds,
   available,
   now = Date.now(),
+  allTimeMs = null,
   onShowAllTime,
 }: {
   lastSeenMs: number;
@@ -50,6 +51,9 @@ export function NodePulse({
   // прочерк, а не «запросов не было»: это разные состояния.
   available: boolean;
   now?: number;
+  // allTimeMs — последняя активность ЗА ВСЁ ВРЕМЯ, если её уже запросили
+  // кликом. null = ещё не запрашивали, 0 = записей нет вовсе.
+  allTimeMs?: number | null;
   onShowAllTime?: () => void;
 }) {
   const { t } = useTranslation();
@@ -85,17 +89,28 @@ export function NodePulse({
       <span className="text-fg-muted">
         {silent ? t("metrics.pulse.none_in_period") : t("metrics.pulse.in_period", { n: fmtNum(total) })}
       </span>
-      {onShowAllTime && (
-        // Кнопка, а не автозагрузка: полный max по времени читает колонку на
-        // всей таблице (боевая внешняя §64 — 10,2 млн записей), и в поллинг
-        // такому запросу нельзя.
-        <button
-          type="button"
-          onClick={onShowAllTime}
-          className="ml-auto text-accent underline-offset-2 hover:underline"
-        >
-          {t("metrics.pulse.all_time")}
-        </button>
+      {allTimeMs !== null ? (
+        <span className="ml-auto text-fg-muted">
+          {allTimeMs > 0
+            ? t("metrics.pulse.all_time_value", {
+                ago: fmtAgo(Math.max(now - allTimeMs, 0), t),
+                stamp: fmtStamp(allTimeMs),
+              })
+            : t("metrics.pulse.all_time_none")}
+        </span>
+      ) : (
+        onShowAllTime && (
+          // Кнопка, а не автозагрузка: полный max по времени читает колонку на
+          // всей таблице (боевая внешняя §64 — 10,2 млн записей), и в поллинг
+          // такому запросу нельзя.
+          <button
+            type="button"
+            onClick={onShowAllTime}
+            className="ml-auto text-accent underline-offset-2 hover:underline"
+          >
+            {t("metrics.pulse.all_time")}
+          </button>
+        )
       )}
     </div>
   );

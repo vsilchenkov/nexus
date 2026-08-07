@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 
-import { type Node } from "../../api/client";
+import { api, type Node } from "../../api/client";
 import {
   Card,
   Hint,
@@ -152,6 +152,21 @@ export function MetricsTab({
   );
 
   const m = useNodeMetrics(node.id, period, step, filterParams, viewReady);
+
+  // §84.6: «за всё время» — СТРОГО по клику и без поллинга. Полный
+  // max(date_request) без окна читает колонку на всей таблице (боевая внешняя
+  // §64 — 10,2 млн записей), а вкладка обновляется каждые ~12 с.
+  const [allTimeMs, setAllTimeMs] = useState<number | null>(null);
+  const loadAllTime = useCallback(async () => {
+    try {
+      const r = await api.get<{ max_ms: number }>(`/api/nodes/${node.id}/logs/date-range`);
+      setAllTimeMs(r.max_ms || 0);
+    } catch {
+      // Второстепенное действие: молча остаёмся с оконным значением, вкладка
+      // из-за него краснеть не должна.
+      setAllTimeMs(0);
+    }
+  }, [node.id]);
   const kpi = m.data?.kpi;
   const chartUnavailable = m.data && !m.data.chart_available;
   const byAttempts = m.data?.chart_unit === "attempts";
@@ -234,6 +249,8 @@ export function MetricsTab({
         total={kpi?.total ?? 0}
         stepSeconds={m.data?.step_seconds ?? 0}
         available={!!m.data?.chart_available}
+        allTimeMs={allTimeMs}
+        onShowAllTime={loadAllTime}
       />
       {/* §79.4: авто-обновление выключено, пока набор фильтров отвечает дольше
           порога — иначе запросы накладываются друг на друга. */}

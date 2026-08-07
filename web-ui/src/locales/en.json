@@ -189,7 +189,9 @@
       "silent": "No requests in this period",
       "in_period": "{{n}} requests in this period",
       "none_in_period": "check the period or the filters",
-      "all_time": "all time →"
+      "all_time": "all time →",
+      "all_time_value": "all time: {{ago}} · {{stamp}}",
+      "all_time_none": "no records at all"
     },
     "step": {
       "label": "Chart step",
@@ -959,6 +961,7 @@
     "head": {
       "summary": "Waiting: {{waiting}} · partition {{partition}} · head age {{age}}",
       "age_min": "{{m}} min",
+      "capacity_link": "partition capacity — in «Metrics» →",
       "age_lt_min": "under a minute"
     },
     "unavailable": "Kafka queue is unavailable (cluster not configured).",

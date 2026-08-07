@@ -75,4 +75,38 @@ describe("NodePulse (§84.6)", () => {
     render(<NodePulse lastSeenMs={0} total={0} stepSeconds={3600} available now={NOW} />);
     expect(screen.queryByText("metrics.pulse.all_time")).not.toBeInTheDocument();
   });
+
+  // Ревизия §84.10: проп onShowAllTime был, а вкладка его не передавала —
+  // обещанная ТЗ §84.6 кнопка не появлялась НИКОГДА. Здесь закреплён показ
+  // результата после клика.
+  it("после загрузки показывается значение «за всё время», а не кнопка", () => {
+    render(
+      <NodePulse
+        lastSeenMs={0}
+        total={0}
+        stepSeconds={3600}
+        available
+        now={NOW}
+        allTimeMs={NOW - 3 * 24 * 60 * MIN}
+        onShowAllTime={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText("metrics.pulse.all_time")).not.toBeInTheDocument();
+    expect(screen.getByText(/metrics\.pulse\.all_time_value/)).toBeInTheDocument();
+  });
+
+  it("записей нет вовсе → так и сказано, а не «56 лет назад»", () => {
+    render(
+      <NodePulse
+        lastSeenMs={0}
+        total={0}
+        stepSeconds={3600}
+        available
+        now={NOW}
+        allTimeMs={0}
+        onShowAllTime={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("metrics.pulse.all_time_none")).toBeInTheDocument();
+  });
 });
