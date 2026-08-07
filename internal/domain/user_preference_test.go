@@ -21,6 +21,7 @@ func TestUserPreference_Validate_Key(t *testing.T) {
 	}{
 		{"simple", "period", nil},
 		{"namespaced", domain.PreferenceKeyOverviewPeriod, nil},
+		{"node metrics view", domain.PreferenceKeyNodeMetricsView("e557e4b9-55ce-455c-8bfc-9996d568a7c6"), nil},
 		{"deep namespace", "overview.logs.filters_v2", nil},
 		{"digits and underscore", "a1_b2.c3_d4", nil},
 		{"max length", strings.Repeat("a", 64), nil},
@@ -50,6 +51,30 @@ func TestUserPreference_Validate_Key(t *testing.T) {
 			assert.True(t, errors.Is(err, tt.wantErr), "got %v, want %v", err, tt.wantErr)
 		})
 	}
+}
+
+// §84.3: ключ вида узла собирается из UUID, и оба ограничения §71 — формат и
+// длина — он обязан проходить с запасом. Проверяем не только «валиден», но и
+// сам запас: удлинение префикса однажды упрётся в 400 при сохранении, и
+// узнать об этом надо здесь, а не на бою.
+func TestPreferenceKeyNodeMetricsView(t *testing.T) {
+	t.Parallel()
+
+	const nodeID = "e557e4b9-55ce-455c-8bfc-9996d568a7c6"
+	key := domain.PreferenceKeyNodeMetricsView(nodeID)
+
+	assert.Equal(t, "node.metrics.view.e557e4b955ce455c8bfc9996d568a7c6", key)
+	assert.NotContains(t, key, "-", "дефисы не проходят формат ключа §71")
+	assert.Len(t, key, 50)
+	assert.LessOrEqual(t, len(key), 64, "потолок VARCHAR(64) и maxPreferenceKeyLen")
+
+	p := &domain.UserPreference{Key: key, Value: json.RawMessage(`{"range":"24h","step":"1h"}`)}
+	assert.NoError(t, p.Validate())
+
+	// Разные узлы дают разные ключи — иначе вид одного узла затирал бы другой.
+	other := domain.PreferenceKeyNodeMetricsView("2c7b4368-d2d0-4795-aa9a-7184e2ea697c")
+	assert.NotEqual(t, key, other)
+	assert.NoError(t, (&domain.UserPreference{Key: other, Value: json.RawMessage(`{}`)}).Validate())
 }
 
 func TestUserPreference_Validate_Value(t *testing.T) {

@@ -24,6 +24,7 @@ import {
   type ChartStep,
 } from "../../lib/period";
 import { parseMetricsView, withMetricsView } from "../../lib/nodeTabUrl";
+import { prefKeyNodeMetricsView, useNodeMetricsViewPref, useSetPref } from "../../lib/prefs";
 import {
   advFormEqual,
   emptyAdvForm,
@@ -58,17 +59,29 @@ export function MetricsTab({
   // туда. Недостающее в адресе добирается дефолтом (§84.3: сначала преф узла).
   const [searchParams, setSearchParams] = useSearchParams();
   const urlView = useMemo(() => parseMetricsView(searchParams), [searchParams]);
-  const period = urlView.period ?? defaultPeriod;
 
-  // explicitStep — шаг, ВЫБРАННЫЙ пользователем (есть в адресе). undefined
+  // §84.3, цепочка приоритетов: АДРЕС → преф ЭТОГО узла → системный дефолт.
+  // Адрес выигрывает всегда, в том числе при первой загрузке: прямая ссылка
+  // обязана открывать ровно то, что в ней написано (правило §71).
+  const pref = useNodeMetricsViewPref(node.id);
+  // Гейт готовности: пока преф не приехал, вид неизвестен, и запрос метрик не
+  // уходит. Показать 24 ч и через мгновение переключиться на сохранённые 7 д —
+  // это и мигание, и лишний запрос (урок §71).
+  const viewReady = pref.settled;
+
+  const period = urlView.period ?? pref.value.period ?? defaultPeriod;
+
+  // explicitStep — шаг, ВЫБРАННЫЙ пользователем (адрес или преф). undefined
   // означает «шаг неявный, берётся дефолтом периода», и различать эти два
   // состояния обязательно: иначе дефолт одного периода при переключении на
   // другой переезжает туда уже как выбор и закрепляется в адресе.
-  const explicitStep = urlView.step;
-  // Шаг из адреса нормализуется: ссылка «range=30d&step=1m» приходит извне и
-  // обещает плотность, которой сервер не даст.
+  const explicitStep = urlView.step ?? pref.value.step ?? undefined;
+  // Шаг нормализуется: ссылка «range=30d&step=1m» приходит извне, а
+  // сохранённый шаг мог остаться от другого периода.
   const step = normalizeStepForPeriod(explicitStep ?? defaultStepFor(period), period);
   const stepOptions = useMemo(() => stepsForPeriod(period), [period]);
+
+  const setPref = useSetPref();
 
   const applyView = useCallback(
     (p: Period, s: ChartStep | undefined) => {
@@ -82,8 +95,25 @@ export function MetricsTab({
       setSearchParams((prev) => withMetricsView(prev, p, write, { period: defaultPeriod }), {
         replace: true,
       });
+
+      // Преф пишется ТОЛЬКО отсюда — из действия пользователя, и никогда из
+      // эффекта синхронизации «адрес → состояние». Иначе кнопка «Назад»
+      // переписывала бы личный дефолт узла.
+      //
+      // Произвольный период в преф не сохраняется (календарный диапазон в роли
+      // дефолта бессмыслен), но и не стирает ранее сохранённый пресет: человек
+      // посмотрел конкретные сутки и вернулся — его дефолт должен уцелеть.
+      const keepRange = p.kind === "preset" ? p.range : pref.value.period?.range;
+      setPref.mutate({
+        teamId: node.team_id,
+        key: prefKeyNodeMetricsView(node.id),
+        value: {
+          ...(keepRange ? { range: keepRange } : {}),
+          ...(write ? { step: write } : {}),
+        },
+      });
     },
-    [setSearchParams],
+    [setSearchParams, setPref, node.id, node.team_id, pref.value.period],
   );
 
   const setPeriod = useCallback(
@@ -113,7 +143,7 @@ export function MetricsTab({
     [applied, status],
   );
 
-  const m = useNodeMetrics(node.id, period, step, filterParams);
+  const m = useNodeMetrics(node.id, period, step, filterParams, viewReady);
   const kpi = m.data?.kpi;
   const chartUnavailable = m.data && !m.data.chart_available;
   const byAttempts = m.data?.chart_unit === "attempts";
