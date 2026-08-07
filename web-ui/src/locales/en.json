@@ -354,7 +354,12 @@
       "sample_label": "Sample request body",
       "take_from_logs": "Take the latest request from logs",
       "take_from_logs_masked": "The body comes from the node journal, where sensitive values are already masked (***). That rarely matters for checking a template, but a substitution from a masked field will differ from the production response.",
-      "take_from_logs_empty": "Could not take a body from logs: no records, or request body logging is off.",
+      "take_from_logs_err": {
+        "no_node": "The node is not saved yet, so it has no journal. Save the node and try again.",
+        "no_records": "The node journal has no records.",
+        "body_not_logged": "The record has no stored body: «Log request body» is off on the node, or the body was empty or multipart.",
+        "request_failed": "Could not read the journal: the request to the server failed."
+      },
       "preview_button": "Check",
       "reason": {
         "body_not_json": "request body is not JSON",

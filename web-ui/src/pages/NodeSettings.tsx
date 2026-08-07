@@ -39,6 +39,7 @@ import { validateNodeForm } from "../lib/nodeValidation";
 import { chSchemaChangeWontApply, chSyncFormDirty } from "../lib/chSchema";
 import { buildVerifyMessage } from "../lib/chTableVerify";
 import { ackFormDefaults, ackFormFromSpec, ackSpecFromForm } from "../lib/ackSpec";
+import { fetchLastLogBody } from "../lib/lastLogBody";
 import { useConfirm } from "../lib/confirm";
 import { DryRunDialog } from "../components/DryRunDialog";
 import { CHSchemaSyncDialog } from "../components/CHSchemaSyncDialog";
@@ -419,31 +420,23 @@ export default function NodeSettings() {
   // §83: подставить последнее реальное тело запроса узла из логов. Чисто
   // фронтовая операция поверх существующих эндпоинтов логов — нового API не
   // требуется. Тело в логе ЗАМАСКИРОВАНО, о чём предупреждает подсказка поля.
+  //
+  // Сам запрос живёт в lib/lastLogBody: там же разобран боевой дефект формы
+  // вызова (`{ params: … }` вместо плоской карты) и заведено замкнутое
+  // множество причин отказа — единый текст «записей нет или логирование
+  // выключено» уводил разбор в настройки узла, где всё было в порядке.
   const lastLogBody = useMutation({
-    mutationFn: async () => {
-      // Контракт эндпоинтов логов: список отдаёт items[].id, а тело приходит
-      // полем chunk при which=request (не part/body — на этом легко ошибиться).
-      const list = await api.get<{ items?: Array<{ id: string; request?: string }> }>(
-        `/api/nodes/${id}/logs`,
-        { params: { limit: 1 } },
-      );
-      const logId = list.items?.[0]?.id;
-      if (!logId) throw new Error("empty");
-      const body = await api.get<{ chunk?: string }>(`/api/nodes/${id}/log/${logId}/body`, {
-        params: { which: "request", limit: 8192 },
-      });
-      return body.chunk ?? "";
-    },
+    mutationFn: () => fetchLastLogBody(id),
     onMutate: () => setLastLogBodyError(null),
-    onSuccess: (body) => {
-      if (body.trim() === "") {
-        setLastLogBodyError(t("node.ack.take_from_logs_empty"));
+    onSuccess: (res) => {
+      if (!res.ok) {
+        setLastLogBodyError(t(`node.ack.take_from_logs_err.${res.reason}`));
         return;
       }
-      setAckSample(body);
+      setAckSample(res.body);
       ackPreview.reset();
     },
-    onError: () => setLastLogBodyError(t("node.ack.take_from_logs_empty")),
+    onError: () => setLastLogBodyError(t("node.ack.take_from_logs_err.request_failed")),
   });
 
   // §83: что показать под кнопкой «Проверить». Причина отказа переводится по
