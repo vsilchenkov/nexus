@@ -4293,6 +4293,52 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/nodes/{id}/runtime": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Runtime-состояние узла для шапки страницы: ok / degraded / down по модели §52. Источник — персистентный Redis (переживает рестарт Sender), fallback — instant-gauge Prometheus. available=false означает «неизвестно» (ни один источник не ответил), и это НЕ то же самое, что ok. Доступно всем ролям: понимать, почему узел молчит, нужно и наблюдателю.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "nodes"
+                ],
+                "summary": "Исход последнего исходящего вызова узла (§84.7).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.nodeRuntimeDTO"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/{id}/status": {
             "patch": {
                 "security": [
@@ -8171,6 +8217,22 @@ const docTemplate = `{
                 },
                 "total": {
                     "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.nodeRuntimeDTO": {
+            "type": "object",
+            "properties": {
+                "available": {
+                    "type": "boolean"
+                },
+                "last_outcome": {
+                    "description": "ok | degraded | down",
+                    "type": "string"
+                },
+                "source": {
+                    "description": "redis | prometheus | none",
+                    "type": "string"
                 }
             }
         },

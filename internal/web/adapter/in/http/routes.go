@@ -32,6 +32,7 @@ type Handlers struct {
 	Prefs         *PreferenceHandler
 	Instances     *PeerInstanceHandler
 	Breaker       *BreakerHandler
+	NodeRuntime   *NodeRuntimeHandler
 }
 
 // Middlewares — общие middleware (auth-check, role-check, API token-check).
@@ -377,6 +378,14 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		if h.Breaker != nil {
 			authed.GET("/nodes/:id/breaker", h.Breaker.State)
 			authedManager.POST("/nodes/:id/breaker/reset", h.Breaker.Reset)
+		}
+
+		// §84.7: исход последнего вызова узла — рядом с состоянием защиты и по
+		// тем же правилам: все роли (наблюдателю тоже надо понимать, почему узел
+		// молчит) и БЕЗ KafkaRateLimit — это чтение Redis/Prometheus, к очереди
+		// отношения не имеющее.
+		if h.NodeRuntime != nil {
+			authed.GET("/nodes/:id/runtime", h.NodeRuntime.State)
 		}
 
 		if h.AsyncQueue != nil {

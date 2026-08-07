@@ -265,39 +265,22 @@ func (u *MetricsUsecase) NodesOverview(ctx context.Context, teamID string, since
 // fallback для узлов, которых ещё нет в Redis; маппинг значений 0/1/2 —
 // domain.OutcomeFromGaugeValue). Деградирует мягко: нет ни Redis, ни
 // Prometheus (или ошибки запросов) → узел остаётся ok.
+// §84.7: само правило приоритета переехало в LastOutcomeResolver — у него
+// появился второй потребитель (бейдж на странице узла). Здесь остался только
+// маппинг на строки таблицы. Поведение прежнее, в том числе трактовка
+// «неизвестно» как ok: в таблице рабочего стола у бейджа нет пустого
+// состояния, каждая строка обязана иметь тон.
 func (u *MetricsUsecase) applyLastOutcomes(ctx context.Context, at time.Time, res *NodesOverview) {
 	if len(res.Items) == 0 {
 		return
 	}
-	// Redis — приоритетный источник (персистентный, §46).
-	var redisLO map[string]domain.NodeOutcome
-	if u.nodeStatus != nil {
-		paths := make([]string, len(res.Items))
-		for i := range res.Items {
-			paths[i] = res.Items[i].Node
-		}
-		if m, err := u.nodeStatus.GetLastOutcomes(ctx, paths); err != nil {
-			u.logger.Warn("redis node last outcomes failed", u.logger.Err(err))
-		} else {
-			redisLO = m
-		}
-	}
-	// Prometheus — fallback (§41) для узлов без записи в Redis.
-	var promLE map[string]float64
-	if u.prom != nil {
-		if m, err := u.prom.NodeLastErrors(ctx, at); err != nil {
-			u.logger.Warn("prometheus node last errors failed", u.logger.Err(err))
-		} else {
-			promLE = m
-		}
-	}
+	paths := make([]string, len(res.Items))
 	for i := range res.Items {
-		node := res.Items[i].Node
-		if v, ok := redisLO[node]; ok {
-			res.Items[i].LastOutcome = v
-			continue
-		}
-		res.Items[i].LastOutcome = domain.OutcomeFromGaugeValue(promLE[node])
+		paths[i] = res.Items[i].Node
+	}
+	got := NewLastOutcomeResolver(u.nodeStatus, u.prom, u.logger).Resolve(ctx, at, paths)
+	for i := range res.Items {
+		res.Items[i].LastOutcome = got[res.Items[i].Node].Outcome
 	}
 }
 

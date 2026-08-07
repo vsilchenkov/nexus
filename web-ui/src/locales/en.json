@@ -695,6 +695,14 @@
       "dlq_retry_delay_hint": "minimum wait before re-attempting a failed delivery; default 5 min",
       "hours": "h"
     },
+    "runtime": {
+      "degraded": "Degraded",
+      "down": "Down",
+      "hint_degraded": "The node's last outbound call returned a non-2xx, but the receiver did answer: most likely a data or client error rather than unavailability.",
+      "hint_down": "The node's last outbound call did not get through: a transport error or a 5xx response.",
+      "src_redis": "Source: Redis — the value survives a Sender restart.",
+      "src_prom": "Source: Prometheus — the value resets when Sender restarts."
+    },
     "rmq": {
       "source": "RabbitMQ — source",
       "host_port": "Host and port",

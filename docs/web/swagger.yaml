@@ -1753,6 +1753,17 @@ definitions:
       total:
         type: integer
     type: object
+  internal_web_adapter_in_http.nodeRuntimeDTO:
+    properties:
+      available:
+        type: boolean
+      last_outcome:
+        description: ok | degraded | down
+        type: string
+      source:
+        description: redis | prometheus | none
+        type: string
+    type: object
   internal_web_adapter_in_http.nodeThroughputDTO:
     properties:
       errors:
@@ -5342,6 +5353,39 @@ paths:
       security:
       - CookieAuth: []
       summary: 'Предпросмотр переноса узла: что будет с таблицей логов (admin only).'
+      tags:
+      - nodes
+  /api/nodes/{id}/runtime:
+    get:
+      description: 'Runtime-состояние узла для шапки страницы: ok / degraded / down
+        по модели §52. Источник — персистентный Redis (переживает рестарт Sender),
+        fallback — instant-gauge Prometheus. available=false означает «неизвестно»
+        (ни один источник не ответил), и это НЕ то же самое, что ok. Доступно всем
+        ролям: понимать, почему узел молчит, нужно и наблюдателю.'
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.nodeRuntimeDTO'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Исход последнего исходящего вызова узла (§84.7).
       tags:
       - nodes
   /api/nodes/{id}/status:

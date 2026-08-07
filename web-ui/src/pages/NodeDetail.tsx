@@ -27,6 +27,7 @@ import {
   type NodeTab,
 } from "../lib/nodeTabUrl";
 import { ShareNodeButton } from "../components/node/ShareNodeButton";
+import { NodeRuntimeBadge } from "../components/node/NodeRuntimeBadge";
 import { DryRunDialog } from "../components/DryRunDialog";
 import { LogsTab } from "../components/node/LogsTab";
 import { OverviewTab } from "../components/node/OverviewTab";
@@ -144,6 +145,10 @@ export default function NodeDetail() {
           </h1>
           <Chip>{node.root_method}</Chip>
           <Pill tone={statusTone}>{t(`node.status.${node.status}`)}</Pill>
+          {/* §84.7: рядом с КОНФИГУРАЦИОННЫМ статусом — RUNTIME-исход
+              последнего вызова. Раньше «Активен» стоял и у узла, к которому
+              доставка не проходит вовсе. */}
+          <NodeRuntimeBadge nodeId={node.id} />
           {isPull && rmq?.degraded && <Pill tone="err">{t("node.rmq.degraded")}</Pill>}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-2">

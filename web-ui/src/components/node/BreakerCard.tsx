@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { ShieldOff, ShieldCheck, RotateCcw } from "lucide-react";
 
 import { api } from "../../api/client";
+import { NODE_RUNTIME_KEY } from "./NodeRuntimeBadge";
 import { Button, Hint } from "../ui";
 import { useConfirm } from "../../lib/confirm";
 import { useRoleAtLeast } from "../../lib/useCurrentRole";
@@ -62,6 +63,10 @@ export function BreakerCard({ nodeId }: { nodeId: string }) {
       // до ближайшего планового рефетча.
       qc.invalidateQueries({ queryKey: ["nodes"] });
       qc.invalidateQueries({ queryKey: ["node-metrics"] });
+      // §84.7: тот же бейдж появился в шапке страницы узла и живёт под своим
+      // ключом. Без этой строки кнопка «сбросить» выглядела бы безрезультатной
+      // прямо на том экране, где её нажали, — до планового рефетча через 30 с.
+      qc.invalidateQueries({ queryKey: [NODE_RUNTIME_KEY, nodeId] });
     },
   });
 
