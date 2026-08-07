@@ -6,6 +6,7 @@ import {
   isChartStep,
   normalizeStepForPeriod,
   periodMs,
+  isStepTooFine,
   stepsForPeriod,
   type Period,
 } from "./period";
@@ -49,7 +50,7 @@ describe("stepsForPeriod (§84.1)", () => {
   // (сервер сжимает его до окна и отдаёт один столбец), а не ошибка. Раньше
   // такие ступени прятались, и 7д/14д/30д пропадали из списка на коротких
   // периодах — выглядело как будто их нет вовсе.
-  it("крупные ступени доступны на ЛЮБОМ периоде — красный на прежнем правиле", () => {
+  it("крупные ступени есть на ЛЮБОМ периоде — красный на прежнем правиле", () => {
     for (const r of PRESETS) {
       const steps = stepsForPeriod(preset(r));
       expect(steps).toContain("7d");
@@ -63,25 +64,49 @@ describe("stepsForPeriod (§84.1)", () => {
     for (const gone of ["5m", "10m", "2h"]) expect(all).not.toContain(gone);
   });
 
-  it("шаг мельче окна/400 не предлагается: сервер поднял бы его до потолка", () => {
-    // 30 суток / 400 = 6480 с, значит всё мельче 2 ч отпадает.
-    const steps = stepsForPeriod(preset("30d"));
-    expect(steps).not.toContain("1m");
-    expect(steps).not.toContain("30m");
-    expect(steps).toContain("24h");
-  });
-
-  it("на вырожденном окне отсекается только слишком мелкое", () => {
-    // 20 с / 400 = 0,05 с — снизу не отсекается ничего, весь словарь доступен.
-    const tiny: Period = { kind: "custom", from: "2026-08-07T10:00:00.000Z", to: "2026-08-07T10:00:20.000Z" };
-    expect(stepsForPeriod(tiny)[0]).toBe("auto");
-    expect(stepsForPeriod(tiny)).toContain("1m");
+  // Набор ПОСТОЯНЕН: пока он менялся вместе с периодом, менялась ширина строки
+  // заголовка и вся шапка вкладки прыгала при переключении периода.
+  it("набор кнопок одинаков на любом периоде — иначе шапка прыгает", () => {
+    const ref = stepsForPeriod(preset("24h"));
+    for (const r of PRESETS) expect(stepsForPeriod(preset(r))).toEqual(ref);
+    expect(ref).toEqual(["auto", ...CHART_STEP_LADDER]);
   });
 
   it("битый произвольный период не роняет расчёт", () => {
     const broken: Period = { kind: "custom", from: "мусор", to: "тоже мусор" };
     expect(periodMs(broken)).toBe(0);
-    expect(stepsForPeriod(broken)).toEqual(["auto"]);
+    expect(stepsForPeriod(broken)[0]).toBe("auto");
+  });
+
+});
+
+// Применимость выражается ГАШЕНИЕМ, а не исчезновением кнопки.
+describe("isStepTooFine (§84.1)", () => {
+  it("на 30 сутках минута и полчаса гасятся: сервер поднял бы их до потолка", () => {
+    // 30 суток / 400 = 6480 с, значит всё мельче 1 ч 48 мин неприменимо.
+    expect(isStepTooFine("1m", preset("30d"))).toBe(true);
+    expect(isStepTooFine("30m", preset("30d"))).toBe(true);
+    expect(isStepTooFine("3h", preset("30d"))).toBe(false);
+  });
+
+  it("крупные ступени не гасятся НИКОГДА — шаг больше окна даёт один столбец", () => {
+    for (const r of PRESETS) {
+      expect(isStepTooFine("30d", preset(r))).toBe(false);
+      expect(isStepTooFine("7d", preset(r))).toBe(false);
+    }
+  });
+
+  it("«Авто» не гасится и на вырожденном окне ничего не гасится", () => {
+    expect(isStepTooFine("auto", preset("30d"))).toBe(false);
+    const broken: Period = { kind: "custom", from: "мусор", to: "тоже мусор" };
+    expect(isStepTooFine("1m", broken)).toBe(false);
+  });
+
+  it("дефолт периода никогда не погашен", () => {
+    for (const r of PRESETS) {
+      const p = preset(r);
+      expect(isStepTooFine(defaultStepFor(p), p)).toBe(false);
+    }
   });
 });
 
@@ -123,7 +148,7 @@ describe("defaultStepFor (§84.3)", () => {
     }
   });
 
-  it("дефолт всегда входит в словарь, доступный для этого периода", () => {
+  it("дефолт всегда входит в словарь", () => {
     for (const r of PRESETS) {
       const p = preset(r);
       expect(stepsForPeriod(p)).toContain(defaultStepFor(p));

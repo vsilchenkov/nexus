@@ -111,25 +111,36 @@ export function periodMs(p: Period): number {
 }
 
 /**
- * stepsForPeriod — какие шаги предлагать при этом периоде (§84.1).
+ * stepsForPeriod — шаги, ПРЕДЛАГАЕМЫЕ при этом периоде (§84.1).
  *
- * Отсекается ТОЛЬКО снизу: шаг мельче `окно / 400` сервер молча поднимет до
- * потолка, то есть сегмент выглядел бы рабочим, а действовал иначе, чем
- * написано. Это единственный случай, когда кнопка врёт.
+ * Набор ПОСТОЯНЕН и не зависит от периода — это требование вёрстки, а не
+ * удобства: пока список менялся вместе с периодом, менялась и ширина строки
+ * заголовка, перенос происходил в разных местах, и вся шапка вкладки прыгала
+ * при каждом переключении периода.
  *
- * Сверху не отсекается. Шаг крупнее окна — не ошибка, а определённое поведение
- * §79.5: сервер сжимает его до окна и отдаёт ровно один столбец («одна цифра за
- * весь период»). Раньше такие ступени прятались, и крупные шаги (7д/14д/30д)
- * пропадали из списка на коротких периодах — выглядело это так, будто их нет
- * вовсе.
- *
- * «Авто» есть всегда. На вырожденном окне останется только он.
+ * Применимость выражается не исчезновением кнопки, а её гашением — см.
+ * isStepTooFine.
  */
-export function stepsForPeriod(p: Period): ChartStep[] {
+export function stepsForPeriod(_p: Period): ChartStep[] {
+  return CHART_STEPS;
+}
+
+/**
+ * isStepTooFine — шаг мельче, чем `окно / 400`, и сервер молча поднимет его до
+ * потолка (§79.5).
+ *
+ * Это единственный случай, когда кнопка солгала бы: выглядит рабочей, а
+ * действует иначе, чем написано. Поэтому такой шаг гасится.
+ *
+ * Шаг КРУПНЕЕ окна не гасится: сервер сжимает его до окна и отдаёт ровно один
+ * столбец — «одна цифра за весь период» — это определённое поведение, а не
+ * ошибка.
+ */
+export function isStepTooFine(s: ChartStep, p: Period): boolean {
+  if (s === "auto") return false;
   const window = periodMs(p);
-  if (window <= 0) return ["auto"];
-  const min = window / MAX_CHART_BUCKETS;
-  return ["auto", ...CHART_STEP_LADDER.filter((s) => CHART_STEP_MS[s] >= min)];
+  if (window <= 0) return false;
+  return CHART_STEP_MS[s] < window / MAX_CHART_BUCKETS;
 }
 
 /**
@@ -145,8 +156,12 @@ export function stepsForPeriod(p: Period): ChartStep[] {
 export function defaultStepFor(p: Period): ChartStep {
   const window = periodMs(p);
   if (window <= 0) return "auto";
-  const fits = CHART_STEP_LADDER.filter((s) => window / CHART_STEP_MS[s] >= MIN_DEFAULT_BUCKETS);
-  if (fits.length === 0) return CHART_STEP_LADDER[0];
+  const fits = CHART_STEP_LADDER.filter(
+    (s) => window / CHART_STEP_MS[s] >= MIN_DEFAULT_BUCKETS && !isStepTooFine(s, p),
+  );
+  // Ни одна ступень не даёт нужной плотности (очень короткое окно) — берём
+  // самую мелкую ПРИМЕНИМУЮ, а не самую мелкую вообще.
+  if (fits.length === 0) return CHART_STEP_LADDER.find((s) => !isStepTooFine(s, p)) ?? "auto";
   return fits[fits.length - 1];
 }
 
@@ -159,7 +174,7 @@ export function defaultStepFor(p: Period): ChartStep {
  * периода, а не молча оставляется.
  */
 export function normalizeStepForPeriod(s: ChartStep, p: Period): ChartStep {
-  return stepsForPeriod(p).includes(s) ? s : defaultStepFor(p);
+  return isStepTooFine(s, p) ? defaultStepFor(p) : s;
 }
 
 /** stepParams — query-параметр шага; auto не отправляем (сервер выберет сам). */

@@ -130,7 +130,15 @@ export function KpiRow({
   );
 }
 
-export type SegOption<T extends string> = { value: T; label: ReactNode };
+// SegOption — вариант переключателя. disabled НЕ прячет вариант, а гасит его:
+// набор кнопок остаётся постоянным, поэтому ширина строки не скачет при смене
+// соседнего контрола (§84: шаги, недоступные при коротком периоде).
+export type SegOption<T extends string> = {
+  value: T;
+  label: ReactNode;
+  disabled?: boolean;
+  title?: string;
+};
 
 // Seg — сегментный переключатель эталона (.seg).
 export function Seg<T extends string>({
@@ -150,12 +158,16 @@ export function Seg<T extends string>({
         <button
           key={o.value}
           type="button"
+          disabled={o.disabled}
+          title={o.title}
           onClick={() => onChange(o.value)}
           className={cn(
             "rounded px-3 py-1 text-xs transition-colors",
-            o.value === value
-              ? "bg-bg-3 font-medium text-fg"
-              : "text-fg-muted hover:text-fg",
+            o.disabled
+              ? "cursor-not-allowed text-fg-subtle opacity-40"
+              : o.value === value
+                ? "bg-bg-3 font-medium text-fg"
+                : "text-fg-muted hover:text-fg",
           )}
         >
           {o.label}

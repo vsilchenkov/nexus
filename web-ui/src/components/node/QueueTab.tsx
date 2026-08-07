@@ -209,9 +209,11 @@ export function QueueTab({
 
   return (
     <div className="space-y-4">
-      {/* Пикер слева, а не прижат вправо: на этой вкладке он единственный
-          элемент строки, и justify-end оставлял слева пустую половину экрана. */}
-      <div className="flex flex-wrap items-center justify-start gap-3">
+      {/* Пикер прижат ВПРАВО — как на остальных вкладках и как было в релизе.
+          Пробовал сдвинуть влево (казалось, что слева пустое место): под ним
+          идут плитки во всю ширину, и пикер, прижатый к левому краю, ломает
+          общую линию правого края страницы. Пустота слева тут не дефект. */}
+      <div className="flex flex-wrap items-center justify-end gap-3">
         <PeriodPicker value={period} onChange={setPeriod} maxLookbackMs={nodeLookbackMs(node)} />
       </div>
 

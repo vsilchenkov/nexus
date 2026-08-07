@@ -194,7 +194,8 @@
       "all_time_none": "no records at all"
     },
     "step": {
-      "label": "Chart step",
+      "label": "Step",
+      "too_fine": "This step is finer than the period allows: the server would coarsen the bucket anyway.",
       "auto": "Auto",
       "opt": {
         "1m": "1m",

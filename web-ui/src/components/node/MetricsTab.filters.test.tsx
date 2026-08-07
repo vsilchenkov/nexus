@@ -187,24 +187,30 @@ describe("MetricsTab: период и шаг в адресе (§84.2)", () => {
     expect(locSearch()).not.toContain("step=30m");
   });
 
-  // Сужение ТОЛЬКО снизу: слишком мелкий шаг сервер молча поднял бы до потолка,
-  // и кнопка врала бы о плотности. Крупные ступени остаются на любом периоде —
-  // шаг больше окна это определённое поведение §79.5 (один столбец), а не
-  // ошибка, и прятать их значило бы «их нет вовсе».
-  it("на 30 днях нет минуты, но недельные ступени есть", async () => {
+  // Набор кнопок ПОСТОЯНЕН — иначе ширина строки меняется с периодом и шапка
+  // вкладки прыгает при каждом переключении. Неприменимость выражается
+  // гашением: гасится только то, что солгало бы (шаг мельче окна/400 сервер
+  // всё равно укрупнил бы).
+  it("на 30 днях минута погашена, но КНОПКА на месте — иначе строка прыгает", async () => {
     renderTab("/nodes/n1?tab=metrics&range=30d");
     await waitFor(() => expect(metricsCalls().length).toBeGreaterThan(0));
     const g = within(screen.getByRole("group", { name: "metrics.step.label" }));
-    expect(g.queryByRole("button", { name: "metrics.step.opt.1m" })).not.toBeInTheDocument();
-    expect(g.getByRole("button", { name: "metrics.step.opt.7d" })).toBeInTheDocument();
+    const min = g.getByRole("button", { name: "metrics.step.opt.1m" });
+    expect(min).toBeInTheDocument();
+    expect(min).toBeDisabled();
+    expect(g.getByRole("button", { name: "metrics.step.opt.7d" })).toBeEnabled();
   });
 
-  it("на часе доступны и минута, и крупные ступени", async () => {
+  it("число кнопок шага не меняется при смене периода", async () => {
     renderTab("/nodes/n1?tab=metrics&range=1h");
     await waitFor(() => expect(metricsCalls().length).toBeGreaterThan(0));
-    const g = within(screen.getByRole("group", { name: "metrics.step.label" }));
-    expect(g.getByRole("button", { name: "metrics.step.opt.1m" })).toBeInTheDocument();
-    expect(g.getByRole("button", { name: "metrics.step.opt.30d" })).toBeInTheDocument();
+    const count = () =>
+      within(screen.getByRole("group", { name: "metrics.step.label" })).getAllByRole("button").length;
+    const before = count();
+
+    fireEvent.click(screen.getByRole("button", { name: "metrics.range.30d" }));
+    await waitFor(() => expect(metricsCalls().some((c) => c.range === "30d")).toBe(true));
+    expect(count()).toBe(before);
   });
 
   it("мусор в адресе не ломает вкладку — берётся дефолт", async () => {

@@ -20,6 +20,7 @@ import { fmtNum } from "../../lib/format";
 import {
   defaultPeriod,
   defaultStepFor,
+  isStepTooFine,
   normalizeStepForPeriod,
   stepsForPeriod,
   type ChartStep,
@@ -190,15 +191,18 @@ export function MetricsTab({
             {/* Без uppercase: рядом стоит выбор периода с обычными подписями,
                 и капс тут читался как отдельный «заголовок секции». */}
             <span className="text-xs text-fg-muted">{t("metrics.step.label")}</span>
-            {/* §84.1: словарь сужен по периоду — шаг крупнее окна сервер
-                сожмёт до окна, мельче окна/400 поднимет до потолка, и сегмент
-                показывал бы не ту плотность, что получится. */}
+            {/* §84.1: набор кнопок ПОСТОЯНЕН, неприменимые гасятся. Пока
+                список менялся вместе с периодом, менялась ширина строки, и вся
+                шапка прыгала при каждом переключении. Гасится только то, что
+                солгало бы: шаг мельче окна/400 сервер поднял бы до потолка. */}
             <Seg<ChartStep>
               value={step}
               onChange={setStep}
               options={stepOptions.map((s) => ({
                 value: s,
                 label: s === "auto" ? t("metrics.step.auto") : t(`metrics.step.opt.${s}`),
+                disabled: isStepTooFine(s, period),
+                title: isStepTooFine(s, period) ? t("metrics.step.too_fine") : undefined,
               }))}
             />
           </div>
