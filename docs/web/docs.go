@@ -8159,6 +8159,10 @@ const docTemplate = `{
                 "errors": {
                     "type": "integer"
                 },
+                "last_seen_ms": {
+                    "description": "§84.6: последняя активность В ОКНЕ и под текущими фильтрами (UnixMilli);\n0 = в окне запросов не было. Не «за всё время» — см. port.NodeKPI.",
+                    "type": "integer"
+                },
                 "p95_ms": {
                     "type": "number"
                 },

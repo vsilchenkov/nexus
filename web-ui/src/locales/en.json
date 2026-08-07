@@ -164,6 +164,24 @@
         "errors": "{{n}} errors ({{pct}}%)"
       }
     },
+    "latency": {
+      "title": "Latency",
+      "hint": "p50 and p95 call duration over the same intervals as the requests chart. The unit is a delivery attempt (a journal row), not a request: duration describes the outbound call.",
+      "gap_hint": "A gap in the line means there was not a single attempt in that interval. A zero there would claim «the node answered in 0 ms», which is untrue.",
+      "axis_max": "scale up to {{v}}",
+      "no_data": "no data"
+    },
+    "pulse": {
+      "label": "Last activity",
+      "just_now": "just now",
+      "ago_m": "{{m}} min ago",
+      "ago_h": "{{h}} h {{m}} min ago",
+      "ago_d": "{{d}} d {{h}} h ago",
+      "silent": "No requests in this period",
+      "in_period": "{{n}} requests in this period",
+      "none_in_period": "check the period or the filters",
+      "all_time": "all time →"
+    },
     "step": {
       "label": "Chart step",
       "auto": "Auto",

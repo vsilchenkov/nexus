@@ -247,12 +247,25 @@ type nodeKPIDTO struct {
 	Errors    uint64  `json:"errors"`
 	P95ms     float64 `json:"p95_ms"`
 	P99ms     float64 `json:"p99_ms"`
+	// §84.6: последняя активность В ОКНЕ и под текущими фильтрами (UnixMilli);
+	// 0 = в окне запросов не было. Не «за всё время» — см. port.NodeKPI.
+	LastSeenMs int64 `json:"last_seen_ms"`
 }
 
 type seriesPointDTO struct {
 	TsMs   int64  `json:"ts"`
 	Count  uint64 `json:"count"`
 	Errors uint64 `json:"errors"`
+}
+
+// latencyPointDTO — точка графика латентности (§84.5). attempts — попытки
+// (строки), а не записи: по нулю клиент рвёт линию, а не рисует нулевую
+// латентность.
+type latencyPointDTO struct {
+	TsMs     int64   `json:"ts"`
+	P50ms    float64 `json:"p50_ms"`
+	P95ms    float64 `json:"p95_ms"`
+	Attempts uint64  `json:"attempts"`
 }
 
 // Node godoc
@@ -311,18 +324,32 @@ func (h *MetricsHandler) Node(c *gin.Context) {
 	for _, p := range res.Series {
 		series = append(series, seriesPointDTO{TsMs: p.TsMs, Count: p.Count, Errors: p.Errors})
 	}
+	// Ряд латентности всегда массив, а не null: пустой ряд законен (в окне не
+	// было запросов), и клиенту не приходится различать два «нет данных».
+	latency := make([]latencyPointDTO, 0, len(res.Latency))
+	for _, p := range res.Latency {
+		latency = append(latency, latencyPointDTO{
+			TsMs:     p.TsMs,
+			P50ms:    p.P50ms,
+			P95ms:    p.P95ms,
+			Attempts: p.Attempts,
+		})
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"kpi": nodeKPIDTO{
-			Total:     res.KPI.Total,
-			Delivered: res.KPI.Delivered,
-			Errors:    res.KPI.Errors,
-			P95ms:     res.KPI.P95ms,
-			P99ms:     res.KPI.P99ms,
+			Total:      res.KPI.Total,
+			Delivered:  res.KPI.Delivered,
+			Errors:     res.KPI.Errors,
+			P95ms:      res.KPI.P95ms,
+			P99ms:      res.KPI.P99ms,
+			LastSeenMs: res.KPI.LastSeenMs,
 		},
-		"series":          series,
-		"chart_available": res.ChartAvailable,
-		"range_ms":        res.RangeMs,
-		"step_seconds":    res.StepSec,
-		"chart_unit":      res.ChartUnit,
+		"series":            series,
+		"chart_available":   res.ChartAvailable,
+		"range_ms":          res.RangeMs,
+		"step_seconds":      res.StepSec,
+		"chart_unit":        res.ChartUnit,
+		"latency":           latency,
+		"latency_available": res.LatencyAvailable,
 	})
 }

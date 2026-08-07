@@ -1375,27 +1375,40 @@ func (r *LogReaderCH) NodeKPI(ctx context.Context, q port.LogQuery, approx bool)
 		return port.NodeKPI{}, err
 	}
 	totalExpr, deliveredExpr := uniqueExprs(approx)
+	// §84.6: last_seen считается ТОЙ ЖЕ агрегацией — дополнительного прохода по
+	// таблице не появляется. toUnixTimestamp64Milli(0) на пустом наборе даёт
+	// эпоху, поэтому ниже стоит guard по total: без него «нет запросов»
+	// превратилось бы в «последняя активность 56 лет назад».
 	sql := fmt.Sprintf(`SELECT
 		%s AS total,
 		%s AS delivered,
 		quantile(0.95)(duration) AS p95,
-		quantile(0.99)(duration) AS p99
+		quantile(0.99)(duration) AS p99,
+		toInt64(toUnixTimestamp64Milli(toDateTime64(max(date_request), 3))) AS last_seen_ms
 	FROM %s%s`, totalExpr, deliveredExpr, q.Table, where)
 	var total, delivered uint64
 	var p95, p99 float64
-	if err := conn.QueryRow(ctx, sql, args...).Scan(&total, &delivered, &p95, &p99); err != nil {
+	var lastSeenMs int64
+	if err := conn.QueryRow(ctx, sql, args...).Scan(&total, &delivered, &p95, &p99, &lastSeenMs); err != nil {
 		return port.NodeKPI{}, classifyCHErr("clickhouse node kpi", err)
 	}
 	if delivered > total {
 		delivered = total
 	}
-	if math.IsNaN(p95) {
-		p95 = 0
+	p95, p99 = nanToZero(p95), nanToZero(p99)
+	// §84.6: пустой набор даёт эпоху, а не NULL — «56 лет назад» вместо «нет
+	// запросов». Признак пустоты здесь один и надёжный: total.
+	if total == 0 {
+		lastSeenMs = 0
 	}
-	if math.IsNaN(p99) {
-		p99 = 0
-	}
-	return port.NodeKPI{Total: total, Delivered: delivered, Errors: subUnsigned(total, delivered), P95ms: p95, P99ms: p99}, nil
+	return port.NodeKPI{
+		Total:      total,
+		Delivered:  delivered,
+		Errors:     subUnsigned(total, delivered),
+		P95ms:      p95,
+		P99ms:      p99,
+		LastSeenMs: lastSeenMs,
+	}, nil
 }
 
 // defaultChartStepSec — шаг по умолчанию, если вызывающий его не задал (час).
@@ -1475,6 +1488,97 @@ func (r *LogReaderCH) NodeChart(ctx context.Context, q port.LogQuery, c port.Cha
 
 // chartSQL — запрос ряда под выбранную форму столбца.
 //
+// nanToZero — quantile по пустому набору ClickHouse отдаёт NaN, а тот
+// невыразим в JSON и уронил бы сериализацию ответа. Тот же приём, что в
+// NodeKPI, но вынесенный в функцию: там два поля, здесь — по два на каждый
+// интервал окна.
+func nanToZero(v float64) float64 {
+	if math.IsNaN(v) {
+		return 0
+	}
+	return v
+}
+
+// NodeLatencyChart — перцентили длительности по интервалам окна (§84.5).
+//
+// Единица — ПОПЫТКА (строка), а не запись: длительность характеризует внешний
+// вызов, и та же единица у p95/p99 в NodeKPI (§79.5). Отсюда одностадийность —
+// сворачивать строки в записи здесь нечего и не нужно.
+//
+// WHERE строится тем же searchConds, что список логов и NodeChart: отдельный
+// набор условий для латентности гарантированно разошёлся бы с ними (§79.4).
+//
+// Плотный ряд достраивается нулём ПОПЫТОК, а не нулевой латентностью: пустой
+// интервал — разрыв линии, и отличить его клиент может только по Attempts.
+func (r *LogReaderCH) NodeLatencyChart(ctx context.Context, q port.LogQuery, stepSec int64) ([]port.LatencyPoint, error) {
+	if !isSafeTableName(q.Table) {
+		return nil, fmt.Errorf("invalid table name: %q", q.Table)
+	}
+	if q.UntilMs <= q.SinceMs {
+		return []port.LatencyPoint{}, nil
+	}
+	if stepSec <= 0 {
+		stepSec = defaultChartStepSec
+	}
+	stepMs := stepSec * 1000
+	q.BeforeID, q.Limit = "", 0
+
+	conds, args := r.searchConds(ctx, q)
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + strings.Join(conds, " AND ")
+	}
+	conn, err := r.liveConn()
+	if err != nil {
+		return nil, err
+	}
+	sql := fmt.Sprintf(`SELECT
+		toInt64(toUnixTimestamp(toStartOfInterval(date_request, INTERVAL %d SECOND))) AS bucket_s,
+		quantile(0.5)(duration) AS p50,
+		quantile(0.95)(duration) AS p95,
+		count() AS attempts
+	FROM %s%s
+	GROUP BY bucket_s ORDER BY bucket_s`, stepSec, q.Table, where)
+	rows, err := conn.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, classifyCHErr("clickhouse node latency", err)
+	}
+	defer rows.Close()
+
+	type bkt struct {
+		p50, p95 float64
+		attempts uint64
+	}
+	got := make(map[int64]bkt)
+	for rows.Next() {
+		var bsec int64
+		var p50, p95 float64
+		var attempts uint64
+		if err := rows.Scan(&bsec, &p50, &p95, &attempts); err != nil {
+			return nil, fmt.Errorf("scan node latency: %w", err)
+		}
+		// quantile по пустому набору даёт NaN — в JSON он невыразим и уронил бы
+		// сериализацию ответа. Тот же приём, что в NodeKPI.
+		got[bsec*1000] = bkt{p50: nanToZero(p50), p95: nanToZero(p95), attempts: attempts}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, classifyCHErr("clickhouse node latency", err)
+	}
+
+	startMs := (q.SinceMs / stepMs) * stepMs
+	out := make([]port.LatencyPoint, 0, (q.UntilMs-startMs)/stepMs+2)
+	for ts := startMs; ts <= q.UntilMs; ts += stepMs {
+		b := got[ts]
+		out = append(out, port.LatencyPoint{
+			TsMs:     ts,
+			P50ms:    b.p50,
+			P95ms:    b.p95,
+			Attempts: b.attempts,
+		})
+	}
+	return out, nil
+}
+
 // Точный режим двухстадийный: сначала строки сворачиваются в записи
 // (min(date_request) — когда запрос пришёл, max(done) — доставлен ли он в итоге),
 // и только потом раскладываются по интервалам. Дешёвый режим раскладывает сразу

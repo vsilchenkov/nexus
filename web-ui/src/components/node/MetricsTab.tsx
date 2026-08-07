@@ -6,6 +6,7 @@ import { type Node } from "../../api/client";
 import {
   Card,
   Hint,
+  LatencyChart,
   Kpi,
   KpiRow,
   LabelHint,
@@ -35,6 +36,7 @@ import {
 } from "../../lib/logsQuery";
 import { useNodeMetrics } from "./useNodeMetrics";
 import { LogsAdvancedFilters } from "./LogsAdvancedFilters";
+import { NodePulse } from "./NodePulse";
 
 // MetricsTab — вкладка «Метрики» узла (§21): перцентили + счётчики + график
 // за выбранный период. Источник — ClickHouse (точные quantile). По умолчанию 24h.
@@ -219,6 +221,15 @@ export function MetricsTab({
       )}
 
       {chartUnavailable && <Hint tone="muted">{t("logs.not_configured")}</Hint>}
+
+      {/* §84.6: пульс стоит НАД счётчиками — «узел молчит третий час» важнее
+          любой цифры под ним, и заметить это надо раньше, чем начать читать. */}
+      <NodePulse
+        lastSeenMs={kpi?.last_seen_ms ?? 0}
+        total={kpi?.total ?? 0}
+        stepSeconds={m.data?.step_seconds ?? 0}
+        available={!!m.data?.chart_available}
+      />
       {/* §79.4: авто-обновление выключено, пока набор фильтров отвечает дольше
           порога — иначе запросы накладываются друг на друга. */}
       {m.slow && <Hint tone="warn">{t("metrics.filters.autorefresh_paused")}</Hint>}
@@ -262,6 +273,27 @@ export function MetricsTab({
           onOpenLogs={node.clickhouse_table ? onOpenLogs : undefined}
         />
       </Card>
+
+      {/* §84.5: латентность во времени — под графиком трафика и в тех же
+          столбцах. Два числа в KPI (p95/p99) не отвечают на вопрос «когда было
+          плохо»: на боевом узле они описывали получасовой пик, а выглядели как
+          характеристика суток. */}
+      {m.data?.latency_available && (
+        <Card>
+          <div className="mb-3 flex items-center gap-1.5 text-sm font-semibold">
+            {t("metrics.latency.title")}
+            <LabelHint
+              content={
+                <div className="max-w-xs space-y-1 text-left">
+                  <div>{t("metrics.latency.hint")}</div>
+                  <div>{t("metrics.latency.gap_hint")}</div>
+                </div>
+              }
+            />
+          </div>
+          <LatencyChart data={m.data.latency ?? []} height={140} />
+        </Card>
+      )}
     </div>
   );
 }

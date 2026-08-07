@@ -12,6 +12,7 @@ export { ErrorAlert } from "./ErrorAlert";
 export { LabelHint } from "./LabelHint";
 export { PeriodPicker } from "./PeriodPicker";
 export { DateTimeField } from "./DateTimeField";
+export { LatencyChart, type LatencyPoint } from "./LatencyChart";
 export { periodParams, periodKey, periodLabel, periodWindow, defaultPeriod, PRESET_RANGES } from "../../lib/period";
 export type { Period, PresetRange } from "../../lib/period";
 export { PickGroup, Toggle, Toggle3 } from "./pickers";
