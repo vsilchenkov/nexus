@@ -46,3 +46,24 @@ export function fmtShare(share: number): string {
   const pct = share * 100;
   return pct < 10 ? `${pct.toFixed(1)} %` : `${Math.round(pct)} %`;
 }
+
+/**
+ * fmtCapacityDuration — длительность в пояснении к формуле.
+ *
+ * Единица выбирается по величине, и это не косметика: жёсткие секунды
+ * превращали p95 = 2 мс в «0.0 с», а жёсткие часы — окно в 30 минут в «0 ч».
+ * Строка, которая ОБЪЯСНЯЕТ расчёт, начинала читаться как «p95 нулевая» и
+ * «период нулевой» — ровно та ложь, против которой написан весь раздел.
+ * Найдено прогоном на стенде: на быстром узле в формуле стояли нули.
+ *
+ * units — локализованные подписи из i18n-ключа `metrics.capacity.units`
+ * («мс|с|мин|ч»), как это уже сделано для размеров (`fmtSize`).
+ */
+export function fmtCapacityDuration(ms: number, units: string[]): string {
+  const [u_ms = "ms", u_s = "s", u_min = "min", u_h = "h"] = units;
+  if (!Number.isFinite(ms) || ms <= 0) return `0 ${u_ms}`;
+  if (ms < 1000) return `${Math.round(ms)} ${u_ms}`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)} ${u_s}`;
+  if (ms < 3600_000) return `${Math.round(ms / 60_000)} ${u_min}`;
+  return `${Math.round(ms / 3600_000)} ${u_h}`;
+}

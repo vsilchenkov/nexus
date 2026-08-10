@@ -4,7 +4,7 @@ import { type Node } from "../../api/client";
 import { Card, LabelHint } from "../ui";
 import { cn } from "../../lib/cn";
 import { fmtNum } from "../../lib/format";
-import { capacityShare, capacityTone, fmtShare } from "../../lib/queueCapacity";
+import { capacityShare, capacityTone, fmtCapacityDuration, fmtShare } from "../../lib/queueCapacity";
 
 /**
  * CapacityCard — помещается ли узел в одну партицию Kafka (§84.8).
@@ -29,6 +29,7 @@ export function CapacityCard({
   onOpenQueue?: () => void;
 }) {
   const { t } = useTranslation();
+  const units = t("metrics.capacity.units").split("|");
 
   if (node.root_method !== "requestAsync") return null;
   const share = capacityShare({ total, p95Ms, rangeMs });
@@ -61,10 +62,12 @@ export function CapacityCard({
           {fmtShare(share)}
         </span>
         <span className="text-xs text-fg-muted">
+          {/* Единицы приходят готовыми внутри значений: у быстрого узла p95
+              измеряется миллисекундами, у короткого окна период — минутами. */}
           {t("metrics.capacity.formula", {
             total: fmtNum(total),
-            p95: (p95Ms / 1000).toFixed(1),
-            range: (rangeMs / 3600_000).toFixed(0),
+            p95: fmtCapacityDuration(p95Ms, units),
+            range: fmtCapacityDuration(rangeMs, units),
           })}
         </span>
       </div>

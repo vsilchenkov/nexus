@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { capacityShare, capacityTone, fmtShare } from "./queueCapacity";
+import { capacityShare, capacityTone, fmtCapacityDuration, fmtShare } from "./queueCapacity";
 
 // §84.8 (узловой срез §80.2): помещается ли узел в одну партицию Kafka.
 // Эталон — боевой замер §80.1, ради которого раздел и написан.
@@ -57,5 +57,31 @@ describe("fmtShare", () => {
 
   it("выше 10 % дробь только мешает", () => {
     expect(fmtShare(1.361)).toBe("136 %");
+  });
+});
+
+// Найдено прогоном на стенде: пояснение к формуле печатало «p95 0.0 с» при
+// p95 = 2 мс. Строка, объясняющая расчёт, читалась как «p95 нулевая».
+describe("fmtCapacityDuration (§84.8)", () => {
+  const U = ["мс", "с", "мин", "ч"];
+
+  it("быстрый узел измеряется миллисекундами, а не «0.0 с»", () => {
+    expect(fmtCapacityDuration(2, U)).toBe("2 мс");
+    expect(fmtCapacityDuration(999, U)).toBe("999 мс");
+  });
+
+  it("короткое окно измеряется минутами, а не «0 ч»", () => {
+    expect(fmtCapacityDuration(30 * 60_000, U)).toBe("30 мин");
+  });
+
+  it("боевые величины §80.1 не меняются", () => {
+    expect(fmtCapacityDuration(22366, U)).toBe("22.4 с");
+    expect(fmtCapacityDuration(HOUR, U)).toBe("1 ч");
+    expect(fmtCapacityDuration(24 * HOUR, U)).toBe("24 ч");
+  });
+
+  it("нечисло и ноль не печатают «NaN»", () => {
+    expect(fmtCapacityDuration(NaN, U)).toBe("0 мс");
+    expect(fmtCapacityDuration(0, U)).toBe("0 мс");
   });
 });
