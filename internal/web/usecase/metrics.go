@@ -9,6 +9,7 @@ import (
 	"nexus/internal/domain"
 	"nexus/internal/platform/clock"
 	"nexus/internal/platform/logging"
+	"nexus/internal/platform/safego"
 	"nexus/internal/web/usecase/port"
 )
 
@@ -167,6 +168,15 @@ type NodeMetrics struct {
 	// ChartUnitAttempts (по прогонам в интервале, деградация на больших окнах,
 	// §79.5.1). Молча подменять семантику нельзя — UI обязан сказать об этом.
 	ChartUnit string
+
+	// Latency — перцентили по тем же интервалам (§84.5). Единица — ПОПЫТКИ, а не
+	// записи: это характеристика внешнего вызова (§79.5).
+	Latency []port.LatencyPoint
+
+	// LatencyAvailable — отдельный флаг, а не признак пустого ряда: пустой ряд
+	// законен (в окне не было запросов), и отличить его от «запрос латентности
+	// не удался» иначе нечем. Деградация латентности НЕ гасит график трафика.
+	LatencyAvailable bool
 }
 
 // Единицы столбца графика (§79.5).
@@ -255,39 +265,22 @@ func (u *MetricsUsecase) NodesOverview(ctx context.Context, teamID string, since
 // fallback для узлов, которых ещё нет в Redis; маппинг значений 0/1/2 —
 // domain.OutcomeFromGaugeValue). Деградирует мягко: нет ни Redis, ни
 // Prometheus (или ошибки запросов) → узел остаётся ok.
+// §84.7: само правило приоритета переехало в LastOutcomeResolver — у него
+// появился второй потребитель (бейдж на странице узла). Здесь остался только
+// маппинг на строки таблицы. Поведение прежнее, в том числе трактовка
+// «неизвестно» как ok: в таблице рабочего стола у бейджа нет пустого
+// состояния, каждая строка обязана иметь тон.
 func (u *MetricsUsecase) applyLastOutcomes(ctx context.Context, at time.Time, res *NodesOverview) {
 	if len(res.Items) == 0 {
 		return
 	}
-	// Redis — приоритетный источник (персистентный, §46).
-	var redisLO map[string]domain.NodeOutcome
-	if u.nodeStatus != nil {
-		paths := make([]string, len(res.Items))
-		for i := range res.Items {
-			paths[i] = res.Items[i].Node
-		}
-		if m, err := u.nodeStatus.GetLastOutcomes(ctx, paths); err != nil {
-			u.logger.Warn("redis node last outcomes failed", u.logger.Err(err))
-		} else {
-			redisLO = m
-		}
-	}
-	// Prometheus — fallback (§41) для узлов без записи в Redis.
-	var promLE map[string]float64
-	if u.prom != nil {
-		if m, err := u.prom.NodeLastErrors(ctx, at); err != nil {
-			u.logger.Warn("prometheus node last errors failed", u.logger.Err(err))
-		} else {
-			promLE = m
-		}
-	}
+	paths := make([]string, len(res.Items))
 	for i := range res.Items {
-		node := res.Items[i].Node
-		if v, ok := redisLO[node]; ok {
-			res.Items[i].LastOutcome = v
-			continue
-		}
-		res.Items[i].LastOutcome = domain.OutcomeFromGaugeValue(promLE[node])
+		paths[i] = res.Items[i].Node
+	}
+	got := NewLastOutcomeResolver(u.nodeStatus, u.prom, u.logger).Resolve(ctx, at, paths)
+	for i := range res.Items {
+		res.Items[i].LastOutcome = got[res.Items[i].Node].Outcome
 	}
 }
 
@@ -480,18 +473,57 @@ func (u *MetricsUsecase) NodeMetrics(ctx context.Context, in NodeMetricsQuery) (
 		u.logger.Debug("node metrics: chart degraded to attempts unit",
 			u.logger.Str("node", n.Path), u.logger.Int("records", int(kpi.Total)))
 	}
-	series, err := u.nodeLogs.NodeChart(mctx, q, port.ChartQuery{
-		StepSec:  stepSec,
-		ByRecord: byRecord,
-		Approx:   u.approxCounts(ctx),
+	// §84.5: график трафика и график латентности — два независимых запроса
+	// (слить нельзя: точная форма трафика уже свернула строки в записи, а
+	// перцентили считаются по попыткам). Идут КОНКУРЕНТНО под общим таймаутом,
+	// поэтому время ответа вкладки не растёт; нагрузка на ClickHouse на этой
+	// вкладке примерно удваивается — осознанная цена, названная в §84.5.
+	var (
+		series  []port.SeriesPoint
+		latency []port.LatencyPoint
+		latErr  error
+	)
+	g, gctx := errgroup.WithContext(mctx)
+	g.Go(func() error {
+		defer safego.Recover(u.logger, "web.metrics.node_chart")
+		s, err := u.nodeLogs.NodeChart(gctx, q, port.ChartQuery{
+			StepSec:  stepSec,
+			ByRecord: byRecord,
+			Approx:   u.approxCounts(ctx),
+		})
+		series = s
+		return err
 	})
-	if err != nil {
+	g.Go(func() error {
+		defer safego.Recover(u.logger, "web.metrics.node_latency")
+		t0 := u.clock.Now()
+		l, err := u.nodeLogs.NodeLatencyChart(gctx, q, stepSec)
+		// Ошибка латентности НЕ валит группу: она гасит только свой график.
+		// Каскадить деградацию нельзя — без трафика и KPI вкладка бесполезна,
+		// а без латентности всего лишь беднее.
+		latency, latErr = l, err
+		u.logger.Debug("node metrics: latency chart",
+			u.logger.Str("node", n.Path),
+			u.logger.Int("step_sec", int(stepSec)),
+			u.logger.Int("points", len(l)),
+			u.logger.Int("duration_ms", int(u.clock.Now().Sub(t0).Milliseconds())),
+			u.logger.Any("failed", err != nil))
+		return nil
+	})
+	if err := g.Wait(); err != nil {
 		u.logger.Warn("clickhouse node chart failed", u.logger.Err(err))
 		return res, nil
 	}
+
 	res.KPI = kpi
 	res.Series = series
 	res.ChartAvailable = true
+	if latErr != nil {
+		u.logger.Warn("clickhouse node latency failed", u.logger.Err(latErr))
+	} else {
+		res.Latency = latency
+		res.LatencyAvailable = true
+	}
 	return res, nil
 }
 

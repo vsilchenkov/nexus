@@ -27,6 +27,7 @@ import (
 	"nexus/internal/domain"
 	"nexus/internal/platform/bootstrap"
 	chpf "nexus/internal/platform/clickhouse"
+	"nexus/internal/platform/clock"
 	"nexus/internal/platform/config"
 	"nexus/internal/platform/crypto"
 	"nexus/internal/platform/grpcsender"
@@ -635,6 +636,19 @@ func (a *App) Start(ctx context.Context) error {
 	breakerHandler := httpadapter.NewBreakerHandler(
 		usecase.NewNodeBreakerUsecase(nodeBreaker, statusResetter, nodeRepo, auditUC, a.logger), a.logger)
 
+	// §84.7: исход последнего вызова узла для шапки страницы. Резолвер общий с
+	// рабочим столом (usecase.LastOutcomeResolver) — правило приоритета
+	// Redis→Prometheus существует в одном экземпляре, иначе две копии разойдутся.
+	// Оба источника опциональны: при отсутствии обоих эндпоинт честно отвечает
+	// available=false, и бейдж не рисуется.
+	nodeRuntimeHandler := httpadapter.NewNodeRuntimeHandler(
+		usecase.NewNodeRuntimeUsecase(
+			nodeRepo,
+			usecase.NewLastOutcomeResolver(nodeStatusReader, promMetrics, a.logger),
+			clock.System(),
+			a.logger,
+		), a.logger)
+
 	mw := httpadapter.Middlewares{
 		APITokenAuth:   httpadapter.APITokenAuthMiddleware(tokenUC, rl, a.cfg.Web.APITokenRateLimitPerMin, a.logger),
 		SessionAuth:    httpadapter.AuthMiddleware(authUC, &a.cfg.Web),
@@ -666,6 +680,7 @@ func (a *App) Start(ctx context.Context) error {
 		RMQTest:       rmqTestHandler,
 		Instances:     peerInstanceHandler,
 		Breaker:       breakerHandler,
+		NodeRuntime:   nodeRuntimeHandler,
 		Kafka:         kafkaHandler,
 		AsyncQueue:    asyncQueueHandler,
 		ServiceLogs:   serviceLogsHandler,

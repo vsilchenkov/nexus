@@ -2,11 +2,17 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "../../lib/cn";
-import { PRESET_RANGES, type Period, type PresetRange } from "../../lib/period";
+import { resolveCustomPeriod, PRESET_RANGES, type Period, type PresetRange } from "../../lib/period";
+import { DateTimeField } from "./DateTimeField";
 import { Seg } from "./data";
 
-// toLocalInput — RFC3339 → значение <input type="datetime-local">
-// (YYYY-MM-DDTHH:mm в локальной зоне; конструктор datetime-local зону не несёт).
+// DEFAULT_MAX_LOOKBACK_MS — на сколько назад уходит пустое «от» там, где
+// глубина хранения неизвестна (рабочий стол со многими узлами, мониторинг
+// Kafka). 30 суток — самый крупный пресет периода.
+const DEFAULT_MAX_LOOKBACK_MS = 30 * 24 * 3600_000;
+
+// toLocalInput — RFC3339 → значение поля даты ("YYYY-MM-DDTHH:mm" в локальной
+// зоне; формат совместим с прежним datetime-local и с DateTimeField).
 function toLocalInput(iso: string): string {
   const d = new Date(iso);
   if (isNaN(+d)) return "";
@@ -14,15 +20,42 @@ function toLocalInput(iso: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-// PeriodPicker — пресеты периода (1h..30d) + «Произвольный» с двумя
-// datetime-local (календарь), §28 Пункт 4. По умолчанию 1h.
+// fmtStamp — «05.08 00:00» для подписи фактического окна.
+function fmtStamp(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// fmtSpan — длительность окна человеческим текстом: «2 сут 9 ч», «45 мин».
+function fmtSpan(ms: number, t: (k: string, o?: Record<string, unknown>) => string): string {
+  const min = Math.max(Math.round(ms / 60_000), 0);
+  if (min < 60) return t("metrics.range.span_m", { m: min });
+  const h = Math.floor(min / 60);
+  if (h < 24) return t("metrics.range.span_h", { h, m: min % 60 });
+  return t("metrics.range.span_d", { d: Math.floor(h / 24), h: h % 24 });
+}
+
+/**
+ * PeriodPicker — пресеты периода (1ч..30д) + «Произвольный» (§28 п.4).
+ *
+ * §84.4: произвольный период применяется КЛИКОМ ПО ДНЮ — поле даты (§48.8)
+ * само закрывает поповер и отдаёт значение. Кнопки «Применить» больше нет:
+ * лишний клик на каждое изменение, а обе границы приходилось заполнять
+ * обязательно. Компонент один на все пять экранов, где выбирается период.
+ *
+ * maxLookbackMs — чем считается пустое «от». Вызывающая сторона передаёт
+ * глубину хранения узла там, где узел один; без него берётся 30 суток.
+ */
 export function PeriodPicker({
   value,
   onChange,
+  maxLookbackMs = DEFAULT_MAX_LOOKBACK_MS,
   className,
 }: {
   value: Period;
   onChange: (p: Period) => void;
+  maxLookbackMs?: number;
   className?: string;
 }) {
   const { t } = useTranslation();
@@ -47,13 +80,16 @@ export function PeriodPicker({
     setShowCustom(true);
   }, [customFrom, customTo]);
 
-  function applyCustom() {
-    if (!from || !to) return;
-    const f = new Date(from);
-    const tt = new Date(to);
-    if (isNaN(+f) || isNaN(+tt) || f >= tt) return;
-    onChange({ kind: "custom", from: f.toISOString(), to: tt.toISOString() });
+  // commit — применить границы сразу, без отдельной кнопки. Незаполненная пара
+  // не применяется молча: подпись ниже объясняет, чего не хватает.
+  function commit(nextFrom: string, nextTo: string) {
+    setFrom(nextFrom);
+    setTo(nextTo);
+    const r = resolveCustomPeriod(nextFrom, nextTo, maxLookbackMs);
+    if (r) onChange({ kind: "custom", from: r.from, to: r.to });
   }
+
+  const resolved = showCustom ? resolveCustomPeriod(from, to, maxLookbackMs) : null;
 
   return (
     <div className={cn("flex flex-wrap items-center gap-2", className)}>
@@ -77,27 +113,34 @@ export function PeriodPicker({
       </button>
       {showCustom && (
         <div className="flex flex-wrap items-center gap-1.5">
-          <input
-            type="datetime-local"
-            value={from}
-            onChange={(e) => setFrom(e.target.value)}
-            className="rounded-md border border-line bg-app px-2 py-1 text-xs text-fg"
-          />
+          <div className="w-44">
+            <DateTimeField
+              value={from}
+              onChange={(v) => commit(v, to)}
+              placeholder={t("metrics.range.from_open")}
+              max={to ? new Date(to) : undefined}
+            />
+          </div>
           <span className="text-fg-subtle">—</span>
-          <input
-            type="datetime-local"
-            value={to}
-            onChange={(e) => setTo(e.target.value)}
-            className="rounded-md border border-line bg-app px-2 py-1 text-xs text-fg"
-          />
-          <button
-            type="button"
-            onClick={applyCustom}
-            disabled={!from || !to}
-            className="rounded-md bg-accent px-2.5 py-1 text-xs disabled:opacity-50"
-          >
-            {t("common.apply")}
-          </button>
+          <div className="w-44">
+            <DateTimeField
+              value={to}
+              onChange={(v) => commit(from, v)}
+              defaultTime="23:59"
+              placeholder={t("metrics.range.to_open")}
+              min={from ? new Date(from) : undefined}
+            />
+          </div>
+          {/* Фактическое окно показывается ВСЕГДА: открытая граница без него
+              означала бы, что пользователь не знает, что именно он смотрит. */}
+          <span className="text-xs text-fg-muted">
+            {resolved
+              ? `↳ ${fmtStamp(Date.parse(resolved.from))} — ${fmtStamp(Date.parse(resolved.to))} (${fmtSpan(
+                  Date.parse(resolved.to) - Date.parse(resolved.from),
+                  t,
+                )})`
+              : t("metrics.range.need_one_bound")}
+          </span>
         </div>
       )}
     </div>

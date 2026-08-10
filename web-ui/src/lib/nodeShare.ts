@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
 import { api, isNotFound } from "../api/client";
-import { type NodeTab } from "./nodeTabUrl";
+import { shareableTabParams, type NodeTab } from "./nodeTabUrl";
 import { useMyTeams, useSwitchTeam } from "./teams";
 
 // Слой данных «Поделиться узлом» (§58). Узел жёстко привязан к команде
@@ -109,7 +109,21 @@ export function useEnsureNodeTeam(id: string | undefined): { status: EnsureStatu
 // §79.3: с tab ссылка ведёт сразу на нужную вкладку. Окно и фильтры журнала в
 // неё НЕ попадают — это сиюминутное состояние клика по графику, а не то, чем
 // делятся; «Обзор» (вкладка по умолчанию) параметром не отмечается.
-export function nodePageUrl(id: string, tab?: NodeTab): string {
+//
+// §84.2: с search ссылка несёт ещё и вид вкладки — период и шаг «Метрик»
+// (shareableTabParams). Без этого повторялся урок §79: адрес у вкладки есть, а
+// поделиться конкретным масштабом нечем. Что именно шарится — решает
+// nodeTabUrl, здесь только сборка строки.
+export function nodePageUrl(id: string, tab?: NodeTab, search?: URLSearchParams): string {
   const base = `${window.location.origin}/nodes/${id}`;
-  return tab && tab !== "overview" ? `${base}?tab=${tab}` : base;
+  const q = new URLSearchParams();
+  if (tab && tab !== "overview") q.set("tab", tab);
+  if (tab && search) {
+    for (const key of shareableTabParams(tab)) {
+      const v = search.get(key);
+      if (v !== null) q.set(key, v);
+    }
+  }
+  const s = q.toString();
+  return s ? `${base}?${s}` : base;
 }

@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "@radix-ui/react-tooltip";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // §79.4/§79.5: вкладка «Метрики» шлёт те же фильтры, что журнал логов, и
@@ -39,13 +39,26 @@ function metricsCalls() {
     .map((c) => (c[1] ?? {}) as Record<string, string>);
 }
 
-function renderTab() {
+// §84.2: вид вкладки живёт в адресе, поэтому тесты монтируют её на конкретном
+// маршруте. LocationProbe печатает текущую строку запроса — так проверяется,
+// что клик действительно ПИШЕТ адрес, а не только меняет состояние.
+function LocationProbe() {
+  const loc = useLocation();
+  return <div data-testid="loc">{loc.search}</div>;
+}
+
+function locSearch(): string {
+  return screen.getByTestId("loc").textContent ?? "";
+}
+
+function renderTab(entry = "/nodes/n1?tab=metrics") {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[entry]}>
       <QueryClientProvider client={qc}>
         <TooltipProvider>
           <MetricsTab node={NODE} />
+          <LocationProbe />
         </TooltipProvider>
       </QueryClientProvider>
     </MemoryRouter>,
@@ -64,10 +77,21 @@ beforeEach(() => {
 });
 
 describe("MetricsTab: фильтры и шаг графика (§79.4/§79.5)", () => {
-  it("без выбора шага параметр не отправляется (сервер решает сам)", async () => {
+  // §84.3 меняет контракт: дефолт шага перестал быть «Авто». Раньше здесь
+  // проверялось, что step не отправляется вовсе.
+  it("дефолтный шаг конкретный: на периоде 24ч уходит step=1h, а не пусто", async () => {
     renderTab();
     await waitFor(() => expect(metricsCalls().length).toBeGreaterThan(0));
-    expect(metricsCalls()[0].step).toBeUndefined();
+    expect(metricsCalls()[0].step).toBe("1h");
+  });
+
+  it("выбор «Авто» отправку шага отключает — сервер решает сам", async () => {
+    renderTab();
+    await waitFor(() => expect(metricsCalls().length).toBeGreaterThan(0));
+
+    const stepGroup = within(screen.getByRole("group", { name: "metrics.step.label" }));
+    fireEvent.click(stepGroup.getByRole("button", { name: "metrics.step.auto" }));
+    await waitFor(() => expect(metricsCalls().some((c) => c.step === undefined)).toBe(true));
   });
 
   it("выбор шага уходит в запрос", async () => {
@@ -75,8 +99,8 @@ describe("MetricsTab: фильтры и шаг графика (§79.4/§79.5)", 
     await waitFor(() => expect(metricsCalls().length).toBeGreaterThan(0));
 
     const stepGroup = within(screen.getByRole("group", { name: "metrics.step.label" }));
-    fireEvent.click(stepGroup.getByRole("button", { name: "metrics.range.24h" }));
-    await waitFor(() => expect(metricsCalls().some((c) => c.step === "24h")).toBe(true));
+    fireEvent.click(stepGroup.getByRole("button", { name: "metrics.step.opt.30m" }));
+    await waitFor(() => expect(metricsCalls().some((c) => c.step === "30m")).toBe(true));
   });
 
   it("быстрый фильтр «Ошибки» уходит в запрос метрик", async () => {
@@ -110,5 +134,89 @@ describe("MetricsTab: фильтры и шаг графика (§79.4/§79.5)", 
     expect(screen.queryByText("logs.advanced.from")).not.toBeInTheDocument();
     expect(screen.queryByText("logs.advanced.to")).not.toBeInTheDocument();
     expect(screen.getByText("logs.advanced.client_host")).toBeInTheDocument();
+  });
+});
+
+// §84.2: вид вкладки — производная АДРЕСА. Всё ниже красное на старом коде:
+// там период и шаг жили в useState и в адрес не попадали никогда.
+describe("MetricsTab: период и шаг в адресе (§84.2)", () => {
+  it("адрес управляет запросом: ?range=7d&step=6h доезжает до API", async () => {
+    renderTab("/nodes/n1?tab=metrics&range=7d&step=6h");
+    await waitFor(() => expect(metricsCalls().length).toBeGreaterThan(0));
+    expect(metricsCalls()[0].range).toBe("7d");
+    expect(metricsCalls()[0].step).toBe("6h");
+  });
+
+  it("клик по периоду пишет адрес — ссылкой можно поделиться", async () => {
+    renderTab();
+    await waitFor(() => expect(metricsCalls().length).toBeGreaterThan(0));
+
+    fireEvent.click(screen.getByRole("button", { name: "metrics.range.7d" }));
+    await waitFor(() => expect(locSearch()).toContain("range=7d"));
+    await waitFor(() => expect(metricsCalls().some((c) => c.range === "7d")).toBe(true));
+  });
+
+  it("клик по шагу пишет адрес", async () => {
+    renderTab();
+    await waitFor(() => expect(metricsCalls().length).toBeGreaterThan(0));
+
+    const stepGroup = within(screen.getByRole("group", { name: "metrics.step.label" }));
+    fireEvent.click(stepGroup.getByRole("button", { name: "metrics.step.opt.30m" }));
+    await waitFor(() => expect(locSearch()).toContain("step=30m"));
+  });
+
+  it("дефолтный вид в адрес не пишется — ссылка остаётся короткой", async () => {
+    renderTab("/nodes/n1?tab=metrics&range=7d");
+    await waitFor(() => expect(metricsCalls().length).toBeGreaterThan(0));
+
+    fireEvent.click(screen.getByRole("button", { name: "metrics.range.24h" }));
+    await waitFor(() => expect(locSearch()).not.toContain("range="));
+    expect(locSearch()).not.toContain("step=");
+  });
+
+  it("шаг, не влезающий в новый период, заменяется дефолтом нового периода", async () => {
+    // 30м на окне 30 суток дало бы 1440 столбцов: сервер поднял бы шаг, а
+    // сегмент показывал бы не ту ширину столбца, что получилась.
+    renderTab("/nodes/n1?tab=metrics&range=24h&step=30m");
+    await waitFor(() => expect(metricsCalls().length).toBeGreaterThan(0));
+
+    fireEvent.click(screen.getByRole("button", { name: "metrics.range.30d" }));
+    await waitFor(() => expect(metricsCalls().some((c) => c.range === "30d")).toBe(true));
+    const last = metricsCalls()[metricsCalls().length - 1];
+    expect(last.step).toBe("24h");
+    expect(locSearch()).not.toContain("step=30m");
+  });
+
+  // Набор кнопок ПОСТОЯНЕН — иначе ширина строки меняется с периодом и шапка
+  // вкладки прыгает при каждом переключении. Неприменимость выражается
+  // гашением: гасится только то, что солгало бы (шаг мельче окна/400 сервер
+  // всё равно укрупнил бы).
+  it("на 30 днях минута погашена, но КНОПКА на месте — иначе строка прыгает", async () => {
+    renderTab("/nodes/n1?tab=metrics&range=30d");
+    await waitFor(() => expect(metricsCalls().length).toBeGreaterThan(0));
+    const g = within(screen.getByRole("group", { name: "metrics.step.label" }));
+    const min = g.getByRole("button", { name: "metrics.step.opt.1m" });
+    expect(min).toBeInTheDocument();
+    expect(min).toBeDisabled();
+    expect(g.getByRole("button", { name: "metrics.step.opt.7d" })).toBeEnabled();
+  });
+
+  it("число кнопок шага не меняется при смене периода", async () => {
+    renderTab("/nodes/n1?tab=metrics&range=1h");
+    await waitFor(() => expect(metricsCalls().length).toBeGreaterThan(0));
+    const count = () =>
+      within(screen.getByRole("group", { name: "metrics.step.label" })).getAllByRole("button").length;
+    const before = count();
+
+    fireEvent.click(screen.getByRole("button", { name: "metrics.range.30d" }));
+    await waitFor(() => expect(metricsCalls().some((c) => c.range === "30d")).toBe(true));
+    expect(count()).toBe(before);
+  });
+
+  it("мусор в адресе не ломает вкладку — берётся дефолт", async () => {
+    renderTab("/nodes/n1?tab=metrics&range=zzz&step=99y");
+    await waitFor(() => expect(metricsCalls().length).toBeGreaterThan(0));
+    expect(metricsCalls()[0].range).toBe("24h");
+    expect(metricsCalls()[0].step).toBe("1h");
   });
 });

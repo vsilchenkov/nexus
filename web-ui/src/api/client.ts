@@ -116,6 +116,9 @@ export type Node = {
   clickhouse_template_id: string;
   // §64: таблицей логов управляет не Nexus (оператор или посторонний писатель).
   external_table: boolean;
+  // §84.4: чем считается пустое «от» в произвольном периоде — старше этой
+  // глубины записей физически нет, их удалил TTL.
+  clickhouse_retention_days?: number;
   forward_headers: string[];
   log_request_body: boolean;
   log_response_body: boolean;
@@ -266,6 +269,8 @@ export type NodesThroughputResp = {
 //   attempts — деградация на больших окнах: запись в интервале своего прогона.
 export type ChartUnit = "records" | "attempts";
 
+export type LatencyPointResp = { ts: number; p50_ms: number; p95_ms: number; attempts: number };
+
 export type NodeMetricsResp = {
   kpi: {
     total: number;
@@ -273,6 +278,9 @@ export type NodeMetricsResp = {
     errors: number;
     p95_ms: number;
     p99_ms: number;
+    // §84.6: последняя активность В ОКНЕ и под текущими фильтрами (UnixMilli);
+    // 0 = запросов не было. Опционально — старый бэкенд поля не отдаёт.
+    last_seen_ms?: number;
   };
   series: { ts: number; count: number; errors: number }[];
   chart_available: boolean;
@@ -281,6 +289,11 @@ export type NodeMetricsResp = {
   // он согласуется с окном) и единица счёта столбцов.
   step_seconds?: number;
   chart_unit?: ChartUnit;
+  // §84.5: ряд латентности по тем же интервалам. Оба поля опциональны —
+  // совместимость в обе стороны: новый фронт со старым бэкендом их просто не
+  // увидит, а не сломается.
+  latency?: LatencyPointResp[];
+  latency_available?: boolean;
 };
 
 // §19: шаблоны DDL для таблиц логов ClickHouse.

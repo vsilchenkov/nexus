@@ -5,6 +5,7 @@ import { Trash2, ChevronRight, Pause, Power, Play, RotateCcw } from "lucide-reac
 
 import { api, type Node } from "../../api/client";
 import { Button, Kpi, KpiRow, Hint, Pill, PeriodPicker, periodWindow, periodKey, defaultPeriod, type Period } from "../ui";
+import { nodeLookbackMs } from "../../lib/nodeLookback";
 import { ReplayDialog } from "../ReplayDialog";
 import { type LogsInitialFilter } from "./LogsTab";
 import { type LogRow, type LogDetail } from "./types";
@@ -60,9 +61,14 @@ function prettyJson(raw: string): string {
 export function QueueTab({
   node,
   onOpenFailedLogs,
+  onOpenMetrics,
 }: {
   node: Node;
   onOpenFailedLogs?: (f: LogsInitialFilter) => void;
+  // §84.8: обратная ссылка на «Метрики». Ёмкость партиции считается там (из
+  // метрик), «сколько ждёт прямо сейчас» — здесь; без взаимных ссылок разбор
+  // упирается в тупик на любой из двух вкладок.
+  onOpenMetrics?: () => void;
 }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
@@ -203,13 +209,17 @@ export function QueueTab({
 
   return (
     <div className="space-y-4">
+      {/* Пикер прижат ВПРАВО — как на остальных вкладках и как было в релизе.
+          Пробовал сдвинуть влево (казалось, что слева пустое место): под ним
+          идут плитки во всю ширину, и пикер, прижатый к левому краю, ломает
+          общую линию правого края страницы. Пустота слева тут не дефект. */}
       <div className="flex flex-wrap items-center justify-end gap-3">
-        <PeriodPicker value={period} onChange={setPeriod} />
+        <PeriodPicker value={period} onChange={setPeriod} maxLookbackMs={nodeLookbackMs(node)} />
       </div>
 
       {/* У sync-узла плитки «Ожидают отправки» нет: очереди не существует.
-          Сетка остаётся двухколоночной — одинокая плитка занимает первую
-          колонку и не растягивается на всю ширину. */}
+          Оставшаяся одна плитка выкладывается НЕ сеткой (см. KpiRow): половина
+          строки под неё и пустая половина рядом читались как поломка вёрстки. */}
       <KpiRow cols={2}>
         {isAsync && (
           <Kpi
@@ -315,6 +325,18 @@ export function QueueTab({
               }}
             />
           </div>
+          {/* §84.8: голова очереди из УЖЕ загруженного списка — он отсортирован
+              по времени приёма, значит items[0] и есть самое старое сообщение.
+              Ни нового эндпоинта, ни лишнего давления на KafkaRateLimit. */}
+          {pendingCount > 0 && (
+            <QueueHeadSummary
+              count={pendingCount}
+              capped={pendingCapped}
+              partition={pending[0].partition}
+              headReceivedAt={pending[0].received_at}
+              onOpenMetrics={onOpenMetrics}
+            />
+          )}
           {pending.length === 0 ? (
             <div className="text-fg-muted">
               {node.status === "paused"
@@ -726,5 +748,59 @@ function FailedBody({ nodeId, logId }: { nodeId: string; logId: string }) {
         </pre>
       </div>
     </div>
+  );
+}
+
+/**
+ * QueueHeadSummary — голова очереди узла (§84.8, узловой срез §80.2).
+ *
+ * Возраст головы отвечает на вопрос, который число «ждут N» не закрывает:
+ * «доставка встала или просто много трафика». Считается из УЖЕ загруженного
+ * списка — он отсортирован по времени приёма, поэтому items[0] и есть самое
+ * старое сообщение; нового запроса к Kafka не появляется.
+ *
+ * capped означает, что выборка упёрлась в предел: показываем «50+», а не «50»,
+ * иначе число читается как точное.
+ */
+function QueueHeadSummary({
+  count,
+  capped,
+  partition,
+  headReceivedAt,
+  onOpenMetrics,
+}: {
+  count: number;
+  capped: boolean;
+  partition: number;
+  headReceivedAt: string;
+  onOpenMetrics?: () => void;
+}) {
+  const { t } = useTranslation();
+  const ageMs = Math.max(Date.now() - Date.parse(headReceivedAt), 0);
+  const ageMin = Math.round(ageMs / 60_000);
+  // Пять минут — уже не «просто много трафика»: при штатной доставке голова
+  // очереди живёт секунды.
+  const stale = ageMin >= 5;
+  return (
+    <p className={cn("text-xs", stale ? "text-warn" : "text-fg-muted")}>
+      {t("queue.head.summary", {
+        waiting: `${count}${capped ? "+" : ""}`,
+        partition,
+        age: ageMin < 1 ? t("queue.head.age_lt_min") : t("queue.head.age_min", { m: ageMin }),
+      })}
+      {stale && " ⚠"}
+      {onOpenMetrics && (
+        <>
+          {" · "}
+          <button
+            type="button"
+            onClick={onOpenMetrics}
+            className="text-accent underline-offset-2 hover:underline"
+          >
+            {t("queue.head.capacity_link")}
+          </button>
+        </>
+      )}
+    </p>
   );
 }

@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -82,20 +83,43 @@ type fakeNodeLogs struct {
 	chart    []port.SeriesPoint
 	chartErr error
 
+	latency    []port.LatencyPoint
+	latencyErr error
+
 	gotKPIQuery   port.LogQuery
 	gotChartQuery port.LogQuery
 	gotChart      port.ChartQuery
 	chartCalls    int
+
+	// §84.5: шаг латентности фиксируется отдельно — два графика обязаны
+	// считаться ОДНИМ шагом, иначе их нельзя сопоставить глазом.
+	gotLatencyQuery port.LogQuery
+	gotLatencyStep  int64
+	latencyCalls    int
+	mu              sync.Mutex
 }
 
 func (f *fakeNodeLogs) NodeKPI(_ context.Context, q port.LogQuery, _ bool) (port.NodeKPI, error) {
 	f.gotKPIQuery = q
 	return f.kpi, f.kpiErr
 }
+
+// §84.5: NodeChart и NodeLatencyChart зовутся КОНКУРЕНТНО, поэтому запись
+// полей фейка защищена мьютексом — иначе -race красит тест, а не код.
 func (f *fakeNodeLogs) NodeChart(_ context.Context, q port.LogQuery, c port.ChartQuery) ([]port.SeriesPoint, error) {
+	f.mu.Lock()
 	f.gotChartQuery, f.gotChart = q, c
 	f.chartCalls++
+	f.mu.Unlock()
 	return f.chart, f.chartErr
+}
+
+func (f *fakeNodeLogs) NodeLatencyChart(_ context.Context, q port.LogQuery, stepSec int64) ([]port.LatencyPoint, error) {
+	f.mu.Lock()
+	f.gotLatencyQuery, f.gotLatencyStep = q, stepSec
+	f.latencyCalls++
+	f.mu.Unlock()
+	return f.latency, f.latencyErr
 }
 
 // fakeNodeRepo встраивает port.NodeRepo (nil): usecase зовёт Get и List.
@@ -542,5 +566,78 @@ func TestMetricsUsecase_NodeMetrics(t *testing.T) {
 		uc := NewMetricsUsecase(nil, nil, repo, nil, nil, log)
 		_, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "", Since: time.Now().Add(-time.Hour), Until: time.Now()})
 		require.NoError(t, err)
+	})
+
+	// §84.5: латентность считается ТЕМ ЖЕ шагом, что и трафик. Разные шаги
+	// означали бы два графика друг под другом в разных столбцах — сопоставить
+	// их глазом (ради чего они и стоят рядом) стало бы нельзя.
+	t.Run("§84.5 латентность считается тем же шагом, что и график трафика", func(t *testing.T) {
+		t.Parallel()
+		repo := &fakeNodeRepo{node: &domain.Node{ID: "n1", Path: "p", TeamID: "default", ClickHouseTable: "db.t"}}
+		logs := &fakeNodeLogs{
+			kpi:     port.NodeKPI{Total: 5},
+			latency: []port.LatencyPoint{{TsMs: 1, P50ms: 5300, P95ms: 30490, Attempts: 7}},
+		}
+		uc := NewMetricsUsecase(nil, logs, repo, nil, nil, log)
+
+		until := time.Now()
+		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{
+			NodeID: "n1", TeamID: "default",
+			Since: until.Add(-14 * 24 * time.Hour), Until: until, Step: "24h",
+		})
+		require.NoError(t, err)
+		require.Equal(t, 1, logs.latencyCalls)
+		require.EqualValues(t, logs.gotChart.StepSec, logs.gotLatencyStep)
+		require.EqualValues(t, 86400, logs.gotLatencyStep)
+		require.True(t, got.LatencyAvailable)
+		require.Len(t, got.Latency, 1)
+		require.EqualValues(t, 30490, got.Latency[0].P95ms)
+	})
+
+	// §84.5: деградация латентности НЕ каскадит. Без трафика и KPI вкладка
+	// бесполезна, без латентности — всего лишь беднее.
+	t.Run("§84.5 ошибка латентности не гасит график трафика", func(t *testing.T) {
+		t.Parallel()
+		repo := &fakeNodeRepo{node: &domain.Node{ID: "n1", Path: "p", TeamID: "default", ClickHouseTable: "db.t"}}
+		logs := &fakeNodeLogs{
+			kpi:        port.NodeKPI{Total: 5},
+			chart:      []port.SeriesPoint{{TsMs: 1, Count: 5}},
+			latencyErr: errors.New("boom"),
+		}
+		uc := NewMetricsUsecase(nil, logs, repo, nil, nil, log)
+
+		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "default"})
+		require.NoError(t, err)
+		require.True(t, got.ChartAvailable, "трафик обязан выжить")
+		require.Len(t, got.Series, 1)
+		require.False(t, got.LatencyAvailable)
+		require.Empty(t, got.Latency)
+	})
+
+	// §84.5: обратная сторона того же правила — падение ГРАФИКА гасит вкладку
+	// целиком, как и до раздела. Иначе KPI показывались бы под пустым графиком
+	// без объяснения.
+	t.Run("§84.5 ошибка графика по-прежнему гасит вкладку", func(t *testing.T) {
+		t.Parallel()
+		repo := &fakeNodeRepo{node: &domain.Node{ID: "n1", Path: "p", TeamID: "default", ClickHouseTable: "db.t"}}
+		logs := &fakeNodeLogs{kpi: port.NodeKPI{Total: 5}, chartErr: errors.New("boom")}
+		uc := NewMetricsUsecase(nil, logs, repo, nil, nil, log)
+
+		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "default"})
+		require.NoError(t, err)
+		require.False(t, got.ChartAvailable)
+	})
+
+	// §84.6: пульс приезжает тем же вызовом KPI — дополнительного запроса не
+	// появляется.
+	t.Run("§84.6 last_seen приходит вместе с KPI, без отдельного запроса", func(t *testing.T) {
+		t.Parallel()
+		repo := &fakeNodeRepo{node: &domain.Node{ID: "n1", Path: "p", TeamID: "default", ClickHouseTable: "db.t"}}
+		logs := &fakeNodeLogs{kpi: port.NodeKPI{Total: 5, LastSeenMs: 1786114275000}}
+		uc := NewMetricsUsecase(nil, logs, repo, nil, nil, log)
+
+		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "default"})
+		require.NoError(t, err)
+		require.EqualValues(t, 1786114275000, got.KPI.LastSeenMs)
 	})
 }

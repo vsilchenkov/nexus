@@ -42,11 +42,16 @@ export const SLOW_METRICS_MS = 2000;
 // §79.4/§79.5: к периоду добавились «Шаг графика» и фильтры журнала. Оба обязаны
 // входить в queryKey — иначе react-query отдаёт кеш прежнего набора и фильтр
 // «работает» только визуально (грабля §72.2).
+// §84.3: enabled — гейт готовности вида. Пока персональный преф узла не
+// приехал, запрос НЕ уходит вовсе: иначе повторяется мигание §71 — показали
+// 24 ч, через 300 мс переключили на сохранённые 7 д и сделали два запроса
+// вместо одного.
 export function useNodeMetrics(
   id: string | undefined,
   period: Period,
   step: ChartStep = "auto",
   filterParams: Record<string, string> = {},
+  enabled = true,
 ) {
   const refetch = useMetricsRefetchMs();
   // Ключ фильтров — стабильная строка: объект в queryKey сравнивается
@@ -69,7 +74,7 @@ export function useNodeMetrics(
       setSlow(Date.now() - started > SLOW_METRICS_MS);
       return res;
     },
-    enabled: !!id,
+    enabled: !!id && enabled,
     refetchInterval: slow ? false : refetch,
   });
   const data = useStableData(

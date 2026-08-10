@@ -27,6 +27,7 @@ import {
   type NodeTab,
 } from "../lib/nodeTabUrl";
 import { ShareNodeButton } from "../components/node/ShareNodeButton";
+import { NodeRuntimeBadge } from "../components/node/NodeRuntimeBadge";
 import { DryRunDialog } from "../components/DryRunDialog";
 import { LogsTab } from "../components/node/LogsTab";
 import { OverviewTab } from "../components/node/OverviewTab";
@@ -144,6 +145,10 @@ export default function NodeDetail() {
           </h1>
           <Chip>{node.root_method}</Chip>
           <Pill tone={statusTone}>{t(`node.status.${node.status}`)}</Pill>
+          {/* §84.7: рядом с КОНФИГУРАЦИОННЫМ статусом — RUNTIME-исход
+              последнего вызова. Раньше «Активен» стоял и у узла, к которому
+              доставка не проходит вовсе. */}
+          <NodeRuntimeBadge nodeId={node.id} />
           {isPull && rmq?.degraded && <Pill tone="err">{t("node.rmq.degraded")}</Pill>}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-2">
@@ -158,7 +163,7 @@ export default function NodeDetail() {
             {t("node.actions.refresh")}
           </Button>
           {/* §58, п.1/п.4: «Поделиться» доступна всем ролям (viewer тоже). */}
-          <ShareNodeButton nodeId={node.id} tab={tab} sm />
+          <ShareNodeButton nodeId={node.id} tab={tab} search={searchParams} sm />
           {canEdit && (
             <>
               <Button sm variant="ghost" onClick={() => setDryRunOpen(true)}>
@@ -251,11 +256,18 @@ export default function NodeDetail() {
       )}
       {tab === "logs" && <LogsTab node={node} initialFilter={logsFilter ?? undefined} />}
       {tab === "config" && <ConfigTab node={node} />}
-      {tab === "metrics" && <MetricsTab node={node} onOpenLogs={openLogsAt} />}
+      {tab === "metrics" && (
+        <MetricsTab
+          node={node}
+          onOpenLogs={openLogsAt}
+          onOpenQueue={() => setSearchParams((prev) => withNodeTab(prev, "queue"))}
+        />
+      )}
       {tab === "queue" && (
         <QueueTab
           node={node}
           onOpenFailedLogs={(f) => setSearchParams((prev) => withFailedLogs(prev, f))}
+          onOpenMetrics={() => setSearchParams((prev) => withNodeTab(prev, "metrics"))}
         />
       )}
     </div>

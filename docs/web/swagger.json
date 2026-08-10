@@ -3531,6 +3531,59 @@
                 }
             }
         },
+        "/api/nodes/{id}/log/{logId}/ack": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Прогоняет сохранённое тело запроса через ТЕКУЩИЙ шаблон ответа приёма узла (§83) и показывает, чем шина ответила бы сейчас. Это расчёт, а не факт: отрендеренный ответ приёма нигде не сохраняется. applicable=false с причиной — у узла выключено изменение ответа, запись прошла синхронным путём или тело запроса не логируется. Провал подстановки приходит с HTTP 200 и ok=false. Доступно всем ролям со scope logs:read: исполняется шаблон уже сохранённого узла на теле, которое запрашивающий и так видит в журнале.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logs"
+                ],
+                "summary": "Пересчёт ответа шины по записи журнала (§84.9).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "log record id",
+                        "name": "logId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ackFromLogDTO"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/{id}/log/{logId}/body": {
             "get": {
                 "security": [
@@ -4283,6 +4336,52 @@
                     },
                     "404": {
                         "description": "node or target team not found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{id}/runtime": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Runtime-состояние узла для шапки страницы: ok / degraded / down по модели §52. Источник — персистентный Redis (переживает рестарт Sender), fallback — instant-gauge Prometheus. available=false означает «неизвестно» (ни один источник не ответил), и это НЕ то же самое, что ok. Доступно всем ролям: понимать, почему узел молчит, нужно и наблюдателю.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "nodes"
+                ],
+                "summary": "Исход последнего исходящего вызова узла (§84.7).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.nodeRuntimeDTO"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
@@ -7409,6 +7508,60 @@
                 }
             }
         },
+        "internal_web_adapter_in_http.ackFromLogDTO": {
+            "type": "object",
+            "properties": {
+                "applicable": {
+                    "type": "boolean"
+                },
+                "body": {
+                    "type": "string"
+                },
+                "body_source": {
+                    "type": "string"
+                },
+                "content_type": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "not_applicable_reason": {
+                    "type": "string"
+                },
+                "ok": {
+                    "description": "ok=false — НЕ ошибка запроса: подстановка не удалась, причина в reason.",
+                    "type": "boolean"
+                },
+                "on_error": {
+                    "type": "string"
+                },
+                "placeholder": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "request_at_ms": {
+                    "type": "integer"
+                },
+                "spec_changed_after_request": {
+                    "type": "boolean"
+                },
+                "spec_updated_at_ms": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "integer"
+                },
+                "warnings": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "internal_web_adapter_in_http.addMemberRequest": {
             "type": "object",
             "required": [
@@ -8156,6 +8309,10 @@
                 "errors": {
                     "type": "integer"
                 },
+                "last_seen_ms": {
+                    "description": "§84.6: последняя активность В ОКНЕ и под текущими фильтрами (UnixMilli);\n0 = в окне запросов не было. Не «за всё время» — см. port.NodeKPI.",
+                    "type": "integer"
+                },
                 "p95_ms": {
                     "type": "number"
                 },
@@ -8164,6 +8321,22 @@
                 },
                 "total": {
                     "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.nodeRuntimeDTO": {
+            "type": "object",
+            "properties": {
+                "available": {
+                    "type": "boolean"
+                },
+                "last_outcome": {
+                    "description": "ok | degraded | down",
+                    "type": "string"
+                },
+                "source": {
+                    "description": "redis | prometheus | none",
+                    "type": "string"
                 }
             }
         },

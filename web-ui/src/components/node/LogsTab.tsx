@@ -26,6 +26,7 @@ import {
 import { Popover, PopoverAnchor, PopoverContent } from "../ui";
 import { CopyButton } from "../ui/CopyButton";
 import { ReplayDialog } from "../ReplayDialog";
+import { LogAckBlock } from "./LogAckBlock";
 import { LogsAdvancedFilters } from "./LogsAdvancedFilters";
 import { type LogRow, type LogsResp, type LogDetail, type LogBodyChunk } from "./types";
 
@@ -757,7 +758,7 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                     {isOpen && (
                       <tr className="border-t border-line bg-bg-muted/30">
                         <td colSpan={8} className="px-3 py-3">
-                          <LogBodies nodeId={id} logId={r.id} />
+                          <LogBodies node={node} logId={r.id} />
                         </td>
                       </tr>
                     )}
@@ -924,7 +925,8 @@ function LogUrlCell({ url }: { url: string }) {
 // Монтируется только при раскрытии строки. Get отдаёт ПРЕВЬЮ тел (первые ~64K
 // рун) + полные длины — большое тело не грузится разом и не вешает фронт;
 // остаток тянется по кнопке «Показать весь» или скачивается файлом.
-function LogBodies({ nodeId, logId }: { nodeId: string; logId: string }) {
+function LogBodies({ node, logId }: { node: Node; logId: string }) {
+  const nodeId = node.id;
   const { t } = useTranslation();
   const sizeUnits = useSizeUnits();
   const q = useQuery({
@@ -990,6 +992,9 @@ function LogBodies({ nodeId, logId }: { nodeId: string; logId: string }) {
           total={q.data.response_len ?? 0}
         />
       </div>
+      {/* §84.9: чем шина ответила БЫ по текущему шаблону. Блока нет вовсе у
+          узла без изменения ответа и у записи, прошедшей синхронным путём. */}
+      <LogAckBlock node={node} logId={logId} recordType={q.data.type} />
     </div>
   );
 }
