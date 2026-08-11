@@ -4,7 +4,13 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { MemoryRouter, useLocation, useSearchParams } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { setTeamScopeAll, teamScopeKey, scopeParams, TEAM_SCOPE_ALL } from "./teamScope";
+import {
+  setTeamScopeAll,
+  teamScopeKey,
+  scopeParams,
+  useAllTeamsScope,
+  TEAM_SCOPE_ALL,
+} from "./teamScope";
 import { useTeamUrlParam } from "./teamShare";
 import { type MyTeamsResp, type TeamMembership } from "./teams";
 
@@ -52,10 +58,15 @@ function mockServer(currentTeamID = "team-a") {
   apiPost.mockImplementation((url: string) => Promise.reject(new Error(`unexpected POST ${url}`)));
 }
 
-const probe = { search: "" };
+const probe = { search: "", allTeams: false };
 
 function RouterProbe() {
   probe.search = useLocation().search;
+  // Режим читаем пробой, а не по адресной строке: во входящей ссылке `*` стоит
+  // в URL С САМОГО НАЧАЛА, и ожидание «в адресе есть team=*» выполняется ещё до
+  // того, как режим включится. На этом артефакте тест «выхода из режима»
+  // сначала показал ложный отказ.
+  probe.allTeams = useAllTeamsScope();
   return null;
 }
 
@@ -100,6 +111,7 @@ describe("сквозной режим «Все команды» (§86)", () => {
     apiGet.mockReset();
     apiPost.mockReset();
     probe.search = "";
+    probe.allTeams = false;
     setTeamScopeAll(false);
     sessionStorage.clear();
   });
@@ -107,7 +119,8 @@ describe("сквозной режим «Все команды» (§86)", () => {
   it("ссылка /?team=* включает режим, не переключая команду и не поднимая баннер", async () => {
     const { result } = render(`/?team=${encodeURIComponent(TEAM_SCOPE_ALL)}`);
 
-    await waitFor(() => expect(probe.search).toContain("team=*"));
+    await waitFor(() => expect(probe.allTeams).toBe(true));
+    expect(probe.search).toContain("team=*");
     // Ключевое: `*` разбирается ДО резолва slug'а. Иначе он не нашёлся бы среди
     // членств, поднял бы баннер «команда недоступна», а параметр тут же
     // переписался бы на текущую команду — режим не включился бы ни разу.
@@ -118,7 +131,7 @@ describe("сквозной режим «Все команды» (§86)", () => {
   it("зеркало не подменяет `*` слогом текущей команды", async () => {
     render(`/?team=${encodeURIComponent(TEAM_SCOPE_ALL)}`);
 
-    await waitFor(() => expect(probe.search).toContain("team=*"));
+    await waitFor(() => expect(probe.allTeams).toBe(true));
     // Даём зеркалу отработать несколько раз: инвариант §76.4 («параметр = slug
     // текущей команды») для режима не действует, и залипания быть не должно.
     await act(async () => {
@@ -145,6 +158,20 @@ describe("сквозной режим «Все команды» (§86)", () => {
 
   it("выключённый режим приводит параметр к текущей команде", async () => {
     render("/");
+
+    await waitFor(() => expect(probe.search).toContain("team=alpha"));
+    expect(probe.search).not.toContain("team=*");
+  });
+
+  it("выход из режима приводит параметр к команде, а не включает режим обратно", async () => {
+    // Сценарий: оператор в сквозном режиме выбирает конкретную команду.
+    // `setTeamScopeAll(false)` будит тот же эффект, а в URL всё ещё `*` — без
+    // одноразовости применения режим включался бы обратно, и переключение
+    // выглядело бы как «кнопка не реагирует».
+    render(`/?team=${encodeURIComponent(TEAM_SCOPE_ALL)}`);
+    await waitFor(() => expect(probe.allTeams).toBe(true));
+
+    act(() => setTeamScopeAll(false));
 
     await waitFor(() => expect(probe.search).toContain("team=alpha"));
     expect(probe.search).not.toContain("team=*");

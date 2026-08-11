@@ -136,6 +136,21 @@ func TestNodeUC_Create_TeamFallbackAndTrust(t *testing.T) {
 		assert.Zero(t, teams.listCalls.Load(), "на общем пути членства не перечитываются")
 	})
 
+	t.Run("системный вызов не резолвит членства", func(t *testing.T) {
+		t.Parallel()
+		teams := newScopeTeams()
+		uc := newSearchUC(newMemNodeRepo(), teams)
+
+		// SystemActor (сидинг, CLI, integration-сценарии) команду задаёт явно, а
+		// пользователя за ним нет. Резолв членств по пустому user_id — это не
+		// «строгая проверка», а запрос `''::uuid` и ошибка PostgreSQL 22P02:
+		// узел просто перестал бы создаваться. Дефект нашёл integration-набор.
+		n := newNodeCreate("team2", "parcel")
+		require.NoError(t, uc.Create(context.Background(), SystemActor(), n))
+		assert.Equal(t, "team2", n.TeamID)
+		assert.Zero(t, teams.listCalls.Load(), "у системного вызова членств нет по определению")
+	})
+
 	t.Run("пустая команда → узел уходит в default (прежний контракт)", func(t *testing.T) {
 		t.Parallel()
 		teams := newScopeTeams()

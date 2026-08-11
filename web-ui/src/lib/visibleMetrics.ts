@@ -120,6 +120,14 @@ export function useVisibleNodeMetrics(opts: VisibleMetricsOptions): VisibleMetri
       { rootMargin: ROOT_MARGIN },
     );
     observer.current = io;
+    // Подхватываем строки, отрисованные ДО появления наблюдателя.
+    //
+    // Это не перестраховка: наблюдатель включается по `enabled`, то есть после
+    // готовности периода (§71), а строки к этому моменту уже смонтированы и свои
+    // ref-callback'и отработали. Без этого прохода метрики не грузились бы
+    // вообще, пока оператор не тронет прокрутку — при формально исправном
+    // наблюдателе.
+    for (const el of nodeByEl.current.keys()) io.observe(el);
     return () => {
       io.disconnect();
       observer.current = null;
@@ -135,8 +143,9 @@ export function useVisibleNodeMetrics(opts: VisibleMetricsOptions): VisibleMetri
       const ref = (el: Element | null) => {
         if (!el) return;
         nodeByEl.current.set(el, nodeId);
-        // Наблюдателя может ещё не быть (первый рендер до эффекта) — тогда
-        // строку подхватит повторный рендер, который придёт с данными списка.
+        // Наблюдателя может ещё не быть (строка отрисована раньше, чем режим
+        // стал активен) — такие элементы подхватывает эффект создания
+        // наблюдателя, он проходит по этой же карте.
         observer.current?.observe(el);
       };
       refCache.current.set(nodeId, ref);
@@ -160,18 +169,16 @@ export function useVisibleNodeMetrics(opts: VisibleMetricsOptions): VisibleMetri
     }),
   });
 
-  const items = useMemo(() => {
-    const m = new Map<string, NodesThroughputResp["items"][number]>();
-    for (const r of results) {
-      for (const it of r.data?.items ?? []) {
-        if (it.node_id) m.set(it.node_id, it);
-      }
+  // Карта собирается на каждый рендер, без useMemo: useQueries возвращает новый
+  // массив всегда, и мемоизация потребовала бы синтетического ключа с
+  // подавлением правила зависимостей — цена честности выше выигрыша, а проход
+  // здесь линейный по числу ВИДИМЫХ узлов.
+  const items = new Map<string, NodesThroughputResp["items"][number]>();
+  for (const r of results) {
+    for (const it of r.data?.items ?? []) {
+      if (it.node_id) items.set(it.node_id, it);
     }
-    return m;
-    // results — новый массив на каждый рендер; сравниваем по содержимому,
-    // иначе карта пересобиралась бы вхолостую.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [results.map((r) => r.dataUpdatedAt).join(",")]);
+  }
 
   return { items, observe, requestedCount: requested.length };
 }

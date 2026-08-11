@@ -428,7 +428,11 @@ func (u *MetricsUsecase) nodesOverviewCH(ctx context.Context, nodes []*domain.No
 				}
 			}
 			rows[i] = NodeThroughputRow{
-				Node: n.Path, In: kpi.Total, Out: kpi.Delivered,
+				// NodeID обязателен: строка перезаписывается целиком, и без него
+				// клиент не сошьёт метрики с узлом (§86.7) — таблица показала бы
+				// прочерки вместо цифр во ВСЕХ режимах.
+				NodeID: n.ID,
+				Node:   n.Path, In: kpi.Total, Out: kpi.Delivered,
 				Errors: kpi.Errors, P95ms: kpi.P95ms, Spark: spark,
 			}
 			return nil

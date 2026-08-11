@@ -342,8 +342,8 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 		t.Parallel()
 		// nodeLogs != nil → берём из CH (как страница узла), не из Prometheus.
 		repo := &fakeNodeRepo{list: []*domain.Node{
-			{Path: "a/x", ClickHouseTable: "db.a"},
-			{Path: "b/y", ClickHouseTable: ""}, // нет логирования → нули
+			{ID: "n1", Path: "a/x", ClickHouseTable: "db.a"},
+			{ID: "n2", Path: "b/y", ClickHouseTable: ""}, // нет логирования → нули
 		}}
 		logs := &fakeNodeLogs{
 			kpi:   port.NodeKPI{Total: 50, Delivered: 47, Errors: 3, P95ms: 12},
@@ -363,6 +363,11 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 		require.EqualValues(t, 12, byNode["a/x"].P95ms)
 		require.Equal(t, []float64{5, 7}, byNode["a/x"].Spark)
 		require.Zero(t, byNode["b/y"].In, "узел без CH-таблицы → нули")
+		// §86.7: id обязан пережить ЗАПОЛНЕНИЕ строки метриками. Строка
+		// собирается заново внутри горутины, и потерянный там NodeID означал бы
+		// прочерки вместо цифр во всех режимах — клиент сшивает метрики по нему.
+		require.Equal(t, "n1", byNode["a/x"].NodeID, "id узла с метриками")
+		require.Equal(t, "n2", byNode["b/y"].NodeID, "id узла без логирования")
 		// §44.A: шапка = сумма строк (CH-ветка) = только узел a/x (b/y нулевой).
 		require.EqualValues(t, 50, got.Totals.Incoming)
 		require.EqualValues(t, 47, got.Totals.Outgoing)

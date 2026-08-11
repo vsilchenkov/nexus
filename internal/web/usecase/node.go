@@ -500,8 +500,19 @@ func (u *NodeUsecase) prepareNewNode(ctx context.Context, n *domain.Node) ([]str
 //
 // Приём и семантика ошибки — как у создания API-токена (`ensureMembership`,
 // §18.3): чужая команда → ErrPermissionDenied → 403.
+//
+// Пустой actor.UserID — это НЕ пользователь, а системный вызов (SystemActor:
+// сидинг, CLI, integration-сценарии), у которого членств нет по определению и
+// никогда не было: проверять там нечего, а запрос `”::uuid` в PostgreSQL —
+// прямая ошибка 22P02. HTTP-путь сюда не попадает: actorFromCtx всегда берёт
+// UserID из сессии, а без сессии handler не вызывается вовсе.
 func (u *NodeUsecase) ensureCreateTeam(ctx context.Context, actor Actor, teamID string) error {
 	if teamID == "" || teamID == actor.TeamID || u.teams == nil {
+		return nil
+	}
+	if actor.UserID == "" {
+		u.logger.Debug("create node: system actor, membership check skipped",
+			u.logger.Str("team_id", teamID))
 		return nil
 	}
 	memberships, err := u.teams.ListUserTeams(ctx, actor.UserID)
