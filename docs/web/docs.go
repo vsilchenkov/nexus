@@ -2437,7 +2437,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Только admin. §3.3 ТЗ, лимиты в §3.3.",
+                "description": "manager+. §3.3 ТЗ, лимиты в §3.3. Команда — поле team_id (§86.6); пусто → команда текущей сессии. Команда вне членств пользователя → 403.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2468,6 +2468,12 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "team is not among user memberships",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
@@ -6330,6 +6336,10 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 2048
                 },
+                "team_id": {
+                    "description": "TeamID — команда, в которой создаётся узел (§86.6). Пусто → команда\nтекущей сессии, как было до §86: поле необязательное, поэтому старые\nклиенты и API-токены продолжают работать без изменений. Непустое значение\nобязано быть среди членств пользователя, иначе 403.",
+                    "type": "string"
+                },
                 "timeout_ms": {
                     "type": "integer"
                 },
@@ -7608,6 +7618,10 @@ const docTemplate = `{
                 "target_url": {
                     "type": "string",
                     "maxLength": 2048
+                },
+                "team_id": {
+                    "description": "TeamID — команда, в которой создаётся узел (§86.6). Пусто → команда\nтекущей сессии, как было до §86: поле необязательное, поэтому старые\nклиенты и API-токены продолжают работать без изменений. Непустое значение\nобязано быть среди членств пользователя, иначе 403.",
+                    "type": "string"
                 },
                 "timeout_ms": {
                     "type": "integer"

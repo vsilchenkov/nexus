@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,12 +27,18 @@ type scopeNodeRepo struct {
 	nodes      []*domain.Node
 	lastFilter port.ListNodesFilter
 	listCalls  int
+	created    *domain.Node
 }
 
 func (r *scopeNodeRepo) List(_ context.Context, f port.ListNodesFilter) ([]*domain.Node, error) {
 	r.lastFilter = f
 	r.listCalls++
 	return r.nodes, nil
+}
+
+func (r *scopeNodeRepo) Create(_ context.Context, n *domain.Node) error {
+	r.created = n
+	return nil
 }
 
 // scopeTeamRepo — port.TeamRepo, из которого сквозному режиму нужен ровно один
@@ -87,7 +94,70 @@ func scopeEngine(repo *scopeNodeRepo, teams port.TeamRepo, asAPIToken bool) *gin
 		c.Next()
 	})
 	r.GET("/api/nodes", h.List)
+	r.POST("/api/nodes", h.Create)
 	return r
+}
+
+// createBody — минимальное валидное тело создания узла; team задаётся отдельно,
+// чтобы тесты §86.6 отличались от него ровно одним полем.
+//
+// Имя таблицы дано сразу с префиксом БД: тогда normalizeCHTable выходит рано и
+// не требует резолва команды — префикс проверяется отдельным unit-тестом
+// usecase, где он и живёт.
+func createBody(teamField string) string {
+	return `{` + teamField + `"path":"svc/parcel","root_method":"request",` +
+		`"target_url":"https://api.example.com/v1","clickhouse_table":"nexus_test.parcel"}`
+}
+
+// TestNodeHandler_Create_TeamID (§86.6): поле team_id необязательное, но
+// валидируемое; пустое — прежний контракт «создать в команде сессии».
+func TestNodeHandler_Create_TeamID(t *testing.T) {
+	t.Parallel()
+
+	t.Run("нет поля → команда сессии (старые клиенты не ломаются)", func(t *testing.T) {
+		t.Parallel()
+		repo := &scopeNodeRepo{}
+		r := scopeEngine(repo, &scopeTeamRepo{memberships: scopeMemberships()}, false)
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/nodes", strings.NewReader(createBody("")))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusCreated, w.Code)
+		assert.Equal(t, "session-team", repo.created.TeamID)
+	})
+
+	t.Run("невалидный UUID → 400, узел не создаётся", func(t *testing.T) {
+		t.Parallel()
+		repo := &scopeNodeRepo{}
+		r := scopeEngine(repo, &scopeTeamRepo{memberships: scopeMemberships()}, false)
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/nodes",
+			strings.NewReader(createBody(`"team_id":"not-a-uuid",`)))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Nil(t, repo.created)
+	})
+
+	t.Run("чужая команда → 403, узел не создаётся", func(t *testing.T) {
+		t.Parallel()
+		repo := &scopeNodeRepo{}
+		// Пользователь состоит в team1/team2, а просит создать в третьей.
+		r := scopeEngine(repo, &scopeTeamRepo{memberships: scopeMemberships()}, false)
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/nodes",
+			strings.NewReader(createBody(`"team_id":"8f14e45f-ceea-467a-9575-7bd0e2c1a111",`)))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusForbidden, w.Code)
+		assert.Nil(t, repo.created, "чужая команда не должна доходить до репозитория")
+	})
 }
 
 func scopeMemberships() []*domain.UserTeam {

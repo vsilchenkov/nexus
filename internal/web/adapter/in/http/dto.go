@@ -28,6 +28,11 @@ const CredentialsMask = "***"
 
 // CreateNodeRequest — DTO для POST /api/nodes.
 type CreateNodeRequest struct {
+	// TeamID — команда, в которой создаётся узел (§86.6). Пусто → команда
+	// текущей сессии, как было до §86: поле необязательное, поэтому старые
+	// клиенты и API-токены продолжают работать без изменений. Непустое значение
+	// обязано быть среди членств пользователя, иначе 403.
+	TeamID                 string   `json:"team_id" binding:"omitempty,uuid"`
 	Path                   string   `json:"path" binding:"required,max=255"`
 	RootMethod             string   `json:"root_method" binding:"required,oneof=request requestAsync RabbitMQAsync"`
 	IncomingMethod         string   `json:"incoming_method" binding:"omitempty,oneof=GET POST PUT DELETE ANY"`

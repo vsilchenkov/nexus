@@ -131,13 +131,14 @@ func (h *NodeHandler) Get(c *gin.Context) {
 
 // Create godoc
 // @Summary  Создать узел.
-// @Description  Только admin. §3.3 ТЗ, лимиты в §3.3.
+// @Description  manager+. §3.3 ТЗ, лимиты в §3.3. Команда — поле team_id (§86.6); пусто → команда текущей сессии. Команда вне членств пользователя → 403.
 // @Tags     nodes
 // @Accept   json
 // @Produce  json
 // @Param    body  body  CreateNodeRequest  true  "node config"
 // @Success  201   {object}  NodeResponse
 // @Failure  400   {object}  ErrorResponse
+// @Failure  403   {object}  ErrorResponse  "team is not among user memberships"
 // @Failure  409   {object}  ErrorResponse  "path already exists"
 // @Security CookieAuth
 // @Router   /api/nodes [post]
@@ -148,7 +149,12 @@ func (h *NodeHandler) Create(c *gin.Context) {
 		return
 	}
 	n := reqToDomain(req)
-	n.TeamID = currentTeamID(c)
+	// §86.6: команда приходит с формы. Пустое поле — прежний контракт
+	// («создать в текущей команде»), поэтому старые клиенты не ломаются.
+	n.TeamID = req.TeamID
+	if n.TeamID == "" {
+		n.TeamID = currentTeamID(c)
+	}
 	if err := h.uc.Create(c.Request.Context(), actorFromCtx(c), n); err != nil {
 		h.replyDomainError(c, err, "node.create")
 		return
