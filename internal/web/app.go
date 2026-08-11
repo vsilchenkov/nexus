@@ -238,7 +238,9 @@ func (a *App) Start(ctx context.Context) error {
 
 	nodeCache := rediscache.NewNodeCacheRedis(a.redis, a.cipher, a.logger)
 	auditRepo := pgrepo.NewAuditRepoPg(a.pg, a.logger)
-	auditUC := usecase.NewAuditUsecase(auditRepo, a.logger)
+	// §86.7: членства нужны журналу только для сквозного режима scope=all;
+	// на запись аудита (её делают все usecase) это не влияет.
+	auditUC := usecase.NewAuditUsecase(auditRepo, a.logger).WithTeams(teamRepo)
 	uow := pgrepo.NewUnitOfWorkPg(a.pg, a.cipher, a.logger)
 	chTemplateRepo := pgrepo.NewCHTemplateRepoPg(a.pg, a.logger)
 	// §32.2: список своих authority для self-reference валидации target_url.

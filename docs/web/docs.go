@@ -269,6 +269,12 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
+                        "description": "all — журнал всех команд пользователя (§86.7); НЕ то же, что team_id=* (весь инстанс, admin)",
+                        "name": "scope",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "description": "фильтр по user_id",
                         "name": "user_id",
                         "in": "query"
@@ -357,6 +363,12 @@ const docTemplate = `{
                 ],
                 "summary": "Выгрузка audit-log в CSV (admin only, §7.13).",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "all — журнал всех команд пользователя (§86.7); НЕ то же, что team_id=* (весь инстанс, admin)",
+                        "name": "scope",
+                        "in": "query"
+                    },
                     {
                         "type": "string",
                         "description": "фильтр по user_id",

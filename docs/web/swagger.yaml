@@ -2959,6 +2959,11 @@ paths:
         token.create/revoke/delete, login.success/failure, ch_table.drop, settings.update
         и др.'
       parameters:
+      - description: all — журнал всех команд пользователя (§86.7); НЕ то же, что
+          team_id=* (весь инстанс, admin)
+        in: query
+        name: scope
+        type: string
       - description: фильтр по user_id
         in: query
         name: user_id
@@ -3018,6 +3023,11 @@ paths:
         max 50000. CSV в UTF-8 с BOM (для Excel), 9 колонок: id, created_at, user_login,
         user_id, action, target_type, target_id, ip_address, details (JSON).'
       parameters:
+      - description: all — журнал всех команд пользователя (§86.7); НЕ то же, что
+          team_id=* (весь инстанс, admin)
+        in: query
+        name: scope
+        type: string
       - description: фильтр по user_id
         in: query
         name: user_id

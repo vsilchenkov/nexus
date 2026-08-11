@@ -104,11 +104,41 @@ func auditFilterFromQuery(c *gin.Context, defaultLimit, maxLimit int) port.Audit
 	return f
 }
 
+// listEntries — выбор скоупа журнала: команда сессии (или явный team_id) либо
+// все команды пользователя при scope=all (§86.7). Общий путь для списка и
+// CSV-выгрузки: два разбора одного скоупа разъехались бы, и выгрузка отдавала бы
+// не то, что показано на экране.
+//
+// ok=false означает, что ответ уже записан.
+func (h *AuditHandler) listEntries(c *gin.Context, f port.AuditFilter, op string) ([]*domain.AuditEntry, bool) {
+	ctx := c.Request.Context()
+	var (
+		entries []*domain.AuditEntry
+		err     error
+	)
+	if wantsAllTeams(c) {
+		userID, allowed := resolveAllTeamsUser(c)
+		if !allowed {
+			return nil, false
+		}
+		entries, err = h.uc.ListAcrossTeams(ctx, userID, f)
+	} else {
+		entries, err = h.uc.List(ctx, f)
+	}
+	if err != nil {
+		h.logger.ErrorWithOp("audit list failed", err, op)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return nil, false
+	}
+	return entries, true
+}
+
 // List godoc
 // @Summary  Журнал audit-log (admin only, §7.13).
 // @Description  Поддерживаемые actions: node.create/update/delete, user.create/update/delete/password_changed, token.create/revoke/delete, login.success/failure, ch_table.drop, settings.update и др.
 // @Tags     audit
 // @Produce  json
+// @Param    scope        query  string  false  "all — журнал всех команд пользователя (§86.7); НЕ то же, что team_id=* (весь инстанс, admin)"
 // @Param    user_id      query  string  false  "фильтр по user_id"
 // @Param    action       query  string  false  "одно значение action"
 // @Param    actions      query  string  false  "несколько action через запятую"
@@ -126,10 +156,8 @@ func auditFilterFromQuery(c *gin.Context, defaultLimit, maxLimit int) port.Audit
 func (h *AuditHandler) List(c *gin.Context) {
 	f := auditFilterFromQuery(c, 100, 1000)
 
-	entries, err := h.uc.List(c.Request.Context(), f)
-	if err != nil {
-		h.logger.ErrorWithOp("audit list failed", err, "audit.list")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+	entries, ok := h.listEntries(c, f, "audit.list")
+	if !ok {
 		return
 	}
 	out := make([]auditEntryResponse, 0, len(entries))
@@ -144,6 +172,7 @@ func (h *AuditHandler) List(c *gin.Context) {
 // @Description  Тот же набор фильтров, что у /api/audit. Default limit 10000, max 50000. CSV в UTF-8 с BOM (для Excel), 9 колонок: id, created_at, user_login, user_id, action, target_type, target_id, ip_address, details (JSON).
 // @Tags     audit
 // @Produce  text/csv
+// @Param    scope        query  string  false  "all — журнал всех команд пользователя (§86.7); НЕ то же, что team_id=* (весь инстанс, admin)"
 // @Param    user_id      query  string  false  "фильтр по user_id"
 // @Param    action       query  string  false  "одно значение action"
 // @Param    actions      query  string  false  "несколько action через запятую"
@@ -161,10 +190,8 @@ func (h *AuditHandler) List(c *gin.Context) {
 func (h *AuditHandler) ExportCSV(c *gin.Context) {
 	f := auditFilterFromQuery(c, 10000, 50000)
 
-	entries, err := h.uc.List(c.Request.Context(), f)
-	if err != nil {
-		h.logger.ErrorWithOp("audit export failed", err, "audit.export")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+	entries, ok := h.listEntries(c, f, "audit.export")
+	if !ok {
 		return
 	}
 
