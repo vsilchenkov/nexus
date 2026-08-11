@@ -34,14 +34,17 @@ func NewNodeHandler(uc *usecase.NodeUsecase, health RMQHealthReader, logger logg
 }
 
 // List godoc
-// @Summary  Список узлов команды.
+// @Summary  Список узлов команды (или всех команд пользователя при scope=all).
+// @Description  Без scope — узлы текущей команды сессии. scope=all (§86) — узлы ВСЕХ команд, в которых состоит пользователь; только session-cookie, по API-токену 403 (токен закреплён за одной командой).
 // @Tags     nodes
 // @Produce  json
+// @Param    scope        query  string  false  "all — узлы всех команд пользователя (§86)"
 // @Param    search       query  string  false  "поиск по path или target_url"
 // @Param    root_method  query  string  false  "request | requestAsync"
 // @Param    limit        query  int     false  "лимит, max 500"
 // @Param    offset       query  int     false  "смещение"
 // @Success  200          {object}  ListNodesResponse
+// @Failure  403          {object}  ErrorResponse
 // @Security CookieAuth
 // @Security ApiTokenAuth
 // @Router   /api/nodes [get]
@@ -62,16 +65,42 @@ func (h *NodeHandler) List(c *gin.Context) {
 		}
 	}
 
-	nodes, err := h.uc.List(c.Request.Context(), f)
-	if err != nil {
-		h.replyServerError(c, err, "node.list")
-		return
+	nodes, ok := h.listNodes(c, f)
+	if !ok {
+		return // ответ уже записан
 	}
 	resp := make([]NodeResponse, 0, len(nodes))
 	for _, n := range nodes {
 		resp = append(resp, nodeToResponse(n))
 	}
 	c.JSON(http.StatusOK, gin.H{"items": resp})
+}
+
+// listNodes — выбор скоупа для List: команда сессии либо все команды
+// пользователя при scope=all (§86).
+//
+// ok=false означает, что ответ клиенту уже записан (403/401 недоступного режима
+// или 500 репозитория) и вызывающий обязан прекратить обработку.
+func (h *NodeHandler) listNodes(c *gin.Context, f port.ListNodesFilter) ([]*domain.Node, bool) {
+	ctx := c.Request.Context()
+	if wantsAllTeams(c) {
+		userID, allowed := resolveAllTeamsUser(c)
+		if !allowed {
+			return nil, false
+		}
+		nodes, err := h.uc.ListAcrossTeams(ctx, userID, f)
+		if err != nil {
+			h.replyServerError(c, err, "node.list")
+			return nil, false
+		}
+		return nodes, true
+	}
+	nodes, err := h.uc.List(ctx, f)
+	if err != nil {
+		h.replyServerError(c, err, "node.list")
+		return nil, false
+	}
+	return nodes, true
 }
 
 // Get godoc
@@ -102,13 +131,14 @@ func (h *NodeHandler) Get(c *gin.Context) {
 
 // Create godoc
 // @Summary  Создать узел.
-// @Description  Только admin. §3.3 ТЗ, лимиты в §3.3.
+// @Description  manager+. §3.3 ТЗ, лимиты в §3.3. Команда — поле team_id (§86.6); пусто → команда текущей сессии. Команда вне членств пользователя → 403.
 // @Tags     nodes
 // @Accept   json
 // @Produce  json
 // @Param    body  body  CreateNodeRequest  true  "node config"
 // @Success  201   {object}  NodeResponse
 // @Failure  400   {object}  ErrorResponse
+// @Failure  403   {object}  ErrorResponse  "team is not among user memberships"
 // @Failure  409   {object}  ErrorResponse  "path already exists"
 // @Security CookieAuth
 // @Router   /api/nodes [post]
@@ -119,7 +149,12 @@ func (h *NodeHandler) Create(c *gin.Context) {
 		return
 	}
 	n := reqToDomain(req)
-	n.TeamID = currentTeamID(c)
+	// §86.6: команда приходит с формы. Пустое поле — прежний контракт
+	// («создать в текущей команде»), поэтому старые клиенты не ломаются.
+	n.TeamID = req.TeamID
+	if n.TeamID == "" {
+		n.TeamID = currentTeamID(c)
+	}
 	if err := h.uc.Create(c.Request.Context(), actorFromCtx(c), n); err != nil {
 		h.replyDomainError(c, err, "node.create")
 		return

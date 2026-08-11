@@ -18,6 +18,16 @@ export const ME_PREFS_KEY = ["me-prefs"] as const;
 // PREF_KEY_OVERVIEW_PERIOD — зеркало domain.PreferenceKeyOverviewPeriod.
 export const PREF_KEY_OVERVIEW_PERIOD = "overview.period";
 
+// PREF_KEY_FAVORITE_ALL_TEAMS — «Все команды» в избранном (§86.5).
+//
+// Почему преф, а не user_team_favorites: у той таблицы составной внешний ключ на
+// user_teams(user_id, team_id) с инвариантом «избранное ⊆ членство», и
+// псевдо-идентификатора режима туда не вставить. Хранилище §71 для того и
+// сделано generic'ом — новый ключ не требует ни миграции, ни правки бэкенда.
+//
+// Преф ГЛОБАЛЬНЫЙ (team_id = ""): режим не принадлежит ни одной команде.
+export const PREF_KEY_FAVORITE_ALL_TEAMS = "teams.favorite_all";
+
 // PREF_KEY_NODE_METRICS_VIEW_PREFIX — зеркало
 // domain.PreferenceKeyNodeMetricsViewPrefix (§84.3).
 export const PREF_KEY_NODE_METRICS_VIEW_PREFIX = "node.metrics.view.";
@@ -139,6 +149,20 @@ export function useNodeMetricsViewPref(nodeId: string): PrefsState<NodeMetricsVi
   const key = prefKeyNodeMetricsView(nodeId);
   const found = (q.data?.items ?? []).find((p) => p.key === key);
   return { value: parseNodeMetricsViewPref(found?.value), settled };
+}
+
+/**
+ * useFavoriteAllTeams — лежит ли «Все команды» в избранном (§86.5).
+ *
+ * Значение читается терпимо: любое не-`true` считается «не в избранном».
+ * Ошибка запроса префов сюда не эскалируется — избранное декорация, и ронять
+ * из-за неё сайдбар нельзя (та же линия, что FavoriteTeamIDs §49.5).
+ */
+export function useFavoriteAllTeams(): boolean {
+  const q = usePrefs();
+  return (q.data?.items ?? []).some(
+    (p) => p.key === PREF_KEY_FAVORITE_ALL_TEAMS && p.team_id === "" && p.value === true,
+  );
 }
 
 type SetPrefVars = { teamId: string; key: string; value: unknown };

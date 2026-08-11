@@ -269,6 +269,12 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
+                        "description": "all — журнал всех команд пользователя (§86.7); НЕ то же, что team_id=* (весь инстанс, admin)",
+                        "name": "scope",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "description": "фильтр по user_id",
                         "name": "user_id",
                         "in": "query"
@@ -357,6 +363,12 @@ const docTemplate = `{
                 ],
                 "summary": "Выгрузка audit-log в CSV (admin only, §7.13).",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "all — журнал всех команд пользователя (§86.7); НЕ то же, что team_id=* (весь инстанс, admin)",
+                        "name": "scope",
+                        "in": "query"
+                    },
                     {
                         "type": "string",
                         "description": "фильтр по user_id",
@@ -2179,7 +2191,7 @@ const docTemplate = `{
                         "ApiTokenAuth": []
                     }
                 ],
-                "description": "Источник — ClickHouse-логи (уникальные запросы), fallback Prometheus. Ключ node = path узла. Поле totals = СУММА строк (incoming/outgoing/errors/error_rate) для KPI шапки. Без источника — пустой список с prometheus_available=false.",
+                "description": "Источник — ClickHouse-логи (уникальные запросы), fallback Prometheus. Поле totals = СУММА строк (incoming/outgoing/errors/error_rate) для KPI шапки. Без источника — пустой список с prometheus_available=false. scope=all (§86.4) считает по всем командам пользователя (только session-cookie); node_ids сужает расчёт до перечисленных узлов — порционная загрузка рабочего стола. При node_ids поле totals относится только к запрошенным узлам, полный агрегат отдаёт /api/metrics/totals.",
                 "produces": [
                     "application/json"
                 ],
@@ -2205,6 +2217,18 @@ const docTemplate = `{
                         "description": "период по (RFC3339 или UnixMilli)",
                         "name": "to",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "all — все команды пользователя (§86.4)",
+                        "name": "scope",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "id узлов через запятую, максимум 200 (§86.4)",
+                        "name": "node_ids",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -2212,6 +2236,18 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.NodesMetricsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
                     }
                 }
@@ -2366,6 +2402,66 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/metrics/totals": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    },
+                    {
+                        "ApiTokenAuth": []
+                    }
+                ],
+                "description": "Сумма incoming/outgoing/errors по ВСЕМ узлам скоупа за окно, без per-node строк и спарклайнов. Нужен сквозному режиму: там строки таблицы грузятся порционно, и шапка обязана считаться отдельно, иначе её значение зависело бы от прокрутки. node_ids здесь игнорируется. Результат кешируется на несколько секунд, одновременные промахи схлопываются в один расчёт.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "metrics"
+                ],
+                "summary": "Агрегат шапки рабочего стола по всему скоупу (§86.4).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "1h | 3h | 24h | 7d | 14d | 30d (default 1h)",
+                        "name": "range",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "период с (RFC3339 или UnixMilli)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "период по (RFC3339 или UnixMilli)",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "all — все команды пользователя (§86.4)",
+                        "name": "scope",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.NodesTotalsResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes": {
             "get": {
                 "security": [
@@ -2376,14 +2472,21 @@ const docTemplate = `{
                         "ApiTokenAuth": []
                     }
                 ],
+                "description": "Без scope — узлы текущей команды сессии. scope=all (§86) — узлы ВСЕХ команд, в которых состоит пользователь; только session-cookie, по API-токену 403 (токен закреплён за одной командой).",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "nodes"
                 ],
-                "summary": "Список узлов команды.",
+                "summary": "Список узлов команды (или всех команд пользователя при scope=all).",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "all — узлы всех команд пользователя (§86)",
+                        "name": "scope",
+                        "in": "query"
+                    },
                     {
                         "type": "string",
                         "description": "поиск по path или target_url",
@@ -2415,6 +2518,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ListNodesResponse"
                         }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
                     }
                 }
             },
@@ -2424,7 +2533,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Только admin. §3.3 ТЗ, лимиты в §3.3.",
+                "description": "manager+. §3.3 ТЗ, лимиты в §3.3. Команда — поле team_id (§86.6); пусто → команда текущей сессии. Команда вне членств пользователя → 403.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2455,6 +2564,12 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "team is not among user memberships",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
@@ -6317,6 +6432,10 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 2048
                 },
+                "team_id": {
+                    "description": "TeamID — команда, в которой создаётся узел (§86.6). Пусто → команда\nтекущей сессии, как было до §86: поле необязательное, поэтому старые\nклиенты и API-токены продолжают работать без изменений. Непустое значение\nобязано быть среди членств пользователя, иначе 403.",
+                    "type": "string"
+                },
                 "timeout_ms": {
                     "type": "integer"
                 },
@@ -7166,6 +7285,14 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_web_adapter_in_http.NodesTotalsResponse": {
+            "type": "object",
+            "properties": {
+                "totals": {
+                    "$ref": "#/definitions/internal_web_adapter_in_http.overviewTotalsDTO"
+                }
+            }
+        },
         "internal_web_adapter_in_http.PeerInstanceResponse": {
             "type": "object",
             "properties": {
@@ -7595,6 +7722,10 @@ const docTemplate = `{
                 "target_url": {
                     "type": "string",
                     "maxLength": 2048
+                },
+                "team_id": {
+                    "description": "TeamID — команда, в которой создаётся узел (§86.6). Пусто → команда\nтекущей сессии, как было до §86: поле необязательное, поэтому старые\nклиенты и API-токены продолжают работать без изменений. Непустое значение\nобязано быть среди членств пользователя, иначе 403.",
+                    "type": "string"
                 },
                 "timeout_ms": {
                     "type": "integer"
@@ -8542,6 +8673,10 @@ const docTemplate = `{
                     ]
                 },
                 "node": {
+                    "type": "string"
+                },
+                "node_id": {
+                    "description": "NodeID — идентификатор узла (§86.7). Клиент сшивает строки таблицы с\nметриками именно по нему: путь уникален лишь внутри команды, и в сквозном\nрежиме две команды могут иметь узлы с одинаковым путём.",
                     "type": "string"
                 },
                 "out": {

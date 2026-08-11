@@ -1,21 +1,21 @@
-import { type ReactNode } from "react";
+import { forwardRef, type ReactNode } from "react";
 
 import { cn } from "../../lib/cn";
 
 // Card — карточка эталона (.card).
-export function Card({
-  children,
-  className,
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <div className={cn("bg-bg border border-line rounded-lg p-4", className)}>
-      {children}
-    </div>
-  );
-}
+//
+// Проброшена через forwardRef (§86.4): порционная загрузка метрик вешает
+// на карточку узла ref-callback IntersectionObserver'а. Обёртка вокруг Card
+// сломала бы сетку (h-full у карточки считается от ячейки грида).
+export const Card = forwardRef<HTMLDivElement, { children: ReactNode; className?: string }>(
+  function Card({ children, className }, ref) {
+    return (
+      <div ref={ref} className={cn("bg-bg border border-line rounded-lg p-4", className)}>
+        {children}
+      </div>
+    );
+  },
+);
 
 // SectionHead — заголовок секции формы (.section-head) с иконкой слева.
 export function SectionHead({

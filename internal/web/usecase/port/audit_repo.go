@@ -13,8 +13,16 @@ import (
 // фильтра по команде; admin-handler передаёт current_team_id из сессии
 // при включённой scope-фильтрации.
 type AuditFilter struct {
-	UserID     string
-	TeamID     string
+	UserID string
+	TeamID string
+	// TeamIDs — сквозной скоуп «все мои команды» (§86.7). Непустой список имеет
+	// приоритет над TeamID: смешивать однокомандный и многокомандный скоуп в
+	// одном запросе нельзя. Приём тот же, что у ListNodesFilter.TeamIDs (§62) —
+	// расширяем фильтр, а не интерфейс порта, чтобы стабы в тестах не ломались.
+	//
+	// Записи с team_id IS NULL (глобальные действия admin'а, §18.1) в выдачу не
+	// попадают — как и при фильтре по одной команде.
+	TeamIDs    []string
 	Actions    []string
 	TargetType string
 	TargetID   string

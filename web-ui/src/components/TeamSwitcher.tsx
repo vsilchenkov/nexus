@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, ChevronDown, Share2, Star } from "lucide-react";
+import { Check, ChevronDown, Layers, Share2, Star } from "lucide-react";
+
+import { useNavigate } from "react-router-dom";
 
 import { cn } from "../lib/cn";
 import { copyToClipboard } from "../lib/clipboard";
+import { PREF_KEY_FAVORITE_ALL_TEAMS, useFavoriteAllTeams, useSetPref } from "../lib/prefs";
+import { setTeamScopeAll, useAllTeamsScope } from "../lib/teamScope";
 import { teamPageUrl } from "../lib/teamShare";
 import { useMyTeams, useSetFavoriteTeams, useSwitchTeam, type TeamMembership } from "../lib/teams";
 import { Popover, PopoverTrigger, PopoverContent, Tooltip } from "./ui";
@@ -20,16 +24,40 @@ export function TeamSwitcher() {
   const switchTeam = useSwitchTeam();
   const setFavorites = useSetFavoriteTeams();
 
+  const navigate = useNavigate();
+  const allTeams = useAllTeamsScope();
+  const allFavorite = useFavoriteAllTeams();
+  const setPref = useSetPref();
+
   const data = myTeams.data;
   if (!data || data.items.length === 0) return null;
   const current = data.items.find((tm) => tm.id === data.current_team_id);
   const favorites = data.favorites ?? [];
 
   const pick = (id: string) => {
+    // Выбор конкретной команды всегда выводит из сквозного режима — иначе
+    // переключение выглядело бы безрезультатным: список остался бы сквозным.
+    setTeamScopeAll(false);
     if (id !== data.current_team_id && !switchTeam.isPending) {
       switchTeam.mutate(id);
     }
     setOpen(false);
+  };
+
+  // pickAllTeams — включить сквозной режим (§86.2). Команду сессии НЕ трогаем:
+  // это режим просмотра, и все остальные экраны продолжают жить в ней.
+  //
+  // Переход на рабочий стол, потому что смотреть сквозной список больше негде
+  // (§86.2), а на /nodes/:id параметр `?team` вообще запрещён (§76.3) — приём
+  // тот же, что у клика в секции «Избранное» (§49.2).
+  const pickAllTeams = () => {
+    setTeamScopeAll(true);
+    setOpen(false);
+    navigate("/");
+  };
+
+  const toggleAllFavorite = () => {
+    setPref.mutate({ teamId: "", key: PREF_KEY_FAVORITE_ALL_TEAMS, value: !allFavorite });
   };
 
   const toggleFavorite = (id: string) => {
@@ -49,7 +77,9 @@ export function TeamSwitcher() {
             "transition-colors hover:bg-bg-muted data-[state=open]:border-accent",
           )}
         >
-          <span className="max-w-[200px] truncate">{current?.name ?? ""}</span>
+          <span className="max-w-[200px] truncate">
+            {allTeams ? t("teams.all") : (current?.name ?? "")}
+          </span>
           <ChevronDown className="h-3.5 w-3.5 shrink-0 text-fg-subtle" />
         </PopoverTrigger>
       </Tooltip>
@@ -57,11 +87,21 @@ export function TeamSwitcher() {
         <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-fg-subtle">
           {t("nav.team")}
         </div>
+        {/* §86: сквозной режим — первой строкой, отделён от списка команд.
+            Кнопки «Поделиться» у него нет: у режима нет slug'а, а ссылка
+            описывала бы у получателя ДРУГОЕ множество команд (его членства). */}
+        <AllTeamsRow
+          isCurrent={allTeams}
+          isFavorite={allFavorite}
+          onPick={pickAllTeams}
+          onToggleFavorite={toggleAllFavorite}
+        />
+        <div className="my-1 h-px bg-line" />
         {data.items.map((tm) => (
           <TeamRow
             key={tm.id}
             team={tm}
-            isCurrent={tm.id === data.current_team_id}
+            isCurrent={!allTeams && tm.id === data.current_team_id}
             isFavorite={favorites.includes(tm.id)}
             onPick={() => pick(tm.id)}
             onToggleFavorite={() => toggleFavorite(tm.id)}
@@ -69,6 +109,56 @@ export function TeamSwitcher() {
         ))}
       </PopoverContent>
     </Popover>
+  );
+}
+
+// AllTeamsRow — строка сквозного режима (§86.2). Та же разметка, что у команды,
+// минус «Поделиться»: кнопка выбора + звезда избранного.
+function AllTeamsRow({
+  isCurrent,
+  isFavorite,
+  onPick,
+  onToggleFavorite,
+}: {
+  isCurrent: boolean;
+  isFavorite: boolean;
+  onPick: () => void;
+  onToggleFavorite: () => void;
+}) {
+  const { t } = useTranslation();
+  const favLabel = isFavorite ? t("teams.favorite_remove") : t("teams.favorite_add");
+  return (
+    <div className="flex items-center gap-0.5">
+      <button
+        type="button"
+        onClick={onPick}
+        className={cn(
+          "flex min-w-0 flex-1 items-center gap-2 rounded px-3 py-2 text-left text-[13px] hover:bg-bg-muted",
+          isCurrent ? "font-medium text-fg" : "text-fg-muted hover:text-fg",
+        )}
+      >
+        <Layers className="h-3.5 w-3.5 shrink-0 text-fg-subtle" />
+        <span className="min-w-0 flex-1 truncate">{t("teams.all")}</span>
+        {isCurrent && <Check className="h-3.5 w-3.5 shrink-0 text-accent" />}
+      </button>
+      <Tooltip content={favLabel}>
+        <button
+          type="button"
+          aria-label={favLabel}
+          aria-pressed={isFavorite}
+          onClick={onToggleFavorite}
+          className={cn(
+            "grid h-7 w-7 shrink-0 place-items-center rounded transition-colors hover:bg-bg-muted",
+            isFavorite ? "text-accent" : "text-fg-subtle hover:text-fg",
+          )}
+        >
+          <Star className={cn("h-3.5 w-3.5", isFavorite && "fill-current")} />
+        </button>
+      </Tooltip>
+      {/* Пустая ячейка вместо «Поделиться» — иначе строка режима и строки
+          команд разъезжаются по ширине. */}
+      <span className="h-7 w-7 shrink-0" aria-hidden />
+    </div>
   );
 }
 

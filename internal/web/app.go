@@ -238,7 +238,9 @@ func (a *App) Start(ctx context.Context) error {
 
 	nodeCache := rediscache.NewNodeCacheRedis(a.redis, a.cipher, a.logger)
 	auditRepo := pgrepo.NewAuditRepoPg(a.pg, a.logger)
-	auditUC := usecase.NewAuditUsecase(auditRepo, a.logger)
+	// §86.7: членства нужны журналу только для сквозного режима scope=all;
+	// на запись аудита (её делают все usecase) это не влияет.
+	auditUC := usecase.NewAuditUsecase(auditRepo, a.logger).WithTeams(teamRepo)
 	uow := pgrepo.NewUnitOfWorkPg(a.pg, a.cipher, a.logger)
 	chTemplateRepo := pgrepo.NewCHTemplateRepoPg(a.pg, a.logger)
 	// §32.2: список своих authority для self-reference валидации target_url.
@@ -592,7 +594,11 @@ func (a *App) Start(ctx context.Context) error {
 	}
 	metricsUC := usecase.NewMetricsUsecase(promMetrics, nodeLogMetrics, nodeRepo, appSettingsRepo, nodeStatusReader, a.logger,
 		// §79.5.1: порог точной формы графика — рычаг оператора на больших таблицах.
-		usecase.WithExactChartMaxRecords(a.cfg.Web.MetricsExactChartMaxRecords))
+		usecase.WithExactChartMaxRecords(a.cfg.Web.MetricsExactChartMaxRecords),
+		// §86.4: сквозной скоуп «Все команды» + кеш агрегата шапки. Без членств
+		// режим просто недоступен, поведение одной команды не меняется.
+		usecase.WithMetricsTeams(teamRepo),
+		usecase.WithTotalsCacheTTL(usecase.DefaultTotalsCacheTTL))
 	metricsHandler := httpadapter.NewMetricsHandler(metricsUC, a.logger)
 
 	// Мониторинг Kafka (§4 spec): Prometheus (throughput/lag/KPI/top-узлы) +

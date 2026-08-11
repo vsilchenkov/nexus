@@ -232,6 +232,13 @@ definitions:
       target_url:
         maxLength: 2048
         type: string
+      team_id:
+        description: |-
+          TeamID — команда, в которой создаётся узел (§86.6). Пусто → команда
+          текущей сессии, как было до §86: поле необязательное, поэтому старые
+          клиенты и API-токены продолжают работать без изменений. Непустое значение
+          обязано быть среди членств пользователя, иначе 403.
+        type: string
       timeout_ms:
         type: integer
       url_allowed_hosts:
@@ -840,6 +847,11 @@ definitions:
         description: 'Totals — агрегат KPI шапки (§44.A): сумма строк items за тот
           же период.'
     type: object
+  internal_web_adapter_in_http.NodesTotalsResponse:
+    properties:
+      totals:
+        $ref: '#/definitions/internal_web_adapter_in_http.overviewTotalsDTO'
+    type: object
   internal_web_adapter_in_http.PeerInstanceResponse:
     properties:
       base_url:
@@ -1166,6 +1178,13 @@ definitions:
         type: string
       target_url:
         maxLength: 2048
+        type: string
+      team_id:
+        description: |-
+          TeamID — команда, в которой создаётся узел (§86.6). Пусто → команда
+          текущей сессии, как было до §86: поле необязательное, поэтому старые
+          клиенты и API-токены продолжают работать без изменений. Непустое значение
+          обязано быть среди членств пользователя, иначе 403.
         type: string
       timeout_ms:
         type: integer
@@ -1832,6 +1851,12 @@ definitions:
         - down
         type: string
       node:
+        type: string
+      node_id:
+        description: |-
+          NodeID — идентификатор узла (§86.7). Клиент сшивает строки таблицы с
+          метриками именно по нему: путь уникален лишь внутри команды, и в сквозном
+          режиме две команды могут иметь узлы с одинаковым путём.
         type: string
       out:
         type: integer
@@ -2945,6 +2970,11 @@ paths:
         token.create/revoke/delete, login.success/failure, ch_table.drop, settings.update
         и др.'
       parameters:
+      - description: all — журнал всех команд пользователя (§86.7); НЕ то же, что
+          team_id=* (весь инстанс, admin)
+        in: query
+        name: scope
+        type: string
       - description: фильтр по user_id
         in: query
         name: user_id
@@ -3004,6 +3034,11 @@ paths:
         max 50000. CSV в UTF-8 с BOM (для Excel), 9 колонок: id, created_at, user_login,
         user_id, action, target_type, target_id, ip_address, details (JSON).'
       parameters:
+      - description: all — журнал всех команд пользователя (§86.7); НЕ то же, что
+          team_id=* (весь инстанс, admin)
+        in: query
+        name: scope
+        type: string
       - description: фильтр по user_id
         in: query
         name: user_id
@@ -4198,8 +4233,11 @@ paths:
   /api/metrics/nodes:
     get:
       description: Источник — ClickHouse-логи (уникальные запросы), fallback Prometheus.
-        Ключ node = path узла. Поле totals = СУММА строк (incoming/outgoing/errors/error_rate)
-        для KPI шапки. Без источника — пустой список с prometheus_available=false.
+        Поле totals = СУММА строк (incoming/outgoing/errors/error_rate) для KPI шапки.
+        Без источника — пустой список с prometheus_available=false. scope=all (§86.4)
+        считает по всем командам пользователя (только session-cookie); node_ids сужает
+        расчёт до перечисленных узлов — порционная загрузка рабочего стола. При node_ids
+        поле totals относится только к запрошенным узлам, полный агрегат отдаёт /api/metrics/totals.
       parameters:
       - description: 1h | 3h | 24h | 7d | 14d | 30d (default 1h)
         in: query
@@ -4214,6 +4252,14 @@ paths:
         in: query
         name: to
         type: string
+      - description: all — все команды пользователя (§86.4)
+        in: query
+        name: scope
+        type: string
+      - description: id узлов через запятую, максимум 200 (§86.4)
+        in: query
+        name: node_ids
+        type: string
       produces:
       - application/json
       responses:
@@ -4221,6 +4267,14 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/internal_web_adapter_in_http.NodesMetricsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       - ApiTokenAuth: []
@@ -4329,9 +4383,57 @@ paths:
       summary: 'KPI шапки: очередь Kafka + доступность Prometheus (§21, §44.A).'
       tags:
       - metrics
+  /api/metrics/totals:
+    get:
+      description: 'Сумма incoming/outgoing/errors по ВСЕМ узлам скоупа за окно, без
+        per-node строк и спарклайнов. Нужен сквозному режиму: там строки таблицы грузятся
+        порционно, и шапка обязана считаться отдельно, иначе её значение зависело
+        бы от прокрутки. node_ids здесь игнорируется. Результат кешируется на несколько
+        секунд, одновременные промахи схлопываются в один расчёт.'
+      parameters:
+      - description: 1h | 3h | 24h | 7d | 14d | 30d (default 1h)
+        in: query
+        name: range
+        type: string
+      - description: период с (RFC3339 или UnixMilli)
+        in: query
+        name: from
+        type: string
+      - description: период по (RFC3339 или UnixMilli)
+        in: query
+        name: to
+        type: string
+      - description: all — все команды пользователя (§86.4)
+        in: query
+        name: scope
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.NodesTotalsResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      - ApiTokenAuth: []
+      summary: Агрегат шапки рабочего стола по всему скоупу (§86.4).
+      tags:
+      - metrics
   /api/nodes:
     get:
+      description: Без scope — узлы текущей команды сессии. scope=all (§86) — узлы
+        ВСЕХ команд, в которых состоит пользователь; только session-cookie, по API-токену
+        403 (токен закреплён за одной командой).
       parameters:
+      - description: all — узлы всех команд пользователя (§86)
+        in: query
+        name: scope
+        type: string
       - description: поиск по path или target_url
         in: query
         name: search
@@ -4355,16 +4457,21 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/internal_web_adapter_in_http.ListNodesResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       - ApiTokenAuth: []
-      summary: Список узлов команды.
+      summary: Список узлов команды (или всех команд пользователя при scope=all).
       tags:
       - nodes
     post:
       consumes:
       - application/json
-      description: Только admin. §3.3 ТЗ, лимиты в §3.3.
+      description: manager+. §3.3 ТЗ, лимиты в §3.3. Команда — поле team_id (§86.6);
+        пусто → команда текущей сессии. Команда вне членств пользователя → 403.
       parameters:
       - description: node config
         in: body
@@ -4381,6 +4488,10 @@ paths:
             $ref: '#/definitions/internal_web_adapter_in_http.NodeResponse'
         "400":
           description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "403":
+          description: team is not among user memberships
           schema:
             $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
         "409":
