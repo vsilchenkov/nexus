@@ -1,14 +1,17 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 
 	"nexus/internal/domain"
+	"nexus/internal/domain/logsearch"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase"
+	"nexus/internal/web/usecase/port"
 )
 
 // ReplayHandler — POST /api/logs/{id}/replay (§7.4.1 ТЗ).
@@ -94,6 +97,151 @@ func (h *ReplayHandler) Replay(c *gin.Context) {
 	default:
 		h.logger.ErrorWithOp("replay failed", err, "log.replay",
 			h.logger.Str("log_id", logID))
+		localizedError(c, http.StatusInternalServerError, "error.internal")
+	}
+}
+
+// replayPeriodRequest — тело обоих эндпоинтов §85.
+//
+// Фильтр приходит НЕ здесь, а query-параметрами: их разбирает тот же
+// logQueryFromContext, что список и счётчик журнала. Свой разбор в теле означал
+// бы второй парсер тех же фильтров, а расхождение показало бы в предпросмотре
+// одно множество, а отправило другое.
+type replayPeriodRequest struct {
+	// Cursor — позиция продолжения из предыдущего батча; отсутствует у первого.
+	Cursor *replayCursorDTO `json:"cursor"`
+	// Limit — размер батча; 0 = серверный дефолт.
+	Limit int `json:"limit"`
+	// SkipReplayCopies — не брать записи, порождённые прошлыми повторами (§85.6).
+	// Указатель, чтобы отличить «не прислано» (дефолт true) от явного false.
+	SkipReplayCopies *bool `json:"skip_replay_copies"`
+}
+
+// replayCursorDTO — keyset-позиция обхода журнала (§85.5).
+type replayCursorDTO struct {
+	AfterMs int64  `json:"after_ms"`
+	AfterID string `json:"after_id"`
+}
+
+// replayPeriodInput — общая сборка входа для обоих эндпоинтов.
+func replayPeriodInput(c *gin.Context, req replayPeriodRequest) usecase.ReplayPeriodInput {
+	in := usecase.ReplayPeriodInput{
+		NodeID:           c.Param("id"),
+		TeamID:           currentTeamID(c),
+		Filter:           logQueryFromContext(c),
+		Limit:            req.Limit,
+		SkipReplayCopies: req.SkipReplayCopies == nil || *req.SkipReplayCopies,
+	}
+	if req.Cursor != nil {
+		in.Cursor = port.ReplayCursor{AfterMs: req.Cursor.AfterMs, AfterID: req.Cursor.AfterID}
+	}
+	return in
+}
+
+// bindReplayPeriod — разбор тела (допускается пустое) с проверкой курсора.
+func bindReplayPeriod(c *gin.Context) (replayPeriodRequest, bool) {
+	var req replayPeriodRequest
+	if c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return req, false
+		}
+	}
+	return req, true
+}
+
+// PlanPeriod godoc
+// @Summary  Предпросмотр повторной отправки из логов за период (§85.7).
+// @Description  Read-only: сообщает, сколько записей окна будет отправлено, а сколько нет и почему (тело обрезано / multipart / не сохранено / синхронная запись / запись-повтор). Ничего не отправляет и в аудит не пишет. Фильтр — те же query-параметры, что у GET /api/nodes/{id}/logs. Флаг exact=false означает, что окно разобрано не целиком (потолок разбора) и числа неполные. Границы окна возвращаются в ответе — их надо слать обратно в каждый батч, иначе «по сейчас» затянет в набор собственные повторы.
+// @Tags     logs
+// @Accept   json
+// @Produce  json
+// @Param    id    path   string  true   "node id"
+// @Param    from  query  string  true   "начало окна (RFC3339 или UnixMilli)"
+// @Param    to    query  string  true   "конец окна (RFC3339 или UnixMilli)"
+// @Param    body  body   replayPeriodRequest  false  "опции"
+// @Success  200   {object}  usecase.ReplayPeriodPlan
+// @Failure  400   {object}  ErrorResponse  "нет границ окна / плохой поисковый запрос"
+// @Failure  404   {object}  ErrorResponse
+// @Failure  409   {object}  ErrorResponse  "узел отключён или синхронный"
+// @Failure  422   {object}  ErrorResponse  "узел не логирует тело запроса"
+// @Security CookieAuth
+// @Router   /api/nodes/{id}/logs/replay-period/plan [post]
+func (h *ReplayHandler) PlanPeriod(c *gin.Context) {
+	req, ok := bindReplayPeriod(c)
+	if !ok {
+		return
+	}
+	plan, err := h.uc.PlanPeriod(c.Request.Context(), replayPeriodInput(c, req))
+	if err != nil {
+		h.replayPeriodError(c, err, "node.replay_period.plan")
+		return
+	}
+	c.JSON(http.StatusOK, plan)
+}
+
+// RunPeriod godoc
+// @Summary  Батч повторной отправки из логов за период (§85.5).
+// @Description  Реинжектирует до limit записей окна через Receiver и возвращает курсор продолжения; next_cursor=null означает, что окно пройдено. Цикл батчей крутит клиент. Повторяются только async-записи; уже отправленные повторно не берутся благодаря курсору. Аудит пишется на каждый батч.
+// @Tags     logs
+// @Accept   json
+// @Produce  json
+// @Param    id    path   string  true   "node id"
+// @Param    from  query  string  true   "начало окна (RFC3339 или UnixMilli)"
+// @Param    to    query  string  true   "конец окна (RFC3339 или UnixMilli)"
+// @Param    body  body   replayPeriodRequest  false  "курсор и опции"
+// @Success  200   {object}  usecase.ReplayPeriodBatch
+// @Failure  400   {object}  ErrorResponse  "нет границ окна / плохой поисковый запрос"
+// @Failure  404   {object}  ErrorResponse
+// @Failure  409   {object}  ErrorResponse  "узел отключён или синхронный"
+// @Failure  422   {object}  ErrorResponse  "узел не логирует тело запроса"
+// @Failure  429   {object}  ErrorResponse  "rate limit exceeded"
+// @Security CookieAuth
+// @Router   /api/nodes/{id}/logs/replay-period/run [post]
+func (h *ReplayHandler) RunPeriod(c *gin.Context) {
+	req, ok := bindReplayPeriod(c)
+	if !ok {
+		return
+	}
+	res, err := h.uc.ReplayPeriod(c.Request.Context(), actorFromCtx(c), replayPeriodInput(c, req))
+	if err != nil {
+		h.replayPeriodError(c, err, "node.replay_period.run")
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+// replayPeriodError — общий маппинг отказов §85 на HTTP.
+func (h *ReplayHandler) replayPeriodError(c *gin.Context, err error, op string) {
+	switch {
+	case errors.Is(err, usecase.ErrReplayRateLimit):
+		c.Header("Retry-After", "60")
+		localizedError(c, http.StatusTooManyRequests, "error.rate_limited")
+	case errors.Is(err, usecase.ErrReplayPeriodNoWindow):
+		localizedError(c, http.StatusBadRequest, "replay_period.no_window")
+	case errors.Is(err, logsearch.ErrBadQuery):
+		localizedError(c, http.StatusBadRequest, "error.bad_search_query")
+	case errors.Is(err, usecase.ErrReplayPeriodSyncNode):
+		localizedError(c, http.StatusConflict, "replay_period.sync_node")
+	case errors.Is(err, usecase.ErrReplayPeriodBodyNotLogged):
+		localizedError(c, http.StatusUnprocessableEntity, "replay_period.body_not_logged")
+	case errors.Is(err, domain.ErrNodeLogsNotConfigured):
+		localizedError(c, http.StatusUnprocessableEntity, "replay_period.logs_disabled")
+	case errors.Is(err, domain.ErrNodeNotFound), errors.Is(err, domain.ErrNotFound):
+		localizedError(c, http.StatusNotFound, "node.not_found")
+	case errors.Is(err, domain.ErrNodeDisabled):
+		localizedError(c, http.StatusConflict, "node.disabled")
+	case errors.Is(err, domain.ErrLogsBackendUnavailable):
+		// Логи временно недоступны — это не 500: та же мягкая деградация, что у
+		// счётчиков журнала (§67), только здесь операция просто не начинается.
+		localizedError(c, http.StatusServiceUnavailable, "error.logs_unavailable")
+	case errors.Is(err, context.Canceled):
+		// Клиент ушёл (кнопка «Остановить» или закрытая вкладка) — не ошибка
+		// сервера и не повод для записи в Sentry.
+		h.logger.Debug("replay period aborted by client", h.logger.Str("node_id", c.Param("id")))
+	default:
+		h.logger.ErrorWithOp("replay period failed", err, op,
+			h.logger.Str("node_id", c.Param("id")))
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 	}
 }

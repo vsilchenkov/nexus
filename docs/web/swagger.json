@@ -4135,6 +4135,178 @@
                 }
             }
         },
+        "/api/nodes/{id}/logs/replay-period/plan": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Read-only: сообщает, сколько записей окна будет отправлено, а сколько нет и почему (тело обрезано / multipart / не сохранено / синхронная запись / запись-повтор). Ничего не отправляет и в аудит не пишет. Фильтр — те же query-параметры, что у GET /api/nodes/{id}/logs. Флаг exact=false означает, что окно разобрано не целиком (потолок разбора) и числа неполные. Границы окна возвращаются в ответе — их надо слать обратно в каждый батч, иначе «по сейчас» затянет в набор собственные повторы.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logs"
+                ],
+                "summary": "Предпросмотр повторной отправки из логов за период (§85.7).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "начало окна (RFC3339 или UnixMilli)",
+                        "name": "from",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "конец окна (RFC3339 или UnixMilli)",
+                        "name": "to",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "description": "опции",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.replayPeriodRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nexus_internal_web_usecase.ReplayPeriodPlan"
+                        }
+                    },
+                    "400": {
+                        "description": "нет границ окна / плохой поисковый запрос",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "узел отключён или синхронный",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "узел не логирует тело запроса",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{id}/logs/replay-period/run": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Реинжектирует до limit записей окна через Receiver и возвращает курсор продолжения; next_cursor=null означает, что окно пройдено. Цикл батчей крутит клиент. Повторяются только async-записи; уже отправленные повторно не берутся благодаря курсору. Аудит пишется на каждый батч.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logs"
+                ],
+                "summary": "Батч повторной отправки из логов за период (§85.5).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "начало окна (RFC3339 или UnixMilli)",
+                        "name": "from",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "конец окна (RFC3339 или UnixMilli)",
+                        "name": "to",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "description": "курсор и опции",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.replayPeriodRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nexus_internal_web_usecase.ReplayPeriodBatch"
+                        }
+                    },
+                    "400": {
+                        "description": "нет границ окна / плохой поисковый запрос",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "узел отключён или синхронный",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "узел не логирует тело запроса",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "rate limit exceeded",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/{id}/logs/stream": {
             "get": {
                 "security": [
@@ -8585,6 +8757,38 @@
                 }
             }
         },
+        "internal_web_adapter_in_http.replayCursorDTO": {
+            "type": "object",
+            "properties": {
+                "after_id": {
+                    "type": "string"
+                },
+                "after_ms": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.replayPeriodRequest": {
+            "type": "object",
+            "properties": {
+                "cursor": {
+                    "description": "Cursor — позиция продолжения из предыдущего батча; отсутствует у первого.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.replayCursorDTO"
+                        }
+                    ]
+                },
+                "limit": {
+                    "description": "Limit — размер батча; 0 = серверный дефолт.",
+                    "type": "integer"
+                },
+                "skip_replay_copies": {
+                    "description": "SkipReplayCopies — не брать записи, порождённые прошлыми повторами (§85.6).\nУказатель, чтобы отличить «не прислано» (дефолт true) от явного false.",
+                    "type": "boolean"
+                }
+            }
+        },
         "internal_web_adapter_in_http.requestFieldRequest": {
             "type": "object",
             "properties": {
@@ -9508,6 +9712,115 @@
                 }
             }
         },
+        "nexus_internal_web_usecase.ReplayCandidateView": {
+            "type": "object",
+            "properties": {
+                "date_request": {
+                    "type": "string"
+                },
+                "done": {
+                    "type": "boolean"
+                },
+                "http_method": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "method": {
+                    "type": "string"
+                },
+                "request_size": {
+                    "type": "integer"
+                },
+                "skip_reason": {
+                    "description": "SkipReason — пусто у пригодной записи.",
+                    "type": "string"
+                },
+                "status": {
+                    "type": "integer"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "nexus_internal_web_usecase.ReplayPeriodBatch": {
+            "type": "object",
+            "properties": {
+                "failed": {
+                    "type": "integer"
+                },
+                "next_cursor": {
+                    "description": "NextCursor — продолжение; nil означает, что окно пройдено до конца.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/nexus_internal_web_usecase_port.ReplayCursor"
+                        }
+                    ]
+                },
+                "replayed": {
+                    "type": "integer"
+                },
+                "scanned": {
+                    "type": "integer"
+                },
+                "skipped_by": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
+        "nexus_internal_web_usecase.ReplayPeriodPlan": {
+            "type": "object",
+            "properties": {
+                "eligible": {
+                    "description": "Eligible — сколько из разобранных будет отправлено.",
+                    "type": "integer"
+                },
+                "eligibles": {
+                    "description": "Eligibles / Ineligibles — примеры обеих групп.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/nexus_internal_web_usecase.ReplayCandidateView"
+                    }
+                },
+                "exact": {
+                    "description": "Exact — окно разобрано целиком, значит счётчики точные. false означает\n«упёрлись в потолок разбора», и интерфейс обязан сказать это словами.",
+                    "type": "boolean"
+                },
+                "from": {
+                    "description": "From / To — ЗАФИКСИРОВАННЫЕ границы окна: клиент обязан слать их обратно\nв каждый батч, иначе «по сейчас» затянет в набор собственные повторы.",
+                    "type": "string"
+                },
+                "ineligibles": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/nexus_internal_web_usecase.ReplayCandidateView"
+                    }
+                },
+                "scanned": {
+                    "description": "Scanned — сколько записей реально разобрано.",
+                    "type": "integer"
+                },
+                "skipped_by": {
+                    "description": "SkippedBy — причина (§85.3) → сколько записей.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                },
+                "to": {
+                    "type": "string"
+                },
+                "total": {
+                    "description": "Total — записей окна под фильтром (uniqExact по ID).",
+                    "type": "integer"
+                }
+            }
+        },
         "nexus_internal_web_usecase.ReplayResult": {
             "type": "object",
             "properties": {
@@ -9560,6 +9873,18 @@
                 },
                 "ok": {
                     "type": "boolean"
+                }
+            }
+        },
+        "nexus_internal_web_usecase_port.ReplayCursor": {
+            "type": "object",
+            "properties": {
+                "afterID": {
+                    "type": "string"
+                },
+                "afterMs": {
+                    "type": "integer",
+                    "format": "int64"
                 }
             }
         }

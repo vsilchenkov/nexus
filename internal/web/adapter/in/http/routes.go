@@ -215,6 +215,14 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		// disabled (нет прав), API-токены реплеить не могут (логи — только snapshot).
 		if h.Replay != nil {
 			authedManager.POST("/logs/:id/replay", RequireSessionOnly(), h.Replay.Replay)
+			// §85: повторная отправка из логов за период. Намеренно ВНЕ группы
+			// /nodes/:id/async-queue — на ней висит KafkaRateLimit (60/мин на
+			// пользователя, поставлен ради peek'а Kafka), а здесь клиент крутит
+			// цикл батчей, и общий лимит очереди зарубил бы его на середине. Тот
+			// же довод, по которому вне группы стоят маршруты breaker §81.4.
+			// manager+ и только session-cookie — как одиночный replay.
+			authedManager.POST("/nodes/:id/logs/replay-period/plan", RequireSessionOnly(), h.Replay.PlanPeriod)
+			authedManager.POST("/nodes/:id/logs/replay-period/run", RequireSessionOnly(), h.Replay.RunPeriod)
 		}
 		// §56: синхронизация схемы CH-таблицы узла (ALTER). Plan — предпросмотр
 		// (read-only), Apply — исполнение. manager+ (как и правка узла).

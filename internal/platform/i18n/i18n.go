@@ -127,6 +127,11 @@ var translations = map[Lang]map[string]string{
 		"replay.body_unavailable":      "original request body was not logged for this node — enter the body manually to replay",
 		"replay.multipart_unavailable": "original request body was multipart/form-data and is not stored — enter the body manually to replay",
 		"replay.bad_params":            "parameters must be a valid query string (a=1&b=2)",
+		// replay from logs for a period (§85)
+		"replay_period.no_window":       "both period bounds are required for a bulk replay",
+		"replay_period.sync_node":       "node is synchronous: async ingress is closed, requests cannot be queued",
+		"replay_period.body_not_logged": "node does not log request bodies — there is nothing to replay",
+		"replay_period.logs_disabled":   "node logging is disabled or has no ClickHouse table",
 		// url
 		"url.required":    "url parameter is required",
 		"url.invalid":     "target url is invalid",
@@ -256,9 +261,14 @@ var translations = map[Lang]map[string]string{
 		"replay.body_unavailable":      "тело исходного запроса не сохранялось для этого узла — введите тело вручную, чтобы повторить",
 		"replay.multipart_unavailable": "тело исходного запроса было multipart/form-data и не сохранялось — введите тело вручную, чтобы повторить",
 		"replay.bad_params":            "параметры должны быть валидной query-строкой (a=1&b=2)",
-		"url.required":                 "параметр URL обязателен",
-		"url.invalid":                  "целевой URL невалиден",
-		"url.not_allowed":              "целевой URL не входит в allowlist",
+		// повтор из логов за период (§85)
+		"replay_period.no_window":       "для массового повтора нужны обе границы периода",
+		"replay_period.sync_node":       "узел работает синхронно: асинхронный вход закрыт, поставить запросы в очередь нельзя",
+		"replay_period.body_not_logged": "узел не логирует тело запроса — повторять нечего",
+		"replay_period.logs_disabled":   "у узла выключено логирование или не задана таблица ClickHouse",
+		"url.required":                  "параметр URL обязателен",
+		"url.invalid":                   "целевой URL невалиден",
+		"url.not_allowed":               "целевой URL не входит в allowlist",
 		// allowed hosts catalog (§23)
 		"host.not_found":          "паттерн хоста не найден",
 		"host.already_exists":     "паттерн хоста с таким значением уже существует",

@@ -258,6 +258,12 @@ func (u *ReplayUsecase) preparePeriod(ctx context.Context, in ReplayPeriodInput)
 	if q.SinceMs <= 0 || q.UntilMs <= 0 {
 		return nil, port.LogQuery{}, ErrReplayPeriodNoWindow
 	}
+	// Полнотекстовый фильтр обязан быть разобран здесь: адаптер читает только
+	// QExpr, и без разбора непустой q молча не действовал бы — предпросмотр
+	// показывал бы одно множество, а отправка брала другое.
+	if err := parseSearch(&q); err != nil {
+		return nil, port.LogQuery{}, err
+	}
 	q.Table = node.ClickHouseTable
 	q.NodeID = node.ID
 	// §72.4: сужение по колонке партиционирования — только там, где инвариант
