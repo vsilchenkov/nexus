@@ -594,7 +594,11 @@ func (a *App) Start(ctx context.Context) error {
 	}
 	metricsUC := usecase.NewMetricsUsecase(promMetrics, nodeLogMetrics, nodeRepo, appSettingsRepo, nodeStatusReader, a.logger,
 		// §79.5.1: порог точной формы графика — рычаг оператора на больших таблицах.
-		usecase.WithExactChartMaxRecords(a.cfg.Web.MetricsExactChartMaxRecords))
+		usecase.WithExactChartMaxRecords(a.cfg.Web.MetricsExactChartMaxRecords),
+		// §86.4: сквозной скоуп «Все команды» + кеш агрегата шапки. Без членств
+		// режим просто недоступен, поведение одной команды не меняется.
+		usecase.WithMetricsTeams(teamRepo),
+		usecase.WithTotalsCacheTTL(usecase.DefaultTotalsCacheTTL))
 	metricsHandler := httpadapter.NewMetricsHandler(metricsUC, a.logger)
 
 	// Мониторинг Kafka (§4 spec): Prometheus (throughput/lag/KPI/top-узлы) +

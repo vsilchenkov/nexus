@@ -847,6 +847,11 @@ definitions:
         description: 'Totals — агрегат KPI шапки (§44.A): сумма строк items за тот
           же период.'
     type: object
+  internal_web_adapter_in_http.NodesTotalsResponse:
+    properties:
+      totals:
+        $ref: '#/definitions/internal_web_adapter_in_http.overviewTotalsDTO'
+    type: object
   internal_web_adapter_in_http.PeerInstanceResponse:
     properties:
       base_url:
@@ -1846,6 +1851,12 @@ definitions:
         - down
         type: string
       node:
+        type: string
+      node_id:
+        description: |-
+          NodeID — идентификатор узла (§86.7). Клиент сшивает строки таблицы с
+          метриками именно по нему: путь уникален лишь внутри команды, и в сквозном
+          режиме две команды могут иметь узлы с одинаковым путём.
         type: string
       out:
         type: integer
@@ -4222,8 +4233,11 @@ paths:
   /api/metrics/nodes:
     get:
       description: Источник — ClickHouse-логи (уникальные запросы), fallback Prometheus.
-        Ключ node = path узла. Поле totals = СУММА строк (incoming/outgoing/errors/error_rate)
-        для KPI шапки. Без источника — пустой список с prometheus_available=false.
+        Поле totals = СУММА строк (incoming/outgoing/errors/error_rate) для KPI шапки.
+        Без источника — пустой список с prometheus_available=false. scope=all (§86.4)
+        считает по всем командам пользователя (только session-cookie); node_ids сужает
+        расчёт до перечисленных узлов — порционная загрузка рабочего стола. При node_ids
+        поле totals относится только к запрошенным узлам, полный агрегат отдаёт /api/metrics/totals.
       parameters:
       - description: 1h | 3h | 24h | 7d | 14d | 30d (default 1h)
         in: query
@@ -4238,6 +4252,14 @@ paths:
         in: query
         name: to
         type: string
+      - description: all — все команды пользователя (§86.4)
+        in: query
+        name: scope
+        type: string
+      - description: id узлов через запятую, максимум 200 (§86.4)
+        in: query
+        name: node_ids
+        type: string
       produces:
       - application/json
       responses:
@@ -4245,6 +4267,14 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/internal_web_adapter_in_http.NodesMetricsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
       security:
       - CookieAuth: []
       - ApiTokenAuth: []
@@ -4351,6 +4381,47 @@ paths:
       - CookieAuth: []
       - ApiTokenAuth: []
       summary: 'KPI шапки: очередь Kafka + доступность Prometheus (§21, §44.A).'
+      tags:
+      - metrics
+  /api/metrics/totals:
+    get:
+      description: 'Сумма incoming/outgoing/errors по ВСЕМ узлам скоупа за окно, без
+        per-node строк и спарклайнов. Нужен сквозному режиму: там строки таблицы грузятся
+        порционно, и шапка обязана считаться отдельно, иначе её значение зависело
+        бы от прокрутки. node_ids здесь игнорируется. Результат кешируется на несколько
+        секунд, одновременные промахи схлопываются в один расчёт.'
+      parameters:
+      - description: 1h | 3h | 24h | 7d | 14d | 30d (default 1h)
+        in: query
+        name: range
+        type: string
+      - description: период с (RFC3339 или UnixMilli)
+        in: query
+        name: from
+        type: string
+      - description: период по (RFC3339 или UnixMilli)
+        in: query
+        name: to
+        type: string
+      - description: all — все команды пользователя (§86.4)
+        in: query
+        name: scope
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.NodesTotalsResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      - ApiTokenAuth: []
+      summary: Агрегат шапки рабочего стола по всему скоупу (§86.4).
       tags:
       - metrics
   /api/nodes:

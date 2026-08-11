@@ -184,6 +184,11 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		if h.Metrics != nil {
 			authed.GET("/metrics/overview", RequireScope("metrics:read"), h.Metrics.Overview)
 			authed.GET("/metrics/nodes", RequireScope("metrics:read"), h.Metrics.NodesOverview)
+			// §86.4: агрегат шапки отдельным маршрутом. НЕ /metrics/nodes/totals:
+			// сегментом ниже уже стоит wildcard `/metrics/nodes/:id`, и статический
+			// сосед рядом с ним роняет gin-роутер (та же грабля, что увела
+			// глобальный поиск в /api/search/*, §62, и `log` vs `logs`, §7.4).
+			authed.GET("/metrics/totals", RequireScope("metrics:read"), h.Metrics.NodesTotals)
 			authed.GET("/metrics/nodes/:id", RequireScope("metrics:read"), h.Metrics.Node)
 			// §44.E: сверка Prometheus↔ClickHouse (диагностика расхождений счётчиков).
 			authed.GET("/metrics/diagnostics", RequireScope("metrics:read"), h.Metrics.Diagnostics)

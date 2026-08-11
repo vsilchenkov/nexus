@@ -89,21 +89,14 @@ func (u *AuditUsecase) List(ctx context.Context, f port.AuditFilter) ([]*domain.
 // означал бы «фильтра нет», то есть ровно тот глобальный журнал, которого здесь
 // быть не должно.
 func (u *AuditUsecase) ListAcrossTeams(ctx context.Context, userID string, f port.AuditFilter) ([]*domain.AuditEntry, error) {
-	if u.teams == nil {
-		return nil, fmt.Errorf("audit across teams: team repo unavailable")
-	}
-	memberships, err := u.teams.ListUserTeams(ctx, userID)
+	teamIDs, _, err := teamScope(ctx, u.teams, userID)
 	if err != nil {
-		return nil, fmt.Errorf("audit across teams: list memberships: %w", err)
+		return nil, fmt.Errorf("audit across teams: %w", err)
 	}
-	if len(memberships) == 0 {
+	if len(teamIDs) == 0 {
 		u.logger.Debug("audit across teams: user has no memberships",
 			u.logger.Str("user_id", userID))
 		return []*domain.AuditEntry{}, nil
-	}
-	teamIDs := make([]string, 0, len(memberships))
-	for _, m := range memberships {
-		teamIDs = append(teamIDs, m.Team.ID)
 	}
 	f.TeamID = ""
 	f.TeamIDs = teamIDs

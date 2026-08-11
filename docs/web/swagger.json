@@ -2188,7 +2188,7 @@
                         "ApiTokenAuth": []
                     }
                 ],
-                "description": "Источник — ClickHouse-логи (уникальные запросы), fallback Prometheus. Ключ node = path узла. Поле totals = СУММА строк (incoming/outgoing/errors/error_rate) для KPI шапки. Без источника — пустой список с prometheus_available=false.",
+                "description": "Источник — ClickHouse-логи (уникальные запросы), fallback Prometheus. Поле totals = СУММА строк (incoming/outgoing/errors/error_rate) для KPI шапки. Без источника — пустой список с prometheus_available=false. scope=all (§86.4) считает по всем командам пользователя (только session-cookie); node_ids сужает расчёт до перечисленных узлов — порционная загрузка рабочего стола. При node_ids поле totals относится только к запрошенным узлам, полный агрегат отдаёт /api/metrics/totals.",
                 "produces": [
                     "application/json"
                 ],
@@ -2214,6 +2214,18 @@
                         "description": "период по (RFC3339 или UnixMilli)",
                         "name": "to",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "all — все команды пользователя (§86.4)",
+                        "name": "scope",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "id узлов через запятую, максимум 200 (§86.4)",
+                        "name": "node_ids",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -2221,6 +2233,18 @@
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.NodesMetricsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
                     }
                 }
@@ -2370,6 +2394,66 @@
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.overviewKPIDTO"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/metrics/totals": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    },
+                    {
+                        "ApiTokenAuth": []
+                    }
+                ],
+                "description": "Сумма incoming/outgoing/errors по ВСЕМ узлам скоупа за окно, без per-node строк и спарклайнов. Нужен сквозному режиму: там строки таблицы грузятся порционно, и шапка обязана считаться отдельно, иначе её значение зависело бы от прокрутки. node_ids здесь игнорируется. Результат кешируется на несколько секунд, одновременные промахи схлопываются в один расчёт.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "metrics"
+                ],
+                "summary": "Агрегат шапки рабочего стола по всему скоупу (§86.4).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "1h | 3h | 24h | 7d | 14d | 30d (default 1h)",
+                        "name": "range",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "период с (RFC3339 или UnixMilli)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "период по (RFC3339 или UnixMilli)",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "all — все команды пользователя (§86.4)",
+                        "name": "scope",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.NodesTotalsResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
                     }
                 }
@@ -7198,6 +7282,14 @@
                 }
             }
         },
+        "internal_web_adapter_in_http.NodesTotalsResponse": {
+            "type": "object",
+            "properties": {
+                "totals": {
+                    "$ref": "#/definitions/internal_web_adapter_in_http.overviewTotalsDTO"
+                }
+            }
+        },
         "internal_web_adapter_in_http.PeerInstanceResponse": {
             "type": "object",
             "properties": {
@@ -8578,6 +8670,10 @@
                     ]
                 },
                 "node": {
+                    "type": "string"
+                },
+                "node_id": {
+                    "description": "NodeID — идентификатор узла (§86.7). Клиент сшивает строки таблицы с\nметриками именно по нему: путь уникален лишь внутри команды, и в сквозном\nрежиме две команды могут иметь узлы с одинаковым путём.",
                     "type": "string"
                 },
                 "out": {

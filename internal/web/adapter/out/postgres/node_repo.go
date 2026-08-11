@@ -118,6 +118,12 @@ func (r *NodeRepoPg) List(ctx context.Context, f port.ListNodesFilter) ([]*domai
 		q = `SELECT ` + nodeColumns + ` FROM nodes WHERE team_id = $1`
 		args = []any{f.TeamID}
 	}
+	// §86.4: сужение до конкретных узлов идёт ПОВЕРХ team-условия (AND), а не
+	// вместо него — иначе набор id стал бы способом прочитать чужую команду.
+	if len(f.IDs) > 0 {
+		q += fmt.Sprintf(" AND id = ANY($%d::uuid[])", len(args)+1)
+		args = append(args, f.IDs)
+	}
 	if f.RootMethod != "" {
 		q += fmt.Sprintf(" AND root_method = $%d", len(args)+1)
 		args = append(args, f.RootMethod)

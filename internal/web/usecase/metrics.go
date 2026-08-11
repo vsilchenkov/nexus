@@ -28,13 +28,18 @@ type MetricsUsecase struct {
 	prom       port.PromMetrics    // может быть nil
 	nodeLogs   port.NodeLogMetrics // ClickHouse-логи (per-node KPI/график)
 	nodes      port.NodeRepo
+	teams      port.TeamRepo         // §86.4: членства для сквозного скоупа (может быть nil)
 	settings   port.AppSettingsRepo  // §44-perf: режим подсчёта уникальных (может быть nil)
 	nodeStatus port.NodeStatusReader // §46: персистентный «Down» из Redis (может быть nil)
 	clock      clock.Clock           // §4: «сейчас» для окон по умолчанию
 	// exactChartMax — §79.5.1: потолок записей окна, до которого график строится
 	// точной формой («по итогу записи»). 0 → defaultExactChartMaxRecords.
 	exactChartMax uint64
-	logger        logging.Logger
+	// totalsTTL/totalsCache — §86.4: кеш агрегата шапки сквозного режима.
+	// 0 → кеш выключен (юнит-тесты считают на каждый вызов).
+	totalsTTL   time.Duration
+	totalsCache *totalsCache
+	logger      logging.Logger
 }
 
 // metricsTimeout — серверный потолок пары CH-запросов метрик узла (§79.4).
@@ -72,11 +77,23 @@ func (u *MetricsUsecase) exactChartMaxRecords() uint64 {
 }
 
 func NewMetricsUsecase(prom port.PromMetrics, nodeLogs port.NodeLogMetrics, nodes port.NodeRepo, settings port.AppSettingsRepo, nodeStatus port.NodeStatusReader, logger logging.Logger, opts ...MetricsOption) *MetricsUsecase {
-	u := &MetricsUsecase{prom: prom, nodeLogs: nodeLogs, nodes: nodes, settings: settings, nodeStatus: nodeStatus, clock: clock.System(), logger: logger}
+	u := &MetricsUsecase{prom: prom, nodeLogs: nodeLogs, nodes: nodes, settings: settings, nodeStatus: nodeStatus, clock: clock.System(), totalsCache: newTotalsCache(), logger: logger}
 	for _, o := range opts {
 		o(u)
 	}
 	return u
+}
+
+// WithMetricsTeams включает сквозной скоуп «все команды пользователя» (§86.4).
+// nil (опция не задана) оставляет режим недоступным, а не падающим.
+func WithMetricsTeams(teams port.TeamRepo) MetricsOption {
+	return func(u *MetricsUsecase) { u.teams = teams }
+}
+
+// WithTotalsCacheTTL задаёт время жизни кеша агрегата шапки (§86.4).
+// 0 — кеш выключен (юнит-тесты считают на каждый вызов).
+func WithTotalsCacheTTL(ttl time.Duration) MetricsOption {
+	return func(u *MetricsUsecase) { u.totalsTTL = ttl }
 }
 
 // approxCounts читает режим подсчёта уникальных из app_settings (§44-perf):
@@ -106,6 +123,11 @@ type OverviewKPI struct {
 
 // NodeThroughputRow — строка per-node throughput для таблицы/карточек Overview.
 type NodeThroughputRow struct {
+	// NodeID — идентификатор узла (§86.7). Появился, потому что путь уникален
+	// лишь ВНУТРИ команды (`UNIQUE(team_id, path)`): в сквозном режиме две
+	// команды могут иметь одинаковый путь, и сшивать строки таблицы с метриками
+	// по Node стало нельзя.
+	NodeID string
 	Node   string
 	In     uint64
 	Out    uint64
@@ -238,17 +260,75 @@ const nodesSparkBuckets = 12
 // узла. Без ClickHouse (nodeLogs==nil) деградирует на Prometheus (старый путь).
 // Пустой период нормализуется в последний час.
 func (u *MetricsUsecase) NodesOverview(ctx context.Context, teamID string, since, until time.Time) NodesOverview {
+	return u.NodesOverviewScoped(ctx, NodesScope{TeamID: teamID}, since, until)
+}
+
+// NodesScope — какой набор узлов считать (§86.4).
+//
+// Ровно один из скоупов: TeamID (команда сессии, обычный режим) либо UserID
+// (сквозной режим «Все команды» — набор задаётся членствами и читается на каждый
+// запрос). NodeIDs СУЖАЕТ выбранный скоуп до конкретных узлов (порционная
+// загрузка), но не заменяет его.
+type NodesScope struct {
+	TeamID  string
+	UserID  string
+	NodeIDs []string
+}
+
+// filter собирает фильтр репозитория под скоуп. Возвращает ok=false, когда
+// набор заведомо пуст (сквозной режим без членств): пустой TeamIDs в адаптере
+// означал бы «фильтра нет», то есть узлы всех команд инстанса.
+func (s NodesScope) filter(ctx context.Context, teams port.TeamRepo) (port.ListNodesFilter, bool, error) {
+	f := port.ListNodesFilter{IDs: s.NodeIDs}
+	if s.UserID == "" {
+		f.TeamID = s.TeamID
+		return f, true, nil
+	}
+	ids, _, err := teamScope(ctx, teams, s.UserID)
+	if err != nil {
+		return f, false, err
+	}
+	if len(ids) == 0 {
+		return f, false, nil
+	}
+	f.TeamIDs = ids
+	return f, true, nil
+}
+
+// NodesOverviewScoped — per-node throughput по произвольному скоупу (§86.4).
+//
+// Набор узлов резолвится ОДИН раз и общий для обеих веток источника: это не
+// только экономия запроса, но и условие корректности Prometheus-ветки — она
+// раньше отдавала всё, что есть в Prometheus, без какой-либо привязки к команде.
+func (u *MetricsUsecase) NodesOverviewScoped(ctx context.Context, sc NodesScope, since, until time.Time) NodesOverview {
 	if until.IsZero() {
 		until = u.clock.Now()
 	}
 	if since.IsZero() || !since.Before(until) {
 		since = until.Add(-time.Hour)
 	}
+	empty := NodesOverview{Items: []NodeThroughputRow{}}
+
+	f, ok, err := sc.filter(ctx, u.teams)
+	if err != nil {
+		u.logger.Warn("nodes overview: resolve scope failed", u.logger.Err(err))
+		return empty
+	}
+	if !ok {
+		u.logger.Debug("nodes overview: empty scope", u.logger.Str("user_id", sc.UserID))
+		return empty
+	}
+	nodes, err := u.nodes.List(ctx, f)
+	if err != nil {
+		u.logger.Warn("nodes overview: list nodes failed", u.logger.Err(err))
+		return empty
+	}
+
 	var res NodesOverview
 	if u.nodeLogs != nil {
-		res = u.nodesOverviewCH(ctx, teamID, since, until)
+		res = u.nodesOverviewCH(ctx, nodes, since, until)
 	} else {
-		res = u.nodesOverviewProm(ctx, since, until)
+		res = u.nodesOverviewProm(ctx, nodes, since, until)
 	}
 	// §41/§52: оверлей исхода последнего вызова поверх любой ветки
 	// (CH-источник его не считает, gauge живёт только в Prometheus).
@@ -289,12 +369,7 @@ func (u *MetricsUsecase) applyLastOutcomes(ctx context.Context, at time.Time, re
 // ошибки, p95) и спарклайн (count по бакетам) — тем же NodeKPI/NodeChart, что и
 // страница узла, поэтому цифры совпадают. Ошибка по одному узлу деградирует его до
 // нулей, не валя весь список.
-func (u *MetricsUsecase) nodesOverviewCH(ctx context.Context, teamID string, since, until time.Time) NodesOverview {
-	nodes, err := u.nodes.List(ctx, port.ListNodesFilter{TeamID: teamID})
-	if err != nil {
-		u.logger.Warn("nodes overview: list nodes failed", u.logger.Err(err))
-		return NodesOverview{Items: []NodeThroughputRow{}}
-	}
+func (u *MetricsUsecase) nodesOverviewCH(ctx context.Context, nodes []*domain.Node, since, until time.Time) NodesOverview {
 	sinceMs, untilMs := since.UnixMilli(), until.UnixMilli()
 	// §44-perf: режим подсчёта уникальных читаем ОДИН раз на весь батч (а не на
 	// каждый узел) и передаём во все горутины.
@@ -303,7 +378,7 @@ func (u *MetricsUsecase) nodesOverviewCH(ctx context.Context, teamID string, sin
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(12)
 	for i, n := range nodes {
-		rows[i] = NodeThroughputRow{Node: n.Path, Spark: []float64{}}
+		rows[i] = NodeThroughputRow{NodeID: n.ID, Node: n.Path, Spark: []float64{}}
 		if n.ClickHouseTable == "" {
 			continue // нет логирования → нет per-node CH-метрик
 		}
@@ -364,7 +439,7 @@ func (u *MetricsUsecase) nodesOverviewCH(ctx context.Context, teamID string, sin
 }
 
 // nodesOverviewProm — fallback на Prometheus (когда ClickHouse не подключён).
-func (u *MetricsUsecase) nodesOverviewProm(ctx context.Context, since, until time.Time) NodesOverview {
+func (u *MetricsUsecase) nodesOverviewProm(ctx context.Context, nodes []*domain.Node, since, until time.Time) NodesOverview {
 	if u.prom == nil {
 		return NodesOverview{Items: []NodeThroughputRow{}}
 	}
@@ -373,6 +448,20 @@ func (u *MetricsUsecase) nodesOverviewProm(ctx context.Context, since, until tim
 		u.logger.Warn("prometheus node throughput failed", u.logger.Err(err))
 		return NodesOverview{Items: []NodeThroughputRow{}}
 	}
+	// §86.4: у метки Prometheus нет команды (`node = <path>`, §37/IMPLEMENTATION),
+	// поэтому запрос отдаёт узлы ВСЕХ команд инстанса. До §86 эта ветка вообще не
+	// скоупилась — рабочий стол без ClickHouse показывал чужие пути. Сужаем по
+	// набору узлов скоупа; совпадение путей в разных командах при этом остаётся
+	// (§86.8), но чужие команды из выдачи уходят.
+	allowed := make(map[string]struct{}, len(nodes))
+	for _, n := range nodes {
+		allowed[n.Path] = struct{}{}
+	}
+	for node := range m {
+		if _, ok := allowed[node]; !ok {
+			delete(m, node)
+		}
+	}
 	// Спарклайн (12 точек) одним range-запросом на весь список. Ошибка
 	// спарклайна не валит throughput — деградируем до пустых рядов.
 	series, err := u.prom.NodeSeries(ctx, since, until, nodesSparkBuckets)
@@ -380,14 +469,21 @@ func (u *MetricsUsecase) nodesOverviewProm(ctx context.Context, since, until tim
 		u.logger.Warn("prometheus node series failed", u.logger.Err(err))
 		series = map[string][]float64{}
 	}
-	items := make([]NodeThroughputRow, 0, len(m))
-	for node, t := range m {
-		spark := series[node]
+	// Строка на КАЖДЫЙ узел скоупа, а не на каждую серию Prometheus: так ветка
+	// сходится с CH-веткой (там строка есть у любого узла, даже молчащего) и у
+	// каждой строки появляется node_id, которого в метках Prometheus нет.
+	// Узлы с одинаковым путём в разных командах получат одинаковые числа — это
+	// та же граница §86.8, что и у бейджа исхода.
+	items := make([]NodeThroughputRow, 0, len(nodes))
+	for _, n := range nodes {
+		t := m[n.Path]
+		spark := series[n.Path]
 		if spark == nil {
 			spark = []float64{}
 		}
 		items = append(items, NodeThroughputRow{
-			Node:   node,
+			NodeID: n.ID,
+			Node:   n.Path,
 			In:     f2u(t.In),
 			Out:    f2u(t.Out),
 			Errors: f2u(t.Errors),

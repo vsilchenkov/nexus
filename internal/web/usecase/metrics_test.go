@@ -209,11 +209,16 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 			// §41/§52: gauge=2 → последний вызов — down.
 			lastErrs: map[string]float64{"webhook/send": 2},
 		}
-		uc := NewMetricsUsecase(prom, nil, &fakeNodeRepo{}, nil, nil, log)
+		// §86.4: строки строятся по узлам скоупа, а числа берутся из Prometheus
+		// по пути. До §86 ветка отдавала всё, что нашлось в Prometheus, без
+		// какой-либо привязки к команде.
+		repo := &fakeNodeRepo{list: []*domain.Node{{ID: "n1", Path: "webhook/send"}}}
+		uc := NewMetricsUsecase(prom, nil, repo, nil, nil, log)
 		got := uc.NodesOverview(context.Background(), "", time.Now().Add(-time.Hour), time.Now())
 		require.True(t, got.PrometheusAvailable)
 		require.Len(t, got.Items, 1)
 		require.Equal(t, "webhook/send", got.Items[0].Node)
+		require.Equal(t, "n1", got.Items[0].NodeID, "§86.7: строка несёт id узла")
 		require.EqualValues(t, 4201, got.Items[0].In)
 		require.EqualValues(t, 4198, got.Items[0].Out)
 		require.EqualValues(t, 2, got.Items[0].Errors)
@@ -252,7 +257,11 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 			"a/x": domain.NodeOutcomeDegraded,
 			"b/y": domain.NodeOutcomeDown,
 		}}
-		uc := NewMetricsUsecase(prom, nil, &fakeNodeRepo{}, nil, rs, log)
+		repo := &fakeNodeRepo{list: []*domain.Node{
+			{ID: "n1", Path: "a/x"}, {ID: "n2", Path: "b/y"},
+			{ID: "n3", Path: "c/z"}, {ID: "n4", Path: "d/w"},
+		}}
+		uc := NewMetricsUsecase(prom, nil, repo, nil, rs, log)
 		got := uc.NodesOverview(context.Background(), "", time.Now().Add(-time.Hour), time.Now())
 		by := map[string]NodeThroughputRow{}
 		for _, it := range got.Items {
@@ -275,11 +284,58 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 			lastErrs:   map[string]float64{"a/x": 2},
 		}
 		rs := &fakeNodeStatus{err: errors.New("redis down")}
-		uc := NewMetricsUsecase(prom, nil, &fakeNodeRepo{}, nil, rs, log)
+		repo := &fakeNodeRepo{list: []*domain.Node{{ID: "n1", Path: "a/x"}}}
+		uc := NewMetricsUsecase(prom, nil, repo, nil, rs, log)
 		got := uc.NodesOverview(context.Background(), "", time.Now().Add(-time.Hour), time.Now())
 		require.Len(t, got.Items, 1)
 		require.Equal(t, domain.NodeOutcomeDown, got.Items[0].LastOutcome,
 			"ошибка Redis → fallback на Prometheus")
+	})
+
+	// §86.4: Prometheus-ветка больше не отдаёт всё подряд.
+	//
+	// У метки Prometheus нет команды (`node = <path>`), поэтому до §86 рабочий
+	// стол БЕЗ ClickHouse показывал пути узлов всех команд инстанса — в сквозном
+	// режиме это стало бы прямой утечкой. Теперь строки строятся по узлам
+	// скоупа: чужой узел не появится, а «сирота» (есть в Prometheus, нет в
+	// конфигурации) остаётся видимым только диагностике §44.E.
+	t.Run("prometheus branch is scoped to configured nodes", func(t *testing.T) {
+		t.Parallel()
+		prom := &fakeProm{throughput: map[string]port.NodeThroughput{
+			"mine/x":    {In: 10},
+			"foreign/y": {In: 999}, // узел чужой команды
+			"orphan/z":  {In: 7},   // трафик без узла в конфигурации
+		}}
+		repo := &fakeNodeRepo{list: []*domain.Node{{ID: "n1", Path: "mine/x"}}}
+		uc := NewMetricsUsecase(prom, nil, repo, nil, nil, log)
+
+		got := uc.NodesOverview(context.Background(), "team-mine", time.Now().Add(-time.Hour), time.Now())
+
+		require.Len(t, got.Items, 1)
+		require.Equal(t, "mine/x", got.Items[0].Node)
+		require.EqualValues(t, 10, got.Totals.Incoming,
+			"§44.A: шапка = сумма ВИДИМЫХ строк, чужой трафик в неё не входит")
+	})
+
+	// §86.4: узел без трафика в Prometheus всё равно имеет строку — так ветка
+	// сходится с ClickHouse-веткой, где строка есть у каждого узла.
+	t.Run("prometheus branch keeps silent nodes", func(t *testing.T) {
+		t.Parallel()
+		prom := &fakeProm{throughput: map[string]port.NodeThroughput{"loud/x": {In: 5}}}
+		repo := &fakeNodeRepo{list: []*domain.Node{
+			{ID: "n1", Path: "loud/x"}, {ID: "n2", Path: "silent/y"},
+		}}
+		uc := NewMetricsUsecase(prom, nil, repo, nil, nil, log)
+
+		got := uc.NodesOverview(context.Background(), "team", time.Now().Add(-time.Hour), time.Now())
+
+		require.Len(t, got.Items, 2)
+		by := map[string]NodeThroughputRow{}
+		for _, it := range got.Items {
+			by[it.Node] = it
+		}
+		require.EqualValues(t, 0, by["silent/y"].In)
+		require.NotNil(t, by["silent/y"].Spark, "спарклайн молчащего узла — пустой ряд, не nil")
 	})
 
 	t.Run("clickhouse source matches node detail (per-node KPI)", func(t *testing.T) {

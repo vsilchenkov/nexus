@@ -335,26 +335,6 @@ func (u *NodeUsecase) List(ctx context.Context, f port.ListNodesFilter) ([]*doma
 	return u.repo.List(ctx, f)
 }
 
-// membershipScope — команды пользователя как скоуп кросс-командной операции
-// (§62 поиск, §86 сквозной просмотр): список id для port.ListNodesFilter.TeamIDs
-// и карта id → команда для обогащения выдачи без второго запроса.
-//
-// Пустой список членств — не ошибка: пользователь без команд просто ничего не
-// видит (вызывающий отдаёт пустую выдачу, а не 500).
-func (u *NodeUsecase) membershipScope(ctx context.Context, userID string) ([]string, map[string]domain.Team, error) {
-	memberships, err := u.teams.ListUserTeams(ctx, userID)
-	if err != nil {
-		return nil, nil, fmt.Errorf("list memberships: %w", err)
-	}
-	teamIDs := make([]string, 0, len(memberships))
-	teamByID := make(map[string]domain.Team, len(memberships))
-	for _, m := range memberships {
-		teamIDs = append(teamIDs, m.Team.ID)
-		teamByID[m.Team.ID] = m.Team
-	}
-	return teamIDs, teamByID, nil
-}
-
 // ListAcrossTeams — узлы ВСЕХ команд пользователя одним списком (§86, режим
 // «Все команды»). Фильтры (поиск, root_method, лимит) действуют как в обычном
 // List; скоуп задаётся членствами, а не текущей командой сессии.
@@ -370,7 +350,7 @@ func (u *NodeUsecase) ListAcrossTeams(ctx context.Context, userID string, f port
 	if u.teams == nil {
 		return nil, fmt.Errorf("list nodes across teams: team repo unavailable")
 	}
-	teamIDs, _, err := u.membershipScope(ctx, userID)
+	teamIDs, _, err := teamScope(ctx, u.teams, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list nodes across teams: %w", err)
 	}
@@ -432,7 +412,7 @@ func (u *NodeUsecase) SearchAcrossTeams(ctx context.Context, userID, query strin
 	case limit > maxNodeSearchLimit:
 		limit = maxNodeSearchLimit
 	}
-	teamIDs, teamByID, err := u.membershipScope(ctx, userID)
+	teamIDs, teamByID, err := teamScope(ctx, u.teams, userID)
 	if err != nil {
 		return nil, fmt.Errorf("search nodes: %w", err)
 	}
