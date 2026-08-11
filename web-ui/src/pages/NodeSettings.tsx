@@ -1597,14 +1597,21 @@ export default function NodeSettings() {
               created_at); пустой автор не выводится. */}
           <Card>
             <dl className="divide-y divide-line text-[13px]">
-              <div className="grid grid-cols-[96px_1fr] gap-3 py-2.5 first:pt-0 last:pb-0">
-                <dt className="text-fg-muted">{t("node.fields.team")}</dt>
-                {/* §86.6: при создании команда выбирается явно — молчаливое
-                    наследование из сессии убрано (в сквозном режиме такой
-                    команды нет вовсе). При правке остаётся текстом: перенос
-                    делает кнопка «Перенести» (§18.5, admin). */}
-                <dd className="font-medium">
-                  {isNew ? (
+              {/* §86.6: при создании команда выбирается явно — молчаливое
+                  наследование из сессии убрано (в сквозном режиме такой команды
+                  нет вовсе). При правке остаётся текстом: перенос делает кнопка
+                  «Перенести» (§18.5, admin).
+
+                  Разметка у этих двух случаев РАЗНАЯ, и это не косметика.
+                  Сетка «лейбл слева / значение справа» рассчитана на read-only
+                  текст (даты, автор): контрол в ней прижимает лейбл к верхнему
+                  краю и остаётся зажат в узкой правой колонке. Поэтому на форме
+                  создания команда — обычное поле формы: лейбл сверху, селект во
+                  всю ширину, как «Путь узла» и «Входящий метод» в левой колонке. */}
+              {isNew ? (
+                <div className="py-2.5 first:pt-0 last:pb-0">
+                  <dt className="pb-1.5 text-fg-muted">{t("node.fields.team")}</dt>
+                  <dd>
                     <Select
                       className="w-full"
                       value={teamChoice}
@@ -1617,11 +1624,14 @@ export default function NodeSettings() {
                         </option>
                       ))}
                     </Select>
-                  ) : (
-                    (teamName ?? "—")
-                  )}
-                </dd>
-              </div>
+                  </dd>
+                </div>
+              ) : (
+                <div className="grid grid-cols-[96px_1fr] gap-3 py-2.5 first:pt-0 last:pb-0">
+                  <dt className="text-fg-muted">{t("node.fields.team")}</dt>
+                  <dd className="font-medium">{teamName ?? "—"}</dd>
+                </div>
+              )}
               {!isNew && existing.data && (
                 <>
                   <div className="grid grid-cols-[96px_1fr] gap-3 py-2.5 first:pt-0 last:pb-0">
