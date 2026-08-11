@@ -396,7 +396,6 @@
       "help_link": "Detailed help →",
       "disabled_hint": "Disabled — the bus replies {\"result\":true,\"id\":\"<uuid>\"}.",
       "enable_warning": "Warning: enabling changes the response for ALL clients of this node.",
-      "sync_note": "The node runs in request mode: the template is stored but applies only while the node is paused (§3.6). It starts working immediately once the node is switched back to requestAsync.",
       "status_as_is": "as is",
       "on_error_default": "reply as before",
       "on_error_error": "return 400, do not queue",

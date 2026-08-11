@@ -38,7 +38,7 @@ import { parseNumInput } from "../lib/numField";
 import { validateNodeForm } from "../lib/nodeValidation";
 import { chSchemaChangeWontApply, chSyncFormDirty } from "../lib/chSchema";
 import { buildVerifyMessage } from "../lib/chTableVerify";
-import { ackFormDefaults, ackFormFromSpec, ackSpecFromForm } from "../lib/ackSpec";
+import { ackFormDefaults, ackFormFromSpec, ackSpecApplies, ackSpecFromForm } from "../lib/ackSpec";
 import { fetchLastLogBody } from "../lib/lastLogBody";
 import { useConfirm } from "../lib/confirm";
 import { DryRunDialog } from "../components/DryRunDialog";
@@ -360,13 +360,15 @@ export default function NodeSettings() {
     if (form.clickhouse_template_id) p.external_table = false;
     // §83: плоские поля формы → спека; выключенный переключатель шлёт null,
     // то есть «отвечать как раньше». Черновик шаблона при этом не сохраняется:
-    // на сервере хранится либо рабочая спека, либо ничего.
+    // на сервере хранится либо рабочая спека, либо ничего. Тип узла передаётся
+    // явно: сохранение как sync или pull ВЫКЛЮЧАЕТ переопределение, даже если
+    // поля остались заполненными от прежнего типа.
     delete p.ack_enabled;
     delete p.ack_content_type;
     delete p.ack_status;
     delete p.ack_on_error;
     delete p.ack_body;
-    p.async_ack_spec = ackSpecFromForm(form);
+    p.async_ack_spec = ackSpecFromForm(form, form.root_method);
     return p;
   }
 
@@ -1105,8 +1107,12 @@ export default function NodeSettings() {
           </Card>
 
           {/* §83: чем шина отвечает клиенту на приём запроса в очередь.
-              Скрыто у pull-узлов: у них входящего HTTP нет, отвечать некому. */}
-          {form.root_method !== "RabbitMQAsync" && (
+              Только у requestAsync: ответ «принято в очередь» существует лишь
+              там, где очередь есть. У sync-узла клиент получает ответ
+              приёмника, у pull-узла входящего HTTP нет вовсе — в обоих случаях
+              настройка ни на что не влияла бы. Смена типа на sync прячет группу
+              И выключает переопределение при сохранении (см. ackSpecFromForm). */}
+          {ackSpecApplies(form.root_method) && (
             <Card>
               <div className="mb-3 flex items-center justify-between">
                 <SectionHead icon={<Reply className="h-4 w-4" />} className="mb-0">
@@ -1133,9 +1139,6 @@ export default function NodeSettings() {
               ) : (
                 <>
                   <p className="mb-3 text-xs text-warn">{t("node.ack.enable_warning")}</p>
-                  {form.root_method === "request" && (
-                    <p className="mb-3 text-xs text-fg-subtle">{t("node.ack.sync_note")}</p>
-                  )}
 
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <Field label={t("node.fields.ack_content_type")} help={t("node.help.ack_content_type")}>

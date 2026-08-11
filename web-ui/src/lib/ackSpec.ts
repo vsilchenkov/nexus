@@ -23,13 +23,38 @@ export const ackFormDefaults: AckFormFields = {
   ack_body: "",
 };
 
+// AckRootMethod — тип узла в терминах формы: от него зависит, существует ли
+// переопределение ответа вообще.
+export type AckRootMethod = "request" | "requestAsync" | "RabbitMQAsync";
+
+/**
+ * ackSpecApplies — переопределение ответа существует ТОЛЬКО у `requestAsync`.
+ *
+ * Ответ «принято в очередь» есть только там, где очередь есть: у sync-узла
+ * клиент получает ответ приёмника, у pull-узла (`RabbitMQAsync`) входящего
+ * HTTP нет вовсе и отвечать некому. Показывать группу в этих двух случаях
+ * значит предлагать настройку, которая ни на что не влияет.
+ *
+ * Одно правило на два места — показ группы и сборку payload'а: пока условие
+ * было записано дважды, форма прятала карточку у pull-узлов, но продолжала бы
+ * отправлять спеку, попади она в поля.
+ */
+export function ackSpecApplies(rootMethod: AckRootMethod): boolean {
+  return rootMethod === "requestAsync";
+}
+
 // ackSpecFromForm собирает спеку для сохранения узла.
 //
 // Выключенный переключатель даёт null — «отвечать как раньше». Черновик
 // шаблона при этом НЕ сохраняется: на сервере лежит либо рабочая спека, либо
 // ничего, иначе выключенный узел хранил бы невалидный текст, который однажды
 // «оживёт» при включении.
-export function ackSpecFromForm(f: AckFormFields): AckSpec | null {
+//
+// rootMethod — обязательный аргумент, а не «если надо, проверьте снаружи»:
+// сохранение узла как sync ВЫКЛЮЧАЕТ переопределение, и правило не должно
+// зависеть от того, вспомнил ли о нём вызывающий.
+export function ackSpecFromForm(f: AckFormFields, rootMethod: AckRootMethod): AckSpec | null {
+  if (!ackSpecApplies(rootMethod)) return null;
   if (!f.ack_enabled) return null;
   return {
     version: 1,
