@@ -1,5 +1,5 @@
-import { useQueries } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { keepPreviousData, useQueries } from "@tanstack/react-query";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api, type NodesThroughputResp } from "../api/client";
 
@@ -69,7 +69,14 @@ function chunk<T>(items: T[], size: number): T[][] {
 export function useVisibleNodeMetrics(opts: VisibleMetricsOptions): VisibleMetrics {
   const { enabled, scopeKey, periodKey, params, refetchInterval } = opts;
 
-  const [requested, setRequested] = useState<string[]>([]);
+  // chunks — ЗАМОРОЖЕННЫЕ пачки: созданная пачка больше не меняется.
+  //
+  // Раньше пачки нарезались из общего растущего списка, и последняя недобранная
+  // меняла состав на каждой догрузке — а состав входит в ключ кеша. Значит это
+  // был НОВЫЙ запрос: цифры уже показанных узлов гасли в «—» и появлялись снова,
+  // и те же узлы пересчитывались в ClickHouse заново. Теперь каждый flush даёт
+  // свои неизменные пачки.
+  const [chunks, setChunks] = useState<string[][]>([]);
   // Накопитель между flush'ами: держим в ref, чтобы пересечения не будили
   // рендер на каждую строку.
   const pending = useRef<Set<string>>(new Set());
@@ -84,14 +91,14 @@ export function useVisibleNodeMetrics(opts: VisibleMetricsOptions): VisibleMetri
   useEffect(() => {
     pending.current.clear();
     known.current.clear();
-    setRequested([]);
+    setChunks([]);
   }, [scopeKey, periodKey]);
 
   const flush = useCallback(() => {
     if (pending.current.size === 0) return;
     const add = Array.from(pending.current);
     pending.current.clear();
-    setRequested((prev) => [...prev, ...add]);
+    setChunks((prev) => [...prev, ...chunk(add, CHUNK_SIZE)]);
   }, []);
 
   const markVisible = useCallback(
@@ -154,9 +161,10 @@ export function useVisibleNodeMetrics(opts: VisibleMetricsOptions): VisibleMetri
     [],
   );
 
-  const chunks = useMemo(() => chunk(requested, CHUNK_SIZE), [requested]);
-
-  const results = useQueries({
+  // combine — штатный способ react-query собрать один результат из набора
+  // запросов. Он же держит идентичность: без него карта пересобиралась бы на
+  // КАЖДЫЙ рендер, а вслед за ней пересортировывался бы весь список узлов.
+  const { items } = useQueries({
     queries: chunks.map((ids) => {
       const key = ids.join(",");
       return {
@@ -165,20 +173,21 @@ export function useVisibleNodeMetrics(opts: VisibleMetricsOptions): VisibleMetri
           api.get<NodesThroughputResp>("/api/metrics/nodes", { ...params, node_ids: key }),
         refetchInterval,
         enabled,
+        // Автообновление не должно гасить уже показанные цифры: без этого на
+        // каждом интервале строка мигала «—» до прихода ответа.
+        placeholderData: keepPreviousData,
       };
     }),
+    combine: (results) => {
+      const m = new Map<string, NodesThroughputResp["items"][number]>();
+      for (const r of results) {
+        for (const it of r.data?.items ?? []) {
+          if (it.node_id) m.set(it.node_id, it);
+        }
+      }
+      return { items: m };
+    },
   });
 
-  // Карта собирается на каждый рендер, без useMemo: useQueries возвращает новый
-  // массив всегда, и мемоизация потребовала бы синтетического ключа с
-  // подавлением правила зависимостей — цена честности выше выигрыша, а проход
-  // здесь линейный по числу ВИДИМЫХ узлов.
-  const items = new Map<string, NodesThroughputResp["items"][number]>();
-  for (const r of results) {
-    for (const it of r.data?.items ?? []) {
-      if (it.node_id) items.set(it.node_id, it);
-    }
-  }
-
-  return { items, observe, requestedCount: requested.length };
+  return { items, observe, requestedCount: chunks.reduce((n, c) => n + c.length, 0) };
 }

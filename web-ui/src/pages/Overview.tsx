@@ -75,6 +75,10 @@ type Throughput = {
   lastOutcome: "ok" | "degraded" | "down" | "unknown";
 };
 
+// TOTALS_REFETCH_FACTOR — во сколько раз реже строк обновляется KPI-шапка
+// сквозного режима (§86.4).
+const TOTALS_REFETCH_FACTOR = 4;
+
 const VIEW_KEY = "nexus.overview.view";
 const AUTOREFRESH_KEY = "nexus.overview.autorefresh";
 
@@ -304,7 +308,12 @@ export default function Overview() {
     queryKey: ["metrics-totals", scopeKey, periodKey(period)],
     queryFn: () =>
       api.get<NodesTotalsResp>("/api/metrics/totals", { ...periodParams(period), ...scopeQuery }),
-    refetchInterval: autoRefresh ? refetchMs : false,
+    // Своё, более редкое автообновление (§86.4). Агрегат — полный проход по
+    // ВСЕМ узлам скоупа, и гонять его в темпе строк незачем: серверный кеш
+    // живёт секунды, а шапка за минуту не устаревает. Кратность интервалу
+    // строк, а не отдельная константа: оператор регулирует темп одной
+    // настройкой (§44.C), и связь между ними не теряется.
+    refetchInterval: autoRefresh ? refetchMs * TOTALS_REFETCH_FACTOR : false,
     enabled: periodReady && allTeams,
   });
 
@@ -369,13 +378,27 @@ export default function Overview() {
         (n) => nodeVariant(n, throughput.get(n.id), metricsReady) === statusFilter,
       );
     }
+    // §86.4: в сквозном режиме порядок СТАБИЛЬНЫЙ — команда, затем путь.
+    //
+    // Сортировка «проблемные первыми» опирается на метрики, а они здесь
+    // приходят порциями по мере прокрутки: каждая пачка переставляла бы строки
+    // под курсором, и место, до которого оператор долистал, уезжало. Ранжировать
+    // по данным, которых ещё нет, всё равно нельзя — до полной загрузки такой
+    // порядок был бы неправдой. Группировка по команде читается вместе с
+    // колонкой «Команда» и не зависит от того, что уже досчитано.
+    if (allTeams) {
+      const teamOf = (n: Node) => teamNames?.get(n.team_id) ?? "";
+      return [...items].sort(
+        (a, b) => teamOf(a).localeCompare(teamOf(b)) || a.path.localeCompare(b.path),
+      );
+    }
     return [...items].sort((a, b) => {
       const va = nodeVariant(a, throughput.get(a.id), metricsReady);
       const vb = nodeVariant(b, throughput.get(b.id), metricsReady);
       if (sortRank[va] !== sortRank[vb]) return sortRank[va] - sortRank[vb];
       return (throughput.get(b.id)?.in ?? 0) - (throughput.get(a.id)?.in ?? 0);
     });
-  }, [nodesQ.data, method, statusFilter, throughput, sortRank, metricsReady]);
+  }, [nodesQ.data, method, statusFilter, throughput, sortRank, metricsReady, allTeams, teamNames]);
 
   const kpi = useStableData(kpiQ.data, "overview-kpi", (d) => d.prometheus_available);
   // §44.A: трафик KPI шапки = totals из throughput (сумма строк таблицы за
