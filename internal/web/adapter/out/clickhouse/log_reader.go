@@ -1105,7 +1105,7 @@ const (
 // обрезанному началу вместо настоящего тела (та же грабля, что у listCols).
 const replayCandidateCols = `ID,
 	toInt64(toUnixTimestamp64Milli(toDateTime64(date_request, 3))) AS ts,
-	type, http_method, method, url, status, done, reason,
+	type, http_method, method, url, status, done,
 	request_size,
 	length(request) AS stored_len,
 	substringUTF8(request, 1, ?) AS body_start,
@@ -1275,7 +1275,7 @@ func scanReplayCandidate(rows chdriver.Rows) (domain.ReplayCandidate, int64, err
 		storedLen uint64
 	)
 	if err := rows.Scan(
-		&c.ID, &ts, &typ, &c.HTTPMethod, &c.Method, &c.URL, &c.Status, &c.Done, &c.Reason,
+		&c.ID, &ts, &typ, &c.HTTPMethod, &c.Method, &c.URL, &c.Status, &c.Done,
 		&c.RequestSize, &storedLen, &c.BodyHead, &c.BodyTruncationMarker, &c.IsReplayCopy,
 	); err != nil {
 		return domain.ReplayCandidate{}, 0, fmt.Errorf("scan replay candidate: %w", err)

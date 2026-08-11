@@ -525,6 +525,9 @@ func (a *App) Start(ctx context.Context) error {
 			// оригиналов — иначе записи остаются в «Неудачных доставках» до
 			// ручной очистки, хотя сообщения уже доставлены.
 			usecase.WithFailedCleaner(logReader),
+			// §85.9: у массового повтора за период свой счёт — цикл батчей
+			// крутит клиент, и общий лимит одиночного replay остановил бы его.
+			usecase.WithPeriodRateLimit(a.cfg.Web.ReplayPeriodRateLimitPerUserPerMin),
 		)
 		logsUC := usecase.NewLogsUsecase(logReader, nodeRepo, a.logger)
 		replayHandler = httpadapter.NewReplayHandler(replayUC, a.logger)

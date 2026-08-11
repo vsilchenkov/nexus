@@ -405,6 +405,10 @@ type WebSection struct {
 	SessionCookieSamesite        string `yaml:"session_cookie_samesite"`
 	AuditRetentionDays           int    `yaml:"audit_retention_days"`
 	ReplayRateLimitPerUserPerMin int    `yaml:"replay_rate_limit_per_user_per_min"`
+	// ReplayPeriodRateLimitPerUserPerMin — §85.9: лимит БАТЧЕЙ массового повтора
+	// из логов за период. Отдельный счёт от одиночного replay: цикл батчей
+	// крутит клиент, и общий лимит 10/мин остановил бы прогон после десятого.
+	ReplayPeriodRateLimitPerUserPerMin int `yaml:"replay_period_rate_limit_per_user_per_min"`
 	// MetricsExactChartMaxRecords — §79.5.1: до скольких записей в окне график
 	// узла строится точной формой («столбец = записи по интервалу прихода,
 	// статус итоговый»). Точная форма сворачивает строки в записи по всему окну

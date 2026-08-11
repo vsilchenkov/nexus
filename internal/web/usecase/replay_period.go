@@ -25,6 +25,9 @@ const (
 	// него окно не разбирается: ответ помечается exact=false, а остальные записи
 	// проверяются по ходу отправки.
 	replayPeriodPreviewCap = 2000
+	// replayPeriodPreviewPasses — потолок числа страниц, которые разбирает
+	// предпросмотр. Считается от потолка записей с запасом на отсев §85.5.1.
+	replayPeriodPreviewPasses = replayPeriodPreviewCap/replayPeriodBatchCap + 20
 	// replayPeriodSamples — сколько примеров каждой группы отдаётся в план.
 	replayPeriodSamples = 20
 	// replayPeriodRateLimit — батчей в минуту на пользователя по умолчанию.
@@ -136,8 +139,12 @@ func (u *ReplayUsecase) PlanPeriod(ctx context.Context, in ReplayPeriodInput) (R
 	}
 	plan.Total = total
 
+	// Потолок стоит и на числе ПРОХОДОВ: страница может целиком уйти в отсев
+	// повторных прогонов (§85.5.1), и тогда Scanned не растёт, а обход
+	// продолжается. Без второго ограничителя окно с большой долей многопрогонных
+	// записей превращало бы предпросмотр в полный обход журнала.
 	cursor := in.Cursor
-	for plan.Scanned < replayPeriodPreviewCap {
+	for pass := 0; plan.Scanned < replayPeriodPreviewCap && pass < replayPeriodPreviewPasses; pass++ {
 		limit := min(replayPeriodBatchCap, replayPeriodPreviewCap-plan.Scanned)
 		items, next, err := u.logs.ReplayCandidates(ctx, q, cursor, limit)
 		if err != nil {
@@ -199,12 +206,14 @@ func (u *ReplayUsecase) ReplayPeriod(ctx context.Context, actor Actor, in Replay
 	}
 
 	res := ReplayPeriodBatch{SkippedBy: map[string]int{}}
+	var aborted error
 	for _, c := range items {
 		if err := ctx.Err(); err != nil {
-			// Клиент ушёл. Курсор не отдаём: часть страницы уже отправлена, и
-			// продолжение с этого места пропустило бы остаток — оператор
-			// перезапустит прогон от последней подтверждённой отметки.
-			return res, err
+			// Клиент ушёл. Прерываемся, но НЕ выходим сразу: часть записей уже
+			// отправлена получателю, и след об этом обязан попасть в аудит
+			// (§85.9) — ради него цикл только размыкается.
+			aborted = err
+			break
 		}
 		res.Scanned++
 		if reason := u.classify(node, c, in.SkipReplayCopies); reason != domain.ReplaySkipNone {
@@ -219,22 +228,33 @@ func (u *ReplayUsecase) ReplayPeriod(ctx context.Context, actor Actor, in Replay
 		}
 		res.Replayed++
 	}
-	if !next.IsZero() {
+	// Курсор отдаём только у целиком пройденной страницы: после обрыва часть её
+	// уже отправлена, и продолжение с конца страницы пропустило бы остаток —
+	// оператор перезапускает прогон от последней подтверждённой отметки.
+	if aborted == nil && !next.IsZero() {
 		cursor := next
 		res.NextCursor = &cursor
 	}
 
-	// Аудит на КАЖДЫЙ батч: прогон обрывается закрытием вкладки, и след обязан
-	// остаться от того, что успело уйти, а не только от завершённой операции.
-	u.audit.Log(ctx, actor, domain.ActionNodeReplayPeriod, "node", node.ID, map[string]any{
+	// Аудит на КАЖДЫЙ батч, ВКЛЮЧАЯ прерванный: прогон обрывается закрытием
+	// вкладки, и след обязан остаться от того, что успело уйти получателю.
+	//
+	// Контекст отвязывается (§6): на обрыве исходный уже отменён, и запись
+	// аудита — то единственное, что осталось от отправленного, — не доехала бы
+	// вместе с ушедшим клиентом.
+	u.audit.Log(context.WithoutCancel(ctx), actor, domain.ActionNodeReplayPeriod, "node", node.ID, map[string]any{
 		"from":     q.SinceMs,
 		"to":       q.UntilMs,
 		"scanned":  res.Scanned,
 		"replayed": res.Replayed,
 		"failed":   res.Failed,
 		"skipped":  res.SkippedBy,
-		"done":     res.NextCursor == nil,
+		"aborted":  aborted != nil,
+		"done":     aborted == nil && res.NextCursor == nil,
 	})
+	if aborted != nil {
+		return res, aborted
+	}
 	return res, nil
 }
 

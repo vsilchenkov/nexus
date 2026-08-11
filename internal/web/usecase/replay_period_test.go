@@ -312,11 +312,15 @@ func TestPlanPeriod_NotExactWhenCapped(t *testing.T) {
 	t.Parallel()
 
 	at := time.Now().Add(-30 * time.Minute)
-	// Каждая страница отдаёт запись И курсор — окно «не кончается».
-	pages := make([]replayCandPage, 0, replayPeriodPreviewCap)
-	for i := range replayPeriodPreviewCap {
+	// Полные страницы: потолок ЗАПИСЕЙ достигается раньше потолка проходов.
+	full := make([]domain.ReplayCandidate, 0, replayPeriodBatchCap)
+	for i := range replayPeriodBatchCap {
+		full = append(full, okCandidate("id", at.Add(time.Duration(i)*time.Millisecond)))
+	}
+	pages := make([]replayCandPage, 0, replayPeriodPreviewPasses)
+	for i := range replayPeriodPreviewPasses {
 		pages = append(pages, replayCandPage{
-			items: []domain.ReplayCandidate{okCandidate("id", at)},
+			items: full,
 			next:  port.ReplayCursor{AfterMs: at.UnixMilli() + int64(i) + 1, AfterID: "id"},
 		})
 	}
@@ -327,6 +331,34 @@ func TestPlanPeriod_NotExactWhenCapped(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, plan.Exact, "потолок разбора достигнут — числа неполные")
 	assert.Equal(t, replayPeriodPreviewCap, plan.Scanned)
+}
+
+// TestPlanPeriod_StopsOnPassLimit — второй ограничитель предпросмотра.
+//
+// Страница может целиком уйти в отсев повторных прогонов (§85.5.1), и тогда
+// Scanned не растёт вовсе. Без потолка ПРОХОДОВ такой предпросмотр превращался
+// бы в полный обход журнала, оставаясь под лимитом записей.
+func TestPlanPeriod_StopsOnPassLimit(t *testing.T) {
+	t.Parallel()
+
+	at := time.Now().Add(-30 * time.Minute)
+	// Каждая страница пустая (всё отсеяно), но курсор двигается — окно «не
+	// кончается».
+	pages := make([]replayCandPage, 0, replayPeriodPreviewPasses*2)
+	for i := range replayPeriodPreviewPasses * 2 {
+		pages = append(pages, replayCandPage{
+			next: port.ReplayCursor{AfterMs: at.UnixMilli() + int64(i) + 1, AfterID: "id"},
+		})
+	}
+	reader := &periodReader{total: 1_000_000, pages: pages}
+	uc, _ := newPeriodUC(t, reader, periodNode(), &refusingDispatcher{t: t})
+
+	plan, err := uc.PlanPeriod(context.Background(), periodInput())
+	require.NoError(t, err)
+	assert.False(t, plan.Exact)
+	assert.Equal(t, 0, plan.Scanned)
+	assert.Len(t, reader.calls, replayPeriodPreviewPasses,
+		"обход обязан остановиться по числу проходов, а не крутиться до конца журнала")
 }
 
 // TestReplayPeriod_ExternalTableKeepsPartitionNarrowingOff — на внешней таблице
@@ -350,4 +382,56 @@ func TestReplayPeriod_ExternalTableKeepsPartitionNarrowingOff(t *testing.T) {
 	_, err = uc2.ReplayPeriod(context.Background(), SystemActor(), periodInput())
 	require.NoError(t, err)
 	assert.True(t, reader2.gotQ.DateCreateAligned)
+}
+
+// cancelAfterFirstDispatcher — отменяет контекст прогона после первой успешной
+// реинжекции: имитирует уход клиента посреди батча.
+type cancelAfterFirstDispatcher struct {
+	cancel context.CancelFunc
+	calls  int
+}
+
+func (d *cancelAfterFirstDispatcher) Dispatch(_ context.Context, _ port.DispatchRequest) (*port.DispatchResponse, error) {
+	d.calls++
+	if d.calls == 1 {
+		d.cancel()
+	}
+	return &port.DispatchResponse{StatusCode: 200, Body: []byte(`{"ok":true}`)}, nil
+}
+
+// TestReplayPeriod_AuditSurvivesClientAbort — НАХОДКА РЕВИЗИИ.
+//
+// Прерванный батч обязан оставить след: часть записей уже ушла получателю, и
+// это единственное свидетельство того, что именно он получил. Ранний return по
+// ctx.Err() выходил ДО записи аудита, а сама запись шла с уже отменённым
+// контекстом — след терялся вместе с ушедшим клиентом.
+func TestReplayPeriod_AuditSurvivesClientAbort(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	at := time.Now().Add(-30 * time.Minute)
+	reader := &periodReader{pages: []replayCandPage{{
+		items: []domain.ReplayCandidate{
+			okCandidate("a", at),
+			okCandidate("b", at.Add(time.Second)),
+			okCandidate("c", at.Add(2*time.Second)),
+		},
+		next: port.ReplayCursor{AfterMs: at.UnixMilli(), AfterID: "c"},
+	}}}
+	disp := &cancelAfterFirstDispatcher{cancel: cancel}
+	uc, auditRepo := newPeriodUC(t, reader, periodNode(), disp)
+
+	res, err := uc.ReplayPeriod(ctx, SystemActor(), periodInput())
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, 1, res.Replayed, "успела уйти ровно одна запись")
+	assert.Nil(t, res.NextCursor, "курсор после обрыва не отдаём: остаток страницы пропущен не был бы")
+
+	require.Len(t, auditRepo.entries, 1, "прерванный батч обязан оставить след в аудите")
+	e := auditRepo.entries[0]
+	assert.Equal(t, domain.ActionNodeReplayPeriod, e.Action)
+	assert.Equal(t, 1, e.Details["replayed"])
+	assert.Equal(t, true, e.Details["aborted"])
+	assert.Equal(t, false, e.Details["done"])
 }

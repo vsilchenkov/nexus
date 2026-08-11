@@ -84,7 +84,6 @@ type ReplayCandidate struct {
 	URL    string
 	Status int32
 	Done   bool
-	Reason string
 	// RequestSize — истинный размер тела в БАЙТАХ до усечения (§42.10).
 	RequestSize int64
 	// StoredBytes — размер сохранённой копии тела в байтах.
