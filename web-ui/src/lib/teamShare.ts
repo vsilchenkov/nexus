@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
 
+import { TEAM_SCOPE_ALL, setTeamScopeAll, useAllTeamsScope } from "./teamScope";
 import { useMyTeams, useSwitchTeam } from "./teams";
 
 // Слой «Ссылка на команду» (§76). Активная команда живёт только в серверной
@@ -115,6 +116,8 @@ export function useTeamUrlParam(): TeamUrlState {
   // ссылку, которую сейчас применяет.
   const awaiting = useRef<string | null>(null);
 
+  const allTeams = useAllTeamsScope();
+
   const allowed = teamParamAllowed(pathname);
   const desired = allowed ? normalizeSlug(params.get(TEAM_PARAM)) : null;
   const currentSlug = data?.items.find((m) => m.id === data.current_team_id)?.slug ?? "";
@@ -174,6 +177,25 @@ export function useTeamUrlParam(): TeamUrlState {
       }
     }
 
+    // §86.7.1: сквозной режим разбирается ДО резолва slug'а и выпадает из
+    // машины зеркала целиком — он не команда, переключать нечего.
+    //
+    // Порядок веток здесь значим: без этой проверки `*` пошёл бы в поиск по
+    // членствам, не нашёлся бы и поднял баннер «команда недоступна», а параметр
+    // тут же переписался бы на текущую команду — режим не включился бы ни разу.
+    if (desired === TEAM_SCOPE_ALL) {
+      handled.current = desired;
+      setUnavailableSlug(null);
+      setTeamScopeAll(true); // входящая ссылка `/?team=*` включает режим
+      return;
+    }
+    // Режим включён (переключателем или ссылкой), а параметра нет — например
+    // после перехода «Узлы» в сайдбаре, открывающего `/` без query. Возвращаем
+    // параметр, иначе режим молча схлопнулся бы в команду сессии.
+    if (allTeams) {
+      writeParam(TEAM_SCOPE_ALL);
+      return;
+    }
     if (desired === null) {
       writeParam(currentSlug);
       return;
@@ -214,6 +236,7 @@ export function useTeamUrlParam(): TeamUrlState {
     // навигации.
   }, [
     allowed,
+    allTeams,
     data,
     currentSlug,
     desired,

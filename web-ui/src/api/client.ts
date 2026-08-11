@@ -245,6 +245,10 @@ export type OverviewKPI = {
   prometheus_available: boolean;
 };
 export type NodeThroughput = {
+  // §86.7: строки сшиваются с узлами по node_id, а не по node (пути): путь
+  // уникален лишь внутри команды, и в сквозном режиме два узла разных команд
+  // могут иметь одинаковый. Поле может быть пустым у старого бэкенда.
+  node_id?: string;
   node: string;
   in: number;
   out: number;
@@ -271,6 +275,10 @@ export type NodesThroughputResp = {
   totals: OverviewTotals;
   prometheus_available: boolean;
 };
+// §86.4: агрегат шапки отдельным запросом (GET /api/metrics/totals). Нужен
+// сквозному режиму: там строки таблицы грузятся порционно, и шапка обязана
+// считаться по всему скоупу, иначе её значение зависело бы от прокрутки.
+export type NodesTotalsResp = { totals: OverviewTotals };
 // §79.5: chart_unit — как посчитаны столбцы.
 //   records  — запись в интервале своего прихода, «ошибка» по ИТОГОВОМУ статусу
 //              (после успешного повтора красный сегмент исчезает сам);

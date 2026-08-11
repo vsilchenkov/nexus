@@ -9,6 +9,7 @@ import {
   type Node,
   type OverviewKPI,
   type NodesThroughputResp,
+  type NodesTotalsResp,
 } from "../api/client";
 import { useStableData } from "../lib/useStableData";
 import {
@@ -50,7 +51,9 @@ import {
   useSetPref,
   useTeamDefaultPeriod,
 } from "../lib/prefs";
+import { scopeParams, teamScopeKey, useAllTeamsScope } from "../lib/teamScope";
 import { useCurrentTeamID, useMyTeams } from "../lib/teams";
+import { useVisibleNodeMetrics } from "../lib/visibleMetrics";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { useMetricsRefetchMs } from "../components/node/useNodeMetrics";
 import { SearchHistoryList } from "../components/SearchHistoryList";
@@ -65,7 +68,11 @@ type Throughput = {
   p95: number;
   spark: number[];
   // §52: исход последнего вызова узла (ok/degraded/down).
-  lastOutcome: "ok" | "degraded" | "down";
+  // §86.8: "unknown" — исход неизвестен, потому что он ключуется ПУТЁМ
+  // (nexus:node:last_error:<path> в Redis, метка node в Prometheus), а путь
+  // уникален лишь внутри команды: у двух одноимённых узлов разных команд
+  // значение общее и как минимум одному из них не принадлежит.
+  lastOutcome: "ok" | "degraded" | "down" | "unknown";
 };
 
 const VIEW_KEY = "nexus.overview.view";
@@ -89,6 +96,10 @@ export default function Overview() {
   // enabled: пока членства не загрузились (teamId=""), запрос не шлём — иначе
   // ответ лёг бы под ключ с пустым teamId и алиасился между командами.
   const teamId = useCurrentTeamID();
+  // §86: сквозной режим «Все команды». Скоуп обязан входить в queryKey — иначе
+  // выдача всех команд и выдача одной алиасятся в один слот кеша (правило
+  // §4.44, из-за него уже был баг «стёр поиск → узлы не той команды»).
+  const allTeams = useAllTeamsScope();
 
   // §71: дефолтный период — персональный и СВОЙ У КАЖДОЙ КОМАНДЫ, хранится на
   // сервере (преф команды → глобальный преф → системные 24ч). При переключении
@@ -168,6 +179,14 @@ export default function Overview() {
   const teamsQ = useMyTeams();
   const currentTeamName =
     teamsQ.data?.items.find((m) => m.id === teamsQ.data?.current_team_id)?.name ?? "";
+  // §86.3: имя команды резолвит клиент — членства уже на руках, и сервер выдачу
+  // не обогащает. null вне сквозного режима = колонки/чипа команды нет вовсе.
+  const teamNames = useMemo(() => {
+    if (!allTeams) return null;
+    const m = new Map<string, string>();
+    for (const tm of teamsQ.data?.items ?? []) m.set(tm.id, tm.name);
+    return m;
+  }, [allTeams, teamsQ.data]);
   const [view, setView] = useState<View>(
     () => (localStorage.getItem(VIEW_KEY) as View) || "table",
   );
@@ -230,17 +249,23 @@ export default function Overview() {
   useEffect(() => localStorage.setItem(VIEW_KEY, view), [view]);
   useEffect(() => localStorage.setItem(AUTOREFRESH_KEY, autoRefresh ? "1" : "0"), [autoRefresh]);
 
+  const scopeKey = teamScopeKey(allTeams, teamId);
+  const scopeQuery = useMemo(() => scopeParams(allTeams), [allTeams]);
+  // В сквозном режиме команда сессии не участвует, поэтому ждать её незачем —
+  // иначе список не загрузился бы у пользователя, у которого она ещё не пришла.
+  const scopeReady = allTeams || teamId !== "";
+
   const nodesQ = useQuery({
-    queryKey: ["nodes", teamId, search],
-    queryFn: () => api.get<ListResp>("/api/nodes", { search }),
-    enabled: teamId !== "",
+    queryKey: ["nodes", scopeKey, search],
+    queryFn: () => api.get<ListResp>("/api/nodes", { ...scopeQuery, search }),
+    enabled: scopeReady,
   });
 
   const kpiQ = useQuery({
-    queryKey: ["metrics-overview", teamId],
+    queryKey: ["metrics-overview", scopeKey],
     queryFn: () => api.get<OverviewKPI>("/api/metrics/overview"),
     refetchInterval: autoRefresh ? refetchMs : false,
-    enabled: teamId !== "",
+    enabled: scopeReady,
   });
 
   // §28 Пункт 4: период per-node throughput выбирается (дефолт — персональный
@@ -251,22 +276,73 @@ export default function Overview() {
   // ушёл бы с системными 24ч, а следом второй — с настоящим дефолтом команды.
   // Это двойная нагрузка на ClickHouse на КАЖДЫЙ заход на рабочий стол.
   const thrQ = useQuery({
-    queryKey: ["metrics-nodes", teamId, periodKey(period)],
+    queryKey: ["metrics-nodes", scopeKey, periodKey(period)],
     queryFn: () => api.get<NodesThroughputResp>("/api/metrics/nodes", periodParams(period)),
     refetchInterval: autoRefresh ? refetchMs : false,
-    enabled: periodReady,
+    // §86.4: в сквозном режиме одним запросом метрики не считаются — строки
+    // грузятся порционно (useVisibleNodeMetrics), а шапка отдельным агрегатом.
+    enabled: periodReady && !allTeams,
+  });
+
+  // §86.4: порционная загрузка — только сквозной режим. Режим одной команды
+  // идёт прежним путём: там всё приезжает одним запросом и менять нечего.
+  const visible = useVisibleNodeMetrics({
+    enabled: allTeams && periodReady,
+    scopeKey,
+    periodKey: periodKey(period),
+    params: useMemo(
+      () => ({ ...periodParams(period), ...scopeQuery }),
+      [period, scopeQuery],
+    ),
+    refetchInterval: autoRefresh ? refetchMs : false,
+  });
+
+  // §86.4: агрегат шапки в сквозном режиме считается отдельно и приезжает
+  // позже строк — сумма по ВСЕМ узлам скоупа, а не по загруженным (иначе
+  // значение шапки менялось бы от прокрутки).
+  const totalsQ = useQuery({
+    queryKey: ["metrics-totals", scopeKey, periodKey(period)],
+    queryFn: () =>
+      api.get<NodesTotalsResp>("/api/metrics/totals", { ...periodParams(period), ...scopeQuery }),
+    refetchInterval: autoRefresh ? refetchMs : false,
+    enabled: periodReady && allTeams,
   });
 
   // Анти-мерцание: держим последний ответ с prometheus_available=true (§ useStableData).
   const thrData = useStableData(thrQ.data, periodKey(period), (d) => d.prometheus_available);
 
+  // Ключ карты — id узла, а НЕ путь (§86.7): путь уникален лишь внутри команды,
+  // и в сквозном списке два узла разных команд могут иметь одинаковый.
+  // §86.8: пути, встречающиеся в скоупе больше одного раза. Внутри команды путь
+  // уникален (UNIQUE(team_id, path)), поэтому набор непуст только в сквозном
+  // режиме — и только там бейдж исхода может принадлежать чужому узлу.
+  const ambiguousPaths = useMemo(() => {
+    if (!allTeams) return null;
+    const seen = new Map<string, number>();
+    for (const n of nodesQ.data?.items ?? []) seen.set(n.path, (seen.get(n.path) ?? 0) + 1);
+    const dup = new Set<string>();
+    for (const [path, count] of seen) if (count > 1) dup.add(path);
+    return dup;
+  }, [allTeams, nodesQ.data]);
+
   const throughput = useMemo(() => {
     const m = new Map<string, Throughput>();
-    for (const it of thrData?.items ?? []) {
-      m.set(it.node, { in: it.in, out: it.out, errors: it.errors, p95: it.p95_ms, spark: it.spark ?? [], lastOutcome: it.last_outcome });
+    const src = allTeams ? Array.from(visible.items.values()) : (thrData?.items ?? []);
+    for (const it of src) {
+      if (!it.node_id) continue;
+      m.set(it.node_id, {
+        in: it.in,
+        out: it.out,
+        errors: it.errors,
+        p95: it.p95_ms,
+        spark: it.spark ?? [],
+        // Числа и спарклайн приходят из ClickHouse с фильтром по node_id и
+        // коллизией путей не задеты — подменяется только исход (§86.8).
+        lastOutcome: ambiguousPaths?.has(it.node) ? "unknown" : it.last_outcome,
+      });
     }
     return m;
-  }, [thrData]);
+  }, [thrData, allTeams, visible.items, ambiguousPaths]);
 
   // Сортировка: проблемные первыми (err → degraded → warn → paused → ok →
   // disabled), внутри статуса — по убыванию входящего трафика (§22, ui_cards.html).
@@ -278,21 +354,26 @@ export default function Overview() {
   // metricsReady — метрики throughput реально пришли и Prometheus доступен.
   // Пока не готовы, статус узла показываем нейтральным «unknown», а не зелёным
   // «OK» (П11: статус мигал ОК→down при дозагрузке метрик).
-  const metricsReady = thrQ.isSuccess && (thrData?.prometheus_available ?? false);
+  // В сквозном режиме источник другой (порционные пачки), и признак готовности
+  // строится по факту наличия метрик у узла: единого «ответ пришёл» здесь нет —
+  // строки досчитываются по мере прокрутки.
+  const metricsReady = allTeams
+    ? visible.items.size > 0
+    : thrQ.isSuccess && (thrData?.prometheus_available ?? false);
 
   const nodes = useMemo(() => {
     let items = nodesQ.data?.items ?? [];
     if (method) items = items.filter((n) => n.root_method === method);
     if (statusFilter !== "all") {
       items = items.filter(
-        (n) => nodeVariant(n, throughput.get(n.path), metricsReady) === statusFilter,
+        (n) => nodeVariant(n, throughput.get(n.id), metricsReady) === statusFilter,
       );
     }
     return [...items].sort((a, b) => {
-      const va = nodeVariant(a, throughput.get(a.path), metricsReady);
-      const vb = nodeVariant(b, throughput.get(b.path), metricsReady);
+      const va = nodeVariant(a, throughput.get(a.id), metricsReady);
+      const vb = nodeVariant(b, throughput.get(b.id), metricsReady);
       if (sortRank[va] !== sortRank[vb]) return sortRank[va] - sortRank[vb];
-      return (throughput.get(b.path)?.in ?? 0) - (throughput.get(a.path)?.in ?? 0);
+      return (throughput.get(b.id)?.in ?? 0) - (throughput.get(a.id)?.in ?? 0);
     });
   }, [nodesQ.data, method, statusFilter, throughput, sortRank, metricsReady]);
 
@@ -300,7 +381,9 @@ export default function Overview() {
   // §44.A: трафик KPI шапки = totals из throughput (сумма строк таблицы за
   // выбранный период, ClickHouse) → шапка сходится с таблицей. Очередь Kafka —
   // из kpiQ (мгновенный lag, только в Prometheus). Ярлык несёт выбранный период.
-  const tot = thrData?.totals;
+  // §86.4: в сквозном режиме шапка приезжает отдельным запросом и позже строк
+  // (сумма по ВСЕМ узлам скоупа, а не по загруженным).
+  const tot = allTeams ? totalsQ.data?.totals : thrData?.totals;
   // Пока дефолт команды не пришёл (§71), период в подписи ещё не тот — метку не
   // показываем: значения всё равно «—» (thrQ выключен), а мигание «24ч → 7д»
   // в заголовке KPI выглядело бы как смена данных.
@@ -419,8 +502,11 @@ export default function Overview() {
           <div className="h-[30px] w-[320px] animate-pulse rounded-md bg-line/40" aria-hidden />
         )}
         {/* §44.B/§71: «под себя» — сохранить текущий период как дефолт ЭТОЙ
-            команды (только пресет; произвольный диапазон дефолтом не имеет смысла). */}
-        {periodReady && period.kind === "preset" && (
+            команды (только пресет; произвольный диапазон дефолтом не имеет смысла).
+            §86.7: в сквозном режиме кнопки нет вовсе — преф хранится НА КОМАНДУ,
+            а команды здесь нет; сохранять было бы некуда, и «сохранить в текущую
+            команду сессии» означало бы настроить не тот экран, что открыт. */}
+        {periodReady && !allTeams && period.kind === "preset" && (
           <button
             type="button"
             onClick={() =>
@@ -480,9 +566,23 @@ export default function Overview() {
 
       {nodes.length > 0 &&
         (view === "table" ? (
-          <NodeTable nodes={nodes} throughput={throughput} period={period} ready={metricsReady} />
+          <NodeTable
+            nodes={nodes}
+            throughput={throughput}
+            period={period}
+            ready={metricsReady}
+            teamNames={teamNames}
+            observe={allTeams ? visible.observe : null}
+          />
         ) : (
-          <NodeCards nodes={nodes} throughput={throughput} period={period} ready={metricsReady} />
+          <NodeCards
+            nodes={nodes}
+            throughput={throughput}
+            period={period}
+            ready={metricsReady}
+            teamNames={teamNames}
+            observe={allTeams ? visible.observe : null}
+          />
         ))}
     </div>
   );
@@ -511,6 +611,9 @@ function nodeVariant(n: Node, m: Throughput | undefined, ready: boolean): Varian
   if (n.root_method === "requestAsync" && m.in - m.out > Math.max(50, m.in * 0.1)) {
     return "warn";
   }
+  // §86.8/§84.7: неизвестный исход не красится в «ok» — соврать оператору
+  // «всё в порядке» хуже, чем не сказать ничего.
+  if (m.lastOutcome === "unknown") return "unknown";
   return "ok";
 }
 
@@ -553,11 +656,19 @@ function NodeTable({
   throughput,
   period,
   ready,
+  teamNames,
+  observe,
 }: {
   nodes: Node[];
   throughput: Map<string, Throughput>;
   period: Period;
   ready: boolean;
+  // teamNames — карта id → имя команды; непуста только в сквозном режиме (§86.7).
+  // Имя резолвит клиент по членствам: сервер выдачу не обогащает (§86.3).
+  teamNames: Map<string, string> | null;
+  // observe — ref-callback порционной загрузки (§86.4); в режиме одной команды
+  // наблюдать нечего, метрики приезжают одним запросом.
+  observe: ((nodeId: string) => (el: Element | null) => void) | null;
 }) {
   const { t } = useTranslation();
   const status = useStatus();
@@ -569,6 +680,9 @@ function NodeTable({
       <table className="w-full min-w-[640px] text-[12.5px]">
         <thead>
           <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-fg-muted">
+            {teamNames && (
+              <th className="px-3 py-2 font-medium">{t("overview.table.team")}</th>
+            )}
             <th className="px-3 py-2 font-medium">{t("overview.table.path")}</th>
             <th className="px-3 py-2 font-medium">{t("overview.table.method")}</th>
             <th className="px-3 py-2 font-medium">{t("overview.table.in")} {plabel}</th>
@@ -583,10 +697,19 @@ function NodeTable({
         </thead>
         <tbody>
           {nodes.map((n) => {
-            const m = throughput.get(n.path);
+            const m = throughput.get(n.id);
             const s = status(n, m, ready);
             return (
-              <tr key={n.id} className="border-b border-line last:border-0 hover:bg-bg-muted">
+              <tr
+                key={n.id}
+                ref={observe?.(n.id)}
+                className="border-b border-line last:border-0 hover:bg-bg-muted"
+              >
+                {teamNames && (
+                  <td className="px-3 py-2.5">
+                    <Chip tone="info">{teamNames.get(n.team_id) ?? "—"}</Chip>
+                  </td>
+                )}
                 <td className="px-3 py-2.5 font-mono">
                   <Link to={`/nodes/${n.id}`} className="hover:text-accent">
                     {n.path}
@@ -638,11 +761,15 @@ function NodeCards({
   throughput,
   period,
   ready,
+  teamNames,
+  observe,
 }: {
   nodes: Node[];
   throughput: Map<string, Throughput>;
   period: Period;
   ready: boolean;
+  teamNames: Map<string, string> | null;
+  observe: ((nodeId: string) => (el: Element | null) => void) | null;
 }) {
   const { t } = useTranslation();
   const status = useStatus();
@@ -651,13 +778,14 @@ function NodeCards({
   return (
     <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
       {nodes.map((n) => {
-        const m = throughput.get(n.path);
+        const m = throughput.get(n.id);
         const s = status(n, m, ready);
         const target =
           n.url_mode === "from_request" ? t("overview.card.dynamic_url") : n.target_url || "—";
         return (
           <Card
             key={n.id}
+            ref={observe?.(n.id)}
             className={cn(
               "flex h-full flex-col gap-3 border-l-[3px]",
               accentByVariant[s.variant],
@@ -680,6 +808,14 @@ function NodeCards({
                   </Pill>
                 </div>
               </div>
+              {/* §86.7: имя команды — в правый слот шапки карточки (он тут уже
+                  был, justify-between с единственным ребёнком). Тот же
+                  визуальный язык, что у результата глобального поиска §62. */}
+              {teamNames && (
+                <Chip tone="info" className="ml-2 shrink-0">
+                  {teamNames.get(n.team_id) ?? "—"}
+                </Chip>
+              )}
             </div>
             <div className="grid grid-cols-3 gap-2 border-y border-line py-2.5 text-center">
               <CardStat label={`${t("overview.table.in")} ${plabel}`} value={m ? fmtNum(m.in) : "—"} />
