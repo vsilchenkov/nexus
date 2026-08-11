@@ -1006,3 +1006,110 @@ func TestReplayFailed_SkipsClientCanceled(t *testing.T) {
 	assert.Empty(t, logs.gotExcludes[0])
 	assert.Equal(t, []string{domain.ReasonClientCanceled}, logs.gotExcludes[1])
 }
+
+// idDispatcher — отдаёт заданные заголовки и тело, чтобы проверить, откуда
+// повтор берёт идентификатор новой записи.
+type idDispatcher struct {
+	headers map[string]string
+	body    string
+	gotReq  port.DispatchRequest
+}
+
+func (d *idDispatcher) Dispatch(_ context.Context, req port.DispatchRequest) (*port.DispatchResponse, error) {
+	d.gotReq = req
+	return &port.DispatchResponse{StatusCode: 200, Body: []byte(d.body), Headers: d.headers}, nil
+}
+
+// TestReplay_NewLogIDComesFromBus — §85.9: идентификатор новой записи берётся из
+// ответа ШИНЫ, а не выдумывается.
+//
+// До правки здесь стоял свежий uuid.NewString(): значение выглядело как
+// идентификатор записи, но не было связано ни с чем, и журнал аудита ссылался
+// на запись, которой не существует.
+func TestReplay_NewLogIDComesFromBus(t *testing.T) {
+	t.Parallel()
+
+	const busID = "3f2a1c9e-11aa-4bb2-8cc3-99dd77ee5566"
+
+	tests := []struct {
+		name    string
+		recType domain.RootMethod
+		sync    bool
+		headers map[string]string
+		body    string
+		want    string
+		why     string
+	}{
+		{
+			name:    "async: штатный ответ шины",
+			recType: domain.RootMethodRequestAsync,
+			body:    `{"result":true,"id":"` + busID + `"}`,
+			want:    busID,
+			why:     "собственная форма шины — идентификатор в теле",
+		},
+		{
+			name:    "async на паузе: 202 queued",
+			recType: domain.RootMethodRequestAsync,
+			body:    `{"result":true,"id":"` + busID + `","queued":true,"node_status":"paused"}`,
+			want:    busID,
+			why:     "§3.6 отвечает той же формой с queued",
+		},
+		{
+			name:    "async с шаблоном §83: идентификатор в заголовке",
+			recType: domain.RootMethodRequestAsync,
+			headers: map[string]string{"X-Nexus-Id": busID},
+			body:    `{"confirmedLogId":79569}`,
+			want:    busID,
+			why:     "тело шаблона пишет оператор, идентификатора там может не быть",
+		},
+		{
+			name:    "sync: тело приёмника НЕ разбирается",
+			recType: domain.RootMethodRequest,
+			body:    `{"id":"` + busID + `","order":42}`,
+			want:    "",
+			why:     "поле id принадлежит приёмнику; принять его за запись журнала нельзя",
+		},
+		{
+			name:    "async: чужой нечисловой id из тела отвергается",
+			recType: domain.RootMethodRequestAsync,
+			body:    `{"result":true,"id":"not-a-uuid"}`,
+			want:    "",
+			why:     "форма шины гарантирует UUID — всё прочее не её",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			node := &domain.Node{
+				ID: "n1", Path: "demo/x", Status: domain.NodeStatusEnabled,
+				ClickHouseTable: "t.t", IncomingMethod: domain.HTTPMethodPOST,
+			}
+			log := &domain.LogRecord{
+				ID: "log1", Type: tt.recType, Request: `{"a":1}`,
+				DateRequest: time.Now(), Done: true,
+			}
+			disp := &idDispatcher{headers: tt.headers, body: tt.body}
+			auditRepo := &stubAuditRepo{}
+			uc := NewReplayUsecase(
+				&stubLogReader{log: log},
+				&stubNodeRepo{nodes: map[string]*domain.Node{"n1": node}},
+				disp, nil, NewAuditUsecase(auditRepo, logging.NewNoop()), 10, logging.NewNoop(),
+			)
+
+			res, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{UseNodeAuth: true})
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, res.NewLogID, tt.why)
+
+			// Пустой идентификатор в аудит не попадает вовсе: строка
+			// «new_log_id: » читалась бы как «запись есть, но безымянная».
+			require.Len(t, auditRepo.entries, 1)
+			got, ok := auditRepo.entries[0].Details["new_log_id"]
+			if tt.want == "" {
+				assert.False(t, ok, "пустой идентификатор не пишется в аудит")
+			} else {
+				assert.Equal(t, tt.want, got)
+			}
+		})
+	}
+}

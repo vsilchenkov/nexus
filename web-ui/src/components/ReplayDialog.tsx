@@ -8,7 +8,11 @@ import { Button, Field, Hint, Input, Modal, Textarea } from "./ui";
 import type { LogDetail } from "./node/types";
 
 type ReplayResult = {
-  new_log_id: string;
+  // §85.9: идентификатор новой записи приходит ИЗ ОТВЕТА ШИНЫ и потому
+  // необязателен — у sync-повтора отвечает приёмник, и идентификатора записи в
+  // его ответе нет ни в каком виде. Раньше сервер присылал сюда выдуманный
+  // UUID, и строка под результатом вела в никуда.
+  new_log_id?: string;
   status_code: number;
   body_preview?: string;
 };
@@ -175,7 +179,12 @@ export function ReplayDialog({
               {result.body_preview}
             </pre>
           )}
-          <div className="font-mono text-xs text-fg-muted">{result.new_log_id}</div>
+          {/* Пустой идентификатор не рисуем вовсе: пустая моноширинная строка
+              читается как «запись есть, но безымянная», хотя означает «шина его
+              не вернула» (sync-повтор). */}
+          {result.new_log_id && (
+            <div className="font-mono text-xs text-fg-muted">{result.new_log_id}</div>
+          )}
         </div>
       )}
     </Modal>

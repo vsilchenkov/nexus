@@ -2744,6 +2744,11 @@ definitions:
           type: string
         type: object
       new_log_id:
+        description: |-
+          NewLogID — идентификатор записи, созданной повтором, как его сообщила
+          шина (см. replayedLogID). ПУСТ у sync-повтора: там ответ приходит от
+          приёмника, и идентификатора записи в нём нет ни в каком виде. Пустое
+          значение наружу не отдаётся — интерфейсу нечего показывать.
         type: string
       status_code:
         type: integer
