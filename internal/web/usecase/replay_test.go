@@ -1020,7 +1020,7 @@ func (d *idDispatcher) Dispatch(_ context.Context, req port.DispatchRequest) (*p
 	return &port.DispatchResponse{StatusCode: 200, Body: []byte(d.body), Headers: d.headers}, nil
 }
 
-// TestReplay_NewLogIDComesFromBus — §85.9: идентификатор новой записи берётся из
+// TestReplay_NewLogIDComesFromBus — §85.10: идентификатор новой записи берётся из
 // ответа ШИНЫ, а не выдумывается.
 //
 // До правки здесь стоял свежий uuid.NewString(): значение выглядело как
