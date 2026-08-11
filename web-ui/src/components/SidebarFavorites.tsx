@@ -98,11 +98,16 @@ export function SidebarFavorites() {
   };
 
   return (
-    <nav className="mt-4 border-t border-line pt-2.5">
+    // Секция забирает ВЕСЬ остаток высоты сайдбара до подвала («Настройки»),
+    // а не фиксированные 40vh (§49.2): на длинном списке прежний потолок давал
+    // скролл при пустом месте снизу — оператор листал там, где листать было
+    // незачем. min-h-0 обязателен: без него flex-ребёнок не даёт вложенному
+    // контейнеру прокручиваться и распирает колонку.
+    <nav className="mt-4 flex min-h-0 flex-1 flex-col border-t border-line pt-2.5">
       <div className="px-2.5 pb-1 text-[10px] uppercase tracking-wide text-fg-subtle">
         {t("nav.favorites")}
       </div>
-      <div className="max-h-[40vh] space-y-0.5 overflow-y-auto">
+      <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
         {allFavorite && (
           <button
             type="button"
