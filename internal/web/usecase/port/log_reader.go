@@ -112,6 +112,21 @@ type LogQuery struct {
 	ExcludeReasonPrefixes []string
 }
 
+// ReplayCursor — позиция keyset-обхода журнала в ХРОНОЛОГИЧЕСКОМ порядке
+// (§85.5). Пара `(date_request, ID)` последней ПРОСМОТРЕННОЙ строки.
+//
+// Курсор описывает просмотренное, а не отданное: страница отсеивает часть строк
+// (§85.5.1), и, встань он на последнюю отданную, следующая страница начала бы с
+// отсеянных — прогон зациклился бы на них.
+type ReplayCursor struct {
+	AfterMs int64
+	AfterID string
+}
+
+// IsZero — курсор не задан. На входе означает «с начала окна», на выходе —
+// «окно пройдено, продолжать нечего».
+func (c ReplayCursor) IsZero() bool { return c.AfterMs == 0 && c.AfterID == "" }
+
 // LogReader — read-only доступ к ClickHouse-логам узлов (§7.4 ТЗ).
 // Используется replay (§7.4.1) и live-tail (§7.4).
 type LogReader interface {
@@ -172,6 +187,22 @@ type LogReader interface {
 	// доставленное (боевой случай: 15 дублей у получателя). Поэтому при
 	// capped=true вернуться может заметно меньше cap элементов — это не ошибка.
 	FailedIDs(ctx context.Context, q LogQuery, cap int) (ids []string, capped bool, err error)
+
+	// ReplayCandidates — страница записей под фильтрами q в ХРОНОЛОГИЧЕСКОМ
+	// порядке (§85.5), по ОДНОЙ записи на строку результата: отдаётся первый
+	// прогон записи в окне — у него исходное тело.
+	//
+	// Тела целиком НЕ читаются: из колонки берутся начало (детект §68), признак
+	// маркера усечения и обе длины — ровно то, что нужно
+	// domain.ClassifyReplayCandidate.
+	//
+	// next — позиция последней ПРОСМОТРЕННОЙ строки; nil-значение
+	// (ReplayCursor.IsZero) означает, что окно пройдено до конца. Отсеянные
+	// строки (§85.5.1) в items не попадают, но курсор через них проходит,
+	// поэтому len(items) < limit концом окна НЕ является.
+	//
+	// q.BeforeID/q.Limit/q.Unresolved игнорируются: обход идёт своим курсором.
+	ReplayCandidates(ctx context.Context, q LogQuery, after ReplayCursor, limit int) (items []domain.ReplayCandidate, next ReplayCursor, err error)
 
 	// DistinctMethods — уникальные непустые значения колонки method узла
 	// (§48.3, фасет дропдауна Method), отсортированные, до limit (кап адаптера).

@@ -278,7 +278,9 @@ func (u *ReplayUsecase) replayOne(ctx context.Context, node *domain.Node, logID 
 		}
 	}
 	// Маркер § «В поле parameters добавляется __replay_of=<original_id>».
-	q.Set("__replay_of", logID)
+	// Имя параметра — доменная константа: по нему массовый повтор §85.6 отсеивает
+	// записи, порождённые прошлыми повторами.
+	q.Set(domain.ReplayOfParam, logID)
 
 	async := orig.Type == domain.RootMethodRequestAsync && !opts.SyncOverride
 
