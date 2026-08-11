@@ -279,6 +279,9 @@ web:
   # trusted_proxies: ["10.0.0.0/8"]                # Phase AUD.5: чьим X-Forwarded-For верить; дефолт — loopback + приватные сети.
   swagger_enabled: false                        # Отдавать ли Swagger UI Web'а (выключай в prod).
   allow_version_override: false                 # §34.3: разрешить ручной override версии в настройках (dev/staging). В prod — false: версия всегда из git.
+  dev_mode: false                               # §85.8: установка тестовая (стенд), а не боевая. В prod — false (и отсутствие ключа значит то же).
+                                                #   Сейчас влияет на одно: форма входа подставляет логин `admin` только на стенде.
+                                                #   Отдельный ключ от allow_version_override намеренно: тот — разрешение на настройку, а не маркер среды.
   receiver_url: http://receiver:8080            # Base URL Receiver: replay-запросы (§7.4.1) и проксирование идут через реальный pipeline.
   # §55: адрес Sender'а для dry-run в РЕАЛЬНОМ режиме (тестовый запрос со снятой
   # галкой mock уходит на target тем же путём, что боевой трафик). Секция
