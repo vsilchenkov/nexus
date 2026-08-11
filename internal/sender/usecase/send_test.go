@@ -501,11 +501,11 @@ func TestTruncateRunes(t *testing.T) {
 		{"max<=0 passes through", "hello", true, 0, "hello"},
 		{"shorter than limit", "hi", true, 5, "hi"},
 		{"exactly at limit", "hello", true, 5, "hello"},
-		{"longer than limit", "hello world", true, 5, "hello" + truncationMarker},
+		{"longer than limit", "hello world", true, 5, "hello" + domain.LogBodyTruncationMarker},
 		{"empty string", "", true, 5, ""},
 		// Режем по РУНАМ, не по байтам: 6 кириллических рун = 12 байт.
-		{"cyrillic by runes", "привет мир", true, 6, "привет" + truncationMarker},
-		{"emoji by runes", "😀😀😀😀😀", true, 2, "😀😀" + truncationMarker},
+		{"cyrillic by runes", "привет мир", true, 6, "привет" + domain.LogBodyTruncationMarker},
+		{"emoji by runes", "😀😀😀😀😀", true, 2, "😀😀" + domain.LogBodyTruncationMarker},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -583,8 +583,8 @@ func TestSend_MaxBodySize_TruncatesLogOnly_ClientFull(t *testing.T) {
 	rec := logw.written[0].rec
 	assert.True(t, rec.Done)
 	// В логе — усечённые копии + маркер.
-	assert.Equal(t, strings.Repeat("я", 10)+truncationMarker, rec.Request)
-	assert.Equal(t, strings.Repeat("😀", 10)+truncationMarker, rec.Response)
+	assert.Equal(t, strings.Repeat("я", 10)+domain.LogBodyTruncationMarker, rec.Request)
+	assert.Equal(t, strings.Repeat("😀", 10)+domain.LogBodyTruncationMarker, rec.Response)
 	assert.True(t, utf8.ValidString(rec.Request))
 	assert.True(t, utf8.ValidString(rec.Response))
 	// checksum — по ПОЛНОМУ телу.
@@ -649,7 +649,7 @@ func TestSend_BodySizes(t *testing.T) {
 		rec := logw.written[0].rec
 		assert.EqualValues(t, len(reqBody), rec.RequestSize, "байты полного запроса, не руны и не усечённая копия")
 		assert.EqualValues(t, len(respBody), rec.ResponseSize, "байты полного ответа при LogResponseBody=false")
-		assert.Equal(t, strings.Repeat("я", 10)+truncationMarker, rec.Request, "копия усечена, размер — нет")
+		assert.Equal(t, strings.Repeat("я", 10)+domain.LogBodyTruncationMarker, rec.Request, "копия усечена, размер — нет")
 		assert.Empty(t, rec.Response)
 	})
 
@@ -928,7 +928,7 @@ func TestSend_MultipartRequest_ExemptFromMaxBodySize(t *testing.T) {
 	require.Len(t, logw.written, 1)
 	rec := logw.written[0].rec
 	assert.True(t, domain.IsMultipartLogPlaceholder(rec.Request))
-	assert.NotContains(t, rec.Request, truncationMarker, "плейсхолдер не режется по max_body_size")
+	assert.NotContains(t, rec.Request, domain.LogBodyTruncationMarker, "плейсхолдер не режется по max_body_size")
 }
 
 // §68: логирование тела выключено — плейсхолдер тоже не пишется (гейт сохранён).

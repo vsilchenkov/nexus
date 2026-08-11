@@ -470,15 +470,16 @@ func (u *SendUsecase) logBodyCopy(kind, contentType string, body []byte, in Send
 	return truncateRunes(string(body), in.MaxBodySizeEnabled, in.MaxBodySize)
 }
 
-// truncationMarker дописывается к сохраняемому телу, если оно было обрезано по
-// max_body_size (§22.2). Делает обрезку видимой в логах/UI.
-const truncationMarker = "…(truncated)"
-
 // truncateRunes режет строку до max СИМВОЛОВ (рун), если на узле включён лимит
 // max_body_size (§22.2). Режем по рунам, а не по байтам, чтобы не порвать
 // многобайтовый UTF-8 и не получить битую запись в ClickHouse. checksum считает
 // вызывающая сторона по полному телу ДО обрезки — целостность сохраняется. На
 // тело, отдаваемое клиенту, обрезка НЕ влияет (только лог).
+//
+// Маркер обрезки — domain.LogBodyTruncationMarker: по нему §85.3 отличает
+// усечённое тело от целого и отказывает в повторе. Своей копии константы здесь
+// быть не должно — разъехавшись, она молча пропустила бы обрезанное тело во
+// внешнюю систему как целое.
 func truncateRunes(s string, enabled bool, max int32) string {
 	if !enabled || max <= 0 {
 		return s
@@ -487,7 +488,7 @@ func truncateRunes(s string, enabled bool, max int32) string {
 	if int32(len(runes)) <= max {
 		return s
 	}
-	return string(runes[:max]) + truncationMarker
+	return string(runes[:max]) + domain.LogBodyTruncationMarker
 }
 
 // appendRedirectNote дописывает к reason лога краткую сводку по редиректам (§50):

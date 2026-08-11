@@ -231,24 +231,12 @@ func (u *ReplayUsecase) replayOne(ctx context.Context, node *domain.Node, logID 
 	}
 
 	// Сборка нового запроса.
-	// HTTP-глагол берём из ВХОДЯЩЕГО метода узла, а не из лога. §39: глагол
-	// записан в колонку http_method (orig.HTTPMethod = исходящий метод), а
-	// orig.Method теперь хранит подпуть passthrough — не глагол. Replay
-	// переинъецирует запрос через входной endpoint Receiver'а, где метод
-	// валидируется против node.IncomingMethod; при OutgoingMethod != IncomingMethod
-	// (POST-in / GET-out) использование залогированного метода давало 405
-	// ErrNodeMethodNotAllowed (§34.5). Пустой IncomingMethod → POST, как
-	// трактует methodMatches в Receiver.
-	method := string(node.IncomingMethod)
-	// §40: ANY-узел принимает любой метод — "ANY" не валидный HTTP-глагол для
-	// реинъекции. Берём залогированный глагол исходного запроса (orig.HTTPMethod,
-	// колонка http_method §39); fallback POST.
-	if node.IncomingMethod == domain.HTTPMethodAny {
-		method = orig.HTTPMethod
-	}
-	if method == "" {
-		method = "POST"
-	}
+	// HTTP-глагол берём из ВХОДЯЩЕГО метода узла, а не из лога (§39/§40/§34.5) —
+	// правило целиком в domain.ReplayEffectiveMethod. Оно общее с массовым
+	// повтором §85, который по тому же глаголу решает, обязательно ли телу быть
+	// в журнале: две копии правила разошлись бы, и предпросмотр обещал бы не то,
+	// что уходит.
+	method := domain.ReplayEffectiveMethod(node.IncomingMethod, orig.HTTPMethod)
 	// Тело: при nil-override берём оригинал из лога. Если узел не логировал
 	// тело (orig.Request пуст) и пользователь его не задал — отказываем явно,
 	// иначе во внешний target ушёл бы пустой body → 400 «empty body» (П1).
