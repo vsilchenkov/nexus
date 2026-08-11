@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,11 +21,14 @@ type scopeTeams struct {
 	nopTeamRepo
 	memberships []*domain.UserTeam
 	byID        map[string]domain.Team
-	listCalls   int
+	// listCalls — атомарный: сквозной режим зовёт членства из нескольких
+	// горутин (singleflight, §86.4), и обычный счётчик красил бы -race в самой
+	// заглушке, маскируя настоящие гонки соседних тестов.
+	listCalls atomic.Int32
 }
 
 func (r *scopeTeams) ListUserTeams(context.Context, string) ([]*domain.UserTeam, error) {
-	r.listCalls++
+	r.listCalls.Add(1)
 	return r.memberships, nil
 }
 
@@ -129,7 +133,7 @@ func TestNodeUC_Create_TeamFallbackAndTrust(t *testing.T) {
 		require.NoError(t, uc.Create(context.Background(), actor, newNodeCreate("team1", "parcel")))
 		// Якорь доверия для команды сессии — логин и switch-team (§18.3/§18.9);
 		// дублировать его запросом на каждое создание узла незачем.
-		assert.Zero(t, teams.listCalls, "на общем пути членства не перечитываются")
+		assert.Zero(t, teams.listCalls.Load(), "на общем пути членства не перечитываются")
 	})
 
 	t.Run("пустая команда → узел уходит в default (прежний контракт)", func(t *testing.T) {
@@ -140,7 +144,7 @@ func TestNodeUC_Create_TeamFallbackAndTrust(t *testing.T) {
 		n := newNodeCreate("", "")
 		require.NoError(t, uc.Create(context.Background(), Actor{UserID: "u1"}, n))
 		assert.Equal(t, "default-team", n.TeamID)
-		assert.Zero(t, teams.listCalls)
+		assert.Zero(t, teams.listCalls.Load())
 	})
 }
 

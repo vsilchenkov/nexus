@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -230,6 +231,71 @@ func TestNodeHandler_List_DefaultScopeUnchanged(t *testing.T) {
 			assert.Empty(t, repo.lastFilter.TeamIDs, "неизвестный scope не включает сквозной режим")
 		})
 	}
+}
+
+// TestMetricsScope (§86.4): разбор скоупа расчёта метрик.
+func TestMetricsScope(t *testing.T) {
+	t.Parallel()
+
+	newCtx := func(query string, asToken bool) (*gin.Context, *httptest.ResponseRecorder) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet, "/?"+query, nil)
+		c.Set(ctxSessionKey, &domain.Session{UserID: "u1", CurrentTeamID: "session-team"})
+		if asToken {
+			c.Set(ctxAPITokenKey, &domain.APIToken{TeamID: "session-team"})
+		}
+		return c, w
+	}
+
+	t.Run("обычный режим — команда сессии", func(t *testing.T) {
+		t.Parallel()
+		c, _ := newCtx("range=24h", false)
+		sc, ok := metricsScope(c)
+		require.True(t, ok)
+		assert.Equal(t, "session-team", sc.TeamID)
+		assert.Empty(t, sc.UserID)
+	})
+
+	t.Run("scope=all — членства, команда сессии не участвует", func(t *testing.T) {
+		t.Parallel()
+		c, _ := newCtx("scope=all", false)
+		sc, ok := metricsScope(c)
+		require.True(t, ok)
+		assert.Equal(t, "u1", sc.UserID)
+		assert.Empty(t, sc.TeamID, "два скоупа сразу в расчёт не уезжают")
+	})
+
+	t.Run("node_ids сужают выборку", func(t *testing.T) {
+		t.Parallel()
+		c, _ := newCtx("node_ids=n1,n2", false)
+		sc, ok := metricsScope(c)
+		require.True(t, ok)
+		assert.Equal(t, []string{"n1", "n2"}, sc.NodeIDs)
+	})
+
+	t.Run("перебор node_ids → 400", func(t *testing.T) {
+		t.Parallel()
+		ids := make([]string, maxNodeIDsPerRequest+1)
+		for i := range ids {
+			ids[i] = "n" + strconv.Itoa(i)
+		}
+		c, w := newCtx("node_ids="+strings.Join(ids, ","), false)
+		_, ok := metricsScope(c)
+		// Потолок отсекает попытку затянуть весь инстанс одним вызовом в обход
+		// порционности — молча урезать список было бы хуже: клиент решил бы, что
+		// получил метрики всех перечисленных узлов.
+		assert.False(t, ok)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("scope=all под API-токеном → 403", func(t *testing.T) {
+		t.Parallel()
+		c, w := newCtx("scope=all", true)
+		_, ok := metricsScope(c)
+		assert.False(t, ok)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
 }
 
 // TestWantsAllTeams (§86.3): регистр и пробелы нормализуются — значение приходит
