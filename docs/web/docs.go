@@ -2376,14 +2376,21 @@ const docTemplate = `{
                         "ApiTokenAuth": []
                     }
                 ],
+                "description": "Без scope — узлы текущей команды сессии. scope=all (§86) — узлы ВСЕХ команд, в которых состоит пользователь; только session-cookie, по API-токену 403 (токен закреплён за одной командой).",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "nodes"
                 ],
-                "summary": "Список узлов команды.",
+                "summary": "Список узлов команды (или всех команд пользователя при scope=all).",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "all — узлы всех команд пользователя (§86)",
+                        "name": "scope",
+                        "in": "query"
+                    },
                     {
                         "type": "string",
                         "description": "поиск по path или target_url",
@@ -2414,6 +2421,12 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ListNodesResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
                     }
                 }

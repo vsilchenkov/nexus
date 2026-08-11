@@ -335,6 +335,64 @@ func (u *NodeUsecase) List(ctx context.Context, f port.ListNodesFilter) ([]*doma
 	return u.repo.List(ctx, f)
 }
 
+// membershipScope — команды пользователя как скоуп кросс-командной операции
+// (§62 поиск, §86 сквозной просмотр): список id для port.ListNodesFilter.TeamIDs
+// и карта id → команда для обогащения выдачи без второго запроса.
+//
+// Пустой список членств — не ошибка: пользователь без команд просто ничего не
+// видит (вызывающий отдаёт пустую выдачу, а не 500).
+func (u *NodeUsecase) membershipScope(ctx context.Context, userID string) ([]string, map[string]domain.Team, error) {
+	memberships, err := u.teams.ListUserTeams(ctx, userID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("list memberships: %w", err)
+	}
+	teamIDs := make([]string, 0, len(memberships))
+	teamByID := make(map[string]domain.Team, len(memberships))
+	for _, m := range memberships {
+		teamIDs = append(teamIDs, m.Team.ID)
+		teamByID[m.Team.ID] = m.Team
+	}
+	return teamIDs, teamByID, nil
+}
+
+// ListAcrossTeams — узлы ВСЕХ команд пользователя одним списком (§86, режим
+// «Все команды»). Фильтры (поиск, root_method, лимит) действуют как в обычном
+// List; скоуп задаётся членствами, а не текущей командой сессии.
+//
+// Членства резолвятся НА КАЖДЫЙ вызов, а не берутся из сессии: сессионный скоуп
+// §18.3 переживает исключение из команды до самолечения §18.9, а сквозной режим
+// не должен (§86.2). Роль видимость не расширяет — admin тоже видит только свои
+// команды (§62.3, §86.9).
+//
+// f.TeamID вызывающего игнорируется: TeamIDs имеет приоритет в репозитории, и
+// смешивать два скоупа в одном запросе нельзя.
+func (u *NodeUsecase) ListAcrossTeams(ctx context.Context, userID string, f port.ListNodesFilter) ([]*domain.Node, error) {
+	if u.teams == nil {
+		return nil, fmt.Errorf("list nodes across teams: team repo unavailable")
+	}
+	teamIDs, _, err := u.membershipScope(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list nodes across teams: %w", err)
+	}
+	if len(teamIDs) == 0 {
+		// §51.9: пустая выдача у пользователя без команд — не ошибка, но повод
+		// для следа: «почему у коллеги пустой рабочий стол» разбирается отсюда.
+		u.logger.Debug("list nodes across teams: user has no memberships",
+			u.logger.Str("user_id", userID))
+		return []*domain.Node{}, nil
+	}
+	f.TeamID = ""
+	f.TeamIDs = teamIDs
+	nodes, err := u.repo.List(ctx, f)
+	if err != nil {
+		return nil, fmt.Errorf("list nodes across teams: list: %w", err)
+	}
+	u.logger.Debug("list nodes across teams",
+		u.logger.Str("user_id", userID), u.logger.Int("teams", len(teamIDs)),
+		u.logger.Int("nodes", len(nodes)))
+	return nodes, nil
+}
+
 // NodeSearchHit — узел, найденный кросс-командным поиском (§62), с командой-
 // владельцем (для бейджа в выпадающем списке и авто-переключения).
 type NodeSearchHit struct {
@@ -374,18 +432,12 @@ func (u *NodeUsecase) SearchAcrossTeams(ctx context.Context, userID, query strin
 	case limit > maxNodeSearchLimit:
 		limit = maxNodeSearchLimit
 	}
-	memberships, err := u.teams.ListUserTeams(ctx, userID)
+	teamIDs, teamByID, err := u.membershipScope(ctx, userID)
 	if err != nil {
-		return nil, fmt.Errorf("search nodes: list memberships: %w", err)
+		return nil, fmt.Errorf("search nodes: %w", err)
 	}
-	if len(memberships) == 0 {
+	if len(teamIDs) == 0 {
 		return nil, nil
-	}
-	teamIDs := make([]string, 0, len(memberships))
-	teamByID := make(map[string]domain.Team, len(memberships))
-	for _, m := range memberships {
-		teamIDs = append(teamIDs, m.Team.ID)
-		teamByID[m.Team.ID] = m.Team
 	}
 	nodes, err := u.repo.List(ctx, port.ListNodesFilter{
 		TeamIDs: teamIDs,
