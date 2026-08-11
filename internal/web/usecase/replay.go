@@ -66,7 +66,11 @@ type ReplayUsecase struct {
 	teams      ReplayTeamResolver     // §18: слаг команды узла для пути реинъекции (nil = без слага)
 	retention  time.Duration          // TTL tombstone'а отмены (= retention топика)
 	rateLimit  int                    // запросов/мин на пользователя (§7.4.1: 10)
-	logger     logging.Logger
+	// periodRateLimit — §85.9: свой лимит батчей массового повтора за период.
+	// Общий rateLimit (10/мин) остановил бы цикл после десятого батча. 0 →
+	// дефолт replayPeriodRateLimit.
+	periodRateLimit int
+	logger          logging.Logger
 }
 
 // ReplayOption — необязательная зависимость ReplayUsecase. Вариадическая форма
@@ -78,6 +82,16 @@ type ReplayOption func(*ReplayUsecase)
 // сообщения уходят, но записи остаются в «Неудачных доставках» до очистки.
 func WithFailedCleaner(c port.FailedLogsCleaner) ReplayOption {
 	return func(u *ReplayUsecase) { u.cleaner = c }
+}
+
+// WithPeriodRateLimit задаёт лимит батчей массового повтора за период (§85.9).
+// Ноль/отрицательное значение оставляет дефолт replayPeriodRateLimit.
+func WithPeriodRateLimit(n int) ReplayOption {
+	return func(u *ReplayUsecase) {
+		if n > 0 {
+			u.periodRateLimit = n
+		}
+	}
 }
 
 func NewReplayUsecase(
