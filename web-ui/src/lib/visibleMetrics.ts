@@ -46,8 +46,6 @@ export type VisibleMetrics = {
   items: Map<string, NodesThroughputResp["items"][number]>;
   // observe — ref-callback для строки/карточки узла.
   observe: (nodeId: string) => (el: Element | null) => void;
-  // requestedCount — сколько узлов уже запрошено (для тестов и отладки).
-  requestedCount: number;
 };
 
 // chunk — нарезка на пачки фиксированного размера.
@@ -189,5 +187,5 @@ export function useVisibleNodeMetrics(opts: VisibleMetricsOptions): VisibleMetri
     },
   });
 
-  return { items, observe, requestedCount: chunks.reduce((n, c) => n + c.length, 0) };
+  return { items, observe };
 }
