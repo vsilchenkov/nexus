@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Trash2, ChevronRight, Pause, Power, Play, RotateCcw } from "lucide-react";
+import { Trash2, ChevronRight, Pause, Power, Play, RotateCcw, History } from "lucide-react";
 
 import { api, type Node } from "../../api/client";
 import { Button, Kpi, KpiRow, Hint, Pill, PeriodPicker, periodWindow, periodKey, defaultPeriod, type Period } from "../ui";
@@ -15,6 +15,7 @@ import { MAX_INFINITE_ROWS, useInfiniteLogs } from "../../lib/useInfiniteLogs";
 import { useConfirm } from "../../lib/confirm";
 import { useRoleAtLeast } from "../../lib/useCurrentRole";
 import { BreakerCard } from "./BreakerCard";
+import { ReplayPeriodDialog } from "./ReplayPeriodDialog";
 
 type QueueMessage = {
   id: string;
@@ -96,6 +97,17 @@ export function QueueTab({
   // id + HTTP-глагол строки — ReplayDialog по нему решает, требуется ли тело
   // (GET — без тела) и какой метод реинъекции покажет поведение бэкенда.
   const [replay, setReplay] = useState<{ id: string; httpMethod?: string } | null>(null);
+  const [replayPeriodOpen, setReplayPeriodOpen] = useState(false);
+
+  // §85: кнопка повтора из логов гаснет по конкретной причине, а не «просто
+  // недоступна» — иначе оператор идёт искать права, хотя дело в конфиге узла.
+  // Сообщение о sync-узле здесь не нужно: у него кнопки нет вовсе (isAsync).
+  const replayPeriodReason = useMemo(() => {
+    if (!node.logging_enabled) return { enabled: false, title: t("queue.replay_period_off_logs") };
+    if (!hasLogsTable) return { enabled: false, title: t("queue.replay_period_off_table") };
+    if (!node.log_request_body) return { enabled: false, title: t("queue.replay_period_off_body") };
+    return { enabled: true, title: undefined as string | undefined };
+  }, [node.logging_enabled, node.log_request_body, hasLogsTable, t]);
 
   // Живая очередь (pending) — manager+ («Управление узлами»). На паузе опрашиваем
   // часто (очередь наполняется, нужна живая обратная связь); если есть pending —
@@ -214,6 +226,20 @@ export function QueueTab({
           идут плитки во всю ширину, и пикер, прижатый к левому краю, ломает
           общую линию правого края страницы. Пустота слева тут не дефект. */}
       <div className="flex flex-wrap items-center justify-end gap-3">
+        {/* §85: повтор запросов из логов за период. Не в секции «Неудачные
+            доставки»: операция идёт по ВСЕМ записям окна, а не по её
+            подмножеству, и место рядом с фильтром периода это отражает. */}
+        {isManager && isAsync && (
+          <Button
+            sm
+            variant="ghost"
+            disabled={!replayPeriodReason.enabled}
+            title={replayPeriodReason.title}
+            onClick={() => setReplayPeriodOpen(true)}
+          >
+            <History className="h-3.5 w-3.5" /> {t("queue.replay_period")}
+          </Button>
+        )}
         <PeriodPicker value={period} onChange={setPeriod} maxLookbackMs={nodeLookbackMs(node)} />
       </div>
 
@@ -523,6 +549,14 @@ export function QueueTab({
           httpMethod={replay.httpMethod}
           incomingMethod={node.incoming_method}
           onClose={() => setReplay(null)}
+        />
+      )}
+
+      {replayPeriodOpen && (
+        <ReplayPeriodDialog
+          node={node}
+          onClose={() => setReplayPeriodOpen(false)}
+          onFinished={invalidateFailed}
         />
       )}
     </div>

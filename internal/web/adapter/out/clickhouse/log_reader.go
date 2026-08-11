@@ -1084,6 +1084,208 @@ func (r *LogReaderCH) markedAmong(ctx context.Context, q port.LogQuery, ids, pre
 	return scanIDs(ctx, conn, sql, args, "clickhouse marked ids")
 }
 
+const (
+	// replayBodyHeadRunes — сколько рун начала тела читает ReplayCandidates.
+	// Хватает с запасом на детект §68-плейсхолдера (media type + первая строка
+	// части); тянуть больше значило бы читать тела ради решения, которое от них
+	// не зависит.
+	replayBodyHeadRunes = 512
+	// replayCandidatesLimit — дефолтный размер страницы обхода.
+	replayCandidatesLimit = 200
+	// replayCandidatesMaxLimit — потолок страницы: строка тянет начало тела,
+	// поэтому цена страницы линейна по её размеру.
+	replayCandidatesMaxLimit = 1000
+)
+
+// replayCandidateCols — проекция записи для §85. Тела целиком не читаются:
+// берутся начало (детект §68), признак маркера усечения и обе длины.
+//
+// Алиасы намеренно НЕ повторяют имена колонок: в ClickHouse алиас SELECT
+// затеняет одноимённую колонку в WHERE, и полнотекстовый фильтр q искал бы по
+// обрезанному началу вместо настоящего тела (та же грабля, что у listCols).
+const replayCandidateCols = `ID,
+	toInt64(toUnixTimestamp64Milli(toDateTime64(date_request, 3))) AS ts,
+	type, http_method, method, url, status, done,
+	request_size,
+	length(request) AS stored_len,
+	substringUTF8(request, 1, ?) AS body_start,
+	endsWith(request, ?) AS body_cut,
+	position(parameters, ?) > 0 AS replay_copy`
+
+// ReplayCandidates — страница записей узла в хронологическом порядке (§85.5).
+//
+// Порядок ASC выбран не для красоты: он сохраняет последовательность запросов
+// при реинжекции (ключ Kafka — путь узла, одна партиция, §3.5), то есть
+// приёмник получит их в том же порядке, что и в оригинале. Он же совпадает с
+// началом ключа сортировки таблицы (`date_create, date_request, …`), поэтому
+// курсор двигает точку старта, а LIMIT останавливает чтение — страница не
+// стоит скана окна.
+func (r *LogReaderCH) ReplayCandidates(
+	ctx context.Context, q port.LogQuery, after port.ReplayCursor, limit int,
+) ([]domain.ReplayCandidate, port.ReplayCursor, error) {
+	if !isSafeTableName(q.Table) {
+		return nil, port.ReplayCursor{}, fmt.Errorf("invalid table name: %q", q.Table)
+	}
+	if limit <= 0 || limit > replayCandidatesMaxLimit {
+		limit = replayCandidatesLimit
+	}
+	// Обход идёт своим курсором: keyset журнала (BeforeID) смотрит в другую
+	// сторону, а Unresolved сузил бы набор до неудачных — ровно того множества,
+	// которого в §85 недостаточно.
+	q.BeforeID, q.Limit, q.Unresolved = "", 0, false
+
+	conds, args := r.searchConds(ctx, q)
+	// Аргументы проекции идут ПЕРЕД аргументами WHERE: подстановки нумеруются
+	// по порядку появления в тексте запроса, а SELECT стоит первым.
+	colArgs := []any{replayBodyHeadRunes, domain.LogBodyTruncationMarker, domain.ReplayOfParam + "="}
+	if !after.IsZero() {
+		conds = append(conds, "(toUnixTimestamp64Milli(toDateTime64(date_request, 3)) > ? "+
+			"OR (toUnixTimestamp64Milli(toDateTime64(date_request, 3)) = ? AND ID > ?))")
+		args = append(args, after.AfterMs, after.AfterMs, after.AfterID)
+	}
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + strings.Join(conds, " AND ")
+	}
+
+	conn, err := r.liveConn()
+	if err != nil {
+		return nil, port.ReplayCursor{}, err
+	}
+	sql := fmt.Sprintf(
+		`SELECT %s FROM %s%s ORDER BY date_request ASC, ID ASC LIMIT 1 BY ID LIMIT ?`,
+		replayCandidateCols, q.Table, where)
+	rows, err := conn.Query(ctx, sql, append(append(colArgs, args...), limit)...)
+	if err != nil {
+		return nil, port.ReplayCursor{}, classifyCHErr("clickhouse replay candidates", err)
+	}
+	defer rows.Close()
+
+	var (
+		page []domain.ReplayCandidate
+		next port.ReplayCursor
+	)
+	for rows.Next() {
+		c, ts, err := scanReplayCandidate(rows)
+		if err != nil {
+			return nil, port.ReplayCursor{}, err
+		}
+		page = append(page, c)
+		next = port.ReplayCursor{AfterMs: ts, AfterID: c.ID}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, port.ReplayCursor{}, classifyCHErr("clickhouse replay candidates", err)
+	}
+	// Страница короче запрошенного — читать больше нечего. Курсор гасим: для
+	// вызывающей стороны это признак конца окна.
+	if len(page) < limit {
+		next = port.ReplayCursor{}
+	}
+	if len(page) == 0 {
+		return nil, next, nil
+	}
+
+	items, err := r.dropSeenEarlier(ctx, q, page)
+	if err != nil {
+		return nil, port.ReplayCursor{}, err
+	}
+	r.logger.Debug("replay candidates page",
+		r.logger.Str("table", q.Table),
+		r.logger.Int("scanned", len(page)),
+		r.logger.Int("kept", len(items)),
+		r.logger.Any("has_more", !next.IsZero()))
+	return items, next, nil
+}
+
+// dropSeenEarlier убирает из страницы записи, чей ПЕРВЫЙ прогон в окне остался
+// позади курсора (§85.5.1).
+//
+// Без этого шага запись с несколькими прогонами уезжает дважды: `LIMIT 1 BY ID`
+// схлопывает прогоны только ВНУТРИ страницы, поэтому запись с прогонами t1 и t3
+// попадает в первую страницу строкой t1, а во вторую — строкой t3. Ровно эта
+// повторная отправка стоила §79 пятнадцати дублей у получателя.
+//
+// Проба ограничена идентификаторами страницы (приём §79.1: платим по МАЛОЙ
+// стороне). Условия и окно — те же, что у страницы, но БЕЗ курсора: минимум
+// ищется по всему окну, иначе он совпал бы с текущей строкой у любой записи.
+func (r *LogReaderCH) dropSeenEarlier(
+	ctx context.Context, q port.LogQuery, page []domain.ReplayCandidate,
+) ([]domain.ReplayCandidate, error) {
+	ids := make([]string, 0, len(page))
+	for _, c := range page {
+		ids = append(ids, c.ID)
+	}
+	conds, args := r.searchConds(ctx, q)
+	conds = append(conds, "ID IN ?")
+	args = append(args, ids)
+
+	conn, err := r.liveConn()
+	if err != nil {
+		return nil, err
+	}
+	sql := fmt.Sprintf(
+		`SELECT ID, toInt64(toUnixTimestamp64Milli(toDateTime64(min(date_request), 3))) AS first_ts
+		 FROM %s WHERE %s GROUP BY ID`,
+		q.Table, strings.Join(conds, " AND "))
+	rows, err := conn.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, classifyCHErr("clickhouse replay first runs", err)
+	}
+	defer rows.Close()
+
+	firstTS := make(map[string]int64, len(ids))
+	for rows.Next() {
+		var (
+			id string
+			ts int64
+		)
+		if err := rows.Scan(&id, &ts); err != nil {
+			return nil, fmt.Errorf("clickhouse replay first runs: scan: %w", err)
+		}
+		firstTS[id] = ts
+	}
+	if err := rows.Err(); err != nil {
+		return nil, classifyCHErr("clickhouse replay first runs", err)
+	}
+
+	out := make([]domain.ReplayCandidate, 0, len(page))
+	for _, c := range page {
+		// Записи нет в пробе — оставляем: пропустить её значило бы молча
+		// потерять запрос из-за расхождения двух чтений.
+		if ts, ok := firstTS[c.ID]; ok && ts != c.DateRequest.UnixMilli() {
+			r.logger.Debug("replay candidate skipped: first run is behind the cursor",
+				r.logger.Str("log_id", c.ID),
+				r.logger.Any("row_ms", c.DateRequest.UnixMilli()),
+				r.logger.Any("first_ms", ts))
+			continue
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+// scanReplayCandidate — разбор строки replayCandidateCols. Второе возвращаемое
+// значение — та же метка времени в UnixMilli, что уходит в курсор: считать её
+// повторно из time.Time было бы лишним преобразованием туда-обратно.
+func scanReplayCandidate(rows chdriver.Rows) (domain.ReplayCandidate, int64, error) {
+	var (
+		c         domain.ReplayCandidate
+		ts        int64
+		typ       string
+		storedLen uint64
+	)
+	if err := rows.Scan(
+		&c.ID, &ts, &typ, &c.HTTPMethod, &c.Method, &c.URL, &c.Status, &c.Done,
+		&c.RequestSize, &storedLen, &c.BodyHead, &c.BodyTruncationMarker, &c.IsReplayCopy,
+	); err != nil {
+		return domain.ReplayCandidate{}, 0, fmt.Errorf("scan replay candidate: %w", err)
+	}
+	c.Type = domain.RootMethod(typ)
+	c.StoredBytes = int64(storedLen)
+	c.DateRequest = time.UnixMilli(ts).UTC()
+	return c, ts, nil
+}
+
 // scanIDs — общий сбор колонки ID.
 func scanIDs(ctx context.Context, conn chgo.Conn, sql string, args []any, op string) ([]string, error) {
 	rows, err := conn.Query(ctx, sql, args...)

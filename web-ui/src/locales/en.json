@@ -958,7 +958,44 @@
       "details": "Details"
     }
   },
+  "replay_period": {
+    "title": "Replay from logs",
+    "step_period": "1. Period",
+    "step_filter": "2. Filter (optional)",
+    "state": "State",
+    "skip_copies": "Skip records that are replays themselves",
+    "frozen_bounds": "Period bounds are frozen when you check: otherwise replays fall into their own window and the run starts amplifying itself.",
+    "check": "Check",
+    "back": "Change period and filter",
+    "send": "Send {{n}} requests",
+    "stop": "Stop",
+    "window": "Period",
+    "will_send": "Will be sent",
+    "will_skip": "Will be skipped",
+    "exact": "The whole window was scanned — the numbers are exact. Records in period: {{total}}.",
+    "not_exact": "Scanned the first {{scanned}} of {{total}} — the rest will be checked while sending.",
+    "empty": "No records",
+    "warn_duplicates": "The receiver will get these requests AGAIN. If it is not idempotent there will be duplicates; sent requests cannot be recalled.",
+    "warn_throughput": "The node drains its queue sequentially, so delivery will take a while — watch the Metrics tab.",
+    "running": "Sending… keep this window open",
+    "progress": "Sent {{replayed}} · failed {{failed}} · skipped {{skipped}}",
+    "processed_until": "Processed until",
+    "done": "Done: sent {{replayed}}, failed {{failed}}.",
+    "stopped": "Stopped: sent {{replayed}}. Start again from the last processed mark to continue.",
+    "col": { "size": "Body size", "reason": "Reason" },
+    "reason": {
+      "record_not_async": "synchronous record",
+      "body_multipart": "multipart — body is not stored",
+      "body_truncated": "body is truncated",
+      "body_missing": "body was not logged",
+      "already_replay": "record is already a replay"
+    }
+  },
   "queue": {
+    "replay_period": "Replay from logs",
+    "replay_period_off_logs": "Node logging is off — there is nothing to replay",
+    "replay_period_off_table": "The node has no logs table configured",
+    "replay_period_off_body": "The node does not log request bodies — replay is impossible",
     "head": {
       "summary": "Waiting: {{waiting}} · partition {{partition}} · head age {{age}}",
       "age_min": "{{m}} min",

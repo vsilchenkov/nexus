@@ -27,11 +27,15 @@ type VersionHandler struct {
 	// instance — §70.8: идентификатор ноды для бейджа в шапке. Пустой у ноды
 	// без идентификатора: бейдж тогда не рендерится вовсе.
 	instance string
+	// devMode — §85.8: установка тестовая. Форме входа этого достаточно, чтобы
+	// решить, подставлять ли логин `admin`; больше признаков среды наружу не
+	// отдаётся.
+	devMode bool
 }
 
 // NewVersionHandler — version/commit/buildDate обычно из cfg.Build; overrideAllowed
 // = cfg.Web.AllowVersionOverride; override — провайдер из app_settings (может быть nil).
-func NewVersionHandler(version, commit, buildDate string, overrideAllowed bool, override func(ctx context.Context) string, instance string) *VersionHandler {
+func NewVersionHandler(version, commit, buildDate string, overrideAllowed bool, override func(ctx context.Context) string, instance string, devMode bool) *VersionHandler {
 	return &VersionHandler{
 		version:         version,
 		commit:          commit,
@@ -39,6 +43,7 @@ func NewVersionHandler(version, commit, buildDate string, overrideAllowed bool, 
 		overrideAllowed: overrideAllowed,
 		override:        override,
 		instance:        instance,
+		devMode:         devMode,
 	}
 }
 
@@ -62,5 +67,6 @@ func (h *VersionHandler) Get(c *gin.Context) {
 		BuildDate:       h.buildDate,
 		OverrideAllowed: h.overrideAllowed,
 		Instance:        h.instance,
+		DevMode:         h.devMode,
 	})
 }

@@ -1220,6 +1220,15 @@ definitions:
         type: string
       commit:
         type: string
+      dev_mode:
+        description: |-
+          DevMode — §85.8: установка тестовая (web.dev_mode). Единственный публичный
+          признак среды, доступный форме входа: /api/version — единственный /api без
+          авторизации, и SPA его уже запрашивает ради версии в футере.
+
+          НЕ путать с OverrideAllowed: тот разрешает конкретную настройку §34.3.
+          Отдавать наружу dev_mode=false безопасно, true бывает только на стенде.
+        type: boolean
       instance:
         description: |-
           Instance — идентификатор ноды (§70.8). Пустой у ноды без идентификатора,
@@ -1972,6 +1981,29 @@ definitions:
     required:
     - q
     type: object
+  internal_web_adapter_in_http.replayCursorDTO:
+    properties:
+      after_id:
+        type: string
+      after_ms:
+        type: integer
+    type: object
+  internal_web_adapter_in_http.replayPeriodRequest:
+    properties:
+      cursor:
+        allOf:
+        - $ref: '#/definitions/internal_web_adapter_in_http.replayCursorDTO'
+        description: Cursor — позиция продолжения из предыдущего батча; отсутствует
+          у первого.
+      limit:
+        description: Limit — размер батча; 0 = серверный дефолт.
+        type: integer
+      skip_replay_copies:
+        description: |-
+          SkipReplayCopies — не брать записи, порождённые прошлыми повторами (§85.6).
+          Указатель, чтобы отличить «не прислано» (дефолт true) от явного false.
+        type: boolean
+    type: object
   internal_web_adapter_in_http.requestFieldRequest:
     properties:
       description:
@@ -2623,6 +2655,84 @@ definitions:
         description: уникальных неудачных найдено (в пределах cap)
         type: integer
     type: object
+  nexus_internal_web_usecase.ReplayCandidateView:
+    properties:
+      date_request:
+        type: string
+      done:
+        type: boolean
+      http_method:
+        type: string
+      id:
+        type: string
+      method:
+        type: string
+      request_size:
+        type: integer
+      skip_reason:
+        description: SkipReason — пусто у пригодной записи.
+        type: string
+      status:
+        type: integer
+      url:
+        type: string
+    type: object
+  nexus_internal_web_usecase.ReplayPeriodBatch:
+    properties:
+      failed:
+        type: integer
+      next_cursor:
+        allOf:
+        - $ref: '#/definitions/nexus_internal_web_usecase_port.ReplayCursor'
+        description: NextCursor — продолжение; nil означает, что окно пройдено до
+          конца.
+      replayed:
+        type: integer
+      scanned:
+        type: integer
+      skipped_by:
+        additionalProperties:
+          type: integer
+        type: object
+    type: object
+  nexus_internal_web_usecase.ReplayPeriodPlan:
+    properties:
+      eligible:
+        description: Eligible — сколько из разобранных будет отправлено.
+        type: integer
+      eligibles:
+        description: Eligibles / Ineligibles — примеры обеих групп.
+        items:
+          $ref: '#/definitions/nexus_internal_web_usecase.ReplayCandidateView'
+        type: array
+      exact:
+        description: |-
+          Exact — окно разобрано целиком, значит счётчики точные. false означает
+          «упёрлись в потолок разбора», и интерфейс обязан сказать это словами.
+        type: boolean
+      from:
+        description: |-
+          From / To — ЗАФИКСИРОВАННЫЕ границы окна: клиент обязан слать их обратно
+          в каждый батч, иначе «по сейчас» затянет в набор собственные повторы.
+        type: string
+      ineligibles:
+        items:
+          $ref: '#/definitions/nexus_internal_web_usecase.ReplayCandidateView'
+        type: array
+      scanned:
+        description: Scanned — сколько записей реально разобрано.
+        type: integer
+      skipped_by:
+        additionalProperties:
+          type: integer
+        description: SkippedBy — причина (§85.3) → сколько записей.
+        type: object
+      to:
+        type: string
+      total:
+        description: Total — записей окна под фильтром (uniqExact по ID).
+        type: integer
+    type: object
   nexus_internal_web_usecase.ReplayResult:
     properties:
       body_preview:
@@ -2634,6 +2744,11 @@ definitions:
           type: string
         type: object
       new_log_id:
+        description: |-
+          NewLogID — идентификатор записи, созданной повтором, как его сообщила
+          шина (см. replayedLogID). ПУСТ у sync-повтора: там ответ приходит от
+          приёмника, и идентификатора записи в нём нет ни в каком виде. Пустое
+          значение наружу не отдаётся — интерфейсу нечего показывать.
         type: string
       status_code:
         type: integer
@@ -2658,6 +2773,14 @@ definitions:
         type: integer
       ok:
         type: boolean
+    type: object
+  nexus_internal_web_usecase_port.ReplayCursor:
+    properties:
+      afterID:
+        type: string
+      afterMs:
+        format: int64
+        type: integer
     type: object
 info:
   contact: {}
@@ -5288,6 +5411,127 @@ paths:
       - CookieAuth: []
       - ApiTokenAuth: []
       summary: Уникальные значения method узла для фасета фильтра (§48.3).
+      tags:
+      - logs
+  /api/nodes/{id}/logs/replay-period/plan:
+    post:
+      consumes:
+      - application/json
+      description: 'Read-only: сообщает, сколько записей окна будет отправлено, а
+        сколько нет и почему (тело обрезано / multipart / не сохранено / синхронная
+        запись / запись-повтор). Ничего не отправляет и в аудит не пишет. Фильтр —
+        те же query-параметры, что у GET /api/nodes/{id}/logs. Флаг exact=false означает,
+        что окно разобрано не целиком (потолок разбора) и числа неполные. Границы
+        окна возвращаются в ответе — их надо слать обратно в каждый батч, иначе «по
+        сейчас» затянет в набор собственные повторы.'
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: начало окна (RFC3339 или UnixMilli)
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: конец окна (RFC3339 или UnixMilli)
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: опции
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.replayPeriodRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/nexus_internal_web_usecase.ReplayPeriodPlan'
+        "400":
+          description: нет границ окна / плохой поисковый запрос
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "409":
+          description: узел отключён или синхронный
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "422":
+          description: узел не логирует тело запроса
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Предпросмотр повторной отправки из логов за период (§85.7).
+      tags:
+      - logs
+  /api/nodes/{id}/logs/replay-period/run:
+    post:
+      consumes:
+      - application/json
+      description: Реинжектирует до limit записей окна через Receiver и возвращает
+        курсор продолжения; next_cursor=null означает, что окно пройдено. Цикл батчей
+        крутит клиент. Повторяются только async-записи; уже отправленные повторно
+        не берутся благодаря курсору. Аудит пишется на каждый батч.
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: начало окна (RFC3339 или UnixMilli)
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: конец окна (RFC3339 или UnixMilli)
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: курсор и опции
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.replayPeriodRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/nexus_internal_web_usecase.ReplayPeriodBatch'
+        "400":
+          description: нет границ окна / плохой поисковый запрос
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "409":
+          description: узел отключён или синхронный
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "422":
+          description: узел не логирует тело запроса
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "429":
+          description: rate limit exceeded
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Батч повторной отправки из логов за период (§85.5).
       tags:
       - logs
   /api/nodes/{id}/logs/stream:

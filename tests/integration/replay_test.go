@@ -29,7 +29,8 @@ import (
 //   - прочитать оригинальный log из CH через LogReader;
 //   - вызвать ReceiverDispatcher с маркером __replay_of=<orig_id> в query и
 //     оригинальным телом запроса;
-//   - вернуть NewLogID и StatusCode из ответа dispatcher'а;
+//   - вернуть StatusCode из ответа dispatcher'а, а NewLogID — только если
+//     идентификатор сообщила сама шина (§85.10: у sync-повтора его нет);
 //   - записать audit-запись domain.ActionNodeReplay.
 //
 // ReceiverDispatcher здесь — capturingDispatcher (fake), потому что иначе
@@ -145,23 +146,35 @@ func TestReplay_E2E_ClickHouse(t *testing.T) {
 	}
 	result, err := replayUC.Replay(ctx, actor, origID, n.ID, "", webuc.ReplayOptions{})
 	require.NoError(t, err)
-	require.NotEmpty(t, result.NewLogID, "replay must return new id")
+	// §85.10: узел синхронный, значит отвечает ПРИЁМНИК, и идентификатора
+	// записи журнала в его ответе нет ни в каком виде — поле обязано быть
+	// пустым. Прежний ассерт «must return new id» проверял, что выдуманный
+	// uuid.NewString() непуст, то есть фиксировал ровно ту неправду, из-за
+	// которой аудит ссылался на несуществующую запись.
+	require.Empty(t, result.NewLogID,
+		"sync-повтор: шина идентификатор не возвращает, придумывать его нельзя")
 	require.Equal(t, 200, result.StatusCode)
 	require.Equal(t, `{"replayed":true}`, result.BodyPreview)
 
 	// 4. Dispatcher: __replay_of в query + оригинальное тело.
+	//
+	// Снимок под локом, а не проверки под `defer Unlock`: ниже идёт второй
+	// прогон, которому нужно перезаписать ответ заглушки, и удержанный до конца
+	// функции мьютекс дал бы самоблокировку.
 	dispatcher.mu.Lock()
-	defer dispatcher.mu.Unlock()
-	require.NotNil(t, dispatcher.req, "dispatcher must be called once")
-	require.Equal(t, "demo/replay", dispatcher.req.NodePath)
-	require.False(t, dispatcher.req.Async, "node.RootMethod=request → sync replay")
-	require.Equal(t, "POST", dispatcher.req.Method)
-	require.Equal(t, `{"hello":"world"}`, string(dispatcher.req.Body))
-	require.Equal(t, origID, dispatcher.req.Query.Get("__replay_of"),
+	req := dispatcher.req
+	dispatcher.mu.Unlock()
+
+	require.NotNil(t, req, "dispatcher must be called once")
+	require.Equal(t, "demo/replay", req.NodePath)
+	require.False(t, req.Async, "node.RootMethod=request → sync replay")
+	require.Equal(t, "POST", req.Method)
+	require.Equal(t, `{"hello":"world"}`, string(req.Body))
+	require.Equal(t, origID, req.Query.Get("__replay_of"),
 		"replay must inject __replay_of marker (§7.4.1)")
 	// Оригинальные query-параметры должны сохраниться рядом с __replay_of.
-	require.Equal(t, "1", dispatcher.req.Query.Get("x"))
-	require.Equal(t, "2", dispatcher.req.Query.Get("y"))
+	require.Equal(t, "1", req.Query.Get("x"))
+	require.Equal(t, "2", req.Query.Get("y"))
 
 	// 5. Audit: одна запись о replay привязана к log_id.
 	entries, err := auditRepo.List(ctx, port.AuditFilter{TargetID: origID, Limit: 10})
@@ -170,6 +183,27 @@ func TestReplay_E2E_ClickHouse(t *testing.T) {
 	require.Equal(t, domain.ActionNodeReplay, entries[0].Action)
 	require.Equal(t, "log", entries[0].TargetType)
 	require.Equal(t, actor.UserID, entries[0].UserID)
+	// §85.10: пустой идентификатор в аудит не пишется вовсе — строка
+	// «new_log_id: » читалась бы как «запись есть, но безымянная».
+	require.NotContains(t, entries[0].Details, "new_log_id",
+		"у sync-повтора идентификатора нет — в аудит он не попадает")
+
+	// 6. §85.10: когда шина идентификатор ВОЗВРАЩАЕТ, он доходит до результата.
+	// Заголовок X-Nexus-Id Receiver ставит при ответе по шаблону §83; здесь он
+	// проверяется сквозь весь usecase, а не только в разборе.
+	const busID = "9c1e0a44-77bb-4c22-9d31-1a2b3c4d5e6f"
+	dispatcher.mu.Lock()
+	dispatcher.response = &port.DispatchResponse{
+		StatusCode: 200,
+		Body:       []byte(`{"confirmedLogId":79569}`),
+		Headers:    map[string]string{"X-Nexus-Id": busID},
+	}
+	dispatcher.mu.Unlock()
+
+	withID, err := replayUC.Replay(ctx, actor, origID, n.ID, "", webuc.ReplayOptions{})
+	require.NoError(t, err)
+	require.Equal(t, busID, withID.NewLogID,
+		"идентификатор берётся из ответа шины, а не генерируется")
 }
 
 // capturingDispatcher — port.ReceiverDispatcher, который запоминает первый

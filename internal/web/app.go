@@ -311,6 +311,7 @@ func (a *App) Start(ctx context.Context) error {
 		a.cfg.Build.Version, a.cfg.Build.Commit, a.cfg.Build.BuildDate,
 		a.cfg.Web.AllowVersionOverride, versionOverride,
 		a.identity.ID.String(), // §70.8: бейдж ноды в шапке
+		a.cfg.Web.DevMode,      // §85.8: префилл логина только на стенде
 	).Get)
 	// Telegram-клиент (§20): для тестовой отправки и планировщика уведомлений.
 	telegramClient := telegram.New(a.logger)
@@ -524,6 +525,9 @@ func (a *App) Start(ctx context.Context) error {
 			// оригиналов — иначе записи остаются в «Неудачных доставках» до
 			// ручной очистки, хотя сообщения уже доставлены.
 			usecase.WithFailedCleaner(logReader),
+			// §85.9: у массового повтора за период свой счёт — цикл батчей
+			// крутит клиент, и общий лимит одиночного replay остановил бы его.
+			usecase.WithPeriodRateLimit(a.cfg.Web.ReplayPeriodRateLimitPerUserPerMin),
 		)
 		logsUC := usecase.NewLogsUsecase(logReader, nodeRepo, a.logger)
 		replayHandler = httpadapter.NewReplayHandler(replayUC, a.logger)

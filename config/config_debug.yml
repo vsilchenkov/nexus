@@ -159,3 +159,5 @@ web:
   api_token_rate_limit_per_min: 1000
   swagger_enabled: true
   receiver_url: ${RECEIVER_URL:http://localhost:8080}
+  dev_mode: true                 # §85.8: отладочная установка — форма входа подставляет логин `admin`.
+                                 # На бою ключ либо false, либо отсутствует (дефолт false) — префилла нет.

@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -47,7 +48,11 @@ type ReplayOptions struct {
 
 // ReplayResult — что вернётся клиенту в ответ на POST /api/logs/{id}/replay.
 type ReplayResult struct {
-	NewLogID    string            `json:"new_log_id"`
+	// NewLogID — идентификатор записи, созданной повтором, как его сообщила
+	// шина (см. replayedLogID). ПУСТ у sync-повтора: там ответ приходит от
+	// приёмника, и идентификатора записи в нём нет ни в каком виде. Пустое
+	// значение наружу не отдаётся — интерфейсу нечего показывать.
+	NewLogID    string            `json:"new_log_id,omitempty"`
 	StatusCode  int               `json:"status_code"`
 	DurationMs  int64             `json:"duration_ms"`
 	BodyPreview string            `json:"body_preview"`
@@ -66,7 +71,11 @@ type ReplayUsecase struct {
 	teams      ReplayTeamResolver     // §18: слаг команды узла для пути реинъекции (nil = без слага)
 	retention  time.Duration          // TTL tombstone'а отмены (= retention топика)
 	rateLimit  int                    // запросов/мин на пользователя (§7.4.1: 10)
-	logger     logging.Logger
+	// periodRateLimit — §85.9: свой лимит батчей массового повтора за период.
+	// Общий rateLimit (10/мин) остановил бы цикл после десятого батча. 0 →
+	// дефолт replayPeriodRateLimit.
+	periodRateLimit int
+	logger          logging.Logger
 }
 
 // ReplayOption — необязательная зависимость ReplayUsecase. Вариадическая форма
@@ -78,6 +87,16 @@ type ReplayOption func(*ReplayUsecase)
 // сообщения уходят, но записи остаются в «Неудачных доставках» до очистки.
 func WithFailedCleaner(c port.FailedLogsCleaner) ReplayOption {
 	return func(u *ReplayUsecase) { u.cleaner = c }
+}
+
+// WithPeriodRateLimit задаёт лимит батчей массового повтора за период (§85.9).
+// Ноль/отрицательное значение оставляет дефолт replayPeriodRateLimit.
+func WithPeriodRateLimit(n int) ReplayOption {
+	return func(u *ReplayUsecase) {
+		if n > 0 {
+			u.periodRateLimit = n
+		}
+	}
 }
 
 func NewReplayUsecase(
@@ -177,12 +196,17 @@ func (u *ReplayUsecase) Replay(
 	if err != nil {
 		return nil, err
 	}
-	u.audit.Log(ctx, actor, domain.ActionNodeReplay, "log", logID, map[string]any{
+	details := map[string]any{
 		"node_id":       node.ID,
-		"new_log_id":    res.NewLogID,
 		"status_code":   res.StatusCode,
 		"sync_override": opts.SyncOverride,
-	})
+	}
+	// Пустой идентификатор в аудит НЕ пишем: строка «new_log_id: » читается как
+	// «запись есть, но безымянная», хотя означает «шина его не вернула».
+	if res.NewLogID != "" {
+		details["new_log_id"] = res.NewLogID
+	}
+	u.audit.Log(ctx, actor, domain.ActionNodeReplay, "log", logID, details)
 	return res, nil
 }
 
@@ -231,24 +255,12 @@ func (u *ReplayUsecase) replayOne(ctx context.Context, node *domain.Node, logID 
 	}
 
 	// Сборка нового запроса.
-	// HTTP-глагол берём из ВХОДЯЩЕГО метода узла, а не из лога. §39: глагол
-	// записан в колонку http_method (orig.HTTPMethod = исходящий метод), а
-	// orig.Method теперь хранит подпуть passthrough — не глагол. Replay
-	// переинъецирует запрос через входной endpoint Receiver'а, где метод
-	// валидируется против node.IncomingMethod; при OutgoingMethod != IncomingMethod
-	// (POST-in / GET-out) использование залогированного метода давало 405
-	// ErrNodeMethodNotAllowed (§34.5). Пустой IncomingMethod → POST, как
-	// трактует methodMatches в Receiver.
-	method := string(node.IncomingMethod)
-	// §40: ANY-узел принимает любой метод — "ANY" не валидный HTTP-глагол для
-	// реинъекции. Берём залогированный глагол исходного запроса (orig.HTTPMethod,
-	// колонка http_method §39); fallback POST.
-	if node.IncomingMethod == domain.HTTPMethodAny {
-		method = orig.HTTPMethod
-	}
-	if method == "" {
-		method = "POST"
-	}
+	// HTTP-глагол берём из ВХОДЯЩЕГО метода узла, а не из лога (§39/§40/§34.5) —
+	// правило целиком в domain.ReplayEffectiveMethod. Оно общее с массовым
+	// повтором §85, который по тому же глаголу решает, обязательно ли телу быть
+	// в журнале: две копии правила разошлись бы, и предпросмотр обещал бы не то,
+	// что уходит.
+	method := domain.ReplayEffectiveMethod(node.IncomingMethod, orig.HTTPMethod)
 	// Тело: при nil-override берём оригинал из лога. Если узел не логировал
 	// тело (orig.Request пуст) и пользователь его не задал — отказываем явно,
 	// иначе во внешний target ушёл бы пустой body → 400 «empty body» (П1).
@@ -290,7 +302,9 @@ func (u *ReplayUsecase) replayOne(ctx context.Context, node *domain.Node, logID 
 		}
 	}
 	// Маркер § «В поле parameters добавляется __replay_of=<original_id>».
-	q.Set("__replay_of", logID)
+	// Имя параметра — доменная константа: по нему массовый повтор §85.6 отсеивает
+	// записи, порождённые прошлыми повторами.
+	q.Set(domain.ReplayOfParam, logID)
 
 	async := orig.Type == domain.RootMethodRequestAsync && !opts.SyncOverride
 
@@ -360,11 +374,49 @@ func (u *ReplayUsecase) replayOne(ctx context.Context, node *domain.Node, logID 
 	}
 
 	return &ReplayResult{
-		NewLogID:    uuid.NewString(),
+		NewLogID:    replayedLogID(resp, async),
 		StatusCode:  resp.StatusCode,
 		BodyPreview: previewBody(resp.Body, 512),
 		Headers:     resp.Headers,
 	}, nil
+}
+
+// replayedLogID — идентификатор ЗАПИСИ, созданной повтором, как его сообщила
+// сама шина. Пустая строка означает «шина идентификатор не вернула», и это
+// честный ответ, а не деградация.
+//
+// До §85.10 здесь стоял свежий uuid.NewString(): значение выглядело как
+// идентификатор записи, но не было связано ни с чем — журнал аудита ссылался на
+// запись, которой не существует.
+//
+// Два источника, и порядок между ними важен:
+//
+//   - заголовок X-Nexus-Id — его Receiver ставит, когда отвечает по шаблону
+//     §83: тело там пишет оператор, и идентификатора в нём может не быть вовсе;
+//   - тело штатного async-ответа `{"result":true,"id":"<uuid>"}` (и 202 узла на
+//     паузе, §3.6) — собственная форма шины.
+//
+// Тело SYNC-ответа не разбирается никогда: это ответ ПРИЁМНИКА, и его
+// собственное поле `id` (заказ, документ, что угодно) уехало бы в аудит как
+// идентификатор записи журнала. По той же причине значение из тела обязано быть
+// валидным UUID — форма шины гарантирует именно его.
+func replayedLogID(resp *port.DispatchResponse, async bool) string {
+	if id := resp.Headers["X-Nexus-Id"]; id != "" {
+		return id
+	}
+	if !async {
+		return ""
+	}
+	var ack struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(resp.Body, &ack); err != nil || ack.ID == "" {
+		return ""
+	}
+	if _, err := uuid.Parse(ack.ID); err != nil {
+		return ""
+	}
+	return ack.ID
 }
 
 // ReplayBulkResult — итог «Повторить все сейчас» (§36.11).

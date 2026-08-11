@@ -172,6 +172,13 @@ type VersionResponse struct {
 	// Instance — идентификатор ноды (§70.8). Пустой у ноды без идентификатора,
 	// поэтому omitempty: интерфейс действующей ноды не меняется.
 	Instance string `json:"instance,omitempty"`
+	// DevMode — §85.8: установка тестовая (web.dev_mode). Единственный публичный
+	// признак среды, доступный форме входа: /api/version — единственный /api без
+	// авторизации, и SPA его уже запрашивает ради версии в футере.
+	//
+	// НЕ путать с OverrideAllowed: тот разрешает конкретную настройку §34.3.
+	// Отдавать наружу dev_mode=false безопасно, true бывает только на стенде.
+	DevMode bool `json:"dev_mode"`
 }
 
 // PublicSettingsResponse — GET /api/settings/public.
