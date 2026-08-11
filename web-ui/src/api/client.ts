@@ -45,8 +45,16 @@ export const api = {
     const r = await axiosInstance.get<T>(url, { params, signal: opts?.signal });
     return r.data;
   },
-  async post<T>(url: string, body?: unknown): Promise<T> {
-    const r = await axiosInstance.post<T>(url, body);
+  // opts.params — query-параметры POST-запроса. Нужны там, где фильтр приходит
+  // теми же параметрами, что у соответствующего GET (§85: фильтр журнала
+  // разбирает общий с ним logQueryFromContext), а в теле лежит только состояние
+  // операции. opts.signal — настоящая отмена (кнопка «Остановить» цикла батчей).
+  async post<T>(
+    url: string,
+    body?: unknown,
+    opts?: { params?: Record<string, unknown>; signal?: AbortSignal },
+  ): Promise<T> {
+    const r = await axiosInstance.post<T>(url, body, { params: opts?.params, signal: opts?.signal });
     return r.data;
   },
   async put<T>(url: string, body?: unknown): Promise<T> {

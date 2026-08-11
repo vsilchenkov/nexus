@@ -121,10 +121,14 @@ func (u *ReplayUsecase) PlanPeriod(ctx context.Context, in ReplayPeriodInput) (R
 		return ReplayPeriodPlan{}, err
 	}
 
+	// Списки инициализируются пустыми, а не nil: nil-срез уходит в JSON как
+	// null, и клиенту пришлось бы страховаться на каждом обращении к списку.
 	plan := ReplayPeriodPlan{
-		SkippedBy: map[string]int{},
-		From:      time.UnixMilli(q.SinceMs).UTC(),
-		To:        time.UnixMilli(q.UntilMs).UTC(),
+		SkippedBy:   map[string]int{},
+		Eligibles:   []ReplayCandidateView{},
+		Ineligibles: []ReplayCandidateView{},
+		From:        time.UnixMilli(q.SinceMs).UTC(),
+		To:          time.UnixMilli(q.UntilMs).UTC(),
 	}
 	total, err := u.logs.Count(ctx, q)
 	if err != nil {
