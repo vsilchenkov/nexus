@@ -88,6 +88,7 @@
   "role": {
     "admin": "full access",
     "manager": "manage nodes",
+    "operator": "operate nodes",
     "viewer": "read-only"
   },
   "overview": {
@@ -1270,7 +1271,9 @@
         "admin": "Full access",
         "admin_hint": "Manage everything in Nexus.",
         "manager": "Manage nodes",
-        "manager_hint": "Manage nodes, host/header catalogs and view audit; no users, global settings or CH templates.",
+        "manager_hint": "Everything an Operator can do, plus creating and editing nodes, dry-run and host/header catalogs; no users, global settings or CH templates.",
+        "operator": "Operator",
+        "operator_hint": "Run the node queue (pause, purge, retry) and replay requests from logs; view audit. Cannot create or edit nodes.",
         "viewer": "Read-only",
         "viewer_hint": "View nodes, logs and audit; no modifications."
       },

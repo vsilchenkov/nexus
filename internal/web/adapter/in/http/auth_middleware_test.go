@@ -171,6 +171,13 @@ func TestRequireMinRole(t *testing.T) {
 		{"manager < admin → 403", &domain.Session{Role: domain.UserRoleManager}, domain.UserRoleAdmin, 403},
 		{"admin >= admin → ok", &domain.Session{Role: domain.UserRoleAdmin}, domain.UserRoleAdmin, 200},
 		{"no session → 403", nil, domain.UserRoleManager, 403},
+		// §87: оператор проходит свои гейты и не проходит менеджерские.
+		{"operator >= operator → ok", &domain.Session{Role: domain.UserRoleOperator}, domain.UserRoleOperator, 200},
+		{"operator < manager → 403", &domain.Session{Role: domain.UserRoleOperator}, domain.UserRoleManager, 403},
+		{"operator < admin → 403", &domain.Session{Role: domain.UserRoleOperator}, domain.UserRoleAdmin, 403},
+		{"manager >= operator → ok", &domain.Session{Role: domain.UserRoleManager}, domain.UserRoleOperator, 200},
+		{"admin >= operator → ok", &domain.Session{Role: domain.UserRoleAdmin}, domain.UserRoleOperator, 200},
+		{"viewer < operator → 403", &domain.Session{Role: domain.UserRoleViewer}, domain.UserRoleOperator, 403},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

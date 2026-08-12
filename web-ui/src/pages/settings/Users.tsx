@@ -274,6 +274,8 @@ export function UsersPanel() {
                           ? "bg-accent/15 text-accent"
                           : u.role === "manager"
                           ? "bg-ok/15 text-ok"
+                          : u.role === "operator"
+                          ? "bg-warn/15 text-warn"
                           : "bg-fg-muted/15 text-fg-muted"
                       }`}
                     >
@@ -717,7 +719,10 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
 
   return (
     <Modal onClose={onClose}>
-      <div className="space-y-4 w-[460px] max-w-full">
+      {/* §87.5: четвёртая роль добавила ряд карточек — без ограничения высоты
+          форма создания выталкивала бы кнопки за нижний край на низких экранах
+          (у Modal своей прокрутки нет). */}
+      <div className="space-y-4 w-[460px] max-w-full max-h-[80vh] overflow-y-auto pr-1">
         <header>
           <h3 className="text-lg font-semibold">
             {mode === "create"
@@ -812,8 +817,13 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
             <label className="text-xs uppercase tracking-wider text-fg-muted">
               {t("settings.users.field.role")}
             </label>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-              {(["admin", "manager", "viewer"] as const).map((r) => {
+            {/*
+              §87.5: ролей стало четыре, и в один ряд они не помещаются — окно
+              диалога 460px, на карточку осталось бы ~97px и подсказки рвались бы
+              по слогам. Отсюда сетка 2×2; порядок — по убыванию прав.
+            */}
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {(["admin", "manager", "operator", "viewer"] as const).map((r) => {
                 const disabledLastAdmin = isLastAdmin && r !== "admin";
                 const disabledSelf = isSelf && initial?.role === "admin" && r !== "admin";
                 const disabled = disabledLastAdmin || disabledSelf;

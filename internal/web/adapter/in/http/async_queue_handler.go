@@ -15,7 +15,7 @@ import (
 )
 
 // AsyncQueueHandler — управление async-очередью Kafka на узле requestAsync (§34.4).
-// Admin-only (регистрируется в authedAdmin), мутации под CSRF (глобально на /api).
+// Operator+ (регистрируется в authedOperator, §87), мутации под CSRF (глобально на /api).
 type AsyncQueueHandler struct {
 	uc     *usecase.AsyncQueueUsecase
 	logger logging.Logger
@@ -73,7 +73,7 @@ func toQueueMessageDTO(m port.QueueMessageMeta) queueMessageDTO {
 
 // List godoc
 // @Summary  Первые 50 сообщений async-очереди узла (§34.4).
-// @Description  Метаданные сообщений (без тела, как в логах). Тело тянется лениво через .../messages/body. Admin-only.
+// @Description  Метаданные сообщений (без тела, как в логах). Тело тянется лениво через .../messages/body. Operator+ (§87).
 // @Tags     async-queue
 // @Produce  json
 // @Param    id  path  string  true  "node id"
@@ -96,7 +96,7 @@ func (h *AsyncQueueHandler) List(c *gin.Context) {
 
 // Body godoc
 // @Summary  Тело одного сообщения async-очереди (§34.4).
-// @Description  Ленивая подгрузка тела по физической координате (topic, partition, offset) из списка. Admin-only.
+// @Description  Ленивая подгрузка тела по физической координате (topic, partition, offset) из списка. Operator+ (§87).
 // @Tags     async-queue
 // @Produce  json
 // @Param    id         path   string  true   "node id"
@@ -133,7 +133,7 @@ func (h *AsyncQueueHandler) Body(c *gin.Context) {
 
 // DeleteOne godoc
 // @Summary  Удалить (отменить) одно сообщение очереди (§34.4).
-// @Description  Логическое удаление через cancel-set: Sender пропустит сообщение при доставке. Admin-only.
+// @Description  Логическое удаление через cancel-set: Sender пропустит сообщение при доставке. Operator+ (§87).
 // @Tags     async-queue
 // @Produce  json
 // @Param    id     path  string  true  "node id"
@@ -154,7 +154,7 @@ func (h *AsyncQueueHandler) DeleteOne(c *gin.Context) {
 
 // Purge godoc
 // @Summary  Очистить async-очередь узла за период или целиком (§34.4).
-// @Description  Отменяет сообщения с ReceivedAt ∈ [from,to] (логически, через cancel-set). Пустые from/to = очистить всё. Admin-only.
+// @Description  Отменяет сообщения с ReceivedAt ∈ [from,to] (логически, через cancel-set). Пустые from/to = очистить всё. Operator+ (§87).
 // @Tags     async-queue
 // @Accept   json
 // @Produce  json
@@ -188,7 +188,7 @@ func (h *AsyncQueueHandler) Purge(c *gin.Context) {
 
 // PurgeFailed godoc
 // @Summary  Очистить «Неудачные доставки» узла за период или целиком (§35/§36).
-// @Description  Отменяет повторную доставку (DLQ-репроцессор перестаёт повторять) и удаляет записи done=0 из CH-логов узла за [from,to]. Пустые from/to = всё. Cancelled = число удалённых. Admin-only.
+// @Description  Отменяет повторную доставку (DLQ-репроцессор перестаёт повторять) и удаляет записи done=0 из CH-логов узла за [from,to]. Пустые from/to = всё. Cancelled = число удалённых. Operator+ (§87).
 // @Tags     async-queue
 // @Accept   json
 // @Produce  json

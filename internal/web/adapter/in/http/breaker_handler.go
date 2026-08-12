@@ -76,7 +76,7 @@ func (h *BreakerHandler) State(c *gin.Context) {
 
 // Reset godoc
 // @Summary  Снять блокировку circuit breaker'а узла вручную (§81.4.2).
-// @Description  Возвращает узлу полный бюджет попыток немедленно, не дожидаясь паузы, и снимает персистентный бейдж «Down» (§52). Идемпотентно: сброс закрытой защиты — не ошибка. Действие пишется в аудит (node.breaker_reset). Требует роль manager+.
+// @Description  Возвращает узлу полный бюджет попыток немедленно, не дожидаясь паузы, и снимает персистентный бейдж «Down» (§52). Идемпотентно: сброс закрытой защиты — не ошибка. Действие пишется в аудит (node.breaker_reset). Требует роль operator+ (§87).
 // @Tags     nodes
 // @Produce  json
 // @Param    id  path  string  true  "node id"

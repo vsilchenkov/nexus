@@ -133,6 +133,11 @@ func (u *UserUsecase) Create(ctx context.Context, actor Actor, teamID string, in
 // последнего активного админа» и «нельзя самому себе понизить роль» —
 // в handler через actor.
 func (u *UserUsecase) Update(ctx context.Context, actor Actor, in *domain.User) error {
+	// Симметрично Create: не полагаемся на binding-тег handler'а — любой другой
+	// вызывающий (bootstrap, CLI) иначе упёрся бы только в CHECK-constraint PG.
+	if !in.Role.Valid() {
+		return errors.New("invalid role")
+	}
 	old, err := u.users.Get(ctx, in.ID)
 	if err != nil {
 		return err

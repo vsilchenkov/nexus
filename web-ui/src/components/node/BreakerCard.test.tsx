@@ -38,7 +38,7 @@ const OPEN_STATE: BreakerState = {
 };
 
 // Роль приходит из /api/auth/me — тем же запросом, что и в остальных вкладках.
-function mockServer(state: BreakerState, role: "admin" | "viewer" = "admin") {
+function mockServer(state: BreakerState, role: "admin" | "operator" | "viewer" = "admin") {
   apiGet.mockImplementation((url: string) => {
     if (url === "/api/nodes/n1/breaker") return Promise.resolve(state);
     if (url === "/api/auth/me") return Promise.resolve({ user: { user_id: "u1", role } });
@@ -108,6 +108,17 @@ describe("BreakerCard", () => {
 
     expect(await screen.findByText(/queue\.breaker\.state_open/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /queue\.breaker\.reset/ })).not.toBeInTheDocument();
+  });
+
+  // §87: сброс защиты — работа оператора, ради неё роль и вводилась.
+  it("оператор может снять защиту", async () => {
+    mockServer(OPEN_STATE, "operator");
+    renderCard();
+
+    fireEvent.click(await screen.findByRole("button", { name: /queue\.breaker\.reset/ }));
+
+    await waitFor(() => expect(apiPost).toHaveBeenCalled());
+    expect(apiPost.mock.calls[0][0]).toBe("/api/nodes/n1/breaker/reset");
   });
 
   // Ревизия §81.9: «3 из 5» — предупреждение «узел на грани». Раньше счётчик

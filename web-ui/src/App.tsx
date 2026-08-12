@@ -37,12 +37,13 @@ function Protected() {
   return <AppShell />;
 }
 
-// AuditRoute — журнал действий доступен только manager+ (§26, П6). Viewer,
-// открывший /audit по прямой ссылке, редиректится на список узлов (пункт меню
-// для него скрыт, бэкенд всё равно вернул бы 403).
+// AuditRoute — журнал действий доступен operator+ (§26, П6; §87 — оператору
+// журнал нужен, чтобы понять, кто и что менял до инцидента). Viewer, открывший
+// /audit по прямой ссылке, редиректится на список узлов (пункт меню для него
+// скрыт, бэкенд всё равно вернул бы 403).
 function AuditRoute() {
   const { data } = useMe();
-  if (data && !roleAtLeast(data.user.role, "manager")) return <Navigate to="/" replace />;
+  if (data && !roleAtLeast(data.user.role, "operator")) return <Navigate to="/" replace />;
   return <AuditLog />;
 }
 

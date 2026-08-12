@@ -265,7 +265,7 @@ const docTemplate = `{
                 "tags": [
                     "audit"
                 ],
-                "summary": "Журнал audit-log (admin only, §7.13).",
+                "summary": "Журнал audit-log (operator+, §7.13/§87).",
                 "parameters": [
                     {
                         "type": "string",
@@ -361,7 +361,7 @@ const docTemplate = `{
                 "tags": [
                     "audit"
                 ],
-                "summary": "Выгрузка audit-log в CSV (admin only, §7.13).",
+                "summary": "Выгрузка audit-log в CSV (operator+, §7.13/§87).",
                 "parameters": [
                     {
                         "type": "string",
@@ -3007,7 +3007,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Метаданные сообщений (без тела, как в логах). Тело тянется лениво через .../messages/body. Admin-only.",
+                "description": "Метаданные сообщений (без тела, как в логах). Тело тянется лениво через .../messages/body. Operator+ (§87).",
                 "produces": [
                     "application/json"
                 ],
@@ -3047,7 +3047,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Ленивая подгрузка тела по физической координате (topic, partition, offset) из списка. Admin-only.",
+                "description": "Ленивая подгрузка тела по физической координате (topic, partition, offset) из списка. Operator+ (§87).",
                 "produces": [
                     "application/json"
                 ],
@@ -3119,7 +3119,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Логическое удаление через cancel-set: Sender пропустит сообщение при доставке. Admin-only.",
+                "description": "Логическое удаление через cancel-set: Sender пропустит сообщение при доставке. Operator+ (§87).",
                 "produces": [
                     "application/json"
                 ],
@@ -3169,7 +3169,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Отменяет сообщения с ReceivedAt ∈ [from,to] (логически, через cancel-set). Пустые from/to = очистить всё. Admin-only.",
+                "description": "Отменяет сообщения с ReceivedAt ∈ [from,to] (логически, через cancel-set). Пустые from/to = очистить всё. Operator+ (§87).",
                 "consumes": [
                     "application/json"
                 ],
@@ -3226,7 +3226,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Отменяет повторную доставку (DLQ-репроцессор перестаёт повторять) и удаляет записи done=0 из CH-логов узла за [from,to]. Пустые from/to = всё. Cancelled = число удалённых. Admin-only.",
+                "description": "Отменяет повторную доставку (DLQ-репроцессор перестаёт повторять) и удаляет записи done=0 из CH-логов узла за [from,to]. Пустые from/to = всё. Cancelled = число удалённых. Operator+ (§87).",
                 "consumes": [
                     "application/json"
                 ],
@@ -3404,7 +3404,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Возвращает узлу полный бюджет попыток немедленно, не дожидаясь паузы, и снимает персистентный бейдж «Down» (§52). Идемпотентно: сброс закрытой защиты — не ошибка. Действие пишется в аудит (node.breaker_reset). Требует роль manager+.",
+                "description": "Возвращает узлу полный бюджет попыток немедленно, не дожидаясь паузы, и снимает персистентный бейдж «Down» (§52). Идемпотентно: сброс закрытой защиты — не ошибка. Действие пишется в аудит (node.breaker_reset). Требует роль operator+ (§87).",
                 "produces": [
                     "application/json"
                 ],
@@ -4686,7 +4686,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Лёгкая замена полного PUT для кнопок «Пауза»/«Отключить». manager+. Меняет лишь status, не трогая прочие поля/креды.",
+                "description": "Лёгкая замена полного PUT для кнопок «Пауза»/«Отключить». operator+ (§87 — кнопки живут на вкладке «Очередь»). Меняет лишь status, не трогая прочие поля/креды.",
                 "consumes": [
                     "application/json"
                 ],
@@ -8154,7 +8154,8 @@ const docTemplate = `{
                     "enum": [
                         "admin",
                         "viewer",
-                        "manager"
+                        "manager",
+                        "operator"
                     ]
                 }
             }
@@ -9240,7 +9241,8 @@ const docTemplate = `{
                     "enum": [
                         "admin",
                         "viewer",
-                        "manager"
+                        "manager",
+                        "operator"
                     ]
                 }
             }

@@ -73,11 +73,14 @@ Redis. `GET /api/nodes/{id}` team-scoped: при несовпадении ком
 кнопку disabled). Фикс:
 
 - backend: маршрут перенесён в `authedManager` + `RequireSessionOnly()` (viewer → 403; API-токены
-  реплеить не могут — для них логи только snapshot, §7.14);
+  реплеить не могут — для них логи только snapshot, §7.14). С [§87](87-operator-role.md) — группа
+  `authedOperator`;
 - frontend: кнопки Replay в `LogsTab` и `QueueTab` гейтятся `useRoleAtLeast("manager")` — для viewer
-  **disabled** с tooltip «Нет прав» (`common.no_permission`).
+  **disabled** с tooltip «Нет прав» (`common.no_permission`). С §87 гейт опущен до
+  `useRoleAtLeast("operator")`.
 
-Матрица кнопок узла после аудита:
+Матрица кнопок узла после аудита (столбец «Право» приведён к состоянию после
+[§87](87-operator-role.md) — до него операторские строки были manager+/admin):
 
 | Кнопка | Экран | Право |
 |---|---|---|
@@ -86,8 +89,10 @@ Redis. `GET /api/nodes/{id}` team-scoped: при несовпадении ком
 | Новый узел | Overview | manager+ |
 | Перенести | Overview | admin |
 | Сохранить, Удалить, форма целиком | NodeSettings | manager+ (форма редиректит viewer) |
-| Replay (логи, неудачи очереди) | LogsTab / QueueTab | manager+ (viewer — disabled) |
-| Живая очередь (pending, purge) | QueueTab | admin |
+| Replay (логи, неудачи очереди) | LogsTab / QueueTab | operator+ (viewer — disabled) |
+| Живая очередь (pending, purge) | QueueTab | operator+ |
+| Пауза / Отключить / Возобновить | QueueTab | operator+ |
+| Снять защиту (breaker) | QueueTab | operator+ |
 | Копирование значений (Config), метрики | NodeDetail | read-only, любая роль |
 
 ## 58.6 Неочевидности

@@ -150,7 +150,7 @@ func TestBreakerHandler_ForeignTeam_Is404(t *testing.T) {
 	}
 }
 
-// §81.4.1: состояние видно всем ролям, сброс — только manager+. Гейт роли живёт
+// §81.4.1/§87: состояние видно всем ролям, сброс — operator+. Гейт роли живёт
 // в маршрутизации, поэтому тест собирает те же группы, что routes.go.
 func TestBreakerRoutes_ViewerSeesStateButCannotReset(t *testing.T) {
 	t.Parallel()
@@ -167,9 +167,9 @@ func TestBreakerRoutes_ViewerSeesStateButCannotReset(t *testing.T) {
 		c.Next()
 	})
 	authed := r.Group("/api")
-	authedManager := authed.Group("/", RequireMinRole(domain.UserRoleManager))
+	authedOperator := authed.Group("/", RequireMinRole(domain.UserRoleOperator))
 	authed.GET("/nodes/:id/breaker", h.State)
-	authedManager.POST("/nodes/:id/breaker/reset", h.Reset)
+	authedOperator.POST("/nodes/:id/breaker/reset", h.Reset)
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/nodes/n1/breaker", nil))

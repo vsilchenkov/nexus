@@ -41,8 +41,8 @@ export function Sidebar() {
   // Пункт «Kafka» (§4 spec) — в блоке Аудита (рядом с Audit log), не в
   // «Настройках»; виден только админам (роль admin), как и сам раздел.
   const isAdmin = roleAtLeast(me.data?.user.role, "admin");
-  // Журнал действий (§26) доступен manager+ — viewer получал 403 (П6).
-  const isManager = roleAtLeast(me.data?.user.role, "manager");
+  // Журнал действий (§26/§87) доступен operator+ — viewer получал 403 (П6).
+  const canSeeAudit = roleAtLeast(me.data?.user.role, "operator");
 
   // Основная навигация (оперативные разделы) — вверху сайдбара.
   const items: NavItem[] = [
@@ -52,7 +52,7 @@ export function Sidebar() {
       icon: <LayoutGrid className="h-[18px] w-[18px]" />,
       match: (p) => p === "/" || p.startsWith("/nodes"),
     },
-    ...(isManager
+    ...(canSeeAudit
       ? [
           {
             to: "/audit",
@@ -113,7 +113,7 @@ export function Sidebar() {
   // §66: в чипе показываем отображаемое имя (фолбэк на логин для старых
   // ответов /api/auth/me без name).
   const displayName = me.data?.user.name || me.data?.user.login || "admin";
-  // role.{admin,manager,viewer} — §26.
+  // role.{admin,manager,operator,viewer} — §26, §87.
   const role = t(`role.${me.data?.user.role ?? "viewer"}`);
 
   return (
