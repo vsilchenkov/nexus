@@ -1724,27 +1724,10 @@ git fetch --tags && git checkout v1.20.2
 
 ```bash
 # 0. Дамп (если не снят перед обновлением) — down-миграции удаляют данные.
-#    Каталог deploy/arc — рабочее место оператора: содержимое исключено и из git,
+#    Скрипт сам определяет, где работает PostgreSQL (контейнер в этом стеке
+#    или нативный сервис), и пишет в deploy/arc — каталог исключён и из git,
 #    и из контекста сборки образов (см. deploy/arc/README.md).
-#
-#    ЕСЛИ PostgreSQL В DOCKER (варианты A/C — контейнер postgres в этом же стеке):
-docker compose exec -T postgres pg_dump -U nexus nexus > deploy/arc/nexus_$(date +%F_%H%M).sql
-#
-#    ЕСЛИ PostgreSQL НЕ В DOCKER (нативный сервис — так развёрнут бой).
-#    Одной командой: копируется и вставляется целиком.
-#      - реквизиты подтягиваются из .env одной строкой (`source` не годится:
-#        в файле есть KAFKA_HEAP_OPTS=-Xmx1G -Xms1G — пробел без кавычек);
-#      - хост 127.0.0.1, а НЕ $PG_HOST: в .env записан адрес для КОНТЕЙНЕРОВ
-#        (host.docker.internal), с самого сервера он не резолвится;
-#      - PGPASSWORD передаётся через `env`, а не префиксом `PGPASSWORD=... pg_dump`:
-#        префикс легко обрезать при копировании, и сбой выходит тихим — вместо
-#        ошибки просто запрос пароля (а с `env` будет `nv: command not found`).
-#    Если пароль содержит $, кавычки или обратные кавычки — eval их съест;
-#    тогда читайте пароль отдельно: см. §12.
-eval "$(grep -E '^PG_(PORT|USER|DATABASE|PASSWORD)=' .env)" && \
-env PGPASSWORD="$PG_PASSWORD" \
-  pg_dump -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DATABASE" \
-  > "deploy/arc/nexus_$(date +%F_%H%M).sql"
+./scripts/deploy/pg_dump.sh
 
 # 1. Остановить ВСЕ три сервиса: работающий новый код обращается к колонкам,
 #    которые down удалит.
@@ -1864,6 +1847,12 @@ docker compose -f deploy/docker-compose.app.yml run --rm web --set-admin-passwor
 ## 12. Бэкап и восстановление (кратко)
 
 - **PostgreSQL** (критично — конфиг узлов, пользователи, секреты).
+
+  **Штатный способ — `./scripts/deploy/pg_dump.sh`**: скрипт сам определяет, где работает база
+  (контейнер сервиса `postgres` в этом compose-проекте или нативный сервис), обходит все три
+  ловушки ниже, проверяет дамп на обрыв и пишет в `deploy/arc`. Разбор ниже нужен, если скрипт
+  недоступен или что-то пошло не так — например `./scripts/deploy/pg_dump.sh --check` показал
+  не тот режим (принудительно: `NEXUS_PG_MODE=docker|native`).
 
   **Если PostgreSQL НЕ в Docker** (нативный сервис — так развёрнут бой): `pg_dump` запускается
   с хоста, реквизиты берутся из `.env` (`PG_PORT` / `PG_USER` / `PG_DATABASE` / `PG_PASSWORD`;
