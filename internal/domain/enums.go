@@ -163,23 +163,31 @@ func (s IncomingAuthSource) Valid() bool {
 	return false
 }
 
-// UserRole — роль пользователя UI (§7.1, §26).
+// UserRole — роль пользователя UI (§7.1, §26, §87).
 //
-// Иерархия прав: viewer < manager < admin (см. Rank/AtLeast). Менеджер
-// управляет узлами и каталогами Allowed Hosts/Headers, видит Audit log и
-// меняет только свой пароль; общие настройки, пользователи, команды и
+// Иерархия прав: viewer < operator < manager < admin (см. Rank/AtLeast).
+// Оператор эксплуатирует узел, но не конфигурирует его: очередь целиком
+// (peek/очистка/«повторить все»), пауза-отключение-включение, сброс защиты,
+// повтор запросов из логов и чтение Audit log — но узлы не создаёт, не меняет
+// и не копирует (§87). Менеджер добавляет к этому CRUD узлов, dry-run и
+// каталоги Allowed Hosts/Headers; общие настройки, пользователи, команды и
 // шаблоны CH остаются за admin (§26).
+//
+// Ранг ВЫЧИСЛЯЕМЫЙ: в БД, сессии Redis и JSON API живёт строка роли, поэтому
+// вставка роли в середину иерархии не требует миграции данных и не ломает
+// уже выданные сессии.
 type UserRole string
 
 const (
-	UserRoleAdmin   UserRole = "admin"
-	UserRoleManager UserRole = "manager"
-	UserRoleViewer  UserRole = "viewer"
+	UserRoleAdmin    UserRole = "admin"
+	UserRoleManager  UserRole = "manager"
+	UserRoleOperator UserRole = "operator"
+	UserRoleViewer   UserRole = "viewer"
 )
 
 func (r UserRole) Valid() bool {
 	switch r {
-	case UserRoleAdmin, UserRoleManager, UserRoleViewer:
+	case UserRoleAdmin, UserRoleManager, UserRoleOperator, UserRoleViewer:
 		return true
 	}
 	return false
@@ -187,13 +195,15 @@ func (r UserRole) Valid() bool {
 
 func (r UserRole) IsAdmin() bool { return r == UserRoleAdmin }
 
-// Rank — числовой ранг роли в иерархии (viewer=0, manager=1, admin=2).
-// Неизвестная роль трактуется как минимальный ранг.
+// Rank — числовой ранг роли в иерархии (viewer=0, operator=1, manager=2,
+// admin=3). Неизвестная роль трактуется как минимальный ранг.
 func (r UserRole) Rank() int {
 	switch r {
 	case UserRoleAdmin:
-		return 2
+		return 3
 	case UserRoleManager:
+		return 2
+	case UserRoleOperator:
 		return 1
 	default:
 		return 0

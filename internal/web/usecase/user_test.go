@@ -172,6 +172,35 @@ func TestUserUC_Create_RepoError(t *testing.T) {
 	assert.Len(t, audit.entries, 0)
 }
 
+// §87: Update валидирует роль симметрично Create — раньше единственной защитой
+// был binding-тег handler'а, и любой другой вызывающий упирался только в
+// CHECK-constraint PG.
+func TestUserUC_Update_InvalidRole(t *testing.T) {
+	t.Parallel()
+	users := newAuthUserRepo()
+	users.put(&domain.User{ID: "u1", Login: "alice", Role: domain.UserRoleViewer, Active: true})
+	uc, _ := newUserUC(users, newMemSessionRepo())
+
+	err := uc.Update(context.Background(), SystemActor(),
+		&domain.User{ID: "u1", Role: "editor", Active: true})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid role")
+	assert.Equal(t, 0, users.updateCalls)
+}
+
+// §87: новая роль проходит валидацию Update наравне с прежними тремя.
+func TestUserUC_Update_OperatorRoleAccepted(t *testing.T) {
+	t.Parallel()
+	users := newAuthUserRepo()
+	users.put(&domain.User{ID: "u1", Login: "alice", Role: domain.UserRoleViewer, Active: true})
+	uc, _ := newUserUC(users, newMemSessionRepo())
+
+	err := uc.Update(context.Background(), SystemActor(),
+		&domain.User{ID: "u1", Role: domain.UserRoleOperator, Active: true})
+	require.NoError(t, err)
+	assert.Equal(t, 1, users.updateCalls)
+}
+
 func TestUserUC_Update_LastAdmin_Demote_Rejected(t *testing.T) {
 	t.Parallel()
 	users := newAuthUserRepo()

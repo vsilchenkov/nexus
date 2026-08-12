@@ -218,3 +218,58 @@ func TestUserRoleManager_E2E(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, tokenNew)
 }
+
+// TestUserRoleOperator_E2E проверяет, что миграция 0035 принимает роль
+// `operator` (CHECK-constraint users_role_check) и что роль доезжает до сессии
+// в Redis без потерь (§87). Ранг — величина вычисляемая, храниться и
+// передаваться обязана СТРОКА: если бы где-то персистился номер ранга, сдвиг
+// manager 1→2 / admin 2→3 сломал бы уже выданные сессии.
+func TestUserRoleOperator_E2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+
+	pool, pgCleanup := startPostgres(t, ctx)
+	defer pgCleanup()
+
+	redisClient, redisCleanup := startRedis(t, ctx)
+	defer redisCleanup()
+
+	logger := logging.NewNoop()
+	userRepo := pgrepo.NewUserRepoPg(pool, logger)
+	sessionRepo := webredis.NewSessionRepoRedis(redisClient)
+	teamRepo := pgrepo.NewTeamRepoPg(pool, logger)
+	auditUC := webuc.NewAuditUsecase(pgrepo.NewAuditRepoPg(pool, logger), logger)
+	authUC := webuc.NewAuthUsecase(userRepo, sessionRepo, teamRepo, auditUC, func() time.Duration { return time.Hour }, logger)
+
+	const password = "Op3ratorPwd!"
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	require.NoError(t, err)
+
+	// (1) Создание пользователя с role='operator' проходит CHECK-constraint 0035.
+	op := &domain.User{
+		Login:        "op",
+		PasswordHash: string(hash),
+		Role:         domain.UserRoleOperator,
+		Active:       true,
+		Lang:         domain.UserLangEN,
+	}
+	require.NoError(t, userRepo.Create(ctx, op))
+	require.NotEmpty(t, op.ID)
+
+	got, err := userRepo.Get(ctx, op.ID)
+	require.NoError(t, err)
+	require.Equal(t, domain.UserRoleOperator, got.Role)
+
+	// (2) Роль переживает round-trip через сессию в Redis.
+	token, _, err := authUC.Login(ctx, "op", password, "127.0.0.1")
+	require.NoError(t, err)
+	sess, err := authUC.Check(ctx, token)
+	require.NoError(t, err)
+	require.Equal(t, domain.UserRoleOperator, sess.Role)
+
+	// (3) Иерархия на живой сессии: оператор выше наблюдателя, ниже менеджера.
+	require.True(t, sess.Role.AtLeast(domain.UserRoleOperator))
+	require.True(t, sess.Role.AtLeast(domain.UserRoleViewer))
+	require.False(t, sess.Role.AtLeast(domain.UserRoleManager))
+	require.False(t, sess.Role.AtLeast(domain.UserRoleAdmin))
+}
