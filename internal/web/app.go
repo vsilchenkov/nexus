@@ -660,12 +660,13 @@ func (a *App) Start(ctx context.Context) error {
 		), a.logger)
 
 	mw := httpadapter.Middlewares{
-		APITokenAuth:   httpadapter.APITokenAuthMiddleware(tokenUC, rl, a.cfg.Web.APITokenRateLimitPerMin, a.logger),
-		SessionAuth:    httpadapter.AuthMiddleware(authUC, &a.cfg.Web),
-		RequireAdmin:   httpadapter.RequireMinRole(domain.UserRoleAdmin),
-		RequireManager: httpadapter.RequireMinRole(domain.UserRoleManager),
-		KafkaRateLimit: httpadapter.KafkaRateLimitMiddleware(rl, a.cfg.Web.KafkaMonitorRateLimitPerMin),
-		CSRFCheck:      httpadapter.CSRFOriginCheck(a.logger),
+		APITokenAuth:    httpadapter.APITokenAuthMiddleware(tokenUC, rl, a.cfg.Web.APITokenRateLimitPerMin, a.logger),
+		SessionAuth:     httpadapter.AuthMiddleware(authUC, &a.cfg.Web),
+		RequireAdmin:    httpadapter.RequireMinRole(domain.UserRoleAdmin),
+		RequireManager:  httpadapter.RequireMinRole(domain.UserRoleManager),
+		RequireOperator: httpadapter.RequireMinRole(domain.UserRoleOperator),
+		KafkaRateLimit:  httpadapter.KafkaRateLimitMiddleware(rl, a.cfg.Web.KafkaMonitorRateLimitPerMin),
+		CSRFCheck:       httpadapter.CSRFOriginCheck(a.logger),
 	}
 	httpadapter.RegisterAPI(r, httpadapter.Handlers{
 		Auth:          authHandler,

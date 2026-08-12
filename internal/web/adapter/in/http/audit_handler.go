@@ -17,7 +17,7 @@ import (
 	"nexus/internal/web/usecase/port"
 )
 
-// AuditHandler — GET /api/audit (admin only).
+// AuditHandler — GET /api/audit (operator+, §26/§87).
 type AuditHandler struct {
 	uc     *usecase.AuditUsecase
 	logger logging.Logger
@@ -134,7 +134,7 @@ func (h *AuditHandler) listEntries(c *gin.Context, f port.AuditFilter, op string
 }
 
 // List godoc
-// @Summary  Журнал audit-log (admin only, §7.13).
+// @Summary  Журнал audit-log (operator+, §7.13/§87).
 // @Description  Поддерживаемые actions: node.create/update/delete, user.create/update/delete/password_changed, token.create/revoke/delete, login.success/failure, ch_table.drop, settings.update и др.
 // @Tags     audit
 // @Produce  json
@@ -168,7 +168,7 @@ func (h *AuditHandler) List(c *gin.Context) {
 }
 
 // ExportCSV godoc
-// @Summary  Выгрузка audit-log в CSV (admin only, §7.13).
+// @Summary  Выгрузка audit-log в CSV (operator+, §7.13/§87).
 // @Description  Тот же набор фильтров, что у /api/audit. Default limit 10000, max 50000. CSV в UTF-8 с BOM (для Excel), 9 колонок: id, created_at, user_login, user_id, action, target_type, target_id, ip_address, details (JSON).
 // @Tags     audit
 // @Produce  text/csv

@@ -1499,6 +1499,7 @@ definitions:
         - admin
         - viewer
         - manager
+        - operator
         type: string
     required:
     - login
@@ -2236,6 +2237,7 @@ definitions:
         - admin
         - viewer
         - manager
+        - operator
         type: string
     required:
     - name
@@ -3025,7 +3027,7 @@ paths:
       security:
       - CookieAuth: []
       - ApiTokenAuth: []
-      summary: Журнал audit-log (admin only, §7.13).
+      summary: Журнал audit-log (operator+, §7.13/§87).
       tags:
       - audit
   /api/audit/export.csv:
@@ -3089,7 +3091,7 @@ paths:
       security:
       - CookieAuth: []
       - ApiTokenAuth: []
-      summary: Выгрузка audit-log в CSV (admin only, §7.13).
+      summary: Выгрузка audit-log в CSV (operator+, §7.13/§87).
       tags:
       - audit
   /api/auth/login:
@@ -4675,7 +4677,7 @@ paths:
   /api/nodes/{id}/async-queue/messages:
     get:
       description: Метаданные сообщений (без тела, как в логах). Тело тянется лениво
-        через .../messages/body. Admin-only.
+        через .../messages/body. Operator+ (§87).
       parameters:
       - description: node id
         in: path
@@ -4701,7 +4703,7 @@ paths:
   /api/nodes/{id}/async-queue/messages/{msgId}:
     delete:
       description: 'Логическое удаление через cancel-set: Sender пропустит сообщение
-        при доставке. Admin-only.'
+        при доставке. Operator+ (§87).'
       parameters:
       - description: node id
         in: path
@@ -4734,7 +4736,7 @@ paths:
   /api/nodes/{id}/async-queue/messages/body:
     get:
       description: Ленивая подгрузка тела по физической координате (topic, partition,
-        offset) из списка. Admin-only.
+        offset) из списка. Operator+ (§87).
       parameters:
       - description: node id
         in: path
@@ -4784,7 +4786,7 @@ paths:
       consumes:
       - application/json
       description: Отменяет сообщения с ReceivedAt ∈ [from,to] (логически, через cancel-set).
-        Пустые from/to = очистить всё. Admin-only.
+        Пустые from/to = очистить всё. Operator+ (§87).
       parameters:
       - description: node id
         in: path
@@ -4822,7 +4824,7 @@ paths:
       - application/json
       description: Отменяет повторную доставку (DLQ-репроцессор перестаёт повторять)
         и удаляет записи done=0 из CH-логов узла за [from,to]. Пустые from/to = всё.
-        Cancelled = число удалённых. Admin-only.
+        Cancelled = число удалённых. Operator+ (§87).
       parameters:
       - description: node id
         in: path
@@ -4944,7 +4946,7 @@ paths:
       description: 'Возвращает узлу полный бюджет попыток немедленно, не дожидаясь
         паузы, и снимает персистентный бейдж «Down» (§52). Идемпотентно: сброс закрытой
         защиты — не ошибка. Действие пишется в аудит (node.breaker_reset). Требует
-        роль manager+.'
+        роль operator+ (§87).'
       parameters:
       - description: node id
         in: path
@@ -5824,8 +5826,9 @@ paths:
     patch:
       consumes:
       - application/json
-      description: Лёгкая замена полного PUT для кнопок «Пауза»/«Отключить». manager+.
-        Меняет лишь status, не трогая прочие поля/креды.
+      description: Лёгкая замена полного PUT для кнопок «Пауза»/«Отключить». operator+
+        (§87 — кнопки живут на вкладке «Очередь»). Меняет лишь status, не трогая прочие
+        поля/креды.
       parameters:
       - description: node id
         in: path

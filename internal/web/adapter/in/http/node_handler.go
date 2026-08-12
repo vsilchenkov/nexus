@@ -242,7 +242,7 @@ type UpdateNodeStatusRequest struct {
 
 // UpdateStatus godoc
 // @Summary  Сменить только статус узла (§35).
-// @Description  Лёгкая замена полного PUT для кнопок «Пауза»/«Отключить». manager+. Меняет лишь status, не трогая прочие поля/креды.
+// @Description  Лёгкая замена полного PUT для кнопок «Пауза»/«Отключить». operator+ (§87 — кнопки живут на вкладке «Очередь»). Меняет лишь status, не трогая прочие поля/креды.
 // @Tags     nodes
 // @Accept   json
 // @Produce  json
