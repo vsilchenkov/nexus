@@ -265,6 +265,19 @@ export default function Overview() {
     enabled: scopeReady,
   });
 
+  // §86.4: статусы, которые выводятся ИЗ МЕТРИК. paused/disabled берутся из
+  // конфигурации узла и метрик не требуют.
+  const statusNeedsMetrics =
+    statusFilter !== "all" && statusFilter !== "paused" && statusFilter !== "disabled";
+
+  // Кандидаты фильтра по статусу: узлы после фильтра по методу. Именно их
+  // метрики нужны целиком — «какие узлы OK» нельзя ответить про непосчитанные.
+  const statusCandidates = useMemo(() => {
+    if (!allTeams || !statusNeedsMetrics) return undefined;
+    const items = nodesQ.data?.items ?? [];
+    return (method ? items.filter((n) => n.root_method === method) : items).map((n) => n.id);
+  }, [allTeams, statusNeedsMetrics, nodesQ.data, method]);
+
   const kpiQ = useQuery({
     queryKey: ["metrics-overview", scopeKey],
     queryFn: () => api.get<OverviewKPI>("/api/metrics/overview"),
@@ -299,6 +312,7 @@ export default function Overview() {
       [period, scopeQuery],
     ),
     refetchInterval: autoRefresh ? refetchMs : false,
+    preload: statusCandidates,
   });
 
   // §86.4: агрегат шапки в сквозном режиме считается отдельно и приезжает
@@ -399,6 +413,11 @@ export default function Overview() {
       return (throughput.get(b.id)?.in ?? 0) - (throughput.get(a.id)?.in ?? 0);
     });
   }, [nodesQ.data, method, statusFilter, throughput, sortRank, metricsReady, allTeams, teamNames]);
+
+  // statusFilterPending — фильтр по статусу выбран, но метрики, из которых
+  // статус выводится, ещё не пришли. В сквозном режиме это окно длится, пока
+  // догружаются пачки preload; в режиме одной команды — пока идёт общий запрос.
+  const statusFilterPending = statusNeedsMetrics && !metricsReady;
 
   const kpi = useStableData(kpiQ.data, "overview-kpi", (d) => d.prometheus_available);
   // §44.A: трафик KPI шапки = totals из throughput (сумма строк таблицы за
@@ -583,7 +602,14 @@ export default function Overview() {
 
       {nodesQ.isLoading && <div className="text-fg-muted">{t("common.loading")}</div>}
       {nodesQ.error && <div className="text-err">{(nodesQ.error as Error).message}</div>}
-      {nodesQ.data && nodes.length === 0 && (
+      {/* §86.4: пока метрики фильтруемых узлов не досчитаны, «Узлов пока нет» —
+          неправда: статус выводится ИЗ метрик, и до их прихода под фильтр не
+          попадает никто. Показываем загрузку, иначе оператор решит, что узлов
+          с таким статусом не существует. */}
+      {nodesQ.data && nodes.length === 0 && statusFilterPending && (
+        <div className="text-fg-muted">{t("common.loading")}</div>
+      )}
+      {nodesQ.data && nodes.length === 0 && !statusFilterPending && (
         <div className="text-fg-muted">{t("overview.empty")}</div>
       )}
 

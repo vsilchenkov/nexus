@@ -39,6 +39,14 @@ export type VisibleMetricsOptions = {
   // params — общие параметры запроса (период + scope).
   params: Record<string, string>;
   refetchInterval: number | false;
+  // preload — узлы, метрики которых нужны НЕЗАВИСИМО от прокрутки.
+  //
+  // Нужен фильтру по статусу: статус узла выводится из метрик, поэтому ответить
+  // «какие узлы сейчас OK» можно только про те, что посчитаны. При загрузке
+  // «по мере появления в поле зрения» это замыкается в круг — отфильтрованные
+  // строки не рендерятся, значит не становятся видимыми, значит их метрики
+  // никогда не запрашиваются, и список остаётся пустым навсегда.
+  preload?: string[];
 };
 
 export type VisibleMetrics = {
@@ -65,7 +73,7 @@ function chunk<T>(items: T[], size: number): T[][] {
  * переносила бы узлы между пачками и заставляла перезапрашивать всё.
  */
 export function useVisibleNodeMetrics(opts: VisibleMetricsOptions): VisibleMetrics {
-  const { enabled, scopeKey, periodKey, params, refetchInterval } = opts;
+  const { enabled, scopeKey, periodKey, params, refetchInterval, preload } = opts;
 
   // chunks — ЗАМОРОЖЕННЫЕ пачки: созданная пачка больше не меняется.
   //
@@ -98,6 +106,22 @@ export function useVisibleNodeMetrics(opts: VisibleMetricsOptions): VisibleMetri
     pending.current.clear();
     setChunks((prev) => [...prev, ...chunk(add, CHUNK_SIZE)]);
   }, []);
+
+  // Досыл preload-набора. Идёт через тот же known/pending, что и прокрутка,
+  // поэтому уже запрошенные узлы не запрашиваются повторно, а пачки остаются
+  // заморожёнными. Срабатывает и после сброса по смене периода/скоупа: эффект
+  // сброса объявлен выше и на тех же ключах отрабатывает первым.
+  useEffect(() => {
+    if (!enabled || !preload || preload.length === 0) return;
+    let added = false;
+    for (const id of preload) {
+      if (known.current.has(id)) continue;
+      known.current.add(id);
+      pending.current.add(id);
+      added = true;
+    }
+    if (added) flush();
+  }, [enabled, preload, flush, scopeKey, periodKey]);
 
   const markVisible = useCallback(
     (nodeId: string) => {
