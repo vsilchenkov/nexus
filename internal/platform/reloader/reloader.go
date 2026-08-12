@@ -33,7 +33,14 @@ const (
 	SectionNotifications Section = "notifications"
 	SectionSecurity      Section = "security" // §34.2: длительность сессии
 	SectionLogging       Section = "logging"  // §51: runtime-уровень логов
-	SectionAll           Section = "all"
+	// SectionMail — §88. Сам SMTP-транспорт перезагружать нечего: соединение с
+	// релеем живёт одну отправку и создаётся из свежепрочитанных настроек.
+	// Единственный подписчик — провайдер признака «восстановление пароля
+	// доступно», который отдаётся публичным GET /api/version: тот эндпоинт
+	// опрашивают и соседние инстансы (§73), поэтому читать app_settings на
+	// каждый его вызов нельзя, и значение держится в памяти процесса.
+	SectionMail Section = "mail"
+	SectionAll  Section = "all"
 )
 
 // Message — формат тела события.
@@ -154,5 +161,8 @@ func sectionsFor(s Section) []Section {
 	if s != SectionAll {
 		return []Section{s}
 	}
-	return []Section{SectionSentry, SectionClickHouse, SectionNotifications, SectionSecurity, SectionLogging}
+	return []Section{
+		SectionSentry, SectionClickHouse, SectionNotifications,
+		SectionSecurity, SectionLogging, SectionMail,
+	}
 }

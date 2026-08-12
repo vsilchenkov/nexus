@@ -68,7 +68,8 @@ func (r *AppSettingsRepoPg) Update(ctx context.Context, s *domain.AppSettings) e
 		ClickHouse    domain.ClickHouseSettings    `json:"clickhouse"`
 		Notifications domain.NotificationsSettings `json:"notifications"`
 		Logging       domain.LoggingSettings       `json:"logging"`
-	}{s.General, s.Security, s.Sentry, s.ClickHouse, s.Notifications, s.Logging})
+		Mail          domain.MailSettings          `json:"mail"`
+	}{s.General, s.Security, s.Sentry, s.ClickHouse, s.Notifications, s.Logging, s.Mail})
 	if err != nil {
 		return fmt.Errorf("app_settings marshal: %w", err)
 	}

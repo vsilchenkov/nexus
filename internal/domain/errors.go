@@ -191,6 +191,20 @@ var (
 	// Уведомления (§20)
 	ErrTelegramCronInvalid = errors.New("domain: invalid telegram cron expression")
 
+	// Почта и восстановление пароля (§88)
+	ErrMailHostInvalid         = errors.New("domain: mail host must be a bare hostname without scheme, port or spaces")
+	ErrMailPortInvalid         = errors.New("domain: mail port must be within [1, 65535]")
+	ErrMailEncryptionInvalid   = errors.New("domain: mail encryption must be one of none|starttls|tls")
+	ErrMailAuthTypeInvalid     = errors.New("domain: mail auth_type must be one of none|plain|login|cram-md5")
+	ErrMailUsernameLength      = errors.New("domain: mail username length must be <= 255")
+	ErrMailPasswordLength      = errors.New("domain: mail password length must be <= 255")
+	ErrMailFromInvalid         = errors.New("domain: mail from_address must be a valid email address")
+	ErrMailFromNameInvalid     = errors.New("domain: mail from_name must be <= 128 chars and contain no line breaks")
+	ErrMailHELOInvalid         = errors.New("domain: mail helo_host must be <= 255 chars without spaces")
+	ErrMailTimeoutInvalid      = errors.New("domain: mail timeout_sec must be within [1, 120]")
+	ErrMailResetRequiresMail   = errors.New("domain: password_reset_enabled requires mail.enabled")
+	ErrPasswordResetTTLInvalid = errors.New("domain: password_reset_ttl_min must be within [5, 1440]")
+
 	// Общие настройки (§28, Пункт 1)
 	ErrPublicBaseURLInvalid = errors.New("domain: public_base_url must be an http(s) origin without path or trailing slash")
 
