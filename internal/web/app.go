@@ -34,6 +34,7 @@ import (
 	"nexus/internal/platform/healthcheck"
 	"nexus/internal/platform/i18n"
 	"nexus/internal/platform/logging"
+	"nexus/internal/platform/mail"
 	"nexus/internal/platform/metrics"
 	"nexus/internal/platform/nodeevents"
 	otelpf "nexus/internal/platform/otel"
@@ -317,9 +318,11 @@ func (a *App) Start(ctx context.Context) error {
 	).Get)
 	// Telegram-клиент (§20): для тестовой отправки и планировщика уведомлений.
 	telegramClient := telegram.New(a.logger)
+	// SMTP-отправитель (§88.3): тестовое письмо и восстановление пароля.
+	mailSender := mail.New(a.logger)
 	// SettingsTester (Phase 6.3.2.6): test connection без сохранения.
 	settingsTester := usecase.NewSettingsTester(
-		appSettingsRepo, a.cfg, chpf.New, usecase.DefaultSentryClientFactory, telegramClient,
+		appSettingsRepo, a.cfg, chpf.New, usecase.DefaultSentryClientFactory, telegramClient, mailSender,
 		a.cfg.Build.ProjectName, a.cfg.Build.Version, a.logger,
 	)
 

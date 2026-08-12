@@ -5100,6 +5100,57 @@
                 }
             }
         },
+        "/api/settings/mail/test": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Шлёт письмо на указанный адрес с merge'нутыми (current + body) настройками. Маскированный пароль не используется — merge оставит сохранённый. Возвращает {ok,latency_ms} или {ok:false,error}. Не сохраняет настройки.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "settings"
+                ],
+                "summary": "Отправить тестовое письмо с patch'ем настроек (§88.8.4).",
+                "parameters": [
+                    {
+                        "description": "patch + получатель",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.mailTestRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nexus_internal_web_usecase.TestResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/settings/notifications/test": {
             "post": {
                 "security": [
@@ -8575,6 +8626,61 @@
                 }
             }
         },
+        "internal_web_adapter_in_http.mailTestRequest": {
+            "type": "object",
+            "required": [
+                "to"
+            ],
+            "properties": {
+                "auth_type": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "encryption": {
+                    "type": "string"
+                },
+                "from_address": {
+                    "type": "string"
+                },
+                "from_name": {
+                    "type": "string"
+                },
+                "helo_host": {
+                    "type": "string"
+                },
+                "host": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                },
+                "password_reset_enabled": {
+                    "description": "Восстановление пароля живёт в этой же секции: без работающей почты оно\nбессмысленно, а оператор настраивает то и другое одним экраном (§88.2).",
+                    "type": "boolean"
+                },
+                "password_reset_ttl_min": {
+                    "type": "integer"
+                },
+                "port": {
+                    "type": "integer"
+                },
+                "skip_tls_verify": {
+                    "type": "boolean"
+                },
+                "timeout_sec": {
+                    "type": "integer"
+                },
+                "to": {
+                    "type": "string",
+                    "maxLength": 320
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_web_adapter_in_http.meResponse": {
             "type": "object",
             "properties": {
@@ -9334,6 +9440,14 @@
                 "logging": {
                     "$ref": "#/definitions/nexus_internal_domain.LoggingSettings"
                 },
+                "mail": {
+                    "description": "§88: SMTP + восстановление пароля",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/nexus_internal_domain.MailSettings"
+                        }
+                    ]
+                },
                 "notifications": {
                     "$ref": "#/definitions/nexus_internal_domain.NotificationsSettings"
                 },
@@ -9511,6 +9625,54 @@
                 "level": {
                     "description": "Level — уровень логирования всех трёх сервисов (2=error, 3=warn,\n4=info, 5=debug). nil = брать из YAML (cfg.Logging.Level). Применяется\nбез рестарта через reloader.SectionLogging (LevelVar в цепочке хендлеров).",
                     "type": "integer"
+                }
+            }
+        },
+        "nexus_internal_domain.MailSettings": {
+            "type": "object",
+            "properties": {
+                "auth_type": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "encryption": {
+                    "type": "string"
+                },
+                "from_address": {
+                    "type": "string"
+                },
+                "from_name": {
+                    "type": "string"
+                },
+                "helo_host": {
+                    "type": "string"
+                },
+                "host": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                },
+                "password_reset_enabled": {
+                    "description": "Восстановление пароля живёт в этой же секции: без работающей почты оно\nбессмысленно, а оператор настраивает то и другое одним экраном (§88.2).",
+                    "type": "boolean"
+                },
+                "password_reset_ttl_min": {
+                    "type": "integer"
+                },
+                "port": {
+                    "type": "integer"
+                },
+                "skip_tls_verify": {
+                    "type": "boolean"
+                },
+                "timeout_sec": {
+                    "type": "integer"
+                },
+                "username": {
+                    "type": "string"
                 }
             }
         },

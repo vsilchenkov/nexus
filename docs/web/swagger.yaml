@@ -1779,6 +1779,45 @@ definitions:
     - login
     - password
     type: object
+  internal_web_adapter_in_http.mailTestRequest:
+    properties:
+      auth_type:
+        type: string
+      enabled:
+        type: boolean
+      encryption:
+        type: string
+      from_address:
+        type: string
+      from_name:
+        type: string
+      helo_host:
+        type: string
+      host:
+        type: string
+      password:
+        type: string
+      password_reset_enabled:
+        description: |-
+          Восстановление пароля живёт в этой же секции: без работающей почты оно
+          бессмысленно, а оператор настраивает то и другое одним экраном (§88.2).
+        type: boolean
+      password_reset_ttl_min:
+        type: integer
+      port:
+        type: integer
+      skip_tls_verify:
+        type: boolean
+      timeout_sec:
+        type: integer
+      to:
+        maxLength: 320
+        type: string
+      username:
+        type: string
+    required:
+    - to
+    type: object
   internal_web_adapter_in_http.meResponse:
     properties:
       current_team_id:
@@ -2302,6 +2341,10 @@ definitions:
         $ref: '#/definitions/nexus_internal_domain.GeneralSettings'
       logging:
         $ref: '#/definitions/nexus_internal_domain.LoggingSettings'
+      mail:
+        allOf:
+        - $ref: '#/definitions/nexus_internal_domain.MailSettings'
+        description: '§88: SMTP + восстановление пароля'
       notifications:
         $ref: '#/definitions/nexus_internal_domain.NotificationsSettings'
       security:
@@ -2443,6 +2486,40 @@ definitions:
           4=info, 5=debug). nil = брать из YAML (cfg.Logging.Level). Применяется
           без рестарта через reloader.SectionLogging (LevelVar в цепочке хендлеров).
         type: integer
+    type: object
+  nexus_internal_domain.MailSettings:
+    properties:
+      auth_type:
+        type: string
+      enabled:
+        type: boolean
+      encryption:
+        type: string
+      from_address:
+        type: string
+      from_name:
+        type: string
+      helo_host:
+        type: string
+      host:
+        type: string
+      password:
+        type: string
+      password_reset_enabled:
+        description: |-
+          Восстановление пароля живёт в этой же секции: без работающей почты оно
+          бессмысленно, а оператор настраивает то и другое одним экраном (§88.2).
+        type: boolean
+      password_reset_ttl_min:
+        type: integer
+      port:
+        type: integer
+      skip_tls_verify:
+        type: boolean
+      timeout_sec:
+        type: integer
+      username:
+        type: string
     type: object
   nexus_internal_domain.NotificationsSettings:
     properties:
@@ -6207,6 +6284,40 @@ paths:
       security:
       - CookieAuth: []
       summary: Проверить соединение с ClickHouse по patch'у настроек (§7.10).
+      tags:
+      - settings
+  /api/settings/mail/test:
+    post:
+      consumes:
+      - application/json
+      description: Шлёт письмо на указанный адрес с merge'нутыми (current + body)
+        настройками. Маскированный пароль не используется — merge оставит сохранённый.
+        Возвращает {ok,latency_ms} или {ok:false,error}. Не сохраняет настройки.
+      parameters:
+      - description: patch + получатель
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.mailTestRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/nexus_internal_web_usecase.TestResult'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Отправить тестовое письмо с patch'ем настроек (§88.8.4).
       tags:
       - settings
   /api/settings/notifications/test:

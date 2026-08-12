@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -54,6 +55,7 @@ type SettingsTester struct {
 	chFactory     ClickHouseFactory
 	sentryFactory SentryClientFactory
 	telegram      TelegramSender
+	mail          MailSender
 	projectName   string
 	version       string
 	pingTimeout   time.Duration
@@ -70,6 +72,7 @@ func NewSettingsTester(
 	chFactory ClickHouseFactory,
 	sentryFactory SentryClientFactory,
 	telegram TelegramSender,
+	mailSender MailSender,
 	projectName, version string,
 	logger logging.Logger,
 ) *SettingsTester {
@@ -79,6 +82,7 @@ func NewSettingsTester(
 		chFactory:     chFactory,
 		sentryFactory: sentryFactory,
 		telegram:      telegram,
+		mail:          mailSender,
 		projectName:   projectName,
 		version:       version,
 		pingTimeout:   5 * time.Second,
@@ -208,6 +212,55 @@ func (t *SettingsTester) TestTelegram(ctx context.Context, patch *domain.Telegra
 func derefTelegram(p *domain.TelegramSettings) domain.TelegramSettings {
 	if p == nil {
 		return domain.TelegramSettings{}
+	}
+	return *p
+}
+
+// TestMail шлёт тестовое письмо по merge'нутым настройкам (§88.8.4). Патч —
+// текущее несохранённое состояние формы; маскированный пароль в нём не
+// используется, merge оставит сохранённый реальный. Настройки не сохраняются.
+//
+// Получатель приходит отдельным аргументом: у почты, в отличие от Telegram,
+// адрес назначения не является частью настроек.
+//
+// Таймаут берётся из САМИХ настроек, а не из t.pingTimeout (5 с): для ping'а
+// ClickHouse пяти секунд достаточно, а полный SMTP-диалог через корпоративный
+// релей в них не укладывается — рабочая конфигурация показывала бы
+// «context deadline exceeded».
+func (t *SettingsTester) TestMail(ctx context.Context, patch *domain.MailSettings, to string) (*TestResult, error) {
+	current, err := t.repo.Get(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read current settings: %w", err)
+	}
+	merged := mergeAppSettings(current, &domain.AppSettings{Mail: derefMail(patch)})
+	m := merged.Mail.Resolve()
+
+	if to = strings.TrimSpace(to); to == "" {
+		return &TestResult{OK: false, Error: "recipient is empty"}, nil
+	}
+	if m.Host == "" {
+		return &TestResult{OK: false, Error: "mail host is empty"}, nil
+	}
+	if m.FromAddress == "" {
+		return &TestResult{OK: false, Error: "mail from_address is empty"}, nil
+	}
+	if t.mail == nil {
+		return nil, errors.New("mail sender is nil")
+	}
+
+	sendCtx, cancel := context.WithTimeout(ctx, time.Duration(m.TimeoutSec)*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	if err := t.mail.Send(sendCtx, mailConfigFrom(m), mailTestMessage(to, m)); err != nil {
+		return &TestResult{OK: false, Error: err.Error()}, nil
+	}
+	return &TestResult{OK: true, LatencyMs: time.Since(start).Milliseconds()}, nil
+}
+
+func derefMail(p *domain.MailSettings) domain.MailSettings {
+	if p == nil {
+		return domain.MailSettings{}
 	}
 	return *p
 }

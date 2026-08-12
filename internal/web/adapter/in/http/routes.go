@@ -337,6 +337,7 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			authedAdmin.POST("/settings/sentry/test", h.AppSettings.TestSentry)
 			// Тестовое уведомление в Telegram (§20.7).
 			authedAdmin.POST("/settings/notifications/test", h.AppSettings.TestTelegram)
+			authedAdmin.POST("/settings/mail/test", h.AppSettings.TestMail) // §88.8.4
 		}
 
 		// Шаблоны CH-таблиц (§19): мутации и verify — admin-only.

@@ -226,3 +226,48 @@ func (h *AppSettingsHandler) TestTelegram(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, res)
 }
+
+// mailTestRequest — тело проверки почтовых настроек (§88.8.4): секция целиком
+// плюс получатель. Получатель отдельным полем, а не внутри настроек: у почты,
+// в отличие от Telegram, адрес назначения частью конфигурации не является.
+type mailTestRequest struct {
+	domain.MailSettings
+	To string `json:"to" binding:"required,email,max=320"`
+}
+
+// TestMail godoc
+// @Summary  Отправить тестовое письмо с patch'ем настроек (§88.8.4).
+// @Description  Шлёт письмо на указанный адрес с merge'нутыми (current + body) настройками. Маскированный пароль не используется — merge оставит сохранённый. Возвращает {ok,latency_ms} или {ok:false,error}. Не сохраняет настройки.
+// @Tags     settings
+// @Accept   json
+// @Produce  json
+// @Param    body  body  mailTestRequest  true  "patch + получатель"
+// @Success  200  {object}  usecase.TestResult
+// @Failure  400  {object}  ErrorResponse
+// @Failure  500  {object}  ErrorResponse
+// @Security CookieAuth
+// @Router   /api/settings/mail/test [post]
+func (h *AppSettingsHandler) TestMail(c *gin.Context) {
+	if h.tester == nil {
+		localizedError(c, http.StatusServiceUnavailable, "error.internal")
+		return
+	}
+	var req mailTestRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	// Негодные значения самой секции отсекаем до похода в сеть — иначе
+	// оператор увидит невнятную ошибку резолвера вместо «порт вне диапазона».
+	if err := domain.ValidateMailSettings(req.MailSettings); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	res, err := h.tester.TestMail(c.Request.Context(), &req.MailSettings, req.To)
+	if err != nil {
+		h.logger.ErrorWithOp("mail test failed", err, "settings.test_mail")
+		localizedError(c, http.StatusInternalServerError, "error.internal")
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
