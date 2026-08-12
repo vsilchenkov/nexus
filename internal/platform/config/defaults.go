@@ -276,6 +276,9 @@ func applyDefaults(c *Config) {
 	if c.Web.ReplayRateLimitPerUserPerMin == 0 {
 		c.Web.ReplayRateLimitPerUserPerMin = 10
 	}
+	if c.Web.ReplayPeriodRateLimitPerUserPerMin == 0 {
+		c.Web.ReplayPeriodRateLimitPerUserPerMin = 60
+	}
 	if c.Web.NodesSoftLimit == 0 {
 		c.Web.NodesSoftLimit = 10000
 	}

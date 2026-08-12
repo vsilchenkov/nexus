@@ -42,7 +42,13 @@ const (
 	ActionAPITokenRotate = "api_token.rotate"
 
 	ActionNodeReplay = "node.replay"
-	ActionNodeDryRun = "node.dry_run"
+	// ActionNodeReplayPeriod — §85: массовый повтор записей журнала за период.
+	// Отдельное действие, а не разновидность node.replay: фильтр и CSV-экспорт
+	// журнала аудита работают по action, и «кто залил в приёмник месяц трафика»
+	// по вложенному полю было бы не найти. Пишется НА КАЖДЫЙ БАТЧ — прогон
+	// обрывается закрытием вкладки, и след обязан остаться от ушедшего.
+	ActionNodeReplayPeriod = "node.replay_period"
+	ActionNodeDryRun       = "node.dry_run"
 	// §56: применение ALTER'ов синхронизации схемы CH к таблице узла.
 	ActionNodeCHSchemaSync = "node.ch_schema_sync"
 	ActionNodeMove         = "node.move"

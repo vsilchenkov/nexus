@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -28,6 +29,12 @@ type captureNodeLogs struct {
 	chart   port.ChartQuery
 	chartQ  port.LogQuery
 	callsCh int
+
+	// §84.5: латентность считается конкурентно с графиком — запись полей под
+	// мьютексом, иначе -race красит тест, а не код.
+	latencyStep int64
+	latencyErr  error
+	mu          sync.Mutex
 }
 
 func (c *captureNodeLogs) NodeKPI(_ context.Context, q port.LogQuery, _ bool) (port.NodeKPI, error) {
@@ -36,9 +43,22 @@ func (c *captureNodeLogs) NodeKPI(_ context.Context, q port.LogQuery, _ bool) (p
 }
 
 func (c *captureNodeLogs) NodeChart(_ context.Context, q port.LogQuery, cq port.ChartQuery) ([]port.SeriesPoint, error) {
+	c.mu.Lock()
 	c.chartQ, c.chart = q, cq
 	c.callsCh++
+	c.mu.Unlock()
 	return []port.SeriesPoint{{TsMs: 1, Count: 2}}, nil
+}
+
+func (c *captureNodeLogs) NodeLatencyChart(_ context.Context, _ port.LogQuery, stepSec int64) ([]port.LatencyPoint, error) {
+	c.mu.Lock()
+	c.latencyStep = stepSec
+	err := c.latencyErr
+	c.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	return []port.LatencyPoint{{TsMs: 1, P50ms: 5, P95ms: 30, Attempts: 2}}, nil
 }
 
 // metricsNodeRepo — port.NodeRepo с одним узлом.

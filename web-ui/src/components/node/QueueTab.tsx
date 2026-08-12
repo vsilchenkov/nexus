@@ -1,10 +1,11 @@
 import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Trash2, ChevronRight, Pause, Power, Play, RotateCcw } from "lucide-react";
+import { Trash2, ChevronRight, Pause, Power, Play, RotateCcw, History } from "lucide-react";
 
 import { api, type Node } from "../../api/client";
 import { Button, Kpi, KpiRow, Hint, Pill, PeriodPicker, periodWindow, periodKey, defaultPeriod, type Period } from "../ui";
+import { nodeLookbackMs } from "../../lib/nodeLookback";
 import { ReplayDialog } from "../ReplayDialog";
 import { type LogsInitialFilter } from "./LogsTab";
 import { type LogRow, type LogDetail } from "./types";
@@ -14,6 +15,7 @@ import { MAX_INFINITE_ROWS, useInfiniteLogs } from "../../lib/useInfiniteLogs";
 import { useConfirm } from "../../lib/confirm";
 import { useRoleAtLeast } from "../../lib/useCurrentRole";
 import { BreakerCard } from "./BreakerCard";
+import { ReplayPeriodDialog } from "./ReplayPeriodDialog";
 
 type QueueMessage = {
   id: string;
@@ -60,9 +62,14 @@ function prettyJson(raw: string): string {
 export function QueueTab({
   node,
   onOpenFailedLogs,
+  onOpenMetrics,
 }: {
   node: Node;
   onOpenFailedLogs?: (f: LogsInitialFilter) => void;
+  // §84.8: обратная ссылка на «Метрики». Ёмкость партиции считается там (из
+  // метрик), «сколько ждёт прямо сейчас» — здесь; без взаимных ссылок разбор
+  // упирается в тупик на любой из двух вкладок.
+  onOpenMetrics?: () => void;
 }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
@@ -90,6 +97,17 @@ export function QueueTab({
   // id + HTTP-глагол строки — ReplayDialog по нему решает, требуется ли тело
   // (GET — без тела) и какой метод реинъекции покажет поведение бэкенда.
   const [replay, setReplay] = useState<{ id: string; httpMethod?: string } | null>(null);
+  const [replayPeriodOpen, setReplayPeriodOpen] = useState(false);
+
+  // §85: кнопка повтора из логов гаснет по конкретной причине, а не «просто
+  // недоступна» — иначе оператор идёт искать права, хотя дело в конфиге узла.
+  // Сообщение о sync-узле здесь не нужно: у него кнопки нет вовсе (isAsync).
+  const replayPeriodReason = useMemo(() => {
+    if (!node.logging_enabled) return { enabled: false, title: t("queue.replay_period_off_logs") };
+    if (!hasLogsTable) return { enabled: false, title: t("queue.replay_period_off_table") };
+    if (!node.log_request_body) return { enabled: false, title: t("queue.replay_period_off_body") };
+    return { enabled: true, title: undefined as string | undefined };
+  }, [node.logging_enabled, node.log_request_body, hasLogsTable, t]);
 
   // Живая очередь (pending) — manager+ («Управление узлами»). На паузе опрашиваем
   // часто (очередь наполняется, нужна живая обратная связь); если есть pending —
@@ -203,13 +221,31 @@ export function QueueTab({
 
   return (
     <div className="space-y-4">
+      {/* Пикер прижат ВПРАВО — как на остальных вкладках и как было в релизе.
+          Пробовал сдвинуть влево (казалось, что слева пустое место): под ним
+          идут плитки во всю ширину, и пикер, прижатый к левому краю, ломает
+          общую линию правого края страницы. Пустота слева тут не дефект. */}
       <div className="flex flex-wrap items-center justify-end gap-3">
-        <PeriodPicker value={period} onChange={setPeriod} />
+        {/* §85: повтор запросов из логов за период. Не в секции «Неудачные
+            доставки»: операция идёт по ВСЕМ записям окна, а не по её
+            подмножеству, и место рядом с фильтром периода это отражает. */}
+        {isManager && isAsync && (
+          <Button
+            sm
+            variant="ghost"
+            disabled={!replayPeriodReason.enabled}
+            title={replayPeriodReason.title}
+            onClick={() => setReplayPeriodOpen(true)}
+          >
+            <History className="h-3.5 w-3.5" /> {t("queue.replay_period")}
+          </Button>
+        )}
+        <PeriodPicker value={period} onChange={setPeriod} maxLookbackMs={nodeLookbackMs(node)} />
       </div>
 
       {/* У sync-узла плитки «Ожидают отправки» нет: очереди не существует.
-          Сетка остаётся двухколоночной — одинокая плитка занимает первую
-          колонку и не растягивается на всю ширину. */}
+          Оставшаяся одна плитка выкладывается НЕ сеткой (см. KpiRow): половина
+          строки под неё и пустая половина рядом читались как поломка вёрстки. */}
       <KpiRow cols={2}>
         {isAsync && (
           <Kpi
@@ -315,6 +351,18 @@ export function QueueTab({
               }}
             />
           </div>
+          {/* §84.8: голова очереди из УЖЕ загруженного списка — он отсортирован
+              по времени приёма, значит items[0] и есть самое старое сообщение.
+              Ни нового эндпоинта, ни лишнего давления на KafkaRateLimit. */}
+          {pendingCount > 0 && (
+            <QueueHeadSummary
+              count={pendingCount}
+              capped={pendingCapped}
+              partition={pending[0].partition}
+              headReceivedAt={pending[0].received_at}
+              onOpenMetrics={onOpenMetrics}
+            />
+          )}
           {pending.length === 0 ? (
             <div className="text-fg-muted">
               {node.status === "paused"
@@ -501,6 +549,14 @@ export function QueueTab({
           httpMethod={replay.httpMethod}
           incomingMethod={node.incoming_method}
           onClose={() => setReplay(null)}
+        />
+      )}
+
+      {replayPeriodOpen && (
+        <ReplayPeriodDialog
+          node={node}
+          onClose={() => setReplayPeriodOpen(false)}
+          onFinished={invalidateFailed}
         />
       )}
     </div>
@@ -726,5 +782,59 @@ function FailedBody({ nodeId, logId }: { nodeId: string; logId: string }) {
         </pre>
       </div>
     </div>
+  );
+}
+
+/**
+ * QueueHeadSummary — голова очереди узла (§84.8, узловой срез §80.2).
+ *
+ * Возраст головы отвечает на вопрос, который число «ждут N» не закрывает:
+ * «доставка встала или просто много трафика». Считается из УЖЕ загруженного
+ * списка — он отсортирован по времени приёма, поэтому items[0] и есть самое
+ * старое сообщение; нового запроса к Kafka не появляется.
+ *
+ * capped означает, что выборка упёрлась в предел: показываем «50+», а не «50»,
+ * иначе число читается как точное.
+ */
+function QueueHeadSummary({
+  count,
+  capped,
+  partition,
+  headReceivedAt,
+  onOpenMetrics,
+}: {
+  count: number;
+  capped: boolean;
+  partition: number;
+  headReceivedAt: string;
+  onOpenMetrics?: () => void;
+}) {
+  const { t } = useTranslation();
+  const ageMs = Math.max(Date.now() - Date.parse(headReceivedAt), 0);
+  const ageMin = Math.round(ageMs / 60_000);
+  // Пять минут — уже не «просто много трафика»: при штатной доставке голова
+  // очереди живёт секунды.
+  const stale = ageMin >= 5;
+  return (
+    <p className={cn("text-xs", stale ? "text-warn" : "text-fg-muted")}>
+      {t("queue.head.summary", {
+        waiting: `${count}${capped ? "+" : ""}`,
+        partition,
+        age: ageMin < 1 ? t("queue.head.age_lt_min") : t("queue.head.age_min", { m: ageMin }),
+      })}
+      {stale && " ⚠"}
+      {onOpenMetrics && (
+        <>
+          {" · "}
+          <button
+            type="button"
+            onClick={onOpenMetrics}
+            className="text-accent underline-offset-2 hover:underline"
+          >
+            {t("queue.head.capacity_link")}
+          </button>
+        </>
+      )}
+    </p>
   );
 }

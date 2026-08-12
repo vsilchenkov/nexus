@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -29,6 +30,30 @@ type UserPreference struct {
 // Значение — сериализованный Period фронта: {"kind":"preset","range":"7d"}.
 // Контракт значения держит клиент (web-ui/src/lib/period.ts), не сервер.
 const PreferenceKeyOverviewPeriod = "overview.period"
+
+// PreferenceKeyNodeMetricsViewPrefix — префикс ключа вида вкладки «Метрики»
+// узла (§84.3). Полный ключ собирает PreferenceKeyNodeMetricsView.
+const PreferenceKeyNodeMetricsViewPrefix = "node.metrics.view."
+
+// PreferenceKeyNodeMetricsView — ключ вида (период + шаг) для КОНКРЕТНОГО узла
+// (§84.3): "node.metrics.view.<id узла без дефисов>".
+//
+// Одна строка префа на узел, а не карта в одном значении. Карта упирается в
+// maxPreferenceValueBytes (4 КиБ) примерно на сороковом узле и требует
+// клиентского вытеснения — механизма, который молча теряет настройки
+// пользователя. Отдельные строки этой проблемы не имеют вовсе.
+//
+// Дефисы снимаются не для красоты: формат ключа (preferenceKeyPattern и
+// зеркальный CHECK миграции 0031) их не допускает. UUID без дефисов —
+// 32 символа нижнего hex, и с префиксом выходит 50 при потолке
+// maxPreferenceKeyLen = 64. Запас закреплён тестом: удлинение префикса однажды
+// упрётся в 400, и узнать об этом надо здесь, а не на бою.
+//
+// Значение — {"range":"24h","step":"1h"}; контракт держит клиент, сервер
+// значения префов не интерпретирует (§71.3).
+func PreferenceKeyNodeMetricsView(nodeID string) string {
+	return PreferenceKeyNodeMetricsViewPrefix + strings.ReplaceAll(nodeID, "-", "")
+}
 
 const (
 	// maxPreferenceKeyLen — совпадает с VARCHAR(64) в миграции 0031.

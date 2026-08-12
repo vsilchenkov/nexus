@@ -269,6 +269,12 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
+                        "description": "all — журнал всех команд пользователя (§86.7); НЕ то же, что team_id=* (весь инстанс, admin)",
+                        "name": "scope",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "description": "фильтр по user_id",
                         "name": "user_id",
                         "in": "query"
@@ -357,6 +363,12 @@ const docTemplate = `{
                 ],
                 "summary": "Выгрузка audit-log в CSV (admin only, §7.13).",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "all — журнал всех команд пользователя (§86.7); НЕ то же, что team_id=* (весь инстанс, admin)",
+                        "name": "scope",
+                        "in": "query"
+                    },
                     {
                         "type": "string",
                         "description": "фильтр по user_id",
@@ -2179,7 +2191,7 @@ const docTemplate = `{
                         "ApiTokenAuth": []
                     }
                 ],
-                "description": "Источник — ClickHouse-логи (уникальные запросы), fallback Prometheus. Ключ node = path узла. Поле totals = СУММА строк (incoming/outgoing/errors/error_rate) для KPI шапки. Без источника — пустой список с prometheus_available=false.",
+                "description": "Источник — ClickHouse-логи (уникальные запросы), fallback Prometheus. Поле totals = СУММА строк (incoming/outgoing/errors/error_rate) для KPI шапки. Без источника — пустой список с prometheus_available=false. scope=all (§86.4) считает по всем командам пользователя (только session-cookie); node_ids сужает расчёт до перечисленных узлов — порционная загрузка рабочего стола. При node_ids поле totals относится только к запрошенным узлам, полный агрегат отдаёт /api/metrics/totals.",
                 "produces": [
                     "application/json"
                 ],
@@ -2205,6 +2217,18 @@ const docTemplate = `{
                         "description": "период по (RFC3339 или UnixMilli)",
                         "name": "to",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "all — все команды пользователя (§86.4)",
+                        "name": "scope",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "id узлов через запятую, максимум 200 (§86.4)",
+                        "name": "node_ids",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -2212,6 +2236,18 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.NodesMetricsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
                     }
                 }
@@ -2366,6 +2402,66 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/metrics/totals": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    },
+                    {
+                        "ApiTokenAuth": []
+                    }
+                ],
+                "description": "Сумма incoming/outgoing/errors по ВСЕМ узлам скоупа за окно, без per-node строк и спарклайнов. Нужен сквозному режиму: там строки таблицы грузятся порционно, и шапка обязана считаться отдельно, иначе её значение зависело бы от прокрутки. node_ids здесь игнорируется. Результат кешируется на несколько секунд, одновременные промахи схлопываются в один расчёт.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "metrics"
+                ],
+                "summary": "Агрегат шапки рабочего стола по всему скоупу (§86.4).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "1h | 3h | 24h | 7d | 14d | 30d (default 1h)",
+                        "name": "range",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "период с (RFC3339 или UnixMilli)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "период по (RFC3339 или UnixMilli)",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "all — все команды пользователя (§86.4)",
+                        "name": "scope",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.NodesTotalsResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes": {
             "get": {
                 "security": [
@@ -2376,14 +2472,21 @@ const docTemplate = `{
                         "ApiTokenAuth": []
                     }
                 ],
+                "description": "Без scope — узлы текущей команды сессии. scope=all (§86) — узлы ВСЕХ команд, в которых состоит пользователь; только session-cookie, по API-токену 403 (токен закреплён за одной командой).",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "nodes"
                 ],
-                "summary": "Список узлов команды.",
+                "summary": "Список узлов команды (или всех команд пользователя при scope=all).",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "all — узлы всех команд пользователя (§86)",
+                        "name": "scope",
+                        "in": "query"
+                    },
                     {
                         "type": "string",
                         "description": "поиск по path или target_url",
@@ -2415,6 +2518,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ListNodesResponse"
                         }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
                     }
                 }
             },
@@ -2424,7 +2533,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Только admin. §3.3 ТЗ, лимиты в §3.3.",
+                "description": "manager+. §3.3 ТЗ, лимиты в §3.3. Команда — поле team_id (§86.6); пусто → команда текущей сессии. Команда вне членств пользователя → 403.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2455,6 +2564,12 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "team is not among user memberships",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
@@ -3534,6 +3649,59 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/nodes/{id}/log/{logId}/ack": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Прогоняет сохранённое тело запроса через ТЕКУЩИЙ шаблон ответа приёма узла (§83) и показывает, чем шина ответила бы сейчас. Это расчёт, а не факт: отрендеренный ответ приёма нигде не сохраняется. applicable=false с причиной — у узла выключено изменение ответа, запись прошла синхронным путём или тело запроса не логируется. Провал подстановки приходит с HTTP 200 и ok=false. Доступно всем ролям со scope logs:read: исполняется шаблон уже сохранённого узла на теле, которое запрашивающий и так видит в журнале.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logs"
+                ],
+                "summary": "Пересчёт ответа шины по записи журнала (§84.9).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "log record id",
+                        "name": "logId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ackFromLogDTO"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/{id}/log/{logId}/body": {
             "get": {
                 "security": [
@@ -4085,6 +4253,178 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/nodes/{id}/logs/replay-period/plan": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Read-only: сообщает, сколько записей окна будет отправлено, а сколько нет и почему (тело обрезано / multipart / не сохранено / синхронная запись / запись-повтор). Ничего не отправляет и в аудит не пишет. Фильтр — те же query-параметры, что у GET /api/nodes/{id}/logs. Флаг exact=false означает, что окно разобрано не целиком (потолок разбора) и числа неполные. Границы окна возвращаются в ответе — их надо слать обратно в каждый батч, иначе «по сейчас» затянет в набор собственные повторы.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logs"
+                ],
+                "summary": "Предпросмотр повторной отправки из логов за период (§85.7).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "начало окна (RFC3339 или UnixMilli)",
+                        "name": "from",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "конец окна (RFC3339 или UnixMilli)",
+                        "name": "to",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "description": "опции",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.replayPeriodRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nexus_internal_web_usecase.ReplayPeriodPlan"
+                        }
+                    },
+                    "400": {
+                        "description": "нет границ окна / плохой поисковый запрос",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "узел отключён или синхронный",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "узел не логирует тело запроса",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{id}/logs/replay-period/run": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Реинжектирует до limit записей окна через Receiver и возвращает курсор продолжения; next_cursor=null означает, что окно пройдено. Цикл батчей крутит клиент. Повторяются только async-записи; уже отправленные повторно не берутся благодаря курсору. Аудит пишется на каждый батч.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logs"
+                ],
+                "summary": "Батч повторной отправки из логов за период (§85.5).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "начало окна (RFC3339 или UnixMilli)",
+                        "name": "from",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "конец окна (RFC3339 или UnixMilli)",
+                        "name": "to",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "description": "курсор и опции",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.replayPeriodRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nexus_internal_web_usecase.ReplayPeriodBatch"
+                        }
+                    },
+                    "400": {
+                        "description": "нет границ окна / плохой поисковый запрос",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "узел отключён или синхронный",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "узел не логирует тело запроса",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "rate limit exceeded",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/{id}/logs/stream": {
             "get": {
                 "security": [
@@ -4286,6 +4626,52 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "node or target team not found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{id}/runtime": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Runtime-состояние узла для шапки страницы: ok / degraded / down по модели §52. Источник — персистентный Redis (переживает рестарт Sender), fallback — instant-gauge Prometheus. available=false означает «неизвестно» (ни один источник не ответил), и это НЕ то же самое, что ok. Доступно всем ролям: понимать, почему узел молчит, нужно и наблюдателю.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "nodes"
+                ],
+                "summary": "Исход последнего исходящего вызова узла (§84.7).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.nodeRuntimeDTO"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
@@ -6046,6 +6432,10 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 2048
                 },
+                "team_id": {
+                    "description": "TeamID — команда, в которой создаётся узел (§86.6). Пусто → команда\nтекущей сессии, как было до §86: поле необязательное, поэтому старые\nклиенты и API-токены продолжают работать без изменений. Непустое значение\nобязано быть среди членств пользователя, иначе 403.",
+                    "type": "string"
+                },
                 "timeout_ms": {
                     "type": "integer"
                 },
@@ -6895,6 +7285,14 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_web_adapter_in_http.NodesTotalsResponse": {
+            "type": "object",
+            "properties": {
+                "totals": {
+                    "$ref": "#/definitions/internal_web_adapter_in_http.overviewTotalsDTO"
+                }
+            }
+        },
         "internal_web_adapter_in_http.PeerInstanceResponse": {
             "type": "object",
             "properties": {
@@ -7325,6 +7723,10 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 2048
                 },
+                "team_id": {
+                    "description": "TeamID — команда, в которой создаётся узел (§86.6). Пусто → команда\nтекущей сессии, как было до §86: поле необязательное, поэтому старые\nклиенты и API-токены продолжают работать без изменений. Непустое значение\nобязано быть среди членств пользователя, иначе 403.",
+                    "type": "string"
+                },
                 "timeout_ms": {
                     "type": "integer"
                 },
@@ -7399,6 +7801,10 @@ const docTemplate = `{
                 "commit": {
                     "type": "string"
                 },
+                "dev_mode": {
+                    "description": "DevMode — §85.8: установка тестовая (web.dev_mode). Единственный публичный\nпризнак среды, доступный форме входа: /api/version — единственный /api без\nавторизации, и SPA его уже запрашивает ради версии в футере.\n\nНЕ путать с OverrideAllowed: тот разрешает конкретную настройку §34.3.\nОтдавать наружу dev_mode=false безопасно, true бывает только на стенде.",
+                    "type": "boolean"
+                },
                 "instance": {
                     "description": "Instance — идентификатор ноды (§70.8). Пустой у ноды без идентификатора,\nпоэтому omitempty: интерфейс действующей ноды не меняется.",
                     "type": "string"
@@ -7409,6 +7815,60 @@ const docTemplate = `{
                 },
                 "version": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.ackFromLogDTO": {
+            "type": "object",
+            "properties": {
+                "applicable": {
+                    "type": "boolean"
+                },
+                "body": {
+                    "type": "string"
+                },
+                "body_source": {
+                    "type": "string"
+                },
+                "content_type": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "not_applicable_reason": {
+                    "type": "string"
+                },
+                "ok": {
+                    "description": "ok=false — НЕ ошибка запроса: подстановка не удалась, причина в reason.",
+                    "type": "boolean"
+                },
+                "on_error": {
+                    "type": "string"
+                },
+                "placeholder": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "request_at_ms": {
+                    "type": "integer"
+                },
+                "spec_changed_after_request": {
+                    "type": "boolean"
+                },
+                "spec_updated_at_ms": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "integer"
+                },
+                "warnings": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -8159,6 +8619,10 @@ const docTemplate = `{
                 "errors": {
                     "type": "integer"
                 },
+                "last_seen_ms": {
+                    "description": "§84.6: последняя активность В ОКНЕ и под текущими фильтрами (UnixMilli);\n0 = в окне запросов не было. Не «за всё время» — см. port.NodeKPI.",
+                    "type": "integer"
+                },
                 "p95_ms": {
                     "type": "number"
                 },
@@ -8167,6 +8631,22 @@ const docTemplate = `{
                 },
                 "total": {
                     "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.nodeRuntimeDTO": {
+            "type": "object",
+            "properties": {
+                "available": {
+                    "type": "boolean"
+                },
+                "last_outcome": {
+                    "description": "ok | degraded | down",
+                    "type": "string"
+                },
+                "source": {
+                    "description": "redis | prometheus | none",
+                    "type": "string"
                 }
             }
         },
@@ -8193,6 +8673,10 @@ const docTemplate = `{
                     ]
                 },
                 "node": {
+                    "type": "string"
+                },
+                "node_id": {
+                    "description": "NodeID — идентификатор узла (§86.7). Клиент сшивает строки таблицы с\nметриками именно по нему: путь уникален лишь внутри команды, и в сквозном\nрежиме две команды могут иметь узлы с одинаковым путём.",
                     "type": "string"
                 },
                 "out": {
@@ -8412,6 +8896,38 @@ const docTemplate = `{
                 "q": {
                     "type": "string",
                     "maxLength": 1000
+                }
+            }
+        },
+        "internal_web_adapter_in_http.replayCursorDTO": {
+            "type": "object",
+            "properties": {
+                "after_id": {
+                    "type": "string"
+                },
+                "after_ms": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.replayPeriodRequest": {
+            "type": "object",
+            "properties": {
+                "cursor": {
+                    "description": "Cursor — позиция продолжения из предыдущего батча; отсутствует у первого.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.replayCursorDTO"
+                        }
+                    ]
+                },
+                "limit": {
+                    "description": "Limit — размер батча; 0 = серверный дефолт.",
+                    "type": "integer"
+                },
+                "skip_replay_copies": {
+                    "description": "SkipReplayCopies — не брать записи, порождённые прошлыми повторами (§85.6).\nУказатель, чтобы отличить «не прислано» (дефолт true) от явного false.",
+                    "type": "boolean"
                 }
             }
         },
@@ -9338,6 +9854,115 @@ const docTemplate = `{
                 }
             }
         },
+        "nexus_internal_web_usecase.ReplayCandidateView": {
+            "type": "object",
+            "properties": {
+                "date_request": {
+                    "type": "string"
+                },
+                "done": {
+                    "type": "boolean"
+                },
+                "http_method": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "method": {
+                    "type": "string"
+                },
+                "request_size": {
+                    "type": "integer"
+                },
+                "skip_reason": {
+                    "description": "SkipReason — пусто у пригодной записи.",
+                    "type": "string"
+                },
+                "status": {
+                    "type": "integer"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "nexus_internal_web_usecase.ReplayPeriodBatch": {
+            "type": "object",
+            "properties": {
+                "failed": {
+                    "type": "integer"
+                },
+                "next_cursor": {
+                    "description": "NextCursor — продолжение; nil означает, что окно пройдено до конца.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/nexus_internal_web_usecase_port.ReplayCursor"
+                        }
+                    ]
+                },
+                "replayed": {
+                    "type": "integer"
+                },
+                "scanned": {
+                    "type": "integer"
+                },
+                "skipped_by": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
+        "nexus_internal_web_usecase.ReplayPeriodPlan": {
+            "type": "object",
+            "properties": {
+                "eligible": {
+                    "description": "Eligible — сколько из разобранных будет отправлено.",
+                    "type": "integer"
+                },
+                "eligibles": {
+                    "description": "Eligibles / Ineligibles — примеры обеих групп.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/nexus_internal_web_usecase.ReplayCandidateView"
+                    }
+                },
+                "exact": {
+                    "description": "Exact — окно разобрано целиком, значит счётчики точные. false означает\n«упёрлись в потолок разбора», и интерфейс обязан сказать это словами.",
+                    "type": "boolean"
+                },
+                "from": {
+                    "description": "From / To — ЗАФИКСИРОВАННЫЕ границы окна: клиент обязан слать их обратно\nв каждый батч, иначе «по сейчас» затянет в набор собственные повторы.",
+                    "type": "string"
+                },
+                "ineligibles": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/nexus_internal_web_usecase.ReplayCandidateView"
+                    }
+                },
+                "scanned": {
+                    "description": "Scanned — сколько записей реально разобрано.",
+                    "type": "integer"
+                },
+                "skipped_by": {
+                    "description": "SkippedBy — причина (§85.3) → сколько записей.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                },
+                "to": {
+                    "type": "string"
+                },
+                "total": {
+                    "description": "Total — записей окна под фильтром (uniqExact по ID).",
+                    "type": "integer"
+                }
+            }
+        },
         "nexus_internal_web_usecase.ReplayResult": {
             "type": "object",
             "properties": {
@@ -9354,6 +9979,7 @@ const docTemplate = `{
                     }
                 },
                 "new_log_id": {
+                    "description": "NewLogID — идентификатор записи, созданной повтором, как его сообщила\nшина (см. replayedLogID). ПУСТ у sync-повтора: там ответ приходит от\nприёмника, и идентификатора записи в нём нет ни в каком виде. Пустое\nзначение наружу не отдаётся — интерфейсу нечего показывать.",
                     "type": "string"
                 },
                 "status_code": {
@@ -9390,6 +10016,18 @@ const docTemplate = `{
                 },
                 "ok": {
                     "type": "boolean"
+                }
+            }
+        },
+        "nexus_internal_web_usecase_port.ReplayCursor": {
+            "type": "object",
+            "properties": {
+                "afterID": {
+                    "type": "string"
+                },
+                "afterMs": {
+                    "type": "integer",
+                    "format": "int64"
                 }
             }
         }

@@ -1,9 +1,9 @@
 import { useTranslation } from "react-i18next";
 
-import { LabelHint } from "../ui";
+import { DateTimeField, LabelHint } from "../ui";
 import { LogMethodFilter } from "./LogMethodFilter";
 import { LogClientHostFilter } from "./LogClientHostFilter";
-import { LogDateField } from "./LogDateField";
+
 import { emptyAdvForm, type LogsAdvForm } from "../../lib/logsQuery";
 
 // LogsAdvancedFilters — панель расширенных фильтров (§48/§67), вынесенная из
@@ -128,7 +128,7 @@ export function LogsAdvancedFilters({
               <label className="text-[10px] uppercase tracking-wider text-fg-muted">
                 {t("logs.advanced.from")}
               </label>
-              <LogDateField
+              <DateTimeField
                 value={draft.from}
                 onChange={(v) => onCommit({ ...draft, from: v })}
                 min={minDate}
@@ -141,7 +141,7 @@ export function LogsAdvancedFilters({
               <label className="text-[10px] uppercase tracking-wider text-fg-muted">
                 {t("logs.advanced.to")}
               </label>
-              <LogDateField
+              <DateTimeField
                 value={draft.to}
                 onChange={(v) => onCommit({ ...draft, to: v })}
                 min={minDate}

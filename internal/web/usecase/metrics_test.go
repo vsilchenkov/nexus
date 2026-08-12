@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -82,20 +83,43 @@ type fakeNodeLogs struct {
 	chart    []port.SeriesPoint
 	chartErr error
 
+	latency    []port.LatencyPoint
+	latencyErr error
+
 	gotKPIQuery   port.LogQuery
 	gotChartQuery port.LogQuery
 	gotChart      port.ChartQuery
 	chartCalls    int
+
+	// §84.5: шаг латентности фиксируется отдельно — два графика обязаны
+	// считаться ОДНИМ шагом, иначе их нельзя сопоставить глазом.
+	gotLatencyQuery port.LogQuery
+	gotLatencyStep  int64
+	latencyCalls    int
+	mu              sync.Mutex
 }
 
 func (f *fakeNodeLogs) NodeKPI(_ context.Context, q port.LogQuery, _ bool) (port.NodeKPI, error) {
 	f.gotKPIQuery = q
 	return f.kpi, f.kpiErr
 }
+
+// §84.5: NodeChart и NodeLatencyChart зовутся КОНКУРЕНТНО, поэтому запись
+// полей фейка защищена мьютексом — иначе -race красит тест, а не код.
 func (f *fakeNodeLogs) NodeChart(_ context.Context, q port.LogQuery, c port.ChartQuery) ([]port.SeriesPoint, error) {
+	f.mu.Lock()
 	f.gotChartQuery, f.gotChart = q, c
 	f.chartCalls++
+	f.mu.Unlock()
 	return f.chart, f.chartErr
+}
+
+func (f *fakeNodeLogs) NodeLatencyChart(_ context.Context, q port.LogQuery, stepSec int64) ([]port.LatencyPoint, error) {
+	f.mu.Lock()
+	f.gotLatencyQuery, f.gotLatencyStep = q, stepSec
+	f.latencyCalls++
+	f.mu.Unlock()
+	return f.latency, f.latencyErr
 }
 
 // fakeNodeRepo встраивает port.NodeRepo (nil): usecase зовёт Get и List.
@@ -185,11 +209,16 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 			// §41/§52: gauge=2 → последний вызов — down.
 			lastErrs: map[string]float64{"webhook/send": 2},
 		}
-		uc := NewMetricsUsecase(prom, nil, &fakeNodeRepo{}, nil, nil, log)
+		// §86.4: строки строятся по узлам скоупа, а числа берутся из Prometheus
+		// по пути. До §86 ветка отдавала всё, что нашлось в Prometheus, без
+		// какой-либо привязки к команде.
+		repo := &fakeNodeRepo{list: []*domain.Node{{ID: "n1", Path: "webhook/send"}}}
+		uc := NewMetricsUsecase(prom, nil, repo, nil, nil, log)
 		got := uc.NodesOverview(context.Background(), "", time.Now().Add(-time.Hour), time.Now())
 		require.True(t, got.PrometheusAvailable)
 		require.Len(t, got.Items, 1)
 		require.Equal(t, "webhook/send", got.Items[0].Node)
+		require.Equal(t, "n1", got.Items[0].NodeID, "§86.7: строка несёт id узла")
 		require.EqualValues(t, 4201, got.Items[0].In)
 		require.EqualValues(t, 4198, got.Items[0].Out)
 		require.EqualValues(t, 2, got.Items[0].Errors)
@@ -228,7 +257,11 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 			"a/x": domain.NodeOutcomeDegraded,
 			"b/y": domain.NodeOutcomeDown,
 		}}
-		uc := NewMetricsUsecase(prom, nil, &fakeNodeRepo{}, nil, rs, log)
+		repo := &fakeNodeRepo{list: []*domain.Node{
+			{ID: "n1", Path: "a/x"}, {ID: "n2", Path: "b/y"},
+			{ID: "n3", Path: "c/z"}, {ID: "n4", Path: "d/w"},
+		}}
+		uc := NewMetricsUsecase(prom, nil, repo, nil, rs, log)
 		got := uc.NodesOverview(context.Background(), "", time.Now().Add(-time.Hour), time.Now())
 		by := map[string]NodeThroughputRow{}
 		for _, it := range got.Items {
@@ -251,19 +284,66 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 			lastErrs:   map[string]float64{"a/x": 2},
 		}
 		rs := &fakeNodeStatus{err: errors.New("redis down")}
-		uc := NewMetricsUsecase(prom, nil, &fakeNodeRepo{}, nil, rs, log)
+		repo := &fakeNodeRepo{list: []*domain.Node{{ID: "n1", Path: "a/x"}}}
+		uc := NewMetricsUsecase(prom, nil, repo, nil, rs, log)
 		got := uc.NodesOverview(context.Background(), "", time.Now().Add(-time.Hour), time.Now())
 		require.Len(t, got.Items, 1)
 		require.Equal(t, domain.NodeOutcomeDown, got.Items[0].LastOutcome,
 			"ошибка Redis → fallback на Prometheus")
 	})
 
+	// §86.4: Prometheus-ветка больше не отдаёт всё подряд.
+	//
+	// У метки Prometheus нет команды (`node = <path>`), поэтому до §86 рабочий
+	// стол БЕЗ ClickHouse показывал пути узлов всех команд инстанса — в сквозном
+	// режиме это стало бы прямой утечкой. Теперь строки строятся по узлам
+	// скоупа: чужой узел не появится, а «сирота» (есть в Prometheus, нет в
+	// конфигурации) остаётся видимым только диагностике §44.E.
+	t.Run("prometheus branch is scoped to configured nodes", func(t *testing.T) {
+		t.Parallel()
+		prom := &fakeProm{throughput: map[string]port.NodeThroughput{
+			"mine/x":    {In: 10},
+			"foreign/y": {In: 999}, // узел чужой команды
+			"orphan/z":  {In: 7},   // трафик без узла в конфигурации
+		}}
+		repo := &fakeNodeRepo{list: []*domain.Node{{ID: "n1", Path: "mine/x"}}}
+		uc := NewMetricsUsecase(prom, nil, repo, nil, nil, log)
+
+		got := uc.NodesOverview(context.Background(), "team-mine", time.Now().Add(-time.Hour), time.Now())
+
+		require.Len(t, got.Items, 1)
+		require.Equal(t, "mine/x", got.Items[0].Node)
+		require.EqualValues(t, 10, got.Totals.Incoming,
+			"§44.A: шапка = сумма ВИДИМЫХ строк, чужой трафик в неё не входит")
+	})
+
+	// §86.4: узел без трафика в Prometheus всё равно имеет строку — так ветка
+	// сходится с ClickHouse-веткой, где строка есть у каждого узла.
+	t.Run("prometheus branch keeps silent nodes", func(t *testing.T) {
+		t.Parallel()
+		prom := &fakeProm{throughput: map[string]port.NodeThroughput{"loud/x": {In: 5}}}
+		repo := &fakeNodeRepo{list: []*domain.Node{
+			{ID: "n1", Path: "loud/x"}, {ID: "n2", Path: "silent/y"},
+		}}
+		uc := NewMetricsUsecase(prom, nil, repo, nil, nil, log)
+
+		got := uc.NodesOverview(context.Background(), "team", time.Now().Add(-time.Hour), time.Now())
+
+		require.Len(t, got.Items, 2)
+		by := map[string]NodeThroughputRow{}
+		for _, it := range got.Items {
+			by[it.Node] = it
+		}
+		require.EqualValues(t, 0, by["silent/y"].In)
+		require.NotNil(t, by["silent/y"].Spark, "спарклайн молчащего узла — пустой ряд, не nil")
+	})
+
 	t.Run("clickhouse source matches node detail (per-node KPI)", func(t *testing.T) {
 		t.Parallel()
 		// nodeLogs != nil → берём из CH (как страница узла), не из Prometheus.
 		repo := &fakeNodeRepo{list: []*domain.Node{
-			{Path: "a/x", ClickHouseTable: "db.a"},
-			{Path: "b/y", ClickHouseTable: ""}, // нет логирования → нули
+			{ID: "n1", Path: "a/x", ClickHouseTable: "db.a"},
+			{ID: "n2", Path: "b/y", ClickHouseTable: ""}, // нет логирования → нули
 		}}
 		logs := &fakeNodeLogs{
 			kpi:   port.NodeKPI{Total: 50, Delivered: 47, Errors: 3, P95ms: 12},
@@ -283,6 +363,11 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 		require.EqualValues(t, 12, byNode["a/x"].P95ms)
 		require.Equal(t, []float64{5, 7}, byNode["a/x"].Spark)
 		require.Zero(t, byNode["b/y"].In, "узел без CH-таблицы → нули")
+		// §86.7: id обязан пережить ЗАПОЛНЕНИЕ строки метриками. Строка
+		// собирается заново внутри горутины, и потерянный там NodeID означал бы
+		// прочерки вместо цифр во всех режимах — клиент сшивает метрики по нему.
+		require.Equal(t, "n1", byNode["a/x"].NodeID, "id узла с метриками")
+		require.Equal(t, "n2", byNode["b/y"].NodeID, "id узла без логирования")
 		// §44.A: шапка = сумма строк (CH-ветка) = только узел a/x (b/y нулевой).
 		require.EqualValues(t, 50, got.Totals.Incoming)
 		require.EqualValues(t, 47, got.Totals.Outgoing)
@@ -542,5 +627,78 @@ func TestMetricsUsecase_NodeMetrics(t *testing.T) {
 		uc := NewMetricsUsecase(nil, nil, repo, nil, nil, log)
 		_, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "", Since: time.Now().Add(-time.Hour), Until: time.Now()})
 		require.NoError(t, err)
+	})
+
+	// §84.5: латентность считается ТЕМ ЖЕ шагом, что и трафик. Разные шаги
+	// означали бы два графика друг под другом в разных столбцах — сопоставить
+	// их глазом (ради чего они и стоят рядом) стало бы нельзя.
+	t.Run("§84.5 латентность считается тем же шагом, что и график трафика", func(t *testing.T) {
+		t.Parallel()
+		repo := &fakeNodeRepo{node: &domain.Node{ID: "n1", Path: "p", TeamID: "default", ClickHouseTable: "db.t"}}
+		logs := &fakeNodeLogs{
+			kpi:     port.NodeKPI{Total: 5},
+			latency: []port.LatencyPoint{{TsMs: 1, P50ms: 5300, P95ms: 30490, Attempts: 7}},
+		}
+		uc := NewMetricsUsecase(nil, logs, repo, nil, nil, log)
+
+		until := time.Now()
+		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{
+			NodeID: "n1", TeamID: "default",
+			Since: until.Add(-14 * 24 * time.Hour), Until: until, Step: "24h",
+		})
+		require.NoError(t, err)
+		require.Equal(t, 1, logs.latencyCalls)
+		require.EqualValues(t, logs.gotChart.StepSec, logs.gotLatencyStep)
+		require.EqualValues(t, 86400, logs.gotLatencyStep)
+		require.True(t, got.LatencyAvailable)
+		require.Len(t, got.Latency, 1)
+		require.EqualValues(t, 30490, got.Latency[0].P95ms)
+	})
+
+	// §84.5: деградация латентности НЕ каскадит. Без трафика и KPI вкладка
+	// бесполезна, без латентности — всего лишь беднее.
+	t.Run("§84.5 ошибка латентности не гасит график трафика", func(t *testing.T) {
+		t.Parallel()
+		repo := &fakeNodeRepo{node: &domain.Node{ID: "n1", Path: "p", TeamID: "default", ClickHouseTable: "db.t"}}
+		logs := &fakeNodeLogs{
+			kpi:        port.NodeKPI{Total: 5},
+			chart:      []port.SeriesPoint{{TsMs: 1, Count: 5}},
+			latencyErr: errors.New("boom"),
+		}
+		uc := NewMetricsUsecase(nil, logs, repo, nil, nil, log)
+
+		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "default"})
+		require.NoError(t, err)
+		require.True(t, got.ChartAvailable, "трафик обязан выжить")
+		require.Len(t, got.Series, 1)
+		require.False(t, got.LatencyAvailable)
+		require.Empty(t, got.Latency)
+	})
+
+	// §84.5: обратная сторона того же правила — падение ГРАФИКА гасит вкладку
+	// целиком, как и до раздела. Иначе KPI показывались бы под пустым графиком
+	// без объяснения.
+	t.Run("§84.5 ошибка графика по-прежнему гасит вкладку", func(t *testing.T) {
+		t.Parallel()
+		repo := &fakeNodeRepo{node: &domain.Node{ID: "n1", Path: "p", TeamID: "default", ClickHouseTable: "db.t"}}
+		logs := &fakeNodeLogs{kpi: port.NodeKPI{Total: 5}, chartErr: errors.New("boom")}
+		uc := NewMetricsUsecase(nil, logs, repo, nil, nil, log)
+
+		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "default"})
+		require.NoError(t, err)
+		require.False(t, got.ChartAvailable)
+	})
+
+	// §84.6: пульс приезжает тем же вызовом KPI — дополнительного запроса не
+	// появляется.
+	t.Run("§84.6 last_seen приходит вместе с KPI, без отдельного запроса", func(t *testing.T) {
+		t.Parallel()
+		repo := &fakeNodeRepo{node: &domain.Node{ID: "n1", Path: "p", TeamID: "default", ClickHouseTable: "db.t"}}
+		logs := &fakeNodeLogs{kpi: port.NodeKPI{Total: 5, LastSeenMs: 1786114275000}}
+		uc := NewMetricsUsecase(nil, logs, repo, nil, nil, log)
+
+		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "default"})
+		require.NoError(t, err)
+		require.EqualValues(t, 1786114275000, got.KPI.LastSeenMs)
 	})
 }

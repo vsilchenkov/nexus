@@ -709,3 +709,71 @@ func (h *LogsHandler) Stream(c *gin.Context) {
 		}
 	}
 }
+
+// ackFromLogDTO — пересчёт ответа шины по записи журнала (§84.9).
+//
+// Это РАСЧЁТ по текущему шаблону, а не то, что реально ушло клиенту: ответ
+// приёма не сохраняется нигде. Поля, помогающие не спутать одно с другим
+// (spec_changed_after_request, body_source, warnings, on_error), — часть
+// контракта, а не украшение.
+type ackFromLogDTO struct {
+	Applicable          bool   `json:"applicable"`
+	NotApplicableReason string `json:"not_applicable_reason,omitempty"`
+
+	// ok=false — НЕ ошибка запроса: подстановка не удалась, причина в reason.
+	OK          bool   `json:"ok"`
+	Status      int    `json:"status,omitempty"`
+	ContentType string `json:"content_type,omitempty"`
+	Body        string `json:"body,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	Placeholder string `json:"placeholder,omitempty"`
+	Message     string `json:"message,omitempty"`
+
+	OnError                 string   `json:"on_error,omitempty"`
+	SpecChangedAfterRequest bool     `json:"spec_changed_after_request"`
+	SpecUpdatedAtMs         int64    `json:"spec_updated_at_ms,omitempty"`
+	RequestAtMs             int64    `json:"request_at_ms,omitempty"`
+	BodySource              string   `json:"body_source,omitempty"`
+	Warnings                []string `json:"warnings,omitempty"`
+}
+
+// GetAck godoc
+// @Summary  Пересчёт ответа шины по записи журнала (§84.9).
+// @Description  Прогоняет сохранённое тело запроса через ТЕКУЩИЙ шаблон ответа приёма узла (§83) и показывает, чем шина ответила бы сейчас. Это расчёт, а не факт: отрендеренный ответ приёма нигде не сохраняется. applicable=false с причиной — у узла выключено изменение ответа, запись прошла синхронным путём или тело запроса не логируется. Провал подстановки приходит с HTTP 200 и ok=false. Доступно всем ролям со scope logs:read: исполняется шаблон уже сохранённого узла на теле, которое запрашивающий и так видит в журнале.
+// @Tags     logs
+// @Produce  json
+// @Param    id     path  string  true  "node id"
+// @Param    logId  path  string  true  "log record id"
+// @Success  200  {object}  ackFromLogDTO
+// @Failure  404  {object}  ErrorResponse
+// @Failure  503  {object}  ErrorResponse
+// @Security CookieAuth
+// @Router   /api/nodes/{id}/log/{logId}/ack [get]
+func (h *LogsHandler) GetAck(c *gin.Context) {
+	nodeID := c.Param("id")
+	rep, err := h.uc.AckFromLog(c.Request.Context(), nodeID, currentTeamID(c), c.Param("logId"))
+	if err != nil {
+		if h.writeLogReadError(c, nodeID, "logs.ack", err) {
+			return
+		}
+		localizedError(c, http.StatusInternalServerError, "error.internal")
+		return
+	}
+	c.JSON(http.StatusOK, ackFromLogDTO{
+		Applicable:              rep.Applicable,
+		NotApplicableReason:     rep.NotApplicableReason,
+		OK:                      rep.OK,
+		Status:                  rep.Status,
+		ContentType:             rep.ContentType,
+		Body:                    rep.Body,
+		Reason:                  rep.Reason,
+		Placeholder:             rep.Placeholder,
+		Message:                 rep.Message,
+		OnError:                 rep.OnError,
+		SpecChangedAfterRequest: rep.SpecChangedAfterRequest,
+		SpecUpdatedAtMs:         rep.SpecUpdatedAtMs,
+		RequestAtMs:             rep.RequestAtMs,
+		BodySource:              rep.BodySource,
+		Warnings:                rep.Warnings,
+	})
+}

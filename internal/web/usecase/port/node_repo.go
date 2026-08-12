@@ -18,7 +18,11 @@ type ListNodesFilter struct {
 	// значении фильтр идёт по team_id = ANY(TeamIDs), а TeamID игнорируется.
 	// Используется NodeUsecase.SearchAcrossTeams (поиск по всем командам
 	// пользователя); обычный List передаёт только TeamID.
-	TeamIDs    []string
+	TeamIDs []string
+	// IDs — выборка конкретных узлов (§86.4, порционная загрузка метрик).
+	// СУЖАЕТ выдачу внутри уже заданного team-скоупа, а не заменяет его: иначе
+	// по списку id можно было бы вытащить узел чужой команды.
+	IDs        []string
 	Search     string // подстрока для path / target_url
 	RootMethod string // "" / "request" / "requestAsync"
 	Limit      int

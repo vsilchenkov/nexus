@@ -45,8 +45,16 @@ export const api = {
     const r = await axiosInstance.get<T>(url, { params, signal: opts?.signal });
     return r.data;
   },
-  async post<T>(url: string, body?: unknown): Promise<T> {
-    const r = await axiosInstance.post<T>(url, body);
+  // opts.params — query-параметры POST-запроса. Нужны там, где фильтр приходит
+  // теми же параметрами, что у соответствующего GET (§85: фильтр журнала
+  // разбирает общий с ним logQueryFromContext), а в теле лежит только состояние
+  // операции. opts.signal — настоящая отмена (кнопка «Остановить» цикла батчей).
+  async post<T>(
+    url: string,
+    body?: unknown,
+    opts?: { params?: Record<string, unknown>; signal?: AbortSignal },
+  ): Promise<T> {
+    const r = await axiosInstance.post<T>(url, body, { params: opts?.params, signal: opts?.signal });
     return r.data;
   },
   async put<T>(url: string, body?: unknown): Promise<T> {
@@ -116,6 +124,9 @@ export type Node = {
   clickhouse_template_id: string;
   // §64: таблицей логов управляет не Nexus (оператор или посторонний писатель).
   external_table: boolean;
+  // §84.4: чем считается пустое «от» в произвольном периоде — старше этой
+  // глубины записей физически нет, их удалил TTL.
+  clickhouse_retention_days?: number;
   forward_headers: string[];
   log_request_body: boolean;
   log_response_body: boolean;
@@ -234,6 +245,10 @@ export type OverviewKPI = {
   prometheus_available: boolean;
 };
 export type NodeThroughput = {
+  // §86.7: строки сшиваются с узлами по node_id, а не по node (пути): путь
+  // уникален лишь внутри команды, и в сквозном режиме два узла разных команд
+  // могут иметь одинаковый. Поле может быть пустым у старого бэкенда.
+  node_id?: string;
   node: string;
   in: number;
   out: number;
@@ -260,11 +275,17 @@ export type NodesThroughputResp = {
   totals: OverviewTotals;
   prometheus_available: boolean;
 };
+// §86.4: агрегат шапки отдельным запросом (GET /api/metrics/totals). Нужен
+// сквозному режиму: там строки таблицы грузятся порционно, и шапка обязана
+// считаться по всему скоупу, иначе её значение зависело бы от прокрутки.
+export type NodesTotalsResp = { totals: OverviewTotals };
 // §79.5: chart_unit — как посчитаны столбцы.
 //   records  — запись в интервале своего прихода, «ошибка» по ИТОГОВОМУ статусу
 //              (после успешного повтора красный сегмент исчезает сам);
 //   attempts — деградация на больших окнах: запись в интервале своего прогона.
 export type ChartUnit = "records" | "attempts";
+
+export type LatencyPointResp = { ts: number; p50_ms: number; p95_ms: number; attempts: number };
 
 export type NodeMetricsResp = {
   kpi: {
@@ -273,6 +294,9 @@ export type NodeMetricsResp = {
     errors: number;
     p95_ms: number;
     p99_ms: number;
+    // §84.6: последняя активность В ОКНЕ и под текущими фильтрами (UnixMilli);
+    // 0 = запросов не было. Опционально — старый бэкенд поля не отдаёт.
+    last_seen_ms?: number;
   };
   series: { ts: number; count: number; errors: number }[];
   chart_available: boolean;
@@ -281,6 +305,11 @@ export type NodeMetricsResp = {
   // он согласуется с окном) и единица счёта столбцов.
   step_seconds?: number;
   chart_unit?: ChartUnit;
+  // §84.5: ряд латентности по тем же интервалам. Оба поля опциональны —
+  // совместимость в обе стороны: новый фронт со старым бэкендом их просто не
+  // увидит, а не сломается.
+  latency?: LatencyPointResp[];
+  latency_available?: boolean;
 };
 
 // §19: шаблоны DDL для таблиц логов ClickHouse.

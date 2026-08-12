@@ -335,6 +335,44 @@ func (u *NodeUsecase) List(ctx context.Context, f port.ListNodesFilter) ([]*doma
 	return u.repo.List(ctx, f)
 }
 
+// ListAcrossTeams — узлы ВСЕХ команд пользователя одним списком (§86, режим
+// «Все команды»). Фильтры (поиск, root_method, лимит) действуют как в обычном
+// List; скоуп задаётся членствами, а не текущей командой сессии.
+//
+// Членства резолвятся НА КАЖДЫЙ вызов, а не берутся из сессии: сессионный скоуп
+// §18.3 переживает исключение из команды до самолечения §18.9, а сквозной режим
+// не должен (§86.2). Роль видимость не расширяет — admin тоже видит только свои
+// команды (§62.3, §86.9).
+//
+// f.TeamID вызывающего игнорируется: TeamIDs имеет приоритет в репозитории, и
+// смешивать два скоупа в одном запросе нельзя.
+func (u *NodeUsecase) ListAcrossTeams(ctx context.Context, userID string, f port.ListNodesFilter) ([]*domain.Node, error) {
+	if u.teams == nil {
+		return nil, fmt.Errorf("list nodes across teams: team repo unavailable")
+	}
+	teamIDs, _, err := teamScope(ctx, u.teams, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list nodes across teams: %w", err)
+	}
+	if len(teamIDs) == 0 {
+		// §51.9: пустая выдача у пользователя без команд — не ошибка, но повод
+		// для следа: «почему у коллеги пустой рабочий стол» разбирается отсюда.
+		u.logger.Debug("list nodes across teams: user has no memberships",
+			u.logger.Str("user_id", userID))
+		return []*domain.Node{}, nil
+	}
+	f.TeamID = ""
+	f.TeamIDs = teamIDs
+	nodes, err := u.repo.List(ctx, f)
+	if err != nil {
+		return nil, fmt.Errorf("list nodes across teams: list: %w", err)
+	}
+	u.logger.Debug("list nodes across teams",
+		u.logger.Str("user_id", userID), u.logger.Int("teams", len(teamIDs)),
+		u.logger.Int("nodes", len(nodes)))
+	return nodes, nil
+}
+
 // NodeSearchHit — узел, найденный кросс-командным поиском (§62), с командой-
 // владельцем (для бейджа в выпадающем списке и авто-переключения).
 type NodeSearchHit struct {
@@ -374,18 +412,12 @@ func (u *NodeUsecase) SearchAcrossTeams(ctx context.Context, userID, query strin
 	case limit > maxNodeSearchLimit:
 		limit = maxNodeSearchLimit
 	}
-	memberships, err := u.teams.ListUserTeams(ctx, userID)
+	teamIDs, teamByID, err := teamScope(ctx, u.teams, userID)
 	if err != nil {
-		return nil, fmt.Errorf("search nodes: list memberships: %w", err)
+		return nil, fmt.Errorf("search nodes: %w", err)
 	}
-	if len(memberships) == 0 {
+	if len(teamIDs) == 0 {
 		return nil, nil
-	}
-	teamIDs := make([]string, 0, len(memberships))
-	teamByID := make(map[string]domain.Team, len(memberships))
-	for _, m := range memberships {
-		teamIDs = append(teamIDs, m.Team.ID)
-		teamByID[m.Team.ID] = m.Team
 	}
 	nodes, err := u.repo.List(ctx, port.ListNodesFilter{
 		TeamIDs: teamIDs,
@@ -458,7 +490,57 @@ func (u *NodeUsecase) prepareNewNode(ctx context.Context, n *domain.Node) ([]str
 	return cleared, nil
 }
 
+// ensureCreateTeam — узел создаётся в команде, в которой создающий состоит
+// (§86.6).
+//
+// Проверка идёт ТОЛЬКО когда команда узла отличается от команды актора, то есть
+// когда клиент выбрал её на форме явно. Совпадение с командой сессии — прежний
+// путь §18.3 со своим якорем доверия (логин и switch-team уже проверили
+// членство), и лишний запрос в PG на каждое создание узла там не нужен.
+//
+// Приём и семантика ошибки — как у создания API-токена (`ensureMembership`,
+// §18.3): чужая команда → ErrPermissionDenied → 403.
+//
+// Пустой actor.UserID — это НЕ пользователь, а системный вызов (SystemActor:
+// сидинг, CLI, integration-сценарии), у которого членств нет по определению и
+// никогда не было: проверять там нечего, а запрос `”::uuid` в PostgreSQL —
+// прямая ошибка 22P02. HTTP-путь сюда не попадает: actorFromCtx всегда берёт
+// UserID из сессии, а без сессии handler не вызывается вовсе.
+func (u *NodeUsecase) ensureCreateTeam(ctx context.Context, actor Actor, teamID string) error {
+	if teamID == "" || teamID == actor.TeamID || u.teams == nil {
+		return nil
+	}
+	if actor.UserID == "" {
+		u.logger.Debug("create node: system actor, membership check skipped",
+			u.logger.Str("team_id", teamID))
+		return nil
+	}
+	memberships, err := u.teams.ListUserTeams(ctx, actor.UserID)
+	if err != nil {
+		return fmt.Errorf("create node: list memberships: %w", err)
+	}
+	for _, m := range memberships {
+		if m.Team.ID == teamID {
+			u.logger.Debug("create node in non-current team",
+				u.logger.Str("user_id", actor.UserID), u.logger.Str("team_id", teamID),
+				u.logger.Str("session_team_id", actor.TeamID))
+			return nil
+		}
+	}
+	// §51.9: отказ тихий для клиента (403 без деталей) — след нужен, чтобы
+	// разобрать «почему не даёт создать узел в этой команде».
+	u.logger.Debug("create node: team is not among user memberships",
+		u.logger.Str("user_id", actor.UserID), u.logger.Str("team_id", teamID))
+	return domain.ErrPermissionDenied
+}
+
 func (u *NodeUsecase) Create(ctx context.Context, actor Actor, n *domain.Node) error {
+	// §86.6: авторизация команды — ДО подготовки узла. Иначе normalizeCHTable
+	// успел бы сходить в PG за ch_database чужой команды, а лимит узлов —
+	// посчитаться по ней же.
+	if err := u.ensureCreateTeam(ctx, actor, n.TeamID); err != nil {
+		return err
+	}
 	// §63: автор создания узла.
 	n.CreatedBy = actor.UserLogin
 	cleared, err := u.prepareNewNode(ctx, n)
@@ -473,6 +555,9 @@ func (u *NodeUsecase) Create(ctx context.Context, actor Actor, n *domain.Node) e
 		"url_mode":    string(n.URLMode),
 		"auth_type":   string(n.AuthType),
 		"status":      string(n.Status),
+		// §86.6: команда больше не подразумевается сессией — фиксируем её явно,
+		// иначе по журналу нельзя восстановить, куда узел был создан.
+		"team_id": n.TeamID,
 	}
 	if len(cleared) > 0 {
 		auditDetails["cleared_incompatible_fields"] = cleared

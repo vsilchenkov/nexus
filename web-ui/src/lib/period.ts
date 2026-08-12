@@ -36,9 +36,146 @@ export function periodParams(p: Period): Record<string, string> {
 // §79.5 «Шаг графика» — ширина ОДНОГО столбца. Не путать с периодом: период —
 // сколько показываем, шаг — насколько крупными столбцами. Пара «период 14д +
 // шаг 24ч» даёт 14 столбцов, по одному на сутки.
-export type ChartStep = "auto" | PresetRange;
+//
+// §84.1: словарь шага для ВЫБОРА. До §84 он совпадал с пресетами периода, то
+// есть минимальным доступным шагом был ЧАС, и на окне 1 ч выбрать было нечего
+// вовсе; теперь есть и минута, и крупные ступени до 30 суток.
+//
+// Это словарь ПИКЕРА, и он НЕ совпадает с лестницей авто-снапа на сервере
+// (usecase/metrics_window.go, chartStepLadder) — намеренно. Серверная лестница
+// плотнее (в ней есть 5м/10м/2ч), потому что «Авто» подбирает ширину под
+// целевую плотность и промежуточные ступени там нужны. В интерфейсе они
+// оказались лишними: десять кнопок читаются хуже, чем шесть, а выбрать между
+// «5м» и «10м» на глаз всё равно невозможно. Значения, общие для обоих
+// списков, совпадают — расхождение только в наборе.
+//
+// Все значения до суток делят сутки нацело (выравнивание столбцов), крупные —
+// кратны суткам.
+//
+// Бэкенд менять не требуется: ParseChartStep принимает Go-длительности
+// (`15m`, `6h`, `12h`) помимо пресетов, а `1h`/`3h`/`24h`/`7d`/`14d`/`30d`
+// есть в его словаре.
+export const CHART_STEP_LADDER = [
+  "1m",
+  "15m",
+  "30m",
+  "1h",
+  "3h",
+  "6h",
+  "12h",
+  "24h",
+  "7d",
+  "14d",
+  "30d",
+] as const;
 
-export const CHART_STEPS: ChartStep[] = ["auto", ...PRESET_RANGES];
+export type ChartStepValue = (typeof CHART_STEP_LADDER)[number];
+export type ChartStep = "auto" | ChartStepValue;
+
+export const CHART_STEPS: ChartStep[] = ["auto", ...CHART_STEP_LADDER];
+
+const CHART_STEP_MS: Record<ChartStepValue, number> = {
+  "1m": 60_000,
+  "15m": 900_000,
+  "30m": 1_800_000,
+  "1h": 3_600_000,
+  "3h": 10_800_000,
+  "6h": 21_600_000,
+  "12h": 43_200_000,
+  "24h": 86_400_000,
+  "7d": 604_800_000,
+  "14d": 1_209_600_000,
+  "30d": 2_592_000_000,
+};
+
+// MAX_CHART_BUCKETS — зеркало maxChartBuckets сервера. Шаг мельче, чем
+// окно/400, сервер всё равно поднимет до потолка, поэтому предлагать его в
+// интерфейсе значит обещать плотность, которой не будет.
+const MAX_CHART_BUCKETS = 400;
+
+// MIN_DEFAULT_BUCKETS — сколько столбцов должен давать шаг по умолчанию
+// (§84.3). Ниже графику нечего показывать, выше — дефолт становится мельче
+// прежнего «Авто» и дороже для ClickHouse.
+const MIN_DEFAULT_BUCKETS = 24;
+
+/** isChartStep — распознавание значения шага (адрес, преф — источники внешние). */
+export function isChartStep(raw: unknown): raw is ChartStep {
+  return raw === "auto" || (CHART_STEP_LADDER as readonly string[]).includes(raw as string);
+}
+
+// periodMs — длительность окна периода в миллисекундах.
+export function periodMs(p: Period): number {
+  if (p.kind === "preset") return PRESET_MS[p.range];
+  const w = periodWindow(p);
+  return Number.isFinite(w.since) && Number.isFinite(w.until) ? Math.max(w.until - w.since, 0) : 0;
+}
+
+/**
+ * stepsForPeriod — шаги, ПРЕДЛАГАЕМЫЕ при этом периоде (§84.1).
+ *
+ * Набор ПОСТОЯНЕН и не зависит от периода — это требование вёрстки, а не
+ * удобства: пока список менялся вместе с периодом, менялась и ширина строки
+ * заголовка, перенос происходил в разных местах, и вся шапка вкладки прыгала
+ * при каждом переключении периода.
+ *
+ * Применимость выражается не исчезновением кнопки, а её гашением — см.
+ * isStepTooFine.
+ */
+export function stepsForPeriod(_p: Period): ChartStep[] {
+  return CHART_STEPS;
+}
+
+/**
+ * isStepTooFine — шаг мельче, чем `окно / 400`, и сервер молча поднимет его до
+ * потолка (§79.5).
+ *
+ * Это единственный случай, когда кнопка солгала бы: выглядит рабочей, а
+ * действует иначе, чем написано. Поэтому такой шаг гасится.
+ *
+ * Шаг КРУПНЕЕ окна не гасится: сервер сжимает его до окна и отдаёт ровно один
+ * столбец — «одна цифра за весь период» — это определённое поведение, а не
+ * ошибка.
+ */
+export function isStepTooFine(s: ChartStep, p: Period): boolean {
+  if (s === "auto") return false;
+  const window = periodMs(p);
+  if (window <= 0) return false;
+  return CHART_STEP_MS[s] < window / MAX_CHART_BUCKETS;
+}
+
+/**
+ * defaultStepFor — шаг по умолчанию для периода (§84.3).
+ *
+ * Правило: НАИБОЛЬШАЯ ступень, дающая не меньше MIN_DEFAULT_BUCKETS столбцов.
+ * Даёт 1ч→1м, 3ч→5м, 24ч→1ч, 7д→6ч, 14д→12ч, 30д→1сут — везде 24–36 столбцов.
+ *
+ * Дефолт — конкретное значение, а не «Авто»: подсвеченный сегмент сразу
+ * сообщает масштаб, в котором пользователь смотрит, и его видно куда сдвинуть.
+ * «Авто» остаётся в словаре как отдельный выбор.
+ */
+export function defaultStepFor(p: Period): ChartStep {
+  const window = periodMs(p);
+  if (window <= 0) return "auto";
+  const fits = CHART_STEP_LADDER.filter(
+    (s) => window / CHART_STEP_MS[s] >= MIN_DEFAULT_BUCKETS && !isStepTooFine(s, p),
+  );
+  // Ни одна ступень не даёт нужной плотности (очень короткое окно) — берём
+  // самую мелкую ПРИМЕНИМУЮ, а не самую мелкую вообще.
+  if (fits.length === 0) return CHART_STEP_LADDER.find((s) => !isStepTooFine(s, p)) ?? "auto";
+  return fits[fits.length - 1];
+}
+
+/**
+ * normalizeStepForPeriod — шаг, применимый к ЭТОМУ периоду.
+ *
+ * Нужен при смене периода: сохранённый «30м» на окне 30 суток дал бы 1440
+ * столбцов, сервер поднял бы шаг до потолка, и подсвеченный сегмент врал бы о
+ * фактической ширине столбца. Неподходящий шаг заменяется дефолтом НОВОГО
+ * периода, а не молча оставляется.
+ */
+export function normalizeStepForPeriod(s: ChartStep, p: Period): ChartStep {
+  return isStepTooFine(s, p) ? defaultStepFor(p) : s;
+}
 
 /** stepParams — query-параметр шага; auto не отправляем (сервер выберет сам). */
 export function stepParams(s: ChartStep): Record<string, string> {
@@ -81,4 +218,32 @@ export function periodKey(p: Period): string {
 // локализованное "1ч"/"24ч"/…, произвольный → "Произвольный". t — i18n-функция.
 export function periodLabel(p: Period, t: (k: string) => string): string {
   return p.kind === "preset" ? t(`metrics.range.${p.range}`) : t("metrics.range.custom");
+}
+
+/**
+ * resolveCustomPeriod — фактическое окно из полей «от»/«по» (§84.4).
+ *
+ * Открытые границы разрешаются ЗДЕСЬ, в момент выбора, а не размазываются по
+ * контракту `Period`: наружу уходит всегда конкретный диапазон. Благодаря
+ * этому не меняется ни один потребитель периода, а нижняя граница всегда
+ * материализована — сужение по колонке партиционирования (§72.4) остаётся
+ * единственным, что держит стоимость запроса на боевых таблицах.
+ *
+ *   пустое «по» → сейчас;
+ *   пустое «от» → «по» минус глубина хранения (старше данных нет физически);
+ *   обе пустые  → null: один клик по «Произвольный» не имеет права запускать
+ *                 полный скан таблицы.
+ */
+export function resolveCustomPeriod(
+  fromLocal: string,
+  toLocal: string,
+  maxLookbackMs: number,
+  now: number = Date.now(),
+): { from: string; to: string } | null {
+  if (!fromLocal && !toLocal) return null;
+  const toMs = toLocal ? Date.parse(toLocal) : now;
+  if (!Number.isFinite(toMs)) return null;
+  const fromMs = fromLocal ? Date.parse(fromLocal) : toMs - maxLookbackMs;
+  if (!Number.isFinite(fromMs) || fromMs >= toMs) return null;
+  return { from: new Date(fromMs).toISOString(), to: new Date(toMs).toISOString() };
 }

@@ -18,17 +18,21 @@ import { type NodeTab } from "../../lib/nodeTabUrl";
 export function ShareNodeButton({
   nodeId,
   tab,
+  search,
   sm,
 }: {
   nodeId: string;
   tab?: NodeTab;
+  // §84.2: текущие параметры адреса — из них в ссылку попадает вид вкладки
+  // (период и шаг «Метрик»). Отбор ключей делает nodeTabUrl, не эта кнопка.
+  search?: URLSearchParams;
   sm?: boolean;
 }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
 
   async function share() {
-    if (await copyToClipboard(nodePageUrl(nodeId, tab))) {
+    if (await copyToClipboard(nodePageUrl(nodeId, tab, search))) {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
     }

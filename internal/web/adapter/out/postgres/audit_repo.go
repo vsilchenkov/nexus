@@ -53,7 +53,12 @@ FROM user_audit WHERE 1=1`
 		q += fmt.Sprintf(" AND user_id = $%d::uuid", len(args)+1)
 		args = append(args, f.UserID)
 	}
-	if f.TeamID != "" {
+	// §86.7: сквозной скоуп имеет приоритет над однокомандным — иначе в запрос
+	// уехали бы два взаимоисключающих условия и выдача всегда была бы пустой.
+	if len(f.TeamIDs) > 0 {
+		q += fmt.Sprintf(" AND team_id = ANY($%d::uuid[])", len(args)+1)
+		args = append(args, f.TeamIDs)
+	} else if f.TeamID != "" {
 		q += fmt.Sprintf(" AND team_id = $%d::uuid", len(args)+1)
 		args = append(args, f.TeamID)
 	}

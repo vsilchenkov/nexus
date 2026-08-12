@@ -115,6 +115,10 @@ func (h *MetricsHandler) Overview(c *gin.Context) {
 }
 
 type nodeThroughputDTO struct {
+	// NodeID — идентификатор узла (§86.7). Клиент сшивает строки таблицы с
+	// метриками именно по нему: путь уникален лишь внутри команды, и в сквозном
+	// режиме две команды могут иметь узлы с одинаковым путём.
+	NodeID string    `json:"node_id"`
 	Node   string    `json:"node"`
 	In     uint64    `json:"in"`
 	Out    uint64    `json:"out"`
@@ -139,21 +143,58 @@ type overviewTotalsDTO struct {
 	ErrorRate float64 `json:"error_rate"`
 }
 
+// maxNodeIDsPerRequest — потолок узлов в одном порционном запросе метрик (§86.4).
+// Фронт грузит пачками по ~50; потолок отсекает попытку затянуть весь инстанс
+// одним вызовом в обход порционности.
+const maxNodeIDsPerRequest = 200
+
+// metricsScope собирает скоуп расчёта метрик из запроса (§86.4).
+// ok=false — ответ уже записан.
+func metricsScope(c *gin.Context) (usecase.NodesScope, bool) {
+	sc := usecase.NodesScope{TeamID: currentTeamID(c)}
+	if ids := splitCSV(c.Query("node_ids")); len(ids) > 0 {
+		if len(ids) > maxNodeIDsPerRequest {
+			c.JSON(http.StatusBadRequest, ErrorResponse{Error: "too many node_ids"})
+			return sc, false
+		}
+		sc.NodeIDs = ids
+	}
+	if !wantsAllTeams(c) {
+		return sc, true
+	}
+	userID, allowed := resolveAllTeamsUser(c)
+	if !allowed {
+		return sc, false
+	}
+	// В сквозном режиме команда сессии не участвует: скоуп задают членства.
+	sc.TeamID = ""
+	sc.UserID = userID
+	return sc, true
+}
+
 // NodesOverview godoc
 // @Summary  Per-node throughput за окно + агрегат для шапки (§21, §44.A).
-// @Description  Источник — ClickHouse-логи (уникальные запросы), fallback Prometheus. Ключ node = path узла. Поле totals = СУММА строк (incoming/outgoing/errors/error_rate) для KPI шапки. Без источника — пустой список с prometheus_available=false.
+// @Description  Источник — ClickHouse-логи (уникальные запросы), fallback Prometheus. Поле totals = СУММА строк (incoming/outgoing/errors/error_rate) для KPI шапки. Без источника — пустой список с prometheus_available=false. scope=all (§86.4) считает по всем командам пользователя (только session-cookie); node_ids сужает расчёт до перечисленных узлов — порционная загрузка рабочего стола. При node_ids поле totals относится только к запрошенным узлам, полный агрегат отдаёт /api/metrics/totals.
 // @Tags     metrics
 // @Produce  json
-// @Param    range  query  string  false  "1h | 3h | 24h | 7d | 14d | 30d (default 1h)"
-// @Param    from   query  string  false  "период с (RFC3339 или UnixMilli); вместе с to задаёт произвольный период"
-// @Param    to     query  string  false  "период по (RFC3339 или UnixMilli)"
+// @Param    range     query  string  false  "1h | 3h | 24h | 7d | 14d | 30d (default 1h)"
+// @Param    from      query  string  false  "период с (RFC3339 или UnixMilli); вместе с to задаёт произвольный период"
+// @Param    to        query  string  false  "период по (RFC3339 или UnixMilli)"
+// @Param    scope     query  string  false  "all — все команды пользователя (§86.4)"
+// @Param    node_ids  query  string  false  "id узлов через запятую, максимум 200 (§86.4)"
 // @Success  200  {object}  NodesMetricsResponse
+// @Failure  400  {object}  ErrorResponse
+// @Failure  403  {object}  ErrorResponse
 // @Security CookieAuth
 // @Security ApiTokenAuth
 // @Router   /api/metrics/nodes [get]
 func (h *MetricsHandler) NodesOverview(c *gin.Context) {
 	since, until := resolveWindow(c)
-	res := h.uc.NodesOverview(c.Request.Context(), currentTeamID(c), since, until)
+	sc, ok := metricsScope(c)
+	if !ok {
+		return
+	}
+	res := h.uc.NodesOverviewScoped(c.Request.Context(), sc, since, until)
 	items := make([]nodeThroughputDTO, 0, len(res.Items))
 	for _, it := range res.Items {
 		spark := it.Spark
@@ -161,7 +202,8 @@ func (h *MetricsHandler) NodesOverview(c *gin.Context) {
 			spark = []float64{}
 		}
 		items = append(items, nodeThroughputDTO{
-			Node: it.Node, In: it.In, Out: it.Out, Errors: it.Errors,
+			NodeID: it.NodeID,
+			Node:   it.Node, In: it.In, Out: it.Out, Errors: it.Errors,
 			P95ms: it.P95ms, Spark: spark,
 			LastError:   it.LastOutcome.IsError(),
 			LastOutcome: string(it.LastOutcome),
@@ -177,6 +219,40 @@ func (h *MetricsHandler) NodesOverview(c *gin.Context) {
 		},
 		"prometheus_available": res.PrometheusAvailable,
 	})
+}
+
+// NodesTotalsResponse — агрегат шапки без per-node строк (§86.4).
+type NodesTotalsResponse struct {
+	Totals overviewTotalsDTO `json:"totals"`
+}
+
+// NodesTotals godoc
+// @Summary  Агрегат шапки рабочего стола по всему скоупу (§86.4).
+// @Description  Сумма incoming/outgoing/errors по ВСЕМ узлам скоупа за окно, без per-node строк и спарклайнов. Нужен сквозному режиму: там строки таблицы грузятся порционно, и шапка обязана считаться отдельно, иначе её значение зависело бы от прокрутки. node_ids здесь игнорируется. Результат кешируется на несколько секунд, одновременные промахи схлопываются в один расчёт.
+// @Tags     metrics
+// @Produce  json
+// @Param    range  query  string  false  "1h | 3h | 24h | 7d | 14d | 30d (default 1h)"
+// @Param    from   query  string  false  "период с (RFC3339 или UnixMilli)"
+// @Param    to     query  string  false  "период по (RFC3339 или UnixMilli)"
+// @Param    scope  query  string  false  "all — все команды пользователя (§86.4)"
+// @Success  200  {object}  NodesTotalsResponse
+// @Failure  403  {object}  ErrorResponse
+// @Security CookieAuth
+// @Security ApiTokenAuth
+// @Router   /api/metrics/totals [get]
+func (h *MetricsHandler) NodesTotals(c *gin.Context) {
+	since, until := resolveWindow(c)
+	sc, ok := metricsScope(c)
+	if !ok {
+		return
+	}
+	totals := h.uc.OverviewTotalsScoped(c.Request.Context(), sc, since, until)
+	c.JSON(http.StatusOK, NodesTotalsResponse{Totals: overviewTotalsDTO{
+		Incoming:  totals.Incoming,
+		Outgoing:  totals.Outgoing,
+		Errors:    totals.Errors,
+		ErrorRate: totals.ErrorRate,
+	}})
 }
 
 // diagSourceDTO / diagNodeDTO / diagnosticsDTO — сверка источников (§44.E).
@@ -247,12 +323,25 @@ type nodeKPIDTO struct {
 	Errors    uint64  `json:"errors"`
 	P95ms     float64 `json:"p95_ms"`
 	P99ms     float64 `json:"p99_ms"`
+	// §84.6: последняя активность В ОКНЕ и под текущими фильтрами (UnixMilli);
+	// 0 = в окне запросов не было. Не «за всё время» — см. port.NodeKPI.
+	LastSeenMs int64 `json:"last_seen_ms"`
 }
 
 type seriesPointDTO struct {
 	TsMs   int64  `json:"ts"`
 	Count  uint64 `json:"count"`
 	Errors uint64 `json:"errors"`
+}
+
+// latencyPointDTO — точка графика латентности (§84.5). attempts — попытки
+// (строки), а не записи: по нулю клиент рвёт линию, а не рисует нулевую
+// латентность.
+type latencyPointDTO struct {
+	TsMs     int64   `json:"ts"`
+	P50ms    float64 `json:"p50_ms"`
+	P95ms    float64 `json:"p95_ms"`
+	Attempts uint64  `json:"attempts"`
 }
 
 // Node godoc
@@ -311,18 +400,32 @@ func (h *MetricsHandler) Node(c *gin.Context) {
 	for _, p := range res.Series {
 		series = append(series, seriesPointDTO{TsMs: p.TsMs, Count: p.Count, Errors: p.Errors})
 	}
+	// Ряд латентности всегда массив, а не null: пустой ряд законен (в окне не
+	// было запросов), и клиенту не приходится различать два «нет данных».
+	latency := make([]latencyPointDTO, 0, len(res.Latency))
+	for _, p := range res.Latency {
+		latency = append(latency, latencyPointDTO{
+			TsMs:     p.TsMs,
+			P50ms:    p.P50ms,
+			P95ms:    p.P95ms,
+			Attempts: p.Attempts,
+		})
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"kpi": nodeKPIDTO{
-			Total:     res.KPI.Total,
-			Delivered: res.KPI.Delivered,
-			Errors:    res.KPI.Errors,
-			P95ms:     res.KPI.P95ms,
-			P99ms:     res.KPI.P99ms,
+			Total:      res.KPI.Total,
+			Delivered:  res.KPI.Delivered,
+			Errors:     res.KPI.Errors,
+			P95ms:      res.KPI.P95ms,
+			P99ms:      res.KPI.P99ms,
+			LastSeenMs: res.KPI.LastSeenMs,
 		},
-		"series":          series,
-		"chart_available": res.ChartAvailable,
-		"range_ms":        res.RangeMs,
-		"step_seconds":    res.StepSec,
-		"chart_unit":      res.ChartUnit,
+		"series":            series,
+		"chart_available":   res.ChartAvailable,
+		"range_ms":          res.RangeMs,
+		"step_seconds":      res.StepSec,
+		"chart_unit":        res.ChartUnit,
+		"latency":           latency,
+		"latency_available": res.LatencyAvailable,
 	})
 }

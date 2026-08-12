@@ -32,6 +32,7 @@ type Handlers struct {
 	Prefs         *PreferenceHandler
 	Instances     *PeerInstanceHandler
 	Breaker       *BreakerHandler
+	NodeRuntime   *NodeRuntimeHandler
 }
 
 // Middlewares — общие middleware (auth-check, role-check, API token-check).
@@ -156,6 +157,11 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			// §42: срез тела по рунам (постраничная подгрузка «показать весь») и
 			// потоковое скачивание тела файлом — большой ответ не вешает фронт.
 			authed.GET("/nodes/:id/log/:logId/body", RequireScope("logs:read"), h.Logs.GetBody)
+			// §84.9: пересчёт ответа шины по записи. Все роли со scope logs:read,
+			// а не manager+: исполняется шаблон УЖЕ СОХРАНЁННОГО узла на теле,
+			// которое запрашивающий и так видит в журнале, — новой информации не
+			// раскрывается (в отличие от ack-preview, где спека присылается).
+			authed.GET("/nodes/:id/log/:logId/ack", RequireScope("logs:read"), h.Logs.GetAck)
 			authed.GET("/nodes/:id/log/:logId/body/download", RequireScope("logs:read"), h.Logs.GetBodyDownload)
 			// §35: дешёвый счётчик неудач (done=0) для KPI вкладки «Очередь».
 			authed.GET("/nodes/:id/logs/failed-count", RequireScope("logs:read"), h.Logs.CountFailed)
@@ -178,6 +184,11 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		if h.Metrics != nil {
 			authed.GET("/metrics/overview", RequireScope("metrics:read"), h.Metrics.Overview)
 			authed.GET("/metrics/nodes", RequireScope("metrics:read"), h.Metrics.NodesOverview)
+			// §86.4: агрегат шапки отдельным маршрутом. НЕ /metrics/nodes/totals:
+			// сегментом ниже уже стоит wildcard `/metrics/nodes/:id`, и статический
+			// сосед рядом с ним роняет gin-роутер (та же грабля, что увела
+			// глобальный поиск в /api/search/*, §62, и `log` vs `logs`, §7.4).
+			authed.GET("/metrics/totals", RequireScope("metrics:read"), h.Metrics.NodesTotals)
 			authed.GET("/metrics/nodes/:id", RequireScope("metrics:read"), h.Metrics.Node)
 			// §44.E: сверка Prometheus↔ClickHouse (диагностика расхождений счётчиков).
 			authed.GET("/metrics/diagnostics", RequireScope("metrics:read"), h.Metrics.Diagnostics)
@@ -209,6 +220,14 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		// disabled (нет прав), API-токены реплеить не могут (логи — только snapshot).
 		if h.Replay != nil {
 			authedManager.POST("/logs/:id/replay", RequireSessionOnly(), h.Replay.Replay)
+			// §85: повторная отправка из логов за период. Намеренно ВНЕ группы
+			// /nodes/:id/async-queue — на ней висит KafkaRateLimit (60/мин на
+			// пользователя, поставлен ради peek'а Kafka), а здесь клиент крутит
+			// цикл батчей, и общий лимит очереди зарубил бы его на середине. Тот
+			// же довод, по которому вне группы стоят маршруты breaker §81.4.
+			// manager+ и только session-cookie — как одиночный replay.
+			authedManager.POST("/nodes/:id/logs/replay-period/plan", RequireSessionOnly(), h.Replay.PlanPeriod)
+			authedManager.POST("/nodes/:id/logs/replay-period/run", RequireSessionOnly(), h.Replay.RunPeriod)
 		}
 		// §56: синхронизация схемы CH-таблицы узла (ALTER). Plan — предпросмотр
 		// (read-only), Apply — исполнение. manager+ (как и правка узла).
@@ -377,6 +396,14 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		if h.Breaker != nil {
 			authed.GET("/nodes/:id/breaker", h.Breaker.State)
 			authedManager.POST("/nodes/:id/breaker/reset", h.Breaker.Reset)
+		}
+
+		// §84.7: исход последнего вызова узла — рядом с состоянием защиты и по
+		// тем же правилам: все роли (наблюдателю тоже надо понимать, почему узел
+		// молчит) и БЕЗ KafkaRateLimit — это чтение Redis/Prometheus, к очереди
+		// отношения не имеющее.
+		if h.NodeRuntime != nil {
+			authed.GET("/nodes/:id/runtime", h.NodeRuntime.State)
 		}
 
 		if h.AsyncQueue != nil {

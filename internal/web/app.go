@@ -27,6 +27,7 @@ import (
 	"nexus/internal/domain"
 	"nexus/internal/platform/bootstrap"
 	chpf "nexus/internal/platform/clickhouse"
+	"nexus/internal/platform/clock"
 	"nexus/internal/platform/config"
 	"nexus/internal/platform/crypto"
 	"nexus/internal/platform/grpcsender"
@@ -237,7 +238,9 @@ func (a *App) Start(ctx context.Context) error {
 
 	nodeCache := rediscache.NewNodeCacheRedis(a.redis, a.cipher, a.logger)
 	auditRepo := pgrepo.NewAuditRepoPg(a.pg, a.logger)
-	auditUC := usecase.NewAuditUsecase(auditRepo, a.logger)
+	// §86.7: членства нужны журналу только для сквозного режима scope=all;
+	// на запись аудита (её делают все usecase) это не влияет.
+	auditUC := usecase.NewAuditUsecase(auditRepo, a.logger).WithTeams(teamRepo)
 	uow := pgrepo.NewUnitOfWorkPg(a.pg, a.cipher, a.logger)
 	chTemplateRepo := pgrepo.NewCHTemplateRepoPg(a.pg, a.logger)
 	// §32.2: список своих authority для self-reference валидации target_url.
@@ -310,6 +313,7 @@ func (a *App) Start(ctx context.Context) error {
 		a.cfg.Build.Version, a.cfg.Build.Commit, a.cfg.Build.BuildDate,
 		a.cfg.Web.AllowVersionOverride, versionOverride,
 		a.identity.ID.String(), // §70.8: бейдж ноды в шапке
+		a.cfg.Web.DevMode,      // §85.8: префилл логина только на стенде
 	).Get)
 	// Telegram-клиент (§20): для тестовой отправки и планировщика уведомлений.
 	telegramClient := telegram.New(a.logger)
@@ -523,6 +527,9 @@ func (a *App) Start(ctx context.Context) error {
 			// оригиналов — иначе записи остаются в «Неудачных доставках» до
 			// ручной очистки, хотя сообщения уже доставлены.
 			usecase.WithFailedCleaner(logReader),
+			// §85.9: у массового повтора за период свой счёт — цикл батчей
+			// крутит клиент, и общий лимит одиночного replay остановил бы его.
+			usecase.WithPeriodRateLimit(a.cfg.Web.ReplayPeriodRateLimitPerUserPerMin),
 		)
 		logsUC := usecase.NewLogsUsecase(logReader, nodeRepo, a.logger)
 		replayHandler = httpadapter.NewReplayHandler(replayUC, a.logger)
@@ -587,7 +594,11 @@ func (a *App) Start(ctx context.Context) error {
 	}
 	metricsUC := usecase.NewMetricsUsecase(promMetrics, nodeLogMetrics, nodeRepo, appSettingsRepo, nodeStatusReader, a.logger,
 		// §79.5.1: порог точной формы графика — рычаг оператора на больших таблицах.
-		usecase.WithExactChartMaxRecords(a.cfg.Web.MetricsExactChartMaxRecords))
+		usecase.WithExactChartMaxRecords(a.cfg.Web.MetricsExactChartMaxRecords),
+		// §86.4: сквозной скоуп «Все команды» + кеш агрегата шапки. Без членств
+		// режим просто недоступен, поведение одной команды не меняется.
+		usecase.WithMetricsTeams(teamRepo),
+		usecase.WithTotalsCacheTTL(usecase.DefaultTotalsCacheTTL))
 	metricsHandler := httpadapter.NewMetricsHandler(metricsUC, a.logger)
 
 	// Мониторинг Kafka (§4 spec): Prometheus (throughput/lag/KPI/top-узлы) +
@@ -635,6 +646,19 @@ func (a *App) Start(ctx context.Context) error {
 	breakerHandler := httpadapter.NewBreakerHandler(
 		usecase.NewNodeBreakerUsecase(nodeBreaker, statusResetter, nodeRepo, auditUC, a.logger), a.logger)
 
+	// §84.7: исход последнего вызова узла для шапки страницы. Резолвер общий с
+	// рабочим столом (usecase.LastOutcomeResolver) — правило приоритета
+	// Redis→Prometheus существует в одном экземпляре, иначе две копии разойдутся.
+	// Оба источника опциональны: при отсутствии обоих эндпоинт честно отвечает
+	// available=false, и бейдж не рисуется.
+	nodeRuntimeHandler := httpadapter.NewNodeRuntimeHandler(
+		usecase.NewNodeRuntimeUsecase(
+			nodeRepo,
+			usecase.NewLastOutcomeResolver(nodeStatusReader, promMetrics, a.logger),
+			clock.System(),
+			a.logger,
+		), a.logger)
+
 	mw := httpadapter.Middlewares{
 		APITokenAuth:   httpadapter.APITokenAuthMiddleware(tokenUC, rl, a.cfg.Web.APITokenRateLimitPerMin, a.logger),
 		SessionAuth:    httpadapter.AuthMiddleware(authUC, &a.cfg.Web),
@@ -666,6 +690,7 @@ func (a *App) Start(ctx context.Context) error {
 		RMQTest:       rmqTestHandler,
 		Instances:     peerInstanceHandler,
 		Breaker:       breakerHandler,
+		NodeRuntime:   nodeRuntimeHandler,
 		Kafka:         kafkaHandler,
 		AsyncQueue:    asyncQueueHandler,
 		ServiceLogs:   serviceLogsHandler,

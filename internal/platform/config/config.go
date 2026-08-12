@@ -405,6 +405,10 @@ type WebSection struct {
 	SessionCookieSamesite        string `yaml:"session_cookie_samesite"`
 	AuditRetentionDays           int    `yaml:"audit_retention_days"`
 	ReplayRateLimitPerUserPerMin int    `yaml:"replay_rate_limit_per_user_per_min"`
+	// ReplayPeriodRateLimitPerUserPerMin — §85.9: лимит БАТЧЕЙ массового повтора
+	// из логов за период. Отдельный счёт от одиночного replay: цикл батчей
+	// крутит клиент, и общий лимит 10/мин остановил бы прогон после десятого.
+	ReplayPeriodRateLimitPerUserPerMin int `yaml:"replay_period_rate_limit_per_user_per_min"`
 	// MetricsExactChartMaxRecords — §79.5.1: до скольких записей в окне график
 	// узла строится точной формой («столбец = записи по интервалу прихода,
 	// статус итоговый»). Точная форма сворачивает строки в записи по всему окну
@@ -440,6 +444,19 @@ type WebSection struct {
 	// admin'у задать app_settings.general.version_override. В проде версия всегда
 	// из git (ldflags), а запись override отклоняется (403).
 	AllowVersionOverride bool `yaml:"allow_version_override"`
+	// DevMode — установка тестовая (стенд), а не боевая. Дефолт false, поэтому
+	// ОТСУТСТВИЕ ключа в боевом config.yml даёт боевое поведение — это важно:
+	// config.yml выкатывается вручную, и забытый ключ обязан ошибаться в
+	// безопасную сторону.
+	//
+	// Сейчас влияет на одно: форма входа подставляет логин `admin` только на
+	// стенде. Отдельный ключ, а не переиспользование AllowVersionOverride:
+	// тот — РАЗРЕШЕНИЕ на конкретную настройку §34.3, а не маркер среды. Свяжи
+	// с ним второе поведение — и выключенный на стенде override версии молча
+	// уносит подсказку логина, а включённый на боевой установке возвращает имя
+	// привилегированного аккаунта на страницу входа. Гейт, вся ценность
+	// которого в прод-безопасности, обязан означать ровно одно.
+	DevMode bool `yaml:"dev_mode"`
 	// ReceiverURL — base URL Receiver Service (e.g. "http://receiver:8080").
 	// Используется для replay-запросов (§7.4.1): Web отправляет реплай через
 	// реальный pipeline Receiver, а не через bypass.

@@ -30,6 +30,33 @@ type logReaderMock struct {
 	total           uint64        // ответ Count (§67)
 	rangeMin        int64         // ответ DateRange (§48)
 	rangeMax        int64
+	// §85: страницы кандидатов повтора, отдаваемые по одной на вызов.
+	replayPages  []replayPage
+	replayCalls  []port.ReplayCursor // курсоры, с которыми звали (проверка обхода)
+	replayLimits []int
+	replayErr    error
+}
+
+// replayPage — одна страница ответа ReplayCandidates (§85.5).
+type replayPage struct {
+	items []domain.ReplayCandidate
+	next  port.ReplayCursor
+}
+
+func (m *logReaderMock) ReplayCandidates(
+	_ context.Context, _ port.LogQuery, after port.ReplayCursor, limit int,
+) ([]domain.ReplayCandidate, port.ReplayCursor, error) {
+	m.replayCalls = append(m.replayCalls, after)
+	m.replayLimits = append(m.replayLimits, limit)
+	if m.replayErr != nil {
+		return nil, port.ReplayCursor{}, m.replayErr
+	}
+	if len(m.replayPages) == 0 {
+		return nil, port.ReplayCursor{}, nil
+	}
+	p := m.replayPages[0]
+	m.replayPages = m.replayPages[1:]
+	return p.items, p.next, nil
 }
 
 func (m *logReaderMock) GetByID(_ context.Context, _, _ string) (*domain.LogRecord, error) {

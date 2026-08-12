@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ackFormDefaults, ackFormFromSpec, ackSpecFromForm } from "./ackSpec";
+import { ackFormDefaults, ackFormFromSpec, ackSpecApplies, ackSpecFromForm } from "./ackSpec";
 
 // §83: форма ↔ спека. Ошибка здесь выглядит как «настройка не сохранилась» или
 // «сохранилась не та» — то есть ровно как баг, ради которого раздел и написан.
@@ -15,7 +15,7 @@ describe("ackSpecFromForm", () => {
       // Черновик в поле остался, но сохраняться он не должен: иначе узел хранил
       // бы текст, который однажды «оживёт» при включении.
       ack_body: "черновик",
-    });
+    }, "requestAsync");
 
     expect(spec).toBeNull();
   });
@@ -27,7 +27,7 @@ describe("ackSpecFromForm", () => {
       ack_status: 0,
       ack_on_error: "default",
       ack_body: sigurTemplate,
-    });
+    }, "requestAsync");
 
     expect(spec).toEqual({
       version: 1,
@@ -45,11 +45,39 @@ describe("ackSpecFromForm", () => {
       ack_status: 202,
       ack_on_error: "error",
       ack_body: "${ query.code }",
-    });
+    }, "requestAsync");
 
     expect(spec?.status).toBe(202);
     expect(spec?.content_type).toBe("text/plain");
     expect(spec?.on_error).toBe("error");
+  });
+
+  // Красное на прежнем коде: `ackSpecFromForm` тип узла не принимал вовсе и
+  // собирала спеку одинаково, поэтому узел, сохранённый как sync, уносил на
+  // сервер переопределение, которого в интерфейсе уже не видно.
+  it.each(["request", "RabbitMQAsync"] as const)(
+    "тип %s выключает переопределение, даже если поля заполнены",
+    (rootMethod) => {
+      const filled = {
+        ack_enabled: true,
+        ack_content_type: "application/json" as const,
+        ack_status: 202,
+        ack_on_error: "error" as const,
+        ack_body: sigurTemplate,
+      };
+
+      expect(ackSpecFromForm(filled, rootMethod)).toBeNull();
+    },
+  );
+});
+
+// Одно правило на показ группы и на сборку payload'а: пока условие было
+// записано дважды, форма прятала карточку у pull-узлов, но спеку бы отправила.
+describe("ackSpecApplies (§83.5)", () => {
+  it("переопределение существует только у requestAsync", () => {
+    expect(ackSpecApplies("requestAsync")).toBe(true);
+    expect(ackSpecApplies("request")).toBe(false);
+    expect(ackSpecApplies("RabbitMQAsync")).toBe(false);
   });
 });
 
@@ -98,6 +126,6 @@ describe("ackFormFromSpec", () => {
       on_error: "default" as const,
     };
 
-    expect(ackSpecFromForm(ackFormFromSpec(original))).toEqual(original);
+    expect(ackSpecFromForm(ackFormFromSpec(original), "requestAsync")).toEqual(original);
   });
 });

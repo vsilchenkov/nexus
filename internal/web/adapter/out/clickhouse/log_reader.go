@@ -1084,6 +1084,208 @@ func (r *LogReaderCH) markedAmong(ctx context.Context, q port.LogQuery, ids, pre
 	return scanIDs(ctx, conn, sql, args, "clickhouse marked ids")
 }
 
+const (
+	// replayBodyHeadRunes — сколько рун начала тела читает ReplayCandidates.
+	// Хватает с запасом на детект §68-плейсхолдера (media type + первая строка
+	// части); тянуть больше значило бы читать тела ради решения, которое от них
+	// не зависит.
+	replayBodyHeadRunes = 512
+	// replayCandidatesLimit — дефолтный размер страницы обхода.
+	replayCandidatesLimit = 200
+	// replayCandidatesMaxLimit — потолок страницы: строка тянет начало тела,
+	// поэтому цена страницы линейна по её размеру.
+	replayCandidatesMaxLimit = 1000
+)
+
+// replayCandidateCols — проекция записи для §85. Тела целиком не читаются:
+// берутся начало (детект §68), признак маркера усечения и обе длины.
+//
+// Алиасы намеренно НЕ повторяют имена колонок: в ClickHouse алиас SELECT
+// затеняет одноимённую колонку в WHERE, и полнотекстовый фильтр q искал бы по
+// обрезанному началу вместо настоящего тела (та же грабля, что у listCols).
+const replayCandidateCols = `ID,
+	toInt64(toUnixTimestamp64Milli(toDateTime64(date_request, 3))) AS ts,
+	type, http_method, method, url, status, done,
+	request_size,
+	length(request) AS stored_len,
+	substringUTF8(request, 1, ?) AS body_start,
+	endsWith(request, ?) AS body_cut,
+	position(parameters, ?) > 0 AS replay_copy`
+
+// ReplayCandidates — страница записей узла в хронологическом порядке (§85.5).
+//
+// Порядок ASC выбран не для красоты: он сохраняет последовательность запросов
+// при реинжекции (ключ Kafka — путь узла, одна партиция, §3.5), то есть
+// приёмник получит их в том же порядке, что и в оригинале. Он же совпадает с
+// началом ключа сортировки таблицы (`date_create, date_request, …`), поэтому
+// курсор двигает точку старта, а LIMIT останавливает чтение — страница не
+// стоит скана окна.
+func (r *LogReaderCH) ReplayCandidates(
+	ctx context.Context, q port.LogQuery, after port.ReplayCursor, limit int,
+) ([]domain.ReplayCandidate, port.ReplayCursor, error) {
+	if !isSafeTableName(q.Table) {
+		return nil, port.ReplayCursor{}, fmt.Errorf("invalid table name: %q", q.Table)
+	}
+	if limit <= 0 || limit > replayCandidatesMaxLimit {
+		limit = replayCandidatesLimit
+	}
+	// Обход идёт своим курсором: keyset журнала (BeforeID) смотрит в другую
+	// сторону, а Unresolved сузил бы набор до неудачных — ровно того множества,
+	// которого в §85 недостаточно.
+	q.BeforeID, q.Limit, q.Unresolved = "", 0, false
+
+	conds, args := r.searchConds(ctx, q)
+	// Аргументы проекции идут ПЕРЕД аргументами WHERE: подстановки нумеруются
+	// по порядку появления в тексте запроса, а SELECT стоит первым.
+	colArgs := []any{replayBodyHeadRunes, domain.LogBodyTruncationMarker, domain.ReplayOfParam + "="}
+	if !after.IsZero() {
+		conds = append(conds, "(toUnixTimestamp64Milli(toDateTime64(date_request, 3)) > ? "+
+			"OR (toUnixTimestamp64Milli(toDateTime64(date_request, 3)) = ? AND ID > ?))")
+		args = append(args, after.AfterMs, after.AfterMs, after.AfterID)
+	}
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + strings.Join(conds, " AND ")
+	}
+
+	conn, err := r.liveConn()
+	if err != nil {
+		return nil, port.ReplayCursor{}, err
+	}
+	sql := fmt.Sprintf(
+		`SELECT %s FROM %s%s ORDER BY date_request ASC, ID ASC LIMIT 1 BY ID LIMIT ?`,
+		replayCandidateCols, q.Table, where)
+	rows, err := conn.Query(ctx, sql, append(append(colArgs, args...), limit)...)
+	if err != nil {
+		return nil, port.ReplayCursor{}, classifyCHErr("clickhouse replay candidates", err)
+	}
+	defer rows.Close()
+
+	var (
+		page []domain.ReplayCandidate
+		next port.ReplayCursor
+	)
+	for rows.Next() {
+		c, ts, err := scanReplayCandidate(rows)
+		if err != nil {
+			return nil, port.ReplayCursor{}, err
+		}
+		page = append(page, c)
+		next = port.ReplayCursor{AfterMs: ts, AfterID: c.ID}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, port.ReplayCursor{}, classifyCHErr("clickhouse replay candidates", err)
+	}
+	// Страница короче запрошенного — читать больше нечего. Курсор гасим: для
+	// вызывающей стороны это признак конца окна.
+	if len(page) < limit {
+		next = port.ReplayCursor{}
+	}
+	if len(page) == 0 {
+		return nil, next, nil
+	}
+
+	items, err := r.dropSeenEarlier(ctx, q, page)
+	if err != nil {
+		return nil, port.ReplayCursor{}, err
+	}
+	r.logger.Debug("replay candidates page",
+		r.logger.Str("table", q.Table),
+		r.logger.Int("scanned", len(page)),
+		r.logger.Int("kept", len(items)),
+		r.logger.Any("has_more", !next.IsZero()))
+	return items, next, nil
+}
+
+// dropSeenEarlier убирает из страницы записи, чей ПЕРВЫЙ прогон в окне остался
+// позади курсора (§85.5.1).
+//
+// Без этого шага запись с несколькими прогонами уезжает дважды: `LIMIT 1 BY ID`
+// схлопывает прогоны только ВНУТРИ страницы, поэтому запись с прогонами t1 и t3
+// попадает в первую страницу строкой t1, а во вторую — строкой t3. Ровно эта
+// повторная отправка стоила §79 пятнадцати дублей у получателя.
+//
+// Проба ограничена идентификаторами страницы (приём §79.1: платим по МАЛОЙ
+// стороне). Условия и окно — те же, что у страницы, но БЕЗ курсора: минимум
+// ищется по всему окну, иначе он совпал бы с текущей строкой у любой записи.
+func (r *LogReaderCH) dropSeenEarlier(
+	ctx context.Context, q port.LogQuery, page []domain.ReplayCandidate,
+) ([]domain.ReplayCandidate, error) {
+	ids := make([]string, 0, len(page))
+	for _, c := range page {
+		ids = append(ids, c.ID)
+	}
+	conds, args := r.searchConds(ctx, q)
+	conds = append(conds, "ID IN ?")
+	args = append(args, ids)
+
+	conn, err := r.liveConn()
+	if err != nil {
+		return nil, err
+	}
+	sql := fmt.Sprintf(
+		`SELECT ID, toInt64(toUnixTimestamp64Milli(toDateTime64(min(date_request), 3))) AS first_ts
+		 FROM %s WHERE %s GROUP BY ID`,
+		q.Table, strings.Join(conds, " AND "))
+	rows, err := conn.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, classifyCHErr("clickhouse replay first runs", err)
+	}
+	defer rows.Close()
+
+	firstTS := make(map[string]int64, len(ids))
+	for rows.Next() {
+		var (
+			id string
+			ts int64
+		)
+		if err := rows.Scan(&id, &ts); err != nil {
+			return nil, fmt.Errorf("clickhouse replay first runs: scan: %w", err)
+		}
+		firstTS[id] = ts
+	}
+	if err := rows.Err(); err != nil {
+		return nil, classifyCHErr("clickhouse replay first runs", err)
+	}
+
+	out := make([]domain.ReplayCandidate, 0, len(page))
+	for _, c := range page {
+		// Записи нет в пробе — оставляем: пропустить её значило бы молча
+		// потерять запрос из-за расхождения двух чтений.
+		if ts, ok := firstTS[c.ID]; ok && ts != c.DateRequest.UnixMilli() {
+			r.logger.Debug("replay candidate skipped: first run is behind the cursor",
+				r.logger.Str("log_id", c.ID),
+				r.logger.Any("row_ms", c.DateRequest.UnixMilli()),
+				r.logger.Any("first_ms", ts))
+			continue
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+// scanReplayCandidate — разбор строки replayCandidateCols. Второе возвращаемое
+// значение — та же метка времени в UnixMilli, что уходит в курсор: считать её
+// повторно из time.Time было бы лишним преобразованием туда-обратно.
+func scanReplayCandidate(rows chdriver.Rows) (domain.ReplayCandidate, int64, error) {
+	var (
+		c         domain.ReplayCandidate
+		ts        int64
+		typ       string
+		storedLen uint64
+	)
+	if err := rows.Scan(
+		&c.ID, &ts, &typ, &c.HTTPMethod, &c.Method, &c.URL, &c.Status, &c.Done,
+		&c.RequestSize, &storedLen, &c.BodyHead, &c.BodyTruncationMarker, &c.IsReplayCopy,
+	); err != nil {
+		return domain.ReplayCandidate{}, 0, fmt.Errorf("scan replay candidate: %w", err)
+	}
+	c.Type = domain.RootMethod(typ)
+	c.StoredBytes = int64(storedLen)
+	c.DateRequest = time.UnixMilli(ts).UTC()
+	return c, ts, nil
+}
+
 // scanIDs — общий сбор колонки ID.
 func scanIDs(ctx context.Context, conn chgo.Conn, sql string, args []any, op string) ([]string, error) {
 	rows, err := conn.Query(ctx, sql, args...)
@@ -1375,27 +1577,40 @@ func (r *LogReaderCH) NodeKPI(ctx context.Context, q port.LogQuery, approx bool)
 		return port.NodeKPI{}, err
 	}
 	totalExpr, deliveredExpr := uniqueExprs(approx)
+	// §84.6: last_seen считается ТОЙ ЖЕ агрегацией — дополнительного прохода по
+	// таблице не появляется. toUnixTimestamp64Milli(0) на пустом наборе даёт
+	// эпоху, поэтому ниже стоит guard по total: без него «нет запросов»
+	// превратилось бы в «последняя активность 56 лет назад».
 	sql := fmt.Sprintf(`SELECT
 		%s AS total,
 		%s AS delivered,
 		quantile(0.95)(duration) AS p95,
-		quantile(0.99)(duration) AS p99
+		quantile(0.99)(duration) AS p99,
+		toInt64(toUnixTimestamp64Milli(toDateTime64(max(date_request), 3))) AS last_seen_ms
 	FROM %s%s`, totalExpr, deliveredExpr, q.Table, where)
 	var total, delivered uint64
 	var p95, p99 float64
-	if err := conn.QueryRow(ctx, sql, args...).Scan(&total, &delivered, &p95, &p99); err != nil {
+	var lastSeenMs int64
+	if err := conn.QueryRow(ctx, sql, args...).Scan(&total, &delivered, &p95, &p99, &lastSeenMs); err != nil {
 		return port.NodeKPI{}, classifyCHErr("clickhouse node kpi", err)
 	}
 	if delivered > total {
 		delivered = total
 	}
-	if math.IsNaN(p95) {
-		p95 = 0
+	p95, p99 = nanToZero(p95), nanToZero(p99)
+	// §84.6: пустой набор даёт эпоху, а не NULL — «56 лет назад» вместо «нет
+	// запросов». Признак пустоты здесь один и надёжный: total.
+	if total == 0 {
+		lastSeenMs = 0
 	}
-	if math.IsNaN(p99) {
-		p99 = 0
-	}
-	return port.NodeKPI{Total: total, Delivered: delivered, Errors: subUnsigned(total, delivered), P95ms: p95, P99ms: p99}, nil
+	return port.NodeKPI{
+		Total:      total,
+		Delivered:  delivered,
+		Errors:     subUnsigned(total, delivered),
+		P95ms:      p95,
+		P99ms:      p99,
+		LastSeenMs: lastSeenMs,
+	}, nil
 }
 
 // defaultChartStepSec — шаг по умолчанию, если вызывающий его не задал (час).
@@ -1475,6 +1690,97 @@ func (r *LogReaderCH) NodeChart(ctx context.Context, q port.LogQuery, c port.Cha
 
 // chartSQL — запрос ряда под выбранную форму столбца.
 //
+// nanToZero — quantile по пустому набору ClickHouse отдаёт NaN, а тот
+// невыразим в JSON и уронил бы сериализацию ответа. Тот же приём, что в
+// NodeKPI, но вынесенный в функцию: там два поля, здесь — по два на каждый
+// интервал окна.
+func nanToZero(v float64) float64 {
+	if math.IsNaN(v) {
+		return 0
+	}
+	return v
+}
+
+// NodeLatencyChart — перцентили длительности по интервалам окна (§84.5).
+//
+// Единица — ПОПЫТКА (строка), а не запись: длительность характеризует внешний
+// вызов, и та же единица у p95/p99 в NodeKPI (§79.5). Отсюда одностадийность —
+// сворачивать строки в записи здесь нечего и не нужно.
+//
+// WHERE строится тем же searchConds, что список логов и NodeChart: отдельный
+// набор условий для латентности гарантированно разошёлся бы с ними (§79.4).
+//
+// Плотный ряд достраивается нулём ПОПЫТОК, а не нулевой латентностью: пустой
+// интервал — разрыв линии, и отличить его клиент может только по Attempts.
+func (r *LogReaderCH) NodeLatencyChart(ctx context.Context, q port.LogQuery, stepSec int64) ([]port.LatencyPoint, error) {
+	if !isSafeTableName(q.Table) {
+		return nil, fmt.Errorf("invalid table name: %q", q.Table)
+	}
+	if q.UntilMs <= q.SinceMs {
+		return []port.LatencyPoint{}, nil
+	}
+	if stepSec <= 0 {
+		stepSec = defaultChartStepSec
+	}
+	stepMs := stepSec * 1000
+	q.BeforeID, q.Limit = "", 0
+
+	conds, args := r.searchConds(ctx, q)
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + strings.Join(conds, " AND ")
+	}
+	conn, err := r.liveConn()
+	if err != nil {
+		return nil, err
+	}
+	sql := fmt.Sprintf(`SELECT
+		toInt64(toUnixTimestamp(toStartOfInterval(date_request, INTERVAL %d SECOND))) AS bucket_s,
+		quantile(0.5)(duration) AS p50,
+		quantile(0.95)(duration) AS p95,
+		count() AS attempts
+	FROM %s%s
+	GROUP BY bucket_s ORDER BY bucket_s`, stepSec, q.Table, where)
+	rows, err := conn.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, classifyCHErr("clickhouse node latency", err)
+	}
+	defer rows.Close()
+
+	type bkt struct {
+		p50, p95 float64
+		attempts uint64
+	}
+	got := make(map[int64]bkt)
+	for rows.Next() {
+		var bsec int64
+		var p50, p95 float64
+		var attempts uint64
+		if err := rows.Scan(&bsec, &p50, &p95, &attempts); err != nil {
+			return nil, fmt.Errorf("scan node latency: %w", err)
+		}
+		// quantile по пустому набору даёт NaN — в JSON он невыразим и уронил бы
+		// сериализацию ответа. Тот же приём, что в NodeKPI.
+		got[bsec*1000] = bkt{p50: nanToZero(p50), p95: nanToZero(p95), attempts: attempts}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, classifyCHErr("clickhouse node latency", err)
+	}
+
+	startMs := (q.SinceMs / stepMs) * stepMs
+	out := make([]port.LatencyPoint, 0, (q.UntilMs-startMs)/stepMs+2)
+	for ts := startMs; ts <= q.UntilMs; ts += stepMs {
+		b := got[ts]
+		out = append(out, port.LatencyPoint{
+			TsMs:     ts,
+			P50ms:    b.p50,
+			P95ms:    b.p95,
+			Attempts: b.attempts,
+		})
+	}
+	return out, nil
+}
+
 // Точный режим двухстадийный: сначала строки сворачиваются в записи
 // (min(date_request) — когда запрос пришёл, max(done) — доставлен ли он в итоге),
 // и только потом раскладываются по интервалам. Дешёвый режим раскладывает сразу

@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 
 import { api } from "../api/client";
-import { defaultPeriod, parsePeriodPref, type Period } from "./period";
+import { defaultPeriod, isChartStep, parsePeriodPref, type ChartStep, type Period } from "./period";
 
 // Слой данных персональных предпочтений (§71). Префы хранятся на бэкенде
 // (PostgreSQL, таблица user_preferences), привязаны к пользователю и —
@@ -17,6 +17,61 @@ export const ME_PREFS_KEY = ["me-prefs"] as const;
 
 // PREF_KEY_OVERVIEW_PERIOD — зеркало domain.PreferenceKeyOverviewPeriod.
 export const PREF_KEY_OVERVIEW_PERIOD = "overview.period";
+
+// PREF_KEY_FAVORITE_ALL_TEAMS — «Все команды» в избранном (§86.5).
+//
+// Почему преф, а не user_team_favorites: у той таблицы составной внешний ключ на
+// user_teams(user_id, team_id) с инвариантом «избранное ⊆ членство», и
+// псевдо-идентификатора режима туда не вставить. Хранилище §71 для того и
+// сделано generic'ом — новый ключ не требует ни миграции, ни правки бэкенда.
+//
+// Преф ГЛОБАЛЬНЫЙ (team_id = ""): режим не принадлежит ни одной команде.
+export const PREF_KEY_FAVORITE_ALL_TEAMS = "teams.favorite_all";
+
+// PREF_KEY_NODE_METRICS_VIEW_PREFIX — зеркало
+// domain.PreferenceKeyNodeMetricsViewPrefix (§84.3).
+export const PREF_KEY_NODE_METRICS_VIEW_PREFIX = "node.metrics.view.";
+
+/**
+ * prefKeyNodeMetricsView — ключ вида вкладки «Метрики» для конкретного узла.
+ *
+ * Дефисы снимаются не для красоты: формат ключа §71 их не допускает. UUID без
+ * дефисов — 32 символа нижнего hex, с префиксом выходит 50 при потолке 64.
+ * Зеркало domain.PreferenceKeyNodeMetricsView — расхождение здесь означало бы
+ * молчаливую потерю настройки, поэтому обе стороны закрыты тестами.
+ */
+export function prefKeyNodeMetricsView(nodeId: string): string {
+  return PREF_KEY_NODE_METRICS_VIEW_PREFIX + nodeId.replaceAll("-", "");
+}
+
+// PresetPeriod — период-пресет. В префе хранится только он: произвольный
+// календарный диапазон в роли дефолта бессмыслен (завтра он уже прошлое), и
+// тип это фиксирует, а не только комментарий.
+export type PresetPeriod = Extract<Period, { kind: "preset" }>;
+
+// NodeMetricsView — что запоминается для узла: период (только пресет) и шаг.
+export type NodeMetricsView = { period: PresetPeriod | null; step: ChartStep | null };
+
+/**
+ * parseNodeMetricsViewPref — разбор значения префа (§84.3).
+ *
+ * Значение приходит с сервера как есть — он его не валидирует (§71.3), контракт
+ * держит эта функция. Каждое поле разбирается независимо: испорченный шаг не
+ * должен обнулять сохранённый период.
+ *
+ * Произвольный период в преф не попадает по построению (parsePeriodPref
+ * пропускает только пресет): календарный диапазон в роли дефолта бессмыслен —
+ * завтра он уже прошлое.
+ */
+export function parseNodeMetricsViewPref(raw: unknown): NodeMetricsView {
+  if (!raw || typeof raw !== "object") return { period: null, step: null };
+  const v = raw as { range?: unknown; step?: unknown };
+  const parsed = parsePeriodPref({ kind: "preset", range: v.range });
+  return {
+    period: parsed?.kind === "preset" ? parsed : null,
+    step: isChartStep(v.step) ? v.step : null,
+  };
+}
 
 // UserPref — одна запись предпочтений. team_id пустой = глобальный преф
 // (действует во всех командах, перекрывается командным).
@@ -73,6 +128,41 @@ export function useTeamDefaultPeriod(teamId: string): PrefsState<Period> {
   // чему, но глобальный уже применим.
   const value = (teamId !== "" ? pick(teamId) : null) ?? pick("") ?? defaultPeriod;
   return { value, settled };
+}
+
+/**
+ * useNodeMetricsViewPref — сохранённый вид вкладки «Метрики» ЭТОГО узла (§84.3).
+ *
+ * Одна строка префа на узел, поэтому здесь нет ни двухуровневого резолва (как
+ * у периода рабочего стола), ни глобального запасного значения: промежуточного
+ * «общего вида на все узлы» в §84.3 намеренно нет — системный дефолт после
+ * §84.1 сам стал круглым и предсказуемым, а третий уровень пришлось бы
+ * объяснять в интерфейсе.
+ *
+ * settled — «запрос завершён», а не «успешен» (та же калька §71, см. PrefsState):
+ * недоступный /api/me/prefs не имеет права навсегда оставить вкладку без
+ * метрик. Гейт готовности у вызывающей стороны строится именно на нём.
+ */
+export function useNodeMetricsViewPref(nodeId: string): PrefsState<NodeMetricsView> {
+  const q = usePrefs();
+  const settled = !q.isPending;
+  const key = prefKeyNodeMetricsView(nodeId);
+  const found = (q.data?.items ?? []).find((p) => p.key === key);
+  return { value: parseNodeMetricsViewPref(found?.value), settled };
+}
+
+/**
+ * useFavoriteAllTeams — лежит ли «Все команды» в избранном (§86.5).
+ *
+ * Значение читается терпимо: любое не-`true` считается «не в избранном».
+ * Ошибка запроса префов сюда не эскалируется — избранное декорация, и ронять
+ * из-за неё сайдбар нельзя (та же линия, что FavoriteTeamIDs §49.5).
+ */
+export function useFavoriteAllTeams(): boolean {
+  const q = usePrefs();
+  return (q.data?.items ?? []).some(
+    (p) => p.key === PREF_KEY_FAVORITE_ALL_TEAMS && p.team_id === "" && p.value === true,
+  );
 }
 
 type SetPrefVars = { teamId: string; key: string; value: unknown };

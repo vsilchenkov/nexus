@@ -267,6 +267,9 @@ web:
   session_cookie_samesite: strict               # SameSite-политика cookie: strict/lax/none.
   audit_retention_days: 365                     # Срок хранения записей аудита (дней).
   replay_rate_limit_per_user_per_min: 10        # Лимит replay-запросов на пользователя в минуту.
+  replay_period_rate_limit_per_user_per_min: 60 # §85.9: лимит БАТЧЕЙ массового повтора из логов за период.
+                                                #   Отдельный счёт от одиночного replay: цикл батчей крутит клиент,
+                                                #   и общий лимит 10/мин остановил бы прогон после десятого батча.
   metrics_exact_chart_max_records: 2000000     # §79.5: до скольких записей окна график узла строится точной формой (столбец = записи по интервалу прихода). Сверх — счёт по прогонам с пометкой chart_unit=attempts.
   nodes_soft_limit: 10000                       # Мягкий лимит числа узлов (предупреждение в UI).
   nodes_hard_limit: 50000                       # Жёсткий лимит числа узлов (запрет создания сверх).
@@ -279,6 +282,9 @@ web:
   # trusted_proxies: ["10.0.0.0/8"]                # Phase AUD.5: чьим X-Forwarded-For верить; дефолт — loopback + приватные сети.
   swagger_enabled: false                        # Отдавать ли Swagger UI Web'а (выключай в prod).
   allow_version_override: false                 # §34.3: разрешить ручной override версии в настройках (dev/staging). В prod — false: версия всегда из git.
+  dev_mode: false                               # §85.8: установка тестовая (стенд), а не боевая. В prod — false (и отсутствие ключа значит то же).
+                                                #   Сейчас влияет на одно: форма входа подставляет логин `admin` только на стенде.
+                                                #   Отдельный ключ от allow_version_override намеренно: тот — разрешение на настройку, а не маркер среды.
   receiver_url: http://receiver:8080            # Base URL Receiver: replay-запросы (§7.4.1) и проксирование идут через реальный pipeline.
   # §55: адрес Sender'а для dry-run в РЕАЛЬНОМ режиме (тестовый запрос со снятой
   # галкой mock уходит на target тем же путём, что боевой трафик). Секция

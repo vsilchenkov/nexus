@@ -38,7 +38,8 @@ import { parseNumInput } from "../lib/numField";
 import { validateNodeForm } from "../lib/nodeValidation";
 import { chSchemaChangeWontApply, chSyncFormDirty } from "../lib/chSchema";
 import { buildVerifyMessage } from "../lib/chTableVerify";
-import { ackFormDefaults, ackFormFromSpec, ackSpecFromForm } from "../lib/ackSpec";
+import { ackFormDefaults, ackFormFromSpec, ackSpecApplies, ackSpecFromForm } from "../lib/ackSpec";
+import { fetchLastLogBody } from "../lib/lastLogBody";
 import { useConfirm } from "../lib/confirm";
 import { DryRunDialog } from "../components/DryRunDialog";
 import { CHSchemaSyncDialog } from "../components/CHSchemaSyncDialog";
@@ -218,11 +219,25 @@ export default function NodeSettings() {
   // §65: строка «Команда» в сайдбаре — только имя. Для правки — резолвер §58
   // (ключ уже закеширован useEnsureNodeTeam, второго запроса нет), для
   // создания — текущая команда сессии из членств (узел будет создан в ней).
+  // §86.6: команда узла выбирается ЯВНО на форме создания. До §86 она молча
+  // наследовалась из сессии, а в сквозном режиме такой команды нет вовсе.
+  // Пустая строка = «ещё не выбрана»: отправная точка проставляется эффектом
+  // ниже, когда придут членства.
+  const [teamChoice, setTeamChoice] = useState("");
   const myTeams = useMyTeams();
   const nodeTeamQ = useNodeTeam(isNew ? undefined : id);
   const teamName = isNew
     ? myTeams.data?.items.find((m) => m.id === myTeams.data?.current_team_id)?.name
     : nodeTeamQ.data?.team_name;
+
+  // §86.6: отправная точка селекта — текущая команда сессии, как у формы
+  // создания API-токена (§18.3). Ставится один раз, когда придут членства, и
+  // только пока оператор не выбрал сам.
+  useEffect(() => {
+    if (!isNew || teamChoice !== "") return;
+    const current = myTeams.data?.current_team_id;
+    if (current) setTeamChoice(current);
+  }, [isNew, teamChoice, myTeams.data]);
 
   const existing = useQuery({
     queryKey: ["node", id],
@@ -316,14 +331,46 @@ export default function NodeSettings() {
       : p));
   }, [isNew, defaultTemplateId]);
 
+  // §86.6: БД выбранной команды. На форме правки команда не меняется, поэтому
+  // источник прежний — команда сессии.
+  const chosenTeam = myTeams.data?.items.find((m) => m.id === teamChoice);
+  const chosenDatabase = isNew ? (chosenTeam?.ch_database ?? chDatabase) : chDatabase;
+  // prevDatabase — префикс, который подставили мы сами. Нужен, чтобы при смене
+  // команды переписать ТОЛЬКО префикс и не тронуть набранное имя таблицы.
+  const prevDatabaseRef = useRef("");
+
   useEffect(() => {
-    if (!isNew || tableSeededRef.current || !chDatabase) return;
+    if (!isNew || tableSeededRef.current || !chosenDatabase) return;
     tableSeededRef.current = true;
+    prevDatabaseRef.current = chosenDatabase;
     // Префикс БД команды подставляется РЕДАКТИРУЕМЫМ: оператору остаётся дописать
     // имя таблицы, но для внешней таблицы префикс можно стереть — она вправе
     // жить в чужой БД.
-    setForm((p) => (p.clickhouse_table === "" ? { ...p, clickhouse_table: `${chDatabase}.` } : p));
-  }, [isNew, chDatabase]);
+    setForm((p) =>
+      p.clickhouse_table === "" ? { ...p, clickhouse_table: `${chosenDatabase}.` } : p,
+    );
+  }, [isNew, chosenDatabase]);
+
+  // §86.6: смена команды переписывает ТОЛЬКО префикс, сохраняя имя таблицы.
+  //
+  // Ошибка здесь тихая и дорогая: normalizeCHTable на сервере дописывает БД
+  // лишь к именам БЕЗ префикса, а явно указанный ЧУЖОЙ префикс сохраняет — узел
+  // одной команды начал бы писать логи в БД другой, и заметить это можно было бы
+  // только по факту. Поле не трогаем, если оператор уже увёл его от нашего
+  // префикса (внешняя таблица §64 вправе жить в чужой БД).
+  useEffect(() => {
+    if (!isNew || !chosenDatabase || !tableSeededRef.current) return;
+    const prev = prevDatabaseRef.current;
+    if (!prev || prev === chosenDatabase) return;
+    prevDatabaseRef.current = chosenDatabase;
+    setForm((p) => {
+      if (!p.clickhouse_table.startsWith(`${prev}.`)) return p;
+      return {
+        ...p,
+        clickhouse_table: `${chosenDatabase}.${p.clickhouse_table.slice(prev.length + 1)}`,
+      };
+    });
+  }, [isNew, chosenDatabase]);
 
   useEffect(() => {
     if (!isNew || bodySizeSeededRef.current || !nodeDefaults.maxBodySize) return;
@@ -346,6 +393,9 @@ export default function NodeSettings() {
     const { auth_login, auth_password, incoming_auth_login, incoming_auth_password, ...rest } =
       form;
     const p: Record<string, unknown> = { ...rest };
+    // §86.6: команда — только при СОЗДАНИИ. Правка команду не меняет (сервер
+    // ответит 403), перенос делает отдельная кнопка «Перенести» (§18.5).
+    if (isNew && teamChoice) p.team_id = teamChoice;
     if (form.auth_type === "basic") {
       p.auth_credentials = auth_password ? `${auth_login}:${auth_password}` : "";
     }
@@ -359,13 +409,15 @@ export default function NodeSettings() {
     if (form.clickhouse_template_id) p.external_table = false;
     // §83: плоские поля формы → спека; выключенный переключатель шлёт null,
     // то есть «отвечать как раньше». Черновик шаблона при этом не сохраняется:
-    // на сервере хранится либо рабочая спека, либо ничего.
+    // на сервере хранится либо рабочая спека, либо ничего. Тип узла передаётся
+    // явно: сохранение как sync или pull ВЫКЛЮЧАЕТ переопределение, даже если
+    // поля остались заполненными от прежнего типа.
     delete p.ack_enabled;
     delete p.ack_content_type;
     delete p.ack_status;
     delete p.ack_on_error;
     delete p.ack_body;
-    p.async_ack_spec = ackSpecFromForm(form);
+    p.async_ack_spec = ackSpecFromForm(form, form.root_method);
     return p;
   }
 
@@ -419,31 +471,23 @@ export default function NodeSettings() {
   // §83: подставить последнее реальное тело запроса узла из логов. Чисто
   // фронтовая операция поверх существующих эндпоинтов логов — нового API не
   // требуется. Тело в логе ЗАМАСКИРОВАНО, о чём предупреждает подсказка поля.
+  //
+  // Сам запрос живёт в lib/lastLogBody: там же разобран боевой дефект формы
+  // вызова (`{ params: … }` вместо плоской карты) и заведено замкнутое
+  // множество причин отказа — единый текст «записей нет или логирование
+  // выключено» уводил разбор в настройки узла, где всё было в порядке.
   const lastLogBody = useMutation({
-    mutationFn: async () => {
-      // Контракт эндпоинтов логов: список отдаёт items[].id, а тело приходит
-      // полем chunk при which=request (не part/body — на этом легко ошибиться).
-      const list = await api.get<{ items?: Array<{ id: string; request?: string }> }>(
-        `/api/nodes/${id}/logs`,
-        { params: { limit: 1 } },
-      );
-      const logId = list.items?.[0]?.id;
-      if (!logId) throw new Error("empty");
-      const body = await api.get<{ chunk?: string }>(`/api/nodes/${id}/log/${logId}/body`, {
-        params: { which: "request", limit: 8192 },
-      });
-      return body.chunk ?? "";
-    },
+    mutationFn: () => fetchLastLogBody(id),
     onMutate: () => setLastLogBodyError(null),
-    onSuccess: (body) => {
-      if (body.trim() === "") {
-        setLastLogBodyError(t("node.ack.take_from_logs_empty"));
+    onSuccess: (res) => {
+      if (!res.ok) {
+        setLastLogBodyError(t(`node.ack.take_from_logs_err.${res.reason}`));
         return;
       }
-      setAckSample(body);
+      setAckSample(res.body);
       ackPreview.reset();
     },
-    onError: () => setLastLogBodyError(t("node.ack.take_from_logs_empty")),
+    onError: () => setLastLogBodyError(t("node.ack.take_from_logs_err.request_failed")),
   });
 
   // §83: что показать под кнопкой «Проверить». Причина отказа переводится по
@@ -1112,8 +1156,12 @@ export default function NodeSettings() {
           </Card>
 
           {/* §83: чем шина отвечает клиенту на приём запроса в очередь.
-              Скрыто у pull-узлов: у них входящего HTTP нет, отвечать некому. */}
-          {form.root_method !== "RabbitMQAsync" && (
+              Только у requestAsync: ответ «принято в очередь» существует лишь
+              там, где очередь есть. У sync-узла клиент получает ответ
+              приёмника, у pull-узла входящего HTTP нет вовсе — в обоих случаях
+              настройка ни на что не влияла бы. Смена типа на sync прячет группу
+              И выключает переопределение при сохранении (см. ackSpecFromForm). */}
+          {ackSpecApplies(form.root_method) && (
             <Card>
               <div className="mb-3 flex items-center justify-between">
                 <SectionHead icon={<Reply className="h-4 w-4" />} className="mb-0">
@@ -1140,9 +1188,6 @@ export default function NodeSettings() {
               ) : (
                 <>
                   <p className="mb-3 text-xs text-warn">{t("node.ack.enable_warning")}</p>
-                  {form.root_method === "request" && (
-                    <p className="mb-3 text-xs text-fg-subtle">{t("node.ack.sync_note")}</p>
-                  )}
 
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <Field label={t("node.fields.ack_content_type")} help={t("node.help.ack_content_type")}>
@@ -1552,10 +1597,41 @@ export default function NodeSettings() {
               created_at); пустой автор не выводится. */}
           <Card>
             <dl className="divide-y divide-line text-[13px]">
-              <div className="grid grid-cols-[96px_1fr] gap-3 py-2.5 first:pt-0 last:pb-0">
-                <dt className="text-fg-muted">{t("node.fields.team")}</dt>
-                <dd className="font-medium">{teamName ?? "—"}</dd>
-              </div>
+              {/* §86.6: при создании команда выбирается явно — молчаливое
+                  наследование из сессии убрано (в сквозном режиме такой команды
+                  нет вовсе). При правке остаётся текстом: перенос делает кнопка
+                  «Перенести» (§18.5, admin).
+
+                  Разметка у этих двух случаев РАЗНАЯ, и это не косметика.
+                  Сетка «лейбл слева / значение справа» рассчитана на read-only
+                  текст (даты, автор): контрол в ней прижимает лейбл к верхнему
+                  краю и остаётся зажат в узкой правой колонке. Поэтому на форме
+                  создания команда — обычное поле формы: лейбл сверху, селект во
+                  всю ширину, как «Путь узла» и «Входящий метод» в левой колонке. */}
+              {isNew ? (
+                <div className="py-2.5 first:pt-0 last:pb-0">
+                  <dt className="pb-1.5 text-fg-muted">{t("node.fields.team")}</dt>
+                  <dd>
+                    <Select
+                      className="w-full"
+                      value={teamChoice}
+                      onChange={(e) => setTeamChoice(e.target.value)}
+                      aria-label={t("node.fields.team")}
+                    >
+                      {(myTeams.data?.items ?? []).map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </dd>
+                </div>
+              ) : (
+                <div className="grid grid-cols-[96px_1fr] gap-3 py-2.5 first:pt-0 last:pb-0">
+                  <dt className="text-fg-muted">{t("node.fields.team")}</dt>
+                  <dd className="font-medium">{teamName ?? "—"}</dd>
+                </div>
+              )}
               {!isNew && existing.data && (
                 <>
                   <div className="grid grid-cols-[96px_1fr] gap-3 py-2.5 first:pt-0 last:pb-0">

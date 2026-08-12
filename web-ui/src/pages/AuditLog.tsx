@@ -1,10 +1,12 @@
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 import { Download } from "lucide-react";
 
 import { api } from "../api/client";
-import { useCurrentTeamID } from "../lib/teams";
+import { scopeParams, teamScopeKey, useAllTeamsScope } from "../lib/teamScope";
+import { useCurrentTeamID, useMyTeams } from "../lib/teams";
 import { AuditDetailsCell } from "../components/AuditDetailsCell";
 import { Button, Card, Chip, ErrorAlert, Select } from "../components/ui";
 
@@ -18,6 +20,9 @@ type Entry = {
   target_id?: string;
   details?: Record<string, unknown>;
   ip_address?: string;
+  // §86.7: команда записи. omitempty — у глобальных действий admin'а (§18.1)
+  // её нет вовсе.
+  team_id?: string;
   created_at: string;
 };
 type Resp = { items: Entry[] };
@@ -51,16 +56,39 @@ export default function AuditLog() {
   // teamId в ключе: /api/audit фильтруется по команде сессии — без него записи
   // разных команд алиасятся в один слот кеша (см. useCurrentTeamID в lib/teams).
   const teamId = useCurrentTeamID();
+  // §86.7: сквозной режим — журнал всех команд пользователя. Скоуп обязан быть
+  // в ключе, иначе выдачи режимов алиасятся в один слот кеша (правило §4.44).
+  const allTeams = useAllTeamsScope();
+  const scopeKey = teamScopeKey(allTeams, teamId);
+  const scopeQuery = useMemo(() => scopeParams(allTeams), [allTeams]);
   const q = useQuery({
-    queryKey: ["audit", teamId, filter],
+    queryKey: ["audit", scopeKey, filter],
     queryFn: () =>
-      api.get<Resp>("/api/audit", filter ? { action: filter, limit: 200 } : { limit: 200 }),
-    enabled: teamId !== "",
+      api.get<Resp>("/api/audit", {
+        ...scopeQuery,
+        ...(filter ? { action: filter, limit: 200 } : { limit: 200 }),
+      }),
+    // В сквозном режиме команда сессии не участвует — ждать её незачем.
+    enabled: allTeams || teamId !== "",
   });
 
-  const csvHref = filter
-    ? `/api/audit/export.csv?action=${encodeURIComponent(filter)}`
-    : "/api/audit/export.csv";
+  // §86.3: имя команды резолвит клиент по членствам — сервер выдачу не
+  // обогащает. Колонка появляется только в сквозном режиме.
+  const teamsQ = useMyTeams();
+  const teamNames = useMemo(() => {
+    if (!allTeams) return null;
+    const m = new Map<string, string>();
+    for (const tm of teamsQ.data?.items ?? []) m.set(tm.id, tm.name);
+    return m;
+  }, [allTeams, teamsQ.data]);
+
+  // Выгрузка обязана повторять скоуп экрана: иначе CSV молча отдал бы другое
+  // множество записей, чем показано в таблице.
+  const csvParams = new URLSearchParams();
+  if (allTeams) csvParams.set("scope", "all");
+  if (filter) csvParams.set("action", filter);
+  const csvQuery = csvParams.toString();
+  const csvHref = csvQuery ? `/api/audit/export.csv?${csvQuery}` : "/api/audit/export.csv";
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">
@@ -96,6 +124,9 @@ export default function AuditLog() {
             <thead>
               <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-fg-muted">
                 <th className="px-3 py-2 font-medium">{t("audit.columns.when")}</th>
+                {teamNames && (
+                  <th className="px-3 py-2 font-medium">{t("overview.table.team")}</th>
+                )}
                 <th className="px-3 py-2 font-medium">{t("audit.columns.user")}</th>
                 <th className="px-3 py-2 font-medium">{t("audit.columns.action")}</th>
                 <th className="px-3 py-2 font-medium">{t("audit.columns.target")}</th>
@@ -109,6 +140,13 @@ export default function AuditLog() {
                   <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">
                     {new Date(e.created_at).toLocaleString()}
                   </td>
+                  {teamNames && (
+                    <td className="px-3 py-2">
+                      <Chip tone="info">
+                        {e.team_id ? (teamNames.get(e.team_id) ?? "—") : "—"}
+                      </Chip>
+                    </td>
+                  )}
                   <td className="px-3 py-2">{e.user_login}</td>
                   <td className="px-3 py-2">
                     <Chip tone={actionTone(e.action)}>{e.action}</Chip>

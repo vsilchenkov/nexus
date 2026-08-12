@@ -74,6 +74,8 @@
     "favorite_remove": "Remove from favorites",
     "drag_hint": "Drag to reorder",
     "share": "Copy team link",
+    "all": "All teams",
+    "all_hint": "Nodes of every team you belong to",
     "unavailable": "Team “{{slug}}” is unavailable: it does not exist or you are not a member. Staying in the current team."
   },
   "search": {
@@ -115,7 +117,8 @@
       "in": "In",
       "out": "Out",
       "errors": "Errors",
-      "traffic": "Traffic"
+      "traffic": "Traffic",
+      "team": "Team"
     },
     "empty": "No nodes yet",
     "move": {
@@ -164,9 +167,53 @@
         "errors": "{{n}} errors ({{pct}}%)"
       }
     },
+    "capacity": {
+      "title": "Partition capacity",
+      "hint": "All of a node's messages land in ONE Kafka partition (the publish key is the node path, to keep FIFO per node), and within a partition they are processed strictly sequentially. So the node's ceiling is one call per outbound-call duration, regardless of how many partitions and instances there are.",
+      "hint_formula": "The share is computed as «requests over the period × p95 / period length». Above 100 % means the node physically does not fit into one partition: lag will grow linearly and will not clear on its own.",
+      "formula": "{{total}} requests × p95 {{p95}} / {{range}}",
+      "units": "ms|s|min|h",
+      "over": "The node needs more capacity than a single Kafka partition provides — lag will grow. It also delays any node hashed onto the same partition.",
+      "see_queue": "What is physically waiting right now —",
+      "queue_link": "the «Queue» tab →"
+    },
+    "latency": {
+      "title": "Latency",
+      "hint": "p50 and p95 call duration over the same intervals as the requests chart. The unit is a delivery attempt (a journal row), not a request: duration describes the outbound call.",
+      "gap_hint": "A gap in the line means there was not a single attempt in that interval. A zero there would claim «the node answered in 0 ms», which is untrue.",
+      "axis_max": "scale up to {{v}}",
+      "no_data": "no data"
+    },
+    "pulse": {
+      "label": "Last activity",
+      "just_now": "just now",
+      "ago_m": "{{m}} min ago",
+      "ago_h": "{{h}} h {{m}} min ago",
+      "ago_d": "{{d}} d {{h}} h ago",
+      "silent": "No requests in this period",
+      "in_period": "{{n}} requests in this period",
+      "none_in_period": "check the period or the filters",
+      "all_time": "all time →",
+      "all_time_value": "all time: {{ago}} · {{stamp}}",
+      "all_time_none": "no records at all"
+    },
     "step": {
-      "label": "Chart step",
-      "auto": "Auto"
+      "label": "Step",
+      "too_fine": "This step is finer than the period allows: the server would coarsen the bucket anyway.",
+      "auto": "Auto",
+      "opt": {
+        "1m": "1m",
+        "15m": "15m",
+        "30m": "30m",
+        "1h": "1h",
+        "3h": "3h",
+        "6h": "6h",
+        "12h": "12h",
+        "24h": "1d",
+        "7d": "7d",
+        "14d": "14d",
+        "30d": "30d"
+      }
     },
     "filters": {
       "autorefresh_paused": "Auto-refresh paused: this filter takes over 2s. Refresh manually or simplify the filter."
@@ -180,7 +227,13 @@
       "7d": "7d",
       "14d": "14d",
       "30d": "30d",
-      "custom": "Custom"
+      "custom": "Custom",
+      "from_open": "from start",
+      "to_open": "until now",
+      "need_one_bound": "Fill in at least one bound",
+      "span_m": "{{m}} min",
+      "span_h": "{{h}} h {{m}} min",
+      "span_d": "{{d}} d {{h}} h"
     },
     "tooltip": {
       "delivered": "delivered",
@@ -346,7 +399,6 @@
       "help_link": "Detailed help →",
       "disabled_hint": "Disabled — the bus replies {\"result\":true,\"id\":\"<uuid>\"}.",
       "enable_warning": "Warning: enabling changes the response for ALL clients of this node.",
-      "sync_note": "The node runs in request mode: the template is stored but applies only while the node is paused (§3.6). It starts working immediately once the node is switched back to requestAsync.",
       "status_as_is": "as is",
       "on_error_default": "reply as before",
       "on_error_error": "return 400, do not queue",
@@ -354,7 +406,12 @@
       "sample_label": "Sample request body",
       "take_from_logs": "Take the latest request from logs",
       "take_from_logs_masked": "The body comes from the node journal, where sensitive values are already masked (***). That rarely matters for checking a template, but a substitution from a masked field will differ from the production response.",
-      "take_from_logs_empty": "Could not take a body from logs: no records, or request body logging is off.",
+      "take_from_logs_err": {
+        "no_node": "The node is not saved yet, so it has no journal. Save the node and try again.",
+        "no_records": "The node journal has no records.",
+        "body_not_logged": "The record has no stored body: «Log request body» is off on the node, or the body was empty or multipart.",
+        "request_failed": "Could not read the journal: the request to the server failed."
+      },
       "preview_button": "Check",
       "reason": {
         "body_not_json": "request body is not JSON",
@@ -653,6 +710,14 @@
       "dlq_retry_delay_hint": "minimum wait before re-attempting a failed delivery; default 5 min",
       "hours": "h"
     },
+    "runtime": {
+      "degraded": "Degraded",
+      "down": "Down",
+      "hint_degraded": "The node's last outbound call returned a non-2xx, but the receiver did answer: most likely a data or client error rather than unavailability.",
+      "hint_down": "The node's last outbound call did not get through: a transport error or a 5xx response.",
+      "src_redis": "Source: Redis — the value survives a Sender restart.",
+      "src_prom": "Source: Prometheus — the value resets when Sender restarts."
+    },
     "rmq": {
       "source": "RabbitMQ — source",
       "host_port": "Host and port",
@@ -787,6 +852,17 @@
     "detail": {
       "parameters": "Parameters",
       "request": "Request",
+      "ack": {
+        "title": "Bus response — recomputed with the current template",
+        "failed": "Substitution failed: {{reason}}",
+        "on_error_error": "Node policy on_error = error: such a request would NOT be accepted, and no journal record would appear at all.",
+        "on_error_default": "Node policy on_error = default: the client would get the regular {\"result\":true,\"id\":…} response.",
+        "warn_now_not_then": "This is «what the bus WOULD answer now», not what actually went to the client back then: the acceptance response is stored nowhere.",
+        "warn_spec_changed": "The node was changed at {{changed}} — AFTER this request ({{request}}).",
+        "warn_truncated": "The body in the journal is truncated (max_body_size) — the substitution may have missed a value present in the original body.",
+        "warn_query_not_stored": "The inbound request query is not stored in the journal: ${ query.… } substitutions are unavailable here.",
+        "note_on_error_error": "The node has on_error = error: on a failed substitution the request is not accepted and no journal record appears — such cases are fundamentally invisible here."
+      },
       "response": "Response",
       "reason": "Reason",
       "empty": "(empty)",
@@ -885,7 +961,50 @@
       "details": "Details"
     }
   },
+  "replay_period": {
+    "title": "Replay from logs",
+    "step_period": "1. Period",
+    "step_filter": "2. Filter (optional)",
+    "state": "State",
+    "skip_copies": "Skip records that are replays themselves",
+    "frozen_bounds": "Period bounds are frozen when you check: otherwise replays fall into their own window and the run starts amplifying itself.",
+    "check": "Check",
+    "back": "Change period and filter",
+    "send": "Send {{n}} requests",
+    "stop": "Stop",
+    "window": "Period",
+    "will_send": "Will be sent",
+    "will_skip": "Will be skipped",
+    "exact": "The whole window was scanned — the numbers are exact. Records in period: {{total}}.",
+    "not_exact": "Scanned the first {{scanned}} of {{total}} — the rest will be checked while sending.",
+    "empty": "No records",
+    "warn_duplicates": "The receiver will get these requests AGAIN. If it is not idempotent there will be duplicates; sent requests cannot be recalled.",
+    "warn_throughput": "The node drains its queue sequentially, so delivery will take a while — watch the Metrics tab.",
+    "running": "Sending… keep this window open",
+    "progress": "Sent {{replayed}} · failed {{failed}} · skipped {{skipped}}",
+    "processed_until": "Processed until",
+    "done": "Done: sent {{replayed}}, failed {{failed}}.",
+    "stopped": "Stopped: sent {{replayed}}. Start again from the last processed mark to continue.",
+    "col": { "size": "Body size", "reason": "Reason" },
+    "reason": {
+      "record_not_async": "synchronous record",
+      "body_multipart": "multipart — body is not stored",
+      "body_truncated": "body is truncated",
+      "body_missing": "body was not logged",
+      "already_replay": "record is already a replay"
+    }
+  },
   "queue": {
+    "replay_period": "Replay from logs",
+    "replay_period_off_logs": "Node logging is off — there is nothing to replay",
+    "replay_period_off_table": "The node has no logs table configured",
+    "replay_period_off_body": "The node does not log request bodies — replay is impossible",
+    "head": {
+      "summary": "Waiting: {{waiting}} · partition {{partition}} · head age {{age}}",
+      "age_min": "{{m}} min",
+      "capacity_link": "partition capacity — in «Metrics» →",
+      "age_lt_min": "under a minute"
+    },
     "unavailable": "Kafka queue is unavailable (cluster not configured).",
     "capped_mark": "(may be more)",
     "capped_hint": "Showing the first of a limited scan — the queue may be larger.",
