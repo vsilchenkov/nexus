@@ -213,7 +213,8 @@ func (h *UserHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	// Запрет самому себе менять свою роль на viewer (§7.9).
+	// Запрет самому себе понижать роль (§7.9): условие «роль в запросе ≠ admin»,
+	// то есть закрыты ВСЕ не-админские роли, а не только viewer. С §87 их три.
 	if actor := userActor(c); actor.UserID == id && domain.UserRole(req.Role) != domain.UserRoleAdmin {
 		c.JSON(http.StatusForbidden, gin.H{"error": "cannot demote yourself"})
 		return
