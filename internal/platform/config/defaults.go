@@ -303,6 +303,9 @@ func applyDefaults(c *Config) {
 	if c.Web.LoginRateLimitPerMin == 0 {
 		c.Web.LoginRateLimitPerMin = 10 // Phase AUD.4: анти-брутфорс /api/auth/login
 	}
+	if c.Web.PasswordResetRateLimitPerMin == 0 {
+		c.Web.PasswordResetRateLimitPerMin = 5 // §88.4.4
+	}
 	if len(c.Receiver.TrustedProxies) == 0 {
 		c.Receiver.TrustedProxies = defaultTrustedProxies()
 	}
