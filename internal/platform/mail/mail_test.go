@@ -277,8 +277,7 @@ func TestSend_AuthNoneSendsNoCredentials(t *testing.T) {
 
 func TestSend_ServerRejection(t *testing.T) {
 	t.Parallel()
-	srv := newFakeSMTP(t)
-	srv.failAt = "RCPT"
+	srv := newFakeSMTP(t, withFailAt("RCPT"))
 	host, port := srv.addr()
 
 	err := New(logging.NewNoop()).Send(context.Background(), testConfig(host, port), Message{
@@ -302,8 +301,7 @@ func TestSend_UnreachableHost(t *testing.T) {
 // (стережёт goleak в TestMain).
 func TestSend_ContextCancelled(t *testing.T) {
 	t.Parallel()
-	srv := newFakeSMTP(t)
-	srv.silentGreeting = true
+	srv := newFakeSMTP(t, withSilentGreeting())
 	host, port := srv.addr()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)

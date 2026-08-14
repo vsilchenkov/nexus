@@ -23,20 +23,38 @@ type fakeSMTP struct {
 	data     string   // тело последнего письма (без завершающей точки)
 	authArg  string   // аргумент команды AUTH (base64-полезная нагрузка)
 
-	// failAt — команда, на которую сервер ответит отказом 550 (пусто = не отказывать).
-	failAt string
-	// silentGreeting — не отправлять приветствие 220 вовсе: клиент должен
-	// упереться в таймаут или отмену контекста.
+	// failAt и silentGreeting задаются ТОЛЬКО опциями конструктора и после
+	// старта не меняются. Раньше тесты писали их полями уже работающему
+	// серверу — это была настоящая гонка (нашёл контейнерный -race; нативный
+	// прогон на Windows её не увидел).
+	failAt         string
 	silentGreeting bool
 }
 
-func newFakeSMTP(t *testing.T) *fakeSMTP {
+// fakeSMTPOption настраивает сервер ДО того, как он начал принимать соединения.
+type fakeSMTPOption func(*fakeSMTP)
+
+// withFailAt заставляет сервер ответить 550 на указанную команду.
+func withFailAt(verb string) fakeSMTPOption {
+	return func(s *fakeSMTP) { s.failAt = verb }
+}
+
+// withSilentGreeting — сервер не шлёт приветствие 220 вовсе: клиент обязан
+// упереться в таймаут или отмену контекста.
+func withSilentGreeting() fakeSMTPOption {
+	return func(s *fakeSMTP) { s.silentGreeting = true }
+}
+
+func newFakeSMTP(t *testing.T, opts ...fakeSMTPOption) *fakeSMTP {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
 	s := &fakeSMTP{ln: ln}
+	for _, o := range opts {
+		o(s)
+	}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -103,10 +121,9 @@ func (s *fakeSMTP) handle(conn net.Conn) {
 			_, payload, _ := strings.Cut(arg, " ")
 			s.authArg = payload
 		}
-		failAt := s.failAt
 		s.mu.Unlock()
 
-		if failAt != "" && verb == failAt {
+		if s.failAt != "" && verb == s.failAt {
 			if !reply("550 5.7.1 rejected by fake server") {
 				return
 			}
