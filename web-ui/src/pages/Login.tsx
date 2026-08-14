@@ -6,6 +6,7 @@ import { ArrowLeftRight } from "lucide-react";
 
 import { api } from "../api/client";
 import { Button, Card, ErrorAlert, Field, Input } from "../components/ui";
+import { ForgotPasswordDialog } from "./ForgotPasswordDialog";
 
 // DEV_PREFILL_LOGIN — подсказка логина на СТЕНДЕ (§85.8). На боевой установке
 // префилла нет вовсе: форма входа не должна называть имя существующего
@@ -28,11 +29,18 @@ export default function Login() {
   // Недоступность/ошибка → префилла нет: fail-closed = боевое поведение.
   const version = useQuery({
     queryKey: ["version"],
-    queryFn: () => api.get<{ dev_mode?: boolean }>("/api/version"),
+    queryFn: () =>
+      api.get<{ dev_mode?: boolean; password_reset_ready?: boolean }>("/api/version"),
     staleTime: Infinity,
     retry: false,
   });
   const devMode = version.data?.dev_mode === true;
+  // §88.4.5: ссылка появляется, только если восстановление реально
+  // работоспособно (почта настроена, функция включена, задан публичный адрес).
+  // Тот же запрос, что и для dev_mode — лишнего обращения не появляется.
+  // Fail-closed: недоступность /api/version ссылки не показывает.
+  const resetReady = version.data?.password_reset_ready === true;
+  const [forgotOpen, setForgotOpen] = useState(false);
 
   useEffect(() => {
     if (devMode && !touched.current && login === "") setLogin(DEV_PREFILL_LOGIN);
@@ -80,7 +88,22 @@ export default function Login() {
                 required
               />
             </Field>
-            <Field label={t("auth.password_field")}>
+            <Field
+              label={t("auth.password_field")}
+              labelRight={
+                resetReady ? (
+                  // Кнопка, а не ссылка: элемент открывает диалог, а не ведёт
+                  // по адресу (§88.8.1). type="button" — чтобы не сабмитить форму.
+                  <button
+                    type="button"
+                    onClick={() => setForgotOpen(true)}
+                    className="text-xs text-accent hover:underline"
+                  >
+                    {t("auth.forgot_link")}
+                  </button>
+                ) : undefined
+              }
+            >
               <Input
                 type="password"
                 autoComplete="current-password"
@@ -96,6 +119,9 @@ export default function Login() {
           </form>
         </Card>
       </div>
+      {forgotOpen && (
+        <ForgotPasswordDialog initialLogin={login} onClose={() => setForgotOpen(false)} />
+      )}
     </div>
   );
 }

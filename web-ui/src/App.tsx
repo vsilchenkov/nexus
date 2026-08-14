@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 
 import Login from "./pages/Login";
+import ResetPassword from "./pages/ResetPassword";
 import Overview from "./pages/Overview";
 import NodeDetail from "./pages/NodeDetail";
 import NodeSettings from "./pages/NodeSettings";
@@ -59,6 +60,10 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      {/* §88.8.3: публичная страница задания нового пароля по ссылке из
+          письма. Объявлена ЯВНО: catch-all ниже иначе увёл бы прямой переход
+          из письма на «/». */}
+      <Route path="/reset-password" element={<ResetPassword />} />
       <Route element={<Protected />}>
         <Route path="/" element={<Overview />} />
         <Route path="/nodes/new" element={<NodeSettings />} />

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
 import { api } from "../../api/client";
+import { generatePassword, passwordStrength } from "../../lib/password";
 import { useConfirm } from "../../lib/confirm";
 import type { Role } from "../../lib/roles";
 import { MY_TEAMS_KEY } from "../../lib/teams";
@@ -31,38 +32,6 @@ type ListResp = { items: User[] };
 type Me = {
   user: { user_id: string; login: string; role: string };
 };
-
-function passwordStrength(p: string): { score: 0 | 1 | 2 | 3 | 4; key: string } {
-  if (p.length === 0) return { score: 0, key: "settings.users.pw_empty" };
-  let score = 0;
-  if (p.length >= 8) score++;
-  if (/[A-Z]/.test(p) && /[a-z]/.test(p)) score++;
-  if (/\d/.test(p)) score++;
-  if (/[^A-Za-z0-9]/.test(p)) score++;
-  const key =
-    score <= 1
-      ? "settings.users.pw_weak"
-      : score === 2
-      ? "settings.users.pw_medium"
-      : score === 3
-      ? "settings.users.pw_strong"
-      : "settings.users.pw_very_strong";
-  return { score: score as 0 | 1 | 2 | 3 | 4, key };
-}
-
-function generatePassword(): string {
-  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
-  const lower = "abcdefghijkmnopqrstuvwxyz";
-  const digits = "23456789";
-  const symbols = "!@#$%^&*-_+=?";
-  const all = upper + lower + digits + symbols;
-  const pick = (set: string) => set[Math.floor(Math.random() * set.length)];
-  const must = [pick(upper), pick(lower), pick(digits), pick(symbols)];
-  const rest = Array.from({ length: 8 }, () => pick(all));
-  return [...must, ...rest]
-    .sort(() => Math.random() - 0.5)
-    .join("");
-}
 
 function relativeTime(iso?: string, lang = "en"): string {
   if (!iso) return "—";
