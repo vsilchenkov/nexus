@@ -49,7 +49,7 @@ func (f *fakeMailSender) last() (mail.Config, mail.Message, bool) {
 }
 
 func newMailTester(repo *fakeAppSettingsRepo, sender MailSender) *SettingsTester {
-	return NewSettingsTester(repo, &config.Config{}, nil, nil, nil, sender, "Test", "v0", logging.NewNoop())
+	return NewSettingsTester(repo, &config.Config{}, nil, nil, nil, sender, nil, "Test", "v0", logging.NewNoop())
 }
 
 func configuredMailRepo() *fakeAppSettingsRepo {

@@ -168,10 +168,15 @@ func (h *PasswordResetHandler) Confirm(c *gin.Context) {
 	case errors.Is(err, domain.ErrUserNotFound), errors.Is(err, domain.ErrNotFound):
 		// Пользователя удалили между письмом и переходом.
 		localizedError(c, http.StatusBadRequest, "auth.reset_token_invalid")
-	default:
-		// Сюда попадает и отказ политики пароля (validatePassword) — её текст
-		// показывается как есть: он про введённое значение, а не про учётную
-		// запись, и ничего не раскрывает.
+	case errors.Is(err, usecase.ErrPasswordPolicy):
+		// Отказ политики пароля: текст про введённое значение, а не про
+		// учётную запись, — показывать его безопасно и полезно.
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	default:
+		// Всё остальное — внутренний сбой (БД, bcrypt). Наружу его текст
+		// отдавать нельзя: эндпоинт публичный, а в ошибке хранилища бывает и
+		// имя таблицы, и кусок запроса.
+		h.logger.ErrorWithOp("password reset confirm failed", err, "auth.password_reset_confirm")
+		localizedError(c, http.StatusInternalServerError, "error.internal")
 	}
 }

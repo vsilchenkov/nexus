@@ -15,6 +15,31 @@ type MailSender interface {
 	Send(ctx context.Context, cfg mail.Config, msg mail.Message) error
 }
 
+// Назначения писем для метрик (§88.9).
+const (
+	MailPurposePasswordReset = "password_reset"
+	MailPurposeTest          = "test"
+)
+
+// MailMetrics — учёт исхода и длительности отправки. Реализует
+// metrics.Metrics; nil допустим (unit-тесты).
+type MailMetrics interface {
+	ObserveMailSend(purpose, result string, seconds float64)
+}
+
+// observeMailSend — общая точка учёта для обеих отправок (тестовой и
+// восстановления): иначе одна из них рано или поздно окажется без метрики.
+func observeMailSend(m MailMetrics, purpose string, started time.Time, err error) {
+	if m == nil {
+		return
+	}
+	result := "ok"
+	if err != nil {
+		result = "error"
+	}
+	m.ObserveMailSend(purpose, result, time.Since(started).Seconds())
+}
+
 // mailConfigFrom переводит разрешённые настройки в параметры транспорта.
 // Единственная точка перевода: строки настроек и типы платформы совпадают
 // по значениям, но не по типам — чтобы platform/mail не зависел от домена.

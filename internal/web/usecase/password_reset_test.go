@@ -420,6 +420,35 @@ func TestPasswordReset_Request_StorageFailureIsError(t *testing.T) {
 	})
 }
 
+// Ревизия §88.9: недоступная БД — это НЕ «такого пользователя нет». Свалив их
+// в один исход, мы отвечали бы «письмо отправлено» во время аварии и писали бы
+// в аудит неправду. Красный на коде, где ошибка поиска молча вела к
+// resetResultUserNotFound.
+func TestPasswordReset_Request_LookupFailureIsError(t *testing.T) {
+	t.Parallel()
+
+	t.Run("сбой поиска по логину", func(t *testing.T) {
+		t.Parallel()
+		f := newResetFixture(t, mailReadySettings(), activeUser())
+		f.users.getErr = errors.New("db is down")
+
+		_, err := f.uc.Request(context.Background(), "ivanov", "10.1.2.3")
+
+		require.Error(t, err, "сбой хранилища обязан быть ошибкой, а не «пользователь не найден»")
+		assert.Empty(t, f.audit.written, "исход в аудит писать нечего — мы его не знаем")
+	})
+
+	t.Run("пользователя действительно нет", func(t *testing.T) {
+		t.Parallel()
+		f := newResetFixture(t, mailReadySettings(), activeUser())
+
+		_, err := f.uc.Request(context.Background(), "nobody", "10.1.2.3")
+
+		require.NoError(t, err)
+		assert.Equal(t, resetResultUserNotFound, f.auditDetail(t, "result"))
+	})
+}
+
 // ── Validate ───────────────────────────────────────────────────────────────
 
 func TestPasswordReset_Validate(t *testing.T) {

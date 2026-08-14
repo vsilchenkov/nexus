@@ -68,6 +68,9 @@ type PasswordResetUsecase struct {
 	instanceID string
 
 	metrics PasswordResetMetrics
+	// mailMetrics — учёт отправок (§88.9). Отдельно от metrics: тот считает
+	// исходы ЗАПРОСА, этот — исходы самой отправки письма.
+	mailMetrics MailMetrics
 	// runner запускает фоновую отправку. Опция, а не голый `go`: unit-тесты
 	// подменяют её синхронной, иначе они флейкуют и спорят с goleak.
 	runner func(func())
@@ -86,9 +89,14 @@ func WithPasswordResetRunner(run func(func())) PasswordResetOption {
 	return func(u *PasswordResetUsecase) { u.runner = run }
 }
 
-// WithPasswordResetMetrics включает учёт исходов.
+// WithPasswordResetMetrics включает учёт исходов запроса.
 func WithPasswordResetMetrics(m PasswordResetMetrics) PasswordResetOption {
 	return func(u *PasswordResetUsecase) { u.metrics = m }
+}
+
+// WithPasswordResetMailMetrics включает учёт отправок письма (§88.9).
+func WithPasswordResetMailMetrics(m MailMetrics) PasswordResetOption {
+	return func(u *PasswordResetUsecase) { u.mailMetrics = m }
 }
 
 func NewPasswordResetUsecase(
@@ -146,7 +154,10 @@ func (u *PasswordResetUsecase) Request(ctx context.Context, input, ip string) (t
 		return ttlMinutes, nil
 	}
 
-	user, result := u.resolveUser(ctx, input)
+	user, result, err := u.resolveUser(ctx, input)
+	if err != nil {
+		return 0, err
+	}
 	if result != "" {
 		u.finish(ctx, actor, "", result, nil)
 		return ttlMinutes, nil
@@ -194,32 +205,45 @@ func (u *PasswordResetUsecase) Request(ctx context.Context, input, ip string) (t
 	return ttlMinutes, nil
 }
 
-// resolveUser ищет пользователя по логину, затем по email. Возвращает либо
-// пользователя, либо код исхода — тот уйдёт в аудит.
-func (u *PasswordResetUsecase) resolveUser(ctx context.Context, input string) (*domain.User, string) {
+// resolveUser ищет пользователя по логину, затем по email.
+//
+// Возвращает ЛИБО пользователя, ЛИБО код исхода для аудита, ЛИБО ошибку.
+// Третье отделено от второго намеренно: недоступная БД — это не «такого
+// пользователя нет». Свалив их в один исход, мы отвечали бы «письмо
+// отправлено» во время аварии и писали бы в аудит неправду.
+func (u *PasswordResetUsecase) resolveUser(ctx context.Context, input string) (*domain.User, string, error) {
 	if input == "" {
-		return nil, resetResultUserNotFound
+		return nil, resetResultUserNotFound, nil
 	}
+
 	user, err := u.users.GetByLogin(ctx, input)
 	if err != nil {
-		if !errors.Is(err, domain.ErrUserNotFound) && !errors.Is(err, domain.ErrNotFound) {
-			u.logger.Warn("password reset: lookup by login failed", u.logger.Err(err))
+		if !isUserMissing(err) {
+			return nil, "", fmt.Errorf("lookup by login: %w", err)
 		}
 		user, err = u.users.GetByEmail(ctx, input)
 		switch {
 		case errors.Is(err, domain.ErrUserEmailAmbiguous):
-			return nil, resetResultEmailAmbiguous
+			return nil, resetResultEmailAmbiguous, nil
+		case isUserMissing(err):
+			return nil, resetResultUserNotFound, nil
 		case err != nil:
-			return nil, resetResultUserNotFound
+			return nil, "", fmt.Errorf("lookup by email: %w", err)
 		}
 	}
+
 	if !user.Active {
-		return nil, resetResultInactive
+		return nil, resetResultInactive, nil
 	}
 	if strings.TrimSpace(user.Email) == "" {
-		return nil, resetResultNoEmail
+		return nil, resetResultNoEmail, nil
 	}
-	return user, ""
+	return user, "", nil
+}
+
+// isUserMissing — «пользователя нет», а не «хранилище не ответило».
+func isUserMissing(err error) bool {
+	return errors.Is(err, domain.ErrUserNotFound) || errors.Is(err, domain.ErrNotFound)
 }
 
 // sendAsync отправляет письмо в фоне (§88.5).
@@ -256,7 +280,10 @@ func (u *PasswordResetUsecase) sendAsync(
 		defer cancel()
 		defer safego.Recover(u.logger, "auth.password_reset_send")
 
-		if err := u.mail.Send(sendCtx, cfg, msg); err != nil {
+		started := time.Now()
+		err := u.mail.Send(sendCtx, cfg, msg)
+		observeMailSend(u.mailMetrics, MailPurposePasswordReset, started, err)
+		if err != nil {
 			u.finish(sendCtx, actor, user.ID, resetResultSendFailed, err)
 			return
 		}

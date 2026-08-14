@@ -56,6 +56,7 @@ type SettingsTester struct {
 	sentryFactory SentryClientFactory
 	telegram      TelegramSender
 	mail          MailSender
+	mailMetrics   MailMetrics
 	projectName   string
 	version       string
 	pingTimeout   time.Duration
@@ -73,6 +74,7 @@ func NewSettingsTester(
 	sentryFactory SentryClientFactory,
 	telegram TelegramSender,
 	mailSender MailSender,
+	mailMetrics MailMetrics,
 	projectName, version string,
 	logger logging.Logger,
 ) *SettingsTester {
@@ -83,6 +85,7 @@ func NewSettingsTester(
 		sentryFactory: sentryFactory,
 		telegram:      telegram,
 		mail:          mailSender,
+		mailMetrics:   mailMetrics,
 		projectName:   projectName,
 		version:       version,
 		pingTimeout:   5 * time.Second,
@@ -252,7 +255,9 @@ func (t *SettingsTester) TestMail(ctx context.Context, patch *domain.MailSetting
 	defer cancel()
 
 	start := time.Now()
-	if err := t.mail.Send(sendCtx, mailConfigFrom(m), mailTestMessage(to, m)); err != nil {
+	err = t.mail.Send(sendCtx, mailConfigFrom(m), mailTestMessage(to, m))
+	observeMailSend(t.mailMetrics, MailPurposeTest, start, err)
+	if err != nil {
 		return &TestResult{OK: false, Error: err.Error()}, nil
 	}
 	return &TestResult{OK: true, LatencyMs: time.Since(start).Milliseconds()}, nil

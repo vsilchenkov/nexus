@@ -330,7 +330,8 @@ func (a *App) Start(ctx context.Context) error {
 	mailSender := mail.New(a.logger)
 	// SettingsTester (Phase 6.3.2.6): test connection без сохранения.
 	settingsTester := usecase.NewSettingsTester(
-		appSettingsRepo, a.cfg, chpf.New, usecase.DefaultSentryClientFactory, telegramClient, mailSender,
+		appSettingsRepo, a.cfg, chpf.New, usecase.DefaultSentryClientFactory, telegramClient,
+		mailSender, a.metrics,
 		a.cfg.Build.ProjectName, a.cfg.Build.Version, a.logger,
 	)
 
@@ -487,6 +488,7 @@ func (a *App) Start(ctx context.Context) error {
 			userRepo, oneTimeTokenRepo, appSettingsRepo, mailSender, mailTemplates,
 			authUC, auditUC, a.cfg.Build.ProjectName, a.identity.ID.String(), a.logger,
 			usecase.WithPasswordResetMetrics(a.metrics),
+			usecase.WithPasswordResetMailMetrics(a.metrics),
 		)
 		passwordResetHandler = httpadapter.NewPasswordResetHandler(
 			passwordResetUC, rl, a.cfg.Web.PasswordResetRateLimitPerMin, a.logger)

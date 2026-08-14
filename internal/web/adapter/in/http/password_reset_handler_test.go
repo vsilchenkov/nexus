@@ -131,11 +131,15 @@ func (s *prMailSender) Send(_ context.Context, _ mail.Config, _ mail.Message) er
 type prChanger struct {
 	mu    sync.Mutex
 	calls int
+	err   error
 }
 
 func (c *prChanger) ChangePassword(_ context.Context, _ usecase.Actor, _, _ string, _ bool) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.err != nil {
+		return c.err
+	}
 	c.calls++
 	return nil
 }
@@ -419,6 +423,23 @@ func TestPasswordResetHandler_Confirm(t *testing.T) {
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Zero(t, f.changer.calls)
+	})
+
+	// Ревизия §88.9: эндпоинт публичный, и текст внутренней ошибки наружу
+	// отдавать нельзя — в ошибке хранилища бывает имя таблицы и кусок запроса.
+	t.Run("внутренний сбой не показывает свой текст", func(t *testing.T) {
+		t.Parallel()
+		u := prActiveUser()
+		f := newPRFixture(t, usersWith(u), prSettings())
+		f.tokens.consume = &domain.OneTimeToken{UserID: u.ID, Purpose: domain.TokenPurposePasswordReset}
+		f.changer.err = errors.New(`pq: relation "users" does not exist`)
+
+		w := f.post("/api/auth/password-reset/confirm",
+			`{"token":"`+goodToken+`","new_password":"new-strong-password"}`)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.NotContains(t, w.Body.String(), "relation")
+		assert.NotContains(t, w.Body.String(), "users")
 	})
 
 	t.Run("лимит — 429", func(t *testing.T) {
