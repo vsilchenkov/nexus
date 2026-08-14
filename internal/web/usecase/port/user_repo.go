@@ -24,6 +24,11 @@ type ListUsersFilter struct {
 type UserRepo interface {
 	Get(ctx context.Context, id string) (*domain.User, error)
 	GetByLogin(ctx context.Context, login string) (*domain.User, error)
+	// GetByEmail — поиск без учёта регистра (§88.4.2). Колонка users.email не
+	// уникальна: несколько совпадений → domain.ErrUserEmailAmbiguous, и
+	// вызывающий трактует их как «не найден» (письмо не уходит, чтобы владелец
+	// общего адреса не получил ссылку на чужую учётную запись).
+	GetByEmail(ctx context.Context, email string) (*domain.User, error)
 	List(ctx context.Context, f ListUsersFilter) ([]*domain.User, error)
 	CountActiveAdmins(ctx context.Context) (int, error)
 	Create(ctx context.Context, u *domain.User) error

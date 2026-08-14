@@ -205,6 +205,15 @@ var (
 	ErrMailResetRequiresMail   = errors.New("domain: password_reset_enabled requires mail.enabled")
 	ErrPasswordResetTTLInvalid = errors.New("domain: password_reset_ttl_min must be within [5, 1440]")
 
+	// ErrOneTimeTokenInvalid — одноразовая ссылка не найдена, погашена,
+	// истекла ИЛИ выдана на другое назначение (§88.4.1). Причина намеренно
+	// одна: различать их для предъявителя нельзя.
+	ErrOneTimeTokenInvalid = errors.New("domain: one-time token is invalid or already used")
+	// ErrUserEmailAmbiguous — под адресом числится больше одного пользователя
+	// (колонка users.email не уникальна). Трактуется как «не найден»: письмо
+	// не уходит, чтобы владелец адреса не получил ссылку на чужую учётку.
+	ErrUserEmailAmbiguous = errors.New("domain: several users share this email")
+
 	// Общие настройки (§28, Пункт 1)
 	ErrPublicBaseURLInvalid = errors.New("domain: public_base_url must be an http(s) origin without path or trailing slash")
 
