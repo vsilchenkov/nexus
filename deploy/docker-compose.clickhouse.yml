@@ -1,0 +1,104 @@
+# ClickHouse ВНУТРИ стека — override к корневому docker-compose.yml.
+#
+# Зачем: корневой docker-compose.yml — «Вариант C» (DEPLOYMENT.md §5): PG/Redis/
+# Kafka в контейнерах, а ClickHouse ВНЕШНИЙ. Этот файл добавляет к нему
+# контейнер ClickHouse, превращая стек в полностью самодостаточный: после
+# наложения на сервере не нужен ни один внешний сервис.
+#
+# Как применить — два способа:
+#
+#   1. Скопировать в корень, где Compose подхватит его АВТОМАТИЧЕСКИ, и запуск
+#      не изменится:
+#         cp deploy/docker-compose.clickhouse.yml docker-compose.override.yml
+#         docker compose up -d --build
+#      Корневой docker-compose.override.yml в .gitignore — файл остаётся
+#      локальным для этого сервера и не конфликтует при обновлении кода.
+#
+#   2. Либо подключать вторым -f, ничего не копируя:
+#         docker compose -f docker-compose.yml -f deploy/docker-compose.clickhouse.yml up -d --build
+#      Тогда этот -f нужно повторять в КАЖДОЙ команде compose (up, ps, logs,
+#      build, run) — забыли в одной, и она отработает без ClickHouse.
+#
+# ВНИМАНИЕ: способ 1 занимает единственный слот автоподхвата. Если на этом же
+# сервере нужен и профиль малой памяти (deploy/docker-compose.override.yml,
+# 2 ГБ / 2 ядра), скопировать оба файла в корень под одним именем нельзя —
+# накладывайте оба через -f:
+#   docker compose -f docker-compose.yml \
+#                  -f deploy/docker-compose.clickhouse.yml \
+#                  -f deploy/docker-compose.override.yml up -d --build
+#
+# Проверить, что получилось после наложения: `docker compose config`.
+#
+# В .env при этом обязателен CH_HOST=clickhouse (имя сервиса в сети nexus_net),
+# CH_PORT=9000 — нативный TCP-порт, НЕ HTTP 8123. Полный список — DEPLOYMENT.md §2.
+#
+# Альтернатива этому файлу: deploy/docker-compose.yml («Вариант A», DEPLOYMENT.md
+# §3) — там тот же полный стек одним файлом, но запускается только через -f и
+# тянет дополнительно rabbitmq/loadtest за профилями.
+
+services:
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine
+    restart: unless-stopped
+    environment:
+      # Nexus заводит по БД на команду (nexus_<slug>) сам — эта нужна как
+      # стартовая для команды default. Право на CREATE DATABASE даёт
+      # CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT (§5.3).
+      CLICKHOUSE_DB: nexus_default
+      CLICKHOUSE_USER: ${CH_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CH_PASSWORD:-}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    ports:
+      # Наружу НЕ публикуем: внутри стека сервисы ходят по имени clickhouse:9000,
+      # а CH с пустым CH_PASSWORD на 0.0.0.0 — открытый доступ к логам запросов.
+      # Привязка к 127.0.0.1 оставляет доступ для операторских задач с самого
+      # сервера (дампы, ручные SQL для внешних таблиц §64) через ssh-туннель.
+      # Нужен доступ извне — меняйте на "8123:8123" ОСОЗНАННО и с паролем.
+      - "127.0.0.1:8123:8123"
+      - "127.0.0.1:9000:9000"
+    ulimits:
+      # ClickHouse держит много открытых файлов (по файлу на колонку × партиции);
+      # дефолтный лимит контейнера он перерастает на первых же партициях логов.
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      # clickhouse-client всегда есть в образе clickhouse-server, в отличие от
+      # wget — в alpine-варианте 24+ его выпилили из base layer'а.
+      # --host=127.0.0.1 принудительно по TCP 9000, чтобы не зависеть от
+      # HTTP-listener'а.
+      #
+      # Логин/пароль передаём ЯВНО из окружения контейнера ($$ — экранирование,
+      # чтобы значение подставил shell контейнера, а не compose при парсинге).
+      # Замерено на clickhouse-server:24-alpine с непустым паролем: без явных
+      # флагов проба ТОЖЕ проходит — clickhouse-client сам читает
+      # CLICKHOUSE_USER/CLICKHOUSE_PASSWORD из окружения (с очищенным окружением
+      # та же команда даёт AUTHENTICATION_FAILED). Но это поведение КЛИЕНТА, а не
+      # контракт образа: сменится версия — проба молча пойдёт анонимно, контейнер
+      # застрянет unhealthy, и sender (depends_on: service_healthy) не стартует
+      # вообще. Отказ будет выглядеть как «sender не поднимается» при полностью
+      # исправном ClickHouse, поэтому креды фиксируем явно.
+      test: ["CMD-SHELL", "clickhouse-client --host=127.0.0.1 --user=\"$${CLICKHOUSE_USER:-default}\" --password=\"$${CLICKHOUSE_PASSWORD:-}\" --query='SELECT 1' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks: [nexus_net]
+
+  # Sender пишет логи запросов в ClickHouse (adapter/out/chlog, chlogretry) —
+  # ему CH нужен готовым к старту. depends_on в mapping-форме СЛИВАЕТСЯ с
+  # корневым файлом, то есть postgres/kafka оттуда сохраняются.
+  sender:
+    depends_on:
+      clickhouse: { condition: service_healthy }
+
+  # Web ЧИТАЕТ логи из CH (adapter/out/clickhouse), но зависимости здесь нет
+  # намеренно — как и в варианте A: панель обязана подниматься и при лежащем
+  # ClickHouse (деградация вместо отказа, §21). Жёсткий depends_on задержал бы
+  # старт интерфейса ровно тогда, когда он нужнее всего — при разборе аварии.
+
+volumes:
+  clickhouse_data:

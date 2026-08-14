@@ -599,6 +599,59 @@ docker compose logs -f web receiver sender
 заводит БД на команду (`nexus_<slug>`, для default — `nexus_default`) и создаёт таблицы логов.
 PostgreSQL/Redis/Kafka — bundled, как в Варианте A.
 
+### 5.3.1. ClickHouse внутрь стека — полностью самодостаточная установка
+
+Если отдельного ClickHouse нет и весь стек должен жить в одном docker-compose, накладывайте на
+корневой файл [deploy/docker-compose.clickhouse.yml](./deploy/docker-compose.clickhouse.yml).
+Он добавляет контейнер `clickhouse` (volume `clickhouse_data`, healthcheck, `ulimits nofile`)
+и вписывает его в `depends_on` у `sender`. Внешних сервисов после этого не остаётся вовсе.
+
+Два способа применить:
+
+```bash
+# 1. Копией в корень — Compose подхватит автоматически, команды не меняются:
+cp deploy/docker-compose.clickhouse.yml docker-compose.override.yml
+docker compose up -d --build
+
+# 2. Либо вторым -f, ничего не копируя (повторять в КАЖДОЙ команде compose):
+docker compose -f docker-compose.yml -f deploy/docker-compose.clickhouse.yml up -d --build
+```
+
+В `.env` меняется ровно одна строка против §5.1 — адрес CH становится именем контейнера:
+
+```dotenv
+CH_HOST=clickhouse        # имя сервиса в сети nexus_net, НЕ внешний адрес
+CH_PORT=9000              # нативный TCP; 8123 — это HTTP, он тут не нужен
+CH_USER=default
+CH_PASSWORD=<пароль>      # тот же попадёт в контейнер CH при первом старте
+```
+
+> **Смена пароля ClickHouse требует пересоздания контейнера, а не `restart`.** Entrypoint
+> образа при каждом старте перезаписывает `/etc/clickhouse-server/users.d/default-user.xml`
+> из `CLICKHOUSE_PASSWORD` (путь лежит в контейнере, не в томе), так что новый пароль
+> подхватится — но переменные окружения фиксируются в момент СОЗДАНИЯ контейнера, поэтому
+> после правки `.env` нужен `docker compose up -d` (пересоздаст), а не `docker compose restart`
+> (перезапустит со старым значением). Том `clickhouse_data` при этом сохраняется, логи не
+> теряются.
+
+Порты CH публикуются только на `127.0.0.1` (`8123`, `9000`) — снаружи сервер их не отдаёт, а
+операторские задачи (дампы, ручной SQL для внешних таблиц §64) делаются с самой машины или через
+ssh-туннель. Открывать наружу — осознанно и только с непустым `CH_PASSWORD`.
+
+**Ограничение автоподхвата.** Корневой `docker-compose.override.yml` — один на сервер. Если
+нужен ещё и профиль малой памяти (§5.4, [deploy/docker-compose.override.yml](./deploy/docker-compose.override.yml)),
+скопировать оба файла под одним именем нельзя — накладывайте оба через `-f`:
+
+```bash
+docker compose -f docker-compose.yml \
+               -f deploy/docker-compose.clickhouse.yml \
+               -f deploy/docker-compose.override.yml up -d --build
+```
+
+Альтернатива — [deploy/docker-compose.yml](./deploy/docker-compose.yml) (Вариант A, §3): тот же
+полный стек одним файлом, но запускается только через `-f` и содержит дополнительно
+`rabbitmq`/`loadtest` за профилями `stand`/`loadtest`.
+
 **ClickHouse должен быть доступен к моменту старта Sender'а.** `sender` подключается к CH на
 старте и при неудаче завершается с кодом 1 (`bootstrap.MustClickHouse`), после чего Docker
 перезапускает контейнер по кругу. `web` при недоступном CH стартует (replay и live-tail
