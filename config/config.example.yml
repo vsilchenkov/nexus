@@ -110,11 +110,13 @@ kafka:
   # Параметры авто-создания топика (EnsureTopics при старте).
   topic:
     partitions: 8                        # Число партиций топика = потолок параллелизма обработки (min с consumer.instances). Боевое значение с 2026-08-07 (§80.1: узлы конкурировали за партицию, лаг рос до 3.3k). Увеличивается без пересоздания (kafka-topics --alter; процедура и её цена — DEPLOYMENT.md, «Увеличение числа ПАРТИЦИЙ»), уменьшить нельзя.
-    # Дефолты — для multi-broker prod-кластера. На single-broker (локальный
-    # docker-compose, CI loadtest) переопределяй через env: RF=1, ISR=1 —
-    # иначе EnsureTopics зависнет/упадёт на InvalidReplicationFactor.
-    replication_factor: ${KAFKA_TOPIC_REPLICATION_FACTOR:3}   # Фактор репликации партиций.
-    min_insync_replicas: ${KAFKA_TOPIC_MIN_INSYNC_REPLICAS:2} # Минимум синхронных реплик для acks=all.
+    # Дефолты — под поставку из docker-compose: ОДИН брокер в KRaft-режиме (RF=1, ISR=1).
+    # RF не может превышать число брокеров: RF=3 на одном брокере роняет EnsureTopics
+    # на InvalidReplicationFactor, а ISR=2 при одной реплике валит каждую запись
+    # producer'а с acks=all. На кластере из 3+ брокеров переопредели через env
+    # RF=3, ISR=2 — иначе топики живут в одной копии без отказоустойчивости.
+    replication_factor: ${KAFKA_TOPIC_REPLICATION_FACTOR:1}   # Фактор репликации партиций (≤ числа брокеров).
+    min_insync_replicas: ${KAFKA_TOPIC_MIN_INSYNC_REPLICAS:1} # Минимум синхронных реплик для acks=all.
     retention_ms: 604800000       # Хранение сообщений по времени (мс) = 7 дней (неделя).
     retention_bytes: 42949672960  # Хранение по размеру (байт) = 40 ГиБ. ВНИМАНИЕ: лимит на ПАРТИЦИЮ,
                                   # суммарно по топику = retention_bytes × partitions. Предохранитель диска:

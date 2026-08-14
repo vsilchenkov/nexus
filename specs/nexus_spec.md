@@ -441,7 +441,7 @@ UI умеет:
 |---|---|---|
 | `partitions` | 4 | Под параллелизм consumer'ов; запас по параллелизму даже для нагрузки выше 500 rps |
 | `replication.factor` | 3 (prod) / 1 (compose) | Отказоустойчивость; 3 копии переживут падение одного broker'а |
-| `min.insync.replicas` | 2 | Producer с `acks=all` ждёт подтверждения от 2 ISR, что гарантирует durability при падении одного broker'а |
+| `min.insync.replicas` | 2 (prod) / 1 (compose) | Producer с `acks=all` ждёт подтверждения от 2 ISR, что гарантирует durability при падении одного broker'а. На одном брокере обязан быть 1, иначе каждая запись падает с `NotEnoughReplicas` |
 | `retention.ms` | 2592000000 (30 дней) | Требование заказчика |
 | `retention.bytes` | -1 | Без лимита по объёму — управляем только временем |
 | `segment.ms` | 86400000 (1 день) | Сегменты ротируются раз в сутки — оптимально для retention 30 дней |
@@ -1150,8 +1150,8 @@ kafka:
   # === Параметры топиков (применяются при автосоздании на старте) ===
   topic:
     partitions: 4                      # под параллелизм consumer'ов и rps
-    replication_factor: 3              # в проде; для compose-окружения override → 1
-    min_insync_replicas: 2             # acks=all требует подтверждения от 2 ISR
+    replication_factor: 1              # дефолт под compose (один брокер); на кластере 3+ брокеров → 3
+    min_insync_replicas: 1             # на кластере → 2: acks=all потребует подтверждения от 2 ISR
     retention_ms: 2592000000           # 30 дней = 30 * 24 * 60 * 60 * 1000
     retention_bytes: -1                # без лимита по объёму (-1 = unlimited)
     segment_ms: 86400000               # 1 день — ротация сегмента

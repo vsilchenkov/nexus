@@ -88,8 +88,8 @@ kafka:
   # === Параметры топиков (применяются при автосоздании на старте) ===
   topic:
     partitions: 4                      # под параллелизм consumer'ов и rps
-    replication_factor: 3              # в проде; для compose-окружения override → 1
-    min_insync_replicas: 2             # acks=all требует подтверждения от 2 ISR
+    replication_factor: 1              # дефолт под compose (один брокер); на кластере 3+ брокеров → 3
+    min_insync_replicas: 1             # на кластере → 2: acks=all потребует подтверждения от 2 ISR
     retention_ms: 2592000000           # 30 дней = 30 * 24 * 60 * 60 * 1000
     retention_bytes: -1                # без лимита по объёму (-1 = unlimited)
     segment_ms: 86400000               # 1 день — ротация сегмента

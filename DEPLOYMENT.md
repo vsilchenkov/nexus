@@ -78,10 +78,14 @@ Nexus — три stateless Go-сервиса плюс набор хранили�
 | `ENCRYPTION_KEY`      | **Обязателен.** Ключ AES-256-GCM для шифрования кредов узлов в БД — 32 байта в base64 | заглушка |
 | `NEXUS_RECEIVER_MAX_HOPS` | §32: лимит переходов запроса через шину (`X-Nexus-Hops`) до ответа 508 Loop Detected. `0` = дефолт 5; `<0` = защита от зацикливания выключена | `5` |
 
-Дополнительно при single-broker Kafka (один узел) задавайте в `.env`
-`KAFKA_TOPIC_REPLICATION_FACTOR=1` и `KAFKA_TOPIC_MIN_INSYNC_REPLICAS=1` — иначе создание
-топиков упадёт с `InvalidReplicationFactor` (дефолты в `config.example.yml` рассчитаны
-на кластер из 3+ брокеров: RF=3, ISR=2).
+Дефолты `KAFKA_TOPIC_REPLICATION_FACTOR=1` и `KAFKA_TOPIC_MIN_INSYNC_REPLICAS=1` рассчитаны
+на поставку из docker-compose — один брокер в KRaft-режиме, и менять их там не нужно.
+**На кластере из 3+ брокеров** поднимите значения до `3` и `2` в `.env`: иначе топики
+создаются в одной копии, и падение брокера теряет непрочитанные сообщения.
+Обратное (RF выше числа брокеров) недопустимо — создание топиков упадёт с
+`InvalidReplicationFactor`, а `ISR=2` на одной реплике завалит каждую запись producer'а
+с `acks=all`. Значения применяются ТОЛЬКО при создании топика: существующему нужен
+`kafka-reassign-partitions`.
 
 > **Внешний Kafka — лимит размера сообщения.** §38 durable-retry при недоступности
 > ClickHouse шлёт проваленные батчи логов (с телами request/response, до неск. МБ) в
@@ -306,8 +310,8 @@ git clone <repo-url> nexus && cd nexus
 # 2. Подготовить секреты
 cp .env.example .env
 #    Отредактируйте .env: PG_PASSWORD, REDIS_PASSWORD, CH_PASSWORD,
-#    и обязательно ENCRYPTION_KEY (см. §2). Для single-broker Kafka добавьте
-#    KAFKA_TOPIC_REPLICATION_FACTOR=1 и KAFKA_TOPIC_MIN_INSYNC_REPLICAS=1.
+#    и обязательно ENCRYPTION_KEY (см. §2). Дефолты KAFKA_TOPIC_* рассчитаны на
+#    один брокер; на кластере 3+ брокеров поднимите их до 3 и 2 (см. §2).
 
 # 3. Собрать образы и поднять стек
 docker compose -f deploy/docker-compose.yml up -d --build
@@ -424,8 +428,8 @@ docker compose -f deploy/docker-compose.app.yml logs -f web receiver sender
   по БД на команду (`nexus_<slug>`, для default — `nexus_default`) и создаёт таблицы логов.
 - **Kafka**: автосоздание топиков на брокере должно быть **разрешено**, либо заранее
   создайте `nexus.async`, `nexus.async.dlq`, `nexus.async.paused` и `nexus.logs.retry` (Nexus сам пытается их завести с
-  `retention.ms=7 дней` + `retention.bytes=40 ГиБ` **на партицию**; на single-broker не забудьте
-  RF=1/ISR=1 — см. §2). Топик `nexus.logs.retry`
+  `retention.ms=7 дней` + `retention.bytes=40 ГиБ` **на партицию**; RF/ISR по умолчанию `1`/`1` —
+  на кластере из 3+ брокеров поднимите до `3`/`2`, см. §2). Топик `nexus.logs.retry`
   (§38) — durable-буфер проваленных CH-батчей при недоступности ClickHouse; его retention должен
   покрывать максимально ожидаемый простой CH × объём логов (иначе при очень долгом простое старые
   батчи истекут по retention и не доедут в CH). Имя настраивается `kafka.retry_topic`; пустое
@@ -1614,7 +1618,7 @@ curl -s http://localhost:8000/api/version    # → {"version":"1.0.0"}
 - [ ] Репозиторий склонирован **с `.git`** (нужен для `git describe` при сборке образов).
 - [ ] В `.env` заданы реальные `CH_HOST/CH_PORT/CH_USER/CH_PASSWORD` внешнего ClickHouse и
       **обязательный** `ENCRYPTION_KEY` (32 байта base64, §2). `VERSION` не нужен (registry-путь убран).
-- [ ] Single-broker Kafka? Заданы `KAFKA_TOPIC_REPLICATION_FACTOR=1` и `KAFKA_TOPIC_MIN_INSYNC_REPLICAS=1` (§2).
+- [ ] Кластер Kafka из 3+ брокеров? Подняты `KAFKA_TOPIC_REPLICATION_FACTOR=3` и `KAFKA_TOPIC_MIN_INSYNC_REPLICAS=2` (§2). На одном брокере — оставить дефолтные `1`/`1`.
 - [ ] Используете дашборды панели / Telegram-алерты? Задан `PROMETHEUS_URL` (§21/§22).
 - [ ] У CH-пользователя есть право создавать БД/таблицы (`nexus_<slug>`, §5.3).
 
@@ -1957,7 +1961,7 @@ docker compose -f deploy/docker-compose.app.yml run --rm web --set-admin-passwor
 | Симптом | Причина / решение |
 |---------|-------------------|
 | Сервис падает на старте с `ENCRYPTION_KEY invalid` | base64 не декодируется в ровно 32 байта — перегенерируйте (§2). |
-| `InvalidReplicationFactor` при старте `sender` | Single-broker Kafka: задайте `KAFKA_TOPIC_REPLICATION_FACTOR=1` и `KAFKA_TOPIC_MIN_INSYNC_REPLICAS=1` в `.env`. |
+| `InvalidReplicationFactor` при старте `sender` | `KAFKA_TOPIC_REPLICATION_FACTOR` в `.env` больше числа брокеров. Верните дефолтные `1`/`1` для одного брокера (`KAFKA_TOPIC_MIN_INSYNC_REPLICAS` — тоже, иначе записи упадут с `NotEnoughReplicas`). Уже созданным топикам правка не поможет — нужен `kafka-reassign-partitions`. |
 | Kafka не поднимается за 10 сек | Норма для KRaft — дайте до 30 сек (`start_period`). Логи: `docker compose ... logs kafka`. |
 | `web` стартует, но replay/live-tail отдают 404 | ClickHouse недоступен — некритично, остальное работает. Проверьте `CH_HOST`/`CH_PASSWORD`. |
 | Не получается войти под `admin` | Не выполнен bootstrap пароля (§3.3) — пароль остаётся NULL после миграции. |
