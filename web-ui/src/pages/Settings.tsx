@@ -12,6 +12,7 @@ import { ClickHousePanel } from "./settings/ClickHouse";
 import { UsersPanel } from "./settings/Users";
 import { TeamsPanel } from "./settings/Teams";
 import { NotificationsPanel } from "./settings/Notifications";
+import { MailPanel } from "./settings/Mail";
 import { AllowedHostsPanel } from "./settings/AllowedHosts";
 import { HeadersPanel } from "./settings/Headers";
 import { InstancesPanel } from "./settings/Instances";
@@ -34,6 +35,8 @@ const tabs: Tab[] = [
   { to: "language", labelKey: "settings.language.title" },
   { to: "sentry", labelKey: "settings.sentry.title", minRole: "admin" },
   { to: "clickhouse", labelKey: "settings.clickhouse.title", minRole: "admin" },
+  // §88: почта — соседствует с остальными внешними интеграциями.
+  { to: "mail", labelKey: "settings.mail.title", minRole: "admin" },
   { to: "notifications", labelKey: "settings.notifications.title", minRole: "admin" },
 ];
 
@@ -90,6 +93,7 @@ export default function Settings() {
           <Route path="language" element={<LanguagePanel />} />
           {isAdmin && <Route path="sentry" element={<SentryPanel />} />}
           {isAdmin && <Route path="clickhouse" element={<ClickHousePanel />} />}
+          {isAdmin && <Route path="mail" element={<MailPanel />} />}
           {isAdmin && <Route path="notifications" element={<NotificationsPanel />} />}
           <Route path="*" element={<Navigate to="tokens" replace />} />
         </Routes>
