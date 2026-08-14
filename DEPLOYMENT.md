@@ -599,23 +599,62 @@ docker compose logs -f web receiver sender
 заводит БД на команду (`nexus_<slug>`, для default — `nexus_default`) и создаёт таблицы логов.
 PostgreSQL/Redis/Kafka — bundled, как в Варианте A.
 
-### 5.3.1. ClickHouse внутрь стека — полностью самодостаточная установка
+**ClickHouse должен быть доступен к моменту старта Sender'а.** `sender` подключается к CH на
+старте и при неудаче завершается с кодом 1 (`bootstrap.MustClickHouse`), после чего Docker
+перезапускает контейнер по кругу. `web` при недоступном CH стартует (replay и live-tail
+отключаются), `receiver` в CH не ходит вовсе.
 
-Если отдельного ClickHouse нет и весь стек должен жить в одном docker-compose, накладывайте на
-корневой файл [deploy/docker-compose.clickhouse.yml](./deploy/docker-compose.clickhouse.yml).
-Он добавляет контейнер `clickhouse` (volume `clickhouse_data`, healthcheck, `ulimits nofile`)
-и вписывает его в `depends_on` у `sender`. Внешних сервисов после этого не остаётся вовсе.
+### 5.3.1. Закрытая самодостаточная установка (публичный сервер)
+
+Если отдельного ClickHouse нет, весь стек должен жить в одном docker-compose, а сервер смотрит
+в интернет — накладывайте на корневой файл
+[deploy/docker-compose.standalone.override.yml](./deploy/docker-compose.standalone.override.yml).
+Он делает две вещи:
+
+1. **Добавляет контейнер `clickhouse`** (том `clickhouse_data`, healthcheck, `ulimits nofile`)
+   и вписывает его в `depends_on` у `sender`. Внешних сервисов после этого не остаётся вовсе.
+2. **Прячет ВСЕ публикуемые порты на `127.0.0.1`.** Корневой `docker-compose.yml` выставляет
+   `postgres:5432`, `redis:6379`, `kafka:9092`, `prometheus:9091` и порты сервисов на `0.0.0.0` —
+   на публичном IP это открытые наружу хранилища.
+
+> **`!override` в этом файле обязателен, и это не стилистика.** Списки `ports` при наложении
+> Compose **сливаются**, а не заменяются: без тега `postgres` получает ОБА маппинга —
+> `0.0.0.0:5432` и `127.0.0.1:5432`, — то есть порт остаётся открытым наружу при полном
+> ощущении, что он закрыт (проверено `docker compose config`). Тег заменяет список целиком.
 
 Два способа применить:
 
 ```bash
 # 1. Копией в корень — Compose подхватит автоматически, команды не меняются:
-cp deploy/docker-compose.clickhouse.yml docker-compose.override.yml
+cp deploy/docker-compose.standalone.override.yml docker-compose.override.yml
 docker compose up -d --build
 
 # 2. Либо вторым -f, ничего не копируя (повторять в КАЖДОЙ команде compose):
-docker compose -f docker-compose.yml -f deploy/docker-compose.clickhouse.yml up -d --build
+docker compose -f docker-compose.yml -f deploy/docker-compose.standalone.override.yml up -d --build
 ```
+
+**Проверить, что наружу действительно ничего не торчит** (после любой правки compose-файлов):
+
+```bash
+docker compose config --format json | python3 -c "
+import json,sys
+d=json.load(sys.stdin); bad=[]
+for n in sorted(d['services']):
+    for p in d['services'][n].get('ports',[]):
+        ip=p.get('host_ip','0.0.0.0'); print(n, ip+':'+str(p['published']), '->', p['target'])
+        if ip!='127.0.0.1': bad.append((n,ip,p['published']))
+print('ОТКРЫТО НАРУЖУ:', bad or 'ничего')
+"
+```
+
+Ожидаемый результат — 10 строк, все с `127.0.0.1`, и `ОТКРЫТО НАРУЖУ: ничего`.
+
+**Панель и приём запросов — через reverse-proxy.** `web:8000` и `receiver:8080` тоже закрыты:
+на публичном сервере их полагается публиковать через nginx/caddy на хосте, который слушает 443
+с TLS и проксирует на `127.0.0.1:8000` и `127.0.0.1:8080`. Прямая публикация отдала бы панель и
+API по открытому HTTP — сессионная кука и токены команд ушли бы в сеть в открытом виде. Если
+reverse-proxy нет и доступ нужен напрямую, замените адрес осознанно (в файле есть готовый
+закомментированный блок) и закройте остальное фаерволом.
 
 В `.env` меняется ровно одна строка против §5.1 — адрес CH становится именем контейнера:
 
@@ -644,18 +683,13 @@ ssh-туннель. Открывать наружу — осознанно и т
 
 ```bash
 docker compose -f docker-compose.yml \
-               -f deploy/docker-compose.clickhouse.yml \
+               -f deploy/docker-compose.standalone.override.yml \
                -f deploy/docker-compose.override.yml up -d --build
 ```
 
 Альтернатива — [deploy/docker-compose.yml](./deploy/docker-compose.yml) (Вариант A, §3): тот же
 полный стек одним файлом, но запускается только через `-f` и содержит дополнительно
 `rabbitmq`/`loadtest` за профилями `stand`/`loadtest`.
-
-**ClickHouse должен быть доступен к моменту старта Sender'а.** `sender` подключается к CH на
-старте и при неудаче завершается с кодом 1 (`bootstrap.MustClickHouse`), после чего Docker
-перезапускает контейнер по кругу. `web` при недоступном CH стартует (replay и live-tail
-отключаются), `receiver` в CH не ходит вовсе.
 
 ### 5.4. Минимальные ресурсы сервера при низкой нагрузке
 
