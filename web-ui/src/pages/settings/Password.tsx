@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Info } from "lucide-react";
 
@@ -15,6 +15,21 @@ export function PasswordPanel() {
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  // §88.8.6: куда придёт ссылка восстановления. Оба запроса уже в кеше
+  // (шапка и футер), лишних обращений не появляется.
+  const me = useQuery({
+    queryKey: ["me"],
+    queryFn: () => api.get<{ user: { email?: string } }>("/api/auth/me"),
+  });
+  const version = useQuery({
+    queryKey: ["version"],
+    queryFn: () => api.get<{ password_reset_ready?: boolean }>("/api/version"),
+    staleTime: Infinity,
+    retry: false,
+  });
+  const resetReady = version.data?.password_reset_ready === true;
+  const email = me.data?.user.email ?? "";
 
   const mismatch = confirm.length > 0 && next !== confirm;
   const canSubmit =
@@ -41,6 +56,16 @@ export function PasswordPanel() {
       <div className="mb-3.5 mt-1 text-xs text-fg-muted">
         {t("settings.password.subtitle")}
       </div>
+
+      {resetReady &&
+        (email !== "" ? (
+          <div className="mb-3.5 text-xs text-fg-muted">
+            {t("settings.password.your_email", { email })}
+            <div className="text-fg-subtle">{t("settings.password.email_managed_by_admin")}</div>
+          </div>
+        ) : (
+          <div className="mb-3.5 text-xs text-warn">{t("settings.password.no_email")}</div>
+        ))}
 
       {error && (
         <div className="mb-3 rounded border border-err/40 bg-err/10 px-3 py-2 text-sm text-err">

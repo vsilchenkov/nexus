@@ -33,6 +33,20 @@ type Me = {
   user: { user_id: string; login: string; role: string };
 };
 
+// usePasswordResetReady — §88.8.5: подсказки «без email восстановление
+// недоступно» показываются, только когда функция включена. Иначе это фоновый
+// шум, который перестают замечать. Тот же queryKey, что у футера и формы
+// входа, — лишнего запроса не появляется.
+function usePasswordResetReady(): boolean {
+  const v = useQuery({
+    queryKey: ["version"],
+    queryFn: () => api.get<{ password_reset_ready?: boolean }>("/api/version"),
+    staleTime: Infinity,
+    retry: false,
+  });
+  return v.data?.password_reset_ready === true;
+}
+
 function relativeTime(iso?: string, lang = "en"): string {
   if (!iso) return "—";
   const date = new Date(iso);
@@ -75,6 +89,7 @@ export function UsersPanel() {
     queryKey: ["me"],
     queryFn: () => api.get<Me>("/api/auth/me"),
   });
+  const resetReady = usePasswordResetReady();
 
   const [search, setSearch] = useState("");
 
@@ -231,7 +246,18 @@ export function UsersPanel() {
                         </div>
                         <div className="text-xs text-fg-muted">
                           <span className="font-mono">{u.login}</span>
-                          {u.email && <span> · {u.email}</span>}
+                          {u.email ? (
+                            <span> · {u.email}</span>
+                          ) : (
+                            resetReady && (
+                              <span
+                                className="ml-1.5 rounded bg-warn/15 px-1.5 py-0.5 text-[11px] text-warn"
+                                title={t("settings.users.no_email_hint")}
+                              >
+                                {t("settings.users.no_email")}
+                              </span>
+                            )
+                          )}
                         </div>
                       </div>
                     </div>
@@ -631,6 +657,7 @@ type UserDialogProps = {
 
 function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: UserDialogProps) {
   const { t } = useTranslation();
+  const resetReady = usePasswordResetReady();
 
   const [login, setLogin] = useState(initial?.login ?? "");
   // §66: отображаемое имя — обязательно при создании и изменении.
@@ -755,6 +782,12 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
               placeholder="user@example.com"
               className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none"
             />
+            {/* §88.8.5: email обязательным не делаем (колонка nullable с
+                первых миграций, обязательность сломала бы существующие
+                учётки) — вместо этого предупреждаем. */}
+            {resetReady && email.trim() === "" && (
+              <p className="text-xs text-warn">{t("settings.users.no_email_hint")}</p>
+            )}
           </div>
 
           {mode === "create" && (

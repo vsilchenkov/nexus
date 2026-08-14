@@ -1238,7 +1238,10 @@
       "mismatch": "Passwords do not match.",
       "submit": "Change password",
       "saving": "Changing…",
-      "note": "All your active sessions are revoked; sign in again with the new password."
+      "note": "All your active sessions are revoked; sign in again with the new password. Previously sent recovery links stop working.",
+      "your_email": "The recovery link will be sent to {{email}}",
+      "email_managed_by_admin": "The address is managed by an administrator in the Users section.",
+      "no_email": "No email address — you will not be able to reset your password yourself, contact an administrator."
     },
     "theme": { "title": "Theme", "light": "Light", "dark": "Dark" },
     "common": {
@@ -1322,6 +1325,8 @@
       "last_admin_warning": "At least one admin must remain.",
       "cannot_disable_self": "Cannot disable yourself.",
       "pw_empty": "Enter a password.",
+      "no_email": "no email",
+      "no_email_hint": "Password recovery is unavailable without an email address.",
       "pw_weak": "Weak.",
       "pw_medium": "Medium.",
       "pw_strong": "Strong.",

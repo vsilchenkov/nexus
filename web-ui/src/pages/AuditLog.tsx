@@ -33,6 +33,11 @@ function actionTone(action: string): "default" | "info" | "success" | "danger" |
   if (action.endsWith(".delete") || action.includes("failed") || action.includes("drop"))
     return "danger";
   if (action.endsWith(".update")) return "info";
+  // §88.9: подтверждение означает состоявшуюся смену пароля. А вот запрос
+  // восстановления красить «успехом» нельзя — он пишется и для
+  // безрезультатных попыток, исход лежит в details.result; он остаётся
+  // нейтральным по общему правилу ниже.
+  if (action === "user.password_reset.confirm") return "success";
   return "default";
 }
 
@@ -104,6 +109,8 @@ export default function AuditLog() {
           <option value="node.copy">node.copy</option>
           <option value="user.login.success">user.login.success</option>
           <option value="user.login.failed">user.login.failed</option>
+          <option value="user.password_reset.request">user.password_reset.request</option>
+          <option value="user.password_reset.confirm">user.password_reset.confirm</option>
           <option value="api_token.create">api_token.create</option>
           <option value="api_token.revoke">api_token.revoke</option>
         </Select>
