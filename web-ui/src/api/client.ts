@@ -275,10 +275,22 @@ export type NodesThroughputResp = {
   totals: OverviewTotals;
   prometheus_available: boolean;
 };
+// §86.10: лёгкая строка среза — по ней строится порядок узлов и бейдж статуса
+// ДО того, как доедут порционные метрики. Без p95 и спарклайна: срез приходит
+// на ВСЕ узлы скоупа, и каждое лишнее поле умножается на их число.
+export type NodeRank = {
+  node_id: string;
+  in: number;
+  out: number;
+  errors: number;
+  last_outcome: "ok" | "degraded" | "down";
+};
 // §86.4: агрегат шапки отдельным запросом (GET /api/metrics/totals). Нужен
 // сквозному режиму: там строки таблицы грузятся порционно, и шапка обязана
 // считаться по всему скоупу, иначе её значение зависело бы от прокрутки.
-export type NodesTotalsResp = { totals: OverviewTotals };
+// §86.10: тем же ответом едет срез nodes — он считается тем же проходом.
+// Опционален: старый бэкенд поля не отдаёт, и рабочий стол обязан это пережить.
+export type NodesTotalsResp = { totals: OverviewTotals; nodes?: NodeRank[] };
 // §79.5: chart_unit — как посчитаны столбцы.
 //   records  — запись в интервале своего прихода, «ошибка» по ИТОГОВОМУ статусу
 //              (после успешного повтора красный сегмент исчезает сам);

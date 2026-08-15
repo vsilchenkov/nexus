@@ -7,6 +7,7 @@ import { Search, Plus, Star, Play, Pause } from "lucide-react";
 import {
   api,
   type Node,
+  type NodeRank,
   type OverviewKPI,
   type NodesThroughputResp,
   type NodesTotalsResp,
@@ -78,6 +79,23 @@ type Throughput = {
 // TOTALS_REFETCH_FACTOR — во сколько раз реже строк обновляется KPI-шапка
 // сквозного режима (§86.4).
 const TOTALS_REFETCH_FACTOR = 4;
+
+// rankThroughput — метрика узла из строки среза шапки (§86.10).
+//
+// p95=0 и пустой спарклайн — это «ещё не загружено», а не «ноль»: карточка на
+// нуле рисует «—» (fmtMs), пустой ряд даёт ту же заглушку, что у узла без
+// метрик. Оба поля приезжают только с порционной пачкой и ложатся поверх.
+function rankThroughput(r: NodeRank, path: string, ambiguous: Set<string> | null): Throughput {
+  return {
+    in: r.in,
+    out: r.out,
+    errors: r.errors,
+    p95: 0,
+    spark: [],
+    // §86.8: исход ключуется путём, а путь уникален лишь внутри команды.
+    lastOutcome: ambiguous?.has(path) ? "unknown" : r.last_outcome,
+  };
+}
 
 const VIEW_KEY = "nexus.overview.view";
 const AUTOREFRESH_KEY = "nexus.overview.autorefresh";
@@ -350,6 +368,25 @@ export default function Overview() {
 
   const throughput = useMemo(() => {
     const m = new Map<string, Throughput>();
+    // §86.10: в сквозном режиме БАЗОВЫЙ слой — срез из шапки, он есть на ВСЕ
+    // узлы скоупа. Порционные пачки ложатся поверх: они свежее и несут p95 со
+    // спарклайном.
+    //
+    // Слой один намеренно: порядок, бейдж и фильтр по статусу считает один и тот
+    // же nodeVariant. Если бы ранг брался из среза, а бейдж — из пачек, узел
+    // вставал бы наверх с серым «неизвестно», и верх списка читался бы как
+    // случайный.
+    //
+    // p95=0 и пустой спарклайн — не «ноль», а «ещё не загружено»: карточка на
+    // нуле рисует «—» (fmtMs), спарклайн от пустого массива рисует ту же
+    // заглушку, что и у узла без метрик. Показанного не портим, недостающее не
+    // выдумываем.
+    if (allTeams) {
+      const pathById = new Map((nodesQ.data?.items ?? []).map((n) => [n.id, n.path]));
+      for (const r of totalsQ.data?.nodes ?? []) {
+        m.set(r.node_id, rankThroughput(r, pathById.get(r.node_id) ?? "", ambiguousPaths));
+      }
+    }
     const src = allTeams ? Array.from(visible.items.values()) : (thrData?.items ?? []);
     for (const it of src) {
       if (!it.node_id) continue;
@@ -365,7 +402,7 @@ export default function Overview() {
       });
     }
     return m;
-  }, [thrData, allTeams, visible.items, ambiguousPaths]);
+  }, [thrData, allTeams, visible.items, ambiguousPaths, totalsQ.data, nodesQ.data]);
 
   // Сортировка: проблемные первыми (err → degraded → warn → paused → ok →
   // disabled), внутри статуса — по убыванию входящего трафика (§22, ui_cards.html).
@@ -377,12 +414,68 @@ export default function Overview() {
   // metricsReady — метрики throughput реально пришли и Prometheus доступен.
   // Пока не готовы, статус узла показываем нейтральным «unknown», а не зелёным
   // «OK» (П11: статус мигал ОК→down при дозагрузке метрик).
-  // В сквозном режиме источник другой (порционные пачки), и признак готовности
-  // строится по факту наличия метрик у узла: единого «ответ пришёл» здесь нет —
-  // строки досчитываются по мере прокрутки.
+  // В сквозном режиме источника два: срез шапки (все узлы разом, §86.10) и
+  // порционные пачки. Готовность — по факту наличия метрик хоть откуда: срез
+  // приходит одним ответом, пачки досчитываются по мере прокрутки, и ждать
+  // вторые, когда пришёл первый, значит держать весь список серым без причины.
   const metricsReady = allTeams
-    ? visible.items.size > 0
+    ? (totalsQ.data?.nodes?.length ?? 0) > 0 || visible.items.size > 0
     : thrQ.isSuccess && (thrData?.prometheus_available ?? false);
+
+  // §86.10: порядок сквозного режима — «проблемные первыми», построенный ОДИН
+  // раз и замороженный до смены периода или скоупа.
+  //
+  // Замораживается КАРТА «id узла → позиция», а не готовый массив: поиск, метод
+  // и статус отфильтровывают ту же карту, поэтому взаимный порядок переживает
+  // любой фильтр, а переключение «Таблица ↔ Карточки» не перетасовывает список
+  // (вид в ключ заморозки не входит — данные те же, меняется только отрисовка).
+  //
+  // Почему не пересортировывать на каждом ответе: срез обновляется по
+  // автообновлению, и живая сортировка переставляла бы строки под курсором —
+  // ровно то, из-за чего в §86.4 от ранжирования отказались вовсе.
+  //
+  // Ранг считается СТРОГО из среза, а не из throughput: тот подмешивает
+  // порционные пачки, и порядок стал бы зависеть от того, докуда успели
+  // долистать. Из среза он зависит только от периода и скоупа.
+  const rankKey = `${scopeKey}|${periodKey(period)}`;
+  const frozenRank = useRef<{ key: string; order: Map<string, number> } | null>(null);
+  const rankOrder = useMemo(() => {
+    if (!allTeams) return null;
+    const rows = totalsQ.data?.nodes;
+    // Среза нет (старый бэкенд, недоступный ClickHouse) — порядок не строим:
+    // экран обязан пережить это, а не остаться без списка.
+    if (!rows || rows.length === 0) return null;
+    if (frozenRank.current?.key === rankKey) return frozenRank.current.order;
+
+    const items = nodesQ.data?.items ?? [];
+    const rowByID = new Map(rows.map((r) => [r.node_id, r]));
+    const teamOf = (n: Node) => teamNames?.get(n.team_id) ?? "";
+    const byTeamPath = (a: Node, b: Node) =>
+      teamOf(a).localeCompare(teamOf(b)) || a.path.localeCompare(b.path);
+
+    const ranked: Node[] = [];
+    const rest: Node[] = [];
+    for (const n of items) (rowByID.has(n.id) ? ranked : rest).push(n);
+    ranked.sort((a, b) => {
+      const ma = rankThroughput(rowByID.get(a.id)!, a.path, ambiguousPaths);
+      const mb = rankThroughput(rowByID.get(b.id)!, b.path, ambiguousPaths);
+      const va = nodeVariant(a, ma, true);
+      const vb = nodeVariant(b, mb, true);
+      if (sortRank[va] !== sortRank[vb]) return sortRank[va] - sortRank[vb];
+      if (mb.in !== ma.in) return mb.in - ma.in;
+      // Полная детерминированность: без этого равные узлы шевелились бы между
+      // перестроениями, потому что порядок items приходит из репозитория.
+      return byTeamPath(a, b);
+    });
+    // Узлы вне среза (созданы после его расчёта) — в конец: про них ещё ничего
+    // не известно, и ставить их среди ранжированных значило бы соврать.
+    rest.sort(byTeamPath);
+
+    const order = new Map<string, number>();
+    [...ranked, ...rest].forEach((n, i) => order.set(n.id, i));
+    frozenRank.current = { key: rankKey, order };
+    return order;
+  }, [allTeams, totalsQ.data, nodesQ.data, rankKey, teamNames, ambiguousPaths, sortRank]);
 
   const nodes = useMemo(() => {
     let items = nodesQ.data?.items ?? [];
@@ -392,19 +485,31 @@ export default function Overview() {
         (n) => nodeVariant(n, throughput.get(n.id), metricsReady) === statusFilter,
       );
     }
-    // §86.4: в сквозном режиме порядок СТАБИЛЬНЫЙ — команда, затем путь.
+    // §86.10: в сквозном режиме порядок берётся из ЗАМОРОЖЕННОЙ карты рангов.
     //
-    // Сортировка «проблемные первыми» опирается на метрики, а они здесь
-    // приходят порциями по мере прокрутки: каждая пачка переставляла бы строки
-    // под курсором, и место, до которого оператор долистал, уезжало. Ранжировать
-    // по данным, которых ещё нет, всё равно нельзя — до полной загрузки такой
-    // порядок был бы неправдой. Группировка по команде читается вместе с
-    // колонкой «Команда» и не зависит от того, что уже досчитано.
+    // До §86.10 здесь был стабильный порядок «команда, затем путь»: метрики
+    // приезжали только порциями по мере прокрутки, и ранжировать было не по
+    // чему — каждая пачка переставляла бы строки под курсором. Теперь ранг
+    // известен сразу для всех узлов (срез приходит с шапкой), а от перестановок
+    // под курсором защищает заморозка, а не отказ от сортировки.
+    //
+    // Прежний порядок остался деградацией: срез недоступен — список всё равно
+    // осмысленно сгруппирован по командам и читается вместе с колонкой «Команда».
     if (allTeams) {
       const teamOf = (n: Node) => teamNames?.get(n.team_id) ?? "";
-      return [...items].sort(
-        (a, b) => teamOf(a).localeCompare(teamOf(b)) || a.path.localeCompare(b.path),
-      );
+      const byTeamPath = (a: Node, b: Node) =>
+        teamOf(a).localeCompare(teamOf(b)) || a.path.localeCompare(b.path);
+      if (!rankOrder) return [...items].sort(byTeamPath);
+      return [...items].sort((a, b) => {
+        const ra = rankOrder.get(a.id);
+        const rb = rankOrder.get(b.id);
+        // Узел появился после заморозки — в конец, но детерминированно.
+        if (ra === undefined || rb === undefined) {
+          if (ra === rb) return byTeamPath(a, b);
+          return ra === undefined ? 1 : -1;
+        }
+        return ra - rb;
+      });
     }
     return [...items].sort((a, b) => {
       const va = nodeVariant(a, throughput.get(a.id), metricsReady);
@@ -412,7 +517,17 @@ export default function Overview() {
       if (sortRank[va] !== sortRank[vb]) return sortRank[va] - sortRank[vb];
       return (throughput.get(b.id)?.in ?? 0) - (throughput.get(a.id)?.in ?? 0);
     });
-  }, [nodesQ.data, method, statusFilter, throughput, sortRank, metricsReady, allTeams, teamNames]);
+  }, [
+    nodesQ.data,
+    method,
+    statusFilter,
+    throughput,
+    sortRank,
+    metricsReady,
+    allTeams,
+    teamNames,
+    rankOrder,
+  ]);
 
   // statusFilterPending — фильтр по статусу выбран, но метрики, из которых
   // статус выводится, ещё не пришли. В сквозном режиме это окно длится, пока
