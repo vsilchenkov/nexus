@@ -753,6 +753,19 @@ export default function Overview() {
           </button>
         )}
         <div className="ml-auto flex items-center gap-2">
+          {/* §86.11: ручное обновление — только иконка, подпись в title и
+              aria-label. Стоит ЛЕВЕЕ «Авто»: сначала действие, затем режим.
+              Состояние «Авто» не трогает: пауза остаётся паузой. */}
+          <button
+            type="button"
+            onClick={refreshAll}
+            disabled={refreshing}
+            title={t("overview.refresh")}
+            aria-label={t("overview.refresh")}
+            className="inline-flex items-center rounded-md border border-line px-2 py-1 text-xs text-fg-muted hover:text-accent disabled:cursor-default disabled:opacity-50"
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
+          </button>
           {/* §44.C: пауза/запуск автообновления рабочего стола. */}
           <button
             type="button"
@@ -771,18 +784,6 @@ export default function Overview() {
                 {t("overview.autorefresh_off")}
               </>
             )}
-          </button>
-          {/* §86.11: ручное обновление — только иконка, подпись в title и
-              aria-label. Состояние «Авто» не трогает: пауза остаётся паузой. */}
-          <button
-            type="button"
-            onClick={refreshAll}
-            disabled={refreshing}
-            title={t("overview.refresh")}
-            aria-label={t("overview.refresh")}
-            className="inline-flex items-center rounded-md border border-line px-2 py-1 text-xs text-fg-muted hover:text-accent disabled:cursor-default disabled:opacity-50"
-          >
-            <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
           </button>
         </div>
       </div>
