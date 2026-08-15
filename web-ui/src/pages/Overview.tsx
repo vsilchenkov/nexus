@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Search, Plus, Star, Play, Pause } from "lucide-react";
+import { Search, Plus, Star, Play, Pause, RefreshCw } from "lucide-react";
 
 import {
   api,
@@ -437,7 +437,13 @@ export default function Overview() {
   // Ранг считается СТРОГО из среза, а не из throughput: тот подмешивает
   // порционные пачки, и порядок стал бы зависеть от того, докуда успели
   // долистать. Из среза он зависит только от периода и скоупа.
-  const rankKey = `${scopeKey}|${periodKey(period)}`;
+  // rankEpoch — счётчик ручных обновлений (§86.11). Входит в ключ заморозки,
+  // потому что «Обновить» — единственный способ перестроить порядок, не трогая
+  // период и скоуп. Инкремент делается ПОСЛЕ прихода нового среза: сделай его
+  // до — карта пересобралась бы по старым числам, а новые уже не пересобрали бы
+  // её, ключ-то совпал.
+  const [rankEpoch, setRankEpoch] = useState(0);
+  const rankKey = `${scopeKey}|${periodKey(period)}|${rankEpoch}`;
   const frozenRank = useRef<{ key: string; order: Map<string, number> } | null>(null);
   const rankOrder = useMemo(() => {
     if (!allTeams) return null;
@@ -533,6 +539,30 @@ export default function Overview() {
   // статус выводится, ещё не пришли. В сквозном режиме это окно длится, пока
   // догружаются пачки preload; в режиме одной команды — пока идёт общий запрос.
   const statusFilterPending = statusNeedsMetrics && !metricsReady;
+
+  // §86.11: ручное обновление. Нужно и при выключенном автообновлении (там оно
+  // единственный способ обновиться), и при включённом — чтобы не ждать интервал.
+  //
+  // Перезапрашиваем ИМЕННО текущие запросы, а не инвалидируем экран целиком:
+  // лишний проход по всем узлам скоупа здесь стоит дорого.
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshAll = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([
+        nodesQ.refetch(),
+        kpiQ.refetch(),
+        allTeams ? totalsQ.refetch() : thrQ.refetch(),
+        allTeams ? visible.refresh() : Promise.resolve(),
+      ]);
+      // Порядок перестраивается ПОСЛЕ того, как свежий срез уже в кеше (см.
+      // rankEpoch). В режиме одной команды перестраивать нечего: там сортировка
+      // и так живая, на каждом ответе.
+      if (allTeams) setRankEpoch((e) => e + 1);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [allTeams, nodesQ, kpiQ, totalsQ, thrQ, visible]);
 
   const kpi = useStableData(kpiQ.data, "overview-kpi", (d) => d.prometheus_available);
   // §44.A: трафик KPI шапки = totals из throughput (сумма строк таблицы за
@@ -694,25 +724,39 @@ export default function Overview() {
             {t("overview.set_default_period")}
           </button>
         )}
-        {/* §44.C: пауза/запуск автообновления рабочего стола. */}
-        <button
-          type="button"
-          onClick={() => setAutoRefresh((v) => !v)}
-          title={autoRefresh ? t("overview.autorefresh_on") : t("overview.autorefresh_off")}
-          className="ml-auto inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-fg-muted hover:text-accent"
-        >
-          {autoRefresh ? (
-            <>
-              <Pause className="h-3.5 w-3.5" />
-              {t("overview.autorefresh_on")}
-            </>
-          ) : (
-            <>
-              <Play className="h-3.5 w-3.5" />
-              {t("overview.autorefresh_off")}
-            </>
-          )}
-        </button>
+        <div className="ml-auto flex items-center gap-2">
+          {/* §44.C: пауза/запуск автообновления рабочего стола. */}
+          <button
+            type="button"
+            onClick={() => setAutoRefresh((v) => !v)}
+            title={autoRefresh ? t("overview.autorefresh_on") : t("overview.autorefresh_off")}
+            className="inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-fg-muted hover:text-accent"
+          >
+            {autoRefresh ? (
+              <>
+                <Pause className="h-3.5 w-3.5" />
+                {t("overview.autorefresh_on")}
+              </>
+            ) : (
+              <>
+                <Play className="h-3.5 w-3.5" />
+                {t("overview.autorefresh_off")}
+              </>
+            )}
+          </button>
+          {/* §86.11: ручное обновление — только иконка, подпись в title и
+              aria-label. Состояние «Авто» не трогает: пауза остаётся паузой. */}
+          <button
+            type="button"
+            onClick={refreshAll}
+            disabled={refreshing}
+            title={t("overview.refresh")}
+            aria-label={t("overview.refresh")}
+            className="inline-flex items-center rounded-md border border-line px-2 py-1 text-xs text-fg-muted hover:text-accent disabled:cursor-default disabled:opacity-50"
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
+          </button>
+        </div>
       </div>
 
       {nodesQ.isLoading && <div className="text-fg-muted">{t("common.loading")}</div>}

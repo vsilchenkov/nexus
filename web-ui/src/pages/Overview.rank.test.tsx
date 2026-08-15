@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { type ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -233,6 +233,50 @@ describe("Overview: срез и порядок в сквозном режиме 
     renderOverview(qc, "/?range=7d");
 
     await waitFor(() => expect(pathOrder()).toEqual(["n1", "n2", "n3"]));
+  });
+
+  // §86.11: «Обновить» — единственный способ перестроить порядок, не трогая
+  // период и скоуп. Без него заморозка была бы ловушкой: оператор видит
+  // устаревший порядок и ничего не может с ним сделать.
+  it("кнопка «Обновить» перестраивает порядок", async () => {
+    slice = [okRow("n1", 10), okRow("n2", 30), okRow("n3", 20)];
+    renderOverview(newClient());
+
+    await waitFor(() => expect(pathOrder()).toEqual(["n2", "n3", "n1"]));
+
+    slice = [downRow("n1", 1), okRow("n2", 30), okRow("n3", 20)];
+    fireEvent.click(screen.getByRole("button", { name: "overview.refresh" }));
+
+    await waitFor(() => expect(pathOrder()).toEqual(["n1", "n2", "n3"]));
+  });
+
+  // Кнопка обязана работать и на паузе — там она вообще единственный способ
+  // обновиться.
+  it("«Обновить» перезапрашивает срез при выключенном автообновлении", async () => {
+    localStorage.setItem("nexus.overview.autorefresh", "0");
+    renderOverview(newClient());
+
+    await waitFor(() => expect(totalsCalls).toBe(1));
+    // Убеждаемся, что режим действительно «Пауза», а не просто интервал не успел
+    // сработать: иначе тест проверял бы обычное автообновление.
+    expect(screen.getByText("overview.autorefresh_off")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "overview.refresh" }));
+
+    await waitFor(() => expect(totalsCalls).toBe(2));
+    // Клик по «Обновить» паузу не снимает.
+    expect(screen.getByText("overview.autorefresh_off")).toBeInTheDocument();
+  });
+
+  // Природа элемента, а не только реакция на клик (урок §79): у иконки без
+  // подписи доступное имя обязано браться из aria-label, иначе кнопка немая
+  // для скринридера и не находится по имени вовсе.
+  it("«Обновить» — кнопка с доступным именем и без подписи", async () => {
+    renderOverview(newClient());
+
+    const btn = await screen.findByRole("button", { name: "overview.refresh" });
+    expect(btn.tagName).toBe("BUTTON");
+    expect(btn.textContent).toBe("");
   });
 
   // Деградация: старый бэкенд среза не отдаёт. Экран обязан пережить это со
