@@ -53,6 +53,8 @@ type Rank = { node_id: string; in: number; out: number; errors: number; last_out
 // slice — текущий срез «бэкенда»; тесты его подменяют между обновлениями.
 let slice: Rank[] | undefined;
 let totalsCalls = 0;
+// chunkCalls — значения node_ids каждого порционного запроса метрик.
+let chunkCalls: string[] = [];
 
 // okRow / downRow — строки среза: узел работает / узел лежит.
 function okRow(id: string, inCount: number): Rank {
@@ -64,7 +66,8 @@ function downRow(id: string, inCount: number): Rank {
 
 function mockServer() {
   totalsCalls = 0;
-  apiGet.mockImplementation((url: string) => {
+  chunkCalls = [];
+  apiGet.mockImplementation((url: string, params?: Record<string, unknown>) => {
     if (url === "/api/me/teams") {
       const resp: MyTeamsResp = { items: TEAMS, current_team_id: TEAM_A, favorites: [] };
       return Promise.resolve(resp);
@@ -96,6 +99,7 @@ function mockServer() {
       });
     }
     if (url === "/api/metrics/nodes") {
+      chunkCalls.push(String((params as Record<string, unknown>)?.node_ids ?? ""));
       return Promise.resolve({
         items: [],
         totals: { incoming: 0, outgoing: 0, errors: 0, error_rate: 0 },
@@ -277,6 +281,30 @@ describe("Overview: срез и порядок в сквозном режиме 
     const btn = await screen.findByRole("button", { name: "overview.refresh" });
     expect(btn.tagName).toBe("BUTTON");
     expect(btn.textContent).toBe("");
+  });
+
+  // Найдено на стенде: одно касание фильтра по статусу добавляло в порционную
+  // загрузку ВЕСЬ список узлов (preload), и дальше он пересчитывался в
+  // ClickHouse каждые 12 секунд — даже после сброса фильтра, потому что пачки
+  // заморожены и не удаляются. Со срезом preload не нужен: статус всех узлов
+  // уже известен.
+  it("фильтр по статусу не тянет метрики всего списка, когда есть срез", async () => {
+    slice = [downRow("n1", 10), okRow("n2", 20), okRow("n3", 30)];
+    renderOverview(newClient(), "/?status=err");
+
+    await waitFor(() => expect(pathOrder()).toEqual(["n1"]));
+    // Ни одного запроса метрик с перечислением узлов: фильтр обслужен срезом.
+    expect(chunkCalls).toEqual([]);
+  });
+
+  // Обратная сторона того же гейта: без среза preload обязан работать, иначе
+  // фильтр по статусу снова замкнётся в круг и покажет пусто навсегда.
+  it("без среза фильтр по статусу по-прежнему догружает метрики кандидатов", async () => {
+    slice = undefined;
+    renderOverview(newClient(), "/?status=err");
+
+    await waitFor(() => expect(chunkCalls.length).toBeGreaterThan(0));
+    expect(chunkCalls.join(",")).toContain("n1");
   });
 
   // Деградация: старый бэкенд среза не отдаёт. Экран обязан пережить это со

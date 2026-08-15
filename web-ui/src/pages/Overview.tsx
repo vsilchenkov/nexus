@@ -288,14 +288,6 @@ export default function Overview() {
   const statusNeedsMetrics =
     statusFilter !== "all" && statusFilter !== "paused" && statusFilter !== "disabled";
 
-  // Кандидаты фильтра по статусу: узлы после фильтра по методу. Именно их
-  // метрики нужны целиком — «какие узлы OK» нельзя ответить про непосчитанные.
-  const statusCandidates = useMemo(() => {
-    if (!allTeams || !statusNeedsMetrics) return undefined;
-    const items = nodesQ.data?.items ?? [];
-    return (method ? items.filter((n) => n.root_method === method) : items).map((n) => n.id);
-  }, [allTeams, statusNeedsMetrics, nodesQ.data, method]);
-
   const kpiQ = useQuery({
     queryKey: ["metrics-overview", scopeKey],
     queryFn: () => api.get<OverviewKPI>("/api/metrics/overview"),
@@ -319,6 +311,48 @@ export default function Overview() {
     enabled: periodReady && !allTeams,
   });
 
+  // §86.4: агрегат шапки в сквозном режиме считается отдельно и приезжает
+  // позже строк — сумма по ВСЕМ узлам скоупа, а не по загруженным (иначе
+  // значение шапки менялось бы от прокрутки).
+  // §86.10: тем же ответом приходит срез по узлам, поэтому запрос объявлен ДО
+  // порционной загрузки — та смотрит на срез, решая, нужен ли ей preload.
+  const totalsQ = useQuery({
+    queryKey: ["metrics-totals", scopeKey, periodKey(period)],
+    queryFn: () =>
+      api.get<NodesTotalsResp>("/api/metrics/totals", { ...periodParams(period), ...scopeQuery }),
+    // Своё, более редкое автообновление (§86.4). Агрегат — полный проход по
+    // ВСЕМ узлам скоупа, и гонять его в темпе строк незачем: серверный кеш
+    // живёт секунды, а шапка за минуту не устаревает. Кратность интервалу
+    // строк, а не отдельная константа: оператор регулирует темп одной
+    // настройкой (§44.C), и связь между ними не теряется.
+    refetchInterval: autoRefresh ? refetchMs * TOTALS_REFETCH_FACTOR : false,
+    enabled: periodReady && allTeams,
+  });
+
+  // Кандидаты фильтра по статусу: узлы после фильтра по методу. Именно их
+  // метрики нужны целиком — «какие узлы OK» нельзя ответить про непосчитанные.
+  //
+  // §86.10: при наличии среза preload НЕ НУЖЕН — статус всех узлов уже известен
+  // из него. Это не микро-экономия: без гейта одно касание фильтра по статусу
+  // добавляло в порционную загрузку ВЕСЬ список (на стенде — 82 узла сверх
+  // видимых), и дальше он пересчитывался в ClickHouse каждые 12 секунд, даже
+  // после сброса фильтра (пачки заморожены и не удаляются).
+  //
+  // Гейт оставлен, а не удалён: без среза (старый бэкенд, недоступный
+  // ClickHouse) фильтр по статусу снова замкнулся бы в круг — отфильтрованные
+  // строки не рендерятся, значит не становятся видимыми, значит их метрики не
+  // запрашиваются, и список пуст навсегда.
+  const statusCandidates = useMemo(() => {
+    if (!allTeams || !statusNeedsMetrics) return undefined;
+    // Ответа шапки ещё нет — ЖДЁМ, а не досылаем на всякий случай: пачка
+    // замораживается в момент создания и потом не удаляется, поэтому один
+    // преждевременный досыл остаётся в автообновлении навсегда.
+    if (totalsQ.isPending) return undefined;
+    if ((totalsQ.data?.nodes?.length ?? 0) > 0) return undefined;
+    const items = nodesQ.data?.items ?? [];
+    return (method ? items.filter((n) => n.root_method === method) : items).map((n) => n.id);
+  }, [allTeams, statusNeedsMetrics, nodesQ.data, method, totalsQ.data, totalsQ.isPending]);
+
   // §86.4: порционная загрузка — только сквозной режим. Режим одной команды
   // идёт прежним путём: там всё приезжает одним запросом и менять нечего.
   const visible = useVisibleNodeMetrics({
@@ -331,22 +365,6 @@ export default function Overview() {
     ),
     refetchInterval: autoRefresh ? refetchMs : false,
     preload: statusCandidates,
-  });
-
-  // §86.4: агрегат шапки в сквозном режиме считается отдельно и приезжает
-  // позже строк — сумма по ВСЕМ узлам скоупа, а не по загруженным (иначе
-  // значение шапки менялось бы от прокрутки).
-  const totalsQ = useQuery({
-    queryKey: ["metrics-totals", scopeKey, periodKey(period)],
-    queryFn: () =>
-      api.get<NodesTotalsResp>("/api/metrics/totals", { ...periodParams(period), ...scopeQuery }),
-    // Своё, более редкое автообновление (§86.4). Агрегат — полный проход по
-    // ВСЕМ узлам скоупа, и гонять его в темпе строк незачем: серверный кеш
-    // живёт секунды, а шапка за минуту не устаревает. Кратность интервалу
-    // строк, а не отдельная константа: оператор регулирует темп одной
-    // настройкой (§44.C), и связь между ними не теряется.
-    refetchInterval: autoRefresh ? refetchMs * TOTALS_REFETCH_FACTOR : false,
-    enabled: periodReady && allTeams,
   });
 
   // Анти-мерцание: держим последний ответ с prometheus_available=true (§ useStableData).
