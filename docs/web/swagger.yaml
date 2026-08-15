@@ -849,6 +849,10 @@ definitions:
     type: object
   internal_web_adapter_in_http.NodesTotalsResponse:
     properties:
+      nodes:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.nodeRankDTO'
+        type: array
       totals:
         $ref: '#/definitions/internal_web_adapter_in_http.overviewTotalsDTO'
     type: object
@@ -1865,6 +1869,19 @@ definitions:
       p99_ms:
         type: number
       total:
+        type: integer
+    type: object
+  internal_web_adapter_in_http.nodeRankDTO:
+    properties:
+      errors:
+        type: integer
+      in:
+        type: integer
+      last_outcome:
+        type: string
+      node_id:
+        type: string
+      out:
         type: integer
     type: object
   internal_web_adapter_in_http.nodeRuntimeDTO:
@@ -4603,11 +4620,13 @@ paths:
       - metrics
   /api/metrics/totals:
     get:
-      description: 'Сумма incoming/outgoing/errors по ВСЕМ узлам скоупа за окно, без
-        per-node строк и спарклайнов. Нужен сквозному режиму: там строки таблицы грузятся
-        порционно, и шапка обязана считаться отдельно, иначе её значение зависело
-        бы от прокрутки. node_ids здесь игнорируется. Результат кешируется на несколько
-        секунд, одновременные промахи схлопываются в один расчёт.'
+      description: 'Сумма incoming/outgoing/errors по ВСЕМ узлам скоупа за окно, плюс
+        лёгкий срез nodes (node_id, in, out, errors, last_outcome) — без p95 и спарклайнов.
+        Нужен сквозному режиму: там строки таблицы грузятся порционно, и шапка обязана
+        считаться отдельно, иначе её значение зависело бы от прокрутки; срез задаёт
+        порядок строк («проблемные первыми») и статус до дозагрузки. node_ids здесь
+        игнорируется. Результат кешируется на несколько секунд, одновременные промахи
+        схлопываются в один расчёт.'
       parameters:
       - description: 1h | 3h | 24h | 7d | 14d | 30d (default 1h)
         in: query
@@ -4639,7 +4658,8 @@ paths:
       security:
       - CookieAuth: []
       - ApiTokenAuth: []
-      summary: Агрегат шапки рабочего стола по всему скоупу (§86.4).
+      summary: Агрегат шапки рабочего стола по всему скоупу + срез по узлам (§86.4,
+        §86.10).
       tags:
       - metrics
   /api/nodes:
