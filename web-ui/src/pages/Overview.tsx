@@ -461,7 +461,13 @@ export default function Overview() {
   // до — карта пересобралась бы по старым числам, а новые уже не пересобрали бы
   // её, ключ-то совпал.
   const [rankEpoch, setRankEpoch] = useState(0);
-  const rankKey = `${scopeKey}|${periodKey(period)}|${rankEpoch}`;
+  // Поиск входит в ключ, потому что список узлов приходит УЖЕ суженным им
+  // (`/api/nodes?search=`), а карта рангов строится по этому списку. Без него
+  // открытие страницы по ссылке с поиском и последующий сброс оставляли бы
+  // наверху горстку найденного, а всё остальное — алфавитом: в карте этих узлов
+  // просто нет. Метод и статус фильтруют на клиенте и в ключ НЕ входят — в этом
+  // и смысл заморозки карты, а не готового списка.
+  const rankKey = `${scopeKey}|${periodKey(period)}|${search}|${rankEpoch}`;
   const frozenRank = useRef<{ key: string; order: Map<string, number> } | null>(null);
   const rankOrder = useMemo(() => {
     if (!allTeams) return null;
@@ -469,9 +475,12 @@ export default function Overview() {
     // Среза нет (старый бэкенд, недоступный ClickHouse) — порядок не строим:
     // экран обязан пережить это, а не остаться без списка.
     if (!rows || rows.length === 0) return null;
+    // Список узлов ещё не приехал — НЕ морозим: иначе зафиксировалась бы пустая
+    // (или частичная) карта, и подъехавшие узлы остались бы вне ранга навсегда,
+    // ключ-то уже совпал. Оба входа обязаны быть на руках.
+    const items = nodesQ.data?.items;
+    if (!items || items.length === 0) return null;
     if (frozenRank.current?.key === rankKey) return frozenRank.current.order;
-
-    const items = nodesQ.data?.items ?? [];
     const rowByID = new Map(rows.map((r) => [r.node_id, r]));
     const teamOf = (n: Node) => teamNames?.get(n.team_id) ?? "";
     const byTeamPath = (a: Node, b: Node) =>
@@ -554,8 +563,9 @@ export default function Overview() {
   ]);
 
   // statusFilterPending — фильтр по статусу выбран, но метрики, из которых
-  // статус выводится, ещё не пришли. В сквозном режиме это окно длится, пока
-  // догружаются пачки preload; в режиме одной команды — пока идёт общий запрос.
+  // статус выводится, ещё не пришли. В сквозном режиме это окно длится до
+  // прихода среза (§86.10), а без него — пока догружаются пачки preload; в
+  // режиме одной команды — пока идёт общий запрос.
   const statusFilterPending = statusNeedsMetrics && !metricsReady;
 
   // §86.11: ручное обновление. Нужно и при выключенном автообновлении (там оно

@@ -84,7 +84,13 @@ function mockServer() {
         ],
       });
     }
-    if (url === "/api/nodes") return Promise.resolve({ items: NODES });
+    if (url === "/api/nodes") {
+      // Сервер сужает список поиском — клиент получает УЖЕ отфильтрованное.
+      // Фильтруем по РЕАЛЬНОМУ параметру запроса, а не по переменной теста:
+      // иначе легко проверить сценарий, которого на клиенте не происходило.
+      const q = String((params as Record<string, unknown>)?.search ?? "");
+      return Promise.resolve({ items: q ? NODES.filter((n) => n.path.includes(q)) : NODES });
+    }
     if (url === "/api/metrics/overview") {
       return Promise.resolve({
         incoming_24h: 0, outgoing_24h: 0, kafka_queue: 0,
@@ -305,6 +311,25 @@ describe("Overview: срез и порядок в сквозном режиме 
 
     await waitFor(() => expect(chunkCalls.length).toBeGreaterThan(0));
     expect(chunkCalls.join(",")).toContain("n1");
+  });
+
+  // Найдено ревизией: карта рангов строится из списка узлов, а тот приходит
+  // УЖЕ отфильтрованным поиском (`/api/nodes?search=`). Если поиск не входит в
+  // ключ заморозки, то открыв страницу по ссылке с поиском и сбросив его,
+  // оператор получал бы наверху горстку найденных ранее узлов, а всё остальное
+  // — алфавитом: в карте их просто нет.
+  it("после сброса поиска ранжируется весь список, а не только найденное ранее", async () => {
+    slice = [okRow("n1", 10), okRow("n2", 30), downRow("n3", 5)];
+    // Открываемся по ссылке с поиском: список узлов приходит суженным.
+    renderOverview(newClient(), "/?q=alpha%2Fb");
+
+    await waitFor(() => expect(pathOrder()).toEqual(["n2"]));
+
+    // Оператор очищает строку поиска — как в браузере, а не пересозданием
+    // страницы: поиск переживает перемонтирование через зеркало сессии (§54).
+    fireEvent.change(screen.getAllByRole("textbox")[0], { target: { value: "" } });
+
+    await waitFor(() => expect(pathOrder()).toEqual(["n3", "n2", "n1"]), { timeout: 3000 });
   });
 
   // Деградация: старый бэкенд среза не отдаёт. Экран обязан пережить это со
