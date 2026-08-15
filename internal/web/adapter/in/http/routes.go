@@ -6,7 +6,10 @@ import (
 
 // Handlers — bag всех HTTP-handler'ов Web Service.
 type Handlers struct {
-	Auth          *AuthHandler
+	Auth *AuthHandler
+	// PasswordReset — §88: публичное восстановление пароля. nil, когда
+	// хранилище токенов не сконфигурировано — маршруты тогда не появляются.
+	PasswordReset *PasswordResetHandler
 	Node          *NodeHandler
 	User          *UserHandler
 	Token         *APITokenHandler
@@ -69,6 +72,20 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 	}
 	{
 		api.POST("/auth/login", h.Auth.Login)
+
+		// §88.4.2: восстановление пароля — второй и последний блок публичных
+		// маршрутов внутри /api. Намеренно рядом с login, чтобы «что тут
+		// публично» читалось в одном месте.
+		//
+		// CSRF-проверка группы их НЕ обходит и обходить не должна: GET
+		// проходит всегда, POST с пустым Origin — тоже (curl, тесты), а
+		// сторонний сайт, инициирующий сброс от имени открывшего его
+		// пользователя, получает отказ до обработчика.
+		if h.PasswordReset != nil {
+			api.POST("/auth/password-reset/request", h.PasswordReset.Request)
+			api.GET("/auth/password-reset/validate", h.PasswordReset.Validate)
+			api.POST("/auth/password-reset/confirm", h.PasswordReset.Confirm)
+		}
 
 		// RequirePasswordChanged (П18): пока сессия в режиме «требуется смена
 		// пароля», все эндпоинты ниже отдают 403 password_change_required,
@@ -337,6 +354,7 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			authedAdmin.POST("/settings/sentry/test", h.AppSettings.TestSentry)
 			// Тестовое уведомление в Telegram (§20.7).
 			authedAdmin.POST("/settings/notifications/test", h.AppSettings.TestTelegram)
+			authedAdmin.POST("/settings/mail/test", h.AppSettings.TestMail) // §88.8.4
 		}
 
 		// Шаблоны CH-таблиц (§19): мутации и verify — admin-only.

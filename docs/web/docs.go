@@ -554,6 +554,130 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/auth/password-reset/confirm": {
+            "post": {
+                "description": "Гасит ссылку и меняет пароль. Все сессии пользователя завершаются, ранее выданные ссылки восстановления аннулируются. Недействительный, истёкший и уже использованный токен дают один ответ.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Задать новый пароль по ссылке (§88.7).",
+                "parameters": [
+                    {
+                        "description": "токен и новый пароль",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.passwordResetConfirmBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "пароль изменён"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "rate limit exceeded",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/auth/password-reset/request": {
+            "post": {
+                "description": "Принимает логин ИЛИ email. Отвечает ОДИНАКОВО во всех содержательных исходах (письмо ушло, пользователя нет, у него нет email, он отключён, адрес неоднозначен, превышен предел активных ссылок, почта выключена) — публичная форма не должна быть справочником существующих учётных записей. Настоящая причина пишется в аудит. Письмо отправляется фоном.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Запросить ссылку для смены пароля (§88.4.2).",
+                "parameters": [
+                    {
+                        "description": "логин или email",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.passwordResetRequestBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.passwordResetRequestResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "rate limit exceeded",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/auth/password-reset/validate": {
+            "get": {
+                "description": "Проверка НЕ расходует ссылку: почтовые шлюзы с защитой от вредоносных ссылок сами открывают адреса из писем, и гашение на проверке убивало бы ссылку раньше адресата. Всегда 200; недействительная, истёкшая и уже использованная неразличимы.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Проверить ссылку для смены пароля (§88.4.6).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "токен из письма",
+                        "name": "token",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.passwordResetValidateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/ch-tables/verify": {
             "post": {
                 "security": [
@@ -5103,6 +5227,57 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/settings/mail/test": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Шлёт письмо на указанный адрес с merge'нутыми (current + body) настройками. Маскированный пароль не используется — merge оставит сохранённый. Возвращает {ok,latency_ms} или {ok:false,error}. Не сохраняет настройки.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "settings"
+                ],
+                "summary": "Отправить тестовое письмо с patch'ем настроек (§88.8.4).",
+                "parameters": [
+                    {
+                        "description": "patch + получатель",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.mailTestRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nexus_internal_web_usecase.TestResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/settings/notifications/test": {
             "post": {
                 "security": [
@@ -7813,6 +7988,10 @@ const docTemplate = `{
                     "description": "OverrideAllowed — true в dev (web.allow_version_override): UI показывает\nполе ручного override версии; в проде false (версия всегда из git).",
                     "type": "boolean"
                 },
+                "password_reset_ready": {
+                    "description": "PasswordResetReady — §88.4.5: восстановление пароля работоспособно\n(почта включена и настроена, функция разрешена, задан публичный адрес).\nФорма входа по нему решает, показывать ли ссылку «Забыли пароль?».\n\nПоле аддитивное: реестр инстансов §73 разбирает этот же ответ и от\nнового ключа не ломается.",
+                    "type": "boolean"
+                },
                 "version": {
                     "type": "string"
                 }
@@ -8578,6 +8757,61 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_web_adapter_in_http.mailTestRequest": {
+            "type": "object",
+            "required": [
+                "to"
+            ],
+            "properties": {
+                "auth_type": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "encryption": {
+                    "type": "string"
+                },
+                "from_address": {
+                    "type": "string"
+                },
+                "from_name": {
+                    "type": "string"
+                },
+                "helo_host": {
+                    "type": "string"
+                },
+                "host": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                },
+                "password_reset_enabled": {
+                    "description": "Восстановление пароля живёт в этой же секции: без работающей почты оно\nбессмысленно, а оператор настраивает то и другое одним экраном (§88.2).",
+                    "type": "boolean"
+                },
+                "password_reset_ttl_min": {
+                    "type": "integer"
+                },
+                "port": {
+                    "type": "integer"
+                },
+                "skip_tls_verify": {
+                    "type": "boolean"
+                },
+                "timeout_sec": {
+                    "type": "integer"
+                },
+                "to": {
+                    "type": "string",
+                    "maxLength": 320
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_web_adapter_in_http.meResponse": {
             "type": "object",
             "properties": {
@@ -8757,6 +8991,59 @@ const docTemplate = `{
                 },
                 "outgoing": {
                     "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.passwordResetConfirmBody": {
+            "type": "object",
+            "required": [
+                "new_password",
+                "token"
+            ],
+            "properties": {
+                "new_password": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 8
+                },
+                "token": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 16
+                }
+            }
+        },
+        "internal_web_adapter_in_http.passwordResetRequestBody": {
+            "type": "object",
+            "required": [
+                "login"
+            ],
+            "properties": {
+                "login": {
+                    "description": "Login — логин ИЛИ email. 320 — предел длины адреса по RFC.",
+                    "type": "string",
+                    "maxLength": 320,
+                    "minLength": 1
+                }
+            }
+        },
+        "internal_web_adapter_in_http.passwordResetRequestResponse": {
+            "type": "object",
+            "properties": {
+                "ok": {
+                    "type": "boolean"
+                },
+                "ttl_minutes": {
+                    "description": "TTLMinutes — срок жизни ссылки; интерфейс показывает его в тексте\n«ссылка действует N минут». Значение одинаково при любом исходе и\nничего не раскрывает.",
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.passwordResetValidateResponse": {
+            "type": "object",
+            "properties": {
+                "valid": {
+                    "type": "boolean"
                 }
             }
         },
@@ -9337,6 +9624,14 @@ const docTemplate = `{
                 "logging": {
                     "$ref": "#/definitions/nexus_internal_domain.LoggingSettings"
                 },
+                "mail": {
+                    "description": "§88: SMTP + восстановление пароля",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/nexus_internal_domain.MailSettings"
+                        }
+                    ]
+                },
                 "notifications": {
                     "$ref": "#/definitions/nexus_internal_domain.NotificationsSettings"
                 },
@@ -9514,6 +9809,54 @@ const docTemplate = `{
                 "level": {
                     "description": "Level — уровень логирования всех трёх сервисов (2=error, 3=warn,\n4=info, 5=debug). nil = брать из YAML (cfg.Logging.Level). Применяется\nбез рестарта через reloader.SectionLogging (LevelVar в цепочке хендлеров).",
                     "type": "integer"
+                }
+            }
+        },
+        "nexus_internal_domain.MailSettings": {
+            "type": "object",
+            "properties": {
+                "auth_type": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "encryption": {
+                    "type": "string"
+                },
+                "from_address": {
+                    "type": "string"
+                },
+                "from_name": {
+                    "type": "string"
+                },
+                "helo_host": {
+                    "type": "string"
+                },
+                "host": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                },
+                "password_reset_enabled": {
+                    "description": "Восстановление пароля живёт в этой же секции: без работающей почты оно\nбессмысленно, а оператор настраивает то и другое одним экраном (§88.2).",
+                    "type": "boolean"
+                },
+                "password_reset_ttl_min": {
+                    "type": "integer"
+                },
+                "port": {
+                    "type": "integer"
+                },
+                "skip_tls_verify": {
+                    "type": "boolean"
+                },
+                "timeout_sec": {
+                    "type": "integer"
+                },
+                "username": {
+                    "type": "string"
                 }
             }
         },

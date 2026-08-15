@@ -39,6 +39,7 @@ type AppSettings struct {
 	ClickHouse    ClickHouseSettings    `json:"clickhouse"`
 	Notifications NotificationsSettings `json:"notifications"`
 	Logging       LoggingSettings       `json:"logging"`
+	Mail          MailSettings          `json:"mail"` // §88: SMTP + восстановление пароля
 
 	UpdatedAt time.Time `json:"updated_at"`
 	UpdatedBy string    `json:"updated_by,omitempty"` // user_id, кто последним обновил

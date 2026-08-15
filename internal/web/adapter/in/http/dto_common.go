@@ -179,6 +179,13 @@ type VersionResponse struct {
 	// НЕ путать с OverrideAllowed: тот разрешает конкретную настройку §34.3.
 	// Отдавать наружу dev_mode=false безопасно, true бывает только на стенде.
 	DevMode bool `json:"dev_mode"`
+	// PasswordResetReady — §88.4.5: восстановление пароля работоспособно
+	// (почта включена и настроена, функция разрешена, задан публичный адрес).
+	// Форма входа по нему решает, показывать ли ссылку «Забыли пароль?».
+	//
+	// Поле аддитивное: реестр инстансов §73 разбирает этот же ответ и от
+	// нового ключа не ломается.
+	PasswordResetReady bool `json:"password_reset_ready"`
 }
 
 // PublicSettingsResponse — GET /api/settings/public.

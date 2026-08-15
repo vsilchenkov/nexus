@@ -435,6 +435,14 @@ type WebSection struct {
 	// LoginRateLimitPerMin — анти-брутфорс /api/auth/login (Phase AUD.4):
 	// столько попыток в минуту на IP и отдельно на login. -1 = выключить.
 	LoginRateLimitPerMin int `yaml:"login_rate_limit_per_min"`
+	// PasswordResetRateLimitPerMin — §88.4.4: лимит запросов восстановления
+	// пароля. Три независимых ключа с одним значением: на IP, на ВВЕДЁННУЮ
+	// строку (независимо от существования пользователя — иначе сам лимит стал
+	// бы способом узнать ответ) и на IP при подтверждении. -1 = выключить.
+	//
+	// В YAML, а не в настройках БД: это параметр развёртывания, и админ не
+	// должен снимать собственную защиту от перебора кликом в интерфейсе.
+	PasswordResetRateLimitPerMin int `yaml:"password_reset_rate_limit_per_min"`
 	// TrustedProxies — CIDR/IP, от которых принимается X-Forwarded-For
 	// (Phase AUD.5). Пустой список → дефолт: loopback + приватные сети.
 	TrustedProxies []string `yaml:"trusted_proxies"`

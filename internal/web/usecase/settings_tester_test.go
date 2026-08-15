@@ -69,7 +69,7 @@ func newTester(t *testing.T,
 		ClickHouse: config.ClickHouseSection{Host: "yaml-host", Port: 9000, Database: "yaml-db"},
 		Sentry:     config.SentrySection{Use: false, Dsn: ""},
 	}
-	return NewSettingsTester(repo, cfg, chFactory, sentryFactory, nil, "Test", "v0", logging.NewNoop())
+	return NewSettingsTester(repo, cfg, chFactory, sentryFactory, nil, nil, nil, "Test", "v0", logging.NewNoop())
 }
 
 func TestSettingsTester_TestTelegram(t *testing.T) {
@@ -83,7 +83,7 @@ func TestSettingsTester_TestTelegram(t *testing.T) {
 	}}
 	cfg := &config.Config{}
 	sender := &notifSender{}
-	tester := NewSettingsTester(repo, cfg, nil, nil, sender, "Test", "v0", logging.NewNoop())
+	tester := NewSettingsTester(repo, cfg, nil, nil, sender, nil, nil, "Test", "v0", logging.NewNoop())
 
 	// Маскированный токен в patch не используется — merge берёт сохранённый.
 	masked := "***"
@@ -96,7 +96,7 @@ func TestSettingsTester_TestTelegram(t *testing.T) {
 func TestSettingsTester_TestTelegram_NoToken(t *testing.T) {
 	t.Parallel()
 	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
-	tester := NewSettingsTester(repo, &config.Config{}, nil, nil, &notifSender{}, "Test", "v0", logging.NewNoop())
+	tester := NewSettingsTester(repo, &config.Config{}, nil, nil, &notifSender{}, nil, nil, "Test", "v0", logging.NewNoop())
 	res, err := tester.TestTelegram(context.Background(), &domain.TelegramSettings{})
 	require.NoError(t, err)
 	require.False(t, res.OK)

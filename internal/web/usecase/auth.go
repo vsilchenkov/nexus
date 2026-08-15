@@ -45,6 +45,10 @@ type AuthUsecase struct {
 	// (unit-тесты без WithFavoriteTeams): чтение отдаёт пустой список.
 	favorites port.FavoriteTeamRepo
 
+	// resetTokens — гашение выданных ссылок восстановления при смене пароля
+	// (§88.7). nil — no-op (unit-тесты без WithPasswordResetInvalidator).
+	resetTokens PasswordResetInvalidator
+
 	// clock — источник времени (§4 CLAUDE.md): от него зависят срок жизни
 	// сессии и отметка last_seen. Дефолт — системные часы.
 	clock clock.Clock
@@ -81,6 +85,28 @@ func NewAuthUsecase(
 func (u *AuthUsecase) WithLoginRateLimit(rl RateLimiter, limitPerMin int) *AuthUsecase {
 	u.rl = rl
 	u.loginRateLimitPMin = limitPerMin
+	return u
+}
+
+// PasswordResetInvalidator гасит выданные ссылки восстановления (§88.7).
+// Интерфейс объявлен здесь, у потребителя (CLAUDE.md §3); реализует его
+// port.OneTimeTokenRepo.
+type PasswordResetInvalidator interface {
+	InvalidateByUser(ctx context.Context, purpose domain.TokenPurpose, userID string, at time.Time) (int, error)
+}
+
+// WithPasswordResetInvalidator включает гашение выданных ссылок при смене
+// пароля (§88.7).
+//
+// Хук ставится именно сюда, потому что ChangePassword — ЕДИНСТВЕННОЕ место,
+// где меняется пароль: ChangeOwnPassword делегирует в него, админский
+// UserHandler.ChangePassword вызывает его же, и подтверждение восстановления
+// тоже. Значит покрываются все каналы разом.
+//
+// Закрываемая дыра: без этого старая ссылка из почты позволила бы перебить
+// только что установленный пароль.
+func (u *AuthUsecase) WithPasswordResetInvalidator(inv PasswordResetInvalidator) *AuthUsecase {
+	u.resetTokens = inv
 	return u
 }
 
@@ -448,8 +474,33 @@ func (u *AuthUsecase) ChangePassword(ctx context.Context, actor Actor, userID, n
 		return err
 	}
 	_, _ = u.sessions.DeleteByUser(ctx, userID)
+	u.invalidateResetLinks(ctx, userID)
 	u.audit.Log(ctx, actor, domain.ActionUserPassword, "user", userID, nil)
 	return nil
+}
+
+// invalidateResetLinks гасит выданные ссылки восстановления (§88.7).
+// Best-effort, как и DeleteByUser рядом: пароль уже сменён, и откатывать
+// операцию из-за недоступного хранилища ссылок нельзя — они всё равно
+// короткоживущие. Сбой виден в логе.
+func (u *AuthUsecase) invalidateResetLinks(ctx context.Context, userID string) {
+	if u.resetTokens == nil {
+		return
+	}
+	n, err := u.resetTokens.InvalidateByUser(ctx, domain.TokenPurposePasswordReset, userID, u.clock.Now())
+	if err != nil {
+		u.logger.Warn("invalidate password reset links failed",
+			u.logger.Str("user_id", userID),
+			u.logger.Err(err))
+		return
+	}
+	if n > 0 {
+		// §51.9: без этой строки «почему моя ссылка из почты перестала
+		// работать» выясняется только по коду.
+		u.logger.Debug("password reset links invalidated",
+			u.logger.Str("user_id", userID),
+			u.logger.Int("count", n))
+	}
 }
 
 // ChangeOwnPassword — self-service смена собственного пароля (§26). В

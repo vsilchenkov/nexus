@@ -78,10 +78,14 @@ Nexus — три stateless Go-сервиса плюс набор хранили�
 | `ENCRYPTION_KEY`      | **Обязателен.** Ключ AES-256-GCM для шифрования кредов узлов в БД — 32 байта в base64 | заглушка |
 | `NEXUS_RECEIVER_MAX_HOPS` | §32: лимит переходов запроса через шину (`X-Nexus-Hops`) до ответа 508 Loop Detected. `0` = дефолт 5; `<0` = защита от зацикливания выключена | `5` |
 
-Дополнительно при single-broker Kafka (один узел) задавайте в `.env`
-`KAFKA_TOPIC_REPLICATION_FACTOR=1` и `KAFKA_TOPIC_MIN_INSYNC_REPLICAS=1` — иначе создание
-топиков упадёт с `InvalidReplicationFactor` (дефолты в `config.example.yml` рассчитаны
-на кластер из 3+ брокеров: RF=3, ISR=2).
+Дефолты `KAFKA_TOPIC_REPLICATION_FACTOR=1` и `KAFKA_TOPIC_MIN_INSYNC_REPLICAS=1` рассчитаны
+на поставку из docker-compose — один брокер в KRaft-режиме, и менять их там не нужно.
+**На кластере из 3+ брокеров** поднимите значения до `3` и `2` в `.env`: иначе топики
+создаются в одной копии, и падение брокера теряет непрочитанные сообщения.
+Обратное (RF выше числа брокеров) недопустимо — создание топиков упадёт с
+`InvalidReplicationFactor`, а `ISR=2` на одной реплике завалит каждую запись producer'а
+с `acks=all`. Значения применяются ТОЛЬКО при создании топика: существующему нужен
+`kafka-reassign-partitions`.
 
 > **Внешний Kafka — лимит размера сообщения.** §38 durable-retry при недоступности
 > ClickHouse шлёт проваленные батчи логов (с телами request/response, до неск. МБ) в
@@ -306,8 +310,8 @@ git clone <repo-url> nexus && cd nexus
 # 2. Подготовить секреты
 cp .env.example .env
 #    Отредактируйте .env: PG_PASSWORD, REDIS_PASSWORD, CH_PASSWORD,
-#    и обязательно ENCRYPTION_KEY (см. §2). Для single-broker Kafka добавьте
-#    KAFKA_TOPIC_REPLICATION_FACTOR=1 и KAFKA_TOPIC_MIN_INSYNC_REPLICAS=1.
+#    и обязательно ENCRYPTION_KEY (см. §2). Дефолты KAFKA_TOPIC_* рассчитаны на
+#    один брокер; на кластере 3+ брокеров поднимите их до 3 и 2 (см. §2).
 
 # 3. Собрать образы и поднять стек
 docker compose -f deploy/docker-compose.yml up -d --build
@@ -424,8 +428,8 @@ docker compose -f deploy/docker-compose.app.yml logs -f web receiver sender
   по БД на команду (`nexus_<slug>`, для default — `nexus_default`) и создаёт таблицы логов.
 - **Kafka**: автосоздание топиков на брокере должно быть **разрешено**, либо заранее
   создайте `nexus.async`, `nexus.async.dlq`, `nexus.async.paused` и `nexus.logs.retry` (Nexus сам пытается их завести с
-  `retention.ms=7 дней` + `retention.bytes=40 ГиБ` **на партицию**; на single-broker не забудьте
-  RF=1/ISR=1 — см. §2). Топик `nexus.logs.retry`
+  `retention.ms=7 дней` + `retention.bytes=40 ГиБ` **на партицию**; RF/ISR по умолчанию `1`/`1` —
+  на кластере из 3+ брокеров поднимите до `3`/`2`, см. §2). Топик `nexus.logs.retry`
   (§38) — durable-буфер проваленных CH-батчей при недоступности ClickHouse; его retention должен
   покрывать максимально ожидаемый простой CH × объём логов (иначе при очень долгом простое старые
   батчи истекут по retention и не доедут в CH). Имя настраивается `kafka.retry_topic`; пустое
@@ -599,6 +603,121 @@ PostgreSQL/Redis/Kafka — bundled, как в Варианте A.
 старте и при неудаче завершается с кодом 1 (`bootstrap.MustClickHouse`), после чего Docker
 перезапускает контейнер по кругу. `web` при недоступном CH стартует (replay и live-tail
 отключаются), `receiver` в CH не ходит вовсе.
+
+### 5.3.1. Закрытая самодостаточная установка (публичный сервер)
+
+Если отдельного ClickHouse нет, весь стек должен жить в одном docker-compose, а сервер смотрит
+в интернет — накладывайте на корневой файл
+[deploy/docker-compose.standalone.override.yml](./deploy/docker-compose.standalone.override.yml).
+Он делает две вещи:
+
+1. **Добавляет контейнер `clickhouse`** (том `clickhouse_data`, healthcheck, `ulimits nofile`)
+   и вписывает его в `depends_on` у `sender`. Внешних сервисов после этого не остаётся вовсе.
+2. **Прячет на `127.0.0.1` всю инфраструктуру.** Корневой `docker-compose.yml` выставляет
+   `postgres:5432`, `redis:6379`, `kafka:9092`, `prometheus:9091` и служебные порты `sender`
+   на `0.0.0.0` — на публичном IP это открытые наружу хранилища. Снаружи остаётся только
+   `web:8000`: через него идут и панель, и боевой трафик.
+
+> **`!override` в этом файле обязателен, и это не стилистика.** Списки `ports` при наложении
+> Compose **сливаются**, а не заменяются: без тега `postgres` получает ОБА маппинга —
+> `0.0.0.0:5432` и `127.0.0.1:5432`, — то есть порт остаётся открытым наружу при полном
+> ощущении, что он закрыт (проверено `docker compose config`). Тег заменяет список целиком.
+
+Два способа применить:
+
+```bash
+# 1. Копией в корень — Compose подхватит автоматически, команды не меняются:
+cp deploy/docker-compose.standalone.override.yml docker-compose.override.yml
+docker compose up -d --build
+
+# 2. Либо вторым -f, ничего не копируя (повторять в КАЖДОЙ команде compose):
+docker compose -f docker-compose.yml -f deploy/docker-compose.standalone.override.yml up -d --build
+```
+
+**Проверить, что наружу действительно ничего не торчит** (после любой правки compose-файлов):
+
+```bash
+docker compose config --format json | python3 -c "
+import json,sys
+d=json.load(sys.stdin); bad=[]
+for n in sorted(d['services']):
+    for p in d['services'][n].get('ports',[]):
+        ip=p.get('host_ip','0.0.0.0'); print(n, ip+':'+str(p['published']), '->', p['target'])
+        if ip!='127.0.0.1': bad.append((n,ip,p['published']))
+print('ОТКРЫТО НАРУЖУ:', bad or 'ничего')
+"
+```
+
+Ожидаемый результат — 10 строк, из них ровно одна наружу: `web` (8000). Любая другая строка
+с `0.0.0.0` — дефект конфигурации, наружу смотрит то, что не должно.
+
+**Почему 8080 наружу не нужен.** Receiver обслуживает только `/api/v1/*`
+([handler.go](../internal/receiver/adapter/in/http/handler.go)); прямой формы `/v1/request/...`
+у него больше нет — она отвечает `404 API version required`. Весь боевой трафик приходит на Web,
+который проксирует `/api/v1/*` в Receiver внутри `nexus_net` (§17.1, единый вход), и панель
+раздаёт клиентам адреса узлов ровно в этом виде — `https://<хост>/api/v1/<команда>/<путь>`.
+Поэтому `RECEIVER_BIND` по умолчанию `127.0.0.1`.
+
+Ставить `RECEIVER_BIND=0.0.0.0` имеет смысл в одном случае: если приём запросов выносится
+отдельным хостом, чтобы падение Web не останавливало боевой трафик (сейчас Web — единая точка
+отказа для него). Тогда клиентам придётся раздать адрес, отличный от того, что показывает панель.
+
+**`WEB_BIND` — когда появится reverse-proxy.** По умолчанию `0.0.0.0`, то есть панель доступна
+сразу после `up -d` по открытому **HTTP**: сессионная кука и токены команд идут по сети
+незашифрованными. На публичном сервере правильная схема — nginx/caddy на хосте слушает 443 с TLS
+и проксирует на `127.0.0.1:8000`. Когда обёртка поднята и проверена, допишите в `.env`:
+
+```dotenv
+WEB_BIND=127.0.0.1
+```
+
+— порт уйдёт на loopback без правки compose-файлов. Минимум, который обязана делать обёртка:
+
+```nginx
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;   # иначе все клиенты = 127.0.0.1
+proxy_set_header X-Forwarded-Proto $scheme;
+proxy_read_timeout 600s;      # sync-вызов живёт по таймауту узла, дефолтные 60 с его оборвут
+client_max_body_size 16m;     # ≥ receiver.max_body_bytes (§68 multipart)
+```
+
+Со стороны Nexus настраивать ничего не нужно: `trusted_proxies` по умолчанию покрывает loopback
+и приватные сети, поэтому `X-Forwarded-For` от локального прокси принимается, и `client_host`
+(§67) с rate-limit по IP продолжают видеть реальных клиентов.
+
+В `.env` меняется ровно одна строка против §5.1 — адрес CH становится именем контейнера:
+
+```dotenv
+CH_HOST=clickhouse        # имя сервиса в сети nexus_net, НЕ внешний адрес
+CH_PORT=9000              # нативный TCP; 8123 — это HTTP, он тут не нужен
+CH_USER=default
+CH_PASSWORD=<пароль>      # тот же попадёт в контейнер CH при первом старте
+```
+
+> **Смена пароля ClickHouse требует пересоздания контейнера, а не `restart`.** Entrypoint
+> образа при каждом старте перезаписывает `/etc/clickhouse-server/users.d/default-user.xml`
+> из `CLICKHOUSE_PASSWORD` (путь лежит в контейнере, не в томе), так что новый пароль
+> подхватится — но переменные окружения фиксируются в момент СОЗДАНИЯ контейнера, поэтому
+> после правки `.env` нужен `docker compose up -d` (пересоздаст), а не `docker compose restart`
+> (перезапустит со старым значением). Том `clickhouse_data` при этом сохраняется, логи не
+> теряются.
+
+Порты CH публикуются только на `127.0.0.1` (`8123`, `9000`) — снаружи сервер их не отдаёт, а
+операторские задачи (дампы, ручной SQL для внешних таблиц §64) делаются с самой машины или через
+ssh-туннель. Открывать наружу — осознанно и только с непустым `CH_PASSWORD`.
+
+**Ограничение автоподхвата.** Корневой `docker-compose.override.yml` — один на сервер. Если
+нужен ещё и профиль малой памяти (§5.4, [deploy/docker-compose.override.yml](./deploy/docker-compose.override.yml)),
+скопировать оба файла под одним именем нельзя — накладывайте оба через `-f`:
+
+```bash
+docker compose -f docker-compose.yml \
+               -f deploy/docker-compose.standalone.override.yml \
+               -f deploy/docker-compose.override.yml up -d --build
+```
+
+Альтернатива — [deploy/docker-compose.yml](./deploy/docker-compose.yml) (Вариант A, §3): тот же
+полный стек одним файлом, но запускается только через `-f` и содержит дополнительно
+`rabbitmq`/`loadtest` за профилями `stand`/`loadtest`.
 
 ### 5.4. Минимальные ресурсы сервера при низкой нагрузке
 
@@ -1242,6 +1361,39 @@ web:
   приёмника и не открывает защиту узла. Если у вас был узел, чью защиту открывали нетерпеливые
   клиенты, после обновления он начнёт доставлять — убедитесь, что приёмник к этому готов.
 
+- **§88 — почта (SMTP) и восстановление пароля.** Миграция `0036_one_time_tokens` создаёт
+  таблицу одноразовых ссылок (`one_time_tokens`) и добавляет индекс `users_email_lower_idx` по
+  `lower(email)` для резолва пользователя при восстановлении. Миграция **аддитивная** (§74.2),
+  синтаксис совместим с **PostgreSQL 12** (UUID генерируется `uuid_generate_v4()` из уже
+  включённого `uuid-ossp`, а не `gen_random_uuid()` — та встроена только с PG 13).
+
+  **Порядок выката: миграция → Web.** Receiver и Sender почту не отправляют и обновления не
+  требуют. Если выкатить Web до миграции, восстановление пароля будет отвечать ошибкой, а
+  остальной интерфейс продолжит работать.
+
+  **Настройки почты миграции не требуют** — они лежат в `app_settings.value` (JSONB), как
+  Telegram и Sentry, и задаются администратором в `Настройки → Почта` без перезапуска. В
+  `config.yml` от §88 появляется единственный ключ:
+
+  ```yaml
+  web:
+    password_reset_rate_limit_per_min: 5   # -1 = выключить
+  ```
+
+  Он ограничивает три независимых счётчика: по IP запрашивающего, по введённой строке
+  (независимо от того, существует такой пользователь или нет) и по IP при подтверждении.
+  Ключ имеет дефолт в коде, поэтому его отсутствие в файле старт не ломает — но на боевой
+  сервер `config.yml` кладётся вручную, и добавить строку туда нужно.
+
+  **Обязательное условие работы восстановления:** заданный публичный адрес приложения
+  (`Настройки → Общие`). Без него ссылка в письме соберётся без хоста; интерфейс в этом случае
+  не показывает ссылку «Забыли пароль?» на форме входа и предупреждает об этом на экране почты.
+
+  **Откат — 1 миграция, с потерей выданных ссылок.** `down` удаляет таблицу целиком: все
+  неиспользованные ссылки восстановления перестают действовать, пользователи запрашивают письмо
+  заново. Практического вреда нет — ссылки короткоживущие (по умолчанию 60 минут). Откат ТОЛЬКО
+  кода безопасен: старый Web о таблице не знает и не обращается к ней.
+
 - **§87 — роль доступа «Оператор».** Миграция `0035_user_role_operator` расширяет
   CHECK-constraint `users_role_check` до `('admin','manager','operator','viewer')`. Новых таблиц и
   колонок нет, тип колонки не меняется, синтаксис совместим с **PostgreSQL 12**.
@@ -1614,7 +1766,7 @@ curl -s http://localhost:8000/api/version    # → {"version":"1.0.0"}
 - [ ] Репозиторий склонирован **с `.git`** (нужен для `git describe` при сборке образов).
 - [ ] В `.env` заданы реальные `CH_HOST/CH_PORT/CH_USER/CH_PASSWORD` внешнего ClickHouse и
       **обязательный** `ENCRYPTION_KEY` (32 байта base64, §2). `VERSION` не нужен (registry-путь убран).
-- [ ] Single-broker Kafka? Заданы `KAFKA_TOPIC_REPLICATION_FACTOR=1` и `KAFKA_TOPIC_MIN_INSYNC_REPLICAS=1` (§2).
+- [ ] Кластер Kafka из 3+ брокеров? Подняты `KAFKA_TOPIC_REPLICATION_FACTOR=3` и `KAFKA_TOPIC_MIN_INSYNC_REPLICAS=2` (§2). На одном брокере — оставить дефолтные `1`/`1`.
 - [ ] Используете дашборды панели / Telegram-алерты? Задан `PROMETHEUS_URL` (§21/§22).
 - [ ] У CH-пользователя есть право создавать БД/таблицы (`nexus_<slug>`, §5.3).
 
@@ -1957,7 +2109,7 @@ docker compose -f deploy/docker-compose.app.yml run --rm web --set-admin-passwor
 | Симптом | Причина / решение |
 |---------|-------------------|
 | Сервис падает на старте с `ENCRYPTION_KEY invalid` | base64 не декодируется в ровно 32 байта — перегенерируйте (§2). |
-| `InvalidReplicationFactor` при старте `sender` | Single-broker Kafka: задайте `KAFKA_TOPIC_REPLICATION_FACTOR=1` и `KAFKA_TOPIC_MIN_INSYNC_REPLICAS=1` в `.env`. |
+| `InvalidReplicationFactor` при старте `sender` | `KAFKA_TOPIC_REPLICATION_FACTOR` в `.env` больше числа брокеров. Верните дефолтные `1`/`1` для одного брокера (`KAFKA_TOPIC_MIN_INSYNC_REPLICAS` — тоже, иначе записи упадут с `NotEnoughReplicas`). Уже созданным топикам правка не поможет — нужен `kafka-reassign-partitions`. |
 | Kafka не поднимается за 10 сек | Норма для KRaft — дайте до 30 сек (`start_period`). Логи: `docker compose ... logs kafka`. |
 | `web` стартует, но replay/live-tail отдают 404 | ClickHouse недоступен — некритично, остальное работает. Проверьте `CH_HOST`/`CH_PASSWORD`. |
 | Не получается войти под `admin` | Не выполнен bootstrap пароля (§3.3) — пароль остаётся NULL после миграции. |

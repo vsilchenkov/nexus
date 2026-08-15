@@ -36,6 +36,15 @@ const (
 	ActionUserDelete      = "user.delete"
 	ActionUserPassword    = "user.password.change"
 
+	// Восстановление пароля по email (§88.9). Колонка action — VARCHAR(64),
+	// обе строки умещаются.
+	//
+	// Запрос пишется на КАЖДЫЙ вызов, включая безрезультатные: наружу форма
+	// отвечает одинаково (§88.4.3), и аудит — единственное место, где видно,
+	// что на самом деле произошло.
+	ActionUserPasswordResetRequest = "user.password_reset.request"
+	ActionUserPasswordResetConfirm = "user.password_reset.confirm"
+
 	ActionAPITokenCreate = "api_token.create"
 	ActionAPITokenRevoke = "api_token.revoke"
 	ActionAPITokenDelete = "api_token.delete"

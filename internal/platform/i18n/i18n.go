@@ -109,6 +109,10 @@ var translations = map[Lang]map[string]string{
 		"auth.user_inactive":       "user is inactive",
 		"auth.session_expired":     "session expired",
 		"auth.rate_limited":        "too many login attempts, try again later",
+		// §88: восстановление пароля
+		"auth.reset_rate_limited":  "too many password reset requests, try again later",
+		"auth.reset_token_invalid": "this password reset link is invalid or has already been used",
+		"auth.reset_not_allowed":   "password reset is not available for this account",
 		// node
 		"node.not_found":      "node not found",
 		"node.already_exists": "node with this path already exists",
@@ -248,6 +252,9 @@ var translations = map[Lang]map[string]string{
 		"auth.user_inactive":           "пользователь отключён",
 		"auth.session_expired":         "сессия истекла",
 		"auth.rate_limited":            "слишком много попыток входа, попробуйте позже",
+		"auth.reset_rate_limited":      "слишком много запросов восстановления, попробуйте позже",
+		"auth.reset_token_invalid":     "ссылка для смены пароля недействительна или уже использована",
+		"auth.reset_not_allowed":       "восстановление пароля для этой учётной записи недоступно",
 		"node.not_found":               "узел не найден",
 		"node.already_exists":          "узел с таким путём уже существует",
 		"node.disabled":                "узел отключён; включите его перед replay",

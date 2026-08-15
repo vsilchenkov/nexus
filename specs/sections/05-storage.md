@@ -77,7 +77,7 @@ UI умеет:
 |---|---|---|
 | `partitions` | 4 | Под параллелизм consumer'ов; запас по параллелизму даже для нагрузки выше 500 rps |
 | `replication.factor` | 3 (prod) / 1 (compose) | Отказоустойчивость; 3 копии переживут падение одного broker'а |
-| `min.insync.replicas` | 2 | Producer с `acks=all` ждёт подтверждения от 2 ISR, что гарантирует durability при падении одного broker'а |
+| `min.insync.replicas` | 2 (prod) / 1 (compose) | Producer с `acks=all` ждёт подтверждения от 2 ISR, что гарантирует durability при падении одного broker'а. На одном брокере обязан быть 1, иначе каждая запись падает с `NotEnoughReplicas` |
 | `retention.ms` | 2592000000 (30 дней) | Требование заказчика |
 | `retention.bytes` | -1 | Без лимита по объёму — управляем только временем |
 | `segment.ms` | 86400000 (1 день) | Сегменты ротируются раз в сутки — оптимально для retention 30 дней |

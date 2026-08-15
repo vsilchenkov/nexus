@@ -82,6 +82,32 @@ func (r *authUserRepo) GetByLogin(_ context.Context, login string) (*domain.User
 	return nil, domain.ErrUserNotFound
 }
 
+// GetByEmail (§88.4.2) — поиск без учёта регистра по тем же пользователям, что
+// лежат в byLogin: отдельной карты не заводим, иначе тесты пришлось бы
+// наполнять дважды и они разъехались бы. Несколько совпадений —
+// domain.ErrUserEmailAmbiguous, как в настоящем репозитории.
+func (r *authUserRepo) GetByEmail(_ context.Context, email string) (*domain.User, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.getErr != nil {
+		return nil, r.getErr
+	}
+	var found []*domain.User
+	for _, u := range r.byLogin {
+		if u.Email != "" && strings.EqualFold(u.Email, email) {
+			found = append(found, u)
+		}
+	}
+	switch len(found) {
+	case 0:
+		return nil, domain.ErrUserNotFound
+	case 1:
+		return found[0], nil
+	default:
+		return nil, domain.ErrUserEmailAmbiguous
+	}
+}
+
 func (r *authUserRepo) List(_ context.Context, f port.ListUsersFilter) ([]*domain.User, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
