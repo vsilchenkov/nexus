@@ -249,6 +249,14 @@ docker compose -f deploy/docker-compose.deps.yml up -d
 
 ### Тесты (§51 — что добавилось)
 
+> **Добавили integration-тест — проверьте, что он попадает в под-прогон.** `make
+> test-integration` гоняет тесты группами с фильтрами `-run` (ради таймаутов), а CI запускает
+> пакет `tests/integration` целиком. Тест, не попавший ни в один фильтр, локально не
+> выполняется вовсе — и падение всплывает уже на теге (так вышло при выпуске 1.28.0,
+> IMPLEMENTATION §4.75). Первой целью `test-integration` идёт гейт `check-int-coverage`
+> (`scripts/ci/check_integration_coverage.py`): он падает со списком непокрытых тестов.
+> Не подходит ни одна группа — дополните `test-int-misc`.
+
 - `make test-int-logs` — integration-группа консоли служебных логов (Redis+PG: шиппер, мерж,
   кросс-сервисный reload уровня, маскировка, неблокируемость); входит в общий `make test-integration`.
 - Фронтовые unit-тесты: `cd web-ui && npm run test` (vitest + RTL, setup `src/test/setup.ts` с

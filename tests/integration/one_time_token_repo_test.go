@@ -4,7 +4,10 @@ package integration
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -329,9 +332,15 @@ func TestOneTimeTokens_MigrationDownUp_E2E(t *testing.T) {
 	mp, err := filepath.Abs("../../migrations")
 	require.NoError(t, err)
 
+	// Глубина отката СЧИТАЕТСЯ, а не зашита единицей: `Down(1)` откатывал бы
+	// последнюю миграцию, и как только поверх 0036 легла следующая (0037, §89),
+	// тест начал проверять чужой откат — таблица оставалась на месте, а падение
+	// выглядело как «down сломан». Теперь откатываем ровно до 0036 включительно,
+	// сколько бы миграций ни добавили сверху.
+	depth := migrationsAtOrAbove(t, mp, 36)
 	mg, err := pgpf.NewMigratorFromDSN(dsn, mp, logging.NewNoop())
 	require.NoError(t, err)
-	require.NoError(t, mg.Down(1), "0036 обязана откатываться")
+	require.NoError(t, mg.Down(depth), "0036 обязана откатываться")
 	mg.Close()
 
 	assert.False(t, tableExists(), "down обязан убрать таблицу")
@@ -376,4 +385,32 @@ func TestUserRepo_GetByEmail_E2E(t *testing.T) {
 		_, err := repo.GetByEmail(ctx, "shared@example.com")
 		require.ErrorIs(t, err, domain.ErrUserEmailAmbiguous)
 	})
+}
+
+// migrationsAtOrAbove — сколько миграций в каталоге имеют номер >= from.
+//
+// Нужна тестам отката: `Down(N)` считает шаги от ХВОСТА, поэтому «откатить
+// миграцию 00NN» означает «откатить всё, что легло поверх неё, плюс её саму».
+// Зашитая единица превращает такой тест в проверку последней миграции, какой бы
+// она ни оказалась, — и падает он не там, где сломано (§89.9).
+func migrationsAtOrAbove(t *testing.T, dir string, from int) int {
+	t.Helper()
+
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+
+	n := 0
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".up.sql") {
+			continue
+		}
+		v, err := strconv.Atoi(strings.SplitN(name, "_", 2)[0])
+		require.NoErrorf(t, err, "имя миграции без номера: %s", name)
+		if v >= from {
+			n++
+		}
+	}
+	require.Positivef(t, n, "не найдено миграций с номером >= %04d", from)
+	return n
 }
