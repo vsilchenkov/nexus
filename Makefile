@@ -77,6 +77,10 @@ build-web:
 
 build-ui: ## Сборка SPA (web-ui) и копирование в internal/web/static
 	cd web-ui && npm install && npm run build
+# rm перед cp: `cp` ничего не удаляет, а имена ассетов хешированы — без очистки
+# каталог копил бы прежние index-<hash>.js от каждой сборки (§89.1 добавил туда
+# ещё 20 шрифтов, так что мусор стал заметен).
+	rm -rf internal/web/static/assets
 	cp -r web-ui/dist/* internal/web/static/ 2>/dev/null || true
 
 build-windows: ## Кросс-сборка под Windows (.exe)

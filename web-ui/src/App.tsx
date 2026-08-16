@@ -14,6 +14,7 @@ import ForcePasswordChange from "./pages/ForcePasswordChange";
 import { AppShell } from "./components/AppShell";
 import { api } from "./api/client";
 import { roleAtLeast } from "./lib/roles";
+import { useDocumentTitle } from "./lib/useDocumentTitle";
 
 // useMe — проверка текущей сессии через /api/auth/me.
 // При 401 (isError) пользователь будет редиректнут на /login.
@@ -57,6 +58,12 @@ function LogsRoute() {
 }
 
 export default function App() {
+  // §89.2: код ноды в заголовке вкладки. Здесь, а не в AppShell: /api/version
+  // публичный, и вкладка ЛОГИНА обязана называться так же — иначе при
+  // нескольких открытых нодах вкладки «Nexus» неотличимы ровно в тот момент,
+  // когда человек выбирает, куда вводить пароль.
+  useDocumentTitle();
+
   return (
     <Routes>
       <Route path="/login" element={<Login />} />

@@ -30,8 +30,8 @@ const TEAM_A = "team-a";
 const TEAM_B = "team-b";
 
 const TEAMS = [
-  { id: TEAM_A, slug: "alpha", name: "Alpha", ch_database: "nexus_alpha", role: "admin" as const },
-  { id: TEAM_B, slug: "beta", name: "Beta", ch_database: "nexus_beta", role: "admin" as const },
+  { id: TEAM_A, slug: "alpha", name: "Alpha", ch_database: "nexus_alpha", external_url: "", role: "admin" as const },
+  { id: TEAM_B, slug: "beta", name: "Beta", ch_database: "nexus_beta", external_url: "", role: "admin" as const },
 ];
 
 // server — изменяемое состояние «бэкенда»: текущая команда сессии и префы.

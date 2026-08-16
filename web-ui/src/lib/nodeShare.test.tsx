@@ -21,8 +21,8 @@ vi.mock("../api/client", async () => {
 });
 
 const TEAMS = [
-  { id: "team-a", slug: "alpha", name: "Alpha", ch_database: "nexus_alpha", role: "admin" as const },
-  { id: "team-b", slug: "beta", name: "Beta", ch_database: "nexus_beta", role: "admin" as const },
+  { id: "team-a", slug: "alpha", name: "Alpha", ch_database: "nexus_alpha", external_url: "", role: "admin" as const },
+  { id: "team-b", slug: "beta", name: "Beta", ch_database: "nexus_beta", external_url: "", role: "admin" as const },
 ];
 
 // server — изменяемое состояние «бэкенда»: команда узла и текущая команда

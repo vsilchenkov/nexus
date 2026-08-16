@@ -28,8 +28,26 @@ export const TEAM_PARAM = "team";
 // неизменяем (PUT /api/teams принимает только name) — ссылка не протухает;
 // encodeURIComponent тут страховка на случай ослабления паттерна.
 export function teamPageUrl(slug: string): string {
-  return `${window.location.origin}/?${TEAM_PARAM}=${encodeURIComponent(slug)}`;
+  return `${window.location.origin}${teamPagePath(slug)}`;
 }
+
+// teamPagePath — ПУТЬ рабочего стола команды (§76.2), без origin. Отдельно от
+// teamPageUrl, потому что у них разные потребители: <Link to=…> и href принимают
+// путь (абсолютный URL react-router считает внешней навигацией), а кнопка
+// «Поделиться» шлёт полный адрес. Формат параметра описан здесь ОДИН раз —
+// иначе ссылка из буфера и ссылка из сайдбара однажды разойдутся, и разойдутся
+// молча (§89.3).
+export function teamPagePath(slug: string): string {
+  return `/?${TEAM_PARAM}=${encodeURIComponent(slug)}`;
+}
+
+// TEAM_SCOPE_ALL_PATH — адрес сквозного режима «Все команды» (§86.5). Отдельная
+// константа, а не teamPagePath(TEAM_SCOPE_ALL) на вызывающей стороне: `*` — не
+// slug команды, и подстановка его в «путь команды» читалась бы как ошибка.
+// Экранирование не нужно и не происходит: encodeURIComponent символ `*` не
+// трогает (он незарезервирован), так что в адресе окажется ровно `?team=*` —
+// то, что разбирает useTeamUrlParam.
+export const TEAM_SCOPE_ALL_PATH = `/?${TEAM_PARAM}=${TEAM_SCOPE_ALL}`;
 
 // TEAM_PARAM_ROUTES — маршруты, на которых параметр имеет смысл. Белый список,
 // а не чёрный: новый маршрут не должен молча получить параметр.

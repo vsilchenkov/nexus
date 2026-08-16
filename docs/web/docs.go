@@ -5534,7 +5534,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Slug и ch_database immutable после создания.",
+                "description": "Меняются имя и внешняя ссылка (§89.4). Slug и ch_database immutable после создания.",
                 "consumes": [
                     "application/json"
                 ],
@@ -5544,7 +5544,7 @@ const docTemplate = `{
                 "tags": [
                     "teams"
                 ],
-                "summary": "Обновить имя команды (admin only).",
+                "summary": "Обновить команду (admin only).",
                 "parameters": [
                     {
                         "type": "string",
@@ -5554,7 +5554,7 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "name",
+                        "description": "name, external_url",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -7620,6 +7620,10 @@ const docTemplate = `{
         "internal_web_adapter_in_http.ResolveTeamResponse": {
             "type": "object",
             "properties": {
+                "team_external_url": {
+                    "description": "TeamExternalURL — §89.4: внешняя ссылка команды УЗЛА. Едет здесь, а не\nрезолвится по /api/me/teams, потому что вкладка «Конфиг» обязана показать\nадрес команды-владельца, а её в членствах вызывающего может не быть вовсе\n(тот же случай, ради которого §58 и завёл этот резолвер). Лишнего запроса\nне появляется: ключ уже прогрет useEnsureNodeTeam.",
+                    "type": "string"
+                },
                 "team_id": {
                     "type": "string"
                 },
@@ -8250,6 +8254,11 @@ const docTemplate = `{
                 "slug"
             ],
             "properties": {
+                "external_url": {
+                    "description": "ExternalURL — §89.4. Необязательное; формат (абсолютный http(s) без\nquery) проверяет домен, здесь только потолок длины.",
+                    "type": "string",
+                    "maxLength": 2048
+                },
                 "name": {
                     "type": "string",
                     "maxLength": 255,
@@ -9381,6 +9390,10 @@ const docTemplate = `{
                 "ch_database": {
                     "type": "string"
                 },
+                "external_url": {
+                    "description": "ExternalURL — §89.4: внешняя ссылка команды. Нужна форме СОЗДАНИЯ узла,\nгде команда выбирается явно (§86.6) и её ещё нет ни в одном резолвере.",
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
                 },
@@ -9402,6 +9415,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "created_at": {
+                    "type": "string"
+                },
+                "external_url": {
+                    "description": "ExternalURL — §89.4: адрес команды снаружи контура. Всегда присутствует\n(пустая строка = не задан), без omitempty: форма редактирования читает\nтекущее значение отсюда, и исчезающее поле она прочитала бы как undefined.",
                     "type": "string"
                 },
                 "id": {
@@ -9512,6 +9529,10 @@ const docTemplate = `{
                 "name"
             ],
             "properties": {
+                "external_url": {
+                    "type": "string",
+                    "maxLength": 2048
+                },
                 "name": {
                     "type": "string",
                     "maxLength": 255,

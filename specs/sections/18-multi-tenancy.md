@@ -14,9 +14,10 @@ ClickHouse для логов.
 - `teams` — справочник команд:
   - `id` (UUID, PK), `slug` (varchar, UNIQUE, формат `^[a-z][a-z0-9_]{0,31}$`),
     `name`, `ch_database` (varchar, UNIQUE, формат `^nexus_[a-z][a-z0-9_]{0,31}$`),
+    `external_url` (varchar 2048, §89.4 — адрес команды снаружи контура, пусто = не задан),
     `created_at`, `updated_at`.
   - `slug` и `ch_database` **неизменяемы** после создания (переименование
-    БД ClickHouse в полёте сломало бы Sender). Меняется только `name`.
+    БД ClickHouse в полёте сломало бы Sender). Меняются `name` и `external_url`.
 - `user_teams` — членство many-to-many: `user_id` × `team_id` × `role`
   (`owner` / `admin` / `member`), `created_at`. PK `(user_id, team_id)`,
   `ON DELETE CASCADE`.

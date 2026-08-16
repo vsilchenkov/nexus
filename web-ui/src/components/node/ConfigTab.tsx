@@ -12,18 +12,22 @@ export function ConfigTab({ node }: { node: Node }) {
   const { t } = useTranslation();
   const isPull = node.root_method === "RabbitMQAsync";
   const verb = node.root_method === "request" ? "request" : "requestAsync";
-  // §28 Пункт 1: адрес из публичного base URL приложения + slug команды.
-  const buildUrl = useNodeUrlBuilder();
-  const address = buildUrl(verb, node.path);
   // Команда узла — только человекочитаемое имя (без slug/UUID, §65): эндпоинт
   // узла отдаёт лишь team_id, имя резолвим по членствам (запрос общий с шапкой,
   // react-query дедуплицирует ключ) с фолбэком на резолвер §58 (тот уже
   // закеширован страницей узла через useEnsureNodeTeam). Имя недоступно → «—».
   const myTeams = useMyTeams();
   const nodeTeamQ = useNodeTeam(node.id);
-  const teamName =
-    myTeams.data?.items.find((tm) => tm.id === node.team_id)?.name ??
-    nodeTeamQ.data?.team_name;
+  const membership = myTeams.data?.items.find((tm) => tm.id === node.team_id);
+  const teamName = membership?.name ?? nodeTeamQ.data?.team_name;
+  // §28 Пункт 1: адрес из публичного base URL приложения + slug команды.
+  // Команда берётся ОТ УЗЛА, а не из сессии (§89.6): в членствах вызывающего
+  // команды узла может не быть вовсе, и резолвер §58 — единственный источник.
+  const buildUrl = useNodeUrlBuilder({
+    slug: nodeTeamQ.data?.team_slug ?? membership?.slug,
+    externalUrl: nodeTeamQ.data?.team_external_url ?? membership?.external_url,
+  });
+  const address = buildUrl(verb, node.path);
   return (
     <Card>
       <dl className="divide-y divide-line">
@@ -57,6 +61,18 @@ export function ConfigTab({ node }: { node: Node }) {
                 </span>
                 <CopyButton value={address.legacy} />
               </div>
+              {/* §89.4: адрес узла снаружи контура — внешняя ссылка команды
+                  плюс путь узла. Строки нет, пока ссылка у команды не задана:
+                  пустой «внешняя: » сообщал бы, что адреса не существует, тогда
+                  как его просто не настроили. */}
+              {address.external && (
+                <div className="flex items-center gap-1.5">
+                  <span className="min-w-0 break-all font-mono text-[11px] text-fg-subtle">
+                    {t("node.form.external_address")}: {address.external}
+                  </span>
+                  <CopyButton value={address.external} />
+                </div>
+              )}
             </div>
           </Row>
         )}

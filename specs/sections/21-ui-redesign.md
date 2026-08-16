@@ -25,8 +25,11 @@
   `dark` на `<html>`, хранение в `localStorage` (`nexus.theme`), применяется до
   первого render. Переключатель — иконка в топбаре (отдельной страницы настроек
   темы нет).
-- **Шрифты** — Inter (sans) + JetBrains Mono (mono), подключаются ссылкой в
-  `index.html`; при отсутствии сети — graceful fallback на системный стек.
+- **Шрифты** — Inter (sans) + JetBrains Mono (mono), **локальные** (§89.1):
+  woff2-сабсеты latin/latin-ext/cyrillic/cyrillic-ext лежат в
+  `web-ui/src/assets/fonts/`, `@font-face` с `unicode-range` и `font-display: swap` —
+  в генерируемом `fonts.css` там же, подключается из `main.tsx`. Внешних ссылок нет:
+  панель одинаково выглядит в изолированном контуре.
 - **Иконки** — lucide-react (имена близки к Tabler из эталона).
 - **UI-kit** — `web-ui/src/components/ui/*`: `Button`, `Input/Select/Textarea/Field`,
   `Card`, `SectionHead`, `Modal`, `Chip`, `Pill`, `Kpi/KpiRow`, `Seg`, `Hint`,
