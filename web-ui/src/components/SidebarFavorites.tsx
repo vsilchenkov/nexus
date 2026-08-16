@@ -32,6 +32,10 @@ import { useMyTeams, useSetFavoriteTeams, useSwitchTeam, type TeamMembership } f
 // optimistic). Без избранных секция скрыта целиком. id, чьих команд уже нет в
 // членствах (гонка с исключением), молча отфильтровываются — сервер уже удалил
 // их каскадом.
+//
+// §89.3: строки — настоящие ссылки на `/?team=<slug>`, чтобы работали
+// контекстное меню браузера, Ctrl/Cmd+клик и средняя кнопка. Обычный левый клик
+// по-прежнему обрабатывается здесь (см. pick/pickAll).
 export function SidebarFavorites() {
   const { t } = useTranslation();
   const navigate = useNavigate();
