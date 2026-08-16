@@ -1,14 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, ChevronDown, Layers, Share2, Star } from "lucide-react";
 
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 import { cn } from "../lib/cn";
 import { copyToClipboard } from "../lib/clipboard";
+import { isPlainLeftClick } from "../lib/linkClick";
 import { PREF_KEY_FAVORITE_ALL_TEAMS, useFavoriteAllTeams, useSetPref } from "../lib/prefs";
 import { setTeamScopeAll, useAllTeamsScope } from "../lib/teamScope";
-import { teamPageUrl } from "../lib/teamShare";
+import { TEAM_SCOPE_ALL_PATH, teamPagePath, teamPageUrl } from "../lib/teamShare";
 import { useMyTeams, useSetFavoriteTeams, useSwitchTeam, type TeamMembership } from "../lib/teams";
 import { Popover, PopoverTrigger, PopoverContent, Tooltip } from "./ui";
 
@@ -34,7 +35,14 @@ export function TeamSwitcher() {
   const current = data.items.find((tm) => tm.id === data.current_team_id);
   const favorites = data.favorites ?? [];
 
-  const pick = (id: string) => {
+  // §89.3: строки списка — настоящие ссылки (href ради контекстного меню,
+  // Ctrl/Cmd+клика и средней кнопки), но обычный левый клик обрабатываем сами и
+  // гасим preventDefault'ом — разбор причин в SidebarFavorites. Модифицированный
+  // клик уходит браузеру нетронутым: попап при этом остаётся открытым намеренно,
+  // текущая вкладка вообще не меняется.
+  const pick = (e: MouseEvent, id: string) => {
+    if (!isPlainLeftClick(e)) return;
+    e.preventDefault();
     // Выбор конкретной команды всегда выводит из сквозного режима — иначе
     // переключение выглядело бы безрезультатным: список остался бы сквозным.
     setTeamScopeAll(false);
@@ -50,7 +58,9 @@ export function TeamSwitcher() {
   // Переход на рабочий стол, потому что смотреть сквозной список больше негде
   // (§86.2), а на /nodes/:id параметр `?team` вообще запрещён (§76.3) — приём
   // тот же, что у клика в секции «Избранное» (§49.2).
-  const pickAllTeams = () => {
+  const pickAllTeams = (e: MouseEvent) => {
+    if (!isPlainLeftClick(e)) return;
+    e.preventDefault();
     setTeamScopeAll(true);
     setOpen(false);
     navigate("/");
@@ -103,7 +113,7 @@ export function TeamSwitcher() {
             team={tm}
             isCurrent={!allTeams && tm.id === data.current_team_id}
             isFavorite={favorites.includes(tm.id)}
-            onPick={() => pick(tm.id)}
+            onPick={(e) => pick(e, tm.id)}
             onToggleFavorite={() => toggleFavorite(tm.id)}
           />
         ))}
@@ -113,7 +123,7 @@ export function TeamSwitcher() {
 }
 
 // AllTeamsRow — строка сквозного режима (§86.2). Та же разметка, что у команды,
-// минус «Поделиться»: кнопка выбора + звезда избранного.
+// минус «Поделиться»: ссылка выбора (§89.3) + звезда избранного.
 function AllTeamsRow({
   isCurrent,
   isFavorite,
@@ -122,16 +132,17 @@ function AllTeamsRow({
 }: {
   isCurrent: boolean;
   isFavorite: boolean;
-  onPick: () => void;
+  onPick: (e: MouseEvent) => void;
   onToggleFavorite: () => void;
 }) {
   const { t } = useTranslation();
   const favLabel = isFavorite ? t("teams.favorite_remove") : t("teams.favorite_add");
   return (
     <div className="flex items-center gap-0.5">
-      <button
-        type="button"
+      <Link
+        to={TEAM_SCOPE_ALL_PATH}
         onClick={onPick}
+        draggable={false}
         className={cn(
           "flex min-w-0 flex-1 items-center gap-2 rounded px-3 py-2 text-left text-[13px] hover:bg-bg-muted",
           isCurrent ? "font-medium text-fg" : "text-fg-muted hover:text-fg",
@@ -140,7 +151,7 @@ function AllTeamsRow({
         <Layers className="h-3.5 w-3.5 shrink-0 text-fg-subtle" />
         <span className="min-w-0 flex-1 truncate">{t("teams.all")}</span>
         {isCurrent && <Check className="h-3.5 w-3.5 shrink-0 text-accent" />}
-      </button>
+      </Link>
       <Tooltip content={favLabel}>
         <button
           type="button"
@@ -162,11 +173,12 @@ function AllTeamsRow({
   );
 }
 
-// TeamRow — строка команды: кнопка выбора (имя + галка текущей), кнопка-звезда
-// и кнопка «Поделиться» (§76). Соседние кнопки, а не вложенные (невалидный
-// HTML) — и звезда со «Поделиться» не переключают команду без всяких
-// stopPropagation. Попап при копировании остаётся открытым по той же причине:
-// onPick не срабатывает, а Radix закрывает Popover только по outside-pointerdown.
+// TeamRow — строка команды: ССЫЛКА выбора (имя + галка текущей, §89.3),
+// кнопка-звезда и кнопка «Поделиться» (§76). Соседние элементы, а не вложенные
+// (кнопка внутри <a> — невалидный HTML) — и звезда со «Поделиться» не
+// переключают команду без всяких stopPropagation. Попап при копировании
+// остаётся открытым по той же причине: onPick не срабатывает, а Radix закрывает
+// Popover только по outside-pointerdown.
 function TeamRow({
   team,
   isCurrent,
@@ -177,16 +189,17 @@ function TeamRow({
   team: TeamMembership;
   isCurrent: boolean;
   isFavorite: boolean;
-  onPick: () => void;
+  onPick: (e: MouseEvent) => void;
   onToggleFavorite: () => void;
 }) {
   const { t } = useTranslation();
   const favLabel = isFavorite ? t("teams.favorite_remove") : t("teams.favorite_add");
   return (
     <div className="flex items-center gap-0.5">
-      <button
-        type="button"
+      <Link
+        to={teamPagePath(team.slug)}
         onClick={onPick}
+        draggable={false}
         className={cn(
           "flex min-w-0 flex-1 items-center gap-2 rounded px-3 py-2 text-left text-[13px] hover:bg-bg-muted",
           isCurrent ? "font-medium text-fg" : "text-fg-muted hover:text-fg",
@@ -194,7 +207,7 @@ function TeamRow({
       >
         <span className="min-w-0 flex-1 truncate">{team.name}</span>
         {isCurrent && <Check className="h-3.5 w-3.5 shrink-0 text-accent" />}
-      </button>
+      </Link>
       <Tooltip content={favLabel}>
         <button
           type="button"

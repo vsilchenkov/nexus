@@ -1,5 +1,5 @@
-import { useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useRef, type MouseEvent } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Layers, Star } from "lucide-react";
 import {
@@ -20,8 +20,10 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 
 import { cn } from "../lib/cn";
+import { isPlainLeftClick } from "../lib/linkClick";
 import { useFavoriteAllTeams } from "../lib/prefs";
 import { setTeamScopeAll, useAllTeamsScope } from "../lib/teamScope";
+import { TEAM_SCOPE_ALL_PATH, teamPagePath } from "../lib/teamShare";
 import { useMyTeams, useSetFavoriteTeams, useSwitchTeam, type TeamMembership } from "../lib/teams";
 
 // SidebarFavorites — секция «Избранное» в сайдбаре (§49.2): избранные команды
@@ -58,8 +60,25 @@ export function SidebarFavorites() {
   // Порядок режима не хранится: он лежит в другом хранилище (преф §71, а не
   // user_team_favorites), и сливать два источника в один упорядоченный список
   // ради одного элемента дороже, чем закрепить его сверху.
-  const pickAll = () => {
-    if (draggedRef.current) return;
+  // §89.3: строки избранного — НАСТОЯЩИЕ ссылки, но обычный левый клик мы
+  // по-прежнему обрабатываем сами и гасим preventDefault'ом. Отдать его роутеру
+  // нельзя: в адресе сразу оказался бы `?team=<slug>`, и зеркало §76 применило
+  // бы его как ВХОДЯЩУЮ ссылку — второй POST /api/me/switch-team на ту же
+  // команду и вторая инвалидация всего team-scoped кеша. А в двух случаях
+  // зеркало ещё и отработало бы неверно: (1) его ref одноразовости `handled`
+  // переживает /nodes/:id, где §58 меняет команду сессии мимо адресной строки,
+  // и клик по прежней команде вернул бы адрес назад вместо переключения;
+  // (2) в сквозном режиме ветка «allTeams → writeParam(*)» стоит ВЫШЕ резолва
+  // slug'а (§86.7.1) и просто съела бы выбор команды.
+  // href существует ради браузера: контекстное меню, Ctrl/Cmd+клик и средняя
+  // кнопка (тот же приём, что у вкладок узла в §79.3).
+  const pickAll = (e: MouseEvent) => {
+    if (draggedRef.current) {
+      e.preventDefault();
+      return;
+    }
+    if (!isPlainLeftClick(e)) return; // новая вкладка — текущую не трогаем
+    e.preventDefault();
     setTeamScopeAll(true);
     navigate("/");
   };
@@ -69,8 +88,17 @@ export function SidebarFavorites() {
   // другой раздел (Аудит/Логи/Настройки) или команда уже текущая — иначе на
   // не-Узлах клик выглядел «не реагирующим». Команду переключаем лишь когда она
   // отличается (switch-team дёргает инвалидацию team-scoped кеша зря при той же).
-  const pick = (id: string) => {
-    if (draggedRef.current) return;
+  const pick = (e: MouseEvent, id: string) => {
+    if (draggedRef.current) {
+      // После реального драга браузер всё равно шлёт click по элементу. С
+      // <button> его хватало проигнорировать; со ссылкой — нет: без
+      // preventDefault браузер уйдёт по href, и перетаскивание избранного
+      // заканчивалось бы переходом.
+      e.preventDefault();
+      return;
+    }
+    if (!isPlainLeftClick(e)) return;
+    e.preventDefault();
     // §86: выбор конкретной команды выводит из сквозного режима — как и в
     // переключателе шапки, иначе список остался бы сквозным.
     setTeamScopeAll(false);
@@ -109,9 +137,10 @@ export function SidebarFavorites() {
       </div>
       <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
         {allFavorite && (
-          <button
-            type="button"
+          <Link
+            to={TEAM_SCOPE_ALL_PATH}
             onClick={pickAll}
+            draggable={false}
             className={cn(
               "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-[13px] transition-colors",
               allTeams
@@ -126,7 +155,7 @@ export function SidebarFavorites() {
               )}
             />
             <span className="min-w-0 flex-1 truncate">{t("teams.all")}</span>
-          </button>
+          </Link>
         )}
         <DndContext
           sensors={sensors}
@@ -144,7 +173,7 @@ export function SidebarFavorites() {
                 key={tm.id}
                 team={tm}
                 isCurrent={!allTeams && tm.id === data?.current_team_id}
-                onPick={() => pick(tm.id)}
+                onPick={(e) => pick(e, tm.id)}
               />
             ))}
           </SortableContext>
@@ -163,16 +192,28 @@ function FavoriteItem({
 }: {
   team: TeamMembership;
   isCurrent: boolean;
-  onPick: () => void;
+  onPick: (e: MouseEvent) => void;
 }) {
   const { t } = useTranslation();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: team.id,
+    // §89.3: @dnd-kit кладёт в attributes role="button" (useDraggable,
+    // defaultRole). На <a href> ЯВНАЯ роль перебивает нативную: строка
+    // перестаёт быть ссылкой и для скринридера, и для getByRole("link") —
+    // ровно та потеря семантики, ради устранения которой раздел и делается.
+    // Роль задаём здесь, а не выкусываем из спреда: так она типизирована
+    // (UseDraggableArguments) и не забудется при следующей правке разметки.
+    // aria-pressed при role != "button" dnd-kit не выставляет сам, а полезный
+    // aria-roledescription="sortable" остаётся.
+    attributes: { role: "link" },
   });
   return (
-    <button
+    <Link
       ref={setNodeRef}
-      type="button"
+      to={teamPagePath(team.slug)}
+      // Против нативного HTML5-драга ссылок: браузер перехватывает pointermove
+      // на <a href>, показывает «призрак» адреса, и сортировка не стартует.
+      draggable={false}
       title={t("teams.drag_hint")}
       style={{ transform: CSS.Transform.toString(transform), transition }}
       onClick={onPick}
@@ -193,6 +234,6 @@ function FavoriteItem({
         )}
       />
       <span className="min-w-0 flex-1 truncate">{team.name}</span>
-    </button>
+    </Link>
   );
 }
