@@ -191,6 +191,29 @@ var (
 	// Уведомления (§20)
 	ErrTelegramCronInvalid = errors.New("domain: invalid telegram cron expression")
 
+	// Почта и восстановление пароля (§88)
+	ErrMailHostInvalid         = errors.New("domain: mail host must be a bare hostname without scheme, port or spaces")
+	ErrMailPortInvalid         = errors.New("domain: mail port must be within [1, 65535]")
+	ErrMailEncryptionInvalid   = errors.New("domain: mail encryption must be one of none|starttls|tls")
+	ErrMailAuthTypeInvalid     = errors.New("domain: mail auth_type must be one of none|plain|login|cram-md5")
+	ErrMailUsernameLength      = errors.New("domain: mail username length must be <= 255")
+	ErrMailPasswordLength      = errors.New("domain: mail password length must be <= 255")
+	ErrMailFromInvalid         = errors.New("domain: mail from_address must be a valid email address")
+	ErrMailFromNameInvalid     = errors.New("domain: mail from_name must be <= 128 chars and contain no line breaks")
+	ErrMailHELOInvalid         = errors.New("domain: mail helo_host must be <= 255 chars without spaces")
+	ErrMailTimeoutInvalid      = errors.New("domain: mail timeout_sec must be within [1, 120]")
+	ErrMailResetRequiresMail   = errors.New("domain: password_reset_enabled requires mail.enabled")
+	ErrPasswordResetTTLInvalid = errors.New("domain: password_reset_ttl_min must be within [5, 1440]")
+
+	// ErrOneTimeTokenInvalid — одноразовая ссылка не найдена, погашена,
+	// истекла ИЛИ выдана на другое назначение (§88.4.1). Причина намеренно
+	// одна: различать их для предъявителя нельзя.
+	ErrOneTimeTokenInvalid = errors.New("domain: one-time token is invalid or already used")
+	// ErrUserEmailAmbiguous — под адресом числится больше одного пользователя
+	// (колонка users.email не уникальна). Трактуется как «не найден»: письмо
+	// не уходит, чтобы владелец адреса не получил ссылку на чужую учётку.
+	ErrUserEmailAmbiguous = errors.New("domain: several users share this email")
+
 	// Общие настройки (§28, Пункт 1)
 	ErrPublicBaseURLInvalid = errors.New("domain: public_base_url must be an http(s) origin without path or trailing slash")
 
@@ -221,10 +244,13 @@ var (
 	// ErrTeamSlugReserved — §78.3: слаг совпадает с сегментом-методом боевого
 	// адреса, из-за чего короткая форма /api/v1/<slug>/<path> стала бы
 	// неоднозначной (первый сегмент прочитался бы как метод, а не как команда).
-	ErrTeamSlugReserved   = errors.New("domain: team slug is reserved by the bus ingress path")
-	ErrTeamInvalidRole    = errors.New("domain: invalid team role")
-	ErrTeamMemberNotFound = errors.New("domain: team membership not found")
-	ErrTeamHasNodes       = errors.New("domain: team has attached nodes and cannot be deleted")
+	ErrTeamSlugReserved = errors.New("domain: team slug is reserved by the bus ingress path")
+	// ErrTeamExternalURLInvalid — §89.4: внешняя ссылка команды не является
+	// абсолютным http(s)-адресом, несёт query/fragment или длиннее 2048.
+	ErrTeamExternalURLInvalid = errors.New("domain: team external url must be an absolute http(s) address without query")
+	ErrTeamInvalidRole        = errors.New("domain: invalid team role")
+	ErrTeamMemberNotFound     = errors.New("domain: team membership not found")
+	ErrTeamHasNodes           = errors.New("domain: team has attached nodes and cannot be deleted")
 
 	// Instance (§70: несколько нод на одном ClickHouse)
 	ErrInstanceIDFormat = errors.New("domain: instance id must be empty or match ^[a-z][a-z0-9]{0,7}$")

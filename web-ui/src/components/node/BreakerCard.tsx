@@ -44,7 +44,8 @@ export function BreakerCard({ nodeId }: { nodeId: string }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const confirm = useConfirm();
-  const isManager = useRoleAtLeast("manager");
+  // §81.4/§87: сброс защиты — operator+, как пауза и очистка очереди.
+  const canOperate = useRoleAtLeast("operator");
 
   const q = useQuery({
     queryKey: ["node-breaker", nodeId],
@@ -124,7 +125,7 @@ export function BreakerCard({ nodeId }: { nodeId: string }) {
             </>
           )}
         </div>
-        {isManager && (
+        {canOperate && (
           <Button
             sm
             variant="ghost"

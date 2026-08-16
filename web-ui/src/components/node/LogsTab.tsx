@@ -475,10 +475,10 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   // id + HTTP-глагол строки: ReplayDialog по глаголу решает, требуется ли тело
   // (GET — без тела), и зеркалит выбор метода реинъекции бэкенда (ANY-узлы).
   const [replay, setReplay] = useState<{ id: string; httpMethod?: string } | null>(null);
-  // §7.4.1/§58: replay пере-отправляет запрос на внешнюю цель (сайд-эффект) —
-  // manager+. viewer видит кнопку disabled с tooltip «Нет прав» (бэкенд тоже
+  // §7.4.1/§58/§87: replay пере-отправляет запрос на внешнюю цель (сайд-эффект) —
+  // operator+. viewer видит кнопку disabled с tooltip «Нет прав» (бэкенд тоже
   // отдаёт 403). Скрывать не будем — так понятно, что действие существует.
-  const canReplay = useRoleAtLeast("manager");
+  const canReplay = useRoleAtLeast("operator");
 
   const scrollToTop = () => {
     if (tableWrapRef.current) {

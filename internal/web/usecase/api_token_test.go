@@ -146,6 +146,9 @@ func (s *userRepoStub) Get(_ context.Context, id string) (*domain.User, error) {
 func (s *userRepoStub) GetByLogin(_ context.Context, _ string) (*domain.User, error) {
 	return nil, domain.ErrNotFound
 }
+func (s *userRepoStub) GetByEmail(_ context.Context, _ string) (*domain.User, error) {
+	return nil, domain.ErrNotFound
+}
 func (s *userRepoStub) List(_ context.Context, _ port.ListUsersFilter) ([]*domain.User, error) {
 	return nil, nil
 }

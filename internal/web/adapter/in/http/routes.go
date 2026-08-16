@@ -6,7 +6,10 @@ import (
 
 // Handlers — bag всех HTTP-handler'ов Web Service.
 type Handlers struct {
-	Auth          *AuthHandler
+	Auth *AuthHandler
+	// PasswordReset — §88: публичное восстановление пароля. nil, когда
+	// хранилище токенов не сконфигурировано — маршруты тогда не появляются.
+	PasswordReset *PasswordResetHandler
 	Node          *NodeHandler
 	User          *UserHandler
 	Token         *APITokenHandler
@@ -41,8 +44,12 @@ type Middlewares struct {
 	SessionAuth    gin.HandlerFunc // session-cookie auth
 	RequireAdmin   gin.HandlerFunc // роль admin
 	RequireManager gin.HandlerFunc // роль не ниже manager (manager+admin), §26
-	KafkaRateLimit gin.HandlerFunc // §9 spec: лимит /api/kafka/* на пользователя
-	CSRFCheck      gin.HandlerFunc // Phase AUD.4: Origin-check мутаций под session-cookie
+	// RequireOperator — роль не ниже operator (operator+manager+admin), §87:
+	// эксплуатация узла (очередь, статус, breaker, повторы, аудит) без права
+	// его конфигурировать.
+	RequireOperator gin.HandlerFunc
+	KafkaRateLimit  gin.HandlerFunc // §9 spec: лимит /api/kafka/* на пользователя
+	CSRFCheck       gin.HandlerFunc // Phase AUD.4: Origin-check мутаций под session-cookie
 }
 
 // RegisterAPI вешает /api/* маршруты.
@@ -65,6 +72,20 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 	}
 	{
 		api.POST("/auth/login", h.Auth.Login)
+
+		// §88.4.2: восстановление пароля — второй и последний блок публичных
+		// маршрутов внутри /api. Намеренно рядом с login, чтобы «что тут
+		// публично» читалось в одном месте.
+		//
+		// CSRF-проверка группы их НЕ обходит и обходить не должна: GET
+		// проходит всегда, POST с пустым Origin — тоже (curl, тесты), а
+		// сторонний сайт, инициирующий сброс от имени открывшего его
+		// пользователя, получает отказ до обработчика.
+		if h.PasswordReset != nil {
+			api.POST("/auth/password-reset/request", h.PasswordReset.Request)
+			api.GET("/auth/password-reset/validate", h.PasswordReset.Validate)
+			api.POST("/auth/password-reset/confirm", h.PasswordReset.Confirm)
+		}
 
 		// RequirePasswordChanged (П18): пока сессия в режиме «требуется смена
 		// пароля», все эндпоинты ниже отдают 403 password_change_required,
@@ -203,31 +224,39 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 
 		// Mutating — только session-cookie (API-токены сюда не пускаем).
 		//
+		// authedOperator (роль operator+, §87): ЭКСПЛУАТАЦИЯ узла — вкладка
+		// «Очередь» целиком, статус, сброс защиты, повторы из логов и чтение
+		// аудита. Конфигурация узла (CRUD, копия, dry-run, схема CH, каталоги)
+		// остаётся за authedManager ниже.
+		authedOperator := authed.Group("/", mw.RequireOperator)
+		// §35.4: лёгкая смена статуса (пауза/отключение/включение). Кнопки живут
+		// на вкладке «Очередь», меняется единственное поле status — это
+		// эксплуатация, а не правка конфига (§87.3).
+		authedOperator.PATCH("/nodes/:id/status", h.Node.UpdateStatus)
+		//
 		// authedManager (роль manager+admin, §26): управление узлами и
-		// связанными каталогами + чтение Audit log.
+		// связанными каталогами.
 		authedManager := authed.Group("/", mw.RequireManager)
 		authedManager.POST("/nodes", h.Node.Create)
 		authedManager.PUT("/nodes/:id", h.Node.Update)
-		// §35: лёгкая смена статуса (пауза/отключение) — manager+.
-		authedManager.PATCH("/nodes/:id/status", h.Node.UpdateStatus)
 		// §53: клонирование узла (включая креды) с новым path, копия — paused.
 		authedManager.POST("/nodes/:id/copy", h.Node.Copy)
 		authedManager.DELETE("/nodes/:id", h.Node.Delete)
 		// §7.5.1: dry-run без сохранения конфига.
 		authedManager.POST("/nodes/dry-run", h.DryRun.Run)
-		// §7.4.1/§58: replay записи лога пере-отправляет запрос на внешнюю цель
-		// (сайд-эффект) — manager+, только session-cookie. viewer видит кнопку
+		// §7.4.1/§58/§87: replay записи лога пере-отправляет запрос на внешнюю цель
+		// (сайд-эффект) — operator+, только session-cookie. viewer видит кнопку
 		// disabled (нет прав), API-токены реплеить не могут (логи — только snapshot).
 		if h.Replay != nil {
-			authedManager.POST("/logs/:id/replay", RequireSessionOnly(), h.Replay.Replay)
+			authedOperator.POST("/logs/:id/replay", RequireSessionOnly(), h.Replay.Replay)
 			// §85: повторная отправка из логов за период. Намеренно ВНЕ группы
 			// /nodes/:id/async-queue — на ней висит KafkaRateLimit (60/мин на
 			// пользователя, поставлен ради peek'а Kafka), а здесь клиент крутит
 			// цикл батчей, и общий лимит очереди зарубил бы его на середине. Тот
 			// же довод, по которому вне группы стоят маршруты breaker §81.4.
-			// manager+ и только session-cookie — как одиночный replay.
-			authedManager.POST("/nodes/:id/logs/replay-period/plan", RequireSessionOnly(), h.Replay.PlanPeriod)
-			authedManager.POST("/nodes/:id/logs/replay-period/run", RequireSessionOnly(), h.Replay.RunPeriod)
+			// operator+ и только session-cookie — как одиночный replay.
+			authedOperator.POST("/nodes/:id/logs/replay-period/plan", RequireSessionOnly(), h.Replay.PlanPeriod)
+			authedOperator.POST("/nodes/:id/logs/replay-period/run", RequireSessionOnly(), h.Replay.RunPeriod)
 		}
 		// §56: синхронизация схемы CH-таблицы узла (ALTER). Plan — предпросмотр
 		// (read-only), Apply — исполнение. manager+ (как и правка узла).
@@ -271,11 +300,12 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			authedManager.POST("/request-fields", h.RequestField.Create)
 		}
 
-		// Audit log: чтение доступно manager+admin (§26); scope audit:read нужен
+		// Audit log: чтение доступно operator+ (§26, §87 — оператору журнал нужен,
+		// чтобы понять, кто и что менял до инцидента); scope audit:read нужен
 		// только для API-токена.
-		authedManager.GET("/audit", RequireScope("audit:read"), h.Audit.List)
+		authedOperator.GET("/audit", RequireScope("audit:read"), h.Audit.List)
 		// CSV-экспорт журнала (§7.13, Phase 6.6).
-		authedManager.GET("/audit/export.csv", RequireScope("audit:read"), h.Audit.ExportCSV)
+		authedOperator.GET("/audit/export.csv", RequireScope("audit:read"), h.Audit.ExportCSV)
 
 		// authedAdmin — только admin: перенос узлов между командами, управление
 		// пользователями/командами, общие настройки и шаблоны CH.
@@ -324,6 +354,7 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			authedAdmin.POST("/settings/sentry/test", h.AppSettings.TestSentry)
 			// Тестовое уведомление в Telegram (§20.7).
 			authedAdmin.POST("/settings/notifications/test", h.AppSettings.TestTelegram)
+			authedAdmin.POST("/settings/mail/test", h.AppSettings.TestMail) // §88.8.4
 		}
 
 		// Шаблоны CH-таблиц (§19): мутации и verify — admin-only.
@@ -380,22 +411,22 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			kafka.POST("/test", h.Kafka.Test)
 		}
 
-		// Управление async-очередью узла (§34.4): manager+ (роль «Управление
-		// узлами»), node-scoped. Раньше было admin-only; открыто manager по
-		// запросу — управление очередью узла относится к управлению узлом (как
-		// пауза/отключение §35.4 и replay §58). Чтение деградирует
-		// (kafka_available), мутации под глобальным CSRF и тем же rate-limit,
-		// что Kafka-экран (защита от peek-флуда брокеров).
+		// Управление async-очередью узла (§34.4): operator+ (§87), node-scoped.
+		// Изначально admin-only; §35.5 открыл manager (управление очередью узла
+		// относится к управлению узлом, как пауза/отключение §35.4 и replay §58),
+		// §87 опустил до operator — это и есть его основная работа. Чтение
+		// деградирует (kafka_available), мутации под глобальным CSRF и тем же
+		// rate-limit, что Kafka-экран (защита от peek-флуда брокеров).
 		// §81.4: circuit breaker узла — состояние и ручной сброс. Отдельная от
 		// async-queue группа намеренно: та висит под KafkaRateLimit и семантически
 		// про очередь, а breaker есть и у sync-узла, где очереди нет вовсе.
 		// Чтение открыто всем ролям (наблюдателю тоже нужно понимать, почему узел
-		// молчит), сброс — manager+, как пауза и очистка очереди. Отдельный
+		// молчит), сброс — operator+, как пауза и очистка очереди. Отдельный
 		// rate-limit не вводится: чтение — один HMGET, а от злоупотребления сбросом
 		// защищают роль и запись в аудит. POST покрыт глобальным CSRF-check'ом.
 		if h.Breaker != nil {
 			authed.GET("/nodes/:id/breaker", h.Breaker.State)
-			authedManager.POST("/nodes/:id/breaker/reset", h.Breaker.Reset)
+			authedOperator.POST("/nodes/:id/breaker/reset", h.Breaker.Reset)
 		}
 
 		// §84.7: исход последнего вызова узла — рядом с состоянием защиты и по
@@ -407,7 +438,7 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		}
 
 		if h.AsyncQueue != nil {
-			aq := authedManager.Group("/nodes/:id/async-queue")
+			aq := authedOperator.Group("/nodes/:id/async-queue")
 			if mw.KafkaRateLimit != nil {
 				aq.Use(mw.KafkaRateLimit)
 			}
@@ -417,7 +448,7 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			aq.POST("/purge", h.AsyncQueue.Purge)
 			aq.POST("/purge-failed", h.AsyncQueue.PurgeFailed)
 			// §36.11: «Повторить все сейчас» — handler в ReplayHandler (нужен
-			// dispatcher), маршрут manager+ под async-queue, как purge-failed.
+			// dispatcher), маршрут operator+ под async-queue, как purge-failed.
 			if h.Replay != nil {
 				aq.POST("/replay-failed", h.Replay.ReplayFailed)
 			}

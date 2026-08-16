@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
 import { api } from "../../api/client";
+import { generatePassword, passwordStrength } from "../../lib/password";
 import { useConfirm } from "../../lib/confirm";
 import type { Role } from "../../lib/roles";
 import { MY_TEAMS_KEY } from "../../lib/teams";
@@ -32,36 +33,18 @@ type Me = {
   user: { user_id: string; login: string; role: string };
 };
 
-function passwordStrength(p: string): { score: 0 | 1 | 2 | 3 | 4; key: string } {
-  if (p.length === 0) return { score: 0, key: "settings.users.pw_empty" };
-  let score = 0;
-  if (p.length >= 8) score++;
-  if (/[A-Z]/.test(p) && /[a-z]/.test(p)) score++;
-  if (/\d/.test(p)) score++;
-  if (/[^A-Za-z0-9]/.test(p)) score++;
-  const key =
-    score <= 1
-      ? "settings.users.pw_weak"
-      : score === 2
-      ? "settings.users.pw_medium"
-      : score === 3
-      ? "settings.users.pw_strong"
-      : "settings.users.pw_very_strong";
-  return { score: score as 0 | 1 | 2 | 3 | 4, key };
-}
-
-function generatePassword(): string {
-  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
-  const lower = "abcdefghijkmnopqrstuvwxyz";
-  const digits = "23456789";
-  const symbols = "!@#$%^&*-_+=?";
-  const all = upper + lower + digits + symbols;
-  const pick = (set: string) => set[Math.floor(Math.random() * set.length)];
-  const must = [pick(upper), pick(lower), pick(digits), pick(symbols)];
-  const rest = Array.from({ length: 8 }, () => pick(all));
-  return [...must, ...rest]
-    .sort(() => Math.random() - 0.5)
-    .join("");
+// usePasswordResetReady — §88.8.5: подсказки «без email восстановление
+// недоступно» показываются, только когда функция включена. Иначе это фоновый
+// шум, который перестают замечать. Тот же queryKey, что у футера и формы
+// входа, — лишнего запроса не появляется.
+function usePasswordResetReady(): boolean {
+  const v = useQuery({
+    queryKey: ["version"],
+    queryFn: () => api.get<{ password_reset_ready?: boolean }>("/api/version"),
+    staleTime: Infinity,
+    retry: false,
+  });
+  return v.data?.password_reset_ready === true;
 }
 
 function relativeTime(iso?: string, lang = "en"): string {
@@ -106,6 +89,7 @@ export function UsersPanel() {
     queryKey: ["me"],
     queryFn: () => api.get<Me>("/api/auth/me"),
   });
+  const resetReady = usePasswordResetReady();
 
   const [search, setSearch] = useState("");
 
@@ -262,7 +246,18 @@ export function UsersPanel() {
                         </div>
                         <div className="text-xs text-fg-muted">
                           <span className="font-mono">{u.login}</span>
-                          {u.email && <span> · {u.email}</span>}
+                          {u.email ? (
+                            <span> · {u.email}</span>
+                          ) : (
+                            resetReady && (
+                              <span
+                                className="ml-1.5 rounded bg-warn/15 px-1.5 py-0.5 text-[11px] text-warn"
+                                title={t("settings.users.no_email_hint")}
+                              >
+                                {t("settings.users.no_email")}
+                              </span>
+                            )
+                          )}
                         </div>
                       </div>
                     </div>
@@ -274,6 +269,8 @@ export function UsersPanel() {
                           ? "bg-accent/15 text-accent"
                           : u.role === "manager"
                           ? "bg-ok/15 text-ok"
+                          : u.role === "operator"
+                          ? "bg-warn/15 text-warn"
                           : "bg-fg-muted/15 text-fg-muted"
                       }`}
                     >
@@ -660,6 +657,7 @@ type UserDialogProps = {
 
 function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: UserDialogProps) {
   const { t } = useTranslation();
+  const resetReady = usePasswordResetReady();
 
   const [login, setLogin] = useState(initial?.login ?? "");
   // §66: отображаемое имя — обязательно при создании и изменении.
@@ -717,7 +715,10 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
 
   return (
     <Modal onClose={onClose}>
-      <div className="space-y-4 w-[460px] max-w-full">
+      {/* §87.5: четвёртая роль добавила ряд карточек — без ограничения высоты
+          форма создания выталкивала бы кнопки за нижний край на низких экранах
+          (у Modal своей прокрутки нет). */}
+      <div className="space-y-4 w-[460px] max-w-full max-h-[80vh] overflow-y-auto pr-1">
         <header>
           <h3 className="text-lg font-semibold">
             {mode === "create"
@@ -781,6 +782,12 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
               placeholder="user@example.com"
               className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none"
             />
+            {/* §88.8.5: email обязательным не делаем (колонка nullable с
+                первых миграций, обязательность сломала бы существующие
+                учётки) — вместо этого предупреждаем. */}
+            {resetReady && email.trim() === "" && (
+              <p className="text-xs text-warn">{t("settings.users.no_email_hint")}</p>
+            )}
           </div>
 
           {mode === "create" && (
@@ -812,8 +819,13 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
             <label className="text-xs uppercase tracking-wider text-fg-muted">
               {t("settings.users.field.role")}
             </label>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-              {(["admin", "manager", "viewer"] as const).map((r) => {
+            {/*
+              §87.5: ролей стало четыре, и в один ряд они не помещаются — окно
+              диалога 460px, на карточку осталось бы ~97px и подсказки рвались бы
+              по слогам. Отсюда сетка 2×2; порядок — по убыванию прав.
+            */}
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {(["admin", "manager", "operator", "viewer"] as const).map((r) => {
                 const disabledLastAdmin = isLastAdmin && r !== "admin";
                 const disabledSelf = isSelf && initial?.role === "admin" && r !== "admin";
                 const disabled = disabledLastAdmin || disabledSelf;

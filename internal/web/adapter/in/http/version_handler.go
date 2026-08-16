@@ -31,6 +31,15 @@ type VersionHandler struct {
 	// решить, подставлять ли логин `admin`; больше признаков среды наружу не
 	// отдаётся.
 	devMode bool
+	// passwordResetReady — §88.4.5: восстановление пароля работоспособно
+	// (почта включена и настроена, функция разрешена, задан публичный адрес).
+	// Форма входа по нему решает, показывать ли ссылку «Забыли пароль?».
+	//
+	// Провайдер, а не чтение из БД: этот эндпоинт публичный, его опрашивают
+	// соседние инстансы (§73), и на боевой установке он не делает ни одного
+	// запроса в базу. Значение живёт в памяти процесса и обновляется по
+	// reload-событию секции mail. nil → false (fail-closed).
+	passwordResetReady func() bool
 }
 
 // NewVersionHandler — version/commit/buildDate обычно из cfg.Build; overrideAllowed
@@ -47,6 +56,14 @@ func NewVersionHandler(version, commit, buildDate string, overrideAllowed bool, 
 	}
 }
 
+// WithPasswordResetReady подключает провайдер признака §88.4.5.
+// Builder-паттерн: у конструктора и так семь позиционных аргументов, восьмой
+// сделал бы вызов нечитаемым.
+func (h *VersionHandler) WithPasswordResetReady(ready func() bool) *VersionHandler {
+	h.passwordResetReady = ready
+	return h
+}
+
 // Get godoc
 // @Summary  Версия приложения (§30, §34.3).
 // @Description  Публичный read-only эндпоинт: версия Web Service + commit/build_date. Не требует авторизации. В dev (override_allowed) version может быть переопределена настройкой.
@@ -61,12 +78,17 @@ func (h *VersionHandler) Get(c *gin.Context) {
 			version = ov
 		}
 	}
+	resetReady := false
+	if h.passwordResetReady != nil {
+		resetReady = h.passwordResetReady()
+	}
 	c.JSON(http.StatusOK, VersionResponse{
-		Version:         version,
-		Commit:          h.commit,
-		BuildDate:       h.buildDate,
-		OverrideAllowed: h.overrideAllowed,
-		Instance:        h.instance,
-		DevMode:         h.devMode,
+		Version:            version,
+		Commit:             h.commit,
+		BuildDate:          h.buildDate,
+		OverrideAllowed:    h.overrideAllowed,
+		Instance:           h.instance,
+		DevMode:            h.devMode,
+		PasswordResetReady: resetReady,
 	})
 }

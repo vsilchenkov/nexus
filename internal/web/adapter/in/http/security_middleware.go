@@ -56,12 +56,17 @@ func CSRFOriginCheck(logger logging.Logger) gin.HandlerFunc {
 }
 
 // cspPolicy — Content-Security-Policy SPA: всё с собственного origin;
-// 'unsafe-inline' только для style (Tailwind/Radix инлайнят style-атрибуты);
-// Google Fonts — эталон §21 (см. web-ui/index.html, с graceful fallback).
+// 'unsafe-inline' только для style (Tailwind/Radix инлайнят style-атрибуты).
+//
+// Внешних источников в политике нет вовсе: с §89.1 шрифты эталона §21 лежат
+// локально (web-ui/src/assets/fonts → бандл → embed.FS), Google Fonts из
+// index.html убраны, и панель полностью работоспособна в изолированном контуре.
+// font-src без data: — намеренно: инлайн шрифта в base64 запрещён на стороне
+// сборки (build.assetsInlineLimit в vite.config.ts), и политика это дублирует.
 const cspPolicy = "default-src 'self'; " +
 	"script-src 'self'; " +
-	"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
-	"font-src 'self' data: https://fonts.gstatic.com; " +
+	"style-src 'self' 'unsafe-inline'; " +
+	"font-src 'self'; " +
 	"img-src 'self' data:; " +
 	"connect-src 'self'; " +
 	"frame-ancestors 'none'"

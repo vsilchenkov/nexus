@@ -65,6 +65,12 @@ func (u *AppSettingsUsecase) Get(ctx context.Context) (*domain.AppSettings, erro
 		masked := "***"
 		s.Notifications.Telegram.BotToken = &masked
 	}
+	// §88: пароль SMTP лежит в JSONB открытым текстом (как DSN Sentry и пароль
+	// ClickHouse) — наружу он не должен выходить даже админу.
+	if s.Mail.Password != nil && *s.Mail.Password != "" {
+		masked := "***"
+		s.Mail.Password = &masked
+	}
 	return s, nil
 }
 
@@ -112,6 +118,10 @@ func (u *AppSettingsUsecase) Update(ctx context.Context, actor Actor, patch *dom
 			return err
 		}
 	}
+	// §88: заданные поля секции mail — по отдельности.
+	if err := domain.ValidateMailSettings(patch.Mail); err != nil {
+		return err
+	}
 
 	current, err := u.repo.Get(ctx)
 	if err != nil {
@@ -119,6 +129,12 @@ func (u *AppSettingsUsecase) Update(ctx context.Context, actor Actor, patch *dom
 	}
 
 	merged := mergeAppSettings(current, patch)
+	// §88: межполевые правила почты проверяются по СМЕРЖЕННОЙ секции — на
+	// патче их проверить нельзя, там половины значений просто нет (например,
+	// приходит один флаг enabled, а хост уже сохранён ранее).
+	if err := domain.ValidateMailConsistency(merged.Mail); err != nil {
+		return err
+	}
 	merged.UpdatedBy = actor.UserID
 
 	if err := u.repo.Update(ctx, merged); err != nil {
@@ -249,6 +265,52 @@ func mergeAppSettings(current, patch *domain.AppSettings) *domain.AppSettings {
 	if tg.Cron != nil {
 		out.Notifications.Telegram.Cron = tg.Cron
 	}
+
+	// Mail (§88). password не перезаписываем маской — иначе правка любого
+	// соседнего поля стирала бы сохранённый пароль релея.
+	mailPatch := patch.Mail
+	if mailPatch.Enabled != nil {
+		out.Mail.Enabled = mailPatch.Enabled
+	}
+	if mailPatch.Host != nil {
+		out.Mail.Host = mailPatch.Host
+	}
+	if mailPatch.Port != nil {
+		out.Mail.Port = mailPatch.Port
+	}
+	if mailPatch.Encryption != nil {
+		out.Mail.Encryption = mailPatch.Encryption
+	}
+	if mailPatch.AuthType != nil {
+		out.Mail.AuthType = mailPatch.AuthType
+	}
+	if mailPatch.Username != nil {
+		out.Mail.Username = mailPatch.Username
+	}
+	if mailPatch.Password != nil && *mailPatch.Password != "***" {
+		out.Mail.Password = mailPatch.Password
+	}
+	if mailPatch.FromAddress != nil {
+		out.Mail.FromAddress = mailPatch.FromAddress
+	}
+	if mailPatch.FromName != nil {
+		out.Mail.FromName = mailPatch.FromName
+	}
+	if mailPatch.HELOHost != nil {
+		out.Mail.HELOHost = mailPatch.HELOHost
+	}
+	if mailPatch.TimeoutSec != nil {
+		out.Mail.TimeoutSec = mailPatch.TimeoutSec
+	}
+	if mailPatch.SkipTLSVerify != nil {
+		out.Mail.SkipTLSVerify = mailPatch.SkipTLSVerify
+	}
+	if mailPatch.PasswordResetEnabled != nil {
+		out.Mail.PasswordResetEnabled = mailPatch.PasswordResetEnabled
+	}
+	if mailPatch.PasswordResetTTLMin != nil {
+		out.Mail.PasswordResetTTLMin = mailPatch.PasswordResetTTLMin
+	}
 	return &out
 }
 
@@ -295,7 +357,22 @@ func changedSections(p *domain.AppSettings) []string {
 	if p.Logging.Level != nil {
 		out = append(out, "logging")
 	}
+	// §88: имя обязано совпадать с reloader.SectionMail. Подписчик у секции
+	// один — провайдер признака «восстановление доступно» (сам SMTP-транспорт
+	// перезагружать нечего, соединение живёт одну отправку).
+	if mailChanged(p.Mail) {
+		out = append(out, "mail")
+	}
 	return out
+}
+
+// mailChanged — в патче задано хотя бы одно поле секции mail (§88).
+func mailChanged(m domain.MailSettings) bool {
+	return m.Enabled != nil || m.Host != nil || m.Port != nil || m.Encryption != nil ||
+		m.AuthType != nil || m.Username != nil || m.Password != nil ||
+		m.FromAddress != nil || m.FromName != nil || m.HELOHost != nil ||
+		m.TimeoutSec != nil || m.SkipTLSVerify != nil ||
+		m.PasswordResetEnabled != nil || m.PasswordResetTTLMin != nil
 }
 
 // maskSecret возвращает строку с серединой, заменённой на ***. Сохраняет

@@ -11,7 +11,8 @@ import {
 } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { teamPageUrl, useTeamUrlParam } from "./teamShare";
+import { TEAM_SCOPE_ALL_PATH, teamPagePath, teamPageUrl, useTeamUrlParam } from "./teamShare";
+import { TEAM_SCOPE_ALL } from "./teamScope";
 import { MY_TEAMS_KEY, useMyTeams, type MyTeamsResp, type TeamMembership } from "./teams";
 
 // §76: параметр `?team=<slug>` — зеркало текущей команды сессии в адресной
@@ -32,6 +33,7 @@ const ALPHA: TeamMembership = {
   slug: "alpha",
   name: "Alpha",
   ch_database: "nexus_alpha",
+  external_url: "",
   role: "admin",
 };
 const BETA: TeamMembership = {
@@ -39,6 +41,7 @@ const BETA: TeamMembership = {
   slug: "beta",
   name: "Beta",
   ch_database: "nexus_beta",
+  external_url: "",
   role: "admin",
 };
 
@@ -407,5 +410,19 @@ describe("useTeamUrlParam", () => {
 describe("teamPageUrl", () => {
   it("ведёт на рабочий стол с параметром команды", () => {
     expect(teamPageUrl("alpha")).toBe(`${window.location.origin}/?team=alpha`);
+  });
+});
+
+describe("teamPagePath", () => {
+  it("путь и абсолютная ссылка описывают один адрес", () => {
+    expect(teamPagePath("alpha")).toBe("/?team=alpha");
+    // §89.3: у кнопки «Поделиться» и у ссылок сайдбара/шапки один формат.
+    // Разъехались бы они молча — обе формы «выглядят правильно» по отдельности.
+    expect(teamPageUrl("alpha")).toBe(`${window.location.origin}${teamPagePath("alpha")}`);
+  });
+
+  it("сквозной режим не экранируется в %2A", () => {
+    expect(TEAM_SCOPE_ALL_PATH).toBe("/?team=*");
+    expect(new URLSearchParams(TEAM_SCOPE_ALL_PATH.slice(1)).get("team")).toBe(TEAM_SCOPE_ALL);
   });
 });

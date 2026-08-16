@@ -77,6 +77,10 @@ build-web:
 
 build-ui: ## Сборка SPA (web-ui) и копирование в internal/web/static
 	cd web-ui && npm install && npm run build
+# rm перед cp: `cp` ничего не удаляет, а имена ассетов хешированы — без очистки
+# каталог копил бы прежние index-<hash>.js от каждой сборки (§89.1 добавил туда
+# ещё 20 шрифтов, так что мусор стал заметен).
+	rm -rf internal/web/static/assets
 	cp -r web-ui/dist/* internal/web/static/ 2>/dev/null || true
 
 build-windows: ## Кросс-сборка под Windows (.exe)
@@ -224,7 +228,7 @@ test-int-ch: ## integration: ClickHouse/шаблоны/метрики/replay/в�
 	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestClickHouse|^TestCHTemplateRepo|^TestCHProvisioner|^TestLogReader|^TestMetricsReader|^TestReplay|^TestMultiInstance" ./tests/integration/...
 
 test-int-catalog: ## integration: каталоги/auth/сессии/нотификации/circuit-breaker
-	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestHostAllowlist|^TestHeaderCatalog|^TestAuth|^TestSession|^TestUserRoleManager|^TestUserPrefs|^TestSearchHistory|^TestAppSettingsRepo|^TestNotif|^TestCircuitBreaker" ./tests/integration/...
+	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestHostAllowlist|^TestHeaderCatalog|^TestAuth|^TestSession|^TestUserRole|^TestUserPrefs|^TestSearchHistory|^TestAppSettingsRepo|^TestNotif|^TestCircuitBreaker" ./tests/integration/...
 
 test-int-logs: ## integration: консоль служебных логов §51 (Redis+PG: шиппер/мерж/reload уровня/маскировка/неблокируемость)
 	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestServiceLogs" ./tests/integration/...

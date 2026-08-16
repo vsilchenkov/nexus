@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 
 import Login from "./pages/Login";
+import ResetPassword from "./pages/ResetPassword";
 import Overview from "./pages/Overview";
 import NodeDetail from "./pages/NodeDetail";
 import NodeSettings from "./pages/NodeSettings";
@@ -13,6 +14,7 @@ import ForcePasswordChange from "./pages/ForcePasswordChange";
 import { AppShell } from "./components/AppShell";
 import { api } from "./api/client";
 import { roleAtLeast } from "./lib/roles";
+import { useDocumentTitle } from "./lib/useDocumentTitle";
 
 // useMe — проверка текущей сессии через /api/auth/me.
 // При 401 (isError) пользователь будет редиректнут на /login.
@@ -37,12 +39,13 @@ function Protected() {
   return <AppShell />;
 }
 
-// AuditRoute — журнал действий доступен только manager+ (§26, П6). Viewer,
-// открывший /audit по прямой ссылке, редиректится на список узлов (пункт меню
-// для него скрыт, бэкенд всё равно вернул бы 403).
+// AuditRoute — журнал действий доступен operator+ (§26, П6; §87 — оператору
+// журнал нужен, чтобы понять, кто и что менял до инцидента). Viewer, открывший
+// /audit по прямой ссылке, редиректится на список узлов (пункт меню для него
+// скрыт, бэкенд всё равно вернул бы 403).
 function AuditRoute() {
   const { data } = useMe();
-  if (data && !roleAtLeast(data.user.role, "manager")) return <Navigate to="/" replace />;
+  if (data && !roleAtLeast(data.user.role, "operator")) return <Navigate to="/" replace />;
   return <AuditLog />;
 }
 
@@ -55,9 +58,19 @@ function LogsRoute() {
 }
 
 export default function App() {
+  // §89.2: код ноды в заголовке вкладки. Здесь, а не в AppShell: /api/version
+  // публичный, и вкладка ЛОГИНА обязана называться так же — иначе при
+  // нескольких открытых нодах вкладки «Nexus» неотличимы ровно в тот момент,
+  // когда человек выбирает, куда вводить пароль.
+  useDocumentTitle();
+
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      {/* §88.8.3: публичная страница задания нового пароля по ссылке из
+          письма. Объявлена ЯВНО: catch-all ниже иначе увёл бы прямой переход
+          из письма на «/». */}
+      <Route path="/reset-password" element={<ResetPassword />} />
       <Route element={<Protected />}>
         <Route path="/" element={<Overview />} />
         <Route path="/nodes/new" element={<NodeSettings />} />

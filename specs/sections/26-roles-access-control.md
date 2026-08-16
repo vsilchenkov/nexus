@@ -1,5 +1,9 @@
 ## 26. Роли доступа и RBAC
 
+> Раздел дополнен [§87](87-operator-role.md): между `viewer` и `manager`
+> появилась четвёртая роль `operator`. Иерархия, матрица и §26.2.1 ниже уже
+> учитывают её.
+
 Раздел вводит третью роль `manager` между `viewer` и `admin` и фиксирует
 полную матрицу доступа. До этого в системе было две роли (§7.1): `admin`
 (полный доступ) и `viewer` (только просмотр). Промежуточного уровня не было —
@@ -9,17 +13,27 @@
 ### 26.1 Роли и иерархия
 
 - `viewer` — только просмотр (узлы, логи, метрики, аудит). Без мутаций.
+- `operator` — эксплуатация узла: очередь, статус, повторы (§87).
 - `manager` — управление узлами; **новая роль**.
 - `admin` — полный доступ.
 
-Авторизация построена на **иерархии рангов**: `viewer (0) < manager (1) <
-admin (2)`. Проверка доступа — «роль не ниже требуемой» (`AtLeast`), поэтому
-`admin` автоматически проходит любые `manager`-проверки. На бэкенде ранги
-заданы в `domain.UserRole.Rank()`; на фронте зеркалятся в `web-ui/src/lib/roles.ts`.
+Авторизация построена на **иерархии рангов**: `viewer (0) < operator (1) <
+manager (2) < admin (3)`. Проверка доступа — «роль не ниже требуемой»
+(`AtLeast`), поэтому `admin` автоматически проходит любые `manager`-проверки, а
+`manager` — любые операторские. На бэкенде ранги заданы в
+`domain.UserRole.Rank()`; на фронте зеркалятся в `web-ui/src/lib/roles.ts`.
+
+Ранг — величина **вычисляемая**: в БД, в сессии Redis и в JSON API живёт строка
+роли, а не её номер. Поэтому роль `operator` удалось вставить в середину
+иерархии (со сдвигом `manager` 1→2, `admin` 2→3) без миграции данных и без
+инвалидации уже выданных сессий. Свойство обязано сохраняться — как только ранг
+где-нибудь запишется на диск, следующая роль в середине станет ломающим
+изменением.
 
 Роль хранится в существующей колонке `users.role` (без новых таблиц). Миграция
 `0013_user_role_manager` расширяет CHECK-constraint до
-`('admin','manager','viewer')`.
+`('admin','manager','viewer')`, `0035_user_role_operator` — до
+`('admin','manager','operator','viewer')`.
 
 ### 26.2 Что может `manager`
 
@@ -35,28 +49,51 @@ admin (2)`. Проверка доступа — «роль не ниже тре�
   (§19), переносить узлы между командами (`/api/nodes/:id/move` — операция
   multi-tenancy, остаётся за `admin`).
 
+### 26.2.1 Что может `operator`
+
+Оператор — урезанный менеджер: **эксплуатация узла без права его менять**
+(полное описание и обоснование границ — [§87](87-operator-role.md)).
+
+- **Может**: всё доступное `viewer`, плюс вкладку «Очередь» целиком (§35),
+  смену статуса узла (`PATCH /api/nodes/:id/status`), сброс circuit breaker
+  (§81.4), повтор запросов из логов — одиночный (§7.4.1) и за период (§85), —
+  и чтение Audit log (§7.13).
+- **Не может**: CRUD узлов, копирование (§53), dry-run (§7.5.1), схему
+  CH-таблицы (§56), мутации каталогов Allowed Hosts / Headers, а также всё, что
+  закрыто от `manager`.
+
+Возможности оператора — строгое подмножество возможностей менеджера, поэтому
+линейная иерархия рангов сохраняется и решётка прав не вводится.
+
 ### 26.3 Матрица доступа (endpoint × роль)
 
 Минимальная роль для группы эндпоинтов (роль выше по иерархии тоже проходит):
 
-| Группа / endpoint | viewer | manager | admin |
-|---|---|---|---|
-| Чтение узлов/логов/метрик (`GET /api/nodes`, `/logs`, `/metrics/*`) | ✅ | ✅ | ✅ |
-| Свои API-токены (`/api/tokens`) | ✅ | ✅ | ✅ |
-| Смена своего пароля (`POST /api/me/password`) | ✅ | ✅ | ✅ |
-| Узлы CRUD + dry-run (`POST/PUT/DELETE /api/nodes`, `/api/nodes/dry-run`) | ⛔ | ✅ | ✅ |
-| Каталоги Allowed Hosts / Headers (мутации, привязки) | ⛔ | ✅ | ✅ |
-| Audit log (чтение, `GET /api/audit`, `/api/audit/export.csv`) | ⛔ | ✅ | ✅ |
-| Перенос узла между командами (`POST /api/nodes/:id/move`) | ⛔ | ⛔ | ✅ |
-| Управление пользователями (`/api/users/*`) | ⛔ | ⛔ | ✅ |
-| Управление командами (`/api/teams/*`) | ⛔ | ⛔ | ✅ |
-| Общие настройки (`/api/settings/app`, CH/Sentry/Telegram test) | ⛔ | ⛔ | ✅ |
-| Шаблоны таблиц ClickHouse (мутации, `/api/ch-templates`) | ⛔ | ⛔ | ✅ |
-| Orphan-таблицы ClickHouse (`/api/settings/clickhouse/orphans`) | ⛔ | ⛔ | ✅ |
+| Группа / endpoint | viewer | operator | manager | admin |
+|---|---|---|---|---|
+| Чтение узлов/логов/метрик (`GET /api/nodes`, `/logs`, `/metrics/*`) | ✅ | ✅ | ✅ | ✅ |
+| Свои API-токены (`/api/tokens`) | ✅ | ✅ | ✅ | ✅ |
+| Смена своего пароля (`POST /api/me/password`) | ✅ | ✅ | ✅ | ✅ |
+| Управление очередью узла (`/api/nodes/:id/async-queue/*`, §35.5, §87) | ⛔ | ✅ | ✅ | ✅ |
+| Смена статуса узла — пауза/отключение/включение (`PATCH /api/nodes/:id/status`) | ⛔ | ✅ | ✅ | ✅ |
+| Сброс circuit breaker (`POST /api/nodes/:id/breaker/reset`, §81.4) | ⛔ | ✅ | ✅ | ✅ |
+| Повтор из логов (`POST /api/logs/:id/replay`, `/logs/replay-period/*`, §85.9) | ⛔ | ✅ | ✅ | ✅ |
+| Audit log (чтение, `GET /api/audit`, `/api/audit/export.csv`) | ⛔ | ✅ | ✅ | ✅ |
+| Узлы CRUD + dry-run + копия (`POST/PUT/DELETE /api/nodes`, `/api/nodes/dry-run`, `/copy`) | ⛔ | ⛔ | ✅ | ✅ |
+| Схема CH узла, ack-preview, проверка внешней таблицы и RabbitMQ | ⛔ | ⛔ | ✅ | ✅ |
+| Каталоги Allowed Hosts / Headers (мутации, привязки) | ⛔ | ⛔ | ✅ | ✅ |
+| Перенос узла между командами (`POST /api/nodes/:id/move`) | ⛔ | ⛔ | ⛔ | ✅ |
+| Управление пользователями (`/api/users/*`) | ⛔ | ⛔ | ⛔ | ✅ |
+| Управление командами (`/api/teams/*`) | ⛔ | ⛔ | ⛔ | ✅ |
+| Общие настройки (`/api/settings/app`, CH/Sentry/Telegram test) | ⛔ | ⛔ | ⛔ | ✅ |
+| Шаблоны таблиц ClickHouse (мутации, `/api/ch-templates`) | ⛔ | ⛔ | ⛔ | ✅ |
+| Orphan-таблицы ClickHouse (`/api/settings/clickhouse/orphans`) | ⛔ | ⛔ | ⛔ | ✅ |
+| Мониторинг Kafka (`/api/kafka/*`), реестр инстансов (`/api/instances/*`), логи сервисов (`/api/logs`) | ⛔ | ⛔ | ⛔ | ✅ |
 
 В UI вкладки Settings гейтятся по той же иерархии (`minRole`): `users`,
 `teams`, `sentry`, `clickhouse`, `notifications` → `admin`; `allowed-hosts` →
-`manager`; `tokens`, `language`, `password` → все роли.
+`manager`; `tokens`, `language`, `password` → все роли. Роль `operator` вкладок
+Settings не добавляет.
 
 ### 26.4 Self-service смена своего пароля
 

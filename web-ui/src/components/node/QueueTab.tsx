@@ -75,7 +75,9 @@ export function QueueTab({
   const qc = useQueryClient();
   const confirm = useConfirm();
   const id = node.id;
-  const isManager = useRoleAtLeast("manager");
+  // §87: вкладка «Очередь» целиком — работа оператора (очередь, статус, повторы,
+  // сброс защиты). Конфигурация узла осталась за manager+ и живёт вне этой вкладки.
+  const canOperate = useRoleAtLeast("operator");
   const hasLogsTable = !!node.clickhouse_table;
   // §69.1: очередь в Kafka есть у requestAsync и pull-узлов (RabbitMQAsync) —
   // они идут через один топик nexus.async. У sync-узла её нет.
@@ -109,13 +111,13 @@ export function QueueTab({
     return { enabled: true, title: undefined as string | undefined };
   }, [node.logging_enabled, node.log_request_body, hasLogsTable, t]);
 
-  // Живая очередь (pending) — manager+ («Управление узлами»). На паузе опрашиваем
+  // Живая очередь (pending) — operator+ (§87). На паузе опрашиваем
   // часто (очередь наполняется, нужна живая обратная связь); если есть pending —
   // реже; на enabled с пустой очередью — не молотим Kafka впустую.
   const pendingQ = useQuery({
     queryKey: ["aq-list", id],
     queryFn: () => api.get<ListResp>(`/api/nodes/${id}/async-queue/messages`),
-    enabled: isManager && isAsync,
+    enabled: canOperate && isAsync,
     refetchInterval: (q) => {
       if (node.status === "paused") return 4_000;
       const data = q.state.data as ListResp | undefined;
@@ -125,10 +127,10 @@ export function QueueTab({
   const pending = pendingQ.data?.items ?? [];
   const pendingCount = pending.length;
   const pendingCapped = pendingQ.data?.capped ?? false;
-  // Секцию показываем всегда (для manager+) — пустое состояние объясняет, почему
+  // Секцию показываем всегда (для operator+) — пустое состояние объясняет, почему
   // на активном узле в очереди пусто (см. §35: неудачи уходят в логи/DLQ).
   // У sync-узла очереди не существует — секции нет вовсе (§69.1).
-  const showPending = isManager && isAsync;
+  const showPending = canOperate && isAsync;
 
   // Неудачные доставки — ClickHouse (done=0) за период.
   // ВАЖНО: в queryKey — стабильный periodKey(period), НЕ periodWindow(period).
@@ -229,7 +231,7 @@ export function QueueTab({
         {/* §85: повтор запросов из логов за период. Не в секции «Неудачные
             доставки»: операция идёт по ВСЕМ записям окна, а не по её
             подмножеству, и место рядом с фильтром периода это отражает. */}
-        {isManager && isAsync && (
+        {canOperate && isAsync && (
           <Button
             sm
             variant="ghost"
@@ -250,7 +252,7 @@ export function QueueTab({
         {isAsync && (
           <Kpi
             label={t("queue.kpi.pending")}
-            value={isManager ? `${pendingCount}${pendingCapped ? "+" : ""}` : "—"}
+            value={canOperate ? `${pendingCount}${pendingCapped ? "+" : ""}` : "—"}
             hint={t("queue.kpi.pending_hint")}
           />
         )}
@@ -278,7 +280,7 @@ export function QueueTab({
                 ? t("queue.banner.state_disabled")
                 : t(isAsync ? "queue.banner.explain" : "queue.banner.explain_sync")}
           </p>
-          {isManager && (
+          {canOperate && (
             <div className="flex flex-wrap gap-2">
               {node.status !== "enabled" && (
                 <Button
@@ -408,7 +410,7 @@ export function QueueTab({
           <div className="flex flex-wrap items-center justify-end gap-2">
             {/* §36.11/§36.10: повтор всех сейчас + очистка неудачных. Manager+
                 («Управление узлами»; маршруты async-queue под authedManager). */}
-            {isManager && hasLogsTable && (
+            {canOperate && hasLogsTable && (
               <>
                 <Button
                   sm
@@ -517,7 +519,7 @@ export function QueueTab({
                     open={failedExpanded === r.id}
                     onToggle={() => setFailedExpanded(failedExpanded === r.id ? null : r.id)}
                     onReplay={() => setReplay({ id: r.id, httpMethod: r.http_method })}
-                    canReplay={isManager}
+                    canReplay={canOperate}
                   />
                 ))}
                 {failedLogs.query.isFetchingNextPage && (
@@ -728,7 +730,7 @@ function FailedRow({
           {r.reason}
         </td>
         <td className="px-2 py-2">
-          {/* §7.4.1/§58: replay — manager+. viewer видит кнопку disabled. */}
+          {/* §7.4.1/§58/§87: replay — operator+. viewer видит кнопку disabled. */}
           <button
             type="button"
             disabled={!canReplay}

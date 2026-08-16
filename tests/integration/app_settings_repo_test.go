@@ -125,3 +125,57 @@ func TestAppSettingsRepo_LoggingRoundTrip_E2E(t *testing.T) {
 	require.NotNil(t, got.Logging.Level, "logging.level должен сохраниться")
 	require.Equal(t, 5, *got.Logging.Level)
 }
+
+// TestAppSettingsRepo_MailRoundTrip_E2E (§88.2): та же регрессия для секции
+// mail. Пропуск секции в анонимной структуре Update означал бы, что настройки
+// релея «сохраняются» в UI и молча исчезают из БД — а обнаружилось бы это
+// только неотправленным письмом восстановления пароля.
+//
+// Проверяются все поля секции: забытое поле теряется ровно так же, как
+// забытая секция.
+func TestAppSettingsRepo_MailRoundTrip_E2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	pool, cleanup := startPostgres(t, ctx)
+	defer cleanup()
+
+	repo := pgrepo.NewAppSettingsRepoPg(pool, logging.NewNoop())
+
+	in := &domain.AppSettings{Mail: domain.MailSettings{
+		Enabled:              new(true),
+		Host:                 new("smtp.example.com"),
+		Port:                 new(465),
+		Encryption:           new(domain.MailEncryptionTLS),
+		AuthType:             new(domain.MailAuthLogin),
+		Username:             new("noreply@example.com"),
+		Password:             new("smtp-secret"),
+		FromAddress:          new("nexus@example.com"),
+		FromName:             new("Шина"),
+		HELOHost:             new("nexus.example.com"),
+		TimeoutSec:           new(42),
+		SkipTLSVerify:        new(true),
+		PasswordResetEnabled: new(true),
+		PasswordResetTTLMin:  new(30),
+	}}
+	require.NoError(t, repo.Update(ctx, in))
+
+	got, err := repo.Get(ctx)
+	require.NoError(t, err)
+
+	m := got.Mail.Resolve()
+	require.True(t, m.Enabled, "секция mail должна пережить сохранение")
+	require.Equal(t, "smtp.example.com", m.Host)
+	require.Equal(t, 465, m.Port)
+	require.Equal(t, domain.MailEncryptionTLS, m.Encryption)
+	require.Equal(t, domain.MailAuthLogin, m.AuthType)
+	require.Equal(t, "noreply@example.com", m.Username)
+	require.Equal(t, "smtp-secret", m.Password, "репозиторий отдаёт пароль как есть; маскирует usecase")
+	require.Equal(t, "nexus@example.com", m.FromAddress)
+	require.Equal(t, "Шина", m.FromName)
+	require.Equal(t, "nexus.example.com", m.HELOHost)
+	require.Equal(t, 42, m.TimeoutSec)
+	require.True(t, m.SkipTLSVerify)
+	require.True(t, m.PasswordResetEnabled)
+	require.Equal(t, 30, m.PasswordResetTTLMin)
+}

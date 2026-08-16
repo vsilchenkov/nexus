@@ -31,7 +31,7 @@ type createUserRequest struct {
 	Name               string `json:"name" binding:"required,min=1,max=255"`
 	Email              string `json:"email" binding:"omitempty,email,max=255"`
 	Password           string `json:"password" binding:"omitempty,min=8,max=128"`
-	Role               string `json:"role" binding:"required,oneof=admin viewer manager"`
+	Role               string `json:"role" binding:"required,oneof=admin viewer manager operator"`
 	Active             bool   `json:"active"`
 	Lang               string `json:"lang" binding:"omitempty,oneof=en ru"`
 	MustChangePassword bool   `json:"must_change_password"`
@@ -41,7 +41,7 @@ type updateUserRequest struct {
 	// Name — отображаемое имя (§66), обязательно и при обновлении.
 	Name               string `json:"name" binding:"required,min=1,max=255"`
 	Email              string `json:"email" binding:"omitempty,email,max=255"`
-	Role               string `json:"role" binding:"required,oneof=admin viewer manager"`
+	Role               string `json:"role" binding:"required,oneof=admin viewer manager operator"`
 	Active             bool   `json:"active"`
 	Lang               string `json:"lang" binding:"omitempty,oneof=en ru"`
 	MustChangePassword bool   `json:"must_change_password"`
@@ -213,7 +213,8 @@ func (h *UserHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	// Запрет самому себе менять свою роль на viewer (§7.9).
+	// Запрет самому себе понижать роль (§7.9): условие «роль в запросе ≠ admin»,
+	// то есть закрыты ВСЕ не-админские роли, а не только viewer. С §87 их три.
 	if actor := userActor(c); actor.UserID == id && domain.UserRole(req.Role) != domain.UserRoleAdmin {
 		c.JSON(http.StatusForbidden, gin.H{"error": "cannot demote yourself"})
 		return

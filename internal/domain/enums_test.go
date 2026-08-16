@@ -174,6 +174,7 @@ func TestUserRole_Valid_And_IsAdmin(t *testing.T) {
 	}{
 		{"admin", UserRoleAdmin, true, true},
 		{"manager", UserRoleManager, true, false},
+		{"operator", UserRoleOperator, true, false},
 		{"viewer", UserRoleViewer, true, false},
 		{"empty", UserRole(""), false, false},
 		{"editor-not-supported", UserRole("editor"), false, false},
@@ -194,11 +195,13 @@ func TestUserRole_Valid_And_IsAdmin(t *testing.T) {
 
 func TestUserRole_Rank_And_AtLeast(t *testing.T) {
 	t.Parallel()
-	// Иерархия: viewer < manager < admin (§26).
-	if UserRoleViewer.Rank() >= UserRoleManager.Rank() ||
+	// Иерархия: viewer < operator < manager < admin (§26, §87).
+	if UserRoleViewer.Rank() >= UserRoleOperator.Rank() ||
+		UserRoleOperator.Rank() >= UserRoleManager.Rank() ||
 		UserRoleManager.Rank() >= UserRoleAdmin.Rank() {
-		t.Fatalf("ожидалось viewer(%d) < manager(%d) < admin(%d)",
-			UserRoleViewer.Rank(), UserRoleManager.Rank(), UserRoleAdmin.Rank())
+		t.Fatalf("ожидалось viewer(%d) < operator(%d) < manager(%d) < admin(%d)",
+			UserRoleViewer.Rank(), UserRoleOperator.Rank(),
+			UserRoleManager.Rank(), UserRoleAdmin.Rank())
 	}
 	cases := []struct {
 		name string
@@ -213,6 +216,15 @@ func TestUserRole_Rank_And_AtLeast(t *testing.T) {
 		{"viewer < manager", UserRoleViewer, UserRoleManager, false},
 		{"viewer >= viewer", UserRoleViewer, UserRoleViewer, true},
 		{"unknown < manager", UserRole("editor"), UserRoleManager, false},
+		// §87: оператор проходит свои гейты, но не менеджерские.
+		{"operator >= operator", UserRoleOperator, UserRoleOperator, true},
+		{"operator >= viewer", UserRoleOperator, UserRoleViewer, true},
+		{"operator < manager", UserRoleOperator, UserRoleManager, false},
+		{"operator < admin", UserRoleOperator, UserRoleAdmin, false},
+		{"manager >= operator", UserRoleManager, UserRoleOperator, true},
+		{"admin >= operator", UserRoleAdmin, UserRoleOperator, true},
+		{"viewer < operator", UserRoleViewer, UserRoleOperator, false},
+		{"unknown < operator", UserRole("editor"), UserRoleOperator, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

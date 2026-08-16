@@ -1,4 +1,4 @@
-import { keepPreviousData, useQueries } from "@tanstack/react-query";
+import { keepPreviousData, useQueries, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api, type NodesThroughputResp } from "../api/client";
@@ -46,6 +46,11 @@ export type VisibleMetricsOptions = {
   // «по мере появления в поле зрения» это замыкается в круг — отфильтрованные
   // строки не рендерятся, значит не становятся видимыми, значит их метрики
   // никогда не запрашиваются, и список остаётся пустым навсегда.
+  //
+  // §86.10: на обычном пути набор пуст — статус всех узлов приходит срезом
+  // шапки, и досылать сюда весь список незачем. Механизм остался страховкой на
+  // случай, когда среза нет (старый бэкенд, недоступный ClickHouse); решение
+  // «нужен ли он сейчас» принимает вызывающий (Overview, statusCandidates).
   preload?: string[];
 };
 
@@ -54,6 +59,12 @@ export type VisibleMetrics = {
   items: Map<string, NodesThroughputResp["items"][number]>;
   // observe — ref-callback для строки/карточки узла.
   observe: (nodeId: string) => (el: Element | null) => void;
+  // refresh — перезапросить УЖЕ загруженные пачки (§86.11, ручное обновление).
+  //
+  // Именно перезапрос, а не сброс: сброс пачек погасил бы показанные цифры в
+  // «—» и заставил бы ClickHouse считать те же узлы заново, пройдя ещё и через
+  // пересев по наблюдателю. Состав пачек при обновлении не меняется.
+  refresh: () => Promise<void>;
 };
 
 // chunk — нарезка на пачки фиксированного размера.
@@ -91,14 +102,16 @@ export function useVisibleNodeMetrics(opts: VisibleMetricsOptions): VisibleMetri
   const refCache = useRef<Map<string, (el: Element | null) => void>>(new Map());
   const observer = useRef<IntersectionObserver | null>(null);
   const nodeByEl = useRef<Map<Element, string>>(new Map());
-
-  // Смена скоупа или периода обнуляет накопленное: узлы прежнего режима к новым
-  // ключам отношения не имеют, а пачки должны собраться заново.
-  useEffect(() => {
-    pending.current.clear();
-    known.current.clear();
-    setChunks([]);
-  }, [scopeKey, periodKey]);
+  // visibleNow — узлы, которые ПРЯМО СЕЙЧАС в поле зрения.
+  //
+  // Нужен пересеву после смены периода: IntersectionObserver сообщает только об
+  // ИЗМЕНЕНИИ видимости, а строки, уже стоящие на экране, границу не пересекают
+  // — событий по ним не будет. Без этого набора сброшенные метрики видимых строк
+  // не запрашивались заново, и таблица оживала только от прокрутки.
+  const visibleNow = useRef<Set<string>>(new Set());
+  // elByNode — обратная карта к nodeByEl: нужна, чтобы по id отписать элемент
+  // при размонтировании (ref с null самого элемента уже не приносит).
+  const elByNode = useRef<Map<string, Element>>(new Map());
 
   const flush = useCallback(() => {
     if (pending.current.size === 0) return;
@@ -106,6 +119,24 @@ export function useVisibleNodeMetrics(opts: VisibleMetricsOptions): VisibleMetri
     pending.current.clear();
     setChunks((prev) => [...prev, ...chunk(add, CHUNK_SIZE)]);
   }, []);
+
+  // Смена скоупа или периода обнуляет накопленное: узлы прежнего режима к новым
+  // ключам отношения не имеют, а пачки должны собраться заново.
+  //
+  // И сразу же пересеваются те, что на экране: иначе видимые строки остались бы
+  // с прочерками до первой прокрутки — наблюдатель по ним молчит, потому что их
+  // видимость не менялась. Пересев идёт через тот же pending, поэтому пачки
+  // остаются заморожёнными.
+  useEffect(() => {
+    pending.current.clear();
+    known.current.clear();
+    setChunks([]);
+    for (const id of visibleNow.current) {
+      known.current.add(id);
+      pending.current.add(id);
+    }
+    if (pending.current.size > 0) flush();
+  }, [scopeKey, periodKey, flush]);
 
   // Досыл preload-набора. Идёт через тот же known/pending, что и прокрутка,
   // поэтому уже запрошенные узлы не запрашиваются повторно, а пачки остаются
@@ -141,9 +172,17 @@ export function useVisibleNodeMetrics(opts: VisibleMetricsOptions): VisibleMetri
     const io = new IntersectionObserver(
       (entries) => {
         for (const e of entries) {
-          if (!e.isIntersecting) continue;
           const id = nodeByEl.current.get(e.target);
-          if (id) markVisible(id);
+          if (!id) continue;
+          // Уход строки из поля зрения тоже отслеживаем — набор visibleNow
+          // обязан оставаться правдой, иначе пересев после смены периода
+          // запросит метрики для половины списка.
+          if (!e.isIntersecting) {
+            visibleNow.current.delete(id);
+            continue;
+          }
+          visibleNow.current.add(id);
+          markVisible(id);
         }
       },
       { rootMargin: ROOT_MARGIN },
@@ -170,7 +209,21 @@ export function useVisibleNodeMetrics(opts: VisibleMetricsOptions): VisibleMetri
       const cached = refCache.current.get(nodeId);
       if (cached) return cached;
       const ref = (el: Element | null) => {
-        if (!el) return;
+        // Размонтирование строки (смена фильтра, поиск, переключение вида):
+        // React зовёт ref с null. Убираем узел из наблюдения и из набора
+        // видимых — иначе он остался бы «на экране» навсегда, и пересев после
+        // смены периода запрашивал бы метрики для давно исчезнувших строк.
+        if (!el) {
+          const prev = elByNode.current.get(nodeId);
+          if (prev) {
+            observer.current?.unobserve(prev);
+            nodeByEl.current.delete(prev);
+            elByNode.current.delete(nodeId);
+          }
+          visibleNow.current.delete(nodeId);
+          return;
+        }
+        elByNode.current.set(nodeId, el);
         nodeByEl.current.set(el, nodeId);
         // Наблюдателя может ещё не быть (строка отрисована раньше, чем режим
         // стал активен) — такие элементы подхватывает эффект создания
@@ -211,5 +264,12 @@ export function useVisibleNodeMetrics(opts: VisibleMetricsOptions): VisibleMetri
     },
   });
 
-  return { items, observe };
+  // Ключ-префикс пачек: react-query матчит queryKey по префиксу, поэтому одним
+  // вызовом накрываются все пачки текущего скоупа и периода — и только они.
+  const qc = useQueryClient();
+  const refresh = useCallback(async () => {
+    await qc.refetchQueries({ queryKey: ["metrics-nodes-chunk", scopeKey, periodKey] });
+  }, [qc, scopeKey, periodKey]);
+
+  return { items, observe, refresh };
 }

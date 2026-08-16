@@ -69,14 +69,23 @@ type Metrics struct {
 	AckRenderFailedTotal *prometheus.CounterVec
 	// Phase AUD.8: сбои проверки rate-limit'а (fail-open, §9.4) по scope ключа.
 	RateLimitCheckErrorsTotal *prometheus.CounterVec
-	RequestDuration           *prometheus.HistogramVec
-	KafkaLag                  *prometheus.GaugeVec
-	KafkaInFlight             *prometheus.GaugeVec     // §31: сообщения «в полёте» (fetched, не committed)
-	KafkaProduceDuration      *prometheus.HistogramVec // §31: длительность публикации в Kafka по топику
-	CHBufferSize              *prometheus.GaugeVec
-	CHErrorsTotal             *prometheus.CounterVec
-	CHDroppedTotal            *prometheus.CounterVec
-	CHFallbackTotal           *prometheus.CounterVec
+	// §88.5: исходы запросов восстановления пароля. Наружу все исходы дают
+	// один ответ, а письмо уходит фоном — без этого счётчика «письма не
+	// доходят» невидимо целиком.
+	PasswordResetRequestsTotal *prometheus.CounterVec
+	// §88.9: отправки писем по назначению и исходу + длительность. Письмо
+	// уходит фоном и пользователю о сбое не сообщается — без этих рядов
+	// «письма не доходят» не видно ниоткуда, кроме служебного лога.
+	MailSendTotal        *prometheus.CounterVec
+	MailSendDuration     *prometheus.HistogramVec
+	RequestDuration      *prometheus.HistogramVec
+	KafkaLag             *prometheus.GaugeVec
+	KafkaInFlight        *prometheus.GaugeVec     // §31: сообщения «в полёте» (fetched, не committed)
+	KafkaProduceDuration *prometheus.HistogramVec // §31: длительность публикации в Kafka по топику
+	CHBufferSize         *prometheus.GaugeVec
+	CHErrorsTotal        *prometheus.CounterVec
+	CHDroppedTotal       *prometheus.CounterVec
+	CHFallbackTotal      *prometheus.CounterVec
 
 	L2CacheHits      *prometheus.CounterVec
 	L2CacheMisses    prometheus.Counter
@@ -198,6 +207,30 @@ func New(service string, opts ...Option) *Metrics {
 			Help:        "Rate limit checks that failed (e.g. Redis down) and were allowed fail-open, by key scope.",
 			ConstLabels: constLabels,
 		}, []string{"scope"}),
+
+		// §88.5: result — sent | user_not_found | no_email | inactive |
+		// email_ambiguous | too_many_active | mail_disabled | send_failed.
+		// Рост send_failed означает, что пользователи ждут писем, которых нет:
+		// в ответе формы это неразличимо by design.
+		PasswordResetRequestsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "nexus_password_reset_requests_total",
+			Help:        "Password reset requests by outcome (§88).",
+			ConstLabels: constLabels,
+		}, []string{"result"}),
+
+		// §88.9: purpose — password_reset | test; result — ok | error.
+		MailSendTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "nexus_mail_send_total",
+			Help:        "Outgoing emails by purpose and result (§88).",
+			ConstLabels: constLabels,
+		}, []string{"purpose", "result"}),
+
+		MailSendDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:        "nexus_mail_send_duration_seconds",
+			Help:        "SMTP send duration by purpose (§88).",
+			ConstLabels: constLabels,
+			Buckets:     []float64{0.1, 0.25, 0.5, 1, 2, 5, 10, 30},
+		}, []string{"purpose"}),
 
 		RequestDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:        "nexus_request_duration_seconds",
@@ -359,6 +392,9 @@ func New(service string, opts ...Option) *Metrics {
 		m.AsyncIngressRejectedTotal,
 		m.AckRenderFailedTotal,
 		m.RateLimitCheckErrorsTotal,
+		m.PasswordResetRequestsTotal,
+		m.MailSendTotal,
+		m.MailSendDuration,
 		m.RequestDuration,
 		m.KafkaLag,
 		m.KafkaInFlight,
@@ -405,6 +441,19 @@ func (m *Metrics) SetSchemaState(version uint, ahead bool) {
 // пропусков при недоступном Redis (Phase AUD.8).
 func (m *Metrics) IncRateLimitCheckError(scope string) {
 	m.RateLimitCheckErrorsTotal.WithLabelValues(scope).Inc()
+}
+
+// IncPasswordResetRequest реализует usecase.PasswordResetMetrics: учёт исхода
+// запроса восстановления пароля (§88.5).
+func (m *Metrics) IncPasswordResetRequest(result string) {
+	m.PasswordResetRequestsTotal.WithLabelValues(result).Inc()
+}
+
+// ObserveMailSend реализует usecase.MailMetrics: исход и длительность одной
+// отправки письма (§88.9).
+func (m *Metrics) ObserveMailSend(purpose, result string, seconds float64) {
+	m.MailSendTotal.WithLabelValues(purpose, result).Inc()
+	m.MailSendDuration.WithLabelValues(purpose).Observe(seconds)
 }
 
 // IncL2Hit реализует nodecache.L2Metrics: счётчик попаданий в L2-кеш.

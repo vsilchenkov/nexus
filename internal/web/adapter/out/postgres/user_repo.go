@@ -59,6 +59,42 @@ func (r *UserRepoPg) GetByLogin(ctx context.Context, login string) (*domain.User
 	return r.scanRow(r.pool.QueryRow(ctx, `SELECT `+userCols+` FROM users u WHERE u.login = $1`, login))
 }
 
+// GetByEmail — поиск без учёта регистра (§88.4.2), под индексом
+// users_email_lower_idx (миграция 0036).
+//
+// Колонка не уникальна, поэтому берём ДВЕ строки: несколько совпадений —
+// domain.ErrUserEmailAmbiguous, и вызывающий трактует их как «не найден».
+// Иначе владелец адреса, который делят двое, получил бы ссылку на чужую
+// учётную запись.
+func (r *UserRepoPg) GetByEmail(ctx context.Context, email string) (*domain.User, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+userCols+` FROM users u WHERE lower(u.email) = lower($1) LIMIT 2`, email)
+	if err != nil {
+		return nil, fmt.Errorf("user get by email: %w", err)
+	}
+	defer rows.Close()
+
+	var users []*domain.User
+	for rows.Next() {
+		u, scanErr := r.scanRow(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		users = append(users, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("user get by email: %w", err)
+	}
+	switch len(users) {
+	case 0:
+		return nil, domain.ErrUserNotFound
+	case 1:
+		return users[0], nil
+	default:
+		return nil, domain.ErrUserEmailAmbiguous
+	}
+}
+
 func (r *UserRepoPg) List(ctx context.Context, f port.ListUsersFilter) ([]*domain.User, error) {
 	// Phase 11.A: scope по членству в команде через JOIN user_teams.
 	// userCols квалифицированы алиасом u, чтобы created_at не был

@@ -34,6 +34,7 @@ import (
 	"nexus/internal/platform/healthcheck"
 	"nexus/internal/platform/i18n"
 	"nexus/internal/platform/logging"
+	"nexus/internal/platform/mail"
 	"nexus/internal/platform/metrics"
 	"nexus/internal/platform/nodeevents"
 	otelpf "nexus/internal/platform/otel"
@@ -309,17 +310,28 @@ func (a *App) Start(ctx context.Context) error {
 		}
 		return *s.General.VersionOverride
 	}
+	// §88.4.5: признак «восстановление доступно» держится в памяти процесса и
+	// обновляется по reload-событию секции mail — публичный /api/version не
+	// должен ходить в БД (его опрашивают и соседние инстансы §73).
+	mailAvailability := usecase.NewMailAvailabilityProvider(appSettingsRepo, a.logger)
+	if err := mailAvailability.Refresh(ctx); err != nil {
+		a.logger.Warn("mail availability initial read failed", a.logger.Err(err))
+	}
+
 	r.GET("/api/version", httpadapter.NewVersionHandler(
 		a.cfg.Build.Version, a.cfg.Build.Commit, a.cfg.Build.BuildDate,
 		a.cfg.Web.AllowVersionOverride, versionOverride,
 		a.identity.ID.String(), // §70.8: бейдж ноды в шапке
 		a.cfg.Web.DevMode,      // §85.8: префилл логина только на стенде
-	).Get)
+	).WithPasswordResetReady(mailAvailability.Get).Get)
 	// Telegram-клиент (§20): для тестовой отправки и планировщика уведомлений.
 	telegramClient := telegram.New(a.logger)
+	// SMTP-отправитель (§88.3): тестовое письмо и восстановление пароля.
+	mailSender := mail.New(a.logger)
 	// SettingsTester (Phase 6.3.2.6): test connection без сохранения.
 	settingsTester := usecase.NewSettingsTester(
 		appSettingsRepo, a.cfg, chpf.New, usecase.DefaultSentryClientFactory, telegramClient,
+		mailSender, a.metrics,
 		a.cfg.Build.ProjectName, a.cfg.Build.Version, a.logger,
 	)
 
@@ -351,6 +363,11 @@ func (a *App) Start(ctx context.Context) error {
 		a.logger.Warn("seed session TTL from app_settings failed; using env fallback", a.logger.Err(err))
 	}
 	reloadSub.Register(reloader.SectionSecurity, applySessionTTL)
+
+	// §88.4.5: единственный подписчик секции mail. Сам SMTP-транспорт
+	// перезагружать нечего (соединение живёт одну отправку) — обновляется
+	// признак доступности восстановления, который отдаёт /api/version.
+	reloadSub.Register(reloader.SectionMail, mailAvailability.Refresh)
 
 	// §51: runtime-уровень логов из app_settings.logging.level (+ сид старта).
 	applyLogLevel := bootstrap.LogLevelReloader(a.pg, a.logCtl, a.logger)
@@ -453,6 +470,29 @@ func (a *App) Start(ctx context.Context) error {
 	// Анти-брутфорс /api/auth/login (Phase AUD.4): лимит попыток на IP и
 	// на login через общий Redis-лимитер; fail-open при сбое Redis (§9.4).
 	authUC.WithLoginRateLimit(rl, a.cfg.Web.LoginRateLimitPerMin)
+
+	// §88: восстановление пароля. Шаблоны разбираются один раз; ошибка не
+	// валит сервис — почта деградирует, остальной интерфейс работает.
+	var passwordResetHandler *httpadapter.PasswordResetHandler
+	if mailTemplates, tplErr := mail.NewTemplates(); tplErr != nil {
+		a.logger.ErrorWithOp("mail templates parse failed; password reset disabled",
+			tplErr, "web.mail_templates")
+	} else {
+		oneTimeTokenRepo := pgrepo.NewOneTimeTokenRepoPg(a.pg, a.logger)
+		// §88.7: смена пароля гасит выданные ссылки. Хук ставится на
+		// ChangePassword — единственную точку смены, — поэтому покрывает и
+		// админскую смену, и self-service, и само восстановление.
+		authUC.WithPasswordResetInvalidator(oneTimeTokenRepo)
+
+		passwordResetUC := usecase.NewPasswordResetUsecase(
+			userRepo, oneTimeTokenRepo, appSettingsRepo, mailSender, mailTemplates,
+			authUC, auditUC, a.cfg.Build.ProjectName, a.identity.ID.String(), a.logger,
+			usecase.WithPasswordResetMetrics(a.metrics),
+			usecase.WithPasswordResetMailMetrics(a.metrics),
+		)
+		passwordResetHandler = httpadapter.NewPasswordResetHandler(
+			passwordResetUC, rl, a.cfg.Web.PasswordResetRateLimitPerMin, a.logger)
+	}
 
 	// §27.8: проверка подключения к RabbitMQ (диагностический AMQP-handshake,
 	// rate-limit на пользователя через общий Redis-лимитер).
@@ -660,15 +700,17 @@ func (a *App) Start(ctx context.Context) error {
 		), a.logger)
 
 	mw := httpadapter.Middlewares{
-		APITokenAuth:   httpadapter.APITokenAuthMiddleware(tokenUC, rl, a.cfg.Web.APITokenRateLimitPerMin, a.logger),
-		SessionAuth:    httpadapter.AuthMiddleware(authUC, &a.cfg.Web),
-		RequireAdmin:   httpadapter.RequireMinRole(domain.UserRoleAdmin),
-		RequireManager: httpadapter.RequireMinRole(domain.UserRoleManager),
-		KafkaRateLimit: httpadapter.KafkaRateLimitMiddleware(rl, a.cfg.Web.KafkaMonitorRateLimitPerMin),
-		CSRFCheck:      httpadapter.CSRFOriginCheck(a.logger),
+		APITokenAuth:    httpadapter.APITokenAuthMiddleware(tokenUC, rl, a.cfg.Web.APITokenRateLimitPerMin, a.logger),
+		SessionAuth:     httpadapter.AuthMiddleware(authUC, &a.cfg.Web),
+		RequireAdmin:    httpadapter.RequireMinRole(domain.UserRoleAdmin),
+		RequireManager:  httpadapter.RequireMinRole(domain.UserRoleManager),
+		RequireOperator: httpadapter.RequireMinRole(domain.UserRoleOperator),
+		KafkaRateLimit:  httpadapter.KafkaRateLimitMiddleware(rl, a.cfg.Web.KafkaMonitorRateLimitPerMin),
+		CSRFCheck:       httpadapter.CSRFOriginCheck(a.logger),
 	}
 	httpadapter.RegisterAPI(r, httpadapter.Handlers{
 		Auth:          authHandler,
+		PasswordReset: passwordResetHandler, // §88
 		Node:          nodeHandler,
 		User:          userHandler,
 		Token:         tokenHandler,

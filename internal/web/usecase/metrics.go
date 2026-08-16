@@ -301,6 +301,19 @@ func (s NodesScope) filter(ctx context.Context, teams port.TeamRepo) (port.ListN
 // только экономия запроса, но и условие корректности Prometheus-ветки — она
 // раньше отдавала всё, что есть в Prometheus, без какой-либо привязки к команде.
 func (u *MetricsUsecase) NodesOverviewScoped(ctx context.Context, sc NodesScope, since, until time.Time) NodesOverview {
+	return u.nodesOverviewScoped(ctx, sc, since, until, true)
+}
+
+// nodesOverviewScoped — общее тело NodesOverviewScoped с флагом спарклайна.
+//
+// withSpark=false включается ТОЛЬКО на пути агрегата шапки (§86.10,
+// OverviewTotalsScoped): там от строк нужны лишь числа для суммы и порядка, а
+// спарклайн — отдельный запрос на каждый узел (в CH-ветке) или общий range-запрос
+// (в Prometheus-ветке), результат которого гарантированно уходил в мусор.
+//
+// Флаг не выносится наружу: снаружи «обзор без графиков» не имеет смысла —
+// спарклайн рисуется в каждой строке таблицы.
+func (u *MetricsUsecase) nodesOverviewScoped(ctx context.Context, sc NodesScope, since, until time.Time, withSpark bool) NodesOverview {
 	if until.IsZero() {
 		until = u.clock.Now()
 	}
@@ -326,9 +339,9 @@ func (u *MetricsUsecase) NodesOverviewScoped(ctx context.Context, sc NodesScope,
 
 	var res NodesOverview
 	if u.nodeLogs != nil {
-		res = u.nodesOverviewCH(ctx, nodes, since, until)
+		res = u.nodesOverviewCH(ctx, nodes, since, until, withSpark)
 	} else {
-		res = u.nodesOverviewProm(ctx, nodes, since, until)
+		res = u.nodesOverviewProm(ctx, nodes, since, until, withSpark)
 	}
 	// §41/§52: оверлей исхода последнего вызова поверх любой ветки
 	// (CH-источник его не считает, gauge живёт только в Prometheus).
@@ -369,7 +382,10 @@ func (u *MetricsUsecase) applyLastOutcomes(ctx context.Context, at time.Time, re
 // ошибки, p95) и спарклайн (count по бакетам) — тем же NodeKPI/NodeChart, что и
 // страница узла, поэтому цифры совпадают. Ошибка по одному узлу деградирует его до
 // нулей, не валя весь список.
-func (u *MetricsUsecase) nodesOverviewCH(ctx context.Context, nodes []*domain.Node, since, until time.Time) NodesOverview {
+//
+// withSpark=false (§86.10, путь агрегата шапки) убирает ВТОРОЙ CH-запрос на узел:
+// спарклайн там никто не читает.
+func (u *MetricsUsecase) nodesOverviewCH(ctx context.Context, nodes []*domain.Node, since, until time.Time, withSpark bool) NodesOverview {
 	sinceMs, untilMs := since.UnixMilli(), until.UnixMilli()
 	// §44-perf: режим подсчёта уникальных читаем ОДИН раз на весь батч (а не на
 	// каждый узел) и передаём во все горутины.
@@ -413,7 +429,7 @@ func (u *MetricsUsecase) nodesOverviewCH(ctx context.Context, nodes []*domain.No
 			// столбца переходит на записи вместе с графиком узла: спарклайн
 			// перестаёт расходиться с числами In/Out в своей же строке.
 			spark := []float64{}
-			if kpi.Total > 0 {
+			if withSpark && kpi.Total > 0 {
 				sparkStep := max((untilMs-sinceMs)/nodesSparkBuckets/1000, 1)
 				series, serr := u.nodeLogs.NodeChart(gctx, q, port.ChartQuery{
 					StepSec:  sparkStep,
@@ -443,7 +459,10 @@ func (u *MetricsUsecase) nodesOverviewCH(ctx context.Context, nodes []*domain.No
 }
 
 // nodesOverviewProm — fallback на Prometheus (когда ClickHouse не подключён).
-func (u *MetricsUsecase) nodesOverviewProm(ctx context.Context, nodes []*domain.Node, since, until time.Time) NodesOverview {
+//
+// withSpark=false (§86.10) убирает range-запрос спарклайнов: на пути агрегата
+// шапки ряды не читаются.
+func (u *MetricsUsecase) nodesOverviewProm(ctx context.Context, nodes []*domain.Node, since, until time.Time, withSpark bool) NodesOverview {
 	if u.prom == nil {
 		return NodesOverview{Items: []NodeThroughputRow{}}
 	}
@@ -468,10 +487,14 @@ func (u *MetricsUsecase) nodesOverviewProm(ctx context.Context, nodes []*domain.
 	}
 	// Спарклайн (12 точек) одним range-запросом на весь список. Ошибка
 	// спарклайна не валит throughput — деградируем до пустых рядов.
-	series, err := u.prom.NodeSeries(ctx, since, until, nodesSparkBuckets)
-	if err != nil {
-		u.logger.Warn("prometheus node series failed", u.logger.Err(err))
-		series = map[string][]float64{}
+	series := map[string][]float64{}
+	if withSpark {
+		got, serr := u.prom.NodeSeries(ctx, since, until, nodesSparkBuckets)
+		if serr != nil {
+			u.logger.Warn("prometheus node series failed", u.logger.Err(serr))
+		} else {
+			series = got
+		}
 	}
 	// Строка на КАЖДЫЙ узел скоупа, а не на каждую серию Prometheus: так ветка
 	// сходится с CH-веткой (там строка есть у любого узла, даже молчащего) и у

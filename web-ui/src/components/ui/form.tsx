@@ -69,24 +69,33 @@ export function Field({
   label,
   hint,
   help,
+  labelRight,
   children,
   className,
 }: {
   label?: ReactNode;
   hint?: ReactNode;
   help?: ReactNode;
+  // labelRight — блок у правого края строки подписи (§88.8.1: «Забыли
+  // пароль?» напротив «Пароль»). Рендерится РЯДОМ с <label>, а не внутри:
+  // вложенный интерактивный элемент делает разметку невалидной (<label> не
+  // допускает вложенных labelable-элементов) и ловится jsx-a11y.
+  labelRight?: ReactNode;
   children: ReactNode;
   className?: string;
 }) {
   return (
     <div className={cn("space-y-1.5", className)}>
       {label && (
-        <div className="flex items-center gap-1">
-          <label className="block text-xs text-fg-muted">
-            {label}
-            {hint && <span className="text-fg-subtle"> · {hint}</span>}
-          </label>
-          {help && <LabelHint content={help} />}
+        <div className={cn("flex items-center gap-1", labelRight && "justify-between")}>
+          <span className="flex items-center gap-1">
+            <label className="block text-xs text-fg-muted">
+              {label}
+              {hint && <span className="text-fg-subtle"> · {hint}</span>}
+            </label>
+            {help && <LabelHint content={help} />}
+          </span>
+          {labelRight}
         </div>
       )}
       {children}

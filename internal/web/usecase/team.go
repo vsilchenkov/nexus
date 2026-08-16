@@ -30,6 +30,16 @@ type TeamUsecase struct {
 // ErrCHUnavailable — попытка создать команду без подключённого ClickHouse.
 var ErrCHUnavailable = errors.New("usecase: ClickHouse unavailable, cannot provision team database")
 
+// TeamInput — изменяемые оператором поля команды. Структура, а не позиционные
+// параметры: слаг и ch_database неизменяемы, так что редактируемых полей ровно
+// столько, и следующее добавление не превратит сигнатуру в ряд одинаковых
+// строк, которые легко переставить местами незаметно для компилятора.
+type TeamInput struct {
+	Name string
+	// ExternalURL — §89.4, внешняя ссылка команды. Пустая строка = не задана.
+	ExternalURL string
+}
+
 func NewTeamUsecase(
 	repo port.TeamRepo,
 	provisioner port.TeamProvisioner,
@@ -60,7 +70,7 @@ func (u *TeamUsecase) List(ctx context.Context) ([]*domain.Team, error) {
 //
 // Creator автоматически становится owner'ом через AddMember (otherwise
 // он бы не увидел созданную команду в /api/me/teams).
-func (u *TeamUsecase) Create(ctx context.Context, actor Actor, slug, name, creatorUserID string) (*domain.Team, error) {
+func (u *TeamUsecase) Create(ctx context.Context, actor Actor, slug string, in TeamInput, creatorUserID string) (*domain.Team, error) {
 	if u.provisioner == nil {
 		return nil, ErrCHUnavailable
 	}
@@ -78,9 +88,10 @@ func (u *TeamUsecase) Create(ctx context.Context, actor Actor, slug, name, creat
 		return nil, domain.ErrTeamSlugReserved
 	}
 	t := &domain.Team{
-		Slug:       slug,
-		Name:       name,
-		CHDatabase: u.instanceID.CHDatabase(slug),
+		Slug:        slug,
+		Name:        in.Name,
+		CHDatabase:  u.instanceID.CHDatabase(slug),
+		ExternalURL: in.ExternalURL,
 	}
 	if err := t.Validate(); err != nil {
 		return nil, err
@@ -113,21 +124,30 @@ func (u *TeamUsecase) Create(ctx context.Context, actor Actor, slug, name, creat
 	}
 
 	u.audit.Log(ctx, actor, domain.ActionTeamCreate, "team", t.ID, map[string]any{
-		"slug":        t.Slug,
-		"name":        t.Name,
-		"ch_database": t.CHDatabase,
+		"slug":         t.Slug,
+		"name":         t.Name,
+		"ch_database":  t.CHDatabase,
+		"external_url": t.ExternalURL,
 	})
 	return t, nil
 }
 
-// Update — меняет только name. Slug и ch_database immutable после
-// создания (переименование БД ClickHouse сломало бы Sender в полёте).
-func (u *TeamUsecase) Update(ctx context.Context, actor Actor, id, name string) (*domain.Team, error) {
+// Update — меняет изменяемые поля команды (name и внешнюю ссылку §89.4).
+// Slug и ch_database immutable после создания (переименование БД ClickHouse
+// сломало бы Sender в полёте).
+//
+// Патч применяется ЦЕЛИКОМ, без «пустое = не трогать»: пустая внешняя ссылка —
+// это законное значение «не задана», и трактовать её как «оставь прежнюю»
+// означало бы, что стереть ссылку через интерфейс невозможно.
+func (u *TeamUsecase) Update(ctx context.Context, actor Actor, id string, in TeamInput) (*domain.Team, error) {
 	t, err := u.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	t.Name = name
+	t.Name = in.Name
+	t.ExternalURL = in.ExternalURL
+	// Validate заодно нормализует ссылку (обрезает пробелы и хвостовые слеши),
+	// поэтому в репозиторий и в аудит уходит уже канонический вид.
 	if err := t.Validate(); err != nil {
 		return nil, err
 	}
@@ -135,7 +155,8 @@ func (u *TeamUsecase) Update(ctx context.Context, actor Actor, id, name string) 
 		return nil, err
 	}
 	u.audit.Log(ctx, actor, domain.ActionTeamUpdate, "team", t.ID, map[string]any{
-		"name": t.Name,
+		"name":         t.Name,
+		"external_url": t.ExternalURL,
 	})
 	return t, nil
 }

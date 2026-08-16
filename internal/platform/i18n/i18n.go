@@ -109,14 +109,19 @@ var translations = map[Lang]map[string]string{
 		"auth.user_inactive":       "user is inactive",
 		"auth.session_expired":     "session expired",
 		"auth.rate_limited":        "too many login attempts, try again later",
+		// §88: восстановление пароля
+		"auth.reset_rate_limited":  "too many password reset requests, try again later",
+		"auth.reset_token_invalid": "this password reset link is invalid or has already been used",
+		"auth.reset_not_allowed":   "password reset is not available for this account",
 		// node
 		"node.not_found":      "node not found",
 		"node.already_exists": "node with this path already exists",
 		"node.disabled":       "node is disabled; enable it before replay",
 		"node.limit_reached":  "node limit reached, contact administrator",
 		"node.paused":         "node is paused",
-		// team (§78.3)
-		"team.slug_reserved": "this slug is reserved by the bus address (request, requestAsync, callback) — pick another one",
+		// team (§78.3, §89.4)
+		"team.slug_reserved":        "this slug is reserved by the bus address (request, requestAsync, callback) — pick another one",
+		"team.external_url_invalid": "external link must start with http:// or https:// and contain a host, without query string",
 		// RabbitMQAsync (§27)
 		"rmq.test_rate_limited": "too many RabbitMQ connection tests, try again in a minute",
 		// Kafka monitoring (§4 spec)
@@ -248,12 +253,16 @@ var translations = map[Lang]map[string]string{
 		"auth.user_inactive":           "пользователь отключён",
 		"auth.session_expired":         "сессия истекла",
 		"auth.rate_limited":            "слишком много попыток входа, попробуйте позже",
+		"auth.reset_rate_limited":      "слишком много запросов восстановления, попробуйте позже",
+		"auth.reset_token_invalid":     "ссылка для смены пароля недействительна или уже использована",
+		"auth.reset_not_allowed":       "восстановление пароля для этой учётной записи недоступно",
 		"node.not_found":               "узел не найден",
 		"node.already_exists":          "узел с таким путём уже существует",
 		"node.disabled":                "узел отключён; включите его перед replay",
 		"node.limit_reached":           "достигнут лимит узлов, обратитесь к администратору",
 		"node.paused":                  "узел в паузе",
 		"team.slug_reserved":           "этот slug занят адресом шины (request, requestAsync, callback) — выберите другой",
+		"team.external_url_invalid":    "внешняя ссылка должна начинаться с http:// или https:// и содержать хост, без параметров запроса",
 		"rmq.test_rate_limited":        "слишком много проверок подключения к RabbitMQ, повторите через минуту",
 		"kafka.rate_limited":           "слишком много запросов мониторинга Kafka, повторите через минуту",
 		"kafka.period_too_long":        "произвольный период не может превышать 90 дней",

@@ -90,6 +90,7 @@ type fakeNodeLogs struct {
 	gotChartQuery port.LogQuery
 	gotChart      port.ChartQuery
 	chartCalls    int
+	kpiCalls      int
 
 	// §84.5: шаг латентности фиксируется отдельно — два графика обязаны
 	// считаться ОДНИМ шагом, иначе их нельзя сопоставить глазом.
@@ -99,8 +100,13 @@ type fakeNodeLogs struct {
 	mu              sync.Mutex
 }
 
+// NodeKPI на рабочем столе зовётся КОНКУРЕНТНО по узлам (nodesOverviewCH), так
+// что запись полей фейка тоже под мьютексом — иначе -race красит тест, а не код.
 func (f *fakeNodeLogs) NodeKPI(_ context.Context, q port.LogQuery, _ bool) (port.NodeKPI, error) {
+	f.mu.Lock()
 	f.gotKPIQuery = q
+	f.kpiCalls++
+	f.mu.Unlock()
 	return f.kpi, f.kpiErr
 }
 

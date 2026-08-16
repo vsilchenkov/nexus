@@ -262,7 +262,7 @@
                 "tags": [
                     "audit"
                 ],
-                "summary": "Журнал audit-log (admin only, §7.13).",
+                "summary": "Журнал audit-log (operator+, §7.13/§87).",
                 "parameters": [
                     {
                         "type": "string",
@@ -358,7 +358,7 @@
                 "tags": [
                     "audit"
                 ],
-                "summary": "Выгрузка audit-log в CSV (admin only, §7.13).",
+                "summary": "Выгрузка audit-log в CSV (operator+, §7.13/§87).",
                 "parameters": [
                     {
                         "type": "string",
@@ -544,6 +544,130 @@
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/auth/password-reset/confirm": {
+            "post": {
+                "description": "Гасит ссылку и меняет пароль. Все сессии пользователя завершаются, ранее выданные ссылки восстановления аннулируются. Недействительный, истёкший и уже использованный токен дают один ответ.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Задать новый пароль по ссылке (§88.7).",
+                "parameters": [
+                    {
+                        "description": "токен и новый пароль",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.passwordResetConfirmBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "пароль изменён"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "rate limit exceeded",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/auth/password-reset/request": {
+            "post": {
+                "description": "Принимает логин ИЛИ email. Отвечает ОДИНАКОВО во всех содержательных исходах (письмо ушло, пользователя нет, у него нет email, он отключён, адрес неоднозначен, превышен предел активных ссылок, почта выключена) — публичная форма не должна быть справочником существующих учётных записей. Настоящая причина пишется в аудит. Письмо отправляется фоном.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Запросить ссылку для смены пароля (§88.4.2).",
+                "parameters": [
+                    {
+                        "description": "логин или email",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.passwordResetRequestBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.passwordResetRequestResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "rate limit exceeded",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/auth/password-reset/validate": {
+            "get": {
+                "description": "Проверка НЕ расходует ссылку: почтовые шлюзы с защитой от вредоносных ссылок сами открывают адреса из писем, и гашение на проверке убивало бы ссылку раньше адресата. Всегда 200; недействительная, истёкшая и уже использованная неразличимы.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Проверить ссылку для смены пароля (§88.4.6).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "токен из письма",
+                        "name": "token",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.passwordResetValidateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
@@ -2409,14 +2533,14 @@
                         "ApiTokenAuth": []
                     }
                 ],
-                "description": "Сумма incoming/outgoing/errors по ВСЕМ узлам скоупа за окно, без per-node строк и спарклайнов. Нужен сквозному режиму: там строки таблицы грузятся порционно, и шапка обязана считаться отдельно, иначе её значение зависело бы от прокрутки. node_ids здесь игнорируется. Результат кешируется на несколько секунд, одновременные промахи схлопываются в один расчёт.",
+                "description": "Сумма incoming/outgoing/errors по ВСЕМ узлам скоупа за окно, плюс лёгкий срез nodes (node_id, in, out, errors, last_outcome) — без p95 и спарклайнов. Нужен сквозному режиму: там строки таблицы грузятся порционно, и шапка обязана считаться отдельно, иначе её значение зависело бы от прокрутки; срез задаёт порядок строк («проблемные первыми») и статус до дозагрузки. node_ids здесь игнорируется. Результат кешируется на несколько секунд, одновременные промахи схлопываются в один расчёт.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "metrics"
                 ],
-                "summary": "Агрегат шапки рабочего стола по всему скоупу (§86.4).",
+                "summary": "Агрегат шапки рабочего стола по всему скоупу + срез по узлам (§86.4, §86.10).",
                 "parameters": [
                     {
                         "type": "string",
@@ -3004,7 +3128,7 @@
                         "CookieAuth": []
                     }
                 ],
-                "description": "Метаданные сообщений (без тела, как в логах). Тело тянется лениво через .../messages/body. Admin-only.",
+                "description": "Метаданные сообщений (без тела, как в логах). Тело тянется лениво через .../messages/body. Operator+ (§87).",
                 "produces": [
                     "application/json"
                 ],
@@ -3044,7 +3168,7 @@
                         "CookieAuth": []
                     }
                 ],
-                "description": "Ленивая подгрузка тела по физической координате (topic, partition, offset) из списка. Admin-only.",
+                "description": "Ленивая подгрузка тела по физической координате (topic, partition, offset) из списка. Operator+ (§87).",
                 "produces": [
                     "application/json"
                 ],
@@ -3116,7 +3240,7 @@
                         "CookieAuth": []
                     }
                 ],
-                "description": "Логическое удаление через cancel-set: Sender пропустит сообщение при доставке. Admin-only.",
+                "description": "Логическое удаление через cancel-set: Sender пропустит сообщение при доставке. Operator+ (§87).",
                 "produces": [
                     "application/json"
                 ],
@@ -3166,7 +3290,7 @@
                         "CookieAuth": []
                     }
                 ],
-                "description": "Отменяет сообщения с ReceivedAt ∈ [from,to] (логически, через cancel-set). Пустые from/to = очистить всё. Admin-only.",
+                "description": "Отменяет сообщения с ReceivedAt ∈ [from,to] (логически, через cancel-set). Пустые from/to = очистить всё. Operator+ (§87).",
                 "consumes": [
                     "application/json"
                 ],
@@ -3223,7 +3347,7 @@
                         "CookieAuth": []
                     }
                 ],
-                "description": "Отменяет повторную доставку (DLQ-репроцессор перестаёт повторять) и удаляет записи done=0 из CH-логов узла за [from,to]. Пустые from/to = всё. Cancelled = число удалённых. Admin-only.",
+                "description": "Отменяет повторную доставку (DLQ-репроцессор перестаёт повторять) и удаляет записи done=0 из CH-логов узла за [from,to]. Пустые from/to = всё. Cancelled = число удалённых. Operator+ (§87).",
                 "consumes": [
                     "application/json"
                 ],
@@ -3401,7 +3525,7 @@
                         "CookieAuth": []
                     }
                 ],
-                "description": "Возвращает узлу полный бюджет попыток немедленно, не дожидаясь паузы, и снимает персистентный бейдж «Down» (§52). Идемпотентно: сброс закрытой защиты — не ошибка. Действие пишется в аудит (node.breaker_reset). Требует роль manager+.",
+                "description": "Возвращает узлу полный бюджет попыток немедленно, не дожидаясь паузы, и снимает персистентный бейдж «Down» (§52). Идемпотентно: сброс закрытой защиты — не ошибка. Действие пишется в аудит (node.breaker_reset). Требует роль operator+ (§87).",
                 "produces": [
                     "application/json"
                 ],
@@ -4683,7 +4807,7 @@
                         "CookieAuth": []
                     }
                 ],
-                "description": "Лёгкая замена полного PUT для кнопок «Пауза»/«Отключить». manager+. Меняет лишь status, не трогая прочие поля/креды.",
+                "description": "Лёгкая замена полного PUT для кнопок «Пауза»/«Отключить». operator+ (§87 — кнопки живут на вкладке «Очередь»). Меняет лишь status, не трогая прочие поля/креды.",
                 "consumes": [
                     "application/json"
                 ],
@@ -5100,6 +5224,57 @@
                 }
             }
         },
+        "/api/settings/mail/test": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Шлёт письмо на указанный адрес с merge'нутыми (current + body) настройками. Маскированный пароль не используется — merge оставит сохранённый. Возвращает {ok,latency_ms} или {ok:false,error}. Не сохраняет настройки.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "settings"
+                ],
+                "summary": "Отправить тестовое письмо с patch'ем настроек (§88.8.4).",
+                "parameters": [
+                    {
+                        "description": "patch + получатель",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.mailTestRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nexus_internal_web_usecase.TestResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/settings/notifications/test": {
             "post": {
                 "security": [
@@ -5356,7 +5531,7 @@
                         "CookieAuth": []
                     }
                 ],
-                "description": "Slug и ch_database immutable после создания.",
+                "description": "Меняются имя и внешняя ссылка (§89.4). Slug и ch_database immutable после создания.",
                 "consumes": [
                     "application/json"
                 ],
@@ -5366,7 +5541,7 @@
                 "tags": [
                     "teams"
                 ],
-                "summary": "Обновить имя команды (admin only).",
+                "summary": "Обновить команду (admin only).",
                 "parameters": [
                     {
                         "type": "string",
@@ -5376,7 +5551,7 @@
                         "required": true
                     },
                     {
-                        "description": "name",
+                        "description": "name, external_url",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -7285,6 +7460,12 @@
         "internal_web_adapter_in_http.NodesTotalsResponse": {
             "type": "object",
             "properties": {
+                "nodes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.nodeRankDTO"
+                    }
+                },
                 "totals": {
                     "$ref": "#/definitions/internal_web_adapter_in_http.overviewTotalsDTO"
                 }
@@ -7436,6 +7617,10 @@
         "internal_web_adapter_in_http.ResolveTeamResponse": {
             "type": "object",
             "properties": {
+                "team_external_url": {
+                    "description": "TeamExternalURL — §89.4: внешняя ссылка команды УЗЛА. Едет здесь, а не\nрезолвится по /api/me/teams, потому что вкладка «Конфиг» обязана показать\nадрес команды-владельца, а её в членствах вызывающего может не быть вовсе\n(тот же случай, ради которого §58 и завёл этот резолвер). Лишнего запроса\nне появляется: ключ уже прогрет useEnsureNodeTeam.",
+                    "type": "string"
+                },
                 "team_id": {
                     "type": "string"
                 },
@@ -7810,6 +7995,10 @@
                     "description": "OverrideAllowed — true в dev (web.allow_version_override): UI показывает\nполе ручного override версии; в проде false (версия всегда из git).",
                     "type": "boolean"
                 },
+                "password_reset_ready": {
+                    "description": "PasswordResetReady — §88.4.5: восстановление пароля работоспособно\n(почта включена и настроена, функция разрешена, задан публичный адрес).\nФорма входа по нему решает, показывать ли ссылку «Забыли пароль?».\n\nПоле аддитивное: реестр инстансов §73 разбирает этот же ответ и от\nнового ключа не ломается.",
+                    "type": "boolean"
+                },
                 "version": {
                     "type": "string"
                 }
@@ -8062,6 +8251,11 @@
                 "slug"
             ],
             "properties": {
+                "external_url": {
+                    "description": "ExternalURL — §89.4. Необязательное; формат (абсолютный http(s) без\nquery) проверяет домен, здесь только потолок длины.",
+                    "type": "string",
+                    "maxLength": 2048
+                },
                 "name": {
                     "type": "string",
                     "maxLength": 255,
@@ -8151,7 +8345,8 @@
                     "enum": [
                         "admin",
                         "viewer",
-                        "manager"
+                        "manager",
+                        "operator"
                     ]
                 }
             }
@@ -8574,6 +8769,61 @@
                 }
             }
         },
+        "internal_web_adapter_in_http.mailTestRequest": {
+            "type": "object",
+            "required": [
+                "to"
+            ],
+            "properties": {
+                "auth_type": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "encryption": {
+                    "type": "string"
+                },
+                "from_address": {
+                    "type": "string"
+                },
+                "from_name": {
+                    "type": "string"
+                },
+                "helo_host": {
+                    "type": "string"
+                },
+                "host": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                },
+                "password_reset_enabled": {
+                    "description": "Восстановление пароля живёт в этой же секции: без работающей почты оно\nбессмысленно, а оператор настраивает то и другое одним экраном (§88.2).",
+                    "type": "boolean"
+                },
+                "password_reset_ttl_min": {
+                    "type": "integer"
+                },
+                "port": {
+                    "type": "integer"
+                },
+                "skip_tls_verify": {
+                    "type": "boolean"
+                },
+                "timeout_sec": {
+                    "type": "integer"
+                },
+                "to": {
+                    "type": "string",
+                    "maxLength": 320
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_web_adapter_in_http.meResponse": {
             "type": "object",
             "properties": {
@@ -8627,6 +8877,26 @@
                     "type": "number"
                 },
                 "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.nodeRankDTO": {
+            "type": "object",
+            "properties": {
+                "errors": {
+                    "type": "integer"
+                },
+                "in": {
+                    "type": "integer"
+                },
+                "last_outcome": {
+                    "type": "string"
+                },
+                "node_id": {
+                    "type": "string"
+                },
+                "out": {
                     "type": "integer"
                 }
             }
@@ -8753,6 +9023,59 @@
                 },
                 "outgoing": {
                     "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.passwordResetConfirmBody": {
+            "type": "object",
+            "required": [
+                "new_password",
+                "token"
+            ],
+            "properties": {
+                "new_password": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 8
+                },
+                "token": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 16
+                }
+            }
+        },
+        "internal_web_adapter_in_http.passwordResetRequestBody": {
+            "type": "object",
+            "required": [
+                "login"
+            ],
+            "properties": {
+                "login": {
+                    "description": "Login — логин ИЛИ email. 320 — предел длины адреса по RFC.",
+                    "type": "string",
+                    "maxLength": 320,
+                    "minLength": 1
+                }
+            }
+        },
+        "internal_web_adapter_in_http.passwordResetRequestResponse": {
+            "type": "object",
+            "properties": {
+                "ok": {
+                    "type": "boolean"
+                },
+                "ttl_minutes": {
+                    "description": "TTLMinutes — срок жизни ссылки; интерфейс показывает его в тексте\n«ссылка действует N минут». Значение одинаково при любом исходе и\nничего не раскрывает.",
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.passwordResetValidateResponse": {
+            "type": "object",
+            "properties": {
+                "valid": {
+                    "type": "boolean"
                 }
             }
         },
@@ -9064,6 +9387,10 @@
                 "ch_database": {
                     "type": "string"
                 },
+                "external_url": {
+                    "description": "ExternalURL — §89.4: внешняя ссылка команды. Нужна форме СОЗДАНИЯ узла,\nгде команда выбирается явно (§86.6) и её ещё нет ни в одном резолвере.",
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
                 },
@@ -9085,6 +9412,10 @@
                     "type": "string"
                 },
                 "created_at": {
+                    "type": "string"
+                },
+                "external_url": {
+                    "description": "ExternalURL — §89.4: адрес команды снаружи контура. Всегда присутствует\n(пустая строка = не задан), без omitempty: форма редактирования читает\nтекущее значение отсюда, и исчезающее поле она прочитала бы как undefined.",
                     "type": "string"
                 },
                 "id": {
@@ -9195,6 +9526,10 @@
                 "name"
             ],
             "properties": {
+                "external_url": {
+                    "type": "string",
+                    "maxLength": 2048
+                },
                 "name": {
                     "type": "string",
                     "maxLength": 255,
@@ -9237,7 +9572,8 @@
                     "enum": [
                         "admin",
                         "viewer",
-                        "manager"
+                        "manager",
+                        "operator"
                     ]
                 }
             }
@@ -9331,6 +9667,14 @@
                 },
                 "logging": {
                     "$ref": "#/definitions/nexus_internal_domain.LoggingSettings"
+                },
+                "mail": {
+                    "description": "§88: SMTP + восстановление пароля",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/nexus_internal_domain.MailSettings"
+                        }
+                    ]
                 },
                 "notifications": {
                     "$ref": "#/definitions/nexus_internal_domain.NotificationsSettings"
@@ -9509,6 +9853,54 @@
                 "level": {
                     "description": "Level — уровень логирования всех трёх сервисов (2=error, 3=warn,\n4=info, 5=debug). nil = брать из YAML (cfg.Logging.Level). Применяется\nбез рестарта через reloader.SectionLogging (LevelVar в цепочке хендлеров).",
                     "type": "integer"
+                }
+            }
+        },
+        "nexus_internal_domain.MailSettings": {
+            "type": "object",
+            "properties": {
+                "auth_type": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "encryption": {
+                    "type": "string"
+                },
+                "from_address": {
+                    "type": "string"
+                },
+                "from_name": {
+                    "type": "string"
+                },
+                "helo_host": {
+                    "type": "string"
+                },
+                "host": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                },
+                "password_reset_enabled": {
+                    "description": "Восстановление пароля живёт в этой же секции: без работающей почты оно\nбессмысленно, а оператор настраивает то и другое одним экраном (§88.2).",
+                    "type": "boolean"
+                },
+                "password_reset_ttl_min": {
+                    "type": "integer"
+                },
+                "port": {
+                    "type": "integer"
+                },
+                "skip_tls_verify": {
+                    "type": "boolean"
+                },
+                "timeout_sec": {
+                    "type": "integer"
+                },
+                "username": {
+                    "type": "string"
                 }
             }
         },

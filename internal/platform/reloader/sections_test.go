@@ -17,7 +17,10 @@ func TestSectionsFor_Single(t *testing.T) {
 func TestSectionsFor_AllIncludesEveryKnownSection(t *testing.T) {
 	t.Parallel()
 	got := sectionsFor(SectionAll)
-	want := []Section{SectionSentry, SectionClickHouse, SectionNotifications, SectionSecurity, SectionLogging}
+	want := []Section{
+		SectionSentry, SectionClickHouse, SectionNotifications,
+		SectionSecurity, SectionLogging, SectionMail,
+	}
 	assert.ElementsMatch(t, want, got)
 	assert.NotContains(t, got, SectionAll)
 }

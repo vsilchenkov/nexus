@@ -221,14 +221,25 @@ func (h *MetricsHandler) NodesOverview(c *gin.Context) {
 	})
 }
 
-// NodesTotalsResponse — агрегат шапки без per-node строк (§86.4).
+// nodeRankDTO — лёгкая строка среза по узлу (§86.10): без p95 и спарклайна.
+// Задаёт клиенту порядок строк и статус до порционной загрузки метрик.
+type nodeRankDTO struct {
+	NodeID      string `json:"node_id"`
+	In          uint64 `json:"in"`
+	Out         uint64 `json:"out"`
+	Errors      uint64 `json:"errors"`
+	LastOutcome string `json:"last_outcome"`
+}
+
+// NodesTotalsResponse — агрегат шапки и срез по узлам скоупа (§86.4, §86.10).
 type NodesTotalsResponse struct {
 	Totals overviewTotalsDTO `json:"totals"`
+	Nodes  []nodeRankDTO     `json:"nodes"`
 }
 
 // NodesTotals godoc
-// @Summary  Агрегат шапки рабочего стола по всему скоупу (§86.4).
-// @Description  Сумма incoming/outgoing/errors по ВСЕМ узлам скоупа за окно, без per-node строк и спарклайнов. Нужен сквозному режиму: там строки таблицы грузятся порционно, и шапка обязана считаться отдельно, иначе её значение зависело бы от прокрутки. node_ids здесь игнорируется. Результат кешируется на несколько секунд, одновременные промахи схлопываются в один расчёт.
+// @Summary  Агрегат шапки рабочего стола по всему скоупу + срез по узлам (§86.4, §86.10).
+// @Description  Сумма incoming/outgoing/errors по ВСЕМ узлам скоупа за окно, плюс лёгкий срез nodes (node_id, in, out, errors, last_outcome) — без p95 и спарклайнов. Нужен сквозному режиму: там строки таблицы грузятся порционно, и шапка обязана считаться отдельно, иначе её значение зависело бы от прокрутки; срез задаёт порядок строк («проблемные первыми») и статус до дозагрузки. node_ids здесь игнорируется. Результат кешируется на несколько секунд, одновременные промахи схлопываются в один расчёт.
 // @Tags     metrics
 // @Produce  json
 // @Param    range  query  string  false  "1h | 3h | 24h | 7d | 14d | 30d (default 1h)"
@@ -246,13 +257,26 @@ func (h *MetricsHandler) NodesTotals(c *gin.Context) {
 	if !ok {
 		return
 	}
-	totals := h.uc.OverviewTotalsScoped(c.Request.Context(), sc, since, until)
-	c.JSON(http.StatusOK, NodesTotalsResponse{Totals: overviewTotalsDTO{
-		Incoming:  totals.Incoming,
-		Outgoing:  totals.Outgoing,
-		Errors:    totals.Errors,
-		ErrorRate: totals.ErrorRate,
-	}})
+	res := h.uc.OverviewTotalsScoped(c.Request.Context(), sc, since, until)
+	nodes := make([]nodeRankDTO, 0, len(res.Nodes))
+	for _, n := range res.Nodes {
+		nodes = append(nodes, nodeRankDTO{
+			NodeID:      n.NodeID,
+			In:          n.In,
+			Out:         n.Out,
+			Errors:      n.Errors,
+			LastOutcome: string(n.LastOutcome),
+		})
+	}
+	c.JSON(http.StatusOK, NodesTotalsResponse{
+		Totals: overviewTotalsDTO{
+			Incoming:  res.Totals.Incoming,
+			Outgoing:  res.Totals.Outgoing,
+			Errors:    res.Totals.Errors,
+			ErrorRate: res.Totals.ErrorRate,
+		},
+		Nodes: nodes,
+	})
 }
 
 // diagSourceDTO / diagNodeDTO / diagnosticsDTO — сверка источников (§44.E).

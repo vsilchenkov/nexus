@@ -26,5 +26,13 @@ export default defineConfig({
     outDir: "dist",
     sourcemap: true,
     chunkSizeWarningLimit: 1000,
+    // §89.1: шрифты НИКОГДА не инлайним. Правило Vite — «размер < лимита» без
+    // исключений для url() внутри CSS, а jetbrains-mono-*-cyrillic-ext.woff2
+    // весит ~1,6 КБ при пороге 4096 — то есть по умолчанию он уехал бы в base64
+    // внутрь render-blocking CSS. Цена: +33 % байт, unicode-range перестаёт
+    // экономить (все сабсеты качаются до первой отрисовки), и главное — CSP
+    // после §89.1 запрещает `font-src data:`, так что инлайн ломал бы шрифт
+    // молча. undefined = поведение по умолчанию для всего остального.
+    assetsInlineLimit: (file: string) => (file.endsWith(".woff2") ? false : undefined),
   },
 });
