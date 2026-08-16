@@ -4,17 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/nexus.svg" />
-    <!-- Шрифты эталона (§21). При отсутствии сети — graceful fallback на
-         системный стек из --font-sans/--font-mono. -->
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
-      rel="stylesheet"
-    />
+    <!-- Шрифты эталона (§21) с §89.1 лежат локально: web-ui/src/assets/fonts,
+         подключаются из main.tsx и попадают в бандл (а оттуда в embed.FS).
+         Внешних ссылок здесь быть не должно — интерфейс обязан выглядеть
+         одинаково в изолированном контуре. -->
     <title>Nexus</title>
-    <script type="module" crossorigin src="/assets/index-Cz8a3eIf.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-CNb8qQO5.css">
+    <script type="module" crossorigin src="/assets/index-Dy_Q_gNU.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-uY6hgLZ9.css">
   </head>
   <body class="bg-app text-fg">
     <div id="root"></div>

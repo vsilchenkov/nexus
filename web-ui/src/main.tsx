@@ -9,6 +9,11 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { applyTheme, getTheme } from "./lib/theme";
 import { queryClient } from "./lib/queryClient";
 import "./i18n";
+// §89.1: локальные @font-face (Inter + JetBrains Mono). Импорт из TS, а не
+// `@import` в globals.css: CSS требует, чтобы @import стоял ПЕРЕД любыми
+// другими правилами, то есть выше @tailwind base — ловушка на ровном месте.
+// Порядок в бандле для @font-face безразличен, специфичности у него нет.
+import "./assets/fonts/fonts.css";
 import "./styles/globals.css";
 
 // Применяем сохранённую тему до первого render'а (избегаем flash-of-light).
