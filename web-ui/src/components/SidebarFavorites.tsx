@@ -1,4 +1,4 @@
-import { useRef, type MouseEvent } from "react";
+import { type MouseEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Layers, Star } from "lucide-react";
@@ -21,6 +21,7 @@ import { CSS } from "@dnd-kit/utilities";
 
 import { cn } from "../lib/cn";
 import { isPlainLeftClick } from "../lib/linkClick";
+import { useSuppressClickAfterDrag } from "../lib/suppressClickAfterDrag";
 import { useFavoriteAllTeams } from "../lib/prefs";
 import { setTeamScopeAll, useAllTeamsScope } from "../lib/teamScope";
 import { TEAM_SCOPE_ALL_PATH, teamPagePath } from "../lib/teamShare";
@@ -46,9 +47,11 @@ export function SidebarFavorites() {
   // distance 6px: клик короче порога остаётся кликом, не 0px-драгом.
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
-  // После реального драга браузер всё равно шлёт click по элементу — гасим
-  // его флагом, который сбрасывается макротаском ПОСЛЕ этого click.
-  const draggedRef = useRef(false);
+  // §89.8: click, который браузер шлёт по перетащенному элементу после drop,
+  // гасится НАТИВНЫМ слушателем на document (см. useSuppressClickAfterDrag).
+  // React-обработчик для этого не годится: после реконсиляции dnd-kit он не
+  // вызывается вовсе, а действие по умолчанию — переход по href — остаётся.
+  const clickAfterDrag = useSuppressClickAfterDrag();
 
   const allFavorite = useFavoriteAllTeams();
   const allTeams = useAllTeamsScope();
@@ -77,10 +80,6 @@ export function SidebarFavorites() {
   // href существует ради браузера: контекстное меню, Ctrl/Cmd+клик и средняя
   // кнопка (тот же приём, что у вкладок узла в §79.3).
   const pickAll = (e: MouseEvent) => {
-    if (draggedRef.current) {
-      e.preventDefault();
-      return;
-    }
     if (!isPlainLeftClick(e)) return; // новая вкладка — текущую не трогаем
     e.preventDefault();
     setTeamScopeAll(true);
@@ -93,14 +92,6 @@ export function SidebarFavorites() {
   // не-Узлах клик выглядел «не реагирующим». Команду переключаем лишь когда она
   // отличается (switch-team дёргает инвалидацию team-scoped кеша зря при той же).
   const pick = (e: MouseEvent, id: string) => {
-    if (draggedRef.current) {
-      // После реального драга браузер всё равно шлёт click по элементу. С
-      // <button> его хватало проигнорировать; со ссылкой — нет: без
-      // preventDefault браузер уйдёт по href, и перетаскивание избранного
-      // заканчивалось бы переходом.
-      e.preventDefault();
-      return;
-    }
     if (!isPlainLeftClick(e)) return;
     e.preventDefault();
     // §86: выбор конкретной команды выводит из сквозного режима — как и в
@@ -112,14 +103,7 @@ export function SidebarFavorites() {
     navigate("/");
   };
 
-  const resetDragged = () => {
-    setTimeout(() => {
-      draggedRef.current = false;
-    }, 0);
-  };
-
   const onDragEnd = (e: DragEndEvent) => {
-    resetDragged();
     const { active, over } = e;
     if (!over || active.id === over.id) return;
     const ids = teams.map((tm) => tm.id);
@@ -135,7 +119,13 @@ export function SidebarFavorites() {
     // скролл при пустом месте снизу — оператор листал там, где листать было
     // незачем. min-h-0 обязателен: без него flex-ребёнок не даёт вложенному
     // контейнеру прокручиваться и распирает колонку.
-    <nav className="mt-4 flex min-h-0 flex-1 flex-col border-t border-line pt-2.5">
+    <nav
+      className="mt-4 flex min-h-0 flex-1 flex-col border-t border-line pt-2.5"
+      // Любое новое взаимодействие снимает взведённое подавление: если после
+      // драга клика так и не случилось, оно не должно съесть следующий клик.
+      onPointerDownCapture={clickAfterDrag.disarm}
+      onKeyDownCapture={clickAfterDrag.disarm}
+    >
       <div className="px-2.5 pb-1 text-[10px] uppercase tracking-wide text-fg-subtle">
         {t("nav.favorites")}
       </div>
@@ -165,10 +155,10 @@ export function SidebarFavorites() {
           sensors={sensors}
           collisionDetection={closestCenter}
           modifiers={[restrictToVerticalAxis, restrictToParentElement]}
-          onDragStart={() => {
-            draggedRef.current = true;
-          }}
-          onDragCancel={resetDragged}
+          // Взводим на СТАРТЕ драга: click прилетает после drop, и к этому
+          // моменту слушатель уже должен стоять. Отмена драга взведение не
+          // снимает — click браузер шлёт и после неё.
+          onDragStart={clickAfterDrag.arm}
           onDragEnd={onDragEnd}
         >
           <SortableContext items={teams.map((tm) => tm.id)} strategy={verticalListSortingStrategy}>
