@@ -637,8 +637,17 @@ export default function NodeSettings() {
   // означает, что проверка не состоялась вовсе.
   const verifyMessage = buildVerifyMessage(verifyError, verify.data, t);
   // §28 Пункт 1: полный адрес собирается из публичного адреса приложения
-  // (если задан в настройках) или origin браузера + slug текущей команды.
-  const buildUrl = useNodeUrlBuilder();
+  // (если задан в настройках) или origin браузера + slug команды.
+  //
+  // §89.6: команда берётся ОТ УЗЛА, а не из сессии. На форме СОЗДАНИЯ она
+  // выбирается явно (§86.6), и превью показывало адрес с чужим слагом: текущая
+  // alpha, выбрана webhook → «…/api/v1/alpha/<path>», а узел создавался
+  // доступным по «…/api/v1/webhook/<path>». Рядом chosenTeam/chosenDatabase уже
+  // сделаны «по выбору» — адрес просто отстал.
+  const buildUrl = useNodeUrlBuilder({
+    slug: isNew ? chosenTeam?.slug : nodeTeamQ.data?.team_slug,
+    externalUrl: isNew ? chosenTeam?.external_url : nodeTeamQ.data?.team_external_url,
+  });
   const address = buildUrl(verb, form.path);
 
   // §26/§28 Пункт 3: форму узла (с полями авторизации) открывает только

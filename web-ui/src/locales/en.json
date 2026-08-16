@@ -691,6 +691,7 @@
       "path_passthrough_hint": "The incoming path tail after the node path is appended to the Target URL. E.g. node ozon + request /ozon/GetAuthToken → <target>/GetAuthToken. Off — exact path match (extra tail → 404).",
       "full_address": "Full address",
       "legacy_address": "classic",
+      "external_address": "external",
       "state": "State",
       "url_static": "Static",
       "url_static_desc": "address from Target URL",
@@ -1383,6 +1384,9 @@
         "slug_hint": "Lowercase letters / digits / underscore, 1..32 chars. Immutable after creation.",
         "slug_immutable": "Slug and ClickHouse database name cannot be changed after creation.",
         "name": "Display name",
+        "external_url": "External link",
+        "external_url_hint": "Address at which the team's nodes are reachable from outside (via a gateway). The node path is appended to it and the result is shown in the node config. Optional.",
+        "external_url_invalid": "An absolute address is required: http:// or https:// and a host.",
         "ch_database_preview": "ClickHouse database will be created as `{{db}}`."
       },
       "dialog": {

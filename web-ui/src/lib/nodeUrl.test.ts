@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildLegacyNodeUrl, buildNodeUrl } from "./nodeUrl";
+import { buildExternalNodeUrl, buildLegacyNodeUrl, buildNodeUrl } from "./nodeUrl";
 
 const base = "https://nexus.example.com";
 
@@ -77,5 +77,42 @@ describe("buildLegacyNodeUrl (классическая форма)", () => {
         path: "sbp-qr",
       }),
     ).toBe("https://nexus.example.com/api/v1/request/sbp-qr");
+  });
+});
+
+describe("buildExternalNodeUrl (§89.4, внешний адрес)", () => {
+  it("склеивает ссылку команды с путём узла", () => {
+    expect(
+      buildExternalNodeUrl({ externalBase: "https://gw.partner.ru/nexus", path: "ozon" }),
+    ).toBe("https://gw.partner.ru/nexus/ozon");
+  });
+
+  it("ссылка команды не задана → пусто (строку не показываем)", () => {
+    expect(buildExternalNodeUrl({ externalBase: "", path: "ozon" })).toBe("");
+    expect(buildExternalNodeUrl({ path: "ozon" })).toBe("");
+  });
+
+  // Двойной слеш в адресе глазами не виден, а внешний шлюз такой путь обычно не
+  // узнаёт. База нормализуется и на бэкенде, но сюда значение может прийти из
+  // старой записи или из формы до сохранения.
+  it("хвостовые слеши базы и краевые слеши пути срезаются", () => {
+    expect(buildExternalNodeUrl({ externalBase: "https://gw.partner.ru/nexus/", path: "ozon" })).toBe(
+      "https://gw.partner.ru/nexus/ozon",
+    );
+    expect(buildExternalNodeUrl({ externalBase: "https://gw.partner.ru///", path: "/ozon/" })).toBe(
+      "https://gw.partner.ru/ozon",
+    );
+  });
+
+  it("многосегментный путь сохраняется целиком", () => {
+    expect(
+      buildExternalNodeUrl({ externalBase: "https://gw.partner.ru", path: "billing/invoice" }),
+    ).toBe("https://gw.partner.ru/billing/invoice");
+  });
+
+  it("пробелы по краям базы игнорируются", () => {
+    expect(buildExternalNodeUrl({ externalBase: "  https://gw.partner.ru  ", path: "ozon" })).toBe(
+      "https://gw.partner.ru/ozon",
+    );
   });
 });

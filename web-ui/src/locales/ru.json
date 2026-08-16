@@ -692,6 +692,7 @@
       "path_passthrough_hint": "Хвост входящего пути после пути узла приклеивается к Target URL. Напр. узел ozon + запрос /ozon/GetAuthToken → <target>/GetAuthToken. Выключено — точный матч пути (лишний хвост → 404).",
       "full_address": "Полный адрес",
       "legacy_address": "классический",
+      "external_address": "внешняя",
       "state": "Состояние",
       "url_static": "Статичный",
       "url_static_desc": "адрес из Target URL",
@@ -1384,6 +1385,9 @@
         "slug_hint": "Строчные буквы / цифры / подчёркивание, 1..32 символа. Изменить нельзя.",
         "slug_immutable": "Slug и имя БД ClickHouse нельзя изменить после создания.",
         "name": "Отображаемое имя",
+        "external_url": "Внешняя ссылка",
+        "external_url_hint": "Адрес, по которому узлы команды доступны снаружи (через шлюз). К нему дописывается путь узла и результат показывается в конфиге узла. Необязательно.",
+        "external_url_invalid": "Нужен абсолютный адрес: http:// или https:// и хост.",
         "ch_database_preview": "БД ClickHouse будет создана как `{{db}}`."
       },
       "dialog": {

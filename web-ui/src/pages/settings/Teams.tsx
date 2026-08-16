@@ -13,6 +13,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "../../components/ui";
+import { cn } from "../../lib/cn";
 import { useConfirm } from "../../lib/confirm";
 import { useCHDatabasePrefix } from "../../lib/instance";
 import { MY_TEAMS_KEY } from "../../lib/teams";
@@ -26,6 +27,8 @@ type Team = {
   slug: string;
   name: string;
   ch_database: string;
+  // external_url — §89.4: адрес команды снаружи контура. Пустая строка = не задан.
+  external_url: string;
   created_at: string;
   updated_at: string;
 };
@@ -231,14 +234,18 @@ function TeamDialog({ mode, initial, onClose, onSaved }: TeamDialogProps) {
   const chPrefix = useCHDatabasePrefix();
   const [slug, setSlug] = useState(initial?.slug ?? "");
   const [name, setName] = useState(initial?.name ?? "");
+  const [externalUrl, setExternalUrl] = useState(initial?.external_url ?? "");
   const [error, setError] = useState<string | null>(null);
 
   const save = useMutation({
     mutationFn: async () => {
+      // Ссылку шлём даже пустой: пустое значение — законное «не задана», и без
+      // него стереть уже сохранённую ссылку было бы нечем.
+      const externalPayload = { external_url: externalUrl.trim() };
       if (mode === "create") {
-        return api.post("/api/teams", { slug, name });
+        return api.post("/api/teams", { slug, name, ...externalPayload });
       }
-      return api.put(`/api/teams/${initial!.id}`, { name });
+      return api.put(`/api/teams/${initial!.id}`, { name, ...externalPayload });
     },
     onSuccess: () => onSaved(),
     onError: (err: { response?: { data?: { error?: string } } }) => {
@@ -246,9 +253,16 @@ function TeamDialog({ mode, initial, onClose, onSaved }: TeamDialogProps) {
     },
   });
 
+  // §89.4: зеркало domain.ValidateTeamExternalURL — абсолютный http(s) с
+  // хостом; пустое значение допустимо. Полный разбор (query/fragment, длина)
+  // остаётся за сервером: клиентская проверка ловит опечатку сразу, серверная —
+  // источник истины.
+  const externalUrlOk = externalUrl.trim() === "" || /^https?:\/\/[^/?#\s]+/i.test(externalUrl.trim());
+
   const canSubmit =
     !save.isPending &&
     name.length >= 1 &&
+    externalUrlOk &&
     (mode === "edit" || /^[a-z][a-z0-9_]{0,31}$/.test(slug));
 
   return (
@@ -302,6 +316,25 @@ function TeamDialog({ mode, initial, onClose, onSaved }: TeamDialogProps) {
               placeholder={mode === "create" ? "Acme Corp" : ""}
               className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none"
             />
+          </div>
+
+          {/* §89.4: адрес команды снаружи контура. Доступен и при создании —
+              иначе новую команду пришлось бы сразу открывать на правку. */}
+          <div className="space-y-1">
+            <label className="text-xs uppercase tracking-wider text-fg-muted">
+              {t("settings.teams.field.external_url")}
+            </label>
+            <input
+              value={externalUrl}
+              onChange={(e) => setExternalUrl(e.target.value)}
+              placeholder="https://gw.example.com/nexus"
+              className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none font-mono text-[13px]"
+            />
+            <div className={cn("text-xs", externalUrlOk ? "text-fg-muted" : "text-err")}>
+              {externalUrlOk
+                ? t("settings.teams.field.external_url_hint")
+                : t("settings.teams.field.external_url_invalid")}
+            </div>
           </div>
 
           {mode === "create" && slug && (

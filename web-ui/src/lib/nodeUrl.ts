@@ -5,7 +5,7 @@ import { api } from "../api/client";
 export type RouteVerb = "request" | "requestAsync";
 
 type PublicSettings = { public_base_url: string };
-type TeamMembership = { id: string; slug: string };
+type TeamMembership = { id: string; slug: string; external_url?: string };
 type MyTeamsResp = { items: TeamMembership[]; current_team_id: string };
 
 // Сегменты-методы боевого адреса (§78.2). Регистр значим — Receiver сравнивает
@@ -51,13 +51,37 @@ export function buildLegacyNodeUrl(opts: {
   return `${origin}/api/v1/${opts.verb}${team}/${opts.path}`;
 }
 
-// NodeUrls — обе формы адреса узла: короткая (основная) и классическая.
-export type NodeUrls = { short: string; legacy: string };
+// buildExternalNodeUrl собирает ВНЕШНИЙ адрес узла (§89.4): внешняя ссылка
+// команды + путь узла. Пустая строка, если ссылка у команды не задана — вызов
+// сам решает, показывать строку или нет.
+//
+// Хвостовые слеши базы и краевые слеши пути срезаются: база нормализуется и на
+// бэкенде (domain.NormalizeTeamExternalURL), но значение может прийти из старой
+// записи или из формы до сохранения, а «//» посередине адреса глазами не видно.
+export function buildExternalNodeUrl(opts: { externalBase?: string; path: string }): string {
+  const base = (opts.externalBase ?? "").trim().replace(/\/+$/, "");
+  if (base === "") return "";
+  return `${base}/${opts.path.replace(/^\/+|\/+$/g, "")}`;
+}
+
+// NodeUrls — формы адреса узла: короткая (основная), классическая и внешняя
+// (§89.4; пустая строка, когда у команды нет внешней ссылки).
+export type NodeUrls = { short: string; legacy: string; external: string };
+
+// NodeUrlTeam — команда, ОТ ИМЕНИ которой строится адрес.
+export type NodeUrlTeam = { slug?: string; externalUrl?: string };
 
 // useNodeUrlBuilder отдаёт функцию сборки адресов узла, подтягивая публичный
-// адрес приложения (/api/settings/public) и slug текущей команды
-// (/api/me/teams). Обе query кешируются TanStack Query и переиспользуются.
-export function useNodeUrlBuilder(): (verb: RouteVerb, path: string) => NodeUrls {
+// адрес приложения (/api/settings/public) и данные команды.
+//
+// Команду можно задать явно (team) — и это не украшение, а исправление §89.6:
+// по умолчанию берётся slug ТЕКУЩЕЙ команды сессии, тогда как адрес принадлежит
+// команде УЗЛА. На странице узла расхождение маскирует гейт useEnsureNodeTeam,
+// но на форме СОЗДАНИЯ с явным выбором команды (§86.6) превью показывало адрес
+// с чужим слагом: текущая alpha, выбрана webhook → «…/api/v1/alpha/<path>», а
+// узел создавался доступным по «…/api/v1/webhook/<path>». Без аргумента
+// поведение прежнее — текущая команда сессии.
+export function useNodeUrlBuilder(team?: NodeUrlTeam): (verb: RouteVerb, path: string) => NodeUrls {
   const publicSettings = useQuery({
     queryKey: ["public-settings"],
     queryFn: () => api.get<PublicSettings>("/api/settings/public"),
@@ -71,13 +95,18 @@ export function useNodeUrlBuilder(): (verb: RouteVerb, path: string) => NodeUrls
 
   const publicBaseUrl = publicSettings.data?.public_base_url;
   const teams = myTeams.data;
-  const teamSlug = teams?.items.find((m) => m.id === teams.current_team_id)?.slug;
+  const current = teams?.items.find((m) => m.id === teams.current_team_id);
+  const teamSlug = team?.slug ?? current?.slug;
+  const externalBase = team ? team.externalUrl : current?.external_url;
 
   return (verb, path) => {
     const p = path || "…";
     return {
       short: buildNodeUrl({ publicBaseUrl, teamSlug, path: p }),
       legacy: buildLegacyNodeUrl({ publicBaseUrl, teamSlug, verb, path: p }),
+      // Путь-заглушка «…» во внешний адрес не подставляем: строка «внешняя»
+      // показывается только у сохранённого узла с реальным путём.
+      external: path ? buildExternalNodeUrl({ externalBase, path }) : "",
     };
   };
 }

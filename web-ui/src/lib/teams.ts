@@ -15,6 +15,9 @@ export type TeamMembership = {
   slug: string;
   name: string;
   ch_database: string;
+  // external_url — §89.4: адрес команды снаружи контура (база, к которой
+  // приклеивается путь узла). Пустая строка = не задан.
+  external_url: string;
   role: "owner" | "admin" | "member";
 };
 

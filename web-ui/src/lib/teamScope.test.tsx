@@ -33,6 +33,7 @@ const ALPHA: TeamMembership = {
   slug: "alpha",
   name: "Alpha",
   ch_database: "nexus_alpha",
+  external_url: "",
   role: "admin",
 };
 const BETA: TeamMembership = {
@@ -40,6 +41,7 @@ const BETA: TeamMembership = {
   slug: "beta",
   name: "Beta",
   ch_database: "nexus_beta",
+  external_url: "",
   role: "admin",
 };
 
