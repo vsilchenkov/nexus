@@ -1,4 +1,4 @@
-import { keepPreviousData, useQueries } from "@tanstack/react-query";
+import { keepPreviousData, useQueries, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api, type NodesThroughputResp } from "../api/client";
@@ -46,6 +46,11 @@ export type VisibleMetricsOptions = {
   // «по мере появления в поле зрения» это замыкается в круг — отфильтрованные
   // строки не рендерятся, значит не становятся видимыми, значит их метрики
   // никогда не запрашиваются, и список остаётся пустым навсегда.
+  //
+  // §86.10: на обычном пути набор пуст — статус всех узлов приходит срезом
+  // шапки, и досылать сюда весь список незачем. Механизм остался страховкой на
+  // случай, когда среза нет (старый бэкенд, недоступный ClickHouse); решение
+  // «нужен ли он сейчас» принимает вызывающий (Overview, statusCandidates).
   preload?: string[];
 };
 
@@ -54,6 +59,12 @@ export type VisibleMetrics = {
   items: Map<string, NodesThroughputResp["items"][number]>;
   // observe — ref-callback для строки/карточки узла.
   observe: (nodeId: string) => (el: Element | null) => void;
+  // refresh — перезапросить УЖЕ загруженные пачки (§86.11, ручное обновление).
+  //
+  // Именно перезапрос, а не сброс: сброс пачек погасил бы показанные цифры в
+  // «—» и заставил бы ClickHouse считать те же узлы заново, пройдя ещё и через
+  // пересев по наблюдателю. Состав пачек при обновлении не меняется.
+  refresh: () => Promise<void>;
 };
 
 // chunk — нарезка на пачки фиксированного размера.
@@ -253,5 +264,12 @@ export function useVisibleNodeMetrics(opts: VisibleMetricsOptions): VisibleMetri
     },
   });
 
-  return { items, observe };
+  // Ключ-префикс пачек: react-query матчит queryKey по префиксу, поэтому одним
+  // вызовом накрываются все пачки текущего скоупа и периода — и только они.
+  const qc = useQueryClient();
+  const refresh = useCallback(async () => {
+    await qc.refetchQueries({ queryKey: ["metrics-nodes-chunk", scopeKey, periodKey] });
+  }, [qc, scopeKey, periodKey]);
+
+  return { items, observe, refresh };
 }

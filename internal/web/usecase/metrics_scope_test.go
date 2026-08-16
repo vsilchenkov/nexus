@@ -138,6 +138,114 @@ func TestMetrics_TotalsScoped_Cache(t *testing.T) {
 	assert.Greater(t, repo.calls.Load(), first, "после TTL агрегат пересчитывается")
 }
 
+// chNodes — узлы для CH-ветки: два с логированием и один без таблицы.
+func chNodes() []*domain.Node {
+	return []*domain.Node{
+		{ID: "n1", Path: "a/x", ClickHouseTable: "nexus_a.logs"},
+		{ID: "n2", Path: "b/y", ClickHouseTable: "nexus_b.logs"},
+		{ID: "n3", Path: "c/z"}, // логирование выключено — CH-запросов не будет
+	}
+}
+
+// TestMetrics_TotalsScoped_SkipsSparkline (§86.10): проход для шапки НЕ строит
+// спарклайны.
+//
+// Тест на экономию, а не на форму ответа: спарклайн — второй CH-запрос на узел,
+// и его результат на этом пути гарантированно уходит в мусор. Без проверки
+// лишний проход вернулся бы незамеченным — сумма от него не меняется.
+func TestMetrics_TotalsScoped_SkipsSparkline(t *testing.T) {
+	t.Parallel()
+	repo := &scopeMetricsRepo{list: chNodes()}
+	logs := &fakeNodeLogs{kpi: port.NodeKPI{Total: 100, Delivered: 90}}
+	uc := NewMetricsUsecase(&fakeProm{}, logs, repo, nil, nil, logging.NewNoop(),
+		WithMetricsTeams(newScopeTeams()))
+	since, until := metricsWindow()
+
+	uc.OverviewTotalsScoped(context.Background(), NodesScope{UserID: "u1"}, since, until)
+
+	logs.mu.Lock()
+	kpiCalls, chartCalls := logs.kpiCalls, logs.chartCalls
+	logs.mu.Unlock()
+	assert.Equal(t, 2, kpiCalls, "KPI считается для каждого узла с таблицей")
+	assert.Zero(t, chartCalls, "спарклайн на пути агрегата шапки не нужен")
+}
+
+// TestMetrics_NodesOverviewScoped_KeepsSparkline (§86.10): обычный обзор
+// спарклайны строит по-прежнему — они рисуются в строках таблицы.
+//
+// Регресс-гейт на оптимизацию выше: если флаг «без графика» протечёт на общий
+// путь, спарклайны молча исчезнут из таблицы рабочего стола.
+func TestMetrics_NodesOverviewScoped_KeepsSparkline(t *testing.T) {
+	t.Parallel()
+	repo := &scopeMetricsRepo{list: chNodes()}
+	logs := &fakeNodeLogs{kpi: port.NodeKPI{Total: 100, Delivered: 90}}
+	uc := NewMetricsUsecase(&fakeProm{}, logs, repo, nil, nil, logging.NewNoop(),
+		WithMetricsTeams(newScopeTeams()))
+	since, until := metricsWindow()
+
+	uc.NodesOverviewScoped(context.Background(), NodesScope{UserID: "u1"}, since, until)
+
+	logs.mu.Lock()
+	chartCalls := logs.chartCalls
+	logs.mu.Unlock()
+	assert.Equal(t, 2, chartCalls, "в таблице спарклайн нужен на каждом узле с трафиком")
+}
+
+// TestMetrics_TotalsScoped_RankSlice (§86.10): срез приходит на ВСЕ узлы скоупа.
+//
+// Узел без ClickHouse-таблицы обязан быть в срезе с нулями: иначе он выпал бы из
+// карты рангов и уехал в конец списка «как неизвестный», хотя про него всё
+// известно — у него просто нет логирования.
+func TestMetrics_TotalsScoped_RankSlice(t *testing.T) {
+	t.Parallel()
+	repo := &scopeMetricsRepo{list: chNodes()}
+	logs := &fakeNodeLogs{kpi: port.NodeKPI{Total: 65, Delivered: 54, Errors: 11}}
+	uc := NewMetricsUsecase(&fakeProm{}, logs, repo, nil, nil, logging.NewNoop(),
+		WithMetricsTeams(newScopeTeams()))
+	since, until := metricsWindow()
+
+	got := uc.OverviewTotalsScoped(context.Background(), NodesScope{UserID: "u1"}, since, until)
+
+	ids := make([]string, 0, len(got.Nodes))
+	byID := make(map[string]NodeRankRow, len(got.Nodes))
+	for _, n := range got.Nodes {
+		ids = append(ids, n.NodeID)
+		byID[n.NodeID] = n
+	}
+	assert.ElementsMatch(t, []string{"n1", "n2", "n3"}, ids)
+	assert.Equal(t, uint64(65), byID["n1"].In)
+	assert.Equal(t, uint64(54), byID["n1"].Out)
+	assert.Equal(t, uint64(11), byID["n1"].Errors)
+	assert.Zero(t, byID["n3"].In, "узел без логирования — нули, но в срезе")
+	// Сумма шапки и срез считаются одним проходом и обязаны сходиться.
+	assert.Equal(t, uint64(130), got.Totals.Incoming)
+}
+
+// TestMetrics_TotalsScoped_CacheKeepsSlice (§86.10): из кеша приезжает не только
+// сумма, но и срез.
+//
+// Иначе повторный запрос в пределах TTL отдал бы шапку с пустым nodes, и клиент
+// на каждом втором автообновлении терял бы порядок и статусы.
+func TestMetrics_TotalsScoped_CacheKeepsSlice(t *testing.T) {
+	t.Parallel()
+	repo := &scopeMetricsRepo{list: chNodes()}
+	logs := &fakeNodeLogs{kpi: port.NodeKPI{Total: 10}}
+	fake := clock.NewFake(time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC))
+	uc := NewMetricsUsecase(&fakeProm{}, logs, repo, nil, nil, logging.NewNoop(),
+		WithMetricsTeams(newScopeTeams()),
+		WithMetricsClock(fake),
+		WithTotalsCacheTTL(15*time.Second))
+	sc := NodesScope{UserID: "u1"}
+	since, until := metricsWindow()
+
+	first := uc.OverviewTotalsScoped(context.Background(), sc, since, until)
+	require.Len(t, first.Nodes, 3)
+
+	second := uc.OverviewTotalsScoped(context.Background(), sc, since, until)
+	assert.Equal(t, int32(1), repo.calls.Load(), "второй запрос взят из кеша")
+	assert.Equal(t, first.Nodes, second.Nodes, "срез переживает попадание в кеш")
+}
+
 // TestMetrics_TotalsCacheKey_QuantizesWindow (§86.4): границы скользящего окна
 // квантуются по TTL.
 //

@@ -2536,14 +2536,14 @@ const docTemplate = `{
                         "ApiTokenAuth": []
                     }
                 ],
-                "description": "Сумма incoming/outgoing/errors по ВСЕМ узлам скоупа за окно, без per-node строк и спарклайнов. Нужен сквозному режиму: там строки таблицы грузятся порционно, и шапка обязана считаться отдельно, иначе её значение зависело бы от прокрутки. node_ids здесь игнорируется. Результат кешируется на несколько секунд, одновременные промахи схлопываются в один расчёт.",
+                "description": "Сумма incoming/outgoing/errors по ВСЕМ узлам скоупа за окно, плюс лёгкий срез nodes (node_id, in, out, errors, last_outcome) — без p95 и спарклайнов. Нужен сквозному режиму: там строки таблицы грузятся порционно, и шапка обязана считаться отдельно, иначе её значение зависело бы от прокрутки; срез задаёт порядок строк («проблемные первыми») и статус до дозагрузки. node_ids здесь игнорируется. Результат кешируется на несколько секунд, одновременные промахи схлопываются в один расчёт.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "metrics"
                 ],
-                "summary": "Агрегат шапки рабочего стола по всему скоупу (§86.4).",
+                "summary": "Агрегат шапки рабочего стола по всему скоупу + срез по узлам (§86.4, §86.10).",
                 "parameters": [
                     {
                         "type": "string",
@@ -7463,6 +7463,12 @@ const docTemplate = `{
         "internal_web_adapter_in_http.NodesTotalsResponse": {
             "type": "object",
             "properties": {
+                "nodes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.nodeRankDTO"
+                    }
+                },
                 "totals": {
                     "$ref": "#/definitions/internal_web_adapter_in_http.overviewTotalsDTO"
                 }
@@ -8865,6 +8871,26 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.nodeRankDTO": {
+            "type": "object",
+            "properties": {
+                "errors": {
+                    "type": "integer"
+                },
+                "in": {
+                    "type": "integer"
+                },
+                "last_outcome": {
+                    "type": "string"
+                },
+                "node_id": {
+                    "type": "string"
+                },
+                "out": {
                     "type": "integer"
                 }
             }

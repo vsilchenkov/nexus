@@ -114,6 +114,7 @@
     "new_node": "Новый узел",
     "set_default_period": "По умолчанию",
     "set_default_period_hint": "Сделать периодом по умолчанию для команды «{{team}}»",
+    "refresh": "Обновить",
     "autorefresh_on": "Авто",
     "autorefresh_off": "Пауза",
     "search_placeholder": "Поиск по пути или URL…",

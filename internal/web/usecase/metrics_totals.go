@@ -9,7 +9,46 @@ import (
 	"time"
 
 	"golang.org/x/sync/singleflight"
+
+	"nexus/internal/domain"
 )
+
+// NodeRankRow — строка среза для порядка узлов в сквозном режиме (§86.10).
+//
+// Намеренно ЛЁГКАЯ: ни p95, ни спарклайна. Срез приходит на ВСЕ узлы скоупа,
+// поэтому каждое лишнее поле умножается на их число, а порядок и бейдж строятся
+// ровно из этих четырёх значений.
+type NodeRankRow struct {
+	NodeID      string
+	In          uint64
+	Out         uint64
+	Errors      uint64
+	LastOutcome domain.NodeOutcome
+}
+
+// ScopedTotals — агрегат шапки и срез по узлам скоупа (§86.4, §86.10).
+//
+// Едут вместе, потому что считаются одним проходом: разделять их означало бы
+// второй полный проход по ClickHouse ради тех же чисел.
+type ScopedTotals struct {
+	Totals OverviewTotals
+	Nodes  []NodeRankRow
+}
+
+// rankRows — срез для порядка из полных строк обзора.
+func rankRows(items []NodeThroughputRow) []NodeRankRow {
+	out := make([]NodeRankRow, 0, len(items))
+	for _, it := range items {
+		out = append(out, NodeRankRow{
+			NodeID:      it.NodeID,
+			In:          it.In,
+			Out:         it.Out,
+			Errors:      it.Errors,
+			LastOutcome: it.LastOutcome,
+		})
+	}
+	return out
+}
 
 // Агрегат шапки рабочего стола для сквозного режима (§86.4).
 //
@@ -32,9 +71,9 @@ import (
 // заметно меньше периода, за который она считается (минимум час).
 const DefaultTotalsCacheTTL = 15 * time.Second
 
-// totalsCacheEntry — посчитанный агрегат и момент расчёта.
+// totalsCacheEntry — посчитанный агрегат со срезом и момент расчёта.
 type totalsCacheEntry struct {
-	totals   OverviewTotals
+	value    ScopedTotals
 	computed time.Time
 }
 
@@ -54,24 +93,24 @@ func newTotalsCache() *totalsCache {
 }
 
 // get возвращает непротухшую запись.
-func (c *totalsCache) get(key string, now time.Time, ttl time.Duration) (OverviewTotals, bool) {
+func (c *totalsCache) get(key string, now time.Time, ttl time.Duration) (ScopedTotals, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.entries[key]
 	if !ok {
-		return OverviewTotals{}, false
+		return ScopedTotals{}, false
 	}
 	if now.Sub(e.computed) >= ttl {
 		delete(c.entries, key)
-		return OverviewTotals{}, false
+		return ScopedTotals{}, false
 	}
-	return e.totals, true
+	return e.value, true
 }
 
-func (c *totalsCache) put(key string, totals OverviewTotals, now time.Time) {
+func (c *totalsCache) put(key string, value ScopedTotals, now time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.entries[key] = totalsCacheEntry{totals: totals, computed: now}
+	c.entries[key] = totalsCacheEntry{value: value, computed: now}
 }
 
 // totalsCacheKey — ключ кеша агрегата.
@@ -100,41 +139,52 @@ func totalsCacheKey(scopeIDs []string, since, until time.Time, approx bool, ttl 
 	return b.String()
 }
 
-// OverviewTotalsScoped — агрегат шапки по всему скоупу (§86.4).
+// OverviewTotalsScoped — агрегат шапки по всему скоупу и срез для порядка строк
+// (§86.4, §86.10).
 //
 // Возвращает ту же сумму, что дала бы NodesOverviewScoped без сужения по узлам,
-// но БЕЗ per-node строк и спарклайнов: клиенту шапки они не нужны, а спарклайн —
-// это второй CH-запрос на каждый узел.
+// плюс ЛЁГКИЙ срез на каждый узел скоупа (см. NodeRankRow). Спарклайны в этом
+// проходе НЕ считаются: раньше они считались и выбрасывались, а это второй
+// CH-запрос на каждый узел.
+//
+// Срез задаёт клиенту порядок и статус, но не заменяет порционную загрузку строк:
+// p95 и спарклайн по-прежнему приезжают только для видимых узлов.
 //
 // Кеш и singleflight включаются только при ненулевом TTL (см. WithTotalsCacheTTL).
-func (u *MetricsUsecase) OverviewTotalsScoped(ctx context.Context, sc NodesScope, since, until time.Time) OverviewTotals {
+func (u *MetricsUsecase) OverviewTotalsScoped(ctx context.Context, sc NodesScope, since, until time.Time) ScopedTotals {
 	// Сужение по узлам для агрегата бессмысленно: шапка обязана считаться по
 	// ВСЕМУ скоупу, иначе её значение зависело бы от прокрутки таблицы.
 	sc.NodeIDs = nil
 
 	if u.totalsTTL <= 0 || u.totalsCache == nil {
-		return u.NodesOverviewScoped(ctx, sc, since, until).Totals
+		return u.scopedTotals(ctx, sc, since, until)
 	}
 
 	scopeIDs, ok := u.totalsScopeIDs(ctx, sc)
 	if !ok {
-		return OverviewTotals{}
+		return ScopedTotals{}
 	}
 	key := totalsCacheKey(scopeIDs, since, until, u.approxCounts(ctx), u.totalsTTL)
 	now := u.clock.Now()
-	if totals, hit := u.totalsCache.get(key, now, u.totalsTTL); hit {
+	if value, hit := u.totalsCache.get(key, now, u.totalsTTL); hit {
 		u.logger.Debug("nodes totals: cache hit", u.logger.Str("key", key))
-		return totals
+		return value
 	}
 	// singleflight: одновременные промахи (несколько операторов, автообновление)
 	// схлопываются в один проход по ClickHouse вместо N одинаковых.
 	v, _, _ := u.totalsCache.group.Do(key, func() (any, error) {
-		totals := u.NodesOverviewScoped(ctx, sc, since, until).Totals
-		u.totalsCache.put(key, totals, u.clock.Now())
-		return totals, nil
+		value := u.scopedTotals(ctx, sc, since, until)
+		u.totalsCache.put(key, value, u.clock.Now())
+		return value, nil
 	})
-	totals, _ := v.(OverviewTotals)
-	return totals
+	value, _ := v.(ScopedTotals)
+	return value
+}
+
+// scopedTotals — один проход по скоупу без спарклайнов: сумма + срез.
+func (u *MetricsUsecase) scopedTotals(ctx context.Context, sc NodesScope, since, until time.Time) ScopedTotals {
+	res := u.nodesOverviewScoped(ctx, sc, since, until, false)
+	return ScopedTotals{Totals: res.Totals, Nodes: rankRows(res.Items)}
 }
 
 // totalsScopeIDs — стабильный набор идентификаторов скоупа для ключа кеша.
