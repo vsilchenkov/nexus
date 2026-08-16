@@ -25,12 +25,16 @@ func NewTeamHandler(uc *usecase.TeamUsecase, logger logging.Logger) *TeamHandler
 }
 
 type teamResponse struct {
-	ID         string    `json:"id"`
-	Slug       string    `json:"slug"`
-	Name       string    `json:"name"`
-	CHDatabase string    `json:"ch_database"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID         string `json:"id"`
+	Slug       string `json:"slug"`
+	Name       string `json:"name"`
+	CHDatabase string `json:"ch_database"`
+	// ExternalURL — §89.4: адрес команды снаружи контура. Всегда присутствует
+	// (пустая строка = не задан), без omitempty: форма редактирования читает
+	// текущее значение отсюда, и исчезающее поле она прочитала бы как undefined.
+	ExternalURL string    `json:"external_url"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type teamMemberResponse struct {
@@ -47,10 +51,14 @@ type teamMemberResponse struct {
 type createTeamRequest struct {
 	Slug string `json:"slug" binding:"required,min=1,max=32"`
 	Name string `json:"name" binding:"required,min=1,max=255"`
+	// ExternalURL — §89.4. Необязательное; формат (абсолютный http(s) без
+	// query) проверяет домен, здесь только потолок длины.
+	ExternalURL string `json:"external_url" binding:"omitempty,max=2048"`
 }
 
 type updateTeamRequest struct {
-	Name string `json:"name" binding:"required,min=1,max=255"`
+	Name        string `json:"name" binding:"required,min=1,max=255"`
+	ExternalURL string `json:"external_url" binding:"omitempty,max=2048"`
 }
 
 type addMemberRequest struct {
@@ -65,7 +73,8 @@ type updateMemberRoleRequest struct {
 func toTeamResp(t *domain.Team) teamResponse {
 	return teamResponse{
 		ID: t.ID, Slug: t.Slug, Name: t.Name, CHDatabase: t.CHDatabase,
-		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
+		ExternalURL: t.ExternalURL,
+		CreatedAt:   t.CreatedAt, UpdatedAt: t.UpdatedAt,
 	}
 }
 
@@ -128,7 +137,8 @@ func (h *TeamHandler) Create(c *gin.Context) {
 		return
 	}
 	s, _ := sessionFromCtx(c)
-	t, err := h.uc.Create(c.Request.Context(), userActor(c), req.Slug, req.Name, s.UserID)
+	t, err := h.uc.Create(c.Request.Context(), userActor(c), req.Slug,
+		usecase.TeamInput{Name: req.Name, ExternalURL: req.ExternalURL}, s.UserID)
 	if err != nil {
 		h.replyTeamError(c, err)
 		return
@@ -137,13 +147,13 @@ func (h *TeamHandler) Create(c *gin.Context) {
 }
 
 // Update godoc
-// @Summary  Обновить имя команды (admin only).
-// @Description  Slug и ch_database immutable после создания.
+// @Summary  Обновить команду (admin only).
+// @Description  Меняются имя и внешняя ссылка (§89.4). Slug и ch_database immutable после создания.
 // @Tags     teams
 // @Accept   json
 // @Produce  json
 // @Param    id    path  string             true  "team id"
-// @Param    body  body  updateTeamRequest  true  "name"
+// @Param    body  body  updateTeamRequest  true  "name, external_url"
 // @Success  200   {object}  teamResponse
 // @Security CookieAuth
 // @Router   /api/teams/{id} [put]
@@ -153,7 +163,8 @@ func (h *TeamHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	t, err := h.uc.Update(c.Request.Context(), userActor(c), c.Param("id"), req.Name)
+	t, err := h.uc.Update(c.Request.Context(), userActor(c), c.Param("id"),
+		usecase.TeamInput{Name: req.Name, ExternalURL: req.ExternalURL})
 	if err != nil {
 		h.replyTeamError(c, err)
 		return
@@ -290,6 +301,13 @@ func (h *TeamHandler) replyTeamError(c *gin.Context, err error) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": i18n.Translate(i18n.FromGin(c), "team.slug_reserved"),
 			"code":  "team.slug_reserved",
+		})
+	case errors.Is(err, domain.ErrTeamExternalURLInvalid):
+		// §89.4: как и slug_reserved — ошибка формы, которую видит оператор,
+		// поэтому с переводом и кодом, а не голым текстом домена.
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": i18n.Translate(i18n.FromGin(c), "team.external_url_invalid"),
+			"code":  "team.external_url_invalid",
 		})
 	case errors.Is(err, domain.ErrTeamSlugFormat),
 		errors.Is(err, domain.ErrTeamNameLength),

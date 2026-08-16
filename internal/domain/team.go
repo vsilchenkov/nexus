@@ -17,8 +17,16 @@ type Team struct {
 	Slug       string
 	Name       string
 	CHDatabase string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	// ExternalURL — адрес, по которому узлы команды доступны СНАРУЖИ контура
+	// (§89.4): внешние системы часто ходят не в Nexus напрямую, а через шлюз со
+	// своим адресом и своим префиксом пути. Пустая строка = не задан.
+	//
+	// Значение — БАЗА: интерфейс дописывает к ней путь узла. Маршрутизации не
+	// касается вообще (Receiver его не читает) — это справочные данные для
+	// оператора, которому надо выдать наружу правильный адрес.
+	ExternalURL string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // TeamRole — роль пользователя внутри команды.
@@ -113,7 +121,53 @@ func TeamSlugReserved(slug string) bool {
 	return ok
 }
 
+// MaxTeamExternalURLLen — потолок длины внешней ссылки (§89.4). Совпадает с
+// лимитом target_url узла и с VARCHAR(2048) в миграции 0037.
+const MaxTeamExternalURLLen = 2048
+
+// NormalizeTeamExternalURL приводит внешнюю ссылку к каноническому виду:
+// обрезает пробелы по краям и хвостовые слеши.
+//
+// Хвостовой слеш срезается именно здесь, а не в UI: путь узла приклеивается к
+// этой базе, и «https://gw.example.com/nexus/» дал бы адрес с «//» посередине —
+// внешний шлюз такой путь обычно не узнаёт, а глазами двойной слеш не виден.
+func NormalizeTeamExternalURL(raw string) string {
+	return strings.TrimRight(strings.TrimSpace(raw), "/")
+}
+
+// ValidateTeamExternalURL проверяет внешнюю ссылку команды (§89.4): пустая
+// строка допустима (= не задана), иначе — абсолютный http(s)-URL.
+//
+// В отличие от ValidatePublicBaseURL (§28) ПУТЬ здесь разрешён: внешний шлюз
+// обычно публикует шину под своим префиксом («https://gw.example.com/nexus»), и
+// запрет пути сделал бы поле бесполезным ровно в основном сценарии. Query и
+// fragment запрещены: к базе приклеивается путь узла, после «?» это дало бы
+// заведомо неработающий адрес.
+//
+// Вызывается на УЖЕ нормализованном значении (см. Team.Validate).
+func ValidateTeamExternalURL(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	if len(raw) > MaxTeamExternalURLLen {
+		return ErrTeamExternalURLInvalid
+	}
+	u, ok := AbsoluteHTTPURL(raw)
+	if !ok {
+		return ErrTeamExternalURLInvalid
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return ErrTeamExternalURLInvalid
+	}
+	return nil
+}
+
 // Validate проверяет инварианты команды.
+//
+// Внешняя ссылка нормализуется НА МЕСТЕ (t.ExternalURL перезаписывается) — у
+// Team нет SetDefaults, куда это можно было бы вынести; приём тот же, что у
+// PeerInstance.Validate с BaseURL. Так в базу и в ответ API попадает ровно то
+// значение, которое прошло проверку.
 func (t *Team) Validate() error {
 	if !teamSlugPattern.MatchString(t.Slug) {
 		return ErrTeamSlugFormat
@@ -124,5 +178,6 @@ func (t *Team) Validate() error {
 	if !teamCHDatabasePattern.MatchString(t.CHDatabase) {
 		return ErrTeamCHDatabaseFormat
 	}
-	return nil
+	t.ExternalURL = NormalizeTeamExternalURL(t.ExternalURL)
+	return ValidateTeamExternalURL(t.ExternalURL)
 }

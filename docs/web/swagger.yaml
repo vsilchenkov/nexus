@@ -967,6 +967,14 @@ definitions:
     type: object
   internal_web_adapter_in_http.ResolveTeamResponse:
     properties:
+      team_external_url:
+        description: |-
+          TeamExternalURL — §89.4: внешняя ссылка команды УЗЛА. Едет здесь, а не
+          резолвится по /api/me/teams, потому что вкладка «Конфиг» обязана показать
+          адрес команды-владельца, а её в членствах вызывающего может не быть вовсе
+          (тот же случай, ради которого §58 и завёл этот резолвер). Лишнего запроса
+          не появляется: ключ уже прогрет useEnsureNodeTeam.
+        type: string
       team_id:
         type: string
       team_name:
@@ -1438,6 +1446,12 @@ definitions:
     type: object
   internal_web_adapter_in_http.createTeamRequest:
     properties:
+      external_url:
+        description: |-
+          ExternalURL — §89.4. Необязательное; формат (абсолютный http(s) без
+          query) проверяет домен, здесь только потолок длины.
+        maxLength: 2048
+        type: string
       name:
         maxLength: 255
         minLength: 1
@@ -2224,6 +2238,11 @@ definitions:
     properties:
       ch_database:
         type: string
+      external_url:
+        description: |-
+          ExternalURL — §89.4: внешняя ссылка команды. Нужна форме СОЗДАНИЯ узла,
+          где команда выбирается явно (§86.6) и её ещё нет ни в одном резолвере.
+        type: string
       id:
         type: string
       name:
@@ -2238,6 +2257,12 @@ definitions:
       ch_database:
         type: string
       created_at:
+        type: string
+      external_url:
+        description: |-
+          ExternalURL — §89.4: адрес команды снаружи контура. Всегда присутствует
+          (пустая строка = не задан), без omitempty: форма редактирования читает
+          текущее значение отсюда, и исчезающее поле она прочитала бы как undefined.
         type: string
       id:
         type: string
@@ -2311,6 +2336,9 @@ definitions:
     type: object
   internal_web_adapter_in_http.updateTeamRequest:
     properties:
+      external_url:
+        maxLength: 2048
+        type: string
       name:
         maxLength: 255
         minLength: 1
@@ -6675,14 +6703,15 @@ paths:
     put:
       consumes:
       - application/json
-      description: Slug и ch_database immutable после создания.
+      description: Меняются имя и внешняя ссылка (§89.4). Slug и ch_database immutable
+        после создания.
       parameters:
       - description: team id
         in: path
         name: id
         required: true
         type: string
-      - description: name
+      - description: name, external_url
         in: body
         name: body
         required: true
@@ -6697,7 +6726,7 @@ paths:
             $ref: '#/definitions/internal_web_adapter_in_http.teamResponse'
       security:
       - CookieAuth: []
-      summary: Обновить имя команды (admin only).
+      summary: Обновить команду (admin only).
       tags:
       - teams
   /api/teams/{id}/members:

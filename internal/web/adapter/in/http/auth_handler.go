@@ -58,7 +58,10 @@ type teamMembershipResponse struct {
 	Slug       string `json:"slug"`
 	Name       string `json:"name"`
 	CHDatabase string `json:"ch_database"`
-	Role       string `json:"role"`
+	// ExternalURL — §89.4: внешняя ссылка команды. Нужна форме СОЗДАНИЯ узла,
+	// где команда выбирается явно (§86.6) и её ещё нет ни в одном резолвере.
+	ExternalURL string `json:"external_url"`
+	Role        string `json:"role"`
 }
 
 type switchTeamRequest struct {
@@ -260,7 +263,8 @@ func (h *AuthHandler) MyTeams(c *gin.Context) {
 	for _, m := range memberships {
 		items = append(items, teamMembershipResponse{
 			ID: m.Team.ID, Slug: m.Team.Slug, Name: m.Team.Name,
-			CHDatabase: m.Team.CHDatabase, Role: string(m.Role),
+			CHDatabase: m.Team.CHDatabase, ExternalURL: m.Team.ExternalURL,
+			Role: string(m.Role),
 		})
 	}
 	// §49: избранное едет вместе с членствами — один источник истины для UI

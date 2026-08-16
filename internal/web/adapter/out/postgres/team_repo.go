@@ -32,11 +32,16 @@ func NewTeamRepoPg(pool *pgxpool.Pool, logger logging.Logger) *TeamRepoPg {
 	return &TeamRepoPg{pool: pool, logger: logger}
 }
 
-const teamCols = `id, slug, name, ch_database, created_at, updated_at`
+// teamCols покрывает GetByID/GetBySlug/List. ВНИМАНИЕ: у команды ТРИ
+// независимых места сканирования — этот список, а также ListUserTeams и
+// ListTeamsByUsers со своими явными SELECT'ами. Новая колонка обязана попасть во
+// все три: пропуск в ListUserTeams даёт пустое значение именно в /api/me/teams,
+// то есть ровно там, где его ждёт интерфейс, — и падения при этом нет.
+const teamCols = `id, slug, name, ch_database, external_url, created_at, updated_at`
 
 func (r *TeamRepoPg) scanRow(row pgx.Row) (*domain.Team, error) {
 	var t domain.Team
-	if err := row.Scan(&t.ID, &t.Slug, &t.Name, &t.CHDatabase, &t.CreatedAt, &t.UpdatedAt); err != nil {
+	if err := row.Scan(&t.ID, &t.Slug, &t.Name, &t.CHDatabase, &t.ExternalURL, &t.CreatedAt, &t.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) || isInvalidUUID(err) {
 			return nil, domain.ErrTeamNotFound
 		}
@@ -75,10 +80,10 @@ func (r *TeamRepoPg) List(ctx context.Context) ([]*domain.Team, error) {
 
 func (r *TeamRepoPg) Create(ctx context.Context, t *domain.Team) error {
 	err := r.pool.QueryRow(ctx, `
-INSERT INTO teams (slug, name, ch_database)
-VALUES ($1, $2, $3)
+INSERT INTO teams (slug, name, ch_database, external_url)
+VALUES ($1, $2, $3, $4)
 RETURNING id, created_at, updated_at`,
-		t.Slug, t.Name, t.CHDatabase,
+		t.Slug, t.Name, t.CHDatabase, t.ExternalURL,
 	).Scan(&t.ID, &t.CreatedAt, &t.UpdatedAt)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -92,9 +97,9 @@ RETURNING id, created_at, updated_at`,
 
 func (r *TeamRepoPg) Update(ctx context.Context, t *domain.Team) error {
 	tag, err := r.pool.Exec(ctx, `
-UPDATE teams SET name = $2, ch_database = $3, updated_at = now()
+UPDATE teams SET name = $2, ch_database = $3, external_url = $4, updated_at = now()
 WHERE id = $1::uuid`,
-		t.ID, t.Name, t.CHDatabase,
+		t.ID, t.Name, t.CHDatabase, t.ExternalURL,
 	)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -221,7 +226,7 @@ ORDER BY ut.created_at`, teamID)
 
 func (r *TeamRepoPg) ListUserTeams(ctx context.Context, userID string) ([]*domain.UserTeam, error) {
 	rows, err := r.pool.Query(ctx, `
-SELECT t.id, t.slug, t.name, t.ch_database, t.created_at, t.updated_at, ut.role
+SELECT t.id, t.slug, t.name, t.ch_database, t.external_url, t.created_at, t.updated_at, ut.role
 FROM user_teams ut
 JOIN teams t ON t.id = ut.team_id
 WHERE ut.user_id = $1::uuid
@@ -236,7 +241,7 @@ ORDER BY t.slug`, userID)
 		var role string
 		if err := rows.Scan(
 			&ut.Team.ID, &ut.Team.Slug, &ut.Team.Name, &ut.Team.CHDatabase,
-			&ut.Team.CreatedAt, &ut.Team.UpdatedAt, &role,
+			&ut.Team.ExternalURL, &ut.Team.CreatedAt, &ut.Team.UpdatedAt, &role,
 		); err != nil {
 			return nil, fmt.Errorf("scan user team: %w", err)
 		}
@@ -311,7 +316,7 @@ func (r *TeamRepoPg) ListTeamsByUsers(ctx context.Context, userIDs []string) (ma
 		return out, nil
 	}
 	rows, err := r.pool.Query(ctx, `
-SELECT ut.user_id, t.id, t.slug, t.name, t.ch_database, t.created_at, t.updated_at, ut.role
+SELECT ut.user_id, t.id, t.slug, t.name, t.ch_database, t.external_url, t.created_at, t.updated_at, ut.role
 FROM user_teams ut
 JOIN teams t ON t.id = ut.team_id
 WHERE ut.user_id = ANY($1::uuid[])
@@ -325,7 +330,7 @@ ORDER BY ut.user_id, t.slug`, userIDs)
 		var ut domain.UserTeam
 		if err := rows.Scan(
 			&userID, &ut.Team.ID, &ut.Team.Slug, &ut.Team.Name, &ut.Team.CHDatabase,
-			&ut.Team.CreatedAt, &ut.Team.UpdatedAt, &role,
+			&ut.Team.ExternalURL, &ut.Team.CreatedAt, &ut.Team.UpdatedAt, &role,
 		); err != nil {
 			return nil, fmt.Errorf("scan teams by users: %w", err)
 		}

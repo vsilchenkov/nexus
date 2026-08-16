@@ -386,6 +386,12 @@ type ResolveTeamResponse struct {
 	TeamID   string `json:"team_id"`
 	TeamSlug string `json:"team_slug"`
 	TeamName string `json:"team_name"`
+	// TeamExternalURL — §89.4: внешняя ссылка команды УЗЛА. Едет здесь, а не
+	// резолвится по /api/me/teams, потому что вкладка «Конфиг» обязана показать
+	// адрес команды-владельца, а её в членствах вызывающего может не быть вовсе
+	// (тот же случай, ради которого §58 и завёл этот резолвер). Лишнего запроса
+	// не появляется: ключ уже прогрет useEnsureNodeTeam.
+	TeamExternalURL string `json:"team_external_url"`
 }
 
 // ResolveTeam godoc
@@ -410,9 +416,10 @@ func (h *NodeHandler) ResolveTeam(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, ResolveTeamResponse{
-		TeamID:   team.ID,
-		TeamSlug: team.Slug,
-		TeamName: team.Name,
+		TeamID:          team.ID,
+		TeamSlug:        team.Slug,
+		TeamName:        team.Name,
+		TeamExternalURL: team.ExternalURL,
 	})
 }
 

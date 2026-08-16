@@ -244,10 +244,13 @@ var (
 	// ErrTeamSlugReserved — §78.3: слаг совпадает с сегментом-методом боевого
 	// адреса, из-за чего короткая форма /api/v1/<slug>/<path> стала бы
 	// неоднозначной (первый сегмент прочитался бы как метод, а не как команда).
-	ErrTeamSlugReserved   = errors.New("domain: team slug is reserved by the bus ingress path")
-	ErrTeamInvalidRole    = errors.New("domain: invalid team role")
-	ErrTeamMemberNotFound = errors.New("domain: team membership not found")
-	ErrTeamHasNodes       = errors.New("domain: team has attached nodes and cannot be deleted")
+	ErrTeamSlugReserved = errors.New("domain: team slug is reserved by the bus ingress path")
+	// ErrTeamExternalURLInvalid — §89.4: внешняя ссылка команды не является
+	// абсолютным http(s)-адресом, несёт query/fragment или длиннее 2048.
+	ErrTeamExternalURLInvalid = errors.New("domain: team external url must be an absolute http(s) address without query")
+	ErrTeamInvalidRole        = errors.New("domain: invalid team role")
+	ErrTeamMemberNotFound     = errors.New("domain: team membership not found")
+	ErrTeamHasNodes           = errors.New("domain: team has attached nodes and cannot be deleted")
 
 	// Instance (§70: несколько нод на одном ClickHouse)
 	ErrInstanceIDFormat = errors.New("domain: instance id must be empty or match ^[a-z][a-z0-9]{0,7}$")

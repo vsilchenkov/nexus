@@ -119,8 +119,9 @@ var translations = map[Lang]map[string]string{
 		"node.disabled":       "node is disabled; enable it before replay",
 		"node.limit_reached":  "node limit reached, contact administrator",
 		"node.paused":         "node is paused",
-		// team (§78.3)
-		"team.slug_reserved": "this slug is reserved by the bus address (request, requestAsync, callback) — pick another one",
+		// team (§78.3, §89.4)
+		"team.slug_reserved":        "this slug is reserved by the bus address (request, requestAsync, callback) — pick another one",
+		"team.external_url_invalid": "external link must start with http:// or https:// and contain a host, without query string",
 		// RabbitMQAsync (§27)
 		"rmq.test_rate_limited": "too many RabbitMQ connection tests, try again in a minute",
 		// Kafka monitoring (§4 spec)
@@ -261,6 +262,7 @@ var translations = map[Lang]map[string]string{
 		"node.limit_reached":           "достигнут лимит узлов, обратитесь к администратору",
 		"node.paused":                  "узел в паузе",
 		"team.slug_reserved":           "этот slug занят адресом шины (request, requestAsync, callback) — выберите другой",
+		"team.external_url_invalid":    "внешняя ссылка должна начинаться с http:// или https:// и содержать хост, без параметров запроса",
 		"rmq.test_rate_limited":        "слишком много проверок подключения к RabbitMQ, повторите через минуту",
 		"kafka.rate_limited":           "слишком много запросов мониторинга Kafka, повторите через минуту",
 		"kafka.period_too_long":        "произвольный период не может превышать 90 дней",
