@@ -219,7 +219,15 @@ INTEGRATION_TIMEOUT ?= 20m
 # группы успели отработать и отчитаться даже при её падении.
 # Регексы -run в ДВОЙНЫХ кавычках — переносимо между cmd.exe (Windows) и sh.
 # Запуск отдельной группы: `make test-int-rmq` и т.п.
-test-integration: test-int-pg test-int-ch test-int-catalog test-int-logs test-int-receiver test-int-rmq test-int-sender test-int-queue ## Integration-тесты под-прогонами (требует Docker; 20m на группу)
+test-integration: check-int-coverage test-int-pg test-int-ch test-int-catalog test-int-logs test-int-receiver test-int-rmq test-int-sender test-int-queue test-int-misc ## Integration-тесты под-прогонами (требует Docker; 20m на группу)
+
+# Гейт покрытия под-прогонов. Группы фильтруют тесты по `-run`, а CI гоняет
+# ПАКЕТ ЦЕЛИКОМ — из-за этого локальный `make test-integration` мог быть зелёным
+# на тесте, который в него просто не попал (так и случилось с §89: 26 из 145
+# тестов не матчились ни одним фильтром, и падение нашлось только на теге).
+# Проверка дешёвая и без Docker, поэтому стоит первой.
+check-int-coverage: ## проверить, что каждый integration-тест попадает хотя бы в одну группу
+	python scripts/ci/check_integration_coverage.py
 
 test-int-pg: ## integration: Postgres-узлы/миграции/multi-tenancy
 	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestNodeRepo|^TestNodeUC|^TestNodeCache|^TestNodeSearch|^TestNodeAuthor|^TestMigrate|^TestMultiTenancy" ./tests/integration/...
@@ -244,6 +252,9 @@ test-int-sender: ## integration: Sender async + DLQ + DLQ-репроцессор
 
 test-int-queue: ## integration: управление async-очередью §35 + tombstones (Kafka+Redis)
 	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestAsyncQueue|^TestQueueCancel" ./tests/integration/...
+
+test-int-misc: ## integration: остальное — скоупы, статусы узла, одноразовые ссылки §88, каталог полей, dry-run, rDNS
+	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestAuditScope|^TestCHTableVerify|^TestDryRun|^TestMigrations_|^TestNodeAck|^TestNodeAsyncAckSpec|^TestNodeScope|^TestNodeStatus|^TestOneTimeToken|^TestUserRepo_|^TestRDNS|^TestRequestFieldCatalog|^TestTeamExternalURL|^TestTeamFavorites" ./tests/integration/...
 
 # Масштабный замер скролла логов (§77.5). В test-integration НЕ входит: сид на
 # десятки млн строк и прогон занимают минуты, а результат — не pass/fail, а
