@@ -274,9 +274,12 @@ ClickHouse-батчинга, cookie-флаги) живут в `config/config.exa
   чтобы proxy не переписывал `Host` относительно того origin'а, с которого открыт UI
   (стандартная настройка `proxy_set_header Host $host` в nginx — корректна).
 - **Security-заголовки**: Web выставляет CSP/nosniff/X-Frame-Options/Referrer-Policy
-  автоматически; на `/swagger/*` CSP не ставится. SPA использует Google Fonts — CSP уже
-  разрешает `fonts.googleapis.com`/`fonts.gstatic.com`; в полностью офлайн-контуре шрифты
-  просто не загрузятся (graceful fallback на системные).
+  автоматически; на `/swagger/*` CSP не ставится. Внешних источников CSP не разрешает
+  вовсе: шрифты Inter/JetBrains Mono с §89.1 лежат локально и встроены в бинарь через
+  `embed.FS` (`web-ui/src/assets/fonts` → `/assets/*.woff2`), запросов к
+  `fonts.googleapis.com`/`fonts.gstatic.com` панель больше не делает — интерфейс
+  полностью работоспособен в изолированном контуре. Обновление шрифтов —
+  `scripts/fonts/update-google-fonts.ps1` (зеркало `.sh`).
 - `session_cookie_samesite: none` без `session_cookie_secure: true` теперь даёт warning
   при старте — такая комбинация отбрасывается браузерами.
 - **Доверенные прокси (Phase AUD.5)**: `receiver.trusted_proxies` и `web.trusted_proxies` —

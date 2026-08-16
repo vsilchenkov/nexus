@@ -1418,8 +1418,10 @@ Sender ключ не ставится — их поведение не меня�
 - **Дизайн-токены** ([web-ui/src/styles/globals.css](../web-ui/src/styles/globals.css) +
   [tailwind.config.js](../web-ui/tailwind.config.js)) — палитра/радиусы/шрифты эталона как
   CSS-переменные (RGB-тройки для opacity). Тёмная тема — основная, светлая зеркальная.
-  Шрифты Inter + JetBrains Mono подключены ссылкой в [index.html](../web-ui/index.html) с
-  graceful-fallback на системный стек.
+  Шрифты Inter + JetBrains Mono с §89.1 **локальные**:
+  [web-ui/src/assets/fonts/](../web-ui/src/assets/fonts/) (8 woff2, 226 КБ) +
+  генерируемый `fonts.css`, подключается из `main.tsx`; обновление —
+  [scripts/fonts/update-google-fonts.sh](../scripts/fonts/update-google-fonts.sh).
 - **UI-kit** [web-ui/src/components/ui/](../web-ui/src/components/ui/) — атомы эталона
   (Button, Input/Select/Textarea/Field, Card, SectionHead, Modal, Chip, Pill, Kpi/KpiRow,
   Seg, Hint, PickGroup, Toggle3). Снимает дублирование инлайн-классов на экранах.
@@ -2935,8 +2937,9 @@ make proto                                     # перегенерация send
         на группе `/api/*`: мутации с чужим/`null` Origin → 403; Bearer-токены
         и запросы без Origin (curl) пропускаются; reverse-proxy `/api/v1/*`
         не затрагивается. Дополнение к SameSite-cookie, не замена;
-      - security-заголовки `SecurityHeaders()`: CSP (self + Google Fonts +
-        'unsafe-inline' для style), nosniff, X-Frame-Options DENY,
+      - security-заголовки `SecurityHeaders()`: CSP (только self +
+        'unsafe-inline' для style; с §89.1 внешних источников нет вовсе —
+        шрифты локальные), nosniff, X-Frame-Options DENY,
         Referrer-Policy. CSP пропускается для `/swagger/*` (inline-скрипт
         конфигурации Swagger UI);
       - warning при старте, если `session_cookie_samesite=none` без `secure`.

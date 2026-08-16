@@ -76,7 +76,13 @@ func TestSecurityHeaders(t *testing.T) {
 	assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
 	assert.Equal(t, "DENY", w.Header().Get("X-Frame-Options"))
 	assert.Equal(t, "same-origin", w.Header().Get("Referrer-Policy"))
-	assert.Contains(t, w.Header().Get("Content-Security-Policy"), "default-src 'self'")
+	csp := w.Header().Get("Content-Security-Policy")
+	assert.Contains(t, csp, "default-src 'self'")
+	// §89.1: шрифты локальные и встроены в бинарь. Внешних источников в политике
+	// быть не должно ни одного — иначе изолированный контур снова зависит от
+	// сети, а поймать это нечем: страница «просто выглядит иначе».
+	assert.Contains(t, csp, "font-src 'self';")
+	assert.NotContains(t, csp, "https://", "CSP не должен разрешать внешние origin'ы")
 
 	// Swagger UI живёт на inline-скрипте конфигурации — CSP не ставим.
 	w = httptest.NewRecorder()
