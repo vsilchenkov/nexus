@@ -2583,7 +2583,9 @@ ClickHouse (§21), идентификатор узла в логах для об
 
 ---
 
-[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.26.0...HEAD
+[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.28.1...HEAD
+[1.28.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.28.0...v1.28.1
+[1.28.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.27.2...v1.28.0
 [1.27.2]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.27.1...v1.27.2
 [1.27.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.27.0...v1.27.1
 [1.27.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.26.0...v1.27.0
