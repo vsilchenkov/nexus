@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -282,12 +283,5 @@ func setString(doc map[string]any, path []string, val string) {
 }
 
 func pathString(path []string) string {
-	out := ""
-	for i, p := range path {
-		if i > 0 {
-			out += "."
-		}
-		out += p
-	}
-	return out
+	return strings.Join(path, ".")
 }

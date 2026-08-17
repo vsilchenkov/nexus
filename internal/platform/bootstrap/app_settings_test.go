@@ -13,8 +13,6 @@ import (
 	"nexus/internal/platform/logging"
 )
 
-func ptr[T any](v T) *T { return &v }
-
 func TestDecodeAppSettings(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -82,20 +80,20 @@ func TestDecodeAppSettings_DecryptsSecrets(t *testing.T) {
 		{
 			name:    "шифротекст расшифровывается",
 			raw:     `{"sentry":{"dsn":"` + encDSN + `"},"clickhouse":{"password":"` + encPwd + `"}}`,
-			wantDSN: ptr("https://key@sentry.example.com/52"),
-			wantPwd: ptr("ch-secret"),
+			wantDSN: new("https://key@sentry.example.com/52"),
+			wantPwd: new("ch-secret"),
 		},
 		{
 			name:    "legacy plaintext проходит как есть",
 			raw:     `{"sentry":{"dsn":"https://key@sentry.example.com/52"},"clickhouse":{"password":"ch-secret"}}`,
-			wantDSN: ptr("https://key@sentry.example.com/52"),
-			wantPwd: ptr("ch-secret"),
+			wantDSN: new("https://key@sentry.example.com/52"),
+			wantPwd: new("ch-secret"),
 		},
 		{
 			name:    "смесь: DSN зашифрован, пароль ещё нет",
 			raw:     `{"sentry":{"dsn":"` + encDSN + `"},"clickhouse":{"password":"ch-secret"}}`,
-			wantDSN: ptr("https://key@sentry.example.com/52"),
-			wantPwd: ptr("ch-secret"),
+			wantDSN: new("https://key@sentry.example.com/52"),
+			wantPwd: new("ch-secret"),
 		},
 		{
 			name:    "секреты не заданы",
