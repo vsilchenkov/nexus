@@ -281,14 +281,19 @@ ClickHouse-батчинга, cookie-флаги) живут в `config/config.exa
   полностью работоспособен в изолированном контуре. Обновление шрифтов —
   `scripts/fonts/update-google-fonts.ps1` (зеркало `.sh`).
 - **Secure-флаг session-cookie (§90.2)**: `session_cookie_secure: true` означает «ставить
-  `Secure`, когда запрос пришёл по HTTPS» — прямое TLS-соединение или заголовок
-  `X-Forwarded-Proto: https` от прокси. По обычному HTTP (вход по `http://<IP>:8000`) кука
-  выдаётся без `Secure` и вход работает, поэтому менять конфиг при переходе между
-  DNS-именем и IP больше не нужно. `false` запрещает `Secure` при любой схеме (аварийный
-  выключатель). **Прокси обязан слать `X-Forwarded-Proto`** (`proxy_set_header
-  X-Forwarded-Proto $scheme;`, см. §5.3): без него Web не отличит HTTPS от HTTP и отдаст
-  куку без `Secure` — она уйдёт по сети между браузером и прокси в открытом виде, если
-  кто-то откроет UI по `http://`.
+  `Secure`, когда запрос пришёл по HTTPS». Схема определяется по прямому TLS-соединению,
+  заголовкам прокси (`X-Forwarded-Proto`, `X-Forwarded-Ssl`, `Front-End-Https`,
+  `X-Url-Scheme`) и — если их нет — по `Origin` самого браузера. По обычному HTTP (вход по
+  `http://<IP>:8000`) кука выдаётся без `Secure` и вход работает, поэтому менять конфиг при
+  переходе между DNS-именем и IP больше не нужно. `false` запрещает `Secure` при любой схеме
+  (аварийный выключатель).
+
+  **Настраивать прокси не обязательно.** Если он не добавляет `X-Forwarded-Proto` — типовой
+  случай, когда общий HAProxy правит другая команда, — схему подскажет `Origin`: браузер
+  присылает его на всех мутациях, а кука ставится только в `Login`/`Logout`. Заголовок
+  (`proxy_set_header X-Forwarded-Proto $scheme;` в nginx,
+  `http-request set-header X-Forwarded-Proto https` в HAProxy) остаётся рекомендацией: он даёт
+  прямой сигнал и не зависит от того, прислал ли браузер `Origin`.
 - `session_cookie_samesite: none` без `session_cookie_secure: true` даёт warning
   при старте — такая комбинация отбрасывается браузерами. Учтите, что при `samesite: none`
   вход по обычному HTTP невозможен в принципе (браузеры требуют `Secure` для `None`);
