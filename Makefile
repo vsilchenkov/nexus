@@ -253,8 +253,8 @@ test-int-sender: ## integration: Sender async + DLQ + DLQ-репроцессор
 test-int-queue: ## integration: управление async-очередью §35 + tombstones (Kafka+Redis)
 	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestAsyncQueue|^TestQueueCancel" ./tests/integration/...
 
-test-int-misc: ## integration: остальное — скоупы, статусы узла, одноразовые ссылки §88, каталог полей, dry-run, rDNS
-	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestAuditScope|^TestCHTableVerify|^TestDryRun|^TestMigrations_|^TestNodeAck|^TestNodeAsyncAckSpec|^TestNodeScope|^TestNodeStatus|^TestOneTimeToken|^TestUserRepo_|^TestRDNS|^TestRequestFieldCatalog|^TestTeamExternalURL|^TestTeamFavorites" ./tests/integration/...
+test-int-misc: ## integration: остальное — скоупы, статусы узла, одноразовые ссылки §88, каталог полей, dry-run, rDNS, ротация ключа §90
+	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestAuditScope|^TestCHTableVerify|^TestDryRun|^TestMigrations_|^TestNodeAck|^TestNodeAsyncAckSpec|^TestNodeScope|^TestNodeStatus|^TestOneTimeToken|^TestRotateKey|^TestUserRepo_|^TestRDNS|^TestRequestFieldCatalog|^TestTeamExternalURL|^TestTeamFavorites" ./tests/integration/...
 
 # Масштабный замер скролла логов (§77.5). В test-integration НЕ входит: сид на
 # десятки млн строк и прогон занимают минуты, а результат — не pass/fail, а

@@ -424,6 +424,13 @@
 | **§87.2: иерархия рангов выдержала вставку роли в середину** | ✅ Phase 87.1 | [enums.go](../internal/domain/enums.go) `Rank()` 3/2/1/0 + [roles.ts](../web-ui/src/lib/roles.ts). Возможности оператора — строгое подмножество менеджерских, поэтому решётка прав не понадобилась: гейты опущены с `RequireMinRole(manager)` на `RequireMinRole(operator)`. Сдвиг `manager` 1→2 / `admin` 2→3 безопасен — ранг вычисляемый (грепом подтверждено, что `rank` не персистится нигде) |
 | **§87.3: группа `authedOperator`, 7 перенесённых регистраций** | ✅ Phase 87.2 | [routes.go](../internal/web/adapter/in/http/routes.go): `PATCH /nodes/:id/status`, `POST /logs/:id/replay`, `replay-period/{plan,run}`, `POST /nodes/:id/breaker/reset`, вся группа `/nodes/:id/async-queue/*`, `GET /audit` + `/audit/export.csv`. Тесты — [routes_role_test.go](../internal/web/adapter/in/http/routes_role_test.go) поверх настоящего `RegisterAPI` |
 | **§87.4: миграция 0035 и потеря роли при откате** | ✅ Phase 87.1 | [0035_user_role_operator.up.sql](../migrations/0035_user_role_operator.up.sql) расширяет CHECK; `down` переводит операторов в `viewer`. `scripts/release/rollback_info.py` эту потерю НЕ пометит (смотрит `DROP TABLE`/`DROP COLUMN`/`DELETE FROM`, а тут `UPDATE`) — строку «Откат» в CHANGELOG пишем вручную |
+| **§90: безопасность внешних сервисов (секреты в БД, Secure-кука, автозаполнение)** | ◐ в работе | Раздел ТЗ [90-external-services-security.md](sections/90-external-services-security.md). Сделано: защита форм от автозаполнения (90.3), Secure-кука по схеме запроса (90.2), `crypto.DecryptLenient`, расшифровка в bootstrap-overlay и hot-reload'ерах, шифрование секретов в репозитории, ротация ключа для `nodes.rmq_password` и `app_settings` (90.1/90.4). Неочевидности — §4.76–§4.78. Миграций нет |
+| **§90.1: шифруются четыре секрета `app_settings`** | ✅ Phase 90.6 | [app_settings_repo.go](../internal/web/adapter/out/postgres/app_settings_repo.go): `sentry.dsn`, `clickhouse.password`, `mail.password`, `notifications.telegram.bot_token`. Схема БД не меняется (значения остаются строками в JSONB), миграции данных нет — чтение принимает и исторический plaintext. Закрывает дамп/бэкап/прямой доступ к PG; НЕ закрывает чтение `.env` (ключ там же) — граница названа в ТЗ явно |
+| **§90.1: строгий Get против мягкого overlay** | ✅ Phase 90.5/90.6 | Разное поведение при `ErrDecryption` продиктовано read-modify-write в `usecase.Update` (мягкость → затирание секрета) и контрактом overlay'я как опционального слоя (строгость → простой трёх сервисов). Подробно — §4.76 |
+| **§90.1: порядок внедрения (читатели раньше писателя)** | ✅ Phase 90.5 → 90.6 | В обратном порядке overlay залил бы `v1:...` в `cfg.ClickHouse.Password` молча. `readAppSettings` используется и всеми hot-reload'ерами ([reload.go](../internal/platform/bootstrap/reload.go)), поэтому одна правка в `decodeAppSettings` закрыла и горячую перезагрузку; `MustCipher` поднят выше `ApplyAppSettings` в трёх `main` |
+| **§90.2: Secure вычисляется на запрос** | ✅ Phase 90.2 | [auth_handler.go](../internal/web/adapter/in/http/auth_handler.go) `requestIsHTTPS` (TLS или `X-Forwarded-Proto: https`) + общий `setSessionCookie` для Login/Logout (раньше Logout не выставлял `SameSite`). Чинит петлю «логин 200 → /me 401 → форма входа» при входе по IP. Подробно — §4.77 |
+| **§90.3: автозаполнение чинится атрибутами** | ✅ Phase 90.1 | `autocomplete="off"`/`new-password` в ClickHouse, Mail, Notifications, Users, Sentry, RabbitMQSection; форма входа не тронута. Регрессионный тест проверяет атрибуты, а не поведение клика — заполняет браузер, а не приложение (§4.78) |
+| **§90.4: ротация ключа полная и идемпотентная** | ✅ Phase 90.4/90.7 | [keyrotate](../internal/platform/keyrotate/keyrotate.go): три колонки `nodes` (добавлен забытый `rmq_password`) + четыре секрета `app_settings`; plaintext шифруется и считается `rows_upgraded_plaintext` (прогон с `OLD_KEY == NEW_KEY` = разовая миграция §90.1); документ разбирается в `map[string]any`, чтобы не потерять незнакомые поля. Логика вынесена из `package main` — иначе её не покрыть тестами. Процедура — DEPLOYMENT §12 |
 | **§89: разные улучшения (шрифты, заголовок вкладки, ссылки на команду, внешний адрес)** | ◐ в работе | Раздел ТЗ [89-misc-improvements.md](sections/89-misc-improvements.md). Сделано: локальные шрифты и CSP (89.1), раздача /assets — MIME/кеш/404 (89.1), код ноды в заголовке вкладки (89.2), ссылки на команду в избранном и переключателе (89.3), внешняя ссылка команды — бэкенд и фронт (89.4), фикс адреса узла по чужому слагу (89.6) |
 | **§89.1: шрифты живут в `src/assets`, а не в `public`** | ✅ Phase 89.1 | Выбор продиктован embed-директивой: Vite эмитит ассеты, на которые ссылается CSS, в `dist/assets` с хешем, а это ровно то, что уже покрыто `//go:embed index.html assets` ([static.go](../internal/web/static/static.go)). `public/fonts` дал бы `dist/fonts` — вне `assets`, то есть потребовал бы и правки директивы, и нового маршрута (иначе `/fonts/x.woff2` проваливается в SPA-fallback), и имена без хеша, несовместимые с `immutable`-кешем |
 | **§89.1: Google отдаёт разный ответ по User-Agent** | ✅ Phase 89.1 | На дефолтном UA `css2` возвращает пять `@font-face` с `format('truetype')` — без woff2, без `unicode-range`, без деления на сабсеты, и ТОЖЕ с кодом 200. [update-google-fonts.sh](../scripts/fonts/update-google-fonts.sh) подставляет UA Chrome и проверяет результат по наличию `unicode-range`, а не по коду ответа |
@@ -1197,13 +1204,22 @@ Sender'а падал с `No such column http_method`, §38-retry в Kafka тож
   Версионированные образы строит сервер при `docker compose up -d --build` — там `.git`
   нужен в контексте, дата `%cI`, ведущий `v` тега срезается (`${VERSION#v}`/`patsubst`).
 
-### 4.1 Шифрование auth_credentials живёт только в `adapter/out/postgres`
+### 4.1 Шифрование живёт только в `adapter/out/postgres` (узлы и app_settings)
 
 `domain.Node` всегда хранит **открытый** plaintext. Шифрование/расшифровка происходит
 исключительно в [postgres/node_repo.go](../internal/web/adapter/out/postgres/node_repo.go)
 (`Create`, `Update`, `scan`) и [sender/adapter/out/nodepg/reader.go](../internal/sender/adapter/out/nodepg/reader.go).
 Это намеренное архитектурное решение (§5.5 ТЗ + §17.4 «mapper.go»):
 usecase не знает, что креды зашифрованы — он работает с готовым `*domain.Node`.
+
+**§90.1 распространил правило на `app_settings`.** Четыре секрета (`sentry.dsn`,
+`clickhouse.password`, `mail.password`, `notifications.telegram.bot_token`) шифруются в
+[postgres/app_settings_repo.go](../internal/web/adapter/out/postgres/app_settings_repo.go);
+`domain.AppSettings` снаружи — plaintext, маскирование `***` в usecase не менялось. У этой
+таблицы **второй читатель мимо репозитория** —
+[bootstrap/app_settings.go](../internal/platform/bootstrap/app_settings.go), через который
+работают и все hot-reload'еры ([reload.go](../internal/platform/bootstrap/reload.go)), поэтому
+расшифровка добавлена и туда. Подробности о разном поведении двух читателей при ошибке — §4.76.
 
 ### 4.2 NodeRepoPg / AuditRepoPg принимают `DBTX`, не pool
 
@@ -4971,3 +4987,87 @@ Makefile и падает, если тест не попал ни в одну г�
 **Правило на будущее:** добавил integration-тест — либо он матчится существующей
 группой, либо дополни `test-int-misc`. Зелёный `make test-integration` без этого гейта
 не означает, что тесты выполнялись.
+
+### 4.76 §90.1 — два читателя `app_settings` ведут себя при ошибке ПО-РАЗНОМУ
+
+Секреты `app_settings` читают два независимых места, и деградация у них противоположная.
+Это не недосмотр, а следствие того, что́ каждое из них делает с прочитанным.
+
+**Web-репозиторий (`Get`) — строгий**: ошибка расшифровки возвращается наверх (запрос
+настроек падает с 500, сервис жив). Причина — read-modify-write в
+[usecase/app_settings.go](../internal/web/usecase/app_settings.go) `Update`: он читает
+текущие настройки, накладывает патч и сохраняет **весь** документ. Мягкая деградация
+(подставить `nil` или оставить шифротекст) означала бы, что первое же сохранение любой
+соседней настройки затирает рабочий секрет — тихая порча данных вместо видимой ошибки.
+
+**Bootstrap-overlay — мягкий**: битое поле зануляется, сервис поднимается на значении из
+`.env`/YAML, на каждое поле пишется `Error`. Причина — контракт самого overlay'я
+(комментарий в [bootstrap/app_settings.go](../internal/platform/bootstrap/app_settings.go)):
+он опциональный слой поверх обязательного env-конфига. Уронить Receiver и Sender из-за
+одного битого web-секрета — самопричинённый простой там, где рабочее значение обычно уже
+лежит в окружении. Молчаливой деградации нет: `Error` на поле плюс видимые последствия
+(ClickHouse не подключается, Sentry молчит).
+
+**Порядок внедрения был обязателен.** Читатели научились понимать шифротекст (Phase 90.5)
+**раньше**, чем включилась запись (Phase 90.6). В обратном порядке overlay залил бы
+`v1:...` в `cfg.ClickHouse.Password`, и сервисы пошли бы подключаться шифротекстом вместо
+пароля — без единой ошибки, просто «CH недоступен».
+
+**Смешанное состояние вместо миграции данных.** Мигрировать значения SQL-миграцией нельзя
+(у неё нет ключа), а утилита ротации работает вне сервиса. Поэтому
+`Cipher.DecryptLenient` ([crypto/aesgcm.go](../internal/platform/crypto/aesgcm.go))
+принимает и plaintext: не похоже на `v1:<4 части>` → отдать как есть. Различение по форме
+безопасно для реальных значений (Sentry DSN с двоеточиями даёт другое число частей);
+неотличим лишь гипотетический plaintext вида `v1:a:b:c` — записано в godoc.
+`ErrDecryption` при этом НЕ проглатывается: несовпадение GCM-тега — доказанный факт чужого
+ключа или порчи, и трактовать такое значение как plaintext значило бы отдать наверх
+шифротекст под видом секрета.
+
+**Ротация (§90.4) заодно чинит два старых дефекта**
+([keyrotate](../internal/platform/keyrotate/keyrotate.go)): `nodes.rmq_password` в список
+колонок не входил (после смены ключа pull-узлы молча переставали подключаться), а одно
+историческое plaintext-значение валило весь прогон. Теперь plaintext шифруется и считается
+отдельным счётчиком `rows_upgraded_plaintext`, поэтому прогон с `OLD_KEY == NEW_KEY`
+работает как разовая миграция значений §90.1. Документ настроек разбирается в
+`map[string]any`, а не в `domain.AppSettings`: round-trip через типизированную структуру
+молча выбросил бы незнакомые ей поля (есть тест). Логика вынесена из `package main` —
+из `cmd/` её не покрыть тестами.
+
+### 4.77 §90.2 — `Secure` нельзя было держать статическим флагом
+
+Web слушает только plain HTTP (TLS терминирует внешний nginx), поэтому `c.Request.TLS`
+за прокси всегда `nil`, а `X-Forwarded-Proto`, который DEPLOYMENT велит прокидывать,
+до §90.2 не читался в коде **ни разу**. `Secure`-кука, отданная по `http://`, молча
+отбрасывается браузером (RFC 6265bis §5.5), и это давало петлю: логин отвечает 200,
+`GET /api/auth/me` получает 401, SPA возвращает на форму входа — без единой ошибки в логах,
+поэтому симптом читался как «пароль не подходит».
+
+Теперь `requestIsHTTPS` в
+[auth_handler.go](../internal/web/adapter/in/http/auth_handler.go) считает схему на каждый
+запрос, а флаг конфига означает «ставить `Secure`, когда канал позволяет». Заголовку можно
+верить: атрибут только **сужает** круг соединений, по которым браузер отправит куку —
+подделавший навредит лишь себе. Этим `X-Forwarded-Proto` принципиально отличается от
+`X-Forwarded-For`, где доверие ограничено `web.trusted_proxies` (подделка искажает аудит).
+
+Границы, которые это НЕ закрывает: `samesite=none` требует `Secure` по правилам браузеров,
+поэтому с ним вход по HTTP невозможен в принципе (предупреждение при старте осталось); а
+если nginx не шлёт `X-Forwarded-Proto`, кука уедет без `Secure` даже по HTTPS.
+
+### 4.78 §90.3 — автозаполнение форм чинится атрибутами, а не состоянием React
+
+Жалоба «в параметрах ClickHouse сам подставляется пользователь» выглядит как баг
+контролируемой формы, но состояние тут ни при чём: Chrome эвристически распознаёт пару
+«текстовое поле + `type="password"` рядом» как форму логина и заполняет её из менеджера
+паролей. Отсутствие тега `<form>` не помогает — у form-less разметки эвристика самая
+агрессивная, браузер группирует соседние поля синтетически.
+
+Лечится `autocomplete="off"` на текстовых полях рядом с паролями и
+`autocomplete="new-password"` на самих парольных. Приём в проекте уже был — в атоме
+[SecretInput.tsx](../web-ui/src/components/ui/SecretInput.tsx), но панели настроек его не
+получили. Форма входа и экраны смены пароля намеренно оставлены с
+`username`/`current-password`.
+
+Регрессионный тест проверяет именно **атрибуты** полей
+([ClickHouse.test.tsx](../web-ui/src/pages/settings/ClickHouse.test.tsx)): поведение клика
+здесь ничего не докажет — автозаполнение выполняет браузер, а не приложение (тот же урок,
+что §79.3 про `<button>` вместо ссылки).
