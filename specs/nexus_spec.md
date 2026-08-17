@@ -1215,7 +1215,7 @@ sender:
 web:
   http_addr: :8000
   session_cookie_name: nexus_session # имя cookie с session-токеном
-  session_cookie_secure: true          # cookie только по HTTPS (false для локальной разработки)
+  session_cookie_secure: true          # §90.2: Secure ставится, когда запрос пришёл по HTTPS (false — никогда)
   session_cookie_samesite: strict      # strict / lax / none
   # session_ttl наследуется из redis.session_ttl_sec (см. §7.1)
   audit_retention_days: 365            # хранение записей user_audit (см. §7.13)

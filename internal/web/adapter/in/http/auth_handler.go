@@ -3,6 +3,7 @@ package http
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -123,16 +124,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	sameSite := http.SameSiteStrictMode
-	switch h.cfg.SessionCookieSamesite {
-	case "lax":
-		sameSite = http.SameSiteLaxMode
-	case "none":
-		sameSite = http.SameSiteNoneMode
-	}
-	c.SetSameSite(sameSite)
-	c.SetCookie(h.cfg.SessionCookieName, token, int(h.ttl().Seconds()), "/", "",
-		h.cfg.SessionCookieSecure, true)
+	h.setSessionCookie(c, token, int(h.ttl().Seconds()))
 
 	c.JSON(http.StatusOK, gin.H{
 		"user": meResponse{
@@ -158,9 +150,49 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	if err == nil && token != "" {
 		_ = h.uc.Logout(c.Request.Context(), token)
 	}
-	c.SetCookie(h.cfg.SessionCookieName, "", -1, "/", "",
-		h.cfg.SessionCookieSecure, true)
+	// maxAge<0 — команда браузеру удалить куку. Атрибуты (SameSite, Secure)
+	// считаются те же, что при установке: браузер сопоставляет куку по
+	// name/domain/path, но несимметричные атрибуты — источник трудноуловимых
+	// расхождений между схемами.
+	h.setSessionCookie(c, "", -1)
 	c.Status(http.StatusNoContent)
+}
+
+// setSessionCookie ставит (или удаляет при maxAge<0) session-cookie с
+// атрибутами SameSite и Secure, согласованными между Login и Logout.
+func (h *AuthHandler) setSessionCookie(c *gin.Context, token string, maxAge int) {
+	sameSite := http.SameSiteStrictMode
+	switch h.cfg.SessionCookieSamesite {
+	case "lax":
+		sameSite = http.SameSiteLaxMode
+	case "none":
+		sameSite = http.SameSiteNoneMode
+	}
+	c.SetSameSite(sameSite)
+	c.SetCookie(h.cfg.SessionCookieName, token, maxAge, "/", "",
+		requestIsHTTPS(c) && h.cfg.SessionCookieSecure, true)
+}
+
+// requestIsHTTPS — пришёл ли запрос по защищённому каналу (§90.2).
+//
+// Web всегда слушает plain HTTP: TLS терминирует внешний nginx, поэтому
+// c.Request.TLS за прокси всегда nil и единственный признак схемы —
+// X-Forwarded-Proto. Заголовку можно верить: атрибут Secure только сужает
+// круг соединений, по которым браузер отправит куку, так что подделавший
+// заголовок клиент навредит лишь себе.
+//
+// Зачем: cookie с Secure, отданная по http://, молча отбрасывается браузером
+// (RFC 6265bis §5.5) — логин отвечал 200, а следующий /api/auth/me получал
+// 401 и SPA возвращала на форму входа. Статический флаг из конфига заставлял
+// выбирать между входом по DNS (HTTPS) и по IP (HTTP); теперь Secure ставится
+// ровно тогда, когда канал это позволяет.
+func requestIsHTTPS(c *gin.Context) bool {
+	if c.Request.TLS != nil {
+		return true
+	}
+	// Прокси может прислать список ("https, http") — значима первая запись.
+	proto, _, _ := strings.Cut(c.GetHeader("X-Forwarded-Proto"), ",")
+	return strings.EqualFold(strings.TrimSpace(proto), "https")
 }
 
 // Me godoc
