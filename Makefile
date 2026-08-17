@@ -267,10 +267,12 @@ sqlc-gen: ## Phase 1: генерация Go-кода из SQL через sqlc
 	@echo "TODO Phase 1: sqlc generate"
 
 rotate-encryption-key: ## Ротация ENCRYPTION_KEY: make rotate-encryption-key OLD_KEY=... NEW_KEY=... [DRY_RUN=true]
-	$(GO) run ./cmd/rotate-key \
-		--old-key="$(OLD_KEY)" \
-		--new-key="$(NEW_KEY)" \
-		$(if $(filter true,$(DRY_RUN)),--dry-run,)
+# Параметры уходят в окружение, а не флагами: разбор командной строки принадлежит
+# bootstrap.Init (свой FlagSet с ExitOnError), и на «чужом» флаге утилита печатала
+# usage и завершалась — то есть ротация не выполнялась вовсе (§90.4).
+# @ обязателен: без него make печатает строку целиком, и оба ключа шифрования
+# уходят в вывод терминала (а на CI — в лог задания).
+	@OLD_KEY="$(OLD_KEY)" NEW_KEY="$(NEW_KEY)" DRY_RUN="$(DRY_RUN)" $(GO) run ./cmd/rotate-key
 
 # ----- git hooks (Phase 7.9) ------------------------------------------------
 
