@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"nexus/internal/platform/config"
+	"nexus/internal/platform/crypto"
 	"nexus/internal/platform/logging"
 )
 
@@ -51,8 +52,8 @@ type appSettingsOverlay struct {
 //
 // Ошибка чтения логируется, но не валит сервис: app_settings —
 // опциональный слой поверх обязательного env-конфига.
-func ApplyAppSettings(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config, logger logging.Logger) {
-	o, err := readAppSettings(ctx, pool)
+func ApplyAppSettings(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config, cipher *crypto.Cipher, logger logging.Logger) {
+	o, err := readAppSettings(ctx, pool, cipher, logger)
 	if err != nil {
 		logger.Warn("app_settings overlay skipped",
 			logger.Err(err))
@@ -63,7 +64,7 @@ func ApplyAppSettings(ctx context.Context, pool *pgxpool.Pool, cfg *config.Confi
 	logger.Info("app_settings overlay applied")
 }
 
-func readAppSettings(ctx context.Context, pool *pgxpool.Pool) (*appSettingsOverlay, error) {
+func readAppSettings(ctx context.Context, pool *pgxpool.Pool, cipher *crypto.Cipher, logger logging.Logger) (*appSettingsOverlay, error) {
 	var raw []byte
 	err := pool.QueryRow(ctx, `SELECT value FROM app_settings WHERE id = 1`).Scan(&raw)
 	if err != nil {
@@ -72,12 +73,13 @@ func readAppSettings(ctx context.Context, pool *pgxpool.Pool) (*appSettingsOverl
 		}
 		return nil, fmt.Errorf("query app_settings: %w", err)
 	}
-	return decodeAppSettings(raw)
+	return decodeAppSettings(raw, cipher, logger)
 }
 
-// decodeAppSettings разбирает JSONB-значение app_settings в overlay.
+// decodeAppSettings разбирает JSONB-значение app_settings в overlay и
+// расшифровывает секреты (§90.1).
 // Чистая функция — извлечена из readAppSettings ради unit-тестов без pgxpool.
-func decodeAppSettings(raw []byte) (*appSettingsOverlay, error) {
+func decodeAppSettings(raw []byte, cipher *crypto.Cipher, logger logging.Logger) (*appSettingsOverlay, error) {
 	o := &appSettingsOverlay{}
 	if len(raw) == 0 || string(raw) == "{}" {
 		return o, nil
@@ -85,7 +87,52 @@ func decodeAppSettings(raw []byte) (*appSettingsOverlay, error) {
 	if err := json.Unmarshal(raw, o); err != nil {
 		return nil, fmt.Errorf("decode app_settings: %w", err)
 	}
+	decryptOverlaySecrets(o, cipher, logger)
 	return o, nil
+}
+
+// decryptOverlaySecrets расшифровывает секреты overlay'я (§90.1). Секретов в
+// нём два: DSN Sentry и пароль ClickHouse.
+//
+// Нерасшифровываемое поле ЗАНУЛЯЕТСЯ, а сервис продолжает подниматься на
+// значении из env/YAML. Это осознанно мягче, чем в web-репозитории (там
+// ошибка): overlay — опциональный слой поверх обязательного env-конфига
+// (см. контракт ApplyAppSettings), и ронять Receiver с Sender'ом из-за одного
+// битого поля значило бы устроить простой там, где рабочее значение чаще
+// всего уже лежит в окружении. Молчаливой деградации при этом нет: на каждое
+// поле пишется Error, а последствие видно и само (CH не подключается,
+// Sentry молчит).
+func decryptOverlaySecrets(o *appSettingsOverlay, cipher *crypto.Cipher, logger logging.Logger) {
+	if cipher == nil {
+		return
+	}
+	fields := []struct {
+		name string
+		ptr  **string
+	}{
+		{"sentry.dsn", &o.Sentry.DSN},
+		{"clickhouse.password", &o.ClickHouse.Password},
+	}
+	for _, f := range fields {
+		if *f.ptr == nil {
+			continue
+		}
+		plain, wasEncrypted, err := cipher.DecryptLenient(**f.ptr)
+		if err != nil {
+			logger.ErrorWithOp("app_settings secret decrypt failed, falling back to env",
+				err, "bootstrap.app_settings")
+			*f.ptr = nil
+			continue
+		}
+		if !wasEncrypted {
+			// §90.1: значение ещё не «дозрело» — лежит открытым текстом и
+			// зашифруется при следующем сохранении настроек или ротации ключа.
+			logger.Debug("app_settings: plaintext secret read as is",
+				logger.Str("field", f.name))
+			continue
+		}
+		*f.ptr = &plain
+	}
 }
 
 func overlaySentry(cfg *config.Config, o *appSettingsOverlay) {

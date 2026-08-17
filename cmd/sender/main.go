@@ -40,8 +40,11 @@ func main() {
 	// отсутствие instance_identity здесь не фатально — он стартовал раньше Web.
 	identity := bootstrap.MustInstanceIdentity(ctx, pgPool, cfg, flags, projectName, logger)
 
+	// Cipher нужен раньше overlay'я: тот расшифровывает секреты app_settings (§90.1).
+	cipher := bootstrap.MustCipher(logger)
+
 	// §8.4 / §14.5: накладываем CH-настройки из app_settings ДО подключения.
-	bootstrap.ApplyAppSettings(ctx, pgPool, cfg, logger)
+	bootstrap.ApplyAppSettings(ctx, pgPool, cfg, cipher, logger)
 
 	// Conn закрывается через sender.App.Stop → clickhouse.Manager.Close,
 	// чтобы при hot-reload (§8.4) закрылся ТЕКУЩИЙ conn, а не исходный
@@ -50,8 +53,6 @@ func main() {
 
 	redisClient := bootstrap.MustRedis(ctx, cfg, logger)
 	defer redisClient.Close()
-
-	cipher := bootstrap.MustCipher(logger)
 
 	// §3.6: nexus.async.paused — delay-топик отложенных сообщений paused-узлов.
 	// §38: nexus.logs.retry — durable-буфер проваленных CH-батчей (если задан).

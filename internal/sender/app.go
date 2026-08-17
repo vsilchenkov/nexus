@@ -334,12 +334,12 @@ func (a *App) startBackgroundJobs(ctx context.Context, nodeReader *nodepg.Reader
 
 		reloadSub := reloader.NewSubscriber(a.redis, a.logger)
 		reloadSub.Register(reloader.SectionSentry,
-			bootstrap.SentryReloader(a.pg, a.cfg, a.cfg.Build.ProjectName, a.cfg.Build.Version, a.logger))
+			bootstrap.SentryReloader(a.pg, a.cfg, a.cfg.Build.ProjectName, a.cfg.Build.Version, a.cipher, a.logger))
 		reloadSub.Register(reloader.SectionClickHouse,
 			bootstrap.ClickHouseReloader(a.pg, a.cfg, a.chMgr,
-				[]bootstrap.WriterReloader{a.chWriter}, a.logger))
+				[]bootstrap.WriterReloader{a.chWriter}, a.cipher, a.logger))
 		// §51: runtime-уровень логов из app_settings.logging.level (+ сид старта).
-		applyLogLevel := bootstrap.LogLevelReloader(a.pg, a.logCtl, a.logger)
+		applyLogLevel := bootstrap.LogLevelReloader(a.pg, a.logCtl, a.cipher, a.logger)
 		if err := applyLogLevel(ctx); err != nil {
 			a.logger.Warn("seed log level from app_settings failed; using yaml level", a.logger.Err(err))
 		}
