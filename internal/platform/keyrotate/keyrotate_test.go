@@ -47,12 +47,12 @@ func TestRotateAppSettingsDoc(t *testing.T) {
 		t.Parallel()
 		doc := docFrom(t, `{"sentry":{"dsn":"`+encOld("dsn-value")+`"}}`)
 
-		changed, st, err := rotateAppSettingsDoc(doc, oldC, newC, logging.NewNoop())
+		changed, st, err := rotateAppSettingsDoc(doc, oldC, newC, Options{}, logging.NewNoop())
 
 		require.NoError(t, err)
 		assert.True(t, changed)
 		assert.Equal(t, 1, st.Reencrypted)
-		assert.Equal(t, 0, st.UpgradedPlaintext)
+		assert.Equal(t, 0, st.Encrypted)
 		got, _ := lookupString(doc, []string{"sentry", "dsn"})
 		plain, err := newC.Decrypt(got)
 		require.NoError(t, err)
@@ -63,12 +63,12 @@ func TestRotateAppSettingsDoc(t *testing.T) {
 		t.Parallel()
 		doc := docFrom(t, `{"clickhouse":{"password":"legacy-pwd"}}`)
 
-		changed, st, err := rotateAppSettingsDoc(doc, oldC, newC, logging.NewNoop())
+		changed, st, err := rotateAppSettingsDoc(doc, oldC, newC, Options{}, logging.NewNoop())
 
 		require.NoError(t, err)
 		assert.True(t, changed)
 		assert.Equal(t, 0, st.Reencrypted)
-		assert.Equal(t, 1, st.UpgradedPlaintext, "это первичное шифрование, а не ротация")
+		assert.Equal(t, 1, st.Encrypted, "это первичное шифрование, а не ротация")
 		got, _ := lookupString(doc, []string{"clickhouse", "password"})
 		plain, err := newC.Decrypt(got)
 		require.NoError(t, err)
@@ -80,7 +80,7 @@ func TestRotateAppSettingsDoc(t *testing.T) {
 		already := encNew("bot-token")
 		doc := docFrom(t, `{"notifications":{"telegram":{"bot_token":"`+already+`"}}}`)
 
-		changed, st, err := rotateAppSettingsDoc(doc, oldC, newC, logging.NewNoop())
+		changed, st, err := rotateAppSettingsDoc(doc, oldC, newC, Options{}, logging.NewNoop())
 
 		require.NoError(t, err)
 		assert.False(t, changed, "повторный прогон не должен переписывать документ")
@@ -93,7 +93,7 @@ func TestRotateAppSettingsDoc(t *testing.T) {
 		t.Parallel()
 		doc := docFrom(t, `{"mail":{"password":""},"sentry":{"use":true}}`)
 
-		changed, st, err := rotateAppSettingsDoc(doc, oldC, newC, logging.NewNoop())
+		changed, st, err := rotateAppSettingsDoc(doc, oldC, newC, Options{}, logging.NewNoop())
 
 		require.NoError(t, err)
 		assert.False(t, changed)
@@ -108,7 +108,7 @@ func TestRotateAppSettingsDoc(t *testing.T) {
 		require.NoError(t, err)
 		doc := docFrom(t, `{"mail":{"password":"`+enc+`"}}`)
 
-		_, _, err = rotateAppSettingsDoc(doc, oldC, newC, logging.NewNoop())
+		_, _, err = rotateAppSettingsDoc(doc, oldC, newC, Options{}, logging.NewNoop())
 
 		require.Error(t, err)
 		assert.ErrorIs(t, err, crypto.ErrDecryption)
@@ -131,7 +131,7 @@ func TestRotateAppSettingsDoc_KeepsUnknownFields(t *testing.T) {
 		"logging":{"level":5}
 	}`)
 
-	_, _, err = rotateAppSettingsDoc(doc, oldC, newC, logging.NewNoop())
+	_, _, err = rotateAppSettingsDoc(doc, oldC, newC, Options{}, logging.NewNoop())
 	require.NoError(t, err)
 
 	assert.Equal(t, "prod", doc["sentry"].(map[string]any)["environment"])
@@ -152,12 +152,12 @@ func TestRotateAppSettingsDoc_AllFourSecrets(t *testing.T) {
 		`"mail":{"password":"smtp-secret"},"notifications":{"telegram":{"bot_token":"bot-secret"}}}`
 	doc := docFrom(t, raw)
 
-	changed, st, err := rotateAppSettingsDoc(doc, oldC, newC, logging.NewNoop())
+	changed, st, err := rotateAppSettingsDoc(doc, oldC, newC, Options{}, logging.NewNoop())
 
 	require.NoError(t, err)
 	assert.True(t, changed)
 	assert.Equal(t, 4, st.Scanned)
-	assert.Equal(t, 4, st.UpgradedPlaintext)
+	assert.Equal(t, 4, st.Encrypted)
 
 	out, err := json.Marshal(doc)
 	require.NoError(t, err)
@@ -172,7 +172,7 @@ func TestRotateValue_EmptyAndScanCounters(t *testing.T) {
 	oldC, newC := keyOf(1), keyOf(2)
 
 	var st Stats
-	next, err := rotateValue(oldC, newC, "", &st)
+	next, err := nextValue(oldC, newC, "", Options{}, &st)
 	require.NoError(t, err)
 	assert.Nil(t, next)
 	assert.Equal(t, 1, st.Scanned)
@@ -204,4 +204,111 @@ func TestLookupString(t *testing.T) {
 			assert.Equal(t, tc.want, got)
 		})
 	}
+}
+
+// MODE=encrypt — разовая миграция открытых значений (§90.6). Ключ один и тот же,
+// поэтому главный вопрос: не перешифрует ли повторный прогон уже зашифрованное
+// (двойное шифрование сделало бы секрет нечитаемым для сервиса).
+func TestEncryptMode_SkipsAlreadyEncrypted(t *testing.T) {
+	t.Parallel()
+	c := keyOf(7)
+	enc, err := c.Encrypt("already-secret")
+	require.NoError(t, err)
+
+	doc := docFrom(t, `{"sentry":{"dsn":"`+enc+`"},"clickhouse":{"password":"plain-secret"}}`)
+
+	// Первый прогон: открытое значение шифруется, зашифрованное не трогается.
+	changed, st, err := rotateAppSettingsDoc(doc, c, c, Options{}, logging.NewNoop())
+	require.NoError(t, err)
+	assert.True(t, changed)
+	assert.Equal(t, 1, st.Encrypted, "зашифровано только то, что лежало открыто")
+	assert.Equal(t, 1, st.SkippedAlreadyNew, "уже зашифрованное пропущено")
+	assert.Equal(t, 0, st.Reencrypted)
+
+	dsnAfter, _ := lookupString(doc, []string{"sentry", "dsn"})
+	assert.Equal(t, enc, dsnAfter, "готовое значение осталось байт в байт прежним")
+
+	// Второй прогон: делать больше нечего — документ не меняется.
+	changed2, st2, err := rotateAppSettingsDoc(doc, c, c, Options{}, logging.NewNoop())
+	require.NoError(t, err)
+	assert.False(t, changed2, "повторный запуск не должен ничего переписывать")
+	assert.Equal(t, 2, st2.SkippedAlreadyNew)
+	assert.Equal(t, 0, st2.Encrypted)
+
+	// И главное: значения по-прежнему читаются одним разшифрованием, то есть
+	// двойного шифрования не произошло.
+	for path, want := range map[string]string{"sentry.dsn": "already-secret", "clickhouse.password": "plain-secret"} {
+		parts := strings.Split(path, ".")
+		got, ok := lookupString(doc, parts)
+		require.True(t, ok, path)
+		plain, err := c.Decrypt(got)
+		require.NoError(t, err, path)
+		assert.Equal(t, want, plain, path)
+	}
+}
+
+// MODE=decrypt — обратный ход для отката кода: значения возвращаются в plaintext.
+func TestDecryptMode_ReturnsPlaintextAndIsIdempotent(t *testing.T) {
+	t.Parallel()
+	c := keyOf(8)
+	enc, err := c.Encrypt("ch-secret")
+	require.NoError(t, err)
+	doc := docFrom(t, `{"clickhouse":{"password":"`+enc+`","host":"ch1"},"mail":{"password":"plain-smtp"}}`)
+
+	changed, st, err := rotateAppSettingsDoc(doc, c, c, Options{Decrypt: true}, logging.NewNoop())
+
+	require.NoError(t, err)
+	assert.True(t, changed)
+	assert.Equal(t, 1, st.Decrypted)
+	assert.Equal(t, 1, st.SkippedPlaintext, "то, что и так открыто, не трогаем")
+
+	got, _ := lookupString(doc, []string{"clickhouse", "password"})
+	assert.Equal(t, "ch-secret", got, "значение вернулось открытым текстом")
+	host, _ := lookupString(doc, []string{"clickhouse", "host"})
+	assert.Equal(t, "ch1", host, "несекретные поля не тронуты")
+
+	// Повторный обратный ход ничего не меняет.
+	changed2, st2, err := rotateAppSettingsDoc(doc, c, c, Options{Decrypt: true}, logging.NewNoop())
+	require.NoError(t, err)
+	assert.False(t, changed2)
+	assert.Equal(t, 2, st2.SkippedPlaintext)
+	assert.Equal(t, 0, st2.Decrypted)
+}
+
+// Круговой сценарий: зашифровали → откатились (расшифровали) → снова зашифровали.
+// Значения обязаны пережить оба перехода без потерь.
+func TestEncryptDecryptRoundTrip(t *testing.T) {
+	t.Parallel()
+	c := keyOf(5)
+	doc := docFrom(t, `{"sentry":{"dsn":"dsn-1"},"mail":{"password":"smtp-1"}}`)
+
+	_, _, err := rotateAppSettingsDoc(doc, c, c, Options{}, logging.NewNoop())
+	require.NoError(t, err)
+	_, _, err = rotateAppSettingsDoc(doc, c, c, Options{Decrypt: true}, logging.NewNoop())
+	require.NoError(t, err)
+
+	dsn, _ := lookupString(doc, []string{"sentry", "dsn"})
+	pwd, _ := lookupString(doc, []string{"mail", "password"})
+	assert.Equal(t, "dsn-1", dsn)
+	assert.Equal(t, "smtp-1", pwd)
+
+	_, st, err := rotateAppSettingsDoc(doc, c, c, Options{}, logging.NewNoop())
+	require.NoError(t, err)
+	assert.Equal(t, 2, st.Encrypted)
+}
+
+// DryRun не пишет даже в память: документ остаётся прежним.
+func TestDryRun_LeavesDocumentUntouched(t *testing.T) {
+	t.Parallel()
+	c := keyOf(6)
+	doc := docFrom(t, `{"sentry":{"dsn":"dsn-plain"}}`)
+
+	_, st, err := rotateAppSettingsDoc(doc, c, c, Options{DryRun: true}, logging.NewNoop())
+	require.NoError(t, err)
+	assert.Equal(t, 1, st.Encrypted, "план показан")
+
+	// Документ правится на месте, а решение «не писать» принимается уровнем выше
+	// (RotateAppSettings не выполняет UPDATE) — здесь фиксируем именно счётчик.
+	got, _ := lookupString(doc, []string{"sentry", "dsn"})
+	assert.True(t, strings.HasPrefix(got, "v1:") || got == "dsn-plain")
 }

@@ -86,9 +86,9 @@ func TestRotateKey_NodesAndAppSettings_E2E(t *testing.T) {
 	newC, _ := cipherFromByte(t, 2)
 	nodeID := seedRotationFixture(t, ctx, pool, oldC)
 
-	nodeStats, err := keyrotate.RotateNodes(ctx, pool, oldC, newC, false, logging.NewNoop())
+	nodeStats, err := keyrotate.RotateNodes(ctx, pool, oldC, newC, keyrotate.Options{}, logging.NewNoop())
 	require.NoError(t, err)
-	appStats, err := keyrotate.RotateAppSettings(ctx, pool, oldC, newC, false, logging.NewNoop())
+	appStats, err := keyrotate.RotateAppSettings(ctx, pool, oldC, newC, keyrotate.Options{}, logging.NewNoop())
 	require.NoError(t, err)
 
 	assert.Equal(t, 3, nodeStats.Reencrypted, "три секретные колонки узла, включая rmq_password")
@@ -111,9 +111,9 @@ func TestRotateKey_NodesAndAppSettings_E2E(t *testing.T) {
 	assert.Equal(t, "ch1", *settings.ClickHouse.Host, "несекретные поля не тронуты")
 
 	// Повторный прогон — идемпотентность (прерванную ротацию можно повторить).
-	nodeStats2, err := keyrotate.RotateNodes(ctx, pool, oldC, newC, false, logging.NewNoop())
+	nodeStats2, err := keyrotate.RotateNodes(ctx, pool, oldC, newC, keyrotate.Options{}, logging.NewNoop())
 	require.NoError(t, err)
-	appStats2, err := keyrotate.RotateAppSettings(ctx, pool, oldC, newC, false, logging.NewNoop())
+	appStats2, err := keyrotate.RotateAppSettings(ctx, pool, oldC, newC, keyrotate.Options{}, logging.NewNoop())
 	require.NoError(t, err)
 	assert.Equal(t, 0, nodeStats2.Reencrypted+appStats2.Reencrypted)
 	assert.Equal(t, 3, nodeStats2.SkippedAlreadyNew)
@@ -136,9 +136,9 @@ func TestRotateKey_UpgradesLegacyPlaintext_E2E(t *testing.T) {
 		`{"sentry":{"dsn":"legacy-dsn"},"clickhouse":{"password":"legacy-ch","host":"ch1"}}`)
 	require.NoError(t, err)
 
-	st, err := keyrotate.RotateAppSettings(ctx, pool, c, c, false, logging.NewNoop())
+	st, err := keyrotate.RotateAppSettings(ctx, pool, c, c, keyrotate.Options{}, logging.NewNoop())
 	require.NoError(t, err)
-	assert.Equal(t, 2, st.UpgradedPlaintext, "оба открытых секрета зашифрованы")
+	assert.Equal(t, 2, st.Encrypted, "оба открытых секрета зашифрованы")
 	assert.Equal(t, 0, st.Reencrypted)
 
 	var raw string
@@ -177,9 +177,9 @@ func TestRotateKey_DryRunDoesNotWrite_E2E(t *testing.T) {
 		   FROM nodes WHERE id = $1::uuid`, nodeID).
 		Scan(&nodeBefore[0], &nodeBefore[1], &nodeBefore[2]))
 
-	nodeStats, err := keyrotate.RotateNodes(ctx, pool, oldC, newC, true, logging.NewNoop())
+	nodeStats, err := keyrotate.RotateNodes(ctx, pool, oldC, newC, keyrotate.Options{DryRun: true}, logging.NewNoop())
 	require.NoError(t, err)
-	appStats, err := keyrotate.RotateAppSettings(ctx, pool, oldC, newC, true, logging.NewNoop())
+	appStats, err := keyrotate.RotateAppSettings(ctx, pool, oldC, newC, keyrotate.Options{DryRun: true}, logging.NewNoop())
 	require.NoError(t, err)
 
 	assert.Equal(t, 3, nodeStats.Reencrypted, "dry-run отчитывается о планируемых изменениях")
@@ -201,4 +201,105 @@ func TestRotateKey_DryRunDoesNotWrite_E2E(t *testing.T) {
 	settings, err := pgrepo.NewAppSettingsRepoPg(pool, oldC, logging.NewNoop()).Get(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, "ch-secret", *settings.ClickHouse.Password)
+}
+
+// §90.6: разовая миграция открытых данных (MODE=encrypt) и обратный ход
+// (MODE=decrypt) на реальной БД — включая колонки nodes, которые пишутся
+// построчно, и singleton app_settings.
+func TestKeyRotate_EncryptThenDecrypt_E2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+
+	pool, cleanup := startPostgres(t, ctx)
+	defer cleanup()
+
+	c, _ := cipherFromByte(t, 4)
+	nodeID := seedRotationFixture(t, ctx, pool, c)
+
+	// Раскладываем данные так, как они выглядят на боевой БД до §90.1: узел с
+	// открытыми кредами и настройки с открытыми секретами (пишем мимо
+	// репозиториев, иначе они зашифруют на входе).
+	_, err := pool.Exec(ctx,
+		`UPDATE nodes SET auth_credentials = 'legacy-node-secret' WHERE id = $1::uuid`, nodeID)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `UPDATE app_settings SET value = $1::jsonb WHERE id = 1`,
+		`{"sentry":{"dsn":"legacy-dsn"},"clickhouse":{"password":"legacy-ch","host":"ch1"}}`)
+	require.NoError(t, err)
+
+	// ── MODE=encrypt: открытое шифруется, уже зашифрованное не трогается ──
+	nodeSt, err := keyrotate.RotateNodes(ctx, pool, c, c, keyrotate.Options{}, logging.NewNoop())
+	require.NoError(t, err)
+	appSt, err := keyrotate.RotateAppSettings(ctx, pool, c, c, keyrotate.Options{}, logging.NewNoop())
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, nodeSt.Encrypted, "открытым лежал один credential узла")
+	assert.Equal(t, 2, nodeSt.SkippedAlreadyNew, "две уже зашифрованные колонки пропущены")
+	assert.Equal(t, 2, appSt.Encrypted)
+
+	var rawNode, rawApp string
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT auth_credentials FROM nodes WHERE id = $1::uuid`, nodeID).Scan(&rawNode))
+	require.NoError(t, pool.QueryRow(ctx,
+		"SELECT value::text FROM app_settings WHERE id = 1").Scan(&rawApp))
+	assert.True(t, strings.HasPrefix(rawNode, "v1:"), "credential узла зашифрован")
+	assert.NotContains(t, rawApp, "legacy-dsn")
+	assert.NotContains(t, rawApp, "legacy-ch")
+
+	// Повторный прогон ничего не переписывает — двойного шифрования нет.
+	nodeSt2, err := keyrotate.RotateNodes(ctx, pool, c, c, keyrotate.Options{}, logging.NewNoop())
+	require.NoError(t, err)
+	appSt2, err := keyrotate.RotateAppSettings(ctx, pool, c, c, keyrotate.Options{}, logging.NewNoop())
+	require.NoError(t, err)
+	assert.Equal(t, 0, nodeSt2.Encrypted+nodeSt2.Reencrypted)
+	assert.Equal(t, 0, appSt2.Encrypted+appSt2.Reencrypted)
+
+	var rawNodeAgain string
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT auth_credentials FROM nodes WHERE id = $1::uuid`, nodeID).Scan(&rawNodeAgain))
+	assert.Equal(t, rawNode, rawNodeAgain, "значение осталось байт в байт прежним")
+
+	// Данные читаются сервисом.
+	repo := pgrepo.NewNodeRepoPg(pool, c, logging.NewNoop())
+	node, err := repo.Get(ctx, nodeID)
+	require.NoError(t, err)
+	assert.Equal(t, "legacy-node-secret", node.AuthCredentials)
+
+	// ── MODE=decrypt: обратный ход ТОЛЬКО для app_settings ──
+	//
+	// Креды узлов раскрывать нельзя: все три сервиса читают их строгим Decrypt,
+	// поэтому plaintext в этих колонках означал бы неработающие узлы. Утилита
+	// обязана отказаться, а не «услужливо» расшифровать.
+	_, err = keyrotate.RotateNodes(ctx, pool, c, c,
+		keyrotate.Options{Decrypt: true}, logging.NewNoop())
+	require.ErrorIs(t, err, keyrotate.ErrDecryptNodesForbidden)
+
+	appDec, err := keyrotate.RotateAppSettings(ctx, pool, c, c,
+		keyrotate.Options{Decrypt: true}, logging.NewNoop())
+	require.NoError(t, err)
+	assert.Equal(t, 2, appDec.Decrypted)
+
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT auth_credentials FROM nodes WHERE id = $1::uuid`, nodeID).Scan(&rawNode))
+	require.NoError(t, pool.QueryRow(ctx,
+		"SELECT value::text FROM app_settings WHERE id = 1").Scan(&rawApp))
+	assert.True(t, strings.HasPrefix(rawNode, "v1:"), "креды узла остались зашифрованными")
+	assert.Contains(t, rawApp, "legacy-dsn", "секреты настроек снова открытым текстом")
+	assert.Contains(t, rawApp, "ch1", "несекретные поля целы")
+
+	// Повторный обратный ход безопасен.
+	appDec2, err := keyrotate.RotateAppSettings(ctx, pool, c, c,
+		keyrotate.Options{Decrypt: true}, logging.NewNoop())
+	require.NoError(t, err)
+	assert.Equal(t, 0, appDec2.Decrypted)
+	assert.Equal(t, 2, appDec2.SkippedPlaintext)
+
+	// Узлы продолжают читаться сервисом, несмотря на прогон обратного хода.
+	node, err = repo.Get(ctx, nodeID)
+	require.NoError(t, err)
+	assert.Equal(t, "legacy-node-secret", node.AuthCredentials)
+
+	// И код §90.1 читает открытые настройки (lazy-upgrade).
+	settings, err := pgrepo.NewAppSettingsRepoPg(pool, c, logging.NewNoop()).Get(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "legacy-dsn", *settings.Sentry.DSN)
 }

@@ -2175,9 +2175,9 @@ docker compose -f deploy/docker-compose.app.yml run --rm web --set-admin-passwor
      OLD_KEY=<старый> NEW_KEY=<новый> DRY_RUN=true ./rotate-key --config=/path/config.yml
      ```
 
-     Отчёт (`rows_scanned`, `rows_reencrypted`, `rows_upgraded_plaintext`,
-     `rows_skipped_already_new`, `rows_empty`) печатается и при аварийном завершении — по нему
-     видно, сколько строк уже переехало на новый ключ.
+     Отчёт (`rows_scanned`, `rows_reencrypted`, `rows_encrypted`, `rows_decrypted`,
+     `rows_skipped_already_new`, `rows_skipped_plaintext`, `rows_empty`) печатается и при
+     аварийном завершении — по нему видно, сколько строк уже переехало на новый ключ.
   3. Замените `ENCRYPTION_KEY` в `.env`.
   4. **Сразу** перезапустите все три сервиса. В окне между шагами 2 и 4 сервисы держат в памяти
      старый ключ: страница настроек отвечает 500 (`app_settings decrypt ...`), overlay
@@ -2185,8 +2185,51 @@ docker compose -f deploy/docker-compose.app.yml run --rm web --set-admin-passwor
      не отправляют. Сами процессы при этом живы.
 
   Значения, лежащие в БД открытым текстом (данные старше включения шифрования), не ошибка —
-  ротация шифрует их новым ключом и показывает счётчиком `rows_upgraded_plaintext`. Поэтому
-  прогон с одинаковыми `OLD_KEY` и `NEW_KEY` работает как разовая миграция таких значений.
+  ротация шифрует их новым ключом и показывает счётчиком `rows_encrypted`.
+
+- **Разовая миграция открытых секретов (§90.6).** Шифрование `app_settings` включено позже
+  появления самих полей, поэтому до первого сохранения настроек секреты продолжают лежать в
+  БД читаемыми — то есть дамп по-прежнему их выдаёт. Перевести всё разом:
+
+  ```bash
+  make encrypt-secrets KEY=<текущий ENCRYPTION_KEY> DRY_RUN=true   # план, ничего не пишет
+  make encrypt-secrets KEY=<текущий ENCRYPTION_KEY>                # запись
+  ```
+
+  Обрабатываются и колонки `nodes`, и секреты `app_settings`. **Повторный запуск безопасен:**
+  значение, которое читается текущим ключом, распознаётся как уже зашифрованное и
+  пропускается байт в байт — двойного шифрования не бывает (счётчик `rows_skipped_already_new`).
+  Прогонять можно на работающих сервисах: оба формата читаются одинаково.
+
+  Проверить, что открытых секретов не осталось:
+
+  ```sql
+  SELECT count(*) FILTER (WHERE auth_credentials <> '' AND auth_credentials NOT LIKE 'v1:%')
+       + count(*) FILTER (WHERE incoming_auth_credentials <> '' AND incoming_auth_credentials NOT LIKE 'v1:%')
+       + count(*) FILTER (WHERE rmq_password IS NOT NULL AND rmq_password <> '' AND rmq_password NOT LIKE 'v1:%')
+    AS plaintext_in_nodes FROM nodes;
+
+  SELECT value->'sentry'->>'dsn'                              NOT LIKE 'v1:%' AS sentry_plain,
+         value->'clickhouse'->>'password'                     NOT LIKE 'v1:%' AS ch_plain,
+         value->'mail'->>'password'                           NOT LIKE 'v1:%' AS smtp_plain,
+         value->'notifications'->'telegram'->>'bot_token'     NOT LIKE 'v1:%' AS telegram_plain
+    FROM app_settings WHERE id = 1;
+  ```
+
+- **Обратный ход ПЕРЕД откатом кода (§90.6).** Версия без §90.1 не понимает шифротекст в
+  `app_settings` и примет строку `v1:…` за сам секрет — Sentry, ClickHouse, почта и Telegram
+  получат мусор вместо DSN и паролей. Поэтому перед откатом на такую версию раскройте
+  секреты обратно:
+
+  ```bash
+  make decrypt-secrets KEY=<текущий ENCRYPTION_KEY>
+  ```
+
+  Затрагиваются **только** `app_settings`. Креды узлов остаются зашифрованными, и утилита
+  отказывается их раскрывать: все три сервиса читают эти колонки строгим `Decrypt`, то есть
+  открытый текст означал бы неработающие узлы (они шифруются с самого начала, §5.5, и ни
+  одна версия кода не ждёт их открытыми). После расшифровки секреты снова лежат в БД
+  читаемыми — когда откат закончен, верните защиту прогоном `make encrypt-secrets`.
 - **ClickHouse** — логи; стратегия бэкапа зависит от объёма (партиции по дням,
   housekeeping с retention). Для большинства сценариев логи не бэкапятся.
 

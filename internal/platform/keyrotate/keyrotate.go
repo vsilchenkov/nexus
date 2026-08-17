@@ -38,42 +38,76 @@ var appSettingsSecretPaths = [][]string{
 	{"notifications", "telegram", "bot_token"},
 }
 
-// Stats — итог прогона. Reencrypted и UpgradedPlaintext разделены намеренно:
-// второе означает, что данные лежали в БД открытыми, и оператору это важно
-// увидеть в отчёте.
+// Options — режим прогона.
+type Options struct {
+	// DryRun — только посчитать, ничего не писать.
+	DryRun bool
+	// Decrypt — обратный ход (§90.6): значения расшифровываются и остаются в БД
+	// ОТКРЫТЫМ ТЕКСТОМ. Нужен ровно для одного сценария — отката кода на версию
+	// без §90.1, которая шифротекст в app_settings не понимает и приняла бы его
+	// за сам секрет. Ключ при этом берётся из OldCipher, NewCipher не участвует.
+	Decrypt bool
+}
+
+// Stats — итог прогона. Счётчики разделены намеренно: Encrypted означает, что
+// данные лежали в БД ОТКРЫТЫМИ, и оператору это важно увидеть отдельно от
+// обычной перешифровки.
 type Stats struct {
-	Scanned           int
-	Reencrypted       int
-	UpgradedPlaintext int
+	Scanned     int
+	Reencrypted int
+	// Encrypted — значения, лежавшие открытым текстом и зашифрованные.
+	Encrypted int
+	// Decrypted — значения, расшифрованные обратно в plaintext (Options.Decrypt).
+	Decrypted         int
 	SkippedAlreadyNew int
-	Empty             int
+	// SkippedPlaintext — при Decrypt: значение и так лежит открыто.
+	SkippedPlaintext int
+	Empty            int
 }
 
 // Add суммирует результаты фаз.
 func (s *Stats) Add(other Stats) {
 	s.Scanned += other.Scanned
 	s.Reencrypted += other.Reencrypted
-	s.UpgradedPlaintext += other.UpgradedPlaintext
+	s.Encrypted += other.Encrypted
+	s.Decrypted += other.Decrypted
 	s.SkippedAlreadyNew += other.SkippedAlreadyNew
+	s.SkippedPlaintext += other.SkippedPlaintext
 	s.Empty += other.Empty
 }
 
-func (s *Stats) count(wasEncrypted bool) {
-	if wasEncrypted {
-		s.Reencrypted++
-		return
+// actionOf — как назвать выполненное действие в логе: оператор по одной строке
+// должен понимать, зашифровали значение или, наоборот, раскрыли.
+func actionOf(opts Options) string {
+	if opts.Decrypt {
+		return "decrypted to plaintext"
 	}
-	s.UpgradedPlaintext++
+	return "re-encrypted"
 }
 
-// rotateValue решает судьбу одного значения: nil — оставить как есть
-// (пропущено), иначе — новое значение под новым ключом.
-func rotateValue(oldC, newC *crypto.Cipher, val string, st *Stats) (*string, error) {
+// nextValue решает судьбу одного значения: nil — оставить как есть
+// (пропущено), иначе — значение, которое нужно записать.
+func nextValue(oldC, newC *crypto.Cipher, val string, opts Options, st *Stats) (*string, error) {
 	st.Scanned++
 	if val == "" {
 		st.Empty++
 		return nil, nil
 	}
+
+	if opts.Decrypt {
+		plain, wasEncrypted, err := oldC.DecryptLenient(val)
+		if err != nil {
+			return nil, err
+		}
+		if !wasEncrypted {
+			// Уже открыто — повторный прогон обратного хода безопасен.
+			st.SkippedPlaintext++
+			return nil, nil
+		}
+		st.Decrypted++
+		return &plain, nil
+	}
+
 	if _, err := newC.Decrypt(val); err == nil {
 		st.SkippedAlreadyNew++
 		return nil, nil
@@ -86,21 +120,39 @@ func rotateValue(oldC, newC *crypto.Cipher, val string, st *Stats) (*string, err
 	if err != nil {
 		return nil, err
 	}
-	st.count(wasEncrypted)
+	if wasEncrypted {
+		st.Reencrypted++
+	} else {
+		st.Encrypted++
+	}
 	return &next, nil
 }
 
-// RotateNodes перешифровывает секретные колонки таблицы nodes.
+// ErrDecryptNodesForbidden — попытка расшифровать креды узлов обратно в
+// plaintext. Запрещено намеренно (§90.6): все три сервиса читают эти колонки
+// СТРОГИМ Decrypt (node_repo.go, sender/nodepg, receiver/nodecache), поэтому
+// открытый текст в них означает, что узлы просто перестанут работать. В
+// отличие от app_settings, они шифруются с самого начала (§5.5) — ни одна
+// версия кода не ждёт их открытыми, и откатывать тут нечего.
+var ErrDecryptNodesForbidden = errors.New(
+	"keyrotate: decrypting node credentials is not supported — services read them with strict Decrypt")
+
+// RotateNodes обрабатывает секретные колонки таблицы nodes: перешифровывает на
+// новый ключ или шифрует лежащее открытым текстом. Обратный ход (Options.Decrypt)
+// запрещён — см. ErrDecryptNodesForbidden.
 func RotateNodes(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	oldC, newC *crypto.Cipher,
-	dryRun bool,
+	opts Options,
 	logger logging.Logger,
 ) (Stats, error) {
 	var st Stats
+	if opts.Decrypt {
+		return st, ErrDecryptNodesForbidden
+	}
 	for _, col := range nodeSecretColumns {
-		colStats, err := rotateNodeColumn(ctx, pool, oldC, newC, col, dryRun, logger)
+		colStats, err := rotateNodeColumn(ctx, pool, oldC, newC, col, opts, logger)
 		if err != nil {
 			return st, err
 		}
@@ -114,7 +166,7 @@ func rotateNodeColumn(
 	pool *pgxpool.Pool,
 	oldC, newC *crypto.Cipher,
 	col string,
-	dryRun bool,
+	opts Options,
 	logger logging.Logger,
 ) (Stats, error) {
 	var st Stats
@@ -143,23 +195,20 @@ func rotateNodeColumn(
 
 	for _, r := range batch {
 		before := st
-		next, err := rotateValue(oldC, newC, r.val, &st)
+		next, err := nextValue(oldC, newC, r.val, opts, &st)
 		if err != nil {
 			return st, fmt.Errorf("rotate %s/%s: %w", col, r.id, err)
 		}
-		if next == nil {
-			continue
-		}
-		if dryRun {
+		if next == nil || opts.DryRun {
 			continue
 		}
 		if _, err := pool.Exec(ctx, "UPDATE nodes SET "+col+" = $1 WHERE id = $2", *next, r.id); err != nil {
 			return st, fmt.Errorf("update %s/%s: %w", col, r.id, err)
 		}
-		logger.Info("re-encrypted",
+		logger.Info(actionOf(opts),
 			logger.Str("column", col),
 			logger.Str("id", r.id),
-			logger.Any("was_plaintext", st.UpgradedPlaintext > before.UpgradedPlaintext))
+			logger.Any("was_plaintext", st.Encrypted > before.Encrypted))
 	}
 	return st, nil
 }
@@ -177,7 +226,7 @@ func RotateAppSettings(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	oldC, newC *crypto.Cipher,
-	dryRun bool,
+	opts Options,
 	logger logging.Logger,
 ) (Stats, error) {
 	var st Stats
@@ -201,11 +250,11 @@ func RotateAppSettings(
 		return st, fmt.Errorf("decode app_settings: %w", err)
 	}
 
-	changed, st, err := rotateAppSettingsDoc(doc, oldC, newC, logger)
+	changed, st, err := rotateAppSettingsDoc(doc, oldC, newC, opts, logger)
 	if err != nil {
 		return st, err
 	}
-	if !changed || dryRun {
+	if !changed || opts.DryRun {
 		return st, nil
 	}
 
@@ -225,6 +274,7 @@ func RotateAppSettings(
 func rotateAppSettingsDoc(
 	doc map[string]any,
 	oldC, newC *crypto.Cipher,
+	opts Options,
 	logger logging.Logger,
 ) (bool, Stats, error) {
 	var st Stats
@@ -236,7 +286,7 @@ func rotateAppSettingsDoc(
 		}
 		field := pathString(path)
 		before := st
-		next, err := rotateValue(oldC, newC, val, &st)
+		next, err := nextValue(oldC, newC, val, opts, &st)
 		if err != nil {
 			return false, st, fmt.Errorf("rotate app_settings %s: %w", field, err)
 		}
@@ -245,9 +295,9 @@ func rotateAppSettingsDoc(
 		}
 		setString(doc, path, *next)
 		changed = true
-		logger.Info("re-encrypted",
+		logger.Info(actionOf(opts),
 			logger.Str("column", "app_settings."+field),
-			logger.Any("was_plaintext", st.UpgradedPlaintext > before.UpgradedPlaintext))
+			logger.Any("was_plaintext", st.Encrypted > before.Encrypted))
 	}
 	return changed, st, nil
 }
