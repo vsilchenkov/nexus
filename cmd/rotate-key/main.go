@@ -1,5 +1,5 @@
 // rotate-key — перешифровывает чувствительные поля nodes (auth_credentials,
-// incoming_auth_credentials) со старого ключа на новый (§5.5 ТЗ).
+// incoming_auth_credentials, rmq_password) со старого ключа на новый (§5.5 ТЗ).
 //
 // Запуск:
 //
@@ -7,6 +7,11 @@
 //
 // Идемпотентен: если значение уже расшифровывается новым ключом — пропускаем
 // (повторный запуск безопасен, например, после прерывания посередине).
+//
+// Значения, лежащие открытым текстом (узлы, заведённые до включения шифрования),
+// не ошибка: они шифруются новым ключом и считаются отдельным счётчиком
+// upgraded_plaintext. Ошибкой остаётся только шифротекст, который не бьётся
+// старым ключом (§90.4).
 package main
 
 import (
@@ -64,16 +69,39 @@ func main() {
 	logger.Info("rotate-key finished",
 		logger.Int("rows_scanned", st.scanned),
 		logger.Int("rows_reencrypted", st.reencrypted),
+		logger.Int("rows_upgraded_plaintext", st.upgradedPlaintext),
 		logger.Int("rows_skipped_already_new", st.skippedAlreadyNew),
 		logger.Int("rows_empty", st.empty),
 		logger.Any("dry_run", *dryRun))
 }
 
 type stats struct {
-	scanned           int
-	reencrypted       int
+	scanned     int
+	reencrypted int
+	// upgradedPlaintext — значения, лежавшие открытым текстом и зашифрованные
+	// новым ключом. Считаются отдельно от reencrypted: это не ротация, а
+	// первичное шифрование, и оператору важно видеть, что такие данные были.
+	upgradedPlaintext int
 	skippedAlreadyNew int
 	empty             int
+}
+
+// countRotated разносит обработанное значение по счётчикам: настоящая ротация
+// (шифротекст старым ключом) и первичное шифрование лежавшего открыто значения.
+func countRotated(st *stats, wasEncrypted bool) {
+	if wasEncrypted {
+		st.reencrypted++
+		return
+	}
+	st.upgradedPlaintext++
+}
+
+func (s *stats) add(other stats) {
+	s.scanned += other.scanned
+	s.reencrypted += other.reencrypted
+	s.upgradedPlaintext += other.upgradedPlaintext
+	s.skippedAlreadyNew += other.skippedAlreadyNew
+	s.empty += other.empty
 }
 
 func rotateAll(
@@ -87,15 +115,14 @@ func rotateAll(
 	defer pool.Close()
 
 	var st stats
-	for _, col := range []string{"auth_credentials", "incoming_auth_credentials"} {
+	// rmq_password (§27) шифруется наравне с кредами узла, но в ротацию не входил —
+	// после смены ключа пароли RabbitMQ становились нечитаемыми (§90.4).
+	for _, col := range []string{"auth_credentials", "incoming_auth_credentials", "rmq_password"} {
 		colStats, err := rotateColumn(ctx, pool, oldC, newC, col, dryRun, logger)
 		if err != nil {
 			return st, err
 		}
-		st.scanned += colStats.scanned
-		st.reencrypted += colStats.reencrypted
-		st.skippedAlreadyNew += colStats.skippedAlreadyNew
-		st.empty += colStats.empty
+		st.add(colStats)
 	}
 	return st, nil
 }
@@ -138,7 +165,11 @@ func rotateColumn(
 			st.skippedAlreadyNew++
 			continue
 		}
-		plain, err := oldC.Decrypt(r.val)
+		// DecryptLenient, а не Decrypt: узлы, заведённые до включения шифрования,
+		// хранят креды открытым текстом, и строгий Decrypt валил на них ротацию
+		// целиком. Такие значения шифруются новым ключом (первичное шифрование),
+		// а не бьющийся старым ключом шифротекст по-прежнему ошибка.
+		plain, wasEncrypted, err := oldC.DecryptLenient(r.val)
 		if err != nil {
 			return st, fmt.Errorf("decrypt %s/%s with old key: %w", col, r.id, err)
 		}
@@ -147,16 +178,17 @@ func rotateColumn(
 			return st, fmt.Errorf("encrypt %s/%s with new key: %w", col, r.id, err)
 		}
 		if dryRun {
-			st.reencrypted++
+			countRotated(&st, wasEncrypted)
 			continue
 		}
 		if _, err := pool.Exec(ctx, "UPDATE nodes SET "+col+" = $1 WHERE id = $2", next, r.id); err != nil {
 			return st, fmt.Errorf("update %s/%s: %w", col, r.id, err)
 		}
-		st.reencrypted++
+		countRotated(&st, wasEncrypted)
 		logger.Info("re-encrypted",
 			logger.Str("column", col),
-			logger.Str("id", r.id))
+			logger.Str("id", r.id),
+			logger.Any("was_plaintext", !wasEncrypted))
 	}
 	return st, nil
 }
