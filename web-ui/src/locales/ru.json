@@ -969,6 +969,10 @@
     "all_actions": "Все действия",
     "empty": "Нет записей",
     "export_csv": "Экспорт в CSV",
+    "no_more": "Больше записей нет",
+    "cap_reached": "Показан предел записей — уточните фильтр или выгрузите CSV",
+    "shown_of_total": "Показано {{shown}} из {{total}}",
+    "shown_count": "Показано {{shown}}",
     "diff": {
       "before": "Было",
       "after": "Стало",

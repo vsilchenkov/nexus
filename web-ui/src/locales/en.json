@@ -968,6 +968,10 @@
     "all_actions": "All actions",
     "empty": "No entries",
     "export_csv": "Export CSV",
+    "no_more": "No more entries",
+    "cap_reached": "Display limit reached — narrow the filter or export CSV",
+    "shown_of_total": "Showing {{shown}} of {{total}}",
+    "shown_count": "Showing {{shown}}",
     "diff": {
       "before": "Before",
       "after": "After",
