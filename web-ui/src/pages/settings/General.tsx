@@ -116,6 +116,7 @@ export function GeneralPanel() {
           type="text"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
+          autoComplete="off"
           placeholder="https://nexus.example.com"
           className="w-full rounded-md bg-bg-muted px-3 py-2 font-mono text-xs outline-none"
         />
@@ -131,6 +132,7 @@ export function GeneralPanel() {
             type="text"
             value={versionOverride}
             onChange={(e) => setVersionOverride(e.target.value)}
+            autoComplete="off"
             placeholder={version.data?.version ?? "dev-local"}
             className="w-full rounded-md bg-bg-muted px-3 py-2 font-mono text-xs outline-none"
           />

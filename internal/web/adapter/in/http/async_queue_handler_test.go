@@ -49,6 +49,7 @@ func (aqAuditRepo) Write(_ context.Context, _ *domain.AuditEntry) error { return
 func (aqAuditRepo) List(_ context.Context, _ port.AuditFilter) ([]*domain.AuditEntry, error) {
 	return nil, nil
 }
+func (aqAuditRepo) Count(_ context.Context, _ port.AuditFilter) (int, error)    { return 0, nil }
 func (aqAuditRepo) DeleteOlderThan(_ context.Context, _ time.Time) (int, error) { return 0, nil }
 
 // aqEngine собирает движок с сессией (admin, team t1) и зарегистрированными

@@ -1,162 +1,180 @@
-// rotate-key — перешифровывает чувствительные поля nodes (auth_credentials,
-// incoming_auth_credentials) со старого ключа на новый (§5.5 ТЗ).
+// rotate-key — работа с шифрованием чувствительных данных в PostgreSQL
+// (§5.5, §90.4, §90.6): секретные колонки nodes (auth_credentials,
+// incoming_auth_credentials, rmq_password) и секреты app_settings (DSN Sentry,
+// пароли ClickHouse и SMTP, токен Telegram-бота).
 //
-// Запуск:
+// Три режима (MODE):
 //
-//	rotate-key --old-key=<base64> --new-key=<base64> [--config=...] [--dry-run]
+//	rotate  — по умолчанию: перешифровать со старого ключа на новый;
+//	encrypt — зашифровать то, что лежит открытым текстом, текущим ключом
+//	          (разовая миграция данных §90.1; NEW_KEY не нужен);
+//	decrypt — обратный ход: расшифровать всё и оставить ОТКРЫТЫМ ТЕКСТОМ.
+//	          Нужен только для отката кода на версию без §90.1 — она не понимает
+//	          шифротекст и приняла бы его за сам секрет.
+//
+// Запуск (параметры — через окружение, см. ниже):
+//
+//	OLD_KEY=<base64> NEW_KEY=<base64> [DRY_RUN=true] rotate-key [--config=...]
+//	MODE=encrypt OLD_KEY=<base64> rotate-key
+//	MODE=decrypt OLD_KEY=<base64> rotate-key
+//
+// Ключи и режим передаются переменными окружения, а не флагами, потому что
+// разбор командной строки принадлежит платформенному bootstrap.Init: он парсит
+// os.Args своим FlagSet с ExitOnError и на любом «чужом» флаге печатает usage и
+// завершает процесс. Утилита с флагами --old-key/--new-key поэтому не
+// запускалась вовсе (§90.4, найдено прогоном процедуры на стенде).
 //
 // Идемпотентен: если значение уже расшифровывается новым ключом — пропускаем
 // (повторный запуск безопасен, например, после прерывания посередине).
+//
+// Значения, лежащие открытым текстом (данные старше включения шифрования),
+// не ошибка: они шифруются новым ключом и считаются отдельным счётчиком
+// upgraded_plaintext. Поэтому прогон с OLD_KEY == NEW_KEY работает как разовая
+// миграция исторических plaintext-значений. Ошибкой остаётся только шифротекст,
+// который не бьётся старым ключом.
 package main
 
 import (
 	"context"
-	"flag"
+	_ "embed"
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"nexus/internal/platform/bootstrap"
-	"nexus/internal/platform/config"
 	"nexus/internal/platform/crypto"
+	"nexus/internal/platform/keyrotate"
 	"nexus/internal/platform/logging"
 )
 
 const projectName = "rotate-key"
 
-func main() {
-	oldKey := flag.String("old-key", "", "old base64-encoded encryption key (32 bytes)")
-	newKey := flag.String("new-key", "", "new base64-encoded encryption key (32 bytes)")
-	dryRun := flag.Bool("dry-run", false, "do not write back; just report planned changes")
-	flag.Parse()
+// Режимы работы (переменная MODE).
+const (
+	modeRotate  = "rotate"
+	modeEncrypt = "encrypt"
+	modeDecrypt = "decrypt"
+)
 
-	if *oldKey == "" || *newKey == "" {
-		fmt.Fprintln(os.Stderr, "both --old-key and --new-key are required")
-		os.Exit(2)
+// isTrue — мягкий разбор булевой переменной окружения: пустая строка и любое
+// «не да» означают выключено (флаг задаётся людьми в командной строке).
+func isTrue(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	}
+	return false
+}
+
+// versionInfoData — как у остальных бинарей: bootstrap.Init разбирает его через
+// build.NewOption. Без файла утилита падала на старте с «build option: parse
+// versioninfo.json: unexpected end of JSON input» (передавался nil), то есть
+// процедура ротации ключа из DEPLOYMENT §12 не выполнялась в принципе.
+//
+//go:embed versioninfo.json
+var versionInfoData []byte
+
+func main() {
+	oldKey := os.Getenv("OLD_KEY")
+	newKey := os.Getenv("NEW_KEY")
+	mode := strings.ToLower(strings.TrimSpace(os.Getenv("MODE")))
+	if mode == "" {
+		mode = modeRotate
+	}
+	opts := keyrotate.Options{DryRun: isTrue(os.Getenv("DRY_RUN")), Decrypt: mode == modeDecrypt}
+
+	switch mode {
+	case modeRotate:
+		if oldKey == "" || newKey == "" {
+			usage("MODE=rotate requires both OLD_KEY and NEW_KEY")
+		}
+	case modeEncrypt, modeDecrypt:
+		if oldKey == "" {
+			usage("MODE=" + mode + " requires OLD_KEY (the key the data is encrypted with)")
+		}
+		// encrypt/decrypt работают одним ключом: шифруем и расшифровываем тем же,
+		// которым уже пользуется сервис.
+		newKey = oldKey
+	default:
+		usage("unknown MODE " + mode + " (expected rotate, encrypt or decrypt)")
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	_, _, cfg, logger, _ := bootstrap.Init(nil, projectName)
+	_, _, cfg, logger, _ := bootstrap.Init(versionInfoData, projectName)
 	defer bootstrap.Shutdown(logger)
 
-	oldC, err := crypto.NewCipher(*oldKey)
+	oldC, err := crypto.NewCipher(oldKey)
 	if err != nil {
 		logger.ErrorWithOp("old key invalid", err, "rotate-key.main")
 		os.Exit(1)
 	}
-	newC, err := crypto.NewCipher(*newKey)
+	newC, err := crypto.NewCipher(newKey)
 	if err != nil {
 		logger.ErrorWithOp("new key invalid", err, "rotate-key.main")
 		os.Exit(1)
 	}
 
-	st, err := rotateAll(ctx, cfg, oldC, newC, *dryRun, logger)
-	if err != nil {
-		logger.ErrorWithOp("rotate failed", err, "rotate-key.rotateAll")
-		os.Exit(1)
-	}
-
-	logger.Info("rotate-key finished",
-		logger.Int("rows_scanned", st.scanned),
-		logger.Int("rows_reencrypted", st.reencrypted),
-		logger.Int("rows_skipped_already_new", st.skippedAlreadyNew),
-		logger.Int("rows_empty", st.empty),
-		logger.Any("dry_run", *dryRun))
-}
-
-type stats struct {
-	scanned           int
-	reencrypted       int
-	skippedAlreadyNew int
-	empty             int
-}
-
-func rotateAll(
-	ctx context.Context,
-	cfg *config.Config,
-	oldC, newC *crypto.Cipher,
-	dryRun bool,
-	logger logging.Logger,
-) (stats, error) {
 	pool := bootstrap.MustPG(ctx, cfg, logger)
 	defer pool.Close()
 
-	var st stats
-	for _, col := range []string{"auth_credentials", "incoming_auth_credentials"} {
-		colStats, err := rotateColumn(ctx, pool, oldC, newC, col, dryRun, logger)
+	var st keyrotate.Stats
+
+	// Отчёт печатается и на аварийном выходе: после прерванного прогона первое,
+	// что нужно оператору, — сколько строк УЖЕ перешифровано новым ключом
+	// (от этого зависит, повторять прогон или возвращать старый ключ).
+	// Обратный ход касается только app_settings: креды узлов читаются строгим
+	// Decrypt во всех трёх сервисах, и открытый текст в них означал бы, что
+	// узлы перестали работать (§90.6).
+	if !opts.Decrypt {
+		nodeStats, err := keyrotate.RotateNodes(ctx, pool, oldC, newC, opts, logger)
+		st.Add(nodeStats)
 		if err != nil {
-			return st, err
+			logger.ErrorWithOp("rotate nodes failed", err, "rotate-key.nodes")
+			report(logger, st, mode, opts)
+			os.Exit(1)
 		}
-		st.scanned += colStats.scanned
-		st.reencrypted += colStats.reencrypted
-		st.skippedAlreadyNew += colStats.skippedAlreadyNew
-		st.empty += colStats.empty
+	} else {
+		logger.Info("decrypt mode: node credentials are left encrypted on purpose (§90.6)")
 	}
-	return st, nil
+
+	appStats, err := keyrotate.RotateAppSettings(ctx, pool, oldC, newC, opts, logger)
+	st.Add(appStats)
+	if err != nil {
+		logger.ErrorWithOp("rotate app_settings failed", err, "rotate-key.app_settings")
+		report(logger, st, mode, opts)
+		os.Exit(1)
+	}
+
+	report(logger, st, mode, opts)
+
+	if opts.Decrypt && !opts.DryRun && st.Decrypted > 0 {
+		logger.Warn("secrets are now stored in PLAINTEXT — this is only for rolling the code back; " +
+			"re-run with MODE=encrypt once the rollback is over")
+	}
 }
 
-func rotateColumn(
-	ctx context.Context,
-	pool *pgxpool.Pool,
-	oldC, newC *crypto.Cipher,
-	col string,
-	dryRun bool,
-	logger logging.Logger,
-) (stats, error) {
-	var st stats
-	rows, err := pool.Query(ctx, "SELECT id, "+col+" FROM nodes WHERE "+col+" <> ''")
-	if err != nil {
-		return st, fmt.Errorf("select %s: %w", col, err)
-	}
-	type row struct {
-		id  string
-		val string
-	}
-	var batch []row
-	for rows.Next() {
-		var r row
-		if err := rows.Scan(&r.id, &r.val); err != nil {
-			rows.Close()
-			return st, fmt.Errorf("scan %s: %w", col, err)
-		}
-		batch = append(batch, r)
-	}
-	rows.Close()
+func usage(msg string) {
+	fmt.Fprintln(os.Stderr, msg)
+	fmt.Fprintln(os.Stderr, "usage:")
+	fmt.Fprintln(os.Stderr, "  OLD_KEY=<base64> NEW_KEY=<base64> [DRY_RUN=true] rotate-key [--config=path]")
+	fmt.Fprintln(os.Stderr, "  MODE=encrypt OLD_KEY=<base64> [DRY_RUN=true] rotate-key [--config=path]")
+	fmt.Fprintln(os.Stderr, "  MODE=decrypt OLD_KEY=<base64> [DRY_RUN=true] rotate-key [--config=path]")
+	os.Exit(2)
+}
 
-	for _, r := range batch {
-		st.scanned++
-		if r.val == "" {
-			st.empty++
-			continue
-		}
-		if _, err := newC.Decrypt(r.val); err == nil {
-			st.skippedAlreadyNew++
-			continue
-		}
-		plain, err := oldC.Decrypt(r.val)
-		if err != nil {
-			return st, fmt.Errorf("decrypt %s/%s with old key: %w", col, r.id, err)
-		}
-		next, err := newC.Encrypt(plain)
-		if err != nil {
-			return st, fmt.Errorf("encrypt %s/%s with new key: %w", col, r.id, err)
-		}
-		if dryRun {
-			st.reencrypted++
-			continue
-		}
-		if _, err := pool.Exec(ctx, "UPDATE nodes SET "+col+" = $1 WHERE id = $2", next, r.id); err != nil {
-			return st, fmt.Errorf("update %s/%s: %w", col, r.id, err)
-		}
-		st.reencrypted++
-		logger.Info("re-encrypted",
-			logger.Str("column", col),
-			logger.Str("id", r.id))
-	}
-	return st, nil
+func report(logger logging.Logger, st keyrotate.Stats, mode string, opts keyrotate.Options) {
+	logger.Info("rotate-key finished",
+		logger.Str("mode", mode),
+		logger.Int("rows_scanned", st.Scanned),
+		logger.Int("rows_reencrypted", st.Reencrypted),
+		logger.Int("rows_encrypted", st.Encrypted),
+		logger.Int("rows_decrypted", st.Decrypted),
+		logger.Int("rows_skipped_already_new", st.SkippedAlreadyNew),
+		logger.Int("rows_skipped_plaintext", st.SkippedPlaintext),
+		logger.Int("rows_empty", st.Empty),
+		logger.Any("dry_run", opts.DryRun))
 }

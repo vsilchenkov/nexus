@@ -22,6 +22,11 @@ definitions:
     required:
     - spec
     type: object
+  internal_web_adapter_in_http.AuditCountResponse:
+    properties:
+      count:
+        type: integer
+    type: object
   internal_web_adapter_in_http.CHTableVerifyRequest:
     properties:
       table:
@@ -3180,10 +3185,20 @@ paths:
         in: query
         name: limit
         type: integer
-      - description: смещение
+      - description: смещение (legacy; для постраничного чтения используйте before_ts+before_id)
         in: query
         name: offset
         type: integer
+      - description: 'keyset-курсор §91.1: created_at последней показанной записи
+          (RFC3339Nano). Работает только вместе с before_id'
+        in: query
+        name: before_ts
+        type: string
+      - description: 'keyset-курсор §91.1: id последней показанной записи. Работает
+          только вместе с before_ts'
+        in: query
+        name: before_id
+        type: string
       produces:
       - application/json
       responses:
@@ -3199,6 +3214,61 @@ paths:
       - CookieAuth: []
       - ApiTokenAuth: []
       summary: Журнал audit-log (operator+, §7.13/§87).
+      tags:
+      - audit
+  /api/audit/count:
+    get:
+      description: 'Тот же набор фильтров, что у /api/audit, но без limit и курсора.
+        Нужен счётчику «показано N из M»: список отдаёт страницу, и по нему нельзя
+        понять, обрезана выдача или нет.'
+      parameters:
+      - description: all — журнал всех команд пользователя (§86.7)
+        in: query
+        name: scope
+        type: string
+      - description: фильтр по user_id
+        in: query
+        name: user_id
+        type: string
+      - description: одно значение action
+        in: query
+        name: action
+        type: string
+      - description: несколько action через запятую
+        in: query
+        name: actions
+        type: string
+      - description: node|user|token|ch_table|...
+        in: query
+        name: target_type
+        type: string
+      - description: фильтр по target_id
+        in: query
+        name: target_id
+        type: string
+      - description: RFC3339 (начало)
+        in: query
+        name: from
+        type: string
+      - description: RFC3339 (конец)
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.AuditCountResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      - ApiTokenAuth: []
+      summary: Сколько записей журнала подходит под фильтр (operator+, §91.1).
       tags:
       - audit
   /api/audit/export.csv:

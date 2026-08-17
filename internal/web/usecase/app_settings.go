@@ -65,8 +65,9 @@ func (u *AppSettingsUsecase) Get(ctx context.Context) (*domain.AppSettings, erro
 		masked := "***"
 		s.Notifications.Telegram.BotToken = &masked
 	}
-	// §88: пароль SMTP лежит в JSONB открытым текстом (как DSN Sentry и пароль
-	// ClickHouse) — наружу он не должен выходить даже админу.
+	// §88: пароль SMTP наружу не выходит даже админу. В БД он, как DSN Sentry,
+	// пароль ClickHouse и токен бота, лежит зашифрованным (§90.1) — репозиторий
+	// отдаёт сюда уже расшифрованное значение.
 	if s.Mail.Password != nil && *s.Mail.Password != "" {
 		masked := "***"
 		s.Mail.Password = &masked

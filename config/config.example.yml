@@ -265,7 +265,9 @@ web:
                                                 #   read/write не задаются намеренно — через Web идут SSE-стримы (live-tail)
                                                 #   и sync-прокси к Receiver с таймаутом узла до 600 с.
   session_cookie_name: nexus_session            # Имя cookie серверной сессии.
-  session_cookie_secure: true                   # Secure-флаг cookie (только по HTTPS); в проде true.
+  session_cookie_secure: true                   # true (рекомендуется) — Secure ставится, когда запрос ПРИШЁЛ по HTTPS (§90.2): прямой TLS
+                                                #   или X-Forwarded-Proto: https от прокси. По HTTP (вход по IP) кука выдаётся без Secure,
+                                                #   поэтому оба способа входа работают без правки конфига. false — никогда не ставить Secure.
   session_cookie_samesite: strict               # SameSite-политика cookie: strict/lax/none.
   audit_retention_days: 365                     # Срок хранения записей аудита (дней).
   replay_rate_limit_per_user_per_min: 10        # Лимит replay-запросов на пользователя в минуту.

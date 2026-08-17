@@ -7,6 +7,7 @@ import (
 
 	chpf "nexus/internal/platform/clickhouse"
 	"nexus/internal/platform/config"
+	"nexus/internal/platform/crypto"
 	"nexus/internal/platform/logging"
 	"nexus/internal/platform/reloader"
 	sentrypf "nexus/internal/platform/sentry"
@@ -17,9 +18,9 @@ import (
 //
 // Безопасно вызывать из горутины — sentry-go thread-safe, и Init
 // internally заменяет глобальный hub.
-func SentryReloader(pool *pgxpool.Pool, cfg *config.Config, projectName, version string, logger logging.Logger) reloader.Reloader {
+func SentryReloader(pool *pgxpool.Pool, cfg *config.Config, projectName, version string, cipher *crypto.Cipher, logger logging.Logger) reloader.Reloader {
 	return func(ctx context.Context) error {
-		o, err := readAppSettings(ctx, pool)
+		o, err := readAppSettings(ctx, pool, cipher, logger)
 		if err != nil {
 			return err
 		}
@@ -40,9 +41,9 @@ func SentryReloader(pool *pgxpool.Pool, cfg *config.Config, projectName, version
 // в инстансах, у которых нет ClickHouse-клиента (например Receiver),
 // — чтобы overlay в их config'е оставался свежим и при добавлении
 // CH-зависимости в будущем не было рассинхрона.
-func ClickHouseOverlayReloader(pool *pgxpool.Pool, cfg *config.Config, logger logging.Logger) reloader.Reloader {
+func ClickHouseOverlayReloader(pool *pgxpool.Pool, cfg *config.Config, cipher *crypto.Cipher, logger logging.Logger) reloader.Reloader {
 	return func(ctx context.Context) error {
-		o, err := readAppSettings(ctx, pool)
+		o, err := readAppSettings(ctx, pool, cipher, logger)
 		if err != nil {
 			return err
 		}
@@ -58,9 +59,9 @@ func ClickHouseOverlayReloader(pool *pgxpool.Pool, cfg *config.Config, logger lo
 // валидный уровень (2..5) → установка; nil/невалидный → откат на YAML-уровень.
 // Тот же Reloader используется как сид стартового значения (первый вызов
 // сразу после создания подписчика в app.New каждого сервиса).
-func LogLevelReloader(pool *pgxpool.Pool, ctl *LogController, logger logging.Logger) reloader.Reloader {
+func LogLevelReloader(pool *pgxpool.Pool, ctl *LogController, cipher *crypto.Cipher, logger logging.Logger) reloader.Reloader {
 	return func(ctx context.Context) error {
-		o, err := readAppSettings(ctx, pool)
+		o, err := readAppSettings(ctx, pool, cipher, logger)
 		if err != nil {
 			return err
 		}
@@ -108,9 +109,9 @@ type WriterReloader interface {
 // не пересоздаётся, ошибка возвращается в reloader.Subscriber.handle
 // и логируется. Это гарантирует, что битые настройки UI не «убьют» поток
 // логов.
-func ClickHouseReloader(pool *pgxpool.Pool, cfg *config.Config, mgr *chpf.Manager, writers []WriterReloader, logger logging.Logger) reloader.Reloader {
+func ClickHouseReloader(pool *pgxpool.Pool, cfg *config.Config, mgr *chpf.Manager, writers []WriterReloader, cipher *crypto.Cipher, logger logging.Logger) reloader.Reloader {
 	return func(ctx context.Context) error {
-		o, err := readAppSettings(ctx, pool)
+		o, err := readAppSettings(ctx, pool, cipher, logger)
 		if err != nil {
 			return err
 		}

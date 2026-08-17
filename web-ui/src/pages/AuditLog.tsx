@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
@@ -7,8 +7,13 @@ import { Download } from "lucide-react";
 import { api } from "../api/client";
 import { scopeParams, teamScopeKey, useAllTeamsScope } from "../lib/teamScope";
 import { useCurrentTeamID, useMyTeams } from "../lib/teams";
+import { useInfiniteList } from "../lib/useInfiniteList";
 import { AuditDetailsCell } from "../components/AuditDetailsCell";
 import { Button, Card, Chip, ErrorAlert, Select } from "../components/ui";
+
+// PAGE_SIZE — размер страницы журнала. Меньше потолка накопления
+// (MAX_INFINITE_ROWS = 1000), чтобы до него нужно было именно листать.
+const PAGE_SIZE = 100;
 
 type Entry = {
   id: string;
@@ -26,6 +31,11 @@ type Entry = {
   created_at: string;
 };
 type Resp = { items: Entry[] };
+
+// AuditCursor — keyset-курсор §91.1: метка времени и id последней показанной
+// записи. Только время не годится — метки не уникальны, и на их совпадении
+// записи терялись бы или дублировались на границе страницы.
+type AuditCursor = { beforeTS: string; beforeID: string };
 
 // actionTone — окраска чипа действия по префиксу/семантике.
 function actionTone(action: string): "default" | "info" | "success" | "danger" | "warning" {
@@ -66,15 +76,50 @@ export default function AuditLog() {
   const allTeams = useAllTeamsScope();
   const scopeKey = teamScopeKey(allTeams, teamId);
   const scopeQuery = useMemo(() => scopeParams(allTeams), [allTeams]);
-  const q = useQuery({
+
+  // В сквозном режиме команда сессии не участвует — ждать её незачем.
+  const enabled = allTeams || teamId !== "";
+  // Фильтры списка и счётчика собираются в одном месте: разъехавшись, они дали
+  // бы «показано N из M», где M посчитано по другому множеству.
+  const filterParams = useMemo(
+    () => ({ ...scopeQuery, ...(filter ? { action: filter } : {}) }),
+    [scopeQuery, filter],
+  );
+
+  // §91.3: подгрузка по скроллу с keyset-курсором — тот же механизм, что у
+  // логов узла. Раньше страница просила limit=200 без пагинации, и записи за
+  // пределами этих двухсот были недостижимы (счётчика тоже не было, поэтому
+  // обрезка выдачи ничем не показывалась).
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const q = useInfiniteList<Entry, Resp, AuditCursor>({
     queryKey: ["audit", scopeKey, filter],
-    queryFn: () =>
-      api.get<Resp>("/api/audit", {
-        ...scopeQuery,
-        ...(filter ? { action: filter, limit: 200 } : { limit: 200 }),
-      }),
-    // В сквозном режиме команда сессии не участвует — ждать её незачем.
-    enabled: allTeams || teamId !== "",
+    enabled,
+    containerRef: wrapRef,
+    fetchPage: (cursor, signal) =>
+      api.get<Resp>(
+        "/api/audit",
+        {
+          ...filterParams,
+          limit: PAGE_SIZE,
+          ...(cursor ? { before_ts: cursor.beforeTS, before_id: cursor.beforeID } : {}),
+        },
+        { signal },
+      ),
+    getItems: (page) => page.items ?? [],
+    getId: (row) => row.id,
+    getCursor: (_page, items) => {
+      if (items.length < PAGE_SIZE) return undefined; // недобор страницы = конец истории
+      const oldest = items[items.length - 1]; // DESC → последняя самая старая
+      return oldest ? { beforeTS: oldest.created_at, beforeID: oldest.id } : undefined;
+    },
+  });
+
+  // «Показано N из M»: список отдаёт страницу, и по нему нельзя понять, есть ли
+  // ещё записи. Лимит в счётчик не уходит — он отвечает «из скольких».
+  const countQ = useQuery({
+    queryKey: ["audit-count", scopeKey, filter],
+    queryFn: () => api.get<{ count: number }>("/api/audit/count", filterParams),
+    enabled,
   });
 
   // §86.3: имя команды резолвит клиент по членствам — сервер выдачу не
@@ -121,12 +166,26 @@ export default function AuditLog() {
         </a>
       </div>
 
-      {q.isLoading && <div className="text-fg-muted">{t("common.loading")}</div>}
-      {q.error && <ErrorAlert />}
+      {q.items.length > 0 && (
+        <div className="text-xs text-fg-muted">
+          {countQ.data
+            ? t("audit.shown_of_total", { shown: q.items.length, total: countQ.data.count })
+            : t("audit.shown_count", { shown: q.items.length })}
+        </div>
+      )}
 
-      {q.data && (
-        <Card className="overflow-hidden p-0">
-          <div className="overflow-x-auto">
+      {!!q.query.error && <ErrorAlert />}
+
+      {/* Карточка со скролл-контейнером рендерится всегда, а не по приходу
+          данных: иначе при подгрузке структура страницы прыгала бы, а сам
+          контейнер (к нему привязан обработчик скролла) появлялся бы позже
+          первой страницы. */}
+      <Card className="overflow-hidden p-0">
+          <div
+            ref={wrapRef}
+            onScroll={q.onScroll}
+            className="max-h-[70vh] overflow-y-auto overflow-x-auto"
+          >
           <table className="w-full min-w-[720px] text-[12.5px]">
             <thead>
               <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-fg-muted">
@@ -142,7 +201,7 @@ export default function AuditLog() {
               </tr>
             </thead>
             <tbody>
-              {q.data.items.map((e) => (
+              {q.items.map((e) => (
                 <tr key={e.id} className="border-b border-line last:border-0 hover:bg-bg-muted">
                   <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">
                     {new Date(e.created_at).toLocaleString()}
@@ -168,18 +227,40 @@ export default function AuditLog() {
                   </td>
                 </tr>
               ))}
-              {q.data.items.length === 0 && (
+              {q.items.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-3 py-6 text-center text-fg-muted">
-                    {t("audit.empty")}
+                  {/* Колонок 6, а в сквозном режиме добавляется «Команда» (§86.7) —
+                      с фиксированным colSpan строка не растягивалась на всю ширину. */}
+                  <td colSpan={teamNames ? 7 : 6} className="px-3 py-6 text-center text-fg-muted">
+                    {/* isPending, а не isLoading: при выключенном запросе (команда
+                        сессии ещё не отрезолвлена) isLoading в react-query v5
+                        равен false, и вместо загрузки показывалось «Нет записей». */}
+                    {q.query.isPending ? t("common.loading") : t("audit.empty")}
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
+
+          {/* Состояние подгрузки — под таблицей, внутри скролл-контейнера:
+              иначе подсказка «больше нет» уезжает за пределы видимой области. */}
+          {q.query.isFetchingNextPage && (
+            <div className="px-3 py-3 text-center text-xs text-fg-muted">
+              {t("common.loading")}
+            </div>
+          )}
+          {!q.query.hasNextPage && q.items.length > 0 && (
+            <div className="px-3 py-3 text-center text-xs text-fg-muted">
+              {t("audit.no_more")}
+            </div>
+          )}
+          {q.atCap && (
+            <div className="px-3 py-3 text-center text-xs text-warn">
+              {t("audit.cap_reached")}
+            </div>
+          )}
           </div>
-        </Card>
-      )}
+      </Card>
     </div>
   );
 }

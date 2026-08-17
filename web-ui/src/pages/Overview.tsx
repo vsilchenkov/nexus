@@ -17,7 +17,6 @@ import {
   Button,
   Card,
   Chip,
-  Input,
   Kpi,
   KpiRow,
   ChartTooltip,
@@ -34,6 +33,7 @@ import {
   periodLabel,
   periodWindow,
   type Period,
+  SearchInput,
 } from "../components/ui";
 import {
   applyFilters,
@@ -635,7 +635,10 @@ export default function Overview() {
               onClick={() => setHistoryOpen(true)}
             >
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-subtle" />
-              <Input
+              <SearchInput
+                // Escape здесь закрывает список истории поиска, а search-поле
+                // Chrome по Escape очищает само — тип оставлен текстовым.
+                type="text"
                 className="pl-9"
                 placeholder={t("overview.search_placeholder")}
                 value={searchInput}

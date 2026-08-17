@@ -81,7 +81,11 @@ const (
 	ActionCHTemplateUpdate = "ch_template.update"
 	ActionCHTemplateDelete = "ch_template.delete"
 
-	ActionTeamSwitch = "team.switch"
+	// §91.2: ActionTeamSwitch («team.switch») удалён — переключение команды это
+	// обычная навигация, а не подотчётное действие. Записи забивали журнал и
+	// уходили со старым team_id, то есть в новой команде даже не показывались.
+	// Накопленные записи вычищены миграцией 0039.
+
 	// ActionUserFavoriteTeams — §49: пользователь заменил свой список
 	// избранных команд (добавление/удаление/переупорядочивание — один PUT).
 	ActionUserFavoriteTeams = "user.favorite_teams.update"

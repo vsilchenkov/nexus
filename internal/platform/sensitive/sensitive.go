@@ -20,6 +20,10 @@ var keys = []string{
 	"incoming_auth_credentials",
 	"rmq_password",
 	"encryption_key",
+	// §90.1: DSN Sentry несёт внутри себя ключ проекта
+	// (https://<key>@host/<project>), то есть является секретом целиком.
+	// Подстрочное сравнение накрывает и производные имена вроде `sentry_dsn`.
+	"dsn",
 	"cookie",
 	"set-cookie",
 	"x-api-key",

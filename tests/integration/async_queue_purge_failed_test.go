@@ -35,6 +35,7 @@ func (r *pfAuditRepo) Write(_ context.Context, _ *domain.AuditEntry) error { r.w
 func (r *pfAuditRepo) List(_ context.Context, _ webport.AuditFilter) ([]*domain.AuditEntry, error) {
 	return nil, nil
 }
+func (r *pfAuditRepo) Count(_ context.Context, _ webport.AuditFilter) (int, error) { return 0, nil }
 func (r *pfAuditRepo) DeleteOlderThan(_ context.Context, _ time.Time) (int, error) { return 0, nil }
 
 // TestAsyncQueue_PurgeFailed_E2E (§35/§36): очистка «Неудачных доставок» —

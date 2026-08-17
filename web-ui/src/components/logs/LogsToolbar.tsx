@@ -3,7 +3,7 @@ import { Download, RefreshCw, Radio, Pause } from "lucide-react";
 
 import { cn } from "../../lib/cn";
 import { SERVICES, LEVELS, type LevelName, type ServiceName } from "../../lib/logsUtils";
-import { Button, Input, Seg, type SegOption } from "../ui";
+import { Button, SearchInput, Seg, type SegOption } from "../ui";
 
 type Props = {
   services: ServiceName[];
@@ -92,7 +92,7 @@ export function LogsToolbar({
         <Seg value={level} options={levelOptions} onChange={onLevelChange} />
       </div>
 
-      <Input
+      <SearchInput
         className="w-52"
         value={query}
         onChange={(e) => onQueryChange(e.target.value)}

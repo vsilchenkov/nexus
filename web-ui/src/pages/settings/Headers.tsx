@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 
 import { api, type HeaderCatalogEntry } from "../../api/client";
-import { Button, Input, Modal } from "../../components/ui";
+import { Button, Input, Modal, SearchInput } from "../../components/ui";
 import { useConfirm } from "../../lib/confirm";
 
 type ListResp = { items: HeaderCatalogEntry[] };
@@ -58,7 +58,7 @@ export function HeadersPanel() {
         </Button>
       </header>
 
-      <Input
+      <SearchInput
         className="max-w-xs"
         placeholder={t("settings.headers.search")}
         value={q}

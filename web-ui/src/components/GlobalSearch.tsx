@@ -117,8 +117,15 @@ export function GlobalSearch() {
             )}
           >
             <Search size={15} className="shrink-0 text-fg-subtle" />
+            {/* §90.3: те же признаки «это поиск», что у CommandInput. Тип
+                текстовый — Escape закрывает выпадающий список результатов. */}
             <CommandPrimitive.Input
               ref={inputRef}
+              name="q"
+              autoComplete="off"
+              data-1p-ignore
+              data-lpignore="true"
+              data-form-type="other"
               value={q}
               onValueChange={(v) => {
                 setQ(v);

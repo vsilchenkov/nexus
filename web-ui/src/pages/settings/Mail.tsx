@@ -138,6 +138,7 @@ export function MailPanel() {
               className={inp}
               value={form.host ?? ""}
               onChange={(e) => setForm({ ...form, host: e.target.value })}
+              autoComplete="off"
               placeholder="smtp.example.com"
             />
           </div>
@@ -193,6 +194,7 @@ export function MailPanel() {
               className={inp}
               value={form.helo_host ?? ""}
               onChange={(e) => setForm({ ...form, helo_host: e.target.value })}
+              autoComplete="off"
               placeholder="nexus.example.com"
             />
             <p className="text-xs text-fg-subtle">{t("settings.mail.helo_hint")}</p>
@@ -219,8 +221,11 @@ export function MailPanel() {
           </div>
           <div className="space-y-1">
             <label className="text-sm text-fg-muted">{t("settings.mail.username")}</label>
+            {/* autoComplete="off": текстовое поле перед password-полем — Chrome
+                иначе вписывает сюда сохранённый логин браузера. */}
             <input
               className={inp}
+              autoComplete="off"
               value={form.username ?? ""}
               onChange={(e) => setForm({ ...form, username: e.target.value })}
               placeholder="noreply@example.com"
@@ -250,6 +255,7 @@ export function MailPanel() {
               className={inp}
               value={form.from_address ?? ""}
               onChange={(e) => setForm({ ...form, from_address: e.target.value })}
+              autoComplete="off"
               placeholder="nexus@example.com"
             />
           </div>
@@ -259,6 +265,7 @@ export function MailPanel() {
               className={inp}
               value={form.from_name ?? ""}
               onChange={(e) => setForm({ ...form, from_name: e.target.value })}
+              autoComplete="off"
               placeholder="Nexus"
             />
           </div>
@@ -311,6 +318,7 @@ export function MailPanel() {
               type="email"
               value={to}
               onChange={(e) => setTo(e.target.value)}
+              autoComplete="off"
               placeholder="admin@example.com"
             />
           </div>

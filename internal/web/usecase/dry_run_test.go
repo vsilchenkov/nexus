@@ -25,6 +25,10 @@ func (s *stubAuditRepo) List(_ context.Context, _ port.AuditFilter) ([]*domain.A
 	return s.entries, nil
 }
 
+func (s *stubAuditRepo) Count(_ context.Context, _ port.AuditFilter) (int, error) {
+	return len(s.entries), nil
+}
+
 func (s *stubAuditRepo) DeleteOlderThan(_ context.Context, _ time.Time) (int, error) {
 	return 0, nil
 }
