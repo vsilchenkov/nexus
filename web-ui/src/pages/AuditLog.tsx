@@ -229,10 +229,13 @@ export default function AuditLog() {
               ))}
               {q.items.length === 0 && (
                 <tr>
-                  {/* Колонок 7, а в сквозном режиме добавляется «Команда» —
-                      прежний colSpan={6} не растягивал строку на всю ширину. */}
-                  <td colSpan={teamNames ? 8 : 7} className="px-3 py-6 text-center text-fg-muted">
-                    {q.query.isLoading ? t("common.loading") : t("audit.empty")}
+                  {/* Колонок 6, а в сквозном режиме добавляется «Команда» (§86.7) —
+                      с фиксированным colSpan строка не растягивалась на всю ширину. */}
+                  <td colSpan={teamNames ? 7 : 6} className="px-3 py-6 text-center text-fg-muted">
+                    {/* isPending, а не isLoading: при выключенном запросе (команда
+                        сессии ещё не отрезолвлена) isLoading в react-query v5
+                        равен false, и вместо загрузки показывалось «Нет записей». */}
+                    {q.query.isPending ? t("common.loading") : t("audit.empty")}
                   </td>
                 </tr>
               )}

@@ -119,8 +119,10 @@ func decryptOverlaySecrets(o *appSettingsOverlay, cipher *crypto.Cipher, logger 
 		}
 		plain, wasEncrypted, err := cipher.DecryptLenient(**f.ptr)
 		if err != nil {
-			logger.ErrorWithOp("app_settings secret decrypt failed, falling back to env",
-				err, "bootstrap.app_settings")
+			// Имя поля обязательно: без него по логу не понять, что именно
+			// деградировало — Sentry или подключение к ClickHouse.
+			logger.Error("app_settings secret decrypt failed, falling back to env",
+				logger.Str("field", f.name), logger.Err(err))
 			*f.ptr = nil
 			continue
 		}

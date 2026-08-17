@@ -164,11 +164,18 @@ func TestRotateKey_DryRunDoesNotWrite_E2E(t *testing.T) {
 
 	oldC, _ := cipherFromByte(t, 1)
 	newC, _ := cipherFromByte(t, 2)
-	seedRotationFixture(t, ctx, pool, oldC)
+	nodeID := seedRotationFixture(t, ctx, pool, oldC)
 
 	var before string
 	require.NoError(t, pool.QueryRow(ctx,
 		"SELECT value::text FROM app_settings WHERE id = 1").Scan(&before))
+	// Колонки узла пишутся построчно, поэтому их неизменность проверяется
+	// отдельно от singleton'а настроек.
+	var nodeBefore [3]string
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT auth_credentials, incoming_auth_credentials, COALESCE(rmq_password, '')
+		   FROM nodes WHERE id = $1::uuid`, nodeID).
+		Scan(&nodeBefore[0], &nodeBefore[1], &nodeBefore[2]))
 
 	nodeStats, err := keyrotate.RotateNodes(ctx, pool, oldC, newC, true, logging.NewNoop())
 	require.NoError(t, err)
@@ -182,6 +189,13 @@ func TestRotateKey_DryRunDoesNotWrite_E2E(t *testing.T) {
 	require.NoError(t, pool.QueryRow(ctx,
 		"SELECT value::text FROM app_settings WHERE id = 1").Scan(&after))
 	assert.Equal(t, before, after, "dry-run не пишет в БД")
+
+	var nodeAfter [3]string
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT auth_credentials, incoming_auth_credentials, COALESCE(rmq_password, '')
+		   FROM nodes WHERE id = $1::uuid`, nodeID).
+		Scan(&nodeAfter[0], &nodeAfter[1], &nodeAfter[2]))
+	assert.Equal(t, nodeBefore, nodeAfter, "dry-run не трогает секретные колонки узла")
 
 	// Данные по-прежнему читаются СТАРЫМ ключом.
 	settings, err := pgrepo.NewAppSettingsRepoPg(pool, oldC, logging.NewNoop()).Get(ctx)

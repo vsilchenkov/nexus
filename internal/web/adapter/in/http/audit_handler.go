@@ -54,7 +54,7 @@ func toAuditResp(e *domain.AuditEntry) auditEntryResponse {
 // TeamID по умолчанию — current_team_id из сессии (multi-tenancy v2,
 // Phase 10.F.1). Чтобы посмотреть глобальный аудит, admin может передать
 // ?team_id=* (или передать другой UUID — admin'у доверяем).
-func auditFilterFromQuery(c *gin.Context, defaultLimit, maxLimit int) port.AuditFilter {
+func auditFilterFromQuery(c *gin.Context, defaultLimit, maxLimit int) (port.AuditFilter, error) {
 	teamScope := currentTeamID(c)
 	if v := c.Query("team_id"); v != "" {
 		if v == "*" {
@@ -110,12 +110,16 @@ func auditFilterFromQuery(c *gin.Context, defaultLimit, maxLimit int) port.Audit
 	// §91.1: keyset-курсор работает только парой — половина курсора означала бы
 	// молча другую выборку, а не «страницу дальше».
 	if ts, id := c.Query("before_ts"), c.Query("before_id"); ts != "" && id != "" {
-		if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
-			f.BeforeTS = &t
-			f.BeforeID = id
+		t, err := time.Parse(time.RFC3339Nano, ts)
+		if err != nil {
+			// Молча отдать первую страницу нельзя: клиент получит те же записи,
+			// дедуп их выбросит, и подгрузка встанет в «вечную загрузку».
+			return f, fmt.Errorf("invalid before_ts (expected RFC3339): %w", err)
 		}
+		f.BeforeTS = &t
+		f.BeforeID = id
 	}
-	return f
+	return f, nil
 }
 
 // isAdminSession — роль текущей сессии admin? Для API-токенов роль берётся из
@@ -177,7 +181,11 @@ func (h *AuditHandler) listEntries(c *gin.Context, f port.AuditFilter, op string
 // @Security ApiTokenAuth
 // @Router   /api/audit [get]
 func (h *AuditHandler) List(c *gin.Context) {
-	f := auditFilterFromQuery(c, 100, 1000)
+	f, err := auditFilterFromQuery(c, 100, 1000)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
 	entries, ok := h.listEntries(c, f, "audit.list")
 	if !ok {
@@ -210,14 +218,15 @@ func (h *AuditHandler) List(c *gin.Context) {
 // @Router   /api/audit/count [get]
 func (h *AuditHandler) Count(c *gin.Context) {
 	// Лимиты не нужны: считаем всё подходящее под фильтр.
-	f := auditFilterFromQuery(c, 0, 0)
+	f, err := auditFilterFromQuery(c, 0, 0)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	f.Limit, f.Offset = 0, 0
 
 	ctx := c.Request.Context()
-	var (
-		n   int
-		err error
-	)
+	var n int
 	if wantsAllTeams(c) {
 		userID, allowed := resolveAllTeamsUser(c)
 		if !allowed {
@@ -256,7 +265,11 @@ func (h *AuditHandler) Count(c *gin.Context) {
 // @Security ApiTokenAuth
 // @Router   /api/audit/export.csv [get]
 func (h *AuditHandler) ExportCSV(c *gin.Context) {
-	f := auditFilterFromQuery(c, 10000, 50000)
+	f, err := auditFilterFromQuery(c, 10000, 50000)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
 	entries, ok := h.listEntries(c, f, "audit.export")
 	if !ok {

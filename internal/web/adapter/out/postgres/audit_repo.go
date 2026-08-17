@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"nexus/internal/domain"
@@ -139,7 +138,6 @@ FROM user_audit WHERE 1=1`
 		if e.Details == nil {
 			e.Details = map[string]any{}
 		}
-		_ = strings.TrimSpace // зарезервировано
 		out = append(out, &e)
 	}
 	return out, rows.Err()

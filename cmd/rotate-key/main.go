@@ -66,10 +66,14 @@ func main() {
 
 	var st keyrotate.Stats
 
+	// Отчёт печатается и на аварийном выходе: после прерванного прогона первое,
+	// что нужно оператору, — сколько строк УЖЕ перешифровано новым ключом
+	// (от этого зависит, повторять прогон или возвращать старый ключ).
 	nodeStats, err := keyrotate.RotateNodes(ctx, pool, oldC, newC, *dryRun, logger)
 	st.Add(nodeStats)
 	if err != nil {
 		logger.ErrorWithOp("rotate nodes failed", err, "rotate-key.nodes")
+		report(logger, st, *dryRun)
 		os.Exit(1)
 	}
 
@@ -77,6 +81,7 @@ func main() {
 	st.Add(appStats)
 	if err != nil {
 		logger.ErrorWithOp("rotate app_settings failed", err, "rotate-key.app_settings")
+		report(logger, st, *dryRun)
 		os.Exit(1)
 	}
 

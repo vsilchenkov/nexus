@@ -148,9 +148,14 @@ func (h *AuthHandler) Login(c *gin.Context) {
 func (h *AuthHandler) Logout(c *gin.Context) {
 	token, err := c.Cookie(h.cfg.SessionCookieName)
 	if err == nil && token != "" {
-		// §91.2: actor нужен для записи user.logout в журнал; сессия здесь уже
-		// проверена middleware'ом.
-		_ = h.uc.Logout(c.Request.Context(), userActor(c), token)
+		// §91.2: actor нужен для записи user.logout в журнал. TeamID намеренно
+		// НЕ проставляется: вход (user.login.success) пишется глобально, и выход
+		// обязан лежать в том же скоупе — иначе пара «вход/выход» из §7.13
+		// расползается по разным журналам, а выход ещё и становится виден всем
+		// operator'ам той команды, в которой пользователь случайно оказался.
+		actor := userActor(c)
+		actor.TeamID = ""
+		_ = h.uc.Logout(c.Request.Context(), actor, token)
 	}
 	// maxAge<0 — команда браузеру удалить куку. Атрибуты (SameSite, Secure)
 	// считаются те же, что при установке: браузер сопоставляет куку по
@@ -170,9 +175,27 @@ func (h *AuthHandler) setSessionCookie(c *gin.Context, token string, maxAge int)
 	case "none":
 		sameSite = http.SameSiteNoneMode
 	}
+	https := requestIsHTTPS(c)
+	secure := https && h.cfg.SessionCookieSecure
 	c.SetSameSite(sameSite)
-	c.SetCookie(h.cfg.SessionCookieName, token, maxAge, "/", "",
-		requestIsHTTPS(c) && h.cfg.SessionCookieSecure, true)
+	c.SetCookie(h.cfg.SessionCookieName, token, maxAge, "/", "", secure, true)
+
+	// §51.9: решение о Secure влияет на то, примет ли браузер сессию вообще, а
+	// внешне отказ выглядит как «неверный пароль» — без следа в логах такой
+	// случай не разобрать.
+	h.logger.Debug("session cookie set",
+		h.logger.Any("secure", secure),
+		h.logger.Any("request_https", https),
+		h.logger.Str("samesite", h.cfg.SessionCookieSamesite),
+		h.logger.Int("max_age", maxAge))
+	// Комбинация, при которой браузер гарантированно отбросит куку: SameSite=None
+	// требует Secure. Стартовый warning про конфиг уже есть, но он не показывает,
+	// что это случилось на конкретном входе.
+	if !secure && sameSite == http.SameSiteNoneMode {
+		h.logger.Warn("session cookie will be rejected by the browser: samesite=none requires a secure request",
+			h.logger.Any("config_secure", h.cfg.SessionCookieSecure),
+			h.logger.Any("request_https", https))
+	}
 }
 
 // requestIsHTTPS — пришёл ли запрос по защищённому каналу (§90.2).

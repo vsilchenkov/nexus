@@ -15,9 +15,11 @@ package keyrotate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"nexus/internal/platform/crypto"
@@ -181,6 +183,13 @@ func RotateAppSettings(
 	var st Stats
 	var raw []byte
 	if err := pool.QueryRow(ctx, `SELECT value FROM app_settings WHERE id = 1`).Scan(&raw); err != nil {
+		// Строку заводит миграция 0006, но отсутствие настроек — не повод валить
+		// ротацию узлов: шифровать тут попросту нечего (так же трактуют эту
+		// ситуацию оба штатных читателя app_settings).
+		if errors.Is(err, pgx.ErrNoRows) {
+			logger.Info("rotate app_settings: singleton row is missing, nothing to do")
+			return st, nil
+		}
 		return st, fmt.Errorf("select app_settings: %w", err)
 	}
 	if len(raw) == 0 {

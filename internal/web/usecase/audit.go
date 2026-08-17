@@ -93,6 +93,8 @@ func (u *AuditUsecase) CountAcrossTeams(ctx context.Context, userID string, f po
 		return 0, fmt.Errorf("audit across teams: count scope: %w", err)
 	}
 	if len(teamIDs) == 0 {
+		u.logger.Debug("audit across teams count: user has no memberships",
+			u.logger.Str("user_id", userID))
 		return 0, nil
 	}
 	f.TeamID = ""
@@ -101,6 +103,9 @@ func (u *AuditUsecase) CountAcrossTeams(ctx context.Context, userID string, f po
 	if err != nil {
 		return 0, fmt.Errorf("audit across teams: count: %w", err)
 	}
+	u.logger.Debug("audit across teams count",
+		u.logger.Str("user_id", userID), u.logger.Int("teams", len(teamIDs)),
+		u.logger.Int("count", n))
 	return n, nil
 }
 

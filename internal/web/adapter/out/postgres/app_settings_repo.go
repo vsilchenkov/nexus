@@ -30,7 +30,14 @@ type AppSettingsRepoPg struct {
 
 var _ port.AppSettingsRepo = (*AppSettingsRepoPg)(nil)
 
+// NewAppSettingsRepoPg. cipher обязателен: без него секреты ушли бы в БД
+// открытым текстом — ровно то, что чинит §90.1. Отсутствие шифра не остаётся
+// незамеченным (Error при каждом создании репозитория), но и не валит сборку
+// графа: единственный источник nil сегодня — тесты, которым шифрование не нужно.
 func NewAppSettingsRepoPg(db DBTX, cipher *crypto.Cipher, logger logging.Logger) *AppSettingsRepoPg {
+	if cipher == nil {
+		logger.Error("app_settings repo created without cipher: secrets will be stored as plaintext (§90.1)")
+	}
 	return &AppSettingsRepoPg{db: db, cipher: cipher, logger: logger}
 }
 
