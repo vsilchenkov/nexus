@@ -1,9 +1,12 @@
 # Дополнительные CA для образов Nexus
 
 Здесь лежат сертификаты удостоверяющих центров, которых **нет в базовом бандле
-alpine**, но без которых Sender не может установить TLS-соединение с частью
-узлов. Все файлы встраиваются в образ Sender'а
-([deploy/docker/sender.Dockerfile](../docker/sender.Dockerfile)) через
+alpine**, но без которых Nexus не может установить TLS-соединение с частью
+внешних адресов. Файлы встраиваются в образы **Sender'а**
+([deploy/docker/sender.Dockerfile](../docker/sender.Dockerfile)) — исходящие
+запросы узлов — и **Web**
+([deploy/docker/web.Dockerfile](../docker/web.Dockerfile)) — серверная проба
+соседних инстансов (§73). Оба через
 `update-ca-certificates`. Файлы **дополняют** друг друга — ни один не заменяет
 другой и не удаляется при добавлении нового.
 
@@ -15,8 +18,9 @@ alpine**, но без которых Sender не может установить
 ## `vozovoz-issuing-ca.crt` — «Vozovoz Issuing CA»
 
 Промежуточный CA, которым подписаны сертификаты внутренних доменов
-`*.vz78.vozovoz.ru`. Встраивается в образ Sender'а
-([deploy/docker/sender.Dockerfile](../docker/sender.Dockerfile)), иначе исходящие
+`*.vz78.vozovoz.ru`. Встраивается в образы Sender'а и Web
+([deploy/docker/sender.Dockerfile](../docker/sender.Dockerfile),
+[deploy/docker/web.Dockerfile](../docker/web.Dockerfile)), иначе исходящие
 запросы к узлам на внутренних адресах падают с
 `x509: certificate signed by unknown authority`.
 

@@ -38,6 +38,21 @@ COPY --from=builder /out/web /usr/local/bin/web
 COPY config/config.example.yml /app/config/config.yml
 COPY migrations /app/migrations
 
+# Корпоративные CA — те же, что в образе Sender'а, и по тем же причинам
+# (обоснование выбора именно ISSUING-, а не корневого CA Vozovoz — в
+# deploy/docker/sender.Dockerfile и deploy/certs/README.md).
+#
+# Web ходит наружу сам: реестр инстансов (§73) опрашивает соседей ПО HTTPS с
+# сервера, а не из браузера. Без этих сертификатов сосед за корпоративным
+# сертификатом всегда показывается как «Нет ответа / tls error» — Go отвергает
+# цепочку, до /api/version дело не доходит. Сеть при этом в порядке: TLS-ошибка
+# возникает уже ПОСЛЕ установленного TCP-соединения.
+#
+# Ставим ДО `USER nexus`: update-ca-certificates пишет в /etc/ssl/certs.
+COPY deploy/certs/vozovoz-issuing-ca.crt /usr/local/share/ca-certificates/
+COPY deploy/certs/russian-trusted-root-ca.crt /usr/local/share/ca-certificates/
+RUN update-ca-certificates
+
 USER nexus
 
 EXPOSE 8000
