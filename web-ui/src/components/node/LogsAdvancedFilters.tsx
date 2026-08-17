@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 
-import { DateTimeField, LabelHint } from "../ui";
+import { DateTimeField, LabelHint, SearchInput } from "../ui";
 import { LogMethodFilter } from "./LogMethodFilter";
 import { LogClientHostFilter } from "./LogClientHostFilter";
 
@@ -67,9 +67,10 @@ export function LogsAdvancedFilters({
           {/* §77.3: поиск запускается по завершении ввода — Enter или уход
               фокуса, НЕ на каждую букву (полнотекст по всей истории стоит
               секунды, см. §77.5). Esc возвращает применённое значение. */}
-          <input
+          <SearchInput
+            // §77.3: Esc возвращает применённое значение — нативная очистка
+            // search-поля перебила бы этот обработчик.
             type="text"
-            autoComplete="off"
             value={draft.q}
             onChange={(e) => onDraft({ ...draft, q: e.target.value })}
             onKeyDown={(e) => {

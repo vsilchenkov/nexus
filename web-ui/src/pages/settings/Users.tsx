@@ -7,6 +7,7 @@ import { generatePassword, passwordStrength } from "../../lib/password";
 import { useConfirm } from "../../lib/confirm";
 import type { Role } from "../../lib/roles";
 import { MY_TEAMS_KEY } from "../../lib/teams";
+import { SearchInput } from "../../components/ui";
 
 // TeamBrief — команда пользователя для колонки «Команды» (§44.G).
 type TeamBrief = { id: string; slug: string; name: string; role: string };
@@ -173,12 +174,11 @@ export function UsersPanel() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <input
-            autoComplete="off"
+          <SearchInput
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t("settings.users.search_placeholder")}
-            className="px-3 py-2 bg-bg-muted rounded-md outline-none text-sm w-60"
+            className="bg-bg-muted text-sm w-60"
           />
           <button
             onClick={() => setEditing("new")}
