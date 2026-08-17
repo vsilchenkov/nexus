@@ -16,6 +16,13 @@ const fieldBase =
 type InputProps = InputHTMLAttributes<HTMLInputElement> & { mono?: boolean };
 
 // Input — текстовое поле эталона (.in). mono — моноширинный вариант.
+//
+// §90.3: autoComplete по умолчанию выключён. В админ-панели почти нет полей,
+// куда уместно подставлять личные данные, зато есть поиск и фильтры — на них
+// браузер разворачивает попап менеджера паролей, который перекрывает список
+// под полем и предлагает вписать чужой логин. Атрибут стоит ДО {...rest},
+// поэтому формы входа и смены пароля переопределяют его своим
+// `username`/`current-password`/`new-password`.
 export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
   { className, mono, ...rest },
   ref,
@@ -23,6 +30,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
   return (
     <input
       ref={ref}
+      autoComplete="off"
       className={cn(fieldBase, "h-9 px-3", mono && "font-mono text-xs", className)}
       {...rest}
     />

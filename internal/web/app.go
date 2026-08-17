@@ -295,7 +295,7 @@ func (a *App) Start(ctx context.Context) error {
 	// teamRepo — для проверки членства при выборе команды токена (§18.3).
 	tokenUC := usecase.NewAPITokenUsecase(tokenRepo, userRepo, teamRepo, auditUC, a.logger)
 
-	appSettingsRepo := pgrepo.NewAppSettingsRepoPg(a.pg, a.logger)
+	appSettingsRepo := pgrepo.NewAppSettingsRepoPg(a.pg, a.cipher, a.logger)
 	reloadPublisher := reloader.NewPublisher(a.redis)
 	appSettingsUC := usecase.NewAppSettingsUsecase(appSettingsRepo, auditUC, reloadPublisher, a.cfg.Web.AllowVersionOverride, a.logger)
 
@@ -343,7 +343,7 @@ func (a *App) Start(ctx context.Context) error {
 	// ClickHouseReloader регистрируется ниже — после создания chMgr (если CH доступен).
 	reloadSub := reloader.NewSubscriber(a.redis, a.logger)
 	reloadSub.Register(reloader.SectionSentry,
-		bootstrap.SentryReloader(a.pg, a.cfg, a.cfg.Build.ProjectName, a.cfg.Build.Version, a.logger))
+		bootstrap.SentryReloader(a.pg, a.cfg, a.cfg.Build.ProjectName, a.cfg.Build.Version, a.cipher, a.logger))
 
 	// §34.2: длительность сессии из app_settings (сидинг на старте + hot-reload
 	// секции security). nil → сброс провайдера на env-fallback.
@@ -370,7 +370,7 @@ func (a *App) Start(ctx context.Context) error {
 	reloadSub.Register(reloader.SectionMail, mailAvailability.Refresh)
 
 	// §51: runtime-уровень логов из app_settings.logging.level (+ сид старта).
-	applyLogLevel := bootstrap.LogLevelReloader(a.pg, a.logCtl, a.logger)
+	applyLogLevel := bootstrap.LogLevelReloader(a.pg, a.logCtl, a.cipher, a.logger)
 	if err := applyLogLevel(ctx); err != nil {
 		a.logger.Warn("seed log level from app_settings failed; using yaml level", a.logger.Err(err))
 	}
@@ -590,12 +590,12 @@ func (a *App) Start(ctx context.Context) error {
 		// ClickHouse hot-reload: Web не держит chlog.Writer, поэтому writers пуст.
 		// Manager.Reload swap'нет conn — LogReaderCH сразу пойдёт через новый.
 		reloadSub.Register(reloader.SectionClickHouse,
-			bootstrap.ClickHouseReloader(a.pg, a.cfg, a.chMgr, nil, a.logger))
+			bootstrap.ClickHouseReloader(a.pg, a.cfg, a.chMgr, nil, a.cipher, a.logger))
 	} else {
 		// CH-клиент недоступен — но overlay в cfg всё равно полезно обновлять,
 		// чтобы при следующем рестарте подхватились свежие значения.
 		reloadSub.Register(reloader.SectionClickHouse,
-			bootstrap.ClickHouseOverlayReloader(a.pg, a.cfg, a.logger))
+			bootstrap.ClickHouseOverlayReloader(a.pg, a.cfg, a.cipher, a.logger))
 	}
 
 	// Планировщик Telegram-уведомлений (§22): ошибки берутся из Prometheus

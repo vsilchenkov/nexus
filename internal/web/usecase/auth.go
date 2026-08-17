@@ -367,9 +367,18 @@ func teamInMemberships(teamID string, memberships []*domain.UserTeam) bool {
 	return false
 }
 
-// Logout удаляет сессию.
-func (u *AuthUsecase) Logout(ctx context.Context, token string) error {
-	return u.sessions.Delete(ctx, token)
+// Logout удаляет сессию и пишет в журнал (§7.13 требует фиксировать вход И
+// выход; до §91.2 константа ActionUserLogout была объявлена, но не
+// использовалась — выходы не фиксировались вовсе).
+//
+// Аудит пишется ПОСЛЕ успешного удаления: запись о выходе, которого не
+// произошло, хуже её отсутствия.
+func (u *AuthUsecase) Logout(ctx context.Context, actor Actor, token string) error {
+	if err := u.sessions.Delete(ctx, token); err != nil {
+		return err
+	}
+	u.audit.Log(ctx, actor, domain.ActionUserLogout, "user", actor.UserID, nil)
+	return nil
 }
 
 // Check валидирует session-token; продлевает TTL и обновляет LastSeenAt
@@ -456,7 +465,13 @@ func (u *AuthUsecase) SwitchTeam(ctx context.Context, actor Actor, token, teamID
 	if err := u.sessions.Create(ctx, s, u.sessionTTL()); err != nil {
 		return nil, fmt.Errorf("update session: %w", err)
 	}
-	u.audit.Log(ctx, actor, domain.ActionTeamSwitch, "team", teamID, nil)
+	// §91.2: переключение команды в аудит НЕ пишется — это обычная навигация
+	// (её же выполняют переходы по ссылкам §76/§89.3), и записи забивали журнал,
+	// вытесняя содержательные события. К тому же они уходили со СТАРЫМ team_id
+	// (actor вычисляется до смены), поэтому в журнале новой команды всё равно
+	// не показывались.
+	u.logger.Debug("session team switched",
+		u.logger.Str("user_id", actor.UserID), u.logger.Str("team_id", teamID))
 	return s, nil
 }
 

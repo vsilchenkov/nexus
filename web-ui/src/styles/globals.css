@@ -77,3 +77,15 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+
+/* §90.3: у type="search" Chrome рисует собственный крестик очистки — он встаёт
+   поверх наших иконок и ломает вид поля. Тип нужен только затем, чтобы браузер
+   не считал поле контактным и не предлагал автозаполнение, поэтому внешний вид
+   возвращаем к обычному текстовому полю. */
+input[type="search"]::-webkit-search-decoration,
+input[type="search"]::-webkit-search-cancel-button,
+input[type="search"]::-webkit-search-results-button,
+input[type="search"]::-webkit-search-results-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+}

@@ -3,6 +3,7 @@ package http
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -123,16 +124,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	sameSite := http.SameSiteStrictMode
-	switch h.cfg.SessionCookieSamesite {
-	case "lax":
-		sameSite = http.SameSiteLaxMode
-	case "none":
-		sameSite = http.SameSiteNoneMode
-	}
-	c.SetSameSite(sameSite)
-	c.SetCookie(h.cfg.SessionCookieName, token, int(h.ttl().Seconds()), "/", "",
-		h.cfg.SessionCookieSecure, true)
+	h.setSessionCookie(c, token, int(h.ttl().Seconds()))
 
 	c.JSON(http.StatusOK, gin.H{
 		"user": meResponse{
@@ -156,11 +148,76 @@ func (h *AuthHandler) Login(c *gin.Context) {
 func (h *AuthHandler) Logout(c *gin.Context) {
 	token, err := c.Cookie(h.cfg.SessionCookieName)
 	if err == nil && token != "" {
-		_ = h.uc.Logout(c.Request.Context(), token)
+		// §91.2: actor нужен для записи user.logout в журнал. TeamID намеренно
+		// НЕ проставляется: вход (user.login.success) пишется глобально, и выход
+		// обязан лежать в том же скоупе — иначе пара «вход/выход» из §7.13
+		// расползается по разным журналам, а выход ещё и становится виден всем
+		// operator'ам той команды, в которой пользователь случайно оказался.
+		actor := userActor(c)
+		actor.TeamID = ""
+		_ = h.uc.Logout(c.Request.Context(), actor, token)
 	}
-	c.SetCookie(h.cfg.SessionCookieName, "", -1, "/", "",
-		h.cfg.SessionCookieSecure, true)
+	// maxAge<0 — команда браузеру удалить куку. Атрибуты (SameSite, Secure)
+	// считаются те же, что при установке: браузер сопоставляет куку по
+	// name/domain/path, но несимметричные атрибуты — источник трудноуловимых
+	// расхождений между схемами.
+	h.setSessionCookie(c, "", -1)
 	c.Status(http.StatusNoContent)
+}
+
+// setSessionCookie ставит (или удаляет при maxAge<0) session-cookie с
+// атрибутами SameSite и Secure, согласованными между Login и Logout.
+func (h *AuthHandler) setSessionCookie(c *gin.Context, token string, maxAge int) {
+	sameSite := http.SameSiteStrictMode
+	switch h.cfg.SessionCookieSamesite {
+	case "lax":
+		sameSite = http.SameSiteLaxMode
+	case "none":
+		sameSite = http.SameSiteNoneMode
+	}
+	https := requestIsHTTPS(c)
+	secure := https && h.cfg.SessionCookieSecure
+	c.SetSameSite(sameSite)
+	c.SetCookie(h.cfg.SessionCookieName, token, maxAge, "/", "", secure, true)
+
+	// §51.9: решение о Secure влияет на то, примет ли браузер сессию вообще, а
+	// внешне отказ выглядит как «неверный пароль» — без следа в логах такой
+	// случай не разобрать.
+	h.logger.Debug("session cookie set",
+		h.logger.Any("secure", secure),
+		h.logger.Any("request_https", https),
+		h.logger.Str("samesite", h.cfg.SessionCookieSamesite),
+		h.logger.Int("max_age", maxAge))
+	// Комбинация, при которой браузер гарантированно отбросит куку: SameSite=None
+	// требует Secure. Стартовый warning про конфиг уже есть, но он не показывает,
+	// что это случилось на конкретном входе.
+	if !secure && sameSite == http.SameSiteNoneMode {
+		h.logger.Warn("session cookie will be rejected by the browser: samesite=none requires a secure request",
+			h.logger.Any("config_secure", h.cfg.SessionCookieSecure),
+			h.logger.Any("request_https", https))
+	}
+}
+
+// requestIsHTTPS — пришёл ли запрос по защищённому каналу (§90.2).
+//
+// Web всегда слушает plain HTTP: TLS терминирует внешний nginx, поэтому
+// c.Request.TLS за прокси всегда nil и единственный признак схемы —
+// X-Forwarded-Proto. Заголовку можно верить: атрибут Secure только сужает
+// круг соединений, по которым браузер отправит куку, так что подделавший
+// заголовок клиент навредит лишь себе.
+//
+// Зачем: cookie с Secure, отданная по http://, молча отбрасывается браузером
+// (RFC 6265bis §5.5) — логин отвечал 200, а следующий /api/auth/me получал
+// 401 и SPA возвращала на форму входа. Статический флаг из конфига заставлял
+// выбирать между входом по DNS (HTTPS) и по IP (HTTP); теперь Secure ставится
+// ровно тогда, когда канал это позволяет.
+func requestIsHTTPS(c *gin.Context) bool {
+	if c.Request.TLS != nil {
+		return true
+	}
+	// Прокси может прислать список ("https, http") — значима первая запись.
+	proto, _, _ := strings.Cut(c.GetHeader("X-Forwarded-Proto"), ",")
+	return strings.EqualFold(strings.TrimSpace(proto), "https")
 }
 
 // Me godoc

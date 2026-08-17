@@ -175,7 +175,7 @@ docker-logs: ## Логи сервисов (Ctrl+C для выхода)
 
 # ----- placeholders для следующих фаз ---------------------------------------
 
-.PHONY: swagger proto loadtest test-integration sqlc-gen rotate-encryption-key
+.PHONY: swagger proto loadtest test-integration sqlc-gen rotate-encryption-key encrypt-secrets decrypt-secrets
 .PHONY: test-int-pg test-int-ch test-int-catalog test-int-receiver test-int-rmq test-int-sender test-int-logs-scale
 
 SWAG ?= swag
@@ -253,8 +253,8 @@ test-int-sender: ## integration: Sender async + DLQ + DLQ-репроцессор
 test-int-queue: ## integration: управление async-очередью §35 + tombstones (Kafka+Redis)
 	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestAsyncQueue|^TestQueueCancel" ./tests/integration/...
 
-test-int-misc: ## integration: остальное — скоупы, статусы узла, одноразовые ссылки §88, каталог полей, dry-run, rDNS
-	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestAuditScope|^TestCHTableVerify|^TestDryRun|^TestMigrations_|^TestNodeAck|^TestNodeAsyncAckSpec|^TestNodeScope|^TestNodeStatus|^TestOneTimeToken|^TestUserRepo_|^TestRDNS|^TestRequestFieldCatalog|^TestTeamExternalURL|^TestTeamFavorites" ./tests/integration/...
+test-int-misc: ## integration: остальное — скоупы, статусы узла, одноразовые ссылки §88, каталог полей, dry-run, rDNS, ротация ключа §90
+	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestAuditKeyset|^TestAuditScope|^TestCHTableVerify|^TestKeyRotate|^TestDryRun|^TestMigrations_|^TestNodeAck|^TestNodeAsyncAckSpec|^TestNodeScope|^TestNodeStatus|^TestOneTimeToken|^TestRotateKey|^TestUserRepo_|^TestRDNS|^TestRequestFieldCatalog|^TestTeamExternalURL|^TestTeamFavorites" ./tests/integration/...
 
 # Масштабный замер скролла логов (§77.5). В test-integration НЕ входит: сид на
 # десятки млн строк и прогон занимают минуты, а результат — не pass/fail, а
@@ -267,10 +267,18 @@ sqlc-gen: ## Phase 1: генерация Go-кода из SQL через sqlc
 	@echo "TODO Phase 1: sqlc generate"
 
 rotate-encryption-key: ## Ротация ENCRYPTION_KEY: make rotate-encryption-key OLD_KEY=... NEW_KEY=... [DRY_RUN=true]
-	$(GO) run ./cmd/rotate-key \
-		--old-key="$(OLD_KEY)" \
-		--new-key="$(NEW_KEY)" \
-		$(if $(filter true,$(DRY_RUN)),--dry-run,)
+# Параметры уходят в окружение, а не флагами: разбор командной строки принадлежит
+# bootstrap.Init (свой FlagSet с ExitOnError), и на «чужом» флаге утилита печатала
+# usage и завершалась — то есть ротация не выполнялась вовсе (§90.4).
+# @ обязателен: без него make печатает строку целиком, и оба ключа шифрования
+# уходят в вывод терминала (а на CI — в лог задания).
+	@OLD_KEY="$(OLD_KEY)" NEW_KEY="$(NEW_KEY)" DRY_RUN="$(DRY_RUN)" $(GO) run ./cmd/rotate-key
+
+encrypt-secrets: ## §90.6 Зашифровать секреты, лежащие в БД открытым текстом: make encrypt-secrets KEY=... [DRY_RUN=true]
+	@MODE=encrypt OLD_KEY="$(KEY)" DRY_RUN="$(DRY_RUN)" $(GO) run ./cmd/rotate-key
+
+decrypt-secrets: ## §90.6 Раскрыть секреты app_settings обратно в plaintext — ТОЛЬКО для отката кода: make decrypt-secrets KEY=... [DRY_RUN=true]
+	@MODE=decrypt OLD_KEY="$(KEY)" DRY_RUN="$(DRY_RUN)" $(GO) run ./cmd/rotate-key
 
 # ----- git hooks (Phase 7.9) ------------------------------------------------
 

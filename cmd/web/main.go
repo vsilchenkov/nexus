@@ -60,9 +60,13 @@ func main() {
 	// §70.5: заявляем/сверяем идентификатор ноды сразу после миграций — до
 	// подключения ClickHouse, потому что от него зависят имена БД команд.
 	identity := bootstrap.MustInstanceIdentity(ctx, pgPool, cfg, flags, projectName, logger)
+	// Cipher нужен раньше остальных зависимостей: overlay ниже расшифровывает
+	// секреты app_settings (§90.1).
+	cipher := bootstrap.MustCipher(logger)
+
 	// §8.4 / §14.5: накладываем dynamic-настройки из app_settings поверх
 	// env-конфига до подключения зависимостей (CH-клиент возьмёт overlay'нутый адрес).
-	bootstrap.ApplyAppSettings(ctx, pgPool, cfg, logger)
+	bootstrap.ApplyAppSettings(ctx, pgPool, cfg, cipher, logger)
 
 	redisClient := bootstrap.MustRedis(ctx, cfg, logger)
 	defer redisClient.Close()
@@ -77,8 +81,6 @@ func main() {
 	// внутри App.Start: ошибку старта сервис-обёртка гасит логом, и в
 	// неинтерактивном режиме процесс остался бы жить с невыполненным гейтом.
 	bootstrap.MustCHOwnership(ctx, pgPool, chConn, cfg, identity, logger)
-
-	cipher := bootstrap.MustCipher(logger)
 
 	otelShutdown := bootstrap.MustOtel(ctx, cfg, "web", logger)
 

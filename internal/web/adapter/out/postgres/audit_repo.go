@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"nexus/internal/domain"
@@ -42,12 +41,10 @@ RETURNING id, created_at`
 	return nil
 }
 
-func (r *AuditRepoPg) List(ctx context.Context, f port.AuditFilter) ([]*domain.AuditEntry, error) {
-	q := `
-SELECT id, COALESCE(user_id::text,''), user_login, COALESCE(team_id::text,''),
-       action, target_type, target_id,
-       details, COALESCE(ip_address::text,''), created_at
-FROM user_audit WHERE 1=1`
+// auditWhere собирает общую часть WHERE для List и Count: разъехавшиеся условия
+// означали бы, что счётчик «из M» считает не то, что показано на экране.
+func auditWhere(f port.AuditFilter) (string, []any) {
+	q := ""
 	args := []any{}
 	if f.UserID != "" {
 		q += fmt.Sprintf(" AND user_id = $%d::uuid", len(args)+1)
@@ -55,12 +52,23 @@ FROM user_audit WHERE 1=1`
 	}
 	// §86.7: сквозной скоуп имеет приоритет над однокомандным — иначе в запрос
 	// уехали бы два взаимоисключающих условия и выдача всегда была бы пустой.
-	if len(f.TeamIDs) > 0 {
-		q += fmt.Sprintf(" AND team_id = ANY($%d::uuid[])", len(args)+1)
+	// §91.2: IncludeGlobal (admin) добавляет к скоупу записи без команды —
+	// входы, неудачные логины, восстановление пароля.
+	switch {
+	case len(f.TeamIDs) > 0:
+		q += fmt.Sprintf(" AND (team_id = ANY($%d::uuid[])", len(args)+1)
 		args = append(args, f.TeamIDs)
-	} else if f.TeamID != "" {
-		q += fmt.Sprintf(" AND team_id = $%d::uuid", len(args)+1)
+		if f.IncludeGlobal {
+			q += " OR team_id IS NULL"
+		}
+		q += ")"
+	case f.TeamID != "":
+		q += fmt.Sprintf(" AND (team_id = $%d::uuid", len(args)+1)
 		args = append(args, f.TeamID)
+		if f.IncludeGlobal {
+			q += " OR team_id IS NULL"
+		}
+		q += ")"
 	}
 	if len(f.Actions) > 0 {
 		q += fmt.Sprintf(" AND action = ANY($%d)", len(args)+1)
@@ -82,7 +90,27 @@ FROM user_audit WHERE 1=1`
 		q += fmt.Sprintf(" AND created_at <= $%d", len(args)+1)
 		args = append(args, *f.To)
 	}
-	q += " ORDER BY created_at DESC"
+	return q, args
+}
+
+func (r *AuditRepoPg) List(ctx context.Context, f port.AuditFilter) ([]*domain.AuditEntry, error) {
+	q := `
+SELECT id, COALESCE(user_id::text,''), user_login, COALESCE(team_id::text,''),
+       action, target_type, target_id,
+       details, COALESCE(ip_address::text,''), created_at
+FROM user_audit WHERE 1=1`
+	where, args := auditWhere(f)
+	q += where
+
+	// §91.1: keyset-курсор. Сравнение кортежей, а не отдельно по created_at:
+	// метки не уникальны, и на границе страницы записи с одинаковым временем
+	// либо дублировались бы, либо терялись.
+	if f.BeforeTS != nil && f.BeforeID != "" {
+		q += fmt.Sprintf(" AND (created_at, id) < ($%d, $%d::uuid)", len(args)+1, len(args)+2)
+		args = append(args, *f.BeforeTS, f.BeforeID)
+	}
+	// id в сортировке обязателен — он же второй компонент курсора.
+	q += " ORDER BY created_at DESC, id DESC"
 	if f.Limit > 0 {
 		q += fmt.Sprintf(" LIMIT $%d", len(args)+1)
 		args = append(args, f.Limit)
@@ -110,10 +138,21 @@ FROM user_audit WHERE 1=1`
 		if e.Details == nil {
 			e.Details = map[string]any{}
 		}
-		_ = strings.TrimSpace // зарезервировано
 		out = append(out, &e)
 	}
 	return out, rows.Err()
+}
+
+// Count — сколько записей подходит под фильтр целиком (§91.1). Limit, Offset и
+// курсор намеренно игнорируются: счётчик отвечает на вопрос «из скольких», а не
+// «сколько на этой странице».
+func (r *AuditRepoPg) Count(ctx context.Context, f port.AuditFilter) (int, error) {
+	where, args := auditWhere(f)
+	var n int
+	if err := r.db.QueryRow(ctx, `SELECT count(*) FROM user_audit WHERE 1=1`+where, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("audit count: %w", err)
+	}
+	return n, nil
 }
 
 func (r *AuditRepoPg) DeleteOlderThan(ctx context.Context, cutoff time.Time) (int, error) {

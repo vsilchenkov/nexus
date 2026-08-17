@@ -27,8 +27,18 @@ export const CommandInput = forwardRef<
   return (
     <div className="flex h-9 items-center gap-2 border-b border-line px-3">
       <Search size={15} className="shrink-0 text-fg-subtle" />
+      {/* §90.3: cmdk сам ставит autocomplete="off", но этого мало — Chrome
+          игнорирует его для полей, которые счёл контактными, а часть наших
+          списков ищет по логину и email. Добавляем остальные признаки: имя без
+          семантики и метки сторонних менеджеров паролей. Тип оставляем
+          текстовым — Escape здесь закрывает попап, а search-поле Chrome по
+          Escape очищает само. */}
       <CommandPrimitive.Input
         ref={ref}
+        name="q"
+        data-1p-ignore
+        data-lpignore="true"
+        data-form-type="other"
         className={cn(
           "h-full w-full bg-transparent text-[13px] text-fg outline-none placeholder:text-fg-subtle",
           className,

@@ -21,6 +21,9 @@ func TestIsSensitive(t *testing.T) {
 		{"contains token", "access_token", true},
 		{"authorization", "Authorization", true},
 		{"set-cookie", "Set-Cookie", true},
+		// §90.1: DSN Sentry содержит ключ проекта — секрет целиком.
+		{"dsn", "dsn", true},
+		{"sentry_dsn", "sentry_dsn", true},
 		{"plain node", "node", false},
 		{"plain status", "status", false},
 		{"plain url", "url", false},

@@ -320,8 +320,20 @@
                     },
                     {
                         "type": "integer",
-                        "description": "смещение",
+                        "description": "смещение (legacy; для постраничного чтения используйте before_ts+before_id)",
                         "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "keyset-курсор §91.1: created_at последней показанной записи (RFC3339Nano). Работает только вместе с before_id",
+                        "name": "before_ts",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "keyset-курсор §91.1: id последней показанной записи. Работает только вместе с before_ts",
+                        "name": "before_id",
                         "in": "query"
                     }
                 ],
@@ -330,6 +342,90 @@
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ListAuditResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/audit/count": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    },
+                    {
+                        "ApiTokenAuth": []
+                    }
+                ],
+                "description": "Тот же набор фильтров, что у /api/audit, но без limit и курсора. Нужен счётчику «показано N из M»: список отдаёт страницу, и по нему нельзя понять, обрезана выдача или нет.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "audit"
+                ],
+                "summary": "Сколько записей журнала подходит под фильтр (operator+, §91.1).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "all — журнал всех команд пользователя (§86.7)",
+                        "name": "scope",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "фильтр по user_id",
+                        "name": "user_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "одно значение action",
+                        "name": "action",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "несколько action через запятую",
+                        "name": "actions",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "node|user|token|ch_table|...",
+                        "name": "target_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "фильтр по target_id",
+                        "name": "target_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339 (начало)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "RFC3339 (конец)",
+                        "name": "to",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.AuditCountResponse"
                         }
                     },
                     "500": {
@@ -6328,6 +6424,14 @@
                 },
                 "spec": {
                     "$ref": "#/definitions/nexus_internal_domain_ackspec.Spec"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.AuditCountResponse": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
                 }
             }
         },

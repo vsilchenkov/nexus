@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Plus, Pencil, Trash2, Check, X } from "lucide-react";
 
 import { api, type HostAllowlistEntry, type HostKind } from "../../api/client";
-import { Button, Chip, Input, Modal, Seg, type SegOption } from "../../components/ui";
+import { Button, Chip, Input, Modal, SearchInput, Seg, type SegOption } from "../../components/ui";
 import { useConfirm } from "../../lib/confirm";
 
 type ListResp = { items: HostAllowlistEntry[] };
@@ -61,7 +61,7 @@ export function AllowedHostsPanel() {
 
       <div className="flex flex-wrap items-center gap-2">
         <Seg value={kind} options={segOptions} onChange={setKind} />
-        <Input
+        <SearchInput
           className="max-w-xs flex-1"
           placeholder={t("settings.allowed_hosts.search")}
           value={q}

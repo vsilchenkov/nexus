@@ -140,6 +140,12 @@ type LogCountResponse struct {
 	LogsAvailable  bool   `json:"logs_available"`
 }
 
+// AuditCountResponse — GET /api/audit/count (§91.1): сколько записей журнала
+// подходит под фильтр целиком, для счётчика «показано N из M».
+type AuditCountResponse struct {
+	Count int `json:"count"`
+}
+
 // LogDateRangeResponse — GET /api/nodes/{id}/logs/date-range (§48.3): min/max
 // date_request узла (UnixMilli) для ограничения полей дат фильтра. 0/0 —
 // записей нет, ограничения не ставятся.

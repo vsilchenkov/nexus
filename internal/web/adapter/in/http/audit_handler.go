@@ -54,7 +54,7 @@ func toAuditResp(e *domain.AuditEntry) auditEntryResponse {
 // TeamID по умолчанию — current_team_id из сессии (multi-tenancy v2,
 // Phase 10.F.1). Чтобы посмотреть глобальный аудит, admin может передать
 // ?team_id=* (или передать другой UUID — admin'у доверяем).
-func auditFilterFromQuery(c *gin.Context, defaultLimit, maxLimit int) port.AuditFilter {
+func auditFilterFromQuery(c *gin.Context, defaultLimit, maxLimit int) (port.AuditFilter, error) {
 	teamScope := currentTeamID(c)
 	if v := c.Query("team_id"); v != "" {
 		if v == "*" {
@@ -68,6 +68,12 @@ func auditFilterFromQuery(c *gin.Context, defaultLimit, maxLimit int) port.Audit
 		TeamID:     teamScope,
 		TargetType: c.Query("target_type"),
 		TargetID:   c.Query("target_id"),
+		// §91.2: глобальные записи (входы, неудачные логины, восстановление
+		// пароля, действия над пользователями) пишутся с team_id IS NULL и до
+		// этого не попадали ни в один режим просмотра, кроме ручного team_id=*.
+		// Админу они показываются вместе с журналом команды; operator/manager
+		// продолжают видеть строго свою команду.
+		IncludeGlobal: isAdminSession(c),
 	}
 	if v := c.Query("action"); v != "" && c.Query("actions") == "" {
 		f.Actions = []string{v}
@@ -101,7 +107,26 @@ func auditFilterFromQuery(c *gin.Context, defaultLimit, maxLimit int) port.Audit
 			f.Offset = n
 		}
 	}
-	return f
+	// §91.1: keyset-курсор работает только парой — половина курсора означала бы
+	// молча другую выборку, а не «страницу дальше».
+	if ts, id := c.Query("before_ts"), c.Query("before_id"); ts != "" && id != "" {
+		t, err := time.Parse(time.RFC3339Nano, ts)
+		if err != nil {
+			// Молча отдать первую страницу нельзя: клиент получит те же записи,
+			// дедуп их выбросит, и подгрузка встанет в «вечную загрузку».
+			return f, fmt.Errorf("invalid before_ts (expected RFC3339): %w", err)
+		}
+		f.BeforeTS = &t
+		f.BeforeID = id
+	}
+	return f, nil
+}
+
+// isAdminSession — роль текущей сессии admin? Для API-токенов роль берётся из
+// псевдо-сессии, которую строит APITokenAuth, поэтому проверка едина.
+func isAdminSession(c *gin.Context) bool {
+	s, ok := sessionFromCtx(c)
+	return ok && s.Role == domain.UserRoleAdmin
 }
 
 // listEntries — выбор скоупа журнала: команда сессии (или явный team_id) либо
@@ -147,14 +172,20 @@ func (h *AuditHandler) listEntries(c *gin.Context, f port.AuditFilter, op string
 // @Param    from         query  string  false  "RFC3339 (начало)"
 // @Param    to           query  string  false  "RFC3339 (конец)"
 // @Param    limit        query  int     false  "default 100, max 1000"
-// @Param    offset       query  int     false  "смещение"
+// @Param    offset       query  int     false  "смещение (legacy; для постраничного чтения используйте before_ts+before_id)"
+// @Param    before_ts    query  string  false  "keyset-курсор §91.1: created_at последней показанной записи (RFC3339Nano). Работает только вместе с before_id"
+// @Param    before_id    query  string  false  "keyset-курсор §91.1: id последней показанной записи. Работает только вместе с before_ts"
 // @Success  200          {object}  ListAuditResponse
 // @Failure  500          {object}  ErrorResponse
 // @Security CookieAuth
 // @Security ApiTokenAuth
 // @Router   /api/audit [get]
 func (h *AuditHandler) List(c *gin.Context) {
-	f := auditFilterFromQuery(c, 100, 1000)
+	f, err := auditFilterFromQuery(c, 100, 1000)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
 	entries, ok := h.listEntries(c, f, "audit.list")
 	if !ok {
@@ -165,6 +196,52 @@ func (h *AuditHandler) List(c *gin.Context) {
 		out = append(out, toAuditResp(e))
 	}
 	c.JSON(http.StatusOK, gin.H{"items": out})
+}
+
+// Count godoc
+// @Summary  Сколько записей журнала подходит под фильтр (operator+, §91.1).
+// @Description  Тот же набор фильтров, что у /api/audit, но без limit и курсора. Нужен счётчику «показано N из M»: список отдаёт страницу, и по нему нельзя понять, обрезана выдача или нет.
+// @Tags     audit
+// @Produce  json
+// @Param    scope        query  string  false  "all — журнал всех команд пользователя (§86.7)"
+// @Param    user_id      query  string  false  "фильтр по user_id"
+// @Param    action       query  string  false  "одно значение action"
+// @Param    actions      query  string  false  "несколько action через запятую"
+// @Param    target_type  query  string  false  "node|user|token|ch_table|..."
+// @Param    target_id    query  string  false  "фильтр по target_id"
+// @Param    from         query  string  false  "RFC3339 (начало)"
+// @Param    to           query  string  false  "RFC3339 (конец)"
+// @Success  200          {object}  AuditCountResponse
+// @Failure  500          {object}  ErrorResponse
+// @Security CookieAuth
+// @Security ApiTokenAuth
+// @Router   /api/audit/count [get]
+func (h *AuditHandler) Count(c *gin.Context) {
+	// Лимиты не нужны: считаем всё подходящее под фильтр.
+	f, err := auditFilterFromQuery(c, 0, 0)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	f.Limit, f.Offset = 0, 0
+
+	ctx := c.Request.Context()
+	var n int
+	if wantsAllTeams(c) {
+		userID, allowed := resolveAllTeamsUser(c)
+		if !allowed {
+			return
+		}
+		n, err = h.uc.CountAcrossTeams(ctx, userID, f)
+	} else {
+		n, err = h.uc.Count(ctx, f)
+	}
+	if err != nil {
+		h.logger.ErrorWithOp("audit count failed", err, "audit.count")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"count": n})
 }
 
 // ExportCSV godoc
@@ -188,7 +265,11 @@ func (h *AuditHandler) List(c *gin.Context) {
 // @Security ApiTokenAuth
 // @Router   /api/audit/export.csv [get]
 func (h *AuditHandler) ExportCSV(c *gin.Context) {
-	f := auditFilterFromQuery(c, 10000, 50000)
+	f, err := auditFilterFromQuery(c, 10000, 50000)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
 	entries, ok := h.listEntries(c, f, "audit.export")
 	if !ok {

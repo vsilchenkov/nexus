@@ -7,6 +7,7 @@ import { generatePassword, passwordStrength } from "../../lib/password";
 import { useConfirm } from "../../lib/confirm";
 import type { Role } from "../../lib/roles";
 import { MY_TEAMS_KEY } from "../../lib/teams";
+import { SearchInput } from "../../components/ui";
 
 // TeamBrief — команда пользователя для колонки «Команды» (§44.G).
 type TeamBrief = { id: string; slug: string; name: string; role: string };
@@ -173,11 +174,11 @@ export function UsersPanel() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <input
+          <SearchInput
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t("settings.users.search_placeholder")}
-            className="px-3 py-2 bg-bg-muted rounded-md outline-none text-sm w-60"
+            className="bg-bg-muted text-sm w-60"
           />
           <button
             onClick={() => setEditing("new")}
@@ -759,7 +760,10 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
             <label className="text-xs uppercase tracking-wider text-fg-muted">
               {t("settings.users.field.login")}
             </label>
+            {/* autoComplete="off": иначе Chrome вписывает сюда сохранённый
+                логин браузера (поле пароля идёт следом в create-режиме). */}
             <input
+              autoComplete="off"
               value={login}
               onChange={(e) => setLogin(e.target.value)}
               disabled={mode === "edit"}
@@ -798,6 +802,7 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
               <div className="flex gap-2">
                 <input
                   type="text"
+                  autoComplete="off"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="min 8 chars"
@@ -960,6 +965,7 @@ function PasswordDialog({ user, onClose, onSaved }: PasswordDialogProps) {
           <div className="flex gap-2">
             <input
               type="text"
+              autoComplete="off"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="min 8 chars"

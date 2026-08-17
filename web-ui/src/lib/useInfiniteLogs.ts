@@ -1,13 +1,9 @@
-import {
-  useInfiniteQuery,
-  useQueryClient,
-  type InfiniteData,
-  type UseInfiniteQueryResult,
-} from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef, type RefObject } from "react";
+import { type InfiniteData, type UseInfiniteQueryResult } from "@tanstack/react-query";
+import { useRef, type RefObject } from "react";
 
 import { api } from "../api/client";
 import { type LogRow, type LogsResp } from "../components/node/types";
+import { useInfiniteList } from "./useInfiniteList";
 
 // useInfiniteLogs — постраничное чтение логов узла с keyset-курсором (§7.4/§44,
 // §72.3). Один механизм на все списки логов: журнал узла (вкладка «Логи») и
@@ -18,19 +14,17 @@ import { type LogRow, type LogsResp } from "../components/node/types";
 // `before_id`. Простого `to` мало, потому что date_request имеет секундную
 // точность, и на «плотных» секундах страница возвращала те же записи → дедуп →
 // стопор скролла (§44/45-fix).
+//
+// §91.3: общая механика (накопление страниц, дедуп, подгрузка у низа,
+// схлопывание кеша) вынесена в useInfiniteList и переиспользуется журналом
+// аудита. Здесь остались только специфика логов узла: адрес, форма курсора,
+// признак доступности ClickHouse и замер длительности страницы.
 
-// MAX_INFINITE_ROWS — потолок накопленных строк (§44.K). Без виртуализации
-// неограниченный append раздувает DOM и вешает прокрутку; достигнут потолок —
-// подгрузка останавливается, а список показывает подсказку сузить период.
-export const MAX_INFINITE_ROWS = 1000;
-
-// SCROLL_BOTTOM_THRESHOLD_PX — насколько близко к низу надо прокрутить, чтобы
-// пошла подгрузка следующей страницы.
-export const SCROLL_BOTTOM_THRESHOLD_PX = 200;
-
-// SCROLL_TOP_THRESHOLD_PX — «пользователь у верха списка»: смотрит свежие
-// записи, а не листает историю.
-export const SCROLL_TOP_THRESHOLD_PX = 8;
+export {
+  MAX_INFINITE_ROWS,
+  SCROLL_BOTTOM_THRESHOLD_PX,
+  SCROLL_TOP_THRESHOLD_PX,
+} from "./useInfiniteList";
 
 // LogsCursor — keyset-курсор: время самой старой загруженной строки (мс) и её
 // id как тай-брейкер.
@@ -65,50 +59,39 @@ export function useInfiniteLogs(o: {
   pageSize: number;
   enabled: boolean;
   refetchInterval?: number | false;
-  // containerRef — скролл-контейнер списка: по нему считается близость к низу и
-  // отслеживается «страница короче контейнера» (тогда скроллить нечего и
-  // следующую страницу тянем сами).
   containerRef: RefObject<HTMLElement | null>;
   maxRows?: number;
-  // collapseEnabled — разрешение «возврату к верху» схлопывать кеш до первой
-  // страницы (§72.5). Журнал логов выключает его, пока раскрыта строка (§77.1):
-  // схлопывание выбрасывало страницы 2+ вместе с раскрытой строкой, и тело
-  // закрывалось. По умолчанию включено (вкладка «Очередь» строк не раскрывает).
   collapseEnabled?: boolean;
   // onPageLoaded — длительность успешно загруженной страницы, мс (§77.3):
   // журнал логов по ней выключает автообновление на дорогих фильтрах (>2 с).
   onPageLoaded?: (ms: number) => void;
 }): UseInfiniteLogsResult {
-  const { nodeId, queryKey, params, pageSize, enabled, refetchInterval = false, containerRef } = o;
-  const collapseEnabled = o.collapseEnabled ?? true;
+  const { nodeId, params, pageSize } = o;
   // Коллбэк в ref: он пересоздаётся каждый рендер и в deps queryFn не годится.
   const onPageLoadedRef = useRef(o.onPageLoaded);
   onPageLoadedRef.current = o.onPageLoaded;
-  const maxRows = o.maxRows ?? MAX_INFINITE_ROWS;
-  const qc = useQueryClient();
-  // Ключ в ref: массив пересоздаётся каждый рендер и в deps коллбэков не годится.
-  const keyRef = useRef(queryKey);
-  keyRef.current = queryKey;
 
-  const query = useInfiniteQuery({
-    queryKey,
-    enabled,
-    initialPageParam: null as LogsCursor | null,
-    // signal — настоящая отмена запроса (§77.3): без него «Отменить» рвало бы
-    // запрос только в react-query, а ClickHouse продолжал бы его выполнять.
-    queryFn: async ({ pageParam, signal }) => {
+  const list = useInfiniteList<LogRow, LogsResp, LogsCursor>({
+    queryKey: o.queryKey,
+    enabled: o.enabled,
+    refetchInterval: o.refetchInterval,
+    containerRef: o.containerRef,
+    maxRows: o.maxRows,
+    collapseEnabled: o.collapseEnabled,
+    fetchPage: async (cursor, signal) => {
       const p: Record<string, string | number> = { ...params, limit: pageSize };
-      if (pageParam) {
-        p.to = pageParam.to;
-        p.before_id = pageParam.beforeId;
+      if (cursor) {
+        p.to = cursor.to;
+        p.before_id = cursor.beforeId;
       }
       const t0 = performance.now();
       const resp = await api.get<LogsResp>(`/api/nodes/${nodeId}/logs`, p, { signal });
       onPageLoadedRef.current?.(performance.now() - t0);
       return resp;
     },
-    getNextPageParam: (lastPage) => {
-      const items = lastPage.items ?? [];
+    getItems: (page) => page.items ?? [],
+    getId: (row) => row.id,
+    getCursor: (_page, items) => {
       // LIMIT в ClickHouse применяется ПОСЛЕ WHERE, поэтому недобор страницы —
       // это конец отфильтрованной истории, а не «фильтр выел строки».
       if (items.length < pageSize) return undefined;
@@ -117,86 +100,13 @@ export function useInfiniteLogs(o: {
         ? { to: new Date(oldest.date_request).getTime(), beforeId: oldest.id }
         : undefined;
     },
-    refetchInterval,
-    // §48: 4xx (невалидный поисковый запрос → 400) не ретраим — покажем ошибку
-    // сразу; глобальная политика ретраит всё, кроме 401/403.
-    retry: (failureCount, error: unknown) => {
-      const status = (error as { response?: { status?: number } })?.response?.status;
-      if (status && status >= 400 && status < 500) return false;
-      return failureCount < 2;
-    },
   });
 
-  // Дедуп по id: курсорная граница включительна, поэтому самая старая запись
-  // страницы может прийти повторно первой записью следующей.
-  const items = useMemo(() => {
-    const pages = query.data?.pages ?? [];
-    const seen = new Set<string>();
-    const out: LogRow[] = [];
-    for (const p of pages) {
-      for (const r of p.items ?? []) {
-        if (seen.has(r.id)) continue;
-        seen.add(r.id);
-        out.push(r);
-      }
-    }
-    return out;
-  }, [query.data]);
-
-  const atCap = items.length >= maxRows;
-  const canFetchMore = query.hasNextPage && !query.isFetchingNextPage && !atCap;
-  const pageCount = query.data?.pages.length ?? 0;
-
-  // Вернулись к верху — схлопываем кеш до первой страницы (§72.5).
-  //
-  // useInfiniteQuery при авто-рефетче перезапрашивает ВСЕ накопленные страницы.
-  // Пользователь, пролиставший список до потолка (20 страниц) и вернувшийся
-  // наверх, получал бы 20 запросов к ClickHouse каждые несколько секунд — на
-  // одну открытую вкладку. Наверху нужны только свежие записи; вниз страницы
-  // догрузятся обычным путём.
-  //
-  // Штатный maxPages здесь не подходит: он выбрасывает ПЕРВЫЕ страницы при
-  // fetchNextPage и ломает накопительный список (§44.K).
-  const collapseToFirstPage = useCallback(() => {
-    qc.setQueryData(keyRef.current, (d: InfiniteData<LogsResp, unknown> | undefined) =>
-      d && d.pages.length > 1
-        ? { pages: d.pages.slice(0, 1), pageParams: d.pageParams.slice(0, 1) }
-        : d,
-    );
-  }, [qc]);
-
-  const onScroll = useCallback(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    if (el.scrollTop <= SCROLL_TOP_THRESHOLD_PX) {
-      // Гейт по числу страниц обязателен: событий скролла десятки в секунду, а
-      // setQueryData уведомляет подписчиков даже когда данные не изменились —
-      // без него каждое движение у верха перерисовывало бы весь список.
-      // §77.1: при раскрытой строке схлопывание отложено (collapseEnabled).
-      if (pageCount > 1 && collapseEnabled) collapseToFirstPage();
-      return;
-    }
-    if (!canFetchMore) return;
-    if (el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_BOTTOM_THRESHOLD_PX) {
-      query.fetchNextPage();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [containerRef, canFetchMore, pageCount, collapseEnabled, collapseToFirstPage, query.fetchNextPage]);
-
-  // Догрузка при недоборе высоты: контента меньше высоты контейнера (скроллбара
-  // нет) — доскроллить нельзя, тянем следующую страницу сами.
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el || !canFetchMore) return;
-    if (el.scrollHeight <= el.clientHeight) query.fetchNextPage();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items.length, canFetchMore]);
-
   return {
-    items,
-    query,
-    logsAvailable: query.data?.pages?.[0]?.logs_available !== false,
-    atCap,
-    onScroll,
+    items: list.items,
+    query: list.query,
+    logsAvailable: list.query.data?.pages?.[0]?.logs_available !== false,
+    atCap: list.atCap,
+    onScroll: list.onScroll,
   };
 }

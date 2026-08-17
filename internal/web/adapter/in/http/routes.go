@@ -304,6 +304,8 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		// чтобы понять, кто и что менял до инцидента); scope audit:read нужен
 		// только для API-токена.
 		authedOperator.GET("/audit", RequireScope("audit:read"), h.Audit.List)
+		// §91.1: счётчик «показано N из M» для подгрузки по скроллу.
+		authedOperator.GET("/audit/count", RequireScope("audit:read"), h.Audit.Count)
 		// CSV-экспорт журнала (§7.13, Phase 6.6).
 		authedOperator.GET("/audit/export.csv", RequireScope("audit:read"), h.Audit.ExportCSV)
 

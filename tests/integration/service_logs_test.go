@@ -162,7 +162,7 @@ func TestServiceLogs_ReloadLevelAcrossServices(t *testing.T) {
 		ctl := bootstrap.NewLogController(4, svc)
 		ctls[svc] = ctl
 		sub := reloader.NewSubscriber(client, logging.NewNoop())
-		sub.Register(reloader.SectionLogging, bootstrap.LogLevelReloader(pool, ctl, logging.NewNoop()))
+		sub.Register(reloader.SectionLogging, bootstrap.LogLevelReloader(pool, ctl, mustTestCipher(t), logging.NewNoop()))
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -179,7 +179,7 @@ func TestServiceLogs_ReloadLevelAcrossServices(t *testing.T) {
 
 	// Web-сторона: реальный usecase + publisher (путь PUT /api/settings/app).
 	uc := webuc.NewAppSettingsUsecase(
-		pgrepo.NewAppSettingsRepoPg(pool, logging.NewNoop()),
+		pgrepo.NewAppSettingsRepoPg(pool, mustTestCipher(t), logging.NewNoop()),
 		webuc.NewAuditUsecase(pgrepo.NewAuditRepoPg(pool, logging.NewNoop()), logging.NewNoop()),
 		reloader.NewPublisher(client), false, logging.NewNoop())
 

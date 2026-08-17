@@ -23,6 +23,9 @@ func (r *errAuditRepo) Write(_ context.Context, _ *domain.AuditEntry) error { re
 func (r *errAuditRepo) List(_ context.Context, _ port.AuditFilter) ([]*domain.AuditEntry, error) {
 	return nil, nil
 }
+func (r *errAuditRepo) Count(_ context.Context, _ port.AuditFilter) (int, error) {
+	return 0, nil
+}
 func (r *errAuditRepo) DeleteOlderThan(_ context.Context, _ time.Time) (int, error) {
 	return 0, nil
 }

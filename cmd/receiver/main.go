@@ -56,13 +56,14 @@ func main() {
 	// старт здесь, а не всплывать позже расхождением имён БД у Web и Sender.
 	bootstrap.MustInstanceIdentity(ctx, pgPool, cfg, flags, projectName, logger)
 
+	// Cipher нужен раньше overlay'я: тот расшифровывает секреты app_settings (§90.1).
+	cipher := bootstrap.MustCipher(logger)
+
 	// §8.4 / §14.5: динамическая часть Sentry/CH из app_settings поверх env.
-	bootstrap.ApplyAppSettings(ctx, pgPool, cfg, logger)
+	bootstrap.ApplyAppSettings(ctx, pgPool, cfg, cipher, logger)
 
 	redisClient := bootstrap.MustRedis(ctx, cfg, logger)
 	defer redisClient.Close()
-
-	cipher := bootstrap.MustCipher(logger)
 
 	// PausedTopic (§3.6) создаём и здесь: Receiver может стартовать раньше
 	// Sender'а, а Web читает delay-топик для вкладки «Очередь» (§35).

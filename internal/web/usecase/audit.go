@@ -79,6 +79,36 @@ func (u *AuditUsecase) List(ctx context.Context, f port.AuditFilter) ([]*domain.
 	return u.repo.List(ctx, f)
 }
 
+// Count — сколько записей подходит под фильтр целиком (§91.1), для счётчика
+// «показано N из M».
+func (u *AuditUsecase) Count(ctx context.Context, f port.AuditFilter) (int, error) {
+	return u.repo.Count(ctx, f)
+}
+
+// CountAcrossTeams — Count в сквозном режиме (§86.7): тот же скоуп членств, что
+// и у ListAcrossTeams, иначе счётчик считал бы не то, что показано.
+func (u *AuditUsecase) CountAcrossTeams(ctx context.Context, userID string, f port.AuditFilter) (int, error) {
+	teamIDs, _, err := teamScope(ctx, u.teams, userID)
+	if err != nil {
+		return 0, fmt.Errorf("audit across teams: count scope: %w", err)
+	}
+	if len(teamIDs) == 0 {
+		u.logger.Debug("audit across teams count: user has no memberships",
+			u.logger.Str("user_id", userID))
+		return 0, nil
+	}
+	f.TeamID = ""
+	f.TeamIDs = teamIDs
+	n, err := u.repo.Count(ctx, f)
+	if err != nil {
+		return 0, fmt.Errorf("audit across teams: count: %w", err)
+	}
+	u.logger.Debug("audit across teams count",
+		u.logger.Str("user_id", userID), u.logger.Int("teams", len(teamIDs)),
+		u.logger.Int("count", n))
+	return n, nil
+}
+
 // ListAcrossTeams — журнал по всем командам пользователя (§86.7).
 //
 // Это НЕ то же самое, что существующий `?team_id=*`: тот снимает фильтр вовсе и

@@ -453,6 +453,10 @@ func (f *fakeAuditRepo) List(_ context.Context, _ port.AuditFilter) ([]*domain.A
 	return f.written, nil
 }
 
+func (f *fakeAuditRepo) Count(_ context.Context, _ port.AuditFilter) (int, error) {
+	return len(f.written), nil
+}
+
 func (f *fakeAuditRepo) DeleteOlderThan(_ context.Context, _ time.Time) (int, error) {
 	return 0, nil
 }

@@ -12,6 +12,7 @@ import {
   Popover,
   PopoverContent,
   PopoverTrigger,
+  SearchInput,
 } from "../../components/ui";
 import { cn } from "../../lib/cn";
 import { useConfirm } from "../../lib/confirm";
@@ -99,11 +100,11 @@ export function TeamsPanel() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <input
+          <SearchInput
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t("settings.teams.search_placeholder")}
-            className="px-3 py-2 bg-bg-muted rounded-md outline-none text-sm w-72"
+            className="bg-bg-muted text-sm w-72"
           />
           <button
             onClick={() => setEditing("new")}
@@ -479,11 +480,15 @@ function MembersDialog({ team, onClose }: MembersDialogProps) {
 
         {members.data && members.data.items.length > 0 && (
           <div className="space-y-2">
-            <input
+            {/* §90.3: SearchInput, а не голый input — по подсказке «имя, логин
+                или email» Chrome опознавал поле как контактное и разворачивал
+                поверх списка попап с сохранёнными адресами; autocomplete="off"
+                он для таких полей игнорирует. */}
+            <SearchInput
               value={memberQuery}
               onChange={(e) => setMemberQuery(e.target.value)}
               placeholder={t("settings.teams.members.filter_placeholder")}
-              className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none text-sm"
+              className="w-full bg-bg-muted text-sm"
             />
             {visibleMembers.length === 0 ? (
               <div className="text-fg-muted text-sm px-1">
