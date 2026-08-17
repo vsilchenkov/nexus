@@ -61,6 +61,7 @@ func (piAuditRepo) Write(context.Context, *domain.AuditEntry) error { return nil
 func (piAuditRepo) List(context.Context, port.AuditFilter) ([]*domain.AuditEntry, error) {
 	return nil, nil
 }
+func (piAuditRepo) Count(context.Context, port.AuditFilter) (int, error)    { return 0, nil }
 func (piAuditRepo) DeleteOlderThan(context.Context, time.Time) (int, error) { return 0, nil }
 
 type piProber struct {

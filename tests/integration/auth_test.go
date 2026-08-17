@@ -107,7 +107,7 @@ func TestAuth_Login_E2E(t *testing.T) {
 	tokenNew, _, err := authUC.Login(ctx, "alice", "NewSecret!42", "127.0.0.1")
 	require.NoError(t, err)
 	require.NotEmpty(t, tokenNew)
-	require.NoError(t, authUC.Logout(ctx, tokenNew))
+	require.NoError(t, authUC.Logout(ctx, webuc.Actor{UserLogin: "alice"}, tokenNew))
 	_, err = authUC.Check(ctx, tokenNew)
 	require.ErrorIs(t, err, domain.ErrSessionNotFound, "logout must remove session")
 

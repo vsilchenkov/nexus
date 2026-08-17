@@ -54,6 +54,7 @@ func (nopAuditRepo) Write(_ context.Context, _ *domain.AuditEntry) error { retur
 func (nopAuditRepo) List(_ context.Context, _ port.AuditFilter) ([]*domain.AuditEntry, error) {
 	return nil, nil
 }
+func (nopAuditRepo) Count(_ context.Context, _ port.AuditFilter) (int, error)    { return 0, nil }
 func (nopAuditRepo) DeleteOlderThan(_ context.Context, _ time.Time) (int, error) { return 0, nil }
 
 type capturePublisher struct {

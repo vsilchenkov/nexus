@@ -205,6 +205,7 @@ type memSessionRepo struct {
 	deleteByUser  map[string]int
 	getErr        error
 	createErr     error
+	deleteErr     error
 	deleteCalls   int
 	touchCalls    int
 	deletedByUser []string
@@ -256,6 +257,9 @@ func (r *memSessionRepo) Delete(_ context.Context, token string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.deleteCalls++
+	if r.deleteErr != nil {
+		return r.deleteErr
+	}
 	delete(r.byToken, token)
 	return nil
 }
@@ -793,11 +797,30 @@ func TestAuthUC_Logout(t *testing.T) {
 	t.Parallel()
 	sessions := newMemSessionRepo()
 	sessions.byToken["tok"] = &domain.Session{Token: "tok"}
-	uc, _ := newAuthUC(newAuthUserRepo(), sessions)
+	uc, audit := newAuthUC(newAuthUserRepo(), sessions)
 
-	require.NoError(t, uc.Logout(context.Background(), "tok"))
+	actor := Actor{UserID: "u1", UserLogin: "alice"}
+	require.NoError(t, uc.Logout(context.Background(), actor, "tok"))
 	_, ok := sessions.byToken["tok"]
 	assert.False(t, ok)
+
+	// §7.13 требует фиксировать и выход; до §91.2 запись не создавалась вовсе.
+	require.Len(t, audit.entries, 1)
+	assert.Equal(t, domain.ActionUserLogout, audit.entries[0].Action)
+	assert.Equal(t, "alice", audit.entries[0].UserLogin)
+}
+
+// Запись о выходе не должна появляться, если сессию удалить не удалось.
+func TestAuthUC_Logout_NoAuditOnFailure(t *testing.T) {
+	t.Parallel()
+	sessions := newMemSessionRepo()
+	sessions.deleteErr = errors.New("redis down")
+	uc, audit := newAuthUC(newAuthUserRepo(), sessions)
+
+	err := uc.Logout(context.Background(), Actor{UserID: "u1", UserLogin: "alice"}, "tok")
+
+	require.Error(t, err)
+	assert.Empty(t, audit.entries)
 }
 
 func TestAuthUC_Check_TouchesAndReturns(t *testing.T) {

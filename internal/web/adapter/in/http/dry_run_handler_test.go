@@ -47,6 +47,7 @@ func (drAuditRepo) Write(_ context.Context, _ *domain.AuditEntry) error { return
 func (drAuditRepo) List(_ context.Context, _ port.AuditFilter) ([]*domain.AuditEntry, error) {
 	return nil, nil
 }
+func (drAuditRepo) Count(_ context.Context, _ port.AuditFilter) (int, error)    { return 0, nil }
 func (drAuditRepo) DeleteOlderThan(_ context.Context, _ time.Time) (int, error) { return 0, nil }
 
 // drSender — SenderClient: ловит исходящий запрос к target.

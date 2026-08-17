@@ -97,4 +97,112 @@ func TestAuditScope_TeamIDs_E2E(t *testing.T) {
 	if !a["node.delete"] || a["node.create"] {
 		t.Fatalf("однокомандный скоуп изменился: %v", a)
 	}
+
+	// §91.2: IncludeGlobal добавляет к скоупу записи без команды — входы,
+	// неудачные логины, восстановление пароля. Без флага они не видны нигде,
+	// кроме ручного team_id=*, из-за чего журнал и выглядел полупустым.
+	got, err = repo.List(ctx, port.AuditFilter{TeamID: defaultTeam, IncludeGlobal: true})
+	if err != nil {
+		t.Fatalf("list with IncludeGlobal: %v", err)
+	}
+	a = actions(got)
+	if !a["node.delete"] {
+		t.Fatal("IncludeGlobal потерял записи собственной команды")
+	}
+	if !a["settings.update"] {
+		t.Fatal("IncludeGlobal обязан показывать записи без команды")
+	}
+	if a["node.create"] {
+		t.Fatal("IncludeGlobal не должен раскрывать записи ЧУЖИХ команд")
+	}
+
+	// Тот же флаг в сквозном режиме.
+	got, err = repo.List(ctx, port.AuditFilter{TeamIDs: []string{alpha.ID}, IncludeGlobal: true})
+	if err != nil {
+		t.Fatalf("list across teams with IncludeGlobal: %v", err)
+	}
+	a = actions(got)
+	if !a["node.create"] || !a["settings.update"] || a["node.update"] {
+		t.Fatalf("сквозной скоуп с IncludeGlobal вернул не то: %v", a)
+	}
+}
+
+// §91.1: keyset-пагинация и счётчик. Проверяется на реальном PG, потому что
+// сравнение кортежей `(created_at, id) < ($1, $2::uuid)` — новая для этого
+// репозитория форма условия, а её поведение на равных метках времени и есть
+// то, ради чего курсор вводился.
+func TestAuditKeysetPagination_E2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	pool, cleanup := startPostgres(t, ctx)
+	defer cleanup()
+
+	logger := logging.NewNoop()
+	repo := pgrepo.NewAuditRepoPg(pool, logger)
+	defaultTeam := resolveDefaultTeamID(t, ctx, pool)
+
+	// Половина записей — с ОДИНАКОВОЙ меткой времени: на таких данных
+	// пагинация только по created_at теряла бы или дублировала строки.
+	const total = 25
+	shared := time.Now().UTC().Truncate(time.Second)
+	for i := range total {
+		e := &domain.AuditEntry{UserLogin: "alice", TeamID: defaultTeam, Action: "node.update"}
+		if err := repo.Write(ctx, e); err != nil {
+			t.Fatalf("write audit %d: %v", i, err)
+		}
+		if i%2 == 0 {
+			if _, err := pool.Exec(ctx,
+				`UPDATE user_audit SET created_at = $1 WHERE id = $2::uuid`, shared, e.ID); err != nil {
+				t.Fatalf("stamp shared created_at: %v", err)
+			}
+		}
+	}
+
+	f := port.AuditFilter{TeamID: defaultTeam, Limit: 10}
+	seen := map[string]bool{}
+	pages := 0
+	for {
+		page, err := repo.List(ctx, f)
+		if err != nil {
+			t.Fatalf("list page %d: %v", pages, err)
+		}
+		if len(page) == 0 {
+			break
+		}
+		for _, e := range page {
+			if seen[e.ID] {
+				t.Fatalf("запись %s пришла дважды — курсор не двигается", e.ID)
+			}
+			seen[e.ID] = true
+		}
+		last := page[len(page)-1]
+		f.BeforeTS, f.BeforeID = &last.CreatedAt, last.ID
+		pages++
+		if pages > 10 {
+			t.Fatal("пагинация не сходится")
+		}
+	}
+	if len(seen) != total {
+		t.Fatalf("прочитано %d записей из %d — часть потеряна на границах страниц", len(seen), total)
+	}
+
+	// Count игнорирует limit и курсор: он отвечает «из скольких», а не
+	// «сколько на странице».
+	n, err := repo.Count(ctx, port.AuditFilter{TeamID: defaultTeam, Limit: 10})
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != total {
+		t.Fatalf("count = %d, want %d", n, total)
+	}
+
+	// Фильтры счётчика те же, что у списка.
+	n, err = repo.Count(ctx, port.AuditFilter{TeamID: defaultTeam, Actions: []string{"node.create"}})
+	if err != nil {
+		t.Fatalf("count filtered: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("count по чужому action = %d, want 0", n)
+	}
 }

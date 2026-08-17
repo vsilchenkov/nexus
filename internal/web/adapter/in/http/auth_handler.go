@@ -148,7 +148,9 @@ func (h *AuthHandler) Login(c *gin.Context) {
 func (h *AuthHandler) Logout(c *gin.Context) {
 	token, err := c.Cookie(h.cfg.SessionCookieName)
 	if err == nil && token != "" {
-		_ = h.uc.Logout(c.Request.Context(), token)
+		// §91.2: actor нужен для записи user.logout в журнал; сессия здесь уже
+		// проверена middleware'ом.
+		_ = h.uc.Logout(c.Request.Context(), userActor(c), token)
 	}
 	// maxAge<0 — команда браузеру удалить куку. Атрибуты (SameSite, Secure)
 	// считаются те же, что при установке: браузер сопоставляет куку по
