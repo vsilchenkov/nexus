@@ -100,6 +100,7 @@ export function TeamsPanel() {
         </div>
         <div className="flex items-center gap-2">
           <input
+            autoComplete="off"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t("settings.teams.search_placeholder")}
@@ -479,7 +480,10 @@ function MembersDialog({ team, onClose }: MembersDialogProps) {
 
         {members.data && members.data.items.length > 0 && (
           <div className="space-y-2">
+            {/* §90.3: фильтр по имени/логину/email браузер принимал за поле
+                логина и разворачивал над списком попап менеджера паролей. */}
             <input
+              autoComplete="off"
               value={memberQuery}
               onChange={(e) => setMemberQuery(e.target.value)}
               placeholder={t("settings.teams.members.filter_placeholder")}

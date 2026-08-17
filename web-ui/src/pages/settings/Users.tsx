@@ -174,6 +174,7 @@ export function UsersPanel() {
         </div>
         <div className="flex items-center gap-2">
           <input
+            autoComplete="off"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t("settings.users.search_placeholder")}

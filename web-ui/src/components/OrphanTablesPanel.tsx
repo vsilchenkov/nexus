@@ -64,6 +64,7 @@ function DropDialog({
         <input
           autoFocus
           type="text"
+          autoComplete="off"
           value={typed}
           onChange={(e) => setTyped(e.target.value)}
           placeholder={table}

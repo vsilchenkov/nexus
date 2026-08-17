@@ -69,6 +69,7 @@ export function LogsAdvancedFilters({
               секунды, см. §77.5). Esc возвращает применённое значение. */}
           <input
             type="text"
+            autoComplete="off"
             value={draft.q}
             onChange={(e) => onDraft({ ...draft, q: e.target.value })}
             onKeyDown={(e) => {

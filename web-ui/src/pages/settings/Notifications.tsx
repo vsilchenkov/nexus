@@ -96,6 +96,7 @@ export function NotificationsPanel() {
             className={`${inp} font-mono`}
             value={form.cron ?? ""}
             onChange={(e) => setForm({ ...form, cron: e.target.value })}
+            autoComplete="off"
             placeholder="*/15 * * * *"
           />
           <p className="text-xs text-fg-muted">{t("settings.notifications.cron_hint")}</p>

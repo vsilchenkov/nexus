@@ -138,6 +138,7 @@ export function MailPanel() {
               className={inp}
               value={form.host ?? ""}
               onChange={(e) => setForm({ ...form, host: e.target.value })}
+              autoComplete="off"
               placeholder="smtp.example.com"
             />
           </div>
@@ -193,6 +194,7 @@ export function MailPanel() {
               className={inp}
               value={form.helo_host ?? ""}
               onChange={(e) => setForm({ ...form, helo_host: e.target.value })}
+              autoComplete="off"
               placeholder="nexus.example.com"
             />
             <p className="text-xs text-fg-subtle">{t("settings.mail.helo_hint")}</p>
@@ -253,6 +255,7 @@ export function MailPanel() {
               className={inp}
               value={form.from_address ?? ""}
               onChange={(e) => setForm({ ...form, from_address: e.target.value })}
+              autoComplete="off"
               placeholder="nexus@example.com"
             />
           </div>
@@ -262,6 +265,7 @@ export function MailPanel() {
               className={inp}
               value={form.from_name ?? ""}
               onChange={(e) => setForm({ ...form, from_name: e.target.value })}
+              autoComplete="off"
               placeholder="Nexus"
             />
           </div>
@@ -314,6 +318,7 @@ export function MailPanel() {
               type="email"
               value={to}
               onChange={(e) => setTo(e.target.value)}
+              autoComplete="off"
               placeholder="admin@example.com"
             />
           </div>

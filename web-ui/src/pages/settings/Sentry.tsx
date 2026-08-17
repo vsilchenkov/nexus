@@ -123,6 +123,7 @@ export function SentryPanel() {
             onChange={(e) =>
               setForm({ ...form, environment: e.target.value })
             }
+            autoComplete="off"
             placeholder="production"
             className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none"
           />
