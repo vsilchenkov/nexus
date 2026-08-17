@@ -295,7 +295,7 @@ func (a *App) Start(ctx context.Context) error {
 	// teamRepo — для проверки членства при выборе команды токена (§18.3).
 	tokenUC := usecase.NewAPITokenUsecase(tokenRepo, userRepo, teamRepo, auditUC, a.logger)
 
-	appSettingsRepo := pgrepo.NewAppSettingsRepoPg(a.pg, a.logger)
+	appSettingsRepo := pgrepo.NewAppSettingsRepoPg(a.pg, a.cipher, a.logger)
 	reloadPublisher := reloader.NewPublisher(a.redis)
 	appSettingsUC := usecase.NewAppSettingsUsecase(appSettingsRepo, auditUC, reloadPublisher, a.cfg.Web.AllowVersionOverride, a.logger)
 
