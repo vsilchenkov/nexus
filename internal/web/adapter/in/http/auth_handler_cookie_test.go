@@ -130,3 +130,71 @@ func TestSetSessionCookie_DeleteKeepsAttributes(t *testing.T) {
 	assert.Equal(t, http.SameSiteLaxMode, got.SameSite)
 	assert.True(t, got.HttpOnly)
 }
+
+// §90.2 (доработка): схема определяется и без участия прокси.
+//
+// Причина: конфигурация HAProxy бывает вне зоны влияния — попросить добавить
+// X-Forwarded-Proto можно не всегда. Без этого кука уходила бы без Secure даже
+// когда пользователь работает по HTTPS, то есть защита молча слабела бы после
+// обновления. Схему сообщает сам браузер: на мутациях всегда есть Origin (на
+// нём же построена CSRF-проверка), а кука ставится только в Login и Logout.
+func TestRequestIsHTTPS_WithoutProxyHeaders(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		headers map[string]string
+		want    bool
+	}{
+		// Заголовки прокси — как раньше.
+		{"X-Forwarded-Proto: https", map[string]string{"X-Forwarded-Proto": "https"}, true},
+		{"цепочка https,http", map[string]string{"X-Forwarded-Proto": "https, http"}, true},
+		{"X-Forwarded-Proto: http", map[string]string{"X-Forwarded-Proto": "http"}, false},
+		// Прокси, не знающие про X-Forwarded-Proto.
+		{"X-Forwarded-Ssl: on", map[string]string{"X-Forwarded-Ssl": "on"}, true},
+		{"Front-End-Https: on", map[string]string{"Front-End-Https": "on"}, true},
+		{"X-Url-Scheme: https", map[string]string{"X-Url-Scheme": "https"}, true},
+		// Схема от браузера — работает на любом прокси без настройки.
+		{"Origin https", map[string]string{"Origin": "https://nexus.example.com"}, true},
+		{"Origin http", map[string]string{"Origin": "http://10.0.0.5:8000"}, false},
+		{"Referer https", map[string]string{"Referer": "https://nexus.example.com/login"}, true},
+		{"Referer http", map[string]string{"Referer": "http://10.0.0.5:8000/login"}, false},
+		{"регистр не важен", map[string]string{"Origin": "HTTPS://NEXUS.EXAMPLE.COM"}, true},
+		// Вход по IP без TLS: Secure ставить нельзя — иначе браузер отбросит
+		// куку и вернётся петля «логин 200 → /me 401 → форма входа».
+		{"ничего нет", map[string]string{}, false},
+		{"Origin null (sandboxed iframe)", map[string]string{"Origin": "null"}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			gin.SetMode(gin.TestMode)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+			for k, v := range tt.headers {
+				c.Request.Header.Set(k, v)
+			}
+			assert.Equal(t, tt.want, requestIsHTTPS(c))
+		})
+	}
+}
+
+// Сквозная проверка на самой куке: вход по HTTPS через прокси, который НЕ
+// добавляет ни одного X-Forwarded-заголовка, всё равно получает Secure.
+func TestSetSessionCookie_SecureFromBrowserOrigin(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+	h := newCookieTestHandler(true, "strict")
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+	c.Request.Header.Set("Origin", "https://nexus.example.com")
+
+	h.setSessionCookie(c, "tok", 3600)
+
+	cookies := (&http.Response{Header: rec.Header()}).Cookies()
+	require.Len(t, cookies, 1)
+	assert.True(t, cookies[0].Secure, "панель открыта по HTTPS — кука обязана быть Secure")
+}

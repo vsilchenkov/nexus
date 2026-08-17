@@ -215,9 +215,35 @@ func requestIsHTTPS(c *gin.Context) bool {
 	if c.Request.TLS != nil {
 		return true
 	}
-	// Прокси может прислать список ("https, http") — значима первая запись.
-	proto, _, _ := strings.Cut(c.GetHeader("X-Forwarded-Proto"), ",")
-	return strings.EqualFold(strings.TrimSpace(proto), "https")
+	// Заголовки прокси. X-Forwarded-Proto может прийти списком ("https, http") —
+	// значима первая запись; остальные три ставят прокси, не знающие о нём.
+	if proto, _, _ := strings.Cut(c.GetHeader("X-Forwarded-Proto"), ","); strings.EqualFold(strings.TrimSpace(proto), "https") {
+		return true
+	}
+	for _, h := range [...]struct{ name, want string }{
+		{"X-Forwarded-Ssl", "on"},
+		{"Front-End-Https", "on"},
+		{"X-Url-Scheme", "https"},
+	} {
+		if strings.EqualFold(strings.TrimSpace(c.GetHeader(h.name)), h.want) {
+			return true
+		}
+	}
+	// Схема, по которой открыт сам интерфейс: её сообщает браузер, и от
+	// настройки прокси она не зависит вовсе. Для мутаций Origin есть всегда —
+	// на нём же построена CSRF-проверка (Phase AUD.4), а кука ставится только
+	// в Login и Logout, то есть в POST. Referer — запасной вариант.
+	//
+	// Так панель остаётся защищённой на инсталляциях, где прокси не настраивают
+	// (или не могут настроить — конфигурация HAProxy бывает вне зоны влияния):
+	// без этого кука уходила бы без Secure даже когда пользователь работает
+	// по HTTPS.
+	for _, name := range [...]string{"Origin", "Referer"} {
+		if strings.HasPrefix(strings.ToLower(c.GetHeader(name)), "https://") {
+			return true
+		}
+	}
+	return false
 }
 
 // Me godoc
