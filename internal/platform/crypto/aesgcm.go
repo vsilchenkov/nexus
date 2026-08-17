@@ -122,6 +122,42 @@ func (c *Cipher) Decrypt(encoded string) (string, error) {
 	return string(plain), nil
 }
 
+// DecryptLenient расшифровывает значение, которое МОЖЕТ оказаться незашифрованным
+// (§90.1). Нужен для полей, шифрование которых включено позже их появления:
+// в БД лежит смесь исторического plaintext и нового шифротекста, а отдельной
+// миграции нет — значение «дозревает» при следующей записи или ротации ключа.
+//
+// Возвращает: расшифрованное (или исходное) значение, признак того, что вход
+// БЫЛ шифротекстом, и ошибку.
+//   - ""                         → ("", false, nil)
+//   - валидный v1:-шифротекст    → (plaintext, true, nil)
+//   - не наш формат/версия       → (вход как есть, false, nil) — legacy plaintext
+//   - v1:-формат, но не бьётся   → ("", true, ErrDecryption) — чужой ключ или порча
+//
+// Отличать legacy plaintext от шифротекста по форме безопасно для реальных
+// значений: строка обязана состоять ровно из четырёх частей через ':' и
+// начинаться с "v1" (Sentry DSN с его двоеточиями даёт другое число частей).
+// Теоретически неотличим только plaintext вида "v1:a:b:c" с корректным base64 —
+// принятое ограничение.
+//
+// ErrDecryption НЕ проглатывается: несовпадение GCM-тега — доказанный факт
+// чужого ключа или порчи данных, и трактовать такое значение как plaintext
+// значило бы отдать наверх шифротекст под видом секрета.
+func (c *Cipher) DecryptLenient(encoded string) (plain string, wasEncrypted bool, err error) {
+	if encoded == "" {
+		return "", false, nil
+	}
+	plain, err = c.Decrypt(encoded)
+	switch {
+	case err == nil:
+		return plain, true, nil
+	case errors.Is(err, ErrInvalidFormat), errors.Is(err, ErrInvalidVersion):
+		return encoded, false, nil
+	default:
+		return "", true, err
+	}
+}
+
 // MustNewCipher — для тестов и init-фаз: панически валит, если ключ невалидный.
 // В production-коде используется NewCipher с явной обработкой ошибки.
 func MustNewCipher(base64Key string) *Cipher {
