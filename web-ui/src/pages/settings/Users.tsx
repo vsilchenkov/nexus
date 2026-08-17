@@ -759,7 +759,10 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
             <label className="text-xs uppercase tracking-wider text-fg-muted">
               {t("settings.users.field.login")}
             </label>
+            {/* autoComplete="off": иначе Chrome вписывает сюда сохранённый
+                логин браузера (поле пароля идёт следом в create-режиме). */}
             <input
+              autoComplete="off"
               value={login}
               onChange={(e) => setLogin(e.target.value)}
               disabled={mode === "edit"}
@@ -798,6 +801,7 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
               <div className="flex gap-2">
                 <input
                   type="text"
+                  autoComplete="off"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="min 8 chars"
@@ -960,6 +964,7 @@ function PasswordDialog({ user, onClose, onSaved }: PasswordDialogProps) {
           <div className="flex gap-2">
             <input
               type="text"
+              autoComplete="off"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="min 8 chars"

@@ -96,6 +96,7 @@ export function ClickHousePanel() {
           </label>
           <input
             type="text"
+            autoComplete="off"
             value={form.host ?? ""}
             onChange={(e) => setForm({ ...form, host: e.target.value })}
             placeholder="clickhouse"
@@ -122,6 +123,7 @@ export function ClickHousePanel() {
           </label>
           <input
             type="text"
+            autoComplete="off"
             value={form.database ?? ""}
             onChange={(e) => setForm({ ...form, database: e.target.value })}
             placeholder="nexus"
@@ -133,8 +135,12 @@ export function ClickHousePanel() {
           <label className="text-xs uppercase tracking-wider text-fg-muted">
             {t("settings.clickhouse.user")}
           </label>
+          {/* autoComplete="off" + new-password на пароле ниже: без них Chrome
+              считает эту пару «формой логина» и на открытии страницы вписывает
+              сюда сохранённый логин браузера (тот же приём — SecretInput). */}
           <input
             type="text"
+            autoComplete="off"
             value={form.user ?? ""}
             onChange={(e) => setForm({ ...form, user: e.target.value })}
             placeholder="default"
@@ -148,6 +154,7 @@ export function ClickHousePanel() {
           </label>
           <input
             type="password"
+            autoComplete="new-password"
             value={form.password ?? ""}
             onChange={(e) => setForm({ ...form, password: e.target.value })}
             className="w-full px-3 py-2 bg-bg-muted rounded-md outline-none font-mono text-xs"

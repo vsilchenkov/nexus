@@ -69,8 +69,11 @@ export function NotificationsPanel() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-3xl">
         <div className="space-y-1">
           <label className="text-sm text-fg-muted">{t("settings.notifications.chat_id")}</label>
+          {/* autoComplete="off": текстовое поле перед password-полем — Chrome
+              иначе вписывает сюда сохранённый логин браузера. */}
           <input
             className={inp}
+            autoComplete="off"
             value={form.chat_id ?? ""}
             onChange={(e) => setForm({ ...form, chat_id: e.target.value })}
             placeholder="-1001234567890"
@@ -80,6 +83,7 @@ export function NotificationsPanel() {
           <label className="text-sm text-fg-muted">{t("settings.notifications.bot_token")}</label>
           <input
             type="password"
+            autoComplete="new-password"
             className={inp}
             value={form.bot_token ?? ""}
             onChange={(e) => setForm({ ...form, bot_token: e.target.value })}

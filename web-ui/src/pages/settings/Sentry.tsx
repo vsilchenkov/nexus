@@ -100,6 +100,7 @@ export function SentryPanel() {
           </label>
           <input
             type="text"
+            autoComplete="off"
             value={form.dsn ?? ""}
             onChange={(e) => setForm({ ...form, dsn: e.target.value })}
             placeholder="https://<key>@o0.ingest.sentry.io/0"

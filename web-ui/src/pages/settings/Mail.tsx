@@ -219,8 +219,11 @@ export function MailPanel() {
           </div>
           <div className="space-y-1">
             <label className="text-sm text-fg-muted">{t("settings.mail.username")}</label>
+            {/* autoComplete="off": текстовое поле перед password-полем — Chrome
+                иначе вписывает сюда сохранённый логин браузера. */}
             <input
               className={inp}
+              autoComplete="off"
               value={form.username ?? ""}
               onChange={(e) => setForm({ ...form, username: e.target.value })}
               placeholder="noreply@example.com"

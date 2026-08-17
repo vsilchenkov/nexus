@@ -115,6 +115,7 @@ export function RabbitMQSection({ form, set, isNew, errField, errMsg }: Props) {
         <Field label={t("node.rmq.auth")} help={t("node.rmq.auth_help")} className="mt-3">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <Input
+              autoComplete="off"
               value={form.rmq_user}
               onChange={(e) => set("rmq_user", e.target.value)}
               placeholder="user"
