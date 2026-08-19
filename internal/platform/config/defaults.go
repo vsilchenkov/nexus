@@ -7,10 +7,19 @@ package config
 // (`grpc_max_message_bytes`).
 const defaultGRPCMaxMessageBytes = 64 * 1024 * 1024
 
-// defaultMaxAsyncBodyBytes — дефолтный потолок тела для async-приёма (32 МиБ).
-// Согласован с kafka.topic.max_message_bytes 64 МиБ: 32 МиБ × 1.33 (base64
-// async-конверта) ≈ 42.6 МиБ + запас на заголовки конверта.
-const defaultMaxAsyncBodyBytes = 32 * 1024 * 1024
+// defaultMaxAsyncBodyBytes — дефолтный потолок тела для async-приёма (10 МиБ).
+//
+// Согласован с kafka.topic.max_message_bytes 16 МиБ, который, в свою очередь,
+// не выше брокерских message.max.bytes / replica.fetch.max.bytes боевого стека
+// (docker-compose.yml, 16 МиБ): 10 МиБ × 1.33 (base64 async-конверта) ≈ 13.3 МиБ
+// плюс заголовки — влезает.
+//
+// Почему НЕ 32 МиБ, как sync-потолок: async-тело ограничивает не память
+// Receiver'а, а Kafka. При 32 МиБ конверт (~42.6 МиБ) требует топика и брокера
+// на 64 МиБ; на боевом брокере они остались 16 МиБ, и сообщение было бы
+// отвергнуто уже после того, как Receiver ответил клиенту, — то есть async-приём
+// отдавал бы 503 на телах, которые sync принимает без вопросов.
+const defaultMaxAsyncBodyBytes = 10 * 1024 * 1024
 
 // defaultTrustedProxies — дефолтный список сетей, чьи X-Forwarded-For
 // принимаются на веру (Phase AUD.5): loopback + приватные диапазоны
