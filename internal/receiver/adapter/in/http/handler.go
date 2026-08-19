@@ -24,16 +24,38 @@ type Handler struct {
 	metrics      *metrics.Metrics
 	logger       logging.Logger
 	maxBodyBytes int
+	// maxAsyncBodyBytes — потолок тела для приёма в очередь (/requestAsync,
+	// /callback и sync-запрос к paused-узлу, §3.6). Ниже maxBodyBytes: async
+	// упирается не в память Receiver'а, а в размер сообщения Kafka —
+	// тело едет в конверте в base64 (+33%).
+	maxAsyncBodyBytes int
 }
 
+// New создаёт handler боевого трафика. maxBodyBytes — потолок тела sync-запроса,
+// maxAsyncBodyBytes — тела, принимаемого в очередь (см. поле). Значение
+// maxAsyncBodyBytes <= 0 трактуется как «отдельного лимита нет» и приравнивается
+// к maxBodyBytes — прежнее поведение с одним лимитом на оба пути.
 func New(
 	route *usecase.RouteUsecase,
 	routeAsync *usecase.RouteAsyncUsecase,
 	maxBodyBytes int,
+	maxAsyncBodyBytes int,
 	m *metrics.Metrics,
 	logger logging.Logger,
 ) *Handler {
-	return &Handler{route: route, routeAsync: routeAsync, metrics: m, logger: logger, maxBodyBytes: maxBodyBytes}
+	// Нормализация ОБОИХ лимитов здесь, а не в readBody: async-потолок
+	// сравнивается с длиной уже прочитанного тела (§3.6), и «0 = дефолт»
+	// на этой ветке означало бы «отвергать всё непустое».
+	if maxBodyBytes <= 0 {
+		maxBodyBytes = defaultMaxBodyBytes
+	}
+	if maxAsyncBodyBytes <= 0 || maxAsyncBodyBytes > maxBodyBytes {
+		maxAsyncBodyBytes = maxBodyBytes
+	}
+	return &Handler{
+		route: route, routeAsync: routeAsync, metrics: m, logger: logger,
+		maxBodyBytes: maxBodyBytes, maxAsyncBodyBytes: maxAsyncBodyBytes,
+	}
 }
 
 // Register вешает боевые маршруты шины на роутер — ОДНИМ catch-all
@@ -237,6 +259,19 @@ func (h *Handler) handleSync(c *gin.Context, rest string) {
 		// §3.6: paused-узел в sync-режиме переключается на async и
 		// отвечает 202 + queued:true (см. handleAsync).
 		if errors.Is(err, domain.ErrNodePaused) {
+			// §3.6 + разделённые лимиты: sync принимает тела крупнее, чем влезает
+			// в Kafka-конверт. Запрос к paused-узлу уходит в очередь, поэтому
+			// здесь действует АСИНХРОННЫЙ потолок — иначе тело было бы принято
+			// (200 клиенту), а затем отвергнуто брокером при публикации, то есть
+			// потеряно молча.
+			if len(in.Body) > h.maxAsyncBodyBytes {
+				h.logger.Warn("sync request to paused node exceeds async body limit",
+					h.logger.Str("node", nodePath),
+					h.logger.Int("body_len", len(in.Body)),
+					h.logger.Int("limit", h.maxAsyncBodyBytes))
+				replyReadBodyError(c, errBodyTooLargeForQueue)
+				return
+			}
 			h.handleAsyncFromInput(c, in)
 			return
 		}
@@ -280,9 +315,9 @@ func (h *Handler) handleCallback(c *gin.Context, rest string) {
 	// §78.2: собственная метка method вместо прежнего fallback'а по имени
 	// маршрута — c.FullPath() теперь один на все формы адреса.
 	c.Set(metrics.RootMethodLabelKey, metrics.RootMethodCallback)
-	body, err := readBody(c, h.maxBodyBytes)
+	body, err := readBody(c, h.maxAsyncBodyBytes)
 	if err != nil {
-		replyReadBodyError(c, err) // §43-rev: превышение max_body_bytes → 413
+		replyReadBodyError(c, err) // §43-rev: превышение max_async_body_bytes → 413
 		return
 	}
 	h.handleAsyncFromInput(c, usecase.RouteInput{
@@ -320,9 +355,9 @@ func (h *Handler) handleAsync(c *gin.Context, rest string) {
 	// sync-узел на паузе уходит в async-ветку (§3.6), но остаётся "request" —
 	// ровно как метился по имени маршрута до §78.
 	c.Set(metrics.RootMethodLabelKey, string(domain.RootMethodRequestAsync))
-	body, err := readBody(c, h.maxBodyBytes)
+	body, err := readBody(c, h.maxAsyncBodyBytes)
 	if err != nil {
-		replyReadBodyError(c, err) // §43-rev: превышение max_body_bytes → 413
+		replyReadBodyError(c, err) // §43-rev: превышение max_async_body_bytes → 413
 		return
 	}
 	h.handleAsyncFromInput(c, usecase.RouteInput{
@@ -389,6 +424,13 @@ func (h *Handler) handleAsyncFromInput(c *gin.Context, in usecase.RouteInput) {
 // а не «битый запрос» (§43-rev).
 var errBodyTooLarge = errors.New("request body too large")
 
+// errBodyTooLargeForQueue — тело влезает в sync-лимит, но не в async: узел на
+// паузе, и запрос обязан уехать в очередь (§3.6), а туда такое тело не пройдёт.
+// Текст отличается от errBodyTooLarge намеренно: у клиента запрос «того же
+// размера, что и минуту назад» вдруг отвергается, и причина — состояние узла,
+// а не сам запрос.
+var errBodyTooLargeForQueue = errors.New("request body too large for queued delivery: node is paused")
+
 // drainCap — потолок «дренажа» остатка тела при превышении лимита: дочитываем
 // и выбрасываем (io.Discard, без памяти) до этого объёма, чтобы запрос завершился
 // штатно и ответ 413 дошёл до клиента/прокси, а не превратился в TCP-reset → 502.
@@ -396,9 +438,13 @@ var errBodyTooLarge = errors.New("request body too large")
 // защита от slow/DoS-дренажа.
 const drainCap = 8 << 20 // 8 МиБ
 
+// defaultMaxBodyBytes — потолок тела, когда лимит не задан конфигом (5 МиБ).
+// Совпадает с дефолтом receiver.max_body_bytes в platform/config.
+const defaultMaxBodyBytes = 5 * 1024 * 1024
+
 func readBody(c *gin.Context, max int) ([]byte, error) {
 	if max <= 0 {
-		max = 5 * 1024 * 1024
+		max = defaultMaxBodyBytes
 	}
 	// Ранний отказ по заявленному Content-Length — ДО чтения тела. Для клиентов
 	// с Expect: 100-continue (curl добавляет его на тела > 1 МБ) это даёт чистый
@@ -425,7 +471,7 @@ func readBody(c *gin.Context, max int) ([]byte, error) {
 // replyReadBodyError мапит ошибку readBody в HTTP-ответ: превышение лимита →
 // 413 Payload Too Large, прочее (обрыв чтения) → 400.
 func replyReadBodyError(c *gin.Context, err error) {
-	if errors.Is(err, errBodyTooLarge) {
+	if errors.Is(err, errBodyTooLarge) || errors.Is(err, errBodyTooLargeForQueue) {
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": err.Error()})
 		return
 	}

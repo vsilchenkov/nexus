@@ -101,6 +101,8 @@ func (a *App) Start(ctx context.Context) error {
 
 	a.startPullerManager(ctx)
 
+	a.warnAsyncBodyLimitOverKafka()
+
 	r, err := a.buildHTTPRouter(routeUC, routeAsyncUC)
 	if err != nil {
 		return err
@@ -159,7 +161,11 @@ func (a *App) startPullerManager(ctx context.Context) {
 // buildHTTPRouter собирает gin-роутер: middleware, health/metrics и маршруты
 // шины под rate-limit.
 func (a *App) buildHTTPRouter(routeUC *usecase.RouteUsecase, routeAsyncUC *usecase.RouteAsyncUsecase) (*gin.Engine, error) {
-	handler := httpadapter.New(routeUC, routeAsyncUC, a.cfg.Receiver.MaxBodyBytes, a.metrics, a.logger)
+	handler := httpadapter.New(
+		routeUC, routeAsyncUC,
+		a.cfg.Receiver.MaxBodyBytes, a.cfg.Receiver.MaxAsyncBodyBytes,
+		a.metrics, a.logger,
+	)
 
 	rl := ratelimit.New(a.redis, ratelimit.WithErrorSink(a.metrics))
 	rlMw := httpadapter.RateLimitMiddleware(rl, a.cfg.Receiver.RateLimitPerNode, a.logger)
@@ -337,4 +343,35 @@ func (a *App) teamSlugByID(ctx context.Context, teamID string) (string, error) {
 		return "", err
 	}
 	return slug, nil
+}
+
+// asyncEnvelopeOverheadRatio — во сколько раз async-конверт больше тела: JSON
+// кодирует его в base64 (+33%), сверху идут заголовки/URL конверта. Служит
+// только для стартовой проверки согласованности лимитов.
+const asyncEnvelopeOverheadRatio = 1.4
+
+// warnAsyncBodyLimitOverKafka предупреждает, если принятое по
+// receiver.max_async_body_bytes тело заведомо не влезет в сообщение Kafka.
+// Такое расхождение не ломает старт, но проявляется позже и неприятно: запрос
+// принимается (клиент получил 200 и id), а публикация в топик падает —
+// сообщение теряется. Гейта здесь нет намеренно: реальный потолок задаёт
+// брокер, значения которого Receiver не знает, и падать на догадке нельзя.
+func (a *App) warnAsyncBodyLimitOverKafka() {
+	topicMax := a.cfg.Kafka.Topic.MaxMessageBytes
+	asyncMax := a.cfg.Receiver.MaxAsyncBodyBytes
+	if topicMax <= 0 || asyncMax <= 0 {
+		return
+	}
+	need := int(float64(asyncMax) * asyncEnvelopeOverheadRatio)
+	if need <= topicMax {
+		a.logger.Debug("async body limit fits kafka message size",
+			a.logger.Int("max_async_body_bytes", asyncMax),
+			a.logger.Int("envelope_estimate", need),
+			a.logger.Int("topic_max_message_bytes", topicMax))
+		return
+	}
+	a.logger.Warn("receiver.max_async_body_bytes exceeds kafka.topic.max_message_bytes; large async requests will be accepted and then dropped on publish",
+		a.logger.Int("max_async_body_bytes", asyncMax),
+		a.logger.Int("envelope_estimate", need),
+		a.logger.Int("topic_max_message_bytes", topicMax))
 }

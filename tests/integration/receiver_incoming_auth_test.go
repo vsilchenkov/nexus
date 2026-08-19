@@ -93,7 +93,7 @@ func TestReceiver_IncomingAuth_E2E(t *testing.T) {
 	// Handler требует non-nil. Producer тоже nil — он будет вызван только если
 	// мы попадём в async-path; в тестовых сценариях этого не происходит.
 	routeAsyncUC := rcv.NewRouteAsyncUsecase(&fakeReader{repo: nodeRepo}, nopAsyncProducer{}, "test.async", 5, logger)
-	rcvhttp.New(routeUC, routeAsyncUC, 5*1024*1024, nil, logger).Register(engine)
+	rcvhttp.New(routeUC, routeAsyncUC, 5*1024*1024, 5*1024*1024, nil, logger).Register(engine)
 	srv := httptest.NewServer(engine)
 	defer srv.Close()
 

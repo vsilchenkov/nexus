@@ -178,7 +178,7 @@ func TestHandleSync_ForwardsResponseBodyAndHeaders(t *testing.T) {
 		},
 	}}
 	route := usecase.NewRouteUsecase(syncStubReader{node: node}, sender, 5, logging.NewNoop())
-	h := New(route, nil, 0, nil, logging.NewNoop())
+	h := New(route, nil, 0, 0, nil, logging.NewNoop())
 
 	r := gin.New()
 	h.Register(r)
@@ -207,7 +207,7 @@ func TestHandle_BodyTooLarge_Returns413(t *testing.T) {
 	}
 	route := usecase.NewRouteUsecase(syncStubReader{node: node},
 		syncStubSender{resp: &senderv1.SendResponse{StatusCode: 200}}, 5, logging.NewNoop())
-	h := New(route, nil, 8, nil, logging.NewNoop()) // max_body_bytes = 8
+	h := New(route, nil, 8, 8, nil, logging.NewNoop()) // max_body_bytes = 8
 	r := gin.New()
 	h.Register(r)
 

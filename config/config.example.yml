@@ -155,8 +155,12 @@ kafka:
 # СВЯЗИ ЛИМИТОВ РАЗМЕРА ТЕЛА (§43-rev). Держите инварианты, иначе большое тело
 # рвётся не там и не тем кодом:
 #   • receiver.max_body_bytes  <  sender.grpc_max_message_bytes
-#       и  receiver.max_body_bytes  <  kafka.topic.max_message_bytes
-#     (запас под envelope gRPC/Kafka). Тело ЗАПРОСА больше max_body_bytes → 413.
+#     (запас под envelope gRPC). Это потолок SYNC-запроса: тело больше → 413.
+#     Kafka здесь НЕ участвует — sync очередь не использует.
+#   • receiver.max_async_body_bytes × 1.4  <  kafka.topic.max_message_bytes
+#     (base64-конверт +33% и заголовки). Это потолок ASYNC-приёма
+#     (/requestAsync, /callback, sync к paused-узлу §3.6): тело больше → 413.
+#     Лимит обязан быть ≤ max_body_bytes; 0 → min(32 МиБ, max_body_bytes).
 #   • sender.grpc_max_message_bytes  ==  receiver.sender_grpc.max_message_bytes
 #     — это потолок ОТВЕТА (Sender→Receiver). Тело ОТВЕТА больше него → 502.
 #   • kafka.consumer.fetch_max_bytes  ≥  kafka.topic.max_message_bytes; брокерский
@@ -167,10 +171,11 @@ kafka:
 # Receiver Service — точка входа HTTP, auth/resolve/masking, проксирование в Sender.
 receiver:
   http_addr: :8080               # Адрес/порт HTTP-сервера Receiver.
-  read_timeout_ms: 10000         # Таймаут чтения запроса клиента (мс).
+  read_timeout_ms: 300000        # Таймаут чтения запроса клиента (мс) = 5 мин. ВКЛЮЧАЕТ приём тела: при крупном max_body_bytes прежние 10 с рвали загрузку большого тела на медленном канале.
   write_timeout_ms: 610000       # Таймаут записи ответа клиенту (мс). ДОЛЖЕН превышать максимальный timeout_ms узла (600000): WriteTimeout включает всё время работы handler'а, меньше — долгий sync-запрос рвётся Receiver'ом (Web-прокси видит EOF, клиент — 502).
   idle_timeout_sec: 120          # Keep-alive: время простоя соединения до закрытия (сек).
-  max_body_bytes: 33554432       # Лимит тела входящего запроса (байт) = 32 МиБ (§68: покрывает multipart-вложения; подписанные ЭЦП пакеты с base64-вложениями). Для async тело едет в Kafka-envelope в base64 (+33%) — kafka.topic.max_message_bytes и брокерский message.max.bytes должны быть ≥ 48 МиБ (в поставке 64 МиБ).
+  max_body_bytes: 130023424      # Лимит тела входящего SYNC-запроса (байт) = 124 МиБ (/api/v1/request/*). Ограничен только gRPC (192 МиБ) и памятью сервисов — очередь sync не использует.
+  max_async_body_bytes: 33554432 # Лимит тела входящего ASYNC-запроса (байт) = 32 МиБ (/requestAsync/*, /callback/*, sync к paused-узлу §3.6). Тело едет в Kafka-envelope в base64 (+33%): 32 × 1.33 ≈ 42.6 МиБ < topic.max_message_bytes (64 МиБ). 0 → min(32 МиБ, max_body_bytes).
   max_header_bytes: 1048576      # Лимит заголовков входящего запроса (байт) = 1 МиБ.
   rate_limit_per_node: 0         # Лимит RPS на узел; 0 = без ограничения.
   # Phase AUD.5: X-Forwarded-For принимается только от этих CIDR/IP.
@@ -184,7 +189,7 @@ receiver:
     timeout_ms: 30000            # НЕ ПРИМЕНЯЕТСЯ — мёртвый параметр, оставлен ради совместимости формата. Дедлайн gRPC-вызову не ставится: RPC живёт под контекстом входящего HTTP-запроса, а потолок задаёт per-node timeout_ms узла. Менять значение бесполезно — sync-запрос им не оборвать и не продлить.
     keepalive_time_sec: 30       # Период keepalive-ping'ов по соединению (сек).
     keepalive_timeout_sec: 10    # Ожидание ответа на keepalive-ping до разрыва (сек).
-    max_message_bytes: 67108864  # Лимит размера gRPC-сообщения клиента (оба напр.) = 64 МиБ. Дефолт gRPC 4 МиБ мал для больших тел (ответ апстрима → ResourceExhausted). Должен быть ≥ receiver.max_body_bytes и совпадать с sender.grpc_max_message_bytes.
+    max_message_bytes: 201326592 # Лимит размера gRPC-сообщения клиента (оба напр.) = 192 МиБ. Дефолт gRPC 4 МиБ мал для больших тел (ответ апстрима → ResourceExhausted). Должен быть ≥ receiver.max_body_bytes с запасом на envelope и совпадать с sender.grpc_max_message_bytes.
   swagger_enabled: false         # Отдавать ли Swagger UI Receiver'а (выключай в prod).
   # In-memory L2-кеш конфига узлов (§9.2). Снимает нагрузку с Redis на
   # пиковом RPS и спасает при кратковременном Redis-flutter'е. При
@@ -206,7 +211,7 @@ sender:
   grpc_addr: :9190               # Адрес/порт gRPC-сервера Sender.
   admin_http_addr: :9091         # Адрес/порт admin-HTTP: /health, /ready, /metrics (housekeeping — фоновый цикл, не ручка).
   grpc_max_concurrent_streams: 1000 # Лимит одновременных gRPC-стримов на соединение.
-  grpc_max_message_bytes: 67108864  # Лимит размера gRPC-сообщения сервера (recv тела запроса + send тела ответа) = 64 МиБ. Должен совпадать с receiver.sender_grpc.max_message_bytes.
+  grpc_max_message_bytes: 201326592 # Лимит размера gRPC-сообщения сервера (recv тела запроса + send тела ответа) = 192 МиБ. Должен совпадать с receiver.sender_grpc.max_message_bytes.
   # HTTP-клиент для исходящих запросов к внешним системам.
   http_client:
     timeout_ms: 30000            # Fallback-таймаут внешнего HTTP-запроса (мс) — только для запросов БЕЗ per-node timeout_ms. Таймаут узла имеет приоритет и этим параметром НЕ капается.
@@ -303,7 +308,7 @@ web:
     timeout_ms: 30000            # НЕ ПРИМЕНЯЕТСЯ — мёртвый параметр (тот же grpcsender без дедлайна, что у receiver.sender_grpc). Дедлайн dry-run-вызова задаёт контекст HTTP-запроса Web + per-node timeout_ms узла.
     keepalive_time_sec: 30       # Период keepalive-ping'ов по соединению (сек).
     keepalive_timeout_sec: 10    # Ожидание ответа на keepalive-ping до разрыва (сек).
-    max_message_bytes: 67108864  # Лимит размера gRPC-сообщения = 64 МиБ (как у receiver.sender_grpc).
+    max_message_bytes: 201326592 # Лимит размера gRPC-сообщения = 192 МиБ (как у receiver.sender_grpc).
   # §32.2: «свои» authority (host или host:port) для запрета self-referencing target_url узла.
   # Пусто → выводится из receiver_url. Полезно за реверс-прокси, когда внешний адрес отличается.
   self_ingress_hosts: []                        # напр.: ["nexus.example.com", "receiver:8080"]
