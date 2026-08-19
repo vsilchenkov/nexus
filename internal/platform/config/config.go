@@ -213,13 +213,21 @@ type KafkaConsumerSection struct {
 }
 
 type ReceiverSection struct {
-	HTTPAddr         string `yaml:"http_addr"`
-	ReadTimeoutMs    int    `yaml:"read_timeout_ms"`
-	WriteTimeoutMs   int    `yaml:"write_timeout_ms"`
-	IdleTimeoutSec   int    `yaml:"idle_timeout_sec"`
-	MaxBodyBytes     int    `yaml:"max_body_bytes"`
-	MaxHeaderBytes   int    `yaml:"max_header_bytes"`
-	RateLimitPerNode int    `yaml:"rate_limit_per_node"`
+	HTTPAddr       string `yaml:"http_addr"`
+	ReadTimeoutMs  int    `yaml:"read_timeout_ms"`
+	WriteTimeoutMs int    `yaml:"write_timeout_ms"`
+	IdleTimeoutSec int    `yaml:"idle_timeout_sec"`
+	MaxBodyBytes   int    `yaml:"max_body_bytes"`
+	// MaxAsyncBodyBytes — лимит тела для АСИНХРОННОГО приёма
+	// (/requestAsync, /callback и sync-запрос к paused-узлу, §3.6). Отдельный
+	// от MaxBodyBytes, потому что путь другой: тело едет в Kafka-конверте в
+	// base64 (+33%), и потолок здесь задаёт брокер, а не память Receiver'а.
+	// Sync такого ограничения не имеет — его тело идёт напрямую по gRPC.
+	// 0 → дефолт min(32 МиБ, MaxBodyBytes): у конфигов без этого ключа
+	// поведение остаётся прежним (один лимит на оба пути).
+	MaxAsyncBodyBytes int `yaml:"max_async_body_bytes"`
+	MaxHeaderBytes    int `yaml:"max_header_bytes"`
+	RateLimitPerNode  int `yaml:"rate_limit_per_node"`
 	// MaxHops — лимит переходов запроса через шину (§32). Служебный заголовок
 	// X-Nexus-Hops инкрементится на каждом проходе; при достижении лимита
 	// запрос отклоняется (508 Loop Detected). 0 → дефолт 5; < 0 → защита выключена.

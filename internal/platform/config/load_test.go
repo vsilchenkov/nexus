@@ -342,3 +342,35 @@ kafka:
 	assert.Contains(t, err.Error(), "validate config")
 	assert.Contains(t, err.Error(), "clickhouse.database")
 }
+
+// Async-лимит тела задаётся отдельно от общего (sync 124 МиБ vs очередь 32 МиБ),
+// поэтому дефолт обязан быть безопасным в обе стороны: не выше 32 МиБ (столько
+// влезает в сообщение Kafka вместе с base64-конвертом) и не выше самого
+// max_body_bytes (иначе async принимал бы больше, чем sync).
+func TestApplyDefaults_MaxAsyncBodyBytes(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name      string
+		maxBody   int
+		maxAsync  int
+		wantAsync int
+	}{
+		{name: "оба не заданы", maxBody: 0, maxAsync: 0, wantAsync: 5_242_880},
+		{name: "крупный sync-лимит → async остаётся 32 МиБ", maxBody: 130_023_424, maxAsync: 0, wantAsync: 33_554_432},
+		{name: "мелкий sync-лимит → async не выше него", maxBody: 10_485_760, maxAsync: 0, wantAsync: 10_485_760},
+		{name: "явное значение не затирается", maxBody: 130_023_424, maxAsync: 1_048_576, wantAsync: 1_048_576},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := &Config{Receiver: ReceiverSection{
+				MaxBodyBytes:      tc.maxBody,
+				MaxAsyncBodyBytes: tc.maxAsync,
+			}}
+			applyDefaults(c)
+			assert.Equal(t, tc.wantAsync, c.Receiver.MaxAsyncBodyBytes)
+			assert.LessOrEqual(t, c.Receiver.MaxAsyncBodyBytes, c.Receiver.MaxBodyBytes,
+				"async-лимит никогда не должен превышать общий")
+		})
+	}
+}

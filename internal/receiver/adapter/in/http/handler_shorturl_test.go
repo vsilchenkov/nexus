@@ -100,7 +100,7 @@ func newShortURLHandler(t *testing.T, nodes map[string]*domain.Node, m *metrics.
 	route := usecase.NewRouteUsecase(reader, sender, 5, logger)
 	routeAsync := usecase.NewRouteAsyncUsecase(reader, queue, "nexus.async", 5, logger)
 
-	h := New(route, routeAsync, 0, m, logger)
+	h := New(route, routeAsync, 0, 0, m, logger)
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	if m != nil {
