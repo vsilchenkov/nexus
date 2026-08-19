@@ -18,6 +18,17 @@ export const ME_PREFS_KEY = ["me-prefs"] as const;
 // PREF_KEY_OVERVIEW_PERIOD — зеркало domain.PreferenceKeyOverviewPeriod.
 export const PREF_KEY_OVERVIEW_PERIOD = "overview.period";
 
+// PREF_KEY_NODE_PERIOD — дефолтный период вкладок узла «Обзор» и «Очередь» (§92).
+// Ключ один на обе вкладки: горизонт наблюдения — свойство узла, а не вкладки,
+// и раздельные ключи означали бы, что «По умолчанию» на одной вкладке ничего не
+// меняет на соседней.
+export const PREF_KEY_NODE_PERIOD = "node.period";
+
+// PREF_KEY_KAFKA_PERIOD — дефолтный период монитора Kafka (§92). Отдельный от
+// узлового: у брокера свой горизонт (размеры топиков смотрят сутками, трафик
+// узла — часами).
+export const PREF_KEY_KAFKA_PERIOD = "kafka.period";
+
 // PREF_KEY_FAVORITE_ALL_TEAMS — «Все команды» в избранном (§86.5).
 //
 // Почему преф, а не user_team_favorites: у той таблицы составной внешний ключ на
@@ -111,16 +122,24 @@ export function usePrefs() {
 type PrefsState<T> = { value: T; settled: boolean };
 
 // useTeamDefaultPeriod — дефолтный период команды: преф команды → глобальный
-// преф → системные 24ч. Глобальный преф появляется после разовой миграции
-// прежнего localStorage-значения (§71.5) и служит дефолтом для команд, где
+// преф → системные 24ч. Глобальный преф ставится кнопкой «По умолчанию» в
+// сквозном режиме (§92) и появляется после разовой миграции прежнего
+// localStorage-значения (§71.5); он служит дефолтом для команд, где
 // пользователь звёздочку ещё не нажимал.
-export function useTeamDefaultPeriod(teamId: string): PrefsState<Period> {
+//
+// key — какой экран спрашивает (§92): рабочий стол, вкладки узла или монитор
+// Kafka. Дефолтное значение оставлено ради вызовов §71, которые про другие
+// экраны не знают.
+export function useTeamDefaultPeriod(
+  teamId: string,
+  key: string = PREF_KEY_OVERVIEW_PERIOD,
+): PrefsState<Period> {
   const q = usePrefs();
   const settled = !q.isPending;
   const items = q.data?.items ?? [];
 
   const pick = (tid: string): Period | null => {
-    const found = items.find((p) => p.key === PREF_KEY_OVERVIEW_PERIOD && p.team_id === tid);
+    const found = items.find((p) => p.key === key && p.team_id === tid);
     return found ? parsePeriodPref(found.value) : null;
   };
 

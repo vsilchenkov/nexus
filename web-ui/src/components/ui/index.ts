@@ -12,6 +12,7 @@ export type { SegOption } from "./data";
 export { ErrorAlert } from "./ErrorAlert";
 export { LabelHint } from "./LabelHint";
 export { PeriodPicker } from "./PeriodPicker";
+export { DefaultPeriodButton } from "./DefaultPeriodButton";
 export { DateTimeField } from "./DateTimeField";
 export { LatencyChart, type LatencyPoint } from "./LatencyChart";
 export { periodParams, periodKey, periodLabel, periodWindow, defaultPeriod, PRESET_RANGES } from "../../lib/period";
