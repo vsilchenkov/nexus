@@ -26,8 +26,9 @@
 #   3. У каждой пары общий СЕТЕВОЙ АЛИАС (`web`, `receiver`, `sender`). Поэтому
 #      config.yml не меняется ни на строку: `web.receiver_url: http://receiver:8080`
 #      и `receiver.sender_grpc.addr: sender:9190` продолжают резолвиться — теперь
-#      в два адреса. На этом же алиасе стоит dns_sd Prometheus (deploy/prometheus.ha.yml)
-#      и gRPC-балансировка `dns:///` в Receiver.
+#      в два адреса. На этом же алиасе держится gRPC-балансировка `dns:///` в
+#      Receiver. Prometheus, наоборот, скрейпит реплики ПОИМЁННО
+#      (deploy/prometheus.ha.yml) — ему нужны стабильные метки instance.
 #   4. `image:` задан ЯВНО. Без него compose назвал бы образ по сервису
 #      (`nexus-web-1`), и scripts/deploy/images.sh, который тегирует и
 #      откатывает `nexus-web:latest`, перестал бы находить образы — откат
@@ -44,6 +45,13 @@ name: nexus
 
 x-app-base: &app-base
   restart: unless-stopped
+  # Сколько docker ждёт после SIGTERM, прежде чем убить процесс. Обязано быть
+  # БОЛЬШЕ, чем shutdown.drain_sec + shutdown.timeout_sec из config.yml
+  # (5 + 30 = 35 с), иначе весь graceful-путь §93.5 бессмыслен: дефолт движка
+  # оборвал остановку прямо посреди дренажа, и запрос, который реплика в этот
+  # момент доигрывала, терялся. Найдено стендовым прогоном — контейнер
+  # останавливался за 1.5 с на паузе дренажа в 5 с.
+  stop_grace_period: 45s
   env_file: .env
   volumes:
     - ./config/config.yml:/app/config/config.yml:ro
@@ -151,7 +159,11 @@ services:
       - "${WEB_BIND:-0.0.0.0}:8000:8000"
       - "${RECEIVER_BIND:-127.0.0.1}:8080:8080"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8000/nginx-health"]
+      # 127.0.0.1, а НЕ localhost: nginx слушает только IPv4 (listen 8000), а
+      # localhost в контейнере резолвится сначала в ::1 — busybox-wget уходит в
+      # IPv6 и получает Connection refused. Контейнер при этом полностью
+      # работоспособен, но вечно висит unhealthy.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8000/nginx-health"]
       interval: 10s
       timeout: 3s
       retries: 5
