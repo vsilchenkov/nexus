@@ -2,11 +2,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { type ReactNode } from "react";
 import { MemoryRouter, useLocation } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import Overview from "./Overview";
 import { ME_PREFS_KEY, PREF_KEY_OVERVIEW_PERIOD } from "../lib/prefs";
 import { MY_TEAMS_KEY, type MyTeamsResp } from "../lib/teams";
+import { setTeamScopeAll } from "../lib/teamScope";
 
 // §71: дефолтный период рабочего стола — персональный и свой у каждой команды.
 //
@@ -82,6 +83,16 @@ function mockServer(s: Server) {
       return Promise.resolve({
         incoming_24h: 0, outgoing_24h: 0, kafka_queue: 0,
         errors_24h: 0, error_rate: 0, prometheus_available: true,
+      });
+    }
+    if (url === "/api/metrics/totals") {
+      // §86.4: в сквозном режиме шапка считается этим запросом, а /metrics/nodes
+      // не зовётся вовсе — период наблюдаем здесь.
+      metricsCalls.push(params ?? {});
+      return Promise.resolve({
+        totals: { incoming: 0, outgoing: 0, errors: 0, error_rate: 0 },
+        items: [],
+        prometheus_available: true,
       });
     }
     if (url === "/api/metrics/nodes") {
@@ -334,5 +345,54 @@ describe("Overview: дефолтный период per-team (§71)", () => {
 
     await waitFor(() => expect(lastMetricsRange()).toBe("24h"));
     expect(qc.getQueryData(ME_PREFS_KEY)).toEqual({ items: [] });
+  });
+});
+
+// §92: кнопка «По умолчанию» в сквозном режиме «Все команды».
+//
+// Регресс, красный на прежнем коде: кнопки там не было вовсе (условие показа
+// содержало !allTeams, §86.7), поэтому настроить стартовый период сквозного
+// экрана было нечем, а сам он брал дефолт команды сессии — чужой для выдачи по
+// всем командам.
+describe("Overview: дефолтный период в сквозном режиме (§92)", () => {
+  beforeEach(() => {
+    apiGet.mockReset();
+    apiPut.mockReset();
+    localStorage.clear();
+    sessionStorage.clear();
+    setTeamScopeAll(true);
+  });
+
+  afterEach(() => setTeamScopeAll(false));
+
+  it("берёт ГЛОБАЛЬНЫЙ преф, а не дефолт команды сессии", async () => {
+    mockServer({
+      currentTeamID: TEAM_A,
+      prefs: [
+        { team_id: TEAM_A, range: "1h" }, // дефолт команды сессии — не про этот экран
+        { team_id: "", range: "7d" }, // глобальный — его и ждём
+      ],
+    });
+    renderOverview(newClient());
+
+    await waitFor(() => expect(lastMetricsRange()).toBe("7d"));
+  });
+
+  it("кнопка видна и сохраняет период ГЛОБАЛЬНО (пустой team_id)", async () => {
+    // Глобального префа нет → дефолт 24ч; период берём из адреса, иначе кнопка
+    // законно неактивна (текущий период уже равен сохранённому).
+    mockServer({ currentTeamID: TEAM_A, prefs: [{ team_id: TEAM_A, range: "1h" }] });
+    renderOverview(newClient(), "/?range=30d");
+
+    const btn = await screen.findByText("overview.set_default_period");
+    fireEvent.click(btn);
+
+    await waitFor(() =>
+      expect(apiPut).toHaveBeenCalledWith("/api/me/prefs", {
+        team_id: "",
+        key: PREF_KEY_OVERVIEW_PERIOD,
+        value: { kind: "preset", range: "30d" },
+      }),
+    );
   });
 });

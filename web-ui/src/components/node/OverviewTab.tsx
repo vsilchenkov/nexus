@@ -3,10 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
 import { api, type Node } from "../../api/client";
-import { Card, Kpi, KpiRow, LabelHint, Pill, PeriodPicker, TrafficChart, defaultPeriod, type LogsRange, type Period } from "../ui";
+import { Card, DefaultPeriodButton, Kpi, KpiRow, LabelHint, Pill, PeriodPicker, TrafficChart, type LogsRange, type Period } from "../ui";
 import { nodeLookbackMs } from "../../lib/nodeLookback";
 import { fmtLogTs, fmtNum } from "../../lib/format";
 import { isLogOK } from "../../lib/logsQuery";
+import { PREF_KEY_NODE_PERIOD, useTeamDefaultPeriod } from "../../lib/prefs";
 import { useNodeMetrics, METRICS_REFETCH_MS } from "./useNodeMetrics";
 import { type LogsResp } from "./types";
 
@@ -23,8 +24,19 @@ export function OverviewTab({
   onOpenLogs?: (range: LogsRange) => void;
 }) {
   const { t } = useTranslation();
-  const [period, setPeriod] = useState<Period>(defaultPeriod);
-  const m = useNodeMetrics(node.id, period);
+  // §92: стартовый период — дефолт команды (преф команды → глобальный → 24ч),
+  // а не системные 24ч. Выбор пользователя живёт поверх префа отдельным
+  // состоянием: писать выбор в преф на каждый клик нельзя — дефолт меняется
+  // только кнопкой «По умолчанию».
+  const { value: teamDefault, settled: periodReady } = useTeamDefaultPeriod(
+    node.team_id,
+    PREF_KEY_NODE_PERIOD,
+  );
+  const [picked, setPicked] = useState<Period | null>(null);
+  const period = picked ?? teamDefault;
+  // enabled=periodReady: до прихода префа период неизвестен, и запрос ушёл бы
+  // за чужим окном — лишний поход в ClickHouse и мигание графика.
+  const m = useNodeMetrics(node.id, period, "auto", {}, periodReady);
   const hasLogsTable = !!node.clickhouse_table;
 
   const recentQ = useQuery({
@@ -77,7 +89,21 @@ export function OverviewTab({
             {t("metrics.traffic")}
             <LabelHint content={t("metrics.hints.traffic")} />
           </span>
-          <PeriodPicker value={period} onChange={setPeriod} maxLookbackMs={nodeLookbackMs(node)} />
+          {periodReady ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <PeriodPicker value={period} onChange={setPicked} maxLookbackMs={nodeLookbackMs(node)} />
+              <DefaultPeriodButton
+                period={period}
+                savedDefault={teamDefault}
+                teamId={node.team_id}
+                prefKey={PREF_KEY_NODE_PERIOD}
+              />
+            </div>
+          ) : (
+            /* §71/§92: плейсхолдер той же высоты вместо переключателя — показать
+               24ч и переключить на настоящий дефолт значило бы мигание. */
+            <div className="h-[30px] w-[320px] animate-pulse rounded-md bg-line/40" aria-hidden />
+          )}
         </div>
         <TrafficChart data={m.data?.series ?? []} onOpenLogs={hasLogsTable ? onOpenLogs : undefined} />
       </Card>

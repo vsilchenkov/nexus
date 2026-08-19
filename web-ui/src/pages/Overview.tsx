@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Search, Plus, Star, Play, Pause, RefreshCw } from "lucide-react";
+import { Search, Plus, Play, Pause, RefreshCw } from "lucide-react";
 
 import {
   api,
@@ -20,6 +20,7 @@ import {
   Kpi,
   KpiRow,
   ChartTooltip,
+  DefaultPeriodButton,
   PeriodPicker,
   Pill,
   Popover,
@@ -49,7 +50,6 @@ import { cn } from "../lib/cn";
 import {
   PREF_KEY_OVERVIEW_PERIOD,
   useMigrateLegacyPeriodPref,
-  useSetPref,
   useTeamDefaultPeriod,
 } from "../lib/prefs";
 import { scopeParams, teamScopeKey, useAllTeamsScope } from "../lib/teamScope";
@@ -126,7 +126,14 @@ export default function Overview() {
   // §71: дефолтный период — персональный и СВОЙ У КАЖДОЙ КОМАНДЫ, хранится на
   // сервере (преф команды → глобальный преф → системные 24ч). При переключении
   // команды период всегда сбрасывается на её дефолт (эффект ниже).
-  const { value: teamDefault, settled: prefsSettled } = useTeamDefaultPeriod(teamId);
+  //
+  // §92: в сквозном режиме спрашивается ГЛОБАЛЬНЫЙ преф (пустой teamId), а не
+  // преф команды сессии. Экран показывает узлы всех команд, поэтому дефолт
+  // одной из них здесь ничего не значит, — и ровно это значение пишет кнопка
+  // «По умолчанию» в этом режиме: читаем то же, что сохраняем.
+  const { value: teamDefault, settled: prefsSettled } = useTeamDefaultPeriod(
+    allTeams ? "" : teamId,
+  );
   // periodReady — и членства, и префы разрешились. До этого момента дефолтный
   // период неизвестен, и любая запись в URL/зеркало была бы записью НЕ ТОГО
   // периода (у пользователя с дефолтом 7д в зеркале осел бы 24ч).
@@ -197,7 +204,6 @@ export default function Overview() {
   // локальный state. Раньше это был useState с ленивой инициализацией, из-за
   // чего после смены команды подсветка показывала дефолт прежней команды.
   const savedDefault = teamDefault;
-  const setDefaultPeriod = useSetPref();
   const teamsQ = useMyTeams();
   const currentTeamName =
     teamsQ.data?.items.find((m) => m.id === teamsQ.data?.current_team_id)?.name ?? "";
@@ -719,41 +725,27 @@ export default function Overview() {
         ) : (
           <div className="h-[30px] w-[320px] animate-pulse rounded-md bg-line/40" aria-hidden />
         )}
-        {/* §44.B/§71: «под себя» — сохранить текущий период как дефолт ЭТОЙ
-            команды (только пресет; произвольный диапазон дефолтом не имеет смысла).
-            §86.7: в сквозном режиме кнопки нет вовсе — преф хранится НА КОМАНДУ,
-            а команды здесь нет; сохранять было бы некуда, и «сохранить в текущую
-            команду сессии» означало бы настроить не тот экран, что открыт. */}
-        {periodReady && !allTeams && period.kind === "preset" && (
-          <button
-            type="button"
-            onClick={() =>
-              setDefaultPeriod.mutate({
-                teamId,
-                key: PREF_KEY_OVERVIEW_PERIOD,
-                value: period,
-              })
-            }
-            disabled={
-              savedDefault.kind === "preset" && savedDefault.range === period.range
-            }
+        {/* §44.B/§71: «под себя» — сохранить текущий период как дефолт (только
+            пресет; произвольный диапазон дефолтом не имеет смысла).
+            §92: в сквозном режиме кнопка тоже есть, но пишет ГЛОБАЛЬНЫЙ преф
+            (teamId=""): команды здесь нет, а глобальное значение и есть ответ на
+            вопрос «с чего начинать везде, где своё не задано». Прежде кнопки в
+            этом режиме не было вовсе (§86.7), и настроить сквозной экран было
+            нечем. */}
+        {periodReady && (
+          <DefaultPeriodButton
+            period={period}
+            savedDefault={savedDefault}
+            teamId={allTeams ? "" : teamId}
+            prefKey={PREF_KEY_OVERVIEW_PERIOD}
             title={
-              currentTeamName
-                ? t("overview.set_default_period_hint", { team: currentTeamName })
-                : t("overview.set_default_period")
+              allTeams
+                ? t("overview.set_default_period_all_hint")
+                : currentTeamName
+                  ? t("overview.set_default_period_hint", { team: currentTeamName })
+                  : t("overview.set_default_period")
             }
-            className="inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-fg-muted hover:text-accent disabled:cursor-default disabled:opacity-50"
-          >
-            <Star
-              className={cn(
-                "h-3.5 w-3.5",
-                savedDefault.kind === "preset" &&
-                  savedDefault.range === period.range &&
-                  "fill-current text-accent",
-              )}
-            />
-            {t("overview.set_default_period")}
-          </button>
+          />
         )}
         <div className="ml-auto flex items-center gap-2">
           {/* §86.11: ручное обновление — только иконка, подпись в title и

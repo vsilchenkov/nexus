@@ -11,7 +11,8 @@ import {
   type KafkaTimeseries,
   type KafkaTopicsResp,
 } from "../api/client";
-import { Button, Card, PeriodPicker, Seg, defaultPeriod, periodKey, periodParams, periodWindow } from "../components/ui";
+import { Button, Card, DefaultPeriodButton, PeriodPicker, Seg, periodKey, periodParams, periodWindow } from "../components/ui";
+import { PREF_KEY_KAFKA_PERIOD, useTeamDefaultPeriod } from "../lib/prefs";
 import type { Period } from "../components/ui";
 import { HealthBanner } from "../components/kafka/HealthBanner";
 import { LagChart, MiniSpark, ThroughputChart } from "../components/kafka/charts";
@@ -29,7 +30,15 @@ export default function KafkaMonitor() {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const isAdmin = useRoleAtLeast("admin");
-  const [period, setPeriod] = useState<Period>(defaultPeriod);
+  // §92: дефолтный период монитора — ГЛОБАЛЬНЫЙ преф (пустой teamId): брокер
+  // один на инстанс и ни одной команде не принадлежит, поэтому командного
+  // значения здесь быть не может. Выбор пользователя живёт поверх префа.
+  const { value: savedDefault, settled: periodReady } = useTeamDefaultPeriod(
+    "",
+    PREF_KEY_KAFKA_PERIOD,
+  );
+  const [picked, setPicked] = useState<Period | null>(null);
+  const period = picked ?? savedDefault;
   const [resolution, setResolution] = useState<Resolution>("auto");
   const [now, setNow] = useState(() => Date.now());
 
@@ -106,7 +115,20 @@ export default function KafkaMonitor() {
           <p className="text-[13px] text-fg-muted">{t("kafka.subtitle")}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <PeriodPicker value={period} onChange={setPeriod} />
+          {periodReady ? (
+            <>
+              <PeriodPicker value={period} onChange={setPicked} />
+              <DefaultPeriodButton
+                period={period}
+                savedDefault={savedDefault}
+                teamId=""
+                prefKey={PREF_KEY_KAFKA_PERIOD}
+                title={t("kafka.set_default_period_hint")}
+              />
+            </>
+          ) : (
+            <div className="h-[30px] w-[320px] animate-pulse rounded-md bg-line/40" aria-hidden />
+          )}
           <span className="text-[11px] text-fg-subtle">{t("kafka.updated_ago", { secs: secsAgo })}</span>
           <Button sm onClick={refreshAll}>
             <RefreshCw className="h-3.5 w-3.5" /> {t("kafka.refresh")}

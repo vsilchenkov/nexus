@@ -4,8 +4,9 @@ import { useTranslation } from "react-i18next";
 import { Trash2, ChevronRight, Pause, Power, Play, RotateCcw, History } from "lucide-react";
 
 import { api, type Node } from "../../api/client";
-import { Button, Kpi, KpiRow, Hint, Pill, PeriodPicker, periodWindow, periodKey, defaultPeriod, type Period } from "../ui";
+import { Button, DefaultPeriodButton, Kpi, KpiRow, Hint, Pill, PeriodPicker, periodWindow, periodKey, type Period } from "../ui";
 import { nodeLookbackMs } from "../../lib/nodeLookback";
+import { PREF_KEY_NODE_PERIOD, useTeamDefaultPeriod } from "../../lib/prefs";
 import { ReplayDialog } from "../ReplayDialog";
 import { type LogsInitialFilter } from "./LogsTab";
 import { type LogRow, type LogDetail } from "./types";
@@ -88,7 +89,15 @@ export function QueueTab({
   // очистка тронет только уже принятое шиной.
   const isPull = node.root_method === "RabbitMQAsync";
 
-  const [period, setPeriod] = useState<Period>(defaultPeriod);
+  // §92: стартовый период — дефолт команды (тот же ключ, что у вкладки
+  // «Обзор»: горизонт наблюдения принадлежит узлу, а не вкладке). Выбор
+  // пользователя живёт поверх префа: дефолт меняет только кнопка.
+  const { value: teamDefault, settled: periodReady } = useTeamDefaultPeriod(
+    node.team_id,
+    PREF_KEY_NODE_PERIOD,
+  );
+  const [picked, setPicked] = useState<Period | null>(null);
+  const period = picked ?? teamDefault;
   const periodIso = () => {
     const { since, until } = periodWindow(period);
     return { from: new Date(since).toISOString(), to: new Date(until).toISOString() };
@@ -242,7 +251,19 @@ export function QueueTab({
             <History className="h-3.5 w-3.5" /> {t("queue.replay_period")}
           </Button>
         )}
-        <PeriodPicker value={period} onChange={setPeriod} maxLookbackMs={nodeLookbackMs(node)} />
+        {periodReady ? (
+          <>
+            <PeriodPicker value={period} onChange={setPicked} maxLookbackMs={nodeLookbackMs(node)} />
+            <DefaultPeriodButton
+              period={period}
+              savedDefault={teamDefault}
+              teamId={node.team_id}
+              prefKey={PREF_KEY_NODE_PERIOD}
+            />
+          </>
+        ) : (
+          <div className="h-[30px] w-[320px] animate-pulse rounded-md bg-line/40" aria-hidden />
+        )}
       </div>
 
       {/* У sync-узла плитки «Ожидают отправки» нет: очереди не существует.
