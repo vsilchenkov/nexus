@@ -9,6 +9,7 @@ import { LogsToolbar } from "../components/logs/LogsToolbar";
 import { ErrorAlert } from "../components/ui";
 import {
   filterEntries,
+  hasDistinctReplicas,
   formatTs,
   levelBadgeClass,
   levelFromInt,
@@ -68,6 +69,11 @@ export default function LogsPage() {
     const filtered = filterEntries(logs.data ?? [], { query });
     return filtered.slice(0, MAX_ROWS).reverse();
   }, [logs.data, query]);
+
+  // §93.6: колонка реплики появляется сама, когда в выборке есть записи от
+  // разных экземпляров сервиса. В одиночной установке её нет — там имя реплики
+  // повторяло бы имя сервиса.
+  const showReplica = useMemo(() => hasDistinctReplicas(visible), [visible]);
 
   // Follow-tail: пока «прилипли» к низу — держим низ при каждом обновлении.
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -160,6 +166,11 @@ export default function LogsPage() {
                     {e.level}
                   </span>
                   <span className="w-16 shrink-0 text-fg-muted">{e.service}</span>
+                  {showReplica && (
+                    <span className="w-20 shrink-0 truncate text-fg-subtle" title={e.replica ?? ""}>
+                      {e.replica ?? ""}
+                    </span>
+                  )}
                   <span className="min-w-0 flex-1 whitespace-pre-wrap break-words text-fg">
                     {e.msg}
                   </span>

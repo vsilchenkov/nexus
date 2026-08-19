@@ -164,7 +164,11 @@ func buildLogger(logCfg *logging.Config, sentryCfg *logging.SentryConfig, servic
 	base, _ := buildBaseHandler(logCfg, lv, os.Stderr)
 	// §70.7: каждая запись кольца несёт идентификатор ноды — иначе в консоли
 	// логов записи двух нод неотличимы.
-	ring := logsink.NewRingHandler(lv, service, logsink.WithInstance(instanceID))
+	// §93.6: и имя реплики — у двух реплик ОДНОЙ ноды instanceID одинаков,
+	// так что без него записи web-1 и web-2 в общем кольце не развести.
+	ring := logsink.NewRingHandler(lv, service,
+		logsink.WithInstance(instanceID),
+		logsink.WithReplica(ReplicaName()))
 
 	var sentryH slog.Handler
 	if sentryCfg.Use {

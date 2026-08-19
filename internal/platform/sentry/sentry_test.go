@@ -337,7 +337,7 @@ func TestBeforeSendTransaction_ScrubsSpans(t *testing.T) {
 func TestInit_Disabled(t *testing.T) {
 	// Не parallel: Init трогает глобальный sentry hub.
 	s := &config.SentrySection{Use: false}
-	if err := Init(s, "project", "v0.0.0", "kz"); err != nil {
+	if err := Init(s, Identity{Project: "project", Version: "v0.0.0", Instance: "kz"}); err != nil {
 		t.Errorf("Init(use=false) error: %v", err)
 	}
 }
@@ -345,7 +345,7 @@ func TestInit_Disabled(t *testing.T) {
 func TestReload_Disabled(t *testing.T) {
 	// Не parallel: Reload вызывает Init с глобальным hub.
 	s := &config.SentrySection{Use: false}
-	if err := Reload(s, "project", "v0.0.0", "kz"); err != nil {
+	if err := Reload(s, Identity{Project: "project", Version: "v0.0.0", Instance: "kz"}); err != nil {
 		t.Errorf("Reload(use=false) error: %v", err)
 	}
 }
@@ -366,5 +366,48 @@ func TestSensitiveKeys_NotEmpty(t *testing.T) {
 				break
 			}
 		}
+	}
+}
+
+// TestIdentityTags (§70.7 + §93.6): теги собираются только из непустых полей.
+//
+// Пустой тег изменил бы группировку уже существующих в Sentry событий, поэтому
+// «нет значения» обязано означать «нет тега», а не «тег с пустой строкой».
+func TestIdentityTags(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		id   Identity
+		want map[string]string
+	}{
+		{"пусто — тегов нет", Identity{Project: "p", Version: "v"}, nil},
+		{"только нода", Identity{Instance: "kz"}, map[string]string{"instance": "kz"}},
+		{"только реплика", Identity{Replica: "web-2"}, map[string]string{"replica": "web-2"}},
+		{
+			"нода и реплика",
+			Identity{Instance: "kz", Replica: "web-2"},
+			map[string]string{"instance": "kz", "replica": "web-2"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := tt.id.tags()
+			if len(tt.want) == 0 {
+				if got != nil {
+					t.Errorf("ожидались nil-теги, получено %v", got)
+				}
+				return
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("тегов %d, ожидалось %d: %v", len(got), len(tt.want), got)
+			}
+			for k, v := range tt.want {
+				if got[k] != v {
+					t.Errorf("тег %q = %q, ожидалось %q", k, got[k], v)
+				}
+			}
+		})
 	}
 }

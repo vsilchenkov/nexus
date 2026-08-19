@@ -5,10 +5,13 @@
 // (receiver / sender / web).
 package config
 
+import "time"
+
 // Config — корневая структура конфига.
 type Config struct {
 	Instance   InstanceSection   `yaml:"instance"`
 	Build      BuildSection      `yaml:"build"`
+	Shutdown   ShutdownSection   `yaml:"shutdown"`
 	Logging    LoggingSection    `yaml:"logging"`
 	Sentry     SentrySection     `yaml:"sentry"`
 	Otel       OtelSection       `yaml:"otel"`
@@ -77,6 +80,49 @@ type BuildSection struct {
 	// копируются из build.Option в bootstrap. Отдаются в GET /api/version (§34.3).
 	Commit    string `yaml:"commit"`
 	BuildDate string `yaml:"build_date"`
+}
+
+// ShutdownSection — как сервис уходит по SIGTERM (§93.5). Общая для всех трёх
+// сервисов: остановка у них устроена одинаково, а разные значения на Receiver и
+// Sender означали бы, что выкат рвёт запрос на полпути между ними.
+type ShutdownSection struct {
+	// DrainSec — сколько ждать между «я больше не готов» (/ready → 503) и
+	// собственно остановкой HTTP/gRPC-сервера.
+	//
+	// Пауза нужна балансировщику: пока он не заметил 503 (или пока rolling.sh
+	// не убрал реплику из upstream), он продолжает слать сюда новые запросы, и
+	// остановка в этот момент отдала бы клиенту разрыв соединения.
+	//
+	// 0 означает «дефолт» (5 с), как и во всех остальных секциях конфига.
+	// Чтобы ВЫКЛЮЧИТЬ дренаж и вернуть поведение до §93, задайте отрицательное
+	// значение: yaml не отличает «не указано» от «указан ноль», а молча
+	// игнорировать явный ноль было бы хуже, чем потребовать -1.
+	DrainSec int `yaml:"drain_sec"`
+
+	// TimeoutSec — потолок ожидания уже принятых запросов после начала
+	// остановки.
+	//
+	// Раньше был зашит константой 30 с, и это рвало долгие синхронные вызовы:
+	// таймаут внешнего узла у sync-запроса доходит до 600 с (§16), а такой
+	// запрос на выводимой реплике просто обрывался на 30-й секунде — клиент
+	// получал разрыв, в логах шины оставался done=false без внятной причины.
+	// Значение подбирается под самый долгий узел: меньше — рвём, сильно
+	// больше — выкат стоит и ждёт зависший вызов.
+	TimeoutSec int `yaml:"timeout_sec"`
+}
+
+// Drain — пауза между «не готов» и остановкой сервера. Отрицательное значение
+// в конфиге означает «дренаж выключен» и превращается здесь в ноль.
+func (s ShutdownSection) Drain() time.Duration {
+	if s.DrainSec <= 0 {
+		return 0
+	}
+	return time.Duration(s.DrainSec) * time.Second
+}
+
+// Timeout — потолок ожидания уже принятых запросов при остановке.
+func (s ShutdownSection) Timeout() time.Duration {
+	return time.Duration(s.TimeoutSec) * time.Second
 }
 
 // LoggingSection — параметры логгера. Поля совпадают с

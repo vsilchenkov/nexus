@@ -26,21 +26,54 @@ const maxSentryValueBytes = 8 * 1024
 // логи в logsink).
 var sensitiveKeys = sensitive.Keys()
 
-// Init инициализирует Sentry SDK. Если Use=false — no-op, возвращает nil.
-// Имя проекта (`server_name`) и release заполняются из buildVersion/projectName.
+// Identity — кто именно шлёт события: проект, версия сборки, нода и реплика.
 //
-// instanceID (§70.7) — идентификатор ноды. Ноды пишут в ОДИН проект Sentry, и
+// Структура, а не четыре строковых параметра подряд: перепутанные местами
+// аргументы одного типа компилятор не поймает, а обнаружилось бы это тегами в
+// боевом Sentry.
+type Identity struct {
+	// Project — имя проекта, уезжает в server_name.
+	Project string
+	// Version — версия сборки, уезжает в release.
+	Version string
+	// Instance — идентификатор ноды (§70.7).
+	Instance string
+	// Replica — имя реплики сервиса (§93.6), обычно hostname контейнера.
+	Replica string
+}
+
+// tags собирает теги события. Пустые значения тегов НЕ добавляют: пустой тег
+// изменил бы группировку уже существующих в Sentry событий.
+func (id Identity) tags() map[string]string {
+	t := make(map[string]string, 2)
+	if id.Instance != "" {
+		t["instance"] = id.Instance
+	}
+	if id.Replica != "" {
+		t["replica"] = id.Replica
+	}
+	if len(t) == 0 {
+		return nil
+	}
+	return t
+}
+
+// Init инициализирует Sentry SDK. Если Use=false — no-op, возвращает nil.
+// Имя проекта (`server_name`) и release заполняются из Identity.
+//
+// Тег instance (§70.7) — идентификатор ноды. Ноды пишут в ОДИН проект Sentry, и
 // без тега их события неразличимы: server_name у всех "Receiver"/"Sender"/"Web",
-// release — одна и та же версия сборки. Пустой идентификатор (нода до §70) тег
-// НЕ добавляет: пустое значение изменило бы группировку существующих событий.
-func Init(s *config.SentrySection, projectName, version, instanceID string) error {
+// release — одна и та же версия сборки.
+//
+// Тег replica (§93.6) — какая из двух реплик сервиса упала. Нода при этом одна
+// и та же, поэтому instance их не разводит: «падает только на одной реплике» —
+// частый и совершенно неочевидный без тега случай при выкате.
+func Init(s *config.SentrySection, id Identity) error {
 	if !s.Use {
 		return nil
 	}
-	var tags map[string]string
-	if instanceID != "" {
-		tags = map[string]string{"instance": instanceID}
-	}
+	projectName, version := id.Project, id.Version
+	tags := id.tags()
 	opts := sentry.ClientOptions{
 		Dsn:              s.Dsn,
 		Environment:      s.Environment,
@@ -75,8 +108,8 @@ func Flush(timeout time.Duration) {
 // так что middleware и логгер продолжают работать без переподписки.
 //
 // Если новый Use=false — старый hub остаётся, но клиент станет no-op.
-func Reload(s *config.SentrySection, projectName, version, instanceID string) error {
-	return Init(s, projectName, version, instanceID)
+func Reload(s *config.SentrySection, id Identity) error {
+	return Init(s, id)
 }
 
 func beforeSend(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {

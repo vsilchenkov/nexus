@@ -30,6 +30,7 @@ import (
 	"nexus/internal/platform/ratelimit"
 	recoverypf "nexus/internal/platform/recovery"
 	redispf "nexus/internal/platform/redis"
+	"nexus/internal/platform/redislock"
 	"nexus/internal/platform/reloader"
 	"nexus/internal/platform/requestid"
 	"nexus/internal/platform/safego"
@@ -50,6 +51,7 @@ type App struct {
 	metrics *metrics.Metrics
 
 	srv          *http.Server
+	health       *healthcheck.Handler
 	senderCl     *grpcsender.Client
 	producer     *kafkapf.Producer
 	otelShutdown otelpf.ShutdownFunc
@@ -146,7 +148,7 @@ func (a *App) startPullerManager(ctx context.Context) {
 		a.metrics,
 		rabbitmqadapter.NewHealthSink(a.redis),
 		a.logger,
-	)
+	).WithNodeLease(redislock.NewLease(a.redis, bootstrap.ReplicaName()))
 	pctx, pcancel := context.WithCancel(context.WithoutCancel(ctx))
 	a.pullerCancel = pcancel
 	a.pullerDone = make(chan struct{})
@@ -190,6 +192,9 @@ func (a *App) buildHTTPRouter(routeUC *usecase.RouteUsecase, routeAsyncUC *useca
 		[]healthcheck.Checker{pgpf.HealthChecker("postgres", a.pg)},
 		[]healthcheck.Checker{redispf.HealthChecker("redis", a.redis)},
 	)
+	// §93.5: Stop переводит этот же handler в режим дренажа, поэтому он живёт
+	// полем App, а не только внутри роутера.
+	a.health = hc
 	hc.Register(r)
 	r.GET("/metrics", gin.WrapH(a.metrics.Handler()))
 
@@ -265,8 +270,23 @@ func (a *App) serve(ctx context.Context, r *gin.Engine) error {
 	}
 }
 
+// drain выводит реплику из ротации перед остановкой (§93.5): /ready начинает
+// отвечать 503, и балансировщик перестаёт слать новые запросы, пока текущие
+// доигрывают. В одиночной установке (shutdown.drain_sec отрицательный) — no-op.
+func (a *App) drain(ctx context.Context) {
+	pause := a.cfg.Shutdown.Drain()
+	if a.health == nil || pause <= 0 {
+		return
+	}
+	a.logger.Info("receiver draining before shutdown",
+		a.logger.Str("pause", pause.String()))
+	healthcheck.Drain(ctx, a.health, pause)
+}
+
 func (a *App) Stop(ctx context.Context) error {
-	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	a.drain(ctx)
+
+	shutdownCtx, cancel := context.WithTimeout(ctx, a.cfg.Shutdown.Timeout())
 	defer cancel()
 	a.logger.Info("receiver shutting down")
 

@@ -151,6 +151,16 @@ func applyDefaults(c *Config) {
 	if c.Receiver.MaxHops == 0 {
 		c.Receiver.MaxHops = 5
 	}
+	// §93.5: остановка сервиса. Дефолты подобраны так, чтобы одиночная
+	// установка вела себя как раньше (30 с на доигрывание), а профиль двух
+	// реплик получал паузу дренажа без правки конфига.
+	if c.Shutdown.DrainSec == 0 {
+		c.Shutdown.DrainSec = 5
+	}
+	if c.Shutdown.TimeoutSec == 0 {
+		c.Shutdown.TimeoutSec = 30
+	}
+
 	if c.Receiver.SenderGRPC.Addr == "" {
 		c.Receiver.SenderGRPC.Addr = "sender:9190"
 	}
