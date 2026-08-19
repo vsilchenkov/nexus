@@ -90,6 +90,12 @@ func main() {
 	logger.Info("echosrv stopped")
 }
 
+// maxEchoBodyBytes — сколько байт тела запроса стенд-приёмник читает и
+// возвращает эхом. Держится НЕ ниже receiver.max_body_bytes (32 МиБ), иначе
+// проверка транспортного лимита шины упирается в лимит самого echosrv и
+// большое тело молча усекается в ответе.
+const maxEchoBodyBytes = 64 << 20
+
 type echoResponse struct {
 	OK      bool                `json:"ok"`
 	Method  string              `json:"method"`
@@ -101,7 +107,7 @@ type echoResponse struct {
 
 func handler(logger *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(io.LimitReader(r.Body, 5<<20))
+		body, _ := io.ReadAll(io.LimitReader(r.Body, maxEchoBodyBytes))
 		_ = r.Body.Close()
 
 		seg := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 3)
