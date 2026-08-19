@@ -150,7 +150,10 @@ export function QueueTab({
   const failedCountQ = useQuery({
     queryKey: ["aq-failed-count", id, periodKey(period)],
     queryFn: () => api.get<FailedCountResp>(`/api/nodes/${id}/logs/failed-count`, periodIso()),
-    enabled: hasLogsTable,
+    // §92.4: ждём префы. Без гейта первый запрос уходит с системными 24ч, и за
+    // ним сразу второй — с настоящим дефолтом узла: лишний проход по ClickHouse
+    // и прыгающий счётчик на каждом заходе.
+    enabled: hasLogsTable && periodReady,
     refetchInterval: 15_000,
   });
   // §72.3: список неудач читается тем же keyset-механизмом, что журнал логов, —
@@ -175,7 +178,7 @@ export function QueueTab({
     queryKey: ["aq-failed-list", id, periodKey(period)],
     params: failedParams,
     pageSize: FAILED_PAGE_SIZE,
-    enabled: hasLogsTable,
+    enabled: hasLogsTable && periodReady,
     refetchInterval: 15_000,
     containerRef: failedWrapRef,
   });
@@ -266,10 +269,11 @@ export function QueueTab({
         )}
       </div>
 
-      {/* У sync-узла плитки «Ожидают отправки» нет: очереди не существует.
-          Оставшаяся одна плитка выкладывается НЕ сеткой (см. KpiRow): половина
-          строки под неё и пустая половина рядом читались как поломка вёрстки. */}
-      <KpiRow cols={2}>
+      {/* У sync-узла плитки «Ожидают отправки» нет: очереди не существует, и
+          соседа у «Неудачных доставок» не бывает в принципе — поэтому единственная
+          плитка растягивается на всю ширину (single="full"). У async сосед есть,
+          и там строка остаётся сеткой из двух колонок. */}
+      <KpiRow cols={2} single="full">
         {isAsync && (
           <Kpi
             label={t("queue.kpi.pending")}
