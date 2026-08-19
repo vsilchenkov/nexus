@@ -90,11 +90,11 @@ Nexus — три stateless Go-сервиса плюс набор хранили�
 > **Внешний Kafka — лимит размера сообщения.** §38 durable-retry при недоступности
 > ClickHouse шлёт проваленные батчи логов (с телами request/response, до неск. МБ) в
 > топик `nexus.logs.retry`. Топики создаются с `max.message.bytes` из
-> `kafka.topic.max_message_bytes` (по умолчанию **16 МиБ** — запас под
-> `receiver.max_body_bytes` 10 МиБ × 1.33 base64 async-envelope, §68), но **брокерский**
+> `kafka.topic.max_message_bytes` (по умолчанию **64 МиБ** — запас под
+> `receiver.max_body_bytes` 32 МиБ × 1.33 base64 async-envelope, §68), но **брокерский**
 > дефолт `message.max.bytes`/`replica.fetch.max.bytes` (~1 МиБ) перебивает
 > per-topic-конфиг. В bundled-compose это уже выставлено (`KAFKA_MESSAGE_MAX_BYTES`/
-> `KAFKA_REPLICA_FETCH_MAX_BYTES = 16777216`). При **внешнем** Kafka-кластере выставьте
+> `KAFKA_REPLICA_FETCH_MAX_BYTES = 67108864`). При **внешнем** Kafka-кластере выставьте
 > на брокерах `message.max.bytes` и `replica.fetch.max.bytes` **не ниже**
 > `kafka.topic.max_message_bytes`, иначе крупные retry-батчи отвергаются
 > (`Message Size Too Large`) и логи теряются.
@@ -107,6 +107,26 @@ Nexus — три stateless Go-сервиса плюс набор хранили�
 > поднимите оба параметра. Async-путь: producer публикует сообщение размером до
 > `kafka.topic.max_message_bytes` (BatchBytes продьюсера авто-подтягивается до этого лимита) —
 > убедитесь, что брокерский `message.max.bytes` его не перебивает (см. выше).
+
+> **Поднятие `receiver.max_body_bytes` на РАБОТАЮЩЕЙ установке** (с 10 до 32 МиБ) требует трёх
+> действий помимо правки `config.yml` — иначе крупное тело отвергается раньше, чем доходит до
+> шины, либо теряется на async-пути:
+>
+> 1. **Фронт-прокси.** `client_max_body_size` в nginx (см. раздел про reverse-proxy) — не ниже
+>    нового лимита плюс запас; иначе клиент получает 413 от nginx, и в логах шины запроса нет вовсе.
+> 2. **Брокер.** `message.max.bytes`/`replica.fetch.max.bytes` — не ниже
+>    `kafka.topic.max_message_bytes` (в bundled-compose уже 64 МиБ; для внешнего кластера — руками).
+> 3. **Существующие топики.** `kafka.topic.*` применяется только при создании топика, поэтому
+>    живые `nexus.async`, `nexus.async.dlq`, `nexus.async.paused`, `nexus.logs.retry` остаются со
+>    старым `max.message.bytes` — поднимите его `kafka-configs --alter` (команда ниже).
+>
+> Sync-путь ограничен только `receiver.max_body_bytes` и gRPC-лимитом (64 МиБ), async — ещё и
+> Kafka: тело едет в конверте base64 (+33%), то есть 32 МиБ тела ≈ 42.6 МиБ сообщения.
+>
+> **Побочный эффект для ClickHouse.** У узла с `log_request_body` и выключенным `max_body_size`
+> тело пишется в лог ЦЕЛИКОМ: после поднятия лимита одна запись может весить 32 МиБ. Для узлов с
+> крупными телами включайте `max_body_size` (он режет только лог-копию, на проброс не влияет) либо
+> отключайте логирование тела — иначе таблица узла растёт на порядок быстрее расчётного retention.
 
 Переменные `VERSION` и `REGISTRY_BASE` больше не используются: registry-путь деплоя убран
 (§9.2), деплой — сборкой из исходников на сервере (§9.1). Версия приложения берётся из git
@@ -476,7 +496,7 @@ docker compose -f deploy/docker-compose.app.yml logs -f web receiver sender
   >   --add-config retention.ms=604800000,retention.bytes=42949672960
   > # лимит размера сообщения (например, после поднятия receiver.max_body_bytes):
   > docker compose exec -e KAFKA_OPTS= kafka /opt/kafka/bin/kafka-configs.sh \
-  >   --bootstrap-server localhost:9092 --entity-type topics --entity-name nexus.async --alter --add-config max.message.bytes=16777216
+  >   --bootstrap-server localhost:9092 --entity-type topics --entity-name nexus.async --alter --add-config max.message.bytes=67108864
   > # проверить: --describe вместо --alter/--add-config
   > ```
   >
@@ -696,7 +716,7 @@ WEB_BIND=127.0.0.1
 proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;   # иначе все клиенты = 127.0.0.1
 proxy_set_header X-Forwarded-Proto $scheme;
 proxy_read_timeout 600s;      # sync-вызов живёт по таймауту узла, дефолтные 60 с его оборвут
-client_max_body_size 16m;     # ≥ receiver.max_body_bytes (§68 multipart)
+client_max_body_size 48m;     # ≥ receiver.max_body_bytes (32 МиБ, §68 multipart) + запас
 ```
 
 Со стороны Nexus настраивать ничего не нужно: `trusted_proxies` по умолчанию покрывает loopback
@@ -875,7 +895,7 @@ services:
 
 `mem_limit` — потолки, а не резервирование: в простое весь стек занимает ~1 ГБ, а лимиты нужны,
 чтобы при всплеске ядро убило один контейнер, а не выбирало жертву само. Если через шину ходят
-крупные тела (`receiver.max_body_bytes` — 10 МиБ, §68 multipart), поднимите лимиты `receiver`
+крупные тела (`receiver.max_body_bytes` — 32 МиБ, §68 multipart), поднимите лимиты `receiver`
 и `sender`. `GOMEMLIMIT` — мягкий потолок для сборщика мусора Go: он начинает собирать активнее,
 не дожидаясь удвоения heap. Проверить, что получилось после наложения: `docker compose config`.
 

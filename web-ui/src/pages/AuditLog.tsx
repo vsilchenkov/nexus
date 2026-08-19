@@ -181,10 +181,15 @@ export default function AuditLog() {
           контейнер (к нему привязан обработчик скролла) появлялся бы позже
           первой страницы. */}
       <Card className="overflow-hidden p-0">
+          {/* Высота считается от окна, а не фиксированные 70vh: под таблицей
+              оставалась пустая полоса почти в треть экрана. 190px — это
+              измеренные 165px над контейнером (шапка приложения, заголовок,
+              фильтры, счётчик) плюс небольшой отступ снизу. min-h держит
+              список читаемым на низких окнах, где calc дал бы слишком мало. */}
           <div
             ref={wrapRef}
             onScroll={q.onScroll}
-            className="max-h-[70vh] overflow-y-auto overflow-x-auto"
+            className="max-h-[calc(100vh-190px)] min-h-[320px] overflow-y-auto overflow-x-auto"
           >
           <table className="w-full min-w-[720px] text-[12.5px]">
             <thead>
