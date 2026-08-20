@@ -131,7 +131,10 @@ func (u *RouteUsecase) NodeRootMethod(ctx context.Context, teamSlug, nodePath st
 		return "", err
 	}
 	if node.Status == domain.NodeStatusDisabled {
-		return "", domain.ErrNodeNotFound
+		// Наружу — «узла нет» (см. checkNodeAcceptsSync), но ошибка несёт
+		// настоящую причину: журнал отказов §94 показывает оператору, что узел
+		// существует и выключен, а не потерян.
+		return "", domain.ErrNodeDisabled
 	}
 	u.logger.Debug("route: root method resolved for short url",
 		u.logger.Str("team", teamSlug),
@@ -149,7 +152,11 @@ func (u *RouteUsecase) NodeRootMethod(ctx context.Context, teamSlug, nodePath st
 func checkNodeAcceptsSync(node *domain.Node, in RouteInput) error {
 	switch node.Status {
 	case domain.NodeStatusDisabled:
-		return domain.ErrNodeNotFound
+		// Клиенту отвечаем «узла нет» — факт существования выключенного узла
+		// наружу не раскрываем. Отдельная ошибка нужна журналу §94: там видно
+		// «узел выключен», иначе оператор ищет потерянный узел вместо того,
+		// чтобы его включить.
+		return domain.ErrNodeDisabled
 	case domain.NodeStatusPaused:
 		// §3.6: sync на paused-узел превращается в async — handler
 		// переключается на RouteAsync и отвечает 202 + queued:true.

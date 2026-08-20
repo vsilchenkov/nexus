@@ -88,7 +88,8 @@ func (u *RouteAsyncUsecase) RouteAsync(ctx context.Context, in RouteInput) (*Rou
 		return nil, err
 	}
 	if node.Status == domain.NodeStatusDisabled {
-		return nil, domain.ErrNodeNotFound
+		// Наружу — 404 «узла нет» (§94.2), в журнале — честное «узел выключен».
+		return nil, domain.ErrNodeDisabled
 	}
 
 	// §16 ТЗ: callback-маршрут разрешён только для узлов с подписью.

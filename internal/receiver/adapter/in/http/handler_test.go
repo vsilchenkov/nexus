@@ -79,7 +79,9 @@ func TestClassifyDomainError(t *testing.T) {
 	}{
 		{"not found", domain.ErrNodeNotFound, http.StatusNotFound, domain.RejectReasonNodeNotFound, false},
 		{"async ingress gate", domain.ErrNodeNotAsyncIngress, http.StatusNotFound, domain.RejectReasonNodeNotFound, false},
-		{"disabled", domain.ErrNodeDisabled, http.StatusServiceUnavailable, domain.RejectReasonNodeDisabled, false},
+		// §94.2: выключенный узел наружу неотличим от несуществующего (тот же
+		// 404 и тот же текст), а причина в журнале — своя.
+		{"disabled", domain.ErrNodeDisabled, http.StatusNotFound, domain.RejectReasonNodeDisabled, false},
 		{"method not allowed", domain.ErrNodeMethodNotAllowed, http.StatusMethodNotAllowed, domain.RejectReasonMethodNotAllowed, false},
 		{"url param required", domain.ErrURLParamRequired, http.StatusBadRequest, domain.RejectReasonBadRequest, false},
 		{"url invalid", domain.ErrURLInvalid, http.StatusBadRequest, domain.RejectReasonBadRequest, false},

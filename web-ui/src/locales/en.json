@@ -892,7 +892,7 @@
       "samples": "Recent requests",
       "no_clients": "No clients recorded",
       "no_samples": "No requests stored",
-      "body_bytes": "body {{n}} B",
+      "body_bytes": "body {{n}}",
       "resolve": "Mark as resolved",
       "delete": "Delete group"
     }

@@ -41,12 +41,16 @@ rate-limit и считает, что «шина не работает».
 | `node_not_found` | 404 | `ErrNodeNotFound`; сюда же §82.3 (`ErrNodeNotAsyncIngress`) и pull-узел §27 без HTTP-входа — наружу они неотличимы от «узла нет», но в журнале различаются |
 | `method_not_allowed` | 405 | `ErrNodeMethodNotAllowed` (§40); а также не-POST на `/api/v1/callback/...` |
 | `unauthorized` | 401 | `ErrAuthHeaderMissing`, `ErrAuthHeaderMalformed`, `ErrAuthTokenRequired`, `ErrUnauthorized` (§41) |
-| `node_disabled` | 503 | `ErrNodeDisabled` — узел выключен оператором |
+| `node_disabled` | **404** | Узел существует, но выключен оператором. Клиенту отвечаем ровно как на несуществующий узел (тем же текстом): факт существования выключенного узла наружу не раскрывается, иначе перебором адресов вычислялось бы, какие интеграции есть. Разница видна ТОЛЬКО в журнале — оператор понимает, что узел надо включить, а не искать |
 | `url_not_allowed` | 403 | `ErrURLNotAllowed` — целевой адрес вне allowlist (§23) |
 | `body_too_large` | 413 | `errBodyTooLarge` / `errBodyTooLargeForQueue` (§43) |
 | `rate_limited` | 429 | `RateLimitMiddleware` (§9.4) |
 | `loop_detected` | 508 | превышен hop-лимит (§32) |
 | `bad_request` | 400 | пустой путь узла, `ErrURLParamRequired`, `ErrURLInvalid`, `ErrCallbackNotAllowed`, `ErrAckRenderFailed` (§83) |
+
+Три причины (`node_not_found`, `node_disabled` и «pull-узел / не тот эндпоинт» §82.3) дают клиенту
+ОДИН И ТОТ ЖЕ ответ — 404 «node not found». Это и есть главный довод за отдельный код причины:
+снаружи они неразличимы намеренно, а внутри различать их необходимо.
 
 **`502 internal routing error` в журнал НЕ попадает:** это сбой шины, а не отказ клиенту; его место
 в Sentry и служебном логе. **Обращения вне `/api/v1`** (сканеры `/wp-login.php`, `/.env`, попадающие

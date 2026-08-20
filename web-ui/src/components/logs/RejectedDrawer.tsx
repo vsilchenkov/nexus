@@ -5,7 +5,7 @@ import { Check, ExternalLink, Trash2, X } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { api } from "../../api/client";
-import { fmtNum } from "../../lib/format";
+import { fmtNum, fmtSize } from "../../lib/format";
 import { reasonLabelKey, type RejectedDetails } from "../../lib/rejected";
 import { Button, ErrorAlert } from "../ui";
 
@@ -25,6 +25,8 @@ type Props = {
 // клик по подложке НЕ закрывает (общее правило диалогов §21).
 export function RejectedDrawer({ id, onClose, onChanged }: Props) {
   const { t } = useTranslation();
+  // Единицы размера — локализованные (§42-доп), тот же приём, что в логах узла.
+  const sizeUnits = t("logs.size_units").split("|");
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -151,7 +153,9 @@ export function RejectedDrawer({ id, onClose, onChanged }: Props) {
                     <span className="break-all">{s.raw_path}</span>
                   </div>
                   <div className="text-fg-muted">
-                    {s.client_ip} · {t("rejected.details.body_bytes", { n: fmtNum(s.body_bytes) })}
+                    {/* Размер — размерным форматтером, а не fmtNum: тот сокращает до
+                        «2.00M», и с подписью «Б» получалось «2.00M Б». */}
+                    {s.client_ip} · {t("rejected.details.body_bytes", { n: fmtSize(s.body_bytes, sizeUnits) })}
                     {s.request_id ? ` · ${s.request_id}` : ""}
                   </div>
                 </div>

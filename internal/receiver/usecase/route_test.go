@@ -115,8 +115,12 @@ func TestRoute_Disabled(t *testing.T) {
 	}
 	u := NewRouteUsecase(stubNodeReader{node: node}, stubSenderClient{}, 5, logging.NewNoop())
 	_, err := u.Route(context.Background(), RouteInput{NodePath: "demo/path"})
-	if !errors.Is(err, domain.ErrNodeNotFound) {
-		t.Fatalf("want ErrNodeNotFound, got %v", err)
+	// §94.2: наружу выключенный узел по-прежнему неотличим от несуществующего
+	// (handler отвечает 404 «node not found»), но ошибка несёт настоящую
+	// причину — иначе в журнале отказов оператор видел бы «узла нет» и искал
+	// потерянный узел вместо того, чтобы его включить.
+	if !errors.Is(err, domain.ErrNodeDisabled) {
+		t.Fatalf("want ErrNodeDisabled, got %v", err)
 	}
 }
 

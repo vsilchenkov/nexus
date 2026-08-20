@@ -530,7 +530,12 @@ func classifyDomainError(err error) (status int, message string, reason domain.R
 		errors.Is(err, domain.ErrNodeNotAsyncIngress):
 		return http.StatusNotFound, "node not found", domain.RejectReasonNodeNotFound, false
 	case errors.Is(err, domain.ErrNodeDisabled):
-		return http.StatusServiceUnavailable, "node not available", domain.RejectReasonNodeDisabled, false
+		// ТОТ ЖЕ ответ, что у несуществующего узла: выключенный узел наружу не
+		// раскрывается (иначе перебором адресов вычисляется, какие интеграции
+		// существуют). Разница видна только в журнале §94 — там причина
+		// node_disabled, и оператор понимает, что узел надо включить, а не
+		// искать.
+		return http.StatusNotFound, "node not found", domain.RejectReasonNodeDisabled, false
 	case errors.Is(err, domain.ErrNodeMethodNotAllowed):
 		return http.StatusMethodNotAllowed, "http method not allowed for this node", domain.RejectReasonMethodNotAllowed, false
 	case errors.Is(err, domain.ErrURLParamRequired),
