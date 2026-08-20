@@ -77,6 +77,13 @@ const (
 
 	ActionAppSettingsUpdate = "app_settings.update"
 
+	// §94.6: работа с журналом отказов на входе. Оба действия меняют то, что
+	// видят остальные операторы (снятая группа исчезает из выдачи), поэтому
+	// подотчётны — иначе «кто убрал группу, по которой шло расследование»
+	// установить нечем.
+	ActionRejectedResolve = "rejected.resolve"
+	ActionRejectedDelete  = "rejected.delete"
+
 	ActionCHTemplateCreate = "ch_template.create"
 	ActionCHTemplateUpdate = "ch_template.update"
 	ActionCHTemplateDelete = "ch_template.delete"

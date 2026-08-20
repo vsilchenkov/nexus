@@ -419,6 +419,12 @@ func (a *App) Start(ctx context.Context) error {
 	serviceLogsUC := usecase.NewServiceLogsUsecase(rediscache.NewServiceLogReaderRedis(a.redis, a.logger), a.logger)
 	serviceLogsHandler := httpadapter.NewServiceLogsHandler(serviceLogsUC, a.logger)
 
+	// §94.6: журнал отказов на входе — вкладка «Логи → Отказы» (operator+).
+	// nodeRepo нужен подсказке «похоже на этот узел», teamRepo — резолву слога
+	// команды в область видимости вызывающего.
+	rejectedUC := usecase.NewRejectedUsecase(rejectedRepo, teamRepo, nodeRepo, auditUC, rejectRetention, a.logger)
+	rejectedHandler := httpadapter.NewRejectedHandler(rejectedUC, a.logger)
+
 	// Шаблоны CH-таблиц (§19). chTemplateRepo создан выше (для NodeUsecase);
 	// usecase/handler создаём всегда (GET работает без ClickHouse); provisioner
 	// может быть nil — Verify тогда вернёт 503.
@@ -766,6 +772,7 @@ func (a *App) Start(ctx context.Context) error {
 		AsyncQueue:    asyncQueueHandler,
 		ServiceLogs:   serviceLogsHandler,
 		Prefs:         prefHandler,
+		Rejected:      rejectedHandler,
 	}, mw)
 
 	// Реверс-прокси боевых эндпоинтов Receiver (§17.1, единый вход): Web
