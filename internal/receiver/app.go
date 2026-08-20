@@ -280,6 +280,19 @@ func (a *App) startBackgroundSubscribers(ctx context.Context, reader port.NodeRe
 		a.logger.Warn("seed log level from app_settings failed; using yaml level", a.logger.Err(err))
 	}
 	reloadSub.Register(reloader.SectionLogging, applyLogLevel)
+	// §94.5: срок хранения журнала отказов включает и выключает сбор. Сид
+	// стартового значения тем же Reloader'ом: до него коллектор пишет по флагу
+	// конфигурации, и первые секунды после старта журнал ведётся, даже если
+	// оператор его выключил — терять отказы из-за порядка инициализации хуже,
+	// чем записать несколько лишних (их снесёт ближайшая чистка).
+	if a.rejectLog != nil {
+		applyRejectLog := bootstrap.RejectLogReloader(a.pg, a.rejectLog, a.cipher, a.logger)
+		if err := applyRejectLog(ctx); err != nil {
+			a.logger.Warn("seed reject log retention from app_settings failed; collection stays on",
+				a.logger.Err(err))
+		}
+		reloadSub.Register(reloader.SectionGeneral, applyRejectLog)
+	}
 	a.reloadDone = safego.Go(a.logger, "receiver.reloadSubscriber", func() {
 		reloadSub.Run(ctx)
 	})

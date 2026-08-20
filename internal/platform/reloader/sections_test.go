@@ -20,6 +20,9 @@ func TestSectionsFor_AllIncludesEveryKnownSection(t *testing.T) {
 	want := []Section{
 		SectionSentry, SectionClickHouse, SectionNotifications,
 		SectionSecurity, SectionLogging, SectionMail,
+		// §94.5: срок хранения журнала отказов. Без разворота «применить все
+		// настройки» не тронул бы ни чистку в Web, ни включение сбора в Receiver.
+		SectionGeneral,
 	}
 	assert.ElementsMatch(t, want, got)
 	assert.NotContains(t, got, SectionAll)

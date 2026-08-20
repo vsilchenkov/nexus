@@ -5,6 +5,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"nexus/internal/domain"
 	chpf "nexus/internal/platform/clickhouse"
 	"nexus/internal/platform/config"
 	"nexus/internal/platform/crypto"
@@ -85,6 +86,40 @@ func applyLogLevelFromOverlay(o *appSettingsOverlay, ctl *LogController) {
 		}
 	}
 	ctl.Level.Set(slogLevelFromInt(ctl.fallbackLevel))
+}
+
+// RejectLogSwitch — переключатель сбора журнала отказов (§94.5). Реализуется
+// rejectlog.Collector; интерфейс объявлен здесь, чтобы bootstrap не зависел от
+// пакетов Receiver.
+type RejectLogSwitch interface {
+	SetEnabled(v bool)
+}
+
+// RejectLogReloader возвращает Reloader, который перечитывает срок хранения
+// журнала отказов и включает либо выключает сбор (§94.5).
+//
+// Ноль дней — это «журнал выключен», а не «хранить вечно»: одна ручка отвечает
+// и за срок, и за выключение. Значение nil означает «оператор ничего не задал»
+// и разворачивается в дефолт домена, то есть сбор идёт.
+//
+// Тот же Reloader используется как сид стартового значения — первый вызов
+// сразу после создания подписчика.
+func RejectLogReloader(pool *pgxpool.Pool, sw RejectLogSwitch, cipher *crypto.Cipher, logger logging.Logger) reloader.Reloader {
+	return func(ctx context.Context) error {
+		o, err := readAppSettings(ctx, pool, cipher, logger)
+		if err != nil {
+			return err
+		}
+		var days *int
+		if o != nil {
+			days = o.General.RejectedRetentionDays
+		}
+		retention := domain.RejectedRetentionOrDefault(days)
+		sw.SetEnabled(retention > 0)
+		logger.Info("reject log collection applied from app_settings",
+			logger.Int("retention_days", retention))
+		return nil
+	}
 }
 
 // WriterReloader — узкий интерфейс, который реализует chlog.WriterManager
