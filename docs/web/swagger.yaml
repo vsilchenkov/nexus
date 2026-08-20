@@ -2208,6 +2208,11 @@ definitions:
       total:
         type: integer
     type: object
+  internal_web_adapter_in_http.rejectedResolveAllResponse:
+    properties:
+      marked:
+        type: integer
+    type: object
   internal_web_adapter_in_http.rejectedSampleResponse:
     properties:
       at:
@@ -6617,6 +6622,26 @@ paths:
           schema:
             type: string
       summary: Выгрузка журнала отказов в CSV (§94.6).
+      tags:
+      - rejected
+  /api/rejected/resolve-all:
+    post:
+      description: 'Помечает ВСЕ непросмотренные группы, доступные вызывающему (оператор
+        — свою команду, администратор — все), намеренно игнорируя фильтры экрана:
+        кнопка обнуляет счётчик, а он считается по всей области видимости. Отметка
+        снимается сама, когда в группу приходит новый отказ.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.rejectedResolveAllResponse'
+        "403":
+          description: роль ниже operator
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      summary: Пометить просмотренными все отказы области видимости (§94.6).
       tags:
       - rejected
   /api/rejected/summary:

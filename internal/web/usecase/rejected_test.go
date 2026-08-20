@@ -26,6 +26,15 @@ type rejectedRepoStub struct {
 	resolvedID string
 	resolvedBy string
 	deletedID  string
+
+	resolveAllFilter port.RejectedFilter
+	resolveAllBy     string
+	resolveAllResult int
+}
+
+func (r *rejectedRepoStub) ResolveAllRejected(_ context.Context, f port.RejectedFilter, by string, _ time.Time) (int, error) {
+	r.resolveAllFilter, r.resolveAllBy = f, by
+	return r.resolveAllResult, nil
 }
 
 func (r *rejectedRepoStub) ListRejected(_ context.Context, f port.RejectedFilter) ([]*domain.RejectedGroup, error) {
@@ -216,6 +225,56 @@ func TestRejectedResolveDelete_ScopeAndAudit(t *testing.T) {
 	assert.ErrorIs(t, uc2.Resolve(context.Background(), RejectedScope{TeamID: "team-1"}, actor, "g2"),
 		domain.ErrRejectedGroupNotFound)
 	assert.Empty(t, foreign.resolvedID)
+}
+
+// TestRejectedResolveAll_ScopeAndReset (§94.6): массовая отметка идёт по ВСЕЙ
+// области видимости и игнорирует экранные фильтры — кнопка обещает обнулить
+// счётчик, а он считается не по видимой странице.
+func TestRejectedResolveAll_ScopeAndReset(t *testing.T) {
+	t.Parallel()
+
+	t.Run("operator marks only own team", func(t *testing.T) {
+		t.Parallel()
+		repo := &rejectedRepoStub{resolveAllResult: 4}
+		teams := &rejectedTeamRepo{team: &domain.Team{ID: "team-1", Slug: "vika"}}
+		uc := newRejectedUC(t, repo, teams, nil)
+
+		n, err := uc.ResolveAll(context.Background(),
+			RejectedScope{TeamID: "team-1"}, Actor{UserID: "u1", UserLogin: "operator"})
+		require.NoError(t, err)
+		assert.Equal(t, 4, n)
+		assert.Equal(t, []string{"vika"}, repo.resolveAllFilter.TeamSlugs)
+		assert.Equal(t, "operator", repo.resolveAllBy)
+		// Экранные условия не доезжают до запроса — иначе часть групп осталась
+		// бы непомеченной, а бейдж продолжал бы гореть.
+		assert.True(t, repo.resolveAllFilter.From.IsZero())
+		assert.Empty(t, repo.resolveAllFilter.Reasons)
+		assert.Empty(t, repo.resolveAllFilter.Query)
+		assert.False(t, repo.resolveAllFilter.IncludeResolved)
+	})
+
+	t.Run("admin marks everything", func(t *testing.T) {
+		t.Parallel()
+		repo := &rejectedRepoStub{resolveAllResult: 12}
+		uc := newRejectedUC(t, repo, &rejectedTeamRepo{}, nil)
+
+		n, err := uc.ResolveAll(context.Background(),
+			RejectedScope{IsAdmin: true}, Actor{UserID: "a1", UserLogin: "admin"})
+		require.NoError(t, err)
+		assert.Equal(t, 12, n)
+		assert.Nil(t, repo.resolveAllFilter.TeamSlugs, "nil = без ограничения по командам")
+	})
+
+	t.Run("nothing to mark", func(t *testing.T) {
+		t.Parallel()
+		repo := &rejectedRepoStub{resolveAllResult: 0}
+		uc := newRejectedUC(t, repo, &rejectedTeamRepo{}, nil)
+
+		n, err := uc.ResolveAll(context.Background(),
+			RejectedScope{IsAdmin: true}, Actor{UserID: "a1", UserLogin: "admin"})
+		require.NoError(t, err)
+		assert.Zero(t, n)
+	})
 }
 
 // TestRejectedSummary_IncludesResolved: «сколько отказов за сутки» не должно

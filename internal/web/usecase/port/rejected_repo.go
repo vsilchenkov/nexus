@@ -70,6 +70,12 @@ type RejectedRepo interface {
 	// ResolveRejected ставит отметку «разобрано». Нет записи →
 	// ErrRejectedGroupNotFound.
 	ResolveRejected(ctx context.Context, id, by string, at time.Time) error
+	// ResolveAllRejected помечает просмотренными ВСЕ неотмеченные группы,
+	// попадающие под фильтр, и возвращает их число. Фильтр здесь несёт только
+	// область видимости вызывающего: экранные условия (период, причина, поиск)
+	// сбрасывает usecase — кнопка обещает обнулить счётчик, а он считается по
+	// всей области видимости, а не по видимой странице.
+	ResolveAllRejected(ctx context.Context, f RejectedFilter, by string, at time.Time) (int, error)
 	// DeleteRejected удаляет группу вместе с клиентами и сэмплами (каскад).
 	DeleteRejected(ctx context.Context, id string) error
 	// DeleteRejectedOlderThan удаляет группы, в которые не приходило отказов

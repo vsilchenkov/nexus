@@ -245,6 +245,7 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			// их приоритетнее, и /summary не попадёт в :id.
 			rejected.GET("/summary", h.Rejected.Summary)
 			rejected.GET("/export.csv", h.Rejected.Export)
+			rejected.POST("/resolve-all", h.Rejected.ResolveAll)
 			rejected.GET("/:id", h.Rejected.Get)
 			rejected.POST("/:id/resolve", h.Rejected.Resolve)
 			rejected.DELETE("/:id", h.Rejected.Delete)

@@ -83,6 +83,11 @@ const (
 	// установить нечем.
 	ActionRejectedResolve = "rejected.resolve"
 	ActionRejectedDelete  = "rejected.delete"
+	// ActionRejectedResolveAll — массовая отметка «просмотрено» по всей области
+	// видимости. Отдельное действие, а не серия rejected.resolve: одним нажатием
+	// гасится весь счётчик, и в журнале это должно читаться как одно решение
+	// оператора, а не как сотня отдельных.
+	ActionRejectedResolveAll = "rejected.resolve_all"
 
 	ActionCHTemplateCreate = "ch_template.create"
 	ActionCHTemplateUpdate = "ch_template.update"

@@ -260,6 +260,31 @@ func (r *RejectedRepoPg) ResolveRejected(ctx context.Context, id, by string, at 
 	return nil
 }
 
+// ResolveAllRejected помечает просмотренными все неотмеченные группы области
+// видимости.
+//
+// Условия скоупа собирает тот же rejectedWhere, что и список: разъехавшись,
+// кнопка «пометить все» пометила бы не то, что человек видит в разделе — в том
+// числе чужие команды. Псевдоним `g` живёт только внутри подзапроса, поэтому
+// текст условий переиспользуется как есть, без переписывания псевдонимов.
+func (r *RejectedRepoPg) ResolveAllRejected(ctx context.Context, f port.RejectedFilter, by string, at time.Time) (int, error) {
+	// Отмеченные не трогаем: иначе у давно просмотренной группы переписалось бы
+	// имя и время, и «кто это смотрел» стало бы неправдой.
+	f.IncludeResolved = false
+	where, args := rejectedWhere(f)
+	q := fmt.Sprintf(`
+UPDATE rejected_groups SET resolved_at = $%d, resolved_by = $%d
+WHERE id IN (SELECT g.id%s WHERE 1=1%s)`,
+		len(args)+1, len(args)+2, rejectedGroupFrom, where)
+	args = append(args, at, by)
+
+	tag, err := r.db.Exec(ctx, q, args...)
+	if err != nil {
+		return 0, fmt.Errorf("resolve all rejected_groups: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 func (r *RejectedRepoPg) DeleteRejected(ctx context.Context, id string) error {
 	tag, err := r.db.Exec(ctx, `DELETE FROM rejected_groups WHERE id = $1::uuid`, id)
 	if err != nil {

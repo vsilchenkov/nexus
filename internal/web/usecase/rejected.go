@@ -191,6 +191,32 @@ func (u *RejectedUsecase) Resolve(ctx context.Context, sc RejectedScope, actor A
 	return nil
 }
 
+// ResolveAll помечает просмотренными все группы области видимости и возвращает
+// их число (§94.6).
+//
+// Экранные фильтры (период, причина, поиск) СБРАСЫВАЮТСЯ намеренно: кнопка
+// обещает обнулить счётчик, а он считается по всей области видимости. Пометить
+// «всё, что видно», и оставить бейдж гореть — худший из возможных исходов.
+func (u *RejectedUsecase) ResolveAll(ctx context.Context, sc RejectedScope, actor Actor) (int, error) {
+	scoped, err := u.applyScope(ctx, sc, port.RejectedFilter{})
+	if err != nil {
+		return 0, err
+	}
+	n, err := u.repo.ResolveAllRejected(ctx, scoped, actor.UserLogin, u.clock.Now().UTC())
+	if err != nil {
+		return 0, fmt.Errorf("rejected resolve all: %w", err)
+	}
+	if n == 0 {
+		// Нечего было помечать — не засоряем журнал аудита пустым действием.
+		u.logger.Debug("rejected resolve all: nothing to mark")
+		return 0, nil
+	}
+	u.audit.Log(ctx, actor, domain.ActionRejectedResolveAll, "rejected_group", "", map[string]any{
+		"marked": n,
+	})
+	return n, nil
+}
+
 // Delete удаляет группу вместе с клиентами и сэмплами.
 func (u *RejectedUsecase) Delete(ctx context.Context, sc RejectedScope, actor Actor, id string) error {
 	g, err := u.get(ctx, sc, id)

@@ -1,11 +1,12 @@
-import { useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Download } from "lucide-react";
+import { CheckCheck, Download } from "lucide-react";
 
 import { api } from "../../api/client";
 import { cn } from "../../lib/cn";
 import { fmtNum } from "../../lib/format";
+import { useConfirm } from "../../lib/confirm";
 import { useCurrentTeamID } from "../../lib/teams";
 import { useRoleAtLeast } from "../../lib/useCurrentRole";
 import { PREF_KEY_REJECTED_PERIOD, useTeamDefaultPeriod } from "../../lib/prefs";
@@ -46,6 +47,7 @@ export default function RejectedTab() {
   const qc = useQueryClient();
   const isAdmin = useRoleAtLeast("admin");
   const teamID = useCurrentTeamID();
+  const confirm = useConfirm();
 
   // Период — тот же механизм, что на остальных экранах (§92): преф команды →
   // глобальный преф → системные 24ч. Отдельный ключ: горизонт разбора отказов
@@ -94,6 +96,43 @@ export default function RejectedTab() {
     void qc.invalidateQueries({ queryKey: ["rejected"] });
   };
 
+  // markViewedLocally — строка, помеченную открытием карточки, НЕ выдёргиваем
+  // из выдачи: она гаснет на месте и уходит при следующем обновлении списка.
+  // Инвалидация здесь заставила бы таблицу перестроиться прямо под курсором, и
+  // соседние строки прыгали бы при каждом клике (§94.7).
+  const markViewedLocally = useCallback(
+    (id: string, at: string) => {
+      qc.setQueriesData<RejectedListResp>({ queryKey: ["rejected", "list"] }, (prev) =>
+        prev
+          ? {
+              ...prev,
+              groups: prev.groups.map((g) => (g.id === id ? { ...g, resolved_at: at } : g)),
+            }
+          : prev,
+      );
+      // Счётчики и бейдж, наоборот, обязаны обновиться сразу — ради них отметка
+      // и ставится.
+      void qc.invalidateQueries({ queryKey: ["rejected", "summary"] });
+    },
+    [qc],
+  );
+
+  const resolveAll = useMutation({
+    mutationFn: () => api.post<{ marked: number }>("/api/rejected/resolve-all", {}),
+    onSuccess: invalidate,
+  });
+
+  const onResolveAll = async () => {
+    // Подтверждение обязательно: одно нажатие гасит счётчик по ВСЕЙ области
+    // видимости, включая группы, которых сейчас не видно из-за фильтров.
+    const ok = await confirm({
+      title: t("rejected.resolve_all.title"),
+      message: t("rejected.resolve_all.confirm"),
+      confirmLabel: t("rejected.resolve_all.title"),
+    });
+    if (ok) resolveAll.mutate();
+  };
+
   return (
     <div className="space-y-3">
       {!collecting && (
@@ -136,6 +175,15 @@ export default function RejectedTab() {
             />
           </>
         )}
+        {/* Кнопка активна, только пока есть что помечать: с нулевым счётчиком
+            нажатие ничего не изменило бы, а выглядело бы как действие. */}
+        <Button
+          sm
+          onClick={() => void onResolveAll()}
+          disabled={resolveAll.isPending || !(summaryQ.data?.unresolved ?? 0)}
+        >
+          <CheckCheck className="h-3.5 w-3.5" /> {t("rejected.resolve_all.title")}
+        </Button>
         <a href={csvHref} download>
           <Button sm>
             <Download className="h-3.5 w-3.5" /> {t("rejected.export_csv")}
@@ -191,6 +239,7 @@ export default function RejectedTab() {
                   key={g.id}
                   group={g}
                   showTeam={isAdmin}
+                  active={g.id === openID}
                   onOpen={() => setOpenID(g.id)}
                 />
               ))}
@@ -221,7 +270,12 @@ export default function RejectedTab() {
       )}
 
       {openID && (
-        <RejectedDrawer id={openID} onClose={() => setOpenID(null)} onChanged={invalidate} />
+        <RejectedDrawer
+          id={openID}
+          onClose={() => setOpenID(null)}
+          onViewed={markViewedLocally}
+          onDeleted={invalidate}
+        />
       )}
     </div>
   );
@@ -230,10 +284,14 @@ export default function RejectedTab() {
 function RejectedRow({
   group,
   showTeam,
+  active,
   onOpen,
 }: {
   group: RejectedGroup;
   showTeam: boolean;
+  // active — карточка этой группы открыта в панели справа. Панель не модальная,
+  // и без подсветки было бы не видно, к какой строке она относится.
+  active: boolean;
   onOpen: () => void;
 }) {
   const { t } = useTranslation();
@@ -243,7 +301,9 @@ function RejectedRow({
       onClick={onOpen}
       className={cn(
         "cursor-pointer border-b border-line/60 last:border-0 hover:bg-bg-muted",
+        // Просмотренная гаснет, но остаётся на месте до обновления списка.
         group.resolved_at && "opacity-60",
+        active && "bg-bg-muted",
       )}
     >
       <td className="px-3 py-2 whitespace-nowrap">

@@ -11,12 +11,17 @@ import { type RejectedGroup } from "../../lib/rejected";
 // журнал отличает «отказов не было» от «сбор выключен», что фильтры доезжают
 // до запроса, и что колонка команды показывается только администратору.
 
-const { apiGet } = vi.hoisted(() => ({ apiGet: vi.fn() }));
+const { apiGet, apiPost } = vi.hoisted(() => ({ apiGet: vi.fn(), apiPost: vi.fn() }));
 
 vi.mock("../../api/client", async () => {
   const actual = await vi.importActual<typeof import("../../api/client")>("../../api/client");
-  return { ...actual, api: { ...actual.api, get: apiGet } };
+  return { ...actual, api: { ...actual.api, get: apiGet, post: apiPost } };
 });
+
+// Подтверждение массовой отметки — сразу «да»: сам диалог проверяется тестами
+// ConfirmProvider, здесь важно, что кнопка доходит до запроса.
+const { confirmMock } = vi.hoisted(() => ({ confirmMock: vi.fn(async () => true) }));
+vi.mock("../../lib/confirm", () => ({ useConfirm: () => confirmMock }));
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (k: string) => k }),
@@ -44,6 +49,7 @@ type ServerOpts = {
   groups?: RejectedGroup[];
   collecting?: boolean;
   retentionDays?: number;
+  unresolved?: number;
 };
 
 function mockServer(o: ServerOpts = {}) {
@@ -66,7 +72,7 @@ function mockServer(o: ServerOpts = {}) {
         count: 842,
         groups: groups.length,
         clients: 3,
-        unresolved: 1,
+        unresolved: o.unresolved ?? 1,
         retention_days: o.retentionDays ?? 30,
         collecting,
       });
@@ -92,6 +98,8 @@ function renderTab() {
 describe("RejectedTab", () => {
   beforeEach(() => {
     apiGet.mockReset();
+    apiPost.mockReset();
+    confirmMock.mockClear();
   });
 
   it("показывает группы отказов", async () => {
@@ -148,6 +156,29 @@ describe("RejectedTab", () => {
       );
       expect(call).toBeTruthy();
     });
+  });
+
+  it("«Пометить все» спрашивает подтверждение и шлёт resolve-all", async () => {
+    mockServer();
+    apiPost.mockResolvedValue({ marked: 3 });
+    renderTab();
+    await waitFor(() => expect(screen.getByText("telephony")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("rejected.resolve_all.title"));
+
+    await waitFor(() => expect(confirmMock).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(apiPost).toHaveBeenCalledWith("/api/rejected/resolve-all", {}),
+    );
+  });
+
+  it("«Пометить все» неактивна, когда непросмотренных нет", async () => {
+    mockServer({ unresolved: 0 });
+    renderTab();
+    await waitFor(() => expect(screen.getByText("telephony")).toBeInTheDocument());
+
+    const btn = screen.getByText("rejected.resolve_all.title").closest("button");
+    expect(btn).toBeDisabled();
   });
 
   it("ссылка выгрузки повторяет фильтры экрана", async () => {

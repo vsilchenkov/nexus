@@ -848,12 +848,16 @@
   },
   "rejected": {
     "summary": "Rejects: {{total}} · Clients: {{clients}} · Addresses: {{groups}}",
-    "unresolved": "⚠ {{n}} unresolved",
+    "unresolved": "⚠ {{n}} unviewed",
     "empty": "No rejected requests for the selected period",
     "empty_disabled": "The rejected-request log is off",
     "disabled_hint": "The rejected-request log is off: retention is set to zero and stored records were deleted.",
     "disabled_link": "Settings → General",
     "export_csv": "Download CSV",
+    "resolve_all": {
+      "title": "Mark all as viewed",
+      "confirm": "All unviewed rejection groups will be marked as viewed and the badge will reset. Nothing is deleted; a new rejection makes the group unviewed again."
+    },
     "set_default_period_hint": "Set as the default period for the rejected-request log",
     "shown_of_total": "Showing {{shown}} of {{total}}",
     "retention_hint": "Records are kept for {{days}} days and then deleted automatically",
@@ -861,7 +865,7 @@
     "filter": {
       "all_reasons": "All reasons",
       "search_placeholder": "Path, IP, host, User-Agent…",
-      "include_resolved": "Show resolved"
+      "include_resolved": "Show viewed"
     },
     "columns": {
       "reason": "Reason",
@@ -885,7 +889,7 @@
     },
     "details": {
       "seen": "First {{first}} · last {{last}} · requests: {{total}}",
-      "resolved_by": "Resolved by {{who}}, {{when}}",
+      "resolved_by": "Viewed by {{who}}, {{when}}",
       "suggestion": "Looks like node “{{path}}”",
       "open_node": "Open node",
       "clients": "Clients",
@@ -893,8 +897,9 @@
       "no_clients": "No clients recorded",
       "no_samples": "No requests stored",
       "body_bytes": "body {{n}}",
-      "resolve": "Mark as resolved",
-      "delete": "Delete group"
+      "no_body": "no body",
+      "request_id": "request_id:",
+            "delete": "Delete group"
     }
   },
   "logs": {

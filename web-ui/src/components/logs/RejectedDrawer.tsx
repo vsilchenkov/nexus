@@ -1,29 +1,35 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Check, ExternalLink, Trash2, X } from "lucide-react";
+import { ExternalLink, Trash2, X } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { api } from "../../api/client";
 import { fmtNum, fmtSize } from "../../lib/format";
 import { reasonLabelKey, type RejectedDetails } from "../../lib/rejected";
-import { Button, ErrorAlert } from "../ui";
+import { Button, CopyButton, ErrorAlert } from "../ui";
 
 type Props = {
   id: string;
   onClose: () => void;
-  // onChanged — список и сводку нужно перечитать: разобранная группа исчезает
-  // из выдачи, удалённая — тем более.
-  onChanged: () => void;
+  // onViewed — группа помечена просмотренной при открытии карточки (§94.7):
+  // счётчики надо перечитать, а строку списка — приглушить на месте.
+  onViewed: (id: string, at: string) => void;
+  // onDeleted — группы больше нет, список перечитывается целиком.
+  onDeleted: () => void;
 };
 
 // RejectedDrawer — карточка группы отказов (§94.7): клиенты, последние
-// запросы, подсказка похожего узла и действия «разобрано» / «удалить».
+// запросы, подсказка похожего узла и удаление группы.
 //
-// Панель справа, а не диалог по центру: список остаётся на виду, и по нему
-// видно, из какой строки открыта карточка. Закрывается Esc и крестиком —
-// клик по подложке НЕ закрывает (общее правило диалогов §21).
-export function RejectedDrawer({ id, onClose, onChanged }: Props) {
+// Панель НЕ модальная: подложки нет, таблица под ней остаётся кликабельной, и
+// клик по другой строке переключает карточку без закрытия текущей. Закрывается
+// Esc и крестиком.
+//
+// Открытие карточки = просмотр: непросмотренная группа помечается сама, ручной
+// кнопки нет. Иначе счётчик непросмотренных приходилось бы гасить вторым
+// действием уже после того, как человек всё посмотрел.
+export function RejectedDrawer({ id, onClose, onViewed, onDeleted }: Props) {
   const { t } = useTranslation();
   // Единицы размера — локализованные (§42-доп), тот же приём, что в логах узла.
   const sizeUnits = t("logs.size_units").split("|");
@@ -39,17 +45,10 @@ export function RejectedDrawer({ id, onClose, onChanged }: Props) {
     queryFn: () => api.get<RejectedDetails>(`/api/rejected/${id}`),
   });
 
-  const resolve = useMutation({
-    mutationFn: () => api.post(`/api/rejected/${id}/resolve`, {}),
-    onSuccess: () => {
-      onChanged();
-      onClose();
-    },
-  });
   const remove = useMutation({
     mutationFn: () => api.del(`/api/rejected/${id}`),
     onSuccess: () => {
-      onChanged();
+      onDeleted();
       onClose();
     },
   });
@@ -57,9 +56,23 @@ export function RejectedDrawer({ id, onClose, onChanged }: Props) {
   const g = q.data?.group;
   const reasonKey = g ? reasonLabelKey(g.reason) : "";
 
+  // Отметка «просмотрено» — ровно одна на открытие группы. markedRef держит id
+  // уже помеченной: без него перерисовка панели слала бы запрос повторно, а
+  // переключение между строками — на каждый рендер.
+  const markedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!g || g.resolved_at || markedRef.current === g.id) return;
+    markedRef.current = g.id;
+    const at = new Date().toISOString();
+    void api.post(`/api/rejected/${g.id}/resolve`, {}).then(() => onViewed(g.id, at));
+  }, [g, onViewed]);
+
+  // Ни подложки, ни перехвата кликов: панель занимает правый край, а список под
+  // ней остаётся рабочим — клик по другой строке переключает карточку (§94.7).
+  // z-40 ниже модалок приложения (z-50), чтобы диалог подтверждения ложился
+  // поверх панели, а не под неё.
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/40">
-      <aside className="flex h-full w-full max-w-xl flex-col overflow-hidden border-l border-line-strong bg-app shadow-2xl">
+    <aside className="fixed bottom-0 right-0 top-0 z-40 flex w-full max-w-xl flex-col overflow-hidden border-l border-line-strong bg-app shadow-2xl">
         <div className="flex shrink-0 items-start justify-between gap-3 border-b border-line px-5 py-4">
           <div className="min-w-0">
             <h3 className="break-all text-[15px] font-semibold">{g?.node_path ?? "…"}</h3>
@@ -152,11 +165,29 @@ export function RejectedDrawer({ id, onClose, onChanged }: Props) {
                     <span>{s.http_method}</span>
                     <span className="break-all">{s.raw_path}</span>
                   </div>
-                  <div className="text-fg-muted">
-                    {/* Размер — размерным форматтером, а не fmtNum: тот сокращает до
-                        «2.00M», и с подписью «Б» получалось «2.00M Б». */}
-                    {s.client_ip} · {t("rejected.details.body_bytes", { n: fmtSize(s.body_bytes, sizeUnits) })}
-                    {s.request_id ? ` · ${s.request_id}` : ""}
+                  <div className="flex flex-wrap items-center gap-x-1.5 text-fg-muted">
+                    <span>{s.client_ip}</span>
+                    <span aria-hidden>·</span>
+                    {/* Тела в журнале нет НИКОГДА — хранится только его размер
+                        (§94.9). При нуле пишем «без тела»: «тело —» читалось
+                        как сбой, хотя означало «тела не было». Размер —
+                        размерным форматтером, иначе fmtNum давал «2.00M Б». */}
+                    <span>
+                      {s.body_bytes > 0
+                        ? t("rejected.details.body_bytes", { n: fmtSize(s.body_bytes, sizeUnits) })
+                        : t("rejected.details.no_body")}
+                    </span>
+                    {s.request_id && (
+                      <>
+                        <span aria-hidden>·</span>
+                        {/* request_id (§30) — сквозной идентификатор запроса: по
+                            нему он ищется во вкладке «Сервисы» и в Sentry. Без
+                            подписи голый UUID читался как «что-то про тело». */}
+                        <span>{t("rejected.details.request_id")}</span>
+                        <span className="select-all">{s.request_id}</span>
+                        <CopyButton value={s.request_id} />
+                      </>
+                    )}
                   </div>
                 </div>
               ))}
@@ -167,19 +198,14 @@ export function RejectedDrawer({ id, onClose, onChanged }: Props) {
           </section>
         </div>
 
-        <div className="flex shrink-0 items-center justify-between gap-2 border-t border-line px-5 py-3.5">
-          <Button
-            sm
-            onClick={() => resolve.mutate()}
-            disabled={resolve.isPending || !g || !!g.resolved_at}
-          >
-            <Check className="h-3.5 w-3.5" /> {t("rejected.details.resolve")}
-          </Button>
-          <Button sm variant="danger" onClick={() => remove.mutate()} disabled={remove.isPending || !g}>
-            <Trash2 className="h-3.5 w-3.5" /> {t("rejected.details.delete")}
-          </Button>
-        </div>
-      </aside>
-    </div>
+      {/* Кнопки «пометить» здесь нет: отметка ставится самим открытием
+          карточки. Осталось только удаление — оно необратимо и должно быть
+          явным действием. */}
+      <div className="flex shrink-0 items-center justify-end gap-2 border-t border-line px-5 py-3.5">
+        <Button sm variant="danger" onClick={() => remove.mutate()} disabled={remove.isPending || !g}>
+          <Trash2 className="h-3.5 w-3.5" /> {t("rejected.details.delete")}
+        </Button>
+      </div>
+    </aside>
   );
 }

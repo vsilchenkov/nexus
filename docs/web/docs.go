@@ -5128,6 +5128,32 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/rejected/resolve-all": {
+            "post": {
+                "description": "Помечает ВСЕ непросмотренные группы, доступные вызывающему (оператор — свою команду, администратор — все), намеренно игнорируя фильтры экрана: кнопка обнуляет счётчик, а он считается по всей области видимости. Отметка снимается сама, когда в группу приходит новый отказ.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "rejected"
+                ],
+                "summary": "Пометить просмотренными все отказы области видимости (§94.6).",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.rejectedResolveAllResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "роль ниже operator",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/rejected/summary": {
             "get": {
                 "description": "Число отказов, групп, разных клиентов и неразобранных групп — для строки на рабочем столе и бейджа раздела. Разобранные группы в счётчики входят: «сколько отказов за сутки» не должно меняться от нажатия «разобрано».",
@@ -9695,6 +9721,14 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.rejectedResolveAllResponse": {
+            "type": "object",
+            "properties": {
+                "marked": {
                     "type": "integer"
                 }
             }

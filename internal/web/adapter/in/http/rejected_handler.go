@@ -102,6 +102,11 @@ type rejectedSuggestionResponse struct {
 	Distance int    `json:"distance"`
 }
 
+// rejectedResolveAllResponse — сколько групп помечено массовой отметкой.
+type rejectedResolveAllResponse struct {
+	Marked int `json:"marked"`
+}
+
 // rejectedSummaryResponse — счётчики за период.
 type rejectedSummaryResponse struct {
 	Count      int64 `json:"count"`
@@ -229,6 +234,23 @@ func (h *RejectedHandler) Resolve(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// ResolveAll godoc
+// @Summary  Пометить просмотренными все отказы области видимости (§94.6).
+// @Description  Помечает ВСЕ непросмотренные группы, доступные вызывающему (оператор — свою команду, администратор — все), намеренно игнорируя фильтры экрана: кнопка обнуляет счётчик, а он считается по всей области видимости. Отметка снимается сама, когда в группу приходит новый отказ.
+// @Tags     rejected
+// @Produce  json
+// @Success  200  {object}  rejectedResolveAllResponse
+// @Failure  403  {object}  ErrorResponse  "роль ниже operator"
+// @Router   /api/rejected/resolve-all [post]
+func (h *RejectedHandler) ResolveAll(c *gin.Context) {
+	n, err := h.uc.ResolveAll(c.Request.Context(), h.scope(c), actorFromCtx(c))
+	if err != nil {
+		h.fail(c, err, "rejected.resolve_all")
+		return
+	}
+	c.JSON(http.StatusOK, rejectedResolveAllResponse{Marked: n})
 }
 
 // Delete godoc

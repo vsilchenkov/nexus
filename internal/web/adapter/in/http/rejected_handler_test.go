@@ -88,6 +88,7 @@ func TestRejectedRoutesDoNotConflict(t *testing.T) {
 		g.GET("", func(c *gin.Context) { got = append(got, "list") })
 		g.GET("/summary", func(c *gin.Context) { got = append(got, "summary") })
 		g.GET("/export.csv", func(c *gin.Context) { got = append(got, "export") })
+		g.POST("/resolve-all", func(c *gin.Context) { got = append(got, "resolve-all") })
 		g.GET("/:id", func(c *gin.Context) { got = append(got, "get:"+c.Param("id")) })
 		g.POST("/:id/resolve", func(c *gin.Context) { got = append(got, "resolve:"+c.Param("id")) })
 		g.DELETE("/:id", func(c *gin.Context) { got = append(got, "delete:"+c.Param("id")) })
@@ -96,6 +97,7 @@ func TestRejectedRoutesDoNotConflict(t *testing.T) {
 			httptest.NewRequest(http.MethodGet, "/api/rejected", nil),
 			httptest.NewRequest(http.MethodGet, "/api/rejected/summary", nil),
 			httptest.NewRequest(http.MethodGet, "/api/rejected/export.csv", nil),
+			httptest.NewRequest(http.MethodPost, "/api/rejected/resolve-all", nil),
 			httptest.NewRequest(http.MethodGet, "/api/rejected/abc-123", nil),
 			httptest.NewRequest(http.MethodPost, "/api/rejected/abc-123/resolve", nil),
 			httptest.NewRequest(http.MethodDelete, "/api/rejected/abc-123", nil),
@@ -105,7 +107,7 @@ func TestRejectedRoutesDoNotConflict(t *testing.T) {
 	})
 
 	assert.Equal(t, []string{
-		"list", "summary", "export", "get:abc-123", "resolve:abc-123", "delete:abc-123",
+		"list", "summary", "export", "resolve-all", "get:abc-123", "resolve:abc-123", "delete:abc-123",
 	}, got, "статический сегмент не должен попадать в :id")
 }
 
