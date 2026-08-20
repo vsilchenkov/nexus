@@ -134,7 +134,12 @@ export default function RejectedTab() {
   };
 
   return (
-    <div className="space-y-3">
+    // При открытой панели контент ужимается вправо, а не уезжает под неё.
+    // Найдено на стенде: панель шириной 36rem накрывала правую половину
+    // таблицы, и клик по строке в перекрытой области не доходил вовсе — то
+    // есть немодальность была только на вид. Отступ только с xl: на узких
+    // экранах панель всё равно занимает всю ширину.
+    <div className={cn("space-y-3", openID && "xl:pr-[37rem]")}>
       {!collecting && (
         <Card className="border-warn/40 bg-warn/5 p-3 text-[13px]">
           {t("rejected.disabled_hint")}{" "}
