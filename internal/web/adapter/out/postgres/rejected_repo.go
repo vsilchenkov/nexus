@@ -282,6 +282,21 @@ func (r *RejectedRepoPg) DeleteRejectedOlderThan(ctx context.Context, cutoff tim
 	return int(tag.RowsAffected()), nil
 }
 
+func (r *RejectedRepoPg) TrimRejectedGroups(ctx context.Context, keep int) (int, error) {
+	if keep <= 0 {
+		return 0, nil
+	}
+	// NOT IN по подзапросу с LIMIT: тот же приём, что у кольца сэмплов. Индекс
+	// rejected_groups_last_seen_idx обслуживает и подзапрос, и сортировку.
+	tag, err := r.db.Exec(ctx, `
+DELETE FROM rejected_groups WHERE id NOT IN (
+    SELECT id FROM rejected_groups ORDER BY last_seen DESC LIMIT $1)`, keep)
+	if err != nil {
+		return 0, fmt.Errorf("trim rejected_groups: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 func (r *RejectedRepoPg) PurgeRejected(ctx context.Context) (int, error) {
 	tag, err := r.db.Exec(ctx, `DELETE FROM rejected_groups`)
 	if err != nil {

@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"nexus/internal/domain"
-	"nexus/internal/web/usecase/port"
 )
 
 // TestRejectedFilterFromQuery: разбор фильтров выдачи (§94.6). Общая функция
@@ -165,17 +164,4 @@ func TestRejectedSummaryResponse_CarriesState(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"retention_days":0`)
 	assert.Contains(t, string(raw), `"collecting":false`)
-}
-
-// TestRejectedFilter_PortContract: пустой не-nil список команд означает «ни
-// одной», nil — «без ограничения». Контракт закреплён тестом, потому что
-// перепутать их — это молчаливая утечка чужих групп.
-func TestRejectedFilter_PortContract(t *testing.T) {
-	t.Parallel()
-
-	var f port.RejectedFilter
-	assert.Nil(t, f.TeamSlugs)
-	f.TeamSlugs = []string{}
-	assert.NotNil(t, f.TeamSlugs)
-	assert.Empty(t, f.TeamSlugs)
 }

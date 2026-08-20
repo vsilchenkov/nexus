@@ -68,11 +68,14 @@ type Metrics struct {
 	// «шаблон применился» от «шаблон не смог» нельзя.
 	AckRenderFailedTotal *prometheus.CounterVec
 	// IngressRejectedTotal — §94: запросы, отклонённые на входе, по коду
-	// причины, HTTP-статусу и слогу команды из адреса.
+	// причины и HTTP-статусу.
 	//
-	// Ни узла, ни адреса клиента в метках нет намеренно: путь при 404 задаёт
-	// кто угодно, а IP не ограничен ничем — детализацию даёт журнал отказов,
-	// а метрика отвечает только на вопрос «сколько и почему».
+	// Метки — ТОЛЬКО замкнутые множества. Ни узла, ни клиента, ни слога команды
+	// здесь нет намеренно: при 404 всё это задаёт кто угодно снаружи, а метка
+	// входит в идентичность ряда — сканер по случайным адресам плодил бы ряды
+	// без предела, и они остаются в Prometheus навсегда (ровно та причина, по
+	// которой node у nexus_requests_total стал `<unresolved>`). Кто и куда
+	// стучится, показывает журнал отказов; метрика отвечает «сколько и почему».
 	IngressRejectedTotal *prometheus.CounterVec
 	// IngressRejectDroppedTotal — §94.4: отказы, не доехавшие до журнала.
 	// Метка cause: "queue_full" (всплеск обогнал сброс), "groups_full" (слишком
@@ -202,15 +205,13 @@ func New(service string, opts ...Option) *Metrics {
 			ConstLabels: constLabels,
 		}, []string{"node"}),
 
-		// §94: отказы на входе. Метки — только замкнутые множества: reason из
-		// domain.RejectReason, status из ответов Receiver, team — слог из
-		// адреса (обрезан писателем и в норме совпадает с существующей
-		// командой). Путь и IP сюда не попадают — они неограниченны.
+		// §94: отказы на входе. reason — из domain.RejectReason, status — из
+		// ответов Receiver; оба множества конечны и известны заранее.
 		IngressRejectedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name:        "nexus_ingress_rejected_total",
-			Help:        "Requests rejected by Receiver on ingress, by reason code, HTTP status and team slug (§94).",
+			Help:        "Requests rejected by Receiver on ingress, by reason code and HTTP status (§94).",
 			ConstLabels: constLabels,
-		}, []string{"reason", "status", "team"}),
+		}, []string{"reason", "status"}),
 
 		// §94.4: потери журнала отказов. Растёт — журнал неполон.
 		IngressRejectDroppedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -514,9 +515,9 @@ func (m *Metrics) IncAsyncIngressRejected(node string) {
 }
 
 // IncIngressRejected — §94: запрос отклонён на входе. reason — код из
-// domain.RejectReason, team — слог команды из адреса.
-func (m *Metrics) IncIngressRejected(reason, status, team string) {
-	m.IngressRejectedTotal.WithLabelValues(reason, status, team).Inc()
+// domain.RejectReason, status — HTTP-код ответа.
+func (m *Metrics) IncIngressRejected(reason, status string) {
+	m.IngressRejectedTotal.WithLabelValues(reason, status).Inc()
 }
 
 // IncIngressRejectDropped — §94.4: запись журнала отказов потеряна. cause —

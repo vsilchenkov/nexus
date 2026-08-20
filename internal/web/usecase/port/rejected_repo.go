@@ -76,6 +76,11 @@ type RejectedRepo interface {
 	// с cutoff, и возвращает их число. Граница по last_seen: пока в группу
 	// падают новые отказы, она живая (§94.5).
 	DeleteRejectedOlderThan(ctx context.Context, cutoff time.Time) (int, error)
+	// TrimRejectedGroups оставляет keep самых свежих групп (по last_seen),
+	// остальные удаляет, и возвращает число удалённых. Предохранитель от
+	// сканера: он создаёт новую группу на каждый случайный путь, и одного
+	// срока хранения мало (§94.5).
+	TrimRejectedGroups(ctx context.Context, keep int) (int, error)
 	// PurgeRejected удаляет журнал целиком — режим «сбор выключен» (срок 0).
 	PurgeRejected(ctx context.Context) (int, error)
 }

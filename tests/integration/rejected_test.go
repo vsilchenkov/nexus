@@ -262,6 +262,59 @@ func TestRejectedRetention_DeleteAndPurge_E2E(t *testing.T) {
 	assert.Empty(t, groups)
 }
 
+// TestRejectedTrim_CapsStoredGroups_E2E (§94.3): число групп в хранилище
+// ограничено — сканер по случайным путям создаёт новую группу на каждую
+// попытку, и одного срока хранения против него мало.
+func TestRejectedTrim_CapsStoredGroups_E2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pool, cleanup := startPostgres(t, ctx)
+	defer cleanup()
+
+	writer := rejectlog.NewRepo(pool)
+	reader := pgrepo.NewRejectedRepoPg(pool, logging.NewNoop())
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// Десять групп с разным last_seen: чем больше индекс, тем свежее.
+	var aggs []domain.RejectedAggregate
+	for i := range 10 {
+		at := now.Add(time.Duration(i) * time.Minute)
+		aggs = append(aggs, rejectedAgg(rejectedKey("default", fmt.Sprintf("scan-%02d", i)), 1, at, at,
+			[]domain.RejectedClient{rejectedClient("10.0.0.1", 1, at)},
+			[]domain.RejectedSample{rejectedSample("10.0.0.1", at, "/api/v1/scan")}))
+	}
+	require.NoError(t, writer.Flush(ctx, aggs))
+
+	deleted, err := reader.TrimRejectedGroups(ctx, 3)
+	require.NoError(t, err)
+	assert.Equal(t, 7, deleted)
+
+	groups, err := reader.ListRejected(ctx, port.RejectedFilter{})
+	require.NoError(t, err)
+	require.Len(t, groups, 3)
+	// Остаются САМЫЕ СВЕЖИЕ: журнал отвечает на вопрос «кто стучится сейчас».
+	assert.Equal(t, "scan-09", groups[0].NodePath)
+	assert.Equal(t, "scan-07", groups[2].NodePath)
+
+	// Каскад отработал и здесь: сирот не осталось.
+	var orphans int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT
+		(SELECT count(*) FROM rejected_clients c LEFT JOIN rejected_groups g ON g.id = c.group_id WHERE g.id IS NULL)
+		+ (SELECT count(*) FROM rejected_samples s LEFT JOIN rejected_groups g ON g.id = s.group_id WHERE g.id IS NULL)`).
+		Scan(&orphans))
+	assert.Zero(t, orphans)
+
+	// keep <= 0 — не «удалить всё», а «ничего не делать»: иначе опечатка в
+	// вызове стёрла бы журнал целиком.
+	deleted, err = reader.TrimRejectedGroups(ctx, 0)
+	require.NoError(t, err)
+	assert.Zero(t, deleted)
+	groups, err = reader.ListRejected(ctx, port.RejectedFilter{})
+	require.NoError(t, err)
+	assert.Len(t, groups, 3)
+}
+
 // TestRejectedScope_TeamAndUnknownSlug_E2E (§94.6): фильтр по слогу ограничивает
 // выдачу, а группа с несуществующим слогом опознаётся как «команда не найдена».
 func TestRejectedScope_TeamAndUnknownSlug_E2E(t *testing.T) {

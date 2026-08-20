@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"nexus/internal/domain"
 	"nexus/internal/platform/clock"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase/port"
@@ -130,8 +131,21 @@ func (h *RejectedHousekeeping) Cycle(ctx context.Context) {
 			h.logger.Int("deleted", n),
 			h.logger.Int("retention_days", days),
 			h.logger.Str("cutoff", cutoff.Format(time.RFC3339)))
+	} else {
+		h.logger.Debug("rejected housekeeping: nothing to delete",
+			h.logger.Int("retention_days", days))
+	}
+
+	// Предохранитель от сканера: срока хранения мало, потому что каждая новая
+	// попытка по случайному пути — это НОВАЯ группа. Держим самые свежие.
+	trimmed, err := h.repo.TrimRejectedGroups(ctx, domain.RejectedMaxStoredGroups)
+	if err != nil {
+		h.logger.ErrorWithOp("rejected housekeeping trim failed", err, "housekeeping.rejected")
 		return
 	}
-	h.logger.Debug("rejected housekeeping: nothing to delete",
-		h.logger.Int("retention_days", days))
+	if trimmed > 0 {
+		h.logger.Warn("rejected housekeeping: group limit reached, oldest groups dropped",
+			h.logger.Int("deleted", trimmed),
+			h.logger.Int("limit", domain.RejectedMaxStoredGroups))
+	}
 }

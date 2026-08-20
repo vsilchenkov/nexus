@@ -41,7 +41,7 @@ type RejectSink interface {
 // журнала: метрика обязана считать отказы и тогда, когда журнал выключен
 // настройкой — иначе выключение сбора делает шину слепой целиком.
 type rejectMetrics interface {
-	IncIngressRejected(reason, status, team string)
+	IncIngressRejected(reason, status string)
 }
 
 // rejectHeaderWhitelist — заголовки, попадающие в сэмпл (§94.9).
@@ -87,7 +87,10 @@ func RejectLogMiddleware(sink RejectSink, m rejectMetrics) gin.HandlerFunc {
 			teamSlug = domain.DefaultTeamSlug
 		}
 		if m != nil {
-			m.IncIngressRejected(string(reason), statusLabel(status), teamSlug)
+			// Слог команды в метку НЕ уходит: при 404 его задаёт клиент, и
+			// кардинальность стала бы неограниченной. Разрез по командам даёт
+			// журнал (§94.8).
+			m.IncIngressRejected(string(reason), statusLabel(status))
 		}
 		if sink == nil {
 			return

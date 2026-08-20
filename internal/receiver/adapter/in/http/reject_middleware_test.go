@@ -19,10 +19,10 @@ type captureSink struct{ samples []rejectlog.Sample }
 func (s *captureSink) Add(x rejectlog.Sample) { s.samples = append(s.samples, x) }
 
 // captureMetrics — счётчик отказов для тестов.
-type captureMetrics struct{ calls [][3]string }
+type captureMetrics struct{ calls [][2]string }
 
-func (m *captureMetrics) IncIngressRejected(reason, status, team string) {
-	m.calls = append(m.calls, [3]string{reason, status, team})
+func (m *captureMetrics) IncIngressRejected(reason, status string) {
+	m.calls = append(m.calls, [2]string{reason, status})
 }
 
 // runReject прогоняет один запрос через цепочку с журналом отказов.
@@ -72,7 +72,8 @@ func TestRejectLogMiddleware_RecordsDomainReason(t *testing.T) {
 	assert.Equal(t, int32(http.StatusServiceUnavailable), s.Status)
 	assert.Equal(t, "axios/1.6", s.UserAgent)
 	require.Len(t, m.calls, 1)
-	assert.Equal(t, [3]string{"node_disabled", "503", "vika"}, m.calls[0])
+	// Слога команды в метке нет: при 404 его задаёт клиент (§94.8).
+	assert.Equal(t, [2]string{"node_disabled", "503"}, m.calls[0])
 }
 
 // TestRejectLogMiddleware_FallsBackToStatus: отказы, вернувшиеся не из
@@ -179,7 +180,6 @@ func TestRejectLogMiddleware_ShortFormTeam(t *testing.T) {
 	assert.Equal(t, domain.DefaultTeamSlug, sink.samples[0].Key.TeamSlug)
 	assert.Equal(t, "telephony", sink.samples[0].Key.NodePath)
 	require.Len(t, m.calls, 1)
-	assert.Equal(t, domain.DefaultTeamSlug, m.calls[0][2])
 }
 
 // TestRejectLogMiddleware_LegacyVerbForm: форма с сегментом метода

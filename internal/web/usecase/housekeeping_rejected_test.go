@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,17 +17,32 @@ import (
 )
 
 // fakeRejectedRepo — заглушка порта журнала отказов: запоминает вызовы чистки.
+//
+// Под мьютексом: фоновый цикл Run зовёт репозиторий из своей горутины, а тест
+// читает счётчики из своей — без синхронизации это гонка (найдена -race).
 type fakeRejectedRepo struct {
 	port.RejectedRepo
 
+	mu        sync.Mutex
 	cutoffs   []time.Time
 	purges    int
+	trims     []int
 	deleted   int
+	trimmed   int
 	deleteErr error
 	purgeErr  error
 }
 
+func (r *fakeRejectedRepo) TrimRejectedGroups(_ context.Context, keep int) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.trims = append(r.trims, keep)
+	return r.trimmed, nil
+}
+
 func (r *fakeRejectedRepo) DeleteRejectedOlderThan(_ context.Context, cutoff time.Time) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.cutoffs = append(r.cutoffs, cutoff)
 	if r.deleteErr != nil {
 		return 0, r.deleteErr
@@ -35,11 +51,38 @@ func (r *fakeRejectedRepo) DeleteRejectedOlderThan(_ context.Context, cutoff tim
 }
 
 func (r *fakeRejectedRepo) PurgeRejected(_ context.Context) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.purges++
 	if r.purgeErr != nil {
 		return 0, r.purgeErr
 	}
 	return r.deleted, nil
+}
+
+// cutoffCount/purgeCount — чтение счётчиков из горутины теста.
+func (r *fakeRejectedRepo) cutoffCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.cutoffs)
+}
+
+func (r *fakeRejectedRepo) purgeCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.purges
+}
+
+func (r *fakeRejectedRepo) trimKeeps() []int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]int(nil), r.trims...)
+}
+
+func (r *fakeRejectedRepo) cutoffAt(i int) time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.cutoffs[i]
 }
 
 // TestRejectRetentionProvider: ноль — это «сбор выключен», а не «не задано».
@@ -79,9 +122,28 @@ func TestRejectedHousekeepingCycle_DeletesByRetention(t *testing.T) {
 		WithRejectedHousekeepingClock(clock.Func(func() time.Time { return now })))
 	hk.Cycle(context.Background())
 
-	require.Len(t, repo.cutoffs, 1)
-	assert.Equal(t, now.AddDate(0, 0, -7), repo.cutoffs[0])
-	assert.Zero(t, repo.purges, "при заданном сроке журнал не вычищается целиком")
+	require.Equal(t, 1, repo.cutoffCount())
+	assert.Equal(t, now.AddDate(0, 0, -7), repo.cutoffAt(0))
+	assert.Zero(t, repo.purgeCount(), "при заданном сроке журнал не вычищается целиком")
+	// Предохранитель от сканера: одного срока хранения мало — каждая попытка по
+	// случайному пути создаёт НОВУЮ группу.
+	assert.Equal(t, []int{domain.RejectedMaxStoredGroups}, repo.trimKeeps())
+}
+
+// TestRejectedHousekeepingCycle_SkipsTrimWhenDisabled: при выключенном журнале
+// вычищается всё, и подрезать уже нечего.
+func TestRejectedHousekeepingCycle_SkipsTrimWhenDisabled(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeRejectedRepo{}
+	ret := NewRejectRetentionProvider()
+	zero := 0
+	ret.Set(&zero)
+
+	NewRejectedHousekeeping(repo, ret, logging.NewNoop()).Cycle(context.Background())
+
+	assert.Equal(t, 1, repo.purgeCount())
+	assert.Empty(t, repo.trimKeeps())
 }
 
 // TestRejectedHousekeepingCycle_PurgesWhenDisabled: срок 0 удаляет накопленное
@@ -98,8 +160,8 @@ func TestRejectedHousekeepingCycle_PurgesWhenDisabled(t *testing.T) {
 	hk := NewRejectedHousekeeping(repo, ret, logging.NewNoop())
 	hk.Cycle(context.Background())
 
-	assert.Equal(t, 1, repo.purges)
-	assert.Empty(t, repo.cutoffs, "по сроку не удаляем — удалять нечего, журнал выключен")
+	assert.Equal(t, 1, repo.purgeCount())
+	assert.Zero(t, repo.cutoffCount(), "по сроку не удаляем — удалять нечего, журнал выключен")
 }
 
 // TestRejectedHousekeepingCycle_ErrorsAreLoggedNotPanicked: сбой БД не роняет
@@ -112,7 +174,7 @@ func TestRejectedHousekeepingCycle_ErrorsAreLoggedNotPanicked(t *testing.T) {
 	hk := NewRejectedHousekeeping(repo, ret, logging.NewNoop())
 
 	assert.NotPanics(t, func() { hk.Cycle(context.Background()) })
-	assert.Len(t, repo.cutoffs, 1)
+	assert.Equal(t, 1, repo.cutoffCount())
 }
 
 // TestRejectedHousekeepingRun_StopsOnContext: цикл делает первый проход сразу и
@@ -128,7 +190,7 @@ func TestRejectedHousekeepingRun_StopsOnContext(t *testing.T) {
 	done := make(chan struct{})
 	go func() { defer close(done); hk.Run(ctx) }()
 
-	require.Eventually(t, func() bool { return len(repo.cutoffs) > 0 }, time.Second, 10*time.Millisecond,
+	require.Eventually(t, func() bool { return repo.cutoffCount() > 0 }, time.Second, 10*time.Millisecond,
 		"первый проход выполняется сразу, а не через период")
 
 	cancel()
