@@ -848,7 +848,7 @@
     }
   },
   "rejected": {
-    "summary": "{{total}} отказов · {{clients}} клиентов · {{groups}} адресов",
+    "summary": "Отказов: {{total}} · Клиентов: {{clients}} · Адресов: {{groups}}",
     "unresolved": "⚠ {{n}} не разобрано",
     "empty": "Отказов за выбранный период нет",
     "empty_disabled": "Журнал отказов выключен",
@@ -885,7 +885,7 @@
       "other": "прочее"
     },
     "details": {
-      "seen": "Впервые {{first}} · последний {{last}} · {{total}} запросов",
+      "seen": "Впервые {{first}} · последний {{last}} · запросов: {{total}}",
       "resolved_by": "Разобрано: {{who}}, {{when}}",
       "suggestion": "Похоже на узел «{{path}}»",
       "open_node": "Открыть узел",

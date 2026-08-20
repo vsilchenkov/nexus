@@ -847,7 +847,7 @@
     }
   },
   "rejected": {
-    "summary": "{{total}} rejects · {{clients}} clients · {{groups}} addresses",
+    "summary": "Rejects: {{total}} · Clients: {{clients}} · Addresses: {{groups}}",
     "unresolved": "⚠ {{n}} unresolved",
     "empty": "No rejected requests for the selected period",
     "empty_disabled": "The rejected-request log is off",
@@ -884,7 +884,7 @@
       "other": "other"
     },
     "details": {
-      "seen": "First {{first}} · last {{last}} · {{total}} requests",
+      "seen": "First {{first}} · last {{last}} · requests: {{total}}",
       "resolved_by": "Resolved by {{who}}, {{when}}",
       "suggestion": "Looks like node “{{path}}”",
       "open_node": "Open node",
