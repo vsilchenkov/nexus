@@ -118,7 +118,6 @@
     "refresh": "Обновить",
     "autorefresh_on": "Авто",
     "autorefresh_off": "Пауза",
-    "rejected_hint": "Отклонено на входе за {{period}}: {{total}} запросов от {{clients}} клиентов",
     "search_placeholder": "Поиск по пути или URL…",
     "kpi": {
       "incoming": "Входящие",

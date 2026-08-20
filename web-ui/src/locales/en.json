@@ -118,7 +118,6 @@
     "refresh": "Refresh",
     "autorefresh_on": "Auto",
     "autorefresh_off": "Paused",
-    "rejected_hint": "Rejected on ingress over {{period}}: {{total}} requests from {{clients}} clients",
     "search_placeholder": "Search by path or URL…",
     "kpi": {
       "incoming": "Incoming",
