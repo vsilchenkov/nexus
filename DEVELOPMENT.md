@@ -261,6 +261,11 @@ docker compose -f deploy/docker-compose.deps.yml up -d
   кросс-сервисный reload уровня, маскировка, неблокируемость); входит в общий `make test-integration`.
 - Фронтовые unit-тесты: `cd web-ui && npm run test` (vitest + RTL, setup `src/test/setup.ts` с
   jest-dom). **Гоняются в CI** (job `ui-build`) — падение vitest валит pipeline, как и lint/build.
+- `make test-int-rejected` (§94) — integration-группа журнала отказов на входе (PostgreSQL):
+  слияние пачек нескольких реплик Receiver в одну группу, вытеснение клиентов и сэмплов
+  сверх лимитов, снятие отметки «разобрано» новым отказом, чистка по сроку и полное
+  выключение журнала, скоупы команд. Входит в общий `make test-integration`. Тесты гоняются
+  на `postgres:12-alpine` — той же мажорной версии, что на бою.
 - `make test-int-logs-scale` (§77.5) — **ручной** замер прокрутки логов на большом объёме: сидит
   таблицу одним `INSERT … SELECT FROM numbers` и прогоняет 20 страниц по 50 строк по keyset-курсору,
   печатая avg/max и эталон «без автоокна». Объём — `LOG_SCALE_ROWS` (по умолчанию 1 млн; боевой

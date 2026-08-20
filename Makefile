@@ -176,7 +176,7 @@ docker-logs: ## Логи сервисов (Ctrl+C для выхода)
 # ----- placeholders для следующих фаз ---------------------------------------
 
 .PHONY: swagger proto loadtest test-integration sqlc-gen rotate-encryption-key encrypt-secrets decrypt-secrets
-.PHONY: test-int-pg test-int-ch test-int-catalog test-int-receiver test-int-rmq test-int-sender test-int-logs-scale
+.PHONY: test-int-pg test-int-ch test-int-catalog test-int-receiver test-int-rmq test-int-sender test-int-logs-scale test-int-rejected
 
 SWAG ?= swag
 swagger: ## Сгенерировать swagger в docs/web и docs/receiver (см. §11, §25)
@@ -219,7 +219,7 @@ INTEGRATION_TIMEOUT ?= 20m
 # группы успели отработать и отчитаться даже при её падении.
 # Регексы -run в ДВОЙНЫХ кавычках — переносимо между cmd.exe (Windows) и sh.
 # Запуск отдельной группы: `make test-int-rmq` и т.п.
-test-integration: check-int-coverage test-int-pg test-int-ch test-int-catalog test-int-logs test-int-receiver test-int-rmq test-int-sender test-int-queue test-int-misc ## Integration-тесты под-прогонами (требует Docker; 20m на группу)
+test-integration: check-int-coverage test-int-pg test-int-ch test-int-catalog test-int-logs test-int-rejected test-int-receiver test-int-rmq test-int-sender test-int-queue test-int-misc ## Integration-тесты под-прогонами (требует Docker; 20m на группу)
 
 # Гейт покрытия под-прогонов. Группы фильтруют тесты по `-run`, а CI гоняет
 # ПАКЕТ ЦЕЛИКОМ — из-за этого локальный `make test-integration` мог быть зелёным
@@ -240,6 +240,9 @@ test-int-catalog: ## integration: каталоги/auth/сессии/нотиф�
 
 test-int-logs: ## integration: консоль служебных логов §51 (Redis+PG: шиппер/мерж/reload уровня/маскировка/неблокируемость)
 	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestServiceLogs" ./tests/integration/...
+
+test-int-rejected: ## integration: журнал отказов на входе §94 (PG: слияние реплик, вытеснение, чистка, скоупы)
+	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestRejected" ./tests/integration/...
 
 test-int-receiver: ## integration: Receiver sync/incoming-auth
 	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestReceiver_" ./tests/integration/...
