@@ -8,7 +8,9 @@ import NodeDetail from "./pages/NodeDetail";
 import NodeSettings from "./pages/NodeSettings";
 import AuditLog from "./pages/AuditLog";
 import KafkaMonitor from "./pages/KafkaMonitor";
-import LogsPage from "./pages/Logs";
+import LogsSection from "./pages/Logs";
+import ServiceLogsTab from "./pages/logs/ServiceLogsTab";
+import RejectedTab from "./pages/logs/RejectedTab";
 import Settings from "./pages/Settings";
 import ForcePasswordChange from "./pages/ForcePasswordChange";
 import { AppShell } from "./components/AppShell";
@@ -49,12 +51,32 @@ function AuditRoute() {
   return <AuditLog />;
 }
 
-// LogsRoute — консоль служебных логов (§51) доступна только admin: пункт меню
-// для остальных скрыт, а бэкенд вернул бы 403 на /api/logs.
+// LogsRoute — раздел «Логи» (§94.7). Доступен operator+: внутри две вкладки, и
+// «Отказы» нужны оператору и менеджеру для своей команды. Viewer, открывший
+// /logs по прямой ссылке, редиректится на список узлов.
 function LogsRoute() {
   const { data } = useMe();
-  if (data && !roleAtLeast(data.user.role, "admin")) return <Navigate to="/" replace />;
-  return <LogsPage />;
+  if (data && !roleAtLeast(data.user.role, "operator")) return <Navigate to="/" replace />;
+  return <LogsSection />;
+}
+
+// LogsIndexRoute — /logs открывает первую ДОСТУПНУЮ вкладку: администратору
+// привычные служебные логи, остальным — «Отказы» (служебных они не видят).
+function LogsIndexRoute() {
+  const { data } = useMe();
+  if (!data) return null;
+  return (
+    <Navigate to={roleAtLeast(data.user.role, "admin") ? "/logs/services" : "/logs/rejected"} replace />
+  );
+}
+
+// ServiceLogsRoute — консоль служебных логов (§51) остаётся admin-only: бэкенд
+// вернул бы 403 на /api/logs, поэтому прямой заход уводим на «Отказы», а не
+// показываем пустой экран с ошибкой.
+function ServiceLogsRoute() {
+  const { data } = useMe();
+  if (data && !roleAtLeast(data.user.role, "admin")) return <Navigate to="/logs/rejected" replace />;
+  return <ServiceLogsTab />;
 }
 
 export default function App() {
@@ -78,7 +100,11 @@ export default function App() {
         <Route path="/nodes/:id/edit" element={<NodeSettings />} />
         <Route path="/audit" element={<AuditRoute />} />
         <Route path="/kafka" element={<KafkaMonitor />} />
-        <Route path="/logs" element={<LogsRoute />} />
+        <Route path="/logs" element={<LogsRoute />}>
+          <Route index element={<LogsIndexRoute />} />
+          <Route path="services" element={<ServiceLogsRoute />} />
+          <Route path="rejected" element={<RejectedTab />} />
+        </Route>
         <Route path="/settings/*" element={<Settings />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

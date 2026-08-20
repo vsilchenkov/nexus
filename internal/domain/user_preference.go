@@ -40,6 +40,12 @@ const PreferenceKeyNodePeriod = "node.period"
 // от узлового: у брокера свой горизонт наблюдения.
 const PreferenceKeyKafkaPeriod = "kafka.period"
 
+// PreferenceKeyRejectedPeriod — дефолтный период вкладки «Логи → Отказы»
+// (§94.7). Скоуп — команда: журнал отказов у каждой команды свой, а горизонт
+// разбора («что стучится сейчас» против «что накопилось за неделю») не связан
+// с периодом графиков рабочего стола.
+const PreferenceKeyRejectedPeriod = "rejected.period"
+
 // PreferenceKeyNodeMetricsViewPrefix — префикс ключа вида вкладки «Метрики»
 // узла (§84.3). Полный ключ собирает PreferenceKeyNodeMetricsView.
 const PreferenceKeyNodeMetricsViewPrefix = "node.metrics.view."

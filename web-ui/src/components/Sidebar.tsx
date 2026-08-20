@@ -8,7 +8,15 @@ import { cn } from "../lib/cn";
 import { roleAtLeast } from "../lib/roles";
 import { SidebarFavorites } from "./SidebarFavorites";
 
-type NavItem = { to: string; label: string; icon: React.ReactNode; match: (p: string) => boolean };
+type NavItem = {
+  to: string;
+  label: string;
+  icon: React.ReactNode;
+  match: (p: string) => boolean;
+  // badge — число неразобранных групп отказов (§94.7). Пока раздел не открыт,
+  // это единственный признак, что в шину кто-то стучится мимо.
+  badge?: number;
+};
 
 // Sidebar — постоянная левая навигация панели (§21): бренд, разделы,
 // футер с текущим пользователем.
@@ -38,9 +46,27 @@ export function Sidebar() {
     staleTime: Infinity,
   });
 
+  // §94.7: бейдж пункта «Логи» — неразобранные группы отказов за сутки.
+  // Запрос лёгкий (агрегат в PostgreSQL) и идёт только у тех, кому раздел
+  // доступен; при выключенном журнале сервер отдаёт нули, и бейдж исчезает.
+  const rejectedSummary = useQuery({
+    queryKey: ["rejected", "summary", "sidebar"],
+    queryFn: () =>
+      api.get<{ unresolved: number }>("/api/rejected/summary", {
+        from: new Date(Date.now() - 24 * 3600_000).toISOString(),
+      }),
+    enabled: roleAtLeast(me.data?.user.role, "operator"),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+  const unresolvedRejects = rejectedSummary.data?.unresolved ?? 0;
+
   // Пункт «Kafka» (§4 spec) — в блоке Аудита (рядом с Audit log), не в
   // «Настройках»; виден только админам (роль admin), как и сам раздел.
   const isAdmin = roleAtLeast(me.data?.user.role, "admin");
+  // §94.7: журнал отказов доступен operator+ — от этого зависит и видимость
+  // пункта «Логи», внутри которого он живёт.
+  const canSeeRejected = roleAtLeast(me.data?.user.role, "operator");
   // Журнал действий (§26/§87) доступен operator+ — viewer получал 403 (П6).
   const canSeeAudit = roleAtLeast(me.data?.user.role, "operator");
 
@@ -70,12 +96,20 @@ export function Sidebar() {
             icon: <Activity className="h-[18px] w-[18px]" />,
             match: (p: string) => p.startsWith("/kafka"),
           },
-          // §51: консоль служебных логов трёх сервисов (admin-only).
+        ]
+      : []),
+    // §94.7: раздел «Логи» — две вкладки: служебные логи сервисов (§51,
+    // admin-only) и журнал отказов на входе (operator+). Пункт виден
+    // operator+, потому что вторая вкладка адресована именно ему; вкладку
+    // «Сервисы» рисует только администратор.
+    ...(canSeeRejected
+      ? [
           {
             to: "/logs",
             label: t("nav.logs"),
             icon: <ScrollText className="h-[18px] w-[18px]" />,
             match: (p: string) => p.startsWith("/logs"),
+            badge: unresolvedRejects,
           },
         ]
       : []),
@@ -105,7 +139,12 @@ export function Sidebar() {
         )}
       >
         {it.icon}
-        {it.label}
+        <span className="flex-1">{it.label}</span>
+        {!!it.badge && it.badge > 0 && (
+          <span className="rounded-full bg-warn/20 px-1.5 py-0.5 text-[10px] font-medium text-warn">
+            {it.badge > 99 ? "99+" : it.badge}
+          </span>
+        )}
       </NavLink>
     );
   };

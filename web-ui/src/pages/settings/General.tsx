@@ -9,6 +9,9 @@ type GeneralSettings = {
   version_override?: string;
   metrics_refetch_ms?: number;
   metrics_approx_counts?: boolean;
+  // §94.5: срок хранения журнала отказов, дней. 0 = сбор выключен и
+  // накопленное удаляется — отдельного тумблера нет.
+  rejected_retention_days?: number;
 };
 type SecuritySettings = { session_ttl_seconds?: number };
 type AppSettings = {
@@ -21,6 +24,10 @@ type VersionInfo = { version: string; override_allowed?: boolean };
 // Длительность сессии задаётся в минутах в UI, хранится в секундах (§34.2).
 const SESSION_MIN_MINUTES = 5; // 300 c
 const SESSION_MAX_MINUTES = 30 * 24 * 60; // 30 суток
+
+// §94.5: границы срока хранения журнала отказов. Зеркало домена
+// (RejectedRetention*Days): расхождение дало бы поле, которое сервер отвергает.
+const REJECTED_RETENTION_MAX_DAYS = 365;
 
 // GeneralPanel — общие настройки приложения (§28, Пункт 1): публичный адрес,
 // под которым опубликован Web. Если задан, UI собирает полный адрес узла от
@@ -50,6 +57,8 @@ export function GeneralPanel() {
   const [refetchSec, setRefetchSec] = useState("");
   // §44-perf: режим подсчёта уникальных (точно/приблизительно).
   const [approxCounts, setApproxCounts] = useState(false);
+  // §94.5: срок хранения журнала отказов (пусто = не трогаем текущее значение).
+  const [rejectedDays, setRejectedDays] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -61,6 +70,10 @@ export function GeneralPanel() {
       const ms = data.general?.metrics_refetch_ms;
       setRefetchSec(ms ? String(Math.round(ms / 1000)) : "");
       setApproxCounts(data.general?.metrics_approx_counts ?? false);
+      const rr = data.general?.rejected_retention_days;
+      // Ноль — осмысленное значение («журнал выключен»), поэтому проверка
+      // именно на undefined: `rr ? …` показал бы пустое поле вместо нуля.
+      setRejectedDays(rr === undefined ? "" : String(rr));
     }
   }, [data]);
 
@@ -73,6 +86,10 @@ export function GeneralPanel() {
       if (sec !== "") general.metrics_refetch_ms = Math.round(Number(sec) * 1000);
       // §44-perf: режим подсчёта уникальных (всегда шлём текущее значение тоггла).
       general.metrics_approx_counts = approxCounts;
+      // §94.5: срок хранения отказов. Пусто — не трогаем; ноль отправляем как
+      // есть (это «выключить журнал», а не «нет значения»).
+      const rr = rejectedDays.trim();
+      if (rr !== "") general.rejected_retention_days = Math.round(Number(rr));
       const body: { general: GeneralSettings; security?: SecuritySettings } = { general };
       // Длительность сессии: пусто — не трогаем (остаётся из env/текущего).
       const mins = sessionMinutes.trim();
@@ -170,6 +187,25 @@ export function GeneralPanel() {
           className="w-full rounded-md bg-bg-muted px-3 py-2 font-mono text-xs outline-none"
         />
         <p className="text-xs text-fg-subtle">{t("settings.general.metrics_refetch_hint")}</p>
+      </div>
+
+      <div className="max-w-3xl space-y-1">
+        <label className="text-xs uppercase tracking-wider text-fg-muted">
+          {t("settings.general.rejected_retention")}
+        </label>
+        <input
+          type="number"
+          min={0}
+          max={REJECTED_RETENTION_MAX_DAYS}
+          value={rejectedDays}
+          onChange={(e) => setRejectedDays(e.target.value)}
+          placeholder="30"
+          className="w-full rounded-md bg-bg-muted px-3 py-2 font-mono text-xs outline-none"
+        />
+        <p className="text-xs text-fg-subtle">{t("settings.general.rejected_retention_hint")}</p>
+        {rejectedDays.trim() === "0" && (
+          <p className="text-xs text-warn">{t("settings.general.rejected_retention_zero_warn")}</p>
+        )}
       </div>
 
       <div className="max-w-3xl space-y-1">

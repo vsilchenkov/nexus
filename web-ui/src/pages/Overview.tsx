@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Search, Plus, Play, Pause, RefreshCw } from "lucide-react";
+import { Search, Plus, Play, Pause, RefreshCw, AlertTriangle } from "lucide-react";
 
 import {
   api,
@@ -322,6 +322,21 @@ export default function Overview() {
   // значение шапки менялось бы от прокрутки).
   // §86.10: тем же ответом приходит срез по узлам, поэтому запрос объявлен ДО
   // порционной загрузки — та смотрит на срез, решая, нужен ли ей preload.
+  // §94.7: сводка отказов на входе за тот же период, что и KPI. Строка ниже
+  // появляется, только когда отказы есть: пустая она была бы шумом на главном
+  // экране.
+  const rejectedQ = useQuery({
+    queryKey: ["rejected", "summary", "overview", periodKey(period)],
+    queryFn: () => {
+      const w = periodWindow(period);
+      return api.get<{ count: number; clients: number; collecting: boolean }>(
+        "/api/rejected/summary",
+        { from: new Date(w.since).toISOString(), to: new Date(w.until).toISOString() },
+      );
+    },
+    enabled: periodReady,
+  });
+
   const totalsQ = useQuery({
     queryKey: ["metrics-totals", scopeKey, periodKey(period)],
     queryFn: () =>
@@ -627,6 +642,24 @@ export default function Overview() {
 
       {kpi && !kpi.prometheus_available && (
         <div className="text-xs text-fg-subtle">{t("metrics.prometheus_off")}</div>
+      )}
+
+      {/* §94.7: отклонённые запросы. Ссылка, а не кнопка: Ctrl+клик и «Открыть
+          в новой вкладке» обязаны работать (урок §79). Ведёт сразу на вкладку
+          «Отказы», минуя служебные логи. */}
+      {!!rejectedQ.data?.count && (
+        <Link
+          to="/logs/rejected"
+          className="flex items-center gap-1.5 text-xs text-warn hover:underline"
+        >
+          <AlertTriangle className="h-3.5 w-3.5" />
+          {t("overview.rejected_hint", {
+            period: kpiPeriod,
+            total: fmtNum(rejectedQ.data.count),
+            clients: fmtNum(rejectedQ.data.clients),
+          })}
+          <span aria-hidden>→</span>
+        </Link>
       )}
 
       <div className="flex flex-wrap items-center gap-2">
