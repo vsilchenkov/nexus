@@ -179,6 +179,17 @@ func applyDefaults(c *Config) {
 
 	// §27: Puller включён по умолчанию; узлов RabbitMQAsync может не быть —
 	// тогда reconcile просто ничего не поднимает.
+	// §94.4: темп сброса журнала отказов. Ноль трактуется как «значение не
+	// задано» — сбором управляет срок хранения в настройках, а не эти ключи.
+	if c.Receiver.RejectLog.FlushIntervalSec == 0 {
+		c.Receiver.RejectLog.FlushIntervalSec = 10
+	}
+	if c.Receiver.RejectLog.QueueSize == 0 {
+		c.Receiver.RejectLog.QueueSize = 4096
+	}
+	if c.Receiver.RejectLog.MaxGroups == 0 {
+		c.Receiver.RejectLog.MaxGroups = 2000
+	}
 	if c.Receiver.Puller.ReconcileSec == 0 {
 		c.Receiver.Puller.ReconcileSec = 15
 	}

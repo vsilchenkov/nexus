@@ -511,11 +511,16 @@ func isHopByHopHeader(name string) bool {
 	return false
 }
 
-// classifyDomainError маппит доменную ошибку маршрутизации в HTTP-код и
-// человекочитаемое сообщение. internal=true означает «непредвиденная ошибка»
-// (502) — её caller дополнительно логирует. Общая для sync (replyDomainError)
-// и async (replyAsyncError), чтобы коды и тексты не расходились.
-func classifyDomainError(err error) (status int, message string, internal bool) {
+// classifyDomainError маппит доменную ошибку маршрутизации в HTTP-код,
+// человекочитаемое сообщение и код причины для журнала отказов (§94.2).
+// internal=true означает «непредвиденная ошибка» (502) — её caller
+// дополнительно логирует, а в журнал клиентов она не попадает: это сбой шины.
+//
+// Причина возвращается ОТСЮДА, а не выводится из статуса: по коду ответа
+// «узел выключен» (503) неотличим от сбоя шины, а 400 не говорит, что именно
+// было не так с запросом. Общая для sync (replyDomainError) и async
+// (replyAsyncError), чтобы коды, тексты и причины не расходились.
+func classifyDomainError(err error) (status int, message string, reason domain.RejectReason, internal bool) {
 	switch {
 	case errors.Is(err, domain.ErrNodeNotFound),
 		// §82.3: async-эндпоинт на не-async узле. Наружу неотличимо от «узла
@@ -523,40 +528,41 @@ func classifyDomainError(err error) (status int, message string, internal bool) 
 		// handleAuto: факт существования узла не раскрываем. Диагностику даёт
 		// warn в RouteAsync и метрика nexus_async_ingress_rejected_total.
 		errors.Is(err, domain.ErrNodeNotAsyncIngress):
-		return http.StatusNotFound, "node not found", false
+		return http.StatusNotFound, "node not found", domain.RejectReasonNodeNotFound, false
 	case errors.Is(err, domain.ErrNodeDisabled):
-		return http.StatusServiceUnavailable, "node not available", false
+		return http.StatusServiceUnavailable, "node not available", domain.RejectReasonNodeDisabled, false
 	case errors.Is(err, domain.ErrNodeMethodNotAllowed):
-		return http.StatusMethodNotAllowed, "http method not allowed for this node", false
+		return http.StatusMethodNotAllowed, "http method not allowed for this node", domain.RejectReasonMethodNotAllowed, false
 	case errors.Is(err, domain.ErrURLParamRequired),
 		errors.Is(err, domain.ErrCallbackNotAllowed):
-		return http.StatusBadRequest, err.Error(), false
+		return http.StatusBadRequest, err.Error(), domain.RejectReasonBadRequest, false
 	case errors.Is(err, domain.ErrURLInvalid):
-		return http.StatusBadRequest, "target url is invalid", false
+		return http.StatusBadRequest, "target url is invalid", domain.RejectReasonBadRequest, false
 	case errors.Is(err, domain.ErrAckRenderFailed):
 		// §83: узел настроен on_error=error. Запрос НЕ принят (рендер идёт до
 		// публикации в Kafka), поэтому 400 честен: клиенту следует повторить.
 		// Не 502: это ошибка настройки узла, а не сбой шины, и в Sentry ей
 		// делать нечего — диагностика в warn receiver.async_ack и метрике.
-		return http.StatusBadRequest, "ack template render failed", false
+		return http.StatusBadRequest, "ack template render failed", domain.RejectReasonBadRequest, false
 	case errors.Is(err, domain.ErrURLNotAllowed):
-		return http.StatusForbidden, "target url not in allowlist", false
+		return http.StatusForbidden, "target url not in allowlist", domain.RejectReasonURLNotAllowed, false
 	case errors.Is(err, domain.ErrLoopDetected):
 		// §32: запрос вернулся в шину больше max_hops раз — петля.
-		return http.StatusLoopDetected, "loop detected", false
+		return http.StatusLoopDetected, "loop detected", domain.RejectReasonLoopDetected, false
 	case errors.Is(err, domain.ErrAuthHeaderMissing),
 		errors.Is(err, domain.ErrAuthHeaderMalformed),
 		errors.Is(err, domain.ErrAuthTokenRequired),
 		errors.Is(err, domain.ErrUnauthorized):
-		return http.StatusUnauthorized, err.Error(), false
+		return http.StatusUnauthorized, err.Error(), domain.RejectReasonUnauthorized, false
 	default:
-		return http.StatusBadGateway, "internal routing error", true
+		return http.StatusBadGateway, "internal routing error", domain.RejectReasonOther, true
 	}
 }
 
 // replyDomainError — sync-ответ об ошибке: {"error": <msg>}.
 func (h *Handler) replyDomainError(c *gin.Context, err error, nodePath, op string) {
-	status, msg, internal := classifyDomainError(err)
+	status, msg, reason, internal := classifyDomainError(err)
+	h.markRejected(c, err, reason, internal)
 	if internal {
 		h.logger.ErrorWithOp("receiver routing failed", err, op,
 			h.logger.Str("node", nodePath))
@@ -577,6 +583,27 @@ func (h *Handler) replyDomainError(c *gin.Context, err error, nodePath, op strin
 	c.JSON(status, gin.H{"error": msg})
 }
 
+// markRejected размечает отказ для наблюдаемости (§94): кладёт код причины в
+// контекст — оттуда его берёт RejectLogMiddleware — и подменяет метку узла,
+// когда узла не существует.
+//
+// internal-ошибки (502) не размечаются: это сбой шины, а не отказ клиенту, и в
+// журнале отказов ему делать нечего.
+//
+// Подмена метки касается ТОЛЬКО ErrNodeNotFound: путь в этом случае задал
+// клиент, и метка node у nexus_requests_total росла бы новым рядом на каждый
+// мусорный путь (§94.8). У §82.3 (ErrNodeNotAsyncIngress) узел существует, и
+// его путь в метке остаётся — там ряд ограничен числом узлов.
+func (h *Handler) markRejected(c *gin.Context, err error, reason domain.RejectReason, internal bool) {
+	if internal {
+		return
+	}
+	SetRejectReason(c, reason)
+	if errors.Is(err, domain.ErrNodeNotFound) {
+		c.Set(metrics.NodeLabelKey, metrics.NodeUnresolved)
+	}
+}
+
 // onLoopDetected фиксирует обнаружение петли (§32): warn-лог + Prometheus-счётчик
 // nexus_loop_detected_total{mode}. metrics может быть nil в unit-тестах handler'а.
 func (h *Handler) onLoopDetected(c *gin.Context, mode, nodePath string) {
@@ -594,7 +621,8 @@ func (h *Handler) onLoopDetected(c *gin.Context, mode, nodePath string) {
 // "message": <причина>}. Тело отличается от sync-варианта, чтобы async-клиент
 // единообразно читал result/message и в успехе, и в ошибке.
 func (h *Handler) replyAsyncError(c *gin.Context, err error, nodePath, op string) {
-	status, msg, internal := classifyDomainError(err)
+	status, msg, reason, internal := classifyDomainError(err)
+	h.markRejected(c, err, reason, internal)
 	if internal {
 		h.logger.ErrorWithOp("receiver async routing failed", err, op,
 			h.logger.Str("node", nodePath))

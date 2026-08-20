@@ -220,6 +220,13 @@ type RejectedAggregate struct {
 	Samples   []RejectedSample
 }
 
+// TruncateRawPath обрезает путь сэмпла до колонки raw_path.
+func TruncateRawPath(s string) string { return truncateRunes(s, RejectedRawPathMaxLen) }
+
+// TruncateUserAgent обрезает User-Agent (и значения заголовков сэмпла) до
+// колонки user_agent. Клиент задаёт их сам, длина ничем не ограничена.
+func TruncateUserAgent(s string) string { return truncateRunes(s, RejectedUserAgentMaxLen) }
+
 // truncateRunes обрезает строку до n рун (не байт): обрезка по байтам порвала
 // бы UTF-8 в середине символа, и в БД поехала бы невалидная строка.
 func truncateRunes(s string, n int) string {

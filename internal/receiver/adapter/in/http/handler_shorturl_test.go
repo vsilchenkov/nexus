@@ -305,7 +305,10 @@ func TestShortURL_MetricsLabelsMatchLegacy(t *testing.T) {
 		{"legacy async", "/api/v1/requestAsync/webhook/sbp-qr-async", "requestAsync", "sbp-qr-async"},
 		{"callback", "/api/v1/callback/webhook/sbp-qr-async", metrics.RootMethodCallback, "sbp-qr-async"},
 		// Мусорные обращения по короткому адресу не подмешиваются в боевые ряды.
-		{"неизвестный узел", "/api/v1/webhook/nope", metrics.RootMethodShortURL, "nope"},
+		// §94.8: путь несуществующего узла в метку больше не попадает — иначе
+		// сканер по случайным адресам плодил бы ряд на каждую попытку, и они
+		// остаются в Prometheus навсегда. Детализацию даёт журнал отказов.
+		{"неизвестный узел", "/api/v1/webhook/nope", metrics.RootMethodShortURL, metrics.NodeUnresolved},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
