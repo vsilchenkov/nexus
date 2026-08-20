@@ -9064,6 +9064,13 @@ const docTemplate = `{
                     "items": {
                         "type": "number"
                     }
+                },
+                "spark_err": {
+                    "description": "SparkErr — ошибки в тех же бакетах, что и Spark (§52-доп). Отдельным\nполем, а не заменой spark: старый клиент продолжает читать spark как\nпрежде. Пустой ряд означает «разбивки нет» (Prometheus-fallback), а не\n«ошибок ноль» — рисовать его зелёным нельзя.",
+                    "type": "array",
+                    "items": {
+                        "type": "number"
+                    }
                 }
             }
         },
@@ -10096,10 +10103,18 @@ const docTemplate = `{
                     "type": "object",
                     "additionalProperties": {}
                 },
+                "instance": {
+                    "description": "Instance — нода, записавшая строку (§70.7). Пусто у ноды без\nидентификатора и у записей, сделанных до §70.",
+                    "type": "string"
+                },
                 "level": {
                     "type": "string"
                 },
                 "msg": {
+                    "type": "string"
+                },
+                "replica": {
+                    "description": "Replica — экземпляр сервиса (§93.6), например web-2. Поле было в кольце\nRedis, но не доезжало до интерфейса: структура его не разбирала, и\nзаписи двух реплик выглядели одинаково.",
                     "type": "string"
                 },
                 "service": {

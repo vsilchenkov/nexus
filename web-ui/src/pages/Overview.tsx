@@ -68,6 +68,9 @@ type Throughput = {
   errors: number;
   p95: number;
   spark: number[];
+  // Ошибки по тем же бакетам (§52-доп). Пустой ряд = разбивки нет: столбцы
+  // рисуются одноцветными, а не «без ошибок».
+  sparkErr: number[];
   // §52: исход последнего вызова узла (ok/degraded/down).
   // §86.8: "unknown" — исход неизвестен, потому что он ключуется ПУТЁМ
   // (nexus:node:last_error:<path> в Redis, метка node в Prometheus), а путь
@@ -92,6 +95,7 @@ function rankThroughput(r: NodeRank, path: string, ambiguous: Set<string> | null
     errors: r.errors,
     p95: 0,
     spark: [],
+    sparkErr: [],
     // §86.8: исход ключуется путём, а путь уникален лишь внутри команды.
     lastOutcome: ambiguous?.has(path) ? "unknown" : r.last_outcome,
   };
@@ -420,6 +424,7 @@ export default function Overview() {
         errors: it.errors,
         p95: it.p95_ms,
         spark: it.spark ?? [],
+        sparkErr: it.spark_err ?? [],
         // Числа и спарклайн приходят из ClickHouse с фильтром по node_id и
         // коллизией путей не задеты — подменяется только исход (§86.8).
         lastOutcome: ambiguousPaths?.has(it.node) ? "unknown" : it.last_outcome,
@@ -959,6 +964,7 @@ function NodeTable({
                 <td className="w-[140px] px-3 py-2.5">
                   <Sparkline
                     data={m?.spark ?? []}
+                    errors={m?.sparkErr}
                     variant={s.variant}
                     period={period}
                     onOpenLogs={
@@ -1060,6 +1066,7 @@ function NodeCards({
             </div>
             <Sparkline
               data={m?.spark ?? []}
+              errors={m?.sparkErr}
               variant={s.variant}
               period={period}
               onOpenLogs={
@@ -1109,6 +1116,11 @@ function fmtBucket(start: number, end: number, multiDay: boolean): string {
   return `${new Date(start).toLocaleString([], opts)}–${new Date(end).toLocaleString([], opts)}`;
 }
 
+// SPARK_ERR_COLOR — цвет маркера «Ошибки» в тултипе спарклайна. Совпадает с
+// C_ERR графика узла (TrafficChart): один и тот же смысл обязан выглядеть
+// одинаково на карточке и на странице узла.
+const SPARK_ERR_COLOR = "#e85d5c";
+
 // Sparkline — мини-график входящего трафика за период (§22, ui_cards.html).
 // На каждом столбце единый тултип (§33): окно бакета + число входящих запросов.
 // Radix-тултип монтирует контент лениво на hover (провайдер общий в AppShell) —
@@ -1118,11 +1130,13 @@ function fmtBucket(start: number, end: number, multiDay: boolean): string {
 // узлов с таблицей логов; иначе бары некликабельны.
 function Sparkline({
   data,
+  errors,
   variant,
   period,
   onOpenLogs,
 }: {
   data: number[];
+  errors?: number[];
   variant: Variant;
   period: Period;
   onOpenLogs?: (range: { from: number; to: number }) => void;
@@ -1132,14 +1146,15 @@ function Sparkline({
     return <div className="h-7" />;
   }
   const max = Math.max(1, ...data);
-  const color =
-    variant === "err"
-      ? "bg-err"
-      : variant === "warn"
-        ? "bg-warn"
-        : variant === "disabled"
-          ? "bg-fg-subtle"
-          : "bg-accent";
+  // Цвет столбцов НЕ зависит от статуса узла (§52-доп). Раньше весь спарклайн
+  // красился по variant, и узел со статусом down выглядел так, будто не прошёл
+  // ни один запрос, — при 42 ошибках из 489. Статус остаётся в бейдже и в
+  // левой полосе карточки, а график показывает данные: доля ошибок в столбце.
+  //
+  // Исключение — состояния, где данных нет или узел выключен: там приглушённый
+  // цвет по-прежнему честен.
+  const muted = variant === "disabled" || variant === "paused" || variant === "unknown";
+  const baseColor = muted ? "bg-fg-subtle" : "bg-accent";
   const { since, until } = periodWindow(period);
   const bucketW = (until - since) / data.length;
   const multiDay = until - since > 86_400_000;
@@ -1147,6 +1162,13 @@ function Sparkline({
     <div className="flex h-7 items-end gap-px">
       {data.map((v, i) => {
         const start = since + i * bucketW;
+        // Доля ошибок столбца — как в TrafficChart на странице узла: клампим в
+        // [0, 100] (errors может превысить count при дублях записей) и даём
+        // красному сегменту минимальную видимую высоту, иначе одна ошибка на
+        // тысячу схлопывается в ноль и столбец врёт «всё чисто».
+        const errCount = muted ? 0 : (errors?.[i] ?? 0);
+        const errShare = v > 0 && errCount > 0 ? Math.min(100, (errCount / v) * 100) : 0;
+        const errPct = errShare > 0 ? Math.max(12, errShare) : 0;
         return (
           <Tooltip
             key={i}
@@ -1157,16 +1179,39 @@ function Sparkline({
                 compact
                 period={{ from: fmtBucket(start, start + bucketW, multiDay) }}
                 primary={{ value: fmtNum(Math.round(v)), unit: t("metrics.tooltip.requests") }}
+                series={
+                  errCount > 0
+                    ? [
+                        {
+                          marker: "bar",
+                          // Тот же hex, что у маркеров TrafficChart (§33):
+                          // маркеры тултипа рисуются инлайн-стилем, CSS-токен
+                          // сюда не доезжает.
+                          color: SPARK_ERR_COLOR,
+                          name: t("metrics.tooltip.errors"),
+                          value: fmtNum(Math.round(errCount)),
+                        },
+                      ]
+                    : undefined
+                }
               />
             }
           >
             <span
-              className={cn("flex-1 rounded-sm opacity-80", color, onOpenLogs && "cursor-pointer")}
+              className={cn(
+                "flex flex-1 flex-col justify-end overflow-hidden rounded-sm opacity-80",
+                baseColor,
+                onOpenLogs && "cursor-pointer",
+              )}
               style={{ height: `${Math.max(4, (v / max) * 100)}%` }}
               onClick={
                 onOpenLogs ? () => onOpenLogs({ from: start, to: start + bucketW }) : undefined
               }
-            />
+            >
+              {errPct > 0 && (
+                <span className="w-full bg-err" style={{ height: `${errPct}%` }} aria-hidden />
+              )}
+            </span>
           </Tooltip>
         );
       })}

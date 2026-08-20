@@ -163,6 +163,13 @@ func applyDefaults(c *Config) {
 	// §93.5: остановка сервиса. Дефолты подобраны так, чтобы одиночная
 	// установка вела себя как раньше (30 с на доигрывание), а профиль двух
 	// реплик получал паузу дренажа без правки конфига.
+	// §52-доп: порог подряд идущих отказов для статуса down. Зеркало
+	// nodestatus.DefaultDownThreshold — writer подставляет то же значение, если
+	// порог до него не доехал.
+	if c.Sender.NodeDownThreshold == 0 {
+		c.Sender.NodeDownThreshold = 10
+	}
+
 	if c.Shutdown.DrainSec == 0 {
 		c.Shutdown.DrainSec = 5
 	}

@@ -134,6 +134,16 @@ type NodeThroughputRow struct {
 	Errors uint64
 	P95ms  float64   // §22: p95 латентности исходящих (Prometheus)
 	Spark  []float64 // §22: спарклайн входящего трафика (range-запрос)
+	// SparkErrors — ошибки в тех же бакетах, что и Spark, столбец в столбец.
+	//
+	// Ряд идёт ОТДЕЛЬНЫМ полем, а не заменяет Spark: спарклайн карточки красился
+	// по статусу узла целиком, и узел со статусом down выглядел так, будто не
+	// прошёл ни один запрос — при 42 ошибках из 489. Теперь цвет столбца
+	// показывает долю ошибок в нём, ровно как график узла (§79.5).
+	//
+	// Пустой ряд = разбивки нет (Prometheus-fallback). Это НЕ «ошибок ноль»:
+	// клиент в таком случае рисует одноцветный столбец, а не зелёный.
+	SparkErrors []float64
 	// §41/§52: исход последнего исходящего вызова узла — ok (2xx) / degraded
 	// (ответил не-2xx <500) / down (транспортная ошибка или 5xx). Overview
 	// красит runtime-бейдж узла по этому полю.
@@ -394,7 +404,7 @@ func (u *MetricsUsecase) nodesOverviewCH(ctx context.Context, nodes []*domain.No
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(12)
 	for i, n := range nodes {
-		rows[i] = NodeThroughputRow{NodeID: n.ID, Node: n.Path, Spark: []float64{}}
+		rows[i] = NodeThroughputRow{NodeID: n.ID, Node: n.Path, Spark: []float64{}, SparkErrors: []float64{}}
 		if n.ClickHouseTable == "" {
 			continue // нет логирования → нет per-node CH-метрик
 		}
@@ -429,6 +439,7 @@ func (u *MetricsUsecase) nodesOverviewCH(ctx context.Context, nodes []*domain.No
 			// столбца переходит на записи вместе с графиком узла: спарклайн
 			// перестаёт расходиться с числами In/Out в своей же строке.
 			spark := []float64{}
+			sparkErrors := []float64{}
 			if withSpark && kpi.Total > 0 {
 				sparkStep := max((untilMs-sinceMs)/nodesSparkBuckets/1000, 1)
 				series, serr := u.nodeLogs.NodeChart(gctx, q, port.ChartQuery{
@@ -438,8 +449,13 @@ func (u *MetricsUsecase) nodesOverviewCH(ctx context.Context, nodes []*domain.No
 				})
 				if serr == nil {
 					spark = make([]float64, len(series))
+					// Ошибки идут тем же рядом и той же длины: клиент рисует
+					// столбец двухцветным, а расхождение длин означало бы
+					// сдвиг красного сегмента на соседний бакет.
+					sparkErrors = make([]float64, len(series))
 					for j, p := range series {
 						spark[j] = float64(p.Count)
+						sparkErrors[j] = float64(p.Errors)
 					}
 				}
 			}
@@ -449,7 +465,7 @@ func (u *MetricsUsecase) nodesOverviewCH(ctx context.Context, nodes []*domain.No
 				// прочерки вместо цифр во ВСЕХ режимах.
 				NodeID: n.ID,
 				Node:   n.Path, In: kpi.Total, Out: kpi.Delivered,
-				Errors: kpi.Errors, P95ms: kpi.P95ms, Spark: spark,
+				Errors: kpi.Errors, P95ms: kpi.P95ms, Spark: spark, SparkErrors: sparkErrors,
 			}
 			return nil
 		})

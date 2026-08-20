@@ -385,6 +385,7 @@
     }
   },
   "node": {
+    "set_default_period_hint": "Set as the default period for node tabs in team “{{team}}”",
     "tabs": {
       "overview": "Overview",
       "logs": "Logs",

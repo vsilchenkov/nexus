@@ -212,7 +212,7 @@ func (a *App) buildSendUsecase(ctx context.Context) (*usecase.SendUsecase, useca
 	// статус «Down» корректен после деплоя). Noop без Redis — поведение как §41.
 	var nodeStatus usecase.NodeStatusWriter = nodestatus.Noop{}
 	if a.redis != nil {
-		nodeStatus = nodestatus.NewRedisWriter(a.redis, a.logger)
+		nodeStatus = nodestatus.NewRedisWriter(a.redis, a.cfg.Sender.NodeDownThreshold, a.logger)
 	}
 
 	return sendUC, breaker, nodeStatus

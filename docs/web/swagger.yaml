@@ -1951,6 +1951,15 @@ definitions:
         items:
           type: number
         type: array
+      spark_err:
+        description: |-
+          SparkErr — ошибки в тех же бакетах, что и Spark (§52-доп). Отдельным
+          полем, а не заменой spark: старый клиент продолжает читать spark как
+          прежде. Пустой ряд означает «разбивки нет» (Prometheus-fallback), а не
+          «ошибок ноль» — рисовать его зелёным нельзя.
+        items:
+          type: number
+        type: array
     type: object
   internal_web_adapter_in_http.orphanItemResp:
     properties:
@@ -2679,9 +2688,20 @@ definitions:
       attrs:
         additionalProperties: {}
         type: object
+      instance:
+        description: |-
+          Instance — нода, записавшая строку (§70.7). Пусто у ноды без
+          идентификатора и у записей, сделанных до §70.
+        type: string
       level:
         type: string
       msg:
+        type: string
+      replica:
+        description: |-
+          Replica — экземпляр сервиса (§93.6), например web-2. Поле было в кольце
+          Redis, но не доезжало до интерфейса: структура его не разбирала, и
+          записи двух реплик выглядели одинаково.
         type: string
       service:
         type: string
