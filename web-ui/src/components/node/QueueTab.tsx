@@ -6,6 +6,7 @@ import { Trash2, ChevronRight, Pause, Power, Play, RotateCcw, History } from "lu
 import { api, type Node } from "../../api/client";
 import { Button, DefaultPeriodButton, Kpi, KpiRow, Hint, Pill, PeriodPicker, periodWindow, periodKey, type Period } from "../ui";
 import { nodeLookbackMs } from "../../lib/nodeLookback";
+import { useNodeTeamName } from "../../lib/nodeTeamName";
 import { PREF_KEY_NODE_PERIOD, useTeamDefaultPeriod } from "../../lib/prefs";
 import { ReplayDialog } from "../ReplayDialog";
 import { type LogsInitialFilter } from "./LogsTab";
@@ -96,6 +97,9 @@ export function QueueTab({
     node.team_id,
     PREF_KEY_NODE_PERIOD,
   );
+  // §92.3: имя команды нужно только подсказке кнопки «По умолчанию». Запросы
+  // общие со страницей узла — react-query их дедуплицирует.
+  const teamName = useNodeTeamName(node);
   const [picked, setPicked] = useState<Period | null>(null);
   const period = picked ?? teamDefault;
   const periodIso = () => {
@@ -262,6 +266,10 @@ export function QueueTab({
               savedDefault={teamDefault}
               teamId={node.team_id}
               prefKey={PREF_KEY_NODE_PERIOD}
+              // §92.3: тот же преф и та же подсказка, что на вкладке «Обзор».
+              title={
+                teamName ? t("node.set_default_period_hint", { team: teamName }) : undefined
+              }
             />
           </>
         ) : (

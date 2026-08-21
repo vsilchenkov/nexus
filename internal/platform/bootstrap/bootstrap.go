@@ -72,7 +72,14 @@ func Init(versionInfoData []byte, projectName string) (*build.Option, config.Fla
 	// §70.7: тег instance в событиях. Значение берётся из конфига — сверка с
 	// PostgreSQL идёт позже (MustInstanceIdentity), а Sentry нужен уже здесь,
 	// чтобы ошибки самого старта не потерялись.
-	if err := sentrypf.Init(&cfg.Sentry, projectName, buildOpt.Version, cfg.Instance.ID); err != nil {
+	// §93.6: тег replica — какая из реплик сервиса прислала событие.
+	sentryID := sentrypf.Identity{
+		Project:  projectName,
+		Version:  buildOpt.Version,
+		Instance: cfg.Instance.ID,
+		Replica:  ReplicaName(),
+	}
+	if err := sentrypf.Init(&cfg.Sentry, sentryID); err != nil {
 		fmt.Fprintf(os.Stderr, "sentry init: %v\n", err)
 		os.Exit(1)
 	}

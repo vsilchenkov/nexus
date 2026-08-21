@@ -6,9 +6,16 @@ import "time"
 // кладёт в Redis (`nexus:logs:<service>`) и что консоль «Логи» показывает в UI.
 // НЕ путать с логами запросов узлов (ClickHouse, §7.4).
 type ServiceLogEntry struct {
-	TS      time.Time      `json:"ts"`
-	Level   string         `json:"level"`
-	Service string         `json:"service"`
+	TS      time.Time `json:"ts"`
+	Level   string    `json:"level"`
+	Service string    `json:"service"`
+	// Instance — нода, записавшая строку (§70.7). Пусто у ноды без
+	// идентификатора и у записей, сделанных до §70.
+	Instance string `json:"instance,omitempty"`
+	// Replica — экземпляр сервиса (§93.6), например web-2. Поле было в кольце
+	// Redis, но не доезжало до интерфейса: структура его не разбирала, и
+	// записи двух реплик выглядели одинаково.
+	Replica string         `json:"replica,omitempty"`
 	Msg     string         `json:"msg"`
 	Attrs   map[string]any `json:"attrs,omitempty"`
 }

@@ -200,3 +200,89 @@ func TestRejectedHousekeepingRun_StopsOnContext(t *testing.T) {
 		t.Fatal("housekeeping did not stop on context cancel")
 	}
 }
+
+// fakeRejectLock — заглушка лока цикла: считает попытки и отвечает заданным
+// вердиктом. Под мьютексом — Run зовёт TryLock из своей горутины (§93.7).
+type fakeRejectLock struct {
+	mu    sync.Mutex
+	calls int
+	grant bool
+	err   error
+}
+
+func (l *fakeRejectLock) TryLock(_ context.Context, _ time.Duration) (bool, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.calls++
+	return l.grant, l.err
+}
+
+func (l *fakeRejectLock) count() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.calls
+}
+
+// TestRejectedHousekeepingRun_SkipsCycleWhenLockTaken: плановый проход
+// достаётся ОДНОЙ реплике (§93.7) — не получив лок, вторая ничего не удаляет.
+func TestRejectedHousekeepingRun_SkipsCycleWhenLockTaken(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeRejectedRepo{}
+	lock := &fakeRejectLock{grant: false}
+	hk := NewRejectedHousekeeping(repo, NewRejectRetentionProvider(), logging.NewNoop(),
+		WithRejectedHousekeepingInterval(time.Hour), WithRejectedHousekeepingLock(lock))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { defer close(done); hk.Run(ctx) }()
+
+	require.Eventually(t, func() bool { return lock.count() > 0 }, time.Second, 10*time.Millisecond,
+		"плановый проход обязан спросить лок")
+	assert.Zero(t, repo.cutoffCount(), "без лока реплика не должна чистить")
+
+	cancel()
+	<-done
+}
+
+// TestRejectedHousekeepingCycleNow_IgnoresLock: внеочередной прогон по смене
+// настройки лока НЕ берёт. Иначе TTL часового цикла отложил бы применение
+// нового срока хранения до следующего часа — обещание §94.5 «уменьшение
+// применяется сразу» сломалось бы ровно на второй реплике.
+func TestRejectedHousekeepingCycleNow_IgnoresLock(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeRejectedRepo{}
+	lock := &fakeRejectLock{grant: false} // лок занят соседом
+	hk := NewRejectedHousekeeping(repo, NewRejectRetentionProvider(), logging.NewNoop(),
+		WithRejectedHousekeepingInterval(time.Hour), WithRejectedHousekeepingLock(lock))
+
+	hk.CycleNow(context.Background())
+
+	assert.Equal(t, 1, repo.cutoffCount(), "внеочередная чистка обязана выполниться")
+	assert.Zero(t, lock.count(), "и не должна спрашивать лок вовсе")
+}
+
+// TestRejectedHousekeepingRun_LockErrorSkipsCycle: ошибка Redis трактуется как
+// запрет (тот же выбор, что у чистки аудита): с больным Redis дешевле
+// пропустить час, чем идти вторым DELETE по растущей таблице.
+func TestRejectedHousekeepingRun_LockErrorSkipsCycle(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeRejectedRepo{}
+	lock := &fakeRejectLock{grant: true, err: errors.New("redis down")}
+	hk := NewRejectedHousekeeping(repo, NewRejectRetentionProvider(), logging.NewNoop(),
+		WithRejectedHousekeepingInterval(time.Hour), WithRejectedHousekeepingLock(lock))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { defer close(done); hk.Run(ctx) }()
+
+	require.Eventually(t, func() bool { return lock.count() > 0 }, time.Second, 10*time.Millisecond)
+	assert.Zero(t, repo.cutoffCount(), "ошибка лока = пропуск цикла, а не проход")
+
+	cancel()
+	<-done
+}

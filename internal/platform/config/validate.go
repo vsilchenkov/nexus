@@ -22,6 +22,22 @@ func Validate(c *Config) error {
 		return fmt.Errorf("instance.id=%q: %w", c.Instance.ID, err)
 	}
 
+	// §52-доп: порог статуса down. Верхняя граница — здравый смысл: при пороге
+	// в сотни отказов бейдж перестаёт что-либо значить.
+	if c.Sender.NodeDownThreshold < 1 || c.Sender.NodeDownThreshold > 1_000 {
+		return fmt.Errorf("sender.node_down_threshold=%d: must be 1..1000", c.Sender.NodeDownThreshold)
+	}
+
+	// §93.5: остановка. Верхние границы — не вкусовщина: пока идёт дренаж и
+	// доигрывание, реплика уже выведена из ротации, и вся нагрузка лежит на
+	// соседней. Час такого «выката» — это не graceful, это отказ.
+	if c.Shutdown.TimeoutSec < 1 || c.Shutdown.TimeoutSec > 3_600 {
+		return fmt.Errorf("shutdown.timeout_sec=%d: must be 1..3600", c.Shutdown.TimeoutSec)
+	}
+	if c.Shutdown.DrainSec > 600 {
+		return fmt.Errorf("shutdown.drain_sec=%d: must be <= 600 (negative disables draining)", c.Shutdown.DrainSec)
+	}
+
 	if c.Postgres.Host == "" {
 		return errors.New("postgres.host is required")
 	}

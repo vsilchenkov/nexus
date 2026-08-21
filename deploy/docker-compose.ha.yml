@@ -1,0 +1,251 @@
+# Nexus — развёртывание без простоя: по две реплики каждого сервиса (§93).
+#
+# Оверлей поверх КОРНЕВОГО docker-compose.yml (основной прод, вариант C).
+# Запуск — с обоими файлами, и `-f` придётся повторять в каждой команде
+# compose (up, ps, logs, exec, build):
+#
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.ha.yml up -d --build
+#
+# Чтобы не повторять, положите в .env строку
+#   COMPOSE_FILE=docker-compose.yml:deploy/docker-compose.ha.yml
+# — тогда обычные команды `docker compose ps|logs|exec` работают как раньше.
+# Именно это делает scripts/deploy/rolling.sh, он же и обновляет стек.
+#
+# Если нужен ещё и профиль малой памяти (deploy/docker-compose.override.yml),
+# накладывайте его ПЕРЕД этим файлом: лимиты приложения заданы здесь, и они
+# должны выиграть. Kafka/Postgres/Redis из того профиля применяются как есть.
+#
+# ── Что здесь происходит ─────────────────────────────────────────────────────
+#
+#   1. Одиночные receiver/sender/web уходят под профиль `disabled` — под
+#      неактивным профилем сервис не запускается и не воюет за порты.
+#   2. Вместо них поднимаются пары `<service>-1` / `<service>-2`. Имена разные
+#      намеренно: rolling.sh обновляет РОВНО ОДНУ реплику за раз, а с
+#      `deploy.replicas: 2` compose пересоздал бы обе сразу — то есть простой,
+#      ради устранения которого всё и затевается.
+#   3. У каждой пары общий СЕТЕВОЙ АЛИАС (`web`, `receiver`, `sender`). Поэтому
+#      config.yml не меняется ни на строку: `web.receiver_url: http://receiver:8080`
+#      и `receiver.sender_grpc.addr: sender:9190` продолжают резолвиться — теперь
+#      в два адреса. На этом же алиасе держится gRPC-балансировка `dns:///` в
+#      Receiver. Prometheus, наоборот, скрейпит реплики ПОИМЁННО
+#      (deploy/prometheus.ha.yml) — ему нужны стабильные метки instance.
+#   4. `image:` задан ЯВНО. Без него compose назвал бы образ по сервису
+#      (`nexus-web-1`), и scripts/deploy/images.sh, который тегирует и
+#      откатывает `nexus-web:latest`, перестал бы находить образы — откат
+#      сломался бы молча, обнаружился бы в аварии.
+#   5. Наружу публикует порты только nginx, и ровно те же, что публиковала
+#      одиночная установка (8000 панель, 8080 прямой вход в Receiver). Для
+#      внешнего nginx на хосте и для клиентов адреса не меняются.
+
+name: nexus
+
+# ── Общие куски сервисов приложения ──────────────────────────────────────────
+# Повторяются у шести сервисов; собраны в якоря, чтобы правка ехала во все
+# реплики разом, а не в ту, о которой вспомнили.
+
+x-app-base: &app-base
+  restart: unless-stopped
+  # Сколько docker ждёт после SIGTERM, прежде чем убить процесс. Обязано быть
+  # БОЛЬШЕ, чем shutdown.drain_sec + shutdown.timeout_sec из config.yml
+  # (5 + 30 = 35 с), иначе весь graceful-путь §93.5 бессмыслен: дефолт движка
+  # оборвал остановку прямо посреди дренажа, и запрос, который реплика в этот
+  # момент доигрывала, терялся. Найдено стендовым прогоном — контейнер
+  # останавливался за 1.5 с на паузе дренажа в 5 с.
+  stop_grace_period: 45s
+  env_file: .env
+  volumes:
+    - ./config/config.yml:/app/config/config.yml:ro
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+
+x-web-build: &web-build
+  build:
+    context: .
+    dockerfile: deploy/docker/web.Dockerfile
+  image: nexus-web:latest
+
+x-receiver-build: &receiver-build
+  build:
+    context: .
+    dockerfile: deploy/docker/receiver.Dockerfile
+  image: nexus-receiver:latest
+
+x-sender-build: &sender-build
+  build:
+    context: .
+    dockerfile: deploy/docker/sender.Dockerfile
+  image: nexus-sender:latest
+
+x-web-health: &web-health
+  healthcheck:
+    test: ["CMD", "wget", "-qO-", "http://localhost:8000/health"]
+    interval: 10s
+    timeout: 3s
+    retries: 10
+    start_period: 30s
+
+x-receiver-health: &receiver-health
+  healthcheck:
+    test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+    interval: 10s
+    timeout: 3s
+    retries: 10
+    start_period: 30s
+
+x-sender-health: &sender-health
+  healthcheck:
+    test: ["CMD", "wget", "-qO-", "http://localhost:9091/health"]
+    interval: 10s
+    timeout: 3s
+    retries: 10
+    start_period: 30s
+
+x-deps-web: &deps-web
+  depends_on:
+    postgres: { condition: service_healthy }
+    redis:    { condition: service_healthy }
+
+x-deps-receiver: &deps-receiver
+  depends_on:
+    postgres: { condition: service_healthy }
+    redis:    { condition: service_healthy }
+
+x-deps-sender: &deps-sender
+  depends_on:
+    postgres: { condition: service_healthy }
+    kafka:    { condition: service_healthy }
+
+services:
+
+  # ── Одиночные сервисы выключены ────────────────────────────────────────────
+  # Профиль `disabled` нигде не активируется. Секции остаются в корневом файле
+  # нетронутыми, так что откат к одиночной установке — это просто запуск без
+  # этого оверлея.
+
+  receiver:
+    profiles: ["disabled"]
+
+  sender:
+    profiles: ["disabled"]
+
+  web:
+    profiles: ["disabled"]
+
+  # ── Балансировщик ──────────────────────────────────────────────────────────
+
+  nginx:
+    build:
+      context: .
+      dockerfile: deploy/docker/nginx.Dockerfile
+    image: nexus-nginx:latest
+    restart: unless-stopped
+    environment:
+      NEXUS_WEB_UPSTREAMS: "web-1:8000 web-2:8000"
+      NEXUS_RECEIVER_UPSTREAMS: "receiver-1:8080 receiver-2:8080"
+      # Сколько подряд неудачных попыток выводят реплику из ротации и на
+      # сколько. 2/10s — компромисс: мёртвая реплика уходит за пару запросов,
+      # а разовый таймаут медленного узла ротацию не ломает.
+      NEXUS_UPSTREAM_MAX_FAILS: "2"
+      NEXUS_UPSTREAM_FAIL_TIMEOUT: "10s"
+    depends_on:
+      # По одной реплике из пары ждём готовой, вторую — только запущенной:
+      # иначе первый старт стека упирается в самую медленную реплику, а nginx
+      # с одним живым апстримом уже полезен.
+      web-1:      { condition: service_healthy }
+      web-2:      { condition: service_started }
+      receiver-1: { condition: service_healthy }
+      receiver-2: { condition: service_started }
+    ports:
+      - "${WEB_BIND:-0.0.0.0}:8000:8000"
+      - "${RECEIVER_BIND:-127.0.0.1}:8080:8080"
+    healthcheck:
+      # 127.0.0.1, а НЕ localhost: nginx слушает только IPv4 (listen 8000), а
+      # localhost в контейнере резолвится сначала в ::1 — busybox-wget уходит в
+      # IPv6 и получает Connection refused. Контейнер при этом полностью
+      # работоспособен, но вечно висит unhealthy.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8000/nginx-health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    mem_limit: 64m
+    networks: [nexus_net]
+
+  # ── Web × 2 ────────────────────────────────────────────────────────────────
+
+  web-1:
+    <<: [*app-base, *web-build, *web-health, *deps-web]
+    environment:
+      GOMEMLIMIT: 150MiB
+    mem_limit: 192m
+    networks:
+      nexus_net:
+        aliases: [web]
+
+  web-2:
+    <<: [*app-base, *web-build, *web-health, *deps-web]
+    environment:
+      GOMEMLIMIT: 150MiB
+    mem_limit: 192m
+    networks:
+      nexus_net:
+        aliases: [web]
+
+  # ── Receiver × 2 ───────────────────────────────────────────────────────────
+  # Лимиты — как в одиночной установке (deploy/docker-compose.override.yml):
+  # реплика обязана держать тот же предельный запрос 124 МиБ, что и одиночный
+  # сервис, поэтому потолок на реплику не делится. Сумма потолков растёт вдвое —
+  # если сервер 4 ГБ, снижайте здесь оба значения и ограничивайте поток крупных
+  # тел через receiver.rate_limit_per_node (DEPLOYMENT §5.5).
+
+  receiver-1:
+    <<: [*app-base, *receiver-build, *receiver-health, *deps-receiver]
+    environment:
+      GOMEMLIMIT: 800MiB
+    mem_limit: 1g
+    networks:
+      nexus_net:
+        aliases: [receiver]
+
+  receiver-2:
+    <<: [*app-base, *receiver-build, *receiver-health, *deps-receiver]
+    environment:
+      GOMEMLIMIT: 800MiB
+    mem_limit: 1g
+    networks:
+      nexus_net:
+        aliases: [receiver]
+
+  # ── Sender × 2 ─────────────────────────────────────────────────────────────
+  # Порты наружу не публикуются: gRPC :9190 зовёт только Receiver внутри сети
+  # (через алиас `sender`), метрики :9091 читает Prometheus оттуда же.
+
+  sender-1:
+    <<: [*app-base, *sender-build, *sender-health, *deps-sender]
+    environment:
+      GOMEMLIMIT: 1400MiB
+    mem_limit: 1792m
+    networks:
+      nexus_net:
+        aliases: [sender]
+
+  sender-2:
+    <<: [*app-base, *sender-build, *sender-health, *deps-sender]
+    environment:
+      GOMEMLIMIT: 1400MiB
+    mem_limit: 1792m
+    networks:
+      nexus_net:
+        aliases: [sender]
+
+  # ── Prometheus: обнаружение реплик через DNS ───────────────────────────────
+  # !override заменяет список целиком: со слиянием остался бы и старый
+  # prometheus.yml со static_configs, где два ряда счётчиков схлопываются в
+  # один таргет и increase() начинает врать.
+
+  prometheus:
+    volumes: !override
+      - ./deploy/prometheus.ha.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/prometheus.alerts.yml:/etc/prometheus/prometheus.alerts.yml:ro
+      - ./deploy/prometheus.alerts.ha.yml:/etc/prometheus/prometheus.alerts.ha.yml:ro
+      - prometheus_data:/prometheus

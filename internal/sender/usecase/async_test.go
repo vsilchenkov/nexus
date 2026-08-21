@@ -422,8 +422,11 @@ type nodeStatusRec struct {
 	outcome domain.NodeOutcome
 }
 
-func (s *stubNodeStatus) SetLastOutcome(_ context.Context, path string, outcome domain.NodeOutcome) {
+// SetLastOutcome возвращает исход как есть: порог подряд идущих отказов (§52-доп)
+// живёт в Redis-реализации.
+func (s *stubNodeStatus) SetLastOutcome(_ context.Context, path string, outcome domain.NodeOutcome) domain.NodeOutcome {
 	s.calls = append(s.calls, nodeStatusRec{path: path, outcome: outcome})
+	return outcome
 }
 
 // TestAsync_WritesNodeStatus (§46/§52): async-обработка пишет исход последнего

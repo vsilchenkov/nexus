@@ -1,0 +1,354 @@
+# Nexus — основной конфиг.
+# Этот файл — шаблон. Реальный config.yml в git не коммитится.
+# Все секреты подставляются из .env через ${VAR} / ${VAR:default}.
+
+# Идентификация ноды (инстанса) шины — §70. Нода = своё развёртывание со своими
+# PostgreSQL/Redis/Kafka, пишущее логи в ОБЩИЙ с другими нодами ClickHouse.
+instance:
+  id: ${NEXUS_INSTANCE_ID:}            # Пусто = единственная/первая нода: имена БД прежние (nexus_<slug>).
+                                       # Иначе 1..8 символов ^[a-z][a-z0-9]{0,7}$ (напр. kz) → БД nexus_kz_<slug>,
+                                       # плюс тег Sentry, метка метрик nexus_instance и атрибут логов.
+                                       # Менять после первого запуска нельзя: имена уже созданных БД не переедут.
+  adopt_unowned: ${NEXUS_ADOPT:false}  # Аварийно: присвоить существующие БД без маркера владения (PG пересоздали,
+                                       # а ClickHouse остался). Чужой маркер не перебивается никогда.
+
+# Метаданные сборки. Подставляются в логи, Sentry-релиз, /health.
+# Версия здесь НЕ задаётся — единый источник истины git: она вшивается в бинарь
+# при сборке через ldflags (build.Version; см. Makefile / Dockerfile). VERSION в
+# .env на это значение не влияет.
+build:
+  project_name: nexus           # Имя проекта — попадает в логи/метрики как ярлык сервиса.
+
+# Логирование (github.com/vsilchenkov/logging, §14.1 ТЗ).
+# Остановка сервиса (§93.5). Общая для Receiver, Sender и Web.
+shutdown:
+  drain_sec: 5                  # Пауза между «/ready → 503» и остановкой сервера: балансировщик успевает вывести реплику из ротации, пока текущие запросы доигрывают. 0 → дефолт 5 с; отрицательное — выключить дренаж (поведение до §93).
+  timeout_sec: 30               # Потолок ожидания уже принятых запросов. Было зашито константой 30 с и рвало долгие sync-вызовы: таймаут внешнего узла доходит до 600 с. Ставьте по самому долгому узлу — меньше рвём, сильно больше выкат ждёт зависший вызов.
+
+logging:
+  level: 4                       # Порог логов: 2=error, 3=warn, 4=info, 5=debug.
+  output_in_file: false          # true → писать логи в файл (в каталог dir), а не только в stdout.
+  dir: logs                      # Каталог для файловых логов (актуален при output_in_file: true).
+  debug: false                   # Debug-режим самого логгера (расширенный self-вывод), не уровень логов.
+
+# Sentry — отправка ошибок и трейсов (§14.2 ТЗ).
+sentry:
+  use: ${SENTRY_USE:false}                          # Главный рубильник: false = Sentry не инициализируется.
+  dsn: ${SENTRY_DSN}                                # DSN проекта Sentry (секрет из .env).
+  environment: ${SENTRY_ENVIRONMENT:production}     # Тег окружения (production/staging/dev) в событиях.
+  level: 2                                          # Минимальный уровень для отправки в Sentry (2=error).
+  attach_stacktrace: true                           # Прикладывать стектрейс к событиям.
+  enable_tracing: true                              # Включить performance-трейсинг Sentry (транзакции).
+  traces_sample_rate: 0.1                           # Доля трейсов в Sentry: 0.1 = 10% запросов.
+  debug: false                                      # Debug-вывод SDK Sentry (диагностика доставки событий).
+
+# OpenTelemetry distributed tracing (§16 ТЗ, Phase 8.2).
+# При enable=false полный no-op: global TracerProvider не устанавливается,
+# Init не пытается коннектиться к collector'у, GinMiddleware пропускает
+# запрос без span'а. OTLP-экспорт по HTTP (POST /v1/traces).
+otel:
+  enable:        ${OTEL_ENABLE:false}           # Рубильник трейсинга: false = весь OTel no-op.
+  otlp_endpoint: ${OTEL_OTLP_ENDPOINT:otel-collector:4318}   # Адрес OTLP/HTTP collector'а (host:port).
+  otlp_insecure: ${OTEL_OTLP_INSECURE:true}     # true = без TLS (plaintext). production: false + valid TLS.
+  sample_rate:   ${OTEL_SAMPLE_RATE:0.1}        # 0.0..1.0 — head-based ratio sampler (0=drop all, 1=все).
+  service_name:  ${OTEL_SERVICE_NAME:}          # Имя сервиса в трейсах; пусто → берётся имя бинаря.
+  environment:   ${OTEL_ENVIRONMENT:production} # Тег окружения в ресурсе трейса.
+
+# PostgreSQL — конфиг узлов, пользователи, аудит (источник истины).
+postgres:
+  host: ${PG_HOST:postgres}      # Хост PG; в docker-compose дефолт — имя сервиса postgres.
+  port: ${PG_PORT:5432}          # Порт PG.
+  database: nexus                # Имя базы.
+  user: ${PG_USER:nexus}         # Пользователь БД.
+  password: ${PG_PASSWORD}       # Пароль БД (секрет из .env).
+  max_open_conns: 25             # Максимум открытых соединений в пуле.
+  max_idle_conns: 5              # Максимум простаивающих соединений, удерживаемых в пуле.
+  conn_max_lifetime_min: 30      # Время жизни соединения (мин) до пересоздания — против протухших коннектов.
+
+# Redis — горячий кеш узлов, серверные сессии UI, rate-limit счётчики.
+redis:
+  host: ${REDIS_HOST:redis}         # Хост Redis.
+  port: ${REDIS_PORT:6379}          # Порт Redis.
+  db: 0                             # Номер логической БД Redis (0..15).
+  username: ${REDIS_USER:}          # ACL-юзер (Redis 6+); пусто = default.
+  password: ${REDIS_PASSWORD}       # Пароль Redis (секрет из .env).
+  pool_size: 50                     # Размер пула соединений к Redis.
+  min_idle_conns: 10                # Минимум прогретых простаивающих соединений.
+  dial_timeout_ms: 2000             # Таймаут установки соединения (мс).
+  read_timeout_ms: 500              # Таймаут чтения ответа (мс).
+  write_timeout_ms: 500             # Таймаут записи команды (мс).
+  node_ttl_sec: 300                 # TTL кеша конфига узла в Redis (сек) = 5 мин.
+  session_ttl_sec: 86400            # TTL серверной сессии UI (сек) = 24 ч; продлевается при активности.
+  ratelimit_window_sec: 60          # Окно rate-limit счётчиков (сек) = 1 мин.
+
+# ClickHouse — лог исходящих запросов (sync + async), аналитика панели.
+clickhouse:
+  host: ${CH_HOST:clickhouse}    # Хост ClickHouse.
+  port: ${CH_PORT:9000}          # Нативный TCP-порт CH (9000), не HTTP 8123.
+  database: nexus_default        # Имя базы CH.
+  user: ${CH_USER:default}       # Пользователь CH.
+  password: ${CH_PASSWORD}       # Пароль CH (секрет из .env).
+  batch_size: 500                # Размер батча на вставку (строк) — копится перед flush.
+  flush_interval_sec: 5          # Принудительный flush буфера (сек), даже если батч не заполнен.
+  buffer_max_size: 100000        # Потолок строк в памяти; при достижении — backpressure/сброс.
+  workers: 2                     # Число воркеров-писателей в CH.
+  # §38: NDJSON-fallback (fallback_dir) удалён — durable-ретрай проваленных
+  # CH-батчей теперь через Kafka (kafka.retry_topic ниже).
+
+# Prometheus — источник метрик для дашбордов Web-панели (§21, §6).
+# Это адрес сервера Prometheus (query API), а НЕ /metrics самих сервисов.
+# Пусто → KPI/очередь/графики недоступны (деградация), per-node счётчики и
+# перцентили на странице узла считаются из ClickHouse.
+prometheus:
+  url: ${PROMETHEUS_URL:}          # напр. http://prometheus:9090. Пусто = метрики панели деградируют.
+  timeout_ms: 5000                 # Таймаут запроса к query API Prometheus (мс).
+
+# Kafka — транспорт async-запросов (Receiver → topic → Sender-consumer).
+kafka:
+  brokers: ${KAFKA_BROKERS:kafka:9092}   # Список брокеров через запятую (host:port).
+  async_topic: nexus.async               # Топик основной очереди async-запросов.
+  dlq_topic: nexus.async.dlq             # Dead-letter топик для неуспешно обработанных сообщений.
+  retry_topic: nexus.logs.retry          # §38: durable-буфер проваленных CH-батчей (дренится обратно в CH). ПУСТО = retry off → батчи теряются при сбое ClickHouse.
+  paused_topic: nexus.async.paused       # §3.6: delay-топик сообщений paused-узлов. Основной consumer переиздаёт их сюда, чтобы бэклог одного узла не блокировал партицию (соседей по хешу node_path).
+  consumer_group: nexus-sender           # Consumer-group, под которой Sender читает топик.
+  # Параметры авто-создания топика (EnsureTopics при старте).
+  # ВНИМАНИЕ: применяются ТОЛЬКО при создании топика (CreateTopics). На уже
+  # существующих топиках правка этих значений НЕ действует — меняй через
+  # `kafka-configs --alter` (см. DEPLOYMENT.md §4.3).
+  topic:
+    partitions: 8                        # Число партиций топика = потолок параллелизма обработки (min с consumer.instances). Боевое значение с 2026-08-07 (§80.1: узлы конкурировали за партицию, лаг рос до 3.3k). Увеличивается без пересоздания (kafka-topics --alter; процедура и её цена — DEPLOYMENT.md, «Увеличение числа ПАРТИЦИЙ»), уменьшить нельзя.
+    # Дефолты — под поставку из docker-compose: ОДИН брокер в KRaft-режиме (RF=1, ISR=1).
+    # RF не может превышать число брокеров: RF=3 на одном брокере роняет EnsureTopics
+    # на InvalidReplicationFactor, а ISR=2 при одной реплике валит каждую запись
+    # producer'а с acks=all. На кластере из 3+ брокеров переопредели через env
+    # RF=3, ISR=2 — иначе топики живут в одной копии без отказоустойчивости.
+    replication_factor: ${KAFKA_TOPIC_REPLICATION_FACTOR:1}   # Фактор репликации партиций (≤ числа брокеров).
+    min_insync_replicas: ${KAFKA_TOPIC_MIN_INSYNC_REPLICAS:1} # Минимум синхронных реплик для acks=all.
+    retention_ms: 604800000       # Хранение сообщений по времени (мс) = 7 дней (неделя). nexus.async — транзитная очередь (в норме lag≈0), долговременное хранение логов — в ClickHouse; 7 дней = запас на простой/отставание Sender'а.
+    retention_bytes: 42949672960  # Хранение по размеру (байт) = 40 ГиБ. ВНИМАНИЕ: лимит на ПАРТИЦИЮ:
+                                  # логический объём топика = retention_bytes × partitions (4 → 160 ГиБ),
+                                  # физически на кластере ещё × replication_factor (RF=3 → 480 ГиБ; на
+                                  # брокер при 3 брокерах ≈ 160 ГиБ). Предохранитель диска: Kafka удаляет
+                                  # старые сегменты при превышении, даже если они младше retention_ms.
+                                  # Держи заметно выше пикового backlog, иначе при отставании consumer'а
+                                  # удалятся НЕпрочитанные сообщения (потеря) — мониторь consumer lag.
+    segment_ms: 86400000       # Период ротации сегмента лога (мс) = 1 день.
+    cleanup_policy: delete     # Политика очистки: delete (по retention) или compact.
+    compression_type: lz4      # Компрессия на стороне топика.
+    max_message_bytes: 16777216 # Максимальный размер сообщения (байт) = 16 МиБ. Согласован с брокерским message.max.bytes боевого стека (docker-compose.yml: KAFKA_MESSAGE_MAX_BYTES=16777216) — брокерский потолок ОБЯЗАН быть не ниже per-topic, иначе "Message Size Too Large". Держит async-тело 10 МиБ в base64-конверте (+33% ≈ 13.3 МиБ). Применяется при CreateTopics; на живом топике меняется через kafka-configs --alter.
+  # Параметры producer'а (Receiver публикует в топик).
+  producer:
+    acks: all                  # Подтверждение записи: all = ждать min_insync_replicas (надёжно).
+    compression_type: lz4      # Компрессия на стороне producer'а.
+    linger_ms: 5               # Задержка перед отправкой батча (мс) — копит сообщения для эффективности.
+    batch_size: 65536          # Размер батча producer'а (байт) = 64 КиБ.
+    buffer_memory: 33554432    # Память под буфер producer'а (байт) = 32 МиБ.
+    retries: 2147483647        # Число ретраев отправки (фактически бесконечно, ограничено delivery_timeout).
+    delivery_timeout_ms: 120000 # Общий дедлайн доставки сообщения с ретраями (мс) = 2 мин.
+    enable_idempotence: true   # Идемпотентный producer — защита от дублей при ретраях.
+    max_in_flight_requests: 5  # Неподтверждённых запросов в полёте на соединение (≤5 при идемпотентности).
+    request_timeout_ms: 30000  # Таймаут одного запроса к брокеру (мс).
+  # Параметры consumer'а (Sender читает топик).
+  consumer:
+    auto_offset_reset: earliest # Старт без сохранённого offset: earliest = с начала, latest = с конца.
+    enable_auto_commit: false   # false = ручной commit offset после обработки (at-least-once, без потерь).
+    fetch_min_bytes: 1          # Минимум байт в ответе fetch; 1 = не ждать накопления.
+    fetch_max_bytes: 52428800   # Максимум байт за один fetch (байт) = 50 МиБ; ДОЛЖЕН быть ≥ topic.max_message_bytes, иначе крупное сообщение не вычитывается никогда.
+    max_partition_fetch_bytes: 16777216 # Максимум байт на партицию за fetch (байт) = 16 МиБ; ≥ topic.max_message_bytes.
+    session_timeout_ms: 30000   # Таймаут сессии consumer'а в группе (мс) — после него считается мёртвым.
+    heartbeat_interval_ms: 10000 # Период heartbeat'ов в координатор группы (мс).
+    max_poll_records: 500       # Максимум сообщений за один poll.
+    max_poll_interval_ms: 300000 # Декларативный: kafka-go параметр НЕ применяет (heartbeat идёт в фоне независимо от обработки; долгая обработка ребаланс не вызывает, ребаланс — только по session_timeout при смерти процесса).
+    isolation_level: read_committed # Читать только закоммиченные сообщения (для транзакционного producer'а).
+    instances: 8                # Число consumer-инстансов (горутин-readers) в этом процессе. Активны min(instances, partitions) — при instances < partitions часть партиций простаивает. Держи = topic.partitions при одной реплике Sender, либо дели партиции между репликами. Параметр общий для ВСЕХ групп Sender'а (async, dlq-reprocess, clog-retry).
+
+# ─────────────────────────────────────────────────────────────────────────────
+# СВЯЗИ ЛИМИТОВ РАЗМЕРА ТЕЛА (§43-rev). Держите инварианты, иначе большое тело
+# рвётся не там и не тем кодом:
+#   • receiver.max_body_bytes  <  sender.grpc_max_message_bytes
+#     (запас под envelope gRPC). Это потолок SYNC-запроса: тело больше → 413.
+#     Kafka здесь НЕ участвует — sync очередь не использует.
+#   • receiver.max_async_body_bytes × 1.4  <  kafka.topic.max_message_bytes
+#     (base64-конверт +33% и заголовки). Это потолок ASYNC-приёма
+#     (/requestAsync, /callback, sync к paused-узлу §3.6): тело больше → 413.
+#     Лимит обязан быть ≤ max_body_bytes; 0 → min(10 МиБ, max_body_bytes).
+#     ВАЖНО: async-потолок упирается не в память, а в Kafka. Поднять его нельзя
+#     без одновременного подъёма topic.max_message_bytes И брокерских
+#     message.max.bytes / replica.fetch.max.bytes — иначе брокер отвергнет
+#     сообщение, а клиент получит 503 на приёме.
+#   • sender.grpc_max_message_bytes  ==  receiver.sender_grpc.max_message_bytes
+#     — это потолок ОТВЕТА (Sender→Receiver). Тело ОТВЕТА больше него → 502.
+#   • kafka.consumer.fetch_max_bytes  ≥  kafka.topic.max_message_bytes; брокерский
+#     message.max.bytes / replica.fetch.max.bytes  ≥  topic.max_message_bytes.
+#     Боевой стек (корневой docker-compose.yml) держит брокерские потолки на
+#     16 МиБ — topic.max_message_bytes выше этого значения поднимать бесполезно
+#     и опасно: топик создастся, а сообщения будут отвергаться брокером.
+#   • ЛОГИ при недоступном ClickHouse (§38) уезжают в nexus.logs.retry тем же
+#     топиковым лимитом. Батч режется на под-батчи, но ОДНА запись больше лимита
+#     не режется — лог запроса с телом больше topic.max_message_bytes в retry не
+#     попадёт (потеря записи лога, не данных). Для узлов с крупными телами
+#     включайте per-node «Ограничить размер тела»: он режет копию тела в логе.
+#   • per-node «Ограничить размер тела» (max_body_size, в форме узла) режет ТОЛЬКО
+#     сохраняемый лог ClickHouse (в рунах) — на ответ клиенту и на 413/502 НЕ влияет.
+# ─────────────────────────────────────────────────────────────────────────────
+# Receiver Service — точка входа HTTP, auth/resolve/masking, проксирование в Sender.
+receiver:
+  http_addr: :8080               # Адрес/порт HTTP-сервера Receiver.
+  read_timeout_ms: 300000        # Таймаут чтения запроса клиента (мс) = 5 мин. ВКЛЮЧАЕТ приём тела: при max_body_bytes 124 МиБ прежние 10 с рвали загрузку крупного тела на медленном канале (клиент видел обрыв, в логах шины запроса не было).
+  write_timeout_ms: 610000       # Таймаут записи ответа клиенту (мс). ДОЛЖЕН превышать максимальный timeout_ms узла (600000): WriteTimeout включает всё время работы handler'а, меньше — долгий sync-запрос рвётся Receiver'ом (Web-прокси видит EOF, клиент — 502). Было 10000 — причина Sentry NEXUS-8.
+  idle_timeout_sec: 120          # Keep-alive: время простоя соединения до закрытия (сек).
+  max_body_bytes: 130023424       # Лимит тела ВХОДЯЩЕГО SYNC-запроса (байт) = 124 МиБ (/api/v1/request/*). ДОЛЖЕН быть ниже gRPC (192 МиБ) — тело едет к Sender одним gRPC-сообщением. Kafka здесь ни при чём: sync очередь не использует. Память: тело целиком лежит в RAM Receiver и Sender, см. mem_limit/GOMEMLIMIT в deploy/docker-compose.override.yml. Было 33554432 (32 МиБ).
+  max_async_body_bytes: 10485760 # Лимит тела ВХОДЯЩЕГО ASYNC-запроса (байт) = 10 МиБ (/api/v1/requestAsync/*, /callback/*, а также sync к paused-узлу §3.6 — он уходит в очередь). Отдельный от max_body_bytes и НАМЕРЕННО меньше: тело едет в Kafka в base64-конверте (+33%), 10 × 1.33 ≈ 13.3 МиБ < topic.max_message_bytes (16 МиБ), а тот в свою очередь не выше брокерского message.max.bytes боевого стека. Поднимать async-лимит без одновременного подъёма ОБОИХ kafka-потолков нельзя: брокер отвергнет сообщение ("Message Size Too Large"), и async-запрос вернёт 503.
+  max_header_bytes: 1048576      # Лимит заголовков входящего запроса (байт) = 1 МиБ.
+  rate_limit_per_node: 0         # Лимит RPS на узел; 0 = без ограничения.
+  max_hops: 5                    # §32: лимит переходов через шину (X-Nexus-Hops). 0 = дефолт 5; <0 = выкл.
+  # gRPC-клиент к Sender Service.
+  sender_grpc:
+    addr: sender:9190            # Адрес gRPC-сервера Sender (host:port).
+    pool_size: 8                 # Размер пула gRPC-соединений к Sender.
+    timeout_ms: 30000            # НЕ ПРИМЕНЯЕТСЯ — мёртвый параметр, оставлен ради совместимости формата. Дедлайн gRPC-вызову не ставится: RPC живёт под контекстом входящего HTTP-запроса, а потолок задаёт per-node timeout_ms узла. Менять значение бесполезно — sync-запрос им не оборвать и не продлить.
+    keepalive_time_sec: 30       # Период keepalive-ping'ов по соединению (сек).
+    keepalive_timeout_sec: 10    # Ожидание ответа на keepalive-ping до разрыва (сек).
+    max_message_bytes: 201326592 # Лимит размера gRPC-сообщения клиента (оба напр.) = 192 МиБ. Дефолт gRPC 4 МиБ мал для больших тел (ответ апстрима → ResourceExhausted). Должен быть ≥ receiver.max_body_bytes (124 МиБ) с запасом на envelope и совпадать с sender.grpc_max_message_bytes.
+  swagger_enabled: false         # Отдавать ли Swagger UI Receiver'а (выключай в prod).
+  # In-memory L2-кеш конфига узлов (§9.2). Снимает нагрузку с Redis на
+  # пиковом RPS и спасает при кратковременном Redis-flutter'е. При
+  # одновременной недоступности Redis и PG (§9.4 крайний случай) возвращает
+  # протухшую запись в пределах stale_ttl_ms.
+  l2_cache:
+    enabled: false               # Подключать ли L2-слой; false = чтение напрямую Redis/PG.
+    size: 1000                   # Ёмкость LRU-кеша (число узлов).
+    ttl_ms: 2000                 # Свежесть записи (мс) — до этого момента отдаётся без обращения к Redis.
+    stale_ttl_ms: 60000          # Допустимая «протухлость» (мс) при недоступности Redis+PG.
+  # §27: Puller-воркеры RabbitMQAsync (один на узел, забор basic.get → Kafka).
+  # Включён по умолчанию; при отсутствии узлов RabbitMQAsync — no-op.
+  puller:
+    disabled: false              # true = полностью выключить поллинг RabbitMQAsync.
+    reconcile_sec: 15            # Период сверки списка узлов с запущенными воркерами (сек).
+  # §94: журнал отказов на входе (вкладка «Логи → Отказы»). Здесь только ТЕМП и
+  # ПРЕДЕЛЫ буфера — включение сбора и срок хранения задаёт оператор в
+  # «Настройки → Общие» (срок 0 = сбор выключен, накопленное удаляется).
+  reject_log:
+    disabled: false              # Аварийный выключатель сбора на уровне процесса (обычный путь — срок хранения 0 в настройках).
+    flush_interval_sec: 10       # Период сброса накопленного в PostgreSQL (сек).
+    queue_size: 4096             # Глубина очереди «обработчик → агрегатор». Переполнение = дроп со счётчиком, а не задержка ответа.
+    max_groups: 2000             # Сколько разных групп держится в памяти между сбросами (защита от сканера по случайным путям).
+
+# Sender Service — gRPC-сервер, внешние HTTP-вызовы, лог в ClickHouse.
+sender:
+  grpc_addr: :9190               # Адрес/порт gRPC-сервера Sender.
+  admin_http_addr: :9091         # Адрес/порт admin-HTTP: /health, /ready, /metrics (housekeeping — фоновый цикл, не ручка).
+  grpc_max_concurrent_streams: 1000 # Лимит одновременных gRPC-стримов на соединение.
+  grpc_max_message_bytes: 201326592 # Лимит размера gRPC-сообщения сервера (recv тела запроса + send тела ответа) = 192 МиБ. Должен совпадать с receiver.sender_grpc.max_message_bytes.
+  # HTTP-клиент для исходящих запросов к внешним системам.
+  http_client:
+    timeout_ms: 30000            # Fallback-таймаут внешнего HTTP-запроса (мс) — только для запросов БЕЗ per-node timeout_ms. Таймаут узла имеет приоритет и этим параметром НЕ капается.
+    max_idle_conns: 100          # Максимум простаивающих соединений во всём пуле.
+    max_idle_conns_per_host: 20  # Максимум простаивающих соединений на один хост.
+    idle_conn_timeout_sec: 90    # Время жизни простаивающего соединения (сек) до закрытия.
+    dial_timeout_ms: 5000        # Таймаут установки TCP-соединения (мс).
+    tls_handshake_timeout_ms: 5000 # Таймаут TLS-рукопожатия (мс).
+  workers: 50                    # Число воркеров обработки async-задач.
+  # §52-доп: сколько «тяжёлых» отказов ПОДРЯД переводят узел в статус down.
+  # Тяжёлый отказ — транспортная ошибка или 5xx; ответ 4xx счётчик не трогает
+  # (это ответ приёмника, а не его отказ), любой успех обнуляет. Раньше порога
+  # не было, и первая же 500 красила узел в down: на потоке бейдж срывался от
+  # одиночной ошибки среди сотен успешных, причём выигрывал вызов, который
+  # ЗАВЕРШИЛСЯ последним (медленная 500 перебивала быстрые 200 той же секунды).
+  # 1 возвращает прежнее поведение. Требует Redis: счётчик хранится рядом со
+  # статусом; без Redis порог не применяется.
+  node_down_threshold: 10
+  # §36: авто-репроцессор DLQ — фоновый sweeper над nexus.async.dlq, повторно
+  # доставляет неудачные async-сообщения до per-node dlq_ttl_seconds.
+  reprocessor:
+    disabled: false              # Рубильник sweeper'а (false → включён).
+    interval_sec: 60             # Период прохода (сек, раз в минуту). Эффективная пауза
+                                 # повтора = max(interval_sec, dlq_retry_delay_seconds узла);
+                                 # держите ≤ минимального per-node delay, который хотите задавать.
+    max_scan: 1000               # Максимум сообщений за один проход (защита брокеров).
+  # §3.6: sweeper delay-топика nexus.async.paused — доставляет сообщения, которые
+  # накопились, пока узел стоял на паузе (в основном топике их не удерживают,
+  # иначе пауза одного узла тормозила бы соседей по партиции).
+  paused_sweep:
+    disabled: false              # Рубильник sweeper'а (false → включён). ВНИМАНИЕ: при
+                                 # выключении накопленный за паузу бэклог не будет
+                                 # доставлен вообще и истечёт по retention топика.
+    interval_sec: 30             # Период прохода (сек) = максимальная задержка доставки
+                                 # после снятия паузы; он же задаёт темп циркуляции бэклога.
+    max_scan: 1000               # Максимум сообщений за один проход (защита брокеров).
+  # §67: reverse-DNS резолв PTR-имени клиента → колонка client_host в CH-логах.
+  # Асинхронный, кеш в Redis + L1, fail-open. Требует PTR-записей в DNS.
+  rdns:
+    disabled: false              # Рубильник (false → включён).
+    timeout_ms: 2000             # Таймаут одного PTR-lookup (фоновый).
+    cache_ttl_sec: 3600          # TTL позитивного кеша IP→hostname (Redis).
+    negative_ttl_sec: 600        # TTL негативного кеша (IP без PTR / ошибка DNS).
+  # §81.3: circuit breaker узла — сколько отказов подряд закрывают доставку и
+  # сколько ждать до пробного запроса. Отказом считается 5xx, истёкший
+  # timeout_ms узла или отказ соединения; уход клиента шины отказом НЕ считается
+  # (§81.2). Значения можно переопределить на конкретном узле в его карточке —
+  # пустое поле там означает «как здесь».
+  circuit_breaker:
+    threshold: 5                 # Отказов подряд до открытия защиты.
+    cooldown_sec: 30             # Пауза до одного пробного запроса.
+  # §82.1: что gRPC-сервер Sender'а считает допустимым темпом keepalive-ping'ов
+  # от клиентов (Receiver и Web). Без этой секции действует дефолт grpc-go
+  # (5 минут), штатные ping'и клиентов считаются нарушением, и на третьем сервер
+  # обрывает СОЕДИНЕНИЕ ЦЕЛИКОМ (GOAWAY «too_many_pings») вместе с идущим по
+  # нему sync-вызовом. Потолок sync-запроса при этом = 4×keepalive_time_sec
+  # (замерено: обрывы на 91 и 121 с при timeout_ms узла 600000).
+  grpc_keepalive:
+    enforcement_min_time_sec: 5  # Минимальный допустимый интервал ping'ов клиента (сек). ОБЯЗАН быть ≤ receiver.sender_grpc.keepalive_time_sec и web.sender_grpc.keepalive_time_sec — иначе сервис не стартует (проверка в Validate).
+    deny_ping_without_stream: false # Запрещать ping по соединению без активных вызовов. ОСТАВЬ false: при true простаивающее соединение копит нарушения «в кредит» (порог 2 часа), и первый же долгий запрос получает GOAWAY почти сразу.
+
+# Web Service — REST API под /api/* и встроенный SPA (embed.FS).
+web:
+  http_addr: :8000                              # Адрес/порт HTTP-сервера Web.
+  idle_timeout_sec: 120                         # Таймаут ПРОСТАИВАЮЩЕГО keep-alive соединения (сек). Единственный таймаут HTTP-сервера Web:
+                                                #   read/write не задаются намеренно — через Web идут SSE-стримы (live-tail)
+                                                #   и sync-прокси к Receiver с таймаутом узла до 600 с.
+  session_cookie_name: nexus_session            # Имя cookie серверной сессии.
+  session_cookie_secure: true                    # true — Secure ставится, когда запрос пришёл по HTTPS (§90.2: прямой TLS или X-Forwarded-Proto: https).
+                                                 #   Вход по http://<IP> при этом тоже работает — кука просто выдаётся без Secure. false — никогда.
+  session_cookie_samesite: strict               # SameSite-политика cookie: strict/lax/none.
+  audit_retention_days: 365                     # Срок хранения записей аудита (дней).
+  replay_rate_limit_per_user_per_min: 10        # Лимит replay-запросов на пользователя в минуту.
+  metrics_exact_chart_max_records: 2000000     # §79.5: до скольких записей окна график узла строится точной формой (столбец = записи по интервалу прихода). Сверх — счёт по прогонам с пометкой chart_unit=attempts.
+  nodes_soft_limit: 10000                       # Мягкий лимит числа узлов (предупреждение в UI).
+  nodes_hard_limit: 50000                       # Жёсткий лимит числа узлов (запрет создания сверх).
+  node_default_max_body_size: 50000             # §64: «Макс. размер тела» по умолчанию в форме СОЗДАНИЯ узла (лимит сразу включён). Существующие узлы не меняет.
+  api_token_rate_limit_per_min: 100             # Лимит запросов по API-токену в минуту.
+  rmq_test_rate_limit_per_min: 10               # Лимит POST /api/nodes/test-rmq на пользователя в минуту (§27.8).
+  instance_probe_timeout_ms: 3000               # §73: таймаут КАЖДОГО из двух запросов пробы соседнего инстанса (GET /api/version и GET /ready).
+  instance_probe_rate_limit_per_min: 30         # §73: лимит проверок инстансов на пользователя в минуту (POST /api/instances/*).
+  password_reset_rate_limit_per_min: 5          # §88.4.4: лимит запросов восстановления пароля (на IP, на введённый логин и на подтверждение). -1 = выключить.
+  swagger_enabled: false                        # Отдавать ли Swagger UI Web'а (выключай в prod).
+  receiver_url: http://receiver:8080            # Base URL Receiver: replay-запросы (§7.4.1) и проксирование идут через реальный pipeline.
+  # §55: адрес Sender'а для dry-run в РЕАЛЬНОМ режиме (тестовый запрос со снятой
+  # галкой mock уходит на target тем же путём, что боевой трафик). Секция
+  # опциональна: пустой addr → реальный режим недоступен (шаг «Response» вернёт
+  # skipped «real call is not available»), mock работает как прежде. Тест не пишет
+  # в ClickHouse и не влияет на метрики, статус узла и circuit breaker — гейт
+  # `dry_run` на стороне Sender'а, поэтому Sender должен быть НЕ СТАРШЕ Web
+  # (старый Sender флаг проигнорирует и учтёт тест как боевой вызов).
+  sender_grpc:
+    addr: sender:9190                           # Адрес gRPC-сервера Sender (host:port). Пусто = реальный режим выключен. Порт 9190 уже слушается для Receiver'а — новый открывать не нужно.
+    pool_size: 2                                # Пул соединений: dry-run — ручная операция, большой пул не нужен.
+    timeout_ms: 30000                           # НЕ ПРИМЕНЯЕТСЯ — мёртвый параметр (тот же grpcsender без дедлайна, что у receiver.sender_grpc). Дедлайн dry-run-вызова задаёт контекст HTTP-запроса Web + per-node timeout_ms узла.
+    keepalive_time_sec: 30                      # Период keepalive-ping'ов по соединению (сек).
+    keepalive_timeout_sec: 10                   # Ожидание ответа на keepalive-ping до разрыва (сек).
+    max_message_bytes: 201326592                # Лимит размера gRPC-сообщения = 192 МиБ (как у receiver.sender_grpc).
+  # §32.2: «свои» authority (host или host:port) для запрета self-referencing target_url узла.
+  # Пусто → выводится из receiver_url. Полезно за реверс-прокси, когда внешний адрес отличается.
+  self_ingress_hosts: []                        # напр.: ["nexus.example.com", "receiver:8080"]
+  kafka_monitor_rate_limit_per_min: 60          # Лимит запросов к /api/kafka/* на пользователя в минуту (экран Kafka-мониторинга, защита от dashboard-флуда). 0 = без лимита.
+  # Пороги индикации (жёлтый/красный) для health-banner и KPI экрана Kafka-мониторинга (§6 spec).
+  # Вычисляются на каждом /api/kafka/overview; в сам Kafka/Prometheus не пишутся.
+  kafka_alerts_thresholds:
+    lag_warning: 100                            # Текущий consumer lag (сообщений) → жёлтый.
+    lag_critical: 1000                          # Текущий consumer lag → красный.
+    lag_growth_critical_per_sec: 50             # Прирост lag/сек, держащийся 5 минут подряд → красный.
+    error_rate_warning: 0.001                   # Доля ошибок (produced+consumed) за период → жёлтый (0.001 = 0.1%).
+    error_rate_critical: 0.01                   # Доля ошибок за период → красный (0.01 = 1%).
+    produce_latency_p95_warning_ms: 100         # p95 produce latency (мс) → жёлтый.
+    produce_latency_p95_critical_ms: 500        # p95 produce latency (мс) → красный.

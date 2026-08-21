@@ -41,11 +41,14 @@ type stubNodeStatus struct {
 	}
 }
 
-func (s *stubNodeStatus) SetLastOutcome(_ context.Context, path string, outcome domain.NodeOutcome) {
+// SetLastOutcome возвращает исход как есть: порог подряд идущих отказов (§52-доп)
+// живёт в Redis-реализации, и подменять его здесь значило бы тестировать заглушку.
+func (s *stubNodeStatus) SetLastOutcome(_ context.Context, path string, outcome domain.NodeOutcome) domain.NodeOutcome {
 	s.calls = append(s.calls, struct {
 		path    string
 		outcome domain.NodeOutcome
 	}{path, outcome})
+	return outcome
 }
 
 // TestServer_Send_NodeOutcome (§52): sync gRPC-путь классифицирует исход

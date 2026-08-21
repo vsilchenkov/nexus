@@ -1,0 +1,51 @@
+# Prometheus для развёртывания с двумя репликами (§93).
+#
+# Отличие от deploy/prometheus.yml ровно одно, но существенное: у каждого job'а
+# перечислены ОБЕ реплики поимённо, а не одно имя сервиса.
+#
+# Почему так, а не `targets: ["receiver:8080"]` как раньше: у пары реплик общий
+# сетевой алиас `receiver`, и Docker DNS отдаёт по нему два адреса вперемешку.
+# Prometheus скрейпил бы то одну реплику, то другую под ОДНОЙ меткой instance —
+# два независимых ряда счётчиков схлопнулись бы в один, а `increase()` на каждом
+# переключении видел бы «счётчик уехал назад» и считал это рестартом. Панель §21
+# и §28 получали бы мусор, причём правдоподобный.
+#
+# Поимённые таргеты дают стабильные метки instance (`web-1:8000`), поэтому в
+# Grafana и в /kafka видно, какая именно реплика отвечает. Имя резолвится на
+# каждый скрейп, так что пересозданный контейнер с новым IP подхватывается сам.
+#
+# Все PromQL панели уже агрегируют (`sum(...)`, `sum by (node)`), а правила
+# алертов — `max by (...)`, поэтому два ряда вместо одного они переживают без
+# изменений. Проверено при разборе §93.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - prometheus.alerts.yml
+  - prometheus.alerts.ha.yml
+
+scrape_configs:
+  - job_name: nexus-receiver
+    static_configs:
+      - targets: ["receiver-1:8080", "receiver-2:8080"]
+    metrics_path: /metrics
+
+  - job_name: nexus-sender
+    static_configs:
+      - targets: ["sender-1:9091", "sender-2:9091"]
+    metrics_path: /metrics
+
+  - job_name: nexus-web
+    static_configs:
+      - targets: ["web-1:8000", "web-2:8000"]
+    metrics_path: /metrics
+
+  # §75: JMX-агент на брокере — единственный источник размера топиков на диске
+  # (kafka_log_log_size{topic,partition}); Web агрегирует его для колонки «Размер»
+  # на экране /kafka. Брокер один и в §93 не реплицируется.
+  - job_name: kafka-jmx
+    static_configs:
+      - targets: ["kafka:7071"]
+    metrics_path: /metrics

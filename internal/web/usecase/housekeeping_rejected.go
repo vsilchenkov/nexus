@@ -23,17 +23,21 @@ const rejectedHousekeepingInterval = time.Hour
 // Отдельная задача, а не ещё один шаг в Housekeeping: у той суточный тикер, а
 // здесь нужен и другой период, и внеочередной запуск по смене настройки.
 //
-// Распределённого лока цикла у задачи нет: в этой ветке его ещё не существует
-// (§93 с redislock в dev не влит). Для чистки это безопасно — DELETE по
-// условию идемпотентен, и вторая реплика лишь сделает пустой проход. При
-// слиянии с §93 цикл берётся под лок так же, как чистка аудита, причём у
-// периодического и внеочередного проходов ключи ДОЛЖНЫ быть разными: общий лок
-// с длинным TTL от тикера отложил бы применение нового срока хранения, то есть
-// сломал бы обещание «уменьшение применяется сразу».
+// Периодический цикл берётся под лок реплики (§93.7) — как чистка аудита: с
+// двумя репликами Web тикер срабатывает дважды, и обе делают один и тот же
+// DELETE по растущей таблице.
+//
+// А внеочередной прогон (CycleNow по смене настройки) лока НЕ берёт вовсе, и
+// это не упущение: общий лок с TTL от часового тикера отложил бы применение
+// нового срока хранения до следующего часа — ровно то обещание §94.5
+// («уменьшение применяется сразу»), ради которого прогон и существует. Двойной
+// DELETE при этом безвреден: условие идемпотентно, вторая реплика делает
+// пустой проход.
 type RejectedHousekeeping struct {
 	repo      port.RejectedRepo
 	retention *RejectRetentionProvider
 	interval  time.Duration
+	lock      CycleLock
 	clock     clock.Clock
 	logger    logging.Logger
 }
@@ -56,6 +60,18 @@ func WithRejectedHousekeepingInterval(d time.Duration) RejectedHousekeepingOptio
 	return func(h *RejectedHousekeeping) {
 		if d > 0 {
 			h.interval = d
+		}
+	}
+}
+
+// WithRejectedHousekeepingLock подключает лок ПЕРИОДИЧЕСКОГО цикла (§93.7).
+// Ключ обязан отличаться от ключа чистки аудита: это разные задачи с разными
+// периодами, под общим ключом одна отменяла бы другую. На внеочередной прогон
+// (CycleNow) лок не распространяется — см. комментарий к типу.
+func WithRejectedHousekeepingLock(l CycleLock) RejectedHousekeepingOption {
+	return func(h *RejectedHousekeeping) {
+		if l != nil {
+			h.lock = l
 		}
 	}
 }
@@ -83,16 +99,47 @@ func (h *RejectedHousekeeping) Run(ctx context.Context) {
 
 	// Первый проход сразу: после простоя сервиса накопившееся должно уйти без
 	// ожидания целого периода.
-	h.Cycle(ctx)
+	h.tickCycle(ctx)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			h.Cycle(ctx)
+			h.tickCycle(ctx)
 		}
 	}
+}
+
+// tickCycle — плановый проход: выполняется одной репликой из пары (§93.7).
+func (h *RejectedHousekeeping) tickCycle(ctx context.Context) {
+	if !h.acquireCycle(ctx) {
+		return
+	}
+	h.Cycle(ctx)
+}
+
+// acquireCycle — можно ли этой реплике выполнять плановый цикл.
+//
+// Ошибка Redis трактуется как запрет — тот же выбор, что у чистки аудита: с
+// больным Redis дешевле пропустить час, чем пройти вторым DELETE по таблице,
+// которая и так растёт. Пропуск не теряет данные: следующий тик через час, а
+// смена срока хранения всё равно приходит внеочередным прогоном без лока.
+func (h *RejectedHousekeeping) acquireCycle(ctx context.Context) bool {
+	if h.lock == nil {
+		return true
+	}
+	ttl := max(h.interval/2, time.Minute)
+	ok, err := h.lock.TryLock(ctx, ttl)
+	if err != nil {
+		h.logger.Warn("rejected housekeeping: cycle lock check failed, skipping cycle",
+			h.logger.Err(err))
+		return false
+	}
+	if !ok {
+		h.logger.Debug("rejected housekeeping: cycle already taken by another replica")
+	}
+	return ok
 }
 
 // CycleNow выполняет внеочередную чистку — вызывается подписчиком reload сразу

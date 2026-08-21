@@ -43,6 +43,7 @@ import (
 	"nexus/internal/platform/ratelimit"
 	recoverypf "nexus/internal/platform/recovery"
 	redispf "nexus/internal/platform/redis"
+	"nexus/internal/platform/redislock"
 	"nexus/internal/platform/reloader"
 	"nexus/internal/platform/requestid"
 	"nexus/internal/platform/safego"
@@ -80,6 +81,7 @@ type App struct {
 	metrics *metrics.Metrics
 
 	srv          *http.Server
+	health       *healthcheck.Handler
 	otelShutdown otelpf.ShutdownFunc
 	// senderClient — §55: gRPC-пул к Sender для dry-run в реальном режиме.
 	// nil, если web.sender_grpc.addr не задан. Закрывается в Stop.
@@ -154,6 +156,8 @@ func (a *App) Start(ctx context.Context) error {
 		},
 		nil,
 	)
+	// §93.5: Stop переводит этот же handler в режим дренажа.
+	a.health = hc
 	hc.Register(r)
 	r.GET("/metrics", gin.WrapH(a.metrics.Handler()))
 
@@ -385,7 +389,11 @@ func (a *App) Start(ctx context.Context) error {
 	// уменьшенный срок применился бы только в следующем часу, а выключение
 	// журнала (0 дней) оставило бы накопленное лежать.
 	rejectRetention := usecase.NewRejectRetentionProvider()
-	rejectedHK := usecase.NewRejectedHousekeeping(rejectedRepo, rejectRetention, a.logger)
+	// §93.7: плановый (часовой) проход достаётся одной реплике; внеочередной
+	// прогон по смене настройки лока не берёт — иначе TTL часового цикла
+	// отложил бы применение нового срока хранения.
+	rejectedHK := usecase.NewRejectedHousekeeping(rejectedRepo, rejectRetention, a.logger,
+		usecase.WithRejectedHousekeepingLock(redislock.New(a.redis, "web-rejected-housekeeping")))
 	applyRejectRetention := func(ctx context.Context) error {
 		st, err := appSettingsUC.Raw(ctx)
 		if err != nil {
@@ -786,7 +794,9 @@ func (a *App) Start(ctx context.Context) error {
 	httpadapter.SPAFallback(r, static.FS())
 
 	// Housekeeping cron: ежедневное удаление старых audit-записей (§7.13).
-	hk := usecase.NewHousekeeping(auditUC, a.cfg.Web.AuditRetentionDays, a.logger)
+	// §93.7: лок оставляет суточную чистку аудита одной из реплик.
+	hk := usecase.NewHousekeeping(auditUC, a.cfg.Web.AuditRetentionDays, a.logger,
+		usecase.WithHousekeepingLock(redislock.New(a.redis, "web-audit-housekeeping")))
 	a.housekeepingDone = safego.Go(a.logger, "web.housekeeping", func() {
 		hk.Run(ctx)
 	})
@@ -833,11 +843,26 @@ func (a *App) Start(ctx context.Context) error {
 	}
 }
 
+// drain выводит реплику из ротации перед остановкой (§93.5): /ready начинает
+// отвечать 503, и балансировщик перестаёт слать новые запросы, пока текущие
+// доигрывают. В одиночной установке (shutdown.drain_sec отрицательный) — no-op.
+func (a *App) drain(ctx context.Context) {
+	pause := a.cfg.Shutdown.Drain()
+	if a.health == nil || pause <= 0 {
+		return
+	}
+	a.logger.Info("web draining before shutdown",
+		a.logger.Str("pause", pause.String()))
+	healthcheck.Drain(ctx, a.health, pause)
+}
+
 func (a *App) Stop(ctx context.Context) error {
 	if a.srv == nil {
 		return nil
 	}
-	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	a.drain(ctx)
+
+	shutdownCtx, cancel := context.WithTimeout(ctx, a.cfg.Shutdown.Timeout())
 	defer cancel()
 	a.logger.Info("web shutting down")
 	if err := a.srv.Shutdown(shutdownCtx); err != nil {

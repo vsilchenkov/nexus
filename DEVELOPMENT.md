@@ -389,6 +389,17 @@ git update-index --skip-worktree config/config_debug.yml
 # git update-index --no-skip-worktree config/config_debug.yml
 ```
 
+> **Локально стоит выключить дренаж остановки (§93.5).** По умолчанию сервис по SIGTERM сначала
+> объявляет себя неготовым, ждёт `shutdown.drain_sec` (5 с) и только потом останавливается — на
+> сервере это нужно балансировщику, а при отладке добавляет пять секунд к каждому перезапуску.
+> В своём `config_debug.yml`:
+>
+> ```yaml
+> shutdown:
+>   drain_sec: -1     # отрицательное значение выключает паузу; 0 означает «дефолт»
+>   timeout_sec: 15
+> ```
+
 **Способ B (изолированный) — отдельный файл.** Скопируйте `config/config_debug.yml` в
 `config/config.local.yml`, внесите те же три правки и запускайте с `--config config/config.local.yml`
 вместо `--debug`. Для VS Code продублируйте нужные конфиги в [.vscode/launch.json](./.vscode/launch.json),

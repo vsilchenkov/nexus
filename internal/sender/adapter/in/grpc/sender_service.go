@@ -90,6 +90,26 @@ func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 	// §52: outcome (ok/degraded/down) — для бейджа узла; isErr («любой
 	// не-2xx») — прежняя семантика incomplete_total.
 	outcome := domain.OutcomeFromStatusCode(out.StatusCode)
+	// §46: персистентный исход в Redis (переживает рестарт; Noop без Redis).
+	// Идёт ПЕРЕД метриками намеренно (§52-доп): счётчик подряд идущих отказов
+	// живёт там же и возвращает эффективный исход — сырой down остаётся
+	// degraded, пока порог не набран. Гаудж ниже выставляется по нему, иначе
+	// бейдж узла и алерты Prometheus говорили бы про один узел разное.
+	// §81.2: контекст отвязан — на sync-пути он умирает вместе с ушедшим
+	// клиентом, а go-redis отбрасывает команду с отменённым контекстом ещё в
+	// пуле: бейдж узла молча не обновлялся именно тогда, когда это важнее всего.
+	effOutcome := outcome
+	if s.nodeStatus != nil && !out.ParentGone {
+		statusCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), nodeStatusWriteTimeout)
+		effOutcome = s.nodeStatus.SetLastOutcome(statusCtx, req.GetNodePath(), outcome)
+		cancel()
+	} else if out.ParentGone {
+		// §51.9: тихий пропуск — иначе «почему узел не покраснел» не разобрать.
+		s.logger.Debug("send: caller gone, node outcome not updated",
+			s.logger.Str("id", req.GetId()),
+			s.logger.Str("node", req.GetNodePath()))
+	}
+
 	if s.metrics != nil {
 		s.metrics.RequestsTotal.
 			WithLabelValues("request", req.GetNodePath(), strconv.FormatInt(int64(out.StatusCode), 10)).Inc()
@@ -98,26 +118,13 @@ func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 		if outcome.IsError() {
 			s.metrics.RequestsIncompleteTotal.WithLabelValues("request", req.GetNodePath()).Inc()
 		}
-		// §41/§52: исход последнего вызова узла (in-memory гаудж).
+		// §41/§52: исход последнего вызова узла (in-memory гаудж) — по
+		// ЭФФЕКТИВНОМУ значению, см. выше.
 		// §81.2: обрыв вызывающей стороной исходом узла НЕ считается — он о
 		// здоровье приёмника не говорит ничего.
 		if !out.ParentGone {
-			s.metrics.SetNodeLastRequestOutcome(req.GetNodePath(), outcome)
+			s.metrics.SetNodeLastRequestOutcome(req.GetNodePath(), effOutcome)
 		}
-	}
-	// §46: персистентный исход в Redis (переживает рестарт; Noop без Redis).
-	// §81.2: контекст отвязан — на sync-пути он умирает вместе с ушедшим
-	// клиентом, а go-redis отбрасывает команду с отменённым контекстом ещё в
-	// пуле: бейдж узла молча не обновлялся именно тогда, когда это важнее всего.
-	if s.nodeStatus != nil && !out.ParentGone {
-		statusCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), nodeStatusWriteTimeout)
-		s.nodeStatus.SetLastOutcome(statusCtx, req.GetNodePath(), outcome)
-		cancel()
-	} else if out.ParentGone {
-		// §51.9: тихий пропуск — иначе «почему узел не покраснел» не разобрать.
-		s.logger.Debug("send: caller gone, node outcome not updated",
-			s.logger.Str("id", req.GetId()),
-			s.logger.Str("node", req.GetNodePath()))
 	}
 
 	return &senderv1.SendResponse{

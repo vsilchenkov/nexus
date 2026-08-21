@@ -4,6 +4,7 @@ import { type ReactNode } from "react";
 import { type Node } from "../../api/client";
 import { useNodeUrlBuilder } from "../../lib/nodeUrl";
 import { useNodeTeam } from "../../lib/nodeShare";
+import { useNodeTeamName } from "../../lib/nodeTeamName";
 import { useMyTeams } from "../../lib/teams";
 import { Card, Chip, CopyButton } from "../ui";
 
@@ -12,14 +13,13 @@ export function ConfigTab({ node }: { node: Node }) {
   const { t } = useTranslation();
   const isPull = node.root_method === "RabbitMQAsync";
   const verb = node.root_method === "request" ? "request" : "requestAsync";
-  // Команда узла — только человекочитаемое имя (без slug/UUID, §65): эндпоинт
-  // узла отдаёт лишь team_id, имя резолвим по членствам (запрос общий с шапкой,
-  // react-query дедуплицирует ключ) с фолбэком на резолвер §58 (тот уже
-  // закеширован страницей узла через useEnsureNodeTeam). Имя недоступно → «—».
+  // Команда узла — только человекочитаемое имя (без slug/UUID, §65). Расчёт
+  // общий с подсказкой кнопки «По умолчанию» на вкладках «Обзор»/«Очередь»
+  // (§92.3), поэтому живёт в useNodeTeamName. Имя недоступно → «—».
   const myTeams = useMyTeams();
   const nodeTeamQ = useNodeTeam(node.id);
   const membership = myTeams.data?.items.find((tm) => tm.id === node.team_id);
-  const teamName = membership?.name ?? nodeTeamQ.data?.team_name;
+  const teamName = useNodeTeamName(node);
   // §28 Пункт 1: адрес из публичного base URL приложения + slug команды.
   // Команда берётся ОТ УЗЛА, а не из сессии (§89.6): в членствах вызывающего
   // команды узла может не быть вовсе, и резолвер §58 — единственный источник.

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   filterEntries,
   formatEntryLine,
+  hasDistinctReplicas,
   levelBadgeClass,
   levelFromInt,
   levelToInt,
@@ -136,5 +137,42 @@ describe("logsQueryKey", () => {
 
   it("is insensitive to chip click order (stable cache key)", () => {
     expect(logsQueryKey(["web", "receiver"], 200)).toEqual(logsQueryKey(["receiver", "web"], 200));
+  });
+});
+
+describe("hasDistinctReplicas (§93.6)", () => {
+  it("false when replica repeats the service name (single-instance install)", () => {
+    // hostname контейнера в одиночной установке равен имени сервиса — колонка
+    // с репликой дублировала бы соседнюю и показываться не должна.
+    expect(
+      hasDistinctReplicas([entry({ service: "web", replica: "web" }), entry({ service: "receiver", replica: "receiver" })]),
+    ).toBe(false);
+  });
+
+  it("false when replica is absent (records written before §93)", () => {
+    expect(hasDistinctReplicas([entry({}), entry({ replica: "" })])).toBe(false);
+  });
+
+  it("true as soon as one record comes from a named replica", () => {
+    expect(
+      hasDistinctReplicas([entry({ service: "web", replica: "web" }), entry({ service: "web", replica: "web-2" })]),
+    ).toBe(true);
+  });
+});
+
+describe("filterEntries by replica (§93.6)", () => {
+  const entries = [
+    entry({ msg: "first", service: "web", replica: "web-1" }),
+    entry({ msg: "second", service: "web", replica: "web-2" }),
+  ];
+
+  it("finds rows of one replica by its name", () => {
+    const got = filterEntries(entries, { query: "web-2" });
+    expect(got).toHaveLength(1);
+    expect(got[0]?.msg).toBe("second");
+  });
+
+  it("keeps matching by message intact", () => {
+    expect(filterEntries(entries, { query: "first" })).toHaveLength(1);
   });
 });

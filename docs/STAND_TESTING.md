@@ -20,6 +20,37 @@
 > Узлы после прогона **не удаляются** — это сделано намеренно, чтобы можно было
 > вручную проверить их в UI, логах и метриках.
 
+
+## 0.0. Стенд с двумя репликами и балансировщиком (§93)
+
+Обычный стенд поднимает по одному экземпляру сервисов нативно. Для проверки выката без простоя есть
+второй профиль — [deploy/docker-compose.stand-ha.yml](../deploy/docker-compose.stand-ha.yml): шесть
+реплик и nginx в docker, зависимости берутся из уже поднятого стека `services`.
+
+```bash
+# 0. Освободить 8000/8080 — нативные make run-web / run-receiver их занимают.
+# 1. Поднять (креды локальных зависимостей — в .env.stand, файл не в git).
+docker compose -f deploy/docker-compose.stand-ha.yml up -d --build
+curl http://localhost:8000/api/version
+
+# 2. Обновление по одной реплике под нагрузкой.
+COMPOSE_FILE=deploy/docker-compose.stand-ha.yml ./scripts/deploy/rolling.sh --skip-dump --skip-tag
+
+# 3. Погасить.
+docker compose -f deploy/docker-compose.stand-ha.yml down
+```
+
+**Kafka стенда анонсирует два адреса.** В `e:/git_rep/services/docker-compose.yml` у брокера два
+клиентских listener'а: `localhost:9092` для нативных `make run-*` с хоста и `kafka:29092` для
+контейнеров в его сети. Одного мало: клиент идёт по АНОНСИРОВАННОМУ адресу, поэтому с единственным
+`advertised=localhost` контейнер уходит на самого себя и падает на старте
+(«dial controller localhost:9092: connection refused»). Стек `services` под git не заведён — правки
+в нём нигде не версионируются, помните об этом при переустановке машины.
+
+**После ручного `docker compose up -d` реплик обязателен `docker compose exec nginx nginx -s reload`** —
+иначе балансировщик держит старые адреса контейнеров (в прогоне это дало 55 % ошибок, пока reload не
+выполнили).
+
 ---
 
 ## 0. Что где слушает (единый вход)
