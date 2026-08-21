@@ -50,12 +50,15 @@ type ServerOpts = {
   collecting?: boolean;
   retentionDays?: number;
   unresolved?: number;
+  // scopeUnresolved — ответ сводки БЕЗ фильтров (вся область видимости). Она
+  // отличается от экранной, когда непросмотренные лежат за пределами периода.
+  scopeUnresolved?: number;
 };
 
 function mockServer(o: ServerOpts = {}) {
   const groups = o.groups ?? [group()];
   const collecting = o.collecting ?? true;
-  apiGet.mockImplementation((url: string) => {
+  apiGet.mockImplementation((url: string, params?: Record<string, unknown>) => {
     if (url === "/api/auth/me") {
       return Promise.resolve({ user: { user_id: "u1", role: o.role ?? "operator" } });
     }
@@ -68,11 +71,14 @@ function mockServer(o: ServerOpts = {}) {
       });
     }
     if (url === "/api/rejected/summary") {
+      // Без второго аргумента запрашивается сводка всей области видимости —
+      // ею меряется доступность «Пометить все» (§94.6).
+      const scoped = params === undefined;
       return Promise.resolve({
         count: 842,
         groups: groups.length,
         clients: 3,
-        unresolved: o.unresolved ?? 1,
+        unresolved: scoped ? (o.scopeUnresolved ?? o.unresolved ?? 1) : (o.unresolved ?? 1),
         retention_days: o.retentionDays ?? 30,
         collecting,
       });
@@ -179,6 +185,22 @@ describe("RejectedTab", () => {
 
     const btn = screen.getByText("rejected.resolve_all.title").closest("button");
     expect(btn).toBeDisabled();
+  });
+
+  it("«Пометить все» активна, когда непросмотренные лежат вне периода экрана", async () => {
+    // Экран (узкий период) непросмотренных не показывает, а в области
+    // видимости они есть — бейдж в сайдбаре горит. Кнопка обязана оставаться
+    // рабочей: она гасит счётчик целиком, а не то, что попало в период.
+    mockServer({ unresolved: 0, scopeUnresolved: 3 });
+    apiPost.mockResolvedValue({ marked: 3 });
+    renderTab();
+    await waitFor(() => expect(screen.getByText("telephony")).toBeInTheDocument());
+
+    const btn = screen.getByText("rejected.resolve_all.title").closest("button");
+    await waitFor(() => expect(btn).toBeEnabled());
+
+    fireEvent.click(screen.getByText("rejected.resolve_all.title"));
+    await waitFor(() => expect(apiPost).toHaveBeenCalledWith("/api/rejected/resolve-all", {}));
   });
 
   it("ссылка выгрузки повторяет фильтры экрана", async () => {

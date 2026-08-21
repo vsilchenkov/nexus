@@ -84,6 +84,16 @@ export default function RejectedTab() {
     enabled: periodReady,
   });
 
+  // Сводка ВСЕЙ области видимости — без периода и прочих экранных фильтров.
+  // Нужна ровно одному потребителю: доступности кнопки «пометить все». Кнопка
+  // действует по всей области видимости (§94.6), поэтому гасить её по сводке
+  // экрана нельзя — при узком периоде она гасла, хотя непросмотренные были и
+  // бейдж горел, и обнулить счётчик становилось нечем.
+  const scopeSummaryQ = useQuery({
+    queryKey: ["rejected", "summary", "scope"],
+    queryFn: () => api.get<RejectedSummary>("/api/rejected/summary"),
+  });
+
   // Выгрузка обязана повторять фильтры экрана: иначе CSV молча отдал бы другое
   // множество групп, чем показано в таблице (тот же приём, что в аудите).
   const csvHref = "/api/rejected/export.csv?" + new URLSearchParams(params).toString();
@@ -181,11 +191,13 @@ export default function RejectedTab() {
           </>
         )}
         {/* Кнопка активна, только пока есть что помечать: с нулевым счётчиком
-            нажатие ничего не изменило бы, а выглядело бы как действие. */}
+            нажатие ничего не изменило бы, а выглядело бы как действие. Счёт —
+            по области видимости (scopeSummaryQ), а не по экрану: именно её
+            меняет операция. */}
         <Button
           sm
           onClick={() => void onResolveAll()}
-          disabled={resolveAll.isPending || !(summaryQ.data?.unresolved ?? 0)}
+          disabled={resolveAll.isPending || !(scopeSummaryQ.data?.unresolved ?? 0)}
         >
           <CheckCheck className="h-3.5 w-3.5" /> {t("rejected.resolve_all.title")}
         </Button>
