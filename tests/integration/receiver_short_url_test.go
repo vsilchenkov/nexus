@@ -208,6 +208,11 @@ func TestReceiver_ShortURL_E2E(t *testing.T) {
 		}
 		assert.True(t, seen["request|sbp-qr"], "sync-узел: одна метка на обе формы адреса")
 		assert.True(t, seen["requestAsync|sbp-qr-async"], "async-узел: одна метка на обе формы адреса")
-		assert.True(t, seen["route|no-such-node"], "404 по короткому адресу метится отдельным рядом")
+		// §94.8: путь несуществующего узла в метку НЕ попадает — иначе сканер
+		// по случайным адресам плодил бы ряд на каждую попытку, и они остались
+		// бы в Prometheus навсегда. Детализацию даёт журнал отказов.
+		assert.True(t, seen["route|"+metrics.NodeUnresolved],
+			"404 по короткому адресу метится маркером, а не путём")
+		assert.False(t, seen["route|no-such-node"], "путь несуществующего узла в метку не попадает")
 	})
 }
