@@ -261,6 +261,11 @@ docker compose -f deploy/docker-compose.deps.yml up -d
   кросс-сервисный reload уровня, маскировка, неблокируемость); входит в общий `make test-integration`.
 - Фронтовые unit-тесты: `cd web-ui && npm run test` (vitest + RTL, setup `src/test/setup.ts` с
   jest-dom). **Гоняются в CI** (job `ui-build`) — падение vitest валит pipeline, как и lint/build.
+- `make test-int-rejected` (§94) — integration-группа журнала отказов на входе (PostgreSQL):
+  слияние пачек нескольких реплик Receiver в одну группу, вытеснение клиентов и сэмплов
+  сверх лимитов, снятие отметки «разобрано» новым отказом, чистка по сроку и полное
+  выключение журнала, скоупы команд. Входит в общий `make test-integration`. Тесты гоняются
+  на `postgres:12-alpine` — той же мажорной версии, что на бою.
 - `make test-int-logs-scale` (§77.5) — **ручной** замер прокрутки логов на большом объёме: сидит
   таблицу одним `INSERT … SELECT FROM numbers` и прогоняет 20 страниц по 50 строк по keyset-курсору,
   печатая avg/max и эталон «без автоокна». Объём — `LOG_SCALE_ROWS` (по умолчанию 1 млн; боевой
@@ -384,6 +389,17 @@ git update-index --skip-worktree config/config_debug.yml
 # git update-index --no-skip-worktree config/config_debug.yml
 ```
 
+> **Локально стоит выключить дренаж остановки (§93.5).** По умолчанию сервис по SIGTERM сначала
+> объявляет себя неготовым, ждёт `shutdown.drain_sec` (5 с) и только потом останавливается — на
+> сервере это нужно балансировщику, а при отладке добавляет пять секунд к каждому перезапуску.
+> В своём `config_debug.yml`:
+>
+> ```yaml
+> shutdown:
+>   drain_sec: -1     # отрицательное значение выключает паузу; 0 означает «дефолт»
+>   timeout_sec: 15
+> ```
+
 **Способ B (изолированный) — отдельный файл.** Скопируйте `config/config_debug.yml` в
 `config/config.local.yml`, внесите те же три правки и запускайте с `--config config/config.local.yml`
 вместо `--debug`. Для VS Code продублируйте нужные конфиги в [.vscode/launch.json](./.vscode/launch.json),
@@ -449,8 +465,22 @@ go run ./cmd/web --debug --set-admin-password admin
   `docker compose -f deploy/docker-compose.deps.yml logs kafka`.
 - **Порт `5432`/`6379`/`9092` занят** — выключите локальный сервис postgres/redis/kafka или
   поменяйте проброс портов в `docker-compose.deps.yml`.
-- **`go test -race` падает на cgo** — на Windows нужен gcc из MSYS2 в PATH (см. шапку
-  [Makefile](./Makefile): mingw64 добавляется в PATH автоматически при наличии).
+- **`go test -race` падает на cgo** (`runtime/cgo: cgo.exe: exit status 2`) — на Windows нужен gcc
+  из MSYS2 в PATH ПЕРЕД каталогом `mingw64\bin` из состава Git for Windows. Иначе `cc1.exe`
+  из MSYS2 подхватывает DLL от Git for Windows (там нет `libmpfr`/`libmpc`/`libisl`, а `zlib1`/
+  `libwinpthread` другой версии) и падает с `STATUS_ENTRYPOINT_NOT_FOUND` — молча, без вывода.
+  `make`-цели чинят порядок сами (см. шапку [Makefile](./Makefile)); при запуске `go test` руками
+  порядок PATH нужно поправить вручную либо в системных переменных.
+- **Один пакет падает с `Access is denied … [build failed]`, остальные проходят** — это НЕ порча
+  кода и не блокировка процессом. Kaspersky Endpoint Security помечает конкретный тестовый бинарь
+  эвристикой `VHO:Trojan.Win64.Agent.gen` (вердикт облачный, точность «высокая») и блокирует файл
+  сразу после линковки; go спотыкается на следующем шаге `go tool buildid -w`. Проверяется в
+  журнале: `Get-WinEvent -LogName 'Kaspersky Endpoint Security' | Where-Object Id -eq 302` — там
+  видно имя объекта и SHA256. Ложное срабатывание ловит именно PIE-бинарь (Go линкует тесты как
+  PIE, когда включён cgo), поэтому все `make`-цели гоняют тесты с `-buildmode=exe`
+  (`GO_TEST_FLAGS` в шапке Makefile) — обычный exe эвристику не задевает. Настоящее лечение —
+  исключение в политике KES (каталог `%LOCALAPPDATA%\Temp\go-build*` либо доверенное приложение
+  `go.exe`); флаг нужен потому, что прав на политику у разработчика обычно нет.
 - **delve: «could not load source» для `embed.FS`** — не критично, на отладку не влияет
   (см. [.vscode/settings.json](./.vscode/settings.json)).
 - **Web не стартует: «database already exists on first run of this instance» (§70).** Сработал гейт

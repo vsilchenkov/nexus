@@ -5,10 +5,13 @@
 // (receiver / sender / web).
 package config
 
+import "time"
+
 // Config — корневая структура конфига.
 type Config struct {
 	Instance   InstanceSection   `yaml:"instance"`
 	Build      BuildSection      `yaml:"build"`
+	Shutdown   ShutdownSection   `yaml:"shutdown"`
 	Logging    LoggingSection    `yaml:"logging"`
 	Sentry     SentrySection     `yaml:"sentry"`
 	Otel       OtelSection       `yaml:"otel"`
@@ -77,6 +80,49 @@ type BuildSection struct {
 	// копируются из build.Option в bootstrap. Отдаются в GET /api/version (§34.3).
 	Commit    string `yaml:"commit"`
 	BuildDate string `yaml:"build_date"`
+}
+
+// ShutdownSection — как сервис уходит по SIGTERM (§93.5). Общая для всех трёх
+// сервисов: остановка у них устроена одинаково, а разные значения на Receiver и
+// Sender означали бы, что выкат рвёт запрос на полпути между ними.
+type ShutdownSection struct {
+	// DrainSec — сколько ждать между «я больше не готов» (/ready → 503) и
+	// собственно остановкой HTTP/gRPC-сервера.
+	//
+	// Пауза нужна балансировщику: пока он не заметил 503 (или пока rolling.sh
+	// не убрал реплику из upstream), он продолжает слать сюда новые запросы, и
+	// остановка в этот момент отдала бы клиенту разрыв соединения.
+	//
+	// 0 означает «дефолт» (5 с), как и во всех остальных секциях конфига.
+	// Чтобы ВЫКЛЮЧИТЬ дренаж и вернуть поведение до §93, задайте отрицательное
+	// значение: yaml не отличает «не указано» от «указан ноль», а молча
+	// игнорировать явный ноль было бы хуже, чем потребовать -1.
+	DrainSec int `yaml:"drain_sec"`
+
+	// TimeoutSec — потолок ожидания уже принятых запросов после начала
+	// остановки.
+	//
+	// Раньше был зашит константой 30 с, и это рвало долгие синхронные вызовы:
+	// таймаут внешнего узла у sync-запроса доходит до 600 с (§16), а такой
+	// запрос на выводимой реплике просто обрывался на 30-й секунде — клиент
+	// получал разрыв, в логах шины оставался done=false без внятной причины.
+	// Значение подбирается под самый долгий узел: меньше — рвём, сильно
+	// больше — выкат стоит и ждёт зависший вызов.
+	TimeoutSec int `yaml:"timeout_sec"`
+}
+
+// Drain — пауза между «не готов» и остановкой сервера. Отрицательное значение
+// в конфиге означает «дренаж выключен» и превращается здесь в ноль.
+func (s ShutdownSection) Drain() time.Duration {
+	if s.DrainSec <= 0 {
+		return 0
+	}
+	return time.Duration(s.DrainSec) * time.Second
+}
+
+// Timeout — потолок ожидания уже принятых запросов при остановке.
+func (s ShutdownSection) Timeout() time.Duration {
+	return time.Duration(s.TimeoutSec) * time.Second
 }
 
 // LoggingSection — параметры логгера. Поля совпадают с
@@ -241,6 +287,29 @@ type ReceiverSection struct {
 	SwaggerEnabled bool                     `yaml:"swagger_enabled"`
 	L2Cache        ReceiverL2CacheConfig    `yaml:"l2_cache"`
 	Puller         ReceiverPullerConfig     `yaml:"puller"`
+	// RejectLog — журнал отказов на входе (§94).
+	RejectLog ReceiverRejectLogConfig `yaml:"reject_log"`
+}
+
+// ReceiverRejectLogConfig — параметры сбора журнала отказов (§94.4).
+//
+// Здесь только ТЕМП и ПРЕДЕЛЫ буфера: включение сбора и срок хранения задаёт
+// оператор в интерфейсе (§94.5), а не файл конфигурации — иначе одну и ту же
+// вещь пришлось бы согласовывать в двух местах.
+type ReceiverRejectLogConfig struct {
+	// Disabled — аварийный выключатель сбора на уровне процесса. Обычный путь
+	// выключения — срок хранения 0 в настройках; этот флаг нужен, когда
+	// интерфейс недоступен (например, PostgreSQL перегружен и надо снять с
+	// него запись немедленно).
+	Disabled bool `yaml:"disabled"`
+	// FlushIntervalSec — период сброса накопленного в PostgreSQL (default 10).
+	FlushIntervalSec int `yaml:"flush_interval_sec"`
+	// QueueSize — глубина очереди между обработчиком и агрегатором
+	// (default 4096). Переполнение = дроп со счётчиком, а не задержка ответа.
+	QueueSize int `yaml:"queue_size"`
+	// MaxGroups — сколько разных групп держится в памяти между сбросами
+	// (default 2000). Защита от сканера по случайным путям.
+	MaxGroups int `yaml:"max_groups"`
 }
 
 // ReceiverPullerConfig — параметры Puller-воркеров RabbitMQAsync (§27.2).
@@ -297,6 +366,20 @@ type SenderSection struct {
 	PausedSweep SenderPausedSweepConfig `yaml:"paused_sweep"`
 	// RDNS — reverse-DNS резолв client_host для логов (§67).
 	RDNS SenderRDNSConfig `yaml:"rdns"`
+	// NodeDownThreshold — сколько «тяжёлых» отказов ПОДРЯД переводят узел в
+	// статус down (§52-доп). Тяжёлый отказ — транспортная ошибка или 5xx;
+	// ответ 4xx счётчик не трогает (это ответ приёмника, а не его отказ), а
+	// любой успех обнуляет.
+	//
+	// Зачем порог: статус пишется по каждому вызову, и раньше первая же 500
+	// красила узел в down. На потоке это давало ложную картину — бейдж срывался
+	// от одиночной ошибки среди сотен успешных, причём выигрывал тот вызов,
+	// который ЗАВЕРШИЛСЯ последним, а не начался (медленная 500 перебивала
+	// быстрые 200 из той же секунды).
+	//
+	// 0 → дефолт 10. Значение 1 возвращает прежнее поведение «любая ошибка =
+	// down». Работает только с Redis: счётчик хранится там же, где статус.
+	NodeDownThreshold int `yaml:"node_down_threshold"`
 	// CircuitBreaker — политика защиты узла (§81.3). Раньше порог и пауза были
 	// литералами в коде.
 	CircuitBreaker SenderCircuitBreakerConfig `yaml:"circuit_breaker"`

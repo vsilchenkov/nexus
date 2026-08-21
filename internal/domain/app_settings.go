@@ -91,6 +91,38 @@ func ValidateSessionTTLSeconds(v int) error {
 	return nil
 }
 
+// Границы срока хранения журнала отказов (§94.5).
+const (
+	// RejectedRetentionDisabled — сбор выключен, накопленное удаляется.
+	RejectedRetentionDisabled = 0
+	// RejectedRetentionDefaultDays — значение по умолчанию, когда оператор
+	// ничего не задал (настройка nil).
+	RejectedRetentionDefaultDays = 30
+	// RejectedRetentionMaxDays — потолок: журнал агрегированный, но растёт с
+	// числом уникальных клиентов, и год хранения ему ни к чему.
+	RejectedRetentionMaxDays = 365
+)
+
+// ValidateRejectedRetentionDays проверяет срок хранения журнала отказов
+// (§94.5): [RejectedRetentionDisabled, RejectedRetentionMaxDays], где 0 —
+// «сбор выключен», а не «хранить вечно».
+func ValidateRejectedRetentionDays(v int) error {
+	if v < RejectedRetentionDisabled || v > RejectedRetentionMaxDays {
+		return ErrRejectedRetentionInvalid
+	}
+	return nil
+}
+
+// RejectedRetentionOrDefault разворачивает настройку в действующее число дней:
+// nil → RejectedRetentionDefaultDays. Вынесено в домен, чтобы Web (чистка) и
+// Receiver (признак «писать или нет») понимали nil одинаково.
+func RejectedRetentionOrDefault(v *int) int {
+	if v == nil {
+		return RejectedRetentionDefaultDays
+	}
+	return *v
+}
+
 // GeneralSettings — общесистемные настройки приложения (§28, Пункт 1).
 type GeneralSettings struct {
 	// PublicBaseURL — публичный адрес, под которым опубликован Web (origin без
@@ -110,6 +142,12 @@ type GeneralSettings struct {
 	// [MetricsRefetchMinMs, MetricsRefetchMaxMs]. Отдаётся всем авторизованным
 	// через /api/settings/public (не секрет).
 	MetricsRefetchMs *int `json:"metrics_refetch_ms,omitempty"`
+
+	// RejectedRetentionDays — срок хранения журнала отказов на входе (§94.5),
+	// в днях. nil = дефолт RejectedRetentionDefaultDays. Ноль — особое значение:
+	// сбор ВЫКЛЮЧЕН и накопленное удаляется (одна ручка вместо пары
+	// «тумблер + срок»). Не секрет — Get() не маскирует.
+	RejectedRetentionDays *int `json:"rejected_retention_days,omitempty"`
 
 	// MetricsApproxCounts — режим подсчёта уникальных запросов в KPI узлов и
 	// счётчиках дашборда (§44-perf). nil/false = ТОЧНО (countDistinct/uniqExact,

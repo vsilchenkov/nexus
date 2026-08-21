@@ -4994,6 +4994,291 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/rejected": {
+            "get": {
+                "description": "Группы отклонённых запросов: куда, почему, сколько раз, от скольких клиентов. Оператор и менеджер видят свою текущую команду, администратор — все и группы с неопознанным слогом.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "rejected"
+                ],
+                "summary": "Журнал отказов на входе (§94.6).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "нижняя граница last_seen (RFC3339)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "верхняя граница last_seen (RFC3339)",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "коды причин через запятую (node_not_found, method_not_allowed, …)",
+                        "name": "reasons",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "фильтр по команде (только admin)",
+                        "name": "team_slug",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "только группы с неопознанным слогом (только admin)",
+                        "name": "unknown_team",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "поиск по пути, слогу, IP, PTR-имени, User-Agent",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "включать разобранные группы",
+                        "name": "include_resolved",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "default 100, max 1000",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "смещение",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.rejectedListResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "роль ниже operator",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/rejected/export.csv": {
+            "get": {
+                "description": "Те же фильтры, что у списка. CSV в UTF-8 с BOM (для Excel), 10 колонок.",
+                "produces": [
+                    "text/csv"
+                ],
+                "tags": [
+                    "rejected"
+                ],
+                "summary": "Выгрузка журнала отказов в CSV (§94.6).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "нижняя граница last_seen (RFC3339)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "верхняя граница last_seen (RFC3339)",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "коды причин через запятую",
+                        "name": "reasons",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "поиск",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "включать разобранные",
+                        "name": "include_resolved",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "CSV",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/rejected/resolve-all": {
+            "post": {
+                "description": "Помечает ВСЕ непросмотренные группы, доступные вызывающему (оператор — свою команду, администратор — все), намеренно игнорируя фильтры экрана: кнопка обнуляет счётчик, а он считается по всей области видимости. Отметка снимается сама, когда в группу приходит новый отказ.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "rejected"
+                ],
+                "summary": "Пометить просмотренными все отказы области видимости (§94.6).",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.rejectedResolveAllResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "роль ниже operator",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/rejected/summary": {
+            "get": {
+                "description": "Число отказов, групп, разных клиентов и неразобранных групп — для строки на рабочем столе и бейджа раздела. Разобранные группы в счётчики входят: «сколько отказов за сутки» не должно меняться от нажатия «разобрано».",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "rejected"
+                ],
+                "summary": "Счётчики отказов за период (§94.6).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "нижняя граница last_seen (RFC3339)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "верхняя граница last_seen (RFC3339)",
+                        "name": "to",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.rejectedSummaryResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/rejected/{id}": {
+            "get": {
+                "description": "Группа с клиентами (IP, PTR-имя, User-Agent), последними запросами и подсказкой похожего узла. Чужая группа отдаётся как «не найдено»: иначе по коду ответа восстанавливались бы адреса других команд.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "rejected"
+                ],
+                "summary": "Карточка группы отказов (§94.6).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "id группы",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.rejectedDetailsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "группы нет либо она вне области видимости",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Удаляет группу вместе с её клиентами и сохранёнными запросами. Записывается в журнал аудита.",
+                "tags": [
+                    "rejected"
+                ],
+                "summary": "Удалить группу отказов (§94.6).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "id группы",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "удалено"
+                    },
+                    "404": {
+                        "description": "группы нет либо она вне области видимости",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/rejected/{id}/resolve": {
+            "post": {
+                "description": "Отметка снимается автоматически при новом отказе в эту группу — иначе однажды закрытая группа скрывала бы возобновившуюся проблему.",
+                "tags": [
+                    "rejected"
+                ],
+                "summary": "Пометить группу отказов разобранной (§94.6).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "id группы",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "разобрано"
+                    },
+                    "404": {
+                        "description": "группы нет либо она вне области видимости",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/request-fields": {
             "get": {
                 "security": [
@@ -9064,6 +9349,13 @@ const docTemplate = `{
                     "items": {
                         "type": "number"
                     }
+                },
+                "spark_err": {
+                    "description": "SparkErr — ошибки в тех же бакетах, что и Spark (§52-доп). Отдельным\nполем, а не заменой spark: старый клиент продолжает читать spark как\nпрежде. Пустой ряд означает «разбивки нет» (Prometheus-fallback), а не\n«ошибок ноль» — рисовать его зелёным нельзя.",
+                    "type": "array",
+                    "items": {
+                        "type": "number"
+                    }
                 }
             }
         },
@@ -9323,6 +9615,201 @@ const docTemplate = `{
                 "q": {
                     "type": "string",
                     "maxLength": 1000
+                }
+            }
+        },
+        "internal_web_adapter_in_http.rejectedClientResponse": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "first_seen": {
+                    "type": "string"
+                },
+                "host": {
+                    "type": "string"
+                },
+                "ip": {
+                    "type": "string"
+                },
+                "last_seen": {
+                    "type": "string"
+                },
+                "user_agent": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.rejectedDetailsResponse": {
+            "type": "object",
+            "properties": {
+                "clients": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.rejectedClientResponse"
+                    }
+                },
+                "group": {
+                    "$ref": "#/definitions/internal_web_adapter_in_http.rejectedGroupResponse"
+                },
+                "samples": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.rejectedSampleResponse"
+                    }
+                },
+                "suggestion": {
+                    "$ref": "#/definitions/internal_web_adapter_in_http.rejectedSuggestionResponse"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.rejectedGroupResponse": {
+            "type": "object",
+            "properties": {
+                "clients": {
+                    "type": "integer"
+                },
+                "count": {
+                    "type": "integer"
+                },
+                "first_seen": {
+                    "type": "string"
+                },
+                "http_method": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "last_seen": {
+                    "type": "string"
+                },
+                "node_path": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "resolved_at": {
+                    "type": "string"
+                },
+                "resolved_by": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "integer"
+                },
+                "team_id": {
+                    "type": "string"
+                },
+                "team_name": {
+                    "type": "string"
+                },
+                "team_slug": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.rejectedListResponse": {
+            "type": "object",
+            "properties": {
+                "collecting": {
+                    "type": "boolean"
+                },
+                "groups": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.rejectedGroupResponse"
+                    }
+                },
+                "retention_days": {
+                    "description": "RetentionDays/Collecting: без них интерфейс не отличит «отказов не было»\nот «сбор выключен настройкой» (§94.5).",
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.rejectedResolveAllResponse": {
+            "type": "object",
+            "properties": {
+                "marked": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.rejectedSampleResponse": {
+            "type": "object",
+            "properties": {
+                "at": {
+                    "type": "string"
+                },
+                "body_bytes": {
+                    "type": "integer"
+                },
+                "client_ip": {
+                    "type": "string"
+                },
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "http_method": {
+                    "type": "string"
+                },
+                "raw_path": {
+                    "type": "string"
+                },
+                "request_id": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.rejectedSuggestionResponse": {
+            "type": "object",
+            "properties": {
+                "distance": {
+                    "type": "integer"
+                },
+                "node_id": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "team_slug": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.rejectedSummaryResponse": {
+            "type": "object",
+            "properties": {
+                "clients": {
+                    "type": "integer"
+                },
+                "collecting": {
+                    "type": "boolean"
+                },
+                "count": {
+                    "type": "integer"
+                },
+                "groups": {
+                    "type": "integer"
+                },
+                "retention_days": {
+                    "description": "RetentionDays/Collecting — то же, что в списке: строка на рабочем столе\nне должна появляться, когда журнал выключен.",
+                    "type": "integer"
+                },
+                "unresolved": {
+                    "type": "integer"
                 }
             }
         },
@@ -9934,6 +10421,10 @@ const docTemplate = `{
                     "description": "PublicBaseURL — публичный адрес, под которым опубликован Web (origin без\nхвостового слеша, напр. https://nexus.example.com). Если задан, UI\nформирует полный адрес узла от него вместо window.location.origin.\nnil/\"\" = не задан (UI берёт origin браузера). Не секрет — Get() не маскирует.",
                     "type": "string"
                 },
+                "rejected_retention_days": {
+                    "description": "RejectedRetentionDays — срок хранения журнала отказов на входе (§94.5),\nв днях. nil = дефолт RejectedRetentionDefaultDays. Ноль — особое значение:\nсбор ВЫКЛЮЧЕН и накопленное удаляется (одна ручка вместо пары\n«тумблер + срок»). Не секрет — Get() не маскирует.",
+                    "type": "integer"
+                },
                 "version_override": {
                     "description": "VersionOverride — ручное переопределение отображаемой версии (§34.3).\nПрименяется и редактируется ТОЛЬКО при включённом web.allow_version_override\n(dev/staging); в проде флаг выключен → значение игнорируется, а запись\nотклоняется (ErrVersionOverrideForbidden). nil/\"\" = версия из git (ldflags).",
                     "type": "string"
@@ -10096,10 +10587,18 @@ const docTemplate = `{
                     "type": "object",
                     "additionalProperties": {}
                 },
+                "instance": {
+                    "description": "Instance — нода, записавшая строку (§70.7). Пусто у ноды без\nидентификатора и у записей, сделанных до §70.",
+                    "type": "string"
+                },
                 "level": {
                     "type": "string"
                 },
                 "msg": {
+                    "type": "string"
+                },
+                "replica": {
+                    "description": "Replica — экземпляр сервиса (§93.6), например web-2. Поле было в кольце\nRedis, но не доезжало до интерфейса: структура его не разбирала, и\nзаписи двух реплик выглядели одинаково.",
                     "type": "string"
                 },
                 "service": {

@@ -357,7 +357,11 @@ func TestApplyDefaults_MaxAsyncBodyBytes(t *testing.T) {
 		wantAsync int
 	}{
 		{name: "оба не заданы", maxBody: 0, maxAsync: 0, wantAsync: 5_242_880},
-		{name: "крупный sync-лимит → async остаётся 32 МиБ", maxBody: 130_023_424, maxAsync: 0, wantAsync: 33_554_432},
+		// §93: async-потолок упирается в Kafka, а не в память, поэтому крупный
+		// sync-лимит его НЕ поднимает. 10 МиБ × 1.33 (base64-конверт) влезает в
+		// topic.max_message_bytes 16 МиБ, который сам не выше брокерского
+		// message.max.bytes боевого стека.
+		{name: "крупный sync-лимит async не поднимает", maxBody: 130_023_424, maxAsync: 0, wantAsync: 10_485_760},
 		{name: "мелкий sync-лимит → async не выше него", maxBody: 10_485_760, maxAsync: 0, wantAsync: 10_485_760},
 		{name: "явное значение не затирается", maxBody: 130_023_424, maxAsync: 1_048_576, wantAsync: 1_048_576},
 	} {

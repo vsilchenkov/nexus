@@ -6,6 +6,10 @@ export type ServiceLogEntry = {
   ts: string;
   level: string;
   service: string;
+  /** Нода, записавшая строку (§70.7). Пусто у ноды без идентификатора. */
+  instance?: string;
+  /** Экземпляр сервиса (§93.6), например web-2. Пусто в старых записях. */
+  replica?: string;
   msg: string;
   attrs?: Record<string, unknown>;
 };
@@ -68,6 +72,9 @@ export function filterEntries(
   if (q === "") return entries;
   return entries.filter((e) => {
     if (e.msg.toLowerCase().includes(q)) return true;
+    // §93.6: по имени реплики тоже ищем — «покажи всё с web-2» это первое,
+    // что делают при разборе «на одной реплике работает, на другой нет».
+    if (e.replica != null && e.replica.toLowerCase().includes(q)) return true;
     return e.attrs != null && stableStringify(e.attrs).toLowerCase().includes(q);
   });
 }
@@ -107,4 +114,15 @@ export function logsQueryKey(
   limit: number,
 ): readonly [string, string, number] {
   return ["service-logs", serviceParam(services) ?? "all", limit] as const;
+}
+
+// hasDistinctReplicas — есть ли в выборке имя реплики, отличное от имени
+// сервиса (§93.6).
+//
+// В одиночной установке hostname контейнера совпадает с именем сервиса
+// (`receiver`), и отдельная колонка была бы шумом: она повторяла бы соседнюю.
+// В профиле двух реплик имена вида `receiver-1` расходятся — тогда колонка и
+// появляется, без всякого переключателя в интерфейсе.
+export function hasDistinctReplicas(entries: ServiceLogEntry[]): boolean {
+  return entries.some((e) => e.replica != null && e.replica !== "" && e.replica !== e.service);
 }

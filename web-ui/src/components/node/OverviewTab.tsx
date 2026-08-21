@@ -3,11 +3,14 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
 import { api, type Node } from "../../api/client";
-import { Card, Kpi, KpiRow, LabelHint, Pill, PeriodPicker, TrafficChart, defaultPeriod, type LogsRange, type Period } from "../ui";
+import { Card, DefaultPeriodButton, Kpi, KpiRow, LabelHint, Pill, PeriodPicker, TrafficChart, type LogsRange, type Period } from "../ui";
 import { nodeLookbackMs } from "../../lib/nodeLookback";
 import { fmtLogTs, fmtNum } from "../../lib/format";
 import { isLogOK } from "../../lib/logsQuery";
+import { useNodeTeamName } from "../../lib/nodeTeamName";
+import { PREF_KEY_NODE_PERIOD, useTeamDefaultPeriod } from "../../lib/prefs";
 import { useNodeMetrics, METRICS_REFETCH_MS } from "./useNodeMetrics";
+import { LogUrlCell } from "./LogUrlCell";
 import { type LogsResp } from "./types";
 
 // OverviewTab — вкладка «Обзор» узла (§21): 4 KPI + график трафика + последние
@@ -23,8 +26,22 @@ export function OverviewTab({
   onOpenLogs?: (range: LogsRange) => void;
 }) {
   const { t } = useTranslation();
-  const [period, setPeriod] = useState<Period>(defaultPeriod);
-  const m = useNodeMetrics(node.id, period);
+  // §92: стартовый период — дефолт команды (преф команды → глобальный → 24ч),
+  // а не системные 24ч. Выбор пользователя живёт поверх префа отдельным
+  // состоянием: писать выбор в преф на каждый клик нельзя — дефолт меняется
+  // только кнопкой «По умолчанию».
+  const { value: teamDefault, settled: periodReady } = useTeamDefaultPeriod(
+    node.team_id,
+    PREF_KEY_NODE_PERIOD,
+  );
+  // §92.3: имя команды нужно только подсказке кнопки «По умолчанию». Запросы
+  // общие со страницей узла — react-query их дедуплицирует.
+  const teamName = useNodeTeamName(node);
+  const [picked, setPicked] = useState<Period | null>(null);
+  const period = picked ?? teamDefault;
+  // enabled=periodReady: до прихода префа период неизвестен, и запрос ушёл бы
+  // за чужим окном — лишний поход в ClickHouse и мигание графика.
+  const m = useNodeMetrics(node.id, period, "auto", {}, periodReady);
   const hasLogsTable = !!node.clickhouse_table;
 
   const recentQ = useQuery({
@@ -77,7 +94,30 @@ export function OverviewTab({
             {t("metrics.traffic")}
             <LabelHint content={t("metrics.hints.traffic")} />
           </span>
-          <PeriodPicker value={period} onChange={setPeriod} maxLookbackMs={nodeLookbackMs(node)} />
+          {periodReady ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <PeriodPicker value={period} onChange={setPicked} maxLookbackMs={nodeLookbackMs(node)} />
+              <DefaultPeriodButton
+                period={period}
+                savedDefault={teamDefault}
+                teamId={node.team_id}
+                prefKey={PREF_KEY_NODE_PERIOD}
+                // §92.3: подсказка обязана называть скоуп — преф общий для
+                // «Обзора» и «Очереди» и действует на все узлы команды, а не
+                // на этот один. Пока имя команды не подгрузилось, показываем
+                // подпись кнопки (дефолт компонента), а не «команда undefined».
+                title={
+                  teamName
+                    ? t("node.set_default_period_hint", { team: teamName })
+                    : undefined
+                }
+              />
+            </div>
+          ) : (
+            /* §71/§92: плейсхолдер той же высоты вместо переключателя — показать
+               24ч и переключить на настоящий дефолт значило бы мигание. */
+            <div className="h-[30px] w-[320px] animate-pulse rounded-md bg-line/40" aria-hidden />
+          )}
         </div>
         <TrafficChart data={m.data?.series ?? []} onOpenLogs={hasLogsTable ? onOpenLogs : undefined} />
       </Card>
@@ -93,7 +133,20 @@ export function OverviewTab({
             {t("metrics.all_logs")}
           </button>
         </div>
-        <table className="w-full text-[12.5px]">
+        {/* table-fixed + colgroup обязательны: при авто-раскладке браузер
+            ИГНОРИРУЕТ max-width у ячейки и растягивает колонку под содержимое —
+            длинный подпуть (§39) в «Методе» распирал таблицу за край карточки,
+            а truncate не срабатывал вовсе. Ширины подобраны как в журнале
+            логов: фиксированные служебные колонки, а «Метод» и URL делят
+            остаток. */}
+        <table className="w-full table-fixed text-[12.5px]">
+          <colgroup>
+            <col className="w-[150px]" />
+            <col className="w-[76px]" />
+            <col className="w-[80px]" />
+            <col />
+            <col />
+          </colgroup>
           <thead>
             <tr className="border-y border-line text-left text-[11px] uppercase tracking-wide text-fg-muted">
               <th className="px-4 py-2 font-medium">{t("logs.col.time")}</th>
@@ -117,8 +170,16 @@ export function OverviewTab({
                     <Pill tone={isErr ? "err" : "ok"}>{r.status}</Pill>
                   </td>
                   <td className="px-4 py-2 font-mono">{r.duration_ms} ms</td>
-                  <td className="px-4 py-2 font-mono">{r.method}</td>
-                  <td className="max-w-[24rem] truncate px-4 py-2 font-mono text-fg-muted">{r.url}</td>
+                  {/* Метод — это подпуть §39, он бывает длиннее URL; обрезаем
+                      с полным значением в подсказке, как в журнале логов. */}
+                  <td className="truncate px-4 py-2 font-mono" title={r.method}>
+                    {r.method}
+                  </td>
+                  {/* Тот же компонент, что в журнале логов: обрезка + всплывающий
+                      блок с полным адресом и кнопкой «Скопировать». */}
+                  <td className="truncate px-4 py-2 font-mono text-fg-muted">
+                    <LogUrlCell url={r.url} />
+                  </td>
                 </tr>
               );
             })}

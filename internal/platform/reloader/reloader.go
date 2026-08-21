@@ -33,6 +33,10 @@ const (
 	SectionNotifications Section = "notifications"
 	SectionSecurity      Section = "security" // §34.2: длительность сессии
 	SectionLogging       Section = "logging"  // §51: runtime-уровень логов
+	// SectionGeneral — §94.5: срок хранения журнала отказов (и прочие поля
+	// секции general). Имя обязано совпадать со строкой из changedSections —
+	// publish кастует её в Section без маппинга.
+	SectionGeneral Section = "general"
 	// SectionMail — §88. Сам SMTP-транспорт перезагружать нечего: соединение с
 	// релеем живёт одну отправку и создаётся из свежепрочитанных настроек.
 	// Единственный подписчик — провайдер признака «восстановление пароля
@@ -163,6 +167,6 @@ func sectionsFor(s Section) []Section {
 	}
 	return []Section{
 		SectionSentry, SectionClickHouse, SectionNotifications,
-		SectionSecurity, SectionLogging, SectionMail,
+		SectionSecurity, SectionLogging, SectionMail, SectionGeneral,
 	}
 }

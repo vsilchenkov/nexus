@@ -36,6 +36,7 @@ type Handlers struct {
 	Instances     *PeerInstanceHandler
 	Breaker       *BreakerHandler
 	NodeRuntime   *NodeRuntimeHandler
+	Rejected      *RejectedHandler // §94: журнал отказов на входе
 }
 
 // Middlewares — общие middleware (auth-check, role-check, API token-check).
@@ -233,6 +234,22 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		// на вкладке «Очередь», меняется единственное поле status — это
 		// эксплуатация, а не правка конфига (§87.3).
 		authedOperator.PATCH("/nodes/:id/status", h.Node.UpdateStatus)
+		// §94.6: журнал отказов на входе. Роль operator+ (эксплуатация, не
+		// конфигурация); scope logs:read переиспользован намеренно — это тот же
+		// класс данных, что логи узлов, и новый код скоупа сломал бы уже
+		// выданные токены.
+		if h.Rejected != nil {
+			rejected := authedOperator.Group("/rejected", RequireScope("logs:read"))
+			rejected.GET("", h.Rejected.List)
+			// Статические сегменты объявлены ДО параметрического: gin разбирает
+			// их приоритетнее, и /summary не попадёт в :id.
+			rejected.GET("/summary", h.Rejected.Summary)
+			rejected.GET("/export.csv", h.Rejected.Export)
+			rejected.POST("/resolve-all", h.Rejected.ResolveAll)
+			rejected.GET("/:id", h.Rejected.Get)
+			rejected.POST("/:id/resolve", h.Rejected.Resolve)
+			rejected.DELETE("/:id", h.Rejected.Delete)
+		}
 		//
 		// authedManager (роль manager+admin, §26): управление узлами и
 		// связанными каталогами.

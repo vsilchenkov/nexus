@@ -125,6 +125,11 @@ type nodeThroughputDTO struct {
 	Errors uint64    `json:"errors"`
 	P95ms  float64   `json:"p95_ms"`
 	Spark  []float64 `json:"spark"`
+	// SparkErr — ошибки в тех же бакетах, что и Spark (§52-доп). Отдельным
+	// полем, а не заменой spark: старый клиент продолжает читать spark как
+	// прежде. Пустой ряд означает «разбивки нет» (Prometheus-fallback), а не
+	// «ошибок ноль» — рисовать его зелёным нельзя.
+	SparkErr []float64 `json:"spark_err"`
 	// §41 (back-compat): последний исходящий вызов узла завершился ошибкой
 	// («любой не-2xx» = last_outcome != "ok"). UI использует last_outcome;
 	// поле сохранено для внешних потребителей metrics:read.
@@ -201,10 +206,14 @@ func (h *MetricsHandler) NodesOverview(c *gin.Context) {
 		if spark == nil {
 			spark = []float64{}
 		}
+		sparkErr := it.SparkErrors
+		if sparkErr == nil {
+			sparkErr = []float64{}
+		}
 		items = append(items, nodeThroughputDTO{
 			NodeID: it.NodeID,
 			Node:   it.Node, In: it.In, Out: it.Out, Errors: it.Errors,
-			P95ms: it.P95ms, Spark: spark,
+			P95ms: it.P95ms, Spark: spark, SparkErr: sparkErr,
 			LastError:   it.LastOutcome.IsError(),
 			LastOutcome: string(it.LastOutcome),
 		})

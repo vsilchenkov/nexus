@@ -31,6 +31,21 @@ type UserPreference struct {
 // Контракт значения держит клиент (web-ui/src/lib/period.ts), не сервер.
 const PreferenceKeyOverviewPeriod = "overview.period"
 
+// PreferenceKeyNodePeriod — дефолтный период вкладок узла «Обзор» и «Очередь»
+// (§92). Значение той же формы, что у PreferenceKeyOverviewPeriod. Ключ один на
+// обе вкладки: горизонт наблюдения — свойство узла, а не вкладки.
+const PreferenceKeyNodePeriod = "node.period"
+
+// PreferenceKeyKafkaPeriod — дефолтный период монитора Kafka (§92). Отдельный
+// от узлового: у брокера свой горизонт наблюдения.
+const PreferenceKeyKafkaPeriod = "kafka.period"
+
+// PreferenceKeyRejectedPeriod — дефолтный период вкладки «Логи → Отказы»
+// (§94.7). Скоуп — команда: журнал отказов у каждой команды свой, а горизонт
+// разбора («что стучится сейчас» против «что накопилось за неделю») не связан
+// с периодом графиков рабочего стола.
+const PreferenceKeyRejectedPeriod = "rejected.period"
+
 // PreferenceKeyNodeMetricsViewPrefix — префикс ключа вида вкладки «Метрики»
 // узла (§84.3). Полный ключ собирает PreferenceKeyNodeMetricsView.
 const PreferenceKeyNodeMetricsViewPrefix = "node.metrics.view."

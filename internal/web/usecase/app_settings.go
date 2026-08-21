@@ -103,6 +103,12 @@ func (u *AppSettingsUsecase) Update(ctx context.Context, actor Actor, patch *dom
 			return err
 		}
 	}
+	// §94.5: срок хранения журнала отказов (0 = сбор выключен).
+	if patch.General.RejectedRetentionDays != nil {
+		if err := domain.ValidateRejectedRetentionDays(*patch.General.RejectedRetentionDays); err != nil {
+			return err
+		}
+	}
 	// §34.3: override версии разрешён только в dev (web.allow_version_override).
 	if patch.General.VersionOverride != nil && !u.allowVersionOverride {
 		return domain.ErrVersionOverrideForbidden
@@ -188,6 +194,10 @@ func mergeAppSettings(current, patch *domain.AppSettings) *domain.AppSettings {
 	// §44-perf: режим подсчёта уникальных (точно/приблизительно), не секрет.
 	if patch.General.MetricsApproxCounts != nil {
 		out.General.MetricsApproxCounts = patch.General.MetricsApproxCounts
+	}
+	// §94.5: срок хранения журнала отказов, не секрет.
+	if patch.General.RejectedRetentionDays != nil {
+		out.General.RejectedRetentionDays = patch.General.RejectedRetentionDays
 	}
 
 	// §34.2: Security — длительность сессии (не секрет).
@@ -332,8 +342,12 @@ func validateTelegramPatch(p *domain.AppSettings) error {
 // содержит хотя бы одно не-nil поле. Используется в audit details.
 func changedSections(p *domain.AppSettings) []string {
 	var out []string
+	// §94.5: имя обязано совпадать с reloader.SectionGeneral — publish кастует
+	// строку в Section без маппинга, а подписчики (срок хранения журнала
+	// отказов в Web и Receiver) слушают именно её.
 	if p.General.PublicBaseURL != nil || p.General.VersionOverride != nil ||
-		p.General.MetricsRefetchMs != nil || p.General.MetricsApproxCounts != nil {
+		p.General.MetricsRefetchMs != nil || p.General.MetricsApproxCounts != nil ||
+		p.General.RejectedRetentionDays != nil {
 		out = append(out, "general")
 	}
 	if p.Security.SessionTTLSeconds != nil {

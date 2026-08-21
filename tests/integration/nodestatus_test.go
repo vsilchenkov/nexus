@@ -29,7 +29,11 @@ func TestNodeStatus_WriterReader_Redis_E2E(t *testing.T) {
 	defer cleanup()
 
 	logger := logging.NewNoop()
-	writer := nodestatus.NewRedisWriter(client, logger) // Sender-сторона
+	// Порог 1 (§52.8) = «любой тяжёлый отказ сразу down»: сценарий проверяет
+	// кодировку значения и чтение на стороне Web, а не накопление отказов —
+	// с дефолтными 10 первый же down читался бы как degraded и тест проверял
+	// бы совсем другое. Порог покрыт своими тестами в platform/nodestatus.
+	writer := nodestatus.NewRedisWriter(client, 1, logger) // Sender-сторона
 	reader := webredis.NewNodeStatusReaderRedis(client, logger)
 
 	writer.SetLastOutcome(ctx, "partner/fail", domain.NodeOutcomeDown)      // транспорт/5xx

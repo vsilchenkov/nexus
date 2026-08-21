@@ -255,6 +255,10 @@ export type NodeThroughput = {
   errors: number;
   p95_ms: number;
   spark: number[];
+  // Ошибки в тех же бакетах, что и spark (§52-доп): столбец спарклайна рисуется
+  // двухцветным по доле ошибок. Пустой/отсутствующий ряд = разбивки нет
+  // (старый бэкенд или Prometheus-fallback) — тогда столбец одноцветный.
+  spark_err?: number[];
   // §41 (back-compat, = last_outcome != "ok"): UI использует last_outcome.
   last_error: boolean;
   // §52: исход последнего исходящего вызова узла — ok (2xx) / degraded

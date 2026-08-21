@@ -28,8 +28,10 @@ import (
 	otelpf "nexus/internal/platform/otel"
 	pgpf "nexus/internal/platform/pg"
 	"nexus/internal/platform/ratelimit"
+	"nexus/internal/platform/rdns"
 	recoverypf "nexus/internal/platform/recovery"
 	redispf "nexus/internal/platform/redis"
+	"nexus/internal/platform/redislock"
 	"nexus/internal/platform/reloader"
 	"nexus/internal/platform/requestid"
 	"nexus/internal/platform/safego"
@@ -37,6 +39,7 @@ import (
 	httpadapter "nexus/internal/receiver/adapter/in/http"
 	"nexus/internal/receiver/adapter/out/nodecache"
 	rabbitmqadapter "nexus/internal/receiver/adapter/out/rabbitmq"
+	"nexus/internal/receiver/adapter/out/rejectlog"
 	"nexus/internal/receiver/usecase"
 	"nexus/internal/receiver/usecase/port"
 )
@@ -50,6 +53,7 @@ type App struct {
 	metrics *metrics.Metrics
 
 	srv          *http.Server
+	health       *healthcheck.Handler
 	senderCl     *grpcsender.Client
 	producer     *kafkapf.Producer
 	otelShutdown otelpf.ShutdownFunc
@@ -67,6 +71,11 @@ type App struct {
 
 	// §51: ручка runtime-уровня логов + кольцо для Redis-шиппера.
 	logCtl *bootstrap.LogController
+
+	// §94: журнал отказов на входе — агрегатор в памяти + фоновый сброс в PG.
+	// nil, когда сбор выключен конфигурацией (receiver.reject_log.disabled).
+	rejectLog     *rejectlog.Collector
+	rejectLogDone <-chan struct{}
 }
 
 func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, cipher *crypto.Cipher, otelShutdown otelpf.ShutdownFunc, schema bootstrap.SchemaState, logger logging.Logger, logCtl *bootstrap.LogController) *App {
@@ -100,6 +109,8 @@ func (a *App) Start(ctx context.Context) error {
 	routeAsyncUC := usecase.NewRouteAsyncUsecase(reader, a.producer, a.cfg.Kafka.AsyncTopic, a.cfg.Receiver.MaxHops, a.logger)
 
 	a.startPullerManager(ctx)
+
+	a.startRejectLog(ctx)
 
 	a.warnAsyncBodyLimitOverKafka()
 
@@ -146,7 +157,7 @@ func (a *App) startPullerManager(ctx context.Context) {
 		a.metrics,
 		rabbitmqadapter.NewHealthSink(a.redis),
 		a.logger,
-	)
+	).WithNodeLease(redislock.NewLease(a.redis, bootstrap.ReplicaName()))
 	pctx, pcancel := context.WithCancel(context.WithoutCancel(ctx))
 	a.pullerCancel = pcancel
 	a.pullerDone = make(chan struct{})
@@ -156,6 +167,46 @@ func (a *App) startPullerManager(ctx context.Context) {
 		pullerMgr.Run(pctx)
 	}()
 	a.logger.Info("rabbitmq puller manager started")
+}
+
+// startRejectLog поднимает журнал отказов на входе (§94.4): агрегатор в памяти
+// + фоновый сброс накопленного в PostgreSQL.
+//
+// Резолвер PTR-имён берётся с параметрами секции sender.rdns — кеш имён у
+// Sender и Receiver общий (nexus:rdns:<ip> в Redis), и два набора настроек для
+// одного кеша только разошлись бы. Выключенный там резолв выключает имена и
+// здесь: журнал покажет адреса без hostname.
+//
+// Сбор включается СРАЗУ по флагу конфигурации, а не по настройке срока
+// хранения: до первого чтения app_settings (§94.5) отказы уже могут случиться,
+// и терять их из-за порядка инициализации незачем — срок хранения подключается
+// подписчиком ниже по коду и может выключить сбор через несколько миллисекунд.
+func (a *App) startRejectLog(ctx context.Context) {
+	if a.cfg.Receiver.RejectLog.Disabled {
+		a.logger.Info("reject log is disabled by config")
+		return
+	}
+	opts := []rejectlog.Option{rejectlog.WithDropSink(a.metrics)}
+	if !a.cfg.Sender.RDNS.Disabled {
+		opts = append(opts, rejectlog.WithHostResolver(rdns.New(ctx, a.redis, rdns.Config{
+			Timeout:     time.Duration(a.cfg.Sender.RDNS.TimeoutMs) * time.Millisecond,
+			CacheTTL:    time.Duration(a.cfg.Sender.RDNS.CacheTTLSec) * time.Second,
+			NegativeTTL: time.Duration(a.cfg.Sender.RDNS.NegativeTTLSec) * time.Second,
+		}, a.logger)))
+	}
+	a.rejectLog = rejectlog.New(rejectlog.NewRepo(a.pg), rejectlog.Config{
+		FlushInterval: time.Duration(a.cfg.Receiver.RejectLog.FlushIntervalSec) * time.Second,
+		QueueSize:     a.cfg.Receiver.RejectLog.QueueSize,
+		MaxGroups:     a.cfg.Receiver.RejectLog.MaxGroups,
+	}, a.logger, opts...)
+	a.rejectLog.SetEnabled(true)
+
+	done := make(chan struct{})
+	a.rejectLogDone = done
+	go func() {
+		defer close(done)
+		a.rejectLog.Run(ctx)
+	}()
 }
 
 // buildHTTPRouter собирает gin-роутер: middleware, health/metrics и маршруты
@@ -190,11 +241,28 @@ func (a *App) buildHTTPRouter(routeUC *usecase.RouteUsecase, routeAsyncUC *useca
 		[]healthcheck.Checker{pgpf.HealthChecker("postgres", a.pg)},
 		[]healthcheck.Checker{redispf.HealthChecker("redis", a.redis)},
 	)
+	// §93.5: Stop переводит этот же handler в режим дренажа, поэтому он живёт
+	// полем App, а не только внутри роутера.
+	a.health = hc
 	hc.Register(r)
 	r.GET("/metrics", gin.WrapH(a.metrics.Handler()))
 
-	handler.Register(r, rlMw)
+	// Порядок важен: журнал отказов идёт ПЕРВЫМ, чтобы его c.Next() охватывал
+	// rate-limit — иначе 429 в журнал не попадал бы вовсе.
+	handler.Register(r, httpadapter.RejectLogMiddleware(a.rejectLogSink(), a.metrics), rlMw)
 	return r, nil
+}
+
+// rejectLogSink отдаёт коллектор как приёмник журнала, а выключенный сбор — как
+// nil ИНТЕРФЕЙС.
+//
+// Возвращать *Collector напрямую нельзя: nil-указатель в интерфейсе даёт
+// не-nil интерфейс, и middleware считал бы журнал включённым.
+func (a *App) rejectLogSink() httpadapter.RejectSink {
+	if a.rejectLog == nil {
+		return nil
+	}
+	return a.rejectLog
 }
 
 // startBackgroundSubscribers запускает фоновых слушателей Redis: шиппер
@@ -217,6 +285,19 @@ func (a *App) startBackgroundSubscribers(ctx context.Context, reader port.NodeRe
 		a.logger.Warn("seed log level from app_settings failed; using yaml level", a.logger.Err(err))
 	}
 	reloadSub.Register(reloader.SectionLogging, applyLogLevel)
+	// §94.5: срок хранения журнала отказов включает и выключает сбор. Сид
+	// стартового значения тем же Reloader'ом: до него коллектор пишет по флагу
+	// конфигурации, и первые секунды после старта журнал ведётся, даже если
+	// оператор его выключил — терять отказы из-за порядка инициализации хуже,
+	// чем записать несколько лишних (их снесёт ближайшая чистка).
+	if a.rejectLog != nil {
+		applyRejectLog := bootstrap.RejectLogReloader(a.pg, a.rejectLog, a.cipher, a.logger)
+		if err := applyRejectLog(ctx); err != nil {
+			a.logger.Warn("seed reject log retention from app_settings failed; collection stays on",
+				a.logger.Err(err))
+		}
+		reloadSub.Register(reloader.SectionGeneral, applyRejectLog)
+	}
 	a.reloadDone = safego.Go(a.logger, "receiver.reloadSubscriber", func() {
 		reloadSub.Run(ctx)
 	})
@@ -265,8 +346,23 @@ func (a *App) serve(ctx context.Context, r *gin.Engine) error {
 	}
 }
 
+// drain выводит реплику из ротации перед остановкой (§93.5): /ready начинает
+// отвечать 503, и балансировщик перестаёт слать новые запросы, пока текущие
+// доигрывают. В одиночной установке (shutdown.drain_sec отрицательный) — no-op.
+func (a *App) drain(ctx context.Context) {
+	pause := a.cfg.Shutdown.Drain()
+	if a.health == nil || pause <= 0 {
+		return
+	}
+	a.logger.Info("receiver draining before shutdown",
+		a.logger.Str("pause", pause.String()))
+	healthcheck.Drain(ctx, a.health, pause)
+}
+
 func (a *App) Stop(ctx context.Context) error {
-	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	a.drain(ctx)
+
+	shutdownCtx, cancel := context.WithTimeout(ctx, a.cfg.Shutdown.Timeout())
 	defer cancel()
 	a.logger.Info("receiver shutting down")
 
@@ -291,6 +387,9 @@ func (a *App) Stop(ctx context.Context) error {
 	safego.Await(shutdownCtx, a.reloadDone, a.logger, "receiver.reloadSubscriber")
 	safego.Await(shutdownCtx, a.nodeInvalidateDone, a.logger, "receiver.nodeInvalidateSubscriber")
 	safego.Await(shutdownCtx, a.shipperDone, a.logger, "receiver.logShipper")
+	// §94.4: коллектор дописывает накопленное за последний неполный интервал —
+	// ждём его до закрытия пула PostgreSQL, иначе запись уйдёт в закрытый пул.
+	safego.Await(shutdownCtx, a.rejectLogDone, a.logger, "receiver.rejectLog")
 	if a.senderCl != nil {
 		_ = a.senderCl.Close()
 	}

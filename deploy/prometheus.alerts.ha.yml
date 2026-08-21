@@ -1,0 +1,38 @@
+# Alert rules, специфичные для развёртывания с двумя репликами (§93).
+#
+# Отдельный файл, а не строки в prometheus.alerts.yml, намеренно: в одиночной
+# установке «живых реплик меньше двух» — это норма, и такое правило висело бы
+# вечным алертом. Подключается только через deploy/prometheus.ha.yml.
+#
+# Что УЖЕ покрыто основным файлом и здесь не дублируется:
+#   * NexusReceiverDown / NexusSenderDown / NexusWebDown — `up{job=...} == 0`
+#     срабатывает на КОНКРЕТНУЮ реплику, то есть «одна из двух лежит» видно
+#     отдельным событием и в HA;
+#   * NexusSchemaAheadOfBinary (for: 15m) — застрявший на середине выкат:
+#     половина реплик осталась на старом коде при уже накатанной схеме.
+groups:
+  - name: nexus.ha
+    interval: 30s
+    rules:
+
+      # Единственное, чего в одиночной установке быть не могло: избыточности
+      # больше нет.
+      #
+      # Без этого правила самый неприятный сценарий §93 остаётся невидимым —
+      # одна реплика в crash-loop выглядит снаружи как «всё работает, но иногда
+      # 502»: вторая обслуживает трафик, панель открывается, дашборд зелёный.
+      #
+      # sum, а не count: `count(up == 1)` при полностью мёртвом сервисе не вернул
+      # бы ни одного ряда, и правило молчало бы ровно в худшем случае. `sum(up)`
+      # считает мёртвых как 0 и честно даёт 0 < 2.
+      - alert: NexusReplicasDegraded
+        expr: sum by (job) (up{job=~"nexus-(receiver|sender|web)"}) < 2
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Less than two live replicas of {{ $labels.job }}"
+          description: >-
+            Only {{ $value }} replica(s) of {{ $labels.job }} are scraped.
+            Zero-downtime deploys and crash tolerance are lost until the second
+            replica is back. Check `docker compose ps` and the container logs.

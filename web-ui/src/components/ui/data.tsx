@@ -112,17 +112,28 @@ export function Kpi({
 export function KpiRow({
   children,
   cols = 4,
+  single = "compact",
   className,
 }: {
   children: ReactNode;
   cols?: 2 | 3 | 4;
+  // single — что делать с ЕДИНСТВЕННОЙ отрисованной плиткой:
+  //   "compact" (по умолчанию) — узкая карточка (max-w-xs). Подходит там, где
+  //     соседние плитки просто не пришли и широкая карточка читалась бы как
+  //     растянутый по ошибке блок;
+  //   "full" — плитка занимает всю ширину строки. Для случаев, когда соседа не
+  //     бывает В ПРИНЦИПЕ (у sync-узла нет очереди, а значит и плитки «Ожидают
+  //     отправки»), и пустая половина строки выглядит как недогруженный экран.
+  single?: "compact" | "full";
   className?: string;
 }) {
   // Считаем ТОЛЬКО отрисованные плитки: условная `{flag && <Kpi/>}` даёт в
   // children значение false, и Children.count посчитал бы его тоже.
   const shown = Children.toArray(children).filter(Boolean).length;
   if (shown === 1) {
-    return <div className={cn("max-w-xs", className)}>{children}</div>;
+    return (
+      <div className={cn(single === "full" ? "w-full" : "max-w-xs", className)}>{children}</div>
+    );
   }
   const colsCls = cols === 2 ? "sm:grid-cols-2" : cols === 3 ? "sm:grid-cols-3" : "sm:grid-cols-4";
   return (

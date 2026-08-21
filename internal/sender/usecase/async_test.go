@@ -3,6 +3,8 @@ package usecase
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -422,8 +424,11 @@ type nodeStatusRec struct {
 	outcome domain.NodeOutcome
 }
 
-func (s *stubNodeStatus) SetLastOutcome(_ context.Context, path string, outcome domain.NodeOutcome) {
+// SetLastOutcome возвращает исход как есть: порог подряд идущих отказов (§52-доп)
+// живёт в Redis-реализации.
+func (s *stubNodeStatus) SetLastOutcome(_ context.Context, path string, outcome domain.NodeOutcome) domain.NodeOutcome {
 	s.calls = append(s.calls, nodeStatusRec{path: path, outcome: outcome})
+	return outcome
 }
 
 // TestAsync_WritesNodeStatus (§46/§52): async-обработка пишет исход последнего
@@ -509,3 +514,45 @@ func assertSomeError() error {
 type someErr struct{ msg string }
 
 func (e *someErr) Error() string { return e.msg }
+
+// TestAsync_PausedRequeue_TooLarge_Ack: сообщение, которое НЕ ВЛЕЗАЕТ в
+// delay-топик, отпускается (ack), а не крутится вечно.
+//
+// Так выглядит наследство завышенного async-лимита: тело приняли старой
+// версией, оно легло в nexus.async впритык, а при перекладывании добавились
+// служебные заголовки — и брокер отвечает «Message Size Too Large» НАВСЕГДА.
+// Retry-in-place здесь не «пробует ещё раз», а останавливает всю партицию:
+// offset не двигается, и следующие сообщения не обрабатываются вовсе.
+func TestAsync_PausedRequeue_TooLarge_Ack(t *testing.T) {
+	t.Parallel()
+
+	node := &domain.Node{Path: "partner/echo", Status: domain.NodeStatusPaused}
+	dlq := &stubDLQProducer{err: fmt.Errorf("write to nexus.async.paused: %w: broker said no",
+		domain.ErrMessageTooLargeForTopic)}
+	httpc := &stubHTTPCaller{}
+	send := NewSendUsecase(httpc, &stubLogWriter{}, nil, logging.NewNoop(), 64<<20)
+	p := NewAsyncProcessor(&stubAsyncNodeReader{node: node}, send, dlq,
+		nil, nil, "nexus.async.dlq", nil, logging.NewNoop(),
+		WithPausedRequeue("nexus.async.paused"))
+
+	got := p.Handle(context.Background(), makeEnvelope(t, "partner/echo"), nil)
+	assert.Equal(t, HandleAck, got,
+		"постоянная ошибка размера → отпускаем сообщение, иначе встаёт партиция")
+}
+
+// TestAsync_PausedRequeue_TransientError_Retry: временная ошибка брокера
+// по-прежнему означает retry — потеря недопустима, когда повтор может помочь.
+func TestAsync_PausedRequeue_TransientError_Retry(t *testing.T) {
+	t.Parallel()
+
+	node := &domain.Node{Path: "partner/echo", Status: domain.NodeStatusPaused}
+	dlq := &stubDLQProducer{err: errors.New("write to nexus.async.paused: broker unavailable")}
+	httpc := &stubHTTPCaller{}
+	send := NewSendUsecase(httpc, &stubLogWriter{}, nil, logging.NewNoop(), 64<<20)
+	p := NewAsyncProcessor(&stubAsyncNodeReader{node: node}, send, dlq,
+		nil, nil, "nexus.async.dlq", nil, logging.NewNoop(),
+		WithPausedRequeue("nexus.async.paused"))
+
+	got := p.Handle(context.Background(), makeEnvelope(t, "partner/echo"), nil)
+	assert.Equal(t, HandleRetry, got, "недоступность брокера — временная, повтор обязан остаться")
+}

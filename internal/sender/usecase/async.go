@@ -38,7 +38,10 @@ type CancelSet interface {
 // (фиксация статуса не влияет на доставку). Объявлен на стороне consumer'а
 // (accept interfaces, §17.2).
 type NodeStatusWriter interface {
-	SetLastOutcome(ctx context.Context, nodePath string, outcome domain.NodeOutcome)
+	// SetLastOutcome возвращает ЭФФЕКТИВНЫЙ исход: сырой down остаётся degraded,
+	// пока подряд идущих отказов меньше порога (§52-доп). По нему же выставляется
+	// Prometheus-гаудж — иначе бейдж и алерты трактовали бы один узел по-разному.
+	SetLastOutcome(ctx context.Context, nodePath string, outcome domain.NodeOutcome) domain.NodeOutcome
 }
 
 // AsyncProcessor — обработчик одного Kafka-сообщения для Sender.
@@ -229,6 +232,20 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 		p.logger.Int("attempts", int(out.Attempts)),
 		p.logger.Int("duration_ms", int(out.DurationMs)),
 		p.logger.Str("outcome", string(outcome)))
+	// §46: персистентный исход в Redis (переживает рестарт; Noop без Redis).
+	// Идёт ПЕРЕД гауджем намеренно (§52-доп): счётчик подряд идущих отказов
+	// живёт там же, и только он знает эффективный исход — сырой down остаётся
+	// degraded, пока порог не набран. Гаудж ниже выставляется по этому значению.
+	// §81.2: контекст отвязан — запись делается ПОСЛЕ вызова и обязана пережить
+	// смерть родителя (клиент шины ушёл, сервис останавливается). go-redis
+	// отбрасывает команду с отменённым контекстом ещё в пуле, поэтому раньше на
+	// обрыве бейдж узла молча не обновлялся, а в лог сыпался ложный warn.
+	effOutcome := outcome
+	if p.nodeStatus != nil && !out.ParentGone {
+		statusCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), nodeStatusWriteTimeout)
+		effOutcome = p.nodeStatus.SetLastOutcome(statusCtx, env.NodePath, outcome)
+		cancel()
+	}
 	if p.metrics != nil {
 		p.metrics.RequestsTotal.
 			WithLabelValues("requestAsync", env.NodePath, strconv.FormatInt(int64(out.StatusCode), 10)).Inc()
@@ -241,18 +258,8 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 		// §81.2: обрыв вызывающей стороной (здесь — остановка сервиса) исходом
 		// узла не считается.
 		if !out.ParentGone {
-			p.metrics.SetNodeLastRequestOutcome(env.NodePath, outcome)
+			p.metrics.SetNodeLastRequestOutcome(env.NodePath, effOutcome)
 		}
-	}
-	// §46: персистентный исход в Redis (переживает рестарт; Noop без Redis).
-	// §81.2: контекст отвязан — запись делается ПОСЛЕ вызова и обязана пережить
-	// смерть родителя (клиент шины ушёл, сервис останавливается). go-redis
-	// отбрасывает команду с отменённым контекстом ещё в пуле, поэтому раньше на
-	// обрыве бейдж узла молча не обновлялся, а в лог сыпался ложный warn.
-	if p.nodeStatus != nil && !out.ParentGone {
-		statusCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), nodeStatusWriteTimeout)
-		p.nodeStatus.SetLastOutcome(statusCtx, env.NodePath, outcome)
-		cancel()
 	}
 
 	if out.StatusCode >= 200 && out.StatusCode < 300 {
@@ -261,6 +268,20 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 
 	// Retry исчерпан → DLQ с метаданными.
 	if err := p.publishDLQ(ctx, raw, env, out); err != nil {
+		if errors.Is(err, domain.ErrMessageTooLargeForTopic) {
+			// Постоянная ошибка: сообщение физически не влезает в DLQ-топик
+			// (обычно принято старой версией с завышенным async-лимитом, а при
+			// перекладывании добавляются служебные заголовки). Повтор даст тот
+			// же ответ всегда, а offset при этом не двигается — то есть встаёт
+			// ВСЯ партиция, а не одно сообщение. Отпускаем его с ERROR: одна
+			// потерянная запись лучше остановленной доставки по партиции.
+			p.logger.ErrorWithOp("dlq publish dropped: message exceeds topic limit", err,
+				"async.publishDLQ",
+				p.logger.Str("id", env.ID),
+				p.logger.Str("node_path", env.NodePath),
+				p.logger.Int("bytes", len(raw)))
+			return HandleAck
+		}
 		p.logger.ErrorWithOp("dlq publish failed", err, "async.publishDLQ",
 			p.logger.Str("id", env.ID))
 		return HandleRetry
@@ -299,6 +320,16 @@ func (p *AsyncProcessor) handlePaused(ctx context.Context, raw []byte, env Envel
 
 	hdrs := p.pausedHeaders(env, msgHeaders)
 	if err := p.dlq.Produce(ctx, p.pausedTopic, env.NodePath, raw, hdrs); err != nil {
+		if errors.Is(err, domain.ErrMessageTooLargeForTopic) {
+			// То же, что и у DLQ: повторять нечего, а retry-in-place остановил
+			// бы всю партицию из-за одного сообщения. См. publishDLQ.
+			p.logger.ErrorWithOp("paused requeue dropped: message exceeds topic limit", err,
+				"async.handlePaused",
+				p.logger.Str("id", env.ID),
+				p.logger.Str("node_path", env.NodePath),
+				p.logger.Int("bytes", len(raw)))
+			return HandleAck
+		}
 		// Не смогли переложить — НЕ коммитим: сообщение обработается снова
 		// (retry-in-place в адаптере), потеря исключена.
 		p.logger.ErrorWithOp("paused requeue failed", err, "async.handlePaused",

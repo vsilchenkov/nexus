@@ -43,6 +43,11 @@ type appSettingsOverlay struct {
 	Logging struct {
 		Level *int `json:"level,omitempty"`
 	} `json:"logging"`
+	// §94.5: срок хранения журнала отказов. Receiver'у из всей секции нужен
+	// только он — по значению 0 сбор выключается.
+	General struct {
+		RejectedRetentionDays *int `json:"rejected_retention_days,omitempty"`
+	} `json:"general"`
 }
 
 // ApplyAppSettings читает singleton-строку app_settings и накладывает

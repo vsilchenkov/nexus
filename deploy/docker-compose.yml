@@ -118,12 +118,16 @@ services:
       # (с телами request/response, до ~неск. МБ) в nexus.logs.retry — без этого
       # они отвергаются и теряются. replica.fetch.max.bytes держим >= того же
       # (нужно для репликации при RF>1; для single-broker не вредит).
-      # 64 МиБ = receiver.max_body_bytes (32 МиБ, §68 multipart + подписанные
-      # ЭЦП пакеты) × 1.33 (base64 async-envelope) + запас; совпадает с
-      # kafka.topic.max_message_bytes конфига. Брокерский потолок ОБЯЗАН быть не
-      # ниже per-topic лимита — иначе Message Size Too Large (см. §4.0.4).
-      KAFKA_MESSAGE_MAX_BYTES: "67108864"
-      KAFKA_REPLICA_FETCH_MAX_BYTES: "67108864"
+      # 16 МиБ = receiver.max_async_body_bytes (10 МиБ) × 1.33 (base64
+      # async-envelope) + запас; совпадает с kafka.topic.max_message_bytes
+      # конфига и с боевым стеком (корневой docker-compose.yml), где эти
+      # потолки не менялись. Брокерский потолок ОБЯЗАН быть не ниже per-topic
+      # лимита — иначе Message Size Too Large (см. §4.0.4).
+      #
+      # SYNC-тело (124 МиБ) здесь ни при чём: синхронный путь очередь не
+      # использует, его потолок задаёт sender.grpc_max_message_bytes.
+      KAFKA_MESSAGE_MAX_BYTES: "16777216"
+      KAFKA_REPLICA_FETCH_MAX_BYTES: "16777216"
       # Брокерный дефолт retention. Топики nexus.* создаются приложением с ЯВНЫМ
       # конфигом (config.yml kafka.topic → CreateTopics); эти значения — запасной
       # потолок для прочих/авто-топиков и согласуют брокер с топик-конфигом:

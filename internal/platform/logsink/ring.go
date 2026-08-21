@@ -34,6 +34,12 @@ func WithInstance(id string) RingOption {
 	return func(c *ringCore) { c.instance = id }
 }
 
+// WithReplica проставляет имя реплики в каждую запись (§93.6). Пустое значение
+// поле не добавляет — одиночная установка выглядит как прежде.
+func WithReplica(name string) RingOption {
+	return func(c *ringCore) { c.replica = name }
+}
+
 // WithChannelCapacity задаёт ёмкость буферизованного канала к шипперу.
 func WithChannelCapacity(n int) RingOption {
 	return func(c *ringCore) {
@@ -50,6 +56,8 @@ type ringCore struct {
 	service string
 	// instance — идентификатор ноды (§70.7); пустой у ноды до §70.
 	instance string
+	// replica — имя реплики сервиса (§93.6); пустое в одиночной установке.
+	replica string
 
 	mu   sync.Mutex
 	buf  []Entry // кольцо: buf[next] — место следующей записи
@@ -118,6 +126,7 @@ func (h *RingHandler) Handle(_ context.Context, r slog.Record) error {
 		Level:    strings.ToLower(r.Level.String()),
 		Service:  h.core.service,
 		Instance: h.core.instance,
+		Replica:  h.core.replica,
 		Msg:      r.Message,
 		Attrs:    attrs,
 	}

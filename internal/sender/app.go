@@ -36,6 +36,7 @@ import (
 	"nexus/internal/platform/queuecancel"
 	"nexus/internal/platform/rdns"
 	recoverypf "nexus/internal/platform/recovery"
+	"nexus/internal/platform/redislock"
 	"nexus/internal/platform/reloader"
 	"nexus/internal/platform/requestid"
 	"nexus/internal/platform/safego"
@@ -65,6 +66,8 @@ type App struct {
 	metrics *metrics.Metrics
 
 	grpcSrv       *grpc.Server
+	grpcHealth    *health.Server
+	httpHealth    *healthcheck.Handler
 	adminSrv      *http.Server
 	chMgr         *chpf.Manager
 	chWriter      *chlog.WriterManager
@@ -209,7 +212,7 @@ func (a *App) buildSendUsecase(ctx context.Context) (*usecase.SendUsecase, useca
 	// статус «Down» корректен после деплоя). Noop без Redis — поведение как §41.
 	var nodeStatus usecase.NodeStatusWriter = nodestatus.Noop{}
 	if a.redis != nil {
-		nodeStatus = nodestatus.NewRedisWriter(a.redis, a.logger)
+		nodeStatus = nodestatus.NewRedisWriter(a.redis, a.cfg.Sender.NodeDownThreshold, a.logger)
 	}
 
 	return sendUC, breaker, nodeStatus
@@ -313,7 +316,11 @@ func (a *App) startAsyncPipeline(
 // подписчиков hot-reload вместе с шиппером служебных логов (§14.5/§8.4/§51).
 func (a *App) startBackgroundJobs(ctx context.Context, nodeReader *nodepg.Reader, chGuard *chpf.Guard) {
 	// CH partition-drop housekeeping (§4.3 ТЗ): фоновый цикл раз в сутки.
-	hk := usecase.NewCHHousekeeping(a.chMgr, nodeReader, a.logger).WithOwnership(chGuard)
+	// §93.7: с двумя репликами суточный тикер срабатывает дважды — лок
+	// оставляет уборку одной из них.
+	hk := usecase.NewCHHousekeeping(a.chMgr, nodeReader, a.logger).
+		WithOwnership(chGuard).
+		WithCycleLock(redislock.New(a.redis, "sender-ch-housekeeping"))
 	a.housekeepingDone = safego.Go(a.logger, "sender.chHousekeeping", func() {
 		hk.Run(ctx)
 	})
@@ -410,6 +417,10 @@ func (a *App) startGRPC(svc *grpcadapter.Server) error {
 	hsrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
 	hsrv.SetServingStatus("nexus.sender.v1.SenderService", healthpb.HealthCheckResponse_SERVING)
 	healthpb.RegisterHealthServer(a.grpcSrv, hsrv)
+	// §93.5: на остановке Stop переводит этот же сервер в NOT_SERVING, и клиенты
+	// с healthCheckConfig (Receiver, platform/grpcsender) убирают реплику из
+	// round_robin ДО того, как gRPC-сервер начнёт отказывать в соединениях.
+	a.grpcHealth = hsrv
 	reflection.Register(a.grpcSrv)
 
 	a.logger.Info("sender grpc listening",
@@ -439,6 +450,7 @@ func (a *App) startAdminHTTP() error {
 		},
 		nil,
 	)
+	a.httpHealth = hc
 	hc.Register(r)
 	r.GET("/metrics", gin.WrapH(a.metrics.Handler()))
 
@@ -509,9 +521,35 @@ func (a *App) publishLag(snaps []kafkaadapter.LagSnapshot, group, defaultTopic s
 // Stop — порядок остановки существенен и зафиксирован в шагах ниже: сперва
 // перестаём читать очереди, потом гасим приём gRPC, потом дожидаемся фоновых
 // горутин и только затем закрываем ресурсы, которыми они пользуются.
+// drain выводит реплику из ротации перед остановкой (§93.5).
+//
+// У Sender'а два канала, по которым его находят, и оба надо погасить ДО
+// остановки: gRPC-health (по нему Receiver балансирует вызовы, §93.4) и
+// HTTP /ready на админ-порту (его смотрят мониторинг и §73). Порядок именно
+// такой: сперва перестаём быть кандидатом на новые вызовы, потом ждём, потом
+// останавливаем серверы.
+func (a *App) drain(ctx context.Context) {
+	// NOT_SERVING выставляем всегда, даже когда пауза выключена: это стоит
+	// доли миллисекунды, а клиенту даёт шанс не выбрать эту реплику для
+	// следующего вызова. Shutdown() переводит ВСЕ зарегистрированные сервисы в
+	// NOT_SERVING и запрещает возврат в SERVING — ровно семантика остановки.
+	if a.grpcHealth != nil {
+		a.grpcHealth.Shutdown()
+	}
+
+	pause := a.cfg.Shutdown.Drain()
+	if pause <= 0 || a.httpHealth == nil {
+		return
+	}
+	a.logger.Info("sender draining before shutdown",
+		a.logger.Str("pause", pause.String()))
+	healthcheck.Drain(ctx, a.httpHealth, pause)
+}
+
 func (a *App) Stop(ctx context.Context) error {
 	a.logger.Info("sender shutting down")
 
+	a.drain(ctx)
 	a.stopQueueConsumers()
 	a.stopGRPC(ctx)
 	a.awaitBackgroundJobs(ctx)
@@ -548,8 +586,10 @@ func (a *App) stopQueueConsumers() {
 	}
 }
 
-// stopGRPC гасит gRPC-сервер graceful, но не дольше 30 с (или до отмены ctx):
-// зависший клиентский стрим не должен удерживать остановку сервиса.
+// stopGRPC гасит gRPC-сервер graceful, но не дольше shutdown.timeout_sec (или
+// до отмены ctx): зависший клиентский стрим не должен удерживать остановку
+// сервиса. Тот же потолок применяется к HTTP-серверам Receiver и Web — выкат
+// не должен зависеть от того, по какому протоколу пришёл долгий запрос.
 func (a *App) stopGRPC(ctx context.Context) {
 	if a.grpcSrv == nil {
 		return
@@ -564,7 +604,7 @@ func (a *App) stopGRPC(ctx context.Context) {
 	case <-done:
 	case <-ctx.Done():
 		a.grpcSrv.Stop()
-	case <-time.After(30 * time.Second):
+	case <-time.After(a.cfg.Shutdown.Timeout()):
 		a.grpcSrv.Stop()
 	}
 }

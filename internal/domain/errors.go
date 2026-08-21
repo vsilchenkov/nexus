@@ -141,6 +141,13 @@ var (
 	// §32: защита от зацикливания запросов (hop-счётчик X-Nexus-Hops).
 	ErrLoopDetected = errors.New("domain: request loop detected (max hops exceeded)")
 
+	// ErrMessageTooLargeForTopic — брокер отверг публикацию: сообщение больше
+	// потолка топика (§43). ПОСТОЯННАЯ ошибка: повтор с тем же сообщением даст
+	// тот же ответ всегда, поэтому обработчик обязан отличать её от временной
+	// недоступности брокера, иначе retry-in-place крутится вечно и НЕ двигает
+	// offset — то есть встаёт вся партиция, а не одно сообщение.
+	ErrMessageTooLargeForTopic = errors.New("domain: message exceeds topic size limit")
+
 	// CH-шаблоны (§19)
 	ErrCHTemplateNotFound                = errors.New("domain: clickhouse template not found")
 	ErrCHTemplateAlreadyExists           = errors.New("domain: clickhouse template with this name already exists")
@@ -272,4 +279,10 @@ var (
 	// userinfo (креды в URL утекли бы в интерфейс и в журнал аудита).
 	ErrPeerInstanceURLInvalid    = errors.New("domain: peer instance address must be an http(s) origin without path, query or credentials")
 	ErrPeerInstanceStatusInvalid = errors.New("domain: invalid peer instance status")
+
+	// Журнал отказов на входе (§94)
+	ErrRejectedGroupNotFound = errors.New("domain: rejected group not found")
+	// ErrRejectedRetentionInvalid — срок хранения журнала отказов вне
+	// [0, 365] дней; ноль допустим и означает «сбор выключен» (§94.5).
+	ErrRejectedRetentionInvalid = errors.New("domain: rejected requests retention days must be 0..365")
 )

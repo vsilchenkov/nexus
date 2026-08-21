@@ -17,8 +17,16 @@
 #
 # Переменные окружения (варианты установки A/B/C — см. DEPLOYMENT.md):
 #   NEXUS_IMAGE_PREFIX   префикс имён образов        (по умолчанию nexus)
-#   NEXUS_SERVICES       список сервисов              (по умолчанию "web receiver sender")
+#   NEXUS_SERVICES       список ОБРАЗОВ               (по умолчанию "web receiver sender")
+#   NEXUS_RESTART_SERVICES  какие сервисы compose перезапускать при откате
+#                        (по умолчанию = NEXUS_SERVICES)
 #   NEXUS_COMPOSE_FILE   compose-файл для перезапуска (по умолчанию корневой, без -f)
+#
+# Зачем NEXUS_RESTART_SERVICES отдельно от NEXUS_SERVICES: в профиле двух реплик
+# (§93, deploy/docker-compose.ha.yml) сервисы называются web-1/web-2/…, а образ
+# у пары общий — nexus-web:latest. Тегировать надо образы, перезапускать —
+# сервисы, и списки перестают совпадать. Скрипт rolling.sh выставляет эту
+# переменную сам.
 #
 # Скрипт НЕ заменяет `git checkout` прежнего тега: рабочее дерево нужно вернуть,
 # чтобы следующая сборка шла от правильного кода. Но в аварии порядок обратный —
@@ -28,6 +36,7 @@ set -eu
 
 PREFIX="${NEXUS_IMAGE_PREFIX:-nexus}"
 SERVICES="${NEXUS_SERVICES:-web receiver sender}"
+RESTART_SERVICES="${NEXUS_RESTART_SERVICES:-$SERVICES}"
 COMPOSE_FILE="${NEXUS_COMPOSE_FILE:-}"
 
 die() {
@@ -36,7 +45,7 @@ die() {
 }
 
 usage() {
-	sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'
 	exit "${1:-0}"
 }
 
@@ -120,7 +129,7 @@ cmd_rollback() {
 		echo "$PREFIX-$svc:latest → $version"
 	done
 
-	restart="$(compose_cmd) up -d --no-build --force-recreate $SERVICES"
+	restart="$(compose_cmd) up -d --no-build --force-recreate $RESTART_SERVICES"
 	echo
 	if [ "$apply" -eq 1 ]; then
 		echo "+ $restart"

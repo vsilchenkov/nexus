@@ -17,12 +17,31 @@ import (
 
 func newWriter(t *testing.T) (*nodestatus.RedisWriter, *miniredis.Miniredis) {
 	t.Helper()
+	// Порог 1 = прежнее поведение «любой тяжёлый отказ сразу down»: тесты ниже
+	// проверяют запись и TTL, а не сам порог (для него отдельный файл).
+	return newWriterWithThreshold(t, 1)
+}
+
+// redisClient — второй клиент к ТОМУ ЖЕ серверу: нужен тестам, которые
+// проверяют общее состояние двух реплик Sender (§93).
+func redisClient(t *testing.T, srv *miniredis.Miniredis) *goredis.Client {
+	t.Helper()
+	c := goredis.NewClient(&goredis.Options{Addr: srv.Addr()})
+	t.Cleanup(func() { _ = c.Close() })
+	return c
+}
+
+// noopLogger — логгер-заглушка для писателей, создаваемых вне newWriter*.
+func noopLogger() logging.Logger { return logging.NewNoop() }
+
+func newWriterWithThreshold(t *testing.T, threshold int) (*nodestatus.RedisWriter, *miniredis.Miniredis) {
+	t.Helper()
 
 	srv := miniredis.RunT(t)
 	client := goredis.NewClient(&goredis.Options{Addr: srv.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
 
-	return nodestatus.NewRedisWriter(client, logging.NewNoop()), srv
+	return nodestatus.NewRedisWriter(client, threshold, logging.NewNoop()), srv
 }
 
 // Кодировка исходов — контракт между Sender (пишет) и Web (читает): §52.

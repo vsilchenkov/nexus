@@ -7,10 +7,19 @@ package config
 // (`grpc_max_message_bytes`).
 const defaultGRPCMaxMessageBytes = 64 * 1024 * 1024
 
-// defaultMaxAsyncBodyBytes — дефолтный потолок тела для async-приёма (32 МиБ).
-// Согласован с kafka.topic.max_message_bytes 64 МиБ: 32 МиБ × 1.33 (base64
-// async-конверта) ≈ 42.6 МиБ + запас на заголовки конверта.
-const defaultMaxAsyncBodyBytes = 32 * 1024 * 1024
+// defaultMaxAsyncBodyBytes — дефолтный потолок тела для async-приёма (10 МиБ).
+//
+// Согласован с kafka.topic.max_message_bytes 16 МиБ, который, в свою очередь,
+// не выше брокерских message.max.bytes / replica.fetch.max.bytes боевого стека
+// (docker-compose.yml, 16 МиБ): 10 МиБ × 1.33 (base64 async-конверта) ≈ 13.3 МиБ
+// плюс заголовки — влезает.
+//
+// Почему НЕ 32 МиБ, как sync-потолок: async-тело ограничивает не память
+// Receiver'а, а Kafka. При 32 МиБ конверт (~42.6 МиБ) требует топика и брокера
+// на 64 МиБ; на боевом брокере они остались 16 МиБ, и сообщение было бы
+// отвергнуто уже после того, как Receiver ответил клиенту, — то есть async-приём
+// отдавал бы 503 на телах, которые sync принимает без вопросов.
+const defaultMaxAsyncBodyBytes = 10 * 1024 * 1024
 
 // defaultTrustedProxies — дефолтный список сетей, чьи X-Forwarded-For
 // принимаются на веру (Phase AUD.5): loopback + приватные диапазоны
@@ -151,6 +160,23 @@ func applyDefaults(c *Config) {
 	if c.Receiver.MaxHops == 0 {
 		c.Receiver.MaxHops = 5
 	}
+	// §93.5: остановка сервиса. Дефолты подобраны так, чтобы одиночная
+	// установка вела себя как раньше (30 с на доигрывание), а профиль двух
+	// реплик получал паузу дренажа без правки конфига.
+	// §52-доп: порог подряд идущих отказов для статуса down. Зеркало
+	// nodestatus.DefaultDownThreshold — writer подставляет то же значение, если
+	// порог до него не доехал.
+	if c.Sender.NodeDownThreshold == 0 {
+		c.Sender.NodeDownThreshold = 10
+	}
+
+	if c.Shutdown.DrainSec == 0 {
+		c.Shutdown.DrainSec = 5
+	}
+	if c.Shutdown.TimeoutSec == 0 {
+		c.Shutdown.TimeoutSec = 30
+	}
+
 	if c.Receiver.SenderGRPC.Addr == "" {
 		c.Receiver.SenderGRPC.Addr = "sender:9190"
 	}
@@ -179,6 +205,17 @@ func applyDefaults(c *Config) {
 
 	// §27: Puller включён по умолчанию; узлов RabbitMQAsync может не быть —
 	// тогда reconcile просто ничего не поднимает.
+	// §94.4: темп сброса журнала отказов. Ноль трактуется как «значение не
+	// задано» — сбором управляет срок хранения в настройках, а не эти ключи.
+	if c.Receiver.RejectLog.FlushIntervalSec == 0 {
+		c.Receiver.RejectLog.FlushIntervalSec = 10
+	}
+	if c.Receiver.RejectLog.QueueSize == 0 {
+		c.Receiver.RejectLog.QueueSize = 4096
+	}
+	if c.Receiver.RejectLog.MaxGroups == 0 {
+		c.Receiver.RejectLog.MaxGroups = 2000
+	}
 	if c.Receiver.Puller.ReconcileSec == 0 {
 		c.Receiver.Puller.ReconcileSec = 15
 	}

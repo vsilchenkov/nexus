@@ -37,6 +37,13 @@ type TableOwnership interface {
 	OwnsTable(ctx context.Context, table string) (bool, error)
 }
 
+// CycleLock — распределённый лок цикла периодической задачи (§93.7). Определён
+// на стороне консьюмера; реализуется platform/redislock. nil = поведение до
+// §93 (цикл выполняется всегда).
+type CycleLock interface {
+	TryLock(ctx context.Context, ttl time.Duration) (bool, error)
+}
+
 // CHHousekeeping — раз в сутки удаляет старые ClickHouse-партиции по
 // retention каждого узла (§4.3 ТЗ).
 //
@@ -51,6 +58,7 @@ type CHHousekeeping struct {
 	nodes     NodeLister
 	period    time.Duration
 	ownership TableOwnership
+	lock      CycleLock
 	clock     clock.Clock
 	logger    logging.Logger
 }
@@ -64,6 +72,19 @@ func NewCHHousekeeping(ch ConnProvider, nodes NodeLister, logger logging.Logger)
 // партиции логов считать устаревшими и удалить.
 func (h *CHHousekeeping) WithClock(c clock.Clock) *CHHousekeeping {
 	h.clock = c
+	return h
+}
+
+// WithCycleLock подключает лок цикла (§93.7) и возвращает тот же экземпляр для
+// цепочки в wiring. nil сохраняет прежнее поведение.
+//
+// С двумя репликами Sender'а суточный тикер срабатывает дважды, и обе реплики
+// выполняют DROP PARTITION по одному и тому же списку. Данные от этого не
+// страдают (второй дроп — no-op), но ClickHouse получает лишнюю работу, а в
+// логи попадают ошибки «партиции нет» — ровно там, где потом будут искать
+// настоящую причину пропавших логов.
+func (h *CHHousekeeping) WithCycleLock(l CycleLock) *CHHousekeeping {
+	h.lock = l
 	return h
 }
 
@@ -100,19 +121,62 @@ func (h *CHHousekeeping) Run(ctx context.Context) {
 	tick := time.NewTicker(h.period)
 	defer tick.Stop()
 
-	if err := h.RunOnce(ctx); err != nil {
-		h.logger.ErrorWithOp("ch housekeeping iteration failed", err, "ch.housekeeping")
-	}
+	h.runCycle(ctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			if err := h.RunOnce(ctx); err != nil {
-				h.logger.ErrorWithOp("ch housekeeping iteration failed", err, "ch.housekeeping")
-			}
+			h.runCycle(ctx)
 		}
 	}
+}
+
+// runCycle — один цикл уборки под локом реплики (§93.7).
+//
+// Лок берётся здесь, а не внутри RunOnce, намеренно: RunOnce экспортирован и
+// вызывается integration-тестами напрямую, чтобы прогнать уборку
+// детерминированно, не дожидаясь суточного тикера. Затащив лок туда, мы
+// потребовали бы от них живой Redis ради задачи, которая его не касается.
+func (h *CHHousekeeping) runCycle(ctx context.Context) {
+	if !h.acquireCycle(ctx) {
+		return
+	}
+	if err := h.RunOnce(ctx); err != nil {
+		h.logger.ErrorWithOp("ch housekeeping iteration failed", err, "ch.housekeeping")
+	}
+}
+
+// acquireCycle — можно ли этой реплике выполнять цикл.
+//
+// Ошибку Redis трактуем как запрет: пропущенная уборка стоит места на диске,
+// а выполненная дважды — лишней нагрузки на ClickHouse и ложных ошибок в
+// логах. Та же логика, что у гейта владения таблицей (mayDrop).
+func (h *CHHousekeeping) acquireCycle(ctx context.Context) bool {
+	if h.lock == nil {
+		return true
+	}
+	ok, err := h.lock.TryLock(ctx, h.cycleLockTTL())
+	if err != nil {
+		h.logger.Warn("housekeeping: cycle lock check failed, skipping cycle",
+			h.logger.Err(err))
+		return false
+	}
+	if !ok {
+		h.logger.Debug("housekeeping: cycle already taken by another replica")
+	}
+	return ok
+}
+
+// cycleLockTTL — половина периода: лок обязан истечь до следующего тика,
+// иначе одна упавшая реплика заблокировала бы уборку навсегда, но не раньше
+// конца самого цикла. Пол в минуту — для тестов и коротких периодов.
+func (h *CHHousekeeping) cycleLockTTL() time.Duration {
+	ttl := h.period / 2
+	if ttl < time.Minute {
+		return time.Minute
+	}
+	return ttl
 }
 
 // RunOnce — один проход уборки: по каждому узлу с retention удаляются партиции

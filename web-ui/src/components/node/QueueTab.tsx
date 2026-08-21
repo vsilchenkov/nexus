@@ -4,8 +4,10 @@ import { useTranslation } from "react-i18next";
 import { Trash2, ChevronRight, Pause, Power, Play, RotateCcw, History } from "lucide-react";
 
 import { api, type Node } from "../../api/client";
-import { Button, Kpi, KpiRow, Hint, Pill, PeriodPicker, periodWindow, periodKey, defaultPeriod, type Period } from "../ui";
+import { Button, DefaultPeriodButton, Kpi, KpiRow, Hint, Pill, PeriodPicker, periodWindow, periodKey, type Period } from "../ui";
 import { nodeLookbackMs } from "../../lib/nodeLookback";
+import { useNodeTeamName } from "../../lib/nodeTeamName";
+import { PREF_KEY_NODE_PERIOD, useTeamDefaultPeriod } from "../../lib/prefs";
 import { ReplayDialog } from "../ReplayDialog";
 import { type LogsInitialFilter } from "./LogsTab";
 import { type LogRow, type LogDetail } from "./types";
@@ -88,7 +90,18 @@ export function QueueTab({
   // очистка тронет только уже принятое шиной.
   const isPull = node.root_method === "RabbitMQAsync";
 
-  const [period, setPeriod] = useState<Period>(defaultPeriod);
+  // §92: стартовый период — дефолт команды (тот же ключ, что у вкладки
+  // «Обзор»: горизонт наблюдения принадлежит узлу, а не вкладке). Выбор
+  // пользователя живёт поверх префа: дефолт меняет только кнопка.
+  const { value: teamDefault, settled: periodReady } = useTeamDefaultPeriod(
+    node.team_id,
+    PREF_KEY_NODE_PERIOD,
+  );
+  // §92.3: имя команды нужно только подсказке кнопки «По умолчанию». Запросы
+  // общие со страницей узла — react-query их дедуплицирует.
+  const teamName = useNodeTeamName(node);
+  const [picked, setPicked] = useState<Period | null>(null);
+  const period = picked ?? teamDefault;
   const periodIso = () => {
     const { since, until } = periodWindow(period);
     return { from: new Date(since).toISOString(), to: new Date(until).toISOString() };
@@ -141,7 +154,10 @@ export function QueueTab({
   const failedCountQ = useQuery({
     queryKey: ["aq-failed-count", id, periodKey(period)],
     queryFn: () => api.get<FailedCountResp>(`/api/nodes/${id}/logs/failed-count`, periodIso()),
-    enabled: hasLogsTable,
+    // §92.4: ждём префы. Без гейта первый запрос уходит с системными 24ч, и за
+    // ним сразу второй — с настоящим дефолтом узла: лишний проход по ClickHouse
+    // и прыгающий счётчик на каждом заходе.
+    enabled: hasLogsTable && periodReady,
     refetchInterval: 15_000,
   });
   // §72.3: список неудач читается тем же keyset-механизмом, что журнал логов, —
@@ -166,7 +182,7 @@ export function QueueTab({
     queryKey: ["aq-failed-list", id, periodKey(period)],
     params: failedParams,
     pageSize: FAILED_PAGE_SIZE,
-    enabled: hasLogsTable,
+    enabled: hasLogsTable && periodReady,
     refetchInterval: 15_000,
     containerRef: failedWrapRef,
   });
@@ -242,13 +258,30 @@ export function QueueTab({
             <History className="h-3.5 w-3.5" /> {t("queue.replay_period")}
           </Button>
         )}
-        <PeriodPicker value={period} onChange={setPeriod} maxLookbackMs={nodeLookbackMs(node)} />
+        {periodReady ? (
+          <>
+            <PeriodPicker value={period} onChange={setPicked} maxLookbackMs={nodeLookbackMs(node)} />
+            <DefaultPeriodButton
+              period={period}
+              savedDefault={teamDefault}
+              teamId={node.team_id}
+              prefKey={PREF_KEY_NODE_PERIOD}
+              // §92.3: тот же преф и та же подсказка, что на вкладке «Обзор».
+              title={
+                teamName ? t("node.set_default_period_hint", { team: teamName }) : undefined
+              }
+            />
+          </>
+        ) : (
+          <div className="h-[30px] w-[320px] animate-pulse rounded-md bg-line/40" aria-hidden />
+        )}
       </div>
 
-      {/* У sync-узла плитки «Ожидают отправки» нет: очереди не существует.
-          Оставшаяся одна плитка выкладывается НЕ сеткой (см. KpiRow): половина
-          строки под неё и пустая половина рядом читались как поломка вёрстки. */}
-      <KpiRow cols={2}>
+      {/* У sync-узла плитки «Ожидают отправки» нет: очереди не существует, и
+          соседа у «Неудачных доставок» не бывает в принципе — поэтому единственная
+          плитка растягивается на всю ширину (single="full"). У async сосед есть,
+          и там строка остаётся сеткой из двух колонок. */}
+      <KpiRow cols={2} single="full">
         {isAsync && (
           <Kpi
             label={t("queue.kpi.pending")}

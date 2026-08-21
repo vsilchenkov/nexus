@@ -2,15 +2,43 @@ package kafka
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	kafka "github.com/segmentio/kafka-go"
 	"github.com/segmentio/kafka-go/compress"
 
+	"nexus/internal/domain"
 	"nexus/internal/platform/config"
 	"nexus/internal/platform/metrics"
 )
+
+// isMessageTooLarge — брокер отверг сообщение по размеру (код протокола 10).
+//
+// Проверяем именно код, а не текст: текст меняется от версии брокера, а
+// решение по нему принимается серьёзное — не повторять публикацию вовсе.
+// MessageSizeTooLarge приходит и как ошибка записи, и внутри WriteErrors при
+// батче, поэтому errors.As недостаточно — разбираем и агрегат.
+func isMessageTooLarge(err error) bool {
+	var kerr kafka.Error
+	if errors.As(err, &kerr) && kerr == kafka.MessageSizeTooLarge {
+		return true
+	}
+	var werrs kafka.WriteErrors
+	if errors.As(err, &werrs) {
+		for _, e := range werrs {
+			if e == nil {
+				continue
+			}
+			var ke kafka.Error
+			if errors.As(e, &ke) && ke == kafka.MessageSizeTooLarge {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // Producer — обёртка над *kafka.Writer с параметрами из §5.3 ТЗ.
 type Producer struct {
@@ -90,6 +118,11 @@ func (p *Producer) Produce(ctx context.Context, topic, key string, value []byte,
 	}
 	start := time.Now()
 	if err := p.w.WriteMessages(ctx, msg); err != nil {
+		// Классифицируем здесь, а не в usecase: код протокола Kafka — деталь
+		// адаптера, наружу уходит доменная ошибка (§3 CLAUDE.md).
+		if isMessageTooLarge(err) {
+			return fmt.Errorf("write to %s: %w: %w", topic, domain.ErrMessageTooLargeForTopic, err)
+		}
 		return fmt.Errorf("write to %s: %w", topic, err)
 	}
 	// §31: длительность успешной публикации (на ошибках не пишем — иначе p95
