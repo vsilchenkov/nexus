@@ -268,6 +268,20 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 
 	// Retry исчерпан → DLQ с метаданными.
 	if err := p.publishDLQ(ctx, raw, env, out); err != nil {
+		if errors.Is(err, domain.ErrMessageTooLargeForTopic) {
+			// Постоянная ошибка: сообщение физически не влезает в DLQ-топик
+			// (обычно принято старой версией с завышенным async-лимитом, а при
+			// перекладывании добавляются служебные заголовки). Повтор даст тот
+			// же ответ всегда, а offset при этом не двигается — то есть встаёт
+			// ВСЯ партиция, а не одно сообщение. Отпускаем его с ERROR: одна
+			// потерянная запись лучше остановленной доставки по партиции.
+			p.logger.ErrorWithOp("dlq publish dropped: message exceeds topic limit", err,
+				"async.publishDLQ",
+				p.logger.Str("id", env.ID),
+				p.logger.Str("node_path", env.NodePath),
+				p.logger.Int("bytes", len(raw)))
+			return HandleAck
+		}
 		p.logger.ErrorWithOp("dlq publish failed", err, "async.publishDLQ",
 			p.logger.Str("id", env.ID))
 		return HandleRetry
@@ -306,6 +320,16 @@ func (p *AsyncProcessor) handlePaused(ctx context.Context, raw []byte, env Envel
 
 	hdrs := p.pausedHeaders(env, msgHeaders)
 	if err := p.dlq.Produce(ctx, p.pausedTopic, env.NodePath, raw, hdrs); err != nil {
+		if errors.Is(err, domain.ErrMessageTooLargeForTopic) {
+			// То же, что и у DLQ: повторять нечего, а retry-in-place остановил
+			// бы всю партицию из-за одного сообщения. См. publishDLQ.
+			p.logger.ErrorWithOp("paused requeue dropped: message exceeds topic limit", err,
+				"async.handlePaused",
+				p.logger.Str("id", env.ID),
+				p.logger.Str("node_path", env.NodePath),
+				p.logger.Int("bytes", len(raw)))
+			return HandleAck
+		}
 		// Не смогли переложить — НЕ коммитим: сообщение обработается снова
 		// (retry-in-place в адаптере), потеря исключена.
 		p.logger.ErrorWithOp("paused requeue failed", err, "async.handlePaused",

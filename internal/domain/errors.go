@@ -141,6 +141,13 @@ var (
 	// §32: защита от зацикливания запросов (hop-счётчик X-Nexus-Hops).
 	ErrLoopDetected = errors.New("domain: request loop detected (max hops exceeded)")
 
+	// ErrMessageTooLargeForTopic — брокер отверг публикацию: сообщение больше
+	// потолка топика (§43). ПОСТОЯННАЯ ошибка: повтор с тем же сообщением даст
+	// тот же ответ всегда, поэтому обработчик обязан отличать её от временной
+	// недоступности брокера, иначе retry-in-place крутится вечно и НЕ двигает
+	// offset — то есть встаёт вся партиция, а не одно сообщение.
+	ErrMessageTooLargeForTopic = errors.New("domain: message exceeds topic size limit")
+
 	// CH-шаблоны (§19)
 	ErrCHTemplateNotFound                = errors.New("domain: clickhouse template not found")
 	ErrCHTemplateAlreadyExists           = errors.New("domain: clickhouse template with this name already exists")
