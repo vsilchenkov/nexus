@@ -52,6 +52,25 @@ else
     MKDIR := mkdir -p
 endif
 
+# GO_TEST_FLAGS — флаги, общие для ВСЕХ тестовых прогонов (см. GOTEST ниже).
+#
+# На Windows тестовый бинарь линкуется внешним gcc как PIE, и Kaspersky
+# Endpoint Security помечает его эвристикой VHO:Trojan.Win64.Agent.gen (ложное
+# срабатывание, вердикт облачный). Файл блокируется сразу после линковки, go
+# спотыкается на следующем шаге (`go tool buildid -w`) и прогон падает с
+# «Access is denied … [build failed]» — притом у ОДНОГО пакета, чей бинарь под
+# эвристику попал. `-buildmode=exe` даёт обычный exe вместо PIE: на поведение
+# тестов это не влияет, а срабатывание уходит.
+#
+# Настоящее лечение — исключение в KES (каталог %LOCALAPPDATA%\Temp\go-build*
+# либо доверенное приложение go.exe), но оно требует прав на политику
+# антивируса; флаг работает без них. Подробности — DEVELOPMENT.md.
+GO_TEST_FLAGS ?=
+ifeq ($(OS),Windows_NT)
+    GO_TEST_FLAGS := -buildmode=exe
+endif
+GOTEST = $(GO) test $(GO_TEST_FLAGS)
+
 COMPOSE     ?= docker compose
 COMPOSE_F    = -f deploy/docker-compose.yml
 COMPOSE_DEV  = $(COMPOSE_F) -f deploy/docker-compose.dev.yml
@@ -111,10 +130,10 @@ run-web: ## Локальный запуск Web с config_debug.yml
 .PHONY: test test-coverage lint
 
 test: ## Unit-тесты
-	$(GO) test -race -short $(PKG)
+	$(GOTEST) -race -short $(PKG)
 
 test-coverage: ## Покрытие в ./coverage.html
-	$(GO) test -race -coverprofile=coverage.out $(PKG)
+	$(GOTEST) -race -coverprofile=coverage.out $(PKG)
 	$(GO) tool cover -html=coverage.out -o coverage.html
 
 lint: ## golangci-lint run
@@ -176,7 +195,7 @@ docker-logs: ## Логи сервисов (Ctrl+C для выхода)
 # ----- placeholders для следующих фаз ---------------------------------------
 
 .PHONY: swagger proto loadtest test-integration sqlc-gen rotate-encryption-key encrypt-secrets decrypt-secrets
-.PHONY: test-int-pg test-int-ch test-int-catalog test-int-receiver test-int-rmq test-int-sender test-int-logs-scale
+.PHONY: test-int-pg test-int-ch test-int-catalog test-int-receiver test-int-rmq test-int-sender test-int-logs-scale test-int-rejected
 
 SWAG ?= swag
 swagger: ## Сгенерировать swagger в docs/web и docs/receiver (см. §11, §25)
@@ -219,7 +238,7 @@ INTEGRATION_TIMEOUT ?= 20m
 # группы успели отработать и отчитаться даже при её падении.
 # Регексы -run в ДВОЙНЫХ кавычках — переносимо между cmd.exe (Windows) и sh.
 # Запуск отдельной группы: `make test-int-rmq` и т.п.
-test-integration: check-int-coverage test-int-pg test-int-ch test-int-catalog test-int-logs test-int-receiver test-int-rmq test-int-sender test-int-queue test-int-misc ## Integration-тесты под-прогонами (требует Docker; 20m на группу)
+test-integration: check-int-coverage test-int-pg test-int-ch test-int-catalog test-int-logs test-int-rejected test-int-receiver test-int-rmq test-int-sender test-int-queue test-int-misc ## Integration-тесты под-прогонами (требует Docker; 20m на группу)
 
 # Гейт покрытия под-прогонов. Группы фильтруют тесты по `-run`, а CI гоняет
 # ПАКЕТ ЦЕЛИКОМ — из-за этого локальный `make test-integration` мог быть зелёным
@@ -230,38 +249,41 @@ check-int-coverage: ## проверить, что каждый integration-те�
 	python scripts/ci/check_integration_coverage.py
 
 test-int-pg: ## integration: Postgres-узлы/миграции/multi-tenancy
-	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestNodeRepo|^TestNodeUC|^TestNodeCache|^TestNodeSearch|^TestNodeAuthor|^TestMigrate|^TestMultiTenancy" ./tests/integration/...
+	$(GOTEST) -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestNodeRepo|^TestNodeUC|^TestNodeCache|^TestNodeSearch|^TestNodeAuthor|^TestMigrate|^TestMultiTenancy" ./tests/integration/...
 
 test-int-ch: ## integration: ClickHouse/шаблоны/метрики/replay/владение БД (§70)
-	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestClickHouse|^TestCHTemplateRepo|^TestCHProvisioner|^TestLogReader|^TestMetricsReader|^TestReplay|^TestMultiInstance" ./tests/integration/...
+	$(GOTEST) -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestClickHouse|^TestCHTemplateRepo|^TestCHProvisioner|^TestLogReader|^TestMetricsReader|^TestReplay|^TestMultiInstance" ./tests/integration/...
 
 test-int-catalog: ## integration: каталоги/auth/сессии/нотификации/circuit-breaker
-	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestHostAllowlist|^TestHeaderCatalog|^TestAuth|^TestSession|^TestUserRole|^TestUserPrefs|^TestSearchHistory|^TestAppSettingsRepo|^TestNotif|^TestCircuitBreaker" ./tests/integration/...
+	$(GOTEST) -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestHostAllowlist|^TestHeaderCatalog|^TestAuth|^TestSession|^TestUserRole|^TestUserPrefs|^TestSearchHistory|^TestAppSettingsRepo|^TestNotif|^TestCircuitBreaker" ./tests/integration/...
 
 test-int-logs: ## integration: консоль служебных логов §51 (Redis+PG: шиппер/мерж/reload уровня/маскировка/неблокируемость)
-	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestServiceLogs" ./tests/integration/...
+	$(GOTEST) -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestServiceLogs" ./tests/integration/...
+
+test-int-rejected: ## integration: журнал отказов на входе §94 (PG: слияние реплик, вытеснение, чистка, скоупы)
+	$(GOTEST) -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestRejected" ./tests/integration/...
 
 test-int-receiver: ## integration: Receiver sync/incoming-auth
-	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestReceiver_" ./tests/integration/...
+	$(GOTEST) -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestReceiver_" ./tests/integration/...
 
 test-int-rmq: ## integration: RabbitMQAsync Puller (§27)
-	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestRMQPuller" ./tests/integration/...
+	$(GOTEST) -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestRMQPuller" ./tests/integration/...
 
 test-int-sender: ## integration: Sender async + DLQ + DLQ-репроцессор (Kafka)
-	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestSender_" ./tests/integration/...
+	$(GOTEST) -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestSender_" ./tests/integration/...
 
 test-int-queue: ## integration: управление async-очередью §35 + tombstones (Kafka+Redis)
-	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestAsyncQueue|^TestQueueCancel" ./tests/integration/...
+	$(GOTEST) -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestAsyncQueue|^TestQueueCancel" ./tests/integration/...
 
 test-int-misc: ## integration: остальное — скоупы, статусы узла, одноразовые ссылки §88, каталог полей, dry-run, rDNS, ротация ключа §90
-	$(GO) test -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestAuditKeyset|^TestAuditScope|^TestCHTableVerify|^TestKeyRotate|^TestDryRun|^TestMigrations_|^TestNodeAck|^TestNodeAsyncAckSpec|^TestNodeScope|^TestNodeStatus|^TestOneTimeToken|^TestRotateKey|^TestUserRepo_|^TestRDNS|^TestRequestFieldCatalog|^TestTeamExternalURL|^TestTeamFavorites" ./tests/integration/...
+	$(GOTEST) -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestAuditKeyset|^TestAuditScope|^TestCHTableVerify|^TestKeyRotate|^TestDryRun|^TestMigrations_|^TestNodeAck|^TestNodeAsyncAckSpec|^TestNodeScope|^TestNodeStatus|^TestOneTimeToken|^TestRotateKey|^TestUserRepo_|^TestRDNS|^TestRequestFieldCatalog|^TestTeamExternalURL|^TestTeamFavorites" ./tests/integration/...
 
 # Масштабный замер скролла логов (§77.5). В test-integration НЕ входит: сид на
 # десятки млн строк и прогон занимают минуты, а результат — не pass/fail, а
 # цифры в логе теста. Объём: LOG_SCALE_ROWS (по умолчанию 1 млн).
 LOG_SCALE_ROWS ?= 1000000
 test-int-logs-scale: ## integration: замер скролла логов на большом объёме (LOG_SCALE_ROWS=50000000)
-	LOG_SCALE_RUN=1 LOG_SCALE_ROWS=$(LOG_SCALE_ROWS) $(GO) test -tags=integration -count=1 -v -timeout 60m -run "^TestClickHouse_ScrollScale" ./tests/integration/...
+	LOG_SCALE_RUN=1 LOG_SCALE_ROWS=$(LOG_SCALE_ROWS) $(GOTEST) -tags=integration -count=1 -v -timeout 60m -run "^TestClickHouse_ScrollScale" ./tests/integration/...
 
 sqlc-gen: ## Phase 1: генерация Go-кода из SQL через sqlc
 	@echo "TODO Phase 1: sqlc generate"

@@ -241,6 +241,29 @@ type ReceiverSection struct {
 	SwaggerEnabled bool                     `yaml:"swagger_enabled"`
 	L2Cache        ReceiverL2CacheConfig    `yaml:"l2_cache"`
 	Puller         ReceiverPullerConfig     `yaml:"puller"`
+	// RejectLog — журнал отказов на входе (§94).
+	RejectLog ReceiverRejectLogConfig `yaml:"reject_log"`
+}
+
+// ReceiverRejectLogConfig — параметры сбора журнала отказов (§94.4).
+//
+// Здесь только ТЕМП и ПРЕДЕЛЫ буфера: включение сбора и срок хранения задаёт
+// оператор в интерфейсе (§94.5), а не файл конфигурации — иначе одну и ту же
+// вещь пришлось бы согласовывать в двух местах.
+type ReceiverRejectLogConfig struct {
+	// Disabled — аварийный выключатель сбора на уровне процесса. Обычный путь
+	// выключения — срок хранения 0 в настройках; этот флаг нужен, когда
+	// интерфейс недоступен (например, PostgreSQL перегружен и надо снять с
+	// него запись немедленно).
+	Disabled bool `yaml:"disabled"`
+	// FlushIntervalSec — период сброса накопленного в PostgreSQL (default 10).
+	FlushIntervalSec int `yaml:"flush_interval_sec"`
+	// QueueSize — глубина очереди между обработчиком и агрегатором
+	// (default 4096). Переполнение = дроп со счётчиком, а не задержка ответа.
+	QueueSize int `yaml:"queue_size"`
+	// MaxGroups — сколько разных групп держится в памяти между сбросами
+	// (default 2000). Защита от сканера по случайным путям.
+	MaxGroups int `yaml:"max_groups"`
 }
 
 // ReceiverPullerConfig — параметры Puller-воркеров RabbitMQAsync (§27.2).

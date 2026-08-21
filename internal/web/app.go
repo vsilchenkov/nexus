@@ -91,7 +91,9 @@ type App struct {
 	notifDone        <-chan struct{}
 	reloadDone       <-chan struct{}
 	housekeepingDone <-chan struct{}
-	shipperDone      <-chan struct{} // §51: done-канал шиппера служебных логов
+	// §94.5: чистка журнала отказов по сроку хранения.
+	rejectedHousekeepingDone <-chan struct{}
+	shipperDone              <-chan struct{} // §51: done-канал шиппера служебных логов
 
 	// §51: ручка runtime-уровня логов + кольцо для Redis-шиппера.
 	logCtl *bootstrap.LogController
@@ -239,6 +241,8 @@ func (a *App) Start(ctx context.Context) error {
 
 	nodeCache := rediscache.NewNodeCacheRedis(a.redis, a.cipher, a.logger)
 	auditRepo := pgrepo.NewAuditRepoPg(a.pg, a.logger)
+	// §94: журнал отказов на входе — чтение для интерфейса и чистка по сроку.
+	rejectedRepo := pgrepo.NewRejectedRepoPg(a.pg, a.logger)
 	// §86.7: членства нужны журналу только для сквозного режима scope=all;
 	// на запись аудита (её делают все usecase) это не влияет.
 	auditUC := usecase.NewAuditUsecase(auditRepo, a.logger).WithTeams(teamRepo)
@@ -376,6 +380,31 @@ func (a *App) Start(ctx context.Context) error {
 	}
 	reloadSub.Register(reloader.SectionLogging, applyLogLevel)
 
+	// §94.5: срок хранения журнала отказов (сид старта + hot-reload секции
+	// general). Смена настройки сразу запускает внеочередную чистку — иначе
+	// уменьшенный срок применился бы только в следующем часу, а выключение
+	// журнала (0 дней) оставило бы накопленное лежать.
+	rejectRetention := usecase.NewRejectRetentionProvider()
+	rejectedHK := usecase.NewRejectedHousekeeping(rejectedRepo, rejectRetention, a.logger)
+	applyRejectRetention := func(ctx context.Context) error {
+		st, err := appSettingsUC.Raw(ctx)
+		if err != nil {
+			return err
+		}
+		var days *int
+		if st != nil {
+			days = st.General.RejectedRetentionDays
+		}
+		rejectRetention.Set(days)
+		rejectedHK.CycleNow(ctx)
+		return nil
+	}
+	if err := applyRejectRetention(ctx); err != nil {
+		a.logger.Warn("seed rejected retention from app_settings failed; using default",
+			a.logger.Err(err))
+	}
+	reloadSub.Register(reloader.SectionGeneral, applyRejectRetention)
+
 	authHandler := httpadapter.NewAuthHandler(authUC, &a.cfg.Web, sessionTTLProvider.Get, a.logger)
 	userHandler := httpadapter.NewUserHandler(userUC, authUC, a.logger)
 	tokenHandler := httpadapter.NewAPITokenHandler(tokenUC, a.logger)
@@ -389,6 +418,12 @@ func (a *App) Start(ctx context.Context) error {
 	// сервисов (admin-only, маршруты /api/logs*).
 	serviceLogsUC := usecase.NewServiceLogsUsecase(rediscache.NewServiceLogReaderRedis(a.redis, a.logger), a.logger)
 	serviceLogsHandler := httpadapter.NewServiceLogsHandler(serviceLogsUC, a.logger)
+
+	// §94.6: журнал отказов на входе — вкладка «Логи → Отказы» (operator+).
+	// nodeRepo нужен подсказке «похоже на этот узел», teamRepo — резолву слога
+	// команды в область видимости вызывающего.
+	rejectedUC := usecase.NewRejectedUsecase(rejectedRepo, teamRepo, nodeRepo, auditUC, rejectRetention, a.logger)
+	rejectedHandler := httpadapter.NewRejectedHandler(rejectedUC, a.logger)
 
 	// Шаблоны CH-таблиц (§19). chTemplateRepo создан выше (для NodeUsecase);
 	// usecase/handler создаём всегда (GET работает без ClickHouse); provisioner
@@ -737,6 +772,7 @@ func (a *App) Start(ctx context.Context) error {
 		AsyncQueue:    asyncQueueHandler,
 		ServiceLogs:   serviceLogsHandler,
 		Prefs:         prefHandler,
+		Rejected:      rejectedHandler,
 	}, mw)
 
 	// Реверс-прокси боевых эндпоинтов Receiver (§17.1, единый вход): Web
@@ -753,6 +789,13 @@ func (a *App) Start(ctx context.Context) error {
 	hk := usecase.NewHousekeeping(auditUC, a.cfg.Web.AuditRetentionDays, a.logger)
 	a.housekeepingDone = safego.Go(a.logger, "web.housekeeping", func() {
 		hk.Run(ctx)
+	})
+
+	// §94.5: чистка журнала отказов — свой цикл (час, а не сутки: срок хранения
+	// меняется в интерфейсе, и реплика, пропустившая событие, обязана применить
+	// новый срок сама).
+	a.rejectedHousekeepingDone = safego.Go(a.logger, "web.rejectedHousekeeping", func() {
+		rejectedHK.Run(ctx)
 	})
 
 	// ReadTimeout/WriteTimeout здесь НЕ задаются намеренно, и это не упущение:
@@ -806,6 +849,7 @@ func (a *App) Stop(ctx context.Context) error {
 	safego.Await(awaitCtx, a.notifDone, a.logger, "web.notificationScheduler")
 	safego.Await(awaitCtx, a.reloadDone, a.logger, "web.reloadSubscriber")
 	safego.Await(awaitCtx, a.housekeepingDone, a.logger, "web.housekeeping")
+	safego.Await(awaitCtx, a.rejectedHousekeepingDone, a.logger, "web.rejectedHousekeeping")
 	safego.Await(awaitCtx, a.shipperDone, a.logger, "web.logShipper")
 	awaitCancel()
 	if a.chMgr != nil {

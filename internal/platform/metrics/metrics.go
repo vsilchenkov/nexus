@@ -67,6 +67,22 @@ type Metrics struct {
 	// on_error=default: клиент получает штатный 200, и по коду ответа отличить
 	// «шаблон применился» от «шаблон не смог» нельзя.
 	AckRenderFailedTotal *prometheus.CounterVec
+	// IngressRejectedTotal — §94: запросы, отклонённые на входе, по коду
+	// причины и HTTP-статусу.
+	//
+	// Метки — ТОЛЬКО замкнутые множества. Ни узла, ни клиента, ни слога команды
+	// здесь нет намеренно: при 404 всё это задаёт кто угодно снаружи, а метка
+	// входит в идентичность ряда — сканер по случайным адресам плодил бы ряды
+	// без предела, и они остаются в Prometheus навсегда (ровно та причина, по
+	// которой node у nexus_requests_total стал `<unresolved>`). Кто и куда
+	// стучится, показывает журнал отказов; метрика отвечает «сколько и почему».
+	IngressRejectedTotal *prometheus.CounterVec
+	// IngressRejectDroppedTotal — §94.4: отказы, не доехавшие до журнала.
+	// Метка cause: "queue_full" (всплеск обогнал сброс), "groups_full" (слишком
+	// много разных групп в одном интервале) либо "write_failed"
+	// (PostgreSQL недоступен). Ненулевое значение означает, что журнал неполон,
+	// и это единственный способ об этом узнать — сама запись best-effort.
+	IngressRejectDroppedTotal *prometheus.CounterVec
 	// Phase AUD.8: сбои проверки rate-limit'а (fail-open, §9.4) по scope ключа.
 	RateLimitCheckErrorsTotal *prometheus.CounterVec
 	// §88.5: исходы запросов восстановления пароля. Наружу все исходы дают
@@ -188,6 +204,21 @@ func New(service string, opts ...Option) *Metrics {
 			Help:        "Requests to /api/v1/requestAsync rejected because the node is not configured as requestAsync (§82.3).",
 			ConstLabels: constLabels,
 		}, []string{"node"}),
+
+		// §94: отказы на входе. reason — из domain.RejectReason, status — из
+		// ответов Receiver; оба множества конечны и известны заранее.
+		IngressRejectedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "nexus_ingress_rejected_total",
+			Help:        "Requests rejected by Receiver on ingress, by reason code and HTTP status (§94).",
+			ConstLabels: constLabels,
+		}, []string{"reason", "status"}),
+
+		// §94.4: потери журнала отказов. Растёт — журнал неполон.
+		IngressRejectDroppedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "nexus_ingress_reject_dropped_total",
+			Help:        "Rejected-request records dropped before reaching the log, by cause (queue_full, groups_full, write_failed) (§94.4).",
+			ConstLabels: constLabels,
+		}, []string{"cause"}),
 
 		// §83: отказ рендера шаблона ответа приёма. При on_error=default клиент
 		// видит прежний 200 — счётчик единственный показывает, что интеграция
@@ -391,6 +422,8 @@ func New(service string, opts ...Option) *Metrics {
 		m.LoopDetectedTotal,
 		m.AsyncIngressRejectedTotal,
 		m.AckRenderFailedTotal,
+		m.IngressRejectedTotal,
+		m.IngressRejectDroppedTotal,
 		m.RateLimitCheckErrorsTotal,
 		m.PasswordResetRequestsTotal,
 		m.MailSendTotal,
@@ -479,6 +512,22 @@ func (m *Metrics) IncLoopDetected(mode string) { m.LoopDetectedTotal.WithLabelVa
 // который не настроен асинхронным.
 func (m *Metrics) IncAsyncIngressRejected(node string) {
 	m.AsyncIngressRejectedTotal.WithLabelValues(node).Inc()
+}
+
+// IncIngressRejected — §94: запрос отклонён на входе. reason — код из
+// domain.RejectReason, status — HTTP-код ответа.
+func (m *Metrics) IncIngressRejected(reason, status string) {
+	m.IngressRejectedTotal.WithLabelValues(reason, status).Inc()
+}
+
+// IncIngressRejectDropped — §94.4: запись журнала отказов потеряна. cause —
+// "queue_full" либо "write_failed"; свободные строки сюда не передаются, иначе
+// кардинальность метрики перестанет быть ограниченной.
+func (m *Metrics) IncIngressRejectDropped(cause string, n int) {
+	if n <= 0 {
+		return
+	}
+	m.IngressRejectDroppedTotal.WithLabelValues(cause).Add(float64(n))
 }
 
 // IncAckRenderFailed — §83: шаблон ответа приёма не отработал. reason берётся

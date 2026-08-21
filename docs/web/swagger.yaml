@@ -2131,6 +2131,138 @@ definitions:
     required:
     - q
     type: object
+  internal_web_adapter_in_http.rejectedClientResponse:
+    properties:
+      count:
+        type: integer
+      first_seen:
+        type: string
+      host:
+        type: string
+      ip:
+        type: string
+      last_seen:
+        type: string
+      user_agent:
+        type: string
+    type: object
+  internal_web_adapter_in_http.rejectedDetailsResponse:
+    properties:
+      clients:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.rejectedClientResponse'
+        type: array
+      group:
+        $ref: '#/definitions/internal_web_adapter_in_http.rejectedGroupResponse'
+      samples:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.rejectedSampleResponse'
+        type: array
+      suggestion:
+        $ref: '#/definitions/internal_web_adapter_in_http.rejectedSuggestionResponse'
+    type: object
+  internal_web_adapter_in_http.rejectedGroupResponse:
+    properties:
+      clients:
+        type: integer
+      count:
+        type: integer
+      first_seen:
+        type: string
+      http_method:
+        type: string
+      id:
+        type: string
+      last_seen:
+        type: string
+      node_path:
+        type: string
+      reason:
+        type: string
+      resolved_at:
+        type: string
+      resolved_by:
+        type: string
+      status:
+        type: integer
+      team_id:
+        type: string
+      team_name:
+        type: string
+      team_slug:
+        type: string
+    type: object
+  internal_web_adapter_in_http.rejectedListResponse:
+    properties:
+      collecting:
+        type: boolean
+      groups:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.rejectedGroupResponse'
+        type: array
+      retention_days:
+        description: |-
+          RetentionDays/Collecting: без них интерфейс не отличит «отказов не было»
+          от «сбор выключен настройкой» (§94.5).
+        type: integer
+      total:
+        type: integer
+    type: object
+  internal_web_adapter_in_http.rejectedResolveAllResponse:
+    properties:
+      marked:
+        type: integer
+    type: object
+  internal_web_adapter_in_http.rejectedSampleResponse:
+    properties:
+      at:
+        type: string
+      body_bytes:
+        type: integer
+      client_ip:
+        type: string
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      http_method:
+        type: string
+      raw_path:
+        type: string
+      request_id:
+        type: string
+      status:
+        type: integer
+    type: object
+  internal_web_adapter_in_http.rejectedSuggestionResponse:
+    properties:
+      distance:
+        type: integer
+      node_id:
+        type: string
+      path:
+        type: string
+      team_slug:
+        type: string
+    type: object
+  internal_web_adapter_in_http.rejectedSummaryResponse:
+    properties:
+      clients:
+        type: integer
+      collecting:
+        type: boolean
+      count:
+        type: integer
+      groups:
+        type: integer
+      retention_days:
+        description: |-
+          RetentionDays/Collecting — то же, что в списке: строка на рабочем столе
+          не должна появляться, когда журнал выключен.
+        type: integer
+      unresolved:
+        type: integer
+    type: object
   internal_web_adapter_in_http.replayCursorDTO:
     properties:
       after_id:
@@ -2560,6 +2692,13 @@ definitions:
           формирует полный адрес узла от него вместо window.location.origin.
           nil/"" = не задан (UI берёт origin браузера). Не секрет — Get() не маскирует.
         type: string
+      rejected_retention_days:
+        description: |-
+          RejectedRetentionDays — срок хранения журнала отказов на входе (§94.5),
+          в днях. nil = дефолт RejectedRetentionDefaultDays. Ноль — особое значение:
+          сбор ВЫКЛЮЧЕН и накопленное удаляется (одна ручка вместо пары
+          «тумблер + срок»). Не секрет — Get() не маскирует.
+        type: integer
       version_override:
         description: |-
           VersionOverride — ручное переопределение отображаемой версии (§34.3).
@@ -6329,6 +6468,206 @@ paths:
       summary: Проверить подключение к RabbitMQ (§27.8).
       tags:
       - nodes
+  /api/rejected:
+    get:
+      description: 'Группы отклонённых запросов: куда, почему, сколько раз, от скольких
+        клиентов. Оператор и менеджер видят свою текущую команду, администратор —
+        все и группы с неопознанным слогом.'
+      parameters:
+      - description: нижняя граница last_seen (RFC3339)
+        in: query
+        name: from
+        type: string
+      - description: верхняя граница last_seen (RFC3339)
+        in: query
+        name: to
+        type: string
+      - description: коды причин через запятую (node_not_found, method_not_allowed,
+          …)
+        in: query
+        name: reasons
+        type: string
+      - description: фильтр по команде (только admin)
+        in: query
+        name: team_slug
+        type: string
+      - description: только группы с неопознанным слогом (только admin)
+        in: query
+        name: unknown_team
+        type: boolean
+      - description: поиск по пути, слогу, IP, PTR-имени, User-Agent
+        in: query
+        name: q
+        type: string
+      - description: включать разобранные группы
+        in: query
+        name: include_resolved
+        type: boolean
+      - description: default 100, max 1000
+        in: query
+        name: limit
+        type: integer
+      - description: смещение
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.rejectedListResponse'
+        "403":
+          description: роль ниже operator
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      summary: Журнал отказов на входе (§94.6).
+      tags:
+      - rejected
+  /api/rejected/{id}:
+    delete:
+      description: Удаляет группу вместе с её клиентами и сохранёнными запросами.
+        Записывается в журнал аудита.
+      parameters:
+      - description: id группы
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: удалено
+        "404":
+          description: группы нет либо она вне области видимости
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      summary: Удалить группу отказов (§94.6).
+      tags:
+      - rejected
+    get:
+      description: 'Группа с клиентами (IP, PTR-имя, User-Agent), последними запросами
+        и подсказкой похожего узла. Чужая группа отдаётся как «не найдено»: иначе
+        по коду ответа восстанавливались бы адреса других команд.'
+      parameters:
+      - description: id группы
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.rejectedDetailsResponse'
+        "404":
+          description: группы нет либо она вне области видимости
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      summary: Карточка группы отказов (§94.6).
+      tags:
+      - rejected
+  /api/rejected/{id}/resolve:
+    post:
+      description: Отметка снимается автоматически при новом отказе в эту группу —
+        иначе однажды закрытая группа скрывала бы возобновившуюся проблему.
+      parameters:
+      - description: id группы
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: разобрано
+        "404":
+          description: группы нет либо она вне области видимости
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      summary: Пометить группу отказов разобранной (§94.6).
+      tags:
+      - rejected
+  /api/rejected/export.csv:
+    get:
+      description: Те же фильтры, что у списка. CSV в UTF-8 с BOM (для Excel), 10
+        колонок.
+      parameters:
+      - description: нижняя граница last_seen (RFC3339)
+        in: query
+        name: from
+        type: string
+      - description: верхняя граница last_seen (RFC3339)
+        in: query
+        name: to
+        type: string
+      - description: коды причин через запятую
+        in: query
+        name: reasons
+        type: string
+      - description: поиск
+        in: query
+        name: q
+        type: string
+      - description: включать разобранные
+        in: query
+        name: include_resolved
+        type: boolean
+      produces:
+      - text/csv
+      responses:
+        "200":
+          description: CSV
+          schema:
+            type: string
+      summary: Выгрузка журнала отказов в CSV (§94.6).
+      tags:
+      - rejected
+  /api/rejected/resolve-all:
+    post:
+      description: 'Помечает ВСЕ непросмотренные группы, доступные вызывающему (оператор
+        — свою команду, администратор — все), намеренно игнорируя фильтры экрана:
+        кнопка обнуляет счётчик, а он считается по всей области видимости. Отметка
+        снимается сама, когда в группу приходит новый отказ.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.rejectedResolveAllResponse'
+        "403":
+          description: роль ниже operator
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      summary: Пометить просмотренными все отказы области видимости (§94.6).
+      tags:
+      - rejected
+  /api/rejected/summary:
+    get:
+      description: 'Число отказов, групп, разных клиентов и неразобранных групп —
+        для строки на рабочем столе и бейджа раздела. Разобранные группы в счётчики
+        входят: «сколько отказов за сутки» не должно меняться от нажатия «разобрано».'
+      parameters:
+      - description: нижняя граница last_seen (RFC3339)
+        in: query
+        name: from
+        type: string
+      - description: верхняя граница last_seen (RFC3339)
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.rejectedSummaryResponse'
+      summary: Счётчики отказов за период (§94.6).
+      tags:
+      - rejected
   /api/request-fields:
     get:
       parameters:

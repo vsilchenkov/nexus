@@ -29,6 +29,12 @@ export const PREF_KEY_NODE_PERIOD = "node.period";
 // узла — часами).
 export const PREF_KEY_KAFKA_PERIOD = "kafka.period";
 
+// PREF_KEY_REJECTED_PERIOD — дефолтный период вкладки «Логи → Отказы» (§94.7).
+// Отдельный от рабочего стола: горизонт разбора отказов («что стучится прямо
+// сейчас» либо «что накопилось за неделю») не связан с периодом графиков.
+// Скоуп — команда: журнал отказов у каждой команды свой.
+export const PREF_KEY_REJECTED_PERIOD = "rejected.period";
+
 // PREF_KEY_FAVORITE_ALL_TEAMS — «Все команды» в избранном (§86.5).
 //
 // Почему преф, а не user_team_favorites: у той таблицы составной внешний ключ на

@@ -62,35 +62,95 @@ func TestSplitTeamSlugAndPath(t *testing.T) {
 	}
 }
 
-// TestClassifyDomainError фиксирует маппинг доменных ошибок в HTTP-коды —
-// общий для sync и async ответов (§3, #5/#7).
+// TestClassifyDomainError фиксирует маппинг доменных ошибок в HTTP-коды и коды
+// причин журнала отказов (§3, #5/#7; §94.2) — общий для sync и async ответов.
+//
+// Причина проверяется здесь же, а не отдельным тестом: она возвращается тем же
+// switch'ем, и разъехавшиеся код с причиной означали бы, что журнал называет
+// отказ не тем, чем он был.
 func TestClassifyDomainError(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name         string
 		err          error
 		wantStatus   int
+		wantReason   domain.RejectReason
 		wantInternal bool
 	}{
-		{"not found", domain.ErrNodeNotFound, http.StatusNotFound, false},
-		{"disabled", domain.ErrNodeDisabled, http.StatusServiceUnavailable, false},
-		{"method not allowed", domain.ErrNodeMethodNotAllowed, http.StatusMethodNotAllowed, false},
-		{"url param required", domain.ErrURLParamRequired, http.StatusBadRequest, false},
-		{"url invalid", domain.ErrURLInvalid, http.StatusBadRequest, false},
-		{"url not allowed", domain.ErrURLNotAllowed, http.StatusForbidden, false},
-		{"loop detected", domain.ErrLoopDetected, http.StatusLoopDetected, false},
-		{"unauthorized", domain.ErrUnauthorized, http.StatusUnauthorized, false},
-		{"unknown -> 502 internal", assert.AnError, http.StatusBadGateway, true},
+		{"not found", domain.ErrNodeNotFound, http.StatusNotFound, domain.RejectReasonNodeNotFound, false},
+		{"async ingress gate", domain.ErrNodeNotAsyncIngress, http.StatusNotFound, domain.RejectReasonNodeNotFound, false},
+		// §94.2: выключенный узел наружу неотличим от несуществующего (тот же
+		// 404 и тот же текст), а причина в журнале — своя.
+		{"disabled", domain.ErrNodeDisabled, http.StatusNotFound, domain.RejectReasonNodeDisabled, false},
+		{"method not allowed", domain.ErrNodeMethodNotAllowed, http.StatusMethodNotAllowed, domain.RejectReasonMethodNotAllowed, false},
+		{"url param required", domain.ErrURLParamRequired, http.StatusBadRequest, domain.RejectReasonBadRequest, false},
+		{"url invalid", domain.ErrURLInvalid, http.StatusBadRequest, domain.RejectReasonBadRequest, false},
+		{"ack render failed", domain.ErrAckRenderFailed, http.StatusBadRequest, domain.RejectReasonBadRequest, false},
+		{"url not allowed", domain.ErrURLNotAllowed, http.StatusForbidden, domain.RejectReasonURLNotAllowed, false},
+		{"loop detected", domain.ErrLoopDetected, http.StatusLoopDetected, domain.RejectReasonLoopDetected, false},
+		{"unauthorized", domain.ErrUnauthorized, http.StatusUnauthorized, domain.RejectReasonUnauthorized, false},
+		{"unknown -> 502 internal", assert.AnError, http.StatusBadGateway, domain.RejectReasonOther, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			status, msg, internal := classifyDomainError(tc.err)
+			status, msg, reason, internal := classifyDomainError(tc.err)
 			assert.Equal(t, tc.wantStatus, status)
+			assert.Equal(t, tc.wantReason, reason)
 			assert.Equal(t, tc.wantInternal, internal)
 			assert.NotEmpty(t, msg)
 		})
 	}
+}
+
+// TestReplyDomainError_MarksReject: отказ размечается для журнала §94 —
+// причина уходит в контекст, а метка узла подменяется маркером, когда узла
+// не существует.
+//
+// Подмена метки — защита кардинальности nexus_requests_total: путь при 404
+// задаёт клиент, и без маркера сканер по случайным адресам плодил бы ряд на
+// каждую попытку (§94.8).
+func TestReplyDomainError_MarksReject(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	newCtx := func() (*gin.Context, *httptest.ResponseRecorder) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/vika/telephony", nil)
+		c.Set(metrics.NodeLabelKey, "telephony")
+		return c, w
+	}
+	h := &Handler{metrics: metrics.New("receiver"), logger: logging.NewNoop()}
+
+	t.Run("node not found hides the client-supplied path", func(t *testing.T) {
+		t.Parallel()
+		c, w := newCtx()
+		h.replyDomainError(c, domain.ErrNodeNotFound, "telephony", "test")
+		require.Equal(t, http.StatusNotFound, w.Code)
+		assert.Equal(t, string(domain.RejectReasonNodeNotFound), c.GetString(RejectReasonKey))
+		assert.Equal(t, metrics.NodeUnresolved, c.GetString(metrics.NodeLabelKey))
+	})
+
+	t.Run("existing node keeps its label", func(t *testing.T) {
+		t.Parallel()
+		// §82.3: узел есть, просто дёрнули не тот эндпоинт — путь в метке
+		// настоящий, и ряд ограничен числом узлов.
+		c, w := newCtx()
+		h.replyAsyncError(c, domain.ErrNodeNotAsyncIngress, "telephony", "test")
+		require.Equal(t, http.StatusNotFound, w.Code)
+		assert.Equal(t, string(domain.RejectReasonNodeNotFound), c.GetString(RejectReasonKey))
+		assert.Equal(t, "telephony", c.GetString(metrics.NodeLabelKey))
+	})
+
+	t.Run("bus failure is not a client reject", func(t *testing.T) {
+		t.Parallel()
+		c, w := newCtx()
+		h.replyDomainError(c, assert.AnError, "telephony", "test")
+		require.Equal(t, http.StatusBadGateway, w.Code)
+		assert.Empty(t, c.GetString(RejectReasonKey), "502 в журнал отказов не попадает")
+		assert.Equal(t, "telephony", c.GetString(metrics.NodeLabelKey))
+	})
 }
 
 // TestReplyDomainError_Loop: sync-ответ на петлю — 508 + инкремент

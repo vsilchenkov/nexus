@@ -71,6 +71,14 @@ func rootMethodFromPath(fullPath string) string {
 // GinMiddleware пишет его в метку node вместо сырого path-параметра.
 const NodeLabelKey = "nexus_node"
 
+// NodeUnresolved — метка node для запросов к НЕСУЩЕСТВУЮЩЕМУ узлу (§94.8).
+//
+// Путь в таком запросе задаёт клиент, а метка входит в идентичность ряда:
+// сканер по случайным адресам плодил бы ряд на каждую попытку, и они остаются
+// в Prometheus навсегда. Обработчик подменяет метку на этот маркер, а
+// детализацию по путям даёт журнал отказов §94.
+const NodeUnresolved = "<unresolved>"
+
 // RootMethodLabelKey — ключ gin-контекста для метки method (§78.2). Обработчик
 // боевого маршрута кладёт туда "request" | "requestAsync" | "callback" |
 // RootMethodShortURL; выводить метку из имени маршрута нельзя — он один на все

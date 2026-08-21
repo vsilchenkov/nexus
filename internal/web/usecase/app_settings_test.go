@@ -320,6 +320,63 @@ func TestAppSettings_SessionTTL_Invalid(t *testing.T) {
 	assert.Nil(t, repo.lastSaved, "invalid TTL must not persist")
 }
 
+// TestAppSettings_RejectedRetention_MergeAndSection (§94.5): срок хранения
+// журнала отказов сохраняется и публикует секцию general — её слушают и Web
+// (чистка), и Receiver (включение сбора).
+func TestAppSettings_RejectedRetention_MergeAndSection(t *testing.T) {
+	t.Parallel()
+	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
+	pub := &fakeReloadPublisher{}
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, false, logging.NewNoop())
+
+	days := 7
+	err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
+		General: domain.GeneralSettings{RejectedRetentionDays: &days},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, repo.lastSaved)
+	require.NotNil(t, repo.lastSaved.General.RejectedRetentionDays)
+	assert.Equal(t, 7, *repo.lastSaved.General.RejectedRetentionDays)
+	assert.Equal(t, []string{"general"}, pub.sections,
+		"без публикации секции ни чистка, ни выключение сбора не применились бы до рестарта")
+}
+
+// TestAppSettings_RejectedRetention_ZeroIsValid (§94.5): 0 — это «сбор
+// выключен», настройка обязана сохраниться, а не отвергнуться как пустая.
+func TestAppSettings_RejectedRetention_ZeroIsValid(t *testing.T) {
+	t.Parallel()
+	thirty := 30
+	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{
+		General: domain.GeneralSettings{RejectedRetentionDays: &thirty},
+	}}
+	pub := &fakeReloadPublisher{}
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, false, logging.NewNoop())
+
+	zero := 0
+	err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
+		General: domain.GeneralSettings{RejectedRetentionDays: &zero},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, repo.lastSaved.General.RejectedRetentionDays)
+	assert.Equal(t, 0, *repo.lastSaved.General.RejectedRetentionDays)
+	assert.Equal(t, []string{"general"}, pub.sections)
+}
+
+// TestAppSettings_RejectedRetention_Invalid (§94.5): вне [0, 365] не сохраняется.
+func TestAppSettings_RejectedRetention_Invalid(t *testing.T) {
+	t.Parallel()
+	for _, days := range []int{-1, domain.RejectedRetentionMaxDays + 1} {
+		repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
+		uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false, logging.NewNoop())
+		d := days
+		err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
+			General: domain.GeneralSettings{RejectedRetentionDays: &d},
+		})
+		assert.ErrorIs(t, err, domain.ErrRejectedRetentionInvalid, "days=%d", days)
+		assert.Nil(t, repo.lastSaved, "невалидный срок не сохраняется, days=%d", days)
+	}
+}
+
 func TestChangedSections_Security(t *testing.T) {
 	t.Parallel()
 	ttl := 3600

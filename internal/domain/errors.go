@@ -272,4 +272,10 @@ var (
 	// userinfo (креды в URL утекли бы в интерфейс и в журнал аудита).
 	ErrPeerInstanceURLInvalid    = errors.New("domain: peer instance address must be an http(s) origin without path, query or credentials")
 	ErrPeerInstanceStatusInvalid = errors.New("domain: invalid peer instance status")
+
+	// Журнал отказов на входе (§94)
+	ErrRejectedGroupNotFound = errors.New("domain: rejected group not found")
+	// ErrRejectedRetentionInvalid — срок хранения журнала отказов вне
+	// [0, 365] дней; ноль допустим и означает «сбор выключен» (§94.5).
+	ErrRejectedRetentionInvalid = errors.New("domain: rejected requests retention days must be 0..365")
 )

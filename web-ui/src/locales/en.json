@@ -846,7 +846,67 @@
       }
     }
   },
+  "rejected": {
+    "summary": "Rejects: {{total}} · Clients: {{clients}} · Addresses: {{groups}}",
+    "unresolved": "⚠ {{n}} unviewed",
+    "empty": "No rejected requests for the selected period",
+    "empty_disabled": "The rejected-request log is off",
+    "disabled_hint": "The rejected-request log is off: retention is set to zero and stored records were deleted.",
+    "disabled_link": "Settings → General",
+    "export_csv": "Download CSV",
+    "resolve_all": {
+      "title": "Mark all as viewed",
+      "confirm": "All unviewed rejection groups will be marked as viewed and the badge will reset. Nothing is deleted; a new rejection makes the group unviewed again."
+    },
+    "set_default_period_hint": "Set as the default period for the rejected-request log",
+    "shown_of_total": "Showing {{shown}} of {{total}}",
+    "retention_hint": "Records are kept for {{days}} days and then deleted automatically",
+    "unknown_team_hint": "No team with this slug exists — a request to a non-existent address",
+    "filter": {
+      "all_reasons": "All reasons",
+      "search_placeholder": "Path, IP, host, User-Agent…",
+      "include_resolved": "Show viewed"
+    },
+    "columns": {
+      "reason": "Reason",
+      "address": "Address",
+      "team": "Team",
+      "clients": "Clients",
+      "requests": "Requests",
+      "last_seen": "Last seen"
+    },
+    "reason": {
+      "node_not_found": "no such node",
+      "method_not_allowed": "method not allowed",
+      "unauthorized": "unauthorized",
+      "node_disabled": "node disabled",
+      "url_not_allowed": "url not allowed",
+      "rate_limited": "rate limited",
+      "body_too_large": "body too large",
+      "loop_detected": "loop detected",
+      "bad_request": "bad request",
+      "other": "other"
+    },
+    "details": {
+      "seen": "First {{first}} · last {{last}} · requests: {{total}}",
+      "resolved_by": "Viewed by {{who}}, {{when}}",
+      "suggestion": "Looks like node “{{path}}”",
+      "open_node": "Open node",
+      "clients": "Clients",
+      "samples": "Recent requests",
+      "no_clients": "No clients recorded",
+      "no_samples": "No requests stored",
+      "body_bytes": "body {{n}}",
+      "no_body": "no body",
+      "request_id": "request_id:",
+            "delete": "Delete group"
+    }
+  },
   "logs": {
+    "tabs": {
+      "services": "Services",
+      "rejected": "Rejected"
+    },
     "viewer": {
       "title": "Service logs",
       "subtitle": "slog output of Receiver, Sender and Web (not node request logs)",
@@ -1120,7 +1180,10 @@
       "metrics_refetch": "Metrics auto-refresh interval (seconds)",
       "metrics_refetch_hint": "How often the dashboard and node pages refresh metrics. Allowed 1 .. 120 seconds. Leave empty for the default (12 s).",
       "metrics_approx": "Approximate unique-request counts (faster)",
-      "metrics_approx_hint": "Off (default) — exact counts (countDistinct). On — approximate (HyperLogLog, ~0.3% error) but ~3× cheaper on CPU. Enable when there are many nodes/data and the exact count pushes ClickHouse to 100% CPU on the dashboard."
+      "metrics_approx_hint": "Off (default) — exact counts (countDistinct). On — approximate (HyperLogLog, ~0.3% error) but ~3× cheaper on CPU. Enable when there are many nodes/data and the exact count pushes ClickHouse to 100% CPU on the dashboard.",
+      "rejected_retention": "Rejected-request retention, days",
+      "rejected_retention_hint": "Log of rejected requests (Logs → Rejected tab). Records older than the retention are deleted automatically; lowering the retention deletes the excess immediately. 0 turns collection off and deletes what has been stored. Empty keeps the current value.",
+      "rejected_retention_zero_warn": "Zero turns collection off and deletes every stored rejected-request record."
     },
     "tokens": {
       "title": "API tokens",
