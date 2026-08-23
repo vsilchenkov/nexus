@@ -168,7 +168,14 @@ services:
       timeout: 3s
       retries: 5
       start_period: 10s
-    mem_limit: 64m
+    # Потолок памяти nginx задаётся переменной, а по умолчанию НЕ задан вовсе.
+    # Причина: на ядрах без учёта swap для cgroup (swapaccount=1) docker на
+    # каждый контейнер с лимитом печатает «Your kernel does not support swap
+    # limit capabilities… Memory limited without swap». Предупреждение
+    # безобидное — nginx в этой роли ест единицы мегабайт и до потолка не
+    # дотягивается, — но в выводе каждой сборки оно читается как проблема.
+    # Нужен лимит: NGINX_MEM_LIMIT=64m в .env.
+    mem_limit: ${NGINX_MEM_LIMIT:-0}
     networks: [nexus_net]
 
   # ── Web × 2 ────────────────────────────────────────────────────────────────
