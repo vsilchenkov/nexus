@@ -1,89 +1,42 @@
-# nginx перед ОДИНОЧНЫМ стеком — промежуточный шаг к §93 без пар реплик.
+# Снятие публикации портов у web/receiver — вторая половина включения nginx.
 #
-# ЗАЧЕМ ОТДЕЛЬНО ОТ ha.yml. Полный профиль §93 удваивает все три сервиса, и
-# потолки памяти вырастают до ~6 ГБ только на приложение. Этот оверлей ставит
-# балансировщик перед ПРЕЖНИМИ одиночными `web` и `receiver`: расход памяти
-# растёт на 64 МБ (сам nginx), а схема входа становится такой же, как в §93.
-# Когда сервер будет готов к двум репликам — меняется только подключаемый файл
-# (ha.yml вместо этого), клиенты и адреса не трогаются.
+# Сам сервис nginx живёт в КОРНЕВОМ docker-compose.yml под `profiles: ["nginx"]`
+# (см. комментарий там). Здесь только то, чего профиль сделать не может:
+# профиль решает, поднимать ли сервис, но НЕ меняет поля соседних сервисов.
 #
-# ЧТО ДАЁТ УЖЕ СЕЙЧАС:
-#   • боевой /api/v1/* идёт СРАЗУ в Receiver, минуя Web (§93.3) — панель
-#     перестаёт быть частью горячего пути, её перезапуск не рвёт трафик;
-#   • заголовки не теряются молча: underscores_in_headers on (иначе X_Api_Key
-#     исчезает бесшумно), large_client_header_buffers 8×32k, merge_slashes off;
-#   • единая точка входа: наружу смотрит только nginx.
+# Пока nginx активен, 8000 и 8080 занимает он, поэтому у web и receiver
+# публикация должна быть снята. `!override` заменяет список ЦЕЛИКОМ — без тега
+# пустой список слился бы с корневым, порт остался бы занят, и балансировщик не
+# поднялся бы с «port is already allocated».
 #
-# ЧЕГО НЕ ДАЁТ: избыточности. Экземпляр каждого сервиса по-прежнему один,
-# обновление по-прежнему означает простой. Это подготовка, а не §93.
-#
-# ПОДКЛЮЧЕНИЕ — вторым `-f`, локальный override сервера ТРЕТЬИМ:
-#   docker compose -f docker-compose.yml \
+# ВКЛЮЧЕНИЕ — оба действия обязательны:
+#   COMPOSE_PROFILES=nginx
+#   COMPOSE_FILE=docker-compose.yml:deploy/docker-compose.nginx.yml:docker-compose.override.yml
+# в .env, либо то же самое флагами:
+#   docker compose --profile nginx \
+#                  -f docker-compose.yml \
 #                  -f deploy/docker-compose.nginx.yml \
 #                  -f docker-compose.override.yml up -d --build
 #
 # ⚠️ При ЯВНЫХ `-f` корневой docker-compose.override.yml НЕ подхватывается сам —
-# его обязательно указывать последним, иначе локальные настройки сервера
-# (внешний PostgreSQL, ClickHouse в стеке, лимиты) молча пропадут.
+# указывайте его последним, иначе локальные настройки сервера (внешний
+# PostgreSQL, ClickHouse в стеке, лимиты) молча пропадут.
 #
 # ⚠️ ПОРТ 8080 МЕНЯЕТ ПРИВЯЗКУ. В корневом файле `receiver` публикует 8080 на
-# 0.0.0.0, здесь nginx слушает 8080 только на 127.0.0.1 (RECEIVER_BIND).
-# Клиенты, ходящие прямо в Receiver по :8080, перестанут достукиваться —
-# проверьте ДО выката:
-#   ss -tnp 'sport = :8080' | head
-# Если такие есть, поставьте в .env RECEIVER_BIND=0.0.0.0 — но правильный путь
-# раздать им адрес вида https://<хост>/api/v1/<команда>/<путь>.
+# 0.0.0.0, а nginx слушает его только на 127.0.0.1 (RECEIVER_BIND). Клиенты,
+# ходящие прямо в Receiver по :8080, перестанут достукиваться — проверьте ДО
+# выката: `ss -tnp 'sport = :8080' | head`. Если такие есть, поставьте в .env
+# RECEIVER_BIND=0.0.0.0; правильный путь — раздать им адрес вида
+# https://<хост>/api/v1/<команда>/<путь>.
+#
+# ОТКАТ: убрать COMPOSE_PROFILES и этот файл из COMPOSE_FILE, затем
+# `docker compose up -d` — публикация вернётся к web/receiver. Остановленный
+# контейнер балансировщика удаляется `docker compose rm -f nginx`.
 
 services:
 
-  # Публикацию портов снимаем: 8000 и 8080 занимает nginx. Сервисы остаются в
-  # nexus_net и доступны балансировщику по именам. `!override` заменяет список
-  # целиком — без него пустой список СЛИЛСЯ бы с корневым, порт остался бы
-  # занят, и nginx не поднялся бы с «port is already allocated».
   web:
     ports: !override []
 
   receiver:
     ports: !override []
-
-  nginx:
-    build:
-      context: .
-      dockerfile: deploy/docker/nginx.Dockerfile
-    image: nexus-nginx:latest
-    restart: unless-stopped
-    environment:
-      # По одному адресу в каждом upstream — тот же скрипт генерации, что и в
-      # §93, просто список из одного элемента.
-      NEXUS_WEB_UPSTREAMS: "web:8000"
-      NEXUS_RECEIVER_UPSTREAMS: "receiver:8080"
-      # Один апстрем выводить из ротации некуда, поэтому порог мягче, чем в
-      # §93: при max_fails=2 разовый таймаут узла отправил бы единственный
-      # backend в down на 10 секунд, и шина отвечала бы 502 на всё подряд.
-      # 0 = «не выводить»: пусть лучше запрос дойдёт и получит честный ответ.
-      NEXUS_UPSTREAM_MAX_FAILS: "0"
-      NEXUS_UPSTREAM_FAIL_TIMEOUT: "10s"
-    depends_on:
-      web:      { condition: service_healthy }
-      receiver: { condition: service_healthy }
-    ports:
-      - "${WEB_BIND:-0.0.0.0}:8000:8000"
-      - "${RECEIVER_BIND:-127.0.0.1}:8080:8080"
-    healthcheck:
-      # 127.0.0.1, а НЕ localhost: nginx слушает только IPv4, а localhost в
-      # контейнере резолвится сначала в ::1 — busybox-wget уходит в IPv6 и
-      # получает Connection refused при полностью рабочем сервере.
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8000/nginx-health"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-      start_period: 10s
-    # Потолок памяти nginx задаётся переменной, а по умолчанию НЕ задан вовсе.
-    # Причина: на ядрах без учёта swap для cgroup (swapaccount=1) docker на
-    # каждый контейнер с лимитом печатает «Your kernel does not support swap
-    # limit capabilities… Memory limited without swap». Предупреждение
-    # безобидное — nginx в этой роли ест единицы мегабайт и до потолка не
-    # дотягивается, — но в выводе каждой сборки оно читается как проблема.
-    # Нужен лимит: NGINX_MEM_LIMIT=64m в .env.
-    mem_limit: ${NGINX_MEM_LIMIT:-0}
-    networks: [nexus_net]

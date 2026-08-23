@@ -22,6 +22,26 @@
 
 ## [Unreleased]
 
+## [1.31.4] - 2026-08-23
+
+**Откат:** без отката схемы (миграций нет). Возврат на 1.31.3 безопасен.
+
+### Changed
+
+- **Сервис `nginx` переехал в корневой `docker-compose.yml`** под `profiles: ["nginx"]` — раньше он
+  жил целиком в оверлее `deploy/docker-compose.nginx.yml`. Теперь балансировщик описан там же, где
+  остальные сервисы стека, и по умолчанию просто не поднимается.
+
+  **Включение стало из двух частей, и обе обязательны:** `COMPOSE_PROFILES=nginx` активирует сам
+  сервис, а оверлей `deploy/docker-compose.nginx.yml` снимает публикацию портов у `web`/`receiver`.
+  Разделение вынужденное: профиль решает, поднимать ли сервис, но не меняет поля соседних сервисов,
+  а пока nginx активен, порты 8000 и 8080 должны быть свободны. Активировать профиль и забыть
+  оверлей — стек не поднимется с «port is already allocated»; это названо в обоих файлах и в
+  DEPLOYMENT §5.4.1.
+
+  Для установок без nginx (сервер 4 ГБ) ничего не меняется: без профиля сервис отсутствует в
+  проекте, порты у `web`/`receiver` прежние.
+
 ## [1.31.3] - 2026-08-23
 
 **Откат:** без отката схемы (миграций нет). Возврат на 1.31.2 безопасен.
@@ -2973,7 +2993,8 @@ ClickHouse (§21), идентификатор узла в логах для об
 
 ---
 
-[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.3...HEAD
+[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.4...HEAD
+[1.31.4]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.3...v1.31.4
 [1.31.3]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.2...v1.31.3
 [1.31.2]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.1...v1.31.2
 [1.31.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.0...v1.31.1
