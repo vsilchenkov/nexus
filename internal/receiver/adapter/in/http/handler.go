@@ -285,6 +285,10 @@ func (h *Handler) handleSync(c *gin.Context, rest string) {
 		}
 		c.Header(k, v)
 	}
+	// §94: статус ниже — ответ ВНЕШНЕЙ системы, а не решение шины. Без этой
+	// пометки штатный 400 от апстрима (Telegram «message is not modified»)
+	// попадал бы в журнал отказов как отказ шины.
+	MarkProxiedResponse(c)
 	c.Data(out.StatusCode, out.Headers["Content-Type"], out.Body)
 }
 
@@ -402,6 +406,9 @@ func (h *Handler) handleAsyncFromInput(c *gin.Context, in usecase.RouteInput) {
 		// в кастомном теле идентификатора шины может не быть вовсе.
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.Header("X-Nexus-Id", res.ID)
+		// §83: статус задаёт шаблон ответа приёма, настроенный на узле, — это
+		// тоже не отказ шины (сам приём состоялся, сообщение в очереди).
+		MarkProxiedResponse(c)
 		c.Data(res.Ack.Status, res.Ack.ContentType, res.Ack.Body)
 		return
 	}

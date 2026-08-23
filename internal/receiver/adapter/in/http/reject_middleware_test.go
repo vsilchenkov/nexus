@@ -235,3 +235,44 @@ func TestRejectLogMiddleware_UnknownReasonInContext(t *testing.T) {
 	require.Len(t, sink.samples, 1)
 	assert.Equal(t, domain.RejectReasonOther, sink.samples[0].Key.Reason)
 }
+
+// TestRejectLogMiddleware_IgnoresProxiedUpstreamStatus: ответ, ПРОБРОШЕННЫЙ от
+// внешней системы, в журнал отказов не попадает — какой бы у него ни был код.
+//
+// Найдено на бою 23.08.2026: узлы с path_passthrough отдают клиенту ответ
+// апстрима как есть, и штатный 400 от Telegram («message is not modified») или
+// Green API оседал в журнале как отказ шины. Шина при этом отработала
+// правильно: запрос дошёл, ответ доставлен и уже записан в лог узла.
+func TestRejectLogMiddleware_IgnoresProxiedUpstreamStatus(t *testing.T) {
+	t.Parallel()
+
+	for _, status := range []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict} {
+		req := httptest.NewRequest(http.MethodPost,
+			"/api/v1/messengers/telegram/bot123/editMessageReplyMarkup", nil)
+		sink, m, w := runReject(t, req, func(c *gin.Context) {
+			MarkProxiedResponse(c)
+			c.Data(status, "application/json", []byte(`{"ok":false}`))
+		})
+
+		assert.Equal(t, status, w.Code, "статус апстрима доходит до клиента без изменений")
+		assert.Empty(t, sink.samples, "проброшенный ответ %d — не отказ шины", status)
+		assert.Empty(t, m.calls, "и метрику отказов он тоже не двигает")
+	}
+}
+
+// TestRejectLogMiddleware_ProxiedDoesNotHideRealReason: пометка проброса НЕ
+// перебивает явную причину. Порядок зафиксирован тестом, чтобы правило не
+// зависело от того, в каком порядке обработчик расставил вызовы.
+func TestRejectLogMiddleware_ProxiedDoesNotHideRealReason(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/messengers/telegram/x", nil)
+	sink, _, _ := runReject(t, req, func(c *gin.Context) {
+		SetRejectReason(c, domain.RejectReasonUnauthorized)
+		MarkProxiedResponse(c)
+		c.Status(http.StatusUnauthorized)
+	})
+
+	require.Len(t, sink.samples, 1, "названная обработчиком причина главнее пометки проброса")
+	assert.Equal(t, domain.RejectReasonUnauthorized, sink.samples[0].Key.Reason)
+}
