@@ -20,6 +20,20 @@
 #   CH_HOST=host.docker.internal
 # (резолвится через extra_hosts у sender/web ниже).
 #
+# ЕДИНАЯ ТОЧКА ВХОДА ЧЕРЕЗ nginx (необязательно, с 1.31.1). Этот файл сам по
+# себе публикует наружу web:8000 и receiver:8080. Чтобы вход шёл через
+# балансировщик — как в профиле §93, но БЕЗ пар реплик и без роста памяти —
+# подключите вторым `-f`:
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.nginx.yml \
+#                  -f docker-compose.override.yml up -d --build
+# Тогда 8000/8080 занимает nginx, а web/receiver публикацию портов теряют
+# (deploy/docker-compose.nginx.yml). Боевой /api/v1/* при этом идёт сразу в
+# Receiver, минуя Web. Локальный docker-compose.override.yml при ЯВНЫХ `-f` сам
+# НЕ подхватывается — указывайте его последним.
+#
+# Привязка публикуемых портов задаётся WEB_BIND / RECEIVER_BIND из .env; по
+# умолчанию обе 0.0.0.0, то есть поведение прежнее.
+#
 # Прочие варианты установки (всё в Docker / все зависимости внешние) и запуск
 # готовых образов из registry — в deploy/ и DEPLOYMENT.md.
 
@@ -178,7 +192,7 @@ services:
       redis:    { condition: service_healthy }
       sender:   { condition: service_started }
     ports:
-      - "8080:8080"
+      - "${RECEIVER_BIND:-0.0.0.0}:8080:8080"
     volumes:
       - ./config/config.yml:/app/config/config.yml:ro
     extra_hosts:
@@ -225,7 +239,7 @@ services:
       postgres: { condition: service_healthy }
       redis:    { condition: service_healthy }
     ports:
-      - "8000:8000"
+      - "${WEB_BIND:-0.0.0.0}:8000:8000"
     volumes:
       - ./config/config.yml:/app/config/config.yml:ro
     extra_hosts:
