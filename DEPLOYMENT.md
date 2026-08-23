@@ -944,7 +944,7 @@ services:
 Промежуточный профиль между обычным стеком и полным §93. Ставит балансировщик перед **прежними
 одиночными** `web` и `receiver`: пар реплик нет, память растёт на 64 МБ (сам nginx), а схема входа
 становится такой же, как в §93. Когда сервер будет готов к двум репликам — меняется только
-подключаемый файл, клиенты и адреса не трогаются.
+подключаемый профиль, клиенты и адреса не трогаются.
 
 **Что даёт уже сейчас**
 
@@ -958,25 +958,46 @@ services:
 **Чего не даёт** — избыточности. Экземпляр каждого сервиса по-прежнему один, обновление
 по-прежнему означает простой. Это подготовка, а не §93.
 
-```bash
-# Обычное обновление, БЕЗ rolling.sh. Локальный override — ПОСЛЕДНИМ -f.
-docker compose -f docker-compose.yml                -f deploy/docker-compose.nginx.yml                -f docker-compose.override.yml up -d --build
+#### Включение состоит из ДВУХ частей
 
-# Проверить.
-curl -s http://localhost:8000/nginx-health     # → ok
+Сервис `nginx` лежит в корневом `docker-compose.yml` под `profiles: ["nginx"]` — по умолчанию он
+не поднимается. Снятие публикации портов у `web`/`receiver` живёт в
+`deploy/docker-compose.nginx.yml`: профиль решает, поднимать ли сервис, но **не меняет поля
+соседних сервисов**, а пока nginx активен, порты 8000 и 8080 должны быть свободны.
+
+> ⚠️ Активировать профиль и **забыть оверлей** — самая вероятная ошибка. Стек не поднимется:
+> порт 8000 уже занят контейнером `web` («port is already allocated»).
+
+Проще всего закрепить обе части в `.env` — тогда обычные команды работают без флагов:
+
+```bash
+COMPOSE_PROFILES=nginx
+COMPOSE_FILE=docker-compose.yml:deploy/docker-compose.nginx.yml:docker-compose.override.yml
+```
+
+```bash
+# После этого обновление — обычное, БЕЗ rolling.sh:
+docker compose up -d --build
+
+# Проверить:
+curl -s http://localhost:8000/nginx-health     # ok
 curl -s http://localhost:8000/api/version
-docker compose -f docker-compose.yml -f deploy/docker-compose.nginx.yml                -f docker-compose.override.yml ps
+docker compose ps                               # web, receiver, sender, nginx — healthy
+```
+
+То же самое флагами, если не хочется править `.env` (локальный override — **последним** `-f`):
+
+```bash
+docker compose --profile nginx \r
+               -f docker-compose.yml \r
+               -f deploy/docker-compose.nginx.yml \r
+               -f docker-compose.override.yml up -d --build
 ```
 
 **Локальный `docker-compose.override.yml` менять не нужно.** Имена сервисов те же (`web`,
 `receiver`, `sender`), поэтому все его секции — внешний PostgreSQL, ClickHouse в стеке, лимиты
-памяти, `depends_on` — продолжают действовать. Единственное требование: при ЯВНЫХ `-f` корневой
-override **не подхватывается сам**, его нужно указывать последним. Чтобы не повторять три `-f`
-в каждой команде, закрепите список в `.env`:
-
-```bash
-COMPOSE_FILE=docker-compose.yml:deploy/docker-compose.nginx.yml:docker-compose.override.yml
-```
+памяти, `depends_on` — продолжают действовать. Единственное требование: при явных `-f` корневой
+override **не подхватывается сам**, его нужно указывать последним.
 
 > ⚠️ **Порт 8080 меняет привязку.** В корневом файле `receiver` публикует 8080 на `0.0.0.0`, а
 > nginx слушает 8080 только на `127.0.0.1`. Клиенты, ходящие прямо в Receiver по `:8080`,
@@ -984,9 +1005,11 @@ COMPOSE_FILE=docker-compose.yml:deploy/docker-compose.nginx.yml:docker-compose.o
 > `RECEIVER_BIND=0.0.0.0` в `.env`, но правильный путь раздать им адрес вида
 > `https://<хост>/api/v1/<команда>/<путь>`.
 
-**Откат** — убрать `-f deploy/docker-compose.nginx.yml` (и строку из `COMPOSE_FILE`), затем
-`docker compose up -d`. Публикация портов вернётся к `web`/`receiver`, контейнер nginx останется
-остановленным; удалить его — `docker compose rm -f nginx`.
+#### Откат
+
+Убрать `COMPOSE_PROFILES=nginx` и оверлей из `COMPOSE_FILE`, затем `docker compose up -d` —
+публикация портов вернётся к `web`/`receiver`. Остановленный контейнер балансировщика удаляется
+`docker compose rm -f nginx`.
 
 ### 5.5. Развёртывание без простоя: две реплики каждого сервиса (§93)
 

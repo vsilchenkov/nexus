@@ -252,6 +252,64 @@ services:
       start_period: 30s
     networks: [nexus_net]
 
+  # ── Балансировщик (профиль "nginx", по умолчанию ВЫКЛЮЧЕН) ────────────────
+  #
+  # Единая точка входа перед одиночными web/receiver: боевой /api/v1/* уходит
+  # СРАЗУ в Receiver, минуя Web (§93.3), а заголовки не теряются молча
+  # (underscores_in_headers, large_client_header_buffers, merge_slashes off).
+  # Реплики при этом по-прежнему по одной — это подготовка к §93, а не он сам.
+  #
+  # ВКЛЮЧЕНИЕ — ДВА действия, и оба обязательны:
+  #   1) активировать профиль:  COMPOSE_PROFILES=nginx в .env
+  #      (или --profile nginx в каждой команде);
+  #   2) подключить оверлей, снимающий публикацию портов у web/receiver:
+  #      COMPOSE_FILE=docker-compose.yml:deploy/docker-compose.nginx.yml:docker-compose.override.yml
+  #
+  # Почему двумя частями, а не одним профилем: профиль решает, поднимать ли
+  # сервис, но НЕ меняет поля соседних сервисов. Снять у web/receiver
+  # публикацию 8000/8080 умеет только оверлей (`ports: !override []`), а без
+  # этого docker откажет балансировщику: «port is already allocated».
+  #
+  # ⚠️ Включить профиль и ЗАБЫТЬ оверлей — самая вероятная ошибка: стек не
+  # поднимется, потому что порт 8000 уже занят контейнером web.
+  nginx:
+    profiles: ["nginx"]
+    build:
+      context: .
+      dockerfile: deploy/docker/nginx.Dockerfile
+    image: nexus-nginx:latest
+    restart: unless-stopped
+    environment:
+      # Тот же скрипт генерации upstream'ов, что и в §93, просто список из
+      # одного адреса.
+      NEXUS_WEB_UPSTREAMS: "web:8000"
+      NEXUS_RECEIVER_UPSTREAMS: "receiver:8080"
+      # Единственный backend выводить из ротации некуда: при max_fails=2
+      # разовый таймаут узла отправил бы его в down на 10 секунд, и шина
+      # отвечала бы 502 на всё подряд. 0 = «не выводить».
+      NEXUS_UPSTREAM_MAX_FAILS: "0"
+      NEXUS_UPSTREAM_FAIL_TIMEOUT: "10s"
+    depends_on:
+      web:      { condition: service_healthy }
+      receiver: { condition: service_healthy }
+    ports:
+      - "${WEB_BIND:-0.0.0.0}:8000:8000"
+      - "${RECEIVER_BIND:-127.0.0.1}:8080:8080"
+    healthcheck:
+      # 127.0.0.1, а НЕ localhost: nginx слушает только IPv4, а localhost в
+      # контейнере резолвится сначала в ::1 — busybox-wget уходит в IPv6 и
+      # получает Connection refused при полностью рабочем сервере.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8000/nginx-health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    # По умолчанию потолок НЕ задан: на ядрах без swapaccount=1 docker печатает
+    # «Your kernel does not support swap limit capabilities» на каждый
+    # контейнер с mem_limit. Нужен лимит — NGINX_MEM_LIMIT=64m в .env.
+    mem_limit: ${NGINX_MEM_LIMIT:-0}
+    networks: [nexus_net]
+
 networks:
   nexus_net:
     driver: bridge
