@@ -968,16 +968,29 @@ services:
 > ⚠️ Активировать профиль и **забыть оверлей** — самая вероятная ошибка. Стек не поднимется:
 > порт 8000 уже занят контейнером `web` («port is already allocated»).
 
+**Порядок файлов значим: `deploy/docker-compose.nginx.yml` идёт ПОСЛЕДНИМ, после локального
+override.** Его задача — СНЯТЬ публикацию портов, а побеждает всегда последний файл. Оба готовых
+шаблона (`deploy/docker-compose.override.yml` и `standalone`) сами задают `ports` у `web`, поэтому
+поставленный после них локальный override вернёт 8000 обратно, и балансировщик не поднимется:
+«port is already allocated». Найдено на бою 23.08.2026.
+
 Проще всего закрепить обе части в `.env` — тогда обычные команды работают без флагов:
 
 ```bash
 COMPOSE_PROFILES=nginx
-COMPOSE_FILE=docker-compose.yml:deploy/docker-compose.nginx.yml:docker-compose.override.yml
+COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml:deploy/docker-compose.nginx.yml
 ```
 
 ```bash
 # После этого обновление — обычное, БЕЗ rolling.sh:
 docker compose up -d --build
+
+# ВКЛЮЧЕНИЕ НА УЖЕ РАБОТАЮЩЕМ СТЕКЕ — на шаг больше. Контейнеры web/receiver
+# созданы со СТАРОЙ спецификацией и держат 8000/8080, пока их не пересоздать;
+# `up -d` до них не доходит — падает раньше, на nginx. Поэтому сначала они:
+docker compose up -d --no-deps --force-recreate web receiver
+docker ps --format '{{.Names}}	{{.Ports}}' | grep -E 'web|receiver'   # маппингов быть не должно
+docker compose up -d nginx
 
 # Проверить:
 curl -s http://localhost:8000/nginx-health     # ok
@@ -990,20 +1003,40 @@ docker compose ps                               # web, receiver, sender, nginx �
 ```bash
 docker compose --profile nginx \r
                -f docker-compose.yml \r
-               -f deploy/docker-compose.nginx.yml \r
-               -f docker-compose.override.yml up -d --build
+               -f docker-compose.override.yml \r
+               -f deploy/docker-compose.nginx.yml up -d --build
 ```
 
 **Локальный `docker-compose.override.yml` менять не нужно.** Имена сервисов те же (`web`,
 `receiver`, `sender`), поэтому все его секции — внешний PostgreSQL, ClickHouse в стеке, лимиты
-памяти, `depends_on` — продолжают действовать. Единственное требование: при явных `-f` корневой
-override **не подхватывается сам**, его нужно указывать последним.
+памяти, `depends_on` — продолжают действовать; nginx-оверлей трогает ТОЛЬКО `ports` у `web` и
+`receiver`. Два требования: при явных `-f` корневой override **не подхватывается сам**, и стоять он
+должен ПЕРЕД nginx-оверлеем (см. выше про порядок).
 
 > ⚠️ **Порт 8080 меняет привязку.** В корневом файле `receiver` публикует 8080 на `0.0.0.0`, а
 > nginx слушает 8080 только на `127.0.0.1`. Клиенты, ходящие прямо в Receiver по `:8080`,
 > перестанут достукиваться. Проверьте ДО выката: `ss -tnp 'sport = :8080' | head`. Если такие есть —
 > `RECEIVER_BIND=0.0.0.0` в `.env`, но правильный путь раздать им адрес вида
 > `https://<хост>/api/v1/<команда>/<путь>`.
+
+> ⚠️ **Healthcheck внешнего прокси (HAProxy/nginx/ELB) обязан нести Host — иначе фронт молча
+> метится DOWN.** Пока перед Nexus стоял только `web`, проверка вида `option httpchk GET /` (без
+> заголовка Host) возвращала 200. С nginx впереди тот же запрос проксируется в `web` по HTTP/1.1,
+> где Host обязателен, и Go отвечает `400 missing required Host header` — внешний балансировщик
+> видит не-200, метит бэкенд недоступным и отдаёт 503 на весь домен. Nexus при этом полностью
+> исправен. Найдено на бою `nexus-kz` 23.08.2026.
+>
+> Правьте проверку **внешнего** прокси одним из двух способов:
+>
+> - нацелить на `/nginx-health` — nginx отвечает 200 сам, без Host и без похода в web (это liveness
+>   фронта; если web ляжет, клиент получит честный 502, а не 503 от балансировщика);
+> - либо оставить `GET /`, но добавить Host (HAProxy 2.2+):
+>   `option httpchk` + `http-check send meth GET uri / hdr Host <ваш-домен>` — так проверяется весь
+>   путь до web, как было раньше.
+>
+> Пример для HAProxy на `nexus-kz` (host-конфиг, вне этого репозитория):
+> `sudo sed -i 's|option httpchk GET /|option httpchk GET /nginx-health|' /etc/haproxy/haproxy.cfg`,
+> затем `sudo haproxy -c -f …` и `sudo systemctl reload haproxy`.
 
 #### Откат
 

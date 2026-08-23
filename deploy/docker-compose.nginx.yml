@@ -11,16 +11,29 @@
 #
 # ВКЛЮЧЕНИЕ — оба действия обязательны:
 #   COMPOSE_PROFILES=nginx
-#   COMPOSE_FILE=docker-compose.yml:deploy/docker-compose.nginx.yml:docker-compose.override.yml
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml:deploy/docker-compose.nginx.yml
 # в .env, либо то же самое флагами:
 #   docker compose --profile nginx \
 #                  -f docker-compose.yml \
-#                  -f deploy/docker-compose.nginx.yml \
-#                  -f docker-compose.override.yml up -d --build
+#                  -f docker-compose.override.yml \
+#                  -f deploy/docker-compose.nginx.yml up -d --build
+#
+# ⚠️ ЭТОТ ФАЙЛ ИДЁТ ПОСЛЕДНИМ — после локального override. Он СНИМАЕТ
+# публикацию, а побеждает всегда последний файл: оба готовых шаблона
+# (deploy/docker-compose.override.yml и standalone) сами задают `ports` у web,
+# и поставленный после этого оверлея локальный override вернёт 8000 обратно.
+# Ровно так вышло на бою 23.08.2026: nginx не поднялся с «port is already
+# allocated», хотя и профиль, и оверлей были подключены.
+#
+# ⚠️ ВКЛЮЧЕНИЕ НА УЖЕ РАБОТАЮЩЕМ СТЕКЕ. Контейнеры web/receiver созданы со
+# старой спецификацией и держат 8000/8080, пока их не пересоздать, а `up -d`
+# до них не доходит — падает раньше, на nginx. Порядок:
+#   docker compose up -d --no-deps --force-recreate web receiver
+#   docker compose up -d nginx
 #
 # ⚠️ При ЯВНЫХ `-f` корневой docker-compose.override.yml НЕ подхватывается сам —
-# указывайте его последним, иначе локальные настройки сервера (внешний
-# PostgreSQL, ClickHouse в стеке, лимиты) молча пропадут.
+# перечисляйте его явно, ПЕРЕД этим файлом, иначе локальные настройки сервера
+# (внешний PostgreSQL, ClickHouse в стеке, лимиты) молча пропадут.
 #
 # ⚠️ ПОРТ 8080 МЕНЯЕТ ПРИВЯЗКУ. В корневом файле `receiver` публикует 8080 на
 # 0.0.0.0, а nginx слушает его только на 127.0.0.1 (RECEIVER_BIND). Клиенты,
