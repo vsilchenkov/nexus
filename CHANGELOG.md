@@ -22,6 +22,22 @@
 
 ## [Unreleased]
 
+## [1.31.5] - 2026-08-23
+
+**Откат:** без отката схемы (миграций нет). Возврат на 1.31.4 безопасен.
+
+Только документация — код, образы и compose-файлы не менялись.
+
+### Fixed
+
+- **DEPLOYMENT §5.4.1: предупреждение про healthcheck внешнего прокси перед nginx.** На бою
+  `nexus-kz` домен отдавал 503, хотя Nexus был исправен: HAProxy проверял бэкенд запросом
+  `option httpchk GET /` **без заголовка Host**. Пока перед Nexus стоял только `web`, такой запрос
+  возвращал 200; с nginx впереди он проксируется в `web` по HTTP/1.1, где Host обязателен, Go
+  отвечает `400 missing required Host header`, и внешний балансировщик метит бэкенд недоступным.
+  Документация теперь требует нацеливать проверку **внешнего** прокси на `/nginx-health` либо слать
+  `GET /` с заголовком Host. Сам фикс — host-конфиг HAProxy, вне этого репозитория.
+
 ## [1.31.4] - 2026-08-23
 
 **Откат:** без отката схемы (миграций нет). Возврат на 1.31.3 безопасен.
@@ -2993,7 +3009,8 @@ ClickHouse (§21), идентификатор узла в логах для об
 
 ---
 
-[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.4...HEAD
+[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.5...HEAD
+[1.31.5]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.4...v1.31.5
 [1.31.4]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.3...v1.31.4
 [1.31.3]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.2...v1.31.3
 [1.31.2]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.1...v1.31.2

@@ -262,16 +262,25 @@ services:
   # ВКЛЮЧЕНИЕ — ДВА действия, и оба обязательны:
   #   1) активировать профиль:  COMPOSE_PROFILES=nginx в .env
   #      (или --profile nginx в каждой команде);
-  #   2) подключить оверлей, снимающий публикацию портов у web/receiver:
-  #      COMPOSE_FILE=docker-compose.yml:deploy/docker-compose.nginx.yml:docker-compose.override.yml
+  #   2) подключить оверлей, снимающий публикацию портов у web/receiver, —
+  #      ПОСЛЕДНИМ, после локального override: оверлей СНИМАЕТ публикацию, а
+  #      побеждает последний файл, и override (он сам задаёт ports у web)
+  #      вернул бы 8000 обратно:
+  #      COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml:deploy/docker-compose.nginx.yml
   #
   # Почему двумя частями, а не одним профилем: профиль решает, поднимать ли
   # сервис, но НЕ меняет поля соседних сервисов. Снять у web/receiver
   # публикацию 8000/8080 умеет только оверлей (`ports: !override []`), а без
   # этого docker откажет балансировщику: «port is already allocated».
   #
-  # ⚠️ Включить профиль и ЗАБЫТЬ оверлей — самая вероятная ошибка: стек не
-  # поднимется, потому что порт 8000 уже занят контейнером web.
+  # ⚠️ Три ошибки, каждая даёт «port is already allocated», и все три случались
+  # на бою 23.08.2026:
+  #   • включить профиль и ЗАБЫТЬ оверлей;
+  #   • поставить оверлей ПЕРЕД локальным override — тот вернёт ports обратно;
+  #   • включать на УЖЕ РАБОТАЮЩЕМ стеке без пересоздания web/receiver: они
+  #     держат порты со старой спецификации, а `up -d` падает на nginx раньше,
+  #     чем доходит до них. Сначала
+  #     `docker compose up -d --no-deps --force-recreate web receiver`.
   nginx:
     profiles: ["nginx"]
     build:
