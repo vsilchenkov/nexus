@@ -939,6 +939,55 @@ services:
 
 ---
 
+### 5.4.1. Шаг к §93: nginx перед одиночным стеком (с 1.31.1)
+
+Промежуточный профиль между обычным стеком и полным §93. Ставит балансировщик перед **прежними
+одиночными** `web` и `receiver`: пар реплик нет, память растёт на 64 МБ (сам nginx), а схема входа
+становится такой же, как в §93. Когда сервер будет готов к двум репликам — меняется только
+подключаемый файл, клиенты и адреса не трогаются.
+
+**Что даёт уже сейчас**
+
+- боевой `/api/v1/*` идёт **сразу в Receiver, минуя Web**: панель перестаёт быть частью горячего
+  пути, её перезапуск не рвёт трафик;
+- заголовки не теряются молча — `underscores_in_headers on` (иначе `X_Api_Key` исчезает бесшумно),
+  `large_client_header_buffers 8 32k` (дефолт отвечает 400 на крупный JWT), `merge_slashes off`
+  (§39 отдаёт хвост пути как есть);
+- единая точка входа: наружу смотрит только nginx.
+
+**Чего не даёт** — избыточности. Экземпляр каждого сервиса по-прежнему один, обновление
+по-прежнему означает простой. Это подготовка, а не §93.
+
+```bash
+# Обычное обновление, БЕЗ rolling.sh. Локальный override — ПОСЛЕДНИМ -f.
+docker compose -f docker-compose.yml                -f deploy/docker-compose.nginx.yml                -f docker-compose.override.yml up -d --build
+
+# Проверить.
+curl -s http://localhost:8000/nginx-health     # → ok
+curl -s http://localhost:8000/api/version
+docker compose -f docker-compose.yml -f deploy/docker-compose.nginx.yml                -f docker-compose.override.yml ps
+```
+
+**Локальный `docker-compose.override.yml` менять не нужно.** Имена сервисов те же (`web`,
+`receiver`, `sender`), поэтому все его секции — внешний PostgreSQL, ClickHouse в стеке, лимиты
+памяти, `depends_on` — продолжают действовать. Единственное требование: при ЯВНЫХ `-f` корневой
+override **не подхватывается сам**, его нужно указывать последним. Чтобы не повторять три `-f`
+в каждой команде, закрепите список в `.env`:
+
+```bash
+COMPOSE_FILE=docker-compose.yml:deploy/docker-compose.nginx.yml:docker-compose.override.yml
+```
+
+> ⚠️ **Порт 8080 меняет привязку.** В корневом файле `receiver` публикует 8080 на `0.0.0.0`, а
+> nginx слушает 8080 только на `127.0.0.1`. Клиенты, ходящие прямо в Receiver по `:8080`,
+> перестанут достукиваться. Проверьте ДО выката: `ss -tnp 'sport = :8080' | head`. Если такие есть —
+> `RECEIVER_BIND=0.0.0.0` в `.env`, но правильный путь раздать им адрес вида
+> `https://<хост>/api/v1/<команда>/<путь>`.
+
+**Откат** — убрать `-f deploy/docker-compose.nginx.yml` (и строку из `COMPOSE_FILE`), затем
+`docker compose up -d`. Публикация портов вернётся к `web`/`receiver`, контейнер nginx останется
+остановленным; удалить его — `docker compose rm -f nginx`.
+
 ### 5.5. Развёртывание без простоя: две реплики каждого сервиса (§93)
 
 Профиль, при котором обновление приложения и падение процесса перестают быть простоем: по две
@@ -1013,8 +1062,11 @@ docker compose -f docker-compose.yml -f deploy/docker-compose.ha.yml build sende
 docker compose exec web /app/web --migrate-only   # либо как в §4.2
 
 # 5. ОКНО НЕДОСТУПНОСТИ (десятки секунд): гасим одиночные, поднимаем пары + nginx.
+#    ВНИМАНИЕ: локальный override подключается ТРЕТЬИМ -f (см. врезку ниже) —
+#    при явных -f корневой docker-compose.override.yml НЕ подхватывается.
 docker compose stop web receiver sender
-docker compose -f docker-compose.yml -f deploy/docker-compose.ha.yml up -d
+docker compose -f docker-compose.yml -f deploy/docker-compose.ha.yml \r
+               -f deploy/docker-compose.ha.standalone.override.yml up -d
 
 # 6. Проверить, что наружу отвечает балансировщик, а реплик по две.
 curl -s http://localhost:8000/nginx-health          # ok
@@ -1027,6 +1079,42 @@ docker compose rm -f web receiver sender
 # 8. Закрепить профиль, чтобы обычные docker compose команды знали про оверлей.
 echo 'COMPOSE_FILE=docker-compose.yml:deploy/docker-compose.ha.yml' >> .env
 ```
+
+**Локальный `docker-compose.override.yml` при переходе ЛОМАЕТСЯ — это главная грабля.**
+
+Файл на сервере переопределяет сервисы `web`, `receiver`, `sender`. В HA-схеме таких сервисов нет:
+они помечены `profiles: ["disabled"]`, а работают пары `web-1`/`web-2` и так далее. Compose при
+этом НЕ ругается — секции применяются к отключённым сервисам, и лимиты памяти, привязки портов,
+`depends_on` уходят в никуда молча. Хуже: **при явных `-f` корневой `docker-compose.override.yml`
+не подхватывается вовсе** (проверено `docker compose config` — из проекта пропадает ClickHouse
+вместе с loopback-привязками), а `COMPOSE_FILE` задаёт список файлов целиком.
+
+Два готовых шаблона под HA лежат рядом с оверлеем — их надо подключать **третьим** `-f`:
+
+| Профиль сервера | Файл | Что чинит |
+|---|---|---|
+| самодостаточный (ClickHouse в стеке) | `deploy/docker-compose.ha.standalone.override.yml` | возвращает ClickHouse, loopback-порты, `WEB_BIND`/`RECEIVER_BIND` (теперь у nginx), урезает потолки памяти реплик под небольшой сервер, возвращает `sender → clickhouse` |
+| внешний PostgreSQL на хосте | `deploy/docker-compose.ha.external-pg.override.yml` | снимает зависимость от bundled-postgres у ВСЕХ шести реплик |
+
+Без второго файла стек с внешним PostgreSQL **не собирается вообще**:
+
+```
+service "sender-2" depends on undefined service "postgres": invalid compose project
+```
+
+Падает не контейнер, а разбор проекта: `depends_on` реплик приходит из якорей `ha.yml` и требует
+`postgres`, отключённого профилем.
+
+```bash
+# .env — список файлов целиком, порядок значим (локальный override последним):
+COMPOSE_FILE=docker-compose.yml:deploy/docker-compose.ha.yml:deploy/docker-compose.ha.standalone.override.yml
+```
+
+**Память — считайте ДО перехода.** Потолки `ha.yml` рассчитаны на сервер, обрабатывающий тела до
+124 МиБ: `sender` 1792 МБ × 2 + `receiver` 1024 МБ × 2 + `web` 192 МБ × 2 = **6 ГБ только
+приложения**, плюс инфраструктура (PostgreSQL 320 + Redis 96 + Kafka 768 + Prometheus 192 +
+ClickHouse 1280 ≈ 2.6 ГБ). На машине 4 ГБ это не работает — берите `ha.standalone.override.yml`
+с урезанными потолками и учитывайте его цену: крупные тела на такой машине обработать нечем.
 
 **Единственный простой во всей процедуре — шаг 5.** Всё остальное (сборка, миграции, сохранение
 образов) идёт при работающем старом стеке. Дальнейшие обновления простоя уже не требуют — они

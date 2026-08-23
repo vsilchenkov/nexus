@@ -336,7 +336,13 @@ integration:
   #   DOCKER_TLS_CERTDIR: ""
   #   TESTCONTAINERS_HOST_OVERRIDE: "docker"
   #   TESTCONTAINERS_RYUK_DISABLED: "true"
-  timeout: 35 minutes
+  # 50, а не 35 — запас на выбросы раннера. На v1.31.0 job упал по таймауту
+  # (1920 с), но ПЕРЕЗАПУСК того же коммита прошёл за 1157 с — то есть дело не
+  # в объёме тестов (v1.30.1 занимал 1453 с), а в перегруженном раннере:
+  # контейнеры PostgreSQL не поднимались, соединение с Kafka обрывалось. При
+  # прежнем потолке любой такой выброс роняет прогон целиком, а на теге это
+  # означает красный релиз.
+  timeout: 50 minutes
   rules:
     - if: $RUN_PROFILE == "loadtest-only"
       when: never
@@ -359,7 +365,7 @@ integration:
     - 'echo "===== integration test env ====="'
     - go version
     - 'echo "DOCKER_HOST = $DOCKER_HOST"'
-    - 'echo "===== gotestsum -tags=integration -timeout 30m -count=1 ./tests/integration/... ====="'
+    - 'echo "===== gotestsum -tags=integration -timeout 45m -count=1 ./tests/integration/... ====="'
     # JUnit-отчёт пишем в junit-integration.xml — отдельный файл от unit-тестов,
     # чтобы в GitLab Tests tab были две независимые вкладки и было видно, в
     # каком слое (unit vs integration) сломалось.
@@ -372,7 +378,7 @@ integration:
         --junitfile junit-integration.xml
         --format standard-verbose
         --
-        -tags=integration -timeout 30m -count=1 ./tests/integration/...
+        -tags=integration -timeout 45m -count=1 ./tests/integration/...
     - 'echo "===== integration done ====="'
   artifacts:
     when: always
