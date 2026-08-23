@@ -1013,8 +1013,11 @@ docker compose -f docker-compose.yml -f deploy/docker-compose.ha.yml build sende
 docker compose exec web /app/web --migrate-only   # либо как в §4.2
 
 # 5. ОКНО НЕДОСТУПНОСТИ (десятки секунд): гасим одиночные, поднимаем пары + nginx.
+#    ВНИМАНИЕ: локальный override подключается ТРЕТЬИМ -f (см. врезку ниже) —
+#    при явных -f корневой docker-compose.override.yml НЕ подхватывается.
 docker compose stop web receiver sender
-docker compose -f docker-compose.yml -f deploy/docker-compose.ha.yml up -d
+docker compose -f docker-compose.yml -f deploy/docker-compose.ha.yml \r
+               -f deploy/docker-compose.ha.standalone.override.yml up -d
 
 # 6. Проверить, что наружу отвечает балансировщик, а реплик по две.
 curl -s http://localhost:8000/nginx-health          # ok
@@ -1027,6 +1030,42 @@ docker compose rm -f web receiver sender
 # 8. Закрепить профиль, чтобы обычные docker compose команды знали про оверлей.
 echo 'COMPOSE_FILE=docker-compose.yml:deploy/docker-compose.ha.yml' >> .env
 ```
+
+**Локальный `docker-compose.override.yml` при переходе ЛОМАЕТСЯ — это главная грабля.**
+
+Файл на сервере переопределяет сервисы `web`, `receiver`, `sender`. В HA-схеме таких сервисов нет:
+они помечены `profiles: ["disabled"]`, а работают пары `web-1`/`web-2` и так далее. Compose при
+этом НЕ ругается — секции применяются к отключённым сервисам, и лимиты памяти, привязки портов,
+`depends_on` уходят в никуда молча. Хуже: **при явных `-f` корневой `docker-compose.override.yml`
+не подхватывается вовсе** (проверено `docker compose config` — из проекта пропадает ClickHouse
+вместе с loopback-привязками), а `COMPOSE_FILE` задаёт список файлов целиком.
+
+Два готовых шаблона под HA лежат рядом с оверлеем — их надо подключать **третьим** `-f`:
+
+| Профиль сервера | Файл | Что чинит |
+|---|---|---|
+| самодостаточный (ClickHouse в стеке) | `deploy/docker-compose.ha.standalone.override.yml` | возвращает ClickHouse, loopback-порты, `WEB_BIND`/`RECEIVER_BIND` (теперь у nginx), урезает потолки памяти реплик под небольшой сервер, возвращает `sender → clickhouse` |
+| внешний PostgreSQL на хосте | `deploy/docker-compose.ha.external-pg.override.yml` | снимает зависимость от bundled-postgres у ВСЕХ шести реплик |
+
+Без второго файла стек с внешним PostgreSQL **не собирается вообще**:
+
+```
+service "sender-2" depends on undefined service "postgres": invalid compose project
+```
+
+Падает не контейнер, а разбор проекта: `depends_on` реплик приходит из якорей `ha.yml` и требует
+`postgres`, отключённого профилем.
+
+```bash
+# .env — список файлов целиком, порядок значим (локальный override последним):
+COMPOSE_FILE=docker-compose.yml:deploy/docker-compose.ha.yml:deploy/docker-compose.ha.standalone.override.yml
+```
+
+**Память — считайте ДО перехода.** Потолки `ha.yml` рассчитаны на сервер, обрабатывающий тела до
+124 МиБ: `sender` 1792 МБ × 2 + `receiver` 1024 МБ × 2 + `web` 192 МБ × 2 = **6 ГБ только
+приложения**, плюс инфраструктура (PostgreSQL 320 + Redis 96 + Kafka 768 + Prometheus 192 +
+ClickHouse 1280 ≈ 2.6 ГБ). На машине 4 ГБ это не работает — берите `ha.standalone.override.yml`
+с урезанными потолками и учитывайте его цену: крупные тела на такой машине обработать нечем.
 
 **Единственный простой во всей процедуре — шаг 5.** Всё остальное (сборка, миграции, сохранение
 образов) идёт при работающем старом стеке. Дальнейшие обновления простоя уже не требуют — они

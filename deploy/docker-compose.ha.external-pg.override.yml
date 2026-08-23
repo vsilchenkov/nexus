@@ -1,0 +1,57 @@
+# Локальный override для сервера с ВНЕШНИМ PostgreSQL (на хосте, не в стеке),
+# переведённого на профиль двух реплик (§93).
+#
+# БЕЗ ЭТОГО ФАЙЛА СТЕК НЕ СОБЕРЁТСЯ ВОВСЕ. Проверено `docker compose config`:
+#
+#   service "sender-2" depends on undefined service "postgres": invalid compose project
+#
+# Причина: старый override снимал зависимость от bundled-postgres у сервисов
+# `web`, `receiver`, `sender`, а в HA-схеме работают ПАРЫ (`web-1`, `web-2`, …).
+# Их depends_on приходит из якорей ha.yml и по-прежнему требует `postgres`,
+# который отключён профилем `disabled`. Compose проверяет это на этапе разбора
+# проекта — падает не какой-то один контейнер, а команда целиком.
+#
+# ПОРЯДОК ФАЙЛОВ — этот подключается ПОСЛЕ ha.yml:
+#   docker compose -f docker-compose.yml \
+#                  -f deploy/docker-compose.ha.yml \
+#                  -f deploy/docker-compose.ha.external-pg.override.yml up -d
+# либо через .env:
+#   COMPOSE_FILE=docker-compose.yml:deploy/docker-compose.ha.yml:deploy/docker-compose.ha.external-pg.override.yml
+#
+# ⚠️ Корневой docker-compose.override.yml при ЯВНЫХ `-f` НЕ подхватывается —
+# локальные правки обязаны идти отдельным `-f`.
+#
+# В .env адрес внешней базы: PG_HOST=host.docker.internal (или IP хоста в
+# docker-сети), PG_PORT=5432. Реплики уже имеют extra_hosts с
+# host.docker.internal — отдельно прописывать не нужно.
+
+services:
+
+  # Bundled-postgres не поднимаем: используется PostgreSQL на хосте.
+  # Профиль "disabled" нигде не активируется — контейнер не стартует, и порт
+  # 5432 не отбирается у хостовой базы.
+  postgres:
+    profiles: ["disabled"]
+
+  # Зависимость от bundled-postgres снимается у КАЖДОЙ реплики: `!override`
+  # заменяет список целиком, а не дополняет его. Redis и Kafka остаются — они
+  # в стеке.
+  web-1: &web-deps
+    depends_on: !override
+      redis:
+        condition: service_healthy
+  web-2: *web-deps
+
+  receiver-1: &receiver-deps
+    depends_on: !override
+      redis:
+        condition: service_healthy
+  receiver-2: *receiver-deps
+
+  sender-1: &sender-deps
+    depends_on: !override
+      kafka:
+        condition: service_healthy
+  sender-2: *sender-deps
+
+  # nginx ждёт готовности реплик — этот список из ha.yml менять не нужно.

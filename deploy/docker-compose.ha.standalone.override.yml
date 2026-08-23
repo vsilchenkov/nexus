@@ -1,0 +1,120 @@
+# Локальный override для СЕРВЕРА С САМОДОСТАТОЧНЫМ СТЕКОМ, переведённого на
+# профиль двух реплик (§93). Замена deploy/docker-compose.standalone.override.yml
+# после перехода на nginx-схему.
+#
+# ЗАЧЕМ ОТДЕЛЬНЫЙ ФАЙЛ. Старый override переопределяет сервисы `web`, `receiver`
+# и `sender` — в HA-схеме таких сервисов НЕТ, они помечены `profiles: [disabled]`,
+# а работают пары `web-1`/`web-2`, `receiver-1`/`receiver-2`, `sender-1`/`sender-2`.
+# Compose не ругается: секции применяются к отключённым сервисам, то есть все
+# лимиты памяти, привязки портов и depends_on уходят в никуда МОЛЧА. Реплики при
+# этом берут значения из deploy/docker-compose.ha.yml.
+#
+# ПОРЯДОК ФАЙЛОВ ВАЖЕН — этот подключается ПОСЛЕ ha.yml:
+#   docker compose -f docker-compose.yml \
+#                  -f deploy/docker-compose.ha.yml \
+#                  -f deploy/docker-compose.ha.standalone.override.yml up -d
+# либо через .env:
+#   COMPOSE_FILE=docker-compose.yml:deploy/docker-compose.ha.yml:deploy/docker-compose.ha.standalone.override.yml
+#
+# ⚠️ Корневой docker-compose.override.yml при ЯВНЫХ `-f` НЕ подхватывается
+# (проверено `docker compose config`: ClickHouse и loopback-привязки исчезают из
+# проекта). Поэтому локальные правки должны идти отдельным `-f`, а не лежать
+# в корне «как раньше».
+#
+# ПАМЯТЬ. Дефолтные потолки ha.yml рассчитаны на сервер, где тела запросов
+# доходят до 124 МиБ: sender 1792 МБ × 2 + receiver 1024 МБ × 2 + web 192 МБ × 2
+# = 6 ГБ ТОЛЬКО приложения, плюс инфраструктура. На машине 4 ГБ это не работает —
+# ниже потолки урезаны под реальный профиль небольшого сервера. Цена урезания
+# названа явно: тело крупнее ~40 МБ на такой машине обработать нечем, и запрос
+# упрётся в OOM контейнера, а не в 413. Если крупные тела нужны — нужен сервер
+# от 8 ГБ и дефолтные значения ha.yml.
+
+services:
+
+  # ── ClickHouse в стеке (его нет ни в корневом файле, ни в ha.yml) ──────────
+  clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: nexus_default
+      CLICKHOUSE_USER: ${CH_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CH_PASSWORD:-}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    mem_limit: 1280m
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - /opt/nexus-local/clickhouse/config.d/memory.xml:/etc/clickhouse-server/config.d/memory.xml:ro
+      - /opt/nexus-local/clickhouse/users.d/memory.xml:/etc/clickhouse-server/users.d/memory.xml:ro
+    ports:
+      - "127.0.0.1:8123:8123"
+      - "127.0.0.1:9000:9000"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --host=127.0.0.1 --user=\"$${CLICKHOUSE_USER:-default}\" --password=\"$${CLICKHOUSE_PASSWORD:-}\" --query='SELECT 1' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks: [nexus_net]
+
+  # ── Инфраструктура: loopback + потолки (как было) ──────────────────────────
+  postgres:
+    mem_limit: 320m
+    ports: !override
+      - "127.0.0.1:5432:5432"
+
+  redis:
+    mem_limit: 96m
+    ports: !override
+      - "127.0.0.1:6379:6379"
+
+  kafka:
+    environment:
+      KAFKA_HEAP_OPTS: "-Xmx512m -Xms256m"
+    mem_limit: 768m
+    ports: !override
+      - "127.0.0.1:9092:9092"
+
+  prometheus:
+    mem_limit: 192m
+    ports: !override
+      - "127.0.0.1:9091:9090"
+
+  # ── Балансировщик: единственная точка входа ────────────────────────────────
+  # WEB_BIND/RECEIVER_BIND теперь управляют портами nginx, а не web/receiver:
+  # публикует наружу именно он. Значения по умолчанию совпадают с ha.yml.
+  nginx:
+    ports: !override
+      - "${WEB_BIND:-0.0.0.0}:8000:8000"
+      - "${RECEIVER_BIND:-127.0.0.1}:8080:8080"
+
+  # ── Реплики приложения ─────────────────────────────────────────────────────
+  # Потолки урезаны под 4 ГБ. GOMEMLIMIT ставится НИЖЕ mem_limit, чтобы GC успел
+  # отработать до жёсткого лимита.
+  web-1: &web-small
+    environment:
+      GOMEMLIMIT: 200MiB
+    mem_limit: 256m
+  web-2: *web-small
+
+  receiver-1: &receiver-small
+    environment:
+      GOMEMLIMIT: 256MiB
+    mem_limit: 320m
+  receiver-2: *receiver-small
+
+  # Sender ждёт ClickHouse: он пишет туда логи запросов. В ha.yml этой
+  # зависимости нет — ClickHouse там не объявлен вовсе.
+  sender-1: &sender-small
+    environment:
+      GOMEMLIMIT: 360MiB
+    mem_limit: 448m
+    depends_on:
+      clickhouse: { condition: service_healthy }
+  sender-2: *sender-small
+
+volumes:
+  clickhouse_data:
