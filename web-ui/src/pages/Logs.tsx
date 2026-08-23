@@ -32,8 +32,11 @@ export default function LogsSection() {
       {/* Вкладки — ССЫЛКИ, а не кнопки: Ctrl+клик, средняя кнопка мыши и
           «Открыть в новой вкладке» обязаны работать (урок §79). */}
       <nav className="flex items-center gap-1 border-b border-line pb-px">
-        {isAdmin && <LogsTab to="/logs/services" label={t("logs.tabs.services")} />}
+        {/* «Отказы» первыми и по умолчанию: на пункте меню горит счётчик
+            непросмотренных, и клик по нему должен приводить сразу к ним.
+            Служебные логи открывают осознанно, а отказы — по сигналу. */}
         <LogsTab to="/logs/rejected" label={t("logs.tabs.rejected")} />
+        {isAdmin && <LogsTab to="/logs/services" label={t("logs.tabs.services")} />}
       </nav>
 
       <div className="min-h-0 flex-1 pt-3">

@@ -55,6 +55,22 @@ describe("LogsSection", () => {
     expect(rejected).toHaveAttribute("href", "/logs/rejected");
   });
 
+  it("«Отказы» стоят ПЕРЕД «Сервисами» — на них ведёт счётчик меню", async () => {
+    renderSection("admin");
+
+    // Ждём именно «Сервисы»: они появляются после ответа /api/auth/me (видны
+    // только администратору), тогда как «Отказы» отрисованы сразу.
+    const services = await screen.findByText("logs.tabs.services");
+    const rejected = screen.getByText("logs.tabs.rejected");
+
+    // Порядок в DOM: у пункта меню «Логи» горит счётчик непросмотренных
+    // отказов, и клик по нему должен приводить сразу к ним, а не требовать
+    // второго перехода. Проверяем позицию, а не только наличие: перестановка
+    // вкладок иначе откатится незамеченной.
+    const order = rejected.compareDocumentPosition(services);
+    expect(order & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("оператору вкладка служебных логов не показывается", async () => {
     renderSection("operator");
 
