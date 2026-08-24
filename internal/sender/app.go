@@ -46,6 +46,7 @@ import (
 	"nexus/internal/sender/adapter/out/chlog"
 	"nexus/internal/sender/adapter/out/chlogretry"
 	"nexus/internal/sender/adapter/out/httpclient"
+	"nexus/internal/sender/adapter/out/maskpg"
 	"nexus/internal/sender/adapter/out/nodepg"
 	"nexus/internal/sender/usecase"
 	senderv1 "nexus/proto/sender/v1"
@@ -91,6 +92,12 @@ type App struct {
 	// §51: ручка runtime-уровня логов + кольцо для Redis-шиппера.
 	logCtl *bootstrap.LogController
 
+	// §95: маскирование секретов в логах узлов. Провайдер держит атомарный набор
+	// скомпилированных regexp (сидится из PG на старте, обновляется reload'ом
+	// секции masking); reader читает справочник из PG.
+	logMaskProvider *usecase.LogMaskProvider
+	maskReader      *maskpg.Reader
+
 	// identity — §70: идентификатор ноды. Sender ничего не захватывает и не
 	// усыновляет, но обязан отличать свои ClickHouse-таблицы от чужих.
 	identity bootstrap.Identity
@@ -122,7 +129,14 @@ func New(
 }
 
 func (a *App) Start(ctx context.Context) error {
+	// §95: провайдер маскирования создаём ДО chWriter (initClickHouseAndProducer
+	// передаёт его в WriterManager). Набор шаблонов сидим из PG сразу после —
+	// до первого лога, чтобы секрет не проскочил незамаскированным на старте.
+	a.logMaskProvider = usecase.NewLogMaskProvider()
+	a.maskReader = maskpg.New(a.pg, a.logger)
+
 	chGuard := a.initClickHouseAndProducer()
+	a.seedLogMasks(ctx)
 
 	sendUC, breaker, nodeStatus := a.buildSendUsecase(ctx)
 
@@ -167,8 +181,24 @@ func (a *App) initClickHouseAndProducer() *chpf.Guard {
 	if a.cfg.Kafka.RetryTopic != "" {
 		chRetrier = chlogretry.New(a.producer, a.cfg.Kafka.RetryTopic, a.cfg.Kafka.Topic.MaxMessageBytes, a.logger)
 	}
-	a.chWriter = chlog.NewManagerWithRetrier(a.chMgr, &a.cfg.ClickHouse, chRetrier, a.metrics, a.logger)
+	a.chWriter = chlog.NewManagerWithRetrier(a.chMgr, &a.cfg.ClickHouse, chRetrier, a.metrics, a.logMaskProvider, a.logger)
 	return chGuard
+}
+
+// seedLogMasks заполняет провайдер маскирования (§95) из PG на старте — ДО
+// первого лога узла. Ошибка чтения не фатальна: маскирование остаётся no-op до
+// первого успешного reload'а (Debug-след §51.9), логи при этом пишутся.
+func (a *App) seedLogMasks(ctx context.Context) {
+	patterns, err := a.maskReader.Load(ctx)
+	if err != nil {
+		a.logger.Warn("§95 seed log masks failed; masking disabled until reload",
+			a.logger.Err(err))
+		return
+	}
+	applied, skipped := a.logMaskProvider.Set(patterns)
+	a.logger.Info("§95 log mask patterns loaded",
+		a.logger.Int("applied", applied),
+		a.logger.Int("skipped", skipped))
 }
 
 // buildSendUsecase собирает доставку: HTTP-клиент с транспортным лимитом,
@@ -351,6 +381,20 @@ func (a *App) startBackgroundJobs(ctx context.Context, nodeReader *nodepg.Reader
 			a.logger.Warn("seed log level from app_settings failed; using yaml level", a.logger.Err(err))
 		}
 		reloadSub.Register(reloader.SectionLogging, applyLogLevel)
+		// §95: справочник маскирования логов изменился в UI → перечитать из PG и
+		// пересобрать набор regexp без рестарта. Сид уже сделан в Start
+		// (seedLogMasks) — здесь только горячее обновление.
+		reloadSub.Register(reloader.SectionMasking, func(ctx context.Context) error {
+			patterns, err := a.maskReader.Load(ctx)
+			if err != nil {
+				return fmt.Errorf("§95 reload log masks: %w", err)
+			}
+			applied, skipped := a.logMaskProvider.Set(patterns)
+			a.logger.Info("§95 log mask patterns reloaded",
+				a.logger.Int("applied", applied),
+				a.logger.Int("skipped", skipped))
+			return nil
+		})
 		a.reloadDone = safego.Go(a.logger, "sender.reloadSubscriber", func() {
 			reloadSub.Run(ctx)
 		})

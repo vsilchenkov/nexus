@@ -15,6 +15,7 @@ import { NotificationsPanel } from "./settings/Notifications";
 import { MailPanel } from "./settings/Mail";
 import { AllowedHostsPanel } from "./settings/AllowedHosts";
 import { HeadersPanel } from "./settings/Headers";
+import { LogMasksPanel } from "./settings/LogMasks";
 import { InstancesPanel } from "./settings/Instances";
 import { PasswordPanel } from "./settings/Password";
 import { roleAtLeast, type Role } from "../lib/roles";
@@ -29,6 +30,8 @@ const tabs: Tab[] = [
   { to: "tokens", labelKey: "settings.tokens.title" },
   { to: "allowed-hosts", labelKey: "settings.allowed_hosts.title", minRole: "manager" },
   { to: "headers", labelKey: "settings.headers.title", minRole: "admin" },
+  // §95: маскирование секретов в логах узлов по regex-шаблонам.
+  { to: "log-masks", labelKey: "settings.log_masks.title", minRole: "admin" },
   // §73: реестр соседних инстансов Nexus (не «узлов» — это маршруты шины).
   { to: "instances", labelKey: "settings.instances.title", minRole: "admin" },
   { to: "password", labelKey: "settings.password.title" },
@@ -88,6 +91,7 @@ export default function Settings() {
           <Route path="tokens" element={<ApiTokensPanel />} />
           {isManager && <Route path="allowed-hosts" element={<AllowedHostsPanel />} />}
           {isAdmin && <Route path="headers" element={<HeadersPanel />} />}
+          {isAdmin && <Route path="log-masks" element={<LogMasksPanel />} />}
           {isAdmin && <Route path="instances" element={<InstancesPanel />} />}
           <Route path="password" element={<PasswordPanel />} />
           <Route path="language" element={<LanguagePanel />} />

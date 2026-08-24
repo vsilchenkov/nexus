@@ -44,7 +44,12 @@ const (
 	// опрашивают и соседние инстансы (§73), поэтому читать app_settings на
 	// каждый его вызов нельзя, и значение держится в памяти процесса.
 	SectionMail Section = "mail"
-	SectionAll  Section = "all"
+	// SectionMasking — §95: справочник шаблонов маскирования логов узлов
+	// изменился. Единственный подписчик — Sender: перечитывает log_mask_patterns
+	// из PG и пересобирает скомпилированный набор regexp без рестарта. Web
+	// публикует эту секцию после каждой мутации справочника.
+	SectionMasking Section = "masking"
+	SectionAll     Section = "all"
 )
 
 // Message — формат тела события.
@@ -168,5 +173,6 @@ func sectionsFor(s Section) []Section {
 	return []Section{
 		SectionSentry, SectionClickHouse, SectionNotifications,
 		SectionSecurity, SectionLogging, SectionMail, SectionGeneral,
+		SectionMasking,
 	}
 }

@@ -38,6 +38,7 @@ type WriterManager struct {
 	cfg      *config.ClickHouseSection
 	retrier  BatchRetrier
 	metrics  *metrics.Metrics
+	masker   LogMasker // §95: переживает пересоздание Writer'а при hot-reload
 	logger   logging.Logger
 
 	mu      sync.RWMutex
@@ -51,15 +52,20 @@ var _ port.LogWriter = (*WriterManager)(nil)
 // Writer с переданными параметрами. cfg — указатель на живую секцию
 // конфига, которую Reload использует при пересоздании. retrier (§38) —
 // durable-retry проваленных батчей через Kafka; nil → потеря при сбое CH.
-func NewManagerWithRetrier(provider ConnProvider, cfg *config.ClickHouseSection, retrier BatchRetrier, m *metrics.Metrics, logger logging.Logger) *WriterManager {
+// masker (§95) — маскирование секретов в логах; nil → выключено. Masker живёт
+// в manager'е и передаётся каждому пересозданному Writer'у, поэтому переживает
+// hot-reload ClickHouse (сам набор шаблонов внутри masker'а обновляется
+// независимо, атомарно — Writer держит лишь ссылку).
+func NewManagerWithRetrier(provider ConnProvider, cfg *config.ClickHouseSection, retrier BatchRetrier, m *metrics.Metrics, masker LogMasker, logger logging.Logger) *WriterManager {
 	wm := &WriterManager{
 		provider: provider,
 		cfg:      cfg,
 		retrier:  retrier,
 		metrics:  m,
+		masker:   masker,
 		logger:   logger,
 	}
-	wm.current = NewWithRetrier(provider, cfg, retrier, m, logger)
+	wm.current = NewWithRetrier(provider, cfg, retrier, m, masker, logger)
 	return wm
 }
 
@@ -110,7 +116,7 @@ func (m *WriterManager) Reload(ctx context.Context) error {
 		return nil
 	}
 	old := m.current
-	fresh := NewWithRetrier(m.provider, m.cfg, m.retrier, m.metrics, m.logger)
+	fresh := NewWithRetrier(m.provider, m.cfg, m.retrier, m.metrics, m.masker, m.logger)
 	m.current = fresh
 	m.mu.Unlock()
 

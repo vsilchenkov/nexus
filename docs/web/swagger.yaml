@@ -428,6 +428,13 @@ definitions:
           $ref: '#/definitions/internal_web_adapter_in_http.hostResponse'
         type: array
     type: object
+  internal_web_adapter_in_http.ListLogMasksResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.logMaskResponse'
+        type: array
+    type: object
   internal_web_adapter_in_http.ListLogsResponse:
     properties:
       items:
@@ -544,6 +551,15 @@ definitions:
         type: integer
       min_ms:
         type: integer
+    type: object
+  internal_web_adapter_in_http.LogMaskPreviewResponse:
+    properties:
+      matched:
+        type: boolean
+      result:
+        type: string
+      valid:
+        type: boolean
     type: object
   internal_web_adapter_in_http.LogMethodsResponse:
     properties:
@@ -1796,6 +1812,51 @@ definitions:
         type: integer
       members:
         type: integer
+    type: object
+  internal_web_adapter_in_http.logMaskPreviewRequest:
+    properties:
+      pattern:
+        type: string
+      replacement:
+        type: string
+      sample:
+        type: string
+    type: object
+  internal_web_adapter_in_http.logMaskRequest:
+    properties:
+      description:
+        type: string
+      enabled:
+        type: boolean
+      pattern:
+        type: string
+      replacement:
+        type: string
+      sort_order:
+        type: integer
+    type: object
+  internal_web_adapter_in_http.logMaskResponse:
+    properties:
+      created_at:
+        type: string
+      created_by:
+        type: string
+      description:
+        type: string
+      enabled:
+        type: boolean
+      id:
+        type: string
+      pattern:
+        type: string
+      replacement:
+        type: string
+      sort_order:
+        type: integer
+      updated_at:
+        type: string
+      updated_by:
+        type: string
     type: object
   internal_web_adapter_in_http.loginRequest:
     properties:
@@ -4323,6 +4384,133 @@ paths:
       summary: Список топиков кластера (§4.3 spec).
       tags:
       - kafka
+  /api/log-masks:
+    get:
+      parameters:
+      - description: поиск по шаблону/описанию
+        in: query
+        name: q
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ListLogMasksResponse'
+      security:
+      - CookieAuth: []
+      summary: 'Справочник маскирования логов: список (admin, §95).'
+      tags:
+      - log-masks
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: log mask
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.logMaskRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.logMaskResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Создать шаблон маскирования (admin, §95).
+      tags:
+      - log-masks
+  /api/log-masks/{id}:
+    delete:
+      parameters:
+      - description: log mask id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Удалить шаблон маскирования (admin, §95).
+      tags:
+      - log-masks
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: log mask id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: log mask
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.logMaskRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Изменить шаблон маскирования (admin, §95).
+      tags:
+      - log-masks
+  /api/log-masks/preview:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: preview
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.logMaskPreviewRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.LogMaskPreviewResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: 'Превью маскирования: как шаблон изменит образец (admin, §95).'
+      tags:
+      - log-masks
   /api/logs:
     get:
       description: Свежие записи slog-логов Receiver/Sender/Web из Redis-колец nexus:logs:*,

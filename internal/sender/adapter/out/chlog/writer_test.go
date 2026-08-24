@@ -52,7 +52,7 @@ func TestWriter_Stop_DrainsPendingJobs(t *testing.T) {
 		Workers:          1,
 	}
 	retrier := &stubRetrier{}
-	w := chlog.NewWithRetrier(&stubProvider{}, cfg, retrier, nil, logging.NewNoop())
+	w := chlog.NewWithRetrier(&stubProvider{}, cfg, retrier, nil, nil, logging.NewNoop())
 
 	const n = 20
 	for i := range n {

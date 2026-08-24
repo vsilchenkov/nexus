@@ -235,6 +235,20 @@ export type RequestFieldCatalogEntry = {
   updated_at: string;
 };
 
+// §95: справочник маскирования логов узлов (см. /api/log-masks).
+export type LogMaskEntry = {
+  id: string;
+  pattern: string;
+  replacement: string;
+  description: string;
+  enabled: boolean;
+  sort_order: number;
+  created_by: string;
+  updated_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
 // §21: метрики панели (см. /api/metrics/*).
 export type OverviewKPI = {
   incoming_24h: number;

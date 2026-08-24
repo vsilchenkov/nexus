@@ -158,6 +158,13 @@ var translations = map[Lang]map[string]string{
 		"header.name_length":        "header name length must be between 1 and 100 characters",
 		"header.name_format":        "header name must be a valid RFC 7230 token (no spaces)",
 		"header.description_length": "description must be at most 500 characters",
+		// log mask patterns (§95)
+		"log_mask.not_found":           "log mask pattern not found",
+		"log_mask.pattern_length":      "pattern length must be between 1 and 500 characters",
+		"log_mask.pattern_invalid":     "pattern must be a valid RE2 regular expression",
+		"log_mask.replacement_length":  "replacement must be at most 200 characters",
+		"log_mask.description_length":  "description must be at most 500 characters",
+		"log_mask.sort_order_negative": "order must be a non-negative number",
 		// peer instances registry (§73)
 		"instance.not_found":          "instance not found",
 		"instance.already_exists":     "an instance with this address is already connected",
@@ -295,6 +302,13 @@ var translations = map[Lang]map[string]string{
 		"header.name_length":        "длина имени заголовка должна быть от 1 до 100 символов",
 		"header.name_format":        "имя заголовка должно быть валидным RFC 7230 token (без пробелов)",
 		"header.description_length": "описание должно быть не длиннее 500 символов",
+		// log mask patterns (§95)
+		"log_mask.not_found":           "шаблон маскирования не найден",
+		"log_mask.pattern_length":      "длина шаблона должна быть от 1 до 500 символов",
+		"log_mask.pattern_invalid":     "шаблон должен быть корректным regex (RE2)",
+		"log_mask.replacement_length":  "замена должна быть не длиннее 200 символов",
+		"log_mask.description_length":  "описание должно быть не длиннее 500 символов",
+		"log_mask.sort_order_negative": "порядок должен быть неотрицательным числом",
 		// peer instances registry (§73)
 		"instance.not_found":          "инстанс не найден",
 		"instance.already_exists":     "инстанс с таким адресом уже подключён",
