@@ -181,14 +181,17 @@ lb_write() {
 	body=""
 	active=0
 	for target in $targets; do
+		# resolve — как в nginx-upstreams.sh: nginx перечитывает IP апстрима в
+		# рантайме, поэтому пересозданная вне rolling.sh реплика (ручной
+		# `up -d`) не оставляет nginx со stale-адресом до следующего рестарта.
 		case "$target" in
 		"$down_replica":*)
 			body="$body
-server $target down;"
+server $target resolve down;"
 			;;
 		*)
 			body="$body
-server $target max_fails=2 fail_timeout=10s;"
+server $target resolve max_fails=2 fail_timeout=10s;"
 			active=$((active + 1))
 			;;
 		esac
