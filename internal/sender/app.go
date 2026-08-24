@@ -94,9 +94,11 @@ type App struct {
 
 	// §95: маскирование секретов в логах узлов. Провайдер держит атомарный набор
 	// скомпилированных regexp (сидится из PG на старте, обновляется reload'ом
-	// секции masking); reader читает справочник из PG.
+	// секции masking); reader читает справочник из PG. logMaskSeedDone — done
+	// фонового ретрая сида (nil, если сид удался с первого раза).
 	logMaskProvider *usecase.LogMaskProvider
 	maskReader      *maskpg.Reader
+	logMaskSeedDone <-chan struct{}
 
 	// identity — §70: идентификатор ноды. Sender ничего не захватывает и не
 	// усыновляет, но обязан отличать свои ClickHouse-таблицы от чужих.
@@ -185,20 +187,76 @@ func (a *App) initClickHouseAndProducer() *chpf.Guard {
 	return chGuard
 }
 
-// seedLogMasks заполняет провайдер маскирования (§95) из PG на старте — ДО
-// первого лога узла. Ошибка чтения не фатальна: маскирование остаётся no-op до
-// первого успешного reload'а (Debug-след §51.9), логи при этом пишутся.
-func (a *App) seedLogMasks(ctx context.Context) {
+// applyLogMasks читает активные шаблоны маскирования (§95) из PG и атомарно
+// заменяет набор в провайдере. Единая точка для сида, фонового ретрая и reload.
+func (a *App) applyLogMasks(ctx context.Context) (applied, skipped int, err error) {
 	patterns, err := a.maskReader.Load(ctx)
 	if err != nil {
-		a.logger.Warn("§95 seed log masks failed; masking disabled until reload",
-			a.logger.Err(err))
+		return 0, 0, err
+	}
+	applied, skipped = a.logMaskProvider.Set(patterns)
+	return applied, skipped, nil
+}
+
+// seedLogMasks заполняет провайдер маскирования из PG на старте — ДО первого
+// лога узла. При ошибке старт НЕ блокируется: web накатывает миграцию 0041
+// параллельно со стартом Sender, и таблицы может ещё не быть (инцидент kz
+// 26.08.2026 — seed падал на 42P01 «relation log_mask_patterns does not exist»,
+// и маскирование молча оставалось выключенным до ручного reload настроек).
+// Поэтому при неудаче дочитываем в фоне с backoff, пока таблица не появится.
+func (a *App) seedLogMasks(ctx context.Context) {
+	applied, skipped, err := a.applyLogMasks(ctx)
+	if err == nil {
+		a.logger.Info("§95 log mask patterns loaded",
+			a.logger.Int("applied", applied),
+			a.logger.Int("skipped", skipped))
 		return
 	}
-	applied, skipped := a.logMaskProvider.Set(patterns)
-	a.logger.Info("§95 log mask patterns loaded",
-		a.logger.Int("applied", applied),
-		a.logger.Int("skipped", skipped))
+	a.logger.Warn("§95 seed log masks failed; retrying in background until the table appears",
+		a.logger.Err(err))
+	a.logMaskSeedDone = safego.Go(a.logger, "sender.seedLogMasksRetry", func() {
+		a.retryLoadLogMasks(ctx)
+	})
+}
+
+// retryLoadLogMasks дочитывает шаблоны в фоне, пока таблица не появится (миграция
+// доедет) или ctx не отменят. Не бесконечно: после исчерпания попыток
+// маскирование остаётся выключенным до reload настроек (как раньше), но типовая
+// гонка «Sender стартовал раньше миграции» закрывается сама за секунды.
+func (a *App) retryLoadLogMasks(ctx context.Context) {
+	ok := retryUntil(ctx, 3*time.Second, 20, func(ctx context.Context) error {
+		applied, skipped, err := a.applyLogMasks(ctx)
+		if err != nil {
+			a.logger.Debug("§95 log masks still unavailable, will retry", a.logger.Err(err))
+			return err
+		}
+		a.logger.Info("§95 log mask patterns loaded after retry",
+			a.logger.Int("applied", applied),
+			a.logger.Int("skipped", skipped))
+		return nil
+	})
+	if !ok {
+		a.logger.Warn("§95 log masks unavailable after retries; masking stays off until a settings reload")
+	}
+}
+
+// retryUntil вызывает attempt с интервалом interval до первого успеха (nil),
+// исчерпания maxAttempts или отмены ctx. true — успех. Первая попытка тоже ждёт
+// interval: вызывающий уже сделал немедленную попытку до фонового ретрая.
+func retryUntil(ctx context.Context, interval time.Duration, maxAttempts int, attempt func(context.Context) error) bool {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for range maxAttempts {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-t.C:
+			if attempt(ctx) == nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // buildSendUsecase собирает доставку: HTTP-клиент с транспортным лимитом,
@@ -385,11 +443,10 @@ func (a *App) startBackgroundJobs(ctx context.Context, nodeReader *nodepg.Reader
 		// пересобрать набор regexp без рестарта. Сид уже сделан в Start
 		// (seedLogMasks) — здесь только горячее обновление.
 		reloadSub.Register(reloader.SectionMasking, func(ctx context.Context) error {
-			patterns, err := a.maskReader.Load(ctx)
+			applied, skipped, err := a.applyLogMasks(ctx)
 			if err != nil {
 				return fmt.Errorf("§95 reload log masks: %w", err)
 			}
-			applied, skipped := a.logMaskProvider.Set(patterns)
 			a.logger.Info("§95 log mask patterns reloaded",
 				a.logger.Int("applied", applied),
 				a.logger.Int("skipped", skipped))
@@ -666,6 +723,7 @@ func (a *App) awaitBackgroundJobs(ctx context.Context) {
 	safego.Await(awaitCtx, a.dlqReprocDone, a.logger, "sender.dlqReprocessor")
 	safego.Await(awaitCtx, a.pausedSweepDone, a.logger, "sender.pausedSweep")
 	safego.Await(awaitCtx, a.shipperDone, a.logger, "sender.logShipper")
+	safego.Await(awaitCtx, a.logMaskSeedDone, a.logger, "sender.seedLogMasksRetry") // §95: nil, если сид удался сразу
 }
 
 // closeStorageResources сбрасывает буфер логов в ClickHouse и закрывает
