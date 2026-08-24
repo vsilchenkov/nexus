@@ -22,6 +22,13 @@
 
 ## [Unreleased]
 
+## [1.32.1] - 2026-08-24
+
+**Откат:** без отката схемы (миграций нет). Возврат на 1.32.0 безопасен, но вернёт исходную
+проблему: пересоздание `web`/`receiver` на одиночном nginx-профиле снова требует ручного
+`nginx -s reload`, а маскирование §95 при гонке старта Sender с миграцией остаётся выключенным
+до reload настроек.
+
 ### Fixed
 
 - **nginx: пересоздание `web`/`receiver` больше не роняет шину в 502.** Апстримы
@@ -3083,7 +3090,8 @@ ClickHouse (§21), идентификатор узла в логах для об
 
 ---
 
-[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.32.0...HEAD
+[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.32.1...HEAD
+[1.32.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.32.0...v1.32.1
 [1.32.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.6...v1.32.0
 [1.31.6]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.5...v1.31.6
 [1.31.5]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.4...v1.31.5
