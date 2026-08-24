@@ -201,7 +201,7 @@ func (a *App) applyLogMasks(ctx context.Context) (applied, skipped int, err erro
 // seedLogMasks заполняет провайдер маскирования из PG на старте — ДО первого
 // лога узла. При ошибке старт НЕ блокируется: web накатывает миграцию 0041
 // параллельно со стартом Sender, и таблицы может ещё не быть (инцидент kz
-// 26.08.2026 — seed падал на 42P01 «relation log_mask_patterns does not exist»,
+// 24.08.2026 — seed падал на 42P01 «relation log_mask_patterns does not exist»,
 // и маскирование молча оставалось выключенным до ручного reload настроек).
 // Поэтому при неудаче дочитываем в фоне с backoff, пока таблица не появится.
 func (a *App) seedLogMasks(ctx context.Context) {
