@@ -27,13 +27,22 @@ RECEIVER="${NEXUS_RECEIVER_UPSTREAMS:-receiver-1:8080 receiver-2:8080}"
 
 mkdir -p "$DYN_DIR"
 
+# resolve: nginx перерезолвивает адрес апстрима в рантайме через `resolver`
+# (127.0.0.11 valid=10s в nginx.conf), а не только при старте/reload. Без него
+# пересоздание web/receiver (`docker compose up -d --build …` даёт контейнеру
+# НОВЫЙ IP) оставляло nginx с прежним адресом → 502 на весь `/api/v1/*`, пока
+# кто-то не сделает `nginx -s reload` (инцидент kz 24.08.2026: одиночный
+# nginx-профиль, rolling.sh нет, reload делать было некому). Требует `zone` в
+# upstream-блоке (есть) и hostname (не IP) в адресе — состав всегда задаётся
+# именами docker-сервисов, поэтому условие выполнено. Порядок параметров у
+# `server` не значим.
 write_upstreams() {
 	file="$1"
 	shift
 	: >"$file"
 	for target in "$@"; do
 		[ -n "$target" ] || continue
-		printf 'server %s max_fails=%s fail_timeout=%s;\n' \
+		printf 'server %s resolve max_fails=%s fail_timeout=%s;\n' \
 			"$target" "$MAX_FAILS" "$FAIL_TIMEOUT" >>"$file"
 	done
 	# Пустой include — это ошибка конфигурации nginx («no servers in upstream»),
