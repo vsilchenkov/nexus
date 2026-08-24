@@ -117,6 +117,11 @@ const (
 	// Справочник полей запроса (§41).
 	ActionRequestFieldCreate = "request_field.create"
 
+	// Справочник маскирования логов узлов (§95).
+	ActionLogMaskCreate = "log_mask.create"
+	ActionLogMaskUpdate = "log_mask.update"
+	ActionLogMaskDelete = "log_mask.delete"
+
 	// Каталог разрешённых хостов (§23).
 	ActionHostCreate = "host.create"
 	ActionHostUpdate = "host.update"

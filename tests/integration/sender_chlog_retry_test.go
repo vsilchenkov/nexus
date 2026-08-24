@@ -57,7 +57,7 @@ func TestSender_CHRetryViaKafka(t *testing.T) {
 
 	// --- Фаза 1: CH «лежит» — провайдер с nil-conn, insert падает → retry в Kafka.
 	const n = 12
-	downWriter := chlog.NewWithRetrier(clickhouse.StaticProvider(nil), chCfg, retrier, nil, logger)
+	downWriter := chlog.NewWithRetrier(clickhouse.StaticProvider(nil), chCfg, retrier, nil, nil, logger)
 	for i := 0; i < n; i++ {
 		downWriter.Write(ctx, table, retryRec(fmt.Sprintf("rec-%02d", i), int32(200+i)))
 	}
@@ -73,7 +73,7 @@ func TestSender_CHRetryViaKafka(t *testing.T) {
 	require.EqualValues(t, 0, chCount(t, ctx, chConn, table), "CH must be empty before retry-consumer drains")
 
 	// --- Фаза 2: CH «поднялся» — consumer дренит топик в живой CH.
-	upWriter := chlog.NewManagerWithRetrier(clickhouse.StaticProvider(chConn), chCfg, nil, nil, logger)
+	upWriter := chlog.NewManagerWithRetrier(clickhouse.StaticProvider(chConn), chCfg, nil, nil, nil, logger)
 	defer upWriter.Stop(ctx)
 	handler := kafkaadapter.NewChLogRetryHandler(upWriter, nil, logger)
 	consumer := kafkaadapter.NewChLogRetryConsumer(cfg, cfg.Kafka.RetryTopic, "nexus-it-clog-retry", handler, logger)

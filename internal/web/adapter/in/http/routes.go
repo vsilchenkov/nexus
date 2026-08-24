@@ -28,6 +28,7 @@ type Handlers struct {
 	HostAllowlist *HostAllowlistHandler
 	HeaderCatalog *HeaderCatalogHandler
 	RequestField  *RequestFieldCatalogHandler
+	LogMask       *LogMaskHandler // §95: справочник маскирования логов узлов
 	RMQTest       *RMQTestHandler
 	Kafka         *KafkaHandler
 	AsyncQueue    *AsyncQueueHandler
@@ -390,6 +391,18 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		if h.HeaderCatalog != nil {
 			authedAdmin.PATCH("/headers/:id", h.HeaderCatalog.Update)
 			authedAdmin.DELETE("/headers/:id", h.HeaderCatalog.Delete)
+		}
+
+		// Справочник маскирования логов узлов (§95): целиком admin-only, включая
+		// чтение — шаблоны описывают, как выглядят секреты. Статический сегмент
+		// preview соседствует с параметрическим :id (разные методы — конфликта
+		// маршрутов нет).
+		if h.LogMask != nil {
+			authedAdmin.GET("/log-masks", h.LogMask.List)
+			authedAdmin.POST("/log-masks", h.LogMask.Create)
+			authedAdmin.POST("/log-masks/preview", h.LogMask.Preview)
+			authedAdmin.PATCH("/log-masks/:id", h.LogMask.Update)
+			authedAdmin.DELETE("/log-masks/:id", h.LogMask.Delete)
 		}
 
 		// Реестр соседних инстансов Nexus (§73). Admin-only целиком: адрес,

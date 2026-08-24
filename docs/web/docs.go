@@ -1799,6 +1799,212 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/log-masks": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "log-masks"
+                ],
+                "summary": "Справочник маскирования логов: список (admin, §95).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "поиск по шаблону/описанию",
+                        "name": "q",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ListLogMasksResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "log-masks"
+                ],
+                "summary": "Создать шаблон маскирования (admin, §95).",
+                "parameters": [
+                    {
+                        "description": "log mask",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.logMaskRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.logMaskResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/log-masks/preview": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "log-masks"
+                ],
+                "summary": "Превью маскирования: как шаблон изменит образец (admin, §95).",
+                "parameters": [
+                    {
+                        "description": "preview",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.logMaskPreviewRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.LogMaskPreviewResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/log-masks/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "log-masks"
+                ],
+                "summary": "Удалить шаблон маскирования (admin, §95).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "log mask id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "log-masks"
+                ],
+                "summary": "Изменить шаблон маскирования (admin, §95).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "log mask id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "log mask",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.logMaskRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/logs": {
             "get": {
                 "security": [
@@ -7257,6 +7463,17 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_web_adapter_in_http.ListLogMasksResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.logMaskResponse"
+                    }
+                }
+            }
+        },
         "internal_web_adapter_in_http.ListLogsResponse": {
             "type": "object",
             "properties": {
@@ -7433,6 +7650,20 @@ const docTemplate = `{
                 },
                 "min_ms": {
                     "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.LogMaskPreviewResponse": {
+            "type": "object",
+            "properties": {
+                "matched": {
+                    "type": "boolean"
+                },
+                "result": {
+                    "type": "string"
+                },
+                "valid": {
+                    "type": "boolean"
                 }
             }
         },
@@ -9139,6 +9370,75 @@ const docTemplate = `{
                 },
                 "members": {
                     "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.logMaskPreviewRequest": {
+            "type": "object",
+            "properties": {
+                "pattern": {
+                    "type": "string"
+                },
+                "replacement": {
+                    "type": "string"
+                },
+                "sample": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.logMaskRequest": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "pattern": {
+                    "type": "string"
+                },
+                "replacement": {
+                    "type": "string"
+                },
+                "sort_order": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.logMaskResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "pattern": {
+                    "type": "string"
+                },
+                "replacement": {
+                    "type": "string"
+                },
+                "sort_order": {
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "updated_by": {
+                    "type": "string"
                 }
             }
         },

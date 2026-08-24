@@ -1257,6 +1257,35 @@
         "create": "Create"
       }
     },
+    "log_masks": {
+      "title": "Log masking",
+      "subtitle": "Secrets in node logs (url · method · parameters) are hidden by regex patterns BEFORE writing. Applies to new records; historical logs are not changed.",
+      "add": "Add pattern",
+      "search": "Search by pattern/description…",
+      "empty": "No patterns",
+      "enabled_on": "Enabled",
+      "enabled_off": "Disabled",
+      "order_hint": "Applied top to bottom (by the Order field).",
+      "re2_hint": "RE2 syntax (Go regexp): no backreferences or lookaround. Replacement supports $1..$9 and ${name}.",
+      "pattern_invalid": "Invalid regex (RE2)",
+      "confirm_delete": "Delete pattern {{description}}?",
+      "col": { "pattern": "Pattern (RE2)", "replacement": "Replacement", "description": "Description", "enabled": "On" },
+      "field": {
+        "pattern": "Pattern (RE2)",
+        "replacement": "Replacement (supports $1, $2, ${name})",
+        "description": "Description",
+        "sort_order": "Order",
+        "enabled": "Enabled",
+        "sample": "Sample to test"
+      },
+      "preview": { "result": "Result", "invalid": "Invalid pattern — fix it to see the preview" },
+      "dialog": {
+        "new": "Add pattern",
+        "edit": "Edit pattern",
+        "subtitle": "Applied by all Senders of the installation without restart",
+        "create": "Create"
+      }
+    },
     "instances": {
       "title": "Instances",
       "subtitle": "Other Nexus deployments. The list is for quick navigation; instances do not exchange data. Checks run from the server, not from the browser.",

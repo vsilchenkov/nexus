@@ -48,6 +48,14 @@ type BatchRetrier interface {
 	Retry(ctx context.Context, table string, batch []*domain.LogRecord) error
 }
 
+// LogMasker маскирует секреты в строковых полях лога узла (§95) ПЕРЕД записью в
+// ClickHouse. Определён на стороне consumer'а (CLAUDE.md §3); реализуется
+// sender/usecase.LogMaskProvider структурным совпадением. nil → маскирование
+// выключено (тесты/обратная совместимость).
+type LogMasker interface {
+	Mask(s string) string
+}
+
 // Writer реализует port.LogWriter.
 type Writer struct {
 	conn    ConnProvider
@@ -62,6 +70,7 @@ type Writer struct {
 	bufferAt map[string]time.Time
 
 	retrier BatchRetrier // §38: durable-retry проваленных батчей через Kafka
+	masker  LogMasker    // §95: маскирование секретов в url/method/parameters (nil = выкл)
 
 	wg     sync.WaitGroup
 	stopCh chan struct{}
@@ -75,14 +84,16 @@ type job struct {
 }
 
 func New(conn ConnProvider, cfg *config.ClickHouseSection, logger logging.Logger) *Writer {
-	return NewWithRetrier(conn, cfg, nil, nil, logger)
+	return NewWithRetrier(conn, cfg, nil, nil, nil, logger)
 }
 
 // NewWithRetrier — вариант с durable-retry проваленных батчей через Kafka
-// (§38) и опциональными Prometheus-метриками (§6 ТЗ).
+// (§38), опциональными Prometheus-метриками (§6 ТЗ) и маскированием секретов
+// (§95).
 // retrier = nil — retry отключён, проваленные батчи теряются (как в Phase 1).
 // m = nil — метрики не публикуются (тестовый режим).
-func NewWithRetrier(conn ConnProvider, cfg *config.ClickHouseSection, retrier BatchRetrier, m *metrics.Metrics, logger logging.Logger) *Writer {
+// masker = nil — маскирование выключено (§95).
+func NewWithRetrier(conn ConnProvider, cfg *config.ClickHouseSection, retrier BatchRetrier, m *metrics.Metrics, masker LogMasker, logger logging.Logger) *Writer {
 	w := &Writer{
 		conn:     conn,
 		cfg:      cfg,
@@ -92,6 +103,7 @@ func NewWithRetrier(conn ConnProvider, cfg *config.ClickHouseSection, retrier Ba
 		buffers:  make(map[string][]*domain.LogRecord),
 		bufferAt: make(map[string]time.Time),
 		retrier:  retrier,
+		masker:   masker,
 		stopCh:   make(chan struct{}),
 	}
 	for i := 0; i < cfg.Workers; i++ {
@@ -111,6 +123,16 @@ func (w *Writer) Write(_ context.Context, table string, rec *domain.LogRecord) {
 			w.metrics.CHDroppedTotal.WithLabelValues("", "empty_table").Inc()
 		}
 		return
+	}
+	// §95: маскируем секреты в url/method/parameters в ЕДИНОЙ точке — до попадания
+	// записи в буфер (и, при сбое CH, в retry-топик Kafka §38). Мутируем rec на
+	// месте: во всех трёх продьюсерах (send/dlq_reprocess) Write — терминальная
+	// операция над записью, после неё эти поля не читаются. Тела (Request/Response)
+	// не трогаем — вне рамок v1 (§95).
+	if w.masker != nil {
+		rec.URL = w.masker.Mask(rec.URL)
+		rec.Method = w.masker.Mask(rec.Method)
+		rec.Parameters = w.masker.Mask(rec.Parameters)
 	}
 	select {
 	case w.ch <- job{table: table, rec: rec}:

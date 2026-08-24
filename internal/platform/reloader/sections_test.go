@@ -23,6 +23,9 @@ func TestSectionsFor_AllIncludesEveryKnownSection(t *testing.T) {
 		// §94.5: срок хранения журнала отказов. Без разворота «применить все
 		// настройки» не тронул бы ни чистку в Web, ни включение сбора в Receiver.
 		SectionGeneral,
+		// §95: справочник маскирования логов узлов. Без разворота publish("all")
+		// не перечитал бы шаблоны на Sender'ах.
+		SectionMasking,
 	}
 	assert.ElementsMatch(t, want, got)
 	assert.NotContains(t, got, SectionAll)
