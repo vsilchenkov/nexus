@@ -86,6 +86,18 @@ type ListRequestFieldsResponse struct {
 	Items []requestFieldResponse `json:"items"`
 }
 
+// ListLogMasksResponse — GET /api/log-masks (§95).
+type ListLogMasksResponse struct {
+	Items []logMaskResponse `json:"items"`
+}
+
+// LogMaskPreviewResponse — POST /api/log-masks/preview (§95).
+type LogMaskPreviewResponse struct {
+	Valid   bool   `json:"valid"`
+	Result  string `json:"result"`
+	Matched bool   `json:"matched"`
+}
+
 // ListOrphansResponse — GET /api/settings/clickhouse/orphans.
 type ListOrphansResponse struct {
 	Items []orphanItemResp `json:"items"`

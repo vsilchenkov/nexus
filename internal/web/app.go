@@ -490,6 +490,13 @@ func (a *App) Start(ctx context.Context) error {
 	)
 	requestFieldHandler := httpadapter.NewRequestFieldCatalogHandler(requestFieldUC, a.logger)
 
+	// Справочник маскирования логов узлов (§95). Мутации публикуют reload секции
+	// masking — Sender'ы перечитывают набор шаблонов без рестарта.
+	logMaskUC := usecase.NewLogMaskUsecase(
+		pgrepo.NewLogMaskRepoPg(a.pg, a.logger), auditUC, reloadPublisher, a.logger,
+	)
+	logMaskHandler := httpadapter.NewLogMaskHandler(logMaskUC, a.logger)
+
 	// §55: клиент к Sender для dry-run в реальном режиме. Опционален — адрес не
 	// задан → реальный вызов недоступен (шаг «Response» вернёт skipped), mock
 	// работает как прежде. Ошибку создания не эскалируем: Web не должен падать
@@ -772,6 +779,7 @@ func (a *App) Start(ctx context.Context) error {
 		HostAllowlist: hostAllowlistHandler,
 		HeaderCatalog: headerCatalogHandler,
 		RequestField:  requestFieldHandler,
+		LogMask:       logMaskHandler,
 		RMQTest:       rmqTestHandler,
 		Instances:     peerInstanceHandler,
 		Breaker:       breakerHandler,
