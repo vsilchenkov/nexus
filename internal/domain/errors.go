@@ -188,6 +188,14 @@ var (
 	ErrHeaderDescriptionLength = errors.New("domain: header description length must be <= 500")
 	ErrHeaderInUse             = errors.New("domain: header is used by nodes and cannot be renamed or deleted")
 
+	// §95: справочник маскирования логов узлов (log_mask_patterns).
+	ErrLogMaskNotFound          = errors.New("domain: log mask pattern not found")
+	ErrLogMaskPatternLength     = errors.New("domain: log mask pattern length must be 1..500")
+	ErrLogMaskPatternInvalid    = errors.New("domain: log mask pattern must be a valid RE2 regular expression")
+	ErrLogMaskReplacementLength = errors.New("domain: log mask replacement length must be <= 200")
+	ErrLogMaskDescriptionLength = errors.New("domain: log mask description length must be <= 500")
+	ErrLogMaskSortOrderNegative = errors.New("domain: log mask sort_order must be >= 0")
+
 	// §41: каталог полей запроса (request_fields_catalog).
 	ErrRequestFieldNotFound          = errors.New("domain: request field not found")
 	ErrRequestFieldAlreadyExists     = errors.New("domain: request field with this name already exists")
