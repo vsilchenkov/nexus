@@ -596,6 +596,18 @@ func (a *App) Start(ctx context.Context) error {
 		queueCancel = queuecancel.New(a.redis)
 	}
 	dlqRetention := time.Duration(a.cfg.Kafka.Topic.RetentionMs) * time.Millisecond
+	// Один admin-клиент Kafka обслуживает три потребителя: экран мониторинга
+	// (§4.3/§4.5), peek очереди узла (§34.4) и поиск оригинальных конвертов для
+	// повтора (§96). Создаётся здесь, ДО replay: тому он нужен как источник тела.
+	var (
+		kafkaAdmin     webport.KafkaAdmin
+		asyncPeeker    webport.AsyncQueuePeeker
+		queueOriginals webport.AsyncOriginalReader
+	)
+	if a.cfg.Kafka.Brokers != "" {
+		kac := kafkaadmin.New(a.cfg.Kafka.Brokers, 5*time.Second, 30, a.logger)
+		kafkaAdmin, asyncPeeker, queueOriginals = kac, kac, kac
+	}
 	if a.ch != nil {
 		// a.chMgr уже создан выше (вместе с teamProvisioner).
 		logReader := chreader.NewLogReader(a.chMgr, a.logger)
@@ -620,6 +632,10 @@ func (a *App) Start(ctx context.Context) error {
 			// §85.9: у массового повтора за период свой счёт — цикл батчей
 			// крутит клиент, и общий лимит одиночного replay остановил бы его.
 			usecase.WithPeriodRateLimit(a.cfg.Web.ReplayPeriodRateLimitPerUserPerMin),
+			// §96: источник тела для повтора — оригинальный конверт в очереди, а
+			// журнальная копия остаётся запасным вариантом. Без Kafka опция
+			// не включается, и повтор работает по журналу, как раньше.
+			usecase.WithQueueOriginals(queueOriginals, queueSources(a.cfg)),
 		)
 		logsUC := usecase.NewLogsUsecase(logReader, nodeRepo, a.logger)
 		replayHandler = httpadapter.NewReplayHandler(replayUC, a.logger)
@@ -694,14 +710,6 @@ func (a *App) Start(ctx context.Context) error {
 	// Мониторинг Kafka (§4 spec): Prometheus (throughput/lag/KPI/top-узлы) +
 	// Kafka Admin (топики/брокеры/ping, только при заданных брокерах) + Redis-кеш
 	// метаданных (TTL 30с). Все источники опциональны — usecase деградирует.
-	var kafkaAdmin webport.KafkaAdmin
-	// §34.4: тот же admin-клиент реализует AsyncQueuePeeker (peek очереди).
-	var asyncPeeker webport.AsyncQueuePeeker
-	if a.cfg.Kafka.Brokers != "" {
-		kac := kafkaadmin.New(a.cfg.Kafka.Brokers, 5*time.Second, 30, a.logger)
-		kafkaAdmin = kac
-		asyncPeeker = kac
-	}
 	kafkaUC := usecase.NewKafkaMonitorUsecase(
 		promMetrics, kafkaAdmin, rediscache.NewKafkaCacheRedis(a.redis, 30*time.Second),
 		kafkaThresholds(&a.cfg.Web.KafkaAlerts), a.logger,
@@ -928,6 +936,27 @@ func resolveSelfIngressHosts(configured []string, receiverURL string) []string {
 
 // kafkaThresholds маппит config-секцию порогов в usecase-тип (usecase не
 // зависит от config). Значения уже с дефолтами (applyKafkaAlertsDefaults).
+// queueSources — топики очереди в порядке поиска оригинального конверта (§96.3):
+// DLQ (там стоит неудачная доставка), delay-топик паузы (§3.6), основная
+// очередь. Ненастроенные топики пропускаются.
+//
+// Глубокий проход разрешён только для DLQ: у остальных топиков нет сценария, в
+// котором нужный конверт лежит ПОЗАДИ committed offset их группы, а лишний
+// проход по истории стоит чтения.
+func queueSources(cfg *config.Config) []webport.QueueSource {
+	out := make([]webport.QueueSource, 0, 3)
+	if cfg.Kafka.DLQTopic != "" {
+		out = append(out, webport.QueueSource{Topic: cfg.Kafka.DLQTopic, Group: cfg.Kafka.DLQGroup(), Deep: true})
+	}
+	if cfg.Kafka.PausedTopic != "" {
+		out = append(out, webport.QueueSource{Topic: cfg.Kafka.PausedTopic, Group: cfg.Kafka.PausedGroup()})
+	}
+	if cfg.Kafka.AsyncTopic != "" {
+		out = append(out, webport.QueueSource{Topic: cfg.Kafka.AsyncTopic, Group: cfg.Kafka.ConsumerGroup})
+	}
+	return out
+}
+
 func kafkaThresholds(c *config.KafkaAlertsSection) usecase.KafkaThresholds {
 	return usecase.KafkaThresholds{
 		LagWarning:              c.LagWarning,

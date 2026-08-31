@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"nexus/internal/domain"
@@ -150,6 +151,9 @@ func (u *ReplayUsecase) PlanPeriod(ctx context.Context, in ReplayPeriodInput) (R
 		if err != nil {
 			return ReplayPeriodPlan{}, fmt.Errorf("replay period candidates: %w", err)
 		}
+		// §96.6: предпросмотр обязан показывать то, что произойдёт, поэтому
+		// наличие конверта в очереди проверяется и здесь — но без чтения тел.
+		u.markOriginalsInQueue(ctx, node, items)
 		for _, c := range items {
 			plan.Scanned++
 			reason := u.classify(node, c, in.SkipReplayCopies)
@@ -206,28 +210,20 @@ func (u *ReplayUsecase) ReplayPeriod(ctx context.Context, actor Actor, in Replay
 	}
 
 	res := ReplayPeriodBatch{SkippedBy: map[string]int{}}
-	var aborted error
+	u.markOriginalsInQueue(ctx, node, items)
+	eligible := make([]domain.ReplayCandidate, 0, len(items))
 	for _, c := range items {
-		if err := ctx.Err(); err != nil {
-			// Клиент ушёл. Прерываемся, но НЕ выходим сразу: часть записей уже
-			// отправлена получателю, и след об этом обязан попасть в аудит
-			// (§85.9) — ради него цикл только размыкается.
-			aborted = err
-			break
-		}
 		res.Scanned++
 		if reason := u.classify(node, c, in.SkipReplayCopies); reason != domain.ReplaySkipNone {
 			res.SkippedBy[string(reason)]++
 			continue
 		}
-		if _, rerr := u.replayOne(ctx, node, c.ID, ReplayOptions{UseNodeAuth: true}); rerr != nil {
-			res.Failed++
-			u.logger.Warn("replay period: one record failed",
-				u.logger.Str("log_id", c.ID), u.logger.Str("node", node.Path), u.logger.Err(rerr))
-			continue
-		}
-		res.Replayed++
+		eligible = append(eligible, c)
 	}
+	// Клиент может уйти посреди отправки. Прерываемся, но НЕ выходим сразу:
+	// часть записей уже у получателя, и след об этом обязан попасть в аудит
+	// (§85.9) — ради него цикл только размыкается.
+	aborted := u.sendPeriodBatch(ctx, node, eligible, &res)
 	// Курсор отдаём только у целиком пройденной страницы: после обрыва часть её
 	// уже отправлена, и продолжение с конца страницы пропустило бы остаток —
 	// оператор перезапускает прогон от последней подтверждённой отметки.
@@ -256,6 +252,90 @@ func (u *ReplayUsecase) ReplayPeriod(ctx context.Context, actor Actor, in Replay
 		return res, aborted
 	}
 	return res, nil
+}
+
+// markOriginalsInQueue проставляет кандидатам страницы признак «оригинальный
+// конверт жив в очереди» (§96.6). Одна проба на страницу, без чтения тел: у
+// предпросмотра окно бывает в тысячи записей, и тела там не нужны.
+//
+// Промах пробы (нет Kafka, ошибка, упор в cap) оставляет признак false — тогда
+// решение принимается по журнальным признакам, как до §96.
+func (u *ReplayUsecase) markOriginalsInQueue(ctx context.Context, node *domain.Node, items []domain.ReplayCandidate) {
+	if u.originals == nil || len(items) == 0 {
+		return
+	}
+	ids, since := candidatesLookup(items)
+	found, err := u.originals.ProbeOriginals(ctx, port.OriginalLookup{
+		Sources:  u.queueSources,
+		NodePath: node.Path,
+		IDs:      ids,
+		Since:    since,
+	})
+	if err != nil {
+		u.logger.Warn("replay period: queue probe failed, judging by log copy only",
+			u.logger.Str("node", node.Path), u.logger.Int("ids", len(ids)), u.logger.Err(err))
+		return
+	}
+	for i := range items {
+		items[i].OriginalInQueue = found[items[i].ID]
+	}
+	u.logger.Debug("replay period: queue probe done",
+		u.logger.Str("node", node.Path),
+		u.logger.Int("requested", len(ids)),
+		u.logger.Int("in_queue", len(found)))
+}
+
+// sendPeriodBatch отправляет пригодные записи страницы, беря тела из конвертов
+// очереди порциями (§96.7). Возвращает ошибку отмены контекста — она размыкает
+// цикл, но не отменяет аудит уже отправленного.
+func (u *ReplayUsecase) sendPeriodBatch(
+	ctx context.Context, node *domain.Node, items []domain.ReplayCandidate, res *ReplayPeriodBatch,
+) error {
+	for chunk := range slices.Chunk(items, originalsChunk) {
+		ids, since := candidatesLookup(chunk)
+		found := u.findOriginals(ctx, node, ids, since)
+		for _, c := range chunk {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			src := replaySource{searched: true}
+			if env, ok := found[c.ID]; ok {
+				src.original = &env
+			}
+			if _, rerr := u.replayOne(ctx, node, c.ID, ReplayOptions{UseNodeAuth: true}, src); rerr != nil {
+				// Конверт мог исчезнуть между пробой предпросмотра и отправкой
+				// (истёк retention, репроцессор доставил). Это не сбой записи, а
+				// та же причина, что показал бы предпросмотр.
+				if errors.Is(rerr, ErrReplayOriginalUnavailable) {
+					res.SkippedBy[string(domain.ReplaySkipOriginalUnavailable)]++
+					continue
+				}
+				res.Failed++
+				u.logger.Warn("replay period: one record failed",
+					u.logger.Str("log_id", c.ID), u.logger.Str("node", node.Path), u.logger.Err(rerr))
+				continue
+			}
+			res.Replayed++
+		}
+	}
+	return nil
+}
+
+// candidatesLookup — идентификаторы записей и нижняя граница поиска конвертов по
+// времени: самая старая запись набора минус запас на расхождение часов.
+func candidatesLookup(items []domain.ReplayCandidate) ([]string, time.Time) {
+	ids := make([]string, 0, len(items))
+	var since time.Time
+	for _, c := range items {
+		ids = append(ids, c.ID)
+		if since.IsZero() || c.DateRequest.Before(since) {
+			since = c.DateRequest
+		}
+	}
+	if since.IsZero() {
+		return ids, since
+	}
+	return ids, since.Add(-queueLookupSkew)
 }
 
 // preparePeriod — общие гейты и сборка запроса к журналу.

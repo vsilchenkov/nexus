@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -69,8 +70,15 @@ type ReplayUsecase struct {
 	cancel     port.QueueCancelWriter // §36.11: отмена оригиналов при «Повторить все» (nil без Redis)
 	cleaner    port.FailedLogsCleaner // §79.2: уборка строк done=0 после успешного повтора (nil без CH)
 	teams      ReplayTeamResolver     // §18: слаг команды узла для пути реинъекции (nil = без слага)
-	retention  time.Duration          // TTL tombstone'а отмены (= retention топика)
-	rateLimit  int                    // запросов/мин на пользователя (§7.4.1: 10)
+	// originals — §96: источник ПОЛНОГО тела для повтора (оригинальный конверт в
+	// очереди Kafka). nil без Kafka — тогда источником остаётся журнальная
+	// копия, и усечённая запись честно отклоняется.
+	originals port.AsyncOriginalReader
+	// queueSources — топики очереди в порядке поиска (§96.3): DLQ, delay-топик
+	// паузы, основной. Пусто = поиск выключен.
+	queueSources []port.QueueSource
+	retention    time.Duration // TTL tombstone'а отмены (= retention топика)
+	rateLimit    int           // запросов/мин на пользователя (§7.4.1: 10)
 	// periodRateLimit — §85.9: свой лимит батчей массового повтора за период.
 	// Общий rateLimit (10/мин) остановил бы цикл после десятого батча. 0 →
 	// дефолт replayPeriodRateLimit.
@@ -87,6 +95,23 @@ type ReplayOption func(*ReplayUsecase)
 // сообщения уходят, но записи остаются в «Неудачных доставках» до очистки.
 func WithFailedCleaner(c port.FailedLogsCleaner) ReplayOption {
 	return func(u *ReplayUsecase) { u.cleaner = c }
+}
+
+// WithQueueOriginals подключает §96: тело для повтора берётся из оригинального
+// конверта в очереди Kafka, а журнальная копия остаётся запасным источником.
+// Без опции (нет Kafka) повтор работает как до раздела — с той разницей, что
+// усечённую копию он теперь не отправляет, а отклоняет.
+//
+// sources перечисляются в порядке поиска (§96.3); пустой список или nil-reader
+// опцию не включают.
+func WithQueueOriginals(r port.AsyncOriginalReader, sources []port.QueueSource) ReplayOption {
+	return func(u *ReplayUsecase) {
+		if r == nil || len(sources) == 0 {
+			return
+		}
+		u.originals = r
+		u.queueSources = sources
+	}
 }
 
 // WithPeriodRateLimit задаёт лимит батчей массового повтора за период (§85.9).
@@ -176,6 +201,21 @@ var ErrReplayBadParams = errors.New("params_override is not a valid query string
 // может задать тело вручную (BodyOverride) → handler отдаёт 422.
 var ErrReplayBodyMultipart = errors.New("original request body was multipart/form-data and is not stored; provide body manually")
 
+// ErrReplayOriginalUnavailable — §96: оригинального конверта в очереди уже нет
+// (старше retention топика, Kafka не сконфигурирована, скан упёрся в cap), а
+// журнальная копия усечена по max_body_size. Отправлять её нельзя: приёмник
+// получит оборванный JSON с приклеенным маркером и ответит ошибкой — ровно
+// боевой инцидент 31.08.2026, из-за которого раздел и появился.
+//
+// Handler отдаёт 422: это не сбой шины, а состояние записи.
+var ErrReplayOriginalUnavailable = errors.New("original message is gone from the queue and the log copy is truncated")
+
+// ErrReplayBodyTruncated — журнальная копия усечена, а конверта в очереди у
+// записи не бывает в принципе: она прошла СИНХРОННЫМ путём (§96.10 п.1).
+// Отдельная ошибка, потому что оператору нужен разный совет: здесь ждать
+// нечего, помочь может только ручное тело в диалоге повтора.
+var ErrReplayBodyTruncated = errors.New("log copy of the request body is truncated; provide body manually")
+
 // Replay выполняет повторную отправку запроса через шину.
 //
 // teamID — multi-tenancy scope (Phase 10.D). Узел чужой команды → 404.
@@ -192,7 +232,8 @@ func (u *ReplayUsecase) Replay(
 	if err != nil {
 		return nil, err
 	}
-	res, err := u.replayOne(ctx, node, logID, opts)
+	// Одиночный повтор конверт ещё не искал — replayOne сделает это сам (§96.3).
+	res, err := u.replayOne(ctx, node, logID, opts, replaySource{})
 	if err != nil {
 		return nil, err
 	}
@@ -245,13 +286,21 @@ func (u *ReplayUsecase) resolveReplayNode(ctx context.Context, nodeID, teamID st
 // replayOne — пере-инжектирует один залогированный запрос logID через Receiver
 // (узел уже резолвлен). Без rate-limit/резолва/аудита — их делают вызывающие
 // (Replay — построчно, ReplayFailed — массово).
-func (u *ReplayUsecase) replayOne(ctx context.Context, node *domain.Node, logID string, opts ReplayOptions) (*ReplayResult, error) {
+func (u *ReplayUsecase) replayOne(
+	ctx context.Context, node *domain.Node, logID string, opts ReplayOptions, src replaySource,
+) (*ReplayResult, error) {
 	orig, err := u.logs.GetByID(ctx, node.ClickHouseTable, logID)
 	if err != nil {
 		return nil, fmt.Errorf("replay get original log: %w", err)
 	}
 	if !orig.Done && time.Since(orig.DateRequest) > 7*24*time.Hour {
 		return nil, ErrReplayTooOldFailure
+	}
+	// §96: если конверт не искали заранее (одиночный повтор), ищем сейчас —
+	// массовые операции передают уже найденное, чтобы не сканировать очередь на
+	// каждую запись.
+	if !src.searched {
+		src = u.lookupOriginal(ctx, node, orig)
 	}
 
 	// Сборка нового запроса.
@@ -261,25 +310,14 @@ func (u *ReplayUsecase) replayOne(ctx context.Context, node *domain.Node, logID 
 	// в журнале: две копии правила разошлись бы, и предпросмотр обещал бы не то,
 	// что уходит.
 	method := domain.ReplayEffectiveMethod(node.IncomingMethod, orig.HTTPMethod)
-	// Тело: при nil-override берём оригинал из лога. Если узел не логировал
-	// тело (orig.Request пуст) и пользователь его не задал — отказываем явно,
-	// иначе во внешний target ушёл бы пустой body → 400 «empty body» (П1).
-	// Явно переданное пустое тело (BodyOverride = []byte{}) считаем намеренным.
-	// Исключение — GET: у него тела нет by design, пустой orig.Request — норма,
-	// а не «не сохранилось» (боевой кейс legat_by: GET-логи блокировались 422).
+	// Тело: явный BodyOverride важнее всего (оператор задал его руками), затем
+	// оригинальный конверт из очереди (§96), и только потом журнальная копия.
 	body := opts.BodyOverride
 	if body == nil {
-		// §68: multipart-запись хранит в orig.Request плейсхолдер, а не тело —
-		// отправить его как body нельзя. Разрешаем только явный BodyOverride.
-		if domain.IsMultipartLogPlaceholder(orig.Request) {
-			u.logger.Debug("replay: multipart original, body not stored — reject",
-				u.logger.Str("log_id", logID))
-			return nil, ErrReplayBodyMultipart
+		body, err = u.replayBody(node, orig, method, src)
+		if err != nil {
+			return nil, err
 		}
-		if orig.Request == "" && method != "GET" {
-			return nil, ErrReplayBodyUnavailable
-		}
-		body = []byte(orig.Request)
 	}
 
 	// Query: явный override из диалога приоритетнее сохранённых параметров
@@ -308,7 +346,10 @@ func (u *ReplayUsecase) replayOne(ctx context.Context, node *domain.Node, logID 
 
 	async := orig.Type == domain.RootMethodRequestAsync && !opts.SyncOverride
 
-	headers := map[string]string{}
+	// §96.5: заголовки исходного запроса живут только в конверте — журнал их не
+	// хранит вовсе. Берём Content-Type и то, что узел пробрасывает дальше;
+	// авторизацию Receiver подставит сам (ниже), поэтому её из конверта не тянем.
+	headers := replayHeaders(node, src.original)
 	switch {
 	case opts.CustomAuth != "":
 		headers["Authorization"] = opts.CustomAuth
@@ -381,6 +422,141 @@ func (u *ReplayUsecase) replayOne(ctx context.Context, node *domain.Node, logID 
 	}, nil
 }
 
+// replaySource — оригинальный конверт записи, найденный в очереди (§96).
+// searched отличает «искали и не нашли» от «ещё не искали»: массовые операции
+// ищут пачкой заранее, одиночный повтор — сам, и повторный скан на каждую
+// запись был бы лишним обходом всех топиков очереди.
+type replaySource struct {
+	original *port.AsyncOriginal
+	searched bool
+}
+
+// queueLookupSkew — запас назад от времени приёма записи при поиске конверта.
+// Конверт попадает в DLQ ПОЗЖЕ приёма, так что запас нужен только на расхождение
+// часов между сервисом и брокером.
+const queueLookupSkew = time.Minute
+
+// lookupOriginal ищет конверт одной записи (§96.3). Промах — не ошибка: решение
+// принимает replayBody по правилам §96.4.
+func (u *ReplayUsecase) lookupOriginal(ctx context.Context, node *domain.Node, orig *domain.LogRecord) replaySource {
+	if u.originals == nil || orig.Type != domain.RootMethodRequestAsync {
+		return replaySource{searched: true}
+	}
+	found := u.findOriginals(ctx, node, []string{orig.ID}, orig.DateRequest.Add(-queueLookupSkew))
+	if env, ok := found[orig.ID]; ok {
+		return replaySource{original: &env, searched: true}
+	}
+	return replaySource{searched: true}
+}
+
+// findOriginals — общий вызов поиска конвертов для набора записей. Пустая карта
+// при выключенном §96 или ошибке: источником тела тогда остаётся журнал.
+func (u *ReplayUsecase) findOriginals(
+	ctx context.Context, node *domain.Node, ids []string, since time.Time,
+) map[string]port.AsyncOriginal {
+	if u.originals == nil || len(ids) == 0 {
+		return nil
+	}
+	found, err := u.originals.FindOriginals(ctx, port.OriginalLookup{
+		Sources:  u.queueSources,
+		NodePath: node.Path,
+		IDs:      ids,
+		Since:    since,
+	})
+	if err != nil {
+		// Поиск best-effort: недоступная Kafka не должна валить повтор записи,
+		// чья журнальная копия цела. Ошибку логируем — молчаливый переход на
+		// журнал скрыл бы деградацию источника.
+		u.logger.Warn("replay: queue lookup failed, falling back to log copy",
+			u.logger.Str("node", node.Path), u.logger.Int("ids", len(ids)), u.logger.Err(err))
+		return nil
+	}
+	u.logger.Debug("replay: queue lookup done",
+		u.logger.Str("node", node.Path),
+		u.logger.Int("requested", len(ids)),
+		u.logger.Int("found", len(found)))
+	return found
+}
+
+// lookupSince — нижняя граница поиска конвертов для массовых операций (§96.3).
+//
+// Берём начало окна операции; когда окно открытое («все неудачные»), опираемся
+// на retention топика: раньше него конвертов не существует физически, а скан
+// «с начала времён» по топику, общему для всех узлов, стоил бы дорого и всё
+// равно ничего бы не нашёл.
+func (u *ReplayUsecase) lookupSince(from time.Time) time.Time {
+	if !from.IsZero() {
+		return from.Add(-queueLookupSkew)
+	}
+	return time.Now().Add(-u.retention)
+}
+
+// replayBody выбирает источник тела по правилам §96.4 и объясняет отказ.
+//
+// Порядок: конверт из очереди (полное тело) → журнальная копия, если она целая →
+// отказ. Журнальные признаки «нет тела» (плейсхолдер §68, пустая колонка,
+// усечение) проверяются только когда конверта нет: они говорят о том, чего нет
+// в ЖУРНАЛЕ, а не о том, что нечего отправлять.
+func (u *ReplayUsecase) replayBody(
+	node *domain.Node, orig *domain.LogRecord, method string, src replaySource,
+) ([]byte, error) {
+	if src.original != nil {
+		u.logger.Debug("replay: body taken from queue envelope",
+			u.logger.Str("log_id", orig.ID), u.logger.Str("node", node.Path),
+			u.logger.Str("topic", src.original.Topic),
+			u.logger.Int("body_bytes", len(src.original.Body)))
+		return src.original.Body, nil
+	}
+	if domain.IsMultipartLogPlaceholder(orig.Request) {
+		u.logger.Debug("replay: multipart original, body not stored — reject",
+			u.logger.Str("log_id", orig.ID))
+		return nil, ErrReplayBodyMultipart
+	}
+	// §96.1: усечённую копию отправлять нельзя — приёмник получит оборванный
+	// JSON с приклеенным маркером и будет отвечать ошибкой на каждый повтор.
+	if domain.IsTruncatedLogBody(
+		strings.HasSuffix(orig.Request, domain.LogBodyTruncationMarker),
+		int64(len(orig.Request)), orig.RequestSize,
+	) {
+		u.logger.Debug("replay: log copy truncated and no envelope in queue — reject",
+			u.logger.Str("log_id", orig.ID), u.logger.Str("node", node.Path),
+			u.logger.Int("stored_bytes", len(orig.Request)),
+			u.logger.Any("request_size", orig.RequestSize))
+		if orig.Type == domain.RootMethodRequest {
+			return nil, ErrReplayBodyTruncated
+		}
+		return nil, ErrReplayOriginalUnavailable
+	}
+	// Пустое тело у GET — норма by design, а не «не сохранилось» (боевой кейс
+	// legat_by: GET-логи блокировались 422).
+	if orig.Request == "" && method != "GET" {
+		return nil, ErrReplayBodyUnavailable
+	}
+	return []byte(orig.Request), nil
+}
+
+// replayHeaders восстанавливает заголовки исходного запроса из конверта (§96.5):
+// Content-Type и то, что узел пробрасывает дальше. Остальное отбрасывается
+// намеренно — в конверте лежат и служебные заголовки шины, а исходящую
+// авторизацию Receiver соберёт заново по актуальному конфигу узла.
+func replayHeaders(node *domain.Node, env *port.AsyncOriginal) map[string]string {
+	out := map[string]string{}
+	if env == nil {
+		return out
+	}
+	allowed := make(map[string]struct{}, len(node.ForwardHeaders)+1)
+	allowed["content-type"] = struct{}{}
+	for _, h := range node.ForwardHeaders {
+		allowed[strings.ToLower(h)] = struct{}{}
+	}
+	for k, v := range env.Headers {
+		if _, ok := allowed[strings.ToLower(k)]; ok {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 // replayedLogID — идентификатор ЗАПИСИ, созданной повтором, как его сообщила
 // сама шина. Пустая строка означает «шина идентификатор не вернула», и это
 // честный ответ, а не деградация.
@@ -430,7 +606,16 @@ type ReplayBulkResult struct {
 	// всего, обработал (тело принял целиком), и повтор дал бы дубли. Показывается
 	// оператору отдельной строкой — молча терять их из счёта нельзя.
 	SkippedClientCanceled int `json:"skipped_client_canceled"`
+	// §96.4: пропущено записей, чей оригинальный конверт в очереди недоступен, а
+	// журнальная копия усечена. Их оригиналы НЕ отменены и строки НЕ вычищены —
+	// запись остаётся в «Неудачных доставках» вместе со своим следом.
+	SkippedOriginalUnavailable int `json:"skipped_original_unavailable"`
 }
+
+// originalsChunk — по скольку записей за раз искать конверты в очереди (§96.7).
+// Компромисс: скан на КАЖДУЮ запись — это N обходов топиков, поиск сразу на весь
+// набор (до replayAllCap = 500) держал бы в памяти Web все их тела.
+const originalsChunk = 20
 
 // replayAllCap — верхняя граница числа сообщений за один «Повторить все»
 // (защита от долгого синхронного прохода/таймаута). Превышение → Capped=true.
@@ -492,33 +677,54 @@ func (u *ReplayUsecase) ReplayFailed(ctx context.Context, actor Actor, nodeID, t
 			u.logger.Int("skipped", res.SkippedClientCanceled))
 	}
 	replayed := make([]string, 0, len(ids))
-	for _, id := range ids {
-		if err := ctx.Err(); err != nil {
-			return res, err // контекст отменён (клиент отвалился) — прерываем
-		}
-		if _, rerr := u.replayOne(ctx, node, id, ReplayOptions{UseNodeAuth: true}); rerr != nil {
-			res.Failed++
-			u.logger.Warn("replay-all: one message failed",
-				u.logger.Str("log_id", id), u.logger.Err(rerr))
-			continue
-		}
-		// Успех → отменяем оригинал в DLQ: авто-репроцессор дропнет его по
-		// tombstone, иначе при восстановлении адреса сообщение доставилось бы
-		// дважды (replay-копия + авто-повтор оригинала).
-		if u.cancel != nil {
-			if _, cerr := u.cancel.Cancel(ctx, []string{id}, u.retention); cerr != nil {
-				u.logger.Warn("replay-all: cancel original failed",
-					u.logger.Str("log_id", id), u.logger.Err(cerr))
+	// §96: конверты ищем ПОРЦИЯМИ, а не по одному (скан очереди на каждую
+	// запись — это N обходов топиков) и не все разом (тела всего набора в
+	// памяти Web). Порция подобрана так, чтобы обычный набор укладывался в
+	// один-два прохода.
+	for chunk := range slices.Chunk(ids, originalsChunk) {
+		found := u.findOriginals(ctx, node, chunk, u.lookupSince(from))
+		for _, id := range chunk {
+			if err := ctx.Err(); err != nil {
+				return res, err // контекст отменён (клиент отвалился) — прерываем
 			}
+			src := replaySource{searched: true}
+			if env, ok := found[id]; ok {
+				src.original = &env
+			}
+			if _, rerr := u.replayOne(ctx, node, id, ReplayOptions{UseNodeAuth: true}, src); rerr != nil {
+				// §96.4: конверта нет, копия обрезана — запись пропускается
+				// БЕЗ отмены оригинала и без очистки строк. Иначе операция
+				// уничтожала бы последний след полного тела (боевой инцидент).
+				if errors.Is(rerr, ErrReplayOriginalUnavailable) {
+					res.SkippedOriginalUnavailable++
+					u.logger.Debug("replay-all: original unavailable, record skipped",
+						u.logger.Str("log_id", id), u.logger.Str("node", node.Path))
+					continue
+				}
+				res.Failed++
+				u.logger.Warn("replay-all: one message failed",
+					u.logger.Str("log_id", id), u.logger.Err(rerr))
+				continue
+			}
+			// Успех → отменяем оригинал в DLQ: авто-репроцессор дропнет его по
+			// tombstone, иначе при восстановлении адреса сообщение доставилось бы
+			// дважды (replay-копия + авто-повтор оригинала).
+			if u.cancel != nil {
+				if _, cerr := u.cancel.Cancel(ctx, []string{id}, u.retention); cerr != nil {
+					u.logger.Warn("replay-all: cancel original failed",
+						u.logger.Str("log_id", id), u.logger.Err(cerr))
+				}
+			}
+			replayed = append(replayed, id)
+			res.Replayed++
 		}
-		replayed = append(replayed, id)
-		res.Replayed++
 	}
 	res.Cleaned = u.cleanupReplayed(ctx, q, replayed)
 	u.audit.Log(ctx, actor, domain.ActionNodeReplay, "node", node.ID, map[string]any{
 		"op": "replay_all", "total": res.Total, "replayed": res.Replayed,
 		"failed": res.Failed, "cleaned": res.Cleaned, "capped": res.Capped,
-		"skipped_client_canceled": res.SkippedClientCanceled,
+		"skipped_client_canceled":      res.SkippedClientCanceled,
+		"skipped_original_unavailable": res.SkippedOriginalUnavailable,
 	})
 	return res, nil
 }
