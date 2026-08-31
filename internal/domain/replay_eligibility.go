@@ -59,8 +59,11 @@ const (
 	// ReplaySkipMultipart — в теле §68-плейсхолдер: вложения в ClickHouse не
 	// хранятся вовсе, отправить сводку частей вместо тела нельзя.
 	ReplaySkipMultipart ReplaySkipReason = "body_multipart"
-	// ReplaySkipTruncated — лог-копия тела усечена по max_body_size.
-	ReplaySkipTruncated ReplaySkipReason = "body_truncated"
+	// ReplaySkipOriginalUnavailable — §96: оригинального конверта в очереди уже
+	// нет (старше retention топика / Kafka не сконфигурирована), а журнальная
+	// копия усечена. Отправить её означало бы повторить боевой инцидент 31.08:
+	// приёмник получает оборванный JSON, отвечает 500, запись повторяют снова.
+	ReplaySkipOriginalUnavailable ReplaySkipReason = "original_unavailable"
 	// ReplaySkipBodyMissing — тело не логировалось (log_request_body=false),
 	// а метод реинжекции его требует.
 	ReplaySkipBodyMissing ReplaySkipReason = "body_missing"
@@ -98,6 +101,12 @@ type ReplayCandidate struct {
 	// IsReplayCopy — в параметрах записи есть служебный маркер `__replay_of`,
 	// то есть она сама порождена повтором.
 	IsReplayCopy bool
+	// OriginalInQueue — §96: оригинальный конверт записи найден в очереди Kafka,
+	// то есть повтор отправит ПОЛНОЕ тело, а не усечённую журнальную копию.
+	// Заполняется поиском по топикам очереди (dlq → paused → async) до
+	// классификации; false означает «не найден», включая упор в cap скана и
+	// отсутствие Kafka — во всех этих случаях источником остаётся журнал.
+	OriginalInQueue bool
 }
 
 // ReplayEffectiveMethod — HTTP-глагол, которым запись будет реинжектирована.
@@ -125,6 +134,12 @@ func ReplayEffectiveMethod(incoming HTTPMethod, loggedVerb string) string {
 // effectiveMethod — глагол реинжекции (см. ReplayEffectiveMethod).
 // skipReplayCopies — исключать ли записи, порождённые прошлыми повторами (§85.6).
 //
+// §96: решение зависит не только от журнала, но и от того, найден ли
+// оригинальный конверт в очереди (c.OriginalInQueue) — он и есть источник тела.
+// Пока конверт жив, НИ ОДИН журнальный признак повтор не блокирует: и усечённая
+// копия, и §68-плейсхолдер, и пустое тело у узла с выключенным log_request_body
+// говорят лишь о том, чего нет в ЖУРНАЛЕ, а отправлять будем содержимое конверта.
+//
 // ПОРЯДОК ПРОВЕРОК ЗНАЧИМ: плейсхолдер §68 короче исходного тела, поэтому
 // проверка усечения приняла бы его за обрезанное и подменила точную причину
 // неточной.
@@ -135,11 +150,14 @@ func ClassifyReplayCandidate(c ReplayCandidate, effectiveMethod string, skipRepl
 	if skipReplayCopies && c.IsReplayCopy {
 		return ReplaySkipReplayCopy
 	}
+	if c.OriginalInQueue {
+		return ReplaySkipNone
+	}
 	if IsMultipartLogPlaceholder(c.BodyHead) {
 		return ReplaySkipMultipart
 	}
 	if IsTruncatedLogBody(c.BodyTruncationMarker, c.StoredBytes, c.RequestSize) {
-		return ReplaySkipTruncated
+		return ReplaySkipOriginalUnavailable
 	}
 	// Пустое тело у GET — норма, а не «не сохранилось»: тела у него нет by
 	// design (боевой кейс legat_by, где GET-записи блокировались 422).

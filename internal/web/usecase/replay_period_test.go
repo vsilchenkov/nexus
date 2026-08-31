@@ -296,7 +296,7 @@ func TestPlanPeriod_ReadOnly(t *testing.T) {
 	assert.EqualValues(t, 42, plan.Total)
 	assert.Equal(t, 2, plan.Scanned)
 	assert.Equal(t, 1, plan.Eligible)
-	assert.Equal(t, 1, plan.SkippedBy[string(domain.ReplaySkipTruncated)])
+	assert.Equal(t, 1, plan.SkippedBy[string(domain.ReplaySkipOriginalUnavailable)])
 	assert.True(t, plan.Exact, "страница пришла без курсора — окно разобрано целиком")
 	assert.Len(t, plan.Eligibles, 1)
 	assert.Len(t, plan.Ineligibles, 1)

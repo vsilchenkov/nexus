@@ -219,6 +219,17 @@ const PausedGroupSuffix = "-paused"
 // PausedGroup возвращает имя consumer-group sweeper'а delay-топика.
 func (k KafkaSection) PausedGroup() string { return k.ConsumerGroup + PausedGroupSuffix }
 
+// DLQGroupSuffix — суффикс consumer-group авто-репроцессора DLQ (§36.2). Как и
+// PausedGroupSuffix, живёт в конфиге, потому что группу вычисляют ДВА сервиса:
+// Sender (репроцессор читает и коммитит DLQ) и Web (§96 ищет оригинальный
+// конверт от committed offset этой группы — там стоят ещё не разобранные
+// сообщения). Разъедутся — поиск конверта начнётся не с той позиции и повтор
+// решит, что тела нет.
+const DLQGroupSuffix = "-dlq-reprocess"
+
+// DLQGroup возвращает имя consumer-group авто-репроцессора DLQ.
+func (k KafkaSection) DLQGroup() string { return k.ConsumerGroup + DLQGroupSuffix }
+
 type KafkaTopicSection struct {
 	Partitions        int    `yaml:"partitions"`
 	ReplicationFactor int    `yaml:"replication_factor"`

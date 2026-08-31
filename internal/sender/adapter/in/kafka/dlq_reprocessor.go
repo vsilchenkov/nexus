@@ -48,7 +48,7 @@ func NewDLQReprocessor(
 	if maxScan <= 0 {
 		maxScan = 1000
 	}
-	group := cfg.Kafka.ConsumerGroup + "-dlq-reprocess"
+	group := cfg.Kafka.DLQGroup()
 	return &DLQReprocessor{
 		consumer:     kafkapf.NewConsumerWithGroup(cfg, cfg.Kafka.DLQTopic, group),
 		processor:    processor,

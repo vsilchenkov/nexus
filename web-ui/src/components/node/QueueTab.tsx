@@ -31,9 +31,27 @@ type QueueMessage = {
   received_at: string;
   body_size: number;
 };
-type ListResp = { items: QueueMessage[]; capped: boolean; kafka_available: boolean };
+type ListResp = {
+  items: QueueMessage[];
+  capped: boolean;
+  kafka_available: boolean;
+  // §96.7: сколько часов повтор ещё может отправить полное тело из конверта
+  // очереди. Отсутствует/0 — окно неизвестно, срок не обещаем.
+  original_window_hours?: number;
+};
 type BodyResp = { id: string; method: string; target_url: string; headers?: Record<string, string>; body: string };
 type FailedCountResp = { count: number; logs_configured: boolean; logs_available?: boolean };
+// §96.8: итог «Повторить все сейчас». skipped_original_unavailable — записи, чей
+// оригинал в очереди недоступен, а копия в журнале обрезана: их не отправляли,
+// и они остались в списке вместе со своим следом.
+type ReplayFailedResult = {
+  total: number;
+  replayed: number;
+  failed: number;
+  capped: boolean;
+  skipped_client_canceled: number;
+  skipped_original_unavailable: number;
+};
 
 // FAILED_PAGE_SIZE — размер страницы списка неудачных доставок (§72.3).
 // Переключателя размера, как в журнале логов, здесь нет: секция вспомогательная,
@@ -140,6 +158,9 @@ export function QueueTab({
   const pending = pendingQ.data?.items ?? [];
   const pendingCount = pending.length;
   const pendingCapped = pendingQ.data?.capped ?? false;
+  // §96.7: срок жизни оригинального конверта приходит вместе со списком
+  // очереди — он общий для инсталляции (retention топика), а не свойство узла.
+  const originalWindowHours = pendingQ.data?.original_window_hours ?? 0;
   // Секцию показываем всегда (для operator+) — пустое состояние объясняет, почему
   // на активном узле в очереди пусто (см. §35: неудачи уходят в логи/DLQ).
   // У sync-узла очереди не существует — секции нет вовсе (§69.1).
@@ -218,7 +239,7 @@ export function QueueTab({
   // и отменяет их оригиналы в DLQ (без двойной доставки).
   const replayFailed = useMutation({
     mutationFn: (body: { from?: string; to?: string }) =>
-      api.post(`/api/nodes/${id}/async-queue/replay-failed`, body),
+      api.post<ReplayFailedResult>(`/api/nodes/${id}/async-queue/replay-failed`, body),
     onSuccess: () => {
       // Ре-инжекция асинхронна (Receiver→Kafka→Sender→CH ≈ пара секунд): сразу
       // обновляем + ещё раз с задержкой, чтобы список/счётчик актуализировались
@@ -507,6 +528,31 @@ export function QueueTab({
             )}
           </div>
         </div>
+        {/* §96.8: итог последнего «Повторить все сейчас». Показываем именно
+            здесь, рядом со списком, в котором пропущенные записи и остались:
+            молчаливое «повторено 12 из 15» хуже отсутствия числа. */}
+        {replayFailed.data && (
+          <p className="text-xs text-fg-muted">
+            {t("queue.replay_failed_result", {
+              replayed: replayFailed.data.replayed,
+              total: replayFailed.data.total,
+            })}
+            {replayFailed.data.skipped_original_unavailable > 0 && (
+              <span className="text-warn">
+                {" · "}
+                {t("queue.replay_failed_skipped_original", {
+                  count: replayFailed.data.skipped_original_unavailable,
+                })}
+              </span>
+            )}
+            {replayFailed.data.failed > 0 && (
+              <span className="text-err">
+                {" · "}
+                {t("queue.replay_failed_errors", { count: replayFailed.data.failed })}
+              </span>
+            )}
+          </p>
+        )}
         {/* §36: подсказка про авто-репроцессор DLQ — повтор до TTL узла.
             §69.1: у sync-узла DLQ нет, повторять некому — своя подсказка. */}
         <p className="text-xs text-fg-muted">
@@ -516,6 +562,14 @@ export function QueueTab({
               })
             : t("queue.failed.no_reprocess_hint")}
         </p>
+        {/* §96.7: окно, в котором повтор ещё берёт ПОЛНОЕ тело из очереди. Оно
+            короче срока хранения логов, поэтому названо заранее — оператор
+            должен знать границу до того, как упрётся в отказ, а не после. */}
+        {isAsync && !!originalWindowHours && (
+          <p className="text-xs text-fg-muted">
+            {t("queue.failed.original_window_hint", { hours: originalWindowHours })}
+          </p>
+        )}
         {!hasLogsTable ? (
           <div className="text-fg-muted">{t("queue.failed.no_logging")}</div>
         ) : failedUnavailable ? (

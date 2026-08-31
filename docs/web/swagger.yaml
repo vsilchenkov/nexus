@@ -2153,6 +2153,12 @@ definitions:
         type: array
       kafka_available:
         type: boolean
+      original_window_hours:
+        description: |-
+          OriginalWindowHours — §96.7: сколько часов повтор записи узла ещё может
+          отправить ПОЛНОЕ тело из конверта очереди. 0 — окно неизвестно (Kafka не
+          сконфигурирована), интерфейс тогда срока не обещает.
+        type: integer
     type: object
   internal_web_adapter_in_http.queueMessageDTO:
     properties:
@@ -3074,6 +3080,14 @@ definitions:
           всего, обработал (тело принял целиком), и повтор дал бы дубли. Показывается
           оператору отдельной строкой — молча терять их из счёта нельзя.
         type: integer
+      skipped_original_unavailable:
+        description: |-
+          §96.4: пропущено записей, у которых отправлять нечего — оригинального
+          конверта в очереди нет, а журнальная копия усечена (сюда же попадает
+          sync-запись, у которой конверта не бывает вовсе). Их оригиналы НЕ отменены
+          и строки НЕ вычищены — запись остаётся в «Неудачных доставках» вместе со
+          своим следом.
+        type: integer
       total:
         description: уникальных неудачных найдено (в пределах cap)
         type: integer
@@ -3159,6 +3173,11 @@ definitions:
   nexus_internal_web_usecase.ReplayResult:
     properties:
       body_preview:
+        type: string
+      body_source:
+        description: |-
+          BodySource — §96: откуда взято отправленное тело (queue | log | override).
+          Интерфейсу это нужно, чтобы не гадать, ушла ли полная копия запроса.
         type: string
       duration_ms:
         type: integer

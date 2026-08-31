@@ -88,6 +88,13 @@ func (h *ReplayHandler) Replay(c *gin.Context) {
 		localizedError(c, http.StatusUnprocessableEntity, "replay.body_unavailable")
 	case errors.Is(err, usecase.ErrReplayBodyMultipart):
 		localizedError(c, http.StatusUnprocessableEntity, "replay.multipart_unavailable")
+	// §96.4: отправить усечённую копию нельзя. Две разные причины, потому что
+	// оператору нужен разный совет: у async-записи оригинал в очереди мог просто
+	// устареть, у sync-записи его не было никогда — там поможет только ручное тело.
+	case errors.Is(err, usecase.ErrReplayOriginalUnavailable):
+		localizedError(c, http.StatusUnprocessableEntity, "replay.original_unavailable")
+	case errors.Is(err, usecase.ErrReplayBodyTruncated):
+		localizedError(c, http.StatusUnprocessableEntity, "replay.body_truncated")
 	case errors.Is(err, domain.ErrNotFound):
 		localizedError(c, http.StatusNotFound, "error.not_found")
 	case errors.Is(err, domain.ErrNodeNotFound):
