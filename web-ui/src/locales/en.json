@@ -1077,7 +1077,6 @@
     "reason": {
       "record_not_async": "synchronous record",
       "body_multipart": "multipart — body is not stored",
-      "body_truncated": "body is truncated",
       "original_unavailable": "original is gone from the queue, log copy is truncated",
       "body_missing": "body was not logged",
       "already_replay": "record is already a replay"
@@ -1159,6 +1158,7 @@
     "failed": {
       "empty": "No failed deliveries in this period.",
       "no_logging": "Logging is not configured for this node — failed deliveries can't be shown.",
+      "original_window_hint": "Retry sends the full body while the original is still in the queue — about {{hours}}h after it was received; later the log copy is used, and a truncated copy is not sent at all.",
       "reprocess_hint": "Retried automatically until TTL ({{hours}} h) — once the target recovers, they are delivered. “Replay” forces an immediate retry.",
       "no_reprocess_hint": "Synchronous requests are never retried automatically: the caller already got its response. “Replay” re-sends them manually.",
       "replay": "Replay",

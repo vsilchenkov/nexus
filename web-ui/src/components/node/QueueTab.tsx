@@ -31,7 +31,14 @@ type QueueMessage = {
   received_at: string;
   body_size: number;
 };
-type ListResp = { items: QueueMessage[]; capped: boolean; kafka_available: boolean };
+type ListResp = {
+  items: QueueMessage[];
+  capped: boolean;
+  kafka_available: boolean;
+  // §96.7: сколько часов повтор ещё может отправить полное тело из конверта
+  // очереди. Отсутствует/0 — окно неизвестно, срок не обещаем.
+  original_window_hours?: number;
+};
 type BodyResp = { id: string; method: string; target_url: string; headers?: Record<string, string>; body: string };
 type FailedCountResp = { count: number; logs_configured: boolean; logs_available?: boolean };
 // §96.8: итог «Повторить все сейчас». skipped_original_unavailable — записи, чей
@@ -151,6 +158,9 @@ export function QueueTab({
   const pending = pendingQ.data?.items ?? [];
   const pendingCount = pending.length;
   const pendingCapped = pendingQ.data?.capped ?? false;
+  // §96.7: срок жизни оригинального конверта приходит вместе со списком
+  // очереди — он общий для инсталляции (retention топика), а не свойство узла.
+  const originalWindowHours = pendingQ.data?.original_window_hours ?? 0;
   // Секцию показываем всегда (для operator+) — пустое состояние объясняет, почему
   // на активном узле в очереди пусто (см. §35: неудачи уходят в логи/DLQ).
   // У sync-узла очереди не существует — секции нет вовсе (§69.1).
@@ -552,6 +562,14 @@ export function QueueTab({
               })
             : t("queue.failed.no_reprocess_hint")}
         </p>
+        {/* §96.7: окно, в котором повтор ещё берёт ПОЛНОЕ тело из очереди. Оно
+            короче срока хранения логов, поэтому названо заранее — оператор
+            должен знать границу до того, как упрётся в отказ, а не после. */}
+        {isAsync && !!originalWindowHours && (
+          <p className="text-xs text-fg-muted">
+            {t("queue.failed.original_window_hint", { hours: originalWindowHours })}
+          </p>
+        )}
         {!hasLogsTable ? (
           <div className="text-fg-muted">{t("queue.failed.no_logging")}</div>
         ) : failedUnavailable ? (

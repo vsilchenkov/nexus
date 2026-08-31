@@ -102,6 +102,11 @@ type QueueListResult struct {
 	Items          []port.QueueMessageMeta
 	Capped         bool
 	KafkaAvailable bool
+	// OriginalWindowHours — §96.7: сколько часов оригинальный конверт живёт в
+	// топике, то есть как долго повтор записи узла может отправить ПОЛНОЕ тело,
+	// а не журнальную копию. Равен retention топика; интерфейс показывает срок
+	// заранее, а не в момент отказа.
+	OriginalWindowHours int
 }
 
 // QueuePurgeResult — итог операции очистки.
@@ -148,7 +153,10 @@ func (u *AsyncQueueUsecase) List(ctx context.Context, nodeID, teamID string) (Qu
 		u.logger.Debug("async queue list skipped: sync node",
 			u.logger.Str("node_path", node.Path),
 			u.logger.Str("root_method", string(node.RootMethod)))
-		return QueueListResult{Items: []port.QueueMessageMeta{}, KafkaAvailable: u.peeker != nil}, nil
+		return QueueListResult{
+			Items: []port.QueueMessageMeta{}, KafkaAvailable: u.peeker != nil,
+			OriginalWindowHours: int(u.retention.Hours()),
+		}, nil
 	}
 	if u.peeker == nil {
 		return QueueListResult{Items: []port.QueueMessageMeta{}}, nil
@@ -187,7 +195,10 @@ func (u *AsyncQueueUsecase) List(ctx context.Context, nodeID, teamID string) (Qu
 		items = items[:asyncQueueListLimit]
 		capped = true
 	}
-	return QueueListResult{Items: items, Capped: capped, KafkaAvailable: true}, nil
+	return QueueListResult{
+		Items: items, Capped: capped, KafkaAvailable: true,
+		OriginalWindowHours: int(u.retention.Hours()),
+	}, nil
 }
 
 // Body — тело одного сообщения по (topic, partition, offset) для ленивой

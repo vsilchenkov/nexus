@@ -59,10 +59,6 @@ const (
 	// ReplaySkipMultipart — в теле §68-плейсхолдер: вложения в ClickHouse не
 	// хранятся вовсе, отправить сводку частей вместо тела нельзя.
 	ReplaySkipMultipart ReplaySkipReason = "body_multipart"
-	// ReplaySkipTruncated — лог-копия тела усечена по max_body_size, а другого
-	// источника у записи нет в принципе: она прошла синхронным путём, и конверта
-	// в очереди Kafka для неё не существовало никогда (§96.10 п.1).
-	ReplaySkipTruncated ReplaySkipReason = "body_truncated"
 	// ReplaySkipOriginalUnavailable — §96: оригинального конверта в очереди уже
 	// нет (старше retention топика / Kafka не сконфигурирована), а журнальная
 	// копия усечена. Отправить её означало бы повторить боевой инцидент 31.08:

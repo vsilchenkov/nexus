@@ -645,9 +645,11 @@ type ReplayBulkResult struct {
 	// всего, обработал (тело принял целиком), и повтор дал бы дубли. Показывается
 	// оператору отдельной строкой — молча терять их из счёта нельзя.
 	SkippedClientCanceled int `json:"skipped_client_canceled"`
-	// §96.4: пропущено записей, чей оригинальный конверт в очереди недоступен, а
-	// журнальная копия усечена. Их оригиналы НЕ отменены и строки НЕ вычищены —
-	// запись остаётся в «Неудачных доставках» вместе со своим следом.
+	// §96.4: пропущено записей, у которых отправлять нечего — оригинального
+	// конверта в очереди нет, а журнальная копия усечена (сюда же попадает
+	// sync-запись, у которой конверта не бывает вовсе). Их оригиналы НЕ отменены
+	// и строки НЕ вычищены — запись остаётся в «Неудачных доставках» вместе со
+	// своим следом.
 	SkippedOriginalUnavailable int `json:"skipped_original_unavailable"`
 }
 
@@ -734,10 +736,13 @@ func (u *ReplayUsecase) ReplayFailed(ctx context.Context, actor Actor, nodeID, t
 				// §96.4: конверта нет, копия обрезана — запись пропускается
 				// БЕЗ отмены оригинала и без очистки строк. Иначе операция
 				// уничтожала бы последний след полного тела (боевой инцидент).
-				if errors.Is(rerr, ErrReplayOriginalUnavailable) {
+				// Обе ошибки означают одно: отправлять нечего. ErrReplayBodyTruncated
+				// прилетает от sync-записи, попавшей в набор async-узла (§3.6), и
+				// считать её «ошибкой отправки» неверно — отправки не было.
+				if errors.Is(rerr, ErrReplayOriginalUnavailable) || errors.Is(rerr, ErrReplayBodyTruncated) {
 					res.SkippedOriginalUnavailable++
-					u.logger.Debug("replay-all: original unavailable, record skipped",
-						u.logger.Str("log_id", id), u.logger.Str("node", node.Path))
+					u.logger.Debug("replay-all: body unavailable, record skipped",
+						u.logger.Str("log_id", id), u.logger.Str("node", node.Path), u.logger.Err(rerr))
 					continue
 				}
 				res.Failed++
