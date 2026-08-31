@@ -1078,6 +1078,7 @@
       "record_not_async": "synchronous record",
       "body_multipart": "multipart — body is not stored",
       "body_truncated": "body is truncated",
+      "original_unavailable": "original is gone from the queue, log copy is truncated",
       "body_missing": "body was not logged",
       "already_replay": "record is already a replay"
     }

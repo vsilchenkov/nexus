@@ -111,14 +111,26 @@ func TestClassifyReplayCandidate(t *testing.T) {
 			want:            domain.ReplaySkipMultipart,
 		},
 		{
-			name: "усечённое тело",
+			// §96: вложения нет в ClickHouse, но конверт в очереди несёт
+			// multipart-тело целиком — повторять есть что.
+			name: "multipart с конвертом в очереди — пригодна",
+			mutate: func(c *domain.ReplayCandidate) {
+				c.BodyHead = multipartHead
+				c.RequestSize = 1200
+				c.OriginalInQueue = true
+			},
+			effectiveMethod: "POST",
+			want:            domain.ReplaySkipNone,
+		},
+		{
+			name: "усечённое тело без конверта в очереди",
 			mutate: func(c *domain.ReplayCandidate) {
 				c.BodyHead = strings.Repeat("a", 10)
 				c.StoredBytes = 10
 				c.RequestSize = 5000
 			},
 			effectiveMethod: "POST",
-			want:            domain.ReplaySkipTruncated,
+			want:            domain.ReplaySkipOriginalUnavailable,
 		},
 		{
 			name: "усечение по маркеру, размеры совпали",
@@ -126,13 +138,39 @@ func TestClassifyReplayCandidate(t *testing.T) {
 				c.BodyTruncationMarker = true
 			},
 			effectiveMethod: "POST",
-			want:            domain.ReplaySkipTruncated,
+			want:            domain.ReplaySkipOriginalUnavailable,
+		},
+		{
+			// §96: конверт жив в очереди — повтор возьмёт полное тело оттуда,
+			// усечение журнальной копии перестаёт быть препятствием.
+			name: "усечённое тело, но конверт в очереди — пригодна",
+			mutate: func(c *domain.ReplayCandidate) {
+				c.BodyHead = strings.Repeat("a", 10)
+				c.StoredBytes = 10
+				c.RequestSize = 5000
+				c.OriginalInQueue = true
+			},
+			effectiveMethod: "POST",
+			want:            domain.ReplaySkipNone,
 		},
 		{
 			name:            "тело не сохранено",
 			mutate:          func(c *domain.ReplayCandidate) { c.BodyHead = ""; c.StoredBytes = 0; c.RequestSize = 0 },
 			effectiveMethod: "POST",
 			want:            domain.ReplaySkipBodyMissing,
+		},
+		{
+			// §96: узел с log_request_body=false до раздела не повторялся
+			// никогда; конверт в очереди делает его повторяемым.
+			name: "тело не логировалось, но конверт в очереди — пригодна",
+			mutate: func(c *domain.ReplayCandidate) {
+				c.BodyHead = ""
+				c.StoredBytes = 0
+				c.RequestSize = 0
+				c.OriginalInQueue = true
+			},
+			effectiveMethod: "POST",
+			want:            domain.ReplaySkipNone,
 		},
 		{
 			name:            "пустое тело у GET — не отказ",
