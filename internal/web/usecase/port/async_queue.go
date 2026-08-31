@@ -24,6 +24,66 @@ type AsyncQueuePeeker interface {
 	ScanIDs(ctx context.Context, group, topic, nodePath string, from, to time.Time, cap int) (ScanIDsResult, error)
 }
 
+// QueueSource — топик очереди и consumer-group, чей committed offset отмечает
+// начало «живого хвоста» этого топика (§96.3). Порядок источников задаёт
+// вызывающая сторона: сначала DLQ, затем delay-топик паузы, затем основной.
+//
+// Deep разрешает второй проход по топику — от offset по времени, а не от
+// committed offset группы. Он нужен только DLQ: репроцессор коммитит
+// обработанные сообщения, и конверт записи, чей TTL истёк, лежит ПОЗАДИ
+// committed offset, оставаясь физически живым до retention топика.
+type QueueSource struct {
+	Topic string
+	Group string
+	Deep  bool
+}
+
+// OriginalLookup — параметры поиска оригинальных конвертов (§96.3).
+type OriginalLookup struct {
+	Sources  []QueueSource
+	NodePath string
+	// IDs — идентификаторы записей, чьи конверты ищем. Пустой список — поиск не
+	// выполняется вовсе (не «искать всё»).
+	IDs []string
+	// Since — нижняя граница поиска по времени: время приёма самой старой
+	// записи набора. Задаёт стартовый offset глубокого прохода; нулевое
+	// значение отключает глубокий проход (искать «с начала времён» по топику,
+	// общему для всех узлов, слишком дорого).
+	Since time.Time
+	// Cap — максимум сообщений, прочитанных за поиск. 0 → дефолт адаптера.
+	Cap int
+}
+
+// AsyncOriginal — оригинальный конверт async-сообщения, найденный в очереди
+// (§96.2). Тело здесь ПОЛНОЕ, в отличие от журнальной копии, усечённой по
+// max_body_size (§22.2).
+type AsyncOriginal struct {
+	ID      string
+	Body    []byte
+	Headers map[string]string
+	// Topic — где конверт найден. Только для наблюдаемости (§96.9): на доставку
+	// не влияет, реинжекция всегда идёт через Receiver.
+	Topic      string
+	ReceivedAt time.Time
+}
+
+// AsyncOriginalReader — поиск оригинальных конвертов в топиках очереди (§96).
+// Реализуется тем же kafkaadmin-клиентом, что и AsyncQueuePeeker, но объявлен
+// отдельным интерфейсом: его потребитель (повтор) вызывает только эти два
+// метода и не должен зависеть от peek-контракта экрана очереди (ISP).
+//
+// Оба метода best-effort по построению: упор в Cap, недоступный брокер или
+// отсутствующий топик дают «конверт не найден», а не ошибку — решение об отказе
+// принимает домен (§96.4), и оно одинаково для всех причин промаха.
+type AsyncOriginalReader interface {
+	// FindOriginals возвращает найденные конверты С ТЕЛАМИ.
+	FindOriginals(ctx context.Context, in OriginalLookup) (map[string]AsyncOriginal, error)
+	// ProbeOriginals возвращает только признак наличия. Отдельный метод, а не
+	// флаг у FindOriginals: предпросмотр §85 разбирает окно целиком, и тела
+	// сотен записей в памяти Web ему не нужны и вредны.
+	ProbeOriginals(ctx context.Context, in OriginalLookup) (map[string]bool, error)
+}
+
 // QueueMessageMeta — метаданные одного сообщения очереди (без тела).
 type QueueMessageMeta struct {
 	ID        string

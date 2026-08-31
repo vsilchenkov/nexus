@@ -147,7 +147,7 @@ func TestClickHouse_ReplayCandidates_OrderAndBodyFacts(t *testing.T) {
 	}{
 		{"11111111-0000-0000-0000-000000000001", base, domain.RootMethodRequestAsync, `{"ok":1}`, 8, "", domain.ReplaySkipNone},
 		{"22222222-0000-0000-0000-000000000002", base.Add(time.Second), domain.RootMethodRequest, `{"ok":1}`, 8, "", domain.ReplaySkipNotAsync},
-		{"33333333-0000-0000-0000-000000000003", base.Add(2 * time.Second), domain.RootMethodRequestAsync, truncated, 9999, "", domain.ReplaySkipTruncated},
+		{"33333333-0000-0000-0000-000000000003", base.Add(2 * time.Second), domain.RootMethodRequestAsync, truncated, 9999, "", domain.ReplaySkipOriginalUnavailable},
 		{"44444444-0000-0000-0000-000000000004", base.Add(3 * time.Second), domain.RootMethodRequestAsync, multipart, 4096, "", domain.ReplaySkipMultipart},
 		{"55555555-0000-0000-0000-000000000005", base.Add(4 * time.Second), domain.RootMethodRequestAsync, "", 0, "", domain.ReplaySkipBodyMissing},
 		{"66666666-0000-0000-0000-000000000006", base.Add(5 * time.Second), domain.RootMethodRequestAsync, `{"ok":1}`, 8, domain.ReplayOfParam + "=old-id", domain.ReplaySkipReplayCopy},

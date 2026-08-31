@@ -117,8 +117,12 @@ type Metrics struct {
 	NodeDegraded           *prometheus.GaugeVec // {node, reason}: 1 при degraded
 
 	// §36: авто-репроцессор DLQ (повторная доставка неудачных async-сообщений).
-	DLQReprocessTotal    *prometheus.CounterVec // {node, result=succeeded|failed|ttl_dropped|skipped|dropped}
-	DLQReprocessDuration prometheus.Histogram   // длительность одного прохода sweeper'а (секунды)
+	DLQReprocessTotal *prometheus.CounterVec // {node, result=succeeded|failed|ttl_dropped|skipped|dropped}
+	// ReplayBodySourceTotal — §96.9: чем на самом деле кормится приёмник при
+	// повторе. Рост source=log на узле с включённым лимитом тела означает, что
+	// окно retention очереди коротко; rejected — что тело потеряно совсем.
+	ReplayBodySourceTotal *prometheus.CounterVec // {node, source=queue|log|rejected}
+	DLQReprocessDuration  prometheus.Histogram   // длительность одного прохода sweeper'а (секунды)
 
 	// §74.3: состояние схемы PostgreSQL относительно кода сервиса.
 	PGSchemaVersion prometheus.Gauge // версия схемы в БД (0 = миграций не было)
@@ -390,6 +394,15 @@ func New(service string, opts ...Option) *Metrics {
 			ConstLabels: constLabels,
 		}, []string{"node", "result"}),
 
+		// §96.9: источник тела повтора. queue — полное тело из конверта очереди,
+		// log — журнальная копия (она целая, иначе повтор бы отказал),
+		// rejected — отказ: конверта нет, копия усечена.
+		ReplayBodySourceTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "nexus_replay_body_source_total",
+			Help:        "Replay request body source per node (queue, log, rejected).",
+			ConstLabels: constLabels,
+		}, []string{"node", "source"}),
+
 		// §36: длительность одного прохода sweeper'а над DLQ.
 		DLQReprocessDuration: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:        "nexus_dlq_reprocess_duration_seconds",
@@ -447,6 +460,7 @@ func New(service string, opts ...Option) *Metrics {
 		m.RMQConsumerCount,
 		m.NodeDegraded,
 		m.DLQReprocessTotal,
+		m.ReplayBodySourceTotal,
 		m.DLQReprocessDuration,
 		m.PGSchemaVersion,
 		m.PGSchemaAhead,
@@ -487,6 +501,12 @@ func (m *Metrics) IncPasswordResetRequest(result string) {
 func (m *Metrics) ObserveMailSend(purpose, result string, seconds float64) {
 	m.MailSendTotal.WithLabelValues(purpose, result).Inc()
 	m.MailSendDuration.WithLabelValues(purpose).Observe(seconds)
+}
+
+// IncReplayBodySource реализует usecase.ReplayMetrics (§96.9): откуда взято
+// тело повтора. source — queue | log | rejected.
+func (m *Metrics) IncReplayBodySource(node, source string) {
+	m.ReplayBodySourceTotal.WithLabelValues(node, source).Inc()
 }
 
 // IncL2Hit реализует nodecache.L2Metrics: счётчик попаданий в L2-кеш.

@@ -43,6 +43,10 @@ type queueListDTO struct {
 	Items          []queueMessageDTO `json:"items"`
 	Capped         bool              `json:"capped"`
 	KafkaAvailable bool              `json:"kafka_available"`
+	// OriginalWindowHours — §96.7: сколько часов повтор записи узла ещё может
+	// отправить ПОЛНОЕ тело из конверта очереди. 0 — окно неизвестно (Kafka не
+	// сконфигурирована), интерфейс тогда срока не обещает.
+	OriginalWindowHours int `json:"original_window_hours,omitempty"`
 }
 
 type queueBodyDTO struct {
@@ -91,7 +95,10 @@ func (h *AsyncQueueHandler) List(c *gin.Context) {
 	for _, m := range r.Items {
 		items = append(items, toQueueMessageDTO(m))
 	}
-	c.JSON(http.StatusOK, queueListDTO{Items: items, Capped: r.Capped, KafkaAvailable: r.KafkaAvailable})
+	c.JSON(http.StatusOK, queueListDTO{
+		Items: items, Capped: r.Capped, KafkaAvailable: r.KafkaAvailable,
+		OriginalWindowHours: r.OriginalWindowHours,
+	})
 }
 
 // Body godoc
