@@ -3074,6 +3074,12 @@ definitions:
           всего, обработал (тело принял целиком), и повтор дал бы дубли. Показывается
           оператору отдельной строкой — молча терять их из счёта нельзя.
         type: integer
+      skipped_original_unavailable:
+        description: |-
+          §96.4: пропущено записей, чей оригинальный конверт в очереди недоступен, а
+          журнальная копия усечена. Их оригиналы НЕ отменены и строки НЕ вычищены —
+          запись остаётся в «Неудачных доставках» вместе со своим следом.
+        type: integer
       total:
         description: уникальных неудачных найдено (в пределах cap)
         type: integer
@@ -3159,6 +3165,11 @@ definitions:
   nexus_internal_web_usecase.ReplayResult:
     properties:
       body_preview:
+        type: string
+      body_source:
+        description: |-
+          BodySource — §96: откуда взято отправленное тело (queue | log | override).
+          Интерфейсу это нужно, чтобы не гадать, ушла ли полная копия запроса.
         type: string
       duration_ms:
         type: integer

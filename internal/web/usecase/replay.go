@@ -58,6 +58,9 @@ type ReplayResult struct {
 	DurationMs  int64             `json:"duration_ms"`
 	BodyPreview string            `json:"body_preview"`
 	Headers     map[string]string `json:"headers,omitempty"`
+	// BodySource — §96: откуда взято отправленное тело (queue | log | override).
+	// Интерфейсу это нужно, чтобы не гадать, ушла ли полная копия запроса.
+	BodySource string `json:"body_source,omitempty"`
 }
 
 // ReplayUsecase — §7.4.1 ТЗ.
@@ -77,8 +80,10 @@ type ReplayUsecase struct {
 	// queueSources — топики очереди в порядке поиска (§96.3): DLQ, delay-топик
 	// паузы, основной. Пусто = поиск выключен.
 	queueSources []port.QueueSource
-	retention    time.Duration // TTL tombstone'а отмены (= retention топика)
-	rateLimit    int           // запросов/мин на пользователя (§7.4.1: 10)
+	// metrics — §96.9: счётчик источников тела повтора. nil допустим.
+	metrics   ReplayMetrics
+	retention time.Duration // TTL tombstone'а отмены (= retention топика)
+	rateLimit int           // запросов/мин на пользователя (§7.4.1: 10)
 	// periodRateLimit — §85.9: свой лимит батчей массового повтора за период.
 	// Общий rateLimit (10/мин) остановил бы цикл после десятого батча. 0 →
 	// дефолт replayPeriodRateLimit.
@@ -112,6 +117,26 @@ func WithQueueOriginals(r port.AsyncOriginalReader, sources []port.QueueSource) 
 		u.originals = r
 		u.queueSources = sources
 	}
+}
+
+// ReplayMetrics — учёт источника тела повтора (§96.9). Реализует
+// metrics.Metrics; nil допустим (unit-тесты, сборка без метрик).
+type ReplayMetrics interface {
+	IncReplayBodySource(node, source string)
+}
+
+// Источники тела повтора для метрики (§96.9).
+const (
+	replaySourceQueue    = "queue"    // полное тело из конверта очереди
+	replaySourceLog      = "log"      // целая журнальная копия
+	replaySourceRejected = "rejected" // конверта нет, копия усечена — отказ
+	replaySourceOverride = "override" // тело задано оператором в диалоге §7.4.1
+)
+
+// WithReplayMetrics подключает счётчик источников тела (§96.9). Без него повтор
+// работает так же, просто молча: понять, чем кормится приёмник, будет нельзя.
+func WithReplayMetrics(m ReplayMetrics) ReplayOption {
+	return func(u *ReplayUsecase) { u.metrics = m }
 }
 
 // WithPeriodRateLimit задаёт лимит батчей массового повтора за период (§85.9).
@@ -241,6 +266,9 @@ func (u *ReplayUsecase) Replay(
 		"node_id":       node.ID,
 		"status_code":   res.StatusCode,
 		"sync_override": opts.SyncOverride,
+		// §96.9: чем кормили приёмник. Без этого по журналу аудита нельзя
+		// отличить повтор с полным телом от повтора журнальной копии.
+		"body_source": res.BodySource,
 	}
 	// Пустой идентификатор в аудит НЕ пишем: строка «new_log_id: » читается как
 	// «запись есть, но безымянная», хотя означает «шина его не вернула».
@@ -312,9 +340,9 @@ func (u *ReplayUsecase) replayOne(
 	method := domain.ReplayEffectiveMethod(node.IncomingMethod, orig.HTTPMethod)
 	// Тело: явный BodyOverride важнее всего (оператор задал его руками), затем
 	// оригинальный конверт из очереди (§96), и только потом журнальная копия.
-	body := opts.BodyOverride
+	body, bodySource := opts.BodyOverride, replaySourceOverride
 	if body == nil {
-		body, err = u.replayBody(node, orig, method, src)
+		body, bodySource, err = u.replayBody(node, orig, method, src)
 		if err != nil {
 			return nil, err
 		}
@@ -419,6 +447,7 @@ func (u *ReplayUsecase) replayOne(
 		StatusCode:  resp.StatusCode,
 		BodyPreview: previewBody(resp.Body, 512),
 		Headers:     resp.Headers,
+		BodySource:  bodySource,
 	}, nil
 }
 
@@ -499,18 +528,19 @@ func (u *ReplayUsecase) lookupSince(from time.Time) time.Time {
 // в ЖУРНАЛЕ, а не о том, что нечего отправлять.
 func (u *ReplayUsecase) replayBody(
 	node *domain.Node, orig *domain.LogRecord, method string, src replaySource,
-) ([]byte, error) {
+) ([]byte, string, error) {
 	if src.original != nil {
 		u.logger.Debug("replay: body taken from queue envelope",
 			u.logger.Str("log_id", orig.ID), u.logger.Str("node", node.Path),
 			u.logger.Str("topic", src.original.Topic),
 			u.logger.Int("body_bytes", len(src.original.Body)))
-		return src.original.Body, nil
+		u.countBodySource(node.Path, replaySourceQueue)
+		return src.original.Body, replaySourceQueue, nil
 	}
 	if domain.IsMultipartLogPlaceholder(orig.Request) {
 		u.logger.Debug("replay: multipart original, body not stored — reject",
 			u.logger.Str("log_id", orig.ID))
-		return nil, ErrReplayBodyMultipart
+		return nil, "", ErrReplayBodyMultipart
 	}
 	// §96.1: усечённую копию отправлять нельзя — приёмник получит оборванный
 	// JSON с приклеенным маркером и будет отвечать ошибкой на каждый повтор.
@@ -522,17 +552,26 @@ func (u *ReplayUsecase) replayBody(
 			u.logger.Str("log_id", orig.ID), u.logger.Str("node", node.Path),
 			u.logger.Int("stored_bytes", len(orig.Request)),
 			u.logger.Any("request_size", orig.RequestSize))
+		u.countBodySource(node.Path, replaySourceRejected)
 		if orig.Type == domain.RootMethodRequest {
-			return nil, ErrReplayBodyTruncated
+			return nil, "", ErrReplayBodyTruncated
 		}
-		return nil, ErrReplayOriginalUnavailable
+		return nil, "", ErrReplayOriginalUnavailable
 	}
 	// Пустое тело у GET — норма by design, а не «не сохранилось» (боевой кейс
 	// legat_by: GET-логи блокировались 422).
 	if orig.Request == "" && method != "GET" {
-		return nil, ErrReplayBodyUnavailable
+		return nil, "", ErrReplayBodyUnavailable
 	}
-	return []byte(orig.Request), nil
+	u.countBodySource(node.Path, replaySourceLog)
+	return []byte(orig.Request), replaySourceLog, nil
+}
+
+// countBodySource — учёт источника тела (§96.9). Метрики опциональны.
+func (u *ReplayUsecase) countBodySource(node, source string) {
+	if u.metrics != nil {
+		u.metrics.IncReplayBodySource(node, source)
+	}
 }
 
 // replayHeaders восстанавливает заголовки исходного запроса из конверта (§96.5):

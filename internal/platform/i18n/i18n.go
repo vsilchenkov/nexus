@@ -131,6 +131,8 @@ var translations = map[Lang]map[string]string{
 		"replay.too_old":               "cannot replay failed request older than 7 days",
 		"replay.body_unavailable":      "original request body was not logged for this node — enter the body manually to replay",
 		"replay.multipart_unavailable": "original request body was multipart/form-data and is not stored — enter the body manually to replay",
+		"replay.original_unavailable":  "the original message is no longer in the queue and the stored log copy is truncated — replay would send a broken body",
+		"replay.body_truncated":        "the stored log copy of the request body is truncated — enter the body manually to replay",
 		"replay.bad_params":            "parameters must be a valid query string (a=1&b=2)",
 		// replay from logs for a period (§85)
 		"replay_period.no_window":       "both period bounds are required for a bulk replay",
@@ -276,6 +278,8 @@ var translations = map[Lang]map[string]string{
 		"replay.too_old":               "нельзя повторить запрос с ошибкой старше 7 дней",
 		"replay.body_unavailable":      "тело исходного запроса не сохранялось для этого узла — введите тело вручную, чтобы повторить",
 		"replay.multipart_unavailable": "тело исходного запроса было multipart/form-data и не сохранялось — введите тело вручную, чтобы повторить",
+		"replay.original_unavailable":  "оригинала уже нет в очереди, а копия в журнале обрезана — повтор отправил бы битое тело",
+		"replay.body_truncated":        "копия тела в журнале обрезана — введите тело вручную, чтобы повторить",
 		"replay.bad_params":            "параметры должны быть валидной query-строкой (a=1&b=2)",
 		// повтор из логов за период (§85)
 		"replay_period.no_window":       "для массового повтора нужны обе границы периода",

@@ -284,3 +284,45 @@ func TestReplayFailed_LooksUpOriginalsInChunks(t *testing.T) {
 	assert.Equal(t, 2, orig.calls, "25 записей при порции 20 — ровно два поиска")
 	assert.Len(t, orig.gotIDs[0], originalsChunk)
 }
+
+// stubReplayMetrics — учёт источников тела (§96.9).
+type stubReplayMetrics struct {
+	got []string
+}
+
+func (s *stubReplayMetrics) IncReplayBodySource(_, source string) {
+	s.got = append(s.got, source)
+}
+
+// TestReplay_BodySourceReported — источник тела виден и в ответе (для UI), и в
+// метрике: без этого нельзя отличить повтор полного тела от повтора журнальной
+// копии ни на экране, ни в мониторинге.
+func TestReplay_BodySourceReported(t *testing.T) {
+	t.Parallel()
+
+	t.Run("из очереди", func(t *testing.T) {
+		t.Parallel()
+		m := &stubReplayMetrics{}
+		orig := &stubOriginals{byID: map[string]port.AsyncOriginal{
+			"log1": {ID: "log1", Body: []byte(`{"full":true}`)},
+		}}
+		uc := queueUC(queueReplayNode(), &stubLogReader{log: truncatedLog("log1")},
+			&stubDispatcher{}, orig, WithReplayMetrics(m))
+
+		res, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{UseNodeAuth: true})
+		require.NoError(t, err)
+		assert.Equal(t, replaySourceQueue, res.BodySource)
+		assert.Equal(t, []string{replaySourceQueue}, m.got)
+	})
+
+	t.Run("отказ считается отдельно", func(t *testing.T) {
+		t.Parallel()
+		m := &stubReplayMetrics{}
+		uc := queueUC(queueReplayNode(), &stubLogReader{log: truncatedLog("log1")},
+			&stubDispatcher{}, &stubOriginals{}, WithReplayMetrics(m))
+
+		_, err := uc.Replay(context.Background(), SystemActor(), "log1", "n1", "", ReplayOptions{UseNodeAuth: true})
+		require.ErrorIs(t, err, ErrReplayOriginalUnavailable)
+		assert.Equal(t, []string{replaySourceRejected}, m.got)
+	})
+}

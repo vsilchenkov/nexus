@@ -636,6 +636,9 @@ func (a *App) Start(ctx context.Context) error {
 			// журнальная копия остаётся запасным вариантом. Без Kafka опция
 			// не включается, и повтор работает по журналу, как раньше.
 			usecase.WithQueueOriginals(queueOriginals, queueSources(a.cfg)),
+			// §96.9: без счётчика источника тела не видно, кормится приёмник
+			// конвертом или журнальной копией.
+			usecase.WithReplayMetrics(a.metrics),
 		)
 		logsUC := usecase.NewLogsUsecase(logReader, nodeRepo, a.logger)
 		replayHandler = httpadapter.NewReplayHandler(replayUC, a.logger)
