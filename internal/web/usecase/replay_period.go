@@ -211,8 +211,17 @@ func (u *ReplayUsecase) ReplayPeriod(ctx context.Context, actor Actor, in Replay
 
 	res := ReplayPeriodBatch{SkippedBy: map[string]int{}}
 	u.markOriginalsInQueue(ctx, node, items)
+	// Клиент может уйти в любой момент. Прерываемся, но НЕ выходим сразу: часть
+	// записей уже у получателя, и след об этом обязан попасть в аудит (§85.9) —
+	// ради него цикл только размыкается. Scanned при этом обязан считать
+	// РАЗОБРАННОЕ, а не размер страницы: он уходит в аудит как «сколько прошли».
+	var aborted error
 	eligible := make([]domain.ReplayCandidate, 0, len(items))
 	for _, c := range items {
+		if err := ctx.Err(); err != nil {
+			aborted = err
+			break
+		}
 		res.Scanned++
 		if reason := u.classify(node, c, in.SkipReplayCopies); reason != domain.ReplaySkipNone {
 			res.SkippedBy[string(reason)]++
@@ -220,10 +229,9 @@ func (u *ReplayUsecase) ReplayPeriod(ctx context.Context, actor Actor, in Replay
 		}
 		eligible = append(eligible, c)
 	}
-	// Клиент может уйти посреди отправки. Прерываемся, но НЕ выходим сразу:
-	// часть записей уже у получателя, и след об этом обязан попасть в аудит
-	// (§85.9) — ради него цикл только размыкается.
-	aborted := u.sendPeriodBatch(ctx, node, eligible, &res)
+	if aborted == nil {
+		aborted = u.sendPeriodBatch(ctx, node, eligible, &res)
+	}
 	// Курсор отдаём только у целиком пройденной страницы: после обрыва часть её
 	// уже отправлена, и продолжение с конца страницы пропустило бы остаток —
 	// оператор перезапускает прогон от последней подтверждённой отметки.

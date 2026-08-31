@@ -563,6 +563,11 @@ func (u *ReplayUsecase) replayBody(
 	if orig.Request == "" && method != "GET" {
 		return nil, "", ErrReplayBodyUnavailable
 	}
+	// §51.9: тихий переход на журнальную копию — событие, которое надо видеть:
+	// именно оно означает, что конверта в очереди уже нет.
+	u.logger.Debug("replay: body taken from log copy, envelope not found",
+		u.logger.Str("log_id", orig.ID), u.logger.Str("node", node.Path),
+		u.logger.Int("body_bytes", len(orig.Request)))
 	u.countBodySource(node.Path, replaySourceLog)
 	return []byte(orig.Request), replaySourceLog, nil
 }
