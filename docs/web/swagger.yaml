@@ -936,6 +936,22 @@ definitions:
           склеивает литерал на клиенте — иначе на ноде с идентификатором предпросмотр
           показывал бы чужое имя.
         type: string
+      max_async_body_bytes:
+        type: integer
+      max_async_body_bytes_cap:
+        type: integer
+      max_body_bytes:
+        description: |-
+          §97: действующие рабочие лимиты размера тела (байты) — что применяется
+          прямо сейчас, с развёрнутым nil.
+        type: integer
+      max_body_bytes_cap:
+        description: |-
+          §97: ПОТОЛКИ этих лимитов из конфига (receiver.max_body_bytes /
+          max_async_body_bytes). Форма настроек показывает их в подсказке и не даёт
+          сохранить больше: выше потолка шина не настроена (nginx, gRPC, Kafka,
+          память). 0 = потолок не задан.
+        type: integer
       metrics_refetch_ms:
         description: '§44.C: интервал автообновления метрик (мс) для дашборда/страниц
           узлов.'
@@ -2746,6 +2762,23 @@ definitions:
     type: object
   nexus_internal_domain.GeneralSettings:
     properties:
+      max_async_body_bytes:
+        description: |-
+          MaxAsyncBodyBytes — рабочий лимит тела асинхронного приёма (§97), байты:
+          /requestAsync, /callback и sync-запрос к узлу на паузе (§3.6, он уходит
+          в очередь). Обязан быть ≤ MaxBodyBytes. nil = дефолт
+          BodyLimitDefaultBytes. Не секрет.
+        type: integer
+      max_body_bytes:
+        description: |-
+          MaxBodyBytes — РАБОЧИЙ лимит тела синхронного запроса (§97), байты.
+          Отличать от потолка `receiver.max_body_bytes` в конфиге: конфиг говорит,
+          сколько шина способна переварить физически (память сервисов, gRPC,
+          nginx), а это значение — сколько администратор разрешает сегодня.
+          nil = дефолт BodyLimitDefaultBytes. Больше потолка задать нельзя;
+          значение, оказавшееся выше потолка (конфиг снизили после), зажимается
+          потолком. Не секрет — Get() не маскирует.
+        type: integer
       metrics_approx_counts:
         description: |-
           MetricsApproxCounts — режим подсчёта уникальных запросов в KPI узлов и

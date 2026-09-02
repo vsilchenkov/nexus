@@ -50,7 +50,7 @@ func newBodyLimitsHandler(t *testing.T, node *domain.Node, maxBody, maxAsyncBody
 	h := New(
 		usecase.NewRouteUsecase(reader, sender, 5, logger),
 		usecase.NewRouteAsyncUsecase(reader, queue, "nexus.async", 5, logger),
-		maxBody, maxAsyncBody, nil, logger,
+		usecase.NewBodyLimitsProvider(maxBody, maxAsyncBody, logger), nil, logger,
 	)
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -154,8 +154,9 @@ func TestBodyLimits_PausedNodeUsesAsyncLimit(t *testing.T) {
 	})
 }
 
-// Конструктор страхует от конфигурации, где async-лимит выше sync-лимита или не
-// задан вовсе: в обоих случаях действует один общий потолок (прежнее поведение).
+// Провайдер страхует от конфигурации, где async-потолок выше sync-потолка или
+// не задан вовсе: в обоих случаях действует один общий потолок (прежнее
+// поведение конструктора до §97).
 func TestBodyLimits_AsyncLimitFallsBackToSync(t *testing.T) {
 	t.Parallel()
 
@@ -171,8 +172,8 @@ func TestBodyLimits_AsyncLimitFallsBackToSync(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h := New(nil, nil, 100, tc.maxAsync, nil, logging.NewNoop())
-			assert.Equal(t, tc.wantLimits, h.maxAsyncBodyBytes)
+			p := usecase.NewBodyLimitsProvider(100, tc.maxAsync, logging.NewNoop())
+			assert.Equal(t, tc.wantLimits, p.Async())
 		})
 	}
 }

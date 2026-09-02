@@ -76,6 +76,11 @@ type App struct {
 	// nil, когда сбор выключен конфигурацией (receiver.reject_log.disabled).
 	rejectLog     *rejectlog.Collector
 	rejectLogDone <-chan struct{}
+
+	// bodyLimits — действующие лимиты размера тела (§97). Создаётся с потолками
+	// из конфига, рабочие значения приезжают из app_settings и меняются в
+	// интерфейсе без рестарта.
+	bodyLimits *usecase.BodyLimitsProvider
 }
 
 func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, cipher *crypto.Cipher, otelShutdown otelpf.ShutdownFunc, schema bootstrap.SchemaState, logger logging.Logger, logCtl *bootstrap.LogController) *App {
@@ -113,6 +118,7 @@ func (a *App) Start(ctx context.Context) error {
 	a.startRejectLog(ctx)
 
 	a.warnAsyncBodyLimitOverKafka()
+	a.warnSyncBodyLimitOverGRPC()
 
 	r, err := a.buildHTTPRouter(routeUC, routeAsyncUC)
 	if err != nil {
@@ -212,9 +218,13 @@ func (a *App) startRejectLog(ctx context.Context) {
 // buildHTTPRouter собирает gin-роутер: middleware, health/metrics и маршруты
 // шины под rate-limit.
 func (a *App) buildHTTPRouter(routeUC *usecase.RouteUsecase, routeAsyncUC *usecase.RouteAsyncUsecase) (*gin.Engine, error) {
+	// §97: конфиг задаёт ПОТОЛКИ, рабочие лимиты приходят из app_settings.
+	// До сида действует дефолт домена, зажатый потолком, — консервативно.
+	a.bodyLimits = usecase.NewBodyLimitsProvider(
+		a.cfg.Receiver.MaxBodyBytes, a.cfg.Receiver.MaxAsyncBodyBytes, a.logger)
 	handler := httpadapter.New(
 		routeUC, routeAsyncUC,
-		a.cfg.Receiver.MaxBodyBytes, a.cfg.Receiver.MaxAsyncBodyBytes,
+		a.bodyLimits,
 		a.metrics, a.logger,
 	)
 
@@ -297,6 +307,17 @@ func (a *App) startBackgroundSubscribers(ctx context.Context, reader port.NodeRe
 				a.logger.Err(err))
 		}
 		reloadSub.Register(reloader.SectionGeneral, applyRejectLog)
+	}
+	// §97: рабочие лимиты размера тела. Сид тем же Reloader'ом — до него
+	// действует дефолт домена: принять меньше, чем разрешил администратор,
+	// безопаснее, чем принять больше, пока настройки едут.
+	if a.bodyLimits != nil {
+		applyBodyLimits := bootstrap.BodyLimitsReloader(a.pg, a.bodyLimits, a.cipher, a.logger)
+		if err := applyBodyLimits(ctx); err != nil {
+			a.logger.Warn("seed body limits from app_settings failed; using defaults",
+				a.logger.Err(err))
+		}
+		reloadSub.Register(reloader.SectionGeneral, applyBodyLimits)
 	}
 	a.reloadDone = safego.Go(a.logger, "receiver.reloadSubscriber", func() {
 		reloadSub.Run(ctx)
@@ -442,6 +463,55 @@ func (a *App) teamSlugByID(ctx context.Context, teamID string) (string, error) {
 		return "", err
 	}
 	return slug, nil
+}
+
+// grpcRequestEnvelopeReserve — запас под envelope gRPC SendRequest (URL,
+// заголовки, метаданные) сверх самого тела: тело + envelope должны влезть в
+// одно gRPC-сообщение, иначе вызов падает ResourceExhausted. Симметричен
+// grpcResponseEnvelopeReserve на стороне Sender.
+const grpcRequestEnvelopeReserve = 1 << 20 // 1 МиБ
+
+// syncBodyLimitFitsGRPC сообщает, влезает ли тело предельного размера
+// (receiver.max_body_bytes) в gRPC-сообщение Receiver→Sender вместе с
+// envelope. Значение ≤ 0 означает «лимит не задан» и проверке не подлежит: ноль
+// подменяют дефолты конфига, а отрицательное readBody и gRPC-клиент одинаково
+// трактуют как «дефолт», и предупреждать тут не о чем.
+func syncBodyLimitFitsGRPC(maxBodyBytes, grpcMaxMessageBytes int) bool {
+	if maxBodyBytes <= 0 || grpcMaxMessageBytes <= 0 {
+		return true
+	}
+	return maxBodyBytes+grpcRequestEnvelopeReserve <= grpcMaxMessageBytes
+}
+
+// warnSyncBodyLimitOverGRPC предупреждает, если принятое по
+// receiver.max_body_bytes тело заведомо не влезет в gRPC-сообщение к Sender.
+// Расхождение не ломает старт, но проявляется позже и сбивает с толку: клиент
+// шлёт тело в рамках объявленного лимита, получает не 413, а 502 —
+// ResourceExhausted на пути Receiver→Sender. Типовая причина — подъём
+// max_body_bytes без парного подъёма обоих gRPC-лимитов (или откат кода без
+// отката конфигурации). Гейта нет намеренно: как и у async-проверки, падать на
+// старте из-за конфигурации, при которой мелкие тела продолжают работать,
+// хуже, чем громко предупредить.
+//
+// Чего проверка НЕ закрывает (Receiver этих значений не знает и знать не может):
+// серверный лимит Sender'а (`sender.grpc_max_message_bytes` — другой процесс,
+// со своим конфигом), потолок фронт-прокси (`client_max_body_size`) и реальную
+// доступную память контейнеров. Любое из них, занижённое в одиночку, так же
+// оборвёт крупное тело — но уже без этого предупреждения.
+func (a *App) warnSyncBodyLimitOverGRPC() {
+	maxBody := a.cfg.Receiver.MaxBodyBytes
+	grpcMax := a.cfg.Receiver.SenderGRPC.MaxMessageBytes
+	if syncBodyLimitFitsGRPC(maxBody, grpcMax) {
+		a.logger.Debug("sync body limit fits grpc message size",
+			a.logger.Int("max_body_bytes", maxBody),
+			a.logger.Int("envelope_reserve", grpcRequestEnvelopeReserve),
+			a.logger.Int("grpc_max_message_bytes", grpcMax))
+		return
+	}
+	a.logger.Warn("receiver.max_body_bytes exceeds receiver.sender_grpc.max_message_bytes; large sync requests will be accepted and then fail with 502 (ResourceExhausted) instead of 413",
+		a.logger.Int("max_body_bytes", maxBody),
+		a.logger.Int("envelope_reserve", grpcRequestEnvelopeReserve),
+		a.logger.Int("grpc_max_message_bytes", grpcMax))
 }
 
 // asyncEnvelopeOverheadRatio — во сколько раз async-конверт больше тела: JSON

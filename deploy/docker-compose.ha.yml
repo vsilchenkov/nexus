@@ -200,16 +200,20 @@ services:
 
   # ── Receiver × 2 ───────────────────────────────────────────────────────────
   # Лимиты — как в одиночной установке (deploy/docker-compose.override.yml):
-  # реплика обязана держать тот же предельный запрос 124 МиБ, что и одиночный
-  # сервис, поэтому потолок на реплику не делится. Сумма потолков растёт вдвое —
-  # если сервер 4 ГБ, снижайте здесь оба значения и ограничивайте поток крупных
-  # тел через receiver.rate_limit_per_node (DEPLOYMENT §5.5).
+  # реплика обязана держать тот же предельный запрос 300 МиБ, что и одиночный
+  # сервис, поэтому потолок на реплику не делится. Сумма потолков растёт вдвое:
+  # receiver 2 × 3072m + sender 2 × 3072m + web 2 × 192m ≈ 12.4 ГиБ ТОЛЬКО приложения,
+  # плюс инфраструктура ≈ 4.3 ГиБ (Kafka с 1.34.0 везёт сообщения до 448 МиБ и берёт
+  # 2560m) — итого ≈ 16.7 ГиБ. ПЕРЕД ВЫКАТОМ сверьте с `free -g`: потолок выше
+  # фактической RAM не защищает, а переносит отказ с контейнера на весь хост.
+  # Если памяти меньше — снижайте здесь оба значения вместе с receiver.max_body_bytes
+  # и ограничивайте поток крупных тел через receiver.rate_limit_per_node (DEPLOYMENT §5.5).
 
   receiver-1:
     <<: [*app-base, *receiver-build, *receiver-health, *deps-receiver]
     environment:
-      GOMEMLIMIT: 800MiB
-    mem_limit: 1g
+      GOMEMLIMIT: 2400MiB
+    mem_limit: 3072m
     networks:
       nexus_net:
         aliases: [receiver]
@@ -217,8 +221,8 @@ services:
   receiver-2:
     <<: [*app-base, *receiver-build, *receiver-health, *deps-receiver]
     environment:
-      GOMEMLIMIT: 800MiB
-    mem_limit: 1g
+      GOMEMLIMIT: 2400MiB
+    mem_limit: 3072m
     networks:
       nexus_net:
         aliases: [receiver]
@@ -230,8 +234,8 @@ services:
   sender-1:
     <<: [*app-base, *sender-build, *sender-health, *deps-sender]
     environment:
-      GOMEMLIMIT: 1400MiB
-    mem_limit: 1792m
+      GOMEMLIMIT: 2600MiB
+    mem_limit: 3072m
     networks:
       nexus_net:
         aliases: [sender]
@@ -239,8 +243,8 @@ services:
   sender-2:
     <<: [*app-base, *sender-build, *sender-health, *deps-sender]
     environment:
-      GOMEMLIMIT: 1400MiB
-    mem_limit: 1792m
+      GOMEMLIMIT: 2600MiB
+    mem_limit: 3072m
     networks:
       nexus_net:
         aliases: [sender]

@@ -78,7 +78,7 @@ func TestLoopProtection_E2E_TerminatesAt508(t *testing.T) {
 
 	routeUC := usecase.NewRouteUsecase(e2eNodeReader{}, sender, maxHops, logging.NewNoop())
 	routeAsyncUC := usecase.NewRouteAsyncUsecase(e2eNodeReader{}, nil, "nexus.async", maxHops, logging.NewNoop())
-	h := New(routeUC, routeAsyncUC, 1<<20, 1<<20, m, logging.NewNoop())
+	h := New(routeUC, routeAsyncUC, usecase.NewBodyLimitsProvider(1<<20, 1<<20, logging.NewNoop()), m, logging.NewNoop())
 
 	r := gin.New()
 	h.Register(r)

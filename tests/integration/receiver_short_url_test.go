@@ -106,7 +106,7 @@ func TestReceiver_ShortURL_E2E(t *testing.T) {
 	h := rcvhttp.New(
 		rcv.NewRouteUsecase(reader, &httpSenderStub{client: http.DefaultClient}, 5, logger),
 		rcv.NewRouteAsyncUsecase(reader, producer, "nexus.async", 5, logger),
-		1<<20, 1<<20, m, logger,
+		rcv.NewBodyLimitsProvider(1<<20, 1<<20, logger), m, logger,
 	)
 	gin.SetMode(gin.TestMode)
 	r := gin.New()

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
 import { api } from "../../api/client";
+import { useBodyLimitCaps } from "../../lib/nodeDefaults";
 
 type GeneralSettings = {
   public_base_url?: string;
@@ -12,6 +13,9 @@ type GeneralSettings = {
   // §94.5: срок хранения журнала отказов, дней. 0 = сбор выключен и
   // накопленное удаляется — отдельного тумблера нет.
   rejected_retention_days?: number;
+  // §97: рабочие лимиты размера тела, БАЙТЫ (в форме вводятся в МиБ).
+  max_body_bytes?: number;
+  max_async_body_bytes?: number;
 };
 type SecuritySettings = { session_ttl_seconds?: number };
 type AppSettings = {
@@ -28,6 +32,12 @@ const SESSION_MAX_MINUTES = 30 * 24 * 60; // 30 суток
 // §94.5: границы срока хранения журнала отказов. Зеркало домена
 // (RejectedRetention*Days): расхождение дало бы поле, которое сервер отвергает.
 const REJECTED_RETENTION_MAX_DAYS = 365;
+
+// §97: лимиты тела задаются в МиБ в UI, хранятся в байтах — та же схема, что у
+// длительности сессии (минуты) и интервала метрик (секунды).
+const MIB = 1024 * 1024;
+const bytesToMib = (v: number) => String(Math.round(v / MIB));
+const mibToBytes = (v: string) => Math.round(Number(v) * MIB);
 
 // GeneralPanel — общие настройки приложения (§28, Пункт 1): публичный адрес,
 // под которым опубликован Web. Если задан, UI собирает полный адрес узла от
@@ -59,7 +69,27 @@ export function GeneralPanel() {
   const [approxCounts, setApproxCounts] = useState(false);
   // §94.5: срок хранения журнала отказов (пусто = не трогаем текущее значение).
   const [rejectedDays, setRejectedDays] = useState("");
+  // §97: рабочие лимиты размера тела, в МиБ.
+  const [bodyMib, setBodyMib] = useState("");
+  const [asyncBodyMib, setAsyncBodyMib] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  // §97: потолки из конфига — выше них сервер значение не примет, поэтому
+  // форма показывает их в подсказке и блокирует сохранение заранее.
+  const caps = useBodyLimitCaps();
+  const syncCapMib = caps.syncMaxBytes > 0 ? Math.floor(caps.syncMaxBytes / MIB) : 0;
+  const asyncCapMib = caps.asyncMaxBytes > 0 ? Math.floor(caps.asyncMaxBytes / MIB) : 0;
+
+  const bodyOverCap = syncCapMib > 0 && bodyMib.trim() !== "" && Number(bodyMib) > syncCapMib;
+  const asyncOverCap =
+    asyncCapMib > 0 && asyncBodyMib.trim() !== "" && Number(asyncBodyMib) > asyncCapMib;
+  // async не может быть больше sync: запрос к узлу на паузе (§3.6) уходит в
+  // очередь и режется async-лимитом.
+  const asyncOverSync =
+    bodyMib.trim() !== "" &&
+    asyncBodyMib.trim() !== "" &&
+    Number(asyncBodyMib) > Number(bodyMib);
+  const limitsInvalid = bodyOverCap || asyncOverCap || asyncOverSync;
 
   useEffect(() => {
     if (data) {
@@ -74,6 +104,11 @@ export function GeneralPanel() {
       // Ноль — осмысленное значение («журнал выключен»), поэтому проверка
       // именно на undefined: `rr ? …` показал бы пустое поле вместо нуля.
       setRejectedDays(rr === undefined ? "" : String(rr));
+      // §97: байты → МиБ.
+      const mb = data.general?.max_body_bytes;
+      setBodyMib(mb === undefined ? "" : bytesToMib(mb));
+      const amb = data.general?.max_async_body_bytes;
+      setAsyncBodyMib(amb === undefined ? "" : bytesToMib(amb));
     }
   }, [data]);
 
@@ -90,6 +125,11 @@ export function GeneralPanel() {
       // есть (это «выключить журнал», а не «нет значения»).
       const rr = rejectedDays.trim();
       if (rr !== "") general.rejected_retention_days = Math.round(Number(rr));
+      // §97: МиБ → байты; пусто — не трогаем текущее значение.
+      const bm = bodyMib.trim();
+      if (bm !== "") general.max_body_bytes = mibToBytes(bm);
+      const abm = asyncBodyMib.trim();
+      if (abm !== "") general.max_async_body_bytes = mibToBytes(abm);
       const body: { general: GeneralSettings; security?: SecuritySettings } = { general };
       // Длительность сессии: пусто — не трогаем (остаётся из env/текущего).
       const mins = sessionMinutes.trim();
@@ -209,6 +249,56 @@ export function GeneralPanel() {
       </div>
 
       <div className="max-w-3xl space-y-1">
+        <label className="text-xs uppercase tracking-wider text-fg-muted">
+          {t("settings.general.max_body_sync")}
+        </label>
+        <input
+          type="number"
+          min={1}
+          max={syncCapMib > 0 ? syncCapMib : undefined}
+          value={bodyMib}
+          onChange={(e) => setBodyMib(e.target.value)}
+          placeholder="100"
+          className="w-full rounded-md bg-bg-muted px-3 py-2 font-mono text-xs outline-none"
+        />
+        <p className="text-xs text-fg-subtle">
+          {t("settings.general.max_body_sync_hint", { max: syncCapMib })}
+        </p>
+        {bodyOverCap && (
+          <p className="text-xs text-err">
+            {t("settings.general.max_body_over_cap", { max: syncCapMib })}
+          </p>
+        )}
+      </div>
+
+      <div className="max-w-3xl space-y-1">
+        <label className="text-xs uppercase tracking-wider text-fg-muted">
+          {t("settings.general.max_body_async")}
+        </label>
+        <input
+          type="number"
+          min={1}
+          max={asyncCapMib > 0 ? asyncCapMib : undefined}
+          value={asyncBodyMib}
+          onChange={(e) => setAsyncBodyMib(e.target.value)}
+          placeholder="100"
+          className="w-full rounded-md bg-bg-muted px-3 py-2 font-mono text-xs outline-none"
+        />
+        <p className="text-xs text-fg-subtle">
+          {t("settings.general.max_body_async_hint", { max: asyncCapMib })}
+        </p>
+        {asyncOverCap && (
+          <p className="text-xs text-err">
+            {t("settings.general.max_body_over_cap", { max: asyncCapMib })}
+          </p>
+        )}
+        {asyncOverSync && (
+          <p className="text-xs text-err">{t("settings.general.max_body_async_over_sync")}</p>
+        )}
+        <p className="text-xs text-fg-subtle">{t("settings.common.hot_reload_note")}</p>
+      </div>
+
+      <div className="max-w-3xl space-y-1">
         <label className="flex cursor-pointer items-center gap-2">
           <input
             type="checkbox"
@@ -226,7 +316,7 @@ export function GeneralPanel() {
       <div className="flex flex-wrap items-center gap-3">
         <button
           onClick={() => save.mutate()}
-          disabled={save.isPending}
+          disabled={save.isPending || limitsInvalid}
           className="rounded-md bg-accent px-4 py-2 text-sm hover:bg-accent-hover disabled:opacity-50"
         >
           {t("common.save")}

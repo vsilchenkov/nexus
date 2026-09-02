@@ -128,6 +128,44 @@ func RejectLogReloader(pool *pgxpool.Pool, sw RejectLogSwitch, cipher *crypto.Ci
 	}
 }
 
+// BodyLimitsSwitch — узкий интерфейс, который реализует
+// receiver/usecase.BodyLimitsProvider. Объявлен здесь, чтобы bootstrap не
+// зависел от пакетов Receiver.
+type BodyLimitsSwitch interface {
+	Set(syncBytes, asyncBytes int)
+}
+
+// BodyLimitsReloader возвращает Reloader, который перечитывает рабочие лимиты
+// размера тела и применяет их без рестарта (§97).
+//
+// Конфиг задаёт ПОТОЛОК (под него настроены nginx, gRPC, Kafka и память
+// сервисов), а эти значения — сколько администратор разрешает сегодня. nil
+// означает «оператор ничего не задал» и разворачивается в дефолт домена;
+// зажатие потолком и инвариант async ≤ sync — забота провайдера.
+//
+// Тот же Reloader используется как сид стартового значения — первый вызов
+// сразу после создания подписчика.
+func BodyLimitsReloader(pool *pgxpool.Pool, sw BodyLimitsSwitch, cipher *crypto.Cipher, logger logging.Logger) reloader.Reloader {
+	return func(ctx context.Context) error {
+		o, err := readAppSettings(ctx, pool, cipher, logger)
+		if err != nil {
+			return err
+		}
+		var syncPtr, asyncPtr *int
+		if o != nil {
+			syncPtr = o.General.MaxBodyBytes
+			asyncPtr = o.General.MaxAsyncBodyBytes
+		}
+		syncBytes := domain.BodyLimitOrDefault(syncPtr)
+		asyncBytes := domain.BodyLimitOrDefault(asyncPtr)
+		sw.Set(syncBytes, asyncBytes)
+		logger.Info("body limits applied from app_settings",
+			logger.Int("max_body_bytes", syncBytes),
+			logger.Int("max_async_body_bytes", asyncBytes))
+		return nil
+	}
+}
+
 // WriterReloader — узкий интерфейс, который реализует chlog.WriterManager
 // (sender) и в будущем — любой другой держатель CH-зависимостей. Объявлен
 // в bootstrap'е, чтобы избежать import cycle с sender/chlog (config →

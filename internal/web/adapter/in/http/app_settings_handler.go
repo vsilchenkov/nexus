@@ -25,17 +25,24 @@ type AppSettingsHandler struct {
 	// chDatabasePrefix — §70.8: "nexus_" либо "nexus_<instance>_". Диалог
 	// создания команды показывает по нему предпросмотр имени БД.
 	chDatabasePrefix string
-	logger           logging.Logger
+	// maxBodyBytesCap / maxAsyncBodyBytesCap — §97: ПОТОЛКИ рабочих лимитов
+	// тела из конфига. Форма настроек показывает их в подсказке и не даёт
+	// сохранить значение выше — сервер проверяет то же самое.
+	maxBodyBytesCap      int
+	maxAsyncBodyBytesCap int
+	logger               logging.Logger
 }
 
 // NewAppSettingsHandler — tester опционален: nil отключает test-эндпоинты
 // (например в тестах, где не нужны live-коннекты к CH/Sentry).
-func NewAppSettingsHandler(uc *usecase.AppSettingsUsecase, tester *usecase.SettingsTester, nodeDefaultMaxBodySize int, chDatabasePrefix string, logger logging.Logger) *AppSettingsHandler {
+func NewAppSettingsHandler(uc *usecase.AppSettingsUsecase, tester *usecase.SettingsTester, nodeDefaultMaxBodySize int, chDatabasePrefix string, maxBodyBytesCap, maxAsyncBodyBytesCap int, logger logging.Logger) *AppSettingsHandler {
 	return &AppSettingsHandler{
 		uc:                     uc,
 		tester:                 tester,
 		nodeDefaultMaxBodySize: nodeDefaultMaxBodySize,
 		chDatabasePrefix:       chDatabasePrefix,
+		maxBodyBytesCap:        maxBodyBytesCap,
+		maxAsyncBodyBytesCap:   maxAsyncBodyBytesCap,
 		logger:                 logger,
 	}
 }
@@ -94,7 +101,57 @@ func (h *AppSettingsHandler) GetPublic(c *gin.Context) {
 		// §70.8: префикс имён БД ClickHouse этой ноды — по нему диалог создания
 		// команды строит предпросмотр вместо литерала "nexus_" на клиенте.
 		"ch_database_prefix": h.chDatabasePrefix,
+		// §97: рабочие лимиты тела и ПОТОЛКИ под них. Лимиты — из app_settings
+		// (nil → дефолт), потолки — из конфига: форма показывает их в подсказке
+		// и не даёт ввести больше.
+		"max_body_bytes":           domain.BodyLimitOrDefault(s.General.MaxBodyBytes),
+		"max_async_body_bytes":     domain.BodyLimitOrDefault(s.General.MaxAsyncBodyBytes),
+		"max_body_bytes_cap":       h.maxBodyBytesCap,
+		"max_async_body_bytes_cap": h.maxAsyncBodyBytesCap,
 	})
+}
+
+// settingsValidationErrors — ошибки валидации настроек, которые обязаны
+// доезжать до клиента как 400 с текстом ошибки, а не как 500 «внутренняя
+// ошибка»: оператор правит форму и должен видеть, ЧТО именно не так.
+//
+// Список, а не цепочка `||`: она уже переставала расти вместе с валидацией —
+// срок хранения журнала отказов (§94.5) и вся секция почты (§88) проверялись в
+// usecase, но в цепочку их не добавили, и невалидное значение возвращало 500.
+// Добавляя новую проверку в AppSettingsUsecase.Update, добавьте ошибку сюда.
+var settingsValidationErrors = []error{
+	domain.ErrPublicBaseURLInvalid,
+	domain.ErrTelegramCronInvalid,
+	domain.ErrSessionTTLInvalid,
+	domain.ErrMetricsRefetchInvalid,
+	domain.ErrLogLevelInvalid,
+	// §94.5
+	domain.ErrRejectedRetentionInvalid,
+	// §97
+	domain.ErrMaxBodyBytesInvalid,
+	domain.ErrMaxAsyncBodyBytesInvalid,
+	domain.ErrAsyncBodyLimitOverSync,
+	// §88
+	domain.ErrMailHostInvalid,
+	domain.ErrMailPortInvalid,
+	domain.ErrMailEncryptionInvalid,
+	domain.ErrMailAuthTypeInvalid,
+	domain.ErrMailUsernameLength,
+	domain.ErrMailPasswordLength,
+	domain.ErrMailFromInvalid,
+	domain.ErrMailFromNameInvalid,
+	domain.ErrMailHELOInvalid,
+	domain.ErrMailTimeoutInvalid,
+	domain.ErrMailResetRequiresMail,
+}
+
+func isSettingsValidationError(err error) bool {
+	for _, target := range settingsValidationErrors {
+		if errors.Is(err, target) {
+			return true
+		}
+	}
+	return false
 }
 
 // Update godoc
@@ -116,9 +173,7 @@ func (h *AppSettingsHandler) Update(c *gin.Context) {
 		return
 	}
 	if err := h.uc.Update(c.Request.Context(), actorFromCtx(c), &patch); err != nil {
-		if errors.Is(err, domain.ErrPublicBaseURLInvalid) || errors.Is(err, domain.ErrTelegramCronInvalid) ||
-			errors.Is(err, domain.ErrSessionTTLInvalid) || errors.Is(err, domain.ErrMetricsRefetchInvalid) ||
-			errors.Is(err, domain.ErrLogLevelInvalid) {
+		if isSettingsValidationError(err) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
