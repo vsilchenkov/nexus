@@ -1188,7 +1188,13 @@
       "metrics_approx_hint": "Off (default) — exact counts (countDistinct). On — approximate (HyperLogLog, ~0.3% error) but ~3× cheaper on CPU. Enable when there are many nodes/data and the exact count pushes ClickHouse to 100% CPU on the dashboard.",
       "rejected_retention": "Rejected-request retention, days",
       "rejected_retention_hint": "Log of rejected requests (Logs → Rejected tab). Records older than the retention are deleted automatically; lowering the retention deletes the excess immediately. 0 turns collection off and deletes what has been stored. Empty keeps the current value.",
-      "rejected_retention_zero_warn": "Zero turns collection off and deletes every stored rejected-request record."
+      "rejected_retention_zero_warn": "Zero turns collection off and deletes every stored rejected-request record.",
+      "max_body_sync": "Max request body, sync (MiB)",
+      "max_body_sync_hint": "Applies to /api/v1/request/*. Server ceiling — {{max}} MiB; it is set by the deployment (nginx, gRPC, memory) and cannot be raised from here.",
+      "max_body_async": "Max request body, async (MiB)",
+      "max_body_async_hint": "Applies to /api/v1/requestAsync/*, /api/v1/callback/* and to a sync request sent to a paused node — it goes to the queue. Server ceiling — {{max}} MiB.",
+      "max_body_over_cap": "Above the server ceiling ({{max}} MiB)",
+      "max_body_async_over_sync": "The async limit must not exceed the sync limit"
     },
     "tokens": {
       "title": "API tokens",

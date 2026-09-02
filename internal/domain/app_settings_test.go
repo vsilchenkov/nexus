@@ -93,3 +93,86 @@ func TestValidateSessionTTLSeconds(t *testing.T) {
 		})
 	}
 }
+
+// Рабочие лимиты размера тела (§97). Верхняя граница не константа — её задаёт
+// потолок из конфига, поэтому проверяем обе стороны диапазона и случай
+// «потолок не задан».
+func TestValidateMaxBodyBytes(t *testing.T) {
+	t.Parallel()
+
+	const cap300 = 300 << 20
+
+	tests := []struct {
+		name       string
+		value      int
+		maxAllowed int
+		wantErr    bool
+	}{
+		{name: "default fits under cap", value: BodyLimitDefaultBytes, maxAllowed: cap300},
+		{name: "minimum allowed", value: BodyLimitMinBytes, maxAllowed: cap300},
+		{name: "exactly at cap", value: cap300, maxAllowed: cap300},
+		{name: "one byte over cap", value: cap300 + 1, maxAllowed: cap300, wantErr: true},
+		{name: "below minimum", value: BodyLimitMinBytes - 1, maxAllowed: cap300, wantErr: true},
+		{name: "zero rejected", value: 0, maxAllowed: cap300, wantErr: true},
+		{name: "negative rejected", value: -1, maxAllowed: cap300, wantErr: true},
+		{name: "cap not configured checks lower bound only", value: 1 << 30, maxAllowed: 0},
+		{name: "cap not configured still rejects tiny", value: 1, maxAllowed: 0, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateMaxBodyBytes(tt.value, tt.maxAllowed)
+			if tt.wantErr {
+				require.ErrorIs(t, err, ErrMaxBodyBytesInvalid)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
+// TestValidateMaxAsyncBodyBytes — тот же контракт, но своя sentinel-ошибка:
+// оператор должен видеть, какое именно поле формы не прошло.
+func TestValidateMaxAsyncBodyBytes(t *testing.T) {
+	t.Parallel()
+
+	const cap300 = 300 << 20
+
+	require.NoError(t, ValidateMaxAsyncBodyBytes(BodyLimitDefaultBytes, cap300))
+	require.ErrorIs(t, ValidateMaxAsyncBodyBytes(cap300+1, cap300), ErrMaxAsyncBodyBytesInvalid)
+	require.ErrorIs(t, ValidateMaxAsyncBodyBytes(0, cap300), ErrMaxAsyncBodyBytesInvalid)
+}
+
+func TestBodyLimitOrDefault(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, BodyLimitDefaultBytes, BodyLimitOrDefault(nil), "nil = настройка не задана")
+
+	v := 42 << 20
+	assert.Equal(t, v, BodyLimitOrDefault(&v))
+}
+
+// TestClampBodyLimit: значение из БД может оказаться выше потолка, если конфиг
+// снизили уже после сохранения настройки. Работаем по потолку и сообщаем, что
+// зажали, — вызывающий пишет об этом в лог.
+func TestClampBodyLimit(t *testing.T) {
+	t.Parallel()
+
+	const cap300 = 300 << 20
+
+	got, clamped := ClampBodyLimit(100<<20, cap300)
+	assert.Equal(t, 100<<20, got)
+	assert.False(t, clamped)
+
+	got, clamped = ClampBodyLimit(cap300, cap300)
+	assert.Equal(t, cap300, got)
+	assert.False(t, clamped, "равное потолку не зажимается")
+
+	got, clamped = ClampBodyLimit(400<<20, cap300)
+	assert.Equal(t, cap300, got)
+	assert.True(t, clamped)
+
+	got, clamped = ClampBodyLimit(400<<20, 0)
+	assert.Equal(t, 400<<20, got)
+	assert.False(t, clamped, "потолок не задан — не зажимаем")
+}

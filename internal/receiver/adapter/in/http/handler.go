@@ -19,42 +19,34 @@ import (
 
 // Handler — /v1/request/* и /v1/requestAsync/*.
 type Handler struct {
-	route        *usecase.RouteUsecase
-	routeAsync   *usecase.RouteAsyncUsecase
-	metrics      *metrics.Metrics
-	logger       logging.Logger
-	maxBodyBytes int
-	// maxAsyncBodyBytes — потолок тела для приёма в очередь (/requestAsync,
-	// /callback и sync-запрос к paused-узлу, §3.6). Ниже maxBodyBytes: async
-	// упирается не в память Receiver'а, а в размер сообщения Kafka —
-	// тело едет в конверте в base64 (+33%).
-	maxAsyncBodyBytes int
+	route      *usecase.RouteUsecase
+	routeAsync *usecase.RouteAsyncUsecase
+	metrics    *metrics.Metrics
+	logger     logging.Logger
+	// limits — действующие лимиты размера тела (§97). Не два числа, а
+	// провайдер: администратор меняет их в интерфейсе, и новое значение
+	// применяется без рестарта (секция general, Redis pub/sub). Пара
+	// (sync, async) читается атомарно — см. BodyLimitsProvider.Limits.
+	limits *usecase.BodyLimitsProvider
 }
 
-// New создаёт handler боевого трафика. maxBodyBytes — потолок тела sync-запроса,
-// maxAsyncBodyBytes — тела, принимаемого в очередь (см. поле). Значение
-// maxAsyncBodyBytes <= 0 трактуется как «отдельного лимита нет» и приравнивается
-// к maxBodyBytes — прежнее поведение с одним лимитом на оба пути.
+// New создаёт handler боевого трафика. limits — провайдер действующих лимитов
+// размера тела (§97); nil допустим и означает «дефолт домена на обоих путях».
+//
+// Нормализация лимитов («0 = дефолт», «async ≤ sync», зажатие потолком из
+// конфига) живёт в провайдере, а не здесь: async-потолок сравнивается с длиной
+// уже прочитанного тела (§3.6), и «0» на этой ветке означало бы «отвергать всё
+// непустое».
 func New(
 	route *usecase.RouteUsecase,
 	routeAsync *usecase.RouteAsyncUsecase,
-	maxBodyBytes int,
-	maxAsyncBodyBytes int,
+	limits *usecase.BodyLimitsProvider,
 	m *metrics.Metrics,
 	logger logging.Logger,
 ) *Handler {
-	// Нормализация ОБОИХ лимитов здесь, а не в readBody: async-потолок
-	// сравнивается с длиной уже прочитанного тела (§3.6), и «0 = дефолт»
-	// на этой ветке означало бы «отвергать всё непустое».
-	if maxBodyBytes <= 0 {
-		maxBodyBytes = defaultMaxBodyBytes
-	}
-	if maxAsyncBodyBytes <= 0 || maxAsyncBodyBytes > maxBodyBytes {
-		maxAsyncBodyBytes = maxBodyBytes
-	}
 	return &Handler{
 		route: route, routeAsync: routeAsync, metrics: m, logger: logger,
-		maxBodyBytes: maxBodyBytes, maxAsyncBodyBytes: maxAsyncBodyBytes,
+		limits: limits,
 	}
 }
 
@@ -239,7 +231,12 @@ func (h *Handler) handleSync(c *gin.Context, rest string) {
 	// трафик по короткому адресу виден в существующих панелях.
 	c.Set(metrics.RootMethodLabelKey, string(domain.RootMethodRequest))
 
-	body, err := readBody(c, h.maxBodyBytes)
+	// Пара лимитов читается ОДНИМ снимком: ниже, на ветке paused-узла (§3.6),
+	// нужен async-лимит, и он обязан быть из той же версии настроек, что и
+	// sync-лимит, по которому тело уже прочитано.
+	syncLimit, asyncLimit := h.limits.Limits()
+
+	body, err := readBody(c, syncLimit)
 	if err != nil {
 		replyReadBodyError(c, err) // §43-rev: превышение max_body_bytes → 413
 		return
@@ -264,11 +261,11 @@ func (h *Handler) handleSync(c *gin.Context, rest string) {
 			// здесь действует АСИНХРОННЫЙ потолок — иначе тело было бы принято
 			// (200 клиенту), а затем отвергнуто брокером при публикации, то есть
 			// потеряно молча.
-			if len(in.Body) > h.maxAsyncBodyBytes {
+			if len(in.Body) > asyncLimit {
 				h.logger.Warn("sync request to paused node exceeds async body limit",
 					h.logger.Str("node", nodePath),
 					h.logger.Int("body_len", len(in.Body)),
-					h.logger.Int("limit", h.maxAsyncBodyBytes))
+					h.logger.Int("limit", asyncLimit))
 				replyReadBodyError(c, errBodyTooLargeForQueue)
 				return
 			}
@@ -319,7 +316,7 @@ func (h *Handler) handleCallback(c *gin.Context, rest string) {
 	// §78.2: собственная метка method вместо прежнего fallback'а по имени
 	// маршрута — c.FullPath() теперь один на все формы адреса.
 	c.Set(metrics.RootMethodLabelKey, metrics.RootMethodCallback)
-	body, err := readBody(c, h.maxAsyncBodyBytes)
+	body, err := readBody(c, h.limits.Async())
 	if err != nil {
 		replyReadBodyError(c, err) // §43-rev: превышение max_async_body_bytes → 413
 		return
@@ -359,7 +356,7 @@ func (h *Handler) handleAsync(c *gin.Context, rest string) {
 	// sync-узел на паузе уходит в async-ветку (§3.6), но остаётся "request" —
 	// ровно как метился по имени маршрута до §78.
 	c.Set(metrics.RootMethodLabelKey, string(domain.RootMethodRequestAsync))
-	body, err := readBody(c, h.maxAsyncBodyBytes)
+	body, err := readBody(c, h.limits.Async())
 	if err != nil {
 		replyReadBodyError(c, err) // §43-rev: превышение max_async_body_bytes → 413
 		return
@@ -445,8 +442,14 @@ var errBodyTooLargeForQueue = errors.New("request body too large for queued deli
 // защита от slow/DoS-дренажа.
 const drainCap = 8 << 20 // 8 МиБ
 
-// defaultMaxBodyBytes — потолок тела, когда лимит не задан конфигом (5 МиБ).
-// Совпадает с дефолтом receiver.max_body_bytes в platform/config.
+// defaultMaxBodyBytes — последний рубеж readBody: потолок, если ему передали
+// неположительный лимит (5 МиБ, совпадает с дефолтом receiver.max_body_bytes в
+// platform/config).
+//
+// В боевом пути сюда не попадают: действующий лимит приходит из
+// BodyLimitsProvider (§97), а тот разворачивает «не задано» в дефолт домена
+// (100 МиБ). Константа осталась страховкой на случай прямого вызова readBody —
+// без неё нулевой лимит означал бы «отвергать всё непустое».
 const defaultMaxBodyBytes = 5 * 1024 * 1024
 
 func readBody(c *gin.Context, max int) ([]byte, error) {

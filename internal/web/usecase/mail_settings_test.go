@@ -23,7 +23,7 @@ func TestAppSettings_GetMasksMailPassword(t *testing.T) {
 			Password: new("real-smtp-password"),
 		},
 	}}
-	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false, logging.NewNoop())
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false, 0, 0, logging.NewNoop())
 
 	got, err := uc.Get(context.Background())
 	require.NoError(t, err)
@@ -151,7 +151,7 @@ func TestAppSettings_Update_MailPublishesReload(t *testing.T) {
 		&fakeAppSettingsRepo{current: &domain.AppSettings{
 			Mail: domain.MailSettings{Host: new("smtp.example.com"), FromAddress: new("nexus@example.com")},
 		}},
-		NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, false, logging.NewNoop())
+		NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, false, 0, 0, logging.NewNoop())
 
 	require.NoError(t, uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
 		Mail: domain.MailSettings{Enabled: new(true)},
@@ -179,7 +179,7 @@ func TestAppSettings_Update_MailValidationRejects(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
-			uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false, logging.NewNoop())
+			uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false, 0, 0, logging.NewNoop())
 
 			err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{Mail: tt.patch})
 
@@ -201,7 +201,7 @@ func TestAppSettings_Update_MailConsistencyUsesMergedValue(t *testing.T) {
 			FromAddress: new("nexus@example.com"),
 		}}}
 		pub := &fakeReloadPublisher{}
-		uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, false, logging.NewNoop())
+		uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, false, 0, 0, logging.NewNoop())
 
 		err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
 			Mail: domain.MailSettings{Enabled: new(true)},
@@ -215,7 +215,7 @@ func TestAppSettings_Update_MailConsistencyUsesMergedValue(t *testing.T) {
 	t.Run("включение без хоста отклоняется", func(t *testing.T) {
 		t.Parallel()
 		repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
-		uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false, logging.NewNoop())
+		uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false, 0, 0, logging.NewNoop())
 
 		err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
 			Mail: domain.MailSettings{Enabled: new(true), FromAddress: new("nexus@example.com")},
@@ -228,7 +228,7 @@ func TestAppSettings_Update_MailConsistencyUsesMergedValue(t *testing.T) {
 	t.Run("восстановление без включённой почты отклоняется", func(t *testing.T) {
 		t.Parallel()
 		repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
-		uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false, logging.NewNoop())
+		uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false, 0, 0, logging.NewNoop())
 
 		err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
 			Mail: domain.MailSettings{PasswordResetEnabled: new(true)},

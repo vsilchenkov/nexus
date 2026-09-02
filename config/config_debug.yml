@@ -1,17 +1,22 @@
-# Nexus — конфиг для локальной отладки (Windows + docker-compose).
-#
-# Значения подключения к зависимостям подставляются из .env через
-# ${VAR:default}. Дефолты соответствуют сервисам, поднятым в
-# docker-compose.yml в корне репозитория (postgres / redis / clickhouse /
-# kafka). При запуске под `cmd/* --debug` бинарь читает этот файл и
-# подставляет переменные окружения; envFile из .vscode/launch.json
-# поставляет реальные значения.
-#
-# Если меняешь имена переменных — синхронизируй с .env.example.
+# Nexus — конфиг для локальной отладки.
+# Зависимости подняты в docker-compose.dev.yml на localhost.
+
+# §70: идентификатор ноды. Локально пусто — поведение как у единственной ноды.
+# Для отладки второй ноды на общем ClickHouse: id: kz → БД nexus_kz_<slug>.
+instance:
+  id: ${NEXUS_INSTANCE_ID:}
+  adopt_unowned: ${NEXUS_ADOPT:false}
 
 build:
   project_name: nexus
-  version: ${VERSION:dev}
+  # version не задаётся: вшивается из git-ldflags (make build / go run через -X).
+  # Без ldflags fallback на versioninfo.json (0.0.0-dev).
+
+# Остановка сервиса (§93.5). На локальной машине дренаж не нужен — выводить из
+# ротации некуда, а лишние секунды на каждом перезапуске мешают.
+shutdown:
+  drain_sec: -1
+  timeout_sec: 15
 
 logging:
   level: 5              # debug
@@ -20,39 +25,31 @@ logging:
   debug: true
 
 sentry:
-  use: ${SENTRY_USE:false}
-  dsn: ${SENTRY_DSN:}
-  environment: ${SENTRY_ENVIRONMENT:dev}
+  use: false
+  dsn: ""
+  environment: dev
   level: 2
   attach_stacktrace: true
   enable_tracing: false
   traces_sample_rate: 0.0
   debug: false
 
-otel:
-  enable:        ${OTEL_ENABLE:false}
-  otlp_endpoint: ${OTEL_OTLP_ENDPOINT:localhost:4318}
-  otlp_insecure: ${OTEL_OTLP_INSECURE:true}
-  sample_rate:   ${OTEL_SAMPLE_RATE:0.1}
-  service_name:  ${OTEL_SERVICE_NAME:}
-  environment:   ${OTEL_ENVIRONMENT:dev}
-
 postgres:
-  host: ${PG_HOST:localhost}
-  port: ${PG_PORT:5432}
-  database: ${PG_DATABASE:postgres}
-  user: ${PG_USER:postgres}
-  password: ${PG_PASSWORD:vOkjDn}
+  host: localhost
+  port: 5432
+  database: nexus
+  user: postgres
+  password: vOkjDn
   max_open_conns: 10
   max_idle_conns: 2
   conn_max_lifetime_min: 30
 
 redis:
-  host: ${REDIS_HOST:localhost}
-  port: ${REDIS_PORT:6379}
-  db: ${REDIS_DB:0}
-  username: ${REDIS_USER:sa}
-  password: ${REDIS_PASSWORD:I2MV5s}
+  host: localhost
+  port: 6379
+  db: 0
+  username: sa
+  password: I2MV5s
   pool_size: 10
   min_idle_conns: 2
   dial_timeout_ms: 2000
@@ -63,35 +60,40 @@ redis:
   ratelimit_window_sec: 60
 
 clickhouse:
-  # ВАЖНО: TCP-порт ClickHouse в docker-compose проброшен как 19000:9000.
-  # HTTP-порт — 18123:8123 (не используется коннектором clickhouse-go).
-  host: ${CH_HOST:localhost}
-  port: ${CH_PORT:19000}
-  database: ${CH_DATABASE:nexus_default}
-  user: ${CH_USER:default}
-  password: ${CH_PASSWORD:}
+  host: localhost
+  port: 19000
+  database: nexus_default
+  user: default
+  password: ""
   batch_size: 100
   flush_interval_sec: 2
   buffer_max_size: 10000
   workers: 1
 
+# Локально Prometheus поднимается профилем metrics; по умолчанию выключен,
+# поэтому url пуст — метрики панели деградируют (см. DEVELOPMENT.md).
+prometheus:
+  # services-стек: Prometheus в docker на хосте, порт 9099→9090 (контейнер prometheus).
+  # Можно переопределить через ENV PROMETHEUS_URL.
+  url: ${PROMETHEUS_URL:http://localhost:9099}
+  timeout_ms: 5000
+
 kafka:
-  brokers: ${KAFKA_BROKERS:localhost:9092}
+  brokers: localhost:9092
   async_topic: nexus.async
   dlq_topic: nexus.async.dlq
+  paused_topic: nexus.async.paused
   consumer_group: nexus-sender-dev
   topic:
-    partitions: 1
-    # single-broker docker-compose → RF=1, ISR=1 (см. примечание в
-    # config.example.yml). Любое больше — InvalidReplicationFactor.
-    replication_factor: ${KAFKA_TOPIC_REPLICATION_FACTOR:1}
-    min_insync_replicas: ${KAFKA_TOPIC_MIN_INSYNC_REPLICAS:1}
-    retention_ms: 2592000000
-    retention_bytes: -1
-    segment_ms: 86400000
+    partitions: 8                        # Число партиций топика = потолок параллелизма обработки (min с consumer.instances). Боевое значение с 2026-08-07 (§80.1: узлы конкурировали за партицию, лаг рос до 3.3k). Увеличивается без пересоздания (kafka-topics --alter; процедура и её цена — DEPLOYMENT.md, «Увеличение числа ПАРТИЦИЙ»), уменьшить нельзя.
+    replication_factor: 1
+    min_insync_replicas: 1
+    retention_ms: 604800000       # 7 дней (неделя)
+    retention_bytes: 42949672960  # 40 ГиБ — лимит на ПАРТИЦИЮ (суммарно = ×partitions)
+    segment_ms: 86400000          # 1 день
     cleanup_policy: delete
     compression_type: lz4
-    max_message_bytes: 10485760
+    max_message_bytes: 469762048 # 448 МиБ — как на бою: держит async-тело 300 МиБ в base64-конверте (~420 МиБ)
   producer:
     acks: all
     compression_type: lz4
@@ -107,37 +109,47 @@ kafka:
     auto_offset_reset: earliest
     enable_auto_commit: false
     fetch_min_bytes: 1
-    fetch_max_bytes: 52428800
-    max_partition_fetch_bytes: 10485760
+    fetch_max_bytes: 536870912  # 512 МиБ; ≥ topic.max_message_bytes
+    max_partition_fetch_bytes: 469762048 # 448 МиБ; ≥ topic.max_message_bytes
     session_timeout_ms: 30000
     heartbeat_interval_ms: 10000
     max_poll_records: 100
     max_poll_interval_ms: 300000
     isolation_level: read_committed
-    instances: 1
+    instances: 8                # Число consumer-инстансов (горутин-readers) в этом процессе. Активны min(instances, partitions) — при instances < partitions часть партиций простаивает. Держи = topic.partitions при одной реплике Sender, либо дели партиции между репликами. Параметр общий для ВСЕХ групп Sender'а (async, dlq-reprocess, clog-retry).
 
 receiver:
   http_addr: :8080
-  read_timeout_ms: 60000
+  read_timeout_ms: 600000 # 10 мин: ВКЛЮЧАЕТ приём тела (300 МиБ на канале 10 Мбит/с едут ~250 с)
   # Должен превышать максимальный timeout_ms узла (600000) — иначе долгий
   # sync-запрос рвётся Receiver'ом до записи ответа (Web-прокси видит EOF).
   write_timeout_ms: 610000
   idle_timeout_sec: 120
-  max_body_bytes: 5242880
+  max_body_bytes: 314572800 # 300 МиБ — SYNC (/api/v1/request/*): ограничен gRPC (384 МиБ) и памятью, очередь не используется С 1.34.0 это ПОТОЛОК, а не действующий лимит (§97): фактическое значение задаёт администратор в «Настройки → Общие» (по умолчанию 100 МиБ) и меняет без рестарта, выше потолка задать нельзя.
+  max_async_body_bytes: 314572800 # 300 МиБ — ASYNC: 300 × 1.4 ≈ 420 МиБ < topic 448 МиБ С 1.34.0 это ПОТОЛОК, а не действующий лимит (§97): фактическое значение задаёт администратор в «Настройки → Общие» (по умолчанию 100 МиБ) и меняет без рестарта, выше потолка задать нельзя.
   max_header_bytes: 1048576
   rate_limit_per_node: 0
+  max_hops: 5
   sender_grpc:
     addr: localhost:9190
     pool_size: 2
     timeout_ms: 60000
     keepalive_time_sec: 30
     keepalive_timeout_sec: 10
+    max_message_bytes: 402653184 # §42: лимит gRPC-сообщения клиента (оба напр.) = 384 МиБ (≥ max_body_bytes 300 МиБ + запас).
   swagger_enabled: true
+  # §94: журнал отказов на входе. Срок хранения и включение — в настройках UI.
+  reject_log:
+    disabled: false
+    flush_interval_sec: 10
+    queue_size: 4096
+    max_groups: 2000
 
 sender:
   grpc_addr: :9190
   admin_http_addr: :9091
   grpc_max_concurrent_streams: 100
+  grpc_max_message_bytes: 402653184 # §42: лимит gRPC-сообщения сервера (оба напр.) = 384 МиБ.
   http_client:
     timeout_ms: 60000
     max_idle_conns: 20
@@ -146,18 +158,68 @@ sender:
     dial_timeout_ms: 5000
     tls_handshake_timeout_ms: 5000
   workers: 10
+  # §36: авто-репроцессор DLQ. На dev-стенде короткий интервал — быстрее видеть
+  # повторы при ручной проверке восстановления приёмника.
+  reprocessor:
+    disabled: false
+    interval_sec: 30
+    max_scan: 500
+  # §3.6: sweeper delay-топика paused-узлов. На dev-стенде 5с — чтобы после
+  # снятия паузы бэклог уходил почти сразу и это было видно в UI.
+  paused_sweep:
+    disabled: false
+    interval_sec: 5
+    max_scan: 500
+  # §67: reverse-DNS client_host. На dev-стенде короткие TTL — быстрее видеть
+  # обновления при ручных проверках.
+  rdns:
+    disabled: false
+    timeout_ms: 2000
+    cache_ttl_sec: 300
+    negative_ttl_sec: 60
+  # §81.3: circuit breaker узла — сколько отказов подряд закрывают доставку и
+  # сколько ждать до пробного запроса. Отказом считается 5xx, истёкший
+  # timeout_ms узла или отказ соединения; уход клиента шины отказом НЕ считается
+  # (§81.2). Значения можно переопределить на конкретном узле в его карточке —
+  # пустое поле там означает «как здесь».
+  circuit_breaker:
+    threshold: 5                 # Отказов подряд до открытия защиты.
+    cooldown_sec: 30             # Пауза до одного пробного запроса.
+  # §82.1: допустимый темп keepalive-ping'ов клиентов. См. комментарий в
+  # config.yml — без секции sync-запрос рвётся на 4×keepalive_time_sec.
+  grpc_keepalive:
+    enforcement_min_time_sec: 5  # Должен быть ≤ receiver.sender_grpc.keepalive_time_sec (30).
+    deny_ping_without_stream: false
 
 web:
   http_addr: :8000
+  idle_timeout_sec: 120
+  # Единый вход: Web реверс-проксирует /api/v1/request|requestAsync|callback
+  # в Receiver. Локально Receiver слушает на localhost:8080.
+  receiver_url: http://localhost:8080
+  # §55: реальный режим dry-run — Web вызывает target через Sender.
+  sender_grpc:
+    addr: localhost:9190
+    pool_size: 2
+    timeout_ms: 60000
+    max_message_bytes: 402653184 # 384 МиБ — как у receiver.sender_grpc (dry-run §55 ходит тем же путём)
   session_cookie_name: nexus_session
-  session_cookie_secure: false
+  # §90.2: true безопасно и для локальной разработки по http — Secure ставится
+  # только когда запрос реально пришёл по HTTPS.
+  session_cookie_secure: true
   session_cookie_samesite: lax
   audit_retention_days: 30
   replay_rate_limit_per_user_per_min: 100
+  metrics_exact_chart_max_records: 2000000     # §79.5: до скольких записей окна график узла строится точной формой (столбец = записи по интервалу прихода). Сверх — счёт по прогонам с пометкой chart_unit=attempts.
   nodes_soft_limit: 1000
   nodes_hard_limit: 5000
+  node_default_max_body_size: 50000             # §64: дефолт «Макс. размер тела» в форме создания узла.
   api_token_rate_limit_per_min: 1000
+  # §73: реестр инстансов. На стенде соседи локальные — таймаут можно оставить
+  # дефолтным, а лимит проверок поднять, чтобы кнопка «Проверить» не упиралась.
+  instance_probe_timeout_ms: 3000
+  instance_probe_rate_limit_per_min: 1000
+  password_reset_rate_limit_per_min: 1000       # §88.4.4: на стенде лимит фактически снят.
   swagger_enabled: true
-  receiver_url: ${RECEIVER_URL:http://localhost:8080}
-  dev_mode: true                 # §85.8: отладочная установка — форма входа подставляет логин `admin`.
-                                 # На бою ключ либо false, либо отсутствует (дефолт false) — префилла нет.
+  allow_version_override: true                   # §34.3: dev — разрешаем ручной override версии в настройках.
+  dev_mode: true                                 # §85.8: стенд — форма входа подставляет логин `admin` (на бою префилла нет).

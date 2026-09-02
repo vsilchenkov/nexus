@@ -293,4 +293,15 @@ var (
 	// ErrRejectedRetentionInvalid — срок хранения журнала отказов вне
 	// [0, 365] дней; ноль допустим и означает «сбор выключен» (§94.5).
 	ErrRejectedRetentionInvalid = errors.New("domain: rejected requests retention days must be 0..365")
+
+	// Настраиваемые лимиты размера тела (§97)
+	// ErrMaxBodyBytesInvalid — рабочий лимит sync-тела вне допустимого
+	// диапазона: меньше минимума или больше потолка из конфига.
+	ErrMaxBodyBytesInvalid = errors.New("domain: max_body_bytes is out of allowed range")
+	// ErrMaxAsyncBodyBytesInvalid — то же для async-тела.
+	ErrMaxAsyncBodyBytesInvalid = errors.New("domain: max_async_body_bytes is out of allowed range")
+	// ErrAsyncBodyLimitOverSync — async-лимит больше sync-лимита. Запрещено:
+	// sync-запрос к узлу на паузе (§3.6) уходит в очередь и режется
+	// async-лимитом, поэтому async выше sync не имеет смысла.
+	ErrAsyncBodyLimitOverSync = errors.New("domain: max_async_body_bytes must not exceed max_body_bytes")
 )
