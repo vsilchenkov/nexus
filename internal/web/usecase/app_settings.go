@@ -32,15 +32,27 @@ type AppSettingsUsecase struct {
 	// allowVersionOverride — гейт §34.3: при false запись general.version_override
 	// отклоняется (прод). Значение из cfg.Web.AllowVersionOverride.
 	allowVersionOverride bool
+	// maxBodyBytesCap / maxAsyncBodyBytesCap — ПОТОЛКИ рабочих лимитов тела
+	// (§97) из конфига (receiver.max_body_bytes / max_async_body_bytes). Выше
+	// потолка администратор задать лимит не может: под потолок настроены
+	// инфраструктура (nginx, gRPC, Kafka) и память сервисов. 0 = потолок не
+	// задан, проверяется только нижняя граница.
+	maxBodyBytesCap      int
+	maxAsyncBodyBytesCap int
 	logger               logging.Logger
 }
 
-func NewAppSettingsUsecase(repo port.AppSettingsRepo, audit *AuditUsecase, publisher ReloadPublisher, allowVersionOverride bool, logger logging.Logger) *AppSettingsUsecase {
+// NewAppSettingsUsecase создаёт usecase настроек. maxBodyBytesCap и
+// maxAsyncBodyBytesCap — потолки рабочих лимитов тела из конфига (§97);
+// 0 означает «потолок не задан».
+func NewAppSettingsUsecase(repo port.AppSettingsRepo, audit *AuditUsecase, publisher ReloadPublisher, allowVersionOverride bool, maxBodyBytesCap, maxAsyncBodyBytesCap int, logger logging.Logger) *AppSettingsUsecase {
 	return &AppSettingsUsecase{
 		repo:                 repo,
 		audit:                audit,
 		publisher:            publisher,
 		allowVersionOverride: allowVersionOverride,
+		maxBodyBytesCap:      maxBodyBytesCap,
+		maxAsyncBodyBytesCap: maxAsyncBodyBytesCap,
 		logger:               logger,
 	}
 }
@@ -109,6 +121,17 @@ func (u *AppSettingsUsecase) Update(ctx context.Context, actor Actor, patch *dom
 			return err
 		}
 	}
+	// §97: рабочие лимиты тела — в пределах потолка из конфига.
+	if patch.General.MaxBodyBytes != nil {
+		if err := domain.ValidateMaxBodyBytes(*patch.General.MaxBodyBytes, u.maxBodyBytesCap); err != nil {
+			return err
+		}
+	}
+	if patch.General.MaxAsyncBodyBytes != nil {
+		if err := domain.ValidateMaxAsyncBodyBytes(*patch.General.MaxAsyncBodyBytes, u.maxAsyncBodyBytesCap); err != nil {
+			return err
+		}
+	}
 	// §34.3: override версии разрешён только в dev (web.allow_version_override).
 	if patch.General.VersionOverride != nil && !u.allowVersionOverride {
 		return domain.ErrVersionOverrideForbidden
@@ -141,6 +164,12 @@ func (u *AppSettingsUsecase) Update(ctx context.Context, actor Actor, patch *dom
 	// приходит один флаг enabled, а хост уже сохранён ранее).
 	if err := domain.ValidateMailConsistency(merged.Mail); err != nil {
 		return err
+	}
+	// §97: async-лимит не может быть выше sync — по той же причине, что и у
+	// почты, проверяем по СМЕРЖЕННОМУ объекту: патч может нести только одно из
+	// двух полей, а второе уже сохранено ранее.
+	if domain.BodyLimitOrDefault(merged.General.MaxAsyncBodyBytes) > domain.BodyLimitOrDefault(merged.General.MaxBodyBytes) {
+		return domain.ErrAsyncBodyLimitOverSync
 	}
 	merged.UpdatedBy = actor.UserID
 
@@ -196,6 +225,12 @@ func mergeAppSettings(current, patch *domain.AppSettings) *domain.AppSettings {
 		out.General.MetricsApproxCounts = patch.General.MetricsApproxCounts
 	}
 	// §94.5: срок хранения журнала отказов, не секрет.
+	if patch.General.MaxBodyBytes != nil {
+		out.General.MaxBodyBytes = patch.General.MaxBodyBytes
+	}
+	if patch.General.MaxAsyncBodyBytes != nil {
+		out.General.MaxAsyncBodyBytes = patch.General.MaxAsyncBodyBytes
+	}
 	if patch.General.RejectedRetentionDays != nil {
 		out.General.RejectedRetentionDays = patch.General.RejectedRetentionDays
 	}
@@ -347,7 +382,8 @@ func changedSections(p *domain.AppSettings) []string {
 	// отказов в Web и Receiver) слушают именно её.
 	if p.General.PublicBaseURL != nil || p.General.VersionOverride != nil ||
 		p.General.MetricsRefetchMs != nil || p.General.MetricsApproxCounts != nil ||
-		p.General.RejectedRetentionDays != nil {
+		p.General.RejectedRetentionDays != nil ||
+		p.General.MaxBodyBytes != nil || p.General.MaxAsyncBodyBytes != nil {
 		out = append(out, "general")
 	}
 	if p.Security.SessionTTLSeconds != nil {

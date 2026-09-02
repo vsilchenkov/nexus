@@ -305,7 +305,8 @@ func (a *App) Start(ctx context.Context) error {
 
 	appSettingsRepo := pgrepo.NewAppSettingsRepoPg(a.pg, a.cipher, a.logger)
 	reloadPublisher := reloader.NewPublisher(a.redis)
-	appSettingsUC := usecase.NewAppSettingsUsecase(appSettingsRepo, auditUC, reloadPublisher, a.cfg.Web.AllowVersionOverride, a.logger)
+	appSettingsUC := usecase.NewAppSettingsUsecase(appSettingsRepo, auditUC, reloadPublisher, a.cfg.Web.AllowVersionOverride,
+		a.cfg.Receiver.MaxBodyBytes, a.cfg.Receiver.MaxAsyncBodyBytes, a.logger)
 
 	// Версия приложения (§30/§34.3): публичный эндпоинт на корневом движке (вне
 	// auth-группы) — SPA показывает версию в футере (+ commit/build_date в
@@ -420,6 +421,8 @@ func (a *App) Start(ctx context.Context) error {
 	appSettingsHandler := httpadapter.NewAppSettingsHandler(
 		appSettingsUC, settingsTester, a.cfg.Web.NodeDefaultMaxBodySize,
 		a.identity.ID.CHDatabasePrefix(), // §70.8: предпросмотр имени БД команды
+		// §97: потолки рабочих лимитов тела — форма показывает их и не даёт превысить.
+		a.cfg.Receiver.MaxBodyBytes, a.cfg.Receiver.MaxAsyncBodyBytes,
 		a.logger)
 
 	// §51: консоль служебных логов — хвост Redis-колец nexus:logs:* трёх

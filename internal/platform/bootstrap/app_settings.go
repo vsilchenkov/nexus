@@ -43,10 +43,13 @@ type appSettingsOverlay struct {
 	Logging struct {
 		Level *int `json:"level,omitempty"`
 	} `json:"logging"`
-	// §94.5: срок хранения журнала отказов. Receiver'у из всей секции нужен
-	// только он — по значению 0 сбор выключается.
+	// §94.5: срок хранения журнала отказов (0 — сбор выключается) и §97:
+	// рабочие лимиты размера тела. Из всей секции general не-Web-сервисам
+	// нужны только эти поля.
 	General struct {
 		RejectedRetentionDays *int `json:"rejected_retention_days,omitempty"`
+		MaxBodyBytes          *int `json:"max_body_bytes,omitempty"`
+		MaxAsyncBodyBytes     *int `json:"max_async_body_bytes,omitempty"`
 	} `json:"general"`
 }
 

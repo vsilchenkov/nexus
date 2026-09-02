@@ -75,8 +75,9 @@ func newSettingsRouter(t *testing.T, repo *fakeSettingsRepo, pub *capturePublish
 	t.Helper()
 	uc := usecase.NewAppSettingsUsecase(
 		repo, usecase.NewAuditUsecase(nopAuditRepo{}, logging.NewNoop()), pub,
-		allowVersionOverride, logging.NewNoop())
-	h := NewAppSettingsHandler(uc, nil, testNodeDefaultMaxBodySize, "nexus_kz_", logging.NewNoop())
+		allowVersionOverride, testMaxBodyBytesCap, testMaxAsyncBodyBytesCap, logging.NewNoop())
+	h := NewAppSettingsHandler(uc, nil, testNodeDefaultMaxBodySize, "nexus_kz_",
+		testMaxBodyBytesCap, testMaxAsyncBodyBytesCap, logging.NewNoop())
 	r := gin.New()
 	r.GET("/api/settings/app", h.Get)
 	r.GET("/api/settings/public", h.GetPublic)
@@ -87,6 +88,14 @@ func newSettingsRouter(t *testing.T, repo *fakeSettingsRepo, pub *capturePublish
 // testNodeDefaultMaxBodySize — значение web.node_default_max_body_size в тестах
 // (§64); отличается от боевого дефолта 50000, чтобы поймать захардкоженное.
 const testNodeDefaultMaxBodySize = 12345
+
+// Потолки рабочих лимитов тела в тестах (§97). Значения намеренно не круглые и
+// не равны дефолту домена: так тест ловит захардкоженную константу вместо
+// значения из конфига.
+const (
+	testMaxBodyBytesCap      = 300 << 20
+	testMaxAsyncBodyBytesCap = 200 << 20
+)
 
 // §64: форма создания узла берёт дефолт «Макс. размер тела» из публичных
 // настроек — значение приходит из конфига, а не из app_settings.

@@ -186,3 +186,33 @@ func TestApplyLogLevelFromOverlay_IdempotentAndNilSafe(t *testing.T) {
 		applyLogLevelFromOverlay(o, nil) // nil-контроллер — no-op
 	})
 }
+
+// §97: Receiver применяет рабочие лимиты тела из app_settings, поэтому оба поля
+// обязаны быть в узком overlay. Без них reloader молча ставил бы дефолт, и
+// настройка из интерфейса не доезжала бы до приёма запросов.
+func TestDecodeAppSettings_BodyLimits(t *testing.T) {
+	t.Parallel()
+
+	raw := `{"general":{"max_body_bytes":157286400,"max_async_body_bytes":104857600,"rejected_retention_days":7}}`
+	o, err := decodeAppSettings([]byte(raw), nil, logging.NewNoop())
+	require.NoError(t, err)
+	require.NotNil(t, o)
+
+	require.NotNil(t, o.General.MaxBodyBytes)
+	assert.Equal(t, 157286400, *o.General.MaxBodyBytes)
+	require.NotNil(t, o.General.MaxAsyncBodyBytes)
+	assert.Equal(t, 104857600, *o.General.MaxAsyncBodyBytes)
+	require.NotNil(t, o.General.RejectedRetentionDays, "соседнее поле секции не потеряно")
+	assert.Equal(t, 7, *o.General.RejectedRetentionDays)
+}
+
+// Настройка не задана — поля nil, вызывающий разворачивает их в дефолт домена.
+func TestDecodeAppSettings_BodyLimitsAbsent(t *testing.T) {
+	t.Parallel()
+
+	o, err := decodeAppSettings([]byte(`{"general":{}}`), nil, logging.NewNoop())
+	require.NoError(t, err)
+	require.NotNil(t, o)
+	assert.Nil(t, o.General.MaxBodyBytes)
+	assert.Nil(t, o.General.MaxAsyncBodyBytes)
+}

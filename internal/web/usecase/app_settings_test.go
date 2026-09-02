@@ -138,7 +138,7 @@ func TestAppSettingsUsecase_GetMasksSecrets(t *testing.T) {
 			ClickHouse: domain.ClickHouseSettings{Password: &realPwd},
 		},
 	}
-	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false, logging.NewNoop())
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false, 0, 0, logging.NewNoop())
 
 	got, err := uc.Get(context.Background())
 	require.NoError(t, err)
@@ -161,7 +161,7 @@ func TestAppSettingsUsecase_UpdateMergesAndAudits(t *testing.T) {
 	}
 	audit := &fakeAuditRepo{}
 	pub := &fakeReloadPublisher{}
-	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(audit, logging.NewNoop()), pub, false, logging.NewNoop())
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(audit, logging.NewNoop()), pub, false, 0, 0, logging.NewNoop())
 
 	err := uc.Update(context.Background(), Actor{UserID: "u-1"}, &domain.AppSettings{
 		Sentry: domain.SentrySettings{Environment: &envNew},
@@ -189,7 +189,7 @@ func TestAppSettings_GetMasksBotToken(t *testing.T) {
 			BotToken: new("123456:secret-bot-token"),
 		}},
 	}}
-	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false, logging.NewNoop())
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false, 0, 0, logging.NewNoop())
 
 	got, err := uc.Get(context.Background())
 	require.NoError(t, err)
@@ -223,7 +223,7 @@ func TestChangedSections_Notifications(t *testing.T) {
 func TestAppSettings_Update_InvalidCron(t *testing.T) {
 	t.Parallel()
 	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
-	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false, logging.NewNoop())
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false, 0, 0, logging.NewNoop())
 
 	err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
 		Notifications: domain.NotificationsSettings{Telegram: domain.TelegramSettings{Cron: new("not a cron")}},
@@ -236,7 +236,7 @@ func TestAppSettings_Update_ValidCron(t *testing.T) {
 	t.Parallel()
 	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
 	pub := &fakeReloadPublisher{}
-	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, false, logging.NewNoop())
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, false, 0, 0, logging.NewNoop())
 
 	err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
 		Notifications: domain.NotificationsSettings{Telegram: domain.TelegramSettings{
@@ -254,7 +254,7 @@ func TestAppSettings_Update_ValidCron(t *testing.T) {
 func TestAppSettings_VersionOverride_GatedInProd(t *testing.T) {
 	t.Parallel()
 	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
-	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false, logging.NewNoop())
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false, 0, 0, logging.NewNoop())
 
 	err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
 		General: domain.GeneralSettings{VersionOverride: new("dev-local")},
@@ -269,7 +269,7 @@ func TestAppSettings_VersionOverride_AllowedInDev(t *testing.T) {
 	t.Parallel()
 	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
 	pub := &fakeReloadPublisher{}
-	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, true, logging.NewNoop())
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, true, 0, 0, logging.NewNoop())
 
 	err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
 		General: domain.GeneralSettings{VersionOverride: new("dev-local")},
@@ -293,7 +293,7 @@ func TestAppSettings_SessionTTL_MergeAndSection(t *testing.T) {
 	t.Parallel()
 	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
 	pub := &fakeReloadPublisher{}
-	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, false, logging.NewNoop())
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, false, 0, 0, logging.NewNoop())
 
 	ttl := 7200
 	err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
@@ -310,7 +310,7 @@ func TestAppSettings_SessionTTL_MergeAndSection(t *testing.T) {
 func TestAppSettings_SessionTTL_Invalid(t *testing.T) {
 	t.Parallel()
 	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
-	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false, logging.NewNoop())
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false, 0, 0, logging.NewNoop())
 
 	tooSmall := 5
 	err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
@@ -327,7 +327,7 @@ func TestAppSettings_RejectedRetention_MergeAndSection(t *testing.T) {
 	t.Parallel()
 	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
 	pub := &fakeReloadPublisher{}
-	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, false, logging.NewNoop())
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, false, 0, 0, logging.NewNoop())
 
 	days := 7
 	err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
@@ -350,7 +350,7 @@ func TestAppSettings_RejectedRetention_ZeroIsValid(t *testing.T) {
 		General: domain.GeneralSettings{RejectedRetentionDays: &thirty},
 	}}
 	pub := &fakeReloadPublisher{}
-	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, false, logging.NewNoop())
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, false, 0, 0, logging.NewNoop())
 
 	zero := 0
 	err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
@@ -367,7 +367,7 @@ func TestAppSettings_RejectedRetention_Invalid(t *testing.T) {
 	t.Parallel()
 	for _, days := range []int{-1, domain.RejectedRetentionMaxDays + 1} {
 		repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
-		uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false, logging.NewNoop())
+		uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false, 0, 0, logging.NewNoop())
 		d := days
 		err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
 			General: domain.GeneralSettings{RejectedRetentionDays: &d},
@@ -424,7 +424,7 @@ func TestAppSettings_LogLevel_MergeAndPublish(t *testing.T) {
 	t.Parallel()
 	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
 	pub := &fakeReloadPublisher{}
-	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, false, logging.NewNoop())
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, false, 0, 0, logging.NewNoop())
 
 	err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
 		Logging: domain.LoggingSettings{Level: new(2)},
@@ -443,7 +443,7 @@ func TestAppSettings_LogLevel_Invalid(t *testing.T) {
 	for _, lvl := range []int{0, 1, 6, -3} {
 		repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
 		pub := &fakeReloadPublisher{}
-		uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, false, logging.NewNoop())
+		uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, false, 0, 0, logging.NewNoop())
 
 		err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
 			Logging: domain.LoggingSettings{Level: &lvl},
@@ -528,4 +528,90 @@ func (f *fakeReloadPublisher) Publish(_ context.Context, s reloader.Section) err
 	defer f.mu.Unlock()
 	f.sections = append(f.sections, string(s))
 	return nil
+}
+
+// §97: рабочий лимит тела не может превышать потолок из конфига.
+func TestAppSettings_Update_BodyLimitOverCap(t *testing.T) {
+	t.Parallel()
+	const cap300 = 300 << 20
+
+	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false,
+		cap300, cap300, logging.NewNoop())
+
+	err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
+		General: domain.GeneralSettings{MaxBodyBytes: new(cap300 + 1)},
+	})
+	assert.ErrorIs(t, err, domain.ErrMaxBodyBytesInvalid)
+	assert.Nil(t, repo.lastSaved, "значение выше потолка не должно сохраняться")
+}
+
+func TestAppSettings_Update_AsyncBodyLimitOverCap(t *testing.T) {
+	t.Parallel()
+	const capSync, capAsync = 300 << 20, 200 << 20
+
+	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false,
+		capSync, capAsync, logging.NewNoop())
+
+	err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
+		General: domain.GeneralSettings{MaxAsyncBodyBytes: new(capAsync + 1)},
+	})
+	assert.ErrorIs(t, err, domain.ErrMaxAsyncBodyBytesInvalid)
+	assert.Nil(t, repo.lastSaved)
+}
+
+// Межполевое правило проверяется по СМЕРЖЕННОМУ объекту: патч несёт только
+// async, а sync уже сохранён ранее — на самом патче правило не видно.
+func TestAppSettings_Update_AsyncOverSync_OnMergedValue(t *testing.T) {
+	t.Parallel()
+	const cap300 = 300 << 20
+
+	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{
+		General: domain.GeneralSettings{MaxBodyBytes: new(50 << 20)},
+	}}
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), nil, false,
+		cap300, cap300, logging.NewNoop())
+
+	err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
+		General: domain.GeneralSettings{MaxAsyncBodyBytes: new(100 << 20)},
+	})
+	assert.ErrorIs(t, err, domain.ErrAsyncBodyLimitOverSync)
+	assert.Nil(t, repo.lastSaved, "async выше sync не должен сохраняться")
+}
+
+// Валидное значение сохраняется и публикует секцию general — именно её слушает
+// Receiver, чтобы применить лимит без рестарта.
+func TestAppSettings_Update_BodyLimitsSavedAndPublished(t *testing.T) {
+	t.Parallel()
+	const cap300 = 300 << 20
+
+	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
+	pub := &fakeReloadPublisher{}
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, false,
+		cap300, cap300, logging.NewNoop())
+
+	require.NoError(t, uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
+		General: domain.GeneralSettings{
+			MaxBodyBytes:      new(150 << 20),
+			MaxAsyncBodyBytes: new(120 << 20),
+		},
+	}))
+
+	require.NotNil(t, repo.lastSaved)
+	require.NotNil(t, repo.lastSaved.General.MaxBodyBytes)
+	assert.Equal(t, 150<<20, *repo.lastSaved.General.MaxBodyBytes)
+	require.NotNil(t, repo.lastSaved.General.MaxAsyncBodyBytes)
+	assert.Equal(t, 120<<20, *repo.lastSaved.General.MaxAsyncBodyBytes)
+	assert.Equal(t, []string{"general"}, pub.sections)
+}
+
+func TestChangedSections_BodyLimits(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, []string{"general"}, changedSections(&domain.AppSettings{
+		General: domain.GeneralSettings{MaxBodyBytes: new(10 << 20)},
+	}))
+	assert.Equal(t, []string{"general"}, changedSections(&domain.AppSettings{
+		General: domain.GeneralSettings{MaxAsyncBodyBytes: new(10 << 20)},
+	}))
 }

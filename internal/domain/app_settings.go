@@ -155,6 +155,71 @@ type GeneralSettings struct {
 	// ошибка ~0.3%). Оператор включает приблизительный режим, когда узлов/данных
 	// много и точный distinct упирает ClickHouse в 100% CPU. Не секрет.
 	MetricsApproxCounts *bool `json:"metrics_approx_counts,omitempty"`
+
+	// MaxBodyBytes — РАБОЧИЙ лимит тела синхронного запроса (§97), байты.
+	// Отличать от потолка `receiver.max_body_bytes` в конфиге: конфиг говорит,
+	// сколько шина способна переварить физически (память сервисов, gRPC,
+	// nginx), а это значение — сколько администратор разрешает сегодня.
+	// nil = дефолт BodyLimitDefaultBytes. Больше потолка задать нельзя;
+	// значение, оказавшееся выше потолка (конфиг снизили после), зажимается
+	// потолком. Не секрет — Get() не маскирует.
+	MaxBodyBytes *int `json:"max_body_bytes,omitempty"`
+
+	// MaxAsyncBodyBytes — рабочий лимит тела асинхронного приёма (§97), байты:
+	// /requestAsync, /callback и sync-запрос к узлу на паузе (§3.6, он уходит
+	// в очередь). Обязан быть ≤ MaxBodyBytes. nil = дефолт
+	// BodyLimitDefaultBytes. Не секрет.
+	MaxAsyncBodyBytes *int `json:"max_async_body_bytes,omitempty"`
+}
+
+// Рабочие лимиты размера тела (§97): дефолт 100 МиБ, минимум 1 КиБ.
+// Верхняя граница не константа — её задаёт потолок из конфига
+// (receiver.max_body_bytes / receiver.max_async_body_bytes), поэтому
+// валидаторы принимают её параметром.
+const (
+	BodyLimitDefaultBytes = 100 << 20 // 100 МиБ
+	BodyLimitMinBytes     = 1 << 10   // 1 КиБ
+)
+
+// ValidateMaxBodyBytes проверяет рабочий лимит sync-тела (§97):
+// [BodyLimitMinBytes, maxAllowed], где maxAllowed — потолок из конфига.
+// Потолок ≤ 0 трактуется как «конфиг не задан» и проверяется только снизу:
+// падать из-за незаполненного потолка хуже, чем принять значение.
+func ValidateMaxBodyBytes(v, maxAllowed int) error {
+	if v < BodyLimitMinBytes || (maxAllowed > 0 && v > maxAllowed) {
+		return ErrMaxBodyBytesInvalid
+	}
+	return nil
+}
+
+// ValidateMaxAsyncBodyBytes — то же для async-тела (§97).
+func ValidateMaxAsyncBodyBytes(v, maxAllowed int) error {
+	if v < BodyLimitMinBytes || (maxAllowed > 0 && v > maxAllowed) {
+		return ErrMaxAsyncBodyBytesInvalid
+	}
+	return nil
+}
+
+// BodyLimitOrDefault разворачивает настройку в действующее значение:
+// nil → BodyLimitDefaultBytes. Вынесено в домен, чтобы Web (валидация и форма)
+// и Receiver (применение) понимали nil одинаково.
+func BodyLimitOrDefault(v *int) int {
+	if v == nil {
+		return BodyLimitDefaultBytes
+	}
+	return *v
+}
+
+// ClampBodyLimit зажимает рабочий лимит потолком из конфига и возвращает
+// признак того, что зажатие произошло. Нужен на стороне применения (§97):
+// значение в БД может оказаться выше потолка, если конфиг снизили уже после
+// сохранения настройки, — тогда работаем по потолку и предупреждаем в лог.
+// Потолок ≤ 0 означает «не задан» и не зажимает.
+func ClampBodyLimit(v, maxAllowed int) (int, bool) {
+	if maxAllowed > 0 && v > maxAllowed {
+		return maxAllowed, true
+	}
+	return v, false
 }
 
 // Интервал автообновления метрик (§44.C): дефолт 12с, диапазон 1с..120с.

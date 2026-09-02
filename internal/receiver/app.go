@@ -76,6 +76,11 @@ type App struct {
 	// nil, когда сбор выключен конфигурацией (receiver.reject_log.disabled).
 	rejectLog     *rejectlog.Collector
 	rejectLogDone <-chan struct{}
+
+	// bodyLimits — действующие лимиты размера тела (§97). Создаётся с потолками
+	// из конфига, рабочие значения приезжают из app_settings и меняются в
+	// интерфейсе без рестарта.
+	bodyLimits *usecase.BodyLimitsProvider
 }
 
 func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, cipher *crypto.Cipher, otelShutdown otelpf.ShutdownFunc, schema bootstrap.SchemaState, logger logging.Logger, logCtl *bootstrap.LogController) *App {
@@ -213,9 +218,13 @@ func (a *App) startRejectLog(ctx context.Context) {
 // buildHTTPRouter собирает gin-роутер: middleware, health/metrics и маршруты
 // шины под rate-limit.
 func (a *App) buildHTTPRouter(routeUC *usecase.RouteUsecase, routeAsyncUC *usecase.RouteAsyncUsecase) (*gin.Engine, error) {
+	// §97: конфиг задаёт ПОТОЛКИ, рабочие лимиты приходят из app_settings.
+	// До сида действует дефолт домена, зажатый потолком, — консервативно.
+	a.bodyLimits = usecase.NewBodyLimitsProvider(
+		a.cfg.Receiver.MaxBodyBytes, a.cfg.Receiver.MaxAsyncBodyBytes, a.logger)
 	handler := httpadapter.New(
 		routeUC, routeAsyncUC,
-		a.cfg.Receiver.MaxBodyBytes, a.cfg.Receiver.MaxAsyncBodyBytes,
+		a.bodyLimits,
 		a.metrics, a.logger,
 	)
 
@@ -298,6 +307,17 @@ func (a *App) startBackgroundSubscribers(ctx context.Context, reader port.NodeRe
 				a.logger.Err(err))
 		}
 		reloadSub.Register(reloader.SectionGeneral, applyRejectLog)
+	}
+	// §97: рабочие лимиты размера тела. Сид тем же Reloader'ом — до него
+	// действует дефолт домена: принять меньше, чем разрешил администратор,
+	// безопаснее, чем принять больше, пока настройки едут.
+	if a.bodyLimits != nil {
+		applyBodyLimits := bootstrap.BodyLimitsReloader(a.pg, a.bodyLimits, a.cipher, a.logger)
+		if err := applyBodyLimits(ctx); err != nil {
+			a.logger.Warn("seed body limits from app_settings failed; using defaults",
+				a.logger.Err(err))
+		}
+		reloadSub.Register(reloader.SectionGeneral, applyBodyLimits)
 	}
 	a.reloadDone = safego.Go(a.logger, "receiver.reloadSubscriber", func() {
 		reloadSub.Run(ctx)
