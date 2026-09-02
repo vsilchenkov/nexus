@@ -186,8 +186,13 @@ describe("LogsTab — серверная фильтрация (§72.2)", () => {
     wrap!.scrollTop = 4400; // < SCROLL_BOTTOM_THRESHOLD_PX до низа
     fireEvent.scroll(wrap!);
 
-    await waitFor(() => expect(logsCalls.length).toBeGreaterThan(1));
-    const next = lastLogsCall();
+    // Ждём именно ЗАПРОС СЛЕДУЮЩЕЙ СТРАНИЦЫ, а не «второй запрос вообще»:
+    // рядом живёт авто-рефетч (каждые 5 с), который ходит без курсора, и на
+    // медленной машине он успевает встрять между скроллом и подгрузкой —
+    // тогда lastLogsCall() возвращал бы его и тест падал на before_id
+    // (ловилось только в CI, локально прогон укладывался в интервал рефетча).
+    await waitFor(() => expect(logsCalls.some((c) => c.before_id !== undefined)).toBe(true));
+    const next = logsCalls.filter((c) => c.before_id !== undefined).at(-1)!;
     expect(next.status).toBe("err");
     expect(next.before_id).toBeDefined();
     expect(next.to).toBeDefined();
