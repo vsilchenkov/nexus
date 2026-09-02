@@ -181,7 +181,7 @@ func TestServiceLogs_ReloadLevelAcrossServices(t *testing.T) {
 	uc := webuc.NewAppSettingsUsecase(
 		pgrepo.NewAppSettingsRepoPg(pool, mustTestCipher(t), logging.NewNoop()),
 		webuc.NewAuditUsecase(pgrepo.NewAuditRepoPg(pool, logging.NewNoop()), logging.NewNoop()),
-		reloader.NewPublisher(client), false, logging.NewNoop())
+		reloader.NewPublisher(client), false, 0, 0, logging.NewNoop())
 
 	// updated_by — uuid-колонка: берём seed-пользователя admin из миграций.
 	var adminID string
