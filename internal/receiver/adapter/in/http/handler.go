@@ -442,8 +442,14 @@ var errBodyTooLargeForQueue = errors.New("request body too large for queued deli
 // защита от slow/DoS-дренажа.
 const drainCap = 8 << 20 // 8 МиБ
 
-// defaultMaxBodyBytes — потолок тела, когда лимит не задан конфигом (5 МиБ).
-// Совпадает с дефолтом receiver.max_body_bytes в platform/config.
+// defaultMaxBodyBytes — последний рубеж readBody: потолок, если ему передали
+// неположительный лимит (5 МиБ, совпадает с дефолтом receiver.max_body_bytes в
+// platform/config).
+//
+// В боевом пути сюда не попадают: действующий лимит приходит из
+// BodyLimitsProvider (§97), а тот разворачивает «не задано» в дефолт домена
+// (100 МиБ). Константа осталась страховкой на случай прямого вызова readBody —
+// без неё нулевой лимит означал бы «отвергать всё непустое».
 const defaultMaxBodyBytes = 5 * 1024 * 1024
 
 func readBody(c *gin.Context, max int) ([]byte, error) {
