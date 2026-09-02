@@ -91,12 +91,13 @@ func main() {
 }
 
 // maxEchoBodyBytes — сколько байт тела запроса стенд-приёмник читает и
-// возвращает эхом. Держится НЕ ниже receiver.max_body_bytes (124 МиБ) и не выше
-// gRPC-лимита Sender→Receiver (192 МиБ): иначе проверка транспортного лимита
-// шины упирается в лимит самого echosrv и большое тело молча усекается в
-// ответе — стенд показывает 200 и «проброс работает», хотя до приёмника дошла
-// только часть.
-const maxEchoBodyBytes = 192 << 20
+// возвращает эхом. Держится НЕ ниже receiver.max_body_bytes (300 МиБ) и не выше
+// gRPC-лимита Sender→Receiver (384 МиБ): иначе проверка транспортного лимита
+// шины упирается в лимит самого echosrv и большое тело усекается в ответе —
+// стенд показывает 200 и «проброс работает», хотя до приёмника дошла только
+// часть. Достижение потолка логируется как warn (см. handler): молчаливое
+// усечение уже давало ложную приёмку в v1.30.0.
+const maxEchoBodyBytes = 384 << 20
 
 type echoResponse struct {
 	OK      bool                `json:"ok"`
@@ -109,8 +110,17 @@ type echoResponse struct {
 
 func handler(logger *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(io.LimitReader(r.Body, maxEchoBodyBytes))
+		// +1 байт сверх потолка — чтобы отличить «тело ровно по лимиту» от
+		// «тело больше лимита и усечено», иначе усечение не видно ни в логе,
+		// ни в эхо-ответе.
+		body, _ := io.ReadAll(io.LimitReader(r.Body, maxEchoBodyBytes+1))
 		_ = r.Body.Close()
+		if len(body) > maxEchoBodyBytes {
+			body = body[:maxEchoBodyBytes]
+			logger.Warn("request body truncated by echosrv limit",
+				slog.Int("limit_bytes", maxEchoBodyBytes),
+				slog.String("path", r.URL.Path))
+		}
 
 		seg := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 3)
 		mode := ""

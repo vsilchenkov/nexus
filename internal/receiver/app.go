@@ -113,6 +113,7 @@ func (a *App) Start(ctx context.Context) error {
 	a.startRejectLog(ctx)
 
 	a.warnAsyncBodyLimitOverKafka()
+	a.warnSyncBodyLimitOverGRPC()
 
 	r, err := a.buildHTTPRouter(routeUC, routeAsyncUC)
 	if err != nil {
@@ -442,6 +443,55 @@ func (a *App) teamSlugByID(ctx context.Context, teamID string) (string, error) {
 		return "", err
 	}
 	return slug, nil
+}
+
+// grpcRequestEnvelopeReserve — запас под envelope gRPC SendRequest (URL,
+// заголовки, метаданные) сверх самого тела: тело + envelope должны влезть в
+// одно gRPC-сообщение, иначе вызов падает ResourceExhausted. Симметричен
+// grpcResponseEnvelopeReserve на стороне Sender.
+const grpcRequestEnvelopeReserve = 1 << 20 // 1 МиБ
+
+// syncBodyLimitFitsGRPC сообщает, влезает ли тело предельного размера
+// (receiver.max_body_bytes) в gRPC-сообщение Receiver→Sender вместе с
+// envelope. Значение ≤ 0 означает «лимит не задан» и проверке не подлежит: ноль
+// подменяют дефолты конфига, а отрицательное readBody и gRPC-клиент одинаково
+// трактуют как «дефолт», и предупреждать тут не о чем.
+func syncBodyLimitFitsGRPC(maxBodyBytes, grpcMaxMessageBytes int) bool {
+	if maxBodyBytes <= 0 || grpcMaxMessageBytes <= 0 {
+		return true
+	}
+	return maxBodyBytes+grpcRequestEnvelopeReserve <= grpcMaxMessageBytes
+}
+
+// warnSyncBodyLimitOverGRPC предупреждает, если принятое по
+// receiver.max_body_bytes тело заведомо не влезет в gRPC-сообщение к Sender.
+// Расхождение не ломает старт, но проявляется позже и сбивает с толку: клиент
+// шлёт тело в рамках объявленного лимита, получает не 413, а 502 —
+// ResourceExhausted на пути Receiver→Sender. Типовая причина — подъём
+// max_body_bytes без парного подъёма обоих gRPC-лимитов (или откат кода без
+// отката конфигурации). Гейта нет намеренно: как и у async-проверки, падать на
+// старте из-за конфигурации, при которой мелкие тела продолжают работать,
+// хуже, чем громко предупредить.
+//
+// Чего проверка НЕ закрывает (Receiver этих значений не знает и знать не может):
+// серверный лимит Sender'а (`sender.grpc_max_message_bytes` — другой процесс,
+// со своим конфигом), потолок фронт-прокси (`client_max_body_size`) и реальную
+// доступную память контейнеров. Любое из них, занижённое в одиночку, так же
+// оборвёт крупное тело — но уже без этого предупреждения.
+func (a *App) warnSyncBodyLimitOverGRPC() {
+	maxBody := a.cfg.Receiver.MaxBodyBytes
+	grpcMax := a.cfg.Receiver.SenderGRPC.MaxMessageBytes
+	if syncBodyLimitFitsGRPC(maxBody, grpcMax) {
+		a.logger.Debug("sync body limit fits grpc message size",
+			a.logger.Int("max_body_bytes", maxBody),
+			a.logger.Int("envelope_reserve", grpcRequestEnvelopeReserve),
+			a.logger.Int("grpc_max_message_bytes", grpcMax))
+		return
+	}
+	a.logger.Warn("receiver.max_body_bytes exceeds receiver.sender_grpc.max_message_bytes; large sync requests will be accepted and then fail with 502 (ResourceExhausted) instead of 413",
+		a.logger.Int("max_body_bytes", maxBody),
+		a.logger.Int("envelope_reserve", grpcRequestEnvelopeReserve),
+		a.logger.Int("grpc_max_message_bytes", grpcMax))
 }
 
 // asyncEnvelopeOverheadRatio — во сколько раз async-конверт больше тела: JSON

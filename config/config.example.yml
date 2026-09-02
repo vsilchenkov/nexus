@@ -129,7 +129,7 @@ kafka:
     segment_ms: 86400000          # Период ротации сегмента лога (мс) = 1 день.
     cleanup_policy: delete     # Политика очистки: delete (по retention) или compact.
     compression_type: lz4      # Компрессия на стороне топика.
-    max_message_bytes: 16777216 # Максимальный размер сообщения (байт) = 16 МиБ. Согласован с брокерским message.max.bytes боевого стека (docker-compose.yml: KAFKA_MESSAGE_MAX_BYTES=16777216) — брокерский потолок ОБЯЗАН быть не ниже per-topic, иначе "Message Size Too Large". Держит async-тело 10 МиБ в base64-конверте (+33% ≈ 13.3 МиБ). Применяется при CreateTopics; на живом топике меняется через kafka-configs --alter.
+    max_message_bytes: 469762048 # Максимальный размер ОДНОГО сообщения (байт) = 448 МиБ. Согласован с брокерским message.max.bytes боевого стека (docker-compose.yml: KAFKA_MESSAGE_MAX_BYTES) — брокерский потолок ОБЯЗАН быть не ниже per-topic, иначе "Message Size Too Large". Держит async-тело 300 МиБ в base64-конверте (+33% плюс заголовки ≈ 420 МиБ). Применяется при CreateTopics; на ЖИВОМ топике меняется только через kafka-configs --alter (DEPLOYMENT §5.2).
   # Параметры producer'а (Receiver публикует в топик).
   producer:
     acks: all                  # Подтверждение записи: all = ждать min_insync_replicas (надёжно).
@@ -147,8 +147,8 @@ kafka:
     auto_offset_reset: earliest # Старт без сохранённого offset: earliest = с начала, latest = с конца.
     enable_auto_commit: false   # false = ручной commit offset после обработки (at-least-once, без потерь).
     fetch_min_bytes: 1          # Минимум байт в ответе fetch; 1 = не ждать накопления.
-    fetch_max_bytes: 52428800   # Максимум байт за один fetch (байт) = 50 МиБ; ДОЛЖЕН быть ≥ topic.max_message_bytes, иначе крупное сообщение не вычитывается никогда.
-    max_partition_fetch_bytes: 16777216 # Максимум байт на партицию за fetch (байт) = 16 МиБ; ≥ topic.max_message_bytes.
+    fetch_max_bytes: 536870912  # Максимум байт за один fetch (байт) = 512 МиБ; ДОЛЖЕН быть ≥ topic.max_message_bytes, иначе крупное сообщение не вычитывается НИКОГДА (consumer молча встаёт на этой партиции).
+    max_partition_fetch_bytes: 469762048 # Максимум байт на партицию за fetch (байт) = 448 МиБ; ≥ topic.max_message_bytes.
     session_timeout_ms: 30000   # Таймаут сессии consumer'а в группе (мс) — после него считается мёртвым.
     heartbeat_interval_ms: 10000 # Период heartbeat'ов в координатор группы (мс).
     max_poll_records: 500       # Максимум сообщений за один poll.
@@ -166,17 +166,29 @@ kafka:
 #     (base64-конверт +33% и заголовки). Это потолок ASYNC-приёма
 #     (/requestAsync, /callback, sync к paused-узлу §3.6): тело больше → 413.
 #     Лимит обязан быть ≤ max_body_bytes; 0 → min(10 МиБ, max_body_bytes).
-#     ВАЖНО: async-потолок упирается не в память, а в Kafka. Поднять его нельзя
-#     без одновременного подъёма topic.max_message_bytes И брокерских
-#     message.max.bytes / replica.fetch.max.bytes — иначе брокер отвергнет
-#     сообщение, а клиент получит 503 на приёме.
+#     С 1.34.0 async сравнялся с sync (300 МиБ), и цепочка потолков под ним
+#     ДЛИННЕЕ, чем у sync. Поднимать/снижать это значение можно только ВМЕСТЕ с:
+#       kafka.topic.max_message_bytes (448 МиБ)         — иначе publish падает,
+#       брокерские message.max.bytes / replica.fetch.max.bytes — иначе "Message
+#         Size Too Large" и 503 на приёме (брокерский дефолт ~1 МиБ ПЕРЕБИВАЕТ
+#         per-topic конфиг),
+#       kafka.consumer.fetch_max_bytes / max_partition_fetch_bytes — иначе
+#         сообщение записано, но НИКОГДА не вычитывается, и партиция встаёт,
+#       heap и mem_limit брокера — сообщение живёт в памяти на приёме и отдаче.
+#     На ЖИВЫХ топиках kafka.topic.* не применяется (только CreateTopics) —
+#     существующим nexus.async{,.dlq,.paused} и nexus.logs.retry лимит поднимают
+#     kafka-configs --alter (DEPLOYMENT §5.2).
+#     ЦЕНА, принятая осознанно: пока сообщение на 420 МиБ доставляется, его
+#     партиция занята — всё, что стоит за ним, ждёт. Kafka рассчитана на
+#     сообщения в единицы МиБ, и это далеко за пределами её типового профиля.
 #   • sender.grpc_max_message_bytes  ==  receiver.sender_grpc.max_message_bytes
 #     — это потолок ОТВЕТА (Sender→Receiver). Тело ОТВЕТА больше него → 502.
 #   • kafka.consumer.fetch_max_bytes  ≥  kafka.topic.max_message_bytes; брокерский
 #     message.max.bytes / replica.fetch.max.bytes  ≥  topic.max_message_bytes.
 #     Боевой стек (корневой docker-compose.yml) держит брокерские потолки на
-#     16 МиБ — topic.max_message_bytes выше этого значения поднимать бесполезно
-#     и опасно: топик создастся, а сообщения будут отвергаться брокером.
+#     448 МиБ (KAFKA_MESSAGE_MAX_BYTES / KAFKA_REPLICA_FETCH_MAX_BYTES) —
+#     topic.max_message_bytes выше этого значения поднимать бесполезно и опасно:
+#     топик создастся, а сообщения будут отвергаться брокером.
 #   • ЛОГИ при недоступном ClickHouse (§38) уезжают в nexus.logs.retry тем же
 #     топиковым лимитом. Батч режется на под-батчи, но ОДНА запись больше лимита
 #     не режется — лог запроса с телом больше topic.max_message_bytes в retry не
@@ -188,11 +200,11 @@ kafka:
 # Receiver Service — точка входа HTTP, auth/resolve/masking, проксирование в Sender.
 receiver:
   http_addr: :8080               # Адрес/порт HTTP-сервера Receiver.
-  read_timeout_ms: 300000        # Таймаут чтения запроса клиента (мс) = 5 мин. ВКЛЮЧАЕТ приём тела: при крупном max_body_bytes прежние 10 с рвали загрузку большого тела на медленном канале.
+  read_timeout_ms: 600000        # Таймаут чтения запроса клиента (мс) = 10 мин. ВКЛЮЧАЕТ приём тела, поэтому растёт вместе с max_body_bytes: 300 МиБ на канале 10 Мбит/с едут ~250 с — прежние 5 мин шли впритык, и клиент видел обрыв без записи в логах шины.
   write_timeout_ms: 610000       # Таймаут записи ответа клиенту (мс). ДОЛЖЕН превышать максимальный timeout_ms узла (600000): WriteTimeout включает всё время работы handler'а, меньше — долгий sync-запрос рвётся Receiver'ом (Web-прокси видит EOF, клиент — 502).
   idle_timeout_sec: 120          # Keep-alive: время простоя соединения до закрытия (сек).
-  max_body_bytes: 130023424      # Лимит тела входящего SYNC-запроса (байт) = 124 МиБ (/api/v1/request/*). Ограничен только gRPC (192 МиБ) и памятью сервисов — очередь sync не использует.
-  max_async_body_bytes: 10485760 # Лимит тела ВХОДЯЩЕГО ASYNC-запроса (байт) = 10 МиБ (/api/v1/requestAsync/*, /callback/*, а также sync к paused-узлу §3.6 — он уходит в очередь). Отдельный от max_body_bytes и НАМЕРЕННО меньше: тело едет в Kafka в base64-конверте (+33%), 10 × 1.33 ≈ 13.3 МиБ < topic.max_message_bytes (16 МиБ), а тот в свою очередь не выше брокерского message.max.bytes боевого стека. Поднимать async-лимит без одновременного подъёма ОБОИХ kafka-потолков нельзя: брокер отвергнет сообщение ("Message Size Too Large"), и async-запрос вернёт 503.
+  max_body_bytes: 314572800      # Лимит тела входящего SYNC-запроса (байт) = 300 МиБ (/api/v1/request/*). Ограничен только gRPC (384 МиБ) и памятью сервисов — очередь sync не использует. Поднятие ТРЕБУЕТ client_max_body_size на фронт-прокси и mem_limit сервисов (DEPLOYMENT §2).
+  max_async_body_bytes: 314572800 # Лимит тела ВХОДЯЩЕГО ASYNC-запроса (байт) = 300 МиБ (/api/v1/requestAsync/*, /callback/*, а также sync к paused-узлу §3.6 — он уходит в очередь). Сравнялся с max_body_bytes с 1.34.0. ЦЕНА: тело едет в Kafka в base64-конверте (+33%), 300 × 1.4 ≈ 420 МиБ на ОДНО сообщение — поэтому подъём требует topic.max_message_bytes (448 МиБ), брокерских message.max.bytes / replica.fetch.max.bytes, consumer.fetch_max_bytes и памяти брокера. Пока такое сообщение доставляется, его партиция занята — крупные async-тела упорядоченно задерживают всё, что стоит за ними в той же партиции.
   max_header_bytes: 1048576      # Лимит заголовков входящего запроса (байт) = 1 МиБ.
   rate_limit_per_node: 0         # Лимит RPS на узел; 0 = без ограничения.
   # Phase AUD.5: X-Forwarded-For принимается только от этих CIDR/IP.
@@ -206,7 +218,7 @@ receiver:
     timeout_ms: 30000            # НЕ ПРИМЕНЯЕТСЯ — мёртвый параметр, оставлен ради совместимости формата. Дедлайн gRPC-вызову не ставится: RPC живёт под контекстом входящего HTTP-запроса, а потолок задаёт per-node timeout_ms узла. Менять значение бесполезно — sync-запрос им не оборвать и не продлить.
     keepalive_time_sec: 30       # Период keepalive-ping'ов по соединению (сек).
     keepalive_timeout_sec: 10    # Ожидание ответа на keepalive-ping до разрыва (сек).
-    max_message_bytes: 201326592 # Лимит размера gRPC-сообщения клиента (оба напр.) = 192 МиБ. Дефолт gRPC 4 МиБ мал для больших тел (ответ апстрима → ResourceExhausted). Должен быть ≥ receiver.max_body_bytes с запасом на envelope и совпадать с sender.grpc_max_message_bytes.
+    max_message_bytes: 402653184 # Лимит размера gRPC-сообщения клиента (оба напр.) = 384 МиБ. Дефолт gRPC 4 МиБ мал для больших тел (ответ апстрима → ResourceExhausted). Должен быть ≥ receiver.max_body_bytes (300 МиБ) с запасом на envelope и совпадать с sender.grpc_max_message_bytes.
   swagger_enabled: false         # Отдавать ли Swagger UI Receiver'а (выключай в prod).
   # In-memory L2-кеш конфига узлов (§9.2). Снимает нагрузку с Redis на
   # пиковом RPS и спасает при кратковременном Redis-flutter'е. При
@@ -236,7 +248,7 @@ sender:
   grpc_addr: :9190               # Адрес/порт gRPC-сервера Sender.
   admin_http_addr: :9091         # Адрес/порт admin-HTTP: /health, /ready, /metrics (housekeeping — фоновый цикл, не ручка).
   grpc_max_concurrent_streams: 1000 # Лимит одновременных gRPC-стримов на соединение.
-  grpc_max_message_bytes: 201326592 # Лимит размера gRPC-сообщения сервера (recv тела запроса + send тела ответа) = 192 МиБ. Должен совпадать с receiver.sender_grpc.max_message_bytes.
+  grpc_max_message_bytes: 402653184 # Лимит размера gRPC-сообщения сервера (recv тела запроса + send тела ответа) = 384 МиБ. Должен совпадать с receiver.sender_grpc.max_message_bytes.
   # HTTP-клиент для исходящих запросов к внешним системам.
   http_client:
     timeout_ms: 30000            # Fallback-таймаут внешнего HTTP-запроса (мс) — только для запросов БЕЗ per-node timeout_ms. Таймаут узла имеет приоритет и этим параметром НЕ капается.
@@ -342,7 +354,7 @@ web:
     timeout_ms: 30000            # НЕ ПРИМЕНЯЕТСЯ — мёртвый параметр (тот же grpcsender без дедлайна, что у receiver.sender_grpc). Дедлайн dry-run-вызова задаёт контекст HTTP-запроса Web + per-node timeout_ms узла.
     keepalive_time_sec: 30       # Период keepalive-ping'ов по соединению (сек).
     keepalive_timeout_sec: 10    # Ожидание ответа на keepalive-ping до разрыва (сек).
-    max_message_bytes: 201326592 # Лимит размера gRPC-сообщения = 192 МиБ (как у receiver.sender_grpc).
+    max_message_bytes: 402653184 # Лимит размера gRPC-сообщения = 384 МиБ (как у receiver.sender_grpc).
   # §32.2: «свои» authority (host или host:port) для запрета self-referencing target_url узла.
   # Пусто → выводится из receiver_url. Полезно за реверс-прокси, когда внешний адрес отличается.
   self_ingress_hosts: []                        # напр.: ["nexus.example.com", "receiver:8080"]
