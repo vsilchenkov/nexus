@@ -8170,6 +8170,20 @@ const docTemplate = `{
                     "description": "§70.8: префикс имён БД ClickHouse этой ноды (\"nexus_\" либо \"nexus_\u003cid\u003e_\").\nДиалог создания команды показывает предпросмотр имени БД из него, а не\nсклеивает литерал на клиенте — иначе на ноде с идентификатором предпросмотр\nпоказывал бы чужое имя.",
                     "type": "string"
                 },
+                "max_async_body_bytes": {
+                    "type": "integer"
+                },
+                "max_async_body_bytes_cap": {
+                    "type": "integer"
+                },
+                "max_body_bytes": {
+                    "description": "§97: действующие рабочие лимиты размера тела (байты) — что применяется\nпрямо сейчас, с развёрнутым nil.",
+                    "type": "integer"
+                },
+                "max_body_bytes_cap": {
+                    "description": "§97: ПОТОЛКИ этих лимитов из конфига (receiver.max_body_bytes /\nmax_async_body_bytes). Форма настроек показывает их в подсказке и не даёт\nсохранить больше: выше потолка шина не настроена (nginx, gRPC, Kafka,\nпамять). 0 = потолок не задан.",
+                    "type": "integer"
+                },
                 "metrics_refetch_ms": {
                     "description": "§44.C: интервал автообновления метрик (мс) для дашборда/страниц узлов.",
                     "type": "integer"
@@ -10713,6 +10727,14 @@ const docTemplate = `{
         "nexus_internal_domain.GeneralSettings": {
             "type": "object",
             "properties": {
+                "max_async_body_bytes": {
+                    "description": "MaxAsyncBodyBytes — рабочий лимит тела асинхронного приёма (§97), байты:\n/requestAsync, /callback и sync-запрос к узлу на паузе (§3.6, он уходит\nв очередь). Обязан быть ≤ MaxBodyBytes. nil = дефолт\nBodyLimitDefaultBytes. Не секрет.",
+                    "type": "integer"
+                },
+                "max_body_bytes": {
+                    "description": "MaxBodyBytes — РАБОЧИЙ лимит тела синхронного запроса (§97), байты.\nОтличать от потолка ` + "`" + `receiver.max_body_bytes` + "`" + ` в конфиге: конфиг говорит,\nсколько шина способна переварить физически (память сервисов, gRPC,\nnginx), а это значение — сколько администратор разрешает сегодня.\nnil = дефолт BodyLimitDefaultBytes. Больше потолка задать нельзя;\nзначение, оказавшееся выше потолка (конфиг снизили после), зажимается\nпотолком. Не секрет — Get() не маскирует.",
+                    "type": "integer"
+                },
                 "metrics_approx_counts": {
                     "description": "MetricsApproxCounts — режим подсчёта уникальных запросов в KPI узлов и\nсчётчиках дашборда (§44-perf). nil/false = ТОЧНО (countDistinct/uniqExact,\nдефолт); true = ПРИБЛИЗИТЕЛЬНО (uniq/uniqIf, HyperLogLog: ~3× дешевле по CPU,\nошибка ~0.3%). Оператор включает приблизительный режим, когда узлов/данных\nмного и точный distinct упирает ClickHouse в 100% CPU. Не секрет.",
                     "type": "boolean"

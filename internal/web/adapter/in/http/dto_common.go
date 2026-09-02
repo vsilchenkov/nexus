@@ -219,6 +219,16 @@ type PublicSettingsResponse struct {
 	// склеивает литерал на клиенте — иначе на ноде с идентификатором предпросмотр
 	// показывал бы чужое имя.
 	CHDatabasePrefix string `json:"ch_database_prefix"`
+	// §97: действующие рабочие лимиты размера тела (байты) — что применяется
+	// прямо сейчас, с развёрнутым nil.
+	MaxBodyBytes      int `json:"max_body_bytes"`
+	MaxAsyncBodyBytes int `json:"max_async_body_bytes"`
+	// §97: ПОТОЛКИ этих лимитов из конфига (receiver.max_body_bytes /
+	// max_async_body_bytes). Форма настроек показывает их в подсказке и не даёт
+	// сохранить больше: выше потолка шина не настроена (nginx, gRPC, Kafka,
+	// память). 0 = потолок не задан.
+	MaxBodyBytesCap      int `json:"max_body_bytes_cap"`
+	MaxAsyncBodyBytesCap int `json:"max_async_body_bytes_cap"`
 }
 
 // UserEnvelope — обёртка {"user": ...} для login/me.
