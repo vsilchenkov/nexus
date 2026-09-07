@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { CheckCheck, Download } from "lucide-react";
@@ -18,6 +19,7 @@ import {
   type RejectedSummary,
 } from "../../lib/rejected";
 import { RejectedDrawer } from "../../components/logs/RejectedDrawer";
+import { REJECTED_PARAM } from "../../lib/rejectedShare";
 import {
   Button,
   Card,
@@ -62,7 +64,28 @@ export default function RejectedTab() {
   const [reason, setReason] = useState("");
   const [query, setQuery] = useState("");
   const [includeResolved, setIncludeResolved] = useState(false);
-  const [openID, setOpenID] = useState<string | null>(null);
+  // §98.3: открытая карточка живёт в АДРЕСЕ, а не в useState — иначе ею нельзя
+  // поделиться (тот же урок, что §79.3 для вкладок узла). Карточка грузится по
+  // id независимо от выдачи списка, поэтому ссылка работает и когда группы нет
+  // в текущем периоде или под текущим фильтром.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const openID = searchParams.get(REJECTED_PARAM);
+  const setOpenID = useCallback(
+    (id: string | null) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (id) next.set(REJECTED_PARAM, id);
+          else next.delete(REJECTED_PARAM);
+          return next;
+        },
+        // replace: переключение между карточками — это просмотр, а не переходы:
+        // иначе «Назад» пришлось бы жать столько раз, сколько строк открыли.
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
 
   const params = useMemo(() => {
     const p: Record<string, string> = { ...windowParams(period), limit: String(PAGE_SIZE) };

@@ -386,6 +386,18 @@ describe("useTeamUrlParam", () => {
     await waitFor(() => expect(probe.search).toBe("?team=alpha"));
   });
 
+  it("журнал отказов зеркалит команду, консоль служебных логов — нет (§98.3)", async () => {
+    // /logs/rejected team-scoped: без параметра ссылка на конкретный отказ
+    // открывалась бы у получателя в ЕГО команде, то есть «не найдено».
+    // Соседний /logs — консоль служебных логов инстанса, там команды нет.
+    const server: Server = { items: [ALPHA, BETA], currentTeamID: "team-a" };
+    render(server, "/logs/rejected?rejected=g-42");
+
+    await waitFor(() => expect(new URLSearchParams(probe.search).get("team")).toBe("alpha"));
+    // Чужой ключ выживает — правило §54: модуль владеет только своим.
+    expect(new URLSearchParams(probe.search).get("rejected")).toBe("g-42");
+  });
+
   it("километровое значение параметра обрезается (баннер не распирает страницу)", async () => {
     const server: Server = { items: [ALPHA, BETA], currentTeamID: "team-a" };
     const { result } = render(server, `/?team=${"z".repeat(500)}`);
