@@ -707,6 +707,7 @@
       "outgoing": "Outgoing",
       "credentials": "Credentials",
       "keep_secret": "leave empty to keep current",
+      "secret_set": "Set",
       "webhook_secret": "Webhook secret",
       "sig_header": "Signature header",
       "sig_prefix": "Signature prefix",

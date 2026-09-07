@@ -708,6 +708,7 @@
       "outgoing": "Исходящая",
       "credentials": "Креды",
       "keep_secret": "оставьте пустым, чтобы не менять",
+      "secret_set": "Установлен",
       "webhook_secret": "Секрет вебхука",
       "sig_header": "Заголовок подписи",
       "sig_prefix": "Префикс подписи",

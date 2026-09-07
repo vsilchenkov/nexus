@@ -35,6 +35,7 @@ import { useNodeFormDefaults } from "../lib/nodeDefaults";
 import { useEnsureNodeTeam, useNodeTeam } from "../lib/nodeShare";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { parseNumInput } from "../lib/numField";
+import { secretPlaceholderKey } from "../lib/secretPlaceholder";
 import { validateNodeForm } from "../lib/nodeValidation";
 import { chSchemaChangeWontApply, chSyncFormDirty } from "../lib/chSchema";
 import { buildVerifyMessage } from "../lib/chTableVerify";
@@ -384,6 +385,18 @@ export default function NodeSettings() {
   // здесь НЕ делаем — он уничтожил бы несохранённые правки; показываем баннер и
   // блокируем сохранение (оно всё равно вернёт 404 — team-scope в handler'е).
   const foreignTeam = isNotFound(existing.error);
+
+  // §98.1: подсказка пустого поля секрета. Правило (включая гейт по типу
+  // авторизации) живёт в lib/secretPlaceholder — там оно покрыто таблицей.
+  function secretPlaceholder(isSet: boolean | undefined, typeUnchanged: boolean, whenNew = "") {
+    const key = secretPlaceholderKey({ isNew, isSet, typeUnchanged });
+    return key ? t(key) : whenNew;
+  }
+
+  // Тип авторизации в форме совпадает с сохранённым — только тогда флаг *_set
+  // говорит о том же самом секрете, который сейчас редактируется.
+  const outgoingAuthKept = form.auth_type === (existing.data?.auth_type ?? "");
+  const incomingAuthKept = form.incoming_auth_type === (existing.data?.incoming_auth_type ?? "");
 
   // buildPayload — форма → тело запроса API. Для basic склеивает Логин+Пароль
   // в auth_credentials "login:password" (формат хранения); пустой пароль →
@@ -790,6 +803,7 @@ export default function NodeSettings() {
               // значений; дженерик-сеттер Form совместим, TS требует явный каст.
               set={set as RMQSetter}
               isNew={isNew}
+              passwordSet={existing.data?.rmq_password_set}
               errField={errField}
               errMsg={error}
             />
@@ -987,7 +1001,7 @@ export default function NodeSettings() {
                     className={errCls("incoming_auth_password")}
                     value={form.incoming_auth_password}
                     onChange={(e) => set("incoming_auth_password", e.target.value)}
-                    placeholder={isNew ? "" : t("node.form.keep_secret")}
+                    placeholder={secretPlaceholder(existing.data?.incoming_auth_credentials_set, incomingAuthKept)}
                   />
                   {fieldErr("incoming_auth_password")}
                 </Field>
@@ -1006,7 +1020,7 @@ export default function NodeSettings() {
                 <SecretInput
                   value={form.incoming_auth_credentials}
                   onChange={(e) => set("incoming_auth_credentials", e.target.value)}
-                  placeholder={isNew ? "" : t("node.form.keep_secret")}
+                  placeholder={secretPlaceholder(existing.data?.incoming_auth_credentials_set, incomingAuthKept)}
                 />
               </Field>
             )}
@@ -1103,7 +1117,7 @@ export default function NodeSettings() {
                     className={errCls("auth_password")}
                     value={form.auth_password}
                     onChange={(e) => set("auth_password", e.target.value)}
-                    placeholder={isNew ? "" : t("node.form.keep_secret")}
+                    placeholder={secretPlaceholder(existing.data?.auth_credentials_set, outgoingAuthKept)}
                   />
                   {fieldErr("auth_password")}
                 </Field>
@@ -1114,7 +1128,7 @@ export default function NodeSettings() {
                 <SecretInput
                   value={form.auth_credentials}
                   onChange={(e) => set("auth_credentials", e.target.value)}
-                  placeholder={isNew ? "" : t("node.form.keep_secret")}
+                  placeholder={secretPlaceholder(existing.data?.auth_credentials_set, outgoingAuthKept)}
                 />
               </Field>
             )}
