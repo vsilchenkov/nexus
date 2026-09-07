@@ -166,6 +166,43 @@ func BodyLimitsReloader(pool *pgxpool.Pool, sw BodyLimitsSwitch, cipher *crypto.
 	}
 }
 
+// BreakerPolicySwitch — узкий интерфейс, который реализует
+// circuitbreaker.PolicyProvider. Объявлен здесь, чтобы bootstrap не зависел от
+// пакета circuitbreaker (§98.5).
+type BreakerPolicySwitch interface {
+	Set(p domain.BreakerPolicy)
+}
+
+// BreakerPolicyReloader возвращает Reloader, который перечитывает ГЛОБАЛЬНУЮ
+// политику защиты узла и применяет её без рестарта (§98.5).
+//
+// Конфигурация (sender.circuit_breaker) остаётся значением по умолчанию: nil в
+// настройках означает «администратор ничего не задавал», и действует то же, что
+// до §98. Переопределение на узле сюда не приходит вовсе — оно едет вместе с
+// запросом (sync) или читается из БД на каждое сообщение (async).
+//
+// Тот же Reloader используется как сид стартового значения — первый вызов сразу
+// после создания подписчика.
+func BreakerPolicyReloader(pool *pgxpool.Pool, sw BreakerPolicySwitch, cfgThreshold, cfgCooldownSec int, cipher *crypto.Cipher, logger logging.Logger) reloader.Reloader {
+	return func(ctx context.Context) error {
+		o, err := readAppSettings(ctx, pool, cipher, logger)
+		if err != nil {
+			return err
+		}
+		var threshold, cooldown *int
+		if o != nil {
+			threshold = o.General.CircuitBreakerThreshold
+			cooldown = o.General.CircuitBreakerCooldownSec
+		}
+		p := domain.BreakerPolicyOrConfig(threshold, cooldown, cfgThreshold, cfgCooldownSec)
+		sw.Set(p)
+		logger.Info("circuit breaker policy applied from app_settings",
+			logger.Int("threshold", p.Threshold),
+			logger.Int("cooldown_sec", int(p.Cooldown.Seconds())))
+		return nil
+	}
+}
+
 // WriterReloader — узкий интерфейс, который реализует chlog.WriterManager
 // (sender) и в будущем — любой другой держатель CH-зависимостей. Объявлен
 // в bootstrap'е, чтобы избежать import cycle с sender/chlog (config →

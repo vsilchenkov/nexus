@@ -732,6 +732,7 @@
       "circuit_breaker_threshold": "Protection failure threshold",
       "circuit_breaker_cooldown_sec": "Pause before probe, sec",
       "breaker_default_placeholder": "as in configuration",
+      "breaker_default_global": "as in general settings · {{value}}",
       "dlq_retry_delay_hint": "minimum wait before re-attempting a failed delivery; default 5 min",
       "hours": "h"
     },
@@ -1197,7 +1198,11 @@
       "max_body_async": "Max request body, async (MiB)",
       "max_body_async_hint": "Applies to /api/v1/requestAsync/*, /api/v1/callback/* and to a sync request sent to a paused node — it goes to the queue. Server ceiling — {{max}} MiB.",
       "max_body_over_cap": "Above the server ceiling ({{max}} MiB)",
-      "max_body_async_over_sync": "The async limit must not exceed the sync limit"
+      "max_body_async_over_sync": "The async limit must not exceed the sync limit",
+      "breaker_threshold": "Node protection failure threshold",
+      "breaker_threshold_hint": "How many consecutive failures pause delivery to a node. Empty — the value from the service configuration. A specific node can override it. A failure is a 5xx response, an expired node timeout or an unreachable address.",
+      "breaker_cooldown": "Pause before probe request, sec",
+      "breaker_cooldown_hint": "How long to wait before the probe request after delivery is paused. Empty — the value from the service configuration. A successful probe resumes delivery."
     },
     "tokens": {
       "title": "API tokens",

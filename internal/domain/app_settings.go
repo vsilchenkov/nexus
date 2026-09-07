@@ -170,6 +170,19 @@ type GeneralSettings struct {
 	// в очередь). Обязан быть ≤ MaxBodyBytes. nil = дефолт
 	// BodyLimitDefaultBytes. Не секрет.
 	MaxAsyncBodyBytes *int `json:"max_async_body_bytes,omitempty"`
+
+	// CircuitBreakerThreshold — сколько отказов подряд приостанавливают доставку
+	// к узлу, ГЛОБАЛЬНО (§98.5). Третий уровень цепочки: узел (поле > 0) →
+	// это значение → sender.circuit_breaker.threshold из конфига.
+	// nil = «в интерфейсе не задано», и действует конфиг, как до §98.
+	// Диапазон — тот же, что у поля узла (1..100): расхождение границ дало бы
+	// значение, которое принимают глобально и отвергают на узле. Не секрет.
+	CircuitBreakerThreshold *int `json:"circuit_breaker_threshold,omitempty"`
+
+	// CircuitBreakerCooldownSec — пауза до пробного запроса после приостановки,
+	// секунды, ГЛОБАЛЬНО (§98.5). Диапазон 1..3600, как у поля узла.
+	// nil = действует конфиг. Не секрет.
+	CircuitBreakerCooldownSec *int `json:"circuit_breaker_cooldown_sec,omitempty"`
 }
 
 // Рабочие лимиты размера тела (§97): дефолт 100 МиБ, минимум 1 КиБ.
@@ -198,6 +211,54 @@ func ValidateMaxAsyncBodyBytes(v, maxAllowed int) error {
 		return ErrMaxAsyncBodyBytesInvalid
 	}
 	return nil
+}
+
+// Границы глобальной политики защиты узла (§98.5). Зеркало границ поля узла
+// (см. Node.Validate): одно и то же число обязано приниматься на обоих уровнях,
+// иначе оператор задаёт значение глобально и получает отказ, повторив его на
+// узле. Ноль здесь недопустим — «не задано» выражается nil'ом, а не нулём:
+// у поля узла ноль означает «взять уровнем выше», а выше глобального уровня
+// только конфиг, и второе значение с тем же смыслом лишь путало бы.
+const (
+	BreakerThresholdMin   = 1
+	BreakerThresholdMax   = 100
+	BreakerCooldownMinSec = 1
+	BreakerCooldownMaxSec = 3600
+)
+
+// ValidateBreakerThreshold проверяет глобальный порог отказов (§98.5).
+func ValidateBreakerThreshold(v int) error {
+	if v < BreakerThresholdMin || v > BreakerThresholdMax {
+		return ErrBreakerThresholdInvalid
+	}
+	return nil
+}
+
+// ValidateBreakerCooldownSec проверяет глобальную паузу до пробы (§98.5).
+func ValidateBreakerCooldownSec(v int) error {
+	if v < BreakerCooldownMinSec || v > BreakerCooldownMaxSec {
+		return ErrBreakerCooldownInvalid
+	}
+	return nil
+}
+
+// BreakerPolicyOrConfig разворачивает глобальную настройку в действующую
+// политику, подставляя значения конфига там, где в интерфейсе ничего не задано
+// (§98.5).
+//
+// Живёт в домене, потому что понимать nil одинаково обязаны обе стороны: Web
+// (валидация и подсказка в форме узла) и Sender (применение). Значения конфига
+// ≤ 0 означают «конфиг тоже молчит» и остаются нулями — их развернёт в свои
+// дефолты уже сам breaker.
+func BreakerPolicyOrConfig(threshold, cooldownSec *int, cfgThreshold, cfgCooldownSec int) BreakerPolicy {
+	t, c := cfgThreshold, cfgCooldownSec
+	if threshold != nil {
+		t = *threshold
+	}
+	if cooldownSec != nil {
+		c = *cooldownSec
+	}
+	return BreakerPolicy{Threshold: t, Cooldown: time.Duration(c) * time.Second}
 }
 
 // BodyLimitOrDefault разворачивает настройку в действующее значение:

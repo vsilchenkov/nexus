@@ -54,3 +54,33 @@ export function useBodyLimitCaps(): BodyLimitCaps {
     asyncMaxBytes: q.data?.max_async_body_bytes_cap ?? BODY_LIMIT_CAP_FALLBACK,
   };
 }
+
+// §98.5: ГЛОБАЛЬНАЯ политика защиты узла, заданная в «Настройки → Общие».
+//
+// Нужна форме узла: его поля «Порог отказов защиты» и «Пауза до пробы» пустыми
+// означают «как задано выше», и до §98 подсказка говорила расплывчатое «как в
+// конфигурации» — увидеть действующее число оператор не мог нигде.
+//
+// undefined означает «в интерфейсе не задано»: тогда действует конфигурация
+// сервиса, и подставлять сюда число нельзя. Значение из конфига Web'а сервер
+// намеренно не отдаёт — политику применяет Sender, читающий СВОЙ файл
+// конфигурации, и в инсталляции они могут разойтись (§81.3.1).
+export type BreakerDefaults = {
+  threshold?: number;
+  cooldownSec?: number;
+};
+
+export function useBreakerDefaults(): BreakerDefaults {
+  const q = useQuery({
+    queryKey: ["public-settings"],
+    queryFn: () =>
+      api.get<{ circuit_breaker_threshold?: number | null; circuit_breaker_cooldown_sec?: number | null }>(
+        "/api/settings/public",
+      ),
+    staleTime: 5 * 60_000,
+  });
+  return {
+    threshold: q.data?.circuit_breaker_threshold ?? undefined,
+    cooldownSec: q.data?.circuit_breaker_cooldown_sec ?? undefined,
+  };
+}

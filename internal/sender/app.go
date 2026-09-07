@@ -20,6 +20,7 @@ import (
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 
+	"nexus/internal/domain"
 	"nexus/internal/platform/bootstrap"
 	"nexus/internal/platform/circuitbreaker"
 	chpf "nexus/internal/platform/clickhouse"
@@ -78,6 +79,11 @@ type App struct {
 	dlqReproc     *kafkaadapter.DLQReprocessor     // §36: авто-репроцессор DLQ (nil если выключен)
 	pausedSweep   *kafkaadapter.PausedSweeper      // §3.6: sweeper delay-топика paused-узлов (nil если выключен)
 	otelShutdown  otelpf.ShutdownFunc
+
+	// breakerPolicy — держатель ГЛОБАЛЬНОЙ политики защиты узла (§98.5).
+	// Создаётся вместе с breaker'ом (то есть только при живом Redis) и
+	// обновляется reloader'ом секции general без рестарта.
+	breakerPolicy *circuitbreaker.PolicyProvider
 
 	// done-каналы фоновых горутин — Stop дожидается их завершения
 	// (Phase AUD.3): housekeeping/lag-reporter/reload-callbacks не должны
@@ -278,9 +284,15 @@ func (a *App) buildSendUsecase(ctx context.Context) (*usecase.SendUsecase, useca
 		breaker usecase.BreakerInspector // §36: read-only IsOpen для репроцессора DLQ
 	)
 	if a.redis != nil {
-		b := circuitbreaker.New(a.redis,
-			a.cfg.Sender.CircuitBreaker.Threshold,
-			time.Duration(a.cfg.Sender.CircuitBreaker.CooldownSec)*time.Second)
+		// §98.5: глобальная политика подменяема на ходу — стартовое значение из
+		// конфигурации, дальше её задаёт администратор в интерфейсе, и оно
+		// приезжает событием настроек (секция general). Провайдер держится в
+		// поле приложения: его же обновляет reloader, поднимаемый ниже.
+		a.breakerPolicy = circuitbreaker.NewPolicyProvider(domain.BreakerPolicy{
+			Threshold: a.cfg.Sender.CircuitBreaker.Threshold,
+			Cooldown:  time.Duration(a.cfg.Sender.CircuitBreaker.CooldownSec) * time.Second,
+		})
+		b := circuitbreaker.NewWithPolicy(a.redis, a.breakerPolicy)
 		cb, breaker = b, b
 	}
 	// §67: reverse-DNS резолв client_host — асинхронный, кеш Redis + L1,
@@ -439,6 +451,21 @@ func (a *App) startBackgroundJobs(ctx context.Context, nodeReader *nodepg.Reader
 			a.logger.Warn("seed log level from app_settings failed; using yaml level", a.logger.Err(err))
 		}
 		reloadSub.Register(reloader.SectionLogging, applyLogLevel)
+		// §98.5: глобальная политика защиты узла из app_settings.general
+		// (+ сид старта). Без Redis breaker не работает вовсе, поэтому и
+		// провайдер существует только внутри этой ветки.
+		if a.breakerPolicy != nil {
+			applyBreaker := bootstrap.BreakerPolicyReloader(a.pg, a.breakerPolicy,
+				a.cfg.Sender.CircuitBreaker.Threshold, a.cfg.Sender.CircuitBreaker.CooldownSec,
+				a.cipher, a.logger)
+			// Ошибка сида не валит старт: до приезда настроек действует
+			// конфигурация — то же поведение, что было до §98.
+			if err := applyBreaker(ctx); err != nil {
+				a.logger.Warn("seed circuit breaker policy from app_settings failed; using yaml values",
+					a.logger.Err(err))
+			}
+			reloadSub.Register(reloader.SectionGeneral, applyBreaker)
+		}
 		// §95: справочник маскирования логов изменился в UI → перечитать из PG и
 		// пересобрать набор regexp без рестарта. Сид уже сделан в Start
 		// (seedLogMasks) — здесь только горячее обновление.

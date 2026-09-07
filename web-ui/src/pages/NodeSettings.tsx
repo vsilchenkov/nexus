@@ -31,7 +31,7 @@ import {
 } from "../api/client";
 import { useNodeUrlBuilder } from "../lib/nodeUrl";
 import { useCurrentTeamCHDatabase, useMyTeams } from "../lib/teams";
-import { useNodeFormDefaults } from "../lib/nodeDefaults";
+import { useBreakerDefaults, useNodeFormDefaults } from "../lib/nodeDefaults";
 import { useEnsureNodeTeam, useNodeTeam } from "../lib/nodeShare";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { parseNumInput } from "../lib/numField";
@@ -318,6 +318,15 @@ export default function NodeSettings() {
   // что оператор уже успел ввести.
   const chDatabase = useCurrentTeamCHDatabase();
   const nodeDefaults = useNodeFormDefaults();
+  // §98.5: действующая ГЛОБАЛЬНАЯ политика защиты. Показывается в подсказке
+  // пустого поля: до §98 там стояло расплывчатое «как в конфигурации», и узнать
+  // действующее число оператор не мог нигде. Пусто — значит в интерфейсе
+  // ничего не задано и действует конфигурация сервиса.
+  const breakerDefaults = useBreakerDefaults();
+  const breakerHint = (v: number | undefined) =>
+    v === undefined
+      ? t("node.form.breaker_default_placeholder")
+      : t("node.form.breaker_default_global", { value: v });
   const defaultTemplateId = templates.data?.items.find((tpl) => tpl.is_default)?.id ?? "";
   const templateSeededRef = useRef(false);
   const tableSeededRef = useRef(false);
@@ -936,7 +945,7 @@ export default function NodeSettings() {
                   type="number"
                   min={0}
                   max={100}
-                  placeholder={t("node.form.breaker_default_placeholder")}
+                  placeholder={breakerHint(breakerDefaults.threshold)}
                   className={errCls("circuit_breaker_threshold")}
                   value={form.circuit_breaker_threshold || ""}
                   onChange={(e) =>
@@ -953,7 +962,7 @@ export default function NodeSettings() {
                   type="number"
                   min={0}
                   max={3600}
-                  placeholder={t("node.form.breaker_default_placeholder")}
+                  placeholder={breakerHint(breakerDefaults.cooldownSec)}
                   className={errCls("circuit_breaker_cooldown_sec")}
                   value={form.circuit_breaker_cooldown_sec || ""}
                   onChange={(e) =>
