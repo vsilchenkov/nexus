@@ -1106,6 +1106,8 @@
     "purge_period_confirm": "Delete waiting messages received in the selected period? They will not be sent.",
     "purge_failed_all": "Clear all failed",
     "purge_failed_all_confirm": "Clear all failed deliveries? Their automatic retry stops and the records are removed from the logs. This cannot be undone.",
+    "purge_failed_result": "Records cleared: {{count}}.",
+    "purge_failed_capped": "not all were cleared — click again",
     "purge_failed_all_confirm_sync": "Clear all failed deliveries? The records are removed from the node logs. This cannot be undone.",
     "purge_failed_period": "Clear failed (period)",
     "purge_failed_period_confirm": "Clear failed deliveries in the selected period? Their automatic retry stops and the records are removed from the logs. This cannot be undone.",

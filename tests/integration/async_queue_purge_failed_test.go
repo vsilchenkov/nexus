@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -129,4 +130,79 @@ func TestAsyncQueue_PurgeFailed_E2E(t *testing.T) {
 	require.NoError(t, conn.QueryRow(ctx, "SELECT count() FROM "+table).Scan(&remaining))
 	require.EqualValues(t, 1, remaining, "delivered (done=1) record stays")
 	require.Equal(t, 1, auditRepo.writes, "одна audit-запись очистки")
+}
+
+// TestAsyncQueue_PurgeFailed_MultipleBatches_E2E (§98.4): очистка убирает ВСЕ
+// неудачные, а не первый батч.
+//
+// Проверяется на живом ClickHouse, а не стабом, потому что конечность цикла
+// держится на реальном поведении сервера: пока удаление не применилось,
+// следующая выборка кандидатов возвращает те же ID. Здесь (CH 24) ожидание
+// включено по умолчанию, поэтому тест зелёный и без syncMutationCtx — на
+// старших серверах эту же роль играет mutations_sync, см. её godoc. То есть
+// тест проверяет ПОЛНОТУ очистки, а не саму настройку.
+func TestAsyncQueue_PurgeFailed_MultipleBatches_E2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
+	defer cancel()
+
+	conn, chCfg, chCleanup := startClickHouse(t, ctx)
+	defer chCleanup()
+	redisClient, redisCleanup := startRedis(t, ctx)
+	defer redisCleanup()
+
+	const table = "nexus_default.purge_failed_batches"
+	createNodeLogTable(t, ctx, conn, table)
+
+	logger := logging.NewNoop()
+	provider := clickhouse.StaticProvider(conn)
+	writer := chlog.New(provider, chCfg, logger)
+	defer writer.Stop(ctx)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	// Батч задан МАЛЕНЬКИМ (peekCap=7), а записей — заведомо больше: важно
+	// пройти несколько кругов, а не залить объём.
+	const (
+		batch   = 7
+		records = 25
+	)
+	for i := range records {
+		writer.Write(ctx, table, &domain.LogRecord{
+			ID: fmt.Sprintf("00000000-0000-0000-0000-%012d", i), Type: domain.RootMethodRequestAsync,
+			URL: "https://x", Method: "POST", Request: "{}", Response: "{}", Status: 0,
+			DateCreate: now, DateRequest: now, DateResponse: now, Duration: 1, Done: false,
+			ChecksumRequest: strings.Repeat("a", 32), ChecksumResponse: strings.Repeat("b", 32),
+			Host: "h", IP: "127.0.0.1", Attempts: 1, AttemptsDetails: "[]",
+		})
+	}
+	require.NoError(t, writer.Flush(ctx))
+
+	deadline := time.Now().Add(20 * time.Second)
+	var total uint64
+	for time.Now().Before(deadline) {
+		require.NoError(t, conn.QueryRow(ctx, "SELECT count() FROM "+table).Scan(&total))
+		if total >= records {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	require.EqualValues(t, records, total)
+
+	logReader := webch.NewLogReader(provider, logger)
+	node := &domain.Node{ID: "n1", Path: "partner/echo", TeamID: "t1", ClickHouseTable: table}
+	auditRepo := &pfAuditRepo{}
+	aqUC := webuc.NewAsyncQueueUsecase(nil, queuecancel.New(redisClient), logReader,
+		&pfNodeRepo{node: node}, webuc.NewAuditUsecase(auditRepo, logger),
+		"nexus-sender", "nexus.async",
+		"nexus-sender-paused", "nexus.async.paused",
+		time.Hour, batch, logger)
+
+	r, err := aqUC.PurgeFailed(ctx, webuc.SystemActor(), "n1", "t1", time.Time{}, time.Time{})
+	require.NoError(t, err)
+	require.EqualValues(t, records, r.Cancelled, "очищены все записи, а не первый батч")
+	require.False(t, r.Capped, "бюджет проходов не исчерпан — остатка нет")
+
+	var remaining uint64
+	require.NoError(t, conn.QueryRow(ctx, "SELECT count() FROM "+table).Scan(&remaining))
+	require.Zero(t, remaining, "в таблице не должно остаться ни одной неудачной записи")
+	require.Equal(t, 1, auditRepo.writes, "одна audit-запись на всю операцию")
 }

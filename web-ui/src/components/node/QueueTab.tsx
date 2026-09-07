@@ -41,6 +41,11 @@ type ListResp = {
 };
 type BodyResp = { id: string; method: string; target_url: string; headers?: Record<string, string>; body: string };
 type FailedCountResp = { count: number; logs_configured: boolean; logs_available?: boolean };
+// §98.4: итог очистки «Неудачных доставок». cancelled — сколько записей убрано;
+// capped — очистка упёрлась в бюджет прохода, и неудачные ещё остались. До §98
+// это поле приходило с сервера, но не читалось, и оператор считал очистку
+// полной, хотя за один вызов убиралась ровно тысяча записей.
+type PurgeFailedResult = { cancelled: number; capped: boolean; kafka_available: boolean };
 // §96.8: итог «Повторить все сейчас». skipped_original_unavailable — записи, чей
 // оригинал в очереди недоступен, а копия в журнале обрезана: их не отправляли,
 // и они остались в списке вместе со своим следом.
@@ -232,7 +237,7 @@ export function QueueTab({
   // перестаёт повторять) и удаляет записи done=0 из CH-логов узла.
   const purgeFailed = useMutation({
     mutationFn: (body: { from?: string; to?: string }) =>
-      api.post(`/api/nodes/${id}/async-queue/purge-failed`, body),
+      api.post<PurgeFailedResult>(`/api/nodes/${id}/async-queue/purge-failed`, body),
     onSuccess: invalidateFailed,
   });
   // §36.11: «Повторить все сейчас» — пере-инжектит все неудачные через Receiver
@@ -549,6 +554,20 @@ export function QueueTab({
               <span className="text-err">
                 {" · "}
                 {t("queue.replay_failed_errors", { count: replayFailed.data.failed })}
+              </span>
+            )}
+          </p>
+        )}
+        {/* §98.4: итог последней очистки. Без него «Очистить все неудачные»
+            выглядела успешной всегда — в том числе когда убрала первую тысячу
+            из сорока семи, и остаток молча оставался в списке. */}
+        {purgeFailed.data && (
+          <p className="text-xs text-fg-muted">
+            {t("queue.purge_failed_result", { count: purgeFailed.data.cancelled })}
+            {purgeFailed.data.capped && (
+              <span className="text-warn">
+                {" · "}
+                {t("queue.purge_failed_capped")}
               </span>
             )}
           </p>

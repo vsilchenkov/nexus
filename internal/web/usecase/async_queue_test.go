@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -83,6 +84,23 @@ func newQueueUCFull(peeker port.AsyncQueuePeeker, cancel port.QueueCancelWriter,
 		"nexus-sender", "nexus.async",
 		"nexus-sender-paused", "nexus.async.paused",
 		time.Hour, 5000, logging.NewNoop())
+	return uc, repo
+}
+
+// newQueueUCCap — то же, но с явным размером батча. §98.4-тестам он нужен
+// маленьким: проверяется поведение ЦИКЛА, а не пропускная способность, и гонять
+// двести проходов по пять тысяч ID незачем.
+func newQueueUCCap(failed port.FailedLogsPurger, cancel port.QueueCancelWriter, node *domain.Node, peekCap int) (*AsyncQueueUsecase, *stubAuditRepo) {
+	repo := &stubAuditRepo{}
+	nodes := &stubNodeRepo{nodes: map[string]*domain.Node{}}
+	if node != nil {
+		nodes.nodes[node.ID] = node
+	}
+	uc := NewAsyncQueueUsecase(&stubPeeker{}, cancel, failed, nodes,
+		NewAuditUsecase(repo, logging.NewNoop()),
+		"nexus-sender", "nexus.async",
+		"nexus-sender-paused", "nexus.async.paused",
+		time.Hour, peekCap, logging.NewNoop())
 	return uc, repo
 }
 
@@ -521,4 +539,97 @@ func TestAsyncQueue_PurgeFailed_DoesNotExcludeClientCanceled(t *testing.T) {
 	_, err := uc.PurgeFailed(context.Background(), Actor{UserID: "u"}, "n1", "t1", time.Time{}, time.Time{})
 	require.NoError(t, err)
 	assert.Empty(t, failed.gotExcludes, "очистка видит всё множество недоставленных")
+}
+
+// batchFailedPurger — модель настоящего хранилища для §98.4: FailedIDs отдаёт
+// не больше cap записей и сообщает, есть ли ещё, а DeleteFailedRows реально их
+// убирает. Именно синхронность удаления делает цикл конечным: с асинхронной
+// мутацией ClickHouse следующая выборка вернула бы те же ID (см. syncMutationCtx).
+type batchFailedPurger struct {
+	remaining []string
+	idsCalls  int
+	delCalls  int
+	delSizes  []int
+}
+
+func (s *batchFailedPurger) FailedIDs(_ context.Context, _ port.LogQuery, capN int) ([]string, bool, error) {
+	s.idsCalls++
+	if len(s.remaining) == 0 {
+		return nil, false, nil
+	}
+	n := min(capN, len(s.remaining))
+	out := append([]string(nil), s.remaining[:n]...)
+	return out, len(s.remaining) > n, nil
+}
+
+func (s *batchFailedPurger) DeleteFailedRows(_ context.Context, _ port.LogQuery, ids []string) (uint64, error) {
+	s.delCalls++
+	s.delSizes = append(s.delSizes, len(ids))
+	gone := map[string]struct{}{}
+	for _, id := range ids {
+		gone[id] = struct{}{}
+	}
+	kept := s.remaining[:0]
+	for _, id := range s.remaining {
+		if _, ok := gone[id]; !ok {
+			kept = append(kept, id)
+		}
+	}
+	s.remaining = kept
+	return uint64(len(ids)), nil
+}
+
+func failedIDs(n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = "f" + strconv.Itoa(i)
+	}
+	return out
+}
+
+// §98.4: очистка убирает ВСЕ неудачные, а не первую страницу. До этого один
+// вызов чистил ровно peekCap записей, а признак «остались ещё» интерфейс не
+// читал — оператор считал очистку полной.
+func TestAsyncQueue_PurgeFailed_ClearsEverythingInBatches(t *testing.T) {
+	t.Parallel()
+	// Три полных батча и остаток: 10 + 10 + 10 + 1.
+	failed := &batchFailedPurger{remaining: failedIDs(31)}
+	cancelW := &stubCancelWriter{}
+	uc, audit := newQueueUCCap(failed, cancelW, asyncNodeCH(), 10)
+
+	r, err := uc.PurgeFailed(context.Background(), Actor{UserID: "u"}, "n1", "t1", time.Time{}, time.Time{})
+	require.NoError(t, err)
+
+	assert.Equal(t, 31, r.Cancelled, "очищено должно быть всё, а не первая страница")
+	assert.False(t, r.Capped, "бюджет не исчерпан — остатка нет")
+	assert.Empty(t, failed.remaining)
+	assert.Equal(t, []int{10, 10, 10, 1}, failed.delSizes)
+	// Инвариант §79.2 держится ВНУТРИ батча: отменяем ровно то, что удаляем.
+	assert.Len(t, cancelW.gotIDs, 31)
+	// Аудит — одна запись на операцию, с агрегатом и числом проходов.
+	require.Len(t, audit.entries, 1)
+	assert.Equal(t, uint64(31), audit.entries[0].Details["deleted"])
+	assert.Equal(t, 4, audit.entries[0].Details["batches"])
+	assert.Equal(t, false, audit.entries[0].Details["capped"])
+}
+
+// Бюджет прохода конечен: один клик не должен уметь держать запрос
+// неограниченно долго. Упёрлись — Capped, и интерфейс просит нажать ещё раз.
+func TestAsyncQueue_PurgeFailed_BudgetExhausted_ReportsCapped(t *testing.T) {
+	t.Parallel()
+	// На одну запись больше, чем успевает убрать бюджет проходов.
+	const batch = 10
+	failed := &batchFailedPurger{remaining: failedIDs(batch*purgeFailedMaxBatches + 1)}
+	uc, audit := newQueueUCCap(failed, &stubCancelWriter{}, asyncNodeCH(), batch)
+
+	r, err := uc.PurgeFailed(context.Background(), Actor{UserID: "u"}, "n1", "t1", time.Time{}, time.Time{})
+	require.NoError(t, err)
+
+	assert.True(t, r.Capped, "остались неудачные — операция обязана сказать об этом")
+	assert.Equal(t, batch*purgeFailedMaxBatches, r.Cancelled)
+	assert.Equal(t, purgeFailedMaxBatches, failed.delCalls, "проходов ровно по бюджету")
+	assert.Len(t, failed.remaining, 1)
+	require.Len(t, audit.entries, 1)
+	assert.Equal(t, purgeFailedMaxBatches, audit.entries[0].Details["batches"])
+	assert.Equal(t, true, audit.entries[0].Details["capped"])
 }
