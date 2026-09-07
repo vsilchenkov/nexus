@@ -5,6 +5,7 @@ import { Rabbit, PlugZap, RefreshCw, CircleCheck, CircleX } from "lucide-react";
 import { api, type RMQTestResult } from "../../api/client";
 import { parseNumInput } from "../../lib/numField";
 import { secretPlaceholderKey } from "../../lib/secretPlaceholder";
+import { PASSWORD_MANAGER_OFF } from "../../lib/secretMask";
 import { Button, Card, Field, Hint, Input, SecretInput, SectionHead } from "../ui";
 
 // §27: поля формы, относящиеся к RabbitMQAsync. Подмножество Form в NodeSettings.
@@ -126,7 +127,7 @@ export function RabbitMQSection({ form, set, isNew, passwordSet, errField, errMs
         <Field label={t("node.rmq.auth")} help={t("node.rmq.auth_help")} className="mt-3">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <Input
-              autoComplete="off"
+              {...PASSWORD_MANAGER_OFF}
               value={form.rmq_user}
               onChange={(e) => set("rmq_user", e.target.value)}
               placeholder="user"

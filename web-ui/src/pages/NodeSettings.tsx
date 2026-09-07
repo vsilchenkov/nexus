@@ -36,6 +36,7 @@ import { useEnsureNodeTeam, useNodeTeam } from "../lib/nodeShare";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { parseNumInput } from "../lib/numField";
 import { secretPlaceholderKey } from "../lib/secretPlaceholder";
+import { PASSWORD_MANAGER_OFF } from "../lib/secretMask";
 import { validateNodeForm } from "../lib/nodeValidation";
 import { chSchemaChangeWontApply, chSyncFormDirty } from "../lib/chSchema";
 import { buildVerifyMessage } from "../lib/chTableVerify";
@@ -989,7 +990,7 @@ export default function NodeSettings() {
                 <Field label={t("auth.login_field")} help={t("node.help.basic_login")}>
                   <Input
                     mono
-                    autoComplete="off"
+                    {...PASSWORD_MANAGER_OFF}
                     className={errCls("incoming_auth_login")}
                     value={form.incoming_auth_login}
                     onChange={(e) => set("incoming_auth_login", e.target.value)}
@@ -1105,7 +1106,7 @@ export default function NodeSettings() {
                 <Field label={t("auth.login_field")} help={t("node.help.basic_login")}>
                   <Input
                     mono
-                    autoComplete="off"
+                    {...PASSWORD_MANAGER_OFF}
                     className={errCls("auth_login")}
                     value={form.auth_login}
                     onChange={(e) => set("auth_login", e.target.value)}

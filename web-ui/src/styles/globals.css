@@ -89,3 +89,15 @@ input[type="search"]::-webkit-search-results-decoration {
   -webkit-appearance: none;
   appearance: none;
 }
+
+/* §98.7: маскировка поля секрета БЕЗ type="password". Менеджер паролей
+   Chrome/Edge ищет поле пароля по типу, а секреты чужих систем (узел, RabbitMQ,
+   ClickHouse, SMTP) не имеют к личным учёткам пользователя никакого отношения —
+   его попап там только мешает и, что хуже, способен незаметно подставить чужой
+   пароль в поле, пустота которого означает «оставить старый» (§5.5).
+   Где -webkit-text-security не поддержан, SecretInput возвращается к
+   type="password" (см. lib/secretMask.ts) — открытым текстом секрет не
+   показывается никогда. */
+.secret-mask {
+  -webkit-text-security: disc;
+}
