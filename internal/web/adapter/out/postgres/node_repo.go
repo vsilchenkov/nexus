@@ -30,8 +30,9 @@ type NodeRepoPg struct {
 
 // Compile-time check, что интерфейс реализован полностью.
 var (
-	_ port.NodeRepo       = (*NodeRepoPg)(nil)
-	_ port.NodeTableUsage = (*NodeRepoPg)(nil)
+	_ port.NodeRepo         = (*NodeRepoPg)(nil)
+	_ port.NodeTableUsage   = (*NodeRepoPg)(nil)
+	_ port.NodePathResolver = (*NodeRepoPg)(nil)
 )
 
 func NewNodeRepoPg(db DBTX, cipher *crypto.Cipher, logger logging.Logger) *NodeRepoPg {
@@ -102,6 +103,40 @@ func (r *NodeRepoPg) ListClickHouseTables(ctx context.Context) ([]string, error)
 			continue
 		}
 		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// IDsByPaths реализует port.NodePathResolver (§98.2): путь → id узла, только
+// для однозначных путей.
+//
+// Однозначность проверяет сама СУБД (HAVING count(*) = 1), а не вызывающий код:
+// путь уникален лишь внутри команды, и одноимённые узлы в разных командах —
+// штатная ситуация, а не ошибка данных. Такой путь просто не попадает в карту,
+// и строка на экране остаётся текстом.
+//
+// team-скоупа здесь нет намеренно, см. godoc порта.
+func (r *NodeRepoPg) IDsByPaths(ctx context.Context, paths []string) (map[string]string, error) {
+	out := make(map[string]string, len(paths))
+	if len(paths) == 0 {
+		return out, nil
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT path, min(id::text)
+		FROM nodes
+		WHERE path = ANY($1)
+		GROUP BY path
+		HAVING count(*) = 1`, paths)
+	if err != nil {
+		return nil, fmt.Errorf("node ids by paths: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var path, id string
+		if err := rows.Scan(&path, &id); err != nil {
+			return nil, fmt.Errorf("scan node id by path: %w", err)
+		}
+		out[path] = id
 	}
 	return out, rows.Err()
 }

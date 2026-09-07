@@ -190,7 +190,7 @@ export default function KafkaMonitor() {
       />
 
       {/* Топ-узлы (§5.7) */}
-      {byNode && <TopNodes data={byNode} />}
+      {byNode && <TopNodes data={byNode} from={win.since} to={win.until} />}
 
       {/* Брокеры (§5.8) */}
       <Brokers data={testQ.data} onRecheck={() => testQ.refetch()} rechecking={testQ.isFetching} />

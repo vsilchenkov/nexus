@@ -9208,6 +9208,9 @@
                 "failed": {
                     "type": "integer"
                 },
+                "node_id": {
+                    "type": "string"
+                },
                 "node_path": {
                     "type": "string"
                 },
@@ -9281,6 +9284,9 @@
         "internal_web_adapter_in_http.kafkaProducerDTO": {
             "type": "object",
             "properties": {
+                "node_id": {
+                    "type": "string"
+                },
                 "node_path": {
                     "type": "string"
                 },

@@ -14,15 +14,18 @@ import (
 // cache — Redis-кеш ответов admin (TTL 30с). При nil-источнике
 // соответствующие блоки помечаются недоступными, экран не падает.
 type KafkaMonitorUsecase struct {
-	prom   port.PromMetrics // может быть nil
-	admin  port.KafkaAdmin  // может быть nil
-	cache  port.KafkaCache  // может быть nil
+	prom  port.PromMetrics // может быть nil
+	admin port.KafkaAdmin  // может быть nil
+	cache port.KafkaCache  // может быть nil
+	// §98.2: путь узла → id, чтобы строки top-узлов вели на журнал узла.
+	// Может быть nil — тогда строки остаются текстом, как до §98.
+	nodes  port.NodePathResolver
 	th     KafkaThresholds
 	logger logging.Logger
 }
 
-func NewKafkaMonitorUsecase(prom port.PromMetrics, admin port.KafkaAdmin, cache port.KafkaCache, th KafkaThresholds, logger logging.Logger) *KafkaMonitorUsecase {
-	return &KafkaMonitorUsecase{prom: prom, admin: admin, cache: cache, th: th, logger: logger}
+func NewKafkaMonitorUsecase(prom port.PromMetrics, admin port.KafkaAdmin, cache port.KafkaCache, nodes port.NodePathResolver, th KafkaThresholds, logger logging.Logger) *KafkaMonitorUsecase {
+	return &KafkaMonitorUsecase{prom: prom, admin: admin, cache: cache, nodes: nodes, th: th, logger: logger}
 }
 
 // KafkaSummaryView — числовая сводка за период (§4.1 spec, поле summary).

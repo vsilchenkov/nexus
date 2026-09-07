@@ -9211,6 +9211,9 @@ const docTemplate = `{
                 "failed": {
                     "type": "integer"
                 },
+                "node_id": {
+                    "type": "string"
+                },
                 "node_path": {
                     "type": "string"
                 },
@@ -9284,6 +9287,9 @@ const docTemplate = `{
         "internal_web_adapter_in_http.kafkaProducerDTO": {
             "type": "object",
             "properties": {
+                "node_id": {
+                    "type": "string"
+                },
                 "node_path": {
                     "type": "string"
                 },

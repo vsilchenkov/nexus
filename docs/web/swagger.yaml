@@ -1715,6 +1715,8 @@ definitions:
     properties:
       failed:
         type: integer
+      node_id:
+        type: string
       node_path:
         type: string
       rate:
@@ -1762,6 +1764,8 @@ definitions:
     type: object
   internal_web_adapter_in_http.kafkaProducerDTO:
     properties:
+      node_id:
+        type: string
       node_path:
         type: string
       produced:

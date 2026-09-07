@@ -72,7 +72,7 @@ func TestKafkaOverview_PrometheusAndKafka(t *testing.T) {
 		},
 	}
 	admin := &fakeKafkaAdmin{health: port.BrokerHealth{BrokersTotal: 3, BrokersOnline: 3}}
-	uc := NewKafkaMonitorUsecase(prom, admin, nil, defaultTh(), logging.NewNoop())
+	uc := NewKafkaMonitorUsecase(prom, admin, nil, nil, defaultTh(), logging.NewNoop())
 
 	since, until := kafkaWindow()
 	r := uc.Overview(context.Background(), since, until)
@@ -92,7 +92,7 @@ func TestKafkaOverview_PrometheusAndKafka(t *testing.T) {
 
 func TestKafkaOverview_DegradesWithoutSources(t *testing.T) {
 	t.Parallel()
-	uc := NewKafkaMonitorUsecase(nil, nil, nil, defaultTh(), logging.NewNoop())
+	uc := NewKafkaMonitorUsecase(nil, nil, nil, nil, defaultTh(), logging.NewNoop())
 	since, until := kafkaWindow()
 	r := uc.Overview(context.Background(), since, until)
 
@@ -106,7 +106,7 @@ func TestKafkaOverview_DegradesWithoutSources(t *testing.T) {
 func TestKafkaOverview_BrokerHealthErrorDegrades(t *testing.T) {
 	t.Parallel()
 	admin := &fakeKafkaAdmin{healthErr: errors.New("boom")}
-	uc := NewKafkaMonitorUsecase(&fakeProm{}, admin, nil, defaultTh(), logging.NewNoop())
+	uc := NewKafkaMonitorUsecase(&fakeProm{}, admin, nil, nil, defaultTh(), logging.NewNoop())
 	since, until := kafkaWindow()
 	r := uc.Overview(context.Background(), since, until)
 	assert.False(t, r.KafkaAvailable)
@@ -115,7 +115,7 @@ func TestKafkaOverview_BrokerHealthErrorDegrades(t *testing.T) {
 func TestKafkaTopics(t *testing.T) {
 	t.Parallel()
 	admin := &fakeKafkaAdmin{topics: []port.TopicInfo{{Name: "nexus.async", Partitions: 4}}}
-	uc := NewKafkaMonitorUsecase(nil, admin, nil, defaultTh(), logging.NewNoop())
+	uc := NewKafkaMonitorUsecase(nil, admin, nil, nil, defaultTh(), logging.NewNoop())
 	r := uc.Topics(context.Background())
 	require.True(t, r.KafkaAvailable)
 	require.Len(t, r.Topics, 1)
@@ -124,7 +124,7 @@ func TestKafkaTopics(t *testing.T) {
 
 func TestKafkaTopics_NoAdmin(t *testing.T) {
 	t.Parallel()
-	uc := NewKafkaMonitorUsecase(nil, nil, nil, defaultTh(), logging.NewNoop())
+	uc := NewKafkaMonitorUsecase(nil, nil, nil, nil, defaultTh(), logging.NewNoop())
 	r := uc.Topics(context.Background())
 	assert.False(t, r.KafkaAvailable)
 	assert.Empty(t, r.Topics)
@@ -146,7 +146,7 @@ func TestKafkaTopics_SizesFromPrometheus(t *testing.T) {
 		// топика нет на опрошенном брокере) — размер остаётся нулевым.
 		"__consumer_offsets": 4096, // internal-топика в списке нет — ключ игнорируется
 	}}
-	uc := NewKafkaMonitorUsecase(prom, admin, nil, defaultTh(), logging.NewNoop())
+	uc := NewKafkaMonitorUsecase(prom, admin, nil, nil, defaultTh(), logging.NewNoop())
 
 	r := uc.Topics(context.Background())
 
@@ -168,13 +168,13 @@ func TestKafkaTopics_SizesUnavailableWhenNoSeries(t *testing.T) {
 	admin := &fakeKafkaAdmin{topics: []port.TopicInfo{{Name: "nexus.async", Partitions: 4}}}
 
 	// Prometheus жив, но серий kafka_log_log_size нет (агент не поднят).
-	uc := NewKafkaMonitorUsecase(&fakeProm{topicSizes: map[string]int64{}}, admin, nil, defaultTh(), logging.NewNoop())
+	uc := NewKafkaMonitorUsecase(&fakeProm{topicSizes: map[string]int64{}}, admin, nil, nil, defaultTh(), logging.NewNoop())
 	r := uc.Topics(context.Background())
 	require.True(t, r.KafkaAvailable)
 	assert.False(t, r.SizesAvailable)
 
 	// Prometheus вовсе не сконфигурирован — тот же исход.
-	uc = NewKafkaMonitorUsecase(nil, admin, nil, defaultTh(), logging.NewNoop())
+	uc = NewKafkaMonitorUsecase(nil, admin, nil, nil, defaultTh(), logging.NewNoop())
 	r = uc.Topics(context.Background())
 	require.True(t, r.KafkaAvailable)
 	assert.False(t, r.SizesAvailable)
@@ -188,7 +188,7 @@ func TestKafkaTopics_SizesNotFrozenByCache(t *testing.T) {
 	admin := &fakeKafkaAdmin{topics: []port.TopicInfo{{Name: "nexus.async", Partitions: 4}}}
 	prom := &fakeProm{topicSizes: map[string]int64{"nexus.async": 4096}}
 	cache := newMemKafkaCache()
-	uc := NewKafkaMonitorUsecase(prom, admin, cache, defaultTh(), logging.NewNoop())
+	uc := NewKafkaMonitorUsecase(prom, admin, cache, nil, defaultTh(), logging.NewNoop())
 
 	first := uc.Topics(context.Background())
 	require.Len(t, first.Topics, 1)
@@ -211,7 +211,7 @@ func TestKafkaTopics_SizesDegradeOnPromError(t *testing.T) {
 	t.Parallel()
 	admin := &fakeKafkaAdmin{topics: []port.TopicInfo{{Name: "nexus.async", Partitions: 4, MessagesEstimate: 42}}}
 	prom := &fakeProm{topicSizeErr: errors.New("prometheus down")}
-	uc := NewKafkaMonitorUsecase(prom, admin, nil, defaultTh(), logging.NewNoop())
+	uc := NewKafkaMonitorUsecase(prom, admin, nil, nil, defaultTh(), logging.NewNoop())
 
 	r := uc.Topics(context.Background())
 
@@ -228,7 +228,7 @@ func TestKafkaByNode_TopProducersAndFailures(t *testing.T) {
 		"geo/notify": {Out: 200, Errors: 0},
 		"old/legacy": {Out: 100, Errors: 50},
 	}}
-	uc := NewKafkaMonitorUsecase(prom, nil, nil, defaultTh(), logging.NewNoop())
+	uc := NewKafkaMonitorUsecase(prom, nil, nil, nil, defaultTh(), logging.NewNoop())
 	since, until := kafkaWindow()
 	r := uc.ByNode(context.Background(), since, until)
 
@@ -246,7 +246,7 @@ func TestKafkaTest_AllBrokersOK(t *testing.T) {
 	admin := &fakeKafkaAdmin{pings: []port.BrokerPing{
 		{Addr: "k1:9092", OK: true}, {Addr: "k2:9092", OK: true},
 	}}
-	uc := NewKafkaMonitorUsecase(nil, admin, nil, defaultTh(), logging.NewNoop())
+	uc := NewKafkaMonitorUsecase(nil, admin, nil, nil, defaultTh(), logging.NewNoop())
 	r := uc.Test(context.Background())
 	assert.True(t, r.OK)
 	assert.True(t, r.KafkaAvailable)
@@ -258,7 +258,7 @@ func TestKafkaTest_OneBrokerDown(t *testing.T) {
 	admin := &fakeKafkaAdmin{pings: []port.BrokerPing{
 		{Addr: "k1:9092", OK: true}, {Addr: "k2:9092", OK: false, Warn: "unreachable"},
 	}}
-	uc := NewKafkaMonitorUsecase(nil, admin, nil, defaultTh(), logging.NewNoop())
+	uc := NewKafkaMonitorUsecase(nil, admin, nil, nil, defaultTh(), logging.NewNoop())
 	r := uc.Test(context.Background())
 	assert.False(t, r.OK)
 	assert.True(t, r.KafkaAvailable)

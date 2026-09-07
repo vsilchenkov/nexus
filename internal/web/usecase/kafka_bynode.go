@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"nexus/internal/platform/metrics"
 	"nexus/internal/web/usecase/port"
 )
 
@@ -12,15 +13,22 @@ import (
 const topN = 10
 
 // NodeProducer — строка top producers (§4.4): узел, число сообщений, доля.
+//
+// NodeID (§98.2) пуст, если путь не удалось однозначно сопоставить узлу:
+// такого узла уже нет, путь принадлежит нескольким командам сразу, либо резолв
+// недоступен. Интерфейс в этом случае показывает путь текстом.
 type NodeProducer struct {
 	NodePath string
+	NodeID   string
 	Produced uint64
 	Share    float64 // доля от суммарного produced (0..1)
 }
 
 // NodeFailure — строка top failures (§4.4): узел, число ошибок, error rate.
+// NodeID — как у NodeProducer (§98.2).
 type NodeFailure struct {
 	NodePath string
+	NodeID   string
 	Failed   uint64
 	Rate     float64 // failed / total по узлу (0..1)
 }
@@ -47,7 +55,62 @@ func (u *KafkaMonitorUsecase) ByNode(ctx context.Context, since, until time.Time
 	res.TopProducers = topProducers(m)
 	res.TopFailures = topFailures(m)
 	res.PrometheusAvailable = true
+	u.resolveNodeIDs(ctx, &res)
 	return res
+}
+
+// resolveNodeIDs проставляет id узлов строкам top-блоков (§98.2).
+//
+// Резолв идёт ПОСЛЕ отбора top-N: путей здесь не больше 2×topN, то есть один
+// дешёвый запрос вместо резолва всей карты Prometheus. Ошибка резолва экран не
+// роняет — ссылки украшение, без них таблица остаётся прежней.
+func (u *KafkaMonitorUsecase) resolveNodeIDs(ctx context.Context, res *KafkaByNodeResult) {
+	if u.nodes == nil {
+		return
+	}
+	want := len(res.TopProducers) + len(res.TopFailures)
+	seen := make(map[string]struct{}, want)
+	paths := make([]string, 0, want)
+	add := func(p string) {
+		// §94.8: запросы к несуществующим узлам схлопнуты Prometheus'ом в одну
+		// метку-заглушку. Спрашивать про неё базу бессмысленно, а ссылка на
+		// «узел <unresolved>» была бы прямой ложью.
+		if p == "" || p == metrics.NodeUnresolved {
+			return
+		}
+		if _, ok := seen[p]; ok {
+			return
+		}
+		seen[p] = struct{}{}
+		paths = append(paths, p)
+	}
+	for _, r := range res.TopProducers {
+		add(r.NodePath)
+	}
+	for _, r := range res.TopFailures {
+		add(r.NodePath)
+	}
+	if len(paths) == 0 {
+		return
+	}
+
+	ids, err := u.nodes.IDsByPaths(ctx, paths)
+	if err != nil {
+		u.logger.Debug("kafka by-node: node id resolve failed, rows stay plain text",
+			u.logger.Int("paths", len(paths)), u.logger.Err(err))
+		return
+	}
+	for i := range res.TopProducers {
+		res.TopProducers[i].NodeID = ids[res.TopProducers[i].NodePath]
+	}
+	for i := range res.TopFailures {
+		res.TopFailures[i].NodeID = ids[res.TopFailures[i].NodePath]
+	}
+	// §51.9: расхождение «путей спросили N, узнали M» — первое, что нужно при
+	// разборе жалобы «строка не кликается».
+	u.logger.Debug("kafka by-node: node ids resolved",
+		u.logger.Int("paths", len(paths)),
+		u.logger.Int("resolved", len(ids)))
 }
 
 // topProducers сортирует узлы по числу отправленных сообщений (Out) и берёт
