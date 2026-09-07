@@ -17,7 +17,7 @@ import (
 	"nexus/internal/web/usecase"
 )
 
-// TestNodeIDsByPaths_E2E — §98.2: резолв «путь узла → id» для вкладки Kafka.
+// TestNodeRepoIDsByPaths_E2E — §98.2: резолв «путь узла → id» для вкладки Kafka.
 //
 // Проверяется на ЖИВОМ PostgreSQL, а не стабом, по двум причинам сразу.
 // Во-первых, запрос написан руками и содержит `min(id::text)`: у типа uuid
@@ -26,7 +26,7 @@ import (
 // Go — в unit-тесте с картой в памяти это условие вообще не выполняется.
 //
 // Совместимость: конструкций PostgreSQL 13+ здесь нет (на бою 12).
-func TestNodeIDsByPaths_E2E(t *testing.T) {
+func TestNodeRepoIDsByPaths_E2E(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
