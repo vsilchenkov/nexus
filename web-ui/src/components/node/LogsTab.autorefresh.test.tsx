@@ -25,8 +25,22 @@ vi.mock("../../api/client", async () => {
 
 vi.mock("react-i18next", () => ({
   // i18n нужен полям дат (LogDateField выбирает локаль календаря).
-  useTranslation: () => ({ t: (k: string) => k, i18n: { language: "ru" } }),
+  // Интерполяция нужна счётчику «Показано N»: после §98.6 именно он, а не
+  // число строк в DOM, показывает объём накопленного списка.
+  useTranslation: () => ({
+    t: (k: string, o?: Record<string, unknown>) => (o?.n === undefined ? k : `${k}:${o.n}`),
+    i18n: { language: "ru" },
+  }),
 }));
+
+// §98.6: журнал виртуализован — в DOM живут только видимые строки, поэтому
+// «сколько записей загружено» по разметке больше не сосчитать. Настоящий
+// показатель накопления — счётчик «Показано N» в шапке: он берёт длину списка,
+// а не длину отрисованного куска.
+function loadedCount(): number {
+  const el = screen.getByText(/^logs\.shown_(count|of_total):/);
+  return Number(el.textContent!.split(":")[1]);
+}
 
 const PAGE_SIZE = 50;
 const NODE = { id: "n1", clickhouse_table: "nexus_task.task_vika" } as Node;
@@ -121,7 +135,7 @@ describe("LogsTab — инкрементальное обновление (§77.
 
   it("обновление тянет только новые записи и не перезапрашивает страницу", async () => {
     renderTab();
-    await waitFor(() => expect(screen.getAllByText(/^m\./).length).toBe(PAGE_SIZE));
+    await waitFor(() => expect(loadedCount()).toBe(PAGE_SIZE));
     const pagesAfterFirstLoad = logsCalls.length;
 
     // Тик tail-poll: новая запись сверху.
@@ -137,7 +151,7 @@ describe("LogsTab — инкрементальное обновление (§77.
 
   it("раскрытое тело переживает тик обновления", async () => {
     renderTab();
-    await waitFor(() => expect(screen.getAllByText(/^m\./).length).toBe(PAGE_SIZE));
+    await waitFor(() => expect(loadedCount()).toBe(PAGE_SIZE));
 
     fireEvent.click(screen.getByText("m.1"));
     await waitFor(() => expect(screen.getByText("REQUEST-BODY")).toBeTruthy());
@@ -155,20 +169,32 @@ describe("LogsTab — инкрементальное обновление (§77.
     const wrap = document.querySelector<HTMLDivElement>(".overflow-y-auto");
     expect(wrap).not.toBeNull();
 
-    await waitFor(() => expect(screen.getAllByText(/^m\./).length).toBe(PAGE_SIZE));
+    await waitFor(() => expect(loadedCount()).toBe(PAGE_SIZE));
     wrap!.scrollTop = 4400;
     fireEvent.scroll(wrap!);
-    await waitFor(() => expect(screen.getAllByText(/^m\./).length).toBe(PAGE_SIZE * 2));
+    await waitFor(() => expect(loadedCount()).toBe(PAGE_SIZE * 2));
 
-    // Раскрываем строку со второй страницы и возвращаемся наверх.
-    fireEvent.click(screen.getByText("m.50"));
+    // Раскрываем строку со второй страницы — берём последнюю ОТРИСОВАННУЮ:
+    // §98.6 виртуализовал список, и конкретная строка по номеру может лежать
+    // за пределами окна виртуализации (это не про поведение, а про то, где
+    // сейчас находится прокрутка).
+    const rendered = screen.getAllByText(/^m\.\d+$/);
+    const rowFromSecondPage = rendered[rendered.length - 1];
+    fireEvent.click(rowFromSecondPage);
     await waitFor(() => expect(screen.getByText("REQUEST-BODY")).toBeTruthy());
+
     wrap!.scrollTop = 0;
     fireEvent.scroll(wrap!);
 
-    // Страницы на месте (иначе раскрытая строка исчезла бы вместе с ними).
-    await waitFor(() => expect(screen.getAllByText(/^m\./).length).toBe(PAGE_SIZE * 2));
-    expect(screen.getByText("REQUEST-BODY")).toBeTruthy();
+    // Страницы на месте — ради этого §77.1 и откладывает схлопывание.
+    await waitFor(() => expect(loadedCount()).toBe(PAGE_SIZE * 2));
+
+    // И раскрытие не потерялось: вернувшись к строке, снова видим её тело.
+    // Проверять «тело в DOM» прямо с верха списка после §98.6 нельзя — оно
+    // просто вне окна виртуализации, как и сама строка.
+    wrap!.scrollTop = 4400;
+    fireEvent.scroll(wrap!);
+    await waitFor(() => expect(screen.getByText("REQUEST-BODY")).toBeTruthy());
   }, 15000);
 });
 
