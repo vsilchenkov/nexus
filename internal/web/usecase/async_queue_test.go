@@ -633,3 +633,42 @@ func TestAsyncQueue_PurgeFailed_BudgetExhausted_ReportsCapped(t *testing.T) {
 	assert.Equal(t, purgeFailedMaxBatches, audit.entries[0].Details["batches"])
 	assert.Equal(t, true, audit.entries[0].Details["capped"])
 }
+
+// stuckFailedPurger — хранилище, в котором удаление НИЧЕГО не убирает.
+// Так выглядит DeleteFailedRows, чей DELETE не задел ни строки: метод
+// рапортует число ЗАПРОШЕННЫХ записей, и отличить его от успеха по возврату
+// нельзя. Без сторожа продвижения очистка сделала бы двести одинаковых
+// проходов — двести мутаций и двести раз одни и те же tombstone'ы.
+type stuckFailedPurger struct {
+	ids      []string
+	idsCalls int
+	delCalls int
+}
+
+func (s *stuckFailedPurger) FailedIDs(_ context.Context, _ port.LogQuery, _ int) ([]string, bool, error) {
+	s.idsCalls++
+	return append([]string(nil), s.ids...), true, nil
+}
+
+func (s *stuckFailedPurger) DeleteFailedRows(_ context.Context, _ port.LogQuery, ids []string) (uint64, error) {
+	s.delCalls++
+	return uint64(len(ids)), nil
+}
+
+// §98.4: выборка не сдвинулась — очистка останавливается, а не крутит бюджет.
+func TestAsyncQueue_PurgeFailed_StopsWhenBatchDoesNotAdvance(t *testing.T) {
+	t.Parallel()
+	failed := &stuckFailedPurger{ids: []string{"f1", "f2"}}
+	cancelW := &stubCancelWriter{}
+	uc, audit := newQueueUCCap(failed, cancelW, asyncNodeCH(), 10)
+
+	r, err := uc.PurgeFailed(context.Background(), Actor{UserID: "u"}, "n1", "t1", time.Time{}, time.Time{})
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, failed.idsCalls, "второй проход обязан быть последним")
+	assert.Equal(t, 1, failed.delCalls, "повторного удаления того же набора быть не должно")
+	assert.True(t, r.Capped, "очистка не завершена — оператор должен это видеть")
+	require.Len(t, audit.entries, 1)
+	assert.Equal(t, true, audit.entries[0].Details["capped"])
+	assert.Equal(t, 1, audit.entries[0].Details["batches"])
+}

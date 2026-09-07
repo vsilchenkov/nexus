@@ -376,6 +376,9 @@ func (u *AsyncQueueUsecase) PurgeFailed(ctx context.Context, actor Actor, nodeID
 		totalDeleted   uint64
 		batches        int
 		capped         bool
+		// prevFirstID — первый ID предыдущего батча. Сторож продвижения: см.
+		// ниже, почему одного бюджета проходов мало.
+		prevFirstID string
 	)
 	for batches = 1; batches <= purgeFailedMaxBatches; batches++ {
 		ids, more, err := u.failed.FailedIDs(ctx, q, u.peekCap)
@@ -393,6 +396,25 @@ func (u *AsyncQueueUsecase) PurgeFailed(ctx context.Context, actor Actor, nodeID
 			batches--
 			break
 		}
+
+		// Выборка не сдвинулась — значит предыдущий проход ничего не убрал.
+		// Заметить это иначе нельзя: DeleteFailedRows рапортует число ЗАПРОШЕННЫХ
+		// записей, а не фактически удалённых строк, поэтому «удаление не задело
+		// ничего» выглядит как успех. Без сторожа такой случай означал бы двести
+		// одинаковых проходов: двести мутаций ClickHouse и двести раз одни и те
+		// же tombstone'ы. Бюджет проходов от этого не спасает — он лишь
+		// ограничивает ущерб сверху.
+		if ids[0] == prevFirstID {
+			u.logger.Warn("async queue purge failed: batch did not advance, stopping",
+				u.logger.Str("node_path", node.Path),
+				u.logger.Str("op", op),
+				u.logger.Int("batch", batches),
+				u.logger.Int("ids", len(ids)))
+			capped = true
+			batches--
+			break
+		}
+		prevFirstID = ids[0]
 
 		// 1) Снимаем повторную доставку: репроцессор дропнет эти ID по tombstone.
 		// Для sync-узла шаг пропускаем: DLQ-репроцессора у него нет, tombstone'ы

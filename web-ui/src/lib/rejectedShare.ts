@@ -13,8 +13,9 @@ import { TEAM_PARAM } from "./teamShare";
 // REJECTED_PARAM — id открытой карточки в адресной строке.
 export const REJECTED_PARAM = "rejected";
 
-// REJECTED_PATH — маршрут журнала отказов.
-export const REJECTED_PATH = "/logs/rejected";
+// rejectedPath — маршрут журнала отказов. Не экспортируется: наружу нужен
+// только собранный адрес, а второй способ его собрать однажды разойдётся с этим.
+const rejectedPath = "/logs/rejected";
 
 /**
  * rejectedPageUrl — абсолютная ссылка на карточку отказа для кнопки
@@ -30,5 +31,5 @@ export const REJECTED_PATH = "/logs/rejected";
 export function rejectedPageUrl(id: string, teamSlug: string): string {
   const q = new URLSearchParams({ [REJECTED_PARAM]: id });
   if (teamSlug) q.set(TEAM_PARAM, teamSlug);
-  return `${window.location.origin}${REJECTED_PATH}?${q.toString()}`;
+  return `${window.location.origin}${rejectedPath}?${q.toString()}`;
 }
