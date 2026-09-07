@@ -18,8 +18,18 @@ import { withLogsWindow } from "../../lib/nodeTabUrl";
 // кнопка мыши и контекстное меню «Открыть в новой вкладке» — а из мониторинга
 // уходят смотреть журнал именно так, не теряя текущий экран.
 function NodeCell({ path, nodeId, from, to }: NodeCellProps) {
+  const { t } = useTranslation();
   if (!nodeId) {
-    return <span className="font-mono text-xs">{path}</span>;
+    // §98.2-доп: молчаливое отсутствие ссылки читается как «ссылки не работают»
+    // — так и было доложено со стенда. Причина же в данных: Prometheus хранит
+    // метку `node` вечно, поэтому в топ попадают пути УДАЛЁННЫХ и
+    // ПЕРЕИМЕНОВАННЫХ узлов (а ещё одноимённые пути двух команд и заглушка
+    // §94.8). Ссылку из этого не собрать, но сказать, почему её нет, обязаны.
+    return (
+      <span className="font-mono text-xs text-fg-muted" title={t("kafka.node_unresolved")}>
+        {path}
+      </span>
+    );
   }
   // onlyErrors=false и в блоке ошибок тоже: строка top-failures даёт число
   // ошибок за период, а в журнале смотрят их РЯДОМ с успешными доставками —

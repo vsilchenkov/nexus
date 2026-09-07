@@ -67,4 +67,14 @@ describe("TopNodes — узлы ведут на журнал (§98.2)", () => {
     expect(screen.getByText("<unresolved>")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "<unresolved>" })).toBeNull();
   });
+
+  // Молчаливое отсутствие ссылки читается как «ссылки не работают» — так и было
+  // доложено со стенда. Причина в данных (Prometheus хранит путь удалённого или
+  // переименованного узла), и строка обязана её называть.
+  it("строка без ссылки объясняет, почему её нет", () => {
+    renderTop();
+    expect(screen.getByText("<unresolved>")).toHaveAttribute("title", "kafka.node_unresolved");
+    // У рабочей ссылки такого пояснения быть не должно.
+    expect(screen.getByRole("link", { name: "vika/telephony" })).not.toHaveAttribute("title");
+  });
 });

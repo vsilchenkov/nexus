@@ -318,6 +318,7 @@
       "share": "Share",
       "empty": "No data for the period"
     },
+    "node_unresolved": "No node with this path right now: it was renamed, deleted, or the path is used by nodes of several teams. Prometheus keeps the old path, so the row stays in the top list.",
     "top_failures": {
       "title": "Top failures",
       "node": "Node",
