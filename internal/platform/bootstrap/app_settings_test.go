@@ -216,3 +216,32 @@ func TestDecodeAppSettings_BodyLimitsAbsent(t *testing.T) {
 	assert.Nil(t, o.General.MaxBodyBytes)
 	assert.Nil(t, o.General.MaxAsyncBodyBytes)
 }
+
+// §98.5: глобальная политика защиты узла обязана быть видна узкому overlay.
+// Без этих полей reloader молча ставил бы конфигурационные значения поверх
+// заданных в интерфейсе — ровно та грабля, что проверялась в §97.
+func TestDecodeAppSettings_BreakerPolicy(t *testing.T) {
+	t.Parallel()
+
+	raw := `{"general":{"circuit_breaker_threshold":2,"circuit_breaker_cooldown_sec":5,"max_body_bytes":157286400}}`
+	o, err := decodeAppSettings([]byte(raw), nil, logging.NewNoop())
+	require.NoError(t, err)
+	require.NotNil(t, o)
+
+	require.NotNil(t, o.General.CircuitBreakerThreshold)
+	assert.Equal(t, 2, *o.General.CircuitBreakerThreshold)
+	require.NotNil(t, o.General.CircuitBreakerCooldownSec)
+	assert.Equal(t, 5, *o.General.CircuitBreakerCooldownSec)
+	require.NotNil(t, o.General.MaxBodyBytes, "соседнее поле секции не потеряно")
+}
+
+// Не задано — nil, и вызывающий разворачивает их в значения конфигурации.
+func TestDecodeAppSettings_BreakerPolicyAbsent(t *testing.T) {
+	t.Parallel()
+
+	o, err := decodeAppSettings([]byte(`{"general":{}}`), nil, logging.NewNoop())
+	require.NoError(t, err)
+	require.NotNil(t, o)
+	assert.Nil(t, o.General.CircuitBreakerThreshold)
+	assert.Nil(t, o.General.CircuitBreakerCooldownSec)
+}

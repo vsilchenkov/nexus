@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
 import { api } from "../../api/client";
+import { PASSWORD_MANAGER_OFF } from "../../lib/secretMask";
 import { OrphanTablesPanel } from "../../components/OrphanTablesPanel";
 import { CHTemplatesPanel } from "../../components/CHTemplatesPanel";
 
@@ -135,12 +136,12 @@ export function ClickHousePanel() {
           <label className="text-xs uppercase tracking-wider text-fg-muted">
             {t("settings.clickhouse.user")}
           </label>
-          {/* autoComplete="off" + new-password на пароле ниже: без них Chrome
-              считает эту пару «формой логина» и на открытии страницы вписывает
-              сюда сохранённый логин браузера (тот же приём — SecretInput). */}
+          {/* §98.7: без пометки Chrome считает эту пару «формой логина» и на
+              открытии страницы вписывает сюда сохранённый логин браузера. Поле
+              пароля ниже помечено тем же набором внутри SecretInput. */}
           <input
             type="text"
-            autoComplete="off"
+            {...PASSWORD_MANAGER_OFF}
             value={form.user ?? ""}
             onChange={(e) => setForm({ ...form, user: e.target.value })}
             placeholder="default"

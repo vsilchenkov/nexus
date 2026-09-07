@@ -716,9 +716,11 @@ func (a *App) Start(ctx context.Context) error {
 	// Мониторинг Kafka (§4 spec): Prometheus (throughput/lag/KPI/top-узлы) +
 	// Kafka Admin (топики/брокеры/ping, только при заданных брокерах) + Redis-кеш
 	// метаданных (TTL 30с). Все источники опциональны — usecase деградирует.
+	// §98.2: nodeRepo здесь — резолвер «путь → id», чтобы строки top-узлов вели
+	// на журнал узла. Метрики Prometheus несут только путь (метка node).
 	kafkaUC := usecase.NewKafkaMonitorUsecase(
 		promMetrics, kafkaAdmin, rediscache.NewKafkaCacheRedis(a.redis, 30*time.Second),
-		kafkaThresholds(&a.cfg.Web.KafkaAlerts), a.logger,
+		nodeRepo, kafkaThresholds(&a.cfg.Web.KafkaAlerts), a.logger,
 	)
 	kafkaHandler := httpadapter.NewKafkaHandler(kafkaUC, a.logger)
 

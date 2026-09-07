@@ -426,8 +426,11 @@ export type KafkaTopicsResp = {
   sizes_available: boolean;
 };
 export type KafkaByNode = {
-  top_producers: { node_path: string; produced: number; share: number }[];
-  top_failures: { node_path: string; failed: number; rate: number }[];
+  // §98.2: node_id отсутствует, если путь не сопоставлен ровно одному узлу
+  // (узел удалён, путь занят несколькими командами, метка-заглушка §94.8) —
+  // тогда строка показывается текстом, а не ссылкой на журнал.
+  top_producers: { node_path: string; node_id?: string; produced: number; share: number }[];
+  top_failures: { node_path: string; node_id?: string; failed: number; rate: number }[];
   prometheus_available: boolean;
 };
 export type KafkaBrokerPing = { addr: string; elapsed_ms: number; ok: boolean; warn?: string };

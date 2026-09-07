@@ -24,8 +24,21 @@ vi.mock("../../api/client", async () => {
 
 // i18n в тестах не инициализирован — t() возвращает ключ; проверяем по ключам.
 vi.mock("react-i18next", () => ({
-  useTranslation: () => ({ t: (k: string) => k }),
+  // Интерполяция нужна счётчику «Показано N»: после §98.6 именно он, а не
+  // число строк в DOM, показывает объём накопленного списка.
+  useTranslation: () => ({
+    t: (k: string, o?: Record<string, unknown>) => (o?.n === undefined ? k : `${k}:${o.n}`),
+  }),
 }));
+// §98.6: журнал виртуализован — в DOM живут только видимые строки, поэтому
+// «сколько записей загружено» по разметке больше не сосчитать. Настоящий
+// показатель накопления — счётчик «Показано N» в шапке: он берёт длину списка,
+// а не длину отрисованного куска.
+function loadedCount(): number {
+  const el = screen.getByText(/^logs\.shown_(count|of_total):/);
+  return Number(el.textContent!.split(":")[1]);
+}
+
 
 const PAGE_SIZE = 50;
 const NODE = { id: "n1", clickhouse_table: "nexus_task.task_vika" } as Node;
@@ -104,7 +117,7 @@ describe("LogsTab — серверная фильтрация (§72.2)", () => {
     // Смена фильтра обязана перезапросить список (status в queryKey), а не
     // просто спрятать строки уже загруженной страницы.
     await waitFor(() =>
-      expect(screen.getAllByText("task.getFiles").length).toBeGreaterThanOrEqual(PAGE_SIZE),
+      expect(loadedCount()).toBeGreaterThanOrEqual(PAGE_SIZE),
     );
   });
 
@@ -148,20 +161,20 @@ describe("LogsTab — серверная фильтрация (§72.2)", () => {
     Object.defineProperty(wrap!, "clientHeight", { value: 500, configurable: true });
     Object.defineProperty(wrap!, "scrollTop", { value: 0, writable: true, configurable: true });
 
-    await waitFor(() => expect(screen.getAllByText("task.getFiles")).toHaveLength(PAGE_SIZE));
+    await waitFor(() => expect(loadedCount()).toBe(PAGE_SIZE));
 
     // Листаем историю: две дополнительные страницы.
     for (const want of [2, 3]) {
       wrap!.scrollTop = 4400;
       fireEvent.scroll(wrap!);
-      await waitFor(() => expect(screen.getAllByText("task.getFiles")).toHaveLength(PAGE_SIZE * want));
+      await waitFor(() => expect(loadedCount()).toBe(PAGE_SIZE * want));
     }
 
     // Возврат наверх: авто-рефетч (каждые 5 с) иначе перезапрашивал бы ВСЕ три
     // страницы разом — а наверху нужны только свежие записи.
     wrap!.scrollTop = 0;
     fireEvent.scroll(wrap!);
-    await waitFor(() => expect(screen.getAllByText("task.getFiles")).toHaveLength(PAGE_SIZE));
+    await waitFor(() => expect(loadedCount()).toBe(PAGE_SIZE));
   });
 
   it("подгрузка следующей страницы сохраняет фильтр и несёт keyset-курсор", async () => {
@@ -181,7 +194,7 @@ describe("LogsTab — серверная фильтрация (§72.2)", () => {
     expect(logsCalls[0].status).toBe("err");
     // Ждём отрисовки страницы: до неё hasNextPage ещё false, и обработчик
     // скролла ничего бы не подгрузил.
-    await waitFor(() => expect(screen.getAllByText("task.getFiles")).toHaveLength(PAGE_SIZE));
+    await waitFor(() => expect(loadedCount()).toBe(PAGE_SIZE));
 
     wrap!.scrollTop = 4400; // < SCROLL_BOTTOM_THRESHOLD_PX до низа
     fireEvent.scroll(wrap!);

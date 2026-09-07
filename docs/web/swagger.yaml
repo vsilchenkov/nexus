@@ -1715,6 +1715,8 @@ definitions:
     properties:
       failed:
         type: integer
+      node_id:
+        type: string
       node_path:
         type: string
       rate:
@@ -1762,6 +1764,8 @@ definitions:
     type: object
   internal_web_adapter_in_http.kafkaProducerDTO:
     properties:
+      node_id:
+        type: string
       node_path:
         type: string
       produced:
@@ -2762,6 +2766,21 @@ definitions:
     type: object
   nexus_internal_domain.GeneralSettings:
     properties:
+      circuit_breaker_cooldown_sec:
+        description: |-
+          CircuitBreakerCooldownSec — пауза до пробного запроса после приостановки,
+          секунды, ГЛОБАЛЬНО (§98.5). Диапазон 1..3600, как у поля узла.
+          nil = действует конфиг. Не секрет.
+        type: integer
+      circuit_breaker_threshold:
+        description: |-
+          CircuitBreakerThreshold — сколько отказов подряд приостанавливают доставку
+          к узлу, ГЛОБАЛЬНО (§98.5). Третий уровень цепочки: узел (поле > 0) →
+          это значение → sender.circuit_breaker.threshold из конфига.
+          nil = «в интерфейсе не задано», и действует конфиг, как до §98.
+          Диапазон — тот же, что у поля узла (1..100): расхождение границ дало бы
+          значение, которое принимают глобально и отвергают на узле. Не секрет.
+        type: integer
       max_async_body_bytes:
         description: |-
           MaxAsyncBodyBytes — рабочий лимит тела асинхронного приёма (§97), байты:

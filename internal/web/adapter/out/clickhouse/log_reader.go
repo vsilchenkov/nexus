@@ -1487,12 +1487,34 @@ func (r *LogReaderCH) DeleteFailedRows(ctx context.Context, q port.LogQuery, ids
 		return 0, err
 	}
 	stmt := fmt.Sprintf("DELETE FROM %s WHERE %s", q.Table, strings.Join(conds, " AND "))
-	if err := conn.Exec(ctx, stmt, args...); err != nil {
+	if err := conn.Exec(syncMutationCtx(ctx), stmt, args...); err != nil {
 		return 0, fmt.Errorf("clickhouse delete failed rows: %w", err)
 	}
 	r.logger.Debug("failed rows deleted",
 		r.logger.Str("table", q.Table), r.logger.Int("records", len(ids)))
 	return uint64(len(ids)), nil
+}
+
+// syncMutationCtx — контекст запроса, ждущего ЗАВЕРШЕНИЯ мутации (§98.4).
+//
+// Зачем. Lightweight DELETE порождает мутацию, и очистка «Неудачных доставок»
+// идёт батчами: пока удаление не применилось, следующая выборка кандидатов
+// вернёт ТЕ ЖЕ записи, и цикл либо не закончится, либо упрётся в бюджет
+// проходов и соврёт оператору «очищены не все» на пустой таблице.
+//
+// Что здесь на самом деле происходит. На ClickHouse 23.11+ ожидание и так
+// включено по умолчанию (lightweight_deletes_sync=2), и на таком сервере
+// настройка ничего не меняет — интеграционный тест зелёный и без неё. Она
+// нужна серверам ПОСТАРШЕ, где lightweight DELETE подчинялся mutations_sync и
+// по умолчанию не ждал.
+//
+// Почему задаётся только mutations_sync, а не lightweight_deletes_sync.
+// Последняя появилась в 23.11, и сервер, ради которого страховка и вводится,
+// отверг бы её как неизвестную (UNKNOWN_SETTING) — то есть страховка ломала бы
+// ровно тот случай, который должна защищать. mutations_sync существует во всех
+// поддерживаемых версиях и на новых остаётся безвредной.
+func syncMutationCtx(ctx context.Context) context.Context {
+	return chgo.Context(ctx, chgo.WithSettings(chgo.Settings{"mutations_sync": 1}))
 }
 
 // deleteFailedConds — условия разрушающей операции: строки done=0 указанных

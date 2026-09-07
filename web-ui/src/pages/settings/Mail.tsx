@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { api } from "../../api/client";
 import { SecretInput } from "../../components/ui";
+import { PASSWORD_MANAGER_OFF } from "../../lib/secretMask";
 
 // MailSettings — секция mail из app_settings (§88.2). Поля необязательные:
 // сервер отдаёт только заданные, остальные разворачиваются в дефолты у него же.
@@ -221,11 +222,11 @@ export function MailPanel() {
           </div>
           <div className="space-y-1">
             <label className="text-sm text-fg-muted">{t("settings.mail.username")}</label>
-            {/* autoComplete="off": текстовое поле перед password-полем — Chrome
-                иначе вписывает сюда сохранённый логин браузера. */}
+            {/* §98.7: текстовое поле рядом с полем секрета — без пометки
+                Chrome вписывает сюда сохранённый логин браузера. */}
             <input
               className={inp}
-              autoComplete="off"
+              {...PASSWORD_MANAGER_OFF}
               value={form.username ?? ""}
               onChange={(e) => setForm({ ...form, username: e.target.value })}
               placeholder="noreply@example.com"

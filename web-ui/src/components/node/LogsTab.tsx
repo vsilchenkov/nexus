@@ -1,8 +1,9 @@
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useTranslation } from "react-i18next";
 import { RefreshCw, Settings, RotateCcw, ChevronRight, ChevronDown, Download } from "lucide-react";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api, type Node } from "../../api/client";
 import { useRoleAtLeast } from "../../lib/useCurrentRole";
@@ -18,11 +19,7 @@ import {
   type LogsDoneFilter,
   type LogsFilterState,
 } from "../../lib/logsQuery";
-import {
-  MAX_INFINITE_ROWS,
-  SCROLL_TOP_THRESHOLD_PX,
-  useInfiniteLogs,
-} from "../../lib/useInfiniteLogs";
+import { SCROLL_TOP_THRESHOLD_PX, useInfiniteLogs } from "../../lib/useInfiniteLogs";
 import { CopyButton } from "../ui/CopyButton";
 import { ReplayDialog } from "../ReplayDialog";
 import { LogAckBlock } from "./LogAckBlock";
@@ -59,6 +56,33 @@ const TAIL_POLL_OVERLAP_MS = 1000;
 // Сколько ошибок SSE подряд терпим, прежде чем признать поток мёртвым.
 // Между ними браузер сам переподключается (нативный retry EventSource).
 const LIVE_MAX_CONSECUTIVE_ERRORS = 5;
+
+// MAX_VIRTUAL_ROWS — потолок накопленных строк журнала узла (§98.6).
+//
+// Общий потолок списков (MAX_INFINITE_ROWS = 1000, §44.K) защищал DOM: без
+// виртуализации тысяча строк по восемь ячеек уже вешала прокрутку. Здесь
+// виртуализация есть, и в DOM живут только видимые строки — прежний потолок
+// стал ограничением на ровном месте: с фильтром список упирался в стену
+// «Показано 1000 из 47 000», а оставшиеся совпадения были недостижимы.
+//
+// Совсем без потолка обойтись всё же нельзя: виртуализация разгружает DOM, но
+// накопленные страницы продолжают жить в памяти JS. 50 000 записей покрывают
+// разбор с фильтром с запасом, а сообщение о достигнутом потолке остаётся
+// страховкой на краю.
+const MAX_VIRTUAL_ROWS = 50_000;
+
+// LOG_ROW_ESTIMATE_PX — стартовая оценка высоты строки для виртуализатора.
+// Реальная высота измеряется по факту (measureElement), оценка нужна лишь для
+// первого кадра и для длины полосы прокрутки.
+const LOG_ROW_ESTIMATE_PX = 37;
+
+// LOG_ROW_OVERSCAN — сколько строк рисуем за пределами видимой области. Меньше
+// — заметны пустоты при быстрой прокрутке; больше — растёт DOM без пользы.
+const LOG_ROW_OVERSCAN = 10;
+
+// LOG_VIEWPORT_ESTIMATE_PX — оценка высоты окна списка до первого измерения.
+// Совпадает с max-h-[60vh] контейнера при типовом окне браузера.
+const LOG_VIEWPORT_ESTIMATE_PX = 600;
 
 // useSizeUnits — локализованные единицы размера тела (§42-доп): «Б|КБ|…» из
 // i18n-ключа logs.size_units, сплит по «|» для fmtSize.
@@ -191,6 +215,9 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
     // §77.1: пока строка раскрыта, «возврат к верху» не выбрасывает страницы 2+
     // (вместе с ними исчезала бы и раскрытая строка).
     collapseEnabled: expandedId === null,
+    // §98.6: журнал виртуализован, поэтому общий потолок списков (§44.K) здесь
+    // не нужен — он защищал DOM, которого больше нет.
+    maxRows: MAX_VIRTUAL_ROWS,
     onPageLoaded: (ms) => setSlowFilter(ms > SLOW_FILTER_MS),
   });
   const logsQ = logs.query;
@@ -472,6 +499,52 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   // таблице, и скролл дальше не шёл.
   const visibleLogs = live ? liveLogs : infiniteItems;
 
+  // §98.6: в DOM живут только видимые строки. Единицей виртуализации выбран
+  // <tbody> на запись, а не <tr>: у раскрытой строки (§77.1) тел два — сама
+  // строка и панель с телами запроса/ответа, — и они обязаны измеряться и
+  // прокручиваться как одно целое. HTML допускает в таблице несколько <tbody>,
+  // так что разметка остаётся настоящей таблицей и колонки не разъезжаются.
+  //
+  // Ключ — id записи, а не индекс: tail-poll дописывает свежие записи СВЕРХУ
+  // (§77.1), от чего индексы всех остальных сдвигаются, и кеш измеренных высот
+  // по индексу относился бы уже к другим строкам.
+  const rowVirtualizer = useVirtualizer({
+    count: visibleLogs.length,
+    getScrollElement: () => tableWrapRef.current,
+    estimateSize: () => LOG_ROW_ESTIMATE_PX,
+    overscan: LOG_ROW_OVERSCAN,
+    getItemKey: (i) => visibleLogs[i]?.id ?? i,
+    // Нулевая измеренная высота означает «строка ещё не разложена» (контейнер
+    // скрыт; в jsdom — всегда). Записать её как есть нельзя: суммарная высота
+    // списка схлопнется в ноль, и виртуализатор оставит на экране одну строку.
+    measureElement: (el) => (el as HTMLElement).offsetHeight || LOG_ROW_ESTIMATE_PX,
+    // Своё измерение окна вместо штатного. Штатное берёт offsetHeight как
+    // есть, а нулевая высота контейнера означает «ещё не разложен» (скрытая
+    // вкладка; в jsdom — всегда, там размеров нет вовсе). При нулевой высоте
+    // виртуализатор не рисует НИ ОДНОЙ строки, и тесты журнала проверяли бы
+    // пустую таблицу, молча зеленея. Ноль подменяем оценкой: лишние ~16 строк
+    // в невидимом контейнере безвредны, пустой журнал — нет.
+    observeElementRect: (instance, cb) => {
+      const el = instance.scrollElement;
+      if (!el) return;
+      const report = () =>
+        cb({ width: el.offsetWidth, height: el.offsetHeight || LOG_VIEWPORT_ESTIMATE_PX });
+      report();
+      if (typeof ResizeObserver === "undefined") return;
+      const ro = new ResizeObserver(report);
+      ro.observe(el);
+      return () => ro.disconnect();
+    },
+  });
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  // Распорки сверху и снизу держат высоту полосы прокрутки: без них скроллить
+  // было бы нечего, и подгрузка следующей страницы никогда не запускалась бы.
+  const padTop = virtualRows.length > 0 ? virtualRows[0].start : 0;
+  const padBottom =
+    virtualRows.length > 0
+      ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end
+      : 0;
+
   // id + HTTP-глагол строки: ReplayDialog по глаголу решает, требуется ли тело
   // (GET — без тела), и зеркалит выбор метода реинъекции бэкенда (ANY-узлы).
   const [replay, setReplay] = useState<{ id: string; httpMethod?: string } | null>(null);
@@ -692,13 +765,21 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                 <th className="px-2 py-2" />
               </tr>
             </thead>
-            <tbody>
-              {visibleLogs.map((r) => {
+          {/* §98.6: распорка сверху — суммарная высота строк, оставшихся выше
+              окна виртуализации. */}
+          {padTop > 0 && (
+            <tbody aria-hidden>
+              <tr style={{ height: padTop }} />
+            </tbody>
+          )}
+          {virtualRows.map((v) => {
+                const r = visibleLogs[v.index];
+                if (!r) return null;
                 const isHl = highlighted.has(r.id);
                 const isErr = !isLogOK(r);
                 const isOpen = expandedId === r.id;
                 return (
-                  <Fragment key={r.id}>
+                  <tbody key={r.id} data-index={v.index} ref={rowVirtualizer.measureElement}>
                     <tr
                       onClick={() => setExpandedId(isOpen ? null : r.id)}
                       className={`cursor-pointer border-t border-line transition-colors hover:bg-bg-muted/60 ${
@@ -762,9 +843,16 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
                         </td>
                       </tr>
                     )}
-                  </Fragment>
+                  </tbody>
                 );
               })}
+          {/* Распорка снизу — высота строк ниже окна виртуализации. */}
+          {padBottom > 0 && (
+            <tbody aria-hidden>
+              <tr style={{ height: padBottom }} />
+            </tbody>
+          )}
+            <tbody>
               {visibleLogs.length === 0 && (
                 <tr>
                   <td colSpan={8} className="px-3 py-6 text-center text-fg-muted">
@@ -795,7 +883,7 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
               {!live && logsQ.hasNextPage && logs.atCap && (
                 <tr>
                   <td colSpan={8} className="px-3 py-3 text-center text-[11px] text-warn">
-                    {t("logs.cap_reached", { n: MAX_INFINITE_ROWS })}
+                    {t("logs.cap_reached", { n: MAX_VIRTUAL_ROWS })}
                   </td>
                 </tr>
               )}

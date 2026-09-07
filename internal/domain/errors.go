@@ -304,4 +304,10 @@ var (
 	// sync-запрос к узлу на паузе (§3.6) уходит в очередь и режется
 	// async-лимитом, поэтому async выше sync не имеет смысла.
 	ErrAsyncBodyLimitOverSync = errors.New("domain: max_async_body_bytes must not exceed max_body_bytes")
+	// ErrBreakerThresholdInvalid / ErrBreakerCooldownInvalid — глобальная
+	// политика защиты узла вне допустимых границ (§98.5). Границы те же, что у
+	// одноимённых полей узла, но текст другой: сообщение попадает в форму
+	// настроек приложения, а не в форму узла.
+	ErrBreakerThresholdInvalid = errors.New("domain: circuit_breaker_threshold must be 1..100")
+	ErrBreakerCooldownInvalid  = errors.New("domain: circuit_breaker_cooldown_sec must be 1..3600")
 )
