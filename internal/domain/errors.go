@@ -65,6 +65,8 @@ var (
 	// а факт деградации уходит в warn и метрику.
 	ErrAckRenderFailed       = errors.New("domain: async ack template render failed")
 	ErrNodeInvalidTemplateID = errors.New("domain: clickhouse_template_id must be a valid UUID")
+	// §99: группа узла необязательна, но заданная обязана быть UUID.
+	ErrNodeInvalidGroupID    = errors.New("domain: group_id must be a valid UUID")
 	ErrNodeLogsNotConfigured = errors.New("domain: node has no clickhouse_table configured")
 	// Webhook signature (§16 ТЗ, IncomingAuthTypeWebhookSignature).
 	ErrNodeWebhookSigHeaderLength   = errors.New("domain: webhook_signature_header length must be <= 128")
@@ -187,6 +189,16 @@ var (
 	ErrHeaderNameFormat        = errors.New("domain: header name must be a valid RFC 7230 token")
 	ErrHeaderDescriptionLength = errors.New("domain: header description length must be <= 500")
 	ErrHeaderInUse             = errors.New("domain: header is used by nodes and cannot be renamed or deleted")
+
+	// §99: справочник групп узлов (node_groups). Ошибки отличаются от §24 в
+	// одном: переименования используемой группы среди них НЕТ — узел ссылается
+	// на группу по id, и ссылка не осиротеет. Блокируется только удаление.
+	ErrNodeGroupNotFound          = errors.New("domain: node group not found")
+	ErrNodeGroupAlreadyExists     = errors.New("domain: node group with this name already exists")
+	ErrNodeGroupNameLength        = errors.New("domain: node group name length must be 1..100")
+	ErrNodeGroupDescriptionLength = errors.New("domain: node group description length must be <= 500")
+	ErrNodeGroupSortOrderRange    = errors.New("domain: node group sort_order must be 0..100000")
+	ErrNodeGroupInUse             = errors.New("domain: node group is used by nodes and cannot be deleted")
 
 	// §95: справочник маскирования логов узлов (log_mask_patterns).
 	ErrLogMaskNotFound          = errors.New("domain: log mask pattern not found")
