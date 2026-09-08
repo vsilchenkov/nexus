@@ -60,6 +60,7 @@ import {
   type NodeSection,
 } from "../lib/nodeGroups";
 import { cn } from "../lib/cn";
+import { ABOVE_STRETCH, STRETCH_HOST, STRETCHED_LINK } from "../lib/stretchedLink";
 import {
   PREF_KEY_OVERVIEW_PERIOD,
   useMigrateLegacyPeriodPref,
@@ -669,9 +670,19 @@ export default function Overview() {
   // «Пауза»/«Отключён» — то есть пункт «Down» пропадал бы ровно в тот момент,
   // когда оператор его ищет. Поэтому до готовности метрик показываем полный
   // набор, а сужаем только когда статусы действительно известны.
+  //
+  // Мало и того, что метрики «в принципе пришли»: в сквозном режиме они
+  // догружаются порциями по мере прокрутки (§86.4), и у части узлов их ещё нет.
+  // Сужать по такому набору значило бы прятать «Down» до того, как оператор
+  // долистает до упавшего узла. Поэтому сужаем, только когда статус известен
+  // для КАЖДОГО узла скоупа: у paused/disabled он виден из самого узла, у
+  // остальных нужны метрики.
   const filterStatuses = useMemo(() => {
     const all = STATUS_FILTERS.filter((s) => s !== "all");
-    if (!metricsReady) return all;
+    const known =
+      metricsReady &&
+      scopeNodes.every((n) => n.status !== "enabled" || throughput.has(n.id));
+    if (!known) return all;
     const used = new Set(scopeNodes.map((n) => nodeVariant(n, throughput.get(n.id), true)));
     return all.filter((s) => used.has(s) || s === statusFilter);
   }, [scopeNodes, throughput, metricsReady, statusFilter]);
@@ -1074,7 +1085,13 @@ function NodeTable({
   const colSpan = teamNames ? 8 : 7;
   return (
     <Card className="overflow-hidden p-0">
-      <div className="overflow-x-auto">
+      {/* relative здесь — страховка, а не раскладка. Опора растянутой ссылки —
+          сам <tr>; но если браузер вдруг проигнорирует position на строке,
+          псевдоэлемент уедет к ближайшему позиционированному предку. Без этой
+          обёртки им оказался бы корень страницы: оверлеи всех строк накрыли бы
+          экран, и клик в любом месте открывал бы последний узел списка. С ней
+          отказ схлопывается до одной таблицы — сразу заметен. */}
+      <div className={cn("overflow-x-auto", STRETCH_HOST)}>
       <table className="w-full min-w-[640px] text-[12.5px]">
         <thead>
           <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-fg-muted">
@@ -1135,7 +1152,7 @@ function NodeTable({
               <tr
                 key={n.id}
                 ref={observe?.(n.id)}
-                className="border-b border-line last:border-0 hover:bg-bg-muted"
+                className={cn(STRETCH_HOST, "border-b border-line last:border-0 hover:bg-bg-muted")}
               >
                 {teamNames && (
                   <td className="px-3 py-2.5">
@@ -1143,8 +1160,18 @@ function NodeTable({
                   </td>
                 )}
                 <td className="px-3 py-2.5 font-mono">
-                  <Link to={`/nodes/${n.id}`} className="hover:text-accent">
-                    {n.path}
+                  {/* §7.3 обещает «клик по строке таблицы открывает узел», но
+                      кликабельной была только надпись — 135 px из 1033 px
+                      строки. Растянутая ссылка (псевдоэлемент по ближайшему
+                      relative-предку, то есть по <tr>) делает живой всю строку,
+                      оставляя её НАСТОЯЩЕЙ ссылкой: Ctrl+клик, средняя кнопка и
+                      «Открыть в новой вкладке» работают в любой её точке, а не
+                      только по надписи (урок §79.3). */}
+                  <Link to={`/nodes/${n.id}`} className={cn("hover:text-accent", STRETCHED_LINK)}>
+                    {/* Текст поднят на слой выше псевдоэлемента: иначе путь
+                        нельзя выделить мышью, а его копируют. Клик по нему
+                        всё равно попадает в саму ссылку. */}
+                    <span className="relative z-[1]">{n.path}</span>
                   </Link>
                 </td>
                 <td className="px-3 py-2.5">
@@ -1156,7 +1183,9 @@ function NodeTable({
                 <td className="px-3 py-2.5">
                   <Pill tone={s.tone}>{s.label}</Pill>
                 </td>
-                <td className="w-[140px] px-3 py-2.5">
+                {/* z-10: столбцы спарклайна ведут в журнал за свой интервал, и
+                    накрывшая строку ссылка узла съедала бы эти клики. */}
+                <td className={cn(ABOVE_STRETCH, "w-[140px] px-3 py-2.5")}>
                   <Sparkline
                     data={m?.spark ?? []}
                     errors={m?.sparkErr}
@@ -1256,6 +1285,8 @@ function NodeCards({
             key={n.id}
             ref={observe?.(n.id)}
             className={cn(
+              // Опора для растянутой ссылки заголовка (§7.3).
+              STRETCH_HOST,
               "flex h-full flex-col gap-3 border-l-[3px]",
               accentByVariant[s.variant],
               n.status === "disabled" && "opacity-70",
@@ -1263,11 +1294,17 @@ function NodeCards({
           >
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
+                {/* Растянутая ссылка: клик открывает узел в любой точке
+                    карточки, а не только по надписи (§7.3). Остаётся настоящей
+                    ссылкой — Ctrl+клик и контекстное меню работают везде. */}
                 <Link
                   to={`/nodes/${n.id}`}
-                  className="block truncate font-mono text-[13px] font-medium hover:text-accent"
+                  className={cn(
+                    "block truncate font-mono text-[13px] font-medium hover:text-accent",
+                    STRETCHED_LINK,
+                  )}
                 >
-                  {n.path}
+                  <span className="relative z-[1]">{n.path}</span>
                 </Link>
                 <div className="mt-1 flex items-center gap-1.5">
                   <Chip>{n.root_method}</Chip>
@@ -1295,21 +1332,27 @@ function NodeCards({
                 tone={m && m.errors > 0 ? "err" : undefined}
               />
             </div>
-            <Sparkline
-              data={m?.spark ?? []}
-              errors={m?.sparkErr}
-              variant={s.variant}
-              period={period}
-              onOpenLogs={
-                n.clickhouse_table
-                  ? (r) =>
-                      navigate(
-                        `/nodes/${n.id}?tab=logs&from=${Math.round(r.from)}&to=${Math.round(r.to)}`,
-                      )
-                  : undefined
-              }
-            />
-            <div className="flex items-center gap-2 text-[11px] text-fg-subtle">
+            {/* Поднято над растянутой ссылкой: клики по столбцам ведут в
+                журнал за интервал и не должны доставаться ссылке узла. */}
+            <div className={ABOVE_STRETCH}>
+              <Sparkline
+                data={m?.spark ?? []}
+                errors={m?.sparkErr}
+                variant={s.variant}
+                period={period}
+                onOpenLogs={
+                  n.clickhouse_table
+                    ? (r) =>
+                        navigate(
+                          `/nodes/${n.id}?tab=logs&from=${Math.round(r.from)}&to=${Math.round(r.to)}`,
+                        )
+                    : undefined
+                }
+              />
+            </div>
+            {/* Тоже над ссылкой: под ней не показалась бы подсказка с полным
+                адресом (title), а другого места посмотреть его нет. */}
+            <div className={cn("flex items-center gap-2 text-[11px] text-fg-subtle", ABOVE_STRETCH)}>
               <span className="truncate font-mono" title={target}>
                 {target}
               </span>

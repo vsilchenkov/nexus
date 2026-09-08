@@ -460,6 +460,19 @@ describe("Overview: наборы значений фильтров метода 
     expect(opts).toHaveLength(7);
   });
 
+  // Ревизия перед слиянием: «метрики пришли» не значит «пришли для всех». В
+  // сквозном режиме они догружаются порциями (§86.4), и по неполным данным
+  // «Down» исчез бы до того, как долистали до упавшего узла.
+  it("статус: набор полный, пока метрики есть не у всех узлов", async () => {
+    // Метрики только у части узлов — остальные ещё не догружены.
+    metrics = [ok("free-a", 10), ok("free-b", 10)];
+    renderOverview();
+    await waitForList();
+
+    await waitFor(() => expect(optionsOf(1)).toHaveLength(7));
+    expect(optionsOf(1)).toContain("overview.status.down");
+  });
+
   it("выбранное значение остаётся в списке, даже если таких узлов нет", async () => {
     renderOverview("/?status=paused&method=RabbitMQAsync");
     await waitFor(() => expect(optionsOf(1)).toContain("node.status.paused"));
