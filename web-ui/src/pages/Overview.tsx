@@ -41,6 +41,8 @@ import {
   applyFilters,
   GROUP_NONE,
   hasFilterParams,
+  METHOD_FILTERS,
+  STATUS_FILTERS,
   loadFilters,
   parseFilters,
   saveFilters,
@@ -654,6 +656,26 @@ export default function Overview() {
   // сохраняем по той же причине, что и выбранную группу.
   const showNoGroupOption = hasUngroupedNodes(scopeNodes) || groupFilter === GROUP_NONE;
 
+  // Метод узла хранится в самом узле, поэтому набор известен сразу и целиком
+  // для всего скоупа — фильтруем всегда. Выбранное значение остаётся в списке
+  // по той же причине, что и у групп.
+  const filterMethods = useMemo(() => {
+    const used = new Set(scopeNodes.map((n) => n.root_method));
+    return METHOD_FILTERS.filter((m) => used.has(m) || m === method);
+  }, [scopeNodes, method]);
+
+  // Статус, в отличие от метода и группы, ВЫЧИСЛЯЕТСЯ из метрик. Пока они не
+  // пришли, все узлы «unknown», и отбор по факту оставил бы в списке только
+  // «Пауза»/«Отключён» — то есть пункт «Down» пропадал бы ровно в тот момент,
+  // когда оператор его ищет. Поэтому до готовности метрик показываем полный
+  // набор, а сужаем только когда статусы действительно известны.
+  const filterStatuses = useMemo(() => {
+    const all = STATUS_FILTERS.filter((s) => s !== "all");
+    if (!metricsReady) return all;
+    const used = new Set(scopeNodes.map((n) => nodeVariant(n, throughput.get(n.id), true)));
+    return all.filter((s) => used.has(s) || s === statusFilter);
+  }, [scopeNodes, throughput, metricsReady, statusFilter]);
+
   // statusFilterPending — фильтр по статусу выбран, но метрики, из которых
   // статус выводится, ещё не пришли. В сквозном режиме это окно длится до
   // прихода среза (§86.10), а без него — пока догружаются пачки preload; в
@@ -766,9 +788,11 @@ export default function Overview() {
           onChange={(e) => updateFilters({ method: e.target.value as MethodFilter })}
         >
           <option value="">{t("overview.filter.all_methods")}</option>
-          <option value="request">request</option>
-          <option value="requestAsync">requestAsync</option>
-          <option value="RabbitMQAsync">RabbitMQAsync</option>
+          {filterMethods.map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
         </Select>
         <Select
           className="w-40"
@@ -776,12 +800,11 @@ export default function Overview() {
           onChange={(e) => updateFilters({ status: e.target.value as StatusFilter })}
         >
           <option value="all">{t("overview.filter.all_statuses")}</option>
-          <option value="ok">{t("overview.status.ok")}</option>
-          <option value="warn">{t("overview.status.queue")}</option>
-          <option value="degraded">{t("overview.status.degraded")}</option>
-          <option value="err">{t("overview.status.down")}</option>
-          <option value="paused">{t("node.status.paused")}</option>
-          <option value="disabled">{t("node.status.disabled")}</option>
+          {filterStatuses.map((s) => (
+            <option key={s} value={s}>
+              {t(STATUS_FILTER_LABEL[s])}
+            </option>
+          ))}
         </Select>
         {/* §99.5: фильтр по группе. Показывается, только когда группы вообще
             заведены: пустой селект с единственным «Все группы» занимал бы место
@@ -939,6 +962,18 @@ export default function Overview() {
     </div>
   );
 }
+
+// STATUS_FILTER_LABEL — i18n-ключ подписи для каждого значения фильтра статуса.
+// Отдельной картой, потому что подписи разнородны: часть живёт в overview.status
+// (вычисляемые из метрик), часть — в node.status (состояние самого узла).
+const STATUS_FILTER_LABEL: Record<Exclude<StatusFilter, "all">, string> = {
+  ok: "overview.status.ok",
+  warn: "overview.status.queue",
+  degraded: "overview.status.degraded",
+  err: "overview.status.down",
+  paused: "node.status.paused",
+  disabled: "node.status.disabled",
+};
 
 type Variant = "ok" | "warn" | "degraded" | "err" | "paused" | "disabled" | "unknown";
 type StatusInfo = { tone: "ok" | "err" | "warn" | "muted"; label: string; variant: Variant };

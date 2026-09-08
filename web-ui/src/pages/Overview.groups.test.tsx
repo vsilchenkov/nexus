@@ -94,6 +94,8 @@ function grp(id: string, name: string, order: number) {
 let groups = [grp("g1", "1С Обмен", 10), grp("g2", "Маркетплейсы", 20)];
 // Список узлов «сервера» — тесты подменяют его между прогонами.
 let nodesList = NODES;
+// prometheusAvailable=false воспроизводит окно, когда статусы ещё неизвестны.
+let prometheusAvailable = true;
 
 type Row = { node_id: string; in: number; out: number; errors: number; last_outcome: string };
 let metrics: Row[] = [];
@@ -139,7 +141,7 @@ function mockServer() {
       return Promise.resolve({
         items: metrics,
         totals: { incoming: 0, outgoing: 0, errors: 0, error_rate: 0 },
-        prometheus_available: true,
+        prometheus_available: prometheusAvailable,
       });
     }
     if (url === "/api/me/search-history") return Promise.resolve({ items: [] });
@@ -199,6 +201,7 @@ describe("Overview: группировка узлов (§99.5)", () => {
     sessionStorage.clear();
     groups = [grp("g1", "1С Обмен", 10), grp("g2", "Маркетплейсы", 20)];
     nodesList = NODES;
+    prometheusAvailable = true;
     metrics = NODES.map((n) => ok(n.id, 10));
     mockServer();
   });
@@ -368,5 +371,98 @@ describe("Overview: группировка узлов (§99.5)", () => {
     // экране.
     expect(pathOrder()).toEqual(["free-a", "free-b", "erp-a", "erp-b", "erp-c", "mp-a"]);
     expect(groupHeaders()).toHaveLength(1);
+  });
+});
+
+// §99.5 (то же правило, что у групп): фильтр предлагает только то, что даст
+// непустой результат. Метод известен из самого узла, статус — вычисляется из
+// метрик, и это различие меняет поведение.
+describe("Overview: наборы значений фильтров метода и статуса", () => {
+  beforeEach(() => {
+    apiGet.mockReset();
+    apiPut.mockReset();
+    localStorage.clear();
+    sessionStorage.clear();
+    groups = [grp("g1", "1С Обмен", 10), grp("g2", "Маркетплейсы", 20)];
+    nodesList = NODES;
+    prometheusAvailable = true;
+    metrics = NODES.map((n) => ok(n.id, 10));
+    mockServer();
+  });
+
+  afterEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+
+  function optionsOf(index: number): string[] {
+    const selects = [...document.querySelectorAll("select")];
+    return [...selects[index].querySelectorAll("option")].map((o) => o.textContent ?? "");
+  }
+
+  it("метод: пункта нет, пока таких узлов нет", async () => {
+    // Все узлы фикстуры — request.
+    renderOverview();
+    await waitForList();
+
+    const opts = optionsOf(0);
+    expect(opts).toEqual(["overview.filter.all_methods", "request"]);
+    expect(opts).not.toContain("RabbitMQAsync");
+  });
+
+  it("метод: пункт появляется вместе с узлом такого типа", async () => {
+    nodesList = [
+      ...NODES,
+      { id: "rmq", path: "rmq/a", team_id: TEAM, root_method: "RabbitMQAsync", status: "enabled" },
+    ];
+    metrics = nodesList.map((n) => ok(n.id, 10));
+    renderOverview();
+    await waitForList();
+
+    await waitFor(() => expect(optionsOf(0)).toContain("RabbitMQAsync"));
+    expect(optionsOf(0)).not.toContain("requestAsync");
+  });
+
+  it("статус: остаются только встречающиеся значения", async () => {
+    metrics = [
+      ok("free-a", 10),
+      ok("free-b", 10),
+      ok("erp-a", 10),
+      ok("erp-b", 10),
+      down("erp-c", 5),
+      ok("mp-a", 10),
+    ];
+    renderOverview();
+    await waitForList();
+
+    // Все узлы фикстуры enabled, поэтому «Пауза»/«Отключён» неоткуда взяться.
+    await waitFor(() =>
+      expect(optionsOf(1)).toEqual([
+        "overview.filter.all_statuses",
+        "overview.status.ok",
+        "overview.status.down",
+      ]),
+    );
+  });
+
+  // Ключевое отличие статуса от метода: он выводится из метрик. Пока их нет,
+  // все узлы «unknown», и отбор по факту оставил бы «Пауза»/«Отключён» —
+  // пункт «Down» пропал бы ровно тогда, когда оператор его ищет.
+  it("статус: пока метрики не пришли, набор полный", async () => {
+    prometheusAvailable = false;
+    renderOverview();
+    await waitForList();
+
+    const opts = optionsOf(1);
+    expect(opts).toContain("overview.status.down");
+    expect(opts).toContain("overview.status.degraded");
+    expect(opts).toContain("node.status.paused");
+    expect(opts).toHaveLength(7);
+  });
+
+  it("выбранное значение остаётся в списке, даже если таких узлов нет", async () => {
+    renderOverview("/?status=paused&method=RabbitMQAsync");
+    await waitFor(() => expect(optionsOf(1)).toContain("node.status.paused"));
+    expect(optionsOf(0)).toContain("RabbitMQAsync");
   });
 });
