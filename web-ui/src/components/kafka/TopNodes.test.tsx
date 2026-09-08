@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { TopNodes } from "./TopNodes";
 import type { KafkaByNode } from "../../api/client";
+import { expectStretchedTo } from "../../test/stretched";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (k: string) => k }),
@@ -76,5 +77,28 @@ describe("TopNodes — узлы ведут на журнал (§98.2)", () => {
     expect(screen.getByText("<unresolved>")).toHaveAttribute("title", "kafka.node_unresolved");
     // У рабочей ссылки такого пояснения быть не должно.
     expect(screen.getByRole("link", { name: "vika/telephony" })).not.toHaveAttribute("title");
+  });
+});
+
+// §7.3 (тот же дефект, что был на «Узлах»): строка подсвечивалась целиком, а
+// кликалась одна колонка из трёх — клик мимо надписи не делал ничего.
+describe("TopNodes — зона клика по строке", () => {
+  it("ссылка растянута по всей строке в обоих топах", () => {
+    renderTop();
+
+    for (const name of ["vika/telephony", "conv/dconv"]) {
+      const link = screen.getByRole("link", { name });
+      expectStretchedTo(link, link.closest("tr") as HTMLElement);
+    }
+  });
+
+  // §98.2: путь без узла ссылкой не становится. Значит и подсвечивать его как
+  // кликабельный нельзя — это ровно то враньё, которое §98.2 просил убрать.
+  it("строка без ссылки не подсвечивается и не служит опорой", () => {
+    renderTop();
+
+    const row = screen.getByText("<unresolved>").closest("tr") as HTMLElement;
+    expect(row.className).not.toMatch(/hover:bg-bg-muted/);
+    expect(row).not.toHaveClass("relative");
   });
 });

@@ -2,6 +2,9 @@ import { useTranslation } from "react-i18next";
 import { CheckCircle2 } from "lucide-react";
 import { Link } from "react-router-dom";
 
+import { cn } from "../../lib/cn";
+import { STRETCH_HOST, STRETCHED_LINK } from "../../lib/stretchedLink";
+
 import type { KafkaByNode } from "../../api/client";
 import { Card, Chip, Pill } from "../ui";
 import { fmtNum } from "../../lib/format";
@@ -35,12 +38,16 @@ function NodeCell({ path, nodeId, from, to }: NodeCellProps) {
   // ошибок за период, а в журнале смотрят их РЯДОМ с успешными доставками —
   // иначе не видно, всплеск это или узел вообще перестал отвечать.
   const search = withLogsWindow(new URLSearchParams(), { from, to, onlyErrors: false });
+  // Ссылка растянута по всей строке (§7.3, тот же приём, что на «Узлах»): до
+  // этого строка подсвечивалась целиком, а кликалась одна колонка из трёх —
+  // клик мимо надписи не делал ничего.
   return (
     <Link
       to={{ pathname: `/nodes/${nodeId}`, search: `?${search}` }}
-      className="font-mono text-xs hover:text-accent hover:underline"
+      className={cn("font-mono text-xs hover:text-accent hover:underline", STRETCHED_LINK)}
     >
-      {path}
+      {/* Путь поднят над псевдоэлементом, чтобы его можно было выделить мышью. */}
+      <span className="relative z-[1]">{path}</span>
     </Link>
   );
 }
@@ -60,7 +67,10 @@ export function TopNodes({ data, from, to }: { data: KafkaByNode; from: number; 
   const { t } = useTranslation();
   return (
     <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-2">
-      <Card className="p-0">
+      {/* relative — страховка на случай, если браузер проигнорирует position на
+          <tr>: без неё псевдоэлементы строк уехали бы к корню страницы (та же
+          защита, что у таблицы «Узлов»). */}
+      <Card className={cn("p-0", STRETCH_HOST)}>
         <div className="border-b border-line px-4 py-2.5 text-[13.5px] font-semibold">
           {t("kafka.top_producers.title")}
         </div>
@@ -74,7 +84,16 @@ export function TopNodes({ data, from, to }: { data: KafkaByNode; from: number; 
           </thead>
           <tbody>
             {data.top_producers.map((p) => (
-              <tr key={p.node_path} className="border-b border-line last:border-0 hover:bg-bg-muted">
+              // Подсветка только у строк со ссылкой: у неразрешённого пути
+              // (§98.2) клика нет, и подсвечивать его как кликабельный —
+              // ровно то враньё, которое §98.2 и просил убрать.
+              <tr
+                key={p.node_path}
+                className={cn(
+                  "border-b border-line last:border-0",
+                  p.node_id && cn(STRETCH_HOST, "hover:bg-bg-muted"),
+                )}
+              >
                 <td className="px-3 py-2">
                   <NodeCell path={p.node_path} nodeId={p.node_id} from={from} to={to} />
                 </td>
@@ -93,7 +112,7 @@ export function TopNodes({ data, from, to }: { data: KafkaByNode; from: number; 
         </table>
       </Card>
 
-      <Card className="p-0">
+      <Card className={cn("p-0", STRETCH_HOST)}>
         <div className="border-b border-line px-4 py-2.5 text-[13.5px] font-semibold">
           {t("kafka.top_failures.title")}
         </div>
@@ -116,7 +135,14 @@ export function TopNodes({ data, from, to }: { data: KafkaByNode; from: number; 
                 const pct = f.rate * 100;
                 const row = pct > 5 ? "bg-err/10" : pct > 1 ? "bg-warn/10" : "";
                 return (
-                  <tr key={f.node_path} className={`border-b border-line last:border-0 ${row}`}>
+                  <tr
+                    key={f.node_path}
+                    className={cn(
+                      "border-b border-line last:border-0",
+                      row,
+                      f.node_id && cn(STRETCH_HOST, "hover:bg-bg-muted"),
+                    )}
+                  >
                     <td className="px-3 py-2">
                       <NodeCell path={f.node_path} nodeId={f.node_id} from={from} to={to} />
                     </td>
