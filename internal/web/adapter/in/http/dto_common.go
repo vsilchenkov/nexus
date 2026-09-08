@@ -81,6 +81,11 @@ type ListHeadersResponse struct {
 	Items []headerResponse `json:"items"`
 }
 
+// ListNodeGroupsResponse — GET /api/node-groups (§99).
+type ListNodeGroupsResponse struct {
+	Items []nodeGroupResponse `json:"items"`
+}
+
 // ListRequestFieldsResponse — GET /api/request-fields (§41).
 type ListRequestFieldsResponse struct {
 	Items []requestFieldResponse `json:"items"`

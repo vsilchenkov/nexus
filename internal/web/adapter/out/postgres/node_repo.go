@@ -30,8 +30,9 @@ type NodeRepoPg struct {
 
 // Compile-time check, что интерфейс реализован полностью.
 var (
-	_ port.NodeRepo       = (*NodeRepoPg)(nil)
-	_ port.NodeTableUsage = (*NodeRepoPg)(nil)
+	_ port.NodeRepo         = (*NodeRepoPg)(nil)
+	_ port.NodeTableUsage   = (*NodeRepoPg)(nil)
+	_ port.NodePathResolver = (*NodeRepoPg)(nil)
 )
 
 func NewNodeRepoPg(db DBTX, cipher *crypto.Cipher, logger logging.Logger) *NodeRepoPg {
@@ -57,7 +58,11 @@ const nodeColumns = `
 	incoming_auth_dynamic_source, incoming_auth_dynamic_field,
 	created_by, updated_by, external_table,
 	circuit_breaker_threshold, circuit_breaker_cooldown_sec,
-	async_ack_spec`
+	async_ack_spec, group_id`
+
+// nodeGroupFKConstraint — имя FK nodes.group_id → node_groups.id (§99). Задано
+// явно в миграции 0042.
+const nodeGroupFKConstraint = "nodes_group_id_fkey"
 
 func (r *NodeRepoPg) Get(ctx context.Context, id string) (*domain.Node, error) {
 	row := r.db.QueryRow(ctx, `SELECT `+nodeColumns+` FROM nodes WHERE id = $1`, id)
@@ -102,6 +107,40 @@ func (r *NodeRepoPg) ListClickHouseTables(ctx context.Context) ([]string, error)
 			continue
 		}
 		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// IDsByPaths реализует port.NodePathResolver (§98.2): путь → id узла, только
+// для однозначных путей.
+//
+// Однозначность проверяет сама СУБД (HAVING count(*) = 1), а не вызывающий код:
+// путь уникален лишь внутри команды, и одноимённые узлы в разных командах —
+// штатная ситуация, а не ошибка данных. Такой путь просто не попадает в карту,
+// и строка на экране остаётся текстом.
+//
+// team-скоупа здесь нет намеренно, см. godoc порта.
+func (r *NodeRepoPg) IDsByPaths(ctx context.Context, paths []string) (map[string]string, error) {
+	out := make(map[string]string, len(paths))
+	if len(paths) == 0 {
+		return out, nil
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT path, min(id::text)
+		FROM nodes
+		WHERE path = ANY($1)
+		GROUP BY path
+		HAVING count(*) = 1`, paths)
+	if err != nil {
+		return nil, fmt.Errorf("node ids by paths: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var path, id string
+		if err := rows.Scan(&path, &id); err != nil {
+			return nil, fmt.Errorf("scan node id by path: %w", err)
+		}
+		out[path] = id
 	}
 	return out, rows.Err()
 }
@@ -281,7 +320,7 @@ INSERT INTO nodes (
 	incoming_auth_dynamic_source, incoming_auth_dynamic_field,
 	created_by, updated_by, external_table,
 	circuit_breaker_threshold, circuit_breaker_cooldown_sec,
-	async_ack_spec
+	async_ack_spec, group_id
 ) VALUES (
 	$1, $2,
 	$3, $4, $5, $6,
@@ -301,7 +340,7 @@ INSERT INTO nodes (
 	$47, $48,
 	$49, $50, $51,
 	$52, $53,
-	$54::jsonb
+	$54::jsonb, $55
 ) RETURNING id, created_at, updated_at`
 
 	err = r.db.QueryRow(ctx, q,
@@ -327,12 +366,20 @@ INSERT INTO nodes (
 		nullInt32(n.CircuitBreakerThreshold), nullInt32(n.CircuitBreakerCooldownSec),
 		// §83: nil → NULL, «отвечать как раньше».
 		ack,
+		// §99: пусто → NULL, «узел без группы».
+		nullUUID(n.GroupID),
 	).Scan(&n.ID, &n.CreatedAt, &n.UpdatedAt)
 
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return domain.ErrNodeAlreadyExists
+		}
+		// §99: группу удалили между открытием формы и сохранением. Это ошибка
+		// ЗНАЧЕНИЯ ПОЛЯ (чинится выбором другой группы), а не сбой сервера, —
+		// иначе оператор получил бы «внутреннюю ошибку» без единой подсказки.
+		if isFKViolationOn(err, nodeGroupFKConstraint) {
+			return domain.ErrNodeGroupNotFound
 		}
 		return fmt.Errorf("create node: %w", err)
 	}
@@ -379,7 +426,7 @@ UPDATE nodes SET
 	incoming_auth_dynamic_source = $48, incoming_auth_dynamic_field = $49,
 	updated_by = $50, external_table = $51,
 	circuit_breaker_threshold = $52, circuit_breaker_cooldown_sec = $53,
-	async_ack_spec = $54::jsonb,
+	async_ack_spec = $54::jsonb, group_id = $55,
 	updated_at = now()
 WHERE id = $1
 RETURNING updated_at`
@@ -408,6 +455,8 @@ RETURNING updated_at`
 		nullInt32(n.CircuitBreakerThreshold), nullInt32(n.CircuitBreakerCooldownSec),
 		// §83: nil → NULL, «отвечать как раньше».
 		ack,
+		// §99: пусто → NULL, «узел без группы».
+		nullUUID(n.GroupID),
 	).Scan(&n.UpdatedAt)
 
 	if err != nil {
@@ -417,6 +466,9 @@ RETURNING updated_at`
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return domain.ErrNodeAlreadyExists
+		}
+		if isFKViolationOn(err, nodeGroupFKConstraint) {
+			return domain.ErrNodeGroupNotFound
 		}
 		return fmt.Errorf("update node: %w", err)
 	}
@@ -516,6 +568,8 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 	var encAuth, encInc string
 	var created, updated time.Time
 	var templateID *string
+	// §99: NULL = «узел без группы».
+	var groupID *string
 	var rmqHost, rmqVHost, rmqUser, encRMQ, rmqQueue *string
 	var rmqPort, pullInterval, pullBatch, pullPrefetch *int32
 	// §81.3: NULL = «политика из конфигурации».
@@ -542,7 +596,7 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 		&incAuthDynSrc, &n.IncomingAuthDynamicField,
 		&n.CreatedBy, &n.UpdatedBy, &n.ExternalTable,
 		&cbThreshold, &cbCooldown,
-		&ackRaw,
+		&ackRaw, &groupID,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) || isInvalidUUID(err) {
@@ -579,6 +633,9 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 	n.UpdatedAt = updated
 	if templateID != nil {
 		n.ClickHouseTemplateID = *templateID
+	}
+	if groupID != nil {
+		n.GroupID = *groupID
 	}
 
 	n.AuthCredentials, err = r.cipher.Decrypt(encAuth)

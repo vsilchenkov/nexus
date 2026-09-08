@@ -1,6 +1,8 @@
 // UI-kit панели (§21, эталон specs/nexus_ui.html). Единый источник атомов.
 export { Button } from "./Button";
+export { buttonClasses } from "./buttonClasses";
 export { CopyButton } from "./CopyButton";
+export { ShareLinkButton } from "./ShareLinkButton";
 export { Input, Select, Textarea, Field } from "./form";
 export { SecretInput } from "./SecretInput";
 export { SearchInput } from "./SearchInput";

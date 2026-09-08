@@ -122,6 +122,9 @@ definitions:
         items:
           type: string
         type: array
+      group_id:
+        description: '§99: группа узла; пусто = «без группы». Ссылка по id на node_groups.'
+        type: string
       incoming_auth_credentials:
         maxLength: 1024
         type: string
@@ -444,6 +447,13 @@ definitions:
       logs_configured:
         type: boolean
     type: object
+  internal_web_adapter_in_http.ListNodeGroupsResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.nodeGroupResponse'
+        type: array
+    type: object
   internal_web_adapter_in_http.ListNodesResponse:
     properties:
       items:
@@ -744,6 +754,8 @@ definitions:
         items:
           type: string
         type: array
+      group_id:
+        type: string
       id:
         type: string
       incoming_auth_credentials_set:
@@ -1113,6 +1125,9 @@ definitions:
         items:
           type: string
         type: array
+      group_id:
+        description: '§99: группа узла; пусто = «без группы». Ссылка по id на node_groups.'
+        type: string
       incoming_auth_credentials:
         maxLength: 1024
         type: string
@@ -1715,6 +1730,8 @@ definitions:
     properties:
       failed:
         type: integer
+      node_id:
+        type: string
       node_path:
         type: string
       rate:
@@ -1762,6 +1779,8 @@ definitions:
     type: object
   internal_web_adapter_in_http.kafkaProducerDTO:
     properties:
+      node_id:
+        type: string
       node_path:
         type: string
       produced:
@@ -1948,6 +1967,46 @@ definitions:
         type: string
       user_id:
         type: string
+    type: object
+  internal_web_adapter_in_http.nodeGroupMoveRequest:
+    properties:
+      direction:
+        enum:
+        - up
+        - down
+        type: string
+    required:
+    - direction
+    type: object
+  internal_web_adapter_in_http.nodeGroupRequest:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+      sort_order:
+        type: integer
+    type: object
+  internal_web_adapter_in_http.nodeGroupResponse:
+    properties:
+      created_at:
+        type: string
+      created_by:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      sort_order:
+        type: integer
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+      usage_count:
+        type: integer
     type: object
   internal_web_adapter_in_http.nodeKPIDTO:
     properties:
@@ -2762,6 +2821,21 @@ definitions:
     type: object
   nexus_internal_domain.GeneralSettings:
     properties:
+      circuit_breaker_cooldown_sec:
+        description: |-
+          CircuitBreakerCooldownSec — пауза до пробного запроса после приостановки,
+          секунды, ГЛОБАЛЬНО (§98.5). Диапазон 1..3600, как у поля узла.
+          nil = действует конфиг. Не секрет.
+        type: integer
+      circuit_breaker_threshold:
+        description: |-
+          CircuitBreakerThreshold — сколько отказов подряд приостанавливают доставку
+          к узлу, ГЛОБАЛЬНО (§98.5). Третий уровень цепочки: узел (поле > 0) →
+          это значение → sender.circuit_breaker.threshold из конфига.
+          nil = «в интерфейсе не задано», и действует конфиг, как до §98.
+          Диапазон — тот же, что у поля узла (1..100): расхождение границ дало бы
+          значение, которое принимают глобально и отвергают на узле. Не секрет.
+        type: integer
       max_async_body_bytes:
         description: |-
           MaxAsyncBodyBytes — рабочий лимит тела асинхронного приёма (§97), байты:
@@ -5159,6 +5233,165 @@ paths:
         §86.10).
       tags:
       - metrics
+  /api/node-groups:
+    get:
+      description: 'Порядок вывода — sort_order, затем имя. Поиск — по подстроке имени
+        без учёта регистра. Доступен любой сессии: экран «Узлы» группирует список
+        для всех ролей.'
+      parameters:
+      - description: поиск подстроки в имени; пусто = весь справочник
+        in: query
+        name: q
+        type: string
+      - description: лимит (по умолчанию 200)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ListNodeGroupsResponse'
+      security:
+      - CookieAuth: []
+      summary: Справочник групп узлов (§99).
+      tags:
+      - node-groups
+    post:
+      consumes:
+      - application/json
+      description: 'Идемпотентно по case-insensitive имени: повтор вернёт существующую
+        запись (200), а не ошибку — комбобокс формы узла создаёт группы без диалогов.'
+      parameters:
+      - description: node group
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.nodeGroupRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.nodeGroupResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Создать группу узлов (manager, §99).
+      tags:
+      - node-groups
+  /api/node-groups/{id}:
+    delete:
+      description: Нельзя удалить группу, к которой привязаны узлы (409) — сначала
+        уберите узлы из группы.
+      parameters:
+      - description: node group id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Удалить группу узлов (manager, §99).
+      tags:
+      - node-groups
+    patch:
+      consumes:
+      - application/json
+      description: 'Имя, описание и порядок меняются всегда: узлы ссылаются на группу
+        по id, поэтому переименование ничего не осиротит (в отличие от заголовков
+        §24). Занятое имя — 409.'
+      parameters:
+      - description: node group id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: node group
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.nodeGroupRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Изменить группу узлов (manager, §99).
+      tags:
+      - node-groups
+  /api/node-groups/{id}/move:
+    post:
+      consumes:
+      - application/json
+      description: Сдвиг на одну позицию вверх или вниз. Порядок переприсваивается
+        целиком, поэтому работает и на группах с одинаковым sort_order. Сдвиг за край
+        списка — no-op.
+      parameters:
+      - description: node group id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: direction
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.nodeGroupMoveRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Сдвинуть группу в порядке вывода (manager, §99).
+      tags:
+      - node-groups
   /api/nodes:
     get:
       description: Без scope — узлы текущей команды сессии. scope=all (§86) — узлы

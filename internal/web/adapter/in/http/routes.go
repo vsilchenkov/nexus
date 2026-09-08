@@ -27,6 +27,7 @@ type Handlers struct {
 	AckPreview    *AckPreviewHandler
 	HostAllowlist *HostAllowlistHandler
 	HeaderCatalog *HeaderCatalogHandler
+	NodeGroup     *NodeGroupHandler // §99: справочник групп узлов
 	RequestField  *RequestFieldCatalogHandler
 	LogMask       *LogMaskHandler // §95: справочник маскирования логов узлов
 	RMQTest       *RMQTestHandler
@@ -160,6 +161,14 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		// admin (создание из формы узла) ниже.
 		if h.HeaderCatalog != nil {
 			authed.GET("/headers", h.HeaderCatalog.Search)
+		}
+
+		// Справочник групп узлов (§99). GET — любой сессии: экран «Узлы»
+		// группирует список для всех ролей, включая viewer. Мутации — manager
+		// ниже (в отличие от §24, где PATCH/DELETE оставлены админу:
+		// переименование группы ничего не осиротит, ссылка идёт по id).
+		if h.NodeGroup != nil {
+			authed.GET("/node-groups", h.NodeGroup.List)
 		}
 
 		// Справочник полей запроса (§41). GET — combobox любой сессии; POST —
@@ -311,6 +320,15 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		// Справочник заголовков (§24): create из combobox.
 		if h.HeaderCatalog != nil {
 			authedManager.POST("/headers", h.HeaderCatalog.Create)
+		}
+
+		// Справочник групп узлов (§99): создание из комбобокса формы узла и
+		// управление справочником со страницы «Настройки → Группы».
+		if h.NodeGroup != nil {
+			authedManager.POST("/node-groups", h.NodeGroup.Create)
+			authedManager.PATCH("/node-groups/:id", h.NodeGroup.Update)
+			authedManager.DELETE("/node-groups/:id", h.NodeGroup.Delete)
+			authedManager.POST("/node-groups/:id/move", h.NodeGroup.Move)
 		}
 
 		// Справочник полей запроса (§41): create из combobox.

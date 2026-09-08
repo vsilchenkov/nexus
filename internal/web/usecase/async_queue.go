@@ -331,6 +331,14 @@ func toMs(t time.Time) int64 {
 	return t.UnixMilli()
 }
 
+// purgeFailedMaxBatches — потолок числа проходов одной очистки (§98.4).
+//
+// Существует не ради производительности, а ради конечности: один клик не должен
+// уметь держать запрос неограниченно долго. При батче в peekCap (1000) это
+// двести тысяч записей за вызов — больше, чем накапливает узел между разборами.
+// Упёрлись — честный Capped, и интерфейс просит нажать ещё раз.
+const purgeFailedMaxBatches = 200
+
 // PurgeFailed — очистка «Неудачных доставок» узла за окно [from,to] (нулевые
 // границы = всё): (1) отменяет (qcancel) ID этих сообщений, чтобы DLQ-репроцессор
 // перестал их повторять (§34.4 tombstone), и (2) удаляет их строки done=0 из
@@ -338,13 +346,17 @@ func toMs(t time.Time) int64 {
 // нет таблицы → no-op (нечего чистить). Cancelled в результате — число удалённых
 // записей (видимый «очищено N»).
 //
-// §79.2: оба шага работают с ОДНИМ набором ID, полученным один раз. Раньше это
-// были два независимых прохода (FailedIDs для tombstone'ов и сплошной DELETE по
-// done=0), из-за чего аудит показывал расхождение — боевое cancelled=5 при
-// deleted=10. Теперь равенство конструктивно.
+// §79.2: оба шага работают с ОДНИМ набором ID. Раньше это были два независимых
+// прохода (FailedIDs для tombstone'ов и сплошной DELETE по done=0), из-за чего
+// аудит показывал расхождение — боевое cancelled=5 при deleted=10. Инвариант
+// сохранён и после §98.4: он держится ВНУТРИ каждого батча.
 //
-// Цена единого набора: очистка ограничена peekCap записей за вызов (сплошной
-// DELETE был безлимитным). Превышение отдаётся как Capped — UI просит повторить.
+// §98.4: батчи повторяются, пока неудачные не кончатся. До этого очистка
+// ограничивалась одним проходом в peekCap записей, а признак Capped интерфейс
+// не читал — оператор видел «очищено» и не знал, что осталось ещё сорок шесть
+// тысяч. Цикл корректен только потому, что DeleteFailedRows ждёт завершения
+// мутации (см. syncMutationCtx): с асинхронным удалением следующая выборка
+// возвращала бы те же ID бесконечно.
 func (u *AsyncQueueUsecase) PurgeFailed(ctx context.Context, actor Actor, nodeID, teamID string, from, to time.Time) (QueuePurgeResult, error) {
 	node, err := u.resolveNode(ctx, nodeID, teamID)
 	if err != nil {
@@ -359,34 +371,100 @@ func (u *AsyncQueueUsecase) PurgeFailed(ctx context.Context, actor Actor, nodeID
 	}
 	q := failedQuery(node, toMs(from), toMs(to))
 
-	ids, capped, err := u.failed.FailedIDs(ctx, q, u.peekCap)
-	if err != nil {
-		return QueuePurgeResult{}, fmt.Errorf("async queue failed ids: %w", err)
-	}
-	if len(ids) == 0 {
-		u.logger.Debug("async queue purge failed: nothing to clean",
-			u.logger.Str("node_path", node.Path), u.logger.Str("op", op))
-		return QueuePurgeResult{Capped: capped, KafkaAvailable: u.cancel != nil}, nil
-	}
+	var (
+		totalCancelled int
+		totalDeleted   uint64
+		batches        int
+		capped         bool
+		// prevFirstID — первый ID предыдущего батча. Сторож продвижения: см.
+		// ниже, почему одного бюджета проходов мало.
+		prevFirstID string
+	)
+	for batches = 1; batches <= purgeFailedMaxBatches; batches++ {
+		ids, more, err := u.failed.FailedIDs(ctx, q, u.peekCap)
+		if err != nil {
+			return QueuePurgeResult{}, fmt.Errorf("async queue failed ids: %w", err)
+		}
+		if len(ids) == 0 {
+			// Кандидаты кончились — либо их и не было, либо все отобранные
+			// оказались доставленными позже (FailedIDs отсеивает такие уже
+			// после выборки, см. deliveredAmong). Во втором случае за потолком
+			// выборки могли остаться настоящие неудачи, но продолжать нельзя:
+			// удалять нечего, значит следующая итерация вернула бы ТЕ ЖЕ
+			// кандидатов, и цикл стал бы вечным. Поведение то же, что было до
+			// §98.4 у одиночного прохода.
+			batches--
+			break
+		}
 
-	// 1) Снимаем повторную доставку: репроцессор дропнет эти ID по tombstone.
-	// Для sync-узла шаг пропускаем: DLQ-репроцессора у него нет, tombstone'ы
-	// были бы записью в Redis впустую (§69.1).
-	cancelled := 0
-	if u.cancel != nil && usesAsyncQueue(node) {
-		if cancelled, err = u.cancel.Cancel(ctx, ids, u.retention); err != nil {
-			return QueuePurgeResult{}, fmt.Errorf("async queue cancel failed: %w", err)
+		// Выборка не сдвинулась — значит предыдущий проход ничего не убрал.
+		// Заметить это иначе нельзя: DeleteFailedRows рапортует число ЗАПРОШЕННЫХ
+		// записей, а не фактически удалённых строк, поэтому «удаление не задело
+		// ничего» выглядит как успех. Без сторожа такой случай означал бы двести
+		// одинаковых проходов: двести мутаций ClickHouse и двести раз одни и те
+		// же tombstone'ы. Бюджет проходов от этого не спасает — он лишь
+		// ограничивает ущерб сверху.
+		if ids[0] == prevFirstID {
+			u.logger.Warn("async queue purge failed: batch did not advance, stopping",
+				u.logger.Str("node_path", node.Path),
+				u.logger.Str("op", op),
+				u.logger.Int("batch", batches),
+				u.logger.Int("ids", len(ids)))
+			capped = true
+			batches--
+			break
+		}
+		prevFirstID = ids[0]
+
+		// 1) Снимаем повторную доставку: репроцессор дропнет эти ID по tombstone.
+		// Для sync-узла шаг пропускаем: DLQ-репроцессора у него нет, tombstone'ы
+		// были бы записью в Redis впустую (§69.1).
+		if u.cancel != nil && usesAsyncQueue(node) {
+			cancelled, cErr := u.cancel.Cancel(ctx, ids, u.retention)
+			if cErr != nil {
+				return QueuePurgeResult{}, fmt.Errorf("async queue cancel failed: %w", cErr)
+			}
+			totalCancelled += cancelled
+		}
+
+		// 2) Удаляем строки done=0 этих записей из вида «Неудачные доставки».
+		deleted, dErr := u.failed.DeleteFailedRows(ctx, q, ids)
+		if dErr != nil {
+			return QueuePurgeResult{}, fmt.Errorf("async queue delete failed: %w", dErr)
+		}
+		totalDeleted += deleted
+
+		// §51.9: по этим строкам видно, сколько проходов стоила очистка и на чём
+		// она закончилась — иначе жалоба «чистит долго» неразбираема.
+		u.logger.Debug("async queue purge failed: batch done",
+			u.logger.Str("node_path", node.Path),
+			u.logger.Str("op", op),
+			u.logger.Int("batch", batches),
+			u.logger.Int("ids", len(ids)),
+			u.logger.Int("deleted_total", int(totalDeleted)),
+			u.logger.Any("more", more))
+
+		if !more {
+			break
+		}
+		if batches == purgeFailedMaxBatches {
+			// Бюджет исчерпан, а неудачные ещё есть: сообщаем честно и выходим
+			// сами — иначе счётчик проходов в аудите оказался бы на единицу
+			// больше, чем проходов реально было.
+			capped = true
+			break
 		}
 	}
 
-	// 2) Удаляем строки done=0 этих записей из вида «Неудачные доставки».
-	deleted, err := u.failed.DeleteFailedRows(ctx, q, ids)
-	if err != nil {
-		return QueuePurgeResult{}, fmt.Errorf("async queue delete failed: %w", err)
+	if totalDeleted == 0 {
+		u.logger.Debug("async queue purge failed: nothing to clean",
+			u.logger.Str("node_path", node.Path), u.logger.Str("op", op))
+		return QueuePurgeResult{KafkaAvailable: u.cancel != nil}, nil
 	}
 
 	u.audit.Log(ctx, actor, domain.ActionAsyncQueuePurge, "node", node.ID, map[string]any{
-		"op": op, "cancelled": cancelled, "deleted": deleted, "capped": capped,
+		"op": op, "cancelled": totalCancelled, "deleted": totalDeleted,
+		"batches": batches, "capped": capped,
 	})
-	return QueuePurgeResult{Cancelled: int(deleted), Capped: capped, KafkaAvailable: u.cancel != nil}, nil
+	return QueuePurgeResult{Cancelled: int(totalDeleted), Capped: capped, KafkaAvailable: u.cancel != nil}, nil
 }

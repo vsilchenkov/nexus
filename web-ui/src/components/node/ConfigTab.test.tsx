@@ -119,3 +119,76 @@ describe("ConfigTab — блок «Полный адрес»", () => {
     expect(screen.queryByText(/WRONG\.example\.com/)).toBeNull();
   });
 });
+
+// §99.7: строка «Группа» на вкладке «Конфиг» — сразу после «Команды».
+describe("ConfigTab — строка «Группа»", () => {
+  function mockWithGroups(groups: Array<{ id: string; name: string }>) {
+    apiGet.mockImplementation((url: string) => {
+      if (url === "/api/settings/public") {
+        return Promise.resolve({ public_base_url: "https://nexus.example.com" });
+      }
+      if (url === "/api/me/teams") {
+        return Promise.resolve({ items: [], current_team_id: "team-a", favorites: [] });
+      }
+      if (url === "/api/nodes/node-1/team") {
+        return Promise.resolve({
+          team_id: "team-b",
+          team_slug: "beta",
+          team_name: "Beta",
+          team_external_url: "",
+        });
+      }
+      if (url === "/api/node-groups") {
+        return Promise.resolve({
+          items: groups.map((g) => ({
+            ...g,
+            description: "",
+            sort_order: 10,
+            usage_count: 1,
+            created_by: "",
+            updated_by: "",
+            created_at: "2026-09-01T00:00:00Z",
+            updated_at: "2026-09-01T00:00:00Z",
+          })),
+        });
+      }
+      return Promise.reject(new Error(`unexpected GET ${url}`));
+    });
+  }
+
+  function renderWithGroup(groupID?: string) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={["/nodes/node-1"]}>
+          <ConfigTab node={{ ...NODE, group_id: groupID } as Node} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  it("показывает имя группы узла", async () => {
+    mockWithGroups([{ id: "g1", name: "1С Обмен" }]);
+    renderWithGroup("g1");
+    await waitFor(() => expect(screen.getByText("1С Обмен")).toBeInTheDocument());
+  });
+
+  it("у узла без группы строка показывает прочерк и справочник не запрашивается", async () => {
+    mockWithGroups([{ id: "g1", name: "1С Обмен" }]);
+    renderWithGroup(undefined);
+    // Дожидаемся отрисовки конфига, иначе «прочерк» подтвердился бы просто
+    // потому, что компонент ещё не догрузился.
+    await waitFor(() => expect(screen.getByText("node.fields.group")).toBeInTheDocument());
+    expect(screen.queryByText("1С Обмен")).toBeNull();
+    // Лишний запрос справочника на каждый узел без группы — плата ни за что.
+    expect(apiGet.mock.calls.some((c) => c[0] === "/api/node-groups")).toBe(false);
+  });
+
+  it("группа удалена из справочника — строка не пустая, а с прочерком", async () => {
+    mockWithGroups([]);
+    renderWithGroup("g-gone");
+    await waitFor(() => expect(screen.getByText("node.fields.group")).toBeInTheDocument());
+    // Узел важнее своей метки (§99.9): экран не падает и не прячет строку.
+    expect(screen.queryByText("1С Обмен")).toBeNull();
+  });
+});

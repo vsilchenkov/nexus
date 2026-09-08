@@ -615,3 +615,88 @@ func TestChangedSections_BodyLimits(t *testing.T) {
 		General: domain.GeneralSettings{MaxAsyncBodyBytes: new(10 << 20)},
 	}))
 }
+
+// §98.5: глобальная политика защиты узла сохраняется и публикуется секцией
+// general — её слушает Sender и применяет без рестарта.
+func TestAppSettings_Update_BreakerPolicySavedAndPublished(t *testing.T) {
+	t.Parallel()
+	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
+	pub := &fakeReloadPublisher{}
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, false,
+		0, 0, logging.NewNoop())
+
+	require.NoError(t, uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
+		General: domain.GeneralSettings{
+			CircuitBreakerThreshold:   new(2),
+			CircuitBreakerCooldownSec: new(5),
+		},
+	}))
+
+	require.NotNil(t, repo.lastSaved)
+	require.NotNil(t, repo.lastSaved.General.CircuitBreakerThreshold)
+	assert.Equal(t, 2, *repo.lastSaved.General.CircuitBreakerThreshold)
+	require.NotNil(t, repo.lastSaved.General.CircuitBreakerCooldownSec)
+	assert.Equal(t, 5, *repo.lastSaved.General.CircuitBreakerCooldownSec)
+	assert.Equal(t, []string{"general"}, pub.sections)
+}
+
+// Значение вне границ отвергается ДО записи: иначе Sender применил бы политику,
+// которую та же форма на узле не приняла бы.
+func TestAppSettings_Update_BreakerPolicyOutOfRange(t *testing.T) {
+	t.Parallel()
+	rows := []struct {
+		name  string
+		patch domain.GeneralSettings
+		want  error
+	}{
+		{"порог выше сотни", domain.GeneralSettings{CircuitBreakerThreshold: new(101)}, domain.ErrBreakerThresholdInvalid},
+		{"порог ноль", domain.GeneralSettings{CircuitBreakerThreshold: new(0)}, domain.ErrBreakerThresholdInvalid},
+		{"пауза больше часа", domain.GeneralSettings{CircuitBreakerCooldownSec: new(3601)}, domain.ErrBreakerCooldownInvalid},
+		{"пауза ноль", domain.GeneralSettings{CircuitBreakerCooldownSec: new(0)}, domain.ErrBreakerCooldownInvalid},
+	}
+	for _, r := range rows {
+		t.Run(r.name, func(t *testing.T) {
+			t.Parallel()
+			repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
+			uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()),
+				&fakeReloadPublisher{}, false, 0, 0, logging.NewNoop())
+
+			err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{General: r.patch})
+			assert.ErrorIs(t, err, r.want)
+			assert.Nil(t, repo.lastSaved, "невалидная политика не должна доезжать до БД")
+		})
+	}
+}
+
+// Патч может нести только одно поле — второе обязано сохраниться из текущего
+// состояния, а не обнулиться (общий контракт панели настроек).
+func TestAppSettings_Update_BreakerPolicyPartialPatchKeepsOther(t *testing.T) {
+	t.Parallel()
+	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{
+		General: domain.GeneralSettings{
+			CircuitBreakerThreshold:   new(7),
+			CircuitBreakerCooldownSec: new(90),
+		},
+	}}
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()),
+		&fakeReloadPublisher{}, false, 0, 0, logging.NewNoop())
+
+	require.NoError(t, uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
+		General: domain.GeneralSettings{CircuitBreakerThreshold: new(3)},
+	}))
+
+	require.NotNil(t, repo.lastSaved.General.CircuitBreakerThreshold)
+	assert.Equal(t, 3, *repo.lastSaved.General.CircuitBreakerThreshold)
+	require.NotNil(t, repo.lastSaved.General.CircuitBreakerCooldownSec)
+	assert.Equal(t, 90, *repo.lastSaved.General.CircuitBreakerCooldownSec)
+}
+
+func TestChangedSections_BreakerPolicy(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, []string{"general"}, changedSections(&domain.AppSettings{
+		General: domain.GeneralSettings{CircuitBreakerThreshold: new(5)},
+	}))
+	assert.Equal(t, []string{"general"}, changedSections(&domain.AppSettings{
+		General: domain.GeneralSettings{CircuitBreakerCooldownSec: new(30)},
+	}))
+}

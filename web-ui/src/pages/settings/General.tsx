@@ -16,6 +16,10 @@ type GeneralSettings = {
   // §97: рабочие лимиты размера тела, БАЙТЫ (в форме вводятся в МиБ).
   max_body_bytes?: number;
   max_async_body_bytes?: number;
+  // §98.5: глобальная политика защиты узла. Отсутствие/null = «не задано»,
+  // действует конфигурация сервиса; на узле значение можно переопределить.
+  circuit_breaker_threshold?: number | null;
+  circuit_breaker_cooldown_sec?: number | null;
 };
 type SecuritySettings = { session_ttl_seconds?: number };
 type AppSettings = {
@@ -28,6 +32,14 @@ type VersionInfo = { version: string; override_allowed?: boolean };
 // Длительность сессии задаётся в минутах в UI, хранится в секундах (§34.2).
 const SESSION_MIN_MINUTES = 5; // 300 c
 const SESSION_MAX_MINUTES = 30 * 24 * 60; // 30 суток
+
+// §98.5: границы глобальной политики защиты узла. Зеркало домена
+// (BreakerThreshold*/BreakerCooldown*) и полей узла: расхождение дало бы
+// значение, которое форма пропускает, а сервер отвергает.
+const BREAKER_THRESHOLD_MIN = 1;
+const BREAKER_THRESHOLD_MAX = 100;
+const BREAKER_COOLDOWN_MIN_SEC = 1;
+const BREAKER_COOLDOWN_MAX_SEC = 3600;
 
 // §94.5: границы срока хранения журнала отказов. Зеркало домена
 // (RejectedRetention*Days): расхождение дало бы поле, которое сервер отвергает.
@@ -72,6 +84,9 @@ export function GeneralPanel() {
   // §97: рабочие лимиты размера тела, в МиБ.
   const [bodyMib, setBodyMib] = useState("");
   const [asyncBodyMib, setAsyncBodyMib] = useState("");
+  // §98.5: политика защиты узла. Пусто = не трогаем (действует конфигурация).
+  const [breakerThreshold, setBreakerThreshold] = useState("");
+  const [breakerCooldown, setBreakerCooldown] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   // §97: потолки из конфига — выше них сервер значение не примет, поэтому
@@ -109,6 +124,12 @@ export function GeneralPanel() {
       setBodyMib(mb === undefined ? "" : bytesToMib(mb));
       const amb = data.general?.max_async_body_bytes;
       setAsyncBodyMib(amb === undefined ? "" : bytesToMib(amb));
+      // §98.5: null (не задано) и число различаются — пустое поле означает
+      // «действует конфигурация сервиса», а не ноль.
+      const bt = data.general?.circuit_breaker_threshold;
+      setBreakerThreshold(bt === undefined || bt === null ? "" : String(bt));
+      const bc = data.general?.circuit_breaker_cooldown_sec;
+      setBreakerCooldown(bc === undefined || bc === null ? "" : String(bc));
     }
   }, [data]);
 
@@ -130,6 +151,12 @@ export function GeneralPanel() {
       if (bm !== "") general.max_body_bytes = mibToBytes(bm);
       const abm = asyncBodyMib.trim();
       if (abm !== "") general.max_async_body_bytes = mibToBytes(abm);
+      // §98.5: пусто — поле не отправляется вовсе, и сохранённое значение
+      // остаётся прежним (общий контракт панели).
+      const bt = breakerThreshold.trim();
+      if (bt !== "") general.circuit_breaker_threshold = Math.round(Number(bt));
+      const bc = breakerCooldown.trim();
+      if (bc !== "") general.circuit_breaker_cooldown_sec = Math.round(Number(bc));
       const body: { general: GeneralSettings; security?: SecuritySettings } = { general };
       // Длительность сессии: пусто — не трогаем (остаётся из env/текущего).
       const mins = sessionMinutes.trim();
@@ -295,6 +322,39 @@ export function GeneralPanel() {
         {asyncOverSync && (
           <p className="text-xs text-err">{t("settings.general.max_body_async_over_sync")}</p>
         )}
+        <p className="text-xs text-fg-subtle">{t("settings.common.hot_reload_note")}</p>
+      </div>
+
+      <div className="max-w-3xl space-y-1">
+        <label className="text-xs uppercase tracking-wider text-fg-muted">
+          {t("settings.general.breaker_threshold")}
+        </label>
+        <input
+          type="number"
+          min={BREAKER_THRESHOLD_MIN}
+          max={BREAKER_THRESHOLD_MAX}
+          value={breakerThreshold}
+          onChange={(e) => setBreakerThreshold(e.target.value)}
+          placeholder="5"
+          className="w-full rounded-md bg-bg-muted px-3 py-2 font-mono text-xs outline-none"
+        />
+        <p className="text-xs text-fg-subtle">{t("settings.general.breaker_threshold_hint")}</p>
+      </div>
+
+      <div className="max-w-3xl space-y-1">
+        <label className="text-xs uppercase tracking-wider text-fg-muted">
+          {t("settings.general.breaker_cooldown")}
+        </label>
+        <input
+          type="number"
+          min={BREAKER_COOLDOWN_MIN_SEC}
+          max={BREAKER_COOLDOWN_MAX_SEC}
+          value={breakerCooldown}
+          onChange={(e) => setBreakerCooldown(e.target.value)}
+          placeholder="30"
+          className="w-full rounded-md bg-bg-muted px-3 py-2 font-mono text-xs outline-none"
+        />
+        <p className="text-xs text-fg-subtle">{t("settings.general.breaker_cooldown_hint")}</p>
         <p className="text-xs text-fg-subtle">{t("settings.common.hot_reload_note")}</p>
       </div>
 

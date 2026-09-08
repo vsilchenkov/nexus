@@ -31,10 +31,12 @@ import {
 } from "../api/client";
 import { useNodeUrlBuilder } from "../lib/nodeUrl";
 import { useCurrentTeamCHDatabase, useMyTeams } from "../lib/teams";
-import { useNodeFormDefaults } from "../lib/nodeDefaults";
+import { useBreakerDefaults, useNodeFormDefaults } from "../lib/nodeDefaults";
 import { useEnsureNodeTeam, useNodeTeam } from "../lib/nodeShare";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { parseNumInput } from "../lib/numField";
+import { secretPlaceholderKey } from "../lib/secretPlaceholder";
+import { PASSWORD_MANAGER_OFF } from "../lib/secretMask";
 import { validateNodeForm } from "../lib/nodeValidation";
 import { chSchemaChangeWontApply, chSyncFormDirty } from "../lib/chSchema";
 import { buildVerifyMessage } from "../lib/chTableVerify";
@@ -46,6 +48,7 @@ import { CHSchemaSyncDialog } from "../components/CHSchemaSyncDialog";
 import { DeleteNodeDialog } from "../components/node/DeleteNodeDialog";
 import { AllowedHostsField } from "../components/node/AllowedHostsField";
 import { HeadersField } from "../components/node/HeadersField";
+import { GroupField } from "../components/node/GroupField";
 import { RequestFieldField } from "../components/node/RequestFieldField";
 import { RabbitMQSection, type RMQSetter } from "../components/node/RabbitMQSection";
 import { ShareNodeButton } from "../components/node/ShareNodeButton";
@@ -67,6 +70,7 @@ import {
   Textarea,
   Toggle,
   Toggle3,
+  buttonClasses,
 } from "../components/ui";
 
 const HTTP_METHODS = ["GET", "POST", "PUT", "DELETE", "ANY"] as const;
@@ -132,6 +136,9 @@ type Form = {
   pull_prefetch: number;
   // §29: произвольный комментарий-описание узла.
   comment: string;
+  // §99: группа узла; "" = «без группы». Payload собирается из формы целиком,
+  // поэтому отдельной обработки в buildPayload не требуется.
+  group_id: string;
   // §83: шаблон ответа приёма. В форме поля лежат плоско (спека собирается в
   // buildPayload): так работают контролы и подсветка ошибок, как у остальных.
   ack_enabled: boolean;
@@ -201,6 +208,7 @@ const emptyForm: Form = {
   pull_batch_size: 100,
   pull_prefetch: 100,
   comment: "",
+  group_id: "",
   // §83: по умолчанию шаблон выключен — узел отвечает как раньше.
   ...ackFormDefaults,
 };
@@ -316,6 +324,15 @@ export default function NodeSettings() {
   // что оператор уже успел ввести.
   const chDatabase = useCurrentTeamCHDatabase();
   const nodeDefaults = useNodeFormDefaults();
+  // §98.5: действующая ГЛОБАЛЬНАЯ политика защиты. Показывается в подсказке
+  // пустого поля: до §98 там стояло расплывчатое «как в конфигурации», и узнать
+  // действующее число оператор не мог нигде. Пусто — значит в интерфейсе
+  // ничего не задано и действует конфигурация сервиса.
+  const breakerDefaults = useBreakerDefaults();
+  const breakerHint = (v: number | undefined) =>
+    v === undefined
+      ? t("node.form.breaker_default_placeholder")
+      : t("node.form.breaker_default_global", { value: v });
   const defaultTemplateId = templates.data?.items.find((tpl) => tpl.is_default)?.id ?? "";
   const templateSeededRef = useRef(false);
   const tableSeededRef = useRef(false);
@@ -384,6 +401,18 @@ export default function NodeSettings() {
   // здесь НЕ делаем — он уничтожил бы несохранённые правки; показываем баннер и
   // блокируем сохранение (оно всё равно вернёт 404 — team-scope в handler'е).
   const foreignTeam = isNotFound(existing.error);
+
+  // §98.1: подсказка пустого поля секрета. Правило (включая гейт по типу
+  // авторизации) живёт в lib/secretPlaceholder — там оно покрыто таблицей.
+  function secretPlaceholder(isSet: boolean | undefined, typeUnchanged: boolean, whenNew = "") {
+    const key = secretPlaceholderKey({ isNew, isSet, typeUnchanged });
+    return key ? t(key) : whenNew;
+  }
+
+  // Тип авторизации в форме совпадает с сохранённым — только тогда флаг *_set
+  // говорит о том же самом секрете, который сейчас редактируется.
+  const outgoingAuthKept = form.auth_type === (existing.data?.auth_type ?? "");
+  const incomingAuthKept = form.incoming_auth_type === (existing.data?.incoming_auth_type ?? "");
 
   // buildPayload — форма → тело запроса API. Для basic склеивает Логин+Пароль
   // в auth_credentials "login:password" (формат хранения); пустой пароль →
@@ -678,8 +707,11 @@ export default function NodeSettings() {
           {isNew ? t("overview.new_node") : `${t("node.actions.edit")}: ${form.path}`}
         </h1>
         <div className="flex shrink-0 items-center gap-2">
-          <Link to={isNew ? "/" : `/nodes/${id}`}>
-            <Button variant="ghost">{t("common.cancel")}</Button>
+          <Link
+            to={isNew ? "/" : `/nodes/${id}`}
+            className={buttonClasses({ variant: "ghost" })}
+          >
+            {t("common.cancel")}
           </Link>
           {/* Перенос узла в другую команду — из формы правки (раньше жил кнопкой
               в списке узлов, где его место занял мини-график трафика). */}
@@ -790,6 +822,7 @@ export default function NodeSettings() {
               // значений; дженерик-сеттер Form совместим, TS требует явный каст.
               set={set as RMQSetter}
               isNew={isNew}
+              passwordSet={existing.data?.rmq_password_set}
               errField={errField}
               errMsg={error}
             />
@@ -921,7 +954,7 @@ export default function NodeSettings() {
                   type="number"
                   min={0}
                   max={100}
-                  placeholder={t("node.form.breaker_default_placeholder")}
+                  placeholder={breakerHint(breakerDefaults.threshold)}
                   className={errCls("circuit_breaker_threshold")}
                   value={form.circuit_breaker_threshold || ""}
                   onChange={(e) =>
@@ -938,7 +971,7 @@ export default function NodeSettings() {
                   type="number"
                   min={0}
                   max={3600}
-                  placeholder={t("node.form.breaker_default_placeholder")}
+                  placeholder={breakerHint(breakerDefaults.cooldownSec)}
                   className={errCls("circuit_breaker_cooldown_sec")}
                   value={form.circuit_breaker_cooldown_sec || ""}
                   onChange={(e) =>
@@ -975,7 +1008,7 @@ export default function NodeSettings() {
                 <Field label={t("auth.login_field")} help={t("node.help.basic_login")}>
                   <Input
                     mono
-                    autoComplete="off"
+                    {...PASSWORD_MANAGER_OFF}
                     className={errCls("incoming_auth_login")}
                     value={form.incoming_auth_login}
                     onChange={(e) => set("incoming_auth_login", e.target.value)}
@@ -987,7 +1020,7 @@ export default function NodeSettings() {
                     className={errCls("incoming_auth_password")}
                     value={form.incoming_auth_password}
                     onChange={(e) => set("incoming_auth_password", e.target.value)}
-                    placeholder={isNew ? "" : t("node.form.keep_secret")}
+                    placeholder={secretPlaceholder(existing.data?.incoming_auth_credentials_set, incomingAuthKept)}
                   />
                   {fieldErr("incoming_auth_password")}
                 </Field>
@@ -1006,7 +1039,7 @@ export default function NodeSettings() {
                 <SecretInput
                   value={form.incoming_auth_credentials}
                   onChange={(e) => set("incoming_auth_credentials", e.target.value)}
-                  placeholder={isNew ? "" : t("node.form.keep_secret")}
+                  placeholder={secretPlaceholder(existing.data?.incoming_auth_credentials_set, incomingAuthKept)}
                 />
               </Field>
             )}
@@ -1091,7 +1124,7 @@ export default function NodeSettings() {
                 <Field label={t("auth.login_field")} help={t("node.help.basic_login")}>
                   <Input
                     mono
-                    autoComplete="off"
+                    {...PASSWORD_MANAGER_OFF}
                     className={errCls("auth_login")}
                     value={form.auth_login}
                     onChange={(e) => set("auth_login", e.target.value)}
@@ -1103,7 +1136,7 @@ export default function NodeSettings() {
                     className={errCls("auth_password")}
                     value={form.auth_password}
                     onChange={(e) => set("auth_password", e.target.value)}
-                    placeholder={isNew ? "" : t("node.form.keep_secret")}
+                    placeholder={secretPlaceholder(existing.data?.auth_credentials_set, outgoingAuthKept)}
                   />
                   {fieldErr("auth_password")}
                 </Field>
@@ -1114,7 +1147,7 @@ export default function NodeSettings() {
                 <SecretInput
                   value={form.auth_credentials}
                   onChange={(e) => set("auth_credentials", e.target.value)}
-                  placeholder={isNew ? "" : t("node.form.keep_secret")}
+                  placeholder={secretPlaceholder(existing.data?.auth_credentials_set, outgoingAuthKept)}
                 />
               </Field>
             )}
@@ -1641,6 +1674,18 @@ export default function NodeSettings() {
                   <dd className="font-medium">{teamName ?? "—"}</dd>
                 </div>
               )}
+              {/* §99.6: группа — под «Командой», и при создании, и при правке
+                  (в отличие от команды, которую после создания меняет только
+                  «Перенести»). Разметка — «лейбл сверху, контрол во всю
+                  ширину», как у селекта команды на форме создания: в сетке
+                  «лейбл слева / значение справа» контрол прижимает лейбл к
+                  верхнему краю и остаётся зажат в узкой правой колонке (§65). */}
+              <div className="py-2.5 first:pt-0 last:pb-0">
+                <dt className="pb-1.5 text-fg-muted">{t("node.fields.group")}</dt>
+                <dd>
+                  <GroupField value={form.group_id} onChange={(v) => set("group_id", v)} />
+                </dd>
+              </div>
               {!isNew && existing.data && (
                 <>
                   <div className="grid grid-cols-[96px_1fr] gap-3 py-2.5 first:pt-0 last:pb-0">

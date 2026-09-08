@@ -15,3 +15,13 @@ if (!("ResizeObserver" in globalThis)) {
     disconnect() {}
   };
 }
+
+// scrollIntoView в jsdom не реализован, а cmdk (Command/CommandItem) зовёт его
+// при подсветке активного пункта — без заглушки любой тест, открывающий
+// комбобокс справочника (§24 HeadersField, §99 GroupField), падает
+// «TypeError: e.scrollIntoView is not a function» уже после рендера списка.
+// Заглушка, а не полифилл: прокрутки в jsdom нет, тестам нужен только факт
+// наличия метода.
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = function scrollIntoView() {};
+}

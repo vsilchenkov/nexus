@@ -11,7 +11,7 @@ import { Copy as CopyIcon, Pencil, Play, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { api, isNotFound, type Node } from "../api/client";
-import { Button, Chip, Field, Input, Pill, type LogsRange } from "../components/ui";
+import { Button, buttonClasses, Chip, Field, Input, Pill, type LogsRange } from "../components/ui";
 import { Modal } from "../components/ui/Modal";
 import { cn } from "../lib/cn";
 import { validateNodePath } from "../lib/nodeValidation";
@@ -21,7 +21,6 @@ import {
   isKnownNodeTab,
   parseLogsInitialFilter,
   parseNodeTab,
-  withFailedLogs,
   withLogsWindow,
   withNodeTab,
   type NodeTab,
@@ -172,10 +171,11 @@ export default function NodeDetail() {
               <Button sm variant="ghost" onClick={() => setCopyOpen(true)}>
                 <CopyIcon className="h-3.5 w-3.5" /> {t("node.actions.copy")}
               </Button>
-              <Link to={`/nodes/${node.id}/edit`}>
-                <Button sm variant="primary">
-                  <Pencil className="h-3.5 w-3.5" /> {t("node.actions.edit")}
-                </Button>
+              <Link
+                to={`/nodes/${node.id}/edit`}
+                className={buttonClasses({ sm: true, variant: "primary" })}
+              >
+                <Pencil className="h-3.5 w-3.5" /> {t("node.actions.edit")}
               </Link>
             </>
           )}
@@ -250,7 +250,6 @@ export default function NodeDetail() {
       {tab === "overview" && (
         <OverviewTab
           node={node}
-          onAllLogs={() => setSearchParams((prev) => withNodeTab(prev, "logs"))}
           onOpenLogs={openLogsAt}
         />
       )}
@@ -260,14 +259,11 @@ export default function NodeDetail() {
         <MetricsTab
           node={node}
           onOpenLogs={openLogsAt}
-          onOpenQueue={() => setSearchParams((prev) => withNodeTab(prev, "queue"))}
         />
       )}
       {tab === "queue" && (
         <QueueTab
           node={node}
-          onOpenFailedLogs={(f) => setSearchParams((prev) => withFailedLogs(prev, f))}
-          onOpenMetrics={() => setSearchParams((prev) => withNodeTab(prev, "metrics"))}
         />
       )}
     </div>

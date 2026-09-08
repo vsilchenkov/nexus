@@ -108,6 +108,13 @@ func (h *AppSettingsHandler) GetPublic(c *gin.Context) {
 		"max_async_body_bytes":     domain.BodyLimitOrDefault(s.General.MaxAsyncBodyBytes),
 		"max_body_bytes_cap":       h.maxBodyBytesCap,
 		"max_async_body_bytes_cap": h.maxAsyncBodyBytesCap,
+		// §98.5: глобальная политика защиты узла. Отдаются ТОЛЬКО значения,
+		// заданные в интерфейсе (не задано → null). Подставлять сюда значение из
+		// конфига Web'а нельзя: политику применяет Sender, а он читает СВОЙ
+		// файл конфигурации, и в инсталляции они могут разойтись (§81.3.1) —
+		// форма узла показала бы подсказку, которой доставка не подчиняется.
+		"circuit_breaker_threshold":    s.General.CircuitBreakerThreshold,
+		"circuit_breaker_cooldown_sec": s.General.CircuitBreakerCooldownSec,
 	})
 }
 
@@ -131,6 +138,9 @@ var settingsValidationErrors = []error{
 	domain.ErrMaxBodyBytesInvalid,
 	domain.ErrMaxAsyncBodyBytesInvalid,
 	domain.ErrAsyncBodyLimitOverSync,
+	// §98.5
+	domain.ErrBreakerThresholdInvalid,
+	domain.ErrBreakerCooldownInvalid,
 	// §88
 	domain.ErrMailHostInvalid,
 	domain.ErrMailPortInvalid,

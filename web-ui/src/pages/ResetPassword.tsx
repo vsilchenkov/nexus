@@ -106,6 +106,7 @@ export default function ResetPassword() {
             >
               <Field label={t("auth.reset_new")} hint={t("auth.reset_min", { n: MIN_PASSWORD_LENGTH })}>
                 <SecretInput
+                  ownPassword
                   value={next}
                   onChange={(e) => setNext(e.target.value)}
                   autoComplete="new-password"
@@ -139,6 +140,7 @@ export default function ResetPassword() {
 
               <Field label={t("auth.reset_confirm")}>
                 <SecretInput
+                  ownPassword
                   value={confirm}
                   onChange={(e) => setConfirm(e.target.value)}
                   autoComplete="new-password"

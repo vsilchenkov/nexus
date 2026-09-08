@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -80,7 +80,7 @@ function renderTab() {
     <MemoryRouter>
       <TooltipProvider>
         <QueryClientProvider client={qc}>
-          <OverviewTab node={NODE} onAllLogs={() => {}} />
+          <OverviewTab node={NODE} />
         </QueryClientProvider>
       </TooltipProvider>
     </MemoryRouter>,
@@ -123,5 +123,19 @@ describe("OverviewTab: «Последние запросы» не уезжают
       // LogUrlCell обрезает значение сам — на нём класс truncate.
       expect(spans[0]?.className).toContain("truncate");
     });
+  });
+});
+
+// §7.4 называет «Все логи» переходом, и адрес у него есть (?tab=logs). Значит
+// ссылка, а не кнопка: у кнопки Ctrl+клик и «Открыть в новой вкладке» не
+// работают — ровно так вкладки узла однажды получили адрес без ссылки (§79.3).
+describe("OverviewTab: «Все логи» — ссылка, а не кнопка", () => {
+  it("настоящая <a> с адресом вкладки логов", () => {
+    renderTab();
+
+    const link = screen.getByRole("link", { name: "metrics.all_logs" });
+    expect(link.tagName).toBe("A");
+    expect(link.getAttribute("href") ?? "").toContain("tab=logs");
+    expect(screen.queryByRole("button", { name: "metrics.all_logs" })).toBeNull();
   });
 });

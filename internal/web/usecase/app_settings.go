@@ -132,6 +132,17 @@ func (u *AppSettingsUsecase) Update(ctx context.Context, actor Actor, patch *dom
 			return err
 		}
 	}
+	// §98.5: глобальная политика защиты узла — те же границы, что у полей узла.
+	if patch.General.CircuitBreakerThreshold != nil {
+		if err := domain.ValidateBreakerThreshold(*patch.General.CircuitBreakerThreshold); err != nil {
+			return err
+		}
+	}
+	if patch.General.CircuitBreakerCooldownSec != nil {
+		if err := domain.ValidateBreakerCooldownSec(*patch.General.CircuitBreakerCooldownSec); err != nil {
+			return err
+		}
+	}
 	// §34.3: override версии разрешён только в dev (web.allow_version_override).
 	if patch.General.VersionOverride != nil && !u.allowVersionOverride {
 		return domain.ErrVersionOverrideForbidden
@@ -233,6 +244,13 @@ func mergeAppSettings(current, patch *domain.AppSettings) *domain.AppSettings {
 	}
 	if patch.General.RejectedRetentionDays != nil {
 		out.General.RejectedRetentionDays = patch.General.RejectedRetentionDays
+	}
+	// §98.5: глобальная политика защиты узла.
+	if patch.General.CircuitBreakerThreshold != nil {
+		out.General.CircuitBreakerThreshold = patch.General.CircuitBreakerThreshold
+	}
+	if patch.General.CircuitBreakerCooldownSec != nil {
+		out.General.CircuitBreakerCooldownSec = patch.General.CircuitBreakerCooldownSec
 	}
 
 	// §34.2: Security — длительность сессии (не секрет).
@@ -383,7 +401,8 @@ func changedSections(p *domain.AppSettings) []string {
 	if p.General.PublicBaseURL != nil || p.General.VersionOverride != nil ||
 		p.General.MetricsRefetchMs != nil || p.General.MetricsApproxCounts != nil ||
 		p.General.RejectedRetentionDays != nil ||
-		p.General.MaxBodyBytes != nil || p.General.MaxAsyncBodyBytes != nil {
+		p.General.MaxBodyBytes != nil || p.General.MaxAsyncBodyBytes != nil ||
+		p.General.CircuitBreakerThreshold != nil || p.General.CircuitBreakerCooldownSec != nil {
 		out = append(out, "general")
 	}
 	if p.Security.SessionTTLSeconds != nil {

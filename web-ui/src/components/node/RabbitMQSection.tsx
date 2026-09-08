@@ -4,6 +4,8 @@ import { Rabbit, PlugZap, RefreshCw, CircleCheck, CircleX } from "lucide-react";
 
 import { api, type RMQTestResult } from "../../api/client";
 import { parseNumInput } from "../../lib/numField";
+import { secretPlaceholderKey } from "../../lib/secretPlaceholder";
+import { PASSWORD_MANAGER_OFF } from "../../lib/secretMask";
 import { Button, Card, Field, Hint, Input, SecretInput, SectionHead } from "../ui";
 
 // §27: поля формы, относящиеся к RabbitMQAsync. Подмножество Form в NodeSettings.
@@ -28,6 +30,10 @@ type Props = {
   form: RMQFormFields;
   set: RMQSetter;
   isNew: boolean;
+  // §98.1: у сохранённого узла пароль уже задан. Сам он наружу не отдаётся
+  // (§5.5) — приходит только флаг, и без него подсказка поля одинаково выглядела
+  // и когда пароль настроен, и когда его нет.
+  passwordSet?: boolean;
   // §28 Пункт 5: имя поля с ошибкой валидации и локализованный текст (для
   // inline-подсветки RMQ-полей). Прокидываются из NodeSettings.
   errField?: string | null;
@@ -45,8 +51,14 @@ const INTERVAL_PRESETS: { label: string; sec: number }[] = [
 // RabbitMQSection — секция «RabbitMQ — источник» + «Параметры забора» (§27.11).
 // Кнопка «Проверить подключение» дёргает POST /api/nodes/test-rmq (реальный
 // AMQP-handshake без сохранения узла).
-export function RabbitMQSection({ form, set, isNew, errField, errMsg }: Props) {
+export function RabbitMQSection({ form, set, isNew, passwordSet, errField, errMsg }: Props) {
   const { t } = useTranslation();
+
+  // §98.1: гейта по типу авторизации здесь нет и не нужно — поле одно, и
+  // сохранённый пароль относится именно к нему при любом наборе прочих полей
+  // RabbitMQ. Пустое поле у нового узла подсказывает формат, а не «не менять».
+  const rmqPasswordKey = secretPlaceholderKey({ isNew, isSet: passwordSet, typeUnchanged: true });
+  const rmqPasswordPlaceholder = rmqPasswordKey ? t(rmqPasswordKey) : "password";
 
   // inline-вывод ошибки валидации под RMQ-полем name.
   const fieldErr = (name: string) =>
@@ -115,7 +127,7 @@ export function RabbitMQSection({ form, set, isNew, errField, errMsg }: Props) {
         <Field label={t("node.rmq.auth")} help={t("node.rmq.auth_help")} className="mt-3">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <Input
-              autoComplete="off"
+              {...PASSWORD_MANAGER_OFF}
               value={form.rmq_user}
               onChange={(e) => set("rmq_user", e.target.value)}
               placeholder="user"
@@ -123,7 +135,7 @@ export function RabbitMQSection({ form, set, isNew, errField, errMsg }: Props) {
             <SecretInput
               value={form.rmq_password}
               onChange={(e) => set("rmq_password", e.target.value)}
-              placeholder={isNew ? "password" : t("node.form.keep_secret")}
+              placeholder={rmqPasswordPlaceholder}
             />
           </div>
         </Field>

@@ -7,7 +7,8 @@ import { Link } from "react-router-dom";
 import { api } from "../../api/client";
 import { fmtNum, fmtSize } from "../../lib/format";
 import { reasonLabelKey, type RejectedDetails } from "../../lib/rejected";
-import { Button, CopyButton, ErrorAlert } from "../ui";
+import { Button, CopyButton, ErrorAlert, ShareLinkButton } from "../ui";
+import { rejectedPageUrl } from "../../lib/rejectedShare";
 
 type Props = {
   id: string;
@@ -83,14 +84,22 @@ export function RejectedDrawer({ id, onClose, onViewed, onDeleted }: Props) {
               </div>
             )}
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label={t("common.close")}
-            className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-fg-muted hover:bg-bg-muted hover:text-fg"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex shrink-0 items-center gap-1">
+            {/* §98.3: «Поделиться» стоит в ШАПКЕ, а не в подвале: шапка не
+                прокручивается (кнопка видна и на длинном списке запросов), а
+                подвал — зона необратимого удаления, и безобидное копирование
+                ссылки рядом с ним провоцирует промах. Пока группа не
+                загрузилась, ссылку собирать не из чего: нужен слог команды. */}
+            {g && <ShareLinkButton sm url={rejectedPageUrl(g.id, g.team_slug)} />}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label={t("common.close")}
+              className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-fg-muted hover:bg-bg-muted hover:text-fg"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4 text-[13px]">

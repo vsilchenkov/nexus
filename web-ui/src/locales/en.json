@@ -125,7 +125,15 @@
       "queue": "Kafka queue",
       "errors": "Errors"
     },
-    "filter": { "all_methods": "All methods", "all_statuses": "All statuses" },
+    "filter": {
+      "all_methods": "All methods",
+      "all_statuses": "All statuses",
+      "group": "Group",
+      "all_groups": "All groups",
+      "no_group": "No group",
+      "group_gone": "Group deleted"
+    },
+    "group": { "count": "{{count}} node(s)" },
     "view": { "table": "Table", "cards": "Cards" },
     "card": { "dynamic_url": "{URL from request}" },
     "status": { "ok": "OK", "down": "Down", "degraded": "Degraded", "queue": "Queue", "unknown": "—" },
@@ -318,6 +326,7 @@
       "share": "Share",
       "empty": "No data for the period"
     },
+    "node_unresolved": "No node with this path right now: it was renamed, deleted, or the path is used by nodes of several teams. Prometheus keeps the old path, so the row stays in the top list.",
     "top_failures": {
       "title": "Top failures",
       "node": "Node",
@@ -591,6 +600,7 @@
       "external_table": "External table",
       "id": "Node ID",
       "team": "Team",
+      "group": "Group",
       "method": "Method type",
       "path": "Node path",
       "url_mode": "URL mode",
@@ -707,6 +717,7 @@
       "outgoing": "Outgoing",
       "credentials": "Credentials",
       "keep_secret": "leave empty to keep current",
+      "secret_set": "Set",
       "webhook_secret": "Webhook secret",
       "sig_header": "Signature header",
       "sig_prefix": "Signature prefix",
@@ -731,6 +742,7 @@
       "circuit_breaker_threshold": "Protection failure threshold",
       "circuit_breaker_cooldown_sec": "Pause before probe, sec",
       "breaker_default_placeholder": "as in configuration",
+      "breaker_default_global": "as in general settings · {{value}}",
       "dlq_retry_delay_hint": "minimum wait before re-attempting a failed delivery; default 5 min",
       "hours": "h"
     },
@@ -770,6 +782,14 @@
       "pull_rate": "Pull rate",
       "conn_ok": "Active · connection OK",
       "attempts": "attempts"
+    },
+    "group_combo": {
+      "none": "— No group —",
+      "search": "Group name…",
+      "empty": "No groups found.",
+      "used": "{{count}} node(s)",
+      "create": "Create \"{{name}}\"",
+      "invalid": "Group name must be 1 to 100 characters."
     },
     "headers_combo": {
       "add_placeholder": "Add a header…",
@@ -1105,6 +1125,8 @@
     "purge_period_confirm": "Delete waiting messages received in the selected period? They will not be sent.",
     "purge_failed_all": "Clear all failed",
     "purge_failed_all_confirm": "Clear all failed deliveries? Their automatic retry stops and the records are removed from the logs. This cannot be undone.",
+    "purge_failed_result": "Records cleared: {{count}}.",
+    "purge_failed_capped": "not all were cleared — click again",
     "purge_failed_all_confirm_sync": "Clear all failed deliveries? The records are removed from the node logs. This cannot be undone.",
     "purge_failed_period": "Clear failed (period)",
     "purge_failed_period_confirm": "Clear failed deliveries in the selected period? Their automatic retry stops and the records are removed from the logs. This cannot be undone.",
@@ -1194,7 +1216,11 @@
       "max_body_async": "Max request body, async (MiB)",
       "max_body_async_hint": "Applies to /api/v1/requestAsync/*, /api/v1/callback/* and to a sync request sent to a paused node — it goes to the queue. Server ceiling — {{max}} MiB.",
       "max_body_over_cap": "Above the server ceiling ({{max}} MiB)",
-      "max_body_async_over_sync": "The async limit must not exceed the sync limit"
+      "max_body_async_over_sync": "The async limit must not exceed the sync limit",
+      "breaker_threshold": "Node protection failure threshold",
+      "breaker_threshold_hint": "How many consecutive failures pause delivery to a node. Empty — the value from the service configuration. A specific node can override it. A failure is a 5xx response, an expired node timeout or an unreachable address.",
+      "breaker_cooldown": "Pause before probe request, sec",
+      "breaker_cooldown_hint": "How long to wait before the probe request after delivery is paused. Empty — the value from the service configuration. A successful probe resumes delivery."
     },
     "tokens": {
       "title": "API tokens",
@@ -1246,6 +1272,30 @@
         "create": "Create"
       },
       "preview": { "allow": "Will allow", "block": "Will block", "invalid": "Invalid pattern — fix it to see the preview" }
+    },
+    "groups": {
+      "title": "Groups",
+      "subtitle": "Shared catalog of node groups. Groups are not tied to teams; \"Order\" defines how groups are laid out on the Nodes screen.",
+      "add": "Add group",
+      "search": "Search by name",
+      "empty": "No groups yet",
+      "used": "{{count}} node(s)",
+      "not_used": "not used",
+      "in_use_tip": "the group is used by nodes — remove the nodes from it first",
+      "name_length": "Name must be 1 to 100 characters",
+      "order_hint": "lower goes higher in the list",
+      "order_range": "Order must be an integer between 0 and 100000",
+      "move_up": "Move up",
+      "move_down": "Move down",
+      "confirm_delete": "Delete group {{name}}?",
+      "col": { "order": "Order", "name": "Name", "description": "Description", "usage": "Nodes" },
+      "field": { "name": "Name", "description": "Description", "order": "Order" },
+      "dialog": {
+        "new": "New group",
+        "edit": "Edit group",
+        "subtitle": "Name, description and display order on the Nodes screen",
+        "create": "Create"
+      }
     },
     "headers": {
       "title": "Headers",

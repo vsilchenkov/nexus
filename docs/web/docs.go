@@ -2888,6 +2888,245 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/node-groups": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Порядок вывода — sort_order, затем имя. Поиск — по подстроке имени без учёта регистра. Доступен любой сессии: экран «Узлы» группирует список для всех ролей.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "node-groups"
+                ],
+                "summary": "Справочник групп узлов (§99).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "поиск подстроки в имени; пусто = весь справочник",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "лимит (по умолчанию 200)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ListNodeGroupsResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Идемпотентно по case-insensitive имени: повтор вернёт существующую запись (200), а не ошибку — комбобокс формы узла создаёт группы без диалогов.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "node-groups"
+                ],
+                "summary": "Создать группу узлов (manager, §99).",
+                "parameters": [
+                    {
+                        "description": "node group",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.nodeGroupRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.nodeGroupResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/node-groups/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Нельзя удалить группу, к которой привязаны узлы (409) — сначала уберите узлы из группы.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "node-groups"
+                ],
+                "summary": "Удалить группу узлов (manager, §99).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node group id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Имя, описание и порядок меняются всегда: узлы ссылаются на группу по id, поэтому переименование ничего не осиротит (в отличие от заголовков §24). Занятое имя — 409.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "node-groups"
+                ],
+                "summary": "Изменить группу узлов (manager, §99).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node group id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "node group",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.nodeGroupRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/node-groups/{id}/move": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Сдвиг на одну позицию вверх или вниз. Порядок переприсваивается целиком, поэтому работает и на группах с одинаковым sort_order. Сдвиг за край списка — no-op.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "node-groups"
+                ],
+                "summary": "Сдвинуть группу в порядке вывода (manager, §99).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node group id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "direction",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.nodeGroupMoveRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes": {
             "get": {
                 "security": [
@@ -7058,6 +7297,10 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "group_id": {
+                    "description": "§99: группа узла; пусто = «без группы». Ссылка по id на node_groups.",
+                    "type": "string"
+                },
                 "incoming_auth_credentials": {
                     "type": "string",
                     "maxLength": 1024
@@ -7488,6 +7731,17 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_web_adapter_in_http.ListNodeGroupsResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.nodeGroupResponse"
+                    }
+                }
+            }
+        },
         "internal_web_adapter_in_http.ListNodesResponse": {
             "type": "object",
             "properties": {
@@ -7898,6 +8152,9 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "group_id": {
+                    "type": "string"
                 },
                 "id": {
                     "type": "string"
@@ -8397,6 +8654,10 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "group_id": {
+                    "description": "§99: группа узла; пусто = «без группы». Ссылка по id на node_groups.",
+                    "type": "string"
                 },
                 "incoming_auth_credentials": {
                     "type": "string",
@@ -9211,6 +9472,9 @@ const docTemplate = `{
                 "failed": {
                     "type": "integer"
                 },
+                "node_id": {
+                    "type": "string"
+                },
                 "node_path": {
                     "type": "string"
                 },
@@ -9284,6 +9548,9 @@ const docTemplate = `{
         "internal_web_adapter_in_http.kafkaProducerDTO": {
             "type": "object",
             "properties": {
+                "node_id": {
+                    "type": "string"
+                },
                 "node_path": {
                     "type": "string"
                 },
@@ -9560,6 +9827,67 @@ const docTemplate = `{
                 },
                 "user_id": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.nodeGroupMoveRequest": {
+            "type": "object",
+            "required": [
+                "direction"
+            ],
+            "properties": {
+                "direction": {
+                    "type": "string",
+                    "enum": [
+                        "up",
+                        "down"
+                    ]
+                }
+            }
+        },
+        "internal_web_adapter_in_http.nodeGroupRequest": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "sort_order": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.nodeGroupResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "sort_order": {
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "updated_by": {
+                    "type": "string"
+                },
+                "usage_count": {
+                    "type": "integer"
                 }
             }
         },
@@ -10727,6 +11055,14 @@ const docTemplate = `{
         "nexus_internal_domain.GeneralSettings": {
             "type": "object",
             "properties": {
+                "circuit_breaker_cooldown_sec": {
+                    "description": "CircuitBreakerCooldownSec — пауза до пробного запроса после приостановки,\nсекунды, ГЛОБАЛЬНО (§98.5). Диапазон 1..3600, как у поля узла.\nnil = действует конфиг. Не секрет.",
+                    "type": "integer"
+                },
+                "circuit_breaker_threshold": {
+                    "description": "CircuitBreakerThreshold — сколько отказов подряд приостанавливают доставку\nк узлу, ГЛОБАЛЬНО (§98.5). Третий уровень цепочки: узел (поле \u003e 0) →\nэто значение → sender.circuit_breaker.threshold из конфига.\nnil = «в интерфейсе не задано», и действует конфиг, как до §98.\nДиапазон — тот же, что у поля узла (1..100): расхождение границ дало бы\nзначение, которое принимают глобально и отвергают на узле. Не секрет.",
+                    "type": "integer"
+                },
                 "max_async_body_bytes": {
                     "description": "MaxAsyncBodyBytes — рабочий лимит тела асинхронного приёма (§97), байты:\n/requestAsync, /callback и sync-запрос к узлу на паузе (§3.6, он уходит\nв очередь). Обязан быть ≤ MaxBodyBytes. nil = дефолт\nBodyLimitDefaultBytes. Не секрет.",
                     "type": "integer"

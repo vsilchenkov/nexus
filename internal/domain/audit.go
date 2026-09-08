@@ -114,6 +114,13 @@ const (
 	ActionHeaderUpdate = "header.update"
 	ActionHeaderDelete = "header.delete"
 
+	// Справочник групп узлов (§99). Привязка узла к группе отдельным событием не
+	// пишется — она часть node.update (§7.13).
+	ActionNodeGroupCreate  = "node_group.create"
+	ActionNodeGroupUpdate  = "node_group.update"
+	ActionNodeGroupDelete  = "node_group.delete"
+	ActionNodeGroupReorder = "node_group.reorder"
+
 	// Справочник полей запроса (§41).
 	ActionRequestFieldCreate = "request_field.create"
 

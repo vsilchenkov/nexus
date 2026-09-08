@@ -486,6 +486,13 @@ func (a *App) Start(ctx context.Context) error {
 	)
 	headerCatalogHandler := httpadapter.NewHeaderCatalogHandler(headerCatalogUC, a.logger)
 
+	// Справочник групп узлов (§99). usage_count считается on-read из
+	// nodes.group_id; связь — nullable FK, отдельной таблицы привязки нет.
+	nodeGroupUC := usecase.NewNodeGroupUsecase(
+		pgrepo.NewNodeGroupRepoPg(a.pg, a.logger), auditUC, a.logger,
+	)
+	nodeGroupHandler := httpadapter.NewNodeGroupHandler(nodeGroupUC, a.logger)
+
 	// Справочник полей запроса (§41). usage_count считается on-read из
 	// nodes.auth_dynamic_field / incoming_auth_dynamic_field.
 	requestFieldUC := usecase.NewRequestFieldCatalogUsecase(
@@ -716,9 +723,11 @@ func (a *App) Start(ctx context.Context) error {
 	// Мониторинг Kafka (§4 spec): Prometheus (throughput/lag/KPI/top-узлы) +
 	// Kafka Admin (топики/брокеры/ping, только при заданных брокерах) + Redis-кеш
 	// метаданных (TTL 30с). Все источники опциональны — usecase деградирует.
+	// §98.2: nodeRepo здесь — резолвер «путь → id», чтобы строки top-узлов вели
+	// на журнал узла. Метрики Prometheus несут только путь (метка node).
 	kafkaUC := usecase.NewKafkaMonitorUsecase(
 		promMetrics, kafkaAdmin, rediscache.NewKafkaCacheRedis(a.redis, 30*time.Second),
-		kafkaThresholds(&a.cfg.Web.KafkaAlerts), a.logger,
+		nodeRepo, kafkaThresholds(&a.cfg.Web.KafkaAlerts), a.logger,
 	)
 	kafkaHandler := httpadapter.NewKafkaHandler(kafkaUC, a.logger)
 
@@ -792,6 +801,7 @@ func (a *App) Start(ctx context.Context) error {
 		AckPreview:    ackPreviewHandler,
 		HostAllowlist: hostAllowlistHandler,
 		HeaderCatalog: headerCatalogHandler,
+		NodeGroup:     nodeGroupHandler,
 		RequestField:  requestFieldHandler,
 		LogMask:       logMaskHandler,
 		RMQTest:       rmqTestHandler,

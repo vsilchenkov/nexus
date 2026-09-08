@@ -25,6 +25,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -95,24 +96,79 @@ end
 return 1
 `)
 
+// PolicyProvider — держатель ГЛОБАЛЬНОЙ политики защиты (§98.5).
+//
+// До §98 глобальные порог и пауза были неизменяемым полем, заданным при старте
+// из конфигурации: поменять их можно было только выкатом. Теперь их задаёт
+// администратор в интерфейсе, а значение приезжает во все реплики событием
+// (секция general шины nexus:config:reload), поэтому держатель обязан быть
+// подменяемым на ходу.
+//
+// Пара (порог, пауза) хранится и подменяется ЦЕЛИКОМ, а не двумя независимыми
+// атомиками: RecordFailure записывает обе величины в состояние breaker'а одним
+// действием, и раздельные атомики позволили бы записать половину старой пары и
+// половину новой — интерфейс показал бы «3 из 5 · проба через 60 с» при
+// сохранённых 5/30. Тот же приём, что у BodyLimitsProvider (§97).
+type PolicyProvider struct {
+	cur atomic.Pointer[domain.BreakerPolicy]
+}
+
+// NewPolicyProvider создаёт держатель со стартовой политикой (обычно — из
+// конфигурации; её же заменит первое событие настроек).
+func NewPolicyProvider(p domain.BreakerPolicy) *PolicyProvider {
+	pp := &PolicyProvider{}
+	pp.Set(p)
+	return pp
+}
+
+// Set подменяет действующую глобальную политику целиком.
+func (p *PolicyProvider) Set(v domain.BreakerPolicy) { p.cur.Store(&v) }
+
+// Policy возвращает действующую глобальную политику. Nil-safe: у breaker'а,
+// собранного без провайдера, политика нулевая — это «значения неизвестны», и
+// resolve оставит их такими же, как было до §98 с пустым конфигом.
+func (p *PolicyProvider) Policy() domain.BreakerPolicy {
+	if p == nil {
+		return domain.BreakerPolicy{}
+	}
+	if v := p.cur.Load(); v != nil {
+		return *v
+	}
+	return domain.BreakerPolicy{}
+}
+
 type Breaker struct {
 	client *goredis.Client
-	// Глобальная политика из конфигурации (sender.circuit_breaker).
-	// Применяется к узлам без переопределения.
-	global domain.BreakerPolicy
+	// Глобальная политика: стартово из конфигурации (sender.circuit_breaker),
+	// далее — из настроек приложения без рестарта (§98.5). Применяется к узлам
+	// без переопределения.
+	global *PolicyProvider
 }
 
+// New создаёт breaker с НЕИЗМЕННОЙ глобальной политикой. Форма для случаев, где
+// политика заведомо не меняется: тесты и любой вызывающий без шины настроек.
 func New(client *goredis.Client, threshold int, cooldown time.Duration) *Breaker {
-	return &Breaker{client: client, global: domain.BreakerPolicy{Threshold: threshold, Cooldown: cooldown}}
+	return NewWithPolicy(client, NewPolicyProvider(domain.BreakerPolicy{
+		Threshold: threshold, Cooldown: cooldown,
+	}))
 }
 
-// resolve сводит политику узла с глобальной: нули означают «как в конфигурации».
+// NewWithPolicy создаёт breaker с ПОДМЕНЯЕМОЙ глобальной политикой (§98.5):
+// администратор меняет её в интерфейсе, и значение приезжает во все реплики без
+// рестарта. Провайдер может быть nil — тогда глобальных значений нет вовсе и
+// действуют только переопределения узла.
+func NewWithPolicy(client *goredis.Client, global *PolicyProvider) *Breaker {
+	return &Breaker{client: client, global: global}
+}
+
+// resolve сводит политику узла с глобальной: нули означают «как задано выше».
 func (b *Breaker) resolve(p domain.BreakerPolicy) domain.BreakerPolicy {
+	g := b.global.Policy()
 	if p.Threshold <= 0 {
-		p.Threshold = b.global.Threshold
+		p.Threshold = g.Threshold
 	}
 	if p.Cooldown <= 0 {
-		p.Cooldown = b.global.Cooldown
+		p.Cooldown = g.Cooldown
 	}
 	return p
 }
@@ -134,7 +190,7 @@ func (b *Breaker) Allow(ctx context.Context, key string) (bool, error) {
 		return true, nil
 	}
 	res, err := allowProbeScript.Run(ctx, b.client, []string{k},
-		time.Now().UnixNano(), b.global.Cooldown.Nanoseconds()).Int()
+		time.Now().UnixNano(), b.global.Policy().Cooldown.Nanoseconds()).Int()
 	if err != nil {
 		// fail-open: считаем closed (§9.4 ТЗ)
 		return true, err
@@ -210,7 +266,7 @@ func (b *Breaker) IsOpen(ctx context.Context, key string) (bool, error) {
 	cooldownStr, _ := vals[2].(string)
 	cooldown, _ := strconv.ParseInt(cooldownStr, 10, 64)
 	if cooldown <= 0 {
-		cooldown = b.global.Cooldown.Nanoseconds()
+		cooldown = b.global.Policy().Cooldown.Nanoseconds()
 	}
 	return time.Now().UnixNano()-opened < cooldown, nil
 }

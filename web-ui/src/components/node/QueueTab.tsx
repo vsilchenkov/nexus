@@ -9,7 +9,6 @@ import { nodeLookbackMs } from "../../lib/nodeLookback";
 import { useNodeTeamName } from "../../lib/nodeTeamName";
 import { PREF_KEY_NODE_PERIOD, useTeamDefaultPeriod } from "../../lib/prefs";
 import { ReplayDialog } from "../ReplayDialog";
-import { type LogsInitialFilter } from "./LogsTab";
 import { type LogRow, type LogDetail } from "./types";
 import { cn } from "../../lib/cn";
 import { msToDatetimeLocal } from "../../lib/format";
@@ -18,6 +17,8 @@ import { useConfirm } from "../../lib/confirm";
 import { useRoleAtLeast } from "../../lib/useCurrentRole";
 import { BreakerCard } from "./BreakerCard";
 import { ReplayPeriodDialog } from "./ReplayPeriodDialog";
+import { Link } from "react-router-dom";
+import { useNodeTabTo } from "../../lib/nodeTabLink";
 
 type QueueMessage = {
   id: string;
@@ -41,6 +42,11 @@ type ListResp = {
 };
 type BodyResp = { id: string; method: string; target_url: string; headers?: Record<string, string>; body: string };
 type FailedCountResp = { count: number; logs_configured: boolean; logs_available?: boolean };
+// §98.4: итог очистки «Неудачных доставок». cancelled — сколько записей убрано;
+// capped — очистка упёрлась в бюджет прохода, и неудачные ещё остались. До §98
+// это поле приходило с сервера, но не читалось, и оператор считал очистку
+// полной, хотя за один вызов убиралась ровно тысяча записей.
+type PurgeFailedResult = { cancelled: number; capped: boolean; kafka_available: boolean };
 // §96.8: итог «Повторить все сейчас». skipped_original_unavailable — записи, чей
 // оригинал в очереди недоступен, а копия в журнале обрезана: их не отправляли,
 // и они остались в списке вместе со своим следом.
@@ -81,16 +87,13 @@ function prettyJson(raw: string): string {
 // нельзя вообще — вкладку приходилось «открывать» временной сменой типа узла.
 export function QueueTab({
   node,
-  onOpenFailedLogs,
-  onOpenMetrics,
 }: {
   node: Node;
-  onOpenFailedLogs?: (f: LogsInitialFilter) => void;
   // §84.8: обратная ссылка на «Метрики». Ёмкость партиции считается там (из
   // метрик), «сколько ждёт прямо сейчас» — здесь; без взаимных ссылок разбор
   // упирается в тупик на любой из двух вкладок.
-  onOpenMetrics?: () => void;
 }) {
+  const to = useNodeTabTo();
   const { t } = useTranslation();
   const qc = useQueryClient();
   const confirm = useConfirm();
@@ -232,7 +235,7 @@ export function QueueTab({
   // перестаёт повторять) и удаляет записи done=0 из CH-логов узла.
   const purgeFailed = useMutation({
     mutationFn: (body: { from?: string; to?: string }) =>
-      api.post(`/api/nodes/${id}/async-queue/purge-failed`, body),
+      api.post<PurgeFailedResult>(`/api/nodes/${id}/async-queue/purge-failed`, body),
     onSuccess: invalidateFailed,
   });
   // §36.11: «Повторить все сейчас» — пере-инжектит все неудачные через Receiver
@@ -416,7 +419,6 @@ export function QueueTab({
               capped={pendingCapped}
               partition={pending[0].partition}
               headReceivedAt={pending[0].received_at}
-              onOpenMetrics={onOpenMetrics}
             />
           )}
           {pending.length === 0 ? (
@@ -510,21 +512,21 @@ export function QueueTab({
                 />
               </>
             )}
-            {hasLogsTable && onOpenFailedLogs && (
-              <button
-                type="button"
+            {hasLogsTable && (
+              // Окно считается на рендере, а не по клику: ссылке адрес нужен
+              // заранее. Вкладка перерисовывается по 15-секундному поллингу,
+              // поэтому href остаётся свежим — если поллинг отсюда уберут,
+              // окно в ссылке замрёт, и это придётся решать явно.
+              <Link
+                to={to.failedLogs({
+                  from: msToDatetimeLocal(periodWindow(period).since),
+                  to: msToDatetimeLocal(periodWindow(period).until),
+                  done: "no",
+                })}
                 className="text-xs text-accent transition-colors hover:text-fg"
-                onClick={() => {
-                  const { since, until } = periodWindow(period);
-                  onOpenFailedLogs({
-                    from: msToDatetimeLocal(since),
-                    to: msToDatetimeLocal(until),
-                    done: "no",
-                  });
-                }}
               >
                 {t("queue.open_in_logs")}
-              </button>
+              </Link>
             )}
           </div>
         </div>
@@ -549,6 +551,20 @@ export function QueueTab({
               <span className="text-err">
                 {" · "}
                 {t("queue.replay_failed_errors", { count: replayFailed.data.failed })}
+              </span>
+            )}
+          </p>
+        )}
+        {/* §98.4: итог последней очистки. Без него «Очистить все неудачные»
+            выглядела успешной всегда — в том числе когда убрала первую тысячу
+            из сорока семи, и остаток молча оставался в списке. */}
+        {purgeFailed.data && (
+          <p className="text-xs text-fg-muted">
+            {t("queue.purge_failed_result", { count: purgeFailed.data.cancelled })}
+            {purgeFailed.data.capped && (
+              <span className="text-warn">
+                {" · "}
+                {t("queue.purge_failed_capped")}
               </span>
             )}
           </p>
@@ -890,14 +906,13 @@ function QueueHeadSummary({
   capped,
   partition,
   headReceivedAt,
-  onOpenMetrics,
 }: {
   count: number;
   capped: boolean;
   partition: number;
   headReceivedAt: string;
-  onOpenMetrics?: () => void;
 }) {
+  const to = useNodeTabTo();
   const { t } = useTranslation();
   const ageMs = Math.max(Date.now() - Date.parse(headReceivedAt), 0);
   const ageMin = Math.round(ageMs / 60_000);
@@ -912,18 +927,12 @@ function QueueHeadSummary({
         age: ageMin < 1 ? t("queue.head.age_lt_min") : t("queue.head.age_min", { m: ageMin }),
       })}
       {stale && " ⚠"}
-      {onOpenMetrics && (
-        <>
-          {" · "}
-          <button
-            type="button"
-            onClick={onOpenMetrics}
-            className="text-accent underline-offset-2 hover:underline"
-          >
-            {t("queue.head.capacity_link")}
-          </button>
-        </>
-      )}
+      {" · "}
+      {/* Ссылка, а не кнопка: адрес (?tab=metrics) есть, и Ctrl+клик обязан
+          открывать вкладку рядом, не теряя очередь на экране (§79.3). */}
+      <Link to={to.tab("metrics")} className="text-accent underline-offset-2 hover:underline">
+        {t("queue.head.capacity_link")}
+      </Link>
     </p>
   );
 }

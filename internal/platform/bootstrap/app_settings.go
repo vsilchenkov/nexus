@@ -50,6 +50,11 @@ type appSettingsOverlay struct {
 		RejectedRetentionDays *int `json:"rejected_retention_days,omitempty"`
 		MaxBodyBytes          *int `json:"max_body_bytes,omitempty"`
 		MaxAsyncBodyBytes     *int `json:"max_async_body_bytes,omitempty"`
+		// §98.5: глобальная политика защиты узла. Без этих полей в узком
+		// overlay reloader молча ставил бы конфигурационные значения поверх
+		// заданных в интерфейсе — грабля, отдельно проверявшаяся в §97.
+		CircuitBreakerThreshold   *int `json:"circuit_breaker_threshold,omitempty"`
+		CircuitBreakerCooldownSec *int `json:"circuit_breaker_cooldown_sec,omitempty"`
 	} `json:"general"`
 }
 

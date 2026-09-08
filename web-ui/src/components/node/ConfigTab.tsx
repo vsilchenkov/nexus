@@ -1,7 +1,8 @@
 import { useTranslation } from "react-i18next";
+import { useQuery } from "@tanstack/react-query";
 import { type ReactNode } from "react";
 
-import { type Node } from "../../api/client";
+import { api, type Node, type NodeGroup } from "../../api/client";
 import { useNodeUrlBuilder } from "../../lib/nodeUrl";
 import { useNodeTeam } from "../../lib/nodeShare";
 import { useNodeTeamName } from "../../lib/nodeTeamName";
@@ -20,6 +21,17 @@ export function ConfigTab({ node }: { node: Node }) {
   const nodeTeamQ = useNodeTeam(node.id);
   const membership = myTeams.data?.items.find((tm) => tm.id === node.team_id);
   const teamName = useNodeTeamName(node);
+  // §99: имя группы — из общего справочника (queryKey ["node-groups", ""], тот
+  // же, что у комбобокса формы: один запрос на страницу, а не два).
+  const groupsQ = useQuery({
+    queryKey: ["node-groups", ""],
+    queryFn: () => api.get<{ items: NodeGroup[] }>("/api/node-groups", { q: "", limit: 200 }),
+    staleTime: 30_000,
+    enabled: !!node.group_id,
+  });
+  const groupName = node.group_id
+    ? groupsQ.data?.items.find((g) => g.id === node.group_id)?.name
+    : undefined;
   // §28 Пункт 1: адрес из публичного base URL приложения + slug команды.
   // Команда берётся ОТ УЗЛА, а не из сессии (§89.6): в членствах вызывающего
   // команды узла может не быть вовсе, и резолвер §58 — единственный источник.
@@ -39,6 +51,12 @@ export function ConfigTab({ node }: { node: Node }) {
         </Row>
         <Row label={t("node.fields.team")}>
           <span>{teamName ?? "—"}</span>
+        </Row>
+        {/* §99.7: группа — сразу после команды. Справочник глобальный, поэтому
+            имя резолвится без team-скоупа; группы нет или справочник ещё не
+            приехал → «—», а не пустая строка. */}
+        <Row label={t("node.fields.group")}>
+          <span>{groupName ?? "—"}</span>
         </Row>
         <Row label={t("node.fields.method")}>
           <Chip>{node.root_method}</Chip>

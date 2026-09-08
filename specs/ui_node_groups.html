@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nexus — §99 Группировка узлов</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/tabler-icons.min.css">
+<style>
+:root {
+  --bg-app: #0f1115;
+  --bg-primary: #16191f;
+  --bg-secondary: #1c2027;
+  --bg-tertiary: #22272f;
+  --bg-info: rgba(74, 144, 226, 0.12);
+  --bg-success: rgba(60, 180, 120, 0.14);
+  --bg-warning: rgba(220, 160, 60, 0.14);
+  --bg-danger: rgba(220, 90, 90, 0.14);
+  --border-tertiary: #2a3038;
+  --border-strong: #38404a;
+  --text-primary: #e6e9ef;
+  --text-secondary: #9aa3b2;
+  --text-tertiary: #5f6875;
+  --text-info: #5b9bf0;
+  --text-success: #4cc38a;
+  --text-warning: #d9a441;
+  --text-danger: #e06c6c;
+  --radius-sm: 4px;
+  --radius-md: 7px;
+  --radius-lg: 11px;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font-sans); background: var(--bg-app); color: var(--text-primary); font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; padding: 32px; }
+
+.intro { max-width: 1080px; margin: 0 auto 28px; }
+.intro .tag { display: inline-block; font-family: var(--font-mono); font-size: 11px; color: var(--text-info); background: var(--bg-info); padding: 3px 8px; border-radius: var(--radius-sm); margin-bottom: 10px; }
+.intro h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; margin-bottom: 6px; }
+.intro p { font-size: 13px; color: var(--text-secondary); line-height: 1.65; max-width: 820px; }
+
+.row { max-width: 1080px; margin: 0 auto 30px; }
+.row-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; }
+.row-head .num { font-family: var(--font-mono); font-size: 11px; color: var(--text-info); background: var(--bg-info); padding: 3px 8px; border-radius: var(--radius-sm); }
+.row-head h2 { font-size: 15px; font-weight: 600; }
+.row-desc { font-size: 12.5px; color: var(--text-secondary); margin-bottom: 14px; max-width: 820px; line-height: 1.6; }
+
+.frame { background: var(--bg-app); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); padding: 18px; box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
+.card { background: var(--bg-primary); border: 0.5px solid var(--border-tertiary); border-radius: var(--radius-md); }
+
+/* toolbar */
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 14px; }
+.ctl { height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; background: var(--bg-primary); border: 0.5px solid var(--border-tertiary); border-radius: var(--radius-sm); font-size: 12px; color: var(--text-secondary); }
+.ctl.new { border-color: transparent; background: var(--text-info); color: #0b1017; font-weight: 600; }
+.ctl.hl { border-color: var(--text-info); color: var(--text-primary); box-shadow: 0 0 0 3px rgba(91,155,240,.12); }
+.seg { display: inline-flex; border: 0.5px solid var(--border-tertiary); border-radius: var(--radius-sm); overflow: hidden; height: 30px; }
+.seg span { padding: 0 12px; display: inline-flex; align-items: center; font-size: 12px; color: var(--text-tertiary); }
+.seg span.on { background: var(--bg-tertiary); color: var(--text-primary); }
+.spacer { flex: 1; }
+
+/* table */
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+thead th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-tertiary); font-weight: 500; padding: 8px 10px; border-bottom: 0.5px solid var(--border-tertiary); }
+tbody td { padding: 9px 10px; border-bottom: 0.5px solid var(--border-tertiary); }
+tbody tr:last-child td { border-bottom: none; }
+.mono { font-family: var(--font-mono); }
+.num { font-family: var(--font-mono); }
+
+/* group header row */
+.ghead td { background: var(--bg-secondary); border-top: 0.5px solid var(--border-strong); border-bottom: 0.5px solid var(--border-strong); padding: 7px 10px; }
+.ghead .inner { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.ghead .caret { color: var(--text-tertiary); font-size: 15px; width: 15px; display: inline-block; }
+.ghead .gname { font-size: 12.5px; font-weight: 600; }
+.ghead .gcount { margin-left: auto; font-size: 11px; color: var(--text-tertiary); }
+
+/* pills / chips */
+.pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; padding: 2px 8px; border-radius: 10px; }
+.pill.ok { background: var(--bg-success); color: var(--text-success); }
+.pill.warn { background: var(--bg-warning); color: var(--text-warning); }
+.pill.err { background: var(--bg-danger); color: var(--text-danger); }
+.pill.muted { background: var(--bg-tertiary); color: var(--text-tertiary); }
+.pill .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.chip { display: inline-block; font-size: 11px; padding: 2px 7px; border-radius: var(--radius-sm); background: var(--bg-secondary); color: var(--text-secondary); font-family: var(--font-mono); }
+.spark { display: inline-flex; align-items: flex-end; gap: 2px; height: 18px; }
+.spark i { width: 4px; background: var(--text-info); border-radius: 1px; display: block; }
+.spark.e i { background: var(--text-danger); }
+.spark.w i { background: var(--text-warning); }
+
+/* cards view */
+.cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.ncard { background: var(--bg-primary); border: 0.5px solid var(--border-tertiary); border-left: 3px solid var(--text-success); border-radius: var(--radius-md); padding: 12px; }
+.ncard.err { border-left-color: var(--text-danger); }
+.ncard.warn { border-left-color: var(--text-warning); }
+.ncard.off { border-left-color: var(--border-strong); opacity: .7; }
+.ncard .p { font-family: var(--font-mono); font-size: 12.5px; font-weight: 500; margin-bottom: 6px; }
+.ncard .meta { display: flex; gap: 6px; margin-bottom: 10px; }
+.ncard .stats { display: grid; grid-template-columns: repeat(3, 1fr); text-align: center; border-top: 0.5px solid var(--border-tertiary); border-bottom: 0.5px solid var(--border-tertiary); padding: 8px 0; margin-bottom: 10px; }
+.ncard .stats b { display: block; font-family: var(--font-mono); font-size: 13px; font-weight: 600; }
+.ncard .stats s { display: block; text-decoration: none; font-size: 9.5px; text-transform: uppercase; color: var(--text-tertiary); letter-spacing: .04em; }
+.gsec { display: flex; align-items: center; gap: 8px; margin: 20px 0 10px; }
+.gsec .line { flex: 1; height: 1px; background: var(--border-tertiary); }
+.gsec .gname { font-size: 12.5px; font-weight: 600; }
+.gsec .gcount { font-size: 11px; color: var(--text-tertiary); }
+.gsec .caret { color: var(--text-tertiary); font-size: 15px; }
+
+/* form sidebar */
+.two-col { display: grid; grid-template-columns: 1fr 320px; gap: 16px; }
+.ghost { border: 1px dashed var(--border-tertiary); border-radius: var(--radius-md); padding: 16px; color: var(--text-tertiary); font-size: 12px; min-height: 150px; display: grid; place-items: center; text-align: center; line-height: 1.7; }
+.dl { padding: 4px 14px; }
+.dl .r { display: grid; grid-template-columns: 96px 1fr; gap: 12px; padding: 10px 0; border-bottom: 0.5px solid var(--border-tertiary); font-size: 12.5px; }
+.dl .r:last-child { border-bottom: none; }
+.dl .r dt { color: var(--text-secondary); }
+.dl .r.stack { display: block; }
+.dl .r.stack dt { margin-bottom: 6px; }
+.select { display: flex; align-items: center; height: 34px; padding: 0 10px; background: var(--bg-app); border: 0.5px solid var(--border-tertiary); border-radius: var(--radius-sm); font-size: 12.5px; }
+.select.open { border-color: var(--text-info); box-shadow: 0 0 0 3px rgba(91,155,240,.12); }
+.select .caret { margin-left: auto; color: var(--text-tertiary); }
+.author { display: block; color: var(--text-tertiary); font-size: 11px; }
+
+/* dropdown */
+.combo-wrap { position: relative; }
+.dropdown { margin-top: 6px; background: var(--bg-primary); border: 0.5px solid var(--border-strong); border-radius: var(--radius-md); box-shadow: 0 12px 36px rgba(0,0,0,.5); overflow: hidden; }
+.dd-search { display: flex; align-items: center; gap: 7px; padding: 8px 11px; border-bottom: 0.5px solid var(--border-tertiary); font-size: 12.5px; color: var(--text-primary); }
+.dd-search i { color: var(--text-tertiary); }
+.dd-item { display: flex; align-items: center; gap: 8px; padding: 8px 11px; font-size: 12.5px; cursor: pointer; }
+.dd-item:hover, .dd-item.on { background: var(--bg-secondary); }
+.dd-item .use { margin-left: auto; font-size: 11px; color: var(--text-tertiary); }
+.dd-item.none { color: var(--text-secondary); font-style: italic; }
+.dd-item.create { color: var(--text-info); border-top: 0.5px solid var(--border-tertiary); }
+.dd-note { padding: 7px 11px; font-size: 11px; color: var(--text-tertiary); border-top: 0.5px solid var(--border-tertiary); }
+
+/* settings */
+.settings { display: grid; grid-template-columns: 190px 1fr; gap: 20px; }
+.nav a { display: block; padding: 7px 10px; border-radius: var(--radius-sm); font-size: 12.5px; color: var(--text-secondary); text-decoration: none; }
+.nav a.on { background: var(--bg-tertiary); color: var(--text-primary); font-weight: 500; }
+.panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.panel-head h3 { font-size: 16px; font-weight: 600; }
+.panel-head p { font-size: 12px; color: var(--text-secondary); max-width: 520px; margin-top: 4px; }
+.ord { display: inline-flex; align-items: center; gap: 6px; }
+.ord b { font-family: var(--font-mono); font-size: 12px; min-width: 20px; }
+.arrow { color: var(--text-tertiary); cursor: pointer; font-size: 14px; }
+.arrow.off { opacity: .25; cursor: default; }
+.act { color: var(--text-tertiary); cursor: pointer; margin-left: 8px; }
+.act.del { color: var(--text-danger); }
+.act.disabled { opacity: .28; cursor: not-allowed; }
+
+/* dialog */
+.dialog { max-width: 420px; background: var(--bg-primary); border: 0.5px solid var(--border-strong); border-radius: var(--radius-lg); box-shadow: 0 20px 50px rgba(0,0,0,.6); overflow: hidden; }
+.dialog .h { padding: 14px 18px 12px; border-bottom: 0.5px solid var(--border-tertiary); }
+.dialog .h b { font-size: 14px; }
+.dialog .h p { font-size: 11.5px; color: var(--text-tertiary); margin-top: 3px; }
+.dialog .b { padding: 16px 18px; }
+.fld { margin-bottom: 14px; }
+.fld label { display: block; font-size: 11px; color: var(--text-secondary); margin-bottom: 5px; }
+.fld .inp { height: 34px; display: flex; align-items: center; padding: 0 10px; background: var(--bg-app); border: 0.5px solid var(--border-tertiary); border-radius: var(--radius-sm); font-size: 12.5px; }
+.fld .inp.short { max-width: 120px; }
+.fld .hint { font-size: 11px; color: var(--text-tertiary); margin-top: 5px; }
+.dialog .f { padding: 12px 18px; border-top: 0.5px solid var(--border-tertiary); display: flex; justify-content: flex-end; gap: 8px; }
+.btn { height: 32px; padding: 0 14px; border-radius: var(--radius-sm); font-size: 12.5px; display: inline-flex; align-items: center; }
+.btn.ghost { color: var(--text-secondary); }
+.btn.primary { background: var(--text-info); color: #0b1017; font-weight: 600; }
+
+.note { margin-top: 12px; font-size: 11.5px; color: var(--text-tertiary); line-height: 1.7; border-left: 2px solid var(--border-strong); padding-left: 12px; }
+.note b { color: var(--text-secondary); font-weight: 600; }
+</style>
+</head>
+<body>
+
+<div class="intro">
+  <span class="tag">§99</span>
+  <h1>Группировка узлов</h1>
+  <p>Общий для инсталляции справочник групп и группировка списка узлов по ним — в обеих раскладках.
+  Узлы без группы идут первыми и без заголовка, как сегодня; ниже — секции по группам в порядке поля
+  «Порядок». Существующая сортировка («проблемные первыми, внутри статуса — по трафику») не меняется,
+  она начинает действовать внутри каждой секции. Полный текст —
+  <code>sections/99-node-groups.md</code>.</p>
+</div>
+
+<!-- 1. Таблица -->
+<div class="row">
+  <div class="row-head"><span class="num">99.5</span><h2>Экран «Узлы» — раскладка «Таблица»</h2></div>
+  <p class="row-desc">Одна таблица с общей шапкой: секция группы — отдельный <code>tbody</code>,
+  заголовок — строка на всю ширину. Внутри «1С Обмен» первым стоит <code>erp/orders</code> со статусом
+  Degraded: правило «проблемные наверх» работает в пределах группы, а не всего списка.</p>
+  <div class="frame">
+    <div class="toolbar">
+      <span class="ctl"><i class="ti ti-search"></i> Поиск</span>
+      <span class="ctl">Все методы <i class="ti ti-chevron-down"></i></span>
+      <span class="ctl">Все статусы <i class="ti ti-chevron-down"></i></span>
+      <span class="ctl hl">Все группы <i class="ti ti-chevron-down"></i></span>
+      <span class="spacer"></span>
+      <span class="seg"><span class="on">Таблица</span><span>Карточки</span></span>
+      <span class="ctl new"><i class="ti ti-plus"></i> Новый узел</span>
+    </div>
+    <div class="card">
+      <table>
+        <thead>
+          <tr><th>Путь</th><th>Метод</th><th>Вход</th><th>Выход</th><th>Ошибки</th><th>Статус</th><th style="width:130px">Трафик</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="mono">vika/telephony</td><td><span class="chip">request</span></td><td class="num">1.2k</td><td class="num">1.2k</td><td class="num">41</td><td><span class="pill err"><i class="dot"></i>Down</span></td><td><span class="spark e"><i style="height:4px"></i><i style="height:7px"></i><i style="height:12px"></i><i style="height:18px"></i><i style="height:9px"></i><i style="height:5px"></i></span></td></tr>
+          <tr><td class="mono">webhook/send</td><td><span class="chip">requestAsync</span></td><td class="num">8.4k</td><td class="num">8.4k</td><td class="num">0</td><td><span class="pill ok"><i class="dot"></i>OK</span></td><td><span class="spark"><i style="height:9px"></i><i style="height:12px"></i><i style="height:14px"></i><i style="height:12px"></i><i style="height:9px"></i><i style="height:12px"></i></span></td></tr>
+          <tr><td class="mono">geo/search</td><td><span class="chip">request</span></td><td class="num">340</td><td class="num">340</td><td class="num">0</td><td><span class="pill ok"><i class="dot"></i>OK</span></td><td><span class="spark"><i style="height:4px"></i><i style="height:4px"></i><i style="height:7px"></i><i style="height:4px"></i><i style="height:4px"></i><i style="height:4px"></i></span></td></tr>
+        </tbody>
+        <tbody>
+          <tr class="ghead"><td colspan="7"><div class="inner"><span class="caret"><i class="ti ti-chevron-down"></i></span><span class="gname">1С Обмен</span><span class="gcount">4 узла</span></div></td></tr>
+          <tr><td class="mono">erp/orders</td><td><span class="chip">request</span></td><td class="num">5.1k</td><td class="num">5.0k</td><td class="num">112</td><td><span class="pill warn"><i class="dot"></i>Degraded</span></td><td><span class="spark w"><i style="height:7px"></i><i style="height:12px"></i><i style="height:18px"></i><i style="height:11px"></i><i style="height:7px"></i><i style="height:4px"></i></span></td></tr>
+          <tr><td class="mono">erp/stock</td><td><span class="chip">request</span></td><td class="num">2.2k</td><td class="num">2.2k</td><td class="num">0</td><td><span class="pill ok"><i class="dot"></i>OK</span></td><td><span class="spark"><i style="height:9px"></i><i style="height:9px"></i><i style="height:12px"></i><i style="height:9px"></i><i style="height:9px"></i><i style="height:9px"></i></span></td></tr>
+          <tr><td class="mono">erp/prices</td><td><span class="chip">requestAsync</span></td><td class="num">88</td><td class="num">88</td><td class="num">0</td><td><span class="pill ok"><i class="dot"></i>OK</span></td><td><span class="spark"><i style="height:4px"></i><i style="height:4px"></i><i style="height:4px"></i><i style="height:7px"></i><i style="height:4px"></i><i style="height:4px"></i></span></td></tr>
+          <tr><td class="mono">erp/legacy</td><td><span class="chip">request</span></td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td><span class="pill muted"><i class="dot"></i>Отключён</span></td><td><span style="color:var(--text-tertiary)">—</span></td></tr>
+        </tbody>
+        <tbody>
+          <tr class="ghead"><td colspan="7"><div class="inner"><span class="caret"><i class="ti ti-chevron-right"></i></span><span class="gname">Курьерские службы</span><span class="gcount">6 узлов</span></div></td></tr>
+        </tbody>
+        <tbody>
+          <tr class="ghead"><td colspan="7"><div class="inner"><span class="caret"><i class="ti ti-chevron-down"></i></span><span class="gname">Маркетплейсы</span><span class="gcount">2 узла</span></div></td></tr>
+          <tr><td class="mono">mp/ozon</td><td><span class="chip">request</span></td><td class="num">910</td><td class="num">905</td><td class="num">5</td><td><span class="pill ok"><i class="dot"></i>OK</span></td><td><span class="spark"><i style="height:7px"></i><i style="height:9px"></i><i style="height:7px"></i><i style="height:9px"></i><i style="height:12px"></i><i style="height:9px"></i></span></td></tr>
+          <tr><td class="mono">mp/wb</td><td><span class="chip">request</span></td><td class="num">450</td><td class="num">450</td><td class="num">0</td><td><span class="pill ok"><i class="dot"></i>OK</span></td><td><span class="spark"><i style="height:4px"></i><i style="height:7px"></i><i style="height:4px"></i><i style="height:7px"></i><i style="height:4px"></i><i style="height:7px"></i></span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note"><b>Узлы без группы — первые три строки, над первым заголовком.</b> У них нет
+    заголовка секции вовсе: если групп в инсталляции нет, экран выглядит в точности как до §99.
+    <b>Счётчик «4 узла» считает видимые</b> после фильтров узлы, а не всё содержимое группы.
+    «Курьерские службы» свёрнуты — состояние живёт в <code>localStorage</code>.</p>
+  </div>
+</div>
+
+<!-- 2. Карточки -->
+<div class="row">
+  <div class="row-head"><span class="num">99.5</span><h2>Экран «Узлы» — раскладка «Карточки»</h2></div>
+  <p class="row-desc">Тот же порядок секций: сначала сетка узлов без группы (без заголовка), ниже —
+  заголовок группы и собственная сетка карточек.</p>
+  <div class="frame">
+    <div class="cards">
+      <div class="ncard err">
+        <div class="p">vika/telephony</div>
+        <div class="meta"><span class="chip">request</span><span class="pill err"><i class="dot"></i>Down</span></div>
+        <div class="stats"><div><b>1.2k</b><s>вход 24ч</s></div><div><b>380ms</b><s>p95</s></div><div><b style="color:var(--text-danger)">41</b><s>ошибки</s></div></div>
+        <span class="spark e"><i style="height:4px"></i><i style="height:7px"></i><i style="height:12px"></i><i style="height:18px"></i><i style="height:9px"></i><i style="height:5px"></i></span>
+      </div>
+      <div class="ncard">
+        <div class="p">webhook/send</div>
+        <div class="meta"><span class="chip">requestAsync</span><span class="pill ok"><i class="dot"></i>OK</span></div>
+        <div class="stats"><div><b>8.4k</b><s>вход 24ч</s></div><div><b>12ms</b><s>p95</s></div><div><b>0</b><s>ошибки</s></div></div>
+        <span class="spark"><i style="height:9px"></i><i style="height:12px"></i><i style="height:14px"></i><i style="height:12px"></i><i style="height:9px"></i><i style="height:12px"></i></span>
+      </div>
+      <div class="ncard">
+        <div class="p">geo/search</div>
+        <div class="meta"><span class="chip">request</span><span class="pill ok"><i class="dot"></i>OK</span></div>
+        <div class="stats"><div><b>340</b><s>вход 24ч</s></div><div><b>9ms</b><s>p95</s></div><div><b>0</b><s>ошибки</s></div></div>
+        <span class="spark"><i style="height:4px"></i><i style="height:4px"></i><i style="height:7px"></i><i style="height:4px"></i><i style="height:4px"></i><i style="height:4px"></i></span>
+      </div>
+    </div>
+
+    <div class="gsec"><span class="caret"><i class="ti ti-chevron-down"></i></span><span class="gname">1С Обмен</span><span class="gcount">4 узла</span><span class="line"></span></div>
+    <div class="cards">
+      <div class="ncard warn">
+        <div class="p">erp/orders</div>
+        <div class="meta"><span class="chip">request</span><span class="pill warn"><i class="dot"></i>Degraded</span></div>
+        <div class="stats"><div><b>5.1k</b><s>вход 24ч</s></div><div><b>210ms</b><s>p95</s></div><div><b style="color:var(--text-danger)">112</b><s>ошибки</s></div></div>
+        <span class="spark w"><i style="height:7px"></i><i style="height:12px"></i><i style="height:18px"></i><i style="height:11px"></i><i style="height:7px"></i><i style="height:4px"></i></span>
+      </div>
+      <div class="ncard">
+        <div class="p">erp/stock</div>
+        <div class="meta"><span class="chip">request</span><span class="pill ok"><i class="dot"></i>OK</span></div>
+        <div class="stats"><div><b>2.2k</b><s>вход 24ч</s></div><div><b>40ms</b><s>p95</s></div><div><b>0</b><s>ошибки</s></div></div>
+        <span class="spark"><i style="height:9px"></i><i style="height:9px"></i><i style="height:12px"></i><i style="height:9px"></i><i style="height:9px"></i><i style="height:9px"></i></span>
+      </div>
+      <div class="ncard">
+        <div class="p">erp/prices</div>
+        <div class="meta"><span class="chip">requestAsync</span><span class="pill ok"><i class="dot"></i>OK</span></div>
+        <div class="stats"><div><b>88</b><s>вход 24ч</s></div><div><b>15ms</b><s>p95</s></div><div><b>0</b><s>ошибки</s></div></div>
+        <span class="spark"><i style="height:4px"></i><i style="height:4px"></i><i style="height:4px"></i><i style="height:7px"></i><i style="height:4px"></i><i style="height:4px"></i></span>
+      </div>
+    </div>
+
+    <div class="gsec"><span class="caret"><i class="ti ti-chevron-right"></i></span><span class="gname">Курьерские службы</span><span class="gcount">6 узлов</span><span class="line"></span></div>
+  </div>
+</div>
+
+<!-- 3. Форма узла -->
+<div class="row">
+  <div class="row-head"><span class="num">99.6</span><h2>Форма узла — поле «Группа» под «Командой»</h2></div>
+  <p class="row-desc">Правая колонка формы (320px), карточка под «Предпросмотром» (§65). У «Команды» —
+  разметка «лейбл слева / значение справа», у «Группы» — <b>лейбл сверху, контрол во всю ширину</b>:
+  в узкой правой колонке контрол внутри сетки прижимает лейбл к верхнему краю.</p>
+  <div class="frame">
+    <div class="two-col">
+      <div class="ghost">левая колонка формы<br>Маршрут · Цель · Авторизация · Ответ ·<br>Заголовки · Логирование · DLQ</div>
+      <div>
+        <div class="card" style="padding:14px;margin-bottom:12px">
+          <div style="font-size:11px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Предпросмотр</div>
+          <div class="mono" style="font-size:11.5px;line-height:1.9;color:var(--text-secondary)">
+            <span style="color:var(--text-info)">POST</span> https://nexus…/api/v1/log/erp/orders<br>
+            &nbsp;↓ Receiver<br>&nbsp;↓ gRPC (sync)<br>&nbsp;↓ Sender<br>
+            <span style="color:var(--text-primary)">POST → https://1c.local/hs/orders</span>
+          </div>
+        </div>
+        <div class="card">
+          <div class="dl">
+            <div class="r"><dt>Команда</dt><dd style="font-weight:500">Логистика</dd></div>
+            <div class="r stack">
+              <dt>Группа</dt>
+              <dd><div class="select">1С Обмен <span class="caret"><i class="ti ti-chevron-down"></i></span></div></dd>
+            </div>
+            <div class="r"><dt>Создано</dt><dd>12.08.26 14:02<span class="author">Автор: <span class="mono">ivanov</span></span></dd></div>
+            <div class="r"><dt>Обновлено</dt><dd>03.09.26 09:41<span class="author">Автор: <span class="mono">petrov</span></span></dd></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 4. Комбобокс -->
+<div class="row">
+  <div class="row-head"><span class="num">99.6</span><h2>Комбобокс группы — выбор, снятие, создание</h2></div>
+  <p class="row-desc">Устройство как у комбобокса заголовков §24.4 (поиск с задержкой, создание прямо
+  из списка), но выбор одиночный: вместо чипов — значение в кнопке-триггере, плюс постоянный пункт
+  «— Без группы —» для снятия привязки. Пункт «Создать» виден только роли manager и выше.</p>
+  <div class="frame">
+    <div style="max-width:340px">
+      <div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px">Группа</div>
+      <div class="combo-wrap">
+        <div class="select open">1С Обмен <span class="caret"><i class="ti ti-chevron-down"></i></span></div>
+        <div class="dropdown">
+          <div class="dd-search"><i class="ti ti-search"></i> Курь<span style="color:var(--text-info)">|</span></div>
+          <div class="dd-item none"><i class="ti ti-circle-off" style="color:var(--text-tertiary)"></i> — Без группы —</div>
+          <div class="dd-item on">Курьерские службы <span class="use">узлов: 6</span></div>
+          <div class="dd-item create"><i class="ti ti-plus"></i> Создать «Курь»</div>
+          <div class="dd-note">Создание доступно роли «Управление узлами» и выше</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 5. Конфиг -->
+<div class="row">
+  <div class="row-head"><span class="num">99.7</span><h2>Вкладка узла «Конфиг» — строка «Группа»</h2></div>
+  <p class="row-desc">Сразу после «Команды», в том же формате. Группы нет → «—».</p>
+  <div class="frame">
+    <div class="card" style="max-width:620px">
+      <div class="dl">
+        <div class="r" style="grid-template-columns:150px 1fr"><dt>ID</dt><dd class="mono" style="font-size:11.5px">8f2c1a94-7d31-4b0e-…&nbsp;<i class="ti ti-copy" style="color:var(--text-tertiary)"></i></dd></div>
+        <div class="r" style="grid-template-columns:150px 1fr"><dt>Команда</dt><dd>Логистика</dd></div>
+        <div class="r" style="grid-template-columns:150px 1fr;background:var(--bg-info)"><dt>Группа</dt><dd>1С Обмен</dd></div>
+        <div class="r" style="grid-template-columns:150px 1fr"><dt>Метод</dt><dd><span class="chip">request</span></dd></div>
+        <div class="r" style="grid-template-columns:150px 1fr"><dt>Путь</dt><dd class="mono">erp/orders</dd></div>
+        <div class="r" style="grid-template-columns:150px 1fr"><dt>Полный адрес</dt><dd class="mono" style="font-size:11.5px">https://nexus…/api/v1/log/erp/orders</dd></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 6. Настройки -->
+<div class="row">
+  <div class="row-head"><span class="num">99.8</span><h2>Настройки → «Группы» (роль manager)</h2></div>
+  <p class="row-desc">Таблица справочника с порядком и стрелками, счётчиком узлов и действиями.
+  Удаление заблокировано, пока к группе привязаны узлы: подсказка на кнопке, <code>409</code> на
+  сервере и <code>ON DELETE RESTRICT</code> в СУБД — три уровня одной защиты.</p>
+  <div class="frame">
+    <div class="settings">
+      <div class="nav">
+        <a href="#">Общие</a><a href="#">Пользователи</a><a href="#">Команды</a><a href="#">API-токены</a>
+        <a href="#">Разрешённые хосты</a><a href="#" class="on">Группы</a><a href="#">Заголовки</a>
+        <a href="#">Маски логов</a><a href="#">Инстансы</a><a href="#">Пароль</a><a href="#">Язык</a>
+      </div>
+      <div>
+        <div class="panel-head">
+          <div>
+            <h3>Группы</h3>
+            <p>Общий справочник групп узлов. Группы не привязаны к командам; «Порядок» задаёт, в каком
+            порядке группы идут на экране «Узлы».</p>
+          </div>
+          <span class="ctl new"><i class="ti ti-plus"></i> Добавить группу</span>
+        </div>
+        <span class="ctl" style="margin-bottom:14px"><i class="ti ti-search"></i> Поиск по имени</span>
+        <div class="card">
+          <table>
+            <thead><tr><th style="width:110px">Порядок</th><th>Имя</th><th>Описание</th><th style="width:150px">Узлов</th><th style="width:70px"></th></tr></thead>
+            <tbody>
+              <tr>
+                <td><span class="ord"><b>10</b><i class="ti ti-arrow-up arrow off"></i><i class="ti ti-arrow-down arrow"></i></span></td>
+                <td>1С Обмен</td><td style="color:var(--text-secondary)">Интеграции 1С</td>
+                <td style="color:var(--text-secondary)">узлов: 4</td>
+                <td style="text-align:right;white-space:nowrap"><i class="ti ti-pencil act"></i><i class="ti ti-trash act del disabled" title="используется узлами"></i></td>
+              </tr>
+              <tr>
+                <td><span class="ord"><b>20</b><i class="ti ti-arrow-up arrow"></i><i class="ti ti-arrow-down arrow"></i></span></td>
+                <td>Курьерские службы</td><td style="color:var(--text-secondary)">СДЭК, DPD, Boxberry</td>
+                <td style="color:var(--text-secondary)">узлов: 6</td>
+                <td style="text-align:right;white-space:nowrap"><i class="ti ti-pencil act"></i><i class="ti ti-trash act del disabled" title="используется узлами"></i></td>
+              </tr>
+              <tr>
+                <td><span class="ord"><b>30</b><i class="ti ti-arrow-up arrow"></i><i class="ti ti-arrow-down arrow"></i></span></td>
+                <td>Маркетплейсы</td><td style="color:var(--text-secondary)">Ozon, WB</td>
+                <td style="color:var(--text-secondary)">узлов: 2</td>
+                <td style="text-align:right;white-space:nowrap"><i class="ti ti-pencil act"></i><i class="ti ti-trash act del disabled" title="используется узлами"></i></td>
+              </tr>
+              <tr>
+                <td><span class="ord"><b>40</b><i class="ti ti-arrow-up arrow"></i><i class="ti ti-arrow-down arrow off"></i></span></td>
+                <td>Резерв</td><td style="color:var(--text-tertiary)">—</td>
+                <td style="color:var(--text-tertiary)">не используется</td>
+                <td style="text-align:right;white-space:nowrap"><i class="ti ti-pencil act"></i><i class="ti ti-trash act del"></i></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">Стрелка «вверх» у первой строки и «вниз» у последней неактивны. Сдвиг
+        <b>переприсваивает весь порядок</b> (<code>(позиция+1)*10</code>), а не меняет два значения
+        местами: у исторических записей <code>sort_order</code> совпадает (дефолт 0), и обмен равных
+        значений был бы no-op — кнопка молча ничего бы не делала.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 7. Диалог -->
+<div class="row">
+  <div class="row-head"><span class="num">99.8</span><h2>Диалог группы</h2></div>
+  <p class="row-desc">Один компонент на создание и правку. Имя — свободный текст 1…100 после обрезки
+  пробелов (не RFC-token, как у заголовков: группы называет человек). Переименование используемой
+  группы разрешено — узлы ссылаются по <code>id</code>.</p>
+  <div class="frame">
+    <div class="dialog">
+      <div class="h"><b>Новая группа</b><p>Имя, описание и порядок вывода на экране «Узлы»</p></div>
+      <div class="b">
+        <div class="fld"><label>Имя</label><div class="inp">1С Обмен</div></div>
+        <div class="fld"><label>Описание</label><div class="inp" style="color:var(--text-secondary)">Интеграции с учётными системами</div></div>
+        <div class="fld"><label>Порядок</label><div class="inp short mono">10</div><div class="hint">меньше — выше в списке</div></div>
+      </div>
+      <div class="f"><span class="btn ghost">Отмена</span><span class="btn primary">Создать</span></div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

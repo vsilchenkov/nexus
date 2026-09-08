@@ -228,3 +228,22 @@ func TestNodeUC_Copy_ProvisionsKeptCHTable(t *testing.T) {
 	assert.Equal(t, "nexus_default.orders", clone.ClickHouseTable)
 	assert.Equal(t, "nexus_default.orders", prov.createdTable, "провижининг идемпотентно вызван на ту же таблицу")
 }
+
+// TestNodeUC_Copy_KeepsGroup (§99.4): копия узла наследует группу оригинала.
+// Копируют, чтобы завести соседнюю интеграцию того же семейства, — попадать в
+// «без группы» и уезжать наверх списка копия не должна.
+func TestNodeUC_Copy_KeepsGroup(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	repo := newMemNodeRepo()
+	src := sourceNode()
+	src.GroupID = "8f2c1a94-7d31-4b0e-9a11-2c3d4e5f6071"
+	repo.items[src.ID] = src
+
+	uc := NewNodeUsecase(repo, nopNodeCache{}, NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()),
+		nil, nil, nil, nil, time.Minute, 0, "default-team", nil, logging.NewNoop())
+
+	clone, err := uc.Copy(ctx, SystemActor(), src.ID, "svc/orders-copy", "team1")
+	require.NoError(t, err)
+	assert.Equal(t, src.GroupID, clone.GroupID, "копия остаётся в группе оригинала")
+}

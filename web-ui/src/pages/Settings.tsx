@@ -15,6 +15,7 @@ import { NotificationsPanel } from "./settings/Notifications";
 import { MailPanel } from "./settings/Mail";
 import { AllowedHostsPanel } from "./settings/AllowedHosts";
 import { HeadersPanel } from "./settings/Headers";
+import { NodeGroupsPanel } from "./settings/NodeGroups";
 import { LogMasksPanel } from "./settings/LogMasks";
 import { InstancesPanel } from "./settings/Instances";
 import { PasswordPanel } from "./settings/Password";
@@ -29,6 +30,9 @@ const tabs: Tab[] = [
   { to: "teams", labelKey: "settings.teams.title", minRole: "admin" },
   { to: "tokens", labelKey: "settings.tokens.title" },
   { to: "allowed-hosts", labelKey: "settings.allowed_hosts.title", minRole: "manager" },
+  // §99: группы узлов — manager, как «Разрешённые хосты»: менеджер и так
+  // создаёт группы из формы узла, прятать от него страницу управления незачем.
+  { to: "groups", labelKey: "settings.groups.title", minRole: "manager" },
   { to: "headers", labelKey: "settings.headers.title", minRole: "admin" },
   // §95: маскирование секретов в логах узлов по regex-шаблонам.
   { to: "log-masks", labelKey: "settings.log_masks.title", minRole: "admin" },
@@ -90,6 +94,7 @@ export default function Settings() {
           {isAdmin && <Route path="teams" element={<TeamsPanel />} />}
           <Route path="tokens" element={<ApiTokensPanel />} />
           {isManager && <Route path="allowed-hosts" element={<AllowedHostsPanel />} />}
+          {isManager && <Route path="groups" element={<NodeGroupsPanel />} />}
           {isAdmin && <Route path="headers" element={<HeadersPanel />} />}
           {isAdmin && <Route path="log-masks" element={<LogMasksPanel />} />}
           {isAdmin && <Route path="instances" element={<InstancesPanel />} />}

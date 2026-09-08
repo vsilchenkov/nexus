@@ -65,6 +65,8 @@ var (
 	// а факт деградации уходит в warn и метрику.
 	ErrAckRenderFailed       = errors.New("domain: async ack template render failed")
 	ErrNodeInvalidTemplateID = errors.New("domain: clickhouse_template_id must be a valid UUID")
+	// §99: группа узла необязательна, но заданная обязана быть UUID.
+	ErrNodeInvalidGroupID    = errors.New("domain: group_id must be a valid UUID")
 	ErrNodeLogsNotConfigured = errors.New("domain: node has no clickhouse_table configured")
 	// Webhook signature (§16 ТЗ, IncomingAuthTypeWebhookSignature).
 	ErrNodeWebhookSigHeaderLength   = errors.New("domain: webhook_signature_header length must be <= 128")
@@ -188,6 +190,18 @@ var (
 	ErrHeaderDescriptionLength = errors.New("domain: header description length must be <= 500")
 	ErrHeaderInUse             = errors.New("domain: header is used by nodes and cannot be renamed or deleted")
 
+	// §99: справочник групп узлов (node_groups). Ошибки отличаются от §24 в
+	// одном: переименования используемой группы среди них НЕТ — узел ссылается
+	// на группу по id, и ссылка не осиротеет. Блокируется только удаление.
+	ErrNodeGroupNotFound          = errors.New("domain: node group not found")
+	ErrNodeGroupAlreadyExists     = errors.New("domain: node group with this name already exists")
+	ErrNodeGroupNameLength        = errors.New("domain: node group name length must be 1..100")
+	ErrNodeGroupDescriptionLength = errors.New("domain: node group description length must be <= 500")
+	ErrNodeGroupSortOrderRange    = errors.New("domain: node group sort_order must be 0..100000")
+	ErrNodeGroupInUse             = errors.New("domain: node group is used by nodes and cannot be deleted")
+	ErrNodeGroupInvalidDirection  = errors.New("domain: node group move direction must be up or down")
+	ErrNodeGroupTooManyToReorder  = errors.New("domain: too many node groups to reorder")
+
 	// §95: справочник маскирования логов узлов (log_mask_patterns).
 	ErrLogMaskNotFound          = errors.New("domain: log mask pattern not found")
 	ErrLogMaskPatternLength     = errors.New("domain: log mask pattern length must be 1..500")
@@ -304,4 +318,10 @@ var (
 	// sync-запрос к узлу на паузе (§3.6) уходит в очередь и режется
 	// async-лимитом, поэтому async выше sync не имеет смысла.
 	ErrAsyncBodyLimitOverSync = errors.New("domain: max_async_body_bytes must not exceed max_body_bytes")
+	// ErrBreakerThresholdInvalid / ErrBreakerCooldownInvalid — глобальная
+	// политика защиты узла вне допустимых границ (§98.5). Границы те же, что у
+	// одноимённых полей узла, но текст другой: сообщение попадает в форму
+	// настроек приложения, а не в форму узла.
+	ErrBreakerThresholdInvalid = errors.New("domain: circuit_breaker_threshold must be 1..100")
+	ErrBreakerCooldownInvalid  = errors.New("domain: circuit_breaker_cooldown_sec must be 1..3600")
 )
