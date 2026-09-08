@@ -9,7 +9,7 @@ import { scopeParams, teamScopeKey, useAllTeamsScope } from "../lib/teamScope";
 import { useCurrentTeamID, useMyTeams } from "../lib/teams";
 import { useInfiniteList } from "../lib/useInfiniteList";
 import { AuditDetailsCell } from "../components/AuditDetailsCell";
-import { Button, Card, Chip, ErrorAlert, Select } from "../components/ui";
+import { buttonClasses, Card, Chip, ErrorAlert, Select } from "../components/ui";
 
 // PAGE_SIZE — размер страницы журнала. Меньше потолка накопления
 // (MAX_INFINITE_ROWS = 1000), чтобы до него нужно было именно листать.
@@ -159,10 +159,10 @@ export default function AuditLog() {
           <option value="api_token.create">api_token.create</option>
           <option value="api_token.revoke">api_token.revoke</option>
         </Select>
-        <a href={csvHref} download>
-          <Button sm>
-            <Download className="h-3.5 w-3.5" /> {t("audit.export_csv")}
-          </Button>
+        {/* Ссылка со стилями кнопки: <Button> внутри <a> — невалидный HTML,
+            и вложенная кнопка перехватывает клик у ссылки. */}
+        <a href={csvHref} download className={buttonClasses({ sm: true })}>
+          <Download className="h-3.5 w-3.5" /> {t("audit.export_csv")}
         </a>
       </div>
 

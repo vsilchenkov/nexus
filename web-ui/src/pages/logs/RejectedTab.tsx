@@ -27,6 +27,7 @@ import {
   DefaultPeriodButton,
   ErrorAlert,
   PeriodPicker,
+  buttonClasses,
   SearchInput,
   Select,
   periodKey,
@@ -223,10 +224,10 @@ export default function RejectedTab() {
         >
           <CheckCheck className="h-3.5 w-3.5" /> {t("rejected.resolve_all.title")}
         </Button>
-        <a href={csvHref} download>
-          <Button sm>
-            <Download className="h-3.5 w-3.5" /> {t("rejected.export_csv")}
-          </Button>
+        {/* Ссылка со стилями кнопки: <Button> внутри <a> — невалидный HTML,
+            и вложенная кнопка перехватывает клик у ссылки. */}
+        <a href={csvHref} download className={buttonClasses({ sm: true })}>
+          <Download className="h-3.5 w-3.5" /> {t("rejected.export_csv")}
         </a>
       </div>
 

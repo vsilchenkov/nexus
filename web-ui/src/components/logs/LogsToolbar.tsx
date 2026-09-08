@@ -3,7 +3,7 @@ import { Download, RefreshCw, Radio, Pause } from "lucide-react";
 
 import { cn } from "../../lib/cn";
 import { SERVICES, LEVELS, type LevelName, type ServiceName } from "../../lib/logsUtils";
-import { Button, SearchInput, Seg, type SegOption } from "../ui";
+import { Button, buttonClasses, SearchInput, Seg, type SegOption } from "../ui";
 
 type Props = {
   services: ServiceName[];
@@ -121,10 +121,10 @@ export function LogsToolbar({
         <Button sm onClick={onRefresh} aria-label={t("logs.viewer.refresh")}>
           <RefreshCw className="h-3.5 w-3.5" />
         </Button>
-        <a href={downloadHref} download>
-          <Button sm>
-            <Download className="h-3.5 w-3.5" /> {t("logs.viewer.download")}
-          </Button>
+        {/* Ссылка со стилями кнопки: <Button> внутри <a> — невалидный HTML,
+            и вложенная кнопка перехватывает клик у ссылки. */}
+        <a href={downloadHref} download className={buttonClasses({ sm: true })}>
+          <Download className="h-3.5 w-3.5" /> {t("logs.viewer.download")}
         </a>
       </div>
     </div>

@@ -15,7 +15,7 @@ import {
 } from "../api/client";
 import { useStableData } from "../lib/useStableData";
 import {
-  Button,
+  buttonClasses,
   Card,
   Chip,
   Kpi,
@@ -854,11 +854,11 @@ export default function Overview() {
             { value: "cards", label: t("overview.view.cards") },
           ]}
         />
+        {/* Ссылка со стилями кнопки, а не <Button> внутри <Link>: вложенная
+            кнопка — невалидный HTML и перехватывает клик у ссылки. */}
         {canEdit && (
-          <Link to="/nodes/new">
-            <Button variant="primary">
-              <Plus className="h-4 w-4" /> {t("overview.new_node")}
-            </Button>
+          <Link to="/nodes/new" className={buttonClasses({ variant: "primary" })}>
+            <Plus className="h-4 w-4" /> {t("overview.new_node")}
           </Link>
         )}
       </div>

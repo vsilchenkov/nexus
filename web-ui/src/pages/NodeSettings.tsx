@@ -70,6 +70,7 @@ import {
   Textarea,
   Toggle,
   Toggle3,
+  buttonClasses,
 } from "../components/ui";
 
 const HTTP_METHODS = ["GET", "POST", "PUT", "DELETE", "ANY"] as const;
@@ -706,8 +707,11 @@ export default function NodeSettings() {
           {isNew ? t("overview.new_node") : `${t("node.actions.edit")}: ${form.path}`}
         </h1>
         <div className="flex shrink-0 items-center gap-2">
-          <Link to={isNew ? "/" : `/nodes/${id}`}>
-            <Button variant="ghost">{t("common.cancel")}</Button>
+          <Link
+            to={isNew ? "/" : `/nodes/${id}`}
+            className={buttonClasses({ variant: "ghost" })}
+          >
+            {t("common.cancel")}
           </Link>
           {/* Перенос узла в другую команду — из формы правки (раньше жил кнопкой
               в списке узлов, где его место занял мини-график трафика). */}
