@@ -592,6 +592,7 @@
       "external_table": "External table",
       "id": "Node ID",
       "team": "Team",
+      "group": "Group",
       "method": "Method type",
       "path": "Node path",
       "url_mode": "URL mode",
@@ -773,6 +774,14 @@
       "pull_rate": "Pull rate",
       "conn_ok": "Active · connection OK",
       "attempts": "attempts"
+    },
+    "group_combo": {
+      "none": "— No group —",
+      "search": "Group name…",
+      "empty": "No groups found.",
+      "used": "{{count}} node(s)",
+      "create": "Create \"{{name}}\"",
+      "invalid": "Group name must be 1 to 100 characters."
     },
     "headers_combo": {
       "add_placeholder": "Add a header…",

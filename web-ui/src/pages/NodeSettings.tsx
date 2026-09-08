@@ -48,6 +48,7 @@ import { CHSchemaSyncDialog } from "../components/CHSchemaSyncDialog";
 import { DeleteNodeDialog } from "../components/node/DeleteNodeDialog";
 import { AllowedHostsField } from "../components/node/AllowedHostsField";
 import { HeadersField } from "../components/node/HeadersField";
+import { GroupField } from "../components/node/GroupField";
 import { RequestFieldField } from "../components/node/RequestFieldField";
 import { RabbitMQSection, type RMQSetter } from "../components/node/RabbitMQSection";
 import { ShareNodeButton } from "../components/node/ShareNodeButton";
@@ -134,6 +135,9 @@ type Form = {
   pull_prefetch: number;
   // §29: произвольный комментарий-описание узла.
   comment: string;
+  // §99: группа узла; "" = «без группы». Payload собирается из формы целиком,
+  // поэтому отдельной обработки в buildPayload не требуется.
+  group_id: string;
   // §83: шаблон ответа приёма. В форме поля лежат плоско (спека собирается в
   // buildPayload): так работают контролы и подсветка ошибок, как у остальных.
   ack_enabled: boolean;
@@ -203,6 +207,7 @@ const emptyForm: Form = {
   pull_batch_size: 100,
   pull_prefetch: 100,
   comment: "",
+  group_id: "",
   // §83: по умолчанию шаблон выключен — узел отвечает как раньше.
   ...ackFormDefaults,
 };
@@ -1665,6 +1670,18 @@ export default function NodeSettings() {
                   <dd className="font-medium">{teamName ?? "—"}</dd>
                 </div>
               )}
+              {/* §99.6: группа — под «Командой», и при создании, и при правке
+                  (в отличие от команды, которую после создания меняет только
+                  «Перенести»). Разметка — «лейбл сверху, контрол во всю
+                  ширину», как у селекта команды на форме создания: в сетке
+                  «лейбл слева / значение справа» контрол прижимает лейбл к
+                  верхнему краю и остаётся зажат в узкой правой колонке (§65). */}
+              <div className="py-2.5 first:pt-0 last:pb-0">
+                <dt className="pb-1.5 text-fg-muted">{t("node.fields.group")}</dt>
+                <dd>
+                  <GroupField value={form.group_id} onChange={(v) => set("group_id", v)} />
+                </dd>
+              </div>
               {!isNew && existing.data && (
                 <>
                   <div className="grid grid-cols-[96px_1fr] gap-3 py-2.5 first:pt-0 last:pb-0">
