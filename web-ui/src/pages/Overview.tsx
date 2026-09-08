@@ -2,11 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Search, Plus, Play, Pause, RefreshCw } from "lucide-react";
+import { Search, Plus, Play, Pause, RefreshCw, ChevronDown, ChevronRight } from "lucide-react";
 
 import {
   api,
   type Node,
+  type NodeGroup,
   type NodeRank,
   type OverviewKPI,
   type NodesThroughputResp,
@@ -38,6 +39,7 @@ import {
 } from "../components/ui";
 import {
   applyFilters,
+  GROUP_NONE,
   hasFilterParams,
   loadFilters,
   parseFilters,
@@ -46,6 +48,13 @@ import {
   type OverviewFilters,
   type StatusFilter,
 } from "../lib/overviewFilters";
+import {
+  groupNodes,
+  hasGroupedSections,
+  loadCollapsed,
+  saveCollapsed,
+  type NodeSection,
+} from "../lib/nodeGroups";
 import { cn } from "../lib/cn";
 import {
   PREF_KEY_OVERVIEW_PERIOD,
@@ -156,7 +165,7 @@ export default function Overview() {
   // sessionStorage добавляет кейс, где query теряется (кнопка «Узлы» = to="/").
   const [params, setParams] = useSearchParams();
   const filters = useMemo(() => parseFilters(params, teamDefault), [params, teamDefault]);
-  const { search, method, status: statusFilter, period } = filters;
+  const { search, method, status: statusFilter, group: groupFilter, period } = filters;
 
   // updateFilters — единая точка записи. saveFilters строго ДО setParams (§54.4):
   // иначе при ручной очистке фильтров restore-эффект ниже увидит «URL пуст,
@@ -524,6 +533,12 @@ export default function Overview() {
   const nodes = useMemo(() => {
     let items = nodesQ.data?.items ?? [];
     if (method) items = items.filter((n) => n.root_method === method);
+    // §99.5: фильтр по группе. GROUP_NONE — узлы без группы; узел со ссылкой на
+    // исчезнувшую группу считается здесь сгруппированным (его id не пуст), но в
+    // секции попадёт к «без группы» — расхождение осознанное: фильтр отвечает на
+    // «что записано у узла», а раскладка — на «что показать».
+    if (groupFilter === GROUP_NONE) items = items.filter((n) => !n.group_id);
+    else if (groupFilter) items = items.filter((n) => n.group_id === groupFilter);
     if (statusFilter !== "all") {
       items = items.filter(
         (n) => nodeVariant(n, throughput.get(n.id), metricsReady) === statusFilter,
@@ -565,6 +580,7 @@ export default function Overview() {
     nodesQ.data,
     method,
     statusFilter,
+    groupFilter,
     throughput,
     sortRank,
     metricsReady,
@@ -572,6 +588,37 @@ export default function Overview() {
     teamNames,
     rankOrder,
   ]);
+
+  // §99: справочник групп. Ключ ["node-groups",""] общий с комбобоксом формы
+  // узла и вкладкой «Конфиг» — один запрос на приложение, а не по одному на
+  // экран. Справочник глобальный, скоуп команды в ключ не входит (§99.9).
+  const groupsQ = useQuery({
+    queryKey: ["node-groups", ""],
+    queryFn: () => api.get<{ items: NodeGroup[] }>("/api/node-groups", { q: "", limit: 200 }),
+    staleTime: 60_000,
+  });
+  const groups = useMemo(() => groupsQ.data?.items ?? [], [groupsQ.data]);
+
+  // Свёрнутые группы переживают перезапуск браузера (localStorage, §99.5):
+  // это настройка рабочего места, а не состояние сиюминутной задачи.
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => loadCollapsed());
+  const toggleGroup = useCallback((id: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      saveCollapsed(next);
+      return next;
+    });
+  }, []);
+
+  // Секции: группировка НЕ сортирует, а стабильно разбивает уже отсортированный
+  // список (§99.9) — поэтому «проблемные первыми» действует внутри группы, а
+  // заморозка порядка §86.10 продолжает работать без изменений.
+  const sections = useMemo(() => groupNodes(nodes, groups), [nodes, groups]);
+  // Групп нет вовсе (или ни один видимый узел не сгруппирован) → плоский список,
+  // как до §99: одинокая безымянная секция добавила бы разметку ни о чём.
+  const grouped = hasGroupedSections(sections);
 
   // statusFilterPending — фильтр по статусу выбран, но метрики, из которых
   // статус выводится, ещё не пришли. В сквозном режиме это окно длится до
@@ -702,6 +749,25 @@ export default function Overview() {
           <option value="paused">{t("node.status.paused")}</option>
           <option value="disabled">{t("node.status.disabled")}</option>
         </Select>
+        {/* §99.5: фильтр по группе. Показывается, только когда группы вообще
+            заведены: пустой селект с единственным «Все группы» занимал бы место
+            в шапке, ничего не давая. */}
+        {groups.length > 0 && (
+          <Select
+            className="w-44"
+            value={groupFilter}
+            onChange={(e) => updateFilters({ group: e.target.value })}
+            aria-label={t("overview.filter.group")}
+          >
+            <option value="">{t("overview.filter.all_groups")}</option>
+            <option value={GROUP_NONE}>{t("overview.filter.no_group")}</option>
+            {groups.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.name}
+              </option>
+            ))}
+          </Select>
+        )}
         <Seg
           value={view}
           onChange={setView}
@@ -804,7 +870,10 @@ export default function Overview() {
       {nodes.length > 0 &&
         (view === "table" ? (
           <NodeTable
-            nodes={nodes}
+            sections={sections}
+            grouped={grouped}
+            collapsed={collapsed}
+            onToggleGroup={toggleGroup}
             throughput={throughput}
             period={period}
             ready={metricsReady}
@@ -813,7 +882,10 @@ export default function Overview() {
           />
         ) : (
           <NodeCards
-            nodes={nodes}
+            sections={sections}
+            grouped={grouped}
+            collapsed={collapsed}
+            onToggleGroup={toggleGroup}
             throughput={throughput}
             period={period}
             ready={metricsReady}
@@ -889,14 +961,24 @@ function useStatus() {
 }
 
 function NodeTable({
-  nodes,
+  sections,
+  grouped,
+  collapsed,
+  onToggleGroup,
   throughput,
   period,
   ready,
   teamNames,
   observe,
 }: {
-  nodes: Node[];
+  // sections — узлы, разложенные по группам (§99.5). Секция без группы всегда
+  // первая и заголовка не имеет.
+  sections: NodeSection[];
+  // grouped — есть ли хоть одна группа: без них список рендерится плоским, как
+  // до §99.
+  grouped: boolean;
+  collapsed: Set<string>;
+  onToggleGroup: (id: string) => void;
   throughput: Map<string, Throughput>;
   period: Period;
   ready: boolean;
@@ -911,6 +993,10 @@ function NodeTable({
   const status = useStatus();
   const plabel = periodLabel(period, t);
   const navigate = useNavigate();
+  // colSpan заголовка группы обязан совпадать с числом колонок, иначе строка
+  // схлопнется в первую ячейку. Колонок семь, плюс «Команда» в сквозном режиме.
+  const colSpan = teamNames ? 8 : 7;
+  void grouped; // раскладка таблицы одинакова с группами и без них
   return (
     <Card className="overflow-hidden p-0">
       <div className="overflow-x-auto">
@@ -932,8 +1018,42 @@ function NodeTable({
             <th className="w-[140px] px-3 py-2 font-medium">{t("overview.table.traffic")}</th>
           </tr>
         </thead>
-        <tbody>
-          {nodes.map((n) => {
+        {/* Секция группы — отдельный <tbody> в ОДНОЙ таблице, а не своя таблица
+            на группу: у отдельных таблиц ширина колонок считается независимо, и
+            столбцы разъехались бы между секциями (§99.5). */}
+        {sections.map((sec) => {
+          const isCollapsed = sec.group !== null && collapsed.has(sec.group.id);
+          return (
+        <tbody key={sec.group?.id ?? "__ungrouped__"}>
+          {sec.group && (
+            <tr>
+              <td colSpan={colSpan} className="border-y border-line bg-bg-muted px-3 py-1.5">
+                {/* Кнопка, а не ссылка: заголовок ничего не открывает, а
+                    переключает состояние — урок §79.3 здесь работает в обратную
+                    сторону. */}
+                <button
+                  type="button"
+                  onClick={() => onToggleGroup(sec.group!.id)}
+                  aria-expanded={!isCollapsed}
+                  className="flex w-full items-center gap-2 text-left"
+                >
+                  {isCollapsed ? (
+                    <ChevronRight className="h-4 w-4 shrink-0 text-fg-subtle" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4 shrink-0 text-fg-subtle" />
+                  )}
+                  <span className="truncate text-[12.5px] font-semibold">{sec.group.name}</span>
+                  {/* Счётчик считает ВИДИМЫЕ узлы, после фильтров: иначе «4 узла»
+                      рядом с одной строкой читалось бы как поломка фильтра. */}
+                  <span className="ml-auto shrink-0 text-[11px] text-fg-subtle">
+                    {t("overview.group.count", { count: sec.nodes.length })}
+                  </span>
+                </button>
+              </td>
+            </tr>
+          )}
+          {!isCollapsed &&
+            sec.nodes.map((n) => {
             const m = throughput.get(n.id);
             const s = status(n, m, ready);
             return (
@@ -981,6 +1101,8 @@ function NodeTable({
             );
           })}
         </tbody>
+          );
+        })}
       </table>
       </div>
     </Card>
@@ -995,14 +1117,20 @@ function fmtMs(ms: number): string {
 }
 
 function NodeCards({
-  nodes,
+  sections,
+  grouped,
+  collapsed,
+  onToggleGroup,
   throughput,
   period,
   ready,
   teamNames,
   observe,
 }: {
-  nodes: Node[];
+  sections: NodeSection[];
+  grouped: boolean;
+  collapsed: Set<string>;
+  onToggleGroup: (id: string) => void;
   throughput: Map<string, Throughput>;
   period: Period;
   ready: boolean;
@@ -1013,9 +1141,37 @@ function NodeCards({
   const status = useStatus();
   const plabel = periodLabel(period, t);
   const navigate = useNavigate();
+  // Без групп — прежняя одна сетка на весь список (§99.5): заголовок секции с
+  // пустым именем добавил бы разметку ни о чём.
+  const grid = "grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3";
   return (
-    <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
-      {nodes.map((n) => {
+    <div className={grouped ? "space-y-3" : undefined}>
+      {sections.map((sec) => {
+        const isCollapsed = sec.group !== null && collapsed.has(sec.group.id);
+        return (
+          <div key={sec.group?.id ?? "__ungrouped__"}>
+            {sec.group && (
+              <button
+                type="button"
+                onClick={() => onToggleGroup(sec.group!.id)}
+                aria-expanded={!isCollapsed}
+                className="mb-2.5 mt-1 flex w-full items-center gap-2 text-left"
+              >
+                {isCollapsed ? (
+                  <ChevronRight className="h-4 w-4 shrink-0 text-fg-subtle" />
+                ) : (
+                  <ChevronDown className="h-4 w-4 shrink-0 text-fg-subtle" />
+                )}
+                <span className="truncate text-[12.5px] font-semibold">{sec.group.name}</span>
+                <span className="shrink-0 text-[11px] text-fg-subtle">
+                  {t("overview.group.count", { count: sec.nodes.length })}
+                </span>
+                <span className="ml-2 h-px flex-1 bg-line" aria-hidden />
+              </button>
+            )}
+            {!isCollapsed && (
+              <div className={grid}>
+                {sec.nodes.map((n) => {
         const m = throughput.get(n.id);
         const s = status(n, m, ready);
         const target =
@@ -1084,6 +1240,11 @@ function NodeCards({
               </span>
             </div>
           </Card>
+        );
+                })}
+              </div>
+            )}
+          </div>
         );
       })}
     </div>

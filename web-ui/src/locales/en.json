@@ -125,7 +125,14 @@
       "queue": "Kafka queue",
       "errors": "Errors"
     },
-    "filter": { "all_methods": "All methods", "all_statuses": "All statuses" },
+    "filter": {
+      "all_methods": "All methods",
+      "all_statuses": "All statuses",
+      "group": "Group",
+      "all_groups": "All groups",
+      "no_group": "No group"
+    },
+    "group": { "count": "{{count}} node(s)" },
     "view": { "table": "Table", "cards": "Cards" },
     "card": { "dynamic_url": "{URL from request}" },
     "status": { "ok": "OK", "down": "Down", "degraded": "Degraded", "queue": "Queue", "unknown": "—" },

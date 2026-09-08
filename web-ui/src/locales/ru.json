@@ -125,7 +125,14 @@
       "queue": "Очередь Kafka",
       "errors": "Ошибки"
     },
-    "filter": { "all_methods": "Все методы", "all_statuses": "Все статусы" },
+    "filter": {
+      "all_methods": "Все методы",
+      "all_statuses": "Все статусы",
+      "group": "Группа",
+      "all_groups": "Все группы",
+      "no_group": "Без группы"
+    },
+    "group": { "count": "узлов: {{count}}" },
     "view": { "table": "Таблица", "cards": "Карточки" },
     "card": { "dynamic_url": "{URL из запроса}" },
     "status": { "ok": "OK", "down": "Down", "degraded": "Degraded", "queue": "Очередь", "unknown": "—" },
