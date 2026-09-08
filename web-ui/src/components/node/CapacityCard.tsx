@@ -5,6 +5,8 @@ import { Card, LabelHint } from "../ui";
 import { cn } from "../../lib/cn";
 import { fmtNum } from "../../lib/format";
 import { capacityShare, capacityTone, fmtCapacityDuration, fmtShare } from "../../lib/queueCapacity";
+import { Link } from "react-router-dom";
+import { useNodeTabTo } from "../../lib/nodeTabLink";
 
 /**
  * CapacityCard — помещается ли узел в одну партицию Kafka (§84.8).
@@ -20,14 +22,13 @@ export function CapacityCard({
   total,
   p95Ms,
   rangeMs,
-  onOpenQueue,
 }: {
   node: Node;
   total: number;
   p95Ms: number;
   rangeMs: number;
-  onOpenQueue?: () => void;
 }) {
+  const to = useNodeTabTo();
   const { t } = useTranslation();
   const units = t("metrics.capacity.units").split("|");
 
@@ -77,11 +78,11 @@ export function CapacityCard({
           обязательна, иначе разбор упирается в тупик. */}
       <p className="mt-1 text-xs text-fg-muted">
         {t("metrics.capacity.see_queue")}{" "}
-        {onOpenQueue && (
-          <button type="button" onClick={onOpenQueue} className="text-accent underline-offset-2 hover:underline">
-            {t("metrics.capacity.queue_link")}
-          </button>
-        )}
+        {/* Выглядела ссылкой (text-accent + underline) и вела на ?tab=queue, но
+            была кнопкой: Ctrl+клик открывал пустоту. */}
+        <Link to={to.tab("queue")} className="text-accent underline-offset-2 hover:underline">
+          {t("metrics.capacity.queue_link")}
+        </Link>
       </p>
     </Card>
   );

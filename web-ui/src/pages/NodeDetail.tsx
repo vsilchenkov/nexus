@@ -21,7 +21,6 @@ import {
   isKnownNodeTab,
   parseLogsInitialFilter,
   parseNodeTab,
-  withFailedLogs,
   withLogsWindow,
   withNodeTab,
   type NodeTab,
@@ -250,7 +249,6 @@ export default function NodeDetail() {
       {tab === "overview" && (
         <OverviewTab
           node={node}
-          onAllLogs={() => setSearchParams((prev) => withNodeTab(prev, "logs"))}
           onOpenLogs={openLogsAt}
         />
       )}
@@ -260,14 +258,11 @@ export default function NodeDetail() {
         <MetricsTab
           node={node}
           onOpenLogs={openLogsAt}
-          onOpenQueue={() => setSearchParams((prev) => withNodeTab(prev, "queue"))}
         />
       )}
       {tab === "queue" && (
         <QueueTab
           node={node}
-          onOpenFailedLogs={(f) => setSearchParams((prev) => withFailedLogs(prev, f))}
-          onOpenMetrics={() => setSearchParams((prev) => withNodeTab(prev, "metrics"))}
         />
       )}
     </div>

@@ -58,7 +58,7 @@ function renderTab() {
     <MemoryRouter initialEntries={["/nodes/n1"]}>
       <QueryClientProvider client={qc}>
         <TooltipProvider>
-          <OverviewTab node={NODE} onAllLogs={() => {}} />
+          <OverviewTab node={NODE} />
         </TooltipProvider>
       </QueryClientProvider>
     </MemoryRouter>,
